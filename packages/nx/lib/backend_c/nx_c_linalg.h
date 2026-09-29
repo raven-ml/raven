@@ -6,10 +6,11 @@
 /* nx_c_linalg.h — shared machinery for the owned dense linear algebra family:
    compute-type traits, failure statuses, block-size crossovers, the batched
    dispatch descriptor + strided<->contiguous unpack/pack, batch addressing,
-   and the cross-family QR entry points SVD's U formation consumes. The four
-   family translation units (nx_c_tri.c cholesky+triangular-solve, nx_c_qr.c QR,
-   nx_c_eigh.c eigh, nx_c_svd.c SVD) each include this once. Code-only header;
-   the static tables/helpers it defines are instantiated per translation unit. */
+   and the cross-family QR entry points SVD's U formation consumes. The family
+   translation units (nx_c_tri.c cholesky+triangular-solve, nx_c_qr.c QR,
+   nx_c_lu.c LU, nx_c_eigh.c eigh, nx_c_svd.c SVD) each include this once.
+   Code-only header; the static tables/helpers it defines are instantiated per
+   translation unit. */
 
 #ifndef NX_C_LINALG_H
 #define NX_C_LINALG_H

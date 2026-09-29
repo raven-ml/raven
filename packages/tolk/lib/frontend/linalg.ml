@@ -5,19 +5,22 @@
 
 (* Linear algebra as unrolled compositions.
 
-   These compositions serve Rune's compiled QR, Cholesky and triangular-solve
-   effects, including their gradients and eager factorization conventions.
+   These compositions serve Rune's compiled QR, LU, Cholesky and
+   triangular-solve effects, including their gradients and eager factorization
+   conventions.
 
    Tolk's Uop vocabulary has no host control flow, so an operation whose eager
    implementation iterates over data — a factorization's column loop, a
    substitution's row loop — cannot be a single op. None of the operations
-   here actually need data-dependent iteration, though: QR, triangular solves,
-   and Cholesky all take a number of steps fixed by the input shapes alone.
+   here actually need data-dependent iteration, though: QR, LU, triangular
+   solves, and Cholesky all take a number of steps fixed by the input shapes
+   alone (LU's pivot choice is data, but a row exchange is a masked select).
    They are therefore unrolled here, at graph-construction time, into ordinary
    Tolk compositions (matmuls, element-wise arithmetic, movement ops): min(m,
-   n) Householder reflectors for QR, n forward-substitution steps for a
-   triangular solve, one column per step for Cholesky. The lowering sees a
-   plain static graph and compiles it for every Tolk device.
+   n) Householder reflectors for QR, min(m, n) pivoted eliminations for LU, n
+   forward-substitution steps for a triangular solve, one column per step for
+   Cholesky. The lowering sees a plain static graph and compiles it for every
+   Tolk device.
 
    Conventions follow LAPACK: the reflector sign (beta = -sign(alpha)·‖x‖, so
    R's diagonal takes the reflected sign) and a column whose tail is already
@@ -170,6 +173,111 @@ let qr ~reduced a =
     q := E.sub !q (Op.matmul v proj)
   done;
   (!q, r)
+
+(* {1 LU}
+
+   Partial pivoting, one column per step. Step j finds the row of largest
+   magnitude at or below the diagonal — the first on a tie, a nan never beating
+   a number unless it sits on the diagonal, as in the eager kernel's strict
+   comparison scan — and exchanges it with row j across the whole matrix and
+   the running permutation. The exchange selects rows with [where] against
+   one-hot row masks, so the rows it does not move pass through untouched. The
+   column tail is then divided by the pivot (left as is when the pivot is zero)
+   and the trailing submatrix takes the rank-1 update [a - l·u]. *)
+
+let lu a =
+  let module E = Elementwise in
+  let dt = Tensor.val_dtype a in
+  require_float ~what:"lu" dt;
+  let shape = Tensor.shape a in
+  let rank = List.length shape in
+  if rank < 2 then invalid_arg "Linalg.lu: input requires at least 2 dimensions";
+  let m = List.nth shape (rank - 2) and n = List.nth shape (rank - 1) in
+  let batch = List.filteri (fun i _ -> i < rank - 2) shape in
+  let k = Stdlib.min m n in
+  let i32 = Tolk_uop.Dtype.int32 in
+  let index j =
+    Creation.full ~buffer:false ~dtype:i32 (batch @ [ 1; 1 ]) (Tensor.Sint j)
+  in
+  let rows =
+    Movement.expand
+      (Movement.reshape (Op.arange ~dtype:i32 m) [ m; 1 ])
+      (batch @ [ m; 1 ])
+  in
+  (* Exchange rows [j] (static) and [p] (one per matrix) of [x]. *)
+  let swap j p x =
+    let xdt = Tensor.val_dtype x in
+    let full = batch @ [ m; List.nth (Tensor.shape x) (rank - 1) ] in
+    let is i = Movement.expand (E.eq rows i) full in
+    let is_j = is (index j) and is_p = is p in
+    let row_j = Movement.expand (slice2 x (Some (j, j + 1)) None) full in
+    let zero = Creation.full ~buffer:false ~dtype:xdt full (Tensor.Sint 0) in
+    let row_p =
+      Movement.expand
+        (Reduce.sum ~axis:[ -2 ] ~keepdim:true ~dtype:xdt
+           (E.where is_p x zero))
+        full
+    in
+    E.where is_j row_p (E.where is_p row_j x)
+  in
+  let work = ref a and perm = ref rows and pivots = ref [] in
+  for j = 0 to k - 1 do
+    let mag = E.abs (slice2 !work (Some (j, m)) (Some (j, j + 1))) in
+    let mag_j = slice2 mag (Some (0, 1)) None in
+    let mag =
+      cat2
+        ([ E.where (E.isnan mag_j) (scalar2 dt batch 1 1 Float.infinity) mag_j ]
+        @
+        if m - j - 1 > 0 then
+          let rest = slice2 mag (Some (1, m - j)) None in
+          [ E.where (E.isnan rest) (scalar2 dt batch (m - j - 1) 1 (-1.0)) rest ]
+        else [])
+    in
+    let p =
+      E.add
+        (Dtype_ops.cast (Op.argmax ~axis:(-2) ~keepdim:true mag) i32)
+        (index j)
+    in
+    pivots := Movement.reshape p (batch @ [ 1 ]) :: !pivots;
+    work := swap j p !work;
+    perm := swap j p !perm;
+    if m - j - 1 > 0 then begin
+      let pivot = slice2 !work (Some (j, j + 1)) (Some (j, j + 1)) in
+      let below = slice2 !work (Some (j + 1, m)) (Some (j, j + 1)) in
+      let l =
+        E.where
+          (Movement.expand
+             (E.ne pivot (zero1 dt batch))
+             (batch @ [ m - j - 1; 1 ]))
+          (E.div below pivot) below
+      in
+      let bottom =
+        (if j > 0 then [ slice2 !work (Some (j + 1, m)) (Some (0, j)) ] else [])
+        @ [ l ]
+        @
+        if n - j - 1 > 0 then
+          [ E.sub
+              (slice2 !work (Some (j + 1, m)) (Some (j + 1, n)))
+              (E.mul l (slice2 !work (Some (j, j + 1)) (Some (j + 1, n)))) ]
+        else []
+      in
+      let bottom =
+        match bottom with
+        | [ x ] -> x
+        | x :: xs -> Op.cat ~dim:(-1) x xs
+        | [] -> assert false
+      in
+      work := cat2 [ slice2 !work (Some (0, j + 1)) None; bottom ]
+    end
+  done;
+  let pivots =
+    match List.rev !pivots with
+    | [] ->
+        Creation.full ~buffer:false ~dtype:i32 (batch @ [ 0 ]) (Tensor.Sint 0)
+    | [ p ] -> p
+    | p :: ps -> Op.cat ~dim:(-1) p ps
+  in
+  (!work, pivots, Movement.reshape !perm (batch @ [ m ]))
 
 (* {1 Triangular solve}
 

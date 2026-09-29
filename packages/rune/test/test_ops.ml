@@ -258,6 +258,16 @@ let matmul_tests =
 (* Linear algebra. Inputs are conditioned so the operations are smooth: cholesky
    gets a positive-definite matrix built from the input. *)
 
+(* A matrix whose rows are out of order in every column, so that each LU step
+   exchanges rows, alone and stacked with a second one. *)
+let pivoted () = mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |]
+
+let pivoted_batch () =
+  Nx.stack
+    [
+      pivoted (); mat64 3 3 [| 1.1; -0.2; 0.4; 0.6; 2.4; -1.3; -2.5; 0.8; 1.7 |];
+    ]
+
 let linalg_tests =
   [
     test "cholesky" (fun () ->
@@ -291,6 +301,14 @@ let linalg_tests =
              [|
                1.3; 0.4; -0.6; 1.8; 0.2; -1.1; 0.7; -0.3; 1.1; 0.5; -0.9; 1.4;
              |]));
+    test "lu (square, batched)" (fun () ->
+        (* The input's rows are out of order, so the rule must route the
+           cotangent back through the permutation. *)
+        check_grad ~msg:"lu" ~tol:5e-3
+          (fun x ->
+            let _, l, u = Nx.lu x in
+            Nx.add (Nx.sum (Nx.mul l l)) (Nx.sum (Nx.mul u u)))
+          (pivoted_batch ()));
     test "solve_triangular (batched vector rhs)" (fun () ->
         (* Only the lower triangle is read, so the upper entries get a zero
            gradient, and a vector right-hand side keeps its shape. *)

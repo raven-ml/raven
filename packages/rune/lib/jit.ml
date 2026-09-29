@@ -2679,6 +2679,19 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               let q, r = F.Linalg.qr ~reduced (go t_in) in
               ret2 k (dt t_in) q r
             else refuse k "qr")
+    | E_lu { t_in } ->
+        Some
+          (fun k ->
+            if ND.is_float (dt t_in) then
+              let tl, tpiv, tperm = F.Linalg.lu (go t_in) in
+              match result_placement st eff with
+              | p ->
+                  continue k
+                    ( traced st p (dt t_in) tl,
+                      traced st p ND.int32 tpiv,
+                      traced st p ND.int32 tperm )
+              | exception (Invalid_argument _ as e) -> discontinue k e
+            else refuse k "lu")
     | E_svd _ -> Some (fun k -> refuse k "svd")
     | E_eigvals _ -> Some (fun k -> refuse k "eigvals")
     | E_eig _ -> Some (fun k -> refuse k "eig")

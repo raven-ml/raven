@@ -1016,6 +1016,13 @@ type _ Effect.t +=
       reduced : bool;
     }
       -> (('a, 'b) t * ('a, 'b) t) Effect.t
+  | E_lu : {
+      t_in : ('a, 'b) t;
+    }
+      -> (('a, 'b) t
+         * (int32, Nx_dtype.int32_elt) t
+         * (int32, Nx_dtype.int32_elt) t)
+         Effect.t
   | E_svd : {
       t_in : ('a, 'b) t;
       full_matrices : bool;
@@ -1403,6 +1410,7 @@ let routing : type r. r Effect.t -> (string * rule * packed list) option =
   | E_cholesky { t_in; _ } ->
       Some ("cholesky", Along (matrix_axes t_in), [ P t_in ])
   | E_qr { t_in; _ } -> Some ("qr", Along (matrix_axes t_in), [ P t_in ])
+  | E_lu { t_in } -> Some ("lu", Along (matrix_axes t_in), [ P t_in ])
   | E_svd { t_in; _ } -> Some ("svd", Along (matrix_axes t_in), [ P t_in ])
   | E_eigvals { t_in } -> Some ("eigvals", Along (matrix_axes t_in), [ P t_in ])
   | E_eig { t_in } -> Some ("eig", Along (matrix_axes t_in), [ P t_in ])
@@ -2079,6 +2087,14 @@ let qr ~reduced t_in =
     let r = route_of e in
     let q, rr = Nx_backend.qr ~reduced (host_of t_in) in
     (settle r q, settle r rr)
+
+let lu t_in =
+  let e = E_lu { t_in } in
+  try Effect.perform e
+  with Effect.Unhandled _ ->
+    let r = route_of e in
+    let lu, pivots, perm = Nx_backend.lu (host_of t_in) in
+    (settle r lu, settle r pivots, settle r perm)
 
 let svd ~full_matrices t_in =
   let e = E_svd { t_in; full_matrices } in

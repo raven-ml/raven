@@ -429,6 +429,29 @@ let is_upper r =
          v = 0. || i.(n - 1) >= i.(n - 2))
        r.data)
 
+(* Complex tensors compare by their parts. *)
+let near_complex =
+  let c = close ~rel:1e-9 ~abs:1e-9 () in
+  tensor (Testable.contramap (fun (z : Complex.t) -> (z.re, z.im)) (pair c c))
+
+let complex_matrix ?(batch = Gen.constant ~pp:pp_shape [||]) m n =
+  Gen.bind batch (fun bt ->
+      let batch = Gen.constant ~pp:pp_shape bt in
+      Gen.map
+        (fun (re, im) -> Nx.complex Nx.complex128 ~re ~im)
+        (Gen.pair (matrix ~batch m n) (matrix ~batch m n)))
+
+(* P is a permutation matrix: zeros and ones, one 1 in each row and column. *)
+let is_permutation p =
+  let r = Ref.of_nx p in
+  let n = Ref.ndim r in
+  let ones_along ax =
+    Array.for_all (( = ) 1.) (Ref.reduce ~axes:[ ax ] ( +. ) 0. r).data
+  in
+  Array.for_all (fun v -> v = 0. || v = 1.) r.data
+  && ones_along (n - 1)
+  && ones_along (n - 2)
+
 let factorizations =
   group "factorizations"
     [
@@ -477,6 +500,57 @@ let factorizations =
           equal near (identity_like q) (t q *@ q);
           is_true ~msg:"R is upper-triangular" (is_upper r));
       prop
+        "lu gives a permutation P, a unit lower-triangular L with entries of \
+         magnitude at most 1, and an upper-triangular U with P L U = a"
+        (sized (fun m -> sized (fun n -> matrix ~batch m n)))
+        (fun a ->
+          let p, l, u = Nx.lu a in
+          equal near a (p *@ l *@ u);
+          let p32, l32, u32 = Nx.lu (Nx.cast Nx.float32 a) in
+          equal ~msg:"at float32"
+            (tensor (close ~rel:1e-5 ~abs:1e-5 ()))
+            (Nx.cast Nx.float32 a)
+            (Nx.matmul (Nx.matmul p32 l32) u32);
+          is_true ~msg:"P is a permutation" (is_permutation p);
+          is_true ~msg:"L is lower-triangular" (is_upper (t l));
+          equal ~msg:"L has a unit diagonal" near
+            (Nx.ones_like (Nx.diagonal l))
+            (Nx.diagonal l);
+          is_true ~msg:"L's entries are at most 1 in magnitude"
+            (Array.for_all
+               (fun x -> Float.abs x <= 1.)
+               (Nx.to_array (Nx.contiguous l)));
+          is_true ~msg:"U is upper-triangular" (is_upper u));
+      prop "lu reads every layout"
+        (Gen.pair (sized (fun m -> sized (fun n -> matrix ~batch m n))) layout)
+        (fun (a, steps) ->
+          let v = lay_out steps a in
+          assume (Nx.ndim v >= 2);
+          let same x y =
+            let p, l, u = Nx.lu x and p', l', u' = Nx.lu y in
+            let exact = tensor (close ~rel:0. ()) in
+            equal exact p p';
+            equal exact l l';
+            equal exact u u'
+          in
+          same (Nx.contiguous v) v;
+          let v32 = Nx.cast Nx.float32 v in
+          same (Nx.contiguous v32) v32);
+      prop "lu of a complex matrix gives P L U = a"
+        (sized (fun m -> sized (fun n -> complex_matrix ~batch m n)))
+        (fun z ->
+          let p, l, u = Nx.lu z in
+          equal near_complex z (Nx.matmul (Nx.matmul p l) u));
+      test "lu keeps a zero pivot of a singular matrix on U's diagonal"
+        (fun () ->
+          let a =
+            Nx.create Nx.float64 [| 3; 3 |]
+              [| 1.; 2.; 3.; 2.; 4.; 6.; 1.; 0.; 1. |]
+          in
+          let p, l, u = Nx.lu a in
+          equal near a (p *@ l *@ u);
+          equal (close ~rel:0. ~abs:1e-15 ()) 0. (Nx.item [ 2; 2 ] u));
+      prop
         "svd gives orthonormal U and Vh and descending S with U diag S Vh = a"
         (sized (fun m -> sized (fun n -> matrix ~batch m n)))
         (fun a ->
@@ -515,6 +589,8 @@ let factorizations =
       test "the factorizations refuse integers and non-square matrices"
         (fun () ->
           raises_invalid_arg (fun () -> Nx.qr (Nx.ones Nx.int32 [| 2; 2 |]));
+          raises_invalid_arg (fun () -> Nx.lu (Nx.ones Nx.int32 [| 2; 2 |]));
+          raises_invalid_arg (fun () -> Nx.lu (Nx.ones Nx.float64 [| 2 |]));
           raises_invalid_arg (fun () ->
               Nx.cholesky (Nx.ones Nx.float64 [| 2; 3 |]));
           raises_invalid_arg (fun () -> Nx.eigh (Nx.ones Nx.float64 [| 2; 3 |])));

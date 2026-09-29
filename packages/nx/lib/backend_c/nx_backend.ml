@@ -712,6 +712,31 @@ let qr ~reduced x =
   reraise_linalg ~op:"qr" (fun () -> caml_qr q r x reduced);
   (q, r)
 
+(* lu: the packed factors in the input dtype; the min(m, n) row interchanges and
+   the m-row permutation as int32. *)
+external caml_lu :
+  ('a, 'b) t ->
+  (int32, Nx_dtype.int32_elt) t ->
+  (int32, Nx_dtype.int32_elt) t ->
+  ('a, 'b) t ->
+  unit = "caml_nx_c_lu"
+
+let lu x =
+  let s = x.shape in
+  let nd = Array.length s in
+  let m = s.(nd - 2) and n = s.(nd - 1) in
+  let batch = Array.sub s 0 (nd - 2) in
+  let lu = create_tensor x.context x.dtype s in
+  let pivots =
+    create_tensor x.context Nx_dtype.Int32
+      (Array.append batch [| Int.min m n |])
+  in
+  let perm =
+    create_tensor x.context Nx_dtype.Int32 (Array.append batch [| m |])
+  in
+  reraise_linalg ~op:"lu" (fun () -> caml_lu lu pivots perm x);
+  (lu, pivots, perm)
+
 (* eigvalsh/eigh both drive caml_nx_c_eigh; eigenvalues always float64,
    eigenvectors in the input dtype. eigvalsh takes the cheaper values-only path
    (vectors=false); the stub then ignores the eigenvector slot, so it reuses x

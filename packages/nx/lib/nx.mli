@@ -2643,7 +2643,24 @@ val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
     not converge. Raises [Invalid_argument] if the dtype is not floating-point
     or complex.
 
-    See also {!svd}. *)
+    See also {!svd}, {!lu}. *)
+
+val lu : ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t * ('a, 'b) t
+(** [lu a] is [(P, L, U)] where [a = P L U], [P] is a permutation matrix, [L] is
+    lower-triangular with ones on its diagonal, and [U] is upper-triangular. For
+    [a] of shape [·.., m, n] and [k = min m n], [P] is [·.., m, m], [L] is
+    [·.., m, k] and [U] is [·.., k, n].
+
+    The factorization pivots partially: at each column the row of largest
+    magnitude at or below the diagonal ([|re| + |im|] for complex) moves up to
+    the diagonal, the first such row on a tie, so for a real [a] every entry of
+    [L] has magnitude at most 1. A singular [a] is not an error: its zero pivots
+    stay on the diagonal of [U].
+
+    Raises [Invalid_argument] if [a] has fewer than two dimensions or the dtype
+    is not floating-point or complex.
+
+    See also {!det}, {!solve}. *)
 
 val svd :
   ?full_matrices:bool ->

@@ -35,6 +35,7 @@
    nx_c_matmul
    nx_c_tri
    nx_c_qr
+   nx_c_lu
    nx_c_eigh
    nx_c_svd
    nx_c_eig

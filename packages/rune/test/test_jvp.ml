@@ -269,6 +269,16 @@ let matmul_tests =
         check_jvp2 ~msg:"matmul 3x2d" Nx.matmul (a3 ()) (b2 ()));
   ]
 
+(* A matrix whose rows are out of order in every column, so that each LU step
+   exchanges rows, alone and stacked with a second one. *)
+let pivoted () = mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |]
+
+let pivoted_batch () =
+  Nx.stack
+    [
+      pivoted (); mat64 3 3 [| 1.1; -0.2; 0.4; 0.6; 2.4; -1.3; -2.5; 0.8; 1.7 |];
+    ]
+
 let linalg_tests =
   [
     test "cholesky" (fun () ->
@@ -286,6 +296,12 @@ let linalg_tests =
             Nx.cholesky spd)
           (Nx.create f64 [| 2; 2; 2 |]
              [| 0.9; -0.4; 0.3; 1.2; 1.1; 0.2; -0.5; 0.8 |]));
+    test "lu (square, batched)" (fun () ->
+        check_jvp ~msg:"lu" ~tol:5e-3
+          (fun x ->
+            let _, l, u = Nx.lu x in
+            Nx.add l u)
+          (pivoted_batch ()));
     test "solve_triangular (batched vector rhs)" (fun () ->
         check_jvp2 ~msg:"solve_triangular batched"
           (fun a b -> Nx.solve_triangular a b)

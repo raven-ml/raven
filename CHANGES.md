@@ -2731,6 +2731,10 @@ thread.
 
 ### Nx
 
+- `Nx.lu` factors a matrix with partial pivoting as `(P, L, U)` with
+  `a = P L U`, for rectangular and batched input; a singular matrix keeps its
+  zero pivot in `U`. Rune differentiates it for square input and compiles it
+  under `Rune.jit`.
 - `Nx.rfftn` and `rfft2` refuse an `s` of another length than `axes`, as
   `fftn` and `irfftn` do. A longer `s` was ignored, and a shorter one raised
   `Invalid_argument "index out of bounds"`.

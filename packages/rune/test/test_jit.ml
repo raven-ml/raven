@@ -520,6 +520,23 @@ let test_cholesky_gradient_compiles () =
     (to_arr (Rune.grad' loss a))
     (to_arr compiled)
 
+(* Both matrices exchange rows while factoring; the compiled factors must match
+   eager. *)
+let test_lu_matches_eager () =
+  let a =
+    Nx.cast f32
+      (Nx.stack
+         [
+           mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |];
+           mat64 3 3 [| 1.0; 0.0; 2.0; 0.0; 0.0; 3.0; 4.0; 1.0; 1.0 |];
+         ])
+  in
+  let factors m =
+    let p, l, u = Nx.lu m in
+    Nx.stack [ p; l; u ]
+  in
+  check_arr ~msg:"P, L and U" (to_arr (factors a)) (Rune.jit' factors a)
+
 (* [Nx.solve] compiles: its singularity check lives in the graph, so the QR and
    the triangular solve trace as one program, and [Nx.inv] follows. *)
 let test_solve_matches_eager () =
@@ -5239,6 +5256,7 @@ let tests =
         test "triangular solve takes a vector right-hand side"
           test_solve_triangular_vector_rhs;
         test "triangular solve is batched" test_solve_triangular_batched;
+        test "LU matches eager" test_lu_matches_eager;
         test "solve and inv match eager" test_solve_matches_eager;
         test "the gradient of a QR-using loss compiles"
           test_qr_gradient_compiles;

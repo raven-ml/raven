@@ -283,4 +283,80 @@ let cholesky_tests =
             failf "expected nans in the factor of a non-PD input");
     ]
 
-let () = exit (run "Tolk_frontend_linalg" [ qr_tests; solve_tests; cholesky_tests ])
+(* Check an LU factorization of the row-major m×n matrix [a] on the host:
+   row i of L U must be row perm[i] of [a], L unit lower (its multipliers at
+   most 1 in magnitude) and U upper by construction of the packing. *)
+let check_lu ~msg ~m ~n a (packed, pivots, perm) =
+  let lu = Run.to_float_array packed and perm = Run.to_int_array perm in
+  let k = Stdlib.min m n in
+  if Array.length (Run.to_int_array pivots) <> k then
+    failf "%s: expected %d pivots" msg k;
+  for i = 0 to m - 1 do
+    for c = 0 to n - 1 do
+      let s = ref 0.0 in
+      for j = 0 to Stdlib.min i c do
+        if j < k then begin
+          let l = if j = i then 1.0 else lu.((i * n) + j) in
+          if j < i && Float.abs l > 1.0 then
+            failf "%s: multiplier L[%d][%d] = %g exceeds 1" msg i j l;
+          s := !s +. (l *. lu.((j * n) + c))
+        end
+      done;
+      let want = a.((perm.(i) * n) + c) in
+      if not (close ~tol:1e-5 want !s) then
+        failf "%s: (LU)[%d][%d] = %g, A[perm][%d][%d] = %g" msg i c !s i c want
+    done
+  done
+
+let lu_tests =
+  group "lu"
+    [
+      test "a 2x2 system pivots on the larger row" (fun () ->
+          let packed, pivots, perm =
+            Linalg.lu (fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |])
+          in
+          equal (array int) [| 1; 1 |] (Run.to_int_array pivots);
+          equal (array int) [| 1; 0 |] (Run.to_int_array perm);
+          let got = Run.to_float_array packed in
+          Array.iteri
+            (fun i want ->
+              if not (close ~tol:1e-6 want got.(i)) then
+                failf "packed[%d] = %g, expected %g" i got.(i) want)
+            [| 3.; 4.; 1. /. 3.; 2. -. (4. /. 3.) |]);
+      test "rectangular reconstruction" (fun () ->
+          let tall = [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.5 |] in
+          let wide = [| 1.5; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+          check_lu ~msg:"tall" ~m:4 ~n:2 tall
+            (Linalg.lu (fa ~shape:[ 4; 2 ] tall));
+          check_lu ~msg:"wide" ~m:2 ~n:4 wide
+            (Linalg.lu (fa ~shape:[ 2; 4 ] wide)));
+      test "batched reconstruction" (fun () ->
+          let a =
+            [| 2.; 1.; 1.; 1.; 3.; 2.; 1.; 2.; 4.; 5.; 4.; 1.; 4.; 5.; 2.; 1.;
+               2.; 3. |]
+          in
+          let packed, pivots, perm = Linalg.lu (fa ~shape:[ 2; 3; 3 ] a) in
+          let lu = Run.to_float_array packed
+          and pv = Run.to_int_array pivots
+          and pm = Run.to_int_array perm in
+          List.iter
+            (fun b ->
+              check_lu ~msg:(Printf.sprintf "batch %d" b) ~m:3 ~n:3
+                (Array.sub a (9 * b) 9)
+                ( fa ~shape:[ 3; 3 ] (Array.sub lu (9 * b) 9),
+                  Run.of_int_array ~shape:[ 3 ] (Array.sub pv (3 * b) 3),
+                  Run.of_int_array ~shape:[ 3 ] (Array.sub pm (3 * b) 3) ))
+            [ 0; 1 ]);
+      test "a zero column keeps its zero pivot" (fun () ->
+          let a = [| 0.; 1.; 0.; 2. |] in
+          let packed, pivots, perm = Linalg.lu (fa ~shape:[ 2; 2 ] a) in
+          equal (array int) [| 0; 1 |] (Run.to_int_array pivots);
+          check_lu ~msg:"singular" ~m:2 ~n:2 a (packed, pivots, perm);
+          if Array.exists Float.is_nan (Run.to_float_array packed) then
+            failf "a zero pivot produced nans");
+    ]
+
+let () =
+  exit
+    (run "Tolk_frontend_linalg"
+       [ qr_tests; lu_tests; solve_tests; cholesky_tests ])

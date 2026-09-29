@@ -715,6 +715,26 @@ module type S = sig
       @raise Linalg_error
         with kind [`No_convergence] if the factorization does not converge. *)
 
+  val lu :
+    ('a, 'b) t ->
+    ('a, 'b) t * (int32, Nx_dtype.int32_elt) t * (int32, Nx_dtype.int32_elt) t
+  (** [lu t] is the LU factorization of [t] with partial pivoting, as
+      [(lu, pivots, permutation)].
+
+      For [t] of shape [·.., m, n] and [k = min m n]:
+      - [lu] has [t]'s shape and packs both factors: the unit lower-triangular
+        [L] strictly below the diagonal (its diagonal of ones is not stored) and
+        the upper-triangular [U] on and above it.
+      - [pivots] has shape [·.., k]: at step [j] rows [j] and [pivots.{j}] were
+        interchanged, the row of the largest magnitude in column [j] at or below
+        the diagonal ([|re| + |im|] for complex input). The first row of largest
+        magnitude wins a tie.
+      - [permutation] has shape [·.., m]: the row order the interchanges
+        produce, so that row [i] of [L U] is row [permutation.{i}] of [t].
+
+      A singular [t] is not an error: a zero pivot stays in [U] and its column
+      of [L] is left unscaled. *)
+
   val svd :
     full_matrices:bool ->
     ('a, 'b) t ->

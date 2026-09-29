@@ -4273,6 +4273,30 @@ module Make (B : Backend_intf.S) = struct
     in
     B.qr ~reduced a
 
+  let lu a =
+    check_float_or_complex ~op:"lu" a;
+    let sh = shape a in
+    let nd = Array.length sh in
+    if nd < 2 then err "lu" "input requires at least 2D array";
+    let m = sh.(nd - 2) and n = sh.(nd - 1) in
+    let k = Int.min m n in
+    let packed, _, perm = B.lu a in
+    let ctx = B.context a and dt = dtype a in
+    let batch = List.init (nd - 2) (fun _ -> A) in
+    let l =
+      add
+        (tril ~k:(-1) (slice_internal (batch @ [ A; R (0, k) ]) packed))
+        (eye ctx ~m:k dt m)
+    in
+    let u = triu (slice_internal (batch @ [ R (0, k); A ]) packed) in
+    (* P[perm[i], i] = 1: row i of L U is row perm[i] of a. *)
+    let p =
+      cast dt
+        (cmpeq (expand_dims [ -2 ] perm)
+           (reshape [| m; 1 |] (arange ctx int32 0 m 1)))
+    in
+    (p, l, u)
+
   let svd ?full_matrices a =
     check_float_or_complex ~op:"svd" a;
     B.svd ~full_matrices:(Option.value full_matrices ~default:false) a

@@ -5,14 +5,14 @@
 
 (** Linear algebra as unrolled Tolk compositions.
 
-    QR, triangular solves, and Cholesky have no single-Uop Tolk form: their
-    classic implementations iterate over data, and the Uop vocabulary has no
-    host control flow. Their iteration counts are fixed by the input shapes
-    alone, though, so {!qr}, {!solve_triangular}, and {!cholesky} unroll them
-    at graph-construction time into ordinary compositions of {!Op},
-    {!Elementwise}, {!Movement}, and {!Reduce}. The lowering sees a plain
-    static graph and compiles it for every Tolk device; graph size grows
-    linearly in the matrix dimension.
+    QR, LU, triangular solves, and Cholesky have no single-Uop Tolk form:
+    their classic implementations iterate over data, and the Uop vocabulary
+    has no host control flow. Their iteration counts are fixed by the input
+    shapes alone, though, so {!qr}, {!lu}, {!solve_triangular}, and
+    {!cholesky} unroll them at graph-construction time into ordinary
+    compositions of {!Op}, {!Elementwise}, {!Movement}, and {!Reduce}. The
+    lowering sees a plain static graph and compiles it for every Tolk device;
+    graph size grows linearly in the matrix dimension.
 
     Conventions follow LAPACK — the Householder reflector sign, zero-tail
     columns taking no reflector, and the reflector tails stored on the
@@ -29,6 +29,23 @@ val qr : reduced:bool -> Tensor.t -> Tensor.t * Tensor.t
     [batch @ [min(m, n); n]]; with [reduced:false] the factors are
     [batch @ [m; m]] and [batch @ [m; n]]. A column whose subdiagonal tail is
     already zero takes no reflector, so its [r] diagonal entry keeps its sign.
+
+    Raises [Invalid_argument] if [a] has fewer than 2 dimensions or a
+    non-float dtype. *)
+
+val lu : Tensor.t -> Tensor.t * Tensor.t * Tensor.t
+(** [lu a] is the LU factorization of [a] with partial pivoting as
+    [(lu, pivots, permutation)], one pivoted elimination unrolled per column.
+
+    [a] has shape [batch @ [m; n]]; with [k = min(m, n)], [lu] has [a]'s shape
+    and packs the unit lower-triangular [l] strictly below its diagonal and
+    the upper-triangular [u] on and above it, [pivots] (int32,
+    [batch @ [k]]) holds the row exchanged with row [j] at step [j], and
+    [permutation] (int32, [batch @ [m]]) the resulting row order: row [i] of
+    [l·u] is row [permutation.(i)] of [a]. The pivot is the first row of
+    largest magnitude at or below the diagonal; a nan below the diagonal is
+    never chosen, and one on the diagonal is kept. A zero pivot leaves its
+    column of [l] unscaled.
 
     Raises [Invalid_argument] if [a] has fewer than 2 dimensions or a
     non-float dtype. *)

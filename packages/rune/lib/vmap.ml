@@ -563,6 +563,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_psum { t_in } when batched st t_in -> err_no_rule "psum"
     | E_cholesky { t_in; _ } when batched st t_in -> err_no_rule "cholesky"
     | E_qr { t_in; _ } when batched st t_in -> err_no_rule "qr"
+    | E_lu { t_in } when batched st t_in -> err_no_rule "lu"
     | E_svd { t_in; _ } when batched st t_in -> err_no_rule "svd"
     | E_eigvals { t_in } when batched st t_in -> err_no_rule "eigvals"
     | E_eig { t_in } when batched st t_in -> err_no_rule "eig"

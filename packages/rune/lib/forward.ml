@@ -641,6 +641,45 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
             (fun k ->
               if active t_in then err_no_rule "qr"
               else continue k (qr ~reduced t_in))
+      | E_lu { t_in } ->
+          Some
+            (fun k ->
+              let ((packed, _, perm) as out) = lu t_in in
+              (match tangent t_in with
+              | None -> ()
+              | Some da ->
+                  if T.dim (-1) t_in <> T.dim (-2) t_in then
+                    err_no_rule "lu of a rectangular matrix";
+                  (* P A = L U. X = L^-1 P dA U^-1 is L^-1 dL, strictly lower,
+                     plus dU U^-1, upper: dL = L tril_-1(X) and dU = triu(X) U,
+                     packed as the factors are. *)
+                  let pda =
+                    T.take_along_axis ~axis:(-2)
+                      ~indices:
+                        (T.broadcast_to (T.shape da)
+                           (T.unsqueeze ~axes:[ -1 ] perm))
+                      da
+                  in
+                  let y =
+                    solve_triangular ~upper:false ~transpose:false
+                      ~unit_diag:true packed pda
+                  in
+                  let x =
+                    T.matrix_transpose
+                      (solve_triangular ~upper:false ~transpose:false
+                         ~unit_diag:false
+                         (T.matrix_transpose packed)
+                         (T.matrix_transpose y))
+                  in
+                  let l =
+                    T.add (T.tril ~k:(-1) packed)
+                      (T.eye (T.dtype packed) (T.dim (-1) packed))
+                  in
+                  set_tangent packed
+                    (T.add
+                       (T.matmul l (T.tril ~k:(-1) x))
+                       (T.matmul (T.triu x) (T.triu packed))));
+              continue k out)
       | E_svd { t_in; full_matrices } ->
           Some
             (fun k ->

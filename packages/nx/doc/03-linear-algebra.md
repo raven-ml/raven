@@ -82,6 +82,16 @@ let q, r = Nx.qr a                        (* reduced by default *)
 let q_full, r_full = Nx.qr ~mode:`Complete a
 ```
 
+### LU
+
+Factor A = P·L·U with partial pivoting, where P is a permutation matrix, L is
+lower triangular with a unit diagonal and U is upper triangular:
+
+<!-- $MDX skip -->
+```ocaml
+let p, l, u = Nx.lu a
+```
+
 ### SVD
 
 Singular value decomposition A = U·Σ·Vᵀ:

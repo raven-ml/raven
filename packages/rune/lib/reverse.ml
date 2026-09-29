@@ -1007,6 +1007,57 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         Tape.accumulate tape t_in (T.matrix_transpose da_t))
               end;
               continue k (q, r))
+      (* P A = L U. The pivots and the permutation are integers, so only the
+         packed factors carry a cotangent: with M = tril_-1(Lᵀ L̄) + triu(Ū Uᵀ),
+         the cotangent of P A is L^-T M U^-T, and P's rows go back to where they
+         came from. *)
+      | E_lu { t_in } ->
+          Some
+            (fun k ->
+              let ((packed, _, perm) as out) = lu t_in in
+              if tracked t_in then begin
+                if T.dim (-1) t_in <> T.dim (-2) t_in then
+                  err_no_rule "lu of a rectangular matrix";
+                track packed;
+                Tape.record tape (fun () ->
+                    match Tape.find tape packed with
+                    | None -> ()
+                    | Some g ->
+                        let l =
+                          T.add (T.tril ~k:(-1) packed)
+                            (T.eye (T.dtype packed) (T.dim (-1) packed))
+                        in
+                        let u = T.triu packed in
+                        let m =
+                          T.add
+                            (T.tril ~k:(-1)
+                               (T.matmul (T.matrix_transpose l)
+                                  (T.tril ~k:(-1) g)))
+                            (T.triu
+                               (T.matmul (T.triu g) (T.matrix_transpose u)))
+                        in
+                        (* Lᵀ is the unit upper triangle of the packed
+                           transpose, and (Y U^-T)ᵀ = U^-1 Yᵀ. *)
+                        let y =
+                          solve_triangular ~upper:true ~transpose:false
+                            ~unit_diag:true
+                            (T.matrix_transpose packed)
+                            m
+                        in
+                        let gpa =
+                          T.matrix_transpose
+                            (solve_triangular ~upper:true ~transpose:false
+                               ~unit_diag:false packed (T.matrix_transpose y))
+                        in
+                        let unperm =
+                          T.broadcast_to (T.shape gpa)
+                            (T.unsqueeze ~axes:[ -1 ]
+                               (T.argsort ~axis:(-1) perm))
+                        in
+                        Tape.accumulate tape t_in
+                          (T.take_along_axis ~axis:(-2) ~indices:unperm gpa))
+              end;
+              continue k out)
       | E_svd { t_in; full_matrices } ->
           Some
             (fun k ->

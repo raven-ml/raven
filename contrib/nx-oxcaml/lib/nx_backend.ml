@@ -2040,6 +2040,7 @@ let cholesky ~upper:_ _ =
   invalid_arg "cholesky: not implemented"
 
 let qr ~reduced:_ _ = invalid_arg "qr: not implemented"
+let lu _ = invalid_arg "lu: not implemented"
 
 let svd ~full_matrices:_ _ =
   invalid_arg "svd: not implemented"
