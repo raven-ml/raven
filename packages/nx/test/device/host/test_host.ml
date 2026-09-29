@@ -108,6 +108,98 @@ let test_links () =
   equal ~msg:"reads of its constants" float_exact 12. r.{1};
   equal ~msg:"a call to its own function" float_exact 3. r.{2}
 
+(* Compiler builtins *)
+
+let builtins =
+  lazy
+    (compile
+       {|__bf16 __truncsfbf2(float);
+_Float16 __truncsfhf2(float);
+float __extendhfsf2(_Float16);
+ABI void builtins(void **b, const long long *v) {
+  const float *in = b[0];
+  unsigned short *bf16 = b[1], *f16 = b[2];
+  const unsigned short *halves = b[3];
+  float *out = b[4];
+  for (long long i = 0; i < v[0]; i++) {
+    __bf16 x = __truncsfbf2(in[i]);
+    _Float16 y = __truncsfhf2(in[i]);
+    __builtin_memcpy(&bf16[i], &x, 2);
+    __builtin_memcpy(&f16[i], &y, 2);
+  }
+  for (long long i = 0; i < v[1]; i++) {
+    _Float16 h;
+    __builtin_memcpy(&h, &halves[i], 2);
+    out[i] = __extendhfsf2(h);
+  }
+}|})
+
+(* Float32 bits, and their bfloat16 and float16 roundings: ties to even,
+   overflow, NaN payloads, subnormals, zeros. *)
+let narrowed =
+  [
+    (0x3f800000, 0x3f80, 0x3c00);
+    (0x3f808000, 0x3f80, 0x3c04);
+    (0x3f818000, 0x3f82, 0x3c0c);
+    (0x3f801000, 0x3f80, 0x3c00);
+    (0x3f803000, 0x3f80, 0x3c02);
+    (0xbf80ffff, 0xbf81, 0xbc08);
+    (0x477fefff, 0x4780, 0x7bff);
+    (0x477ff000, 0x4780, 0x7c00);
+    (0x7f7fffff, 0x7f80, 0x7c00);
+    (0x7f800000, 0x7f80, 0x7c00);
+    (0xff800000, 0xff80, 0xfc00);
+    (0x7fc00001, 0x7fc1, 0x7e01);
+    (0x7f800001, 0x7f81, 0x7c01);
+    (0x7f802000, 0x7f81, 0x7c01);
+    (0x33800000, 0x3380, 0x0001);
+    (0x33000000, 0x3300, 0x0000);
+    (0x33c00000, 0x33c0, 0x0002);
+    (0x387fe000, 0x3880, 0x0400);
+    (0x00000001, 0x0000, 0x0000);
+    (0x80000000, 0x8000, 0x8000);
+  ]
+
+(* Float16 bits and their float32 widening. *)
+let widened =
+  [
+    (0x3c00, 0x3f800000);
+    (0x0001, 0x33800000);
+    (0x03ff, 0x387fc000);
+    (0x0400, 0x38800000);
+    (0x7bff, 0x477fe000);
+    (0x7c00, 0x7f800000);
+    (0xfc01, 0xff802000);
+    (0x7e00, 0x7fc00000);
+    (0x8000, 0x80000000);
+  ]
+
+let test_builtins () =
+  let p = P.load host ~binary:(Lazy.force builtins) ~name:"builtins" in
+  let n = List.length narrowed and m = List.length widened in
+  let input = B.create host S.Float32 n in
+  List.iteri
+    (fun i (f, _, _) -> (B.bigarray Bigarray.int32 input).{i} <- Int32.of_int f)
+    narrowed;
+  let bf16 = B.create host S.UInt16 n and f16 = B.create host S.UInt16 n in
+  let halves = B.create host S.UInt16 m and out = B.create host S.Float32 m in
+  List.iteri
+    (fun i (h, _) -> (B.bigarray Bigarray.int16_unsigned halves).{i} <- h)
+    widened;
+  P.call p [| input; bf16; f16; halves; out |] [| n; m |];
+  let u16 b i = (B.bigarray Bigarray.int16_unsigned b).{i} in
+  let u32 b i =
+    Int32.to_int (B.bigarray Bigarray.int32 b).{i} land 0xffff_ffff
+  in
+  equal ~msg:"__truncsfbf2" (list int)
+    (List.map (fun (_, b, _) -> b) narrowed)
+    (List.init n (u16 bf16));
+  equal ~msg:"__truncsfhf2" (list int)
+    (List.map (fun (_, _, h) -> h) narrowed)
+    (List.init n (u16 f16));
+  equal ~msg:"__extendhfsf2" (list int) (List.map snd widened)
+    (List.init m (u32 out))
+
 (* Lifetime *)
 
 let test_cache () =
@@ -208,6 +300,10 @@ let () =
            "a program links its constants, its own functions and the math \
             library"
            test_links;
+         test
+           "a program's calls to the 16-bit float conversions of the \
+            compiler's runtime link and round to nearest even"
+           test_builtins;
          test "a function of a binary loads once while it is reachable"
            test_cache;
          test "an unreachable program's code is freed" test_release;

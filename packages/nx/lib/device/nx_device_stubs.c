@@ -246,12 +246,100 @@ value caml_nx_device_code_free(value v_addr, value v_size) {
   return Val_unit;
 }
 
-/* The address of [name] in the process: in the libraries it loaded, which hold
-   the C and math libraries, then in the compiler's runtime. [0] if none
-   defines it. */
+/* Compiler builtins. The compiler lowers a conversion the target cannot do
+   inline, such as float32 to bfloat16 on x86_64 without AVX512-BF16, to a call
+   into its runtime library, even where the source converts nothing: a 16-bit
+   float merged across a branch is widened to float32 and rounded back. A
+   loaded object has no such library, and a host's copy, if any, may take
+   another calling convention: the object's is System V on x86_64, even on
+   Windows. These are the host's copies, with the object's convention.
+
+   A 16-bit float travels in the low bits of a floating-point register, where
+   a float's bits start, so it is passed and returned as a float holding its
+   bits. Rounding is to nearest, ties to even. A NaN keeps the high bits of its
+   payload, and its lowest kept bit is set if a dropped bit was: it stays a
+   NaN, and a widened value comes back with its bits. */
+
+#if defined(_WIN32) && defined(__x86_64__)
+#define NX_DEVICE_OBJECT_ABI __attribute__((sysv_abi))
+#else
+#define NX_DEVICE_OBJECT_ABI
+#endif
+
+static uint32_t float_bits(float x) {
+  uint32_t b;
+  memcpy(&b, &x, sizeof b);
+  return b;
+}
+
+static float bits_float(uint32_t b) {
+  float x;
+  memcpy(&x, &b, sizeof x);
+  return x;
+}
+
+static NX_DEVICE_OBJECT_ABI float truncsfbf2(float x) {
+  uint32_t b = float_bits(x);
+  if ((b & 0x7fffffffu) > 0x7f800000u)
+    b |= (b & 0xffffu) ? 0x10000u : 0;
+  else
+    b += 0x7fffu + ((b >> 16) & 1u);
+  return bits_float(b >> 16);
+}
+
+static NX_DEVICE_OBJECT_ABI float truncsfhf2(float x) {
+  uint32_t b = float_bits(x);
+  uint32_t sign = (b >> 16) & 0x8000u, abs = b & 0x7fffffffu;
+  uint32_t h;
+  if (abs > 0x7f800000u) {
+    h = 0x7c00u | ((abs >> 13) & 0x3ffu) | ((abs & 0x1fffu) ? 1u : 0);
+  } else if (abs >= 0x477ff000u) {
+    h = 0x7c00u;
+  } else if (abs >= 0x38800000u) {
+    uint32_t r = abs - 0x38000000u;
+    h = (r + 0xfffu + ((r >> 13) & 1u)) >> 13;
+  } else if (abs >= 0x33000000u) {
+    uint32_t m = (abs & 0x7fffffu) | 0x800000u, shift = 126u - (abs >> 23);
+    uint32_t rest = m & ((1u << shift) - 1u), tie = 1u << (shift - 1u);
+    h = m >> shift;
+    h += rest > tie || (rest == tie && (h & 1u));
+  } else {
+    h = 0;
+  }
+  return bits_float(sign | h);
+}
+
+static NX_DEVICE_OBJECT_ABI float extendhfsf2(float x) {
+  uint32_t h = float_bits(x) & 0xffffu;
+  uint32_t sign = (h & 0x8000u) << 16, m = h & 0x3ffu;
+  int e = (h >> 10) & 0x1f;
+  if (e == 0x1f) return bits_float(sign | 0x7f800000u | m << 13);
+  if (e == 0 && m == 0) return bits_float(sign);
+  if (e == 0) {
+    for (e = 1; !(m & 0x400u); e--) m <<= 1;
+    m &= 0x3ffu;
+  }
+  return bits_float(sign | (uint32_t)(e + 112) << 23 | m << 13);
+}
+
+static const struct {
+  const char *name;
+  NX_DEVICE_OBJECT_ABI float (*fn)(float);
+} builtins[] = {
+    {"__truncsfbf2", truncsfbf2},
+    {"__truncsfhf2", truncsfhf2},
+    {"__extendhfsf2", extendhfsf2},
+};
+
+/* The address of [name]: the host's copy of a compiler builtin, else the
+   definition in the libraries the process loaded, which hold the C and math
+   libraries, then in the compiler's runtime. [0] if none defines it. */
 value caml_nx_device_symbol(value v_name) {
   const char *name = String_val(v_name);
   void *a = NULL;
+  for (size_t i = 0; i < sizeof builtins / sizeof builtins[0]; i++)
+    if (strcmp(name, builtins[i].name) == 0)
+      return caml_copy_nativeint((intnat)builtins[i].fn);
 #ifdef _WIN32
   HANDLE modules = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
   if (modules != INVALID_HANDLE_VALUE) {

@@ -366,11 +366,14 @@ module Program : sig
       [clang -c -fPIC --target=ARCH-none-unknown-elf] makes it with [ARCH]
       [x86_64] or [arm64]. Its code may call the functions of the libraries the
       process has loaded, such as the C and math libraries, and of the
-      compiler's runtime library ([libgcc_s] on Linux), and has no writable
-      data, such as [.data] or [.bss]: the host loads it into memory that is
-      executable and never writable. That memory is freed once the program is
-      unreachable, so loading the same binary and name again returns the same
-      program only while it is reachable.
+      compiler's runtime library ([libgcc_s] on Linux). The host has its own
+      copies of the runtime's 16-bit float conversions, [__extendhfsf2],
+      [__truncsfhf2] and [__truncsfbf2], which compilers call where the machine
+      has no instruction for them, even in code that converts nothing. The code
+      has no writable data, such as [.data] or [.bss]: the host loads it into
+      memory that is executable and never writable. That memory is freed once
+      the program is unreachable, so loading the same binary and name again
+      returns the same program only while it is reachable.
 
       Raises [Invalid_argument] if [d] loads no programs, and [Failure] with the
       driver's message if it rejects [binary] or has no function [name]; on the
@@ -396,10 +399,11 @@ module Program : sig
       {v void f(void **buffers, const int64_t *values); v}
 
       given the host address of each buffer's first byte
-      ({!Buffer.host_address}) and each value as a 64-bit integer, in order. It follows the
-      platform's C calling convention: an object compiled for x86_64 ELF
-      declares [__attribute__((ms_abi))] on Windows, and code for arm64 leaves
-      the register [x18] alone ([-ffixed-x18]), which macOS and Windows reserve.
+      ({!Buffer.host_address}) and each value as a 64-bit integer, in order. It
+      follows the platform's C calling convention: on Windows, an object
+      compiled for x86_64 ELF declares [__attribute__((ms_abi))] on its entry
+      and on the library functions it calls, and code for arm64 leaves the
+      register [x18] alone ([-ffixed-x18]), which macOS and Windows reserve.
 
       The OCaml runtime is released while [p] runs, so other threads and domains
       go on; the buffers stay reachable until it returns. The call is outside
