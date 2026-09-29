@@ -2757,6 +2757,10 @@ thread.
 
 ### Nx
 
+- `Nx.eig` and `Nx.eigvals` hold on matrices whose largest entry is below
+  about `1e-138` or above `1e138`, which raised `Linalg_error` for want of
+  convergence: the matrix is scaled into range first, as LAPACK's `xGEEV`
+  does, and its eigenvalues scaled back.
 - `Nx.svd`, `Nx.svdvals`, `Nx.qr`, `Nx.eigh` and `Nx.eigvalsh` hold on
   matrices whose entries are very small or very large. The Householder
   reflectors summed squares that under- or overflowed: a complex64 `svd` of a

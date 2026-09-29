@@ -1064,6 +1064,18 @@ static void eig_batch_base(int64_t bt, int nd, const int64_t *bshape,
   *out = data + o * esz;
 }
 
+/* The factor that brings a matrix whose largest magnitude is amax into
+   [smlnum, bignum], or 1 when it already lies there (xGEEV's range: smlnum =
+   sqrt(safmin) / eps). Balancing and the QR iteration form products of entries,
+   which under- or overflow outside that range; the eigenvalues of the scaled
+   matrix are divided by the factor, the eigenvectors are unchanged. */
+static double eig_range_scale(double amax) {
+  const double smlnum = sqrt(DBL_MIN) / DBL_EPSILON, bignum = 1.0 / smlnum;
+  if (amax > 0.0 && amax < smlnum) return smlnum / amax;
+  if (amax > bignum && amax <= DBL_MAX) return bignum / amax;
+  return 1.0;
+}
+
 /* Normalize a complex column to unit 2-norm and store it as column j of the
    eigenvector output (complex128). */
 static void eig_store_vcol(const eig_ctx *x, const char *vb, int64_t j,
@@ -1096,6 +1108,12 @@ static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
   eig_batch_base(bt, x->batch_nd, x->bshape, x->in_bs, x->in->offset, x->esz,
                  (const char *)x->in->data, &inb);
   eig_unpack_r[x->dt](inb, x->in_rs, x->in_cs, n, a);
+  double amax = 0.0;
+  for (int64_t i = 0; i < n * n; i++)
+    if (fabs(a[i]) > amax) amax = fabs(a[i]);
+  double cscale = eig_range_scale(amax);
+  if (cscale != 1.0)
+    for (int64_t i = 0; i < n * n; i++) a[i] *= cscale;
 
   int low, igh;
   eig_balanc_r(a, ni, &low, &igh, scale);
@@ -1112,7 +1130,8 @@ static void eig_real_body(const eig_ctx *x, int worker, int64_t bt,
   eig_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset, 16,
                  (const char *)x->w->data, &wb);
   for (int64_t j = 0; j < n; j++)
-    *(nx_c_complex64 *)(wb + j * x->w_cs * 16) = (nx_c_complex64)CMPLX(wr[j], wi[j]);
+    *(nx_c_complex64 *)(wb + j * x->w_cs * 16) =
+        (nx_c_complex64)CMPLX(wr[j] / cscale, wi[j] / cscale);
 
   if (!x->vectors) return;
   const char *vb;
@@ -1151,6 +1170,12 @@ static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
   eig_batch_base(bt, x->batch_nd, x->bshape, x->in_bs, x->in->offset, x->esz,
                  (const char *)x->in->data, &inb);
   eig_unpack_c[x->dt](inb, x->in_rs, x->in_cs, n, a);
+  double amax = 0.0;
+  for (int64_t i = 0; i < n * n; i++)
+    if (cabs(a[i]) > amax) amax = cabs(a[i]);
+  double cscale = eig_range_scale(amax);
+  if (cscale != 1.0)
+    for (int64_t i = 0; i < n * n; i++) a[i] *= cscale;
 
   int low, igh;
   eig_balanc_c(a, ni, &low, &igh, scale);
@@ -1165,7 +1190,7 @@ static void eig_cplx_body(const eig_ctx *x, int worker, int64_t bt,
   eig_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset, 16,
                  (const char *)x->w->data, &wb);
   for (int64_t j = 0; j < n; j++)
-    *(nx_c_complex64 *)(wb + j * x->w_cs * 16) = (nx_c_complex64)w[j];
+    *(nx_c_complex64 *)(wb + j * x->w_cs * 16) = (nx_c_complex64)(w[j] / cscale);
 
   if (!x->vectors) return;
   /* eigenvectors: back-substitute on the triangular Schur form, then V = Z x */
