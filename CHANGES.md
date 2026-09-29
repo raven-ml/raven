@@ -2861,6 +2861,10 @@ thread.
 
 ### Nx
 
+- A constant made at a placement is one element placed there and expanded,
+  and a filled value of more elements is then copied into storage of its own;
+  nx no longer holds one-element values itself. Reading one element of a
+  placed value reads that element alone.
 - **Breaking:** `Nx.Rng.fold_in_axis` is removed, and nx no longer declares
   a lane index: `Nx.Rng.fold_in_tensor k (Rune.lane_index ())` gives each lane
   of a map its own key.

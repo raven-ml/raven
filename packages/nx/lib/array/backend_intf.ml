@@ -70,10 +70,9 @@ let () =
 
     {1 Extended backend operations}
 
-    The effect layer ([nx.effect]) adds an extended tier that Rune relies on
-    but a backend does not provide: [const_scalar] (a scalar nx holds itself)
-    and placement ([place], [placement]). Those live outside this module
-    type. *)
+    The effect layer ([nx.effect]) adds placement ([place], [placement]),
+    which Rune relies on but a backend does not provide. It lives outside this
+    module type. *)
 module type S = sig
   (** {1 Types} *)
 

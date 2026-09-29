@@ -307,10 +307,9 @@ module rec Types : sig
     read : 'a 'b. ('a, 'b) resident -> Nx_device.Buffer.t;
         (* the view's elements, in C order, in a host buffer the caller owns *)
     place : 'a 'b. placement -> ('a, 'b) t -> ('a, 'b) t;
-        (* the value on a placement of devices of this memory; its source stays.
-           Placing an empty value allocates nothing, and raises
-           [Invalid_argument] if the placement cannot hold the dtype: nx checks
-           held values this way. *)
+        (* the value on a placement of devices of this memory; its source
+           stays. Raises [Invalid_argument] if the placement cannot hold the
+           dtype. *)
   }
 
   and device = { d_id : int; d_name : string; d_memory : memory }
@@ -341,13 +340,6 @@ include Types
 
 (* Where a creation makes its value. *)
 type context = placement
-
-(* A value of one element that nx holds itself: a scalar created in a device
-   context, or a one-element result. It allocates nothing on the device; a
-   compiled call passes it to a program as it passes a host value. The element is a
-   host buffer of it alone, as stored: a float read as an OCaml float would
-   quiet a signalling NaN. *)
-type storage += Held of Nx_device.Buffer.t
 
 (* The memory of [Nx_device] devices, the host among them: one buffer per device
    of the cell's placement, in its order. *)
@@ -444,14 +436,11 @@ end
 
 (* Reading placed values *)
 
-(* The elements of a placed value's view. A held value's are its one element,
-   broadcast. *)
+(* The elements of a placed value's view. *)
 let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
   Cell.with_borrow r.r_cell (fun () ->
   match r.r_cell.state with
   | Consumed k -> consumed k
-  | Live (Held e) ->
-      Elements.gather e (View.create ~strides:[| 0 |] [| View.numel r.r_view |])
   | Live _ -> (List.hd (Grid.devices r.r_cell.placement.grid)).d_memory.read r)
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
@@ -858,7 +847,7 @@ let runtime_memory =
         assemble r
           (Array.map (fun n -> (0, n)) shape)
           (fun d v -> read_view r.r_dtype (buffer_on d) v)
-    | _ -> assert false (* nx reads held and consumed values itself *)
+    | _ -> assert false (* nx reads consumed values itself *)
   in
   (* A value on the disk is placed on devices that share the host's memory by
      borrowing its file's pages, and keeps its view ([file_windows]). Otherwise
@@ -962,16 +951,6 @@ module Device = struct
   let pp = pp_device
 end
 
-(* A held value of shape [shape] on [p], of the one element of the host
-   buffer [e], of [dtype]. The memory is asked to place an empty value of the
-   dtype first, which allocates nothing and raises if [p] cannot hold the
-   dtype. *)
-let held p dtype e shape =
-  ignore
-    ((memory_of p).place p
-       (Host (Nx_cpu.buffer () dtype [| 0 |])));
-  placed p dtype (View.create shape) (cell ~placement:p ~length:1 (Held e))
-
 (* A hash for identity tables. A placed or traced value hashes by its id, which
    never changes; a host tensor by its structure, which no table sees change,
    since tensors are values. *)
@@ -999,24 +978,6 @@ type packed = P : ('a, 'b) t -> packed
 
 type _ Effect.t +=
   | E_view : ('a, 'b) t -> View.t Effect.t
-  | E_buffer : {
-      context : context;
-      dtype : ('a, 'b) Nx_dtype.t;
-      size_in_elements : int;
-    }
-      -> ('a, 'b) t Effect.t
-  | E_const_scalar : {
-      context : context;
-      value : 'a;
-      dtype : ('a, 'b) Nx_dtype.t;
-    }
-      -> ('a, 'b) t Effect.t
-  | E_from_host : {
-      context : context;
-      dtype : ('a, 'b) Nx_dtype.t;
-      buffer : Nx_device.Buffer.t;
-    }
-      -> ('a, 'b) t Effect.t
   | E_add : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_sub : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_mul : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
@@ -1315,10 +1276,9 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
    Every fallback runs where its operands live. Operands all on the host run on
    nx.cpu. Placed operands must share their devices and backend, and host
    operands join them: on the host backend, the operation reads the placed
-   operands' windows, runs nx.cpu and places its result. A result of
-   one element is held by nx instead, so reading it back moves nothing. The
-   route is decided before anything is read, so operands on two device lists
-   raise before any work.
+   operands' windows, runs nx.cpu and places its result. The route is decided
+   before anything is read, so operands on two device lists raise before any
+   work.
 
    The result takes the placement tolk's multi-device rewrite gives the same
    operation in a compiled program (schedule/multi.ml), so eager and compiled
@@ -1629,14 +1589,7 @@ let settle : type a b. route -> (a, b) Nx_cpu.t -> (a, b) t =
  fun r h ->
   match r with
   | On_host -> Host h
-  | At p ->
-      let shape = View.shape h.view in
-      if Array.fold_left ( * ) 1 shape = 1 then
-        held p h.dtype
-          (Elements.gather (Nx_cpu.to_host h)
-             (View.create ~offset:(View.offset h.view) [||]))
-          shape
-      else (memory_of p).place p (Host h)
+  | At p -> (memory_of p).place p (Host h)
 
 (* [routed e x f] runs [f] over [x], no host tensor, where the operation that
    performs [e] runs. *)
@@ -2583,60 +2536,6 @@ let pad t_in padding_config fill_value =
     (fun (module B : Backend.S) t -> B.pad t padding_config fill_value)
     t_in
 
-(* Creation operations. A value created at a placement lives there, and a
-   scalar there is held by nx and allocates nothing. A filled value of more
-   than one element has storage of its own, so that its view covers its storage
-   and a compiled call can consume it. *)
-
-let buffer (ctx : context) dtype shape_arr =
-  let size_in_elements = Array.fold_left ( * ) 1 shape_arr in
-  let flat =
-    try Effect.perform (E_buffer { context = ctx; dtype; size_in_elements })
-    with Effect.Unhandled _ ->
-      if on_host ctx then Host (Nx_cpu.buffer () dtype shape_arr)
-      else
-        let (module B : Backend.S) = ctx.backend in
-        B.buffer ctx dtype shape_arr
-  in
-  reshape flat shape_arr
-
-let const_scalar (ctx : context) value dtype =
-  try Effect.perform (E_const_scalar { context = ctx; value; dtype })
-  with Effect.Unhandled _ ->
-    if on_host ctx then Host (Nx_cpu.full () dtype [||] value)
-    else
-      let e = Elements.create dtype 1 in
-      Elements.set dtype e 0 value;
-      held ctx dtype e [||]
-
-let broadcast scalar shape_arr =
-  if Array.length shape_arr = 0 then scalar
-  else expand (reshape scalar (Array.map (fun _ -> 1) shape_arr)) shape_arr
-
-let full (ctx : context) dtype shape_arr value =
-  (* Under an effect handler (jit tracing) a filled tensor is a broadcast scalar
-     constant: no bytes are materialized. Until devices compute (RFC 0005 stage
-     3), a fill in a device's context runs on the host and is placed, which
-     holds a host copy of the value until the next collection; stage 3 fills on
-     the device. *)
-  match Effect.perform (E_const_scalar { context = ctx; value; dtype }) with
-  | scalar -> broadcast scalar shape_arr
-  | exception Effect.Unhandled _ ->
-      if on_host ctx then
-        Host (Nx_cpu.full () dtype shape_arr value)
-      else
-        let (module B : Backend.S) = ctx.backend in
-        B.full ctx dtype shape_arr value
-
-let from_host (ctx : context) dtype buffer =
-  check_host "from_host" dtype buffer;
-  try Effect.perform (E_from_host { context = ctx; dtype; buffer })
-  with Effect.Unhandled _ ->
-    if on_host ctx then Host (Nx_cpu.from_host () dtype buffer)
-    else
-      let (module B : Backend.S) = ctx.backend in
-      B.from_host ctx dtype buffer
-
 (* Copy operations *)
 
 let contiguous t_in =
@@ -2647,10 +2546,43 @@ let copy t_in =
   unary_op (E_copy { t_in }) Nx_cpu.copy
     (fun (module B : Backend.S) -> B.copy) t_in
 
+(* Creation. A constant is not an operation: a filled value is one element on
+   the host, placed where it is made and expanded. One of more than one element
+   is then copied into storage of its own, so that its view covers its storage
+   and a compiled call can consume it. *)
+
+let broadcast scalar shape_arr =
+  if Array.length shape_arr = 0 then scalar
+  else
+    let ones = Array.map (fun _ -> 1) shape_arr in
+    let x = reshape scalar ones in
+    if Shape.equal ones shape_arr then x else expand x shape_arr
+
+let full (ctx : context) dtype shape_arr value =
+  let e = Host (Nx_cpu.full () dtype [||] value) in
+  if on_host ctx then
+    let x = broadcast e shape_arr in
+    if Array.fold_left ( * ) 1 shape_arr <= 1 then x else copy x
+  else
+    let copies =
+      List.fold_left
+        (fun p (axis, _) -> Placement.uncut p ~axis)
+        ctx (Placement.cuts ctx)
+    in
+    let x = broadcast (place copies e) shape_arr in
+    if Array.fold_left ( * ) 1 shape_arr <= 1 then x
+    else if copies == ctx then copy x
+    else place ctx x
+
+let from_host (ctx : context) dtype buffer =
+  check_host "from_host" dtype buffer;
+  let x = Host (Nx_cpu.from_host () dtype buffer) in
+  if on_host ctx then x else place ctx x
+
 (* The host buffer of exactly [x]'s elements in C order: its storage when it is
-   contiguous. *)
+   contiguous on the host. A placed value's read is its view's elements. *)
 let elements x =
-  let x = contiguous x in
+  let x = match x with Placed _ -> x | Host _ | Traced _ -> contiguous x in
   let b = to_host x in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b)
     (View.numel (view x))

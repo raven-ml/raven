@@ -859,6 +859,20 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
       err
         "Rune.jit: a tensor traced by another jit entered this trace; a value \
          computed inside a jitted function exists outside it only as an output"
+  | Host a when HB.length a.buffer = 1 && not (HB.is_borrowed a.buffer) -> (
+      (* One element the program's owner cannot change: an immediate constant,
+         which folds into the kernels that read it. *)
+      match Tensor_map.Tbl.find_opt st.table (Key x) with
+      | Some t -> t
+      | None ->
+          check_dtype st a.dtype "a constant of the function";
+          let tt =
+            F.Creation.full ~buffer:false ~dtype:(tolk_dtype a.dtype)
+              (Array.to_list (NV.shape a.view))
+              (scalar_of a.dtype (Nx_array.Elements.get a.dtype a.buffer 0))
+          in
+          Tensor_map.Tbl.replace st.table (Key x) tt;
+          tt)
   | _ ->
       let capture () =
       check_capture st x;
@@ -1756,6 +1770,9 @@ let rec written_buffer u =
   | Tolk_uop.Ops.After when U.has_buffer_identity ~after_ok:true u -> Some u
   | _ -> None
 
+(* Whether [tt] is a constant under movements: it needs no storage. *)
+let is_constant tt = U.op (U.base (F.Tensor.uop tt)) = Tolk_uop.Ops.Const
+
 (* Whether [tt] is whole storage under any reshape, which a kernel argument
    reads in place. *)
 let is_storage tt =
@@ -2065,33 +2082,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     tracing (item, to_host, or a data-dependent branch); \
                     jitted code cannot branch on tensor values"))
         else None
-    (* Creation *)
-    | E_buffer { dtype; size_in_elements; _ } ->
-        Some
-          (fun () ->
-            let ph = Nx_effect.buffer st.st_ctx dtype [| size_in_elements |] in
-            ignore (lift_const st ph);
-            ph)
-    | E_const_scalar { value; dtype; _ } ->
-        Some
-          (fun () ->
-            check_dtype st dtype "a constant of the function";
-            (* [buffer:false] keeps the scalar an immediate constant: it folds
-               into consuming kernels instead of being stored into a one-element
-               buffer by a kernel of its own. *)
-            let tt =
-              F.Creation.full ~buffer:false ~dtype:(tolk_dtype dtype) []
-                (scalar_of dtype value)
-            in
-            let ph = Nx_effect.const_scalar st.st_ctx value dtype in
-            Tensor_map.Tbl.replace st.table (Key ph) tt;
-            ph)
-    | E_from_host { dtype; buffer; _ } ->
-        Some
-          (fun () ->
-            let ph = Nx_effect.from_host st.st_ctx dtype buffer in
-            ignore (lift_const st ph);
-            ph)
     (* Binary arithmetic *)
     | E_add { a; b } ->
         Some (fun () -> ret (dt a) (F.Elementwise.add (go a) (go b)))
@@ -2334,7 +2324,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             ret target_dtype
               (F.Dtype_ops.bitcast (go t_in) (tolk_dtype target_dtype)))
     (* A written buffer is contiguous storage already, and a [contiguous] over
-       it would copy it out. *)
+       it would copy it out. A broadcast constant needs no storage in a
+       program: a copy of it is the constant. *)
     | E_contiguous { t_in } ->
         Some
           (fun () ->
@@ -2344,7 +2335,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               | Some _ -> tt
               | None -> F.Elementwise.contiguous tt))
     | E_copy { t_in } ->
-        Some (fun () -> ret (dt t_in) (F.Elementwise.contiguous (go t_in)))
+        Some
+          (fun () ->
+            let tt = go t_in in
+            ret (dt t_in)
+              (if is_constant tt then tt else F.Elementwise.contiguous tt))
     (* Staged scans *)
     | Scan.E_scan_probe -> Some (fun () -> true)
     | Scan.E_scan req -> Some (fun () -> stage_scan st req)
@@ -4323,8 +4318,8 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
     match U.device_of (F.Tensor.uop tt) with
     | Some _ -> tt
     | None ->
-        let one = Nx_effect.const_scalar st.st_ctx (ND.one dt) dt in
-        F.Elementwise.mul tt (tolk_of st one)
+        let one = Nx.scalar dt (ND.one dt) in
+        F.Elementwise.mul tt (lift_const st one)
   in
   let out_anch =
     List.map

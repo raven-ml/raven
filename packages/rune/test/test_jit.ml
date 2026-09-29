@@ -3416,6 +3416,9 @@ let test_programs_own_their_arenas () =
   let f, f', x = arena_program ~n Nx.tanh in
   let g, g', _ = arena_program ~n Nx.sin in
   check_arr ~eps:1e-2 ~msg:"first program" (to_arr (f (x 1))) (f' (x 1));
+  (* Retiring the storage earlier tests dropped keeps its release out of the
+     measured window. *)
+  full_major ();
   let before = device_bytes "CPU:1" in
   check_arr ~eps:1e-2 ~msg:"second program" (to_arr (g (x 2))) (g' (x 2));
   is_true ~msg:"the second program owns independent intermediate storage"

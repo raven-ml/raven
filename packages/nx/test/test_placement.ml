@@ -637,8 +637,8 @@ let results =
                         (Nx.slice [ R (4, 8) ] x))));
             ]);
       test
-        "a scalar made on a device is held, a filled value is uploaded split \
-         like its model" (fun () ->
+        "a constant made on a device is one element placed there, and a \
+         filled value is uploaded split like its model" (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |])
           and split = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
           let sp = Nx.sum p and ss = Nx.sum split in
@@ -659,11 +659,11 @@ let results =
           equal
             (list (pair int placement))
             [
+              (2, on1);
+              (2, on1);
               (1, on1);
-              (1, on1);
-              (0, on1);
-              (0, Nx.Placement.replicated four);
-              (1, Nx.Placement.sharded ~axis:1 four);
+              (1, Nx.Placement.replicated four);
+              (2, Nx.Placement.sharded ~axis:1 four);
             ]
             (List.map (fun (n, y) -> (n, Nx.placement y)) made);
           let z = snd (List.nth made 1) and filled = snd (List.nth made 4) in
@@ -755,7 +755,7 @@ let identities =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
                     (Nx_array.View.create [| 1 |])
                     (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
-                       (Nx_effect.Held (Nx_array.Elements.create Nx.float32 1)))
+                       (Nx_effect.Runtime [ Nx_array.Elements.create Nx.float32 1 ]))
                 in
                 d.d_id
                 :: List.map Nx_effect.identity_hash

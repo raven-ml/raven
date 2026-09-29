@@ -188,10 +188,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 "Rune: cannot read the value of a batched tensor inside vmap; \
                  return it from the mapped function instead")
         else None
-    (* Constants: creation and metadata. *)
-    | E_buffer _ -> None
-    | E_const_scalar _ -> None
-    | E_from_host _ -> None
     (* Placement: the batch axis sits in front of a split axis. A lane of a map
        over the split axis has no placement of its own. *)
     | E_place { placement = p; t_in } when batched st t_in ->

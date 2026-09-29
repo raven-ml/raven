@@ -349,7 +349,7 @@ let contiguous x = B.contiguous x
 let copy x = B.copy x
 
 (* The reader of [x]'s elements in C order, from index 0. *)
-let elements x = Elements.get (B.dtype x) (B.to_host (contiguous x))
+let elements x = Elements.get (B.dtype x) (B.elements x)
 
 let check_shape op shape =
   if Array.exists (fun d -> d < 0) shape then
@@ -378,7 +378,7 @@ let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
 
 let empty ctx dtype shape_arr =
   check_shape "empty" shape_arr;
-  B.buffer ctx dtype shape_arr
+  B.full ctx dtype shape_arr (Nx_dtype.zero dtype)
 
 let full ctx dt target_shape fill_value =
   check_shape "full" target_shape;
@@ -1702,7 +1702,7 @@ let get indices x =
   slice_internal (List.map (fun i -> I i) checked) x
 
 let unsafe_get indices x =
-  let t = contiguous (get indices x) in
+  let t = get indices x in
   if numel t <> 1 then
     err "unsafe_get" "expected scalar result, got %d elements" (numel t);
   elements t 0

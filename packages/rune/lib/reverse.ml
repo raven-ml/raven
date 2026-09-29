@@ -134,12 +134,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
     if not (Gate.enabled ()) then None
     else
       match eff with
-      (* Constants: creation, RNG, metadata. Fresh outputs are untracked. *)
+      (* Constants: RNG and metadata. Fresh outputs are untracked. *)
       | E_view _ -> None
       | E_to_host _ -> None
-      | E_buffer _ -> None
-      | E_const_scalar _ -> None
-      | E_from_host _ -> None
       | E_threefry _ -> None
       (* Placement is linear: a cotangent moves back to its primal's placement,
          taken now, while the primal is in reach of the handlers above. *)

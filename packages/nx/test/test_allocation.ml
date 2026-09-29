@@ -40,7 +40,7 @@ let dispatch =
       test "matmul" (fun () ->
           equal int 120 (words (fun () -> Nx.matmul mat mat)));
       test "zeros" (fun () ->
-          equal int 104 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
+          equal int 116 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
       test "shape of a vector" (fun () ->
           equal int 9 (words (fun () -> Nx.shape row)));
     ]

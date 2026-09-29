@@ -85,12 +85,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
     if not (Gate.enabled ()) then None
     else
       match eff with
-      (* Constants: creation, RNG, metadata. Fresh outputs are inactive. *)
+      (* Constants: RNG and metadata. Fresh outputs are inactive. *)
       | E_view _ -> None
       | E_to_host _ -> None
-      | E_buffer _ -> None
-      | E_const_scalar _ -> None
-      | E_from_host _ -> None
       | E_threefry _ -> None
       (* Placement is linear: the tangent moves with its primal. *)
       | E_place { placement; t_in } ->
