@@ -174,6 +174,8 @@ let print_float oc v = output_string oc (format_e ~precision:18 v)
 let print_int oc v = output_string oc (string_of_int v)
 let print_int32 oc v = output_string oc (Int32.to_string v)
 let print_int64 oc v = output_string oc (Int64.to_string v)
+let print_uint32 oc v = Printf.fprintf oc "%lu" v
+let print_uint64 oc v = Printf.fprintf oc "%Lu" v
 let print_bool oc v = output_string oc (if v then "1" else "0")
 
 let parse_i32 name token =
@@ -185,6 +187,16 @@ let parse_i64 name token =
   match int64_of_string_opt token with
   | Some v -> Ok v
   | None -> Error (err_invalid_literal name token)
+
+(* An unsigned 64-bit literal, which [Int64.of_string] reads with the [0u]
+   prefix. *)
+let parse_u64 name token =
+  let t = String.trim token in
+  if String.starts_with ~prefix:"-" t then Error (err_out_of_range name token)
+  else
+    match int64_of_string_opt ("0u" ^ t) with
+    | Some v -> Ok v
+    | None -> Error (err_invalid_literal name token)
 
 (* Each GADT arm must be inlined so the type equalities are visible. *)
 
@@ -291,8 +303,11 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type kind = b
 
           let kind = kind
-          let print = print_int32
-          let parse t = parse_i32 name t
+          let print = print_uint32
+
+          let parse t =
+            Result.map Int32.of_int
+              (parse_int_with_bounds name t ~min:0 ~max:0xFFFF_FFFF)
         end)
   | Int64 ->
       Some
@@ -311,8 +326,8 @@ let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
           type kind = b
 
           let kind = kind
-          let print = print_int64
-          let parse t = parse_i64 name t
+          let print = print_uint64
+          let parse t = parse_u64 name t
         end)
   | Bool ->
       Some

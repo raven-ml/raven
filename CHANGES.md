@@ -2731,6 +2731,10 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_txt` writes uint32 and uint64 elements as their unsigned
+  values, as numpy does, and `Nx_io.load_txt` reads them back. The largest
+  uint32 was written as `-1`, and a uint32 of `2147483648` or more, or a
+  uint64 of 2^63 or more, failed to load.
 - `Nx_io.save_safetensors` refuses a name given twice with `Failure`. It wrote
   a file whose header named the tensor twice, which `load_safetensors` refuses.
 - `Nx_io.save_safetensors` saves any view, and writes each element's bits as
