@@ -1438,8 +1438,8 @@ let test_vector_products_are_matmuls () =
       ];
     let rows = Nx.broadcast_to [| 3; 2 |] x
     and cols = Nx.broadcast_to [| 3; 2 |] w in
+    agree "inner of rows" (Array.make 9 exact) Nx.inner rows cols;
     let exact = Array.make 3 exact in
-    agree "rows of inner" exact Nx.inner rows cols;
     agree "rows of vecdot" exact (fun x w -> Nx.vecdot x w) rows cols;
     agree "columns of vecdot" exact
       (fun x w -> Nx.vecdot ~axis:0 x w)

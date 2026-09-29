@@ -2717,6 +2717,15 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.inner` of matrices is the inner product over the last
+  axes of both, with the other axes of `a` then `b`, as `tensordot` over
+  them gives. It was `vecdot`, pairing rows.
+- `Nx.dot` of two tensors of rank above 1 contracts the last axis of `a`
+  with the second to last of `b` and keeps both batches, as documented. It
+  raised on a shape mismatch.
+- `Nx.tensorsolve` without `axes` solves `tensordot a x = b` with `b` on the
+  leading axes of `a`, as its equation says. It took the trailing ones.
+- `Nx.norm ~ord:`Two` of a vector is its 2-norm. It crashed in `svdvals`.
 - `Nx.Rng.uniform` and `Nx.Rng.normal`, and so `Nx.rand`, `Nx.randn` and the
   samplers built on them, return a draw with a buffer of its own. A compiled
   program that read a draw several times recomputed the generator for every

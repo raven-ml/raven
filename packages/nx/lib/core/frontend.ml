@@ -3286,13 +3286,6 @@ module Make (B : Backend_intf.S) = struct
       else squeeze ~axes:[ ndim r - 1 ] r
 
   (* A vector operand makes [dot] the matrix product. *)
-  let dot x w =
-    let x_ndim = ndim x and w_ndim = ndim w in
-    if not (x_ndim > 0 && w_ndim > 0) then
-      invalid_arg "dot: tensors, both must be at least 1D";
-    if x_ndim = 1 || w_ndim = 1 then matmul x w
-    else matmul_with_alloc (shape x) (shape w) x w
-
   let diagonal ?(offset = 0) ?axis1 ?axis2 x =
     let nd = ndim x in
     let ax1 =
@@ -3430,51 +3423,6 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Dot Products and Tensor Contractions ───── *)
 
-  let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
-    let a', b' =
-      try
-        let bc = broadcast_arrays [ a; b ] in
-        (contiguous (List.nth bc 0), contiguous (List.nth bc 1))
-      with _ -> (a, b)
-    in
-    let fa = flatten a' in
-    let fb = flatten b' in
-    if numel fa <> numel fb then
-      invalid_arg "vdot: different number of elements";
-    match dtype a with
-    | (Complex64 | Complex128) when dtype a = dtype b -> dot (conjugate fa) fb
-    | _ -> dot fa fb
-
-  (* Each pair of vectors along [axis] is a row times a column, so the broadcast
-     operands contract as a batch of matrix products. *)
-  let vecdot ?axis x1 x2 =
-    let ax =
-      match axis with
-      | None -> ndim x1 - 1
-      | Some a -> if a < 0 then ndim x1 + a else a
-    in
-    let target = Shape.broadcast (shape x1) (shape x2) in
-    let n = Array.length target in
-    let ax = ax + n - ndim x1 in
-    let x1 = broadcast_to target x1 and x2 = broadcast_to target x2 in
-    let row = unsqueeze ~axes:[ n - 1 ] (moveaxis ax (-1) x1) in
-    let column = unsqueeze ~axes:[ n ] (moveaxis ax (-1) x2) in
-    squeeze ~axes:[ n - 1; n ] (matmul row column)
-
-  let inner a b =
-    if (shape a).(ndim a - 1) <> (shape b).(ndim b - 1) then
-      invalid_arg "inner: last dimensions differ";
-    vecdot ~axis:(-1) a b
-
-  let outer a b =
-    let fa = if ndim a = 0 then reshape [| 1 |] a else flatten a in
-    let fb = if ndim b = 0 then reshape [| 1 |] b else flatten b in
-    let r =
-      matmul (reshape [| numel fa; 1 |] fa) (reshape [| 1; numel fb |] fb)
-    in
-    let r = if ndim a = 0 then squeeze ~axes:[ 0 ] r else r in
-    if ndim b = 0 then squeeze ~axes:[ (if ndim a = 0 then 0 else 1) ] r else r
-
   let tensordot ?axes a b =
     match axes with
     | None -> matmul a b
@@ -3548,6 +3496,14 @@ module Make (B : Backend_intf.S) = struct
         in
         if Array.length result_shape = 0 then squeeze r
         else reshape result_shape r
+
+  let dot x w =
+    let x_ndim = ndim x and w_ndim = ndim w in
+    if not (x_ndim > 0 && w_ndim > 0) then
+      invalid_arg "dot: tensors, both must be at least 1D";
+    (* The last axis of [x] against the only axis of [w], or its second to last;
+       the other axes of both are kept, [x]'s first. *)
+    tensordot ~axes:([ x_ndim - 1 ], [ Stdlib.max 0 (w_ndim - 2) ]) x w
 
   module Einsum = struct
     type token = Axis of char | Ellipsis
@@ -4040,6 +3996,52 @@ module Make (B : Backend_intf.S) = struct
             finalize result (String.to_seq rstr |> List.of_seq)
   end
 
+  let vdot (type a b) (a : (a, b) t) (b : (a, b) t) =
+    let a', b' =
+      try
+        let bc = broadcast_arrays [ a; b ] in
+        (contiguous (List.nth bc 0), contiguous (List.nth bc 1))
+      with _ -> (a, b)
+    in
+    let fa = flatten a' in
+    let fb = flatten b' in
+    if numel fa <> numel fb then
+      invalid_arg "vdot: different number of elements";
+    match dtype a with
+    | (Complex64 | Complex128) when dtype a = dtype b ->
+        matmul (conjugate fa) fb
+    | _ -> matmul fa fb
+
+  (* Each pair of vectors along [axis] is a row times a column, so the broadcast
+     operands contract as a batch of matrix products. *)
+  let vecdot ?axis x1 x2 =
+    let ax =
+      match axis with
+      | None -> ndim x1 - 1
+      | Some a -> if a < 0 then ndim x1 + a else a
+    in
+    let target = Shape.broadcast (shape x1) (shape x2) in
+    let n = Array.length target in
+    let ax = ax + n - ndim x1 in
+    let x1 = broadcast_to target x1 and x2 = broadcast_to target x2 in
+    let row = unsqueeze ~axes:[ n - 1 ] (moveaxis ax (-1) x1) in
+    let column = unsqueeze ~axes:[ n ] (moveaxis ax (-1) x2) in
+    squeeze ~axes:[ n - 1; n ] (matmul row column)
+
+  let inner a b =
+    if (shape a).(ndim a - 1) <> (shape b).(ndim b - 1) then
+      invalid_arg "inner: last dimensions differ";
+    tensordot ~axes:([ ndim a - 1 ], [ ndim b - 1 ]) a b
+
+  let outer a b =
+    let fa = if ndim a = 0 then reshape [| 1 |] a else flatten a in
+    let fb = if ndim b = 0 then reshape [| 1 |] b else flatten b in
+    let r =
+      matmul (reshape [| numel fa; 1 |] fa) (reshape [| 1; numel fb |] fb)
+    in
+    let r = if ndim a = 0 then squeeze ~axes:[ 0 ] r else r in
+    if ndim b = 0 then squeeze ~axes:[ (if ndim a = 0 then 0 else 1) ] r else r
+
   let einsum subscripts operands = Einsum.calculate subscripts operands
 
   let kron a b =
@@ -4230,6 +4232,7 @@ module Make (B : Backend_intf.S) = struct
     | Some `NegOne, None ->
         if ndim x = 1 then min (abs x) ~keepdims
         else min (sum (abs x) ~axes:[ ndim x - 2 ]) ~keepdims
+    | Some `Two, None when ndim x = 1 -> sqrt (sum (square (abs x)) ~keepdims)
     | Some `Two, None -> max (svdvals x |> cast (dtype x)) ~keepdims
     | Some `NegTwo, None -> min (svdvals x |> cast (dtype x)) ~keepdims
     | Some `Inf, None ->
@@ -4626,7 +4629,7 @@ module Make (B : Backend_intf.S) = struct
     if ra < rb then invalid_arg "tensorsolve: a, rank must be >= rank of b";
     let axes_for_b =
       match axes with
-      | None -> Array.init rb (fun i -> ra - rb + i)
+      | None -> Array.init rb Fun.id
       | Some axes ->
           if List.length axes <> rb then
             err "tensorsolve" "axes, expected %d entries, got %d" rb
