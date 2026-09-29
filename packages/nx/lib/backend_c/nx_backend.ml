@@ -481,14 +481,10 @@ let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
 
 (* The window write is the strided copy the engine already runs for [copy]: a
    fresh copy of [t], then [v] written through a shrunk view of it. This is the
-   one call that copies into a destination that is not a fresh tensor, which is
-   why the packed copy kernel needs no read-modify-write of the boundary
-   nibbles: packed dtypes are refused here. *)
+   one call that copies into a destination that is not a fresh tensor; the
+   packed copy writes a window nibble by nibble, keeping the elements around
+   it. *)
 let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
-  (match t.dtype with
-  | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
-      invalid_arg "update: packed dtypes unsupported"
-  | _ -> ());
   let out = copy t in
   let start = Elements.get Nx_dtype.int32 starts.buffer in
   let corner =

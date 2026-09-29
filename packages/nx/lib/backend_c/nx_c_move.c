@@ -25,11 +25,11 @@
    caml/fail.h or caml/threads.h: it cannot raise or touch the runtime lock
    except through the engine, exactly like every other kernel-family file.
 
-   Packed int4/uint4 reach exactly one op here, copy: whole bytes through the
-   u8 identity kernel when both sides are contiguous from offset 0 (so that
-   gets the engine's threading and lock handling), nibble by nibble otherwise.
-   Every other op rejects packed via the copy table's NULL slots
-   (NX_C_ERR_PACKED) or an explicit guard. */
+   Packed int4/uint4 move like every other dtype, an element being a nibble:
+   copy, pad and cat through the packed copy, gather, scatter's `Set and unfold
+   through the element move below, serially wherever two elements of one byte
+   could otherwise be written by two workers. Only fold and scatter's `Add,
+   which sum, refuse them. */
 
 #include <string.h>
 
@@ -141,76 +141,111 @@ static void nx_c_move_dispatch(nx_c_cost_class cls, int64_t total, int64_t run_l
 
 /* Element [i] of packed data: two elements a byte, the first in the low
    nibble. */
-static inline uint8_t nx_c_nibble_get(const uint8_t *p, int64_t i) {
-  uint8_t b = p[i >> 1];
+static inline uint8_t nx_c_nibble_get(const void *p, int64_t i) {
+  uint8_t b = ((const uint8_t *)p)[i >> 1];
   return (i & 1) ? (uint8_t)(b >> 4) : (uint8_t)(b & 0x0f);
 }
 
-static inline void nx_c_nibble_set(uint8_t *p, int64_t i, uint8_t v) {
-  uint8_t *b = p + (i >> 1);
+static inline void nx_c_nibble_set(void *p, int64_t i, uint8_t v) {
+  uint8_t *b = (uint8_t *)p + (i >> 1);
   *b = (i & 1) ? (uint8_t)((*b & 0x0f) | (v << 4)) : (uint8_t)((*b & 0xf0) | v);
 }
 
-/* Packed copy. When both sides are contiguous from offset 0, whole bytes go
-   through the u8 identity kernel and an odd count's last element alone is
-   written as a nibble, so the destination's other nibble in that byte is kept.
-   Any other layout (a transpose, a strided or offset view, a broadcast input)
-   is copied nibble by nibble in the output's order: serially, since two
-   elements of one byte must not be written by two threads. */
-static void nx_c_copy_packed(value vout, value vin) {
-  nx_c_ndarray out, in;
-  nx_c_status s = nx_c_ndarray_of_value(vout, &out);
-  if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
-  if (s != NX_C_OK) nx_c_raise("copy", s);
-  if (out.ndim != in.ndim) nx_c_raise("copy", NX_C_ERR_RANK_MISMATCH);
-  for (int d = 0; d < out.ndim; d++)
-    if (out.shape[d] != in.shape[d]) nx_c_raise("copy", NX_C_ERR_SHAPE);
+/* Element [si] of [src] to element [di] of [dst], and zero into element [di],
+   for the index-dependent movers. [esize] is 0 for a packed dtype, whose
+   elements are nibbles (nx_c_elem_size). */
+static inline void nx_c_elem_move(void *dst, int64_t di, const void *src,
+                                  int64_t si, int64_t esize) {
+  if (esize == 0)
+    nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si));
+  else
+    memcpy((char *)dst + di * esize, (const char *)src + si * esize,
+           (size_t)esize);
+}
 
-  int64_t total = nx_c_prod(out.ndim, out.shape);
-  if (total == 0) return;
-  uint8_t *dst = (uint8_t *)out.data;
-  const uint8_t *src = (const uint8_t *)in.data;
+static inline void nx_c_elem_zero(void *dst, int64_t di, int64_t esize) {
+  if (esize == 0)
+    nx_c_nibble_set(dst, di, 0);
+  else
+    memset((char *)dst + di * esize, 0, (size_t)esize);
+}
 
-  if (nx_c_is_contiguous_off0(&out) && nx_c_is_contiguous_off0(&in)) {
+typedef struct {
+  const nx_c_ndarray *out;
+  const nx_c_ndarray *in;
+} nx_c_copy_packed_ctx;
+
+static void nx_c_copy_packed_body(int64_t lo, int64_t hi, int worker,
+                                  void *vctx) {
+  (void)worker;
+  const nx_c_copy_packed_ctx *c = vctx;
+  const nx_c_ndarray *out = c->out, *in = c->in;
+  int64_t coord[NX_C_MAX_NDIM];
+  for (int64_t it = lo; it < hi; it++) {
+    nx_c_unravel(it, out->ndim, out->shape, coord);
+    nx_c_elem_move(out->data,
+                   out->offset + nx_c_dot(out->ndim, coord, out->strides),
+                   in->data, in->offset + nx_c_dot(in->ndim, coord, in->strides),
+                   0);
+  }
+}
+
+/* Packed copy of [in] into [out], of one shape. When both are contiguous from
+   offset 0, whole bytes go through the u8 identity kernel and an odd count's
+   last element alone is written as a nibble, so the other nibble of its byte
+   is kept. Any other layout (a transpose, a strided or offset view, a
+   broadcast input, a window of a larger destination) moves nibble by nibble
+   on one worker, since two elements of one byte must not be written by two. */
+static nx_c_status nx_c_copy_packed(const nx_c_ndarray *out,
+                                    const nx_c_ndarray *in) {
+  if (out->ndim != in->ndim) return NX_C_ERR_RANK_MISMATCH;
+  for (int d = 0; d < out->ndim; d++)
+    if (out->shape[d] != in->shape[d]) return NX_C_ERR_SHAPE;
+  int64_t total = nx_c_prod(out->ndim, out->shape);
+  if (total == 0) return NX_C_OK;
+
+  if (nx_c_is_contiguous_off0(out) && nx_c_is_contiguous_off0(in)) {
     int64_t bytes = total / 2;
     if (bytes > 0) {
-      nx_c_ndarray bout = out, bin = in;
+      nx_c_ndarray bout = *out, bin = *in;
       bout.ndim = bin.ndim = 1;
       bout.shape[0] = bin.shape[0] = bytes;
       bout.strides[0] = bin.strides[0] = 1;
       int64_t e2[2] = {1, 1};
       nx_c_ndarray ops[2] = {bout, bin};
-      s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
-                       NX_C_COST_BANDWIDTH, NULL);
-      if (s != NX_C_OK) nx_c_raise("copy", s);
+      nx_c_status s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
+                                   NX_C_COST_BANDWIDTH, NULL);
+      if (s != NX_C_OK) return s;
     }
-    if (total & 1)
-      nx_c_nibble_set(dst, total - 1, nx_c_nibble_get(src, total - 1));
-    return;
+    if (total & 1) nx_c_elem_move(out->data, total - 1, in->data, total - 1, 0);
+    return NX_C_OK;
   }
 
-  int64_t coord[NX_C_MAX_NDIM] = {0};
-  int64_t si = in.offset, di = out.offset;
-  for (int64_t k = 0; k < total; k++) {
-    nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si));
-    for (int d = out.ndim - 1; d >= 0; d--) {
-      if (++coord[d] < out.shape[d]) {
-        si += in.strides[d];
-        di += out.strides[d];
-        break;
-      }
-      si -= in.strides[d] * (out.shape[d] - 1);
-      di -= out.strides[d] * (out.shape[d] - 1);
-      coord[d] = 0;
-    }
-  }
+  nx_c_copy_packed_ctx c = {out, in};
+  nx_c_parallel_for(1, total, (total + 1) / 2, nx_c_copy_packed_body, &c, NULL);
+  return NX_C_OK;
+}
+
+/* [in] into [out] through the identity copy, packed or not. */
+static nx_c_status nx_c_copy_into(const nx_c_ndarray *out,
+                                  const nx_c_ndarray *in, nx_c_dtype dt) {
+  if (nx_c_dtype_is_packed(dt)) return nx_c_copy_packed(out, in);
+  int64_t esize = nx_c_elem_size(dt);
+  int64_t e2[2] = {esize, esize};
+  nx_c_ndarray ops[2] = {*out, *in};
+  return nx_c_map_run(&nx_c_copy_table, dt, 1, ops, e2, NX_C_COST_BANDWIDTH,
+                      NULL);
 }
 
 CAMLprim value caml_nx_c_copy(value vout, value vin) {
   CAMLparam2(vout, vin);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
   if (dt != NX_C_DTYPE_COUNT && nx_c_dtype_is_packed(dt)) {
-    nx_c_copy_packed(vout, vin);
+    nx_c_ndarray out, in;
+    nx_c_status s = nx_c_ndarray_of_value(vout, &out);
+    if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
+    if (s == NX_C_OK) s = nx_c_copy_packed(&out, &in);
+    if (s != NX_C_OK) nx_c_raise("copy", s);
   } else {
     value vals[2] = {vout, vin};
     nx_c_map_funnel("copy", &nx_c_copy_table, NX_C_COST_BANDWIDTH, 1, vals, NULL);
@@ -231,17 +266,15 @@ CAMLprim value caml_nx_c_copy(value vout, value vin) {
    handshake. The fill value crosses the FFI as a scalar tensor rather than a
    per-dtype value: the binding, which knows the OCaml element type statically,
    sets it with a typed Bigarray store, so C needs no per-dtype value-extraction
-   switch — and every pass reuses the one copy table. Packed dtypes are rejected
-   by the copy table's NULL slots. */
+   switch — and every pass reuses the one copy, packed dtypes included. */
 
 static nx_c_status nx_c_pad_fill(const nx_c_ndarray *slab, const nx_c_ndarray *fill,
-                               nx_c_dtype dt, const int64_t *e2) {
+                               nx_c_dtype dt) {
   nx_c_ndarray fs = *slab; /* borrows the slab's shape; strides zeroed */
   fs.data = fill->data;
   fs.offset = fill->offset;
   for (int d = 0; d < fs.ndim; d++) fs.strides[d] = 0;
-  nx_c_ndarray ops[2] = {*slab, fs};
-  return nx_c_map_run(&nx_c_copy_table, dt, 1, ops, e2, NX_C_COST_BANDWIDTH, NULL);
+  return nx_c_copy_into(slab, &fs, dt);
 }
 
 CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
@@ -256,8 +289,6 @@ CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
   if (out.ndim != in.ndim || (int)Wosize_val(vpad_before) != out.ndim)
     nx_c_raise_invalid("pad", NX_C_ERR_SHAPE);
-  int64_t esize = nx_c_elem_size(dt);
-  int64_t e2[2] = {esize, esize};
 
   /* `slab` narrows toward the interior: entering iteration d, axes < d carry
      the interior shape/offset and axes >= d are still full. The frontend
@@ -268,13 +299,13 @@ CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
     int64_t after = out.shape[d] - in.shape[d] - before;
     if (before > 0) {
       slab.shape[d] = before;
-      s = nx_c_pad_fill(&slab, &fill, dt, e2);
+      s = nx_c_pad_fill(&slab, &fill, dt);
       if (s != NX_C_OK) nx_c_raise("pad", s);
     }
     if (after > 0) {
       slab.shape[d] = after;
       slab.offset += (before + in.shape[d]) * out.strides[d];
-      s = nx_c_pad_fill(&slab, &fill, dt, e2);
+      s = nx_c_pad_fill(&slab, &fill, dt);
       if (s != NX_C_OK) nx_c_raise("pad", s);
       slab.offset -= (before + in.shape[d]) * out.strides[d];
     }
@@ -282,9 +313,7 @@ CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
     slab.offset += before * out.strides[d];
   }
   /* slab is now exactly the interior sub-view */
-  nx_c_ndarray copy_ops[2] = {slab, in};
-  s = nx_c_map_run(&nx_c_copy_table, dt, 1, copy_ops, e2, NX_C_COST_BANDWIDTH,
-                  NULL);
+  s = nx_c_copy_into(&slab, &in, dt);
   if (s != NX_C_OK) nx_c_raise("pad", s);
   CAMLreturn(Val_unit);
 }
@@ -303,8 +332,6 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
   if (s != NX_C_OK) nx_c_raise("cat", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
   if (axis < 0 || axis >= out.ndim) nx_c_raise_invalid("cat", NX_C_ERR_AXIS);
-  int64_t esize = nx_c_elem_size(dt);
-  int64_t e2[2] = {esize, esize};
 
   int n = (int)Wosize_val(vinputs);
   int64_t pos = 0;
@@ -319,8 +346,7 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
       slice.shape[d] = in.shape[d];
       slice.strides[d] = out.strides[d];
     }
-    nx_c_ndarray ops[2] = {slice, in};
-    s = nx_c_map_run(&nx_c_copy_table, dt, 1, ops, e2, NX_C_COST_BANDWIDTH, NULL);
+    s = nx_c_copy_into(&slice, &in, dt);
     if (s != NX_C_OK) nx_c_raise("cat", s);
     pos += in.shape[axis];
   }
@@ -334,7 +360,7 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
    zero: the transpose of scatter's dropped write, and what compiled code
    computes. All-zero bytes are zero in every dtype this op accepts. Reads are
    disjoint across outputs, so the copy parallelizes freely over output
-   elements. */
+   elements, a packed output's on one worker. */
 
 typedef struct {
   const nx_c_ndarray *data;
@@ -359,14 +385,13 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     int64_t index = *(const int32_t *)((const char *)idx->data +
                                         idx_off * (int64_t)sizeof(int32_t));
     int64_t out_off = out->offset + nx_c_dot(nd, coord, out->strides);
-    char *o = (char *)out->data + out_off * esize;
     if (index < 0 || index >= axis_len) {
-      memset(o, 0, (size_t)esize);
+      nx_c_elem_zero(out->data, out_off, esize);
       continue;
     }
     for (int d = 0; d < nd; d++) dcoord[d] = (d == axis) ? index : coord[d];
     int64_t data_off = data->offset + nx_c_dot(nd, dcoord, data->strides);
-    memcpy(o, (const char *)data->data + data_off * esize, (size_t)esize);
+    nx_c_elem_move(out->data, out_off, data->data, data_off, esize);
   }
 }
 
@@ -419,7 +444,11 @@ static nx_c_status nx_c_gather_run(const nx_c_ndarray *data,
   int64_t total = nx_c_prod(out->ndim, out->shape);
   if (total == 0) return NX_C_OK;
 
-  if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
+  if (esize == 0) {
+    /* Packed: two outputs of one byte stay on one worker. */
+    nx_c_gather_ctx g = {data, indices, out, axis, esize};
+    nx_c_parallel_for(1, total, total, nx_c_gather_body, &g, NULL);
+  } else if (axis == 0 && data->ndim == 2 && indices->strides[1] == 0 &&
       data->shape[1] == out->shape[1] && nx_c_is_contiguous_off0(data) &&
       nx_c_is_contiguous_off0(out)) {
     int64_t rows = out->shape[0], row_elems = out->shape[1];
@@ -444,7 +473,6 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vindices, &indices);
   if (s != NX_C_OK) nx_c_raise("gather", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (nx_c_dtype_is_packed(dt)) nx_c_raise("gather", NX_C_ERR_PACKED);
   s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis), nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_status("gather", s);
   CAMLreturn(Val_unit);
@@ -462,8 +490,8 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
    modes deterministic and race-free with no partitioning or atomics; unique_indices
    could unlock a parallel path but is not needed for correctness and buys
    nothing on the ops that use scatter, so it is accepted and ignored. Add uses
-   a per-dtype accumulate (compute-typed load/add/store); Set is a bit-exact
-   byte copy. Serial does NOT mean under the runtime lock: the walk is a
+   a per-dtype accumulate (compute-typed load/add/store), which packed dtypes
+   have none of; Set is a bit-exact element move. Serial does NOT mean under the runtime lock: the walk is a
    one-worker body driven through nx_c_parallel_for, which runs it in order on
    the calling thread and releases/re-acquires the lock around it per the
    engine's size cutoff, like every other kernel. */
@@ -522,12 +550,11 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
     int64_t out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
     int64_t upd_off = updates->offset + nx_c_dot(nd, coord, updates->strides);
-    char *op = (char *)out->data + out_off * esize;
-    const char *up = (const char *)updates->data + upd_off * esize;
     if (sc->add)
-      sc->add(op, up);
+      sc->add((char *)out->data + out_off * esize,
+              (const char *)updates->data + upd_off * esize);
     else
-      memcpy(op, up, (size_t)esize);
+      nx_c_elem_move(out->data, out_off, updates->data, upd_off, esize);
   }
 }
 
@@ -565,7 +592,6 @@ CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vupdates, &updates);
   if (s != NX_C_OK) nx_c_raise("scatter", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (nx_c_dtype_is_packed(dt)) nx_c_raise("scatter", NX_C_ERR_PACKED);
   s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), Int_val(vmode),
                       dt, nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_status("scatter", s);
@@ -698,7 +724,7 @@ static inline void nx_c_unfold_copy(char *dst, int64_t dstep, const char *src,
 }
 
 /* Zero the same run, on the same terms. A padded tap is byte-zero in every
-   dtype unfold accepts (esize > 0 because packed storage is rejected). */
+   dtype. Runs have esize > 0: a packed unfold takes nx_c_unfold_packed_body. */
 static inline void nx_c_unfold_zero(char *dst, int64_t dstep, int64_t n,
                                     int64_t esize) {
   int64_t nbytes = n * esize;
@@ -967,6 +993,39 @@ static void nx_c_fold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   }
 }
 
+/* Unfold of a packed dtype, element by element on one worker: output (lead,
+   kf, window) is the input nibble the tap reads, or zero in the pad. */
+static void nx_c_unfold_packed_body(int64_t lo, int64_t hi, int worker,
+                                    void *vctx) {
+  (void)worker;
+  const nx_c_unfold_ctx *u = vctx;
+  const nx_c_window *w = u->w;
+  const nx_c_ndarray *in = u->in, *out = u->out;
+  const int ld = w->leading_ndim, K = w->K;
+  int64_t lead_coord[NX_C_MAX_NDIM], wc[NX_C_MAX_SPATIAL];
+  for (int64_t it = lo; it < hi; it++) {
+    int64_t l = it % w->L, kf = (it / w->L) % w->kernel_prod;
+    nx_c_unravel(it / (w->L * w->kernel_prod), ld, in->shape, lead_coord);
+    nx_c_unravel(l, K, w->win, wc);
+    int64_t src = in->offset + nx_c_dot(ld, lead_coord, in->strides);
+    bool inside = true;
+    for (int d = 0; d < K && inside; d++) {
+      int64_t kc = (kf / w->kernel_cumprod[d]) % w->kernel[d];
+      int64_t x = wc[d] * w->stride[d] + kc * w->dilation[d] - w->pad_before[d];
+      if (x < 0 || x >= in->shape[ld + d])
+        inside = false;
+      else
+        src += x * in->strides[ld + d];
+    }
+    int64_t dst = out->offset + nx_c_dot(ld, lead_coord, out->strides) +
+                  kf * out->strides[ld] + l * out->strides[ld + 1];
+    if (inside)
+      nx_c_elem_move(out->data, dst, in->data, src, 0);
+    else
+      nx_c_elem_zero(out->data, dst, 0);
+  }
+}
+
 CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
                                value vstride, value vdilation, value vpadding) {
   CAMLparam5(vout, vin, vkernel, vstride, vdilation);
@@ -976,7 +1035,6 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise("unfold", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (nx_c_dtype_is_packed(dt)) nx_c_raise("unfold", NX_C_ERR_PACKED);
 
   int K = (int)Wosize_val(vkernel);
   if (K < 1 || K > NX_C_MAX_SPATIAL || in.ndim < K)
@@ -993,8 +1051,13 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   int64_t total = w.leading_size * w.kernel_prod * w.L;
   if (total > 0) {
     nx_c_unfold_ctx u = {&w, &in, &out};
-    int64_t bytes = 2 * total * w.esize;
-    nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total, 1, bytes, nx_c_unfold_body, &u);
+    if (w.esize == 0) {
+      nx_c_parallel_for(1, total, total, nx_c_unfold_packed_body, &u, NULL);
+    } else {
+      int64_t bytes = 2 * total * w.esize;
+      nx_c_move_dispatch(NX_C_COST_BANDWIDTH, total, 1, bytes, nx_c_unfold_body,
+                         &u);
+    }
   }
   CAMLreturn(Val_unit);
 }

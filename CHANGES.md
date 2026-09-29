@@ -2757,6 +2757,12 @@ thread.
 
 ### Nx
 
+- Every movement works on int4 and uint4 values: `Nx.take`,
+  `Nx.take_along_axis`, `Nx.slice` with `L`, `M`, `D` or a step other than ±1,
+  `Nx.pad`, `Nx.concatenate`, `Nx.extract_patches`, `Nx.set` and
+  `Nx.scatter ~mode:`Set`. They raised "packed dtype not supported". Summing
+  operations (`Nx.combine_patches`, `Nx.scatter ~mode:`Add`) still refuse
+  4-bit dtypes, as arithmetic does.
 - An int4 or uint4 value under any layout copies, prints and converts to an
   array. `Nx.copy`, `Nx.contiguous` and `Nx.to_array` raised
   `Failure "copy: packed dtype not supported"` on a transpose, a strided or
