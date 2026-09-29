@@ -5,19 +5,17 @@
 
 (* The vendor-independent support of GPU runtimes: address allocators, page
    tables over a GPU memory held in a table, ELF layout, firmware lookup and
-   digests, and mapped memory over the host's heap. *)
+   digests, and mapped memory over memory the test allocates. *)
 
 open Windtrap
 open Nx_device_support
 
 (* Mmio *)
 
-let heap n =
-  let b = Nx_device.Buffer.create Nx_device.host Nx_dtype.Scalar.UInt8 n in
-  (b, Mmio.v (Nx_device.Buffer.host_address b) n)
+external alloc : int -> nativeint = "test_support_alloc"
 
 let test_mmio () =
-  let keep, m = heap 64 in
+  let m = Mmio.v (alloc 64) 64 in
   Mmio.fill m 0 64 '\000';
   Mmio.set32 m 4 0xdead_beef;
   equal ~msg:"32-bit round trip" int 0xdead_beef (Mmio.get32 m 4);
@@ -34,8 +32,7 @@ let test_mmio () =
   raises_match inv (fun () -> Mmio.get32 m 2);
   raises_match inv (fun () -> Mmio.get64 m 60);
   raises_match inv (fun () -> Mmio.write m 62 "abc");
-  raises_match inv (fun () -> Mmio.sub m 60 8);
-  ignore (Sys.opaque_identity keep)
+  raises_match inv (fun () -> Mmio.sub m 60 8)
 
 (* Tlsf *)
 
@@ -498,13 +495,15 @@ let has s sub =
 
 let temp_dir () =
   let d = Filename.temp_dir "nx-firmware" "" in
-  Unix.mkdir (Filename.concat d "amdgpu") 0o755;
+  Sys.mkdir (Filename.concat d "amdgpu") 0o755;
   d
 
 let write dir name s =
   Out_channel.with_open_bin (Filename.concat dir name) (fun oc ->
       output_string oc s)
 
+(* The firmware cache's location is part of [Firmware]'s interface: the
+   environment names it. *)
 let with_cache f =
   let cache = Filename.temp_dir "nx-cache" "" in
   Unix.putenv "RAVEN_CACHE_ROOT" cache;
