@@ -20,7 +20,7 @@ type local = {
   bus : string;
   config : int;
   interrupts : int option; (* the eventfd VFIO signals *)
-  files : int list; (* every descriptor, the lock last *)
+  files : int list; (* every descriptor, the locks last *)
 }
 
 type t =
@@ -89,18 +89,26 @@ let scan ?remote ~vendor ?class_ ids =
   | None -> scan_local ~vendor ?class_ ids
   | Some r -> Remote.scan r ~vendor ?class_ ids
 
-let take_local ~lock bus =
+(* Locks [bus] for this process under [name], or raises naming the file. *)
+let lock_file bus name =
   let file =
     Filename.concat
       (Filename.get_temp_dir_name ())
-      (Printf.sprintf "%s_%s.lock" lock (String.lowercase_ascii bus))
+      (Printf.sprintf "%s_%s.lock" name (String.lowercase_ascii bus))
   in
   let fd = file_lock file in
   if fd < 0 then
     failwith
       (Printf.sprintf "%s is held by another process (see: lsof %s)" bus file);
-  let files = ref [ fd ] in
+  fd
+
+(* The function's own lock, which every driver of this library takes whatever
+   its name, then the driver's, which other drivers of the same GPU take. *)
+let take_local ~lock bus =
+  let own = lock_file bus "nx" in
+  let files = ref [ own ] in
   match
+    files := lock_file bus lock :: !files;
     (try Out_channel.with_open_gen [ Open_wronly ] 0 (path bus "enable") ignore
      with Sys_error _ ->
        failwith

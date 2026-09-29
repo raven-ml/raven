@@ -2805,6 +2805,11 @@ thread.
 
 ### Nx
 
+- Taking a PCI function (AMD and NV under `Pci`, network adapters, and
+  `nx-remote`'s clients) no longer follows a link planted at its lock file in
+  the temporary directory, which created the link's target world-writable. It
+  also takes the lock `nx_BUS.lock` besides the driver's own, so two processes
+  of raven never drive one function, whatever driver name they give.
 - `nx-remote` keeps serving whatever a connection does: a connection reset
   before the server set it up, or an exception a client's command raised there,
   stopped it from accepting anyone, and a peer that never spoke held the only

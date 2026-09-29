@@ -39,16 +39,19 @@ val scan :
 
 val take : ?remote:Remote.t -> lock:string -> string -> t
 (** [take ~lock bus] takes the function at [bus], of the machine of [remote] if
-    given: it locks it for this process through the file [LOCK_BUS.lock] of the
-    temporary directory, which every process driving such a GPU takes, removes
-    the other functions of its device, such as its audio function, and enables
-    it. A function bound to [vfio-pci] in VFIO's no-IOMMU mode stays bound, and
+    given: it locks it for this process through the files [nx_BUS.lock], which
+    every process of this library takes, and [LOCK_BUS.lock], which every
+    process driving such a GPU takes, in the temporary directory. A lock file
+    that is a link or no regular file is refused. It then removes the other
+    functions of its device, such as its audio function, and enables it. A
+    function bound to [vfio-pci] in VFIO's no-IOMMU mode stays bound, and
     delivers its interrupts to {!wait_interrupt}; any other kernel driver is
     detached.
 
-    Raises [Failure] if another process holds the function, if the process may
-    not detach or enable it, or if a driver stays bound to it, each naming what
-    to change. *)
+    Raises [Failure] if another process holds the function, if a lock file
+    cannot be opened, such as one another user created, if the process may not
+    detach or enable it, or if a driver stays bound to it, each naming what to
+    change. *)
 
 val bus : t -> string
 (** [bus p] is [p]'s bus address on its machine. *)

@@ -441,12 +441,16 @@ value caml_nx_file_lock(value path) {
   caml_failwith("Locking a PCI function needs a POSIX system");
   CAMLreturn(Val_unit);
 #else
-  int fd = open(String_val(path), O_RDWR | O_CLOEXEC);
-  if (fd < 0 && errno == ENOENT) {
-    fd = open(String_val(path), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
-    if (fd >= 0) fchmod(fd, 0666);
-  }
+  /* A link is never followed, and the mode of a file another process made is
+     never changed: a lock file names nothing else. */
+  int fd = open(String_val(path), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+                0644);
   if (fd < 0) fail_errno(String_val(path));
+  struct stat st;
+  if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+    close(fd);
+    caml_failwith("the lock file is not a regular file");
+  }
   if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
     close(fd);
     CAMLreturn(Val_int(-1));

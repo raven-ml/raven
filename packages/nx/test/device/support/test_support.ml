@@ -762,6 +762,27 @@ let test_remote_sysmem () =
       Remote.unpin r a n);
   Remote.close r
 
+(* Lock files: a planted link is not followed, and nothing but a regular file
+   serves. *)
+let test_lock_files () =
+  if Sys.win32 then skip ~reason:"PCI functions need a POSIX system" ();
+  let dir = Filename.temp_dir "nx_lock" "" in
+  let previous = Filename.get_temp_dir_name () in
+  Filename.set_temp_dir_name dir;
+  Fun.protect
+    ~finally:(fun () -> Filename.set_temp_dir_name previous)
+    (fun () ->
+      let bus = "0000:ff:1f.7" in
+      let target = Filename.concat dir "target" in
+      Unix.symlink target (Filename.concat dir ("nx_" ^ bus ^ ".lock"));
+      raises_match (Exn.failure ~substring:"") (fun () ->
+          Pci.take ~lock:"t" bus);
+      is_false ~msg:"the link's target is not created" (Sys.file_exists target);
+      Sys.remove (Filename.concat dir ("nx_" ^ bus ^ ".lock"));
+      Unix.mkdir (Filename.concat dir ("nx_" ^ bus ^ ".lock")) 0o700;
+      raises_match (Exn.failure ~substring:"") (fun () ->
+          Pci.take ~lock:"t" bus))
+
 (* Peers that do not know the key: raw sockets to the server. *)
 
 let raw s =
@@ -908,6 +929,7 @@ let () =
              test "handshakes at once" test_handshake_cap;
              test "a large scan" test_large_probe;
              test "an unexpected exception" test_unexpected_exception;
+             test "lock files" test_lock_files;
            ];
          group "firmware"
            [
