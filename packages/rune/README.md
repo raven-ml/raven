@@ -57,6 +57,10 @@ nest into records, so models compose structurally — see
   the backward pass, trading compute for memory
 - **Custom rules** — `custom_vjp` and `custom_jvp` override
   differentiation for a function you know a better rule for
+- **Totals and lanes** — `Total` collects a write-only sum that code
+  anywhere inside a function adds to, threading it through `scan` bodies and
+  `remat` calls and summing it over a `vmap`'s lanes; `axis` names a map and
+  `lanes` reads its lanes as data
 - **Gradient checking** — `check_grads` compares reverse mode against
   finite differences
 - **Control flow** — `scan`, `cond`, `while_loop` combinators with

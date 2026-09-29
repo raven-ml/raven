@@ -312,6 +312,48 @@ A `vmap` passes a `custom_jvp` on as the call of its batched `f` and batched rul
 
 With no transformation in scope, both constructs just run the plain forward function.
 
+## Totals and Lanes
+
+A total is a write-only sum that code anywhere inside a function adds to and that the caller reads when the function returns:
+
+```ocaml
+let () =
+  let total = Rune.Total.make () in
+  let cell h x =
+    let h = Nx.tanh (Nx.add h x) in
+    Rune.Total.add total (Nx.sum x);
+    (h, h)
+  in
+  let xs = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let _, sum =
+    Rune.Total.collect total ~zero:(Nx.zeros Nx.float32 [||]) (fun () ->
+        Rune.scan' ~f:cell ~init:(Nx.zeros Nx.float32 [| 2 |]) xs)
+  in
+  Printf.printf "%s\n" (Nx.to_string sum)
+  (* 21 — the rows' sums, added at every step of the scan *)
+```
+
+`Rune.Total.collect t ~zero f` runs `f` and returns its result with `zero` plus everything `f` added to `t`. Nothing reads a total before its `collect` returns, so an addition never changes a value the function computes, and with no `collect` open an addition does nothing. An addition counts once per execution of the code that makes it, whatever lies between it and the scope: `vmap` adds the sum of its lanes' additions, reverse mode drops the additions of code it runs again in its backward pass, and a `scan` that `jit` stages carries the sum out of its loop, so the loop stays one loop and a replay computes the total again. To compile a scope, open it inside the function `jit` compiles and return the total: a `jit` inside a scope runs its function eagerly, as it does inside `grad` and `vmap`.
+
+`Rune.axis ()` names a map. `Rune.vmap ~axis:a` (or `Rune.vmap' ~axis:a`) gives its map the name `a`, and inside it `Rune.lanes a x` is every lane's `x` stacked on a new leading axis, as data: the same value in every lane, whether `x` differs across the lanes or every lane shares it:
+
+```ocaml
+let () =
+  let a = Rune.axis () in
+  let dirs = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+  let wide =
+    Rune.vmap ~axis:a Nx.Ptree.(tensor @-> returns tensor)
+      (fun _ -> Rune.lanes a (Nx.ones Nx.float32 [| 3 |]))
+      dirs
+  in
+  Format.printf "wide: %a@." Nx.pp_shape (Nx.shape wide)
+  (* wide: [2,2,3] — each of the 2 lanes holds the gather of 2 rows *)
+```
+
+The map named `a` answers the call itself, so the gathered value is a constant of that map, and enclosing transformations see the gather. Every other map passes the call on and keeps its own lanes in front of the gathered axis, and with no map named `a` around the call, `lanes a x` is one lane. A named map also passes the lane index on, so `Nx.Rng.fold_in_axis` inside it addresses the anonymous map around it. `jvp` gathers the tangent with the primal; `grad` inside the map named `a` raises when the operand is tracked, and `grad` outside it differentiates through the gather.
+
+Together they let a forward-mode rule use every lane at once. Under `vmap ~axis:a` over tangent directions around `jvp`, a `custom_jvp` with a unit result, called anywhere in a model, has a rule that can gather its parameter's tangents across the directions with `lanes a` and add a quantity built from all of them to a total that the caller collects inside that map. The same model runs under `grad`, where the call runs its `f`: with `~f:ignore` it does nothing.
+
 ## Gradient Checking
 
 `check_grads` compares the reverse-mode gradient of a scalar objective against central-difference directional derivatives along deterministic directions:
