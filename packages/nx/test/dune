@@ -30,7 +30,6 @@
   test_nx_support
   test_nx_io
   test_nx_quant
-  test_oxcaml_backend
   test_float_codecs)
  (libraries
   nx.dtype
@@ -47,17 +46,6 @@
  (package nx)
  (modules backend_contract test_backend_contract)
  (libraries nx.dtype nx.buffer nx.c nx.core windtrap))
-
-(test
- (name test_oxcaml_backend)
- (package nx)
- (modules test_oxcaml_backend)
- (action
-  (run
-   %{test}
-   %{dep:../lib/core/backend_intf.ml}
-   %{dep:../lib/backend/nx_backend.mli}
-   %{dep:../../../contrib/nx-oxcaml/lib/nx_backend.ml})))
 
 (test
  (name test_nx_quant)
