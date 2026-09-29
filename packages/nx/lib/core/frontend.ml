@@ -2807,76 +2807,95 @@ module Make (B : Backend_intf.S) = struct
        the price of a shape that does not depend on the draw. *)
     let gamma_rounds = 8
 
-    let gamma (type b) k (concentration : (float, b) t) : (float, b) t =
+    (* Marsaglia-Tsang at [compute]: a draw of Gamma(boosted, 1), for [boosted]
+       the concentration raised past 1 where it is below, and what the shift
+       back needs: the concentration, where it is below 1, and the shift's
+       uniform, floored so that its power and logarithm stay finite when it
+       draws exactly zero. *)
+    let marsaglia_tsang (type c) (compute : (float, c) Nx_dtype.t) k
+        concentration =
       let ctx = B.context k in
-      let target = dtype concentration in
+      let lit v = scalar ctx compute v in
+      let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
       let shape = shape concentration in
-      let draw (type c) (compute : (float, c) Nx_dtype.t) =
-        let lit v = scalar ctx compute v in
-        let tiny = lit (Float.ldexp 1.0 (-significand_bits compute)) in
-        let a = at compute concentration in
-        let below_one = cmplt a (lit 1.0) in
-        let boosted = where below_one (add a (lit 1.0)) a in
-        let d = sub boosted (lit (1.0 /. 3.0)) in
-        let squeeze = recip (sqrt (mul (lit 9.0) d)) in
-        let ks = split ~n:3 k in
-        let attempts = Array.append [| gamma_rounds |] shape in
-        let x = normal ks.(0) compute attempts in
-        let u = uniform ks.(1) compute attempts in
-        (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong value for
-           an element no round accepted. *)
-        let acc = ref boosted in
-        let settled = ref (cmpne boosted boosted) in
-        for j = 0 to gamma_rounds - 1 do
-          let xj = contiguous (slice [ I j ] x) in
-          let uj = contiguous (slice [ I j ] u) in
-          let t = add (lit 1.0) (mul squeeze xj) in
-          let v = mul t (mul t t) in
-          (* [v] can be non-positive, where the logarithm is undefined. Floor it
-             so the arithmetic stays finite and let [positive] do the
-             rejecting. *)
-          let positive = cmpgt v (lit 0.0) in
-          let log_v = log (maximum v tiny) in
-          let bound =
-            add
-              (mul (lit 0.5) (mul xj xj))
-              (add d (add (neg (mul d v)) (mul d log_v)))
-          in
-          let accept =
-            logical_and positive (cmplt (log (maximum uj tiny)) bound)
-          in
-          let take = logical_and accept (logical_not !settled) in
-          acc := where take (mul d v) !acc;
-          settled := logical_or !settled accept
-        done;
-        (* Gamma(a) = Gamma(a + 1) * U^(1/a) below 1; the floor keeps the power
-           finite when the uniform draws exactly zero. *)
-        let boost = uniform ks.(2) compute shape in
-        let shifted = mul !acc (pow (maximum boost tiny) (recip a)) in
-        where below_one shifted !acc
-      in
-      match target with
-      | Nx_dtype.Float64 -> at target (draw Nx_dtype.float64)
-      | _ -> at target (draw Nx_dtype.float32)
+      let a = at compute concentration in
+      let below_one = cmplt a (lit 1.0) in
+      let boosted = where below_one (add a (lit 1.0)) a in
+      let d = sub boosted (lit (1.0 /. 3.0)) in
+      let squeeze = recip (sqrt (mul (lit 9.0) d)) in
+      let ks = split ~n:3 k in
+      let attempts = Array.append [| gamma_rounds |] shape in
+      let x = normal ks.(0) compute attempts in
+      let u = uniform ks.(1) compute attempts in
+      (* The mean of Gamma(boosted, 1) is [boosted]: the least wrong value for
+         an element no round accepted. *)
+      let acc = ref boosted in
+      let settled = ref (cmpne boosted boosted) in
+      for j = 0 to gamma_rounds - 1 do
+        let xj = contiguous (slice [ I j ] x) in
+        let uj = contiguous (slice [ I j ] u) in
+        let t = add (lit 1.0) (mul squeeze xj) in
+        let v = mul t (mul t t) in
+        (* [v] can be non-positive, where the logarithm is undefined. Floor it
+           so the arithmetic stays finite and let [positive] do the
+           rejecting. *)
+        let positive = cmpgt v (lit 0.0) in
+        let log_v = log (maximum v tiny) in
+        let bound =
+          add
+            (mul (lit 0.5) (mul xj xj))
+            (add d (add (neg (mul d v)) (mul d log_v)))
+        in
+        let accept =
+          logical_and positive (cmplt (log (maximum uj tiny)) bound)
+        in
+        let take = logical_and accept (logical_not !settled) in
+        acc := where take (mul d v) !acc;
+        settled := logical_or !settled accept
+      done;
+      let boost = maximum (uniform ks.(2) compute shape) tiny in
+      (!acc, a, below_one, boost)
 
-    (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas of unit rate.
-       Both draws inherit {!gamma}'s bounded-rejection approximation. The sum is
-       floored before dividing: two gammas can both round to zero when their
-       concentrations are tiny. *)
+    (* Gamma(a) = Gamma(a + 1) * U^(1/a) below 1. *)
+    let gamma (type b) k (concentration : (float, b) t) : (float, b) t =
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
+        let acc, a, below_one, boost =
+          marsaglia_tsang compute k concentration
+        in
+        at (dtype concentration)
+          (where below_one (mul acc (pow boost (recip a))) acc)
+      in
+      match dtype concentration with
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
+
+    (* The logarithm of a {!gamma} draw, at [compute]. Below a concentration of
+       about 0.03 most float32 draws underflow to zero, where their logarithm,
+       of order [log u / a], is still finite: ratios of gammas are formed from
+       it. *)
+    let log_gamma compute k concentration =
+      let acc, a, below_one, boost = marsaglia_tsang compute k concentration in
+      add (log acc) (where below_one (div (log boost) a) (zeros_like a))
+
+    (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas of unit rate,
+       formed as [1 / (1 + exp (log G(b) - log G(a)))]: at small concentrations
+       both gammas can underflow to zero, where their ratio is lost but the
+       difference of their logarithms is not. Both draws inherit {!gamma}'s
+       bounded-rejection approximation. *)
     let beta (type b) k (a : (float, b) t) (b : (float, b) t) : (float, b) t =
       let a, b = pair a b in
-      let ctx = B.context k in
-      let target = dtype a in
       let ks = split k in
-      let g1 = gamma ks.(0) a in
-      let g2 = gamma ks.(1) b in
-      let tiny =
-        scalar ctx target (Float.ldexp 1.0 (-significand_bits target))
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
+        let d = sub (log_gamma compute ks.(1) b) (log_gamma compute ks.(0) a) in
+        at (dtype a) (recip (add (scalar (B.context k) compute 1.0) (exp d)))
       in
-      div g1 (maximum (add g1 g2) tiny)
+      match dtype a with
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
-    (* Dirichlet: one gamma per component, normalised across the last axis, so
-       every row of the result sums to one. *)
+    (* Dirichlet: one gamma per component, normalised across the last axis in
+       log space, as {!beta} is, so that every row of the result sums to one
+       however small the concentrations. *)
     let dirichlet (type b) k (concentration : (float, b) t) : (float, b) t =
       let s = shape concentration in
       let nd = Array.length s in
@@ -2884,14 +2903,15 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg
           "Nx.Rng.dirichlet: concentration needs at least two components on \
            its last axis";
-      let ctx = B.context k in
-      let target = dtype concentration in
-      let g = gamma k concentration in
-      let tiny =
-        scalar ctx target (Float.ldexp 1.0 (-significand_bits target))
+      let axes = [ nd - 1 ] in
+      let draw (type c) (compute : (float, c) Nx_dtype.t) =
+        let l = log_gamma compute k concentration in
+        let e = exp (sub l (max ~axes ~keepdims:true l)) in
+        at (dtype concentration) (div e (sum ~axes ~keepdims:true e))
       in
-      let total = sum ~axes:[ nd - 1 ] ~keepdims:true g in
-      div g (maximum total tiny)
+      match dtype concentration with
+      | Nx_dtype.Float64 -> draw Nx_dtype.float64
+      | _ -> draw Nx_dtype.float32
 
     (* The Poisson log pmf at an integer-valued [k], written so that no term
        grows with the rate: the direct form cancels three terms of size [rate

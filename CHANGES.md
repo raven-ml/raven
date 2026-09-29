@@ -2724,6 +2724,10 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.beta` and `Nx.Rng.dirichlet` hold at small concentrations: every
+  Dirichlet row sums to one and a Beta draw is the ratio its gammas stand for.
+  Below a concentration of about 0.03 most float32 gammas underflow to zero,
+  and a row of zeros came out as zeros, a fifth of the rows at 0.03.
 - `Nx.Rng.truncated_normal` and `Nx.truncated_normal` at float64 reach 8.3
   standard deviations. A margin kept for infinite bounds stopped every draw at
   5.3, so an interval such as `[5, 6]` was drawn with the wrong mean and one
