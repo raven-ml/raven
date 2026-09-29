@@ -63,8 +63,6 @@ let unsupported op =
 
 (* Dtypes *)
 
-let host_buffer dt n = HB.create Nx_device.host (ND.Scalar.of_dtype dt) n
-
 let tolk_dtype dt =
   match TD.of_scalar (ND.Scalar.of_dtype dt) with
   | Some tdt -> tdt
@@ -563,17 +561,6 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tensor_map.Tbl.replace st.table (Key x) tt;
   tt
 
-(* The range of storage elements [v] reaches, [lo] to [hi] exclusive. *)
-let extent v =
-  let strides = NV.strides v in
-  let lo = ref (NV.offset v) and hi = ref (NV.offset v) in
-  Array.iteri
-    (fun d n ->
-      let span = strides.(d) * (n - 1) in
-      if span < 0 then lo := !lo + span else hi := !hi + span)
-    (NV.shape v);
-  (!lo, !hi + 1)
-
 (* Placed views
 
    A value placed on a program's devices seeds the program without a copy: its
@@ -706,7 +693,7 @@ let seed_of : type a b. Tolk.Device.t list -> (a, b) Nx_effect.t -> seed =
               else if NV.is_c_contiguous v then
                 range (NV.offset v) (NV.numel v) None
               else if nests (NV.shape v) (NV.strides v) then
-                let lo, hi = extent v in
+                let lo, hi = NV.extent v in
                 range lo (hi - lo) (Some (NV.strides v))
               else Copy)
       | _ -> Copy)
@@ -731,7 +718,7 @@ let layout_size layout shape =
   match layout.strides with
   | None -> layout.skip + numel shape
   | Some strides ->
-      let lo, hi = extent (NV.create ~strides shape) in
+      let lo, hi = NV.extent (NV.create ~strides shape) in
       layout.skip + (hi - lo)
 
 let layout_tensor node layout shape =
@@ -1249,7 +1236,7 @@ let window_indices ~spatial_padded ~kernel_size ~stride ~dilation =
   for d = k - 2 downto 0 do
     sp_strides.(d) <- sp_strides.(d + 1) * spatial_padded.(d + 1)
   done;
-  let idx = host_buffer ND.int32 (kernel_prod * nwin) in
+  let idx = Nx_core.Elements.create ND.int32 (kernel_prod * nwin) in
   let entries = HB.bigarray Bigarray.int32 idx in
   let k_pos = Array.make k 0 in
   let w_pos = Array.make k 0 in
@@ -3148,7 +3135,7 @@ let read_base : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
       let dt = Nx_effect.dtype x in
       let item = ND.itemsize dt in
       let n = numel shape in
-      let run = host_buffer dt n in
+      let run = Nx_core.Elements.create dt n in
       let chunk = chunk_bytes / item in
       let pos = ref 0 and ok = ref true in
       while !ok && !pos < n do
@@ -3306,7 +3293,7 @@ let read_out : type a b.
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
  fun ctx dtv shape buf ->
-  let host = host_buffer dtv (numel shape) in
+  let host = Nx_core.Elements.create dtv (numel shape) in
   copyout_into buf ~dst_off:0 dtv host;
   Nx_effect.reshape (Nx_effect.from_host ctx dtv host) shape
 
@@ -3335,7 +3322,7 @@ let with_storage_range dt buf ~lo ~hi f =
       ignore (Sys.opaque_identity buf);
       r
   | None ->
-      let host = host_buffer dt (hi - lo) in
+      let host = Nx_core.Elements.create dt (hi - lo) in
       with_window buf ~off:(lo * item)
         ~len:((hi - lo) * item)
         (fun w -> copyout_into w ~dst_off:0 dt host);
@@ -3377,9 +3364,9 @@ let permuted_copy src ~base v =
 
 let read_window dt buf v =
   let n = NV.numel v in
-  if n = 0 then host_buffer dt 0
+  if n = 0 then Nx_core.Elements.create dt 0
   else
-    let lo, hi = extent v in
+    let lo, hi = NV.extent v in
     with_storage_range dt buf ~lo ~hi @@ fun src how ->
     if how = `Borrowed then
       update_stats (fun s ->
@@ -3394,7 +3381,7 @@ let read_window dt buf v =
       with
       | Some dst -> dst
       | None when NV.is_c_contiguous v ->
-          let dst = host_buffer dt n in
+          let dst = Nx_core.Elements.create dt n in
           HB.copy ~src ~dst;
           dst
       | None -> Nx_core.Elements.gather src (from_base v ~base:lo)
@@ -3406,7 +3393,7 @@ let read : type a b. (a, b) Nx_effect.resident -> HB.t =
   match store_of r.r_cell with
   | None -> assert false (* nx reads held and consumed values itself *)
   | Some { s_bufs = []; _ } ->
-      host_buffer r.r_dtype 0 (* an empty value has no buffer *)
+      Nx_core.Elements.create r.r_dtype 0 (* an empty value has no buffer *)
   | Some s ->
       let shape = Nx_effect.global r.r_placement (NV.shape r.r_view) in
       Nx_effect.assemble r
@@ -3596,7 +3583,7 @@ let borrow : type a b.
      its view of that buffer. *)
   let span w =
     let v = Nx_effect.view (Nx_effect.shrink h w) in
-    let lo, hi = extent v in
+    let lo, hi = NV.extent v in
     let first = Nativeint.add ptr (Nativeint.of_int (lo * item)) in
     let skip =
       Nativeint.to_int (Nativeint.rem first (Nativeint.of_int alignment))
@@ -5100,7 +5087,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           if c.cp_zero_copy then
             begin if (not reserved) && not (Hashtbl.mem out_hosts tag) then begin
               let n = numel (shape_of ph) in
-              let host = host_buffer odt n in
+              let host = Nx_core.Elements.create odt n in
               let buf =
                 Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
                   ~source:host (HB.host_address host)
@@ -5228,7 +5215,8 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
            | None ->
                Nx.P
                  (Nx_effect.reshape
-                    (Nx_effect.from_host c.cp_ctx dt (host_buffer dt 0))
+                    (Nx_effect.from_host c.cp_ctx dt
+                       (Nx_core.Elements.create dt 0))
                     shape)
            | Some node -> (
                let tag = U.tag node in
@@ -5239,7 +5227,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                        let host =
                          if c.cp_first.(j) then host
                          else begin
-                           let copy = host_buffer hdt (HB.length host) in
+                           let copy =
+                             Nx_core.Elements.create hdt (HB.length host)
+                           in
                            HB.copy ~src:host ~dst:copy;
                            copy
                          end

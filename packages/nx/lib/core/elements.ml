@@ -7,11 +7,14 @@ module B = Nx_device.Buffer
 module S = Nx_dtype.Scalar
 module A = Bigarray.Array1
 
-let check fn (type a b) (dt : (a, b) Nx_dtype.t) b =
+let check_host fn b =
   if not (Nx_device.equal (B.device b) Nx_device.host) then
     invalid_arg
       (Printf.sprintf "Nx_core.Elements.%s: the buffer is on %s, not CPU" fn
-         (Nx_device.name (B.device b)));
+         (Nx_device.name (B.device b)))
+
+let check fn (type a b) (dt : (a, b) Nx_dtype.t) b =
+  check_host fn b;
   if not (S.equal (B.dtype b) (S.of_dtype dt)) then
     invalid_arg
       (Printf.sprintf "Nx_core.Elements.%s: a %s buffer read as %s" fn
@@ -37,6 +40,10 @@ let in_bounds fn n i =
       (Printf.sprintf "Nx_core.Elements.%s: index %d of %d elements" fn i n)
 
 let clamp lo hi v = Int.max lo (Int.min hi v)
+
+(* Creation *)
+
+let create dt n = B.create Nx_device.host (S.of_dtype dt) n
 
 (* Access *)
 
@@ -228,16 +235,6 @@ let iter_view v ~run f =
     done
   done
 
-(* The storage elements [v] reaches, from the lowest to one past the highest. *)
-let extent v =
-  let lo = ref (View.offset v) and hi = ref (View.offset v) in
-  Array.iteri
-    (fun a n ->
-      let s = (View.strides v).(a) * (n - 1) in
-      if s < 0 then lo := !lo + s else hi := !hi + s)
-    (View.shape v);
-  (!lo, !hi + 1)
-
 (* [v] over words of [w] per element: an element is [w] consecutive words. *)
 let in_words v w =
   if w = 1 then v
@@ -261,14 +258,11 @@ let copy_view v ~copy_run ~copy =
 let blit s d src dst n = A.blit (A.sub s src n) (A.sub d dst n)
 
 let gather b v =
-  if not (Nx_device.equal (B.device b) Nx_device.host) then
-    invalid_arg
-      (Printf.sprintf "Nx_core.Elements.gather: the buffer is on %s, not CPU"
-         (Nx_device.name (B.device b)));
+  check_host "gather" b;
   let n = View.numel v in
   let dst = B.create Nx_device.host (B.dtype b) n in
   if n > 0 then begin
-    let lo, hi = extent v in
+    let lo, hi = View.extent v in
     if lo < 0 || hi > B.length b then
       invalid_arg
         (Printf.sprintf
@@ -303,3 +297,11 @@ let gather b v =
           ~copy:(fun src dst -> A.unsafe_set d dst (A.unsafe_get s src))
   end;
   dst
+
+let contiguous b v =
+  check_host "contiguous" b;
+  let s = B.dtype b and n = View.numel v in
+  let bits = View.offset v * S.bitsize s in
+  if n > 0 && View.is_c_contiguous v && bits mod 8 = 0 then
+    B.view b ~offset:(bits / 8) s n
+  else gather b v

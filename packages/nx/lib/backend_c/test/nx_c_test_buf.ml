@@ -14,9 +14,7 @@ type ('a, 'b) t = {
 }
 
 let create dtype n =
-  let storage =
-    Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dtype) n
-  in
+  let storage = Nx_core.Elements.create dtype n in
   {
     dtype;
     storage;

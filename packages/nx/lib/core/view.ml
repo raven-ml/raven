@@ -58,6 +58,15 @@ let dim axis v =
 let ndim v = Array.length v.shape
 let numel v = prod v.shape
 
+let extent v =
+  let lo = ref v.offset and hi = ref v.offset in
+  Array.iteri
+    (fun a n ->
+      let s = v.strides.(a) * (n - 1) in
+      if s < 0 then lo := !lo + s else hi := !hi + s)
+    v.shape;
+  (!lo, !hi + 1)
+
 (* ───── View Creation ───── *)
 
 let create ?(offset = 0) ?strides shape =

@@ -347,9 +347,6 @@ module Make (B : Backend_intf.S) = struct
   (* The reader of [x]'s elements in C order, from index 0. *)
   let elements x = Elements.get (B.dtype x) (B.to_host (contiguous x))
 
-  let host_buffer dtype n =
-    Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dtype) n
-
   let check_shape op shape =
     if Array.exists (fun d -> d < 0) shape then
       err op "shape %s, dimensions must be >= 0" (Shape.to_string shape)
@@ -360,7 +357,7 @@ module Make (B : Backend_intf.S) = struct
     if Array.length arr <> n then
       err "create" "array size, got %d elements, expected %d" (Array.length arr)
         n;
-    let buf = host_buffer dtype n in
+    let buf = Elements.create dtype n in
     Array.iteri (Elements.set dtype buf) arr;
     let tensor_1d = B.from_host ctx dtype buf in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
@@ -5822,7 +5819,7 @@ module Make (B : Backend_intf.S) = struct
 
   let map_item f x =
     let src = elements x and sz = size x in
-    let dst = host_buffer (dtype x) sz in
+    let dst = Elements.create (dtype x) sz in
     let set = Elements.set (dtype x) dst in
     for i = 0 to sz - 1 do
       set i (f (src i))

@@ -1367,7 +1367,6 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   nx_c_raise(op, s);
 }
 
-
 void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class cls,
                     int nin, const value *vals, void *ctx) {
   int nop = nin + 1;

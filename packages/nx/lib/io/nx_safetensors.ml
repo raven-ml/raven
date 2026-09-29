@@ -53,7 +53,7 @@ let tensor (type a b) mapping (kind : (a, b) Nx_dtype.t) shape ~off ~len =
         (Nx_dtype.Scalar.of_dtype kind)
         n
     else begin
-      let buffer = Storage.create kind n in
+      let buffer = Nx_core.Elements.create kind n in
       let dst = Storage.bytes buffer in
       Nx_io_codec.blit_bytes ~src:(Storage.bytes mapping) ~src_off:off ~dst
         ~dst_off:0 ~len;
@@ -183,7 +183,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
         fail_msg "unsupported dtype for safetensors: %s"
           (Nx_dtype.to_string dtype)
   in
-  let bytes = Storage.bytes (Storage.of_tensor t) in
+  let bytes = Storage.bytes (Nx_effect.elements t) in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
     let swapped =

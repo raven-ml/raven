@@ -6,7 +6,8 @@
 /* nx_c.h — the dtype table and ABIs for the backend_c CPU backend.
 
    This is the single source of truth below the kernel line. From one X-macro
-   table it generates the dtype enum, the element-size, class, per-dtype load/store, and saturating float->int converters. It also
+   table it generates the dtype enum, the element-size and class tables, and
+   the per-dtype load/store and saturating float->int converters. It also
    defines the metadata struct crossing the FFI, the inner-loop kernel ABIs and
    their dispatch-table types, the status protocol, and the parallel-policy
    declarations. Everything else in the backend is generated from or built
@@ -201,13 +202,13 @@ static inline void nx_c_aligned_free(void *p) {
   X(A, bool_, uint8_t, uint8_t, NX_C_BOOL_LD, NX_C_BOOL_ST,                      \
     NX_C_CAT_BOOL, NX_C_COMPUTE)
 
-/* Full iteration: G receives all eight columns (including cat and sel). */
+/* Full iteration: G receives all seven columns (including cat and sel). */
 #define NX_C_FULL(G, sfx, storage, compute, ld, st, cat, sel)                  \
   G(sfx, storage, compute, ld, st, cat, sel)
 #define NX_C_FOR_EACH_DTYPE(G) NX_C_DTYPE_TABLE(NX_C_FULL, G)
 
 /* Compute-only iteration: packed rows expand to nothing; G receives the first
-   seven columns (sel is consumed by the filter). */
+   six columns (sel is consumed by the filter). */
 #define NX_C_FILTER(G, sfx, storage, compute, ld, st, cat, sel)                \
   NX_C_FILTER_##sel(G, sfx, storage, compute, ld, st, cat)
 #define NX_C_FILTER_NX_C_COMPUTE(G, sfx, storage, compute, ld, st, cat)          \
@@ -290,9 +291,9 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_F2I_ROW)
 #undef NX_C_F2I_ROW
 
 /* ── Derived dtype accessors ──────────────────────────────────────────────
-   All generated from the one table, keeping size handling in one place. dt is bounds-checked as
-   `(unsigned)dt < COUNT`, which rejects negatives and out-of-range in one
-   comparison with no -Wtype-limits risk. */
+   All generated from the one table, keeping size handling in one place. dt is
+   bounds-checked as `(unsigned)dt < COUNT`, which rejects negatives and
+   out-of-range in one comparison with no -Wtype-limits risk. */
 
 static inline int nx_c_dtype_class(nx_c_dtype dt) {
   static const int classes[NX_C_DTYPE_COUNT] = {

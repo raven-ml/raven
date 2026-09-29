@@ -473,15 +473,6 @@ let validate m =
     Ok !buffer_end
   with Validate_error e -> Error e
 
-(* Little-endian I/O *)
-
-let write_u64_le b off v =
-  for i = 0 to 7 do
-    Bytes.set b (off + i)
-      (Char.chr
-         (Int64.to_int (Int64.logand (Int64.shift_right v (8 * i)) 0xFFL)))
-  done
-
 (* JSON ↔ metadata *)
 
 let metadata_to_json m =
@@ -633,6 +624,7 @@ let parse_header header =
 
 (* Serialization *)
 
+(* The bytes of the file, in order: the header, then each tensor's data. *)
 let prepare data data_info =
   let sorted =
     List.sort
@@ -643,7 +635,7 @@ let prepare data data_info =
   in
   let offset = ref 0 in
   let hmetadata = ref [] in
-  let tensors = ref [] in
+  let parts = ref [] in
   List.iter
     (fun (name, t) ->
       let n = Bigarray.Array1.dim t.data in
@@ -656,7 +648,7 @@ let prepare data data_info =
       in
       offset := !offset + n;
       hmetadata := (name, ti) :: !hmetadata;
-      tensors := t :: !tensors)
+      parts := t.data :: !parts)
     sorted;
   let hmetadata = List.rev !hmetadata in
   let index_map = Hashtbl.create (List.length hmetadata) in
@@ -670,22 +662,23 @@ let prepare data data_info =
   in
   let meta = { metadata_kv = data_info; tensors = tensors_arr; index_map } in
   let* _ = validate meta in
+  (* The header is the JSON's length in bytes as a little-endian u64, then the
+     JSON padded with spaces to a multiple of 8 bytes. *)
   let json = metadata_to_json meta in
-  let n_aligned = next_multiple_of (String.length json) header_len_bytes in
-  let header_bytes =
-    if n_aligned = String.length json then json
-    else
-      let b = Bytes.make n_aligned ' ' in
-      Bytes.blit_string json 0 b 0 (String.length json);
-      Bytes.to_string b
+  let n = next_multiple_of (String.length json) header_len_bytes in
+  let header =
+    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
+      (header_len_bytes + n)
   in
-  Ok (n_aligned, header_bytes, !offset, List.rev !tensors)
+  Bigarray.Array1.fill header (Char.code ' ');
+  for i = 0 to header_len_bytes - 1 do
+    header.{i} <- (n lsr (8 * i)) land 0xff
+  done;
+  String.iteri (fun i c -> header.{header_len_bytes + i} <- Char.code c) json;
+  Ok (header :: List.rev !parts)
 
 let serialize_to_file data data_info filename =
-  let* n_aligned, header_bytes, _, tensors = prepare data data_info in
-  let header = Bytes.create (header_len_bytes + n_aligned) in
-  write_u64_le header 0 (Int64.of_int n_aligned);
-  Bytes.blit_string header_bytes 0 header header_len_bytes n_aligned;
+  let* parts = prepare data data_info in
   try
     let fd =
       Unix.openfile filename
@@ -695,12 +688,10 @@ let serialize_to_file data data_info filename =
     Fun.protect
       ~finally:(fun () -> Unix.close fd)
       (fun () ->
-        ignore (Unix.write fd header 0 (Bytes.length header));
         List.iter
-          (fun (tv : tensor_view) ->
-            Nx_io_codec.write_all fd tv.data ~off:0
-              ~len:(Bigarray.Array1.dim tv.data))
-          tensors;
+          (fun b ->
+            Nx_io_codec.write_all fd b ~off:0 ~len:(Bigarray.Array1.dim b))
+          parts;
         Unix.fsync fd);
     Ok ()
   with e -> Error (Io_error (Printexc.to_string e))

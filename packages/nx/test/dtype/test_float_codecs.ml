@@ -83,21 +83,20 @@ let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 (* Codecs *)
 
 let codec f x = S.decode f.scalar (S.encode f.scalar x)
-let element dtype = Nx_device.Buffer.create Nx_device.host (S.of_dtype dtype) 1
 let byte b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b
 
 let nx_value dtype x =
-  let b = element dtype in
+  let b = Nx_core.Elements.create dtype 1 in
   E.set dtype b 0 x;
   E.get dtype b 0
 
 let nx_code dtype x =
-  let b = element dtype in
+  let b = Nx_core.Elements.create dtype 1 in
   E.set dtype b 0 x;
   (byte b).{0}
 
 let nx_decode dtype code =
-  let b = element dtype in
+  let b = Nx_core.Elements.create dtype 1 in
   (byte b).{0} <- code;
   E.get dtype b 0
 

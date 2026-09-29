@@ -15,6 +15,12 @@
     Access is outside the devices' ordering, as {!Nx_device.Buffer.bigarray}'s
     is. *)
 
+val create : ('a, 'b) Nx_dtype.t -> int -> Nx_device.Buffer.t
+(** [create dt n] is a new buffer on {!Nx_device.host} of [n] elements of [dt],
+    their contents unspecified.
+
+    Raises as {!Nx_device.Buffer.create} does. *)
+
 val get : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> int -> 'a
 (** [get dt b] reads the elements of [b] as values of [dt]: [get dt b i] is
     element [i]. The application to [dt] and [b] makes [b]'s view once, so apply
@@ -40,3 +46,10 @@ val gather : Nx_device.Buffer.t -> View.t -> Nx_device.Buffer.t
 
     Raises [Invalid_argument] if [b] is not on {!Nx_device.host} or if [v]
     reaches an element outside [b]. *)
+
+val contiguous : Nx_device.Buffer.t -> View.t -> Nx_device.Buffer.t
+(** [contiguous b v] is the elements of the view [v] of [b] in C order: a view
+    of [b]'s own memory when [v] is C-contiguous and its first element starts a
+    byte, {!gather}[ b v] otherwise.
+
+    Raises [Invalid_argument] as {!gather} does. *)

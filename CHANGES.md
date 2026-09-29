@@ -2789,10 +2789,10 @@ thread.
   uint64 tensor is `bitcast` from the integers of its width.
 - **Breaking (backends):** `Nx_core.Backend_intf.S.to_host` and `from_host`
   exchange host `Nx_device.Buffer.t`s, and `from_host` takes the dtype.
-  `Nx_core.Elements` reads and writes a host buffer's elements as values of a
-  dtype.
-- `Nx_io.save_safetensors` writes each tensor's storage to the file as it is,
-  where it built a string per tensor and then a copy of the whole file.
+  `Nx_core.Elements` creates host buffers for a dtype and reads and writes
+  their elements as its values.
+- `Nx_io.save_safetensors` no longer holds a copy of the whole file in memory:
+  it writes each tensor's storage to the file as it is.
 - Values on devices keep a float's bits. A one-element result on a device, and
   a view of a value on a runtime device (`Nx.Device.of_runtime`) read back
   through a transpose, flip or other strided layout, passed their elements
@@ -3070,7 +3070,7 @@ thread.
   `float16`, which rounds through `float32` first. tolk folds constants with
   them.
 - **Breaking:** dtypes move to a new library, `nx.dtype`, which depends on
-  nothing: `Nx_core.Dtype` is `Nx_dtype`, and `to_stdlib_kind` is
+  nothing: `Nx_core.Dtype` is `Nx_dtype`, and `Nx_buffer.to_stdlib_kind` is
   `Nx_dtype.to_bigarray_kind`, which returns an option. `Nx_dtype.Scalar`
   names storage formats without type parameters, for code that moves or
   compiles bytes. `Nx_core.Dtype.packed`, `pack` and `Packed` are gone.
@@ -3581,10 +3581,12 @@ thread.
   saturating to ±448, matching `ml_dtypes` and PyTorch `float8_e4m3fn` casts;
   clamp before casting if saturation is wanted. `float8_e5m2` subnormal
   rounding now keeps the sticky bits, so round-to-nearest-even resolves ties
-  correctly. Both conversions apply to buffer element access and every C
-  kernel operating on float8 tensors.
-- The extended element types are renamed `int4_elt`, `uint4_elt`,
-  `int8_elt`, `uint8_elt`, `int16_elt` and `uint16_elt`.
+  correctly. Both conversions apply to reading and writing single elements and
+  every C kernel operating on float8 tensors.
+- The element types `int4_signed_elt`, `int4_unsigned_elt`,
+  `int8_signed_elt`, `int8_unsigned_elt`, `int16_signed_elt` and
+  `int16_unsigned_elt` are renamed `int4_elt`, `uint4_elt`, `int8_elt`,
+  `uint8_elt`, `int16_elt` and `uint16_elt`.
 - Reductions along non-innermost axes stream rows instead of striding a cache
   line per element: `sum ~axes:[0]` on 512×512 is ~9.6× faster (and `mean`
   with it), with bit-for-bit identical results.

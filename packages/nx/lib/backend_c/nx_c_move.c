@@ -265,8 +265,8 @@ CAMLprim value caml_nx_c_copy(value vout, value vin) {
    copy kernel, so each pass inherits coalescing, threading, and the lock
    handshake. The fill value crosses the FFI as a scalar tensor rather than a
    per-dtype value: the binding, which knows the OCaml element type statically,
-   sets it with a typed Bigarray store, so C needs no per-dtype value-extraction
-   switch — and every pass reuses the one copy, packed dtypes included. */
+   sets it with Elements.fill, so C needs no per-dtype value-extraction switch
+   — and every pass reuses the one copy, packed dtypes included. */
 
 static nx_c_status nx_c_pad_fill(const nx_c_ndarray *slab, const nx_c_ndarray *fill,
                                nx_c_dtype dt) {

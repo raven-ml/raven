@@ -730,11 +730,7 @@ let assemble (type a b) (r : (a, b) resident) window
   | [ ((_, _, i) as only) ] when i = window -> piece only
   | _ ->
       let into = extents window in
-      let dst =
-        Nx_device.Buffer.create Nx_device.host
-          (Nx_dtype.Scalar.of_dtype r.r_dtype)
-          (Array.fold_left ( * ) 1 into)
-      in
+      let dst = Elements.create r.r_dtype (Array.fold_left ( * ) 1 into) in
       List.iter
         (fun ((_, _, i) as p) ->
           blit_box (piece p) (extents i) dst ~into
@@ -1854,11 +1850,7 @@ let const_scalar (ctx : context) value dtype =
     match ctx with
     | Host c -> Host (Nx_backend.full c dtype [||] value)
     | On ds ->
-        let e =
-          Nx_device.Buffer.create Nx_device.host
-            (Nx_dtype.Scalar.of_dtype dtype)
-            1
-        in
+        let e = Elements.create dtype 1 in
         Elements.set dtype e 0 value;
         held (Placement.replicated ds) dtype e [||])
 
@@ -1918,6 +1910,14 @@ let copy t_in =
     match t_in with
     | Host t -> Host (Nx_backend.copy t)
     | _ -> routed e t_in Nx_backend.copy)
+
+(* The host buffer of exactly [x]'s elements in C order: its storage when it is
+   contiguous. *)
+let elements x =
+  let x = contiguous x in
+  let b = to_host x in
+  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b)
+    (View.numel (view x))
 
 (* Ternary operations *)
 

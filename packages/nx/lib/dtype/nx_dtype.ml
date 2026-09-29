@@ -118,6 +118,20 @@ module Scalar = struct
     | Complex128 -> Complex128
     | Bool -> Bool
 
+  let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> t option = function
+    | Bigarray.Float16 -> Some Float16
+    | Bigarray.Float32 -> Some Float32
+    | Bigarray.Float64 -> Some Float64
+    | Bigarray.Int8_signed -> Some Int8
+    | Bigarray.Int8_unsigned | Bigarray.Char -> Some UInt8
+    | Bigarray.Int16_signed -> Some Int16
+    | Bigarray.Int16_unsigned -> Some UInt16
+    | Bigarray.Int32 -> Some Int32
+    | Bigarray.Int64 -> Some Int64
+    | Bigarray.Complex32 -> Some Complex64
+    | Bigarray.Complex64 -> Some Complex128
+    | Bigarray.Int | Bigarray.Nativeint -> None
+
   let bitsize = function
     | Float8_e4m3 | Float8_e5m2 | Float8_e4m3fnuz | Float8_e5m2fnuz | Int8
     | UInt8 | Bool ->

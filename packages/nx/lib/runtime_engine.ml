@@ -29,16 +29,6 @@ let create d s n =
 
 (* Reading *)
 
-(* The lowest and one past the highest storage element [v] reaches. *)
-let extent v =
-  let lo = ref (View.offset v) and hi = ref (View.offset v) in
-  Array.iteri
-    (fun a n ->
-      let s = (View.strides v).(a) * (n - 1) in
-      if s < 0 then lo := !lo + s else hi := !hi + s)
-    (View.shape v);
-  (!lo, !hi + 1)
-
 (* The elements of view [v] of [b]. Int4 storage is read whole: its elements may
    not start on a byte. *)
 let read_view b v =
@@ -49,18 +39,16 @@ let read_view b v =
     let lo, hi =
       match s with
       | Nx_dtype.Scalar.Int4 | UInt4 -> (0, B.length b)
-      | _ -> extent v
+      | _ -> View.extent v
     in
     let span = B.create Nx_device.host s (hi - lo) in
     B.copy
       ~src:(B.view b ~offset:(lo * Nx_dtype.Scalar.bitsize s / 8) s (hi - lo))
       ~dst:span;
-    if View.is_c_contiguous v && hi - lo = n && View.offset v = lo then span
-    else
-      Elements.gather span
-        (View.create
-           ~offset:(View.offset v - lo)
-           ~strides:(View.strides v) (View.shape v))
+    Elements.contiguous span
+      (View.create
+         ~offset:(View.offset v - lo)
+         ~strides:(View.strides v) (View.shape v))
 
 let read : type a b. (a, b) Nx_effect.resident -> Nx_device.Buffer.t =
  fun r ->
@@ -78,18 +66,12 @@ let read : type a b. (a, b) Nx_effect.resident -> Nx_device.Buffer.t =
 
 (* Placing *)
 
-(* The elements of [t] in C order, as a host buffer of exactly them. *)
-let elements t =
-  let buf = Nx_backend.to_host t and v = Nx_backend.view t in
-  if View.is_c_contiguous v && View.offset v = 0 then
-    B.view buf ~offset:0 (B.dtype buf) (View.numel v)
-  else Elements.gather buf v
-
 let place : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
   let h = Nx_effect.host_of x in
-  let dt = Nx_backend.dtype h and shape = View.shape (Nx_backend.view h) in
+  let dt = Nx_backend.dtype h and v = Nx_backend.view h in
+  let shape = View.shape v in
   let s = Nx_dtype.Scalar.of_dtype dt in
   let ds = Nx_effect.Placement.devices p in
   let windows = List.map (fun d -> Nx_effect.Placement.window p shape d) ds in
@@ -99,7 +81,10 @@ let place : type a b.
     List.map2
       (fun d w ->
         let b = create d s n in
-        if n > 0 then B.copy ~src:(elements (Nx_backend.shrink h w)) ~dst:b;
+        if n > 0 then
+          B.copy
+            ~src:(Elements.contiguous (Nx_backend.to_host h) (View.shrink v w))
+            ~dst:b;
         b)
       ds windows
   in

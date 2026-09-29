@@ -121,24 +121,10 @@ let decode codes scales =
 let chunk = 1 lsl 22
 let rows_per_chunk k = max 1 (chunk / k)
 
-(* Host buffers and the bytes of tensors *)
-
-let host_buffer dt n =
-  Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dt) n
+(* Host buffers *)
 
 let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
-
-(* The bytes of [t]'s elements in C order. *)
-let bytes_of t =
-  let t = Nx.contiguous t in
-  Bigarray.Array1.sub (bytes (Nx_effect.to_host t)) 0 (Nx.nbytes t)
-
-(* [t]'s elements as floats in C order. *)
-let floats_of t =
-  let t = Nx.contiguous t in
-  Bigarray.Array1.sub
-    (Nx_device.Buffer.bigarray Bigarray.float32 (Nx_effect.to_host t))
-    0 (Nx.numel t)
+let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
 let of_host dt buf shape =
   Nx.reshape shape (Nx_effect.from_host Nx_effect.host_tensor_context dt buf)
@@ -181,14 +167,14 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
   let count = Array.fold_left ( * ) 1 lead in
   if count * n * k = 0 then Nx.zeros dt s
   else begin
-    let out = host_buffer dt (count * n * k) in
+    let out = Nx_core.Elements.create dt (count * n * k) in
     let dst = bytes out in
     let item = Nx_dtype.itemsize dt in
     for j = 0 to count - 1 do
       let codes = matrix lead codes j and scales = matrix lead scales j in
       chunks n k (fun r0 r ->
           let values = decode (range r0 r codes) (range r0 r scales) in
-          let src = bytes_of (Nx.cast dt values) in
+          let src = bytes (Nx_effect.elements (Nx.cast dt values)) in
           Bigarray.Array1.blit src
             (Bigarray.Array1.sub dst
                (((j * n) + r0) * k * item)
@@ -347,8 +333,8 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         filled := !filled + List.length group)
       members;
     let slots = !filled + if Array.mem (-1) slot then 1 else 0 in
-    let y = host_buffer Nx_dtype.float32 (slots * m * outputs) in
-    let dst = Nx_device.Buffer.bigarray Bigarray.float32 y in
+    let y = Nx_core.Elements.create Nx_dtype.float32 (slots * m * outputs) in
+    let dst = floats y in
     if slots > !filled then
       Bigarray.Array1.fill
         (Bigarray.Array1.sub dst (!filled * m * outputs) (m * outputs))
@@ -377,14 +363,14 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
                     (decoded r0 r)
                 in
                 sum := Some (match !sum with None -> p | Some s -> Nx.add s p));
-            let src = floats_of (Option.get !sum) in
+            let src = floats (Nx_effect.elements (Option.get !sum)) in
             Bigarray.Array1.blit src
               (Bigarray.Array1.sub dst (!base * m * k) (g * m * k))
           end
           else
             chunks n k (fun r0 r ->
                 let p = Nx.matmul rows (Nx.matrix_transpose (decoded r0 r)) in
-                let src = floats_of p in
+                let src = floats (Nx_effect.elements p) in
                 for q = 0 to (g * m) - 1 do
                   Bigarray.Array1.blit
                     (Bigarray.Array1.sub src (q * r) r)

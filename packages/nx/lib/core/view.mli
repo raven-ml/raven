@@ -45,6 +45,10 @@ val numel : t -> int
 
     [numel] of a scalar ([ndim v = 0]) is [1]. *)
 
+val extent : t -> int * int
+(** [extent v] is [(lo, hi)], [lo] the lowest storage position [v] reaches and
+    [hi] one past the highest. [v] must have at least one element. *)
+
 val dim : int -> t -> int
 (** [dim axis v] is dimension [axis] of [v].
 

@@ -237,11 +237,8 @@ let host_arch = match Host_arch.architecture with "amd64" -> "x86_64" | a -> a
 let default_timeout_ms = 30_000
 
 let host =
-  let alloc n =
-    match heap n with
-    | ba -> Some (heap_memory ba, Host ba)
-    | exception Stdlib.Out_of_memory -> None
-  in
+  (* Buffer.create takes host memory from the heap, never from [alloc]. *)
+  let alloc _ = assert false in
   create ~name:"CPU" ~arch:host_arch ~budget:max_int ~alloc ~free:ignore
     ~host_memory:None ~mapping:None ~copy_queue:None ~load:None ~signal:None
     ~timeout_ms:default_timeout_ms ~synchronized:ignore
@@ -634,26 +631,14 @@ module Buffer = struct
     | Bigarray.Complex64 -> 8
     | k -> Bigarray.kind_size_in_bytes k
 
-  (* The format of the elements of [k]. *)
-  let format_of_kind (type a b) (k : (a, b) Bigarray.kind) =
-    match k with
-    | Bigarray.Float16 -> Nx_dtype.Scalar.Float16
-    | Bigarray.Float32 -> Float32
-    | Bigarray.Float64 -> Float64
-    | Bigarray.Int8_signed -> Int8
-    | Bigarray.Int8_unsigned | Bigarray.Char -> UInt8
-    | Bigarray.Int16_signed -> Int16
-    | Bigarray.Int16_unsigned -> UInt16
-    | Bigarray.Int32 -> Int32
-    | Bigarray.Int64 -> Int64
-    | Bigarray.Complex32 -> Complex64
-    | Bigarray.Complex64 -> Complex128
-    | Bigarray.Int | Bigarray.Nativeint ->
-        invalid_arg
-          "Nx_device.Buffer.of_bigarray: the kind is no storage format"
-
   let of_bigarray ?file ba =
-    let dtype = format_of_kind (Bigarray.Array1.kind ba) in
+    let dtype =
+      match Nx_dtype.Scalar.of_bigarray_kind (Bigarray.Array1.kind ba) with
+      | Some s -> s
+      | None ->
+          invalid_arg
+            "Nx_device.Buffer.of_bigarray: the kind is no storage format"
+    in
     let extent = Bigarray.Array1.size_in_bytes ba in
     Option.iter
       (fun f ->
@@ -764,9 +749,8 @@ module Buffer = struct
         (fun m -> invalid_arg ("Nx_device.Buffer.bigarray: " ^ m))
         fmt
     in
-    (match k with
-    | Bigarray.Int | Bigarray.Nativeint -> fail "the kind is no storage format"
-    | _ -> ());
+    if Nx_dtype.Scalar.of_bigarray_kind k = None then
+      fail "the kind is no storage format";
     if not (buf.base.owner == host) then
       fail "the buffer is on %s, not CPU" buf.base.owner.name;
     reachable buf;

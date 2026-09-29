@@ -282,6 +282,11 @@ module Scalar : sig
   val of_dtype : ('a, 'b) dtype -> t
   (** [of_dtype dt] is the format of [dt]'s elements. *)
 
+  val of_bigarray_kind : ('a, 'b) Bigarray.kind -> t option
+  (** [of_bigarray_kind k] is the format of [k]'s elements: {!UInt8} for [Char].
+      It is [None] for [Int] and [Nativeint], whose width depends on the
+      platform. *)
+
   val bitsize : t -> int
   (** [bitsize s] is the size in bits of one element of [s]: [4] for {!Int4} and
       {!UInt4}, and [8] for {!Bool}. *)

@@ -89,8 +89,6 @@ let elts =
     elt ~code:(fun b -> le 1 (Bool.to_int b)) Nx_dtype.bool Gen.bool Fun.id bool;
   ]
 
-let buffer dt n = B.create Nx_device.host (S.of_dtype dt) n
-
 let stores =
   group "stores"
     (List.map
@@ -103,7 +101,7 @@ let stores =
            (Gen.array ~size:(Gen.int_range 0 9) e.value)
            (fun xs ->
              let n = Array.length xs in
-             let b = buffer e.dt n in
+             let b = E.create e.dt n in
              Array.iteri (E.set e.dt b) xs;
              equal (array e.w) (Array.map e.stored xs)
                (Array.init n (E.get e.dt b));
@@ -212,7 +210,7 @@ let other =
        ~memory:{ alloc; free = ignore } ())
 
 let refusals =
-  let f32 = buffer Nx_dtype.float32 2 in
+  let f32 = E.create Nx_dtype.float32 2 in
   let open Nx_dtype in
   cases ~name:fst "refuse"
     [
@@ -220,7 +218,7 @@ let refusals =
       ("an index past the last element", fun () -> ignore (E.get float32 f32 2));
       ("an index of -1", fun () -> ignore (E.get float32 f32 (-1)));
       ( "a 4-bit store past the last element",
-        fun () -> E.set int4 (buffer int4 3) 3 0 );
+        fun () -> E.set int4 (E.create int4 3) 3 0 );
       ( "a buffer of another device",
         fun () -> ignore (E.get uint8 (B.create (Lazy.force other) S.UInt8 1) 0)
       );
@@ -251,7 +249,8 @@ let () =
          test
            "4-bit stores clamp out of range values (the interfaces are silent)"
            (fun () ->
-             let i4 = buffer Nx_dtype.int4 2 and u4 = buffer Nx_dtype.uint4 2 in
+             let i4 = E.create Nx_dtype.int4 2
+             and u4 = E.create Nx_dtype.uint4 2 in
              List.iteri (E.set Nx_dtype.int4 i4) [ -9; 8 ];
              List.iteri (E.set Nx_dtype.uint4 u4) [ -3; 20 ];
              equal (list int) [ -8; 7; 0; 15 ]

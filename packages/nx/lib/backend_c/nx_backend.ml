@@ -54,11 +54,8 @@ let to_host (t : ('a, 'b) t) = t.buffer
 
 let create_tensor ctx dtype shape =
   let size = Array.fold_left ( * ) 1 shape in
-  let buffer =
-    Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dtype) size
-  in
   {
-    buffer;
+    buffer = Elements.create dtype size;
     shape;
     strides = Shape.c_contiguous_strides shape;
     offset = 0;
