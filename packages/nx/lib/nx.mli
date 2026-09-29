@@ -2726,11 +2726,12 @@ val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** {2:linalg_decomp Decompositions} *)
 
 val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [cholesky ?upper a] is the Cholesky factor of positive-definite matrix [a].
-    When [upper] is [true], returns the upper-triangular factor [U] such that
-    [a = Uᵀ U]; otherwise (default) returns the lower-triangular factor [L] such
-    that [a = L Lᵀ]. Only the lower triangle of [a] is read; the upper triangle
-    may hold anything.
+(** [cholesky ?upper a] is the Cholesky factor of positive-definite matrix [a],
+    real symmetric or complex Hermitian. When [upper] is [true], returns the
+    upper-triangular factor [U] such that [a = Uᴴ U]; otherwise (default)
+    returns the lower-triangular factor [L] such that [a = L Lᴴ], where [ᴴ] is
+    the conjugate transpose, the transpose on real matrices. Only the lower
+    triangle of [a] is read; the upper triangle may hold anything.
 
     Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
     positive-definite. Raises [Invalid_argument] if [a] is not square or the
@@ -2739,8 +2740,9 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     See also {!solve}. *)
 
 val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-(** [qr ?mode a] is [(Q, R)] where [a = Q R], [Q] is orthogonal, and [R] is
-    upper-triangular. [mode] defaults to [`Reduced].
+(** [qr ?mode a] is [(Q, R)] where [a = Q R], the columns of [Q] are orthonormal
+    ([Q] is unitary on complex matrices), and [R] is upper-triangular. [mode]
+    defaults to [`Reduced].
 
     Raises {!Linalg_error} with kind [`No_convergence] if the factorization does
     not converge. Raises [Invalid_argument] if the dtype is not floating-point
