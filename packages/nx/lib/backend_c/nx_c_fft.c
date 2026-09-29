@@ -1257,6 +1257,16 @@ static nx_c_status run_rfft_packed(nx_c_dtype src_dt, nx_c_dtype dst_dt,
   return run_lines(&c, n, (n / 2 + 1) + plan->half->work_cx, rfft_packed_body);
 }
 
+/* Zeroes the single bin of every line of `out` along `axis`. */
+static void rfft_zero_bins(nx_c_dtype dt, const nx_c_ndarray *out, int axis) {
+  int64_t lines = 1;
+  for (int d = 0; d < out->ndim; d++)
+    if (d != axis) lines *= out->shape[d];
+  int64_t esz = nx_c_elem_size(dt);
+  for (int64_t L = 0; L < lines; L++)
+    memset((char *)out->data + line_base(out, axis, L) * esz, 0, (size_t)esz);
+}
+
 /* ── rfft ─────────────────────────────────────────────────────────────────
    Real→complex. Last transformed axis: even n takes the packed half-size
    path; odd n keeps the full-length transform (packing needs pairs). Other
@@ -1270,10 +1280,15 @@ static nx_c_status nx_c_rfft_run(const nx_c_ndarray *in, const nx_c_ndarray *out
   int64_t n = in->shape[last];
   int64_t half = n / 2 + 1;
   if (out->shape[last] != half) return NX_C_ERR_SHAPE;
-  /* last axis: real in (n) → complex out (half) */
-  nx_c_status s = (n >= 2 && (n & 1) == 0)
-                     ? run_rfft_packed(in_dt, out_dt, in, out, last, n)
-                     : run_axis(in_dt, out_dt, in, out, last, n, half, -1, 1, 0);
+  /* last axis: real in (n) → complex out (half). An empty line's one bin is
+     the empty sum, which no line pass writes. */
+  nx_c_status s = NX_C_OK;
+  if (n == 0)
+    rfft_zero_bins(out_dt, out, last);
+  else if (n >= 2 && (n & 1) == 0)
+    s = run_rfft_packed(in_dt, out_dt, in, out, last, n);
+  else
+    s = run_axis(in_dt, out_dt, in, out, last, n, half, -1, 1, 0);
   if (s != NX_C_OK) return s;
   /* remaining axes: complex fft on out in place */
   for (int ai = 0; ai < naxes - 1; ai++) {
