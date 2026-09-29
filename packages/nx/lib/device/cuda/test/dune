@@ -1,0 +1,29 @@
+; On a machine with an NVIDIA GPU and its driver; skips elsewhere.
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "(-cclib -ldl)"))))
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (<> %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "()"))))
+
+(tests
+ (names test_nx_cuda_device test_nx_cuda_hang)
+ (package nx)
+ (foreign_stubs
+  (language c)
+  (names test_driver))
+ (link_flags
+  (:include dl_flags.sexp))
+ (libraries nx nx.cuda.device nx.device nx.dtype unix windtrap))

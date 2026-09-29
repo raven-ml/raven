@@ -1,0 +1,32 @@
+(library
+ (name nx_cuda_device)
+ (public_name nx.cuda.device)
+ (libraries nx_device nx_dtype)
+ (foreign_stubs
+  (language c)
+  (names nx_cuda_device_stubs)
+  (flags
+   (:standard -O2 -Wall -Wextra)))
+ (c_library_flags
+  (:include dl_flags.sexp)))
+
+; dlopen is a library of its own on Linux; elsewhere it is part of the C
+; library (macOS) or of kernel32 (Windows).
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "(-ldl)"))))
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (<> %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "()"))))

@@ -2746,6 +2746,19 @@ thread.
 
 ### Nx
 
+- New `nx.cuda.device` library: `Nx_cuda_device.v 0` opens an NVIDIA GPU as
+  an `Nx_device.t` named `CUDA` (`CUDA:1`, ... for the others) on its primary
+  context, which it makes current only during its own driver calls, so other
+  CUDA libraries keep theirs. Its buffers are GPU memory, copied on the
+  device's copy stream; `Buffer.create ~host:true` gives page-locked memory,
+  and `Buffer.borrow` page-locks host memory once for every GPU that borrows
+  it. It loads CUDA modules (cubin, fatbin or PTX), moves bytes between GPUs
+  with peer copies, and wraps memory other libraries allocated with
+  `Nx_cuda_device.of_address`. The driver is loaded at run time from the
+  library search path (`libcuda.so.1`, `nvcuda.dll`), so nx builds without
+  CUDA; `count` is 0 on a machine without a driver. A device needs the
+  driver's 64-bit stream memory operations on every platform, Windows
+  included, and a GPU fault fails it with the driver's error.
 - `nx.device` holds memory that the host does not address, for GPUs whose
   device copies it. `Buffer.copy` runs such copies on the device's copy queue
   as timeline work: directly between memory the device addresses, and in
