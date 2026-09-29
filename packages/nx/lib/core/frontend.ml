@@ -1631,12 +1631,10 @@ module Make (B : Backend_intf.S) = struct
       take ~axis ~indices:idx_t t
     in
     let shrink_axis axis start stop t =
-      if start < stop then
-        B.shrink t
-          (Array.mapi
-             (fun i dim -> if i = axis then (start, stop) else (0, dim))
-             (shape t))
-      else take ~axis ~indices:(empty (B.context t) Nx_dtype.int32 [| 0 |]) t
+      B.shrink t
+        (Array.mapi
+           (fun i dim -> if i = axis then (start, stop) else (0, dim))
+           (shape t))
     in
     let rec apply current axis sq_axes = function
       | [] -> (current, sq_axes)

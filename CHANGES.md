@@ -2757,6 +2757,11 @@ thread.
 
 ### Nx
 
+- An int4 or uint4 value under any layout copies, prints and converts to an
+  array. `Nx.copy`, `Nx.contiguous` and `Nx.to_array` raised
+  `Failure "copy: packed dtype not supported"` on a transpose, a strided or
+  offset view or a broadcast of one, and `Nx.slice` of an empty range raised
+  from `gather`.
 - `Nx.of_bigarray` and `Nx_device.Buffer.of_bigarray` raise
   `Invalid_argument` for a bigarray whose first element does not lie at a
   multiple of its size (of one component for complex kinds), such as a file

@@ -25,10 +25,11 @@
    caml/fail.h or caml/threads.h: it cannot raise or touch the runtime lock
    except through the engine, exactly like every other kernel-family file.
 
-   Packed int4/uint4 reach exactly one op here — contiguous copy — as a byte-
-   level memcpy reinterpreted through the u8 identity kernel (so even that gets
-   the engine's threading and lock handling). Every other op rejects packed via
-   the copy table's NULL slots (NX_C_ERR_PACKED) or an explicit guard. */
+   Packed int4/uint4 reach exactly one op here, copy: whole bytes through the
+   u8 identity kernel when both sides are contiguous from offset 0 (so that
+   gets the engine's threading and lock handling), nibble by nibble otherwise.
+   Every other op rejects packed via the copy table's NULL slots
+   (NX_C_ERR_PACKED) or an explicit guard. */
 
 #include <string.h>
 
@@ -138,39 +139,70 @@ static void nx_c_move_dispatch(nx_c_cost_class cls, int64_t total, int64_t run_l
    the engine already handles. Dispatch is on the output dtype (== input
    dtype). */
 
-/* Packed contiguous copy: reinterpret the nibble stream as bytes and run it
-   through the u8 identity kernel, so the byte memcpy still rides the engine's
-   threading and lock handshake (no raw memcpy under the runtime lock). Only the
-   contiguous, offset-0 case is in scope for packed dtypes (the dtype policy);
-   anything else is NX_C_ERR_PACKED. */
-static void nx_c_copy_packed(value vout, value vin, nx_c_dtype dt) {
+/* Element [i] of packed data: two elements a byte, the first in the low
+   nibble. */
+static inline uint8_t nx_c_nibble_get(const uint8_t *p, int64_t i) {
+  uint8_t b = p[i >> 1];
+  return (i & 1) ? (uint8_t)(b >> 4) : (uint8_t)(b & 0x0f);
+}
+
+static inline void nx_c_nibble_set(uint8_t *p, int64_t i, uint8_t v) {
+  uint8_t *b = p + (i >> 1);
+  *b = (i & 1) ? (uint8_t)((*b & 0x0f) | (v << 4)) : (uint8_t)((*b & 0xf0) | v);
+}
+
+/* Packed copy. When both sides are contiguous from offset 0, whole bytes go
+   through the u8 identity kernel and an odd count's last element alone is
+   written as a nibble, so the destination's other nibble in that byte is kept.
+   Any other layout (a transpose, a strided or offset view, a broadcast input)
+   is copied nibble by nibble in the output's order: serially, since two
+   elements of one byte must not be written by two threads. */
+static void nx_c_copy_packed(value vout, value vin) {
   nx_c_ndarray out, in;
   nx_c_status s = nx_c_ndarray_of_value(vout, &out);
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise("copy", s);
+  if (out.ndim != in.ndim) nx_c_raise("copy", NX_C_ERR_RANK_MISMATCH);
+  for (int d = 0; d < out.ndim; d++)
+    if (out.shape[d] != in.shape[d]) nx_c_raise("copy", NX_C_ERR_SHAPE);
 
   int64_t total = nx_c_prod(out.ndim, out.shape);
-  if (total != nx_c_prod(in.ndim, in.shape) || !nx_c_is_contiguous_off0(&out) ||
-      !nx_c_is_contiguous_off0(&in))
-    nx_c_raise("copy", NX_C_ERR_PACKED);
-  (void)dt; /* packedness already established by the caller */
+  if (total == 0) return;
+  uint8_t *dst = (uint8_t *)out.data;
+  const uint8_t *src = (const uint8_t *)in.data;
 
-  /* Copy every byte the nibble stream occupies through the u8 kernel
-     (threaded + lock-handled for large buffers). The destination is always a
-     fresh full buffer, so an odd element count's trailing high nibble is
-     private padding and may be overwritten. */
-  int64_t bytes = (total + 1) / 2;
-  if (bytes > 0) {
-    nx_c_ndarray bout = out, bin = in;
-    bout.ndim = bin.ndim = 1;
-    bout.shape[0] = bin.shape[0] = bytes;
-    bout.strides[0] = bin.strides[0] = 1;
-    bout.offset = bin.offset = 0;
-    int64_t e2[2] = {1, 1};
-    nx_c_ndarray ops[2] = {bout, bin};
-    s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
-                    NX_C_COST_BANDWIDTH, NULL);
-    if (s != NX_C_OK) nx_c_raise("copy", s);
+  if (nx_c_is_contiguous_off0(&out) && nx_c_is_contiguous_off0(&in)) {
+    int64_t bytes = total / 2;
+    if (bytes > 0) {
+      nx_c_ndarray bout = out, bin = in;
+      bout.ndim = bin.ndim = 1;
+      bout.shape[0] = bin.shape[0] = bytes;
+      bout.strides[0] = bin.strides[0] = 1;
+      int64_t e2[2] = {1, 1};
+      nx_c_ndarray ops[2] = {bout, bin};
+      s = nx_c_map_run(&nx_c_copy_table, NX_C_DTYPE_u8, 1, ops, e2,
+                       NX_C_COST_BANDWIDTH, NULL);
+      if (s != NX_C_OK) nx_c_raise("copy", s);
+    }
+    if (total & 1)
+      nx_c_nibble_set(dst, total - 1, nx_c_nibble_get(src, total - 1));
+    return;
+  }
+
+  int64_t coord[NX_C_MAX_NDIM] = {0};
+  int64_t si = in.offset, di = out.offset;
+  for (int64_t k = 0; k < total; k++) {
+    nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si));
+    for (int d = out.ndim - 1; d >= 0; d--) {
+      if (++coord[d] < out.shape[d]) {
+        si += in.strides[d];
+        di += out.strides[d];
+        break;
+      }
+      si -= in.strides[d] * (out.shape[d] - 1);
+      di -= out.strides[d] * (out.shape[d] - 1);
+      coord[d] = 0;
+    }
   }
 }
 
@@ -178,7 +210,7 @@ CAMLprim value caml_nx_c_copy(value vout, value vin) {
   CAMLparam2(vout, vin);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
   if (dt != NX_C_DTYPE_COUNT && nx_c_dtype_is_packed(dt)) {
-    nx_c_copy_packed(vout, vin, dt);
+    nx_c_copy_packed(vout, vin);
   } else {
     value vals[2] = {vout, vin};
     nx_c_map_funnel("copy", &nx_c_copy_table, NX_C_COST_BANDWIDTH, 1, vals, NULL);
