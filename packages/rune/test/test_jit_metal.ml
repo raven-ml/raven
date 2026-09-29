@@ -484,6 +484,11 @@ let test_programs_own_their_arenas () =
     (to_arr (f (x 3)))
     (f' (x 3));
   let h, h', _ = program ~n (fun a -> Nx.mul_s (Nx.sin a) 0.5) in
+  (* Storage the earlier calls dropped is released first, so that the count
+     measures the call alone: a release deferred until an operation inside the
+     call would lower it. *)
+  Gc.full_major ();
+  ignore (Rune.jit_stats ());
   let before = device_bytes () in
   check_arr ~eps:1e-2 ~msg:"another large" (to_arr (h (y 2))) (h' (y 2));
   is_true ~msg:"it owns independent intermediate storage"

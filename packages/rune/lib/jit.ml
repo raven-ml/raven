@@ -3004,18 +3004,18 @@ type host_out = Host : ('a, 'b) ND.t * HB.t -> host_out
 
 let chunk_bytes = 64 * 1024 * 1024
 
-(* Byte staging belongs to the caller's table, including full chunks, and is
-   reused across calls so a compiled program does not allocate fresh [Bytes]
-   for every leaf on every replay. Transfer primitives consume the bytes
+(* The host memory a chunk read from a file lands in belongs to the caller's
+   table, by size, and is reused across calls so a compiled program does not
+   allocate it for every leaf on every replay. Transfers consume it
    synchronously before the next lookup. One compiled function is not safe
    for concurrent replay, but independent callers do not share staging. *)
-type scratch = (int, Bytes.t) Hashtbl.t
+type scratch = (int, HB.t) Hashtbl.t
 
-let scratch_bytes tbl size =
+let scratch_buffer tbl size =
   match Hashtbl.find_opt tbl size with
   | Some b -> b
   | None ->
-      let b = Bytes.create size in
+      let b = HB.create Nx_device.host ND.Scalar.UInt8 size in
       Hashtbl.add tbl size b;
       b
 
@@ -3032,38 +3032,19 @@ let with_window buf ~off ~len f =
     ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
     (fun () -> f w)
 
-(* Host staging. Transfers stage bytes, which the host buffers' memory is
-   copied into and out of. *)
-
-external host_to_bytes : nativeint -> bytes -> int -> int -> unit
-  = "caml_rune_host_to_bytes"
-[@@noalloc]
-
-external bytes_to_host : bytes -> int -> nativeint -> int -> unit
-  = "caml_rune_bytes_to_host"
-[@@noalloc]
-
-(* The address of the [len] bytes of the host buffer [host] from byte [off],
-   which [bytes] holds. The bounds are checked without a sum, which an offset
-   near [max_int] would wrap. *)
-let host_range host ~off ~len bytes =
-  let n = HB.nbytes host in
-  if off < 0 || len < 0 || off > n || len > n - off || len > Bytes.length bytes
-  then
-    invalid_arg
-      (Printf.sprintf "Rune: %d bytes at %d of a %d-byte buffer" len off
-         (HB.nbytes host));
-  Nativeint.add (HB.host_address host) (Nativeint.of_int off)
-
-(* [read_host host ~off bytes len] copies the [len] bytes of [host] from byte
-   [off] into [bytes]; [write_host] copies them the other way. *)
-let read_host host ~off bytes len =
-  host_to_bytes (host_range host ~off ~len bytes) bytes 0 len;
-  ignore (Sys.opaque_identity host)
-
-let write_host bytes len host ~off =
-  bytes_to_host bytes 0 (host_range host ~off ~len bytes) len;
-  ignore (Sys.opaque_identity host)
+(* [with_host_window host ~off ~len f] is [f w], [w] the [len] bytes of the host
+   buffer [host] from byte [off] as a buffer of the host device over that
+   memory, which [Tolk.Device.Buffer.copy_from] copies into or out of. [host]
+   stays reachable until [f] returns. *)
+let with_host_window host ~off ~len f =
+  let w =
+    Tolk.Device.Buffer.borrow ~size:len ~dtype:Tolk_uop.Dtype.uint8
+      ~source:host
+      (Nativeint.add (HB.host_address host) (Nativeint.of_int off))
+  in
+  Fun.protect
+    ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
+    (fun () -> f w)
 
 (* File-backed sources
 
@@ -3086,18 +3067,20 @@ let open_file (file : HB.file) =
           Unix.close fd;
           None)
 
-(* [read_at fd ~pos bytes len] fills [bytes] with the [len] bytes of [fd] at
-   [pos], or is [false] if the file is shorter or cannot be read. *)
-let read_at fd ~pos bytes len =
+(* [read_at fd ~pos dst ~off len] fills the [len] bytes of the host buffer
+   [dst] from byte [off] with the bytes of [fd] at [pos], or is [false] if the
+   file is shorter or cannot be read. *)
+let read_at fd ~pos dst ~off len =
   match Unix.LargeFile.lseek fd (Int64.of_int pos) Unix.SEEK_SET with
   | exception Unix.Unix_error _ -> false
   | _ ->
-      let rec fill off =
-        off = len
+      let bytes = HB.bigarray Bigarray.char dst in
+      let rec fill k =
+        k = len
         ||
-        match Unix.read fd bytes off (len - off) with
+        match Unix.read_bigarray fd bytes (off + k) (len - k) with
         | 0 -> false
-        | n -> fill (off + n)
+        | n -> fill (k + n)
         | exception Unix.Unix_error _ -> false
       in
       fill 0
@@ -3116,8 +3099,8 @@ let with_file_source host f =
             (fun () ->
               f
                 (Some
-                   (fun ~pos bytes len ->
-                     read_at fd ~pos:(base + pos) bytes len))))
+                   (fun ~pos dst ~off len ->
+                     read_at fd ~pos:(base + pos) dst ~off len))))
 
 (* [base_layout v] is [Some (shape, axes)] when the elements of the view [v] are
    exactly a contiguous run of its buffer seen through a permutation of axes:
@@ -3153,9 +3136,8 @@ let base_layout v =
    copy of the run for the length of the upload; walking the mapping in the
    view's order instead faults its pages in at a fraction of the disk's
    speed. *)
-let read_base : type a b.
-    scratch -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
- fun sc x ->
+let read_base : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
+ fun x ->
   let v = Nx_effect.view x in
   let host = Nx_effect.to_host x in
   match (HB.file host, base_layout v) with
@@ -3171,9 +3153,10 @@ let read_base : type a b.
       let pos = ref 0 and ok = ref true in
       while !ok && !pos < n do
         let len = Int.min chunk (n - !pos) in
-        let bytes = scratch_bytes sc (len * item) in
-        ok := read ~pos:((NV.offset v + !pos) * item) bytes (len * item);
-        if !ok then write_host bytes (len * item) run ~off:(!pos * item);
+        ok :=
+          read
+            ~pos:((NV.offset v + !pos) * item)
+            run ~off:(!pos * item) (len * item);
         pos := !pos + len
       done;
       if not !ok then None
@@ -3210,29 +3193,34 @@ let rec copyin_at : type a b.
     let pos = ref 0 in
     while !pos < n do
       let len = Int.min chunk (n - !pos) in
-      let bytes = scratch_bytes sc (len * item) in
       let src_off = NV.offset v + !pos in
-      let from_file =
+      (* A chunk read from the file lands in staging; a file that can no
+         longer be read is left for the mapping. *)
+      let src, src_off =
         match !read with
-        | Some read -> read ~pos:(src_off * item) bytes (len * item)
-        | None -> false
+        | None -> (host, src_off * item)
+        | Some r ->
+            let staged = scratch_buffer sc (len * item) in
+            if r ~pos:(src_off * item) staged ~off:0 (len * item) then
+              (staged, 0)
+            else begin
+              read := None;
+              (host, src_off * item)
+            end
       in
-      (* A file that can no longer be read is left for the mapping. *)
-      if not from_file then begin
-        read := None;
-        read_host host ~off:(src_off * item) bytes (len * item)
-      end;
       with_window buf
         ~off:(off + (!pos * item))
         ~len:(len * item)
-        (fun w -> Tolk.Device.Buffer.copyin w bytes);
+        (fun dst ->
+          with_host_window src ~off:src_off ~len:(len * item) (fun src ->
+              Tolk.Device.Buffer.copy_from ~dst ~src));
       update_stats (fun s ->
           { s with bytes_to_device = s.bytes_to_device + (len * item) });
       pos := !pos + len
     done
   end
   else
-    match read_base sc x with
+    match read_base x with
     | Some base -> copyin_at sc buf ~off base
     | None when nbytes <= chunk_bytes ->
         copyin_at sc buf ~off (Nx_effect.contiguous x)
@@ -3269,19 +3257,19 @@ let copyin_tensor sc buf x =
 
 (* Copy a device buffer's contents into [host] from element [dst_off] on. *)
 let copyout_into : type a b.
-    scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) ND.t -> HB.t -> unit
-    =
- fun sc buf ~dst_off dt host ->
+    Tolk.Device.Buffer.t -> dst_off:int -> (a, b) ND.t -> HB.t -> unit =
+ fun buf ~dst_off dt host ->
   let item = ND.itemsize dt in
   let n = Tolk.Device.Buffer.nbytes buf / item in
   let chunk = chunk_bytes / item in
   let pos = ref 0 in
   while !pos < n do
     let len = Int.min chunk (n - !pos) in
-    let bytes = scratch_bytes sc (len * item) in
-    with_window buf ~off:(!pos * item) ~len:(len * item) (fun w ->
-        Tolk.Device.Buffer.copyout w bytes);
-    write_host bytes (len * item) host ~off:((dst_off + !pos) * item);
+    with_window buf ~off:(!pos * item) ~len:(len * item) (fun src ->
+        with_host_window host
+          ~off:((dst_off + !pos) * item)
+          ~len:(len * item)
+          (fun dst -> Tolk.Device.Buffer.copy_from ~dst ~src));
     update_stats (fun s ->
         { s with bytes_from_device = s.bytes_from_device + (len * item) });
     pos := !pos + len
@@ -3312,15 +3300,14 @@ let upload_windows : type a b.
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
 let read_out : type a b.
-    scratch ->
     Nx_effect.context ->
     (a, b) ND.t ->
     int array ->
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
- fun sc ctx dtv shape buf ->
+ fun ctx dtv shape buf ->
   let host = host_buffer dtv (numel shape) in
-  copyout_into sc buf ~dst_off:0 dtv host;
+  copyout_into buf ~dst_off:0 dtv host;
   Nx_effect.reshape (Nx_effect.from_host ctx dtv host) shape
 
 (* The device engine
@@ -3351,7 +3338,7 @@ let with_storage_range dt buf ~lo ~hi f =
       let host = host_buffer dt (hi - lo) in
       with_window buf ~off:(lo * item)
         ~len:((hi - lo) * item)
-        (fun w -> copyout_into (Hashtbl.create 1) w ~dst_off:0 dt host);
+        (fun w -> copyout_into w ~dst_off:0 dt host);
       f host `Copied
 
 (* The view [v] measured from element [base] of the storage. *)
@@ -3640,7 +3627,8 @@ let borrow : type a b.
                   let pos = ref (lo * item) and stop = hi * item in
                   while !pos < stop do
                     let len = Int.min chunk_bytes (stop - !pos) in
-                    ignore (read ~pos:!pos (scratch_bytes sc len) len : bool);
+                    ignore
+                      (read ~pos:!pos (scratch_buffer sc len) ~off:0 len : bool);
                     pos := !pos + len
                   done)
                 spans)
@@ -5266,7 +5254,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                      let buf =
                        Tolk.Realize.resolve context node
                      in
-                     Nx.P (read_out c.cp_scratch c.cp_ctx dt shape buf)
+                     Nx.P (read_out c.cp_ctx dt shape buf)
                    else
                      match repeats.(j) with
                      | Some bufs -> Nx.P (placed_on place dt shape bufs)
