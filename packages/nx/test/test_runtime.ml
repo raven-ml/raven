@@ -40,9 +40,9 @@ let devices =
           is_true (Nx.Device.of_runtime r1 == d1);
           equal string "R1" (Nx.Device.name d1);
           is_false (Nx.Device.equal d1 d2));
-      test "the host shares the runtimes' memory: a copy on it and on a runtime \
-            computes and reads back"
-        (fun () ->
+      test
+        "the host shares the runtimes' memory: a copy on it and on a runtime \
+         computes and reads back" (fun () ->
           let p = Nx.Placement.replicated [ d1; Nx.Device.host ] in
           let x = Nx.place p (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
           let y = Nx.add x x in

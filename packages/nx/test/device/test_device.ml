@@ -984,9 +984,7 @@ let buffers =
           dead (fun () -> B.copy ~src:before ~dst:(B.create host S.UInt8 4));
           dead (fun () -> B.copy ~src:(of_string "abcdefgh") ~dst:b);
           dead (fun () -> B.consume ~why:"again" b);
-          equal
-            (pair string string)
-            ("abcdefgh", "cdef")
+          equal (pair string string) ("abcdefgh", "cdef")
             (read c, read (B.view c ~offset:2 S.UInt8 4));
           equal bool true (B.is_borrowed c));
       test

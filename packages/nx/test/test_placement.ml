@@ -110,9 +110,9 @@ let placements =
           cover "equal placements" same;
           equal bool same (Nx.Placement.equal p (make b)));
       test
-        "refuse no devices, a repeated device, mixed memories, a negative axis, \
-         and windows of a device they lack or an axis that does not divide"
-        (fun () ->
+        "refuse no devices, a repeated device, mixed memories, a negative \
+         axis, and windows of a device they lack or an axis that does not \
+         divide" (fun () ->
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
           refuses
             [
@@ -755,8 +755,7 @@ let identities =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
                     (Nx_array.View.create [| 1 |])
                     (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
-                       (Nx_effect.Held
-                          (Nx_array.Elements.create Nx.float32 1)))
+                       (Nx_effect.Held (Nx_array.Elements.create Nx.float32 1)))
                 in
                 d.d_id
                 :: List.map Nx_effect.identity_hash
