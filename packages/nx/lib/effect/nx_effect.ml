@@ -13,11 +13,11 @@ open Nx_core
    a GADT of its own, whose parameters the return type determines.
 
    A tensor is one of three things. [Host] is a tensor of the link-time engine,
-   the host's. [Placed] is a value that an engine carried by a device holds on a
-   device list other than the host's: nx knows its placement, dtype and view,
-   and the engine alone knows its storage. [Traced] is a node of a trace: it has
-   no bytes and never will, and the tracer that made it keeps its payload in
-   [t_node].
+   the host's. [Placed] is a value held in the memory of the devices of a
+   placement other than the host's: nx knows its placement, dtype and view, and
+   the devices' memory alone knows its storage. [Traced] is a node of a trace:
+   it has no bytes and never will, and the tracer that made it keeps its
+   payload in [t_node].
 
    The views of one placed storage share one cell, which holds what belongs to
    the storage rather than to a view: whether it is live or was consumed by a
@@ -296,16 +296,19 @@ and ('a, 'b) traced = {
   t_node : node; (* the tracer's payload *)
 }
 
-and engine = {
+(* How a device holds bytes: the library that opens it reads and places the
+   values in its memory. Computing on them is not the memory's. *)
+and memory = {
   read : 'a 'b. ('a, 'b) resident -> Nx_device.Buffer.t;
       (* the view's elements, in C order, in a host buffer the caller owns *)
   place : 'a 'b. placement -> ('a, 'b) t -> ('a, 'b) t;
-      (* the value on a placement of this engine; its source stays. Placing an
-         empty value allocates nothing, and raises [Invalid_argument] if the
-         placement cannot hold the dtype: nx checks held values this way. *)
+      (* the value on a placement of devices of this memory; its source stays.
+         Placing an empty value allocates nothing, and raises
+         [Invalid_argument] if the placement cannot hold the dtype: nx checks
+         held values this way. *)
 }
 
-and device = { d_id : int; d_name : string; d_engine : engine }
+and device = { d_id : int; d_name : string; d_memory : memory }
 and placement = device Grid.t
 and storage = ..
 and node = ..
@@ -313,8 +316,8 @@ and node = ..
 type context = device context_of
 
 (* A value of one element that nx holds itself: a scalar created in a device
-   context, or a one-element result. It allocates nothing on the device; an
-   engine passes it to a program as it passes a host value. The element is a
+   context, or a one-element result. It allocates nothing on the device; a
+   compiled call passes it to a program as it passes a host value. The element is a
    host buffer of it alone, as stored: a float read as an OCaml float would
    quiet a signalling NaN. *)
 type storage += Held of Nx_device.Buffer.t
@@ -417,7 +420,7 @@ let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
   | Consumed k -> consumed k
   | Live (Held e) ->
       Elements.gather e (View.create ~strides:[| 0 |] [| View.numel r.r_view |])
-  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_engine.read r)
+  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_memory.read r)
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
@@ -471,144 +474,78 @@ let host_of : type a b. (a, b) t -> (a, b) Nx_backend.t = function
   | Placed r -> read_host r
   | Traced _ -> outside_trace ()
 
-(* Devices *)
+(* Devices and placements
 
-module Device = struct
-  type t = device
+   The host device is the one of id 0; ids from [fresh_id] start at 1. It is
+   made with the runtime's memory, so it and the [Device] and [Placement]
+   modules are defined below that memory; the functions here are what the
+   code in between needs. *)
 
-  exception Out_of_memory of t * int
+exception Out_of_memory of device * int
 
-  let make name engine =
-    { d_id = fresh_id (); d_name = name; d_engine = engine }
+let () =
+  Printexc.register_printer (function
+    | Out_of_memory (d, n) ->
+        Some (Printf.sprintf "Nx.Device.Out_of_memory(%s, %d bytes)" d.d_name n)
+    | _ -> None)
 
-  let name d = d.d_name
-  let engine d = d.d_engine
-  let equal = ( == )
-  let compare a b = Int.compare a.d_id b.d_id
-  let pp ppf d = Format.pp_print_string ppf d.d_name
+let is_host_device d = d.d_id = 0
 
-  (* The host holds no placed value: a value moves to it by a read. *)
-  let rec host_engine =
-    {
-      read = (fun _ -> invalid_arg "the host holds no placed value");
-      place =
-        (fun p x ->
-          match Grid.devices p with
-          | [ d ] when d.d_engine == host_engine -> Host (host_of x)
-          | _ -> invalid_arg "the host engine places values on the host only");
-    }
+let is_host_placement p =
+  match Grid.devices p with [ d ] -> is_host_device d | _ -> false
 
-  let host = make "CPU" host_engine
+let pp_device ppf d = Format.pp_print_string ppf d.d_name
+let pp_placement ppf p = Grid.pp pp_device ppf p
 
-  let () =
-    Printexc.register_printer (function
-      | Out_of_memory (d, n) ->
-          Some
-            (Printf.sprintf "Nx.Device.Out_of_memory(%s, %d bytes)" d.d_name n)
-      | _ -> None)
-end
-
-(* Placements *)
-
-module Placement = struct
-  type t = placement
-
-  let host = Grid.device Device.host
-  let device d = Grid.device d
-  let devices = Grid.devices
-  let engine p = (List.hd (devices p)).d_engine
-  let is_host p = match devices p with [ d ] -> d == Device.host | _ -> false
-
-  let check what ds =
-    let fail fmt =
-      Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
-    in
-    let rec distinct = function
-      | [] -> ()
-      | d :: rest ->
-          if List.memq d rest then fail "%s appears twice" d.d_name;
-          distinct rest
-    in
-    match ds with
-    | [] -> fail "no device"
-    | d :: rest ->
-        distinct ds;
-        List.iter
-          (fun d' ->
-            if d'.d_engine != d.d_engine then
-              fail "%s and %s belong to different engines" d.d_name d'.d_name)
-          rest
-
-  let replicated ds =
-    check "replicated" ds;
-    Grid.v ds [ List.length ds ] []
-
-  let sharded ~axis ds =
-    if axis < 0 then
-      invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
-    check "sharded" ds;
-    Grid.v ds [ List.length ds ] [ (axis, [ 0 ]) ]
-
-  (* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
-  let check_shape what p shape =
-    List.iter
-      (fun (a, n) ->
-        if a >= Array.length shape then
-          invalid_arg
-            (Printf.sprintf "%s: shape %s has no axis %d to split" what
-               (Shape.to_string shape) a);
-        if shape.(a) mod n <> 0 then
-          invalid_arg
-            (Printf.sprintf
-               "%s: axis %d of shape %s does not split evenly over %d devices"
-               what a (Shape.to_string shape) n))
-      (Grid.cuts p)
-
-  let window p shape d =
-    match List.find_index (( == ) d) (devices p) with
-    | None ->
+(* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
+let check_shape what p shape =
+  List.iter
+    (fun (a, n) ->
+      if a >= Array.length shape then
         invalid_arg
-          (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
-    | Some k ->
-        check_shape "Nx.Placement.window" p shape;
-        let w = Array.map (fun n -> (0, n)) shape in
-        List.iter2
-          (fun (a, n) (_, j) ->
-            let size = shape.(a) / n in
-            w.(a) <- (j * size, (j + 1) * size))
-          (Grid.cuts p) (Grid.tile_index p k);
-        w
+          (Printf.sprintf "%s: shape %s has no axis %d to split" what
+             (Shape.to_string shape) a);
+      if shape.(a) mod n <> 0 then
+        invalid_arg
+          (Printf.sprintf
+             "%s: axis %d of shape %s does not split evenly over %d devices"
+             what a (Shape.to_string shape) n))
+    (Grid.cuts p)
 
-  (* The placement of a value with a new leading axis, and of one without its
-     leading axis, which no cut may name. *)
-  let with_leading_axis p = Grid.map_axes succ p
+let window_of p shape d =
+  match List.find_index (( == ) d) (Grid.devices p) with
+  | None ->
+      invalid_arg
+        (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
+  | Some k ->
+      check_shape "Nx.Placement.window" p shape;
+      let w = Array.map (fun n -> (0, n)) shape in
+      List.iter2
+        (fun (a, n) (_, j) ->
+          let size = shape.(a) / n in
+          w.(a) <- (j * size, (j + 1) * size))
+        (Grid.cuts p) (Grid.tile_index p k);
+      w
 
-  let without_leading_axis p =
-    if List.mem_assoc 0 (Grid.cuts p) then None else Some (Grid.map_axes pred p)
-
-  let equal = Grid.equal ( == )
-  let pp ppf p = Grid.pp Device.pp ppf p
-end
-
-(* Placed constructors, for engines *)
+(* Placed constructors, for device memories *)
 
 (* A cell over [storage] of [length] elements per device of [placement], whose
-   engine owns it. The engine attaches the finaliser that releases the
+   memory owns it. The memory attaches the finaliser that releases the
    storage. *)
 let cell ~placement ~length storage =
   { placement; length; state = Live storage; bound = Atomic.make 0;
     lock = Mutex.create (); readers = 0; exclusive = false }
 
 let placed placement dtype view cell =
-  if Placement.is_host placement then
+  if is_host_placement placement then
     invalid_arg "Nx_effect.placed: a placed value is never on the host";
-  let held = Placement.devices cell.placement in
+  let held = Grid.devices cell.placement in
   if
-    not (List.for_all (fun d -> List.memq d held) (Placement.devices placement))
+    not (List.for_all (fun d -> List.memq d held) (Grid.devices placement))
   then
     invalid_arg
       (Format.asprintf "Nx_effect.placed: a value on %a views a storage on %a"
-         Placement.pp placement Placement.pp cell.placement);
+         pp_placement placement pp_placement cell.placement);
   Placed
     {
       r_id = fresh_id ();
@@ -708,7 +645,7 @@ let extents w = Array.map (fun (lo, hi) -> hi - lo) w
 (* [assemble r window read] is the elements of [window] of the value [r], in C
    order, from [read d v], the elements of the per-shard view [v] on device [d]
    in C order. Each tile meeting the window is read once, from the first device
-   that holds it, and only where it meets the window. Engines read placed
+   that holds it, and only where it meets the window. Memories read placed
    values, and gather the pieces of a move, this way. *)
 let assemble (type a b) (r : (a, b) resident) window
     (read : device -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
@@ -717,13 +654,13 @@ let assemble (type a b) (r : (a, b) resident) window
   let pieces =
     List.fold_left
       (fun pieces d ->
-        let t = Placement.window p shape d in
+        let t = window_of p shape d in
         if List.exists (fun (_, t', _) -> t' = t) pieces then pieces
         else
           match intersect window t with
           | Some i -> (d, t, i) :: pieces
           | None -> pieces)
-      [] (Placement.devices p)
+      [] (Grid.devices p)
   in
   let piece (d, t, i) = read d (View.shrink r.r_view (within t i)) in
   match pieces with
@@ -738,13 +675,190 @@ let assemble (type a b) (r : (a, b) resident) window
         pieces;
       dst
 
+(* Runtime memory
+
+   The memory of [Nx_device] devices, the host among them: one buffer per
+   device of the cell's placement, in its order. *)
+
+type storage += Runtime of Nx_device.Buffer.t list
+
+let runtime_lock = Mutex.create ()
+let opened : (Nx_device.t * device) list ref = ref []
+
+let runtime_of d =
+  if is_host_device d then Nx_device.host
+  else
+    Mutex.protect runtime_lock (fun () ->
+        match List.find_opt (fun (_, d') -> d' == d) !opened with
+        | Some (rd, _) -> rd
+        | None -> invalid_arg ("Nx: " ^ d.d_name ^ " is not a runtime device"))
+
+let create_runtime d s n =
+  try Nx_device.Buffer.create (runtime_of d) s n
+  with Nx_device.Out_of_memory (_, bytes) ->
+    raise (Out_of_memory (d, bytes))
+
+(* The elements of view [v] of [b]. Int4 storage is read whole: its elements may
+   not start on a byte. *)
+let read_view b v =
+  let s = Nx_device.Buffer.dtype b in
+  let n = View.numel v in
+  if n = 0 then Nx_device.Buffer.create Nx_device.host s 0
+  else
+    let lo, hi =
+      match s with
+      | Nx_dtype.Scalar.Int4 | UInt4 -> (0, Nx_device.Buffer.length b)
+      | _ -> View.extent v
+    in
+    let span = Nx_device.Buffer.create Nx_device.host s (hi - lo) in
+    Nx_device.Buffer.copy
+      ~src:
+        (Nx_device.Buffer.view b
+           ~offset:(lo * Nx_dtype.Scalar.bitsize s / 8)
+           s (hi - lo))
+      ~dst:span;
+    Elements.contiguous span
+      (View.create
+         ~offset:(View.offset v - lo)
+         ~strides:(View.strides v) (View.shape v))
+
+let runtime_memory =
+  let read : type a b. (a, b) resident -> Nx_device.Buffer.t =
+   fun r ->
+    match Cell.state r.r_cell with
+    | Live (Runtime bufs) ->
+        let holders = Grid.devices r.r_cell.placement in
+        let buffer_on d =
+          List.nth bufs (Option.get (List.find_index (( == ) d) holders))
+        in
+        let shape = global r.r_placement (View.shape r.r_view) in
+        assemble r
+          (Array.map (fun n -> (0, n)) shape)
+          (fun d v -> read_view (buffer_on d) v)
+    | _ -> assert false (* nx reads held and consumed values itself *)
+  in
+  let place : type a b. placement -> (a, b) t -> (a, b) t =
+   fun p x ->
+    let h = host_of x in
+    let dt = Nx_backend.dtype h and v = Nx_backend.view h in
+    let shape = View.shape v in
+    let s = Nx_dtype.Scalar.of_dtype dt in
+    let ds = Grid.devices p in
+    let windows = List.map (fun d -> window_of p shape d) ds in
+    let local = extents (List.hd windows) in
+    let n = Array.fold_left ( * ) 1 local in
+    let bufs =
+      List.map2
+        (fun d w ->
+          let b = create_runtime d s n in
+          if n > 0 then
+            Nx_device.Buffer.copy
+              ~src:
+                (Elements.contiguous (Nx_backend.to_host h) (View.shrink v w))
+              ~dst:b;
+          b)
+        ds windows
+    in
+    placed p dt (View.create local)
+      (cell ~placement:p ~length:n (Runtime bufs))
+  in
+  { read; place }
+
+(* Devices *)
+
+module Device = struct
+  type t = device
+
+  exception Out_of_memory = Out_of_memory
+
+  let host = { d_id = 0; d_name = "CPU"; d_memory = runtime_memory }
+
+  let make name memory =
+    { d_id = fresh_id (); d_name = name; d_memory = memory }
+
+  let of_runtime rd =
+    if Nx_device.equal rd Nx_device.host then host
+    else
+      Mutex.protect runtime_lock (fun () ->
+          match
+            List.find_opt (fun (rd', _) -> Nx_device.equal rd rd') !opened
+          with
+          | Some (_, d) -> d
+          | None ->
+              let d = make (Nx_device.name rd) runtime_memory in
+              opened := (rd, d) :: !opened;
+              d)
+
+  let is_host = is_host_device
+  let name d = d.d_name
+  let memory d = d.d_memory
+  let equal = ( == )
+  let compare a b = Int.compare a.d_id b.d_id
+  let pp = pp_device
+end
+
+(* Placements *)
+
+module Placement = struct
+  type t = placement
+
+  let host = Grid.device Device.host
+  let device d = Grid.device d
+  let devices = Grid.devices
+  let memory p = (List.hd (devices p)).d_memory
+  let is_host = is_host_placement
+
+  let check what ds =
+    let fail fmt =
+      Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
+    in
+    let rec distinct = function
+      | [] -> ()
+      | d :: rest ->
+          if List.memq d rest then fail "%s appears twice" d.d_name;
+          distinct rest
+    in
+    match ds with
+    | [] -> fail "no device"
+    | d :: rest ->
+        distinct ds;
+        List.iter
+          (fun d' ->
+            if d'.d_memory != d.d_memory then
+              fail "%s and %s have different memories" d.d_name d'.d_name)
+          rest
+
+  let replicated ds =
+    check "replicated" ds;
+    Grid.v ds [ List.length ds ] []
+
+  let sharded ~axis ds =
+    if axis < 0 then
+      invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
+    check "sharded" ds;
+    Grid.v ds [ List.length ds ] [ (axis, [ 0 ]) ]
+
+  let check_shape = check_shape
+  let window = window_of
+
+  (* The placement of a value with a new leading axis, and of one without its
+     leading axis, which no cut may name. *)
+  let with_leading_axis p = Grid.map_axes succ p
+
+  let without_leading_axis p =
+    if List.mem_assoc 0 (Grid.cuts p) then None else Some (Grid.map_axes pred p)
+
+  let equal = Grid.equal ( == )
+  let pp = pp_placement
+end
+
 (* A held value of shape [shape] on [p], of the one element of the host
-   buffer [e], of [dtype]. The engine
-   is asked to place an empty value of the dtype first, which allocates nothing
-   and raises if [p] cannot hold the dtype. *)
+   buffer [e], of [dtype]. The memory is asked to place an empty value of the
+   dtype first, which allocates nothing and raises if [p] cannot hold the
+   dtype. *)
 let held p dtype e shape =
   ignore
-    ((Placement.engine p).place p
+    ((Placement.memory p).place p
        (Host (Nx_backend.buffer host_context dtype [| 0 |])));
   placed p dtype (View.create shape) (cell ~placement:p ~length:1 (Held e))
 
@@ -1127,7 +1241,7 @@ let move (type a b) p (x : (a, b) t) : (a, b) t =
   | Placed r when Placement.is_host p -> Host (read_host r)
   | Host _ | Placed _ ->
       Placement.check_shape "Nx.place" p (View.shape (view x));
-      (Placement.engine p).place p x in
+      (Placement.memory p).place p x in
   match x with
   | Placed r -> Cell.with_borrow r.r_cell move
   | Host _ | Traced _ -> move ()
@@ -1451,7 +1565,7 @@ let settle : type a b. route -> (a, b) Nx_backend.t -> (a, b) t =
           (Elements.gather (Nx_backend.to_host h)
              (View.create ~offset:(View.offset (Nx_backend.view h)) [||]))
           shape
-      else (Placement.engine p).place p (Host h)
+      else (Placement.memory p).place p (Host h)
 
 (* [routed e x f] runs [f] over [x], no host tensor, where the operation that
    performs [e] runs. *)

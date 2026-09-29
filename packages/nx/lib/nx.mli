@@ -218,10 +218,9 @@ val to_array : ('a, 'b) t -> 'a array
 
 (** {1:placement Devices and placement}
 
-    Where a value lives is a value too. A device is a run-time value carrying
-    the engine that holds memory on it; the library that owns a device's runtime
-    opens it (for example [Rune.device "METAL"]), and {!Device.host} is the
-    host. A placement is one device, a list of devices each holding a full copy,
+    Where a value lives is a value too. A device holds memory; the library that
+    owns a device's runtime opens it (for example [Rune.device "METAL"]), and
+    {!Device.host} is the host. A placement is one device, a list of devices each holding a full copy,
     or a list of devices each holding an equal slice along one axis.
 
     The result of an operation lives where its placed operands live: operands on
@@ -306,7 +305,8 @@ module Placement : sig
   (** [replicated ds] is a full copy on each device of [ds].
 
       Raises [Invalid_argument] if [ds] is empty, repeats a device, or mixes
-      devices of different engines. *)
+      devices whose memories differ (those of {!Device.of_runtime}, the host
+      included, and those another library opens). *)
 
   val sharded : axis:int -> Device.t list -> t
   (** [sharded ~axis ds] is equal slices of [axis] on the devices of [ds], in

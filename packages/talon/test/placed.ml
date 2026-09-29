@@ -4,13 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 (* A device whose values live in memory of their own, as on a GPU: nx reads them
-   through its engine, which counts the reads. *)
+   through its memory, which counts the reads. *)
 
 type Nx_effect.storage += Mem of Nx_device.Buffer.t
 
 let reads = ref 0
 
-let rec engine =
+let rec memory =
   {
     Nx_effect.read =
       (fun r ->
@@ -32,5 +32,5 @@ and place : type a b.
        ~length:(Nx_device.Buffer.length mem)
        (Mem mem))
 
-let device = Nx_effect.Device.make "TEST" engine
+let device = Nx_effect.Device.make "TEST" memory
 let place x = Nx.place (Nx.Placement.device device) x

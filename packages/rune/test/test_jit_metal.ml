@@ -693,7 +693,7 @@ let test_mixed_placements_raise () =
     (Nx.Placement.equal (Nx.placement p) (Nx.placement y));
   check_arr ~msg:"and the result is right" [| 2.0; 3.0 |] y
 
-(* Metal and the CPU devices have engines of their own: a placement over both
+(* Metal and the CPU devices have memories of their own: a placement over both
    raises, and a value moves between them through the host, window by window. *)
 let test_moves_between_backends () =
   let cpus = [ Rune.device "CPU:1"; Rune.device "CPU:2" ] in
@@ -701,7 +701,7 @@ let test_moves_between_backends () =
   raises_match
     (function
       | Invalid_argument msg ->
-          String.ends_with ~suffix:"belong to different engines" msg
+          String.ends_with ~suffix:"have different memories" msg
       | _ -> false)
     (fun () -> Nx.Placement.replicated [ metal; List.hd cpus ]);
   let x = Nx.reshape [| 4; 6 |] (Nx.arange Nx.int32 0 24 1) in

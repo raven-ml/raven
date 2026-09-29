@@ -162,7 +162,7 @@ let reset_stats () =
    shapes; placement is a property of the compiled signature. *)
 
 (* The devices other than the host, by canonical name: each has one nx device
-   value, whose engine is [engine] below, and one tolk device. *)
+   value, whose memory is [memory_for] below, and one tolk device. *)
 
 let by_name : (string, Nx.Device.t * Tolk.Device.t) Hashtbl.t = Hashtbl.create 4
 let by_name_mutex = Mutex.create ()
@@ -230,10 +230,10 @@ let local_shape p shape =
    [Nx.place] puts on a device. The storage belongs to the value's cell: a read
    copies the view's elements out and leaves it, replay seeds a compiled input
    with the buffer itself when the placement matches, and it is released when
-   the cell is unreachable (by the finaliser the engine attaches) or consumed by
+   the cell is unreachable (by the finaliser the memory attaches) or consumed by
    a compiled call.
 
-   Storage is owned, allocated by the engine, or borrowed, wrapping a mapped
+   Storage is owned, allocated by the memory, or borrowed, wrapping a mapped
    file's pages (see [borrow]); the buffers say which. Only owned storage is
    lent to an output or counted in [resident_bytes] and the collection budget: a
    device write into a borrowed file's pages is lost without an error on a
@@ -3297,7 +3297,7 @@ let read_out : type a b.
   copyout_into buf ~dst_off:0 dtv host;
   Nx_effect.reshape (Nx_effect.from_host ctx dtv host) shape
 
-(* The device engine
+(* The device memory
 
    Reading copies a placed value's view's elements to the host and leaves its
    storage. On devices whose memory the host addresses (Metal, the CPU device),
@@ -3461,7 +3461,7 @@ let allocate_all ds devs ~size dt ~nolru =
 
    A window with a piece that is not contiguous is gathered on the host a block
    of rows at a time (at least one row, else at most a chunk) through the
-   engine's own read, and uploaded. This is the one transfer rune makes itself,
+   memory's own read, and uploaded. This is the one transfer rune makes itself,
    an exception to moves belonging to tolk: tolk copies contiguous buffers only,
    and a strided piece needs a copy compiled on its source device first, which
    stage 3 brings. *)
@@ -3637,7 +3637,7 @@ let borrow : type a b.
           release_unowned !made;
           None)
 
-(* The engine of rune's devices, one value per tolk backend, so that nx refuses
+(* The memory of rune's devices, one value per tolk backend, so that nx refuses
    a placement over two backends. [make_placed] wraps buffers already on the
    devices as a placed value whose cell releases them when it is unreachable;
    [place_on] puts each device's window of a value on it: from a mapped file,
@@ -3734,16 +3734,16 @@ and place_on : type a b.
           raise e);
       make_placed p devs dt (NV.create local) bufs
 
-(* One engine per tolk backend. *)
-let engines : (string, Nx_effect.engine) Hashtbl.t = Hashtbl.create 4
+(* One memory per tolk backend: devices of one memory may share a placement. *)
+let memories : (string, Nx_effect.memory) Hashtbl.t = Hashtbl.create 4
 
-let engine_for backend =
-  match Hashtbl.find_opt engines backend with
-  | Some e -> e
+let memory_for backend =
+  match Hashtbl.find_opt memories backend with
+  | Some m -> m
   | None ->
-      let e = { Nx_effect.read; place = place_on } in
-      Hashtbl.add engines backend e;
-      e
+      let m = { Nx_effect.read; place = place_on } in
+      Hashtbl.add memories backend m;
+      m
 
 (* Devices, opened by name *)
 
@@ -3785,7 +3785,7 @@ let device name =
             match Hashtbl.find_opt by_name name with
             | Some (d, _) -> d
             | None ->
-                let d = Nx_effect.Device.make name (engine_for (backend name)) in
+                let d = Nx_effect.Device.make name (memory_for (backend name)) in
                 Hashtbl.add by_name name (d, dev);
                 d)
 

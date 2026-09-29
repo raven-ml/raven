@@ -10,11 +10,7 @@ exception Linalg_error = Nx_core.Backend_intf.Linalg_error
 
 let context = Lazy.from_fun Nx_effect.create_context
 
-module Device = struct
-  include Nx_effect.Device
-
-  let of_runtime = Runtime_engine.device
-end
+module Device = Nx_effect.Device
 
 module Placement = Nx_effect.Placement
 

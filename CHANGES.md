@@ -2757,6 +2757,9 @@ thread.
 
 ### Nx
 
+- A placement may mix `Nx.Device.host` with `Nx.Device.of_runtime` devices,
+  such as `Nx.Placement.replicated [ Nx.Device.host; d ]`: the host keeps its
+  placed values in the same runtime buffers. It raised `Invalid_argument`.
 - **Breaking (backends):** `Nx_core.Backend_intf.S` no longer declares `view`,
   `dtype` and `context`. They describe a value, which carries them, so a
   backend over nx's values would only repeat nx's answers. A kernel library

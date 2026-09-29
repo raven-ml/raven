@@ -40,14 +40,18 @@ let devices =
           is_true (Nx.Device.of_runtime r1 == d1);
           equal string "R1" (Nx.Device.name d1);
           is_false (Nx.Device.equal d1 d2));
-      test "a placement mixing runtime devices with the host is refused"
+      test "the host shares the runtimes' memory: a copy on it and on a runtime \
+            computes and reads back"
         (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.Placement.replicated [ d1; Nx.Device.host ]));
+          let p = Nx.Placement.replicated [ d1; Nx.Device.host ] in
+          let x = Nx.place p (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
+          let y = Nx.add x x in
+          is_true (Nx.Placement.equal (Nx.placement y) p);
+          equal (array float_exact) [| 2.; 4.; 6. |] (Nx.to_array y));
     ]
 
 (* A buffer that reaches the host engine is on the host and of the value's
-   format, whether a caller hands it over or a device's engine reads it back. *)
+   format, whether a caller hands it over or a device's memory reads it back. *)
 let host_buffers =
   let not_host = Exn.invalid_arg ~substring:"not CPU"
   and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
@@ -67,7 +71,7 @@ let host_buffers =
           let reading b =
             let d =
               Nx_effect.Device.make "READS"
-                { Devices.engine with read = (fun _ -> b) }
+                { Devices.memory with read = (fun _ -> b) }
             in
             let x =
               Nx.place (Nx.Placement.device d) (Nx.zeros Nx.float32 [| 4 |])

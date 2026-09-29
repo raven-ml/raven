@@ -835,7 +835,7 @@ let int_value ~bits ~signed =
 let int_compare ~signed a b =
   if signed then Int64.compare a b else Int64.unsigned_compare a b
 
-(* Test devices: an engine whose devices hold their storage in host memory of
+(* Test devices: a memory whose devices hold their storage in host memory of
    their own, one buffer per device of a value's placement in its order (a split
    value's shards, a replicated value's copies), and count what moves. *)
 module Devices = struct
@@ -849,7 +849,7 @@ module Devices = struct
     elements_read := !elements_read + Nx_core.View.numel v;
     Nx_core.Elements.gather mem v
 
-  let rec engine =
+  let rec memory =
     {
       Nx_effect.read =
         (fun r ->
@@ -885,13 +885,13 @@ module Devices = struct
          ~length:(Array.fold_left ( * ) 1 shape)
          (Mem shards))
 
-  let d1 = Nx_effect.Device.make "TEST:1" engine
-  let d2 = Nx_effect.Device.make "TEST:2" engine
-  let d3 = Nx_effect.Device.make "TEST:3" engine
-  let d4 = Nx_effect.Device.make "TEST:4" engine
+  let d1 = Nx_effect.Device.make "TEST:1" memory
+  let d2 = Nx_effect.Device.make "TEST:2" memory
+  let d3 = Nx_effect.Device.make "TEST:3" memory
+  let d4 = Nx_effect.Device.make "TEST:4" memory
 
-  (* A device of another engine. *)
-  let other = Nx_effect.Device.make "OTHER" { engine with place = engine.place }
+  (* A device of another memory. *)
+  let other = Nx_effect.Device.make "OTHER" { memory with place = memory.place }
   let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
   let cell_of (type a b) (x : (a, b) Nx.t) =

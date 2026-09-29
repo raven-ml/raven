@@ -110,7 +110,7 @@ let placements =
           cover "equal placements" same;
           equal bool same (Nx.Placement.equal p (make b)));
       test
-        "refuse no devices, a repeated device, mixed engines, a negative axis, \
+        "refuse no devices, a repeated device, mixed memories, a negative axis, \
          and windows of a device they lack or an axis that does not divide"
         (fun () ->
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
@@ -669,7 +669,7 @@ let results =
           | Live (Mem shards) ->
               equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
                 (List.map Nx_device.Buffer.length shards)
-          | _ -> fail "expected storage of the test engine");
+          | _ -> fail "expected storage of the test memory");
           equal (tensor float_exact)
             (Nx.mul_s (iota [| 2; 3 |]) 2.)
             (snd (List.hd made));
@@ -744,7 +744,7 @@ let identities =
             done;
             List.concat_map
               (fun _ ->
-                let d = Nx_effect.Device.make "IDENTITY" engine in
+                let d = Nx_effect.Device.make "IDENTITY" memory in
                 let v =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
                     (Nx_core.View.create [| 1 |])
@@ -768,7 +768,7 @@ let identities =
           equal ~msg:"observing the frontier allocates no identity" int horizon
             (Nx_effect.next_traced_id ());
           let after = Nx_effect.identity_hash (traced d1) in
-          let device = Nx_effect.Device.make "FRONTIER" engine in
+          let device = Nx_effect.Device.make "FRONTIER" memory in
           let later = Nx_effect.identity_hash (traced d1) in
           equal ~msg:"the next trace starts at the frontier" int horizon after;
           less int ~than:horizon before;
