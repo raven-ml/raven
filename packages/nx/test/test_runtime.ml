@@ -56,7 +56,7 @@ let host_buffers =
   let not_host = Exn.invalid_arg ~substring:"not CPU"
   and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
   and on_device = Nx_device.Buffer.create r1 Nx_dtype.Scalar.Float32 4
-  and float64 = Nx_core.Elements.create Nx.float64 4 in
+  and float64 = Nx_array.Elements.create Nx.float64 4 in
   group "host buffers"
     [
       test "from_host refuses a buffer on a device or of another format"

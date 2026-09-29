@@ -561,7 +561,7 @@ let test_place_from_a_mapped_file () =
   let placed, up = delta (fun () -> on_metal (Nx.matrix_transpose w)) in
   equal ~msg:"nothing is uploaded" int 0 up;
   equal ~msg:"nothing is counted" int 0 (resident () - base);
-  let strides x = Nx_core.View.strides (Nx_effect.view x) in
+  let strides x = Nx_array.View.strides (Nx_effect.view x) in
   equal ~msg:"the view is kept" (array int)
     (strides (Nx.matrix_transpose w))
     (strides placed);

@@ -12,8 +12,9 @@ strided, low-precision, integer, or otherwise ineligible products.
 
 ## Representation and ABI
 
-The OCaml tensor record crosses the FFI with five fields in this order: buffer,
-shape, strides, offset, and dtype. The buffer is a host `Nx_device.Buffer.t`,
+An operand is an `Nx_array.t`, which crosses the FFI as it is: its dtype, its
+view (shape, strides, offset) and its buffer, in that order, the view's fields
+read at their own slots. The buffer is a host `Nx_device.Buffer.t`,
 whose first byte C reads with `nx_device_buffer_host` from nx.device's
 `nx_device.h`; the dtype's constructor index is its C dtype tag. Shapes,
 strides, and offsets are expressed in logical elements. Packed 4-bit dtypes are

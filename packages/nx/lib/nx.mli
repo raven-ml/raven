@@ -311,7 +311,7 @@ module Backend : sig
   (** The type for backend implementations. A backend has a [name], says with
       [runs_on] whether it runs on a device, makes a value at one of its
       placements with [place], and implements every operation of
-      {!Nx_core.Backend_intf.S} over nx's values, with a placement as the
+      {!Nx_array.Backend_intf.S} over nx's values, with a placement as the
       context in which a creation makes its value. Its [to_host] reads the
       elements of the values whose storage it made.
 
@@ -2537,7 +2537,7 @@ exception
     carrying the operation name and a failure [kind]. Precondition violations
     (non-square input, wrong dtype) raise [Invalid_argument] instead.
 
-    This is {!Nx_core.Backend_intf.Linalg_error}; catching it here catches the
+    This is {!Nx_array.Backend_intf.Linalg_error}; catching it here catches the
     exception raised by the backend. *)
 
 (** {2:linalg_products Products} *)

@@ -61,7 +61,7 @@ let round_trips ~save ~load cases =
           cover "a scalar" (Nx.ndim t = 0);
           cover "a view"
             ((not (Nx.is_c_contiguous t))
-            || Nx_core.View.offset (Nx_effect.view t) <> 0);
+            || Nx_array.View.offset (Nx_effect.view t) <> 0);
           Law.round_trip packed string (saved "" save) load (Nx.P t)))
     cases
 

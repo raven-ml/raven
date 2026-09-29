@@ -149,9 +149,9 @@ let share_memory a b =
    [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
 let positions t =
   let v = Nx_effect.view t in
-  let st = Nx_core.View.strides v in
+  let st = Nx_array.View.strides v in
   Array.init (Nx.numel t) (fun k ->
-      let p = ref (Nx_core.View.offset v) in
+      let p = ref (Nx_array.View.offset v) in
       Array.iteri (fun d i -> p := !p + (i * st.(d))) (unravel (Nx.shape t) k);
       !p)
 
@@ -207,7 +207,7 @@ module Ref = struct
     {
       shape = Nx.shape s;
       data =
-        Array.map (Nx_core.Elements.get (Nx.dtype s) (storage s)) (positions s);
+        Array.map (Nx_array.Elements.get (Nx.dtype s) (storage s)) (positions s);
     }
 
   let witness w =
@@ -846,8 +846,8 @@ module Devices = struct
 
   (* The elements view [v] reaches in [mem], in C order. *)
   let gather mem v =
-    elements_read := !elements_read + Nx_core.View.numel v;
-    Nx_core.Elements.gather mem v
+    elements_read := !elements_read + Nx_array.View.numel v;
+    Nx_array.Elements.gather mem v
 
   let rec memory =
     {
@@ -856,7 +856,7 @@ module Devices = struct
           match r.r_cell.state with
           | Live (Mem shards) ->
               let shape =
-                Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)
+                Nx_effect.global r.r_placement (Nx_array.View.shape r.r_view)
               in
               Nx_effect.assemble r
                 (Array.map (fun n -> (0, n)) shape)
@@ -880,7 +880,7 @@ module Devices = struct
     in
     let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
     Nx_effect.placed p (Nx.dtype x)
-      (Nx_core.View.create shape)
+      (Nx_array.View.create shape)
       (Nx_effect.cell ~placement:p
          ~length:(Array.fold_left ( * ) 1 shape)
          (Mem shards))

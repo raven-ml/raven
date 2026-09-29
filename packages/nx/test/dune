@@ -19,7 +19,7 @@
   test_allocation)
  (package nx)
  (modules :standard \ test_format)
- (libraries nx.dtype nx nx.core nx.effect nx.device unix windtrap nx_test))
+ (libraries nx.dtype nx nx.array nx.effect nx.device unix windtrap nx_test))
 
 (test
  (name test_format)

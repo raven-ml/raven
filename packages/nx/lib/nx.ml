@@ -5,7 +5,7 @@
 
 include Frontend
 
-exception Linalg_error = Nx_core.Backend_intf.Linalg_error
+exception Linalg_error = Nx_array.Backend_intf.Linalg_error
 
 let context = Nx_effect.Placement.host
 

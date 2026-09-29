@@ -9,6 +9,7 @@ let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
 type layout = C_contiguous | Strided
 
+(* The order of [shape], [strides] and [offset] is nx.cpu's C ABI (nx_c.h). *)
 type t = {
   shape : int array;
   strides : int array;
@@ -23,8 +24,15 @@ let prod arr = Array.fold_left ( * ) 1 arr
 (* Check if strides represent a contiguous layout *)
 (* Row-major order whatever the strides of axes of size 1, which are never
    stepped; an empty view holds nothing out of order. *)
+let has_zero shape =
+  let n = Array.length shape and i = ref 0 in
+  while !i < n && Array.unsafe_get shape !i <> 0 do
+    incr i
+  done;
+  !i < n
+
 let is_c_contiguous_strides shape_arr strides =
-  Array.exists (( = ) 0) shape_arr
+  has_zero shape_arr
   ||
   let expected = ref 1 and ordered = ref true in
   for i = Array.length shape_arr - 1 downto 0 do
@@ -70,30 +78,28 @@ let extent v =
 (* ───── View Creation ───── *)
 
 let create ?(offset = 0) ?strides shape =
-  let is_zero_size = Array.exists (( = ) 0) shape in
-  let current_shape =
+  let is_zero_size = has_zero shape in
+  let shape =
     if is_zero_size then Array.map (fun s -> max s 0) shape else shape
   in
-  let current_strides =
-    match strides with
-    | Some s ->
-        if Array.length s <> Array.length current_shape then
-          err "create" "strides length %d != shape length %d" (Array.length s)
-            (Array.length current_shape);
-        s
-    | None -> Shape.c_contiguous_strides current_shape
-  in
-  let current_offset = if is_zero_size then 0 else offset in
-  let new_layout =
-    if is_c_contiguous_strides current_shape current_strides then C_contiguous
-    else Strided
-  in
-  {
-    shape = current_shape;
-    strides = current_strides;
-    offset = current_offset;
-    layout = new_layout;
-  }
+  let offset = if is_zero_size then 0 else offset in
+  match strides with
+  | None ->
+      {
+        shape;
+        strides = Shape.c_contiguous_strides shape;
+        offset;
+        layout = C_contiguous;
+      }
+  | Some strides ->
+      if Array.length strides <> Array.length shape then
+        err "create" "strides length %d != shape length %d"
+          (Array.length strides) (Array.length shape);
+      let layout =
+        if is_c_contiguous_strides shape strides then C_contiguous
+        else Strided
+      in
+      { shape; strides; offset; layout }
 
 (* ───── View Manipulation ───── *)
 
@@ -109,7 +115,7 @@ let expand view new_shape =
   else
     let old_arr = view.shape in
     let new_arr = new_shape in
-    if Array.exists (( = ) 0) old_arr then create new_shape
+    if has_zero old_arr then create new_shape
     else
       let strides =
         Array.mapi
@@ -199,7 +205,7 @@ let viewing_strides view new_shape =
 let can_reshape view new_shape =
   prod view.shape = prod new_shape
   && (view.shape = new_shape
-     || Array.exists (( = ) 0) new_shape
+     || has_zero new_shape
      || view.layout = C_contiguous
      || Option.is_some (viewing_strides view new_shape))
 
@@ -209,7 +215,7 @@ let reshape view new_shape =
     err "reshape" "cannot reshape %s to %s"
       (Shape.to_string view.shape)
       (Shape.to_string new_shape)
-  else if Array.exists (( = ) 0) new_shape then create ~offset:0 new_shape
+  else if has_zero new_shape then create ~offset:0 new_shape
   else if view.layout = C_contiguous then create ~offset:view.offset new_shape
   else
     match viewing_strides view new_shape with

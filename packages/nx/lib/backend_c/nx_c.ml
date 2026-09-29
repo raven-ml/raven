@@ -15,95 +15,59 @@
    Externals are grouped by family. Every op in Backend_intf.S is wired to its C
    kernel; none remain stubbed. *)
 
-open Nx_core
+open Nx_array
 
 type context = unit
 
 (* ── The tensor handle ─────────────────────────────────────────────────────
 
-   FIELD ORDER IS ABI: [t] is passed to C directly, no per-call FFI record. The
-   engine reads an operand at fixed record slots (nx_c.h NX_C_FFI_ markers):
-   slot 0 buffer (a host Nx_device.Buffer.t, read through nx_device.h), 1 shape,
-   2 strides, 3 offset — strides and offset in ELEMENT units, exactly as View
-   provides — and 4 dtype, whose constructor index is the C dtype tag. C never
-   touches slot 5 (context). Reordering these six fields silently misreads every
-   operand; the layout is pinned by the ABI echo test in test/test_backend_c.ml,
-   not by convention. This declaration order MUST match {buffer; shape; strides;
-   offset; dtype; context}. *)
-type ('a, 'b) t = {
-  buffer : Nx_device.Buffer.t;
-  shape : int array;
-  strides : int array;
-  offset : int;
+   An operand is an [Nx_array.t], passed to C directly: the engine reads it at
+   the slots nx_c.h names. *)
+type ('a, 'b) t = ('a, 'b) Nx_array.t = {
   dtype : ('a, 'b) Nx_dtype.t;
-  context : context;
+  view : View.t;
+  buffer : Nx_device.Buffer.t;
 }
 
 (* ── Accessors ─────────────────────────────────────────────────────────────*)
 
-let view (t : ('a, 'b) t) =
-  View.create ~offset:t.offset ~strides:t.strides t.shape
-
-let dtype (t : ('a, 'b) t) = t.dtype
-let context (t : ('a, 'b) t) = t.context
 let to_host (t : ('a, 'b) t) = t.buffer
+let shape (t : ('a, 'b) t) = View.shape t.view
 
 (* ── Creation ──────────────────────────────────────────────────────────────*)
 
-let create_tensor ctx dtype shape =
+let create_tensor dtype shape =
   let size = Array.fold_left ( * ) 1 shape in
-  {
-    buffer = Elements.create dtype size;
-    shape;
-    strides = Shape.c_contiguous_strides shape;
-    offset = 0;
-    dtype;
-    context = ctx;
-  }
+  { dtype; view = View.create shape; buffer = Elements.create dtype size }
 
-let buffer ctx dtype shape = create_tensor ctx dtype shape
+let buffer () dtype shape = create_tensor dtype shape
 
-let full ctx dtype shape value =
-  let t = create_tensor ctx dtype shape in
+let full () dtype shape value =
+  let t = create_tensor dtype shape in
   Elements.fill dtype t.buffer value;
   t
 
-let from_host ctx dtype buf =
-  {
-    buffer = buf;
-    shape = [| Nx_device.Buffer.length buf |];
-    strides = [| 1 |];
-    offset = 0;
-    dtype;
-    context = ctx;
-  }
+let from_host () dtype buffer =
+  { dtype; view = View.create [| Nx_device.Buffer.length buffer |]; buffer }
 
 (* ── Movement (pure View metadata) ─────────────────────────────────────────
 
-   Each op runs the View transformation and reads shape/strides/offset back into
-   a fresh handle sharing the buffer. Broadcast (expand) yields zero strides
-   that go straight to C. pad/cat allocate and copy — they are C ops (move
-   family). *)
+   Each op runs the View transformation into a fresh handle sharing the
+   buffer. Broadcast (expand) yields zero strides that go straight to C.
+   pad/cat allocate and copy — they are C ops (move family). *)
 
-let of_view (t : ('a, 'b) t) v =
-  {
-    t with
-    shape = View.shape v;
-    strides = View.strides v;
-    offset = View.offset v;
-  }
-
-let expand t shape = of_view t (View.expand (view t) shape)
-let reshape t shape = of_view t (View.reshape (view t) shape)
-let permute t axes = of_view t (View.permute (view t) axes)
-let shrink t bounds = of_view t (View.shrink (view t) bounds)
-let flip t axes = of_view t (View.flip (view t) axes)
+let of_view (t : ('a, 'b) t) view = { t with view }
+let expand t shape = of_view t (View.expand t.view shape)
+let reshape t shape = of_view t (View.reshape t.view shape)
+let permute t axes = of_view t (View.permute t.view axes)
+let shrink t bounds = of_view t (View.shrink t.view bounds)
+let flip t axes = of_view t (View.flip t.view axes)
 
 let sliding_window t ~axis ~window ~step =
-  of_view t (View.sliding_window (view t) ~axis ~window ~step)
+  of_view t (View.sliding_window t.view ~axis ~window ~step)
 
 let is_c_contiguous (t : ('a, 'b) t) =
-  View.is_c_contiguous (view t) && t.offset = 0
+  View.is_c_contiguous t.view && View.offset t.view = 0
 
 (* [(before, after); ...] -> flat [before0; after0; before1; after1; ...], the
    window ops' padding ABI (nx_c_move.c reads pad_before/after at 2*d /
@@ -206,17 +170,17 @@ external caml_where :
 external caml_cast : ('c, 'd) t -> ('a, 'b) t -> unit = "caml_nx_c_cast"
 
 let unary caml_op x =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_op out x;
   out
 
 let binary caml_op x y =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_op out x y;
   out
 
 let comparison caml_op x y =
-  let out = create_tensor x.context Nx_dtype.Bool x.shape in
+  let out = create_tensor Nx_dtype.Bool (shape x) in
   caml_op out x y;
   out
 
@@ -260,12 +224,12 @@ let cmplt x y = comparison caml_cmplt x y
 let cmple x y = comparison caml_cmple x y
 
 let where cond if_true if_false =
-  let out = create_tensor if_true.context if_true.dtype if_true.shape in
+  let out = create_tensor if_true.dtype (shape if_true) in
   caml_where out cond if_true if_false;
   out
 
 let cast ~dtype x =
-  let out = create_tensor x.context dtype x.shape in
+  let out = create_tensor dtype (shape x) in
   caml_cast out x;
   out
 
@@ -273,15 +237,12 @@ let cast ~dtype x =
    same memory read at the new kind. *)
 let bitcast ~dtype x =
   {
+    dtype;
+    view = x.view;
     buffer =
       Nx_device.Buffer.view x.buffer ~offset:0
         (Nx_dtype.Scalar.of_dtype dtype)
         (Nx_device.Buffer.length x.buffer);
-    shape = x.shape;
-    strides = x.strides;
-    offset = x.offset;
-    dtype;
-    context = x.context;
   }
 
 (* fold family (nx_c_fold.c): [reduce] preserves the input dtype and drops the
@@ -340,23 +301,23 @@ let reduce ~op ~axes x =
   | Some name ->
       Array.iter
         (fun ax ->
-          if x.shape.(ax) = 0 then
+          if (shape x).(ax) = 0 then
             invalid_arg (name ^ ": reduction over an empty axis has no identity"))
         axes
   | None -> ());
   let out =
-    create_tensor x.context x.dtype
-      (Shape.reduce_output_shape x.shape axes false)
+    create_tensor x.dtype
+      (Shape.reduce_output_shape (shape x) axes false)
   in
   caml_op out x axes;
   out
 
 let argreduce op caml_op ~axis ~keepdims x =
-  if x.shape.(axis) = 0 then
+  if (shape x).(axis) = 0 then
     invalid_arg (op ^ ": argument reduction over an empty axis");
   let out =
-    create_tensor x.context Nx_dtype.Int32
-      (Shape.reduce_output_shape x.shape [| axis |] keepdims)
+    create_tensor Nx_dtype.Int32
+      (Shape.reduce_output_shape (shape x) [| axis |] keepdims)
   in
   caml_op out x axis;
   out
@@ -372,7 +333,7 @@ let associative_scan ~axis ~op x =
     | `Max -> caml_cummax
     | `Min -> caml_cummin
   in
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_op out x axis;
   out
 
@@ -386,12 +347,12 @@ external caml_argsort :
   = "caml_nx_c_argsort"
 
 let sort ~axis ~descending x =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_sort out x axis descending;
   out
 
 let argsort ~axis ~descending x =
-  let out = create_tensor x.context Nx_dtype.Int32 x.shape in
+  let out = create_tensor Nx_dtype.Int32 (shape x) in
   caml_argsort out x axis descending;
   out
 
@@ -408,7 +369,7 @@ let argsort ~axis ~descending x =
 external caml_copy : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_copy"
 
 let copy x =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_copy out x;
   out
 
@@ -423,10 +384,10 @@ let pad x padding fill_value =
       (fun i d ->
         let before, after = padding.(i) in
         d + before + after)
-      x.shape
+      (shape x)
   in
-  let out = create_tensor x.context x.dtype out_shape in
-  let fill = full x.context x.dtype [||] fill_value in
+  let out = create_tensor x.dtype out_shape in
+  let fill = full () x.dtype [||] fill_value in
   caml_pad out x fill (Array.map fst padding);
   out
 
@@ -439,15 +400,15 @@ let cat tensors ~axis =
   match tensors with
   | [] -> invalid_arg "cat: empty tensor list"
   | first :: _ ->
-      let ndim = Array.length first.shape in
+      let ndim = Array.length (shape first) in
       let axis = if axis < 0 then axis + ndim else axis in
       let total =
-        List.fold_left (fun acc t -> acc + t.shape.(axis)) 0 tensors
+        List.fold_left (fun acc t -> acc + (shape t).(axis)) 0 tensors
       in
       let out_shape =
-        Array.mapi (fun i d -> if i = axis then total else d) first.shape
+        Array.mapi (fun i d -> if i = axis then total else d) (shape first)
       in
-      let out = create_tensor first.context first.dtype out_shape in
+      let out = create_tensor first.dtype out_shape in
       caml_cat out (Array.of_list tensors) axis;
       out
 
@@ -456,7 +417,7 @@ external caml_gather :
   = "caml_nx_c_gather"
 
 let gather data indices ~axis =
-  let out = create_tensor data.context data.dtype indices.shape in
+  let out = create_tensor data.dtype (shape indices) in
   caml_gather out data indices axis;
   out
 
@@ -482,12 +443,13 @@ let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
 let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
   let out = copy t in
   let start = Elements.get Nx_dtype.int32 starts.buffer in
+  let offset = View.offset starts.view and stride = View.stride 0 starts.view in
   let corner =
-    Array.init (Array.length t.shape) (fun i ->
-        Int32.to_int (start (starts.offset + (i * starts.strides.(0)))))
+    Array.init (Array.length (shape t)) (fun i ->
+        Int32.to_int (start (offset + (i * stride))))
   in
-  let bounds = Array.mapi (fun i c -> (c, c + v.shape.(i))) corner in
-  caml_copy (of_view out (View.shrink (view out) bounds)) v;
+  let bounds = Array.mapi (fun i c -> (c, c + (shape v).(i))) corner in
+  caml_copy (of_view out (View.shrink out.view bounds)) v;
   out
 
 external caml_unfold :
@@ -501,9 +463,9 @@ external caml_unfold :
 
 let unfold x ~kernel_size ~stride ~dilation ~padding =
   let k = Array.length kernel_size in
-  let leading_ndim = Array.length x.shape - k in
-  let leading = Array.sub x.shape 0 leading_ndim in
-  let spatial = Array.sub x.shape leading_ndim k in
+  let leading_ndim = Array.length (shape x) - k in
+  let leading = Array.sub (shape x) 0 leading_ndim in
+  let spatial = Array.sub (shape x) leading_ndim k in
   let out_spatial =
     Array.init k (fun i ->
         let before, after = padding.(i) in
@@ -515,7 +477,7 @@ let unfold x ~kernel_size ~stride ~dilation ~padding =
   let l = Array.fold_left ( * ) 1 out_spatial in
   let out_shape = Array.concat [ leading; [| kernel_prod; l |] ] in
   let padding_flat = flatten_pairs padding in
-  let out = create_tensor x.context x.dtype out_shape in
+  let out = create_tensor x.dtype out_shape in
   caml_unfold out x kernel_size stride dilation padding_flat;
   out
 
@@ -530,11 +492,11 @@ external caml_fold_window :
   unit = "caml_nx_c_fold_bc" "caml_nx_c_fold"
 
 let fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  let leading_ndim = Array.length x.shape - 2 in
-  let leading = Array.sub x.shape 0 leading_ndim in
+  let leading_ndim = Array.length (shape x) - 2 in
+  let leading = Array.sub (shape x) 0 leading_ndim in
   let out_shape = Array.concat [ leading; output_size ] in
   let padding_flat = flatten_pairs padding in
-  let out = create_tensor x.context x.dtype out_shape in
+  let out = create_tensor x.dtype out_shape in
   caml_fold_window out x output_size kernel_size stride dilation padding_flat;
   out
 
@@ -547,7 +509,7 @@ external caml_threefry :
   unit = "caml_nx_c_threefry"
 
 let threefry key counter =
-  let out = create_tensor counter.context Nx_dtype.Int32 counter.shape in
+  let out = create_tensor Nx_dtype.Int32 (shape counter) in
   caml_threefry out key counter;
   out
 
@@ -558,7 +520,7 @@ external caml_matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_matmul"
 
 let matmul x y =
-  let xs = x.shape and ys = y.shape in
+  let xs = shape x and ys = shape y in
   let xnd = Array.length xs and ynd = Array.length ys in
   let m = xs.(xnd - 2) and n = ys.(ynd - 1) in
   let max_nd = Int.max xnd ynd in
@@ -570,9 +532,9 @@ let matmul x y =
         let sb = if bi >= 0 then ys.(bi) else 1 in
         if sa = 1 then sb else sa)
   in
-  let out = create_tensor x.context x.dtype (Array.append batch [| m; n |]) in
+  let out = create_tensor x.dtype (Array.append batch [| m; n |]) in
   (* An empty product has nothing to compute, and its strides are zero. *)
-  if Array.exists (( = ) 0) out.shape then out
+  if Array.exists (( = ) 0) (shape out) then out
   else (
     caml_matmul out x y;
     out)
@@ -596,20 +558,20 @@ external caml_irfft :
   = "caml_nx_c_irfft"
 
 let fft x ~axes =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_fft out x axes;
   out
 
 let ifft x ~axes =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   caml_ifft out x axes;
   out
 
 let rfft x ~dtype ~axes =
   let last = axes.(Array.length axes - 1) in
-  let out_shape = Array.copy x.shape in
-  out_shape.(last) <- (x.shape.(last) / 2) + 1;
-  let out = create_tensor x.context dtype out_shape in
+  let out_shape = Array.copy (shape x) in
+  out_shape.(last) <- ((shape x).(last) / 2) + 1;
+  let out = create_tensor dtype out_shape in
   caml_rfft out x axes;
   out
 
@@ -619,11 +581,11 @@ let irfft ?s x ~dtype ~axes =
   let size =
     match s with
     | Some sizes -> sizes.(last_idx)
-    | None -> (x.shape.(last) - 1) * 2
+    | None -> ((shape x).(last) - 1) * 2
   in
-  let out_shape = Array.copy x.shape in
+  let out_shape = Array.copy (shape x) in
   out_shape.(last) <- size;
-  let out = create_tensor x.context dtype out_shape in
+  let out = create_tensor dtype out_shape in
   caml_irfft out x axes (match s with Some sizes -> sizes | None -> [||]);
   out
 
@@ -673,16 +635,16 @@ let reraise_linalg ~op f =
     else raise e
 
 let cholesky ~upper x =
-  let out = create_tensor x.context x.dtype x.shape in
+  let out = create_tensor x.dtype (shape x) in
   reraise_linalg ~op:"cholesky" (fun () -> caml_cholesky out x upper);
   out
 
 let solve_triangular ~upper ~transpose ~unit_diag a b =
-  let vector_rhs = Array.length b.shape = Array.length a.shape - 1 in
+  let vector_rhs = Array.length (shape b) = Array.length (shape a) - 1 in
   let b_matrix =
-    if vector_rhs then reshape b (Array.append b.shape [| 1 |]) else b
+    if vector_rhs then reshape b (Array.append (shape b) [| 1 |]) else b
   in
-  let out_matrix = create_tensor b.context b.dtype b_matrix.shape in
+  let out_matrix = create_tensor b.dtype (shape b_matrix) in
   let flags =
     (if upper then 1 else 0)
     lor (if transpose then 2 else 0)
@@ -690,10 +652,10 @@ let solve_triangular ~upper ~transpose ~unit_diag a b =
   in
   reraise_linalg ~op:"solve_triangular" (fun () ->
       caml_solve_triangular out_matrix a b_matrix flags);
-  if vector_rhs then reshape out_matrix b.shape else out_matrix
+  if vector_rhs then reshape out_matrix (shape b) else out_matrix
 
 let qr ~reduced x =
-  let s = x.shape in
+  let s = shape x in
   let nd = Array.length s in
   let m = s.(nd - 2) and n = s.(nd - 1) in
   let k = Int.min m n in
@@ -702,8 +664,8 @@ let qr ~reduced x =
     q_shape.(nd - 1) <- k;
     r_shape.(nd - 2) <- k)
   else q_shape.(nd - 1) <- m;
-  let q = create_tensor x.context x.dtype q_shape in
-  let r = create_tensor x.context x.dtype r_shape in
+  let q = create_tensor x.dtype q_shape in
+  let r = create_tensor x.dtype r_shape in
   reraise_linalg ~op:"qr" (fun () -> caml_qr q r x reduced);
   (q, r)
 
@@ -717,17 +679,17 @@ external caml_lu :
   unit = "caml_nx_c_lu"
 
 let lu x =
-  let s = x.shape in
+  let s = shape x in
   let nd = Array.length s in
   let m = s.(nd - 2) and n = s.(nd - 1) in
   let batch = Array.sub s 0 (nd - 2) in
-  let lu = create_tensor x.context x.dtype s in
+  let lu = create_tensor x.dtype s in
   let pivots =
-    create_tensor x.context Nx_dtype.Int32
+    create_tensor Nx_dtype.Int32
       (Array.append batch [| Int.min m n |])
   in
   let perm =
-    create_tensor x.context Nx_dtype.Int32 (Array.append batch [| m |])
+    create_tensor Nx_dtype.Int32 (Array.append batch [| m |])
   in
   reraise_linalg ~op:"lu" (fun () -> caml_lu lu pivots perm x);
   (lu, pivots, perm)
@@ -737,11 +699,11 @@ let lu x =
    (vectors=false); the stub then ignores the eigenvector slot, so it reuses x
    there — no dummy allocation. *)
 let eigh_values x =
-  let s = x.shape in
+  let s = shape x in
   let nd = Array.length s in
   let n = s.(nd - 1) in
   (* eigenvalues drop the trailing matrix dim: batch... x n. *)
-  create_tensor x.context Nx_dtype.Float64
+  create_tensor Nx_dtype.Float64
     (Array.append (Array.sub s 0 (nd - 2)) [| n |])
 
 let eigvalsh x =
@@ -751,7 +713,7 @@ let eigvalsh x =
 
 let eigh x =
   let w = eigh_values x in
-  let v = create_tensor x.context x.dtype x.shape in
+  let v = create_tensor x.dtype (shape x) in
   reraise_linalg ~op:"eigh" (fun () -> caml_eigh w v x true);
   (w, v)
 
@@ -766,7 +728,7 @@ external caml_svd :
   unit = "caml_nx_c_svd"
 
 let svd ~full_matrices x =
-  let sh = x.shape in
+  let sh = shape x in
   let nd = Array.length sh in
   let m = sh.(nd - 2) and n = sh.(nd - 1) in
   let k = Int.min m n in
@@ -777,11 +739,11 @@ let svd ~full_matrices x =
   let vt_shape =
     Array.append batch (if full_matrices then [| n; n |] else [| k; n |])
   in
-  let u = create_tensor x.context x.dtype u_shape in
+  let u = create_tensor x.dtype u_shape in
   let s =
-    create_tensor x.context Nx_dtype.Float64 (Array.append batch [| k |])
+    create_tensor Nx_dtype.Float64 (Array.append batch [| k |])
   in
-  let vt = create_tensor x.context x.dtype vt_shape in
+  let vt = create_tensor x.dtype vt_shape in
   reraise_linalg ~op:"svd" (fun () -> caml_svd u s vt x);
   (u, s, vt)
 
@@ -798,10 +760,10 @@ external caml_eig :
   unit = "caml_nx_c_eig"
 
 let eig_values x =
-  let sh = x.shape in
+  let sh = shape x in
   let nd = Array.length sh in
   let n = sh.(nd - 1) in
-  create_tensor x.context Nx_dtype.Complex128
+  create_tensor Nx_dtype.Complex128
     (Array.append (Array.sub sh 0 (nd - 2)) [| n |])
 
 let eigvals x =
@@ -811,6 +773,6 @@ let eigvals x =
 
 let eig x =
   let w = eig_values x in
-  let v = create_tensor x.context Nx_dtype.Complex128 x.shape in
+  let v = create_tensor Nx_dtype.Complex128 (shape x) in
   reraise_linalg ~op:"eig" (fun () -> caml_eig w v x true);
   (w, v)

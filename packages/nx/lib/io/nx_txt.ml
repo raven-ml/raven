@@ -405,7 +405,7 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
           let oc = open_out_gen flags perm out in
           Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
           write_comment_lines oc comments newline header;
-          let get = Nx_core.Elements.get S.kind (Nx_effect.elements arr) in
+          let get = Nx_array.Elements.get S.kind (Nx_effect.elements arr) in
           (match ndim with
           | 0 ->
               S.print oc (get 0);
@@ -491,8 +491,8 @@ let load ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows (type a b)
             let rows = Array.of_list (List.rev !rows_rev) in
             let row_count = Array.length rows in
             let n = row_count * cols in
-            let buf = Nx_core.Elements.create S.kind n in
-            let set = Nx_core.Elements.set S.kind buf in
+            let buf = Nx_array.Elements.create S.kind n in
+            let set = Nx_array.Elements.set S.kind buf in
             for i = 0 to row_count - 1 do
               let row = rows.(i) in
               for j = 0 to cols - 1 do

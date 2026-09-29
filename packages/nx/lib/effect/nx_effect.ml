@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Nx_core
+open Nx_array
 
 (* Types
 
@@ -265,7 +265,7 @@ end
 
 module rec Types : sig
   type ('a, 'b) t =
-    | Host : ('a, 'b) Nx_c.t -> ('a, 'b) t
+    | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
     | Placed : ('a, 'b) resident -> ('a, 'b) t
     | Traced : ('a, 'b) traced -> ('a, 'b) t
 
@@ -783,7 +783,7 @@ let runtime_memory =
   let place : type a b. placement -> (a, b) t -> (a, b) t =
    fun p x ->
     let h = host_of x in
-    let dt = Nx_c.dtype h and v = Nx_c.view h in
+    let dt = h.dtype and v = h.view in
     let shape = View.shape v in
     let s = Nx_dtype.Scalar.of_dtype dt in
     let ds = devices_of p in
@@ -1180,12 +1180,12 @@ let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> (
     match x with
-    | Host t -> Nx_c.view t
+    | Host t -> t.view
     | Placed r -> whole_view r
     | Traced t -> t.t_view)
 
 let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
-  | Host t -> Nx_c.dtype t
+  | Host t -> t.dtype
   | Placed r -> r.r_dtype
   | Traced t -> t.t_dtype
 
@@ -1505,11 +1505,11 @@ let settle : type a b. route -> (a, b) Nx_c.t -> (a, b) t =
   match r with
   | On_host -> Host h
   | At p ->
-      let shape = View.shape (Nx_c.view h) in
+      let shape = View.shape h.view in
       if Array.fold_left ( * ) 1 shape = 1 then
-        held p (Nx_c.dtype h)
+        held p h.dtype
           (Elements.gather (Nx_c.to_host h)
-             (View.create ~offset:(View.offset (Nx_c.view h)) [||]))
+             (View.create ~offset:(View.offset h.view) [||]))
           shape
       else (memory_of p).place p (Host h)
 

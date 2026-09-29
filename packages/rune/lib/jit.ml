@@ -48,7 +48,7 @@ module F = Tolk_frontend
 module U = Tolk_uop.Uop
 module TD = Tolk_uop.Dtype
 module ND = Nx_dtype
-module NV = Nx_core.View
+module NV = Nx_array.View
 module HB = Nx_device.Buffer
 
 exception Jit_error of string
@@ -1267,7 +1267,7 @@ let window_indices ~spatial_padded ~kernel_size ~stride ~dilation =
   for d = k - 2 downto 0 do
     sp_strides.(d) <- sp_strides.(d + 1) * spatial_padded.(d + 1)
   done;
-  let idx = Nx_core.Elements.create ND.int32 (kernel_prod * nwin) in
+  let idx = Nx_array.Elements.create ND.int32 (kernel_prod * nwin) in
   let entries = HB.bigarray Bigarray.int32 idx in
   let k_pos = Array.make k 0 in
   let w_pos = Array.make k 0 in
@@ -1921,7 +1921,7 @@ let moved p shape m =
                     over several devices cannot; place the value on one device \
                     first"
                    axis
-                   (Nx_core.Shape.to_string shape)))
+                   (Nx_array.Shape.to_string shape)))
           p (Nx_effect.Placement.cuts p)
     | _ -> q
 
@@ -2442,7 +2442,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             if rank = 0 then ret k (dt t_in) tv
             else if not (is_traced starts) then begin
               let start =
-                Nx_core.Elements.get ND.int32 (Nx_effect.to_host starts)
+                Nx_array.Elements.get ND.int32 (Nx_effect.to_host starts)
               in
               let sv = Nx_effect.view starts in
               let s k =
@@ -3162,7 +3162,7 @@ let read_base : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
       let dt = Nx_effect.dtype x in
       let item = ND.itemsize dt in
       let n = numel shape in
-      let run = Nx_core.Elements.create dt n in
+      let run = Nx_array.Elements.create dt n in
       let chunk = chunk_bytes / item in
       let pos = ref 0 and ok = ref true in
       while !ok && !pos < n do
@@ -3320,7 +3320,7 @@ let read_out : type a b.
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
  fun ctx dtv shape buf ->
-  let host = Nx_core.Elements.create dtv (numel shape) in
+  let host = Nx_array.Elements.create dtv (numel shape) in
   copyout_into buf ~dst_off:0 dtv host;
   Nx_effect.reshape (Nx_effect.from_host ctx dtv host) shape
 
@@ -3349,7 +3349,7 @@ let with_storage_range dt buf ~lo ~hi f =
       ignore (Sys.opaque_identity buf);
       r
   | None ->
-      let host = Nx_core.Elements.create dt (hi - lo) in
+      let host = Nx_array.Elements.create dt (hi - lo) in
       with_window buf ~off:(lo * item)
         ~len:((hi - lo) * item)
         (fun w -> copyout_into w ~dst_off:0 dt host);
@@ -3391,7 +3391,7 @@ let permuted_copy src ~base v =
 
 let read_window dt buf v =
   let n = NV.numel v in
-  if n = 0 then Nx_core.Elements.create dt 0
+  if n = 0 then Nx_array.Elements.create dt 0
   else
     let lo, hi = NV.extent v in
     with_storage_range dt buf ~lo ~hi @@ fun src how ->
@@ -3408,10 +3408,10 @@ let read_window dt buf v =
       with
       | Some dst -> dst
       | None when NV.is_c_contiguous v ->
-          let dst = Nx_core.Elements.create dt n in
+          let dst = Nx_array.Elements.create dt n in
           HB.copy ~src ~dst;
           dst
-      | None -> Nx_core.Elements.gather src (from_base v ~base:lo)
+      | None -> Nx_array.Elements.gather src (from_base v ~base:lo)
 
 let read : type a b. (a, b) Nx_effect.resident -> HB.t =
  fun r ->
@@ -3420,7 +3420,7 @@ let read : type a b. (a, b) Nx_effect.resident -> HB.t =
   match store_of r.r_cell with
   | None -> assert false (* nx reads held and consumed values itself *)
   | Some { s_bufs = []; _ } ->
-      Nx_core.Elements.create r.r_dtype 0 (* an empty value has no buffer *)
+      Nx_array.Elements.create r.r_dtype 0 (* an empty value has no buffer *)
   | Some s ->
       let shape = Nx_effect.global r.r_placement (NV.shape r.r_view) in
       Nx_effect.assemble r
@@ -5114,7 +5114,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           if c.cp_zero_copy then
             begin if (not reserved) && not (Hashtbl.mem out_hosts tag) then begin
               let n = numel (shape_of ph) in
-              let host = Nx_core.Elements.create odt n in
+              let host = Nx_array.Elements.create odt n in
               let buf =
                 Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
                   ~source:host (HB.host_address host)
@@ -5251,7 +5251,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                Nx.P
                  (Nx_effect.reshape
                     (Nx_effect.from_host c.cp_ctx dt
-                       (Nx_core.Elements.create dt 0))
+                       (Nx_array.Elements.create dt 0))
                     shape)
            | Some node -> (
                let tag = U.tag node in
@@ -5263,7 +5263,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                          if c.cp_first.(j) then host
                          else begin
                            let copy =
-                             Nx_core.Elements.create hdt (HB.length host)
+                             Nx_array.Elements.create hdt (HB.length host)
                            in
                            HB.copy ~src:host ~dst:copy;
                            copy

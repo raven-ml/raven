@@ -167,7 +167,7 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
   let count = Array.fold_left ( * ) 1 lead in
   if count * n * k = 0 then Nx.zeros dt s
   else begin
-    let out = Nx_core.Elements.create dt (count * n * k) in
+    let out = Nx_array.Elements.create dt (count * n * k) in
     let dst = bytes out in
     let item = Nx_dtype.itemsize dt in
     for j = 0 to count - 1 do
@@ -333,7 +333,7 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         filled := !filled + List.length group)
       members;
     let slots = !filled + if Array.mem (-1) slot then 1 else 0 in
-    let y = Nx_core.Elements.create Nx_dtype.float32 (slots * m * outputs) in
+    let y = Nx_array.Elements.create Nx_dtype.float32 (slots * m * outputs) in
     let dst = floats y in
     if slots > !filled then
       Bigarray.Array1.fill

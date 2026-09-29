@@ -3059,7 +3059,7 @@ let test_chunked_offset () =
   let n = (chunk / 4) + 4099 in
   let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
   is_true ~msg:"contiguous at an offset"
-    (Nx.is_c_contiguous x && Nx_core.View.offset (Nx_effect.view x) = 3);
+    (Nx.is_c_contiguous x && Nx_array.View.offset (Nx_effect.view x) = 3);
   check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
 
 let test_chunked_strided () =
@@ -4000,7 +4000,7 @@ let remove_mapped path =
   full_major ();
   try Sys.remove path with Sys_error _ when Sys.win32 -> ()
 
-let strides x = Nx_core.View.strides (Nx_effect.view x)
+let strides x = Nx_array.View.strides (Nx_effect.view x)
 
 (* [x] placed from its file is its view of the file's pages, bit for bit [x]. *)
 let check_placed_from_file ~msg x =

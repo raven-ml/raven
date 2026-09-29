@@ -118,7 +118,7 @@ let conversions =
         laid_out (fun (_, t) ->
           if Nx.is_c_contiguous t then
             equal bool
-              (Nx_core.View.offset (Nx_effect.view t) = 0)
+              (Nx_array.View.offset (Nx_effect.view t) = 0)
               (storage (Nx.contiguous t) == storage t));
       test "to_bigarray copies, so writing the bigarray leaves the tensor"
         (fun () ->

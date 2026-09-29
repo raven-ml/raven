@@ -2805,6 +2805,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** the `nx.core` library is `nx.array`, whose `Nx_array.t` is an
+  array: typed elements of a runtime buffer through a strided view. `Nx_c.t`
+  is that record, and loses its `context` field and accessors.
 - **Breaking:** `Nx_core.Make_frontend` is removed: `Nx`'s surface is written
   once over its own values. Another implementation of the operations is a
   backend named in a placement.

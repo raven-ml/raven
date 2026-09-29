@@ -22,7 +22,7 @@
   structure)
  (libraries
   nx.dtype
-  nx.core
+  nx.array
   nx
   nx.quant
   nx.effect

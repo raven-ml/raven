@@ -9,9 +9,9 @@
 
 open Windtrap
 module B = Nx_device.Buffer
-module E = Nx_core.Elements
+module E = Nx_array.Elements
 module S = Nx_dtype.Scalar
-module V = Nx_core.View
+module V = Nx_array.View
 
 let bytes b = B.bigarray Bigarray.char b
 let size s = Int.max 1 (S.bitsize s / 8)
@@ -278,7 +278,7 @@ let refusals =
 
 let () =
   exit
-    (run "Nx_core.Elements"
+    (run "Nx_array.Elements"
        [
          stores;
          fills;

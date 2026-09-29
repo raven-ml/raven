@@ -80,22 +80,22 @@ static inline void nx_c_aligned_free(void *p) {
    in nx_c_ndarray — no dynamic allocation on the FFI path. */
 #define NX_C_MAX_NDIM 32
 
-/* The first five fields of Nx_backend.t cross the FFI in a fixed order, and that
-   order IS ABI: an operand value is read at exactly these slots.
-       0 data     a host Nx_device.Buffer.t
-       1 shape    int array
-       2 strides  int array, ELEMENT units
-       3 offset   int, ELEMENT units
-       4 dtype    Nx_dtype.t, a constant constructor whose index is the tag
-   Nx_backend.t is {buffer; shape; strides; offset; dtype; context}: C reads
-   slots 0-4 and never touches slot 5. The layout is pinned by the binding
-   layer's echo test, not by convention; reordering these five silently
-   misreads every operand. */
-#define NX_C_FFI_DATA 0
-#define NX_C_FFI_SHAPE 1
-#define NX_C_FFI_STRIDES 2
-#define NX_C_FFI_OFFSET 3
-#define NX_C_FFI_DTYPE 4
+/* An operand is an Nx_array.t, read at fixed slots, and those slots ARE ABI:
+       Nx_array.t  0 dtype    Nx_dtype.t, a constant constructor whose index
+                              is the tag
+                   1 view     View.t
+                   2 buffer   a host Nx_device.Buffer.t
+       View.t      0 shape    int array
+                   1 strides  int array, ELEMENT units
+                   2 offset   int, ELEMENT units
+   Both OCaml declarations say so: reordering their fields misreads every
+   operand. */
+#define NX_C_FFI_DTYPE 0
+#define NX_C_FFI_VIEW 1
+#define NX_C_FFI_DATA 2
+#define NX_C_FFI_VIEW_SHAPE 0
+#define NX_C_FFI_VIEW_STRIDES 1
+#define NX_C_FFI_VIEW_OFFSET 2
 
 #if defined(__GNUC__) || defined(__clang__)
 #define NX_C_NORETURN __attribute__((noreturn))
@@ -467,14 +467,15 @@ typedef struct {
    rooted by the funnel) needs no local rooting here. Never raises — validates
    rank cheaply and reports via status; the funnel raises on non-NULL. */
 static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
-  value v_shape = Field(v, NX_C_FFI_SHAPE);
-  value v_strides = Field(v, NX_C_FFI_STRIDES);
+  value v_view = Field(v, NX_C_FFI_VIEW);
+  value v_shape = Field(v_view, NX_C_FFI_VIEW_SHAPE);
+  value v_strides = Field(v_view, NX_C_FFI_VIEW_STRIDES);
   int ndim = (int)Wosize_val(v_shape);
   if (ndim > NX_C_MAX_NDIM) return NX_C_ERR_NDIM;
   if ((int)Wosize_val(v_strides) != ndim) return NX_C_ERR_RANK_MISMATCH;
   out->data = nx_device_buffer_host(Field(v, NX_C_FFI_DATA));
   out->ndim = ndim;
-  out->offset = Long_val(Field(v, NX_C_FFI_OFFSET));
+  out->offset = Long_val(Field(v_view, NX_C_FFI_VIEW_OFFSET));
   for (int i = 0; i < ndim; i++) {
     out->shape[i] = Long_val(Field(v_shape, i));
     out->strides[i] = Long_val(Field(v_strides, i));

@@ -753,10 +753,10 @@ let identities =
                 let d = Nx_effect.Device.make "IDENTITY" memory in
                 let v =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
-                    (Nx_core.View.create [| 1 |])
+                    (Nx_array.View.create [| 1 |])
                     (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
                        (Nx_effect.Held
-                          (Nx_core.Elements.create Nx.float32 1)))
+                          (Nx_array.Elements.create Nx.float32 1)))
                 in
                 d.d_id
                 :: List.map Nx_effect.identity_hash

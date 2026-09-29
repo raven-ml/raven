@@ -44,7 +44,7 @@
   rune
   nx
   nx.dtype
-  nx.core
+  nx.array
   nx.device
   nx.effect
   tolk
@@ -57,7 +57,7 @@
 (executable
  (name repro_jit_beam)
  (modules repro_jit_beam)
- (libraries rune nx nx.core unix))
+ (libraries rune nx nx.array unix))
 
 (test
  (name test_quant)
@@ -72,7 +72,7 @@
  (libraries
   rune
   nx
-  nx.core
+  nx.array
   nx.device
   nx.effect
   tolk
@@ -141,7 +141,7 @@
  (names test_jit_cache)
  (modules test_jit_cache)
  (package rune)
- (libraries rune nx nx.core unix windtrap rune_test_support))
+ (libraries rune nx nx.array unix windtrap rune_test_support))
 
 ; Metal is the default device here, so a function with no placed value runs
 ; on it.
@@ -160,7 +160,7 @@
  (libraries
   rune
   nx
-  nx.core
+  nx.array
   nx.device
   nx.dtype
   nx.effect
@@ -173,4 +173,4 @@
  (names test_jit_cuda)
  (modules test_jit_cuda)
  (package rune)
- (libraries rune nx nx.core windtrap rune_test_support tolk tolk.cuda))
+ (libraries rune nx nx.array windtrap rune_test_support tolk tolk.cuda))

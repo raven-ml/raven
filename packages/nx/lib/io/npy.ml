@@ -322,7 +322,7 @@ type payload =
 
 let materialize header payload =
   let (K kind) = header.kind in
-  let buffer = Nx_core.Elements.create kind header.elements in
+  let buffer = Nx_array.Elements.create kind header.elements in
   let destination = Storage.bytes buffer in
   let fill target =
     match payload with

@@ -9,8 +9,8 @@
 ; no explicit link flag — the OCaml 5 runtime already links it for its domain
 ; support, which satisfies the engine pool's pthread_create/mutex/cond symbols.
 ;
-; Nx_c implements Nx_core.Backend_intf.S (t, View, Shape) over Nx_dtype,
-; so nx_core joins nx_device. The C needs just nx_c.h, nx_device.h and
+; Nx_c implements Nx_array.Backend_intf.S (t, View, Shape) over Nx_dtype,
+; so nx_array joins nx_device. The C needs just nx_c.h, nx_device.h and
 ; nx_dtype.h.
 ;
 ; -Werror is a development/CI gate, not a release constraint: "warnings are
@@ -24,7 +24,7 @@
 (library
  (name nx_c)
  (public_name nx.c)
- (libraries nx_dtype nx_device nx_core)
+ (libraries nx_dtype nx_device nx_array)
  (foreign_stubs
   (language c)
   (names

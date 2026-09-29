@@ -53,7 +53,7 @@ let tensor (type a b) mapping (kind : (a, b) Nx_dtype.t) shape ~off ~len =
         (Nx_dtype.Scalar.of_dtype kind)
         n
     else begin
-      let buffer = Nx_core.Elements.create kind n in
+      let buffer = Nx_array.Elements.create kind n in
       let dst = Storage.bytes buffer in
       Nx_io_codec.blit_bytes ~src:(Storage.bytes mapping) ~src_off:off ~dst
         ~dst_off:0 ~len;

@@ -21,7 +21,7 @@
 
 open Windtrap
 module S = Nx_dtype.Scalar
-module E = Nx_core.Elements
+module E = Nx_array.Elements
 
 (* Reference *)
 
@@ -86,17 +86,17 @@ let codec f x = S.decode f.scalar (S.encode f.scalar x)
 let byte b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b
 
 let nx_value dtype x =
-  let b = Nx_core.Elements.create dtype 1 in
+  let b = Nx_array.Elements.create dtype 1 in
   E.set dtype b 0 x;
   E.get dtype b 0
 
 let nx_code dtype x =
-  let b = Nx_core.Elements.create dtype 1 in
+  let b = Nx_array.Elements.create dtype 1 in
   E.set dtype b 0 x;
   (byte b).{0}
 
 let nx_decode dtype code =
-  let b = Nx_core.Elements.create dtype 1 in
+  let b = Nx_array.Elements.create dtype 1 in
   (byte b).{0} <- code;
   E.get dtype b 0
 

@@ -10,14 +10,14 @@ module A = Bigarray.Array1
 let check_host fn b =
   if not (Nx_device.equal (B.device b) Nx_device.host) then
     invalid_arg
-      (Printf.sprintf "Nx_core.Elements.%s: the buffer is on %s, not CPU" fn
+      (Printf.sprintf "Nx_array.Elements.%s: the buffer is on %s, not CPU" fn
          (Nx_device.name (B.device b)))
 
 let check fn (type a b) (dt : (a, b) Nx_dtype.t) b =
   check_host fn b;
   if not (S.equal (B.dtype b) (S.of_dtype dt)) then
     invalid_arg
-      (Printf.sprintf "Nx_core.Elements.%s: a %s buffer read as %s" fn
+      (Printf.sprintf "Nx_array.Elements.%s: a %s buffer read as %s" fn
          (S.to_string (B.dtype b))
          (Nx_dtype.to_string dt))
 
@@ -37,7 +37,7 @@ let set_nibble ba i v =
 let in_bounds fn n i =
   if i < 0 || i >= n then
     invalid_arg
-      (Printf.sprintf "Nx_core.Elements.%s: index %d of %d elements" fn i n)
+      (Printf.sprintf "Nx_array.Elements.%s: index %d of %d elements" fn i n)
 
 let clamp lo hi v = Int.max lo (Int.min hi v)
 
@@ -266,7 +266,7 @@ let gather b v =
     if lo < 0 || hi > B.length b then
       invalid_arg
         (Printf.sprintf
-           "Nx_core.Elements.gather: the view reaches elements %d to %d of %d"
+           "Nx_array.Elements.gather: the view reaches elements %d to %d of %d"
            lo (hi - 1) (B.length b));
     (* Each width is its own loop, over its own kind, which the compiler
        specializes. *)

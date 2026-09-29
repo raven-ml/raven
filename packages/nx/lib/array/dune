@@ -1,6 +1,6 @@
 (library
- (name nx_core)
- (public_name nx.core)
+ (name nx_array)
+ (public_name nx.array)
  (libraries nx_dtype nx_device)
  (instrumentation
   (backend landmarks))

@@ -171,7 +171,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             (fun k ->
               let s = T.shape x in
               continue k
-                (Nx_core.View.create (Array.sub s 1 (Array.length s - 1))))
+                (Nx_array.View.create (Array.sub s 1 (Array.length s - 1))))
         else None
     (* Reading the value of a batched tensor would expose the physical, batched
        buffer to code that believes it is unbatched. *)

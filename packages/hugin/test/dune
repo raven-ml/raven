@@ -21,7 +21,7 @@
   hugin.vg.pdf
   nx
   nx.dtype
-  nx.core
+  nx.array
   nx.device
   nx.effect
   nx.io

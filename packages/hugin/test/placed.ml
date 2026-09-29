@@ -16,7 +16,7 @@ let rec memory =
       (fun r ->
         incr reads;
         match r.r_cell.state with
-        | Live (Mem mem) -> Nx_core.Elements.gather mem r.r_view
+        | Live (Mem mem) -> Nx_array.Elements.gather mem r.r_view
         | _ -> assert false);
     place = (fun p x -> place p x);
   }
@@ -25,9 +25,9 @@ and place : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
   let x = Nx.place Nx.Placement.host x in
-  let mem = Nx_core.Elements.gather (Nx_effect.to_host x) (Nx_effect.view x) in
+  let mem = Nx_array.Elements.gather (Nx_effect.to_host x) (Nx_effect.view x) in
   Nx_effect.placed p (Nx.dtype x)
-    (Nx_core.View.create (Nx.shape x))
+    (Nx_array.View.create (Nx.shape x))
     (Nx_effect.cell ~placement:p
        ~length:(Nx_device.Buffer.length mem)
        (Mem mem))

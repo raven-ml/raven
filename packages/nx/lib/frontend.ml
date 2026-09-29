@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Nx_core
+open Nx_array
 module B = Nx_effect
 
 let err op fmt =

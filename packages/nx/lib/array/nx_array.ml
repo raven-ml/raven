@@ -3,19 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Core modules for [nx].
-
-    This module re-exports core building blocks used by backends and the
-    high-level [Nx] frontend. *)
-
 module Shape = Shape
-(** Concrete shape operations. *)
-
 module View = View
-(** Strided tensor views. *)
-
 module Elements = Elements
-(** Elements of host buffers as values of a dtype. *)
-
 module Backend_intf = Backend_intf
-(** The operations a backend implements. *)
+
+(* The field order is nx.cpu's C ABI (nx_c.h). *)
+type ('a, 'b) t = {
+  dtype : ('a, 'b) Nx_dtype.t;
+  view : View.t;
+  buffer : Nx_device.Buffer.t;
+}
