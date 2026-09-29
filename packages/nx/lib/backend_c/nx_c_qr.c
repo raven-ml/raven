@@ -45,19 +45,10 @@
     T *tau = (T *)vtau;                                                       \
     for (int64_t c = 0; c < jb; c++) {                                        \
       int64_t j = j0 + c;                                                     \
-      R xnorm2 = (R)0;                                                        \
-      for (int64_t i = j + 1; i < m; i++) xnorm2 += NORM2(A[i * lda + j]);    \
-      T alpha = A[j * lda + j];                                               \
-      R alphr = REAL(alpha);                                                  \
-      if (xnorm2 == (R)0) {                                                   \
-        tau[j] = (T)0;                                                        \
-        continue;                                                            \
-      }                                                                       \
-      R anorm = SQRT(NORM2(alpha) + xnorm2);                                  \
-      R beta = alphr >= (R)0 ? -anorm : anorm;                               \
-      tau[j] = LA_MK_##sfx((beta - alphr) / beta, -LA_IMAG_##sfx(alpha) / beta); \
-      T scal = alpha - LA_MK_##sfx(beta, (R)0);                              \
-      for (int64_t i = j + 1; i < m; i++) A[i * lda + j] = A[i * lda + j] / scal; \
+      R beta;                                                                 \
+      tau[j] = la_larfg_##sfx(A[j * lda + j], &A[(j + 1) * lda + j], m - j - 1, \
+                              lda, &beta);                                    \
+      if (tau[j] == (T)0) continue;                                           \
       A[j * lda + j] = LA_MK_##sfx(beta, (R)0);                              \
       /* factor applies H_jᴴ (conj tau) so A = Q·R with Q = ∏ H_j; form_q       \
          below uses H_j. For real, conj is the identity. Columns are chunked    \

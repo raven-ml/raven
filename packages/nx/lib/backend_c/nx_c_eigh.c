@@ -44,22 +44,12 @@
     T *tau = (T *)vtau;                                                       \
     T *wv = (T *)vwv;                                                         \
     for (int64_t i = j0; i < n - 1; i++) {                                    \
-      R xnorm2 = (R)0;                                                        \
-      for (int64_t r = i + 2; r < n; r++) xnorm2 += NORM2(A[r * lda + i]);    \
-      T alpha = A[(i + 1) * lda + i];                                         \
-      R alphr = REAL(alpha);                                                  \
-      if (xnorm2 == (R)0 && LA_IMAG_##sfx(alpha) == (R)0) {                   \
-        tau[i] = (T)0;                                                        \
-        e[i] = alphr;                                                        \
-        continue;                                                            \
-      }                                                                       \
-      R anorm = SQRT(NORM2(alpha) + xnorm2);                                  \
-      R beta = alphr >= (R)0 ? -anorm : anorm;                               \
-      T t = LA_MK_##sfx((beta - alphr) / beta, -LA_IMAG_##sfx(alpha) / beta); \
-      tau[i] = t;                                                             \
-      T scal = alpha - LA_MK_##sfx(beta, (R)0);                              \
-      for (int64_t r = i + 2; r < n; r++) A[r * lda + i] = A[r * lda + i] / scal; \
-      e[i] = beta;                                                           \
+      R beta;                                                                  \
+      T t = la_larfg_##sfx(A[(i + 1) * lda + i], &A[(i + 2) * lda + i],        \
+                           n - i - 2, lda, &beta);                             \
+      tau[i] = t;                                                              \
+      e[i] = beta;                                                             \
+      if (t == (T)0) continue;                                                 \
       A[(i + 1) * lda + i] = (T)1;                                           \
       for (int64_t j = i + 1; j < n; j++) {                                  \
         T sum = (T)0;                                                        \
@@ -100,23 +90,15 @@
                  W[r * ldw + l] * CONJ(A[i * lda + (j + l)]);               \
           A[r * lda + i] -= s;                                               \
         }                                                                    \
-      R xnorm2 = (R)0;                                                       \
-      for (int64_t r = i + 2; r < n; r++) xnorm2 += NORM2(A[r * lda + i]);   \
-      T alpha = A[(i + 1) * lda + i];                                        \
-      R alphr = REAL(alpha);                                                 \
-      if (xnorm2 == (R)0 && LA_IMAG_##sfx(alpha) == (R)0) {                  \
-        tau[i] = (T)0;                                                       \
-        e[i] = alphr;                                                        \
-        for (int64_t r = i + 1; r < n; r++) W[r * ldw + c] = (T)0;           \
-        continue;                                                           \
-      }                                                                      \
-      R anorm = SQRT(NORM2(alpha) + xnorm2);                                 \
-      R beta = alphr >= (R)0 ? -anorm : anorm;                              \
-      T t = LA_MK_##sfx((beta - alphr) / beta, -LA_IMAG_##sfx(alpha) / beta); \
-      tau[i] = t;                                                            \
-      T scal = alpha - LA_MK_##sfx(beta, (R)0);                             \
-      for (int64_t r = i + 2; r < n; r++) A[r * lda + i] = A[r * lda + i] / scal; \
-      e[i] = beta;                                                          \
+      R beta;                                                                  \
+      T t = la_larfg_##sfx(A[(i + 1) * lda + i], &A[(i + 2) * lda + i],        \
+                           n - i - 2, lda, &beta);                             \
+      tau[i] = t;                                                              \
+      e[i] = beta;                                                             \
+      if (t == (T)0) {                                                         \
+        for (int64_t r = i + 1; r < n; r++) W[r * ldw + c] = (T)0;             \
+        continue;                                                              \
+      }                                                                        \
       A[(i + 1) * lda + i] = (T)1;                                          \
       for (int64_t r = i + 1; r < n; r++) {                                 \
         T s = (T)0;                                                         \

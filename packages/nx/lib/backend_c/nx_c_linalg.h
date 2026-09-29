@@ -114,6 +114,98 @@ static const char LA_ERR_NO_CONVERGE[] =
 #define LA_HYP_c32(a, b) hypotf((a), (b))
 #define LA_HYP_c64(a, b) hypot((a), (b))
 
+/* The least normal and the unit roundoff of the real scalar R. */
+#define LA_RMIN_f32 FLT_MIN
+#define LA_RMIN_f64 DBL_MIN
+#define LA_RMIN_c32 FLT_MIN
+#define LA_RMIN_c64 DBL_MIN
+#define LA_REPS_f32 (0.5f * FLT_EPSILON)
+#define LA_REPS_f64 (0.5 * DBL_EPSILON)
+#define LA_REPS_c32 (0.5f * FLT_EPSILON)
+#define LA_REPS_c64 (0.5 * DBL_EPSILON)
+
+/* ── Householder reflector (LAPACK xLARFG) ────────────────────────────────
+
+   la_larfg_<sfx>(alpha, x, n, incx, &beta) generates H = I - tau v vᴴ with
+   Hᴴ [alpha; x] = [beta; 0], beta real, v = [1; x'] where x' overwrites the n
+   entries of x at stride incx; it returns tau, 0 when [alpha; x] already is
+   [beta; 0] (x zero, alpha real). No norm is a raw sum of squares: la_nrm2 falls
+   back to scaling by the largest part when the plain sum left the range where
+   every square that matters is exact, and la_lapy3 scales its three parts, so
+   no entry under- or overflows the norm. A beta below safmin (the least normal
+   over the unit roundoff) is rescaled into range, as xLARFG's loop does, before
+   1/(alpha - beta) scales x. */
+#define LA_GEN_LARFG(sfx, T, R, DT, CONJ, NORM2, REAL, FROMR, SQRT)            \
+  static inline R la_nrm2_##sfx(const T *x, int64_t n, int64_t incx) {         \
+    R s = (R)0;                                                                \
+    for (int64_t i = 0; i < n; i++) s += NORM2(x[i * incx]);                   \
+    if ((s >= LA_RMIN_##sfx / LA_REPS_##sfx && s <= (R)1 / LA_RMIN_##sfx) ||   \
+        s != s)                                                                \
+      return SQRT(s);                                                          \
+    R big = (R)0;                                                              \
+    for (int64_t i = 0; i < n; i++) {                                          \
+      R re = LA_ABS_##sfx(REAL(x[i * incx]));                                  \
+      R im = LA_ABS_##sfx(LA_IMAG_##sfx(x[i * incx]));                         \
+      if (re > big) big = re;                                                  \
+      if (im > big) big = im;                                                  \
+    }                                                                          \
+    if (big == (R)0) return SQRT(s);                                           \
+    R ss = (R)0;                                                               \
+    for (int64_t i = 0; i < n; i++) {                                          \
+      R re = REAL(x[i * incx]) / big, im = LA_IMAG_##sfx(x[i * incx]) / big;   \
+      ss += re * re + im * im;                                                 \
+    }                                                                          \
+    return big * SQRT(ss);                                                     \
+  }                                                                            \
+  static inline R la_lapy3_##sfx(R a, R b, R c) {                              \
+    R xa = LA_ABS_##sfx(a), xb = LA_ABS_##sfx(b), xc = LA_ABS_##sfx(c);        \
+    R w = xa > xb ? xa : xb;                                                   \
+    if (xc > w) w = xc;                                                        \
+    if (w == (R)0 || w != w) return xa + xb + xc;                              \
+    xa /= w;                                                                   \
+    xb /= w;                                                                   \
+    xc /= w;                                                                   \
+    return w * SQRT(xa * xa + xb * xb + xc * xc);                              \
+  }                                                                            \
+  static inline T la_larfg_##sfx(T alpha, T *x, int64_t n, int64_t incx,       \
+                                 R *beta_out) {                                \
+    R xnorm = la_nrm2_##sfx(x, n, incx);                                       \
+    R alphr = REAL(alpha), alphi = LA_IMAG_##sfx(alpha);                       \
+    if (xnorm == (R)0 && alphi == (R)0) {                                      \
+      *beta_out = alphr;                                                       \
+      return (T)0;                                                             \
+    }                                                                          \
+    R an = la_lapy3_##sfx(alphr, alphi, xnorm);                                \
+    R beta = alphr >= (R)0 ? -an : an;                                         \
+    const R safmin = LA_RMIN_##sfx / LA_REPS_##sfx;                            \
+    int knt = 0;                                                               \
+    if (LA_ABS_##sfx(beta) < safmin) {                                         \
+      const R rsafmn = (R)1 / safmin;                                          \
+      do {                                                                     \
+        knt++;                                                                 \
+        for (int64_t i = 0; i < n; i++) x[i * incx] = x[i * incx] * rsafmn;    \
+        beta *= rsafmn;                                                        \
+        alphr *= rsafmn;                                                       \
+        alphi *= rsafmn;                                                       \
+      } while (LA_ABS_##sfx(beta) < safmin && knt < 20);                       \
+      xnorm = la_nrm2_##sfx(x, n, incx);                                       \
+      alpha = LA_MK_##sfx(alphr, alphi);                                       \
+      an = la_lapy3_##sfx(alphr, alphi, xnorm);                                \
+      beta = alphr >= (R)0 ? -an : an;                                         \
+    }                                                                          \
+    T tau = LA_MK_##sfx((beta - alphr) / beta, -alphi / beta);                 \
+    T scal = alpha - LA_MK_##sfx(beta, (R)0);                                  \
+    for (int64_t i = 0; i < n; i++) x[i * incx] = x[i * incx] / scal;          \
+    for (int j = 0; j < knt; j++) beta *= safmin;                              \
+    *beta_out = beta;                                                          \
+    return tau;                                                                \
+  }
+LA_TRAITS_float(LA_GEN_LARFG)
+LA_TRAITS_double(LA_GEN_LARFG)
+LA_TRAITS_c32(LA_GEN_LARFG)
+LA_TRAITS_c64(LA_GEN_LARFG)
+#undef LA_GEN_LARFG
+
 /* ── Compute-type descriptor and storage->compute mapping ─────────────────
 
    la_compute is the factorization compute type; every storage dtype maps to one

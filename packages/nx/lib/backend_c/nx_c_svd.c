@@ -199,22 +199,11 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
     T *tauq = (T *)vtauq;                                                      \
     T *taup = (T *)vtaup;                                                      \
     for (int64_t i = 0; i < pc; i++) {                                         \
-      R xn = (R)0;                                                             \
-      for (int64_t r = i + 1; r < pr; r++) xn += NORM2(P[r * ld + i]);         \
-      T alpha = P[i * ld + i];                                                 \
-      R alr = REAL(alpha);                                                     \
-      if (xn == (R)0 && LA_IMAG_##sfx(alpha) == (R)0) {                        \
-        tauq[i] = (T)0;                                                        \
-        d[i] = alr;                                                            \
-      } else {                                                                 \
-        R an = SQRT(NORM2(alpha) + xn);                                        \
-        R beta = alr >= (R)0 ? -an : an;                                       \
-        tauq[i] =                                                             \
-            LA_MK_##sfx((beta - alr) / beta, -LA_IMAG_##sfx(alpha) / beta);    \
-        T scal = alpha - LA_MK_##sfx(beta, (R)0);                              \
-        for (int64_t r = i + 1; r < pr; r++)                                   \
-          P[r * ld + i] = P[r * ld + i] / scal;                               \
-        d[i] = beta;                                                           \
+      R beta;                                                                  \
+      tauq[i] = la_larfg_##sfx(P[i * ld + i], &P[(i + 1) * ld + i],            \
+                                pr - i - 1, ld, &beta);                        \
+      d[i] = beta;                                                             \
+      if (tauq[i] != (T)0) {                                                   \
         for (int64_t c = i + 1; c < pc; c++) {                                 \
           T w = P[i * ld + c];                                                 \
           for (int64_t r = i + 1; r < pr; r++)                                 \
@@ -226,22 +215,13 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
         }                                                                      \
       }                                                                        \
       if (i < pc - 1) {                                                        \
-        R xnr = (R)0;                                                          \
-        for (int64_t c = i + 2; c < pc; c++) xnr += NORM2(P[i * ld + c]);      \
-        T al = P[i * ld + (i + 1)];                                            \
-        R alre = REAL(al);                                                     \
-        if (xnr == (R)0 && LA_IMAG_##sfx(al) == (R)0) {                        \
-          taup[i] = (T)0;                                                      \
-          e[i] = alre;                                                         \
-        } else {                                                               \
-          R an = SQRT(NORM2(al) + xnr);                                        \
-          R beta = alre >= (R)0 ? -an : an;                                    \
-          T tauc = LA_MK_##sfx((beta - alre) / beta, LA_IMAG_##sfx(al) / beta); \
-          taup[i] = tauc;                                                      \
-          T scal = CONJ(al) - LA_MK_##sfx(beta, (R)0);                         \
-          e[i] = beta;                                                         \
-          for (int64_t c = i + 2; c < pc; c++)                                 \
-            P[i * ld + c] = CONJ(P[i * ld + c]) / scal;                        \
+        for (int64_t c = i + 2; c < pc; c++) P[i * ld + c] = CONJ(P[i * ld + c]); \
+        R rbeta;                                                               \
+        T tauc = la_larfg_##sfx(CONJ(P[i * ld + (i + 1)]), &P[i * ld + i + 2], \
+                                pc - i - 2, 1, &rbeta);                        \
+        taup[i] = tauc;                                                        \
+        e[i] = rbeta;                                                          \
+        if (tauc != (T)0) {                                                    \
           for (int64_t a = i + 1; a < pr; a++) {                               \
             T s = P[a * ld + (i + 1)];                                         \
             for (int64_t c = i + 2; c < pc; c++)                               \
@@ -251,7 +231,7 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
             for (int64_t c = i + 2; c < pc; c++)                               \
               P[a * ld + c] -= s * CONJ(P[i * ld + c]);                        \
           }                                                                    \
-          P[i * ld + (i + 1)] = LA_MK_##sfx(beta, (R)0);                       \
+          P[i * ld + (i + 1)] = LA_MK_##sfx(rbeta, (R)0);                      \
         }                                                                      \
       } else {                                                                 \
         taup[i] = (T)0;                                                        \
@@ -285,22 +265,11 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
                X[rl * nb + l] * CONJ(P[(off + l) * ld + gi]);                  \
         P[(off + rl) * ld + gi] -= s;                                          \
       }                                                                        \
-      R xn = (R)0;                                                             \
-      for (int64_t r = gi + 1; r < pr; r++) xn += NORM2(P[r * ld + gi]);       \
-      T alpha = P[gi * ld + gi];                                               \
-      R alr = REAL(alpha);                                                     \
-      if (xn == (R)0 && LA_IMAG_##sfx(alpha) == (R)0) {                        \
-        tauq[gi] = (T)0;                                                       \
-        d[gi] = alr;                                                           \
-      } else {                                                                 \
-        R an = SQRT(NORM2(alpha) + xn);                                        \
-        R beta = alr >= (R)0 ? -an : an;                                       \
-        tauq[gi] =                                                            \
-            LA_MK_##sfx((beta - alr) / beta, -LA_IMAG_##sfx(alpha) / beta);    \
-        T scal = alpha - LA_MK_##sfx(beta, (R)0);                             \
-        for (int64_t r = gi + 1; r < pr; r++)                                 \
-          P[r * ld + gi] = P[r * ld + gi] / scal;                             \
-        d[gi] = beta;                                                          \
+      R beta;                                                                  \
+      tauq[gi] = la_larfg_##sfx(P[gi * ld + gi], &P[(gi + 1) * ld + gi],       \
+                                pr - gi - 1, ld, &beta);                       \
+      d[gi] = beta;                                                            \
+      if (tauq[gi] != (T)0) {                                                  \
         P[gi * ld + gi] = (T)1;                                               \
       }                                                                        \
       /* Y(i+1:np, i) = tauq · conj(A(i:mp, i+1:np)ᴴ vᴸ) with the panel-column  \
@@ -346,25 +315,16 @@ static void la_lasv2(double f, double g, double h, double *ssmin, double *ssmax,
         P[gi * ld + (off + cl)] -= s;                                          \
       }                                                                        \
       /* Right reflector P_i on row gi (cols gi+1:pc) [our storage]. */         \
-      R xnr = (R)0;                                                            \
       for (int64_t cl = i + 2; cl < np; cl++)                                  \
-        xnr += NORM2(P[gi * ld + (off + cl)]);                                 \
-      T al = P[gi * ld + (gi + 1)];                                            \
-      R alre = REAL(al);                                                       \
-      if (xnr == (R)0 && LA_IMAG_##sfx(al) == (R)0) {                          \
-        taup[gi] = (T)0;                                                       \
-        e[gi] = alre;                                                          \
+        P[gi * ld + (off + cl)] = CONJ(P[gi * ld + (off + cl)]);               \
+      R rbeta;                                                                 \
+      T tauc = la_larfg_##sfx(CONJ(P[gi * ld + (gi + 1)]),                     \
+                              &P[gi * ld + (off + i + 2)], np - i - 2, 1, &rbeta); \
+      taup[gi] = tauc;                                                         \
+      e[gi] = rbeta;                                                           \
+      if (tauc == (T)0) {                                                      \
         for (int64_t rl = i + 1; rl < mp; rl++) X[rl * nb + i] = (T)0;         \
       } else {                                                                 \
-        R an = SQRT(NORM2(al) + xnr);                                          \
-        R beta = alre >= (R)0 ? -an : an;                                      \
-        T tauc =                                                              \
-            LA_MK_##sfx((beta - alre) / beta, LA_IMAG_##sfx(al) / beta);       \
-        taup[gi] = tauc;                                                       \
-        T scal = CONJ(al) - LA_MK_##sfx(beta, (R)0);                           \
-        e[gi] = beta;                                                          \
-        for (int64_t cl = i + 2; cl < np; cl++)                               \
-          P[gi * ld + (off + cl)] = CONJ(P[gi * ld + (off + cl)]) / scal;      \
         P[gi * ld + (gi + 1)] = (T)1;                                          \
         /* X(i+1:mp, i) = taup · (A(i+1:mp, i+1:np) v_R with corrections). */   \
         for (int64_t rl = i + 1; rl < mp; rl++) {                             \

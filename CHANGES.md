@@ -2757,6 +2757,12 @@ thread.
 
 ### Nx
 
+- `Nx.svd`, `Nx.svdvals`, `Nx.qr`, `Nx.eigh` and `Nx.eigvalsh` hold on
+  matrices whose entries are very small or very large. The Householder
+  reflectors summed squares that under- or overflowed: a complex64 `svd` of a
+  rank-deficient matrix raised `Linalg_error`, a float64 matrix scaled by
+  `1e-170` came back as if it were another matrix, and one scaled by `1e170`
+  gave NaN. The norms are now scaled, as LAPACK's `xLARFG` does.
 - `Nx.eig` and `Nx.eigvals` converge on complex matrices with nearly equal
   eigenvalues, such as a Hermitian tridiagonal with paired eigenvalues, which
   raised `Linalg_error` for want of convergence. The QR iteration's shift lost

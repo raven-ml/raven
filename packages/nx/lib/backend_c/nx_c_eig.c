@@ -788,18 +788,25 @@ static void eig_hess_c(eig_cplx *a, int n, int low, int igh, eig_cplx *z,
     for (int j = 0; j < n; j++) z[i * n + j] = (i == j) ? 1.0 : 0.0;
   for (int m = low + 1; m <= igh - 1; m++) {
     int pcol = m - 1;
+    /* The column is scaled by the sum of its magnitudes, as corth does, so no
+       square in its norm under- or overflows; v and tau do not depend on the
+       scale, beta is scaled back. */
+    double scale = 0.0;
+    for (int i = m; i <= igh; i++) scale += eig_cabs1(a[i * n + pcol]);
+    if (scale == 0.0) continue;
     double xnorm2 = 0.0;
-    for (int i = m + 1; i <= igh; i++) xnorm2 += eig_cnorm2(a[i * n + pcol]);
-    eig_cplx alpha = a[m * n + pcol];
-    double alphr = creal(alpha), alphi = cimag(alpha);
+    for (int i = m + 1; i <= igh; i++)
+      xnorm2 += eig_cnorm2(a[i * n + pcol] / scale);
     if (xnorm2 == 0.0) continue; /* column already reduced */
+    eig_cplx alpha = a[m * n + pcol] / scale;
+    double alphr = creal(alpha), alphi = cimag(alpha);
     double anorm = sqrt(eig_cnorm2(alpha) + xnorm2);
     double beta = (alphr >= 0.0) ? -anorm : anorm;
     eig_cplx tau = CMPLX((beta - alphr) / beta, -alphi / beta);
     eig_cplx scal = alpha - beta;
     v[m] = 1.0;
-    for (int i = m + 1; i <= igh; i++) v[i] = a[i * n + pcol] / scal;
-    a[m * n + pcol] = CMPLX(beta, 0.0);
+    for (int i = m + 1; i <= igh; i++) v[i] = (a[i * n + pcol] / scale) / scal;
+    a[m * n + pcol] = CMPLX(beta * scale, 0.0);
     for (int i = m + 1; i <= igh; i++) a[i * n + pcol] = 0.0;
     /* Hᴴ A (zeros the subcolumn): rows [m,igh], columns [m,n). Hᴴ uses
        conj(tau). */
