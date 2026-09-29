@@ -621,6 +621,14 @@ module Buffer = struct
         Gc.finalise (release d) base;
         { base; offset = 0; dtype = s; length = n }
 
+  (* The bytes an element of [k] is aligned to: one component's for the complex
+     kinds. *)
+  let component_size (type a b) (k : (a, b) Bigarray.kind) =
+    match k with
+    | Bigarray.Complex32 -> 4
+    | Bigarray.Complex64 -> 8
+    | k -> Bigarray.kind_size_in_bytes k
+
   (* The format of the elements of [k]. *)
   let format_of_kind (type a b) (k : (a, b) Bigarray.kind) =
     match k with
@@ -650,6 +658,16 @@ module Buffer = struct
                "Nx_device.Buffer.of_bigarray: %s has %d bytes, the mapping %d"
                f.path f.size extent))
       file;
+    (* A host buffer's elements lie at multiples of their size, as every typed
+       read of it expects. *)
+    let align = component_size (Bigarray.Array1.kind ba) in
+    let address = bigarray_address ba in
+    if extent > 0 && Nativeint.rem address (Nativeint.of_int align) <> 0n then
+      invalid_arg
+        (Printf.sprintf
+           "Nx_device.Buffer.of_bigarray: the elements at 0x%nx are not \
+            aligned to %d bytes"
+           address align);
     let ba = shared ba in
     let base =
       base ?file ~borrowed:true ~keep:(Host ba) ~extent host (heap_memory ba)
@@ -748,11 +766,7 @@ module Buffer = struct
       fail "the buffer is on %s, not CPU" buf.base.owner.name;
     reachable buf;
     let size = Bigarray.kind_size_in_bytes k and bytes = nbytes buf in
-    let align =
-      match k with
-      | Bigarray.Complex32 | Bigarray.Complex64 -> size / 2
-      | _ -> size
-    in
+    let align = component_size k in
     if bytes mod size <> 0 then
       fail "%d bytes are not a whole number of %d-byte elements" bytes size;
     if Nativeint.rem (host_address buf) (Nativeint.of_int align) <> 0n then

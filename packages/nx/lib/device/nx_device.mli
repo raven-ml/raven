@@ -197,8 +197,10 @@ module Buffer : sig
       for the result, its views and its borrows.
 
       Raises [Invalid_argument] if [ba]'s kind is [Int] or [Nativeint], which
-      are no storage format, or if [file] is given and its [size] is not [ba]'s
-      size in bytes. *)
+      are no storage format, if [ba]'s first element does not lie at a
+      multiple of its size (of one component for complex kinds), as a
+      bigarray that [Unix.map_file] maps from an unaligned [pos] may not, or
+      if [file] is given and its [size] is not [ba]'s size in bytes. *)
 
   val file : t -> (file * int) option
   (** [file b] is the file [b]'s memory maps and the offset in it of [b]'s first

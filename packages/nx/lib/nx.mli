@@ -573,7 +573,10 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
     built from the integers of its width with {!bitcast}, such as a bfloat16 one
     from [int16_unsigned] elements.
 
-    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint].
+    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint],
+    or if its first element does not lie at a multiple of its size (of one
+    component for complex kinds), as a bigarray that [Unix.map_file] maps from
+    an unaligned [pos] may not.
 
     See also {!to_bigarray}, which always copies. *)
 

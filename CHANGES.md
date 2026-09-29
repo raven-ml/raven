@@ -2757,6 +2757,12 @@ thread.
 
 ### Nx
 
+- `Nx.of_bigarray` and `Nx_device.Buffer.of_bigarray` raise
+  `Invalid_argument` for a bigarray whose first element does not lie at a
+  multiple of its size (of one component for complex kinds), such as a file
+  that `Unix.map_file` maps from an unaligned `pos`. Such a tensor could not be
+  read with `to_array`, `iter_item` or `pp`, and nx's kernels ran on the
+  misaligned elements.
 - **Breaking:** the `nx.buffer` library and its `Nx_buffer` type are removed,
   and with them `Nx.data`, `Nx.to_buffer`, `Nx.of_buffer`, `Nx.offset` and
   `Nx.strides`. A tensor's storage is a host `Nx_device.Buffer.t` that only

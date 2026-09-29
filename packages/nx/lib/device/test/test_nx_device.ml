@@ -312,6 +312,32 @@ let test_file () =
   raises_match (Exn.invalid_arg ~substring:"the mapping 7") (fun () ->
       B.of_bigarray ~file (host_bytes 7))
 
+(* A bigarray whose elements do not lie at multiples of their size, as a file
+   mapped from an unaligned position gives, is refused. *)
+let test_of_bigarray_alignment () =
+  let path = Filename.temp_file "nx_device_" ".bin" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      let fd = Unix.openfile path [ Unix.O_RDWR ] 0 in
+      Fun.protect
+        ~finally:(fun () -> Unix.close fd)
+        (fun () ->
+          ignore (Unix.write_substring fd (String.make 32 '\000') 0 32);
+          let map pos k =
+            Bigarray.array1_of_genarray
+              (Unix.map_file fd ~pos k Bigarray.c_layout false [| 4 |])
+          in
+          let at_two = map 2L Bigarray.float32 in
+          raises_match (Exn.invalid_arg ~substring:"aligned") (fun () ->
+              B.of_bigarray at_two);
+          raises_match (Exn.invalid_arg ~substring:"aligned") (fun () ->
+              B.of_bigarray (map 4L Bigarray.complex64));
+          is_true ~msg:"a complex at a component's multiple"
+            (B.length (B.of_bigarray (map 8L Bigarray.complex64)) = 4);
+          is_true ~msg:"bytes at any position"
+            (B.length (B.of_bigarray (map 3L Bigarray.int8_unsigned)) = 4)))
+
 external c_host : B.t -> nativeint = "test_nx_device_buffer_host"
 
 let test_c_host () =
@@ -1162,6 +1188,8 @@ let () =
              test "host memory is counted and capped" test_host_memory;
              test "of_bigarray of every kind" test_of_bigarray_kinds;
              test "mapped files" test_file;
+             test "of_bigarray refuses unaligned elements"
+               test_of_bigarray_alignment;
              test "nx_device.h reads the host address" test_c_host;
              test "borrow" test_borrow;
              test "borrows share one mapping" test_borrow_shared;
