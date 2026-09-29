@@ -18,14 +18,14 @@
   test_sorting
   test_linalg
   test_windows
-  test_fft)
+  test_fft
+  test_io)
  (package nx)
  (modules
   :standard
   \
   test_format
   test_nx_support
-  test_nx_io
   test_nx_runtime
   test_nx_quant
   test_float_codecs)
@@ -35,9 +35,13 @@
   nx
   nx.core
   nx.effect
+  nx.io
+  unix
   windtrap
   test_nx_support
-  nx_test))
+  nx_test)
+ (deps
+  (glob_files fixtures/*)))
 
 (test
  (name test_format)
@@ -60,14 +64,6 @@
  (package nx)
  (modules test_nx_quant)
  (libraries nx nx.dtype nx.buffer nx.core nx.effect nx.quant windtrap))
-
-(test
- (name test_nx_io)
- (package nx)
- (modules test_nx_io)
- (libraries nx nx.dtype nx.buffer nx.core nx.io unix windtrap)
- (deps
-  (glob_files fixtures/*)))
 
 (test
  (name test_float_codecs)
