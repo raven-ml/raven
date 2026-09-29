@@ -3,121 +3,161 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Devices over fake drivers whose memory is host memory, so that a test reads
+   what a device holds at its addresses. Programs of creates, views, borrows,
+   copies, drops and budgets run against a model of every buffer's bytes and
+   every device's memory and counters; the laws, the refusals, the timeline and
+   the failure rules are tests of their own. *)
+
 open Windtrap
 module B = Nx_device.Buffer
 module S = Nx_dtype.Scalar
 
-type bytes_ba =
-  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-let host_bytes n : bytes_ba =
-  Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n
-
-let bytes_of_list l =
-  let ba = host_bytes (List.length l) in
-  List.iteri (fun i x -> ba.{i} <- x) l;
-  ba
-
-let bytes_of_buffer b : bytes_ba = B.bigarray Bigarray.int8_unsigned b
-
-let list_of_bytes (ba : bytes_ba) =
-  List.init (Bigarray.Array1.dim ba) (fun i -> ba.{i})
-
-let read b =
-  let ba = host_bytes (B.nbytes b) in
-  B.copy ~src:b ~dst:(B.of_bigarray ba);
-  list_of_bytes ba
-
-let write b l = B.copy ~src:(B.of_bigarray (bytes_of_list l)) ~dst:b
-let le64 v = List.init 8 (fun i -> (v lsr (8 * i)) land 0xff)
-let bytes = list int
-
-(* A device over host memory whose driver counts its calls. *)
-type driver = {
-  memory : (nativeint, bytes_ba) Hashtbl.t;
-  mutable allocs : int;
-  mutable frees : int;
-  mutable refuse : bool;
-}
-
-let driver () =
-  { memory = Hashtbl.create 16; allocs = 0; frees = 0; refuse = false }
-
-let device ?(name = "TEST") ?(budget = max_int) ?load ?signal ?timeout_ms
-    ?synchronized ?mapping drv =
-  let alloc n =
-    if drv.refuse then None
-    else begin
-      let ba = host_bytes n in
-      let a = B.host_address (B.of_bigarray ba) in
-      Hashtbl.add drv.memory a ba;
-      drv.allocs <- drv.allocs + 1;
-      Some { Nx_device.host = Some a; device = a; handle = a }
-    end
-  in
-  let free (m : Nx_device.memory) =
-    Hashtbl.remove drv.memory m.device;
-    drv.frees <- drv.frees + 1
-  in
-  let signal = Option.map (fun s _ -> s) signal in
-  Nx_device.make ~name ~arch:"test" ~budget ~memory:{ alloc; free } ?load
-    ?signal ?timeout_ms ?synchronized ?mapping ()
-
-(* A mapping of host memory, as a device that shares it gives, which counts its
-   live mappings. *)
-let map_host () =
-  let live = ref 0 in
-  let map a _ =
-    incr live;
-    Ok { Nx_device.host = Some a; device = a; handle = 1n }
-  in
-  ({ Nx_device.map; unmap = (fun _ -> decr live) }, live)
-
-external store_signal : nativeint -> int -> unit = "test_nx_device_signal"
+type chars =
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
 external memmove : nativeint -> nativeint -> int -> unit
   = "test_nx_device_memmove"
 
-(* A device whose own memory the host does not address, as a GPU's. Its copy
-   queue holds copies until the host waits for them, then runs them in order up
-   to the value waited for, as a GPU runs behind the host, and counts them. Its
-   host memory is the host's, and it maps any host memory, recording the ranges
-   and counting the live mappings. It moves bytes into the memory of the devices
-   of [peers]. [hang] stops its queue, and [refuse] makes its driver refuse to
-   enqueue. *)
-type far = {
-  dev : Nx_device.t;
-  copies : int ref;
-  peers : Nx_device.t list ref;
-  live : int ref;
-  ranges : (nativeint * int) list ref;
-  hang : bool ref;
-  refuse : bool ref;
+external store_signal : nativeint -> int -> unit = "test_nx_device_signal"
+external c_host : B.t -> nativeint = "test_nx_device_buffer_host"
+
+let host = Nx_device.host
+let chars n : chars = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
+
+let string_of (ba : chars) =
+  String.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba)
+
+let of_string s =
+  B.of_bigarray
+    (Bigarray.Array1.init Bigarray.char Bigarray.c_layout (String.length s)
+       (String.get s))
+
+(* The [n] bytes at the host address [a]. *)
+let peek a n =
+  let ba = chars n in
+  memmove (B.host_address (B.of_bigarray ba)) a n;
+  ba
+
+let read b =
+  let ba = chars (B.nbytes b) in
+  B.copy ~src:b ~dst:(B.of_bigarray ba);
+  string_of ba
+
+let write b s = B.copy ~src:(of_string s) ~dst:b
+
+let pattern seed n =
+  String.init n (fun i ->
+      Char.chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
+
+let stats = Nx_device.stats
+let allocated d = Nx_device.Stats.allocated (stats d)
+let cached d = Nx_device.Stats.cached (stats d)
+let pp_format ppf s = Format.pp_print_string ppf (S.to_string s)
+let pp_device ppf d = Format.pp_print_string ppf (Nx_device.name d)
+let arg pp = Testable.make ~pp ~equal:( == )
+let ints = Gen.of_list ~pp:Format.pp_print_int
+let seeds = Gen.int_range 0 255
+
+let out_of_memory d n = function
+  | Nx_device.Out_of_memory (d', n') -> d' == d && n' = n
+  | _ -> false
+
+(* Host buffers of this many bytes start on a page on every platform. *)
+let page = 1 lsl 16
+
+(* Runs [f] and collects what it allocated. *)
+let dropped f =
+  ignore (Sys.opaque_identity (f ()));
+  Gc.full_major ()
+
+(* Fake drivers *)
+
+(* A driver whose memory is host memory aligned to 16 bytes. It counts its
+   bytes, its calls and its live mappings but those of the host's staging
+   memory. A far driver's own memory is not addressed by the host, and its copy
+   queue runs copies when the host waits for them, as a GPU runs behind the
+   host: [stalled] stops it, [broken] makes it refuse to enqueue, and a device
+   named PEER... copies into the memory of the others. *)
+type driver = {
+  blocks : (nativeint, chars * int) Hashtbl.t;
+  mutable held : int;
+  mutable frees : int;
+  mutable refuse : bool;
+  mutable mapped : int;
+  mutable staging : nativeint list;
+  mutable queued : int;
+  mutable staged : int;
+  mutable stalled : bool;
+  mutable broken : bool;
 }
 
-let far name =
-  let own = driver () and copies = ref 0 and peers = ref [] in
-  let live = ref 0 and ranges = ref [] in
-  let hang = ref false and refuse = ref false in
+type fake = { dev : Nx_device.t; drv : driver }
+
+let staging_bytes = 128 lsl 20
+let peer name = String.starts_with ~prefix:"PEER" name
+
+let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
+    ?signal ?load ?timeout_ms ?synchronized () =
+  let drv =
+    {
+      blocks = Hashtbl.create 8;
+      held = 0;
+      frees = 0;
+      refuse = false;
+      mapped = 0;
+      staging = [];
+      queued = 0;
+      staged = 0;
+      stalled = false;
+      broken = false;
+    }
+  in
+  let alloc ~addressed n =
+    if drv.refuse then None
+    else
+      let ba = chars (n + 15) in
+      let a = B.host_address (B.of_bigarray ba) in
+      let a = Nativeint.(logand (add a 15n) (lognot 15n)) in
+      Hashtbl.replace drv.blocks a (ba, n);
+      drv.held <- drv.held + n;
+      let host = if addressed then Some a else None in
+      Some { Nx_device.host; device = a; handle = a }
+  in
+  let free (m : Nx_device.memory) =
+    drv.held <- drv.held - snd (Hashtbl.find drv.blocks m.device);
+    drv.frees <- drv.frees + 1;
+    Hashtbl.remove drv.blocks m.device
+  in
+  let map a n =
+    if n = staging_bytes then drv.staging <- a :: drv.staging
+    else drv.mapped <- drv.mapped + 1;
+    Ok { Nx_device.host = Some a; device = a; handle = 1n }
+  in
+  let staged a =
+    let n = Nativeint.of_int staging_bytes in
+    List.exists (fun s -> a >= s && a < Nativeint.add s n) drv.staging
+  in
   let queue = Queue.create () and signaled = ref 0 in
   let copy ~dst ~src n v =
-    if !refuse then failwith "enqueue refused";
+    if drv.broken then failwith "enqueue refused";
     Queue.push
       ( v,
         fun () ->
           memmove dst src n;
-          incr copies )
+          drv.queued <- drv.queued + 1;
+          if staged dst || staged src then drv.staged <- drv.staged + 1 )
       queue
   in
   let rec run_to v =
-    if (not !hang) && !signaled < v && not (Queue.is_empty queue) then begin
+    if (not drv.stalled) && !signaled < v && not (Queue.is_empty queue) then begin
       let v', f = Queue.pop queue in
       f ();
       signaled := v';
       run_to v
     end
   in
-  let signal _ =
+  let queue_signal _ =
     {
       Nx_device.signaled = (fun () -> !signaled);
       wait =
@@ -126,522 +166,635 @@ let far name =
           !signaled >= v);
     }
   in
-  let map a n =
-    incr live;
-    ranges := (a, n) :: !ranges;
-    Ok { Nx_device.host = Some a; device = a; handle = 1n }
+  let copy_queue _ =
+    let transfer d =
+      if peer name && peer (Nx_device.name d) then Some copy else None
+    in
+    { Nx_device.copy; transfer }
   in
-  let alloc ~host n =
-    let ba = host_bytes n in
-    let a = B.host_address (B.of_bigarray ba) in
-    Hashtbl.add own.memory a ba;
-    Some
-      {
-        Nx_device.host = (if host then Some a else None);
-        device = a;
-        handle = a;
-      }
-  in
-  let free (m : Nx_device.memory) = Hashtbl.remove own.memory m.device in
+  let unmap _ = drv.mapped <- drv.mapped - 1 in
   let dev =
-    Nx_device.make ~name ~arch:"test" ~budget:max_int
-      ~memory:{ alloc = alloc ~host:false; free }
-      ~host_memory:{ alloc = alloc ~host:true; free }
-      ~mapping:{ map; unmap = (fun _ -> decr live) }
-      ~copy_queue:(fun _ ->
-        {
-          copy;
-          transfer = (fun d -> if List.memq d !peers then Some copy else None);
-        })
-      ~signal ()
+    Nx_device.make ~name ~arch:"test" ~budget
+      ~memory:{ alloc = alloc ~addressed:(not far); free }
+      ?host_memory:
+        (if far then Some { alloc = alloc ~addressed:true; free } else None)
+      ?mapping:(if maps then Some { Nx_device.map; unmap } else None)
+      ?copy_queue:(if far then Some copy_queue else None)
+      ?signal:
+        (if far then Some queue_signal else Option.map (fun s _ -> s) signal)
+      ?load ?timeout_ms ?synchronized ()
   in
-  { dev; copies; peers; live; ranges; hang; refuse }
+  { dev; drv }
 
-(* Runs [f] and collects what it allocated. *)
-let dropped f =
-  ignore (Sys.opaque_identity (f ()));
-  Gc.full_major ()
+let far ?(name = "FAR") ?budget () = fake ~name ?budget ~far:true ()
 
-let allocated d = Nx_device.Stats.allocated (Nx_device.stats d)
-let cached d = Nx_device.Stats.cached (Nx_device.stats d)
-let retained d = Nx_device.Stats.retained (Nx_device.stats d)
+(* A signal whose waits answer [wait timeout_ms]. *)
+let signal ?(signaled = 0) wait =
+  {
+    Nx_device.signaled = (fun () -> signaled);
+    wait = (fun _ ~timeout_ms -> wait timeout_ms);
+  }
 
-(* Signals [v] on [d]'s timeline after [delay] seconds from another domain, as
-   the device would, and records that it did. *)
-let signal_later d v delay =
+(* A signal that never arrives, counting the waits for it. *)
+let never waits =
+  signal (fun _ ->
+      incr waits;
+      false)
+
+(* Signals [v] on [d]'s timeline after 50 ms from another domain, as the device
+   would, and records that it did. *)
+let signal_later d v =
   let signaled = Atomic.make false in
   let word = B.host_address (Nx_device.timeline d) in
   let domain =
     Domain.spawn (fun () ->
-        Unix.sleepf delay;
+        Unix.sleepf 0.05;
         Atomic.set signaled true;
         store_signal word v)
   in
   (signaled, domain)
 
-(* Host *)
+(* Memory *)
 
-let test_host_identity () =
-  let h = Nx_device.host in
-  equal ~msg:"name" string "CPU" (Nx_device.name h);
-  is_true ~msg:"arch" (Nx_device.arch h <> "" && Nx_device.arch h <> "amd64");
-  equal ~msg:"budget" int max_int (Nx_device.budget h);
-  is_true ~msg:"equal" (Nx_device.equal h Nx_device.host);
-  is_false ~msg:"distinct" (Nx_device.equal h (device (driver ())))
+(* Each buffer's bytes, [-1] where nothing wrote them, in memory shared with its
+   views and borrows, and each device's budget, counters, owned memory and
+   borrows. *)
+module Model = struct
+  exception Dropped
+  exception No_memory
 
-let test_create () =
-  let b = B.create Nx_device.host S.Float32 3 in
-  equal ~msg:"length" int 3 (B.length b);
-  equal ~msg:"nbytes" int 12 (B.nbytes b);
-  is_true ~msg:"dtype" (S.equal (B.dtype b) S.Float32);
-  is_false ~msg:"owned" (B.is_borrowed b);
-  equal ~msg:"no handle" nativeint 0n (B.handle b);
-  equal ~msg:"int4 packs two per byte" int 3
-    (B.nbytes (B.create Nx_device.host S.Int4 5));
-  equal ~msg:"bool takes a byte" int 2
-    (B.nbytes (B.create Nx_device.host S.Bool 2));
-  let e = B.create Nx_device.host S.Float64 0 in
-  equal ~msg:"empty" int 0 (B.nbytes e);
-  raises_match (Exn.invalid_arg ~substring:"elements") (fun () ->
-      B.create Nx_device.host S.Float32 (-1))
+  type memory = { cells : int array; on_page : bool }
 
-(* An element count whose bytes pass [max_int] is refused, not wrapped. *)
-let test_overflow () =
-  let overflow = Exn.invalid_arg ~substring:"overflow" in
-  raises_match overflow (fun () ->
-      B.create Nx_device.host S.Float64 ((1 lsl 58) + 1));
-  raises_match overflow (fun () -> B.create Nx_device.host S.Float64 (1 lsl 59));
-  let b = B.create Nx_device.host S.Float64 1 in
-  raises_match overflow (fun () ->
-      B.view b ~offset:0 S.Float64 ((1 lsl 58) + 1))
+  (* The buffers over some memory, the bytes owned, and for a borrow the host
+     memory it maps. *)
+  type holding = { owned : int; mutable holders : int; maps : memory option }
 
-let test_copy_and_views () =
-  let b = B.create Nx_device.host S.UInt8 8 in
-  write b [ 0; 1; 2; 3; 4; 5; 6; 7 ];
-  equal ~msg:"round trip" bytes [ 0; 1; 2; 3; 4; 5; 6; 7 ] (read b);
-  let v = B.view b ~offset:4 S.UInt8 3 in
-  equal ~msg:"view" bytes [ 4; 5; 6 ] (read v);
-  write v [ 9; 9; 9 ];
-  equal ~msg:"writes through a view" bytes [ 0; 1; 2; 3; 9; 9; 9; 7 ] (read b);
-  let w = B.view b ~offset:4 S.UInt32 1 in
-  equal ~msg:"format change" int 4 (B.nbytes w);
-  equal ~msg:"view address" nativeint
-    (Nativeint.add (B.host_address b) 4n)
-    (B.host_address w);
-  let inv = Exn.invalid_arg ~substring:"" in
-  raises_match inv (fun () -> B.view b ~offset:(-1) S.UInt8 1);
-  raises_match inv (fun () -> B.view b ~offset:6 S.UInt8 3);
-  raises_match (Exn.invalid_arg ~substring:"aligned") (fun () ->
-      B.view b ~offset:2 S.UInt32 1);
-  raises_match (Exn.invalid_arg ~substring:"bytes into") (fun () ->
-      B.copy ~src:b ~dst:v)
+  type device = {
+    name : string;
+    mutable budget : int;
+    mutable bytes_in : int;
+    mutable bytes_out : int;
+    mutable owns : holding list;
+    mutable borrows : holding list;
+  }
 
-let test_of_bigarray () =
-  let ba = bytes_of_list [ 1; 2; 3 ] in
-  let before = Nx_device.stats Nx_device.host in
-  let b = B.of_bigarray ba in
-  is_true ~msg:"borrowed" (B.is_borrowed b);
-  is_true ~msg:"on the host" (Nx_device.equal (B.device b) Nx_device.host);
-  is_true ~msg:"bytes" (S.equal (B.dtype b) S.UInt8);
-  ba.{1} <- 7;
-  equal ~msg:"shares memory" bytes [ 1; 7; 3 ] (read b);
-  let d = Nx_device.stats Nx_device.host in
-  equal ~msg:"not counted" int 0
-    (Nx_device.Stats.allocated (Nx_device.Stats.diff before d))
+  type buffer = {
+    memory : memory;
+    off : int;
+    dtype : S.t;
+    length : int;
+    device : device option;
+    holding : holding;
+    borrowed : bool;
+    addressed : bool;
+    mutable dropped : bool;
+  }
 
-(* More bytes than a page on every platform. *)
-let pages = 1 lsl 16
+  let nbytes s n = ((n * S.bitsize s) + 7) / 8
+  let size r = nbytes r.dtype r.length
+  let element s = Int.max 1 (S.bitsize s / 8)
 
-let test_of_bigarray_kinds () =
-  let check (type a b) (k : (a, b) Bigarray.kind) s =
-    let ba = Bigarray.Array1.create k Bigarray.c_layout 3 in
-    let b = B.of_bigarray ba in
-    is_true ~msg:(S.to_string s) (S.equal (B.dtype b) s);
-    equal ~msg:"length" int 3 (B.length b);
-    equal ~msg:"same memory" int 0
-      (compare (B.host_address b)
-         (B.host_address (B.of_bigarray (Bigarray.Array1.sub ba 0 3))))
-  in
-  check Bigarray.float16 S.Float16;
-  check Bigarray.float32 S.Float32;
-  check Bigarray.float64 S.Float64;
-  check Bigarray.int8_signed S.Int8;
-  check Bigarray.int8_unsigned S.UInt8;
-  check Bigarray.char S.UInt8;
-  check Bigarray.int16_signed S.Int16;
-  check Bigarray.int16_unsigned S.UInt16;
-  check Bigarray.int32 S.Int32;
-  check Bigarray.int64 S.Int64;
-  check Bigarray.complex32 S.Complex64;
-  check Bigarray.complex64 S.Complex128;
-  let f = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 2 in
-  f.{1} <- 1.5;
-  equal ~msg:"its bytes" bytes
-    [ 0; 0; 0; 0; 0; 0; 0xc0; 0x3f ]
-    (read (B.of_bigarray f));
-  let inv = Exn.invalid_arg ~substring:"no storage format" in
-  raises_match inv (fun () ->
-      B.of_bigarray (Bigarray.Array1.create Bigarray.int Bigarray.c_layout 1));
-  raises_match inv (fun () ->
-      B.of_bigarray
-        (Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 1))
+  (* Whether [n] elements of [s] take more than [max_int] bytes. *)
+  let too_big s n = S.bitsize s >= 8 && n > max_int / (S.bitsize s / 8)
 
-let test_file () =
-  let file = { B.path = "/weights"; size = pages; mtime = 1.; inode = 2 } in
-  let origin b =
-    Option.map (fun ((f : B.file), off) -> (f.path, off)) (B.file b)
-  in
-  let origin_t = option (pair string int) in
-  (* Page-aligned, as a mapping of a file is, so that a device can borrow it. *)
-  let mapped =
-    B.bigarray Bigarray.int8_unsigned (B.create Nx_device.host S.UInt8 pages)
-  in
-  let b = B.of_bigarray ~file mapped in
-  equal ~msg:"the mapping" origin_t (Some ("/weights", 0)) (origin b);
-  equal ~msg:"a view" origin_t
-    (Some ("/weights", 4))
-    (origin (B.view b ~offset:4 S.Float32 1));
-  let m = device ~mapping:(fst (map_host ())) (driver ()) in
-  equal ~msg:"a borrow of a view" origin_t
-    (Some ("/weights", 2))
-    (origin (B.borrow m (B.view b ~offset:2 S.UInt8 6)));
-  equal ~msg:"other memory" origin_t None
-    (origin (B.of_bigarray (host_bytes 8)));
-  equal ~msg:"owned memory" origin_t None
-    (origin (B.create Nx_device.host S.UInt8 8));
-  raises_match (Exn.invalid_arg ~substring:"the mapping 7") (fun () ->
-      B.of_bigarray ~file (host_bytes 7))
+  let device name budget =
+    { name; budget; bytes_in = 0; bytes_out = 0; owns = []; borrows = [] }
 
-(* A bigarray whose elements do not lie at multiples of their size, as a file
-   mapped from an unaligned position gives, is refused. *)
-let test_of_bigarray_alignment () =
-  let path = Filename.temp_file "nx_device_" ".bin" in
-  Fun.protect
-    ~finally:(fun () -> Sys.remove path)
-    (fun () ->
-      let fd = Unix.openfile path [ Unix.O_RDWR ] 0 in
-      Fun.protect
-        ~finally:(fun () -> Unix.close fd)
-        (fun () ->
-          ignore (Unix.write_substring fd (String.make 32 '\000') 0 32);
-          let map pos k =
-            Bigarray.array1_of_genarray
-              (Unix.map_file fd ~pos k Bigarray.c_layout false [| 4 |])
-          in
-          let at_two = map 2L Bigarray.float32 in
-          raises_match (Exn.invalid_arg ~substring:"aligned") (fun () ->
-              B.of_bigarray at_two);
-          raises_match (Exn.invalid_arg ~substring:"aligned") (fun () ->
-              B.of_bigarray (map 4L Bigarray.complex64));
-          is_true ~msg:"a complex at a component's multiple"
-            (B.length (B.of_bigarray (map 8L Bigarray.complex64)) = 4);
-          is_true ~msg:"bytes at any position"
-            (B.length (B.of_bigarray (map 3L Bigarray.int8_unsigned)) = 4)))
+  let live d =
+    List.fold_left
+      (fun n h -> if h.holders > 0 then n + h.owned else n)
+      0 d.owns
 
-external c_host : B.t -> nativeint = "test_nx_device_buffer_host"
+  let mappings d =
+    let add seen h =
+      match h.maps with
+      | Some m when h.holders > 0 && not (List.memq m seen) -> m :: seen
+      | _ -> seen
+    in
+    List.length (List.fold_left add [] d.borrows)
 
-let test_c_host () =
-  let b = B.create Nx_device.host S.Float32 4 in
-  let v = B.view b ~offset:8 S.UInt8 4 in
-  equal ~msg:"a buffer" nativeint (B.host_address b) (c_host b);
-  equal ~msg:"a view" nativeint (B.host_address v) (c_host v);
-  let o = B.view (B.of_bigarray (host_bytes 16)) ~offset:3 S.UInt8 5 in
-  equal ~msg:"a borrowed view" nativeint (B.host_address o) (c_host o)
+  let name r = match r.device with None -> "CPU" | Some d -> d.name
+  let alive r = if r.dropped then raise Dropped
 
-let test_borrow () =
-  let b = B.of_bigarray (bytes_of_list [ 1; 2 ]) in
-  is_true ~msg:"host borrows itself" (B.borrow Nx_device.host b == b);
-  let d = device (driver ()) in
-  raises_match (Exn.invalid_arg ~substring:"cannot address") (fun () ->
-      B.borrow d b);
-  let on_d = B.create d S.UInt8 2 in
-  raises_match (Exn.invalid_arg ~substring:"not CPU") (fun () ->
-      B.borrow Nx_device.host on_d);
-  let mapping, live = map_host () in
-  let m = device ~mapping (driver ()) in
-  let s0 = Nx_device.stats m in
-  let hb = B.create Nx_device.host S.UInt8 pages in
-  write (B.view hb ~offset:0 S.UInt8 2) [ 1; 2 ];
-  let bm = B.borrow m hb in
-  equal ~msg:"mapped" int 1 !live;
-  is_true ~msg:"borrowed" (B.is_borrowed bm);
-  is_true ~msg:"on the device" (Nx_device.equal (B.device bm) m);
-  equal ~msg:"the same memory" nativeint (B.host_address hb) (B.host_address bm);
-  equal ~msg:"shares it" bytes [ 1; 2 ] (read (B.view bm ~offset:0 S.UInt8 2));
-  let e = B.borrow m (B.view hb ~offset:0 S.UInt8 0) in
-  is_true ~msg:"a zero-byte borrow is borrowed" (B.is_borrowed e);
-  equal ~msg:"not counted" int 0
-    (Nx_device.Stats.allocated (Nx_device.Stats.diff s0 (Nx_device.stats m)));
-  let off_page = B.bigarray Bigarray.int8_unsigned hb in
-  raises_match (Exn.invalid_arg ~substring:"does not start on a page")
-    (fun () -> B.borrow m (B.of_bigarray (Bigarray.Array1.sub off_page 1 2)))
-
-(* The borrows of one host memory on a device share its one mapping, released
-   once they are all collected. *)
-let test_external_on_host () =
-  raises_match (Exn.invalid_arg ~substring:"of_bigarray") (fun () ->
-      Nx_device.external_buffer Nx_device.host
-        { Nx_device.host = Some 0n; device = 0n; handle = 0n }
-        S.UInt8 0)
-
-let test_borrow_shared () =
-  let mapping, live = map_host () in
-  let m = device ~mapping (driver ()) in
-  let hb = B.create Nx_device.host S.UInt8 (2 * pages) in
-  (fun () ->
-    let whole = B.borrow m hb in
-    let tail = B.borrow m (B.view hb ~offset:pages S.UInt8 8) in
-    equal ~msg:"one mapping" int 1 !live;
-    equal ~msg:"a view at its offset" nativeint
-      (Nativeint.add (B.address whole) (Nativeint.of_int pages))
-      (B.address tail))
-    ();
-  Gc.full_major ();
-  ignore (Nx_device.stats m);
-  equal ~msg:"unmapped with its last borrow" int 0 !live;
-  let again = B.borrow m hb in
-  equal ~msg:"mapped again" int 1 !live;
-  ignore (Sys.opaque_identity again)
-
-(* The host memory under a borrow stays alive until the borrowing device's work
-   is done, although the collector may run during that wait. *)
-let test_borrow_lifetime () =
-  let collected = ref false and during = ref true and armed = ref false in
-  let signal =
+  let fresh ?(on_page = false) ?device ?(owned = 0) ~addressed s n =
+    if n < 0 || too_big s n then invalid_arg "create";
+    let holding = { owned; holders = 1; maps = None } in
+    Option.iter (fun d -> d.owns <- holding :: d.owns) device;
+    let memory = { cells = Array.make (nbytes s n) (-1); on_page } in
+    let borrowed = false and dropped = false in
     {
-      Nx_device.signaled = (fun () -> max_int);
-      wait =
-        (fun _ ~timeout_ms:_ ->
-          if !armed then begin
-            armed := false;
-            Gc.full_major ();
-            Gc.full_major ();
-            during := !collected
-          end;
-          true);
+      memory;
+      off = 0;
+      dtype = s;
+      length = n;
+      device;
+      holding;
+      borrowed;
+      addressed;
+      dropped;
     }
-  in
-  let g = device ~mapping:(fst (map_host ())) ~signal (driver ()) in
-  (fun () ->
-    let hb = B.create Nx_device.host S.UInt8 (1 lsl 20) in
-    Gc.finalise_last (fun () -> collected := true) hb;
-    let bm = B.borrow g hb in
-    ignore (Nx_device.submit g ~touches:[ Nx_device.host ] Fun.id);
-    ignore (Sys.opaque_identity bm))
-    ();
-  Gc.full_major ();
-  armed := true;
-  ignore (Nx_device.stats g);
-  is_false ~msg:"alive during the wait" !during;
-  Gc.full_major ();
-  Gc.full_major ();
-  is_true ~msg:"collected after it" !collected
 
-let test_bigarray_view () =
-  let b = B.create Nx_device.host S.Float32 4 in
-  let f = B.bigarray Bigarray.float32 b in
-  equal ~msg:"length" int 4 (Bigarray.Array1.dim f);
-  Bigarray.Array1.fill f 0.;
-  f.{2} <- 1.5;
-  let u = B.bigarray Bigarray.int8_unsigned b in
-  equal ~msg:"one view per kind" int 16 (Bigarray.Array1.dim u);
-  equal ~msg:"writes through" bytes (read b) (list_of_bytes u);
-  write (B.view b ~offset:0 S.UInt8 4) [ 0; 0; 0x80; 0x3f ];
-  equal ~msg:"sees buffer writes" float_exact 1. f.{0};
-  let w =
-    B.bigarray Bigarray.int16_unsigned (B.view b ~offset:8 S.BFloat16 2)
-  in
-  equal ~msg:"a view at an offset" int 0x3fc0 w.{1};
-  let e = B.bigarray Bigarray.float64 (B.create Nx_device.host S.Float64 0) in
-  equal ~msg:"empty" int 0 (Bigarray.Array1.dim e);
-  let inv = Exn.invalid_arg ~substring:"" in
-  raises_match inv (fun () ->
-      B.bigarray Bigarray.int (B.create Nx_device.host S.Int64 1));
-  raises_match inv (fun () ->
-      B.bigarray Bigarray.float32 (B.create Nx_device.host S.UInt8 3));
-  raises_match inv (fun () ->
-      B.bigarray Bigarray.int16_signed
-        (B.view (B.create Nx_device.host S.UInt8 4) ~offset:1 S.UInt8 2));
-  raises_match (Exn.invalid_arg ~substring:"not CPU") (fun () ->
-      B.bigarray Bigarray.char (B.create (device (driver ())) S.UInt8 1))
+  let create_host big s n =
+    if big then fresh ~on_page:true ~addressed:true s (page * 8 / S.bitsize s)
+    else fresh ~addressed:true s n
 
-(* Copies of memory the host does not address run on a device's copy queue:
-   directly between memory it addresses, through the host's staging memory from
-   and to other host memory, and through the staging memory between devices that
-   cannot reach each other. *)
-let test_copy_queue () =
-  let f = far "FAR" in
-  let dev = B.create f.dev S.UInt8 5 in
-  raises_match (Exn.invalid_arg ~substring:"does not address FAR memory")
-    (fun () -> B.host_address dev);
-  write dev [ 1; 2; 3; 4; 5 ];
-  equal ~msg:"staged in and out" bytes [ 1; 2; 3; 4; 5 ] (read dev);
-  equal ~msg:"one copy each way" int 2 !(f.copies);
-  equal ~msg:"on the timeline" int 2 (Nx_device.submitted f.dev);
-  let dev' = B.create f.dev S.UInt8 5 in
-  B.copy ~src:dev ~dst:dev';
-  equal ~msg:"device to device" int 3 !(f.copies);
-  let pinned = B.create ~host:true f.dev S.UInt8 5 in
-  B.copy ~src:dev' ~dst:pinned;
-  equal ~msg:"into its host memory" bytes [ 1; 2; 3; 4; 5 ] (read pinned);
-  let hb = B.create Nx_device.host S.UInt8 pages in
-  let bm = B.borrow f.dev hb in
-  let head = B.view hb ~offset:0 S.UInt8 5 in
-  let c0 = !(f.copies) in
-  B.copy ~src:dev ~dst:head;
-  equal ~msg:"into mapped host memory, directly" int (c0 + 1) !(f.copies);
-  equal ~msg:"mapped bytes" bytes [ 1; 2; 3; 4; 5 ] (read head);
-  ignore (Sys.opaque_identity bm)
+  (* A far device's memory is addressed by the host when it is host memory. *)
+  let create d pinned s n =
+    let bytes = if n < 0 || too_big s n then 0 else nbytes s n in
+    if bytes > 0 && live d + bytes > d.budget then raise No_memory;
+    fresh ~device:d ~owned:bytes ~addressed:(d.name = "NEAR" || pinned) s n
 
-(* The host's staging memory is one, which every device maps once. *)
-let test_staging_shared () =
-  let a = far "SA" and b = far "SB" in
-  let staged f =
-    List.filter (fun (_, n) -> n = 128 lsl 20) !(f.ranges) |> List.map fst
-  in
-  write (B.create a.dev S.UInt8 3) [ 1; 2; 3 ];
-  write (B.create a.dev S.UInt8 3) [ 1; 2; 3 ];
-  write (B.create b.dev S.UInt8 3) [ 1; 2; 3 ];
-  equal ~msg:"mapped once by each" (list int) [ 1; 1 ]
-    [ List.length (staged a); List.length (staged b) ];
-  equal ~msg:"the same memory" (list nativeint) (staged a) (staged b)
+  let view r (offset, s, n) =
+    alive r;
+    if
+      offset < 0 || n < 0 || too_big s n
+      || offset > size r - nbytes s n
+      || (r.off + offset) mod element s <> 0
+    then invalid_arg "view";
+    r.holding.holders <- r.holding.holders + 1;
+    { r with off = r.off + offset; dtype = s; length = n; dropped = false }
 
-(* Host memory another device allocated is mapped for the copy alone, and copied
-   directly. *)
-let test_copy_other_host_memory () =
-  let a = far "PA" and b = far "PB" in
-  let pinned = B.create ~host:true a.dev S.UInt8 4 in
-  write pinned [ 4; 3; 2; 1 ];
-  let on_b = B.create b.dev S.UInt8 4 in
-  let c0 = !(b.copies) and live = !(b.live) in
-  B.copy ~src:pinned ~dst:on_b;
-  equal ~msg:"one copy" int (c0 + 1) !(b.copies);
-  equal ~msg:"unmapped after" int live !(b.live);
-  equal ~msg:"bytes" bytes [ 4; 3; 2; 1 ] (read on_b)
+  let borrow d r =
+    alive r;
+    if r.device <> None || d.name = "NEAR" then invalid_arg "borrow";
+    let maps = if size r > 0 then Some r.memory else None in
+    let mapped = mappings d in
+    let holding = { owned = 0; holders = 1; maps } in
+    cover "a second borrow of mapped memory"
+      (maps <> None
+      && mappings { d with borrows = holding :: d.borrows } = mapped);
+    d.borrows <- holding :: d.borrows;
+    let device = Some d in
+    {
+      r with
+      device;
+      holding;
+      borrowed = true;
+      addressed = true;
+      dropped = false;
+    }
 
-let test_copy_between_queues () =
-  let a = far "A" and b = far "B" and c = far "C" in
-  a.peers := [ c.dev ];
-  let src = B.create a.dev S.UInt8 4 in
-  write src [ 9; 8; 7; 6 ];
-  let on_b = B.create b.dev S.UInt8 4 and on_c = B.create c.dev S.UInt8 4 in
-  let a0 = !(a.copies) and b0 = !(b.copies) and c0 = !(c.copies) in
-  B.copy ~src ~dst:on_b;
-  equal ~msg:"out of A" int (a0 + 1) !(a.copies);
-  equal ~msg:"into B" int (b0 + 1) !(b.copies);
-  equal ~msg:"through the staging memory" bytes [ 9; 8; 7; 6 ] (read on_b);
-  B.copy ~src ~dst:on_c;
-  equal ~msg:"moved by A" int (a0 + 2) !(a.copies);
-  equal ~msg:"C copied nothing" int c0 !(c.copies);
-  equal ~msg:"into C" bytes [ 9; 8; 7; 6 ] (read on_c)
+  let fill r s =
+    String.iteri (fun i c -> r.memory.cells.(r.off + i) <- Char.code c) s
 
-(* Copies of several staging chunks through a queue that runs behind the host: a
-   slot is refilled only after the copy that used it ran. *)
-let test_pipeline () =
-  let f = far "LAZY" and g = far "LAZY2" in
-  let chunk = 64 lsl 20 in
-  let n = (2 * chunk) + (chunk / 2) + 12345 in
-  (* Differs between bytes one and two slots apart. *)
-  let pattern i = (i * 7) + (i lsr 16) + (i / chunk * 13) in
-  let src = B.create Nx_device.host S.UInt8 n in
-  let s = bytes_of_buffer src in
-  for i = 0 to n - 1 do
-    s.{i} <- pattern i land 0xff
-  done;
-  let whole = B.create f.dev S.UInt8 (n + 1000) in
-  let dev = B.view whole ~offset:1000 S.UInt8 n in
-  B.copy ~src ~dst:dev;
-  let back = B.create Nx_device.host S.UInt8 n in
-  B.copy ~src:dev ~dst:back;
-  let b = bytes_of_buffer back in
-  let bad = ref 0 in
-  for i = 0 to n - 1 do
-    if b.{i} <> s.{i} then incr bad
-  done;
-  equal ~msg:"round trip through an offset view" int 0 !bad;
-  let on_g = B.create g.dev S.UInt8 n in
-  B.copy ~src:dev ~dst:on_g;
-  B.copy ~src:on_g ~dst:back;
-  bad := 0;
-  for i = 0 to n - 1 do
-    if b.{i} <> s.{i} then incr bad
-  done;
-  equal ~msg:"bounced between devices" int 0 !bad;
-  let tail = B.create f.dev S.UInt8 100 in
-  B.copy ~src:(B.view dev ~offset:(2 * chunk) S.UInt8 100) ~dst:tail;
-  equal ~msg:"device to device from an offset" bytes
-    (List.init 100 (fun i -> pattern ((2 * chunk) + i) land 0xff))
-    (read tail)
+  let write seed r =
+    alive r;
+    fill r (pattern seed (size r));
+    Option.iter (fun d -> d.bytes_in <- d.bytes_in + size r) r.device
 
-let test_copy_overlap () =
-  let f = far "OVER" in
-  let b = B.create f.dev S.UInt8 8 in
-  raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
+  (* A copy reads all of its source first: a borrow and the memory it borrows
+     are two buffers, which may overlap. *)
+  let copy src dst =
+    alive src;
+    alive dst;
+    let n = size src in
+    if n <> size dst then invalid_arg "copy";
+    let overlap = src.off < dst.off + n && dst.off < src.off + n in
+    if n > 0 && src.holding == dst.holding && overlap then invalid_arg "copy";
+    let cells = Array.sub src.memory.cells src.off n in
+    Array.blit cells 0 dst.memory.cells dst.off n;
+    let between =
+      match (src.device, dst.device) with
+      | Some a, Some b -> a != b
+      | a, b -> Option.is_some a || Option.is_some b
+    in
+    cover "a copy between devices" (n > 0 && between);
+    cover "a copy within one memory" (n > 0 && src.memory == dst.memory);
+    if between then begin
+      Option.iter (fun s -> s.bytes_out <- s.bytes_out + n) src.device;
+      Option.iter (fun d -> d.bytes_in <- d.bytes_in + n) dst.device
+    end
+
+  (* The [n] bytes at [a] in a buffer of [src] bytes and at [b] in one of [dst]
+     bytes, clamped into both. *)
+  let spans src dst (a, b, n) =
+    let a = Int.min a src and b = Int.min b dst in
+    (a, b, Int.min n (Int.min (src - a) (dst - b)))
+
+  let copy_bytes src dst spec =
+    alive src;
+    alive dst;
+    let a, b, n = spans (size src) (size dst) spec in
+    let bytes r o = { r with off = r.off + o; dtype = S.UInt8; length = n } in
+    copy (bytes src a) (bytes dst b)
+
+  (* Whether [ba] holds the bytes of [r] that something wrote. *)
+  let holds r (ba : chars) =
+    let rec from i =
+      i = size r
+      ||
+      let c = r.memory.cells.(r.off + i) in
+      (c < 0 || Char.code ba.{i} = c) && from (i + 1)
+    in
+    from 0
+
+  (* [s] with the bytes of [r] that nothing wrote masked. *)
+  let masked r s =
+    String.mapi (fun i c -> if r.memory.cells.(r.off + i) < 0 then '?' else c) s
+
+  let contents r =
+    String.init (size r) (fun i ->
+        let c = r.memory.cells.(r.off + i) in
+        if c < 0 then '?' else Char.chr c)
+
+  let drop r =
+    if not r.dropped then begin
+      r.dropped <- true;
+      r.holding.holders <- r.holding.holders - 1
+    end
+
+  let set_budget d n =
+    if n < 0 then invalid_arg "set_budget";
+    d.budget <- n
+
+  let pp ppf r =
+    Format.fprintf ppf "%d %s on %s%s" r.length (S.to_string r.dtype) (name r)
+      (if r.dropped then ", dropped" else "")
+end
+
+(* A fake device with the driver bytes it held once made, and a buffer that a
+   drop makes unreachable. *)
+type device = { fake : fake; baseline : int }
+type buffer = { mutable b : B.t option }
+
+let device fake = { fake; baseline = fake.drv.held }
+let get s = match s.b with Some b -> b | None -> raise Model.Dropped
+let some b = { b = Some b }
+
+let device_invariant (r : Model.device) { fake; baseline } =
+  let st = stats fake.dev in
+  let allocated = Nx_device.Stats.allocated st in
+  let cached = Nx_device.Stats.cached st in
+  equal ~msg:"allocated is the live buffers' bytes" int (Model.live r) allocated;
+  equal ~msg:"the driver holds the live buffers and the cache" int
+    (fake.drv.held - baseline) (allocated + cached);
+  if cached > 0 then
+    at_most ~msg:"the cache keeps within the budget" int ~than:r.budget
+      (allocated + cached);
+  equal ~msg:"budget" int r.budget (Nx_device.budget fake.dev);
+  equal ~msg:"bytes in" int r.bytes_in (Nx_device.Stats.bytes_in st);
+  equal ~msg:"bytes out" int r.bytes_out (Nx_device.Stats.bytes_out st);
+  equal ~msg:"one mapping per host memory borrowed" int (Model.mappings r)
+    fake.drv.mapped
+
+let buffer_invariant (r : Model.buffer) s =
+  if not r.dropped then begin
+    let b = get s and n = Model.size r in
+    equal ~msg:"format" string (S.to_string r.dtype) (S.to_string (B.dtype b));
+    equal ~msg:"length" int r.length (B.length b);
+    equal ~msg:"bytes" int n (B.nbytes b);
+    equal ~msg:"borrowed" bool r.borrowed (B.is_borrowed b);
+    equal ~msg:"device" string (Model.name r) (Nx_device.name (B.device b));
+    if n > 0 then begin
+      let held = peek (B.address b) n in
+      if not (Model.holds r held) then
+        equal ~msg:"what the device holds" string (Model.contents r)
+          (Model.masked r (string_of held));
+      if not r.addressed then
+        raises_match Exn.invalid_arg (fun () -> B.host_address b)
+      else
+        equal ~msg:"the host address, read in C" nativeint (B.host_address b)
+          (c_host b);
+      let bigarray () = B.bigarray Bigarray.char b in
+      if r.device = None && bigarray () <> held then
+        equal ~msg:"its bigarray" string (string_of held)
+          (string_of (bigarray ()))
+    end
+  end
+
+let dev = abstract "d" ~invariant:device_invariant
+let buf = abstract "b" ~pp:Model.pp ~invariant:buffer_invariant
+
+let pp_budget ppf n =
+  if n = max_int then Format.pp_print_string ppf "max_int"
+  else Format.pp_print_int ppf n
+
+(* Mostly false: a device's host memory. *)
+let seldom =
+  Gen.frequency
+    [ (3, Gen.constant ~pp:Format.pp_print_bool false); (1, Gen.bool) ]
+
+(* Mostly room for every buffer. *)
+let budgets =
+  Gen.frequency
+    [
+      (3, Gen.constant ~pp:pp_budget max_int);
+      (1, Gen.of_list ~pp:pp_budget [ 0; 16; 64; 256 ]);
+    ]
+
+(* Every storage format. *)
+let formats =
+  Gen.of_list ~pp:pp_format
+    (S.[ Bool; UInt8; Int8; Int4; UInt4; Int16; UInt16; Int32; UInt32 ]
+    @ S.[ Int64; UInt64; Float8_e4m3; Float8_e5m2; Float8_e4m3fnuz ]
+    @ S.[ Float8_e5m2fnuz; Float16; BFloat16; Float32; Float64 ]
+    @ S.[ Complex64; Complex128 ])
+
+let counts = ints [ 0; 1; 2; 3; 5; 16; 17; -1 ]
+
+(* Budgets at the edges of what a device holds. *)
+let edges =
+  among (arg pp_budget) dev (fun r ->
+      let live = Model.live r in
+      [ live; live + 1; live + 16; Int.max 0 (live - 1); 0; max_int; -1 ])
+
+(* Views of a buffer: itself, its bytes, and windows of every width that fit,
+   overflow, cross its end or are not aligned. *)
+let windows =
+  let pp ppf (o, s, n) = Format.fprintf ppf "%d %a at %d" n pp_format s o in
+  among (arg pp) buf (fun (r : Model.buffer) ->
+      let n = Model.size r in
+      S.
+        [
+          (0, r.dtype, r.length);
+          (0, UInt8, n);
+          (1, UInt8, n - 1);
+          (n, UInt8, 0);
+          (0, Int4, (2 * n) - 1);
+          (1, UInt4, 1);
+          (2, Int16, 1);
+          (1, Int16, 1);
+          (4, Float32, (n - 4) / 4);
+          (8, Complex128, 1);
+          (0, Complex128, n / 16);
+          (-1, UInt8, 1);
+          (0, UInt8, -1);
+          (0, UInt8, n + 1);
+          (0, Float64, (max_int / 8) + 1);
+        ])
+
+(* Spans of bytes: where in the source, where in the destination, how many. *)
+let spans =
+  let at = Gen.int_range 0 3 in
+  Gen.with_pp
+    (fun ppf (a, b, n) -> Format.fprintf ppf "(%d bytes from %d to %d)" n a b)
+    (Gen.triple at at (Gen.int_range 0 64))
+
+(* A create the device cannot serve raises Out_of_memory with the device and the
+   bytes. *)
+let created d s n f =
+  match f () with
+  | b -> some b
+  | exception (Nx_device.Out_of_memory _ as e) ->
+      is_true (out_of_memory d (Model.nbytes s n) e);
+      raise Model.No_memory
+
+(* Listed twice in the commands, so that programs copy often. *)
+let copy =
+  command "copy"
+    (buf ^-> buf ^-> spans @-> returns unit)
+    Model.copy_bytes
+    (fun src dst spans ->
+      let src = get src and dst = get dst in
+      let a, b, n = Model.spans (B.nbytes src) (B.nbytes dst) spans in
       B.copy
-        ~src:(B.view b ~offset:0 S.UInt8 4)
-        ~dst:(B.view b ~offset:2 S.UInt8 4));
-  let h = B.create Nx_device.host S.UInt8 8 in
-  raises_match (Exn.invalid_arg ~substring:"overlap") (fun () ->
-      B.copy ~src:h ~dst:h);
-  write (B.view b ~offset:0 S.UInt8 4) [ 1; 2; 3; 4 ];
-  B.copy ~src:(B.view b ~offset:0 S.UInt8 4) ~dst:(B.view b ~offset:4 S.UInt8 4);
-  equal ~msg:"disjoint views copy" bytes [ 1; 2; 3; 4; 1; 2; 3; 4 ] (read b)
+        ~src:(B.view src ~offset:a S.UInt8 n)
+        ~dst:(B.view dst ~offset:b S.UInt8 n))
 
-(* A driver error while enqueueing fails the device, like a fault. *)
-let test_enqueue_error () =
-  let f = far "REFUSING" in
-  let b = B.create f.dev S.UInt8 4 in
-  f.refuse := true;
-  let refused = Exn.failure ~substring:"REFUSING: enqueue refused" in
-  raises_match refused (fun () -> write b [ 1; 2; 3; 4 ]);
-  raises_match refused (fun () -> B.create f.dev S.UInt8 1)
-
-(* A transfer that cannot be waited for leaves its destination in the reach of
-   the source, which failed: copies of it raise the source's error, and its
-   memory is retained, never reused. *)
-let test_hung_transfer () =
-  let a = far "HUNG" and c = far "DEST" in
-  a.peers := [ c.dev ];
-  let src = B.create a.dev S.UInt8 4 in
-  (fun () ->
-    let dst = B.create c.dev S.UInt8 4 in
-    a.hang := true;
-    let hung = Exn.failure ~substring:"HUNG hang detected" in
-    raises_match hung (fun () -> B.copy ~src ~dst);
-    raises_match hung (fun () -> read dst);
-    equal ~msg:"the destination device is healthy" int 3
-      (List.length (read (B.create c.dev S.UInt8 3))))
-    ();
-  Gc.full_major ();
-  equal ~msg:"retained" int 4 (retained c.dev);
-  equal ~msg:"only the healthy buffer cached" int 3 (cached c.dev)
-
-(* A view outlives the buffer it was taken from: the memory stays with it. *)
-let test_bigarray_lifetime () =
-  let v =
-    let b = B.create Nx_device.host S.Int32 1000 in
-    let v = B.bigarray Bigarray.int32 b in
-    Bigarray.Array1.fill v 7l;
-    v
+let commands =
+  [
+    command "near"
+      (budgets @-> makes dev)
+      (Model.device "NEAR")
+      (fun budget -> device (fake ~budget ()));
+    command "far"
+      (budgets @-> Gen.bool @-> makes dev)
+      (fun budget peer -> Model.device (if peer then "PEER" else "FAR") budget)
+      (fun budget peer ->
+        device (far ~name:(if peer then "PEER" else "FAR") ~budget ()));
+    command "create on the host"
+      (Gen.bool @-> formats @-> counts @-> makes buf)
+      Model.create_host
+      (fun big s n ->
+        some (B.create host s (if big then page * 8 / S.bitsize s else n)));
+    command "create"
+      (dev ^-> seldom @-> formats @-> counts @-> makes buf)
+      Model.create
+      (fun d pinned s n ->
+        created d.fake.dev s n (fun () -> B.create ~host:pinned d.fake.dev s n));
+    command "view"
+      (buf ^-> windows ^-> makes buf)
+      Model.view
+      (fun s (offset, f, n) -> some (B.view (get s) ~offset f n));
+    command "write"
+      (seeds @-> buf ^-> returns unit)
+      Model.write
+      (fun seed s ->
+        let b = get s in
+        write b (pattern seed (B.nbytes b)));
+    copy;
+    copy;
+    command "drop"
+      (buf ^-> returns unit)
+      Model.drop
+      (fun s ->
+        s.b <- None;
+        Gc.full_major ());
+    command "set_budget"
+      (dev ^-> edges ^-> returns unit)
+      Model.set_budget
+      (fun d n -> Nx_device.set_budget d.fake.dev n);
+    command "free_cache"
+      (dev ^-> returns int)
+      (Fun.const 0)
+      (fun d ->
+        Nx_device.free_cache d.fake.dev;
+        cached d.fake.dev);
+  ]
+  @
+  (* A small host buffer may start on a page by chance, and then borrows. Listed
+     twice, so that memory is often borrowed again. *)
+  let borrow =
+    command "borrow"
+      ~pre:(fun _ (r : Model.buffer) -> r.device <> None || r.memory.on_page)
+      (dev ^-> buf ^-> makes buf)
+      Model.borrow
+      (fun d s -> some (B.borrow d.fake.dev (get s)))
   in
-  Gc.full_major ();
-  let reused =
-    List.init 100 (fun _ ->
-        let b = B.create Nx_device.host S.Int32 1000 in
-        Bigarray.Array1.fill (B.bigarray Bigarray.int32 b) 0x55l;
-        b)
-  in
-  Gc.full_major ();
-  ignore (Sys.opaque_identity reused);
-  is_true ~msg:"kept alive"
-    (List.for_all
-       (fun i -> v.{i} = 7l)
-       (List.init (Bigarray.Array1.dim v) Fun.id));
-  let tl = B.bigarray Bigarray.int64 (Nx_device.timeline Nx_device.host) in
-  equal ~msg:"the timeline" int 2 (Bigarray.Array1.dim tl)
+  [ borrow; borrow ]
 
-(* Two domains take views of the same fresh buffer at once, and one keeps its
-   view: the view shares the buffer's storage, so it outlives the buffer
+let memory =
+  group "memory"
+    [
+      stateful ~count:300 ~steps:50
+        "buffers hold what was written through them and their views, and \
+         devices hold their live buffers and cache within their budget and \
+         count what is copied (nx_device.mli is silent on the alignment of a \
+         new buffer: 16 bytes assumed; and on copies through a borrow: they \
+         count as copies of its device)"
+        commands;
+      test
+        "four domains create, write and read buffers of one device at once, \
+         and all their memory returns" (fun () ->
+          let d = (fake ()).dev in
+          let work k () =
+            for i = 1 to 200 do
+              let n = 1 + (((i * 37) + k) mod 512) in
+              let b = B.create d S.UInt8 n and s = pattern (i + k) n in
+              write b s;
+              equal string s (read b)
+            done;
+            Gc.full_major ()
+          in
+          List.iter Domain.join (List.init 4 (fun k -> Domain.spawn (work k)));
+          Gc.full_major ();
+          equal int 0 (allocated d));
+      test
+        "host memory counts while its buffer lives, returns when it is \
+         collected, and keeps within the host's budget" (fun () ->
+          Gc.full_major ();
+          let s0 = stats host in
+          let grown () = Nx_device.Stats.(allocated (diff s0 (stats host))) in
+          dropped (fun () ->
+              let b = B.create host S.UInt8 1000 in
+              equal ~msg:"counted" int 1000 (grown ());
+              b);
+          equal ~msg:"returned" int 0 (grown ());
+          Fun.protect ~finally:(fun () -> Nx_device.set_budget host max_int)
+          @@ fun () ->
+          Nx_device.set_budget host (allocated host + 1000);
+          let a = B.create host S.UInt8 600 in
+          raises_match (out_of_memory host 600) (fun () ->
+              B.create host S.UInt8 600);
+          ignore (Sys.opaque_identity a));
+      test
+        "a buffer of up to max_int bytes that its device cannot allocate \
+         raises Out_of_memory" (fun () ->
+          let small = (fake ~budget:1000 ()).dev and n = (1 lsl 58) + 1 in
+          List.iter
+            (fun (d, s, n, bytes) ->
+              raises_match (out_of_memory d bytes) (fun () -> B.create d s n))
+            [
+              (host, S.Float64, n, 8 * n);
+              (host, S.Float64, max_int / 8, max_int / 8 * 8);
+              (host, S.Int4, max_int, (max_int / 2) + 1);
+              (small, S.Float64, n, 8 * n);
+            ]);
+      test "an allocation over the budget raises at once, and keeps the cache"
+        (fun () ->
+          let f = fake ~budget:1000 () in
+          dropped (fun () -> B.create f.dev S.UInt8 500);
+          raises_match (out_of_memory f.dev 2000) (fun () ->
+              B.create f.dev S.UInt8 2000);
+          equal (pair int int) (500, 0) (cached f.dev, f.drv.frees));
+      test "an allocation the driver refuses releases the cache, then raises"
+        (fun () ->
+          let f = fake () in
+          dropped (fun () -> B.create f.dev S.UInt8 100);
+          f.drv.refuse <- true;
+          raises_match (out_of_memory f.dev 200) (fun () ->
+              B.create f.dev S.UInt8 200);
+          equal (pair int int) (0, 1) (cached f.dev, f.drv.frees));
+      test "an allocation over the budget collects unreachable buffers first"
+        (fun () ->
+          let f = fake ~budget:1000 () in
+          let unreachable = ref (Some (B.create f.dev S.UInt8 600)) in
+          ignore (Sys.opaque_identity !unreachable);
+          unreachable := None;
+          equal int 600 (B.nbytes (B.create f.dev S.UInt8 600)));
+    ]
+
+(* Buffers *)
+
+let near = fake ()
+let far_one = far ()
+
+(* A buffer of [n] elements of [s], [k] elements into a larger one on the host,
+   a device the host addresses, one it does not, or that one's host memory. *)
+let placed =
+  let place =
+    Gen.of_list
+      ~pp:(fun ppf (d, pinned) ->
+        Format.fprintf ppf "on %a%s" pp_device d
+          (if pinned then "'s host memory" else ""))
+      [
+        (host, false);
+        (near.dev, false);
+        (far_one.dev, false);
+        (far_one.dev, true);
+      ]
+  in
+  Gen.quad place formats (ints [ 0; 1; 2; 3; 17; 1000 ]) (ints [ 0; 1; 3 ])
+
+let inside ((d, pinned), s, n, k) =
+  let o = k * Model.element s in
+  B.view
+    (B.create ~host:pinned d S.UInt8 (o + Model.nbytes s n + 5))
+    ~offset:o s n
+
+type kind = Kind : ('a, 'b) Bigarray.kind * S.t -> kind
+
+let kinds =
+  let k name kind s = (name, Kind (kind, s)) in
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    Bigarray.
+      [
+        k "float16" float16 S.Float16;
+        k "float32" float32 S.Float32;
+        k "float64" float64 S.Float64;
+        k "int8_signed" int8_signed S.Int8;
+        k "int8_unsigned" int8_unsigned S.UInt8;
+        k "char" char S.UInt8;
+        k "int16_signed" int16_signed S.Int16;
+        k "int16_unsigned" int16_unsigned S.UInt16;
+        k "int32" int32 S.Int32;
+        k "int64" int64 S.Int64;
+        k "complex32" complex32 S.Complex64;
+        k "complex64" complex64 S.Complex128;
+      ]
+
+let laws =
+  group "laws"
+    [
+      prop
+        "a copy there and back is the identity, and counts its bytes on both \
+         sides"
+        (Gen.pair placed seeds) (fun ((((d, _), _, _, _) as spec), seed) ->
+          let b = inside spec in
+          let n = B.nbytes b and h0 = stats host and d0 = stats d in
+          let there s =
+            write b s;
+            b
+          in
+          Law.round_trip string
+            (arg (fun ppf _ -> Format.fprintf ppf "b"))
+            there read (pattern seed n);
+          let h = Nx_device.Stats.diff h0 (stats host)
+          and d = Nx_device.Stats.diff d0 (stats d) in
+          let moved = if Nx_device.equal (B.device b) host then 0 else n in
+          equal
+            ~msg:"out of the host, into and out of the device, into the host"
+            (list int)
+            [ moved; moved; moved; moved ]
+            Nx_device.Stats.[ bytes_out h; bytes_in d; bytes_out d; bytes_in h ]);
+      prop
+        "of_bigarray aliases its bigarray, a borrowed host buffer of its \
+         kind's format"
+        (Gen.pair kinds (ints [ 0; 1; 3; 17 ]))
+        (fun ((_, Kind (k, s)), n) ->
+          let ba = Bigarray.Array1.create k Bigarray.c_layout n in
+          let b = B.of_bigarray ba in
+          equal string (S.to_string s) (S.to_string (B.dtype b));
+          equal (list int)
+            [ n; Bigarray.Array1.size_in_bytes ba ]
+            [ B.length b; B.nbytes b ];
+          is_true (B.is_borrowed b && Nx_device.equal (B.device b) host);
+          let other = Bigarray.Array1.create k Bigarray.c_layout n in
+          let bytes = pattern n (B.nbytes b) in
+          write b bytes;
+          Bigarray.Array1.blit ba other;
+          equal ~msg:"a write through the buffer" string bytes
+            (read (B.of_bigarray other));
+          write (B.of_bigarray other) (pattern (n + 1) (B.nbytes b));
+          Bigarray.Array1.blit other ba;
+          equal ~msg:"a write through the bigarray" string
+            (pattern (n + 1) (B.nbytes b))
+            (read b));
+    ]
+
+(* Two domains take bigarrays of the same fresh buffer at once, and one keeps
+   its bigarray: it shares the buffer's storage, so it outlives the buffer
    whichever domain made the storage's proxy. *)
 let test_concurrent_views () =
   let rounds = 2000 in
@@ -667,7 +820,7 @@ let test_concurrent_views () =
   in
   let workers = List.init 2 (fun k -> Domain.spawn (worker k)) in
   for r = 0 to rounds - 1 do
-    Atomic.set current (Some (B.create Nx_device.host S.Int32 16));
+    Atomic.set current (Some (B.create host S.Int32 16));
     while Atomic.get taken.(0) <= r || Atomic.get taken.(1) <= r do
       Domain.cpu_relax ()
     done
@@ -682,564 +835,598 @@ let test_concurrent_views () =
         Bigarray.Array1.fill a 0x55l;
         a)
   in
-  equal ~msg:"every kept view holds what was written" int 0
+  equal ~msg:"kept bigarrays that lost what was written" int 0
     (List.length (List.filter (fun v -> v.{5} <> 7l) !kept));
   ignore (Sys.opaque_identity filler)
 
-(* Host memory is counted while its buffer lives, returned in the collection
-   that finds it unreachable, and capped by the host's budget like any
-   device's. *)
-let test_host_memory () =
-  let h = Nx_device.host in
-  Gc.full_major ();
-  let s0 = Nx_device.stats h in
-  let b = B.create h S.UInt8 1000 in
-  let grown = Nx_device.Stats.diff s0 (Nx_device.stats h) in
-  equal ~msg:"counted" int 1000 (Nx_device.Stats.allocated grown);
-  ignore (Sys.opaque_identity b);
-  Gc.full_major ();
-  let back = Nx_device.Stats.diff s0 (Nx_device.stats h) in
-  equal ~msg:"returned when collected" int 0 (Nx_device.Stats.allocated back);
-  let held = Nx_device.Stats.allocated (Nx_device.stats h) in
-  Fun.protect ~finally:(fun () -> Nx_device.set_budget h max_int) @@ fun () ->
-  Nx_device.set_budget h (held + 1000);
-  let a = B.create h S.UInt8 600 in
-  raises_match
-    (function Nx_device.Out_of_memory (d, 600) -> d == h | _ -> false)
-    (fun () -> B.create h S.UInt8 600);
-  raises_match
-    (function Nx_device.Out_of_memory (_, 2000) -> true | _ -> false)
-    (fun () -> B.create h S.UInt8 2000);
-  ignore (Sys.opaque_identity a);
-  equal ~msg:"a collected buffer makes room" int 600
-    (B.nbytes (B.create h S.UInt8 600))
-
-(* Memory *)
-
-let test_cache_reuse () =
-  let drv = driver () in
-  let d = device drv in
-  dropped (fun () -> B.create d S.UInt8 1000);
-  equal ~msg:"returned" int 0 (allocated d);
-  equal ~msg:"cached" int 1000 (cached d);
-  let b = B.create d S.UInt8 1000 in
-  equal ~msg:"reused" int 1 drv.allocs;
-  equal ~msg:"allocated" int 1000 (allocated d);
-  equal ~msg:"taken from the cache" int 0 (cached d);
-  ignore (Sys.opaque_identity b)
-
-let test_budget () =
-  let drv = driver () in
-  let d = device ~budget:4096 drv in
-  let a = B.create d S.UInt8 3000 in
-  raises_match
-    (function Nx_device.Out_of_memory (d', 3000) -> d' == d | _ -> false)
-    (fun () -> B.create d S.UInt8 3000);
-  ignore (Sys.opaque_identity a);
-  let a = ref (Some (B.create d S.UInt8 3000)) in
-  ignore (Sys.opaque_identity !a);
-  equal ~msg:"the collected buffer's memory is reused" int 1 drv.allocs;
-  equal ~msg:"taken from the cache" int 0 (cached d);
-  (* An unreachable buffer is collected to make room. *)
-  a := None;
-  ignore (B.create d S.UInt8 2000);
-  is_true ~msg:"collected, then freed to the system" (drv.frees >= 1);
-  is_true ~msg:"within budget" (allocated d + cached d <= 4096)
-
-let test_set_budget () =
-  let drv = driver () in
-  let d = device drv in
-  dropped (fun () -> B.create d S.UInt8 2000);
-  equal ~msg:"cached" int 2000 (cached d);
-  Nx_device.set_budget d 1000;
-  equal ~msg:"budget" int 1000 (Nx_device.budget d);
-  equal ~msg:"cache released" int 0 (cached d);
-  equal ~msg:"freed" int 1 drv.frees;
-  raises_match (Exn.invalid_arg ~substring:"< 0") (fun () ->
-      Nx_device.set_budget d (-1))
-
-let test_free_cache () =
-  let drv = driver () in
-  let d = device drv in
-  dropped (fun () -> (B.create d S.UInt8 100, B.create d S.UInt8 200));
-  equal ~msg:"cached" int 300 (cached d);
-  Nx_device.free_cache d;
-  equal ~msg:"empty" int 0 (cached d);
-  equal ~msg:"freed" int 2 drv.frees
-
-(* A request larger than the budget raises without touching the cache. *)
-let test_oversized () =
-  let drv = driver () in
-  let d = device ~budget:1000 drv in
-  dropped (fun () -> B.create d S.UInt8 500);
-  raises_match
-    (function Nx_device.Out_of_memory (_, 2000) -> true | _ -> false)
-    (fun () -> B.create d S.UInt8 2000);
-  equal ~msg:"the cache is kept" int 500 (cached d);
-  equal ~msg:"nothing freed" int 0 drv.frees
-
-(* Memory a failed device's work may still use is retained: never freed and
-   never reused. *)
-let test_retained () =
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait = (fun _ ~timeout_ms:_ -> false);
-    }
-  in
-  let drv = driver () in
-  let d = device ~name:"D" ~budget:1000 ~signal drv in
-  dropped (fun () -> B.create d S.UInt8 600);
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
-  raises_match (Exn.failure ~substring:"D hang detected") (fun () ->
-      Nx_device.free_cache d);
-  equal ~msg:"not freed" int 0 drv.frees;
-  equal ~msg:"not reused" int 1 drv.allocs;
-  equal ~msg:"stats report the retained bytes" int 600 (retained d);
-  equal ~msg:"no longer cached" int 0 (cached d)
-
-(* The allocator never holds more than the budget in live and cached memory,
-   unless the budget fell below the live buffers, which are never released. *)
-let test_budget_model () =
-  let drv = driver () in
-  let d = device ~budget:8192 drv in
-  let live = ref [] in
-  let check step =
-    let s = Nx_device.stats d in
-    let a = Nx_device.Stats.allocated s and c = Nx_device.Stats.cached s in
-    if not (a + c <= Nx_device.budget d || c = 0) then
-      failf "step %d: allocated %d + cached %d over budget %d" step a c
-        (Nx_device.budget d)
-  in
-  for step = 1 to 600 do
-    (match Random.int 10 with
-    | 0 | 1 | 2 | 3 -> (
-        let n = 1 + Random.int 3000 in
-        match B.create d S.UInt8 n with
-        | b -> live := b :: !live
-        | exception Nx_device.Out_of_memory _ -> ())
-    | 4 | 5 | 6 -> (
-        match !live with
-        | [] -> ()
-        | l ->
-            let k = Random.int (List.length l) in
-            live := List.filteri (fun i _ -> i <> k) l)
-    | 7 -> Nx_device.set_budget d (Random.int 20000)
-    | 8 -> Nx_device.free_cache d
-    | _ -> Gc.full_major ());
-    check step;
-    if step mod 100 = 0 then begin
+let test_borrow_lifetime () =
+  let collected = ref false and during = ref true and armed = ref false in
+  let wait _ =
+    if !armed then begin
+      armed := false;
       Gc.full_major ();
-      equal ~msg:"allocated is the live buffers" int
-        (List.fold_left (fun n b -> n + B.nbytes b) 0 !live)
-        (allocated d)
-    end
-  done
-
-let test_refused () =
-  let drv = driver () in
-  let d = device drv in
-  dropped (fun () -> B.create d S.UInt8 100);
-  drv.refuse <- true;
-  raises_match
-    (function Nx_device.Out_of_memory (_, 200) -> true | _ -> false)
-    (fun () -> B.create d S.UInt8 200);
-  equal ~msg:"cache released before failing" int 0 (cached d);
-  equal ~msg:"freed" int 1 drv.frees
-
-let test_transfer_stats () =
-  let d = device (driver ()) in
-  let h0 = Nx_device.stats Nx_device.host and d0 = Nx_device.stats d in
-  let b = B.create d S.UInt8 4 in
-  write b [ 1; 2; 3; 4 ];
-  equal ~msg:"across" bytes [ 1; 2; 3; 4 ] (read b);
-  B.copy ~src:b ~dst:(B.create d S.UInt8 4);
-  let dh = Nx_device.Stats.diff h0 (Nx_device.stats Nx_device.host)
-  and dd = Nx_device.Stats.diff d0 (Nx_device.stats d) in
-  equal ~msg:"device in" int 4 (Nx_device.Stats.bytes_in dd);
-  equal ~msg:"device out" int 4 (Nx_device.Stats.bytes_out dd);
-  equal ~msg:"host out" int 4 (Nx_device.Stats.bytes_out dh);
-  equal ~msg:"host in" int 4 (Nx_device.Stats.bytes_in dh);
-  equal ~msg:"allocated" int 8 (Nx_device.Stats.allocated dd)
-
-let test_domains () =
-  let d = device (driver ()) in
-  let work k () =
-    for i = 1 to 200 do
-      let n = 1 + (((i * 37) + k) mod 512) in
-      let l = List.init n (fun j -> (i + j + k) land 0xff) in
-      let b = B.create d S.UInt8 n in
-      write b l;
-      if read b <> l then failwith "corrupted copy"
-    done;
-    Gc.full_major ()
+      Gc.full_major ();
+      during := !collected
+    end;
+    true
   in
-  List.iter Domain.join (List.init 4 (fun k -> Domain.spawn (work k)));
-  Gc.full_major ();
-  equal ~msg:"all returned" int 0 (allocated d)
-
-(* Copies between two devices in opposite directions take them in one order, so
-   they cannot deadlock. *)
-let test_opposite_copies () =
-  let a = device (driver ()) and b = device (driver ()) in
-  let ba = B.create a S.UInt8 64 and bb = B.create b S.UInt8 64 in
-  let copies src dst () =
-    for _ = 1 to 2000 do
-      B.copy ~src ~dst
-    done
-  in
-  let d1 = Domain.spawn (copies ba bb) and d2 = Domain.spawn (copies bb ba) in
-  Domain.join d1;
-  Domain.join d2;
-  equal ~msg:"all counted" int (2000 * 64)
-    (Nx_device.Stats.bytes_out (Nx_device.stats a))
-
-(* Programs *)
-
-let test_programs () =
-  raises_match (Exn.invalid_arg ~substring:"loads no programs") (fun () ->
-      Nx_device.Program.load Nx_device.host ~binary:"" ~name:"f");
-  let loads = ref 0 in
-  let load ~binary ~name =
-    if binary = "bad" then failwith "rejected";
-    incr loads;
-    Nativeint.of_int (Hashtbl.hash (binary, name))
-  in
-  let d = device ~load (driver ()) in
-  let p = Nx_device.Program.load d ~binary:"lib" ~name:"f" in
-  let p' = Nx_device.Program.load d ~binary:"lib" ~name:"f" in
-  is_true ~msg:"cached" (p == p');
-  equal ~msg:"loaded once" int 1 !loads;
-  equal ~msg:"name" string "f" (Nx_device.Program.name p);
-  is_true ~msg:"device" (Nx_device.equal d (Nx_device.Program.device p));
-  ignore (Nx_device.Program.load d ~binary:"lib" ~name:"g");
-  equal ~msg:"per function" int 2 !loads;
-  raises_match (Exn.failure ~substring:"rejected") (fun () ->
-      Nx_device.Program.load d ~binary:"bad" ~name:"f")
-
-(* Submitting work *)
-
-(* A device with its own signal reports through [signaled] and leaves the
-   timeline's signal word alone. *)
-let test_timeline_signal_device () =
-  let signal =
-    { Nx_device.signaled = (fun () -> 5); wait = (fun _ ~timeout_ms:_ -> true) }
-  in
-  let d = device ~signal (driver ()) in
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
-  Nx_device.synchronize d;
-  equal ~msg:"signaled" int 5 (Nx_device.signaled d);
-  equal ~msg:"the signal word stays 0" bytes
-    (le64 0 @ le64 1)
-    (read (Nx_device.timeline d))
-
-let test_timeline () =
-  let d = device (driver ()) in
-  equal ~msg:"nothing submitted" int 0 (Nx_device.submitted d);
-  equal ~msg:"nothing signaled" int 0 (Nx_device.signaled d);
-  equal ~msg:"first value" int 1 (Nx_device.submit d ~touches:[] Fun.id);
-  equal ~msg:"submitted" int 1 (Nx_device.submitted d);
-  raises_match (Exn.failure ~substring:"encode") (fun () ->
-      Nx_device.submit d ~touches:[] (fun _ -> failwith "encode"));
-  equal ~msg:"a failed submission records nothing" int 1 (Nx_device.submitted d);
-  equal ~msg:"timeline words" bytes
-    (le64 0 @ le64 1)
-    (read (Nx_device.timeline d));
-  store_signal (B.host_address (Nx_device.timeline d)) 1;
-  equal ~msg:"signaled" int 1 (Nx_device.signaled d)
-
-let test_synchronize_waits () =
-  let d = device (driver ()) in
-  let signaled, domain =
-    Nx_device.submit d ~touches:[] (fun v -> signal_later d v 0.05)
-  in
-  Nx_device.synchronize d;
-  is_true ~msg:"waited for the signal" (Atomic.get signaled);
-  equal ~msg:"signaled" int 1 (Nx_device.signaled d);
-  Domain.join domain
-
-let test_touched () =
-  let d = device (driver ()) in
-  let signaled, domain =
-    Nx_device.submit d ~touches:[ Nx_device.host ] (fun v ->
-        signal_later d v 0.05)
-  in
-  Nx_device.synchronize Nx_device.host;
-  is_true ~msg:"the host waits for work that touched it" (Atomic.get signaled);
-  Domain.join domain
-
-let test_touched_devices () =
-  let a = device ~name:"A" (driver ()) and b = device ~name:"B" (driver ()) in
-  let signaled, domain =
-    Nx_device.submit a ~touches:[ b ] (fun v -> signal_later a v 0.05)
-  in
-  Nx_device.synchronize b;
-  is_true ~msg:"B waits for A's work" (Atomic.get signaled);
-  Domain.join domain
-
-let test_synchronized_hook () =
-  let calls = ref 0 in
-  let d = device ~synchronized:(fun () -> incr calls) (driver ()) in
-  Nx_device.synchronize d;
-  equal ~msg:"synchronize" int 1 !calls;
-  write (B.create d S.UInt8 1) [ 0 ];
-  equal ~msg:"a copy synchronizes" int 2 !calls
-
-let test_copy_synchronizes () =
-  let d = device (driver ()) in
-  let b = B.create d S.UInt8 1 in
-  let signaled, domain =
-    Nx_device.submit d ~touches:[] (fun v -> signal_later d v 0.05)
-  in
-  write b [ 1 ];
-  is_true ~msg:"copied after the work completed" (Atomic.get signaled);
-  Domain.join domain
-
-(* A device that never signals: the first wait times out and fails it, and from
-   then on its own operations raise at once. *)
-let test_hang () =
-  let waits = ref 0 in
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait =
-        (fun _ ~timeout_ms:_ ->
-          incr waits;
-          false);
-    }
-  in
-  let hung = device ~name:"HUNG" ~signal (driver ()) in
-  ignore (Nx_device.submit hung ~touches:[] Fun.id);
-  let hang = Exn.failure ~substring:"HUNG hang detected" in
-  raises_match hang (fun () -> Nx_device.synchronize hung);
-  raises_match hang (fun () -> Nx_device.synchronize hung);
-  raises_match hang (fun () -> B.create hung S.UInt8 1);
-  equal ~msg:"stats still answer" int 0
-    (Nx_device.Stats.allocated (Nx_device.stats hung));
-  raises_match hang (fun () -> Nx_device.submit hung ~touches:[] Fun.id);
-  equal ~msg:"no second wait" int 1 !waits
-
-(* A GPU hangs after work that touched the host through a borrow. The host stays
-   healthy, collections included; only memory the GPU can reach raises its
-   error. *)
-let test_failure_scope () =
-  let waits = ref 0 in
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait =
-        (fun _ ~timeout_ms:_ ->
-          incr waits;
-          false);
-    }
-  in
-  let gpu =
-    device ~name:"GPU" ~mapping:(fst (map_host ())) ~signal (driver ())
-  in
-  let shared =
-    B.view (B.create Nx_device.host S.UInt8 pages) ~offset:0 S.UInt8 8
-  in
-  let mapped = B.borrow gpu shared in
-  ignore (Nx_device.submit gpu ~touches:[ Nx_device.host ] Fun.id);
-  let failed = Exn.failure ~substring:"GPU hang detected" in
-  raises_match failed (fun () -> Nx_device.synchronize gpu);
-  Nx_device.synchronize Nx_device.host;
-  let a = B.create Nx_device.host S.UInt8 8 in
-  write a [ 1; 2; 3; 4; 5; 6; 7; 8 ];
-  equal ~msg:"host copies" bytes [ 1; 2; 3; 4; 5; 6; 7; 8 ] (read a);
-  dropped (fun () -> B.create Nx_device.host S.UInt8 1000);
-  equal ~msg:"host creates after a collection" int 8
-    (B.nbytes (B.create Nx_device.host S.UInt8 8));
-  Nx_device.synchronize Nx_device.host;
-  raises_match failed (fun () -> B.copy ~src:shared ~dst:a);
-  raises_match failed (fun () -> B.copy ~src:a ~dst:shared);
-  raises_match failed (fun () ->
-      B.copy
-        ~src:(B.view shared ~offset:4 S.UInt8 4)
-        ~dst:(B.view a ~offset:0 S.UInt8 4));
-  raises_match failed (fun () -> B.bigarray Bigarray.char shared);
-  equal ~msg:"a view touches no memory" int 4
-    (B.length (B.view shared ~offset:0 S.UInt8 4));
-  raises_match failed (fun () -> read mapped);
-  equal ~msg:"no second wait" int 1 !waits
-
-(* A borrow that was collected and unmapped no longer reaches the host memory:
-   the device failing later leaves that memory usable. *)
-let test_unmapped_before_failure () =
-  let hung = ref false in
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait = (fun _ ~timeout_ms:_ -> not !hung);
-    }
-  in
-  let gpu =
-    device ~name:"LATE" ~mapping:(fst (map_host ())) ~signal (driver ())
-  in
-  let shared =
-    B.view (B.create Nx_device.host S.UInt8 pages) ~offset:0 S.UInt8 4
-  in
-  dropped (fun () -> B.borrow gpu shared);
-  ignore (Nx_device.stats gpu);
-  hung := true;
-  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
-  raises_match (Exn.failure ~substring:"LATE hang detected") (fun () ->
-      Nx_device.synchronize gpu);
-  write shared [ 1; 2; 3; 4 ];
-  equal ~msg:"still usable" bytes [ 1; 2; 3; 4 ] (read shared)
-
-(* The wait bound is the device's, settable at any time. *)
-let test_set_timeout () =
-  let seen = ref 0 in
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait =
-        (fun _ ~timeout_ms ->
-          seen := timeout_ms;
-          true);
-    }
-  in
-  let d = device ~signal (driver ()) in
-  equal ~msg:"default" int 30_000 (Nx_device.timeout d);
-  Nx_device.set_timeout d 5;
-  Nx_device.submit d ~touches:[] ignore;
-  Nx_device.synchronize d;
-  equal ~msg:"waits use it" int 5 !seen;
-  raises_match (Exn.invalid_arg ~substring:"0 ms") (fun () ->
-      Nx_device.set_timeout d 0)
-
-(* A borrow is collected, and its device hangs in the wait before it unmaps it:
-   the host memory stays in the failed device's reach. *)
-let test_cut_short () =
-  let hung = ref false in
-  let signal =
-    {
-      Nx_device.signaled = (fun () -> 0);
-      wait = (fun _ ~timeout_ms:_ -> not !hung);
-    }
-  in
-  let gpu =
-    device ~name:"CUT" ~mapping:(fst (map_host ())) ~signal (driver ())
-  in
-  let shared = B.create Nx_device.host S.UInt8 pages in
+  let g = fake ~maps:true ~signal:(signal ~signaled:max_int wait) () in
   (fun () ->
-    let b = B.borrow gpu shared in
-    Nx_device.submit gpu ~touches:[ Nx_device.host ] (fun _ ->
-        ignore (Sys.opaque_identity b)))
+    let hb = B.create host S.UInt8 (1 lsl 20) in
+    Gc.finalise_last (fun () -> collected := true) hb;
+    let bm = B.borrow g.dev hb in
+    ignore (Nx_device.submit g.dev ~touches:[ host ] Fun.id);
+    ignore (Sys.opaque_identity bm))
     ();
   Gc.full_major ();
-  hung := true;
-  let failed = Exn.failure ~substring:"CUT hang detected" in
-  raises_match failed (fun () -> Nx_device.synchronize gpu);
-  raises_match failed (fun () ->
-      B.copy ~src:shared ~dst:(B.create Nx_device.host S.UInt8 pages))
+  armed := true;
+  ignore (stats g.dev);
+  is_false ~msg:"collected during the wait" !during;
+  Gc.full_major ();
+  Gc.full_major ();
+  is_true ~msg:"collected after it" !collected
 
-(* A fault the driver reports fails the device with the driver's message. *)
-let test_fault () =
-  let signal =
+(* Which devices' queues run a copy, and how many of their copies go through the
+   host's staging memory. *)
+let routes =
+  let a = far () and b = far () in
+  let p = far ~name:"PEER-A" () and q = far ~name:"PEER-B" () in
+  let fakes = [ a; b; p; q ] in
+  let mapped = B.create host S.UInt8 page in
+  let borrow = B.borrow a.dev mapped in
+  let small () = B.create host S.UInt8 8 in
+  let on f () = B.create f.dev S.UInt8 8 in
+  let pinned f () = B.create ~host:true f.dev S.UInt8 8 in
+  let of_mapped () = B.view mapped ~offset:8 S.UInt8 8 in
+  let queued () = List.map (fun f -> f.drv.queued) fakes in
+  let staged () = List.fold_left (fun n f -> n + f.drv.staged) 0 fakes in
+  let mappings () = List.map (fun f -> f.drv.mapped) fakes in
+  let row name src dst queued staged = (name, src, dst, (queued, staged)) in
+  cases
+    ~name:(fun (name, _, _, _) -> name)
+    "a copy runs"
+    [
+      row "from host memory into a device's, staged by the device" small (on a)
+        [ 1; 0; 0; 0 ] 1;
+      row "from a device's memory into host memory, staged by the device" (on a)
+        small [ 1; 0; 0; 0 ] 1;
+      row "from a device's memory into its host memory, directly" (on a)
+        (pinned a) [ 1; 0; 0; 0 ] 0;
+      row "from host memory the device maps, directly" of_mapped (on a)
+        [ 1; 0; 0; 0 ] 0;
+      row "from another device's host memory, mapped for the copy alone"
+        (pinned b) (on a) [ 1; 0; 0; 0 ] 0;
+      row "within a device, directly" (on a) (on a) [ 1; 0; 0; 0 ] 0;
+      row "between devices that cannot reach each other, through staging" (on a)
+        (on b) [ 1; 1; 0; 0 ] 2;
+      row "between devices that can, by the source alone" (on p) (on q)
+        [ 0; 0; 1; 0 ] 0;
+    ]
+    (fun (_, src, dst, expected) ->
+      let src = src () and dst = dst () in
+      write src "abcdefgh";
+      let q0 = queued () and s0 = staged () and m0 = mappings () in
+      B.copy ~src ~dst;
+      equal ~msg:"copies by each device, and staged ones"
+        (pair (list int) int)
+        expected
+        (List.map2 ( - ) (queued ()) q0, staged () - s0);
+      equal ~msg:"mappings" (list int) m0 (mappings ());
+      equal string "abcdefgh" (read dst);
+      ignore (Sys.opaque_identity borrow))
+
+(* Two and a half staging slots, whose bytes differ from slot to slot. *)
+let test_staged_slots () =
+  let f = far () and g = far () in
+  let slot = 64 lsl 20 in
+  let n = (2 * slot) + (slot / 2) + 12345 in
+  let bytes =
+    String.init n (fun i ->
+        Char.chr (((i * 7) + (i lsr 16) + (i / slot * 13)) land 0xff))
+  in
+  let differing s =
+    let d = ref 0 in
+    String.iteri (fun i c -> if c <> bytes.[i] then incr d) s;
+    !d
+  in
+  let dev = B.view (B.create f.dev S.UInt8 (n + 1000)) ~offset:1000 S.UInt8 n in
+  write dev bytes;
+  equal ~msg:"bytes that differ after a round trip" int 0 (differing (read dev));
+  let on_g = B.create g.dev S.UInt8 n in
+  B.copy ~src:dev ~dst:on_g;
+  equal ~msg:"bytes that differ on another device" int 0 (differing (read on_g));
+  let tail = B.create f.dev S.UInt8 100 in
+  B.copy ~src:(B.view dev ~offset:(2 * slot) S.UInt8 100) ~dst:tail;
+  equal ~msg:"from an offset" string
+    (String.sub bytes (2 * slot) 100)
+    (read tail)
+
+let buffers =
+  group "buffers"
+    [
+      test
+        "a buffer over a mapped file answers for it, as do its views and \
+         borrows, and no other buffer does" (fun () ->
+          let file =
+            { B.path = "/weights"; size = page; mtime = 1.; inode = 2 }
+          in
+          let mapped = B.bigarray Bigarray.char (B.create host S.UInt8 page) in
+          let b = B.of_bigarray ~file mapped in
+          let f, _ = Option.get (B.file b) in
+          equal (pair string int) ("/weights", page) (f.path, f.size);
+          equal
+            (list (option int))
+            [ Some 0; Some 4; Some 2; None; None ]
+            (List.map
+               (fun b -> Option.map snd (B.file b))
+               [
+                 b;
+                 B.view b ~offset:4 S.Float32 1;
+                 B.borrow far_one.dev (B.view b ~offset:2 S.UInt8 6);
+                 B.of_bigarray (chars 8);
+                 B.create host S.UInt8 8;
+               ]));
+      test
+        "of_bigarray takes elements at multiples of their size, of one \
+         component for complex kinds, and refuses others" (fun () ->
+          let fd = Unix.openfile (temp_file ()) [ Unix.O_RDWR ] 0 in
+          Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+          ignore (Unix.write_substring fd (String.make 32 '\000') 0 32);
+          let at pos k =
+            B.of_bigarray
+              (Bigarray.array1_of_genarray
+                 (Unix.map_file fd ~pos k Bigarray.c_layout false [| 3 |]))
+          in
+          equal (list int) [ 3; 3 ]
+            [
+              B.length (at 8L Bigarray.complex64);
+              B.length (at 3L Bigarray.char);
+            ];
+          raises_match Exn.invalid_arg (fun () -> at 2L Bigarray.float32);
+          raises_match Exn.invalid_arg (fun () -> at 4L Bigarray.complex64));
+      test
+        "external memory is a borrowed buffer of up to max_int bytes that no \
+         budget counts" (fun () ->
+          let f = fake () and n = (1 lsl 58) + 1 in
+          let m = { Nx_device.host = None; device = 16n; handle = 16n } in
+          let b = Nx_device.external_buffer f.dev m S.Float64 n in
+          equal
+            (quad bool nativeint int int)
+            (true, 16n, 8 * n, 0)
+            (B.is_borrowed b, B.address b, B.nbytes b, allocated f.dev));
+      test
+        "a bigarray of a buffer keeps its memory after the buffer is collected"
+        (fun () ->
+          let v =
+            let v = B.bigarray Bigarray.int32 (B.create host S.Int32 1000) in
+            Bigarray.Array1.fill v 7l;
+            v
+          in
+          Gc.full_major ();
+          let fills =
+            List.init 100 (fun _ ->
+                let b = B.create host S.Int32 1000 in
+                Bigarray.Array1.fill (B.bigarray Bigarray.int32 b) 0x55l;
+                b)
+          in
+          Gc.full_major ();
+          ignore (Sys.opaque_identity fills);
+          equal (array int32) (Array.make 1000 7l)
+            (Array.init 1000 (Bigarray.Array1.get v)));
+      test "bigarrays taken on two domains at once share their buffer's memory"
+        test_concurrent_views;
+      test
+        "a borrow keeps its host memory until its device's work is done, \
+         although the collector runs during the wait"
+        test_borrow_lifetime;
+      test "the host's staging memory is one, which each device maps once"
+        (fun () ->
+          let a = far () and b = far () in
+          List.iter
+            (fun f -> write (B.create f.dev S.UInt8 3) "abc")
+            [ a; a; b ];
+          equal (list int) [ 1; 1 ]
+            [ List.length a.drv.staging; List.length b.drv.staging ];
+          equal (list nativeint) a.drv.staging b.drv.staging);
+      routes;
+      test
+        "a copy of several staging slots round trips through a queue that runs \
+         behind the host, into a view at an offset and between devices"
+        test_staged_slots;
+      test "copies between two devices in opposite directions do not deadlock"
+        (fun () ->
+          let a = near.dev and b = (fake ()).dev in
+          let ba = B.create a S.UInt8 64 and bb = B.create b S.UInt8 64 in
+          let copies src dst () =
+            for _ = 1 to 2000 do
+              B.copy ~src ~dst
+            done
+          in
+          let d = Domain.spawn (copies ba bb) in
+          copies bb ba ();
+          Domain.join d;
+          equal int (2000 * 64) (Nx_device.Stats.bytes_out (stats b)));
+    ]
+
+let refusals =
+  let memory = { Nx_device.alloc = (fun _ -> None); free = ignore } in
+  let make ?host_memory ?mapping ?copy_queue ?(budget = 0) ?timeout_ms () =
+    Nx_device.make ~name:"X" ~arch:"x" ~budget ~memory ?host_memory ?mapping
+      ?copy_queue ?timeout_ms ()
+  in
+  let unaddressed = { Nx_device.host = None; device = 16n; handle = 16n } in
+  let external_ s n = Nx_device.external_buffer near.dev unaddressed s n in
+  let queue _ =
     {
-      Nx_device.signaled = (fun () -> 0);
-      wait = (fun _ ~timeout_ms:_ -> failwith "page fault");
+      Nx_device.copy = (fun ~dst:_ ~src:_ _ _ -> ());
+      transfer = (fun _ -> None);
     }
   in
-  let d = device ~name:"FAULTY" ~signal (driver ()) in
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
-  let fault = Exn.failure ~substring:"FAULTY: page fault" in
-  raises_match fault (fun () -> Nx_device.synchronize d);
-  raises_match fault (fun () -> B.create d S.UInt8 1)
-
-(* Without its own signal, a wait restarts its timeout whenever the signal word
-   moves: slow progress is not a hang, and no progress is. *)
-let test_timeout_restarts () =
-  let d = device ~name:"SLOW" ~timeout_ms:200 (driver ()) in
-  let word = B.host_address (Nx_device.timeline d) in
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
-  let v = Nx_device.submit d ~touches:[] Fun.id in
-  let progress =
-    Domain.spawn (fun () ->
-        for k = 1 to v do
-          Unix.sleepf 0.12;
-          store_signal word k
-        done)
+  let off_page () =
+    let ba = B.bigarray Bigarray.char (B.create host S.UInt8 page) in
+    B.of_bigarray (Bigarray.Array1.sub ba 1 8)
   in
-  let t0 = Unix.gettimeofday () in
-  Nx_device.synchronize d;
-  is_true ~msg:"waited past one timeout" (Unix.gettimeofday () -. t0 > 0.3);
-  Domain.join progress;
-  let stuck = device ~name:"STUCK" ~timeout_ms:200 (driver ()) in
-  ignore (Nx_device.submit stuck ~touches:[] Fun.id);
-  raises_match (Exn.failure ~substring:"STUCK hang detected") (fun () ->
-      Nx_device.synchronize stuck);
-  store_signal (B.host_address (Nx_device.timeline stuck)) 1
+  let refusing () =
+    let mapping =
+      { Nx_device.map = (fun _ _ -> Error "locked"); unmap = ignore }
+    in
+    make ~mapping ()
+  in
+  let rejecting () =
+    (fake ~load:(fun ~binary:_ ~name:_ -> failwith "rejected") ()).dev
+  in
+  let file = { B.path = "/f"; size = 7; mtime = 0.; inode = 0 } in
+  let raise_ ?(exn = Exn.invalid_arg ?substring:None) name f =
+    (name, fun () -> raises_match exn (fun () -> ignore (f ())))
+  in
+  cases ~name:fst "refuse"
+    [
+      raise_ "a device with a negative budget" (fun () -> make ~budget:(-1) ());
+      raise_ "a device with a timeout of 0 ms" (fun () -> make ~timeout_ms:0 ());
+      raise_ "a device with a copy queue and no mapping" (fun () ->
+          make ~copy_queue:queue ());
+      raise_ "host memory that the host does not address" (fun () ->
+          make
+            ~host_memory:{ memory with alloc = (fun _ -> Some unaddressed) }
+            ());
+      raise_ ~exn:(Exn.failure ~substring:"timeline")
+        "host memory with none for the timeline" (fun () ->
+          make ~host_memory:memory ());
+      raise_ "a timeout of 0 ms" (fun () -> Nx_device.set_timeout near.dev 0);
+      raise_ "a buffer of more than max_int bytes" (fun () ->
+          B.create host S.Float64 ((max_int / 8) + 1));
+      raise_ "external memory on the host" (fun () ->
+          Nx_device.external_buffer host
+            { unaddressed with host = Some 0n }
+            S.UInt8 0);
+      raise_ "external memory of -1 elements" (fun () -> external_ S.UInt8 (-1));
+      raise_ "external memory of more than max_int bytes" (fun () ->
+          external_ S.Float64 ((max_int / 8) + 1));
+      raise_ "a bigarray of Int" (fun () ->
+          B.of_bigarray
+            (Bigarray.Array1.create Bigarray.int Bigarray.c_layout 1));
+      raise_ "a bigarray of Nativeint" (fun () ->
+          B.of_bigarray
+            (Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 1));
+      raise_ "a file whose size is not its bigarray's" (fun () ->
+          B.of_bigarray ~file (chars 8));
+      raise_ "a bigarray of Int over a buffer" (fun () ->
+          B.bigarray Bigarray.int (B.create host S.Int64 1));
+      raise_ "a bigarray over a device's buffer" (fun () ->
+          B.bigarray Bigarray.char (B.create near.dev S.UInt8 1));
+      raise_ "a bigarray over part of an element" (fun () ->
+          B.bigarray Bigarray.float32 (B.create host S.UInt8 3));
+      raise_ "a bigarray over bytes not aligned to its elements" (fun () ->
+          B.bigarray Bigarray.int16_signed
+            (B.view (B.create host S.UInt8 4) ~offset:1 S.UInt8 2));
+      raise_ "a borrow of memory that does not start on a page" (fun () ->
+          B.borrow far_one.dev (off_page ()));
+      raise_ ~exn:(Exn.invalid_arg ~substring:"locked")
+        "a borrow its driver refuses, with its reason" (fun () ->
+          B.borrow (refusing ()) (B.create host S.UInt8 page));
+      raise_
+        "a copy of memory the host does not address, by a device without a \
+         copy queue" (fun () ->
+          B.copy ~src:(external_ S.UInt8 4) ~dst:(B.create host S.UInt8 4));
+      raise_ "a copy between buffers of different sizes" (fun () ->
+          B.copy ~src:(B.create host S.UInt8 4) ~dst:(B.create host S.UInt8 3));
+      raise_ "a program on the host" (fun () ->
+          Nx_device.Program.load host ~binary:"" ~name:"f");
+      raise_ ~exn:(Exn.failure ~substring:"rejected")
+        "a program its driver rejects, with its message" (fun () ->
+          Nx_device.Program.load (rejecting ()) ~binary:"lib" ~name:"f");
+    ]
+    (fun (_, check) -> check ())
+
+let programs =
+  test "a function of a binary loads once, on its device" (fun () ->
+      let loads = ref [] in
+      let load ~binary ~name =
+        loads := (binary, name) :: !loads;
+        Nativeint.of_int (List.length !loads)
+      in
+      let d = (fake ~load ()).dev in
+      let p = Nx_device.Program.load d ~binary:"lib" ~name:"f" in
+      is_true ~msg:"loaded again"
+        (Nx_device.Program.load d ~binary:"lib" ~name:"f" == p);
+      ignore (Nx_device.Program.load d ~binary:"lib" ~name:"g");
+      equal (list (pair string string)) [ ("lib", "g"); ("lib", "f") ] !loads;
+      equal
+        (triple string bool nativeint)
+        ("f", true, 1n)
+        Nx_device.Program.(name p, Nx_device.equal d (device p), handle p))
+
+(* Timeline *)
+
+let words t =
+  let ba = B.bigarray Bigarray.int64 t in
+  (Int64.to_int ba.{0}, Int64.to_int ba.{1})
+
+let timeline =
+  group "timeline"
+    [
+      test
+        "starts at 0, gives each submission the next value, and records none \
+         that raised" (fun () ->
+          let d = (fake ()).dev in
+          equal (pair int int) (0, 0)
+            (Nx_device.submitted d, Nx_device.signaled d);
+          equal int 1 (Nx_device.submit d ~touches:[] Fun.id);
+          raises (Failure "encode") (fun () ->
+              Nx_device.submit d ~touches:[] (fun _ -> failwith "encode"));
+          let t = Nx_device.timeline d in
+          equal ~msg:"two UInt64 of the host" (triple string string int)
+            ("CPU", "uint64", 2)
+            (Nx_device.name (B.device t), S.to_string (B.dtype t), B.length t);
+          equal ~msg:"the signal word, then the submitted value" (pair int int)
+            (0, 1) (words t);
+          store_signal (B.host_address t) 1;
+          equal ~msg:"signaled" int 1 (Nx_device.signaled d));
+      test "is the host memory of a device that allocates some" (fun () ->
+          let f = far () in
+          is_true (Nx_device.equal f.dev (B.device (Nx_device.timeline f.dev))));
+      test
+        "of a device with its own signal reports through it, and leaves the \
+         signal word at 0" (fun () ->
+          let d = (fake ~signal:(signal ~signaled:5 (fun _ -> true)) ()).dev in
+          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          Nx_device.synchronize d;
+          equal int 5 (Nx_device.signaled d);
+          equal (pair int int) (0, 1) (words (Nx_device.timeline d)));
+      cases ~name:fst "waits for work"
+        [
+          ("of its device in synchronize", fun a _ -> ([], a));
+          ( "of another device that touched the host, in its synchronize",
+            fun _ _ -> ([ host ], host) );
+          ( "of another device that touched it, in its synchronize",
+            fun _ b -> ([ b ], b) );
+        ]
+        (fun (_, pick) ->
+          let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
+          let touches, waiter = pick a b in
+          let signaled, domain = Nx_device.submit a ~touches (signal_later a) in
+          Nx_device.synchronize waiter;
+          is_true ~msg:"signaled" (Atomic.get signaled);
+          Domain.join domain);
+      test "a copy waits for its devices' work first" (fun () ->
+          let d = (fake ()).dev in
+          let b = B.create d S.UInt8 1 in
+          let signaled, domain =
+            Nx_device.submit d ~touches:[] (signal_later d)
+          in
+          write b "x";
+          is_true ~msg:"signaled" (Atomic.get signaled);
+          Domain.join domain);
+      test "the synchronized hook ends each synchronization, a copy's included"
+        (fun () ->
+          let calls = ref 0 in
+          let d = (fake ~synchronized:(fun () -> incr calls) ()).dev in
+          Nx_device.synchronize d;
+          write (B.create d S.UInt8 1) "x";
+          equal int 2 !calls);
+      test
+        "the timeout is 30 s unless the vendor sets another, and set_timeout \
+         sets it for the waits after it" (fun () ->
+          let seen = ref 0 in
+          let wait timeout_ms =
+            seen := timeout_ms;
+            true
+          in
+          let d = (fake ~signal:(signal wait) ()).dev in
+          equal (pair int int) (30_000, 5)
+            (Nx_device.timeout d, Nx_device.timeout (fake ~timeout_ms:5 ()).dev);
+          Nx_device.set_timeout d 7;
+          Nx_device.submit d ~touches:[] ignore;
+          Nx_device.synchronize d;
+          equal int 7 !seen);
+      test
+        "a wait without a signal restarts its timeout whenever the signal word \
+         moves" (fun () ->
+          let d = (fake ~name:"SLOW" ~timeout_ms:200 ()).dev in
+          let word = B.host_address (Nx_device.timeline d) in
+          List.iter
+            (fun _ -> ignore (Nx_device.submit d ~touches:[] Fun.id))
+            [ 1; 2; 3 ];
+          let progress =
+            Domain.spawn (fun () ->
+                for k = 1 to 3 do
+                  Unix.sleepf 0.12;
+                  store_signal word k
+                done)
+          in
+          let t0 = Unix.gettimeofday () in
+          Nx_device.synchronize d;
+          greater ~msg:"seconds waited" (float 0.01) ~than:0.3
+            (Unix.gettimeofday () -. t0);
+          Domain.join progress;
+          let stuck = (fake ~name:"STUCK" ~timeout_ms:200 ()).dev in
+          ignore (Nx_device.submit stuck ~touches:[] Fun.id);
+          raises (Failure "STUCK hang detected") (fun () ->
+              Nx_device.synchronize stuck));
+    ]
+
+(* Failures *)
+
+let test_hang () =
+  let waits = ref 0 in
+  let d = (fake ~name:"HUNG" ~signal:(never waits) ()).dev in
+  let b = B.create d S.UInt8 8 in
+  ignore (Nx_device.submit d ~touches:[] Fun.id);
+  let hung = Failure "HUNG hang detected" in
+  raises hung (fun () -> Nx_device.synchronize d);
+  List.iter (raises hung)
+    [
+      (fun () -> Nx_device.synchronize d);
+      (fun () -> ignore (B.create d S.UInt8 1));
+      (fun () -> ignore (Nx_device.submit d ~touches:[] Fun.id));
+      (fun () -> ignore (read b));
+      (fun () -> Nx_device.set_budget d 0);
+      (fun () -> Nx_device.free_cache d);
+    ];
+  equal ~msg:"waits" int 1 !waits;
+  equal ~msg:"name and arch" (pair string string) ("HUNG", "test")
+    (Nx_device.name d, Nx_device.arch d);
+  equal ~msg:"budget, submitted, signaled" (triple int int int) (max_int, 1, 0)
+    (Nx_device.budget d, Nx_device.submitted d, Nx_device.signaled d);
+  equal ~msg:"its timeline" int 2 (B.length (Nx_device.timeline d));
+  Gc.full_major ();
+  equal ~msg:"allocated for good" int 8 (allocated d)
+
+let test_scope () =
+  let waits = ref 0 in
+  let gpu = (fake ~name:"GPU" ~maps:true ~signal:(never waits) ()).dev in
+  let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 8 in
+  let mapped = B.borrow gpu shared in
+  ignore (Nx_device.submit gpu ~touches:[ host ] Fun.id);
+  let failed = Failure "GPU hang detected" in
+  raises failed (fun () -> Nx_device.synchronize gpu);
+  Nx_device.synchronize host;
+  let a = B.create host S.UInt8 8 and other = B.create near.dev S.UInt8 8 in
+  write a "12345678";
+  B.copy ~src:a ~dst:other;
+  dropped (fun () -> B.create host S.UInt8 1000);
+  equal ~msg:"memory out of its reach" (pair string string)
+    ("12345678", "12345678")
+    (read a, read other);
+  List.iter (raises failed)
+    [
+      (fun () -> B.copy ~src:shared ~dst:a);
+      (fun () -> B.copy ~src:a ~dst:shared);
+      (fun () ->
+        B.copy
+          ~src:(B.view shared ~offset:4 S.UInt8 4)
+          ~dst:(B.view a ~offset:0 S.UInt8 4));
+      (fun () -> ignore (B.bigarray Bigarray.char shared));
+      (fun () -> ignore (read mapped));
+    ];
+  equal ~msg:"a view of it" int 4 (B.length (B.view shared ~offset:0 S.UInt8 4));
+  equal ~msg:"waits" int 1 !waits
+
+(* A signal that arrives until [hung] is set. *)
+let until hung = signal (fun _ -> not !hung)
+
+let test_unmapped () =
+  let hung = ref false in
+  let gpu = (fake ~name:"LATE" ~maps:true ~signal:(until hung) ()).dev in
+  let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 4 in
+  dropped (fun () -> B.borrow gpu shared);
+  ignore (stats gpu);
+  hung := true;
+  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
+  raises (Failure "LATE hang detected") (fun () -> Nx_device.synchronize gpu);
+  write shared "abcd";
+  equal string "abcd" (read shared)
+
+let test_cut_short () =
+  let hung = ref false in
+  let gpu = (fake ~name:"CUT" ~maps:true ~signal:(until hung) ()).dev in
+  let shared = B.create host S.UInt8 page in
+  dropped (fun () ->
+      let b = B.borrow gpu shared in
+      Nx_device.submit gpu ~touches:[ host ] (fun _ -> Sys.opaque_identity b));
+  hung := true;
+  let failed = Failure "CUT hang detected" in
+  raises failed (fun () -> Nx_device.synchronize gpu);
+  raises failed (fun () -> B.copy ~src:shared ~dst:(B.create host S.UInt8 page))
+
+let test_hung_transfer () =
+  let a = far ~name:"PEER-HUNG" () and c = far ~name:"PEER-DEST" () in
+  let src = B.create a.dev S.UInt8 4 in
+  (fun () ->
+    let dst = B.create c.dev S.UInt8 4 in
+    a.drv.stalled <- true;
+    let hung = Failure "PEER-HUNG hang detected" in
+    raises hung (fun () -> B.copy ~src ~dst);
+    raises hung (fun () -> read dst);
+    let healthy = B.create c.dev S.UInt8 3 in
+    write healthy "abc";
+    equal ~msg:"the destination device" string "abc" (read healthy))
+    ();
+  Gc.full_major ();
+  equal ~msg:"retained, and cached" (pair int int) (4, 3)
+    (Nx_device.Stats.retained (stats c.dev), cached c.dev)
+
+let test_retained () =
+  let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
+  dropped (fun () -> B.create f.dev S.UInt8 600);
+  ignore (Nx_device.submit f.dev ~touches:[] Fun.id);
+  raises (Failure "D hang detected") (fun () -> Nx_device.free_cache f.dev);
+  equal ~msg:"retained, cached and freed" (triple int int int) (600, 0, 0)
+    (Nx_device.Stats.retained (stats f.dev), cached f.dev, f.drv.frees)
+
+let failures =
+  group "failures"
+    [
+      test
+        "a device whose work does not signal in time fails for good, and \
+         answers what does not take it"
+        test_hang;
+      test "a fault its driver reports fails a device with the driver's message"
+        (fun () ->
+          let signal = signal (fun _ -> failwith "page fault") in
+          let d = (fake ~name:"FAULTY" ~signal ()).dev in
+          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          let fault = Failure "FAULTY: page fault" in
+          raises fault (fun () -> Nx_device.synchronize d);
+          raises fault (fun () -> B.create d S.UInt8 1));
+      test "a driver error while enqueueing a copy fails the device" (fun () ->
+          let f = far ~name:"REFUSING" () in
+          let b = B.create f.dev S.UInt8 4 in
+          f.drv.broken <- true;
+          let refused = Failure "REFUSING: enqueue refused" in
+          raises refused (fun () -> write b "abcd");
+          raises refused (fun () -> B.create f.dev S.UInt8 1));
+      test
+        "a failure reaches the memory the failed device can reach, and no other"
+        test_scope;
+      test "a borrow unmapped before a failure is out of its reach"
+        test_unmapped;
+      test "a borrow whose unmapping a failure cut short stays in its reach"
+        test_cut_short;
+      test
+        "a transfer that cannot be waited for leaves its destination in the \
+         source's reach, retained"
+        test_hung_transfer;
+      test "memory that a failed wait could not free is retained" test_retained;
+    ]
+
+let devices =
+  group "devices"
+    [
+      test
+        "the host is CPU, of the machine's instruction set, with a budget of \
+         max_int" (fun () ->
+          equal string "CPU" (Nx_device.name host);
+          mem string (Nx_device.arch host) [ "arm64"; "x86_64" ];
+          equal int max_int (Nx_device.budget host));
+      test "each make is a device of its own, equal only to itself" (fun () ->
+          let a = (fake ()).dev and b = (fake ()).dev in
+          equal (list bool) [ true; false; false ]
+            [ Nx_device.equal a a; Nx_device.equal a b; Nx_device.equal a host ]);
+      programs;
+    ]
 
 let () =
   exit
     (run "nx.device"
-       [
-         group "host"
-           [
-             test "identity" test_host_identity;
-             test "create" test_create;
-             test "element counts do not overflow" test_overflow;
-             test "copies and views" test_copy_and_views;
-             test "of_bigarray" test_of_bigarray;
-             test "host memory is counted and capped" test_host_memory;
-             test "of_bigarray of every kind" test_of_bigarray_kinds;
-             test "mapped files" test_file;
-             test "of_bigarray refuses unaligned elements"
-               test_of_bigarray_alignment;
-             test "nx_device.h reads the host address" test_c_host;
-             test "borrow" test_borrow;
-             test "borrows share one mapping" test_borrow_shared;
-             test "no external host memory" test_external_on_host;
-             test "a borrow keeps its memory through the wait"
-               test_borrow_lifetime;
-             test "bigarray views" test_bigarray_view;
-             test "a bigarray view keeps its memory" test_bigarray_lifetime;
-             test "concurrent views share the storage" test_concurrent_views;
-           ];
-         group "memory"
-           [
-             test "the cache reuses memory" test_cache_reuse;
-             test "the budget caps memory" test_budget;
-             test "set_budget releases the cache" test_set_budget;
-             test "free_cache empties the cache" test_free_cache;
-             test "an oversized request raises at once" test_oversized;
-             test "memory of a hung device is retained" test_retained;
-             test "the budget holds under random use" test_budget_model;
-             test "a refused allocation raises" test_refused;
-             test "copies count across devices" test_transfer_stats;
-             test "a copy queue" test_copy_queue;
-             test "one staging memory" test_staging_shared;
-             test "host memory of another device" test_copy_other_host_memory;
-             test "copies between copy queues" test_copy_between_queues;
-             test "a queue that runs behind the host" test_pipeline;
-             test "overlapping copies are refused" test_copy_overlap;
-             test "an enqueue error fails the device" test_enqueue_error;
-             test "a hung transfer" test_hung_transfer;
-             test "domains share a device" test_domains;
-             test "opposite copies do not deadlock" test_opposite_copies;
-           ];
-         group "programs" [ test "load" test_programs ];
-         group "submission"
-           [
-             test "the timeline" test_timeline;
-             test "a signal device's timeline" test_timeline_signal_device;
-             test "synchronize waits for the signal" test_synchronize_waits;
-             test "work that touched a device" test_touched;
-             test "work that touched another device" test_touched_devices;
-             test "the synchronize hook" test_synchronized_hook;
-             test "copies synchronize" test_copy_synchronizes;
-             test "a hung device fails" test_hang;
-             test "a failure is scoped to the memory it reaches"
-               test_failure_scope;
-             test "an unmapped borrow is out of reach"
-               test_unmapped_before_failure;
-             test "a borrow cut short by a failure" test_cut_short;
-             test "set_timeout" test_set_timeout;
-             test "a faulting device fails" test_fault;
-             test "the timeout restarts on progress" test_timeout_restarts;
-           ];
-       ])
+       [ devices; memory; laws; buffers; refusals; timeline; failures ])
