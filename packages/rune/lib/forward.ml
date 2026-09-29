@@ -51,6 +51,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
      tangent [dx]. *)
   let lift1 (type a b c d) k (out : (a, b) t) (x : (c, d) t)
       (dfun : (c, d) t -> (a, b) t) =
+    Tensor_map.fresh out x;
     (match tangent x with None -> () | Some dx -> set_tangent out (dfun dx));
     continue k out
   in
@@ -59,6 +60,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
      either input is active; the inactive side gets a zero tangent. *)
   let lift2 (type a b) k (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
       (make : (a, b) t -> (a, b) t -> (a, b) t) =
+    Tensor_map.fresh out a_in;
+    Tensor_map.fresh out b_in;
     if active a_in || active b_in then
       set_tangent out (make (tan_or_zeros a_in) (tan_or_zeros b_in));
     continue k out
@@ -85,9 +88,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_place { placement; t_in } ->
           Some
             (fun k ->
-              let out = place placement t_in in
-              if out == t_in then continue k out
-              else lift1 k out t_in (place placement))
+              lift1 k (place placement t_in) t_in (place placement))
       | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None

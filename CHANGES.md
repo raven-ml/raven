@@ -167,6 +167,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.grad` and `Rune.jvp` through `Nx.contiguous` of a placed value that
+  fills its storage no longer count its derivative twice: the value came back
+  as its own result, which the tape took for a second node. A transformation
+  now raises when an operation returns its operand, where the derivatives were
+  silently wrong.
+
 - Placed storage retires through the shared device-safe queue, preserving
   allocation lifetimes during native callbacks and reporting failed retirement
   at explicit safe points.

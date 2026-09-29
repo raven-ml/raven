@@ -87,6 +87,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
      of [out]. Skips recording when [x] is untracked. *)
   let pull1 (type a b c d) k (out : (a, b) t) (x : (c, d) t)
       (f : (a, b) t -> (c, d) t) =
+    Tensor_map.fresh out x;
     if tracked x then begin
       track out;
       Tape.record tape (fun () ->
@@ -101,6 +102,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
      reduced back to each input's shape to undo broadcasting. *)
   let pull2 (type a b) k (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
       (fa : (a, b) t -> (a, b) t) (fb : (a, b) t -> (a, b) t) =
+    Tensor_map.fresh out a_in;
+    Tensor_map.fresh out b_in;
     let ta = tracked a_in and tb = tracked b_in in
     if ta || tb then begin
       track out;
@@ -138,11 +141,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_place { placement = p; t_in } ->
           Some
             (fun k ->
-              let out = place p t_in in
-              if out == t_in then continue k out
-              else
-                let back = placement t_in in
-                pull1 k out t_in (place back))
+              let back = placement t_in in
+              pull1 k (place p t_in) t_in (place back))
       | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None

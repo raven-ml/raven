@@ -5,12 +5,19 @@
 
 type key = Key : ('a, 'b) Nx_effect.t -> key
 
+let same (type a b c d) (a : (a, b) Nx_effect.t) (b : (c, d) Nx_effect.t) =
+  Obj.repr a == Obj.repr b
+
+let fresh out x =
+  if same out x then
+    invalid_arg "Rune: an Nx operation returned its operand as its result"
+
 (* Keys are tensors compared by physical identity and hashed by
    [Nx_effect.identity_hash], which a value keeps for its whole life. *)
 module Tbl = Hashtbl.Make (struct
   type t = key
 
-  let equal (Key a) (Key b) = Obj.repr a == Obj.repr b
+  let equal (Key a) (Key b) = same a b
   let hash (Key x) = Nx_effect.identity_hash x
 end)
 

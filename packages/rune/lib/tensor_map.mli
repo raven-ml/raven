@@ -18,6 +18,16 @@
 
 type key = Key : ('a, 'b) Nx_effect.t -> key
 
+val same : ('a, 'b) Nx_effect.t -> ('c, 'd) Nx_effect.t -> bool
+(** [same a b] is [true] iff [a] and [b] are one tensor. *)
+
+val fresh : ('a, 'b) Nx_effect.t -> ('c, 'd) Nx_effect.t -> unit
+(** [fresh out x] checks that an operation's result [out] is not its operand
+    [x]: a table keyed by identity would take the two for one node.
+
+    Raises [Invalid_argument] if [out] is [x]. Nx returns an operand unchanged
+    only without performing an effect, so this is a bug in the operation. *)
+
 module Tbl : Hashtbl.S with type key = key
 (** Tables keyed by tensor identity. *)
 

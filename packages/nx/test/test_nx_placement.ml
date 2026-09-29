@@ -361,7 +361,8 @@ let test_views_share_the_cell () =
   equal ~msg:"a view moves nothing" int before !uploads;
   is_true ~msg:"one cell" (cell_of v == cell_of p);
   equal ~msg:"its elements" (array float_exact) [| 1.; 2.; 3. |] (Nx.to_array v);
-  is_true ~msg:"a whole value is contiguous" (Nx.contiguous p == p);
+  is_true ~msg:"a whole value is contiguous"
+    (cell_of (Nx.contiguous p) == cell_of p);
   let c = Nx.contiguous v in
   is_true ~msg:"a window is copied" (cell_of c != cell_of p);
   (cell_of p).state <- Consumed { path = "0" };

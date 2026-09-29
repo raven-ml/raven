@@ -1356,8 +1356,8 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     See also {!cast}. *)
 
 val contiguous : ('a, 'b) t -> ('a, 'b) t
-(** [contiguous t] is [t] if it is already C-contiguous, or a fresh contiguous
-    copy otherwise.
+(** [contiguous t] is [t], sharing its storage, if [t] is already
+    C-contiguous, or a fresh contiguous copy otherwise.
 
     See also {!is_c_contiguous}, {!copy}. *)
 

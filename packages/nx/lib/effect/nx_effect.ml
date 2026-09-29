@@ -1104,8 +1104,6 @@ let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
 let move (type a b) p (x : (a, b) t) : (a, b) t =
   let move () = match x with
   | Traced _ -> outside_trace ()
-  | Placed { r_placement; _ } when Placement.equal r_placement p -> x
-  | Host _ when Placement.is_host p -> x
   | Placed r when Placement.is_host p -> Host (read_host r)
   | Host _ | Placed _ ->
       Placement.check_shape "Nx.place" p (View.shape (view x));
@@ -1114,9 +1112,16 @@ let move (type a b) p (x : (a, b) t) : (a, b) t =
   | Placed r -> Cell.with_borrow r.r_cell move
   | Host _ | Traced _ -> move ()
 
-let place p x =
-  try Effect.perform (E_place { placement = p; t_in = x })
-  with Effect.Unhandled _ -> move p x
+(* A value already at [p] is returned without an effect: an effect's result is
+   always a fresh value, which the transformations take for a new node. *)
+let place (type a b) p (x : (a, b) t) : (a, b) t =
+  if Placement.equal (placement x) p then
+    match x with
+    | Placed r -> Cell.with_borrow r.r_cell (fun () -> x)
+    | Host _ | Traced _ -> x
+  else
+    try Effect.perform (E_place { placement = p; t_in = x })
+    with Effect.Unhandled _ -> move p x
 
 (* Routing
 
@@ -1869,7 +1874,7 @@ let contiguous t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Host t -> Host (Nx_backend.contiguous t)
-    | Placed r when covers r -> t_in
+    | Placed r when covers r -> Placed { r with r_id = fresh_id () }
     | _ -> routed e t_in Fun.id)
 
 let copy t_in =
