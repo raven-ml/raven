@@ -764,9 +764,10 @@ val scan :
     carry moves that row, not the cache. {!val-jvp} and {!val-vmap} of a scan
     compile as one loop too, whose carry gains a tangent or a lane only for the
     carry tensors that have one: under [vmap] over tangents around [jvp], the
-    primal state is computed once for every lane. Staging needs the carry to
-    keep its shapes across steps; a fold that changes them, a gradient taken
-    inside [jvp] or [vmap] of a fold, or one in a program over several devices
+    primal state is computed once for every lane. The reversed loop is a scan
+    itself, so [jvp], [vmap] and {!val-grad} of a gradient through a scan
+    compile as loops as well. Staging needs the carry to keep its shapes across
+    steps; a fold that changes them, or one in a program over several devices,
     unrolls into the compiled program instead. Everywhere else the scan folds
     eagerly, tracing every step.
 

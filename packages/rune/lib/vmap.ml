@@ -656,17 +656,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        then aborts its run with [Grow] and the scan passes on again, batching
        it. Otherwise, the eager fold runs under a nested instance of this
        handler. *)
-    | Scan.E_scan_probe Scan.Loop ->
-        Some (fun k -> continue k (Scan.probe Scan.Loop))
-    | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
+    | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
     | Scan.E_scan req ->
         Some
           (fun k ->
             let fold () =
               match_with (fun () -> Scan.eager req) () (handler st)
             in
-            if not (Scan.probe Scan.Loop) then Scan.deliver k fold
-            else
+            Scan.pass_on k ~fold @@ fun () ->
               let exception Grow of bool list in
               let flags = List.map (fun (Nx.P l) -> batched st l) in
               let lanes carried leaves =
@@ -720,11 +717,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                           else Nx.P y)
                         !outputs res.r_ys
                     in
-                    continue k { res with r_ys }
+                    { res with r_ys }
                 (* The aborted run's slot tensors are never reached again. *)
                 | exception Grow carried -> attempt carried
-                | exception Scan.Not_staged -> Scan.deliver k fold
-                | exception e -> discontinue k e
               in
               attempt (flags req.req_carry))
     | Nx_quant.Effect.E_quant { w; op } when quant_batched st w op ->

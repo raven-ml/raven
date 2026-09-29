@@ -163,17 +163,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
-      (* Staged scan. The tape entry recorded for a staged scan performs
-         [E_scan_bwd], which only a staging jit answers — so take the staged
-         path only when the [Transpose] probe says the scan and its backward
-         loop both reach one. Re-performing blindly would let another
-         transformation handler (vmap, jvp, an outer grad) claim [E_scan]: the
-         recorded [E_scan_bwd] would bypass it. Otherwise the eager fold runs
-         under a nested copy of this handler, taping every step as the unrolled
-         scan always did. *)
-      | Scan.E_scan_probe Scan.Loop ->
-          Some (fun k -> continue k (Scan.probe Scan.Transpose))
-      | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
+      (* Staged scan. When a stager lies beyond, the scan passes on and the
+         tape records its transpose, a scan too (see [staged_scan]). Otherwise
+         the eager fold runs under a nested instance of this handler, taping
+         every step. *)
+      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
       | Scan.E_scan req ->
           Some
             (fun k ->
@@ -182,56 +176,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   (fun () -> Scan.eager req)
                   () (handler tape)
               in
-              if not (Scan.probe Scan.Transpose) then Scan.deliver k fold
-              else
-                match
-                  Effect.perform (Scan.E_scan { req with req_record = true })
-                with
-                | res ->
-                    let Scan.{ req_carry; req_xs; req_step = step; _ } = req in
-                    List.iter (fun (Nx.P leaf) -> track leaf) res.r_ys;
-                    List.iter (fun (Nx.P leaf) -> track leaf) res.r_carry;
-                    Tape.record tape (fun () ->
-                        let cotangents =
-                          List.map (fun (Nx.P leaf) ->
-                              Nx.P (Tape.cotangent tape leaf))
-                        in
-                        let bwd =
-                          Scan.
-                            {
-                              bwd_step = step;
-                              bwd_carry = req_carry;
-                              bwd_xs = req_xs;
-                              bwd_dc = cotangents res.r_carry;
-                              bwd_dys = cotangents res.r_ys;
-                            }
-                        in
-                        let { Scan.br_carry; br_xs; br_closed } =
-                          Effect.perform (Scan.E_scan_bwd bwd)
-                        in
-                        let accumulate =
-                          List.iter2 (fun (Nx.P a) b ->
-                              if Tape.tracked tape a then
-                                Tape.accumulate tape a
-                                  (Nx.unpack (Nx.dtype a) b))
-                        in
-                        accumulate req_carry br_carry;
-                        accumulate req_xs br_xs;
-                        (* External inputs of the loop (tensors the body closes
-                           over): accumulate the cotangents the backward loop
-                           totalled for them. Only a tensor tracked here
-                           receives a contribution — loop-slot placeholders and
-                           compile-time constants never are. *)
-                        List.iter
-                          (fun (Scan.Closed_ctan (g, dg)) ->
-                            if Tape.tracked tape g then
-                              Tape.accumulate tape g dg)
-                          br_closed);
-                    continue k res
-                (* The stager declined after tracing the body (e.g. a
-                   shape-unstable carry): fold eagerly, taping every step. *)
-                | exception Scan.Not_staged -> Scan.deliver k fold
-                | exception e -> discontinue k e)
+              Scan.pass_on k ~fold (fun () -> staged_scan tape req))
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)
       | E_sub { a; b } -> Some (fun k -> pull2 k (sub a b) a b Fun.id T.neg)
@@ -1231,6 +1176,102 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
+
+(* A staged scan passes on with its step run under this handler over a scratch
+   tape linked to [tape], whose leaves are then the tensors the step captures
+   that [tape] tracks, and with the carry entering each step among its outputs.
+   The tape records the scan's transpose: a scan the other way over the step's
+   pullback, which recomputes each step from the carry that entered it. Its
+   carry threads the carry's cotangent through the steps and sums each
+   capture's, and its outputs are the cotangents of the tracked rows, stacked
+   like them. It is an ordinary scan, which the handlers around the backward
+   pass transform or stage like any other. *)
+and staged_scan tape (req : Scan.scan_req) : Scan.scan_res =
+  let Scan.{ req_carry; req_xs; req_step; req_reverse } = req in
+  let captures = ref [] in
+  let run c x =
+    let scratch = Tape.create ~parent:tape () in
+    let c', y =
+      Effect.Deep.match_with (fun () -> req_step.run c x) () (handler scratch)
+    in
+    captures := Tape.captures scratch;
+    (c', y @ c)
+  in
+  let res = Effect.perform (Scan.E_scan { req with req_step = { run } }) in
+  let nc = List.length req_carry and nx = List.length req_xs in
+  let ys, stacks = Scan.split (List.length res.r_ys - nc) res.r_ys in
+  let captures = !captures in
+  let tracked = List.map (fun (Nx.P x) -> Tape.tracked tape x) req_xs in
+  let seed t =
+    List.iter2 (fun (Nx.P v) d -> Tape.accumulate t v (Nx.unpack (T.dtype v) d))
+  in
+  let step carry row =
+    let dc, acc = Scan.split nc carry in
+    let c, row = Scan.split nc row in
+    let x, dy = Scan.split nx row in
+    let t = Tape.create ~parent:tape () in
+    List.iter (fun (Nx.P l) -> Tape.track t l) (c @ captures);
+    List.iter2 (fun r (Nx.P l) -> if r then Tape.track t l) tracked x;
+    let c', y =
+      Gate.with_transform (fun () ->
+          Effect.Deep.match_with (fun () -> req_step.run c x) () (handler t))
+    in
+    if not (List.is_empty (Tape.captures t)) then
+      invalid_arg
+        "Rune.scan: the body reads a differentiated tensor in the backward \
+         pass that it did not read in the forward pass";
+    seed t c' dc;
+    seed t y dy;
+    Tape.backward t;
+    let ct (Nx.P l) = Nx.P (Tape.cotangent t l) in
+    ( List.map ct c
+      @ List.map2
+          (fun (Nx.P g) a ->
+            Nx.P (T.add (Nx.unpack (T.dtype g) a) (Tape.cotangent t g)))
+          captures acc,
+      List.concat_map (fun (r, l) -> if r then [ ct l ] else [])
+        (List.combine tracked x) )
+  in
+  let transpose () =
+    let ct (Nx.P l) = Nx.P (Tape.cotangent tape l) in
+    (* The loop's carry lives where the primals do. *)
+    let at (Nx.P l) v = Nx.P (T.place (T.placement l) v) in
+    let bwd =
+      Scan.run
+        {
+          req_carry =
+            List.map
+              (fun (Nx.P l as p) -> at p (Tape.cotangent tape l))
+              res.r_carry
+            @ List.map (fun (Nx.P g as p) -> at p (T.zeros_like g)) captures;
+          req_xs = stacks @ req_xs @ List.map ct ys;
+          req_step = { run = step };
+          req_reverse = not req_reverse;
+        }
+    in
+    let dc, dgs = Scan.split nc bwd.r_carry in
+    let accumulate (Nx.P x) d =
+      if Tape.tracked tape x then
+        Tape.accumulate tape x (Nx.unpack (T.dtype x) d)
+    in
+    List.iter2 accumulate req_carry dc;
+    List.iter2 accumulate
+      (List.filter_map
+         (fun (r, x) -> if r then Some x else None)
+         (List.combine tracked req_xs))
+      bwd.r_ys;
+    List.iter2 accumulate captures dgs
+  in
+  let track = List.iter (fun (Nx.P l) -> Tape.track tape l) in
+  track res.r_carry;
+  track ys;
+  Tape.record tape (fun () ->
+      if
+        List.exists
+          (fun (Nx.P l) -> Option.is_some (Tape.find tape l))
+          (res.r_carry @ ys)
+      then transpose ());
+  { res with r_ys = ys }
 
 (* Accumulate into [tape] the pullback of [cts] through a second run of [f] at
    [params]. The run reads [params] through a barrier after [cts], under a tape

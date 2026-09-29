@@ -35,18 +35,8 @@ let err_quant () =
     "Rune: a part of a quantised weight is differentiated; capture the weight, \
      or build it from Rune.detached tensors"
 
-(* A scan's leaves followed by the tangents of its active ones: [split n l] is
-   the first [n] elements of [l] and the others, and [zip actives leaves ts]
-   pairs each active leaf with its tangent. *)
-let rec split n l =
-  if n = 0 then ([], l)
-  else
-    match l with
-    | x :: l ->
-        let a, b = split (n - 1) l in
-        (x :: a, b)
-    | [] -> assert false
-
+(* A scan's leaves followed by the tangents of its active ones:
+   [zip actives leaves ts] pairs each active leaf with its tangent. *)
 let rec zip actives leaves ts =
   match (actives, leaves, ts) with
   | [], [], [] -> []
@@ -136,9 +126,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          [Grow] and the scan passes on again, carrying it. Otherwise, the eager
          fold runs under a nested instance of this handler, and every step's
          operations acquire their tangents. *)
-      | Scan.E_scan_probe Scan.Loop ->
-          Some (fun k -> continue k (Scan.probe Scan.Loop))
-      | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
+      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
       | Scan.E_scan req ->
           Some
             (fun k ->
@@ -147,8 +135,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   (fun () -> Scan.eager req)
                   () (handler tangents)
               in
-              if not (Scan.probe Scan.Loop) then Scan.deliver k fold
-              else
+              Scan.pass_on k ~fold @@ fun () ->
                 let exception Grow of bool list in
                 let flags = List.map (fun (P l) -> active l) in
                 let tangents_of actives leaves =
@@ -169,7 +156,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 let rec attempt carried =
                   let outputs = ref [] in
                   let run c x =
-                    let c, dc = split nc c and x, dx = split nx x in
+                    let c, dc = Scan.split nc c and x, dx = Scan.split nx x in
                     seed carried c dc;
                     seed rows x dx;
                     let c', y =
@@ -202,15 +189,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                           (zip actives leaves ts);
                         leaves
                       in
-                      let r_carry = set carried (split nc res.r_carry) in
+                      let r_carry = set carried (Scan.split nc res.r_carry) in
                       let r_ys =
-                        set !outputs (split (List.length !outputs) res.r_ys)
+                        set !outputs
+                          (Scan.split (List.length !outputs) res.r_ys)
                       in
-                      continue k { Scan.r_carry; r_ys }
+                      { Scan.r_carry; r_ys }
                   (* The aborted run's slot tensors are never reached again. *)
                   | exception Grow carried -> attempt carried
-                  | exception Scan.Not_staged -> Scan.deliver k fold
-                  | exception e -> discontinue k e
                 in
                 attempt (flags req.req_carry))
       (* Binary arithmetic *)

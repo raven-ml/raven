@@ -167,6 +167,16 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jvp` and `Rune.vmap` of a gradient through a `Rune.scan`, and
+  `Rune.grad` of one, compile as loops under `Rune.jit`, where they unrolled
+  every step: the gradient's reversed loop is now a scan itself, which every
+  transformation passes on. Hessian-vector products and per-example gradients
+  over recurrent models trace the body a fixed number of times whatever the
+  length. The reversed loop also stops computing cotangents nothing asks for,
+  of rows and captured tensors that are not differentiated (a 32-step MLP cell
+  differentiated in its weights only: 11 to 9 kernels per step, 576 to 428 KiB
+  of device memory).
+
 - A `Rune.scan` compiled by `Rune.jit` over the stacked outputs of another
   staged scan reads them where the first loop wrote them. Rows of a size that
   is not a multiple of 16 bytes were copied once per call, and a scan over such

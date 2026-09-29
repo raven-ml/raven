@@ -1513,17 +1513,103 @@ let test_grad_of_vmap_of_scan_is_staged () =
     [ 4; 8 ];
   equal ~msg:"body runs" (list int) [ List.hd !counts; List.hd !counts ] !counts
 
-(* jvp or vmap of a gradient through a scan folds it eagerly, and matches. *)
-let test_jvp_and_vmap_of_grad_through_scan () =
-  let xs = series 2 [| 4; 3 |] and dw = series 3 [| 3; 3 |] in
-  let grad xs w = Rune.grad' (fun w -> Nx.sum (rollout w h0 xs)) w in
-  check_arr ~eps:1e-4 ~msg:"jvp of grad"
-    (to_arr (snd (Rune.jvp' (grad xs) w0 dw)))
-    (Rune.jit' (fun w -> snd (Rune.jvp' (grad xs) w dw)) w0);
-  let xss = series 5 [| 3; 4; 3 |] in
-  check_arr ~eps:1e-4 ~msg:"vmap of grad"
-    (to_arr (lanes 3 (fun i -> grad (lane i xss) w0)))
-    (Rune.jit' (fun w -> Rune.vmap' (fun xs -> grad xs w) xss) w0)
+(* The transpose of a scan is a scan, so jvp and vmap of a gradient through a
+   scan stage it like any other. The forward and the backward scans each gain a
+   carry that becomes active or batched after one step: two runs of the body
+   each. *)
+let test_jvp_and_vmap_of_grad_through_scan_are_staged () =
+  let dw = series 3 [| 3; 3 |] in
+  let grad ?runs xs w =
+    Rune.grad' (fun w -> Nx.sum (rollout ?runs w h0 xs)) w
+  in
+  staged ~runs:4 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"jvp of grad"
+        (to_arr (snd (Rune.jvp' (grad xs) w0 dw)))
+        (Rune.jit' (fun w -> snd (Rune.jvp' (grad ~runs xs) w dw)) w0));
+  staged ~runs:4 (fun runs n ->
+      let xss = series 5 [| 3; n; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"vmap of grad"
+        (to_arr (lanes 3 (fun i -> grad (lane i xss) w0)))
+        (Rune.jit' (fun w -> Rune.vmap' (fun xs -> grad ~runs xs w) xss) w0))
+
+(* grad of a gradient: the outer grad transposes the scan and its transpose,
+   each staged, and runs the body once for each of the four loops. *)
+let test_grad_of_grad_through_scan_is_staged () =
+  let grad ?runs xs w =
+    Rune.grad' (fun w -> Nx.sum (rollout ?runs w h0 xs)) w
+  in
+  staged ~runs:4 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      let second ?runs w = Rune.grad' (fun w -> Nx.sum (grad ?runs xs w)) w in
+      check_arr ~eps:1e-4 ~msg:"second-order gradient"
+        (to_arr (second w0))
+        (Rune.jit' (second ~runs) w0))
+
+(* The transpose sums the cotangents of the tensors the body captures that are
+   differentiated, and only those: an argument of the compiled function that
+   the body captures and nothing differentiates costs a step what a constant
+   made in the body does. *)
+let test_grad_of_scan_ignores_undifferentiated_captures () =
+  let d = series 4 [| 3; 3 |] in
+  let values = Nx.to_array d in
+  let rollout_with d w xs =
+    snd
+      (Rune.scan'
+         ~f:(fun h x ->
+           let h = cell w (Nx.matmul (d ()) h) x in
+           (h, h))
+         ~init:h0 xs)
+  in
+  let grad ~captured xs (w, d) =
+    let d () = if captured then d else Nx.create f32 [| 3; 3 |] values in
+    Rune.grad' (fun w -> Nx.sum (rollout_with d w xs)) w
+  in
+  let compiled ~captured xs =
+    Rune.jit
+      Nx.Ptree.(pair tensor tensor @-> returns tensor)
+      (grad ~captured xs)
+  in
+  let kernels_per_step ~captured =
+    let per_replay n =
+      let g = compiled ~captured (series 2 [| n; 3 |]) in
+      ignore (g (w0, d));
+      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
+      ignore (g (w0, d));
+      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
+    in
+    (per_replay 8 - per_replay 4) / 4
+  in
+  equal ~msg:"kernels per step" int
+    (kernels_per_step ~captured:false)
+    (kernels_per_step ~captured:true);
+  let xs = series 2 [| 4; 3 |] in
+  check_arr ~eps:1e-4 ~msg:"gradient"
+    (to_arr (grad ~captured:true xs (w0, d)))
+    (compiled ~captured:true xs (w0, d))
+
+(* The backward loop recomputes each step, so a body that reads another
+   differentiated tensor there than in the forward loop raises, where its
+   cotangent would be lost. *)
+let test_grad_of_scan_refuses_a_capture_the_forward_did_not_read () =
+  let w1 = series 6 [| 3; 3 |] in
+  let runs = ref 0 in
+  let loss (w, w') =
+    let xs = series 2 [| 4; 3 |] in
+    Nx.sum
+      (snd
+         (Rune.scan'
+            ~f:(fun h x ->
+              incr runs;
+              let h = cell (if !runs = 1 then w else w') h x in
+              (h, h))
+            ~init:h0 xs))
+  in
+  let p = Nx.Ptree.(pair tensor tensor) in
+  raises_match
+    (function Invalid_argument _ -> true | _ -> false)
+    (fun () ->
+      ignore (Rune.jit Nx.Ptree.(p @-> returns p) (Rune.grad p loss) (w0, w1)))
 
 (* Buffer sharing: strided leaves must fall back to copies, views with an offset
    must read the right span, and each call must return tensors with their own
@@ -4996,8 +5082,14 @@ let tests =
           test_grad_of_jvp_of_scan_is_staged;
         test "grad of vmap of a scan is staged"
           test_grad_of_vmap_of_scan_is_staged;
-        test "jvp and vmap of a gradient through a scan"
-          test_jvp_and_vmap_of_grad_through_scan;
+        test "jvp and vmap of a gradient through a scan are staged"
+          test_jvp_and_vmap_of_grad_through_scan_are_staged;
+        test "grad of a gradient through a scan is staged"
+          test_grad_of_grad_through_scan_is_staged;
+        test "grad of a scan ignores undifferentiated captures"
+          test_grad_of_scan_ignores_undifferentiated_captures;
+        test "grad of a scan refuses a capture the forward did not read"
+          test_grad_of_scan_refuses_a_capture_the_forward_did_not_read;
       ];
     group "sliding windows"
       [

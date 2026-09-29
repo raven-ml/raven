@@ -98,14 +98,6 @@ let holds dev dt =
       Tolk.Decomp_dtype.is_dtype_supported (Tolk.Device.renderer dev) tdt
   | None -> false
 
-(* Identity-keyed tables over tensors, as in [Tensor_map]. *)
-module Tbl = Hashtbl.Make (struct
-  type t = Obj.t
-
-  let equal = ( == )
-  let hash = Hashtbl.hash
-end)
-
 type packed = Packed : ('a, 'b) ND.t * ('a, 'b) Nx_effect.t -> packed
 
 (* Backends. Device instances live in the shared tolk registry, one per
@@ -392,22 +384,6 @@ type state = {
       (* reverse order, each at its placement in the program *)
   bound : F.Tensor.t Tensor_map.Tbl.t; (* resident captures bound in place *)
   mutable bound_consts : (U.t * packed * seed * store option) list;
-  scan_stacks : (U.t * int * Nx.Placement.t) list Tbl.t;
-      (* staged scans: the step record's identity -> the per-leaf carry-stack
-         buffer nodes the forward loop wrote, with their row strides and the
-         carry's placement in the loop, for the backward loop to read. The step
-         record is shared between the forward staging and the tape-recorded
-         backward thunk, and is fresh per [Rune.scan] call, so it identifies the
-         scan. Identity-keyed: a structural table compares the record's closure
-         on a hash collision. *)
-  scan_closed : Nx.packed list Tbl.t;
-      (* staged scans: the step record's identity -> the external inputs the
-         forward staging observed the body reading (tensors it closes over), for
-         the backward loop to accumulate their cotangents. Keyed as
-         [scan_stacks]. *)
-  mutable scan_collectors : tensor_hook list;
-      (* active observers of the tensors a scan body reads, innermost first;
-         consulted by [tolk_of] while a scan body is being traced *)
   mutable scan_writes : (U.t * U.t list ref) list;
   (* staged scans being traced: each carry slot's buffer node -> the buffers
      indexed writes into it land in (see [write_destination]) *)
@@ -416,9 +392,6 @@ type state = {
          first: a body recomputes its step in the backward loop, so remat has
          nothing to do there *)
 }
-
-(* A polymorphic observer of the tensors flowing through [tolk_of]. *)
-and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
 
 (* A staged scan body being traced: the traced tensors it makes have ids from
    [horizon] on, and it reads the values made before it from [invariants], the
@@ -851,9 +824,6 @@ let rec invariant st bodies ~t_id p tt =
 (* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
-  (match st.scan_collectors with
-  | [] -> ()
-  | fs -> List.iter (fun h -> h.hook x) fs);
   match x with
   | Nx_effect.Traced { t_node = Node { trace; tensor; place }; t_id; _ }
     when trace = st.st_id ->
@@ -2355,10 +2325,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     (* Staged scans *)
-    | Scan.E_scan_probe _ -> Some (fun k -> continue k true)
+    | Scan.E_scan_probe -> Some (fun k -> continue k true)
     | Scan.E_scan req ->
         Some (fun k -> Scan.deliver k (fun () -> stage_scan st req))
-    | Scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
     (* Gradient checkpointing. A differentiated remat's arguments are the
        residuals of its backward pass, so they are materialised. The backward
        pass copies each written residual after the result's cotangents exist.
@@ -2746,70 +2715,35 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   in
   { retc = Fun.id; exnc = raise; effc }
 
-(* The forward scan: trace the body once, compile it as a sub-program, and emit
-   the loop call. The carry, the rows and the outputs arrive as their tensors in
+(* A scan: trace the body once, compile it as a sub-program, and emit the loop
+   call, which runs the steps from the last row to the first under
+   [req_reverse]. The carry, the rows and the outputs arrive as their tensors in
    walk order: every tensor has its own slot, and slots pair with their buffers
    by position. A carry leaf is a buffer pair, a row leaf is read at row [i] of
    its stacked input, and an output leaf is written at row [i] of its stack.
-   When a staged transpose will read them ([req_record]), the body also writes
-   the carry it receives to a carry stack. Raises [Scan.Not_staged] when the
-   scan cannot be compiled as a loop. *)
+   Raises [Scan.Not_staged] when the scan cannot be compiled as a loop. *)
 and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
-  let Scan.{ req_carry; req_xs; req_step = step; req_record } = req in
+  let Scan.{ req_carry; req_xs; req_step = step; req_reverse } = req in
   if unstageable st req_xs then raise Scan.Not_staged;
   let n = Scan.length req_xs in
-  (* Discover the body's external inputs — the differentiable tensors it closes
-     over: everything the body runs through [tolk_of] that predates its trace is
-     a free input of the loop. The backward loop accumulates their cotangents,
-     so record them against the scan's identity. The snapshot is taken before
-     the slot placeholders exist, and tensors first touched by the body itself
-     (constants it captures) are absent from it — they can never be tracked by
-     an enclosing grad, whose tape only sees traced tensors. The float filter
-     stands for differentiability: complex would qualify too, but [tolk_dtype]
-     refuses complex tensors long before one could reach this hook — widen the
-     filter if tolk ever takes them. *)
-  let before = Tensor_map.Tbl.create 16 in
-  Tensor_map.Tbl.iter (fun k _ -> Tensor_map.Tbl.replace before k ()) st.table;
   let horizon = Nx_effect.next_traced_id () in
-  let predates : type a b. (a, b) Nx_effect.t -> bool = function
-    | Nx_effect.Traced { t_id; _ } -> t_id < horizon
-    | t -> Tensor_map.Tbl.mem before (Key t)
-  in
-  let closed = ref [] in
-  let collect =
-    {
-      hook =
-        (fun (type a b) (t : (a, b) Nx_effect.t) ->
-          let k = Obj.repr t in
-          if
-            ND.is_float (Nx_effect.dtype t)
-            && predates t
-            && not (List.exists (fun (Nx.P g) -> Obj.repr g == k) !closed)
-          then closed := Nx.P t :: !closed);
-    }
-  in
   let c_slots = body_slots st ?places req_carry in
   let x_slots = body_slots st ~rows:true req_xs in
-  (* Trace the body once under a nested copy of this tracer, collecting its
-     external inputs and the buffers its indexed writes into the carry land
-     in. *)
+  (* Trace the body once under a nested copy of this tracer, collecting the
+     buffers its indexed writes into the carry land in. *)
   let writes = List.map (fun s -> (s.s_node, ref [])) c_slots in
   let outer_writes = st.scan_writes in
-  st.scan_collectors <- collect :: st.scan_collectors;
   st.scan_writes <- writes @ outer_writes;
   let loop_body = { horizon; invariants = [] } in
   let c_next, y =
     in_scan_body st loop_body (fun () ->
         Fun.protect
-          ~finally:(fun () ->
-            st.scan_collectors <- List.tl st.scan_collectors;
-            st.scan_writes <- outer_writes)
+          ~finally:(fun () -> st.scan_writes <- outer_writes)
           (fun () ->
             Effect.Deep.match_with
               (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
               () (handler st)))
   in
-  Tbl.replace st.scan_closed (Obj.repr step) !closed;
   (* A loop can only be compiled from a stable carry (the single prototype trace
      stands for every step). A body that changes a carry's shape or placement
      declines staging — the scan folds eagerly and unrolls into this trace, as
@@ -2841,11 +2775,6 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
                 make_node st dt (numel (local_shape place shape)),
                 tolk_of st y ))
             y)
-    in
-    let stack_outs =
-      if req_record then
-        List.map (fun s -> make_node st s.s_dt (slot_numel s)) c_slots
-      else []
     in
     (* In-place carries, by RFC 0001's reuse rule applied to the body. An
        indexed write into a carry lands in its own buffer (see
@@ -2916,17 +2845,7 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
               (fun (_, shape, place, y_out, value) ->
                 U.after ~src:y_out
                   ~deps:[ store_placed place y_out shape value ])
-              y_outs
-          @ List.map2
-              (fun s stack_out ->
-                U.after ~src:stack_out
-                  ~deps:
-                    [
-                      store_placed s.s_place stack_out s.s_shape
-                        (placed_tensor s.s_place s.s_node s.s_shape);
-                    ])
-              (if req_record then c_slots else [])
-              stack_outs)
+              y_outs)
       in
       let sink =
         if copied = [] then sink
@@ -3012,26 +2931,10 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
               ~n ))
         y_outs
     in
-    let stacks =
-      List.map2
-        (fun s stack_out ->
-          add_rows_out st l ~slot:stack_out ~dt:s.s_dt ~numel:(slot_numel s) ~n)
-        (if req_record then c_slots else [])
-        stack_outs
-    in
     let call =
-      loop_call st l ~body_linear ~resolve_node ~reversed:false ~n
+      loop_call st l ~body_linear ~resolve_node ~reversed:req_reverse ~n
         ~invariants:loop_body.invariants
     in
-    (* Register the carry stacks as outputs of the forward loop: the backward
-       loop reads them, and only a graph-visible dependency keeps the forward
-       loop reachable (and so scheduled) when the scan's declared outputs are
-       dead — e.g. under [grad], which discards the loss value. *)
-    if req_record then
-      Tbl.replace st.scan_stacks (Obj.repr step)
-        (List.map2
-           (fun (buf, stride) s -> (written_by call buf, stride, s.s_place))
-           stacks c_slots);
     let r_carry =
       placeholders st req_carry
         (List.map2
@@ -3053,257 +2956,6 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
            ys_rows)
     in
     { Scan.r_carry; r_ys }
-
-(* The backward scan (the transpose): capture the body's pullback against
-   placeholder slot tensors — recomputing the forward step inside the body to
-   recover its residuals — and emit a reversed loop carrying the carry's
-   cotangent. Reads the carry of step i from the forward loop's stack, and
-   writes the cotangent of row i of every floating-point row leaf.
-
-   The body's external inputs (the differentiable tensors it closes over,
-   observed by the forward staging) are tracked on the private tape, so the
-   captured pullback also emits their per-step cotangent contributions; the loop
-   totals each in a carry that starts at zero — unlike the carry, an external
-   input's cotangent is a sum over the steps, not a thread through them. *)
-and stage_scan_bwd : type r.
-    state ->
-    Scan.scan_bwd ->
-    (Scan.scan_bwd_res, r) Effect.Deep.continuation ->
-    r =
- fun st bwd k ->
-  let Scan.{ bwd_step = step; bwd_carry; bwd_xs; bwd_dc; bwd_dys } = bwd in
-  let n = Scan.length bwd_xs in
-  (* The body's external inputs and carry stacks, recorded by the forward
-     staging of this scan. *)
-  let not_staged () =
-    (* Reachable only if a handler claimed [E_scan] without answering
-       [E_scan_probe]: reverse then recorded a transpose for a scan this trace
-       never staged with its carries recorded. *)
-    err
-      "Rune.jit: backward scan for a scan this trace did not stage with its \
-       carries recorded (a handler claimed E_scan without answering \
-       E_scan_probe)"
-  in
-  let closed =
-    match Tbl.find_opt st.scan_closed (Obj.repr step) with
-    | Some closed -> closed
-    | None -> not_staged ()
-  in
-  let stacks =
-    match Tbl.find_opt st.scan_stacks (Obj.repr step) with
-    | Some stacks -> stacks
-    | None -> not_staged ()
-  in
-  (* The carry and its cotangent live where the forward loop kept the carry. *)
-  let places = List.map (fun (_, _, p) -> p) stacks in
-  let horizon = Nx_effect.next_traced_id () in
-  let c_slots = body_slots st ~places bwd_carry in
-  let x_slots = body_slots st ~rows:true bwd_xs in
-  let dc_slots = body_slots st ~places bwd_dc in
-  let dy_slots = body_slots st ~rows:true bwd_dys in
-  let loop_body = { horizon; invariants = [] } in
-  let differentiable s =
-    let (Nx.P ph) = s.s_ph in
-    ND.is_float (Nx_effect.dtype ph)
-  in
-  (* Capture the pullback: run the body once under a private reverse tape, then
-     replay the tape against the placeholder cotangents — every op lands in the
-     trace, forming the backward body (the forward step's ops are recomputed
-     inside it to recover residuals). The external inputs are tracked too, so
-     the pullback emits their per-step contributions. *)
-  let tape = Tape.create () in
-  let track (Nx.P t) = Tape.track tape t in
-  List.iter (fun s -> track s.s_ph) c_slots;
-  List.iter (fun s -> if differentiable s then track s.s_ph) x_slots;
-  List.iter track closed;
-  let c_next, y =
-    in_scan_body st loop_body (fun () ->
-        Effect.Deep.match_with
-          (fun () ->
-            Effect.Deep.match_with
-              (fun () -> step.run (slot_values c_slots) (slot_values x_slots))
-              () (Reverse.handler tape))
-          () (handler st))
-  in
-  if not (same_slots st c_next c_slots) then
-    err
-      "Rune.jit: the scan body must return a carry of the same shapes and \
-       placements it receives (stable carry)";
-  let cotangent (Nx.P t) = Nx.P (Tape.cotangent tape t) in
-  let dc_i, dx_i, dgs =
-    in_scan_body st loop_body (fun () ->
-        Effect.Deep.match_with
-          (fun () ->
-            let seed (Nx.P v) s =
-              Tape.accumulate tape v (Nx.unpack (Nx_effect.dtype v) s.s_ph)
-            in
-            List.iter2 seed c_next dc_slots;
-            List.iter2 seed y dy_slots;
-            Tape.backward tape;
-            ( List.map (fun s -> cotangent s.s_ph) c_slots,
-              List.map
-                (fun s ->
-                  if differentiable s then Some (cotangent s.s_ph) else None)
-                x_slots,
-              List.map
-                (fun (Nx.P g) -> Scan.Closed_ctan (g, Tape.cotangent tape g))
-                closed ))
-          () (handler st))
-  in
-  (* The backward body: per-leaf carry cotangents, row cotangents, and the
-     external inputs' accumulators. The accumulation is elementwise, so it runs
-     on the flat buffers directly. The tensor itself stays packed — unpacked,
-     its type would escape its scope in the tuple. *)
-  let dc_outs =
-    List.map (fun s -> make_node st s.s_dt (slot_numel s)) c_slots
-  in
-  let dx_outs =
-    List.map
-      (fun s ->
-        if differentiable s then Some (make_node st s.s_dt (slot_numel s))
-        else None)
-      x_slots
-  in
-  let g_outs =
-    List.map
-      (fun (Scan.Closed_ctan (g, dg)) ->
-        let g_shape = shape_of g and g_place = placement_in st g in
-        let gdt = tolk_dtype (Nx_effect.dtype g) in
-        let gn = numel (local_shape g_place g_shape) in
-        ( Nx.P g,
-          g_shape,
-          g_place,
-          gdt,
-          make_node st gdt gn,
-          make_node st gdt gn,
-          resharded st g_place dg ))
-      dgs
-  in
-  (* Cotangents are stored where their primals live; stacks are read where they
-     live. *)
-  let value p (Nx.P t) = resharded st p t in
-  let stack (Nx.P t) = tolk_of st t in
-  let body_sink =
-    U.sink
-      (List.map2
-         (fun (s, dc_out) dc ->
-           U.after ~src:dc_out
-             ~deps:
-               [ store_placed s.s_place dc_out s.s_shape (value s.s_place dc) ])
-         (List.combine c_slots dc_outs)
-         dc_i
-      @ List.concat_map
-          (fun ((s, dx_out), dx) ->
-            match (dx_out, dx) with
-            | Some dx_out, Some dx ->
-                [
-                  U.after ~src:dx_out
-                    ~deps:
-                      [
-                        store_placed s.s_place dx_out s.s_shape
-                          (value s.s_place dx);
-                      ];
-                ]
-            | _ -> [])
-          (List.combine (List.combine x_slots dx_outs) dx_i)
-      @ List.map
-          (fun (_, g_shape, g_place, _, g_in, g_out, dg_tt) ->
-            U.after ~src:g_out
-              ~deps:
-                [
-                  store_placed g_place g_out g_shape
-                    (F.Elementwise.add
-                       (placed_tensor g_place g_in g_shape)
-                       dg_tt);
-                ])
-          g_outs)
-  in
-  let body_linear, resolve_node = schedule_body_linear body_sink in
-  let l = loop () in
-  List.iter2
-    (fun s (stack, stride, _) ->
-      add_rows_in l ~slot:s.s_node ~numel:(slot_numel s) ~stride stack)
-    c_slots stacks;
-  List.iter2
-    (fun s x ->
-      add_rows_in_value st l ~slot:s.s_node ~numel:(slot_numel s) ~n (stack x))
-    x_slots bwd_xs;
-  List.iter2
-    (fun s dy ->
-      add_rows_in_value st l ~slot:s.s_node ~numel:(slot_numel s) ~n (stack dy))
-    dy_slots bwd_dys;
-  let dc_pairs =
-    List.map2
-      (fun ((s, dc_out), d) dc ->
-        add_carry st l ~reads:[ d.s_node ] ~writes:[ dc_out ] ~dt:s.s_dt
-          ~place:s.s_place ~shape:s.s_shape (value s.s_place dc))
-      (List.combine (List.combine c_slots dc_outs) dc_slots)
-      bwd_dc
-  in
-  let dx_rows =
-    List.map2
-      (fun s dx_out ->
-        Option.map
-          (fun dx_out ->
-            add_rows_out st l ~slot:dx_out ~dt:s.s_dt ~numel:(slot_numel s) ~n)
-          dx_out)
-      x_slots dx_outs
-  in
-  let g_pairs =
-    List.map
-      (fun (_, g_shape, g_place, gdt, g_in, g_out, _) ->
-        add_carry st l ~reads:[ g_in ] ~writes:[ g_out ] ~dt:gdt ~place:g_place
-          ~shape:g_shape
-          (F.Creation.zeros ~buffer:false ~dtype:gdt (Array.to_list g_shape)))
-      g_outs
-  in
-  let call =
-    loop_call st l ~body_linear ~resolve_node ~reversed:true ~n
-      ~invariants:loop_body.invariants
-  in
-  let br_carry =
-    placeholders st bwd_carry
-      (List.map2
-         (fun s pair ->
-           ( s.s_shape,
-             s.s_place,
-             placed_tensor s.s_place
-               (written_by call (final_carry ~n pair))
-               s.s_shape ))
-         c_slots dc_pairs)
-  in
-  (* A row leaf that is not floating point gets a zero cotangent. *)
-  let br_xs =
-    placeholders st bwd_xs
-      (List.map2
-         (fun s rows ->
-           let shape = Array.append [| n |] s.s_shape in
-           match rows with
-           | Some (buf, stride) ->
-               ( shape,
-                 stacked s.s_place,
-                 rows_tensor (written_by call buf) ~n ~stride ~place:s.s_place
-                   s.s_shape )
-           | None ->
-               ( shape,
-                 here st,
-                 F.Creation.zeros ~buffer:false ~dtype:s.s_dt
-                   (Array.to_list shape) ))
-         x_slots dx_rows)
-  in
-  (* Each external input's total cotangent, as outputs of the loop. *)
-  let br_closed =
-    List.map2
-      (fun (Nx.P g, g_shape, g_place, _, _, _, _) pair ->
-        let after = written_by call (final_carry ~n pair) in
-        let ph =
-          traced st g_place (Nx_effect.dtype g)
-            (placed_tensor g_place after g_shape)
-        in
-        Scan.Closed_ctan (g, ph))
-      g_outs g_pairs
-  in
-  Effect.Deep.continue k { Scan.br_carry; br_xs; br_closed }
 
 (* Host transfers *)
 
@@ -4664,9 +4316,6 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       consts = [];
       bound = Tensor_map.Tbl.create 16;
       bound_consts = [];
-      scan_stacks = Tbl.create 4;
-      scan_closed = Tbl.create 4;
-      scan_collectors = [];
       scan_writes = [];
       scan_bodies = [];
     }
