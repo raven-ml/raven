@@ -2731,6 +2731,9 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_image` and `Nx_io.gunzip` raise `Unix.Unix_error`, as documented,
+  when the directory of the file they write cannot be written. They raised
+  `Sys_error` unless `save_image` was given `~overwrite:false`.
 - `Nx_io.gunzip` reads every valid gzip member. It counted the bytes its
   DEFLATE decoder had read ahead as part of the stream, so a member whose data
   ended early enough in its last bytes failed with
