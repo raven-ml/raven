@@ -62,7 +62,7 @@ let host_buffers =
       test "from_host refuses a buffer on a device or of another format"
         (fun () ->
           let from_host b =
-            Nx_effect.from_host Nx_effect.host_tensor_context Nx.float32 b
+            Nx_effect.from_host Nx_effect.Placement.host Nx.float32 b
           in
           raises_match not_host (fun () -> from_host on_device);
           raises_match other_format (fun () -> from_host float64));

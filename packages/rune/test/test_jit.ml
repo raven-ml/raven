@@ -3989,7 +3989,7 @@ let mapped_int32 ~byte n =
             [| -1 |]))
   in
   Unix.close fd;
-  ( Nx_effect.from_host Nx_effect.host_tensor_context Nx_dtype.int32
+  ( Nx_effect.from_host Nx_effect.Placement.host Nx_dtype.int32
       (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Int32 n),
     path )
 

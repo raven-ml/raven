@@ -547,7 +547,7 @@ let with_mapped_f32 values f =
       in
       Unix.close fd;
       f
-        (Nx_effect.from_host Nx_effect.host_tensor_context Nx_dtype.float32
+        (Nx_effect.from_host Nx_effect.Placement.host Nx_dtype.float32
            (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Float32 n)))
 
 (* A weight over a mapped file placed on Metal is the file's pages, borrowed:

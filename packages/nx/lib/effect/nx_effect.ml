@@ -21,13 +21,7 @@ open Nx_core
 
    The views of one placed storage share one cell, which holds what belongs to
    the storage rather than to a view: whether it is live or was consumed by a
-   compiled call, and how many reachable programs bind it.
-
-   A context says where a creation effect makes its value. It is declared over
-   any device type, ahead of the recursive definition, so that its [Host] stays
-   apart from the tensor's. *)
-
-type 'device context_of = Host of Nx_backend.context | On of 'device list
+   compiled call, and how many reachable programs bind it. *)
 
 (* Placements over a grid
 
@@ -290,7 +284,7 @@ and consumption = { path : string }
 
 and ('a, 'b) traced = {
   t_id : int; (* fresh; identity tables key by it *)
-  t_context : device context_of;
+  t_context : placement; (* where the trace creates its values *)
   t_dtype : ('a, 'b) Nx_dtype.t;
   t_view : View.t; (* C-contiguous over the tensor's shape *)
   t_node : node; (* the tracer's payload *)
@@ -313,7 +307,8 @@ and placement = device Grid.t
 and storage = ..
 and node = ..
 
-type context = device context_of
+(* Where a creation makes its value. *)
+type context = placement
 
 (* A value of one element that nx holds itself: a scalar created in a device
    context, or a one-element result. It allocates nothing on the device; a
@@ -1189,18 +1184,18 @@ type _ Effect.t +=
    view (vmap shows batched tensors without their batch axis) or placement; only
    the unhandled fallback answers from the tensor. *)
 
-let create_context () : context = Host (Nx_backend.create_context ())
-
-(* The context of host tensors, allocated once: the frontend asks for a context
-   each time it builds a constant beside an operand. *)
-let host_tensor_context : context = Host host_context
-
+(* A value made beside a placed one is a full copy on each of its devices. The
+   frontend asks for a context each time it builds a constant beside an
+   operand, so the host's is one value. *)
 let context : type a b. (a, b) t -> context = function
-  | Host t ->
-      let c = Nx_backend.context t in
-      if c == host_context then host_tensor_context else Host c
-  | Placed r -> On (Placement.devices r.r_placement)
+  | Host _ -> Placement.host
+  | Placed r -> Placement.replicated (Placement.devices r.r_placement)
   | Traced t -> t.t_context
+
+(* Whether a creation at [p] makes a host tensor. The frontend's contexts on the
+   host are [Placement.host] itself, so the first test decides the common
+   case. *)
+let on_host (p : context) = p == Placement.host || Placement.is_host p
 
 let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
@@ -1938,35 +1933,29 @@ let pad t_in padding_config fill_value =
     | Host t -> Host (Nx_backend.pad t padding_config fill_value)
     | _ -> routed e t_in (fun t -> Nx_backend.pad t padding_config fill_value))
 
-(* Creation operations. A value created in the context of devices lives there, a
-   full copy on each, and a scalar there is held by nx and allocates nothing. A
-   filled value of more than one element has storage of its own, so that its
-   view covers its storage and a compiled call can consume it. *)
-
-let at_devices ds = At (Placement.replicated ds)
+(* Creation operations. A value created at a placement lives there, and a
+   scalar there is held by nx and allocates nothing. A filled value of more
+   than one element has storage of its own, so that its view covers its storage
+   and a compiled call can consume it. *)
 
 let buffer (ctx : context) dtype shape_arr =
   let size_in_elements = Array.fold_left ( * ) 1 shape_arr in
   let flat =
     try Effect.perform (E_buffer { context = ctx; dtype; size_in_elements })
-    with Effect.Unhandled _ -> (
-      match ctx with
-      | Host c -> Host (Nx_backend.buffer c dtype shape_arr)
-      | On ds ->
-          settle (at_devices ds)
-            (Nx_backend.buffer host_context dtype shape_arr))
+    with Effect.Unhandled _ ->
+      if on_host ctx then Host (Nx_backend.buffer host_context dtype shape_arr)
+      else settle (At ctx) (Nx_backend.buffer host_context dtype shape_arr)
   in
   reshape flat shape_arr
 
 let const_scalar (ctx : context) value dtype =
   try Effect.perform (E_const_scalar { context = ctx; value; dtype })
-  with Effect.Unhandled _ -> (
-    match ctx with
-    | Host c -> Host (Nx_backend.full c dtype [||] value)
-    | On ds ->
-        let e = Elements.create dtype 1 in
-        Elements.set dtype e 0 value;
-        held (Placement.replicated ds) dtype e [||])
+  with Effect.Unhandled _ ->
+    if on_host ctx then Host (Nx_backend.full host_context dtype [||] value)
+    else
+      let e = Elements.create dtype 1 in
+      Elements.set dtype e 0 value;
+      held ctx dtype e [||]
 
 let broadcast scalar shape_arr =
   if Array.length shape_arr = 0 then scalar
@@ -1981,29 +1970,16 @@ let full (ctx : context) dtype shape_arr value =
   match Effect.perform (E_const_scalar { context = ctx; value; dtype }) with
   | scalar -> broadcast scalar shape_arr
   | exception Effect.Unhandled _ -> (
-      match ctx with
-      | Host c -> Host (Nx_backend.full c dtype shape_arr value)
-      | On ds ->
-          settle (at_devices ds)
-            (Nx_backend.full host_context dtype shape_arr value))
-
-(* [full_at p dtype shape value] is [full] at the placement [p]: a split one
-   gives each device its window. *)
-let full_at p dtype shape_arr value =
-  let context = On (Placement.devices p) in
-  match Effect.perform (E_const_scalar { context; value; dtype }) with
-  | scalar -> broadcast scalar shape_arr
-  | exception Effect.Unhandled _ ->
-      settle (At p) (Nx_backend.full host_context dtype shape_arr value)
+      if on_host ctx then
+        Host (Nx_backend.full host_context dtype shape_arr value)
+      else settle (At ctx) (Nx_backend.full host_context dtype shape_arr value))
 
 let from_host (ctx : context) dtype buffer =
   check_host "from_host" dtype buffer;
   try Effect.perform (E_from_host { context = ctx; dtype; buffer })
   with Effect.Unhandled _ -> (
-    match ctx with
-    | Host c -> Host (Nx_backend.from_host c dtype buffer)
-    | On ds ->
-        settle (at_devices ds) (Nx_backend.from_host host_context dtype buffer))
+    if on_host ctx then Host (Nx_backend.from_host host_context dtype buffer)
+    else settle (At ctx) (Nx_backend.from_host host_context dtype buffer))
 
 (* Copy operations. A placed value whose view covers its storage is already
    contiguous. *)

@@ -9,6 +9,6 @@ module B = Nx_device.Buffer
 
 let tensor dtype buffer shape =
   Nx.reshape shape
-    (Nx_effect.from_host Nx_effect.host_tensor_context dtype buffer)
+    (Nx_effect.from_host Nx_effect.Placement.host dtype buffer)
 
 let bytes b = B.bigarray Bigarray.int8_unsigned b

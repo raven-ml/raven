@@ -731,7 +731,7 @@ let reads =
 type Nx_effect.node += Identity_probe
 
 let traced d =
-  Nx_effect.traced (Nx_effect.On [ d ]) Nx.float32 [| 1 |] Identity_probe
+  Nx_effect.traced (Nx.Placement.device d) Nx.float32 [| 1 |] Identity_probe
 
 let identities =
   group "identities"

@@ -127,7 +127,7 @@ let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
 let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
 let of_host dt buf shape =
-  Nx.reshape shape (Nx_effect.from_host Nx_effect.host_tensor_context dt buf)
+  Nx.reshape shape (Nx_effect.from_host Nx_effect.Placement.host dt buf)
 
 (* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
    whose leading axes are [lead], a view. [chunks n k f] calls [f r0 r] on the

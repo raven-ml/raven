@@ -3540,7 +3540,7 @@ let transfer : type a b.
           in
           copyin_at sc buf
             ~off:(!r0 * row * item)
-            (Nx_effect.from_host Nx_effect.host_tensor_context dt host);
+            (Nx_effect.from_host Nx_effect.Placement.host dt host);
           r0 := r1
         done
       end)
@@ -4228,7 +4228,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       st_decided = decided;
       refusal = None;
       st_takes_storage = (fun i -> consumed i && not zero_copy);
-      st_ctx = Nx_effect.create_context ();
+      st_ctx = Nx_effect.Placement.host;
       table = Tensor_map.Tbl.create 64;
       captures = Tensor_map.Tbl.create 16;
       input_tags = Hashtbl.create 16;
