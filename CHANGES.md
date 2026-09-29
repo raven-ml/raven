@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` compiles over arguments placed with any backend
+  (`Nx.Placement.device ~backend`): they bind as they are, a program serves
+  every backend over the same devices and layout, and the results are placed
+  with the arguments' backend. Arguments with two backends raise.
 - `Rune.jvp` and `Rune.vmap` of a gradient through a `Rune.scan`, and
   `Rune.grad` of one, compile as loops under `Rune.jit`, where they unrolled
   every step: the gradient's reversed loop is now a scan itself, which every

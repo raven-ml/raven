@@ -332,6 +332,42 @@ let test_feedback_moves_no_bytes () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
+(* A backend that includes the host's and counts its adds. A compiled call
+   depends on where its arguments lie, not on the backend computing on them
+   eagerly: arguments of this backend bind as they are, and the results are
+   placed with it. *)
+module Counting = struct
+  include Nx.Backend.Host
+
+  let name = "counting"
+  let adds = ref 0
+
+  let add a b =
+    incr adds;
+    Nx.Backend.Host.add a b
+end
+
+let counting : Nx.Backend.t = (module Counting)
+
+let test_another_backend_binds_and_keeps_its_backend () =
+  let g = Rune.jit' (fun x -> Nx.add x x) in
+  let p = Nx.Placement.sharded ~backend:counting ~axis:0 devs2 in
+  let x = Nx.place p (vec32 (Array.init 8 (fun i -> float_of_int i))) in
+  let y1 = g x in
+  equal ~msg:"results keep the backend" placement p (Nx.placement y1);
+  Rune.reset_jit_stats ();
+  let adds = !Counting.adds in
+  let y2 = g y1 in
+  let s = Rune.jit_stats () in
+  equal ~msg:"its arguments bind with no copy" int 0 s.bytes_to_device;
+  equal ~msg:"the compiled add is not the backend's" int adds !Counting.adds;
+  check_arr ~eps:0.0 ~msg:"the values"
+    (Array.init 8 (fun i -> 4.0 *. float_of_int i))
+    y2;
+  ignore (Nx.add y2 y2);
+  equal ~msg:"eager operations on them run on it" int (adds + 1)
+    !Counting.adds
+
 (* w -> w * 2 with w entering from the host as a copy on each device: the output
    is a copy on each, and seeds the next call directly. *)
 let test_replicated_feedback () =
@@ -1132,6 +1168,8 @@ let tests =
       ];
     group "residency"
       [
+        test "another backend's arguments bind and its results keep it"
+          test_another_backend_binds_and_keeps_its_backend;
         test "a split output in eager code" test_split_output_in_eager_code;
         test "operations over a batch split" test_batch_split_operations;
         test "rows of a split table" test_rows_of_a_split_table;

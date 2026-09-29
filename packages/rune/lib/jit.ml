@@ -210,12 +210,43 @@ let pp_devices ppf = function
            Nx.Device.pp)
         ds
 
+(* A program depends on where its values lie, not on the backend that computes
+   on them eagerly: inside it every placement is a layout, at the host backend,
+   and a call gives its results its arguments' backend. *)
+let layout p = Nx_effect.Placement.v Nx.Backend.host (Nx_effect.Placement.grid p)
+
 (* A leaf's placement in a program over [ds]: its own, or a copy on each device
    for a host value. *)
 let leaf_placement : type a b.
     Nx.Device.t list -> (a, b) Nx_effect.t -> Nx.Placement.t =
  fun ds x ->
-  match x with Placed r -> r.r_placement | _ -> Nx.Placement.replicated ds
+  match x with
+  | Placed r -> layout r.r_placement
+  | _ -> Nx.Placement.replicated ds
+
+(* The backend of a call's results: that of its placed leaves, which share
+   one. *)
+let call_backend leaves =
+  let backend_of (Nx.P x) =
+    match x with
+    | Nx_effect.Placed r -> Some (Nx.Placement.backend r.r_placement)
+    | _ -> None
+  in
+  match Array.find_map backend_of leaves with
+  | None -> Nx.Backend.host
+  | Some b ->
+      Array.iter
+        (fun l ->
+          match backend_of l with
+          | Some b' when not (Nx.Backend.equal b b') ->
+              invalid_arg
+                (Printf.sprintf
+                   "Rune.jit: arguments with the backends %s and %s; place \
+                    them with one backend"
+                   (Nx.Backend.name b) (Nx.Backend.name b'))
+          | _ -> ())
+        leaves;
+      b
 
 (* The extents of the slice each device holds of a value of [shape] at [p]. *)
 let local_shape p shape =
@@ -534,7 +565,7 @@ let stacked p = Nx_effect.Placement.map_axes (fun a -> a + 1) p
 let const_placement : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
  fun st x ->
   match x with
-  | Placed { r_placement = p; _ } when over st.st_devices p -> p
+  | Placed { r_placement = p; _ } when over st.st_devices p -> layout p
   | _ -> Nx.Placement.replicated st.st_devices
 
 (* Where [x] lives in the program: a traced value where its operation put it, a
@@ -2596,6 +2627,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_place { placement = q; t_in } ->
         Some
           (fun k ->
+            let q = layout q in
             let p = placement_in st t_in in
             match
               Nx_effect.Placement.check_shape "Nx.place" q (shape_of t_in)
@@ -5191,7 +5223,15 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   if c.cp_zero_copy then Tolk.Device.synchronize c.cp_device;
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_bound);
+  let backend = call_backend leaves in
+  (* A result on the host device, of arguments of another backend, is placed
+     with it. *)
+  let with_backend (Nx.P v) =
+    if Nx.Backend.equal backend Nx.Backend.host then Nx.P v
+    else Nx.P (Nx.place (Nx.Placement.device ~backend Nx.Device.host) v)
+  in
   let placed_on ?tag place dt shape bufs =
+    let place = Nx_effect.Placement.v backend (Nx_effect.Placement.grid place) in
     let value = make_placed place (List.map snd c.cp_devices) dt
         (NV.create (local_shape place shape)) bufs in
     Option.iter (fun tag ->
@@ -5234,17 +5274,18 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                            copy
                          end
                        in
-                       Nx.P
-                         (Nx_effect.reshape
-                            (Nx_effect.from_host c.cp_ctx dt host)
-                            shape)
+                       with_backend
+                         (Nx.P
+                            (Nx_effect.reshape
+                               (Nx_effect.from_host c.cp_ctx dt host)
+                               shape))
                    | None -> assert false)
                | None -> (
                    if c.cp_zero_copy then
                      let buf =
                        Tolk.Realize.resolve context node
                      in
-                     Nx.P (read_out c.cp_ctx dt shape buf)
+                     with_backend (Nx.P (read_out c.cp_ctx dt shape buf))
                    else
                      match repeats.(j) with
                      | Some bufs -> Nx.P (placed_on place dt shape bufs)
