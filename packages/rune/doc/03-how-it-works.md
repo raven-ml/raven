@@ -52,30 +52,41 @@ Tangent arithmetic is re-performed in the enclosing context too, so forward-over
 
 ## Complex Tensors
 
-A complex tensor is two real numbers per element. A function on complex tensors is therefore a function on twice as many real numbers, and its derivative at a point is a real linear map on those components. Both engines pack that map's two directions back into complex tensors — and they use different packings.
-
-A **tangent** carries the perturbation itself: displacing `z` by `dre` in the real component and `dim` in the imaginary one is the complex number `dre + i·dim`. `jvp` takes and returns tangents in this packing, and what it returns is the honest directional derivative — displace the input by `h` times the tangent, and both components of the output move by `h` times the result.
-
-A **cotangent** carries the *conjugate* of the sensitivity. For a real-valued objective `L`, the cotangent of `z` is
+A complex tensor is two real numbers per element. A function on complex tensors is therefore a function on twice as many real numbers, and its derivative at a point is a real linear map on those components. Rune packs a pair of components `(re, im)` as the complex number `re + i·im` and measures these vectors with the real inner product
 
 ```
-dL/dre - i · dL/dim
+<u, v> = Re(sum(conj(u) * v))
 ```
 
-The minus sign is not cosmetic; it is what makes the rules simple. Pair a cotangent `g` with a tangent `v` by taking the real part of `g * v`, and you get exactly the change in `L`:
+which is the ordinary dot product of the two real vectors.
+
+A **tangent** is a displacement in this packing: moving `z` by `dre` in the real component and `dim` in the imaginary one is the tangent `dre + i·dim`. `jvp` takes and returns tangents, and what it returns is the directional derivative: displace the input by `h` times the tangent, and both components of the output move by `h` times the result.
+
+A **gradient** is the vector of partial derivatives in the same packing. For a real-valued objective `L`, the gradient with respect to `z` is
+
+```
+dL/dre + i · dL/dim
+```
+
+It is the direction in which `L` grows fastest, and `<g, v>` is the change in `L` along a tangent `v`, so `z - lr * g` descends. `vjp` is the adjoint of `jvp` under the inner product: the cotangent `w` of an output pulls back to the gradient of the real objective `<w, f z>`. For a complex-differentiable `f` with derivative `f'`, the pullback is `conj(f' z) * w`.
+
+### Inside the tape
+
+The tape holds the conjugates of gradients, `dL/dre - i · dL/dim`, because they pair with a tangent by plain multiplication:
 
 ```
 Re((dL/dre - i·dL/dim) * (dre + i·dim)) = dL/dre · dre + dL/dim · dim
 ```
 
-Because that pairing multiplies rather than conjugates, the transpose of "multiply by the complex number `c`" is again "multiply by `c`". So under this packing **a rule that multiplies the cotangent by a derivative, conjugating nothing, is correct for every operation that has a complex derivative**. `mul` pulls back as `cotangent * b`, `exp` as `cotangent * exp z`, `matmul` through an ordinary — not conjugate — transpose, `fft` through `fft` itself. Every real-valued derivative formula carries over to complex unchanged.
+Under that pairing the transpose of "multiply by the complex number `c`" is again "multiply by `c`". So on the tape a rule that multiplies the cotangent by a derivative and conjugates nothing is correct for every operation that has a complex derivative. `mul` pulls back as `cotangent * b`, `exp` as `cotangent * exp z`, `matmul` through an ordinary transpose, `fft` through `fft` itself: every real derivative formula carries over to complex unchanged. `grad`, `vjp` and `vjp_fun` conjugate the cotangents you give on the way in and the gradients they return on the way out, and a `custom_vjp` rule's `bwd` is called across the same boundary, so it sees gradients too. On real dtypes the conjugation is the identity.
 
-Two consequences are worth stating outright:
+Three kinds of rule need a conjugation of their own on the tape:
 
-- **A gradient is not a descent direction until you conjugate it.** `z - lr * conj g` decreases the objective; `z - lr * g` moves the imaginary component the wrong way.
-- **Operations with no complex derivative need the conjugate contribution too.** `abs z` is the modulus: real-valued, and its differential mixes the two components instead of scaling by a single complex number. Its rule pulls back through `conj (sign z)` rather than `sign z` — the latter negates the imaginary contribution — and keeps only the real part of the cotangent, because a real-valued output cannot move in the imaginary direction. In forward mode it correspondingly produces a real tangent. Both are the identity on real dtypes, so nothing about real gradients changes.
+- **Real-valued operations.** `abs z` is the modulus, and its differential mixes the two components instead of scaling by one complex number. It pulls back through `conj(sign z)` and keeps only the real part of the cotangent, because a real-valued output cannot move in the imaginary direction. In forward mode it produces a real tangent.
+- **Operations that turn with `z`.** `sign z = z / |z|` moves only along the unit circle: its derivative along `v` is `i · s · Im(conj(s) · v) / |z|`, with `s = sign z`.
+- **Factorisations whose complex form conjugates.** A Hermitian Cholesky factor satisfies `H = L Lᴴ`, a unitary `Q` satisfies `Qᴴ Q = I`, and a transposed triangular solve reads `Aᴴ`. Their rules work on the conjugate cotangent, where a product transposes to its conjugate transpose, and conjugate the result back.
 
-Rules are checked against a finite-difference oracle in `packages/rune/test/test_complex.ml`. It perturbs each component of each input separately, assembles the real Jacobian, and compares the engines against it — so it measures the operation rather than trusting another rule. A new rule reachable on a complex dtype belongs there.
+Rules are checked against a finite-difference oracle in `packages/rune/test/test_complex.ml`. It perturbs each component of each input separately, assembles the real Jacobian, and compares both engines against it, so it measures the operation rather than trusting another rule. A new rule reachable on a complex dtype belongs there.
 
 ## vmap: a Virtual View
 

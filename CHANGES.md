@@ -172,6 +172,16 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** on a complex tensor, `Rune.grad` returns the gradient
+  `dL/dre + i*dL/dim`, the direction in which the objective grows fastest, so
+  `z - lr * g` descends as returned. It returned the conjugate, which had to be
+  conjugated again before a step; code that did so must stop. `vjp`, `vjp'`,
+  `vjp_fun` and `vjp_fun'` take and return cotangents in the same sense (the
+  pullback is the adjoint of `jvp` under `Re (sum (conj u * v))`), and a
+  `custom_vjp` rule's `bwd` receives and returns them too. `jacrev'` still
+  equals `jacfwd'` on complex-differentiable functions, `hvp` is now the
+  derivative of the gradient, and `check_grads` pairs a complex gradient with
+  its direction through the conjugate. Real tensors are unaffected.
 - Gradients through `Nx.qr` are right on complex matrices. The reverse rule
   used plain transposes where the unitary factor needs conjugate transposes.
 - Gradients and tangents of `Nx.cholesky` are right on complex Hermitian

@@ -39,8 +39,82 @@ let both2 name f a b =
     test (name ^ " (forward)") (fun () -> check_cjvp2 ~msg:name f (a ()) (b ()));
   ]
 
-(* Holomorphic rules: the real formula is already the complex derivative, and
-   the pullback is the plain chain rule with no conjugation. *)
+(* The convention itself: a gradient is [dL/dre + i*dL/dim], and a pullback is
+   the adjoint of the pushforward under [Re (sum (conj u * v))]. *)
+
+let dot u v = Nx.item [] (Nx.real f64 (Nx.sum (Nx.mul (Nx.conjugate u) v)))
+let loss z = Nx.sum (Nx.square (Nx.magnitude f64 (Nx.sub (Nx.mul z (b3 ())) z)))
+
+let convention_tests =
+  [
+    test "the gradient of |z - c|^2 is 2 (z - c)" (fun () ->
+        let c = b3 () in
+        let g =
+          Rune.grad'
+            (fun z -> Nx.sum (Nx.square (Nx.magnitude f64 (Nx.sub z c))))
+            (z3 ())
+        in
+        check_carr ~msg:"gradient"
+          (to_carr (Nx.mul_s (Nx.sub (z3 ()) c) (cx 2.0 0.0)))
+          g);
+    test "the gradient of Re (c * z) is conj c" (fun () ->
+        let c = b3 () in
+        let g =
+          Rune.grad' (fun z -> Nx.sum (Nx.real f64 (Nx.mul c z))) (z3 ())
+        in
+        check_carr ~msg:"gradient" (to_carr (Nx.conjugate c)) g);
+    test "a complex-valued objective is differentiated through its real part"
+      (fun () ->
+        let z = z3 () in
+        let g = Rune.grad' (fun z -> Nx.sum (Nx.mul z z)) z in
+        check_carr ~msg:"gradient of Re (z^2)"
+          (to_carr (Nx.conjugate (Nx.mul_s z (cx 2.0 0.0))))
+          g);
+    test "a step against the gradient descends" (fun () ->
+        let z = z3 () in
+        let g = Rune.grad' loss z in
+        let step = Nx.sub z (Nx.mul_s g (cx 1e-5 0.0)) in
+        let before = Nx.item [] (loss z) and after = Nx.item [] (loss step) in
+        is_true ~msg:"loss decreases" (after < before);
+        (* The first-order change is -lr |g|^2. *)
+        equal ~msg:"first-order decrease" (float 1e-7)
+          (-1e-5 *. dot g g)
+          (after -. before));
+    test "vjp is the adjoint of jvp" (fun () ->
+        let f z = Nx.mul (Nx.abs z) (Nx.add z (Nx.conjugate (Nx.mul z z))) in
+        let z = z3 () and v = ctangent_like (z3 ()) in
+        let w = cotangent_like (f z) in
+        let _, dy = Rune.jvp' f z v in
+        let _, g = Rune.vjp' f z w in
+        equal ~msg:"<w, J v> = <J* w, v>" (float 1e-10) (dot w dy) (dot g v));
+    test "custom_vjp's bwd takes and returns gradients" (fun () ->
+        let sin z =
+          Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
+            ~fwd:(fun z -> (Nx.sin z, z))
+            ~bwd:(fun z ct -> Nx.mul ct (Nx.conjugate (Nx.cos z)))
+            z
+        in
+        let z = z3 () and w = b3 () in
+        check_carr ~msg:"custom sin"
+          (to_carr (snd (Rune.vjp' Nx.sin z w)))
+          (snd (Rune.vjp' sin z w)));
+    test "jacrev' is jacfwd' on a complex-differentiable function" (fun () ->
+        let f z = Nx.mul (Nx.exp z) (Nx.flip ~axes:[ 0 ] z) in
+        check_carr ~msg:"jacobian"
+          (to_carr (Rune.jacfwd' f (z3 ())))
+          (Rune.jacrev' f (z3 ())));
+    test "hvp is the derivative of the gradient" (fun () ->
+        let v = ctangent_like (z3 ()) in
+        let hv =
+          Rune.hvp' (fun z -> Nx.sum (Nx.square (Nx.magnitude f64 z))) (z3 ()) v
+        in
+        check_carr ~msg:"hvp of |z|^2" (to_carr (Nx.mul_s v (cx 2.0 0.0))) hv);
+    test "check_grads accepts a complex parameter" (fun () ->
+        is_ok ~msg:"check_grads" (Rune.check_grads Nx.Ptree.tensor loss (z3 ())));
+  ]
+
+(* Holomorphic rules: the real formula is already the complex derivative [f'],
+   and the pullback multiplies by its conjugate. *)
 
 let holomorphic_tests =
   List.concat
@@ -360,6 +434,7 @@ let factorisation_tests =
 
 let tests =
   [
+    group "convention" convention_tests;
     group "holomorphic rules" holomorphic_tests;
     group "modulus" modulus_tests;
     group "sign" sign_tests;

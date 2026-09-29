@@ -51,8 +51,15 @@ let tracked_params p params =
     params ();
   (tape, params)
 
+(* The tape holds the conjugate of a gradient: a cotangent [c] of [z] pairs with
+   a tangent [v] as [Re (c * v)], which lets every complex-differentiable rule
+   multiply by its derivative and conjugate nothing. The gradient is the vector
+   that pairs as [Re (conj g * v)], so the cotangents a caller gives and the
+   gradients it gets back are conjugated at this boundary. On real dtypes
+   [Nx.conjugate] is the identity. *)
+
 let cotangents tape p params =
-  Nx.Ptree.map p (fun _ leaf -> Tape.cotangent tape leaf) params
+  Nx.Ptree.map p (fun _ leaf -> Nx.conjugate (Tape.cotangent tape leaf)) params
 
 let value_and_grad p f params =
   let tape, params = tracked_params p params in
@@ -89,7 +96,7 @@ let seed fn tape q y cts =
                 fn (Structure.describe path)
                 (Structure.shape_string (Nx.shape ct))
                 (Structure.shape_string (Nx.shape yl)));
-         Tape.accumulate tape yl ct;
+         Tape.accumulate tape yl (Nx.conjugate ct);
          yl)
        y cts)
 
@@ -229,9 +236,9 @@ let tracked_tensor x =
 let run_reverse' f x ~seed =
   let tape, x = tracked_tensor x in
   let y = run_transform f x (Reverse.handler tape) in
-  Tape.accumulate tape y (seed y);
+  Tape.accumulate tape y (Nx.conjugate (seed y));
   Tape.backward tape;
-  (y, Tape.cotangent tape x)
+  (y, Nx.conjugate (Tape.cotangent tape x))
 
 let value_and_grad' f x =
   require_float_leaf "Rune.value_and_grad'" x;
@@ -247,9 +254,9 @@ let vjp_fun' f x =
   let y = run_transform f x (Reverse.handler tape) in
   let pullback ct =
     Tape.reset_cotangents tape;
-    Tape.accumulate tape y ct;
+    Tape.accumulate tape y (Nx.conjugate ct);
     Tape.backward tape;
-    Tape.cotangent tape x
+    Nx.conjugate (Tape.cotangent tape x)
   in
   (y, pullback)
 
@@ -296,7 +303,9 @@ let jacrev' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
      the same forward pass. Derive the row basis from that output rather than
      evaluating [f] separately for its shape. *)
   let y, pullback = vjp_fun' f x in
-  let rows = vmap' pullback (basis_like y) in
+  (* Row k of the pullback is the gradient of [Re y_k], the conjugate of row k
+     of the Jacobian of a complex-differentiable [f]. *)
+  let rows = vmap' (fun e -> Nx.conjugate (pullback e)) (basis_like y) in
   Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
 
 let jacfwd' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
@@ -352,7 +361,8 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
     ignore
       (Nx.Ptree.map2 p
          (fun _ gl vl ->
-           analytic := !analytic +. scalar_f64 (Nx.sum (Nx.mul gl vl));
+           analytic :=
+             !analytic +. scalar_f64 (Nx.sum (Nx.mul (Nx.conjugate gl) vl));
            gl)
          g v);
     if

@@ -58,12 +58,12 @@ val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
     [grad Nx.Ptree.(pair p q) (fun (a, b) -> loss a b x) (a0, b0)] is the pair
     of their gradients.
 
-    Gradients are defined for real and complex tensors. A structure may hold
-    others (an {!Nx.Rng.t} threaded through a compiled step, a counter, a batch
-    of indices), and they are {e carried}: nothing accumulates into them and
-    their gradient is zero. One structure then serves both [grad] and
-    {!val-jit}, which needs such values as inputs, and Vega's optimizers leave
-    them alone in turn.
+    Gradients are defined for real and complex tensors; {!section-complex} says
+    what one is on a complex tensor. A structure may hold others (an {!Nx.Rng.t}
+    threaded through a compiled step, a counter, a batch of indices), and they
+    are {e carried}: nothing accumulates into them and their gradient is zero.
+    One structure then serves both [grad] and {!val-jit}, which needs such
+    values as inputs, and Vega's optimizers leave them alone in turn.
 
     Raises [Invalid_argument] if [f params] is not a scalar (a tensor with
     exactly one element); use {!vjp} to differentiate non-scalar results against
@@ -85,9 +85,9 @@ val value_and_grad_aux :
 
 val vjp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q -> 'q * 'p
 (** [vjp p q f params cts] is [(f params, g)], where [g], of structure [p], is
-    the vector-Jacobian product of [f] at [params] against [cts]. [cts] has the
-    result's structure [q]: one cotangent per tensor of the result, of that
-    tensor's dtype and shape.
+    the vector-Jacobian product of [f] at [params] against [cts], the adjoint of
+    {!jvp} (see {!section-complex}). [cts] has the result's structure [q]: one
+    cotangent per tensor of the result, of that tensor's dtype and shape.
 
     Raises [Invalid_argument] if [cts] and the result differ in their visits
     ({!Nx.Ptree.visits}), naming the first path where they differ and what each
@@ -109,9 +109,10 @@ val vjp_fun :
 
 val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
 (** [jvp p q f params tangents] is [(f params, dy)], where [dy] is the
-    Jacobian-vector product of [f] at [params] against [tangents], computed in
-    one forward pass. [tangents] has [params]' structure, dtypes and shapes;
-    [dy] has the result's structure [q], one tangent per tensor of the result.
+    Jacobian-vector product of [f] at [params] against [tangents], the
+    directional derivative (see {!section-complex}), computed in one forward
+    pass. [tangents] has [params]' structure, dtypes and shapes; [dy] has the
+    result's structure [q], one tangent per tensor of the result.
 
     Raises [Invalid_argument] if [tangents] and [params] differ in their visits
     (["Rune.jvp: b: None in the parameters, Some in the tangents"]), or if a
@@ -132,34 +133,31 @@ val jvp_aux :
 
     A complex tensor is two real components per element, so a function of one is
     a function of twice as many real numbers, and its derivative is a real
-    linear map on them. Rune packs the two directions of that map into complex
-    tensors differently.
+    linear map on them. Rune packs a pair of real components [(re, im)] as the
+    complex number [re + i*im], and measures these vectors with the real inner
+    product [Re (sum (conj u * v))].
 
-    A {e tangent} carries the perturbation itself. {!jvp} takes and returns
-    [dre + i*dim], and its result is the directional derivative: move the input
-    by [h] times the tangent and both components of the output move by [h] times
-    the result.
+    A {e tangent} is a displacement. {!jvp} takes [dre + i*dim] and returns the
+    directional derivative: move the input by [h] times the tangent and the
+    components of the result move by [h] times what it returns.
 
-    A {e cotangent} carries the conjugate of the sensitivity. For a real-valued
-    objective [l], {!grad} and {!vjp} return [dl/dre - i*dl/dim]. That sign is
-    what makes the plain chain rule correct: with it, a rule that multiplies the
-    cotangent by a derivative and conjugates nothing is right for every
-    operation that has a complex derivative — [mul] pulls back as
-    [cotangent * b], [exp] as [cotangent * exp z], [matmul] through an ordinary
-    transpose. The real-valued formulas carry over unchanged. Using the result
-    as a direction has to undo the conjugation: [z - lr * conj g] descends,
-    while [z - lr * g] moves the imaginary component the wrong way. An objective
-    that is complex-valued rather than real is seeded with a cotangent of [1],
-    so for a complex-differentiable objective {!grad} is its complex derivative.
+    A {e gradient} is the vector of partial derivatives in the same packing. For
+    a real-valued objective [l], {!grad} returns [dl/dre + i*dl/dim], the
+    direction in which [l] grows fastest, so [z - lr * g] descends. The gradient
+    of [|z|] is [z / |z|], that of [|z|^2] is [2 z], and that of [Re (c * z)] is
+    [conj c].
 
-    Operations with no complex derivative carry the conjugation explicitly.
-    [abs] is the modulus: real-valued, and its differential mixes the two
-    components rather than scaling by one complex number. It pulls back through
-    [conj (sign z)] — through [sign z] the imaginary contribution would come
-    back negated — and keeps only the real part of the cotangent, since a
-    real-valued output cannot move in the imaginary direction; in forward mode
-    it produces a real tangent. Both are the identity on real dtypes, so real
-    gradients are unaffected. *)
+    {!vjp} is the adjoint of {!jvp} under that inner product: if {!jvp} maps a
+    tangent [v] to [dy] and {!vjp} maps a cotangent [w] to [g], then
+    [Re (sum (conj w * dy)) = Re (sum (conj g * v))]. Equivalently, [g] is the
+    gradient of the real objective [Re (sum (conj w * f params))]. A
+    complex-differentiable [f] with derivative [f'] pulls [w] back to
+    [conj (f' z) * w]. {!grad} seeds the result with [1], so a complex-valued
+    objective is differentiated through its real part. A {!custom_vjp} rule's
+    [bwd] receives cotangents and returns gradients in this sense.
+
+    On real tensors the imaginary parts are zero and none of this changes the
+    derivatives. *)
 
 (** {1:vmap Vectorizing maps} *)
 
@@ -248,7 +246,8 @@ val custom_vjp :
 (** [custom_vjp p q ~fwd ~bwd params] is [fst (fwd params)], a value of
     structure [q], with a user-defined reverse rule. Under the innermost
     reverse-mode transformation, [fwd]'s operations are not differentiated;
-    [bwd residual cts] gives the gradients instead. [cts] holds the result's
+    [bwd residual cts] gives the gradients instead, as {!vjp} would for [cts]
+    (see {!section-complex} for complex tensors). [cts] holds the result's
     cotangents, of structure [q], zero for a tensor of the result that nothing
     used; the gradients have structure [p], and each tensor its parameter's
     dtype and shape. [residual] is what [fwd] returned beside its result.
@@ -456,7 +455,9 @@ val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [jacrev' f x] is the Jacobian of [f] at [x], with shape
     [shape (f x) @ shape x], computed row by row in reverse mode (one forward
     pass, one vectorized backward pass). Its dtype is the dtype of [x]. Prefer
-    it when the output is smaller than the input. *)
+    it when the output is smaller than the input. For a complex-differentiable
+    [f] it is the complex derivative, as {!jacfwd'} computes it: row [k] is the
+    conjugate of the gradient of [Re y_k]. *)
 
 val hessian' :
   (('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t

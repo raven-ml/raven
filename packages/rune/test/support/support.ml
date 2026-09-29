@@ -238,7 +238,7 @@ let check_jvp2 ?(h = 1e-5) ?(tol = 1e-3) ~msg
    A complex tensor is a pair of real components, and every rule is a real
    linear map on them. These checks differentiate both components separately,
    assemble the real Jacobian, and compare against it under rune's packing: a
-   tangent carries [dre + i*dim], a cotangent carries [dL/dre - i*dL/dim]. That
+   tangent carries [dre + i*dim], a gradient carries [dL/dre + i*dL/dim]. That
    makes them independent of the convention being right — they measure the
    operation, not another rule. *)
 
@@ -308,9 +308,10 @@ let raises_jit_error f =
     f
 
 (* [cvjp_numeric ~h f z w] is the cotangent [w] pulled back through the real
-   Jacobian of [f] at [z], measured by central differences: perturb each
-   component of each input, read how each component of each output responds, and
-   contract with [w] unpacked into [(dL/dre, dL/dim)]. *)
+   Jacobian of [f] at [z], measured by central differences: the gradient of the
+   real loss [Re (sum (conj w * f z))], which reads [w] as [(dL/dre, dL/dim)] at
+   the output. Perturb each component of each input, read how each component of
+   each output responds, and contract with [w]. *)
 let cvjp_numeric ~h f (z : Nx.complex128_t) (w : Complex.t array) =
   let shape = Nx.shape z in
   let zs = to_carr z in
@@ -332,12 +333,12 @@ let cvjp_numeric ~h f (z : Nx.complex128_t) (w : Complex.t array) =
           let re (c : Complex.t) = c.Complex.re
           and im (c : Complex.t) = c.Complex.im in
           let contract p m =
-            (slope p m re *. wi.Complex.re) -. (slope p m im *. wi.Complex.im)
+            (slope p m re *. wi.Complex.re) +. (slope p m im *. wi.Complex.im)
           in
           dre := !dre +. contract fpre fmre;
           dim := !dim +. contract fpim fmim)
         w;
-      cx !dre (-. !dim))
+      cx !dre !dim)
 
 (* [cjvp_numeric ~h f z v] is the central difference of [f] at [z] along [v],
    taken on both components at once — the directional derivative that a

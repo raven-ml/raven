@@ -117,14 +117,13 @@ let test_grad_spectral_energy () =
       Nx.mul y y)
     (x8 ())
 
-(* Pulls against the DFT-definition transpose, under the same convention as the
-   c2c rules: each pull is the plain transpose of the forward, with no
-   conjugation of its own. The pull of [rfft] at sample j is Re (sum_k ct_k
-   e^{-2 pi i j k / n}) — the forward twiddle over the zero-padded half spectrum
-   — and the pull of [irfft] at bin k is factor_k / n * sum_j w_j e^{+2 pi i j k
-   / n}, where factor_k doubles exactly the bins the forward mirrors: the
-   cotangent is real, so its inverse transform is Hermitian along the last axis
-   and the mirror fold is that doubling. *)
+(* Pulls against the DFT-definition adjoint: each pull is the conjugate
+   transpose of the forward. The pull of [rfft] at sample j is Re (sum_k ct_k
+   e^{+2 pi i j k / n}) — the conjugate of the forward twiddle over the
+   zero-padded half spectrum — and the pull of [irfft] at bin k is factor_k / n
+   * sum_j w_j e^{-2 pi i j k / n}, where factor_k doubles exactly the bins the
+   forward mirrors: the cotangent is real, so its transform is Hermitian along
+   the last axis and the mirror fold is that doubling. *)
 
 let rfft_pull_reference n (ct : Complex.t array) =
   Array.init n (fun j ->
@@ -135,7 +134,7 @@ let rfft_pull_reference n (ct : Complex.t array) =
           acc :=
             !acc
             +. (c.Complex.re *. Stdlib.cos th)
-            +. (c.Complex.im *. Stdlib.sin th))
+            -. (c.Complex.im *. Stdlib.sin th))
         ct;
       !acc)
 
@@ -150,7 +149,7 @@ let irfft_pull_reference n m (w : float array) =
           im := !im +. (wj *. Stdlib.sin th))
         w;
       let s = factor /. float_of_int n in
-      cx (s *. !re) (s *. !im))
+      cx (s *. !re) (-.s *. !im))
 
 let ct4 () = cvec [| (0.3, -1.1); (1.0, 0.4); (-0.7, 0.9) |]
 

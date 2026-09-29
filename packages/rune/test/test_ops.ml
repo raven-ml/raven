@@ -400,10 +400,9 @@ let complex_tests =
         check_grad ~msg:"conjugate"
           (fun x -> Nx.imag f64 (Nx.conjugate (z_of x)))
           (v3 ()));
-    (* With a complex leaf, |z| pulls back as conj(z)/|z|. The conjugate is what
-       makes the composite cases above agree with finite differences: without it
-       the imaginary contribution comes back negated. *)
-    test "complex leaf differentiates |z| as conj(z)/|z|" (fun () ->
+    (* With a complex leaf, the gradient of |z| is z/|z|, the unit vector along
+       which |z| grows fastest. *)
+    test "complex leaf differentiates |z| as z/|z|" (fun () ->
         let z =
           Nx.create Nx.complex128 [| 2 |]
             [| Complex.{ re = 3.; im = 4. }; Complex.{ re = -1.; im = 2. } |]
@@ -422,7 +421,7 @@ let complex_tests =
               (float 1e-9) (c.Complex.re /. n) got.(i).Complex.re;
             equal
               ~msg:(Printf.sprintf "im[%d]" i)
-              (float 1e-9) (-.c.Complex.im /. n) got.(i).Complex.im)
+              (float 1e-9) (c.Complex.im /. n) got.(i).Complex.im)
           (Nx.to_array z));
   ]
 

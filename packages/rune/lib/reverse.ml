@@ -1069,13 +1069,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 Nx.Ptree.fold result_s (fun _ leaf () -> track leaf) y ();
                 Tape.record tape (fun () ->
                     let seeded = ref false in
+                    (* [bwd] takes and returns gradients, the conjugates of the
+                       tape's cotangents (see [Rune.vjp]). *)
                     let cts =
                       Nx.Ptree.map result_s
                         (fun _ leaf ->
                           match Tape.find tape leaf with
                           | Some ct ->
                               seeded := true;
-                              ct
+                              T.conjugate ct
                           | None -> T.zeros_like leaf)
                         y
                     in
@@ -1084,7 +1086,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         (Structure.map2 "Rune.custom_vjp" params_s
                            ~this:"the parameters" ~that:"bwd's gradients"
                            (fun _ leaf g ->
-                             if tracked leaf then Tape.accumulate tape leaf g;
+                             if tracked leaf then
+                               Tape.accumulate tape leaf (T.conjugate g);
                              leaf)
                            params (bwd res cts)))
               end;
