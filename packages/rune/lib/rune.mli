@@ -258,9 +258,12 @@ val custom_vjp :
     A tensor of the result that is one of [params] is a new value there: its
     cotangent is the result's alone.
 
-    Raises [Invalid_argument] if the call is differentiated in forward mode
-    (define a {!custom_jvp} rule for that), or if [bwd]'s gradients differ from
-    [params] in their visits or in a tensor's dtype. *)
+    Forward mode has no rule to apply: a call whose result holds no tensor has
+    nothing to differentiate, and [fwd] runs.
+
+    Raises [Invalid_argument] if forward mode differentiates a call whose
+    result holds a tensor (define a {!custom_jvp} rule for that), or if [bwd]'s
+    gradients differ from [params] in their visits or in a tensor's dtype. *)
 
 val custom_jvp :
   'p Nx.Ptree.t ->
@@ -276,10 +279,15 @@ val custom_jvp :
     result that is one of [params] is a new value there: the parameter keeps its
     own tangent.
 
-    Raises [Invalid_argument] if the call is differentiated in reverse mode
-    (define a {!custom_vjp} rule for that), or if [jvp]'s tangents differ from
-    its result in their visits, or a tangent from its result tensor in dtype or
-    shape. *)
+    Reverse mode has no rule to apply: a call whose result holds no tensor has
+    nothing to differentiate, and [f] runs. A [custom_jvp] with a unit result
+    therefore observes the tangents of its parameters in forward mode and is
+    inert under {!grad}.
+
+    Raises [Invalid_argument] if reverse mode differentiates a call whose
+    result holds a tensor (define a {!custom_vjp} rule for that), or if [jvp]'s
+    tangents differ from its result in their visits, or a tangent from its
+    result tensor in dtype or shape. *)
 
 (** {1:totals Totals} *)
 

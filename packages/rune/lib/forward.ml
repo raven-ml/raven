@@ -719,18 +719,23 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                      ~that:"jvp's tangents" set y dy);
                 continue k y
               end)
-      | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
+      (* A custom_vjp has no forward rule. One whose result holds no tensor
+         has nothing to differentiate, and its function runs. *)
+      | Custom.E_custom_vjp
+          (Custom.Vjp_call { params_s; result_s; params; fwd; _ }) ->
           Some
             (fun k ->
+              let y = fst (fwd params) in
               if
-                Nx.Ptree.fold params_s
-                  (fun _ leaf any -> any || active leaf)
-                  params false
+                Structure.holds_tensor result_s y
+                && Nx.Ptree.fold params_s
+                     (fun _ leaf any -> any || active leaf)
+                     params false
               then
                 invalid_arg
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
-              else continue k (fst (fwd params)))
+              else continue k y)
       (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
          function of the call's arguments that gives each argument it receives
          the tangent of the call's argument at its position, runs [f] under this

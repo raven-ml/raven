@@ -205,6 +205,50 @@ let test_custom_jvp_rejects_reverse_mode () =
 let test_custom_jvp_undifferentiated () =
   check_arr ~msg:"value" (to_arr (Nx.sin (v3 ()))) (my_sin_fwd (v3 ()))
 
+(* A custom call whose result holds no tensor has nothing to differentiate:
+   the mode its rule does not cover runs its function. *)
+
+let tap runs y =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit
+    ~f:(fun _ -> incr runs)
+    ~jvp:(fun _ _ -> ((), ()))
+    y
+
+let test_unit_custom_jvp_under_reverse () =
+  let runs = ref 0 in
+  let loss tap x =
+    let y = Nx.sin x in
+    tap y;
+    Nx.sum (Nx.mul y y)
+  in
+  let l, g = Rune.value_and_grad' (loss (tap runs)) (v3 ()) in
+  let l', g' = Rune.value_and_grad' (loss ignore) (v3 ()) in
+  check_arr ~msg:"loss" (to_arr l') l;
+  check_arr ~msg:"gradient" (to_arr g') g;
+  equal ~msg:"f ran" int 1 !runs;
+  let compiled = Rune.jit' (Rune.grad' (loss (tap (ref 0)))) in
+  check_arr ~msg:"compiled gradient" (to_arr g') (compiled (v3 ()))
+
+let test_unit_custom_vjp_under_forward () =
+  let runs = ref 0 in
+  let tap y =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.unit
+      ~fwd:(fun _ -> incr runs; ((), ()))
+      ~bwd:(fun () () -> Nx.zeros_like y)
+      y
+  in
+  let x = v3 () and v = tangent_like (v3 ()) in
+  let _, dy =
+    Rune.jvp'
+      (fun x ->
+        let y = Nx.sin x in
+        tap y;
+        y)
+      x v
+  in
+  check_arr ~msg:"tangent" (to_arr (Nx.mul v (Nx.cos x))) dy;
+  equal ~msg:"fwd ran" int 1 !runs
+
 (* Composition *)
 
 let test_custom_rule_under_vmap_of_grad () =
@@ -283,6 +327,8 @@ let tests =
         test "a structured result" test_structured_vjp_rule;
         test "a result that is its parameter"
           test_vjp_rule_returning_its_parameter;
+        test "a unit result runs fwd under forward mode"
+          test_unit_custom_vjp_under_forward;
       ];
     group "custom_jvp"
       [
@@ -295,6 +341,8 @@ let tests =
         test "undifferentiated calls run f" test_custom_jvp_undifferentiated;
         test "a result that is its parameter"
           test_jvp_rule_returning_its_parameter;
+        test "a unit result runs f under reverse mode"
+          test_unit_custom_jvp_under_reverse;
       ];
     group "composition"
       [

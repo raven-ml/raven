@@ -12,9 +12,11 @@
    parameters are the output's makes the effects fully typed — no erasure.
 
    Dispatch is by handler stacking: the innermost transformation that
-   understands the effect applies its treatment. A differentiation of the wrong
-   mode raises (a custom vjp is not forward-differentiable, and vice versa);
-   vmap batches the forward function, so only a differentiation inside the vmap
+   understands the effect applies its treatment. A transformation that has no
+   rule to apply runs the call's function when its result holds no tensor,
+   since there is nothing to differentiate, and raises otherwise (a custom vjp
+   with a tensor result is not forward-differentiable, and vice versa); vmap
+   batches the forward function, so only a differentiation inside the vmap
    applies the rule. When no handler intercepts — no transformation in scope —
    the plain forward function runs at the call site. *)
 

@@ -1067,18 +1067,23 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                            params (bwd res cts)))
               end;
               continue k y)
-      | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
+      (* A custom_jvp has no reverse rule. One whose result holds no tensor
+         has nothing to differentiate, and its function runs. *)
+      | Custom.E_custom_jvp
+          (Custom.Jvp_call { params_s; result_s; params; f; _ }) ->
           Some
             (fun k ->
+              let y = own f params in
               if
-                Nx.Ptree.fold params_s
-                  (fun _ leaf any -> any || tracked leaf)
-                  params false
+                Structure.holds_tensor result_s y
+                && Nx.Ptree.fold params_s
+                     (fun _ leaf any -> any || tracked leaf)
+                     params false
               then
                 invalid_arg
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
-              else continue k (own f params))
+              else continue k y)
       (* Gradient checkpointing. The call passes on with [f] run under this
          handler over a scratch tape linked to this one, which tells whether the
          result depends on a tracked tensor: an argument, or one [f] captures.

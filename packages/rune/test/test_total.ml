@@ -413,6 +413,22 @@ let test_custom_call_in_rerun_code () =
   counts_once ~msg:"fwd in a remat" t
     (to_arr (Nx.sum (Nx.mul x x)))
     (fun x -> Nx.sum (remat tap x))
+    x;
+  let tap x =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit
+      ~f:(fun x -> Rune.Total.add t (Nx.sum (Nx.mul x x)))
+      ~jvp:(fun _ _ -> ((), ()))
+      x
+  in
+  counts_once ~msg:"a unit result's f in a remat" t
+    (to_arr (Nx.sum (Nx.mul x x)))
+    (fun x ->
+      Nx.sum
+        (remat
+           (fun x ->
+             tap x;
+             Nx.sin x)
+           x))
     x
 
 (* Forward over reverse, reverse over reverse and a pullback run twice rerun
@@ -631,6 +647,17 @@ let test_sketch () =
           check ~msg:"compiled" expected (l, c, ggn))
         [ 2; 5 ])
 
+(* The mark is inert under grad: the model trains with any optimizer. *)
+let test_marked_model_under_grad () =
+  let xs = series 2 [| 5; 3 |] and targets = series 3 [| 5; 2 |] in
+  let plain ~target y = Nx.mean (Nx.square (Nx.sub y target)) in
+  let l, g = Rune.value_and_grad' (model_loss xs targets) w0 in
+  let l', g' = Rune.value_and_grad' (model_loss ~loss:plain xs targets) w0 in
+  check_arr ~msg:"loss" (to_arr l') l;
+  check_arr ~msg:"gradient" (to_arr g') g;
+  check_arr ~eps:1e-9 ~msg:"compiled gradient" (to_arr g')
+    (Rune.jit' (Rune.grad' (model_loss xs targets)) w0)
+
 let tests =
   [
     group "scopes"
@@ -666,7 +693,11 @@ let tests =
       ];
     group "differentiation"
       [ test "a total is differentiated" test_a_total_is_differentiated ];
-    group "sketch" [ test "a marked loss's Gauss-Newton sketch" test_sketch ];
+    group "sketch"
+      [
+        test "a marked loss's Gauss-Newton sketch" test_sketch;
+        test "a marked model trains under grad" test_marked_model_under_grad;
+      ];
     group "reverse mode"
       [
         test "a scope outside grad counts once" test_grad_outside_scope;

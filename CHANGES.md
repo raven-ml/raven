@@ -167,6 +167,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.grad` of a function that calls a `Rune.custom_jvp` with a result that
+  holds no tensor (a unit result) runs its `f`, where it raised on a
+  differentiated parameter: there is nothing to differentiate. Likewise,
+  `Rune.jvp` runs the `fwd` of a `Rune.custom_vjp` with no tensor result. A
+  unit-result `custom_jvp` observes the tangents of its parameters in forward
+  mode and is inert under `grad`, so one model trains with `grad` and is
+  measured with `jvp`. A call with a tensor result still raises in the mode
+  its rule does not cover.
+
 - `Rune.Total` is a write-only sum that code anywhere inside a function adds
   to (`Rune.Total.add t v`) and that `Rune.Total.collect t ~zero f` returns
   beside `f ()`. With no scope open an addition does nothing, so one model
