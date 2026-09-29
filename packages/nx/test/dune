@@ -8,10 +8,8 @@
   test_nx_placement
   test_nx_sanity
   test_nx_linalg
-  test_nx_sorting
   test_nx_fft
   test_nx_fft_oracle
-  test_nx_ops
   test_nx_rng
   test_nx_stft
   test_ptree
@@ -20,7 +18,9 @@
   test_indexing
   test_movement
   test_properties
-  test_elementwise)
+  test_elementwise
+  test_reductions
+  test_sorting)
  (package nx)
  (modules
   :standard

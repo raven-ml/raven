@@ -210,6 +210,14 @@ let flattening =
             (Nx.flatten ~start_dim ~end_dim)
             (Nx.unflatten start_dim inferred)
             t);
+      prop "flatten works on every layout, a view where the layout allows one"
+        (Gen.pair shape layout) (fun (s, steps) ->
+          let t = lay_out steps (tensor_of s) in
+          let target = [| Nx.numel t |] in
+          let f = Nx.flatten t in
+          equal ints (Ref.reshape target (Ref.of_nx t)) (Ref.of_nx f);
+          if viewable t target then
+            is_true ~msg:"a view" (Nx.data f == Nx.data t));
       prop "ravel is reshape to one axis" shape (fun s ->
           equal same
             (Nx.reshape [| -1 |] (tensor_of s))
@@ -236,7 +244,10 @@ let reshaped =
           (fun d -> if d > 0 && n mod d = 0 then Some [| d; n / d |] else None)
           (List.init (n + 1) Fun.id)
       @ List.filter_map
-          (fun d -> if d > 0 && n mod d = 0 && n / d mod 2 = 0 then Some [| d; 2; n / d / 2 |] else None)
+          (fun d ->
+            if d > 0 && n mod d = 0 && n / d mod 2 = 0 then
+              Some [| d; 2; n / d / 2 |]
+            else None)
           (List.init (n + 1) Fun.id))
   in
   (steps, t, target)
@@ -252,10 +263,12 @@ let reshapes =
            reshaped)
         (fun (_, t, target) ->
           if viewable t target then begin
-            cover "a view of a non-contiguous layout" (not (Nx.is_c_contiguous t));
+            cover "a view of a non-contiguous layout"
+              (not (Nx.is_c_contiguous t));
             let r = Nx.reshape target t in
             equal ints (Ref.reshape target (Ref.of_nx t)) (Ref.of_nx r);
-            is_true ~msg:"the result shares its source's storage" (Nx.data r == Nx.data t)
+            is_true ~msg:"the result shares its source's storage"
+              (Nx.data r == Nx.data t)
           end
           else begin
             cover "a layout no reshape can view" true;
@@ -293,4 +306,5 @@ let views =
 
 let () =
   exit
-    (run "nx movement" [ reshapes; reorderings; repetitions; joins; flattening; views ])
+    (run "nx movement"
+       [ reshapes; reorderings; repetitions; joins; flattening; views ])

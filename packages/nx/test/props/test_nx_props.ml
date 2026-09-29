@@ -24,85 +24,9 @@ open Test_nx_props_support
 
 (* ── Sorting Properties ── *)
 
-let sorting_props =
-  [
-    prop "sort is sorted (f32 1d)" f32_1d (fun x ->
-        assume (no_nan x);
-        let sorted, _indices = Nx.sort x in
-        let values = Nx.to_array sorted in
-        equal ~msg:"sorted" (array float_exact)
-          (Array.of_list (List.sort Float.compare (Array.to_list values)))
-          values);
-    prop "sort idempotent (f32 1d)" f32_1d (fun x ->
-        assume (no_nan x);
-        let s1, _ = Nx.sort x in
-        let s2, _ = Nx.sort s1 in
-        equal (approx ()) s2 s1);
-    prop "sort preserves shape (f32 1d)" f32_1d (fun x ->
-        let sorted, _ = Nx.sort x in
-        equal (array int) (Nx.shape x) (Nx.shape sorted));
-    prop "argsort valid indices (f32 1d)" f32_1d (fun x ->
-        let _, indices = Nx.sort x in
-        let n = Nx.numel x in
-        Array.iter
-          (fun i ->
-            satisfies ~msg:"index in range" int32
-              (fun i -> Int32.to_int i >= 0 && Int32.to_int i < n)
-              i)
-          (Nx.to_array indices));
-    prop "sort preserves elements (i32 1d)" i32_1d (fun x ->
-        let sorted, _ = Nx.sort x in
-        let a = Array.copy (Nx.to_array x) in
-        let b = Array.copy (Nx.to_array sorted) in
-        Array.sort Int32.compare a;
-        Array.sort Int32.compare b;
-        equal (array int32) a b);
-  ]
-
 (* ── Math Function Properties ── *)
 
 (* ── Reduction Properties ── *)
-
-let reduction_props =
-  [
-    prop "sum of ones = numel (f32)" f32_any (fun t ->
-        let ones = Nx.ones_like t in
-        equal (float 1e-5)
-          (Float.of_int (Nx.numel t))
-          (Nx.item [] (Nx.sum ones)));
-    prop "prod of ones = 1 (f32)" f32_any (fun t ->
-        let ones = Nx.ones_like t in
-        equal (float 1e-5) 1.0 (Nx.item [] (Nx.prod ones)));
-    prop "mean = sum / numel (f32)" f32_any (fun t ->
-        assume (Nx.numel t > 0);
-        let m = Nx.item [] (Nx.mean t) in
-        let s = Nx.item [] (Nx.sum t) in
-        let n = Float.of_int (Nx.numel t) in
-        equal (float 1e-4) (s /. n) m);
-    prop "max >= all elements (f32)" f32_any (fun t ->
-        assume (no_nan t && Nx.numel t > 0);
-        let mx = Nx.max t in
-        is_true @@ all_true (Nx.less_equal t (Nx.broadcast_to (Nx.shape t) mx)));
-    prop "min <= all elements (f32)" f32_any (fun t ->
-        assume (no_nan t && Nx.numel t > 0);
-        let mn = Nx.min t in
-        is_true
-        @@ all_true (Nx.greater_equal t (Nx.broadcast_to (Nx.shape t) mn)));
-    prop "var >= 0 (f32)" f32_any (fun t ->
-        assume (Nx.numel t > 0);
-        satisfies ~msg:"non-negative" float_exact
-          (fun v -> v >= 0.0)
-          (Nx.item [] (Nx.var t)));
-    prop "sum linearity (f32)" f32_pair (fun (a, b) ->
-        let lhs = Nx.item [] (Nx.sum (Nx.add a b)) in
-        let rhs = Nx.item [] (Nx.sum a) +. Nx.item [] (Nx.sum b) in
-        equal (float 1e-2) rhs lhs);
-    prop "cumsum last = sum (f32 1d)" f32_1d (fun t ->
-        assume (all_finite t && Nx.numel t > 0);
-        let cs = Nx.cumsum t in
-        let last = Nx.item [ Nx.numel t - 1 ] cs in
-        equal (float 1e-3) (Nx.item [] (Nx.sum t)) last);
-  ]
 
 (* ── Linear Algebra Properties ── *)
 
@@ -281,98 +205,11 @@ let einsum_props =
 
 (* ── Stress Tests: Strided Views, Non-Contiguous Ops, High Rank ── *)
 
-let stress_props =
-  [
-    (* Transpose then slice, verify data integrity *)
-    prop ~count:500 "transpose+slice preserves data (f32)" f32_2d_plus (fun t ->
-        let tr = Nx.transpose t in
-        let spec = List.init (Nx.ndim tr) (fun _ -> Nx.A) in
-        let sliced = Nx.slice spec tr in
-        equal (approx ()) (Nx.contiguous tr) (Nx.contiguous sliced));
-    (* Transpose+slice then flatten vs direct flatten of transpose *)
-    prop ~count:500 "transpose+contiguous = contiguous+transpose data (f32)"
-      f32_2d_plus (fun t ->
-        let a = Nx.to_array (Nx.contiguous (Nx.transpose t)) in
-        equal (array float_exact) a
-          (Nx.to_array (Nx.transpose t |> Nx.contiguous)));
-    (* Slice a non-trivial range after transpose, check item access *)
-    prop ~count:500 "item on transposed view (f32)" f32_2d_plus (fun t ->
-        let s = Nx.shape t in
-        let tr = Nx.transpose t in
-        let ts = Nx.shape tr in
-        (* item [0, ..., 0] of transpose should equal item [0, ..., 0] of
-           original since both index the same element *)
-        let zeros_orig = List.init (Array.length s) (fun _ -> 0) in
-        let zeros_tr = List.init (Array.length ts) (fun _ -> 0) in
-        equal float_exact (Nx.item zeros_orig t) (Nx.item zeros_tr tr));
-    (* Flip + slice: flip is a strided view, slicing it compounds strides *)
-    prop ~count:500 "flip+slice data integrity (f32)" f32_2d_plus (fun t ->
-        let flipped = Nx.flip t in
-        let spec = [ Nx.R (0, (Nx.shape flipped).(0)) ] in
-        let sliced = Nx.slice spec flipped in
-        equal (approx ()) (Nx.contiguous flipped) (Nx.contiguous sliced));
-    (* Double transpose on high-rank tensor *)
-    prop ~count:500 "double transpose high rank (f32)" f32_stress (fun t ->
-        assume (Nx.ndim t >= 2);
-        equal (approx ()) t (Nx.transpose (Nx.transpose t)));
-    (* Contiguous on strided views: transpose then contiguous should equal copy
-       of transpose *)
-    prop ~count:500 "contiguous of strided view (f32)" f32_2d_plus (fun t ->
-        let tr = Nx.transpose t in
-        let c = Nx.contiguous tr in
-        is_true ~msg:"contiguous" (Nx.is_c_contiguous c);
-        equal (approx ()) tr c);
-    (* Arithmetic on non-contiguous views *)
-    prop ~count:500 "add on transposed views (f32)" f32_stress_pair
-      (fun (a, b) ->
-        assume (Nx.ndim a >= 2);
-        let at = Nx.transpose a in
-        let bt = Nx.transpose b in
-        let sum_then_transpose = Nx.transpose (Nx.add a b) in
-        let transpose_then_sum = Nx.add at bt in
-        equal (approx ()) transpose_then_sum sum_then_transpose);
-    (* Reduction on transposed view *)
-    prop ~count:500 "sum of transpose = sum of original (f32)" f32_stress
-      (fun t ->
-        assume (all_finite t);
-        let s1 = Nx.item [] (Nx.sum t) in
-        equal (float 1e-2) s1 (Nx.item [] (Nx.sum (Nx.transpose t))));
-    (* Broadcasting + arithmetic on high-rank tensors *)
-    prop ~count:500 "mul broadcast high rank (f32)" f32_broadcastable_stress
-      (fun (a, b) ->
-        let result = Nx.mul a b in
-        let a', b' = Nx.broadcasted a b in
-        equal (approx ()) (Nx.mul a' b') result);
-    (* Slice with step on high-rank tensor *)
-    prop ~count:500 "slice with step roundtrip (f32)" f32_stress (fun t ->
-        assume (Nx.ndim t >= 1 && (Nx.shape t).(0) >= 2);
-        let dim0 = (Nx.shape t).(0) in
-        let sliced = Nx.slice [ Nx.Rs (0, dim0, 2) ] t in
-        let expected_len = (dim0 + 1) / 2 in
-        equal ~msg:"length" int expected_len (Nx.shape sliced).(0);
-        equal ~msg:"rank" int (Nx.ndim t) (Nx.ndim sliced));
-    (* Copy of a strided view preserves data *)
-    prop ~count:500 "copy strided view (f32)" f32_2d_plus (fun t ->
-        let tr = Nx.transpose t in
-        let c = Nx.copy tr in
-        equal (approx ()) tr c;
-        is_true ~msg:"copy is contiguous" (Nx.is_c_contiguous c));
-    (* Reshape after contiguous on strided view *)
-    prop ~count:500 "reshape contiguous strided (f32)" f32_2d_plus (fun t ->
-        let tr = Nx.contiguous (Nx.transpose t) in
-        let flat = Nx.reshape [| Nx.numel t |] tr in
-        equal ~msg:"numel" int (Nx.numel t) (Nx.numel flat);
-        equal (array float_exact) (Nx.to_array tr) (Nx.to_array flat));
-  ]
-
 (* ── Suite ── *)
 
 let () =
   exit (run "Nx Properties"
     [
-      group "Sorting" sorting_props;
-      group "Reductions" reduction_props;
       group "Linear Algebra" linalg_props;
       group "Einsum" einsum_props;
-      group "Stress Tests" stress_props;
     ])

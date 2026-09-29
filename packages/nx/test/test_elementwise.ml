@@ -88,7 +88,7 @@ let agrees ~f32 (u : unary) t =
   let round = if f32 then to_f32 else Fun.id in
   let r = Ref.of_nx t in
   equal
-    (Ref.witness (close ~rel))
+    (Ref.witness (close ~rel ()))
     { r with data = Array.map (fun x -> round (u.ocaml x)) r.data }
     (Ref.of_nx (u.nx t))
 
@@ -129,7 +129,7 @@ let classifiers =
         (fun () ->
           let t = Nx.create Nx.float64 [| 5 |] [| -1.; 1.; 1.5; -2.; nan |] in
           equal
-            (tensor (close ~rel:0.))
+            (tensor (close ~rel:0. ()))
             (Nx.create Nx.float64 [| 5 |]
                [| neg_infinity; infinity; nan; nan; nan |])
             (Nx.erfinv t));
@@ -137,13 +137,13 @@ let classifiers =
         (Gen.array ~size:(Gen.int_range 0 8) (Gen.float_range (-0.999) 0.999))
         (fun xs ->
           let t = Nx.create Nx.float32 [| Array.length xs |] xs in
-          equal (tensor (close ~rel:1e-6)) t (Nx.erf (Nx.erfinv t)));
+          equal (tensor (close ~rel:1e-6 ())) t (Nx.erf (Nx.erfinv t)));
       prop "erf of erfinv is the identity at float64"
         (Gen.array ~size:(Gen.int_range 0 8)
            (Gen.float_range (-0.999999) 0.999999))
         (fun xs ->
           let t = Nx.create Nx.float64 [| Array.length xs |] xs in
-          equal (tensor (close ~rel:1e-14)) t (Nx.erf (Nx.erfinv t)));
+          equal (tensor (close ~rel:1e-14 ())) t (Nx.erf (Nx.erfinv t)));
     ]
 
 (* Binary float operations, over operands that broadcast. *)
@@ -198,7 +198,7 @@ let binary_ops =
            let rel = tolerance ~f32 b.bexact in
            let round = if f32 then to_f32 else Fun.id in
            equal
-             (Ref.witness (close ~rel))
+             (Ref.witness (close ~rel ()))
              (Ref.map2
                 (fun u v -> round (b.bocaml u v))
                 (Ref.of_nx x) (Ref.of_nx y))
@@ -246,7 +246,7 @@ let comparisons =
             { r with data = Array.map (fun (a, _) -> a < 0.) r.data }
           in
           equal
-            (Ref.witness (close ~rel:0.))
+            (Ref.witness (close ~rel:0. ()))
             {
               r with
               data = Array.map (fun (a, b) -> if a < 0. then a else b) r.data;
@@ -258,13 +258,13 @@ let comparisons =
            (Gen.float_range 0. 10.))
         (fun (t, lo, hi) ->
           equal
-            (tensor (close ~rel:0.))
+            (tensor (close ~rel:0. ()))
             (Nx.minimum_s (Nx.maximum_s t lo) hi)
             (Nx.clamp ~min:lo ~max:hi t));
       prop "lerp is a + w (b - a)" (broadcast_pair Nx.float64) (fun (a, b) ->
           let w = Nx.scalar Nx.float64 0.25 in
           equal
-            (tensor (close ~rel:0.))
+            (tensor (close ~rel:0. ()))
             (Nx.add a (Nx.mul w (Nx.sub b a)))
             (Nx.lerp a b w));
     ]
@@ -511,7 +511,7 @@ let complex_numbers =
           (Ref.of_nx (nx a b)))
   in
   let parts t = (Nx.real Nx.float64 t, Nx.imag Nx.float64 t) in
-  let floats64 = tensor (close ~rel:0.) in
+  let floats64 = tensor (close ~rel:0. ()) in
   group "complex numbers"
     [
       agree "add" 0. Nx.add Complex.add;
@@ -530,7 +530,7 @@ let complex_numbers =
         complexes (fun z ->
           let r = Ref.of_nx z in
           let map f = { r with data = Array.map f r.data } in
-          let reals = Ref.witness (close ~rel:1e-15) in
+          let reals = Ref.witness (close ~rel:1e-15 ()) in
           equal reals
             (map (fun z -> z.Complex.re))
             (Ref.of_nx (Nx.real Nx.float64 z));
@@ -557,7 +557,7 @@ let complex_numbers =
           (0., 0., 0.);
         ]
         (fun (re, im, expected) ->
-          equal (close ~rel:0.) expected
+          equal (close ~rel:0. ()) expected
             (Nx.item []
                (Nx.angle Nx.float64 (Nx.scalar Nx.complex128 { re; im }))));
       test "real and magnitude read non-finite components exactly" (fun () ->
@@ -573,7 +573,7 @@ let complex_numbers =
             (Nx.create Nx.float64 [| 3 |] [| infinity; -.infinity; 1e300 |])
             (Nx.real Nx.float64 z);
           equal
-            (tensor (close ~rel:1e-15))
+            (tensor (close ~rel:1e-15 ()))
             (Nx.create Nx.float64 [| 3 |]
                [| infinity; infinity; 1e300 *. Float.sqrt 2. |])
             (Nx.magnitude Nx.float64 z));
@@ -604,7 +604,7 @@ let narrow_floats =
   group "narrow floats"
     (List.concat_map
        (fun (Narrow (name, dt)) ->
-         let exact = tensor (close ~rel:0.) in
+         let exact = tensor (close ~rel:0. ()) in
          let wide t = Nx.cast Nx.float32 t in
          [
            prop (name ^ " arithmetic is float32's, rounded once")

@@ -10,15 +10,16 @@ let tensor w =
     (fun t -> (Nx.shape t, Nx.to_array t))
     (pair (array int) (array w))
 
-(* Floats equal within [rel] of the larger magnitude, every NaN equal to every
-   NaN: the witness of a computed float that may be NaN. *)
-let close ~rel =
+(* Floats equal within [rel] of the larger magnitude or within [abs], every NaN
+   equal to every NaN: the witness of a computed float that may be NaN. *)
+let close ?(abs = 0.) ~rel () =
   Testable.make
     ~pp:(fun ppf x -> Format.fprintf ppf "%.17g" x)
     ~equal:(fun a b ->
       (Float.is_nan a && Float.is_nan b)
       || a = b
-      || Float.abs (a -. b) <= rel *. Float.max (Float.abs a) (Float.abs b))
+      || Float.abs (a -. b)
+         <= Float.max abs (rel *. Float.max (Float.abs a) (Float.abs b)))
 
 let raises_invalid_arg f =
   raises_match Exn.invalid_arg (fun () -> ignore (f ()))
@@ -442,6 +443,55 @@ module Ref = struct
   let item indices t =
     if List.length indices <> ndim t then invalid_arg "item";
     get t (Array.of_list (List.mapi (fun d i -> index t.shape.(d) i) indices))
+
+  (* [along ~axis ~length f t] replaces each lane of [t] along [axis] by the
+     [length] elements [f] gives for it. *)
+  let along ~axis:a ~length f t =
+    let a = axis t a in
+    let rest = Array.copy t.shape in
+    rest.(a) <- 1;
+    let lanes =
+      Array.init (numel rest) (fun l ->
+          let idx = unravel rest l in
+          f
+            (Array.init t.shape.(a) (fun k ->
+                 let i = Array.copy idx in
+                 i.(a) <- k;
+                 get t i)))
+    in
+    let shape = Array.copy t.shape in
+    shape.(a) <- length;
+    init shape (fun idx ->
+        let i = Array.copy idx in
+        i.(a) <- 0;
+        lanes.(ravel rest i).(idx.(a)))
+
+  (* [reduce ?axes ?keepdims f init t] folds [f] over [axes], one axis after the
+     other, from [init]. *)
+  let reduce ?axes ?(keepdims = false) f init t =
+    let axes =
+      match axes with
+      | None -> List.init (ndim t) Fun.id
+      | Some l -> List.sort_uniq compare (List.map (axis t) l)
+    in
+    let kept =
+      List.fold_left
+        (fun t a ->
+          along ~axis:a ~length:1
+            (fun lane -> [| Array.fold_left f init lane |])
+            t)
+        t axes
+    in
+    if keepdims then kept
+    else
+      let shape =
+        List.filteri
+          (fun d _ -> not (List.mem d axes))
+          (Array.to_list kept.shape)
+      in
+      { kept with shape = Array.of_list shape }
+
+  let map f t = { shape = t.shape; data = Array.map f t.data }
 
   (* Elementwise *)
 
