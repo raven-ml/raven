@@ -46,6 +46,9 @@ let unary_cases =
     ("tanh", Nx.tanh, v3);
     ("abs", Nx.abs, v3);
     ("erf", Nx.erf, v3);
+    ( "sigmoid, across its two sides",
+      Nx.sigmoid,
+      fun () -> vec64 [| -1.3; 0.; 2.1 |] );
   ]
 
 let unary_tests =

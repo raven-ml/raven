@@ -3319,7 +3319,8 @@ val relu : ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val sigmoid : ('a, 'b) t -> ('a, 'b) t
-(** [sigmoid t] is [1 / (1 + exp(-t))] element-wise. Output in [(0, 1)].
+(** [sigmoid t] is [1 / (1 + exp(-t))] element-wise, in [[0, 1]]: an element is
+    [0] or [1] only where its exact value rounds there.
 
     {@ocaml[
       # sigmoid (scalar float32 0.) |> item []

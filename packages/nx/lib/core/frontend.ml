@@ -550,9 +550,20 @@ module Make (B : Backend_intf.S) = struct
   let sign x = unaryop B.sign x
   let relu x = maximum_s x (Nx_dtype.zero (dtype x))
 
+  (* [exp] only ever sees [-|x|], so it cannot overflow, and a negative [x]
+     gives [e / (1 + e)], which keeps the subnormal tail where [1 / (1 + e)]
+     would need [e] beyond the largest float. [x] is negated by selection, not
+     by [abs], so the gradient at zero is that of one side. *)
   let sigmoid x =
     at_float32
-      { f = (fun x -> recip (add_s (exp (neg x)) (Nx_dtype.one (dtype x)))) }
+      {
+        f =
+          (fun x ->
+            let negative = cmplt x (scalar_like x (Nx_dtype.zero (dtype x))) in
+            let e = exp (B.where negative x (neg x)) in
+            let r = recip (add_s e (Nx_dtype.one (dtype x))) in
+            B.where negative (mul e r) r);
+      }
       x
 
   let rsqrt x = at_float32 { f = (fun x -> recip (sqrt x)) } x

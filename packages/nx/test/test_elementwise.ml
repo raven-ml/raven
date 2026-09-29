@@ -71,7 +71,10 @@ let unary =
     {
       name = "sigmoid";
       nx = Nx.sigmoid;
-      ocaml = (fun x -> 1. /. (1. +. Float.exp (-.x)));
+      ocaml =
+        (fun x ->
+          if x < 0. then Float.exp x /. (1. +. Float.exp x)
+          else 1. /. (1. +. Float.exp (-.x)));
       exact = false;
     };
   ]
@@ -104,7 +107,16 @@ let unary_ops =
              (u.name ^ " at float32 agrees with OCaml's, rounded")
              (floats Nx.float32) (agrees ~f32:true u);
          ])
-       unary)
+       unary
+    @ [
+        test "sigmoid of a large negative is the subnormal it rounds to"
+          (fun () ->
+            let sigmoid = List.find (fun u -> u.name = "sigmoid") unary in
+            agrees ~f32:true sigmoid
+              (Nx.create Nx.float32 [| 3 |] [| -88.8; -100.; -103. |]);
+            agrees ~f32:false sigmoid
+              (Nx.create Nx.float64 [| 3 |] [| -709.8; -720.; -744. |]));
+      ])
 
 let classifiers =
   group "classifiers"

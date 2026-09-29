@@ -2746,6 +2746,9 @@ thread.
 
 ### Nx
 
+- `Nx.sigmoid` of a large negative number is the subnormal its exact value
+  rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
+  about -88.7 at float32 and -709.8 at float64, and returned 0 there.
 - `Nx_buffer.genarray_change_layout` keeps the dtype of a genarray of an
   extended dtype. It dropped it, so a bfloat16 genarray came back as float16
   and an int4 one as uint8.
