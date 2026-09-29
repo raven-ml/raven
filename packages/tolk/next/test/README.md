@@ -5,7 +5,11 @@
 - `<module path>/` holds the suite of `lib/<module path>.ml`, one executable
   named after the module: `dtype/test_dtype.ml`, `uop/op/test_op.ml`. A suite
   tests its module through its interface, and its goldens sit beside it.
-- `golden/` is the `Golden` library, which every suite uses to read goldens.
+- `support/` is the `tolk_next_test` library that every suite links: its
+  `Golden` module turns goldens into tests. Generators, witnesses and law
+  combinators over tolk.next types join it as modules of their own, so that a
+  law test is one line too. Its `.golden` files are fixtures of its own suite, not tinygrad
+  output.
 - `gen/` generates the goldens from tinygrad.
 - `REGRESSIONS.md` maps each old tolk and tinygrad test to the test that
   replaces it. `../DIVERGENCES.md` is the divergence ledger.
@@ -16,7 +20,7 @@ A suite's stanza:
 (test
  (name test_dtype)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_golden)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (glob_files *.golden))
  (action
@@ -52,29 +56,29 @@ reports as a failure.
 
 A golden is output recorded from tinygrad, in a file `<name>.golden`. Its
 first line is `# tinygrad <commit>`, the commit it was recorded from, and the
-rest is its body. There are two kinds:
+rest is its body. A golden check is one line:
 
-- **Text**: a listing of UOps, a rendered source, any text. `Golden.text`
-  reads it, and `equal text` compares it, printing a diff on failure:
+- **Text**, such as a listing of UOps or a rendered source: `Golden.text` is
+  the test, named after the golden, that a text equals its body. Its failure
+  prints the diff.
 
   ```ocaml
-  test "the linearized kernel matches tinygrad" (fun () ->
-      equal text (Golden.text "elementwise_add.golden") (listing kernel))
+  Golden.text "elementwise_add.golden" (fun () -> listing kernel)
   ```
 
 - **Table**: cells separated by tabs, the column names first, then one line
-  per row. Each cell is the text tinygrad prints for its value
-  (`dtypes.half`, `True`, `inf`). `Golden.table` reads the rows, and
-  `Windtrap.cases` makes each row a test named by its key columns, so a
-  failure names the row and one bad row does not hide the others:
+  per row. A cell is the text tinygrad prints for its value (`dtypes.half`,
+  `True`, `inf`). `Golden.cases` makes one test per row, named by its key
+  cells (the first column by default), and gives the check the row's `cell`
+  function. A failure names the row, and one bad row hides no other.
 
   ```ocaml
-  cases "least_upper_dtype" (Golden.table "least_upper.golden")
-    ~name:(Golden.key [ "a"; "b" ])
-    (fun row ->
-      let dtype column = dtype_of_string (Golden.cell row column) in
-      equal dtype (dtype "least_upper") (Dtype.least_upper (dtype "a") (dtype "b")))
+  Golden.cases "least_upper.golden" ~key:[ "a"; "b" ] (fun cell ->
+      equal dtype (dtype (cell "least_upper"))
+        (Dtype.least_upper (dtype (cell "a")) (dtype (cell "b"))))
   ```
+
+  `Golden.rows` gives the rows themselves, for a claim about the whole table.
 
 A golden is tinygrad's output and is never edited by hand. When a ledger entry
 changes an output, the test that compares it states the difference in code and

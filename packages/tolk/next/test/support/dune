@@ -1,12 +1,15 @@
 (library
- (name tolk_next_golden)
+ (name tolk_next_test)
  (modules golden)
- (wrapped false))
+ (wrapped false)
+ (libraries windtrap))
 
 (test
  (name test_golden)
  (modules test_golden)
  (package tolk)
- (libraries windtrap tolk_next_golden)
+ (libraries windtrap tolk_next_test)
+ (deps
+  (glob_files *.golden))
  (action
   (run %{test} --exclude-tag slow)))
