@@ -1,0 +1,32 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+input	device	renderer	arch	interface	indices	to_string	names
+							
+AMD	AMD					AMD	
+amd	AMD					AMD	
+AMD:LLVM	AMD	LLVM				AMD:LLVM	
+:LLVM		LLVM				:LLVM	
+AMD::gfx1100	AMD		gfx1100			AMD::gfx1100	
+AMD:LLVM:gfx1100	AMD	LLVM	gfx1100			AMD:LLVM:gfx1100	
+::gfx1100			gfx1100			::gfx1100	
+amd:llvm:GFX1100	AMD	LLVM	GFX1100			AMD:LLVM:GFX1100	
+USB+				USB		USB+	
+USB+AMD	AMD			USB		USB+AMD	
+usb+amd	AMD			usb		usb+AMD	
+PCI:0+AMD	AMD			PCI	0	PCI:0+AMD	
+:0+AMD	AMD				0	:0+AMD	
+PCI:0,1+AMD	AMD			PCI	0,1	PCI:0,1+AMD	
+remote:host:2+nv:cuda:sm_89	NV	CUDA	sm_89	remote:host	2	remote:host:2+NV:CUDA:sm_89	
+cpu::	CPU					CPU	
++nv:cuda:	NV	CUDA				NV:CUDA	
+PCI:+				PCI		PCI+	
+:0,2+nv	NV				0,2	:0,2+NV	
+::Apple7			Apple7			::Apple7	
+AMD:	AMD					AMD	
+AMD::	AMD					AMD	
+a:b:+X	X			a:b		a:b+X	
+PCI+NV+CUDA	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	PCI+NV+CUDA
+a+b+	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	a+b+
+++	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	++
+CPU:CLANG:arm64:extra	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	CPU:CLANG:arm64:extra
+:::	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	:::
+PCI:0+AMD:LLVM:gfx1100:x	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	RuntimeError	AMD:LLVM:gfx1100:x

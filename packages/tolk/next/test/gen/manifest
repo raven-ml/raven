@@ -3,4 +3,14 @@ dtype/finfo.golden
 dtype/least_upper.golden
 dtype/lossless_cast.golden
 dtype/properties.golden
+helpers/colors.golden
+helpers/device_targets.golden
+helpers/division.golden
+helpers/durations.golden
+helpers/env.golden
+helpers/selection.golden
+helpers/settings.golden
+helpers/sizes.golden
+helpers/targets.golden
+helpers/text.golden
 uop/op/ops.golden
