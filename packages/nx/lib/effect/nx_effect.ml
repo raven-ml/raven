@@ -743,9 +743,9 @@ let create_runtime d s n =
   with Nx_device.Out_of_memory (_, bytes) ->
     raise (Out_of_memory (d, bytes))
 
-(* The elements of view [v] of [b]. Int4 storage is read whole: its elements may
-   not start on a byte. *)
-let read_view b v =
+(* The elements of view [v] of [b], of [dtype]. Int4 storage is read whole: its
+   elements may not start on a byte. A strided view is gathered by nx.cpu. *)
+let read_view dtype b v =
   let s = Nx_device.Buffer.dtype b in
   let n = View.numel v in
   if n = 0 then Nx_device.Buffer.create Nx_device.host s 0
@@ -762,10 +762,13 @@ let read_view b v =
            ~offset:(lo * Nx_dtype.Scalar.bitsize s / 8)
            s (hi - lo))
       ~dst:span;
-    Elements.contiguous span
-      (View.create
-         ~offset:(View.offset v - lo)
-         ~strides:(View.strides v) (View.shape v))
+    let view =
+      View.create
+        ~offset:(View.offset v - lo)
+        ~strides:(View.strides v) (View.shape v)
+    in
+    if View.is_c_contiguous view then Elements.contiguous span view
+    else Nx_cpu.to_host (Nx_cpu.copy { Nx_array.dtype; view; buffer = span })
 
 let runtime_memory =
   let read : type a b. (a, b) resident -> Nx_device.Buffer.t =
@@ -779,7 +782,7 @@ let runtime_memory =
         let shape = global r.r_placement (View.shape r.r_view) in
         assemble r
           (Array.map (fun n -> (0, n)) shape)
-          (fun d v -> read_view (buffer_on d) v)
+          (fun d v -> read_view r.r_dtype (buffer_on d) v)
     | _ -> assert false (* nx reads held and consumed values itself *)
   in
   let place : type a b. placement -> (a, b) t -> (a, b) t =

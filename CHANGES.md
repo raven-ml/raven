@@ -2832,6 +2832,9 @@ thread.
 
 ### Nx
 
+- A read of a strided view of a value on a runtime device, such as a
+  transposed weight on Metal, gathers its elements with `Nx_cpu.copy`, about
+  five times faster than element by element.
 - `Nx.rfft` and the other transforms of no points are zero under every norm.
   Under `Forward and `Ortho they scaled the empty sum by 1/0 and gave NaN. The
   docs of `Nx.fft`, `Nx.rfft` and `Nx.irfft` now state what a transform of no
