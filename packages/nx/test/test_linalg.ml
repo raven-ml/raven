@@ -2074,9 +2074,8 @@ let structures =
             (rel ~expected:a (Nx.mul u (Nx.unsqueeze ~axes:[ -2 ] s) *@ vh));
           small ~msg:"Uᵀ a V off its diagonal" 1e-12
             (fro (Nx.sub d (Nx.mul d (identity_like d))) /. fro a));
-      test
-        "svd gives +0 for the zero singular value of [[1, 1], [0, -0]] (nx.mli \
-         is silent on its sign)" (fun () ->
+      test "svd gives +0 for the zero singular value of [[1, 1], [0, -0]]"
+        (fun () ->
           List.iter
             (fun s ->
               let s = Nx.to_array s in

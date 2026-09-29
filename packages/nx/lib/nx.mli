@@ -2760,16 +2760,17 @@ val svd :
   ('a, 'b) t ->
   ('a, 'b) t * (float, float64_elt) t * ('a, 'b) t
 (** [svd ?full_matrices a] is [(U, S, Vh)] where [a = U diag(S) Vh]. [S]
-    contains the singular values in descending order. [full_matrices] defaults
-    to [false] (economy decomposition).
+    contains the singular values in descending order, each non-negative: a zero
+    one is [+0], whatever the signs of [a]'s zeros. [full_matrices] defaults to
+    [false] (economy decomposition).
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
     See also {!svdvals}, {!qr}. *)
 
 val svdvals : ('a, 'b) t -> (float, float64_elt) t
-(** [svdvals a] is the singular values of [a] in descending order. More
-    efficient than {!svd} when only the values are needed.
+(** [svdvals a] is the singular values of [a] in descending order, as {!svd}
+    gives them. More efficient than {!svd} when only the values are needed.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
