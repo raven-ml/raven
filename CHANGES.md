@@ -2757,6 +2757,9 @@ thread.
 
 ### Nx
 
+- `Nx.qr` without `~mode` returns the reduced factorization, as documented.
+  It returned the complete one: an `m × m` `Q` and an `m × n` `R` for a tall
+  `m × n` matrix.
 - `Nx.eigvalsh` converges on graded matrices, such as a tridiagonal whose
   diagonal runs from `1e-8` to `1e8`, which raised `Linalg_error` from
   order 100 on while `Nx.eigh` succeeded. Its values-only iteration now picks

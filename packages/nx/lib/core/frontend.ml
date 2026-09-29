@@ -4262,7 +4262,7 @@ module Make (B : Backend_intf.S) = struct
   let qr ?mode a =
     check_float_or_complex ~op:"qr" a;
     let reduced =
-      match mode with Some `Reduced -> true | None | Some `Complete -> false
+      match mode with None | Some `Reduced -> true | Some `Complete -> false
     in
     B.qr ~reduced a
 
