@@ -31,7 +31,7 @@ session, same exe-path rule):
 
 - `packages/nx/lib/core/frontend.ml` — op composition, views, broadcasting,
   contiguity decisions.
-- `packages/nx/lib/backend_c/**` — the C backend: OCaml dispatch and the C
+- `packages/nx/lib/cpu/**` — the C backend: OCaml dispatch and the C
   kernels. Most elementwise / reduction / matmul wins are here.
 - `packages/nx/lib/core/**` **except** `backend.mli`.
 

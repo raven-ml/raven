@@ -1,6 +1,6 @@
 # Nx C backend
 
-This directory contains `nx.c`, nx's kernels over host memory: the `Nx_c`
+This directory contains `nx.cpu`, nx's kernels over host memory: the `Nx_cpu`
 module, which `Nx.Backend.host` runs. It is self-contained C11 on every
 supported platform. On macOS, eligible floating-point matrix multiplications are routed
 automatically to the system Accelerate framework; all other operations use the
@@ -74,8 +74,8 @@ The backend is tested through Nx's public API, in `packages/nx/test`: each
 suite draws inputs on both sides of every threshold where a kernel changes
 method (matmul routes, the linalg crossovers, the sort's radix path, the
 engine's chunking and fork handling), at every dtype, with the large sizes
-tagged `slow`. To check that the suites still reach every path, build `nx_c` with
-`-fprofile-instr-generate -fcoverage-mapping` (and `-fprofile-instr-generate`
+tagged `slow`. To check that the suites still reach every path, build `nx_cpu`
+with `-fprofile-instr-generate -fcoverage-mapping` (and `-fprofile-instr-generate`
 in `c_library_flags`), run the suites and read `llvm-cov report` over
 `nx_c_*.c`.
 

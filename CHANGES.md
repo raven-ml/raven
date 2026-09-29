@@ -2805,6 +2805,8 @@ thread.
 
 ### Nx
 
+- **Breaking:** the `nx.c` library is `nx.cpu`, and its module `Nx_c` is
+  `Nx_cpu`.
 - **Breaking:** the `nx.core` library is `nx.array`, whose `Nx_array.t` is an
   array: typed elements of a runtime buffer through a strided view. `Nx_c.t`
   is that record, and loses its `context` field and accessors.

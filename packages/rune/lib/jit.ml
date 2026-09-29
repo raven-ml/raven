@@ -3369,13 +3369,13 @@ let permuted_copy src ~base v =
   let words (type c d) (word : (c, d) ND.t) (shape, axes) =
     let n = HB.length src in
     let t =
-      Nx_c.from_host () word
+      Nx_cpu.from_host () word
         (HB.view src ~offset:0 (ND.Scalar.of_dtype word) n)
     in
-    let t = Nx_c.permute (Nx_c.reshape t shape) axes in
+    let t = Nx_cpu.permute (Nx_cpu.reshape t shape) axes in
     Some
       (HB.view
-         (Nx_c.to_host (Nx_c.contiguous t))
+         (Nx_cpu.to_host (Nx_cpu.contiguous t))
          ~offset:0 (HB.dtype src) n)
   in
   match base_layout shifted with

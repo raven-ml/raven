@@ -617,11 +617,10 @@ external caml_eigh :
    C funnel (nx_c_raise -> caml_failwith); shape/dtype preconditions cross as
    [Invalid_argument] and are left to propagate (the interface keeps those
    as-is). Lift the three recognized numeric reasons to [Linalg_error] so
-   callers can match on the failure kind — the established pattern from
-   backend_c's [reraise_linalg]. The matched suffixes are the exact static
-   status strings raised in nx_c_linalg.c / nx_c_eig.c (LA_ERR_NOT_PD,
-   LA_ERR_SINGULAR, LA_ERR_NO_CONVERGE / EIG_ERR_NO_CONVERGE); they must stay in
-   sync with them. *)
+   callers can match on the failure kind. The matched suffixes are the exact
+   static status strings raised in nx_c_linalg.c / nx_c_eig.c (LA_ERR_NOT_PD,
+   LA_ERR_SINGULAR, LA_ERR_NO_CONVERGE / EIG_ERR_NO_CONVERGE); they must stay
+   in sync with them. *)
 let reraise_linalg ~op f =
   try f ()
   with Failure msg as e ->

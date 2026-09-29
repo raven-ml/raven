@@ -227,8 +227,9 @@ val to_array : ('a, 'b) t -> 'a array
     names another.
 
     The host device holds values in two ways. A value at {!Placement.host}, the
-    host device with {!Backend.host}, is nx.c's own array: operations on it call
-    nx.c directly, which keeps the default path as cheap as the kernels allow.
+    host device with {!Backend.host}, is nx.cpu's own array: operations on it
+    call nx.cpu directly, which keeps the default path as cheap as the kernels
+    allow.
     A value at any other placement that includes the host device, with another
     backend or beside other devices, is a placed value like one on a GPU: its
     storage carries what compiled calls need to bind and consume it. Creating
@@ -348,7 +349,7 @@ module Backend : sig
   (** [equal b b'] is [true] iff [b] and [b'] are the same value. *)
 
   module Host : S
-  (** [Host] is nx's kernels. At {!Placement.host} they run in place on nx.c's
+  (** [Host] is nx's kernels. At {!Placement.host} they run in place on nx.cpu's
       arrays; on any other placement, of the host device or another, an
       operation reads its operands' elements to the host through their
       devices, computes there and places its result on the result's devices.
@@ -381,7 +382,7 @@ module Placement : sig
 
   val host : t
   (** [host] is [device Device.host]: the host device with {!Backend.host},
-      whose values are nx.c's arrays (see {{!placement}above}). *)
+      whose values are nx.cpu's arrays (see {{!placement}above}). *)
 
   val device : ?backend:Backend.t -> Device.t -> t
   (** [device ~backend d] is placement on [d] alone, computed by [backend]

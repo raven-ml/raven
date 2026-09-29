@@ -2,5 +2,5 @@
  (name nx_top)
  (public_name nx.top)
  (modules nx_top)
- (libraries nx nx.c compiler-libs.toplevel)
+ (libraries nx nx.cpu compiler-libs.toplevel)
  (modes byte))

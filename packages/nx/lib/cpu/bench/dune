@@ -1,10 +1,10 @@
-; The benchmark calls the backend's private owned-GEMM hook without using Nx_c
+; The benchmark calls the backend's private owned-GEMM hook without using Nx_cpu
 ; from OCaml. Keep the backend archive live for single-pass ELF linkers.
 
 (executable
  (name bench_owned_gemm)
  (modules bench_owned_gemm)
- (libraries nx_c nx_dtype nx.device thumper)
+ (libraries nx_cpu nx_dtype nx.device thumper)
  (link_flags -linkall)
  (foreign_stubs
   (language c)

@@ -25,7 +25,7 @@ type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
 type bool_elt = |
 
-(* Dtypes. The constructor order is pinned by the nx.c dtype table in nx_c.h,
+(* Dtypes. The constructor order is pinned by the nx.cpu dtype table in nx_c.h,
    whose tags are the constructor indices; keep the two in sync. *)
 
 type ('a, 'b) t =

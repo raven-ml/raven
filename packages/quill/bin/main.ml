@@ -5,7 +5,7 @@
 
 let raven_packages =
   [
-    "nx.c";
+    "nx.cpu";
     "nx.io";
     "rune";
     "vega";

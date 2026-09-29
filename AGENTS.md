@@ -19,7 +19,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 
   the backend interface is defined at `packages/nx/lib/core/backend.mli`. NEVER add a backend operation without being asked to do so.
   frontend apis are defined in a single file `packages/nx/lib/frontend.ml` using the backend operations.
-  nx comes with a default c backend in `packages/nx/lib/backend_c/`.
+  nx comes with a default c backend in `packages/nx/lib/cpu/`.
 
 - **rune**: tensor computation with automatic differentiation and jit compilation - equivalent to jax.
 

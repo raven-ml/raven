@@ -14,7 +14,7 @@ let libraries =
     ( "nx",
       [
         ("nx", "Nx");
-        ("nx.c", "Nx_c");
+        ("nx.cpu", "Nx_cpu");
         ("nx.array", "Nx_array");
         ("nx.device", "Nx_device");
         ("nx.dtype", "Nx_dtype");

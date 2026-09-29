@@ -35,9 +35,9 @@ let () =
 (** Nx's operations.
 
     This module type lists every operation nx computes, once. It is implemented
-    at two levels: by kernel libraries over their own handles (nx.c's [Nx_c]),
-    and by backends over nx's values, where the type of values is nx's tensor
-    and the context is a placement ([Nx.Backend.S]).
+    at two levels: by kernel libraries over their own handles (nx.cpu's
+    [Nx_cpu]), and by backends over nx's values, where the type of values is
+    nx's tensor and the context is a placement ([Nx.Backend.S]).
 
     {1 Design Philosophy}
 
@@ -83,7 +83,8 @@ module type S = sig
 
   type context
   (** The context in which creation operations make values. For nx's values it
-      is a placement; a kernel library chooses its own, such as nx.c's [unit]. *)
+      is a placement; a kernel library chooses its own, such as nx.cpu's
+      [unit]. *)
 
   (** {1 Reading} *)
 
