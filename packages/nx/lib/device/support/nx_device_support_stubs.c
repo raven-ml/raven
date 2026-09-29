@@ -4,6 +4,9 @@
   ---------------------------------------------------------------------------*/
 
 #define _GNU_SOURCE
+#if defined(_WIN32)
+#define _CRT_RAND_S
+#endif
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -13,12 +16,15 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -30,6 +36,7 @@
 
 #ifdef __linux__
 #include <linux/vfio.h>
+#include <sys/random.h>
 #include <sys/eventfd.h>
 #include <sys/ioctl.h>
 #endif
@@ -144,6 +151,12 @@ value caml_nx_mmio_fill(value a, value n, value c) {
   return Val_unit;
 }
 
+/* The bytes at an address as a bigarray that owns nothing. */
+value caml_nx_mmio_bigarray(value a, value n) {
+  return caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL,
+                            1, (void *)Nativeint_val(a), (intnat)Long_val(n));
+}
+
 /* On arm64 a fence orders memory only within the inner shareable domain; the
    stores to a BAR, write-combined or not, need the full-system barrier. */
 value caml_nx_mmio_barrier(value unit) {
@@ -197,13 +210,14 @@ value caml_nx_sysmem_reserve(value base, value n) {
 }
 
 /* Maps [n] bytes of shared, populated and locked memory at [va], inside a
-   reservation, from a huge page if [huge]. Populating takes time: the runtime
-   is released. */
+   reservation, or where the kernel chooses if [va] is 0, from a huge page if
+   [huge], and is their address. Populating takes time: the runtime is
+   released. */
 value caml_nx_sysmem_alloc(value va, value n, value huge) {
 #ifdef __linux__
-  int flags = MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE | MAP_LOCKED |
-              MAP_FIXED | (Bool_val(huge) ? MAP_HUGETLB : 0);
   void *at = (void *)Nativeint_val(va);
+  int flags = MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE | MAP_LOCKED |
+              (at ? MAP_FIXED : 0) | (Bool_val(huge) ? MAP_HUGETLB : 0);
   size_t len = Long_val(n);
   caml_release_runtime_system();
   void *p = mmap(at, len, PROT_READ | PROT_WRITE, flags, -1, 0);
@@ -211,11 +225,25 @@ value caml_nx_sysmem_alloc(value va, value n, value huge) {
   caml_acquire_runtime_system();
   errno = e;
   if (p == MAP_FAILED) fail_errno("allocating locked system memory");
-  return Val_unit;
+  return caml_copy_nativeint((intnat)p);
 #else
   (void)va;
   (void)n;
   (void)huge;
+  fail_linux("Locked system memory");
+  return Val_unit;
+#endif
+}
+
+/* Unmaps [n] bytes at [va] that no reservation holds. */
+value caml_nx_sysmem_unmap(value va, value n) {
+#ifdef __linux__
+  if (munmap((void *)Nativeint_val(va), Long_val(n)) != 0)
+    fail_errno("releasing locked system memory");
+  return Val_unit;
+#else
+  (void)va;
+  (void)n;
   fail_linux("Locked system memory");
   return Val_unit;
 #endif
@@ -570,6 +598,55 @@ value caml_nx_sha256(value s) {
     for (int b = 0; b < 4; b++)
       Bytes_val(r)[4 * j + b] = (uint8_t)(h[j] >> (24 - 8 * b));
   CAMLreturn(r);
+}
+
+/* Random bytes from the system's generator, for nonces. */
+value caml_nx_random(value n) {
+  CAMLparam1(n);
+  CAMLlocal1(r);
+  size_t len = Long_val(n);
+  r = caml_alloc_string(len);
+  unsigned char *p = Bytes_val(r);
+#if defined(_WIN32)
+  for (size_t i = 0; i < len; i++) {
+    unsigned int w;
+    if (rand_s(&w) != 0) caml_failwith("the system has no random bytes");
+    p[i] = (unsigned char)w;
+  }
+#elif defined(__APPLE__)
+  arc4random_buf(p, len);
+#else
+  for (size_t got = 0; got < len;) {
+    size_t k = len - got < 256 ? len - got : 256;
+    if (getentropy(p + got, k) != 0) fail_errno("reading random bytes");
+    got += k;
+  }
+#endif
+  CAMLreturn(r);
+}
+
+/* Memory of a host that a remote client uses: anonymous pages, [0] if the
+   system has none. */
+value caml_nx_host_alloc(value n) {
+#ifdef _WIN32
+  void *p = VirtualAlloc(NULL, Long_val(n), MEM_COMMIT | MEM_RESERVE,
+                         PAGE_READWRITE);
+  return caml_copy_nativeint((intnat)p);
+#else
+  void *p = mmap(NULL, Long_val(n), PROT_READ | PROT_WRITE,
+                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return caml_copy_nativeint(p == MAP_FAILED ? 0 : (intnat)p);
+#endif
+}
+
+value caml_nx_host_free(value a, value n) {
+#ifdef _WIN32
+  (void)n;
+  VirtualFree((void *)Nativeint_val(a), 0, MEM_RELEASE);
+#else
+  munmap((void *)Nativeint_val(a), Long_val(n));
+#endif
+  return Val_unit;
 }
 
 /* Libraries the system may have, loaded when first needed. */

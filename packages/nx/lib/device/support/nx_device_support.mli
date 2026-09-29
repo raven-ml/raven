@@ -12,6 +12,11 @@
     {!Pci_memory}), and loads the firmware it was validated with ({!Firmware}).
     Programs and firmware are laid out with [nx.device.elf].
 
+    The GPU may be another machine's: that machine runs a server
+    ({!Remote_server}) which the runtime reaches through a connection
+    ({!Remote}), and the GPU's function and system memory are then that
+    machine's.
+
     {b Admission.} A module belongs here iff the runtimes of several vendors
     share it and it knows nothing about any of them. A vendor's formats and
     rules, such as its page-table entries, come in as values; a module that
@@ -23,6 +28,8 @@
     privileges: a missing privilege or kernel setting raises [Failure] naming
     what grants it. *)
 
+module Remote = Remote
+module Remote_server = Remote_server
 module Pci = Pci
 module Mmio = Mmio
 module Sysmem = Sysmem

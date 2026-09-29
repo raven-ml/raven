@@ -2805,6 +2805,15 @@ thread.
 
 ### Nx
 
+- `nx.device.support` reaches another machine's PCI functions and memory
+  through a server there. `Remote` is the client of its protocol: it proves a
+  shared key, and both ends must prove it; `Remote_server` serves one client at
+  a time and, when the client leaves, turns bus mastering off on the functions
+  it took before freeing its memory. `Pci.take ~remote` takes a function of
+  that machine, whose BARs are `Mmio` ranges reached through the connection,
+  and `Pci.alloc_sysmem`, `free_sysmem`, `reserve`, `pin` and `unpin` give the
+  system memory of a function's machine, which `Pci_memory` now uses.
+  `Sysmem.alloc` without `~va` maps locked memory where the system chooses.
 - **Breaking (effect handlers):** the `E_psum` effect and `Nx_effect.op_psum`
   are removed. It had no caller, no batching rule and no backend operation,
   and it raised outside a map; `Nx.sum ~axes:[0] (Rune.lanes a x)` is the same

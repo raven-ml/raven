@@ -16,12 +16,21 @@ external vfio_open : string -> string -> int * int * int * int
 
 external vfio_wait : int -> int -> bool = "caml_nx_vfio_wait"
 
-type t = {
+type local = {
   bus : string;
   config : int;
   interrupts : int option; (* the eventfd VFIO signals *)
   files : int list; (* every descriptor, the lock last *)
 }
+
+type t =
+  | Local of local
+  | Remote of {
+      remote : Remote.t;
+      id : int;
+      bus : string;
+      bars : (int, Mmio.t) Hashtbl.t; (* mapped whole, by BAR *)
+    }
 
 let root = "/sys/bus/pci/devices"
 let path bus file = Printf.sprintf "%s/%s/%s" root bus file
@@ -53,7 +62,7 @@ let readlink link =
 let hex s =
   int_of_string (if String.starts_with ~prefix:"0x" s then s else "0x" ^ s)
 
-let scan ~vendor ?class_ ids =
+let scan_local ~vendor ?class_ ids =
   if not (Sys.file_exists root) then []
   else
     Sys.readdir root |> Array.to_list
@@ -75,7 +84,12 @@ let driver bus =
   if Sys.file_exists link then Some (Filename.basename (readlink link))
   else None
 
-let take ~lock bus =
+let scan ?remote ~vendor ?class_ ids =
+  match remote with
+  | None -> scan_local ~vendor ?class_ ids
+  | Some r -> Remote.scan r ~vendor ?class_ ids
+
+let take_local ~lock bus =
   let file =
     Filename.concat
       (Filename.get_temp_dir_name ())
@@ -120,29 +134,43 @@ let take ~lock bus =
     in
     let config = file_open (path bus "config") true in
     files := config :: !files;
-    { bus; config; interrupts; files = !files }
+    Local { bus; config; interrupts; files = !files }
   with
   | p -> p
   | exception e ->
       List.iter file_close !files;
       raise e
 
-let bus p = p.bus
+let take ?remote ~lock bus =
+  match remote with
+  | None -> take_local ~lock bus
+  | Some remote ->
+      let id = Remote.take remote ~lock bus in
+      Remote { remote; id; bus; bars = Hashtbl.create 4 }
 
-let read_config p off n =
-  let s = pread p.config off n in
-  let v = ref 0 in
-  for i = n - 1 downto 0 do
-    v := (!v lsl 8) lor Char.code s.[i]
-  done;
-  !v
+let bus = function Local p -> p.bus | Remote p -> p.bus
+let remote = function Local _ -> None | Remote p -> Some p.remote
 
-let write_config p off n v =
-  pwrite p.config off
-    (String.init n (fun i -> Char.chr ((v lsr (8 * i)) land 0xff)));
-  ignore (read_config p off n)
+let read_config t off n =
+  match t with
+  | Remote p -> Remote.read_config p.remote p.id off n
+  | Local p ->
+      let s = pread p.config off n in
+      let v = ref 0 in
+      for i = n - 1 downto 0 do
+        v := (!v lsl 8) lor Char.code s.[i]
+      done;
+      !v
 
-let bar p i =
+let write_config t off n v =
+  match t with
+  | Remote p -> Remote.write_config p.remote p.id off n v
+  | Local p ->
+      pwrite p.config off
+        (String.init n (fun i -> Char.chr ((v lsr (8 * i)) land 0xff)));
+      ignore (read_config t off n)
+
+let bar_local p i =
   match
     List.nth_opt (String.split_on_char '\n' (read (path p.bus "resource"))) i
   with
@@ -154,16 +182,33 @@ let bar p i =
       | _ -> failwith (Printf.sprintf "%s: no BAR %d" p.bus i))
   | None -> failwith (Printf.sprintf "%s: no BAR %d" p.bus i)
 
-let map_bar ?(offset = 0) ?length p i =
-  let length =
-    match length with Some n -> n | None -> snd (bar p i) - offset
-  in
-  let fd = file_open (path p.bus (Printf.sprintf "resource%d" i)) true in
-  Fun.protect
-    ~finally:(fun () -> file_close fd)
-    (fun () -> Mmio.v (file_map fd offset length) length)
+let bar t i =
+  match t with
+  | Local p -> bar_local p i
+  | Remote p -> Remote.bar p.remote p.id i
 
-let resize_bar p i =
+let map_bar ?(offset = 0) ?length t i =
+  let length =
+    match length with Some n -> n | None -> snd (bar t i) - offset
+  in
+  match t with
+  | Local p ->
+      let fd = file_open (path p.bus (Printf.sprintf "resource%d" i)) true in
+      Fun.protect
+        ~finally:(fun () -> file_close fd)
+        (fun () -> Mmio.v (file_map fd offset length) length)
+  | Remote p ->
+      let whole =
+        match Hashtbl.find_opt p.bars i with
+        | Some m -> m
+        | None ->
+            let m = Remote.map_bar p.remote p.id i in
+            Hashtbl.replace p.bars i m;
+            m
+      in
+      Mmio.sub whole offset length
+
+let resize_bar_local p i =
   let file = path p.bus (Printf.sprintf "resource%d_resize" i) in
   try
     let sizes = hex (read file) in
@@ -176,23 +221,61 @@ let resize_bar p i =
           settings"
          i p.bus e)
 
+let resize_bar t i =
+  match t with
+  | Local p -> resize_bar_local p i
+  | Remote p -> Remote.resize_bar p.remote p.id i
+
 (* A function answers its configuration reads again once its vendor ID reads
    back as other than all ones. *)
-let reset p =
-  write (path p.bus "reset") "1";
-  let rec wait k =
-    if read_config p 0 2 = 0xffff then
-      if k = 0 then
-        failwith (Printf.sprintf "%s does not answer after its reset" p.bus)
-      else begin
-        Unix.sleepf 0.01;
-        wait (k - 1)
-      end
-  in
-  wait 100
+let reset t =
+  match t with
+  | Remote p -> Remote.reset p.remote p.id
+  | Local p ->
+      write (path p.bus "reset") "1";
+      let rec wait k =
+        if read_config t 0 2 = 0xffff then
+          if k = 0 then
+            failwith (Printf.sprintf "%s does not answer after its reset" p.bus)
+          else begin
+            Unix.sleepf 0.01;
+            wait (k - 1)
+          end
+      in
+      wait 100
 
-let wait_interrupt p ms =
-  match p.interrupts with Some fd -> vfio_wait fd ms | None -> false
+let wait_interrupt t ms =
+  match t with
+  | Local { interrupts = Some fd; _ } -> vfio_wait fd ms
+  | Local { interrupts = None; _ } | Remote _ -> false
 
-let unmap_bar m = file_unmap (Mmio.address m) (Mmio.length m)
-let release p = List.iter file_close p.files
+(* A remote BAR stays mapped on its machine until the function is released. *)
+let unmap_bar m =
+  if not (Mmio.is_remote m) then file_unmap (Mmio.address m) (Mmio.length m)
+
+let release = function
+  | Local p -> List.iter file_close p.files
+  | Remote p -> Remote.release p.remote p.id
+
+(* System memory of the function's machine *)
+
+let page t = match remote t with None -> Sysmem.page | Some r -> Remote.page r
+
+let reserve t ~base n =
+  match remote t with
+  | None -> Sysmem.reserve ~base n
+  | Some r -> Remote.reserve r ~base n
+
+let alloc_sysmem t ?contiguous ?va n =
+  match remote t with
+  | None -> Sysmem.alloc ?contiguous ?va n
+  | Some r -> Remote.alloc_sysmem r ?contiguous ?va n
+
+let free_sysmem t m =
+  match remote t with None -> Sysmem.free m | Some r -> Remote.free_sysmem r m
+
+let pin t a n =
+  match remote t with None -> Sysmem.pin a n | Some r -> Remote.pin r a n
+
+let unpin t a n =
+  match remote t with None -> Sysmem.unpin a n | Some r -> Remote.unpin r a n

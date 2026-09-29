@@ -5,8 +5,9 @@
 
 external page_size : unit -> int = "caml_nx_support_page_size"
 external reserve_at : nativeint -> int -> unit = "caml_nx_sysmem_reserve"
-external map_at : nativeint -> int -> bool -> unit = "caml_nx_sysmem_alloc"
+external map_at : nativeint -> int -> bool -> nativeint = "caml_nx_sysmem_alloc"
 external release_at : nativeint -> int -> unit = "caml_nx_sysmem_release"
+external unmap_at : nativeint -> int -> unit = "caml_nx_sysmem_unmap"
 external lock_at : nativeint -> int -> unit = "caml_nx_sysmem_lock"
 external unlock_at : nativeint -> int -> unit = "caml_nx_sysmem_unlock"
 external pagemap : nativeint -> int -> string = "caml_nx_sysmem_pagemap"
@@ -77,26 +78,45 @@ let add_pins a n =
 
 let huge = 2 lsl 20
 
-let alloc ?(contiguous = false) ~va n =
-  if va mod page <> 0 then
-    invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on a page" va);
+(* Memory mapped where the system chose, which no reservation holds. *)
+let placed : (nativeint, unit) Hashtbl.t = Hashtbl.create 16
+
+(* Returns [n] bytes at [a] to their reservation, or to the system. *)
+let unmap a n =
+  if Mutex.protect lock (fun () -> Hashtbl.mem placed a) then begin
+    Mutex.protect lock (fun () -> Hashtbl.remove placed a);
+    unmap_at a n
+  end
+  else release_at a n
+
+let alloc ?(contiguous = false) ?va n =
+  Option.iter
+    (fun va ->
+      if va mod page <> 0 then
+        invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on a page" va))
+    va;
   if contiguous && n > huge then
     invalid_arg "Sysmem.alloc: contiguous memory is at most 2 MiB";
   let huge_page = contiguous && n > page in
-  if huge_page && va mod huge <> 0 then
-    invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on 2 MiB" va);
+  Option.iter
+    (fun va ->
+      if huge_page && va mod huge <> 0 then
+        invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on 2 MiB" va))
+    va;
   let n = if huge_page then huge else (n + page - 1) / page * page in
-  let a = Nativeint.of_int va in
-  (try map_at a n huge_page
-   with Failure why when huge_page ->
-     failwith
-       (why
-      ^ "; contiguous memory needs a free huge page: sudo sysctl -w \
-         vm.nr_hugepages=16"));
+  let a =
+    try map_at (Nativeint.of_int (Option.value ~default:0 va)) n huge_page
+    with Failure why when huge_page ->
+      failwith
+        (why
+       ^ "; contiguous memory needs a free huge page: sudo sysctl -w \
+          vm.nr_hugepages=16")
+  in
+  if va = None then Mutex.protect lock (fun () -> Hashtbl.replace placed a ());
   let m = Mmio.v a n in
   match physical a n with
   | exception e ->
-      release_at a n;
+      unmap a n;
       raise e
   | pages ->
       let first = List.hd pages in
@@ -104,7 +124,7 @@ let alloc ?(contiguous = false) ~va n =
         contiguous
         && List.filteri (fun i p -> p <> first + (i * page)) pages <> []
       then begin
-        release_at a n;
+        unmap a n;
         failwith "the system gave contiguous memory in scattered pages"
       end;
       Mutex.protect lock (fun () -> add_pins a n);
@@ -119,7 +139,7 @@ let free m =
           | Some 1 | None -> Hashtbl.remove pins p
           | Some k -> Hashtbl.replace pins p (k - 1))
         (pages_of a n));
-  release_at a n
+  unmap a n
 
 let unpin_locked a n =
   List.iter

@@ -7,9 +7,12 @@
 
     Allocates, maps and frees the memory a GPU's work addresses, through the
     GPU's page tables ({!Page_table}): its own memory, which the process reaches
-    through the memory BAR when it asks to; system memory ({!Sysmem}), at the
-    same address for the process and the GPU; process memory the GPU borrows;
-    and another GPU's memory, through that GPU's memory BAR or a direct link.
+    through the memory BAR when it asks to; system memory of the GPU's machine
+    ({!Pci.alloc_sysmem}), at the same address for that machine and the GPU;
+    that machine's memory the GPU borrows; and another GPU's memory, through
+    that GPU's memory BAR or a direct link. The GPU may be another machine's
+    ({!Pci.remote}): its memory is then that machine's, and so are the
+    addresses.
 
     Calls on one GPU are serialized by its owner. *)
 
@@ -73,10 +76,10 @@ val free : t -> memory -> unit
     its addresses. *)
 
 val map_host : t -> nativeint -> int -> (memory, string) result
-(** [map_host m a n] maps the [n] bytes of process memory at [a] for the GPU, at
-    [a]: it {!Sysmem.pin}s them and maps their pages, snooped and uncached.
-    [Error why] if [a] does not start on a page, lies outside the GPU's virtual
-    address range, or cannot be pinned. *)
+(** [map_host m a n] maps the [n] bytes of memory at [a] of the GPU's machine
+    for the GPU, at [a]: it {!Pci.pin}s them and maps their pages, snooped and
+    uncached. [Error why] if [a] does not start on a page, lies outside the
+    GPU's virtual address range, or cannot be pinned. *)
 
 val map_peer : t -> t -> memory -> (memory, string) result
 (** [map_peer m m' mem] maps [mem], memory {!alloc} allocated on the GPU of

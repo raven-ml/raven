@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+module Remote = Remote
+module Remote_server = Remote_server
 module Pci = Pci
 module Mmio = Mmio
 module Sysmem = Sysmem

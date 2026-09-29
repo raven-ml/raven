@@ -9,6 +9,13 @@
  (c_library_flags
   (:include dl_flags.sexp)))
 
+(rule
+ (target host_arch.ml)
+ (action
+  (with-stdout-to
+   host_arch.ml
+   (echo "let architecture = \"%{ocaml-config:architecture}\"\n"))))
+
 ; dlopen is a library of its own on Linux; elsewhere it is part of the C
 ; library (macOS) or of kernel32 (Windows).
 

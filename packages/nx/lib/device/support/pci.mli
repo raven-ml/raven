@@ -15,31 +15,47 @@
     capabilities granted for it. The process takes nothing it lacks the rights
     for, and asks for none: a missing privilege raises [Failure] naming the file
     and the command that grants it. On other systems {!scan} finds nothing and
-    {!take} raises. *)
+    {!take} raises.
+
+    A function may also be another machine's, taken through a {!Remote}
+    connection to that machine's server, which does the same there. Its BARs and
+    the system memory of its machine are then that machine's addresses, reached
+    through the connection, and it has no interrupts. *)
 
 type t
 (** The type for PCI functions the process has taken. *)
 
-val scan : vendor:int -> ?class_:int -> (int * int list) list -> string list
+val scan :
+  ?remote:Remote.t ->
+  vendor:int ->
+  ?class_:int ->
+  (int * int list) list ->
+  string list
 (** [scan ~vendor ids] is the bus addresses, such as ["0000:03:00.0"] and in
     their order, of the functions of [vendor] whose device id, masked by [m], is
     in [l] for some [(m, l)] of [ids], and whose base class is [class_] if
-    given. It is [[]] where the system has no [/sys/bus/pci]. *)
+    given, on the machine of [remote] if given, on this one otherwise. It is
+    [[]] where the system has no [/sys/bus/pci]. *)
 
-val take : lock:string -> string -> t
-(** [take ~lock bus] takes the function at [bus]: it locks it for this process
-    through the file [LOCK_BUS.lock] of the temporary directory, which every
-    process driving such a GPU takes, removes the other functions of its device,
-    such as its audio function, and enables it. A function bound to [vfio-pci]
-    in VFIO's no-IOMMU mode stays bound, and delivers its interrupts to
-    {!wait_interrupt}; any other kernel driver is detached.
+val take : ?remote:Remote.t -> lock:string -> string -> t
+(** [take ~lock bus] takes the function at [bus], of the machine of [remote] if
+    given: it locks it for this process through the file [LOCK_BUS.lock] of the
+    temporary directory, which every process driving such a GPU takes, removes
+    the other functions of its device, such as its audio function, and enables
+    it. A function bound to [vfio-pci] in VFIO's no-IOMMU mode stays bound, and
+    delivers its interrupts to {!wait_interrupt}; any other kernel driver is
+    detached.
 
     Raises [Failure] if another process holds the function, if the process may
     not detach or enable it, or if a driver stays bound to it, each naming what
     to change. *)
 
 val bus : t -> string
-(** [bus p] is [p]'s bus address. *)
+(** [bus p] is [p]'s bus address on its machine. *)
+
+val remote : t -> Remote.t option
+(** [remote p] is the connection to [p]'s machine, if [p] is another machine's.
+*)
 
 val read_config : t -> int -> int -> int
 (** [read_config p off n] is the [n]-byte little-endian value at byte [off] of
@@ -61,7 +77,8 @@ val map_bar : ?offset:int -> ?length:int -> t -> int -> Mmio.t
     of the process. Child processes do not inherit the mapping. *)
 
 val unmap_bar : Mmio.t -> unit
-(** [unmap_bar m] unmaps [m], which {!map_bar} mapped. *)
+(** [unmap_bar m] unmaps [m], which {!map_bar} mapped. Another machine's BARs
+    stay mapped until their function is released. *)
 
 val resize_bar : t -> int -> unit
 (** [resize_bar p i] makes [p]'s BAR [i] as large as the function allows, so
@@ -80,8 +97,32 @@ val reset : t -> unit
 val wait_interrupt : t -> int -> bool
 (** [wait_interrupt p ms] waits at most [ms] milliseconds for an interrupt of
     [p], releasing the OCaml runtime, and is [true] iff one arrived. Without
-    VFIO it returns [false] at once. *)
+    VFIO, or on another machine, it returns [false] at once. *)
 
 val release : t -> unit
 (** [release p] gives [p] back: it closes the process's files for it and unlocks
-    it. Its BAR mappings stay. *)
+    it. Its BAR mappings stay, except on another machine, where they go with it.
+*)
+
+(** {1:sysmem System memory of the function's machine}
+
+    {!Sysmem}'s functions, on the machine of the function: a GPU's system memory
+    must be memory of the machine it is in. *)
+
+val page : t -> int
+(** [page p] is the page size of [p]'s machine. *)
+
+val reserve : t -> base:int -> int -> unit
+(** [reserve p ~base n] is {!Sysmem.reserve} on [p]'s machine. *)
+
+val alloc_sysmem : t -> ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
+(** [alloc_sysmem p ?contiguous ?va n] is {!Sysmem.alloc} on [p]'s machine. *)
+
+val free_sysmem : t -> Mmio.t -> unit
+(** [free_sysmem p m] is {!Sysmem.free} on [p]'s machine. *)
+
+val pin : t -> nativeint -> int -> int list
+(** [pin p a n] is {!Sysmem.pin} on [p]'s machine. *)
+
+val unpin : t -> nativeint -> int -> unit
+(** [unpin p a n] is {!Sysmem.unpin} on [p]'s machine. *)

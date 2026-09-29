@@ -36,24 +36,25 @@ let small_bar m = snd (Pci.bar m.pci m.bar) = 256 lsl 20
 (* System memory at the same address for the process and the GPU, one entry per
    page of the process. *)
 let sysmem m n =
-  let n = round_up n Sysmem.page in
+  let page = Pci.page m.pci in
+  let n = round_up n page in
   let space = Page_table.space m.tables in
-  match Page_table.Space.alloc ~align:Sysmem.page space n with
+  match Page_table.Space.alloc ~align:page space n with
   | None -> None
   | Some va -> (
-      match Sysmem.alloc ~va n with
+      match Pci.alloc_sysmem m.pci ~va n with
       | exception e ->
           Page_table.Space.free space va;
           raise e
       | view, pages -> (
-          let pages = List.map (fun p -> (p, Sysmem.page)) pages in
+          let pages = List.map (fun p -> (p, page)) pages in
           match
             Page_table.map ~snooped:true ~uncached:true m.tables ~va
               Page_table.Sys pages
           with
           | mapping -> Some { mapping; host = Some view; source = Allocated }
           | exception e ->
-              Sysmem.free view;
+              Pci.free_sysmem m.pci view;
               Page_table.Space.free space va;
               raise e))
 
@@ -78,31 +79,32 @@ let alloc ?(host = false) ?(uncached = false) ?(cpu_access = false)
 let free m mem =
   Page_table.free m.tables mem.mapping;
   match (mem.mapping.space, mem.host) with
-  | Page_table.Sys, Some view -> Sysmem.free view
+  | Page_table.Sys, Some view -> Pci.free_sysmem m.pci view
   | _, Some view -> Pci.unmap_bar view
   | _, None -> ()
 
 let map_host m a n =
-  let lo = Nativeint.to_int a and n = round_up n Sysmem.page in
+  let page = Pci.page m.pci in
+  let lo = Nativeint.to_int a and n = round_up n page in
   let base = Page_table.base m.tables in
-  if lo mod Sysmem.page <> 0 then
+  if lo mod page <> 0 then
     Error (Printf.sprintf "the host memory at 0x%x does not start on a page" lo)
   else if lo < base || lo + n > base + Page_table.span m.tables then
     Error
       (Printf.sprintf "the host memory at 0x%x is outside the GPU's addresses"
          lo)
   else
-    match Sysmem.pin a n with
+    match Pci.pin m.pci a n with
     | exception Failure why -> Error why
     | pages -> (
-        let pages = List.map (fun p -> (p, Sysmem.page)) pages in
+        let pages = List.map (fun p -> (p, page)) pages in
         match
           Page_table.map ~snooped:true ~uncached:true m.tables ~va:lo
             Page_table.Sys pages
         with
         | mapping -> Ok { mapping; host = None; source = Pinned }
         | exception e ->
-            Sysmem.unpin a n;
+            Pci.unpin m.pci a n;
             raise e)
 
 let map_peer m m' mem =
@@ -124,4 +126,4 @@ let map_peer m m' mem =
 let unmap m mem =
   Page_table.unmap m.tables ~va:mem.mapping.va mem.mapping.size;
   if mem.source = Pinned then
-    Sysmem.unpin (Nativeint.of_int mem.mapping.va) mem.mapping.size
+    Pci.unpin m.pci (Nativeint.of_int mem.mapping.va) mem.mapping.size

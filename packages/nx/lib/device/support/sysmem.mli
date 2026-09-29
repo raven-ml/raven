@@ -26,14 +26,15 @@ val reserve : base:int -> int -> unit
 
     Raises [Failure] if part of the range is in use. *)
 
-val alloc : ?contiguous:bool -> va:int -> int -> Mmio.t * int list
+val alloc : ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
 (** [alloc ~va n] maps [n] bytes, rounded up to {!page}, of new, zeroed, locked
-    memory at [va], inside a range {!reserve} reserved, and is that memory with
-    the physical address of each of its pages. It holds one {!pin} of each page
-    until {!free}. With [~contiguous:true] (defaults to [false]) the memory is
-    one physical block and the list holds its address alone: larger than a page,
-    it is a huge page of 2 MiB at a [va] on 2 MiB, which the system must have
-    free ([vm.nr_hugepages]).
+    memory at [va], inside a range {!reserve} reserved, or where the system
+    chooses without [va], and is that memory with the physical address of each
+    of its pages. It holds one {!pin} of each page until {!free}. With
+    [~contiguous:true] (defaults to [false]) the memory is one physical block
+    and the list holds its address alone: larger than a page, it is a huge page
+    of 2 MiB, at a [va] on 2 MiB if given, which the system must have free
+    ([vm.nr_hugepages]).
 
     Raises [Failure] if the system cannot, and [Invalid_argument] if [va] is not
     on a page, if [contiguous] memory is larger than 2 MiB, or if [va] is not on
@@ -41,7 +42,7 @@ val alloc : ?contiguous:bool -> va:int -> int -> Mmio.t * int list
 
 val free : Mmio.t -> unit
 (** [free m] releases memory {!alloc} returned, with the pins it held, and
-    returns its addresses to their reservation. *)
+    returns its addresses to their reservation if they had one. *)
 
 val pin : nativeint -> int -> int list
 (** [pin a n] locks the [n] bytes of process memory at [a], which starts on a

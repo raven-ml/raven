@@ -575,6 +575,200 @@ let test_firmware_download () =
   | Error why -> contains ~msg:"a failed download" ~sub:"downloading" why
   | Ok _ -> fail "nothing to download"
 
+(* Remote: a server in this process, on the loopback. *)
+
+let key = "a key of the test, long enough"
+let loopback = Unix.ADDR_INET (Unix.inet_addr_loopback, 0)
+
+let port s =
+  match Remote_server.address s with
+  | Unix.ADDR_INET (_, p) -> p
+  | Unix.ADDR_UNIX _ -> assert false
+
+let with_server ?(key = key) f =
+  let s = Remote_server.listen ~key loopback in
+  Fun.protect ~finally:(fun () -> Remote_server.stop s) (fun () -> f s)
+
+let connect ?(key = key) ?timeout_ms s =
+  Remote.connect ?timeout_ms ~key "127.0.0.1" (port s)
+
+let test_handshake () =
+  with_server @@ fun s ->
+  let r = connect s in
+  equal ~msg:"the name as given" string
+    (Printf.sprintf "127.0.0.1:%d" (port s))
+    (Remote.name r);
+  is_true ~msg:"a page" (Remote.page r > 0);
+  is_true ~msg:"an architecture" (Remote.arch r <> "");
+  Remote.ping r;
+  Remote.close r;
+  raises_match (Exn.failure ~substring:"closed") (fun () -> Remote.ping r);
+  raises_match (Exn.failure ~substring:"does not know the key") (fun () ->
+      connect ~key:"another key of sixteen bytes" s);
+  let r = connect s in
+  Remote.ping r;
+  Remote.close r;
+  raises_match (Exn.invalid_arg ~substring:"16") (fun () ->
+      connect ~key:"short" s)
+
+let test_server_proves () =
+  (* A server with another key: the client refuses it, whatever it says. *)
+  with_server ~key:"the server's own key, not ours" @@ fun s ->
+  raises_match (Exn.failure ~substring:"key") (fun () -> connect s)
+
+let test_busy () =
+  with_server @@ fun s ->
+  let r = connect s in
+  raises_match (Exn.failure ~substring:"busy") (fun () -> connect s);
+  Remote.ping r;
+  Remote.close r;
+  (* The server frees the session once the client has gone. *)
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  Remote.close (retry 500)
+
+let test_memory () =
+  with_server @@ fun s ->
+  let r = connect s in
+  let n = 3 * 4096 in
+  let a = Option.get (Remote.alloc r n) in
+  let local = alloc n and back = alloc n in
+  let m = Mmio.v local n in
+  for i = 0 to n - 1 do
+    Mmio.set8 m i (i * 7)
+  done;
+  Remote.write r ~dst:a ~src:local n;
+  Remote.copy r ~dst:(Nativeint.add a 16n) ~src:a 64;
+  Remote.read r ~src:a ~dst:back n;
+  let b = Mmio.v back n in
+  equal ~msg:"the copy overlapped forwards" int (Mmio.get8 m 0) (Mmio.get8 b 16);
+  equal ~msg:"the tail came back" string
+    (Mmio.read m 80 (n - 80))
+    (Mmio.read b 80 (n - 80));
+  raises_match (Exn.failure ~substring:"no memory of this connection")
+    (fun () ->
+      Remote.read r ~src:(Nativeint.add a (Nativeint.of_int n)) ~dst:back 1);
+  Remote.ping r;
+  let remote = Mmio.remote (Remote.access r) a n in
+  Mmio.set32 remote 4 0xcafe_f00d;
+  equal ~msg:"a remote word" int 0xcafe_f00d (Mmio.get32 remote 4);
+  Mmio.set64 remote 8 0x1122_3344_5566_7788L;
+  equal ~msg:"a remote double word" int64 0x1122_3344_5566_7788L
+    (Mmio.get64 remote 8);
+  Mmio.fill remote 100 5000 'z';
+  equal ~msg:"a remote fill" string (String.make 5000 'z')
+    (Mmio.read remote 100 5000);
+  raises_match (Exn.invalid_arg ~substring:"another machine") (fun () ->
+      Mmio.bigarray remote);
+  Remote.free r a;
+  raises_match (Exn.failure ~substring:"no memory") (fun () ->
+      Remote.read r ~src:a ~dst:back 1);
+  Remote.close r
+
+let test_posted_failure () =
+  with_server @@ fun s ->
+  let r = connect s in
+  let local = alloc 16 in
+  (* A posted write outside the connection's memory has no answer: the next
+     command reads the error, and the connection is gone for good. *)
+  Remote.write r ~dst:0x1000n ~src:local 16;
+  raises_match (Exn.failure ~substring:"no memory of this connection")
+    (fun () -> Remote.ping r);
+  is_some ~msg:"failed" (Remote.failed r);
+  raises_match (Exn.failure ~substring:"no memory of this connection")
+    (fun () -> Remote.ping r)
+
+let test_cleanup () =
+  with_server @@ fun s ->
+  let r = connect s in
+  let a = Option.get (Remote.alloc r 4096) in
+  Remote.close r;
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  let r = retry 500 in
+  raises_match (Exn.failure ~substring:"no memory of this connection")
+    (fun () -> Remote.read r ~src:a ~dst:(alloc 8) 8);
+  Remote.close r
+
+let test_functions () =
+  with_server @@ fun s ->
+  let r = connect s in
+  let buses = Remote.scan r ~vendor:0xffff [ (0xffff, [ 0xffff ]) ] in
+  equal ~msg:"no such function" (list string) [] buses;
+  raises_match (Exn.failure ~substring:"") (fun () ->
+      Pci.take ~remote:r ~lock:"test" "0000:ff:1f.7");
+  raises_match (Exn.failure ~substring:"no lock name") (fun () ->
+      Pci.take ~remote:r ~lock:"../test" "0000:ff:1f.7");
+  raises_match (Exn.failure ~substring:"no PCI address") (fun () ->
+      Pci.take ~remote:r ~lock:"test" "../../0000:ff:1f.7");
+  raises_match (Exn.failure ~substring:"no function") (fun () ->
+      Remote.read_config r 3 0 4);
+  Remote.ping r;
+  Remote.close r
+
+let test_timeout () =
+  (* A listener that never speaks. *)
+  let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind socket loopback;
+  Unix.listen socket 1;
+  let p =
+    match Unix.getsockname socket with
+    | Unix.ADDR_INET (_, p) -> p
+    | Unix.ADDR_UNIX _ -> assert false
+  in
+  Fun.protect
+    ~finally:(fun () -> Unix.close socket)
+    (fun () ->
+      raises_match (Exn.failure ~substring:"no answer within 200 ms") (fun () ->
+          Remote.connect ~timeout_ms:200 ~key "127.0.0.1" p))
+
+(* The machine's system memory, as a GPU there gets it: pinned, anywhere or at
+   an address of a reserved range, and its host memory pinned for a GPU that
+   maps it. Skips where the machine cannot lock memory or read its pages. *)
+let test_remote_sysmem () =
+  with_server @@ fun s ->
+  let r = connect s in
+  (match Remote.alloc_sysmem r (3 * Remote.page r) with
+  | exception Failure why -> skip ~reason:why ()
+  | m, pages ->
+      equal ~msg:"a page each" int 3 (List.length pages);
+      is_true ~msg:"another machine's range" (Mmio.is_remote m);
+      Mmio.set64 m 8 0x5a5aL;
+      equal ~msg:"its memory" int64 0x5a5aL (Mmio.get64 m 8);
+      Remote.free_sysmem r m);
+  let base = 0x7e00_0000_0000 in
+  Remote.reserve r ~base (4 lsl 20);
+  let m, _ = Remote.alloc_sysmem r ~va:base (1 lsl 20) in
+  equal ~msg:"at the address asked" nativeint (Nativeint.of_int base)
+    (Mmio.address m);
+  Remote.free_sysmem r m;
+  let n = 4 * Remote.page r in
+  let a = Option.get (Remote.alloc r n) in
+  equal ~msg:"pinned pages" int 4 (List.length (Remote.pin r a n));
+  raises_match (Exn.failure ~substring:"is pinned") (fun () -> Remote.free r a);
+  Remote.unpin r a n;
+  Remote.free r a;
+  raises_match (Exn.failure ~substring:"is not pinned") (fun () ->
+      Remote.unpin r a n);
+  Remote.close r
+
+let test_stop () =
+  let s = Remote_server.listen ~key loopback in
+  let r = connect s in
+  Remote_server.stop s;
+  raises_match (Exn.failure ~substring:"") (fun () -> Remote.ping r);
+  is_some ~msg:"the connection failed" (Remote.failed r)
+
 let () =
   exit
     (run "nx.device.support"
@@ -599,6 +793,19 @@ let () =
              test "pins are counted" test_sysmem_counted_pins;
              test "allocated memory stays locked" test_sysmem_pins;
              test "contiguous memory" test_sysmem_contiguous;
+           ];
+         group "remote"
+           [
+             test "handshake" test_handshake;
+             test "the server proves the key" test_server_proves;
+             test "one client at a time" test_busy;
+             test "memory" test_memory;
+             test "a posted command fails the connection" test_posted_failure;
+             test "cleanup at disconnect" test_cleanup;
+             test "functions" test_functions;
+             test "timeout" test_timeout;
+             test "system memory" test_remote_sysmem;
+             test "stop" test_stop;
            ];
          group "firmware"
            [
