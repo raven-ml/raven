@@ -284,13 +284,16 @@ and no batched rule, and `Nx.sum ~axes:[0] (lanes a x)` is the same sum.
   with no tensor result (`forward.ml:721-734`), follows the same line. A
   custom call with a tensor result still raises in the mode its rule does not
   cover.
-- **vmap passes a `custom_jvp` on.** A `custom_jvp` with batched parameters is
-  passed on as the custom call of the batched `f` and the batched rule,
-  remat's pattern (`vmap.ml:610-639`), in place of running `f` and dropping
-  the rule (`vmap.ml:592-602`). Each marks the physical arguments at the
-  batched positions and runs under this handler's state, and the batched
-  `jvp` returns primal and tangent physically batched at every position where
-  either is batched, as forward's shape check requires (`forward.ml:704-712`).
+- **vmap passes a `custom_jvp` on.** Every `custom_jvp` is passed on as the
+  custom call of the batched `f` and the batched rule, remat's pattern
+  (`vmap.ml:610-639`), in place of running `f` and dropping the rule
+  (`vmap.ml:592-602`). vmap claims one whose parameters it does not batch too,
+  as it claims every remat and scan: `f` and the rule may read a tensor the
+  map batches, which a claimer outside the map would read as a constant of
+  shape `n :: s`. Each marks the physical arguments at the batched positions
+  and runs under this handler's state, and the batched `jvp` returns primal
+  and tangent physically batched at every position where either is batched,
+  as forward's shape check requires (`forward.ml:704-712`).
 
 `custom.ml`'s header (`custom.ml:16-18`) and the `custom_jvp` entry in
 `rune.mli` change with these two rules.

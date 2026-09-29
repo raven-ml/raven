@@ -658,6 +658,57 @@ let test_marked_model_under_grad () =
   check_arr ~eps:1e-9 ~msg:"compiled gradient" (to_arr g')
     (Rune.jit' (Rune.grad' (model_loss xs targets)) w0)
 
+(* A little loss inside the model's own map over examples: the map passes the
+   mark on, its rule gathers the direction lanes per example, and the map adds
+   the sum of its examples' blocks. *)
+let batch_loss xs targets w =
+  Nx.sum
+    (Rune.vmap
+       Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+       (fun x target -> mse ~target (Nx.matmul readout (cell w h0 x)))
+       xs targets)
+
+let test_sketch_through_a_map () =
+  let k = 3 and b = 5 in
+  let xs = series 2 [| b; 3 |] and targets = series 3 [| b; 2 |] in
+  let w = series 4 [| 3; 3 |] and dirs = series 5 [| k; 3; 3 |] in
+  let sketch w dirs =
+    let (l, c), ggn =
+      Rune.vmap ~axis:directions
+        Nx.Ptree.(tensor @-> returns (pair (pair tensor tensor) tensor))
+        (fun d ->
+          Rune.Total.collect curvature
+            ~zero:(Nx.zeros f64 [| k; k |])
+            (fun () -> Rune.jvp' (batch_loss xs targets) w d))
+        dirs
+    in
+    ((lane 0 l, c), lane 0 ggn)
+  in
+  let predictions w =
+    Rune.vmap' (fun x -> Nx.matmul readout (cell w h0 x)) xs
+  in
+  let ys = List.init k (fun i -> snd (Rune.jvp' predictions w (lane i dirs))) in
+  let ggn =
+    Nx.init f64 [| k; k |] (fun ij ->
+        Nx.item [] (Nx.sum (Nx.mul (List.nth ys ij.(0)) (List.nth ys ij.(1)))))
+  in
+  let c =
+    stack k (fun i -> snd (Rune.jvp' (batch_loss xs targets) w (lane i dirs)))
+  in
+  let check ~msg ((l, c'), ggn') =
+    check_arr ~eps:1e-9 ~msg:(msg ^ ": loss")
+      (to_arr (batch_loss xs targets w))
+      l;
+    check_arr ~eps:1e-9 ~msg:(msg ^ ": C") (to_arr c) c';
+    check_arr ~eps:1e-9 ~msg:(msg ^ ": GGN") (to_arr ggn) ggn'
+  in
+  check ~msg:"eager" (sketch w dirs);
+  check ~msg:"compiled"
+    (Rune.jit
+       Nx.Ptree.(
+         tensor @-> tensor @-> returns (pair (pair tensor tensor) tensor))
+       sketch w dirs)
+
 let tests =
   [
     group "scopes"
@@ -697,6 +748,7 @@ let tests =
       [
         test "a marked loss's Gauss-Newton sketch" test_sketch;
         test "a marked model trains under grad" test_marked_model_under_grad;
+        test "a mark inside the model's own map" test_sketch_through_a_map;
       ];
     group "reverse mode"
       [

@@ -279,6 +279,80 @@ let test_jvp_of_vmap_of_custom_jvp () =
   let _, dy = Rune.jvp' (fun x -> Rune.vmap' my_sin_fwd x) xs v in
   check_arr ~msg:"jvp of vmapped custom" (to_arr (Nx.mul v (Nx.cos xs))) dy
 
+(* vmap passes a custom jvp on: a differentiation outside the map applies the
+   rule, to the map's lanes. *)
+let test_jvp_of_vmap_applies_the_rule () =
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let v = tangent_like xs in
+  let _, dy = Rune.jvp' (fun x -> Rune.vmap' fake_jvp_sin x) xs v in
+  check_arr ~msg:"the rule's tangent" (to_arr (Nx.mul_s v 100.0)) dy;
+  let seen : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make () in
+  let observe y =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit ~f:ignore
+      ~jvp:(fun _ dy ->
+        Rune.Total.add seen dy;
+        ((), ()))
+      y
+  in
+  let _, total =
+    Rune.Total.collect seen ~zero:(Nx.zeros f64 [| 3 |]) (fun () ->
+        Rune.jvp'
+          (fun x ->
+            Rune.vmap'
+              (fun r ->
+                observe (Nx.sin r);
+                r)
+              x)
+          xs v)
+  in
+  check_arr ~msg:"each lane's tangent, summed"
+    (to_arr (Nx.sum ~axes:[ 0 ] (Nx.mul v (Nx.cos xs))))
+    total
+
+(* The claim moves outside the map: grad of a map over a custom jvp with a
+   tensor result raises, as it does without the map. *)
+let test_grad_of_vmap_of_custom_jvp_raises () =
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Rune.grad' (fun x -> Nx.sum (Rune.vmap' my_sin_fwd x)) xs))
+
+(* A map passes on every custom jvp, whatever it batches: the call's functions
+   may read a tensor that only the map reads as lanes, here the [c] of an outer
+   map, whose inner map batches the parameter or no map does. *)
+let test_vmap_passes_on_a_call_capturing_its_lanes () =
+  let lane i x = Nx.slice [ Nx.I i ] x in
+  let stack n f = Nx.stack ~axis:0 (List.init n f) in
+  let xs =
+    Nx.create f64 [| 4; 3 |]
+      (Array.init 12 (fun i -> Float.sin (Float.of_int i)))
+  in
+  let cs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let x0 = v3 () and w = Nx.scalar f64 1.5 in
+  let scaled c x =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+      ~f:(fun x -> Nx.mul x c)
+      ~jvp:(fun x dx -> (Nx.mul x c, Nx.mul dx c))
+      x
+  in
+  let check ~msg f loop =
+    let v, g = Rune.value_and_grad' (fun w -> Nx.sum (f w)) w in
+    check_arr ~msg:(msg ^ ", grad: value")
+      (to_arr (Nx.mul_s (Nx.sum loop) 1.5))
+      v;
+    check_arr ~msg:(msg ^ ", grad: gradient") (to_arr (Nx.sum loop)) g;
+    let y, dy = Rune.jvp' f w (Nx.scalar f64 1.0) in
+    equal ~msg:(msg ^ ", jvp: shape") (array int) (Nx.shape loop) (Nx.shape y);
+    check_arr ~msg:(msg ^ ", jvp: primal") (to_arr (Nx.mul_s loop 1.5)) y;
+    check_arr ~msg:(msg ^ ", jvp: tangent") (to_arr loop) dy
+  in
+  check ~msg:"nested maps"
+    (fun w ->
+      Rune.vmap' (fun c -> Rune.vmap' (fun x -> Nx.mul w (scaled c x)) xs) cs)
+    (stack 2 (fun j -> stack 4 (fun i -> Nx.mul (lane i xs) (lane j cs))));
+  check ~msg:"unbatched parameters"
+    (fun w -> Rune.vmap' (fun c -> Nx.mul w (scaled c x0)) cs)
+    (stack 2 (fun j -> Nx.mul x0 (lane j cs)))
+
 let test_compiled_custom_vjp () =
   let f x = Nx.sum (Nx.mul (fake_grad_sin x) x) in
   let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] (Rune.grad' f) in
@@ -354,6 +428,12 @@ let tests =
           test_grad_of_vmap_of_custom;
         test "jvp of vmap keeps the mapped tangent shape"
           test_jvp_of_vmap_of_custom_jvp;
+        test "jvp of vmap applies the custom jvp rule"
+          test_jvp_of_vmap_applies_the_rule;
+        test "grad of vmap of a custom jvp raises"
+          test_grad_of_vmap_of_custom_jvp_raises;
+        test "vmap passes on a custom jvp that captures its lanes"
+          test_vmap_passes_on_a_call_capturing_its_lanes;
       ];
     group "compiled rules"
       [

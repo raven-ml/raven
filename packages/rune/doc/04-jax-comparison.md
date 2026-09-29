@@ -225,7 +225,7 @@ let () =
     (Nx.to_string (Rune.grad' (fun v -> Nx.sum (f v)) x))
 ```
 
-`custom_jvp` mirrors `jax.custom_jvp` the same way. One difference to know: in rune a `custom_vjp` raises if differentiated in forward mode (and vice versa) — define both rules if you need both modes, where JAX can sometimes transpose a JVP rule automatically.
+`custom_jvp` mirrors `jax.custom_jvp` the same way. One difference to know: in rune a `custom_vjp` with a tensor result raises if differentiated in forward mode (and vice versa) — define both rules if you need both modes, where JAX can sometimes transpose a JVP rule automatically.
 
 ---
 

@@ -167,6 +167,17 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.vmap` passes a `Rune.custom_jvp` on as the custom call of its batched
+  function and batched rule, where it ran the function and dropped the rule:
+  a `jvp` around a map now applies the rule to the map's lanes, so a mark
+  inside a model's own map over examples reaches the forward mode outside it.
+  `Rune.grad` of a map over a `custom_jvp` with a tensor result now raises, as
+  it does without the map, where it differentiated `f`. The map passes on a
+  call whose parameters it does not batch too: its `f` or rule may read a
+  tensor the map batches, which a differentiation outside the map read as the
+  stacked tensor, so `grad` returned a wrong value and gradient and `jvp` a
+  result with an extra axis.
+
 - `Rune.grad` of a function that calls a `Rune.custom_jvp` with a result that
   holds no tensor (a unit result) runs its `f`, where it raised on a
   differentiated parameter: there is nothing to differentiate. Likewise,

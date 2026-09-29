@@ -308,6 +308,8 @@ let () =
   (* [2. 4. 6.] — from the custom rule *)
 ```
 
+A `vmap` passes a `custom_jvp` on as the call of its batched `f` and batched rule, so a `jvp` outside the map applies the rule to the map's lanes. Reverse mode has no rule to apply to a `custom_jvp`, and forward mode none to a `custom_vjp`: a call whose result holds no tensor (a unit result) has nothing to differentiate and runs its function; one with a tensor result raises.
+
 With no transformation in scope, both constructs just run the plain forward function.
 
 ## Gradient Checking

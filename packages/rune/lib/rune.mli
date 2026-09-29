@@ -253,7 +253,8 @@ val custom_vjp :
     used; the gradients have structure [p], and each tensor its parameter's
     dtype and shape. [residual] is what [fwd] returned beside its result.
     Enclosing transformations (an outer {!grad}, {!val-vmap}) see the forward
-    computation itself.
+    computation itself, and under {!val-vmap} so does a differentiation outside
+    the map.
 
     A tensor of the result that is one of [params] is a new value there: its
     cotangent is the result's alone.
@@ -283,6 +284,11 @@ val custom_jvp :
     nothing to differentiate, and [f] runs. A [custom_jvp] with a unit result
     therefore observes the tangents of its parameters in forward mode and is
     inert under {!grad}.
+
+    {!val-vmap} passes the call on as the call of its batched [f] and batched
+    [jvp], so a forward-mode transformation outside the map applies the rule
+    to the map's lanes, and reverse mode outside it raises as it does without
+    the map.
 
     Raises [Invalid_argument] if reverse mode differentiates a call whose
     result holds a tensor (define a {!custom_vjp} rule for that), or if [jvp]'s

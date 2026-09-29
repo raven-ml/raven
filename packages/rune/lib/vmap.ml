@@ -597,12 +597,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_eigh { t_in } when batched st t_in -> err_no_rule "eigh"
     | E_solve_triangular { a; b; _ } when batched st a || batched st b ->
         err_no_rule "solve_triangular"
-    (* Custom rules: vmap batches the forward function. The call runs in a
-       nested fiber under this same handler state, so its operations are
-       translated like any other code and enclosing transformations see the
-       batched forward computation. Letting the call fall through instead would
-       hand physically batched tensors to an enclosing differentiation outside
-       the batching scope. Calls on constants do fall through. *)
+    (* Custom rules. A custom vjp with batched parameters runs its forward
+       function batched, in a nested fiber under this same handler state, so
+       enclosing transformations see the batched forward computation: letting
+       it fall through would hand physically batched tensors to an enclosing
+       differentiation outside the batching scope. Calls on constants do fall
+       through. *)
     | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
         if
           not
@@ -615,17 +615,71 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             (fun k ->
               continue k
                 (match_with (fun () -> fst (fwd params)) () (handler st)))
-    | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
-        if
-          not
-            (Nx.Ptree.fold params_s
-               (fun _ leaf any -> any || batched st leaf)
-               params false)
-        then None
-        else
-          Some
-            (fun k ->
-              continue k (match_with (fun () -> f params) () (handler st)))
+    (* A custom jvp passes on as the custom call of its batched function and
+       its batched rule, as a remat does, whatever its parameters: either
+       function may read a tensor this map batches, which only this handler
+       reads as lanes. Each receives the physical tensors, marks those at the
+       batched parameters' positions (a parameter's tangent is batched where
+       the parameter is) and runs under this handler, and the results the call
+       returns are marked where they came out batched. The batched rule returns
+       a primal and its tangent batched together, as the claimer's shape check
+       requires. *)
+    | Custom.E_custom_jvp
+        (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
+        let flags =
+          List.map
+            (fun (Nx.P p) -> batched st p)
+            (fst (Nx.Ptree.flatten params_s params))
+        in
+        let mark_params ps =
+          List.iter2
+            (fun (Nx.P p) b -> if b then mark st p)
+            (fst (Nx.Ptree.flatten params_s ps))
+            flags
+        in
+        let out = ref [] in
+        let f' ps =
+          mark_params ps;
+          let y = match_with f ps (handler st) in
+          out :=
+            List.map
+              (fun (Nx.P l) -> batched st l)
+              (fst (Nx.Ptree.flatten result_s y));
+          y
+        in
+        let jvp' ps dps =
+          mark_params ps;
+          mark_params dps;
+          let y, dy = match_with (fun () -> jvp ps dps) () (handler st) in
+          let both = ref [] in
+          let batch_both (type a b) (y : (a, b) t) (dy : (a, b) t) =
+            let b = batched st y || batched st dy in
+            both := b :: !both;
+            if b then (ensure_batched st y, ensure_batched st dy) else (y, dy)
+          in
+          let ys = ref [] in
+          let dy =
+            Structure.map2 "Rune.custom_jvp" result_s ~this:"the result"
+              ~that:"jvp's tangents"
+              (fun _ yl dyl ->
+                let yl, dyl = batch_both yl dyl in
+                ys := Nx.P yl :: !ys;
+                dyl)
+              y dy
+          in
+          out := List.rev !both;
+          (Nx.Ptree.rebuild result_s ~like:y (List.rev !ys), dy)
+        in
+        Some
+          (fun k ->
+            let y =
+              Custom.custom_jvp params_s result_s ~f:f' ~jvp:jvp' params
+            in
+            List.iter2
+              (fun (Nx.P l) b -> if b then mark st l)
+              (fst (Nx.Ptree.flatten result_s y))
+              !out;
+            continue k y)
     (* Gradient checkpointing: the remat passes on with its function batched, so
        that the enclosing context recomputes the batched computation, the
        tensors [f] captures included. The batched function receives the physical
