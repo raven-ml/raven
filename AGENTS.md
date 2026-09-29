@@ -46,7 +46,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 ## project structure
 
 - core packages live in `packages/` such as `packages/nx/`, `packages/rune/`, `packages/kaun/`, `packages/talon/`, `packages/hugin/`, and `packages/quill/`, each with `lib/` sources and `test/` suites.
-- contrib packages live in `contrib/` (`fehu`, `sowilo`, `norn`, `nx-oxcaml`), each with its own `dune-project` and version. they may only depend on public libraries of the core. changelog entries for `fehu`, `sowilo`, and `norn` go in `contrib/<package>/CHANGES.md`.
+- contrib packages live in `contrib/` (`fehu`, `sowilo`, `norn`), each with its own `dune-project` and version. they may only depend on public libraries of the core. changelog entries for `fehu`, `sowilo`, and `norn` go in `contrib/<package>/CHANGES.md`.
 - documentation assets live under `www/` (static site).
 
 ## guidelines

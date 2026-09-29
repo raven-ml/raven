@@ -66,7 +66,6 @@ Packages in [`contrib/`](contrib/) build against every change to the core and re
 | ᚾ   | [**norn**](contrib/norn/)             | BlackJAX  | MCMC sampling with automatic gradients         |
 | ᚠ   | [**fehu**](contrib/fehu/)             | Gymnasium | Reinforcement learning environments            |
 | ᛋ   | [**sowilo**](contrib/sowilo/)         | OpenCV    | Differentiable computer vision                 |
-|     | [**nx-oxcaml**](contrib/nx-oxcaml/)   |           | Experimental Nx backend on OxCaml unboxed types |
 
 ## Getting started
 

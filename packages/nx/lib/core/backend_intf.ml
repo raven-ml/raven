@@ -35,9 +35,9 @@ let () =
 (** Nx's operations.
 
     This module type lists every operation nx computes, once. It is implemented
-    at two levels: by kernel libraries over their own handles (nx.c's [Nx_c],
-    nx-oxcaml), and by backends over nx's values, where the type of values is
-    nx's tensor and the context is a placement ([Nx.Backend.S]).
+    at two levels: by kernel libraries over their own handles (nx.c's [Nx_c]),
+    and by backends over nx's values, where the type of values is nx's tensor
+    and the context is a placement ([Nx.Backend.S]).
 
     {1 Design Philosophy}
 

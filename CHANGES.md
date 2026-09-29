@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### General
 
+- `nx-oxcaml` moves to its own repository,
+  <https://github.com/raven-ml/nx-oxcaml>, and raven no longer ships it. Raven
+  now uses OCaml 5.5 syntax and the newest OxCaml compiler is based on OCaml
+  5.4, so the backend cannot build in this tree. It builds against the `nx`
+  1.0.0~alpha3 release until OxCaml supports OCaml 5.5.
 - **Breaking:** a structure of tensors is a module with `type 'a t` and one
   `walk` over an `Nx.Ptree.Walk` cursor (RFC 0006), and transformations,
   optimizers and checkpoints take it as an `'s Nx.Ptree.t` value. Each deleted
@@ -37,7 +42,7 @@ All notable changes to this project will be documented in this file.
     traversals are `Vega.Loss_scale.ptree`.
   - `[@@deriving ptree]`'s `map`, `map2`, `iter`, `fold`, `fold2`, `names`
     and `Uniform` are one derived `walk`.
-- `fehu`, `sowilo`, `norn`, and `nx-oxcaml` move to `contrib/`. Each is its own
+- `fehu`, `sowilo`, and `norn` move to `contrib/`. Each is its own
   dune project with its own version, builds against `main`, and sits outside
   the 1.0 API commitment. Changes to `fehu`, `sowilo`, and `norn` are now
   recorded in `contrib/<package>/CHANGES.md`. The `raven` package no longer
@@ -2831,9 +2836,7 @@ thread.
 - `Nx.Backend.S` has `place`, which makes a value at one of the backend's
   placements, and `Nx.place` asks the target placement's backend. A placed
   value is read by the backend that made its storage, so a backend can hold
-  values in storage of its own and copy them in and out, as nx-oxcaml now
-  does: `Nx.Placement.device ~backend:Nx_oxcaml.backend Nx.Device.host`
-  replaces linking nx-oxcaml in place of nx.c.
+  values in storage of its own and copy them in and out.
 - `Nx.Backend`: a placement carries the backend that computes on its values,
   a value `(module Nx.Backend.S)`. `Nx.Backend.host` is nx's kernels, the
   default everywhere; `Nx.Backend.Host` is its module, to include in a backend
@@ -3588,9 +3591,6 @@ thread.
 - Add float32- and float64-preserving `dct`, `idct`, `dst`, and `idst`
   transforms of types I–IV, including N-D variants and forward, backward, and
   orthonormal scaling modes.
-- `Nx.concatenate` on the OxCaml backend now uses SIMD and unrolled contiguous
-  block copies, with stride-aware paths for offset, transposed, flipped, and
-  broadcast views.
 - `truncated_normal` now rejects integer dtype witnesses at compile time,
   matching the other normal samplers.
 - `rand` and `randn` now reject integer dtype witnesses at compile time instead
@@ -3738,7 +3738,7 @@ thread.
 - Benchmark suites across the workspace now run under a dedicated `bench`
   alias with a shared lock instead of `runtest` (`nx` and its
   `matmul`/`conv2d`/`einsum` suites, `norn`, `talon`, `vega`, `fehu`,
-  `nx-oxcaml`, `brot`, `sowilo` — matching `rune` and `kaun`, which already
+  `brot`, `sowilo` — matching `rune` and `kaun`, which already
   did this). `dune runtest` no longer runs perf regression checks (which could
   fail an ordinary test run on measurement noise); run them with
   `dune build @bench`.

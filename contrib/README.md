@@ -9,7 +9,6 @@ Each one is its own dune project with its own version and opam metadata.
 | [**norn**](norn/)         | MCMC sampling with automatic gradients          |
 | [**fehu**](fehu/)         | Reinforcement learning environments             |
 | [**sowilo**](sowilo/)     | Differentiable computer vision                  |
-| [**nx-oxcaml**](nx-oxcaml/) | Experimental Nx backend on OxCaml unboxed types |
 
 ## Policy
 
@@ -20,6 +19,3 @@ Each one is its own dune project with its own version and opam metadata.
 - They depend only on the public libraries of core packages, with a lower
   bound on the oldest core release they build against.
 - Each package names its maintainers in its `dune-project`.
-
-`nx-oxcaml` needs an OxCaml switch, so the main workspace treats it as data
-and it builds from its own directory. See its README.
