@@ -263,8 +263,8 @@ val to_array : ('a, 'b) t -> 'a array
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
-    Reads and placements keep their source storage in use until they return.
-    If a compiled call consumes that storage concurrently, the conflicting
+    Reads and placements keep their source storage in use until they return. If
+    a compiled call consumes that storage concurrently, the conflicting
     operation raises [Invalid_argument] instead of waiting. This applies to
     every view of the storage. A consumed value cannot be read or placed again;
     its shape and dtype remain available.
@@ -984,9 +984,9 @@ val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
     At most one dimension may be [-1]; it is inferred from the total number of
     elements. The product of [shape] must equal {!numel} [t].
 
-    Raises [Invalid_argument] if [shape] is incompatible, contains more than
-    one [-1], or cannot view [t]'s layout, as a transpose's cannot be
-    flattened; call {!contiguous} first.
+    Raises [Invalid_argument] if [shape] is incompatible, contains more than one
+    [-1], or cannot view [t]'s layout, as a transpose's cannot be flattened;
+    call {!contiguous} first.
 
     {@ocaml[
       # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
@@ -1357,8 +1357,8 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     See also {!cast}. *)
 
 val contiguous : ('a, 'b) t -> ('a, 'b) t
-(** [contiguous t] is [t], sharing its storage, if [t] is already
-    C-contiguous, or a fresh contiguous copy otherwise.
+(** [contiguous t] is [t], sharing its storage, if [t] is already C-contiguous,
+    or a fresh contiguous copy otherwise.
 
     See also {!is_c_contiguous}, {!copy}. *)
 
@@ -1988,13 +1988,16 @@ val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [minimum_s t s] is the element-wise minimum of [t] and scalar [s]. *)
 
 val logical_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_and a b] is the element-wise logical AND. Non-zero is [true]. *)
+(** [logical_and a b] is the element-wise logical AND: one of the dtype where
+    both are non-zero, zero elsewhere. *)
 
 val logical_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_or a b] is the element-wise logical OR. *)
+(** [logical_or a b] is the element-wise logical OR: one where either is
+    non-zero, zero elsewhere. *)
 
 val logical_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_xor a b] is the element-wise logical XOR. *)
+(** [logical_xor a b] is the element-wise logical XOR: one where exactly one is
+    non-zero, zero elsewhere. *)
 
 val logical_not : ('a, 'b) t -> ('a, 'b) t
 (** [logical_not t] is the element-wise logical NOT: non-zero becomes [0], zero
@@ -2048,7 +2051,8 @@ val lshift : ('a, 'b) t -> int -> ('a, 'b) t
     See also {!rshift}. *)
 
 val rshift : ('a, 'b) t -> int -> ('a, 'b) t
-(** [rshift t n] right-shifts each element by [n] bits.
+(** [rshift t n] right-shifts each element by [n] bits, keeping the sign of a
+    signed integer: [t / 2{^n}] rounded toward negative infinity.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.

@@ -465,16 +465,16 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Logical and Comparison Operations ───── *)
 
-  let logical_and a b = binop B.and_ a b
-  let logical_or a b = binop B.or_ a b
-  let logical_xor a b = binop B.xor a b
+  (* A logical operation reads non-zero as true and gives zero or one of the
+     operands' dtype. *)
+  let truth x = cmpop B.cmpne x (scalar_like x (Nx_dtype.zero (dtype x)))
+  let logical op a b = cast (dtype a) (binop op (truth a) (truth b))
+  let logical_and a b = logical B.and_ a b
+  let logical_or a b = logical B.or_ a b
+  let logical_xor a b = logical B.xor a b
 
-  let logical_not (type a b) (x : (a, b) t) : (a, b) t =
-    let dt = dtype x in
-    match dt with
-    | Nx_dtype.UInt8 | Nx_dtype.Bool | Nx_dtype.UInt4 ->
-        binop B.xor x (scalar_like x (Nx_dtype.one dt))
-    | _ -> rsub_s (Nx_dtype.one dt) x
+  let logical_not x =
+    cast (dtype x) (cmpop B.cmpeq x (scalar_like x (Nx_dtype.zero (dtype x))))
 
   let cmpeq a b = cmpop B.cmpeq a b
   let cmpne a b = cmpop B.cmpne a b
@@ -520,26 +520,12 @@ module Make (B : Backend_intf.S) = struct
          (scalar (B.context x) (dtype x)
             (Nx_dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0))))
 
-  let exp2 x =
-    exp
-      (mul x
-         (broadcast_to (shape x)
-            (scalar (B.context x) (dtype x)
-               (Nx_dtype.of_float (dtype x) (Stdlib.log 2.0)))))
-
+  let exp2 x = rpow_s (Nx_dtype.of_float (dtype x) 2.0) x
   let tan x = unaryop B.tan x
   let square x = mul x x
   let sign x = unaryop B.sign x
   let relu x = maximum_s x (Nx_dtype.zero (dtype x))
-
-  let sigmoid x =
-    let dt = dtype x in
-    let neg_one_over_log2 =
-      B.full (B.context x) dt [||]
-        (Nx_dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
-    in
-    recip (add_s (exp2 (mul x neg_one_over_log2)) (Nx_dtype.one dt))
-
+  let sigmoid x = recip (add_s (exp (neg x)) (Nx_dtype.one (dtype x)))
   let rsqrt x = recip (sqrt x)
   let asin x = unaryop B.asin x
   let acos x = unaryop B.acos x
@@ -547,23 +533,6 @@ module Make (B : Backend_intf.S) = struct
   let sinh x = unaryop B.sinh x
   let cosh x = unaryop B.cosh x
   let tanh x = unaryop B.tanh x
-
-  let asinh x =
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
-    log (add x (sqrt (add (square x) one_x)))
-
-  let acosh x =
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
-    log (add x (sqrt (sub (square x) one_x)))
-
-  let atanh x =
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) (Nx_dtype.one dt) in
-    let two_x = full (B.context x) dt (shape x) (Nx_dtype.two dt) in
-    div (log (div (add one_x x) (sub one_x x))) two_x
-
   let trunc x = unaryop B.trunc x
   let ceil x = unaryop B.ceil x
   let floor x = unaryop B.floor x
@@ -610,7 +579,6 @@ module Make (B : Backend_intf.S) = struct
            (B.full (B.context x) dt [||] (power_of_two dt shift_val)))
 
   let lshift x shift_val = shift_op ~op:"lshift" ~apply:mul x shift_val
-  let rshift x shift_val = shift_op ~op:"rshift" ~apply:div x shift_val
 
   let clamp ?min ?max x =
     let x = match min with None -> x | Some min_v -> maximum_s x min_v in
@@ -627,6 +595,80 @@ module Make (B : Backend_intf.S) = struct
     let if_true_b = broadcast_to target if_true in
     let if_false_b = broadcast_to target if_false in
     B.where cond_b if_true_b if_false_b
+
+  (* An arithmetic shift: [t / 2^n] rounded toward negative infinity. *)
+  let rshift x n =
+    let dt = dtype x in
+    let zero = scalar_like x (Nx_dtype.zero dt) in
+    let one = scalar_like x (Nx_dtype.one dt) in
+    let bits = 8 * Nx_dtype.itemsize dt in
+    if
+      Nx_dtype.is_int dt
+      && (not (Nx_dtype.is_uint dt))
+      && n >= bits - 1
+      && n >= 0
+    then where (cmplt x zero) (sub zero one) (broadcast_to (shape x) zero)
+    else if Nx_dtype.is_uint dt && n >= bits then zeros_like x
+    else
+      shift_op ~op:"rshift"
+        ~apply:(fun x p ->
+          (* [div] truncates toward zero: step down where it rounded up *)
+          let q = div x p in
+          where (cmplt (sub x (mul q p)) zero) (sub q one) q)
+        x n
+
+  (* [log1p y] is [log (1 + y)] to a few ulp near zero: scaling by [y / d],
+     where [d] is what [1 + y] kept of [y], undoes its rounding. *)
+  let log1p y =
+    let one = Nx_dtype.one (dtype y) in
+    let u = add_s y one in
+    let d = sub_s u one in
+    let inf = scalar_like y (Nx_dtype.of_float (dtype y) Float.infinity) in
+    where
+      (cmpeq d (zeros_like d))
+      y
+      (where (cmpeq u inf) u (mul (log u) (div y d)))
+
+  (* Past [2^(p/2)], [p] the precision in bits, [sqrt (a^2 + 1)] rounds to [a],
+     and [a^2] would overflow a narrow float. *)
+  let large_argument : type a b. (a, b) Nx_dtype.t -> float = function
+    | Float8_e5m2 -> 2.
+    | Float8_e4m3 -> 4.
+    | BFloat16 -> 16.
+    | Float16 -> 32.
+    | Float32 -> 4096.
+    | _ -> 0x1p26
+
+  let asinh x =
+    let dt = dtype x in
+    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+    let a = abs x in
+    let near =
+      log1p (add a (div (square a) (add_s (sqrt (add_s (square a) one)) one)))
+    in
+    let far = add_s (log a) (of_float (Stdlib.log 2.)) in
+    let r =
+      where (cmpgt a (scalar_like x (of_float (large_argument dt)))) far near
+    in
+    where (cmplt x (zeros_like x)) (neg r) r
+
+  let acosh x =
+    let dt = dtype x in
+    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+    let t = sub_s x one in
+    let near = log1p (add t (sqrt (add (add t t) (square t)))) in
+    let far = add_s (log x) (of_float (Stdlib.log 2.)) in
+    let r =
+      where (cmpgt x (scalar_like x (of_float (large_argument dt)))) far near
+    in
+    where (cmplt x (scalar_like x one)) (scalar_like x (of_float Float.nan)) r
+
+  let atanh x =
+    let dt = dtype x in
+    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+    let a = abs x in
+    let r = mul_s (log1p (div (add a a) (rsub_s one a))) (of_float 0.5) in
+    where (cmplt x (zeros_like x)) (neg r) r
 
   (* ───── Binary Mathematical Functions ───── *)
 
@@ -648,7 +690,14 @@ module Make (B : Backend_intf.S) = struct
     let zero = scalar_like x' (Nx_dtype.zero dt) in
     let ratio = where both_zero zero (div min_val max_val) in
     let result = mul max_val (sqrt (add_s (square ratio) (Nx_dtype.one dt))) in
-    where both_zero zero result
+    let result = where both_zero zero result in
+    (* An infinite side makes the length infinite, even beside a NaN. *)
+    if not (Nx_dtype.is_float dt) then result
+    else
+      where
+        (logical_or (isinf x') (isinf y'))
+        (scalar_like x' (Nx_dtype.of_float dt Float.infinity))
+        result
 
   (* ───── Reduction Operations ───── *)
 

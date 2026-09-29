@@ -2711,6 +2711,18 @@ thread.
 
 ### Nx
 
+- `Nx.logical_and`, `logical_or`, `logical_xor` and `logical_not` read
+  non-zero as true on every dtype and give zero or one. They were bitwise, so
+  `logical_not` of 5 was -4 and `logical_and` of 2 and 1 was 0.
+- `Nx.rshift` of a negative integer is an arithmetic shift, rounding toward
+  negative infinity. It divided, so `rshift (-1) 1` was 0.
+- `Nx.asinh`, `acosh` and `atanh` keep their accuracy at the edges of their
+  domains: `asinh` of a tiny value was 0, `asinh neg_infinity` was NaN, and
+  `acosh` of a large negative value was `neg_infinity`, not NaN.
+- `Nx.exp2` and `Nx.sigmoid` are accurate to a few units in the last place.
+  Both rounded `x * log 2` before exponentiating, an error that grew with `x`.
+- `Nx.hypot` is infinite when either side is infinite, as IEEE 754 requires.
+  It was NaN beside a zero.
 - `Nx.reshape` refuses a shape with another number of elements when either
   side is empty. It accepted `reshape [| 3 |]` of an empty tensor, a view of
   three elements over no storage.
