@@ -1,0 +1,13 @@
+(library
+ (name nx_metal_device)
+ (public_name nx.metal.device)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries nx_device)
+ (foreign_stubs
+  (language c)
+  (names nx_metal_device_stubs)
+  (flags
+   (:standard -fblocks -x objective-c -Wall -Wextra)))
+ (c_library_flags
+  (-framework Metal -framework Foundation -framework CoreGraphics)))

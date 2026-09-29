@@ -1,0 +1,14 @@
+(test
+ (name test_nx_metal_device)
+ (package nx)
+ (modules test_nx_metal_device)
+ (enabled_if
+  (= %{system} macosx))
+ (foreign_stubs
+  (language c)
+  (names test_submitter_stubs)
+  (flags
+   (:standard -fblocks -x objective-c)))
+ (link_flags
+  (-cclib "-framework Metal" -cclib "-framework Foundation"))
+ (libraries nx.metal.device nx.device nx.dtype unix windtrap))

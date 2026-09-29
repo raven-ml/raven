@@ -2754,6 +2754,11 @@ thread.
   before it raises. `Buffer.copy` synchronizes the devices it touches. There are also
   per-device statistics (`stats`), loaded programs (`Program`), and a timeline
   (`submit`, `synchronize`) for the libraries that submit work.
+- New `nx.metal.device` library (macOS): `Nx_metal_device.v 0` opens the
+  Apple GPU as an `Nx_device.t`. Its buffers are memory the GPU shares with
+  the host, kept resident through a residency set where Metal has one. It
+  borrows host memory, loads metallib functions, and waits on its shared
+  event.
 - `Nx.sigmoid` of a large negative number is the subnormal its exact value
   rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
   about -88.7 at float32 and -709.8 at float64, and returned 0 there.
