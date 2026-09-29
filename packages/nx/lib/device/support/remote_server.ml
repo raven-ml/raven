@@ -130,6 +130,18 @@ let master_off p =
   let command = 0x04 and master = 0x04 in
   Pci.write_config p command 2 (Pci.read_config p command 2 land lnot master)
 
+(* An access of configuration space: 1, 2 or 4 bytes, aligned, in its 4096. *)
+let config off n =
+  if
+    (not (List.mem n [ 1; 2; 4 ]))
+    || off < 0
+    || off > 4096 - n
+    || off land (n - 1) <> 0
+  then fail "a configuration access of %d bytes at 0x%x" n off
+
+(* A BAR's bytes go over the connection in pieces of at most this many. *)
+let piece = 1 lsl 20
+
 let ok ?(r0 = 0) ?(r1 = 0) fd =
   Wire.send fd (Wire.encode_response Wire.ok r0 r1)
 
@@ -180,8 +192,11 @@ let run s cmd a0 a1 a2 a3 =
       Hashtbl.remove s.functions a0;
       Pci.release p;
       ok fd
-  | Cfg_read -> ok ~r0:(Pci.read_config (func s a0) a1 a2) fd
+  | Cfg_read ->
+      config a1 a2;
+      ok ~r0:(Pci.read_config (func s a0) a1 a2) fd
   | Cfg_write ->
+      config a1 a2;
       Pci.write_config (func s a0) a1 a2 a3;
       ok fd
   | Resize_bar ->
@@ -278,16 +293,37 @@ let run s cmd a0 a1 a2 a3 =
       ok fd
   | Read -> (
       match find s a1 a2 with
-      | { kind = Bar; mmio }, off ->
+      | { kind = Bar; mmio }, off when a2 <= 8 ->
           let data = read_bar mmio off a2 in
           ok fd;
           Wire.send fd data
+      | { kind = Bar; mmio }, off ->
+          ok fd;
+          let rec go at =
+            if at < a2 then begin
+              let k = Int.min piece (a2 - at) in
+              Wire.send fd (Mmio.read mmio (off + at) k);
+              go (at + k)
+            end
+          in
+          go 0
       | { mmio; _ }, off ->
           ok fd;
           Wire.send_from fd (Mmio.address (Mmio.sub mmio off a2)) a2)
   | Write -> (
       match find s a1 a2 with
-      | { kind = Bar; mmio }, off -> write_bar mmio off (payload fd a2)
+      | { kind = Bar; mmio }, off when a2 <= 8 ->
+          write_bar mmio off (payload fd a2)
+      | { kind = Bar; mmio }, off ->
+          Mmio.barrier ();
+          let rec go at =
+            if at < a2 then begin
+              let k = Int.min piece (a2 - at) in
+              Mmio.write mmio (off + at) (Wire.recv fd k);
+              go (at + k)
+            end
+          in
+          go 0
       | { mmio; _ }, off ->
           Wire.recv_into fd (Mmio.address (Mmio.sub mmio off a2)) a2)
   | Copy ->

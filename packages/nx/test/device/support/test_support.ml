@@ -829,6 +829,92 @@ let test_key_files () =
     refused ~sub:"Permission denied"
       (file "unreadable" (String.make 32 'k') 0o000)
 
+(* A server that proves the key but lies: [answer fd] runs once the handshake is
+   done, with the machine's page size [page]. *)
+let lying_server ~page answer f =
+  let socket = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.bind socket loopback;
+  Unix.listen socket 1;
+  let p =
+    match Unix.getsockname socket with
+    | Unix.ADDR_INET (_, p) -> p
+    | Unix.ADDR_UNIX _ -> assert false
+  in
+  let raw_sha s =
+    let h = Firmware.sha256 s in
+    String.init 32 (fun i ->
+        Char.chr (int_of_string ("0x" ^ String.sub h (2 * i) 2)))
+  in
+  let hmac msg =
+    let pad c =
+      String.init 64 (fun i ->
+          Char.chr
+            ((if i < String.length key then Char.code key.[i] else 0) lxor c))
+    in
+    raw_sha (pad 0x5c ^ raw_sha (pad 0x36 ^ msg))
+  in
+  let le32 n =
+    let b = Bytes.create 4 in
+    Bytes.set_int32_le b 0 (Int32.of_int n);
+    Bytes.to_string b
+  in
+  let send fd str =
+    ignore (Unix.write_substring fd str 0 (String.length str))
+  in
+  let server =
+    Domain.spawn (fun () ->
+        let fd, _ = Unix.accept socket in
+        let nonce = String.make 32 'n' in
+        send fd ("NXREMOTE" ^ le32 2 ^ "\000" ^ nonce);
+        let b = Bytes.create 64 in
+        let rec go off =
+          if off < 64 then go (off + Unix.read fd b off (64 - off))
+        in
+        go 0;
+        let client = Bytes.sub_string b 0 32 in
+        send fd ("\000" ^ hmac ("server" ^ client ^ nonce) ^ le32 page);
+        send fd (le32 4 ^ "test");
+        (try answer fd with Unix.Unix_error _ -> ());
+        Unix.sleepf 0.2;
+        Unix.close fd)
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Domain.join server;
+      Unix.close socket)
+    (fun () -> f p)
+
+let test_lying_server () =
+  lying_server ~page:0 ignore (fun p ->
+      raises_match (Exn.failure ~substring:"page of 0 bytes") (fun () ->
+          Remote.connect ~key "127.0.0.1" p));
+  (* An error answer of a terabyte fails the connection without reading it. *)
+  let huge fd =
+    let b = Bytes.create 36 in
+    ignore (Unix.read fd b 0 36);
+    let r = Bytes.make 17 '\000' in
+    Bytes.set_uint8 r 0 1;
+    Bytes.set_int64_le r 1 (Int64.shift_left 1L 40);
+    ignore (Unix.write fd r 0 17)
+  in
+  lying_server ~page:4096 huge (fun p ->
+      let r = Remote.connect ~key "127.0.0.1" p in
+      raises_match (Exn.failure ~substring:"a malformed answer") (fun () ->
+          Remote.ping r);
+      is_some ~msg:"the connection failed" (Remote.failed r))
+
+let test_config_accesses () =
+  with_server @@ fun s ->
+  let r = connect s in
+  raises_match (Exn.failure ~substring:"a configuration access") (fun () ->
+      Remote.read_config r 0 0 5000);
+  raises_match (Exn.failure ~substring:"a configuration access") (fun () ->
+      Remote.write_config r 0 4096 4 0);
+  raises_match (Exn.failure ~substring:"a configuration access") (fun () ->
+      Remote.read_config r 0 2 4);
+  Remote.ping r;
+  Remote.close r
+
 (* Peers that do not know the key: raw sockets to the server. *)
 
 let raw s =
@@ -977,6 +1063,8 @@ let () =
              test "an unexpected exception" test_unexpected_exception;
              test "lock files" test_lock_files;
              test "key files" test_key_files;
+             test "a server that lies" test_lying_server;
+             test "configuration accesses" test_config_accesses;
            ];
          group "firmware"
            [

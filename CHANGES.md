@@ -2805,6 +2805,11 @@ thread.
 
 ### Nx
 
+- `Nx_device_support.Remote` bounds what it reads from a server: an answer
+  announcing more than it can be fails the connection instead of allocating
+  it, and a page size that is no power of two is refused at connection.
+  `nx-remote` refuses configuration accesses that are not 1, 2 or 4 aligned
+  bytes of the 4096, and moves large BAR reads and writes in pieces of 1 MiB.
 - `Nx_amd_device` under `Pci` turns the GPU's bus mastering on in a partial
   boot too. A GPU left clean by the previous process boots partially, and one
   on another machine had its bus mastering turned off by `nx-remote` when that

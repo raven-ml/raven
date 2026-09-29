@@ -45,6 +45,11 @@ let send_request r cmd a0 a1 a2 a3 payload =
   Wire.send r.fd (Wire.encode_header cmd a0 a1 a2 a3);
   payload r.fd
 
+(* [n], a count the server sent, if it is at most [limit]: the stream is out of
+   step otherwise. [r] is taken. *)
+let bounded r n limit =
+  if n < 0 || n > limit then lost r "a malformed answer" else n
+
 (* The answer to the last request: [reply fd r0 r1] reads its payload. *)
 let answer r reply =
   let s = Wire.recv r.fd Wire.response in
@@ -53,7 +58,7 @@ let answer r reply =
   and r1 = Wire.int64 s 9 in
   if status = Wire.ok then reply r.fd r0 r1
   else
-    let why = Wire.recv r.fd r0 in
+    let why = Wire.recv r.fd (bounded r r0 (1 lsl 20)) in
     if status = Wire.error then failwith (Printf.sprintf "%s: %s" r.name why)
     else lost r why
 
@@ -123,6 +128,8 @@ let handshake fd key =
   if not (Wire.same proof (Wire.server_proof key ~server ~client)) then
     failwith "the server does not know the key";
   let page = Int32.to_int (String.get_int32_le (Wire.recv fd 4) 0) in
+  if page <= 0 || page land (page - 1) <> 0 then
+    failwith (Printf.sprintf "the server reports a page of %d bytes" page);
   let arch = Wire.recv_string fd in
   (page, arch)
 
@@ -215,7 +222,7 @@ let scan r ~vendor ?class_ ids =
     ~a2:(List.length pairs)
     ~payload:(fun fd -> Wire.send fd (Wire.words words))
     (fun fd n _ ->
-      String.split_on_char '\n' (Wire.recv fd n)
+      String.split_on_char '\n' (Wire.recv fd (bounded r n (1 lsl 20)))
       |> List.filter (fun s -> s <> ""))
 
 let take r ~lock bus =
@@ -251,13 +258,18 @@ let map_bar r f i =
   Mmio.remote (access r) (Nativeint.of_int a) n
 
 let reserve r ~base n = rpc r Wire.Reserve ~a1:base ~a2:n unit_reply
-let pages_reply fd r0 r1 = (r0, Wire.of_words (Wire.recv fd (8 * r1)))
+
+(* An address and the pages of [n] bytes there. *)
+let pages_reply r n fd r0 r1 =
+  let pages = bounded r r1 ((n + r.page - 1) / r.page) in
+  (r0, Wire.of_words (Wire.recv fd (8 * pages)))
 
 let alloc_sysmem r ?(contiguous = false) ?va n =
   let a, pages =
     rpc r Wire.Sysmem_alloc
       ~a1:(Option.value ~default:0 va)
-      ~a2:n ~a3:(Bool.to_int contiguous) pages_reply
+      ~a2:n ~a3:(Bool.to_int contiguous)
+      (pages_reply r (if contiguous && n > r.page then 2 lsl 20 else n))
   in
   let n = (n + r.page - 1) / r.page * r.page in
   (Mmio.remote (access r) (Nativeint.of_int a) n, pages)
@@ -273,7 +285,10 @@ let alloc r n =
   | a -> Some (Nativeint.of_int a)
 
 let free r a = rpc r Wire.Free ~a1:(Nativeint.to_int a) unit_reply
-let pin r a n = snd (rpc r Wire.Pin ~a1:(Nativeint.to_int a) ~a2:n pages_reply)
+
+let pin r a n =
+  snd (rpc r Wire.Pin ~a1:(Nativeint.to_int a) ~a2:n (pages_reply r n))
+
 let unpin r a n = rpc r Wire.Unpin ~a1:(Nativeint.to_int a) ~a2:n unit_reply
 
 let read r ~src ~dst n =
