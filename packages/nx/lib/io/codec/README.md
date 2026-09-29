@@ -45,8 +45,8 @@ JPEG 2000/XL families are deliberately outside the surface.
 The code is independently implemented from these specifications and does not
 incorporate source from the libraries that it replaced.
 
-Standalone core tests exercise DEFLATE block boundaries, adaptive block
-selection, image round trips, truncation, single-bit corruption, and
-deterministic malformed streams without involving an Nx backend. The
-`codec-sanitize` alias runs the same corpora under AddressSanitizer and
-UndefinedBehaviorSanitizer.
+The nx.io suite, `packages/nx/test/io`, exercises DEFLATE block boundaries,
+adaptive and stored blocks, image round trips, truncation, single-bit
+corruption, and arbitrary bytes after each format's header. CI also runs it
+with nx's C built under AddressSanitizer and UndefinedBehaviorSanitizer (the
+`sanitize` profile of `packages/nx/dune`), halting on the first report.
