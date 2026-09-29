@@ -37,9 +37,6 @@ nx follow-ups:
   its own adjoint. it belongs in the movement family (same buffer, different
   view, dtype changes) rather than as a general bitcast: `complex[s]` *is*
   `float[s; 2]` structurally, so there is no punning to justify the wider op
-- complex gradient convention is written down nowhere and is unaudited: 16
-  conjugate-sensitive reverse rules are reachable on complex, only `abs` has
-  ever met a finite-difference oracle, and it was wrong
 - run the CUDA device suites (`packages/nx/test/device/cuda`) on an NVIDIA
   machine: they were rewritten on a Mac, where they build and skip
 
