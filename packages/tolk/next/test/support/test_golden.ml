@@ -29,6 +29,9 @@ let tables =
     [
       test "rows are the lines after the columns, in order" (fun () ->
           equal (list string) [ "int"; "half" ] (cells "lub" "lattice.golden"));
+      test "columns are the names on the first line, in order" (fun () ->
+          equal (list string) [ "a"; "b"; "lub" ]
+            (Golden.columns "lattice.golden"));
       test "an empty cell is kept" (fun () ->
           equal (list string) [ "" ]
             (cells "b" (golden (header ^ "a\tb\nx\t\n"))));

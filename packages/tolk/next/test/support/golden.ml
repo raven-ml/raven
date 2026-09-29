@@ -1,5 +1,12 @@
+(* dune copies a suite's goldens beside its executable, which is where the suite
+   runs under dune test but not under dune exec. *)
+let path file =
+  if Filename.is_relative file then
+    Filename.concat (Filename.dirname Sys.executable_name) file
+  else file
+
 let body file =
-  let contents = In_channel.with_open_bin file In_channel.input_all in
+  let contents = In_channel.with_open_bin (path file) In_channel.input_all in
   let last = String.length contents - 1 in
   match String.index_opt contents '\n' with
   | Some eol
@@ -37,6 +44,8 @@ let cell file columns row column =
       invalid_arg
         (Printf.sprintf "%s: no column %S; the columns are %s" file column
            (String.concat ", " columns))
+
+let columns file = fst (table file)
 
 let rows file =
   let columns, rows = table file in

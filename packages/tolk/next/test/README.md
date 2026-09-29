@@ -52,6 +52,25 @@ A suite that has slow tests adds a rule to the `slow` alias:
 tests has no such rule, since `--tag slow` then selects nothing, which windtrap
 reports as a failure.
 
+## Coverage and mutation
+
+The library carries windtrap's coverage and mutation backends, which do
+nothing until a build asks for them. For one module, here `Uop.Op`:
+
+```sh
+# Coverage: run the suite instrumented, then report each file's uncovered code.
+dune build @packages/tolk/next/test/uop/op/runtest --instrument-with ppx_windtrap.coverage
+dune exec windtrap -- coverage -u
+
+# Mutation: each SURVIVED block is a change to the module that no test noticed.
+dune exec --instrument-with ppx_windtrap.mutate \
+  packages/tolk/next/test/uop/op/test_op.exe -- --mutate=packages/tolk/next/lib/uop/op.ml
+```
+
+A suite reads its goldens beside its executable, where dune copies them when
+the suite runs, so run it once with `runtest` before running it with
+`dune exec`.
+
 ## Goldens
 
 A golden is output recorded from tinygrad, in a file `<name>.golden`. Its
@@ -78,7 +97,8 @@ rest is its body. A golden check is one line:
         (Dtype.least_upper (dtype (cell "a")) (dtype (cell "b"))))
   ```
 
-  `Golden.rows` gives the rows themselves, for a claim about the whole table.
+  `Golden.columns` and `Golden.rows` give the table itself, for a claim about
+  the whole table, such as that it has no column the suite does not check.
 
 A golden is tinygrad's output and is never edited by hand. When a ledger entry
 changes an output, the test that compares it states the difference in code and
