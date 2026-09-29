@@ -102,6 +102,31 @@ let structural_benchmarks () =
     Thumper.bench "sort rows 512x512" (fun () -> Nx.sort sort_input);
   ]
 
+(* The fixed cost of an operation: routing, effects and allocation around a
+   kernel that has almost nothing to do. One element exposes that cost alone;
+   1,024 elements show it beside a small kernel. *)
+let dispatch_benchmarks () =
+  let one = Nx.rand Nx.Float32 [| 1 |] and one' = Nx.rand Nx.Float32 [| 1 |] in
+  let row = Nx.rand Nx.Float32 [| 1024 |] in
+  let row' = Nx.rand Nx.Float32 [| 1024 |] in
+  let one_mat = Nx.rand Nx.Float32 [| 1; 1 |] in
+  let mat = Nx.rand Nx.Float32 [| 32; 32 |] in
+  let one_mask = Nx.less one one' and mask = Nx.less row row' in
+  [
+    Thumper.bench "add 1" (fun () -> Nx.add one one');
+    Thumper.bench "add 1024" (fun () -> Nx.add row row');
+    Thumper.bench "less 1" (fun () -> Nx.less one one');
+    Thumper.bench "less 1024" (fun () -> Nx.less row row');
+    Thumper.bench "where 1" (fun () -> Nx.where one_mask one one');
+    Thumper.bench "where 1024" (fun () -> Nx.where mask row row');
+    Thumper.bench "sum 1" (fun () -> Nx.sum one);
+    Thumper.bench "sum 1024" (fun () -> Nx.sum row);
+    Thumper.bench "matmul 1x1" (fun () -> Nx.matmul one_mat one_mat);
+    Thumper.bench "matmul 32x32" (fun () -> Nx.matmul mat mat);
+    Thumper.bench "zeros 1" (fun () -> Nx.zeros Nx.Float32 [| 1 |]);
+    Thumper.bench "shape" (fun () -> Nx.shape row);
+  ]
+
 (* Samplers at the sizes a training step draws: a dropout mask or an init at a
    million elements, and the rejection samplers, whose cost per element is the
    question, at fewer. Poisson is measured at one rate per regime of its
@@ -134,6 +159,7 @@ let () =
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
     [
+      Thumper.group "dispatch" (dispatch_benchmarks ());
       Thumper.group "binary" (binary_benchmarks ());
       Thumper.group "unary" (unary_benchmarks ());
       Thumper.group "reduce" (reduce_benchmarks ());
