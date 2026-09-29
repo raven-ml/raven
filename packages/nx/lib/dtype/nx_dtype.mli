@@ -309,11 +309,12 @@ module Scalar : sig
 
   val encode : t -> float -> int
   (** [encode s x] is the bits of [x] in format [s], rounded once to nearest,
-      ties to even. A finite [x] past the largest finite value of [s] encodes as
-      the infinity of its sign, or as NaN in the formats with no infinity:
-      {!Float8_e4m3} and the fnuz formats. A NaN keeps its sign, except in the
-      fnuz formats, whose one NaN is [0x80]; which payload bits it keeps is
-      unspecified.
+      ties to even. Past the largest finite value of [s], {!Float16} and
+      {!BFloat16} encode the infinity of [x]'s sign, and the float8 formats
+      saturate to the largest finite value of [x]'s sign. An infinity stays one
+      in the formats with infinities and is NaN in {!Float8_e4m3} and the fnuz
+      formats. A NaN keeps its sign, except in the fnuz formats, whose one NaN
+      is [0x80]; which payload bits it keeps is unspecified.
 
       Raises [Invalid_argument] if [s] is not one of the formats above. *)
 

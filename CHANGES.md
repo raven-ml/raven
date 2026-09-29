@@ -1475,10 +1475,8 @@ thread.
   storage. It was reduced into an intermediate buffer and then copied, which
   held one more copy of the tensor on each device.
 
-- A `float8` constant past the format's largest finite value folds to its
-  infinity, or NaN where it has none, and a `bfloat16` constant rounds once
-  from the double, so compiled constants equal nx's eager values. `500.`
-  folded to 448 in `float8_e4m3`.
+- A `bfloat16` constant rounds once from the double, so compiled constants
+  equal nx's eager values.
 
 - A `float16` constant between `2^-25` and `2^-24` in a compiled graph folds
   to the smallest subnormal, `2^-24`. It folded to zero, so `3e-8` became
@@ -2865,6 +2863,12 @@ thread.
 
 ### Nx
 
+- Converting to a float8 format saturates a finite value past the largest
+  finite one to the largest finite value of its sign. `Nx.cast`, element
+  writes and `Nx_dtype.Scalar.encode` gave NaN in `float8_e4m3` and the fnuz
+  formats and infinity in `float8_e5m2`: `1e6` was NaN in `float8_e4m3` and
+  is now 448. Infinities and NaNs are unchanged: an infinity stays one in
+  `float8_e5m2` and is NaN in the formats without infinities.
 - `Nx.shape` returns an array of its own. It returned the value's, so a
   caller that changed it changed the value's shape.
 - **Breaking (effect handlers):** nx's operations are the constructors of one
@@ -3959,12 +3963,11 @@ thread.
 - Fix `float8_e4m3` conversions: the top binade was broken (256–448 saturated
   to 448 on write and decoded as 240 or NaN on read) and values below `2^-6`
   underflowed to zero instead of using the format's subnormals down to
-  `2^-9`. Out-of-range values and infinities now convert to NaN instead of
-  saturating to ±448, matching `ml_dtypes` and PyTorch `float8_e4m3fn` casts;
-  clamp before casting if saturation is wanted. `float8_e5m2` subnormal
-  rounding now keeps the sticky bits, so round-to-nearest-even resolves ties
-  correctly. Both conversions apply to reading and writing single elements and
-  every C kernel operating on float8 tensors.
+  `2^-9`. Infinities now convert to NaN instead of saturating to ±448: an
+  infinity did not overflow, and no finite value stands for it. `float8_e5m2`
+  subnormal rounding now keeps the sticky bits, so round-to-nearest-even
+  resolves ties correctly. Both conversions apply to reading and writing
+  single elements and every C kernel operating on float8 tensors.
 - The element types `int4_signed_elt`, `int4_unsigned_elt`,
   `int8_signed_elt`, `int8_unsigned_elt`, `int16_signed_elt` and
   `int16_unsigned_elt` are renamed `int4_elt`, `uint4_elt`, `int8_elt`,

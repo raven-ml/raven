@@ -290,18 +290,19 @@ let fp8_conversion () =
   in
   equal int 0 (code Dtype.fp8e4m3 0.0);
   equal int 0 (code Dtype.fp8e5m2 0.0);
-  (* Past the largest finite value a result is the format's infinity of its
-     sign, or NaN where the format has none, as for an infinity. *)
+  (* Past the largest finite value a result saturates to the largest finite
+     value of its sign. An infinity stays one where the format has infinities
+     and is NaN where it has none. *)
   let rt = Dtype.truncate_float in
   eq 448.0 (rt Dtype.fp8e4m3 448.0);
   eq 448.0 (rt Dtype.fp8e4m3 464.0);
   is_true (Float.is_nan (rt Dtype.fp8e4m3 infinity));
-  is_true (Float.is_nan (rt Dtype.fp8e4m3 500.0));
-  equal int 0xff (code Dtype.fp8e4m3 (-1e6));
-  equal int 0x80 (code Dtype.fp8e4m3fnuz 1e6);
+  eq 448.0 (rt Dtype.fp8e4m3 500.0);
+  equal int 0xfe (code Dtype.fp8e4m3 (-1e6));
+  equal int 0x7f (code Dtype.fp8e4m3fnuz 1e6);
   eq 57344.0 (rt Dtype.fp8e5m2 57344.0);
   eq 57344.0 (rt Dtype.fp8e5m2 57343.0);
-  eq infinity (rt Dtype.fp8e5m2 61440.0);
+  eq 57344.0 (rt Dtype.fp8e5m2 61440.0);
   eq infinity (rt Dtype.fp8e5m2 infinity);
   equal int 0x7f (code Dtype.fp8e5m2 Float.nan);
   let neg_nan =

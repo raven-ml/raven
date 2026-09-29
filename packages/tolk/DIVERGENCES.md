@@ -602,12 +602,10 @@ in `Rune.jit` and the compilation guide. Contraction and attention coverage
 includes opt-correctness's `row_reduce` and `matmul_full_reduce` workloads.
 A fixed-order reduction contract would require revisiting those shared hoists.
 
-- **Float constants fold with nx's codec.** The reference saturates a finite
-  float8 value past the largest finite one and rounds a bfloat16 constant
-  through binary32 (`struct.pack('f')`), rounding twice. tolk folds with
-  `Nx_dtype.Scalar.encode`, the encoder nx's eager stores use, which rounds
-  once from binary64, and a result past the largest finite value becomes the
-  format's infinity, or NaN in the formats without one. RFC 0005's Law 1 lets
+- **Float constants fold with nx's codec.** The reference rounds a bfloat16
+  constant through binary32 (`struct.pack('f')`), rounding twice. tolk folds
+  with `Nx_dtype.Scalar.encode`, the encoder nx's eager stores use, which
+  rounds once from binary64. RFC 0005's Law 1 lets
   a compiled result differ from the eager one only by the engine's rounding,
   and a constant is not rounded by the engine. Consumers: `Const` and `Bound`
   folding in every compiled graph, through `Dtype.truncate_float`. Coverage:

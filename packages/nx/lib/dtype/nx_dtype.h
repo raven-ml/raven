@@ -5,9 +5,10 @@
 
 /* Encodings of the float formats narrower than binary32: bfloat16, float16
    and the float8 formats e4m3, e5m2 and their fnuz variants. Every encoder
-   rounds once to nearest, ties to even, from its argument's width. A finite
-   value past the largest finite one encodes as the format's infinity, or as
-   NaN where the format has none. */
+   rounds once to nearest, ties to even, from its argument's width. Past the
+   largest finite value, bfloat16 and float16 give their infinity, and the
+   float8 formats saturate to the largest finite value of the sign. An infinity
+   stays one where the format has infinities and is NaN where it has none. */
 
 #ifndef NX_DTYPE_H
 #define NX_DTYPE_H
@@ -169,15 +170,19 @@ static inline float nx_fp8_value(uint32_t q, int m, int bias) {
   return ldexpf((float)(frac | (1u << m)), (int)exp - bias - m);
 }
 
+/* The magnitude code of the finite binary32 [f], saturated to [max], the code
+   of the largest finite value. */
+static inline uint32_t nx_fp8_saturate(float f, int m, int bias, uint32_t max) {
+  uint32_t q = nx_fp8_round(f, m, bias);
+  return q > max ? max : q;
+}
+
 /* E4M3 (the OCP "fn" variant): no infinities, S.1111.111 is NaN and exponent
-   15 is otherwise normal, up to the largest finite value 448. Finite overflow
-   and infinities convert to NaN, matching the ml_dtypes and PyTorch e4m3fn
-   casts; saturate before casting if clamping is wanted. */
+   15 is otherwise normal, up to the largest finite value 448. */
 static inline uint8_t float_to_fp8_e4m3(float f) {
   uint8_t sign = signbit(f) ? 0x80 : 0;
   if (!isfinite(f)) return sign | 0x7F;
-  uint32_t q = nx_fp8_round(f, 3, 7);
-  return sign | (q >= 0x7F ? 0x7F : q);
+  return sign | nx_fp8_saturate(f, 3, 7, 0x7E);
 }
 
 static inline float fp8_e4m3_to_float(uint8_t c) {
@@ -186,13 +191,12 @@ static inline float fp8_e4m3_to_float(uint8_t c) {
   return (c & 0x80) ? -v : v;
 }
 
-/* E5M2: IEEE-like, with infinities. Finite overflow rounds to infinity. */
+/* E5M2: IEEE-like, with infinities, up to the largest finite value 57344. */
 static inline uint8_t float_to_fp8_e5m2(float f) {
   uint8_t sign = signbit(f) ? 0x80 : 0;
   if (isnan(f)) return sign | 0x7F;
   if (isinf(f)) return sign | 0x7C;
-  uint32_t q = nx_fp8_round(f, 2, 15);
-  return sign | (q >= 0x7C ? 0x7C : q);
+  return sign | nx_fp8_saturate(f, 2, 15, 0x7B);
 }
 
 static inline float fp8_e5m2_to_float(uint8_t c) {
@@ -203,11 +207,10 @@ static inline float fp8_e5m2_to_float(uint8_t c) {
 }
 
 /* The fnuz formats: no infinities and no negative zero, and 0x80 is their
-   one NaN. Finite overflow and infinities convert to NaN. */
+   one NaN. */
 static inline uint8_t nx_fp8_fnuz(float f, int m, int bias) {
   if (!isfinite(f)) return 0x80;
-  uint32_t q = nx_fp8_round(f, m, bias);
-  if (q > 0x7F) return 0x80;
+  uint32_t q = nx_fp8_saturate(f, m, bias, 0x7F);
   if (q == 0) return 0;
   return (signbit(f) ? 0x80 : 0) | q;
 }

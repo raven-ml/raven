@@ -10,10 +10,12 @@
    exact reference.
 
    The rule is one for every format: round once to nearest even from the
-   source's width, and past the largest finite value give the format's infinity,
-   or NaN in the formats that have none. The fnuz formats have no negative zero.
-   The one exception is a store of a float64 into float16, which rounds to
-   float32 first, as OCaml's float16 bigarrays do.
+   source's width. Past the largest finite value, float16 and bfloat16 give
+   their infinity, and the float8 formats saturate to the largest finite value
+   of the sign. An infinity stays one where the format has infinities and is NaN
+   where it has none. The fnuz formats have no negative zero. The one exception
+   is a store of a float64 into float16, which rounds to float32 first, as
+   OCaml's float16 bigarrays do.
 
    The inputs are every float32 bit pattern whose low half is one of a few
    values around each format's rounding bit, the float64 neighbours of some of
@@ -26,21 +28,27 @@ module E = Nx_array.Elements
 (* Reference *)
 
 (* [mant] stored fraction bits, [emin] the exponent of the least normal value,
-   [max] the largest finite value. *)
+   [max] the largest finite value, [infinities] whether the format has them,
+   [saturates] whether finite values past [max] clamp to it. *)
 type format = {
   scalar : S.t;
   mant : int;
   emin : int;
   max : float;
   infinities : bool;
+  saturates : bool;
   fnuz : bool;
 }
 
-let format ?(infinities = true) ?(fnuz = false) scalar ~mant ~emin ~max =
-  { scalar; mant; emin; max; infinities; fnuz }
+let format ?(infinities = true) ?(saturates = true) ?(fnuz = false) scalar ~mant
+    ~emin ~max =
+  { scalar; mant; emin; max; infinities; saturates; fnuz }
 
-let f16 = format S.Float16 ~mant:10 ~emin:(-14) ~max:65504.
-let bf16 = format S.BFloat16 ~mant:7 ~emin:(-126) ~max:0x1.fep127
+let f16 = format S.Float16 ~saturates:false ~mant:10 ~emin:(-14) ~max:65504.
+
+let bf16 =
+  format S.BFloat16 ~saturates:false ~mant:7 ~emin:(-126) ~max:0x1.fep127
+
 let e4m3 = format S.Float8_e4m3 ~infinities:false ~mant:3 ~emin:(-6) ~max:448.
 let e5m2 = format S.Float8_e5m2 ~mant:2 ~emin:(-14) ~max:57344.
 
@@ -73,8 +81,9 @@ let nearest f x =
 let reference f x =
   let r = nearest f x in
   if Float.is_nan r then r
+  else if not (Float.is_finite x) then if f.infinities then x else Float.nan
   else if Float.abs r > f.max then
-    if f.infinities then Float.copy_sign Float.infinity x else Float.nan
+    Float.copy_sign (if f.saturates then f.max else Float.infinity) x
   else if f.fnuz && r = 0. then 0.
   else r
 
