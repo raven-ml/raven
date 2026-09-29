@@ -445,6 +445,23 @@ let with_runtime ?(queue = false) ctx ~device program f =
       ~finally:(fun () -> Device.synchronize device; prg.free ())
       (fun () -> f prg)
 
+(* The anchor and byte offset of a storage view, computed once per node like
+   the reference's cached [_buffer_view]: replays resolve the same views on
+   every launch. *)
+let storage_views = Tolk_uop.Uop.Weak_tbl.create 64
+let storage_views_lock = Mutex.create ()
+
+let storage_view node =
+  let module U = Tolk_uop.Uop in
+  match with_cache_lock storage_views_lock (fun () ->
+      U.Weak_tbl.find_opt storage_views node) with
+  | Some view -> view
+  | None ->
+      let view = Prepare.contiguous_view node in
+      with_cache_lock storage_views_lock (fun () ->
+          U.Weak_tbl.replace storage_views node view);
+      view
+
 (* Resolve a call argument UOp structurally to the concrete buffer it names.
    MSELECT indexes one shard out of a multi-device source; MSTACK joins
    per-device sources into a multi-device buffer. *)
@@ -468,7 +485,7 @@ let rec resolve_buffer ctx node =
        | Single buffer -> Single (Device.Buffer.view buffer ~size ~dtype ~offset:0)
        | Multi buffer -> Multi (Device.Multi_buffer.view buffer ~size ~dtype ~offset:0))
   | op when Tolk_uop.Ops.Group.is_movement op ->
-      (match Prepare.contiguous_view node with
+      (match storage_view node with
        | None -> invalid_arg "resolve: non-contiguous storage view"
        | Some (base, _) when U.equal base node -> invalid_arg "resolve: unresolved storage view"
        | Some (base, offset) ->

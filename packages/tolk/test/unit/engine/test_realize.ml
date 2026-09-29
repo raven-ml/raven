@@ -1324,5 +1324,33 @@ let () =
                 (fun () -> run_cached device linear);
               equal int 1 !loaded;
               equal int 2 !launched);
+          test "replays resolve storage views without building nodes" (fun () ->
+              let launched = ref [] in
+              let device = cache_device "TEST:replay-views" (fun object_ ->
+                  ignore object_;
+                  let call buffers ~global ~local ~vals ~wait ~timeout =
+                    ignore (global, local, vals, wait, timeout);
+                    launched := Array.map Device.Buffer.offset buffers :: !launched;
+                    None in
+                  Device.{call; free = (fun () -> ()); handle = 0n}) in
+              let body = U.sink ~kernel_info:(kernel_info "replay_views")
+                  [ U.param ~slot:0 ~dtype:Dtype.int32 () ] in
+              let param = U.param ~slot:0 ~dtype:Dtype.int32 ~shape:(shape_const 8)
+                  ~device:(U.Single "TEST:replay-views") () in
+              let view = storage_view ~src:param ~offset:(shape_const 4) ~size:2
+                  ~dtype:Dtype.int32 in
+              let to_program device body = ignore device; program_of body in
+              let linear = Realize.compile_linear ~device ~to_program
+                  (U.linear [ U.call ~body ~args:[ view ] ~info:(call_info None) ]) in
+              let input = U.from_buffer
+                  (Device.create_buffer ~size:8 ~dtype:Dtype.int32 device) in
+              let replay () = Realize.run_linear ~device ~to_program ~jit:true
+                  ~input_uops:[| input |] linear in
+              replay ();
+              Gc.full_major ();
+              let tags = Tolk_uop__Hashcons.gentag_peek () in
+              replay ();
+              equal int tags (Tolk_uop__Hashcons.gentag_peek ());
+              equal (list (array int)) [ [| 16 |]; [| 16 |] ] !launched);
         ];
     ])
