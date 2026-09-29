@@ -63,7 +63,6 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
     `search` importing `engine.realize`;
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
-  - `mixin/creation.py` imports `canonicalize_device`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
 - **tolk.next:** waiting for L1 through L8, each break with its layer.
 - **Differs:**
@@ -78,7 +77,6 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
   - the engine has one order (schedule, hcq2 helpers, realize, tensor, jit),
     and each late binding is passed as a function argument, never a global
     reference;
-  - `canonicalize_device` moves to `Helpers`;
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
@@ -109,3 +107,20 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 - **Differs:** profiling stamp slots follow the amended `Submission.record`.
 - **Reason:** (c).
 - **Pinned by:** waiting for L7.
+
+## D8. The disk cache maps strings to strings
+
+- **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
+  keyed by strings, integers or dictionaries of columns).
+- **tolk.next:** `lib/helpers.ml:588-699` (`Diskcache`).
+- **Differs:** keys and values are strings, which callers encode. Each entry
+  is a file under `CACHEDB`, a directory, written aside and renamed into
+  place; tables are versioned by tolk.next's own version.
+- **Reason:** (a). OCaml has no pickle, no type-safe serialization of
+  arbitrary values: a cache returning any type would be `Marshal`, which
+  crashes when a rebuilt program reads a value of a changed type. Without an
+  SQLite transaction, writing aside and renaming is what keeps an entry whole
+  when a writer crashes or races another.
+- **Pinned by:** `test/helpers`: `Helpers › Diskcache › get reads back any
+  key and value put` and `Helpers › Diskcache › behaves as a table of entries
+  per table`.

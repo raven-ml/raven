@@ -3,7 +3,17 @@
 (library
  (name tolk_next)
  (public_name tolk.next)
+ (private_modules host_config)
+ (libraries unix)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
   (backend ppx_windtrap.mutate)))
+
+; The system the library is compiled for, cross-compilation included, without
+; probing the machine at run time.
+
+(rule
+ (target host_config.ml)
+ (action
+  (write-file %{target} "let system = \"%{ocaml-config:system}\"\n")))
