@@ -2,8 +2,10 @@
 
 tolk.next is tolk rebuilt on tinygrad at commit
 `79af1ca70e7021f504919c4ff5631245acc33ed6`. It turns tensor graphs into
-kernels and runs them through `nx.device`, which owns every driver. It is
-internal to raven until it replaces the `tolk` library.
+compiled programs, as data: source, binaries, memory plans and the queue
+programs that launch them. It is a compiler and depends on no runtime; rune
+runs its output on `nx.device`, which owns every driver. It is internal to
+raven until it replaces the `tolk` library.
 
 ## Layout
 
@@ -55,13 +57,14 @@ is scope, not a divergence: the part left out is listed here, and
 |---|---|
 | `tensor.py`, `function.py`, `nn/*`, and the `Tensor` surface of `mixin/*`: dtype shorthands, creation, reductions, randomness, the composite ops of `mixin/op.py` | nx and kaun are raven's frontend, and tinygrad's decompositions there are rune's lowering. The mixin methods `UOp` itself uses stay in the IR. |
 | `TinyJit`, `_TinyJit` and `_prepare_jit_inputs` in `engine/jit.py` | the `Tensor` surface of the jit; rune walks the parameters with `Ptree`. |
+| `CapturedJit`, the device registry and the lazy `Buffer` of `device.py`, and running a schedule | execution is rune's; tolk.next returns what to run (see D3). |
 | Pickling a captured jit (`CapturedJit.__reduce__`) | raven has no persistent jit cache. |
 | `mixin/gradient.py` and the `compute_gradient` path | rune owns differentiation. |
 | `llm/*` | models are examples or a package of their own, never part of the compiler. |
 | `viz/*` and the viz hooks in `helpers.py` | a Python web UI. |
 | `tqdm`, `fetch` and `fetch_fw` in `helpers.py` | progress bars and downloads belong to the programs and packages that need them. |
 | The profile events of `helpers.py` and `device.py` | nx.device's `Profile` records them. |
-| The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it (see D3). |
+| The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it, and rune drives it (see D3). |
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
 | `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, and the ISA branches of `codegen/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
 | The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |

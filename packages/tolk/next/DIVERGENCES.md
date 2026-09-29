@@ -6,7 +6,8 @@ for one of three reasons only:
 
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
 - **(b) a named consumer:** a raven call site that fails without it;
-- **(c) an nx.device contract.**
+- **(c) the executor's contract:** nx.device's submission protocol, which
+  rune drives with tolk.next's output.
 
 Taste, speed without a measurement, and "the old tolk did it" are not reasons.
 A difference in numerics also needs a failing rune test, since nx semantics
@@ -23,8 +24,8 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 
 - **tinygrad:** `runtime/support/hcq2.py:276,432`.
 - **tolk.next:** waiting for L7.
-- **Differs:** timeline values are parameters, and only the runtime writes
-  the submitted word.
+- **Differs:** timeline values are parameters of the host program, and only
+  the runtime writes the submitted word.
 - **Reason:** (c).
 - **Pinned by:** waiting for L7.
 
@@ -41,10 +42,11 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
 - **tolk.next:** waiting for L6 and L7.
-- **Differs:** the registry, the lazy `Buffer`, `Compiler` and `Compiled`, and
-  the IR half of each `ops_*.py` (queues, `pm_encode`, program data) are in
-  tolk.next; allocators, programs, drivers and profile events are in
-  nx.device.
+- **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
+  and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
+  (queues, `pm_encode`, program data), all returning data. The registry, the
+  lazy `Buffer` and running a schedule are rune's; allocators, programs,
+  drivers and profile events are nx.device's.
 - **Reason:** (c).
 - **Pinned by:** waiting for L6 and L7.
 
@@ -94,8 +96,9 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 
 - **tinygrad:** `device.py:26,36,395,491` (device strings split at `:`).
 - **tolk.next:** waiting for L6.
-- **Differs:** a device is named by `Nx_device.name` and looked up; its name
-  is never parsed.
+- **Differs:** the caller gives a target, a device name and its `arch`;
+  tolk.next picks the renderer and compiler from the `arch` and never parses
+  the name.
 - **Reason:** (c).
 - **Pinned by:** waiting for L6.
 
