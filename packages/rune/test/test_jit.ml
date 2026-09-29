@@ -1219,6 +1219,238 @@ let test_grad_through_scan_matrix_carry () =
     (to_arr (Rune.grad' loss xs))
     (Rune.jit' (fun xs -> Rune.grad' loss xs) xs)
 
+(* Staged scan rules: under jit, jvp and vmap of a scan compile one loop, the
+   scan of their transformation. [runs] counts the body's runs while the scan is
+   traced: a staged scan runs its body a fixed number of times, whatever its
+   length, where an unrolled one runs it once per step. *)
+
+let cell w h x = Nx.tanh (Nx.add (Nx.matmul w h) x)
+
+let rollout ?(runs = ref 0) w h0 xs =
+  snd
+    (Rune.scan'
+       ~f:(fun h x ->
+         incr runs;
+         let h = cell w h x in
+         (h, h))
+       ~init:h0 xs)
+
+let series seed shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  Nx.create f32 shape
+    (Array.init n (fun i -> Float.sin (Float.of_int ((7 * i) + seed)) /. 2.0))
+
+let w0 = series 1 [| 3; 3 |]
+let h0 = vec32 [| 0.1; -0.2; 0.3 |]
+let lane i x = Nx.slice [ Nx.I i ] x
+let lanes k f = Nx.stack ~axis:0 (List.init k f)
+
+(* [staged ~runs f] runs the checks [f count n] at lengths [n] 4 and 8, and
+   checks that the body counted [runs] runs in [count] at both. *)
+let staged ~runs f =
+  List.iter
+    (fun n ->
+      let count = ref 0 in
+      f count n;
+      equal ~msg:(Printf.sprintf "body runs, length %d" n) int runs !count)
+    [ 4; 8 ]
+
+(* A tangent on the captured weight makes the carry active after one step: the
+   step's first run discovers it, and the scan is staged carrying its
+   tangent. *)
+let test_jvp_of_scan_is_staged () =
+  staged ~runs:2 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      let g =
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+          (fun w dw -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
+      in
+      List.iter
+        (fun seed ->
+          let dw = series seed [| 3; 3 |] in
+          check_arr ~eps:1e-4 ~msg:"tangent"
+            (to_arr (snd (Rune.jvp' (fun w -> rollout w h0 xs) w0 dw)))
+            (g w0 dw))
+        [ 3; 4 ])
+
+(* An active init carries its tangent from the start; a float carry no tangent
+   reaches stays without one, and its outputs' tangents are zero. *)
+let test_jvp_of_scan_with_an_inactive_carry () =
+  staged ~runs:1 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      let f h =
+        let c, ys =
+          Rune.scan pair_ptree Nx.Ptree.tensor Nx.Ptree.tensor
+            ~f:(fun c x ->
+              incr runs;
+              let u = cell w0 c.Pair.u x in
+              ({ Pair.u; v = Nx.add_s c.Pair.v 1.0 }, Nx.mul_s u 2.0))
+            ~init:{ Pair.u = h; v = Nx.scalar f32 0.0 }
+            xs
+        in
+        Nx.concatenate ~axis:0
+          [ c.Pair.u; Nx.reshape [| 1 |] c.Pair.v; Nx.flatten ys ]
+      in
+      let dh = vec32 [| 1.0; -0.5; 0.25 |] in
+      let expected = Rune.jvp' f h0 dh in
+      runs := 0;
+      let g =
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+          (fun h dh -> Rune.jvp' f h dh)
+      in
+      let y, dy = g h0 dh in
+      check_arr ~eps:1e-4 ~msg:"primal" (to_arr (fst expected)) y;
+      check_arr ~eps:1e-4 ~msg:"tangent" (to_arr (snd expected)) dy;
+      equal ~msg:"the counter's tangent" float_exact 0.0 (Nx.item [ 3 ] dy))
+
+let test_jvp_of_jvp_of_scan_is_staged () =
+  let dw = series 3 [| 3; 3 |] and dw2 = series 5 [| 3; 3 |] in
+  let second runs xs w =
+    snd
+      (Rune.jvp'
+         (fun w -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
+         w dw2)
+  in
+  staged ~runs:3 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"second-order tangent"
+        (to_arr (second (ref 0) xs w0))
+        (Rune.jit' (second runs xs) w0))
+
+(* Batched rows batch the carry after one step; a batched capture does too. *)
+let test_vmap_of_scan_is_staged () =
+  let b = 3 in
+  staged ~runs:2 (fun runs n ->
+      let xs = series 2 [| b; n; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"batched rows"
+        (to_arr (lanes b (fun i -> rollout w0 h0 (lane i xs))))
+        (Rune.jit' (Rune.vmap' (fun xs -> rollout ~runs w0 h0 xs)) xs));
+  staged ~runs:2 (fun runs n ->
+      let xs = series 2 [| n; 3 |] and ws = series 6 [| b; 3; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"batched capture"
+        (to_arr (lanes b (fun i -> rollout (lane i ws) h0 xs)))
+        (Rune.jit' (Rune.vmap' (fun w -> rollout ~runs w h0 xs)) ws))
+
+(* vmap over the tangents around jvp of a scan: one loop whose carry holds the
+   state once and its tangent per lane. The carry becomes active after one step,
+   and its tangent batched after another: two runs discover them, a third stages
+   the scan. *)
+let sofo ?(runs = ref 0) xs w dirs =
+  Rune.vmap'
+    (fun dw -> snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
+    dirs
+
+let sofo_lanes xs w dirs =
+  lanes
+    (Nx.shape dirs).(0)
+    (fun i -> snd (Rune.jvp' (fun w -> rollout w h0 xs) w (lane i dirs)))
+
+let test_vmap_over_jvp_of_scan_is_staged () =
+  let k = 4 in
+  staged ~runs:3 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      let g =
+        Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (sofo ~runs xs)
+      in
+      List.iter
+        (fun (w, dirs) ->
+          check_arr ~eps:1e-4 ~msg:"per-lane tangents"
+            (to_arr (sofo_lanes xs w dirs))
+            (g w dirs))
+        [
+          (w0, series 3 [| k; 3; 3 |]);
+          (series 8 [| 3; 3 |], series 9 [| k; 3; 3 |]);
+        ])
+
+(* With the init active and its tangent batched, the first run stages. *)
+let test_vmap_over_jvp_of_scan_from_an_active_init () =
+  let k = 4 in
+  let f runs xs w dws dhs =
+    Rune.vmap
+      Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+      (fun dw dh ->
+        snd
+          (Rune.jvp
+             Nx.Ptree.(pair tensor tensor)
+             Nx.Ptree.tensor
+             (fun (w, h) -> rollout ~runs w h xs)
+             (w, h0) (dw, dh)))
+      dws dhs
+  in
+  staged ~runs:1 (fun runs n ->
+      let xs = series 2 [| n; 3 |] in
+      let dws = series 3 [| k; 3; 3 |] and dhs = series 4 [| k; 3 |] in
+      check_arr ~eps:1e-4 ~msg:"per-lane tangents"
+        (to_arr (f (ref 0) xs w0 dws dhs))
+        (Rune.jit
+           Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+           (f runs xs) w0 dws dhs))
+
+(* The state is not batched: every lane adds the same work, its tangent's, and
+   the work no lane adds covers the primal's, done once whatever the number of
+   lanes. A batched state would leave no such work. *)
+let test_vmap_over_jvp_of_scan_keeps_the_primal_once () =
+  let xs = series 2 [| 8; 3 |] in
+  let ops f =
+    ignore (f ());
+    let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
+    ignore (f ());
+    Z.to_int
+      (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
+  in
+  let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (sofo xs) in
+  let lanes k = ops (fun () -> g w0 (series 3 [| k; 3; 3 |])) in
+  let two = lanes 2 and four = lanes 4 and six = lanes 6 in
+  let primal = ops (fun () -> Rune.jit' (fun w -> rollout w h0 xs) w0) in
+  equal ~msg:"every lane adds the same work" int (four - two) (six - four);
+  is_true ~msg:"the shared work covers the primal" (two - (four - two) >= primal)
+
+(* Reverse mode over a staged jvp or vmap of a scan stages its transpose. *)
+let test_grad_of_jvp_of_scan_is_staged () =
+  let dw = series 3 [| 3; 3 |] in
+  let loss runs xs w =
+    Nx.sum (snd (Rune.jvp' (fun w -> rollout ~runs w h0 xs) w dw))
+  in
+  let counts = ref [] in
+  List.iter
+    (fun n ->
+      let xs = series 2 [| n; 3 |] and runs = ref 0 in
+      check_arr ~eps:1e-4 ~msg:"gradient"
+        (to_arr (Rune.grad' (loss (ref 0) xs) w0))
+        (Rune.jit' (Rune.grad' (loss runs xs)) w0);
+      counts := !runs :: !counts)
+    [ 4; 8 ];
+  equal ~msg:"body runs" (list int) [ List.hd !counts; List.hd !counts ] !counts
+
+let test_grad_of_vmap_of_scan_is_staged () =
+  let loss runs xs w =
+    Nx.sum (Rune.vmap' (fun xs -> rollout ~runs w h0 xs) xs)
+  in
+  let counts = ref [] in
+  List.iter
+    (fun n ->
+      let xs = series 2 [| 3; n; 3 |] and runs = ref 0 in
+      check_arr ~eps:1e-4 ~msg:"gradient"
+        (to_arr (Rune.grad' (loss (ref 0) xs) w0))
+        (Rune.jit' (Rune.grad' (loss runs xs)) w0);
+      counts := !runs :: !counts)
+    [ 4; 8 ];
+  equal ~msg:"body runs" (list int) [ List.hd !counts; List.hd !counts ] !counts
+
+(* jvp or vmap of a gradient through a scan folds it eagerly, and matches. *)
+let test_jvp_and_vmap_of_grad_through_scan () =
+  let xs = series 2 [| 4; 3 |] and dw = series 3 [| 3; 3 |] in
+  let grad xs w = Rune.grad' (fun w -> Nx.sum (rollout w h0 xs)) w in
+  check_arr ~eps:1e-4 ~msg:"jvp of grad"
+    (to_arr (snd (Rune.jvp' (grad xs) w0 dw)))
+    (Rune.jit' (fun w -> snd (Rune.jvp' (grad xs) w dw)) w0);
+  let xss = series 5 [| 3; 4; 3 |] in
+  check_arr ~eps:1e-4 ~msg:"vmap of grad"
+    (to_arr (lanes 3 (fun i -> grad (lane i xss) w0)))
+    (Rune.jit' (fun w -> Rune.vmap' (fun xs -> grad xs w) xss) w0)
+
 (* Buffer sharing: strided leaves must fall back to copies, views with an offset
    must read the right span, and each call must return tensors with their own
    storage. *)
@@ -4670,6 +4902,26 @@ let tests =
         test "a scan reads its rows in place" test_scan_reads_rows_in_place;
         test "a scan computes the values it captures once"
           test_scan_computes_captures_once;
+      ];
+    group "staged scan rules"
+      [
+        test "jvp of a scan is staged" test_jvp_of_scan_is_staged;
+        test "jvp of a scan with an inactive carry"
+          test_jvp_of_scan_with_an_inactive_carry;
+        test "jvp of jvp of a scan is staged" test_jvp_of_jvp_of_scan_is_staged;
+        test "vmap of a scan is staged" test_vmap_of_scan_is_staged;
+        test "vmap over jvp of a scan is staged"
+          test_vmap_over_jvp_of_scan_is_staged;
+        test "vmap over jvp of a scan from an active init"
+          test_vmap_over_jvp_of_scan_from_an_active_init;
+        test "vmap over jvp of a scan keeps the primal once"
+          test_vmap_over_jvp_of_scan_keeps_the_primal_once;
+        test "grad of jvp of a scan is staged"
+          test_grad_of_jvp_of_scan_is_staged;
+        test "grad of vmap of a scan is staged"
+          test_grad_of_vmap_of_scan_is_staged;
+        test "jvp and vmap of a gradient through a scan"
+          test_jvp_and_vmap_of_grad_through_scan;
       ];
     group "sliding windows"
       [

@@ -35,6 +35,25 @@ let err_quant () =
     "Rune: a part of a quantised weight is differentiated; capture the weight, \
      or build it from Rune.detached tensors"
 
+(* A scan's leaves followed by the tangents of its active ones: [split n l] is
+   the first [n] elements of [l] and the others, and [zip actives leaves ts]
+   pairs each active leaf with its tangent. *)
+let rec split n l =
+  if n = 0 then ([], l)
+  else
+    match l with
+    | x :: l ->
+        let a, b = split (n - 1) l in
+        (x :: a, b)
+    | [] -> assert false
+
+let rec zip actives leaves ts =
+  match (actives, leaves, ts) with
+  | [], [], [] -> []
+  | true :: actives, l :: leaves, t :: ts -> (l, t) :: zip actives leaves ts
+  | false :: actives, _ :: leaves, ts -> zip actives leaves ts
+  | _ -> assert false
+
 let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
  fun tangents ->
   let open Effect.Deep in
@@ -109,20 +128,91 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
-      (* Scan: forward mode has no staged rule yet, so run the eager fold under
-         a nested instance of this handler — every step's operations flow
-         through it and acquire their tangents as they always did. Claiming
-         [E_scan] here obliges answering the probe with [false]. *)
-      | Scan.E_scan_probe -> Some (fun k -> continue k false)
+      (* Scan. When a stager lies beyond, the scan passes on as the scan of its
+         jvp: the carry and the rows gain the tangents of their active leaves,
+         the outputs those of theirs, and the step runs the body under a nested
+         instance of this handler. A carry whose tangent is zero at [init] gains
+         one only once a step makes it active: the step then aborts its run with
+         [Grow] and the scan passes on again, carrying it. Otherwise, the eager
+         fold runs under a nested instance of this handler, and every step's
+         operations acquire their tangents. *)
+      | Scan.E_scan_probe Scan.Loop ->
+          Some (fun k -> continue k (Scan.probe Scan.Loop))
+      | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
       | Scan.E_scan req ->
           Some
             (fun k ->
-              let res : Scan.scan_res =
+              let fold () =
                 Effect.Deep.match_with
                   (fun () -> Scan.eager req)
                   () (handler tangents)
               in
-              continue k res)
+              if not (Scan.probe Scan.Loop) then Scan.deliver k fold
+              else
+                let exception Grow of bool list in
+                let flags = List.map (fun (P l) -> active l) in
+                let tangents_of actives leaves =
+                  List.concat
+                    (List.map2
+                       (fun a (P l) -> if a then [ P (tan_or_zeros l) ] else [])
+                       actives leaves)
+                in
+                let seed actives leaves ts =
+                  List.iter
+                    (fun (P l, d) ->
+                      Tensor_map.set tangents l (T.unpack (T.dtype l) d))
+                    (zip actives leaves ts)
+                in
+                let nc = List.length req.req_carry
+                and nx = List.length req.req_xs in
+                let rows = flags req.req_xs in
+                let rec attempt carried =
+                  let outputs = ref [] in
+                  let run c x =
+                    let c, dc = split nc c and x, dx = split nx x in
+                    seed carried c dc;
+                    seed rows x dx;
+                    let c', y =
+                      Effect.Deep.match_with
+                        (fun () -> req.req_step.run c x)
+                        () (handler tangents)
+                    in
+                    let next = flags c' in
+                    if List.exists2 (fun a a' -> a' && not a) carried next then
+                      raise (Grow (List.map2 ( || ) carried next));
+                    outputs := flags y;
+                    (c' @ tangents_of carried c', y @ tangents_of !outputs y)
+                  in
+                  match
+                    Effect.perform
+                      (Scan.E_scan
+                         {
+                           req with
+                           req_carry =
+                             req.req_carry @ tangents_of carried req.req_carry;
+                           req_xs = req.req_xs @ tangents_of rows req.req_xs;
+                           req_step = { run };
+                         })
+                  with
+                  | res ->
+                      let set actives (leaves, ts) =
+                        List.iter
+                          (fun (P l, d) ->
+                            set_tangent l (T.unpack (T.dtype l) d))
+                          (zip actives leaves ts);
+                        leaves
+                      in
+                      let r_carry = set carried (split nc res.r_carry) in
+                      let r_ys =
+                        set !outputs (split (List.length !outputs) res.r_ys)
+                      in
+                      continue k { Scan.r_carry; r_ys }
+                  (* The aborted run's slot tensors are never reached again. *)
+                  | exception Grow carried -> attempt carried
+                  | exception Scan.Not_staged -> Scan.deliver k fold
+                  | exception e -> discontinue k e
+                in
+                attempt (flags req.req_carry))
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> lift2 k (add a b) a b T.add)
       | E_sub { a; b } -> Some (fun k -> lift2 k (sub a b) a b T.sub)

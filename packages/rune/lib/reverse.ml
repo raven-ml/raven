@@ -165,28 +165,24 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_round _ -> None
       (* Staged scan. The tape entry recorded for a staged scan performs
          [E_scan_bwd], which only a staging jit answers — so take the staged
-         path only when the probe says the nearest [E_scan] claimer is one.
-         Re-performing blindly would let another transformation handler (vmap,
-         jvp, an outer grad) claim [E_scan]: the steps would run beyond this
-         tape's reach and the recorded [E_scan_bwd] would go unhandled at
-         backward time. On [false] the eager fold runs under a nested copy of
-         this handler, taping every step as the unrolled scan always did. *)
-      | Scan.E_scan_probe -> Some (fun k -> continue k false)
+         path only when the [Transpose] probe says the scan and its backward
+         loop both reach one. Re-performing blindly would let another
+         transformation handler (vmap, jvp, an outer grad) claim [E_scan]: the
+         recorded [E_scan_bwd] would bypass it. Otherwise the eager fold runs
+         under a nested copy of this handler, taping every step as the unrolled
+         scan always did. *)
+      | Scan.E_scan_probe Scan.Loop ->
+          Some (fun k -> continue k (Scan.probe Scan.Transpose))
+      | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
       | Scan.E_scan req ->
           Some
             (fun k ->
-              let stages =
-                match Effect.perform Scan.E_scan_probe with
-                | stages -> stages
-                | exception Effect.Unhandled _ -> false
+              let fold () =
+                Effect.Deep.match_with
+                  (fun () -> Scan.eager req)
+                  () (handler tape)
               in
-              if not stages then
-                let res : Scan.scan_res =
-                  Effect.Deep.match_with
-                    (fun () -> Scan.eager req)
-                    () (handler tape)
-                in
-                continue k res
+              if not (Scan.probe Scan.Transpose) then Scan.deliver k fold
               else
                 match
                   Effect.perform (Scan.E_scan { req with req_record = true })
@@ -232,16 +228,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                               Tape.accumulate tape g dg)
                           br_closed);
                     continue k res
-                | exception Scan.Not_staged ->
-                    (* The stager declined after tracing the body (e.g. a
-                       shape-unstable carry): fold eagerly, taping every
-                       step. *)
-                    let res : Scan.scan_res =
-                      Effect.Deep.match_with
-                        (fun () -> Scan.eager req)
-                        () (handler tape)
-                    in
-                    continue k res)
+                (* The stager declined after tracing the body (e.g. a
+                   shape-unstable carry): fold eagerly, taping every step. *)
+                | exception Scan.Not_staged -> Scan.deliver k fold
+                | exception e -> discontinue k e)
       (* Binary arithmetic *)
       | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)
       | E_sub { a; b } -> Some (fun k -> pull2 k (sub a b) a b Fun.id T.neg)

@@ -646,27 +646,95 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (fun (Nx.P v) (Nx.P o) -> if batched st v then mark st o)
                 values out;
               continue k out)
-    (* Operations on constants, and effects from other libraries, fall through.
-       A new Nx tensor operation must be added to this match: an unmatched
-       batched operand would silently produce wrong shapes. *)
-    (* The scan claim is unconditional: the body may close over batched
-       tensors that appear in neither the carry nor the scanned input, so a
-       scan can never be handed to a stager above this handler — and the probe
-       must say so. *)
-    | Scan.E_scan_probe -> Some (fun k -> continue k false)
+    (* Scan. The claim is unconditional: the body may close over batched tensors
+       that appear in neither the carry nor the rows. When a stager lies beyond,
+       the scan passes on batched: a batched row has the scan axis moved in
+       front of the lane, a batched carry stays batched through every step, and
+       the step runs the body under a nested instance of this handler. A carry
+       unbatched at [init] becomes batched only once a step batches it: the step
+       then aborts its run with [Grow] and the scan passes on again, batching
+       it. Otherwise, the eager fold runs under a nested instance of this
+       handler. *)
+    | Scan.E_scan_probe Scan.Loop ->
+        Some (fun k -> continue k (Scan.probe Scan.Loop))
+    | Scan.E_scan_probe Scan.Transpose -> Some (fun k -> continue k false)
     | Scan.E_scan req ->
         Some
           (fun k ->
-            let res : Scan.scan_res =
+            let fold () =
               match_with (fun () -> Scan.eager req) () (handler st)
             in
-            continue k res)
+            if not (Scan.probe Scan.Loop) then Scan.deliver k fold
+            else
+              let exception Grow of bool list in
+              let flags = List.map (fun (Nx.P l) -> batched st l) in
+              let lanes carried leaves =
+                List.map2
+                  (fun b (Nx.P l) ->
+                    if b then Nx.P (ensure_batched st l) else Nx.P l)
+                  carried leaves
+              in
+              let rows = flags req.req_xs in
+              let xs =
+                List.map2
+                  (fun b (Nx.P x) ->
+                    if b then Nx.P (T.swapaxes 0 1 x) else Nx.P x)
+                  rows req.req_xs
+              in
+              let rec attempt carried =
+                let outputs = ref [] in
+                let run c x =
+                  List.iter2 (fun b (Nx.P c) -> if b then mark st c) carried c;
+                  List.iter2 (fun b (Nx.P x) -> if b then mark st x) rows x;
+                  let c', y =
+                    match_with (fun () -> req.req_step.run c x) () (handler st)
+                  in
+                  let next = flags c' in
+                  if List.exists2 (fun b b' -> b' && not b) carried next then
+                    raise (Grow (List.map2 ( || ) carried next));
+                  outputs := flags y;
+                  (lanes carried c', y)
+                in
+                match
+                  Effect.perform
+                    (Scan.E_scan
+                       {
+                         req with
+                         req_carry = lanes carried req.req_carry;
+                         req_xs = xs;
+                         req_step = { run };
+                       })
+                with
+                | res ->
+                    List.iter2
+                      (fun b (Nx.P c) -> if b then mark st c)
+                      carried res.r_carry;
+                    let r_ys =
+                      List.map2
+                        (fun b (Nx.P y) ->
+                          if b then (
+                            let y = T.swapaxes 0 1 y in
+                            mark st y;
+                            Nx.P y)
+                          else Nx.P y)
+                        !outputs res.r_ys
+                    in
+                    continue k { res with r_ys }
+                (* The aborted run's slot tensors are never reached again. *)
+                | exception Grow carried -> attempt carried
+                | exception Scan.Not_staged -> Scan.deliver k fold
+                | exception e -> discontinue k e
+              in
+              attempt (flags req.req_carry))
     | Nx_quant.Effect.E_quant { w; op } when quant_batched st w op ->
         Some
           (fun k ->
             let out = quant st w op in
             mark st out;
             continue k out)
+    (* Operations on constants, and effects from other libraries, fall through.
+       A new Nx tensor operation must be added to this match: an unmatched
+       batched operand would silently produce wrong shapes. *)
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

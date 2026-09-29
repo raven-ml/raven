@@ -167,6 +167,13 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jvp` and `Rune.vmap` of a `Rune.scan` compile as one loop under
+  `Rune.jit`, where they unrolled every step. The loop's carry gains a tangent
+  or a lane only where one reaches it, so `vmap` over tangents around `jvp`
+  computes the primal state once for every lane (32 lanes around a 32-step MLP
+  cell: 21 ms per call to 7 ms on the CPU). `Rune.grad` of such a `jvp` or
+  `vmap` compiles its reversed loop too.
+
 - A `Rune.scan` compiled by `Rune.jit` computes a value its body reads from
   before the scan once, before the loop. The loop recomputed such a value at
   every step: a draw from a key argument, or a whole earlier scan, ran once per

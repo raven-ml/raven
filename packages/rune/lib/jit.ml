@@ -2323,12 +2323,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     (* Staged scans *)
-    | Scan.E_scan_probe -> Some (fun k -> continue k true)
+    | Scan.E_scan_probe _ -> Some (fun k -> continue k true)
     | Scan.E_scan req ->
-        Some
-          (fun k ->
-            if unstageable st req.req_xs then discontinue k Scan.Not_staged
-            else stage_scan st req k)
+        Some (fun k -> Scan.deliver k (fun () -> stage_scan st req))
     | Scan.E_scan_bwd bwd -> Some (fun k -> stage_scan_bwd st bwd k)
     (* Gradient checkpointing. A differentiated remat's arguments are the
        residuals of its backward pass, so they are materialised. The backward
@@ -2710,16 +2707,11 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
    by position. A carry leaf is a buffer pair, a row leaf is read at row [i] of
    its stacked input, and an output leaf is written at row [i] of its stack.
    When a staged transpose will read them ([req_record]), the body also writes
-   the carry it receives to a carry stack. *)
-and stage_scan : type r.
-    ?places:Nx.Placement.t list ->
-    ?seen:Nx.Placement.t list list ->
-    state ->
-    Scan.scan_req ->
-    (Scan.scan_res, r) Effect.Deep.continuation ->
-    r =
- fun ?places ?(seen = []) st req k ->
+   the carry it receives to a carry stack. Raises [Scan.Not_staged] when the
+   scan cannot be compiled as a loop. *)
+and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
   let Scan.{ req_carry; req_xs; req_step = step; req_record } = req in
+  if unstageable st req_xs then raise Scan.Not_staged;
   let n = Scan.length req_xs in
   (* Discover the body's external inputs — the differentiable tensors it closes
      over: everything the body runs through [tolk_of] that predates its trace is
@@ -2789,8 +2781,8 @@ and stage_scan : type r.
     if
       List.for_all2 (fun (Nx.P c) s -> shape_of c = s.s_shape) c_next c_slots
       && not (List.exists (List.equal Nx.Placement.equal next) seen)
-    then stage_scan ~places:next ~seen st req k
-    else Effect.Deep.discontinue k Scan.Not_staged
+    then stage_scan ~places:next ~seen st req
+    else raise Scan.Not_staged
   else
     let y_outs =
       in_scan_body st loop_body (fun () ->
@@ -3015,7 +3007,7 @@ and stage_scan : type r.
                rows_tensor (written_by call buf) ~n ~stride ~place shape ))
            ys_rows)
     in
-    Effect.Deep.continue k { Scan.r_carry; r_ys }
+    { Scan.r_carry; r_ys }
 
 (* The backward scan (the transpose): capture the body's pullback against
    placeholder slot tensors — recomputing the forward step inside the body to

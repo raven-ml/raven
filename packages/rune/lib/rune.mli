@@ -761,11 +761,14 @@ val scan :
     tensor's cotangent is the sum over the steps, accumulated on every one. A
     carry tensor the step updates with {!Nx.set}, or reads only at the index it
     writes, is updated in place: a step that writes one row of a cache in the
-    carry moves that row, not the cache. Staging needs the carry to keep its
-    shapes across steps; a fold that changes them, one reached through
-    {!val-vmap}, or one in a program over several devices unrolls into the
-    compiled program instead. Everywhere else the scan folds eagerly, tracing
-    every step.
+    carry moves that row, not the cache. {!val-jvp} and {!val-vmap} of a scan
+    compile as one loop too, whose carry gains a tangent or a lane only for the
+    carry tensors that have one: under [vmap] over tangents around [jvp], the
+    primal state is computed once for every lane. Staging needs the carry to
+    keep its shapes across steps; a fold that changes them, a gradient taken
+    inside [jvp] or [vmap] of a fold, or one in a program over several devices
+    unrolls into the compiled program instead. Everywhere else the scan folds
+    eagerly, tracing every step.
 
     Raises [Invalid_argument] if [xs] has no tensor, a scalar tensor or tensors
     of different leading lengths, or if [n] is [0]; and, eagerly and under

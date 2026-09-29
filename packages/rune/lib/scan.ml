@@ -9,9 +9,14 @@
    compiled program — instead of an unrolled trace — requires the fold step to
    be captured once as a compiled sub-program and the scan itself to become a
    loop construct at the schedule level. [scan] therefore performs the [E_scan]
-   effect; transformation handlers that cannot stage it (everything but jit and
-   reverse) fall back to the eager fold, as does plain execution when no handler
-   is present ([Effect.Unhandled] is catchable since OCaml 5.2).
+   effect. jit stages it; reverse, forward and vmap pass it on as the scan of
+   their transformation when a stager lies beyond them, and otherwise fold
+   eagerly under a nested instance of their handler, as does plain execution
+   when no handler is present ([Effect.Unhandled] is catchable since OCaml 5.2).
+
+   jit traces the fold step under its own handler only, so a transformation
+   handler passes on a step that installs a nested instance of itself around the
+   step it received.
 
    The carry, the rows and the outputs are structures whose types the effect
    cannot carry, so they travel as their tensors in walk order
@@ -65,18 +70,39 @@ type scan_bwd_res = {
   br_closed : closed_ctan list;
 }
 
-(* [E_scan_probe] asks: will the nearest [E_scan] claimer stage the scan as a
-   compiled loop? Every handler with an [E_scan] case must also answer the
-   probe: a staging jit answers [true]; a transformation handler answers
-   [false], because its own [E_scan] case intercepts the scan before any stager
-   above it could. Reverse-mode asks before re-performing [E_scan] — it records
-   a staged-transpose tape entry (an [E_scan_bwd] only a staging jit can answer)
-   exactly when the probe says [true], and otherwise folds eagerly so every step
-   is taped. Unhandled means [false]. *)
+(* [E_scan_probe need] asks whether an [E_scan] performed here would be staged
+   as a compiled loop ([Loop]), and, for [Transpose], whether the [E_scan_bwd]
+   that reverse-mode records for it would reach the stager too. Every handler
+   with an [E_scan] case answers the probe as its case behaves: a staging jit
+   answers [true]; forward and vmap pass [Loop] on, since they pass the scan on
+   when it stages, and answer [Transpose] with [false], since they cannot
+   transform an [E_scan_bwd]; reverse answers [Loop] with the answer to
+   [Transpose] beyond it, which is when it passes the scan on, and [Transpose]
+   with [false], since the backward loop it records is not differentiable.
+   Unhandled means [false].
+
+   A handler that claims [E_scan] delivers the exceptions raised while running
+   the scan to its performer, with [discontinue]: an exception the fold step
+   raises belongs at the scan, where the eager fold raises it, and a
+   transformation's fold step signals through its own exceptions. *)
+type need = Loop | Transpose
+
 type _ Effect.t +=
   | E_scan : scan_req -> scan_res Effect.t
   | E_scan_bwd : scan_bwd -> scan_bwd_res Effect.t
-  | E_scan_probe : bool Effect.t
+  | E_scan_probe : need -> bool Effect.t
+
+let probe need =
+  match Effect.perform (E_scan_probe need) with
+  | stages -> stages
+  | exception Effect.Unhandled _ -> false
+
+(* [deliver k run] resumes the performer of an [E_scan] with the result of
+   [run], or with the exception it raises. *)
+let deliver k run =
+  match run () with
+  | res -> Effect.Deep.continue k res
+  | exception e -> Effect.Deep.discontinue k e
 
 (* A stager may decline an [E_scan] it claimed when tracing the body reveals a
    loop it cannot compile (a carry whose shape changes across steps): it

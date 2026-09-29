@@ -106,6 +106,27 @@ let test_staged_scan_rejects_a_changed_carry () =
        "Rune.scan: the root: length 2 in the carry the body returned, length 1 \
         in the carry it received") (fun () -> ignore (Rune.jit' f (v4 ())))
 
+(* Under vmap and jvp, the staged scan's step runs the body inside their rules:
+   its error still reaches the scan. *)
+let test_staged_scan_under_vmap_and_jvp_rejects_a_changed_carry () =
+  let f xs =
+    let c, () =
+      Rune.scan carry Nx.Ptree.tensor Nx.Ptree.unit ~f:grow
+        ~init:[ Nx.scalar f64 0.0 ]
+        xs
+    in
+    List.hd c
+  in
+  let g xs =
+    Rune.vmap'
+      (fun dx -> snd (Rune.jvp' f xs dx))
+      (Nx.stack ~axis:0 [ v4 (); v4 () ])
+  in
+  raises
+    (Invalid_argument
+       "Rune.scan: the root: length 2 in the carry the body returned, length 1 \
+        in the carry it received") (fun () -> ignore (Rune.jit' g (v4 ())))
+
 (* Every step's outputs have the first step's visits. *)
 (* A carry that changes dtype is named by the scan. The carry is a tensor of
    any dtype, so that the body can change it. *)
@@ -227,6 +248,8 @@ let tests =
         test "rejects a changed carry" test_scan_rejects_a_changed_carry;
         test "rejects a changed carry under jit"
           test_staged_scan_rejects_a_changed_carry;
+        test "a staged scan under vmap and jvp rejects a changed carry"
+          test_staged_scan_under_vmap_and_jvp_rejects_a_changed_carry;
         test "rejects changed outputs" test_scan_rejects_changed_outputs;
         test "rejects a carry of another dtype"
           test_scan_rejects_a_changed_dtype;
