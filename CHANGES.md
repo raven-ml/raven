@@ -2724,6 +2724,11 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.truncated_normal` and `Nx.truncated_normal` at float64 reach 8.3
+  standard deviations. A margin kept for infinite bounds stopped every draw at
+  5.3, so an interval such as `[5, 6]` was drawn with the wrong mean and one
+  such as `[7, 8]` gave its lower bound every time. Past the reach of `erf`, an
+  interval still collapses onto its bound nearer zero, as now documented.
 - `Nx.Rng.fold_in_tensor` agrees with `Nx.Rng.fold_in` on a negative counter
   too, as documented. It derived a different key from every negative int32.
 - `Nx.Rng.shuffle` and `Nx.shuffle` return a tensor whose first axis is empty

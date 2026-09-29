@@ -794,7 +794,11 @@ module Rng : sig
       out-of-range samples: one draw per element whatever the bounds, so the
       cost does not grow as the interval narrows, and the draw is differentiable
       in both bounds. At float64 the draw carries double precision; at narrower
-      dtypes about seven digits, the precision of {!erfinv} there. *)
+      dtypes about seven digits, the precision of {!erfinv} there.
+
+      The bounds enter through {!erf}, which reaches [±1] at about 8.3 standard
+      deviations at float64 and 5.4 at narrower dtypes: an interval beyond that
+      collapses onto its bound nearer zero. *)
 
   val gumbel : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [gumbel k dtype shape] samples the standard Gumbel distribution, the

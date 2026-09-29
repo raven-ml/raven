@@ -3134,9 +3134,11 @@ module Make (B : Backend_intf.S) = struct
         let lit v = scalar ctx compute v in
         let lower = at compute lower and upper = at compute upper in
         (* [erfinv] is infinite at +/-1, which infinite bounds would reach; back
-           the interval off by a hair so unbounded truncation is the untruncated
-           normal rather than an infinity. *)
-        let limit = 1.0 -. 1e-7 in
+           the interval off to the last value before +/-1 so unbounded
+           truncation is the untruncated normal rather than an infinity. A wider
+           margin cuts the support short of where [erf] resolves it: a margin of
+           [1e-7] stops float64 draws at 5.3 standard deviations. *)
+        let limit = 1.0 -. Float.ldexp 1.0 (-significand_bits compute) in
         let edge x =
           maximum (lit (-.limit))
             (minimum (lit limit)
