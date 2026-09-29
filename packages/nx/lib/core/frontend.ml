@@ -2608,15 +2608,21 @@ module Make (B : Backend_intf.S) = struct
       in
       B.threefry (contiguous k) ctr
 
-    (* [fold_in] of a scalar index tensor rather than a host int: the counter
-       [(0, idx)] is [(0, 1)] scaled by [idx], which agrees with the host form
-       for any [idx] below 2^32. A batched [idx] (under vmap) therefore yields a
+    (* [fold_in] of a scalar index tensor rather than a host int. The host form
+       counts with [(idx asr 32, idx)], whose high word is the sign of an index
+       that fits in 32 bits: the counter is [(0, 1)] scaled by [idx] plus [(1,
+       0)] scaled by that sign. A batched [idx] (under vmap) therefore yields a
        batched, per-lane key, and a traced one a traced key. *)
     let fold_in_tensor k idx =
       check_key "fold_in_tensor" k;
       let ctx = B.context k in
-      let template = create ctx Nx_dtype.int32 [| 2 |] [| 0l; 1l |] in
-      let ctr = mul template (cast Nx_dtype.int32 idx) in
+      let word v = create ctx Nx_dtype.int32 [| 2 |] v in
+      let sign =
+        neg (cast Nx_dtype.int32 (cmplt idx (scalar ctx Nx_dtype.int32 0l)))
+      in
+      let ctr =
+        add (mul (word [| 0l; 1l |]) idx) (mul (word [| 1l; 0l |]) sign)
+      in
       B.threefry (contiguous k) ctr
 
     (* Significand width of [dtype], the leading bit included. *)

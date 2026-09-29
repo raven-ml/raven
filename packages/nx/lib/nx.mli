@@ -710,7 +710,7 @@ module Rng : sig
   (** [fold_in_tensor k data] is {!fold_in} for a [data] known only at run time
       — a step counter carried through a compiled loop, a device index. [data]
       is a scalar [int32] tensor, and the result agrees with [fold_in k i]
-      whenever [data] holds [i] and [i] fits in 32 bits.
+      whenever [data] holds [i].
 
       Unlike {!fold_in}, this keeps the derivation inside the computation, so
       the subkey tracks a traced counter instead of freezing whatever value it

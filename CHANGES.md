@@ -2724,6 +2724,8 @@ thread.
 
 ### Nx
 
+- `Nx.Rng.fold_in_tensor` agrees with `Nx.Rng.fold_in` on a negative counter
+  too, as documented. It derived a different key from every negative int32.
 - `Nx.Rng.shuffle` and `Nx.shuffle` return a tensor whose first axis is empty
   unchanged. They raised, asking `permutation` for a permutation of nothing.
 - `Nx.Rng.randint` and `Nx.randint` over a range wider than 2^31, such as
