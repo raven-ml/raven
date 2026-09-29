@@ -595,7 +595,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
               let out = solve_triangular ~upper ~transpose ~unit_diag a b in
               if active a || active b then begin
                 (* A_op X = B, so A_op dX = dB - dA_op X, with dA restricted to
-                   the triangle the solve reads. *)
+                   the triangle the solve reads. A_op is Aᴴ under [transpose]:
+                   the conjugate transpose on complex. *)
                 let db = tan_or_zeros b in
                 let rhs =
                   match tangent a with
@@ -608,7 +609,8 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                         else tri
                       in
                       let da_op =
-                        if transpose then T.matrix_transpose da_used
+                        if transpose then
+                          T.conjugate (T.matrix_transpose da_used)
                         else da_used
                       in
                       let out_2d, was_1d =

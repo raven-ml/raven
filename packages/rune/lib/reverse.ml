@@ -889,9 +889,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     match Tape.find tape out with
                     | None -> ()
                     | Some g ->
+                        (* The solve is X = op(A)^-1 B, where op(A) is A, or Aᴴ
+                           under [transpose]. Its transpose in B is op(A)^-T:
+                           the conjugate of the other solve, op(A)^-H, applied
+                           to the conjugate cotangent. *)
                         let grad_b =
-                          solve_triangular ~upper ~transpose:(not transpose)
-                            ~unit_diag a g
+                          T.conjugate
+                            (solve_triangular ~upper ~transpose:(not transpose)
+                               ~unit_diag a (T.conjugate g))
                         in
                         if tb then Tape.accumulate tape b grad_b;
                         if ta then begin
@@ -901,10 +906,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                                 T.unsqueeze ~axes:[ -1 ] grad_b )
                             else (out, grad_b)
                           in
+                          (* dX = -op(A)^-1 op(dA) X, and op(dA) = dAᴴ
+                             conjugates dA. *)
                           let grad_a_full =
                             if transpose then
                               T.neg
-                                (T.matmul out_2d (T.matrix_transpose grad_b_2d))
+                                (T.conjugate
+                                   (T.matmul out_2d
+                                      (T.matrix_transpose grad_b_2d)))
                             else
                               T.neg
                                 (T.matmul grad_b_2d (T.matrix_transpose out_2d))

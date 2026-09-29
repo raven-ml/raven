@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Gradients through `Nx.solve_triangular`, `Nx.solve` and `Nx.inv` on complex
+  matrices are right. The reverse rule solved against the conjugate
+  transpose where the plain transpose is needed, and with `~transpose:true`
+  both engines differentiated `aᵀ` where the solve reads `aᴴ`.
 - `Rune.grad`, `vjp` and `jvp` differentiate `Nx.sign` on complex tensors,
   where it is `z / |z|` and turns with `z`. It had a zero derivative, as on
   real tensors, so a gradient through a complex `sign` was silently zero and

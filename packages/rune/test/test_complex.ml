@@ -174,6 +174,58 @@ let sign_tests =
       both "abs, second order" modulus_grad z3;
     ]
 
+(* Linear algebra. Each factorisation reads only part of its input: a solve
+   against a triangle ignores the other one, and the Cholesky factor of a
+   Hermitian matrix reads the strict lower triangle and the real part of the
+   diagonal. The inputs hold other values there, so a rule that reads more than
+   the factorisation does shows up. *)
+
+let m33 () =
+  cmat 3 3
+    [|
+      (2.1, 0.5);
+      (-0.7, 1.3);
+      (0.4, -0.9);
+      (0.8, 0.2);
+      (1.9, -0.6);
+      (0.3, 0.7);
+      (-0.5, 0.4);
+      (0.6, -0.3);
+      (2.4, 0.8);
+    |]
+
+let b32 () =
+  cmat 3 2
+    [|
+      (0.6, -1.1); (1.4, 0.3); (-0.8, 0.7); (0.2, 1.0); (0.9, -0.4); (-0.3, 0.5);
+    |]
+
+(* A transposed solve is the conjugate transpose on complex. *)
+
+let triangular name ~upper ~transpose ~unit_diag =
+  both2 name
+    (fun a b -> Nx.solve_triangular ~upper ~transpose ~unit_diag a b)
+    m33 b32
+
+let solve_tests =
+  List.concat
+    [
+      triangular "lower" ~upper:false ~transpose:false ~unit_diag:false;
+      triangular "upper" ~upper:true ~transpose:false ~unit_diag:false;
+      triangular "lower, transposed" ~upper:false ~transpose:true
+        ~unit_diag:false;
+      triangular "upper, transposed" ~upper:true ~transpose:true
+        ~unit_diag:false;
+      triangular "unit diagonal, transposed" ~upper:false ~transpose:true
+        ~unit_diag:true;
+      both2 "vector, transposed"
+        (fun a b -> Nx.solve_triangular ~transpose:true a b)
+        m33
+        (fun () -> Nx.slice [ Nx.A; Nx.I 0 ] (b32 ()));
+      both2 "solve" Nx.solve m33 b32;
+      both "inv" Nx.inv m33;
+    ]
+
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
@@ -182,6 +234,7 @@ let tests =
     group "transforms" transform_tests;
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;
+    group "triangular solves" solve_tests;
   ]
 
 let () = exit (run "rune complex" tests)
