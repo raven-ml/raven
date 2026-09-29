@@ -6,8 +6,12 @@
 type memory = { host : nativeint; device : nativeint; handle : nativeint }
 type signal = { signaled : unit -> int; wait : int -> timeout_ms:int -> bool }
 
-(* A value that must stay reachable for as long as a base does. *)
-type keep = Keep : 'a -> keep
+(* What must stay reachable for as long as a base does. Host memory is the
+   bigarray that holds it from its first byte: views of it join that bigarray's
+   storage, which outlives the base. *)
+type keep =
+  | Keep : 'a -> keep
+  | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
 
 type t = {
   id : int;
@@ -76,11 +80,23 @@ external store_u64 : (nativeint[@unboxed]) -> (int64[@unboxed]) -> unit
   = "caml_nx_device_store_u64_byte" "caml_nx_device_store_u64"
 [@@noalloc]
 
+external bigarray_view :
+  ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t ->
+  ('c, 'd) Bigarray.kind ->
+  int ->
+  int ->
+  ('c, 'd, Bigarray.c_layout) Bigarray.Array1.t = "caml_nx_device_bigarray_view"
+
 external wait_u64 :
   (nativeint[@unboxed]) ->
   (int64[@unboxed]) ->
   (int[@untagged]) ->
   (int[@untagged]) = "caml_nx_device_wait_u64_byte" "caml_nx_device_wait_u64"
+
+(* [shared ba] is [ba] with the proxy of its storage made. The runtime makes a
+   proxy on a bigarray's first sub without synchronization, so a keep must have
+   one before views of it can be taken from several domains. *)
+let shared ba = Bigarray.Array1.sub ba 0 (Bigarray.Array1.dim ba)
 
 let host_memory ba =
   let a = bigarray_address ba in
@@ -97,7 +113,9 @@ let rec remember d =
 
 let create ~name ~arch ~budget ~caches ~alloc ~free ~map ~load ~signal
     ~timeout_ms ~synchronized =
-  let timeline = Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout 2 in
+  let timeline =
+    shared (Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout 2)
+  in
   Bigarray.Array1.fill timeline 0L;
   let d =
     {
@@ -136,7 +154,9 @@ let default_timeout_ms = 30_000
 let host =
   let alloc n =
     match Bigarray.Array1.create Bigarray.char Bigarray.c_layout n with
-    | ba -> Some (host_memory ba, Keep ba)
+    | ba ->
+        let ba = shared ba in
+        Some (host_memory ba, Host ba)
     | exception Stdlib.Out_of_memory -> None
   in
   create ~name:"CPU" ~arch:host_arch ~budget:max_int ~caches:false ~alloc
@@ -363,13 +383,14 @@ module Buffer = struct
         { base; offset = 0; dtype = s; length = n }
 
   let of_bigarray ba =
+    let ba = shared ba in
     let base =
       {
         owner = host;
         memory = host_memory ba;
         bytes = 0;
         borrowed = true;
-        keep = Keep ba;
+        keep = Host ba;
       }
     in
     {
@@ -422,6 +443,34 @@ module Buffer = struct
         (Nx_dtype.Scalar.to_string s)
         size;
     { b with offset = b.offset + offset; dtype = s; length = n }
+
+  let bigarray (type a b) (k : (a, b) Bigarray.kind) buf :
+      (a, b, Bigarray.c_layout) Bigarray.Array1.t =
+    let fail fmt =
+      Printf.ksprintf
+        (fun m -> invalid_arg ("Nx_device.Buffer.bigarray: " ^ m))
+        fmt
+    in
+    (match k with
+    | Bigarray.Int | Bigarray.Nativeint -> fail "the kind is no storage format"
+    | _ -> ());
+    if not (buf.base.owner == host) then
+      fail "the buffer is on %s, not CPU" buf.base.owner.name;
+    let size = Bigarray.kind_size_in_bytes k and bytes = nbytes buf in
+    let align =
+      match k with
+      | Bigarray.Complex32 | Bigarray.Complex64 -> size / 2
+      | _ -> size
+    in
+    if bytes mod size <> 0 then
+      fail "%d bytes are not a whole number of %d-byte elements" bytes size;
+    if Nativeint.rem (host_address buf) (Nativeint.of_int align) <> 0n then
+      fail "the buffer is not aligned to %d bytes" align;
+    if bytes = 0 then Bigarray.Array1.create k Bigarray.c_layout 0
+    else
+      match buf.base.keep with
+      | Host ba -> bigarray_view ba k buf.offset (bytes / size)
+      | Keep _ -> assert false (* host memory is always a bigarray's *)
 
   let copy ~src ~dst =
     let n = nbytes src in
@@ -526,7 +575,7 @@ let timeline d =
       memory = host_memory d.timeline;
       bytes = 0;
       borrowed = true;
-      keep = Keep d.timeline;
+      keep = Host d.timeline;
     }
   in
   { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 2 }

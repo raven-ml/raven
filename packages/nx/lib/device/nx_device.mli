@@ -176,6 +176,29 @@ module Buffer : sig
       bytes, and [Failure "NAME hang detected"] if a device it waits for does
       not signal in time. *)
 
+  val bigarray :
+    ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
+  (** [bigarray k b] is the bytes of the host buffer [b] read as elements of
+      kind [k], without a copy: [nbytes b / Bigarray.kind_size_in_bytes k] of
+      them, in the machine's byte order. Writing through it mutates [b]. It
+      keeps [b]'s memory alive for as long as it is reachable, except memory
+      that OCaml does not manage, which {!of_bigarray}'s caller keeps alive.
+
+      Access through the view is outside the devices' ordering: {!synchronize}
+      {!host} first to see the work that touched it.
+
+      Formats with no kind of their own are read as their storage kind and
+      decoded with {!Nx_dtype.Scalar.decode}: [BFloat16] as [Int16_unsigned],
+      the float8 formats as [Int8_unsigned], [Int4] and [UInt4] as
+      [Int8_unsigned] holding two per byte. With an odd number of 4-bit
+      elements, the last byte's high nibble is not [b]'s, and a write to it may
+      change memory outside [b].
+
+      Raises [Invalid_argument] if [b] is not on {!host}, if [k] is [Int] or
+      [Nativeint], which are no storage format, or if [b]'s bytes are not a
+      whole number of elements of [k], aligned to the size of one element (of
+      one component for complex kinds). *)
+
   (** {2:low Low-level}
 
       For the libraries that submit work over buffers. *)

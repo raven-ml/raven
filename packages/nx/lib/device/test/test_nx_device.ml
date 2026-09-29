@@ -198,9 +198,9 @@ let test_borrow_lifetime () =
   in
   let g = device ~borrow:map_host ~signal (driver ()) in
   (fun () ->
-    let ba = host_bytes (1 lsl 20) in
-    Gc.finalise_last (fun () -> collected := true) ba;
-    let bm = B.borrow g (B.of_bigarray ba) in
+    let hb = B.create Nx_device.host S.UInt8 (1 lsl 20) in
+    Gc.finalise_last (fun () -> collected := true) hb;
+    let bm = B.borrow g hb in
     ignore (Nx_device.submit g ~touches:[ Nx_device.host ] Fun.id);
     ignore (Sys.opaque_identity bm))
     ();
@@ -211,6 +211,104 @@ let test_borrow_lifetime () =
   Gc.full_major ();
   Gc.full_major ();
   is_true ~msg:"collected after it" !collected
+
+let test_bigarray_view () =
+  let b = B.create Nx_device.host S.Float32 4 in
+  let f = B.bigarray Bigarray.float32 b in
+  equal ~msg:"length" int 4 (Bigarray.Array1.dim f);
+  Bigarray.Array1.fill f 0.;
+  f.{2} <- 1.5;
+  let u = B.bigarray Bigarray.int8_unsigned b in
+  equal ~msg:"one view per kind" int 16 (Bigarray.Array1.dim u);
+  equal ~msg:"writes through" bytes (read b) (list_of_bytes u);
+  write (B.view b ~offset:0 S.UInt8 4) [ 0; 0; 0x80; 0x3f ];
+  equal ~msg:"sees buffer writes" float_exact 1. f.{0};
+  let w =
+    B.bigarray Bigarray.int16_unsigned (B.view b ~offset:8 S.BFloat16 2)
+  in
+  equal ~msg:"a view at an offset" int 0x3fc0 w.{1};
+  let e = B.bigarray Bigarray.float64 (B.create Nx_device.host S.Float64 0) in
+  equal ~msg:"empty" int 0 (Bigarray.Array1.dim e);
+  let inv = Exn.invalid_arg ~substring:"" in
+  raises_match inv (fun () ->
+      B.bigarray Bigarray.int (B.create Nx_device.host S.Int64 1));
+  raises_match inv (fun () ->
+      B.bigarray Bigarray.float32 (B.create Nx_device.host S.UInt8 3));
+  raises_match inv (fun () ->
+      B.bigarray Bigarray.int16_signed
+        (B.view (B.create Nx_device.host S.UInt8 4) ~offset:1 S.UInt8 2));
+  raises_match (Exn.invalid_arg ~substring:"not CPU") (fun () ->
+      B.bigarray Bigarray.char (B.create (device (driver ())) S.UInt8 1))
+
+(* A view outlives the buffer it was taken from: the memory stays with it. *)
+let test_bigarray_lifetime () =
+  let v =
+    let b = B.create Nx_device.host S.Int32 1000 in
+    let v = B.bigarray Bigarray.int32 b in
+    Bigarray.Array1.fill v 7l;
+    v
+  in
+  Gc.full_major ();
+  let reused =
+    List.init 100 (fun _ ->
+        let b = B.create Nx_device.host S.Int32 1000 in
+        Bigarray.Array1.fill (B.bigarray Bigarray.int32 b) 0x55l;
+        b)
+  in
+  Gc.full_major ();
+  ignore (Sys.opaque_identity reused);
+  is_true ~msg:"kept alive"
+    (List.for_all
+       (fun i -> v.{i} = 7l)
+       (List.init (Bigarray.Array1.dim v) Fun.id));
+  let tl = B.bigarray Bigarray.int64 (Nx_device.timeline Nx_device.host) in
+  equal ~msg:"the timeline" int 2 (Bigarray.Array1.dim tl)
+
+(* Two domains take views of the same fresh buffer at once, and one keeps its
+   view: the view shares the buffer's storage, so it outlives the buffer
+   whichever domain made the storage's proxy. *)
+let test_concurrent_views () =
+  let rounds = 2000 in
+  let current = Atomic.make None
+  and taken = Array.init 2 (fun _ -> Atomic.make 0) in
+  let kept = ref [] in
+  let worker k () =
+    for r = 0 to rounds - 1 do
+      let rec next () =
+        match Atomic.get current with
+        | Some b when Atomic.get taken.(k) = r -> b
+        | _ ->
+            Domain.cpu_relax ();
+            next ()
+      in
+      let v = B.bigarray Bigarray.int32 (next ()) in
+      if k = 0 then begin
+        Bigarray.Array1.fill v 7l;
+        kept := v :: !kept
+      end;
+      Atomic.incr taken.(k)
+    done
+  in
+  let workers = List.init 2 (fun k -> Domain.spawn (worker k)) in
+  for r = 0 to rounds - 1 do
+    Atomic.set current (Some (B.create Nx_device.host S.Int32 16));
+    while Atomic.get taken.(0) <= r || Atomic.get taken.(1) <= r do
+      Domain.cpu_relax ()
+    done
+  done;
+  Atomic.set current None;
+  List.iter Domain.join workers;
+  Gc.full_major ();
+  Gc.full_major ();
+  let filler =
+    List.init 20000 (fun _ ->
+        let a = Bigarray.Array1.create Bigarray.int32 Bigarray.c_layout 16 in
+        Bigarray.Array1.fill a 0x55l;
+        a)
+  in
+  equal ~msg:"every kept view holds what was written" int 0
+    (List.length (List.filter (fun v -> v.{5} <> 7l) !kept));
+  ignore (Sys.opaque_identity filler)
 
 (* Memory *)
 
@@ -551,6 +649,9 @@ let () =
              test "borrow" test_borrow;
              test "a borrow keeps its memory through the wait"
                test_borrow_lifetime;
+             test "bigarray views" test_bigarray_view;
+             test "a bigarray view keeps its memory" test_bigarray_lifetime;
+             test "concurrent views share the storage" test_concurrent_views;
            ];
          group "memory"
            [

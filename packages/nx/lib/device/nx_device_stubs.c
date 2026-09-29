@@ -5,6 +5,7 @@
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 #include <stdatomic.h>
@@ -43,6 +44,27 @@ value caml_nx_device_memmove(intnat dst, intnat src, intnat n) {
 value caml_nx_device_memmove_byte(value dst, value src, value n) {
   return caml_nx_device_memmove(Nativeint_val(dst), Nativeint_val(src),
                                 Long_val(n));
+}
+
+extern value caml_ba_sub(value vb, value vofs, value vlen);
+
+/* [v_len] elements of kind [v_kind] from byte [v_offset] of [v_src]. The
+   header comes from [caml_ba_sub] over the whole of [v_src], so it joins
+   [v_src]'s storage, which lives as long as any array over it. Its data,
+   length and kind are rewritten, and flags the runtime does not define are
+   cleared. */
+value caml_nx_device_bigarray_view(value v_src, value v_kind, value v_offset,
+                                   value v_len) {
+  CAMLparam2(v_src, v_kind);
+  CAMLlocal1(view);
+  view = caml_ba_sub(v_src, Val_long(0),
+                     Val_long(Caml_ba_array_val(v_src)->dim[0]));
+  struct caml_ba_array *b = Caml_ba_array_val(view);
+  b->data = (char *)b->data + Long_val(v_offset);
+  b->flags = (b->flags & (CAML_BA_LAYOUT_MASK | CAML_BA_MANAGED_MASK)) |
+             Int_val(v_kind);
+  b->dim[0] = Long_val(v_len);
+  CAMLreturn(view);
 }
 
 /* The timeline's words are read and written by other threads and by devices:

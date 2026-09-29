@@ -2749,11 +2749,12 @@ thread.
 - New `nx.device` library: devices and their memory without the tensor layer.
   It provides the host (`Nx_device.host`) and device buffers of a storage
   format (`Nx_device.Buffer`) that are owned, borrowed or byte-offset views.
+  A host buffer reads as a stdlib bigarray without a copy (`Buffer.bigarray`).
   Each device has a caching allocator with a budget (`budget`, `set_budget`,
   `free_cache`) and one `Out_of_memory`, which collects unreachable buffers
-  before it raises. `Buffer.copy` synchronizes the devices it touches. There are also
-  per-device statistics (`stats`), loaded programs (`Program`), and a timeline
-  (`submit`, `synchronize`) for the libraries that submit work.
+  before it raises. `Buffer.copy` synchronizes the devices it touches. There
+  are also per-device statistics (`stats`), loaded programs (`Program`), and a
+  timeline (`submit`, `synchronize`) for the libraries that submit work.
 - New `nx.metal.device` library (macOS): `Nx_metal_device.v 0` opens the
   Apple GPU as an `Nx_device.t`. Its buffers are memory the GPU shares with
   the host, kept resident through a residency set where Metal has one. It
