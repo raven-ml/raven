@@ -43,7 +43,16 @@ type elt =
       -> elt
 
 let elt ?code dt value stored w = Elt { dt; value; stored; w; code }
-let ints lo hi = Gen.int_range lo hi
+
+(* Integers of [bits] bits, drawn up to four times past their range either way,
+   and the value a store keeps: their low bits. *)
+let ints ~bits ~signed dt =
+  let r = 1 lsl (bits + 2) in
+  let stored v = Int64.to_int (Nx_test.wrap ~bits ~signed (Int64.of_int v)) in
+  let code v =
+    if bits = 4 then le 1 (stored v land 0xf) else le (bits / 8) (stored v)
+  in
+  elt ~code dt (Gen.int_range (-r) r) stored int
 
 let narrow dt =
   let s = S.of_dtype dt in
@@ -72,14 +81,12 @@ let elts =
     narrow Nx_dtype.bfloat16;
     narrow Nx_dtype.float8_e4m3;
     narrow Nx_dtype.float8_e5m2;
-    elt
-      ~code:(fun v -> le 1 (v land 0xf))
-      Nx_dtype.int4 (ints (-8) 7) Fun.id int;
-    elt ~code:(le 1) Nx_dtype.uint4 (ints 0 15) Fun.id int;
-    elt Nx_dtype.int8 (ints (-128) 127) Fun.id int;
-    elt Nx_dtype.uint8 (ints 0 255) Fun.id int;
-    elt Nx_dtype.int16 (ints (-32768) 32767) Fun.id int;
-    elt Nx_dtype.uint16 (ints 0 65535) Fun.id int;
+    ints ~bits:4 ~signed:true Nx_dtype.int4;
+    ints ~bits:4 ~signed:false Nx_dtype.uint4;
+    ints ~bits:8 ~signed:true Nx_dtype.int8;
+    ints ~bits:8 ~signed:false Nx_dtype.uint8;
+    ints ~bits:16 ~signed:true Nx_dtype.int16;
+    ints ~bits:16 ~signed:false Nx_dtype.uint16;
     elt Nx_dtype.int32 Gen.int32 Fun.id int32;
     elt Nx_dtype.uint32 Gen.int32 Fun.id int32;
     elt Nx_dtype.int64 Gen.int64 Fun.id int64;
@@ -96,8 +103,8 @@ let stores =
          let s = S.of_dtype e.dt in
          prop
            (S.to_string s
-          ^ " reads back what it stores, as a store of it rounds, in its \
-             format's bits")
+          ^ " reads back what it stores, as a store of it rounds or keeps the \
+             low bits, in its format's bits")
            (Gen.array ~size:(Gen.int_range 0 9) e.value)
            (fun xs ->
              let n = Array.length xs in
@@ -277,22 +284,4 @@ let refusals =
     (fun (_, f) -> raises_match Exn.invalid_arg f)
 
 let () =
-  exit
-    (run "Nx_array.Elements"
-       [
-         stores;
-         fills;
-         gather;
-         contiguous;
-         refusals;
-         test
-           "4-bit stores clamp out of range values (the interfaces are silent)"
-           (fun () ->
-             let i4 = E.create Nx_dtype.int4 2
-             and u4 = E.create Nx_dtype.uint4 2 in
-             List.iteri (E.set Nx_dtype.int4 i4) [ -9; 8 ];
-             List.iteri (E.set Nx_dtype.uint4 u4) [ -3; 20 ];
-             equal (list int) [ -8; 7; 0; 15 ]
-               (List.init 2 (E.get Nx_dtype.int4 i4)
-               @ List.init 2 (E.get Nx_dtype.uint4 u4)));
-       ])
+  exit (run "Nx_array.Elements" [ stores; fills; gather; contiguous; refusals ])

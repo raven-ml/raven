@@ -39,8 +39,6 @@ let in_bounds fn n i =
     invalid_arg
       (Printf.sprintf "Nx_array.Elements.%s: index %d of %d elements" fn i n)
 
-let clamp lo hi v = Int.max lo (Int.min hi v)
-
 (* Creation *)
 
 let create dt n = B.create Nx_device.host (S.of_dtype dt) n
@@ -138,12 +136,12 @@ let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
       let ba = bytes b and n = B.length b in
       fun i v ->
         in_bounds "set" n i;
-        set_nibble ba i (clamp (-8) 7 v land 0xf)
+        set_nibble ba i (v land 0xf)
   | UInt4 ->
       let ba = bytes b and n = B.length b in
       fun i v ->
         in_bounds "set" n i;
-        set_nibble ba i (clamp 0 15 v)
+        set_nibble ba i (v land 0xf)
   | Int8 ->
       let ba = B.bigarray Bigarray.int8_signed b in
       fun i v -> A.set ba i v
@@ -195,8 +193,8 @@ let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
       A.fill (B.bigarray Bigarray.int16_unsigned b) (S.encode BFloat16 v)
   | Float8_e4m3 -> A.fill (bytes b) (S.encode Float8_e4m3 v)
   | Float8_e5m2 -> A.fill (bytes b) (S.encode Float8_e5m2 v)
-  | Int4 -> fill_nibbles b (clamp (-8) 7 v land 0xf)
-  | UInt4 -> fill_nibbles b (clamp 0 15 v)
+  | Int4 -> fill_nibbles b (v land 0xf)
+  | UInt4 -> fill_nibbles b (v land 0xf)
   | Int8 -> A.fill (B.bigarray Bigarray.int8_signed b) v
   | UInt8 -> A.fill (bytes b) v
   | Int16 -> A.fill (B.bigarray Bigarray.int16_signed b) v

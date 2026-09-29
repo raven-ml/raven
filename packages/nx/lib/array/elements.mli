@@ -32,8 +32,9 @@ val get : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> int -> 'a
 
 val set : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> int -> 'a -> unit
 (** [set dt b] writes the elements of [b] as values of [dt]: [set dt b i v]
-    stores [v] as element [i], rounding it as a store of [dt] does. It is
-    applied as {!get} is, and raises as it does. *)
+    stores [v] as element [i], rounding it as a store of [dt] does. An integer
+    outside [dt]'s range keeps its low bits, at every width. It is applied as
+    {!get} is, and raises as it does. *)
 
 val fill : ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> 'a -> unit
 (** [fill dt b v] stores [v] as every element of [b].

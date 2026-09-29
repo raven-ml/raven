@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- Storing an out-of-range integer into an int4 or uint4 element keeps its low
+  four bits, as every wider integer dtype keeps its low bits. It clamped to
+  the range, so `Nx.create Nx.int4 [| 1 |] [| 9 |]` held 7 where an int8 store
+  of 300 wraps to 44. Casts from floats still hold at the range.
 - `Nx_device.Buffer.copy` counts a copy through a borrow as traffic of the
   host, whose memory a borrow is. It counted it in the borrowing device's
   `bytes_in` and `bytes_out`, although borrowed memory is never counted in a
