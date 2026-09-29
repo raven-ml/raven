@@ -18,7 +18,6 @@ type t = {
   name : string;
   arch : string;
   lock : Mutex.t;
-  caches : bool;
   alloc : int -> (memory * keep) option;
   free : memory -> unit;
   map : (nativeint -> int -> memory option) option;
@@ -38,7 +37,7 @@ type t = {
   programs : (string * string, program) Hashtbl.t;
   mutable held : keep list; (* retained memory, and what it keeps *)
   mutable budget : int;
-  mutable allocated : int;
+  allocated : int Atomic.t;
   mutable cached : int;
   mutable retained : int;
   mutable bytes_in : int;
@@ -115,8 +114,8 @@ let rec remember d =
   let l = Atomic.get opened in
   if not (Atomic.compare_and_set opened l (d :: l)) then remember d
 
-let create ~name ~arch ~budget ~caches ~alloc ~free ~map ~load ~signal
-    ~timeout_ms ~synchronized =
+let create ~name ~arch ~budget ~alloc ~free ~map ~load ~signal ~timeout_ms
+    ~synchronized =
   let timeline =
     shared (Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout 2)
   in
@@ -127,7 +126,6 @@ let create ~name ~arch ~budget ~caches ~alloc ~free ~map ~load ~signal
       name;
       arch;
       lock = Mutex.create ();
-      caches;
       alloc;
       free;
       map;
@@ -143,7 +141,7 @@ let create ~name ~arch ~budget ~caches ~alloc ~free ~map ~load ~signal
       programs = Hashtbl.create 16;
       held = [];
       budget;
-      allocated = 0;
+      allocated = Atomic.make 0;
       cached = 0;
       retained = 0;
       bytes_in = 0;
@@ -164,9 +162,9 @@ let host =
         Some (host_memory ba, Host ba)
     | exception Stdlib.Out_of_memory -> None
   in
-  create ~name:"CPU" ~arch:host_arch ~budget:max_int ~caches:false ~alloc
-    ~free:ignore ~map:None ~load:None ~signal:None
-    ~timeout_ms:default_timeout_ms ~synchronized:ignore
+  create ~name:"CPU" ~arch:host_arch ~budget:max_int ~alloc ~free:ignore
+    ~map:None ~load:None ~signal:None ~timeout_ms:default_timeout_ms
+    ~synchronized:ignore
 
 let name d = d.name
 let arch d = d.arch
@@ -256,7 +254,7 @@ let free_all d ~owned ~keep memories =
         d.held <- Keep (memories, keep) :: d.held;
         raise e
 
-let fits d n = n <= d.budget - d.allocated - d.cached - d.retained
+let fits d n = n <= d.budget - Atomic.get d.allocated - d.cached - d.retained
 
 (* Frees cached memory to the system until [d] fits [n] more bytes, or its cache
    is empty. *)
@@ -281,10 +279,10 @@ let release_cache d n =
     free_all d ~owned:!bytes ~keep:() !freed
   end
 
-(* Unreachable owned memory returns to the cache, or to the heap on the host,
-   without a wait: work is ordered after earlier work on the queue, and host
-   memory that a device's work uses is borrowed by that device. A borrow is
-   unmapped once the borrowing device's work is done. *)
+(* Unreachable owned memory returns to the cache without a wait: work is ordered
+   after earlier work on the queue. A borrow is unmapped once the borrowing
+   device's work is done. Host memory never comes here: it is the heap's,
+   returned when the collector finds its base unreachable. *)
 let reclaim d =
   match Atomic.exchange d.released [] with
   | [] -> ()
@@ -293,14 +291,12 @@ let reclaim d =
       List.iter
         (fun b ->
           if not b.borrowed then begin
-            d.allocated <- d.allocated - b.bytes;
-            if d.caches then begin
-              let ms =
-                Option.value ~default:[] (Hashtbl.find_opt d.cache b.bytes)
-              in
-              Hashtbl.replace d.cache b.bytes (b.memory :: ms);
-              d.cached <- d.cached + b.bytes
-            end
+            ignore (Atomic.fetch_and_add d.allocated (-b.bytes));
+            let ms =
+              Option.value ~default:[] (Hashtbl.find_opt d.cache b.bytes)
+            in
+            Hashtbl.replace d.cache b.bytes (b.memory :: ms);
+            d.cached <- d.cached + b.bytes
           end)
         bases;
       free_all d ~owned:0 ~keep:borrowed (List.map (fun b -> b.memory) borrowed);
@@ -428,14 +424,63 @@ module Buffer = struct
     in
     { base; offset = 0; dtype = s; length = n }
 
+  (* Host memory takes neither the host nor its release list: its bytes are
+     reserved atomically against the budget and returned by a finaliser that
+     does not resurrect the base, so the memory is freed in the collection that
+     finds it unreachable. No wait is needed: a device's work reaches host
+     memory only through a borrow, which keeps it alive. *)
+  let rec reserve n =
+    let a = Atomic.get host.allocated in
+    n <= host.budget - a
+    && (Atomic.compare_and_set host.allocated a (a + n) || reserve n)
+
+  let host_alloc n =
+    check host;
+    if n > host.budget then raise (Out_of_memory (host, n));
+    let rec attempt ~collected =
+      let got =
+        if not (reserve n) then None
+        else
+          match host.alloc n with
+          | Some _ as m -> m
+          | None ->
+              ignore (Atomic.fetch_and_add host.allocated (-n));
+              None
+      in
+      match got with
+      | Some m -> m
+      | None when not collected ->
+          Gc.full_major ();
+          attempt ~collected:true
+      | None -> raise (Out_of_memory (host, n))
+    in
+    attempt ~collected:false
+
   let create d s n =
     match checked_nbytes "create" s n with
     | 0 -> empty ~borrowed:false d s n
+    | bytes when d == host ->
+        let memory, keep = host_alloc bytes in
+        let base =
+          {
+            owner = d;
+            memory;
+            bytes;
+            borrowed = false;
+            keep;
+            source = None;
+            maps = Atomic.make [];
+          }
+        in
+        Gc.finalise_last
+          (fun () -> ignore (Atomic.fetch_and_add host.allocated (-bytes)))
+          base;
+        { base; offset = 0; dtype = s; length = n }
     | bytes ->
         let memory, keep =
           with_devices [ d ] (fun () ->
               let m = allocate d bytes ~collected:false in
-              d.allocated <- d.allocated + bytes;
+              ignore (Atomic.fetch_and_add d.allocated bytes);
               m)
         in
         let base =
@@ -636,7 +681,7 @@ let stats d =
   Mutex.protect d.lock (fun () ->
       (if failed d = None then try reclaim d with Failure _ -> ());
       {
-        Stats.allocated = d.allocated;
+        Stats.allocated = Atomic.get d.allocated;
         cached = d.cached;
         retained = d.retained;
         bytes_in = d.bytes_in;
@@ -678,5 +723,5 @@ let make ~name ~arch ~budget ~alloc ~free ?borrow ?load ?signal
   if timeout_ms <= 0 then
     invalid_arg (Printf.sprintf "Nx_device.make: timeout %d ms" timeout_ms);
   let alloc n = Option.map (fun m -> (m, Keep ())) (alloc n) in
-  create ~name ~arch ~budget ~caches:true ~alloc ~free ~map:borrow ~load ~signal
-    ~timeout_ms ~synchronized
+  create ~name ~arch ~budget ~alloc ~free ~map:borrow ~load ~signal ~timeout_ms
+    ~synchronized

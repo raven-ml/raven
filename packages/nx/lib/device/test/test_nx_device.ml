@@ -310,6 +310,34 @@ let test_concurrent_views () =
     (List.length (List.filter (fun v -> v.{5} <> 7l) !kept));
   ignore (Sys.opaque_identity filler)
 
+(* Host memory is counted while its buffer lives, returned in the collection
+   that finds it unreachable, and capped by the host's budget like any
+   device's. *)
+let test_host_memory () =
+  let h = Nx_device.host in
+  Gc.full_major ();
+  let s0 = Nx_device.stats h in
+  let b = B.create h S.UInt8 1000 in
+  let grown = Nx_device.Stats.diff s0 (Nx_device.stats h) in
+  equal ~msg:"counted" int 1000 (Nx_device.Stats.allocated grown);
+  ignore (Sys.opaque_identity b);
+  Gc.full_major ();
+  let back = Nx_device.Stats.diff s0 (Nx_device.stats h) in
+  equal ~msg:"returned when collected" int 0 (Nx_device.Stats.allocated back);
+  let held = Nx_device.Stats.allocated (Nx_device.stats h) in
+  Fun.protect ~finally:(fun () -> Nx_device.set_budget h max_int) @@ fun () ->
+  Nx_device.set_budget h (held + 1000);
+  let a = B.create h S.UInt8 600 in
+  raises_match
+    (function Nx_device.Out_of_memory (d, 600) -> d == h | _ -> false)
+    (fun () -> B.create h S.UInt8 600);
+  raises_match
+    (function Nx_device.Out_of_memory (_, 2000) -> true | _ -> false)
+    (fun () -> B.create h S.UInt8 2000);
+  ignore (Sys.opaque_identity a);
+  equal ~msg:"a collected buffer makes room" int 600
+    (B.nbytes (B.create h S.UInt8 600))
+
 (* Memory *)
 
 let test_cache_reuse () =
@@ -726,6 +754,7 @@ let () =
              test "element counts do not overflow" test_overflow;
              test "copies and views" test_copy_and_views;
              test "of_bigarray" test_of_bigarray;
+             test "host memory is counted and capped" test_host_memory;
              test "borrow" test_borrow;
              test "a borrow keeps its memory through the wait"
                test_borrow_lifetime;
