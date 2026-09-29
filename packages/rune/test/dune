@@ -21,6 +21,7 @@
   test_jit
   test_device_lists
   test_rng
+  test_total
   test_half)
  (modules
   test_grad
@@ -36,6 +37,7 @@
   test_jit
   test_device_lists
   test_rng
+  test_total
   test_half)
  (package rune)
  (libraries

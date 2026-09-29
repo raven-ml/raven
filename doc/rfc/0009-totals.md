@@ -225,7 +225,11 @@ An addition that crosses a transformation:
   over a rerun tape drops an addition before its `no_grad` check, since an
   addition is never taped, and runs the functions it runs in its own context
   (a custom call's `fwd`, a unit-result `f`) under a handler that drops
-  additions.
+  additions. Under `no_grad` it keeps its claim on the code another handler
+  would run away from it, untaped: it passes a scan on with its step under
+  that handler or declines it, so that it folds where it was performed; it
+  passes a remat on with its function under that handler; and it runs a
+  custom call's `f` or `fwd` under that handler itself.
 - **jit** runs its function eagerly inside a scope; with no scope anywhere,
   the addition passes out and is dropped.
 

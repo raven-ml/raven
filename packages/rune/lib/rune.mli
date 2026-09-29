@@ -208,7 +208,10 @@ val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]. *)
 
 val vmap' :
-  ?axis:axis -> (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+  ?axis:axis ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
 (** [vmap' ?axis f x] is [vmap ?axis Nx.Ptree.(tensor @-> returns tensor) f x]:
     [f] mapped over axis 0 of [x], its result stacked along a new axis 0.
 
@@ -277,6 +280,91 @@ val custom_jvp :
     (define a {!custom_vjp} rule for that), or if [jvp]'s tangents differ from
     its result in their visits, or a tangent from its result tensor in dtype or
     shape. *)
+
+(** {1:totals Totals} *)
+
+(** Write-only sums.
+
+    A total is a sum that code anywhere inside a function adds to and that the
+    caller reads when the function returns: {!Total.collect}[ t ~zero f] is
+    [f ()] with [zero] plus everything [f] added to [t]. Nothing reads a total
+    before its [collect] returns, so an addition never changes a value the
+    function computes, and with no [collect] open it does nothing.
+
+    {[
+    let saturated = Rune.Total.make ()
+
+    let cell params h x =
+      let h = Nx.tanh (Nx.add (Nx.matmul h params.w) (Nx.matmul x params.u)) in
+      Rune.Total.add saturated
+        (Nx.mean (Nx.cast Nx.float32 (Nx.greater (Nx.abs h) threshold)));
+      h
+
+    let train_step =
+      Rune.jit sig_ (fun params batch ->
+          let (l, g), sat =
+            Rune.Total.collect saturated ~zero:(Nx.zeros Nx.float32 [||])
+              (fun () ->
+                Rune.value_and_grad params_ptree (fun p -> loss p batch) params)
+          in
+          (update params g, l, sat))
+    ]}
+
+    An addition counts once per execution of the code that makes it, whatever
+    the transformations between it and the scope:
+    - {!jvp} passes it on; it has no tangent.
+    - {!val-vmap} passes on the sum of its lanes' additions: a value batched
+      across the lanes summed over them, one every lane shares times their
+      number. A transformation built on a map counts per lane: {!jacfwd'}
+      counts an addition once per column, and {!jacrev'} once.
+    - {!grad} and the other reverse-mode transformations pass it on when they
+      first run the code that makes it, and drop it when they run that code
+      again, under {!no_grad} too: the backward pass of a compiled {!scan} and
+      a {!remat} recomputation.
+    - A {!scan} a compiled function stages, and a {!remat}, carry the sum of
+      their additions out as a value, so a staged loop stays one loop, a
+      replay computes the total again, and a trace that is restarted discards
+      its additions.
+
+    A scope inside a transformation is ordinary arithmetic to it: the collected
+    total is differentiated under {!jvp}, taped under {!grad}, computed per
+    lane under {!val-vmap} (the map returns the totals stacked) and returned by
+    a compiled function like any value. *)
+module Total : sig
+  type ('a, 'b) t
+  (** A total of [('a, 'b) Nx.t] values. *)
+
+  val make : unit -> ('a, 'b) t
+  (** [make ()] is a fresh total, distinct from every other. *)
+
+  val add : ('a, 'b) t -> ('a, 'b) Nx.t -> unit
+  (** [add t v] adds [v] to the innermost open {!collect} of [t], and does
+      nothing if none is open.
+
+      Raises [Invalid_argument] if [v]'s shape, as the scope sees it, is not
+      its [zero]'s. *)
+
+  val collect :
+    ('a, 'b) t -> zero:('a, 'b) Nx.t -> (unit -> 'r) -> 'r * ('a, 'b) Nx.t
+  (** [collect t ~zero f] is [(f (), total)], where [total] is [zero] plus
+      every addition [f] made to [t]. [zero] gives the total's dtype, shape and
+      placement.
+
+      [f] runs as a transformation, as under {!grad} or {!val-vmap}: a
+      {!val-jit} inside it runs its function eagerly. To compile, open the
+      scope inside the function {!val-jit} compiles and return the total.
+
+      The scope checks each addition's shape against [zero]'s when it
+      receives it, where every map inside the scope has summed its lanes.
+
+      An addition in a custom rule's function ({!custom_vjp}'s [fwd], or
+      {!custom_jvp}'s [f] or [jvp]) reaches the scopes around the
+      transformation that runs it, and skips a scope opened between the call
+      and that transformation.
+
+      If [f] raises, [collect] raises the same exception; an addition made
+      before an exception [f] itself catches counts. *)
+end
 
 (** {1:tensor Single-tensor variants} *)
 

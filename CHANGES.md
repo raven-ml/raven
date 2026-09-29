@@ -167,6 +167,16 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.Total` is a write-only sum that code anywhere inside a function adds
+  to (`Rune.Total.add t v`) and that `Rune.Total.collect t ~zero f` returns
+  beside `f ()`. With no scope open an addition does nothing, so one model
+  serves every driver. Additions count once per execution of the code that
+  makes them: a map adds the sum of its lanes', reverse mode drops the ones
+  it makes again while rerunning code, and a scan staged under `Rune.jit`
+  carries the sum out of its loop, so it stays one loop and a replay computes
+  the total again. A `jit` inside a scope runs eagerly; open the scope inside
+  the compiled function to compile it.
+
 - `Rune.lanes a x` gathers `x` across the lanes of a map, as data: inside the
   map named `a` (`Rune.vmap ~axis:a`, `Rune.vmap' ~axis:a`, with
   `a = Rune.axis ()`) it is every lane's `x` stacked on a new leading axis,

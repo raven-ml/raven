@@ -124,7 +124,13 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
     if inputs_tracked then err_no_rule op else continue k (out ())
   in
 
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  (* A function this handler runs in its own context, as a custom call's, runs
+     past every handler between the call and this one: on a rerun tape its
+     additions to a total are dropped here. *)
+  let dropped f x = Total.dropping (fun () -> f x) in
+  let own f x = if Tape.rerun tape then dropped f x else f x in
+
+  let body : type c. c Effect.t -> ((c, _) continuation -> _) option =
    fun eff ->
     if not (Gate.enabled ()) then None
     else
@@ -1033,7 +1039,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   (fun _ leaf any -> any || tracked leaf)
                   params false
               in
-              let y, res = fwd params in
+              let y, res = own fwd params in
               (* A result that is one of the parameters is aliased, so its
                  cotangent is the result's alone. *)
               let y = if any then Structure.aliases result_s y else y in
@@ -1072,7 +1078,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 invalid_arg
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
-              else continue k (f params))
+              else continue k (own f params))
       (* Gradient checkpointing. The call passes on with [f] run under this
          handler over a scratch tape linked to this one, which tells whether the
          result depends on a tracked tensor: an argument, or one [f] captures.
@@ -1177,6 +1183,45 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          differentiated as a constant. *)
       | _ -> None
   in
+  (* A rerun tape differentiates code the forward pass already ran, so it drops
+     the code's additions, which are never taped. Under [no_grad] it keeps its
+     claim on the code another handler would run past it: scans, remats and
+     custom calls run untaped, with their additions dropped. *)
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff ->
+    if not (Tape.rerun tape) then body eff
+    else
+      match eff with
+      | Total.E_add _ -> Some (fun k -> continue k ())
+      | _ when Gate.enabled () -> body eff
+      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
+      | Scan.E_scan req ->
+          Some
+            (fun k ->
+              Scan.pass_on k
+                ~fold:(fun () -> raise Scan.Not_staged)
+                (fun () ->
+                  let run c x =
+                    Total.dropping (fun () -> req.req_step.run c x)
+                  in
+                  Effect.perform (Scan.E_scan { req with req_step = { run } })))
+      | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
+        ->
+          Some
+            (fun k ->
+              match
+                Remat.run
+                  (Remat.Call
+                     { params_s; result_s; params; f = dropped f; residuals })
+              with
+              | y -> continue k y
+              | exception e -> discontinue k e)
+      | Custom.E_custom_vjp (Custom.Vjp_call { params; fwd; _ }) ->
+          Some (fun k -> continue k (fst (dropped fwd params)))
+      | Custom.E_custom_jvp (Custom.Jvp_call { params; f; _ }) ->
+          Some (fun k -> continue k (dropped f params))
+      | _ -> None
+  in
   { retc = Fun.id; exnc = raise; effc }
 
 (* A staged scan passes on with its step run under this handler over a scratch
@@ -1211,7 +1256,7 @@ and staged_scan tape (req : Scan.scan_req) : Scan.scan_res =
     let dc, acc = Scan.split nc carry in
     let c, row = Scan.split nc row in
     let x, dy = Scan.split nx row in
-    let t = Tape.create ~parent:tape () in
+    let t = Tape.create ~parent:tape ~rerun:true () in
     List.iter (fun (Nx.P l) -> Tape.track t l) (c @ captures);
     List.iter2 (fun r (Nx.P l) -> if r then Tape.track t l) tracked x;
     let c', y =
@@ -1288,7 +1333,7 @@ and recompute : type p q.
       (Nx.Ptree.rebuild params_s ~like:params
          (Remat.barrier ~after (fst (Nx.Ptree.flatten params_s params))))
   in
-  let run = Tape.create ~parent:tape () in
+  let run = Tape.create ~parent:tape ~rerun:true () in
   ignore
     (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
        ~that:"their barriers"

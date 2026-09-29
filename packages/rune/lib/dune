@@ -4,6 +4,7 @@
  (private_modules
   custom
   axis
+  total
   remat
   tape
   reverse

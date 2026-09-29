@@ -214,6 +214,10 @@ let vmap' ?axis f x =
   Vmap.mark st x;
   broadcast_output st (run_transform f x (Vmap.handler st))
 
+(* Totals *)
+
+module Total = Total
+
 (* Single-tensor variants *)
 
 let tracked_tensor x =

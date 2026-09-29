@@ -748,6 +748,20 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 | exception Grow carried -> attempt carried
               in
               attempt (flags req.req_carry))
+    (* An addition to a total is the sum of its lanes' additions: a batched
+       one summed over the lanes, one every lane shares times their number. *)
+    | Total.E_add (t, v) ->
+        Some
+          (fun k ->
+            let v =
+              if batched st v then T.sum ~axes:[ 0 ] v
+              else
+                T.mul_s v
+                  (Nx_dtype.of_float (T.dtype v) (Float.of_int st.batch_size))
+            in
+            match Total.add t v with
+            | () -> continue k ()
+            | exception e -> discontinue k e)
     | Nx_quant.Effect.E_quant { w; op } when quant_batched st w op ->
         Some
           (fun k ->
