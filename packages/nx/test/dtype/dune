@@ -1,0 +1,4 @@
+(test
+ (name test_float_codecs)
+ (package nx)
+ (libraries nx nx.core nx.device nx.dtype windtrap))

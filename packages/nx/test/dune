@@ -14,25 +14,11 @@
   test_linalg
   test_windows
   test_fft
-  test_io
-  test_quant
   test_runtime
   test_elements)
  (package nx)
- (modules :standard \ test_format test_float_codecs)
- (libraries
-  nx.dtype
-  nx
-  nx.core
-  nx.effect
-  nx.io
-  nx.device
-  nx.quant
-  unix
-  windtrap
-  nx_test)
- (deps
-  (glob_files fixtures/*)))
+ (modules :standard \ test_format)
+ (libraries nx.dtype nx nx.core nx.effect nx.device unix windtrap nx_test))
 
 (test
  (name test_format)
@@ -43,9 +29,3 @@
   (progn
    (run %{test} --corrected)
    (diff? test_format.ml test_format.ml.corrected))))
-
-(test
- (name test_float_codecs)
- (package nx)
- (modules test_float_codecs)
- (libraries nx nx.dtype nx.device nx.core windtrap))

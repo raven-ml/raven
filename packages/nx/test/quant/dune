@@ -1,0 +1,4 @@
+(test
+ (name test_quant)
+ (package nx)
+ (libraries nx nx.dtype nx.quant nx_test windtrap))

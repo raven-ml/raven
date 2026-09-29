@@ -8,7 +8,7 @@ sample depths and interlacing that an encoder picks on its own. Each image has
 a sibling .npy of the pixels Pillow decodes from it.
 
 Usage:
-    cd packages/nx/test/fixtures
+    cd packages/nx/test/io/fixtures
     uv run --with numpy --with pillow --with safetensors --with torch \\
       python generate.py
 """

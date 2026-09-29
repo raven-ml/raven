@@ -1,0 +1,15 @@
+(test
+ (name test_io)
+ (package nx)
+ (libraries
+  nx
+  nx.core
+  nx.device
+  nx.dtype
+  nx.effect
+  nx.io
+  nx_test
+  unix
+  windtrap)
+ (deps
+  (glob_files fixtures/*)))
