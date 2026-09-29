@@ -139,6 +139,13 @@ external unsafe_reinterpret :
   ('a, 'b) Nx_dtype.t -> ('c, 'd) t -> int -> int -> ('a, 'b) t
   = "caml_nx_buffer_reinterpret"
 
+(* The runtime makes a bigarray's proxy on its first sub without
+   synchronization: two views taken at once from a buffer that has none would
+   each make their own, and one of them would outlive the storage. Views are
+   taken one at a time, so the second finds the first's proxy. A blocked
+   [Mutex.lock] leaves the runtime, so a collection can still proceed. *)
+let proxy_lock = Mutex.create ()
+
 let reinterpret k buf =
   if is_int4 k || is_int4 (dtype buf) then
     invalid_arg "Nx_buffer.reinterpret: int4 and uint4 pack two elements a byte";
@@ -150,7 +157,8 @@ let reinterpret k buf =
          "Nx_buffer.reinterpret: %d bytes is not a multiple of the %d-byte %s \
           element"
          bytes size (Nx_dtype.to_string k));
-  unsafe_reinterpret k buf (bytes / size) size
+  Mutex.protect proxy_lock (fun () ->
+      unsafe_reinterpret k buf (bytes / size) size)
 
 (* Mapped files *)
 

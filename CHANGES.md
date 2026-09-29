@@ -2746,6 +2746,11 @@ thread.
 
 ### Nx
 
+- `Nx_buffer.reinterpret` of a buffer made by `Nx_buffer.of_bigarray1` could
+  return a view over freed memory when two domains reinterpreted the buffer at
+  once: each view could get its own reference count on the storage, and one
+  count reached zero while the other view was alive. Views are now taken one
+  at a time.
 - New `nx.device` library: devices and their memory without the tensor layer.
   It provides the host (`Nx_device.host`) and device buffers of a storage
   format (`Nx_device.Buffer`) that are owned, borrowed or byte-offset views.

@@ -417,6 +417,55 @@ let test_reinterpret_bit_exact () =
       equal ~msg:(name ^ " back to bytes") bytes pattern back)
     byte_dtypes
 
+(* Two domains reinterpret the same fresh buffer at once, and one keeps its
+   view: both views must share the storage, so the kept one outlives the
+   buffer. *)
+let test_reinterpret_concurrent () =
+  let rounds = 2000 in
+  let current = Atomic.make None
+  and taken = Array.init 2 (fun _ -> Atomic.make 0) in
+  let kept = ref [] in
+  let worker k () =
+    for r = 0 to rounds - 1 do
+      let rec next () =
+        match Atomic.get current with
+        | Some b when Atomic.get taken.(k) = r -> b
+        | _ ->
+            Domain.cpu_relax ();
+            next ()
+      in
+      let v = reinterpret Nx_dtype.int32 (next ()) in
+      if k = 0 then begin
+        fill v 7l;
+        kept := v :: !kept
+      end;
+      Atomic.incr taken.(k)
+    done
+  in
+  let workers = List.init 2 (fun k -> Domain.spawn (worker k)) in
+  for r = 0 to rounds - 1 do
+    Atomic.set current
+      (Some
+         (of_bigarray1
+            (Bigarray.Array1.create Bigarray.int32 Bigarray.c_layout 16)));
+    while Atomic.get taken.(0) <= r || Atomic.get taken.(1) <= r do
+      Domain.cpu_relax ()
+    done
+  done;
+  Atomic.set current None;
+  List.iter Domain.join workers;
+  Gc.full_major ();
+  Gc.full_major ();
+  let filler =
+    List.init 20000 (fun _ ->
+        let a = Bigarray.Array1.create Bigarray.int32 Bigarray.c_layout 16 in
+        Bigarray.Array1.fill a 0x55l;
+        a)
+  in
+  equal ~msg:"every kept view holds what was written" int 0
+    (List.length (List.filter (fun v -> get v 5 <> 7l) !kept));
+  ignore (Sys.opaque_identity filler)
+
 let test_reinterpret_aliases () =
   let source = pattern_buffer () in
   let view = reinterpret UInt32 source in
@@ -644,6 +693,8 @@ let () =
            [
              test "bit exact at every dtype" test_reinterpret_bit_exact;
              test "aliases its source" test_reinterpret_aliases;
+             test "concurrent views share the storage"
+               test_reinterpret_concurrent;
              test "raises" test_reinterpret_raises;
              test "keeps a mapped file alive" test_reinterpret_mapped_lifetime;
            ];
