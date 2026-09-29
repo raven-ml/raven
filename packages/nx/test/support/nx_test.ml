@@ -820,3 +820,80 @@ let int_value ~bits ~signed =
 
 let int_compare ~signed a b =
   if signed then Int64.compare a b else Int64.unsigned_compare a b
+
+(* Test devices: an engine whose devices hold their storage in host memory of
+   their own, one buffer per device of a value's placement in its order (a split
+   value's shards, a replicated value's copies), and count what moves. *)
+module Devices = struct
+  type Nx_effect.storage +=
+    | Mem : ('a, 'b) Nx_dtype.t * ('a, 'b) Nx_buffer.t list -> Nx_effect.storage
+
+  let elements_read = ref 0
+  let uploads = ref 0
+
+  (* The elements view [v] reaches in [mem], in C order. *)
+  let gather (type a b) (mem : (a, b) Nx_buffer.t) v : (a, b) Nx_buffer.t =
+    let shape = Nx_core.View.shape v and strides = Nx_core.View.strides v in
+    let n = Nx_core.View.numel v in
+    let dst = Nx_buffer.create (Nx_buffer.dtype mem) n in
+    for i = 0 to n - 1 do
+      let off = ref (Nx_core.View.offset v) in
+      Array.iteri (fun d k -> off := !off + (k * strides.(d))) (unravel shape i);
+      Nx_buffer.set dst i (Nx_buffer.get mem !off)
+    done;
+    elements_read := !elements_read + n;
+    dst
+
+  let rec engine =
+    {
+      Nx_effect.read =
+        (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
+          match r.r_cell.state with
+          | Live (Mem (dt, shards)) -> (
+              match Nx_dtype.equal_witness dt r.r_dtype with
+              | Some Type.Equal ->
+                  let shape =
+                    Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)
+                  in
+                  Nx_effect.assemble r
+                    (Array.map (fun n -> (0, n)) shape)
+                    (fun d v ->
+                      let devices = Nx.Placement.devices r.r_cell.placement in
+                      let k = Option.get (List.find_index (( == ) d) devices) in
+                      gather (List.nth shards k) v)
+              | None -> assert false)
+          | _ -> assert false);
+      place = (fun p x -> place p x);
+    }
+
+  and place : type a b.
+      Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
+   fun p x ->
+    if Nx.numel x > 0 then incr uploads;
+    let h = Nx.place Nx.Placement.host x in
+    let devices = Nx.Placement.devices p in
+    let windows = List.map (Nx.Placement.window p (Nx.shape h)) devices in
+    let shards =
+      List.map (fun w -> Nx.to_buffer (Nx.copy (Nx.shrink w h))) windows
+    in
+    let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
+    Nx_effect.placed p (Nx.dtype x)
+      (Nx_core.View.create shape)
+      (Nx_effect.cell ~placement:p
+         ~length:(Array.fold_left ( * ) 1 shape)
+         (Mem (Nx.dtype x, shards)))
+
+  let d1 = Nx_effect.Device.make "TEST:1" engine
+  let d2 = Nx_effect.Device.make "TEST:2" engine
+  let d3 = Nx_effect.Device.make "TEST:3" engine
+  let d4 = Nx_effect.Device.make "TEST:4" engine
+
+  (* A device of another engine. *)
+  let other = Nx_effect.Device.make "OTHER" { engine with place = engine.place }
+  let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+  let cell_of (type a b) (x : (a, b) Nx.t) =
+    match x with
+    | Nx_effect.Placed r -> r.r_cell
+    | _ -> fail "expected a placed value"
+end

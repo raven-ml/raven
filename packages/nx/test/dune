@@ -19,7 +19,8 @@
   test_linalg
   test_windows
   test_fft
-  test_io)
+  test_io
+  test_quant)
  (package nx)
  (modules
   :standard
@@ -27,7 +28,6 @@
   test_format
   test_nx_support
   test_nx_runtime
-  test_nx_quant
   test_float_codecs)
  (libraries
   nx.dtype
@@ -36,6 +36,7 @@
   nx.core
   nx.effect
   nx.io
+  nx.quant
   unix
   windtrap
   test_nx_support
@@ -58,12 +59,6 @@
  (package nx)
  (modules test_nx_runtime)
  (libraries nx nx.device windtrap))
-
-(test
- (name test_nx_quant)
- (package nx)
- (modules test_nx_quant)
- (libraries nx nx.dtype nx.buffer nx.core nx.effect nx.quant windtrap))
 
 (test
  (name test_float_codecs)
