@@ -67,9 +67,10 @@ val place : Nx.Placement.t -> t -> t
 val dequant : (float, 'b) Nx.dtype -> t -> (float, 'b) Nx.t
 (** [dequant dt w] is the values of [w] at [dt], of shape [shape w].
 
-    Values are exact at float32 and bfloat16 barring overflow: MXFP4 codes of
-    magnitude 4 or more at scale byte 253, and of 2 or more at 254, are
-    infinite. Other dtypes round each value once.
+    Values are computed at float32, where each is exact barring overflow: MXFP4
+    codes of magnitude 4 or more at scale byte 253, and of 2 or more at 254, are
+    infinite at every dtype. Float32, bfloat16 and float64 hold every other
+    value exactly; float16 rounds each value once.
 
     Eagerly the values are decoded a chunk of 2{^ 22} values at a time into the
     result: beside it, only a few chunk-sized temporaries exist at once, so the
