@@ -2757,6 +2757,12 @@ thread.
 
 ### Nx
 
+- `Nx.Backend.S` has `place`, which makes a value at one of the backend's
+  placements, and `Nx.place` asks the target placement's backend. A placed
+  value is read by the backend that made its storage, so a backend can hold
+  values in storage of its own and copy them in and out, as nx-oxcaml now
+  does: `Nx.Placement.device ~backend:Nx_oxcaml.backend Nx.Device.host`
+  replaces linking nx-oxcaml in place of nx.c.
 - `Nx.Backend`: a placement carries the backend that computes on its values,
   a value `(module Nx.Backend.S)`. `Nx.Backend.host` is nx's kernels, the
   default everywhere; `Nx.Backend.Host` is its module, to include in a backend

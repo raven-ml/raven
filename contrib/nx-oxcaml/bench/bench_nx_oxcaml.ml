@@ -3,4 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let () = Thumper.run "nx_oxcaml" (Bench_nx_common.benchmarks ())
+let () =
+  let at = Nx.Placement.device ~backend:Nx_oxcaml.backend Nx.Device.host in
+  Thumper.run "nx_oxcaml" (Bench_nx_common.benchmarks ~place:(Nx.place at))

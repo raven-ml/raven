@@ -4,7 +4,16 @@ An experimental high-performance backend for Nx that leverages OxCaml's unboxed 
 
 ## Overview
 
-This backend implements the Nx backend interface using OxCaml's unboxed types for improved performance:
+`Nx_oxcaml.backend` is an nx backend over arrays of OxCaml's unboxed types. A
+program places its values with it and computes on them with its kernels:
+
+```ocaml
+let at = Nx.Placement.device ~backend:Nx_oxcaml.backend Nx.Device.host
+let x = Nx.place at (Nx.rand Nx.float32 [| 512; 512 |])
+let y = Nx.exp (Nx.add x x)
+```
+
+The kernels use OxCaml's unboxed types for improved performance:
 
 - **Unboxed arithmetic**: Uses `float#`, `int32#`, `int64#` for zero-allocation numeric operations
 - **Parallel execution**: Built-in support for parallel operations (currently sequential, Domain support planned)

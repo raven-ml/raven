@@ -9,18 +9,19 @@ let cat_tags = [ "cat" ]
 let group_name category size dtype =
   Printf.sprintf "%s / %dx%d %s" category size size dtype
 
-let ops_f32 ~size =
+let ops_f32 ~place ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float32 shape in
-  let b = Nx.rand Nx.Float32 shape in
+  let a = place (Nx.rand Nx.Float32 shape) in
+  let b = place (Nx.rand Nx.Float32 shape) in
   let cond = Nx.less a b in
   let transposed_a = Nx.transpose a in
   let transposed_b = Nx.transpose b in
   let offset_a = Nx.shrink [| (1, size - 1); (0, size) |] a in
   let offset_b = Nx.shrink [| (1, size - 1); (0, size) |] b in
   let indices =
-    Nx.create Nx.Int32 [| size |]
-      (Array.init size (fun i -> Int32.of_int ((i * 37) mod size)))
+    place
+      (Nx.create Nx.Int32 [| size |]
+         (Array.init size (fun i -> Int32.of_int ((i * 37) mod size))))
   in
   [
     Thumper.group (group_name "elementwise" size "f32")
@@ -72,23 +73,22 @@ let ops_f32 ~size =
         Thumper.bench "Take rows" (fun () ->
             Nx.take ~axis:0 ~indices a);
         Thumper.bench "Sort rows" (fun () -> Nx.sort a);
-        Thumper.bench "Rand" (fun () -> Nx.rand Nx.Float32 shape);
-        Thumper.bench "Randn" (fun () -> Nx.randn Nx.Float32 shape);
       ];
   ]
 
-let ops_f64 ~size =
+let ops_f64 ~place ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float64 shape in
-  let b = Nx.rand Nx.Float64 shape in
+  let a = place (Nx.rand Nx.Float64 shape) in
+  let b = place (Nx.rand Nx.Float64 shape) in
   let cond = Nx.less a b in
   let transposed_a = Nx.transpose a in
   let transposed_b = Nx.transpose b in
   let offset_a = Nx.shrink [| (1, size - 1); (0, size) |] a in
   let offset_b = Nx.shrink [| (1, size - 1); (0, size) |] b in
   let indices =
-    Nx.create Nx.Int32 [| size |]
-      (Array.init size (fun i -> Int32.of_int ((i * 37) mod size)))
+    place
+      (Nx.create Nx.Int32 [| size |]
+         (Array.init size (fun i -> Int32.of_int ((i * 37) mod size))))
   in
   [
     Thumper.group (group_name "elementwise" size "f64")
@@ -140,12 +140,12 @@ let ops_f64 ~size =
         Thumper.bench "Take rows" (fun () ->
             Nx.take ~axis:0 ~indices a);
         Thumper.bench "Sort rows" (fun () -> Nx.sort a);
-        Thumper.bench "Rand" (fun () -> Nx.rand Nx.Float64 shape);
-        Thumper.bench "Randn" (fun () -> Nx.randn Nx.Float64 shape);
       ];
   ]
 
-let benchmarks () =
+(* The operations on inputs that [place] puts where the backend under test
+   computes. *)
+let benchmarks ~place =
   List.concat_map
-    (fun size -> ops_f32 ~size @ ops_f64 ~size)
+    (fun size -> ops_f32 ~place ~size @ ops_f64 ~place ~size)
     sizes

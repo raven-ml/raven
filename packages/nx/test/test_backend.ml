@@ -16,10 +16,15 @@ module Counting = struct
 
   let name = "counting"
   let adds = ref 0
+  let places = ref 0
 
   let add a b =
     incr adds;
     Nx.Backend.Host.add a b
+
+  let place p x =
+    incr places;
+    Nx.Backend.Host.place p x
 end
 
 module Refusing = struct
@@ -142,6 +147,13 @@ let backends =
               is_true ~msg:"one storage" (a.r_cell == b.r_cell)
           | _ -> fail "expected placed values");
           equal floats (vec [| 1.; 2. |]) y);
+      test "a move asks the backend of the target placement" (fun () ->
+          let p = Nx.Placement.device ~backend:counting r1 in
+          let before = !Counting.places in
+          let x = Nx.place p (vec [| 1.; 2. |]) in
+          equal int (before + 1) !Counting.places;
+          ignore (Nx.place Nx.Placement.host x);
+          equal ~msg:"not the source's" int (before + 1) !Counting.places);
       test "the host device holds a value of the host placement as a host \
             tensor, and one of another placement as a placed value"
         (fun () ->

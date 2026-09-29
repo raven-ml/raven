@@ -309,10 +309,18 @@ end
 module Backend : sig
   module type S = Nx_effect.Backend.S
   (** The type for backend implementations. A backend has a [name], says with
-      [runs_on] whether it runs on a device, and implements every operation of
+      [runs_on] whether it runs on a device, makes a value at one of its
+      placements with [place], and implements every operation of
       {!Nx_core.Backend_intf.S} over nx's values, with a placement as the
       context in which a creation makes its value. Its [to_host] reads the
-      elements of the values it computes on.
+      elements of the values whose storage it made.
+
+      A backend over its devices' memory, such as {!Host}, shares storage with
+      every other such backend: its [place] makes a view of a value at a
+      placement that differs only in backend. A backend that holds values in
+      storage of its own copies them in its [place] and out in its [to_host],
+      and raises the error of mixed operands for a host operand rather than
+      copy it silently.
 
       Operands are values of one placement of the backend, or values on the
       host joining it; never traced values. A function returns its result at
@@ -425,12 +433,14 @@ end
 val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
 (** [place p x] is [x] held at [p]. It equals [x] in shape, dtype and elements,
     and [x] is unchanged and stays where it was. It is [x] itself when [x] is
-    already at [p]. When [x] is placed and [p] differs from [x]'s placement
-    only in its backend, the result is a view of [x]'s storage and copies
-    nothing.
+    already at [p]. [p]'s backend makes the result: when [x] is placed and [p]
+    differs from [x]'s placement only in its backend, a backend over the
+    devices' memory, such as {!Backend.host}, makes a view of [x]'s storage
+    and copies nothing.
 
     Raises [Invalid_argument] if [p] splits an axis [x] does not have or does
-    not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. *)
+    not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. Raises
+    {!Backend.Refused} if [p]'s backend refuses [x]. *)
 
 val placement : ('a, 'b) t -> Placement.t
 (** [placement x] is where [x] lives: {!Placement.host} for a value on the host.

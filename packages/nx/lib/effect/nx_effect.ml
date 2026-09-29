@@ -327,6 +327,7 @@ and Backend_sig : sig
   module type S = sig
     val name : string
     val runs_on : Types.device -> bool
+    val place : Types.placement -> ('a, 'b) Types.t -> ('a, 'b) Types.t
 
     include
       Backend_intf.S
@@ -484,11 +485,12 @@ let check_host fn dtype buffer =
          (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
          (Nx_dtype.to_string dtype))
 
-(* A placed value is read by its placement's backend, once, and checked: a
-   buffer of another device or format would otherwise reach the host engine's
-   kernels. *)
+(* A placed value is read by the backend that made its storage, the cell's,
+   which a view at a placement of another backend shares. It is read once and
+   checked: a buffer of another device or format would otherwise reach the host
+   engine's kernels. *)
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_backend.t =
-  let (module B : Backend_sig.S) = r.r_placement.backend in
+  let (module B : Backend_sig.S) = r.r_cell.placement.backend in
   let elements = B.to_host (Placed r) in
   check_host "read" r.r_dtype elements;
   Nx_backend.reshape
@@ -1730,6 +1732,14 @@ module Host_backend = struct
   let name = "host"
   let runs_on _ = true
 
+  (* A placed value at a placement that differs from [p] only in backend is a
+     view of its storage, which that backend still reads. *)
+  let place (type a b) p (x : (a, b) t) : (a, b) t =
+    match x with
+    | Placed r when Grid.equal ( == ) r.r_placement.grid p.grid ->
+        Placed { r with r_id = fresh_id (); r_placement = p }
+    | _ -> (memory_of p).place p x
+
   let to_host : type a b. (a, b) t -> Nx_device.Buffer.t = function
     | Host t -> Nx_backend.to_host t
     | Placed r -> read_elements r
@@ -2110,24 +2120,21 @@ let to_host (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
     match x with
     | Host t -> Nx_backend.to_host t
     | Placed r ->
-        let (module B : Backend.S) = r.r_placement.backend in
+        let (module B : Backend.S) = r.r_cell.placement.backend in
         B.to_host x
     | Traced _ -> outside_trace ())
 
-(* Moving. A placed value moved to a placement that differs from its own only
-   in backend is a view of the same storage: every backend computes over its
-   devices' memory. *)
+(* Moving. The target placement's backend makes the value there. *)
 
 let move (type a b) p (x : (a, b) t) : (a, b) t =
   let move () =
     match x with
     | Traced _ -> outside_trace ()
     | Placed r when is_host_placement p -> Host (read_host r)
-    | Placed r when Grid.equal ( == ) r.r_placement.grid p.grid ->
-        Placed { r with r_id = fresh_id (); r_placement = p }
     | Host _ | Placed _ ->
         check_shape "Nx.place" p (View.shape (view x));
-        (memory_of p).place p x
+        let (module B : Backend.S) = p.backend in
+        B.place p x
   in
   match x with
   | Placed r -> Cell.with_borrow r.r_cell move

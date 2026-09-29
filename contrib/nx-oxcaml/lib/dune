@@ -19,10 +19,15 @@
 (library
  (name nx_oxcaml)
  (public_name nx-oxcaml)
- (implements nx.backend)
  (modules
   (:standard \ simd_neon simd_sse))
  (foreign_stubs
   (language c)
   (names nx_oxcaml_stubs simd_stubs))
- (libraries nx.dtype nx.core nx.device stdlib_stable stdlib_upstream_compatible))
+ (libraries
+  nx.dtype
+  nx.core
+  nx.device
+  nx.effect
+  stdlib_stable
+  stdlib_upstream_compatible))
