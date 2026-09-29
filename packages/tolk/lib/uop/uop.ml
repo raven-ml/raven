@@ -1809,8 +1809,12 @@ let remove_all_tags root =
     root
 
 let substitute ?(walk = false) ?(enter_calls = false) mappings root =
-  let f u = List.assq_opt u mappings in
-  graph_rewrite ~bottom_up:true ~walk ~enter_calls f root
+  (* One lookup per node, by identity; the first binding of a node wins. *)
+  let table = Ref_tbl.create (List.length mappings) in
+  List.iter
+    (fun (u, u') -> if not (Ref_tbl.mem table u) then Ref_tbl.replace table u u')
+    mappings;
+  graph_rewrite ~bottom_up:true ~walk ~enter_calls (Ref_tbl.find_opt table) root
 
 (* Analysis *)
 

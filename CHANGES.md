@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function's first call with a warm compile cache is about a
+  quarter faster: 15.3 s to 11.0-12.3 s for GPT-2's training step on Metal.
+  Rebinding a cached program's parameters looked each node up in the list of
+  bindings, so it took time proportional to nodes times bindings.
 - `Nx.place` of a value on the disk, such as an entry of
   `Nx_io.load_safetensors`, on Metal (Apple silicon) or a `CPU:k` device
   borrows the file's pages copy-on-write and keeps its view: gpt-oss-20b's
