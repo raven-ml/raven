@@ -2731,6 +2731,10 @@ thread.
 
 ### Nx
 
+- `Nx_io.gunzip` reads every valid gzip member. It counted the bytes its
+  DEFLATE decoder had read ahead as part of the stream, so a member whose data
+  ended early enough in its last bytes failed with
+  `Failure "truncated gzip member footer"`.
 - `Nx.matmul` of batched operands with an empty result is an empty tensor. It
   raised "output has a broadcast (zero) stride", and a batch axis of 0 against
   one of 1 came out as 1.

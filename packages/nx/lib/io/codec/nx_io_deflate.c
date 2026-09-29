@@ -637,19 +637,21 @@ static nx_io_result inflate_raw_impl(const uint8_t *src, size_t src_len,
     }
   }
 
-  result.input_offset = br.pos;
+  /* The whole bytes still in the bit buffer were read ahead, not consumed. */
+  size_t consumed = br.pos - br.nbits / 8;
+  result.input_offset = consumed;
   result.output_size = out.produced;
   if (result.status == NX_IO_OK) {
     if (unbounded) {
-      if (!allow_trailing && br.pos != src_len)
+      if (!allow_trailing && consumed != src_len)
         result.status = NX_IO_INVALID_BLOCK;
     } else if (!stop_at_limit) {
       size_t expected = skip + dst_len;
       if (out.produced != expected)
         result.status = NX_IO_OUTPUT_SIZE;
-      else if (br.pos != src_len)
+      else if (consumed != src_len)
         result.status = NX_IO_INVALID_BLOCK;
-    } else if (br.pos != src_len) {
+    } else if (consumed != src_len) {
       result.status = NX_IO_INVALID_BLOCK;
     }
   }
