@@ -683,7 +683,9 @@ module Rng : sig
   val split : ?n:int -> t -> t array
   (** [split ?n k] is [n] independent subkeys derived from [k] ([n] defaults to
       [2]). Deterministic, and the subkeys are independent of each other; derive
-      one subkey per consumer instead of reusing [k]. *)
+      one subkey per consumer instead of reusing [k].
+
+      Raises [Invalid_argument] if [n < 1]. *)
 
   val split_batch : n:int -> t -> t
   (** [split_batch ~n k] is [split ~n k] as one batch of keys, of shape
@@ -761,7 +763,7 @@ module Rng : sig
   (** [uniform k dtype shape] samples uniformly from [\[0, 1)].
 
       A draw is a multiple of [2 ** -p], where [p] is the significand width of
-      [dtype] and never more than [24]; [1] itself is unreachable. *)
+      [dtype]; [1] itself is unreachable. *)
 
   val normal : t -> (float, 'b) dtype -> int array -> (float, 'b) tensor
   (** [normal k dtype shape] samples the standard normal distribution (mean 0,
@@ -871,8 +873,8 @@ module Rng : sig
       defaults to [-1] (the last axis). The result has the shape of [logits]
       with [axis] removed; broadcast [logits] for more draws than rows.
 
-      Raises [Invalid_argument] if [logits] is a float8 type or [axis] is out of
-      bounds. *)
+      Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is
+      out of bounds or has length [0]. *)
 
   val permutation : t -> int -> int32_t
   (** [permutation k n] is a random permutation of \[[0], [n-1]\].
@@ -968,8 +970,8 @@ val categorical : ?axis:int -> (float, 'a) t -> int32_t
 (** [categorical logits] samples one category index per row of [logits] along
     [axis]. See {!Rng.categorical}.
 
-    Raises [Invalid_argument] if [logits] is a float8 type or [axis] is out of
-    bounds. *)
+    Raises [Invalid_argument] if [logits] is a float8 type, or if [axis] is out
+    of bounds or has length [0]. *)
 
 val permutation : int -> int32_t
 (** [permutation n] is a random permutation of \[[0], [n-1]\].
