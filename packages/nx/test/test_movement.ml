@@ -382,9 +382,42 @@ let views =
               Nx.ravel (Nx.transpose (tensor_of [| 2; 3 |]))));
     ]
 
+(* Two 4-bit elements share a byte, so a view of them rarely starts, strides or
+   ends on one. *)
+let packed =
+  let reads_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
+    let drawn =
+      let open Gen in
+      let* s = array ~size:(int_range 0 3) (int_range 0 4) in
+      let* steps = layout in
+      let+ xs = array ~size:(constant (Ref.numel s)) (int_range lo hi) in
+      (s, steps, xs)
+    in
+    let pp ppf (s, steps, xs) =
+      Format.fprintf ppf "%a %a: %a" pp_shape s pp_layout steps
+        Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
+        (Array.to_list xs)
+    in
+    prop (name ^ " values read under every layout as the same values at int8")
+      (Gen.with_pp pp drawn) (fun (s, steps, xs) ->
+        let wide = Nx.create Nx.int8 s xs in
+        equal (array int)
+          (Nx.to_array (lay_out steps wide))
+          (Nx.to_array (lay_out steps (Nx.cast dtype wide))))
+  in
+  group "packed"
+    [ reads_as_int8 "int4" Nx.int4 (-8) 7; reads_as_int8 "uint4" Nx.uint4 0 15 ]
+
 let () =
   exit
     (run "nx movement"
        [
-         high_rank; reshapes; reorderings; repetitions; joins; flattening; views;
+         high_rank;
+         reshapes;
+         reorderings;
+         repetitions;
+         joins;
+         flattening;
+         views;
+         packed;
        ])
