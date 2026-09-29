@@ -383,30 +383,101 @@ let views =
     ]
 
 (* Two 4-bit elements share a byte, so a view of them rarely starts, strides or
-   ends on one. *)
+   ends on one, and a movement writes elements whose byte it shares with
+   others. *)
+type movement = { name : string; move : 'b. (int, 'b) Nx.t -> (int, 'b) Nx.t }
+
+let movements =
+  let first t = if Nx.ndim t = 0 then 0 else Nx.dim 0 t in
+  let along_first f t = if first t = 0 then t else f (first t) t in
+  [
+    { name = "as it is"; move = Fun.id };
+    {
+      name = "taken at its last, first, first, past-the-end and -1 positions";
+      move =
+        (fun t ->
+          let n = Nx.numel t in
+          Nx.take
+            ~indices:
+              (Nx.create Nx.int32 [| 5 |]
+                 (Array.map Int32.of_int [| n - 1; 0; 0; n; -1 |]))
+            t);
+    };
+    {
+      name = "every other row";
+      move = (fun t -> along_first (fun n -> Nx.slice [ Rs (0, n, 2) ]) t);
+    };
+    {
+      name = "its last and first rows listed";
+      move = (fun t -> along_first (fun n -> Nx.slice [ L [ n - 1; 0 ] ]) t);
+    };
+    {
+      name = "padded by one on every axis with 5";
+      move = (fun t -> Nx.pad (Array.make (Nx.ndim t) (1, 1)) 5 t);
+    };
+    {
+      name = "concatenated to itself";
+      move =
+        (fun t -> along_first (fun _ t -> Nx.concatenate ~axis:0 [ t; t ]) t);
+    };
+    {
+      name = "in patches of two along its last axis, padded before";
+      move =
+        (fun t ->
+          if Nx.ndim t = 0 || Nx.dim (-1) t = 0 then t
+          else
+            Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+              ~dilation:[| 1 |]
+              ~padding:[| (1, 0) |]
+              t);
+    };
+    {
+      name = "with its first row set to 3";
+      move =
+        (fun t ->
+          along_first
+            (fun _ t -> Nx.set [ R (0, 1) ] (Nx.full (Nx.dtype t) [||] 3) t)
+            t);
+    };
+    {
+      name = "with 7 scattered into its first row";
+      move =
+        (fun t ->
+          along_first
+            (fun _ t ->
+              let s = Array.copy (Nx.shape t) in
+              s.(0) <- 1;
+              Nx.scatter ~axis:0 ~indices:(Nx.zeros Nx.int32 s)
+                ~values:(Nx.full (Nx.dtype t) [||] 7)
+                t)
+            t);
+    };
+  ]
+
 let packed =
-  let reads_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
+  let moves_as_int8 name (dtype : (int, _) Nx.dtype) lo hi =
     let drawn =
       let open Gen in
       let* s = array ~size:(int_range 0 3) (int_range 0 4) in
       let* steps = layout in
+      let* m = of_list movements in
       let+ xs = array ~size:(constant (Ref.numel s)) (int_range lo hi) in
-      (s, steps, xs)
+      (s, steps, m, xs)
     in
-    let pp ppf (s, steps, xs) =
-      Format.fprintf ppf "%a %a: %a" pp_shape s pp_layout steps
+    let pp ppf (s, steps, m, xs) =
+      Format.fprintf ppf "%a %a, %s: %a" pp_shape s pp_layout steps m.name
         Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int)
         (Array.to_list xs)
     in
-    prop (name ^ " values read under every layout as the same values at int8")
-      (Gen.with_pp pp drawn) (fun (s, steps, xs) ->
+    prop (name ^ " values move under every layout as their values at int8 do")
+      (Gen.with_pp pp drawn) (fun (s, steps, m, xs) ->
         let wide = Nx.create Nx.int8 s xs in
         equal (array int)
-          (Nx.to_array (lay_out steps wide))
-          (Nx.to_array (lay_out steps (Nx.cast dtype wide))))
+          (Nx.to_array (m.move (lay_out steps wide)))
+          (Nx.to_array (m.move (lay_out steps (Nx.cast dtype wide)))))
   in
   group "packed"
-    [ reads_as_int8 "int4" Nx.int4 (-8) 7; reads_as_int8 "uint4" Nx.uint4 0 15 ]
+    [ moves_as_int8 "int4" Nx.int4 (-8) 7; moves_as_int8 "uint4" Nx.uint4 0 15 ]
 
 let () =
   exit
