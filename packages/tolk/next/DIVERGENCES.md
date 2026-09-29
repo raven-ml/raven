@@ -15,7 +15,9 @@ belong in rune's lowering.
 Each entry gives the tinygrad file and line, the tolk.next file and line, what
 differs, its reason, and the test that pins it. An entry whose test does not
 exist yet names the layer that brings it; the entry is rejected at that
-layer's review if the test is still missing.
+layer's review if the test is still missing. An entry goes when its reason
+goes. Keeping only part of a file is scope, recorded under Exclusions in
+`README.md`, not a divergence.
 
 ## D1. Timeline values are parameters
 

@@ -45,6 +45,34 @@ file. A library per directory adds a dune stanza and a public name per
 directory for no consumer, since nothing outside tolk.next uses a part of it
 alone.
 
+## Exclusions
+
+What tolk.next does not port from tinygrad, and why. Keeping part of a file
+is scope, not a divergence: the part left out is listed here, and
+`DIVERGENCES.md` lists only what tolk.next does differently.
+
+| Not ported | Reason |
+|---|---|
+| `tensor.py`, `function.py`, `nn/*`, and the `Tensor` surface of `mixin/*`: dtype shorthands, creation, reductions, randomness, the composite ops of `mixin/op.py` | nx and kaun are raven's frontend, and tinygrad's decompositions there are rune's lowering. The mixin methods `UOp` itself uses stay in the IR. |
+| `TinyJit`, `_TinyJit` and `_prepare_jit_inputs` in `engine/jit.py` | the `Tensor` surface of the jit; rune walks the parameters with `Ptree`. |
+| Pickling a captured jit (`CapturedJit.__reduce__`) | raven has no persistent jit cache. |
+| `mixin/gradient.py` and the `compute_gradient` path | rune owns differentiation. |
+| `llm/*` | models are examples or a package of their own, never part of the compiler. |
+| `viz/*` and the viz hooks in `helpers.py` | a Python web UI. |
+| `tqdm`, `fetch` and `fetch_fw` in `helpers.py` | progress bars and downloads belong to the programs and packages that need them. |
+| The profile events of `helpers.py` and `device.py` | nx.device's `Profile` records them. |
+| The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it (see D3). |
+| `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
+| `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, and the ISA branches of `codegen/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
+| The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |
+| `runtime/support/compileserver.py` | compilation workers are domains (see D5). |
+| `ImageDType` and image paths | only OpenCL and QCOM use them. |
+| The z3 fallback of `uop/validate.py` | raven has no SMT solver among its dependencies. |
+| `pyrender` in `uop/render.py`, `test_pyrender` in `uop/spec.py`, the code generation of `uop/upat.py` | they generate Python source; tolk.next matches patterns directly (see D2). |
+| RDMA splitting and encoding in `runtime/support/hcq2.py` (`:136-147,507`) | multi-node placement is not designed yet. |
+| MOCK interfaces and the PYTHON device | raven has no mock drivers; `runtime/ops_python.py` survives only as the tests' reference interpreter. |
+| SQTT, PMC and PMA profiling; `NVEncDecQueue`; USB | no consumer. |
+
 ## Tests and ledgers
 
 `test/README.md` describes the suites, the slow tests and the goldens
