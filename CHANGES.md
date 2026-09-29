@@ -4228,6 +4228,10 @@ thread.
 
 ### Kaun
 
+- `Kaun_datasets` downloads and extracts on Windows. It found curl and ran
+  curl and tar through the shell with `command -v`, which `cmd.exe` lacks; it
+  now runs them directly. `Kaun_datasets` and `Kaun_hf` find the cache under
+  `USERPROFILE` when `HOME` is unset, where they raised `Not_found`.
 - The gpt-oss example's `main.exe` and `validate.exe` take `--devices` in place
   of `--jit` and run expert-parallel over several devices
   (`Gpt_oss.expert_parallel`): each device holds an equal share of the

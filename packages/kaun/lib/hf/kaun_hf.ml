@@ -26,6 +26,13 @@ let err_bad_weight_map path =
 
 (* Cache directory *)
 
+(* The user's home: [HOME] on Unix, [USERPROFILE] on Windows. *)
+let home () =
+  match (Sys.getenv_opt "HOME", Sys.getenv_opt "USERPROFILE") with
+  | Some d, _ when d <> "" -> d
+  | _, Some d when d <> "" -> d
+  | _ -> failwith "no home directory: set HOME, or RAVEN_CACHE_ROOT"
+
 let default_cache_dir () =
   match Sys.getenv_opt "RAVEN_CACHE_ROOT" with
   | Some d when d <> "" -> Filename.concat d "huggingface"
@@ -33,7 +40,7 @@ let default_cache_dir () =
       let xdg =
         match Sys.getenv_opt "XDG_CACHE_HOME" with
         | Some d when d <> "" -> d
-        | _ -> Filename.concat (Sys.getenv "HOME") ".cache"
+        | _ -> Filename.concat (home ()) ".cache"
       in
       Filename.concat (Filename.concat xdg "raven") "huggingface"
 

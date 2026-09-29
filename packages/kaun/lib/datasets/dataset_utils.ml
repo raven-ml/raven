@@ -46,7 +46,16 @@ let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
         let xdg =
           match getenv "XDG_CACHE_HOME" with
           | Some d when d <> "" -> d
-          | _ -> Filename.concat (Sys.getenv "HOME") ".cache"
+          | _ ->
+              (* The user's home: [HOME] on Unix, [USERPROFILE] on Windows. *)
+              let home =
+                match (getenv "HOME", getenv "USERPROFILE") with
+                | Some d, _ when d <> "" -> d
+                | _, Some d when d <> "" -> d
+                | _ ->
+                    failwith "no home directory: set HOME, or RAVEN_CACHE_ROOT"
+              in
+              Filename.concat home ".cache"
         in
         Filename.concat xdg "raven"
   in
@@ -57,19 +66,31 @@ let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
   if path <> "" && path.[String.length path - 1] = sep then path
   else path ^ Filename.dir_sep
 
+(* [run prog args] runs [prog] without a shell, so no argument needs quoting and
+   the lookup on [PATH] is the same on every system. It is [None] when [prog] is
+   missing: exit code 127 from the forked child on Unix, [ENOENT] from process
+   creation on Windows. *)
+let run prog args =
+  let rec wait pid =
+    try snd (Unix.waitpid [] pid)
+    with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
+  in
+  match
+    wait
+      (Unix.create_process prog
+         (Array.of_list (prog :: args))
+         Unix.stdin Unix.stdout Unix.stderr)
+  with
+  | Unix.WEXITED 127 -> None
+  | status -> Some status
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
+
 let curl_download ~url ~dest () =
-  let check =
-    lazy (Unix.system "command -v curl >/dev/null 2>&1" = Unix.WEXITED 0)
-  in
-  if not (Lazy.force check) then failwith "curl not found on PATH";
   mkdir_p (Filename.dirname dest);
-  let cmd =
-    Printf.sprintf "curl -L --fail -s -o %s %s" (Filename.quote dest)
-      (Filename.quote url)
-  in
-  match Unix.system cmd with
-  | Unix.WEXITED 0 -> ()
-  | _ ->
+  match run "curl" [ "-L"; "--fail"; "-s"; "-o"; dest; url ] with
+  | None -> failwith "curl not found on PATH"
+  | Some (Unix.WEXITED 0) -> ()
+  | Some _ ->
       (try Sys.remove dest with Sys_error _ -> ());
       failwith (Printf.sprintf "Failed to download %s" url)
 
@@ -102,16 +123,14 @@ let ensure_extracted_tar_gz ~tar_gz_path ~target_dir ~check_file =
   else if Sys.file_exists tar_gz_path then (
     Log.info (fun m -> m "Extracting %s..." tar_gz_path);
     mkdir_p target_dir;
-    let cmd =
-      Printf.sprintf "tar -xzf %s -C %s"
-        (Filename.quote tar_gz_path)
-        (Filename.quote target_dir)
-    in
-    match Unix.system cmd with
-    | Unix.WEXITED 0 ->
+    match run "tar" [ "-xzf"; tar_gz_path; "-C"; target_dir ] with
+    | Some (Unix.WEXITED 0) ->
         Log.info (fun m -> m "Extracted to %s" target_dir);
         true
-    | _ ->
+    | None ->
+        Log.warn (fun m -> m "tar not found on PATH");
+        false
+    | Some _ ->
         Log.warn (fun m -> m "Failed to extract %s" tar_gz_path);
         false)
   else (
