@@ -83,7 +83,7 @@ let elements t =
   let buf = Nx_backend.to_host t and v = Nx_backend.view t in
   if View.is_c_contiguous v && View.offset v = 0 then
     B.view buf ~offset:0 (B.dtype buf) (View.numel v)
-  else Nx_backend.to_host (Nx_backend.copy t)
+  else Elements.gather buf v
 
 let place : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
