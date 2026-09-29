@@ -133,9 +133,13 @@ val blit_from_bytes :
     the elements in their storage representation. [src_off] and [dst_off]
     default to [0]. [len] defaults to [length buf - dst_off].
 
-    For [Int4] and [UInt4], [bytes] holds two elements packed per byte;
-    [src_off] and [dst_off] must be even, and [len] must be even unless the copy
-    reaches the end of [buf]. Raises [Invalid_argument] otherwise. *)
+    For [Int4] and [UInt4], [bytes] holds two elements packed per byte, the
+    first in the low nibble; [src_off] and [dst_off] must be even, and [len]
+    must be even unless the copy reaches the end of [buf].
+
+    Raises [Invalid_argument] if an offset or [len] is negative, if the copy
+    runs past the end of [bytes] or of [buf], or if an [Int4] or [UInt4] copy
+    breaks the rules above. *)
 
 val blit_to_bytes :
   ?src_off:int -> ?dst_off:int -> ?len:int -> ('a, 'b) t -> bytes -> unit
@@ -144,9 +148,13 @@ val blit_to_bytes :
     elements in their storage representation. [src_off] and [dst_off] default to
     [0]. [len] defaults to [length buf - src_off].
 
-    For [Int4] and [UInt4], [bytes] holds two elements packed per byte, and
-    [src_off] and [dst_off] must be even; if [len] is odd the last byte written
-    carries a padding upper nibble. Raises [Invalid_argument] on odd offsets. *)
+    For [Int4] and [UInt4], [bytes] holds two elements packed per byte, the
+    first in the low nibble, and [src_off] and [dst_off] must be even; if [len]
+    is odd the last byte written carries a padding upper nibble.
+
+    Raises [Invalid_argument] if an offset or [len] is negative, if the copy
+    runs past the end of [buf] or of [bytes], or if an [Int4] or [UInt4] offset
+    is odd. *)
 
 (** {1:ba Bigarray conversions}
 
@@ -176,7 +184,8 @@ val to_genarray :
     see the {{!section:ga}genarray bridge}. *)
 
 val of_genarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_genarray ga] flattens [ga] into a one-dimensional buffer.
+(** [of_genarray ga] flattens [ga] into a one-dimensional buffer. Zero-copy: the
+    buffer and [ga] share their storage.
 
     Raises [Invalid_argument] if [ga]'s kind is [Char], [Int] or [Nativeint],
     which buffers do not support. *)
