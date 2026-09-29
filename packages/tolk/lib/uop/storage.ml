@@ -211,13 +211,28 @@ let nbytes buf = buf.size * Dtype.itemsize buf.dtype
 let allocator buf = Lazy.Mutexed.force (base buf).allocator
 
 let allocator_owner (Allocator.Pack alloc) = alloc.owner
+
+(* The owners that guard a buffer's backing: its allocator's, except for a
+   buffer over an external pointer, whose memory is the caller's and whose
+   allocator only hands the pointer back, so no allocator state needs
+   guarding. *)
+let backing_owners buf =
+  let root = base buf in
+  if Option.is_some root.spec.external_ptr then []
+  else [ allocator_owner (allocator root) ]
+
+(* No owner to take opens no owner scope, which would refuse every owner that
+   [f]'s own operations take. *)
+let with_owners owners f =
+  match owners with [] -> with_operation f | _ -> Owner.run owners f
+
 let rec with_buffers ?(owners = []) buffers f =
   let roots = List.map base buffers |> List.sort_uniq (fun a b -> Int.compare a.id b.id) in
-  let snapshots = List.map (fun root -> root, allocator root, Atomic.get root.mappings) roots in
-  let participants = owners @ List.concat_map (fun (_, allocator, mappings) ->
-      allocator_owner allocator :: List.map (fun (target, _) -> allocator_owner target) mappings) snapshots in
-  match Owner.run participants (fun () ->
-      if List.for_all (fun (root, _, mappings) -> Atomic.get root.mappings == mappings) snapshots
+  let snapshots = List.map (fun root -> root, Atomic.get root.mappings) roots in
+  let participants = owners @ List.concat_map (fun (root, mappings) ->
+      backing_owners root @ List.map (fun (target, _) -> allocator_owner target) mappings) snapshots in
+  match with_owners participants (fun () ->
+      if List.for_all (fun (root, mappings) -> Atomic.get root.mappings == mappings) snapshots
       then Some (f ()) else None) with
   | Some result -> result
   | None -> with_buffers ~owners buffers f
@@ -226,7 +241,7 @@ let with_buffer ?target buf f =
   let owners = Option.fold ~none:[] ~some:(fun target -> [allocator_owner target]) target in
   with_buffers ~owners [buf] f
 
-let with_backing buf f = Owner.run [allocator_owner (allocator buf)] f
+let with_backing buf f = with_owners (backing_owners buf) f
 
 let is_allocated buf =
   match Atomic.get buf.storage with

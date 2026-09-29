@@ -214,9 +214,40 @@ let nested_copy_between_host_devices () =
   equal ~msg:"the copy its synchronize started" string (String.make 16 'b')
     (Bytes.to_string (B.as_bytes second))
 
+(* A buffer over an external pointer takes no allocator owner: borrowing host
+   memory and copying from it inside an operation on another device, as a
+   callback of that device's kernel does, needs no owner that the operation
+   lacks. *)
+let external_copy_inside_another_operation () =
+  let name = "CPU:storage-copy-external" in
+  let renderer = Device.renderer (Device.get "CPU") in
+  let device =
+    Device.make ~name
+      ~allocator:
+        (Device.Allocator.Pack
+           (Storage.Host_allocator.make ~synchronize:(fun () -> ())))
+      ~renderer_set:
+        (Device.Renderer_set.make ~device:name [ ("CLANG", fun _ -> renderer) ])
+      ~synchronize:(fun _ -> ())
+      ()
+  in
+  let memory = B.on_device ~device:"CPU" ~size:16 ~dtype:Dtype.uint8 () in
+  B.ensure_allocated memory;
+  B.copyin memory (Bytes.make 16 'x');
+  let address = Option.get (B.host_addr memory) in
+  let dst = B.on_device ~device:name ~size:16 ~dtype:Dtype.uint8 () in
+  B.ensure_allocated dst;
+  Device.with_operation [ device ] (fun () ->
+      let src = B.borrow ~size:16 ~dtype:Dtype.uint8 ~source:memory address in
+      B.copy_from ~dst ~src;
+      B.deallocate src);
+  equal string (String.make 16 'x') (Bytes.to_string (B.as_bytes dst))
+
 let () = exit (run __FILE__
     [test "non-host byte copies use bounded ordered staging" (roundtrip 0);
      test "non-host offset views preserve bytes outside staging chunks" (roundtrip 1);
      test "failed staging teardown reports errors and retains backing" failed_wait_retains_staging;
      test "a copy between host devices holds both their owners"
-       nested_copy_between_host_devices])
+       nested_copy_between_host_devices;
+     test "an external buffer takes no allocator owner"
+       external_copy_inside_another_operation])

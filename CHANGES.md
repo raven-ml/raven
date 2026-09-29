@@ -744,6 +744,11 @@ thread.
 
 ### Tolk (new)
 
+- A buffer over an external pointer (`Device.Buffer.borrow`) takes no
+  allocator owner: its memory is the caller's. Borrowing host memory, or
+  copying from or to it, inside an operation of another device, such as from a
+  kernel's runtime callback, raised `Invalid_argument "device operation: owner
+  was not prepared"`.
 - `Device.Buffer.copy_from` between two host-memory devices holds both
   devices' owners for the whole copy. A copy that one of them started from its
   synchronize while the first was running, as a replaying caller does, raised
