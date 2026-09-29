@@ -522,19 +522,40 @@ module Make (B : Backend_intf.S) = struct
   let exp x = unaryop B.exp x
   let abs x = unaryop B.abs x
 
+  (* A function composed of several operations computes a narrow float at
+     float32 and rounds once, as an operation of the backend does. *)
+  type composite = { f : 'a 'b. ('a, 'b) t -> ('a, 'b) t }
+
+  let at_float32 (type a b) c (x : (a, b) t) : (a, b) t =
+    match dtype x with
+    | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+        cast (dtype x) (c.f (cast Nx_dtype.float32 x))
+    | _ -> c.f x
+
   let log2 x =
-    mul (log x)
-      (broadcast_to (shape x)
-         (scalar (B.context x) (dtype x)
-            (Nx_dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0))))
+    at_float32
+      {
+        f =
+          (fun x ->
+            mul (log x)
+              (broadcast_to (shape x)
+                 (scalar (B.context x) (dtype x)
+                    (Nx_dtype.of_float (dtype x) (1.0 /. Stdlib.log 2.0)))));
+      }
+      x
 
   let exp2 x = rpow_s (Nx_dtype.of_float (dtype x) 2.0) x
   let tan x = unaryop B.tan x
   let square x = mul x x
   let sign x = unaryop B.sign x
   let relu x = maximum_s x (Nx_dtype.zero (dtype x))
-  let sigmoid x = recip (add_s (exp (neg x)) (Nx_dtype.one (dtype x)))
-  let rsqrt x = recip (sqrt x)
+
+  let sigmoid x =
+    at_float32
+      { f = (fun x -> recip (add_s (exp (neg x)) (Nx_dtype.one (dtype x)))) }
+      x
+
+  let rsqrt x = at_float32 { f = (fun x -> recip (sqrt x)) } x
   let asin x = unaryop B.asin x
   let acos x = unaryop B.acos x
   let atan x = unaryop B.atan x
@@ -648,35 +669,64 @@ module Make (B : Backend_intf.S) = struct
     | _ -> 0x1p26
 
   let asinh x =
-    let dt = dtype x in
-    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
-    let a = abs x in
-    let near =
-      log1p (add a (div (square a) (add_s (sqrt (add_s (square a) one)) one)))
-    in
-    let far = add_s (log a) (of_float (Stdlib.log 2.)) in
-    let r =
-      where (cmpgt a (scalar_like x (of_float (large_argument dt)))) far near
-    in
-    where (cmplt x (zeros_like x)) (neg r) r
+    at_float32
+      {
+        f =
+          (fun x ->
+            let dt = dtype x in
+            let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+            let a = abs x in
+            let near =
+              log1p
+                (add a
+                   (div (square a) (add_s (sqrt (add_s (square a) one)) one)))
+            in
+            let far = add_s (log a) (of_float (Stdlib.log 2.)) in
+            let r =
+              where
+                (cmpgt a (scalar_like x (of_float (large_argument dt))))
+                far near
+            in
+            where (cmplt x (zeros_like x)) (neg r) r);
+      }
+      x
 
   let acosh x =
-    let dt = dtype x in
-    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
-    let t = sub_s x one in
-    let near = log1p (add t (sqrt (add (add t t) (square t)))) in
-    let far = add_s (log x) (of_float (Stdlib.log 2.)) in
-    let r =
-      where (cmpgt x (scalar_like x (of_float (large_argument dt)))) far near
-    in
-    where (cmplt x (scalar_like x one)) (scalar_like x (of_float Float.nan)) r
+    at_float32
+      {
+        f =
+          (fun x ->
+            let dt = dtype x in
+            let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+            let t = sub_s x one in
+            let near = log1p (add t (sqrt (add (add t t) (square t)))) in
+            let far = add_s (log x) (of_float (Stdlib.log 2.)) in
+            let r =
+              where
+                (cmpgt x (scalar_like x (of_float (large_argument dt))))
+                far near
+            in
+            where
+              (cmplt x (scalar_like x one))
+              (scalar_like x (of_float Float.nan))
+              r);
+      }
+      x
 
   let atanh x =
-    let dt = dtype x in
-    let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
-    let a = abs x in
-    let r = mul_s (log1p (div (add a a) (rsub_s one a))) (of_float 0.5) in
-    where (cmplt x (zeros_like x)) (neg r) r
+    at_float32
+      {
+        f =
+          (fun x ->
+            let dt = dtype x in
+            let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
+            let a = abs x in
+            let r =
+              mul_s (log1p (div (add a a) (rsub_s one a))) (of_float 0.5)
+            in
+            where (cmplt x (zeros_like x)) (neg r) r);
+      }
+      x
 
   (* ───── Binary Mathematical Functions ───── *)
 
@@ -5638,8 +5688,8 @@ module Make (B : Backend_intf.S) = struct
       | Int4 -> fprintf fmt "%d" elt
       | UInt4 -> fprintf fmt "%d" elt
       | Bool -> fprintf fmt "%b" elt
-      | Complex64 -> fprintf fmt "(%g+%gi)" elt.re elt.im
-      | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
+      | Complex64 -> fprintf fmt "(%g%+gi)" elt.re elt.im
+      | Complex128 -> fprintf fmt "(%g%+gi)" elt.re elt.im
     in
     let edge = 2 in
     if ndim = 0 then pp_element fmt (Nx_buffer.unsafe_get buffer 0)

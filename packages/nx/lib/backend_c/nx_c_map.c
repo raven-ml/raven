@@ -1227,9 +1227,9 @@ static int64_t nx_c_cast_count(const nx_c_ndarray *a) {
 
 static nx_c_status nx_c_cast_packed(nx_c_dtype src, nx_c_dtype dst,
                                   const nx_c_ndarray *o, const nx_c_ndarray *in) {
-  if (!nx_c_cast_dense(o) || !nx_c_cast_dense(in)) return NX_C_ERR_PACKED;
   int64_t n = nx_c_cast_count(o);
-  if (n == 0) return NX_C_OK;
+  if (n == 0) return NX_C_OK; /* an empty view's strides need not be dense */
+  if (!nx_c_cast_dense(o) || !nx_c_cast_dense(in)) return NX_C_ERR_PACKED;
   bool sp = nx_c_dtype_is_packed(src), dp = nx_c_dtype_is_packed(dst);
   if (sp && dp) { /* packed -> packed is a nibble copy (low 4 bits carry over) */
     const uint8_t *S = (const uint8_t *)in->data;

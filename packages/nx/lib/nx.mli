@@ -1323,6 +1323,11 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     when [t] already has that dtype: a tensor is a value, so only a change of
     dtype allocates. Use {!copy} for fresh storage.
 
+    A float becomes an integer by truncation toward zero, held at the ends of
+    the integer's range, and NaN becomes [0]. A real value becomes a complex one
+    with no imaginary part, and a complex value a real one by dropping its
+    imaginary part.
+
     {@ocaml[
       # create float32 [| 3 |] [| 1.5; 2.7; 3.1 |]
         |> cast int32
@@ -1624,7 +1629,10 @@ val argwhere : ('a, 'b) t -> (int32, int32_elt) t
 
 (** {1:arithmetic Arithmetic}
 
-    Element-wise arithmetic with broadcasting. Each operation [op] has variants:
+    Element-wise arithmetic with broadcasting. At [float16], [bfloat16] and the
+    float8 dtypes, every element-wise operation, the mathematical functions
+    below included, computes at [float32] and rounds once. Each operation [op]
+    has variants:
     - [op_s t s] — tensor-scalar.
     - [rop_s s t] — scalar-tensor (reversed operands). *)
 
@@ -1652,7 +1660,8 @@ val mul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [div a b] is the element-wise quotient [a / b].
 
-    Float dtypes use true division. Integer dtypes truncate toward zero.
+    Float dtypes use true division. Integer dtypes truncate toward zero, and an
+    integer divided by zero is zero.
 
     {@ocaml[
       # let x = create int32 [| 2 |] [| -7l; 8l |] in
@@ -1677,7 +1686,8 @@ val rpow_s : 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rpow_s s t] is [s{^t}] element-wise. *)
 
 val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mod_ a b] is the element-wise remainder of [a / b]. *)
+(** [mod_ a b] is the element-wise remainder of [a / b], of the sign of [a]. An
+    integer remainder by zero is zero. *)
 
 val mod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [mod_s t s] is the remainder of each element divided by scalar [s]. *)

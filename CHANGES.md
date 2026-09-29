@@ -2717,6 +2717,18 @@ thread.
 
 ### Nx
 
+- A complex element prints its imaginary part with its own sign: `(1-2i)`,
+  where `Nx.pp` printed `(1+-2i)`.
+- `Nx.rsqrt`, `log2`, `sigmoid`, `asinh`, `acosh` and `atanh` at `float16`,
+  `bfloat16` and the float8 dtypes compute at `float32` and round once, as
+  every other element-wise operation does. Composed of several operations,
+  they rounded each step and could be a unit in the last place off.
+- `Nx.cast` of an empty tensor to or from `int4` and `uint4` returns an empty
+  tensor. It raised "packed dtype not supported".
+- `Nx.cast`, `Nx.div` and `Nx.mod_` document what they did: a float cast to
+  an integer truncates, holds at the range and takes NaN to 0; an integer
+  divided by zero, or its remainder by zero, is 0; a remainder has the sign
+  of the dividend.
 - **Breaking:** `Nx.inner` of matrices is the inner product over the last
   axes of both, with the other axes of `a` then `b`, as `tensordot` over
   them gives. It was `vecdot`, pairing rows.
