@@ -353,6 +353,12 @@ type t = Legacy of legacy | Cot of cot
 (* The FRTS region: 1 MiB, 1 MiB below the top of the GPU's memory. *)
 let frts_offset (d : Nvdev.t) = d.vram_size - 0x100000 - 0x100000
 
+(* The FRTS region the FSP places for a COT boot: 1 MiB whose top lies 28 MiB
+   below the end of the GPU's memory, which leaves room above it for the VGA
+   workspace and the PMU's reservation. *)
+let cot_frts_offset = 0x1c00000
+let cot_frts_size = 0x100000
+
 let wait_for_reset (d : Nvdev.t) =
   if d.fmc_boot then begin
     Nvdev.include_regs d "dev_therm" "gb202";
@@ -392,7 +398,9 @@ let init_sw (d : Nvdev.t) ~firmware =
     in
     let o = Elf.load firmware in
     let image = section o "image" in
-    let _, _, fmc = Nvdev.boot_mem d ~data:image (String.length image) in
+    let _, _, fmc =
+      Nvdev.boot_mem d ~contiguous:true ~data:image (String.length image)
+    in
     Cot
       {
         args;
@@ -415,13 +423,23 @@ let init_sw (d : Nvdev.t) ~firmware =
         ("dev_bus", "tu102");
       ];
     let rom = read_vbios d in
-    let off, signature, image = find_fwsec rom in
-    let desc f = P.read rom off f in
-    let patched =
-      patch_fwsec ~desc ~signature image
-        ~cmd_id:D.falcon_application_interface_dmem_mapper_v3_cmd_frts
-        (frts_cmd (frts_offset d))
+    (* No digest covers the VBIOS: an offset past its end means a ROM laid out
+       otherwise than this walk reads it. *)
+    let off, patched =
+      match
+        let off, signature, image = find_fwsec rom in
+        ( off,
+          patch_fwsec
+            ~desc:(fun f -> P.read rom off f)
+            ~signature image
+            ~cmd_id:D.falcon_application_interface_dmem_mapper_v3_cmd_frts
+            (frts_cmd (frts_offset d)) )
+      with
+      | r -> r
+      | exception Invalid_argument _ ->
+          failwith "the VBIOS is not laid out as expected"
     in
+    let desc f = P.read rom off f in
     let vram data =
       match Nvdev.boot_mem d ~sysmem:false ~data (String.length data) with
       | _, Some pa, _ -> pa
@@ -540,8 +558,8 @@ let init_hw (d : Nvdev.t) t ~libos ~wpr_meta =
       let p = Bytes.make C.sizeof '\000' in
       P.write p 0 C.version 2;
       P.write p 0 C.size C.sizeof;
-      P.write p 0 C.frts_vidmem_offset 0x1c00000;
-      P.write p 0 C.frts_vidmem_size 0x100000;
+      P.write p 0 C.frts_vidmem_offset cot_frts_offset;
+      P.write p 0 C.frts_vidmem_size cot_frts_size;
       P.write p 0 C.gsp_boot_args_sysmem_offset c.args_sysmem;
       P.write p 0 C.gsp_fmc_sysmem_offset c.fmc_image;
       let words field s =

@@ -23,7 +23,8 @@ Struct layouts come from libclang, for x86_64 Linux; the script checks that
 aarch64 Linux lays them out the same. Structures upstream defines only inside
 .c files are cut out of them by name. The VBIOS structures are laid out by
 their format strings, which describe them as the ROM packs them. It emits only
-what the runtime reads: the inventories below name it.
+what the runtime and the libraries that submit work to it read, such as the
+method constants of tolk's pushbuffers: the inventories below name it.
 """
 
 import glob
@@ -72,7 +73,7 @@ RM_HEADERS = [
     *[f"src/nvidia/arch/nvalloc/unix/include/nv{s}.h" for s in [
         "_escape", "-ioctl", "-ioctl-numbers", "-unix-nvos-params-wrappers"]],
     *[f"src/common/sdk/nvidia/inc/{s}.h" for s in [
-        "alloc/alloc_channel", "nvos", "ctrl/ctrlc36f", "ctrl/ctrla06c", "ctrl/ctrl90f1", "ctrl/ctrla06f/ctrla06fgpfifo"]],
+        "alloc/alloc_channel", "nvos", "ctrl/ctrlc36f", "ctrl/ctrla06c", "ctrl/ctrl90f1"]],
     *[f"src/common/sdk/nvidia/inc/ctrl/ctrl{s}/*.h" for s in ["0000", "0080", "2080", "83de"]],
     "kernel-open/common/inc/nvstatus.h", "src/nvidia/generated/g_allclasses.h",
 ]
@@ -91,7 +92,7 @@ RM_CONSTANTS = [
     "NV_ESC_RM_CONTROL", "NV_ESC_RM_FREE", "NV_ESC_RM_MAP_MEMORY", "NV_ESC_RM_MAP_MEMORY_DMA",
     # memory
     "NVOS02_FLAGS_PHYSICALITY_NONCONTIGUOUS", "NVOS02_FLAGS_COHERENCY_CACHED", "NVOS02_FLAGS_MAPPING_NO_MAP",
-    "NVOS32_ATTR_PHYSICALITY_CONTIGUOUS", "NVOS32_ATTR_PHYSICALITY_ALLOW_NONCONTIGUOUS", "NVOS32_ATTR_PAGE_SIZE_4KB",
+    "NVOS32_ATTR_PHYSICALITY_CONTIGUOUS", "NVOS32_ATTR_PHYSICALITY_ALLOW_NONCONTIGUOUS",
     "NVOS32_ATTR_PAGE_SIZE_HUGE", "NVOS32_ATTR_LOCATION_VIDMEM", "NVOS32_ATTR_LOCATION_PCI",
     "NVOS32_ATTR2_GPU_CACHEABLE_YES", "NVOS32_ATTR2_GPU_CACHEABLE_NO", "NVOS32_ATTR2_PAGE_SIZE_HUGE_2MB",
     "NVOS32_ATTR2_ZBC_PREFER_NO_ZBC", "NVOS32_ALLOC_FLAGS_MAP_NOT_REQUIRED",
@@ -115,8 +116,8 @@ RM_CONSTANTS = [
     "NV0080_CTRL_CMD_GPU_GET_CLASSLIST", "NV2080_CTRL_CMD_GPU_GET_GID_INFO",
     "NV2080_GPU_CMD_GPU_GET_GID_FLAGS_FORMAT_BINARY", "NV2080_CTRL_CMD_PERF_BOOST",
     "NV2080_CTRL_PERF_BOOST_FLAGS_CMD_BOOST_TO_MAX", "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_YES",
-    "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE", "NVA06F_CTRL_CMD_BIND",
-    "NVA06F_CTRL_CMD_GPFIFO_SCHEDULE", "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NV2080_CTRL_CMD_GR_GET_INFO",
+    "NV2080_CTRL_PERF_BOOST_FLAGS_CUDA_PRIORITY_HIGH", "NVA06C_CTRL_CMD_GPFIFO_SCHEDULE",
+    "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN", "NV2080_CTRL_CMD_GR_GET_INFO",
     "NV2080_CTRL_CMD_FB_FLUSH_GPU_CACHE", "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_WRITE_BACK_YES",
     "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_INVALIDATE_YES", "NV2080_CTRL_FB_FLUSH_GPU_CACHE_FLAGS_FLUSH_MODE_FULL_CACHE",
     "NV2080_CTRL_CMD_FB_GET_INFO_V2", "NV2080_CTRL_FB_INFO_INDEX_HEAP_SIZE",
@@ -126,7 +127,7 @@ RM_CONSTANTS = [
     "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS",
     "NV0080_CTRL_FIFO_GET_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_GRAPHICS_PATCH",
     "NV83DE_CTRL_CMD_DEBUG_READ_ALL_SM_ERROR_STATES", "NV83DE_CTRL_CMD_DEBUG_READ_MMU_FAULT_INFO",
-    "NV2080_ENGINE_TYPE_GRAPHICS", "NV2080_ENGINE_TYPE_NVDEC0",
+    "NV2080_ENGINE_TYPE_GRAPHICS",
     "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_GPCS", "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_TPC_PER_GPC",
     "NV2080_CTRL_GR_INFO_INDEX_LITTER_NUM_SM_PER_TPC", "NV2080_CTRL_GR_INFO_INDEX_MAX_WARPS_PER_SM",
     "NV2080_CTRL_GR_INFO_INDEX_SM_VERSION",
@@ -136,7 +137,8 @@ RM_CONSTANTS = [
     # statuses
     "NV_OK", "NV_ERR_NO_MEMORY",
     # UVM
-    "UVM_INITIALIZE", "UVM_MM_INITIALIZE", "UVM_REGISTER_GPU", "UVM_REGISTER_GPU_VASPACE", "UVM_ENABLE_PEER_ACCESS",
+    "UVM_INITIALIZE", "UVM_MM_INITIALIZE", "UVM_REGISTER_GPU", "UVM_UNREGISTER_GPU", "UVM_REGISTER_GPU_VASPACE",
+    "UVM_UNREGISTER_GPU_VASPACE", "UVM_ENABLE_PEER_ACCESS",
     "UVM_REGISTER_CHANNEL", "UVM_CREATE_EXTERNAL_RANGE", "UVM_MAP_EXTERNAL_ALLOCATION", "UVM_UNMAP_EXTERNAL",
     "UVM_FREE", "UvmGpuMappingTypeReadWriteAtomic",
 ]
@@ -189,7 +191,6 @@ RM_STRUCTS = {
     "NV0080_CTRL_GPU_GET_CLASSLIST_PARAMS": ("Classlist", ["numClasses", "classList"]),
     "NV2080_CTRL_GPU_GET_GID_INFO_PARAMS": ("Gid_info", ["flags", "length", "data"]),
     "NV2080_CTRL_PERF_BOOST_PARAMS": ("Perf_boost", ["flags", "duration"]),
-    "NVA06F_CTRL_BIND_PARAMS": ("Bind", ["engineType"]),
     "NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN_PARAMS": ("Work_submit_token", ["workSubmitToken"]),
     "NV2080_CTRL_GR_INFO": ("Gr_info", ["index", "data"]),
     "NV2080_CTRL_GR_GET_INFO_PARAMS": ("Gr_get_info", ["grInfoListSize", "grInfoList"]),
@@ -224,6 +225,8 @@ RM_STRUCTS = {
     "UVM_REGISTER_GPU_PARAMS": ("Uvm_register_gpu", ["gpu_uuid", "rmCtrlFd", "hClient", "hSmcPartRef", "rmStatus"]),
     "UVM_REGISTER_GPU_VASPACE_PARAMS": ("Uvm_register_gpu_vaspace", [
         "gpuUuid", "rmCtrlFd", "hClient", "hVaSpace", "rmStatus"]),
+    "UVM_UNREGISTER_GPU_PARAMS": ("Uvm_unregister_gpu", ["gpu_uuid", "rmStatus"]),
+    "UVM_UNREGISTER_GPU_VASPACE_PARAMS": ("Uvm_unregister_gpu_vaspace", ["gpuUuid", "rmStatus"]),
     "UVM_ENABLE_PEER_ACCESS_PARAMS": ("Uvm_enable_peer_access", ["gpuUuidA", "gpuUuidB", "rmStatus"]),
     "UVM_REGISTER_CHANNEL_PARAMS": ("Uvm_register_channel", [
         "gpuUuid", "rmCtrlFd", "hClient", "hChannel", "base", "length", "rmStatus"]),
@@ -247,7 +250,7 @@ RM_GSP_ONLY = {
 
 # The structs whose layouts differ between the releases.
 RM_PER_RELEASE = {"NV2080_CTRL_FB_GET_INFO_V2_PARAMS", "NVOS46_PARAMETERS", "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS", "NV_VASPACE_ALLOCATION_PARAMETERS",
-                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS", "NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS", "UVM_FREE_PARAMS"}
+                  "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS", "UVM_FREE_PARAMS"}
 RM_STRUCTS.update({
     "NV_CHANNELGPFIFO_ALLOCATION_PARAMETERS": ("Gpfifo_alloc", [
         "gpFifoOffset", "gpFifoEntries", "flags", "hContextShare", "hVASpace", "hUserdMemory", "userdOffset",
@@ -255,7 +258,6 @@ RM_STRUCTS.update({
         "errorNotifierMem", "internalFlags"]),
     "NV_VASPACE_ALLOCATION_PARAMETERS": ("Vaspace_alloc", ["index", "flags", "vaSize", "vaBase"]),
     "NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Group_schedule", ["bEnable"]),
-    "NVA06F_CTRL_GPFIFO_SCHEDULE_PARAMS": ("Channel_schedule", ["bEnable"]),
 })
 
 # The GSP's interface, from the firmware's release
@@ -277,7 +279,7 @@ GSP_DEFINES = ["RPC_MESSAGE_STRUCTURES", "RPC_STRUCTURES", "RPC_GENERIC_UNION"]
 
 GSP_CONSTANTS = [
     "NV_VGPU_MSG_SIGNATURE_VALID", "NV_VGPU_MSG_RESULT_RPC_PENDING", "NV_VGPU_MSG_FUNCTION_CONTINUATION_RECORD",
-    "NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC", "NV_VGPU_MSG_FUNCTION_GSP_RM_CONTROL", "NV_VGPU_MSG_FUNCTION_FREE",
+    "NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC", "NV_VGPU_MSG_FUNCTION_GSP_RM_CONTROL",
     "NV_VGPU_MSG_FUNCTION_SET_PAGE_DIRECTORY", "NV_VGPU_MSG_FUNCTION_GSP_SET_SYSTEM_INFO",
     "NV_VGPU_MSG_FUNCTION_SET_REGISTRY", "NV_VGPU_MSG_FUNCTION_UNLOADING_GUEST_DRIVER",
     "NV_VGPU_MSG_EVENT_GSP_INIT_DONE", "NV_VGPU_MSG_EVENT_GSP_RUN_CPU_SEQUENCER", "NV_VGPU_MSG_EVENT_OS_ERROR_LOG",
@@ -300,7 +302,6 @@ GSP_STRUCTS = {
                                             "flags", "params"]),
     "rpc_gsp_rm_control_v": ("Rpc_rm_control", ["hClient", "hObject", "cmd", "status", "paramsSize", "flags",
                                                 "params"]),
-    "rpc_free_v": ("Rpc_free", ["params__hRoot", "params__hObjectParent", "params__hObjectOld", "params__status"]),
     "rpc_set_page_directory_v": ("Rpc_set_page_directory", ["hClient", "hDevice", "pasid", "params"]),
     "NV0080_CTRL_DMA_SET_PAGE_DIRECTORY_PARAMS_v1E_05": ("Set_page_directory", [
         "physAddress", "numEntries", "flags", "hVASpace", "chId", "subDeviceId", "pasid"]),
@@ -421,7 +422,7 @@ REG_PREFIXES = ["NV_PFALCON_FALCON", "NV_PGSP_FALCON", "NV_PSEC_FALCON", "NV_PRI
                 "NV_PFSP", "NV_PGC6_BSI", "NV_PFALCON_FBIF", "NV_PFALCON2_FALCON", "NV_PBUS", "NV_PFB", "NV_PMC",
                 "NV_PGSP_QUEUE", "NV_VIRTUAL_FUNCTION", "NV_THERM"]
 REGISTERS = [
-    "NV_PMC_BOOT_0", "NV_PMC_BOOT_42", "NV_PFB_PRI_MMU_WPR2_ADDR_HI", "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42",
+    "NV_PMC_BOOT_0", "NV_PMC_BOOT_42", "NV_PFB_PRI_MMU_WPR2_ADDR_LO", "NV_PFB_PRI_MMU_WPR2_ADDR_HI", "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42",
     "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05_PRIV_LEVEL_MASK", "NV_PGC6_AON_SECURE_SCRATCH_GROUP_05",
     "NV_PGC6_BSI_SECURE_SCRATCH_14", "NV_THERM_I2CS_SCRATCH", "NV_VIRTUAL_FUNCTION_PRIV_MMU_INVALIDATE",
     "NV_VIRTUAL_FUNCTION_PRIV_FUNC_BAR1_BLOCK_LOW_ADDR", "NV_PBUS_BAR1_BLOCK", "NV_PGSP_QUEUE_HEAD",

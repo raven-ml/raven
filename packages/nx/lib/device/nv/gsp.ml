@@ -293,12 +293,12 @@ let rec drain g ~want =
       if Some func = want then Some msg else drain g ~want
 
 let wait_answer ?(timeout_ms = 10_000) g func =
-  let t0 = Unix.gettimeofday () in
+  let t0 = Nvdev.now_ms () in
   let rec go () =
     match drain g ~want:(Some func) with
     | Some msg -> msg
     | None ->
-        if (Unix.gettimeofday () -. t0) *. 1000. > float timeout_ms then
+        if Nvdev.now_ms () - t0 > timeout_ms then
           failwith
             (Printf.sprintf "timed out waiting for the GSP's answer to call %d"
                func);
@@ -442,9 +442,8 @@ and rm_alloc g ?(client = priv_root) ~parent cls params =
     Option.iter
       (fun p ->
         let e = P.get p G.engine_type in
-        let key = e + if e >= D.nv2080_engine_type_nvdec0 then 10 else 0 in
         Hashtbl.replace g.channels obj
-          (Option.value ~default:0 (List.assoc_opt key g.runlists)))
+          (Option.value ~default:0 (List.assoc_opt e g.runlists)))
       params;
   if client <> priv_root then begin
     if cls = D.fermi_vaspace_a then
@@ -569,22 +568,43 @@ let fmc_sizes =
     (W.pmu_reserved_size, 0x1820000);
     (W.non_wpr_heap_size, 0x220000);
     (W.gsp_fw_heap_size, 0x8700000);
-    (W.frts_size, 0x100000);
+    (W.frts_size, Falcon.cot_frts_size);
   ]
 
 (* The top of the memory the process may manage: below the region the GSP
-   reserves, which it must never hand out, and 64 MiB below the top. *)
+   reserves, which it must never hand out, and 64 MiB below the top. On Ampere
+   and Ada the CPU lays the region out. The FMC lays it out itself, from the end
+   of memory down: what lies above FRTS, within [Falcon.cot_frts_offset], then
+   FRTS, the boot binary, the image, the heap, the metadata and the WPR header,
+   then the non-WPR heap. The six parts below FRTS are each aligned, to at most
+   1 MiB, which loses less than 6 MiB. [check_region] verifies the bound once
+   the GSP runs. *)
 let managed_top ~vram ~fmc ~boot ~image =
   let bound =
     if fmc then
-      vram
-      - List.fold_left
-          (fun n (_, s) -> n + s)
-          (boot + image + 0x100000)
-          fmc_sizes
+      let size f = List.assoc f fmc_sizes in
+      let module W = D.Wpr_meta in
+      vram - Falcon.cot_frts_offset - size W.frts_size - boot - image
+      - size W.gsp_fw_heap_size - 0x1000 - size W.non_wpr_heap_size - (6 lsl 20)
     else List.assoc D.Wpr_meta.gsp_fw_rsvd_start (wpr ~vram ~boot ~image)
   in
   Int.min (vram - (64 lsl 20)) (round_down bound (2 lsl 20))
+
+(* Fails unless the memory below [top] lies below the region the GSP reserved,
+   which starts the non-WPR heap below the protected region (WPR2). *)
+let check_region d ~top =
+  let wpr2 = Nvdev.read_field d "NV_PFB_PRI_MMU_WPR2_ADDR_LO" "val" lsl 12 in
+  let start =
+    round_down
+      (wpr2 - List.assoc D.Wpr_meta.non_wpr_heap_size fmc_sizes)
+      0x100000
+  in
+  if top > start then
+    failwith
+      (Printf.sprintf
+         "the GSP reserved the GPU memory from 0x%x, below the top 0x%x of the \
+          memory the process manages"
+         start top)
 
 let bdf bus =
   match String.split_on_char ':' bus with
@@ -667,8 +687,9 @@ let init_sw (d : Nvdev.t) flcn (l : layout) =
   P.write h 0 H.flags 1;
   P.write h 0 H.rx_hdr_off H.sizeof;
   Mmio.write cmd_view 0 (Bytes.to_string h);
-  (* libos: its log buffers and its arguments *)
-  let _, _, logs = Nvdev.boot_mem d (2 lsl 20) in
+  (* libos: its log buffers and its arguments, each region one physical block
+     from the address it is given *)
+  let _, _, logs = Nvdev.boot_mem d ~contiguous:true (2 lsl 20) in
   let module L = D.Libos_region in
   let region id ~pa ~size =
     let r = Bytes.make L.sizeof '\000' in
@@ -704,10 +725,12 @@ let init_sw (d : Nvdev.t) flcn (l : layout) =
       (u64s (Array.to_list (Array.sub addrs cur n.(i + 1))))
   done;
   let _, _, sign =
-    Nvdev.boot_mem d ~data:l.signature (String.length l.signature)
+    Nvdev.boot_mem d ~contiguous:true ~data:l.signature
+      (String.length l.signature)
   in
   let _, _, boot =
-    Nvdev.boot_mem d ~data:l.bootloader (String.length l.bootloader)
+    Nvdev.boot_mem d ~contiguous:true ~data:l.bootloader
+      (String.length l.bootloader)
   in
   (* the WPR metadata *)
   let module W = D.Wpr_meta in

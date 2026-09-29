@@ -43,21 +43,40 @@ let eiattr_param_cbank = 0xa
 let eiattr_min_stack_size = 0x12
 let eiattr_regcount = 0x2f
 
-(* The index of a bank of constants, [.nv.constantN...]. *)
-let bank s =
+(* The index of a bank of constants of the function [name]:
+   [.nv.constantN.name], or [.nv.constantN], which every function shares. *)
+let bank ~name s =
   let p = ".nv.constant" in
   let n = String.length p in
   if String.length s <= n || String.sub s 0 n <> p then None
   else
     let rest = String.sub s n (String.length s - n) in
-    let digits =
-      match String.index_opt rest '.' with
-      | Some i -> String.sub rest 0 i
-      | None -> rest
-    in
-    int_of_string_opt digits
+    match String.index_opt rest '.' with
+    | Some i when String.sub rest (i + 1) (String.length rest - i - 1) = name ->
+        int_of_string_opt (String.sub rest 0 i)
+    | Some _ -> None
+    | None -> int_of_string_opt rest
 
 let u32 s off = Int32.to_int (String.get_int32_le s off) land 0xffff_ffff
+
+(* The index of the symbol [name] in [o]'s symbol table: the global [.nv.info]
+   records of a function start with it. *)
+let symbol_index (o : Elf.t) name =
+  let section n =
+    List.find_opt (fun (s : Elf.section) -> s.name = n) o.sections
+  in
+  match (section ".symtab", section ".strtab") with
+  | Some tab, Some str ->
+      let names = str.contents and n = String.length name in
+      let named off =
+        off + n < String.length names
+        && String.sub names off n = name
+        && names.[off + n] = '\000'
+      in
+      List.find_opt
+        (fun k -> named (u32 tab.contents (24 * k)))
+        (List.init (String.length tab.contents / 24) Fun.id)
+  | _ -> None
 
 let load binary ~name =
   let o = Elf.load ~align:128 binary in
@@ -80,14 +99,16 @@ let load binary ~name =
   let banks =
     List.fold_left
       (fun banks (s : Elf.section) ->
-        match bank s.name with
+        match bank ~name s.name with
         | Some i ->
             (i, s.offset, s.size) :: List.filter (fun (j, _, _) -> j <> i) banks
         | None -> banks)
       [ (0, 0, 0x160) ]
       o.sections
   in
+  let sym = symbol_index o name in
   let registers = ref 0 and stack = ref 0 and param = ref 0 in
+  let own d = Some (u32 d 0) = sym in
   List.iter
     (fun (s : Elf.section) ->
       List.iter
@@ -95,9 +116,11 @@ let load binary ~name =
           | p, `Data d
             when s.name = ".nv.info." ^ name && p = eiattr_param_cbank ->
               param := String.get_uint16_le d 4
-          | p, `Data d when s.name = ".nv.info" && p = eiattr_min_stack_size ->
+          | p, `Data d
+            when s.name = ".nv.info" && p = eiattr_min_stack_size && own d ->
               stack := u32 d 4
-          | p, `Data d when s.name = ".nv.info" && p = eiattr_regcount ->
+          | p, `Data d when s.name = ".nv.info" && p = eiattr_regcount && own d
+            ->
               registers := u32 d 4
           | _ -> ())
         (if String.starts_with ~prefix:".nv.info" s.name then

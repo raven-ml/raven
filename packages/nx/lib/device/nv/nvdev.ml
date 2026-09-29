@@ -12,7 +12,12 @@ module Pci = Nx_device_support.Pci
 module Page_table = Nx_device_support.Page_table
 module Sysmem = Nx_device_support.Sysmem
 
-(* Registers *)
+external now_ms : unit -> (int[@untagged])
+  = "caml_nx_nv_now_ms_byte" "caml_nx_nv_now_ms"
+[@@noalloc]
+
+(* Registers: a register or field the chip's inventory lacks is a fact of the
+   hardware, and fails the open or the device like any other. *)
 
 type reg = int * int * (string * (int * int)) list
 
@@ -34,12 +39,12 @@ type t = {
 let include_regs d name arch =
   match List.find_opt (fun (n, a, _) -> n = name && a = arch) D.registers with
   | Some (_, _, regs) -> d.regs <- regs :: d.regs
-  | None -> invalid_arg (Printf.sprintf "no registers %s %s" name arch)
+  | None -> failwith (Printf.sprintf "no registers %s %s" name arch)
 
 let reg d name =
   match List.find_map (List.assoc_opt name) d.regs with
   | Some r -> r
-  | None -> invalid_arg ("Nvdev: no register " ^ name)
+  | None -> failwith ("no register " ^ name)
 
 let rreg d addr = Mmio.get32 d.mmio addr
 let wreg d addr v = Mmio.set32 d.mmio addr v
@@ -54,14 +59,14 @@ let encode d name fields =
     (fun w (f, v) ->
       match List.assoc_opt f fs with
       | Some (lo, n) -> w lor ((v land ((1 lsl n) - 1)) lsl lo)
-      | None -> invalid_arg (Printf.sprintf "Nvdev: %s has no field %s" name f))
+      | None -> failwith (Printf.sprintf "%s has no field %s" name f))
     0 fields
 
 let field d name f w =
   let _, _, fs = reg d name in
   match List.assoc_opt f fs with
   | Some (lo, n) -> (w lsr lo) land ((1 lsl n) - 1)
-  | None -> invalid_arg (Printf.sprintf "Nvdev: %s has no field %s" name f)
+  | None -> failwith (Printf.sprintf "%s has no field %s" name f)
 
 let read d ?base ?i name = rreg d (addr d ?base ?i name)
 let read_field d ?base ?i name f = field d name f (read d ?base ?i name)
@@ -77,8 +82,7 @@ let update d ?base ?i name fields =
         let lo, n =
           match List.assoc_opt f fs with
           | Some b -> b
-          | None ->
-              invalid_arg (Printf.sprintf "Nvdev: %s has no field %s" name f)
+          | None -> failwith (Printf.sprintf "%s has no field %s" name f)
         in
         m lor (((1 lsl n) - 1) lsl lo))
       0 fields
@@ -88,9 +92,9 @@ let update d ?base ?i name fields =
 (* Polls [f] until it holds, for at most [timeout_ms] (defaults to 30 seconds),
    and raises [Failure] naming [what] otherwise. *)
 let wait_until ?(timeout_ms = 30_000) what f =
-  let t0 = Unix.gettimeofday () in
+  let t0 = now_ms () in
   while not (f ()) do
-    if (Unix.gettimeofday () -. t0) *. 1000. > float timeout_ms then
+    if now_ms () - t0 > timeout_ms then
       failwith (Printf.sprintf "timed out waiting for %s" what);
     Domain.cpu_relax ()
   done
@@ -124,8 +128,7 @@ let set_bus_master pci on =
   Pci.write_config pci pci_command 2
     (if on then v lor pci_command_master else v land lnot pci_command_master)
 
-(* Opens the GPU at [pci]: a GPU whose WPR2 is up, left by its kernel driver or
-   a process that did not finish, is reset first. *)
+(* Opens the GPU at [pci] and reads which chip it is, leaving it as it is. *)
 let create pci =
   let d =
     {
@@ -145,11 +148,6 @@ let create pci =
   include_regs d "nv_ref" "";
   include_regs d "dev_fb" "tu102";
   include_regs d "dev_gc6_island" "ga102";
-  if read d "NV_PFB_PRI_MMU_WPR2_ADDR_HI" <> 0 then begin
-    set_bus_master pci false;
-    Pci.reset pci
-  end;
-  set_bus_master pci true;
   let boot42 = read d "NV_PMC_BOOT_42" in
   let architecture = field d "NV_PMC_BOOT_42" "architecture" boot42 in
   let d =
@@ -159,11 +157,22 @@ let create pci =
       implementation = field d "NV_PMC_BOOT_42" "implementation" boot42;
       mmu_ver = (if architecture >= 0x1a then 3 else 2);
       fmc_boot = architecture >= 0x1a;
-      vram_size = read d "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42" lsl 20;
     }
   in
   ignore (chip_name d);
-  { d with large_bar = Mmio.length d.vram >= d.vram_size }
+  d
+
+(* Readies [d] for its boot: a GPU whose WPR2 is up, left by its kernel driver
+   or a process that did not finish, is reset first; then it masters the bus,
+   and the size of its memory is read. *)
+let start d =
+  if read d "NV_PFB_PRI_MMU_WPR2_ADDR_HI" <> 0 then begin
+    set_bus_master d.pci false;
+    Pci.reset d.pci
+  end;
+  set_bus_master d.pci true;
+  let vram_size = read d "NV_PGC6_AON_SECURE_SCRATCH_GROUP_42" lsl 20 in
+  { d with vram_size; large_bar = Mmio.length d.vram >= vram_size }
 
 let chip_id d = read d "NV_PMC_BOOT_0"
 
@@ -269,8 +278,11 @@ let entry ~ver ~vram ~flush =
     flush;
   }
 
-(* The virtual addresses of every NVIDIA GPU the process drives. *)
-let space = Page_table.Space.create ~base:0x10_0000_0000 (1 lsl 44)
+(* The virtual addresses of every NVIDIA GPU the process drives, below 2^40,
+   where a channel's command segments must lie. *)
+let space =
+  let base = 0x10_0000_0000 in
+  Page_table.Space.create ~base ((1 lsl 40) - base)
 
 (* Manages the memory below [top]: the page tables, 2 MiB of boot memory, and
    the rest, in blocks of 512 MiB, 2 MiB and 4 KiB. *)
@@ -300,18 +312,26 @@ let round_up n a = (n + a - 1) / a * a
 (* [boot_mem d n] is [n] bytes the GPU's falcons reach: the process's view of
    them, their address in the GPU's memory if there, and the bus address of each
    page. They are system memory if [sysmem] (defaults to whether the BAR is too
-   small to reach the GPU's memory), and the GPU's memory otherwise. The memory
-   is kept for the life of the process. *)
-let boot_mem d ?sysmem ?data n =
+   small to reach the GPU's memory), and the GPU's memory otherwise, which is
+   one physical block. System memory is one physical block too if [contiguous],
+   for the firmware that is given its first address alone. The memory is kept
+   for the life of the process. *)
+let boot_mem d ?sysmem ?(contiguous = false) ?data n =
   let sz = round_up n 0x1000 in
   let view, paddr, pages =
     if Option.value sysmem ~default:(not d.large_bar) then
+      let align = if contiguous && sz > Sysmem.page then 2 lsl 20 else 0x1000 in
       let va =
-        match Page_table.Space.alloc space sz with
+        match Page_table.Space.alloc ~align space (round_up sz align) with
         | Some va -> va
         | None -> failwith "no addresses for the GPU's boot memory"
       in
-      let view, pages = Sysmem.alloc ~va sz in
+      let view, pages = Sysmem.alloc ~contiguous ~va sz in
+      let pages =
+        if contiguous then
+          List.init (sz / 0x1000) (fun i -> List.hd pages + (i * 0x1000))
+        else pages
+      in
       (view, None, pages)
     else
       match Page_table.palloc (mm d) sz with

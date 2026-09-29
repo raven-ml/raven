@@ -39,13 +39,14 @@ let device ?(i = 0) () =
           ()
       else Nx_nv_device.v ~interface:Kernel i
 
-(* The GPUs nx's runtime laws run on. *)
+(* The GPUs nx's runtime laws run on: over PCI, the one the suite may take and
+   the next, if there is one. *)
 let gpus =
   match pci_first () with
-  | Some first -> (
-      match Nx_nv_device.get ~interface:Pci first with
-      | Ok d -> [ d ]
-      | Error _ -> [])
+  | Some first ->
+      List.filter_map
+        (fun i -> Result.to_option (Nx_nv_device.get ~interface:Pci i))
+        [ first; first + 1 ]
   | None ->
       List.init
         (Nx_nv_device.count ~interface:Kernel ())
@@ -168,27 +169,51 @@ let test_borrow () =
                  (B.create Nx_device.host S.UInt8 (2 * mib)))
               1 mib)))
 
+(* The kilobytes of the process's memory Linux keeps locked. *)
+let locked_kib () =
+  In_channel.with_open_text "/proc/self/status" In_channel.input_lines
+  |> List.find_map (fun l ->
+      match String.split_on_char ':' l with
+      | [ "VmLck"; v ] ->
+          int_of_string_opt
+            (String.trim (Filename.chop_suffix (String.trim v) "kB"))
+      | _ -> None)
+  |> Option.get
+
+(* Copies between two GPUs, in both directions, whether they reach each other or
+   bounce through host memory, and through each one's host memory: the other
+   GPU's pages stay locked. *)
 let test_peer () =
   let d0 = device () and d1 = device ~i:1 () in
   let n = 2 * mib in
   let src = fill_host n (fun i -> i * 3) in
   let a = B.create d0 S.UInt8 n and b = B.create d1 S.UInt8 n in
   B.copy ~src ~dst:a;
-  let on_d0 = ref 0 in
-  let on_d1 =
-    steps d1 (fun () -> on_d0 := steps d0 (fun () -> B.copy ~src:a ~dst:b))
-  in
-  equal ~msg:"one step on the source" int 1 !on_d0;
-  is_true ~msg:"none on the destination for a transfer, one for a bounce"
-    (on_d1 = 0 || on_d1 = 1);
-  let back = B.create Nx_device.host S.UInt8 n in
-  B.copy ~src:b ~dst:back;
-  is_true ~msg:"the bytes" (same_bytes src back);
+  equal ~msg:"one step on the source" int 1
+    (steps d0 (fun () -> B.copy ~src:a ~dst:b));
+  is_true ~msg:"the first GPU into the second" (same_bytes src (to_host b));
+  let src' = fill_host n (fun i -> i * 7) in
+  B.copy ~src:src' ~dst:b;
+  equal ~msg:"one step on the source" int 1
+    (steps d1 (fun () -> B.copy ~src:b ~dst:a));
+  is_true ~msg:"the second GPU into the first" (same_bytes src' (to_host a));
+  B.copy ~src ~dst:a;
   let h1 = B.create ~host:true d1 S.UInt8 n in
+  let locked = locked_kib () in
   B.copy ~src:a ~dst:h1;
+  equal ~msg:"the other GPU's host memory stays locked" int locked
+    (locked_kib ());
   let back = B.create Nx_device.host S.UInt8 n in
   B.copy ~src:h1 ~dst:back;
   is_true ~msg:"into the other GPU's host memory" (same_bytes src back);
+  let h0 = B.create ~host:true d0 S.UInt8 n in
+  B.copy ~src:src' ~dst:h0;
+  B.copy ~src:h0 ~dst:b;
+  is_true ~msg:"out of the other GPU's host memory"
+    (same_bytes src' (to_host b));
+  (* a failed device raises its error here *)
+  Nx_device.synchronize d0;
+  Nx_device.synchronize d1;
   let t0 =
     Domain.spawn (fun () ->
         for _ = 1 to 20 do
@@ -217,8 +242,10 @@ let test_two_borrows () =
   is_true ~msg:"the second once the first let go" (same_bytes host (read d1));
   is_true ~msg:"the first again" (same_bytes host (read d0))
 
-(* A kernel compiled at test time, when NVIDIA's compiler is at hand: it writes
-   through a local array, so that it uses local memory. *)
+(* Kernels compiled at test time, when NVIDIA's compiler is at hand: [fill]
+   writes through a local array, so that it uses local memory; [small] needs few
+   registers and one parameter, [big] many registers, a stack and three
+   parameters. *)
 let compile arch =
   match
     List.find_opt Sys.file_exists
@@ -232,7 +259,14 @@ let compile arch =
       Out_channel.with_open_text src (fun oc ->
           output_string oc
             "extern \"C\" __global__ void fill(int *p) { volatile int s[64]; \
-             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n");
+             s[threadIdx.x % 64] = 42; p[threadIdx.x] = s[threadIdx.x % 64]; }\n\
+             extern \"C\" __global__ void small(int *p) { p[threadIdx.x] = 1; }\n\
+             extern \"C\" __global__ void big(float *p, float *q, int n) { \
+             float a[32]; for (int i = 0; i < 32; i++) a[i] = p[i * n + \
+             threadIdx.x]; float s = 0; for (int i = 0; i < 32; i++) for (int \
+             j = 0; j < 32; j++) s += a[i] * a[j]; volatile float t[64]; \
+             t[threadIdx.x % 64] = s; q[threadIdx.x] = t[(threadIdx.x + 1) % \
+             64]; }\n");
       let cmd =
         Printf.sprintf "%s -cubin -arch=%s -O2 %s -o %s 2>/dev/null" nvcc arch
           src out
@@ -255,10 +289,25 @@ let test_programs () =
       is_true ~msg:"registers" (k.registers > 0);
       is_true ~msg:"threads" (k.max_threads >= 32);
       raises_match (Exn.failure ~substring:"no function") (fun () ->
-          Nx_device.Program.load d ~binary ~name:"absent")
+          Nx_device.Program.load d ~binary ~name:"absent");
+      (* Each function of a cubin of several has its own registers, stack and
+         bank 0, whichever comes last in the cubin. *)
+      let small =
+        Nx_nv_device.kernel (Nx_device.Program.load d ~binary ~name:"small")
+      and big =
+        Nx_nv_device.kernel (Nx_device.Program.load d ~binary ~name:"big")
+      in
+      let bank0 (k : Nx_nv_device.kernel) =
+        List.find_map (fun (i, _, n) -> if i = 0 then Some n else None) k.banks
+      in
+      is_true ~msg:"registers of their own" (small.registers < big.registers);
+      is_true ~msg:"stacks of their own" (small.local_bytes < big.local_bytes);
+      is_true ~msg:"banks 0 of their own" (bank0 small < bank0 big)
 
 let test_local_memory () =
   let d = device () in
+  equal ~msg:"none needed, no work" int 0
+    (steps d (fun () -> ignore (Nx_nv_device.local_memory d 0)));
   let l = Nx_nv_device.local_memory d 256 in
   is_true ~msg:"memory" (l.address <> 0n && l.bytes > 0);
   is_true ~msg:"per thread" (l.per_thread >= 256 && l.per_thread mod 32 = 0);
@@ -268,22 +317,38 @@ let test_local_memory () =
   is_true ~msg:"grown for larger ones" (more.bytes > l.bytes);
   Nx_device.synchronize d
 
-(* The device's timeline across 2^32: from 2^32 - 2, three copies take it
-   through the carry, which the copy engine writes a word at a time. *)
+(* The device's timeline across a carry of its low word, with values signaled in
+   turn by the copy channel, which writes a word at a time, and by the compute
+   channel, where growing local memory runs: across 2^32 the copy channel
+   signals 2^32, low word first; across 2^33 it signals 2^33 - 1 and the compute
+   channel 2^33, which a late high word of the copy would take back. The
+   timeline is seeded by a host copy into its words. *)
 let test_carry () =
   let d = device () in
-  Nx_device.synchronize d;
-  let start = (1 lsl 32) - 2 in
-  let words = B.create Nx_device.host S.UInt64 2 in
-  Bigarray.Array1.fill (B.bigarray Bigarray.int64 words) (Int64.of_int start);
-  B.copy ~src:words ~dst:(Nx_device.timeline d);
   let src = fill_host mib (fun i -> i * 5) and v = B.create d S.UInt8 mib in
-  for _ = 1 to 3 do
-    B.copy ~src ~dst:v
-  done;
-  Nx_device.synchronize d;
-  equal ~msg:"submitted" int (start + 3) (Nx_device.submitted d);
-  equal ~msg:"signaled" int (start + 3) (Nx_device.signaled d);
+  let per = ref (Nx_nv_device.local_memory d 0).per_thread in
+  let copy () = B.copy ~src ~dst:v
+  and grow () =
+    per := !per + 32;
+    ignore (Nx_nv_device.local_memory d !per : Nx_nv_device.local_memory)
+  in
+  let across top first second =
+    Nx_device.synchronize d;
+    let start = top - 3 in
+    let words = B.create Nx_device.host S.UInt64 2 in
+    Bigarray.Array1.fill (B.bigarray Bigarray.int64 words) (Int64.of_int start);
+    B.copy ~src:words ~dst:(Nx_device.timeline d);
+    first ();
+    second ();
+    first ();
+    second ();
+    Nx_device.synchronize d;
+    let at what = Printf.sprintf "%s across 0x%x" what top in
+    equal ~msg:(at "submitted") int (start + 4) (Nx_device.submitted d);
+    equal ~msg:(at "signaled") int (start + 4) (Nx_device.signaled d)
+  in
+  across (1 lsl 32) copy grow;
+  across (1 lsl 33) grow copy;
   is_true ~msg:"the bytes" (same_bytes src (to_host v))
 
 (* Boundaries, wraps and coherence: copies whose bytes a wrong chunk, a ring
@@ -436,14 +501,38 @@ let test_coherence () =
     check ~msg:(at "borrowed memory and VRAM") (20 + round) lent2
   done
 
+(* Allocations up to the budget's end and back: an allocation the driver refuses
+   partway leaves its addresses free, so the memory freed is allocated again and
+   holds its bytes. *)
+let test_exhaustion () =
+  let d = device () in
+  let rec fill size held =
+    if size < 64 * 1024 then held
+    else
+      match B.create d S.UInt8 size with
+      | b -> fill size (b :: held)
+      | exception Nx_device.Out_of_memory _ -> fill (size / 2) held
+  in
+  let held = fill (256 * mib) [] in
+  is_true ~msg:"memory was allocated" (held <> []);
+  ignore (Sys.opaque_identity held);
+  Gc.full_major ();
+  let n = 64 * mib in
+  let src = fill_host n (fun i -> i * 9) and v = B.create d S.UInt8 n in
+  B.copy ~src ~dst:v;
+  is_true ~msg:"the bytes" (same_bytes src (to_host v))
+
 (* Last: work that never signals hangs the device, which fails after its
-   timeout. *)
+   timeout, having slept: the wait's checks for faults do not keep a core
+   busy. *)
 let test_hang () =
   let d = device () in
-  Nx_device.set_timeout d 500;
+  Nx_device.set_timeout d 2000;
   ignore (Nx_device.submit d ~touches:[] Fun.id);
+  let cpu = Sys.time () in
   raises_match (Exn.failure ~substring:"hang detected") (fun () ->
       Nx_device.synchronize d);
+  is_true ~msg:"most of the 2 s asleep" (Sys.time () -. cpu < 1.);
   raises_match (Exn.failure ~substring:"hang detected") (fun () ->
       B.create d S.UInt8 1)
 
@@ -476,5 +565,8 @@ let () =
          group "timeline" [ test "across 2^32" test_carry ];
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
-           [ test "work that never signals fails the device" test_hang ];
+           [
+             test "allocations up to the budget's end" test_exhaustion;
+             test "work that never signals fails the device" test_hang;
+           ];
        ])

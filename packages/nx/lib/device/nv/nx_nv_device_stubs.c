@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
@@ -39,6 +40,18 @@ value caml_nx_nv_linux(value unit) {
 #else
   return Val_false;
 #endif
+}
+
+/* Milliseconds of a monotonic clock. */
+intnat caml_nx_nv_now_ms(value unit) {
+  (void)unit;
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (intnat)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+value caml_nx_nv_now_ms_byte(value unit) {
+  return Val_long(caml_nx_nv_now_ms(unit));
 }
 
 value caml_nx_nv_address(value b) {
@@ -93,7 +106,7 @@ value caml_nx_nv_ioctl(value fd, value request, value b, value what) {
   int r;
   caml_release_runtime_system();
   do r = ioctl(f, req, arg);
-  while (r < 0 && (errno == EINTR || errno == EAGAIN));
+  while (r < 0 && errno == EINTR);
   int e = r < 0 ? errno : 0;
   caml_acquire_runtime_system();
   if (e) fail_errno(String_val(what), e);

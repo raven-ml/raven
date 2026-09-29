@@ -82,9 +82,12 @@ let copy ~dst ~src n =
   in
   go 0 []
 
-(* The copy engine writes 32 bits per semaphore: the 64-bit [v] goes as its low
-   word, then its high word, so that the word never reads above its old value
-   before it reads [v]. *)
+(* The copy engine writes 32 bits per semaphore, so the 64-bit [v] goes as its
+   low word, then its high word when the low one wrapped to 0: mid-write, the
+   word reads no higher than before, so no wait passes early. A high word
+   written late carries the value every later writer has too, so it never takes
+   the word back, as rewriting it on every release would once another channel's
+   release lands between the two words. *)
 let copy_release addr v =
   let one a w =
     methods copy_engine D.nvc6b5_set_semaphore_a [ hi32 a; lo32 a; w ]
@@ -96,9 +99,7 @@ let copy_release addr v =
                 D.nvc6b5_launch_dma_semaphore_type_release_one_word_semaphore;
         ]
   in
-  one addr (lo32 v)
-  @ one (addr + 4) (hi32 v)
-  @ methods host D.nvc56f_non_stall_interrupt [ 0 ]
+  one addr (lo32 v) @ if lo32 v = 0 then one (addr + 4) (hi32 v) else []
 
 (* Channels *)
 
@@ -126,7 +127,7 @@ let entry addr words =
    the GPU has fetched enough of its entries to make room, for at most
    [timeout_ms]. *)
 let submit ch ~timeout_ms addr words =
-  if addr >= 1 lsl 40 then invalid_arg "a command segment above 2^40";
+  if addr >= 1 lsl 40 then failwith "a command segment above 2^40";
   let put = Int64.to_int (Mmio.get64 ch.put 0) in
   let unfetched () =
     (put - Mmio.get32 ch.gp_get 0 + ch.entries) mod ch.entries
@@ -158,7 +159,7 @@ let ring mem ~gpu = { mem; gpu; head = 0; tags = [] }
 let segment r ~signaled ~timeout_ms v words =
   let n = 4 * List.length words in
   if n > Mmio.length r.mem then
-    invalid_arg "a command segment larger than the ring";
+    failwith "a command segment larger than the ring";
   if r.head + n > Mmio.length r.mem then r.head <- 0;
   let start = r.head and stop = r.head + n in
   let last =

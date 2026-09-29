@@ -70,6 +70,14 @@ type client = {
   lock : Mutex.t;
 }
 
+(* [f ()], after which [undo ()] runs if it raised. *)
+let or_undo undo f =
+  match f () with
+  | v -> v
+  | exception e ->
+      undo ();
+      raise e
+
 let uvm_call c cmd p field what =
   ioctl_raw c.uvm cmd p what;
   let s = P.get p field in
@@ -255,19 +263,50 @@ let map_to_cpu g handle size va ~flags ~system =
 
 let set_uuid p field uuid = P.blit_string uuid p (fst field)
 
+(* Frees the unified memory range at [va], unmapping it from every GPU. *)
+let uvm_free c va size =
+  let module F = (val c.release : D.RELEASE) in
+  let module U = F.Uvm_free in
+  let u = P.create U.sizeof in
+  P.set u U.base va;
+  Option.iter (fun l -> P.set u l size) U.length;
+  uvm_call c D.uvm_free u U.rm_status "unmapping GPU memory"
+
+(* Maps the memory object [handle] of [size] bytes, at [va] in the process's
+   unified memory, into [g]'s address space. *)
+let uvm_map_external g va size handle =
+  let c = g.c in
+  let module U = D.Uvm_map_external_allocation in
+  let module G = D.Uvm_gpu_mapping in
+  let u = P.create U.sizeof in
+  P.set u U.base va;
+  P.set u U.length size;
+  P.set u U.rm_ctrl_fd c.ctl;
+  P.set u U.h_client c.root;
+  P.set u U.h_memory handle;
+  P.set u U.gpu_attributes_count 1;
+  set_uuid u (P.elt_field U.per_gpu_attributes 0 G.gpu_uuid) g.uuid;
+  P.set u
+    (P.elt_field U.per_gpu_attributes 0 G.gpu_mapping_type)
+    D.uvm_gpu_mapping_type_read_write_atomic;
+  uvm_call c D.uvm_map_external_allocation u U.rm_status "mapping GPU memory"
+
 (* Maps [size] bytes of the memory object [handle] at [va] for [g]: first
    creating the unified memory range there and the object's mapping in [g]'s
-   virtual memory, if [create]. *)
+   virtual memory, if [create]. A range it created is freed if the mapping
+   fails, so that the addresses stay free. *)
 let uvm_map g ~create va size handle =
   let c = g.c in
   let (module R : D.RELEASE) = c.release in
-  if create then begin
+  if not create then uvm_map_external g va size handle
+  else begin
     let module E = D.Uvm_create_external_range in
     let e = P.create E.sizeof in
     P.set e E.base va;
     P.set e E.length size;
     uvm_call c D.uvm_create_external_range e E.rm_status
       "reserving GPU addresses";
+    or_undo (fun () -> uvm_free c va size) @@ fun () ->
     let module M = R.Nvos46 in
     let m = P.create M.sizeof in
     P.set m M.h_client c.root;
@@ -284,30 +323,18 @@ let uvm_map g ~create va size handle =
     escape c.ctl D.nv_esc_rm_map_memory_dma m "mapping GPU memory";
     Rm.check c.release "mapping GPU memory" (P.get m M.status);
     if P.get m M.dma_offset <> va then
-      failwith "mapping GPU memory: the driver chose another address"
-  end;
-  let module U = D.Uvm_map_external_allocation in
-  let module G = D.Uvm_gpu_mapping in
+      failwith "mapping GPU memory: the driver chose another address";
+    uvm_map_external g va size handle
+  end
+
+(* Unmaps for [g] the [size] bytes at [va] of a range that stays. *)
+let uvm_unmap g va size =
+  let module U = D.Uvm_unmap_external in
   let u = P.create U.sizeof in
   P.set u U.base va;
   P.set u U.length size;
-  P.set u U.rm_ctrl_fd c.ctl;
-  P.set u U.h_client c.root;
-  P.set u U.h_memory handle;
-  P.set u U.gpu_attributes_count 1;
-  set_uuid u (P.elt_field U.per_gpu_attributes 0 G.gpu_uuid) g.uuid;
-  P.set u
-    (P.elt_field U.per_gpu_attributes 0 G.gpu_mapping_type)
-    D.uvm_gpu_mapping_type_read_write_atomic;
-  uvm_call c D.uvm_map_external_allocation u U.rm_status "mapping GPU memory"
-
-let uvm_free c va size =
-  let module F = (val c.release : D.RELEASE) in
-  let module U = F.Uvm_free in
-  let u = P.create U.sizeof in
-  P.set u U.base va;
-  Option.iter (fun l -> P.set u l size) U.length;
-  uvm_call c D.uvm_free u U.rm_status "unmapping GPU memory"
+  set_uuid u U.gpu_uuid g.uuid;
+  uvm_call g.c D.uvm_unmap_external u U.rm_status "unmapping GPU memory"
 
 (* Memory *)
 
@@ -355,14 +382,6 @@ let describe g va size =
   Rm.check c.release "describing host memory to the GPU" (P.get w (at O.status));
   h
 
-(* [f ()], after which [undo ()] runs if it raised. *)
-let or_undo undo f =
-  match f () with
-  | v -> v
-  | exception e ->
-      undo ();
-      raise e
-
 (* The attributes of video memory, or of uncached system memory, in pages of
    [page_size]. *)
 let memory_params c ~uncached ~contiguous ~page_size size =
@@ -380,9 +399,9 @@ let memory_params c ~uncached ~contiguous ~page_size size =
     (P.bits D.nvos32_attr_physicality
        (if contiguous then D.nvos32_attr_physicality_contiguous
         else D.nvos32_attr_physicality_allow_noncontiguous)
-    lor P.bits D.nvos32_attr_page_size
-          (if huge then D.nvos32_attr_page_size_huge
-           else D.nvos32_attr_page_size_4kb)
+    lor (if huge then
+           P.bits D.nvos32_attr_page_size D.nvos32_attr_page_size_huge
+         else 0)
     lor P.bits D.nvos32_attr_location
           (if uncached then D.nvos32_attr_location_pci
            else D.nvos32_attr_location_vidmem));
@@ -470,6 +489,9 @@ let free g m =
 (* Another GPU's memory, mapped for [g] at its address. *)
 let map_peer g m = uvm_map g ~create:false m.va m.size m.handle
 
+(* Unmaps from [g] another GPU's memory [map_peer] mapped. *)
+let unmap_peer g m = uvm_unmap g m.va m.size
+
 (* Host memory mapped for borrows: each range is described to RM once, by the
    first GPU to map it, and mapped for each GPU that borrows it; the last
    unmapping frees the range and the description. *)
@@ -488,10 +510,12 @@ let map_host g a n =
   let a = Nativeint.to_int a in
   Mutex.protect ranges_lock (fun () ->
       match Hashtbl.find_opt ranges a with
-      | Some r when r.bytes = n ->
-          uvm_map g ~create:false a n r.descriptor;
-          r.users <- g :: r.users;
-          Ok ()
+      | Some r when r.bytes = n -> (
+          match uvm_map g ~create:false a n r.descriptor with
+          | exception Failure why -> Error why
+          | () ->
+              r.users <- g :: r.users;
+              Ok ())
       | Some _ -> Error "another borrow maps a different range at this address"
       | None -> (
           let overlaps =
@@ -502,12 +526,15 @@ let map_host g a n =
           if overlaps then
             Error "it overlaps host memory mapped for another borrow"
           else
-            match describe g a n with
+            match
+              let h = describe g a n in
+              or_undo
+                (fun () -> (rm g.c).free ~parent:g.device h)
+                (fun () -> uvm_map g ~create:true a n h);
+              h
+            with
             | exception Failure why -> Error why
             | h ->
-                or_undo
-                  (fun () -> (rm g.c).free ~parent:g.device h)
-                  (fun () -> uvm_map g ~create:true a n h);
                 Hashtbl.replace ranges a
                   {
                     addr = a;
@@ -530,15 +557,7 @@ let unmap_host g a =
             uvm_free g.c a r.bytes;
             (rm g.c).free ~parent:r.parent r.descriptor
           end
-          else begin
-            let module U = D.Uvm_unmap_external in
-            let u = P.create U.sizeof in
-            P.set u U.base a;
-            P.set u U.length r.bytes;
-            set_uuid u U.gpu_uuid g.uuid;
-            uvm_call g.c D.uvm_unmap_external u U.rm_status
-              "unmapping host memory"
-          end)
+          else uvm_unmap g a r.bytes)
 
 (* Setup *)
 
@@ -551,8 +570,32 @@ let usermode g ~subdevice cls =
     | Some va -> va
     | None -> failwith "no address for the GPU's doorbell"
   in
-  map_to_cpu g h 0x10000 va ~flags:0 ~system:false;
+  or_undo
+    (fun () -> Space.free g.c.low va)
+    (fun () -> map_to_cpu g h 0x10000 va ~flags:0 ~system:false);
   Nativeint.of_int va
+
+(* Unmaps the usermode page [usermode] mapped at [va]; freeing the RM device
+   frees its object. *)
+let release_usermode g va =
+  release_at va 0x10000;
+  Space.free g.c.low (Nativeint.to_int va)
+
+let unregister_gpu g =
+  let module U = D.Uvm_unregister_gpu in
+  let u = P.create U.sizeof in
+  set_uuid u U.gpu_uuid g.uuid;
+  uvm_call g.c D.uvm_unregister_gpu u U.rm_status "unregistering the GPU"
+
+(* Unregisters [g] and its address space from unified memory, which detaches its
+   channels and disables its peer access. *)
+let unregister g =
+  let module U = D.Uvm_unregister_gpu_vaspace in
+  let u = P.create U.sizeof in
+  set_uuid u U.gpu_uuid g.uuid;
+  uvm_call g.c D.uvm_unregister_gpu_vaspace u U.rm_status
+    "unregistering the GPU's address space";
+  unregister_gpu g
 
 (* Registers [g] and its address space [vaspace] with unified memory, and
    enables peer access with [peers], returning those it was refused. *)
@@ -578,8 +621,11 @@ let register g ~subdevice ~vaspace ~peers =
   P.set v V.rm_ctrl_fd c.ctl;
   P.set v V.h_client c.root;
   P.set v V.h_va_space vaspace;
-  uvm_call c D.uvm_register_gpu_vaspace v V.rm_status
-    "registering the GPU's address space";
+  or_undo
+    (fun () -> unregister_gpu g)
+    (fun () ->
+      uvm_call c D.uvm_register_gpu_vaspace v V.rm_status
+        "registering the GPU's address space");
   List.filter
     (fun peer ->
       let module E = D.Uvm_enable_peer_access in
@@ -593,8 +639,8 @@ let register g ~subdevice ~vaspace ~peers =
       | exception Failure _ -> true)
     peers
 
-(* Registers the channel [channel] with unified memory, with a range of
-   addresses for it. *)
+(* Registers the channel [channel] with unified memory at a new range of
+   addresses, and is that range's first address. *)
 let register_channel g channel =
   let c = g.c in
   let size = 0x400_0000 in
@@ -611,4 +657,13 @@ let register_channel g channel =
   P.set r R.h_channel channel;
   P.set r R.base base;
   P.set r R.length size;
-  uvm_call c D.uvm_register_channel r R.rm_status "registering a GPU channel"
+  or_undo
+    (fun () -> Space.free c.low base)
+    (fun () ->
+      uvm_call c D.uvm_register_channel r R.rm_status
+        "registering a GPU channel");
+  base
+
+(* Returns the addresses of a channel [register_channel] registered, which
+   unregistering the GPU's address space unregistered. *)
+let release_channel g base = Space.free g.c.low base

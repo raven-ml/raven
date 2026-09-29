@@ -44,8 +44,10 @@
 
     {b Programs} are functions of cubins, the ELF objects NVIDIA's compilers
     make for the device's {!Nx_device.arch}: the function [name] is the code of
-    the section [.text.name]. PTX is not loaded: compile it to a cubin first. A
-    cubin is uploaded once per device and kept, with its relocations applied.
+    the section [.text.name], and a cubin may hold several, each with its own
+    registers, stack and constant bank 0. PTX is not loaded: compile it to a
+    cubin first. A cubin is uploaded once per device and kept, with its
+    relocations applied.
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault or an
     error of a streaming multiprocessor, fails the device with the GPU's report
@@ -101,6 +103,8 @@ val get :
     [i >= count ~interface ()], that the process's interface is the other one,
     that the kernel driver is of another release, naming it, that a privilege is
     missing, or that a firmware image is missing or differs, naming the file.
+    Under {!Kernel}, a failed open gives back what it took, so a later [get] may
+    open the GPU.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
@@ -122,10 +126,12 @@ val interface : Nx_device.t -> interface
     Work for the timeline value [v] first acquires, on its channel, the
     semaphore at the signal word, the first word of {!Nx_device.timeline}, with
     the 64-bit circular greater-or-equal test against [v - 1], and ends by
-    writing [v], all 64 bits, into the signal word: with one 64-bit semaphore
-    release, or with two one-word releases, of its low 32 bits then of its high
-    32 bits. The values thus complete in order across the channels. The device's
-    own copies follow the same rule on the copy channel. *)
+    writing [v] into the signal word: with one 64-bit semaphore release, or with
+    a one-word release of its low 32 bits followed, when they are [0], by one of
+    its high 32 bits. Mid-write the word never reads above its old value, and a
+    late high word never takes it back. The values thus complete in order across
+    the channels. The device's own copies follow the same rule on the copy
+    channel. The memory the device allocates lies below [2{^40}]. *)
 
 type channel = {
   ring : nativeint;
@@ -225,8 +231,10 @@ type local_memory = {
 val local_memory : Nx_device.t -> int -> local_memory
 (** [local_memory d n] is [d]'s local memory for kernels of up to [n] bytes per
     thread, grown if smaller: its address is set on the compute channel as work
-    on [d]'s timeline. Memory it replaces returns to [d] once unreachable. Call
-    it before {!Nx_device.submit}, not inside.
+    on [d]'s timeline. Kernels that need none ([n <= 0]) get no memory, of 0
+    bytes at address 0, until a larger [n] allocates some. Memory it replaces
+    returns to [d] once unreachable. Call it before {!Nx_device.submit}, not
+    inside.
 
     Raises [Invalid_argument] if [d] is not an NV device, and
     {!Nx_device.Out_of_memory} if [d] cannot allocate it. *)

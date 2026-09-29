@@ -91,10 +91,13 @@ type nv = {
   rm : Rm.t;
   hw : Mutex.t; (* the GPU's page tables and memory objects *)
   mutable allocs : alloc Int_map.t; (* the device's own memory, by address *)
-  borrows : (int, mem) Hashtbl.t; (* host memory mapped for borrows *)
+  borrows : (int, mem) Hashtbl.t;
+      (* by address, host memory mapped for a copy or a borrow: under [Pci] the
+         mapping, under [Kernel] another device's memory (the driver keeps
+         borrows) *)
   images : (string, mem) Hashtbl.t; (* uploaded cubins *)
-  kernels : (nativeint, kernel) Hashtbl.t; (* by entry *)
-  unreachable : int list; (* the GPUs peer access was refused with *)
+  kernels : (nativeint, kernel) Hashtbl.t; (* by entry, under [hw] *)
+  unreachable : int list; (* the GPUs peer access was refused with at open *)
   obj : objects;
   props : props;
   mutable ring : Pushbuf.ring option;
@@ -103,6 +106,8 @@ type nv = {
   local_lock : Mutex.t;
   mutable local : (Nx_device.Buffer.t * int) option;
   mutable dev : Nx_device.t option;
+  mutable word : Mmio.t option; (* the timeline's signal word *)
+  mutable ready : bool; (* whether its open succeeded *)
 }
 
 (* Memory of a device and the peers it is mapped on. *)
@@ -225,38 +230,6 @@ let keep n kind what bytes =
   register n m;
   m
 
-(* Borrows: host memory the GPU addresses at its own address. *)
-let mapping n =
-  let map x bytes =
-    with_hw n (fun () ->
-        match n.gpu with
-        | Kernel_gpu g -> (
-            match Nvk.map_host g x bytes with
-            | Ok () -> Ok { Nx_device.host = Some x; device = x; handle = x }
-            | Error why -> Error why)
-        | Pci_gpu p ->
-            Result.map
-              (fun mem ->
-                Hashtbl.replace n.borrows (Nativeint.to_int x) (Pci_mem mem);
-                { Nx_device.host = Some x; device = x; handle = x })
-              (Pci_memory.map_host p.memory x bytes))
-  in
-  let unmap (m : Nx_device.memory) =
-    with_hw n (fun () ->
-        match n.gpu with
-        | Kernel_gpu g -> Nvk.unmap_host g m.handle
-        | Pci_gpu p -> (
-            let key = Nativeint.to_int m.handle in
-            match Hashtbl.find_opt n.borrows key with
-            | Some (Pci_mem mem) ->
-                Hashtbl.remove n.borrows key;
-                Pci_memory.unmap p.memory mem
-            | _ -> ()))
-  in
-  { Nx_device.map; unmap }
-
-(* Channels *)
-
 let opened : (int * nv) list Atomic.t = Atomic.make []
 
 let nv_of d =
@@ -264,6 +237,64 @@ let nv_of d =
     (fun (_, n) ->
       match n.dev with Some d' when Nx_device.equal d d' -> Some n | _ -> None)
     (Atomic.get opened)
+
+(* Host memory another device of [n]'s interface allocated at [x], with that
+   device. *)
+let foreign n x =
+  List.find_map
+    (fun (_, n') ->
+      match (n.gpu, n'.gpu) with
+      | (Kernel_gpu _, Kernel_gpu _ | Pci_gpu _, Pci_gpu _) when n' != n -> (
+          match find n' x with
+          | Some r when Option.is_some (host_view r.mem) -> Some (n', r.mem)
+          | _ -> None)
+      | _ -> None)
+    (Atomic.get opened)
+
+(* Host memory the GPU addresses at the host's address: another device's host
+   memory, which that device keeps locked and described, mapped as its memory;
+   and borrowed memory. *)
+let mapping n =
+  let map x bytes =
+    let memory = { Nx_device.host = Some x; device = x; handle = x } in
+    let key = Nativeint.to_int x in
+    with_hw n (fun () ->
+        match (n.gpu, foreign n key) with
+        | Kernel_gpu g, Some (_, (Kernel_mem m as mem)) -> (
+            match Nvk.map_peer g m with
+            | exception Failure why -> Error why
+            | () ->
+                Hashtbl.replace n.borrows key mem;
+                Ok memory)
+        | Pci_gpu p, Some ({ gpu = Pci_gpu owner; _ }, Pci_mem m) ->
+            Result.map
+              (fun mem ->
+                Hashtbl.replace n.borrows key (Pci_mem mem);
+                memory)
+              (Pci_memory.map_peer p.memory owner.memory m)
+        | Kernel_gpu g, _ ->
+            Result.map (fun () -> memory) (Nvk.map_host g x bytes)
+        | Pci_gpu p, _ ->
+            Result.map
+              (fun mem ->
+                Hashtbl.replace n.borrows key (Pci_mem mem);
+                memory)
+              (Pci_memory.map_host p.memory x bytes))
+  in
+  let unmap (m : Nx_device.memory) =
+    let key = Nativeint.to_int m.handle in
+    with_hw n (fun () ->
+        let mapped = Hashtbl.find_opt n.borrows key in
+        Hashtbl.remove n.borrows key;
+        match (n.gpu, mapped) with
+        | Kernel_gpu g, Some (Kernel_mem m) -> Nvk.unmap_peer g m
+        | Kernel_gpu g, _ -> Nvk.unmap_host g m.handle
+        | Pci_gpu p, Some (Pci_mem mem) -> Pci_memory.unmap p.memory mem
+        | Pci_gpu _, _ -> ())
+  in
+  { Nx_device.map; unmap }
+
+(* Channels *)
 
 let timeout n = Option.fold ~none:30_000 ~some:Nx_device.timeout n.dev
 
@@ -285,10 +316,17 @@ let run n ch ~timeline ~signal v body =
 
 let channels n = Option.get n.channels
 
+(* The pairs of GPUs, (lower index, higher), whose peer access the driver
+   refused: it is one per pair, so copies between them go through host memory in
+   both directions. *)
+let refused : (int * int) list Atomic.t = Atomic.make []
+let pair i j = (Int.min i j, Int.max i j)
+
 (* Whether [n]'s copy engine reaches the memory of [peer]. *)
 let reaches n peer =
   match (n.gpu, peer.gpu) with
-  | Kernel_gpu _, Kernel_gpu _ -> not (List.mem peer.index n.unreachable)
+  | Kernel_gpu _, Kernel_gpu _ ->
+      not (List.mem (pair n.index peer.index) (Atomic.get refused))
   | Pci_gpu _, Pci_gpu p -> not (Pci_memory.small_bar p.memory)
   | _ -> false
 
@@ -358,7 +396,7 @@ let load n ~binary ~name =
       max_threads = c.max_threads;
     }
   in
-  Hashtbl.replace n.kernels k.entry k;
+  with_hw n (fun () -> Hashtbl.replace n.kernels k.entry k);
   k.entry
 
 (* Faults *)
@@ -403,14 +441,24 @@ let fault_report n =
                (P.get p (f E.hww_warp_esr_pc64))))
       (List.init count Fun.id)
 
-(* The check a wait runs every 200 ms the timeline stays still, without
-   blocking: under [Pci], the GSP's messages are handled first, and an error it
-   reported fails the device. *)
+(* The faults a wait looks for: under [Pci], the GSP's messages are handled
+   first, and an error it reported fails the device. *)
 let check_faults n =
   (match n.gpu with Pci_gpu p -> Gsp.poll p.gsp | Kernel_gpu _ -> ());
   match fault_report n with
   | [] -> ()
   | report -> failwith (String.concat "\n" report)
+
+(* The sleep of a wait whose timeline stayed still for 200 ms: it checks for
+   faults, then polls the signal word every millisecond for at most [ms], so
+   that the check runs once a sleep, at most every 200 ms. *)
+let sleep n ms =
+  check_faults n;
+  let word = Option.get n.word in
+  let seen = Mmio.get64 word 0 and until = Nvdev.now_ms () + ms in
+  while Mmio.get64 word 0 = seen && Nvdev.now_ms () < until do
+    Unix.sleepf 0.001
+  done
 
 (* Opening *)
 
@@ -496,10 +544,11 @@ let gr_info gpu (rm : Rm.t) subdevice =
       r
 
 (* A channel of [entries] entries at [offset] of the channels' memory [buf], its
-   USERD after its ring, bound to [cls]. *)
-let new_channel n ~buf ~put ~doorbell ~offset ~entries ~engine ~compute =
+   USERD after its ring, bound to [cls]. [keep] allocates its memory. *)
+let new_channel n ~keep ~taken ~buf ~put ~doorbell ~offset ~entries ~engine
+    ~compute =
   let rm = n.rm in
-  let notifier = keep n Uncached "channel's error notifier" (48 lsl 20) in
+  let notifier = keep Uncached "channel's error notifier" (48 lsl 20) in
   let (module R : D.RELEASE) =
     match n.gpu with Kernel_gpu g -> g.c.release | Pci_gpu _ -> Gsp.release
   in
@@ -526,7 +575,9 @@ let new_channel n ~buf ~put ~doorbell ~offset ~entries ~engine ~compute =
   P.set t D.Work_submit_token.work_submit_token 0xffff_ffff;
   rm.control ch D.nvc36f_ctrl_cmd_gpfifo_get_work_submit_token (Some t);
   (match n.gpu with
-  | Kernel_gpu g -> Nvk.register_channel g ch
+  | Kernel_gpu g ->
+      let base = Nvk.register_channel g ch in
+      taken (fun () -> Nvk.release_channel g base)
   | Pci_gpu _ -> ());
   let view = Option.get (host_view buf) in
   let userd = offset + (entries * 8) in
@@ -566,10 +617,11 @@ let budget n =
       n.rm.control n.obj.subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p);
       P.get p (P.elt_field G.fb_info_list 0 F.data) * 1024
 
-(* Creates the device's RM objects, channels and runtime memory, and its
-   {!Nx_device.t}. [doorbell] maps the usermode page, given the usermode
-   class. *)
-let setup ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes =
+(* Creates the device's RM objects, channels and runtime memory. [doorbell] maps
+   the usermode page, given the usermode class. [taken undo] is given how to
+   give back each thing the process holds after it took it, so that a failed
+   open can give everything back, last first. *)
+let setup ~taken ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes =
   let alloc ~parent cls f size =
     let p = P.create size in
     f p;
@@ -584,6 +636,8 @@ let setup ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes =
           D.nv_device_allocation_vamode_optional_multiple_vaspaces)
       D.Nv0080_alloc.sizeof
   in
+  (* freeing the device frees every object under it *)
+  taken (fun () -> rm.free ~parent:rm.root device);
   let subdevice =
     alloc ~parent:device D.nv20_subdevice_0 ignore D.Nv2080_alloc.sizeof
   in
@@ -636,6 +690,7 @@ let setup ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes =
         let refused =
           Nvk.register g ~subdevice ~vaspace ~peers:(List.map snd peers)
         in
+        taken (fun () -> Nvk.unregister g);
         List.filter_map
           (fun (i, g') -> if List.memq g' refused then Some i else None)
           peers
@@ -700,18 +755,25 @@ let setup ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes =
       local_lock = Mutex.create ();
       local = None;
       dev = None;
+      word = None;
+      ready = false;
     }
   in
+  let keep kind what bytes =
+    let m = keep n kind what bytes in
+    taken (fun () -> free_mem n m);
+    m
+  in
   (* the channels, their put words, and the runtime's command segments *)
-  let buf = keep n Channels "channels" (3 lsl 20) in
-  let words = keep n Host "channels' positions" 0x1000 in
+  let buf = keep Channels "channels" (3 lsl 20) in
+  let words = keep Host "channels' positions" 0x1000 in
   let words_view = Option.get (host_view words) in
   Mmio.fill words_view 0 16 '\000';
-  let segments = keep n Host "command segments" 0x10000 in
+  let segments = keep Host "command segments" 0x10000 in
   n.ring <-
     Some (Pushbuf.ring (Option.get (host_view segments)) ~gpu:(va segments));
   let channel ~offset ~put ~compute engine =
-    new_channel n ~buf
+    new_channel n ~keep ~taken ~buf
       ~put:(Mmio.sub words_view put 8)
       ~doorbell ~offset ~entries:0x10000 ~engine ~compute
   in
@@ -756,11 +818,11 @@ let make_device n ?finalize () =
     Nx_device.make ~name:(name n.index) ~arch:(arch n.props.sm_version)
       ~budget:(budget n) ~memory:(allocator n Vram)
       ~host_memory:(allocator n Host) ~mapping:(mapping n)
-      ~copy_queue:(copy_queue n) ~load:(load n)
-      ~sleep:(fun _ -> check_faults n)
-      ?finalize ()
+      ~copy_queue:(copy_queue n) ~load:(load n) ~sleep:(sleep n) ?finalize ()
   in
   n.dev <- Some dev;
+  n.word <-
+    Some (Mmio.v (Nx_device.Buffer.host_address (Nx_device.timeline dev)) 8);
   let compute, copy = channels n in
   n.handles <-
     Some
@@ -774,18 +836,33 @@ let make_device n ?finalize () =
       };
   bind_engines n
 
+(* A failed open gives back what it took, so that a later one can open the GPU:
+   an error giving something back does not hide the open's. *)
 let open_kernel index =
   let g = Nvk.open_gpu index in
   let rm = Nvk.rm g.c in
+  let undo = ref [] in
+  let taken f = undo := f :: !undo in
   let doorbell ~subdevice cls =
-    Mmio.v (Nativeint.add (Nvk.usermode g ~subdevice cls) 0x90n) 4
+    let usermode = Nvk.usermode g ~subdevice cls in
+    taken (fun () -> Nvk.release_usermode g usermode);
+    Mmio.v (Nativeint.add usermode 0x90n) 4
   in
-  let n =
-    setup ~index ~gpu:(Kernel_gpu g) ~rm ~instance:g.instance ~doorbell
-      ~classes:(kernel_classes rm)
-  in
-  make_device n ();
-  n
+  match
+    let n =
+      setup ~taken ~index ~gpu:(Kernel_gpu g) ~rm ~instance:g.instance ~doorbell
+        ~classes:(kernel_classes rm)
+    in
+    make_device n ();
+    n
+  with
+  | n ->
+      Atomic.set refused
+        (List.map (pair index) n.unreachable @ Atomic.get refused);
+      n
+  | exception e ->
+      List.iter (fun f -> try f () with Failure _ -> ()) !undo;
+      raise e
 
 let pci_ids =
   [
@@ -823,7 +900,6 @@ let fetch ?dir path =
    falcons and the GSP. *)
 let boot ?firmware pci =
   let d = Nvdev.create pci in
-  Falcon.wait_for_reset d;
   let dir = Nvdev.firmware_dir d in
   let gsp_fw = fetch ?dir:firmware "ga102/gsp/gsp-570.144.bin" in
   let bootloader_fw =
@@ -835,29 +911,28 @@ let boot ?firmware pci =
        else dir ^ "/gsp/booter_load-570.144.bin")
   in
   let layout = Gsp.images ~chip:(Nvdev.chip_name d) ~gsp_fw ~bootloader_fw in
-  Nvdev.init_mm d
-    ~top:
-      (Gsp.managed_top ~vram:d.vram_size ~fmc:d.fmc_boot
-         ~boot:(String.length layout.bootloader)
-         ~image:(String.length layout.image));
+  let d = Nvdev.start d in
+  Falcon.wait_for_reset d;
+  let top =
+    Gsp.managed_top ~vram:d.vram_size ~fmc:d.fmc_boot
+      ~boot:(String.length layout.bootloader)
+      ~image:(String.length layout.image)
+  in
+  Nvdev.init_mm d ~top;
   let flcn = Falcon.init_sw d ~firmware:falcon_fw in
   let g = Gsp.init_sw d flcn layout in
   Falcon.init_hw d flcn ~libos:g.libos ~wpr_meta:g.wpr_meta;
   Gsp.init_hw g;
+  if d.fmc_boot then Gsp.check_region d ~top;
   (d, g)
 
-(* Leaves the GPU as its next open expects: a healthy GSP is told the driver
-   unloads; a failed GPU, or one whose GSP cannot be told, stops reaching the
-   memory the process releases, and its next open resets it. *)
+(* Leaves the GPU as its next open expects, which resets it: a healthy GSP is
+   told the driver unloads; then the GPU, failed or not, stops reaching the
+   memory the process releases, which its GSP was given. *)
 let stop ~failed pci gsp =
-  let off () = Nvdev.set_bus_master pci false in
-  if failed then off ()
-  else
-    match Gsp.fini gsp with
-    | () -> ()
-    | exception e ->
-        off ();
-        raise e
+  Fun.protect
+    ~finally:(fun () -> Nvdev.set_bus_master pci false)
+    (fun () -> if not failed then Gsp.fini gsp)
 
 (* Opens the GPU of [pci], which the process took. An open that fails after it
    touched the GPU stops the GPU's access to memory. *)
@@ -878,13 +953,16 @@ let open_taken ?firmware ~index pci =
       Mmio.sub (Pci.map_bar ~offset:0xbb0000 ~length:0x10000 pci 0) 0x90 4
     in
     let classes _ = (0, gsp.gpfifo_class, gsp.compute_class, gsp.dma_class) in
+    (* the next open resets the GPU: what this one took on it needs no giving
+       back *)
     let n =
-      setup ~index
+      setup ~taken:ignore ~index
         ~gpu:(Pci_gpu { nvdev; gsp; memory; pci })
         ~rm ~instance:0 ~doorbell ~classes
     in
     make_device n
-      ~finalize:(fun ~failed -> with_hw n (fun () -> stop ~failed pci gsp))
+      ~finalize:(fun ~failed ->
+        if n.ready then with_hw n (fun () -> stop ~failed pci gsp))
       ();
     n
   with
@@ -952,11 +1030,17 @@ let get ?interface ?firmware i =
                   | Pci -> open_pci ?firmware i
                 with
                 | n ->
+                    n.ready <- true;
                     chosen := Some iface;
                     Atomic.set opened ((i, n) :: Atomic.get opened);
                     Ok (Option.get n.dev)
-                | exception (Failure msg | Sys_error msg) -> Error ("NV: " ^ msg)
-                )))
+                | exception (Failure msg | Sys_error msg | Invalid_argument msg)
+                  ->
+                    Error ("NV: " ^ msg)
+                | exception Unix.Unix_error (e, f, arg) ->
+                    Error
+                      (Printf.sprintf "NV: %s %s: %s" f arg
+                         (Unix.error_message e)))))
 
 let v ?interface ?firmware i =
   match get ?interface ?firmware i with
@@ -978,7 +1062,10 @@ let handles d = Option.get (nv "handles" d).handles
 
 let kernel p =
   let n = nv "kernel" (Nx_device.Program.device p) in
-  match Hashtbl.find_opt n.kernels (Nx_device.Program.handle p) with
+  match
+    with_hw n (fun () ->
+        Hashtbl.find_opt n.kernels (Nx_device.Program.handle p))
+  with
   | Some k -> k
   | None -> invalid_arg "Nx_nv_device.kernel: the program is not an NV kernel"
 
@@ -992,6 +1079,7 @@ let local_memory d bytes =
             bytes = Nx_device.Buffer.nbytes b;
             per_thread = per;
           }
+      | None when bytes <= 0 -> { address = 0n; bytes = 0; per_thread = 0 }
       | _ ->
           let p = n.props in
           let per = round_up (Int.max bytes 0) 32 in

@@ -41,7 +41,6 @@ let nvos02_flags_coherency_cached = 1
 let nvos02_flags_mapping_no_map = 1
 let nvos32_attr_physicality_contiguous = 2
 let nvos32_attr_physicality_allow_noncontiguous = 3
-let nvos32_attr_page_size_4kb = 1
 let nvos32_attr_page_size_huge = 3
 let nvos32_attr_location_vidmem = 0
 let nvos32_attr_location_pci = 1
@@ -96,8 +95,6 @@ let nv2080_ctrl_perf_boost_flags_cmd_boost_to_max = 2
 let nv2080_ctrl_perf_boost_flags_cuda_yes = 1
 let nv2080_ctrl_perf_boost_flags_cuda_priority_high = 1
 let nva06c_ctrl_cmd_gpfifo_schedule = 0xa06c0101
-let nva06f_ctrl_cmd_bind = 0xa06f0104
-let nva06f_ctrl_cmd_gpfifo_schedule = 0xa06f0103
 let nvc36f_ctrl_cmd_gpfifo_get_work_submit_token = 0xc36f0108
 let nv2080_ctrl_cmd_gr_get_info = 0x20801201
 let nv2080_ctrl_cmd_fb_flush_gpu_cache = 0x2080130e
@@ -117,7 +114,6 @@ let nv0080_ctrl_fifo_get_engine_context_properties_engine_id_graphics_patch = 0x
 let nv83de_ctrl_cmd_debug_read_all_sm_error_states = 0x83de030c
 let nv83de_ctrl_cmd_debug_read_mmu_fault_info = 0x83de0328
 let nv2080_engine_type_graphics = 1
-let nv2080_engine_type_nvdec0 = 0x13
 let nv2080_ctrl_gr_info_index_litter_num_gpcs = 0x14
 let nv2080_ctrl_gr_info_index_litter_num_tpc_per_gpc = 0x17
 let nv2080_ctrl_gr_info_index_litter_num_sm_per_tpc = 0x20
@@ -132,7 +128,9 @@ let nv_err_no_memory = 0x51
 let uvm_initialize = 0x30000001
 let uvm_mm_initialize = 0x4b
 let uvm_register_gpu = 0x25
+let uvm_unregister_gpu = 0x26
 let uvm_register_gpu_vaspace = 0x19
+let uvm_unregister_gpu_vaspace = 0x1a
 let uvm_enable_peer_access = 0x1d
 let uvm_register_channel = 0x1b
 let uvm_create_external_range = 0x49
@@ -349,11 +347,6 @@ module Perf_boost = struct
   let duration = (4, 4)
 end
 
-module Bind = struct
-  let sizeof = 4
-  let engine_type = (0, 4)
-end
-
 module Work_submit_token = struct
   let sizeof = 4
   let work_submit_token = (0, 4)
@@ -528,6 +521,18 @@ module Uvm_register_gpu_vaspace = struct
   let rm_status = (0x1c, 4)
 end
 
+module Uvm_unregister_gpu = struct
+  let sizeof = 20
+  let gpu_uuid = (0, 0x10)
+  let rm_status = (0x10, 4)
+end
+
+module Uvm_unregister_gpu_vaspace = struct
+  let sizeof = 20
+  let gpu_uuid = (0, 0x10)
+  let rm_status = (0x10, 4)
+end
+
 module Uvm_enable_peer_access = struct
   let sizeof = 36
   let gpu_uuid_a = (0, 0x10)
@@ -593,11 +598,6 @@ module type RELEASE = sig
     val b_enable : (int * int)
   end
 
-  module Channel_schedule : sig
-    val sizeof : int
-    val b_enable : (int * int)
-  end
-
   module Nvos46 : sig
     val sizeof : int
     val h_client : (int * int)
@@ -658,11 +658,6 @@ module R570 : RELEASE = struct
   end
 
   module Group_schedule = struct
-    let sizeof = 2
-    let b_enable = (0, 1)
-  end
-
-  module Channel_schedule = struct
     let sizeof = 2
     let b_enable = (0, 1)
   end
@@ -871,11 +866,6 @@ module R580 : RELEASE = struct
   end
 
   module Group_schedule = struct
-    let sizeof = 3
-    let b_enable = (0, 1)
-  end
-
-  module Channel_schedule = struct
     let sizeof = 3
     let b_enable = (0, 1)
   end
@@ -1091,11 +1081,6 @@ module R610 : RELEASE = struct
   end
 
   module Group_schedule = struct
-    let sizeof = 3
-    let b_enable = (0, 1)
-  end
-
-  module Channel_schedule = struct
     let sizeof = 3
     let b_enable = (0, 1)
   end
@@ -1354,7 +1339,6 @@ let nv_vgpu_msg_result_rpc_pending = 0xffffffff
 let nv_vgpu_msg_function_continuation_record = 0x47
 let nv_vgpu_msg_function_gsp_rm_alloc = 0x67
 let nv_vgpu_msg_function_gsp_rm_control = 0x4c
-let nv_vgpu_msg_function_free = 0xa
 let nv_vgpu_msg_function_set_page_directory = 0x36
 let nv_vgpu_msg_function_gsp_set_system_info = 0x48
 let nv_vgpu_msg_function_set_registry = 0x49
@@ -1430,14 +1414,6 @@ module Rpc_rm_control = struct
   let params_size = (0x10, 4)
   let flags = (0x14, 4)
   let params = (0x18, 1, 0)
-end
-
-module Rpc_free = struct
-  let sizeof = 16
-  let params_h_root = (0, 4)
-  let params_h_object_parent = (4, 4)
-  let params_h_object_old = (8, 4)
-  let params_status = (0xc, 4)
 end
 
 module Rpc_set_page_directory = struct
@@ -1791,6 +1767,7 @@ let registers = [
       ("NV_PMC_BOOT_42", (0xa00, 0, [ ("minor_extended_revision", (8, 4)); ("minor_revision", (0xc, 4)); ("major_revision", (0x10, 4)); ("implementation", (0x14, 4)); ("architecture", (0x18, 6)); ("chip_id", (0x14, 0xa)) ]));
     ] );
   ( "dev_fb", "tu102", [
+      ("NV_PFB_PRI_MMU_WPR2_ADDR_LO", (0x1fa824, 0, [ ("val", (4, 0x1c)) ]));
       ("NV_PFB_PRI_MMU_WPR2_ADDR_HI", (0x1fa828, 0, [ ("val", (4, 0x1c)) ]));
     ] );
   ( "dev_gc6_island", "ga102", [
