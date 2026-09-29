@@ -42,7 +42,7 @@ let dispatch =
       test "zeros" (fun () ->
           equal int 120 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
       test "shape of a vector" (fun () ->
-          equal int 9 (words (fun () -> Nx.shape row)));
+          equal int 11 (words (fun () -> Nx.shape row)));
     ]
 
 let () = exit (run "nx allocation" [ dispatch ])

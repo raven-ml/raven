@@ -5,6 +5,9 @@
 
 include Frontend
 
+(* A caller owns the array it is given. *)
+let shape x = Array.copy (shape x)
+
 exception Linalg_error = Nx_array.Backend_intf.Linalg_error
 
 let context = Nx_effect.Placement.host

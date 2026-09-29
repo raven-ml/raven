@@ -2865,6 +2865,8 @@ thread.
 
 ### Nx
 
+- `Nx.shape` returns an array of its own. It returned the value's, so a
+  caller that changed it changed the value's shape.
 - **Breaking (effect handlers):** nx's operations are the constructors of one
   type, `Nx_effect.Op.t`, which one effect, `E_op`, carries; the per-operation
   effects (`E_add`, `E_reduce_sum`, ...) are gone. The entry functions are one
