@@ -360,12 +360,14 @@ let outside_trace () =
   invalid_arg
     "a traced tensor has no bytes; it was used outside the trace that made it"
 
-let consumed { path } =
-  invalid_arg
-    (Printf.sprintf
-       "this value was consumed at %s in a compiled call's arguments; use the \
-        value the call returned"
-       path)
+(* Why a value consumed at [path] is dead: the message of every later use. *)
+let why_consumed { path } =
+  Printf.sprintf
+    "this value was consumed at %s in a compiled call's arguments; use the \
+     value the call returned"
+    path
+
+let consumed k = invalid_arg (why_consumed k)
 
 (* The lock only protects the cell's bookkeeping. Readers and consumers keep
    their claim while executing outside it; overlapping consumption never waits. *)

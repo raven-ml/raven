@@ -369,13 +369,14 @@ let test_step_reads_weights_consumes_state () =
   let x0 =
     Nx.create f32 [| 4; 4 |] (Array.init 16 (fun i -> float_of_int i /. 16.0))
   in
+  let expected = to_arr (f w1 (f w1 x0)) and bytes = Nx.nbytes x0 in
   let x1 = step w x0 in
   let before = (Rune.jit_stats ()).reused_bytes in
   let x2, up = delta (fun () -> step w x1) in
   equal ~msg:"resident leaves upload nothing" int 0 up;
-  equal ~msg:"the state is written over its own storage" int (Nx.nbytes x0)
+  equal ~msg:"the state is written over its own storage" int bytes
     ((Rune.jit_stats ()).reused_bytes - before);
-  check_arr ~eps:1e-5 ~msg:"two steps" (to_arr (f w1 (f w1 x0))) x2;
+  check_arr ~eps:1e-5 ~msg:"two steps" expected x2;
   raises_consumed (fun () -> to_arr x1);
   check_arr ~msg:"the weights are readable" (to_arr w1) w
 

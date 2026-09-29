@@ -3434,7 +3434,8 @@ let test_leaked_traced_value_raises () =
    its signature marks with [consumes]: their device buffers return to the
    allocator once the call completes, or back a result, so a state-to-state loop
    holds at most two generations of device memory, without any GC. A consumed
-   handle raises on read; read arguments and host tensors are unaffected. *)
+   handle raises on read, a host one included; read arguments are
+   unaffected. *)
 
 let raises_consumed f =
   raises_match
@@ -3502,11 +3503,11 @@ let test_consume_bounds_resident_memory () =
     let f x = Nx.add_s x 1.0 in
     if d then consume' f else Rune.jit' ~devices:[ cpu1 ] f
   in
-  let x = vec32 (Array.make n 0.0) in
   (* Every handle created here stays reachable; retiring the handles earlier
      tests dropped unread keeps their release out of the measured window. *)
-  let hold = Array.make 10 x in
+  let hold = Array.make 10 (vec32 [||]) in
   let run g =
+    let x = vec32 (Array.make n 0.0) in
     full_major ();
     let base = (Rune.jit_stats ()).resident_bytes in
     let h = ref (g x) in
@@ -3903,9 +3904,9 @@ let test_scatter_of_the_pool_into_itself () =
   let indices = Nx.create Nx.int32 [| 4 |] [| 3l; 2l; 1l; 0l |] in
   let f x = Nx.scatter ~axis:0 ~indices ~values:x x in
   let step = consume' f in
-  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
-  check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step x)));
-  let _, reused = reused_by_second_step step x in
+  let x () = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  check_arr ~msg:"reversed" [| 4.0; 3.0; 2.0; 1.0 |] (step (step (step (x ()))));
+  let _, reused = reused_by_second_step step (x ()) in
   equal ~msg:"the pool's storage is not reused" int 0 reused
 
 (* A kernel reads the old pool and the written one together, so it runs after
@@ -4829,11 +4830,48 @@ let test_read_value_is_still_consumed () =
   raises_consumed (fun () -> to_arr h);
   check_arr ~msg:"the result" [| 4.0; 8.0 |] y
 
-let test_host_input_unaffected_by_consume () =
+(* A host argument is consumed as a placed one: every handle to its buffer
+   dies, and on the host its memory holds the result that derives from it. *)
+let test_host_input_is_consumed () =
   let g = consume' (fun x -> Nx.mul_s x 2.0) in
   let x = vec32 [| 1.0; 2.0 |] in
-  ignore (g x);
-  check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x
+  let alias = Nx.reshape [| 2; 1 |] x in
+  check_arr ~msg:"result" [| 2.0; 4.0 |] (g x);
+  raises_consumed (fun () -> to_arr x);
+  raises_consumed (fun () -> Nx.add alias alias);
+  equal ~msg:"its shape stays readable" (array int) [| 2 |] (Nx.shape x);
+  let h =
+    Rune.jit ~devices:[ Nx.Device.host ]
+      Nx.Ptree.(consumes tensor @@ returns tensor)
+      (fun x -> Nx.add_s x 1.0)
+  in
+  let x = vec32 [| 1.0; 2.0; 3.0 |] in
+  let before = (Rune.jit_stats ()).reused_bytes in
+  let y = h x in
+  equal ~msg:"on the host its memory holds the result" int 12
+    ((Rune.jit_stats ()).reused_bytes - before);
+  check_arr ~msg:"in place" [| 2.0; 3.0; 4.0 |] y;
+  raises_consumed (fun () -> to_arr x)
+
+(* A consumed host argument spans its buffer, alone. *)
+let test_host_input_must_hold_its_storage () =
+  let g = consume' (fun x -> Nx.mul_s x 2.0) in
+  let x = vec32 [| 1.0; 2.0; 3.0; 4.0 |] in
+  invalid_starting "Rune.jit: the argument at 0 views part of its storage"
+    (fun () -> ignore (g (Nx.slice [ Nx.R (0, 2) ] x)));
+  let two =
+    Rune.jit
+      Nx.Ptree.(consumes (pair tensor tensor) @@ returns tensor)
+      (fun (a, b) -> Nx.add a b)
+  in
+  invalid_starting "Rune.jit: the arguments at 0.0 and 0.1 reach one storage"
+    (fun () -> ignore (two (x, x)));
+  check_arr ~msg:"a refused call consumes nothing" [| 1.0; 2.0; 3.0; 4.0 |] x;
+  let captured =
+    Rune.jit Nx.Ptree.(consumes tensor @@ returns tensor) (fun y -> Nx.add y x)
+  in
+  invalid_starting "Rune.jit: the argument at 0 and a capture of the function"
+    (fun () -> ignore (captured x))
 
 let test_jit_leaves_handle_readable () =
   let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul_s x 2.0) in
@@ -5372,7 +5410,9 @@ let tests =
           test_a_copied_capture_of_consumed_storage_raises;
         test "a value read before the call is still consumed"
           test_read_value_is_still_consumed;
-        test "host inputs are unaffected" test_host_input_unaffected_by_consume;
+        test "a host input is consumed" test_host_input_is_consumed;
+        test "a consumed host input holds its storage alone"
+          test_host_input_must_hold_its_storage;
         test "jit never consumes its inputs" test_jit_leaves_handle_readable;
         test "a step reads its first argument"
           test_step_reads_its_first_argument;

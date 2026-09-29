@@ -3892,6 +3892,9 @@ type 'q compiled = {
   cp_captures : Nx_effect.cell array;
       (* the cells of the placed values the program captures, bound or copied: a
          consumed leaf may reach none of them (rule 4) *)
+  cp_host_captures : (nativeint * int) array;
+      (* the host memory of the host values the program captures, as address
+         and bytes: a consumed host leaf may reach none of it *)
   cp_bound : (Nx_effect.cell * packed) array;
       (* resident captures whose device buffers are this program's constants:
          the values stay reachable while the trace can run, and their cells
@@ -4734,8 +4737,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       List.filter consumed (List.init (Array.length cp_inputs) Fun.id)
       |> Array.of_list
     in
-    (* On the host, outputs are host buffers the kernels write in place. *)
-    if zero_copy || consumed_inputs = [||] then []
+    if consumed_inputs = [||] then []
     else begin
       let m = mentions_of linear in
       let position = Hashtbl.create 16 in
@@ -4907,6 +4909,16 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
             match x with Nx_effect.Placed r -> Some r.r_cell | _ -> None)
           st.consts)
   in
+  let cp_host_captures =
+    Array.of_list
+      (List.filter_map
+         (fun (_, _, Packed (_, x)) ->
+           match x with
+           | Nx_effect.Host a when HB.nbytes a.buffer > 0 ->
+               Some (HB.host_address a.buffer, HB.nbytes a.buffer)
+           | _ -> None)
+         st.consts)
+  in
   let compiled =
     {
       cp_device = dev;
@@ -4921,6 +4933,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       cp_consumptions = info.consumptions;
       cp_names = info.names;
       cp_captures;
+      cp_host_captures;
       cp_bound = Array.of_list (List.map (fun (cell, packed, _) -> cell, packed) bound);
       cp_outputs;
       cp_results = results;
@@ -4972,13 +4985,30 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
      leaf's view must cover its owned storage, which a result may take, on every
      device that holds it; borrowed storage is lent to no result. No
      other leaf of the call, nor a capture of the program, may reach that
-     storage. A host leaf has no storage to consume: it is uploaded and stays
-     usable. *)
-  let consumed = ref [] in
+     storage. A consumed host leaf's storage is its runtime buffer, which its
+     view must span whether owned or borrowed. *)
+  let consumed = ref [] and hosts = ref [] in
+  let views_part i =
+    invalid_arg
+      (Printf.sprintf
+         "Rune.jit: the argument at %s views part of its storage (a slice, a \
+          transpose or a broadcast), so it cannot be consumed; pass Nx.copy of \
+          it"
+         c.cp_names.(i))
+  in
   Array.iteri
     (fun i (Nx.P leaf) ->
       if c.cp_consumed.(i) then
         match leaf with
+        | Host a ->
+            if
+              not
+                (NV.is_c_contiguous a.view
+                && NV.offset a.view = 0
+                && NV.numel a.view = HB.length a.buffer
+                && HB.spans a.buffer)
+            then views_part i;
+            hosts := (i, a.buffer) :: !hosts
         | Placed r ->
             (match store_of r.r_cell with
             | Some s
@@ -4996,41 +5026,60 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
             if
               (not (Nx_effect.covers r))
               && match store_of r.r_cell with Some s -> owned s | None -> true
-            then
-              invalid_arg
-                (Printf.sprintf
-                   "Rune.jit: the argument at %s views part of its storage (a \
-                    slice, a transpose or a broadcast), so it cannot be \
-                    consumed; pass Nx.copy of it"
-                   c.cp_names.(i));
+            then views_part i;
             consumed := (i, r.r_cell) :: !consumed
-        | Host _ | Traced _ -> ())
+        | Traced _ -> ())
     leaves;
-  let consumed = List.rev !consumed in
+  let consumed = List.rev !consumed and hosts = List.rev !hosts in
+  let share_storage i j =
+    invalid_arg
+      (Printf.sprintf
+         "Rune.jit: the arguments at %s and %s reach one storage, which a \
+          consumed argument must hold alone; pass Nx.copy of one of them"
+         c.cp_names.(Int.min i j)
+         c.cp_names.(Int.max i j))
+  in
+  let share_capture i =
+    invalid_arg
+      (Printf.sprintf
+         "Rune.jit: the argument at %s and a capture of the function reach one \
+          storage, which a consumed argument must hold alone; pass Nx.copy of \
+          it"
+         c.cp_names.(i))
+  in
+  (* Host memory: whether the [n] bytes at [a] and at [a'] meet. *)
+  let meet (a, n) (a', n') =
+    n > 0 && n' > 0
+    && Nativeint.compare a (Nativeint.add a' (Nativeint.of_int n')) < 0
+    && Nativeint.compare a' (Nativeint.add a (Nativeint.of_int n)) < 0
+  in
+  let memory b = (HB.host_address b, HB.nbytes b) in
+  List.iter
+    (fun (i, b) ->
+      let m = memory b in
+      Array.iteri
+        (fun j (Nx.P leaf) ->
+          match leaf with
+          | Host a when j <> i && meet m (memory a.buffer) -> share_storage i j
+          | _ -> ())
+        leaves;
+      if Array.exists (meet m) c.cp_host_captures then share_capture i)
+    hosts;
   List.iter
     (fun (i, (cell : Nx_effect.cell)) ->
       Array.iteri
         (fun j (Nx.P leaf) ->
           match leaf with
-          | Placed r when j <> i && r.r_cell == cell ->
-              invalid_arg
-                (Printf.sprintf
-                   "Rune.jit: the arguments at %s and %s reach one storage, \
-                    which a consumed argument must hold alone; pass Nx.copy of \
-                    one of them"
-                   c.cp_names.(Int.min i j)
-                   c.cp_names.(Int.max i j))
+          | Placed r when j <> i && r.r_cell == cell -> share_storage i j
           | _ -> ())
         leaves;
       if Array.exists (fun cell' -> cell' == cell) c.cp_captures then
-        invalid_arg
-          (Printf.sprintf
-             "Rune.jit: the argument at %s and a capture of the function reach \
-              one storage, which a consumed argument must hold alone; pass \
-              Nx.copy of it"
-             c.cp_names.(i)))
+        share_capture i)
     consumed;
   let seed_entry = Array.make (Array.length c.cp_inputs) None in
+  (* The buffer each host leaf the zero-copy device reads in place is wrapped
+     in. *)
+  let wrapped = Array.make (Array.length c.cp_inputs) None in
   (* The input nodes bound as a contiguous range that starts [skip] elements
      before the value, by tag. *)
   let skips = Hashtbl.create 4 in
@@ -5051,7 +5100,9 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           supply inp.i_node range
       | Copy -> (
           match if c.cp_zero_copy then wrap_tensor leaf else None with
-          | Some buf -> supply inp.i_node [ buf ]
+          | Some buf ->
+              wrapped.(i) <- Some buf;
+              supply inp.i_node [ buf ]
           | None ->
               supply inp.i_node inp.i_bufs;
               upload_windows c.cp_scratch inp.i_place leaf c.cp_devices
@@ -5068,10 +5119,29 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       (int, Nx_effect.cell * store * Tolk.Device.Buffer.t list) Hashtbl.t =
     Hashtbl.create 4
   in
+  (* On the zero-copy device an output takes an owned host leaf in place: the
+     kernels write it through the leaf's wrapped buffer, and the result is the
+     leaf's memory under the buffer its consumption returns. *)
+  let host_claims : (int, int * Tolk.Device.Buffer.t) Hashtbl.t =
+    Hashtbl.create 4
+  in
+  List.iter
+    (fun { l_otag; l_input; _ } ->
+      match (List.assoc_opt l_input hosts, wrapped.(l_input)) with
+      | Some b, Some buf
+        when c.cp_zero_copy
+             && (not (HB.is_borrowed b))
+             && not (Hashtbl.mem c.cp_reserved l_otag) ->
+          update_stats (fun stats ->
+              { stats with reused_bytes = stats.reused_bytes + HB.nbytes b });
+          Hashtbl.replace host_claims l_otag (l_input, buf)
+      | _ -> ())
+    c.cp_lends;
   List.iter
     (fun { l_otag; l_input; _ } ->
       match seed_entry.(l_input) with
-      | Some ((e : Nx_effect.cell), bufs) when Atomic.get e.bound = 0 -> (
+      | Some ((e : Nx_effect.cell), bufs)
+        when (not c.cp_zero_copy) && Atomic.get e.bound = 0 -> (
           match store_of e with
           | Some s when owned s ->
               let reused = List.fold_left
@@ -5111,18 +5181,20 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       | Some node -> (
           let tag = U.tag node in
           let reserved = Hashtbl.mem c.cp_reserved tag in
-          if c.cp_zero_copy then
-            begin if (not reserved) && not (Hashtbl.mem out_hosts tag) then begin
-              let n = numel (shape_of ph) in
-              let host = Nx_array.Elements.create odt n in
-              let buf =
-                Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
-                  ~source:host (HB.host_address host)
-              in
-              supply node [buf];
-              Hashtbl.add out_hosts tag (Host (odt, host))
-            end
-            end
+          if c.cp_zero_copy then begin
+            if (not reserved) && not (Hashtbl.mem out_hosts tag) then
+              match Hashtbl.find_opt host_claims tag with
+              | Some (_, buf) -> supply node [ buf ]
+              | None ->
+                  let n = numel (shape_of ph) in
+                  let host = Nx_array.Elements.create odt n in
+                  let buf =
+                    Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
+                      ~source:host (HB.host_address host)
+                  in
+                  supply node [ buf ];
+                  Hashtbl.add out_hosts tag (Host (odt, host))
+          end
           else if not (Hashtbl.mem out_bufs tag) then
             match Hashtbl.find_opt claims tag with
             | Some (_, _, bufs) ->
@@ -5176,7 +5248,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
       let claimed =
         match (Hashtbl.find_opt claims (U.tag node), seed_entry.(i)) with
         | Some (e, _, _), Some (e', _) -> e == e'
-        | _ -> false
+        | _ -> (
+            match Hashtbl.find_opt host_claims (U.tag node) with
+            | Some (i', _) -> i' = i
+            | None -> false)
       in
       if not claimed then
         let dsts = node_bufs node in
@@ -5194,6 +5269,20 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
         (i, cell, s))
       consumed
   in
+  (* A consumed host leaf's buffer dies for every handle to it; one an output
+     took holds that output's value. *)
+  List.iter
+    (fun (i, b) ->
+      let live =
+        HB.consume ~why:(Nx_effect.why_consumed c.cp_consumptions.(i)) b
+      in
+      Hashtbl.iter
+        (fun tag (i', _) ->
+          if i' = i then
+            let (Nx.P leaf) = leaves.(i) in
+            Hashtbl.replace out_hosts tag (Host (Nx_effect.dtype leaf, live)))
+        host_claims)
+    hosts;
   Tolk.Realize.run_linear ~device:c.cp_device ~to_program ~input_uops
     ~var_vals:c.cp_vars ~jit:true c.cp_linear;
   (* An output that is an input or a capture returned unchanged keeps its

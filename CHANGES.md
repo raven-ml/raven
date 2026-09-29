@@ -172,6 +172,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** a compiled call consumes a host argument its signature marks
+  with `consumes`, as it consumes a placed one: the value must be all of its
+  buffer, every handle to that buffer then raises, and on the host an output
+  derived from it is written over its memory. A host argument was uploaded and
+  stayed usable, so a donating step held its state twice on the CPU.
 - `Rune.vmap` passes a `Rune.custom_jvp` on as the custom call of its batched
   function and batched rule, where it ran the function and dropped the rule:
   a `jvp` around a map now applies the rule to the map's lanes, so a mark
