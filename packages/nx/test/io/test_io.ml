@@ -685,8 +685,8 @@ let images_group =
                 colour
           | _ -> assert false);
       prop
-        "a smooth image returns from JPEG within a mean error of 8 levels \
-         (nx_io.mli states no quality)"
+        "a smooth image returns from JPEG at quality 90 within a mean error of \
+         8 levels"
         (smooth [ 0; 1; 3 ])
         (fun t ->
           let path = temp_file ~suffix:".jpg" () in

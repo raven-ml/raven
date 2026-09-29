@@ -34,8 +34,9 @@ val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
 
     The case-insensitive extension selects PNG ([.png]) or JPEG ([.jpg] and
     [.jpeg]). Accepted shapes are [[|height; width|]], [[|height; width; 1|]],
-    [[|height; width; 3|]], and, for PNG only, [[|height; width; 4|]].
-    [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
+    [[|height; width; 3|]], and, for PNG only, [[|height; width; 4|]]. JPEG is
+    written baseline at quality 90 (the standard IJG tables scaled to 20%),
+    colour with its chroma subsampled 4:2:0. [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.
 
     @raise Failure
