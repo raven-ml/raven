@@ -252,12 +252,16 @@ val custom_vjp :
     cotangents, of structure [q], zero for a tensor of the result that nothing
     used; the gradients have structure [p], and each tensor its parameter's
     dtype and shape. [residual] is what [fwd] returned beside its result.
-    Enclosing transformations (an outer {!grad}, {!val-vmap}) see the forward
-    computation itself, and under {!val-vmap} so does a differentiation outside
-    the map.
+    Enclosing transformations (an outer {!grad}) see the forward computation
+    itself.
 
     A tensor of the result that is one of [params] is a new value there: its
     cotangent is the result's alone.
+
+    {!val-vmap} passes the call on as the call of its batched [fwd] and batched
+    [bwd], so a reverse-mode transformation outside the map applies the rule to
+    the map's lanes, and forward mode outside it raises as it does without the
+    map.
 
     Forward mode has no rule to apply: a call whose result holds no tensor has
     nothing to differentiate, and [fwd] runs.

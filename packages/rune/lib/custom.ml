@@ -16,11 +16,10 @@
    rule to apply runs the call's function when its result holds no tensor,
    since there is nothing to differentiate, and raises otherwise (a custom vjp
    with a tensor result is not forward-differentiable, and vice versa). vmap
-   passes a custom jvp on as the call of its batched function and batched rule,
-   so the differentiation that claims it applies the rule wherever it lies; it
-   batches a custom vjp's forward function, so only a differentiation inside
-   the vmap applies that rule. When no handler intercepts — no transformation
-   in scope — the plain forward function runs at the call site. *)
+   passes a custom call on as the call of its batched functions, so the
+   differentiation that claims it applies the rule wherever it lies. When no
+   handler intercepts — no transformation in scope — the plain forward function
+   runs at the call site. *)
 
 type 'q vjp_call =
   | Vjp_call : {

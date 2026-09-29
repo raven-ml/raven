@@ -288,7 +288,7 @@ let () =
   (* [2. 4. 6.] — from the custom rule *)
 ```
 
-Each gradient leaf must match its parameter leaf's shape and dtype. Enclosing transformations (an outer `grad`, a `vmap`) see the forward computation itself; only the innermost reverse-mode transformation applies the rule. Differentiating a `custom_vjp` call in forward mode raises — define a `custom_jvp` rule for that.
+Each gradient leaf must match its parameter leaf's shape and dtype. Enclosing transformations (an outer `grad`) see the forward computation itself; only the innermost reverse-mode transformation applies the rule. A `vmap` passes the call on as the call of its batched `fwd` and batched `bwd`, so a `grad` outside the map applies the rule to the map's lanes. Differentiating a `custom_vjp` call in forward mode raises — define a `custom_jvp` rule for that.
 
 ### custom_jvp
 

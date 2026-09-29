@@ -284,19 +284,24 @@ and no batched rule, and `Nx.sum ~axes:[0] (lanes a x)` is the same sum.
   with no tensor result (`forward.ml:721-734`), follows the same line. A
   custom call with a tensor result still raises in the mode its rule does not
   cover.
-- **vmap passes a `custom_jvp` on.** Every `custom_jvp` is passed on as the
-  custom call of the batched `f` and the batched rule, remat's pattern
-  (`vmap.ml:610-639`), in place of running `f` and dropping the rule
-  (`vmap.ml:592-602`). vmap claims one whose parameters it does not batch too,
-  as it claims every remat and scan: `f` and the rule may read a tensor the
-  map batches, which a claimer outside the map would read as a constant of
-  shape `n :: s`. Each marks the physical arguments at the batched positions
-  and runs under this handler's state, and the batched `jvp` returns primal
-  and tangent physically batched at every position where either is batched,
-  as forward's shape check requires (`forward.ml:704-712`).
+- **vmap passes a custom call on.** Every `custom_jvp` is passed on as the
+  custom call of the batched `f` and the batched rule, and every `custom_vjp`
+  as the custom call of the batched `fwd` and the batched `bwd`, remat's
+  pattern (`vmap.ml:606-703`), in place of running `f` or `fwd` and dropping
+  the rule. vmap claims one whose parameters it does not batch too, as it
+  claims every remat and scan: the functions may read a tensor the map
+  batches, which a claimer outside the map would read as a constant of shape
+  `n :: s`. Each marks the physical arguments at the batched positions and
+  runs under this handler's state. The batched `jvp` returns primal and
+  tangent physically batched at every position where either is batched, as
+  forward's shape check requires (`forward.ml:704-712`). The batched `fwd`
+  returns every result batched, so each lane receives its own cotangents, and
+  the batched `bwd` returns the cotangent of a parameter the map batches
+  batched, and that of one it does not summed over the lanes, as an addition
+  crossing the map is (law 3).
 
-`custom.ml`'s header (`custom.ml:16-18`) and the `custom_jvp` entry in
-`rune.mli` change with these two rules.
+`custom.ml`'s header (`custom.ml:16-22`) and the `custom_jvp` and
+`custom_vjp` entries in `rune.mli` change with these two rules.
 
 ### Memory
 
@@ -324,7 +329,7 @@ Along the consumer's path:
 3. The no-tensor custom call rule. With 1-3 a mark works anywhere except
    inside the user's own map, under `jit`, with constant compiled memory, in
    the same model trained with `grad`.
-4. vmap passing a `custom_jvp` on, for a mark inside the user's own map.
+4. vmap passing custom calls on, for a mark inside the user's own map.
 
 ## Laws
 
@@ -385,10 +390,12 @@ Along the consumer's path:
   from the loop of law 3. No consumer adds there.
 - An eager remat inside a scope runs in the scope's context, so a `with_key`
   between them is missed, as it is under any transformation today.
-- Passing a `custom_jvp` on through vmap moves its claim outside the map:
+- Passing custom calls on through vmap moves their claims outside the map:
   `jvp` of a map over a `custom_jvp` applies the rule where it differentiated
-  `f`, and `grad` of a map over a `custom_jvp` with a tensor result raises, as
-  it does without the map, where it now differentiates `f`.
+  `f`, and `grad` of a map over a `custom_vjp` applies `bwd` where it
+  differentiated `fwd`. `grad` of a map over a `custom_jvp` and `jvp` of a map
+  over a `custom_vjp` with a tensor result raise, as they do without the map,
+  where they differentiated the function.
 
 ## Rationale and alternatives
 
@@ -447,10 +454,6 @@ naming collections).
 
 ## Non-goals
 
-- vmap passing a `custom_vjp` on: its batched `bwd` must sum the cotangent of
-  a parameter the map does not batch, and no consumer needs it yet. Until
-  that separate change, `grad` of a map over a `custom_vjp` differentiates
-  `fwd`, as today.
 - Totals of structures, or of monoids other than `+` on one tensor.
 - Discharging an addition into a program output when the scope lies outside
   `jit`: a `jit` inside a scope runs eagerly instead.

@@ -264,10 +264,9 @@ let test_custom_fwd_under_plain_vmap () =
   check_arr ~msg:"vmapped fwd" (to_arr (Nx.sin xs)) y
 
 let test_grad_of_vmap_of_custom () =
-  (* grad of vmap of a custom function: vmap batches the forward computation,
-     and the enclosing grad differentiates it — the rule applies only to a
-     differentiation inside the vmap. Regression: the un-translated custom call
-     used to escape the batching scope and double-count each row. *)
+  (* grad of vmap of a custom function: the enclosing grad applies the rule to
+     the map's lanes. Regression: the un-translated custom call used to escape
+     the batching scope and double-count each row. *)
   let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
   let g = Rune.grad' (fun x -> Nx.sum (Rune.vmap' my_sin x)) xs in
   check_arr ~msg:"grad of vmapped custom" (to_arr (Nx.cos xs)) g
@@ -353,6 +352,78 @@ let test_vmap_passes_on_a_call_capturing_its_lanes () =
     (fun w -> Rune.vmap' (fun c -> Nx.mul w (scaled c x0)) cs)
     (stack 2 (fun j -> Nx.mul x0 (lane j cs)))
 
+(* vmap passes a custom vjp on: a reverse mode outside the map applies [bwd] to
+   the map's lanes, eagerly and compiled. *)
+let test_grad_of_vmap_applies_the_rule () =
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let loss x = Nx.sum (Rune.vmap' fake_grad_sin x) in
+  check_arr ~msg:"the rule's gradient" (Array.make 6 100.0) (Rune.grad' loss xs);
+  check_arr ~msg:"compiled" (Array.make 6 100.0)
+    (Rune.jit' (Rune.grad' loss) xs)
+
+(* Forward mode has no custom vjp rule, outside a map as without one. *)
+let test_jvp_of_vmap_of_custom_vjp_raises () =
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  raises_match Exn.invalid_arg (fun () ->
+      ignore (Rune.jvp' (Rune.vmap' fake_grad_sin) xs (tangent_like xs)))
+
+(* A map passes on every custom vjp, whatever it batches: [fwd] and [bwd] may
+   read a tensor that only the map reads as lanes, here the [c] of a map whose
+   inner map batches the parameter, or of the one map when it batches none.
+   [bwd] is twice the true gradient, and the cotangent of a parameter no map
+   batches is the sum of the lanes'. *)
+let test_vmap_passes_on_a_vjp_capturing_its_lanes () =
+  let lane i x = Nx.slice [ Nx.I i ] x in
+  let stack n f = Nx.stack ~axis:0 (List.init n f) in
+  let xs =
+    Nx.create f64 [| 4; 3 |]
+      (Array.init 12 (fun i -> Float.sin (Float.of_int i)))
+  in
+  let cs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let x0 = v3 () and w = Nx.scalar f64 1.5 in
+  let scaled c p =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
+      ~fwd:(fun p -> (Nx.mul p c, ()))
+      ~bwd:(fun () g ->
+        let g = Nx.mul_s (Nx.mul g c) 2.0 in
+        if Nx.ndim p = 0 then Nx.sum g else g)
+      p
+  in
+  let check ~msg f loop =
+    let grad w = Rune.value_and_grad' (fun w -> Nx.sum (f w)) w in
+    List.iter
+      (fun (mode, (v, g)) ->
+        check_arr
+          ~msg:(Printf.sprintf "%s, %s: value" msg mode)
+          (to_arr (Nx.mul_s (Nx.sum loop) 1.5))
+          v;
+        check_arr
+          ~msg:(Printf.sprintf "%s, %s: gradient" msg mode)
+          (to_arr (Nx.mul_s (Nx.sum loop) 2.0))
+          g)
+      [
+        ("eager", grad w);
+        ( "compiled",
+          Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) grad w );
+      ]
+  in
+  check ~msg:"nested maps"
+    (fun w ->
+      Rune.vmap' (fun c -> Rune.vmap' (fun x -> scaled c (Nx.mul w x)) xs) cs)
+    (stack 2 (fun j -> stack 4 (fun i -> Nx.mul (lane i xs) (lane j cs))));
+  check ~msg:"unbatched parameters"
+    (fun w -> Rune.vmap' (fun c -> Nx.mul (scaled c w) x0) cs)
+    (stack 2 (fun j -> Nx.mul x0 (lane j cs)));
+  let shared =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
+      ~fwd:(fun w -> (w, ()))
+      ~bwd:(fun () _ -> Nx.scalar f64 1.0)
+  in
+  check_arr ~msg:"a cotangent every lane shares, once per lane" [| 2.0 |]
+    (Rune.grad'
+       (fun w -> Nx.sum (Rune.vmap' (fun c -> Nx.mul (shared w) c) cs))
+       w)
+
 let test_compiled_custom_vjp () =
   let f x = Nx.sum (Nx.mul (fake_grad_sin x) x) in
   let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] (Rune.grad' f) in
@@ -434,6 +505,12 @@ let tests =
           test_grad_of_vmap_of_custom_jvp_raises;
         test "vmap passes on a custom jvp that captures its lanes"
           test_vmap_passes_on_a_call_capturing_its_lanes;
+        test "grad of vmap applies the custom vjp rule"
+          test_grad_of_vmap_applies_the_rule;
+        test "jvp of vmap of a custom vjp raises"
+          test_jvp_of_vmap_of_custom_vjp_raises;
+        test "vmap passes on a custom vjp that captures its lanes"
+          test_vmap_passes_on_a_vjp_capturing_its_lanes;
       ];
     group "compiled rules"
       [

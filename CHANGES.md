@@ -172,6 +172,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.vmap` passes a `Rune.custom_vjp` on as the custom call of its batched
+  `fwd` and batched `bwd`, where it ran `fwd` batched and dropped `bwd`: a
+  `grad` around a map now applies the rule to the map's lanes, summing the
+  cotangent of a parameter the map does not batch. A call whose parameters the
+  map does not batch is passed on too, where a `grad` outside read a tensor
+  the map batches as the stacked tensor and returned a wrong value and
+  gradient. `Rune.jvp` of a map over a `custom_vjp` with a tensor result now
+  raises, as it does without the map.
+
 - An exception raised while a transformation handles an operation now raises
   at the operation, where a `try` around it catches it and a `Fun.protect`
   around it runs its finaliser. It left through the transformation instead,

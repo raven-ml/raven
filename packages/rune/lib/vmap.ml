@@ -77,6 +77,12 @@ let to_batched st x target =
 
 let ensure_batched st x = to_batched st x (vshape st x)
 
+(* The sum over the lanes of a value each lane holds: a batched one summed along
+   its batch axis, one every lane shares times their number. *)
+let sum_lanes st v =
+  if batched st v then T.sum ~axes:[ 0 ] v
+  else T.mul_s v (Nx_dtype.of_float (T.dtype v) (Float.of_int st.batch_size))
+
 (* Axis parameters count from the virtual shape; the batch dimension sits at 0,
    so non-negative axes shift by one and negative axes are unchanged. *)
 let taxis ax = if ax >= 0 then ax + 1 else ax
@@ -597,31 +603,49 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_eigh { t_in } when batched st t_in -> Some (no_rule "eigh")
     | E_solve_triangular { a; b; _ } when batched st a || batched st b ->
         Some (no_rule "solve_triangular")
-    (* Custom rules. A custom vjp with batched parameters runs its forward
-       function batched, in a nested fiber under this same handler state, so
-       enclosing transformations see the batched forward computation: letting
-       it fall through would hand physically batched tensors to an enclosing
-       differentiation outside the batching scope. Calls on constants do fall
-       through. *)
-    | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
-        if
-          not
-            (Nx.Ptree.fold params_s
-               (fun _ leaf any -> any || batched st leaf)
-               params false)
-        then None
-        else
-          Some
-            (fun () -> match_with (fun () -> fst (fwd params)) () (handler st))
-    (* A custom jvp passes on as the custom call of its batched function and its
-       batched rule, as a remat does, whatever its parameters: either function
-       may read a tensor this map batches, which only this handler reads as
-       lanes. Each receives the physical tensors, marks those at the batched
-       parameters' positions (a parameter's tangent is batched where the
-       parameter is) and runs under this handler, and the results the call
-       returns are marked where they came out batched. The batched rule returns
-       a primal and its tangent batched together, as the claimer's shape check
-       requires. *)
+    (* Custom rules. A custom call passes on as the custom call of its batched
+       functions, as a remat does, whatever its parameters: any of them may read
+       a tensor this map batches, which only this handler reads as lanes. Each
+       receives the physical tensors, marks those at the batched parameters'
+       positions (a parameter's tangent is batched where the parameter is) and
+       runs under this handler, and the results the call returns are marked
+       where they came out batched. The batched [fwd] of a custom vjp returns
+       every result batched, so that each lane receives its own cotangents, and
+       its batched [bwd] returns the cotangent of a parameter this map batches
+       batched and that of one it does not summed over the lanes. The batched
+       rule of a custom jvp returns a primal and its tangent batched together,
+       as the claimer's shape check requires. *)
+    | Custom.E_custom_vjp
+        (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
+        let flags =
+          List.map
+            (fun (Nx.P p) -> batched st p)
+            (fst (Nx.Ptree.flatten params_s params))
+        in
+        let fwd' ps =
+          List.iter2
+            (fun (Nx.P p) b -> if b then mark st p)
+            (fst (Nx.Ptree.flatten params_s ps))
+            flags;
+          let y, res = match_with fwd ps (handler st) in
+          (Nx.Ptree.map result_s (fun _ l -> ensure_batched st l) y, res)
+        in
+        let bwd' res cts =
+          Nx.Ptree.fold result_s (fun _ c () -> mark st c) cts ();
+          let gs = match_with (fun () -> bwd res cts) () (handler st) in
+          Structure.map2 "Rune.custom_vjp" params_s ~this:"the parameters"
+            ~that:"bwd's gradients"
+            (fun _ p g ->
+              if batched st p then ensure_batched st g else sum_lanes st g)
+            params gs
+        in
+        Some
+          (fun () ->
+            let y =
+              Custom.custom_vjp params_s result_s ~fwd:fwd' ~bwd:bwd' params
+            in
+            Nx.Ptree.fold result_s (fun _ l () -> mark st l) y ();
+            y)
     | Custom.E_custom_jvp
         (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
         let flags =
@@ -800,18 +824,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 | exception Grow carried -> attempt carried
               in
               attempt (flags req.req_carry))
-    (* An addition to a total is the sum of its lanes' additions: a batched
-       one summed over the lanes, one every lane shares times their number. *)
-    | Total.E_add (t, v) ->
-        Some
-          (fun () ->
-            let v =
-              if batched st v then T.sum ~axes:[ 0 ] v
-              else
-                T.mul_s v
-                  (Nx_dtype.of_float (T.dtype v) (Float.of_int st.batch_size))
-            in
-            Total.add t v)
+    (* An addition to a total is the sum of its lanes' additions. *)
+    | Total.E_add (t, v) -> Some (fun () -> Total.add t (sum_lanes st v))
     | Nx_quant.Effect.E_quant { w; op } when quant_batched st w op ->
         Some
           (fun () ->
