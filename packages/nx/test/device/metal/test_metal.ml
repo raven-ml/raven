@@ -314,11 +314,11 @@ let work =
 module P = Nx_device.Profile
 
 let profiled f =
-  P.start ();
+  let p = P.start () in
   match f () with
-  | () -> P.stop ()
+  | () -> P.stop p
   | exception e ->
-      ignore (P.stop ());
+      ignore (P.stop p);
       raise e
 
 let twice =
@@ -356,11 +356,11 @@ let dispatch_profile =
       in
       let ours =
         List.filter
-          (function P.Memory _ -> false | P.Span _ | P.Program _ -> true)
+          (function P.Allocation _ -> false | P.Span _ | P.Load _ -> true)
           events
       in
       match ours with
-      | [ P.Program p; P.Span s ] ->
+      | [ P.Load p; P.Span s ] ->
           equal (pair string bool) ("twice", true)
             (Nx_device.Program.name p.program, p.binary = binary);
           equal (pair string string) ("METAL", "compute")

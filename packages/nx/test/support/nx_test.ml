@@ -1202,11 +1202,11 @@ module Profiles = struct
   module B = Nx_device.Buffer
 
   let profiled f =
-    P.start ();
+    let p = P.start () in
     match f () with
-    | () -> P.stop ()
+    | () -> P.stop p
     | exception e ->
-        ignore (P.stop ());
+        ignore (P.stop p);
         raise e
 
   (* Copies from the host to [d] and back, staged and through a borrow: each is

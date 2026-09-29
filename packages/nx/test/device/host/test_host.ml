@@ -298,12 +298,12 @@ ABI void f(void **b, const long long *v) { *(int *)b[0] = ++calls; }|});
 let test_profile () =
   let p = load ~binary:(Lazy.force affine) ~name:"affine" in
   let out = B.create host S.Int32 4 and input = int32s [| 1l; 2l; 3l; 4l |] in
-  Nx_device.Profile.start ();
+  let profile = Nx_device.Profile.start () in
   let before = Nx_device.Profile.now () in
   P.call p [| out; input |] [| 4; 3; -5 |];
   let after = Nx_device.Profile.now () in
   let lane = Printf.sprintf "domain %d" (Domain.self () :> int) in
-  match Nx_device.Profile.stop () with
+  match Nx_device.Profile.stop profile with
   | [ Span s ] ->
       equal
         (triple string string string)

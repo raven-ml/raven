@@ -646,13 +646,14 @@ val timeline : t -> Buffer.t
 
 (** Profiles of devices' work.
 
-    While a profile is taken, between {!start} and {!stop}, the devices record
-    {!event}s: {e spans} of work on a device, changes of its allocated memory,
-    and the programs it loads. Spans come from the host ({!span}), from the
-    runtime's own copies and calls of host programs, and from the libraries that
-    submit work ({!record}). Every time is on the host's clock, {!now}: the
-    times a device stamps on its own clock are calibrated against it when the
-    profile is taken. {!output} writes a profile in Chrome's trace event format,
+    One profile of every device is taken at a time, between {!start} and
+    {!stop}. While it is taken, the devices record {!event}s: {e spans} of work
+    on a device, changes of its allocated memory, and the programs it loads.
+    Spans come from the host ({!span}), from the runtime's own copies and calls
+    of host programs, and from the libraries that submit work ({!record}). Every
+    time is on the host's clock, {!now}: the times a device stamps on its own
+    clock are calibrated against it when the profile is stopped.
+    {!output_chrome_trace} writes the events in Chrome's trace event format,
     which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
     [chrome://tracing] load.
 
@@ -675,37 +676,42 @@ module Profile : sig
             domains, ["domain 0"], ["domain 1"], ...; a device's copy queue runs
             the runtime's copies on its ["copy"] lane; the libraries that submit
             work name their own lanes. *)
-    | Memory of {
+    | Allocation of {
         device : device;
         time : int;
         allocated : int;
             (** The device's {!Stats.allocated} bytes from [time] on. *)
       }  (** A change of the memory a device allocated. *)
-    | Program of {
+    | Load of {
         program : Program.t;
         binary : string;  (** The binary it was loaded from. *)
         time : int;  (** When it was loaded. *)
       }  (** A program loaded on its device. *)
+
+  type t
+  (** The type for profiles being taken. *)
+
+  val start : unit -> t
+  (** [start ()] starts taking a profile of every device, which only its holder
+      stops.
+
+      Raises [Invalid_argument] if a profile is being taken. *)
+
+  val stop : t -> event list
+  (** [stop p] stops taking [p], and is its events, in time order and, at equal
+      times, longest first. It first synchronizes the devices whose recorded
+      spans are still to be read, and calibrates the clocks of the devices that
+      stamp times on their own. The unread spans of a device lost meanwhile are
+      left out; its next operation raises {!Lost}.
+
+      Raises [Invalid_argument] if [p] is not being taken: it was stopped
+      already. *)
 
   val now : unit -> int
   (** [now ()] is the host clock: nanoseconds of the system's monotonic clock,
       which starts at an unspecified point. C code reads it with
       [nx_device_now_ns] from the header [nx_device.h]. On macOS it is the clock
       of Metal's command buffer times. *)
-
-  val start : unit -> unit
-  (** [start ()] starts taking a profile of every device.
-
-      Raises [Invalid_argument] if a profile is being taken. *)
-
-  val stop : unit -> event list
-  (** [stop ()] stops taking the profile {!start} started, and is its events, in
-      time order and, at equal times, longest first. It first synchronizes the
-      devices whose recorded spans are still to be read, and calibrates the
-      clocks of the devices that stamp times on their own. The unread spans of a
-      device lost meanwhile are left out; its next operation raises {!Lost}.
-
-      Raises [Invalid_argument] if no profile is being taken. *)
 
   val enabled : unit -> bool
   (** [enabled ()] is [true] iff a profile is being taken. The libraries that
@@ -728,14 +734,14 @@ module Profile : sig
       Raises [Invalid_argument] if [stamps] is not two [UInt64] that [d]'s host
       addresses. *)
 
-  val output : out_channel -> event list -> unit
-  (** [output oc events] writes [events] to [oc] in Chrome's trace event format,
-      JSON: a process for each device, named after it, with a thread for each of
-      its lanes; a complete event for each span, a counter [memory] for each
-      change of memory, and an instant event for each program load, with the
-      program's handle. Times are microseconds from the earliest event.
-      Malformed UTF-8 in names becomes U+FFFD. [oc] is neither flushed nor
-      closed. *)
+  val output_chrome_trace : out_channel -> event list -> unit
+  (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace
+      event format, JSON: a process for each device, named after it, with a
+      thread for each of its lanes; a complete event for each span, a counter
+      [memory] for each change of memory, and an instant event for each program
+      load, with the program's handle. Times are microseconds from the earliest
+      event. Malformed UTF-8 in names becomes U+FFFD. [oc] is neither flushed
+      nor closed. *)
 end
 
 (** {1:vendors Vendor runtimes}

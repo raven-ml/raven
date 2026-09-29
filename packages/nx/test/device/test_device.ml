@@ -1833,11 +1833,11 @@ module P = Nx_device.Profile
 
 (* The events of a profile taken around [f]. *)
 let profiled f =
-  P.start ();
+  let p = P.start () in
   match f () with
-  | () -> P.stop ()
+  | () -> P.stop p
   | exception e ->
-      ignore (P.stop ());
+      ignore (P.stop p);
       raise e
 
 type span = { on : string; lane : string; what : string; t0 : int; t1 : int }
@@ -1853,7 +1853,7 @@ let spans =
             t0 = s.start;
             t1 = s.stop;
           }
-    | P.Memory _ | P.Program _ -> None)
+    | P.Allocation _ | P.Load _ -> None)
 
 let span_ =
   Testable.make
@@ -1896,12 +1896,17 @@ let stamped d stamps (t0, t1) =
 
 let test_sessions () =
   is_false (P.enabled ());
-  raises_match Exn.invalid_arg (fun () -> P.stop ());
-  P.start ();
+  let p = P.start () in
   is_true (P.enabled ());
   raises_match Exn.invalid_arg P.start;
-  equal (list span_) [] (spans (P.stop ()));
-  is_false (P.enabled ())
+  equal (list span_) [] (spans (P.stop p));
+  is_false (P.enabled ());
+  raises_match ~msg:"a profile stopped already" Exn.invalid_arg (fun () ->
+      P.stop p);
+  let p' = P.start () in
+  raises_match ~msg:"another profile" Exn.invalid_arg (fun () -> P.stop p);
+  is_true ~msg:"still taken" (P.enabled ());
+  equal (list span_) [] (spans (P.stop p'))
 
 let test_host_spans () =
   let other = ref "" in
@@ -2061,7 +2066,7 @@ let test_memory_events () =
   let samples events =
     List.filter_map
       (function
-        | P.Memory m when Nx_device.equal m.device d -> Some m.allocated
+        | P.Allocation m when Nx_device.equal m.device d -> Some m.allocated
         | _ -> None)
       events
   in
@@ -2080,7 +2085,7 @@ let test_program_events () =
         ignore (program d ~binary:"lib" ~name:"k"))
   in
   match events with
-  | [ P.Program p ] ->
+  | [ P.Load p ] ->
       equal
         (triple string string nativeint)
         ("k", "lib", 42n)
@@ -2255,7 +2260,7 @@ let written events =
   Fun.protect
     ~finally:(fun () -> Sys.remove path)
     (fun () ->
-      Out_channel.with_open_bin path (fun oc -> P.output oc events);
+      Out_channel.with_open_bin path (fun oc -> P.output_chrome_trace oc events);
       parse (In_channel.with_open_bin path In_channel.input_all))
 
 let test_output () =
@@ -2359,7 +2364,7 @@ let test_output () =
 let profiles =
   group "profiles"
     [
-      test "are taken one at a time, between start and stop" test_sessions;
+      test "are taken one at a time, and stopped by their holder" test_sessions;
       test
         "host spans nest on the lane of their domain, and one records a \
          function that raises"

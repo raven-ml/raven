@@ -2829,6 +2829,10 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Profile.start` returns the profile, and
+  `Profile.stop` takes it, so that only its holder stops it. The events
+  `Memory` and `Program` are `Allocation` and `Load`, and `Profile.output` is
+  `output_chrome_trace`.
 - **Breaking:** a device lost to a hang, a driver fault or its machine's
   connection raises `Nx_device.Lost (d, why)`, printed `NAME: why`, where it
   raised `Failure`. A host without memory for a copy's staging raises

@@ -173,8 +173,8 @@ and event =
       start : int;
       stop : int;
     }
-  | Memory of { device : t; time : int; allocated : int }
-  | Program of { program : program; binary : string; time : int }
+  | Allocation of { device : t; time : int; allocated : int }
+  | Load of { program : program; binary : string; time : int }
 
 and collector = { events : event list Atomic.t }
 
@@ -320,7 +320,7 @@ let memory_changed d =
   | None -> ()
   | Some c ->
       push c.events
-        (Memory
+        (Allocation
            { device = d; time = now_ns (); allocated = Atomic.get d.allocated })
 
 (* The lane of the calling domain on the host. *)
@@ -1785,8 +1785,7 @@ module Program = struct
         Gc.finalise_last (fun () -> push d.dropped { key; cell; unload }) p);
     (match Atomic.get profile with
     | None -> ()
-    | Some c ->
-        push c.events (Program { program = p; binary; time = now_ns () }));
+    | Some c -> push c.events (Load { program = p; binary; time = now_ns () }));
     p
 
   (* A loader that raises [Failure] loses its device. *)
@@ -1925,17 +1924,19 @@ module Profile = struct
         start : int;
         stop : int;
       }
-    | Memory of { device : t; time : int; allocated : int }
-    | Program of { program : program; binary : string; time : int }
+    | Allocation of { device : t; time : int; allocated : int }
+    | Load of { program : program; binary : string; time : int }
+
+  type t = collector
 
   let now = now_ns
   let enabled () = Option.is_some (Atomic.get profile)
 
   let start () =
-    if
-      not
-        (Atomic.compare_and_set profile None (Some { events = Atomic.make [] }))
-    then invalid_arg "Nx_device.Profile.start: already profiling"
+    let c = { events = Atomic.make [] } in
+    if not (Atomic.compare_and_set profile None (Some c)) then
+      invalid_arg "Nx_device.Profile.start: already profiling";
+    c
 
   let span name f =
     match Atomic.get profile with
@@ -1999,10 +2000,12 @@ module Profile = struct
 
   let time = function
     | Span s -> s.start
-    | Memory m -> m.time
-    | Program p -> p.time
+    | Allocation m -> m.time
+    | Load p -> p.time
 
-  let length = function Span s -> s.stop - s.start | Memory _ | Program _ -> 0
+  let length = function
+    | Span s -> s.stop - s.start
+    | Allocation _ | Load _ -> 0
 
   (* By time, and at equal times longest first, so that nested spans follow the
      spans they are in. *)
@@ -2011,10 +2014,10 @@ module Profile = struct
     | 0 -> Int.compare (length b) (length a)
     | c -> c
 
-  let stop () =
-    match Atomic.exchange profile None with
-    | None -> invalid_arg "Nx_device.Profile.stop: not profiling"
-    | Some c ->
+  let stop p =
+    let taken = Atomic.get profile in
+    match taken with
+    | Some c when c == p && Atomic.compare_and_set profile taken None ->
         List.iter
           (fun d ->
             if Atomic.get d.spans <> [] && failed d = None then
@@ -2038,13 +2041,14 @@ module Profile = struct
                 (calibrated d hz)
           | e -> Some e)
         |> List.stable_sort order
+    | _ -> invalid_arg "Nx_device.Profile.stop: the profile is not being taken"
 
   (* Chrome's trace event format *)
 
   let device_of = function
     | Span s -> s.device
-    | Memory m -> m.device
-    | Program p -> p.program.p_device
+    | Allocation m -> m.device
+    | Load p -> p.program.p_device
 
   (* [s] as a JSON string. Malformed UTF-8 becomes U+FFFD. *)
   let string oc s =
@@ -2075,7 +2079,7 @@ module Profile = struct
     if ns < 0 then output_char oc '-';
     Printf.fprintf oc "%d.%03d" (abs ns / 1000) (abs ns mod 1000)
 
-  let output oc events =
+  let output_chrome_trace oc events =
     let events = List.stable_sort order events in
     let origin = match events with [] -> 0 | e :: _ -> time e in
     let pids = Hashtbl.create 8 and tids = Hashtbl.create 8 in
@@ -2114,7 +2118,7 @@ module Profile = struct
         let tid = match e with Span s -> tid s.device pid s.lane | _ -> 0 in
         next ();
         let ph =
-          match e with Span _ -> "X" | Memory _ -> "C" | Program _ -> "i"
+          match e with Span _ -> "X" | Allocation _ -> "C" | Load _ -> "i"
         in
         Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
           tid;
@@ -2125,10 +2129,10 @@ module Profile = struct
             micros oc (s.stop - s.start);
             output_string oc ",\"name\":";
             string oc s.name
-        | Memory m ->
+        | Allocation m ->
             Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"
               m.allocated
-        | Program p ->
+        | Load p ->
             output_string oc ",\"s\":\"p\",\"name\":";
             string oc p.program.p_name;
             Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
