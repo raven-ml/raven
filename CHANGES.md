@@ -2863,6 +2863,9 @@ thread.
 
 ### Nx
 
+- Reading a NaN of `float8_e4m3` or `float8_e5m2`, and
+  `Nx_dtype.Scalar.decode`, keep its sign, as writing one already did: a
+  negative NaN read as positive, so it did not survive a round trip.
 - Converting to a float8 format saturates a finite value past the largest
   finite one to the largest finite value of its sign. `Nx.cast`, element
   writes and `Nx_dtype.Scalar.encode` gave NaN in `float8_e4m3` and the fnuz

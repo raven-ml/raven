@@ -320,7 +320,8 @@ module Scalar : sig
 
   val decode : t -> int -> float
   (** [decode s c] is the value of the bits [c] in format [s]. Every finite
-      value is exact.
+      value is exact, and a NaN has the sign of [c], except the one NaN of the
+      fnuz formats.
 
       Raises [Invalid_argument] if [s] is not one of the formats above, or if
       [c] is not in \[[0];[2{^n} - 1]\] where [n] is [bitsize s]. *)

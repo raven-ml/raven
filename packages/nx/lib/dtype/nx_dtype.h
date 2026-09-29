@@ -186,7 +186,7 @@ static inline uint8_t float_to_fp8_e4m3(float f) {
 }
 
 static inline float fp8_e4m3_to_float(uint8_t c) {
-  if ((c & 0x7F) == 0x7F) return NAN;
+  if ((c & 0x7F) == 0x7F) return copysignf(NAN, (c & 0x80) ? -1.f : 1.f);
   float v = nx_fp8_value(c & 0x7F, 3, 7);
   return (c & 0x80) ? -v : v;
 }
@@ -201,7 +201,7 @@ static inline uint8_t float_to_fp8_e5m2(float f) {
 
 static inline float fp8_e5m2_to_float(uint8_t c) {
   uint32_t q = c & 0x7F;
-  if (q > 0x7C) return NAN;
+  if (q > 0x7C) return copysignf(NAN, (c & 0x80) ? -1.f : 1.f);
   float v = q == 0x7C ? INFINITY : nx_fp8_value(q, 2, 15);
   return (c & 0x80) ? -v : v;
 }

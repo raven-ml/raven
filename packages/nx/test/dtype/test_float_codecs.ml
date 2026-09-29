@@ -216,17 +216,19 @@ let check_casts inputs ~src () =
   cast e5m2 Nx.float8_e5m2
 
 (* Every code decodes to its value, and every code but NaN encodes back to
-   itself. *)
+   itself. A NaN encodes back to a NaN of its sign, in the formats whose NaNs
+   have one. *)
 let check_codes f ~is_nan () =
   for code = 0 to 255 do
     let msg = Printf.sprintf "%s code 0x%02x" (name f) code in
     let v = S.decode f.scalar code in
     equal ~msg:(msg ^ " is NaN") bool (is_nan code) (Float.is_nan v);
     if is_nan code then
+      let back = S.encode f.scalar v in
       equal
-        ~msg:(msg ^ " re-encodes a NaN")
+        ~msg:(msg ^ " re-encodes a NaN of its sign")
         bool true
-        (is_nan (S.encode f.scalar v))
+        (is_nan back && (f.fnuz || back land 0x80 = code land 0x80))
     else equal ~msg:(msg ^ " re-encodes") int code (S.encode f.scalar v)
   done
 
