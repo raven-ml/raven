@@ -2136,6 +2136,327 @@ let profiles =
         test_output;
     ]
 
+(* Machines *)
+
+(* Another machine, whose memory stands in for its own: the process reaches it
+   only through the host's [io], which counts its calls and fails once the
+   machine is [down]. *)
+type machine = {
+  mhost : Nx_device.t;
+  down : bool ref;
+  reads : int ref;
+  writes : int ref;
+  copies : int ref;
+}
+
+(* Memory of [n] bytes on 16 bytes, kept in [keep] until freed. *)
+let block keep ~addressed n =
+  let ba = chars (n + 15) in
+  let a = B.host_address (B.of_bigarray ba) in
+  let a = Nativeint.(logand (add a 15n) (lognot 15n)) in
+  Hashtbl.replace keep a ba;
+  let host = if addressed then Some a else None in
+  Some { Nx_device.host; device = a; handle = a }
+
+let machine ?(name = "far:1") ?load ?call () =
+  let down = ref false
+  and reads = ref 0
+  and writes = ref 0
+  and copies = ref 0 in
+  let keep = Hashtbl.create 8 in
+  let reach count f =
+    if !down then failwith (name ^ ": connection lost");
+    incr count;
+    f ()
+  in
+  let io =
+    {
+      Nx_device.read =
+        (fun ~src ~dst n -> reach reads (fun () -> memmove dst src n));
+      write = (fun ~dst ~src n -> reach writes (fun () -> memmove dst src n));
+      copy = (fun ~dst ~src n -> reach copies (fun () -> memmove dst src n));
+    }
+  in
+  let memory =
+    {
+      Nx_device.alloc = block keep ~addressed:true;
+      free = (fun m -> Hashtbl.remove keep m.device);
+    }
+  in
+  let mhost =
+    Nx_device.make_host ~name:("CPU@" ^ name) ~arch:"test" ~budget:max_int
+      ~memory ~io ?load ?call ()
+  in
+  { mhost; down; reads; writes; copies }
+
+(* A GPU of [m] whose memory its host does not address. Its copies run at once
+   and signal its timeline, which only its machine's host addresses. *)
+let remote_gpu ?(name = "GPU") m =
+  let keep = Hashtbl.create 8 in
+  let free (mem : Nx_device.memory) = Hashtbl.remove keep mem.device in
+  let copy_queue (tl : Nx_device.memory) =
+    let word = Option.get tl.host in
+    let copy ~dst ~src n v =
+      if !(m.down) then failwith "the machine is down";
+      memmove dst src n;
+      store_signal word v
+    in
+    let stamp ~slot v =
+      store_signal (Nativeint.add slot 8n) v;
+      store_signal word v
+    in
+    { Nx_device.copy; transfer = (fun _ -> None); stamp }
+  in
+  let map a _ = Ok { Nx_device.host = Some a; device = a; handle = a } in
+  Nx_device.make ~host:m.mhost
+    ~name:(name ^ "@" ^ Nx_device.name m.mhost)
+    ~arch:"test" ~budget:max_int
+    ~memory:{ alloc = block keep ~addressed:false; free }
+    ~host_memory:{ alloc = block keep ~addressed:true; free }
+    ~mapping:{ map; unmap = ignore } ~copy_queue ()
+
+let calls (m : machine) = !(m.reads) + !(m.writes) + !(m.copies)
+
+let test_machines () =
+  let m = machine () in
+  let gpu = remote_gpu m in
+  let near = fake () in
+  equal ~msg:"a device of another machine" (arg pp_device) m.mhost
+    (Nx_device.host_of gpu);
+  equal ~msg:"a host is its own" (arg pp_device) m.mhost
+    (Nx_device.host_of m.mhost);
+  equal ~msg:"this machine's" (arg pp_device) host (Nx_device.host_of near.dev);
+  equal ~msg:"the host" (arg pp_device) host (Nx_device.host_of host);
+  raises_match (Exn.invalid_arg ~substring:"not a host") (fun () ->
+      Nx_device.make ~host:gpu ~name:"X" ~arch:"test" ~budget:1
+        ~memory:{ alloc = (fun _ -> None); free = ignore }
+        ());
+  let b = B.create m.mhost S.UInt8 16 in
+  raises_match (Exn.invalid_arg ~substring:"another machine's") (fun () ->
+      B.host_address b);
+  raises_match (Exn.invalid_arg ~substring:"not CPU") (fun () ->
+      B.bigarray Bigarray.char b);
+  raises_match (Exn.invalid_arg ~substring:"not CPU@far:1") (fun () ->
+      B.borrow gpu (B.create host S.UInt8 page))
+
+let test_host_copies () =
+  let m = machine () in
+  let b = B.create m.mhost S.UInt8 100 and c = B.create m.mhost S.UInt8 100 in
+  let w = !(m.writes) and r = !(m.reads) in
+  write b (pattern 1 100);
+  is_true ~msg:"written through io" (!(m.writes) > w);
+  B.copy ~src:b ~dst:c;
+  is_true ~msg:"a copy there is the host's" (!(m.copies) > 0);
+  equal ~msg:"read back through io" string (pattern 1 100) (read c);
+  is_true ~msg:"read through io" (!(m.reads) > r);
+  let s = Nx_device.Stats.diff (stats m.mhost) (stats m.mhost) in
+  equal ~msg:"stats answer" int 0 (Nx_device.Stats.allocated s)
+
+let test_remote_gpu () =
+  let m = machine () in
+  let gpu = remote_gpu m in
+  let on = B.create gpu S.UInt8 5000 and back = B.create gpu S.UInt8 5000 in
+  write on (pattern 2 5000);
+  B.copy ~src:on ~dst:back;
+  equal ~msg:"from this machine and back, through the far host" string
+    (pattern 2 5000) (read back);
+  let hb = B.create m.mhost S.UInt8 5000 in
+  B.copy ~src:back ~dst:hb;
+  equal ~msg:"into its host's memory" string (pattern 2 5000) (read hb);
+  let pinned = B.create ~host:true gpu S.UInt8 5000 in
+  write pinned (pattern 3 5000);
+  B.copy ~src:pinned ~dst:on;
+  equal ~msg:"from its host memory" string (pattern 3 5000) (read on);
+  let r = !(m.reads) in
+  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
+  (* The work never signals: the wait polls the far word until it times out. *)
+  Nx_device.set_timeout gpu 50;
+  raises_match (Exn.failure ~substring:"hang detected") (fun () ->
+      Nx_device.synchronize gpu);
+  is_true ~msg:"the signal word was read through io" (!(m.reads) > r)
+
+let test_between_machines () =
+  let m = machine () and m' = machine ~name:"far:2" () in
+  let g = remote_gpu m and g' = remote_gpu m' in
+  let local = (far ()).dev in
+  let slot = 64 lsl 20 in
+  let n = slot + 777 in
+  let bytes = pattern 5 n in
+  let on_local = B.create local S.UInt8 n in
+  write on_local bytes;
+  let on_g = B.create g S.UInt8 n in
+  B.copy ~src:on_local ~dst:on_g;
+  let on_g' = B.create g' S.UInt8 n in
+  B.copy ~src:on_g ~dst:on_g';
+  let hb = B.create m'.mhost S.UInt8 n in
+  B.copy ~src:on_g' ~dst:hb;
+  let back = B.create local S.UInt8 n in
+  B.copy ~src:hb ~dst:back;
+  is_true ~msg:"the bytes crossed three machines and came back"
+    (String.equal bytes (read back));
+  equal ~msg:"bytes out of the first" int n
+    (Nx_device.Stats.bytes_out (stats g))
+
+let test_machine_down () =
+  let m = machine () in
+  let gpu = remote_gpu m in
+  let on = B.create gpu S.UInt8 64 and hb = B.create m.mhost S.UInt8 64 in
+  let near = B.create host S.UInt8 64 and here = B.create host S.UInt8 20 in
+  m.down := true;
+  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
+      B.copy ~src:near ~dst:hb);
+  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
+      B.create m.mhost S.UInt8 8);
+  raises_match (Exn.failure ~substring:"") (fun () -> B.copy ~src:near ~dst:on);
+  (* The GPU fails once an operation of its own meets the machine. *)
+  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
+      Nx_device.submit gpu ~touches:[] ignore);
+  let c = calls m in
+  raises_match (Exn.failure ~substring:"") (fun () -> Nx_device.synchronize gpu);
+  equal ~msg:"a failed device reaches its machine no more" int c (calls m);
+  write here "this machine goes on";
+  equal ~msg:"this machine goes on" string "this machine goes on" (read here)
+
+(* A link that carries copies between machines, counting them. *)
+let test_links () =
+  let m = machine () in
+  let gpu = remote_gpu m in
+  let moved = ref 0 and broken = ref false in
+  let rec nic =
+    lazy
+      (Nx_device.make ~name:"NIC" ~arch:"test" ~budget:0
+         ~memory:{ alloc = (fun _ -> None); free = ignore }
+         ~link:(fun ~src ~dst ->
+           if
+             Nx_device.host_of (B.device src)
+             != Nx_device.host_of (B.device dst)
+           then
+             Some
+               {
+                 Nx_device.through = [ Lazy.force nic ];
+                 move =
+                   (fun ~src ~dst ->
+                     if !broken then failwith "NIC: retries exhausted";
+                     incr moved;
+                     ignore (src, dst));
+               }
+           else None)
+         ())
+  in
+  let nic = Lazy.force nic in
+  let local = (far ()).dev in
+  let a = B.create local S.UInt8 32 and b = B.create gpu S.UInt8 32 in
+  let moves () = !(m.writes) + !(m.copies) in
+  let c = moves () in
+  B.copy ~src:a ~dst:b;
+  equal ~msg:"carried by the link" int 1 !moved;
+  equal ~msg:"not through the hosts" int c (moves ());
+  B.copy ~src:a ~dst:(B.create local S.UInt8 32);
+  equal ~msg:"not within a machine" int 1 !moved;
+  broken := true;
+  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
+      B.copy ~src:a ~dst:b);
+  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
+      B.create nic S.UInt8 1);
+  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
+      B.copy ~src:(B.create gpu S.UInt8 32) ~dst:b);
+  B.copy ~src:(B.create local S.UInt8 32) ~dst:a
+
+(* A device that describes its memory, and what runs when it frees it. *)
+let test_dma () =
+  let keep = Hashtbl.create 4 in
+  let freed = ref 0 in
+  let d =
+    Nx_device.make ~name:"DMA" ~arch:"test" ~budget:max_int
+      ~memory:
+        {
+          alloc = block keep ~addressed:true;
+          free =
+            (fun m ->
+              incr freed;
+              Hashtbl.remove keep m.device);
+        }
+      ~dma:(fun m ->
+        if Hashtbl.length keep > 2 then Error "no window left"
+        else
+          Ok
+            {
+              Nx_device.bus = "0000:03:00.0";
+              pages = [ (0x1000, Nativeint.to_int m.device) ];
+            })
+      ()
+  in
+  let b = B.create d S.UInt8 4096 in
+  let dma = B.dma (B.view b ~offset:64 S.UInt8 8) in
+  equal ~msg:"the memory the buffer lies in"
+    (pair string (list (pair int int)))
+    ("0000:03:00.0", [ (0x1000, Nativeint.to_int (B.address b)) ])
+    (dma.bus, dma.pages);
+  raises_match (Exn.invalid_arg ~substring:"does not describe") (fun () ->
+      B.dma (B.create (fake ()).dev S.UInt8 8));
+  let runs = ref 0 in
+  B.on_free b (fun () -> incr runs);
+  raises_match (Exn.invalid_arg ~substring:"allocated") (fun () ->
+      B.on_free (B.create host S.UInt8 8) ignore);
+  dropped (fun () -> b);
+  ignore (stats d);
+  equal ~msg:"cached memory stays mapped" int 0 !runs;
+  Nx_device.free_cache d;
+  equal ~msg:"unmapped before it is freed" (pair int int) (1, 1) (!runs, !freed);
+  let b = B.create d S.UInt8 4096 in
+  B.on_free b (fun () -> failwith "the mapper is gone");
+  dropped (fun () -> b);
+  Nx_device.free_cache d;
+  equal ~msg:"memory a mapper could not unmap is retained" (pair int int)
+    (4096, 1)
+    (Nx_device.Stats.retained (stats d), !freed)
+
+let test_remote_programs () =
+  let calls = ref [] and unloaded = ref 0 in
+  let load ~binary ~name =
+    ignore binary;
+    (Nativeint.of_int (String.length name), fun () -> incr unloaded)
+  in
+  let call h bufs vals = calls := (h, bufs, vals) :: !calls in
+  let m = machine ~load ~call () in
+  let p = Nx_device.Program.load m.mhost ~binary:"elf" ~name:"submit" in
+  let b = B.create m.mhost S.UInt8 24 in
+  Nx_device.Program.call p [| B.view b ~offset:8 S.UInt8 16 |] [| 7 |];
+  (match !calls with
+  | [ (h, [| (a, n) |], [| 7 |]) ] ->
+      equal ~msg:"the handle" nativeint 6n h;
+      equal ~msg:"the buffer's size" int 16 n;
+      is_true ~msg:"an address there" (a <> 0n)
+  | _ -> fail "one call");
+  raises_match (Exn.invalid_arg ~substring:"does not address") (fun () ->
+      Nx_device.Program.call p [| B.create host S.UInt8 8 |] [||]);
+  raises_match (Exn.invalid_arg ~substring:"cannot call") (fun () ->
+      Nx_device.make_host ~name:"X" ~arch:"test" ~budget:1
+        ~memory:{ alloc = (fun _ -> None); free = ignore }
+        ~io:
+          {
+            read = (fun ~src:_ ~dst:_ _ -> ());
+            write = (fun ~dst:_ ~src:_ _ -> ());
+            copy = (fun ~dst:_ ~src:_ _ -> ());
+          }
+        ~load ());
+  dropped (fun () -> p);
+  ignore (stats m.mhost);
+  equal ~msg:"an unreachable program is unloaded there" int 1 !unloaded
+
+let machines =
+  group "machines"
+    [
+      test "devices of another machine and their host" test_machines;
+      test "another machine's host copies through its io" test_host_copies;
+      test "a GPU of another machine" test_remote_gpu;
+      test "copies between three machines, in chunks" test_between_machines;
+      test "a machine that goes down fails its devices alone" test_machine_down;
+      test "links carry copies between machines" test_links;
+      test "memory described to other functions, and unmapped at free" test_dma;
+      test "programs of another machine's host" test_remote_programs;
+    ]
+
 let () =
   if Sys.getenv_opt "NX_DEVICE_FINALIZE_CHILD" = Some "1" then finalize_child ();
   exit
@@ -2150,4 +2471,5 @@ let () =
          failures;
          hooks;
          profiles;
+         machines;
        ])

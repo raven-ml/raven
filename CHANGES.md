@@ -2805,6 +2805,18 @@ thread.
 
 ### Nx
 
+- Devices of other machines. `Nx_device.host_of d` is the host of the machine
+  `d` is attached to. A library that reaches another machine makes its host
+  with `Nx_device.make_host`, whose memory the process reaches through an
+  `io`, and that machine's devices with `make ~host`. `Buffer.copy` copies on
+  another machine as on this one, staging in that machine's memory, and
+  between machines over a link an opened device carries (`make ?link`), or in
+  64 MiB chunks through the hosts otherwise; `Program.call` runs a program of
+  another machine's host there. `Buffer.dma` is how other PCI functions reach
+  a device's memory (`make ?dma`), and `Buffer.on_free` runs a function
+  before a device frees memory another device mapped. A `synchronized` hook
+  that raises now fails its device, and `Profile.record` refuses stamps of
+  another machine than the device's.
 - `nx.device.support` reaches another machine's PCI functions and memory
   through a server there. `Remote` is the client of its protocol: it proves a
   shared key, and both ends must prove it; `Remote_server` serves one client at
