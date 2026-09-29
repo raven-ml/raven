@@ -197,6 +197,12 @@ let replace_or_keep temp path =
 
 let save_safetensors ?(overwrite = true) path items =
   check_overwrite overwrite path;
+  let names = Hashtbl.create (List.length items) in
+  List.iter
+    (fun (name, _) ->
+      if Hashtbl.mem names name then fail_msg "tensor %S is named twice" name;
+      Hashtbl.add names name ())
+    items;
   let tensor_views =
     List.map
       (fun (name, Nx.P arr) ->

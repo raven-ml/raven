@@ -168,9 +168,10 @@ val save_safetensors :
     exist.
 
     @raise Failure
-      if [path] cannot be written or a tensor's dtype has no SafeTensors
-      equivalent (complex and int4 dtypes). If the rename is refused twice, the
-      message names the temporary file, which is kept and holds [entries]. *)
+      if [path] cannot be written, a name is given twice, or a tensor's dtype
+      has no SafeTensors equivalent (complex and int4 dtypes). If the rename is
+      refused twice, the message names the temporary file, which is kept and
+      holds [entries]. *)
 
 (** {1:text Text format} *)
 

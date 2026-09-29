@@ -2731,6 +2731,8 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_safetensors` refuses a name given twice with `Failure`. It wrote
+  a file whose header named the tensor twice, which `load_safetensors` refuses.
 - `Nx_io.save_safetensors` saves any view, and writes each element's bits as
   stored. A transposed, flipped, strided or broadcast tensor raised
   `Invalid_argument` from `reshape`, and a float32 signalling NaN was written
