@@ -70,10 +70,12 @@ val resize_bar : t -> int -> unit
     Raises [Failure] if the system refuses. *)
 
 val reset : t -> unit
-(** [reset p] resets [p] with the reset Linux has for it, and waits until it
-    answers again: it clears the state a previous driver left in it.
+(** [reset p] resets [p] with the reset Linux has for it, and waits, for at most
+    a second, until it answers again: it clears the state a previous driver left
+    in it.
 
-    Raises [Failure] naming the file if the process may not reset it. *)
+    Raises [Failure] naming the file if the process may not reset it or Linux
+    has no reset for it, and if [p] does not answer in time. *)
 
 val wait_interrupt : t -> int -> bool
 (** [wait_interrupt p ms] waits at most [ms] milliseconds for an interrupt of

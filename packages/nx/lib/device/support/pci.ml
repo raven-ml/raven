@@ -32,10 +32,23 @@ let read file =
 let write file s =
   try Out_channel.with_open_text file (fun oc -> output_string oc s)
   with Sys_error e ->
+    let denied =
+      List.exists
+        (fun suffix -> String.ends_with ~suffix e)
+        [ "Permission denied"; "Operation not permitted" ]
+    in
     failwith
-      (Printf.sprintf
-         "%s; writing it needs root (run as root, or grant write access to %s)"
-         e file)
+      (if denied then
+         Printf.sprintf
+           "%s; writing it needs root (run as root, or grant write access to \
+            %s)"
+           e file
+       else e)
+
+let readlink link =
+  try Unix.readlink link
+  with Unix.Unix_error (e, _, _) ->
+    failwith (Printf.sprintf "%s: %s" link (Unix.error_message e))
 
 let hex s =
   int_of_string (if String.starts_with ~prefix:"0x" s then s else "0x" ^ s)
@@ -59,7 +72,7 @@ let scan ~vendor ?class_ ids =
 
 let driver bus =
   let link = path bus "driver" in
-  if Sys.file_exists link then Some (Filename.basename (Unix.readlink link))
+  if Sys.file_exists link then Some (Filename.basename (readlink link))
   else None
 
 let take ~lock bus =
@@ -93,9 +106,7 @@ let take ~lock bus =
     done;
     let interrupts =
       if vfio then begin
-        let group =
-          Filename.basename (Unix.readlink (path bus "iommu_group"))
-        in
+        let group = Filename.basename (readlink (path bus "iommu_group")) in
         let container, group, dev, efd =
           vfio_open ("/dev/vfio/noiommu-" ^ group) bus
         in
@@ -165,9 +176,20 @@ let resize_bar p i =
           settings"
          i p.bus e)
 
+(* A function answers its configuration reads again once its vendor ID reads
+   back as other than all ones. *)
 let reset p =
   write (path p.bus "reset") "1";
-  Unix.sleepf 0.1
+  let rec wait k =
+    if read_config p 0 2 = 0xffff then
+      if k = 0 then
+        failwith (Printf.sprintf "%s does not answer after its reset" p.bus)
+      else begin
+        Unix.sleepf 0.01;
+        wait (k - 1)
+      end
+  in
+  wait 100
 
 let wait_interrupt p ms =
   match p.interrupts with Some fd -> vfio_wait fd ms | None -> false

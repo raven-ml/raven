@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* The vendor-independent support of GPU runtimes: address allocators, page
-   tables over a GPU memory held in a table, firmware lookup and digests, and
-   mapped memory over memory the test allocates. *)
+   tables over a GPU memory held in a table, locked system memory, firmware
+   lookup and digests, and mapped memory over memory the test allocates. *)
 
 open Windtrap
 open Nx_device_support
@@ -392,6 +392,81 @@ let test_base () =
     (translate ~base:0 t mem (va + 8));
   is_none ~msg:"not from the space's base" (translate t mem (va + 8))
 
+(* Sysmem *)
+
+(* Addresses the tests reserve for locked memory. *)
+let sysmem_base = 0x30_0000_0000
+
+(* The kilobytes of the process's memory Linux keeps locked. *)
+let locked_kib () =
+  In_channel.with_open_text "/proc/self/status" In_channel.input_lines
+  |> List.find_map (fun l ->
+      match String.split_on_char ':' l with
+      | [ "VmLck"; v ] ->
+          int_of_string_opt
+            (String.trim (Filename.chop_suffix (String.trim v) "kB"))
+      | _ -> None)
+  |> Option.get
+
+(* Memory [alloc] locked stays locked through a pin and an unpin of it, which
+   another device's mapping of it makes. *)
+let test_sysmem_pins () =
+  match
+    Sysmem.reserve ~base:sysmem_base (8 lsl 20);
+    Sysmem.alloc ~va:sysmem_base (1 lsl 20)
+  with
+  | exception Failure why -> skip ~reason:why ()
+  | m, pages ->
+      equal ~msg:"a page each" int
+        ((1 lsl 20) / Sysmem.page)
+        (List.length pages);
+      let locked = locked_kib () in
+      is_true ~msg:"locked" (locked >= 1024);
+      ignore (Sysmem.pin (Mmio.address m) (Mmio.length m) : int list);
+      Sysmem.unpin (Mmio.address m) (Mmio.length m);
+      equal ~msg:"still locked after a pin and an unpin" int locked
+        (locked_kib ());
+      Sysmem.free m;
+      equal ~msg:"unlocked once freed" int (locked - 1024) (locked_kib ())
+
+(* Pins are counted: of two pins of one range, one unpin leaves its pages
+   locked, and the second unlocks them. *)
+let test_sysmem_counted_pins () =
+  let page = Sysmem.page in
+  let raw = alloc (3 * page) in
+  let a =
+    Nativeint.(
+      logand (add raw (of_int (page - 1))) (lognot (of_int (page - 1))))
+  in
+  match Sysmem.pin a page with
+  | exception Failure why -> skip ~reason:why ()
+  | _ ->
+      let pinned = locked_kib () in
+      ignore (Sysmem.pin a page : int list);
+      Sysmem.unpin a page;
+      equal ~msg:"still locked after one of two unpins" int pinned
+        (locked_kib ());
+      Sysmem.unpin a page;
+      equal ~msg:"unlocked after the second" int
+        (pinned - (page / 1024))
+        (locked_kib ())
+
+(* Contiguous memory is one huge page at an address on 2 MiB. *)
+let test_sysmem_contiguous () =
+  raises_match (Exn.invalid_arg ~substring:"not on 2 MiB") (fun () ->
+      Sysmem.alloc ~contiguous:true
+        ~va:(sysmem_base + Sysmem.page)
+        (4 * Sysmem.page));
+  match
+    Sysmem.reserve ~base:sysmem_base (8 lsl 20);
+    Sysmem.alloc ~contiguous:true ~va:(sysmem_base + (2 lsl 20)) (300 * 1024)
+  with
+  | exception Failure why -> skip ~reason:why ()
+  | m, pages ->
+      equal ~msg:"one address" int 1 (List.length pages);
+      equal ~msg:"a huge page" int (2 lsl 20) (Mmio.length m);
+      Sysmem.free m
+
 (* Firmware *)
 
 let test_sha256 () =
@@ -518,6 +593,12 @@ let () =
              test "entries by level" test_entry_levels;
              test "the tables of a range" test_path;
              test "a base of their own" test_base;
+           ];
+         group "sysmem"
+           [
+             test "pins are counted" test_sysmem_counted_pins;
+             test "allocated memory stays locked" test_sysmem_pins;
+             test "contiguous memory" test_sysmem_contiguous;
            ];
          group "firmware"
            [

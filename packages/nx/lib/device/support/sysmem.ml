@@ -58,30 +58,68 @@ let physical va n =
         failwith "reading physical addresses needs CAP_SYS_ADMIN (run as root)";
       frame * page)
 
-let alloc ?(contiguous = false) ~va n =
-  if va mod page <> 0 then
-    invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on a page" va);
-  if contiguous && n > 2 lsl 20 then
-    invalid_arg "Sysmem.alloc: contiguous memory is at most 2 MiB";
-  let n = (n + page - 1) / page * page in
-  let a = Nativeint.of_int va in
-  map_at a n (contiguous && n > page);
-  let m = Mmio.v a n in
-  match physical a n with
-  | pages -> (m, if contiguous then [ List.hd pages ] else pages)
-  | exception e ->
-      release_at a n;
-      raise e
-
-let free m = release_at (Mmio.address m) (Mmio.length m)
-
-(* Pins, counted per page across the process: munlock is not counted. *)
+(* Pins, counted per page across the process: munlock is not counted. The pages
+   {!alloc} maps locked hold one pin until {!free}, so that no {!unpin} unlocks
+   them. *)
 let pins : (nativeint, int) Hashtbl.t = Hashtbl.create 64
 
 let pages_of a n =
   List.init
     ((n + page - 1) / page)
     (fun i -> Nativeint.add a (Nativeint.of_int (i * page)))
+
+let add_pins a n =
+  List.iter
+    (fun p ->
+      Hashtbl.replace pins p
+        (1 + Option.value ~default:0 (Hashtbl.find_opt pins p)))
+    (pages_of a n)
+
+let huge = 2 lsl 20
+
+let alloc ?(contiguous = false) ~va n =
+  if va mod page <> 0 then
+    invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on a page" va);
+  if contiguous && n > huge then
+    invalid_arg "Sysmem.alloc: contiguous memory is at most 2 MiB";
+  let huge_page = contiguous && n > page in
+  if huge_page && va mod huge <> 0 then
+    invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on 2 MiB" va);
+  let n = if huge_page then huge else (n + page - 1) / page * page in
+  let a = Nativeint.of_int va in
+  (try map_at a n huge_page
+   with Failure why when huge_page ->
+     failwith
+       (why
+      ^ "; contiguous memory needs a free huge page: sudo sysctl -w \
+         vm.nr_hugepages=16"));
+  let m = Mmio.v a n in
+  match physical a n with
+  | exception e ->
+      release_at a n;
+      raise e
+  | pages ->
+      let first = List.hd pages in
+      if
+        contiguous
+        && List.filteri (fun i p -> p <> first + (i * page)) pages <> []
+      then begin
+        release_at a n;
+        failwith "the system gave contiguous memory in scattered pages"
+      end;
+      Mutex.protect lock (fun () -> add_pins a n);
+      (m, if contiguous then [ first ] else pages)
+
+let free m =
+  let a = Mmio.address m and n = Mmio.length m in
+  Mutex.protect lock (fun () ->
+      List.iter
+        (fun p ->
+          match Hashtbl.find_opt pins p with
+          | Some 1 | None -> Hashtbl.remove pins p
+          | Some k -> Hashtbl.replace pins p (k - 1))
+        (pages_of a n));
+  release_at a n
 
 let unpin_locked a n =
   List.iter
@@ -101,11 +139,7 @@ let pin a n =
     invalid_arg (Printf.sprintf "Sysmem.pin: 0x%nx is not on a page" a);
   Mutex.protect lock (fun () ->
       lock_at a n;
-      List.iter
-        (fun p ->
-          Hashtbl.replace pins p
-            (1 + Option.value ~default:0 (Hashtbl.find_opt pins p)))
-        (pages_of a n));
+      add_pins a n);
   match physical a n with
   | addrs -> addrs
   | exception e ->

@@ -144,9 +144,15 @@ value caml_nx_mmio_fill(value a, value n, value c) {
   return Val_unit;
 }
 
+/* On arm64 a fence orders memory only within the inner shareable domain; the
+   stores to a BAR, write-combined or not, need the full-system barrier. */
 value caml_nx_mmio_barrier(value unit) {
   (void)unit;
+#if defined(__aarch64__)
+  __asm__ __volatile__("dsb sy" ::: "memory");
+#else
   atomic_thread_fence(memory_order_seq_cst);
+#endif
   return Val_unit;
 }
 

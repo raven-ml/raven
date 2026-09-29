@@ -106,10 +106,10 @@ let map_host m a n =
             raise e)
 
 let map_peer m m' mem =
-  if small_bar m' then
+  let map = mem.mapping in
+  if map.space <> Page_table.Sys && small_bar m' then
     Error "the other GPU's memory BAR is too small for peer access"
   else
-    let map = mem.mapping in
     let pages, space =
       match map.space with
       | Page_table.Sys -> (map.pages, Page_table.Sys)
