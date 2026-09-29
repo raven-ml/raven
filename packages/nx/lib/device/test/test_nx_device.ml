@@ -374,29 +374,25 @@ let test_oversized () =
   equal ~msg:"the cache is kept" int 500 (cached d);
   equal ~msg:"nothing freed" int 0 drv.frees
 
-(* Memory that work of a hung device may still use is retained: counted, never
-   freed, and never reused. *)
+(* Memory a failed device's work may still use is retained: never freed and
+   never reused. *)
 let test_retained () =
-  let hung = ref false in
   let signal =
     {
       Nx_device.signaled = (fun () -> 0);
-      wait = (fun _ ~timeout_ms:_ -> not !hung);
+      wait = (fun _ ~timeout_ms:_ -> false);
     }
   in
   let drv = driver () in
-  let d = device ~budget:1000 ~signal drv in
+  let d = device ~name:"D" ~budget:1000 ~signal drv in
   dropped (fun () -> B.create d S.UInt8 600);
-  hung := true;
   ignore (Nx_device.submit d ~touches:[] Fun.id);
-  Nx_device.free_cache d;
-  equal ~msg:"retained" int 600 (retained d);
-  equal ~msg:"not cached" int 0 (cached d);
+  raises_match (Exn.failure ~substring:"D hang detected") (fun () ->
+      Nx_device.free_cache d);
   equal ~msg:"not freed" int 0 drv.frees;
-  raises_match
-    (function Nx_device.Out_of_memory (_, 600) -> true | _ -> false)
-    (fun () -> B.create d S.UInt8 600);
-  hung := false
+  equal ~msg:"not reused" int 1 drv.allocs;
+  equal ~msg:"stats report the retained bytes" int 600 (retained d);
+  equal ~msg:"no longer cached" int 0 (cached d)
 
 (* The allocator never holds more than the budget in live and cached memory,
    unless the budget fell below the live buffers, which are never released. *)
@@ -595,20 +591,104 @@ let test_copy_synchronizes () =
   is_true ~msg:"copied after the work completed" (Atomic.get signaled);
   Domain.join domain
 
+(* A device that never signals: the first wait times out and fails it, and from
+   then on its own operations raise at once. *)
 let test_hang () =
-  let hung = ref true in
+  let waits = ref 0 in
   let signal =
     {
-      Nx_device.signaled = (fun () -> if !hung then 0 else max_int);
+      Nx_device.signaled = (fun () -> 0);
+      wait =
+        (fun _ ~timeout_ms:_ ->
+          incr waits;
+          false);
+    }
+  in
+  let hung = device ~name:"HUNG" ~signal (driver ()) in
+  ignore (Nx_device.submit hung ~touches:[] Fun.id);
+  let hang = Exn.failure ~substring:"HUNG hang detected" in
+  raises_match hang (fun () -> Nx_device.synchronize hung);
+  raises_match hang (fun () -> Nx_device.synchronize hung);
+  raises_match hang (fun () -> B.create hung S.UInt8 1);
+  equal ~msg:"stats still answer" int 0
+    (Nx_device.Stats.allocated (Nx_device.stats hung));
+  raises_match hang (fun () -> Nx_device.submit hung ~touches:[] Fun.id);
+  equal ~msg:"no second wait" int 1 !waits
+
+(* A GPU hangs after work that touched the host through a borrow. The host stays
+   healthy, collections included; only memory the GPU can reach raises its
+   error. *)
+let test_failure_scope () =
+  let waits = ref 0 in
+  let signal =
+    {
+      Nx_device.signaled = (fun () -> 0);
+      wait =
+        (fun _ ~timeout_ms:_ ->
+          incr waits;
+          false);
+    }
+  in
+  let gpu = device ~name:"GPU" ~borrow:map_host ~signal (driver ()) in
+  let shared = B.create Nx_device.host S.UInt8 8 in
+  let mapped = B.borrow gpu shared in
+  ignore (Nx_device.submit gpu ~touches:[ Nx_device.host ] Fun.id);
+  let failed = Exn.failure ~substring:"GPU hang detected" in
+  raises_match failed (fun () -> Nx_device.synchronize gpu);
+  Nx_device.synchronize Nx_device.host;
+  let a = B.create Nx_device.host S.UInt8 8 in
+  write a [ 1; 2; 3; 4; 5; 6; 7; 8 ];
+  equal ~msg:"host copies" bytes [ 1; 2; 3; 4; 5; 6; 7; 8 ] (read a);
+  dropped (fun () -> B.create Nx_device.host S.UInt8 1000);
+  equal ~msg:"host creates after a collection" int 8
+    (B.nbytes (B.create Nx_device.host S.UInt8 8));
+  Nx_device.synchronize Nx_device.host;
+  raises_match failed (fun () -> B.copy ~src:shared ~dst:a);
+  raises_match failed (fun () -> B.copy ~src:a ~dst:shared);
+  raises_match failed (fun () ->
+      B.copy
+        ~src:(B.view shared ~offset:4 S.UInt8 4)
+        ~dst:(B.view a ~offset:0 S.UInt8 4));
+  raises_match failed (fun () -> B.bigarray Bigarray.char shared);
+  equal ~msg:"a view touches no memory" int 4
+    (B.length (B.view shared ~offset:0 S.UInt8 4));
+  raises_match failed (fun () -> read mapped);
+  equal ~msg:"no second wait" int 1 !waits
+
+(* A borrow that was collected and unmapped no longer reaches the host memory:
+   the device failing later leaves that memory usable. *)
+let test_unmapped_before_failure () =
+  let hung = ref false in
+  let signal =
+    {
+      Nx_device.signaled = (fun () -> 0);
       wait = (fun _ ~timeout_ms:_ -> not !hung);
     }
   in
-  let d = device ~signal (driver ()) in
+  let gpu = device ~name:"LATE" ~borrow:map_host ~signal (driver ()) in
+  let shared = B.create Nx_device.host S.UInt8 4 in
+  dropped (fun () -> B.borrow gpu shared);
+  ignore (Nx_device.stats gpu);
+  hung := true;
+  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
+  raises_match (Exn.failure ~substring:"LATE hang detected") (fun () ->
+      Nx_device.synchronize gpu);
+  write shared [ 1; 2; 3; 4 ];
+  equal ~msg:"still usable" bytes [ 1; 2; 3; 4 ] (read shared)
+
+(* A fault the driver reports fails the device with the driver's message. *)
+let test_fault () =
+  let signal =
+    {
+      Nx_device.signaled = (fun () -> 0);
+      wait = (fun _ ~timeout_ms:_ -> failwith "page fault");
+    }
+  in
+  let d = device ~name:"FAULTY" ~signal (driver ()) in
   ignore (Nx_device.submit d ~touches:[] Fun.id);
-  raises_match (Exn.failure ~substring:"TEST hang detected") (fun () ->
-      Nx_device.synchronize d);
-  hung := false;
-  Nx_device.synchronize d
+  let fault = Exn.failure ~substring:"FAULTY: page fault" in
+  raises_match fault (fun () -> Nx_device.synchronize d);
+  raises_match fault (fun () -> B.create d S.UInt8 1)
 
 (* Without its own signal, a wait restarts its timeout whenever the signal word
    moves: slow progress is not a hang, and no progress is. *)
@@ -677,7 +757,12 @@ let () =
              test "work that touched another device" test_touched_devices;
              test "the synchronize hook" test_synchronized_hook;
              test "copies synchronize" test_copy_synchronizes;
-             test "a hung device raises" test_hang;
+             test "a hung device fails" test_hang;
+             test "a failure is scoped to the memory it reaches"
+               test_failure_scope;
+             test "an unmapped borrow is out of reach"
+               test_unmapped_before_failure;
+             test "a faulting device fails" test_fault;
              test "the timeout restarts on progress" test_timeout_restarts;
            ];
        ])

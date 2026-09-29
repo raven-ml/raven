@@ -11,6 +11,10 @@
     the host's memory. Its programs are functions of metallib binaries. Its
     budget defaults to the working set size Metal recommends for the GPU.
 
+    A fault on the GPU surfaces as a hang: the runtime reads no command buffer's
+    status, so work that faults is found when its signal does not arrive in
+    time.
+
     This library exists on macOS only. *)
 
 val count : unit -> int

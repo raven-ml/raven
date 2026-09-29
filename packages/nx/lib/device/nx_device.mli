@@ -35,10 +35,26 @@
     it, so memory dropped by a domain that is not allocating returns when that
     domain next runs its finalisers.
 
-    {b Hangs.} {!synchronize} and {!Buffer.copy} wait for the work of the
-    devices involved. They raise [Failure "NAME hang detected"], where [NAME] is
-    a device's name, if one does not signal within its timeout: 30 seconds
-    unless its vendor library sets another. *)
+    {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
+    the devices involved. A device that does not signal within its timeout (30
+    seconds unless its vendor library sets another), or whose driver reports a
+    fault, is {e failed}: its state is unknown and nothing recovers it. Its
+    failure is scoped to the memory it can reach, its own buffers and the host
+    memory it borrowed:
+    - The operation that finds the failure, waiting for the device's own work,
+      raises [Failure "NAME hang detected"], where [NAME] is the device's name,
+      or [Failure] with the driver's message.
+    - Every later operation that takes the failed device raises that error at
+      once. {!stats} answers, as do the functions that do not take the device:
+      {!name}, {!arch}, {!budget}, {!submitted}, {!signaled} and {!timeline}.
+    - {!Buffer.copy} from or to memory the failed device can reach, and
+      {!Buffer.bigarray} of such memory, raise that error too. {!Buffer.view}
+      does not.
+    - Other devices do not wait for the failed device's work, and their other
+      operations are unaffected.
+    - A failed device never reclaims memory again: its buffers, and the host
+      memory it borrowed, stay allocated for the life of the process, including
+      borrows it was unmapping when it failed. *)
 
 (** {1:devices Devices} *)
 
@@ -67,8 +83,10 @@ val synchronize : t -> unit
 (** [synchronize d] returns once the work submitted to [d], and the work
     submitted to other devices that touched [d]'s memory, has completed.
 
-    Raises [Failure "NAME hang detected"] if [d] or one of those devices does
-    not signal in time. *)
+    Work of a failed device is not waited for. Raises
+    [Failure "NAME hang detected"] if [d] does not signal in time, and [Failure]
+    with the driver's message if its driver reports a fault; [d] is then failed.
+    Raises [d]'s error at once if [d] has failed. *)
 
 (** {1:memory Memory} *)
 
@@ -173,8 +191,9 @@ module Buffer : sig
       [bytes_in].
 
       Raises [Invalid_argument] if [src] and [dst] have different sizes in
-      bytes, and [Failure "NAME hang detected"] if a device it waits for does
-      not signal in time. *)
+      bytes; [Failure "NAME hang detected"] if [src]'s or [dst]'s device does
+      not signal in time; and [Failure] with a failed device's error if that
+      device can reach [src] or [dst]. *)
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -197,7 +216,8 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is not on {!host}, if [k] is [Int] or
       [Nativeint], which are no storage format, or if [b]'s bytes are not a
       whole number of elements of [k], aligned to the size of one element (of
-      one component for complex kinds). *)
+      one component for complex kinds), and [Failure] with a failed device's
+      error if that device can reach [b]. *)
 
   (** {2:low Low-level}
 
@@ -283,7 +303,8 @@ end
 
 val stats : t -> Stats.t
 (** [stats d] is a snapshot of [d]'s statistics. The memory of buffers collected
-    before the call counts as returned. *)
+    before the call counts as returned, unless [d] has failed. It answers on a
+    failed device, whose retained bytes it reports. *)
 
 (** {1:submitting Submitting work}
 

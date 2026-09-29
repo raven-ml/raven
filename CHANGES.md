@@ -2755,6 +2755,10 @@ thread.
   before it raises. `Buffer.copy` synchronizes the devices it touches. There
   are also per-device statistics (`stats`), loaded programs (`Program`), and a
   timeline (`submit`, `synchronize`) for the libraries that submit work.
+  A device that hangs or faults is failed for good: every later operation
+  that takes it, and every copy or bigarray view of memory it can reach,
+  raises its first error at once, while other devices stop waiting for its
+  work.
 - New `nx.metal.device` library (macOS): `Nx_metal_device.v 0` opens the
   Apple GPU as an `Nx_device.t`. Its buffers are memory the GPU shares with
   the host, kept resident through a residency set where Metal has one. It

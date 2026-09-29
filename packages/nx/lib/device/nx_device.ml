@@ -29,6 +29,8 @@ type t = {
   timeline : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
       (* [signaled; submitted] *)
   released : base list Atomic.t;
+  failed : string option Atomic.t;
+      (* the error that failed the device, which every operation raises *)
   cache : (int, memory list) Hashtbl.t;
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
@@ -49,6 +51,8 @@ and base = {
   bytes : int; (* of owned memory, 0 when borrowed *)
   borrowed : bool;
   keep : keep;
+  source : base option; (* for a borrow, the host memory it maps *)
+  maps : t list Atomic.t; (* the devices this memory is mapped on *)
 }
 
 and program = { p_device : t; p_name : string; p_handle : nativeint }
@@ -133,6 +137,7 @@ let create ~name ~arch ~budget ~caches ~alloc ~free ~map ~load ~signal
       synchronized;
       timeline;
       released = Atomic.make [];
+      failed = Atomic.make None;
       cache = Hashtbl.create 16;
       pending = Hashtbl.create 4;
       programs = Hashtbl.create 16;
@@ -180,20 +185,57 @@ let signaled d =
   | Some s -> s.signaled ()
   | None -> Int64.to_int (load_u64 (timeline_address d))
 
+(* A device that hung or faulted is in an unknown state: its first error fails
+   it for good, and every later operation raises that error at once. *)
+let fail d msg =
+  ignore (Atomic.compare_and_set d.failed None (Some msg));
+  failwith (Option.get (Atomic.get d.failed))
+
+let check d = Option.iter failwith (Atomic.get d.failed)
+
 let wait_signal d v =
-  let signaled =
+  check d;
+  match
     match d.signal with
     | Some s -> s.wait v ~timeout_ms:d.timeout_ms
     | None -> wait_u64 (timeline_address d) (Int64.of_int v) d.timeout_ms <> 0
-  in
-  if not signaled then failwith (d.name ^ " hang detected")
+  with
+  | true -> ()
+  | false -> fail d (d.name ^ " hang detected")
+  | exception Failure msg -> fail d (d.name ^ ": " ^ msg)
+
+let failed d = Atomic.get d.failed
 
 (* Waits for [d]'s work and for the work that touched [d]'s memory. [d] is
-   taken. *)
+   taken. A failed device will never signal, so its work is not waited for: the
+   memory it can reach raises its error instead. *)
 let sync d =
   wait_signal d (submitted d);
-  Hashtbl.iter (fun _ (d', v) -> wait_signal d' v) d.pending;
+  Hashtbl.iter
+    (fun _ (d', v) ->
+      if failed d' = None then try wait_signal d' v with Failure _ -> ())
+    d.pending;
   d.synchronized ()
+
+(* The error of a failed device that can reach [base]'s memory: its own device,
+   a device it is mapped on, or those of the memory it maps. *)
+let rec failure_of base =
+  match failed base.owner with
+  | Some _ as e -> e
+  | None -> (
+      match List.find_map failed (Atomic.get base.maps) with
+      | Some _ as e -> e
+      | None -> Option.bind base.source failure_of)
+
+let rec update_maps base f =
+  let l = Atomic.get base.maps in
+  if not (Atomic.compare_and_set base.maps l (f l)) then update_maps base f
+
+(* Removes one occurrence of [d] from a mapping list. *)
+let rec unmapped d = function
+  | [] -> []
+  | d' :: l when d' == d -> l
+  | d' :: l -> d' :: unmapped d l
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
@@ -209,9 +251,10 @@ let free_all d ~owned ~keep memories =
   if memories <> [] then
     match sync d with
     | () -> List.iter d.free memories
-    | exception Failure _ ->
+    | exception (Failure _ as e) ->
         d.retained <- d.retained + owned;
-        d.held <- Keep (memories, keep) :: d.held
+        d.held <- Keep (memories, keep) :: d.held;
+        raise e
 
 let fits d n = n <= d.budget - d.allocated - d.cached - d.retained
 
@@ -263,7 +306,11 @@ let reclaim d =
       free_all d ~owned:0 ~keep:borrowed (List.map (fun b -> b.memory) borrowed);
       (* The host memory under the borrows must outlive the wait in [free_all],
          which releases the runtime. *)
-      List.iter (fun b -> ignore (Sys.opaque_identity b.keep)) borrowed;
+      List.iter
+        (fun b ->
+          Option.iter (fun src -> update_maps src (unmapped d)) b.source;
+          ignore (Sys.opaque_identity b.keep))
+        borrowed;
       release_cache d 0
 
 let take_cached d n =
@@ -302,6 +349,7 @@ let with_devices ds f =
   Fun.protect
     ~finally:(fun () -> List.iter (fun d -> Mutex.unlock d.lock) (List.rev ds))
     (fun () ->
+      List.iter check ds;
       List.iter reclaim ds;
       f ())
 
@@ -320,10 +368,11 @@ let () =
   at_exit (fun () ->
       List.iter
         (fun d ->
-          try synchronize d
-          with e ->
-            Printf.eprintf "%s synchronization failed before exiting: %s\n%!"
-              d.name (Printexc.to_string e))
+          if Atomic.get d.failed = None then
+            try synchronize d
+            with e ->
+              Printf.eprintf "%s synchronization failed before exiting: %s\n%!"
+                d.name (Printexc.to_string e))
         (Atomic.get opened))
 
 (* Buffers *)
@@ -359,12 +408,23 @@ module Buffer = struct
     Nativeint.add b.base.memory.host (Nativeint.of_int b.offset)
 
   let handle b = b.base.memory.handle
+
+  (* Raises the error of a failed device that can reach [b]'s memory. *)
+  let reachable b = Option.iter failwith (failure_of b.base)
   let offset b = b.offset
   let no_memory = { host = 0n; device = 0n; handle = 0n }
 
   let empty ~borrowed d s n =
     let base =
-      { owner = d; memory = no_memory; bytes = 0; borrowed; keep = Keep () }
+      {
+        owner = d;
+        memory = no_memory;
+        bytes = 0;
+        borrowed;
+        keep = Keep ();
+        source = None;
+        maps = Atomic.make [];
+      }
     in
     { base; offset = 0; dtype = s; length = n }
 
@@ -378,7 +438,17 @@ module Buffer = struct
               d.allocated <- d.allocated + bytes;
               m)
         in
-        let base = { owner = d; memory; bytes; borrowed = false; keep } in
+        let base =
+          {
+            owner = d;
+            memory;
+            bytes;
+            borrowed = false;
+            keep;
+            source = None;
+            maps = Atomic.make [];
+          }
+        in
         Gc.finalise (release d) base;
         { base; offset = 0; dtype = s; length = n }
 
@@ -391,6 +461,8 @@ module Buffer = struct
         bytes = 0;
         borrowed = true;
         keep = Host ba;
+        source = None;
+        maps = Atomic.make [];
       }
     in
     {
@@ -422,8 +494,17 @@ module Buffer = struct
           | Some memory ->
               let offset = Nativeint.to_int (Nativeint.sub a memory.host) in
               let base =
-                { owner = d; memory; bytes = 0; borrowed = true; keep = Keep b }
+                {
+                  owner = d;
+                  memory;
+                  bytes = 0;
+                  borrowed = true;
+                  keep = Keep b;
+                  source = Some b.base;
+                  maps = Atomic.make [];
+                }
               in
+              update_maps b.base (List.cons d);
               Gc.finalise (release d) base;
               { base; offset; dtype = b.dtype; length = b.length })
 
@@ -456,6 +537,7 @@ module Buffer = struct
     | _ -> ());
     if not (buf.base.owner == host) then
       fail "the buffer is on %s, not CPU" buf.base.owner.name;
+    reachable buf;
     let size = Bigarray.kind_size_in_bytes k and bytes = nbytes buf in
     let align =
       match k with
@@ -482,6 +564,8 @@ module Buffer = struct
     with_devices [ s; d ] (fun () ->
         sync s;
         if d != s then sync d;
+        reachable src;
+        reachable dst;
         if n > 0 then memmove (host_address dst) (host_address src) n;
         if d != s then begin
           s.bytes_out <- s.bytes_out + n;
@@ -546,8 +630,11 @@ module Stats = struct
     }
 end
 
+(* Statistics read counters and reach no memory, so they answer on a failed
+   device, which reclaims nothing. *)
 let stats d =
-  with_devices [ d ] (fun () ->
+  Mutex.protect d.lock (fun () ->
+      (if failed d = None then try reclaim d with Failure _ -> ());
       {
         Stats.allocated = d.allocated;
         cached = d.cached;
@@ -576,6 +663,8 @@ let timeline d =
       bytes = 0;
       borrowed = true;
       keep = Host d.timeline;
+      source = None;
+      maps = Atomic.make [];
     }
   in
   { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 2 }
