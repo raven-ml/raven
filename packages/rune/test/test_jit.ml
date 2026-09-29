@@ -535,10 +535,20 @@ let test_lu_matches_eager () =
     let p, l, u = Nx.lu m in
     Nx.stack [ p; l; u ]
   in
-  check_arr ~msg:"P, L and U" (to_arr (factors a)) (Rune.jit' factors a)
+  check_arr ~msg:"P, L and U" (to_arr (factors a)) (Rune.jit' factors a);
+  check_arr ~msg:"det" (to_arr (Nx.det a)) (Rune.jit' Nx.det a)
 
-(* [Nx.solve] compiles: its singularity check lives in the graph, so the QR and
-   the triangular solve trace as one program, and [Nx.inv] follows. *)
+(* The LU pullback is made of graph ops (triangular solves, matmuls and a gather
+   through the inverse permutation), so the gradient of det compiles. *)
+let test_det_gradient_compiles () =
+  let a = mat64 3 3 [| 0.3; 1.2; -0.4; 2.1; 0.5; 0.9; -0.7; 1.6; 3.2 |] in
+  let compiled = Rune.jit' (fun m -> Rune.grad' Nx.det m) a in
+  check_close ~tol:1e-10 ~msg:"grad through compiled LU"
+    (to_arr (Rune.grad' Nx.det a))
+    (to_arr compiled)
+
+(* [Nx.solve] compiles: its singularity check lives in the graph, so the LU and
+   the triangular solves trace as one program, and [Nx.inv] follows. *)
 let test_solve_matches_eager () =
   let solve (a, b) = Nx.solve a b in
   let a =
@@ -5257,6 +5267,7 @@ let tests =
           test_solve_triangular_vector_rhs;
         test "triangular solve is batched" test_solve_triangular_batched;
         test "LU matches eager" test_lu_matches_eager;
+        test "the gradient of det compiles" test_det_gradient_compiles;
         test "solve and inv match eager" test_solve_matches_eager;
         test "the gradient of a QR-using loss compiles"
           test_qr_gradient_compiles;

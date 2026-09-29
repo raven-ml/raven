@@ -4366,67 +4366,47 @@ module Make (B : Backend_intf.S) = struct
           pow (sum (pow (abs x) p_t) ?axes ~keepdims) inv_p
     | _ -> invalid_arg "norm: this combination of ord and axis not implemented"
 
-  let rec slogdet a =
-    check_square ~op:"slogdet" a;
-    check_float_or_complex ~op:"slogdet" a;
-    let dtype_a = dtype a in
-    let is_complex =
-      Nx_dtype.equal dtype_a Nx_dtype.complex64
-      || Nx_dtype.equal dtype_a Nx_dtype.complex128
-    in
-    let sh = shape a in
-    let rank = Array.length sh in
-    if (not is_complex) && sh.(rank - 1) = 2 && sh.(rank - 2) = 2 then
-      (* 2x2 fast path *)
-      let prefix = List.init (Stdlib.max 0 (rank - 2)) (fun _ -> A) in
-      let a11 = slice_internal (prefix @ [ I 0; I 0 ]) a in
-      let a12 = slice_internal (prefix @ [ I 0; I 1 ]) a in
-      let a21 = slice_internal (prefix @ [ I 1; I 0 ]) a in
-      let a22 = slice_internal (prefix @ [ I 1; I 1 ]) a in
-      let det64 = sub (mul a11 a22) (mul a12 a21) |> cast Nx_dtype.float64 in
-      let z = zeros (B.context det64) Nx_dtype.float64 (shape det64) in
-      let sign_float =
-        sub
-          (cast Nx_dtype.float32 (cast Nx_dtype.float64 (greater det64 z)))
-          (cast Nx_dtype.float32 (cast Nx_dtype.float64 (less det64 z)))
-      in
-      let abs_det = abs det64 in
-      let logdet =
-        cast Nx_dtype.float32
-          (where (cmpeq abs_det z)
-             (full (B.context det64) Nx_dtype.float64 (shape det64)
-                Float.neg_infinity)
-             (log abs_det))
-      in
-      (sign_float, logdet)
-    else
-      let _q, r = B.qr ~reduced:false a in
-      let r_diag = diagonal r in
-      let sign_det =
-        let signs = sign r_diag in
-        if ndim signs > 1 then prod signs ~axes:[ -1 ] ~keepdims:false
-        else prod signs
-      in
-      let sign_float = cast Nx_dtype.float32 (cast Nx_dtype.float64 sign_det) in
-      let abs_f64 = cast Nx_dtype.float64 (abs r_diag) in
-      let z = zeros (B.context abs_f64) Nx_dtype.float64 (shape abs_f64) in
-      let log_abs =
-        where (cmpeq abs_f64 z)
-          (full (B.context abs_f64) Nx_dtype.float64 (shape abs_f64)
-             Float.neg_infinity)
-          (log abs_f64)
-      in
-      let logdet64 =
-        if ndim log_abs > 1 then sum log_abs ~axes:[ -1 ] ~keepdims:false
-        else sum log_abs
-      in
-      (sign_float, cast Nx_dtype.float32 logdet64)
+  (* +1 for a pivot that kept its row, -1 for one that exchanged it. *)
+  let pivot_signs dt pivots =
+    let one = ones (B.context pivots) dt (shape pivots) in
+    let steps = arange (B.context pivots) int32 0 (dim (-1) pivots) 1 in
+    where (not_equal pivots steps) (neg one) one
 
-  and det a =
+  let det a =
     check_square ~op:"det" a;
     check_float_or_complex ~op:"det" a;
-    let sign, logabs = slogdet a in
-    mul (cast (dtype a) sign) (exp logabs |> cast (dtype a))
+    at_float32
+      {
+        f =
+          (fun a ->
+            let packed, pivots, _ = B.lu a in
+            mul
+              (prod (diagonal packed) ~axes:[ -1 ])
+              (prod (pivot_signs (dtype a) pivots) ~axes:[ -1 ]));
+      }
+      a
+
+  let slogdet (type a b) (a : (a, b) t) : (a, b) t * (float, float64_elt) t =
+    check_square ~op:"slogdet" a;
+    check_float_or_complex ~op:"slogdet" a;
+    let factored (type c d) (a : (c, d) t) =
+      let packed, pivots, _ = B.lu a in
+      let d = diagonal packed in
+      let mag = abs d in
+      let unit =
+        div d (where (cmpeq mag (zeros_like mag)) (ones_like mag) mag)
+      in
+      let sign =
+        mul (prod unit ~axes:[ -1 ])
+          (prod (pivot_signs (dtype a) pivots) ~axes:[ -1 ])
+      in
+      (sign, sum (log (cast float64 mag)) ~axes:[ -1 ])
+    in
+    match dtype a with
+    | Float16 ->
+        let sign, logabs = factored (cast float32 a) in
+        (cast (dtype a) sign, logabs)
+    | _ -> factored a
 
   let matrix_rank ?tol ?rtol ?hermitian a =
     check_float_or_complex ~op:"matrix_rank" a;
@@ -4523,25 +4503,44 @@ module Make (B : Backend_intf.S) = struct
         else b
       else b
     in
-    let q, r = B.qr ~reduced:true a in
-    (* A pivot below tolerance makes the system singular. Zeroing its row keeps
-       the check in the graph: the triangular solve then reports [`Singular]
-       itself, and a compiled program yields infinities instead. *)
-    let r =
-      let r_diag = diagonal r |> cast Nx_dtype.float64 in
+    let packed, _, perm = B.lu a in
+    (* Row i of L U is row perm[i] of a, so L U x = b[perm]. A right-hand side
+       of one axis is a vector; any other shares a's batch as a stack of
+       matrices. *)
+    let sa = shape a in
+    let n = sa.(Array.length sa - 1) in
+    let batch = Array.sub sa 0 (Array.length sa - 2) in
+    let vector = ndim b_expanded = 1 in
+    let rows = if vector then [| n |] else [| n; dim (-1) b_expanded |] in
+    let target = Array.append batch rows in
+    let pb =
+      take_along_axis
+        ~axis:(if vector then -1 else -2)
+        ~indices:
+          (broadcast_to target
+             (if vector then perm else expand_dims [ -1 ] perm))
+        (broadcast_to target b_expanded)
+    in
+    (* A pivot below tolerance makes the system singular. Zeroing its row of U
+       keeps the check in the graph: the triangular solve then reports
+       [`Singular] itself, and a compiled program yields infinities instead. *)
+    let u =
+      let pivots = abs (diagonal packed) |> cast Nx_dtype.float64 in
       let m = dim (-2) a in
       let eps =
         if Nx_dtype.equal (dtype a) Nx_dtype.float32 then 1e-6 else 1e-12
       in
       let tol_t =
-        full (B.context r_diag) Nx_dtype.float64 (shape r_diag)
+        full (B.context pivots) Nx_dtype.float64 (shape pivots)
           (eps *. float_of_int m)
       in
-      where (expand_dims [ -1 ] (less (abs r_diag) tol_t)) (zeros_like r) r
+      where (expand_dims [ -1 ] (less pivots tol_t)) (zeros_like packed) packed
     in
-    let y = matmul (matrix_transpose q) b_expanded in
     let result =
-      try B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r y
+      try
+        B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false u
+          (B.solve_triangular ~upper:false ~transpose:false ~unit_diag:true
+             packed pb)
       with Backend_intf.Linalg_error { kind; _ } ->
         raise (Backend_intf.Linalg_error { op = "solve"; kind })
     in

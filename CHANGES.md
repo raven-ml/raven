@@ -2731,6 +2731,17 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.slogdet` returns the sign in the input's dtype (a complex
+  number of modulus 1 for complex input) and the log magnitude as float64,
+  where both were float32. Its type is
+  `('a, 'b) t -> ('a, 'b) t * (float, float64_elt) t`.
+- `Nx.det` of a matrix with an odd number of row exchanges has the right sign,
+  and a float64 determinant has float64 precision. `det` took its sign from
+  QR's `R` alone, dropping `det Q`, so a single row swap had determinant 1, and
+  it went through a float32 `slogdet`. `det`, `slogdet`, `solve`, `inv` and
+  `matrix_power` with a negative power now use `Nx.lu`.
+- `Nx.solve` and `Nx.inv` solve complex systems correctly. The QR-based solve
+  applied `Qᵀ` where a complex `Q` needs `Qᴴ`.
 - `Nx.lu` factors a matrix with partial pivoting as `(P, L, U)` with
   `a = P L U`, for rectangular and batched input; a singular matrix keeps its
   zero pivot in `U`. Rune differentiates it for square input and compiles it

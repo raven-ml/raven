@@ -2763,15 +2763,22 @@ val cond :
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
 val det : ('a, 'b) t -> ('a, 'b) t
-(** [det a] is the determinant of square matrix [a].
+(** [det a] is the determinant of square matrix [a], in [a]'s dtype: the product
+    of the diagonal of {!lu}'s [U], negated once per row interchange. A matrix
+    of size 0 has determinant 1.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
-    floating-point or complex. *)
+    floating-point or complex.
 
-val slogdet : ('a, 'b) t -> (float, float32_elt) t * (float, float32_elt) t
-(** [slogdet a] is [(sign, log_abs_det)] where
-    [det a = sign * exp(log_abs_det)]. More numerically stable than {!det} for
-    matrices with very large or small determinants.
+    See also {!slogdet}. *)
+
+val slogdet : ('a, 'b) t -> ('a, 'b) t * (float, float64_elt) t
+(** [slogdet a] is [(sign, log_abs_det)] with [det a = sign * exp(log_abs_det)].
+    [sign] is in [a]'s dtype: [1] or [-1] for a real matrix, a complex number of
+    modulus 1 for a complex one, and [0] for a singular matrix, whose
+    [log_abs_det] is [neg_infinity]. [log_abs_det] is float64, summed from the
+    logarithms of {!lu}'s pivots, so it holds determinants far beyond the range
+    of {!det}.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex. *)
@@ -2828,8 +2835,10 @@ val solve_triangular :
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [solve a b] is [x] such that [a *@ x = b].
 
+    [x] comes from {!lu}'s factors of [a] and two triangular solves.
+
     Raises {!Linalg_error} with kind [`Singular] if [a] is singular: a pivot of
-    its triangular factor lies below tolerance. Raises [Invalid_argument] if [a]
+    its LU factorization lies below tolerance. Raises [Invalid_argument] if [a]
     is not square or the dtype is not floating-point or complex.
 
     See also {!solve_triangular}, {!lstsq}, {!inv}. *)

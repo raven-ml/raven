@@ -85,7 +85,8 @@ let q_full, r_full = Nx.qr ~mode:`Complete a
 ### LU
 
 Factor A = P·L·U with partial pivoting, where P is a permutation matrix, L is
-lower triangular with a unit diagonal and U is upper triangular:
+lower triangular with a unit diagonal and U is upper triangular. `det`,
+`slogdet`, `solve` and `inv` are computed from this factorization:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -180,7 +181,7 @@ let row_norms = Nx.norm ~axis:[1] m           (* per-row L2 norm *)
 <!-- $MDX skip -->
 ```ocaml
 let d = Nx.det m                    (* determinant *)
-let sd = Nx.slogdet m              (* sign and log-determinant *)
+let sign, logdet = Nx.slogdet m    (* sign, and log |det| as float64 *)
 let tr = Nx.trace m                (* sum of diagonal elements *)
 let r = Nx.matrix_rank m           (* numerical rank *)
 let c = Nx.cond m                  (* condition number *)

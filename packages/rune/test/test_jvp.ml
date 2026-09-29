@@ -302,6 +302,12 @@ let linalg_tests =
             let _, l, u = Nx.lu x in
             Nx.add l u)
           (pivoted_batch ()));
+    test "det, solve and inv" (fun () ->
+        let a = pivoted () in
+        check_jvp ~msg:"det" Nx.det a;
+        check_jvp ~msg:"inv" Nx.inv a;
+        check_jvp2 ~msg:"solve" Nx.solve a
+          (mat64 3 2 [| 1.0; -2.0; 0.5; 3.0; -1.5; 0.7 |]));
     test "solve_triangular (batched vector rhs)" (fun () ->
         check_jvp2 ~msg:"solve_triangular batched"
           (fun a b -> Nx.solve_triangular a b)

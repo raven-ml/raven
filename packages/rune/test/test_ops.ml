@@ -309,6 +309,19 @@ let linalg_tests =
             let _, l, u = Nx.lu x in
             Nx.add (Nx.sum (Nx.mul l l)) (Nx.sum (Nx.mul u u)))
           (pivoted_batch ()));
+    test "det is det(a) times the inverse transpose" (fun () ->
+        let a = pivoted () in
+        check_grad ~msg:"det" (fun x -> Nx.det x) a;
+        let expected = Nx.mul (Nx.det a) (Nx.matrix_transpose (Nx.inv a)) in
+        check_close ~tol:1e-10 ~msg:"d det / da" (to_arr expected)
+          (to_arr (Rune.grad' Nx.det a)));
+    test "slogdet" (fun () ->
+        check_grad ~msg:"slogdet" (fun x -> snd (Nx.slogdet x)) (pivoted ()));
+    test "solve and inv" (fun () ->
+        let a = pivoted () in
+        check_grad2 ~msg:"solve" Nx.solve a
+          (mat64 3 2 [| 1.0; -2.0; 0.5; 3.0; -1.5; 0.7 |]);
+        check_grad ~msg:"inv" Nx.inv a);
     test "solve_triangular (batched vector rhs)" (fun () ->
         (* Only the lower triangle is read, so the upper entries get a zero
            gradient, and a vector right-hand side keeps its shape. *)

@@ -599,29 +599,81 @@ let factorizations =
 let invariants =
   group "norms and invariants"
     [
-      xfail ~reason:"det computes through slogdet, which rounds to float32"
-        (prop "det is multiplicative at float64"
-           (sized (fun n -> Gen.pair (square n) (square n)))
-           (fun (a, b) ->
-             equal near (Nx.mul (Nx.det a) (Nx.det b)) (Nx.det (a *@ b))));
-      xfail
-        ~reason:"det takes its sign from R alone and drops the sign of det Q"
-        (test "det of an odd permutation is -1" (fun () ->
-             let swap =
-               Nx.create Nx.float64 [| 3; 3 |]
-                 [| 0.; 1.; 0.; 1.; 0.; 0.; 0.; 0.; 1. |]
-             in
-             equal (close ~rel:0. ()) (-1.) (Nx.item [] (Nx.det swap))));
-      prop "slogdet is det's sign and log magnitude, at float32"
-        (sized (fun n -> Gen.pair (square n) (square n)))
-        (fun (a, _) ->
-          (* slogdet gives float32, whatever the dtype. *)
+      prop "det is multiplicative at float64"
+        (sized (fun n ->
+             Gen.bind batch (fun bt ->
+                 let batch = Gen.constant ~pp:pp_shape bt in
+                 Gen.pair (square ~batch n) (square ~batch n))))
+        (fun (a, b) ->
+          equal near (Nx.mul (Nx.det a) (Nx.det b)) (Nx.det (a *@ b)));
+      test "det of every permutation matrix up to size 4 is its parity"
+        (fun () ->
+          let rec permutations = function
+            | [] -> [ [] ]
+            | l ->
+                List.concat_map
+                  (fun x ->
+                    List.map
+                      (fun p -> x :: p)
+                      (permutations (List.filter (( <> ) x) l)))
+                  l
+          in
+          let parity p =
+            let p = Array.of_list p in
+            let inversions = ref 0 in
+            Array.iteri
+              (fun i x ->
+                for j = i + 1 to Array.length p - 1 do
+                  if p.(j) < x then incr inversions
+                done)
+              p;
+            if !inversions mod 2 = 0 then 1. else -1.
+          in
+          List.iter
+            (fun n ->
+              List.iter
+                (fun p ->
+                  let m =
+                    Nx.init Nx.float64 [| n; n |] (fun i ->
+                        if List.nth p i.(0) = i.(1) then 1. else 0.)
+                  in
+                  equal (close ~rel:0. ()) (parity p) (Nx.item [] (Nx.det m)))
+                (permutations (List.init n Fun.id)))
+            [ 1; 2; 3; 4 ]);
+      test "det of an empty matrix is 1" (fun () ->
+          equal (close ~rel:0. ()) 1.
+            (Nx.item [] (Nx.det (Nx.zeros Nx.float64 [| 0; 0 |]))));
+      prop "slogdet's sign times the exponential of its log is det, at float64"
+        (sized square) (fun a ->
           let sign, logabs = Nx.slogdet a in
-          equal
-            (tensor (close ~rel:1e-6 ~abs:1e-6 ()))
-            (Nx.det a)
-            (Nx.mul (Nx.cast Nx.float64 sign)
-               (Nx.exp (Nx.cast Nx.float64 logabs))));
+          equal near (Nx.det a) (Nx.mul sign (Nx.exp logabs)));
+      prop
+        "slogdet of a complex matrix is a sign of modulus 1 and det's log \
+         magnitude"
+        (sized (fun n ->
+             Gen.map
+               (fun z ->
+                 Nx.add z
+                   (Nx.mul_s (Nx.eye Nx.complex128 n)
+                      { Complex.re = Float.of_int (n + 2); im = 0. }))
+               (complex_matrix n n)))
+        (fun z ->
+          let sign, logabs = Nx.slogdet z in
+          equal (close ~rel:1e-12 ()) 1. (Complex.norm (Nx.item [] sign));
+          equal near_complex (Nx.det z)
+            (Nx.mul sign (Nx.cast Nx.complex128 (Nx.exp logabs))));
+      test "slogdet of a singular matrix is a zero sign and a log of -inf"
+        (fun () ->
+          let sign, logabs =
+            Nx.slogdet (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |])
+          in
+          equal (close ~rel:0. ()) 0. (Nx.item [] sign);
+          equal (close ~rel:0. ()) Float.neg_infinity (Nx.item [] logabs));
+      test "slogdet holds a determinant beyond float64's range" (fun () ->
+          let _, logabs = Nx.slogdet (Nx.mul_s (Nx.eye Nx.float64 400) 10.) in
+          equal (close ~rel:1e-12 ())
+            (400. *. Float.log 10.)
+            (Nx.item [] logabs));
       prop "vector norms are their sums of powers" (matrix 1 5) (fun v ->
           let x = Array.map Float.abs (Nx.to_array v) in
           let sum f = Array.fold_left (fun s e -> s +. f e) 0. x in
@@ -693,6 +745,17 @@ let solvers =
         (fun (a, b) ->
           let v = Nx.reshape [| Nx.dim 1 b |] b in
           equal near v (Nx.matmul a (Nx.solve a v)));
+      prop "solve gives x with a x = b for a complex system"
+        (sized (fun n ->
+             Gen.pair
+               (Gen.map
+                  (fun z ->
+                    Nx.add z
+                      (Nx.mul_s (Nx.eye Nx.complex128 n)
+                         { Complex.re = Float.of_int (n + 2); im = 0. }))
+                  (complex_matrix n n))
+               (complex_matrix n 2)))
+        (fun (a, b) -> equal near_complex b (Nx.matmul a (Nx.solve a b)));
       prop "inv gives the inverse" (sized square) (fun a ->
           equal near (identity_like a) (a *@ Nx.inv a));
       test "solve and inv refuse a singular matrix" (fun () ->
@@ -773,6 +836,12 @@ let solvers =
 let narrow =
   group "narrow floats"
     [
+      prop "a float16 det is float32's, rounded once" (sized square) (fun a ->
+          let a16 = Nx.cast Nx.float16 a in
+          equal
+            (tensor (close ~rel:0. ()))
+            (Nx.cast Nx.float16 (Nx.det (Nx.cast Nx.float32 a16)))
+            (Nx.det a16));
       prop "a float16 or bfloat16 matmul is float32's, rounded once"
         (Gen.pair (matrix 3 5) (matrix 5 2))
         (fun (a, b) ->
