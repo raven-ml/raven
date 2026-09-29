@@ -2746,6 +2746,14 @@ thread.
 
 ### Nx
 
+- New `nx.device` library: devices and their memory without the tensor layer.
+  It provides the host (`Nx_device.host`) and device buffers of a storage
+  format (`Nx_device.Buffer`) that are owned, borrowed or byte-offset views.
+  Each device has a caching allocator with a budget (`budget`, `set_budget`,
+  `free_cache`) and one `Out_of_memory`, which collects unreachable buffers
+  before it raises. `Buffer.copy` synchronizes the devices it touches. There are also
+  per-device statistics (`stats`), loaded programs (`Program`), and a timeline
+  (`submit`, `synchronize`) for the libraries that submit work.
 - `Nx.sigmoid` of a large negative number is the subnormal its exact value
   rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
   about -88.7 at float32 and -709.8 at float64, and returned 0 there.

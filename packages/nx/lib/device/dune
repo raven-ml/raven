@@ -1,0 +1,15 @@
+(library
+ (name nx_device)
+ (public_name nx.device)
+ (libraries nx_dtype)
+ (foreign_stubs
+  (language c)
+  (names nx_device_stubs)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))
+
+(rule
+ (target host_arch.ml)
+ (action
+  (with-stdout-to
+   host_arch.ml
+   (echo "let architecture = \"%{ocaml-config:architecture}\"\n"))))
