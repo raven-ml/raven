@@ -2746,6 +2746,9 @@ thread.
 
 ### Nx
 
+- `Nx_buffer.blit_from_bytes` and `Nx_buffer.blit_to_bytes` refuse an offset
+  and length whose sum overflows. Such a pair passed the bounds checks, so a
+  copy at an offset near `max_int` wrote or read outside the buffer.
 - `Nx_io.save_txt` writes uint32 and uint64 elements as their unsigned
   values, as numpy does, and `Nx_io.load_txt` reads them back. The largest
   uint32 was written as `-1`, and a uint32 of `2147483648` or more, or a

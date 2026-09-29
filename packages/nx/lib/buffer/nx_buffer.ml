@@ -184,6 +184,15 @@ let blit ~src ~dst =
     (Bigarray.genarray_of_array1 src)
     (Bigarray.genarray_of_array1 dst)
 
+(* The elements [bytes] holds, two a byte for int4. *)
+let bytes_capacity k bytes =
+  if is_int4 k then 2 * Bytes.length bytes
+  else Bytes.length bytes / Nx_dtype.itemsize k
+
+(* Whether [len] elements from [off] run past [n]: no sum, so that no offset or
+   length overflows into range. *)
+let past ~off ~len n = off > n || len > n - off
+
 let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
   let k = dtype buf in
   let buf_len = length buf in
@@ -191,7 +200,7 @@ let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
   if src_off < 0 then invalid_arg "blit_from_bytes: negative src_off";
   if dst_off < 0 then invalid_arg "blit_from_bytes: negative dst_off";
   if len < 0 then invalid_arg "blit_from_bytes: negative length";
-  if dst_off + len > buf_len then
+  if past ~off:dst_off ~len buf_len then
     invalid_arg "blit_from_bytes: dst_off + len > buffer length";
   (* The copy moves whole bytes, and int4 packs two elements per byte: offsets
      must start a byte, and an odd length is only safe when the trailing nibble
@@ -202,14 +211,13 @@ let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
     if len land 1 <> 0 && dst_off + len <> buf_len then
       invalid_arg
         "blit_from_bytes: odd int4 length must reach the end of the buffer");
-  let byte_len = elts_to_bytes k len in
-  let src_byte_off = elt_off_to_bytes k src_off in
-  if src_byte_off + byte_len > Bytes.length bytes then
+  if past ~off:src_off ~len (bytes_capacity k bytes) then
     invalid_arg "blit_from_bytes: src_off + len > bytes length";
-  let dst_byte_off = elt_off_to_bytes k dst_off in
-  unsafe_blit_from_bytes bytes src_byte_off
+  unsafe_blit_from_bytes bytes
+    (elt_off_to_bytes k src_off)
     (Bigarray.genarray_of_array1 buf)
-    dst_byte_off byte_len
+    (elt_off_to_bytes k dst_off)
+    (elts_to_bytes k len)
 
 let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len buf bytes =
   let k = dtype buf in
@@ -218,18 +226,18 @@ let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len buf bytes =
   if src_off < 0 then invalid_arg "blit_to_bytes: negative src_off";
   if dst_off < 0 then invalid_arg "blit_to_bytes: negative dst_off";
   if len < 0 then invalid_arg "blit_to_bytes: negative length";
-  if src_off + len > buf_len then
+  if past ~off:src_off ~len buf_len then
     invalid_arg "blit_to_bytes: src_off + len > buffer length";
   if is_int4 k && (src_off land 1 <> 0 || dst_off land 1 <> 0) then
     invalid_arg "blit_to_bytes: int4 offsets must be even";
-  let byte_len = elts_to_bytes k len in
-  let dst_byte_off = elt_off_to_bytes k dst_off in
-  if dst_byte_off + byte_len > Bytes.length bytes then
+  if past ~off:dst_off ~len (bytes_capacity k bytes) then
     invalid_arg "blit_to_bytes: dst_off + len > bytes length";
-  let src_byte_off = elt_off_to_bytes k src_off in
   unsafe_blit_to_bytes
     (Bigarray.genarray_of_array1 buf)
-    src_byte_off bytes dst_byte_off byte_len
+    (elt_off_to_bytes k src_off)
+    bytes
+    (elt_off_to_bytes k dst_off)
+    (elts_to_bytes k len)
 
 (* Bigarray conversions *)
 
