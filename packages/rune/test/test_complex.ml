@@ -10,8 +10,9 @@
    conjugation. What can go wrong is a rule that multiplies by a derivative — it
    has to be the derivative with respect to [z], not its conjugate — and a rule
    whose operation is not holomorphic, which needs the conjugate contribution
-   too. Every such rule the C backend reaches on complex has a case here, and so
-   should the next one.
+   too: [abs], [sign], and the factorisations whose complex form conjugates
+   where the real one transposes. Every rule the C backend reaches on complex
+   has a case here, and so should the next one.
 
    Inputs stay off the branch cuts of the principal transcendentals (the
    negative real axis for [log], [sqrt] and [pow], the real axis outside [-1, 1]
@@ -174,6 +175,84 @@ let sign_tests =
       both "abs, second order" modulus_grad z3;
     ]
 
+(* Arithmetic, reductions and movements the tables above leave out. *)
+
+let r23 () =
+  cmat 2 3
+    [|
+      (1.1, 0.5); (-0.7, 1.3); (0.4, -0.9); (0.8, 0.2); (-0.3, -0.6); (1.2, 0.4);
+    |]
+
+let z6 () =
+  cvec
+    [|
+      (1.1, 0.5); (-0.7, 1.3); (0.4, -0.9); (0.2, 0.6); (-1.0, 0.3); (0.5, -0.4);
+    |]
+
+let arithmetic_tests =
+  List.concat
+    [
+      both2 "add" Nx.add z3 b3;
+      both2 "sub" Nx.sub z3 b3;
+      both "square" Nx.square z3;
+      both "log2" Nx.log2 z3;
+      both "exp2" Nx.exp2 z3;
+      both "rsqrt" Nx.rsqrt z3;
+      both "mean" (fun z -> Nx.mean z ~axes:[ 1 ] ~keepdims:true) r23;
+      both "trace" Nx.trace m22;
+      both2 "vdot" Nx.vdot z3 b3;
+      both2 "matmul, batched"
+        (fun a b -> Nx.matmul a b)
+        (fun () -> Nx.stack ~axis:0 [ m22 (); n22 () ])
+        n22;
+      both2 "matmul, vector"
+        (fun a b -> Nx.matmul a b)
+        (fun () -> Nx.shrink [| (0, 2) |] (z3 ()))
+        m22;
+    ]
+
+let movement_tests =
+  let idx = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 0l; 1l; 0l; 1l; 0l |] in
+  List.concat
+    [
+      both "reshape" (fun z -> Nx.reshape [| 3; 2 |] z) r23;
+      both "transpose" (fun z -> Nx.transpose z) r23;
+      both "pad" (fun z -> Nx.pad [| (1, 2) |] (cx 0.3 (-0.2)) z) z3;
+      both "shrink" (fun z -> Nx.shrink [| (0, 2); (1, 3) |] z) r23;
+      both "slice, strided" (fun z -> Nx.slice [ Nx.Rs (0, 6, 2) ] z) z6;
+      both "slice, dynamic"
+        (fun z -> Nx.slice [ Nx.D (Nx.scalar Nx.int32 2l, 3) ] z)
+        z6;
+      both "set, dynamic"
+        (fun z ->
+          Nx.set
+            [ Nx.D (Nx.scalar Nx.int32 1l, 2) ]
+            (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (b3 ())))
+            z)
+        z3;
+      both "sliding window"
+        (fun z -> sliding_window ~axis:0 ~window:3 ~step:2 z)
+        z6;
+      both "tile" (fun z -> Nx.tile [| 2 |] z) z3;
+      both "roll" (fun z -> Nx.roll 1 z) z3;
+      both "set"
+        (fun z ->
+          Nx.set
+            [ Nx.R (1, 3) ]
+            (Nx.mul (Nx.shrink [| (0, 2) |] z) (Nx.shrink [| (1, 3) |] (b3 ())))
+            z)
+        z3;
+      both "scatter, set"
+        (fun z -> Nx.scatter ~axis:0 ~indices:idx ~values:(Nx.mul z z) (r23 ()))
+        r23;
+      both "scatter, add"
+        (fun z ->
+          Nx.scatter ~mode:`Add ~axis:0 ~indices:idx ~values:(Nx.mul z z) z)
+        r23;
+      both "diagonal" (fun z -> Nx.diagonal z) m22;
+      both "correlate" (fun z -> Nx.correlate z (b3 ())) z6;
+    ]
+
 (* Linear algebra. Each factorisation reads only part of its input: a solve
    against a triangle ignores the other one, and the Cholesky factor of a
    Hermitian matrix reads the strict lower triangle and the real part of the
@@ -268,6 +347,17 @@ let qr_tests =
         check_cgrad ~msg:"qr square" (fun z -> flat2 (Nx.qr z)) (m33 ()));
   ]
 
+let factorisation_tests =
+  List.concat
+    [
+      both "det" Nx.det m33;
+      both "lu"
+        (fun z ->
+          let _, l, u = Nx.lu z in
+          flat2 (l, u))
+        m33;
+    ]
+
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
@@ -276,9 +366,12 @@ let tests =
     group "transforms" transform_tests;
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;
+    group "arithmetic" arithmetic_tests;
+    group "movements" movement_tests;
     group "triangular solves" solve_tests;
     group "cholesky" cholesky_tests;
     group "qr" qr_tests;
+    group "factorisations" factorisation_tests;
   ]
 
 let () = exit (run "rune complex" tests)
