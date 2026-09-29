@@ -127,79 +127,81 @@ let permute view axes =
   let new_strides = Array.init n (fun i -> view.strides.(axes.(i))) in
   create ~offset:view.offset ~strides:new_strides new_shape
 
-let reshape view new_shape =
-  (* Early return if shapes are identical *)
-  if view.shape = new_shape then view
-  else
-    let old_arr = view.shape in
-    let new_arr = new_shape in
-    let old_numel = prod old_arr in
-    let new_numel = prod new_arr in
-
-    (* Check size compatibility *)
-    if old_numel <> new_numel then
-      err "reshape" "cannot reshape %s to %s" (Shape.to_string old_arr)
-        (Shape.to_string new_arr)
-    else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
-    then create ~offset:0 new_shape (* Fast path for C-contiguous views *)
-    else if view.layout = C_contiguous then create ~offset:view.offset new_shape
+(* The strides that view [view]'s elements as [new_shape], if any. The axes of
+   both shapes group into runs of equal size; the old axes of a run must merge
+   into one stride, which its new axes split. Axes of size 1 take no part, and
+   get stride 0. *)
+let viewing_strides view new_shape =
+  let old_dims =
+    List.filter
+      (fun (d, _) -> d <> 1)
+      (List.combine (Array.to_list view.shape) (Array.to_list view.strides))
+    |> Array.of_list
+  in
+  let new_dims =
+    Array.of_list (List.filter (( <> ) 1) (Array.to_list new_shape))
+  in
+  let strides = Array.make (Array.length new_dims) 0 in
+  let rec runs oi ni =
+    if oi = Array.length old_dims then true
     else
-      (* Group the axes of both shapes into runs of equal size. The old axes of
-         a run must merge into one stride, which its new axes split. Axes of
-         size 1 take no part, and get stride 0. *)
-      let old_dims =
-        List.filter
-          (fun (d, _) -> d <> 1)
-          (List.combine (Array.to_list old_arr) (Array.to_list view.strides))
-        |> Array.of_list
+      let rec grow oj nj op np =
+        if op = np then (oj, nj)
+        else if op < np then grow (oj + 1) nj (op * fst old_dims.(oj)) np
+        else grow oj (nj + 1) op (np * new_dims.(nj))
       in
-      let new_dims =
-        Array.of_list (List.filter (( <> ) 1) (Array.to_list new_arr))
-      in
-      let strides = Array.make (Array.length new_dims) 0 in
-      let rec runs oi ni =
-        if oi = Array.length old_dims then true
-        else
-          let rec grow oj nj op np =
-            if op = np then (oj, nj)
-            else if op < np then grow (oj + 1) nj (op * fst old_dims.(oj)) np
-            else grow oj (nj + 1) op (np * new_dims.(nj))
-          in
-          let oj, nj =
-            grow (oi + 1) (ni + 1) (fst old_dims.(oi)) new_dims.(ni)
-          in
-          let merges = ref true in
-          for k = oi to oj - 2 do
-            let d, s = old_dims.(k + 1) in
-            if snd old_dims.(k) <> d * s then merges := false
-          done;
-          !merges
-          && begin
-            strides.(nj - 1) <- snd old_dims.(oj - 1);
-            for k = nj - 1 downto ni + 1 do
-              strides.(k - 1) <- strides.(k) * new_dims.(k)
-            done;
-            runs oj nj
-          end
-      in
-      if runs 0 0 then
-        let k = ref 0 in
-        let strides =
-          Array.map
-            (fun d ->
-              if d = 1 then 0
-              else
-                let s = strides.(!k) in
-                incr k;
-                s)
-            new_arr
-        in
-        create ~offset:view.offset ~strides new_shape
-      else
+      let oj, nj = grow (oi + 1) (ni + 1) (fst old_dims.(oi)) new_dims.(ni) in
+      let merges = ref true in
+      for k = oi to oj - 2 do
+        let d, s = old_dims.(k + 1) in
+        if snd old_dims.(k) <> d * s then merges := false
+      done;
+      !merges
+      && begin
+        strides.(nj - 1) <- snd old_dims.(oj - 1);
+        for k = nj - 1 downto ni + 1 do
+          strides.(k - 1) <- strides.(k) * new_dims.(k)
+        done;
+        runs oj nj
+      end
+  in
+  if not (runs 0 0) then None
+  else
+    let k = ref 0 in
+    Some
+      (Array.map
+         (fun d ->
+           if d = 1 then 0
+           else
+             let s = strides.(!k) in
+             incr k;
+             s)
+         new_shape)
+
+let can_reshape view new_shape =
+  prod view.shape = prod new_shape
+  && (view.shape = new_shape
+     || Array.exists (( = ) 0) new_shape
+     || view.layout = C_contiguous
+     || Option.is_some (viewing_strides view new_shape))
+
+let reshape view new_shape =
+  if view.shape = new_shape then view
+  else if prod view.shape <> prod new_shape then
+    err "reshape" "cannot reshape %s to %s"
+      (Shape.to_string view.shape)
+      (Shape.to_string new_shape)
+  else if Array.exists (( = ) 0) new_shape then create ~offset:0 new_shape
+  else if view.layout = C_contiguous then create ~offset:view.offset new_shape
+  else
+    match viewing_strides view new_shape with
+    | Some strides -> create ~offset:view.offset ~strides new_shape
+    | None ->
         err "reshape"
           "cannot reshape %s to %s, strides %s cannot view it, call \
            contiguous() first"
-          (Shape.to_string old_arr) (Shape.to_string new_arr)
+          (Shape.to_string view.shape)
+          (Shape.to_string new_shape)
           (Shape.to_string view.strides)
 
 let shrink view arg =

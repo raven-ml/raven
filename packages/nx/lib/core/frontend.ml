@@ -745,12 +745,40 @@ module Make (B : Backend_intf.S) = struct
         err "associative_scan" "axis %d out of bounds for %dD tensor" axis rank
       else B.associative_scan ~axis:a ~op x
 
+  let flatten ?(start_dim = 0) ?(end_dim = -1) x =
+    let sh = shape x in
+    let r = Array.length sh in
+    let s = if start_dim < 0 then start_dim + r else start_dim in
+    let e = if end_dim < 0 then end_dim + r else end_dim in
+    if
+      not
+        ((s >= 0 && s < r && e >= 0 && e < r)
+        || (r = 0 && (s = 0 || start_dim = 0) && (e = -1 || end_dim = -1)))
+    then
+      err "flatten" "start_dim %d or end_dim %d, out of bounds for rank %d"
+        start_dim end_dim r;
+    if r > 0 && s > e then
+      invalid_arg "flatten: dimensions, start_dim must be <= end_dim";
+    let target =
+      if r = 0 then [| 1 |]
+      else
+        Array.concat
+          [
+            Array.sub sh 0 s;
+            [| array_prod (Array.sub sh s (e - s + 1)) |];
+            Array.sub sh (e + 1) (r - (e + 1));
+          ]
+    in
+    (* A view where the layout allows one, a copy otherwise. *)
+    if View.can_reshape (B.view x) target then reshape target x
+    else reshape target (contiguous x)
+
   let cumulative_scan ?axis op x =
     let orig_shape = shape x in
     match axis with
     | Some axis -> associative_scan ~axis op x
     | None ->
-        let flat = reshape [| array_prod orig_shape |] x in
+        let flat = flatten x in
         let scanned = associative_scan ~axis:0 op flat in
         if Array.length orig_shape = 0 then reshape [||] scanned
         else reshape orig_shape scanned
@@ -764,10 +792,13 @@ module Make (B : Backend_intf.S) = struct
     let dt = B.dtype x in
     let s = sum ?axes ~keepdims x in
     let n = reduction_element_count (shape x) ?axes () in
+    (* The mean of nothing is 0 / 0: NaN, which an integer does not hold. *)
+    if n = 0 && not (Nx_dtype.is_float dt || Nx_dtype.is_complex dt) then
+      err "mean" "dtype %s, the mean of an empty axis has no value"
+        (Nx_dtype.to_string dt);
     let divisor =
       broadcast_to (shape s)
-        (scalar (B.context x) dt
-           (Nx_dtype.of_float dt (float_of_int (Stdlib.max 1 n))))
+        (scalar (B.context x) dt (Nx_dtype.of_float dt (float_of_int n)))
     in
     div s divisor
 
@@ -776,7 +807,8 @@ module Make (B : Backend_intf.S) = struct
     let mean_x = mean ?axes ~keepdims:true x in
     let sum_sq = sum ?axes ~keepdims (square (sub x mean_x)) in
     let n = reduction_element_count (shape x) ?axes () in
-    let n_corr = float_of_int (Stdlib.max 0 (n - ddof)) in
+    if ddof >= n then err "var" "ddof %d, must be below the count %d" ddof n;
+    let n_corr = float_of_int (n - ddof) in
     let divisor =
       broadcast_to (shape sum_sq)
         (scalar (B.context x) dt (Nx_dtype.of_float dt n_corr))
@@ -839,28 +871,6 @@ module Make (B : Backend_intf.S) = struct
 
   let shrink shrink_args x = B.shrink x shrink_args
 
-  let flatten ?(start_dim = 0) ?(end_dim = -1) x =
-    let sh = shape x in
-    let r = Array.length sh in
-    let s = if start_dim < 0 then start_dim + r else start_dim in
-    let e = if end_dim < 0 then end_dim + r else end_dim in
-    if
-      not
-        ((s >= 0 && s < r && e >= 0 && e < r)
-        || (r = 0 && (s = 0 || start_dim = 0) && (e = -1 || end_dim = -1)))
-    then
-      err "flatten" "start_dim %d or end_dim %d, out of bounds for rank %d"
-        start_dim end_dim r;
-    if r = 0 then reshape [| 1 |] x
-    else if s > e then
-      invalid_arg "flatten: dimensions, start_dim must be <= end_dim"
-    else if s = 0 && e = r - 1 then reshape [| array_prod sh |] x
-    else
-      let pre = Array.to_list (Array.sub sh 0 s) in
-      let mid = array_prod (Array.sub sh s (e - s + 1)) in
-      let post = Array.to_list (Array.sub sh (e + 1) (r - (e + 1))) in
-      reshape (Array.of_list (pre @ [ mid ] @ post)) x
-
   let unflatten dim sizes x =
     let dim = resolve_single_axis x dim in
     let current_shape = shape x in
@@ -899,7 +909,7 @@ module Make (B : Backend_intf.S) = struct
          ])
       x
 
-  let ravel x = flatten x
+  let ravel x = reshape [| numel x |] x
 
   let squeeze ?axes x =
     let sh = shape x in
@@ -1404,7 +1414,7 @@ module Make (B : Backend_intf.S) = struct
 
   let take ?axis ~indices t =
     match axis with
-    | None -> B.gather (reshape [| numel t |] t) indices ~axis:0
+    | None -> B.gather (flatten t) indices ~axis:0
     | Some axis ->
         let t_shape = shape t in
         let axis = resolve_single_axis t axis in
@@ -1853,7 +1863,7 @@ module Make (B : Backend_intf.S) = struct
   (* Data-dependent output shapes — not differentiable *)
 
   let nonzero_indices_only (condition : (bool, bool_elt) t) =
-    let bits = to_array (reshape [| numel condition |] condition) in
+    let bits = to_array (flatten condition) in
     let positions = ref [] in
     for i = Array.length bits - 1 downto 0 do
       if bits.(i) then positions := Int32.of_int i :: !positions
@@ -1896,7 +1906,7 @@ module Make (B : Backend_intf.S) = struct
     let t_shape = shape t in
     let nd = Array.length t_shape in
     let mask = not_equal t (zeros_like t) in
-    let bits = to_array (reshape [| numel mask |] mask) in
+    let bits = to_array (flatten mask) in
     let n = Array.fold_left (fun acc b -> if b then acc + 1 else acc) 0 bits in
     let coords = Array.init nd (fun _ -> Array.make n 0l) in
     let k = ref 0 in

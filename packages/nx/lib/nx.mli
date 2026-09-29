@@ -1049,7 +1049,8 @@ val expand : int array -> ('a, 'b) t -> ('a, 'b) t
 val flatten : ?start_dim:int -> ?end_dim:int -> ('a, 'b) t -> ('a, 'b) t
 (** [flatten ?start_dim ?end_dim t] collapses dimensions [start_dim] through
     [end_dim] (inclusive) into a single dimension. [start_dim] defaults to [0].
-    [end_dim] defaults to [-1] (last). Negative indices count from the end.
+    [end_dim] defaults to [-1] (last). Negative indices count from the end. It
+    is a view where the layout allows one, and a copy otherwise.
 
     Raises [Invalid_argument] if indices are out of bounds.
 
@@ -1166,8 +1167,8 @@ val swapaxes : int -> int -> ('a, 'b) t -> ('a, 'b) t
 
 val roll : ?axis:int -> int -> ('a, 'b) t -> ('a, 'b) t
 (** [roll ?axis shift t] shifts elements along [axis] by [shift] positions,
-    wrapping around. When [axis] is omitted, operates on the flattened tensor.
-    Negative [shift] rolls backward.
+    wrapping around. When [axis] is omitted, it shifts the flattened tensor and
+    keeps [t]'s shape. Negative [shift] rolls backward.
 
     Raises [Invalid_argument] if [axis] is out of bounds.
 
@@ -2249,27 +2250,28 @@ val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 
 val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cumsum ?axis t] is the inclusive cumulative sum along [axis]. When [axis]
-    is omitted, operates on the flattened tensor.
+    is omitted, it accumulates the flattened tensor and keeps [t]'s shape.
 
     See also {!cumprod}. *)
 
 val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cumprod ?axis t] is the inclusive cumulative product along [axis]. When
-    [axis] is omitted, operates on the flattened tensor.
+    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
+    shape.
 
     See also {!cumsum}. *)
 
 val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummax ?axis t] is the inclusive cumulative maximum along [axis]. NaN
-    propagates for floating-point dtypes. When [axis] is omitted, operates on
-    the flattened tensor.
+    propagates for floating-point dtypes. When [axis] is omitted, it accumulates
+    the flattened tensor and keeps [t]'s shape.
 
     See also {!cummin}. *)
 
 val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummin ?axis t] is the inclusive cumulative minimum along [axis]. NaN
-    propagates for floating-point dtypes. When [axis] is omitted, operates on
-    the flattened tensor.
+    propagates for floating-point dtypes. When [axis] is omitted, it accumulates
+    the flattened tensor and keeps [t]'s shape.
 
     See also {!cummax}. *)
 

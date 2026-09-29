@@ -2711,6 +2711,12 @@ thread.
 
 ### Nx
 
+- `Nx.flatten` works on every layout, a view where the layout allows one and a
+  copy otherwise. It raised on a transpose, and so did `argmax`, `argmin`,
+  `roll`, `repeat`, `cumsum` and the other scans, `take`, `compress` and
+  `extract` without an axis. `Nx.ravel` stays a view and still refuses.
+- `Nx.mean` over an empty axis is NaN, not 0, and refuses an integer dtype.
+- `Nx.var` and `Nx.std` refuse `ddof` at least the count, as documented.
 - `Nx.logical_and`, `logical_or`, `logical_xor` and `logical_not` read
   non-zero as true on every dtype and give zero or one. They were bitwise, so
   `logical_not` of 5 was -4 and `logical_and` of 2 and 1 was 0.

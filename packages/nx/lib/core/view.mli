@@ -74,6 +74,10 @@ val reshape : t -> int array -> t
     mismatches (except zero-size special cases) or incompatible stride patterns.
 *)
 
+val can_reshape : t -> int array -> bool
+(** [can_reshape v new_shape] is [true] iff {!reshape} [v new_shape] gives a
+    view. *)
+
 val expand : t -> int array -> t
 (** [expand v new_shape] broadcasts singleton dimensions to [new_shape] by
     setting corresponding strides to [0].
