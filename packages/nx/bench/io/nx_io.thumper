@@ -27,3 +27,7 @@ png/Load-PNG-512x512-RGB	alloc_words	exact	239
 png/Load-PNG-512x512-RGB	wall_time	batch=1	n=20	6.828e-03	6.616e-03 6.694e-03 6.732e-03 6.739e-03 6.741e-03 6.770e-03 6.779e-03 6.814e-03 6.823e-03 6.827e-03 6.828e-03 6.842e-03 6.876e-03 6.889e-03 6.916e-03 6.921e-03 6.933e-03 6.935e-03 6.938e-03 6.981e-03
 png/Save-PNG-512x512-RGB	alloc_words	exact	339
 png/Save-PNG-512x512-RGB	wall_time	batch=1	n=20	9.795e-03	9.508e-03 9.559e-03 9.564e-03 9.637e-03 9.660e-03 9.686e-03 9.692e-03 9.745e-03 9.774e-03 9.788e-03 9.801e-03 9.802e-03 9.820e-03 9.825e-03 9.845e-03 9.966e-03 1.008e-02 1.046e-02 2.094e-02 3.288e-02
+safetensors/Load-SafeTensors-1-MiB-f32	alloc_words	exact	852
+safetensors/Load-SafeTensors-1-MiB-f32	wall_time	batch=16	n=20	3.449e-05	2.077e-05 2.103e-05 2.103e-05 2.104e-05 2.104e-05 2.111e-05 2.162e-05 2.207e-05 2.239e-05 3.416e-05 3.482e-05 3.654e-05 3.697e-05 3.980e-05 4.188e-05 4.649e-05 4.802e-05 6.104e-05 6.786e-05 7.938e-05
+safetensors/Save-SafeTensors-1-MiB-f32	alloc_words	exact	1574178
+safetensors/Save-SafeTensors-1-MiB-f32	wall_time	batch=1	n=20	5.859e-03	5.550e-03 5.644e-03 5.735e-03 5.782e-03 5.783e-03 5.801e-03 5.825e-03 5.847e-03 5.853e-03 5.855e-03 5.863e-03 5.890e-03 5.894e-03 5.896e-03 5.917e-03 5.941e-03 5.958e-03 6.114e-03 6.651e-03 6.931e-03

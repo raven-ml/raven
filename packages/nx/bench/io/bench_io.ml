@@ -99,6 +99,8 @@ let npz_deflate_input = temporary ".npz"
 let npz_store_input = temporary ".npz"
 let npz_output = temporary ".npz"
 let npz_deflate_output = temporary ".npz"
+let safetensors_input = temporary ".safetensors"
+let safetensors_output = temporary ".safetensors"
 let png_input = temporary ".png"
 let png_output = temporary ".png"
 let jpeg_input = temporary ".jpg"
@@ -110,6 +112,7 @@ let () =
   Nx_io.save_npy npy_input structured;
   Nx_io.save_npz npz_deflate_input [ ("structured", Nx.P structured) ];
   Nx_io.save_npz npz_store_input [ ("random", Nx.P random) ];
+  Nx_io.save_safetensors safetensors_input [ ("structured", Nx.P structured) ];
   Nx_io.save_image png_input image;
   Nx_io.save_image jpeg_input image;
   write_file gzip_input (stored_gzip (String.make (1024 * 1024) '\x5a'))
@@ -133,6 +136,14 @@ let benchmarks =
             Nx_io.save_npz npz_output [ ("random", Nx.P random) ]);
         Thumper.bench "Save NPZ Deflate 1 MiB f32" (fun () ->
             Nx_io.save_npz npz_deflate_output
+              [ ("structured", Nx.P structured) ]);
+      ];
+    Thumper.group "safetensors"
+      [
+        Thumper.bench "Load SafeTensors 1 MiB f32" (fun () ->
+            Nx_io.load_safetensors safetensors_input);
+        Thumper.bench "Save SafeTensors 1 MiB f32" (fun () ->
+            Nx_io.save_safetensors safetensors_output
               [ ("structured", Nx.P structured) ]);
       ];
     Thumper.group "png"

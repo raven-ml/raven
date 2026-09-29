@@ -2,7 +2,8 @@
 
 This suite measures the complete public `Nx_io` operations, including file
 policy, format parsing, allocation, conversion, compression, and checksums. Its
-deterministic corpus covers NPY, compressible and incompressible NPZ, PNG,
+deterministic corpus covers NPY, compressible and incompressible NPZ,
+SafeTensors, PNG,
 JPEG, and a one-MiB stored-block gzip member. Corpus construction and fixture
 writes happen before measurement.
 
