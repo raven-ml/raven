@@ -34,9 +34,15 @@ module T = Nx
 let err_no_rule op =
   invalid_arg (Printf.sprintf "Rune: vmap has no batching rule for %s" op)
 
-type state = { batch_size : int; batched : Tensor_map.Ids.t }
+type state = {
+  batch_size : int;
+  batched : Tensor_map.Ids.t;
+  axis : Axis.t option;
+}
 
-let create ~batch_size = { batch_size; batched = Tensor_map.Ids.create () }
+let create ?axis ~batch_size () =
+  { batch_size; batched = Tensor_map.Ids.create (); axis }
+
 let mark st x = Tensor_map.Ids.add st.batched x
 let batched st x = Tensor_map.Ids.mem st.batched x
 
@@ -233,13 +239,34 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some (fun k -> elt2 k threefry key ctr)
     (* The mapped-axis index is the per-lane iota [0 .. batch_size-1], carried
        as a batched scalar so that a key folded with it (Nx.Rng.fold_in_axis)
-       decorrelates the lanes. *)
-    | E_axis_index ->
+       decorrelates the lanes. A named map answers only the collectives that
+       name it. *)
+    | E_axis_index when Option.is_none st.axis ->
         Some
           (fun k ->
             let idx = T.arange Nx.int32 0 st.batch_size 1 in
             mark st idx;
             continue k idx)
+    (* The map a gather names answers it with the lanes as data: a fresh alias
+       of a batched operand's physical tensor, or the broadcast of an operand
+       every lane shares, a constant of the map either way. Another map gathers
+       its batched operand's physical tensor and keeps its own lanes in front
+       of the gathered axis. *)
+    | Axis.E_lanes { axis; t_in } when st.axis = Some axis ->
+        Some
+          (fun k ->
+            if batched st t_in then continue k (Structure.alias t_in)
+            else
+              continue k
+                (T.broadcast_to
+                   (Array.append [| st.batch_size |] (T.shape t_in))
+                   t_in))
+    | Axis.E_lanes { axis; t_in } when batched st t_in ->
+        Some
+          (fun k ->
+            let out = T.swapaxes 0 1 (Axis.lanes axis t_in) in
+            mark st out;
+            continue k out)
     (* Elementwise unary *)
     | E_neg { t_in } when batched st t_in -> Some (fun k -> elt1 k neg t_in)
     | E_sin { t_in } when batched st t_in -> Some (fun k -> elt1 k sin t_in)
@@ -560,7 +587,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = irfft t ~axes:(Array.map taxis axes) ?s ~dtype in
             mark st out;
             continue k out)
-    | E_psum { t_in } when batched st t_in -> err_no_rule "psum"
     | E_cholesky { t_in; _ } when batched st t_in -> err_no_rule "cholesky"
     | E_qr { t_in; _ } when batched st t_in -> err_no_rule "qr"
     | E_lu { t_in } when batched st t_in -> err_no_rule "lu"

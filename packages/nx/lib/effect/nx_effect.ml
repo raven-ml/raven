@@ -1125,7 +1125,6 @@ type _ Effect.t +=
       s : int array option;
     }
       -> (float, 'c) t Effect.t
-  | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_axis_index : (int32, Nx_dtype.int32_elt) t Effect.t
   | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
   | E_qr : {
@@ -2358,10 +2357,6 @@ let round t =
 let erf t =
   unary_op (E_erf { t_in = t }) Nx_c.erf
     (fun (module B : Backend.S) -> B.erf) t
-
-let op_psum t_in =
-  try Effect.perform (E_psum { t_in })
-  with Effect.Unhandled _ -> failwith "psum must be used under vmap"
 
 (* Reduction operations. The host case of each operation below calls nx.c
    directly, allocating nothing beyond the effect and the result. *)

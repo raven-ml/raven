@@ -440,6 +440,141 @@ let test_vmap_set_window () =
     [| 0.; 9.; 8.; 3.; 0.; 7.; 6.; 3. |]
     (Rune.vmap' (fun v -> Nx.set [ Nx.R (1, 3) ] v (Nx.get [ 0 ] xs)) vs)
 
+(* Lanes *)
+
+let lane i x = Nx.slice [ Nx.I i ] x
+let stack n f = Nx.stack ~axis:0 (List.init n f)
+
+(* The map a gather names answers it with every lane's value, the same in each
+   lane: [x_i . x_j] for every [j] is row [i] of [xs xsᵀ]. *)
+let test_lanes_of_the_named_map () =
+  let a = Rune.axis () and x = xs () in
+  let y = Rune.vmap' ~axis:a (fun r -> Nx.matmul (Rune.lanes a r) r) x in
+  check_arr ~msg:"xs xsᵀ" (to_arr (Nx.matmul x (Nx.transpose x))) y;
+  let y = Rune.vmap' ~axis:a (fun r -> Rune.lanes a r) x in
+  equal ~msg:"shape" (array int) [| 4; 4; 3 |] (Nx.shape y);
+  check_arr ~msg:"every lane holds every row" (to_arr (stack 4 (fun _ -> x))) y
+
+(* A value every lane shares is gathered as its copies. *)
+let test_lanes_of_a_shared_value () =
+  let a = Rune.axis () and c = vec64 [| 1.0; -2.0; 0.5 |] in
+  let y = Rune.vmap' ~axis:a (fun r -> Nx.add (Rune.lanes a c) r) (xs ()) in
+  check_arr ~msg:"c + x_i in every row"
+    (to_arr
+       (stack 4 (fun i ->
+            Nx.add (Nx.broadcast_to [| 4; 3 |] c) (lane i (xs ())))))
+    y
+
+(* A map between the gather and the map it names keeps its own lanes, whether it
+   is anonymous or has another name: lane [(i, j)] gathers [x_(i', j)] over
+   [i']. *)
+let test_lanes_through_another_map () =
+  let a = Rune.axis () and b = Rune.axis () in
+  let x =
+    Nx.create f64 [| 2; 3; 4 |] (Array.init 24 (fun i -> Float.of_int i))
+  in
+  let y = Rune.vmap' ~axis:a (Rune.vmap' (fun r -> Rune.lanes a r)) x in
+  let expected =
+    stack 2 (fun _ -> stack 3 (fun j -> stack 2 (fun i -> lane j (lane i x))))
+  in
+  equal ~msg:"shape" (array int) [| 2; 3; 2; 4 |] (Nx.shape y);
+  check_arr ~msg:"lane (i, j) gathers over i" (to_arr expected) y;
+  check_arr ~msg:"a map of another name" (to_arr expected)
+    (Rune.vmap' ~axis:a (Rune.vmap' ~axis:b (fun r -> Rune.lanes a r)) x);
+  let y =
+    Rune.vmap' ~axis:a
+      (fun r -> Rune.vmap' (fun _ -> Rune.lanes a r) (Nx.zeros f64 [| 3; 1 |]))
+      x
+  in
+  check_arr ~msg:"an operand the inner map does not batch"
+    (to_arr (stack 2 (fun _ -> stack 3 (fun _ -> x))))
+    y
+
+(* With no map of that name around it, a gather is one lane. *)
+let test_lanes_without_the_map () =
+  let a = Rune.axis () and b = Rune.axis () and x = xs () in
+  check_arr ~msg:"no map" (to_arr x) (Rune.lanes a x);
+  equal ~msg:"no map, shape" (array int) [| 1; 4; 3 |]
+    (Nx.shape (Rune.lanes a x));
+  let y = Rune.vmap' (fun r -> Rune.lanes a r) x in
+  equal ~msg:"another map, shape" (array int) [| 4; 1; 3 |] (Nx.shape y);
+  check_arr ~msg:"another map" (to_arr x) y;
+  let y = Rune.vmap' ~axis:b (fun r -> Rune.lanes a r) x in
+  equal ~msg:"a map of another name, shape" (array int) [| 4; 1; 3 |]
+    (Nx.shape y);
+  check_arr ~msg:"a map of another name" (to_arr x) y;
+  check_arr ~msg:"compiled" (to_arr x) (Rune.jit' (Rune.lanes a) x)
+
+(* A named map passes the lane index on: a key folded with it inside the map
+   draws the same values in every lane, and those of the anonymous map around
+   it. *)
+let test_named_map_passes_the_lane_index () =
+  let key = Nx.Rng.key 7 and a = Rune.axis () in
+  let draw () = Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f64 [| 3 |] in
+  let y =
+    Rune.vmap' ~axis:a (fun r -> Nx.add (Nx.mul_s r 0.0) (draw ())) (xs ())
+  in
+  check_arr ~msg:"one lane's draw" (to_arr (stack 4 (fun _ -> draw ()))) y;
+  let y =
+    Rune.vmap'
+      (fun t ->
+        Rune.vmap' ~axis:a
+          (fun r -> Nx.add (Nx.mul_s (Nx.add r t) 0.0) (draw ()))
+          (xs ()))
+      (Nx.zeros f64 [| 2; 3 |])
+  in
+  let trial i = Nx.Rng.uniform (Nx.Rng.fold_in key i) f64 [| 3 |] in
+  check_arr ~msg:"the anonymous map's draws"
+    (to_arr (stack 2 (fun i -> stack 4 (fun _ -> trial i))))
+    y
+
+(* A gather is linear: its tangent is the gather of the tangent. *)
+let test_lanes_under_jvp () =
+  let a = Rune.axis () and x = xs () and dx = Nx.mul_s (xs ()) 0.5 in
+  let gathered x =
+    Rune.vmap' ~axis:a (fun r -> Nx.sum ~axes:[ 0 ] (Rune.lanes a r)) x
+  in
+  let _, dy = Rune.jvp' gathered x dx in
+  check_arr ~msg:"jvp of the map" (to_arr (gathered dx)) dy;
+  let y, dy = Rune.jvp' (Rune.lanes a) x dx in
+  equal ~msg:"no map, shape" (array int) [| 1; 4; 3 |] (Nx.shape dy);
+  check_arr ~msg:"no map, primal" (to_arr x) y;
+  check_arr ~msg:"no map, tangent" (to_arr dx) dy;
+  let c = vec64 [| 0.3; -0.7; 1.1 |] in
+  let dy =
+    Rune.vmap' ~axis:a
+      (fun d ->
+        snd
+          (Rune.jvp'
+             (fun c -> Nx.sum ~axes:[ 0 ] (Rune.lanes a (Nx.mul c c)))
+             c d))
+      dx
+  in
+  let total = Nx.mul (Nx.mul_s c 2.0) (Nx.sum ~axes:[ 0 ] dx) in
+  check_arr ~msg:"jvp inside the map" (to_arr (stack 4 (fun _ -> total))) dy
+
+(* Outside the map named [a], reverse mode differentiates through the answer:
+   [Σ_i (Σ_j x_j) · x_i = |Σ_j x_j|²] has gradient [2 Σ_j x_j] in every row. *)
+let test_grad_outside_the_named_map () =
+  let a = Rune.axis () and x = xs () in
+  let f x =
+    Nx.sum
+      (Rune.vmap' ~axis:a
+         (fun r -> Nx.sum (Nx.mul (Nx.sum ~axes:[ 0 ] (Rune.lanes a r)) r))
+         x)
+  in
+  check_arr ~msg:"gradient"
+    (to_arr (Nx.broadcast_to [| 4; 3 |] (Nx.mul_s (Nx.sum ~axes:[ 0 ] x) 2.0)))
+    (Rune.grad' f x)
+
+let test_lanes_under_grad_raises () =
+  let a = Rune.axis () in
+  raises_match Exn.invalid_arg (fun () ->
+      ignore
+        (Rune.vmap' ~axis:a
+           (fun r -> Rune.grad' (fun r -> Nx.sum (Rune.lanes a r)) r)
+           (xs ())))
+
 let tests =
   [
     group "loop oracle" oracle_tests;
@@ -467,6 +602,19 @@ let tests =
         test "a batched window start batches" test_vmap_set_window_batched_start;
       ];
     group "nesting" [ test "vmap of vmap" test_nested_vmap ];
+    group "lanes"
+      [
+        test "the named map answers" test_lanes_of_the_named_map;
+        test "a shared value is broadcast" test_lanes_of_a_shared_value;
+        test "another map keeps its lanes" test_lanes_through_another_map;
+        test "one lane without the map" test_lanes_without_the_map;
+        test "a named map passes the lane index on"
+          test_named_map_passes_the_lane_index;
+        test "linear under jvp" test_lanes_under_jvp;
+        test "grad outside the named map" test_grad_outside_the_named_map;
+        test "raises under grad inside the named map"
+          test_lanes_under_grad_raises;
+      ];
     group "randomness"
       [
         test "implicit RNG draws are identical per lane"

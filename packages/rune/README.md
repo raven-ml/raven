@@ -116,7 +116,7 @@ Rune aims to fail loudly rather than return wrong gradients.
 Current gaps:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule
-  for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally
+  for `svd`, `eig`, `eigh`, `Rune.lanes`, and `mod`; forward mode additionally
   lacks `qr`. Differentiating through them raises `Invalid_argument` —
   `detach` the input if gradients should not flow through. (`cholesky`,
   reverse-mode `qr`, and the whole FFT family are supported.)

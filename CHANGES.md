@@ -167,10 +167,19 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.lanes a x` gathers `x` across the lanes of a map, as data: inside the
+  map named `a` (`Rune.vmap ~axis:a`, `Rune.vmap' ~axis:a`, with
+  `a = Rune.axis ()`) it is every lane's `x` stacked on a new leading axis,
+  the same value in every lane. A map in between keeps its own lanes, and with
+  no map named `a` around the call there is one lane. A named map passes the
+  lane index on, so `Nx.Rng.fold_in_axis` inside it addresses the anonymous
+  map around it.
+
 - `Rune.jit` compiles over arguments placed with any backend
   (`Nx.Placement.device ~backend`): they bind as they are, a program serves
   every backend over the same devices and layout, and the results are placed
   with the arguments' backend. Arguments with two backends raise.
+
 - `Rune.jvp` and `Rune.vmap` of a gradient through a `Rune.scan`, and
   `Rune.grad` of one, compile as loops under `Rune.jit`, where they unrolled
   every step: the gradient's reversed loop is now a scan itself, which every
@@ -2761,6 +2770,10 @@ thread.
 
 ### Nx
 
+- **Breaking (effect handlers):** the `E_psum` effect and `Nx_effect.op_psum`
+  are removed. It had no caller, no batching rule and no backend operation,
+  and it raised outside a map; `Nx.sum ~axes:[0] (Rune.lanes a x)` is the same
+  sum over the lanes of the map named `a`.
 - New `Nx_device.Profile`: between `start ()` and `stop ()`, devices record
   spans of their work, their allocated memory and the programs they load, all
   on the host clock (`now`). Host code adds spans with `span`, the libraries

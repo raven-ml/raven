@@ -553,9 +553,10 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
             (fun k ->
               lift1 k (irfft t ~axes ?s ~dtype) t (fun dx ->
                   irfft dx ~axes ?s ~dtype))
-      | E_psum { t_in } ->
+      (* A gather is linear. *)
+      | Axis.E_lanes { axis; t_in } ->
           Some
-            (fun k -> no_rule k "psum" (active t_in) (fun () -> op_psum t_in))
+            (fun k -> lift1 k (Axis.lanes axis t_in) t_in (Axis.lanes axis))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some

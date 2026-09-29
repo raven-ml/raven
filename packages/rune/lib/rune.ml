@@ -162,7 +162,12 @@ let custom_jvp = Custom.custom_jvp
 let broadcast_output st y =
   if Vmap.batched st y then y else Vmap.ensure_batched st y
 
-let vmap fn =
+type axis = Axis.t
+
+let axis = Axis.make
+let lanes = Axis.lanes
+
+let vmap ?axis fn =
   let (Structure.Uncurried u) = Structure.uncurry "Rune.vmap" fn in
   fun f ->
     u.curry (fun args ->
@@ -189,7 +194,7 @@ let vmap fn =
           | Some (n, _) -> n
           | None -> invalid_arg "Rune.vmap: the arguments have no leaf to map"
         in
-        let st = Vmap.create ~batch_size in
+        let st = Vmap.create ?axis ~batch_size () in
         let args =
           Nx.Ptree.map u.args
             (fun _ leaf ->
@@ -201,11 +206,11 @@ let vmap fn =
         let y = run_transform (u.apply f) args (Vmap.handler st) in
         Nx.Ptree.map u.result (fun _ yl -> broadcast_output st yl) y)
 
-let vmap' f x =
+let vmap' ?axis f x =
   if Array.length (Nx.shape x) = 0 then
     invalid_arg "Rune.vmap': cannot map a scalar";
   let x = Structure.alias x in
-  let st = Vmap.create ~batch_size:(Nx.shape x).(0) in
+  let st = Vmap.create ?axis ~batch_size:(Nx.shape x).(0) () in
   Vmap.mark st x;
   broadcast_output st (run_transform f x (Vmap.handler st))
 

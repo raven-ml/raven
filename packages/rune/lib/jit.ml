@@ -2729,11 +2729,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 (F.Linalg.solve_triangular ~upper ~transpose ~unit_diag (go a)
                    (go b))
             else refuse k "solve_triangular")
-    | E_psum _ ->
-        Some
-          (fun k ->
-            discontinue k
-              (Jit_error "Rune.jit: psum is only meaningful under vmap"))
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

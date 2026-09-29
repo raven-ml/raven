@@ -20,7 +20,7 @@
    gradient fall into two deliberate categories: - zero derivative (comparisons,
    bitwise and integer ops, bitcasts, rounding, argmax/argmin/argsort, RNG,
    tensor creation): fall through untracked, which yields the correct zero
-   gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
+   gradient; - no rule implemented (svd, eig, eigh, lanes, mod): raise when an
    input is tracked instead of silently producing a zero gradient — detach the
    input if differentiation should not flow through it. *)
 
@@ -830,9 +830,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                          Complex.zero
                          (shrink_axis last (1, n - m + 1) head))
                   else head))
-      | E_psum { t_in } ->
+      | Axis.E_lanes { axis; t_in } ->
           Some
-            (fun k -> no_rule k "psum" (tracked t_in) (fun () -> op_psum t_in))
+            (fun k ->
+              no_rule k "Rune.lanes" (tracked t_in) (fun () ->
+                  Axis.lanes axis t_in))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some

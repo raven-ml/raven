@@ -163,8 +163,16 @@ val jvp_aux :
 
 (** {1:vmap Vectorizing maps} *)
 
-val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [vmap s f] is [f] mapped over axis 0 of every tensor of its arguments. [s]
+type axis
+(** The name of a map. *)
+
+val axis : unit -> axis
+(** [axis ()] is a fresh name, distinct from every other. *)
+
+val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [vmap ?axis s f] is [f] mapped over axis 0 of every tensor of its
+    arguments. [axis] names the map for {!lanes}; a map without one is
+    anonymous. [s]
     is [f]'s signature, one structure per argument and one for the result:
 
     {[
@@ -189,7 +197,9 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     constant of the map. Decorrelate them either by folding the lane index into
     one key with {!Nx.Rng.fold_in_axis}, or by mapping over a batch of keys from
     {!Nx.Rng.split_batch}, walked with {!Nx.Rng.ptree}: each lane sees one key.
-    Reading a batched tensor's value inside the mapped function raises.
+    {!Nx.Rng.fold_in_axis} reads the lane index of the innermost anonymous map:
+    a named map passes it on. Reading a batched tensor's value inside the
+    mapped function raises.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
@@ -197,11 +207,31 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     their axis 0, naming each tensor by its path, as {!val-jit}'s messages do:
     ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]. *)
 
-val vmap' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
-(** [vmap' f x] is [vmap Nx.Ptree.(tensor @-> returns tensor) f x]: [f] mapped
-    over axis 0 of [x], its result stacked along a new axis 0.
+val vmap' :
+  ?axis:axis -> (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+(** [vmap' ?axis f x] is [vmap ?axis Nx.Ptree.(tensor @-> returns tensor) f x]:
+    [f] mapped over axis 0 of [x], its result stacked along a new axis 0.
 
     Raises [Invalid_argument] if [x] is a scalar. *)
+
+val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [lanes a x], inside the map named [a] of [n] lanes, is every lane's [x]
+    stacked on a new leading axis of length [n]: the same value in every lane,
+    a constant of that map. [x] of shape [s] gives shape [n :: s]; an [x] every
+    lane shares gives [n] copies of it.
+
+    Maps between the call and the map named [a] keep their own lanes: under an
+    anonymous map of [m] lanes inside the map named [a], each of the [m] lanes
+    gathers its own [x] across [a]. With no map named [a] around the call there
+    is one lane, and [lanes a x] is [Nx.unsqueeze ~axes:[0] x].
+
+    [lanes a] is linear, and forward mode differentiates it as such:
+    the tangent of [lanes a x] is [lanes a dx].
+
+    {!Nx.sum}[ ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a].
+
+    Raises [Invalid_argument] when a reverse-mode transformation inside the
+    map named [a] differentiates [x]. *)
 
 (** {1:custom Custom differentiation rules} *)
 

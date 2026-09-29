@@ -3,6 +3,7 @@
  (public_name rune)
  (private_modules
   custom
+  axis
   remat
   tape
   reverse
