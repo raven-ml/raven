@@ -2759,6 +2759,11 @@ thread.
   the host, kept resident through a residency set where Metal has one. It
   borrows host memory, loads metallib functions, and waits on its shared
   event.
+- `Nx.Device.of_runtime` makes an `Nx_device.t` a placement target:
+  `Nx.place (Nx.Placement.device (Nx.Device.of_runtime (Nx_metal_device.v 0))) x`
+  holds `x` in Metal memory. Operations on such values compute on the host
+  and place their results back. A device that cannot allocate raises
+  `Nx.Device.Out_of_memory`.
 - `Nx.sigmoid` of a large negative number is the subnormal its exact value
   rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
   about -88.7 at float32 and -709.8 at float64, and returned 0 there.

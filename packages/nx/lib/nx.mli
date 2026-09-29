@@ -304,6 +304,14 @@ module Device : sig
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a device's name. *)
 
+  val of_runtime : Nx_device.t -> t
+  (** [of_runtime d] is the device that holds placed values in [d]'s buffers:
+      the same value for every call with [d], and {!host} for [Nx_device.host].
+      It has [d]'s name. Operations on values placed on it copy their elements
+      to the host, compute there, and place their result back on it. {!place}
+      and operations raise {!Out_of_memory} with this device when [d] cannot
+      allocate. *)
+
   exception Out_of_memory of t * int
   (** Raised by an operation, a {!place} or a compiled call when a device cannot
       allocate the given number of bytes. *)

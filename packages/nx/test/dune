@@ -26,6 +26,7 @@
   test_format
   test_nx_support
   test_nx_io
+  test_nx_runtime
   test_nx_quant
   test_float_codecs)
  (libraries
@@ -47,6 +48,12 @@
   (progn
    (run %{test} --corrected)
    (diff? test_format.ml test_format.ml.corrected))))
+
+(test
+ (name test_nx_runtime)
+ (package nx)
+ (modules test_nx_runtime)
+ (libraries nx nx.device windtrap))
 
 (test
  (name test_nx_quant)

@@ -12,3 +12,11 @@
  (link_flags
   (-cclib "-framework Metal" -cclib "-framework Foundation"))
  (libraries nx.metal.device nx.device nx.dtype unix windtrap))
+
+(test
+ (name test_nx_metal_place)
+ (package nx)
+ (modules test_nx_metal_place)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries nx nx.metal.device nx.device windtrap))
