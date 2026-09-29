@@ -19,7 +19,7 @@ depends: [
   "cmdliner"
   "mosaic"
   "matrix"
-  "windtrap" {with-test}
+  "windtrap" {with-test & >= "0.2.0"}
   "odoc" {with-doc}
 ]
 build: [

@@ -33,14 +33,12 @@
   (name thumper)))
 
 (pin
- (url "git+https://github.com/invariant-hq/windtrap.git")
+ (url
+  "git+https://github.com/invariant-hq/windtrap.git#7be03df651610949a87ed3bb797984015e9691b9")
  (package
-  (name windtrap)))
-
-(pin
- (url "git+https://github.com/invariant-hq/litany.git")
+  (name windtrap))
  (package
-  (name litany)))
+  (name ppx_windtrap)))
 
 (package
  (name nx)
@@ -54,7 +52,14 @@
    (>= 5.5.0))
   dune
   ; tests
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (mdx :with-test)
   (thumper :with-test))
  (tags
@@ -76,7 +81,10 @@
   (uunf
    (>= 15.1.0))
   uucp
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (mdx :with-test)
   (thumper :with-test))
  (tags
@@ -94,7 +102,10 @@
   dune
   (nx
    (= :version))
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (mdx :with-test)
   (thumper :with-test))
  (tags
@@ -114,7 +125,10 @@
    (= :version))
   (tolk
    (= :version))
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
@@ -147,7 +161,10 @@
    (and
     (= :version)
     :with-test))
-  (windtrap :with-test))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0))))
  (tags
   (ppx parameter-tree automatic-differentiation machine-learning)))
 
@@ -174,7 +191,10 @@
   logs
   jsont
   bytesrw
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (thumper :with-test))
  (tags
   (machine-learning deep-learning neural-networks)))
@@ -192,7 +212,10 @@
   (nx
    (= :version))
   zarith
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (thumper :with-test))
  (tags
   (compiler gpu tensor-computation)))
@@ -213,7 +236,10 @@
    (and
     (= :version)
     :with-test))
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (thumper :with-test))
  (tags
   (optimization machine-learning gradient-descent)))
@@ -233,7 +259,10 @@
   cmdliner
   mosaic
   matrix
-  (windtrap :with-test))
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0))))
  (tags
   (experiment-tracking machine-learning monitoring)))
 
@@ -248,7 +277,10 @@
   dune
   (nx
    (= :version))
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (mdx :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
@@ -268,7 +300,10 @@
   bytesrw
   jsont
   mosaic
-  (windtrap :with-test)
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
   (mdx :with-test))
  (tags
   (repl toplevel notebooks interactive-computing literate-programming)))
@@ -300,7 +335,6 @@
   (hugin
    (= :version))
   (quill
-   (= :version))
-  (litany :with-test))
+   (= :version)))
  (tags
   (machine-learning data-science numerical-computation)))

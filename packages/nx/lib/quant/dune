@@ -1,4 +1,8 @@
 (library
  (name nx_quant)
  (public_name nx.quant)
- (libraries nx nx.dtype nx.buffer))
+ (libraries nx nx.dtype nx.buffer)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

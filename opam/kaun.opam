@@ -20,7 +20,7 @@ depends: [
   "logs"
   "jsont"
   "bytesrw"
-  "windtrap" {with-test}
+  "windtrap" {with-test & >= "0.2.0"}
   "thumper" {with-test}
   "odoc" {with-doc}
 ]

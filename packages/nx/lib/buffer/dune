@@ -7,4 +7,8 @@
   (names nx_buffer_stubs))
  (js_of_ocaml
   (javascript_files nx_buffer_stubs.js))
- (libraries nx_dtype))
+ (libraries nx_dtype)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

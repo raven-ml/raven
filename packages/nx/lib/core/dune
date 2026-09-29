@@ -3,4 +3,8 @@
  (public_name nx.core)
  (libraries nx_dtype nx_buffer)
  (instrumentation
-  (backend landmarks)))
+  (backend landmarks))
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

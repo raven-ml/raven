@@ -23,7 +23,6 @@ depends: [
   "munin" {= version}
   "hugin" {= version}
   "quill" {= version}
-  "litany" {with-test}
   "odoc" {with-doc}
 ]
 build: [

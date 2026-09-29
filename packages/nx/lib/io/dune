@@ -13,4 +13,8 @@
    nx_io_png
    nx_io_jpeg)
   (flags
-   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic))))
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

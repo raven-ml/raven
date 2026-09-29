@@ -16,7 +16,7 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {>= "1.0.0~alpha3"}
   "rune" {>= "1.0.0~alpha3"}
-  "windtrap" {with-test}
+  "windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}
   "thumper" {with-test}
   "odoc" {with-doc}
