@@ -109,6 +109,58 @@ let chain_benchmarks x0 =
     Thumper.bench ~tags:[ "lab" ] "chain grad" (fun () -> Rune.grad' chain x0);
   ]
 
+(* Declined: one-element adds of constants under transformations that have
+   nothing to do with them, so each add passes through the transformation
+   untouched. A call runs [declined_ops] adds, so the transformation's own setup
+   is small beside them; (row - eager) / ops approximates the per-op cost of
+   passing through. The last row runs host adds on this domain while another
+   domain sits inside a grad, the cost a transformation active elsewhere puts on
+   host code. *)
+let declined_ops = 100
+
+let adds a b =
+  for _ = 1 to declined_ops do
+    ignore (Sys.opaque_identity (Nx.add a b))
+  done
+
+let declined_benchmarks () =
+  let one = Nx.rand Nx.float32 [| 1 |] and one' = Nx.rand Nx.float32 [| 1 |] in
+  let x0 = Nx.rand Nx.float32 [| 1 |] in
+  let unbatched xi =
+    adds one one';
+    xi
+  in
+  let beside_grad () =
+    let entered = Semaphore.Binary.make false in
+    let release = Semaphore.Binary.make false in
+    let inside x =
+      Semaphore.Binary.release entered;
+      Semaphore.Binary.acquire release;
+      Nx.sum x
+    in
+    let other = Domain.spawn (fun () -> ignore (Rune.grad' inside x0)) in
+    Semaphore.Binary.acquire entered;
+    (release, other)
+  in
+  [
+    Thumper.bench "add 1 (nx eager)" (fun () -> adds one one');
+    Thumper.bench "add 1 under grad" (fun () ->
+        Rune.grad'
+          (fun x ->
+            adds one one';
+            Nx.sum x)
+          x0);
+    Thumper.bench "add 1 under vmap" (fun () -> Rune.vmap' unbatched x0);
+    Thumper.bench "add 1 under grad (vmap)" (fun () ->
+        Rune.grad' (fun x -> Nx.sum (Rune.vmap' unbatched x)) x0);
+    Thumper.bench_with_setup ~setup:beside_grad
+      ~teardown:(fun (release, other) ->
+        Semaphore.Binary.release release;
+        Domain.join other)
+      "add 1 beside grad on another domain"
+      (fun _ -> adds one one');
+  ]
+
 (* Jit: compiled execution of the same computations. Compilation — tracing plus
    kernel build — is hoisted into [setup], which builds the jitted closure and
    calls it once, so the timed region replays the compiled program only. [eager
@@ -412,6 +464,7 @@ let () =
           Thumper.group "MlpJvp" (mlp_jvp_benchmarks params x y);
           Thumper.group "PerSampleGrads" (vmap_benchmarks params x);
           Thumper.group "DeepChain" (chain_benchmarks x0);
+          Thumper.group "Declined" (declined_benchmarks ());
           Thumper.group "Jit" (jit_benchmarks params x x0);
           Thumper.group "JitFootprint"
             (jit_footprint_benchmarks ew_params lorenz_params rnn2 rnn10 rnn20);
