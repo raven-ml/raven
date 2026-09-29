@@ -4893,6 +4893,14 @@ module Make (B : Backend_intf.S) = struct
     let r = B.rfft xp ~dtype ~axes:(Array.of_list axes_list) in
     apply_fft_scale scale r
 
+  (* The backend's real transforms read and write float32 and float64. A
+     narrower float widens to float32 exactly on the way in, and the inverse
+     works at float32 and rounds once on the way out. *)
+  let rfftn (type a) dtype ?axes ?s ?norm (x : (float, a) t) =
+    match B.dtype x with
+    | Float32 | Float64 -> rfftn dtype ?axes ?s ?norm x
+    | _ -> rfftn dtype ?axes ?s ?norm (cast Nx_dtype.float32 x)
+
   let irfftn dtype ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
     let axes_list =
@@ -4947,6 +4955,12 @@ module Make (B : Backend_intf.S) = struct
     if norm_scale <> 1.0 then
       mul r (scalar (B.context r) (B.dtype r) norm_scale)
     else r
+
+  let irfftn (type b) (dtype : (float, b) Nx_dtype.t) ?axes ?s ?norm x :
+      (float, b) t =
+    match dtype with
+    | Float32 | Float64 -> irfftn dtype ?axes ?s ?norm x
+    | _ -> cast dtype (irfftn Nx_dtype.float32 ?axes ?s ?norm x)
 
   (* 1D FFT convenience *)
   let fft ?(axis = -1) ?n ?(norm = `Backward) x =

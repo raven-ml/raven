@@ -2724,6 +2724,11 @@ thread.
 
 ### Nx
 
+- `Nx.rfft`, `irfft` and every transform built on them (`rfft2`, `rfftn`,
+  their inverses, `hfft`, `ihfft`, `stft`, `istft`) take and give float16,
+  bfloat16 and float8 tensors, working at float32. They raised
+  `Failure "unsupported bigarray kind"`, though their types accept any float
+  dtype.
 - `Nx.rfft` of an empty axis gives its one bin as zero, the empty sum, and so
   do `rfftn`, `rfft2` and `stft` when the last transformed axis is empty. The
   bin held whatever its fresh buffer did.
