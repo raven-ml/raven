@@ -198,8 +198,9 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
     for element access that allocates nothing per element.
 
     Raises [Invalid_argument] if [t]'s dtype has no {!Bigarray.kind}: bfloat16,
-    the float8 dtypes, int4, uint4, uint32, uint64 and bool. {!bitcast} to the
-    integers of their width first, which have one, for all but the last three.
+    the float8 dtypes, uint32, uint64, int4, uint4 and bool. {!bitcast} the
+    first five to the integers of their width first, which have one, and
+    {!cast} the last three to [uint8].
 
     See also {!of_bigarray}. *)
 
@@ -570,8 +571,10 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
     copy, of the dtype of [ba]'s kind. The tensor takes ownership: the caller
     must not write [ba] afterwards. Fill a bigarray, then wrap it, to build a
     tensor element by element. A tensor of a dtype with no {!Bigarray.kind} is
-    built from the integers of its width with {!bitcast}, such as a bfloat16 one
-    from [int16_unsigned] elements.
+    built from another: a bfloat16, float8, uint32 or uint64 one from the
+    integers of its width with {!bitcast}, such as a bfloat16 one from
+    [int16_unsigned] elements, and an int4, uint4 or bool one from [uint8]
+    elements with {!cast}.
 
     Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint],
     or if its first element does not lie at a multiple of its size (of one

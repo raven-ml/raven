@@ -314,7 +314,9 @@ module Buffer : sig
       address of a buffer value with [nx_device_buffer_host] from the header
       [nx_device.h], which [nx.device] installs: it reads the value's fields
       without allocating, and the address stays valid while the value is
-      reachable. *)
+      reachable. Its buffer must be one the host addresses, one that
+      {!host_address} answers for, such as every buffer on {!host}; reading any
+      other is undefined behaviour. *)
 
   val address : t -> nativeint
   (** [address b] is the address of [b]'s first byte in its device's address

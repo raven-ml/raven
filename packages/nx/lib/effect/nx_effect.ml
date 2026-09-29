@@ -437,9 +437,31 @@ let whole_view r =
       View.create ~offset:(View.offset v) ~strides:(View.strides v)
         (global r.r_placement (View.shape v))
 
+(* Raises unless [buffer] is a host buffer of [dtype]'s format, as the host
+   engine reads it: through its host address, [dtype]'s elements at a time. *)
+let check_host fn dtype buffer =
+  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
+    invalid_arg
+      (Printf.sprintf "Nx_effect.%s: the buffer is on %s, not CPU" fn
+         (Nx_device.name (Nx_device.Buffer.device buffer)));
+  if
+    not
+      (Nx_dtype.Scalar.equal
+         (Nx_device.Buffer.dtype buffer)
+         (Nx_dtype.Scalar.of_dtype dtype))
+  then
+    invalid_arg
+      (Printf.sprintf "Nx_effect.%s: a %s buffer read as %s" fn
+         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
+         (Nx_dtype.to_string dtype))
+
+(* An engine's read is checked once: a buffer of another device or format
+   would otherwise reach the host engine's kernels. *)
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_backend.t =
+  let elements = read_elements r in
+  check_host "read" r.r_dtype elements;
   Nx_backend.reshape
-    (Nx_backend.from_host host_context r.r_dtype (read_elements r))
+    (Nx_backend.from_host host_context r.r_dtype elements)
     (View.shape (whole_view r))
 
 (* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
@@ -1869,20 +1891,7 @@ let full_at p dtype shape_arr value =
       settle (At p) (Nx_backend.full host_context dtype shape_arr value)
 
 let from_host (ctx : context) dtype buffer =
-  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
-    invalid_arg
-      (Printf.sprintf "from_host: the buffer is on %s, not CPU"
-         (Nx_device.name (Nx_device.Buffer.device buffer)));
-  if
-    not
-      (Nx_dtype.Scalar.equal
-         (Nx_device.Buffer.dtype buffer)
-         (Nx_dtype.Scalar.of_dtype dtype))
-  then
-    invalid_arg
-      (Printf.sprintf "from_host: a %s buffer read as %s"
-         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
-         (Nx_dtype.to_string dtype));
+  check_host "from_host" dtype buffer;
   try Effect.perform (E_from_host { context = ctx; dtype; buffer })
   with Effect.Unhandled _ -> (
     match ctx with

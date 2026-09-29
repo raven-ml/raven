@@ -407,10 +407,18 @@ module Make (B : Backend_intf.S) = struct
         let ba = Nx_device.Buffer.bigarray k (B.to_host (copy x)) in
         Bigarray.reshape (Bigarray.genarray_of_array1 ba) (shape x)
 
-  let of_bigarray ctx ba =
+  let of_bigarray (type a b) ctx
+      (ba : (a, b, Bigarray.c_layout) Bigarray.Genarray.t) =
+    let dtype : (a, b) Nx_dtype.t =
+      match Bigarray.Genarray.kind ba with
+      | Bigarray.Char -> err "of_bigarray" "a char bigarray has no dtype"
+      | Bigarray.Int -> err "of_bigarray" "an int bigarray has no dtype"
+      | Bigarray.Nativeint ->
+          err "of_bigarray" "a nativeint bigarray has no dtype"
+      | k -> Nx_dtype.of_bigarray_kind k
+    in
     let shape = Bigarray.Genarray.dims ba in
     let flat = Bigarray.reshape_1 ba (Array.fold_left ( * ) 1 shape) in
-    let dtype = Nx_dtype.of_bigarray_kind (Bigarray.Genarray.kind ba) in
     reshape shape (B.from_host ctx dtype (Nx_device.Buffer.of_bigarray flat))
 
   let to_array x = Array.init (numel x) (elements x)
