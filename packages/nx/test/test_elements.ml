@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Typed access to host buffers: each dtype's storage representation, fills that
-   stay inside their buffer, and gathers that keep every bit. *)
+(* Typed access to host buffers: a store reads back as the dtype rounds it and
+   lands as the format's bits, a fill stays inside its buffer, and a gather
+   keeps every bit of the elements a view reaches. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -12,172 +13,248 @@ module E = Nx_core.Elements
 module S = Nx_dtype.Scalar
 module V = Nx_core.View
 
+let bytes b = B.bigarray Bigarray.char b
+let size s = Int.max 1 (S.bitsize s / 8)
+
+(* The bits of element [i] of [ba], elements of [s] in storage order. *)
+let bits s ba i =
+  if S.bitsize s = 4 then
+    let byte = Char.code ba.{i / 2} in
+    String.make 1
+      (Char.chr (if i land 1 = 0 then byte land 0xf else byte lsr 4))
+  else String.init (size s) (fun k -> ba.{(i * size s) + k})
+
+let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
+
+(* The [n] bytes of [c], little-endian. *)
+let le n c = String.init n (fun k -> Char.chr ((c lsr (8 * k)) land 0xff))
+
+(* A dtype, values of it, what a store of each reads back as, its witness and
+   the bits a store of it lands as, when they are not those of a bigarray
+   kind. *)
+type elt =
+  | Elt : {
+      dt : ('a, 'b) Nx_dtype.t;
+      value : 'a Gen.t;
+      stored : 'a -> 'a;
+      w : 'a testable;
+      code : ('a -> string) option;
+    }
+      -> elt
+
+let elt ?code dt value stored w = Elt { dt; value; stored; w; code }
+let ints lo hi = Gen.int_range lo hi
+
+let narrow dt =
+  let s = S.of_dtype dt in
+  elt
+    ~code:(fun x -> le (size s) (S.encode s x))
+    dt Gen.any_float
+    (fun x -> S.decode s (S.encode s x))
+    float_exact
+
+let complex round =
+  let part = Gen.any_float in
+  ( Gen.map (fun (re, im) -> { Complex.re; im }) (Gen.pair part part),
+    (fun (c : Complex.t) -> { Complex.re = round c.re; im = round c.im }),
+    Testable.contramap
+      (fun (c : Complex.t) -> (c.re, c.im))
+      (pair float_exact float_exact) )
+
+let elts =
+  let c64, r64, w64 = complex round32 and c128, r128, w128 = complex Fun.id in
+  [
+    elt Nx_dtype.float16 Gen.any_float
+      (fun x -> S.decode Float16 (S.encode Float16 (round32 x)))
+      float_exact;
+    elt Nx_dtype.float32 Gen.any_float round32 float_exact;
+    elt Nx_dtype.float64 Gen.any_float Fun.id float_exact;
+    narrow Nx_dtype.bfloat16;
+    narrow Nx_dtype.float8_e4m3;
+    narrow Nx_dtype.float8_e5m2;
+    elt
+      ~code:(fun v -> le 1 (v land 0xf))
+      Nx_dtype.int4 (ints (-8) 7) Fun.id int;
+    elt ~code:(le 1) Nx_dtype.uint4 (ints 0 15) Fun.id int;
+    elt Nx_dtype.int8 (ints (-128) 127) Fun.id int;
+    elt Nx_dtype.uint8 (ints 0 255) Fun.id int;
+    elt Nx_dtype.int16 (ints (-32768) 32767) Fun.id int;
+    elt Nx_dtype.uint16 (ints 0 65535) Fun.id int;
+    elt Nx_dtype.int32 Gen.int32 Fun.id int32;
+    elt Nx_dtype.uint32 Gen.int32 Fun.id int32;
+    elt Nx_dtype.int64 Gen.int64 Fun.id int64;
+    elt Nx_dtype.uint64 Gen.int64 Fun.id int64;
+    elt Nx_dtype.complex64 c64 r64 w64;
+    elt Nx_dtype.complex128 c128 r128 w128;
+    elt ~code:(fun b -> le 1 (Bool.to_int b)) Nx_dtype.bool Gen.bool Fun.id bool;
+  ]
+
 let buffer dt n = B.create Nx_device.host (S.of_dtype dt) n
-let bytes b = B.bigarray Bigarray.int8_unsigned b
 
-let byte_list b =
-  let ba = bytes b in
-  List.init (Bigarray.Array1.dim ba) (Bigarray.Array1.get ba)
+let stores =
+  group "stores"
+    (List.map
+       (fun (Elt e) ->
+         let s = S.of_dtype e.dt in
+         prop
+           (S.to_string s
+          ^ " reads back what it stores, as a store of it rounds, in its \
+             format's bits")
+           (Gen.array ~size:(Gen.int_range 0 9) e.value)
+           (fun xs ->
+             let n = Array.length xs in
+             let b = buffer e.dt n in
+             Array.iteri (E.set e.dt b) xs;
+             equal (array e.w) (Array.map e.stored xs)
+               (Array.init n (E.get e.dt b));
+             Option.iter
+               (fun code ->
+                 equal ~msg:"bits" (list string)
+                   (List.map code (Array.to_list xs))
+                   (List.init n (bits s (bytes b))))
+               e.code))
+       elts)
 
-let of_bytes l =
-  B.of_bigarray
-    (Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout
-       (List.length l) (List.nth l))
+let fills =
+  group "fill"
+    (List.map
+       (fun (Elt e) ->
+         let s = S.of_dtype e.dt in
+         prop
+           (S.to_string s
+          ^ " stores its value as every element, and nothing outside them")
+           (Gen.triple e.value (Gen.int_range 0 9) (Gen.int_range 0 3))
+           (fun (x, n, k) ->
+             let m = n + (2 * k) + 3 in
+             let whole = B.create Nx_device.host s m in
+             let ba = bytes whole in
+             for i = 0 to Bigarray.Array1.dim ba - 1 do
+               ba.{i} <- Char.chr (((i * 37) + 11) land 0xff)
+             done;
+             let first = 2 * k in
+             let others () =
+               List.filteri
+                 (fun i _ -> i < first || i >= first + n)
+                 (List.init m (bits s ba))
+             in
+             let before = others () in
+             let b = B.view whole ~offset:(first * S.bitsize s / 8) s n in
+             E.fill e.dt b x;
+             equal (array e.w)
+               (Array.make n (e.stored x))
+               (Array.init n (E.get e.dt b));
+             equal ~msg:"the elements around" (list string) before (others ())))
+       elts)
 
-let inv = Exn.invalid_arg ~substring:""
+(* A view of [shape] and [strides] and the offset and length of a buffer it
+   reaches the ends of, give or take [slack]. *)
+let views =
+  let open Gen in
+  let* shape = array ~size:(int_range 0 3) (int_range 0 3) in
+  let* strides =
+    array ~size:(constant (Array.length shape)) (int_range (-3) 3)
+  in
+  let+ slack = int_range 0 2 in
+  let reach sign =
+    if Array.mem 0 shape then 0
+    else
+      Array.fold_left ( + ) 0
+        (Array.mapi
+           (fun a n ->
+             if sign * strides.(a) > 0 then strides.(a) * (n - 1) else 0)
+           shape)
+  in
+  let offset = slack - reach (-1) in
+  (V.create ~offset ~strides shape, offset + reach 1 + 1 + slack)
 
-(* Round trips *)
+let pp_view ppf (v, n) =
+  Format.fprintf ppf "shape %a strides %a offset %d of %d" Nx_test.pp_shape
+    (V.shape v) Nx_test.pp_shape (V.strides v) (V.offset v) n
 
-type case = Case : ('a, 'b) Nx_dtype.t * 'a list -> case
+let formats =
+  Gen.of_list
+    ~pp:(fun ppf s -> Format.pp_print_string ppf (S.to_string s))
+    S.[ Bool; Int4; UInt4; UInt8; BFloat16; Float32; Int64; Complex128 ]
 
-let cases =
-  Nx_dtype.
+let gather =
+  prop "gather is the elements a view reaches in C order, each keeping its bits"
+    (Gen.triple formats
+       (Gen.with_pp pp_view views)
+       (Gen.string_of ~size:(Gen.int_range 1 9) Gen.char))
+    (fun (s, (v, n), seed) ->
+      let src = B.create Nx_device.host s n in
+      let ba = bytes src in
+      for i = 0 to Bigarray.Array1.dim ba - 1 do
+        ba.{i} <- seed.[i mod String.length seed]
+      done;
+      let g = E.gather src v in
+      let expected =
+        List.init (V.numel v) (fun k ->
+            let idx = Nx_test.unravel (V.shape v) k in
+            let p = ref (V.offset v) in
+            Array.iteri (fun a i -> p := !p + (i * (V.strides v).(a))) idx;
+            bits s ba !p)
+      in
+      equal (pair string int)
+        (S.to_string s, V.numel v)
+        (S.to_string (B.dtype g), B.length g);
+      equal (list string) expected (List.init (V.numel v) (bits s (bytes g))))
+
+(* A device over host memory, whose buffers are not the host's. *)
+let other =
+  lazy
+    (let alloc n =
+       let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+       let a = B.host_address (B.of_bigarray ba) in
+       Some { Nx_device.host = Some a; device = a; handle = a }
+     in
+     Nx_device.make ~name:"OTHER" ~arch:"test" ~budget:max_int
+       ~memory:{ alloc; free = ignore } ())
+
+let refusals =
+  let f32 = buffer Nx_dtype.float32 2 in
+  let open Nx_dtype in
+  cases ~name:fst "refuse"
     [
-      Case (float16, [ 1.5; -2.; 0.25 ]);
-      Case (float32, [ 1.5; -2.; 0x1p-100 ]);
-      Case (float64, [ 1.5; -2.; 1e-300 ]);
-      Case (bfloat16, [ 1.5; -2.; 256. ]);
-      Case (float8_e4m3, [ 1.5; -2.; 448. ]);
-      Case (float8_e5m2, [ 1.5; -2.; 57344. ]);
-      Case (int4, [ -8; 7; 0; -1; 3 ]);
-      Case (uint4, [ 0; 15; 9 ]);
-      Case (int8, [ -128; 127; 0 ]);
-      Case (uint8, [ 0; 255; 7 ]);
-      Case (int16, [ -32768; 32767; 5 ]);
-      Case (uint16, [ 0; 65535; 5 ]);
-      Case (int32, [ Int32.min_int; Int32.max_int; 5l ]);
-      Case (uint32, [ -1l; 0l; 5l ]);
-      Case (int64, [ Int64.min_int; Int64.max_int; 5L ]);
-      Case (uint64, [ -1L; 0L; 5L ]);
-      Case (complex64, [ { Complex.re = 1.5; im = -2. } ]);
-      Case (complex128, [ { Complex.re = 1e-300; im = 3. } ]);
-      Case (bool, [ true; false; true ]);
+      ("a buffer of another format", fun () -> ignore (E.get int32 f32 0));
+      ("an index past the last element", fun () -> ignore (E.get float32 f32 2));
+      ("an index of -1", fun () -> ignore (E.get float32 f32 (-1)));
+      ( "a 4-bit store past the last element",
+        fun () -> E.set int4 (buffer int4 3) 3 0 );
+      ( "a buffer of another device",
+        fun () -> ignore (E.get uint8 (B.create (Lazy.force other) S.UInt8 1) 0)
+      );
+      ( "a gather past the end",
+        fun () ->
+          ignore (E.gather f32 (V.create ~offset:1 ~strides:[| 1 |] [| 2 |])) );
+      ( "a gather before the start",
+        fun () ->
+          ignore (E.gather f32 (V.create ~offset:0 ~strides:[| -1 |] [| 2 |]))
+      );
+      ( "a gather of another device's buffer",
+        fun () ->
+          ignore
+            (E.gather
+               (B.create (Lazy.force other) S.UInt8 2)
+               (V.create [| 2 |])) );
     ]
-
-let test_round_trips () =
-  List.iter
-    (fun (Case (dt, values)) ->
-      let n = List.length values in
-      let b = buffer dt n in
-      let set = E.set dt b and get = E.get dt b in
-      List.iteri set values;
-      is_true ~msg:(Nx_dtype.to_string dt) (List.init n get = values);
-      let f = buffer dt n in
-      E.fill dt f (List.hd values);
-      is_true
-        ~msg:(Nx_dtype.to_string dt ^ " fill")
-        (List.init n (E.get dt f) = List.init n (fun _ -> List.hd values)))
-    cases
-
-(* Storage *)
-
-let test_storage () =
-  let i4 = buffer Nx_dtype.int4 3 in
-  List.iteri (E.set Nx_dtype.int4 i4) [ 1; -2; 3 ];
-  equal ~msg:"int4, the first in the low nibble" (list int) [ 0xe1; 0x03 ]
-    (List.mapi (fun i b -> if i = 1 then b land 0xf else b) (byte_list i4));
-  let u4 = buffer Nx_dtype.uint4 2 in
-  E.set Nx_dtype.uint4 u4 0 20;
-  E.set Nx_dtype.uint4 u4 1 (-3);
-  equal ~msg:"uint4 stores clamp" (list int) [ 15; 0 ]
-    (List.init 2 (E.get Nx_dtype.uint4 u4));
-  E.set Nx_dtype.int4 i4 0 (-9);
-  equal ~msg:"int4 stores clamp" int (-8) (E.get Nx_dtype.int4 i4 0);
-  let bf = buffer Nx_dtype.bfloat16 1 in
-  E.set Nx_dtype.bfloat16 bf 0 1.;
-  equal ~msg:"bfloat16 bits" (list int) [ 0x80; 0x3f ] (byte_list bf);
-  let u32 = buffer Nx_dtype.uint32 1 in
-  E.set Nx_dtype.uint32 u32 0 (-1l);
-  equal ~msg:"uint32 bits" (list int) [ 0xff; 0xff; 0xff; 0xff ] (byte_list u32);
-  let bo = of_bytes [ 0; 1; 7 ] in
-  let bo = B.view bo ~offset:0 S.Bool 3 in
-  equal ~msg:"bool reads a nonzero byte as true" (list bool)
-    [ false; true; true ]
-    (List.init 3 (E.get Nx_dtype.bool bo));
-  E.set Nx_dtype.bool bo 2 true;
-  equal ~msg:"bool stores 1" (list int) [ 0; 1; 1 ] (byte_list bo)
-
-let test_fill_stays_inside () =
-  let mem = of_bytes [ 0x00; 0xa0 ] in
-  let three = B.view mem ~offset:0 S.Int4 3 in
-  E.fill Nx_dtype.int4 three 5;
-  equal ~msg:"the neighbour's nibble is kept" (list int) [ 0x55; 0xa5 ]
-    (byte_list mem)
-
-let test_refusals () =
-  let b = buffer Nx_dtype.float32 2 in
-  raises_match inv (fun () -> E.get Nx_dtype.int32 b);
-  raises_match inv (fun () -> E.get Nx_dtype.float32 b 2);
-  raises_match inv (fun () -> E.set Nx_dtype.int4 (buffer Nx_dtype.int4 3) 3 0)
-
-(* Gathering *)
-
-let view ?(offset = 0) strides shape = V.create ~offset ~strides shape
-
-let test_gather_words () =
-  let src = buffer Nx_dtype.int32 6 in
-  List.iteri (E.set Nx_dtype.int32 src) [ 0l; 1l; 2l; 3l; 4l; 5l ];
-  let got v = List.init (V.numel v) (E.get Nx_dtype.int32 (E.gather src v)) in
-  equal ~msg:"transposed" (list int32) [ 0l; 3l; 1l; 4l; 2l; 5l ]
-    (got (view [| 1; 3 |] [| 3; 2 |]));
-  equal ~msg:"reversed" (list int32) [ 5l; 4l; 3l ]
-    (got (view ~offset:5 [| -1 |] [| 3 |]));
-  equal ~msg:"broadcast" (list int32) [ 2l; 2l; 2l; 2l ]
-    (got (view ~offset:2 [| 0; 0 |] [| 2; 2 |]));
-  equal ~msg:"rows of a slice" (list int32) [ 1l; 2l; 4l; 5l ]
-    (got (view ~offset:1 [| 3; 1 |] [| 2; 2 |]));
-  equal ~msg:"a scalar" (list int32) [ 4l ] (got (view ~offset:4 [||] [||]));
-  equal ~msg:"empty" (list int32) [] (got (view [| 1 |] [| 0 |]));
-  raises_match inv (fun () -> E.gather src (view ~offset:4 [| 1 |] [| 3 |]));
-  raises_match inv (fun () -> E.gather src (view ~offset:1 [| -1 |] [| 3 |]))
-
-let test_gather_bits () =
-  let src = buffer Nx_dtype.float32 2 in
-  let bits = B.bigarray Bigarray.int32 src in
-  bits.{0} <- 0x7f800001l;
-  bits.{1} <- 0xffc00001l;
-  let dst = E.gather src (view ~offset:1 [| -1 |] [| 2 |]) in
-  let out = B.bigarray Bigarray.int32 dst in
-  equal ~msg:"a signalling NaN keeps its bits" (list int32)
-    [ 0xffc00001l; 0x7f800001l ]
-    [ out.{0}; out.{1} ];
-  let c = buffer Nx_dtype.complex128 3 in
-  List.iteri
-    (E.set Nx_dtype.complex128 c)
-    [ Complex.one; Complex.i; { Complex.re = 2.; im = 3. } ];
-  let g = E.gather c (view ~offset:2 [| -2 |] [| 2 |]) in
-  equal ~msg:"16-byte elements"
-    (list (pair float_exact float_exact))
-    [ (2., 3.); (1., 0.) ]
-    (List.init 2 (fun i ->
-         let z = E.get Nx_dtype.complex128 g i in
-         (z.Complex.re, z.im)))
-
-let test_gather_nibbles () =
-  let src = buffer Nx_dtype.int4 7 in
-  List.iteri (E.set Nx_dtype.int4 src) [ 0; -1; 2; -3; 4; -5; 6 ];
-  let g = E.gather src (view ~offset:1 [| 2 |] [| 3 |]) in
-  equal ~msg:"odd offsets" (list int) [ -1; -3; -5 ]
-    (List.init 3 (E.get Nx_dtype.int4 g));
-  let r = E.gather src (view ~offset:6 [| -1 |] [| 7 |]) in
-  equal ~msg:"reversed" (list int) [ 6; -5; 4; -3; 2; -1; 0 ]
-    (List.init 7 (E.get Nx_dtype.int4 r))
+    (fun (_, f) -> raises_match Exn.invalid_arg f)
 
 let () =
   exit
     (run "Nx_core.Elements"
        [
-         group "access"
-           [
-             test "every dtype round trips" test_round_trips;
-             test "storage representations" test_storage;
-             test "a fill stays inside its buffer" test_fill_stays_inside;
-             test "refusals" test_refusals;
-           ];
-         group "gather"
-           [
-             test "strided views of words" test_gather_words;
-             test "bits are kept" test_gather_bits;
-             test "4-bit elements" test_gather_nibbles;
-           ];
+         stores;
+         fills;
+         gather;
+         refusals;
+         test
+           "4-bit stores clamp out of range values (the interfaces are silent)"
+           (fun () ->
+             let i4 = buffer Nx_dtype.int4 2 and u4 = buffer Nx_dtype.uint4 2 in
+             List.iteri (E.set Nx_dtype.int4 i4) [ -9; 8 ];
+             List.iteri (E.set Nx_dtype.uint4 u4) [ -3; 20 ];
+             equal (list int) [ -8; 7; 0; 15 ]
+               (List.init 2 (E.get Nx_dtype.int4 i4)
+               @ List.init 2 (E.get Nx_dtype.uint4 u4)));
        ])
