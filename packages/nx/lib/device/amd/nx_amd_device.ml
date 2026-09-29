@@ -8,7 +8,7 @@ module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Pci_memory = Nx_device_support.Pci_memory
 module Page_table = Nx_device_support.Page_table
-module Sysmem = Nx_device_support.Sysmem
+module Remote = Nx_device_support.Remote
 
 external linux : unit -> bool = "caml_nx_amd_linux"
 
@@ -72,6 +72,7 @@ module Int_map = Map.Make (Int)
 
 type amd = {
   index : int;
+  machine : Nx_device.t; (* the host of the GPU's machine *)
   gpu : gpu;
   hw : Mutex.t; (* the GPU's registers and page tables *)
   mutable allocs : alloc Int_map.t; (* the device's own memory, by address *)
@@ -204,15 +205,22 @@ let mapping a =
 
 (* Queues *)
 
-let mmio64 x = Mmio.v x 8
+(* The range at [x] of the GPU's machine. *)
+let range a x n =
+  match a.gpu with
+  | Am_gpu { pci; _ } -> (
+      match Pci.remote pci with
+      | Some r -> Mmio.remote (Remote.access r) x n
+      | None -> Mmio.v x n)
+  | Kfd_gpu _ -> Mmio.v x n
 
-let sdma_queue (q : queue) =
+let sdma_queue a (q : queue) =
   {
-    Sdma.ring = Mmio.v q.ring q.ring_bytes;
-    read_ptr = mmio64 q.read_ptr;
-    write_ptr = mmio64 q.write_ptr;
-    put = mmio64 q.put;
-    doorbell = mmio64 q.doorbell;
+    Sdma.ring = range a q.ring q.ring_bytes;
+    read_ptr = range a q.read_ptr 8;
+    write_ptr = range a q.write_ptr 8;
+    put = range a q.put 8;
+    doorbell = range a q.doorbell 8;
   }
 
 let sdma_family (props : props) =
@@ -228,7 +236,8 @@ let max_copy (props : props) =
   then 0x40000000
   else 0x400000
 
-let opened : (int * amd) list Atomic.t = Atomic.make []
+(* The opened GPUs, by the host of their machine and index there. *)
+let opened : ((Nx_device.t * int) * amd) list Atomic.t = Atomic.make []
 
 let amd_of d =
   List.find_map
@@ -238,7 +247,7 @@ let amd_of d =
 
 (* Whether [a]'s copy engine reaches the memory of [peer], which the topology
    fixes: over a link the driver reports, or through [peer]'s memory BAR when it
-   is large, as mapping [peer]'s memory requires. *)
+   is large, as mapping [peer]'s memory requires, on the same machine. *)
 let reaches a peer =
   with_hw a (fun () ->
       match Hashtbl.find_opt a.reach peer.index with
@@ -247,7 +256,9 @@ let reaches a peer =
           let r =
             match (a.gpu, peer.gpu) with
             | Kfd_gpu k, Kfd_gpu k' -> Kfd.reaches k.node k'.node
-            | Am_gpu _, Am_gpu g' -> not (Pci_memory.small_bar g'.memory)
+            | Am_gpu _, Am_gpu g' ->
+                a.machine == peer.machine
+                && not (Pci_memory.small_bar g'.memory)
             | _ -> false
           in
           Hashtbl.replace a.reach peer.index r;
@@ -260,7 +271,7 @@ let copy_queue a (timeline : Nx_device.memory) =
   let enqueue words =
     let q =
       match a.handles with
-      | Some h -> sdma_queue (List.hd h.sdma)
+      | Some h -> sdma_queue a (List.hd h.sdma)
       | None -> failwith "the SDMA queue is not set up"
     in
     let timeout_ms = Option.fold ~none:30_000 ~some:Nx_device.timeout a.dev in
@@ -302,6 +313,29 @@ let copy_queue a (timeline : Nx_device.memory) =
     | _ -> None
   in
   { Nx_device.copy = submit; transfer; stamp }
+
+(* How the other functions of the GPU's machine reach its memory: its own
+   through the memory BAR, even in a hive whose GPUs reach each other over XGMI,
+   and system memory at its pages. *)
+let dma a (m : Nx_device.memory) =
+  match (a.gpu, find a (Nativeint.to_int m.device)) with
+  | Kfd_gpu _, _ -> Error "the kernel driver's memory is not described"
+  | Am_gpu _, None -> Error "no allocation of this GPU"
+  | Am_gpu { memory; pci; _ }, Some { mem = Am_mem pm; _ } -> (
+      let map = pm.mapping in
+      match map.space with
+      | Page_table.Sys -> Ok { Nx_device.bus = Pci.bus pci; pages = map.pages }
+      | Phys when Pci_memory.small_bar memory ->
+          Error "the memory BAR is too small for other functions to reach it"
+      | Phys ->
+          let start = fst (Pci.bar pci 0) in
+          Ok
+            {
+              Nx_device.bus = Pci.bus pci;
+              pages = List.map (fun (p, n) -> (p + start, n)) map.pages;
+            }
+      | Peer -> Error "memory of another GPU")
+  | Am_gpu _, Some { mem = Kfd_mem _; _ } -> Error "memory of another interface"
 
 (* Programs *)
 
@@ -399,7 +433,12 @@ let scratch d n =
 
 (* Opening *)
 
-let name i = if i = 0 then "AMD" else Printf.sprintf "AMD:%d" i
+(* A GPU of another machine is named for it: ["AMD:1@HOST:PORT"]. *)
+let name ~machine i =
+  let local = if i = 0 then "AMD" else Printf.sprintf "AMD:%d" i in
+  match Nx_remote_device.remote machine with
+  | None -> local
+  | Some r -> local ^ "@" ^ Remote.name r
 
 let target_of v =
   let v = if v = 90403 then 90402 else v in
@@ -574,9 +613,12 @@ let create_queue a ~kind spec ~idx =
 
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
-    Nx_device.make ~name:(name a.index) ~arch:(arch a.props.target) ~budget
+    Nx_device.make
+      ~name:(name ~machine:a.machine a.index)
+      ~arch:(arch a.props.target) ~host:a.machine ~budget
       ~memory:(allocator a Vram) ~host_memory:(allocator a Host)
-      ~mapping:(mapping a) ~copy_queue:(copy_queue a) ~load:(load a) ~sleep
+      ~mapping:(mapping a) ~copy_queue:(copy_queue a) ~load:(load a)
+      ~dma:(dma a) ~sleep
       ~clock:(Nx_device.Device_clock { hz = 100_000_000 })
       ?finalize ()
   in
@@ -599,9 +641,10 @@ let setup a ~saves ~sdma_queues =
   a.aql_desc <- desc;
   (compute, aql, sdma)
 
-let record ~index ~gpu ~props =
+let record ~machine ~index ~gpu ~props =
   {
     index;
+    machine;
     gpu;
     hw = Mutex.create ();
     allocs = Int_map.empty;
@@ -642,14 +685,14 @@ let open_kfd index =
       ~lds_kib:(pr "lds_size_in_kb")
       ~slots:(pr "max_slots_scratch_cu")
   in
-  let a = record ~index ~gpu:(Kfd_gpu k) ~props in
+  let a = record ~machine:Nx_device.host ~index ~gpu:(Kfd_gpu k) ~props in
   let compute, aql, sdma = setup a ~saves:true ~sdma_queues:1 in
   let dev = make_device a ~budget:k.vram ~sleep:(fun ms -> Kfd.sleep k ms) () in
   finish a dev (compute, aql, sdma);
   a
 
 (* Opens the device of [am], a GPU booted over [pci]. *)
-let open_booted ~buses ~index pci (am : Am.t) =
+let open_booted ~machine ~buses ~index pci (am : Am.t) =
   let d = am.d in
   let peer =
     if Amdev.is_hive d then
@@ -671,7 +714,7 @@ let open_booted ~buses ~index pci (am : Am.t) =
       ~slots:g.max_scratch_slots_per_cu
   in
   supported props.target;
-  let a = record ~index ~gpu:(Am_gpu { am; memory; pci }) ~props in
+  let a = record ~machine ~index ~gpu:(Am_gpu { am; memory; pci }) ~props in
   let compute, aql, sdma =
     setup a ~saves:false ~sdma_queues:(if d.is_vf then Int.min buses 8 else 1)
   in
@@ -690,21 +733,22 @@ let open_booted ~buses ~index pci (am : Am.t) =
 (* Opens the GPU of [pci], which the process took. A GPU booted by an open that
    then fails is stopped as a failed device is at exit, and its next boot is a
    full one. *)
-let open_taken ?firmware ~buses ~index pci =
-  Sysmem.reserve
+let open_taken ?firmware ~machine ~buses ~index pci =
+  Pci.reserve pci
     ~base:(Page_table.Space.base Am.space)
     (Page_table.Space.length Am.space);
   (try Pci.resize_bar pci 0 with Failure _ -> ());
   let am = Am.boot ?firmware pci in
-  match open_booted ~buses ~index pci am with
+  match open_booted ~machine ~buses ~index pci am with
   | a -> a
   | exception e ->
       (try Am.fini am ~failed:true with Failure _ -> ());
       raise e
 
 (* A failed open gives the function back, so that a later one can take it. *)
-let open_am ?firmware index =
-  let buses = Am.buses () in
+let open_am ?firmware ~machine index =
+  let remote = Nx_remote_device.remote machine in
+  let buses = Am.buses ?remote () in
   let bus =
     match List.nth_opt buses index with
     | Some b -> b
@@ -713,8 +757,8 @@ let open_am ?firmware index =
           (Printf.sprintf "no GPU %d; there are %d AMD GPUs" index
              (List.length buses))
   in
-  let pci = Pci.take ~lock:"am" bus in
-  match open_taken ?firmware ~buses:(List.length buses) ~index pci with
+  let pci = Pci.take ?remote ~lock:"am" bus in
+  match open_taken ?firmware ~machine ~buses:(List.length buses) ~index pci with
   | a -> a
   | exception e ->
       Pci.release pci;
@@ -729,53 +773,59 @@ let default () =
   | Some i -> i
   | None -> if Kfd.available () then Kernel else Pci
 
-let count ?interface () =
-  if not (linux ()) then 0
-  else
-    Mutex.protect lock (fun () ->
-        match Option.value interface ~default:(default ()) with
-        | Kernel -> ( try Kfd.count () with Sys_error _ | Failure _ -> 0)
-        | Pci -> List.length (Am.buses ()))
+let count ?(host = Nx_device.host) ?interface () =
+  match Nx_remote_device.remote host with
+  | Some remote -> List.length (Am.buses ~remote ())
+  | None when not (linux ()) -> 0
+  | None ->
+      Mutex.protect lock (fun () ->
+          match Option.value interface ~default:(default ()) with
+          | Kernel -> ( try Kfd.count () with Sys_error _ | Failure _ -> 0)
+          | Pci -> List.length (Am.buses ()))
 
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 
-let get ?interface ?firmware i =
-  if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device.get: %d < 0" i);
-  if not (linux ()) then Error "AMD: AMD GPUs need Linux"
-  else
-    Mutex.protect lock (fun () ->
-        let iface = Option.value interface ~default:(default ()) in
-        match !chosen with
-        | Some c when c <> iface ->
-            Error
-              (Printf.sprintf
-                 "AMD: this process reaches AMD GPUs through %s, not %s"
-                 (interface_name c) (interface_name iface))
-        | _ -> (
-            match List.assoc_opt i (Atomic.get opened) with
-            | Some a -> Ok (Option.get a.dev)
-            | None -> (
-                match
-                  match iface with
-                  | Kernel -> open_kfd i
-                  | Pci -> open_am ?firmware i
-                with
-                | a ->
-                    chosen := Some iface;
-                    Atomic.set opened ((i, a) :: Atomic.get opened);
-                    Ok (Option.get a.dev)
-                | exception (Failure msg | Sys_error msg | Invalid_argument msg)
-                  ->
-                    Error ("AMD: " ^ msg)
-                | exception Unix.Unix_error (e, fn, arg) ->
-                    Error
-                      (Printf.sprintf "AMD: %s %s: %s" fn arg
-                         (Unix.error_message e))
-                | exception Not_found -> Error "AMD: opening failed: Not_found")
-            ))
+(* Opens [i] through [iface] on the machine of [machine], once. *)
+let open_gpu ~machine ~iface ?firmware i =
+  match List.assoc_opt (machine, i) (Atomic.get opened) with
+  | Some a -> Ok (Option.get a.dev)
+  | None -> (
+      match
+        match iface with
+        | Kernel -> open_kfd i
+        | Pci -> open_am ?firmware ~machine i
+      with
+      | a ->
+          if machine == Nx_device.host then chosen := Some iface;
+          Atomic.set opened (((machine, i), a) :: Atomic.get opened);
+          Ok (Option.get a.dev)
+      | exception (Failure msg | Sys_error msg | Invalid_argument msg) ->
+          Error ("AMD: " ^ msg)
+      | exception Unix.Unix_error (e, fn, arg) ->
+          Error (Printf.sprintf "AMD: %s %s: %s" fn arg (Unix.error_message e))
+      | exception Not_found -> Error "AMD: opening failed: Not_found")
 
-let v ?interface ?firmware i =
-  match get ?interface ?firmware i with
+let get ?(host = Nx_device.host) ?interface ?firmware i =
+  if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device.get: %d < 0" i);
+  let remote = Nx_remote_device.remote host in
+  Mutex.protect lock (fun () ->
+      match (remote, interface) with
+      | Some _, Some Kernel ->
+          Error "AMD: another machine's GPUs are reached over PCI"
+      | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
+      | None, _ when not (linux ()) -> Error "AMD: AMD GPUs need Linux"
+      | None, _ -> (
+          let iface = Option.value interface ~default:(default ()) in
+          match !chosen with
+          | Some c when c <> iface ->
+              Error
+                (Printf.sprintf
+                   "AMD: this process reaches AMD GPUs through %s, not %s"
+                   (interface_name c) (interface_name iface))
+          | _ -> open_gpu ~machine:host ~iface ?firmware i))
+
+let v ?host ?interface ?firmware i =
+  match get ?host ?interface ?firmware i with
   | Ok d -> d
   | Error msg -> invalid_arg msg
 

@@ -6,7 +6,13 @@
  (name test_nv)
  (modules test_nv)
  (package nx)
- (libraries nx.nv.device nx.device windtrap))
+ (libraries
+  nx.nv.device
+  nx.remote.device
+  nx.device
+  nx.device.support
+  unix
+  windtrap))
 
 (test
  (name test_nv_hw)

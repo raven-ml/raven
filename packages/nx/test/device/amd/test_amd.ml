@@ -17,6 +17,30 @@ let no_gpu () =
 
 let not_amd = Exn.invalid_arg ~substring:"CPU is not an AMD device"
 
+(* Another machine without GPUs: this process serves it on the loopback, for the
+   life of the process, which disconnects at exit. *)
+let test_other_machine () =
+  let key = "a key of the test, long enough" in
+  let s =
+    Nx_remote_device.listen ~key (Unix.ADDR_INET (Unix.inet_addr_loopback, 0))
+  in
+  let port =
+    match Nx_device_support.Remote_server.address s with
+    | Unix.ADDR_INET (_, p) -> p
+    | Unix.ADDR_UNIX _ -> assert false
+  in
+  match Nx_remote_device.connect ~port ~key "127.0.0.1" with
+  | Error why -> fail why
+  | Ok host -> (
+      if Nx_amd_device.count ~host () > 0 then
+        skip ~reason:"the machine has a GPU" ();
+      (match Nx_amd_device.get ~host 0 with
+      | Ok _ -> fail "a GPU opened"
+      | Error msg -> contains ~msg:"the vendor names it" ~sub:"AMD: " msg);
+      match Nx_amd_device.get ~host ~interface:Kernel 0 with
+      | Ok _ -> fail "a GPU opened"
+      | Error msg -> contains ~msg:"over PCI only" ~sub:"over PCI" msg)
+
 let () =
   exit
     (run "nx.amd.device"
@@ -35,6 +59,7 @@ let () =
              is_error (Nx_amd_device.get 0);
              raises_match (Exn.invalid_arg ~substring:"AMD: ") (fun () ->
                  Nx_amd_device.v 0));
+         test "another machine's GPUs are opened over PCI" test_other_machine;
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
                  Nx_amd_device.get (-1)));

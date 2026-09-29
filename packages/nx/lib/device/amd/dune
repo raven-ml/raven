@@ -1,7 +1,13 @@
 (library
  (name nx_amd_device)
  (public_name nx.amd.device)
- (libraries nx.device nx.device.elf nx.device.support nx.dtype unix)
+ (libraries
+  nx.device
+  nx.device.elf
+  nx.device.support
+  nx.remote.device
+  nx.dtype
+  unix)
  (foreign_stubs
   (language c)
   (names nx_amd_device_stubs)

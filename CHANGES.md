@@ -2805,6 +2805,13 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device` and `Nx_nv_device` open another machine's GPUs:
+  `get ~host i` and `count ~host ()`, given the host `Nx_remote_device.connect`
+  gave, drive that machine's GPU `i` under `Pci` through its server, as
+  `AMD@HOST:PORT`, `NV:1@HOST:PORT`, and so on. Their host memory is that
+  machine's, and they copy directly only to GPUs of their machine. Under `Pci`
+  both describe their memory to other PCI functions (`Nx_device.Buffer.dma`),
+  such as a network adapter.
 - New `nx.remote.device` and the `nx-remote` command. A machine runs
   `nx-remote --key-file FILE` (on `127.0.0.1:6667` unless `--listen` says
   otherwise), and `Nx_remote_device.connect ~key host` is that machine's host

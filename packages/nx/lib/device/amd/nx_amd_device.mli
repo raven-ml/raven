@@ -16,6 +16,14 @@
     A process uses one interface, chosen by its first open. Both need Linux:
     elsewhere {!count} is [0] and {!get} says why.
 
+    {b Other machines.} Given the host of another machine ([nx.remote.device]),
+    {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
+    machine's server: they are named ["AMD@HOST:PORT"], ["AMD:1@HOST:PORT"],
+    ..., their host memory is that machine's memory, every register access and
+    ring write crosses the network, and they have no interrupts. Such a GPU
+    copies directly only to GPUs of its machine. The machine needs what {!Pci}
+    needs here, and the process none of it.
+
     {b Memory.} Buffers are GPU memory, which the host does not address.
     {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy engine (SDMA):
     directly from and to host memory the GPU addresses, and through the host's
@@ -64,21 +72,29 @@ type interface =
       (** The compute interface of the [amdgpu] kernel driver, [/dev/kfd]. *)
   | Pci  (** The runtime's own driver, over the GPU's PCI function. *)
 
-val count : ?interface:interface -> unit -> int
+val count : ?host:Nx_device.t -> ?interface:interface -> unit -> int
 (** [count ()] is the number of AMD GPUs that [interface] reaches: under
     {!Kernel}, those of the [amdgpu] driver; under {!Pci}, the PCI functions of
     the GPUs it supports, whatever driver they have. [interface] defaults to the
     process's interface once a device is open, and before that to {!Kernel} if
-    [/dev/kfd] exists and {!Pci} otherwise. [0] on systems other than Linux. *)
+    [/dev/kfd] exists and {!Pci} otherwise. [0] on systems other than Linux.
+    Given another machine's [host], it is the number of that machine's GPUs
+    under {!Pci}.
+
+    Raises [Invalid_argument] if [host] is no host, and [Failure] if [host]'s
+    machine cannot be reached. *)
 
 val get :
+  ?host:Nx_device.t ->
   ?interface:interface ->
   ?firmware:string ->
   int ->
   (Nx_device.t, string) result
 (** [get i] is the AMD GPU [i] of [interface] (defaults as for {!count}), opened
     by the first call that succeeds; every later call returns the same value.
-    The first successful open fixes the process's interface.
+    The first successful open fixes the process's interface. Given another
+    machine's [host] (defaults to {!Nx_device.host}), it is that machine's GPU
+    [i], under {!Pci}.
 
     Under {!Pci}, each of the GPU's firmware images must have the SHA-256 digest
     it was validated with. An image is read from the directory [firmware], if
@@ -93,12 +109,17 @@ val get :
 
     [Error msg] says why the GPU cannot be opened, for example that
     [i >= count ~interface ()], that the process's interface is the other one,
-    that a privilege is missing, or that a firmware image is missing or differs,
-    naming the file.
+    that another machine's GPU was asked for under {!Kernel}, that a privilege
+    is missing, or that a firmware image is missing or differs, naming the file.
 
-    Raises [Invalid_argument] if [i < 0]. *)
+    Raises [Invalid_argument] if [i < 0] or if [host] is no host. *)
 
-val v : ?interface:interface -> ?firmware:string -> int -> Nx_device.t
+val v :
+  ?host:Nx_device.t ->
+  ?interface:interface ->
+  ?firmware:string ->
+  int ->
+  Nx_device.t
 (** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
     the GPU cannot be opened. *)
 

@@ -10,7 +10,6 @@ module D = Amd_defs
 module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Page_table = Nx_device_support.Page_table
-module Sysmem = Nx_device_support.Sysmem
 open Amdev
 
 (* The marker a session leaves in [SCRATCH_REG7]: a GPU that carries it boots
@@ -873,10 +872,11 @@ let gfx_init t =
         | Some va -> va
         | None -> failwith "no GPU addresses for the KIQ"
       in
-      let kiq, pages = Sysmem.alloc ~va size in
+      let kiq, pages = Pci.alloc_sysmem t.d.pci ~va size in
+      let page = Pci.page t.d.pci in
       ignore
         (Page_table.map ~snooped:true ~uncached:true t.mm ~va Page_table.Sys
-           (List.map (fun p -> (p, Sysmem.page)) pages));
+           (List.map (fun p -> (p, page)) pages));
       List.iter
         (fun xcc ->
           let b = va + (0x3000 * xcc) in
@@ -1380,8 +1380,8 @@ let open_hw pci =
   }
 
 (* The PCI functions of the GPUs this driver boots, by device id. *)
-let buses () =
-  Pci.scan ~vendor:0x1002
+let buses ?remote () =
+  Pci.scan ?remote ~vendor:0x1002
     [
       ( 0xffff,
         [

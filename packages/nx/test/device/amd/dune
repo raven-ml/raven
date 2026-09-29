@@ -6,7 +6,13 @@
  (name test_amd)
  (modules test_amd)
  (package nx)
- (libraries nx.amd.device nx.device windtrap))
+ (libraries
+  nx.amd.device
+  nx.remote.device
+  nx.device
+  nx.device.support
+  unix
+  windtrap))
 
 (test
  (name test_amd_hw)

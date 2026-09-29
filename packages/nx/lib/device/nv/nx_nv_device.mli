@@ -18,6 +18,14 @@
     A process uses one interface, chosen by its first open. Both need Linux:
     elsewhere {!count} is [0] and {!get} says why.
 
+    {b Other machines.} Given the host of another machine ([nx.remote.device]),
+    {!count} and {!get} reach that machine's GPUs, over {!Pci} through the
+    machine's server: they are named ["NV@HOST:PORT"], ["NV:1@HOST:PORT"], ...,
+    their host memory is that machine's memory, every register access and
+    pushbuffer write crosses the network, and they have no interrupts. Such a
+    GPU copies directly only to GPUs of its machine. The machine needs what
+    {!Pci} needs here, and the process none of it.
+
     {b NV and CUDA devices.} [nx.cuda.device] opens GPUs through NVIDIA's CUDA
     driver library as ["CUDA"], ["CUDA:1"], ...; this library opens them without
     it. An NV device and a CUDA device are two devices even when they are the
@@ -75,22 +83,29 @@ type interface =
   | Kernel  (** NVIDIA's kernel driver, [/dev/nvidiactl]. *)
   | Pci  (** The runtime's own driver, over PCI. *)
 
-val count : ?interface:interface -> unit -> int
+val count : ?host:Nx_device.t -> ?interface:interface -> unit -> int
 (** [count ()] is the number of NVIDIA GPUs that [interface] reaches: under
     {!Kernel}, those of NVIDIA's kernel driver; under {!Pci}, the PCI functions
     of the GPUs it supports, whatever driver they have. [interface] defaults to
     the process's interface once a device is open, and before that to {!Kernel}
     if [/dev/nvidiactl] exists and {!Pci} otherwise. [0] on systems other than
-    Linux. *)
+    Linux. Given another machine's [host], it is the number of that machine's
+    GPUs under {!Pci}.
+
+    Raises [Invalid_argument] if [host] is no host, and [Failure] if [host]'s
+    machine cannot be reached. *)
 
 val get :
+  ?host:Nx_device.t ->
   ?interface:interface ->
   ?firmware:string ->
   int ->
   (Nx_device.t, string) result
 (** [get i] is the NVIDIA GPU [i] of [interface] (defaults as for {!count}),
     opened by the first call that succeeds; every later call returns the same
-    value. The first successful open fixes the process's interface.
+    value. The first successful open fixes the process's interface. Given
+    another machine's [host] (defaults to {!Nx_device.host}), it is that
+    machine's GPU [i], under {!Pci}.
 
     Under {!Pci}, each of the GPU's firmware images must have the SHA-256 digest
     it was validated with. An image is read from the directory [firmware], if
@@ -105,14 +120,20 @@ val get :
 
     [Error msg] says why the GPU cannot be opened, for example that
     [i >= count ~interface ()], that the process's interface is the other one,
-    that the kernel driver is of another release, naming it, that a privilege is
-    missing, or that a firmware image is missing or differs, naming the file.
-    Under {!Kernel}, a failed open gives back what it took, so a later [get] may
-    open the GPU.
+    that another machine's GPU was asked for under {!Kernel}, that the kernel
+    driver is of another release, naming it, that a privilege is missing, or
+    that a firmware image is missing or differs, naming the file. Under
+    {!Kernel}, a failed open gives back what it took, so a later [get] may open
+    the GPU.
 
-    Raises [Invalid_argument] if [i < 0]. *)
+    Raises [Invalid_argument] if [i < 0] or if [host] is no host. *)
 
-val v : ?interface:interface -> ?firmware:string -> int -> Nx_device.t
+val v :
+  ?host:Nx_device.t ->
+  ?interface:interface ->
+  ?firmware:string ->
+  int ->
+  Nx_device.t
 (** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
     the GPU cannot be opened. *)
 

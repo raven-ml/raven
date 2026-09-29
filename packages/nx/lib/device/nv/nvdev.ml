@@ -10,7 +10,6 @@ module D = Nv_defs
 module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Page_table = Nx_device_support.Page_table
-module Sysmem = Nx_device_support.Sysmem
 
 external now_ms : unit -> (int[@untagged])
   = "caml_nx_nv_now_ms_byte" "caml_nx_nv_now_ms"
@@ -320,13 +319,15 @@ let boot_mem d ?sysmem ?(contiguous = false) ?data n =
   let sz = round_up n 0x1000 in
   let view, paddr, pages =
     if Option.value sysmem ~default:(not d.large_bar) then
-      let align = if contiguous && sz > Sysmem.page then 2 lsl 20 else 0x1000 in
+      let align =
+        if contiguous && sz > Pci.page d.pci then 2 lsl 20 else 0x1000
+      in
       let va =
         match Page_table.Space.alloc ~align space (round_up sz align) with
         | Some va -> va
         | None -> failwith "no addresses for the GPU's boot memory"
       in
-      let view, pages = Sysmem.alloc ~contiguous ~va sz in
+      let view, pages = Pci.alloc_sysmem d.pci ~contiguous ~va sz in
       let pages =
         if contiguous then
           List.init (sz / 0x1000) (fun i -> List.hd pages + (i * 0x1000))
