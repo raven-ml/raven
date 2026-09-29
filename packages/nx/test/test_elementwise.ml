@@ -771,6 +771,52 @@ let dtypes =
             (Nx_dtype.min_value Nx.bool, Nx_dtype.max_value Nx.bool));
     ]
 
+(* Operations large enough to run on the worker pool. *)
+
+(* [nx] over [n] float64 values against [ocaml] on each, as the positions where
+   they differ. *)
+let agrees nx ocaml n =
+  let x = Nx.init Nx.float64 [| n |] (fun i -> float_of_int (i.(0) mod 1013)) in
+  let y = Nx.to_array (nx x) in
+  let bad = ref [] in
+  Array.iteri
+    (fun i v -> if v <> ocaml (float_of_int (i mod 1013)) then bad := i :: !bad)
+    y;
+  equal (list int) [] (List.rev !bad)
+
+(* A square root of a million elements, as IEEE rounds it, runs on the pool. *)
+let roots () = agrees Nx.sqrt Float.sqrt 1_000_000
+
+let the_pool =
+  group "the worker pool"
+    [
+      test
+        "an operation runs on the pool before a fork, in the child and in the \
+         parent after it" (fun () ->
+          if Sys.win32 then skip ~reason:"no fork on Windows" ();
+          roots ();
+          let pid = Unix.fork () in
+          if pid = 0 then
+            Unix._exit (match roots () with () -> 0 | exception _ -> 1)
+          else
+            let deadline = Unix.gettimeofday () +. 30. in
+            let rec wait () =
+              match Unix.waitpid [ Unix.WNOHANG ] pid with
+              | 0, _ when Unix.gettimeofday () < deadline ->
+                  Unix.sleepf 0.01;
+                  wait ()
+              | 0, _ ->
+                  Unix.kill pid Sys.sigkill;
+                  ignore (Unix.waitpid [] pid);
+                  failf "the child did not finish in 30 s"
+              | _, status -> status
+            in
+            equal ~msg:"the child's exit" bool true (wait () = Unix.WEXITED 0);
+            roots ());
+      slow "an operation over 720 MB of traffic computes every element"
+        (fun () -> agrees (fun x -> Nx.add x x) (fun v -> v +. v) 30_000_000);
+    ]
+
 let () =
   exit
     (run "nx elementwise"
@@ -789,4 +835,5 @@ let () =
          booleans;
          narrow_floats;
          dtypes;
+         the_pool;
        ])

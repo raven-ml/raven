@@ -405,6 +405,35 @@ let integer_dtypes =
               (Nx.item [] (Nx.sum (Nx.ones Nx.float32 [| 1 lsl 25 |]))));
       ])
 
+let at_scale =
+  group "reductions at scale"
+    [
+      test
+        "argmax and argmin refuse an axis longer than an int32 index holds \
+         (nx.mli is silent)" (fun () ->
+          let long = Nx.broadcast_to [| 2147483648 |] (Nx.scalar Nx.int8 1) in
+          raises_match Exn.failure (fun () -> Nx.argmax long);
+          raises_match Exn.failure (fun () -> Nx.argmin ~axis:0 long));
+      slow
+        "sum along the long axis of a matrix of two columns keeps each column"
+        (fun () ->
+          let rows = 9_000_000 in
+          let t =
+            Nx.init Nx.float64 [| rows; 2 |] (fun i ->
+                float_of_int ((i.(0) mod 7) + i.(1)))
+          in
+          let column c =
+            let s = ref 0. in
+            for i = 0 to rows - 1 do
+              s := !s +. float_of_int ((i mod 7) + c)
+            done;
+            !s
+          in
+          equal (array float_exact)
+            [| column 0; column 1 |]
+            (Nx.to_array (Nx.sum ~axes:[ 0 ] t)));
+    ]
+
 let () =
   exit
     (run "nx reductions"
@@ -415,4 +444,5 @@ let () =
          arg_reductions;
          scans;
          normalisations;
+         at_scale;
        ])
