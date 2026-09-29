@@ -2860,7 +2860,10 @@ val tensorinv : ?ind:int -> ('a, 'b) t -> ('a, 'b) t
     Raises [Invalid_argument] if the result is not square in the specified
     dimensions or the dtype is not floating-point or complex. *)
 
-(** {1:fft Fourier transforms} *)
+(** {1:fft Fourier transforms}
+
+    Every transform raises [Invalid_argument] if an axis is out of range or if
+    [s] and [axes] differ in length. *)
 
 type fft_norm = [ `Backward | `Forward | `Ortho ]
 (** FFT normalisation mode.
@@ -2898,7 +2901,9 @@ val fft2 :
   (Complex.t, 'a) t
 (** [fft2 ?axes ?s ?norm x] is the 2-D FFT. [axes] defaults to the last two.
 
-    Raises [Invalid_argument] if the input has fewer than 2 dimensions.
+    Raises [Invalid_argument] if the input has fewer than 2 dimensions or if
+    [axes] does not name exactly two axes. So do {!ifft2}, {!rfft2} and
+    {!irfft2}.
 
     See also {!ifft2}, {!fft}. *)
 
@@ -2965,8 +2970,11 @@ val irfft :
   (Complex.t, 'a) t ->
   (float, 'b) t
 (** [irfft dtype ?axis ?n ?norm x] is the inverse of {!rfft}, producing real
-    output stored as [dtype]. Assumes Hermitian symmetry. As with {!rfft},
-    [dtype] selects the storage precision independent of the input's.
+    output stored as [dtype]. Assumes Hermitian symmetry: it reads only the real
+    part of the DC bin and, for an even [n], of the Nyquist bin. [n] defaults to
+    [2 * (m - 1)] for [m] bins along [axis], and the bins are cropped or
+    zero-padded to the [n/2 + 1] it reads. As with {!rfft}, [dtype] selects the
+    storage precision independent of the input's.
 
     See also {!rfft}. *)
 
@@ -2978,8 +2986,8 @@ val rfft2 :
   (float, 'a) t ->
   (Complex.t, 'b) t
 (** [rfft2 dtype ?axes ?s ?norm x] is the 2-D FFT of real input, stored as
-    [dtype]. As with {!rfftn}, the intermediate spectrum is carried at [dtype]
-    between the two axis passes.
+    [dtype]. [axes] defaults to the last two. As with {!rfftn}, the intermediate
+    spectrum is carried at [dtype] between the two axis passes.
 
     See also {!irfft2}, {!rfft}. *)
 
@@ -3000,7 +3008,7 @@ val rfftn :
   (float, 'a) t ->
   (Complex.t, 'b) t
 (** [rfftn dtype ?axes ?s ?norm x] is the N-D FFT of real input, stored as
-    [dtype].
+    [dtype]. [axes] defaults to all.
 
     The real-to-complex pass runs along the last of [axes] and the remaining
     axes are then transformed in place, so with more than one axis the
@@ -3017,7 +3025,10 @@ val irfftn :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, 'b) t
-(** [irfftn dtype ?axes ?s ?norm x] is the inverse of {!rfftn}. *)
+(** [irfftn dtype ?axes ?s ?norm x] is the inverse of {!rfftn}: {!ifftn} along
+    every axis of [axes] but the last, then {!irfft} along the last. [axes]
+    defaults to all. [s] defaults to the lengths of the leading axes and
+    [2 * (m - 1)] for the last. *)
 
 val hfft :
   (float, 'b) dtype ->
@@ -3026,8 +3037,10 @@ val hfft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, 'b) t
-(** [hfft dtype ?axis ?n ?norm x] is the FFT of a signal with Hermitian
-    symmetry, producing real output stored as [dtype]. *)
+(** [hfft dtype ?axis ?n ?norm x] is the FFT of the length-[n] signal with
+    Hermitian symmetry whose first [n/2 + 1] samples are [x], as {!irfft} reads
+    them, producing real output stored as [dtype]. [n] defaults to [2 * (m - 1)]
+    for [m] samples along [axis]. *)
 
 val ihfft :
   (Complex.t, 'b) dtype ->
@@ -3036,8 +3049,9 @@ val ihfft :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, 'b) t
-(** [ihfft dtype ?axis ?n ?norm x] is the inverse of {!hfft}, producing complex
-    output stored as [dtype]. *)
+(** [ihfft dtype ?axis ?n ?norm x] is the inverse of {!hfft}, producing the
+    [n/2 + 1] complex samples stored as [dtype]. [n] defaults to the length of
+    [axis]. *)
 
 val dct :
   ?type_:int -> ?axis:int -> ?norm:fft_norm -> (float, 'a) t -> (float, 'a) t
@@ -3207,8 +3221,9 @@ val stft :
     component across every bin. Pass [~win:(ones (dtype t) [| window |])] for an
     untapered framing.
 
-    [step] defaults to [window / 4]. Framing is a view, so no framed copy of [t]
-    is allocated; only the transform's own output is.
+    [step] defaults to [window / 4], and to [1] for a window under 4. Framing is
+    a view, so no framed copy of [t] is allocated; only the transform's own
+    output is.
 
     Raises [Invalid_argument] if [window < 1], [step < 1], [window] exceeds the
     last axis, [t] is 0-d, or [win] has the wrong shape.
@@ -3244,12 +3259,13 @@ val istft :
     information and come back as [0]; under the default taper that is sample
     [0], which a periodic Hann sends to zero and no later frame reaches.
 
-    [win] defaults to the same periodic {!hann} taper {!stft} uses, so a pair
-    called with matching [window] and [step] and no [win] round-trips.
+    [win] and [step] default as in {!stft}, so a pair called with the same
+    arguments round-trips.
 
     Raises [Invalid_argument] if [step] is outside [[1, window]] (a wider step
     leaves gaps no frame covers), if [z] has fewer than 2 dimensions, if its
-    last axis is not [window / 2 + 1], or if [win] has the wrong shape.
+    last axis is not [window / 2 + 1], if [win] has the wrong shape, or if
+    [length < 1].
 
     {@ocaml[
       # let x = init float64 [| 64 |] (fun i -> float_of_int i.(0)) in
