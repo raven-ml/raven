@@ -2731,6 +2731,9 @@ thread.
 
 ### Nx
 
+- `Nx.matmul` of batched operands with an empty result is an empty tensor. It
+  raised "output has a broadcast (zero) stride", and a batch axis of 0 against
+  one of 1 came out as 1.
 - **Breaking:** `Nx.slogdet` returns the sign in the input's dtype (a complex
   number of modulus 1 for complex input) and the log magnitude as float64,
   where both were float32. Its type is

@@ -576,11 +576,14 @@ let matmul x y =
         let ai = i - (max_nd - xnd) and bi = i - (max_nd - ynd) in
         let sa = if ai >= 0 then xs.(ai) else 1 in
         let sb = if bi >= 0 then ys.(bi) else 1 in
-        Int.max sa sb)
+        if sa = 1 then sb else sa)
   in
   let out = create_tensor x.context x.dtype (Array.append batch [| m; n |]) in
-  caml_matmul out x y;
-  out
+  (* An empty product has nothing to compute, and its strides are zero. *)
+  if Array.exists (( = ) 0) out.shape then out
+  else (
+    caml_matmul out x y;
+    out)
 
 (* fft (nx_c_fft.c): the backend transforms are UNNORMALIZED (the frontend
    applies 1/n). fft/ifft preserve the complex shape; rfft halves the last

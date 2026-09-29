@@ -204,8 +204,8 @@ let products =
         (Gen.pair (sized (fun n -> matrix n n)) layout)
         (fun (a, steps) ->
           let v = lay_out steps a in
-          assume (Nx.ndim v = 2 && Nx.dim 0 v = Nx.dim 1 v);
-          equal near (Nx.contiguous v *@ Nx.contiguous v) (v *@ v));
+          let c = Nx.contiguous v in
+          equal near (c *@ t c) (v *@ t v));
       test "matmul refuses scalars and mismatched inner axes" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.matmul (Nx.scalar Nx.float64 1.) (Nx.ones Nx.float64 [| 2 |]));
