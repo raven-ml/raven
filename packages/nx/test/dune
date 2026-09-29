@@ -15,7 +15,8 @@
   test_windows
   test_fft
   test_runtime
-  test_backend)
+  test_backend
+  test_allocation)
  (package nx)
  (modules :standard \ test_format)
  (libraries nx.dtype nx nx.core nx.effect nx.device unix windtrap nx_test))
