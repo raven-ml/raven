@@ -458,15 +458,19 @@ let errors =
 let placements =
   let drawn =
     let open Gen in
-    let+ w =
+    let* ((_, weight) as w) =
       weight
         ~lead:(list ~size:(int_range 0 1) (int_range 1 4))
         ~n:(int_range 1 4) ()
-    and+ devices =
+    in
+    let k = Array.length (Nx_quant.shape weight) - 1 in
+    let+ devices =
       of_list
         ~pp:(fun ppf l -> Format.fprintf ppf "over %d devices" (List.length l))
         [ [ d1; d2 ]; [ d1; d2; d3; d4 ] ]
-    and+ axis = option (int_range 0 3) in
+    and+ axis =
+      frequency [ (1, constant (Some k)); (2, option (int_range 0 3)) ]
+    in
     (w, devices, axis)
   in
   prop
