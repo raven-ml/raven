@@ -8,8 +8,11 @@ perf follow-ups:
 - fp16 train step: per-leaf unscale/isfinite/where plumbing over 148 leaves
   adds ~750 ms/step (compute itself is ~95 ms with TC engaged) — needs a
   fused/tree-level formulation
-- rune warm start is now trace-dominated (~3.6 s effect replay +
-  transform_to_call)
+- rune warm start regressed: GPT-2's training step takes ~11 s on its first
+  call with a warm compile cache on Metal (4.4 s when the cache landed,
+  cd234a40e; 22 s cold). the cache hits, so the time is tracing, building the
+  call and importing the cached program: profile by phase. one quadratic,
+  `Uop.substitute`'s list lookup, is fixed (5cb655b6f)
 
 rune/jit follow-ups:
 - revisit the CPU's τ (rune quant.ml) if the block kernel comes to multiply
@@ -53,11 +56,6 @@ decode contract follow-ups (rfc 0002):
   that free old columns, tree speculation (a caller-given write target and a
   token-to-token mask), packed sequences with position reset: when a model
   needs them
-
-loading weights follow-ups (rfc 0003):
-- kaun detects curl with `command -v` through `Unix.system`
-  (`kaun/lib/datasets/dataset_utils.ml`), which is `cmd.exe` on windows, so
-  downloads cannot work there
 
 next model targets:
 - llama 3: tolk parity for the `05-llama` example
