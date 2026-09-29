@@ -7,29 +7,9 @@ open Error
 
 let strf = Printf.sprintf
 
-(* Little-endian byte encoding *)
-
-let write_i32_le bytes off v =
-  Bytes.set bytes off (Char.chr (Int32.to_int (Int32.logand v 0xffl)));
-  Bytes.set bytes (off + 1)
-    (Char.chr (Int32.to_int (Int32.logand (Int32.shift_right v 8) 0xffl)));
-  Bytes.set bytes (off + 2)
-    (Char.chr (Int32.to_int (Int32.logand (Int32.shift_right v 16) 0xffl)));
-  Bytes.set bytes (off + 3)
-    (Char.chr (Int32.to_int (Int32.logand (Int32.shift_right v 24) 0xffl)))
-
 let check_overwrite overwrite path =
   if (not overwrite) && Sys.file_exists path then
     failwith (strf "file already exists: %s" path)
-
-(* Byte-swap 16-bit elements in [buf] from native to little-endian or back *)
-let swap_16 buf n =
-  for i = 0 to n - 1 do
-    let pos = i * 2 in
-    let b0 = Bytes.get buf pos in
-    Bytes.set buf pos (Bytes.get buf (pos + 1));
-    Bytes.set buf (pos + 1) b0
-  done
 
 (* Loading *)
 
@@ -166,86 +146,44 @@ let load_safetensors path =
 
 (* Saving *)
 
-let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
-  let n = Array.fold_left ( * ) 1 (Nx.shape arr) in
-  (* Nx.flatten rejects rank-0 tensors; reshape to [| n |] handles all ranks *)
-  let buf = Nx.to_buffer (Nx.reshape [| n |] arr) in
-  (* Little-endian encoders; [get] closes over [buf] with its element type
-     refined by the branch that calls the encoder. *)
-  let le8 (get : int -> char) =
-    let bytes = Bytes.create n in
-    for i = 0 to n - 1 do
-      Bytes.set bytes i (get i)
-    done;
-    Bytes.unsafe_to_string bytes
+(* The SafeTensors dtype of [t] and its elements' bytes, in row-major order and
+   little-endian, as stored: a float's bits are copied, never read as a
+   float. *)
+let tensor_to_bytes (type a b) (t : (a, b) Nx.t) =
+  let dtype : Safetensors.dtype =
+    match Nx.dtype t with
+    | Bool -> BOOL
+    | Int8 -> I8
+    | UInt8 -> U8
+    | Int16 -> I16
+    | UInt16 -> U16
+    | Int32 -> I32
+    | UInt32 -> U32
+    | Int64 -> I64
+    | UInt64 -> U64
+    | Float8_e4m3 -> F8_E4M3
+    | Float8_e5m2 -> F8_E5M2
+    | Float16 -> F16
+    | BFloat16 -> BF16
+    | Float32 -> F32
+    | Float64 -> F64
+    | dtype ->
+        fail_msg "unsupported dtype for safetensors: %s"
+          (Nx_dtype.to_string dtype)
   in
-  let le16 (get : int -> int) =
-    let bytes = Bytes.create (n * 2) in
-    for i = 0 to n - 1 do
-      let v = get i land 0xffff in
-      Bytes.set bytes (i * 2) (Char.chr (v land 0xff));
-      Bytes.set bytes ((i * 2) + 1) (Char.chr (v lsr 8))
+  let size = Nx.itemsize t in
+  let bytes = Bytes.create (Nx.nbytes t) in
+  Nx_buffer.blit_to_bytes (Nx.to_buffer t) bytes;
+  if Sys.big_endian then
+    for e = 0 to Nx.numel t - 1 do
+      for i = 0 to (size / 2) - 1 do
+        let lo = (e * size) + i and hi = (e * size) + size - 1 - i in
+        let c = Bytes.get bytes lo in
+        Bytes.set bytes lo (Bytes.get bytes hi);
+        Bytes.set bytes hi c
+      done
     done;
-    Bytes.unsafe_to_string bytes
-  in
-  let le32 (get : int -> int32) =
-    let bytes = Bytes.create (n * 4) in
-    for i = 0 to n - 1 do
-      write_i32_le bytes (i * 4) (get i)
-    done;
-    Bytes.unsafe_to_string bytes
-  in
-  let le64 (get : int -> int64) =
-    let bytes = Bytes.create (n * 8) in
-    for i = 0 to n - 1 do
-      Safetensors.write_u64_le bytes (i * 8) (get i)
-    done;
-    Bytes.unsafe_to_string bytes
-  in
-  match Nx_buffer.dtype buf with
-  | Float32 ->
-      let get i = Int32.bits_of_float (Nx_buffer.unsafe_get buf i) in
-      (Safetensors.F32, le32 get)
-  | Float64 ->
-      let get i = Int64.bits_of_float (Nx_buffer.unsafe_get buf i) in
-      (Safetensors.F64, le64 get)
-  | Int32 -> (Safetensors.I32, le32 (Nx_buffer.unsafe_get buf))
-  | UInt32 -> (Safetensors.U32, le32 (Nx_buffer.unsafe_get buf))
-  | Int64 -> (Safetensors.I64, le64 (Nx_buffer.unsafe_get buf))
-  | UInt64 -> (Safetensors.U64, le64 (Nx_buffer.unsafe_get buf))
-  | Int16 -> (Safetensors.I16, le16 (Nx_buffer.unsafe_get buf))
-  | UInt16 -> (Safetensors.U16, le16 (Nx_buffer.unsafe_get buf))
-  | Int8 ->
-      let get i = Char.chr (Nx_buffer.unsafe_get buf i land 0xff) in
-      (Safetensors.I8, le8 get)
-  | UInt8 ->
-      let get i = Char.chr (Nx_buffer.unsafe_get buf i land 0xff) in
-      (Safetensors.U8, le8 get)
-  | Bool ->
-      let get i = if Nx_buffer.unsafe_get buf i then '\001' else '\000' in
-      (Safetensors.BOOL, le8 get)
-  | Float8_e4m3 | Float8_e5m2 ->
-      let tag =
-        match Nx_buffer.dtype buf with
-        | Float8_e4m3 -> Safetensors.F8_E4M3
-        | _ -> Safetensors.F8_E5M2
-      in
-      let bytes = Bytes.create n in
-      Nx_buffer.blit_to_bytes ~src_off:0 ~dst_off:0 ~len:n buf bytes;
-      (tag, Bytes.unsafe_to_string bytes)
-  | Float16 | BFloat16 ->
-      let tag =
-        match Nx_buffer.dtype buf with
-        | Float16 -> Safetensors.F16
-        | _ -> Safetensors.BF16
-      in
-      let bytes = Bytes.create (n * 2) in
-      Nx_buffer.blit_to_bytes ~src_off:0 ~dst_off:0 ~len:n buf bytes;
-      if Sys.big_endian then swap_16 bytes n;
-      (tag, Bytes.unsafe_to_string bytes)
-  | _ ->
-      fail_msg "unsupported dtype for safetensors: %s"
-        (Nx_dtype.to_string (Nx_buffer.dtype buf))
+  (dtype, Bytes.unsafe_to_string bytes)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;

@@ -2731,6 +2731,10 @@ thread.
 
 ### Nx
 
+- `Nx_io.save_safetensors` saves any view, and writes each element's bits as
+  stored. A transposed, flipped, strided or broadcast tensor raised
+  `Invalid_argument` from `reshape`, and a float32 signalling NaN was written
+  quieted.
 - `Nx_io.save_image` and `Nx_io.gunzip` raise `Unix.Unix_error`, as documented,
   when the directory of the file they write cannot be written. They raised
   `Sys_error` unless `save_image` was given `~overwrite:false`.
