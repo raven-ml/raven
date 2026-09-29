@@ -1193,7 +1193,10 @@ module Runtimes = struct
               raises_match (out_of_memory 400) (fun () ->
                   Nx.place on_d (Nx.zeros Nx.float32 [| 100 |]));
               let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
-              raises_match (out_of_memory 16) (fun () -> Nx.add x x));
+              raises_match (out_of_memory 16) (fun () -> Nx.add x x);
+              (* Held through the addition: the refused allocation collects
+                 garbage and tries again, and could take a dead [x]'s memory. *)
+              ignore (Sys.opaque_identity x));
         ]
 end
 
