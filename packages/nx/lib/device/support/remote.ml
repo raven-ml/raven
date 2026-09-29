@@ -165,6 +165,35 @@ let connect ?(timeout_ms = 30_000) ~key host port =
             | Unix.Unix_error (e, _, _) -> Unix.error_message e
             | e -> raise e))
 
+(* One open of the file, which cannot block on a pipe, and every check made on
+   what that open found. *)
+let read_key file =
+  let fail fmt = Printf.ksprintf (fun m -> failwith (file ^ ": " ^ m)) fmt in
+  let fd =
+    try Unix.openfile file [ Unix.O_RDONLY; Unix.O_NONBLOCK; Unix.O_CLOEXEC ] 0
+    with Unix.Unix_error (e, _, _) -> fail "%s" (Unix.error_message e)
+  in
+  Fun.protect
+    ~finally:(fun () -> Unix.close fd)
+    (fun () ->
+      let st = Unix.fstat fd in
+      if st.st_kind <> Unix.S_REG then fail "not a regular file";
+      if Sys.unix && st.st_uid <> Unix.geteuid () then
+        fail "belongs to another user";
+      if Sys.unix && st.st_perm land 0o077 <> 0 then
+        fail "others may read it: run chmod 600 %s" file;
+      if st.st_size < Wire.min_key || st.st_size > 4096 then
+        fail "%d bytes, not %d to 4096" st.st_size Wire.min_key;
+      let b = Bytes.create st.st_size in
+      let rec go off =
+        if off < st.st_size then
+          match Unix.read fd b off (st.st_size - off) with
+          | 0 -> fail "changed while it was read"
+          | k -> go (off + k)
+      in
+      go 0;
+      Bytes.unsafe_to_string b)
+
 let close r =
   Mutex.protect r.lock (fun () ->
       if r.failed = None then begin

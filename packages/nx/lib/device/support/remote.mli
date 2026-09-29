@@ -26,7 +26,11 @@
     {b Security.} Both ends prove they hold the same key; nothing else is
     protected. The server gives its client the machine, and the stream after the
     handshake is neither encrypted nor authenticated: use it on the machines'
-    own network, or through a tunnel. *)
+    own network, or through a tunnel that fails when it cannot forward, such as
+    [ssh -o ExitOnForwardFailure=yes -L ...]: whoever answers in the server's
+    place learns a proof of the key it can test guesses against. Make the key
+    random, such as [head -c 32 /dev/urandom > FILE && chmod 600 FILE], and read
+    it with {!read_key}. *)
 
 type t
 (** The type for connections. Every function may be called from any domain;
@@ -42,6 +46,16 @@ val connect : ?timeout_ms:int -> key:string -> string -> int -> t
     Raises [Invalid_argument] if [key] is shorter than 16 bytes, and [Failure]
     if the server cannot be reached, is busy with another client, speaks another
     version of the protocol, or either end does not know the key. *)
+
+val read_key : string -> string
+(** [read_key file] is the key in [file]: its bytes, 16 to 4096 of them, read
+    from one open of it. On POSIX systems [file] must be a regular file of this
+    process's user that no other user may read or write, so that only this user
+    knows the key.
+
+    Raises [Failure] naming [file] if it cannot be opened, is no regular file,
+    belongs to another user, may be read or written by others, or holds too few
+    or too many bytes. *)
 
 val name : t -> string
 (** [name r] is ["HOST:PORT"], as {!connect} was given them. *)

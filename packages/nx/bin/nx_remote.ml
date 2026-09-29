@@ -12,10 +12,12 @@ let usage =
   "nx-remote [--listen ADDR:PORT] --key-file FILE\n\n\
    Serves this machine's PCI functions, memory and host programs to one \
    process of another machine at a time, which drives its GPUs and network \
-   adapters with nx. The client proves that it holds the key of FILE, at least \
-   16 bytes that only this user may read. The client is root here: listen only \
-   where every host that can connect may drive this machine, such as the \
-   loopback behind a tunnel or the machines' own network.\n"
+   adapters with nx. The client proves that it holds the key of FILE: 16 to \
+   4096 bytes, of a file of this user that no other user may read, made with \
+   head -c 32 /dev/urandom > FILE && chmod 600 FILE. The client is root here: \
+   listen only where every host that can connect may drive this machine, such \
+   as the loopback behind a tunnel that fails when it cannot forward (ssh -o \
+   ExitOnForwardFailure=yes -L ...), or the machines' own network.\n"
 
 let fail fmt =
   Printf.ksprintf
@@ -43,19 +45,6 @@ let address s =
       | None, _ -> fail "%s is not a port" port
       | _, [] -> fail "%s is not an address" host)
 
-(* The key: a file of at least 16 bytes that only its owner may read. *)
-let key file =
-  match Unix.stat file with
-  | exception Unix.Unix_error (e, _, _) ->
-      fail "%s: %s" file (Unix.error_message e)
-  | st ->
-      if Sys.unix && st.st_perm land 0o077 <> 0 then
-        fail "%s may be read by others: run chmod 600 %s" file file;
-      let k = In_channel.with_open_bin file In_channel.input_all in
-      if String.length k < 16 then
-        fail "%s holds %d bytes, fewer than 16" file (String.length k);
-      k
-
 let () =
   let listen = ref "127.0.0.1:6667" and key_file = ref "" in
   Arg.parse
@@ -68,7 +57,11 @@ let () =
     (fun a -> fail "unexpected argument %s" a)
     usage;
   if !key_file = "" then fail "no --key-file";
-  let key = key !key_file and addr = address !listen in
+  let key =
+    try Nx_device_support.Remote.read_key !key_file
+    with Failure why -> fail "%s" why
+  in
+  let addr = address !listen in
   let s =
     try Nx_remote_device.listen ~key addr
     with Unix.Unix_error (e, _, _) ->

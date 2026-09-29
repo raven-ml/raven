@@ -26,7 +26,7 @@ let machines =
                   (String.sub target (i + 1) (String.length target - i - 1)) )
           | None -> (target, Nx_remote_device.default_port)
         in
-        let key = In_channel.with_open_bin key_file In_channel.input_all in
+        let key = Nx_device_support.Remote.read_key key_file in
         match Nx_remote_device.connect ~port ~key host with
         | Error why -> Error why
         | Ok far -> (

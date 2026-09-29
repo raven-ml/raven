@@ -783,6 +783,32 @@ let test_lock_files () =
       raises_match (Exn.failure ~substring:"") (fun () ->
           Pci.take ~lock:"t" bus))
 
+(* Key files: read once, of this user alone, and refused with the reason. *)
+let test_key_files () =
+  if not Sys.unix then skip ~reason:"file owners and modes are POSIX" ();
+  let dir = Filename.temp_dir "nx_key" "" in
+  let file name contents perm =
+    let f = Filename.concat dir name in
+    Out_channel.with_open_bin f (fun oc -> output_string oc contents);
+    Unix.chmod f perm;
+    f
+  in
+  let good = file "good" (String.make 32 'k') 0o600 in
+  equal ~msg:"its bytes" string (String.make 32 'k') (Remote.read_key good);
+  let refused ~sub f =
+    raises_match (Exn.failure ~substring:sub) (fun () -> Remote.read_key f)
+  in
+  refused ~sub:"chmod 600" (file "open" (String.make 32 'k') 0o644);
+  refused ~sub:"16 to 4096" (file "short" "hunter2" 0o600);
+  refused ~sub:"16 to 4096" (file "long" (String.make 5000 'k') 0o600);
+  refused ~sub:"No such file" (Filename.concat dir "missing");
+  let fifo = Filename.concat dir "fifo" in
+  Unix.mkfifo fifo 0o600;
+  refused ~sub:"not a regular file" fifo;
+  if Unix.geteuid () <> 0 then
+    refused ~sub:"Permission denied"
+      (file "unreadable" (String.make 32 'k') 0o000)
+
 (* Peers that do not know the key: raw sockets to the server. *)
 
 let raw s =
@@ -930,6 +956,7 @@ let () =
              test "a large scan" test_large_probe;
              test "an unexpected exception" test_unexpected_exception;
              test "lock files" test_lock_files;
+             test "key files" test_key_files;
            ];
          group "firmware"
            [

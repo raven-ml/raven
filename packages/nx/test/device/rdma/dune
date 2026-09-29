@@ -19,4 +19,5 @@
  (name test_rdma_hw)
  (modules test_rdma_hw)
  (package nx)
- (libraries nx.rdma.device nx.remote.device nx.device nx.dtype windtrap))
+ (libraries nx.rdma.device nx.remote.device nx.device nx.device.support
+  nx.dtype windtrap))

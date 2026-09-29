@@ -2805,6 +2805,11 @@ thread.
 
 ### Nx
 
+- `nx-remote --key-file` reads the key with the new
+  `Nx_device_support.Remote.read_key`: one open of the file, which must be a
+  regular file of the server's user that no one else may read, of 16 to 4096
+  bytes. An unreadable file crashed the server, a FIFO blocked it before it
+  listened, and a file of another user was accepted.
 - Taking a PCI function (AMD and NV under `Pci`, network adapters, and
   `nx-remote`'s clients) no longer follows a link planted at its lock file in
   the temporary directory, which created the link's target world-writable. It
