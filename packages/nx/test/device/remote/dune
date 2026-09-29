@@ -1,0 +1,10 @@
+(test
+ (name test_remote)
+ (package nx)
+ (libraries
+  nx.remote.device
+  nx.device
+  nx.device.support
+  nx.dtype
+  unix
+  windtrap))

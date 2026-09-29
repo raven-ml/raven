@@ -1,0 +1,5 @@
+(executable
+ (name nx_remote)
+ (public_name nx-remote)
+ (package nx)
+ (libraries nx.remote.device nx.device.support unix))

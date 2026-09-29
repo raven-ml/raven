@@ -2805,6 +2805,14 @@ thread.
 
 ### Nx
 
+- New `nx.remote.device` and the `nx-remote` command. A machine runs
+  `nx-remote --key-file FILE` (on `127.0.0.1:6667` unless `--listen` says
+  otherwise), and `Nx_remote_device.connect ~key host` is that machine's host
+  as a device, `CPU@HOST:PORT`: its buffers are the machine's memory, copies
+  cross the network, and host programs run there. Both ends prove the key;
+  nothing else protects the traffic, so use it on the machines' own network
+  or through a tunnel. The server serves one process at a time and stops the
+  DMA of the functions a process took once it disconnects.
 - Devices of other machines. `Nx_device.host_of d` is the host of the machine
   `d` is attached to. A library that reaches another machine makes its host
   with `Nx_device.make_host`, whose memory the process reaches through an
