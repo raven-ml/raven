@@ -22,7 +22,7 @@ type entry = {
   local_offset : int;
 }
 
-type in_file = { fd : Unix.file_descr; data : bytes; entries : entry list }
+type in_file = { data : bytes; entries : entry list }
 type written_entry = { entry : entry; zip64_sizes : bool }
 
 type out_file = {
@@ -152,12 +152,6 @@ let substring data off len =
   if off < 0 || len < 0 || off > Array1.dim data || len > Array1.dim data - off
   then error "truncated ZIP string";
   String.init len (fun i -> Char.chr (Array1.unsafe_get data (off + i)))
-
-let map_file fd size =
-  if size = 0 then Array1.create int8_unsigned c_layout 0
-  else
-    Unix.map_file fd int8_unsigned c_layout false [| size |]
-    |> Bigarray.array1_of_genarray
 
 let find_eocd data =
   let size = Array1.dim data in
@@ -413,33 +407,24 @@ let validate_entries data ~central_offset entries =
   disjoint 0 spans
 
 let open_in path =
-  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
-  match
-    let size = (Unix.fstat fd).st_size in
-    let data = map_file fd size in
-    let eocd = find_eocd data in
-    let classic_count = u16 data (eocd + 10) in
-    let classic_size = u32_i64 data (eocd + 12) in
-    let classic_offset = u32_i64 data (eocd + 16) in
-    let count, central_size, central_offset =
-      if
-        classic_count = 0xffff || classic_size = 0xffffffffL
-        || classic_offset = 0xffffffffL
-      then zip64_directory data eocd
-      else classic_directory data eocd
-    in
-    if central_offset > eocd || central_size > eocd - central_offset then
-      error "ZIP central directory overlaps its end record";
-    let entries = parse_entries data ~count ~central_size ~central_offset in
-    validate_entries data ~central_offset entries;
-    { fd; data; entries }
-  with
-  | value -> value
-  | exception exn ->
-      Unix.close fd;
-      raise exn
+  let data = Storage.file_bytes path in
+  let eocd = find_eocd data in
+  let classic_count = u16 data (eocd + 10) in
+  let classic_size = u32_i64 data (eocd + 12) in
+  let classic_offset = u32_i64 data (eocd + 16) in
+  let count, central_size, central_offset =
+    if
+      classic_count = 0xffff || classic_size = 0xffffffffL
+      || classic_offset = 0xffffffffL
+    then zip64_directory data eocd
+    else classic_directory data eocd
+  in
+  if central_offset > eocd || central_size > eocd - central_offset then
+    error "ZIP central directory overlaps its end record";
+  let entries = parse_entries data ~count ~central_size ~central_offset in
+  validate_entries data ~central_offset entries;
+  { data; entries }
 
-let close_in (archive : in_file) = Unix.close archive.fd
 let entries (archive : in_file) = archive.entries
 
 let find_entry (archive : in_file) name =

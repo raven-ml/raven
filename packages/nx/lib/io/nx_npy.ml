@@ -43,7 +43,6 @@ let save_npy ?(overwrite = true) path arr =
 let load_npz path =
   wrap_exn @@ fun () ->
   let zi = Zip_archive.open_in path in
-  Fun.protect ~finally:(fun () -> Zip_archive.close_in zi) @@ fun () ->
   let entries = Zip_archive.npy_entries zi in
   let archive = Hashtbl.create (List.length entries) in
   List.iter
@@ -57,7 +56,6 @@ let load_npz path =
 let load_npz_entry ~name path =
   wrap_exn @@ fun () ->
   let zi = Zip_archive.open_in path in
-  Fun.protect ~finally:(fun () -> Zip_archive.close_in zi) @@ fun () ->
   match Zip_archive.read_npy zi name with
   | packed -> Ok (npy_to_nx packed)
   | exception Not_found -> Error (Missing_entry name)

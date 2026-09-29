@@ -349,20 +349,9 @@ let materialize header payload =
       ~elements:header.elements;
   (P (kind, buffer, Array.copy header.shape), crc)
 
-let map_file fd size =
-  if size = 0 then Array1.create int8_unsigned c_layout 0
-  else
-    Unix.map_file fd int8_unsigned c_layout false [| size |]
-    |> Bigarray.array1_of_genarray
-
-let with_fd path flags permissions f =
-  let fd = Unix.openfile path flags permissions in
-  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> f fd)
-
 let read_copy path =
-  with_fd path [ Unix.O_RDONLY ] 0 @@ fun fd ->
-  let size = (Unix.fstat fd).st_size in
-  let src = map_file fd size in
+  let src = Storage.file_bytes path in
+  let size = Array1.dim src in
   let header = parse_header src ~off:0 ~len:size in
   if header.data_offset > size || header.data_size <> size - header.data_offset
   then read_error "NPY payload size does not match its shape and dtype";

@@ -12,3 +12,7 @@ let tensor dtype buffer shape =
     (Nx_effect.from_host Nx_effect.Placement.host dtype buffer)
 
 let bytes b = B.bigarray Bigarray.int8_unsigned b
+
+(* The bytes of the file at [path], read where they lie: the disk's mapping of
+   its pages. *)
+let file_bytes path = bytes (B.borrow Nx_device.host (B.of_file path))
