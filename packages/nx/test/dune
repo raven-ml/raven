@@ -6,10 +6,7 @@
 (tests
  (names
   test_nx_placement
-  test_nx_fft
-  test_nx_fft_oracle
   test_rng
-  test_nx_stft
   test_ptree
   test_values
   test_creation
@@ -20,7 +17,8 @@
   test_reductions
   test_sorting
   test_linalg
-  test_windows)
+  test_windows
+  test_fft)
  (package nx)
  (modules
   :standard
