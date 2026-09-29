@@ -2746,6 +2746,26 @@ thread.
 
 ### Nx
 
+- `nx.device` holds memory that the host does not address, for GPUs whose
+  device copies it. `Buffer.copy` runs such copies on the device's copy queue
+  as timeline work: directly between memory the device addresses, and in
+  pipelined chunks through the host's staging memory otherwise, two 64 MiB
+  slots that every device maps. It refuses overlapping ranges of one buffer.
+  `Buffer.create ~host:true` allocates host memory that the device's work
+  addresses, page-locked where that matters. `Buffer.borrow` now maps the
+  whole host memory under a buffer once per device and shares the mapping
+  among its borrows, and needs that memory to start on a page: host buffers
+  of at least 64 KiB now do, and smaller ones are copied through staging.
+  This also applies to Metal. `Buffer.host_address` raises `Invalid_argument`
+  on memory the host does not address.
+- `Nx_device.set_timeout` sets how long a wait for a device's work lasts
+  before the device is failed (30 s by default), so that long kernels can
+  run. A driver error while a copy is enqueued now fails the device, like a
+  fault, and a transfer that could not be waited for keeps its destination
+  out of reuse and in the failed device's reach.
+- Vendor libraries describe their devices to `Nx_device.make` with allocator,
+  mapping and copy queue records, and wrap memory another library allocated
+  with `Nx_device.external_buffer`.
 - `Nx_buffer.reinterpret` of a buffer made by `Nx_buffer.of_bigarray1` could
   return a view over freed memory when two domains reinterpreted the buffer at
   once: each view could get its own reference count on the storage, and one

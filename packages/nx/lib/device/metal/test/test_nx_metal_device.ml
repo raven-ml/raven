@@ -102,9 +102,16 @@ let test_copies () =
   equal ~msg:"out" int 9 (Nx_device.Stats.bytes_out d);
   equal ~msg:"allocated" int 9 (Nx_device.Stats.allocated d)
 
+(* More bytes than a page on every platform. *)
+let pages = 1 lsl 16
+
 let test_borrow () =
-  let ba = bytes_of_list (List.init 100 Fun.id) in
-  let host = B.view (B.of_bigarray ba) ~offset:37 S.UInt8 5 in
+  let whole = B.create Nx_device.host S.UInt8 pages in
+  let ba = B.bigarray Bigarray.int8_unsigned whole in
+  for i = 0 to 99 do
+    ba.{i} <- i
+  done;
+  let host = B.view whole ~offset:37 S.UInt8 5 in
   let b = B.borrow metal host in
   is_true ~msg:"borrowed" (B.is_borrowed b);
   is_true ~msg:"on Metal" (Nx_device.equal (B.device b) metal);
@@ -112,6 +119,8 @@ let test_borrow () =
   equal ~msg:"shares memory" bytes [ 37; 38; 39; 40; 41 ] (read b);
   ba.{38} <- 0;
   equal ~msg:"sees host writes" bytes [ 37; 0; 39; 40; 41 ] (read b);
+  raises_match (Exn.invalid_arg ~substring:"does not start on a page")
+    (fun () -> B.borrow metal (B.of_bigarray (Bigarray.Array1.sub ba 1 3)));
   let e = B.borrow metal (B.view host ~offset:0 S.UInt8 0) in
   is_true ~msg:"a zero-byte borrow is borrowed" (B.is_borrowed e);
   let s0 = Nx_device.stats metal in
@@ -168,7 +177,7 @@ let test_residency () =
   ignore (Nx_device.stats metal);
   let before = held () in
   (fun () ->
-    let bm = B.borrow metal (B.create Nx_device.host S.UInt8 100) in
+    let bm = B.borrow metal (B.create Nx_device.host S.UInt8 pages) in
     is_true ~msg:"a borrow" (resident bm);
     equal ~msg:"one more" int (before + 1) (held ()))
     ();

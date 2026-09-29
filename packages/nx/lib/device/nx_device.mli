@@ -6,10 +6,12 @@
 (** Devices, their memory and their programs.
 
     A device is hardware with memory: the {!host}, or a GPU that a vendor
-    library such as [nx.metal.device] opens. Memory is held in {!Buffer}s, a
-    number of elements of one storage format ({!Nx_dtype.Scalar.t}) on one
-    device, and copied between devices by {!Buffer.copy}. A GPU also loads
-    {!Program}s, which the libraries that submit work to it launch.
+    library such as [nx.metal.device] or [nx.cuda.device] opens. Memory is held
+    in {!Buffer}s, a number of elements of one storage format
+    ({!Nx_dtype.Scalar.t}) on one device, and copied between devices by
+    {!Buffer.copy}. The host addresses the memory of some GPUs, such as Metal's,
+    and not that of others, such as CUDA's, whose device copies it. A GPU also
+    loads {!Program}s, which the libraries that submit work to it launch.
 
     Work runs on a device asynchronously. Each device has a {e timeline}: the
     value its last submitted work signals when it completes. {!synchronize}
@@ -36,11 +38,12 @@
     domain next runs its finalisers.
 
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
-    the devices involved. A device that does not signal within its timeout (30
-    seconds unless its vendor library sets another), or whose driver reports a
-    fault, is {e failed}: its state is unknown and nothing recovers it. Its
-    failure is scoped to the memory it can reach, its own buffers and the host
-    memory it borrowed:
+    the devices involved. A device that does not signal within its {!timeout},
+    whose driver reports a fault, or whose driver errs while work is enqueued on
+    its queue, is {e failed}: its state is unknown and nothing recovers it. Its
+    failure is scoped to the memory it can reach: its own buffers, the host
+    memory it borrowed, and memory another device owns that a copy of the failed
+    device was writing when it failed:
     - The operation that finds the failure, waiting for the device's own work,
       raises [Failure "NAME hang detected"], where [NAME] is the device's name,
       or [Failure] with the driver's message.
@@ -54,7 +57,8 @@
       operations are unaffected.
     - A failed device never reclaims memory again: its buffers, and the host
       memory it borrowed, stay allocated for the life of the process, including
-      borrows it was unmapping when it failed. *)
+      borrows it was unmapping when it failed. Memory of another device that its
+      copy was writing is never reused either. *)
 
 (** {1:devices Devices} *)
 
@@ -68,13 +72,14 @@ val host : t
     programs. *)
 
 val name : t -> string
-(** [name d] is [d]'s name: ["CPU"] for the host, ["METAL"] for the Metal GPU.
-*)
+(** [name d] is [d]'s name: ["CPU"] for the host, ["METAL"] for the Metal GPU,
+    ["CUDA"], ["CUDA:1"], ... for CUDA GPUs. *)
 
 val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor: the machine's instruction
-    set for the host, such as ["arm64"] or ["x86_64"], and the GPU family for
-    Metal, such as ["Apple7"]. *)
+    set for the host, such as ["arm64"] or ["x86_64"], the GPU family for Metal,
+    such as ["Apple7"], and the compute capability for CUDA, such as ["sm_86"].
+*)
 
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
@@ -92,8 +97,11 @@ val synchronize : t -> unit
 
 val budget : t -> int
 (** [budget d] is the most bytes [d]'s allocator holds at once, in live buffers
-    and in its cache together. It is [max_int] for the host, and defaults to a
-    device's recommended working set otherwise. *)
+    and in its cache together, of its own memory and of the host memory it
+    allocates ({!Buffer.create}[ ~host:true]). Borrowed memory and the host's
+    staging memory ({!Buffer.copy}) do not count. It is [max_int] for the host,
+    and defaults to a device's recommended working set or memory size otherwise.
+*)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], releasing cached memory to the
@@ -101,6 +109,20 @@ val set_budget : t -> int -> unit
     are never released: an allocation fails until enough of them are collected.
 
     Raises [Invalid_argument] if [n < 0]. *)
+
+val timeout : t -> int
+(** [timeout d] is how long, in milliseconds, a wait for [d]'s work lasts before
+    [d] is considered hung and failed for good. It defaults to [30_000] unless
+    [d]'s vendor library sets another. *)
+
+val set_timeout : t -> int -> unit
+(** [set_timeout d ms] sets [d]'s {!timeout} to [ms], for the waits that start
+    after it, from any domain at any time. Work that takes longer, such as a
+    kernel that runs longer than [ms] without the device signaling, fails [d]
+    for good, and the memory it can reach stays allocated: raise the timeout
+    before submitting such work.
+
+    Raises [Invalid_argument] if [ms <= 0]. *)
 
 val free_cache : t -> unit
 (** [free_cache d] returns all of [d]'s cached memory to the system. *)
@@ -131,9 +153,18 @@ module Buffer : sig
       the buffer and all its views are unreachable. Borrowed memory is never
       cached, and never counted in a device's budget or statistics. *)
 
-  val create : device -> Nx_dtype.Scalar.t -> int -> t
+  val create : ?host:bool -> device -> Nx_dtype.Scalar.t -> int -> t
   (** [create d s n] is an owned buffer of [n] elements of format [s] on [d].
       Its contents are unspecified. A buffer of no bytes allocates nothing.
+
+      With [~host:true] (defaults to [false]) the memory is host memory that
+      [d]'s work addresses, and that the host reads and writes at
+      {!host_address}. On a GPU whose own memory the host does not address, such
+      as CUDA's, it is page-locked, and copies between it and [d]'s memory need
+      no staging. On other devices it is [d]'s memory.
+
+      On the {!host}, buffers of at least 64 KiB (four pages where pages are
+      larger) start on a page, so that devices can {!borrow} them.
 
       Raises [Invalid_argument] if [n < 0] or if [n] elements of [s] take more
       than [max_int] bytes, and {!Out_of_memory} if [d] cannot allocate its
@@ -156,8 +187,18 @@ module Buffer : sig
       that reads or writes through the result touches the host's memory: its
       {!submit} lists {!host} in [touches].
 
-      Raises [Invalid_argument] if [b] is not on {!host}, or if [d] cannot
-      address the host's memory. *)
+      [d] maps the whole host memory that [b] is a view of, once: the borrows on
+      [d] of views of that memory share one mapping, which [d] releases once
+      they are all unreachable. A mapping covers whole pages, so that memory
+      must start on a page: host buffers of at least 64 KiB (four pages where
+      pages are larger) and memory-mapped files do. Smaller host buffers cannot
+      be borrowed; {!copy} moves them through staging memory. On CUDA, mapping
+      page-locks the memory, which must be writable: memory mapped read-only
+      cannot be borrowed there.
+
+      Raises [Invalid_argument] if [b] is not on {!host}, if [d] cannot address
+      the host's memory, if the memory [b] is a view of does not start on a
+      page, or if [d]'s driver refuses to map it, with the driver's reason. *)
 
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
@@ -190,10 +231,28 @@ module Buffer : sig
       between two devices counts in [src]'s [bytes_out] and in [dst]'s
       [bytes_in].
 
+      Between memory that the host addresses, the host copies the bytes.
+      Otherwise a device copies them on its copy queue, as work on its timeline:
+      the device of [dst] when only [src] is host-addressable memory, the device
+      of [src] otherwise. It copies directly between memory it addresses: its
+      own, host memory it allocated or maps, and host memory another device
+      allocated, which it maps for the copy. Other host memory goes through the
+      host's staging memory, two 64 MiB slots of host memory made at the first
+      such copy and kept for the life of the process, which each device maps at
+      its first such copy. Between two devices whose memory the host does not
+      address, it moves the bytes to the other device's memory when it can, and
+      through the staging memory otherwise.
+
       Raises [Invalid_argument] if [src] and [dst] have different sizes in
-      bytes; [Failure "NAME hang detected"] if [src]'s or [dst]'s device does
-      not signal in time; and [Failure] with a failed device's error if that
-      device can reach [src] or [dst]. *)
+      bytes, if they overlap in the memory of one buffer, or if the host does
+      not address the memory of a device that has no copy queue;
+      [Failure "NAME hang detected"] if a device involved does not signal in
+      time; [Failure] with the driver's message if a device's driver reports a
+      fault or errs while the copy is enqueued, which fails that device;
+      [Failure] with a failed device's error if that device can reach [src] or
+      [dst]; and [Failure] if a device cannot map the staging memory, or
+      [Stdlib.Out_of_memory] if the host cannot allocate it, which fail no
+      device. *)
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -230,11 +289,16 @@ module Buffer : sig
   val host_address : t -> nativeint
   (** [host_address b] is the address of [b]'s first byte in the host's address
       space. Reading or writing it is outside the device's ordering: synchronize
-      first. *)
+      first.
+
+      Raises [Invalid_argument] if the host does not address the memory of a
+      nonempty [b], such as memory that {!create} allocated on a CUDA device
+      without [~host:true]. *)
 
   val handle : t -> nativeint
   (** [handle b] is the driver's object for the memory [b] lies in, such as a
-      [MTLBuffer], and [0n] on the host. [b] starts {!offset} bytes into it. *)
+      [MTLBuffer] or the start of a CUDA allocation, and [0n] on the host. [b]
+      starts {!offset} bytes into it. *)
 
   val offset : t -> int
   (** [offset b] is the byte offset of [b]'s first byte in {!handle}[ b]. *)
@@ -252,7 +316,8 @@ module Program : sig
 
   val load : device -> binary:string -> name:string -> t
   (** [load d ~binary ~name] is the function [name] of [binary], a compiled
-      library in [d]'s format, such as a metallib for Metal. Loading the same
+      library in [d]'s format: a metallib for Metal, a CUDA module (cubin,
+      fatbin, or PTX, which the driver compiles) for CUDA. Loading the same
       binary and name on [d] again returns the same program.
 
       Raises [Invalid_argument] if [d] loads no programs, and [Failure] with the
@@ -266,7 +331,7 @@ module Program : sig
 
   val handle : t -> nativeint
   (** [handle p] is the driver's object for [p], such as a
-      [MTLComputePipelineState]. *)
+      [MTLComputePipelineState] or a [CUfunction]. *)
 end
 
 (** {1:stats Statistics} *)
@@ -338,11 +403,13 @@ val signaled : t -> int
     [v <= signaled d] has completed. *)
 
 val timeline : t -> Buffer.t
-(** [timeline d] is a host buffer of two [UInt64]: a signal word, then [d]'s
-    submitted value. On a device made without its own [signal], work signals by
-    storing its value into the signal word, and {!signaled} reads it. A device
-    with its own signal, such as Metal's shared event, reports through
-    {!signaled} alone and leaves the signal word at [0]. *)
+(** [timeline d] is a buffer of two [UInt64] that the host and [d]'s work
+    address: a signal word, then [d]'s submitted value. It is [d]'s host memory
+    when [d] allocates some, such as page-locked memory on CUDA, and memory of
+    the {!host} otherwise. Work signals by storing its value into the signal
+    word, which {!signaled} reads, unless the device signals in its own way:
+    Metal's shared event reports through {!signaled} alone and leaves the signal
+    word at [0]. *)
 
 (** {1:vendors Vendor runtimes}
 
@@ -350,54 +417,111 @@ val timeline : t -> Buffer.t
     once, and returns that value from every later open. *)
 
 type memory = {
-  host : nativeint;  (** The memory's first byte, as the host addresses it. *)
+  host : nativeint option;
+      (** The memory's first byte, as the host addresses it, if it does. *)
   device : nativeint;  (** Its first byte, as the device's work addresses it. *)
   handle : nativeint;  (** The driver's object for it. *)
 }
-(** The type for memory that a driver allocated or mapped. The host addresses
-    all of it: the device's copies are host memory copies. *)
+(** The type for memory that a driver allocated or mapped. *)
+
+type allocator = {
+  alloc : int -> memory option;
+      (** [alloc n] is [n > 0] bytes of new memory, or [None] if the driver has
+          none. *)
+  free : memory -> unit;  (** [free m] returns [m] to the driver. *)
+}
+(** The type for allocators of a device's memory. *)
+
+type mapping = {
+  map : nativeint -> int -> (memory, string) result;
+      (** [map a n] maps the [n] bytes of host memory at [a] for the device:
+          memory whose [host] is at or below [a], or [Error why] if the driver
+          refuses, saying why. *)
+  unmap : memory -> unit;  (** [unmap m] releases a mapping [map] made. *)
+}
+(** The type for the mappings of host memory into a device's address space. *)
+
+type copy = dst:nativeint -> src:nativeint -> int -> int -> unit
+(** The type for enqueueing copies. [copy ~dst ~src n v] enqueues on the
+    device's copy queue a copy of [n > 0] bytes from [src] to [dst], after the
+    device's earlier work, and then the signal of [v] once the copy is complete.
+    It returns without waiting for either. It raises [Failure] with the driver's
+    message if the driver errs, which fails the device. *)
+
+type copy_queue = {
+  copy : copy;
+      (** Copies between the device's addresses: [device] addresses of the
+          memory it allocated or mapped. *)
+  transfer : t -> copy option;
+      (** [transfer d'] copies from the device's memory to the memory of the
+          device [d'], [None] if the device cannot. *)
+}
+(** The type for a device's copy queue. *)
 
 type signal = {
   signaled : unit -> int;  (** The last value the device signaled. *)
   wait : int -> timeout_ms:int -> bool;
       (** [wait v ~timeout_ms] waits until the device signaled [v], for at most
-          [timeout_ms] milliseconds; [false] if it did not. *)
+          [timeout_ms] milliseconds; [false] if it did not. It raises [Failure]
+          with the driver's message if the driver reports a fault. *)
 }
-(** The type for a device's own completion signal. *)
+(** The type for how a device signals completion and is waited for. *)
 
 val make :
   name:string ->
   arch:string ->
   budget:int ->
-  alloc:(int -> memory option) ->
-  free:(memory -> unit) ->
-  ?borrow:(nativeint -> int -> memory option) ->
+  memory:allocator ->
+  ?host_memory:allocator ->
+  ?mapping:mapping ->
+  ?copy_queue:(memory -> copy_queue) ->
   ?load:(binary:string -> name:string -> nativeint) ->
-  ?signal:signal ->
+  ?signal:(memory -> signal) ->
   ?timeout_ms:int ->
   ?synchronized:(unit -> unit) ->
   unit ->
   t
-(** [make ~name ~arch ~budget ~alloc ~free ?borrow ?load ?signal ?timeout_ms
-     ?synchronized ()] is a new device:
-    - [alloc n] is [n > 0] bytes of new memory, or [None] if the driver has
-      none; [free m] returns [m] to the driver. Memory the device frees is
-      cached for reuse first, and the device synchronizes before it calls
-      [free], so no work still uses [m].
-    - [borrow a n] maps the [n] bytes of host memory at [a] for the device:
-      memory whose [host] is at or below [a], [None] if the driver cannot.
-      [free] unmaps it. Without [borrow], the device cannot {!Buffer.borrow}.
+(** [make ~name ~arch ~budget ~memory ?host_memory ?mapping ?copy_queue ?load
+     ?signal ?timeout_ms ?synchronized ()] is a new device:
+    - [memory] allocates the device's own memory, and [host_memory] the host
+      memory that its work addresses, for {!Buffer.create}[ ~host:true]: memory
+      the host addresses. Without [host_memory], [memory] serves both, and the
+      host must address its memory. Memory the device frees is cached for reuse
+      first, and the device synchronizes before it frees it to the driver, so no
+      work still uses it.
+    - [mapping] maps host memory for {!Buffer.borrow}, and unmaps it once the
+      device synchronized. It is given memory that starts on a page. Without it,
+      the device cannot borrow.
+    - [copy_queue m] copies the memory that the host does not address, given
+      [m], the memory of its {!timeline}; other host memory is staged through
+      the host's staging memory, which it maps with [mapping]. Without it, the
+      host must address all of the device's memory, and copies are host memory
+      copies.
     - [load ~binary ~name] loads a program, raising [Failure] if the driver
       rejects it. Without [load], the device loads no programs.
-    - [signal] is how the device signals completion. Without it, the device's
-      work signals by storing into its {!timeline}.
-    - [timeout_ms] is how long a wait for its work lasts before the device is
-      considered hung. Defaults to [30_000]. Without [signal], the timeout
-      restarts whenever the signal word moves.
+    - [signal m] is how the device signals completion and is waited for, given
+      [m], the memory of its {!timeline}. Without it, work signals by storing
+      into the timeline's signal word, and waits poll it.
+    - [timeout_ms] is the device's initial {!timeout}. Defaults to [30_000].
+      Without [signal], the timeout restarts whenever the signal word moves.
     - [synchronized ()] runs at the end of each synchronization of the device.
       Defaults to doing nothing.
 
     These functions run while the device is taken, and must not use it through
     this module. Blocking driver calls should release the OCaml runtime.
 
-    Raises [Invalid_argument] if [budget < 0] or [timeout_ms <= 0]. *)
+    Raises [Invalid_argument] if [budget < 0], if [timeout_ms <= 0], if
+    [copy_queue] is given without [mapping], or if [host_memory] gives memory
+    the host does not address, and [Failure] if [host_memory] has no memory for
+    the timeline. *)
+
+val external_buffer : t -> memory -> Nx_dtype.Scalar.t -> int -> Buffer.t
+(** [external_buffer d m s n] is a borrowed buffer of [n] elements of format [s]
+    over the memory [m] of [d], which something outside this module allocated.
+    Nothing frees [m]: its owner keeps it allocated for as long as the buffer
+    and its views are reachable. Vendor libraries build their constructors of
+    such buffers on it, and check that [m] is [d]'s memory first.
+
+    Raises [Invalid_argument] if [d] is {!host}, whose memory
+    {!Buffer.of_bigarray} borrows, if [n < 0], or if [n] elements of [s] take
+    more than [max_int] bytes. *)

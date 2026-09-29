@@ -17,10 +17,22 @@
 #else
 #include <sched.h>
 #include <time.h>
+#include <unistd.h>
 #endif
 
 /* Copies at least this large release the runtime while they run. */
 #define NX_DEVICE_BLOCKING_BYTES (1 << 16)
+
+value caml_nx_device_page_size(value unit) {
+  (void)unit;
+#ifdef _WIN32
+  SYSTEM_INFO info;
+  GetSystemInfo(&info);
+  return Val_long(info.dwPageSize);
+#else
+  return Val_long(sysconf(_SC_PAGESIZE));
+#endif
+}
 
 intnat caml_nx_device_bigarray_address(value ba) {
   return (intnat)Caml_ba_data_val(ba);

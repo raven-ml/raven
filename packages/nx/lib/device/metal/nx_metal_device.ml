@@ -93,7 +93,16 @@ let open_metal mtl =
     release m.handle
   in
   let map =
-    if unified mtl then Some (fun a n -> resident_memory (wrap mtl a n))
+    if unified mtl then
+      Some
+        {
+          Nx_device.map =
+            (fun a n ->
+              match resident_memory (wrap mtl a n) with
+              | Some m -> Ok m
+              | None -> Error "Metal cannot wrap it in a buffer");
+          unmap = free;
+        }
     else None
   in
   let signal =
@@ -104,10 +113,11 @@ let open_metal mtl =
   in
   let dev =
     Nx_device.make ~name:"METAL" ~arch:(arch mtl) ~budget:(working_set mtl)
-      ~alloc:(fun n -> resident_memory (alloc mtl n))
-      ~free ?borrow:map
+      ~memory:{ alloc = (fun n -> resident_memory (alloc mtl n)); free }
+      ?mapping:map
       ~load:(fun ~binary ~name -> pipeline mtl binary name)
-      ~signal ~synchronized:cycle_pool ()
+      ~signal:(fun _ -> signal)
+      ~synchronized:cycle_pool ()
   in
   { dev; handles; resources }
 

@@ -122,13 +122,14 @@ value caml_nx_metal_residency(value v_set, value v_buffer, value v_add) {
   return Val_unit;
 }
 
-/* [Some { host; device; handle }] for a buffer, [None] for nil. */
+/* [Some { host = Some host; device; handle }] for a buffer, [None] for nil. */
 static value memory_of_buffer(id<MTLBuffer> buffer, intnat host) {
   CAMLparam0();
   CAMLlocal2(memory, v);
   if (buffer == nil) CAMLreturn(Val_none);
   memory = caml_alloc_tuple(3);
   v = caml_copy_nativeint(host);
+  v = caml_alloc_some(v);
   Store_field(memory, 0, v);
   v = caml_copy_nativeint((intnat)buffer.gpuAddress);
   Store_field(memory, 1, v);

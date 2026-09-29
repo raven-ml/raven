@@ -21,10 +21,10 @@ let runtime ?(budget = max_int) name =
     in
     let a = Nx_device.Buffer.host_address (Nx_device.Buffer.of_bigarray ba) in
     Hashtbl.add memory a ba;
-    Some { Nx_device.host = a; device = a; handle = a }
+    Some { Nx_device.host = Some a; device = a; handle = a }
   in
-  let free (m : Nx_device.memory) = Hashtbl.remove memory m.host in
-  Nx_device.make ~name ~arch:"test" ~budget ~alloc ~free ()
+  let free (m : Nx_device.memory) = Hashtbl.remove memory m.device in
+  Nx_device.make ~name ~arch:"test" ~budget ~memory:{ alloc; free } ()
 
 let r1 = runtime "R1"
 let r2 = runtime "R2"
