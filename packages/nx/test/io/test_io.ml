@@ -741,6 +741,13 @@ let images_group =
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let png = flip_byte (read (fixture "png_filters.png")) 30 in
           fails (fun () -> Nx_io.load_image (file "" png)));
+      test "an image of noise, which deflate stores uncompressed, round trips"
+        (fun () ->
+          let noise =
+            Nx.init Nx.uint8 [| 64; 64; 3 |] (fun _ -> Random.int 256)
+          in
+          equal (tensor int) noise
+            (Nx_io.load_image (saved ".png" Nx_io.save_image noise)));
     ]
 
 (* Every format *)
@@ -880,7 +887,103 @@ let every_format =
           fails (fun () -> save (temp_file ()) [ ("w", p); ("w", p) ]));
     ]
 
+(* Malformed streams *)
+
+(* [f ()] returns or raises [Failure], as the decoders promise for a stream that
+   is not theirs: never another exception, a crash or a read out of bounds. *)
+let returns_or_fails f = match f () with _ -> () | exception Failure _ -> ()
+
+(* A stream damaged at a drawn position: one bit flipped there, or cut short
+   there. *)
+type damage = Flip of int * int | Cut of int
+
+let pp_damage ppf = function
+  | Flip (at, bit) -> Format.fprintf ppf "Flip (%d, %d)" at bit
+  | Cut at -> Format.fprintf ppf "Cut %d" at
+
+let damage n =
+  Gen.with_pp pp_damage
+    (Gen.map
+       (fun (at, bit, flip) -> if flip then Flip (at, bit) else Cut at)
+       (Gen.triple (Gen.int_range 0 (n - 1)) (Gen.int_range 0 7) Gen.bool))
+
+let damaged s = function
+  | Flip (at, bit) ->
+      String.mapi
+        (fun j c ->
+          if j = at then Char.chr (Char.code c lxor (1 lsl bit)) else c)
+        s
+  | Cut at -> String.sub s 0 at
+
+let bytes = Gen.string_of ~size:(Gen.int_range 0 512) Gen.char
+
+let pixels =
+  Nx.init Nx.uint8 [| 13; 17; 3 |] (fun i ->
+      ((((i.(0) * 17) + i.(1)) * 3) + i.(2)) * 37 mod 256)
+
+(* A PNG and a JPEG of [pixels], made once. *)
+let png = lazy (Nx_io.encode_png pixels)
+let jpeg = lazy (read (saved ".jpg" Nx_io.save_image pixels))
+
+let damaged_image name stream suffix =
+  prop
+    ("load_image of a damaged " ^ name ^ " loads or fails")
+    (Gen.bind Gen.unit (fun () -> damage (String.length (Lazy.force stream))))
+    (fun d ->
+      returns_or_fails (fun () ->
+          Nx_io.load_image (file suffix (damaged (Lazy.force stream) d))))
+
+let malformed =
+  group "malformed streams"
+    [
+      prop "inflate of a zlib header and any bytes returns or fails" bytes
+        (fun b -> returns_or_fails (fun () -> Nx_io.inflate ("\x78\x9c" ^ b)));
+      prop
+        "inflate of a stream with a bit flipped returns or fails, and of one \
+         cut short fails"
+        (let open Gen in
+         let* s = string_of ~size:(int_range 1 3000) (char_range 'a' 'f') in
+         let z = Nx_io.deflate s in
+         map (fun d -> (z, d)) (damage (String.length z)))
+        (fun (z, d) ->
+          match d with
+          | Flip _ -> returns_or_fails (fun () -> Nx_io.inflate (damaged z d))
+          | Cut _ -> fails (fun () -> Nx_io.inflate (damaged z d)));
+      prop "gunzip of a gzip header and any bytes decompresses or fails" bytes
+        (fun b ->
+          let src =
+            file ".gz" ("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff" ^ b)
+          in
+          returns_or_fails (fun () -> Nx_io.gunzip ~src ~dst:(temp_file ())));
+      test
+        "an npz entry of zeros then noise, deflated with a stored block, loads \
+         back" (fun () ->
+          let t =
+            Nx.init Nx.uint8 [| 300_000 |] (fun i ->
+                if i.(0) < 150_000 then 0 else Random.int 256)
+          in
+          let path = saved "" save_npz [ ("w", Nx.P t) ] in
+          equal int 8 (String.get_uint16_le (read path) 8);
+          equal packed (Nx.P t) (Nx_io.load_npz_entry ~name:"w" path));
+      damaged_image "PNG" png ".png";
+      damaged_image "JPEG" jpeg ".jpg";
+      prop "load_image of an image signature and any bytes loads or fails"
+        (Gen.pair Gen.bool bytes) (fun (is_png, b) ->
+          let signature = if is_png then "\137PNG\r\n\026\n" else "\xff\xd8" in
+          returns_or_fails (fun () ->
+              Nx_io.load_image (file "" (signature ^ b))));
+    ]
+
 let () =
   exit
     (run "nx.io"
-       [ npy; npz; compression; safetensors; txt; images_group; every_format ])
+       [
+         npy;
+         npz;
+         compression;
+         safetensors;
+         txt;
+         images_group;
+         every_format;
+         malformed;
+       ])
