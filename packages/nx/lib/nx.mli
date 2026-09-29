@@ -2678,9 +2678,11 @@ val eig :
 
 val eigh :
   ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t * ('a, 'b) t
-(** [eigh ?uplo a] is [(eigenvalues, eigenvectors)] of symmetric / Hermitian
-    matrix [a] in ascending eigenvalue order. [uplo] defaults to [`L]. More
-    efficient than {!eig} for symmetric matrices.
+(** [eigh ?uplo a] is [(w, v)], the eigenvalues and eigenvectors of the real
+    symmetric or complex Hermitian matrix [a]: [w] holds the eigenvalues, real,
+    in ascending order, and the columns of [v], of [a]'s dtype, are orthonormal
+    eigenvectors, [a v = v diag(w)]. [uplo] defaults to [`L]. More efficient
+    than {!eig} for symmetric matrices.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -2697,8 +2699,8 @@ val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
     See also {!eig}, {!eigvalsh}. *)
 
 val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
-(** [eigvalsh ?uplo a] is the eigenvalues of symmetric / Hermitian matrix [a] in
-    ascending order. [uplo] defaults to [`L].
+(** [eigvalsh ?uplo a] is the eigenvalues of the real symmetric or complex
+    Hermitian matrix [a], real, in ascending order. [uplo] defaults to [`L].
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.

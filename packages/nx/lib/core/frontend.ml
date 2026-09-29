@@ -4254,11 +4254,6 @@ module Make (B : Backend_intf.S) = struct
     | Float16 | Float32 | Float64 | Complex64 | Complex128 -> ()
     | _ -> err op "dtype must be float or complex"
 
-  let check_real (type a b) ~op (a : (a, b) t) =
-    match dtype a with
-    | Float16 | Float32 | Float64 -> ()
-    | _ -> err op "dtype must be real (float)"
-
   let cholesky ?upper a =
     check_square ~op:"cholesky" a;
     check_float_or_complex ~op:"cholesky" a;
@@ -4305,7 +4300,7 @@ module Make (B : Backend_intf.S) = struct
 
   let eigh ?uplo a =
     check_square ~op:"eigh" a;
-    check_real ~op:"eigh" a;
+    check_float_or_complex ~op:"eigh" a;
     let _ = uplo in
     B.eigh a
 
@@ -4316,7 +4311,7 @@ module Make (B : Backend_intf.S) = struct
 
   let eigvalsh ?uplo a =
     check_square ~op:"eigvalsh" a;
-    check_real ~op:"eigvalsh" a;
+    check_float_or_complex ~op:"eigvalsh" a;
     let _ = uplo in
     B.eigvalsh a
 

@@ -2757,6 +2757,9 @@ thread.
 
 ### Nx
 
+- `Nx.eigh` and `Nx.eigvalsh` take complex Hermitian matrices, complex64 and
+  complex128, where they raised `Invalid_argument`. The eigenvalues are real
+  (float64) and the eigenvectors have the matrix's dtype.
 - `Nx.eig` and `Nx.eigvals` hold on matrices whose largest entry is below
   about `1e-138` or above `1e138`, which raised `Linalg_error` for want of
   convergence: the matrix is scaled into range first, as LAPACK's `xGEEV`
