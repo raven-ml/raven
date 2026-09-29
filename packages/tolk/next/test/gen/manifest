@@ -1,0 +1,6 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dtype/finfo.golden
+dtype/least_upper.golden
+dtype/lossless_cast.golden
+dtype/properties.golden
+uop/op/ops.golden

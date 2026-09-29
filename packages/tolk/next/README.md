@@ -41,6 +41,13 @@ and exports every top-level module.
 The alternatives are worse. A flat layout needs invented prefixes as soon as
 two directories hold the same file name (`dtype.py` sits at the top, in
 `mixin/` and in `codegen/decomp/`), and the path no longer names the tinygrad
-file. A
-library per directory adds a dune stanza and a public name per directory for
-no consumer, since nothing outside tolk.next uses a part of it alone.
+file. A library per directory adds a dune stanza and a public name per
+directory for no consumer, since nothing outside tolk.next uses a part of it
+alone.
+
+## Tests and ledgers
+
+`test/README.md` describes the suites, the slow tests and the goldens
+recorded from tinygrad. `DIVERGENCES.md` lists every place where tolk.next
+differs from tinygrad and why, and `test/REGRESSIONS.md` maps each test of
+the old tolk and of tinygrad to the test that replaces it.

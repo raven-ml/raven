@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dtype	priority	bitsize	itemsize	name	fmt	min	max	is_int	is_float	is_unsigned	is_bool
+dtypes.void	-1	0	0	void	None	False	True	False	False	False	False
+dtypes.bool	0	1	1	bool	?	False	True	False	False	False	True
+dtypes.weakint	0	800	100	weakint	None	-3334007216439927137039925895360628898572379161157954080198128905882018618908816035760716100435777145371464955296716620222944400827059682540181678026165415023047578789757007279231539142955907012364482508067943300990845374018738230645581938688	3334007216439927137039925895360628898572379161157954080198128905882018618908816035760716100435777145371464955296716620222944400827059682540181678026165415023047578789757007279231539142955907012364482508067943300990845374018738230645581938687	True	False	False	False
+dtypes.char	1	8	1	signed char	b	-128	127	True	False	False	False
+dtypes.uchar	2	8	1	unsigned char	B	0	255	True	False	True	False
+dtypes.short	3	16	2	short	h	-32768	32767	True	False	False	False
+dtypes.ushort	4	16	2	unsigned short	H	0	65535	True	False	True	False
+dtypes.int	5	32	4	int	i	-2147483648	2147483647	True	False	False	False
+dtypes.uint	6	32	4	unsigned int	I	0	4294967295	True	False	True	False
+dtypes.long	7	64	8	long	q	-9223372036854775808	9223372036854775807	True	False	False	False
+dtypes.ulong	8	64	8	unsigned long	Q	0	18446744073709551615	True	False	True	False
+dtypes.weakfloat	9	800	100	weakfloat	None	-inf	inf	False	True	False	False
+dtypes.fp8e4m3	10	8	1	float8_e4m3	None	-448.0	448.0	False	True	False	False
+dtypes.fp8e4m3fnuz	10	8	1	float8_e4m3fnuz	None	-240.0	240.0	False	True	False	False
+dtypes.fp8e5m2	11	8	1	float8_e5m2	None	-inf	inf	False	True	False	False
+dtypes.fp8e5m2fnuz	11	8	1	float8_e5m2fnuz	None	-57344.0	57344.0	False	True	False	False
+dtypes.half	12	16	2	half	e	-inf	inf	False	True	False	False
+dtypes.bfloat16	13	16	2	__bf16	None	-inf	inf	False	True	False	False
+dtypes.float	14	32	4	float	f	-inf	inf	False	True	False	False
+dtypes.double	15	64	8	double	d	-inf	inf	False	True	False	False
