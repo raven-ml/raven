@@ -21,10 +21,19 @@ type t = {
 let prod arr = Array.fold_left ( * ) 1 arr
 
 (* Check if strides represent a contiguous layout *)
+(* Row-major order whatever the strides of axes of size 1, which are never
+   stepped; an empty view holds nothing out of order. *)
 let is_c_contiguous_strides shape_arr strides =
-  let expected = Shape.c_contiguous_strides shape_arr in
-  Array.length strides = Array.length expected
-  && Array.for_all2 ( = ) strides expected
+  Array.exists (( = ) 0) shape_arr
+  ||
+  let expected = ref 1 and ordered = ref true in
+  for i = Array.length shape_arr - 1 downto 0 do
+    if shape_arr.(i) <> 1 then begin
+      if strides.(i) <> !expected then ordered := false;
+      expected := !expected * shape_arr.(i)
+    end
+  done;
+  !ordered
 
 (* ───── Accessors ───── *)
 

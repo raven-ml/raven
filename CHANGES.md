@@ -2711,6 +2711,26 @@ thread.
 
 ### Nx
 
+- `Nx.slice` and `Nx.set` clamp the start of a stepped range (`Rs`) into the
+  axis, as they clamp its stop and both bounds of `R`. A start outside the
+  axis read zeros or raised.
+- `Nx.create`, `init`, `empty`, `full`, `zeros`, `ones` and `eye` refuse a
+  negative dimension. `create int32 [| -2; -3 |]` with six elements made a
+  tensor of that shape.
+- `Nx.to_bigarray` always copies, as documented. It shared the storage of a
+  contiguous tensor, so writing the bigarray changed the tensor.
+- `Nx.is_c_contiguous` holds for a tensor whose only disorder is in axes of
+  size 1, and for an empty tensor. It was false for a fresh empty tensor.
+  `Nx.contiguous` documents that it shares a C-contiguous tensor only at
+  offset 0.
+- `Nx.one_hot` compares indices and classes as int64. In the index dtype the
+  classes wrapped: a `uint8` index 5 among 300 classes also marked class 261.
+- `Nx.concatenate` refuses an axis out of bounds, for one tensor too;
+  `Nx.split` refuses zero parts instead of raising `Division_by_zero`;
+  `Nx.array_split` counts a negative index from the end, as a range does;
+  `Nx.extract` compares the sizes of the condition and the tensor, not their
+  shapes; and `Nx.compress` without an axis refuses a condition longer than
+  the tensor, where it read zeros past the end.
 - `Nx.flatten` works on every layout, a view where the layout allows one and a
   copy otherwise. It raised on a transpose, and so did `argmax`, `argmin`,
   `roll`, `repeat`, `cumsum` and the other scans, `take`, `compress` and

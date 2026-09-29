@@ -351,7 +351,12 @@ module Make (B : Backend_intf.S) = struct
   let contiguous x = B.contiguous x
   let copy x = B.copy x
 
+  let check_shape op shape =
+    if Array.exists (fun d -> d < 0) shape then
+      err op "shape %s, dimensions must be >= 0" (Shape.to_string shape)
+
   let create ctx dtype shape arr =
+    check_shape "create" shape;
     let n = Array.fold_left ( * ) 1 shape in
     if Array.length arr <> n then
       err "create" "array size, got %d elements, expected %d" (Array.length arr)
@@ -365,21 +370,24 @@ module Make (B : Backend_intf.S) = struct
     else B.reshape tensor_1d shape
 
   let init ctx dtype shape f =
+    check_shape "init" shape;
     let size = Array.fold_left ( * ) 1 shape in
     let arr = Array.init size (fun i -> f (Shape.unravel_index i shape)) in
     create ctx dtype shape arr
 
   let scalar ctx dt value = B.full ctx dt [||] value
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
-  let empty ctx dtype shape_arr = B.buffer ctx dtype shape_arr
 
-  let zeros ctx dtype shape_arr =
-    B.full ctx dtype shape_arr (Nx_dtype.zero dtype)
-
-  let ones ctx dtype shape_arr = B.full ctx dtype shape_arr (Nx_dtype.one dtype)
+  let empty ctx dtype shape_arr =
+    check_shape "empty" shape_arr;
+    B.buffer ctx dtype shape_arr
 
   let full ctx dt target_shape fill_value =
+    check_shape "full" target_shape;
     B.full ctx dt target_shape fill_value
+
+  let zeros ctx dtype shape_arr = full ctx dtype shape_arr (Nx_dtype.zero dtype)
+  let ones ctx dtype shape_arr = full ctx dtype shape_arr (Nx_dtype.one dtype)
 
   let create_like x_ref fill_fn =
     fill_fn (B.context x_ref) (B.dtype x_ref) (shape x_ref)
@@ -405,7 +413,7 @@ module Make (B : Backend_intf.S) = struct
     if Option.is_none (Nx_dtype.to_bigarray_kind (B.dtype x)) then
       err "to_bigarray" "Bigarray has no %s kind"
         (Nx_dtype.to_string (B.dtype x));
-    let ga = Nx_buffer.to_genarray (to_buffer x) (shape x) in
+    let ga = Nx_buffer.to_genarray (to_buffer (copy x)) (shape x) in
     (Obj.magic ga : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
 
   let of_buffer ctx ~shape buf = reshape shape (B.from_host ctx buf)
@@ -1202,26 +1210,31 @@ module Make (B : Backend_intf.S) = struct
         invalid_arg
           "concatenate: tensor list cannot be empty, provide at least one \
            tensor"
-    | [ x ] -> copy x
-    | _ ->
-        check_dtypes_match ~op:"concatenate" ts;
-        let first = List.hd ts in
+    | first :: rest -> (
         let first_ndim = ndim first in
-        let axis = resolve_single_axis ~ndim_opt:first_ndim first axis in
-        if not (List.for_all (fun x -> ndim x = first_ndim) ts) then
-          invalid_arg "concatenate: arrays must have same number of dimensions";
-        let first_shape = shape first in
-        List.iter
-          (fun x ->
-            let s = shape x in
-            Array.iteri
-              (fun i d ->
-                if i <> axis && d <> first_shape.(i) then
-                  err "concatenate" "dimension %d, size %d≠%d" i d
-                    first_shape.(i))
-              s)
-          (List.tl ts);
-        cat_tensors ~axis ts
+        let axis = if axis < 0 then axis + first_ndim else axis in
+        if axis < 0 || axis >= first_ndim then
+          err "concatenate" "axis %d out of bounds for %dD tensor" axis
+            first_ndim;
+        match rest with
+        | [] -> copy first
+        | _ ->
+            check_dtypes_match ~op:"concatenate" ts;
+            if not (List.for_all (fun x -> ndim x = first_ndim) ts) then
+              invalid_arg
+                "concatenate: arrays must have same number of dimensions";
+            let first_shape = shape first in
+            List.iter
+              (fun x ->
+                let s = shape x in
+                Array.iteri
+                  (fun i d ->
+                    if i <> axis && d <> first_shape.(i) then
+                      err "concatenate" "dimension %d, size %d≠%d" i d
+                        first_shape.(i))
+                  s)
+              rest;
+            cat_tensors ~axis ts)
 
   let stack ?axis ts =
     match ts with
@@ -1265,6 +1278,7 @@ module Make (B : Backend_intf.S) = struct
 
   let eye ctx ?m ?k dtype n =
     let cols = Option.value m ~default:n and k = Option.value k ~default:0 in
+    check_shape "eye" [| n; cols |];
     let arr = Array.make (n * cols) (Nx_dtype.zero dtype) in
     let one = Nx_dtype.one dtype in
     for i = 0 to n - 1 do
@@ -1482,19 +1496,16 @@ module Make (B : Backend_intf.S) = struct
           invalid_arg
             "slice: step cannot be zero, use positive step for forward slicing \
              or negative for reverse";
-        let s = normalize_index dim_size start in
-        let e = normalize_index dim_size stop in
-        let len, actual_stop =
-          if step > 0 then
-            let s = Int.max 0 (Int.min s dim_size) in
-            let e = Int.max 0 (Int.min e dim_size) in
-            ((if s >= e then 0 else ((e - 1 - s) / step) + 1), e)
-          else
-            let s = Int.min (dim_size - 1) (Int.max (-1) s) in
-            let e = Int.min (dim_size - 1) (Int.max (-1) e) in
-            ((if s <= e then 0 else ((s - e - 1) / -step) + 1), e)
+        (* Both bounds clamp into the axis, as a Python slice's do. *)
+        let lo, hi = if step > 0 then (0, dim_size) else (-1, dim_size - 1) in
+        let clamp i = Int.max lo (Int.min hi (normalize_index dim_size i)) in
+        let s = clamp start and e = clamp stop in
+        let len =
+          if step > 0 then if s >= e then 0 else ((e - 1 - s) / step) + 1
+          else if s <= e then 0
+          else ((s - e - 1) / -step) + 1
         in
-        View { start = s; stop = actual_stop; step; dim_len = len }
+        View { start = s; stop = e; step; dim_len = len }
     | L indices ->
         Gather
           (Array.map
@@ -1874,6 +1885,9 @@ module Make (B : Backend_intf.S) = struct
   let compress ?axis ~(condition : (bool, bool_elt) t) t =
     match axis with
     | None ->
+        if numel condition > numel t then
+          err "compress" "condition of %d, longer than the %d elements"
+            (numel condition) (numel t);
         let t_flat = flatten t in
         let cond_flat = flatten condition in
         let n =
@@ -1899,7 +1913,9 @@ module Make (B : Backend_intf.S) = struct
         else take ~axis ~indices:true_idx.(0) t
 
   let extract ~condition t =
-    if shape condition <> shape t then invalid_arg "extract: shape mismatch";
+    if numel condition <> numel t then
+      err "extract" "condition of %d elements, tensor of %d" (numel condition)
+        (numel t);
     compress ~condition (flatten t)
 
   let nonzero (type a b) (t : (a, b) t) =
@@ -1951,7 +1967,16 @@ module Make (B : Backend_intf.S) = struct
     in
     match sections with
     | `Indices indices ->
-        let idx = Array.of_list indices in
+        (* An index counts from the end when negative, and clamps into the axis,
+           as a range's bounds do. *)
+        let idx =
+          Array.of_list
+            (List.map
+               (fun i ->
+                 Int.max 0
+                   (Int.min axis_size (if i < 0 then i + axis_size else i)))
+               indices)
+        in
         let n = Array.length idx + 1 in
         let bounds = Array.make (n + 1) 0 in
         Array.iteri (fun i v -> bounds.(i + 1) <- v) idx;
@@ -1974,6 +1999,7 @@ module Make (B : Backend_intf.S) = struct
   let split ~axis sections x =
     let axis = resolve_single_axis x axis in
     let axis_size = dim axis x in
+    if sections < 1 then err "split" "sections must be >= 1, got %d" sections;
     if axis_size mod sections <> 0 then
       err "split"
         "cannot divide evenly axis %d (size %d) to %d sections, %d %% %d = %d, \
@@ -5556,12 +5582,15 @@ module Make (B : Backend_intf.S) = struct
         (Nx_dtype.to_string dt);
     if num_classes <= 0 then
       err "one_hot" "num_classes %d, must be positive" num_classes;
-    let idx_exp = unsqueeze index_tensor ~axes:[ ndim index_tensor ] in
+    (* Compared as int64: the index dtype may not hold every class. *)
+    let idx_exp =
+      unsqueeze (cast Nx_dtype.int64 index_tensor) ~axes:[ ndim index_tensor ]
+    in
     let nd_exp = ndim idx_exp in
     let s = Array.make nd_exp 1 in
     s.(nd_exp - 1) <- num_classes;
     let arange_b =
-      reshape s (arange (B.context index_tensor) dt 0 num_classes 1)
+      reshape s (arange (B.context index_tensor) Nx_dtype.int64 0 num_classes 1)
     in
     cast Nx_dtype.uint8 (cmpeq idx_exp arange_b)
 
