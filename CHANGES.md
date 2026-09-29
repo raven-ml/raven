@@ -2746,6 +2746,9 @@ thread.
 
 ### Nx
 
+- `Nx_buffer.genarray_change_layout` keeps the dtype of a genarray of an
+  extended dtype. It dropped it, so a bfloat16 genarray came back as float16
+  and an int4 one as uint8.
 - `Nx_buffer.blit_from_bytes` and `Nx_buffer.blit_to_bytes` refuse an offset
   and length whose sum overflows. Such a pair passed the bounds checks, so a
   copy at an offset near `max_int` wrote or read outside the buffer.

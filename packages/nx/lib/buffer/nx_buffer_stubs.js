@@ -582,6 +582,14 @@ function caml_nx_buffer_reinterpret(kind_index, ba, len, size) {
   return caml_nx_buffer_create_unsafe(kind, ba.layout, [len], data);
 }
 
+//Provides: caml_nx_buffer_change_layout
+//Requires: caml_nx_buffer_create_unsafe
+function caml_nx_buffer_change_layout(ba, layout) {
+  if (ba.layout === layout) return ba;
+  return caml_nx_buffer_create_unsafe(ba.kind, layout, ba.dims.slice().reverse(),
+                                      ba.data);
+}
+
 //Provides: caml_nx_buffer_register_file
 function caml_nx_buffer_register_file(ba, path, size, mtime, inode) {
   return 0;

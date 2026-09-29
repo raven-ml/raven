@@ -16,6 +16,7 @@ extern value caml_ba_set_N(value vb, value *vind, int nargs);
 extern value caml_ba_blit(value vsrc, value vdst);
 extern CAMLprim value caml_ba_fill(value vb, value vinit);
 extern CAMLprim value caml_ba_sub(value vb, value vofs, value vlen);
+extern CAMLprim value caml_ba_change_layout(value vb, value vlayout);
 
 /*---------------------------------------------------------------------------
    Helpers
@@ -509,6 +510,18 @@ CAMLprim value caml_nx_buffer_reinterpret(value vkind, value vb, value vlen,
   b->flags = nx_buffer_store_extended_kind(
       (b->flags & ~CAML_BA_KIND_MASK) | base_kind, kind);
   b->dim[0] = Long_val(vlen);
+  CAMLreturn(res);
+}
+
+/* [caml_ba_change_layout] keeps the standard kind bits alone: the extended
+   kind is copied over from [vb]. */
+CAMLprim value caml_nx_buffer_change_layout(value vb, value vlayout) {
+  CAMLparam2(vb, vlayout);
+  CAMLlocal1(res);
+  res = caml_ba_change_layout(vb, vlayout);
+  struct caml_ba_array *b = Caml_ba_array_val(res);
+  b->flags = nx_buffer_store_extended_kind(
+      b->flags, nx_buffer_get_kind(Caml_ba_array_val(vb)));
   CAMLreturn(res);
 }
 

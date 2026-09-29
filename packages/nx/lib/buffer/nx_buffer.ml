@@ -281,4 +281,7 @@ let genarray_blit : type a b c.
     (a, b, c) Bigarray.Genarray.t -> (a, b, c) Bigarray.Genarray.t -> unit =
  fun src dst -> genarray_blit_ext src dst
 
-let genarray_change_layout = Bigarray.Genarray.change_layout
+external genarray_change_layout :
+  ('a, 'b, 'c) Bigarray.Genarray.t ->
+  'd Bigarray.layout ->
+  ('a, 'b, 'd) Bigarray.Genarray.t = "caml_nx_buffer_change_layout"
