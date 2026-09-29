@@ -76,9 +76,11 @@ let dropped f =
 (* A driver whose memory is host memory aligned to 16 bytes. It counts its
    bytes, its calls and its live mappings but those of the host's staging
    memory. A far driver's own memory is not addressed by the host, and its copy
-   queue runs copies when the host waits for them, as a GPU runs behind the
-   host: [stalled] stops it, [broken] makes it refuse to enqueue, and a device
-   named PEER... copies into the memory of the others. *)
+   queue runs copies and timestamps when the host waits for them, as a GPU runs
+   behind the host: [stalled] stops it, [broken] makes it refuse to enqueue, and
+   a device named PEER... copies into the memory of the others. Its timestamps
+   are the host clock, or, with a clock of its own, ticks of it two hours
+   ahead. *)
 type driver = {
   blocks : (nativeint, chars * int) Hashtbl.t;
   mutable held : int;
@@ -96,9 +98,11 @@ type fake = { dev : Nx_device.t; drv : driver }
 
 let staging_bytes = 128 lsl 20
 let peer name = String.starts_with ~prefix:"PEER" name
+let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
-    ?signal ?load ?timeout_ms ?synchronized ?sleep ?finalize () =
+    ?signal ?load ?timeout_ms ?synchronized ?sleep ?finalize ?clock ?resolve ()
+    =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -149,6 +153,18 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
           if staged dst || staged src then drv.staged <- drv.staged + 1 )
       queue
   in
+  let ticks () =
+    match clock with
+    | Some (Nx_device.Device_clock { hz }) ->
+        (Nx_device.Profile.now () + ahead) / (1_000_000_000 / hz)
+    | Some Nx_device.Host_clock | None -> Nx_device.Profile.now ()
+  in
+  let stamp ~slot v =
+    if drv.broken then failwith "enqueue refused";
+    Queue.push
+      (v, fun () -> store_signal (Nativeint.add slot 8n) (ticks ()))
+      queue
+  in
   let rec run_to v =
     if (not drv.stalled) && !signaled < v && not (Queue.is_empty queue) then begin
       let v', f = Queue.pop queue in
@@ -170,7 +186,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     let transfer d =
       if peer name && peer (Nx_device.name d) then Some copy else None
     in
-    { Nx_device.copy; transfer }
+    { Nx_device.copy; transfer; stamp }
   in
   let unmap _ = drv.mapped <- drv.mapped - 1 in
   let dev =
@@ -182,11 +198,12 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
       ?copy_queue:(if far then Some copy_queue else None)
       ?signal:
         (if far then Some queue_signal else Option.map (fun s _ -> s) signal)
-      ?load ?timeout_ms ?synchronized ?sleep ?finalize ()
+      ?load ?timeout_ms ?synchronized ?sleep ?finalize ?clock ?resolve ()
   in
   { dev; drv }
 
-let far ?(name = "FAR") ?budget () = fake ~name ?budget ~far:true ()
+let far ?(name = "FAR") ?budget ?clock () =
+  fake ~name ?budget ~far:true ?clock ()
 
 (* A signal whose waits answer [wait timeout_ms]. *)
 let signal ?(signaled = 0) wait =
@@ -1057,9 +1074,10 @@ let buffers =
 
 let refusals =
   let memory = { Nx_device.alloc = (fun _ -> None); free = ignore } in
-  let make ?host_memory ?mapping ?copy_queue ?(budget = 0) ?timeout_ms () =
+  let make ?host_memory ?mapping ?copy_queue ?(budget = 0) ?timeout_ms ?clock ()
+      =
     Nx_device.make ~name:"X" ~arch:"x" ~budget ~memory ?host_memory ?mapping
-      ?copy_queue ?timeout_ms ()
+      ?copy_queue ?timeout_ms ?clock ()
   in
   let unaddressed = { Nx_device.host = None; device = 16n; handle = 16n } in
   let external_ s n = Nx_device.external_buffer near.dev unaddressed s n in
@@ -1067,6 +1085,7 @@ let refusals =
     {
       Nx_device.copy = (fun ~dst:_ ~src:_ _ _ -> ());
       transfer = (fun _ -> None);
+      stamp = (fun ~slot:_ _ -> ());
     }
   in
   let off_page () =
@@ -1092,6 +1111,15 @@ let refusals =
       raise_ "a device with a timeout of 0 ms" (fun () -> make ~timeout_ms:0 ());
       raise_ "a device with a copy queue and no mapping" (fun () ->
           make ~copy_queue:queue ());
+      raise_ "a device with a clock of 0 Hz" (fun () ->
+          let mapping =
+            { Nx_device.map = (fun _ _ -> Error ""); unmap = ignore }
+          in
+          make ~mapping ~copy_queue:queue
+            ~clock:(Nx_device.Device_clock { hz = 0 })
+            ());
+      raise_ "a device with a clock of its own and no copy queue" (fun () ->
+          make ~clock:(Nx_device.Device_clock { hz = 1_000 }) ());
       raise_ "host memory that the host does not address" (fun () ->
           make
             ~host_memory:{ memory with alloc = (fun _ -> Some unaddressed) }
@@ -1545,8 +1573,581 @@ let devices =
       programs;
     ]
 
+(* Profiles *)
+
+module P = Nx_device.Profile
+
+(* The events of a profile taken around [f]. *)
+let profiled f =
+  P.start ();
+  match f () with
+  | () -> P.stop ()
+  | exception e ->
+      ignore (P.stop ());
+      raise e
+
+type span = { on : string; lane : string; what : string; t0 : int; t1 : int }
+
+let spans =
+  List.filter_map (function
+    | P.Span s ->
+        Some
+          {
+            on = Nx_device.name s.device;
+            lane = s.lane;
+            what = s.name;
+            t0 = s.start;
+            t1 = s.stop;
+          }
+    | P.Memory _ | P.Program _ -> None)
+
+let span_ =
+  Testable.make
+    ~pp:(fun ppf s ->
+      Format.fprintf ppf "%s on %s of %s, %d to %d" s.what s.lane s.on s.t0 s.t1)
+    ~equal:( = )
+
+let where = triple string string string
+let placed s = (s.on, s.lane, s.what)
+
+(* [inner] runs within [outer], [slack] nanoseconds either side allowed. *)
+let within ?(slack = 0) ~outer inner =
+  is_true
+    ~msg:
+      (Printf.sprintf "%s [%d, %d] within %s [%d, %d]" inner.what inner.t0
+         inner.t1 outer.what outer.t0 outer.t1)
+    (inner.t0 <= inner.t1
+    && outer.t0 - slack <= inner.t0
+    && inner.t1 <= outer.t1 + slack)
+
+let main_lane = Printf.sprintf "domain %d" (Domain.self () :> int)
+
+(* Work on [d] that a domain does after 50 ms: it writes [t0] and [t1] into
+   [stamps], then signals once [d]'s earlier work has, as work completes in
+   order. *)
+let stamped d stamps (t0, t1) =
+  let timeline = Nx_device.timeline d in
+  let word = B.host_address timeline
+  and signal = B.bigarray Bigarray.int64 timeline in
+  let ba = B.bigarray Bigarray.int64 stamps in
+  Nx_device.submit d ~touches:[] (fun v ->
+      Domain.spawn (fun () ->
+          Unix.sleepf 0.05;
+          ba.{0} <- Int64.of_int t0;
+          ba.{1} <- Int64.of_int t1;
+          while Int64.to_int signal.{0} < v - 1 do
+            Domain.cpu_relax ()
+          done;
+          store_signal word v))
+
+let test_sessions () =
+  is_false (P.enabled ());
+  raises_match Exn.invalid_arg (fun () -> P.stop ());
+  P.start ();
+  is_true (P.enabled ());
+  raises_match Exn.invalid_arg P.start;
+  equal (list span_) [] (spans (P.stop ()));
+  is_false (P.enabled ())
+
+let test_host_spans () =
+  let other = ref "" in
+  let events =
+    profiled (fun () ->
+        P.span "outer" (fun () -> P.span "inner" ignore);
+        raises (Failure "raised") (fun () ->
+            P.span "raising" (fun () -> failwith "raised"));
+        Domain.join
+          (Domain.spawn (fun () ->
+               other := Printf.sprintf "domain %d" (Domain.self () :> int);
+               P.span "elsewhere" ignore)))
+  in
+  match spans events with
+  | [ outer; inner; raising; elsewhere ] ->
+      equal (list where)
+        [
+          ("CPU", main_lane, "outer");
+          ("CPU", main_lane, "inner");
+          ("CPU", main_lane, "raising");
+          ("CPU", !other, "elsewhere");
+        ]
+        (List.map placed [ outer; inner; raising; elsewhere ]);
+      not_equal string main_lane !other;
+      within ~outer inner;
+      is_true ~msg:"in order" (outer.t1 <= raising.t0)
+  | l -> fail (Printf.sprintf "%d spans" (List.length l))
+
+let test_off () =
+  let d = (fake ()).dev in
+  let stamps = B.create host S.UInt64 2 in
+  let f () = () in
+  let words loop =
+    let before = Gc.minor_words () in
+    for _ = 1 to 1000 do
+      loop ()
+    done;
+    Gc.minor_words () -. before
+  in
+  let idle = words ignore in
+  equal ~msg:"words allocated" float_exact idle
+    (words (fun () ->
+         P.span "x" f;
+         P.record d ~lane:"compute" ~name:"x" stamps;
+         ignore (Sys.opaque_identity (P.enabled ()))));
+  let v = Nx_device.submit d ~touches:[] Fun.id in
+  store_signal (B.host_address (Nx_device.timeline d)) v;
+  let events = profiled (fun () -> Nx_device.synchronize d) in
+  equal ~msg:"spans recorded before" (list span_) [] (spans events)
+
+let test_submitted () =
+  let d = (fake ~name:"GPU" ()).dev in
+  let stamps = B.create host S.UInt64 2 and again = B.create host S.UInt64 2 in
+  let events =
+    profiled (fun () ->
+        let first = stamped d stamps (100, 250) in
+        P.record d ~lane:"compute" ~name:"replaced" stamps;
+        P.record d ~lane:"compute" ~name:"kernel" stamps;
+        let second = stamped d again (300, 420) in
+        P.record d ~lane:"copy" ~name:"next" again;
+        Nx_device.synchronize d;
+        List.iter Domain.join [ first; second ])
+  in
+  equal (list span_)
+    [
+      { on = "GPU"; lane = "compute"; what = "kernel"; t0 = 100; t1 = 250 };
+      { on = "GPU"; lane = "copy"; what = "next"; t0 = 300; t1 = 420 };
+    ]
+    (spans events)
+
+let test_resolve () =
+  let log = ref [] in
+  let resolve a =
+    log := "resolve" :: !log;
+    store_signal a 7;
+    store_signal (Nativeint.add a 8n) 9
+  in
+  let d =
+    (fake ~resolve ~synchronized:(fun () -> log := "synchronized" :: !log) ())
+      .dev
+  in
+  let stamps = B.create host S.UInt64 2 in
+  let events =
+    profiled (fun () ->
+        ignore (Nx_device.submit d ~touches:[] Fun.id);
+        P.record d ~lane:"compute" ~name:"k" stamps;
+        store_signal (B.host_address (Nx_device.timeline d)) 1;
+        Nx_device.synchronize d)
+  in
+  equal
+    (list (pair int int))
+    [ (7, 9) ]
+    (List.map (fun s -> (s.t0, s.t1)) (spans events));
+  equal (list string) [ "resolve"; "synchronized" ] (List.rev !log)
+
+(* The spans named [name] of [events]: the host's, and those of copy queues. *)
+let copies events name =
+  List.partition
+    (fun s -> s.on = "CPU")
+    (List.filter (fun s -> s.what = name) (spans events))
+
+let test_copies ?clock ?(slack = 0) () =
+  let f = far ?clock () in
+  let small = B.create host S.UInt8 100 and big = B.create host S.UInt8 page in
+  let on_far = B.create f.dev S.UInt8 100
+  and big_far = B.create f.dev S.UInt8 page in
+  let borrowed = B.borrow f.dev big in
+  let events =
+    profiled (fun () ->
+        B.copy ~src:small ~dst:on_far;
+        B.copy ~src:big ~dst:big_far;
+        B.copy ~src:on_far ~dst:small;
+        B.copy ~src:small ~dst:(B.create host S.UInt8 100))
+  in
+  ignore (Sys.opaque_identity borrowed);
+  let host_in, far_in = copies events "CPU -> FAR" in
+  let host_out, far_out = copies events "FAR -> CPU" in
+  let host_host, _ = copies events "CPU -> CPU" in
+  equal ~msg:"host spans" (list where)
+    [
+      ("CPU", main_lane, "CPU -> FAR");
+      ("CPU", main_lane, "CPU -> FAR");
+      ("CPU", main_lane, "FAR -> CPU");
+      ("CPU", main_lane, "CPU -> CPU");
+    ]
+    (List.map placed (host_in @ host_out @ host_host));
+  equal ~msg:"copy queue spans" (list where)
+    [
+      ("FAR", "copy", "CPU -> FAR");
+      ("FAR", "copy", "CPU -> FAR");
+      ("FAR", "copy", "FAR -> CPU");
+    ]
+    (List.map placed (far_in @ far_out));
+  List.iter2
+    (fun outer s -> within ~slack ~outer s)
+    (host_in @ host_out) (far_in @ far_out)
+
+let test_bounce () =
+  let a = far ~name:"A" () and b = far ~name:"B" () in
+  let src = B.create a.dev S.UInt8 64 and dst = B.create b.dev S.UInt8 64 in
+  let events = profiled (fun () -> B.copy ~src ~dst) in
+  match spans events with
+  | [ host_span; on_a; on_b ] ->
+      equal (list where)
+        [
+          ("CPU", main_lane, "A -> B");
+          ("A", "copy", "A -> B");
+          ("B", "copy", "A -> B");
+        ]
+        (List.map placed [ host_span; on_a; on_b ]);
+      within ~outer:host_span on_a;
+      within ~outer:host_span on_b
+  | l -> fail (Printf.sprintf "%d spans" (List.length l))
+
+let test_memory_events () =
+  let d = (fake ~name:"MEM" ()).dev in
+  let samples events =
+    List.filter_map
+      (function
+        | P.Memory m when Nx_device.equal m.device d -> Some m.allocated
+        | _ -> None)
+      events
+  in
+  let events =
+    profiled (fun () ->
+        dropped (fun () -> B.create d S.UInt8 100);
+        ignore (stats d))
+  in
+  equal (list int) [ 100; 0 ] (samples events)
+
+let test_program_events () =
+  let d = (fake ~load:(fun ~binary:_ ~name:_ -> 42n) ()).dev in
+  let events =
+    profiled (fun () ->
+        ignore (Nx_device.Program.load d ~binary:"lib" ~name:"k");
+        ignore (Nx_device.Program.load d ~binary:"lib" ~name:"k"))
+  in
+  match events with
+  | [ P.Program p ] ->
+      equal
+        (triple string string nativeint)
+        ("k", "lib", 42n)
+        ( Nx_device.Program.name p.program,
+          p.binary,
+          Nx_device.Program.handle p.program );
+      is_true (Nx_device.equal d (Nx_device.Program.device p.program))
+  | l -> fail (Printf.sprintf "%d events" (List.length l))
+
+let test_failed_spans () =
+  let d = (fake ~name:"HUNG" ~timeout_ms:50 ~signal:(never (ref 0)) ()).dev in
+  let stamps = B.create host S.UInt64 2 in
+  let events =
+    profiled (fun () ->
+        ignore (Nx_device.submit d ~touches:[] Fun.id);
+        P.record d ~lane:"compute" ~name:"lost" stamps;
+        P.span "kept" ignore)
+  in
+  equal (list where)
+    [ ("CPU", main_lane, "kept") ]
+    (List.map placed (spans events));
+  raises (Failure "HUNG hang detected") (fun () -> Nx_device.synchronize d)
+
+(* JSON *)
+
+type json =
+  | Null
+  | Bool of bool
+  | Num of float
+  | Str of string
+  | Arr of json list
+  | Obj of (string * json) list
+
+(* Strict JSON, as RFC 8259 has it. *)
+let parse s =
+  let i = ref 0 in
+  let peek () = if !i < String.length s then s.[!i] else '\000' in
+  let error what = failwith (Printf.sprintf "JSON: %s at byte %d" what !i) in
+  let rec ws () =
+    match peek () with
+    | ' ' | '\n' | '\t' | '\r' ->
+        incr i;
+        ws ()
+    | _ -> ()
+  in
+  let expect c =
+    if peek () = c then incr i else error (Printf.sprintf "no %c" c)
+  in
+  let literal word v =
+    if
+      String.length s - !i >= String.length word
+      && String.sub s !i (String.length word) = word
+    then (
+      i := !i + String.length word;
+      v)
+    else error "a bad literal"
+  in
+  let str () =
+    expect '"';
+    let b = Buffer.create 16 in
+    let rec go () =
+      match peek () with
+      | '"' -> incr i
+      | '\\' ->
+          incr i;
+          let c = peek () in
+          incr i;
+          (match c with
+          | '"' | '\\' | '/' -> Buffer.add_char b c
+          | 'b' -> Buffer.add_char b '\b'
+          | 'f' -> Buffer.add_char b '\012'
+          | 'n' -> Buffer.add_char b '\n'
+          | 'r' -> Buffer.add_char b '\r'
+          | 't' -> Buffer.add_char b '\t'
+          | 'u' ->
+              let code = int_of_string ("0x" ^ String.sub s !i 4) in
+              i := !i + 4;
+              Buffer.add_utf_8_uchar b (Uchar.of_int code)
+          | _ -> error "a bad escape");
+          go ()
+      | c when Char.code c < 0x20 -> error "a control character"
+      | c ->
+          Buffer.add_char b c;
+          incr i;
+          go ()
+    in
+    go ();
+    Buffer.contents b
+  in
+  let num () =
+    let j = !i in
+    while
+      match peek () with
+      | '0' .. '9' | '-' | '+' | '.' | 'e' | 'E' -> true
+      | _ -> false
+    do
+      incr i
+    done;
+    match float_of_string_opt (String.sub s j (!i - j)) with
+    | Some f when !i > j -> Num f
+    | _ -> error "a bad number"
+  in
+  let rec value () =
+    ws ();
+    match peek () with
+    | '{' ->
+        incr i;
+        ws ();
+        if peek () = '}' then (
+          incr i;
+          Obj [])
+        else members []
+    | '[' ->
+        incr i;
+        ws ();
+        if peek () = ']' then (
+          incr i;
+          Arr [])
+        else elements []
+    | '"' -> Str (str ())
+    | 't' -> literal "true" (Bool true)
+    | 'f' -> literal "false" (Bool false)
+    | 'n' -> literal "null" Null
+    | _ -> num ()
+  and members acc =
+    ws ();
+    let k = str () in
+    ws ();
+    expect ':';
+    let v = value () in
+    ws ();
+    match peek () with
+    | ',' ->
+        incr i;
+        members ((k, v) :: acc)
+    | '}' ->
+        incr i;
+        Obj (List.rev ((k, v) :: acc))
+    | _ -> error "no , or }"
+  and elements acc =
+    let v = value () in
+    ws ();
+    match peek () with
+    | ',' ->
+        incr i;
+        elements (v :: acc)
+    | ']' ->
+        incr i;
+        Arr (List.rev (v :: acc))
+    | _ -> error "no , or ]"
+  in
+  let v = value () in
+  ws ();
+  if !i <> String.length s then error "trailing bytes";
+  v
+
+let field k = function
+  | Obj kvs -> (
+      match List.assoc_opt k kvs with
+      | Some v -> v
+      | None -> failwith ("no field " ^ k))
+  | _ -> failwith ("no object for " ^ k)
+
+let num k e =
+  match field k e with Num f -> f | _ -> failwith (k ^ " is no number")
+
+let str k e =
+  match field k e with Str s -> s | _ -> failwith (k ^ " is no string")
+
+let written events =
+  let path = Filename.temp_file "profile" ".json" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc -> P.output oc events);
+      parse (In_channel.with_open_bin path In_channel.input_all))
+
+let test_output () =
+  let odd = "a \"quote\", a \\, a\nnewline, \001, \xff and \xc3\xa9" in
+  let f = far () in
+  let d = (fake ~name:"P" ~load:(fun ~binary:_ ~name:_ -> 0x1234n) ()).dev in
+  let events =
+    profiled (fun () ->
+        P.span "outer" (fun () ->
+            P.span odd ignore;
+            B.copy ~src:(B.create host S.UInt8 8)
+              ~dst:(B.create f.dev S.UInt8 8));
+        ignore (Nx_device.Program.load d ~binary:"b" ~name:"k");
+        dropped (fun () -> B.create d S.UInt8 5);
+        ignore (stats d))
+  in
+  let trace =
+    match field "traceEvents" (written events) with
+    | Arr l -> l
+    | _ -> fail "no array"
+  in
+  let ph p = List.filter (fun e -> str "ph" e = p) trace in
+  let meta what =
+    List.filter_map
+      (fun e ->
+        if str "name" e = what then
+          Some
+            ( (int_of_float (num "pid" e), int_of_float (num "tid" e)),
+              str "name" (field "args" e) )
+        else None)
+      (ph "M")
+  in
+  let processes = meta "process_name" and threads = meta "thread_name" in
+  let named (pid, tid) =
+    (List.assoc (pid, 0) processes, List.assoc (pid, tid) threads)
+  in
+  let complete =
+    List.map
+      (fun e ->
+        let key = (int_of_float (num "pid" e), int_of_float (num "tid" e)) in
+        let lo = num "ts" e in
+        (named key, str "name" e, lo, lo +. num "dur" e))
+      (ph "X")
+  in
+  equal ~msg:"spans"
+    (list (pair (pair string string) string))
+    [
+      (("CPU", main_lane), "outer");
+      ( ("CPU", main_lane),
+        "a \"quote\", a \\, a\nnewline, \001, \u{FFFD} and \xc3\xa9" );
+      (("CPU", main_lane), "CPU -> FAR");
+      (("FAR", "copy"), "CPU -> FAR");
+    ]
+    (List.map (fun (k, name, _, _) -> (k, name)) complete);
+  let times =
+    List.map
+      (fun e -> num "ts" e)
+      (List.filter (fun e -> str "ph" e <> "M") trace)
+  in
+  equal ~msg:"in time order" (list float_exact)
+    (List.sort Float.compare times)
+    times;
+  equal ~msg:"from the earliest" float_exact 0. (List.hd times);
+  List.iter
+    (fun (k, name, lo, hi) ->
+      List.iter
+        (fun (k', name', lo', hi') ->
+          if k = k' && name <> name' then
+            is_true
+              ~msg:(name ^ " and " ^ name' ^ " nest or are apart")
+              (hi <= lo' || hi' <= lo
+              || (lo <= lo' && hi' <= hi)
+              || (lo' <= lo && hi <= hi')))
+        complete)
+    complete;
+  (match ph "i" with
+  | [ e ] ->
+      equal
+        (triple string string string)
+        ("k", "p", "0x1234")
+        (str "name" e, str "s" e, str "handle" (field "args" e))
+  | l -> fail (Printf.sprintf "%d instants" (List.length l)));
+  let counters =
+    List.filter_map
+      (fun e ->
+        let pid = int_of_float (num "pid" e) in
+        if List.assoc (pid, 0) processes = "P" then
+          Some (str "name" e, num "allocated" (field "args" e))
+        else None)
+      (ph "C")
+  in
+  equal ~msg:"memory of P"
+    (list (pair string float_exact))
+    [ ("memory", 5.); ("memory", 0.) ]
+    counters;
+  equal ~msg:"nothing" (list string) []
+    (match field "traceEvents" (written []) with
+    | Arr l -> List.map (str "ph") l
+    | _ -> [ "?" ])
+
+let profiles =
+  group "profiles"
+    [
+      test "are taken one at a time, between start and stop" test_sessions;
+      test
+        "host spans nest on the lane of their domain, and one records a \
+         function that raises"
+        test_host_spans;
+      test "record nothing and allocate nothing while no profile is taken"
+        test_off;
+      test
+        "read a submitter's stamps at the next synchronization, a later record \
+         of the same stamps replacing the earlier"
+        test_submitted;
+      test "let the device resolve stamps before they are read" test_resolve;
+      test
+        "make each copy a span of the host, and each a copy queue ran a span \
+         of its copy lane inside it"
+        (test_copies ?clock:None ~slack:0);
+      test "calibrate the spans of a device's own clock onto the host's"
+        (test_copies
+           ~clock:(Nx_device.Device_clock { hz = 1_000_000 })
+           ~slack:1_000_000);
+      test "time both devices of a bounce" test_bounce;
+      test "sample a device's allocated memory at each change"
+        test_memory_events;
+      test "record the first load of a program" test_program_events;
+      test "leave out the unread spans of a device that fails" test_failed_spans;
+      test
+        "write Chrome's trace event format: named processes and threads, \
+         escaped names, time order, nesting"
+        test_output;
+    ]
+
 let () =
   if Sys.getenv_opt "NX_DEVICE_FINALIZE_CHILD" = Some "1" then finalize_child ();
   exit
     (run "nx.device"
-       [ devices; memory; laws; buffers; refusals; timeline; failures; hooks ])
+       [
+         devices;
+         memory;
+         laws;
+         buffers;
+         refusals;
+         timeline;
+         failures;
+         hooks;
+         profiles;
+       ])

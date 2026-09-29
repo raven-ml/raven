@@ -31,6 +31,7 @@ external pipeline : nativeint -> string -> string -> nativeint
 external signaled : nativeint -> int = "caml_nx_metal_signaled"
 external wait : nativeint -> int -> int -> bool = "caml_nx_metal_wait"
 external cycle_pool : unit -> unit = "caml_nx_metal_cycle_pool"
+external resolve : nativeint -> unit = "caml_nx_metal_resolve"
 
 type handles = {
   device : nativeint;
@@ -117,7 +118,7 @@ let open_metal mtl =
       ?mapping:map
       ~load:(fun ~binary ~name -> pipeline mtl binary name)
       ~signal:(fun _ -> signal)
-      ~synchronized:cycle_pool ()
+      ~synchronized:cycle_pool ~resolve ()
   in
   { dev; handles; resources }
 

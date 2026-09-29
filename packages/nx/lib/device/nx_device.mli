@@ -18,7 +18,8 @@
     value its last submitted work signals when it completes. {!synchronize}
     waits for it, and for the work of other devices that touched the device's
     memory. Copies and the return of memory to the system synchronize the
-    devices involved first.
+    devices involved first. A {!Profile} records when that work ran, on the
+    host's clock.
 
     Every function may be called from any domain. The operations on one device
     run one at a time: each takes the device for its whole duration, so they are
@@ -409,7 +410,9 @@ module Program : sig
       go on; the buffers stay reachable until it returns. The call is outside
       the devices' ordering, as an access at {!Buffer.host_address} is: it does
       not take the host, and several domains may run programs at once.
-      Synchronize the devices whose work touches [buffers] first.
+      Synchronize the devices whose work touches [buffers] first. While a
+      {!Profile} is taken, the call is a span of the calling domain's lane of
+      the host, named after [p].
 
       Raises [Invalid_argument] if [p] is not on the {!host} or the host does
       not address the memory of a buffer of [buffers], and [Failure] with a
@@ -493,6 +496,103 @@ val timeline : t -> Buffer.t
     Metal's shared event reports through {!signaled} alone and leaves the signal
     word at [0]. *)
 
+(** {1:profiling Profiling} *)
+
+(** Profiles of devices' work.
+
+    While a profile is taken, between {!start} and {!stop}, the devices record
+    {!event}s: {e spans} of work on a device, changes of its allocated memory,
+    and the programs it loads. Spans come from the host ({!span}), from the
+    runtime's own copies and calls of host programs, and from the libraries that
+    submit work ({!record}). Every time is on the host's clock, {!now}: the
+    times a device stamps on its own clock are calibrated against it when the
+    profile is taken. {!output} writes a profile in Chrome's trace event format,
+    which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
+    [chrome://tracing] load.
+
+    When no profile is taken, recording costs a read of one atomic value and
+    allocates nothing. *)
+module Profile : sig
+  type device := t
+
+  (** The type for profile events. Times are nanoseconds of the host clock,
+      {!now}. *)
+  type event =
+    | Span of {
+        device : device;  (** The device the work ran on. *)
+        lane : string;  (** Its track within the device. *)
+        name : string;  (** What the work was. *)
+        start : int;  (** When it started, on the host clock. *)
+        stop : int;  (** When it stopped, on the host clock. *)
+      }
+        (** Work that ran on a lane of a device. The host's lanes are its
+            domains, ["domain 0"], ["domain 1"], ...; a device's copy queue runs
+            the runtime's copies on its ["copy"] lane; the libraries that submit
+            work name their own lanes. *)
+    | Memory of {
+        device : device;
+        time : int;
+        allocated : int;
+            (** The device's {!Stats.allocated} bytes from [time] on. *)
+      }  (** A change of the memory a device allocated. *)
+    | Program of {
+        program : Program.t;
+        binary : string;  (** The binary it was loaded from. *)
+        time : int;  (** When it was loaded. *)
+      }  (** A program loaded on its device. *)
+
+  val now : unit -> int
+  (** [now ()] is the host clock: nanoseconds of the system's monotonic clock,
+      which starts at an unspecified point. C code reads it with
+      [nx_device_now_ns] from the header [nx_device.h]. On macOS it is the clock
+      of Metal's command buffer times. *)
+
+  val start : unit -> unit
+  (** [start ()] starts taking a profile of every device.
+
+      Raises [Invalid_argument] if a profile is being taken. *)
+
+  val stop : unit -> event list
+  (** [stop ()] stops taking the profile {!start} started, and is its events, in
+      time order and, at equal times, longest first. It first synchronizes the
+      devices whose recorded spans are still to be read, and calibrates the
+      clocks of the devices that stamp times on their own. The unread spans of a
+      device that fails meanwhile are left out; its next operation raises its
+      error.
+
+      Raises [Invalid_argument] if no profile is being taken. *)
+
+  val enabled : unit -> bool
+  (** [enabled ()] is [true] iff a profile is being taken. The libraries that
+      submit work read it to decide whether to stamp their work at all. *)
+
+  val span : string -> (unit -> 'a) -> 'a
+  (** [span name f] is [f ()]. While a profile is taken, it records a span named
+      [name] on the lane of the calling domain of the {!host}, from the call
+      until [f] returns or raises. *)
+
+  val record : device -> lane:string -> name:string -> Buffer.t -> unit
+  (** [record d ~lane ~name stamps] records a span of work named [name] on
+      [lane] of [d], whose start and stop timestamps the work writes into the
+      two elements of [stamps], on [d]'s clock. Call it once the {!submit} of
+      that work returned. The stamps are read at [d]'s next synchronization,
+      which waits for the work: they must stay the work's until then, and a
+      later record of the same stamps before then replaces this one. It does
+      nothing unless a profile is being taken.
+
+      Raises [Invalid_argument] if [stamps] is not two [UInt64] that the host
+      addresses. *)
+
+  val output : out_channel -> event list -> unit
+  (** [output oc events] writes [events] to [oc] in Chrome's trace event format,
+      JSON: a process for each device, named after it, with a thread for each of
+      its lanes; a complete event for each span, a counter [memory] for each
+      change of memory, and an instant event for each program load, with the
+      program's handle. Times are microseconds from the earliest event.
+      Malformed UTF-8 in names becomes U+FFFD. [oc] is neither flushed nor
+      closed. *)
+end
+
 (** {1:vendors Vendor runtimes}
 
     A library that opens devices of some kind makes each of them with {!make},
@@ -537,8 +637,26 @@ type copy_queue = {
   transfer : t -> copy option;
       (** [transfer d'] copies from the device's memory to the memory of the
           device [d'], [None] if the device cannot. *)
+  stamp : slot:nativeint -> int -> unit;
+      (** [stamp ~slot v] enqueues on the copy queue, after the device's earlier
+          work, the write of a timestamp of the device's clock into the second
+          [UInt64] of the 16 bytes at the device address [slot], of which it may
+          write the first too, and then the signal of [v]. It returns without
+          waiting and raises like [copy]. The runtime stamps its copies while a
+          profile is taken, and calibrates a device's own clock with it. *)
 }
 (** The type for a device's copy queue. *)
+
+(** The type for the clocks of a device's timestamps. *)
+type clock =
+  | Host_clock
+      (** The device's timestamps are readings of the host clock,
+          {!Profile.now}, such as the command buffer times of Metal or the
+          stamps of host functions that a device's queue runs. *)
+  | Device_clock of { hz : int }
+      (** The device's timestamps count ticks of a clock of its own, [hz] per
+          second. When a profile is taken, the runtime calibrates it against the
+          host clock with its copy queue's [stamp]. *)
 
 type signal = {
   signaled : unit -> int;  (** The last value the device signaled. *)
@@ -563,10 +681,13 @@ val make :
   ?timeout_ms:int ->
   ?synchronized:(unit -> unit) ->
   ?finalize:(failed:bool -> unit) ->
+  ?clock:clock ->
+  ?resolve:(nativeint -> unit) ->
   unit ->
   t
 (** [make ~name ~arch ~budget ~memory ?host_memory ?mapping ?copy_queue ?load
-     ?signal ?sleep ?timeout_ms ?synchronized ?finalize ()] is a new device:
+     ?signal ?sleep ?timeout_ms ?synchronized ?finalize ?clock ?resolve ()] is a
+    new device:
     - [memory] allocates the device's own memory, and [host_memory] the host
       memory that its work addresses, for {!Buffer.create}[ ~host:true]: memory
       the host addresses. Without [host_memory], [memory] serves both, and the
@@ -605,14 +726,22 @@ val make :
       the next open of it expects and, for a failed device, at least stops the
       device's access to the memory the process is about to release. An
       exception it raises is printed and ignored. Defaults to doing nothing.
+    - [clock] is the clock of the device's timestamps. Defaults to
+      {!Host_clock}.
+    - [resolve a] runs once the work of a span that {!Profile.record} recorded
+      on the device completed, before the runtime reads its stamps, with the
+      host address [a] of the stamps: it writes the timestamps that the device's
+      work does not write itself. It runs before [synchronized]. Defaults to
+      doing nothing.
 
     These functions run while the device is taken, and must not use it through
     this module. Blocking driver calls should release the OCaml runtime.
 
     Raises [Invalid_argument] if [budget < 0], if [timeout_ms <= 0], if
     [copy_queue] is given without [mapping], if [sleep] is given with [signal],
-    or if [host_memory] gives memory the host does not address, and [Failure] if
-    [host_memory] has no memory for the timeline. *)
+    if [clock] is a {!Device_clock} of no more than [0] Hz or without
+    [copy_queue], or if [host_memory] gives memory the host does not address,
+    and [Failure] if [host_memory] has no memory for the timeline. *)
 
 val external_buffer : t -> memory -> Nx_dtype.Scalar.t -> int -> Buffer.t
 (** [external_buffer d m s n] is a borrowed buffer of [n] elements of format [s]

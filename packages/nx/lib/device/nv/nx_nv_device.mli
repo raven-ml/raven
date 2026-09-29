@@ -42,6 +42,10 @@
       as large as the GPU's memory under {!Pci}, the source's copy engine writes
       the destination; otherwise the bytes go through the staging memory.
 
+    {b Timestamps} count the GPU's timer in nanoseconds
+    ({!Nx_device.Device_clock}); the copy engine stamps it for the runtime's
+    profiles.
+
     {b Programs} are functions of cubins, the ELF objects NVIDIA's compilers
     make for the device's {!Nx_device.arch}: the function [name] is the code of
     the section [.text.name], and a cubin may hold several, each with its own

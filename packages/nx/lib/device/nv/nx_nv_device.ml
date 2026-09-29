@@ -364,7 +364,12 @@ let copy_queue n (timeline : Nx_device.memory) =
             submit ~dst ~src bytes v)
     | _ -> None
   in
-  { Nx_device.copy = submit; transfer }
+  let stamp ~slot v =
+    let _, copy = channels n in
+    run n copy ~timeline ~signal:Pushbuf.copy_release v
+      (Pushbuf.copy_stamp (Nativeint.to_int slot))
+  in
+  { Nx_device.copy = submit; transfer; stamp }
 
 (* Programs *)
 
@@ -818,7 +823,9 @@ let make_device n ?finalize () =
     Nx_device.make ~name:(name n.index) ~arch:(arch n.props.sm_version)
       ~budget:(budget n) ~memory:(allocator n Vram)
       ~host_memory:(allocator n Host) ~mapping:(mapping n)
-      ~copy_queue:(copy_queue n) ~load:(load n) ~sleep:(sleep n) ?finalize ()
+      ~copy_queue:(copy_queue n) ~load:(load n) ~sleep:(sleep n)
+      ~clock:(Nx_device.Device_clock { hz = 1_000_000_000 })
+      ?finalize ()
   in
   n.dev <- Some dev;
   n.word <-

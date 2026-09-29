@@ -21,6 +21,7 @@ type mapping = {
 
 type copy = dst:nativeint -> src:nativeint -> int -> int -> unit
 type file = { path : string; size : int; mtime : float; inode : int }
+type clock = Host_clock | Device_clock of { hz : int }
 
 (* What must stay reachable for as long as a base does. Host memory is the
    bigarray that holds it from its first byte: views of it join that bigarray's
@@ -47,7 +48,10 @@ type t = {
   timeout_ms : int Atomic.t;
   synchronized : unit -> unit;
   finalize : failed:bool -> unit;
-  timeline : memory; (* [signaled; submitted] *)
+  clock : clock;
+  resolve : nativeint -> unit;
+  timeline : memory;
+      (* [signaled; submitted], then two 16-byte slots of timestamps *)
   timeline_keep : keep;
   mutable staging : nativeint option;
       (* the device's address of the host's staging memory, once mapped *)
@@ -61,6 +65,9 @@ type t = {
          work signals *)
   programs : (string * string, cached) Hashtbl.t;
   dropped : dropped list Atomic.t;
+  spans : pending list Atomic.t;
+      (* the spans recorded on the device whose stamps are still to read, latest
+         first *)
   mutable held : keep list; (* retained memory, and what it keeps *)
   mutable budget : int;
   allocated : int Atomic.t;
@@ -70,7 +77,11 @@ type t = {
   mutable bytes_out : int;
 }
 
-and copy_queue = { copy : copy; transfer : t -> copy option }
+and copy_queue = {
+  copy : copy;
+  transfer : t -> copy option;
+  stamp : slot:nativeint -> int -> unit;
+}
 
 and base = {
   owner : t;
@@ -108,6 +119,30 @@ and dropped = {
   key : string * string;
   cell : program Weak.t;
   unload : unit -> unit;
+}
+
+(* A span of [Device_clock] device holds its ticks until its profile is taken,
+   which calibrates them. *)
+and event =
+  | Span of {
+      device : t;
+      lane : string;
+      name : string;
+      start : int;
+      stop : int;
+    }
+  | Memory of { device : t; time : int; allocated : int }
+  | Program of { program : program; binary : string; time : int }
+
+and collector = { events : event list Atomic.t }
+
+(* A span whose stamps are the two words at [address], which [stamps] keeps. *)
+and pending = {
+  address : nativeint;
+  stamps : keep;
+  lane : string;
+  name : string;
+  into : collector;
 }
 
 exception Out_of_memory of t * int
@@ -152,6 +187,10 @@ external wait_u64 :
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 
+external now_ns : unit -> (int[@untagged])
+  = "caml_nx_device_now_ns_byte" "caml_nx_device_now_ns"
+[@@noalloc]
+
 external now_ms : unit -> (int[@untagged])
   = "caml_nx_device_now_ms_byte" "caml_nx_device_now_ms"
 [@@noalloc]
@@ -186,6 +225,27 @@ let heap n =
     let skip = (page - (a mod page)) mod page in
     Bigarray.Array1.sub ba skip n
 
+(* Profiling *)
+
+(* The collector of the profile being taken, if any. Every recording site reads
+   it once, and allocates nothing when it is [None]. *)
+let profile : collector option Atomic.t = Atomic.make None
+
+let rec push r x =
+  let l = Atomic.get r in
+  if not (Atomic.compare_and_set r l (x :: l)) then push r x
+
+let memory_changed d =
+  match Atomic.get profile with
+  | None -> ()
+  | Some c ->
+      push c.events
+        (Memory
+           { device = d; time = now_ns (); allocated = Atomic.get d.allocated })
+
+(* The lane of the calling domain on the host. *)
+let domain_lane () = Printf.sprintf "domain %d" (Domain.self () :> int)
+
 (* Devices *)
 
 let ids = Atomic.make 0
@@ -197,23 +257,28 @@ let rec remember d =
 
 (* The timeline is memory that the host and the device's work address: the
    device's host memory when it allocates some, the heap otherwise. It lives as
-   long as the device. *)
+   long as the device. Its two words are followed by two slots of 16 bytes,
+   whose second words take the timestamps of the device's copy queue. *)
+let timeline_bytes = 48
+
 let timeline_of (host_memory : allocator option) =
   match host_memory with
   | None ->
       let ba =
-        shared (Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout 2)
+        shared
+          (Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout
+             (timeline_bytes / 8))
       in
       (heap_memory ba, Host ba)
   | Some a -> (
-      match a.alloc 16 with
+      match a.alloc timeline_bytes with
       | Some ({ host = Some _; _ } as m) -> (m, Keep ())
       | Some { host = None; _ } ->
           invalid_arg "Nx_device.make: host memory the host does not address"
       | None -> failwith "Nx_device.make: no memory for the timeline")
 
 let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
-    ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize =
+    ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize ~clock ~resolve =
   let timeline, timeline_keep = timeline_of host_memory in
   let words = Option.get timeline.host in
   store_u64 words 0L;
@@ -235,6 +300,8 @@ let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
       timeout_ms = Atomic.make timeout_ms;
       synchronized;
       finalize;
+      clock;
+      resolve;
       timeline;
       timeline_keep;
       staging = None;
@@ -244,6 +311,7 @@ let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
       pending = Hashtbl.create 4;
       programs = Hashtbl.create 16;
       dropped = Atomic.make [];
+      spans = Atomic.make [];
       held = [];
       budget;
       allocated = Atomic.make 0;
@@ -273,6 +341,7 @@ let host =
     ~host_memory:None ~mapping:None ~copy_queue:None ~load ~signal:None
     ~sleep:None ~timeout_ms:default_timeout_ms ~synchronized:ignore
     ~finalize:(fun ~failed:_ -> ())
+    ~clock:Host_clock ~resolve:ignore
 
 let name d = d.name
 let arch d = d.arch
@@ -347,15 +416,57 @@ let wait_signal d v =
 
 let failed d = Atomic.get d.failed
 
-(* Waits for [d]'s work and for the work that touched [d]'s memory. [d] is
-   taken. A failed device will never signal, so its work is not waited for: the
-   memory it can reach raises its error instead. *)
+(* A driver error while enqueueing leaves [d]'s queue in an unknown state: like
+   a fault, it fails [d]. *)
+let enqueue d f =
+  let v = submitted d + 1 in
+  (try f v with Failure msg -> fail d (d.name ^ ": " ^ msg));
+  store_u64 (Nativeint.add (timeline_address d) 8n) (Int64.of_int v);
+  v
+
+(* Timestamp slot [i] of [d]'s timeline memory, as [d]'s work addresses it, and
+   the timestamp it holds. *)
+let stamp_slot d i =
+  Nativeint.add d.timeline.device (Nativeint.of_int (16 + (16 * i)))
+
+let stamp d i =
+  Int64.to_int
+    (load_u64
+       (Nativeint.add (timeline_address d) (Nativeint.of_int (24 + (16 * i)))))
+
+(* Reads the stamps of the spans recorded on [d], whose work is done. A later
+   record of the same stamps replaced the earlier ones. *)
+let read_spans d =
+  match Atomic.get d.spans with
+  | [] -> ()
+  | _ :: _ ->
+      let seen = Hashtbl.create 8 in
+      List.iter
+        (fun p ->
+          if not (Hashtbl.mem seen p.address) then begin
+            Hashtbl.add seen p.address ();
+            d.resolve p.address;
+            let start = Int64.to_int (load_u64 p.address)
+            and stop = Int64.to_int (load_u64 (Nativeint.add p.address 8n)) in
+            (* [resolve] may release the runtime: the stamps must outlive their
+               reads. *)
+            ignore (Sys.opaque_identity p.stamps);
+            push p.into.events
+              (Span { device = d; lane = p.lane; name = p.name; start; stop })
+          end)
+        (Atomic.exchange d.spans [])
+
+(* Waits for [d]'s work and for the work that touched [d]'s memory, then reads
+   the stamps of the spans recorded on [d]. [d] is taken. A failed device will
+   never signal, so its work is not waited for: the memory it can reach raises
+   its error instead. *)
 let sync d =
   wait_signal d (submitted d);
   Hashtbl.iter
     (fun _ (d', v) ->
       if failed d' = None then try wait_signal d' v with Failure _ -> ())
     d.pending;
+  read_spans d;
   d.synchronized ()
 
 (* The error of a failed device that can reach [base]'s memory: its own device,
@@ -382,10 +493,6 @@ let mapped_address (m : memory) a =
   Nativeint.add m.device (Nativeint.sub a (Option.get m.host))
 
 (* Memory reclamation. Everything below runs with the device taken. *)
-
-let rec push r x =
-  let l = Atomic.get r in
-  if not (Atomic.compare_and_set r l (x :: l)) then push r x
 
 let release d b = push d.released b
 
@@ -455,7 +562,7 @@ let reclaim d =
   match Atomic.exchange d.released [] with
   | [] -> ()
   | bases ->
-      let emptied = ref [] in
+      let emptied = ref [] and allocated = Atomic.get d.allocated in
       List.iter
         (fun b ->
           match b.source with
@@ -476,6 +583,7 @@ let reclaim d =
               Hashtbl.replace d.cache key (b.memory :: ms);
               d.cached <- d.cached + b.bytes)
         bases;
+      if Atomic.get d.allocated <> allocated then memory_changed d;
       (match !emptied with
       | [] -> ()
       | emptied ->
@@ -686,12 +794,15 @@ module Buffer = struct
         check host;
         if bytes > host.budget then raise (Out_of_memory (host, bytes));
         let ba = host_heap bytes ~collected:false in
+        memory_changed host;
         let base =
           base ~bytes ~borrowed:false ~keep:(Host ba) ~extent:bytes d
             (heap_memory ba)
         in
         Gc.finalise_last
-          (fun () -> ignore (Atomic.fetch_and_add host.allocated (-bytes)))
+          (fun () ->
+            ignore (Atomic.fetch_and_add host.allocated (-bytes));
+            memory_changed host)
           base;
         { base; offset = 0; dtype = s; length = n }
     | bytes ->
@@ -700,6 +811,7 @@ module Buffer = struct
           with_devices [ d ] (fun () ->
               let m = allocate d bytes ~pinned ~collected:false in
               ignore (Atomic.fetch_and_add d.allocated bytes);
+              memory_changed d;
               m)
         in
         let base =
@@ -893,28 +1005,32 @@ module Buffer = struct
         invalid_arg
           (Printf.sprintf "Nx_device.Buffer.copy: %s has no copy queue" e.name)
 
-  (* A driver error while enqueueing leaves [e]'s queue in an unknown state:
-     like a fault, it fails [e]. *)
-  let enqueue e f =
-    let v = submitted e + 1 in
-    (try f v with Failure msg -> fail e (e.name ^ ": " ^ msg));
-    store_u64 (timeline_address e +! 8) (Int64.of_int v);
-    v
+  (* Enqueues [e]'s copy [f] of one chunk of a copy, and is the value to wait
+     for. A [timed] copy stamps the start of its first chunk and the stop of its
+     last into [e]'s timestamp slots. *)
+  let enqueue_copy ~timed ~first ~last e q f =
+    if timed && first then ignore (enqueue e (q.stamp ~slot:(stamp_slot e 0)));
+    let v = enqueue e f in
+    if timed && last then enqueue e (q.stamp ~slot:(stamp_slot e 1)) else v
 
-  let run e f = wait_signal e (enqueue e f)
+  let run ~timed e q f =
+    wait_signal e (enqueue_copy ~timed ~first:true ~last:true e q f)
+
   let chunks n = (n + chunk - 1) / chunk
   let length_of n i = Int.min chunk (n - (i * chunk))
   let slot i = i land 1 * chunk
 
   (* The host fills one slot while [e] copies the other. *)
-  let stage_in e q ~src ~dst n =
+  let stage_in ~timed e q ~src ~dst n =
     let host = bigarray_address (staging_memory ()) and on_e = staging_on e in
     let last = [| 0; 0 |] in
     for i = 0 to chunks n - 1 do
       if i >= 2 then wait_signal e last.(i land 1);
       memmove (host +! slot i) (src +! (i * chunk)) (length_of n i);
       last.(i land 1) <-
-        enqueue e
+        enqueue_copy ~timed ~first:(i = 0)
+          ~last:(i = chunks n - 1)
+          e q
           (q.copy
              ~dst:(dst +! (i * chunk))
              ~src:(on_e +! slot i)
@@ -923,13 +1039,15 @@ module Buffer = struct
     wait_signal e (submitted e)
 
   (* [e] fills one slot while the host drains the other. *)
-  let stage_out e q ~src ~dst n =
+  let stage_out ~timed e q ~src ~dst n =
     let host = bigarray_address (staging_memory ()) and on_e = staging_on e in
     let last = [| 0; 0 |] in
     let fill i =
       if i < chunks n then
         last.(i land 1) <-
-          enqueue e
+          enqueue_copy ~timed ~first:(i = 0)
+            ~last:(i = chunks n - 1)
+            e q
             (q.copy
                ~dst:(on_e +! slot i)
                ~src:(src +! (i * chunk))
@@ -945,19 +1063,21 @@ module Buffer = struct
 
   (* Between devices that cannot reach each other, the bytes go through the
      host's staging memory: [s] fills one slot while [d] drains the other. *)
-  let bounce s ~src d ~dst n =
+  let bounce ~timed s ~src d ~dst n =
     let qs = queue s and qd = queue d in
     let on_s = staging_on s and on_d = staging_on d in
     let last = [| 0; 0 |] in
     for i = 0 to chunks n - 1 do
+      let first = i = 0 and final = i = chunks n - 1 in
       if i >= 2 then wait_signal d last.(i land 1);
-      run s
-        (qs.copy
-           ~dst:(on_s +! slot i)
-           ~src:(address src +! (i * chunk))
-           (length_of n i));
+      wait_signal s
+        (enqueue_copy ~timed ~first ~last:final s qs
+           (qs.copy
+              ~dst:(on_s +! slot i)
+              ~src:(address src +! (i * chunk))
+              (length_of n i)));
       last.(i land 1) <-
-        enqueue d
+        enqueue_copy ~timed ~first ~last:final d qd
           (qd.copy
              ~dst:(address dst +! (i * chunk))
              ~src:(on_d +! slot i)
@@ -993,19 +1113,20 @@ module Buffer = struct
       | None -> f None
 
   (* [e] copies [src], which the host addresses, into [dst], its memory. *)
-  let into e ~src ~dst n =
+  let into ~timed e ~src ~dst n =
     let q = queue e in
     with_address e src (function
-      | Some a -> run e (q.copy ~dst:(address dst) ~src:a n)
-      | None -> stage_in e q ~src:(host_address src) ~dst:(address dst) n)
+      | Some a -> run ~timed e q (q.copy ~dst:(address dst) ~src:a n)
+      | None -> stage_in ~timed e q ~src:(host_address src) ~dst:(address dst) n)
 
   (* [e] copies [src], its memory, into [dst], which the host addresses or [e]
      does. *)
-  let out_of e ~src ~dst n =
+  let out_of ~timed e ~src ~dst n =
     let q = queue e in
     with_address e dst (function
-      | Some a -> run e (q.copy ~dst:a ~src:(address src) n)
-      | None -> stage_out e q ~src:(address src) ~dst:(host_address dst) n)
+      | Some a -> run ~timed e q (q.copy ~dst:a ~src:(address src) n)
+      | None ->
+          stage_out ~timed e q ~src:(address src) ~dst:(host_address dst) n)
 
   type route = Host_copy | Into | Out_of | Transfer of copy | Bounce
 
@@ -1023,20 +1144,55 @@ module Buffer = struct
         | Some transfer -> (Transfer transfer, false)
         | None -> (Bounce, true))
 
-  let move route ~src ~dst n =
+  (* The devices whose copy queues a copy of [route] runs on. *)
+  let queues route s d =
+    match route with
+    | Host_copy -> []
+    | Into -> [ d ]
+    | Out_of | Transfer _ -> [ s ]
+    | Bounce -> [ s; d ]
+
+  let move ~timed route ~src ~dst n =
     let s = device src and d = device dst in
     match route with
     | Host_copy -> memmove (host_address dst) (host_address src) n
-    | Into -> into d ~src ~dst n
-    | Out_of -> out_of s ~src ~dst n
+    | Into -> into ~timed d ~src ~dst n
+    | Out_of -> out_of ~timed s ~src ~dst n
     | Transfer transfer -> (
-        match run s (transfer ~dst:(address dst) ~src:(address src) n) with
+        match
+          run ~timed s (queue s)
+            (transfer ~dst:(address dst) ~src:(address src) n)
+        with
         | () -> ()
         | exception (Failure _ as e) ->
             (* [s]'s copy engine may still write [dst]. *)
             add_reached dst.base s;
             raise e)
-    | Bounce -> bounce s ~src d ~dst n
+    | Bounce -> bounce ~timed s ~src d ~dst n
+
+  (* A profiled copy is a span of the host on the calling domain's lane, and one
+     on the copy lane of each device whose copy queue ran it, from its timestamp
+     slots. *)
+  let profiled c route ~src ~dst n =
+    let s = device src and d = device dst in
+    let start = now_ns () in
+    move ~timed:true route ~src ~dst n;
+    let stop = now_ns () in
+    let name = s.name ^ " -> " ^ d.name in
+    push c.events
+      (Span { device = host; lane = domain_lane (); name; start; stop });
+    List.iter
+      (fun e ->
+        push c.events
+          (Span
+             {
+               device = e;
+               lane = "copy";
+               name;
+               start = stamp e 0;
+               stop = stamp e 1;
+             }))
+      (queues route s d)
 
   let copy ~src ~dst =
     let fail fmt =
@@ -1058,7 +1214,10 @@ module Buffer = struct
         if d != s then sync d;
         reachable src;
         reachable dst;
-        if n > 0 then move route ~src ~dst n;
+        (if n > 0 then
+           match Atomic.get profile with
+           | None -> move ~timed:false route ~src ~dst n
+           | Some c -> profiled c route ~src ~dst n);
         if d != s then begin
           s.bytes_out <- s.bytes_out + n;
           d.bytes_in <- d.bytes_in + n
@@ -1104,6 +1263,11 @@ module Program = struct
                     Gc.finalise_last
                       (fun () -> push d.dropped { key; cell; unload })
                       p);
+                (match Atomic.get profile with
+                | None -> ()
+                | Some c ->
+                    push c.events
+                      (Program { program = p; binary; time = now_ns () }));
                 p)
 
   let device p = p.p_device
@@ -1127,7 +1291,21 @@ module Program = struct
           fail "the host does not address %s memory" b.base.owner.name;
         Buffer.reachable b)
       buffers;
-    call_host p.p_handle buffers values;
+    (match Atomic.get profile with
+    | None -> call_host p.p_handle buffers values
+    | Some c ->
+        let start = now_ns () in
+        call_host p.p_handle buffers values;
+        let stop = now_ns () in
+        push c.events
+          (Span
+             {
+               device = host;
+               lane = domain_lane ();
+               name = p.p_name;
+               start;
+               stop;
+             }));
     (* The program runs with the runtime released: it must stay reachable, and
        its code mapped, until it returns. *)
     ignore (Sys.opaque_identity p)
@@ -1192,11 +1370,230 @@ let timeline d =
   in
   { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 2 }
 
+(* Profiles *)
+
+module Profile = struct
+  type nonrec event = event =
+    | Span of {
+        device : t;
+        lane : string;
+        name : string;
+        start : int;
+        stop : int;
+      }
+    | Memory of { device : t; time : int; allocated : int }
+    | Program of { program : program; binary : string; time : int }
+
+  let now = now_ns
+  let enabled () = Option.is_some (Atomic.get profile)
+
+  let start () =
+    if
+      not
+        (Atomic.compare_and_set profile None (Some { events = Atomic.make [] }))
+    then invalid_arg "Nx_device.Profile.start: already profiling"
+
+  let span name f =
+    match Atomic.get profile with
+    | None -> f ()
+    | Some c -> (
+        let start = now_ns () in
+        let record () =
+          let stop = now_ns () in
+          push c.events
+            (Span { device = host; lane = domain_lane (); name; start; stop })
+        in
+        match f () with
+        | r ->
+            record ();
+            r
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            record ();
+            Printexc.raise_with_backtrace e bt)
+
+  let record d ~lane ~name (stamps : Buffer.t) =
+    if stamps.dtype <> Nx_dtype.Scalar.UInt64 || stamps.length <> 2 then
+      invalid_arg "Nx_device.Profile.record: the stamps are not two UInt64";
+    match (stamps.base.memory.host, Atomic.get profile) with
+    | None, _ ->
+        invalid_arg
+          (Printf.sprintf
+             "Nx_device.Profile.record: the host does not address the stamps \
+              on %s"
+             stamps.base.owner.name)
+    | Some _, None -> ()
+    | Some a, Some into ->
+        let address = Nativeint.add a (Nativeint.of_int stamps.offset) in
+        push d.spans { address; stamps = Keep stamps; lane; name; into }
+
+  (* The host time of a tick of [d]'s clock of [hz] ticks per second. The sample
+     whose wait brackets its stamp most narrowly bounds the error best. *)
+  let calibrate d hz =
+    with_devices [ d ] (fun () ->
+        let q = Option.get d.copy_queue in
+        let rec sample k (width, mid, tick) =
+          if k = 0 then (mid, tick)
+          else
+            let h0 = now_ns () in
+            wait_signal d (enqueue d (q.stamp ~slot:(stamp_slot d 0)));
+            let h1 = now_ns () in
+            sample (k - 1)
+              (if h1 - h0 < width then (h1 - h0, h0 + ((h1 - h0) / 2), stamp d 0)
+               else (width, mid, tick))
+        in
+        let mid, tick = sample 5 (max_int, 0, 0) in
+        let ns = 1e9 /. Float.of_int hz in
+        fun t ->
+          mid + Float.to_int (Float.round (Float.of_int (t - tick) *. ns)))
+
+  let time = function
+    | Span s -> s.start
+    | Memory m -> m.time
+    | Program p -> p.time
+
+  let length = function Span s -> s.stop - s.start | Memory _ | Program _ -> 0
+
+  (* By time, and at equal times longest first, so that nested spans follow the
+     spans they are in. *)
+  let order a b =
+    match Int.compare (time a) (time b) with
+    | 0 -> Int.compare (length b) (length a)
+    | c -> c
+
+  let stop () =
+    match Atomic.exchange profile None with
+    | None -> invalid_arg "Nx_device.Profile.stop: not profiling"
+    | Some c ->
+        List.iter
+          (fun d ->
+            if Atomic.get d.spans <> [] && failed d = None then
+              try synchronize d with Failure _ -> ())
+          (Atomic.get opened);
+        let clocks = Hashtbl.create 4 in
+        let calibrated d hz =
+          match Hashtbl.find_opt clocks d.id with
+          | Some f -> f
+          | None ->
+              let f = try Some (calibrate d hz) with Failure _ -> None in
+              Hashtbl.add clocks d.id f;
+              f
+        in
+        Atomic.get c.events
+        |> List.filter_map (function
+          | Span ({ device = { clock = Device_clock { hz }; _ } as d; _ } as s)
+            ->
+              Option.map
+                (fun f -> Span { s with start = f s.start; stop = f s.stop })
+                (calibrated d hz)
+          | e -> Some e)
+        |> List.stable_sort order
+
+  (* Chrome's trace event format *)
+
+  let device_of = function
+    | Span s -> s.device
+    | Memory m -> m.device
+    | Program p -> p.program.p_device
+
+  (* [s] as a JSON string. Malformed UTF-8 becomes U+FFFD. *)
+  let string oc s =
+    output_char oc '"';
+    let rec go i =
+      if i < String.length s then begin
+        let d = String.get_utf_8_uchar s i in
+        let n = Uchar.utf_decode_length d in
+        (if not (Uchar.utf_decode_is_valid d) then output_string oc "\u{FFFD}"
+         else
+           match s.[i] with
+           | '"' -> output_string oc "\\\""
+           | '\\' -> output_string oc "\\\\"
+           | '\n' -> output_string oc "\\n"
+           | '\r' -> output_string oc "\\r"
+           | '\t' -> output_string oc "\\t"
+           | c when Char.code c < 0x20 ->
+               Printf.fprintf oc "\\u%04x" (Char.code c)
+           | _ -> output_substring oc s i n);
+        go (i + n)
+      end
+    in
+    go 0;
+    output_char oc '"'
+
+  (* [ns] nanoseconds in microseconds. *)
+  let micros oc ns =
+    if ns < 0 then output_char oc '-';
+    Printf.fprintf oc "%d.%03d" (abs ns / 1000) (abs ns mod 1000)
+
+  let output oc events =
+    let events = List.stable_sort order events in
+    let origin = match events with [] -> 0 | e :: _ -> time e in
+    let pids = Hashtbl.create 8 and tids = Hashtbl.create 8 in
+    let first = ref true in
+    let next () = if !first then first := false else output_string oc ",\n" in
+    let meta ~pid ~tid what name =
+      next ();
+      Printf.fprintf oc
+        "{\"ph\":\"M\",\"pid\":%d,\"tid\":%d,\"name\":\"%s\",\"args\":{\"name\":"
+        pid tid what;
+      string oc name;
+      output_string oc "}}"
+    in
+    let pid d =
+      match Hashtbl.find_opt pids d.id with
+      | Some pid -> pid
+      | None ->
+          let pid = Hashtbl.length pids + 1 in
+          Hashtbl.add pids d.id pid;
+          meta ~pid ~tid:0 "process_name" d.name;
+          pid
+    in
+    let tid d pid lane =
+      match Hashtbl.find_opt tids (d.id, lane) with
+      | Some tid -> tid
+      | None ->
+          let tid = Hashtbl.length tids + 1 in
+          Hashtbl.add tids (d.id, lane) tid;
+          meta ~pid ~tid "thread_name" lane;
+          tid
+    in
+    output_string oc "{\"traceEvents\":[\n";
+    List.iter
+      (fun e ->
+        let pid = pid (device_of e) in
+        let tid = match e with Span s -> tid s.device pid s.lane | _ -> 0 in
+        next ();
+        let ph =
+          match e with Span _ -> "X" | Memory _ -> "C" | Program _ -> "i"
+        in
+        Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
+          tid;
+        micros oc (time e - origin);
+        (match e with
+        | Span s ->
+            output_string oc ",\"dur\":";
+            micros oc (s.stop - s.start);
+            output_string oc ",\"name\":";
+            string oc s.name
+        | Memory m ->
+            Printf.fprintf oc ",\"name\":\"memory\",\"args\":{\"allocated\":%d}"
+              m.allocated
+        | Program p ->
+            output_string oc ",\"s\":\"p\",\"name\":";
+            string oc p.program.p_name;
+            Printf.fprintf oc ",\"args\":{\"handle\":\"0x%nx\"}"
+              p.program.p_handle);
+        output_char oc '}')
+      events;
+    output_string oc "\n]}\n"
+end
+
 (* Vendor runtimes *)
 
 let make ~name ~arch ~budget ~(memory : allocator) ?host_memory ?mapping
     ?copy_queue ?load ?signal ?sleep ?(timeout_ms = default_timeout_ms)
-    ?(synchronized = ignore) ?(finalize = fun ~failed:_ -> ()) () =
+    ?(synchronized = ignore) ?(finalize = fun ~failed:_ -> ())
+    ?(clock = Host_clock) ?(resolve = ignore) () =
   let fail fmt =
     Printf.ksprintf (fun m -> invalid_arg ("Nx_device.make: " ^ m)) fmt
   in
@@ -1206,12 +1603,18 @@ let make ~name ~arch ~budget ~(memory : allocator) ?host_memory ?mapping
     fail "%s has a copy queue but maps no host memory" name;
   if Option.is_some sleep && Option.is_some signal then
     fail "%s sleeps on the signal word but signals in its own way" name;
+  (match clock with
+  | Device_clock { hz } when hz <= 0 -> fail "a clock of %d Hz" hz
+  | Device_clock _ when Option.is_none copy_queue ->
+      fail "%s has a clock of its own but no copy queue to stamp it" name
+  | Host_clock | Device_clock _ -> ());
   let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
   let load =
     Option.map (fun load ~binary ~name -> (load ~binary ~name, None)) load
   in
   create ~name ~arch ~budget ~alloc ~free:memory.free ~host_memory ~mapping
-    ~copy_queue ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize
+    ~copy_queue ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize ~clock
+    ~resolve
 
 let external_buffer d m s n =
   if d == host then

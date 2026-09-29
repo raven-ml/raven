@@ -257,18 +257,22 @@ let copy_queue a (timeline : Nx_device.memory) =
   let signal = Nativeint.to_int timeline.device in
   let props = a.props in
   let family = sdma_family props and max = max_copy props in
-  let submit ~dst ~src n v =
+  let enqueue words =
     let q =
       match a.handles with
       | Some h -> sdma_queue (List.hd h.sdma)
       | None -> failwith "the SDMA queue is not set up"
     in
-    let words =
-      Sdma.packets ~family ~max ~signal ~dst:(Nativeint.to_int dst)
-        ~src:(Nativeint.to_int src) n v
-    in
     let timeout_ms = Option.fold ~none:30_000 ~some:Nx_device.timeout a.dev in
     Sdma.submit q ~timeout_ms words
+  in
+  let submit ~dst ~src n v =
+    enqueue
+      (Sdma.packets ~family ~max ~signal ~dst:(Nativeint.to_int dst)
+         ~src:(Nativeint.to_int src) n v)
+  in
+  let stamp ~slot v =
+    enqueue (Sdma.stamp ~family ~signal ~slot:(Nativeint.to_int slot) v)
   in
   (* A transfer maps the destination's allocation on this GPU at its first use;
      freeing it unmaps it. *)
@@ -297,7 +301,7 @@ let copy_queue a (timeline : Nx_device.memory) =
             submit ~dst ~src n v)
     | _ -> None
   in
-  { Nx_device.copy = submit; transfer }
+  { Nx_device.copy = submit; transfer; stamp }
 
 (* Programs *)
 
@@ -573,6 +577,7 @@ let make_device a ~budget ~sleep ?finalize () =
     Nx_device.make ~name:(name a.index) ~arch:(arch a.props.target) ~budget
       ~memory:(allocator a Vram) ~host_memory:(allocator a Host)
       ~mapping:(mapping a) ~copy_queue:(copy_queue a) ~load:(load a) ~sleep
+      ~clock:(Nx_device.Device_clock { hz = 100_000_000 })
       ?finalize ()
   in
   a.dev <- Some dev;

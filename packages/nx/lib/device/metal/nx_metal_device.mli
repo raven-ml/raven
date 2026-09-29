@@ -11,6 +11,8 @@
     the host's memory. Its programs are functions of metallib binaries. Its
     budget defaults to the working set size Metal recommends for the GPU.
 
+    Its timestamps are readings of the host clock ({!Nx_device.Host_clock}).
+
     A fault on the GPU surfaces as a hang: the runtime reads no command buffer's
     status, so work that faults is found when its signal does not arrive in
     time.
@@ -35,7 +37,16 @@ val v : int -> Nx_device.t
 (** {1:low Low-level}
 
     For the libraries that submit work to a Metal device, inside
-    {!Nx_device.submit}. *)
+    {!Nx_device.submit}.
+
+    Metal times its work by command buffer, on the host clock
+    ({!Nx_device.Profile.now}). To profile a command buffer, a submitter writes
+    it, retained, into the first word of the stamps it gives
+    {!Nx_device.Profile.record}, and [0] into the second. Once the command
+    buffer completed, the device writes its GPU start and end times over them
+    and releases it. Stamps recorded again before they were read still hold the
+    command buffer of the earlier record: the submitter releases it before it
+    writes its new one. *)
 
 type handles = {
   device : nativeint;  (** The [MTLDevice]. *)

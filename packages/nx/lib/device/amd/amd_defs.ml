@@ -2383,13 +2383,16 @@ module type SDMA = sig
   val op_fence : int
   val op_trap : int
   val op_poll_regmem : int
+  val op_timestamp : int
   val subop_copy_linear : int
+  val subop_timestamp_get_global : int
   val copy_linear_header_sub_op : (int * int)  (* mask, shift *)
   val poll_regmem_header_func : (int * int)  (* mask, shift *)
   val poll_regmem_header_mem_poll : (int * int)  (* mask, shift *)
   val poll_regmem_dw5_interval : (int * int)  (* mask, shift *)
   val poll_regmem_dw5_retry_count : (int * int)  (* mask, shift *)
   val fence_header_mtype : (int * int) option  (* mask, shift *)
+  val timestamp_get_global_header_sub_op : (int * int)  (* mask, shift *)
 end
 
 module Sdma_v4 : SDMA = struct
@@ -2397,13 +2400,16 @@ module Sdma_v4 : SDMA = struct
   let op_fence = 5
   let op_trap = 6
   let op_poll_regmem = 8
+  let op_timestamp = 0xd
   let subop_copy_linear = 0
+  let subop_timestamp_get_global = 2
   let copy_linear_header_sub_op = (0xff, 8)
   let poll_regmem_header_func = (7, 28)
   let poll_regmem_header_mem_poll = (1, 31)
   let poll_regmem_dw5_interval = (0xffff, 0)
   let poll_regmem_dw5_retry_count = (0xfff, 16)
   let fence_header_mtype = None
+  let timestamp_get_global_header_sub_op = (0xff, 8)
 end
 
 module Sdma_v5 : SDMA = struct
@@ -2411,13 +2417,16 @@ module Sdma_v5 : SDMA = struct
   let op_fence = 5
   let op_trap = 6
   let op_poll_regmem = 8
+  let op_timestamp = 0xd
   let subop_copy_linear = 0
+  let subop_timestamp_get_global = 2
   let copy_linear_header_sub_op = (0xff, 8)
   let poll_regmem_header_func = (7, 28)
   let poll_regmem_header_mem_poll = (1, 31)
   let poll_regmem_dw5_interval = (0xffff, 0)
   let poll_regmem_dw5_retry_count = (0xfff, 16)
   let fence_header_mtype = Some (7, 16)
+  let timestamp_get_global_header_sub_op = (0xff, 8)
 end
 
 module Sdma_v6 : SDMA = struct
@@ -2425,13 +2434,16 @@ module Sdma_v6 : SDMA = struct
   let op_fence = 5
   let op_trap = 6
   let op_poll_regmem = 8
+  let op_timestamp = 0xd
   let subop_copy_linear = 0
+  let subop_timestamp_get_global = 2
   let copy_linear_header_sub_op = (0xff, 8)
   let poll_regmem_header_func = (7, 28)
   let poll_regmem_header_mem_poll = (1, 31)
   let poll_regmem_dw5_interval = (0xffff, 0)
   let poll_regmem_dw5_retry_count = (0xfff, 16)
   let fence_header_mtype = Some (7, 16)
+  let timestamp_get_global_header_sub_op = (0xff, 8)
 end
 
 let sdma = function

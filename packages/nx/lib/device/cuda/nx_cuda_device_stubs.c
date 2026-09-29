@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "nx_device.h"
+
 #ifdef _WIN32
 #include <windows.h>
 #define CUDAAPI __stdcall
@@ -63,6 +65,7 @@ typedef void *CUcontext;
 typedef void *CUstream;
 typedef void *CUmodule;
 typedef void *CUfunction;
+typedef void(CUDAAPI *CUhostFn)(void *);
 
 #define CUDA_SUCCESS 0
 #define CUDA_ERROR_OUT_OF_MEMORY 2
@@ -97,6 +100,7 @@ typedef void *CUfunction;
   X(cuMemHostUnregister, (void *))                                             \
   X(cuMemHostGetDevicePointer_v2, (CUdeviceptr *, void *, unsigned int))       \
   X(cuMemcpyAsync, (CUdeviceptr, CUdeviceptr, size_t, CUstream))               \
+  X(cuLaunchHostFunc, (CUstream, CUhostFn, void *))                            \
   X(cuMemcpyPeerAsync,                                                         \
     (CUdeviceptr, CUcontext, CUdeviceptr, CUcontext, size_t, CUstream))        \
   X(cuPointerGetAttribute, (void *, int, CUdeviceptr))                         \
@@ -475,6 +479,35 @@ value caml_nx_cuda_peer_byte(value *argv, int argn) {
   (void)argn;
   return caml_nx_cuda_peer(argv[0], argv[1], argv[2], argv[3], argv[4],
                            argv[5], argv[6], argv[7]);
+}
+
+/* Stores the host clock into the word at [word], from the driver's thread
+   once the stream reached it. */
+static void CUDAAPI host_stamp(void *word) {
+  atomic_store_explicit((_Atomic uint64_t *)word, nx_device_now_ns(),
+                        memory_order_release);
+}
+
+/* A timestamp as work on the device's timeline: on the copy stream, a wait
+   for the signal to reach [v - 1], the host clock stored into the host word
+   [v_word] by a host function, then the signal of [v]. */
+value caml_nx_cuda_stamp(value v_ctx, value v_stream, value v_signal,
+                         value v_word, value v_v) {
+  CAMLparam5(v_ctx, v_stream, v_signal, v_word, v_v);
+  CUstream stream = Ptr_val(v_stream);
+  CUdeviceptr signal = Dptr_val(v_signal);
+  uint64_t v = (uint64_t)Long_val(v_v);
+  CUresult status = push(Ptr_val(v_ctx));
+  if (status == CUDA_SUCCESS) {
+    CUresult s = p_cuStreamWaitValue64_v2(stream, signal, v - 1,
+                                          CU_STREAM_WAIT_VALUE_GEQ);
+    if (s == CUDA_SUCCESS)
+      s = p_cuLaunchHostFunc(stream, host_stamp, Ptr_val(v_word));
+    if (s == CUDA_SUCCESS) s = p_cuStreamWriteValue64_v2(stream, signal, v, 0);
+    status = pop(s);
+  }
+  check(status);
+  CAMLreturn(Val_unit);
 }
 
 /* Signals */

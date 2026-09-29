@@ -101,6 +101,19 @@ let copy_release addr v =
   in
   one addr (lo32 v) @ if lo32 v = 0 then one (addr + 4) (hi32 v) else []
 
+(* The copy engine's timestamp: a four-word semaphore release at the 16 bytes at
+   [addr] writes a payload of 0 into the first 8 and the GPU timer, in
+   nanoseconds, into the last 8. *)
+let copy_stamp addr =
+  methods copy_engine D.nvc6b5_set_semaphore_a [ hi32 addr; lo32 addr; 0 ]
+  @ methods copy_engine D.nvc6b5_launch_dma
+      [
+        P.bits D.nvc6b5_launch_dma_flush_enable
+          D.nvc6b5_launch_dma_flush_enable_true
+        lor P.bits D.nvc6b5_launch_dma_semaphore_type
+              D.nvc6b5_launch_dma_semaphore_type_release_four_word_semaphore;
+      ]
+
 (* Channels *)
 
 type channel = {

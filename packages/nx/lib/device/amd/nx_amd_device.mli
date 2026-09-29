@@ -31,6 +31,10 @@
       source's copy engine writes the destination; otherwise the bytes go
       through the staging memory.
 
+    {b Timestamps} count the GPU's global clock, 100 MHz
+    ({!Nx_device.Device_clock}); the copy engine stamps it for the runtime's
+    profiles.
+
     {b Programs} are functions of AMD GPU code objects, ELF objects compiled for
     the device's {!Nx_device.arch}: the function [name] is the kernel whose
     descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once per

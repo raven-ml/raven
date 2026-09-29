@@ -64,6 +64,9 @@ external peer :
   int ->
   unit = "caml_nx_cuda_peer_byte" "caml_nx_cuda_peer"
 
+external stamp : nativeint -> nativeint -> nativeint -> nativeint -> int -> unit
+  = "caml_nx_cuda_stamp"
+
 external signaled : nativeint -> int = "caml_nx_cuda_signaled" [@@noalloc]
 
 external wait :
@@ -208,9 +211,14 @@ let open_cuda i ~arch ~budget ctx =
       stream_destroy ctx compute;
       raise e
   in
-  (* Work signals the timeline's first word through its device address. *)
+  (* Work signals the timeline's first word through its device address. A
+     timestamp is the host clock, which a host function stores through the host
+     address of the slot's second word. *)
   let copy_queue (timeline : Nx_device.memory) =
     let signal = timeline.device in
+    let host_word slot =
+      Nativeint.(add (Option.get timeline.host) (add (sub slot signal) 8n))
+    in
     {
       Nx_device.copy =
         (fun ~dst ~src n v -> copy ctx copy_stream signal dst src n v);
@@ -220,6 +228,7 @@ let open_cuda i ~arch ~budget ctx =
             (fun c ~dst ~src n v ->
               peer ctx copy_stream signal dst c.handles.context src n v)
             (find d));
+      stamp = (fun ~slot v -> stamp ctx copy_stream signal (host_word slot) v);
     }
   in
   let signal (timeline : Nx_device.memory) =

@@ -290,6 +290,23 @@ ABI void f(void **b, const long long *v) { *(int *)b[0] = ++calls; }|});
     (Exn.invalid_arg ~substring:"does not address") (fun () ->
       P.call p [| Nx_device.external_buffer fake far S.UInt8 4 |] [| 0; 0; 0 |])
 
+let test_profile () =
+  let p = P.load host ~binary:(Lazy.force affine) ~name:"affine" in
+  let out = B.create host S.Int32 4 and input = int32s [| 1l; 2l; 3l; 4l |] in
+  Nx_device.Profile.start ();
+  let before = Nx_device.Profile.now () in
+  P.call p [| out; input |] [| 4; 3; -5 |];
+  let after = Nx_device.Profile.now () in
+  let lane = Printf.sprintf "domain %d" (Domain.self () :> int) in
+  match Nx_device.Profile.stop () with
+  | [ Span s ] ->
+      equal
+        (triple string string string)
+        ("CPU", lane, "affine")
+        (Nx_device.name s.device, s.lane, s.name);
+      is_true (before <= s.start && s.start <= s.stop && s.stop <= after)
+  | events -> failf "%d events" (List.length events)
+
 let () =
   exit
     (run "nx.device host programs"
@@ -308,5 +325,7 @@ let () =
            test_cache;
          test "an unreachable program's code is freed" test_release;
          test "the runtime is released while a program runs" test_released;
+         test "a call is a span of its program while a profile is taken"
+           test_profile;
          test "the host refuses what it cannot load or call" test_refusals;
        ])

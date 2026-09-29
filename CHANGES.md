@@ -2761,6 +2761,18 @@ thread.
 
 ### Nx
 
+- New `Nx_device.Profile`: between `start ()` and `stop ()`, devices record
+  spans of their work, their allocated memory and the programs they load, all
+  on the host clock (`now`). Host code adds spans with `span`, the libraries
+  that submit work add them with `record` from timestamps their work writes,
+  and `Buffer.copy` and `Program.call` record their own; AMD and NV clocks are
+  calibrated against the host's when the profile is taken. `output` writes
+  Chrome's trace event format, which Perfetto loads. With no profile taken,
+  recording costs one atomic read and allocates nothing.
+- **Breaking:** a vendor's `Nx_device.copy_queue` has a `stamp`, which writes
+  a timestamp of the device's clock, and `Nx_device.make` takes that clock
+  (`?clock`) and a `?resolve` hook for the timestamps the device's work does
+  not write itself, which Metal's command buffers need.
 - `Nx_device.host` loads programs on x86_64 and arm64: `Nx_device.Program.load`
   links an ELF relocatable object compiled for the machine, resolving its
   calls to the C and math libraries and to the compiler runtime's 16-bit float

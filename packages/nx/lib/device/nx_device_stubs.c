@@ -134,6 +134,15 @@ value caml_nx_device_now_ms_byte(value unit) {
   return Val_long(caml_nx_device_now_ms(unit));
 }
 
+intnat caml_nx_device_now_ns(value unit) {
+  (void)unit;
+  return (intnat)nx_device_now_ns();
+}
+
+value caml_nx_device_now_ns_byte(value unit) {
+  return Val_long(caml_nx_device_now_ns(unit));
+}
+
 static void yield(void) {
 #ifdef _WIN32
   SwitchToThread();

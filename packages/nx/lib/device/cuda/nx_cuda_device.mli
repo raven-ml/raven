@@ -27,6 +27,9 @@
     memory operations and unified addressing, on every platform, Windows
     included. There is no fallback.
 
+    {b Timestamps} are readings of the host clock ({!Nx_device.Host_clock}): for
+    the runtime's profiles, the copy stream runs a host function that reads it.
+
     {b Programs} are functions of CUDA modules: cubins, fatbins, or PTX, which
     the driver compiles when it loads it.
 
