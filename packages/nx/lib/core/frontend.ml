@@ -5017,16 +5017,23 @@ module Make (B : Backend_intf.S) = struct
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
-  (* Hermitian FFT *)
-  let hfft dtype ?(axis = -1) ?n ?norm x =
+  (* Hermitian FFT. The forward transform of the Hermitian signal whose half is
+     [x] is the unscaled inverse transform of its conjugate, so each direction
+     is the other real transform with the norm's scaling swapped. *)
+  let swap_norm = function
+    | `Backward -> `Forward
+    | `Forward -> `Backward
+    | `Ortho -> `Ortho
+
+  let hfft dtype ?(axis = -1) ?n ?(norm = `Backward) x =
     let n = match n with None -> 2 * (dim axis x - 1) | Some n -> n in
     let axis = resolve_single_axis x axis in
-    irfftn dtype x ~axes:[ axis ] ~s:[ n ] ?norm
+    irfftn dtype (conjugate x) ~axes:[ axis ] ~s:[ n ] ~norm:(swap_norm norm)
 
-  let ihfft dtype ?(axis = -1) ?n ?norm x =
+  let ihfft dtype ?(axis = -1) ?n ?(norm = `Backward) x =
     let n = match n with None -> dim axis x | Some n -> n in
     let axis = resolve_single_axis x axis in
-    rfftn dtype x ~axes:[ axis ] ~s:[ n ] ?norm
+    conjugate (rfftn dtype x ~axes:[ axis ] ~s:[ n ] ~norm:(swap_norm norm))
 
   (* FFT helpers *)
   let fftfreq ctx dt ?(d = 1.0) n =

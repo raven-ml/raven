@@ -2724,6 +2724,10 @@ thread.
 
 ### Nx
 
+- `Nx.hfft` is the forward transform of the Hermitian signal its input
+  describes, unscaled under the default norm, and `Nx.ihfft` is its inverse.
+  `hfft` returned that signal's inverse transform, divided by `n` and in
+  reverse order, and `ihfft` returned `rfft` unscaled and unconjugated.
 - `Nx.Rng.beta` and `Nx.Rng.dirichlet` hold at small concentrations: every
   Dirichlet row sums to one and a Beta draw is the ratio its gammas stand for.
   Below a concentration of about 0.03 most float32 gammas underflow to zero,
