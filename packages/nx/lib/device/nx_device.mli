@@ -251,16 +251,18 @@ module Buffer : sig
       [d] maps the whole host memory that [b] is a view of, once: the borrows on
       [d] of views of that memory share one mapping, which [d] releases once
       they are all unreachable. A mapping covers whole pages, so that memory
-      must start on a page: host buffers of at least 64 KiB (four pages where
-      pages are larger) and memory-mapped files do. Smaller host buffers cannot
-      be borrowed; {!copy} moves them through staging memory. On CUDA, mapping
-      page-locks the memory, which must be writable: memory mapped read-only
-      cannot be borrowed there.
+      must start on a page. Host buffers that {!create} makes start on one from
+      64 KiB (four pages where pages are larger), and smaller ones cannot be
+      borrowed, wherever they start; {!copy} moves them through staging memory.
+      Memory-mapped files start on a page. Memory that {!of_bigarray} wraps
+      borrows if it starts on one. A buffer of no bytes always borrows, mapping
+      nothing. On CUDA, mapping page-locks the memory, which must be writable:
+      memory mapped read-only cannot be borrowed there.
 
       Raises [Invalid_argument] if [b] is not on [d]'s host, if [d] cannot
-      address the host's memory, if the memory [b] is a view of does not start
-      on a page, or if [d]'s driver refuses to map it, with the driver's reason.
-  *)
+      address the host's memory, if [b] is a host buffer {!create} made of fewer
+      than 64 KiB, if the memory [b] is a view of does not start on a page, or
+      if [d]'s driver refuses to map it, with the driver's reason. *)
 
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)

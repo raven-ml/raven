@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The field order of [memory], [base], [life] and [Buffer.t] up to the
-   fields nx_device.h reads is its C ABI. *)
+(* The field order of [memory], [base], [life] and [Buffer.t] up to the fields
+   nx_device.h reads is its C ABI. *)
 type memory = {
   host : nativeint option;
   device : nativeint;
@@ -127,8 +127,8 @@ and base = {
   mutable life : life;
 }
 
-(* Whether a base's buffers may reach its memory. A consumed base is [Dead],
-   and the base its consumption made in its place, over the same memory, is its
+(* Whether a base's buffers may reach its memory. A consumed base is [Dead], and
+   the base its consumption made in its place, over the same memory, is its
    [Heir]: it keeps the dead one, whose finaliser releases the memory,
    reachable. *)
 and life = Live | Heir of base | Dead of string
@@ -1032,6 +1032,14 @@ module Buffer = struct
       | Some mapping ->
           let src = b.base in
           let first = Option.get src.memory.host in
+          (* A host buffer nx made starts on a page from [aligned_from] bytes; a
+             smaller one is refused wherever it happens to start, so that
+             whether it borrows does not depend on the allocator. *)
+          if h == host && (not src.borrowed) && src.extent < aligned_from then
+            fail
+              "a host buffer of %d bytes does not start on a page, and %s maps \
+               whole pages; host buffers start on one from %d bytes"
+              src.extent d.name aligned_from;
           (* Another machine's pages are its own; its devices check them. *)
           if h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n then
             fail

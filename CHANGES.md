@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.borrow` refuses every host buffer `create` made of fewer
+  than 64 KiB. It borrowed one when the allocator happened to place it on a
+  page, so the same program borrowed on one run or machine and raised on
+  another. A buffer of no bytes still always borrows.
 - `Nx.svd`, `Nx.svdvals`, `Nx.qr`, `Nx.eigh` and `Nx.eigvalsh` keep their
   accuracy on a matrix of subnormal or huge entries. They now scale it into
   range by a power of two and scale the results back. `svd` of a float64
