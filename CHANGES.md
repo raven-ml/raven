@@ -2757,6 +2757,9 @@ thread.
 
 ### Nx
 
+- `Nx.eigh ~uplo:`U` and `Nx.eigvalsh ~uplo:`U` read the upper triangle.
+  `?uplo` was ignored and both always read the lower one, so a matrix given
+  by its upper triangle gave the eigenvalues of another matrix.
 - `Nx.eigh` and `Nx.eigvalsh` take complex Hermitian matrices, complex64 and
   complex128, where they raised `Invalid_argument`. The eigenvalues are real
   (float64) and the eigenvectors have the matrix's dtype.

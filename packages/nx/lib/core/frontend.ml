@@ -4298,11 +4298,15 @@ module Make (B : Backend_intf.S) = struct
     check_float_or_complex ~op:"eig" a;
     B.eig a
 
+  (* The kernels read the lower triangle. The lower triangle of aᴴ is the
+     Hermitian matrix that a's upper triangle names. *)
+  let hermitian_lower ?(uplo = `L) a =
+    match uplo with `L -> a | `U -> conjugate (matrix_transpose a)
+
   let eigh ?uplo a =
     check_square ~op:"eigh" a;
     check_float_or_complex ~op:"eigh" a;
-    let _ = uplo in
-    B.eigh a
+    B.eigh (hermitian_lower ?uplo a)
 
   let eigvals a =
     check_square ~op:"eigvals" a;
@@ -4312,8 +4316,7 @@ module Make (B : Backend_intf.S) = struct
   let eigvalsh ?uplo a =
     check_square ~op:"eigvalsh" a;
     check_float_or_complex ~op:"eigvalsh" a;
-    let _ = uplo in
-    B.eigvalsh a
+    B.eigvalsh (hermitian_lower ?uplo a)
 
   let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
     let keepdims = Option.value keepdims ~default:false in
