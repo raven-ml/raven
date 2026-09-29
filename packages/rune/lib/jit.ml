@@ -2015,38 +2015,32 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
   let open Effect.Deep in
   let dt x = Nx_effect.dtype x in
   let go x = tolk_of st x in
-  let refuse k op =
-    discontinue k
+  let refuse op =
+    raise
       (Jit_error
          (Printf.sprintf
             "Rune.jit: %s is not supported inside jit; move it outside the \
              jitted function"
             op))
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
-    (* Answer an intercepted operation: record the graph node and continue with
-       a fresh placeholder carrying the result's shape, dtype and placement.
+    (* Answer an intercepted operation: record the graph node and answer with a
+       fresh placeholder carrying the result's shape, dtype and placement.
        Operands that cannot meet raise into the function. *)
-    let ret : type a b r.
-        ((a, b) Nx_effect.t, r) continuation -> (a, b) ND.t -> F.Tensor.t -> r =
-     fun k dt tt ->
-      match result_placement st eff with
-      | p -> continue k (traced st p dt tt)
-      | exception (Invalid_argument _ as e) -> discontinue k e
+    let ret : type a b. (a, b) ND.t -> F.Tensor.t -> (a, b) Nx_effect.t =
+     fun dt tt -> traced st (result_placement st eff) dt tt
     in
     (* Like [ret] for a two-result operation: one placeholder per result, both
        carrying the operation's shared dtype (qr's factors, e.g.). *)
-    let ret2 : type a b r.
-        ((a, b) Nx_effect.t * (a, b) Nx_effect.t, r) continuation ->
+    let ret2 : type a b.
         (a, b) ND.t ->
         F.Tensor.t ->
         F.Tensor.t ->
-        r =
-     fun k dt tq tr ->
-      match result_placement st eff with
-      | p -> continue k (traced st p dt tq, traced st p dt tr)
-      | exception (Invalid_argument _ as e) -> discontinue k e
+        (a, b) Nx_effect.t * (a, b) Nx_effect.t =
+     fun dt tq tr ->
+      let p = result_placement st eff in
+      (traced st p dt tq, traced st p dt tr)
     in
     match eff with
     (* Metadata reads fall back to the placeholder, whose view is the
@@ -2058,8 +2052,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_to_host x ->
         if is_traced x then
           Some
-            (fun k ->
-              discontinue k
+            (fun () ->
+              raise
                 (Jit_error
                    "Rune.jit: the value of a traced tensor was read during jit \
                     tracing (item, to_host, or a data-dependent branch); \
@@ -2068,13 +2062,13 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     (* Creation *)
     | E_buffer { dtype; size_in_elements; _ } ->
         Some
-          (fun k ->
+          (fun () ->
             let ph = Nx_effect.buffer st.st_ctx dtype [| size_in_elements |] in
             ignore (lift_const st ph);
-            continue k ph)
+            ph)
     | E_const_scalar { value; dtype; _ } ->
         Some
-          (fun k ->
+          (fun () ->
             check_dtype st dtype "a constant of the function";
             (* [buffer:false] keeps the scalar an immediate constant: it folds
                into consuming kernels instead of being stored into a one-element
@@ -2085,134 +2079,134 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             let ph = Nx_effect.const_scalar st.st_ctx value dtype in
             Tensor_map.Tbl.replace st.table (Key ph) tt;
-            continue k ph)
+            ph)
     | E_from_host { dtype; buffer; _ } ->
         Some
-          (fun k ->
+          (fun () ->
             let ph = Nx_effect.from_host st.st_ctx dtype buffer in
             ignore (lift_const st ph);
-            continue k ph)
+            ph)
     (* Binary arithmetic *)
     | E_add { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.add (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.add (go a) (go b)))
     | E_sub { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.sub (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.sub (go a) (go b)))
     | E_mul { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.mul (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.mul (go a) (go b)))
     | E_idiv { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.cdiv (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.cdiv (go a) (go b)))
     | E_fdiv { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.div (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.div (go a) (go b)))
     | E_max { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.maximum (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.maximum (go a) (go b)))
     | E_min { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.minimum (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.minimum (go a) (go b)))
     | E_mod { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.fmod (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.fmod (go a) (go b)))
     | E_pow { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.pow (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.pow (go a) (go b)))
     | E_xor { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.bitwise_xor (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.bitwise_xor (go a) (go b)))
     | E_or { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.bitwise_or (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.bitwise_or (go a) (go b)))
     | E_and { a; b } ->
-        Some (fun k -> ret k (dt a) (F.Elementwise.bitwise_and (go a) (go b)))
+        Some (fun () -> ret (dt a) (F.Elementwise.bitwise_and (go a) (go b)))
     | E_atan2 { a; b } ->
-        Some (fun k -> ret k (dt a) (atan2_graph (go a) (go b)))
+        Some (fun () -> ret (dt a) (atan2_graph (go a) (go b)))
     (* Comparisons *)
     | E_cmpeq { a; b } ->
-        Some (fun k -> ret k ND.bool (F.Elementwise.eq (go a) (go b)))
+        Some (fun () -> ret ND.bool (F.Elementwise.eq (go a) (go b)))
     | E_cmpne { a; b } ->
-        Some (fun k -> ret k ND.bool (F.Elementwise.ne (go a) (go b)))
+        Some (fun () -> ret ND.bool (F.Elementwise.ne (go a) (go b)))
     | E_cmplt { a; b } ->
-        Some (fun k -> ret k ND.bool (F.Elementwise.lt (go a) (go b)))
+        Some (fun () -> ret ND.bool (F.Elementwise.lt (go a) (go b)))
     | E_cmple { a; b } ->
-        Some (fun k -> ret k ND.bool (F.Elementwise.le (go a) (go b)))
+        Some (fun () -> ret ND.bool (F.Elementwise.le (go a) (go b)))
     (* Unary arithmetic *)
     | E_neg { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.neg (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.neg (go t_in)))
     | E_sin { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.sin (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.sin (go t_in)))
     | E_sqrt { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.sqrt (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.sqrt (go t_in)))
     | E_recip { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.reciprocal (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.reciprocal (go t_in)))
     | E_log { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.log (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.log (go t_in)))
     | E_exp { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.exp (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.exp (go t_in)))
     | E_cos { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.cos (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.cos (go t_in)))
     | E_abs { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.abs (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.abs (go t_in)))
     | E_sign { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.sign (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.sign (go t_in)))
     | E_tan { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.tan (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.tan (go t_in)))
     | E_asin { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.asin (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.asin (go t_in)))
     | E_acos { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.acos (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.acos (go t_in)))
     | E_atan { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.atan (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.atan (go t_in)))
     | E_sinh { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.sinh (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.sinh (go t_in)))
     | E_cosh { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.cosh (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.cosh (go t_in)))
     | E_tanh { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.tanh (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.tanh (go t_in)))
     | E_erf { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.erf (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.erf (go t_in)))
     (* Rounding: identity on integers, as eagerly. *)
     | E_trunc { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
-            ret k (dt t_in)
+            ret (dt t_in)
               (if ND.is_float (dt t_in) then F.Elementwise.trunc t else t))
     | E_ceil { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
-            ret k (dt t_in)
+            ret (dt t_in)
               (if ND.is_float (dt t_in) then F.Elementwise.ceil t else t))
     | E_floor { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
-            ret k (dt t_in)
+            ret (dt t_in)
               (if ND.is_float (dt t_in) then F.Elementwise.floor t else t))
     | E_round { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
-            ret k (dt t_in) (if ND.is_float (dt t_in) then round_away t else t))
+            ret (dt t_in) (if ND.is_float (dt t_in) then round_away t else t))
     (* Ternary *)
     | E_where { condition; if_true; if_false } ->
         Some
-          (fun k ->
-            ret k (dt if_true)
+          (fun () ->
+            ret (dt if_true)
               (F.Elementwise.where (go condition) (go if_true) (go if_false)))
     (* Reductions. The accumulator dtype is pinned to the input's so results
        match eager execution. *)
     | E_reduce_sum { t_in; axes } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
             let axis = Array.to_list axes in
             (* A float sum accumulates at float32 or wider and rounds once, as
                the eager one does; an integer sum wraps at its own width. *)
-            ret k (dt t_in)
+            ret (dt t_in)
               (if ND.is_float (dt t_in) then F.Reduce.sum ~axis ~keepdim:false t
                else
                  F.Reduce.sum ~axis ~keepdim:false ~dtype:(F.Tensor.val_dtype t)
                    t))
     | E_reduce_prod { t_in; axes } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
             let axis = Array.to_list axes in
-            ret k (dt t_in)
+            ret (dt t_in)
               (if narrow_float t then
                  F.Dtype_ops.cast
                    (F.Reduce.prod ~axis ~keepdim:false ~dtype:TD.float32 t)
@@ -2222,48 +2216,48 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                    ~dtype:(F.Tensor.val_dtype t) t))
     | E_reduce_max { t_in; axes } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (extreme ~op:`Max ~axes:(Array.to_list axes) (go t_in)))
     | E_reduce_min { t_in; axes } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (extreme ~op:`Min ~axes:(Array.to_list axes) (go t_in)))
     (* Over integer keys the first NaN is the extreme and zeros tie, so the
        first of equal extremes is eager's position. *)
     | E_argmax { t_in; axis; keepdims } ->
         Some
-          (fun k ->
+          (fun () ->
             let keys, _ = order_keys ~nan:`Greatest ~zeros:`Tied (go t_in) in
-            ret k ND.int32
+            ret ND.int32
               (F.Dtype_ops.cast
                  (F.Op.argmax ~axis ~keepdim:keepdims keys)
                  TD.int32))
     | E_argmin { t_in; axis; keepdims } ->
         Some
-          (fun k ->
+          (fun () ->
             let keys, _ = order_keys ~nan:`Least ~zeros:`Tied (go t_in) in
-            ret k ND.int32
+            ret ND.int32
               (F.Dtype_ops.cast
                  (F.Op.argmin ~axis ~keepdim:keepdims keys)
                  TD.int32))
     | E_sort { t_in; axis; descending } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (sort_graph ~packs:(packs st) ~dim:axis ~descending (go t_in)))
     | E_argsort { t_in; axis; descending } ->
         Some
-          (fun k ->
-            ret k ND.int32
+          (fun () ->
+            ret ND.int32
               (F.Dtype_ops.cast
                  (argsort_graph ~packs:(packs st) ~dim:axis ~descending
                     (go t_in))
                  TD.int32))
     | E_associative_scan { t_in; axis; op } ->
         Some
-          (fun k ->
+          (fun () ->
             let t = go t_in in
             let r =
               match op with
@@ -2273,83 +2267,81 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             in
             (* A sum over small integers accumulates wider; the scan keeps its
                input's dtype. *)
-            ret k (dt t_in) (F.Dtype_ops.cast r (tolk_dtype (dt t_in))))
+            ret (dt t_in) (F.Dtype_ops.cast r (tolk_dtype (dt t_in))))
     (* Movement *)
     | E_permute { t_in; axes } ->
         Some
-          (fun k ->
-            ret k (dt t_in) (F.Movement.permute (go t_in) (Array.to_list axes)))
+          (fun () ->
+            ret (dt t_in) (F.Movement.permute (go t_in) (Array.to_list axes)))
     | E_reshape { t_in; new_shape } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (F.Movement.reshape (go t_in) (Array.to_list new_shape)))
     | E_expand { t_in; new_target_shape } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (F.Movement.expand (go t_in) (Array.to_list new_target_shape)))
     | E_pad { t_in; padding_config; fill_value } ->
         Some
-          (fun k ->
+          (fun () ->
             let pads =
               Array.to_list (Array.map (fun p -> Some p) padding_config)
             in
-            ret k (dt t_in)
+            ret (dt t_in)
               (F.Op.pad ~value:(scalar_of (dt t_in) fill_value) (go t_in) pads))
     | E_shrink { t_in; limits } ->
         Some
-          (fun k ->
-            ret k (dt t_in) (F.Movement.shrink (go t_in) (Array.to_list limits)))
+          (fun () ->
+            ret (dt t_in) (F.Movement.shrink (go t_in) (Array.to_list limits)))
     | E_flip { t_in; dims_to_flip } ->
         Some
-          (fun k ->
+          (fun () ->
             let axes = ref [] in
             Array.iteri (fun i f -> if f then axes := i :: !axes) dims_to_flip;
-            ret k (dt t_in) (F.Movement.flip (go t_in) (List.rev !axes)))
+            ret (dt t_in) (F.Movement.flip (go t_in) (List.rev !axes)))
     (* Unlike the eager movement, which is view metadata, the lowering pools
        through pad/reshape/shrink and materializes: a step narrower than the
        window writes each overlapped element once per window that reads it. *)
     | E_sliding_window { t_in; axis; window; step } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
-              (F.Movement.unfold (go t_in) axis ~size:window ~step))
+          (fun () ->
+            ret (dt t_in) (F.Movement.unfold (go t_in) axis ~size:window ~step))
     | E_cat { t_list; axis } ->
         Some
-          (fun k ->
+          (fun () ->
             match t_list with
             | [] -> err "Rune.jit: cat of an empty list"
             | hd :: tl ->
-                ret k (dt hd)
+                ret (dt hd)
                   (F.Op.cat ~dim:axis (go hd) (List.map (fun t -> go t) tl)))
     (* Cast and copies *)
     | E_cast { t_in; target_dtype } ->
         Some
-          (fun k ->
-            ret k target_dtype
+          (fun () ->
+            ret target_dtype
               (F.Dtype_ops.cast (go t_in) (tolk_dtype target_dtype)))
     | E_bitcast { t_in; target_dtype } ->
         Some
-          (fun k ->
-            ret k target_dtype
+          (fun () ->
+            ret target_dtype
               (F.Dtype_ops.bitcast (go t_in) (tolk_dtype target_dtype)))
     (* A written buffer is contiguous storage already, and a [contiguous] over
        it would copy it out. *)
     | E_contiguous { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let tt = go t_in in
-            ret k (dt t_in)
+            ret (dt t_in)
               (match written_buffer (F.Tensor.uop tt) with
               | Some _ -> tt
               | None -> F.Elementwise.contiguous tt))
     | E_copy { t_in } ->
-        Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
+        Some (fun () -> ret (dt t_in) (F.Elementwise.contiguous (go t_in)))
     (* Staged scans *)
-    | Scan.E_scan_probe -> Some (fun k -> continue k true)
-    | Scan.E_scan req ->
-        Some (fun k -> Scan.deliver k (fun () -> stage_scan st req))
+    | Scan.E_scan_probe -> Some (fun () -> true)
+    | Scan.E_scan req -> Some (fun () -> stage_scan st req)
     (* Gradient checkpointing. A differentiated remat's arguments are the
        residuals of its backward pass, so they are materialised. The backward
        pass copies each written residual after the result's cotangents exist.
@@ -2366,17 +2358,17 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        keeps the plain function. *)
     | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
         Some
-          (fun k ->
+          (fun () ->
             if residuals && st.scan_bodies = [] then
               Nx.Ptree.fold params_s
                 (fun _ leaf () ->
                   ignore (storage st (placement_in st leaf) (go leaf) : U.t))
                 params ();
-            continue k (Effect.Deep.match_with f params (handler st)))
+            Effect.Deep.match_with f params (handler st))
     | Remat.E_barrier { values; after } ->
         Some
-          (fun k ->
-            if st.scan_bodies <> [] then continue k values
+          (fun () ->
+            if st.scan_bodies <> [] then values
             else
               let deps =
                 List.filter_map
@@ -2385,41 +2377,45 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     if U.op s = Tolk_uop.Ops.After then Some s else None)
                   after
               in
-              continue k
-                (List.map
-                   (fun (Nx.P v) ->
-                     let tt = go v in
-                     let s = storage st (placement_in st v) tt in
-                     if U.op s <> Tolk_uop.Ops.After then Nx.P v
-                     else
-                       Nx.P
-                         (traced st (placement_in st v) (dt v)
-                            (F.Tensor.of_uop
-                               (reroot s
-                                  (fun s ->
-                                    if deps = [] then s
-                                    else
-                                      let buffer = make_node st (U.dtype s) (U.max_numel s) in
-                                      U.after ~src:buffer
-                                        ~deps:[U.store ~dst:buffer
-                                          ~value:(U.after ~src:s ~deps) ()])
-                                  (F.Tensor.uop tt)))))
-                   values))
+              List.map
+                (fun (Nx.P v) ->
+                  let tt = go v in
+                  let s = storage st (placement_in st v) tt in
+                  if U.op s <> Tolk_uop.Ops.After then Nx.P v
+                  else
+                    Nx.P
+                      (traced st (placement_in st v) (dt v)
+                         (F.Tensor.of_uop
+                            (reroot s
+                               (fun s ->
+                                 if deps = [] then s
+                                 else
+                                   let buffer =
+                                     make_node st (U.dtype s) (U.max_numel s)
+                                   in
+                                   U.after ~src:buffer
+                                     ~deps:
+                                       [
+                                         U.store ~dst:buffer
+                                           ~value:(U.after ~src:s ~deps) ();
+                                       ])
+                               (F.Tensor.uop tt)))))
+                values)
     (* Indexed access *)
     | E_gather { data; indices; axis } ->
         Some
-          (fun k ->
-            ret k (dt data) (F.Op.gather (go data) ~dim:axis (go indices)))
+          (fun () ->
+            ret (dt data) (F.Op.gather (go data) ~dim:axis (go indices)))
     | E_scatter { data_template; indices; updates; axis; mode; unique_indices }
       ->
         Some
-          (fun k ->
+          (fun () ->
             (* Over a split destination each device writes its slice: the
                updates and their positions are split alike off the write axis
                and whole along it. *)
             let place = placement_in st data_template in
             let along = Nx_effect.Placement.uncut place ~axis in
-            ret k (dt data_template)
+            ret (dt data_template)
               (F.Op.scatter_indexed
                  (write_destination st (go data_template) ~place)
                  ~dim:axis (aligned st along indices) (aligned st along updates)
@@ -2434,12 +2430,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        read through a clamped gather per axis and masked. *)
     | E_update { t_in; starts; v } ->
         Some
-          (fun k ->
+          (fun () ->
             let tshape = shape_of t_in and vshape = shape_of v in
             let rank = Array.length tshape in
             let tt = go t_in and tv = go v in
             let zero = scalar_of (dt v) (ND.zero (dt v)) in
-            if rank = 0 then ret k (dt t_in) tv
+            if rank = 0 then ret (dt t_in) tv
             else if not (is_traced starts) then begin
               let start =
                 Nx_array.Elements.get ND.int32 (Nx_effect.to_host starts)
@@ -2457,7 +2453,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                   (Array.to_list vshape) (F.Tensor.Sbool true)
               in
               let mask = F.Op.pad ~value:(F.Tensor.Sbool false) ones pads in
-              ret k (dt t_in)
+              ret (dt t_in)
                 (F.Elementwise.where mask (F.Op.pad ~value:zero tv pads) tt)
             end
             else if
@@ -2507,8 +2503,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                      [ Array.fold_left ( * ) 1 tshape ])
                   ~dim:0 index src ~mode:`Set ~unique:true
               in
-              ret k (dt t_in)
-                (F.Movement.reshape written (Array.to_list tshape))
+              ret (dt t_in) (F.Movement.reshape written (Array.to_list tshape))
             end
             else begin
               let st_t = go starts in
@@ -2558,14 +2553,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     | Some m -> F.Elementwise.bitwise_and m inside)
               done;
               let mask = Option.get !mask in
-              ret k (dt t_in) (F.Elementwise.where mask !win tt)
+              ret (dt t_in) (F.Elementwise.where mask !win tt)
             end)
     (* Matrix multiplication *)
     | E_matmul { a; b } ->
         Some
-          (fun k ->
+          (fun () ->
             let ta = go a and tb = go b in
-            ret k (dt a)
+            ret (dt a)
               (if narrow_float ta then
                  F.Dtype_ops.cast
                    (F.Op.matmul
@@ -2616,38 +2611,31 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           { Quant.device = st.st_device; quant_matmul; block_matmul }
         in
         Some
-          (fun k ->
-            continue k
-              (Effect.Deep.match_with
-                 (fun () -> Quant.lower kernels w op)
-                 () (handler st)))
+          (fun () ->
+            Effect.Deep.match_with
+              (fun () -> Quant.lower kernels w op)
+              () (handler st))
     (* A placement inside a program: the identity at the value's own placement,
        a [reshard] to another placement over the program's devices; any other
        target raises. *)
     | E_place { placement = q; t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             let q = layout q in
             let p = placement_in st t_in in
-            match
-              Nx_effect.Placement.check_shape "Nx.place" q (shape_of t_in)
-            with
-            | exception (Invalid_argument _ as e) -> discontinue k e
-            | () ->
-                if Nx.Placement.equal p q then continue k t_in
-                else if not (over st.st_devices q) then
-                  discontinue k
-                    (Jit_error
-                       (Format.asprintf
-                          "Rune.jit: a program on %a cannot place a value on \
-                           %a; place it outside the compiled function"
-                          pp_devices st.st_devices Nx.Placement.pp q))
-                else
-                  continue k (traced st q (dt t_in) (reshard st p q (go t_in))))
+            Nx_effect.Placement.check_shape "Nx.place" q (shape_of t_in);
+            if Nx.Placement.equal p q then t_in
+            else if not (over st.st_devices q) then
+              raise
+                (Jit_error
+                   (Format.asprintf
+                      "Rune.jit: a program on %a cannot place a value on %a; \
+                       place it outside the compiled function"
+                      pp_devices st.st_devices Nx.Placement.pp q))
+            else traced st q (dt t_in) (reshard st p q (go t_in)))
     (* A traced value lives where its operation put it, which is what the
        gradient of a placement asks of its primal. *)
-    | E_placement x when is_traced x ->
-        Some (fun k -> continue k (placement_in st x))
+    | E_placement x when is_traced x -> Some (fun () -> placement_in st x)
     | E_placement _ -> None
     (* Random bits compile only from a key that depends on the traced inputs. A
        constant key (implicit RNG such as [Nx.rand], or a captured key) would
@@ -2655,10 +2643,10 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        call — the worst failure mode, wrong without erring. *)
     | E_threefry { key; ctr } ->
         Some
-          (fun k ->
+          (fun () ->
             let kt = go key in
             if not (depends_on_input st (F.Tensor.uop kt)) then
-              discontinue k
+              raise
                 (Jit_error
                    "Rune.jit: random number generation from a constant key \
                     inside jit: the key does not depend on the jitted \
@@ -2667,22 +2655,22 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                     jitted function (derive per-call keys with Nx.Rng.split or \
                     Nx.Rng.fold_in); implicit RNG (Nx.rand and friends) is not \
                     supported inside jit")
-            else ret k ND.int32 (threefry_graph kt (go ctr)))
+            else ret ND.int32 (threefry_graph kt (go ctr)))
     | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (unfold_graph st t_in ~kernel_size ~stride ~dilation ~padding))
     | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
         Some
-          (fun k ->
-            ret k (dt t_in)
+          (fun () ->
+            ret (dt t_in)
               (fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation
                  ~padding))
-    | E_fft _ -> Some (fun k -> refuse k "fft")
-    | E_ifft _ -> Some (fun k -> refuse k "ifft")
-    | E_rfft _ -> Some (fun k -> refuse k "rfft")
-    | E_irfft _ -> Some (fun k -> refuse k "irfft")
+    | E_fft _ -> Some (fun () -> refuse "fft")
+    | E_ifft _ -> Some (fun () -> refuse "ifft")
+    | E_rfft _ -> Some (fun () -> refuse "rfft")
+    | E_irfft _ -> Some (fun () -> refuse "irfft")
     (* Linear algebra without a single Tolk Uop lowers at trace time into
        ordinary Tolk compositions, like matmul and the other lowered C-kernel
        ops; the factorizations unroll a number of steps fixed by the input
@@ -2692,44 +2680,44 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
        the compiled program. *)
     | E_cholesky { t_in; upper } ->
         Some
-          (fun k ->
+          (fun () ->
             if ND.is_float (dt t_in) then
-              ret k (dt t_in) (F.Linalg.cholesky ~upper (go t_in))
-            else refuse k "cholesky")
+              ret (dt t_in) (F.Linalg.cholesky ~upper (go t_in))
+            else refuse "cholesky")
     | E_qr { t_in; reduced } ->
         Some
-          (fun k ->
+          (fun () ->
             if ND.is_float (dt t_in) then
               let q, r = F.Linalg.qr ~reduced (go t_in) in
-              ret2 k (dt t_in) q r
-            else refuse k "qr")
+              ret2 (dt t_in) q r
+            else refuse "qr")
     | E_lu { t_in } ->
         Some
-          (fun k ->
+          (fun () ->
             if ND.is_float (dt t_in) then
               let tl, tpiv, tperm = F.Linalg.lu (go t_in) in
-              match result_placement st eff with
-              | p ->
-                  continue k
-                    ( traced st p (dt t_in) tl,
-                      traced st p ND.int32 tpiv,
-                      traced st p ND.int32 tperm )
-              | exception (Invalid_argument _ as e) -> discontinue k e
-            else refuse k "lu")
-    | E_svd _ -> Some (fun k -> refuse k "svd")
-    | E_eigvals _ -> Some (fun k -> refuse k "eigvals")
-    | E_eig _ -> Some (fun k -> refuse k "eig")
-    | E_eigvalsh _ -> Some (fun k -> refuse k "eigvalsh")
-    | E_eigh _ -> Some (fun k -> refuse k "eigh")
+              let p = result_placement st eff in
+              ( traced st p (dt t_in) tl,
+                traced st p ND.int32 tpiv,
+                traced st p ND.int32 tperm )
+            else refuse "lu")
+    | E_svd _ -> Some (fun () -> refuse "svd")
+    | E_eigvals _ -> Some (fun () -> refuse "eigvals")
+    | E_eig _ -> Some (fun () -> refuse "eig")
+    | E_eigvalsh _ -> Some (fun () -> refuse "eigvalsh")
+    | E_eigh _ -> Some (fun () -> refuse "eigh")
     | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
         Some
-          (fun k ->
+          (fun () ->
             if ND.is_float (dt a) then
-              ret k (dt a)
+              ret (dt a)
                 (F.Linalg.solve_triangular ~upper ~transpose ~unit_diag (go a)
                    (go b))
-            else refuse k "solve_triangular")
+            else refuse "solve_triangular")
     | _ -> None
+  in
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff -> Option.map Gate.deliver (rule eff)
   in
   { retc = Fun.id; exnc = raise; effc }
 

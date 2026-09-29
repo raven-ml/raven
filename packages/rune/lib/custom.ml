@@ -50,10 +50,10 @@ let custom_vjp params_s result_s ~fwd ~bwd params =
   try
     Effect.perform
       (E_custom_vjp (Vjp_call { params_s; result_s; params; fwd; bwd }))
-  with Effect.Unhandled _ -> fst (fwd params)
+  with Effect.Unhandled (E_custom_vjp _) -> fst (fwd params)
 
 let custom_jvp params_s result_s ~f ~jvp params =
   try
     Effect.perform
       (E_custom_jvp (Jvp_call { params_s; result_s; params; f; jvp }))
-  with Effect.Unhandled _ -> f params
+  with Effect.Unhandled (E_custom_jvp _) -> f params

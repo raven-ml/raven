@@ -28,19 +28,15 @@ let add t v = try Effect.perform (E_add (t, v)) with Effect.Unhandled _ -> ()
 
 (* [dropping f] is [f ()] with every addition it makes dropped. *)
 let dropping f =
-  Effect.Deep.match_with f ()
-    {
-      retc = Fun.id;
-      exnc = raise;
-      effc =
-        (fun (type c) (eff : c Effect.t) ->
-          match eff with
-          | E_add _ ->
-              Some
-                (fun (k : (c, _) Effect.Deep.continuation) ->
-                  Effect.Deep.continue k ())
-          | _ -> None);
-    }
+  let rule : type c. c Effect.t -> (unit -> c) option = function
+    | E_add _ -> Some (fun () -> ())
+    | _ -> None
+  in
+  let effc : type c. c Effect.t -> ((c, _) Effect.Deep.continuation -> _) option
+      =
+   fun eff -> Option.map Gate.deliver (rule eff)
+  in
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
 
 let rec collect : type a b r.
     (a, b) t -> zero:(a, b) Nx.t -> (unit -> r) -> r * (a, b) Nx.t =
@@ -80,32 +76,27 @@ let rec collect : type a b r.
     receive (Nx.unpack dtype (List.hd s));
     { res with r_carry = c }
   in
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option = function
+  let rule : type c. c Effect.t -> (unit -> c) option = function
     | E_add (t', v) -> (
         match Type.Id.provably_equal t t' with
-        | Some Type.Equal ->
-            Some
-              (fun k ->
-                match receive v with
-                | () -> continue k ()
-                | exception e -> discontinue k e)
+        | Some Type.Equal -> Some (fun () -> receive v)
         | None -> None)
     (* A scan no stager lies beyond is declined: its performer folds it where it
        performed it, inside this scope, past no handler. *)
-    | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
+    | Scan.E_scan_probe -> Some Scan.probe
     | Scan.E_scan req ->
         Some
-          (fun k ->
-            Scan.pass_on k
+          (fun () ->
+            Scan.pass_on
               ~fold:(fun () -> raise Scan.Not_staged)
               (fun () -> stage req))
     | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals }) ->
         Some
-          (fun k ->
+          (fun () ->
             let f params =
               collect t ~zero:(Nx.zeros_like zero) (fun () -> f params)
             in
-            match
+            let y, s =
               Remat.run
                 (Remat.Call
                    {
@@ -115,12 +106,13 @@ let rec collect : type a b r.
                      f;
                      residuals;
                    })
-            with
-            | y, s ->
-                receive s;
-                continue k y
-            | exception e -> discontinue k e)
+            in
+            receive s;
+            y)
     | _ -> None
+  in
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff -> Option.map Gate.deliver (rule eff)
   in
   Gate.with_transform (fun () ->
       match_with f () { retc = (fun r -> (r, !total)); exnc = raise; effc })

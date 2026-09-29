@@ -3,12 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Tracing gate shared by the differentiation handlers: [no_grad] and [detach]
-   turn interception off for a scope, in both reverse and forward mode. Handler
-   callbacks run outside the continuation containing an inner [no_grad], so a
-   private effect query from those callbacks cannot recover its tracing state.
-   Scopes belong to a systhread within its domain; overlapping fibers on that
-   same thread still require a separate scope mechanism. *)
+(* What rune's handlers share: the tracing gate, and how a handler answers an
+   operation ([deliver]).
+
+   [no_grad] and [detach] turn interception off for a scope, in both reverse and
+   forward mode. Handler callbacks run outside the continuation containing an
+   inner [no_grad], so a private effect query from those callbacks cannot
+   recover its tracing state. Scopes belong to a systhread within its domain;
+   overlapping fibers on that same thread still require a separate scope
+   mechanism. *)
 
 module Threads = Map.Make (Int)
 
@@ -50,3 +53,18 @@ let with_transform f =
   with_state (fun state -> { state with transform_depth = state.transform_depth + 1 }) f
 
 let transforming () = (current ()).transform_depth > 0
+
+(* A handler answers the operation that asked: its case for an operation is a
+   rule computing the answer, and [deliver run k] resumes the performer of [k]
+   with the value of [run ()], or with the exception it raises. OCaml sends an
+   exception raised in a handler's case to whoever installed the handler, past
+   the performer's own handlers and finalisers; delivered, it raises where the
+   operation was performed, as it would with no handler. Only [run] is guarded:
+   an exception the performer raises once resumed leaves through [continue]
+   untouched. A performer that falls back when its operation is unhandled
+   matches [Effect.Unhandled] of its own operation: another's is a rule's
+   error. *)
+let deliver run k =
+  match run () with
+  | v -> Effect.Deep.continue k v
+  | exception e -> Effect.Deep.discontinue k e

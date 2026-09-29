@@ -191,7 +191,7 @@ away from its call site runs under a nested scope started at `Nx.zeros_like
 zero`, its sum leaves as a value, and the scope adds it.
 
 - **`E_scan`.** The scope answers the probe by passing it on and claims the
-  scan with `Scan.pass_on` (`scan.ml:83-89`). When a stager lies beyond and
+  scan with `Scan.pass_on` (`scan.ml:76-78`). When a stager lies beyond and
   stages it, the scope passes the scan on with one more carry leaf,
   `Nx.zeros_like zero`, and a step that runs the received step under a nested
   scope started at that leaf and returns `c' @ [total']`; the scope adds the
@@ -201,13 +201,13 @@ zero`, its sum leaves as a value, and the scope adds it.
   it performed the scan, inside the scope, so each step's additions reach the
   scope as they are made and no handler between them (`Nx.Rng.with_key`,
   `with_debug`) is skipped. Every other exception raised while
-  the scan runs is delivered to its performer (`Scan.deliver`,
-  `scan.ml:65-70`). `stage_scan` sees an ordinary carry.
+  the scan runs is delivered to its performer (law 7). `stage_scan` sees an
+  ordinary carry.
 - **`E_remat`.** The scope passes on the remat of `f'`, which runs `f` under a
   nested scope started at `Nx.zeros_like zero` and returns its sum as an extra
   result, forward's pattern (`forward.ml:740-790`); the scope adds that sum. A
   recompute of `f'` discards the extra result. An exception `f` raises is
-  delivered to the remat's performer.
+  delivered to the remat's performer (law 7).
 - **`cond`, `while_loop`** branch in OCaml (`rune.ml:374-380`); an addition
   inside them is straight-line code.
 
@@ -356,6 +356,16 @@ Along the consumer's path:
    plain sum of its marked little losses plus unmarked terms. The weight a
    later mean or scale gives a marked loss is `∂L/∂ℓ`, a reverse-mode quantity
    forward mode cannot see.
+7. **A handler answers the operation that asked.** Every case of every
+   handler computes an answer and resumes the performer with it, a value
+   through `continue` or an exception through `discontinue` (`Gate.deliver`,
+   `gate.ml:57-70`); a rule never raises past its performer. A performer that
+   falls back when unhandled matches only `Effect.Unhandled` of its own
+   operation. Prevents an error in a rule, or in the code a handler runs for a
+   call (a scan's step, a remat's function, a custom call's functions), from
+   leaving through the `match_with` that installed the handler: it would skip
+   the performer's handlers and finalisers, and an error the function catches
+   would abort the whole transformation.
 
 ## Drawbacks
 

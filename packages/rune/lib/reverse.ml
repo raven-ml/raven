@@ -85,7 +85,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
 
   (* [pull1 out x f] records: cotangent of [x] += [f] applied to the cotangent
      of [out]. Skips recording when [x] is untracked. *)
-  let pull1 (type a b c d) k (out : (a, b) t) (x : (c, d) t)
+  let pull1 (type a b c d) (out : (a, b) t) (x : (c, d) t)
       (f : (a, b) t -> (c, d) t) =
     Tensor_map.fresh out x;
     if tracked x then begin
@@ -95,12 +95,12 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
           | None -> ()
           | Some g -> Tape.accumulate tape x (f g))
     end;
-    continue k out
+    out
   in
 
   (* [pull2 out a b fa fb] is [pull1] for binary arithmetic: contributions are
      reduced back to each input's shape to undo broadcasting. *)
-  let pull2 (type a b) k (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
+  let pull2 (type a b) (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
       (fa : (a, b) t -> (a, b) t) (fb : (a, b) t -> (a, b) t) =
     Tensor_map.fresh out a_in;
     Tensor_map.fresh out b_in;
@@ -116,12 +116,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               if tb then
                 Tape.accumulate tape b_in (unbroadcast (fb g) (T.shape b_in)))
     end;
-    continue k out
+    out
   in
 
-  let no_rule (type c) k (op : string) (inputs_tracked : bool) (out : unit -> c)
-      =
-    if inputs_tracked then err_no_rule op else continue k (out ())
+  let no_rule (type c) (op : string) (inputs_tracked : bool) (out : unit -> c) =
+    if inputs_tracked then err_no_rule op else out ()
   in
 
   (* A function this handler runs in its own context, as a custom call's, runs
@@ -130,7 +129,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
   let dropped f x = Total.dropping (fun () -> f x) in
   let own f x = if Tape.rerun tape then dropped f x else f x in
 
-  let body : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  let body : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     if not (Gate.enabled ()) then None
     else
@@ -146,9 +145,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          taken now, while the primal is in reach of the handlers above. *)
       | E_place { placement = p; t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let back = placement t_in in
-              pull1 k (place p t_in) t_in (place back))
+              pull1 (place p t_in) t_in (place back))
       | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
@@ -173,121 +172,120 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          tape records its transpose, a scan too (see [staged_scan]). Otherwise
          the eager fold runs under a nested instance of this handler, taping
          every step. *)
-      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
+      | Scan.E_scan_probe -> Some Scan.probe
       | Scan.E_scan req ->
           Some
-            (fun k ->
+            (fun () ->
               let fold () =
                 Effect.Deep.match_with
                   (fun () -> Scan.eager req)
                   () (handler tape)
               in
-              Scan.pass_on k ~fold (fun () -> staged_scan tape req))
+              Scan.pass_on ~fold (fun () -> staged_scan tape req))
       (* Binary arithmetic *)
-      | E_add { a; b } -> Some (fun k -> pull2 k (add a b) a b Fun.id Fun.id)
-      | E_sub { a; b } -> Some (fun k -> pull2 k (sub a b) a b Fun.id T.neg)
+      | E_add { a; b } -> Some (fun () -> pull2 (add a b) a b Fun.id Fun.id)
+      | E_sub { a; b } -> Some (fun () -> pull2 (sub a b) a b Fun.id T.neg)
       | E_mul { a; b } ->
           Some
-            (fun k ->
-              pull2 k (mul a b) a b (fun g -> T.mul g b) (fun g -> T.mul g a))
+            (fun () ->
+              pull2 (mul a b) a b (fun g -> T.mul g b) (fun g -> T.mul g a))
       | E_fdiv { a; b } ->
           Some
-            (fun k ->
-              pull2 k (fdiv a b) a b
+            (fun () ->
+              pull2 (fdiv a b) a b
                 (fun g -> T.div g b)
                 (fun g -> T.mul (T.neg g) (T.div a (T.mul b b))))
       | E_pow { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = pow a b in
-              pull2 k out a b
+              pull2 out a b
                 (fun g -> T.mul g (Derivs.pow_wrt_base a b))
                 (fun g -> T.mul g (Derivs.pow_wrt_exp a out)))
       | E_max { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = max a b in
               let mask g = T.cast (T.dtype g) (T.greater a b) in
-              pull2 k out a b
+              pull2 out a b
                 (fun g -> T.mul g (mask g))
                 (fun g ->
                   let m = mask g in
                   T.mul g (T.rsub_s (Derivs.one_like m) m)))
       | E_min { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = min a b in
               let mask g = T.cast (T.dtype g) (T.less a b) in
-              pull2 k out a b
+              pull2 out a b
                 (fun g -> T.mul g (mask g))
                 (fun g ->
                   let m = mask g in
                   T.mul g (T.rsub_s (Derivs.one_like m) m)))
       | E_atan2 { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let denom () = T.add (T.mul a a) (T.mul b b) in
-              pull2 k (atan2 a b) a b
+              pull2 (atan2 a b) a b
                 (fun g -> T.mul g (T.div b (denom ())))
                 (fun g -> T.mul g (T.neg (T.div a (denom ())))))
       | E_mod { a; b } ->
           Some
-            (fun k ->
-              no_rule k "mod" (tracked a || tracked b) (fun () -> mod_ a b))
+            (fun () ->
+              no_rule "mod" (tracked a || tracked b) (fun () -> mod_ a b))
       (* Unary arithmetic *)
-      | E_neg { t_in } -> Some (fun k -> pull1 k (neg t_in) t_in T.neg)
+      | E_neg { t_in } -> Some (fun () -> pull1 (neg t_in) t_in T.neg)
       | E_sin { t_in } ->
-          Some
-            (fun k -> pull1 k (sin t_in) t_in (fun g -> T.mul g (T.cos t_in)))
+          Some (fun () -> pull1 (sin t_in) t_in (fun g -> T.mul g (T.cos t_in)))
       | E_cos { t_in } ->
           Some
-            (fun k ->
-              pull1 k (cos t_in) t_in (fun g -> T.mul g (T.neg (T.sin t_in))))
+            (fun () ->
+              pull1 (cos t_in) t_in (fun g -> T.mul g (T.neg (T.sin t_in))))
       | E_tan { t_in } ->
           Some
-            (fun k ->
-              pull1 k (tan t_in) t_in (fun g -> T.mul g (Derivs.tan' t_in)))
+            (fun () ->
+              pull1 (tan t_in) t_in (fun g -> T.mul g (Derivs.tan' t_in)))
       | E_asin { t_in } ->
           Some
-            (fun k ->
-              pull1 k (asin t_in) t_in (fun g -> T.mul g (Derivs.asin' t_in)))
+            (fun () ->
+              pull1 (asin t_in) t_in (fun g -> T.mul g (Derivs.asin' t_in)))
       | E_acos { t_in } ->
           Some
-            (fun k ->
-              pull1 k (acos t_in) t_in (fun g ->
+            (fun () ->
+              pull1 (acos t_in) t_in (fun g ->
                   T.mul g (T.neg (Derivs.asin' t_in))))
       | E_atan { t_in } ->
           Some
-            (fun k ->
-              pull1 k (atan t_in) t_in (fun g -> T.mul g (Derivs.atan' t_in)))
+            (fun () ->
+              pull1 (atan t_in) t_in (fun g -> T.mul g (Derivs.atan' t_in)))
       | E_sinh { t_in } ->
           Some
-            (fun k -> pull1 k (sinh t_in) t_in (fun g -> T.mul g (T.cosh t_in)))
+            (fun () -> pull1 (sinh t_in) t_in (fun g -> T.mul g (T.cosh t_in)))
       | E_cosh { t_in } ->
           Some
-            (fun k -> pull1 k (cosh t_in) t_in (fun g -> T.mul g (T.sinh t_in)))
+            (fun () -> pull1 (cosh t_in) t_in (fun g -> T.mul g (T.sinh t_in)))
       | E_tanh { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = tanh t_in in
-              pull1 k out t_in (fun g -> T.mul g (Derivs.tanh' out)))
+              pull1 out t_in (fun g -> T.mul g (Derivs.tanh' out)))
       | E_exp { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = exp t_in in
-              pull1 k out t_in (fun g -> T.mul g out))
+              pull1 out t_in (fun g -> T.mul g out))
       | E_log { t_in } ->
           Some
-            (fun k -> pull1 k (log t_in) t_in (fun g -> T.mul g (T.recip t_in)))
+            (fun () -> pull1 (log t_in) t_in (fun g -> T.mul g (T.recip t_in)))
       | E_sqrt { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = sqrt t_in in
-              pull1 k out t_in (fun g -> T.mul g (Derivs.sqrt' out)))
+              pull1 out t_in (fun g -> T.mul g (Derivs.sqrt' out)))
       | E_recip { t_in } ->
           Some
-            (fun k ->
-              pull1 k (recip t_in) t_in (fun g -> T.mul g (Derivs.recip' t_in)))
+            (fun () ->
+              pull1 (recip t_in) t_in (fun g -> T.mul g (Derivs.recip' t_in)))
       (* On complex dtypes [abs] is the modulus: real-valued, and not
          holomorphic. Its pullback conjugates the direction — going through
          [sign z] itself would flip the sign of the imaginary contribution — and
@@ -296,17 +294,17 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          on real dtypes. *)
       | E_abs { t_in } ->
           Some
-            (fun k ->
-              pull1 k (abs t_in) t_in (fun g ->
+            (fun () ->
+              pull1 (abs t_in) t_in (fun g ->
                   T.mul (Derivs.real_part g) (T.conjugate (T.sign t_in))))
       | E_erf { t_in } ->
           Some
-            (fun k ->
-              pull1 k (erf t_in) t_in (fun g -> T.mul g (Derivs.erf' t_in)))
+            (fun () ->
+              pull1 (erf t_in) t_in (fun g -> T.mul g (Derivs.erf' t_in)))
       (* Selection *)
       | E_where { condition; if_true; if_false } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = where condition if_true if_false in
               let tt = tracked if_true and tf = tracked if_false in
               if tt || tf then begin
@@ -325,40 +323,40 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                                (T.mul g (T.rsub_s (Derivs.one_like mask) mask))
                                (T.shape if_false)))
               end;
-              continue k out)
+              out)
       (* Movement: linear ops whose pull is the transpose movement. *)
       | E_reshape { t_in; new_shape } ->
           Some
-            (fun k ->
+            (fun () ->
               (* A cotangent can be a lazy view (a transpose, a broadcast),
                  which a reshape may not take as it is. *)
-              pull1 k (reshape t_in new_shape) t_in (fun g ->
+              pull1 (reshape t_in new_shape) t_in (fun g ->
                   T.reshape (T.shape t_in) (T.contiguous g)))
       | E_permute { t_in; axes } ->
           Some
-            (fun k ->
+            (fun () ->
               let inv = Array.make (Array.length axes) 0 in
               Array.iteri (fun i d -> inv.(d) <- i) axes;
-              pull1 k (permute t_in axes) t_in (fun g ->
+              pull1 (permute t_in axes) t_in (fun g ->
                   T.transpose g ~axes:(Array.to_list inv)))
       | E_expand { t_in; new_target_shape } ->
           Some
-            (fun k ->
-              pull1 k (expand t_in new_target_shape) t_in (fun g ->
+            (fun () ->
+              pull1 (expand t_in new_target_shape) t_in (fun g ->
                   unbroadcast g (T.shape t_in)))
       | E_pad { t_in; padding_config; fill_value } ->
           Some
-            (fun k ->
+            (fun () ->
               let limits =
                 Array.mapi
                   (fun i (pre, _) -> (pre, pre + (T.shape t_in).(i)))
                   padding_config
               in
-              pull1 k (pad t_in padding_config fill_value) t_in (fun g ->
+              pull1 (pad t_in padding_config fill_value) t_in (fun g ->
                   T.shrink limits g))
       | E_shrink { t_in; limits } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = shrink t_in limits in
               let pads =
                 Array.mapi
@@ -368,16 +366,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                     (start, total - start - len))
                   limits
               in
-              pull1 k out t_in (fun g ->
-                  pad g pads (Nx_dtype.zero (dtype t_in))))
+              pull1 out t_in (fun g -> pad g pads (Nx_dtype.zero (dtype t_in))))
       | E_flip { t_in; dims_to_flip } ->
           Some
-            (fun k ->
-              pull1 k (flip t_in dims_to_flip) t_in (fun g ->
-                  flip g dims_to_flip))
+            (fun () ->
+              pull1 (flip t_in dims_to_flip) t_in (fun g -> flip g dims_to_flip))
       | E_sliding_window { t_in; axis; window; step } ->
           Some
-            (fun k ->
+            (fun () ->
               (* The transpose is overlap-add: input position [w*step + j]
                  accumulates the cotangent of window [w] at offset [j]. That is
                  what [fold] computes — it sums the taps landing on each output
@@ -386,7 +382,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                  operand layout is [(leading…, window, count)], so permute the
                  windowed axis into the trailing spatial slot, fold, and permute
                  the result back. *)
-              pull1 k (sliding_window t_in ~axis ~window ~step) t_in (fun g ->
+              pull1 (sliding_window t_in ~axis ~window ~step) t_in (fun g ->
                   let in_shape = T.shape t_in in
                   let r = Array.length in_shape in
                   (* [g] is [(d0…d_axis-1, count, d_axis+1…d_r-1, window)]. *)
@@ -415,7 +411,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   T.transpose folded ~axes:from_fold))
       | E_cat { t_list; axis } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = cat t_list ~axis in
               if List.exists tracked t_list then begin
                 track out;
@@ -434,66 +430,69 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                                 (shrink_axis axis (lo, lo + len) g))
                           t_list)
               end;
-              continue k out)
+              out)
       | E_cast { t_in; target_dtype } ->
           Some
-            (fun k ->
-              pull1 k (cast ~dtype:target_dtype t_in) t_in (fun g ->
+            (fun () ->
+              pull1 (cast ~dtype:target_dtype t_in) t_in (fun g ->
                   T.cast (dtype t_in) g))
       | E_contiguous { t_in } ->
-          Some (fun k -> pull1 k (contiguous t_in) t_in Fun.id)
-      | E_copy { t_in } -> Some (fun k -> pull1 k (copy t_in) t_in Fun.id)
+          Some (fun () -> pull1 (contiguous t_in) t_in Fun.id)
+      | E_copy { t_in } -> Some (fun () -> pull1 (copy t_in) t_in Fun.id)
       (* Reductions *)
       | E_reduce_sum { t_in; axes } ->
           Some
-            (fun k ->
+            (fun () ->
               let shape_in = T.shape t_in in
-              pull1 k (reduce ~op:`Sum ~axes t_in) t_in (fun g ->
+              pull1 (reduce ~op:`Sum ~axes t_in) t_in (fun g ->
                   let kept =
                     T.shape
                       (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
                   T.broadcast_to shape_in (T.reshape kept g)))
       | E_reduce_max { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Max ~axes t_in in
               let axes = Array.to_list axes in
-              pull1 k out t_in (fun g ->
+              pull1 out t_in (fun g ->
                   T.mul (Derivs.reduction_kept ~axes t_in g)
                     (Derivs.extrema' ~axes t_in out)))
       | E_reduce_min { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Min ~axes t_in in
               let axes = Array.to_list axes in
-              pull1 k out t_in (fun g ->
+              pull1 out t_in (fun g ->
                   T.mul (Derivs.reduction_kept ~axes t_in g)
                     (Derivs.extrema' ~axes t_in out)))
       | E_reduce_prod { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Prod ~axes t_in in
               let axes = Array.to_list axes in
-              pull1 k out t_in (fun g ->
+              pull1 out t_in (fun g ->
                   T.mul (Derivs.reduction_kept ~axes t_in g)
                     (Derivs.prod' ~axes t_in out)))
       (* Sorting: a sort is a gather at the argsort indices. *)
       | E_sort { t_in; axis; descending } ->
           Some
-            (fun k ->
-              pull1 k (sort ~axis ~descending t_in) t_in (fun g ->
+            (fun () ->
+              pull1 (sort ~axis ~descending t_in) t_in (fun g ->
                   let indices = argsort ~axis ~descending t_in in
                   scatter ~mode:`Add ~unique_indices:false (T.zeros_like t_in)
                     ~indices ~updates:g ~axis))
       (* Scans *)
       | E_associative_scan { t_in; axis; op } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = associative_scan ~axis ~op t_in in
               let shape_in = T.shape t_in in
               let axis_norm =
                 let rank = Array.length shape_in in
                 if axis < 0 then axis + rank else axis
               in
-              pull1 k out t_in (fun g ->
+              pull1 out t_in (fun g ->
                   match op with
                   | `Sum ->
                       let flipped = T.flip g ~axes:[ axis_norm ] in
@@ -578,14 +577,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       (* Gather / scatter *)
       | E_gather { data; indices; axis } ->
           Some
-            (fun k ->
-              pull1 k (gather data indices ~axis) data (fun g ->
+            (fun () ->
+              pull1 (gather data indices ~axis) data (fun g ->
                   scatter ~mode:`Add ~unique_indices:false (T.zeros_like data)
                     ~indices ~updates:g ~axis))
       | E_scatter
           { data_template; indices; updates; axis; mode; unique_indices } ->
           Some
-            (fun k ->
+            (fun () ->
               let out =
                 scatter ~mode ~unique_indices data_template ~indices ~updates
                   ~axis
@@ -645,10 +644,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           Tape.accumulate tape data_template gt
                         end)
               end;
-              continue k out)
+              out)
       | E_update { t_in; starts; v } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = update t_in ~starts v in
               let tt = tracked t_in and tv = tracked v in
               if tt || tv then begin
@@ -683,11 +682,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           Tape.accumulate tape v !win
                         end)
               end;
-              continue k out)
+              out)
       (* Windowing: unfold and fold are duals. *)
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some
-            (fun k ->
+            (fun () ->
               let input_shape = T.shape t_in in
               let num_spatial = Array.length kernel_size in
               let output_size =
@@ -695,19 +694,19 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   (Array.length input_shape - num_spatial)
                   num_spatial
               in
-              pull1 k (unfold t_in ~kernel_size ~stride ~dilation ~padding) t_in
+              pull1 (unfold t_in ~kernel_size ~stride ~dilation ~padding) t_in
                 (fun g ->
                   fold g ~output_size ~kernel_size ~stride ~dilation ~padding))
       | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
           Some
-            (fun k ->
-              pull1 k
+            (fun () ->
+              pull1
                 (fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding)
                 t_in (fun g -> unfold g ~kernel_size ~stride ~dilation ~padding))
       (* Matrix multiplication *)
       | E_matmul { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = matmul a b in
               let ta = tracked a and tb = tracked b in
               if ta || tb then begin
@@ -782,14 +781,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           Tape.accumulate tape b grad_b
                         end)
               end;
-              continue k out)
+              out)
       (* FFT: the transform matrix is symmetric, so each transform is its own
          transpose and pulls back through itself. Going through the inverse
          instead would reverse the frequency index. *)
       | E_fft { t; axes } ->
-          Some (fun k -> pull1 k (fft t ~axes) t (fun g -> fft g ~axes))
+          Some (fun () -> pull1 (fft t ~axes) t (fun g -> fft g ~axes))
       | E_ifft { t; axes } ->
-          Some (fun k -> pull1 k (ifft t ~axes) t (fun g -> ifft g ~axes))
+          Some (fun () -> pull1 (ifft t ~axes) t (fun g -> ifft g ~axes))
       (* rfft factors as real-embed, fft over every transformed axis, then a
          slice to the first n/2 + 1 bins of the last one. Each factor pulls back
          through its own transpose: the slice through a zero-pad, the fft
@@ -799,8 +798,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          one. *)
       | E_rfft { t; dtype; axes } ->
           Some
-            (fun k ->
-              pull1 k (rfft t ~dtype ~axes) t (fun g ->
+            (fun () ->
+              pull1 (rfft t ~dtype ~axes) t (fun g ->
                   let last = axes.(Array.length axes - 1) in
                   let n = (T.shape t).(last) in
                   let m = (T.shape g).(last) in
@@ -822,8 +821,8 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          n/2 + 1 bins before the effect, so no other adjustment remains. *)
       | E_irfft { t; dtype; axes; s } ->
           Some
-            (fun k ->
-              pull1 k (irfft t ~axes ?s ~dtype) t (fun g ->
+            (fun () ->
+              pull1 (irfft t ~axes ?s ~dtype) t (fun g ->
                   let last = axes.(Array.length axes - 1) in
                   let n = (T.shape g).(last) in
                   let m = (n / 2) + 1 in
@@ -838,15 +837,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   else head))
       | Axis.E_lanes { axis; t_in } ->
           Some
-            (fun k ->
-              no_rule k "Rune.lanes" (tracked t_in) (fun () ->
+            (fun () ->
+              no_rule "Rune.lanes" (tracked t_in) (fun () ->
                   Axis.lanes axis t_in))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some
-            (fun k ->
+            (fun () ->
               let l = cholesky ~upper t_in in
-              pull1 k l t_in (fun dl ->
+              pull1 l t_in (fun dl ->
                   let l_lower, dl_lower =
                     if upper then (T.matrix_transpose l, T.matrix_transpose dl)
                     else (l, dl)
@@ -875,7 +874,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   T.tril da_sym))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = solve_triangular ~upper ~transpose ~unit_diag a b in
               let ta = tracked a and tb = tracked b in
               if ta || tb then begin
@@ -916,10 +915,10 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           Tape.accumulate tape a grad_a
                         end)
               end;
-              continue k out)
+              out)
       | E_qr { t_in; reduced } ->
           Some
-            (fun k ->
+            (fun () ->
               let q, r = qr ~reduced t_in in
               if tracked t_in then begin
                 track q;
@@ -959,14 +958,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         in
                         Tape.accumulate tape t_in (T.matrix_transpose da_t))
               end;
-              continue k (q, r))
+              (q, r))
       (* P A = L U. The pivots and the permutation are integers, so only the
          packed factors carry a cotangent: with M = tril_-1(Lᵀ L̄) + triu(Ū Uᵀ),
          the cotangent of P A is L^-T M U^-T, and P's rows go back to where they
          came from. *)
       | E_lu { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let ((packed, _, perm) as out) = lu t_in in
               if tracked t_in then begin
                 if T.dim (-1) t_in <> T.dim (-2) t_in then
@@ -1010,30 +1009,30 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         Tape.accumulate tape t_in
                           (T.take_along_axis ~axis:(-2) ~indices:unperm gpa))
               end;
-              continue k out)
+              out)
       | E_svd { t_in; full_matrices } ->
           Some
-            (fun k ->
-              no_rule k "svd" (tracked t_in) (fun () -> svd ~full_matrices t_in))
+            (fun () ->
+              no_rule "svd" (tracked t_in) (fun () -> svd ~full_matrices t_in))
       | E_eigvals { t_in } ->
           Some
-            (fun k ->
-              no_rule k "eigvals" (tracked t_in) (fun () -> eigvals t_in))
+            (fun () ->
+              no_rule "eigvals" (tracked t_in) (fun () -> eigvals t_in))
       | E_eig { t_in } ->
-          Some (fun k -> no_rule k "eig" (tracked t_in) (fun () -> eig t_in))
+          Some (fun () -> no_rule "eig" (tracked t_in) (fun () -> eig t_in))
       | E_eigvalsh { t_in } ->
           Some
-            (fun k ->
-              no_rule k "eigvalsh" (tracked t_in) (fun () -> eigvalsh t_in))
+            (fun () ->
+              no_rule "eigvalsh" (tracked t_in) (fun () -> eigvalsh t_in))
       | E_eigh { t_in } ->
-          Some (fun k -> no_rule k "eigh" (tracked t_in) (fun () -> eigh t_in))
+          Some (fun () -> no_rule "eigh" (tracked t_in) (fun () -> eigh t_in))
       (* Custom rules. The forward function runs in the enclosing context: this
          handler replaces its internals with the user's rule, while enclosing
          transformations see the forward computation itself. *)
       | Custom.E_custom_vjp
           (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
           Some
-            (fun k ->
+            (fun () ->
               let any =
                 Nx.Ptree.fold params_s
                   (fun _ leaf any -> any || tracked leaf)
@@ -1066,13 +1065,13 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                              leaf)
                            params (bwd res cts)))
               end;
-              continue k y)
+              y)
       (* A custom_jvp has no reverse rule. One whose result holds no tensor
          has nothing to differentiate, and its function runs. *)
       | Custom.E_custom_jvp
           (Custom.Jvp_call { params_s; result_s; params; f; _ }) ->
           Some
-            (fun k ->
+            (fun () ->
               let y = own f params in
               if
                 Structure.holds_tensor result_s y
@@ -1083,7 +1082,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                 invalid_arg
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
-              else continue k y)
+              else y)
       (* Gradient checkpointing. The call passes on with [f] run under this
          handler over a scratch tape linked to this one, which tells whether the
          result depends on a tracked tensor: an argument, or one [f] captures.
@@ -1092,7 +1091,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          differentiates a second run of [f] (see [recompute]). *)
       | Remat.E_remat (Remat.Call { params_s; result_s; params; f; _ }) ->
           Some
-            (fun k ->
+            (fun () ->
               let depends = ref false in
               let f' params =
                 let scratch = Tape.create ~parent:tape () in
@@ -1108,7 +1107,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   (Remat.Call
                      { params_s; result_s; params; f = f'; residuals = true })
               in
-              if not !depends then continue k y
+              if not !depends then y
               else begin
                 (* A result that is one of the parameters is aliased, so its
                    cotangent is the result's alone. *)
@@ -1125,14 +1124,14 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                         (Nx.Ptree.map result_s
                            (fun _ leaf -> Tape.cotangent tape leaf)
                            y));
-                continue k y
+                y
               end)
       (* The barrier is the identity: an output's cotangent is its value's. *)
       | Remat.E_barrier { values; after } ->
           if not (List.exists (fun (Nx.P v) -> tracked v) values) then None
           else
             Some
-              (fun k ->
+              (fun () ->
                 let out = Remat.barrier ~after values in
                 List.iter2
                   (fun (Nx.P v) o ->
@@ -1145,7 +1144,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           | Some g -> Tape.accumulate tape v g)
                     end)
                   values out;
-                continue k out)
+                out)
       (* Quantised products. A weight is never differentiated; the cotangent of
          [x] is the transposed product with the same ids, summed over the axes
          along which [x] was broadcast. The tape holds the weight and the ids,
@@ -1153,7 +1152,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | Nx_quant.Effect.E_quant
           { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
           Some
-            (fun k ->
+            (fun () ->
               if tracked codes || tracked scales then err_quant ();
               let y = Nx_quant.Effect.perform w op in
               (match op with
@@ -1182,7 +1181,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                           in
                           Tape.accumulate tape x dx)
               | Apply _ | Dequant _ -> ());
-              continue k y)
+              y)
       (* Effects from other libraries fall through. A new Nx tensor operation
          must be added to this match: an unmatched tensor effect would be
          differentiated as a constant. *)
@@ -1192,18 +1191,18 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
      the code's additions, which are never taped. Under [no_grad] it keeps its
      claim on the code another handler would run past it: scans, remats and
      custom calls run untaped, with their additions dropped. *)
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     if not (Tape.rerun tape) then body eff
     else
       match eff with
-      | Total.E_add _ -> Some (fun k -> continue k ())
+      | Total.E_add _ -> Some (fun () -> ())
       | _ when Gate.enabled () -> body eff
-      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
+      | Scan.E_scan_probe -> Some Scan.probe
       | Scan.E_scan req ->
           Some
-            (fun k ->
-              Scan.pass_on k
+            (fun () ->
+              Scan.pass_on
                 ~fold:(fun () -> raise Scan.Not_staged)
                 (fun () ->
                   let run c x =
@@ -1213,19 +1212,18 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
         ->
           Some
-            (fun k ->
-              match
-                Remat.run
-                  (Remat.Call
-                     { params_s; result_s; params; f = dropped f; residuals })
-              with
-              | y -> continue k y
-              | exception e -> discontinue k e)
+            (fun () ->
+              Remat.run
+                (Remat.Call
+                   { params_s; result_s; params; f = dropped f; residuals }))
       | Custom.E_custom_vjp (Custom.Vjp_call { params; fwd; _ }) ->
-          Some (fun k -> continue k (fst (dropped fwd params)))
+          Some (fun () -> fst (dropped fwd params))
       | Custom.E_custom_jvp (Custom.Jvp_call { params; f; _ }) ->
-          Some (fun k -> continue k (dropped f params))
+          Some (fun () -> dropped f params)
       | _ -> None
+  in
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff -> Option.map Gate.deliver (rule eff)
   in
   { retc = Fun.id; exnc = raise; effc }
 

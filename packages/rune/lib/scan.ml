@@ -49,10 +49,10 @@ type scan_res = { r_carry : leaves; r_ys : leaves }
    behaves: a staging jit answers [true], and a transformation passes it on,
    since it passes the scan on when it stages. Unhandled means [false].
 
-   A handler that claims [E_scan] delivers the exceptions raised while running
-   the scan to its performer, with [discontinue]: an exception the fold step
-   raises belongs at the scan, where the eager fold raises it, and a
-   transformation's fold step signals through its own exceptions. *)
+   An exception raised while a handler runs the scan reaches its performer, as
+   every handler's does ([Gate.deliver]): one the fold step raises belongs at
+   the scan, where the eager fold raises it, and a transformation's fold step
+   signals through its own exceptions. *)
 type _ Effect.t +=
   | E_scan : scan_req -> scan_res Effect.t
   | E_scan_probe : bool Effect.t
@@ -62,13 +62,6 @@ let probe () =
   | stages -> stages
   | exception Effect.Unhandled _ -> false
 
-(* [deliver k run] resumes the performer of an [E_scan] with the result of
-   [run], or with the exception it raises. *)
-let deliver k run =
-  match run () with
-  | res -> Effect.Deep.continue k res
-  | exception e -> Effect.Deep.discontinue k e
-
 (* A stager may decline an [E_scan] it claimed when tracing the body reveals a
    loop it cannot compile (a carry whose shape changes across steps): it
    discontinues the scan with [Not_staged]. Every performer of [E_scan] must
@@ -76,17 +69,13 @@ let deliver k run =
    optimistic answer, not a promise. *)
 exception Not_staged
 
-(* [pass_on k ~fold stage] answers an [E_scan] a transformation handler claimed:
+(* [pass_on ~fold stage] answers an [E_scan] a transformation handler claimed:
    with [stage ()], which passes the scan on as the scan of the transformation,
    when a stager lies beyond, and with [fold ()], the eager fold under a nested
    instance of the handler, when none does or the stager declines. *)
-let pass_on k ~fold stage =
-  if not (probe ()) then deliver k fold
-  else
-    match stage () with
-    | res -> Effect.Deep.continue k res
-    | exception Not_staged -> deliver k fold
-    | exception e -> Effect.Deep.discontinue k e
+let pass_on ~fold stage =
+  if not (probe ()) then fold ()
+  else match stage () with res -> res | exception Not_staged -> fold ()
 
 (* [split n l] is the first [n] elements of [l] and the others: a transformed
    scan's leaves are the scan's followed by the ones the transformation adds. *)
@@ -149,7 +138,7 @@ let eager (req : scan_req) : scan_res =
 let run req =
   match Effect.perform (E_scan req) with
   | res -> res
-  | exception (Effect.Unhandled _ | Not_staged) -> eager req
+  | exception (Effect.Unhandled (E_scan _) | Not_staged) -> eager req
 
 (* [scan] itself. The body is wrapped in a step over tensors: it rebuilds the
    carry and the row from the tensors it receives, checks the skeletons of what

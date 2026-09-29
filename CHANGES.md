@@ -172,6 +172,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An exception raised while a transformation handles an operation now raises
+  at the operation, where a `try` around it catches it and a `Fun.protect`
+  around it runs its finaliser. It left through the transformation instead,
+  aborting `grad`, `jvp`, `vmap` or `jit` even when the function caught it:
+  a `remat`, `custom_jvp` or `custom_vjp` whose code raised, an operation
+  with no rule, a value read inside `vmap`, a custom rule's tangent of the
+  wrong shape.
+
 - **Breaking:** a compiled call consumes a host argument its signature marks
   with `consumes`, as it consumes a placed one: the value must be all of its
   buffer, every handle to that buffer then raises, and on the host an output

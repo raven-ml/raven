@@ -187,12 +187,16 @@ let test_exceptions_reach_the_performer () =
   check ~msg:"scan" (scan xs);
   check ~msg:"compiled scan"
     (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) scan xs);
-  check ~msg:"remat"
-    (within (fun () ->
-         Rune.remat
-           Nx.Ptree.(tensor @-> returns tensor)
-           (fun _ -> raise Exit)
-           (lane 0 xs)))
+  let remat xs =
+    within (fun () ->
+        Rune.remat
+          Nx.Ptree.(tensor @-> returns tensor)
+          (fun _ -> raise Exit)
+          (lane 0 xs))
+  in
+  check ~msg:"remat" (remat xs);
+  check ~msg:"compiled remat"
+    (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) remat xs)
 
 (* A jit inside a scope runs its function eagerly and its additions count. *)
 let test_jit_inside_a_scope () =

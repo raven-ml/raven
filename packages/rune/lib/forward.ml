@@ -58,30 +58,29 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
 
   (* [lift1 out x dfun] stores [dfun dx] as the tangent of [out] when [x] has
      tangent [dx]. *)
-  let lift1 (type a b c d) k (out : (a, b) t) (x : (c, d) t)
+  let lift1 (type a b c d) (out : (a, b) t) (x : (c, d) t)
       (dfun : (c, d) t -> (a, b) t) =
     Tensor_map.fresh out x;
     (match tangent x with None -> () | Some dx -> set_tangent out (dfun dx));
-    continue k out
+    out
   in
 
   (* [lift2 out a b make] stores [make da db] as the tangent of [out] when
      either input is active; the inactive side gets a zero tangent. *)
-  let lift2 (type a b) k (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
+  let lift2 (type a b) (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
       (make : (a, b) t -> (a, b) t -> (a, b) t) =
     Tensor_map.fresh out a_in;
     Tensor_map.fresh out b_in;
     if active a_in || active b_in then
       set_tangent out (make (tan_or_zeros a_in) (tan_or_zeros b_in));
-    continue k out
+    out
   in
 
-  let no_rule (type c) k (op : string) (inputs_active : bool) (out : unit -> c)
-      =
-    if inputs_active then err_no_rule op else continue k (out ())
+  let no_rule (type c) (op : string) (inputs_active : bool) (out : unit -> c) =
+    if inputs_active then err_no_rule op else out ()
   in
 
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     if not (Gate.enabled ()) then None
     else
@@ -95,9 +94,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_threefry _ -> None
       (* Placement is linear: the tangent moves with its primal. *)
       | E_place { placement; t_in } ->
-          Some
-            (fun k ->
-              lift1 k (place placement t_in) t_in (place placement))
+          Some (fun () -> lift1 (place placement t_in) t_in (place placement))
       | E_placement _ -> None
       (* Zero derivative: boolean, bitwise and integer results. *)
       | E_cmpeq _ -> None
@@ -126,16 +123,16 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          [Grow] and the scan passes on again, carrying it. Otherwise, the eager
          fold runs under a nested instance of this handler, and every step's
          operations acquire their tangents. *)
-      | Scan.E_scan_probe -> Some (fun k -> continue k (Scan.probe ()))
+      | Scan.E_scan_probe -> Some Scan.probe
       | Scan.E_scan req ->
           Some
-            (fun k ->
+            (fun () ->
               let fold () =
                 Effect.Deep.match_with
                   (fun () -> Scan.eager req)
                   () (handler tangents)
               in
-              Scan.pass_on k ~fold @@ fun () ->
+              Scan.pass_on ~fold @@ fun () ->
                 let exception Grow of bool list in
                 let flags = List.map (fun (P l) -> active l) in
                 let tangents_of actives leaves =
@@ -200,110 +197,108 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 in
                 attempt (flags req.req_carry))
       (* Binary arithmetic *)
-      | E_add { a; b } -> Some (fun k -> lift2 k (add a b) a b T.add)
-      | E_sub { a; b } -> Some (fun k -> lift2 k (sub a b) a b T.sub)
+      | E_add { a; b } -> Some (fun () -> lift2 (add a b) a b T.add)
+      | E_sub { a; b } -> Some (fun () -> lift2 (sub a b) a b T.sub)
       | E_mul { a; b } ->
           Some
-            (fun k ->
-              lift2 k (mul a b) a b (fun da db ->
-                  T.add (T.mul da b) (T.mul a db)))
+            (fun () ->
+              lift2 (mul a b) a b (fun da db -> T.add (T.mul da b) (T.mul a db)))
       | E_fdiv { a; b } ->
           Some
-            (fun k ->
-              lift2 k (fdiv a b) a b (fun da db ->
+            (fun () ->
+              lift2 (fdiv a b) a b (fun da db ->
                   T.sub (T.div da b) (T.mul (T.div a (T.mul b b)) db)))
       | E_pow { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = pow a b in
-              lift2 k out a b (fun da db ->
+              lift2 out a b (fun da db ->
                   T.add
                     (T.mul da (Derivs.pow_wrt_base a b))
                     (T.mul db (Derivs.pow_wrt_exp a out))))
       | E_max { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = max a b in
-              lift2 k out a b (fun da db ->
+              lift2 out a b (fun da db ->
                   let mask = T.cast (dtype out) (T.greater a b) in
                   T.add (T.mul da mask)
                     (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
       | E_min { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = min a b in
-              lift2 k out a b (fun da db ->
+              lift2 out a b (fun da db ->
                   let mask = T.cast (dtype out) (T.less a b) in
                   T.add (T.mul da mask)
                     (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
       | E_atan2 { a; b } ->
           Some
-            (fun k ->
-              lift2 k (atan2 a b) a b (fun da db ->
+            (fun () ->
+              lift2 (atan2 a b) a b (fun da db ->
                   let denom = T.add (T.mul a a) (T.mul b b) in
                   T.sub (T.mul da (T.div b denom)) (T.mul db (T.div a denom))))
       | E_mod { a; b } ->
           Some
-            (fun k ->
-              no_rule k "mod" (active a || active b) (fun () -> mod_ a b))
+            (fun () ->
+              no_rule "mod" (active a || active b) (fun () -> mod_ a b))
       (* Unary arithmetic *)
-      | E_neg { t_in } -> Some (fun k -> lift1 k (neg t_in) t_in T.neg)
+      | E_neg { t_in } -> Some (fun () -> lift1 (neg t_in) t_in T.neg)
       | E_sin { t_in } ->
           Some
-            (fun k -> lift1 k (sin t_in) t_in (fun dx -> T.mul dx (T.cos t_in)))
+            (fun () -> lift1 (sin t_in) t_in (fun dx -> T.mul dx (T.cos t_in)))
       | E_cos { t_in } ->
           Some
-            (fun k ->
-              lift1 k (cos t_in) t_in (fun dx -> T.mul dx (T.neg (T.sin t_in))))
+            (fun () ->
+              lift1 (cos t_in) t_in (fun dx -> T.mul dx (T.neg (T.sin t_in))))
       | E_tan { t_in } ->
           Some
-            (fun k ->
-              lift1 k (tan t_in) t_in (fun dx -> T.mul dx (Derivs.tan' t_in)))
+            (fun () ->
+              lift1 (tan t_in) t_in (fun dx -> T.mul dx (Derivs.tan' t_in)))
       | E_asin { t_in } ->
           Some
-            (fun k ->
-              lift1 k (asin t_in) t_in (fun dx -> T.mul dx (Derivs.asin' t_in)))
+            (fun () ->
+              lift1 (asin t_in) t_in (fun dx -> T.mul dx (Derivs.asin' t_in)))
       | E_acos { t_in } ->
           Some
-            (fun k ->
-              lift1 k (acos t_in) t_in (fun dx ->
+            (fun () ->
+              lift1 (acos t_in) t_in (fun dx ->
                   T.mul dx (T.neg (Derivs.asin' t_in))))
       | E_atan { t_in } ->
           Some
-            (fun k ->
-              lift1 k (atan t_in) t_in (fun dx -> T.mul dx (Derivs.atan' t_in)))
+            (fun () ->
+              lift1 (atan t_in) t_in (fun dx -> T.mul dx (Derivs.atan' t_in)))
       | E_sinh { t_in } ->
           Some
-            (fun k ->
-              lift1 k (sinh t_in) t_in (fun dx -> T.mul dx (T.cosh t_in)))
+            (fun () ->
+              lift1 (sinh t_in) t_in (fun dx -> T.mul dx (T.cosh t_in)))
       | E_cosh { t_in } ->
           Some
-            (fun k ->
-              lift1 k (cosh t_in) t_in (fun dx -> T.mul dx (T.sinh t_in)))
+            (fun () ->
+              lift1 (cosh t_in) t_in (fun dx -> T.mul dx (T.sinh t_in)))
       | E_tanh { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = tanh t_in in
-              lift1 k out t_in (fun dx -> T.mul dx (Derivs.tanh' out)))
+              lift1 out t_in (fun dx -> T.mul dx (Derivs.tanh' out)))
       | E_exp { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = exp t_in in
-              lift1 k out t_in (fun dx -> T.mul dx out))
+              lift1 out t_in (fun dx -> T.mul dx out))
       | E_log { t_in } ->
           Some
-            (fun k ->
-              lift1 k (log t_in) t_in (fun dx -> T.mul dx (T.recip t_in)))
+            (fun () ->
+              lift1 (log t_in) t_in (fun dx -> T.mul dx (T.recip t_in)))
       | E_sqrt { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = sqrt t_in in
-              lift1 k out t_in (fun dx -> T.mul dx (Derivs.sqrt' out)))
+              lift1 out t_in (fun dx -> T.mul dx (Derivs.sqrt' out)))
       | E_recip { t_in } ->
           Some
-            (fun k ->
-              lift1 k (recip t_in) t_in (fun dx ->
-                  T.mul dx (Derivs.recip' t_in)))
+            (fun () ->
+              lift1 (recip t_in) t_in (fun dx -> T.mul dx (Derivs.recip' t_in)))
       (* On complex dtypes [abs] is the modulus: real-valued, and not
          holomorphic. Its pushforward conjugates the direction — going through
          [sign z] itself would flip the sign of the imaginary contribution — and
@@ -312,17 +307,17 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
          dtypes. *)
       | E_abs { t_in } ->
           Some
-            (fun k ->
-              lift1 k (abs t_in) t_in (fun dx ->
+            (fun () ->
+              lift1 (abs t_in) t_in (fun dx ->
                   Derivs.real_part (T.mul dx (T.conjugate (T.sign t_in)))))
       | E_erf { t_in } ->
           Some
-            (fun k ->
-              lift1 k (erf t_in) t_in (fun dx -> T.mul dx (Derivs.erf' t_in)))
+            (fun () ->
+              lift1 (erf t_in) t_in (fun dx -> T.mul dx (Derivs.erf' t_in)))
       (* Selection *)
       | E_where { condition; if_true; if_false } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = where condition if_true if_false in
               if active if_true || active if_false then begin
                 let mask = T.cast (dtype out) condition in
@@ -331,94 +326,97 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   (T.add (T.mul dt_ mask)
                      (T.mul df (T.rsub_s (Derivs.one_like mask) mask)))
               end;
-              continue k out)
+              out)
       (* Movement: linear ops apply to the tangent unchanged. *)
       | E_reshape { t_in; new_shape } ->
           Some
-            (fun k ->
-              lift1 k (reshape t_in new_shape) t_in (fun dx ->
+            (fun () ->
+              lift1 (reshape t_in new_shape) t_in (fun dx ->
                   reshape dx new_shape))
       | E_permute { t_in; axes } ->
           Some
-            (fun k ->
-              lift1 k (permute t_in axes) t_in (fun dx -> permute dx axes))
+            (fun () ->
+              lift1 (permute t_in axes) t_in (fun dx -> permute dx axes))
       | E_expand { t_in; new_target_shape } ->
           Some
-            (fun k ->
-              lift1 k (expand t_in new_target_shape) t_in (fun dx ->
+            (fun () ->
+              lift1 (expand t_in new_target_shape) t_in (fun dx ->
                   expand dx new_target_shape))
       | E_pad { t_in; padding_config; fill_value } ->
           Some
-            (fun k ->
+            (fun () ->
               (* The fill value is a constant: the tangent pads with zero. *)
-              lift1 k (pad t_in padding_config fill_value) t_in (fun dx ->
+              lift1 (pad t_in padding_config fill_value) t_in (fun dx ->
                   pad dx padding_config (Nx_dtype.zero (dtype t_in))))
       | E_shrink { t_in; limits } ->
           Some
-            (fun k ->
-              lift1 k (shrink t_in limits) t_in (fun dx -> shrink dx limits))
+            (fun () ->
+              lift1 (shrink t_in limits) t_in (fun dx -> shrink dx limits))
       | E_flip { t_in; dims_to_flip } ->
           Some
-            (fun k ->
-              lift1 k (flip t_in dims_to_flip) t_in (fun dx ->
+            (fun () ->
+              lift1 (flip t_in dims_to_flip) t_in (fun dx ->
                   flip dx dims_to_flip))
       | E_sliding_window { t_in; axis; window; step } ->
           Some
-            (fun k ->
-              lift1 k (sliding_window t_in ~axis ~window ~step) t_in (fun dx ->
+            (fun () ->
+              lift1 (sliding_window t_in ~axis ~window ~step) t_in (fun dx ->
                   sliding_window dx ~axis ~window ~step))
       | E_cat { t_list; axis } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = cat t_list ~axis in
               if List.exists active t_list then
                 set_tangent out (cat (List.map tan_or_zeros t_list) ~axis);
-              continue k out)
+              out)
       | E_cast { t_in; target_dtype } ->
           Some
-            (fun k ->
-              lift1 k (cast ~dtype:target_dtype t_in) t_in (fun dx ->
+            (fun () ->
+              lift1 (cast ~dtype:target_dtype t_in) t_in (fun dx ->
                   T.cast target_dtype dx))
       | E_contiguous { t_in } ->
-          Some (fun k -> lift1 k (contiguous t_in) t_in Fun.id)
-      | E_copy { t_in } -> Some (fun k -> lift1 k (copy t_in) t_in Fun.id)
+          Some (fun () -> lift1 (contiguous t_in) t_in Fun.id)
+      | E_copy { t_in } -> Some (fun () -> lift1 (copy t_in) t_in Fun.id)
       (* Reductions *)
       | E_reduce_sum { t_in; axes } ->
           Some
-            (fun k ->
-              lift1 k (reduce ~op:`Sum ~axes t_in) t_in (fun dx ->
+            (fun () ->
+              lift1 (reduce ~op:`Sum ~axes t_in) t_in (fun dx ->
                   T.sum dx ~axes:(Array.to_list axes)))
       | E_reduce_max { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Max ~axes t_in in
               let axes = Array.to_list axes in
-              lift1 k out t_in (fun dx ->
+              lift1 out t_in (fun dx ->
                   T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
       | E_reduce_min { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Min ~axes t_in in
               let axes = Array.to_list axes in
-              lift1 k out t_in (fun dx ->
+              lift1 out t_in (fun dx ->
                   T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
       | E_reduce_prod { t_in; axes } ->
-          Some (fun k ->
+          Some
+            (fun () ->
               let out = reduce ~op:`Prod ~axes t_in in
               let axes = Array.to_list axes in
-              lift1 k out t_in (fun dx ->
+              lift1 out t_in (fun dx ->
                   T.sum ~axes (T.mul dx (Derivs.prod' ~axes t_in out))))
       (* Sorting: a sort is a gather at the argsort indices. *)
       | E_sort { t_in; axis; descending } ->
           Some
-            (fun k ->
-              lift1 k (sort ~axis ~descending t_in) t_in (fun dx ->
+            (fun () ->
+              lift1 (sort ~axis ~descending t_in) t_in (fun dx ->
                   let indices = argsort ~axis ~descending t_in in
                   gather dx indices ~axis))
       (* Scans *)
       | E_associative_scan { t_in; axis; op } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = associative_scan ~axis ~op t_in in
-              lift1 k out t_in (fun dx ->
+              lift1 out t_in (fun dx ->
                   match op with
                   | `Sum -> associative_scan ~axis ~op:`Sum dx
                   | `Prod ->
@@ -463,13 +461,13 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       (* Gather / scatter *)
       | E_gather { data; indices; axis } ->
           Some
-            (fun k ->
-              lift1 k (gather data indices ~axis) data (fun dx ->
+            (fun () ->
+              lift1 (gather data indices ~axis) data (fun dx ->
                   gather dx indices ~axis))
       | E_scatter
           { data_template; indices; updates; axis; mode; unique_indices } ->
           Some
-            (fun k ->
+            (fun () ->
               let out =
                 scatter ~mode ~unique_indices data_template ~indices ~updates
                   ~axis
@@ -493,33 +491,33 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 in
                 set_tangent out (T.add d_template d_updates)
               end;
-              continue k out)
+              out)
       (* The window write is linear in [t_in] and [v] together. *)
       | E_update { t_in; starts; v } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = update t_in ~starts v in
               if active t_in || active v then
                 set_tangent out
                   (update (tan_or_zeros t_in) ~starts (tan_or_zeros v));
-              continue k out)
+              out)
       (* Windowing: unfold and fold are linear. *)
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some
-            (fun k ->
-              lift1 k (unfold t_in ~kernel_size ~stride ~dilation ~padding) t_in
+            (fun () ->
+              lift1 (unfold t_in ~kernel_size ~stride ~dilation ~padding) t_in
                 (fun dx -> unfold dx ~kernel_size ~stride ~dilation ~padding))
       | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
           Some
-            (fun k ->
-              lift1 k
+            (fun () ->
+              lift1
                 (fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding)
                 t_in (fun dx ->
                   fold dx ~output_size ~kernel_size ~stride ~dilation ~padding))
       (* Matrix multiplication *)
       | E_matmul { a; b } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = matmul a b in
               (match (tangent a, tangent b) with
               | None, None -> ()
@@ -538,31 +536,30 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                     | _ -> assert false
                   in
                   set_tangent out tan);
-              continue k out)
+              out)
       (* FFT: linear operations apply to the tangent. *)
       | E_fft { t; axes } ->
-          Some (fun k -> lift1 k (fft t ~axes) t (fun dx -> fft dx ~axes))
+          Some (fun () -> lift1 (fft t ~axes) t (fun dx -> fft dx ~axes))
       | E_ifft { t; axes } ->
-          Some (fun k -> lift1 k (ifft t ~axes) t (fun dx -> ifft dx ~axes))
+          Some (fun () -> lift1 (ifft t ~axes) t (fun dx -> ifft dx ~axes))
       | E_rfft { t; dtype; axes } ->
           Some
-            (fun k ->
-              lift1 k (rfft t ~dtype ~axes) t (fun dx -> rfft dx ~dtype ~axes))
+            (fun () ->
+              lift1 (rfft t ~dtype ~axes) t (fun dx -> rfft dx ~dtype ~axes))
       | E_irfft { t; dtype; axes; s } ->
           Some
-            (fun k ->
-              lift1 k (irfft t ~axes ?s ~dtype) t (fun dx ->
+            (fun () ->
+              lift1 (irfft t ~axes ?s ~dtype) t (fun dx ->
                   irfft dx ~axes ?s ~dtype))
       (* A gather is linear. *)
       | Axis.E_lanes { axis; t_in } ->
-          Some
-            (fun k -> lift1 k (Axis.lanes axis t_in) t_in (Axis.lanes axis))
+          Some (fun () -> lift1 (Axis.lanes axis t_in) t_in (Axis.lanes axis))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some
-            (fun k ->
+            (fun () ->
               let l = cholesky ~upper t_in in
-              lift1 k l t_in (fun da ->
+              lift1 l t_in (fun da ->
                   (* dL = L phi(L^-1 dA L^-T), phi = strict lower + half
                      diagonal. *)
                   let l_lower, da_lower =
@@ -588,7 +585,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   if upper then T.matrix_transpose dl_lower else dl_lower))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
-            (fun k ->
+            (fun () ->
               let out = solve_triangular ~upper ~transpose ~unit_diag a b in
               if active a || active b then begin
                 (* A_op X = B, so A_op dX = dB - dA_op X, with dA restricted to
@@ -622,15 +619,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 set_tangent out
                   (solve_triangular ~upper ~transpose ~unit_diag a rhs)
               end;
-              continue k out)
+              out)
       | E_qr { t_in; reduced } ->
           Some
-            (fun k ->
-              if active t_in then err_no_rule "qr"
-              else continue k (qr ~reduced t_in))
+            (fun () ->
+              if active t_in then err_no_rule "qr" else qr ~reduced t_in)
       | E_lu { t_in } ->
           Some
-            (fun k ->
+            (fun () ->
               let ((packed, _, perm) as out) = lu t_in in
               (match tangent t_in with
               | None -> ()
@@ -666,34 +662,33 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                     (T.add
                        (T.matmul l (T.tril ~k:(-1) x))
                        (T.matmul (T.triu x) (T.triu packed))));
-              continue k out)
+              out)
       | E_svd { t_in; full_matrices } ->
           Some
-            (fun k ->
-              no_rule k "svd" (active t_in) (fun () -> svd ~full_matrices t_in))
+            (fun () ->
+              no_rule "svd" (active t_in) (fun () -> svd ~full_matrices t_in))
       | E_eigvals { t_in } ->
           Some
-            (fun k ->
-              no_rule k "eigvals" (active t_in) (fun () -> eigvals t_in))
+            (fun () -> no_rule "eigvals" (active t_in) (fun () -> eigvals t_in))
       | E_eig { t_in } ->
-          Some (fun k -> no_rule k "eig" (active t_in) (fun () -> eig t_in))
+          Some (fun () -> no_rule "eig" (active t_in) (fun () -> eig t_in))
       | E_eigvalsh { t_in } ->
           Some
-            (fun k ->
-              no_rule k "eigvalsh" (active t_in) (fun () -> eigvalsh t_in))
+            (fun () ->
+              no_rule "eigvalsh" (active t_in) (fun () -> eigvalsh t_in))
       | E_eigh { t_in } ->
-          Some (fun k -> no_rule k "eigh" (active t_in) (fun () -> eigh t_in))
+          Some (fun () -> no_rule "eigh" (active t_in) (fun () -> eigh t_in))
       (* Custom rules. *)
       | Custom.E_custom_jvp
           (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
           Some
-            (fun k ->
+            (fun () ->
               if
                 not
                   (Nx.Ptree.fold params_s
                      (fun _ leaf any -> any || active leaf)
                      params false)
-              then continue k (f params)
+              then f params
               else begin
                 let dparams =
                   Nx.Ptree.map params_s (fun _ leaf -> tan_or_zeros leaf) params
@@ -717,14 +712,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 ignore
                   (Structure.map2 "Rune.custom_jvp" result_s ~this:"the result"
                      ~that:"jvp's tangents" set y dy);
-                continue k y
+                y
               end)
       (* A custom_vjp has no forward rule. One whose result holds no tensor
          has nothing to differentiate, and its function runs. *)
       | Custom.E_custom_vjp
           (Custom.Vjp_call { params_s; result_s; params; fwd; _ }) ->
           Some
-            (fun k ->
+            (fun () ->
               let y = fst (fwd params) in
               if
                 Structure.holds_tensor result_s y
@@ -735,7 +730,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                 invalid_arg
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
-              else continue k y)
+              else y)
       (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
          function of the call's arguments that gives each argument it receives
          the tangent of the call's argument at its position, runs [f] under this
@@ -746,7 +741,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | Remat.E_remat (Remat.Call { params_s; result_s; params; f; residuals })
         ->
           Some
-            (fun k ->
+            (fun () ->
               let dparams =
                 List.map
                   (fun (P p) -> Option.map (fun d -> P d) (tangent p))
@@ -793,7 +788,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                    dy
                    (fst (Nx.Ptree.flatten result_s y))
                    !active_out);
-              continue k y)
+              y)
       (* The barrier is the identity, and the tangents pass through it with
          their values: an output's tangent is its value's tangent after the
          barrier. A tangent read around the barrier would let the
@@ -807,7 +802,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
           if tangents = [] then None
           else
             Some
-              (fun k ->
+              (fun () ->
                 let out = Remat.barrier ~after (values @ tangents) in
                 let rec split vs out =
                   match (vs, out) with
@@ -830,13 +825,13 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                        | Some _, [] -> assert false
                        | None, tangents -> tangents)
                      tangents values out);
-                continue k out)
+                out)
       (* Quantised products. A weight is never differentiated; the tangent of a
          product is the product of the tangent of [x]. *)
       | Nx_quant.Effect.E_quant
           { w = Nx_quant.Mxfp4 { codes; scales } as w; op } ->
           Some
-            (fun k ->
+            (fun () ->
               if active codes || active scales then err_quant ();
               let y = Nx_quant.Effect.perform w op in
               (match op with
@@ -848,10 +843,13 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                         (Nx_quant.Effect.perform w
                            (Apply { ids; x = dx; transpose })))
               | Dequant _ -> ());
-              continue k y)
+              y)
       (* Effects from other libraries fall through. A new Nx tensor operation
          must be added to this match: an unmatched tensor effect would be
          differentiated as a constant. *)
       | _ -> None
+  in
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff -> Option.map Gate.deliver (rule eff)
   in
   { retc = Fun.id; exnc = raise; effc }

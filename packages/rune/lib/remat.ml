@@ -41,7 +41,7 @@ type _ Effect.t +=
 let run (Call { params; f; _ } as call) =
   match Effect.perform (E_remat call) with
   | y -> y
-  | exception Effect.Unhandled _ -> f params
+  | exception Effect.Unhandled (E_remat _) -> f params
 
 let barrier ~after values =
   match Effect.perform (E_barrier { values; after }) with

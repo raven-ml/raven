@@ -235,6 +235,203 @@ let test_grad_through_while_loop () =
   in
   check_arr ~msg:"d while" [| 8.0; 8.0 |] (Rune.grad' f (vec64 [| 1.0; 0.5 |]))
 
+(* Exceptions. A handler answers the operation that asked: an exception raised
+   while a transformation handles a call reaches the call, where a [try] around
+   it catches it and a [Fun.protect] around it runs its finaliser, eagerly and
+   compiled. *)
+
+exception Boom
+
+let xs = mat64 2 3 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |]
+let vs = mat64 2 3 [| 1.0; 0.5; -2.0; 0.3; 1.5; -0.7 |]
+let x0 = vec64 [| 0.5; -1.2; 2.1 |]
+let v0 = vec64 [| 1.0; 0.5; -2.0 |]
+let rows = mat64 2 3 [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |]
+let seen : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
+let boom = function Boom -> true | _ -> false
+let invalid = function Invalid_argument _ -> true | _ -> false
+let refused = function Rune.Jit_error _ -> true | _ -> false
+
+(* [guarded ~raises finalised call x] is [call x], or [3 x] when [call] raises
+   an exception [raises] accepts; it counts its finaliser's runs in
+   [finalised]. *)
+let guarded ~raises finalised call x =
+  match Fun.protect ~finally:(fun () -> incr finalised) (fun () -> call x) with
+  | y -> y
+  | exception e when raises e -> Nx.mul_s x 3.0
+
+(* Calls whose code a handler runs, raising [Boom]. *)
+let calls =
+  [
+    ( "remat",
+      boom,
+      fun x ->
+        Rune.remat Nx.Ptree.(tensor @-> returns tensor) (fun _ -> raise Boom) x
+    );
+    ( "custom_jvp",
+      boom,
+      fun x ->
+        Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+          ~f:(fun _ -> raise Boom)
+          ~jvp:(fun _ _ -> raise Boom)
+          x );
+    ( "custom_vjp",
+      boom,
+      fun x ->
+        Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
+          ~fwd:(fun _ -> raise Boom)
+          ~bwd:(fun () g -> g)
+          x );
+    ( "scan",
+      boom,
+      fun x -> fst (Rune.scan' ~f:(fun _ _ -> raise Boom) ~init:x rows) );
+  ]
+
+(* The transformations' own errors: an operation with no rule, a value read
+   inside a map, a refused operation, a custom rule's tangent of another shape,
+   an addition of another shape. *)
+let no_rule = ("an operation with no rule", invalid, fun x -> Nx.mod_ x x)
+
+let read_in_a_map =
+  ( "a value read in a map",
+    invalid,
+    fun x ->
+      ignore (Nx.to_array x);
+      x )
+
+let refused_op =
+  ( "an operation jit refuses",
+    refused,
+    fun x ->
+      ignore (Nx.rfft Nx.complex128 x);
+      x )
+
+let tangent_shape =
+  ( "a custom rule's tangent of another shape",
+    invalid,
+    fun x ->
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+        ~f:(fun x -> Nx.mul_s x 2.0)
+        ~jvp:(fun x dx -> (Nx.mul_s x 2.0, Nx.sum dx))
+        x )
+
+let addition_shape =
+  ( "an addition of another shape",
+    invalid,
+    fun x ->
+      Rune.Total.add seen (Nx.sum x);
+      x )
+
+(* Each transformation of a function [g] of an input, the input, the
+   transformation of [guarded]'s [3 x], and the calls to try. Rerun code is the
+   recomputation of a remat, under [no_grad] there. *)
+let transformations =
+  [
+    ("eager", (fun g x -> g x), x0, Nx.mul_s x0 3.0, calls);
+    ("jit", (fun g x -> Rune.jit' g x), x0, Nx.mul_s x0 3.0, [ refused_op ]);
+    ( "grad",
+      (fun g x -> Rune.grad' (fun x -> Nx.sum (g x)) x),
+      x0,
+      Nx.full f64 [| 3 |] 3.0,
+      calls @ [ no_rule ] );
+    ( "grad of rerun code",
+      (fun g x ->
+        Rune.grad'
+          (fun x ->
+            Nx.sum
+              (Rune.remat
+                 Nx.Ptree.(tensor @-> returns tensor)
+                 (fun x -> Nx.mul x (Rune.no_grad (fun () -> g x)))
+                 x))
+          x),
+      x0,
+      Nx.mul_s x0 3.0,
+      calls );
+    ( "jvp",
+      (fun g x -> snd (Rune.jvp' g x v0)),
+      x0,
+      Nx.mul_s v0 3.0,
+      calls @ [ no_rule; tangent_shape ] );
+    ( "vmap",
+      (fun g x -> Rune.vmap' g x),
+      xs,
+      Nx.mul_s xs 3.0,
+      calls @ [ read_in_a_map ] );
+    ( "jvp of a map",
+      (fun g x -> snd (Rune.jvp' (Rune.vmap' g) x vs)),
+      xs,
+      Nx.mul_s vs 3.0,
+      calls @ [ no_rule; read_in_a_map; tangent_shape ] );
+    ( "a total's scope",
+      (fun g x ->
+        fst
+          (Rune.Total.collect seen ~zero:(Nx.zeros f64 [| 3 |]) (fun () -> g x))),
+      x0,
+      Nx.mul_s x0 3.0,
+      calls @ [ addition_shape ] );
+  ]
+
+(* An operation a call's code leaves unhandled is that code's error: the call's
+   fallback for a missing handler of its own does not run the code again. *)
+type _ Effect.t += Unanswered : unit Effect.t
+
+let test_unhandled_inside_a_call () =
+  let calls runs =
+    let f x =
+      incr runs;
+      Effect.perform Unanswered;
+      x
+    in
+    [
+      ("remat", fun x -> Rune.remat Nx.Ptree.(tensor @-> returns tensor) f x);
+      ( "custom_jvp",
+        fun x ->
+          Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor ~f
+            ~jvp:(fun x dx -> (f x, dx))
+            x );
+      ( "custom_vjp",
+        fun x ->
+          Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
+            ~fwd:(fun x -> (f x, ()))
+            ~bwd:(fun () g -> g)
+            x );
+      ("scan", fun x -> fst (Rune.scan' ~f:(fun c _ -> (f c, c)) ~init:x rows));
+    ]
+  in
+  let runs = ref 0 in
+  List.iter
+    (fun (name, call) ->
+      runs := 0;
+      let g x =
+        match call x with
+        | y -> y
+        | exception Effect.Unhandled Unanswered -> Nx.mul_s x 3.0
+      in
+      check_arr ~msg:name [| 3.0; 3.0; 3.0 |]
+        (Rune.grad' (fun x -> Nx.sum (g x)) x0);
+      equal ~msg:(name ^ ": runs") int 1 !runs)
+    (calls runs)
+
+let exception_tests =
+  List.map
+    (fun (name, transform, x, expected, calls) ->
+      let check ~compiled (_, raises, call) () =
+        let finalised = ref 0 in
+        let run = transform (guarded ~raises finalised call) in
+        let y = if compiled then Rune.jit' run x else run x in
+        check_arr ~msg:"caught at the call" (to_arr expected) y;
+        is_true ~msg:"finalised" (!finalised > 0)
+      in
+      group name
+        (List.concat_map
+           (fun ((call_name, _, _) as c) ->
+             [
+               test call_name (check ~compiled:false c);
+               test (call_name ^ ", compiled") (check ~compiled:true c);
+             ])
+           calls))
+    transformations
+
 let tests =
   [
     group "scan"
@@ -269,6 +466,12 @@ let tests =
         test "iterates until the predicate fails" test_while_loop;
         test "differentiates the taken iterations" test_grad_through_while_loop;
       ];
+    group "exceptions"
+      (exception_tests
+      @ [
+          test "an operation left unhandled inside a call"
+            test_unhandled_inside_a_call;
+        ]);
   ]
 
 let () = exit (run "rune control" tests)
