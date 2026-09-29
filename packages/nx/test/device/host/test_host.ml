@@ -18,6 +18,10 @@ external mapped : nativeint -> bool = "test_host_mapped"
 let host = Nx_device.host
 let arch = Nx_device.arch host
 
+(* The function [name] of [binary], which the host loads. *)
+let load ~binary ~name =
+  match P.load host ~binary ~name with Ok p -> p | Error why -> failwith why
+
 let clang =
   lazy
     (Sys.command (Printf.sprintf "clang --version > %s 2>&1" Filename.null) = 0)
@@ -65,7 +69,7 @@ let affine =
 }|})
 
 let test_arguments () =
-  let p = P.load host ~binary:(Lazy.force affine) ~name:"affine" in
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
   let out = B.create host S.Int32 4 in
   let input = int32s [| 1l; 2l; 3l; 4l |] in
   P.call p [| out; input |] [| 4; 3; -5 |];
@@ -95,7 +99,7 @@ ABI void linked(void **b, const long long *v) {
 }|})
 
 let test_links () =
-  let p = P.load host ~binary:(Lazy.force linked) ~name:"linked" in
+  let p = load ~binary:(Lazy.force linked) ~name:"linked" in
   let out = B.create host S.Float64 3 in
   let input =
     B.of_bigarray
@@ -175,7 +179,7 @@ let widened =
   ]
 
 let test_builtins () =
-  let p = P.load host ~binary:(Lazy.force builtins) ~name:"builtins" in
+  let p = load ~binary:(Lazy.force builtins) ~name:"builtins" in
   let n = List.length narrowed and m = List.length widened in
   let input = B.create host S.Float32 n in
   List.iteri
@@ -204,20 +208,19 @@ let test_builtins () =
 
 let test_cache () =
   let binary = Lazy.force affine in
-  let p = P.load host ~binary ~name:"affine" in
-  is_true ~msg:"loaded again" (P.load host ~binary ~name:"affine" == p);
+  let p = load ~binary ~name:"affine" in
+  is_true ~msg:"loaded again" (load ~binary ~name:"affine" == p);
   equal (triple string bool bool) ("affine", true, true)
     (P.name p, Nx_device.equal host (P.device p), P.handle p <> 0n)
 
 let test_release () =
   let binary = Lazy.force affine in
-  let load () = P.handle (P.load host ~binary ~name:"affine") in
-  let code = load () in
+  let code = P.handle (load ~binary ~name:"affine") in
   is_true ~msg:"the code is mapped while the program is reachable" (mapped code);
   Gc.full_major ();
   Nx_device.synchronize host;
   is_false ~msg:"and freed once it is not" (mapped code);
-  let p = P.load host ~binary ~name:"affine" in
+  let p = load ~binary ~name:"affine" in
   let out = B.create host S.Int32 1 in
   P.call p [| out; int32s [| 2l |] |] [| 1; 2; 1 |];
   equal ~msg:"a new load of it runs" (list int32) [ 5l ] (int32s_of out)
@@ -237,7 +240,7 @@ let waiting =
 (* The collector needs every domain to reach it: it would wait for the program
    to give up if the calling domain held the runtime while it runs. *)
 let test_released () =
-  let p = P.load host ~binary:(Lazy.force waiting) ~name:"waiting" in
+  let p = load ~binary:(Lazy.force waiting) ~name:"waiting" in
   let words = B.create host S.Int64 3 in
   let w = B.bigarray Bigarray.int64 words in
   Bigarray.Array1.fill w 0L;
@@ -257,14 +260,16 @@ let test_released () =
 let other_arch = if arch = "arm64" then "x86_64" else "arm64"
 
 let test_refusals () =
-  let load ?(name = "f") binary () = ignore (P.load host ~binary ~name) in
-  let refused substring binary =
-    raises_match ~msg:substring (Exn.failure ~substring) (load binary)
+  let refused ?(name = "f") sub binary =
+    match P.load host ~binary ~name with
+    | Ok _ -> failf "loaded, not refused for %s" sub
+    | Error why ->
+        contains ~msg:"the host's name" ~sub:"CPU: " why;
+        contains ~msg:sub ~sub why
   in
   refused "not an ELF object" "not an object";
-  raises_match ~msg:"no function"
-    (Exn.failure ~substring:"no function g")
-    (load ~name:"g" (compile "ABI void f(void **b, const long long *v) {}"));
+  refused ~name:"g" "no function g"
+    (compile "ABI void f(void **b, const long long *v) {}");
   refused "is for"
     (compile ~target:other_arch "ABI void f(void **b, const long long *v) {}");
   refused "nx_no_such_symbol"
@@ -278,20 +283,20 @@ ABI void f(void **b, const long long *v) { *(int *)b[0] = ++calls; }|});
   let fake =
     Nx_device.make ~name:"FAKE" ~arch:"fake" ~budget:0
       ~memory:{ alloc = (fun _ -> None); free = ignore }
-      ~load:(fun ~binary:_ ~name:_ -> 1n)
+      ~load:(fun ~binary:_ ~name:_ -> Ok 1n)
       ()
   in
+  let on_fake = Result.get_ok (P.load fake ~binary:"" ~name:"f") in
   raises_match ~msg:"a program of another device"
-    (Exn.invalid_arg ~substring:"FAKE") (fun () ->
-      P.call (P.load fake ~binary:"" ~name:"f") [||] [||]);
-  let p = P.load host ~binary:(Lazy.force affine) ~name:"affine" in
+    (Exn.invalid_arg ~substring:"FAKE") (fun () -> P.call on_fake [||] [||]);
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
   let far = { Nx_device.host = None; device = 0n; handle = 0n } in
   raises_match ~msg:"memory the host does not address"
     (Exn.invalid_arg ~substring:"does not address") (fun () ->
       P.call p [| Nx_device.external_buffer fake far S.UInt8 4 |] [| 0; 0; 0 |])
 
 let test_profile () =
-  let p = P.load host ~binary:(Lazy.force affine) ~name:"affine" in
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
   let out = B.create host S.Int32 4 and input = int32s [| 1l; 2l; 3l; 4l |] in
   Nx_device.Profile.start ();
   let before = Nx_device.Profile.now () in

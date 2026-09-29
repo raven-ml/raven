@@ -257,12 +257,26 @@ let open_nic ~machine ~remote index =
 
 let lock = Mutex.create ()
 
+(* Raises [Lost] for [host] if its machine can no longer be reached: the
+   synchronization of [host] meets the failed connection, which loses it. *)
+let check_reach host =
+  match Nx_remote_device.remote host with
+  | Some r when Remote.failed r <> None -> Nx_device.synchronize host
+  | Some _ | None -> ()
+
 let count ?(host = Nx_device.host) () =
-  List.length (buses ?remote:(Nx_remote_device.remote host) ())
+  try List.length (buses ?remote:(Nx_remote_device.remote host) ())
+  with Failure _ as e ->
+    check_reach host;
+    raise e
 
 let get ?(host = Nx_device.host) i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_rdma_device.get: %d < 0" i);
   let remote = Nx_remote_device.remote host in
+  let refuse why =
+    check_reach host;
+    Error (name ~machine:host i ^ ": " ^ why)
+  in
   Mutex.protect lock (fun () ->
       match List.assoc_opt (host, i) (Atomic.get opened) with
       | Some n -> Ok (Option.get n.dev)
@@ -271,11 +285,9 @@ let get ?(host = Nx_device.host) i =
           | n ->
               Atomic.set opened (((host, i), n) :: Atomic.get opened);
               Ok (Option.get n.dev)
-          | exception (Failure msg | Sys_error msg | Invalid_argument msg) ->
-              Error ("RDMA: " ^ msg)
+          | exception (Failure why | Sys_error why | Invalid_argument why) ->
+              refuse why
           | exception Unix.Unix_error (e, f, arg) ->
-              Error
-                (Printf.sprintf "RDMA: %s %s: %s" f arg (Unix.error_message e))))
+              refuse (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e))))
 
-let v ?host i =
-  match get ?host i with Ok d -> d | Error msg -> invalid_arg msg
+let v ?host i = match get ?host i with Ok d -> d | Error msg -> failwith msg

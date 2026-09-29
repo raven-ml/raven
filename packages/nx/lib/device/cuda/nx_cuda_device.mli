@@ -33,12 +33,12 @@
     {b Programs} are functions of CUDA modules: cubins, fatbins, or PTX, which
     the driver compiles when it loads it.
 
-    {b Faults and hangs.} A fault on the GPU, such as an illegal address, fails
-    the device with the driver's error when a wait finds it; so does a driver
-    error while the runtime enqueues a copy, since the context may then be
-    unusable. Work that does not signal within the device's
+    {b Faults and hangs.} A fault on the GPU, such as an illegal address, loses
+    the device ({!Nx_device.Lost}) with the driver's error when a wait finds it;
+    so does a driver error while the runtime enqueues a copy, since the context
+    may then be unusable. Work that does not signal within the device's
     {!Nx_device.timeout}, 30 seconds unless {!Nx_device.set_timeout} sets
-    another, fails the device too: raise the timeout before submitting kernels
+    another, loses the device too: raise the timeout before submitting kernels
     that run longer.
 
     {b Other CUDA libraries.} Devices use the GPU's primary context, which the
@@ -60,16 +60,17 @@ val count : unit -> int
 val get : int -> (Nx_device.t, string) result
 (** [get i] is CUDA device [i], opened by the first call that succeeds; every
     later call returns the same value. [Error msg] says why it cannot be opened,
-    for example that the driver cannot be loaded, that [i >= count ()], or that
-    the GPU cannot write 64-bit values from its streams. Opening requires the
-    driver's 64-bit stream memory operations and unified addressing on every
-    platform, Windows included; there is no fallback without them.
+    after the device's name, for example that the driver cannot be loaded, that
+    [i >= count ()], or that the GPU cannot write 64-bit values from its
+    streams. Opening requires the driver's 64-bit stream memory operations and
+    unified addressing on every platform, Windows included; there is no fallback
+    without them.
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 val v : int -> Nx_device.t
-(** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
-    the device cannot be opened. *)
+(** [v i] is like {!get} but raises [Failure] with [get]'s message when the
+    device cannot be opened. *)
 
 val of_address :
   Nx_device.t -> nativeint -> Nx_dtype.Scalar.t -> int -> Nx_device.Buffer.t

@@ -30,6 +30,23 @@ external dispatch :
 
 let metal = Nx_metal_device.v 0
 
+(* [metal]'s borrow of [b], which it maps. *)
+let borrow b =
+  match B.borrow metal b with Ok b -> b | Error why -> failwith why
+
+(* The file at [path], opened, or created with [n] bytes. *)
+let of_file path =
+  match B.of_file path with Ok b -> b | Error why -> failwith why
+
+let create_file path n =
+  match B.create_file path n with Ok b -> b | Error why -> failwith why
+
+(* The function [name] of [binary], which [metal] loads. *)
+let program ~binary ~name =
+  match Nx_device.Program.load metal ~binary ~name with
+  | Ok p -> p
+  | Error why -> failwith why
+
 let library =
   lazy
     (compile
@@ -88,7 +105,9 @@ let opening =
           ( "v of a device past the count, with get's message",
             fun () ->
               let why = Result.get_error (Nx_metal_device.get 1) in
-              raises (Invalid_argument why) (fun () -> Nx_metal_device.v 1) );
+              is_true ~msg:"the device's name first"
+                (String.starts_with ~prefix:"METAL:1: " why);
+              raises (Failure why) (fun () -> Nx_metal_device.v 1) );
           ( "a device of index -1",
             fun () ->
               raises_match Exn.invalid_arg (fun () -> Nx_metal_device.get (-1))
@@ -144,10 +163,10 @@ let memory =
             B.view (B.create metal S.UInt8 (n + 16)) ~offset:16 S.UInt8 n
           in
           let v = Nx_device.submitted metal in
-          B.copy ~src:(B.of_file path) ~dst:b;
+          B.copy ~src:(of_file path) ~dst:b;
           is_true ~msg:"read" (read b = bytes);
           let out = temp_file () in
-          B.copy ~src:b ~dst:(B.create_file out n);
+          B.copy ~src:b ~dst:(create_file out n);
           is_true ~msg:"written"
             (In_channel.with_open_bin out In_channel.input_all = bytes);
           equal ~msg:"work submitted" int v (Nx_device.submitted metal));
@@ -158,8 +177,8 @@ let memory =
           Out_channel.with_open_bin path (fun oc -> output_string oc bytes);
           let before = Nx_device.stats Nx_device.disk in
           let b =
-            B.borrow metal
-              (B.view (B.of_file path) ~offset:4 S.UInt8
+            borrow
+              (B.view (of_file path) ~offset:4 S.UInt8
                  (String.length bytes - 4))
           in
           equal (pair bool string) (true, "METAL")
@@ -173,7 +192,7 @@ let memory =
           let whole = B.create Nx_device.host S.UInt8 page in
           let host = B.view whole ~offset:37 S.UInt8 5 in
           write host "abcde";
-          let b = B.borrow metal host in
+          let b = borrow host in
           equal (pair bool string) (true, "METAL")
             (B.is_borrowed b, Nx_device.name (B.device b));
           equal string "abcde" (read b);
@@ -181,7 +200,7 @@ let memory =
           equal string "vwxyz" (read b);
           let ba = B.bigarray Bigarray.char whole in
           let off_page = B.of_bigarray (Bigarray.Array1.sub ba 1 3) in
-          raises_match Exn.invalid_arg (fun () -> B.borrow metal off_page));
+          is_error ~msg:"memory off a page" (B.borrow metal off_page));
       test "an allocation over its budget raises Out_of_memory with it"
         (fun () ->
           let budget = Nx_device.budget metal in
@@ -219,7 +238,7 @@ let memory =
           is_true ~msg:"an allocation" (resident b);
           let before = held () in
           (fun () ->
-            let bm = B.borrow metal (B.create Nx_device.host S.UInt8 page) in
+            let bm = borrow (B.create Nx_device.host S.UInt8 page) in
             is_true ~msg:"a borrow" (resident bm);
             let now = held () in
             ignore (Sys.opaque_identity bm);
@@ -234,25 +253,25 @@ let work =
     [
       test "a metallib's function loads once" (fun () ->
           let binary = Lazy.force library in
-          let p = Nx_device.Program.load metal ~binary ~name:"fill" in
+          let p = program ~binary ~name:"fill" in
           not_equal nativeint 0n (Nx_device.Program.handle p);
-          is_true (Nx_device.Program.load metal ~binary ~name:"fill" == p));
+          is_true (program ~binary ~name:"fill" == p));
       cases
         ~name:(fun (name, _, _) -> name)
-        "a program load raises the driver's Failure for"
+        "a program load is the driver's Error, after the device's name, for"
         [
           ("a missing function", (fun () -> Lazy.force library), "missing");
           ("a binary that is no metallib", (fun () -> "not a metallib"), "fill");
         ]
         (fun (_, binary, name) ->
-          raises_match (Exn.failure ?substring:None) (fun () ->
-              Nx_device.Program.load metal ~binary:(binary ()) ~name));
+          match Nx_device.Program.load metal ~binary:(binary ()) ~name with
+          | Ok _ -> fail "loaded"
+          | Error why ->
+              is_true ~msg:"the device's name first"
+                (String.starts_with ~prefix:"METAL: " why));
       test "a kernel submitted as timeline work writes its buffer and signals"
         (fun () ->
-          let p =
-            Nx_device.Program.load metal ~binary:(Lazy.force library)
-              ~name:"fill"
-          in
+          let p = program ~binary:(Lazy.force library) ~name:"fill" in
           let out = B.create metal S.UInt32 8 in
           let h = Nx_metal_device.handles metal in
           let v =
@@ -324,7 +343,7 @@ let dispatch_profile =
       let before = ref 0 and after = ref 0 in
       let events =
         profiled (fun () ->
-            let p = Nx_device.Program.load metal ~binary ~name:"twice" in
+            let p = program ~binary ~name:"twice" in
             before := P.now ();
             Nx_device.submit metal ~touches:[] (fun v ->
                 dispatch h.queue h.event h.fence

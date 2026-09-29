@@ -31,11 +31,15 @@ let make r ~timeout_ms =
       copy = Remote.copy r;
     }
   in
-  (* A program is gone with a failed connection: the server dropped it. *)
+  (* A program is gone with a failed connection: the server dropped it. A
+     program the server refuses leaves the connection usable. *)
   let load ~binary ~name =
-    let id = Remote.load r ~binary ~name in
-    ( Nativeint.of_int id,
-      fun () -> if Remote.failed r = None then Remote.unload r id )
+    match Remote.load r ~binary ~name with
+    | id ->
+        Ok
+          ( Nativeint.of_int id,
+            fun () -> if Remote.failed r = None then Remote.unload r id )
+    | exception Failure why when Remote.failed r = None -> Error why
   in
   let call h buffers values =
     Remote.call r (Nativeint.to_int h) buffers values
@@ -65,10 +69,12 @@ let programs () =
   let table = Hashtbl.create 16 and next = Atomic.make 0 in
   let lock = Mutex.create () in
   let load ~binary ~name =
-    let p = Nx_device.Program.load Nx_device.host ~binary ~name in
-    let id = Atomic.fetch_and_add next 1 in
-    Mutex.protect lock (fun () -> Hashtbl.replace table id p);
-    id
+    match Nx_device.Program.load Nx_device.host ~binary ~name with
+    | Error why -> failwith why
+    | Ok p ->
+        let id = Atomic.fetch_and_add next 1 in
+        Mutex.protect lock (fun () -> Hashtbl.replace table id p);
+        id
   in
   let call id buffers values =
     match Mutex.protect lock (fun () -> Hashtbl.find_opt table id) with

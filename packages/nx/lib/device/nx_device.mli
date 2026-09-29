@@ -49,27 +49,8 @@
     domain next runs its finalisers.
 
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
-    the devices involved. A device that does not signal within its {!timeout},
-    whose driver reports a fault, or whose driver errs while work is enqueued on
-    its queue, is {e failed}: its state is unknown and nothing recovers it. Its
-    failure is scoped to the memory it can reach: its own buffers, the host
-    memory it borrowed, and memory another device owns that a copy of the failed
-    device was writing when it failed:
-    - The operation that finds the failure, waiting for the device's own work,
-      raises [Failure "NAME hang detected"], where [NAME] is the device's name,
-      or [Failure] with the driver's message.
-    - Every later operation that takes the failed device raises that error at
-      once. {!stats} answers, as do the functions that do not take the device:
-      {!name}, {!arch}, {!budget}, {!submitted}, {!signaled} and {!timeline}.
-    - {!Buffer.copy} from or to memory the failed device can reach, and
-      {!Buffer.bigarray} of such memory, raise that error too. {!Buffer.view}
-      does not.
-    - Other devices do not wait for the failed device's work, and their other
-      operations are unaffected.
-    - A failed device never reclaims memory again: its buffers, and the host
-      memory it borrowed, stay allocated for the life of the process, including
-      borrows it was unmapping when it failed. Memory of another device that its
-      copy was writing is never reused either. *)
+    the devices involved. A device that hangs or faults is lost for good
+    ({!Lost}). *)
 
 (** {1:devices Devices} *)
 
@@ -123,12 +104,44 @@ val equal : t -> t -> bool
 
 val synchronize : t -> unit
 (** [synchronize d] returns once the work submitted to [d], and the work
-    submitted to other devices that touched [d]'s memory, has completed.
+    submitted to other devices that touched [d]'s memory, has completed. The
+    work of a lost device is not waited for.
 
-    Work of a failed device is not waited for. Raises
-    [Failure "NAME hang detected"] if [d] does not signal in time, and [Failure]
-    with the driver's message if its driver reports a fault; [d] is then failed.
-    Raises [d]'s error at once if [d] has failed. *)
+    Raises {!Lost} if [d] is lost, or is lost by the wait: [d] does not signal
+    in time or its driver reports a fault. *)
+
+(** {1:failures Failures} *)
+
+exception Lost of t * string
+(** [Lost (d, why)] is raised when [d]'s state is unknown and nothing recovers
+    it: [d] did not signal within its {!timeout} ([why] is ["hang detected"]),
+    its driver reported a fault or erred while work was enqueued on its queue
+    ([why] is the driver's message), or the connection to its machine failed. It
+    prints as ["NAME: why"], where [NAME] is [d]'s {!name}.
+
+    [d] is then lost for good, and its loss is scoped to the memory it can
+    reach: its own buffers, the host memory it borrowed, and memory another
+    device owns that a copy of [d] was writing when [d] was lost.
+    - The operation that finds the loss raises [Lost (d, why)], and so does,
+      with the same [why], every later operation that takes [d], and every
+      {!Buffer.copy}, {!Buffer.bigarray} and {!Program.call} that reaches memory
+      [d] can reach. {!Buffer.view} does not. {!stats} answers, as do the
+      functions that do not take [d]: {!name}, {!arch}, {!budget}, {!submitted},
+      {!signaled} and {!timeline}.
+    - Other devices do not wait for [d]'s work, and their other operations are
+      unaffected.
+    - [d] never reclaims memory again: its buffers, and the host memory it
+      borrowed, stay allocated for the life of the process, including borrows it
+      was unmapping when it was lost. Memory of another device that its copy was
+      writing is never reused either. *)
+
+exception Out_of_memory of t * int
+(** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes:
+    - by {!Buffer.create}, at once if [n] exceeds [d]'s {!budget}, and otherwise
+      if the budget or the driver refuses them after [d]'s cache was released
+      and unreachable buffers collected;
+    - by {!Buffer.copy}, when the host [d] of a machine cannot allocate the
+      staging memory the copy goes through. *)
 
 (** {1:memory Memory} *)
 
@@ -149,13 +162,13 @@ val set_budget : t -> int -> unit
 
 val timeout : t -> int
 (** [timeout d] is how long, in milliseconds, a wait for [d]'s work lasts before
-    [d] is considered hung and failed for good. It defaults to [30_000] unless
+    [d] is considered hung and lost for good. It defaults to [30_000] unless
     [d]'s vendor library sets another. *)
 
 val set_timeout : t -> int -> unit
 (** [set_timeout d ms] sets [d]'s {!timeout} to [ms], for the waits that start
     after it, from any domain at any time. Work that takes longer, such as a
-    kernel that runs longer than [ms] without the device signaling, fails [d]
+    kernel that runs longer than [ms] without the device signaling, loses [d]
     for good, and the memory it can reach stays allocated: raise the timeout
     before submitting such work.
 
@@ -163,12 +176,6 @@ val set_timeout : t -> int -> unit
 
 val free_cache : t -> unit
 (** [free_cache d] returns all of [d]'s cached memory to the system. *)
-
-exception Out_of_memory of t * int
-(** [Out_of_memory (d, n)] is raised by {!Buffer.create} when [d] cannot
-    allocate [n] bytes: at once if [n] exceeds [d]'s {!budget}, and otherwise if
-    the budget or the driver refuses them after [d]'s cache was released and
-    unreachable buffers collected. *)
 
 type dma = {
   bus : string;
@@ -234,7 +241,7 @@ module Buffer : sig
       multiple of its size (of one component for complex kinds), as a bigarray
       that [Unix.map_file] maps from an unaligned [pos] may not. *)
 
-  val of_file : string -> t
+  val of_file : string -> (t, string) result
   (** [of_file path] is the bytes of the regular file [path] on {!disk}, as
       [UInt8] elements, one per byte, for reading: {!copy} reads them, and
       refuses to write them. Its length is the file's size when it is opened.
@@ -247,10 +254,10 @@ module Buffer : sig
       it is open changes what they read, and a read past a new end of the file
       raises; a borrow of its pages asks more of the file.
 
-      Raises [Sys_error] naming [path] if it cannot be opened for reading or is
-      not a regular file. *)
+      [Error why] naming [path] if it cannot be opened for reading or is not a
+      regular file. *)
 
-  val create_file : string -> int -> t
+  val create_file : string -> int -> (t, string) result
   (** [create_file path n] is the file at [path], created, or emptied if it
       exists, and sized to [n] bytes, as a buffer of [n] [UInt8] elements on
       {!disk} for reading and writing: {!copy} reads and writes them. Its bytes
@@ -258,16 +265,17 @@ module Buffer : sig
       does. A write reaches the file when {!copy} returns, and the storage once
       the system flushes the file, which a sync of the file forces.
 
-      Raises [Invalid_argument] if [n < 0], and [Sys_error] naming [path] if it
-      cannot be created. *)
+      [Error why] naming [path] if it cannot be created.
 
-  val borrow : device -> t -> t
+      Raises [Invalid_argument] if [n < 0]. *)
+
+  val borrow : device -> t -> (t, string) result
   (** [borrow d b] is a borrowed buffer on [d] over the memory of the buffer [b]
       of [d]'s host ({!host_of}), without a copy, of [b]'s format and length. A
       write through either is seen through the other, once the devices involved
-      are synchronized. The result keeps [b] reachable. [borrow host b] is [b].
-      Work that reads or writes through the result touches the host's memory:
-      its {!submit} lists {!host} in [touches].
+      are synchronized. The result keeps [b] reachable. [borrow host b] is
+      [Ok b]. Work that reads or writes through the result touches the host's
+      memory: its {!submit} lists {!host} in [touches].
 
       [d] maps the whole host memory that [b] is a view of, once: the borrows on
       [d] of views of that memory share one mapping, which [d] releases once
@@ -294,13 +302,15 @@ module Buffer : sig
       host's memory ({!shares_host_memory}) borrows a file's bytes; the others
       {!copy} them into their memory.
 
-      Raises [Invalid_argument] if [b] is on neither [d]'s host nor the {!disk},
-      if [d] cannot address the host's memory, if [b] is a host buffer {!create}
-      made of fewer than 64 KiB, if the memory [b] is a view of does not start
-      on a page, or if [d]'s driver refuses to map it, with the driver's reason;
-      for [b] on the disk, if [d] does not share the host's
-      memory or if [b]'s first byte is not aligned to the size of one of its
-      elements. Raises [Failure] naming the file if the system cannot map it. *)
+      [Error why] if [d] cannot address the host's memory, if [b] is a host
+      buffer {!create} made of fewer than 64 KiB, if the memory [b] is a view of
+      does not start on a page, or if [d]'s driver refuses to map it, with the
+      driver's reason; for [b] on the disk, if [d] does not share the host's
+      memory, if [b]'s first byte is not aligned to the size of one of its
+      elements, or if the system cannot map the file, naming it.
+
+      Raises [Invalid_argument] if [b] is on neither [d]'s host nor the {!disk}
+      or is dead ({!consume}), and {!Lost} if [d] is lost. *)
 
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
@@ -373,7 +383,7 @@ module Buffer : sig
       each, and otherwise in chunks of 64 MiB through the hosts: from memory the
       source's host addresses (the source, or its host's staging memory),
       through this process, to memory the destination's host addresses. A link
-      that fails fails its devices, which may still write [dst].
+      that fails loses its devices, which may still write [dst].
 
       A copy from the {!disk} reads the file, and a copy to it writes the file:
       straight into or from memory that the host addresses, and otherwise
@@ -385,16 +395,14 @@ module Buffer : sig
       bytes, if they overlap in the memory of one buffer, if [dst] is a buffer
       of {!of_file}, if one is on the disk and the other on another machine, or
       if the host does not address the memory of a device that has no copy
-      queue; [Failure] naming the file if a read or a write of a file fails or a
-      read reaches its end, as in a file truncated since it was opened, which
-      fails no device; [Failure "NAME hang detected"] if a device involved does
-      not signal in time; [Failure] with the driver's message if a device's
-      driver reports a fault or errs while the copy is enqueued, which fails
-      that device; [Failure] with a failed device's error if that device can
-      reach [src] or [dst]; [Failure] with the error of another machine's host
-      that the network failed, which fails that host; and [Failure] if a device
-      cannot map the staging memory, or [Stdlib.Out_of_memory] if the host
-      cannot allocate it, which fail no device. *)
+      queue; [Sys_error] naming the file if a read or a write of a file fails or
+      a read reaches its end, as in a file truncated since it was opened, which
+      loses no device; {!Lost} if a device involved is lost or is lost by the
+      copy (it does not signal in time, its driver reports a fault or errs while
+      the copy is enqueued, or the connection to its machine fails), or if a
+      lost device can reach [src] or [dst]; {!Out_of_memory} if a host cannot
+      allocate its staging memory; and [Failure] with the driver's reason if a
+      device cannot map the staging memory, which loses no device. *)
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -417,8 +425,8 @@ module Buffer : sig
       Raises [Invalid_argument] if [b] is not on {!host}, if [k] is [Int] or
       [Nativeint], which are no storage format, or if [b]'s bytes are not a
       whole number of elements of [k], aligned to the size of one element (of
-      one component for complex kinds), and [Failure] with a failed device's
-      error if that device can reach [b]. *)
+      one component for complex kinds), and {!Lost} if a lost device can reach
+      [b]. *)
 
   (** {2:low Low-level}
 
@@ -484,7 +492,7 @@ module Program : sig
       program of the {!host} is run by {!call}; a GPU's are launched by the
       libraries that submit work to it. *)
 
-  val load : device -> binary:string -> name:string -> t
+  val load : device -> binary:string -> name:string -> (t, string) result
   (** [load d ~binary ~name] is the function [name] of [binary], a compiled
       library in [d]'s format: a metallib for Metal, a CUDA module (cubin,
       fatbin, or PTX, which the driver compiles) for CUDA, a code object for
@@ -505,10 +513,12 @@ module Program : sig
       the program is unreachable, so loading the same binary and name again
       returns the same program only while it is reachable.
 
-      Raises [Invalid_argument] if [d] loads no programs, and [Failure] with the
-      driver's message if it rejects [binary] or has no function [name]; on the
-      host, with the reason it cannot load [binary], such as a symbol that no
-      library defines. *)
+      [Error why] if [d] loads no programs, or if its driver rejects [binary] or
+      finds no function [name] in it, with the driver's reason (on the host, the
+      reason it cannot load [binary], such as a symbol that no library defines).
+      [why] starts with [d]'s {!name}. [d] stays usable.
+
+      Raises {!Lost} if [d] is lost, or is lost by the load. *)
 
   val device : t -> device
   (** [device p] is the device [p] is loaded on. *)
@@ -548,11 +558,11 @@ module Program : sig
       operations on that machine and before the later ones, and returns once
       sent: the program has run when the next operation that waits for an answer
       from the machine, such as {!synchronize} of its host, returns. A program
-      that fails there fails the host.
+      that fails there loses the host.
 
       Raises [Invalid_argument] if [p]'s device runs no programs or does not
-      address the memory of a buffer of [buffers], and [Failure] with a failed
-      device's error if that device can reach a buffer of [buffers]. *)
+      address the memory of a buffer of [buffers], and {!Lost} if a lost device
+      can reach a buffer of [buffers]. *)
 end
 
 (** {1:stats Statistics} *)
@@ -589,8 +599,8 @@ end
 
 val stats : t -> Stats.t
 (** [stats d] is a snapshot of [d]'s statistics. The memory of buffers collected
-    before the call counts as returned, unless [d] has failed. It answers on a
-    failed device, whose retained bytes it reports. *)
+    before the call counts as returned, unless [d] is lost. It answers on a lost
+    device, whose retained bytes it reports. *)
 
 (** {1:submitting Submitting work}
 
@@ -693,8 +703,7 @@ module Profile : sig
       time order and, at equal times, longest first. It first synchronizes the
       devices whose recorded spans are still to be read, and calibrates the
       clocks of the devices that stamp times on their own. The unread spans of a
-      device that fails meanwhile are left out; its next operation raises its
-      error.
+      device lost meanwhile are left out; its next operation raises {!Lost}.
 
       Raises [Invalid_argument] if no profile is being taken. *)
 
@@ -768,7 +777,7 @@ type copy = dst:nativeint -> src:nativeint -> int -> int -> unit
     device's copy queue a copy of [n > 0] bytes from [src] to [dst], after the
     device's earlier work, and then the signal of [v] once the copy is complete.
     It returns without waiting for either. It raises [Failure] with the driver's
-    message if the driver errs, which fails the device. *)
+    message if the driver errs, which loses the device. *)
 
 type copy_queue = {
   copy : copy;
@@ -803,7 +812,8 @@ type signal = {
   wait : int -> timeout_ms:int -> bool;
       (** [wait v ~timeout_ms] waits until the device signaled [v], for at most
           [timeout_ms] milliseconds; [false] if it did not. It raises [Failure]
-          with the driver's message if the driver reports a fault. *)
+          with the driver's message if the driver reports a fault, which loses
+          the device. *)
 }
 (** The type for how a device signals completion and is waited for. *)
 
@@ -812,7 +822,7 @@ type link = {
   move : src:Buffer.t -> dst:Buffer.t -> unit;
       (** [move ~src ~dst] copies [src]'s bytes into [dst], of the same size,
           and returns once they are there. It raises [Failure] if a device of
-          [through] fails, which fails them all. *)
+          [through] fails, which loses them all. *)
 }
 (** The type for links, which carry copies between the memory of devices of two
     machines. *)
@@ -826,7 +836,7 @@ val make :
   ?host_memory:allocator ->
   ?mapping:mapping ->
   ?copy_queue:(memory -> copy_queue) ->
-  ?load:(binary:string -> name:string -> nativeint) ->
+  ?load:(binary:string -> name:string -> (nativeint, string) result) ->
   ?link:(src:Buffer.t -> dst:Buffer.t -> link option) ->
   ?dma:(memory -> (dma, string) result) ->
   ?signal:(memory -> signal) ->
@@ -858,9 +868,10 @@ val make :
       the host's staging memory, which it maps with [mapping]. Without it, the
       host must address all of the device's memory, and copies are host memory
       copies.
-    - [load ~binary ~name] loads a program, raising [Failure] if the driver
-      rejects it. The device keeps the programs it loads for its life. Without
-      [load], it loads no programs.
+    - [load ~binary ~name] loads a program, or is [Error why] if the driver
+      rejects it, and raises [Failure] with the driver's message if the device
+      faults, which loses the device. The device keeps the programs it loads for
+      its life. Without [load], it loads no programs.
     - [link ~src ~dst] is how the device carries {!Buffer.copy} of [src] into
       [dst] when their devices are of two machines, if it does. It is asked
       without any device taken; its [move] runs with the devices of [src], [dst]
@@ -876,20 +887,20 @@ val make :
       word stays still: it blocks for at most [ms] milliseconds, at most 200 and
       never past the timeout, on the device's interrupts or events, and raises
       [Failure] with the driver's message if the device reports a fault, which
-      fails the device. Before a wait declares the device hung, it runs once
+      loses the device. Before a wait declares the device hung, it runs once
       more with [ms = 1], so a fault reported late still names its cause.
       Without it, waits only poll.
     - [timeout_ms] is the device's initial {!timeout}. Defaults to [30_000].
       Without [signal], the timeout restarts whenever the signal word moves.
     - [synchronized ()] runs at the end of each synchronization of the device,
       and raises [Failure] with the driver's message if the device reports a
-      fault, which fails the device. Defaults to doing nothing.
+      fault, which loses the device. Defaults to doing nothing.
     - [finalize ~failed] runs once when the program exits, whether or not the
-      device has failed: after the device synchronized if it had not, with
-      [failed] telling whether it has failed by then. It leaves the hardware as
-      the next open of it expects and, for a failed device, at least stops the
-      device's access to the memory the process is about to release. An
-      exception it raises is printed and ignored. Defaults to doing nothing.
+      device is lost: after the device synchronized if it was not, with [failed]
+      telling whether it is lost by then. It leaves the hardware as the next
+      open of it expects and, for a lost device, at least stops the device's
+      access to the memory the process is about to release. An exception it
+      raises is printed and ignored. Defaults to doing nothing.
     - [clock] is the clock of the device's timestamps. Defaults to
       {!Host_clock}.
     - [resolve a] runs once the work of a span that {!Profile.record} recorded
@@ -923,7 +934,7 @@ type io = {
 (** The type for how the process reaches the memory of another machine's host.
     Every call sees the bytes of the calls before it, and the work submitted to
     the machine's devices afterwards sees them too. Each raises [Failure] if the
-    machine cannot be reached, which fails the host. *)
+    machine cannot be reached, which loses the host. *)
 
 val make_host :
   name:string ->
@@ -931,7 +942,10 @@ val make_host :
   budget:int ->
   memory:allocator ->
   io:io ->
-  ?load:(binary:string -> name:string -> nativeint * (unit -> unit)) ->
+  ?load:
+    (binary:string ->
+    name:string ->
+    (nativeint * (unit -> unit), string) result) ->
   ?call:(nativeint -> (nativeint * int) array -> int array -> unit) ->
   ?timeout_ms:int ->
   ?synchronized:(unit -> unit) ->
@@ -944,10 +958,11 @@ val make_host :
     - [memory] allocates the machine's memory, which the host addresses and the
       process reaches only through [io]. Its timeline is memory of its own.
     - [load ~binary ~name] loads a program there, and is its handle and how it
-      is unloaded, once it is unreachable. [call handle buffers values] sends a
-      call of the program ({!Program.call}), with each buffer's address and size
-      in bytes, in order after the machine's earlier operations. Without them,
-      it runs no programs.
+      is unloaded, once it is unreachable, or [Error why] if the machine refuses
+      it. It raises [Failure] if the machine cannot be reached, which loses the
+      host. [call handle buffers values] sends a call of the program
+      ({!Program.call}), with each buffer's address and size in bytes, in order
+      after the machine's earlier operations. Without them, it runs no programs.
 
     Raises [Invalid_argument] as {!make} does, and if only one of [load] and
     [call] is given. *)

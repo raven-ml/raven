@@ -14,5 +14,8 @@ let tensor dtype buffer shape =
 let bytes b = B.bigarray Bigarray.int8_unsigned b
 
 (* The bytes of the file at [path], read where they lie: the disk's mapping of
-   its pages. *)
-let file_bytes path = bytes (B.borrow Nx_device.host (B.of_file path))
+   its pages. Raises [Sys_error] if the file cannot be opened or mapped. *)
+let file_bytes path =
+  match Result.bind (B.of_file path) (B.borrow Nx_device.host) with
+  | Ok b -> bytes b
+  | Error why -> raise (Sys_error why)

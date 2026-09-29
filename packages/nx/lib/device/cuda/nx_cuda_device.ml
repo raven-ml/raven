@@ -189,19 +189,24 @@ let count () =
 
 let name i = if i = 0 then "CUDA" else Printf.sprintf "CUDA:%d" i
 
-(* Programs are functions of modules, each image loaded once. *)
+(* Programs are functions of modules, each image loaded once. The driver's
+   refusal of an image or a name leaves the context usable. *)
 let loader ctx =
   let modules = Hashtbl.create 8 in
   fun ~binary ~name ->
-    let m =
-      match Hashtbl.find_opt modules binary with
-      | Some m -> m
-      | None ->
-          let m = load_module ctx binary in
-          Hashtbl.add modules binary m;
-          m
-    in
-    get_function ctx m name
+    match
+      let m =
+        match Hashtbl.find_opt modules binary with
+        | Some m -> m
+        | None ->
+            let m = load_module ctx binary in
+            Hashtbl.add modules binary m;
+            m
+      in
+      get_function ctx m name
+    with
+    | f -> Ok f
+    | exception Failure why -> Error why
 
 let open_cuda i ~arch ~budget ctx =
   let compute = stream ctx in
@@ -264,35 +269,33 @@ let version () =
 
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_cuda_device.get: %d < 0" i);
+  let refuse fmt =
+    Printf.ksprintf (fun why -> Error (name i ^ ": " ^ why)) fmt
+  in
   Mutex.protect lock @@ fun () ->
   match List.assoc_opt i (Atomic.get opened) with
   | Some c -> Ok c.dev
   | None -> (
       match loaded () with
-      | Error _ as e -> e
+      | Error why -> refuse "%s" why
       | Ok () -> (
           try
             let n = device_count () in
-            if i >= n then
-              Error
-                (Printf.sprintf "CUDA: no device %d; there are %d CUDA devices"
-                   i n)
+            if i >= n then refuse "no such device; there are %d CUDA devices" n
             else
               let ordinal, major, minor, budget, memory_ops, unified =
                 device i
               in
               if not memory_ops then
-                Error
-                  (Printf.sprintf
-                     "CUDA: %s cannot write 64-bit values from its streams \
-                      (stream memory operations), which the runtime needs; the \
-                      driver is CUDA %s"
-                     (name i) (version ()))
+                refuse
+                  "the GPU cannot write 64-bit values from its streams (stream \
+                   memory operations), which the runtime needs; the driver is \
+                   CUDA %s"
+                  (version ())
               else if not unified then
-                Error
-                  (Printf.sprintf
-                     "CUDA: %s has no unified addressing; the driver is CUDA %s"
-                     (name i) (version ()))
+                refuse
+                  "the GPU has no unified addressing; the driver is CUDA %s"
+                  (version ())
               else
                 let ctx = retain ordinal in
                 let arch = Printf.sprintf "sm_%d%d" major minor in
@@ -305,9 +308,9 @@ let get i =
                        it. *)
                     (try release ordinal with Failure _ -> ());
                     raise e
-          with Failure msg -> Error ("CUDA: " ^ msg)))
+          with Failure why -> refuse "%s" why))
 
-let v i = match get i with Ok d -> d | Error msg -> invalid_arg msg
+let v i = match get i with Ok d -> d | Error msg -> failwith msg
 
 let cuda fn d =
   match find d with

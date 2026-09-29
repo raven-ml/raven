@@ -2829,6 +2829,17 @@ thread.
 
 ### Nx
 
+- **Breaking:** a device lost to a hang, a driver fault or its machine's
+  connection raises `Nx_device.Lost (d, why)`, printed `NAME: why`, where it
+  raised `Failure`. A host without memory for a copy's staging raises
+  `Nx_device.Out_of_memory`, where it raised `Stdlib.Out_of_memory`.
+- **Breaking:** `Nx_device.Buffer.borrow`, `Buffer.of_file`,
+  `Buffer.create_file` and `Nx_device.Program.load` return a `result`, as do
+  `make`'s and `make_host`'s `?load`: a refused mapping, file or binary is an
+  `Error`, and leaves the device usable.
+- **Breaking:** the vendor libraries' `v` raises `Failure`, where it raised
+  `Invalid_argument`, and `get`'s errors start with the device's name. `count`
+  and `get` raise `Nx_device.Lost` for a host that cannot be reached.
 - **Breaking:** `Nx_device.Buffer.file` and the `?file` argument of
   `Buffer.of_bigarray` are removed: a buffer over a file's bytes is a buffer on
   `Nx_device.disk`.

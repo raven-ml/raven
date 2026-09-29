@@ -409,36 +409,50 @@ let dma n (m : Nx_device.memory) =
 
 (* Programs *)
 
+(* The cubin [binary], relocated and uploaded once. *)
+let upload n binary (c : Cubin.t) =
+  match Hashtbl.find_opt n.images binary with
+  | Some mem -> Some mem
+  | None ->
+      Option.map
+        (fun mem ->
+          register n mem;
+          Mmio.write
+            (Option.get (host_view mem))
+            0
+            (Cubin.relocate c ~base:(va mem));
+          Mmio.barrier ();
+          Hashtbl.replace n.images binary mem;
+          mem)
+        (alloc_mem n Visible (String.length c.image))
+
+(* A cubin the device cannot run, or has no memory for, is refused, and the
+   device stays usable. *)
 let load n ~binary ~name =
-  let c = Cubin.load binary ~name in
-  let mem =
-    match Hashtbl.find_opt n.images binary with
-    | Some mem -> mem
-    | None ->
-        let mem = keep n Visible "program" (String.length c.image) in
-        let base = va mem in
-        Mmio.write (Option.get (host_view mem)) 0 (Cubin.relocate c ~base);
-        Mmio.barrier ();
-        Hashtbl.replace n.images binary mem;
-        mem
-  in
-  let base = va mem in
-  let at off = Nativeint.of_int (base + off) in
-  let k =
-    {
-      image = at 0;
-      entry = at c.entry;
-      code_bytes = c.code_bytes;
-      registers = c.registers;
-      shared_bytes = c.shared_bytes;
-      local_bytes = c.local_bytes;
-      param_offset = c.param_offset;
-      banks = List.map (fun (i, off, bytes) -> (i, at off, bytes)) c.banks;
-      max_threads = c.max_threads;
-    }
-  in
-  with_hw n (fun () -> Hashtbl.replace n.kernels k.entry k);
-  k.entry
+  match Cubin.load binary ~name with
+  | exception Failure why -> Error why
+  | c -> (
+      match upload n binary c with
+      | None -> Error "no GPU memory for the program"
+      | Some mem ->
+          let base = va mem in
+          let at off = Nativeint.of_int (base + off) in
+          let k =
+            {
+              image = at 0;
+              entry = at c.entry;
+              code_bytes = c.code_bytes;
+              registers = c.registers;
+              shared_bytes = c.shared_bytes;
+              local_bytes = c.local_bytes;
+              param_offset = c.param_offset;
+              banks =
+                List.map (fun (i, off, bytes) -> (i, at off, bytes)) c.banks;
+              max_threads = c.max_threads;
+            }
+          in
+          with_hw n (fun () -> Hashtbl.replace n.kernels k.entry k);
+          Ok k.entry)
 
 (* Faults *)
 
@@ -1050,9 +1064,20 @@ let default () =
   | Some i -> i
   | None -> if Nvk.available () then Kernel else Pci
 
+(* Raises [Lost] for [host] if its machine can no longer be reached: the
+   synchronization of [host] meets the failed connection, which loses it. *)
+let check_reach host =
+  match Nx_remote_device.remote host with
+  | Some r when Remote.failed r <> None -> Nx_device.synchronize host
+  | Some _ | None -> ()
+
 let count ?(host = Nx_device.host) ?interface () =
   match Nx_remote_device.remote host with
-  | Some remote -> List.length (pci_buses ~remote ())
+  | Some remote -> (
+      try List.length (pci_buses ~remote ())
+      with Failure _ as e ->
+        check_reach host;
+        raise e)
   | None when not (linux ()) -> 0
   | None ->
       Mutex.protect lock (fun () ->
@@ -1061,6 +1086,11 @@ let count ?(host = Nx_device.host) ?interface () =
           | Pci -> List.length (pci_buses ()))
 
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
+
+(* Why GPU [i] of the machine of [machine] cannot be opened. *)
+let refuse ~machine i why =
+  check_reach machine;
+  Error (name ~machine i ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =
@@ -1077,34 +1107,36 @@ let open_gpu ~machine ~iface ?firmware i =
           if machine == Nx_device.host then chosen := Some iface;
           Atomic.set opened (((machine, i), n) :: Atomic.get opened);
           Ok (Option.get n.dev)
-      | exception (Failure msg | Sys_error msg | Invalid_argument msg) ->
-          Error ("NV: " ^ msg)
+      | exception (Failure why | Sys_error why | Invalid_argument why) ->
+          refuse ~machine i why
       | exception Unix.Unix_error (e, f, arg) ->
-          Error (Printf.sprintf "NV: %s %s: %s" f arg (Unix.error_message e)))
+          refuse ~machine i
+            (Printf.sprintf "%s %s: %s" f arg (Unix.error_message e)))
 
 let get ?(host = Nx_device.host) ?interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_nv_device.get: %d < 0" i);
   let remote = Nx_remote_device.remote host in
+  let refuse = refuse ~machine:host i in
   Mutex.protect lock (fun () ->
       match (remote, interface) with
       | Some _, Some Kernel ->
-          Error "NV: another machine's GPUs are reached over PCI"
+          refuse "another machine's GPUs are reached over PCI"
       | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
-      | None, _ when not (linux ()) -> Error "NV: NVIDIA GPUs need Linux"
+      | None, _ when not (linux ()) -> refuse "NVIDIA GPUs need Linux"
       | None, _ -> (
           let iface = Option.value interface ~default:(default ()) in
           match !chosen with
           | Some c when c <> iface ->
-              Error
+              refuse
                 (Printf.sprintf
-                   "NV: this process reaches NVIDIA GPUs through %s, not %s"
+                   "this process reaches NVIDIA GPUs through %s, not %s"
                    (interface_name c) (interface_name iface))
           | _ -> open_gpu ~machine:host ~iface ?firmware i))
 
 let v ?host ?interface ?firmware i =
   match get ?host ?interface ?firmware i with
   | Ok d -> d
-  | Error msg -> invalid_arg msg
+  | Error msg -> failwith msg
 
 let nv fn d =
   match nv_of d with

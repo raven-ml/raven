@@ -4066,7 +4066,7 @@ let disk_int32 ~byte n =
     written := !written + len
   done;
   close_out oc;
-  let file = Nx_device.Buffer.of_file path in
+  let file = Result.get_ok (Nx_device.Buffer.of_file path) in
   ( Nx_effect.of_buffer Nx_dtype.int32 [| n |]
       (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Int32 n),
     path )
@@ -4147,7 +4147,7 @@ let test_disk_unaligned () =
         Nx_effect.of_buffer Nx_dtype.int32
           [| n - 1 |]
           (Nx_device.Buffer.view
-             (Nx_device.Buffer.of_file path)
+             (Result.get_ok (Nx_device.Buffer.of_file path))
              ~offset:2 Nx_dtype.Scalar.Int32 (n - 1))
       in
       let read = read_from_disk () in

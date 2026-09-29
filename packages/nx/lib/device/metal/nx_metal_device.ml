@@ -62,6 +62,8 @@ let count () =
         1
       end
 
+let name i = if i = 0 then "METAL" else Printf.sprintf "METAL:%d" i
+
 let open_metal mtl =
   let queue = new_queue mtl in
   let residency_set =
@@ -113,10 +115,13 @@ let open_metal mtl =
     }
   in
   let dev =
-    Nx_device.make ~name:"METAL" ~arch:(arch mtl) ~budget:(working_set mtl)
+    Nx_device.make ~name:(name 0) ~arch:(arch mtl) ~budget:(working_set mtl)
       ~memory:{ alloc = (fun n -> resident_memory (alloc mtl n)); free }
       ?mapping:map
-      ~load:(fun ~binary ~name -> pipeline mtl binary name)
+      ~load:(fun ~binary ~name ->
+        match pipeline mtl binary name with
+        | p -> Ok p
+        | exception Failure why -> Error why)
       ~signal:(fun _ -> signal)
       ~synchronized:cycle_pool ~resolve ()
   in
@@ -124,27 +129,30 @@ let open_metal mtl =
 
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_metal_device.get: %d < 0" i);
+  let refuse why = Error (name i ^ ": " ^ why) in
   Mutex.protect lock @@ fun () ->
   match Atomic.get opened with
   | Some m when i = 0 -> Ok m.dev
-  | Some _ ->
-      Error (Printf.sprintf "Metal: no device %d; there is one Metal device" i)
+  | Some _ -> refuse "no such device; there is one Metal device"
   | None -> (
       match create_device () with
-      | 0n -> Error "Metal: no GPU of this machine supports Metal"
+      | 0n -> refuse "no GPU of this machine supports Metal"
       | mtl when i > 0 ->
           release mtl;
-          Error
-            (Printf.sprintf "Metal: no device %d; there is one Metal device" i)
+          refuse "no such device; there is one Metal device"
       | mtl when arch mtl = "" ->
           release mtl;
-          Error "Metal: the GPU belongs to no supported GPU family"
-      | mtl ->
-          let m = open_metal mtl in
-          Atomic.set opened (Some m);
-          Ok m.dev)
+          refuse "the GPU belongs to no supported GPU family"
+      | mtl -> (
+          match open_metal mtl with
+          | m ->
+              Atomic.set opened (Some m);
+              Ok m.dev
+          | exception Failure why ->
+              release mtl;
+              refuse why))
 
-let v i = match get i with Ok d -> d | Error msg -> invalid_arg msg
+let v i = match get i with Ok d -> d | Error msg -> failwith msg
 
 let metal fn d =
   match Atomic.get opened with

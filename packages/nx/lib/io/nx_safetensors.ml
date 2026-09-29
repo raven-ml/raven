@@ -85,8 +85,8 @@ let read_header file =
 
 let load_safetensors path =
   match B.of_file path with
-  | exception Sys_error msg -> failwith msg
-  | file -> (
+  | Error why -> failwith why
+  | Ok file -> (
       try
         let (metadata : Safetensors.metadata), data_start = read_header file in
         let archive = Hashtbl.create (Array.length metadata.tensors) in
@@ -106,7 +106,9 @@ let load_safetensors path =
               (entry file kind shape ~off:(data_start + start) ~len))
           metadata.index_map;
         archive
-      with Failure msg -> fail_msg "%s: %s" path msg)
+      with
+      | Failure msg -> fail_msg "%s: %s" path msg
+      | Sys_error msg -> failwith msg)
 
 (* Saving *)
 
@@ -172,7 +174,11 @@ let write temp header parts =
   let data_len =
     List.fold_left (fun n (off, src) -> Int.max n (off + B.nbytes src)) 0 parts
   in
-  let file = B.create_file temp (hlen + data_len) in
+  let file =
+    match B.create_file temp (hlen + data_len) with
+    | Ok file -> file
+    | Error why -> raise (Sys_error why)
+  in
   let bytes = B.create Nx_device.host Nx_dtype.Scalar.UInt8 hlen in
   let chars = B.bigarray Bigarray.char bytes in
   String.iteri (Bigarray.Array1.set chars) header;

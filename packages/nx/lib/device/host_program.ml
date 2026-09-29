@@ -13,8 +13,7 @@ external code_install : nativeint -> bytes -> unit
 external code_free : nativeint -> int -> unit = "caml_nx_device_code_free"
 external symbol_address : string -> nativeint = "caml_nx_device_symbol"
 
-let fail fmt =
-  Printf.ksprintf (fun m -> failwith ("Nx_device.Program.load: " ^ m)) fmt
+let fail fmt = Printf.ksprintf failwith fmt
 
 (* Objects *)
 
@@ -145,7 +144,7 @@ let link (o : Elf.t) ~machine ~base ~size ~slots_at externals =
 
 let round_up n a = (n + a - 1) / a * a
 
-let load_for machine ~binary ~name =
+let load_exn machine ~binary ~name =
   let o = Elf.load binary in
   if o.kind <> et_rel then fail "the object is not relocatable";
   if o.machine <> machine then
@@ -193,6 +192,11 @@ let load_for machine ~binary ~name =
   | exception e ->
       free ();
       raise e
+
+let load_for machine ~binary ~name =
+  match load_exn machine ~binary ~name with
+  | loaded -> Ok loaded
+  | exception Failure why -> Error why
 
 let load =
   match Host_arch.architecture with

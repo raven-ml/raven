@@ -72,21 +72,21 @@ value caml_nx_metal_new_queue(value v_device) {
   id<MTLDevice> device = Object_val(v_device);
   id<MTLCommandQueue> queue =
       [device newCommandQueueWithMaxCommandBufferCount:1024];
-  if (queue == nil) caml_failwith("Metal: cannot allocate a command queue");
+  if (queue == nil) caml_failwith("cannot allocate a command queue");
   return caml_copy_nativeint((intnat)queue);
 }
 
 value caml_nx_metal_new_event(value v_device) {
   id<MTLDevice> device = Object_val(v_device);
   id<MTLSharedEvent> event = [device newSharedEvent];
-  if (event == nil) caml_failwith("Metal: cannot create a shared event");
+  if (event == nil) caml_failwith("cannot create a shared event");
   return caml_copy_nativeint((intnat)event);
 }
 
 value caml_nx_metal_new_fence(value v_device) {
   id<MTLDevice> device = Object_val(v_device);
   id<MTLFence> fence = [device newFence];
-  if (fence == nil) caml_failwith("Metal: cannot create a fence");
+  if (fence == nil) caml_failwith("cannot create a fence");
   return caml_copy_nativeint((intnat)fence);
 }
 
@@ -187,12 +187,12 @@ value caml_nx_metal_pipeline(value v_device, value v_binary, value v_name) {
     id<MTLLibrary> library = [device newLibraryWithData:data error:&error];
     dispatch_release(data);
     if (library == nil) {
-      set_message(&error_message, error, "Metal: invalid library");
+      set_message(&error_message, error, "invalid library");
     } else {
       id<MTLFunction> function = [library newFunctionWithName:name];
       if (function == nil) {
         snprintf(error_message.text, sizeof(error_message.text),
-                 "Metal: the library has no function %s", name.UTF8String);
+                 "the library has no function %s", name.UTF8String);
       } else {
         MTLComputePipelineDescriptor *descriptor =
             [[MTLComputePipelineDescriptor alloc] init];
@@ -204,7 +204,7 @@ value caml_nx_metal_pipeline(value v_device, value v_binary, value v_name) {
                                        reflection:nil
                                             error:&error];
         if (pipeline == nil)
-          set_message(&error_message, error, "Metal: cannot build a pipeline");
+          set_message(&error_message, error, "cannot build a pipeline");
         [descriptor release];
         [function release];
       }

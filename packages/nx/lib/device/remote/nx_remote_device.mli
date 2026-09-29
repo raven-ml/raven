@@ -20,10 +20,10 @@
     {b Failures.} The connection fails for good when the machine does not answer
     within the host's {!Nx_device.timeout} at connection, when the stream
     breaks, or when an operation sent without waiting fails there. Each device
-    of the machine then fails with that error at its next operation that reaches
-    the machine; this machine's devices go on. The server stops the DMA of the
-    functions this process took and frees its memory once the connection is
-    gone. *)
+    of the machine is then lost ({!Nx_device.Lost}) with that error at its next
+    operation that reaches the machine; this machine's devices go on. The server
+    stops the DMA of the functions this process took and frees its memory once
+    the connection is gone. *)
 
 val default_port : int
 (** [default_port] is [6667], the port [nx-remote] listens on by default. *)
@@ -36,10 +36,10 @@ val connect :
   (Nx_device.t, string) result
 (** [connect ~key host] is the host of the machine whose server listens at
     [host] and [port] (defaults to {!default_port}), proving [key] to it. The
-    same host and port give the same device, failed or not: a machine is
-    connected to once in the life of the process. [timeout_ms] (defaults to
-    [30_000]) bounds the connection and every answer of the server, and is the
-    device's {!Nx_device.timeout}.
+    same host and port give the same device, lost or not: a machine is connected
+    to once in the life of the process. [timeout_ms] (defaults to [30_000])
+    bounds the connection and every answer of the server, and is the device's
+    {!Nx_device.timeout}.
 
     [Error why] if the server cannot be reached, is busy with another client,
     speaks another version of the protocol, or either end does not know the key.

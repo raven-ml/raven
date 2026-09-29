@@ -8,7 +8,7 @@
    around the copy engine's largest copy, copies that wrap its ring, coherence
    through each kind of memory, programs, scratch, the timeline across 2^32,
    nx's runtime laws over the devices, and last, work that never signals, which
-   fails the device. Every test skips without a GPU, and the peer tests without
+   loses the device. Every test skips without a GPU, and the peer tests without
    two. GPUs are reached through the kernel driver when it is loaded; over PCI
    the runtime takes a GPU from its kernel driver, so the suite does only when
    NX_AMD_PCI_TEST names the index of a GPU it may take. *)
@@ -18,6 +18,19 @@ module B = Nx_device.Buffer
 module S = Nx_dtype.Scalar
 
 let mib = 1 lsl 20
+
+(* [d]'s borrow of [b], which it maps. *)
+let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
+
+(* The function [name] of [binary], which [d] loads. *)
+let program d ~binary ~name =
+  match Nx_device.Program.load d ~binary ~name with
+  | Ok p -> p
+  | Error why -> failwith why
+
+let hung d = function
+  | Nx_device.Lost (d', why) -> d' == d && why = "hang detected"
+  | _ -> false
 
 (* The index of the first GPU the suite may take over PCI, if any. *)
 let pci_first () = Option.map int_of_string (Sys.getenv_opt "NX_AMD_PCI_TEST")
@@ -145,7 +158,7 @@ let test_borrow () =
   let d = device () in
   let n = 4 * mib in
   let host = fill_host n (fun i -> i) in
-  let borrowed = B.borrow d host in
+  let borrowed = borrow d host in
   is_true ~msg:"borrowed" (B.is_borrowed borrowed);
   let v = B.create d S.UInt8 n in
   let src = fill_host n (fun i -> 255 - i) in
@@ -154,16 +167,18 @@ let test_borrow () =
     (steps d (fun () -> B.copy ~src:v ~dst:borrowed));
   Nx_device.synchronize Nx_device.host;
   is_true ~msg:"seen through the host buffer" (same_bytes src host);
-  let also = B.borrow d (B.view host ~offset:(64 * 1024) S.UInt8 1024) in
+  let also = borrow d (B.view host ~offset:(64 * 1024) S.UInt8 1024) in
   B.copy ~src:(B.view v ~offset:0 S.UInt8 1024) ~dst:also;
-  raises_match (Exn.invalid_arg ~substring:"does not start on a page")
-    (fun () ->
-      B.borrow d
-        (B.of_bigarray
-           (Bigarray.Array1.sub
-              (B.bigarray Bigarray.int8_unsigned
-                 (B.create Nx_device.host S.UInt8 (2 * mib)))
-              1 mib)))
+  match
+    B.borrow d
+      (B.of_bigarray
+         (Bigarray.Array1.sub
+            (B.bigarray Bigarray.int8_unsigned
+               (B.create Nx_device.host S.UInt8 (2 * mib)))
+            1 mib))
+  with
+  | Ok _ -> fail "borrowed memory off a page"
+  | Error why -> contains ~msg:"off a page" ~sub:"does not start on a page" why
 
 let test_peer () =
   let d0 = device () and d1 = device ~i:1 () in
@@ -228,17 +243,18 @@ let test_programs () =
   let d = device () in
   match compile (Nx_device.arch d) with
   | None -> skip ~reason:"no compiler for the GPU's target" ()
-  | Some binary ->
-      let p = Nx_device.Program.load d ~binary ~name:"fill" in
-      is_true ~msg:"cached" (p == Nx_device.Program.load d ~binary ~name:"fill");
+  | Some binary -> (
+      let p = program d ~binary ~name:"fill" in
+      is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
       let k = Nx_amd_device.kernel p in
       equal ~msg:"the handle is the descriptor" nativeint k.descriptor
         (Nx_device.Program.handle p);
       is_true ~msg:"inside the code"
         (k.descriptor >= k.code && k.entry >= k.code);
       is_true ~msg:"room for its pointer" (k.kernarg_segment >= 8);
-      raises_match (Exn.failure ~substring:"no kernel") (fun () ->
-          Nx_device.Program.load d ~binary ~name:"absent")
+      match Nx_device.Program.load d ~binary ~name:"absent" with
+      | Ok _ -> fail "loaded an absent function"
+      | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)
 
 (* The device's timeline across 2^32: from 2^32 - 2, three copies take it
    through the carry, and the copy after it waits for a low word of 0. *)
@@ -337,7 +353,7 @@ let boundaries max () =
   write_pattern 1 src;
   let out = B.create Nx_device.host S.UInt8 top in
   let lent = B.create Nx_device.host S.UInt8 top in
-  let borrowed = B.borrow d lent in
+  let borrowed = borrow d lent in
   let v = B.create d S.UInt8 top and w = B.create d S.UInt8 top in
   List.iter
     (fun n ->
@@ -404,7 +420,7 @@ let test_coherence () =
   and h2 = B.create ~host:true d S.UInt8 n in
   let lent1 = B.create Nx_device.host S.UInt8 n
   and lent2 = B.create Nx_device.host S.UInt8 n in
-  let b1 = B.borrow d lent1 and b2 = B.borrow d lent2 in
+  let b1 = borrow d lent1 and b2 = borrow d lent2 in
   let v = B.create d S.UInt8 n in
   for round = 1 to 8 do
     let at what = Printf.sprintf "%s, round %d" what round in
@@ -420,16 +436,14 @@ let test_coherence () =
     check ~msg:(at "borrowed memory and VRAM") (20 + round) lent2
   done
 
-(* Last: work that never signals hangs the device, which fails after its
+(* Last: work that never signals hangs the device, which is lost after its
    timeout. *)
 let test_hang () =
   let d = device () in
   Nx_device.set_timeout d 500;
   ignore (Nx_device.submit d ~touches:[] Fun.id);
-  raises_match (Exn.failure ~substring:"hang detected") (fun () ->
-      Nx_device.synchronize d);
-  raises_match (Exn.failure ~substring:"hang detected") (fun () ->
-      B.create d S.UInt8 1)
+  raises_match (hung d) (fun () -> Nx_device.synchronize d);
+  raises_match (hung d) (fun () -> B.create d S.UInt8 1)
 
 let () =
   exit
@@ -458,5 +472,5 @@ let () =
          group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"
-           [ test "work that never signals fails the device" test_hang ];
+           [ test "work that never signals loses the device" test_hang ];
        ])

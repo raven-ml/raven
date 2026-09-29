@@ -434,7 +434,7 @@ let safetensors =
           save_safetensors path (Nx.P (Nx.arange Nx.int32 0 1024 1));
           let (Nx.P t) = load_entry path "t" in
           Unix.truncate path 100;
-          fails ~naming:path (fun () -> Nx.to_array t));
+          raises_match (Exn.sys_error ~substring:path) (fun () -> Nx.to_array t));
       (let whole = typed_file () in
        let with_length n =
          let b = Bytes.of_string whole in

@@ -26,6 +26,21 @@ external other_context_alloc : int -> int -> nativeint
 
 let gpus = List.init (Nx_cuda_device.count ()) Nx_cuda_device.v
 
+(* [d]'s borrow of [b], which it maps. *)
+let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
+
+(* The function [name] of [binary], which [d] loads. *)
+let program d ~binary ~name =
+  match Nx_device.Program.load d ~binary ~name with
+  | Ok p -> p
+  | Error why -> failwith why
+
+(* [f ()] is [Error why], [why] containing [sub]. *)
+let refused ~sub f =
+  match f () with
+  | Ok _ -> fail "not refused"
+  | Error why -> contains ~msg:"the reason" ~sub why
+
 let cuda () =
   match gpus with [] -> skip ~reason:"no CUDA device" () | d :: _ -> d
 
@@ -175,7 +190,7 @@ let copies =
           B.copy ~src:(host_of n (fun i -> i * 3)) ~dst:pinned;
           let b = B.create d S.UInt8 n and b' = B.create d S.UInt8 n in
           let mapped = B.create Nx_device.host S.UInt8 n in
-          let bm = B.borrow d mapped in
+          let bm = borrow d mapped in
           equal (list int) [ 1; 1; 1 ]
             [
               values d (fun () -> B.copy ~src:pinned ~dst:b);
@@ -237,30 +252,28 @@ let borrowing =
           let d = cuda () in
           let hb = host_of (2 * pages) Fun.id in
           (fun () ->
-            let whole = B.borrow d hb in
-            let tail = B.borrow d (B.view hb ~offset:pages S.UInt8 16) in
+            let whole = borrow d hb in
+            let tail = borrow d (B.view hb ~offset:pages S.UInt8 16) in
             equal ~msg:"the host's bytes" nativeint (B.host_address hb)
               (B.host_address whole);
             let b = B.create d S.UInt8 16 in
             B.copy ~src:tail ~dst:b;
             holds ~msg:"read through the mapping" b (fun i -> pages + i);
-            raises_match (Exn.invalid_arg ~substring:"does not start on a page")
-              (fun () ->
+            refused ~sub:"does not start on a page" (fun () ->
                 B.borrow d
                   (B.of_bigarray (Bigarray.Array1.sub (bytes_of hb) 1 16)));
-            raises_match (Exn.invalid_arg ~substring:"cannot map") (fun () ->
-                B.borrow d (overlapping hb)))
+            refused ~sub:"cannot map" (fun () -> B.borrow d (overlapping hb)))
             ();
           collect d;
           is_true ~msg:"unmapped with its last borrow"
-            (B.is_borrowed (B.borrow d (overlapping hb))));
+            (B.is_borrowed (borrow d (overlapping hb))));
       test
         "a host buffer borrowed on two GPUs shares one registration, released \
          when both devices' borrows are collected" (fun () ->
           let d, d1 = two () in
           let hb = host_of (2 * pages) Fun.id in
           (fun () ->
-            let on_d = B.borrow d hb and on_d1 = B.borrow d1 hb in
+            let on_d = borrow d hb and on_d1 = borrow d1 hb in
             let a = B.create d S.UInt8 16 and b = B.create d1 S.UInt8 16 in
             B.copy ~src:(B.view on_d ~offset:0 S.UInt8 16) ~dst:a;
             B.copy ~src:(B.view on_d1 ~offset:pages S.UInt8 16) ~dst:b;
@@ -268,11 +281,10 @@ let borrowing =
             holds ~msg:"on the second" b (fun i -> pages + i))
             ();
           collect d;
-          raises_match (Exn.invalid_arg ~substring:"cannot map") (fun () ->
-              B.borrow d (overlapping hb));
+          refused ~sub:"cannot map" (fun () -> B.borrow d (overlapping hb));
           collect d1;
           is_true ~msg:"unregistered with the last device's borrows"
-            (B.is_borrowed (B.borrow d (overlapping hb))));
+            (B.is_borrowed (borrow d (overlapping hb))));
       test
         "of_address is a borrowed view of another library's allocation, which \
          the host addresses when it is page-locked" (fun () ->
@@ -337,7 +349,7 @@ let ptx =
 (* Launches [double_index] over [out] as timeline work. *)
 let double_index d out =
   let h = Nx_cuda_device.handles d in
-  let f = Nx_device.Program.load d ~binary:ptx ~name:"double_index" in
+  let f = program d ~binary:ptx ~name:"double_index" in
   Nx_device.submit d ~touches:[] (fun v ->
       launch h.context h.compute h.signal (Nx_device.Program.handle f) out v)
 
@@ -348,13 +360,12 @@ let programs =
         "a module's function loads once, and the driver's error names a bad \
          module or a missing function" (fun () ->
           let d = cuda () in
-          let f = Nx_device.Program.load d ~binary:ptx ~name:"double_index" in
-          is_true
-            (Nx_device.Program.load d ~binary:ptx ~name:"double_index" == f);
-          raises_match (Exn.failure ~substring:"CUDA_ERROR_") (fun () ->
+          let f = program d ~binary:ptx ~name:"double_index" in
+          is_true (program d ~binary:ptx ~name:"double_index" == f);
+          refused ~sub:"CUDA: CUDA_ERROR_" (fun () ->
               Nx_device.Program.load d ~binary:"not a module" ~name:"f");
-          raises_match (Exn.failure ~substring:"CUDA_ERROR_NOT_FOUND")
-            (fun () -> Nx_device.Program.load d ~binary:ptx ~name:"missing"));
+          refused ~sub:"CUDA_ERROR_NOT_FOUND" (fun () ->
+              Nx_device.Program.load d ~binary:ptx ~name:"missing"));
       test "a kernel launched through submit computes, and signals its value"
         (fun () ->
           let d = cuda () in
@@ -382,14 +393,18 @@ let programs =
             (Int64.to_int (B.bigarray Bigarray.int64 words).{0}));
     ]
 
-(* A kernel that writes to address 0 faults the device, which fails for good
+(* A kernel that writes to address 0 faults the device, which is lost for good
    with the driver's error. It runs last: the fault ends the context. *)
 let fault =
-  test "a fault fails the device with the driver's error" (fun () ->
+  test "a fault loses the device with the driver's error" (fun () ->
       let d = cuda () in
       let b = B.create d S.UInt8 8 in
       double_index d 0n;
-      let illegal = Exn.failure ~substring:"CUDA: CUDA_ERROR_" in
+      let illegal = function
+        | Nx_device.Lost (d', why) ->
+            d' == d && String.starts_with ~prefix:"CUDA_ERROR_" why
+        | _ -> false
+      in
       raises_match illegal (fun () -> Nx_device.synchronize d);
       raises_match illegal (fun () -> B.create d S.UInt8 1);
       raises_match illegal (fun () -> differs b (fun _ -> 0)))

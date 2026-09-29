@@ -126,14 +126,14 @@ value caml_nx_cuda_load(value unit) {
     lib = library_open(library_names[i]);
   if (lib == NULL)
     snprintf(load_error, sizeof(load_error),
-             "CUDA: no driver library (%s) on the library search path",
+             "no driver library (%s) on the library search path",
              library_names[0]);
 #define RESOLVE(name, args)                                                    \
   if (load_error[0] == '\0') {                                                 \
     p_##name = (CUresult(CUDAAPI *) args)library_symbol(lib, #name);           \
     if (p_##name == NULL)                                                      \
       snprintf(load_error, sizeof(load_error),                                 \
-               "CUDA: the driver has no %s", #name);                           \
+               "the driver has no %s", #name);                           \
   }
   DRIVER(RESOLVE)
 #undef RESOLVE
@@ -142,7 +142,7 @@ value caml_nx_cuda_load(value unit) {
     if (status != CUDA_SUCCESS) {
       const char *name = "unknown error";
       p_cuGetErrorName(status, &name);
-      snprintf(load_error, sizeof(load_error), "CUDA: cuInit failed: %s", name);
+      snprintf(load_error, sizeof(load_error), "cuInit failed: %s", name);
     }
   }
   caml_acquire_runtime_system();

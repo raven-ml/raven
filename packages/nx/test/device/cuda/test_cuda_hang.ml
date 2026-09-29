@@ -20,7 +20,10 @@ let test_hang () =
   let h = Nx_cuda_device.handles d in
   Nx_device.set_timeout d 500;
   Nx_device.submit d ~touches:[] (stall h.context h.compute h.signal);
-  let hung = Exn.failure ~substring:"CUDA hang detected" in
+  let hung = function
+    | Nx_device.Lost (d', why) -> d' == d && why = "hang detected"
+    | _ -> false
+  in
   let t0 = Unix.gettimeofday () in
   raises_match hung (fun () -> Nx_device.synchronize d);
   is_true ~msg:"after the timeout" (Unix.gettimeofday () -. t0 >= 0.5);

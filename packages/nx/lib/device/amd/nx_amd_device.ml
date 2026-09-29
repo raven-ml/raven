@@ -339,45 +339,56 @@ let dma a (m : Nx_device.memory) =
 
 (* Programs *)
 
+(* The code object [binary], uploaded once. *)
+let upload a binary img =
+  match Hashtbl.find_opt a.images binary with
+  | Some mem -> Some mem
+  | None ->
+      Option.map
+        (fun mem ->
+          register a mem;
+          Mmio.write (Option.get (host_view mem)) 0 img;
+          Mmio.barrier ();
+          Hashtbl.replace a.images binary mem;
+          mem)
+        (alloc_mem a Visible (String.length img))
+
+(* A code object the device cannot run, or has no memory for, is refused, and
+   the device stays usable. *)
 let load a ~binary ~name =
   let major, _, _ = a.props.target in
-  let obj, img = Code_object.image binary in
-  let code =
-    match Hashtbl.find_opt a.images binary with
-    | Some mem -> mem
-    | None -> (
-        match alloc_mem a Visible (String.length img) with
-        | None -> failwith "no GPU memory for the program"
-        | Some mem ->
-            register a mem;
-            Mmio.write (Option.get (host_view mem)) 0 img;
-            Mmio.barrier ();
-            Hashtbl.replace a.images binary mem;
-            mem)
-  in
-  let k =
-    Code_object.kernel obj img ~name ~major ~lds_kib:(a.props.lds_bytes / 1024)
-  in
-  let base = va code in
-  let at off = Nativeint.of_int (base + off) in
-  let kernel =
-    {
-      code = Nativeint.of_int base;
-      descriptor = at k.descriptor;
-      entry = at k.entry;
-      rsrc1 = k.rsrc1;
-      rsrc2 = k.rsrc2;
-      rsrc3 = k.rsrc3;
-      wave32 = k.wave32;
-      private_segment = k.private_segment;
-      group_segment = k.group_segment;
-      kernarg_segment = k.kernarg_segment;
-      dispatch_ptr = k.dispatch_ptr;
-      private_segment_buffer = k.private_segment_buffer;
-    }
-  in
-  with_hw a (fun () -> Hashtbl.replace a.kernels kernel.descriptor kernel);
-  kernel.descriptor
+  match
+    let obj, img = Code_object.image binary in
+    ( img,
+      Code_object.kernel obj img ~name ~major ~lds_kib:(a.props.lds_bytes / 1024)
+    )
+  with
+  | exception Failure why -> Error why
+  | img, k -> (
+      match upload a binary img with
+      | None -> Error "no GPU memory for the program"
+      | Some code ->
+          let base = va code in
+          let at off = Nativeint.of_int (base + off) in
+          let kernel =
+            {
+              code = Nativeint.of_int base;
+              descriptor = at k.descriptor;
+              entry = at k.entry;
+              rsrc1 = k.rsrc1;
+              rsrc2 = k.rsrc2;
+              rsrc3 = k.rsrc3;
+              wave32 = k.wave32;
+              private_segment = k.private_segment;
+              group_segment = k.group_segment;
+              kernarg_segment = k.kernarg_segment;
+              dispatch_ptr = k.dispatch_ptr;
+              private_segment_buffer = k.private_segment_buffer;
+            }
+          in
+          with_hw a (fun () ->
+              Hashtbl.replace a.kernels kernel.descriptor kernel);
+          Ok kernel.descriptor)
 
 (* Scratch *)
 
@@ -773,9 +784,20 @@ let default () =
   | Some i -> i
   | None -> if Kfd.available () then Kernel else Pci
 
+(* Raises [Lost] for [host] if its machine can no longer be reached: the
+   synchronization of [host] meets the failed connection, which loses it. *)
+let check_reach host =
+  match Nx_remote_device.remote host with
+  | Some r when Remote.failed r <> None -> Nx_device.synchronize host
+  | Some _ | None -> ()
+
 let count ?(host = Nx_device.host) ?interface () =
   match Nx_remote_device.remote host with
-  | Some remote -> List.length (Am.buses ~remote ())
+  | Some remote -> (
+      try List.length (Am.buses ~remote ())
+      with Failure _ as e ->
+        check_reach host;
+        raise e)
   | None when not (linux ()) -> 0
   | None ->
       Mutex.protect lock (fun () ->
@@ -784,6 +806,11 @@ let count ?(host = Nx_device.host) ?interface () =
           | Pci -> List.length (Am.buses ()))
 
 let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
+
+(* Why GPU [i] of the machine of [machine] cannot be opened. *)
+let refuse ~machine i why =
+  check_reach machine;
+  Error (name ~machine i ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =
@@ -799,35 +826,37 @@ let open_gpu ~machine ~iface ?firmware i =
           if machine == Nx_device.host then chosen := Some iface;
           Atomic.set opened (((machine, i), a) :: Atomic.get opened);
           Ok (Option.get a.dev)
-      | exception (Failure msg | Sys_error msg | Invalid_argument msg) ->
-          Error ("AMD: " ^ msg)
+      | exception (Failure why | Sys_error why | Invalid_argument why) ->
+          refuse ~machine i why
       | exception Unix.Unix_error (e, fn, arg) ->
-          Error (Printf.sprintf "AMD: %s %s: %s" fn arg (Unix.error_message e))
-      | exception Not_found -> Error "AMD: opening failed: Not_found")
+          refuse ~machine i
+            (Printf.sprintf "%s %s: %s" fn arg (Unix.error_message e))
+      | exception Not_found -> refuse ~machine i "opening failed: Not_found")
 
 let get ?(host = Nx_device.host) ?interface ?firmware i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_amd_device.get: %d < 0" i);
   let remote = Nx_remote_device.remote host in
+  let refuse = refuse ~machine:host i in
   Mutex.protect lock (fun () ->
       match (remote, interface) with
       | Some _, Some Kernel ->
-          Error "AMD: another machine's GPUs are reached over PCI"
+          refuse "another machine's GPUs are reached over PCI"
       | Some _, _ -> open_gpu ~machine:host ~iface:Pci ?firmware i
-      | None, _ when not (linux ()) -> Error "AMD: AMD GPUs need Linux"
+      | None, _ when not (linux ()) -> refuse "AMD GPUs need Linux"
       | None, _ -> (
           let iface = Option.value interface ~default:(default ()) in
           match !chosen with
           | Some c when c <> iface ->
-              Error
+              refuse
                 (Printf.sprintf
-                   "AMD: this process reaches AMD GPUs through %s, not %s"
+                   "this process reaches AMD GPUs through %s, not %s"
                    (interface_name c) (interface_name iface))
           | _ -> open_gpu ~machine:host ~iface ?firmware i))
 
 let v ?host ?interface ?firmware i =
   match get ?host ?interface ?firmware i with
   | Ok d -> d
-  | Error msg -> invalid_arg msg
+  | Error msg -> failwith msg
 
 let amd fn d =
   match amd_of d with

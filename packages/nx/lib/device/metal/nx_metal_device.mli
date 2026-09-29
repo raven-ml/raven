@@ -26,13 +26,14 @@ val count : unit -> int
 val get : int -> (Nx_device.t, string) result
 (** [get i] is Metal device [i], opened by the first call that succeeds; every
     later call returns the same value. [Error msg] says why it cannot be opened,
-    for example that [i >= count ()].
+    for example that [i >= count ()], after the device's name, such as
+    ["METAL:1: no such device; there is one Metal device"].
 
     Raises [Invalid_argument] if [i < 0]. *)
 
 val v : int -> Nx_device.t
-(** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
-    the device cannot be opened. *)
+(** [v i] is like {!get} but raises [Failure] with [get]'s message when the
+    device cannot be opened. *)
 
 (** {1:low Low-level}
 

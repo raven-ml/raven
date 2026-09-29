@@ -46,6 +46,22 @@ let read b =
 
 let write b s = B.copy ~src:(of_string s) ~dst:b
 
+(* [d]'s borrow of [b], which it maps. *)
+let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
+
+(* The file at [path], opened, or created with [n] bytes. *)
+let of_file path =
+  match B.of_file path with Ok b -> b | Error why -> failwith why
+
+let create_file path n =
+  match B.create_file path n with Ok b -> b | Error why -> failwith why
+
+(* The function [name] of [binary], which [d] loads. *)
+let program d ~binary ~name =
+  match Nx_device.Program.load d ~binary ~name with
+  | Ok p -> p
+  | Error why -> failwith why
+
 let pattern seed n =
   String.init n (fun i ->
       Char.chr (((seed * 31) + (i * 7) + (i / 5)) land 0xff))
@@ -61,6 +77,10 @@ let seeds = Gen.int_range 0 255
 
 let out_of_memory d n = function
   | Nx_device.Out_of_memory (d', n') -> d' == d && n' = n
+  | _ -> false
+
+let lost d why = function
+  | Nx_device.Lost (d', why') -> d' == d && why' = why
   | _ -> false
 
 (* Host buffers of this many bytes start on a page on every platform. *)
@@ -239,6 +259,7 @@ let signal_later d v =
 module Model = struct
   exception Dropped
   exception No_memory
+  exception Refused
 
   type memory = { cells : int array; on_page : bool }
 
@@ -335,9 +356,9 @@ module Model = struct
      starts. *)
   let borrow d r =
     alive r;
-    if
-      r.device <> None || d.name = "NEAR" || (size r > 0 && not r.memory.on_page)
-    then invalid_arg "borrow";
+    if r.device <> None then invalid_arg "borrow";
+    if d.name = "NEAR" || (size r > 0 && not r.memory.on_page) then
+      raise Refused;
     let maps = if size r > 0 then Some r.memory else None in
     let mapped = mappings d in
     let holding = { owned = 0; holders = 1; maps } in
@@ -631,7 +652,10 @@ let commands =
     command "borrow"
       (dev ^-> buf ^-> makes buf)
       Model.borrow
-      (fun d s -> some (B.borrow d.fake.dev (get s)))
+      (fun d s ->
+        match B.borrow d.fake.dev (get s) with
+        | Ok b -> some b
+        | Error _ -> raise Model.Refused)
   in
   [ borrow; borrow ]
 
@@ -882,7 +906,7 @@ let test_borrow_lifetime () =
   (fun () ->
     let hb = B.create host S.UInt8 (1 lsl 20) in
     Gc.finalise_last (fun () -> collected := true) hb;
-    let bm = B.borrow g.dev hb in
+    let bm = borrow g.dev hb in
     ignore (Nx_device.submit g.dev ~touches:[ host ] Fun.id);
     ignore (Sys.opaque_identity bm))
     ();
@@ -901,7 +925,7 @@ let routes =
   let p = far ~name:"PEER-A" () and q = far ~name:"PEER-B" () in
   let fakes = [ a; b; p; q ] in
   let mapped = B.create host S.UInt8 page in
-  let borrow = B.borrow a.dev mapped in
+  let borrow = borrow a.dev mapped in
   let small () = B.create host S.UInt8 8 in
   let on f () = B.create f.dev S.UInt8 8 in
   let pinned f () = B.create ~host:true f.dev S.UInt8 8 in
@@ -992,7 +1016,7 @@ let test_file_round_trip () =
   let n = (5 lsl 20) + 12345 and at = 4097 in
   let bytes = pattern 3 n in
   let path = temp_file () in
-  let file = B.create_file path (at + n + 3) in
+  let file = create_file path (at + n + 3) in
   write (B.view file ~offset:at S.UInt8 n) bytes;
   let on_disk = contents path in
   equal ~msg:"the file" int (at + n + 3) (String.length on_disk);
@@ -1001,7 +1025,7 @@ let test_file_round_trip () =
     (String.make at '\000' ^ String.make 3 '\000')
     (String.sub on_disk 0 at ^ String.sub on_disk (at + n) 3);
   equal ~msg:"bytes read" string bytes
-    (read (B.view (B.of_file path) ~offset:at S.UInt8 n))
+    (read (B.view (of_file path) ~offset:at S.UInt8 n))
 
 (* Through a device whose memory the host does not address: the file's bytes are
    read into staging slots that the device copies, and a device's written from
@@ -1012,7 +1036,7 @@ let test_file_staged () =
   let n = (2 * slot) + (slot / 2) + 12345 and at = 1001 in
   let bytes = pattern 5 n in
   let file =
-    B.view (B.create_file (temp_file ()) (at + n)) ~offset:at S.UInt8 n
+    B.view (create_file (temp_file ()) (at + n)) ~offset:at S.UInt8 n
   in
   let dev = B.create f.dev S.UInt8 n in
   write dev bytes;
@@ -1022,24 +1046,24 @@ let test_file_staged () =
   let back = B.create f.dev S.UInt8 n in
   B.copy ~src:file ~dst:back;
   equal ~msg:"slots read into the device" int 6 (f.drv.staged - staged);
-  let other = B.create_file (temp_file ()) n in
+  let other = create_file (temp_file ()) n in
   B.copy ~src:file ~dst:other;
   is_true ~msg:"bytes through the device and back" (read back = bytes);
   is_true ~msg:"bytes from file to file" (read other = bytes)
 
 let test_file_closes () =
   let path = file_of "old" in
-  let b = B.of_file path in
+  let b = of_file path in
   let replacement = file_of "new" in
   Sys.rename replacement path;
   equal ~msg:"the file opened" string "old" (read b);
-  equal ~msg:"the file now at its path" string "new" (read (B.of_file path));
+  equal ~msg:"the file now at its path" string "new" (read (of_file path));
   if not Sys.win32 then begin
     let descriptors () = Array.length (Sys.readdir "/dev/fd") in
     Gc.full_major ();
     Nx_device.synchronize disk;
     let before = descriptors () in
-    let opened = List.init 20 (fun _ -> B.of_file path) in
+    let opened = List.init 20 (fun _ -> of_file path) in
     equal ~msg:"open" int (before + 20) (descriptors ());
     ignore (Sys.opaque_identity opened);
     Gc.full_major ();
@@ -1056,9 +1080,9 @@ let test_file_borrows () =
   let path = file_of bytes in
   let read_before = Nx_device.Stats.bytes_out (stats disk) in
   let on_host, on_device =
-    let file = B.of_file path in
+    let file = of_file path in
     let window = B.view file ~offset:page S.UInt8 page in
-    (B.borrow host window, B.borrow sharing.dev window)
+    (borrow host window, borrow sharing.dev window)
   in
   Gc.full_major ();
   Nx_device.synchronize disk;
@@ -1079,7 +1103,7 @@ let disks =
             (Nx_device.name disk, Nx_device.arch disk, Nx_device.budget disk));
       test "a file is its bytes on DISK, borrowed, which a copy reads"
         (fun () ->
-          let b = B.of_file (file_of "hello world") in
+          let b = of_file (file_of "hello world") in
           equal
             (quad string bool int string)
             ("DISK", true, 11, "hello world")
@@ -1088,14 +1112,14 @@ let disks =
             (read (B.view b ~offset:6 S.UInt8 5)));
       test "a new file is zero until a copy writes it, at any offset" (fun () ->
           let path = temp_file () in
-          let b = B.create_file path 10 in
+          let b = create_file path 10 in
           equal ~msg:"zeros" string (String.make 10 '\000') (read b);
           write (B.view b ~offset:3 S.UInt8 5) "abcde";
           equal string "\000\000\000abcde\000\000" (contents path);
-          equal ~msg:"read again" string (contents path) (read (B.of_file path)));
+          equal ~msg:"read again" string (contents path) (read (of_file path)));
       test "a view of a file's bytes is of any format, at any byte" (fun () ->
           let bytes = pattern 9 64 in
-          let f = B.view (B.of_file (file_of bytes)) ~offset:3 S.Float32 4 in
+          let f = B.view (of_file (file_of bytes)) ~offset:3 S.Float32 4 in
           let h = B.create host S.Float32 4 in
           B.copy ~src:f ~dst:h;
           equal string (String.sub bytes 3 16)
@@ -1109,7 +1133,7 @@ let disks =
       test
         "a read counts in DISK's bytes_out and a write in its bytes_in, \
          allocating nothing" (fun () ->
-          let b = B.create_file (temp_file ()) 8 in
+          let b = create_file (temp_file ()) 8 in
           let (i0, o0), (hi0, ho0) = (transferred disk, transferred host) in
           write b "abcdefgh";
           ignore (read (B.view b ~offset:2 S.UInt8 3));
@@ -1126,9 +1150,9 @@ let disks =
         test_file_borrows;
       test "a read past the end of a file truncated since, naming it" (fun () ->
           let path = file_of (String.make 10 'x') in
-          let b = B.of_file path in
+          let b = of_file path in
           Unix.truncate path 4;
-          raises_match (Exn.failure ~substring:path) (fun () ->
+          raises_match (Exn.sys_error ~substring:path) (fun () ->
               read (B.view b ~offset:2 S.UInt8 5)));
     ]
 
@@ -1282,10 +1306,17 @@ let refusals =
     make ~mapping ()
   in
   let rejecting () =
-    (fake ~load:(fun ~binary:_ ~name:_ -> failwith "rejected") ()).dev
+    (fake ~load:(fun ~binary:_ ~name:_ -> Error "rejected") ()).dev
   in
   let raise_ ?(exn = Exn.invalid_arg ?substring:None) name f =
     (name, fun () -> raises_match exn (fun () -> ignore (f ())))
+  in
+  let error ~sub name f =
+    ( name,
+      fun () ->
+        match f () with
+        | Ok _ -> fail "accepted"
+        | Error why -> contains ~msg:"the reason" ~sub why )
   in
   cases ~name:fst "refuse"
     [
@@ -1334,20 +1365,24 @@ let refusals =
       raise_ "a bigarray over bytes not aligned to its elements" (fun () ->
           B.bigarray Bigarray.int16_signed
             (B.view (B.create host S.UInt8 4) ~offset:1 S.UInt8 2));
-      raise_ "a borrow of memory that does not start on a page" (fun () ->
+      error ~sub:"start on a page"
+        "a borrow of memory that does not start on a page" (fun () ->
           B.borrow far_one.dev (off_page ()));
-      raise_ ~exn:(Exn.invalid_arg ~substring:"locked")
-        "a borrow its driver refuses, with its reason" (fun () ->
-          B.borrow (refusing ()) (B.create host S.UInt8 page));
+      error ~sub:"locked" "a borrow its driver refuses, with its reason"
+        (fun () -> B.borrow (refusing ()) (B.create host S.UInt8 page));
+      error ~sub:"cannot address host memory"
+        "a borrow by a device that maps no host memory" (fun () ->
+          B.borrow near.dev (B.create host S.UInt8 page));
       raise_
         "a copy of memory the host does not address, by a device without a \
          copy queue" (fun () ->
           B.copy ~src:(external_ S.UInt8 4) ~dst:(B.create host S.UInt8 4));
       raise_ "a copy between buffers of different sizes" (fun () ->
           B.copy ~src:(B.create host S.UInt8 4) ~dst:(B.create host S.UInt8 3));
-      raise_ "a program on a device that loads none" (fun () ->
+      error ~sub:"NEAR: the device loads no programs"
+        "a program on a device that loads none" (fun () ->
           Nx_device.Program.load (fake ()).dev ~binary:"lib" ~name:"f");
-      raise_ ~exn:(Exn.failure ~substring:"rejected")
+      error ~sub:"NEAR: rejected"
         "a program its driver rejects, with its message" (fun () ->
           Nx_device.Program.load (rejecting ()) ~binary:"lib" ~name:"f");
       raise_ "a buffer of DISK made by create" (fun () ->
@@ -1356,43 +1391,55 @@ let refusals =
           Nx_device.external_buffer Nx_device.disk unaddressed S.UInt8 1);
       raise_ "a new file of -1 bytes" (fun () ->
           B.create_file (temp_file ()) (-1));
-      raise_ ~exn:(Exn.sys_error ~substring:"missing")
-        "a file that does not exist, naming it" (fun () ->
+      error ~sub:"missing" "a file that does not exist, naming it" (fun () ->
           B.of_file (Filename.concat (temp_dir ()) "missing"));
-      raise_ ~exn:(Exn.sys_error ~substring:"not a regular file") "a directory"
-        (fun () -> B.of_file (temp_dir ()));
+      error ~sub:"not a regular file" "a directory" (fun () ->
+          B.of_file (temp_dir ()));
       raise_ "a copy into a file opened for reading" (fun () ->
-          B.copy ~src:(of_string "a") ~dst:(B.of_file (file_of "b")));
+          B.copy ~src:(of_string "a") ~dst:(of_file (file_of "b")));
       raise_ "a bigarray over a file's bytes" (fun () ->
-          B.bigarray Bigarray.char (B.of_file (file_of "a")));
+          B.bigarray Bigarray.char (of_file (file_of "a")));
       raise_ "the host address of a file's bytes" (fun () ->
-          B.host_address (B.of_file (file_of "a")));
-      raise_ "a borrow of a file's bytes by a device apart from the host"
-        (fun () -> B.borrow far_one.dev (B.of_file (file_of "a")));
-      raise_ "a borrow of a file's bytes not aligned to their elements"
-        (fun () ->
+          B.host_address (of_file (file_of "a")));
+      error ~sub:"does not share the host's memory"
+        "a borrow of a file's bytes by a device apart from the host" (fun () ->
+          B.borrow far_one.dev (of_file (file_of "a")));
+      error ~sub:"not aligned"
+        "a borrow of a file's bytes not aligned to their elements" (fun () ->
           B.borrow host
-            (B.view (B.of_file (file_of "abcdef")) ~offset:1 S.Int16 2));
+            (B.view (of_file (file_of "abcdef")) ~offset:1 S.Int16 2));
     ]
     (fun (_, check) -> check ())
 
 let programs =
-  test "a function of a binary loads once, on its device" (fun () ->
-      let loads = ref [] in
-      let load ~binary ~name =
-        loads := (binary, name) :: !loads;
-        Nativeint.of_int (List.length !loads)
-      in
-      let d = (fake ~load ()).dev in
-      let p = Nx_device.Program.load d ~binary:"lib" ~name:"f" in
-      is_true ~msg:"loaded again"
-        (Nx_device.Program.load d ~binary:"lib" ~name:"f" == p);
-      ignore (Nx_device.Program.load d ~binary:"lib" ~name:"g");
-      equal (list (pair string string)) [ ("lib", "g"); ("lib", "f") ] !loads;
-      equal
-        (triple string bool nativeint)
-        ("f", true, 1n)
-        Nx_device.Program.(name p, Nx_device.equal d (device p), handle p))
+  group "programs"
+    [
+      test "a function of a binary loads once, on its device" (fun () ->
+          let loads = ref [] in
+          let load ~binary ~name =
+            loads := (binary, name) :: !loads;
+            Ok (Nativeint.of_int (List.length !loads))
+          in
+          let d = (fake ~load ()).dev in
+          let p = program d ~binary:"lib" ~name:"f" in
+          is_true ~msg:"loaded again" (program d ~binary:"lib" ~name:"f" == p);
+          ignore (program d ~binary:"lib" ~name:"g");
+          equal
+            (list (pair string string))
+            [ ("lib", "g"); ("lib", "f") ]
+            !loads;
+          equal
+            (triple string bool nativeint)
+            ("f", true, 1n)
+            Nx_device.Program.(name p, Nx_device.equal d (device p), handle p));
+      test "a loader that faults loses its device" (fun () ->
+          let load ~binary:_ ~name:_ = failwith "context lost" in
+          let d = (fake ~name:"LOADER" ~load ()).dev in
+          let faulted = lost d "context lost" in
+          raises_match faulted (fun () ->
+              Nx_device.Program.load d ~binary:"lib" ~name:"f");
+          raises_match faulted (fun () -> B.create d S.UInt8 1));
+    ]
 
 (* Timeline *)
 
@@ -1499,7 +1546,7 @@ let timeline =
           Domain.join progress;
           let stuck = (fake ~name:"STUCK" ~timeout_ms:200 ()).dev in
           ignore (Nx_device.submit stuck ~touches:[] Fun.id);
-          raises (Failure "STUCK hang detected") (fun () ->
+          raises_match (lost stuck "hang detected") (fun () ->
               Nx_device.synchronize stuck));
     ]
 
@@ -1510,9 +1557,12 @@ let test_hang () =
   let d = (fake ~name:"HUNG" ~signal:(never waits) ()).dev in
   let b = B.create d S.UInt8 8 in
   ignore (Nx_device.submit d ~touches:[] Fun.id);
-  let hung = Failure "HUNG hang detected" in
-  raises hung (fun () -> Nx_device.synchronize d);
-  List.iter (raises hung)
+  (match Nx_device.synchronize d with
+  | () -> fail "synchronized a hung device"
+  | exception e ->
+      equal ~msg:"printed" string "HUNG: hang detected" (Printexc.to_string e));
+  let hung = lost d "hang detected" in
+  List.iter (raises_match hung)
     [
       (fun () -> Nx_device.synchronize d);
       (fun () -> ignore (B.create d S.UInt8 1));
@@ -1534,10 +1584,10 @@ let test_scope () =
   let waits = ref 0 in
   let gpu = (fake ~name:"GPU" ~maps:true ~signal:(never waits) ()).dev in
   let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 8 in
-  let mapped = B.borrow gpu shared in
+  let mapped = borrow gpu shared in
   ignore (Nx_device.submit gpu ~touches:[ host ] Fun.id);
-  let failed = Failure "GPU hang detected" in
-  raises failed (fun () -> Nx_device.synchronize gpu);
+  let failed = lost gpu "hang detected" in
+  raises_match failed (fun () -> Nx_device.synchronize gpu);
   Nx_device.synchronize host;
   let a = B.create host S.UInt8 8 and other = B.create near.dev S.UInt8 8 in
   write a "12345678";
@@ -1546,7 +1596,7 @@ let test_scope () =
   equal ~msg:"memory out of its reach" (pair string string)
     ("12345678", "12345678")
     (read a, read other);
-  List.iter (raises failed)
+  List.iter (raises_match failed)
     [
       (fun () -> B.copy ~src:shared ~dst:a);
       (fun () -> B.copy ~src:a ~dst:shared);
@@ -1567,11 +1617,11 @@ let test_unmapped () =
   let hung = ref false in
   let gpu = (fake ~name:"LATE" ~maps:true ~signal:(until hung) ()).dev in
   let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 4 in
-  dropped (fun () -> B.borrow gpu shared);
+  dropped (fun () -> borrow gpu shared);
   ignore (stats gpu);
   hung := true;
   ignore (Nx_device.submit gpu ~touches:[] Fun.id);
-  raises (Failure "LATE hang detected") (fun () -> Nx_device.synchronize gpu);
+  raises_match (lost gpu "hang detected") (fun () -> Nx_device.synchronize gpu);
   write shared "abcd";
   equal string "abcd" (read shared)
 
@@ -1580,12 +1630,13 @@ let test_cut_short () =
   let gpu = (fake ~name:"CUT" ~maps:true ~signal:(until hung) ()).dev in
   let shared = B.create host S.UInt8 page in
   dropped (fun () ->
-      let b = B.borrow gpu shared in
+      let b = borrow gpu shared in
       Nx_device.submit gpu ~touches:[ host ] (fun _ -> Sys.opaque_identity b));
   hung := true;
-  let failed = Failure "CUT hang detected" in
-  raises failed (fun () -> Nx_device.synchronize gpu);
-  raises failed (fun () -> B.copy ~src:shared ~dst:(B.create host S.UInt8 page))
+  let failed = lost gpu "hang detected" in
+  raises_match failed (fun () -> Nx_device.synchronize gpu);
+  raises_match failed (fun () ->
+      B.copy ~src:shared ~dst:(B.create host S.UInt8 page))
 
 let test_hung_transfer () =
   let a = far ~name:"PEER-HUNG" () and c = far ~name:"PEER-DEST" () in
@@ -1593,9 +1644,9 @@ let test_hung_transfer () =
   (fun () ->
     let dst = B.create c.dev S.UInt8 4 in
     a.drv.stalled <- true;
-    let hung = Failure "PEER-HUNG hang detected" in
-    raises hung (fun () -> B.copy ~src ~dst);
-    raises hung (fun () -> read dst);
+    let hung = lost a.dev "hang detected" in
+    raises_match hung (fun () -> B.copy ~src ~dst);
+    raises_match hung (fun () -> read dst);
     let healthy = B.create c.dev S.UInt8 3 in
     write healthy "abc";
     equal ~msg:"the destination device" string "abc" (read healthy))
@@ -1608,7 +1659,8 @@ let test_retained () =
   let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
   dropped (fun () -> B.create f.dev S.UInt8 600);
   ignore (Nx_device.submit f.dev ~touches:[] Fun.id);
-  raises (Failure "D hang detected") (fun () -> Nx_device.free_cache f.dev);
+  raises_match (lost f.dev "hang detected") (fun () ->
+      Nx_device.free_cache f.dev);
   equal ~msg:"retained, cached and freed" (triple int int int) (600, 0, 0)
     (Nx_device.Stats.retained (stats f.dev), cached f.dev, f.drv.frees)
 
@@ -1616,36 +1668,34 @@ let failures =
   group "failures"
     [
       test
-        "a device whose work does not signal in time fails for good, and \
+        "a device whose work does not signal in time is lost for good, and \
          answers what does not take it"
         test_hang;
-      test "a fault its driver reports fails a device with the driver's message"
+      test "a fault its driver reports loses a device with the driver's message"
         (fun () ->
           let signal = signal (fun _ -> failwith "page fault") in
           let d = (fake ~name:"FAULTY" ~signal ()).dev in
           ignore (Nx_device.submit d ~touches:[] Fun.id);
-          let fault = Failure "FAULTY: page fault" in
-          raises fault (fun () -> Nx_device.synchronize d);
-          raises fault (fun () -> B.create d S.UInt8 1));
-      test "a driver error while enqueueing a copy fails the device" (fun () ->
+          let fault = lost d "page fault" in
+          raises_match fault (fun () -> Nx_device.synchronize d);
+          raises_match fault (fun () -> B.create d S.UInt8 1));
+      test "a driver error while enqueueing a copy loses the device" (fun () ->
           let f = far ~name:"REFUSING" () in
           let b = B.create f.dev S.UInt8 4 in
           f.drv.broken <- true;
-          let refused = Failure "REFUSING: enqueue refused" in
-          raises refused (fun () -> write b "abcd");
-          raises refused (fun () -> B.create f.dev S.UInt8 1));
-      test
-        "a failure reaches the memory the failed device can reach, and no other"
+          let refused = lost f.dev "enqueue refused" in
+          raises_match refused (fun () -> write b "abcd");
+          raises_match refused (fun () -> B.create f.dev S.UInt8 1));
+      test "a loss reaches the memory the lost device can reach, and no other"
         test_scope;
-      test "a borrow unmapped before a failure is out of its reach"
-        test_unmapped;
-      test "a borrow whose unmapping a failure cut short stays in its reach"
+      test "a borrow unmapped before a loss is out of its reach" test_unmapped;
+      test "a borrow whose unmapping a loss cut short stays in its reach"
         test_cut_short;
       test
         "a transfer that cannot be waited for leaves its destination in the \
          source's reach, retained"
         test_hung_transfer;
-      test "memory that a failed wait could not free is retained" test_retained;
+      test "memory that a hung wait could not free is retained" test_retained;
     ]
 
 (* Sleep and finalize *)
@@ -1688,7 +1738,8 @@ let test_sleep () =
   equal ~msg:"no sleep while the word moves" (list int) [] !sleeps;
   let still = (fake ~name:"STILL" ~sleep ~timeout_ms:500 ()).dev in
   ignore (Nx_device.submit still ~touches:[] Fun.id);
-  raises (Failure "STILL hang detected") (fun () -> Nx_device.synchronize still);
+  raises_match (lost still "hang detected") (fun () ->
+      Nx_device.synchronize still);
   equal ~msg:"a last brief sleep before the hang" int 1 (List.hd !sleeps)
 
 (* At exit every device finalizes, told whether it failed: a healthy one after
@@ -1705,7 +1756,7 @@ let finalize_child () =
     (fake ~name:"BROKEN" ~timeout_ms:50 ~finalize:(say "BROKEN") ()).dev
   in
   ignore (Nx_device.submit broken ~touches:[] Fun.id);
-  (try Nx_device.synchronize broken with Failure _ -> ());
+  (try Nx_device.synchronize broken with Nx_device.Lost _ -> ());
   let hanging =
     (fake ~name:"HANGING" ~timeout_ms:50 ~finalize:(say "HANGING") ()).dev
   in
@@ -1742,14 +1793,14 @@ let hooks =
         "a device sleeps on its interrupts once its signal word stays still, \
          and once more before a hang"
         test_sleep;
-      test "a fault found asleep fails the device with the driver's message"
+      test "a fault found asleep loses the device with the driver's message"
         (fun () ->
           let sleep _ = failwith "page fault at 0x1000" in
           let d = (fake ~name:"FAULTED" ~sleep ()).dev in
           ignore (Nx_device.submit d ~touches:[] Fun.id);
-          let fault = Failure "FAULTED: page fault at 0x1000" in
-          raises fault (fun () -> Nx_device.synchronize d);
-          raises fault (fun () -> B.create d S.UInt8 1));
+          let fault = lost d "page fault at 0x1000" in
+          raises_match fault (fun () -> Nx_device.synchronize d);
+          raises_match fault (fun () -> B.create d S.UInt8 1));
       test "a device that signals in its own way cannot sleep" (fun () ->
           raises
             (Invalid_argument
@@ -1957,7 +2008,7 @@ let test_copies ?clock ?(slack = 0) () =
   let small = B.create host S.UInt8 100 and big = B.create host S.UInt8 page in
   let on_far = B.create f.dev S.UInt8 100
   and big_far = B.create f.dev S.UInt8 page in
-  let borrowed = B.borrow f.dev big in
+  let borrowed = borrow f.dev big in
   let events =
     profiled (fun () ->
         B.copy ~src:small ~dst:on_far;
@@ -2022,11 +2073,11 @@ let test_memory_events () =
   equal (list int) [ 100; 0 ] (samples events)
 
 let test_program_events () =
-  let d = (fake ~load:(fun ~binary:_ ~name:_ -> 42n) ()).dev in
+  let d = (fake ~load:(fun ~binary:_ ~name:_ -> Ok 42n) ()).dev in
   let events =
     profiled (fun () ->
-        ignore (Nx_device.Program.load d ~binary:"lib" ~name:"k");
-        ignore (Nx_device.Program.load d ~binary:"lib" ~name:"k"))
+        ignore (program d ~binary:"lib" ~name:"k");
+        ignore (program d ~binary:"lib" ~name:"k"))
   in
   match events with
   | [ P.Program p ] ->
@@ -2051,7 +2102,7 @@ let test_failed_spans () =
   equal (list where)
     [ ("CPU", main_lane, "kept") ]
     (List.map placed (spans events));
-  raises (Failure "HUNG hang detected") (fun () -> Nx_device.synchronize d)
+  raises_match (lost d "hang detected") (fun () -> Nx_device.synchronize d)
 
 (* JSON *)
 
@@ -2210,14 +2261,14 @@ let written events =
 let test_output () =
   let odd = "a \"quote\", a \\, a\nnewline, \001, \xff and \xc3\xa9" in
   let f = far () in
-  let d = (fake ~name:"P" ~load:(fun ~binary:_ ~name:_ -> 0x1234n) ()).dev in
+  let d = (fake ~name:"P" ~load:(fun ~binary:_ ~name:_ -> Ok 0x1234n) ()).dev in
   let events =
     profiled (fun () ->
         P.span "outer" (fun () ->
             P.span odd ignore;
             B.copy ~src:(B.create host S.UInt8 8)
               ~dst:(B.create f.dev S.UInt8 8));
-        ignore (Nx_device.Program.load d ~binary:"b" ~name:"k");
+        ignore (program d ~binary:"b" ~name:"k");
         dropped (fun () -> B.create d S.UInt8 5);
         ignore (stats d))
   in
@@ -2361,7 +2412,7 @@ let block keep ~addressed n =
   let host = if addressed then Some a else None in
   Some { Nx_device.host; device = a; handle = a }
 
-let machine ?(name = "far:1") ?load ?call () =
+let machine ?(name = "far:1") ?(most = max_int) ?load ?call () =
   let down = ref false
   and reads = ref 0
   and writes = ref 0
@@ -2382,7 +2433,8 @@ let machine ?(name = "far:1") ?load ?call () =
   in
   let memory =
     {
-      Nx_device.alloc = block keep ~addressed:true;
+      Nx_device.alloc =
+        (fun n -> if n > most then None else block keep ~addressed:true n);
       free = (fun m -> Hashtbl.remove keep m.device);
     }
   in
@@ -2474,8 +2526,7 @@ let test_remote_gpu () =
   ignore (Nx_device.submit gpu ~touches:[] Fun.id);
   (* The work never signals: the wait polls the far word until it times out. *)
   Nx_device.set_timeout gpu 50;
-  raises_match (Exn.failure ~substring:"hang detected") (fun () ->
-      Nx_device.synchronize gpu);
+  raises_match (lost gpu "hang detected") (fun () -> Nx_device.synchronize gpu);
   is_true ~msg:"the signal word was read through io" (!(m.reads) > r)
 
 let test_between_machines () =
@@ -2506,19 +2557,24 @@ let test_machine_down () =
   let on = B.create gpu S.UInt8 64 and hb = B.create m.mhost S.UInt8 64 in
   let near = B.create host S.UInt8 64 and here = B.create host S.UInt8 20 in
   m.down := true;
-  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
-      B.copy ~src:near ~dst:hb);
-  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
-      B.create m.mhost S.UInt8 8);
-  raises_match (Exn.failure ~substring:"") (fun () -> B.copy ~src:near ~dst:on);
-  (* The GPU fails once an operation of its own meets the machine. *)
-  raises_match (Exn.failure ~substring:"connection lost") (fun () ->
+  let down = "far:1: connection lost" in
+  raises_match (lost m.mhost down) (fun () -> B.copy ~src:near ~dst:hb);
+  raises_match (lost m.mhost down) (fun () -> B.create m.mhost S.UInt8 8);
+  raises_match (lost m.mhost down) (fun () -> B.copy ~src:near ~dst:on);
+  (* The GPU is lost once an operation of its own meets the machine. *)
+  raises_match (lost gpu down) (fun () ->
       Nx_device.submit gpu ~touches:[] ignore);
   let c = calls m in
-  raises_match (Exn.failure ~substring:"") (fun () -> Nx_device.synchronize gpu);
-  equal ~msg:"a failed device reaches its machine no more" int c (calls m);
+  raises_match (lost gpu down) (fun () -> Nx_device.synchronize gpu);
+  equal ~msg:"a lost device reaches its machine no more" int c (calls m);
   write here "this machine goes on";
   equal ~msg:"this machine goes on" string "this machine goes on" (read here)
+
+let test_no_staging () =
+  let m = machine ~most:(1 lsl 20) () in
+  let gpu = remote_gpu m in
+  raises_match (out_of_memory m.mhost staging_bytes) (fun () ->
+      B.copy ~src:(B.create host S.UInt8 64) ~dst:(B.create gpu S.UInt8 64))
 
 (* A link that carries copies between machines, counting them. *)
 let test_links () =
@@ -2557,11 +2613,10 @@ let test_links () =
   B.copy ~src:a ~dst:(B.create local S.UInt8 32);
   equal ~msg:"not within a machine" int 1 !moved;
   broken := true;
-  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
-      B.copy ~src:a ~dst:b);
-  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
-      B.create nic S.UInt8 1);
-  raises_match (Exn.failure ~substring:"retries exhausted") (fun () ->
+  let exhausted = lost nic "NIC: retries exhausted" in
+  raises_match exhausted (fun () -> B.copy ~src:a ~dst:b);
+  raises_match exhausted (fun () -> B.create nic S.UInt8 1);
+  raises_match exhausted (fun () ->
       B.copy ~src:(B.create gpu S.UInt8 32) ~dst:b);
   B.copy ~src:(B.create local S.UInt8 32) ~dst:a
 
@@ -2618,11 +2673,11 @@ let test_remote_programs () =
   let calls = ref [] and unloaded = ref 0 in
   let load ~binary ~name =
     ignore binary;
-    (Nativeint.of_int (String.length name), fun () -> incr unloaded)
+    Ok (Nativeint.of_int (String.length name), fun () -> incr unloaded)
   in
   let call h bufs vals = calls := (h, bufs, vals) :: !calls in
   let m = machine ~load ~call () in
-  let p = Nx_device.Program.load m.mhost ~binary:"elf" ~name:"submit" in
+  let p = program m.mhost ~binary:"elf" ~name:"submit" in
   let b = B.create m.mhost S.UInt8 24 in
   Nx_device.Program.call p [| B.view b ~offset:8 S.UInt8 16 |] [| 7 |];
   (match !calls with
@@ -2654,7 +2709,9 @@ let machines =
       test "another machine's host copies through its io" test_host_copies;
       test "a GPU of another machine" test_remote_gpu;
       test "copies between three machines, in chunks" test_between_machines;
-      test "a machine that goes down fails its devices alone" test_machine_down;
+      test "a machine that goes down loses its devices alone" test_machine_down;
+      test "a host without memory for its staging raises Out_of_memory"
+        test_no_staging;
       test "links carry copies between machines" test_links;
       test "memory described to other functions, and unmapped at free" test_dma;
       test "programs of another machine's host" test_remote_programs;

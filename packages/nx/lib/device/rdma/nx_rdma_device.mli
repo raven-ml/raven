@@ -31,20 +31,21 @@
     no programs and has no copy queue.
 
     {b Failures.} A copy whose completion does not arrive within the adapters'
-    {!Nx_device.timeout}, or completes in error, fails both adapters of the
-    queue pair, whose state is then unknown, and the destination stays in their
-    reach. At exit the process unregisters from each healthy adapter's firmware,
-    and turns every adapter's bus mastering off, so that none reaches memory the
-    process releases. The fabric is trusted: a packet with the right queue pair
-    and sequence number writes the memory it names. *)
+    {!Nx_device.timeout}, or completes in error, loses both adapters of the
+    queue pair ({!Nx_device.Lost}), whose state is then unknown, and the
+    destination stays in their reach. At exit the process unregisters from each
+    healthy adapter's firmware, and turns every adapter's bus mastering off, so
+    that none reaches memory the process releases. The fabric is trusted: a
+    packet with the right queue pair and sequence number writes the memory it
+    names. *)
 
 val count : ?host:Nx_device.t -> unit -> int
 (** [count ()] is the number of adapters of the machine of [host] (defaults to
     {!Nx_device.host}), whatever driver they have. [0] where the machine has no
     PCI functions, such as off Linux.
 
-    Raises [Invalid_argument] if [host] is no host, and [Failure] if [host]'s
-    machine cannot be reached. *)
+    Raises [Invalid_argument] if [host] is no host, and {!Nx_device.Lost} with
+    [host] if [host]'s machine cannot be reached. *)
 
 val get : ?host:Nx_device.t -> int -> (Nx_device.t, string) result
 (** [get i] is the adapter [i] of the machine of [host] (defaults to
@@ -53,10 +54,13 @@ val get : ?host:Nx_device.t -> int -> (Nx_device.t, string) result
 
     [Error msg] says why the adapter cannot be opened, for example that
     [i >= count ()], that a privilege is missing, or that its firmware refused a
-    request. A failed open gives the function back, its bus mastering off.
+    request, after the adapter's name, such as
+    ["RDMA:2: no adapter 2; there are 2"]. A failed open gives the function
+    back, its bus mastering off.
 
-    Raises [Invalid_argument] if [i < 0] or if [host] is no host. *)
+    Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
+    {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
 
 val v : ?host:Nx_device.t -> int -> Nx_device.t
-(** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
-    the adapter cannot be opened. *)
+(** [v i] is like {!get} but raises [Failure] with [get]'s message when the
+    adapter cannot be opened. *)

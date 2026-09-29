@@ -536,7 +536,7 @@ let with_disk_f32 values f =
         values;
       output_bytes oc bytes;
       close_out oc;
-      let file = Nx_device.Buffer.of_file path in
+      let file = Result.get_ok (Nx_device.Buffer.of_file path) in
       f
         (Nx_effect.of_buffer Nx_dtype.float32 [| n |]
            (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Float32 n)))

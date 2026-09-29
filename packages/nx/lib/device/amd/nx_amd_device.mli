@@ -48,14 +48,14 @@
     descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once per
     device and kept.
 
-    {b Faults and hangs.} A fault the GPU reports, such as a page fault, fails
-    the device with the driver's report when a wait finds it. Work that does not
-    signal within the device's {!Nx_device.timeout}, 30 seconds unless
-    {!Nx_device.set_timeout} sets another, fails it too. Nothing recovers a
-    failed device in the process. Under {!Pci}, the process stops the engines of
-    a failed GPU at exit and takes its bus mastering away, so that it cannot
-    reach the memory the process releases; the next process that opens the GPU
-    finds it was left failed, and resets it before booting it.
+    {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
+    the device ({!Nx_device.Lost}) with the driver's report when a wait finds
+    it. Work that does not signal within the device's {!Nx_device.timeout}, 30
+    seconds unless {!Nx_device.set_timeout} sets another, loses it too. Nothing
+    recovers a lost device in the process. Under {!Pci}, the process stops the
+    engines of a lost GPU at exit and takes its bus mastering away, so that it
+    cannot reach the memory the process releases; the next process that opens
+    the GPU finds it was not closed cleanly, and resets it before booting it.
 
     {b Under {!Pci}}, opening a GPU needs root, or the capabilities and file
     permissions to take PCI functions ({!Nx_device_support.Pci}) and to lock
@@ -81,8 +81,8 @@ val count : ?host:Nx_device.t -> ?interface:interface -> unit -> int
     Given another machine's [host], it is the number of that machine's GPUs
     under {!Pci}.
 
-    Raises [Invalid_argument] if [host] is no host, and [Failure] if [host]'s
-    machine cannot be reached. *)
+    Raises [Invalid_argument] if [host] is no host, and {!Nx_device.Lost} with
+    [host] if [host]'s machine cannot be reached. *)
 
 val get :
   ?host:Nx_device.t ->
@@ -111,8 +111,11 @@ val get :
     [i >= count ~interface ()], that the process's interface is the other one,
     that another machine's GPU was asked for under {!Kernel}, that a privilege
     is missing, or that a firmware image is missing or differs, naming the file.
+    [msg] starts with the GPU's name, such as
+    ["AMD:2: no GPU 2; there are 2 AMD GPUs"].
 
-    Raises [Invalid_argument] if [i < 0] or if [host] is no host. *)
+    Raises [Invalid_argument] if [i < 0] or if [host] is no host, and
+    {!Nx_device.Lost} with [host] if [host]'s machine cannot be reached. *)
 
 val v :
   ?host:Nx_device.t ->
@@ -120,8 +123,8 @@ val v :
   ?firmware:string ->
   int ->
   Nx_device.t
-(** [v i] is like {!get} but raises [Invalid_argument] with [get]'s message when
-    the GPU cannot be opened. *)
+(** [v i] is like {!get} but raises [Failure] with [get]'s message when the GPU
+    cannot be opened. *)
 
 val interface : Nx_device.t -> interface
 (** [interface d] is the interface [d] was opened through.

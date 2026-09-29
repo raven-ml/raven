@@ -1104,9 +1104,12 @@ module Runtimes = struct
   let on_disk x =
     let module B = Nx_device.Buffer in
     let src = Nx_effect.elements x and path = temp_file () in
-    B.copy ~src ~dst:(B.create_file path (B.nbytes src));
+    let pp = Format.pp_print_string in
+    B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
     Nx_effect.of_buffer (Nx.dtype x) (Nx.shape x)
-      (B.view (B.of_file path) ~offset:0 (B.dtype src) (B.length src))
+      (B.view
+         (require_ok ~pp (B.of_file path))
+         ~offset:0 (B.dtype src) (B.length src))
 
   (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
   let tight r f =
@@ -1225,7 +1228,9 @@ module Profiles = struct
                 and big = B.create host u8 (1 lsl 20) in
                 let small_d = B.create d u8 4096
                 and big_d = B.create d u8 (1 lsl 20) in
-                let borrowed = B.borrow d big in
+                let borrowed =
+                  require_ok ~pp:Format.pp_print_string (B.borrow d big)
+                in
                 let events =
                   profiled (fun () ->
                       B.copy ~src:small ~dst:small_d;

@@ -3557,7 +3557,7 @@ let borrow : type a b.
  fun sc devs r b windows ->
   let dt = r.r_dtype in
   let item = ND.itemsize dt in
-  let host = HB.borrow Nx_device.host b in
+  Option.bind (Result.to_option (HB.borrow Nx_device.host b)) @@ fun host ->
   let ptr = HB.host_address host in
   (* Each window's elements [lo] to [hi] of [host], its buffer's first byte, and
      its view of that buffer. *)

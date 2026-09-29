@@ -137,8 +137,14 @@ let test_programs () =
   for (long long i = 0; i < v[0]; i++) out[i] = (char)(v[1] + i);
 }|}
   in
-  let p = P.load d ~binary ~name:"fill" in
-  is_true ~msg:"the same program" (P.load d ~binary ~name:"fill" == p);
+  let load ~binary ~name =
+    match P.load d ~binary ~name with Ok p -> p | Error why -> failwith why
+  in
+  let p = load ~binary ~name:"fill" in
+  is_true ~msg:"the same program" (load ~binary ~name:"fill" == p);
+  (match P.load d ~binary:"not an object" ~name:"fill" with
+  | Ok _ -> fail "loaded a refused binary"
+  | Error why -> contains ~msg:"the host's name" ~sub:(Nx_device.name d) why);
   let b = B.create d S.UInt8 8 in
   P.call p [| B.view b ~offset:2 S.UInt8 4 |] [| 4; 65 |];
   Nx_device.synchronize d;
@@ -152,8 +158,9 @@ let test_gone () =
   let b = B.create d S.UInt8 16 in
   let here = B.create Nx_device.host S.UInt8 16 in
   Server.stop s;
-  raises_match (Exn.failure ~substring:"") (fun () -> B.copy ~src:here ~dst:b);
-  raises_match (Exn.failure ~substring:"") (fun () -> Nx_device.synchronize d);
+  let lost = function Nx_device.Lost (d', _) -> d' == d | _ -> false in
+  raises_match lost (fun () -> B.copy ~src:here ~dst:b);
+  raises_match lost (fun () -> Nx_device.synchronize d);
   is_true ~msg:"the machine's host failed"
     (match Nx_remote_device.remote d with
     | Some r -> Nx_device_support.Remote.failed r <> None

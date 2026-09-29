@@ -50,7 +50,10 @@ type t = {
   mapping : mapping option;
   copy_queue : copy_queue option;
   load :
-    (binary:string -> name:string -> nativeint * (unit -> unit) option) option;
+    (binary:string ->
+    name:string ->
+    (nativeint * (unit -> unit) option, string) result)
+    option;
       (* a program's handle, and how it is released if it can be *)
   call : (nativeint -> (nativeint * int) array -> int array -> unit) option;
       (* how another machine's host calls its programs *)
@@ -76,7 +79,7 @@ type t = {
   peers_lock : Mutex.t;
   released : base list Atomic.t;
   failed : string option Atomic.t;
-      (* the error that failed the device, which every operation raises *)
+      (* why the device was lost, which every operation raises *)
   cache : (int * bool, memory list) Hashtbl.t;
       (* by size, and whether it is host memory *)
   pending : (int, t * int) Hashtbl.t;
@@ -184,10 +187,12 @@ and pending = {
   into : collector;
 }
 
+exception Lost of t * string
 exception Out_of_memory of t * int
 
 let () =
   Printexc.register_printer (function
+    | Lost (d, why) -> Some (d.name ^ ": " ^ why)
     | Out_of_memory (d, n) ->
         Some (Printf.sprintf "Nx_device.Out_of_memory(%s, %d bytes)" d.name n)
     | _ -> None)
@@ -448,8 +453,9 @@ let host =
   let load =
     Option.map
       (fun load ~binary ~name ->
-        let entry, free = load ~binary ~name in
-        (entry, Some free))
+        Result.map
+          (fun (entry, free) -> (entry, Some free))
+          (load ~binary ~name))
       Host_program.load
   in
   create ~name:"CPU" ~arch:host_arch ~machine:None ~io:None ~budget:max_int
@@ -500,13 +506,18 @@ let commit d v =
   write_word (io_of d) (Nativeint.add (timeline_address d) 8n) (Int64.of_int v);
   Atomic.set d.last v
 
-(* A device that hung or faulted is in an unknown state: its first error fails
+(* A device that hung or faulted is in an unknown state: its first error loses
    it for good, and every later operation raises that error at once. *)
-let fail d msg =
-  ignore (Atomic.compare_and_set d.failed None (Some msg));
-  failwith (Option.get (Atomic.get d.failed))
+let lose d why = ignore (Atomic.compare_and_set d.failed None (Some why))
 
-let check d = Option.iter failwith (Atomic.get d.failed)
+let check d =
+  match Atomic.get d.failed with
+  | None -> ()
+  | Some why -> raise (Lost (d, why))
+
+let fail d why =
+  lose d why;
+  raise (Lost (d, Option.get (Atomic.get d.failed)))
 
 (* How long a wait sees the signal word still before it lets the device sleep on
    its interrupts. *)
@@ -563,8 +574,8 @@ let wait_signal d v =
           <> 0
     with
     | true -> settle d v
-    | false -> fail d (d.name ^ " hang detected")
-    | exception Failure msg -> fail d (d.name ^ ": " ^ msg)
+    | false -> fail d "hang detected"
+    | exception Failure why -> fail d why
 
 let failed d = Atomic.get d.failed
 
@@ -575,7 +586,7 @@ let enqueue d f =
   (try
      f v;
      commit d v
-   with Failure msg -> fail d (d.name ^ ": " ^ msg));
+   with Failure why -> fail d why);
   v
 
 (* Timestamp slot [i] of [d]'s timeline memory, as [d]'s work addresses it, and
@@ -621,20 +632,18 @@ let sync d =
   wait_signal d (submitted d);
   Hashtbl.iter
     (fun _ (d', v) ->
-      if failed d' = None then try wait_signal d' v with Failure _ -> ())
+      if failed d' = None then try wait_signal d' v with Lost _ -> ())
     d.pending;
   read_spans d;
-  try d.synchronized () with Failure msg -> fail d (d.name ^ ": " ^ msg)
+  try d.synchronized () with Failure why -> fail d why
 
-(* The error of a failed device that can reach [base]'s memory: its own device,
-   a device it is mapped on or whose transfer into it could not be waited for,
-   or those of the memory it maps. *)
-let rec failure_of base =
+(* Raises [Lost] for a lost device that can reach [base]'s memory: its own
+   device, a device it is mapped on or whose transfer into it could not be
+   waited for, or those of the memory it maps. *)
+let rec check_reach base =
   let { maps; reached } = Atomic.get base.links in
-  let reaching = base.owner :: (List.map (fun m -> m.on) maps @ reached) in
-  match List.find_map failed reaching with
-  | Some _ as e -> e
-  | None -> Option.bind base.source (fun (src, _) -> failure_of src)
+  List.iter check (base.owner :: (List.map (fun m -> m.on) maps @ reached));
+  Option.iter (fun (src, _) -> check_reach src) base.source
 
 let rec update_links base f =
   let l = Atomic.get base.links in
@@ -661,7 +670,7 @@ let free_all d ~owned ~keep memories =
   if memories <> [] then
     match sync d with
     | () -> List.iter (fun (free, m) -> free m) memories
-    | exception (Failure _ as e) ->
+    | exception (Lost _ as e) ->
         d.retained <- d.retained + owned;
         d.held <- Keep (memories, keep) :: d.held;
         raise e
@@ -923,10 +932,10 @@ module Buffer = struct
 
   let handle b = b.base.memory.handle
 
-  (* Raises the error of a failed device that can reach [b]'s memory. *)
+  (* Raises [Lost] for a lost device that can reach [b]'s memory. *)
   let reachable b =
     live b;
-    Option.iter failwith (failure_of b.base)
+    check_reach b.base
 
   let offset b = b.offset
 
@@ -1053,6 +1062,8 @@ module Buffer = struct
     in
     { base; offset = 0; dtype; length = Bigarray.Array1.dim ba }
 
+  let refuse fmt = Printf.ksprintf (fun why -> Error why) fmt
+
   (* A file is opened with the disk taken, so that the descriptors of the files
      already collected are closed first. An open refused for too many open files
      collects the unreachable buffers, whose descriptors the collector cannot
@@ -1060,26 +1071,27 @@ module Buffer = struct
   let open_file path ~create n =
     let rec go ~collected =
       match file_open path create n with
-      | 0, fd, size -> (fd, size)
+      | 0, fd, size -> Ok (fd, size)
       | code, _, _ when code = too_many && not collected ->
           Gc.full_major ();
           reclaim disk;
           go ~collected:true
       | code, _, _ when code = not_regular ->
-          raise (Sys_error (path ^ ": not a regular file"))
-      | code, _, _ when code = too_many ->
-          raise (Sys_error (path ^ ": too many open files"))
-      | code, _, _ -> raise (Sys_error (path ^ ": " ^ error_message code))
+          refuse "%s: not a regular file" path
+      | code, _, _ when code = too_many -> refuse "%s: too many open files" path
+      | code, _, _ -> refuse "%s: %s" path (error_message code)
     in
-    let fd, size = with_devices [ disk ] (fun () -> go ~collected:false) in
-    let memory = { host = None; device = 0n; handle = fd } in
-    let base =
-      base ~borrowed:true ~keep:(Keep ())
-        ~file:{ path; writable = create; pages = None }
-        ~extent:size disk memory
-    in
-    Gc.finalise (release disk) base;
-    { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length = size }
+    Result.map
+      (fun (fd, size) ->
+        let memory = { host = None; device = 0n; handle = fd } in
+        let base =
+          base ~borrowed:true ~keep:(Keep ())
+            ~file:{ path; writable = create; pages = None }
+            ~extent:size disk memory
+        in
+        Gc.finalise (release disk) base;
+        { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length = size })
+      (with_devices [ disk ] (fun () -> go ~collected:false))
 
   let of_file path = open_file path ~create:false 0
 
@@ -1096,7 +1108,7 @@ module Buffer = struct
     let f = file_of b in
     with_devices [ disk ] (fun () ->
         match f.pages with
-        | Some base -> base
+        | Some base -> Ok base
         | None -> (
             match file_map b.base.memory.handle b.base.extent with
             | 0, ba ->
@@ -1105,88 +1117,95 @@ module Buffer = struct
                     (heap_memory ba)
                 in
                 f.pages <- Some base;
-                base
-            | code, _ -> failwith (f.path ^ ": " ^ error_message code)))
+                Ok base
+            | code, _ -> refuse "%s: %s" f.path (error_message code)))
 
-  let borrow_fail fmt =
-    Printf.ksprintf (fun m -> invalid_arg ("Nx_device.Buffer.borrow: " ^ m)) fmt
+  (* [d]'s mapping of the host memory [src] from its first byte [first], made by
+     its first borrow and shared by the later ones. *)
+  let share d (mapping : mapping) src first =
+    with_devices [ d ] (fun () ->
+        match mapping_on d src with
+        | Some m ->
+            m.borrows <- m.borrows + 1;
+            Ok m
+        | None ->
+            Result.map
+              (fun mapped ->
+                let m = { on = d; mapped; borrows = 1 } in
+                update_maps src (List.cons m);
+                m)
+              (mapping.map first src.extent))
 
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory
      of another buffer then never shares its pages. *)
   let borrow_host d b =
-    let fail fmt = borrow_fail fmt in
-    let h = host_of d in
-    if not (b.base.owner == h) then
-      fail "the buffer is on %s, not %s" b.base.owner.name h.name;
-    if d == h then b
-    else
-      match d.mapping with
-      | None -> fail "%s cannot address host memory" d.name
-      | Some _ when nbytes b = 0 -> empty ~borrowed:true d b.dtype b.length
-      | Some mapping ->
-          let src = b.base in
-          let first = Option.get src.memory.host in
-          (* A host buffer nx made starts on a page from [aligned_from] bytes; a
-             smaller one is refused wherever it happens to start, so that
-             whether it borrows does not depend on the allocator. *)
-          if h == host && (not src.borrowed) && src.extent < aligned_from then
-            fail
-              "a host buffer of %d bytes does not start on a page, and %s maps \
-               whole pages; host buffers start on one from %d bytes"
-              src.extent d.name aligned_from;
-          (* Another machine's pages are its own; its devices check them. *)
-          if h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n then
-            fail
-              "the host memory at 0x%nx does not start on a page, and %s maps \
-               whole pages; host buffers start on one from %d bytes"
-              first d.name aligned_from;
-          let m =
-            with_devices [ d ] (fun () ->
-                match mapping_on d src with
-                | Some m ->
-                    m.borrows <- m.borrows + 1;
-                    m
-                | None -> (
-                    match mapping.map first src.extent with
-                    | Error why ->
-                        fail "%s cannot map the host memory at 0x%nx: %s" d.name
-                          first why
-                    | Ok mapped ->
-                        let m = { on = d; mapped; borrows = 1 } in
-                        update_maps src (List.cons m);
-                        m))
-          in
-          let skip =
-            Nativeint.to_int (Nativeint.sub first (Option.get m.mapped.host))
-          in
-          let base =
-            base ~source:(src, m) ~borrowed:true ~keep:(Keep b)
-              ~extent:(skip + src.extent) d m.mapped
-          in
-          Gc.finalise (release d) base;
-          { base; offset = skip + b.offset; dtype = b.dtype; length = b.length }
+    let h = host_of d and src = b.base in
+    if not (src.owner == h) then
+      invalid_arg
+        (Printf.sprintf "Nx_device.Buffer.borrow: the buffer is on %s, not %s"
+           src.owner.name h.name);
+    let first = Option.get src.memory.host in
+    match d.mapping with
+    | _ when d == h -> Ok b
+    | None -> refuse "%s cannot address host memory" d.name
+    | Some _ when nbytes b = 0 -> Ok (empty ~borrowed:true d b.dtype b.length)
+    (* A host buffer nx made starts on a page from [aligned_from] bytes; a
+       smaller one is refused wherever it happens to start, so that whether it
+       borrows does not depend on the allocator. *)
+    | Some _ when h == host && (not src.borrowed) && src.extent < aligned_from
+      ->
+        refuse
+          "a host buffer of %d bytes does not start on a page, and %s maps \
+           whole pages; host buffers start on one from %d bytes"
+          src.extent d.name aligned_from
+    (* Another machine's pages are its own; its devices check them. *)
+    | Some _ when h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n
+      ->
+        refuse
+          "the host memory at 0x%nx does not start on a page, and %s maps \
+           whole pages; host buffers start on one from %d bytes"
+          first d.name aligned_from
+    | Some mapping -> (
+        match share d mapping src first with
+        | Error why ->
+            refuse "%s cannot map the host memory at 0x%nx: %s" d.name first why
+        | Ok m ->
+            let skip =
+              Nativeint.to_int (Nativeint.sub first (Option.get m.mapped.host))
+            in
+            let base =
+              base ~source:(src, m) ~borrowed:true ~keep:(Keep b)
+                ~extent:(skip + src.extent) d m.mapped
+            in
+            Gc.finalise (release d) base;
+            Ok
+              {
+                base;
+                offset = skip + b.offset;
+                dtype = b.dtype;
+                length = b.length;
+              })
 
   (* A file's bytes are borrowed from its pages, by devices that share the
      host's memory. *)
   let borrow_file d b =
-    let fail fmt = borrow_fail fmt in
     let f = file_of b in
-    if not (shares_host_memory d) then
-      fail "%s does not share the host's memory: copy %s's bytes to it" d.name
-        f.path;
     let size = Int.max 1 (Nx_dtype.Scalar.bitsize b.dtype / 8) in
-    if b.offset mod size <> 0 then
-      fail "byte %d of %s is not aligned to %s's %d bytes" b.offset f.path
+    if not (shares_host_memory d) then
+      refuse "%s does not share the host's memory: copy %s's bytes to it" d.name
+        f.path
+    else if b.offset mod size <> 0 then
+      refuse "byte %d of %s is not aligned to %s's %d bytes" b.offset f.path
         (Nx_dtype.Scalar.to_string b.dtype)
-        size;
-    if nbytes b = 0 then empty ~borrowed:true d b.dtype b.length
-    else begin
-      (* A device faulting a file's pages in reads a few times slower than the
-         disk; the host reads them as it needs them. *)
-      if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
-      borrow_host d { b with base = pages b }
-    end
+        size
+    else if nbytes b = 0 then Ok (empty ~borrowed:true d b.dtype b.length)
+    else
+      Result.bind (pages b) (fun pages ->
+          (* A device faulting a file's pages in reads a few times slower than
+             the disk; the host reads them as it needs them. *)
+          if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
+          borrow_host d { b with base = pages })
 
   let borrow d b =
     live b;
@@ -1261,10 +1280,13 @@ module Buffer = struct
   let staging_memory () =
     match !staging with
     | Some ba -> ba
-    | None ->
-        let ba = heap (2 * chunk) in
-        staging := Some ba;
-        ba
+    | None -> (
+        match heap (2 * chunk) with
+        | ba ->
+            staging := Some ba;
+            ba
+        | exception Stdlib.Out_of_memory ->
+            raise (Out_of_memory (host, 2 * chunk)))
 
   (* The address of the host [h]'s staging memory: this machine's, or memory of
      another machine's host, allocated there at its first staged copy and kept
@@ -1279,10 +1301,7 @@ module Buffer = struct
           | Some (m, _) ->
               h.slots <- Some m;
               Option.get m.host
-          | None ->
-              failwith
-                (Printf.sprintf "%s has no memory for its staging slots" h.name)
-          )
+          | None -> raise (Out_of_memory (h, 2 * chunk)))
 
   (* [e]'s address of its host's staging memory, which [e] maps at its first
      staged copy and keeps mapped. *)
@@ -1514,17 +1533,18 @@ module Buffer = struct
     match file_read b.base.memory.handle at a n with
     | k when k = n -> ()
     | k when k >= 0 ->
-        failwith
-          (Printf.sprintf "%s: the file ends at byte %d, before byte %d" f.path
-             (at + k) (at + n))
-    | code -> failwith (f.path ^ ": " ^ error_message (-code))
+        raise
+          (Sys_error
+             (Printf.sprintf "%s: the file ends at byte %d, before byte %d"
+                f.path (at + k) (at + n)))
+    | code -> raise (Sys_error (f.path ^ ": " ^ error_message (-code)))
 
   (* [write b ~pos a n] writes the [n] bytes of host memory at [a] into the disk
      buffer [b] from its byte [pos]. *)
   let write b ~pos a n =
     let f = file_of b in
     let code = file_write b.base.memory.handle (b.offset + pos) a n in
-    if code < 0 then failwith (f.path ^ ": " ^ error_message (-code))
+    if code < 0 then raise (Sys_error (f.path ^ ": " ^ error_message (-code)))
 
   (* A copy from or to the disk reads or writes its file: straight from or into
      memory the host addresses, and through the host's staging memory otherwise,
@@ -1632,7 +1652,7 @@ module Buffer = struct
             (transfer ~dst:(address dst) ~src:(address src) n)
         with
         | () -> ()
-        | exception (Failure _ as e) ->
+        | exception (Lost _ as e) ->
             (* [s]'s copy engine may still write [dst]. *)
             add_reached dst.base s;
             raise e)
@@ -1641,15 +1661,16 @@ module Buffer = struct
     | Link l -> (
         match l.move ~src ~dst with
         | () -> ()
-        | exception Failure msg ->
+        | exception Failure why ->
             (* The link's state is unknown at both ends, and its devices may
                still write [dst]. *)
             List.iter
               (fun t ->
-                ignore (Atomic.compare_and_set t.failed None (Some msg));
+                lose t why;
                 add_reached dst.base t)
               l.through;
-            failwith msg)
+            List.iter check l.through;
+            failwith why)
     | File _ -> file_copy ~timed ~src ~dst n
 
   (* A profiled copy is a span of the host on the calling domain's lane, and one
@@ -1750,36 +1771,37 @@ module Program = struct
     | Some (Collectable cell) -> Weak.get cell 0
     | None -> None
 
-  (* The finaliser runs once the weak pointer is erased: no lookup can find a
-     program whose release is queued. *)
+  (* Caches [d]'s new program. The finaliser runs once the weak pointer is
+     erased: no lookup can find a program whose release is queued. *)
+  let add d ~binary ~name (handle, unload) =
+    let key = (binary, name) in
+    let p = { p_device = d; p_name = name; p_handle = handle } in
+    (match unload with
+    | None -> Hashtbl.replace d.programs key (Kept p)
+    | Some unload ->
+        let cell = Weak.create 1 in
+        Weak.set cell 0 (Some p);
+        Hashtbl.replace d.programs key (Collectable cell);
+        Gc.finalise_last (fun () -> push d.dropped { key; cell; unload }) p);
+    (match Atomic.get profile with
+    | None -> ()
+    | Some c ->
+        push c.events (Program { program = p; binary; time = now_ns () }));
+    p
+
+  (* A loader that raises [Failure] loses its device. *)
   let load d ~binary ~name =
     match d.load with
-    | None ->
-        invalid_arg
-          (Printf.sprintf "Nx_device.Program.load: %s loads no programs" d.name)
+    | None -> Error (d.name ^ ": the device loads no programs")
     | Some load ->
         with_devices [ d ] (fun () ->
-            let key = (binary, name) in
-            match cached d key with
-            | Some p -> p
-            | None ->
-                let handle, unload = load ~binary ~name in
-                let p = { p_device = d; p_name = name; p_handle = handle } in
-                (match unload with
-                | None -> Hashtbl.replace d.programs key (Kept p)
-                | Some unload ->
-                    let cell = Weak.create 1 in
-                    Weak.set cell 0 (Some p);
-                    Hashtbl.replace d.programs key (Collectable cell);
-                    Gc.finalise_last
-                      (fun () -> push d.dropped { key; cell; unload })
-                      p);
-                (match Atomic.get profile with
-                | None -> ()
-                | Some c ->
-                    push c.events
-                      (Program { program = p; binary; time = now_ns () }));
-                p)
+            match cached d (binary, name) with
+            | Some p -> Ok p
+            | None -> (
+                match load ~binary ~name with
+                | Ok loaded -> Ok (add d ~binary ~name loaded)
+                | Error why -> Error (d.name ^ ": " ^ why)
+                | exception Failure why -> fail d why))
 
   let device p = p.p_device
   let name p = p.p_name
@@ -1864,7 +1886,7 @@ end
    device, which reclaims nothing. *)
 let stats d =
   Mutex.protect d.lock (fun () ->
-      (if failed d = None then try reclaim d with Failure _ -> ());
+      (if failed d = None then try reclaim d with Lost _ -> ());
       {
         Stats.allocated = Atomic.get d.allocated;
         cached = d.cached;
@@ -1879,7 +1901,7 @@ let submit d ~touches f =
   with_devices (d :: touches) (fun () ->
       let v = submitted d + 1 in
       let r = f v in
-      (try commit d v with Failure msg -> fail d (d.name ^ ": " ^ msg));
+      (try commit d v with Failure why -> fail d why);
       List.iter
         (fun t -> if t != d then Hashtbl.replace t.pending d.id (d, v))
         touches;
@@ -1996,14 +2018,14 @@ module Profile = struct
         List.iter
           (fun d ->
             if Atomic.get d.spans <> [] && failed d = None then
-              try synchronize d with Failure _ -> ())
+              try synchronize d with Lost _ -> ())
           (Atomic.get opened);
         let clocks = Hashtbl.create 4 in
         let calibrated d hz =
           match Hashtbl.find_opt clocks d.id with
           | Some f -> f
           | None ->
-              let f = try Some (calibrate d hz) with Failure _ -> None in
+              let f = try Some (calibrate d hz) with Lost _ -> None in
               Hashtbl.add clocks d.id f;
               f
         in
@@ -2143,7 +2165,10 @@ let make ~name ~arch ~budget ~(memory : allocator) ?(host = host) ?host_memory
   | Host_clock | Device_clock _ -> ());
   let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
   let load =
-    Option.map (fun load ~binary ~name -> (load ~binary ~name, None)) load
+    Option.map
+      (fun load ~binary ~name ->
+        Result.map (fun handle -> (handle, None)) (load ~binary ~name))
+      load
   in
   create ~name ~arch ~machine:(Some host) ~io:None ~budget ~alloc
     ~free:memory.free ~host_memory ~mapping ~copy_queue ~load ~call:None ~link
@@ -2160,8 +2185,9 @@ let make_host ~name ~arch ~budget ~(memory : allocator) ~io ?load ?call
   let load =
     Option.map
       (fun load ~binary ~name ->
-        let handle, unload = load ~binary ~name in
-        (handle, Some unload))
+        Result.map
+          (fun (handle, unload) -> (handle, Some unload))
+          (load ~binary ~name))
       load
   in
   create ~name ~arch ~machine:None ~io:(Some io) ~budget ~alloc

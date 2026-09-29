@@ -12,12 +12,14 @@ let no_adapter host =
   if Nx_rdma_device.count ~host () > 0 then
     skip ~reason:"the machine has an adapter" ()
 
-let refused host =
+let refused ~named host =
   match Nx_rdma_device.get ~host 0 with
   | Ok _ -> fail "an adapter opened"
-  | Error msg -> contains ~msg:"the runtime names it" ~sub:"RDMA: " msg
+  | Error msg ->
+      is_true ~msg:"the adapter's name starts it"
+        (String.starts_with ~prefix:named msg)
 
-(* Served for the life of the process, which disconnects at exit. *)
+(* Served on the loopback until the test stops serving it. *)
 let other_machine () =
   let key = "a key of the test, long enough" in
   let s =
@@ -29,7 +31,7 @@ let other_machine () =
     | Unix.ADDR_UNIX _ -> assert false
   in
   match Nx_remote_device.connect ~port ~key "127.0.0.1" with
-  | Ok host -> host
+  | Ok host -> (s, port, host)
   | Error why -> fail why
 
 let () =
@@ -38,13 +40,22 @@ let () =
        [
          test "without an adapter, an open fails with a message" (fun () ->
              no_adapter Nx_device.host;
-             refused Nx_device.host;
-             raises_match (Exn.invalid_arg ~substring:"RDMA: ") (fun () ->
+             refused ~named:"RDMA: " Nx_device.host;
+             raises_match (Exn.failure ~substring:"RDMA: ") (fun () ->
                  Nx_rdma_device.v 0));
          test "another machine's adapters" (fun () ->
-             let host = other_machine () in
+             let s, port, host = other_machine () in
              no_adapter host;
-             refused host);
+             refused ~named:(Printf.sprintf "RDMA@127.0.0.1:%d: " port) host;
+             Nx_device_support.Remote_server.stop s;
+             let lost = function
+               | Nx_device.Lost (d, _) -> d == host
+               | _ -> false
+             in
+             raises_match ~msg:"count, the machine gone" lost (fun () ->
+                 Nx_rdma_device.count ~host ());
+             raises_match ~msg:"get, the machine gone" lost (fun () ->
+                 Nx_rdma_device.get ~host 1));
          test "a negative index and a device that is no host are refused"
            (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->

@@ -23,7 +23,7 @@ let on_disk n =
     output_char oc (Char.chr (i land 0xff))
   done;
   close_out oc;
-  let file = Nx_device.Buffer.of_file path in
+  let file = Result.get_ok (Nx_device.Buffer.of_file path) in
   ( Nx_effect.of_buffer Nx_dtype.int32 [| n |]
       (Nx_device.Buffer.view file ~offset:2 Nx_dtype.Scalar.Int32 n),
     path )

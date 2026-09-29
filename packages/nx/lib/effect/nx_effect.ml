@@ -517,16 +517,16 @@ let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_cpu.t =
     (View.shape (whole_view r))
 
 (* A value on the disk is read where it lies, in its file's pages, and keeps its
-   view. *)
+   view; it is copied when the system does not map the file. *)
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_cpu.t =
   match file_run r with
-  | Some b ->
-      Cell.with_borrow r.r_cell (fun () ->
-          {
-            Nx_array.dtype = r.r_dtype;
-            view = whole_view r;
-            buffer = Nx_device.Buffer.borrow Nx_device.host b;
-          })
+  | Some b -> (
+      match
+        Cell.with_borrow r.r_cell (fun () ->
+            Nx_device.Buffer.borrow Nx_device.host b)
+      with
+      | Ok buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
+      | Error _ -> read_copy r)
   | None -> read_copy r
 
 (* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
@@ -810,7 +810,8 @@ let run_in b v =
    window of the view [v] of the file bytes [b], and each device's storage: the
    bytes the window reaches, borrowed from the file's pages. It is [None] unless
    every device shares the host's memory, every window has an element and
-   starts on a byte, and the windows are one view of their storages. *)
+   starts on a byte, the windows are one view of their storages, and every
+   device borrows them. *)
 let file_windows v ds windows b =
   let s = Nx_device.Buffer.dtype b in
   let bits = Nx_dtype.Scalar.bitsize s in
@@ -833,11 +834,14 @@ let file_windows v ds windows b =
     let spans = List.map Option.get spans in
     let ((offset, strides, shape) as view) = fst (List.hd spans) in
     if List.for_all (fun (v', _) -> v' = view) spans then
-      Some
-        ( View.create ~offset ~strides shape,
-          List.map2
-            (fun d (_, run) -> Nx_device.Buffer.borrow (runtime_of d) run)
-            ds spans )
+      let borrows =
+        List.map2
+          (fun d (_, run) -> Nx_device.Buffer.borrow (runtime_of d) run)
+          ds spans
+      in
+      if List.for_all Result.is_ok borrows then
+        Some (View.create ~offset ~strides shape, List.map Result.get_ok borrows)
+      else None
     else None
   else None
 
