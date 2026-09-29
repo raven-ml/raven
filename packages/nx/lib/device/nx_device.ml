@@ -77,11 +77,16 @@ and base = {
   keep : keep;
   source : (base * mapped) option;
       (* for a borrow, the host memory it maps, and the mapping *)
-  maps : mapped list Atomic.t; (* the mappings of this memory, one per device *)
-  reached : t list Atomic.t;
+  links : links Atomic.t;
+  file : file option; (* the file this memory maps, from its first byte *)
+}
+
+(* The other devices that reach a base's memory, changed together. *)
+and links = {
+  maps : mapped list; (* the mappings of this memory, one per device *)
+  reached : t list;
       (* other devices whose work may still write this memory: the source of a
          transfer into it that could not be waited for *)
-  file : file option; (* the file this memory maps, from its first byte *)
 }
 
 (* A mapping of a host base on a device, shared by the device's borrows of it.
@@ -295,21 +300,20 @@ let sync d =
    a device it is mapped on or whose transfer into it could not be waited for,
    or those of the memory it maps. *)
 let rec failure_of base =
-  let reaching =
-    base.owner
-    :: (List.map (fun m -> m.on) (Atomic.get base.maps)
-       @ Atomic.get base.reached)
-  in
+  let { maps; reached } = Atomic.get base.links in
+  let reaching = base.owner :: (List.map (fun m -> m.on) maps @ reached) in
   match List.find_map failed reaching with
   | Some _ as e -> e
   | None -> Option.bind base.source (fun (src, _) -> failure_of src)
 
-let rec update_maps base f =
-  let l = Atomic.get base.maps in
-  if not (Atomic.compare_and_set base.maps l (f l)) then update_maps base f
+let rec update_links base f =
+  let l = Atomic.get base.links in
+  if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
+
+let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
 
 let mapping_on d base =
-  List.find_opt (fun m -> m.on == d) (Atomic.get base.maps)
+  List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
 
 (* The device's address of the host address [a] in the mapping [m]. *)
 let mapped_address (m : memory) a =
@@ -381,7 +385,7 @@ let reclaim d =
           | Some (src, m) ->
               m.borrows <- m.borrows - 1;
               if m.borrows = 0 then emptied := (src, m) :: !emptied
-          | None when Atomic.get b.reached <> [] ->
+          | None when (Atomic.get b.links).reached <> [] ->
               (* Another device's work may still write it. *)
               ignore (Atomic.fetch_and_add d.allocated (-b.bytes));
               d.retained <- d.retained + b.bytes;
@@ -554,8 +558,7 @@ module Buffer = struct
       borrowed;
       keep;
       source;
-      maps = Atomic.make [];
-      reached = Atomic.make [];
+      links = Atomic.make { maps = []; reached = [] };
       file;
     }
 
@@ -573,34 +576,33 @@ module Buffer = struct
     n <= host.budget - a
     && (Atomic.compare_and_set host.allocated a (a + n) || reserve n)
 
-  let host_alloc n =
-    check host;
-    if n > host.budget then raise (Out_of_memory (host, n));
-    let rec attempt ~collected =
-      let got =
-        if not (reserve n) then None
-        else
-          match host.alloc n with
-          | Some _ as m -> m
-          | None ->
-              ignore (Atomic.fetch_and_add host.allocated (-n));
-              None
-      in
-      match got with
-      | Some m -> m
-      | None when not collected ->
-          Gc.full_major ();
-          attempt ~collected:true
-      | None -> raise (Out_of_memory (host, n))
-    in
-    attempt ~collected:false
+  (* [n] reserved bytes of the heap. A refused reservation or allocation
+     collects garbage once and tries again. *)
+  let rec host_heap n ~collected =
+    if reserve n then (
+      match heap n with
+      | ba -> ba
+      | exception Stdlib.Out_of_memory ->
+          ignore (Atomic.fetch_and_add host.allocated (-n));
+          host_refused n ~collected)
+    else host_refused n ~collected
+
+  and host_refused n ~collected =
+    if collected then raise (Out_of_memory (host, n));
+    Gc.full_major ();
+    host_heap n ~collected:true
 
   let create ?host:(pinned = false) d s n =
     match checked_nbytes "create" s n with
     | 0 -> empty ~borrowed:false d s n
     | bytes when d == host ->
-        let memory, keep = host_alloc bytes in
-        let base = base ~bytes ~borrowed:false ~keep ~extent:bytes d memory in
+        check host;
+        if bytes > host.budget then raise (Out_of_memory (host, bytes));
+        let ba = host_heap bytes ~collected:false in
+        let base =
+          base ~bytes ~borrowed:false ~keep:(Host ba) ~extent:bytes d
+            (heap_memory ba)
+        in
         Gc.finalise_last
           (fun () -> ignore (Atomic.fetch_and_add host.allocated (-bytes)))
           base;
@@ -875,10 +877,8 @@ module Buffer = struct
     done;
     wait_signal d (submitted d)
 
-  let rec add_reached base e =
-    let l = Atomic.get base.reached in
-    if not (Atomic.compare_and_set base.reached l (e :: l)) then
-      add_reached base e
+  let add_reached base e =
+    update_links base (fun l -> { l with reached = e :: l.reached })
 
   (* Runs [f] with [b]'s address for [e]'s work, if [e] addresses [b]'s memory:
      its own, host memory it maps, or host memory of another device, which [e]
