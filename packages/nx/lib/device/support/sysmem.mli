@@ -26,6 +26,14 @@ val reserve : base:int -> int -> unit
 
     Raises [Failure] if part of the range is in use. *)
 
+val unreserve : base:int -> int -> unit
+(** [unreserve ~base n] returns the range {!reserve} reserved to the system,
+    which may map anything there again. The memory {!alloc} mapped in it must
+    have been freed. It does nothing for a range not reserved. *)
+
+val extent : ?contiguous:bool -> int -> int
+(** [extent ?contiguous n] is the bytes {!alloc} maps for [n]. *)
+
 val alloc : ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
 (** [alloc ~va n] maps [n] bytes, rounded up to {!page}, of new, zeroed, locked
     memory at [va], inside a range {!reserve} reserved, or where the system

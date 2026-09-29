@@ -29,9 +29,12 @@
 
     {b Cleanup.} When the client disconnects, for whatever reason, the server
     turns bus mastering off on every function it took, so that their DMA stops
-    first, then frees the client's memory, drops its programs and releases its
-    functions. A failure that is no refusal of a command, such as an exception
-    of a program, ends the client's session through this cleanup. *)
+    first, then frees the client's memory and reservations, drops its programs
+    and releases its functions. If a function's DMA cannot be stopped, the
+    client's memory is never freed, and the server says so on its standard
+    error. A function a client releases loses its bus mastering too. A failure
+    that is no refusal of a command, such as an exception of a program, ends the
+    client's session through this cleanup. *)
 
 type programs = {
   load : binary:string -> name:string -> int;

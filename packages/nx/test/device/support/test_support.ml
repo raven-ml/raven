@@ -738,6 +738,11 @@ let test_timeout () =
 let test_remote_sysmem () =
   with_server @@ fun s ->
   let r = connect s in
+  let base = 0x7e00_0000_0000 in
+  (* An address outside the connection's reservations is refused before anything
+     is mapped there. *)
+  raises_match (Exn.failure ~substring:"outside this connection's reservations")
+    (fun () -> Remote.alloc_sysmem r ~va:base 4096);
   (match Remote.alloc_sysmem r (3 * Remote.page r) with
   | exception Failure why -> skip ~reason:why ()
   | m, pages ->
@@ -746,11 +751,14 @@ let test_remote_sysmem () =
       Mmio.set64 m 8 0x5a5aL;
       equal ~msg:"its memory" int64 0x5a5aL (Mmio.get64 m 8);
       Remote.free_sysmem r m);
-  let base = 0x7e00_0000_0000 in
   Remote.reserve r ~base (4 lsl 20);
   let m, _ = Remote.alloc_sysmem r ~va:base (1 lsl 20) in
   equal ~msg:"at the address asked" nativeint (Nativeint.of_int base)
     (Mmio.address m);
+  raises_match (Exn.failure ~substring:"overlaps memory of this connection")
+    (fun () -> Remote.alloc_sysmem r ~va:(base + 4096) 4096);
+  raises_match (Exn.failure ~substring:"outside") (fun () ->
+      Remote.alloc_sysmem r ~va:(base + (4 lsl 20) - 4096) 8192);
   Remote.free_sysmem r m;
   let n = 4 * Remote.page r in
   let a = Option.get (Remote.alloc r n) in
@@ -760,6 +768,18 @@ let test_remote_sysmem () =
   Remote.free r a;
   raises_match (Exn.failure ~substring:"is not pinned") (fun () ->
       Remote.unpin r a n);
+  Remote.close r;
+  (* The reservation went with its client: another range over it can be
+     reserved. *)
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  let r = retry 300 in
+  Remote.reserve r ~base:(base + (2 lsl 20)) (4 lsl 20);
   Remote.close r
 
 (* Lock files: a planted link is not followed, and nothing but a regular file

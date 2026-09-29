@@ -2805,6 +2805,12 @@ thread.
 
 ### Nx
 
+- `nx-remote` frees a client's memory only once the DMA of the functions it
+  took is off, and leaks it, saying so, when that fails; releasing a function
+  turns its bus mastering off. A client's system memory at an address must lie
+  in its own reservations and outside its other memory, which `MAP_FIXED`
+  would silently have replaced, and its reservations are released when it
+  goes. `Nx_device_support.Sysmem` gains `unreserve` and `extent`.
 - `nx-remote --key-file` reads the key with the new
   `Nx_device_support.Remote.read_key`: one open of the file, which must be a
   regular file of the server's user that no one else may read, of 16 to 4096

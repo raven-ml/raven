@@ -23,6 +23,13 @@ let reserve ~base n =
         Hashtbl.add reserved (base, n) ()
       end)
 
+let unreserve ~base n =
+  Mutex.protect lock (fun () ->
+      if Hashtbl.mem reserved (base, n) then begin
+        unmap_at (Nativeint.of_int base) n;
+        Hashtbl.remove reserved (base, n)
+      end)
+
 (* Locked pages must stay at the physical address the process read for them,
    which the kernel guarantees only when it does not compact them. *)
 let setting = "/proc/sys/vm/compact_unevictable_allowed"
@@ -78,6 +85,9 @@ let add_pins a n =
 
 let huge = 2 lsl 20
 
+let extent ?(contiguous = false) n =
+  if contiguous && n > page then huge else (n + page - 1) / page * page
+
 (* Memory mapped where the system chose, which no reservation holds. *)
 let placed : (nativeint, unit) Hashtbl.t = Hashtbl.create 16
 
@@ -103,7 +113,7 @@ let alloc ?(contiguous = false) ?va n =
       if huge_page && va mod huge <> 0 then
         invalid_arg (Printf.sprintf "Sysmem.alloc: 0x%x is not on 2 MiB" va))
     va;
-  let n = if huge_page then huge else (n + page - 1) / page * page in
+  let n = extent ~contiguous n in
   let a =
     try map_at (Nativeint.of_int (Option.value ~default:0 va)) n huge_page
     with Failure why when huge_page ->

@@ -88,7 +88,8 @@ val take : t -> lock:string -> string -> int
     function taken, until {!release}. *)
 
 val release : t -> int -> unit
-(** [release r f] is {!Pci.release} of [f]. *)
+(** [release r f] turns [f]'s bus mastering off, then is {!Pci.release} of [f].
+    If its DMA cannot be stopped, [f] stays taken. *)
 
 val read_config : t -> int -> int -> int -> int
 (** [read_config r f off n] is {!Pci.read_config} of [f]. *)
@@ -113,11 +114,13 @@ val reset : t -> int -> unit
 (** {1:memory Memory} *)
 
 val reserve : t -> base:int -> int -> unit
-(** [reserve r ~base n] is {!Sysmem.reserve} on the machine. *)
+(** [reserve r ~base n] is {!Sysmem.reserve} on the machine, until the
+    connection ends. *)
 
 val alloc_sysmem : t -> ?contiguous:bool -> ?va:int -> int -> Mmio.t * int list
 (** [alloc_sysmem r ?contiguous ?va n] is {!Sysmem.alloc} on the machine,
-    accessed through [r]. *)
+    accessed through [r]. [va] must lie in a range {!reserve} reserved on [r],
+    outside the memory [r] holds there. *)
 
 val free_sysmem : t -> Mmio.t -> unit
 (** [free_sysmem r m] is {!Sysmem.free} on the machine. *)

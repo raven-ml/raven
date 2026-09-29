@@ -30,6 +30,7 @@ type session = {
   mutable ranges : range list;
   pins : (nativeint * int, int) Hashtbl.t; (* counted *)
   loaded : (int, unit) Hashtbl.t;
+  mutable reserved : (int * int) list; (* address ranges, which it releases *)
 }
 
 let fail fmt = Printf.ksprintf failwith fmt
@@ -122,6 +123,13 @@ let write_bar m off s =
   | 8 when off land 7 = 0 -> Mmio.set64 m off (String.get_int64_le s 0)
   | _ -> Mmio.write m off s
 
+let log fmt = Printf.ksprintf (fun m -> prerr_endline ("nx-remote: " ^ m)) fmt
+
+(* Stops the function's DMA. *)
+let master_off p =
+  let command = 0x04 and master = 0x04 in
+  Pci.write_config p command 2 (Pci.read_config p command 2 land lnot master)
+
 let ok ?(r0 = 0) ?(r1 = 0) fd =
   Wire.send fd (Wire.encode_response Wire.ok r0 r1)
 
@@ -157,6 +165,9 @@ let run s cmd a0 a1 a2 a3 =
       ok ~r0:id fd
   | Release ->
       let p = func s a0 in
+      (* A function that cannot be stopped stays held: the cleanup tries again,
+         and keeps the memory it may reach. *)
+      master_off p;
       Hashtbl.filter_map_inplace
         (fun (f, _) m ->
           if f = a0 then begin
@@ -194,11 +205,35 @@ let run s cmd a0 a1 a2 a3 =
       in
       ok ~r0:(Nativeint.to_int (Mmio.address m)) ~r1:(Mmio.length m) fd
   | Reserve ->
-      Sysmem.reserve ~base:a1 a2;
+      if not (List.mem (a1, a2) s.reserved) then begin
+        Sysmem.reserve ~base:a1 a2;
+        s.reserved <- (a1, a2) :: s.reserved
+      end;
       ok fd
   | Sysmem_alloc ->
       let va = if a1 = 0 then None else Some a1 in
-      let m, pages = Sysmem.alloc ~contiguous:(a3 <> 0) ?va a2 in
+      let contiguous = a3 <> 0 in
+      (* Memory at an address replaces whatever is mapped there: only a free
+         part of this connection's reservations may be named. *)
+      Option.iter
+        (fun va ->
+          let n = Sysmem.extent ~contiguous a2 in
+          if
+            n <= 0
+            || not
+                 (List.exists
+                    (fun (b, m) -> va >= b && va - b <= m && n <= m - (va - b))
+                    s.reserved)
+          then
+            fail "0x%x (%d bytes) is outside this connection's reservations" va
+              a2;
+          if
+            List.exists
+              (fun r -> va < first r + Mmio.length r.mmio && first r < va + n)
+              s.ranges
+          then fail "0x%x (%d bytes) overlaps memory of this connection" va a2)
+        va;
+      let m, pages = Sysmem.alloc ~contiguous ?va a2 in
       add_range s Sysmem m;
       ok ~r0:(Nativeint.to_int (Mmio.address m)) ~r1:(List.length pages) fd;
       Wire.send fd (Wire.words pages)
@@ -328,34 +363,47 @@ let loop s =
   in
   next ()
 
-(* Stops the functions' DMA first, then frees what the client held. Each step is
-   attempted whatever the others do. *)
+(* Frees what the client held once its functions' DMA is off: memory a function
+   may still write is leaked on purpose, never handed back to the system. Each
+   step is attempted whatever the others do. *)
 let cleanup s =
   let attempt f = try f () with e when error_of e <> None -> () in
-  let command = 0x04 and master = 0x04 in
-  Hashtbl.iter
-    (fun _ p ->
-      attempt (fun () ->
-          Pci.write_config p command 2
-            (Pci.read_config p command 2 land lnot master)))
-    s.functions;
+  let stopped =
+    Hashtbl.fold
+      (fun _ p stopped ->
+        (try
+           master_off p;
+           true
+         with e when error_of e <> None -> false)
+        && stopped)
+      s.functions true
+  in
   Hashtbl.iter (fun _ m -> attempt (fun () -> Pci.unmap_bar m)) s.bars;
   Hashtbl.iter (fun _ p -> attempt (fun () -> Pci.release p)) s.functions;
-  Hashtbl.iter
-    (fun (a, n) k ->
-      for _ = 1 to k do
-        attempt (fun () -> Sysmem.unpin a n)
-      done)
-    s.pins;
-  List.iter
-    (fun r ->
-      match r.kind with
-      | Host ->
-          attempt (fun () ->
-              host_free (Mmio.address r.mmio) (Mmio.length r.mmio))
-      | Sysmem -> attempt (fun () -> Sysmem.free r.mmio)
-      | Bar -> ())
-    s.ranges;
+  if stopped then begin
+    Hashtbl.iter
+      (fun (a, n) k ->
+        for _ = 1 to k do
+          attempt (fun () -> Sysmem.unpin a n)
+        done)
+      s.pins;
+    List.iter
+      (fun r ->
+        match r.kind with
+        | Host ->
+            attempt (fun () ->
+                host_free (Mmio.address r.mmio) (Mmio.length r.mmio))
+        | Sysmem -> attempt (fun () -> Sysmem.free r.mmio)
+        | Bar -> ())
+      s.ranges;
+    List.iter
+      (fun (base, n) -> attempt (fun () -> Sysmem.unreserve ~base n))
+      s.reserved
+  end
+  else
+    log
+      "the DMA of a client's functions could not be stopped: its memory stays \
+       allocated";
   Option.iter
     (fun p ->
       Hashtbl.iter (fun id () -> attempt (fun () -> p.unload id)) s.loaded)
@@ -378,7 +426,6 @@ external keepalive : Unix.file_descr -> int -> int -> int -> unit
   = "caml_nx_keepalive"
 
 let close fd = try Unix.close fd with Unix.Unix_error _ -> ()
-let log fmt = Printf.ksprintf (fun m -> prerr_endline ("nx-remote: " ^ m)) fmt
 
 let hello status =
   let b = Bytes.create 5 in
@@ -411,6 +458,7 @@ let serve ~programs fd =
       ranges = [];
       pins = Hashtbl.create 16;
       loaded = Hashtbl.create 16;
+      reserved = [];
     }
   in
   (try
