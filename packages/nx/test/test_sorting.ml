@@ -146,48 +146,77 @@ let stable_order ~descending compare is_nan lane =
 
 let shape = Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 0 5)
 
+(* Lanes on both sides of the length past which a sort takes one pass per byte
+   of the key instead of comparisons: 16 entries per byte, 128 for float64. *)
+let long_lanes =
+  Gen.map
+    (fun (rows, length) -> [| rows; length |])
+    (Gen.pair (Gen.int_range 1 3)
+       (Gen.of_list ~pp:Format.pp_print_int
+          [ 15; 16; 17; 63; 64; 65; 127; 128; 129; 1000 ]))
+
+let sorts_as_a_stable_sort (S s) ~shape =
+  let drawn =
+    let open Gen in
+    let* t = viewed ~shape ~pp:s.pp s.dtype s.value in
+    let+ axis = int_range (-Nx.ndim t) (Nx.ndim t - 1) and+ descending = bool in
+    (t, axis, descending)
+  in
+  fun name ->
+    prop name drawn (fun (t, axis, descending) ->
+        let r = Ref.of_nx t in
+        let a = Ref.axis r axis in
+        let n = r.shape.(a) in
+        let order =
+          Ref.along ~axis:a ~length:n
+            (stable_order ~descending s.compare s.is_nan)
+            r
+        in
+        let values =
+          Ref.along ~axis:a ~length:n
+            (fun lane ->
+              Array.map
+                (fun i -> lane.(i))
+                (stable_order ~descending s.compare s.is_nan lane))
+            r
+        in
+        let v, i = Nx.sort ~descending ~axis t in
+        equal (Ref.witness s.exact) values (Ref.of_nx v);
+        equal (Ref.witness int32) (Ref.map Int32.of_int order) (Ref.of_nx i);
+        equal (tensor int32) i (Nx.argsort ~descending ~axis t))
+
 let sorts =
   group "sort"
-    (List.map
-       (fun (S s) ->
-         let drawn =
-           let open Gen in
-           let* t = viewed ~shape ~pp:s.pp s.dtype s.value in
-           let+ axis = int_range (-Nx.ndim t) (Nx.ndim t - 1)
-           and+ descending = bool in
-           (t, axis, descending)
-         in
-         prop
-           (s.name
-          ^ " sorts each lane stably, NaN last, and returns the positions")
-           drawn (fun (t, axis, descending) ->
-             let r = Ref.of_nx t in
-             let a = Ref.axis r axis in
-             let n = r.shape.(a) in
-             let order =
-               Ref.along ~axis:a ~length:n
-                 (stable_order ~descending s.compare s.is_nan)
-                 r
-             in
-             let values =
-               Ref.along ~axis:a ~length:n
-                 (fun lane ->
-                   Array.map
-                     (fun i -> lane.(i))
-                     (stable_order ~descending s.compare s.is_nan lane))
-                 r
-             in
-             let v, i = Nx.sort ~descending ~axis t in
-             equal (Ref.witness s.exact) values (Ref.of_nx v);
-             equal (Ref.witness int32)
-               (Ref.map Int32.of_int order)
-               (Ref.of_nx i);
-             equal (tensor int32) i (Nx.argsort ~descending ~axis t)))
+    (List.concat_map
+       (fun (S s as sortable) ->
+         [
+           sorts_as_a_stable_sort sortable ~shape
+             (s.name
+            ^ " sorts each lane stably, NaN last, and returns the positions");
+           sorts_as_a_stable_sort sortable ~shape:long_lanes
+             (s.name ^ " sorts long lanes as a stable sort does");
+         ])
        sortables
     @ [
         test "sort refuses an axis out of bounds" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.sort ~axis:1 (Nx.zeros Nx.float32 [| 3 |])));
+        test "sorting 4096 rows of 128 float64 values sorts each row" (fun () ->
+            let rows = 4096 and cols = 128 in
+            let xs = Array.init (rows * cols) (fun _ -> Random.float 1.) in
+            let t = Nx.create Nx.float64 [| rows; cols |] xs in
+            let v, i = Nx.sort t in
+            let expected =
+              Array.concat
+                (List.init rows (fun r ->
+                     let row = Array.sub xs (r * cols) cols in
+                     Array.stable_sort Float.compare row;
+                     row))
+            in
+            equal (array float_exact) expected (Nx.to_array v);
+            equal (tensor float_exact) v
+              (Nx.take_along_axis ~axis:1 ~indices:i t);
+            equal (tensor int32) i (Nx.argsort t));
       ])
 
 (* Lanes on both sides of the lengths where top_k changes method: 8 passes, a
