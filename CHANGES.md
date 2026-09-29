@@ -2724,6 +2724,9 @@ thread.
 
 ### Nx
 
+- `Nx.rfftn` and `rfft2` refuse an `s` of another length than `axes`, as
+  `fftn` and `irfftn` do. A longer `s` was ignored, and a shorter one raised
+  `Invalid_argument "index out of bounds"`.
 - `Nx.rfft`, `irfft` and every transform built on them (`rfft2`, `rfftn`,
   their inverses, `hfft`, `ihfft`, `stft`, `istft`) take and give float16,
   bfloat16 and float8 tensors, working at float32. They raised

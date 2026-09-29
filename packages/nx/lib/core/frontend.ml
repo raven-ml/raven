@@ -4888,6 +4888,10 @@ module Make (B : Backend_intf.S) = struct
       | Some values ->
           List.map (fun axis -> if axis < 0 then nd + axis else axis) values
     in
+    (match s with
+    | Some sizes when List.length sizes <> List.length axes_list ->
+        invalid_arg "rfft: s parameter must have same length as axes"
+    | _ -> ());
     let xp = pad_or_truncate_for_fft x axes_list s in
     let scale = fft_norm_scale norm axes_list xp in
     let r = B.rfft xp ~dtype ~axes:(Array.of_list axes_list) in
