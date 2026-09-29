@@ -167,6 +167,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A `Rune.scan` compiled by `Rune.jit` computes a value its body reads from
+  before the scan once, before the loop. The loop recomputed such a value at
+  every step: a draw from a key argument, or a whole earlier scan, ran once per
+  step (a 32-step scan over the result of another staged scan launched 642
+  kernels per call, now 84).
+
 - `Rune.grad` and `Rune.jvp` through `Nx.contiguous` of a placed value that
   fills its storage no longer count its derivative twice: the value came back
   as its own result, which the tape took for a second node. A transformation

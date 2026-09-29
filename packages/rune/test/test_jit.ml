@@ -961,6 +961,60 @@ let test_scan_reads_rows_in_place () =
   check_arr ~msg:"matches the eager fold" (to_arr (over_rows x0)) y;
   equal ~msg:"no copy of the row" int from_capture from_rows
 
+(* A value the function computes before a scan is computed once, before the
+   loop, when the body reads it: each step launches the kernels it launches when
+   the value is an argument of the function. The values are a draw and the
+   result of another scan. *)
+let test_scan_computes_captures_once () =
+  let x0 =
+    Nx.create f32 [| 4; 3 |]
+      (Array.init 12 (fun i -> Float.of_int (i - 5) /. 6.0))
+  in
+  let fold n d =
+    fst
+      (Rune.scan'
+         ~f:(fun z _ -> (Nx.tanh (Nx.matmul z d), z))
+         ~init:x0
+         (Nx.zeros f32 [| n; 1 |]))
+  in
+  let settle d =
+    fst
+      (Rune.scan'
+         ~f:(fun d _ -> (Nx.tanh (Nx.matmul d d), d))
+         ~init:d
+         (Nx.zeros f32 [| 4; 1 |]))
+  in
+  let draw key = Nx.Rng.with_key key (fun () -> Nx.randn f32 [| 3; 3 |]) in
+  let kernels_per_step g x =
+    let per_replay n =
+      let g = g n in
+      ignore (g x);
+      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
+      ignore (g x);
+      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
+    in
+    (per_replay 8 - per_replay 4) / 4
+  in
+  let key = Nx.Rng.key 7 in
+  let d = draw key in
+  let over_argument = kernels_per_step (fun n -> Rune.jit' (fold n)) d in
+  let over_draw =
+    kernels_per_step
+      (fun n ->
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+          (fun key -> fold n (draw key)))
+      key
+  in
+  let over_scan =
+    kernels_per_step (fun n -> Rune.jit' (fun d -> fold n (settle d))) d
+  in
+  equal ~msg:"a draw" int over_argument over_draw;
+  equal ~msg:"another scan" int over_argument over_scan;
+  check_arr ~msg:"matches the eager fold"
+    (to_arr (fold 8 (settle d)))
+    (Rune.jit' (fun d -> fold 8 (settle d)) d)
+
 let test_scan_rows_short_of_16_bytes () =
   let fold xs =
     Rune.scan'
@@ -4614,6 +4668,8 @@ let tests =
           test_scan_rejects_ragged_rows;
         test "a scan carry is written in place" test_scan_carry_written_in_place;
         test "a scan reads its rows in place" test_scan_reads_rows_in_place;
+        test "a scan computes the values it captures once"
+          test_scan_computes_captures_once;
       ];
     group "sliding windows"
       [

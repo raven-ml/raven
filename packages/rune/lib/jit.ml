@@ -411,14 +411,19 @@ type state = {
   mutable scan_writes : (U.t * U.t list ref) list;
   (* staged scans being traced: each carry slot's buffer node -> the buffers
      indexed writes into it land in (see [write_destination]) *)
-  mutable scan_bodies : int;
-      (* the staged scan bodies being traced, forward or backward: a body
-         recomputes its step in the backward loop, so remat has nothing to do
-         there *)
+  mutable scan_bodies : scan_body list;
+      (* the staged scan bodies being traced, forward or backward, innermost
+         first: a body recomputes its step in the backward loop, so remat has
+         nothing to do there *)
 }
 
 (* A polymorphic observer of the tensors flowing through [tolk_of]. *)
 and tensor_hook = { hook : 'a 'b. ('a, 'b) Nx_effect.t -> unit }
+
+(* A staged scan body being traced: the traced tensors it makes have ids from
+   [horizon] on, and it reads the values made before it from [invariants], the
+   storage the program writes before the loop (see [invariant]). *)
+and scan_body = { horizon : int; mutable invariants : U.t list }
 
 let shape_of x = NV.shape (Nx_effect.view x)
 let numel shape = Array.fold_left ( * ) 1 shape
@@ -788,6 +793,61 @@ let bind_const (type a b) st seed (x : (a, b) Nx_effect.t) : F.Tensor.t =
   Tensor_map.Tbl.replace st.bound (Key x) tt;
   tt
 
+(* The storage [u] reads through views, each device's slice of it when [u] is
+   split, when it reads one. *)
+let viewed_storage u =
+  let base = U.base u in
+  let base =
+    if U.op base = Tolk_uop.Ops.Unshard then U.base (U.src base).(0) else base
+  in
+  if U.has_buffer_identity ~after_ok:true base then Some base else None
+
+(* The storage behind [tt]'s views, a value at [p]. A value that reads none is
+   stored into a buffer of each device's slice first and [tt] repointed at it:
+   the tensors that read [tt] later read the buffer, and the nodes built before
+   keep the computation they read. *)
+let storage st p tt =
+  match viewed_storage (F.Tensor.uop tt) with
+  | Some s -> s
+  | None ->
+      let shape = Array.of_list (F.Tensor.shape tt) in
+      let buf =
+        make_node st (F.Tensor.val_dtype tt) (numel (local_shape p shape))
+      in
+      let s = U.after ~src:buf ~deps:[ store_placed p buf shape tt ] in
+      F.Tensor.set_uop tt (F.Tensor.uop (placed_tensor p s shape));
+      s
+
+(* [u] with [base], the node its views read, replaced by [f base]. *)
+let rec reroot base f u =
+  if u == base then f u
+  else
+    U.replace u
+      ~src:
+        (Array.mapi (fun i s -> if i = 0 then reroot base f s else s) (U.src u))
+      ()
+
+(* [tt], the value of the traced tensor [t_id] at [p], as the staged scan
+   bodies [bodies] read it. A value made before a body does not depend on its
+   carry or rows: the body reads it from storage, which the program writes once
+   before the loop, instead of computing it at every step. Through nested
+   bodies, the storage of each is written in the body around it, or before the
+   outermost loop. A constant stays in the body. *)
+let rec invariant st bodies ~t_id p tt =
+  match bodies with
+  | body :: outer when t_id < body.horizon ->
+      let tt = invariant st outer ~t_id p tt in
+      if Option.is_none (U.device_of (F.Tensor.uop tt)) then tt
+      else
+        let s = storage st p tt in
+        if U.op s <> Tolk_uop.Ops.After then tt
+        else begin
+          if not (List.exists (U.equal s) body.invariants) then
+            body.invariants <- s :: body.invariants;
+          F.Tensor.of_uop (reroot s (fun s -> (U.src s).(0)) (F.Tensor.uop tt))
+        end
+  | _ -> tt
+
 (* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
@@ -795,9 +855,9 @@ let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
   | [] -> ()
   | fs -> List.iter (fun h -> h.hook x) fs);
   match x with
-  | Nx_effect.Traced { t_node = Node { trace; tensor; _ }; _ }
+  | Nx_effect.Traced { t_node = Node { trace; tensor; place }; t_id; _ }
     when trace = st.st_id ->
-      tensor
+      invariant st st.scan_bodies ~t_id place tensor
   | Nx_effect.Traced _ ->
       err
         "Rune.jit: a tensor traced by another jit entered this trace; a value \
@@ -1607,14 +1667,16 @@ let final_carry ~n = function
   | In_place b -> b
   | Pair (b0, b1) -> if n mod 2 = 0 then b0 else b1
 
-let loop_call st l ~body_linear ~resolve_node ~reversed ~n =
+let loop_call st l ~body_linear ~resolve_node ~reversed ~n ~invariants =
   let cint v = U.const (Tolk_uop.Const.int Tolk_uop.Dtype.weakint v) in
   let ins = List.rev l.ins and outs = List.rev l.outs in
   let targets = List.map (fun s -> resolve_node s.node) (ins @ outs)
     |> List.sort_uniq U.compare in
   let args = ref (List.rev l.args) in
-  (* Captures cross the same CALL argument boundary as row and carry storage.
-     Nested bodies retain their own PARAM namespace. *)
+  (* Captures cross the same CALL argument boundary as row and carry storage,
+     an invariant's buffer as its storage after the effects that write it,
+     which run before the loop. Nested bodies retain their own PARAM
+     namespace. *)
   let captures =
     U.toposort ~enter_calls:false body_linear
     |> List.filter (fun node ->
@@ -1622,11 +1684,15 @@ let loop_call st l ~body_linear ~resolve_node ~reversed ~n =
         && U.addrspace node = Some TD.Global
         && not (List.exists (U.equal node) targets))
     |> List.map (fun node ->
-        let slot = match List.find_index (U.equal node) !args with
+        let arg =
+          Option.value ~default:node
+            (List.find_opt (fun s -> U.equal node (U.buf_uop s)) invariants)
+        in
+        let slot = match List.find_index (U.equal arg) !args with
           | Some slot -> slot
           | None ->
               let slot = List.length !args in
-              args := !args @ [node];
+              args := !args @ [arg];
               slot in
         node, U.param_like node ~slot) in
   let bindings = List.mapi (fun i node ->
@@ -1715,45 +1781,9 @@ let realize_arg st (tt : F.Tensor.t) : U.t =
     U.after ~src:buf ~deps:[ U.store ~dst:buf ~value:u () ]
   else U.contiguous ~force:true ~src:u ()
 
-let in_scan_body st f =
-  st.scan_bodies <- st.scan_bodies + 1;
-  Fun.protect ~finally:(fun () -> st.scan_bodies <- st.scan_bodies - 1) f
-
-(* Gradient checkpointing (see [Remat]) *)
-
-(* The storage [u] reads through views, each device's slice of it when [u] is
-   split, when it reads one. *)
-let viewed_storage u =
-  let base = U.base u in
-  let base =
-    if U.op base = Tolk_uop.Ops.Unshard then U.base (U.src base).(0) else base
-  in
-  if U.has_buffer_identity ~after_ok:true base then Some base else None
-
-(* The storage behind [tt]'s views, a value at [p]. A value that reads none is
-   stored into a buffer of each device's slice first and [tt] repointed at it:
-   the tensors that read [tt] later read the buffer, and the nodes built before
-   keep the computation they read. *)
-let storage st p tt =
-  match viewed_storage (F.Tensor.uop tt) with
-  | Some s -> s
-  | None ->
-      let shape = Array.of_list (F.Tensor.shape tt) in
-      let buf =
-        make_node st (F.Tensor.val_dtype tt) (numel (local_shape p shape))
-      in
-      let s = U.after ~src:buf ~deps:[ store_placed p buf shape tt ] in
-      F.Tensor.set_uop tt (F.Tensor.uop (placed_tensor p s shape));
-      s
-
-(* [u] with [base], the node its views read, replaced by [f base]. *)
-let rec reroot base f u =
-  if u == base then f u
-  else
-    U.replace u
-      ~src:
-        (Array.mapi (fun i s -> if i = 0 then reroot base f s else s) (U.src u))
-      ()
+let in_scan_body st body f =
+  st.scan_bodies <- body :: st.scan_bodies;
+  Fun.protect ~finally:(fun () -> st.scan_bodies <- List.tl st.scan_bodies) f
 
 (* A row slot [slot] of [numel] elements, each device's, over the rows of the
    [n; ...] value [tt], padded to the loop's row stride when a row falls short
@@ -2317,7 +2347,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Remat.E_remat (Remat.Call { params_s; params; f; residuals; _ }) ->
         Some
           (fun k ->
-            if residuals && st.scan_bodies = 0 then
+            if residuals && st.scan_bodies = [] then
               Nx.Ptree.fold params_s
                 (fun _ leaf () ->
                   ignore (storage st (placement_in st leaf) (go leaf) : U.t))
@@ -2326,7 +2356,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | Remat.E_barrier { values; after } ->
         Some
           (fun k ->
-            if st.scan_bodies > 0 then continue k values
+            if st.scan_bodies <> [] then continue k values
             else
               let deps =
                 List.filter_map
@@ -2730,8 +2760,9 @@ and stage_scan : type r.
   let outer_writes = st.scan_writes in
   st.scan_collectors <- collect :: st.scan_collectors;
   st.scan_writes <- writes @ outer_writes;
+  let loop_body = { horizon; invariants = [] } in
   let c_next, y =
-    in_scan_body st (fun () ->
+    in_scan_body st loop_body (fun () ->
         Fun.protect
           ~finally:(fun () ->
             st.scan_collectors <- List.tl st.scan_collectors;
@@ -2762,16 +2793,17 @@ and stage_scan : type r.
     else Effect.Deep.discontinue k Scan.Not_staged
   else
     let y_outs =
-      List.map
-        (fun (Nx.P y) ->
-          let shape = shape_of y and place = placement_in st y in
-          let dt = tolk_dtype (Nx_effect.dtype y) in
-          ( dt,
-            shape,
-            place,
-            make_node st dt (numel (local_shape place shape)),
-            tolk_of st y ))
-        y
+      in_scan_body st loop_body (fun () ->
+          List.map
+            (fun (Nx.P y) ->
+              let shape = shape_of y and place = placement_in st y in
+              let dt = tolk_dtype (Nx_effect.dtype y) in
+              ( dt,
+                shape,
+                place,
+                make_node st dt (numel (local_shape place shape)),
+                tolk_of st y ))
+            y)
     in
     let stack_outs =
       if req_record then
@@ -2789,7 +2821,8 @@ and stage_scan : type r.
        instead, the other carries stay pairs, and the body is scheduled again
        until every remaining candidate holds. *)
     let next_values =
-      List.map (fun (Nx.P c) -> F.Tensor.uop (tolk_of st c)) c_next
+      in_scan_body st loop_body (fun () ->
+          List.map (fun (Nx.P c) -> F.Tensor.uop (tolk_of st c)) c_next)
     in
     let slot_writes = List.map (fun (_, w) -> !w) writes in
     let c_outs =
@@ -2949,7 +2982,10 @@ and stage_scan : type r.
         (if req_record then c_slots else [])
         stack_outs
     in
-    let call = loop_call st l ~body_linear ~resolve_node ~reversed:false ~n in
+    let call =
+      loop_call st l ~body_linear ~resolve_node ~reversed:false ~n
+        ~invariants:loop_body.invariants
+    in
     (* Register the carry stacks as outputs of the forward loop: the backward
        loop reads them, and only a graph-visible dependency keeps the forward
        loop reachable (and so scheduled) when the scan's declared outputs are
@@ -3023,10 +3059,12 @@ and stage_scan_bwd : type r.
   in
   (* The carry and its cotangent live where the forward loop kept the carry. *)
   let places = List.map (fun (_, _, p) -> p) stacks in
+  let horizon = Nx_effect.next_traced_id () in
   let c_slots = body_slots st ~places bwd_carry in
   let x_slots = body_slots st ~rows:true bwd_xs in
   let dc_slots = body_slots st ~places bwd_dc in
   let dy_slots = body_slots st ~rows:true bwd_dys in
+  let loop_body = { horizon; invariants = [] } in
   let differentiable s =
     let (Nx.P ph) = s.s_ph in
     ND.is_float (Nx_effect.dtype ph)
@@ -3042,7 +3080,7 @@ and stage_scan_bwd : type r.
   List.iter (fun s -> if differentiable s then track s.s_ph) x_slots;
   List.iter track closed;
   let c_next, y =
-    in_scan_body st (fun () ->
+    in_scan_body st loop_body (fun () ->
         Effect.Deep.match_with
           (fun () ->
             Effect.Deep.match_with
@@ -3056,7 +3094,7 @@ and stage_scan_bwd : type r.
        placements it receives (stable carry)";
   let cotangent (Nx.P t) = Nx.P (Tape.cotangent tape t) in
   let dc_i, dx_i, dgs =
-    in_scan_body st (fun () ->
+    in_scan_body st loop_body (fun () ->
         Effect.Deep.match_with
           (fun () ->
             let seed (Nx.P v) s =
@@ -3182,7 +3220,10 @@ and stage_scan_bwd : type r.
           (F.Creation.zeros ~buffer:false ~dtype:gdt (Array.to_list g_shape)))
       g_outs
   in
-  let call = loop_call st l ~body_linear ~resolve_node ~reversed:true ~n in
+  let call =
+    loop_call st l ~body_linear ~resolve_node ~reversed:true ~n
+      ~invariants:loop_body.invariants
+  in
   let br_carry =
     placeholders st bwd_carry
       (List.map2
@@ -4590,7 +4631,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       scan_closed = Tbl.create 4;
       scan_collectors = [];
       scan_writes = [];
-      scan_bodies = 0;
+      scan_bodies = [];
     }
   in
   let transferred = ref false in
