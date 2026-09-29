@@ -84,7 +84,17 @@ let placements =
             (Nx.Placement.sharded ~axis:0 [ d1; d2 ])
             (Nx.Placement.sharded ~axis:0 [ d2; d1 ]));
       prop "window gives each device its slice, and equal compares the windows"
-        (Gen.pair placement_args placement_args) (fun (a, b) ->
+        (let open Gen in
+         let* ((ds, axis) as a) = placement_args in
+         let+ b =
+           frequency
+             [
+               (1, map (fun ds -> (ds, axis)) (permutation ~pp:Nx.Device.pp ds));
+               (2, placement_args);
+             ]
+         in
+         (a, b))
+        (fun (a, b) ->
           let shape = [| 12; 12; 12 |] in
           let p = make a in
           List.iter
@@ -370,8 +380,8 @@ let move_both ((shape, where), steps) =
     (Some (host, placed, where))
     steps
   |> Option.iter (fun (_, moved, _) ->
-         cell.state <- Consumed { path = "0" };
-         raises_invalid_arg (fun () -> Nx.to_array moved))
+      cell.state <- Consumed { path = "0" };
+      raises_invalid_arg (fun () -> Nx.to_array moved))
 
 let movements =
   group "movements"
@@ -380,6 +390,7 @@ let movements =
         "of a placed value equal those of its host value, or raise exactly \
          when they would move elements between devices; a view of a consumed \
          value is not read"
+        ~examples:[ (([| 4; 2 |], Split (0, [ d1; d2 ])), [ (2, 0) ]) ]
         (Gen.pair
            (Gen.with_pp pp_placed placed_shape)
            (Gen.list ~size:(Gen.int_range 1 3)

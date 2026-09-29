@@ -1,7 +1,7 @@
 (test
- (name test_nx_device)
+ (name test_device)
  (package nx)
  (foreign_stubs
   (language c)
-  (names test_nx_device_stubs))
+  (names test_device_stubs))
  (libraries nx.device nx.dtype unix windtrap))

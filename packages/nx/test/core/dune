@@ -1,0 +1,4 @@
+(test
+ (name test_elements)
+ (package nx)
+ (libraries nx.core nx.device nx.dtype nx_test windtrap))

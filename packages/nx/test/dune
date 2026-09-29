@@ -14,8 +14,7 @@
   test_linalg
   test_windows
   test_fft
-  test_runtime
-  test_elements)
+  test_runtime)
  (package nx)
  (modules :standard \ test_format)
  (libraries nx.dtype nx nx.core nx.effect nx.device unix windtrap nx_test))

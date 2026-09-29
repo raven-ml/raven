@@ -1,5 +1,5 @@
 (test
- (name test_nx_metal_device)
+ (name test_metal)
  (package nx)
  (build_if
   (= %{system} macosx))
