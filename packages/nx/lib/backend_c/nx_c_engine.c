@@ -699,7 +699,7 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
                        const nx_c_ndarray *ops, const int64_t *elem_size,
                        nx_c_cost_class cls, void *ctx) {
   int nop = nin + 1;
-  if (nop > NX_C_MAX_OPERANDS) abort(); /* the stubs pass a fixed arity */
+  if (nop > NX_C_MAX_OPERANDS) return NX_C_ERR_ARITY;
 
   nx_c_map_loop *kernel = tbl->fn[dt];
   if (kernel == NULL)
@@ -714,7 +714,7 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
      coalesced output (index 0), after the empty short-circuit, since an empty
      tensor writes nothing. */
   for (int i = 0; i < p.ndim; i++)
-    if (p.shape[i] > 1 && p.bstride[0][i] == 0) abort();
+    if (p.shape[i] > 1 && p.bstride[0][i] == 0) return NX_C_ERR_OUT_ALIASED;
 
   /* Traffic for the bandwidth heuristic: an operand only touches the elements
      it actually holds, so a 0-stride (broadcast) dim contributes one element,
@@ -969,7 +969,7 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
   /* out is aligned, one axis per kept input axis, as the binding allocates it;
      a short/long descriptor would read unspecified stride slots, so the rank is
      asserted before the out strides are paired. */
-  if (out->ndim != e.nk) abort();
+  if (out->ndim != e.nk) return NX_C_ERR_OUT_RANK;
   for (int j = 0; j < e.nk; j++) e.k_out_stride[j] = out->strides[j] * out_elem;
 
   int64_t out_total = 1;
@@ -1099,7 +1099,8 @@ nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
 
   /* The frontend passes a valid axis and the binding allocates out: shape and
      stride reads rely on both. */
-  if (axis < 0 || axis >= in->ndim || out->ndim != in->ndim - 1) abort();
+  if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
+  if (out->ndim != in->ndim - 1) return NX_C_ERR_OUT_RANK;
 
   int64_t axis_len = in->shape[axis];
   nx_c_status vs = nx_c_argreduce_validate(axis_len);
@@ -1179,7 +1180,8 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
 
   /* The frontend passes a valid axis and the binding allocates out: shape and
      stride reads rely on both. */
-  if (axis < 0 || axis >= in->ndim || out->ndim != in->ndim) abort();
+  if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
+  if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
 
   nx_c_scan_exec e;
   e.init = tbl->init[dt];
@@ -1226,7 +1228,7 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
 NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   if (strcmp(s, NX_C_ERR_EMPTY_REDUCE) == 0 || strcmp(s, NX_C_ERR_AXES) == 0 ||
       strcmp(s, NX_C_ERR_AXIS) == 0 || strcmp(s, NX_C_ERR_OUT_RANK) == 0 ||
-      strcmp(s, NX_C_ERR_SHAPE) == 0)
+      strcmp(s, NX_C_ERR_OUT_ALIASED) == 0 || strcmp(s, NX_C_ERR_SHAPE) == 0)
     nx_c_raise_invalid(op, s);
   nx_c_raise(op, s);
 }
@@ -1234,7 +1236,7 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
 void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class cls,
                     int nin, const value *vals, void *ctx) {
   int nop = nin + 1;
-  if (nop > NX_C_MAX_OPERANDS) abort(); /* the stubs pass a fixed arity */
+  if (nop > NX_C_MAX_OPERANDS) nx_c_raise(op, NX_C_ERR_ARITY);
 
   nx_c_ndarray ops[NX_C_MAX_OPERANDS];
   int64_t elem[NX_C_MAX_OPERANDS];
@@ -1264,12 +1266,12 @@ void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class 
 static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                   const int *axes, int n_reduce,
                                   nx_c_ndarray *sq) {
-  if (n_reduce < 0 || n_reduce > in->ndim) abort();
+  if (n_reduce < 0 || n_reduce > in->ndim) return NX_C_ERR_AXES;
   bool reduced[NX_C_MAX_NDIM];
   for (int a = 0; a < in->ndim; a++) reduced[a] = false;
   for (int i = 0; i < n_reduce; i++) {
     int a = axes[i];
-    if (a < 0 || a >= in->ndim || reduced[a]) abort();
+    if (a < 0 || a >= in->ndim || reduced[a]) return NX_C_ERR_AXES;
     reduced[a] = true;
   }
   int kept = in->ndim - n_reduce;
@@ -1277,7 +1279,7 @@ static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *
     *sq = *out; /* already squeezed */
     return NX_C_OK;
   }
-  if (out->ndim != in->ndim) abort();
+  if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
   sq->data = out->data;
   sq->offset = out->offset;
   sq->ndim = kept;

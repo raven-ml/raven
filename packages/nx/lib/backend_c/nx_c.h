@@ -415,8 +415,10 @@ _Static_assert(NX_C_LANES == 16, "NX_C_LANE_TREE combines sixteen lanes");
    A status is NULL on success, otherwise a static, never-freed string. No
    status string is ever heap-allocated, so no error path can leak. Kernels and
    drivers return status; ONLY the engine's funnel turns a non-NULL status into
-   an OCaml exception, and only with the runtime lock held. abort() is reserved
-   for provably-unreachable internal invariants, never user data.
+   an OCaml exception, and only with the runtime lock held. Nothing aborts: a
+   precondition believed unreachable is still a status, since a raised error
+   names what failed and leaves the process running, where abort() takes the
+   host program down without a trace.
 
    Testing a status against a specific error compares by CONTENT (strcmp), or
    routes it to nx_c_raise_status (nx_c_engine.h) — never by pointer: identical

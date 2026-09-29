@@ -325,7 +325,7 @@ static nx_c_status nx_c_sort_drive(nx_c_dtype dt, const nx_c_ndarray *in,
      one cell, a data race once slices run in parallel. Asserted after the empty
      short-circuit, since an empty output writes nothing. */
   for (int a = 0; a < in->ndim; a++)
-    if (in->shape[a] > 1 && out->strides[a] == 0) abort();
+    if (in->shape[a] > 1 && out->strides[a] == 0) return NX_C_ERR_OUT_ALIASED;
 
   /* Round each slot to 16 bytes so every thread's pairs stay aligned when the
      slots are laid end to end. */

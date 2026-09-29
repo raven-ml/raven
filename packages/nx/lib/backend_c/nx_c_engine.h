@@ -37,17 +37,18 @@
    returning a truncated index. Maps to Failure in the binding. */
 #define NX_C_ERR_ARGREDUCE_CAP "argreduce axis length exceeds INT32_MAX"
 
-/* Preconditions the drivers verify rather than assume: reduce axes out of
-   order (Backend_intf promises them valid and deduplicated, not sorted), and
-   the axis and output checks of the families outside the engine (sort, fft,
-   the movements, matmul). The funnels map these to Invalid_argument. What the
-   frontend and the binding guarantee (a valid reduce or scan axis, an output
-   of the operation's rank, a fresh output, the stubs' arity), the engine
-   asserts with abort(). */
+/* Preconditions the drivers verify rather than assume, including those the
+   frontend and the binding are meant to guarantee (a valid axis, an output of
+   the operation's rank, a fresh output): a caller that breaks one gets a loud
+   status, never silent corruption. The funnels map these to
+   Invalid_argument. */
 #define NX_C_ERR_AXES "reduce axes must be strictly increasing and in range"
 #define NX_C_ERR_OUT_RANK "output rank inconsistent with the operation"
 #define NX_C_ERR_AXIS "axis out of range"
 #define NX_C_ERR_OUT_ALIASED "output has a broadcast (zero) stride"
+/* A programming error in a family stub, not user data: more operands than the
+   engine's fixed metadata arrays hold. Maps to Failure. */
+#define NX_C_ERR_ARITY "operand count exceeds NX_C_MAX_OPERANDS"
 
 /* The single status -> exception-kind classifier, so every family (map, move,
    sort, ...) raises identically: Invalid_argument for precondition and empty-
