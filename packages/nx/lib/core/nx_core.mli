@@ -18,7 +18,4 @@ module Elements = Elements
 (** Elements of host buffers as values of a dtype. *)
 
 module Backend_intf = Backend_intf
-(** Backend interface used by frontend functors. *)
-
-module Make_frontend = Frontend.Make
-(** Frontend functor parameterized by a backend implementation. *)
+(** The operations a backend implements. *)

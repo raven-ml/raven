@@ -7,7 +7,7 @@
 
    A thin veneer over the C engine: no per-op materialization, no re-validation
    of frontend guarantees, no broadcast copies. Zero-stride (broadcast) views go
-   straight to C — the engine handles stride 0. The frontend (Make_frontend)
+   straight to C — the engine handles stride 0. The frontend
    pre-broadcasts, promotes dtypes, and validates parameters, so a compute op
    here only allocates its C-contiguous output and hands the operands to the
    engine funnel; movement ops are pure View metadata manipulation.
@@ -403,7 +403,7 @@ let argsort ~axis ~descending x =
    before the scatter walk.
 
    [contiguous] returns an already-contiguous, offset-0 tensor unchanged — the
-   interface fast path, and the read path Make_frontend hits for every
+   interface fast path, and the read path the frontend hits for every
    contiguous result — else it materializes through copy. *)
 external caml_copy : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_copy"
 

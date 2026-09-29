@@ -2805,6 +2805,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_core.Make_frontend` is removed: `Nx`'s surface is written
+  once over its own values. Another implementation of the operations is a
+  backend named in a placement.
 - New `nx.rdma.device`: Broadcom BCM57608 RoCE adapters, which the runtime
   drives itself on this machine or another (`Nx_rdma_device.get ?host i`).
   Once an adapter is open on each of two machines, `Nx_device.Buffer.copy`

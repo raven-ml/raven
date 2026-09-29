@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module F = Nx_core.Make_frontend (Nx_effect)
-include F
+include Frontend
 
 exception Linalg_error = Nx_core.Backend_intf.Linalg_error
 
@@ -32,13 +31,13 @@ let unpack (type a b) (dt : (a, b) dtype) (P x) : (a, b) t =
            (Nx_dtype.to_string (dtype x)))
 
 module Rng = struct
-  include F.Rng
+  include Frontend.Rng
 
-  let key seed = F.Rng.key context seed
-  let next_key () = F.Rng.next_key context
+  let key seed = Frontend.Rng.key context seed
+  let next_key () = Frontend.Rng.next_key context
 
   let fold_in_axis k =
-    F.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))
+    Frontend.Rng.fold_in_tensor k (Nx_effect.axis_index (Nx_effect.context k))
 
   type t = key
 
@@ -63,54 +62,54 @@ let float8_e5m2 = Nx_dtype.float8_e5m2
 
 (* ───── Overriding Functions With Default Context ───── *)
 
-let create dtype shape arr = F.create context dtype shape arr
-let init dtype shape f = F.init context dtype shape f
-let full dtype shape value = F.full context dtype shape value
-let ones dtype shape = F.ones context dtype shape
-let zeros dtype shape = F.zeros context dtype shape
-let scalar dtype v = F.scalar context dtype v
-let eye ?m ?k dtype n = F.eye context ?m ?k dtype n
+let create dtype shape arr = Frontend.create context dtype shape arr
+let init dtype shape f = Frontend.init context dtype shape f
+let full dtype shape value = Frontend.full context dtype shape value
+let ones dtype shape = Frontend.ones context dtype shape
+let zeros dtype shape = Frontend.zeros context dtype shape
+let scalar dtype v = Frontend.scalar context dtype v
+let eye ?m ?k dtype n = Frontend.eye context ?m ?k dtype n
 
 (* A value made like a placed one lives where that one does, split as it is. *)
 let full_like x v =
   match x with
   | Nx_effect.Placed r -> Nx_effect.full r.r_placement (dtype x) (shape x) v
-  | Nx_effect.Host _ | Nx_effect.Traced _ -> F.full_like x v
+  | Nx_effect.Host _ | Nx_effect.Traced _ -> Frontend.full_like x v
 
 let zeros_like x = full_like x (Nx_dtype.zero (dtype x))
 let ones_like x = full_like x (Nx_dtype.one (dtype x))
 let fill v x = full_like x v
 
 let arange dtype start stop step =
-  F.arange context dtype start stop step
+  Frontend.arange context dtype start stop step
 
 let arange_f dtype start stop step =
-  F.arange_f context dtype start stop step
+  Frontend.arange_f context dtype start stop step
 
 let linspace dtype ?endpoint start stop num =
-  F.linspace context dtype ?endpoint start stop num
+  Frontend.linspace context dtype ?endpoint start stop num
 
 let logspace dtype ?endpoint ?base start stop num =
-  F.logspace context dtype ?endpoint ?base start stop num
+  Frontend.logspace context dtype ?endpoint ?base start stop num
 
 let geomspace dtype ?endpoint start stop num =
-  F.geomspace context dtype ?endpoint start stop num
+  Frontend.geomspace context dtype ?endpoint start stop num
 
-let of_bigarray ba = F.of_bigarray context ba
-let to_bigarray = F.to_bigarray
-let rand dtype shape = F.rand context dtype shape
-let randn dtype shape = F.randn context dtype shape
-let randint ?low ~high shape = F.randint context ?low ~high shape
-let bernoulli p = F.bernoulli context p
-let permutation n = F.permutation context n
-let shuffle x = F.shuffle context x
-let categorical ?axis logits = F.categorical context ?axis logits
+let of_bigarray ba = Frontend.of_bigarray context ba
+let to_bigarray = Frontend.to_bigarray
+let rand dtype shape = Frontend.rand context dtype shape
+let randn dtype shape = Frontend.randn context dtype shape
+let randint ?low ~high shape = Frontend.randint context ?low ~high shape
+let bernoulli p = Frontend.bernoulli context p
+let permutation n = Frontend.permutation context n
+let shuffle x = Frontend.shuffle context x
+let categorical ?axis logits = Frontend.categorical context ?axis logits
 
 let truncated_normal lower upper =
-  F.truncated_normal context lower upper
+  Frontend.truncated_normal context lower upper
 
 (* ───── FFT ───── *)
 
-let fftfreq dtype ?d n = F.fftfreq context dtype ?d n
-let rfftfreq dtype ?d n = F.rfftfreq context dtype ?d n
-let hann dt n = F.hann context dt n
+let fftfreq dtype ?d n = Frontend.fftfreq context dtype ?d n
+let rfftfreq dtype ?d n = Frontend.rfftfreq context dtype ?d n
+let hann dt n = Frontend.hann context dt n

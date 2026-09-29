@@ -36,7 +36,7 @@ let dispatch =
       test "less" (fun () -> equal int 238 (words (fun () -> Nx.less a b)));
       test "where" (fun () ->
           equal int 318 (words (fun () -> Nx.where mask a b)));
-      test "sum" (fun () -> equal int 180 (words (fun () -> Nx.sum a)));
+      test "sum" (fun () -> equal int 179 (words (fun () -> Nx.sum a)));
       test "matmul" (fun () ->
           equal int 179 (words (fun () -> Nx.matmul mat mat)));
       test "zeros" (fun () ->
