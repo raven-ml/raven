@@ -2805,6 +2805,14 @@ thread.
 
 ### Nx
 
+- `nx-remote` keeps serving whatever a connection does: a connection reset
+  before the server set it up, or an exception a client's command raised there,
+  stopped it from accepting anyone, and a peer that never spoke held the only
+  client slot. A connection now holds the slot only once it proves the key,
+  handshakes run at most 64 at once for at most 10 seconds each, and an idle
+  client is probed, so one whose machine vanished is disconnected and its GPUs'
+  DMA stopped. The protocol is at version 2: clients and servers of version 1
+  refuse each other.
 - Host operations allocate less: the host array holds its view, and binary
   operations, comparisons and `Nx.where` over operands of one shape skip
   broadcasting. A one-element `Nx.add` allocates 93 words (238 before) and

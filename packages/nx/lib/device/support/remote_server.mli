@@ -9,7 +9,14 @@
     one {!Remote} client at a time: the client drives the functions it takes as
     if they were its own, and its system memory lives at the addresses it
     chooses in this server's address space, so two clients would collide. A
-    second client is told the server is busy.
+    second client that proves the key is told the server is busy.
+
+    {b Connections.} A connection holds nothing until it proves the key: the
+    server runs up to 64 handshakes at once, each for at most 10 seconds, and
+    tells the connections beyond those that it has too many. Nothing a
+    connection does stops the server from accepting the next. A client's
+    connection is probed while idle: one that answers no probe for about a
+    minute, such as a machine that lost power, is gone.
 
     {b Security.} A client is root here: it programs the functions' DMA, reads
     and writes the memory it allocated, and runs code. A client must prove that
@@ -23,7 +30,8 @@
     {b Cleanup.} When the client disconnects, for whatever reason, the server
     turns bus mastering off on every function it took, so that their DMA stops
     first, then frees the client's memory, drops its programs and releases its
-    functions. *)
+    functions. A failure that is no refusal of a command, such as an exception
+    of a program, ends the client's session through this cleanup. *)
 
 type programs = {
   load : binary:string -> name:string -> int;

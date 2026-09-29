@@ -23,9 +23,15 @@
 #include <caml/threads.h>
 
 #ifdef _WIN32
+#include <winsock2.h>
+#include <mstcpip.h>
 #include <windows.h>
+#include <caml/unixsupport.h>
 #else
 #include <dlfcn.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/file.h>
@@ -623,6 +629,38 @@ value caml_nx_random(value n) {
   }
 #endif
   CAMLreturn(r);
+}
+
+/* Keepalive probes on a connection after [idle] s without traffic, every
+   [interval] s, [count] of them: a peer that answers none is gone, and so is
+   one that acknowledges no data for as long. */
+value caml_nx_keepalive(value fd, value idle, value interval, value count) {
+#ifdef _WIN32
+  struct tcp_keepalive k = {1, (ULONG)Int_val(idle) * 1000,
+                            (ULONG)Int_val(interval) * 1000};
+  DWORD n;
+  if (WSAIoctl(Socket_val(fd), SIO_KEEPALIVE_VALS, &k, sizeof k, NULL,
+               0, &n, NULL, NULL) != 0)
+    caml_failwith("enabling keepalive");
+#else
+  int s = Int_val(fd), on = 1, i = Int_val(idle), v = Int_val(interval),
+      c = Int_val(count);
+  if (setsockopt(s, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on) != 0
+#ifdef __APPLE__
+      || setsockopt(s, IPPROTO_TCP, TCP_KEEPALIVE, &i, sizeof i) != 0
+#else
+      || setsockopt(s, IPPROTO_TCP, TCP_KEEPIDLE, &i, sizeof i) != 0
+#endif
+      || setsockopt(s, IPPROTO_TCP, TCP_KEEPINTVL, &v, sizeof v) != 0 ||
+      setsockopt(s, IPPROTO_TCP, TCP_KEEPCNT, &c, sizeof c) != 0)
+    fail_errno("enabling keepalive");
+#ifdef TCP_USER_TIMEOUT
+  unsigned t = (unsigned)(i + v * c) * 1000;
+  if (setsockopt(s, IPPROTO_TCP, TCP_USER_TIMEOUT, &t, sizeof t) != 0)
+    fail_errno("bounding unacknowledged data");
+#endif
+#endif
+  return Val_unit;
 }
 
 /* Memory of a host that a remote client uses: anonymous pages, [0] if the

@@ -52,7 +52,9 @@ let find s a n =
     List.find_opt
       (fun r ->
         let off = a - first r in
-        a >= first r && n >= 0 && off <= Mmio.length r.mmio
+        a >= first r
+        && n >= 0
+        && off <= Mmio.length r.mmio
         && n <= Mmio.length r.mmio - off)
       s.ranges
   with
@@ -71,8 +73,8 @@ let func s id =
 
 let add_range s kind mmio = s.ranges <- { kind; mmio } :: s.ranges
 
-(* A lock name is a word, and a bus a PCI address such as ["0000:03:00.0"]:
-   both name files. *)
+(* A lock name is a word, and a bus a PCI address such as ["0000:03:00.0"]: both
+   name files. *)
 let word w =
   w <> ""
   && String.for_all
@@ -130,13 +132,14 @@ let run s cmd a0 a1 a2 a3 =
   match (cmd : Wire.cmd) with
   | Ping -> ok fd
   | Probe ->
-      let words = Wire.of_words (payload fd (16 * a2)) in
-      let rec pairs = function
-        | m :: d :: l -> (m, [ d ]) :: pairs l
-        | _ -> []
+      let words = Array.of_list (Wire.of_words (payload fd (16 * a2))) in
+      let ids =
+        List.init
+          (Array.length words / 2)
+          (fun i -> (words.(2 * i), [ words.((2 * i) + 1) ]))
       in
       let class_ = if a1 < 0 then None else Some a1 in
-      let buses = Pci.scan ~vendor:a0 ?class_ (pairs words) in
+      let buses = Pci.scan ~vendor:a0 ?class_ ids in
       let reply = String.concat "\n" buses in
       ok ~r0:(String.length reply) fd;
       Wire.send fd reply
@@ -298,7 +301,8 @@ let answer_error fd status why =
   Wire.send fd why
 
 (* Serves commands until the client leaves. A posted command that fails ends the
-   session with a fatal answer the client reads at its next command. *)
+   session with a fatal answer the client reads at its next command, and so does
+   a failure that is no refusal, such as a program's exception. *)
 let loop s =
   let rec next () =
     match Wire.recv s.fd Wire.header with
@@ -316,12 +320,11 @@ let loop s =
             | exception Malformed why -> answer_error s.fd Wire.fatal why
             | exception e -> (
                 match error_of e with
-                | None -> raise e
-                | Some why when Wire.posted cmd ->
-                    answer_error s.fd Wire.fatal why
-                | Some why ->
+                | Some why when not (Wire.posted cmd) ->
                     answer_error s.fd Wire.error why;
-                    next ())))
+                    next ()
+                | Some why -> answer_error s.fd Wire.fatal why
+                | None -> answer_error s.fd Wire.fatal (Printexc.to_string e))))
   in
   next ()
 
@@ -358,34 +361,46 @@ let cleanup s =
       Hashtbl.iter (fun id () -> attempt (fun () -> p.unload id)) s.loaded)
     s.programs
 
-(* The handshake: the server's nonce, the client's proof, then the server's
-   proof and a description of this machine. *)
+(* Connections *)
+
+(* A handshake has this long to complete, and this many run at once: a peer that
+   does not know the key holds no more than a slot of these, for no longer. *)
+let handshake_s = 10.
+let handshakes = 64
+
+(* A client that answers no keepalive probe for this long is gone: its session
+   ends, and cleanup stops its functions' DMA. *)
+let keepalive_idle_s = 30
+let keepalive_interval_s = 10
+let keepalive_count = 3
+
+external keepalive : Unix.file_descr -> int -> int -> int -> unit
+  = "caml_nx_keepalive"
+
+let close fd = try Unix.close fd with Unix.Unix_error _ -> ()
+let log fmt = Printf.ksprintf (fun m -> prerr_endline ("nx-remote: " ^ m)) fmt
+
 let hello status =
   let b = Bytes.create 5 in
   Bytes.set_int32_le b 0 (Int32.of_int Wire.version);
   Bytes.set_uint8 b 4 status;
   Wire.magic ^ Bytes.unsafe_to_string b
 
-let authenticate fd key =
-  let server = Wire.nonce () in
-  Wire.send fd (hello 0 ^ server);
-  let reply = Wire.recv fd 64 in
-  let client = String.sub reply 0 32 and proof = String.sub reply 32 32 in
-  if Wire.same proof (Wire.client_proof key ~server ~client) then begin
-    let b = Bytes.create 4 in
-    Bytes.set_int32_le b 0 (Int32.of_int Sysmem.page);
-    Wire.send fd
-      ("\000" ^ Wire.server_proof key ~server ~client ^ Bytes.unsafe_to_string b);
-    Wire.send_string fd arch;
-    true
-  end
-  else begin
-    Wire.send fd "\001";
-    Wire.send_string fd "the client does not know the key";
-    false
-  end
+let refuse fd why =
+  Wire.send fd "\001";
+  Wire.send_string fd why
 
-let serve ~key ~programs fd =
+(* Sends the server's proof and a description of this machine. *)
+let welcome fd key ~server ~client =
+  let b = Bytes.create 4 in
+  Bytes.set_int32_le b 0 (Int32.of_int Sysmem.page);
+  Wire.send fd
+    ("\000" ^ Wire.server_proof key ~server ~client ^ Bytes.unsafe_to_string b);
+  Wire.send_string fd arch
+
+(* Serves an authenticated client until it leaves, then cleans up after it. It
+   never raises: whatever ends the session, the cleanup runs. *)
+let serve ~programs fd =
   let s =
     {
       fd;
@@ -398,15 +413,23 @@ let serve ~key ~programs fd =
       loaded = Hashtbl.create 16;
     }
   in
-  Fun.protect
-    ~finally:(fun () -> cleanup s)
-    (fun () ->
-      match authenticate fd key with
-      | true -> loop s
-      | false -> ()
-      | exception (Wire.Closed | Unix.Unix_error _) -> ())
+  (try
+     Unix.setsockopt_float fd Unix.SO_RCVTIMEO 0.;
+     Unix.setsockopt_float fd Unix.SO_SNDTIMEO 0.;
+     keepalive fd keepalive_idle_s keepalive_interval_s keepalive_count;
+     loop s
+   with e -> log "a session ended: %s" (Printexc.to_string e));
+  try cleanup s with e -> log "cleanup failed: %s" (Printexc.to_string e)
 
-(* Listening *)
+(* A connection whose handshake is under way: the nonce the server sent, and the
+   client's nonce and proof as they arrive. *)
+type pending = {
+  fd : Unix.file_descr;
+  nonce : string;
+  reply : Bytes.t;
+  mutable got : int;
+  deadline : float;
+}
 
 type t = {
   address : Unix.sockaddr;
@@ -414,47 +437,127 @@ type t = {
   acceptor : unit Domain.t;
 }
 
-let busy fd =
-  Wire.send fd (hello 1);
-  Wire.send_string fd "the server is busy with another client"
-
-let close fd = try Unix.close fd with Unix.Unix_error _ -> ()
-
-let accept_loop ~key ~programs socket stopping client =
+(* The acceptor runs every handshake itself, without blocking on any, and gives
+   a client the session only once it proved the key and no other client holds
+   it. Nothing one connection does ends the acceptor. *)
+let accept_loop ~key ~programs socket stopping =
+  let pending = ref [] in
+  (* The session and whether it ended, and its socket. *)
   let session = ref None in
-  let join () = Option.iter Domain.join !session in
-  let rec go () =
+  let busy () =
+    match !session with
+    | Some (_, ended, _) -> not (Atomic.get ended)
+    | None -> false
+  in
+  let join () =
+    Option.iter (fun (d, _, _) -> Domain.join d) !session;
+    session := None
+  in
+  let drop p =
+    pending := List.filter (fun p' -> p'.fd != p.fd) !pending;
+    close p.fd
+  in
+  let admit () =
     match Unix.accept ~cloexec:true socket with
-    | exception Unix.Unix_error ((Unix.EINTR | Unix.ECONNABORTED), _, _) ->
-        go ()
+    | exception
+        Unix.Unix_error
+          ((Unix.EMFILE | Unix.ENFILE | Unix.ENOBUFS | Unix.ENOMEM), _, _) ->
+        Unix.sleepf 0.1
+    | exception Unix.Unix_error _ -> ()
     | fd, _ when Atomic.get stopping -> close fd
-    | fd, _ ->
-        if Option.is_some (Atomic.get client) then begin
-          (try busy fd with Unix.Unix_error _ -> ());
-          close fd
-        end
-        else begin
-          join ();
+    | fd, _ when List.length !pending >= handshakes ->
+        (try
+           Wire.send fd (hello 1);
+           Wire.send_string fd "the server has too many connections to answer"
+         with Unix.Unix_error _ -> ());
+        close fd
+    | fd, _ -> (
+        let nonce = Wire.nonce () in
+        match
+          Unix.set_nonblock fd;
           Unix.setsockopt fd Unix.TCP_NODELAY true;
-          Atomic.set client (Some fd);
-          session :=
-            Some
-              (Domain.spawn (fun () ->
-                   Fun.protect
-                     ~finally:(fun () ->
-                       Atomic.set client None;
-                       close fd)
-                     (fun () -> serve ~key ~programs fd)))
-        end;
-        go ()
+          Wire.send fd (hello 0 ^ nonce)
+        with
+        | () ->
+            pending :=
+              {
+                fd;
+                nonce;
+                reply = Bytes.create 64;
+                got = 0;
+                deadline = Unix.gettimeofday () +. handshake_s;
+              }
+              :: !pending
+        | exception _ -> close fd)
+  in
+  (* The client's nonce and proof, then the answer: refused, busy, or the
+     session. *)
+  let advance p =
+    match Unix.read p.fd p.reply p.got (64 - p.got) with
+    | exception
+        Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.EINTR), _, _) ->
+        ()
+    | exception _ -> drop p
+    | 0 -> drop p
+    | k when p.got + k < 64 -> p.got <- p.got + k
+    | _ -> (
+        pending := List.filter (fun p' -> p'.fd != p.fd) !pending;
+        let reply = Bytes.to_string p.reply in
+        let client = String.sub reply 0 32 and proof = String.sub reply 32 32 in
+        match
+          Unix.clear_nonblock p.fd;
+          Unix.setsockopt_float p.fd Unix.SO_SNDTIMEO handshake_s;
+          if
+            not
+              (Wire.same proof (Wire.client_proof key ~server:p.nonce ~client))
+          then (
+            refuse p.fd "the client does not know the key";
+            false)
+          else if busy () then (
+            refuse p.fd "the server is busy with another client";
+            false)
+          else (
+            welcome p.fd key ~server:p.nonce ~client;
+            true)
+        with
+        | exception _ -> close p.fd
+        | false -> close p.fd
+        | true ->
+            join ();
+            let ended = Atomic.make false and fd = p.fd in
+            let d =
+              Domain.spawn (fun () ->
+                  serve ~programs fd;
+                  close fd;
+                  Atomic.set ended true)
+            in
+            session := Some (d, ended, fd))
+  in
+  let rec go () =
+    if not (Atomic.get stopping) then begin
+      let now = Unix.gettimeofday () in
+      List.iter (fun p -> if p.deadline <= now then drop p) !pending;
+      let wait =
+        List.fold_left (fun w p -> Float.min w (p.deadline -. now)) 1. !pending
+      in
+      (match
+         Unix.select (socket :: List.map (fun p -> p.fd) !pending) [] [] wait
+       with
+      | exception Unix.Unix_error _ -> ()
+      | ready, _, _ ->
+          List.iter (fun p -> if List.memq p.fd ready then advance p) !pending;
+          if List.memq socket ready then admit ());
+      go ()
+    end
   in
   Fun.protect
     ~finally:(fun () ->
       close socket;
+      List.iter (fun p -> close p.fd) !pending;
       Option.iter
-        (fun fd ->
+        (fun (_, _, fd) ->
           try Unix.shutdown fd Unix.SHUTDOWN_ALL with Unix.Unix_error _ -> ())
-        (Atomic.get client);
+        !session;
       join ())
     go
 
@@ -470,7 +573,7 @@ let listen ~key ?programs addr =
   match
     Unix.setsockopt socket Unix.SO_REUSEADDR true;
     Unix.bind socket addr;
-    Unix.listen socket 4;
+    Unix.listen socket 64;
     Unix.getsockname socket
   with
   | exception e ->
@@ -478,18 +581,16 @@ let listen ~key ?programs addr =
       raise e
   | address ->
       let stopping = Atomic.make false in
-      (* The client being served. *)
-      let client = Atomic.make None in
       let acceptor =
-        Domain.spawn (fun () ->
-            accept_loop ~key ~programs socket stopping client)
+        Domain.spawn (fun () -> accept_loop ~key ~programs socket stopping)
       in
       { address; stopping; acceptor }
 
 let address s = s.address
 let wait s = Domain.join s.acceptor
 
-(* The acceptor blocks in [accept]: a connection of our own wakes it. *)
+(* The acceptor waits at most a second in [select]: a connection of our own
+   wakes it at once. *)
 let stop s =
   if not (Atomic.exchange s.stopping true) then begin
     let fd =

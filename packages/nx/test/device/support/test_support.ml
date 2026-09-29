@@ -585,8 +585,8 @@ let port s =
   | Unix.ADDR_INET (_, p) -> p
   | Unix.ADDR_UNIX _ -> assert false
 
-let with_server ?(key = key) f =
-  let s = Remote_server.listen ~key loopback in
+let with_server ?(key = key) ?programs f =
+  let s = Remote_server.listen ~key ?programs loopback in
   Fun.protect ~finally:(fun () -> Remote_server.stop s) (fun () -> f s)
 
 let connect ?(key = key) ?timeout_ms s =
@@ -762,6 +762,103 @@ let test_remote_sysmem () =
       Remote.unpin r a n);
   Remote.close r
 
+(* Peers that do not know the key: raw sockets to the server. *)
+
+let raw s =
+  let fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port s));
+  fd
+
+(* The status byte of the server's first message: 0 when it sends its nonce. *)
+let hello_status fd =
+  let b = Bytes.create 13 in
+  let rec go off =
+    if off < 13 then
+      match Unix.read fd b off (13 - off) with 0 -> () | k -> go (off + k)
+  in
+  go 0;
+  Bytes.get_uint8 b 12
+
+(* Connections reset before the server even sets them up. *)
+let test_resets () =
+  with_server @@ fun s ->
+  for _ = 1 to 20 do
+    let fd = raw s in
+    Unix.setsockopt_optint fd Unix.SO_LINGER (Some 0);
+    Unix.close fd
+  done;
+  let r = connect s in
+  Remote.ping r;
+  Remote.close r
+
+(* A peer that says nothing, and one that sends a wrong proof, hold no slot: a
+   client with the key is served meanwhile. *)
+let test_silent_peers () =
+  with_server @@ fun s ->
+  let silent = raw s and wrong = raw s in
+  equal ~msg:"a nonce for everyone" int 0 (hello_status silent);
+  ignore (hello_status wrong);
+  ignore (Unix.write_substring wrong (String.make 64 'x') 0 64);
+  let r = connect s in
+  Remote.ping r;
+  Remote.close r;
+  Unix.close silent;
+  Unix.close wrong
+
+(* Beyond the handshakes the server runs at once, a connection is told so and
+   closed; once they end, a client with the key is served. *)
+let test_handshake_cap () =
+  with_server @@ fun s ->
+  let idle = List.init 64 (fun _ -> raw s) in
+  List.iter (fun fd -> ignore (hello_status fd)) idle;
+  let extra = raw s in
+  equal ~msg:"too many" int 1 (hello_status extra);
+  Unix.close extra;
+  List.iter Unix.close idle;
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  Remote.close (retry 300)
+
+(* A scan naming many ids answers, and the connection stays usable. *)
+let test_large_probe () =
+  with_server @@ fun s ->
+  let r = connect s in
+  equal ~msg:"no such function" (list string) []
+    (Remote.scan r ~vendor:0xffff [ (0xffff, List.init 1_000_000 Fun.id) ]);
+  Remote.ping r;
+  Remote.close r
+
+(* A program that raises what the server does not expect ends that session
+   through its cleanup, and the next client is served. *)
+let test_unexpected_exception () =
+  let programs =
+    {
+      Remote_server.load = (fun ~binary:_ ~name:_ -> 0);
+      call = (fun _ _ _ -> raise Exit);
+      unload = ignore;
+    }
+  in
+  with_server ~programs @@ fun s ->
+  let r = connect s in
+  let p = Remote.load r ~binary:"" ~name:"f" in
+  Remote.call r p [||] [||];
+  raises_match (Exn.failure ~substring:"Exit") (fun () -> Remote.ping r);
+  let rec retry k =
+    match connect s with
+    | r -> r
+    | exception Failure _ when k > 0 ->
+        Unix.sleepf 0.01;
+        retry (k - 1)
+  in
+  let r = retry 300 in
+  Remote.ping r;
+  Remote.close r
+
 let test_stop () =
   let s = Remote_server.listen ~key loopback in
   let r = connect s in
@@ -806,6 +903,11 @@ let () =
              test "timeout" test_timeout;
              test "system memory" test_remote_sysmem;
              test "stop" test_stop;
+             test "reset connections" test_resets;
+             test "peers without the key hold no slot" test_silent_peers;
+             test "handshakes at once" test_handshake_cap;
+             test "a large scan" test_large_probe;
+             test "an unexpected exception" test_unexpected_exception;
            ];
          group "firmware"
            [

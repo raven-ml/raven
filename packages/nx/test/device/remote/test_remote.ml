@@ -60,12 +60,17 @@ let test_connect () =
   is_true ~msg:"one device per machine" (connect s == d);
   is_some ~msg:"its connection" (Nx_remote_device.remote d);
   is_none ~msg:"this machine's host" (Nx_remote_device.remote Nx_device.host);
+  (* The machine is taken: a client that proves the key hears it is busy, and
+     one that does not is refused before it learns anything. *)
+  (match Nx_remote_device.connect ~port:(port s) ~key "localhost" with
+  | Error why -> contains ~msg:"one client at a time" ~sub:"busy" why
+  | Ok _ -> fail "a second client was served");
   (match
      Nx_remote_device.connect ~port:(port s) ~key:"a key the server lacks"
        "localhost"
    with
-  | Error why -> contains ~msg:"one client at a time" ~sub:"busy" why
-  | Ok _ -> fail "a second client was served");
+  | Error why -> contains ~msg:"refused before busy" ~sub:"key" why
+  | Ok _ -> fail "a wrong key was accepted");
   let other = serve () in
   Fun.protect
     ~finally:(fun () -> Server.stop other)

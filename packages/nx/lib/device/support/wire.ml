@@ -11,7 +11,7 @@
    integer is little-endian. *)
 
 let magic = "NXREMOTE"
-let version = 1
+let version = 2
 
 type cmd =
   | Ping
