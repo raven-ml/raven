@@ -899,7 +899,9 @@ module Stored = struct
   let storage (Nx.P t) =
     let t = Nx.contiguous t in
     let b = Nx_effect.to_host t in
-    let b = Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t) in
+    let b =
+      Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t)
+    in
     let bytes = Nx_device.Buffer.bigarray Bigarray.char b in
     ( Nx_dtype.to_string (Nx.dtype t),
       Nx.shape t,
@@ -1028,4 +1030,135 @@ module Stored = struct
         complex64;
         complex128;
       ]
+end
+
+(* The contract of [Nx.Device.of_runtime], checked on the runtimes of a suite:
+   test runtimes over host memory, Metal, CUDA. A value of every dtype placed on
+   one runtime, copied on all or split along an axis reads back bit for bit,
+   each runtime receiving the bytes of its window; an operation gives the host's
+   result on the elements placed, placed where its operand is; and an allocation
+   a runtime cannot make raises Out_of_memory with its device and bytes. *)
+module Runtimes = struct
+  open Stored
+
+  let host x = Nx.place Nx.Placement.host x
+
+  (* Values of the 4-bit dtypes, which pack two to a byte: they compare by
+     value, since the unused half of an odd last byte is no element. *)
+  let nibbles =
+    let pp = Format.pp_print_int in
+    let nibbles name dtype lo hi =
+      case name dtype (viewed ~pp dtype (Gen.int_range lo hi)) (tensor int)
+    in
+    [ nibbles "int4" Nx.int4 (-8) 7; nibbles "uint4" Nx.uint4 0 15 ]
+
+  (* Each device alone, a copy on all, and a split along each axis that divides
+     among them. *)
+  let placements ds shape =
+    let n = List.length ds in
+    let splits =
+      List.filter
+        (fun a -> n > 1 && shape.(a) mod n = 0)
+        (List.init (Array.length shape) Fun.id)
+    in
+    Gen.of_list ~pp:Nx.Placement.pp
+      (List.map Nx.Placement.device ds
+      @ (if n > 1 then [ Nx.Placement.replicated ds ] else [])
+      @ List.map (fun axis -> Nx.Placement.sharded ~axis ds) splits)
+
+  let placed ds tensors =
+    Gen.with_pp
+      (fun ppf (t, p) ->
+        Format.fprintf ppf "%a at %a" Nx.pp t Nx.Placement.pp p)
+      (Gen.bind tensors (fun t ->
+           Gen.map (fun p -> (t, p)) (placements ds (Nx.shape t))))
+
+  (* The bytes of the elements of [x] that [d] holds at [p], as stored. *)
+  let window_bytes p x d =
+    if List.exists (Nx.Device.equal d) (Nx.Placement.devices p) then
+      let window = Nx.Placement.window p (Nx.shape x) d in
+      let n = Array.fold_left (fun n (lo, hi) -> n * (hi - lo)) 1 window in
+      let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
+      ((n * bits) + 7) / 8
+    else 0
+
+  let operations =
+    [
+      ("neg", Nx.neg);
+      ("x + x", fun x -> Nx.add x x);
+      ("exp", Nx.exp);
+      ("sum", fun x -> Nx.sum x);
+      ("transpose", fun x -> Nx.transpose x);
+      ("flip", fun x -> Nx.flip x);
+      ("flatten", fun x -> Nx.flatten x);
+    ]
+
+  (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
+  let tight r f =
+    let budget = Nx_device.budget r in
+    Fun.protect ~finally:(fun () -> Nx_device.set_budget r budget) @@ fun () ->
+    Gc.full_major ();
+    Nx_device.set_budget r (Nx_device.Stats.allocated (Nx_device.stats r) + 16);
+    f ()
+
+  let laws = function
+    | [] -> [ test "on no runtime" (fun () -> skip ~reason:"no device" ()) ]
+    | rs ->
+        let ds = List.map Nx.Device.of_runtime rs in
+        let received f =
+          let before = List.map Nx_device.stats rs in
+          let y = f () in
+          let bytes_in r s =
+            Nx_device.Stats.(bytes_in (diff s (Nx_device.stats r)))
+          in
+          (y, List.map2 bytes_in rs before)
+        in
+        let round_trip (Case c) =
+          prop
+            (c.name
+           ^ " values read back bit for bit, each device receiving its window")
+            (placed ds c.tensors) (fun (x, p) ->
+              let y, bytes = received (fun () -> Nx.place p x) in
+              equal Devices.placement p (Nx.placement y);
+              equal ~msg:"bytes received" (list int)
+                (List.map (window_bytes p x) ds)
+                bytes;
+              match c.dtype with
+              | Int4 | UInt4 -> equal c.values x (host y)
+              | _ -> equal packed (Nx.P x) (Nx.P (host y)))
+        in
+        let ops =
+          List.map Nx.Placement.device ds
+          @ if List.length ds > 1 then [ Nx.Placement.replicated ds ] else []
+        in
+        let r = List.hd rs and d = List.hd ds in
+        let out_of_memory n = function
+          | Nx.Device.Out_of_memory (d', m) -> Nx.Device.equal d d' && m = n
+          | _ -> false
+        in
+        [
+          group "placing" (List.map round_trip (every @ nibbles));
+          prop
+            "an operation gives the host's result on the elements placed, \
+             placed where its operand is"
+            (Gen.triple
+               (Gen.of_list
+                  ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+                  operations)
+               (float_tensors Nx.float32 ~e:8 ~m:23)
+               (Gen.of_list ~pp:Nx.Placement.pp ops))
+            (fun ((_, f), x, p) ->
+              let y = f (Nx.place p x) in
+              equal Devices.placement p (Nx.placement y);
+              equal packed (Nx.P (f (Nx.copy x))) (Nx.P (host y)));
+          test
+            "an allocation the runtime cannot make raises Out_of_memory with \
+             the device and its bytes" (fun () ->
+              tight r @@ fun () ->
+              let on_d = Nx.Placement.device d in
+              raises_match (out_of_memory 400) (fun () ->
+                  Nx.place on_d (Nx.zeros Nx.float32 [| 100 |]));
+              let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
+              raises_match (out_of_memory 16) (fun () -> Nx.add x x));
+        ]
 end
