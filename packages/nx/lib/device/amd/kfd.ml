@@ -1,0 +1,379 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* AMD GPUs through the compute interface of Linux's amdgpu driver. *)
+
+module D = Amd_defs
+module Mmio = Nx_device_support.Mmio
+
+external open_file : string -> int = "caml_nx_amd_open"
+external close_file : int -> unit = "caml_nx_amd_close"
+external reserve : int -> nativeint = "caml_nx_amd_reserve"
+external anon : int -> nativeint = "caml_nx_amd_anon"
+
+external map_file : int -> nativeint -> int -> int64 -> nativeint
+  = "caml_nx_amd_map"
+
+external unmap_mem : nativeint -> int -> unit = "caml_nx_amd_unmap"
+external version : int -> int * int = "caml_nx_kfd_version"
+external acquire_vm : int -> int -> int -> unit = "caml_nx_kfd_acquire_vm"
+external runtime_enable : int -> unit = "caml_nx_kfd_runtime_enable"
+
+external kfd_alloc :
+  int -> int -> nativeint -> int -> int -> int64 -> (int64 * int64, int) result
+  = "caml_nx_kfd_alloc_byte" "caml_nx_kfd_alloc"
+
+external kfd_free : int -> int64 -> unit = "caml_nx_kfd_free"
+external kfd_map : int -> int64 -> int -> bool -> int = "caml_nx_kfd_map"
+external create_event : int -> int -> int64 -> int = "caml_nx_kfd_create_event"
+
+type queue_args = {
+  ring : nativeint;
+  ring_bytes : int;
+  gpu : int;
+  kind : int;
+  eop : nativeint;
+  eop_bytes : int;
+  cwsr : nativeint;
+  cwsr_bytes : int;
+  ctl_stack_bytes : int;
+  wptr : nativeint;
+  rptr : nativeint;
+}
+
+external create_queue : int -> queue_args -> int * int64
+  = "caml_nx_kfd_create_queue"
+
+external wait_events : int -> int array -> int -> int -> string
+  = "caml_nx_kfd_wait"
+
+let topology = "/sys/devices/virtual/kfd/kfd/topology/nodes"
+
+let read file =
+  In_channel.with_open_text file In_channel.input_all |> String.trim
+
+let properties file =
+  List.filter_map
+    (fun l ->
+      match String.split_on_char ' ' (String.trim l) with
+      | [ k; v ] -> Option.map (fun v -> (k, v)) (int_of_string_opt v)
+      | _ -> None)
+    (String.split_on_char '\n' (read file))
+
+let dir_entries d = try Array.to_list (Sys.readdir d) with Sys_error _ -> []
+
+(* The topology nodes of GPUs, in node order. *)
+let gpu_nodes () =
+  dir_entries topology
+  |> List.filter_map int_of_string_opt
+  |> List.sort compare
+  |> List.filter (fun n ->
+      match
+        int_of_string_opt (read (Printf.sprintf "%s/%d/gpu_id" topology n))
+      with
+      | Some id -> id <> 0
+      | None | (exception Sys_error _) -> false)
+
+let available () = Sys.file_exists "/dev/kfd"
+let count () = if available () then List.length (gpu_nodes ()) else 0
+
+(* The process's KFD, opened once. *)
+let kfd = lazy (open_file "/dev/kfd")
+
+type t = {
+  fd : int;
+  drm : int;
+  gpu_id : int;
+  node : int;
+  props : (string * int) list;
+  ip_ver : (int * Amdev.version) list;
+  vram : int;
+  sysfs : string;
+  mutable events : int array; (* signal, memory exception, hardware exception *)
+  mutable doorbells : (nativeint * int64) option; (* the page, and its offset *)
+}
+
+let prop t k =
+  match List.assoc_opt k t.props with
+  | Some v -> v
+  | None -> failwith (Printf.sprintf "KFD reports no %s" k)
+
+(* The GPUs whose address space the process acquired, by topology node: the
+   driver lets a process acquire it only once, so a failed open reuses them.
+   Opens are serialized by the caller. *)
+let acquired : (int, t) Hashtbl.t = Hashtbl.create 4
+
+let open_new node =
+  let dir = Printf.sprintf "%s/%d" topology node in
+  let gpu_id = int_of_string (read (dir ^ "/gpu_id")) in
+  let props = properties (dir ^ "/properties") in
+  let render =
+    match List.assoc_opt "drm_render_minor" props with
+    | Some n -> n
+    | None -> failwith "KFD reports no drm_render_minor"
+  in
+  let sysfs = Printf.sprintf "/sys/class/drm/renderD%d/device" render in
+  let ip_base = sysfs ^ "/ip_discovery/die/0" in
+  let ip_ver =
+    List.filter_map
+      (fun (hwip, hwid, name, required) ->
+        let d = Printf.sprintf "%s/%d/0" ip_base hwid in
+        match
+          List.map
+            (fun p -> int_of_string (read (Printf.sprintf "%s/%s" d p)))
+            [ "major"; "minor"; "revision" ]
+        with
+        | [ a; b; c ] -> Some (hwip, (a, b, c))
+        | _ | (exception (Sys_error _ | Failure _)) ->
+            if required then
+              failwith
+                (Printf.sprintf
+                   "the amdgpu driver reports no %s version (%s/%d/0)" name
+                   ip_base hwid)
+            else None)
+      D.
+        [
+          (gc_hwip, gc_hwid, "GC", true);
+          (sdma0_hwip, sdma0_hwid, "SDMA", true);
+          (nbif_hwip, nbif_hwid, "NBIF", false);
+        ]
+  in
+  let vram =
+    List.fold_left
+      (fun acc bank ->
+        let p =
+          properties (Printf.sprintf "%s/mem_banks/%s/properties" dir bank)
+        in
+        match
+          (List.assoc_opt "heap_type" p, List.assoc_opt "size_in_bytes" p)
+        with
+        | Some (1 | 2), Some n -> acc + n
+        | _ -> acc)
+      0
+      (dir_entries (dir ^ "/mem_banks"))
+  in
+  let fd = Lazy.force kfd in
+  let major, minor = version fd in
+  let drm = open_file (Printf.sprintf "/dev/dri/renderD%d" render) in
+  (try acquire_vm fd drm gpu_id
+   with e ->
+     close_file drm;
+     raise e);
+  if (major, minor) >= (1, 14) then runtime_enable fd;
+  {
+    fd;
+    drm;
+    gpu_id;
+    node;
+    props;
+    ip_ver;
+    vram;
+    sysfs;
+    events = [||];
+    doorbells = None;
+  }
+
+let open_gpu i =
+  let nodes = gpu_nodes () in
+  match List.nth_opt nodes i with
+  | None ->
+      failwith
+        (Printf.sprintf "no GPU %d; the amdgpu driver reports %d" i
+           (List.length nodes))
+  | Some node -> (
+      match Hashtbl.find_opt acquired node with
+      | Some t -> t
+      | None ->
+          let t = open_new node in
+          Hashtbl.replace acquired node t;
+          t)
+
+(* Whether the GPU at topology node [node] reaches the memory of the GPU at node
+   [n]: over XGMI (an I/O link) or over PCIe through a large BAR (a P2P
+   link). *)
+let reaches node n =
+  let dir = Printf.sprintf "%s/%d" topology node in
+  List.exists
+    (fun links ->
+      List.exists
+        (fun l ->
+          List.assoc_opt "node_to"
+            (properties (Printf.sprintf "%s/%s/%s/properties" dir links l))
+          = Some n)
+        (dir_entries (Printf.sprintf "%s/%s" dir links)))
+    [ "io_links"; "p2p_links" ]
+
+(* Memory *)
+
+type kind = Vram | Visible | Host | Uncached
+
+type mem = {
+  va : int;
+  size : int;
+  handle : int64;
+  host : Mmio.t option;
+  mapped : nativeint option; (* the process mapping to release *)
+}
+
+let enomem = 12
+let einval = 22
+
+let map_handle t handle =
+  match kfd_map t.fd handle t.gpu_id true with
+  | 0 -> ()
+  | e ->
+      failwith
+        (Printf.sprintf "mapping GPU memory on GPU %d failed (errno %d)"
+           t.gpu_id e)
+
+let unmap_handle t handle = ignore (kfd_map t.fd handle t.gpu_id false)
+
+(* [n] bytes of [kind]: VRAM the host does not address, VRAM it does through the
+   BAR, coherent host memory, or uncached GTT memory for rings. *)
+let alloc t kind n =
+  let open D in
+  let base =
+    kfd_ioc_alloc_mem_flags_writable lor kfd_ioc_alloc_mem_flags_executable
+    lor kfd_ioc_alloc_mem_flags_no_substitute
+  in
+  let flags =
+    match kind with
+    | Vram -> base lor kfd_ioc_alloc_mem_flags_vram
+    | Visible ->
+        base lor kfd_ioc_alloc_mem_flags_vram lor kfd_ioc_alloc_mem_flags_public
+    | Host ->
+        base lor kfd_ioc_alloc_mem_flags_userptr
+        lor kfd_ioc_alloc_mem_flags_coherent
+        lor kfd_ioc_alloc_mem_flags_uncached lor kfd_ioc_alloc_mem_flags_public
+    | Uncached ->
+        base lor kfd_ioc_alloc_mem_flags_coherent
+        lor kfd_ioc_alloc_mem_flags_uncached lor kfd_ioc_alloc_mem_flags_gtt
+        lor kfd_ioc_alloc_mem_flags_public
+  in
+  let userptr = kind = Host in
+  let addr = if userptr then anon n else reserve n in
+  match
+    kfd_alloc t.fd t.gpu_id addr n flags
+      (if userptr then Int64.of_nativeint addr else 0L)
+  with
+  | Error e ->
+      unmap_mem addr n;
+      if e = enomem then None
+      else if e = einval && kind = Visible then
+        failwith
+          "cannot allocate host-visible VRAM: enable Resizable BAR in the \
+           firmware settings"
+      else
+        failwith
+          (Printf.sprintf "allocating %d bytes of GPU memory failed (errno %d)"
+             n e)
+  | Ok (handle, offset) -> (
+      match
+        if not userptr then ignore (map_file t.drm addr n offset);
+        map_handle t handle
+      with
+      | () ->
+          let visible = kind <> Vram in
+          Some
+            {
+              va = Nativeint.to_int addr;
+              size = n;
+              handle;
+              host = (if visible then Some (Mmio.v addr n) else None);
+              mapped = Some addr;
+            }
+      | exception e ->
+          kfd_free t.fd handle;
+          unmap_mem addr n;
+          raise e)
+
+let free t m =
+  unmap_handle t m.handle;
+  Option.iter (fun a -> unmap_mem a m.size) m.mapped;
+  kfd_free t.fd m.handle
+
+(* Registers the process memory at [a] with the GPU, at [a]. *)
+let map_host t a n =
+  let open D in
+  let flags =
+    kfd_ioc_alloc_mem_flags_writable lor kfd_ioc_alloc_mem_flags_executable
+    lor kfd_ioc_alloc_mem_flags_no_substitute
+    lor kfd_ioc_alloc_mem_flags_userptr lor kfd_ioc_alloc_mem_flags_coherent
+    lor kfd_ioc_alloc_mem_flags_uncached lor kfd_ioc_alloc_mem_flags_public
+  in
+  match kfd_alloc t.fd t.gpu_id a n flags (Int64.of_nativeint a) with
+  | Error e ->
+      Error (Printf.sprintf "the driver refuses to register it (errno %d)" e)
+  | Ok (handle, _) -> (
+      match map_handle t handle with
+      | () ->
+          Ok
+            {
+              va = Nativeint.to_int a;
+              size = n;
+              handle;
+              host = None;
+              mapped = None;
+            }
+      | exception Failure why ->
+          kfd_free t.fd handle;
+          Error why)
+
+let unmap_host t m =
+  unmap_handle t m.handle;
+  kfd_free t.fd m.handle
+
+let map_peer t m = map_handle t m.handle
+let unmap_peer t m = unmap_handle t m.handle
+
+(* Queues *)
+
+(* The process's event page, which the first queue of any GPU creates, and which
+   every GPU maps. *)
+let event_page : (t * mem) option ref = ref None
+
+let events t =
+  if t.events = [||] then begin
+    (match !event_page with
+    | Some (owner, m) -> if owner.gpu_id <> t.gpu_id then map_peer t m
+    | None -> (
+        match alloc t Uncached 0x8000 with
+        | Some m ->
+            ignore (create_event t.fd D.kfd_ioc_event_signal m.handle);
+            event_page := Some (t, m)
+        | None -> failwith "no memory for the KFD event page"));
+    t.events <-
+      Array.map
+        (fun kind -> create_event t.fd kind 0L)
+        D.
+          [|
+            kfd_ioc_event_signal;
+            kfd_ioc_event_memory;
+            kfd_ioc_event_hw_exception;
+          |]
+  end
+
+(* Creates a queue; the address of its doorbell. *)
+let create_queue t args =
+  events t;
+  let _, doorbell = create_queue t.fd { args with gpu = t.gpu_id } in
+  let page, base =
+    match t.doorbells with
+    | Some p -> p
+    | None ->
+        let base = Int64.logand doorbell (Int64.lognot 0x1fffL) in
+        let page = map_file t.fd 0n 0x2000 base in
+        t.doorbells <- Some (page, base);
+        (page, base)
+  in
+  Nativeint.add page (Int64.to_nativeint (Int64.sub doorbell base))
+
+(* Blocks at most [ms] on the GPU's events; raises the report of an exception of
+   this GPU. *)
+let sleep t ms =
+  if t.events <> [||] then
+    match wait_events t.fd t.events t.gpu_id ms with
+    | "" -> ()
+    | report -> failwith report
