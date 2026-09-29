@@ -377,9 +377,7 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
             (fun () ->
               lift1 (cast ~dtype:target_dtype t_in) t_in (fun dx ->
                   T.cast target_dtype dx))
-      | E_contiguous { t_in } ->
-          Some (fun () -> lift1 (contiguous t_in) t_in Fun.id)
-      | E_copy { t_in } -> Some (fun () -> lift1 (copy t_in) t_in Fun.id)
+      | E_contiguous { t_in } -> Some (fun () -> lift1 (copy t_in) t_in Fun.id)
       (* Reductions *)
       | E_reduce_sum { t_in; axes } ->
           Some

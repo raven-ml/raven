@@ -439,9 +439,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
             (fun () ->
               pull1 (cast ~dtype:target_dtype t_in) t_in (fun g ->
                   T.cast (dtype t_in) g))
-      | E_contiguous { t_in } ->
-          Some (fun () -> pull1 (contiguous t_in) t_in Fun.id)
-      | E_copy { t_in } -> Some (fun () -> pull1 (copy t_in) t_in Fun.id)
+      | E_contiguous { t_in } -> Some (fun () -> pull1 (copy t_in) t_in Fun.id)
       (* Reductions *)
       | E_reduce_sum { t_in; axes } ->
           Some

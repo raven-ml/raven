@@ -84,9 +84,7 @@ let rec handler : type r. Format.formatter -> (r, r) Effect.Deep.handler =
         Some (fun () -> obs "cast" (cast ~dtype:target_dtype t_in))
     | E_bitcast { t_in; target_dtype } ->
         Some (fun () -> obs "bitcast" (bitcast ~dtype:target_dtype t_in))
-    | E_contiguous { t_in } ->
-        Some (fun () -> obs "contiguous" (contiguous t_in))
-    | E_copy { t_in } -> Some (fun () -> obs "copy" (copy t_in))
+    | E_contiguous { t_in } -> Some (fun () -> obs "contiguous" (copy t_in))
     | E_place { placement; t_in } ->
         Some (fun () -> obs "place" (place placement t_in))
     | E_placement _ -> None

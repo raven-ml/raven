@@ -291,8 +291,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_floor { t_in } when batched st t_in -> Some (fun () -> elt1 floor t_in)
     | E_round { t_in } when batched st t_in -> Some (fun () -> elt1 round t_in)
     | E_contiguous { t_in } when batched st t_in ->
-        Some (fun () -> elt1 contiguous t_in)
-    | E_copy { t_in } when batched st t_in -> Some (fun () -> elt1 copy t_in)
+        Some (fun () -> elt1 copy t_in)
     | E_cast { t_in; target_dtype } when batched st t_in ->
         Some (fun () -> elt1 (cast ~dtype:target_dtype) t_in)
     | E_bitcast { t_in; target_dtype } when batched st t_in ->

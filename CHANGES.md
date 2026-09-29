@@ -2861,6 +2861,10 @@ thread.
 
 ### Nx
 
+- `Nx.copy` always gives storage of its own, and `Nx.contiguous` returns a
+  value whose bytes are already C-contiguous from its first element unchanged,
+  a placed view included; it copied a placed view that did not cover its
+  storage.
 - A constant made at a placement is one element placed there and expanded,
   and a filled value of more elements is then copied into storage of its own;
   nx no longer holds one-element values itself. Reading one element of a

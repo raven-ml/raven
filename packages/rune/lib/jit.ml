@@ -2323,23 +2323,17 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
           (fun () ->
             ret target_dtype
               (F.Dtype_ops.bitcast (go t_in) (tolk_dtype target_dtype)))
-    (* A written buffer is contiguous storage already, and a [contiguous] over
-       it would copy it out. A broadcast constant needs no storage in a
-       program: a copy of it is the constant. *)
+    (* A written buffer is contiguous storage already, and a copy of it would
+       copy it out; a broadcast constant needs no storage in a program. Either
+       is its own copy: a program's results never alias. *)
     | E_contiguous { t_in } ->
         Some
           (fun () ->
             let tt = go t_in in
-            ret (dt t_in)
-              (match written_buffer (F.Tensor.uop tt) with
-              | Some _ -> tt
-              | None -> F.Elementwise.contiguous tt))
-    | E_copy { t_in } ->
-        Some
-          (fun () ->
-            let tt = go t_in in
-            ret (dt t_in)
-              (if is_constant tt then tt else F.Elementwise.contiguous tt))
+            let own =
+              is_constant tt || Option.is_some (written_buffer (F.Tensor.uop tt))
+            in
+            ret (dt t_in) (if own then tt else F.Elementwise.contiguous tt))
     (* Staged scans *)
     | Scan.E_scan_probe -> Some (fun () -> true)
     | Scan.E_scan req -> Some (fun () -> stage_scan st req)

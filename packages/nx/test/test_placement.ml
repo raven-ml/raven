@@ -712,15 +712,15 @@ let reads =
           equal string
             (Nx.to_string (Nx.transpose (iota [| 8; 6 |])))
             (Nx.to_string (Nx.transpose s)));
-      test "views share their cell; a window's contiguous copy does not"
+      test "views share their cell, a contiguous one too; a copy does not"
         (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |]) in
           let v = Nx.transpose (Nx.slice [ R (0, 1) ] p) in
-          let c = Nx.contiguous v in
+          let c = Nx.copy v in
           equal (list bool) [ true; true; false ]
             [
               cell_of v == cell_of p;
-              cell_of (Nx.contiguous p) == cell_of p;
+              cell_of (Nx.contiguous v) == cell_of p;
               cell_of c == cell_of p;
             ];
           (cell_of p).state <- Consumed { path = "0" };

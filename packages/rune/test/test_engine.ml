@@ -178,7 +178,7 @@ let test_lazy_cotangents () =
   equal ~msg:"two forward, two backward" int
     (count "permute" plain + 4)
     (count "permute" paired);
-  equal ~msg:"copies: the two reshape pulls and the gradient leaving" int 3
+  equal ~msg:"copies: the two reshape pulls; the gradient is contiguous" int 2
     (count "contiguous" paired)
 
 let tests =

@@ -1134,7 +1134,6 @@ type _ Effect.t +=
     }
       -> ('c, 'd) t Effect.t
   | E_contiguous : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_copy : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_threefry : {
       key : (int32, Nx_dtype.int32_elt) t;
       ctr : (int32, Nx_dtype.int32_elt) t;
@@ -1531,7 +1530,6 @@ let routing : type r. r Effect.t -> (string * rule * packed list) option =
   | E_round { t_in } -> each "round" [ P t_in ]
   | E_erf { t_in } -> each "erf" [ P t_in ]
   | E_contiguous { t_in } -> each "contiguous" [ P t_in ]
-  | E_copy { t_in } -> each "copy" [ P t_in ]
   | E_cast { t_in; _ } -> each "cast" [ P t_in ]
   | E_bitcast { t_in; _ } -> each "bitcast" [ P t_in ]
   | E_where { condition; if_true; if_false } ->
@@ -1963,14 +1961,8 @@ module Host_backend = struct
           (E_bitcast { t_in; target_dtype = dtype })
           t_in (Nx_cpu.bitcast ~dtype)
 
-  (* A placed value whose view covers its storage is already contiguous. *)
-  let contiguous t_in =
-    match t_in with
-    | Host t -> Host (Nx_cpu.contiguous t)
-    | Placed r when covers r -> Placed { r with r_id = fresh_id () }
-    | _ -> routed (E_contiguous { t_in }) t_in Nx_cpu.contiguous
-
-  let copy t_in = unary (E_copy { t_in }) Nx_cpu.copy t_in
+  let contiguous t_in = unary (E_contiguous { t_in }) Nx_cpu.copy t_in
+  let copy = contiguous
   let threefry key ctr =
     binary (E_threefry { key; ctr }) Nx_cpu.threefry key ctr
 
@@ -2538,13 +2530,20 @@ let pad t_in padding_config fill_value =
 
 (* Copy operations *)
 
-let contiguous t_in =
-  unary_op (E_contiguous { t_in }) Nx_cpu.contiguous
-    (fun (module B : Backend.S) -> B.contiguous) t_in
-
+(* [copy x] is [x] in storage of its own, C-contiguous from its first element:
+   it always copies. [contiguous x] is [x] itself when its bytes are already
+   C-contiguous from its first element. A traced value has no bytes: the
+   interpretation that made it answers its copy. *)
 let copy t_in =
-  unary_op (E_copy { t_in }) Nx_cpu.copy
+  unary_op (E_contiguous { t_in }) Nx_cpu.copy
     (fun (module B : Backend.S) -> B.copy) t_in
+
+let contiguous t_in =
+  match t_in with
+  | Traced _ -> copy t_in
+  | Host _ | Placed _ ->
+      let v = view t_in in
+      if View.is_c_contiguous v && View.offset v = 0 then t_in else copy t_in
 
 (* Creation. A constant is not an operation: a filled value is one element on
    the host, placed where it is made and expanded. One of more than one element
