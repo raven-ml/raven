@@ -6,12 +6,9 @@
 (tests
  (names
   test_nx_placement
-  test_nx_indexing
   test_nx_sanity
   test_nx_linalg
   test_nx_sorting
-  test_nx_basics
-  test_nx_manipulation
   test_nx_extended_dtypes
   test_nx_fft
   test_nx_complex
@@ -19,9 +16,13 @@
   test_nx_ops
   test_nx_rng
   test_nx_splat
-  test_nx_sliding_window
   test_nx_stft
-  test_ptree)
+  test_ptree
+  test_values
+  test_creation
+  test_indexing
+  test_movement
+  test_properties)
  (package nx)
  (modules
   :standard
@@ -33,7 +34,15 @@
   test_nx_quant
   test_oxcaml_backend
   test_float_codecs)
- (libraries nx.dtype nx.buffer nx nx.core nx.effect windtrap test_nx_support))
+ (libraries
+  nx.dtype
+  nx.buffer
+  nx
+  nx.core
+  nx.effect
+  windtrap
+  test_nx_support
+  nx_test))
 
 (test
  (name test_backend_contract)

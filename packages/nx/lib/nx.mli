@@ -984,8 +984,9 @@ val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
     At most one dimension may be [-1]; it is inferred from the total number of
     elements. The product of [shape] must equal {!numel} [t].
 
-    Raises [Invalid_argument] if [shape] is incompatible or contains more than
-    one [-1].
+    Raises [Invalid_argument] if [shape] is incompatible, contains more than
+    one [-1], or cannot view [t]'s layout, as a transpose's cannot be
+    flattened; call {!contiguous} first.
 
     {@ocaml[
       # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]

@@ -2711,6 +2711,27 @@ thread.
 
 ### Nx
 
+- `Nx.reshape` refuses a shape with another number of elements when either
+  side is empty. It accepted `reshape [| 3 |]` of an empty tensor, a view of
+  three elements over no storage.
+- `Nx.shrink` accepts an empty range, as `Nx.slice` does, and `Nx.slice` by an
+  index on a tensor with an empty axis no longer raises from the backend.
+- `Nx.eye ~m n` is an `n × m` matrix, as documented. It was `m × n`, and
+  with more rows than columns a lower diagonal missed its entries in the
+  extra rows.
+- `Nx.arange` over an empty range is an empty tensor, whichever the direction
+  of the step. It raised for a positive step and made `Nx.tril` and `Nx.triu`
+  of an empty matrix raise.
+- `Nx.squeeze ~axes` of a scalar refuses its axes, as it does for every other
+  rank, and `Nx.one_hot` refuses `num_classes <= 0`, as documented.
+- `Nx.argwhere` of a non-zero scalar has shape `[| 1; 0 |]`, one coordinate
+  with no axis, as documented. It was `[| 0; 0 |]`.
+- `Nx.reshape` views every layout that a view can hold, such as a flipped
+  tensor reshaped across its axes, and documents that it refuses the others.
+  It refused some layouts it could view.
+- `Nx.roll` without an axis keeps the tensor's shape when the shift is a
+  multiple of the size or the tensor is empty. It returned the flattened
+  tensor.
 - Eager `Nx_quant.apply` of a weight split on its experts over rows copied on
   each device no longer raises "operands on ... place one of them": the eager
   product decodes each matrix, and reads the rows, on the host.

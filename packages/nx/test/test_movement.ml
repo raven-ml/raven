@@ -1,0 +1,296 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The movements that test_values does not draw, stated through the ones it
+   does, and the views the interface promises. *)
+
+open Windtrap
+open Nx_test
+
+let ints = Ref.witness int32
+let same = tensor int32
+let shape = Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 1 4)
+let iota s = Array.init (Ref.numel s) (fun i -> Int32.of_int (i + 1))
+let tensor_of s = Nx.create Nx.int32 s (iota s)
+
+(* A tensor and one of its axes. *)
+let with_axis =
+  let open Gen in
+  let* s = shape in
+  let+ axis = int_range 0 (Array.length s - 1) in
+  (tensor_of s, axis)
+
+let reorderings =
+  group "reorderings"
+    [
+      prop "swapaxes is the transpose that exchanges two axes"
+        (Gen.pair with_axis Gen.nat) (fun ((t, a), b) ->
+          let n = Nx.ndim t in
+          let b = b mod n in
+          let axes =
+            List.init n (fun i -> if i = a then b else if i = b then a else i)
+          in
+          equal same (Nx.transpose ~axes t) (Nx.swapaxes a b t));
+      prop "moveaxis is the transpose that moves one axis"
+        (Gen.pair with_axis Gen.nat) (fun ((t, src), dst) ->
+          let n = Nx.ndim t in
+          let dst = dst mod n in
+          let rest = List.filter (( <> ) src) (List.init n Fun.id) in
+          let axes =
+            List.filteri (fun i _ -> i < dst) rest
+            @ (src :: List.filteri (fun i _ -> i >= dst) rest)
+          in
+          equal same (Nx.transpose ~axes t) (Nx.moveaxis src dst t));
+      prop "roll shifts along an axis, wrapping around"
+        (Gen.pair with_axis (Gen.int_range (-9) 9))
+        (fun ((t, axis), shift) ->
+          let r = Ref.of_nx t in
+          let n = r.shape.(axis) in
+          equal ints
+            (Ref.init r.shape (fun i ->
+                 let src = Array.copy i in
+                 src.(axis) <- (((i.(axis) - shift) mod n) + n) mod n;
+                 Ref.get r src))
+            (Ref.of_nx (Nx.roll ~axis shift t)));
+      prop "roll without an axis rolls the flattened tensor and keeps the shape"
+        (Gen.pair shape (Gen.int_range (-9) 9))
+        (fun (s, shift) ->
+          let t = tensor_of s in
+          equal same
+            (Nx.reshape s (Nx.roll ~axis:0 shift (Nx.reshape [| -1 |] t)))
+            (Nx.roll shift t));
+    ]
+
+let repetitions =
+  group "repetitions"
+    [
+      prop "tile repeats the whole tensor along each axis"
+        (Gen.pair shape
+           (Gen.array ~size:(Gen.int_range 3 4) (Gen.int_range 0 3)))
+        (fun (s, reps) ->
+          let r = Ref.of_nx (tensor_of s) in
+          let n = Int.max (Array.length s) (Array.length reps) in
+          let pad a = Array.append (Array.make (n - Array.length a) 1) a in
+          let s' = pad s and reps' = pad reps in
+          equal ints
+            (Ref.init (Array.map2 ( * ) s' reps') (fun i ->
+                 Ref.get (Ref.reshape s' r)
+                   (Array.mapi (fun d k -> k mod s'.(d)) i)))
+            (Ref.of_nx (Nx.tile reps (tensor_of s))));
+      prop "repeat repeats each element along an axis"
+        (Gen.pair with_axis (Gen.int_range 0 3))
+        (fun ((t, axis), k) ->
+          let r = Ref.of_nx t in
+          let out = Array.copy r.shape in
+          out.(axis) <- out.(axis) * k;
+          equal ints
+            (Ref.init out (fun i ->
+                 let src = Array.copy i in
+                 src.(axis) <- i.(axis) / k;
+                 Ref.get r src))
+            (Ref.of_nx (Nx.repeat ~axis k t)));
+      test "tile refuses fewer repetitions than axes (nx.mli is silent)"
+        (fun () ->
+          raises_invalid_arg (fun () -> Nx.tile [| 2 |] (tensor_of [| 2; 2 |])));
+      test "tile and repeat refuse a negative count" (fun () ->
+          raises_invalid_arg (fun () -> Nx.tile [| -1 |] (tensor_of [| 2 |]));
+          raises_invalid_arg (fun () -> Nx.repeat (-1) (tensor_of [| 2 |])));
+    ]
+
+let joins =
+  group "joins and splits"
+    [
+      prop "stack is concatenate of each tensor with a new axis"
+        (Gen.pair shape (Gen.int_range 0 3))
+        (fun (s, axis) ->
+          let axis = axis mod (Array.length s + 1) in
+          let ts = [ tensor_of s; Nx.neg (tensor_of s) ] in
+          equal same
+            (Nx.concatenate ~axis (List.map (Nx.unsqueeze ~axes:[ axis ]) ts))
+            (Nx.stack ~axis ts));
+      prop "split into parts that concatenate back" (Gen.pair with_axis Gen.nat)
+        (fun ((t, axis), k) ->
+          let size = Nx.dim axis t in
+          let divisors =
+            List.filter
+              (fun d -> size mod d = 0)
+              (List.init size (fun i -> i + 1))
+          in
+          let n = List.nth divisors (k mod List.length divisors) in
+          let parts = Nx.split ~axis n t in
+          equal int n (List.length parts);
+          equal same t (Nx.concatenate ~axis parts));
+      prop "array_split by count gives the first parts the extra elements"
+        (Gen.pair with_axis (Gen.int_range 1 5))
+        (fun ((t, axis), n) ->
+          let size = Nx.dim axis t in
+          let parts = Nx.array_split ~axis (`Count n) t in
+          equal (list int)
+            (List.init n (fun i -> (size / n) + if i < size mod n then 1 else 0))
+            (List.map (Nx.dim axis) parts);
+          equal same t (Nx.concatenate ~axis parts));
+      prop "array_split at indices cuts between them"
+        (Gen.pair with_axis
+           (Gen.list ~size:(Gen.int_range 0 3) (Gen.int_range 0 4)))
+        (fun ((t, axis), cuts) ->
+          let cuts =
+            List.sort compare
+              (List.map (fun c -> Int.min c (Nx.dim axis t)) cuts)
+          in
+          let bounds = List.combine (0 :: cuts) (cuts @ [ Nx.dim axis t ]) in
+          let r = Ref.of_nx t in
+          let expected =
+            List.map
+              (fun (lo, hi) ->
+                Ref.shrink
+                  (Array.mapi
+                     (fun d n -> if d = axis then (lo, hi) else (0, n))
+                     r.shape)
+                  r)
+              bounds
+          in
+          equal (list ints) expected
+            (List.map Ref.of_nx (Nx.array_split ~axis (`Indices cuts) t)));
+      prop "broadcast_arrays broadcasts every tensor to the common shape"
+        (Gen.pair shape shape) (fun (a, b) ->
+          let b = Array.mapi (fun i d -> if i mod 2 = 0 then 1 else d) b in
+          let common =
+            try Some (Ref.broadcast_shapes a b)
+            with Invalid_argument _ -> None
+          in
+          match common with
+          | None ->
+              raises_invalid_arg (fun () ->
+                  Nx.broadcast_arrays [ tensor_of a; tensor_of b ])
+          | Some s ->
+              equal (list same)
+                [
+                  Nx.broadcast_to s (tensor_of a);
+                  Nx.broadcast_to s (tensor_of b);
+                ]
+                (Nx.broadcast_arrays [ tensor_of a; tensor_of b ]));
+      test "stack, concatenate and split refuse what they cannot join or cut"
+        (fun () ->
+          raises_invalid_arg (fun () -> Nx.stack []);
+          raises_invalid_arg (fun () -> Nx.concatenate ~axis:0 []);
+          raises_invalid_arg (fun () ->
+              Nx.stack [ tensor_of [| 2 |]; tensor_of [| 3 |] ]);
+          raises_invalid_arg (fun () -> Nx.split ~axis:0 2 (tensor_of [| 3 |])));
+    ]
+
+let flattening =
+  group "flattening"
+    [
+      prop "flatten merges a run of axes, and unflatten splits it back"
+        (Gen.pair with_axis Gen.nat) (fun ((t, start_dim), k) ->
+          let s = Nx.shape t in
+          let end_dim = start_dim + (k mod (Array.length s - start_dim)) in
+          let sizes = Array.sub s start_dim (end_dim - start_dim + 1) in
+          let merged =
+            Array.concat
+              [
+                Array.sub s 0 start_dim;
+                [| Ref.numel sizes |];
+                Array.sub s (end_dim + 1) (Array.length s - end_dim - 1);
+              ]
+          in
+          equal same (Nx.reshape merged t) (Nx.flatten ~start_dim ~end_dim t);
+          Law.round_trip same same
+            (Nx.flatten ~start_dim ~end_dim)
+            (Nx.unflatten start_dim sizes)
+            t;
+          let inferred =
+            Array.mapi
+              (fun i d -> if i = k mod Array.length sizes then -1 else d)
+              sizes
+          in
+          Law.round_trip ~msg:"with one size inferred" same same
+            (Nx.flatten ~start_dim ~end_dim)
+            (Nx.unflatten start_dim inferred)
+            t);
+      prop "ravel is reshape to one axis" shape (fun s ->
+          equal same
+            (Nx.reshape [| -1 |] (tensor_of s))
+            (Nx.ravel (tensor_of s)));
+      test "unflatten refuses sizes whose product differs" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.unflatten 0 [| 2; 2 |] (tensor_of [| 6 |])));
+      test "flatten refuses an axis out of bounds" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.flatten ~start_dim:2 (tensor_of [| 2; 2 |])));
+    ]
+
+(* A tensor under some layout, and a shape of as many elements. *)
+let reshaped =
+  let open Gen in
+  let* s = shape in
+  let* steps = layout in
+  let t = lay_out steps (tensor_of s) in
+  let n = Nx.numel t in
+  let+ target =
+    of_list ~pp:pp_shape
+      ([ [| n |]; [| 1; n |]; [| n; 1 |] ]
+      @ List.filter_map
+          (fun d -> if d > 0 && n mod d = 0 then Some [| d; n / d |] else None)
+          (List.init (n + 1) Fun.id)
+      @ List.filter_map
+          (fun d -> if d > 0 && n mod d = 0 && n / d mod 2 = 0 then Some [| d; 2; n / d / 2 |] else None)
+          (List.init (n + 1) Fun.id))
+  in
+  (steps, t, target)
+
+let reshapes =
+  group "reshapes"
+    [
+      prop "reshape views every layout it can, and refuses the others"
+        (Gen.with_pp
+           (fun ppf (steps, t, target) ->
+             Format.fprintf ppf "%a, of shape %a, to %a" pp_layout steps
+               pp_shape (Nx.shape t) pp_shape target)
+           reshaped)
+        (fun (_, t, target) ->
+          if viewable t target then begin
+            cover "a view of a non-contiguous layout" (not (Nx.is_c_contiguous t));
+            let r = Nx.reshape target t in
+            equal ints (Ref.reshape target (Ref.of_nx t)) (Ref.of_nx r);
+            is_true ~msg:"the result shares its source's storage" (Nx.data r == Nx.data t)
+          end
+          else begin
+            cover "a layout no reshape can view" true;
+            raises_invalid_arg (fun () -> Nx.reshape target t)
+          end);
+    ]
+
+(* The interface promises these results share their source's storage. *)
+let views =
+  let shares name f =
+    test (name ^ " is a view of its source") (fun () ->
+        let t = tensor_of [| 4; 6 |] in
+        is_true (Nx.data (f t) == Nx.data t))
+  in
+  group "views"
+    [
+      shares "reshape of a contiguous tensor" (Nx.reshape [| 6; 4 |]);
+      shares "transpose" (fun t -> Nx.transpose t);
+      shares "flip" (fun t -> Nx.flip t);
+      shares "broadcast_to" (fun t -> Nx.broadcast_to [| 2; 4; 6 |] t);
+      shares "slice by a range" (Nx.slice [ R (1, 3) ]);
+      shares "slice by a step of -1" (Nx.slice [ A; Rs (5, 0, -1) ]);
+      shares "a part of split" (fun t -> List.nth (Nx.split ~axis:1 3 t) 1);
+      shares "sliding_window" (Nx.sliding_window ~window:2);
+      shares "broadcast_arrays" (fun t ->
+          List.hd (Nx.broadcast_arrays [ t; Nx.zeros Nx.int32 [| 2; 1; 1 |] ]));
+      test "copy and concatenate never share" (fun () ->
+          let t = tensor_of [| 2; 3 |] in
+          is_false (Nx.data (Nx.copy t) == Nx.data t);
+          is_false (Nx.data (Nx.concatenate ~axis:0 [ t ]) == Nx.data t));
+      test "ravel refuses a tensor it cannot flatten without copying" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.ravel (Nx.transpose (tensor_of [| 2; 3 |]))));
+    ]
+
+let () =
+  exit
+    (run "nx movement" [ reshapes; reorderings; repetitions; joins; flattening; views ])

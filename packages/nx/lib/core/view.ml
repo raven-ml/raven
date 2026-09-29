@@ -137,147 +137,70 @@ let reshape view new_shape =
     let new_numel = prod new_arr in
 
     (* Check size compatibility *)
-    if old_numel <> new_numel && old_numel <> 0 && new_numel <> 0 then
+    if old_numel <> new_numel then
       err "reshape" "cannot reshape %s to %s" (Shape.to_string old_arr)
         (Shape.to_string new_arr)
     else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
     then create ~offset:0 new_shape (* Fast path for C-contiguous views *)
     else if view.layout = C_contiguous then create ~offset:view.offset new_shape
-    else if
-      (* Special case: reshaping to/from scalar *)
-      Array.length new_shape = 0
-    then create ~offset:view.offset new_shape
-      (* Special case: all strides are 0 (broadcast from scalar) *)
-    else if Array.for_all (( = ) 0) view.strides then
-      let new_strides = Array.make (Array.length new_shape) 0 in
-      create ~offset:view.offset ~strides:new_strides new_shape
-    (* Special case: only expanding/squeezing size-1 dimensions *)
-      else
-      let try_squeeze_unsqueeze () =
-        let old_non_one = Array.to_list old_arr |> List.filter (( <> ) 1) in
-        let new_non_one = Array.to_list new_arr |> List.filter (( <> ) 1) in
-
-        if old_non_one = new_non_one then
-          let old_idx = ref 0 in
-          let new_strides =
-            Array.map
-              (fun dim ->
-                if dim = 1 then 0
-                else (
-                  while
-                    !old_idx < Array.length old_arr && old_arr.(!old_idx) = 1
-                  do
-                    incr old_idx
-                  done;
-                  let stride = view.strides.(!old_idx) in
-                  incr old_idx;
-                  stride))
-              new_arr
+    else
+      (* Group the axes of both shapes into runs of equal size. The old axes of
+         a run must merge into one stride, which its new axes split. Axes of
+         size 1 take no part, and get stride 0. *)
+      let old_dims =
+        List.filter
+          (fun (d, _) -> d <> 1)
+          (List.combine (Array.to_list old_arr) (Array.to_list view.strides))
+        |> Array.of_list
+      in
+      let new_dims =
+        Array.of_list (List.filter (( <> ) 1) (Array.to_list new_arr))
+      in
+      let strides = Array.make (Array.length new_dims) 0 in
+      let rec runs oi ni =
+        if oi = Array.length old_dims then true
+        else
+          let rec grow oj nj op np =
+            if op = np then (oj, nj)
+            else if op < np then grow (oj + 1) nj (op * fst old_dims.(oj)) np
+            else grow oj (nj + 1) op (np * new_dims.(nj))
           in
-          Some new_strides
-        else None
-      in
-
-      let try_merge_split () =
-        let old_dims = ref [] in
-        let new_dims = ref [] in
-
-        for i = 0 to Array.length old_arr - 1 do
-          if old_arr.(i) > 1 then
-            old_dims := (old_arr.(i), view.strides.(i)) :: !old_dims
-        done;
-        old_dims := List.rev !old_dims;
-
-        for i = 0 to Array.length new_arr - 1 do
-          if new_arr.(i) > 1 then new_dims := new_arr.(i) :: !new_dims
-        done;
-        new_dims := List.rev !new_dims;
-
-        let rec match_dims old_dims new_dims =
-          match (old_dims, new_dims) with
-          | [], [] -> Some []
-          | [], _ | _, [] -> None
-          | (old_size, old_stride) :: old_rest, new_size :: new_rest ->
-              if old_size = new_size then
-                match match_dims old_rest new_rest with
-                | Some rest_strides ->
-                    Some ((new_size, old_stride) :: rest_strides)
-                | None -> None
-              else if old_size > new_size && old_size mod new_size = 0 then
-                let remaining_size = old_size / new_size in
-                let first_stride = old_stride * remaining_size in
-                let remaining_dims = (remaining_size, old_stride) :: old_rest in
-                match match_dims remaining_dims new_rest with
-                | Some rest_strides ->
-                    Some ((new_size, first_stride) :: rest_strides)
-                | None -> None
-              else if new_size > old_size then
-                let rec collect_merge size stride dims needed =
-                  if size = needed then Some (dims, stride)
-                  else if size > needed then None
-                  else
-                    match dims with
-                    | [] -> None
-                    | (next_size, next_stride) :: rest ->
-                        if stride = next_stride * next_size then
-                          collect_merge (size * next_size) next_stride rest
-                            needed
-                        else None
-                in
-                match collect_merge old_size old_stride old_rest new_size with
-                | Some (remaining, first_stride) -> (
-                    match match_dims remaining new_rest with
-                    | Some rest_strides ->
-                        Some ((new_size, first_stride) :: rest_strides)
-                    | None -> None)
-                | None -> None
-              else None
-        in
-
-        match match_dims !old_dims !new_dims with
-        | None -> None
-        | Some stride_map ->
-            let stride_map_arr = Array.of_list stride_map in
-            let new_strides = Array.make (Array.length new_arr) 0 in
-            let map_idx = ref 0 in
-
-            for i = 0 to Array.length new_arr - 1 do
-              if new_arr.(i) = 1 then new_strides.(i) <- 0
-              else
-                let _, stride = stride_map_arr.(!map_idx) in
-                new_strides.(i) <- stride;
-                incr map_idx
+          let oj, nj =
+            grow (oi + 1) (ni + 1) (fst old_dims.(oi)) new_dims.(ni)
+          in
+          let merges = ref true in
+          for k = oi to oj - 2 do
+            let d, s = old_dims.(k + 1) in
+            if snd old_dims.(k) <> d * s then merges := false
+          done;
+          !merges
+          && begin
+            strides.(nj - 1) <- snd old_dims.(oj - 1);
+            for k = nj - 1 downto ni + 1 do
+              strides.(k - 1) <- strides.(k) * new_dims.(k)
             done;
-
-            Some new_strides
+            runs oj nj
+          end
       in
-      (* Try reshape strategies in order *)
-      match try_squeeze_unsqueeze () with
-      | Some new_strides ->
-          create ~offset:view.offset ~strides:new_strides new_shape
-      | None -> (
-          match try_merge_split () with
-          | Some new_strides ->
-              create ~offset:view.offset ~strides:new_strides new_shape
-          | None ->
-              let expected_strides = Shape.c_contiguous_strides new_arr in
-              let stride_str =
-                "["
-                ^ String.concat ","
-                    (Array.to_list (Array.map string_of_int view.strides))
-                ^ "]"
-              in
-              let expected_str =
-                "["
-                ^ String.concat ","
-                    (Array.to_list (Array.map string_of_int expected_strides))
-                ^ "]"
-              in
-              err "reshape"
-                "cannot reshape %s to %s, incompatible strides %s (expected \
-                 %s), call contiguous() first"
-                (Shape.to_string old_arr) (Shape.to_string new_arr) stride_str
-                expected_str)
+      if runs 0 0 then
+        let k = ref 0 in
+        let strides =
+          Array.map
+            (fun d ->
+              if d = 1 then 0
+              else
+                let s = strides.(!k) in
+                incr k;
+                s)
+            new_arr
+        in
+        create ~offset:view.offset ~strides new_shape
+      else
+        err "reshape"
+          "cannot reshape %s to %s, strides %s cannot view it, call \
+           contiguous() first"
+          (Shape.to_string old_arr) (Shape.to_string new_arr)
+          (Shape.to_string view.strides)
 
 let shrink view arg =
   let ndim = Array.length view.shape in
@@ -287,9 +210,9 @@ let shrink view arg =
   if Array.for_all2 (fun (b, e) s -> b = 0 && e = s) arg shape_arr then view
   else if
     Array.exists2
-      (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b >= e)
+      (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b > e)
       arg shape_arr
-  then invalid_arg "shrink: bounds must be within shape and start < end"
+  then invalid_arg "shrink: bounds must be within shape and start <= end"
   else
     let new_shape = Array.map (fun (a, b) -> b - a) arg in
     let new_offset = ref view.offset in

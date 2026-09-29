@@ -301,13 +301,9 @@ module Make (B : Backend_intf.S) = struct
     let rank_current = Array.length current_shape in
     let rank_spec = Array.length shape_spec in
     let rank_new = max rank_current rank_spec in
-    let current_aligned =
-      if rank_current = rank_new then current_shape
-      else
-        let arr = Array.make rank_new 1 in
-        Array.blit current_shape 0 arr (rank_new - rank_current) rank_current;
-        arr
-    in
+    let current_aligned = Array.make rank_new 1 in
+    Array.blit current_shape 0 current_aligned (rank_new - rank_current)
+      rank_current;
     let target_shape =
       Array.init rank_new (fun i ->
           let spec_idx = i - (rank_new - rank_spec) in
@@ -869,34 +865,32 @@ module Make (B : Backend_intf.S) = struct
         reshape_or_id
           (Array.of_list (List.filter (( <> ) 1) (Array.to_list sh)))
     | Some axes_list ->
-        if r = 0 then x
-        else
-          let normalized =
-            List.map (fun ax -> if ax < 0 then ax + r else ax) axes_list
-          in
-          let seen = Array.make r false in
-          List.iter
-            (fun ax ->
-              if ax < 0 || ax >= r then
-                err "squeeze" "axis %d out of bounds for %dD tensor" ax r;
-              if seen.(ax) then err "squeeze" "axis %d, duplicate axis" ax;
-              seen.(ax) <- true)
-            normalized;
-          List.iter
-            (fun ax ->
-              if sh.(ax) <> 1 then
-                err "squeeze"
-                  "cannot remove dimension at axis %d (size %d), size %d≠1" ax
-                  sh.(ax) sh.(ax))
-            normalized;
-          let axes_set =
-            List.fold_left (fun s ax -> IntSet.add ax s) IntSet.empty normalized
-          in
-          reshape_or_id
-            (Array.of_list
-               (List.filteri
-                  (fun i _ -> not (IntSet.mem i axes_set))
-                  (Array.to_list sh)))
+        let normalized =
+          List.map (fun ax -> if ax < 0 then ax + r else ax) axes_list
+        in
+        let seen = Array.make r false in
+        List.iter
+          (fun ax ->
+            if ax < 0 || ax >= r then
+              err "squeeze" "axis %d out of bounds for %dD tensor" ax r;
+            if seen.(ax) then err "squeeze" "axis %d, duplicate axis" ax;
+            seen.(ax) <- true)
+          normalized;
+        List.iter
+          (fun ax ->
+            if sh.(ax) <> 1 then
+              err "squeeze"
+                "cannot remove dimension at axis %d (size %d), size %d≠1" ax
+                sh.(ax) sh.(ax))
+          normalized;
+        let axes_set =
+          List.fold_left (fun s ax -> IntSet.add ax s) IntSet.empty normalized
+        in
+        reshape_or_id
+          (Array.of_list
+             (List.filteri
+                (fun i _ -> not (IntSet.mem i axes_set))
+                (Array.to_list sh)))
 
   let unsqueeze ?axes x =
     let sh = shape x in
@@ -1035,15 +1029,12 @@ module Make (B : Backend_intf.S) = struct
           (x, norm)
     in
     let sh = shape x in
-    let r = ndim x in
-    if r = 0 then x
-    else
-      let dim_size = sh.(ax_idx) in
-      if dim_size = 0 then x
+    let rolled =
+      if ndim x = 0 || sh.(ax_idx) = 0 then x
       else
-        let s = shift mod dim_size in
-        let actual = if s < 0 then s + dim_size else s in
-        if actual = 0 then if axis = None then reshape (shape x) x else x
+        let dim_size = sh.(ax_idx) in
+        let actual = ((shift mod dim_size) + dim_size) mod dim_size in
+        if actual = 0 then x
         else
           let ranges_p1 =
             Array.mapi
@@ -1055,10 +1046,9 @@ module Make (B : Backend_intf.S) = struct
               (fun i d -> if i = ax_idx then (0, dim_size - actual) else (0, d))
               sh
           in
-          let rolled =
-            cat_tensors ~axis:ax_idx [ shrink ranges_p1 x; shrink ranges_p2 x ]
-          in
-          if axis = None then reshape original_shape rolled else rolled
+          cat_tensors ~axis:ax_idx [ shrink ranges_p1 x; shrink ranges_p2 x ]
+    in
+    if axis = None then reshape original_shape rolled else rolled
 
   let tile reps x =
     let t_shape = shape x in
@@ -1215,26 +1205,16 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Array Creation ───── *)
 
   let eye ctx ?m ?k dtype n =
-    let rows = match m with Some v -> v | None -> n in
-    let cols = n in
-    let k_val = match k with Some v -> v | None -> 0 in
-    if rows <= 0 || cols <= 0 || k_val >= cols || k_val <= -rows then
-      zeros ctx dtype [| rows; cols |]
-    else
-      let arr = Array.make (rows * cols) (Nx_dtype.zero dtype) in
-      let one = Nx_dtype.one dtype in
-      for i = 0 to Stdlib.min rows cols - 1 do
-        let col = i + k_val in
-        if col >= 0 && col < cols then arr.((i * cols) + col) <- one
-      done;
-      create ctx dtype [| rows; cols |] arr
+    let cols = Option.value m ~default:n and k = Option.value k ~default:0 in
+    let arr = Array.make (n * cols) (Nx_dtype.zero dtype) in
+    let one = Nx_dtype.one dtype in
+    for i = 0 to n - 1 do
+      let j = i + k in
+      if j >= 0 && j < cols then arr.((i * cols) + j) <- one
+    done;
+    create ctx dtype [| n; cols |] arr
 
   let arange (type a b) ctx (dtype : (a, b) Nx_dtype.t) start stop step =
-    if start >= stop && step > 0 then
-      err "arange"
-        "range [%d, %d), empty with step=%d, ensure start < stop for positive \
-         step, or start > stop for negative step"
-        start stop step;
     if step = 0 then invalid_arg "arange: step cannot be zero";
     let num_elements =
       if step > 0 then
@@ -1318,7 +1298,6 @@ module Make (B : Backend_intf.S) = struct
     else
       let exponents = linspace ctx dtype ~endpoint start_exp stop_exp count in
       if base = Float.exp 1.0 then exp exponents
-      else if base = 2.0 then exp2 exponents
       else
         let log2_base = Stdlib.log base /. Stdlib.log 2.0 in
         let log2_base_t =
@@ -1328,11 +1307,8 @@ module Make (B : Backend_intf.S) = struct
 
   let geomspace ctx dtype ?(endpoint = true) start_f stop_f count =
     if start_f <= 0. || stop_f <= 0. then
-      err "geomspace"
-        "%s, must be positive (>0), geomspace requires positive values for \
-         logarithmic spacing"
-        (if start_f <= 0. then Printf.sprintf "start %g" start_f
-         else Printf.sprintf "stop %g" stop_f);
+      err "geomspace" "start %g and stop %g, both must be positive" start_f
+        stop_f;
     if count < 0 then err "geomspace" "count must be >= 0, got %d" count;
     if count = 0 then empty ctx dtype [| 0 |]
     else if count = 1 then full ctx dtype [| 1 |] start_f
@@ -1370,13 +1346,6 @@ module Make (B : Backend_intf.S) = struct
       sub col_idx (scalar (B.context x) int32 (Int32.of_int k_val))
     in
     let mask = cmp row_idx k_offset in
-    let mask =
-      if nd > 2 then
-        broadcast_to
-          (Array.concat [ Array.sub sh 0 (nd - 2); [| rows; cols |] ])
-          mask
-      else mask
-    in
     where mask x (scalar_like x (Nx_dtype.zero (dtype x)))
 
   let tril ?k x = triangular_mask ~op:"tril" ~cmp:greater_equal ?k x
@@ -1897,7 +1866,9 @@ module Make (B : Backend_intf.S) = struct
   let argwhere t =
     let coords = nonzero t in
     let nd = Array.length coords in
-    if nd = 0 then empty (B.context t) Int32 [| 0; 0 |]
+    if nd = 0 then
+      let k = if item [] t = Nx_dtype.zero (dtype t) then 0 else 1 in
+      empty (B.context t) Int32 [| k; 0 |]
     else
       let n = dim 0 coords.(0) in
       let cols = Array.map to_array coords in
@@ -5524,6 +5495,8 @@ module Make (B : Backend_intf.S) = struct
     if not (Nx_dtype.is_int dt || Nx_dtype.is_uint dt) then
       err "one_hot" "dtype %s, indices must be integer type"
         (Nx_dtype.to_string dt);
+    if num_classes <= 0 then
+      err "one_hot" "num_classes %d, must be positive" num_classes;
     let idx_exp = unsqueeze index_tensor ~axes:[ ndim index_tensor ] in
     let nd_exp = ndim idx_exp in
     let s = Array.make nd_exp 1 in
