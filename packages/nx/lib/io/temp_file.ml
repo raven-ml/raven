@@ -23,6 +23,12 @@ let sibling path =
   in
   create 1000
 
+(* Forces the bytes written to [path], through any of its descriptors, to its
+   storage. *)
+let sync path =
+  let fd = Unix.openfile path [ O_RDWR; O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> Unix.fsync fd)
+
 let mode = 0o640
 
 let replace temp path =

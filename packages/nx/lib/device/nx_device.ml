@@ -28,7 +28,6 @@ type io = {
 }
 
 type dma = { bus : string; pages : (int * int) list }
-type file = { path : string; size : int; mtime : float; inode : int }
 type clock = Host_clock | Device_clock of { hz : int }
 
 (* What must stay reachable for as long as a base does. Host memory is the
@@ -123,9 +122,8 @@ and base = {
   source : (base * mapped) option;
       (* for a borrow, the host memory it maps, and the mapping *)
   links : links Atomic.t;
-  file : file option; (* the file this memory maps, from its first byte *)
+  file : file option; (* on the disk, the file *)
   mutable life : life;
-  opened : opened option; (* on the disk, the file *)
 }
 
 (* Whether a base's buffers may reach its memory. A consumed base is [Dead], and
@@ -149,7 +147,7 @@ and program = { p_device : t; p_name : string; p_handle : nativeint }
 
 (* A file a disk buffer is over: its memory's handle is the descriptor. Its
    pages are the host memory of its mapping, made at its first borrow. *)
-and opened = { path : string; writable : bool; mutable pages : base option }
+and file = { path : string; writable : bool; mutable pages : base option }
 
 (* A program that its device can release is cached weakly, and released once
    unreachable; the others are kept for the device's life. *)
@@ -744,7 +742,7 @@ let reclaim d =
           | Some (src, m) ->
               m.borrows <- m.borrows - 1;
               if m.borrows = 0 then emptied := (src, m) :: !emptied
-          | None when Option.is_some b.opened ->
+          | None when Option.is_some b.file ->
               (* No read or write of a file outlives the copy that made it. *)
               file_close b.memory.handle
           | None when (Atomic.get b.links).reached <> [] ->
@@ -862,13 +860,6 @@ let () =
 (* Buffers *)
 
 module Buffer = struct
-  type nonrec file = file = {
-    path : string;
-    size : int;
-    mtime : float;
-    inode : int;
-  }
-
   type device = t
 
   type t = buffer = {
@@ -942,7 +933,7 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; device = 0n; handle = 0n }
 
-  let base ?(bytes = 0) ?(pinned = false) ?source ?file ?opened ~borrowed ~keep ~extent
+  let base ?(bytes = 0) ?(pinned = false) ?source ?file ~borrowed ~keep ~extent
       d memory =
     {
       owner = d;
@@ -955,7 +946,6 @@ module Buffer = struct
       source;
       links = Atomic.make { maps = []; reached = [] };
       file;
-      opened;
       life = Live;
     }
 
@@ -1038,7 +1028,7 @@ module Buffer = struct
     | Bigarray.Complex64 -> 8
     | k -> Bigarray.kind_size_in_bytes k
 
-  let of_bigarray ?file ba =
+  let of_bigarray ba =
     let dtype =
       match Nx_dtype.Scalar.of_bigarray_kind (Bigarray.Array1.kind ba) with
       | Some s -> s
@@ -1047,14 +1037,6 @@ module Buffer = struct
             "Nx_device.Buffer.of_bigarray: the kind is no storage format"
     in
     let extent = Bigarray.Array1.size_in_bytes ba in
-    Option.iter
-      (fun f ->
-        if f.size <> extent then
-          invalid_arg
-            (Printf.sprintf
-               "Nx_device.Buffer.of_bigarray: %s has %d bytes, the mapping %d"
-               f.path f.size extent))
-      file;
     (* A host buffer's elements lie at multiples of their size, as every typed
        read of it expects. *)
     let align = component_size (Bigarray.Array1.kind ba) in
@@ -1067,21 +1049,9 @@ module Buffer = struct
            address align);
     let ba = shared ba in
     let base =
-      base ?file ~borrowed:true ~keep:(Host ba) ~extent host (heap_memory ba)
+      base ~borrowed:true ~keep:(Host ba) ~extent host (heap_memory ba)
     in
     { base; offset = 0; dtype; length = Bigarray.Array1.dim ba }
-
-  let rec origin base =
-    match base.file with
-    | Some f -> Some (f, base)
-    | None -> Option.bind base.source (fun (src, _) -> origin src)
-
-  let file b =
-    match (origin b.base, hosted b) with
-    | Some (f, base), Some a ->
-        Some
-          (f, Nativeint.to_int (Nativeint.sub a (Option.get base.memory.host)))
-    | _ -> None
 
   (* A file is opened with the disk taken, so that the descriptors of the files
      already collected are closed first. An open refused for too many open files
@@ -1105,7 +1075,7 @@ module Buffer = struct
     let memory = { host = None; device = 0n; handle = fd } in
     let base =
       base ~borrowed:true ~keep:(Keep ())
-        ~opened:{ path; writable = create; pages = None }
+        ~file:{ path; writable = create; pages = None }
         ~extent:size disk memory
     in
     Gc.finalise (release disk) base;
@@ -1118,7 +1088,7 @@ module Buffer = struct
       invalid_arg (Printf.sprintf "Nx_device.Buffer.create_file: %d bytes" n);
     open_file path ~create:true n
 
-  let file_of b = Option.get b.base.opened
+  let file_of b = Option.get b.base.file
 
   (* A file's pages are its mapping on the host, made once and kept with the
      file. *)

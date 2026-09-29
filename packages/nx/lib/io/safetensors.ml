@@ -264,7 +264,6 @@ type error =
   | Tensor_invalid_info
   | Invalid_offset of string
   | Duplicate_tensor of string
-  | Io_error of string
   | Invalid_tensor_view of string * int list * int
   | Validation_overflow
   | Misaligned_slice
@@ -276,7 +275,6 @@ let string_of_error = function
   | Tensor_invalid_info -> "invalid shape, dtype, or offset for tensor"
   | Invalid_offset n -> strf "invalid offset for tensor '%s'" n
   | Duplicate_tensor n -> strf "tensor '%s' appears twice in the header" n
-  | Io_error e -> "I/O error: " ^ e
   | Invalid_tensor_view (dt, shape, n) ->
       let dims = List.map string_of_int shape |> String.concat ", " in
       strf "tensor of type %s and shape (%s) can't be created from %d bytes" dt
@@ -565,14 +563,11 @@ let json_to_metadata j : (metadata, error) result =
   | Error e -> Error (Invalid_header_deserialization e)
   | Ok _ as ok -> ok
 
-(* Tensor views *)
+(* Tensor views: a tensor to write, by its dtype, shape and size in bytes. *)
 
-type bytes_ba =
-  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+type tensor_view = { dtype : dtype; shape : int list; nbytes : int }
 
-type tensor_view = { dtype : dtype; shape : int list; data : bytes_ba }
-
-let tensor_view_new ~dtype ~shape ~data =
+let tensor_view_new ~dtype ~shape ~nbytes =
   let nbits =
     let ne =
       List.fold_left
@@ -600,10 +595,9 @@ let tensor_view_new ~dtype ~shape ~data =
       if Int64.rem nb 8L <> 0L then Error Misaligned_slice
       else
         let size = Int64.to_int (Int64.div nb 8L) in
-        let length = Bigarray.Array1.dim data in
-        if length <> size then
-          Error (Invalid_tensor_view (dtype_to_string dtype, shape, length))
-        else Ok { dtype; shape; data }
+        if nbytes <> size then
+          Error (Invalid_tensor_view (dtype_to_string dtype, shape, nbytes))
+        else Ok { dtype; shape; nbytes }
 
 (* Header *)
 
@@ -624,8 +618,9 @@ let parse_header header =
 
 (* Serialization *)
 
-(* The bytes of the file, in order: the header, then each tensor's data. *)
-let prepare data data_info =
+(* [layout data data_info] is the header of the file of [data]'s tensors, and
+   each tensor's name with the offset of its bytes from the header's end. *)
+let layout data data_info =
   let sorted =
     List.sort
       (fun (ln, lt) (rn, rt) ->
@@ -634,64 +629,34 @@ let prepare data data_info =
       data
   in
   let offset = ref 0 in
-  let hmetadata = ref [] in
-  let parts = ref [] in
-  List.iter
-    (fun (name, t) ->
-      let n = Bigarray.Array1.dim t.data in
-      let ti =
-        {
-          dtype = t.dtype;
-          shape = t.shape;
-          data_offsets = (!offset, !offset + n);
-        }
-      in
-      offset := !offset + n;
-      hmetadata := (name, ti) :: !hmetadata;
-      parts := t.data :: !parts)
-    sorted;
-  let hmetadata = List.rev !hmetadata in
-  let index_map = Hashtbl.create (List.length hmetadata) in
-  let tensors_arr =
+  let placed =
+    List.map
+      (fun (name, (t : tensor_view)) ->
+        let start = !offset in
+        offset := start + t.nbytes;
+        ( name,
+          { dtype = t.dtype; shape = t.shape; data_offsets = (start, !offset) }
+        ))
+      sorted
+  in
+  let index_map = Hashtbl.create (List.length placed) in
+  let tensors =
     Array.of_list
       (List.mapi
          (fun i (name, ti) ->
            Hashtbl.add index_map name i;
            ti)
-         hmetadata)
+         placed)
   in
-  let meta = { metadata_kv = data_info; tensors = tensors_arr; index_map } in
+  let meta = { metadata_kv = data_info; tensors; index_map } in
   let* _ = validate meta in
   (* The header is the JSON's length in bytes as a little-endian u64, then the
      JSON padded with spaces to a multiple of 8 bytes. *)
   let json = metadata_to_json meta in
   let n = next_multiple_of (String.length json) header_len_bytes in
-  let header =
-    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
-      (header_len_bytes + n)
-  in
-  Bigarray.Array1.fill header (Char.code ' ');
-  for i = 0 to header_len_bytes - 1 do
-    header.{i} <- (n lsr (8 * i)) land 0xff
-  done;
-  String.iteri (fun i c -> header.{header_len_bytes + i} <- Char.code c) json;
-  Ok (header :: List.rev !parts)
-
-let serialize_to_file data data_info filename =
-  let* parts = prepare data data_info in
-  try
-    let fd =
-      Unix.openfile filename
-        [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC; Unix.O_CLOEXEC ]
-        0o666
-    in
-    Fun.protect
-      ~finally:(fun () -> Unix.close fd)
-      (fun () ->
-        List.iter
-          (fun b ->
-            Nx_io_codec.write_all fd b ~off:0 ~len:(Bigarray.Array1.dim b))
-          parts;
-        Unix.fsync fd);
-    Ok ()
-  with e -> Error (Io_error (Printexc.to_string e))
+  let header = Bytes.make (header_len_bytes + n) ' ' in
+  Bytes.set_int64_le header 0 (Int64.of_int n);
+  Bytes.blit_string json 0 header header_len_bytes (String.length json);
+  Ok
+    ( Bytes.unsafe_to_string header,
+      List.map (fun (name, ti) -> (name, fst ti.data_offsets)) placed )

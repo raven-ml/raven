@@ -32,15 +32,15 @@ let row = Nx.create Nx.float32 [| 1024 |] (Array.make 1024 0.5)
 let dispatch =
   group "one-element operations"
     [
-      test "add" (fun () -> equal int 95 (words (fun () -> Nx.add a b)));
-      test "less" (fun () -> equal int 95 (words (fun () -> Nx.less a b)));
+      test "add" (fun () -> equal int 94 (words (fun () -> Nx.add a b)));
+      test "less" (fun () -> equal int 94 (words (fun () -> Nx.less a b)));
       test "where" (fun () ->
-          equal int 105 (words (fun () -> Nx.where mask a b)));
-      test "sum" (fun () -> equal int 152 (words (fun () -> Nx.sum a)));
+          equal int 104 (words (fun () -> Nx.where mask a b)));
+      test "sum" (fun () -> equal int 151 (words (fun () -> Nx.sum a)));
       test "matmul" (fun () ->
-          equal int 121 (words (fun () -> Nx.matmul mat mat)));
+          equal int 120 (words (fun () -> Nx.matmul mat mat)));
       test "zeros" (fun () ->
-          equal int 105 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
+          equal int 104 (words (fun () -> Nx.zeros Nx.float32 [| 1 |])));
       test "shape of a vector" (fun () ->
           equal int 9 (words (fun () -> Nx.shape row)));
     ]

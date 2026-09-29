@@ -526,20 +526,21 @@ val check_grads :
     own the storage they allocate and whose memory is the host's, for testing
     placement without a GPU.
 
-    {!Nx.place} of a tensor over a mapped file (a checkpoint entry) on a device
-    whose memory is the host's (["METAL"] on Apple silicon, the ["CPU:k"]
-    devices) borrows the file's pages: nothing is copied, the weights stay pages
-    the system can drop and read again, and the placed value keeps the tensor's
-    view (a transposed weight stays a transpose). Borrowed storage is never
-    written or lent to a compiled call's output: a call that consumes it gives
-    the result storage of its own. It counts nothing in [resident_bytes] or the
-    collection budget. Any other host value, and any value placed on another
-    device, is copied 64 MiB at a time into one device buffer; a buffer uploaded
-    from a mapped file is returned to the system when the value is released, not
-    kept for reuse. Either way the result is resident like an output of a
-    compiled call (see {!val-jit}): metadata reads are free, a read copies the
-    elements it reads and leaves the storage, a compiled function that takes it
-    as an input leaf reads the storage with no transfer, and a call that
+    {!Nx.place} of a value on the disk (a checkpoint entry of
+    [Nx_io.load_safetensors]) on a device whose memory is the host's (["METAL"]
+    on Apple silicon, the ["CPU:k"] devices) borrows the file's pages: nothing
+    is copied, the weights stay pages the system can drop and read again, and
+    the placed value keeps the value's view (a transposed weight stays a
+    transpose). Borrowed storage is never written or lent to a compiled call's
+    output: a call that consumes it gives the result storage of its own. It
+    counts nothing in [resident_bytes] or the collection budget. A value on the
+    disk placed on any other device is read from its file 64 MiB at a time, and
+    its buffer is returned to the system when the value is released, not kept
+    for reuse. A host value, or a value placed on another device, is copied 64
+    MiB at a time into one device buffer. The result is resident like an output
+    of a compiled call (see {!val-jit}): metadata reads are free, a read copies
+    the elements it reads and leaves the storage, a compiled function that takes
+    it as an input leaf reads the storage with no transfer, and a call that
     consumes the argument it is a leaf of ends it ({!val-jit}). Use it to put a
     model's weights on the device once, as they are imported, instead of once
     per compiled function at its first call. *)
@@ -690,14 +691,15 @@ val jit :
     first trace that meets a placed capture runs again on its devices, and later
     calls run there. [devices] names the devices instead ({!val-device},
     {!val-devices}): at least one, distinct, of one backend. Host values join
-    the devices a call runs on, a full copy on each. A placed input leaf on
-    other devices raises [Invalid_argument] naming its path and both placements,
-    before anything runs, and so does a placed capture, at the trace that meets
-    it: move it with {!Nx.place} first. So does a dtype the device cannot hold,
-    such as [float64] on Metal, in an input leaf; in a value the function
-    computes or captures it raises {!Jit_error}. On the host, contiguous inputs
-    and captured tensors are read in place and outputs are computed directly
-    into the returned tensors' storage; non-contiguous tensors are copied.
+    the devices a call runs on, a full copy on each, and so do values on the
+    disk, which are read from their files. A placed input leaf on other devices
+    raises [Invalid_argument] naming its path and both placements, before
+    anything runs, and so does a placed capture, at the trace that meets it:
+    move it with {!Nx.place} first. So does a dtype the device cannot hold, such
+    as [float64] on Metal, in an input leaf; in a value the function computes or
+    captures it raises {!Jit_error}. On the host, contiguous inputs and captured
+    tensors are read in place and outputs are computed directly into the
+    returned tensors' storage; non-contiguous tensors are copied.
 
     On other devices, results are bit-identical. Host inputs are copied to the
     device on every call; a placed input, an output of an earlier call included,
@@ -839,8 +841,8 @@ type jit_stats = {
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
   resident_bytes : int;
       (** Device bytes held by outputs and placed values that are still
-          reachable, owned storage only: a mapped file's borrowed pages count
-          nothing. *)
+          reachable, owned storage only: a file's borrowed pages count nothing.
+      *)
   reused_bytes : int;
       (** Cumulative bytes of consumed inputs whose storage an output took
           instead of a fresh buffer. *)

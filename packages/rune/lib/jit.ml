@@ -215,13 +215,19 @@ let pp_devices ppf = function
    and a call gives its results its arguments' backend. *)
 let layout p = Nx_effect.Placement.v Nx.Backend.host (Nx_effect.Placement.grid p)
 
+(* A value on the disk takes part in a program as a host value does: the program
+   reads it. *)
+let on_disk : type a b. (a, b) Nx_effect.t -> bool = function
+  | Placed r -> Nx_effect.on_disk r.r_placement
+  | Host _ | Traced _ -> false
+
 (* A leaf's placement in a program over [ds]: its own, or a copy on each device
    for a host value. *)
 let leaf_placement : type a b.
     Nx.Device.t list -> (a, b) Nx_effect.t -> Nx.Placement.t =
  fun ds x ->
   match x with
-  | Placed r -> layout r.r_placement
+  | Placed r when not (on_disk x) -> layout r.r_placement
   | _ -> Nx.Placement.replicated ds
 
 (* The backend of a call's results: that of its placed leaves, which share
@@ -229,7 +235,8 @@ let leaf_placement : type a b.
 let call_backend leaves =
   let backend_of (Nx.P x) =
     match x with
-    | Nx_effect.Placed r -> Some (Nx.Placement.backend r.r_placement)
+    | Nx_effect.Placed r when not (on_disk x) ->
+        Some (Nx.Placement.backend r.r_placement)
     | _ -> None
   in
   match Array.find_map backend_of leaves with
@@ -264,11 +271,10 @@ let local_shape p shape =
    the cell is unreachable (by the finaliser the memory attaches) or consumed by
    a compiled call.
 
-   Storage is owned, allocated by the memory, or borrowed, wrapping a mapped
-   file's pages (see [borrow]); the buffers say which. Only owned storage is
-   lent to an output or counted in [resident_bytes] and the collection budget: a
-   device write into a borrowed file's pages is lost without an error on a
-   read-only mapping. *)
+   Storage is owned, allocated by the memory, or borrowed, over a file's pages
+   (see [borrow]); the buffers say which. Only owned storage is lent to an
+   output or counted in [resident_bytes] and the collection budget: a device
+   write into a file's pages would change the values over them. *)
 
 type store = {
   s_devices : Tolk.Device.t list; (* one per shard, placement order *)
@@ -469,7 +475,7 @@ let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
               "Rune.jit: a captured value was consumed at %s in a compiled \
                call's arguments; capture the value the call returned"
               path))
-  | Placed { r_placement = p; _ } -> (
+  | Placed { r_placement = p; _ } when not (on_disk x) -> (
       if not (over st.st_devices p) then
         match st.st_decided with
         | Guessed -> refuse st (Runs_on p)
@@ -3092,61 +3098,30 @@ let with_host_window host ~off ~len f =
     ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
     (fun () -> f w)
 
-(* File-backed sources
+(* Values on the disk
 
-   A host buffer over a mapped file is copied fastest by reading the file: a
-   read is bound by the disk, a walk of the mapping by the page-fault path,
-   several times slower once the file no longer fits in the cache beside the
-   device buffers it is copied into. The path may name another file by now, so
-   the file opened must be the one that was mapped. *)
+   A value on the disk is read into the device from its file, a chunk at a time:
+   straight into a window the host addresses, and through the caller's scratch
+   memory otherwise. *)
 
-let open_file (file : HB.file) =
-  match Unix.openfile file.path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
-  | exception Unix.Unix_error _ -> None
-  | fd -> (
-      match Unix.LargeFile.fstat fd with
-      | st
-        when st.st_size = Int64.of_int file.size
-             && st.st_mtime = file.mtime && st.st_ino = file.inode ->
-          Some fd
-      | _ | (exception Unix.Unix_error _) ->
-          Unix.close fd;
-          None)
-
-(* [read_at fd ~pos dst ~off len] fills the [len] bytes of the host buffer
-   [dst] from byte [off] with the bytes of [fd] at [pos], or is [false] if the
-   file is shorter or cannot be read. *)
-let read_at fd ~pos dst ~off len =
-  match Unix.LargeFile.lseek fd (Int64.of_int pos) Unix.SEEK_SET with
-  | exception Unix.Unix_error _ -> false
-  | _ ->
-      let bytes = HB.bigarray Bigarray.char dst in
-      let rec fill k =
-        k = len
-        ||
-        match Unix.read_bigarray fd bytes (off + k) (len - k) with
-        | 0 -> false
-        | n -> fill (k + n)
-        | exception Unix.Unix_error _ -> false
-      in
-      fill 0
-
-(* [with_file_source host f] runs [f] with a reader of [host]'s bytes from its
-   file, [None] when [host] is not a mapped file that can still be read. *)
-let with_file_source host f =
-  match HB.file host with
-  | None -> f None
-  | Some (file, base) -> (
-      match open_file file with
-      | None -> f None
-      | Some fd ->
-          Fun.protect
-            ~finally:(fun () -> Unix.close fd)
-            (fun () ->
-              f
-                (Some
-                   (fun ~pos dst ~off len ->
-                     read_at fd ~pos:(base + pos) dst ~off len))))
+(* Copy the bytes of the disk buffer [run] into [buf] from byte [off] on. *)
+let read_disk sc buf ~off run =
+  let n = HB.nbytes run in
+  let pos = ref 0 in
+  while !pos < n do
+    let len = Int.min chunk_bytes (n - !pos) in
+    let src = HB.view run ~offset:!pos ND.Scalar.UInt8 len in
+    with_window buf ~off:(off + !pos) ~len (fun dst ->
+        match Tolk.Device.Buffer.as_buffer dst with
+        | Some mem -> HB.copy ~src ~dst:(HB.of_bigarray mem)
+        | None ->
+            let staged = scratch_buffer sc len in
+            HB.copy ~src ~dst:staged;
+            with_host_window staged ~off:0 ~len (fun src ->
+                Tolk.Device.Buffer.copy_from ~dst ~src));
+    update_stats (fun s -> { s with bytes_to_device = s.bytes_to_device + len });
+    pos := !pos + len
+  done
 
 (* [base_layout v] is [Some (shape, axes)] when the elements of the view [v] are
    exactly a contiguous run of its buffer seen through a permutation of axes:
@@ -3176,48 +3151,10 @@ let base_layout v =
     Some (Array.map (fun a -> shape.(a)) order, axes)
   end
 
-(* A strided view of a mapped file whose elements are a contiguous run of the
-   file seen through a permutation of axes (a transposed weight): the run, read
-   from the file into host memory, under the same permutation. It costs a host
-   copy of the run for the length of the upload; walking the mapping in the
-   view's order instead faults its pages in at a fraction of the disk's
-   speed. *)
-let read_base : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t option =
- fun x ->
-  let v = Nx_effect.view x in
-  let host = Nx_effect.to_host x in
-  match (HB.file host, base_layout v) with
-  | None, _ | _, None -> None
-  | Some _, Some (shape, axes) ->
-      with_file_source host @@ fun read ->
-      Option.bind read @@ fun read ->
-      let dt = Nx_effect.dtype x in
-      let item = ND.itemsize dt in
-      let n = numel shape in
-      let run = Nx_array.Elements.create dt n in
-      let chunk = chunk_bytes / item in
-      let pos = ref 0 and ok = ref true in
-      while !ok && !pos < n do
-        let len = Int.min chunk (n - !pos) in
-        ok :=
-          read
-            ~pos:((NV.offset v + !pos) * item)
-            run ~off:(!pos * item) (len * item);
-        pos := !pos + len
-      done;
-      if not !ok then None
-      else
-        Some
-          (Nx_effect.permute
-             (Nx_effect.reshape
-                (Nx_effect.from_host (Nx_effect.context x) dt run)
-                shape)
-             axes)
-
-(* Copy a tensor's logical contents into [buf] from byte [off] on. A contiguous
-   source, offset or not, is read in place chunk by chunk, from its file when it
-   is a mapped one. A strided one is cut along its leading axis into pieces of
-   at most a chunk, each made contiguous on its own. *)
+(* Copy a tensor's logical contents into [buf] from byte [off] on: a host value
+   or a value on the disk. A contiguous source, offset or not, is read in place
+   chunk by chunk. A strided one is cut along its leading axis into pieces of at
+   most a chunk, each made contiguous on its own. *)
 let rec copyin_at : type a b.
     scratch ->
     Tolk.Device.Buffer.t ->
@@ -3230,44 +3167,28 @@ let rec copyin_at : type a b.
   let item = ND.itemsize (Nx_effect.dtype x) in
   let nbytes = numel shape * item in
   if nbytes = 0 then ()
-  else if NV.is_c_contiguous v then begin
-    let host = Nx_effect.to_host x in
-    with_file_source host @@ fun read ->
-    let read = ref read in
-    let chunk = chunk_bytes / item in
-    let n = numel shape in
-    let pos = ref 0 in
-    while !pos < n do
-      let len = Int.min chunk (n - !pos) in
-      let src_off = NV.offset v + !pos in
-      (* A chunk read from the file lands in staging; a file that can no
-         longer be read is left for the mapping. *)
-      let src, src_off =
-        match !read with
-        | None -> (host, src_off * item)
-        | Some r ->
-            let staged = scratch_buffer sc (len * item) in
-            if r ~pos:(src_off * item) staged ~off:0 (len * item) then
-              (staged, 0)
-            else begin
-              read := None;
-              (host, src_off * item)
-            end
-      in
-      with_window buf
-        ~off:(off + (!pos * item))
-        ~len:(len * item)
-        (fun dst ->
-          with_host_window src ~off:src_off ~len:(len * item) (fun src ->
-              Tolk.Device.Buffer.copy_from ~dst ~src));
-      update_stats (fun s ->
-          { s with bytes_to_device = s.bytes_to_device + (len * item) });
-      pos := !pos + len
-    done
-  end
   else
-    match read_base x with
-    | Some base -> copyin_at sc buf ~off base
+    match if on_disk x then Nx_effect.run x else None with
+    | Some run -> read_disk sc buf ~off run
+    | None when NV.is_c_contiguous v && not (on_disk x) ->
+        let host = Nx_effect.to_host x in
+        let chunk = chunk_bytes / item in
+        let n = numel shape in
+        let pos = ref 0 in
+        while !pos < n do
+          let len = Int.min chunk (n - !pos) in
+          with_window buf
+            ~off:(off + (!pos * item))
+            ~len:(len * item)
+            (fun dst ->
+              with_host_window host
+                ~off:((NV.offset v + !pos) * item)
+                ~len:(len * item)
+                (fun src -> Tolk.Device.Buffer.copy_from ~dst ~src));
+          update_stats (fun s ->
+              { s with bytes_to_device = s.bytes_to_device + (len * item) });
+          pos := !pos + len
+        done
     | None when nbytes <= chunk_bytes ->
         copyin_at sc buf ~off (Nx_effect.contiguous x)
     | None ->
@@ -3293,13 +3214,16 @@ let rec copyin_at : type a b.
           r := stop
         done
 
+(* [x] with a host value in place of a value placed on a device: its view's
+   elements. A value on the disk stays, to be read where it is copied to. *)
+let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
+  | Placed _ as x when not (on_disk x) -> Nx_effect.Host (Nx_effect.host_of x)
+  | x -> x
+
 (* Copy a tensor's logical contents into a device buffer. *)
 let copyin_tensor sc buf x =
   ensure_storage buf;
-  copyin_at sc buf ~off:0
-    (match x with
-    | Nx_effect.Placed _ -> Nx_effect.Host (Nx_effect.host_of x)
-    | x -> x)
+  copyin_at sc buf ~off:0 (on_host x)
 
 (* Copy a device buffer's contents into [host] from element [dst_off] on. *)
 let copyout_into : type a b.
@@ -3320,11 +3244,6 @@ let copyout_into : type a b.
         { s with bytes_from_device = s.bytes_from_device + (len * item) });
     pos := !pos + len
   done
-
-(* [x] with a host value in place of a placed one: its view's elements. *)
-let on_host : type a b. (a, b) Nx_effect.t -> (a, b) Nx_effect.t = function
-  | Placed _ as x -> Nx_effect.Host (Nx_effect.host_of x)
-  | x -> x
 
 (* Copy [x] into [bufs], one per device of [on], each its window of [x] at [p]:
    the whole value for a copy, its slice for a split. *)
@@ -3609,39 +3528,41 @@ let transfer : type a b.
 (* Borrowed storage
 
    A device whose memory is the host's ([Tolk.Device.shares_host_memory]: the
-   CPU devices, and a GPU with unified memory) reads a value over a mapped file
-   where it is: placement borrows the file's pages instead of copying them, and
-   keeps the value's view, so the weights stay clean pages the system drops and
-   reads again rather than compresses. Anonymous host memory is copied:
-   borrowing it would keep nothing out of the compressor, and borrowed storage
-   is never lent, so a state placed from the host, such as a cache pool, would
-   be copied by its first consuming call instead. The borrowed buffer is the
-   host device's, and each device reaches it through its mapping; a device that
-   cannot map it copies. *)
+   CPU devices, and a GPU with unified memory) holds a value on the disk where
+   it lies: placement borrows the file's pages, which the disk maps, instead of
+   copying them, and keeps the value's view, so the weights stay clean pages the
+   system drops and reads again rather than compresses. Host values are copied:
+   borrowing anonymous memory would keep nothing out of the compressor, and
+   borrowed storage is never lent, so a state placed from the host, such as a
+   cache pool, would be copied by its first consuming call instead. The borrowed
+   buffer is the host device's, and each device reaches it through its mapping;
+   a device that cannot map it reads the file. *)
 
-(* [borrow sc devs h windows] is the view each device's window of [h], a host
-   value over a mapped file, is of its storage, and that storage on each device,
-   borrowed: a buffer over the bytes the window reaches, from the 16-byte
-   boundary at or below the first (see [alignment]), which keeps the mapping
-   reachable. It is [None] when the windows are not one view of their storages,
-   an element is narrower than a byte or not aligned to its size, or a device
-   cannot map the memory. The bytes are read from the file once first: a device
-   faulting them in cold reads a few times slower than the disk. *)
+(* [borrow sc devs r b windows] is the view each device's window of [r], a value
+   on the disk whose storage is the file bytes [b], is of its storage, and that
+   storage on each device, borrowed: a buffer over the file's pages the window
+   reaches, from the 16-byte boundary at or below the first (see [alignment]),
+   which keeps the mapping reachable. It is [None] when the windows are not one
+   view of their storages, an element is narrower than a byte, or a device
+   cannot map the memory. The bytes are read from the file once first, into
+   [sc]'s scratch memory: a device faulting them in cold reads a few times
+   slower than the disk. *)
 let borrow : type a b.
     scratch ->
     Tolk.Device.t list ->
-    (a, b) Nx_effect.t ->
+    (a, b) Nx_effect.resident ->
+    HB.t ->
     (int * int) array list ->
     (NV.t * Tolk.Device.Buffer.t list) option =
- fun sc devs h windows ->
-  let dt = Nx_effect.dtype h in
+ fun sc devs r b windows ->
+  let dt = r.r_dtype in
   let item = ND.itemsize dt in
-  let host = Nx_effect.to_host h in
+  let host = HB.borrow Nx_device.host b in
   let ptr = HB.host_address host in
   (* Each window's elements [lo] to [hi] of [host], its buffer's first byte, and
      its view of that buffer. *)
   let span w =
-    let v = Nx_effect.view (Nx_effect.shrink h w) in
+    let v = NV.shrink r.r_view w in
     let lo, hi = NV.extent v in
     let first = Nativeint.add ptr (Nativeint.of_int (lo * item)) in
     let skip =
@@ -3665,20 +3586,17 @@ let borrow : type a b.
   | ND.Int4 | ND.UInt4 -> None
   | _ when not (List.for_all same spans) -> None
   | _ -> (
-      with_file_source host (fun read ->
-          Option.iter
-            (fun read ->
-              List.iter
-                (fun ((lo, hi), _, _, _) ->
-                  let pos = ref (lo * item) and stop = hi * item in
-                  while !pos < stop do
-                    let len = Int.min chunk_bytes (stop - !pos) in
-                    ignore
-                      (read ~pos:!pos (scratch_buffer sc len) ~off:0 len : bool);
-                    pos := !pos + len
-                  done)
-                spans)
-            read);
+      List.iter
+        (fun ((lo, hi), _, _, _) ->
+          let pos = ref (lo * item) and stop = hi * item in
+          while !pos < stop do
+            let len = Int.min chunk_bytes (stop - !pos) in
+            HB.copy
+              ~src:(HB.view b ~offset:!pos ND.Scalar.UInt8 len)
+              ~dst:(scratch_buffer sc len);
+            pos := !pos + len
+          done)
+        spans;
       let made = ref [] in
       let wrap dev ((lo, hi), base, skip, _) =
         let buf =
@@ -3699,12 +3617,12 @@ let borrow : type a b.
 (* The memory of rune's devices, one value per tolk backend, so that nx refuses
    a placement over two backends. [make_placed] wraps buffers already on the
    devices as a placed value whose cell releases them when it is unreachable;
-   [place_on] puts each device's window of a value on it: from a mapped file,
-   the file's pages borrowed on devices whose memory is the host's; otherwise
-   from the host, an upload of the window alone, read from its file when it is a
-   mapped one; from rune's devices, a [transfer]. An upload from a mapped file
-   bypasses the allocator's cache, so a dropped model returns to the system
-   rather than staying parked in it. *)
+   [place_on] puts each device's window of a value on it: from the disk, the
+   file's pages borrowed on devices whose memory is the host's, and the window
+   read from its file otherwise; from the host, an upload of the window alone;
+   from rune's devices, a [transfer]. An upload from the disk bypasses the
+   allocator's cache, so a dropped model returns to the system rather than
+   staying parked in it. *)
 let rec make_placed : type a b.
     Nx_effect.placement ->
     Tolk.Device.t list ->
@@ -3761,20 +3679,17 @@ and place_on : type a b.
   let sc = Hashtbl.create 1 in
   let borrowed =
     match source with
-    | `Host h
-      when numel local > 0
-           && List.for_all Tolk.Device.shares_host_memory devs
-           && HB.file (Nx_effect.to_host h) <> None ->
-        borrow sc devs h windows
+    | `Host (Nx_effect.Placed r)
+      when numel local > 0 && List.for_all Tolk.Device.shares_host_memory devs
+      ->
+        Option.bind (Nx_effect.file_run r) (fun b -> borrow sc devs r b windows)
     | _ -> None
   in
   match borrowed with
   | Some (view, bufs) -> make_placed p devs dt view bufs
   | None ->
       let nolru =
-        match source with
-        | `Host h -> HB.file (Nx_effect.to_host h) <> None
-        | `Stored _ -> false
+        match source with `Host h -> on_disk h | `Stored _ -> false
       in
       let bufs =
         if numel local = 0 then []
@@ -5018,7 +4933,8 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
      device that holds it; borrowed storage is lent to no result. No
      other leaf of the call, nor a capture of the program, may reach that
      storage. A consumed host leaf's storage is its runtime buffer, which its
-     view must span whether owned or borrowed. *)
+     view must span whether owned or borrowed. A leaf on the disk holds
+     no storage a result may take: it is read, and stays usable. *)
   let consumed = ref [] and hosts = ref [] in
   let views_part i =
     invalid_arg
@@ -5041,7 +4957,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                 && HB.spans a.buffer)
             then views_part i;
             hosts := (i, a.buffer) :: !hosts
-        | Placed r ->
+        | Placed r when not (on_disk leaf) ->
             (match store_of r.r_cell with
             | Some s
               when List.compare_lengths
@@ -5060,7 +4976,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
               && match store_of r.r_cell with Some s -> owned s | None -> true
             then views_part i;
             consumed := (i, r.r_cell) :: !consumed
-        | Traced _ -> ())
+        | Placed _ | Traced _ -> ())
     leaves;
   let consumed = List.rev !consumed and hosts = List.rev !hosts in
   let share_storage i j =
@@ -5463,7 +5379,8 @@ let leaves_devices ~requested leaves =
       (List.mapi
          (fun i (Nx.P leaf) ->
            match leaf with
-           | Nx_effect.Placed r -> [ (i, r.r_placement) ]
+           | Nx_effect.Placed r when not (on_disk leaf) ->
+               [ (i, r.r_placement) ]
            | _ -> [])
          (Array.to_list leaves))
   in

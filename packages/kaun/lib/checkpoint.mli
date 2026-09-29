@@ -112,7 +112,7 @@ val to_tensor :
   shape:int array -> ('a, 'b) Nx.dtype -> string -> t -> ('a, 'b) Nx.t
 (** [to_tensor ~shape dtype name t] is [name]'s entry in [t], which must have
     [dtype] and [shape]. The entry is returned as stored, so an entry of a
-    loaded file stays a view of the file.
+    loaded file stays on the disk, unread.
 
     Raises [Invalid_argument], naming the entry, if [name] has no entry or the
     entry's shape or dtype differs. *)
@@ -171,13 +171,12 @@ val save : string -> t -> unit
 
 val load : string -> t
 (** [load path] is the checkpoint stored in the safetensors file at [path],
-    whether written by {!save} or produced elsewhere. The file is mapped and its
-    entries are views of it, read when first used; a device whose memory is the
-    host's holds an entry placed on it as those same pages. The file must not be
-    modified in place while an entry, or a value placed from one, is alive:
-    nothing enforces it, and a file rewritten underneath gives other elements
-    and a truncated one faults. [Nx.copy] gives a tensor that no longer depends
-    on it. An entry whose dtype nx lacks is loaded as its bytes, at [uint8]. See
-    {!Nx_io.load_safetensors}.
+    whether written by {!save} or produced elsewhere. Its entries are values on
+    the disk over the file's bytes: an operation computes on the file's pages,
+    [Nx.place] on the host or on a device whose memory is the host's borrows
+    them, and [Nx.place] on another device reads them into it. The file must not
+    be modified in place while an entry is alive: a {!save} to [path] replaces
+    it and leaves them their values. An entry whose dtype nx lacks is loaded as
+    its bytes, at [uint8]. See {!Nx_io.load_safetensors}.
 
     Raises [Failure] on I/O or format errors. *)

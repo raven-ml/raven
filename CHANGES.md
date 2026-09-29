@@ -172,6 +172,15 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Nx.place` of a value on the disk, such as an entry of
+  `Nx_io.load_safetensors`, on Metal (Apple silicon) or a `CPU:k` device
+  borrows the file's pages copy-on-write and keeps its view: gpt-oss-20b's
+  weights take 1.3 GB of the process's memory instead of 14 GB and import in
+  3.5 s instead of 9.5 s cold. Borrowed storage is never lent to a compiled
+  call's output or written, and counts nothing in `resident_bytes` or the
+  collection budget. On another device the value is read from its file, 64 MiB
+  at a time, into device memory. As an argument or a capture of `Rune.jit` a
+  value on the disk is read as a host value is.
 - A scan staged under `Rune.jit` no longer copies a carry its body returns
   unchanged at every step: the loop reads its initial value and the scan
   returns it. A `Rune.Total` scope around a scan whose body adds nothing adds
@@ -298,13 +307,6 @@ All notable changes to this project will be documented in this file.
 - Preserve higher-order compiled `Rune.remat` gradients with strict buffer-state
   validation. Written residuals get a separate checkpoint after their cotangents
   are ready, retaining the activation-memory bound without ambiguous reads.
-
-- `Nx.place` of a tensor over a mapped file on Metal (Apple silicon) or a
-  `CPU:k` device borrows the file's pages instead of copying them, and keeps
-  its view: gpt-oss-20b's weights take 1.3 GB of the process's memory instead
-  of 14 GB and import in 3.5 s instead of 9.5 s cold. Borrowed storage is never
-  lent to a compiled call's output or written, and counts nothing in
-  `resident_bytes` or the collection budget.
 
 - Overlapping or reentrant calls to the same `jit` or `pmap` closure now raise
   `Invalid_argument` before accessing shared compilation or replay state.
@@ -440,8 +442,8 @@ All notable changes to this project will be documented in this file.
   and a call returns without waiting for its devices.
 - Reading a value on Metal or `CPU:k` that nothing else holds (the operand
   of an eager operation, say) no longer reads freed memory: the collector
-  could release its buffer during the copy, which crashed when the buffer came
-  from a mapped file.
+  could release its buffer during the copy, which crashed when the buffer was
+  uploaded from a file.
 - A compiled `Nx.matmul` of `bfloat16`, `float16` or float8 values multiplies
   and sums at `float32` and rounds once, as eager does. Rounding each product
   moved greedy gpt-oss-20b off its `float32` ids at the fifth token.
@@ -460,7 +462,8 @@ All notable changes to this project will be documented in this file.
   instead of matching values n×n: 65536 `float64` entries take 6 ms, not 4 s.
 - `Nx.place` puts a value on several of rune's devices, `replicated` or
   `sharded`: each device gets its window alone, uploaded from the host (from
-  the file, for a mapped one) or copied by tolk from the devices holding it.
+  its file, for a value on the disk) or copied by tolk from the devices
+  holding it.
 - **Breaking:** devices of different backends (`METAL` and `CPU:1`) have
   different engines, so a placement over both raises.
 - A compiled `Nx.scatter` drops an update whose index is outside the axis
@@ -666,12 +669,6 @@ All notable changes to this project will be documented in this file.
   on Metal held 11 GB of intermediates beside its 13.8 GB of weights and now
   holds 0.2 GB; no longer under memory pressure, it drops from 6.7 s to 0.42 s.
   `NO_MEMORY_PLANNER=1` turns it off.
-- An upload reads a tensor over a mapped file from the file, not through the
-  mapping. Copying mapped pages into device buffers is bound by the page-fault
-  path once the file no longer fits in the cache beside the buffers: placing a
-  13.76 GB checkpoint on Metal took 28.6 s and now takes 7.3 s. A transposed
-  weight is read as the run of the file it permutes. If the path no longer
-  names the file that was mapped, the mapping is read as before.
 - `RUNE_JIT_RESIDENT_BUDGET` counts the outputs of compiled calls only. Placed
   weights stay resident by design, and counting them ran a major collection
   before every output allocation once a model larger than the budget was
@@ -2832,6 +2829,20 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Buffer.file` and the `?file` argument of
+  `Buffer.of_bigarray` are removed: a buffer over a file's bytes is a buffer on
+  `Nx_device.disk`.
+- `Nx_io.load_safetensors` returns each entry as a value on the disk over its
+  bytes in the file, where it returned a host value over a mapping of the file.
+  Placing an entry on the host or on a device whose memory the host addresses
+  maps the file copy-on-write, as the load did, and placing it on another
+  device reads its bytes into the device's memory without a host copy of the
+  file. An entry at an offset that is no multiple of its element size is read
+  from the file instead of copied out of the mapping element by element. The
+  file must not be modified in place while its values are alive.
+- `Nx_io.save_safetensors` writes each tensor into the file from its own
+  storage, wherever it lives: a device writes its memory to the file, and a
+  value on the disk is copied from its file.
 - A value on the disk (`Nx.Device.of_runtime Nx_device.disk`) takes part in
   an operation as a host value: the operation reads it through a mapping of
   its file, or a copy when its bytes are not aligned to its elements, and
@@ -3141,8 +3152,7 @@ thread.
   format (`Nx_device.Buffer`) that are owned, borrowed or byte-offset views.
   A host buffer reads as a stdlib bigarray without a copy (`Buffer.bigarray`),
   and a bigarray of any storage kind is borrowed as a host buffer
-  (`Buffer.of_bigarray`), which can record the file it maps so that a copy
-  reads the file instead of faulting the mapping in (`Buffer.file`).
+  (`Buffer.of_bigarray`).
   Each device has a caching allocator with a budget (`budget`, `set_budget`,
   `free_cache`) and one `Out_of_memory`, which collects unreachable buffers
   before it raises. `Buffer.copy` synchronizes the devices it touches. There

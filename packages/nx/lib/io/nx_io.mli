@@ -132,20 +132,27 @@ val load_safetensors : string -> archive
 (** [load_safetensors path] is the tensors of the SafeTensors file [path], by
     name.
 
-    Loading reads the header and maps the file; it reads no tensor data. An
-    entry whose data sits in the file at an address that suits its dtype is a
-    view of the mapping, whose pages the system reads when they are first used
-    and may drop again under memory pressure. Any other entry is copied by the
-    load: one whose address is not a multiple of its element size, which a
-    header of odd length causes, and every entry on a big-endian host.
+    Loading opens the file and reads its header; it reads no tensor data. Each
+    entry is a value on the disk device ([Nx.Device.of_runtime Nx_device.disk]),
+    over the entry's bytes in the file. The host reads an entry where it lies:
+    an operation on it computes on the file's pages, mapped copy-on-write, and
+    so does {!Nx.place} onto the host or onto a device whose memory is the
+    host's, such as Metal's, which borrows them without a copy. {!Nx.place} onto
+    a device whose memory the host does not address reads the entry's bytes into
+    it. A movement ({!Nx.reshape}, {!Nx.slice}, {!Nx.transpose}, ...) of an
+    entry is a value on the disk too. An entry whose bytes are not aligned to
+    its elements, which a header of odd length causes, is read instead of
+    mapped. On a big-endian host the entries are read and put in its byte order
+    as they load.
 
-    {b The file must not change while a tensor loaded from it is alive.}
-    Truncating or rewriting it in place changes the tensors' values or kills the
-    process with a bus error, which no handler catches. Replace a file by
-    writing a new one and renaming it over the old one, as {!save_safetensors}
-    does; [Nx.copy] gives a tensor that no longer depends on its file. The file
-    stays mapped until the last tensor over it is garbage collected, and on
-    Windows it may not be deleted or replaced until then.
+    The file stays open, and mapped once read, until the last value over it is
+    garbage collected, and its values see the file that was opened:
+    {!save_safetensors} to [path], which renames a new file over it, leaves them
+    their values.
+    {b The file must not change in place while a value loaded from it is alive}:
+    rewriting it may change their values, and truncating it kills the process
+    with a bus error when a truncated page is read. On Windows a mapped file may
+    not be deleted or replaced until its values are collected.
 
     An entry whose dtype nx lacks is loaded as its bytes, at [uint8]: [F8_E8M0]
     keeps the entry's shape, and [F4], [F6_E2M3] and [F6_E3M2], whose elements
@@ -167,9 +174,11 @@ val save_safetensors :
     The tensors are written to a temporary file in [path]'s directory, which is
     synced to disk and then renamed to [path]: a reader sees the previous file
     or the new one, never a partial one, and a failed save leaves the previous
-    file as it was. If the rename is refused, which happens on platforms that
-    lock a file while tensors loaded from it are alive, a major collection runs
-    and the rename is retried once.
+    file as it was. Each tensor's bytes are copied into the file from where they
+    are: a device writes its memory to the file, and a tensor loaded by
+    {!load_safetensors} is copied from its file. If the rename is refused, a
+    major collection runs, which closes the files of the tensors no longer
+    reachable, and the rename is retried once.
 
     [overwrite] defaults to [true]. If [overwrite] is [false], [path] must not
     exist.

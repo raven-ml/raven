@@ -519,11 +519,11 @@ let test_capture_resident_elsewhere () =
   in
   equal ~msg:"nothing is uploaded" int 0 up
 
-(* [with_mapped_f32 values f] is [f] applied to a float32 tensor over a fresh
-   mapping of a file holding [values]. *)
-let with_mapped_f32 values f =
+(* [with_disk_f32 values f] is [f] applied to a float32 tensor on the disk, over
+   a fresh file holding [values]. *)
+let with_disk_f32 values f =
   let n = Array.length values in
-  let path = Filename.temp_file "rune_metal_mapped_" ".bin" in
+  let path = Filename.temp_file "rune_metal_disk_" ".bin" in
   Fun.protect
     ~finally:(fun () ->
       full_major ();
@@ -536,26 +536,16 @@ let with_mapped_f32 values f =
         values;
       output_bytes oc bytes;
       close_out oc;
-      let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
-      let stat = Unix.fstat fd in
-      let mapping =
-        Nx_device.Buffer.of_bigarray
-          ~file:
-            { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
-          (Bigarray.array1_of_genarray
-             (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
-                [| -1 |]))
-      in
-      Unix.close fd;
+      let file = Nx_device.Buffer.of_file path in
       f
-        (Nx_effect.from_host Nx_effect.Placement.host Nx_dtype.float32
-           (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Float32 n)))
+        (Nx_effect.of_buffer Nx_dtype.float32 [| n |]
+           (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Float32 n)))
 
-(* A weight over a mapped file placed on Metal is the file's pages, borrowed:
-   nothing is uploaded or counted, and the transpose is kept. *)
-let test_place_from_a_mapped_file () =
+(* A weight on the disk placed on Metal is the file's pages, borrowed: nothing
+   is read, uploaded or counted, and the transpose is kept. *)
+let test_place_from_the_disk () =
   let values = Array.init 4096 (fun i -> float_of_int (i mod 97) /. 8.0) in
-  with_mapped_f32 values @@ fun w ->
+  with_disk_f32 values @@ fun w ->
   let w = Nx.reshape [| 64; 64 |] w in
   let resident () = (Rune.jit_stats ()).resident_bytes in
   let base = resident () in
@@ -574,7 +564,7 @@ let test_place_from_a_mapped_file () =
     (to_arr (Nx.matmul x (Nx.matrix_transpose w)))
     (g x)
 
-(* A consumed value over a mapped file lends its storage to no result: an
+(* A consumed value borrowed from a file lends its storage to no result: an
    indexed write into it lands in storage of the program's own, and the file's
    pages keep their elements, at a 16-byte boundary and 8 bytes past one, where
    a checkpoint's entries sit; a compiled copy of it is its elements. The same
@@ -590,7 +580,7 @@ let test_borrowed_storage_is_never_lent () =
         Nx.scatter ~axis:0 ~indices ~values:(vec32 [| 10.0; 30.0 |]) pool)
   in
   let copy = Rune.jit' ~devices:[ metal ] Nx.copy in
-  with_mapped_f32 [| 5.0; 6.0; 1.0; 2.0; 3.0; 4.0 |] @@ fun file ->
+  with_disk_f32 [| 5.0; 6.0; 1.0; 2.0; 3.0; 4.0 |] @@ fun file ->
   List.iter
     (fun (msg, pool) ->
       let msg s = msg ^ ": " ^ s in
@@ -1010,8 +1000,7 @@ let tests =
           test_unsupported_dtype_raises_before_a_call;
         test "a capture moves a program past a dtype"
           test_capture_moves_past_a_dtype;
-        test "a weight over a mapped file is borrowed"
-          test_place_from_a_mapped_file;
+        test "a weight on the disk is borrowed" test_place_from_the_disk;
         test "borrowed storage is never lent or written"
           test_borrowed_storage_is_never_lent;
       ];

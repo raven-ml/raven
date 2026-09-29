@@ -2652,6 +2652,18 @@ let elements x =
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b)
     (View.numel (view x))
 
+(* The buffer of exactly [x]'s elements in C order, without a copy, when there
+   is one: [x] is on the host, or its storage is one runtime buffer, and its
+   view is a contiguous run of its storage. *)
+let run (type a b) (x : (a, b) t) =
+  match x with
+  | Host t -> run_in t.buffer t.view
+  | Placed r -> (
+      match Cell.state r.r_cell with
+      | Live (Runtime [ b ]) -> run_in b r.r_view
+      | _ -> None)
+  | Traced _ -> outside_trace ()
+
 (* [of_buffer dtype shape b] is the value of shape [shape] whose elements, of
    [dtype], are [b]'s in C order, without a copy: a host value for a buffer of
    the host, and on [b]'s device otherwise. *)

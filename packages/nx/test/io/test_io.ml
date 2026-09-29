@@ -263,7 +263,7 @@ let safetensors_cases =
 let save_safetensors path p = Nx_io.save_safetensors path [ ("t", p) ]
 
 (* Not inlined, so that once it returns nothing but its result keeps the file
-   mapped. *)
+   open. *)
 let[@inline never] load_entry path name =
   Hashtbl.find (Nx_io.load_safetensors path) name
 
@@ -349,11 +349,17 @@ let safetensors =
       ("{\"" ^ name ^ {|":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|})
     ^ "\042"
   in
-  let file_range archive name =
-    let (Nx.P t) = Hashtbl.find archive name in
-    Option.map
-      (fun ((file : Nx_device.Buffer.file), offset) -> (file.path, offset))
-      (Nx_device.Buffer.file (Nx_effect.to_host t))
+  let disk = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let on_disk archive =
+    List.for_all
+      (fun (_, Nx.P t) -> Nx.Placement.equal disk (Nx.placement t))
+      (listed archive)
+  in
+  let reads f =
+    let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
+    let before = read () in
+    let y = f () in
+    (y, read () - before)
   in
   group "safetensors"
     [
@@ -395,23 +401,40 @@ let safetensors =
         ] (fun name ->
           fails (fun () -> Nx_io.load_safetensors (file "" (u8_entry name))));
       test
-        "an entry of any dtype loads its bytes as stored, a view of the file \
-         when aligned and a copy otherwise" (fun () ->
-          let path = file "" (typed_file ()) in
-          loads_typed_entries path;
-          let start =
-            String.length (read path) - String.length (payload path)
+        "an entry of any dtype loads its bytes as stored, on the disk, at any \
+         offset of the file" (fun () ->
+          List.iter
+            (fun pad ->
+              let path = file "" (typed_file ~pad ()) in
+              loads_typed_entries path;
+              is_true ~msg:"on the disk" (on_disk (Nx_io.load_safetensors path)))
+            [ 0; 1 ]);
+      test
+        "a load reads the header alone, and a use of an entry its file's pages \
+         where they are aligned to its elements, and its bytes otherwise"
+        (fun () ->
+          let used pad =
+            let path = file "" (typed_file ~pad ()) in
+            let header =
+              String.length (read path) - String.length (payload path)
+            in
+            let archive, bytes =
+              reads (fun () -> Nx_io.load_safetensors path)
+            in
+            equal ~msg:"the header" int header bytes;
+            let (Nx.P t) = Hashtbl.find archive "u32" in
+            snd (reads (fun () -> Nx.to_array (Nx.bitcast Nx.int32 t)))
           in
-          let archive = Nx_io.load_safetensors path in
-          let range = option (pair string int) in
-          equal ~msg:"u64" range (Some (path, start)) (file_range archive "u64");
-          equal ~msg:"bf16" range
-            (Some (path, start + 32))
-            (file_range archive "bf16");
-          let path = file "" (typed_file ~pad:1 ()) in
-          loads_typed_entries path;
-          equal ~msg:"a copy" range None
-            (file_range (Nx_io.load_safetensors path) "u64"));
+          equal ~msg:"an aligned entry" int 0 (used 0);
+          equal ~msg:"an entry one byte past" int 16 (used 1));
+      test
+        "an entry of a file truncated since it loaded fails at use, naming it"
+        (fun () ->
+          let path = temp_file () in
+          save_safetensors path (Nx.P (Nx.arange Nx.int32 0 1024 1));
+          let (Nx.P t) = load_entry path "t" in
+          Unix.truncate path 100;
+          fails ~naming:path (fun () -> Nx.to_array t));
       (let whole = typed_file () in
        let with_length n =
          let b = Bytes.of_string whole in
@@ -465,7 +488,8 @@ let safetensors =
           | names -> failf "%d files kept, one expected" (List.length names));
       test
         "a file whose tensors are alive is replaced and deleted, the tensors \
-         outliving their archive unchanged" (fun () ->
+         outliving their archive unchanged, and saved again from the disk"
+        (fun () ->
           let path = temp_file () in
           let first = Nx.P (Nx.arange Nx.int32 0 65536 1) in
           let second = Nx.P (Nx.arange Nx.int32 1 65537 1) in
@@ -478,7 +502,10 @@ let safetensors =
           | () -> ()
           | exception Sys_error reason when Sys.win32 -> skip ~reason ());
           Gc.full_major ();
-          equal ~msg:"the tensor loaded first" packed first loaded);
+          equal ~msg:"the tensor loaded first" packed first loaded;
+          let again = temp_file () in
+          save_safetensors again loaded;
+          equal ~msg:"saved from the disk" packed first (load_entry again "t"));
     ]
 
 (* Text *)

@@ -33,58 +33,38 @@ let kind_of_dtype : Safetensors.dtype -> kind = function
   | I64 -> K Int64
   | U64 -> K UInt64
 
-(* [tensor mapping kind shape ~off ~len] is the entry of [len] bytes at byte
-   [off] of the host buffer [mapping]. It is a view of [mapping] when its
-   address suits [kind], and a copy in the machine's byte order otherwise. *)
-let tensor (type a b) mapping (kind : (a, b) Nx_dtype.t) shape ~off ~len =
+module B = Nx_device.Buffer
+
+(* The [n] bytes of [file] from byte [pos]. *)
+let read_string file ~pos n =
+  let b = B.create Nx_device.host Nx_dtype.Scalar.UInt8 n in
+  B.copy ~src:(B.view file ~offset:pos Nx_dtype.Scalar.UInt8 n) ~dst:b;
+  let chars = B.bigarray Bigarray.char b in
+  String.init n (Bigarray.Array1.get chars)
+
+(* [entry file kind shape ~off ~len] is the entry of [len] bytes at byte [off]
+   of [file]: a value on the disk over them, or on a big-endian host their
+   elements read and put in the host's byte order. *)
+let entry (type a b) file (kind : (a, b) Nx_dtype.t) shape ~off ~len =
   let size = Nx_dtype.itemsize kind in
   let n = len / size in
-  let aligned =
-    let first =
-      Nativeint.add
-        (Nx_device.Buffer.host_address mapping)
-        (Nativeint.of_int off)
-    in
-    Nativeint.rem first (Nativeint.of_int size) = 0n
-  in
-  let buffer =
-    if aligned && not Sys.big_endian then
-      Nx_device.Buffer.view mapping ~offset:off
-        (Nx_dtype.Scalar.of_dtype kind)
-        n
-    else begin
-      let buffer = Nx_array.Elements.create kind n in
-      let dst = Storage.bytes buffer in
-      Nx_io_codec.blit_bytes ~src:(Storage.bytes mapping) ~src_off:off ~dst
-        ~dst_off:0 ~len;
-      if Sys.big_endian then
-        Nx_io_codec.byteswap dst ~element_size:size ~elements:n;
-      buffer
-    end
-  in
-  Nx.P (Storage.tensor kind buffer shape)
+  let bytes = B.view file ~offset:off (Nx_dtype.Scalar.of_dtype kind) n in
+  if Sys.big_endian then begin
+    let buffer = Nx_array.Elements.create kind n in
+    B.copy ~src:bytes ~dst:buffer;
+    Nx_io_codec.byteswap (Storage.bytes buffer) ~element_size:size ~elements:n;
+    Nx.P (Storage.tensor kind buffer shape)
+  end
+  else Nx.P (Nx_effect.of_buffer kind shape bytes)
 
-let read_exactly fd n =
-  let buf = Bytes.create n in
-  let rec go off =
-    if off < n then
-      match Unix.read fd buf off (n - off) with
-      | 0 -> failwith "unexpected end of file"
-      | k -> go (off + k)
-  in
-  go 0;
-  Bytes.unsafe_to_string buf
-
-(* The file is validated before it is mapped: a page of a mapping that lies past
-   the end of its file faults when touched, and no handler catches that. *)
-let map_validated path fd =
-  let stat = Unix.LargeFile.fstat fd in
-  if stat.st_kind <> Unix.S_REG then failwith "not a regular file";
-  let file_len = Int64.to_int stat.st_size in
+(* The header of [file] and the offset of its data, once the file's length is
+   the one the header describes. *)
+let read_header file =
+  let file_len = B.length file in
   let prefix = Safetensors.header_len_bytes in
   if file_len < prefix then
     fail_msg "%d bytes is too short for a SafeTensors file" file_len;
-  let header_len = String.get_int64_le (read_exactly fd prefix) 0 in
+  let header_len = String.get_int64_le (read_string file ~pos:0 prefix) 0 in
   if
     Int64.compare header_len 0L < 0
     || Int64.compare header_len (Int64.of_int Safetensors.max_header_size) > 0
@@ -94,73 +74,46 @@ let map_validated path fd =
   let header_len = Int64.to_int header_len in
   if prefix + header_len > file_len then
     fail_msg "header length %d exceeds the file's %d bytes" header_len file_len;
-  match Safetensors.parse_header (read_exactly fd header_len) with
+  match Safetensors.parse_header (read_string file ~pos:prefix header_len) with
   | Error err -> failwith (Safetensors.string_of_error err)
   | Ok (metadata, data_len) ->
       let expected = prefix + header_len + data_len in
       if expected <> file_len then
         fail_msg "header describes a file of %d bytes but the file has %d"
           expected file_len;
-      let mapping =
-        Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false [| -1 |]
-        |> Bigarray.array1_of_genarray
-      in
-      if Bigarray.Array1.dim mapping <> expected then
-        fail_msg "file changed size while loading: mapped %d bytes of %d"
-          (Bigarray.Array1.dim mapping)
-          expected;
-      (* The path is recorded as opened from any directory. *)
-      let path =
-        if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
-        else path
-      in
-      let file =
-        {
-          Nx_device.Buffer.path;
-          size = file_len;
-          mtime = stat.st_mtime;
-          inode = stat.st_ino;
-        }
-      in
-      (metadata, prefix + header_len, Nx_device.Buffer.of_bigarray ~file mapping)
+      (metadata, prefix + header_len)
 
 let load_safetensors path =
-  try
-    let fd =
-      Unix.openfile path [ Unix.O_RDONLY; Unix.O_NONBLOCK; Unix.O_CLOEXEC ] 0
-    in
-    let (metadata : Safetensors.metadata), data_start, mapping =
-      Fun.protect
-        ~finally:(fun () -> Unix.close fd)
-        (fun () -> map_validated path fd)
-    in
-    let archive = Hashtbl.create (Array.length metadata.tensors) in
-    Hashtbl.iter
-      (fun name index ->
-        let info = metadata.tensors.(index) in
-        let start, stop = info.data_offsets in
-        let len = stop - start in
-        let (K kind) = kind_of_dtype info.dtype in
-        (* Elements narrower than a byte have no shape in bytes. *)
-        let shape =
-          match info.dtype with
-          | F4 | F6_E2M3 | F6_E3M2 -> [| len |]
-          | _ -> Array.of_list info.shape
-        in
-        Hashtbl.replace archive name
-          (tensor mapping kind shape ~off:(data_start + start) ~len))
-      metadata.index_map;
-    archive
-  with
-  | Failure msg -> fail_msg "%s: %s" path msg
-  | Unix.Unix_error (e, _, _) -> fail_msg "%s: %s" path (Unix.error_message e)
+  match B.of_file path with
+  | exception Sys_error msg -> failwith msg
+  | file -> (
+      try
+        let (metadata : Safetensors.metadata), data_start = read_header file in
+        let archive = Hashtbl.create (Array.length metadata.tensors) in
+        Hashtbl.iter
+          (fun name index ->
+            let info = metadata.tensors.(index) in
+            let start, stop = info.data_offsets in
+            let len = stop - start in
+            let (K kind) = kind_of_dtype info.dtype in
+            (* Elements narrower than a byte have no shape in bytes. *)
+            let shape =
+              match info.dtype with
+              | F4 | F6_E2M3 | F6_E3M2 -> [| len |]
+              | _ -> Array.of_list info.shape
+            in
+            Hashtbl.replace archive name
+              (entry file kind shape ~off:(data_start + start) ~len))
+          metadata.index_map;
+        archive
+      with Failure msg -> fail_msg "%s: %s" path msg)
 
 (* Saving *)
 
-(* [tensor_data t] is the SafeTensors dtype of [t] and its elements' bytes, in
-   row-major order and little-endian, as stored: [t]'s own storage on a
-   little-endian host when [t] is contiguous, and a float's bits are copied,
-   never read as a float. *)
+(* [tensor_data t] is the SafeTensors dtype of [t] and a buffer of its elements'
+   bytes, in row-major order and little-endian, as stored: on a little-endian
+   host, [t]'s own storage when its elements are a contiguous run of it,
+   wherever it is. A float's bits are copied, never read as a float. *)
 let tensor_data (type a b) (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
@@ -183,28 +136,53 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
         fail_msg "unsupported dtype for safetensors: %s"
           (Nx_dtype.to_string dtype)
   in
-  let bytes = Storage.bytes (Nx_effect.elements t) in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
+    let elements = Nx_effect.elements t in
     let swapped =
-      Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
-        (Bigarray.Array1.dim bytes)
+      B.create Nx_device.host (B.dtype elements) (B.length elements)
     in
-    Bigarray.Array1.blit bytes swapped;
-    Nx_io_codec.byteswap swapped ~element_size:size ~elements:(Nx.numel t);
+    B.copy ~src:elements ~dst:swapped;
+    Nx_io_codec.byteswap (Storage.bytes swapped) ~element_size:size
+      ~elements:(Nx.numel t);
     (dtype, swapped)
   end
-  else (dtype, bytes)
+  else
+    match Nx_effect.run t with
+    | Some run -> (dtype, run)
+    | None -> (dtype, Nx_effect.elements t)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;
   try Unix.rename temp path
   with Unix.Unix_error _ -> (
+    (* A file loaded from [path] may still be open: its values are collected and
+       the disk, which closes their files, reclaims them. *)
     Gc.full_major ();
+    Nx_device.synchronize Nx_device.disk;
     try Unix.rename temp path
     with Unix.Unix_error (e, _, _) ->
       fail_msg "cannot replace %s (%s): the tensors were written to %s" path
         (Unix.error_message e) temp)
+
+(* Writes the header and the tensors' bytes, each at its offset after the
+   header, to a new file at [temp]. *)
+let write temp header parts =
+  let hlen = String.length header in
+  let data_len =
+    List.fold_left (fun n (off, src) -> Int.max n (off + B.nbytes src)) 0 parts
+  in
+  let file = B.create_file temp (hlen + data_len) in
+  let bytes = B.create Nx_device.host Nx_dtype.Scalar.UInt8 hlen in
+  let chars = B.bigarray Bigarray.char bytes in
+  String.iteri (Bigarray.Array1.set chars) header;
+  B.copy ~src:bytes ~dst:(B.view file ~offset:0 Nx_dtype.Scalar.UInt8 hlen);
+  List.iter
+    (fun (off, src) ->
+      B.copy ~src
+        ~dst:
+          (B.view file ~offset:(hlen + off) Nx_dtype.Scalar.UInt8 (B.nbytes src)))
+    parts
 
 let save_safetensors ?(overwrite = true) path items =
   check_overwrite overwrite path;
@@ -214,25 +192,42 @@ let save_safetensors ?(overwrite = true) path items =
       if Hashtbl.mem names name then fail_msg "tensor %S is named twice" name;
       Hashtbl.add names name ())
     items;
-  let tensor_views =
+  let tensors =
     List.map
       (fun (name, Nx.P arr) ->
         let shape = Array.to_list (Nx.shape arr) in
-        let dtype, data = tensor_data arr in
-        match Safetensors.tensor_view_new ~dtype ~shape ~data with
-        | Ok view -> (name, view)
+        let dtype, src = tensor_data arr in
+        match
+          Safetensors.tensor_view_new ~dtype ~shape ~nbytes:(B.nbytes src)
+        with
+        | Ok view -> (name, (view, src))
         | Error err ->
             fail_msg "failed to create tensor view for '%s': %s" name
               (Safetensors.string_of_error err))
       items
   in
+  let header, offsets =
+    match
+      Safetensors.layout (List.map (fun (n, (v, _)) -> (n, v)) tensors) None
+    with
+    | Ok layout -> layout
+    | Error err -> failwith (Safetensors.string_of_error err)
+  in
+  let srcs = Hashtbl.create (List.length tensors) in
+  List.iter (fun (name, (_, src)) -> Hashtbl.add srcs name src) tensors;
+  let parts =
+    List.map (fun (name, off) -> (off, Hashtbl.find srcs name)) offsets
+  in
   try
     let temp = Temp_file.sibling path in
-    match Safetensors.serialize_to_file tensor_views None temp with
-    | Ok () -> replace_or_keep temp path
-    | Error err ->
+    match
+      write temp header parts;
+      Temp_file.sync temp
+    with
+    | () -> replace_or_keep temp path
+    | exception e ->
         Temp_file.remove_if_exists temp;
-        failwith (Safetensors.string_of_error err)
+        raise e
   with
   | Sys_error msg -> failwith msg
   | Unix.Unix_error (e, _, _) -> fail_msg "%s: %s" path (Unix.error_message e)

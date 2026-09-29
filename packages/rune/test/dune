@@ -129,7 +129,7 @@
    DEV
    CPU
    (run %{test})))
- (libraries rune nx nx.device nx.dtype nx.effect unix))
+ (libraries rune nx nx.device nx.dtype nx.effect))
 
 (test
  (name test_jit_scratch)
@@ -165,7 +165,6 @@
   nx.dtype
   nx.effect
   tolk
-  unix
   windtrap
   rune_test_support))
 

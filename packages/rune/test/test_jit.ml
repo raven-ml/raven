@@ -4044,14 +4044,15 @@ let test_place_then_consume () =
   check_arr ~msg:"result" [| 2.0; 4.0 |] (g p);
   raises_consumed (fun () -> to_arr p)
 
-(* File-backed sources. CPU:1 addresses host memory, so a tensor over a mapped
-   file placed there is the file's pages, borrowed: no bytes move, the view is
-   kept, and the storage is never lent, written or counted. *)
+(* Values on the disk. CPU:1 addresses host memory, so a value on the disk
+   placed there is the file's pages, borrowed: no bytes move, the view is kept,
+   and the storage is never lent, written or counted. A program reads it as it
+   reads a host value. *)
 
-(* An int32 tensor of [n] elements over a fresh mapping of a file whose bytes
+(* An int32 tensor of [n] elements on the disk, over a fresh file whose bytes
    are [byte i] at offset [i], with the file's path. *)
-let mapped_int32 ~byte n =
-  let path = Filename.temp_file "rune_mapped_" ".bin" in
+let disk_int32 ~byte n =
+  let path = Filename.temp_file "rune_disk_" ".bin" in
   let oc = open_out_bin path in
   let piece = 1 lsl 20 in
   let bytes = Bytes.create piece in
@@ -4065,79 +4066,113 @@ let mapped_int32 ~byte n =
     written := !written + len
   done;
   close_out oc;
-  let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
-  let stat = Unix.fstat fd in
-  let mapping =
-    Nx_device.Buffer.of_bigarray
-      ~file:{ path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
-      (Bigarray.array1_of_genarray
-         (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
-            [| -1 |]))
-  in
-  Unix.close fd;
-  ( Nx_effect.from_host Nx_effect.Placement.host Nx_dtype.int32
-      (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Int32 n),
+  let file = Nx_device.Buffer.of_file path in
+  ( Nx_effect.of_buffer Nx_dtype.int32 [| n |]
+      (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Int32 n),
     path )
 
 let first_byte i = Char.chr (i * 7 land 0xff)
 let other_byte i = Char.chr (i * 13 land 0xff)
 
-let remove_mapped path =
+let remove_file path =
   full_major ();
   try Sys.remove path with Sys_error _ when Sys.win32 -> ()
 
+let read_from_disk () =
+  Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk)
+
 let strides x = Nx_array.View.strides (Nx_effect.view x)
 
-(* [x] placed from its file is its view of the file's pages, bit for bit [x]. *)
-let check_placed_from_file ~msg x =
-  is_true
-    ~msg:(msg ^ ": over a mapped file")
-    (Nx_device.Buffer.file (Nx_effect.to_host x) <> None);
-  let base = resident () in
-  let from_file, up, _ = delta (fun () -> place x) in
+(* [x] placed from the disk on CPU:1, whose memory is the host's, is its view of
+   the file's pages, bit for bit [x]: nothing is uploaded or counted, and the
+   file is read once ahead. *)
+let check_placed_from_disk ~msg x =
+  let base = resident () and read = read_from_disk () in
+  let placed, up, _ = delta (fun () -> place x) in
   equal ~msg:(msg ^ ": bytes uploaded") int 0 up;
+  equal ~msg:(msg ^ ": bytes read ahead") int (Nx.nbytes x)
+    (read_from_disk () - read);
   equal ~msg:(msg ^ ": bytes counted") int 0 (resident () - base);
-  equal ~msg:(msg ^ ": the view") (array int) (strides x) (strides from_file);
+  equal ~msg:(msg ^ ": the view") (array int) (strides x) (strides placed);
   equal ~msg:(msg ^ ": elements") (array int32)
     (Nx.to_array (Nx.copy x))
-    (Nx.to_array from_file)
+    (Nx.to_array placed)
 
-let test_file_backed_placement () =
+let test_disk_placement () =
   let n = (chunk / 4) + 4099 in
-  let x, path = mapped_int32 ~byte:first_byte n in
+  let x, path = disk_int32 ~byte:first_byte n in
   Fun.protect
-    ~finally:(fun () -> remove_mapped path)
+    ~finally:(fun () -> remove_file path)
     (fun () ->
-      check_placed_from_file ~msg:"contiguous" x;
-      check_placed_from_file ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
+      check_placed_from_disk ~msg:"contiguous" x;
+      check_placed_from_disk ~msg:"offset" (Nx.slice [ Nx.R (3, n - 5) ] x);
       let rows = 4100 in
       let cols = n / rows in
       let m =
         Nx.reshape [| rows; cols |] (Nx.slice [ Nx.R (0, rows * cols) ] x)
       in
-      check_placed_from_file ~msg:"transposed" (Nx.matrix_transpose m))
+      check_placed_from_disk ~msg:"transposed" (Nx.matrix_transpose m))
 
-(* The path names another file by now: the upload must not read it. *)
-let test_file_backed_upload_after_replace () =
+(* The path names another file by now: the upload reads the one opened. *)
+let test_disk_upload_after_replace () =
   let n = 1 lsl 16 in
-  let x, path = mapped_int32 ~byte:first_byte n in
+  let x, path = disk_int32 ~byte:first_byte n in
   Fun.protect
-    ~finally:(fun () -> remove_mapped path)
+    ~finally:(fun () -> remove_file path)
     (fun () ->
       let expected = Nx.copy x in
-      let _, replacement = mapped_int32 ~byte:other_byte n in
+      let _, replacement = disk_int32 ~byte:other_byte n in
       Unix.rename replacement path;
       let differing placed =
         Nx.item [] (Nx.sum (Nx.cast Nx.int32 (Nx.not_equal placed expected)))
       in
-      equal ~msg:"contiguous: the mapped bytes" int32 0l (differing (place x));
+      equal ~msg:"contiguous: the file opened" int32 0l (differing (place x));
       let m = Nx.matrix_transpose (Nx.reshape [| 256; 256 |] x) in
-      equal ~msg:"transposed: the mapped bytes" int32 0l
+      equal ~msg:"transposed: the file opened" int32 0l
         (Nx.item []
            (Nx.sum
               (Nx.cast Nx.int32
                  (Nx.not_equal (place m)
                     (Nx.matrix_transpose (Nx.reshape [| 256; 256 |] expected)))))))
+
+(* A value whose first byte is not aligned to its elements is not borrowed: its
+   elements cannot be read in place. It is read from its file. *)
+let test_disk_unaligned () =
+  let n = 4096 in
+  let _, path = disk_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_file path)
+    (fun () ->
+      let x =
+        Nx_effect.of_buffer Nx_dtype.int32
+          [| n - 1 |]
+          (Nx_device.Buffer.view
+             (Nx_device.Buffer.of_file path)
+             ~offset:2 Nx_dtype.Scalar.Int32 (n - 1))
+      in
+      let read = read_from_disk () in
+      let placed, up, _ = delta (fun () -> place x) in
+      equal ~msg:"bytes uploaded" int (4 * (n - 1)) up;
+      equal ~msg:"bytes read" int (4 * (n - 1)) (read_from_disk () - read);
+      equal ~msg:"elements" (array int32)
+        (Nx.to_array (Nx.copy x))
+        (Nx.to_array placed))
+
+(* A leaf and a capture on the disk are read as host values are. *)
+let test_disk_leaf_and_capture () =
+  let n = 4096 in
+  let x, path = disk_int32 ~byte:first_byte n in
+  Fun.protect
+    ~finally:(fun () -> remove_file path)
+    (fun () ->
+      let host = Nx.copy x in
+      let twice = Nx.to_array (Nx.add host host) in
+      equal ~msg:"a leaf on CPU:1" (array int32) twice
+        (Nx.to_array (Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.add x x) x));
+      equal ~msg:"a leaf on the host" (array int32) twice
+        (Nx.to_array (Rune.jit' (fun x -> Nx.add x x) x));
+      equal ~msg:"a capture" (array int32) twice
+        (Nx.to_array (Rune.jit' ~devices:[ cpu1 ] (fun y -> Nx.add y x) host)))
 
 (* Device lists. CPU:1..CPU:4 each hold storage of their own, so a value placed
    over them has one buffer per device and a move between them goes through
@@ -4554,12 +4589,13 @@ let test_a_consumed_carry_keeps_its_placement () =
     (Nx.to_array (Nx.mul_s (rows86 ()) 8.0))
     (Nx.to_array (Nx.add s r))
 
-(* A split placement of a mapped file borrows each device's window of it. *)
-let test_split_upload_from_a_file () =
+(* A split placement of a value on the disk borrows each device's window of the
+   file's pages. *)
+let test_split_upload_from_the_disk () =
   let n = 1 lsl 16 in
-  let x, path = mapped_int32 ~byte:first_byte n in
+  let x, path = disk_int32 ~byte:first_byte n in
   Fun.protect
-    ~finally:(fun () -> remove_mapped path)
+    ~finally:(fun () -> remove_file path)
     (fun () ->
       let y, up, _ =
         delta (fun () -> Nx.place (Nx.Placement.sharded ~axis:0 cpus) x)
@@ -4745,18 +4781,18 @@ let with_budget bytes f =
 
 let majors () = (Gc.quick_stat ()).major_collections
 
-(* A consumed value over a mapped file lends its storage to no result: a result
-   that continues it, or an indexed write into it, gets storage of its own, and
-   the file's pages keep their elements. So does an entry 8 bytes past a 16-byte
-   boundary, where a checkpoint's entries sit, which is a window of its borrowed
-   storage; a compiled copy of it is its elements. Placing it counts nothing
-   against the collection budget. The same value copied into owned storage is
-   lent, as a control. *)
+(* A consumed value borrowed from a file lends its storage to no result: a
+   result that continues it, or an indexed write into it, gets storage of its
+   own, and the file's pages keep their elements. So does an entry 8 bytes past
+   a 16-byte boundary, where a checkpoint's entries sit, which is a window of
+   its borrowed storage; a compiled copy of it is its elements. Placing it
+   counts nothing against the collection budget. The same value copied into
+   owned storage is lent, as a control. *)
 let test_borrowed_storage_is_never_lent () =
   let n = 4096 in
-  let x, path = mapped_int32 ~byte:first_byte n in
+  let x, path = disk_int32 ~byte:first_byte n in
   Fun.protect
-    ~finally:(fun () -> remove_mapped path)
+    ~finally:(fun () -> remove_file path)
     (fun () ->
       let reused () = (Rune.jit_stats ()).reused_bytes in
       let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
@@ -5340,13 +5376,18 @@ let tests =
         test "a program on the host is on the host"
           test_host_program_is_on_the_host;
       ];
-    group "file-backed sources"
+    group "values on the disk"
       [
-        slow "a mapped leaf larger than a chunk is borrowed"
-          test_file_backed_placement;
+        slow "a value larger than a chunk is borrowed"
+          test_disk_placement;
+        test "the file opened is read, not the one at its path now"
+          test_disk_upload_after_replace;
+        test "a leaf and a capture are read as host values"
+          test_disk_leaf_and_capture;
         test "borrowed storage is never lent or written"
           test_borrowed_storage_is_never_lent;
-        test "a replaced file is not read" test_file_backed_upload_after_replace;
+        test "a value not aligned to its elements is read into the device"
+          test_disk_unaligned;
       ];
     group "device lists"
       [
@@ -5358,7 +5399,7 @@ let tests =
           test_move_views_between_device_lists;
         test "moves do not gather on the host"
           test_moves_do_not_gather_on_the_host;
-        test "a split upload from a mapped file" test_split_upload_from_a_file;
+        test "a split upload from the disk" test_split_upload_from_the_disk;
         test "eager results stay on the devices"
           test_eager_results_on_device_lists;
       ];

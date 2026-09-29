@@ -1174,28 +1174,6 @@ let buffers =
               ignore (B.consume ~why:"window" window));
           equal bool true (B.spans (B.consume ~why:"whole" b)));
       test
-        "a buffer over a mapped file answers for it, as do its views and \
-         borrows, and no other buffer does" (fun () ->
-          let file =
-            { B.path = "/weights"; size = page; mtime = 1.; inode = 2 }
-          in
-          let mapped = B.bigarray Bigarray.char (B.create host S.UInt8 page) in
-          let b = B.of_bigarray ~file mapped in
-          let f, _ = Option.get (B.file b) in
-          equal (pair string int) ("/weights", page) (f.path, f.size);
-          equal
-            (list (option int))
-            [ Some 0; Some 4; Some 2; None; None ]
-            (List.map
-               (fun b -> Option.map snd (B.file b))
-               [
-                 b;
-                 B.view b ~offset:4 S.Float32 1;
-                 B.borrow far_one.dev (B.view b ~offset:2 S.UInt8 6);
-                 B.of_bigarray (chars 8);
-                 B.create host S.UInt8 8;
-               ]));
-      test
         "of_bigarray takes elements at multiples of their size, of one \
          component for complex kinds, and refuses others" (fun () ->
           let fd = Unix.openfile (temp_file ()) [ Unix.O_RDWR ] 0 in
