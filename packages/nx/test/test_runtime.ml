@@ -82,7 +82,69 @@ let host_buffers =
           raises_match other_format (reading float64));
     ]
 
+(* Values on the disk: files, which the host reads where they lie, in their
+   pages, and other devices read into their memory. *)
+let disk =
+  let on_disk = Runtimes.on_disk in
+  let disk = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let read () = Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk) in
+  let reads f =
+    let before = read () in
+    let y = f () in
+    (y, read () - before)
+  in
+  let x = Nx.arange Nx.int32 0 12 1 |> Nx.reshape [| 3; 4 |] in
+  let placement = Devices.placement in
+  group "disk"
+    [
+      test "a value on the disk is placed there and read by nothing yet"
+        (fun () ->
+          let d, bytes = reads (fun () -> on_disk x) in
+          equal placement disk (Nx.placement d);
+          equal int 0 bytes);
+      test
+        "an operation computes on its file's pages on the host, and a constant \
+         beside it is the host's" (fun () ->
+          let d = on_disk x in
+          let y, bytes = reads (fun () -> Nx.add d (Nx.ones_like d)) in
+          equal placement Nx.Placement.host (Nx.placement y);
+          equal ~msg:"bytes read" int 0 bytes;
+          equal (array int32) (Nx.to_array (Nx.add_s x 1l)) (Nx.to_array y);
+          equal placement Nx.Placement.host (Nx.placement (Nx.full_like d 0l)));
+      test "a movement of it stays on the disk and reads nothing" (fun () ->
+          let d = on_disk x in
+          let y, bytes =
+            reads (fun () -> Nx.transpose (Nx.slice [ Nx.R (1, 3) ] d))
+          in
+          equal placement disk (Nx.placement y);
+          equal int 0 bytes;
+          let z, bytes = reads (fun () -> Nx.place Nx.Placement.host y) in
+          equal ~msg:"placed on the host, its pages" int 0 bytes;
+          is_false ~msg:"a view of them"
+            (Nx_array.View.is_c_contiguous (Nx_effect.view z));
+          equal (array int32)
+            (Nx.to_array (Nx.transpose (Nx.slice [ Nx.R (1, 3) ] x)))
+            (Nx.to_array z));
+      test
+        "beside a value on a device, it joins that device as a host value does"
+        (fun () ->
+          let on_d1 = Nx.place (Nx.Placement.device d1) x in
+          let y = Nx.add on_d1 (on_disk x) in
+          equal placement (Nx.Placement.device d1) (Nx.placement y);
+          equal (array int32) (Nx.to_array (Nx.add x x)) (Nx.to_array y));
+      test "placed on a device apart from the host, it is read into it"
+        (fun () ->
+          let y, bytes =
+            reads (fun () -> Nx.place (Nx.Placement.device d1) (on_disk x))
+          in
+          equal ~msg:"bytes read" int 48 bytes;
+          equal (array int32) (Nx.to_array x) (Nx.to_array y));
+      test "a placement onto the disk raises" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"DISK") (fun () ->
+              Nx.place disk x));
+    ]
+
 let () =
   exit
     (run "nx runtime devices"
-       (devices :: host_buffers :: Runtimes.laws [ r1; r2 ]))
+       (devices :: host_buffers :: disk :: Runtimes.laws [ r1; r2 ]))

@@ -1100,6 +1100,14 @@ module Runtimes = struct
       ("flatten", fun x -> Nx.flatten x);
     ]
 
+  (* [x] written to a fresh file, as a value on the disk over it. *)
+  let on_disk x =
+    let module B = Nx_device.Buffer in
+    let src = Nx_effect.elements x and path = temp_file () in
+    B.copy ~src ~dst:(B.create_file path (B.nbytes src));
+    Nx_effect.of_buffer (Nx.dtype x) (Nx.shape x)
+      (B.view (B.of_file path) ~offset:0 (B.dtype src) (B.length src))
+
   (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
   let tight r f =
     let budget = Nx_device.budget r in
@@ -1120,16 +1128,30 @@ module Runtimes = struct
           in
           (y, List.map2 bytes_in rs before)
         in
-        let round_trip (Case c) =
+        (* A value on the disk is borrowed from its file's pages by devices
+           whose memory the host addresses, which receive no byte, unless a
+           window of 4-bit elements starts inside a byte. *)
+        let borrows = List.for_all Nx_device.shares_host_memory rs in
+        let round_trip ~disk (Case c) =
           prop
-            (c.name
-           ^ " values read back bit for bit, each device receiving its window")
-            (placed ds c.tensors) (fun (x, p) ->
-              let y, bytes = received (fun () -> Nx.place p x) in
+            (c.name ^ " values"
+            ^ (if disk then " on the disk" else "")
+            ^ " read back bit for bit, each device receiving its window")
+            (placed ds c.tensors)
+            (fun (x, p) ->
+              let source = if disk then on_disk x else x in
+              let y, bytes = received (fun () -> Nx.place p source) in
               equal Devices.placement p (Nx.placement y);
-              equal ~msg:"bytes received" (list int)
-                (List.map (window_bytes p x) ds)
-                bytes;
+              let windows = List.map (window_bytes p x) ds in
+              (match c.dtype with
+              | (Int4 | UInt4) when disk && borrows ->
+                  is_true ~msg:"bytes received: none, or the windows"
+                    (List.for_all (( = ) 0) bytes || bytes = windows)
+              | _ when disk && borrows ->
+                  equal ~msg:"bytes received" (list int)
+                    (List.map (fun _ -> 0) ds)
+                    bytes
+              | _ -> equal ~msg:"bytes received" (list int) windows bytes);
               match c.dtype with
               | Int4 | UInt4 -> equal c.values x (host y)
               | _ -> equal packed (Nx.P x) (Nx.P (host y)))
@@ -1144,7 +1166,9 @@ module Runtimes = struct
           | _ -> false
         in
         [
-          group "placing" (List.map round_trip (every @ nibbles));
+          group "placing" (List.map (round_trip ~disk:false) (every @ nibbles));
+          group "placing from the disk"
+            (List.map (round_trip ~disk:true) (every @ nibbles));
           prop
             "an operation gives the host's result on the elements placed, \
              placed where its operand is"

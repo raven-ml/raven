@@ -73,8 +73,10 @@ let eye ?m ?k dtype n = Frontend.eye context ?m ?k dtype n
 (* A value made like a placed one lives where that one does, split as it is. *)
 let full_like x v =
   match x with
-  | Nx_effect.Placed r -> Nx_effect.full r.r_placement (dtype x) (shape x) v
-  | Nx_effect.Host _ | Nx_effect.Traced _ -> Frontend.full_like x v
+  | Nx_effect.Placed { r_placement = p; _ } when not (Nx_effect.on_disk p) ->
+      Nx_effect.full p (dtype x) (shape x) v
+  | Nx_effect.Host _ | Nx_effect.Placed _ | Nx_effect.Traced _ ->
+      Frontend.full_like x v
 
 let zeros_like x = full_like x (Nx_dtype.zero (dtype x))
 let ones_like x = full_like x (Nx_dtype.one (dtype x))

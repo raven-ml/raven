@@ -257,6 +257,13 @@ val to_array : ('a, 'b) t -> 'a array
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
+    The disk ([Device.of_runtime Nx_device.disk]) holds values in files, such as
+    the tensors [Nx_io.load_safetensors] loads, and computes nothing: a value on
+    it takes part in an operation as a host value, which the host reads in the
+    file's pages, and a movement of it stays on the disk. {!place} onto the host
+    or a device whose memory is the host's borrows the file's pages, and onto
+    another device reads the bytes into it; a placement onto the disk raises.
+
     Reads and placements keep their source storage in use until they return. If
     a compiled call consumes that storage concurrently, the conflicting
     operation raises [Invalid_argument] instead of waiting. This applies to
@@ -302,7 +309,10 @@ module Device : sig
   (** [of_runtime d] is the device that holds placed values in [d]'s buffers:
       the same value for every call with [d], and {!host} for [Nx_device.host].
       It has [d]'s name. {!place} and operations raise {!Out_of_memory} with
-      this device when [d] cannot allocate. *)
+      this device when [d] cannot allocate. A value placed on another such
+      device is copied into [d]'s buffers straight from that device's, a
+      window at a time, when the window is a contiguous run of the value's
+      storage, and through the host otherwise. *)
 
   exception Out_of_memory of t * int
   (** Raised by an operation, a {!place} or a compiled call when a device cannot

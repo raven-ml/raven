@@ -2832,6 +2832,16 @@ thread.
 
 ### Nx
 
+- A value on the disk (`Nx.Device.of_runtime Nx_device.disk`) takes part in
+  an operation as a host value: the operation reads it through a mapping of
+  its file, or a copy when its bytes are not aligned to its elements, and
+  computes on the host. A constant made beside it is the host's, and a
+  movement of it stays on the disk and reads nothing. A placement onto the
+  disk raises.
+- `Nx.place` onto an `Nx.Device.of_runtime` device borrows a value on the disk
+  when the device's memory is the host's, and otherwise copies each device's
+  window straight from the value's buffer on another such device when the
+  window is a contiguous run of it. It read the whole value to the host first.
 - New `Nx_device.disk`, the file system as a device. `Nx_device.Buffer.of_file`
   and `Buffer.create_file` make buffers of files' bytes, and `Buffer.copy`
   reads and writes them: straight into or out of memory the host addresses,
