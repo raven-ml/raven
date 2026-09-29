@@ -11,6 +11,7 @@
 
 open Windtrap
 open Nx_test
+open Stored
 
 (* Files *)
 
@@ -48,130 +49,9 @@ let unix_error err f =
     (function Unix.Unix_error (e, _, _) -> e = err | _ -> false)
     (fun () -> ignore (f ()))
 
-(* Tensors compare bit for bit: dtype, shape and the bytes of the elements in
-   row-major order. *)
-
-let storage (Nx.P t) =
-  let bytes = Bytes.create (Nx.nbytes t) in
-  Nx_buffer.blit_to_bytes (Nx.to_buffer t) bytes;
-  (Nx_dtype.to_string (Nx.dtype t), Nx.shape t, Bytes.unsafe_to_string bytes)
-
-let pp_packed ppf (Nx.P t as p) =
-  let _, _, bytes = storage p in
-  Format.fprintf ppf "%a (bytes %S)" Nx.pp t bytes
-
-let packed =
-  Testable.make ~pp:pp_packed ~equal:(fun a b -> storage a = storage b)
-
 (* An archive compares as a set of named tensors. *)
 let entries = slist (pair string packed) (fun (a, _) (b, _) -> compare a b)
 let listed archive = List.of_seq (Hashtbl.to_seq archive)
-
-(* Dtypes *)
-
-(* A dtype, tensors of it under every layout, and the witness of their values
-   that a text file keeps: every NaN equal to every NaN. *)
-type case =
-  | Case : {
-      name : string;
-      dtype : ('a, 'b) Nx.dtype;
-      tensors : ('a, 'b) Nx.t Gen.t;
-      values : ('a, 'b) Nx.t testable;
-    }
-      -> case
-
-let case name dtype tensors values = Case { name; dtype; tensors; values }
-let shape = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 4)
-let pp_bits ppf v = Format.fprintf ppf "0x%Lx" v
-let ones n = Int64.pred (Int64.shift_left 1L n)
-
-(* The bit patterns of a float format with [e] exponent and [m] significand
-   bits: signed zeros, the least and greatest subnormals, the least normal, the
-   greatest finite, infinities, quiet and signalling NaNs with payloads, and any
-   pattern. *)
-let float_bits ~e ~m =
-  let inf = Int64.shift_left (ones e) m in
-  let nans =
-    [ Int64.logor inf (Int64.shift_left 1L (m - 1)); Int64.succ inf ]
-  in
-  let corners =
-    [ 0L; 1L; ones m; Int64.shift_left 1L m; Int64.pred inf; inf ] @ nans
-  in
-  let sign = Int64.logor (Int64.shift_left 1L (e + m)) in
-  let mask = if e + m = 63 then -1L else ones (1 + e + m) in
-  Gen.frequency
-    [
-      (1, Gen.of_list ~pp:pp_bits (corners @ List.map sign corners));
-      (2, Gen.with_pp pp_bits (Gen.map (Int64.logand mask) Gen.int64));
-    ]
-
-(* Tensors of [dtype] whose elements are the bits [bits] draws, read through the
-   integer dtype [name] of the same width. *)
-let from_bits name dtype bits =
-  match List.find (fun (Int_dtype d) -> d.name = name) int_dtypes with
-  | Int_dtype u ->
-      let drawn =
-        let open Gen in
-        let* s = shape in
-        let* steps = layout in
-        let+ xs = array ~size:(constant (Ref.numel s)) bits in
-        (steps, Ref.create s xs)
-      in
-      let pp ppf (steps, r) =
-        Format.fprintf ppf "%a: %a" pp_layout steps (Ref.pp pp_bits) r
-      in
-      Gen.map
-        (fun (steps, (r : int64 Ref.t)) ->
-          let words = Nx.create u.dtype r.shape (Array.map u.of_i64 r.data) in
-          lay_out steps (Nx.bitcast dtype words))
-        (Gen.with_pp pp drawn)
-
-let float_tensors dtype ~e ~m =
-  from_bits ("uint" ^ string_of_int (1 + e + m)) dtype (float_bits ~e ~m)
-
-let float_case name dtype ~e ~m =
-  case name dtype (float_tensors dtype ~e ~m) (tensor float_exact)
-
-let ints =
-  List.map
-    (fun (Int_dtype d) ->
-      let value = int_value ~bits:d.bits ~signed:d.signed in
-      case d.name d.dtype (from_bits d.name d.dtype value) (tensor d.exact))
-    int_dtypes
-
-let bool =
-  let pp = Format.pp_print_bool in
-  case "bool" Nx.bool (viewed ~pp Nx.bool Gen.bool) (tensor bool)
-
-let float16 = float_case "float16" Nx.float16 ~e:5 ~m:10
-let bfloat16 = float_case "bfloat16" Nx.bfloat16 ~e:8 ~m:7
-let float32 = float_case "float32" Nx.float32 ~e:8 ~m:23
-let float64s = float_tensors Nx.float64 ~e:11 ~m:52
-let float64 = case "float64" Nx.float64 float64s (tensor float_exact)
-let float8_e4m3 = float_case "float8_e4m3" Nx.float8_e4m3 ~e:4 ~m:3
-let float8_e5m2 = float_case "float8_e5m2" Nx.float8_e5m2 ~e:5 ~m:2
-
-let complex_exact =
-  Testable.contramap
-    (fun (c : Complex.t) -> (c.re, c.im))
-    (pair float_exact float_exact)
-
-(* A complex64 element is two float32 bit patterns, real part first. *)
-let complex64 =
-  let f32 = float_bits ~e:8 ~m:23 in
-  let word (re, im) = Int64.logor (Int64.shift_left im 32) re in
-  let tensors =
-    from_bits "int64" Nx.complex64 (Gen.map word (Gen.pair f32 f32))
-  in
-  case "complex64" Nx.complex64 tensors (tensor complex_exact)
-
-let complex128 =
-  let pp ppf (c : Complex.t) = Format.fprintf ppf "%h%+hi" c.re c.im in
-  let value (re, im) = { Complex.re; im } in
-  let values = Gen.map value (Gen.pair Gen.any_float Gen.any_float) in
-  case "complex128" Nx.complex128
-    (viewed ~pp Nx.complex128 values)
-    (tensor complex_exact)
 
 let round_trips ~save ~load cases =
   List.map

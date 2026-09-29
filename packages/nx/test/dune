@@ -15,14 +15,10 @@
   test_windows
   test_fft
   test_io
-  test_quant)
+  test_quant
+  test_runtime)
  (package nx)
- (modules
-  :standard
-  \
-  test_format
-  test_nx_runtime
-  test_float_codecs)
+ (modules :standard \ test_format test_float_codecs)
  (libraries
   nx.dtype
   nx.buffer
@@ -30,6 +26,7 @@
   nx.core
   nx.effect
   nx.io
+  nx.device
   nx.quant
   unix
   windtrap
@@ -46,12 +43,6 @@
   (progn
    (run %{test} --corrected)
    (diff? test_format.ml test_format.ml.corrected))))
-
-(test
- (name test_nx_runtime)
- (package nx)
- (modules test_nx_runtime)
- (libraries nx nx.device windtrap))
 
 (test
  (name test_float_codecs)
