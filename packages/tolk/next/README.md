@@ -69,6 +69,7 @@ is scope, not a divergence: the part left out is listed here, and
 | `ImageDType` and image paths | only OpenCL and QCOM use them. |
 | The z3 fallback of `uop/validate.py` | raven has no SMT solver among its dependencies. |
 | `pyrender` in `uop/render.py`, `test_pyrender` in `uop/spec.py`, the code generation of `uop/upat.py` | they generate Python source; tolk.next matches patterns directly (see D2). |
+| `Ops.PYLITERAL` and `Ops.REWRITE_ERROR` in `uop/__init__.py`, with the code that handles them (`uop/ops.py:129,332,377`, `uop/spec.py:116,239`) | produced only by the pattern compiler's code generation and viz, both excluded. `Tolk_next.Uop.Op › Op › has no counterpart for exactly REWRITE_ERROR and PYLITERAL` pins it. |
 | RDMA splitting and encoding in `runtime/support/hcq2.py` (`:136-147,507`) | multi-node placement is not designed yet. |
 | MOCK interfaces and the PYTHON device | raven has no mock drivers; `runtime/ops_python.py` survives only as the tests' reference interpreter. |
 | SQTT, PMC and PMA profiling; `NVEncDecQueue`; USB | no consumer. |
