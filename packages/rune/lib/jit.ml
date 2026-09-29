@@ -184,7 +184,7 @@ let tolk_device_of d =
    a split value's slices in the program's order. *)
 let over ds p =
   let dp = Nx.Placement.devices p in
-  if Nx_effect.Grid.cuts p = [] then
+  if Nx_effect.Placement.cuts p = [] then
     List.compare_lengths dp ds = 0 && List.for_all (fun d -> List.memq d ds) dp
   else List.equal ( == ) dp ds
 
@@ -198,7 +198,7 @@ type decided = Guessed | Unordered | Ordered
    as a set, listed in the order devices were opened. *)
 let decided_by p =
   let ds = Nx.Placement.devices p in
-  if Nx_effect.Grid.cuts p = [] then (List.sort Nx.Device.compare ds, Unordered)
+  if Nx_effect.Placement.cuts p = [] then (List.sort Nx.Device.compare ds, Unordered)
   else (ds, Ordered)
 
 let pp_devices ppf = function
@@ -502,7 +502,7 @@ let make_node st dtolk n =
 (* [local], each device's slice of a value at [p], as the whole value: under
    tolk's [Unshard] when [p] cuts an axis. *)
 let whole_tensor p local =
-  match Nx_effect.Grid.cuts p with
+  match Nx_effect.Placement.cuts p with
   | [] -> local
   | [ (axis, _) ] ->
       F.Tensor.of_uop (U.unshard ~src:(F.Tensor.uop local) ~axes:[ axis ] ())
@@ -517,7 +517,7 @@ let placed_tensor p node shape =
    slice: flat, or for a split value at its shape, which each device stores as
    its slice's. *)
 let store_placed p dst shape tt =
-  match Nx_effect.Grid.cuts p with
+  match Nx_effect.Placement.cuts p with
   | [] -> store_flat dst (numel shape) tt
   | _ ->
       U.store
@@ -526,8 +526,8 @@ let store_placed p dst shape tt =
 
 (* The placement of one row of a stack at [p], whose leading axis is whole, and
    of a stack of rows at [p]. *)
-let row p = Nx_effect.Grid.map_axes (fun a -> a - 1) p
-let stacked p = Nx_effect.Grid.map_axes (fun a -> a + 1) p
+let row p = Nx_effect.Placement.map_axes (fun a -> a - 1) p
+let stacked p = Nx_effect.Placement.map_axes (fun a -> a + 1) p
 
 (* Where a constant of the program lives in it: a placed value on the program's
    devices keeps its placement, and any other is copied to each device. *)
@@ -1879,9 +1879,9 @@ let moved p shape m =
     | Nx_effect.Shrink limits ->
         List.fold_left
           (fun q' (axis, _) ->
-            if List.mem_assoc axis (Nx_effect.Grid.cuts q) then q'
+            if List.mem_assoc axis (Nx_effect.Placement.cuts q) then q'
             else if limits.(axis) = slice.(axis) then
-              Nx_effect.Grid.uncut q' ~axis
+              Nx_effect.Placement.uncut q' ~axis
             else
               invalid_arg
                 (Printf.sprintf
@@ -1891,7 +1891,7 @@ let moved p shape m =
                     first"
                    axis
                    (Nx_core.Shape.to_string shape)))
-          p (Nx_effect.Grid.cuts p)
+          p (Nx_effect.Placement.cuts p)
     | _ -> q
 
 (* [tt], a value at [p] in [st]'s program over several devices, at [q]: a split
@@ -1900,11 +1900,11 @@ let moved p shape m =
 let reshard st p q tt =
   let names = List.map Nx.Device.name st.st_devices in
   let whole =
-    if Nx_effect.Grid.cuts p = [] then tt
+    if Nx_effect.Placement.cuts p = [] then tt
     else
       F.Tensor.of_uop (U.copy ~src:(F.Tensor.uop tt) ~device:(U.Multi (List.map Option.some names)) ())
   in
-  match Nx_effect.Grid.cuts q with
+  match Nx_effect.Placement.cuts q with
   | [] -> whole
   | [ (axis, _) ] -> F.Creation.shard ~axis ~devices:names whole
   | _ -> unsupported "a value cut along several axes"
@@ -1918,8 +1918,8 @@ let resharded st p x =
    copy on each device with one element along every axis [q] cuts. *)
 let aligned st q x =
   if
-    Nx_effect.Grid.cuts (placement_in st x) = []
-    && List.for_all (fun (a, _) -> (shape_of x).(a) = 1) (Nx_effect.Grid.cuts q)
+    Nx_effect.Placement.cuts (placement_in st x) = []
+    && List.for_all (fun (a, _) -> (shape_of x).(a) = 1) (Nx_effect.Placement.cuts q)
   then tolk_of st x
   else resharded st q x
 
@@ -1963,7 +1963,7 @@ let unstageable st xs =
   List.exists
     (fun (Nx.P x) ->
       let p = placement_in st x and shape = shape_of x in
-      let cuts = Nx_effect.Grid.cuts p in
+      let cuts = Nx_effect.Placement.cuts p in
       List.mem_assoc 0 cuts
       || cuts <> []
          &&
@@ -2387,7 +2387,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                updates and their positions are split alike off the write axis
                and whole along it. *)
             let place = placement_in st data_template in
-            let along = Nx_effect.Grid.uncut place ~axis in
+            let along = Nx_effect.Placement.uncut place ~axis in
             ret k (dt data_template)
               (F.Op.scatter_indexed
                  (write_destination st (go data_template) ~place)
@@ -2433,9 +2433,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               Array.fold_left ( * ) 1 tshape <= Int32.to_int Int32.max_int
               && List.for_all
                    (fun (a, _) -> a = 0)
-                   (Nx_effect.Grid.cuts (placement_in st t_in))
+                   (Nx_effect.Placement.cuts (placement_in st t_in))
             then begin
-              let whole = Nx_effect.Grid.uncut (placement_in st t_in) ~axis:0 in
+              let whole = Nx_effect.Placement.uncut (placement_in st t_in) ~axis:0 in
               let st_t = aligned st whole starts and tv = aligned st whole v in
               let i32 n =
                 F.Creation.full ~buffer:false ~dtype:TD.int32 []
@@ -2553,12 +2553,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         let operands ids x matrices =
           if
             Option.is_some ids
-            && List.mem_assoc 0 (Nx_effect.Grid.cuts (placement_in st matrices))
+            && List.mem_assoc 0 (Nx_effect.Placement.cuts (placement_in st matrices))
           then
             (resharded st (here st) x, Option.map (resharded st (here st)) ids)
           else
             match Option.map (placement_in st) ids with
-            | Some p when Nx_effect.Grid.cuts p <> [] ->
+            | Some p when Nx_effect.Placement.cuts p <> [] ->
                 (aligned st p x, Option.map go ids)
             | _ -> (go x, Option.map go ids)
         in
@@ -5315,7 +5315,7 @@ let leaves_devices ~requested leaves =
     | Some ds -> Some (None, (ds, Ordered))
     | None -> (
         let split =
-          List.filter (fun (_, p) -> Nx_effect.Grid.cuts p <> []) placed
+          List.filter (fun (_, p) -> Nx_effect.Placement.cuts p <> []) placed
         in
         match split @ placed with
         | (i, p) :: _ -> Some (Some (i, p), decided_by p)

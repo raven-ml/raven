@@ -2757,6 +2757,15 @@ thread.
 
 ### Nx
 
+- `Nx.Backend`: a placement carries the backend that computes on its values,
+  a value `(module Nx.Backend.S)`. `Nx.Backend.host` is nx's kernels, the
+  default everywhere; `Nx.Backend.Host` is its module, to include in a backend
+  that changes some operations; a backend refuses an operation by raising
+  `Nx.Backend.Refused`. `Nx.Placement.device`, `replicated` and `sharded` take
+  `?backend` and raise when it does not run on a device, and
+  `Nx.Placement.backend` returns it. Operands whose placements have different
+  backends raise, naming both, and `Nx.place` between two placements that
+  differ only in backend makes a view.
 - A placement may mix `Nx.Device.host` with `Nx.Device.of_runtime` devices,
   such as `Nx.Placement.replicated [ Nx.Device.host; d ]`: the host keeps its
   placed values in the same runtime buffers. It raised `Invalid_argument`.

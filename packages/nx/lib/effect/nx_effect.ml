@@ -13,15 +13,25 @@ open Nx_core
    a GADT of its own, whose parameters the return type determines.
 
    A tensor is one of three things. [Host] is a tensor of the link-time engine,
-   the host's. [Placed] is a value held in the memory of the devices of a
-   placement other than the host's: nx knows its placement, dtype and view, and
-   the devices' memory alone knows its storage. [Traced] is a node of a trace:
-   it has no bytes and never will, and the tracer that made it keeps its
-   payload in [t_node].
+   the value of the host placement: the host device with the host backend.
+   [Placed] is a value at any other placement, held in the memory of its
+   devices: nx knows its placement, dtype and view, and the devices' memory
+   alone knows its storage. [Traced] is a node of a trace: it has no bytes and
+   never will, and the tracer that made it keeps its payload in [t_node].
+
+   The host device thus holds values in two ways. At the host placement a value
+   is the link-time engine's own tensor, with no cell, so that the default path
+   pays nothing for what compiled calls need of a storage; at another placement
+   of the host device (another backend, or beside other devices) it is placed,
+   in the runtime's host buffers.
 
    The views of one placed storage share one cell, which holds what belongs to
    the storage rather than to a view: whether it is live or was consumed by a
-   compiled call, and how many reachable programs bind it. *)
+   compiled call, and how many reachable programs bind it.
+
+   A placement holds its backend, and a backend's operations take tensors and
+   placements, so the types and the backend's signature are one recursive
+   definition. *)
 
 (* Placements over a grid
 
@@ -253,59 +263,80 @@ end = struct
           cuts
 end
 
-type ('a, 'b) t =
-  | Host : ('a, 'b) Nx_backend.t -> ('a, 'b) t
-  | Placed : ('a, 'b) resident -> ('a, 'b) t
-  | Traced : ('a, 'b) traced -> ('a, 'b) t
+module rec Types : sig
+  type ('a, 'b) t =
+    | Host : ('a, 'b) Nx_backend.t -> ('a, 'b) t
+    | Placed : ('a, 'b) resident -> ('a, 'b) t
+    | Traced : ('a, 'b) traced -> ('a, 'b) t
 
-and ('a, 'b) resident = {
-  r_id : int; (* fresh per value; identity tables key by it *)
-  r_placement : placement; (* never the host *)
-  r_dtype : ('a, 'b) Nx_dtype.t;
-  r_view : View.t; (* per shard, the same on every shard *)
-  r_cell : cell; (* one per storage, shared by all its views *)
-}
+  and ('a, 'b) resident = {
+    r_id : int; (* fresh per value; identity tables key by it *)
+    r_placement : placement; (* never the host placement *)
+    r_dtype : ('a, 'b) Nx_dtype.t;
+    r_view : View.t; (* per shard, the same on every shard *)
+    r_cell : cell; (* one per storage, shared by all its views *)
+  }
 
-and cell = {
-  placement : placement; (* where the storage lives, whichever views it *)
-  length : int; (* elements of the storage, per shard *)
-  mutable state : state;
-  bound : int Atomic.t; (* reachable program bindings to the storage *)
-  lock : Mutex.t;
-  mutable readers : int;
-  mutable exclusive : bool;
-}
+  and cell = {
+    placement : placement; (* where the storage lives, whichever views it *)
+    length : int; (* elements of the storage, per shard *)
+    mutable state : state;
+    bound : int Atomic.t; (* reachable program bindings to the storage *)
+    lock : Mutex.t;
+    mutable readers : int;
+    mutable exclusive : bool;
+  }
 
-and state = Live of storage | Consumed of consumption
+  and state = Live of storage | Consumed of consumption
 
-(* Where a compiled call consumed a storage: the consumed leaf's path in the
-   call's arguments, whose first segment is the argument's position from 0. *)
-and consumption = { path : string }
+  (* Where a compiled call consumed a storage: the consumed leaf's path in the
+     call's arguments, whose first segment is the argument's position from 0. *)
+  and consumption = { path : string }
 
-and ('a, 'b) traced = {
-  t_id : int; (* fresh; identity tables key by it *)
-  t_context : placement; (* where the trace creates its values *)
-  t_dtype : ('a, 'b) Nx_dtype.t;
-  t_view : View.t; (* C-contiguous over the tensor's shape *)
-  t_node : node; (* the tracer's payload *)
-}
+  and ('a, 'b) traced = {
+    t_id : int; (* fresh; identity tables key by it *)
+    t_context : placement; (* where the trace creates its values *)
+    t_dtype : ('a, 'b) Nx_dtype.t;
+    t_view : View.t; (* C-contiguous over the tensor's shape *)
+    t_node : node; (* the tracer's payload *)
+  }
 
-(* How a device holds bytes: the library that opens it reads and places the
-   values in its memory. Computing on them is not the memory's. *)
-and memory = {
-  read : 'a 'b. ('a, 'b) resident -> Nx_device.Buffer.t;
-      (* the view's elements, in C order, in a host buffer the caller owns *)
-  place : 'a 'b. placement -> ('a, 'b) t -> ('a, 'b) t;
-      (* the value on a placement of devices of this memory; its source stays.
-         Placing an empty value allocates nothing, and raises
-         [Invalid_argument] if the placement cannot hold the dtype: nx checks
-         held values this way. *)
-}
+  (* How a device holds bytes: the library that opens it reads and places the
+     values in its memory. Computing on them is not the memory's. *)
+  and memory = {
+    read : 'a 'b. ('a, 'b) resident -> Nx_device.Buffer.t;
+        (* the view's elements, in C order, in a host buffer the caller owns *)
+    place : 'a 'b. placement -> ('a, 'b) t -> ('a, 'b) t;
+        (* the value on a placement of devices of this memory; its source stays.
+           Placing an empty value allocates nothing, and raises
+           [Invalid_argument] if the placement cannot hold the dtype: nx checks
+           held values this way. *)
+  }
 
-and device = { d_id : int; d_name : string; d_memory : memory }
-and placement = device Grid.t
-and storage = ..
-and node = ..
+  and device = { d_id : int; d_name : string; d_memory : memory }
+  (* Devices, a layout and the one backend that computes on the values there. *)
+  and placement = { grid : device Grid.t; backend : backend }
+
+  and backend = (module Backend_sig.S)
+  and storage = ..
+  and node = ..
+end =
+  Types
+
+and Backend_sig : sig
+  module type S = sig
+    val name : string
+    val runs_on : Types.device -> bool
+
+    include
+      Backend_intf.S
+        with type ('a, 'b) t := ('a, 'b) Types.t
+         and type context := Types.placement
+  end
+end =
+  Backend_sig
+
+include Types
 
 (* Where a creation makes its value. *)
 type context = placement
@@ -415,11 +446,11 @@ let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
   | Consumed k -> consumed k
   | Live (Held e) ->
       Elements.gather e (View.create ~strides:[| 0 |] [| View.numel r.r_view |])
-  | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_memory.read r)
+  | Live _ -> (List.hd (Grid.devices r.r_cell.placement.grid)).d_memory.read r)
 
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
-  match Grid.cuts p with
+  match Grid.cuts p.grid with
   | [] -> shape
   | cuts ->
       let shape = Array.copy shape in
@@ -428,7 +459,7 @@ let global p shape =
 
 (* A split value's view is each shard's, and its shape the whole's. *)
 let whole_view r =
-  match Grid.cuts r.r_placement with
+  match Grid.cuts r.r_placement.grid with
   | [] -> r.r_view
   | _ ->
       let v = r.r_view in
@@ -453,10 +484,12 @@ let check_host fn dtype buffer =
          (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
          (Nx_dtype.to_string dtype))
 
-(* An engine's read is checked once: a buffer of another device or format
-   would otherwise reach the host engine's kernels. *)
+(* A placed value is read by its placement's backend, once, and checked: a
+   buffer of another device or format would otherwise reach the host engine's
+   kernels. *)
 let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_backend.t =
-  let elements = read_elements r in
+  let (module B : Backend_sig.S) = r.r_placement.backend in
+  let elements = B.to_host (Placed r) in
   check_host "read" r.r_dtype elements;
   Nx_backend.reshape
     (Nx_backend.from_host host_context r.r_dtype elements)
@@ -472,9 +505,11 @@ let host_of : type a b. (a, b) t -> (a, b) Nx_backend.t = function
 (* Devices and placements
 
    The host device is the one of id 0; ids from [fresh_id] start at 1. It is
-   made with the runtime's memory, so it and the [Device] and [Placement]
-   modules are defined below that memory; the functions here are what the
-   code in between needs. *)
+   made with the runtime's memory, so the [Device] module is defined below that
+   memory. The host backend routes its operations through the code below, so it
+   and the [Placement] module come after the routing; the functions here are
+   what the code in between needs. The host backend is packed into
+   [host_backend] where it is defined: until then no placement exists. *)
 
 exception Out_of_memory of device * int
 
@@ -485,12 +520,24 @@ let () =
     | _ -> None)
 
 let is_host_device d = d.d_id = 0
+let host_backend : backend option ref = ref None
+let is_host_backend b = match !host_backend with Some h -> b == h | None -> false
 
 let is_host_placement p =
-  match Grid.devices p with [ d ] -> is_host_device d | _ -> false
+  is_host_backend p.backend
+  && match Grid.devices p.grid with [ d ] -> is_host_device d | _ -> false
 
 let pp_device ppf d = Format.pp_print_string ppf d.d_name
-let pp_placement ppf p = Grid.pp pp_device ppf p
+let pp_grid ppf g = Grid.pp pp_device ppf g
+
+let pp_placement ppf p =
+  pp_grid ppf p.grid;
+  if not (is_host_backend p.backend) then
+    let (module B : Backend_sig.S) = p.backend in
+    Format.fprintf ppf " with %s" B.name
+
+let devices_of p = Grid.devices p.grid
+let memory_of p = (List.hd (devices_of p)).d_memory
 
 (* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
 let check_shape what p shape =
@@ -505,10 +552,10 @@ let check_shape what p shape =
           (Printf.sprintf
              "%s: axis %d of shape %s does not split evenly over %d devices"
              what a (Shape.to_string shape) n))
-    (Grid.cuts p)
+    (Grid.cuts p.grid)
 
 let window_of p shape d =
-  match List.find_index (( == ) d) (Grid.devices p) with
+  match List.find_index (( == ) d) (devices_of p) with
   | None ->
       invalid_arg
         (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
@@ -519,7 +566,7 @@ let window_of p shape d =
         (fun (a, n) (_, j) ->
           let size = shape.(a) / n in
           w.(a) <- (j * size, (j + 1) * size))
-        (Grid.cuts p) (Grid.tile_index p k);
+        (Grid.cuts p.grid) (Grid.tile_index p.grid k);
       w
 
 (* Placed constructors, for device memories *)
@@ -534,9 +581,9 @@ let cell ~placement ~length storage =
 let placed placement dtype view cell =
   if is_host_placement placement then
     invalid_arg "Nx_effect.placed: a placed value is never on the host";
-  let held = Grid.devices cell.placement in
+  let held = devices_of cell.placement in
   if
-    not (List.for_all (fun d -> List.memq d held) (Grid.devices placement))
+    not (List.for_all (fun d -> List.memq d held) (devices_of placement))
   then
     invalid_arg
       (Format.asprintf "Nx_effect.placed: a value on %a views a storage on %a"
@@ -655,7 +702,7 @@ let assemble (type a b) (r : (a, b) resident) window
           match intersect window t with
           | Some i -> (d, t, i) :: pieces
           | None -> pieces)
-      [] (Grid.devices p)
+      [] (devices_of p)
   in
   let piece (d, t, i) = read d (View.shrink r.r_view (within t i)) in
   match pieces with
@@ -722,7 +769,7 @@ let runtime_memory =
    fun r ->
     match Cell.state r.r_cell with
     | Live (Runtime bufs) ->
-        let holders = Grid.devices r.r_cell.placement in
+        let holders = devices_of r.r_cell.placement in
         let buffer_on d =
           List.nth bufs (Option.get (List.find_index (( == ) d) holders))
         in
@@ -738,7 +785,7 @@ let runtime_memory =
     let dt = Nx_backend.dtype h and v = Nx_backend.view h in
     let shape = View.shape v in
     let s = Nx_dtype.Scalar.of_dtype dt in
-    let ds = Grid.devices p in
+    let ds = devices_of p in
     let windows = List.map (fun d -> window_of p shape d) ds in
     let local = extents (List.hd windows) in
     let n = Array.fold_left ( * ) 1 local in
@@ -792,68 +839,13 @@ module Device = struct
   let pp = pp_device
 end
 
-(* Placements *)
-
-module Placement = struct
-  type t = placement
-
-  let host = Grid.device Device.host
-  let device d = Grid.device d
-  let devices = Grid.devices
-  let memory p = (List.hd (devices p)).d_memory
-  let is_host = is_host_placement
-
-  let check what ds =
-    let fail fmt =
-      Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
-    in
-    let rec distinct = function
-      | [] -> ()
-      | d :: rest ->
-          if List.memq d rest then fail "%s appears twice" d.d_name;
-          distinct rest
-    in
-    match ds with
-    | [] -> fail "no device"
-    | d :: rest ->
-        distinct ds;
-        List.iter
-          (fun d' ->
-            if d'.d_memory != d.d_memory then
-              fail "%s and %s have different memories" d.d_name d'.d_name)
-          rest
-
-  let replicated ds =
-    check "replicated" ds;
-    Grid.v ds [ List.length ds ] []
-
-  let sharded ~axis ds =
-    if axis < 0 then
-      invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
-    check "sharded" ds;
-    Grid.v ds [ List.length ds ] [ (axis, [ 0 ]) ]
-
-  let check_shape = check_shape
-  let window = window_of
-
-  (* The placement of a value with a new leading axis, and of one without its
-     leading axis, which no cut may name. *)
-  let with_leading_axis p = Grid.map_axes succ p
-
-  let without_leading_axis p =
-    if List.mem_assoc 0 (Grid.cuts p) then None else Some (Grid.map_axes pred p)
-
-  let equal = Grid.equal ( == )
-  let pp = pp_placement
-end
-
 (* A held value of shape [shape] on [p], of the one element of the host
    buffer [e], of [dtype]. The memory is asked to place an empty value of the
    dtype first, which allocates nothing and raises if [p] cannot hold the
    dtype. *)
 let held p dtype e shape =
   ignore
-    ((Placement.memory p).place p
+    ((memory_of p).place p
        (Host (Nx_backend.buffer host_context dtype [| 0 |])));
   placed p dtype (View.create shape) (cell ~placement:p ~length:1 (Held e))
 
@@ -1184,19 +1176,6 @@ type _ Effect.t +=
    view (vmap shows batched tensors without their batch axis) or placement; only
    the unhandled fallback answers from the tensor. *)
 
-(* A value made beside a placed one is a full copy on each of its devices. The
-   frontend asks for a context each time it builds a constant beside an
-   operand, so the host's is one value. *)
-let context : type a b. (a, b) t -> context = function
-  | Host _ -> Placement.host
-  | Placed r -> Placement.replicated (Placement.devices r.r_placement)
-  | Traced t -> t.t_context
-
-(* Whether a creation at [p] makes a host tensor. The frontend's contexts on the
-   host are [Placement.host] itself, so the first test decides the common
-   case. *)
-let on_host (p : context) = p == Placement.host || Placement.is_host p
-
 let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> (
@@ -1209,48 +1188,6 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
   | Host t -> Nx_backend.dtype t
   | Placed r -> r.r_dtype
   | Traced t -> t.t_dtype
-
-let placement (type a b) (x : (a, b) t) : placement =
-  try Effect.perform (E_placement x)
-  with Effect.Unhandled _ -> (
-    match x with
-    | Host _ -> Placement.host
-    | Placed r -> r.r_placement
-    | Traced _ -> outside_trace ())
-
-(* The host engine's storage of a host value, and the view's elements of a
-   placed one: readers take [contiguous] first, so the view is the storage. *)
-let to_host (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
-  try Effect.perform (E_to_host x)
-  with Effect.Unhandled _ -> (
-    match x with
-    | Host t -> Nx_backend.to_host t
-    | Placed r -> read_elements r
-    | Traced _ -> outside_trace ())
-
-(* Moving *)
-
-let move (type a b) p (x : (a, b) t) : (a, b) t =
-  let move () = match x with
-  | Traced _ -> outside_trace ()
-  | Placed r when Placement.is_host p -> Host (read_host r)
-  | Host _ | Placed _ ->
-      Placement.check_shape "Nx.place" p (View.shape (view x));
-      (Placement.memory p).place p x in
-  match x with
-  | Placed r -> Cell.with_borrow r.r_cell move
-  | Host _ | Traced _ -> move ()
-
-(* A value already at [p] is returned without an effect: an effect's result is
-   always a fresh value, which the transformations take for a new node. *)
-let place (type a b) p (x : (a, b) t) : (a, b) t =
-  if Placement.equal (placement x) p then
-    match x with
-    | Placed r -> Cell.with_borrow r.r_cell (fun () -> x)
-    | Host _ | Traced _ -> x
-  else
-    try Effect.perform (E_place { placement = p; t_in = x })
-    with Effect.Unhandled _ -> move p x
 
 (* Routing
 
@@ -1315,83 +1252,92 @@ let along op axis =
         different devices; place the value replicated or on one device first"
        op axis)
 
-(* [combine op ps] is the placement of an elementwise operation's result over
-   operands at [ps]: that of the split ones, which must be alike; copies take
-   it. *)
-let combine op ps =
-  match List.filter (fun p -> Grid.cuts p <> []) ps with
-  | [] -> List.hd ps
-  | p :: rest -> (
-      match List.find_opt (fun q -> not (Placement.equal p q)) rest with
-      | None -> p
-      | Some q ->
+(* [combine op gs] is the grid of an elementwise operation's result over
+   operands on grids [gs]: that of the split ones, which must be alike; copies
+   take it. *)
+let combine op gs =
+  match List.filter (fun g -> Grid.cuts g <> []) gs with
+  | [] -> List.hd gs
+  | g :: rest -> (
+      match List.find_opt (fun h -> not (Grid.equal ( == ) g h)) rest with
+      | None -> g
+      | Some h ->
           invalid_arg
             (Format.asprintf
                "Nx.%s: operands at %a and %a are split differently; place them \
                 alike first"
-               op Placement.pp p Placement.pp q))
+               op pp_grid g pp_grid h))
 
 (* [result op rule operands] is where [op]'s result lives, over operands of
    these placements ([None] on the host) and ranks, the placed ones among them
-   sharing their devices. *)
+   sharing their devices and backend, which the result keeps. *)
 let result op rule operands =
+  let backend =
+    match List.find_map fst operands with
+    | Some p -> p.backend
+    | None -> invalid_arg "Nx_effect.result: no placed operand"
+  in
+  let operands = List.map (fun (p, n) -> (Option.map (fun p -> p.grid) p, n)) operands in
   let ps = List.filter_map fst operands in
   let cut p a = List.mem_assoc a (Grid.cuts p) in
-  match rule with
-  | Elementwise -> combine op ps
-  | Along axes ->
-      List.iter
-        (fun p -> List.iter (fun a -> if cut p a then along op a) axes)
-        ps;
-      combine op ps
-  | Gather axis -> (
-      match operands with
-      | (Some p, _) :: _ when cut p axis ->
-          (* Each device selects among the rows it holds and the selections sum
-             across the devices, as tolk lowers a gather: a copy on each. A 1-D
-             grid's only cut is this one; a grid cut along other axes too would
-             keep those cuts, renumbered as [Reduce] does. *)
-          List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p)
-      | _ -> combine op ps)
-  | Reduce { axes; keepdims } ->
-      let reduce p =
+  let grid =
+    match rule with
+    | Elementwise -> combine op ps
+    | Along axes ->
+        List.iter
+          (fun p -> List.iter (fun a -> if cut p a then along op a) axes)
+          ps;
+        combine op ps
+    | Gather axis -> (
+        match operands with
+        | (Some p, _) :: _ when cut p axis ->
+            (* Each device selects among the rows it holds and the selections sum
+               across the devices, as tolk lowers a gather: a copy on each. A 1-D
+               grid's only cut is this one; a grid cut along other axes too would
+               keep those cuts, renumbered as [Reduce] does. *)
+            List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p)
+        | _ -> combine op ps)
+    | Reduce { axes; keepdims } ->
+        let reduce p =
+          let p =
+            Array.fold_left
+              (fun p a -> if cut p a then Grid.uncut p ~axis:a else p)
+              p axes
+          in
+          if keepdims then p
+          else
+            Grid.map_axes
+              (fun a ->
+                a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
+              p
+        in
+        combine op (List.map reduce ps)
+    | Contract ->
+        (* As [a @ b] is [a [..., m, 1, k] * b [..., 1, n, k]] summed over [k]. *)
+        let r = List.fold_left (fun r (_, n) -> Int.max r n) 0 operands in
+        let lift j (p, n) =
+          let axis i =
+            if (j = 0 && i = n - 1) || (j = 1 && i = n - 2) then r else i + r - n
+          in
+          Option.map (Grid.map_axes axis) p
+        in
         let p =
-          Array.fold_left
-            (fun p a -> if cut p a then Grid.uncut p ~axis:a else p)
-            p axes
+          combine op
+            (List.concat
+               (List.mapi (fun j x -> Option.to_list (lift j x)) operands))
         in
-        if keepdims then p
-        else
-          Grid.map_axes
-            (fun a ->
-              a - Array.fold_left (fun n r -> if r < a then n + 1 else n) 0 axes)
-            p
-      in
-      combine op (List.map reduce ps)
-  | Contract ->
-      (* As [a @ b] is [a [..., m, 1, k] * b [..., 1, n, k]] summed over [k]. *)
-      let r = List.fold_left (fun r (_, n) -> Int.max r n) 0 operands in
-      let lift j (p, n) =
-        let axis i =
-          if (j = 0 && i = n - 1) || (j = 1 && i = n - 2) then r else i + r - n
-        in
-        Option.map (Grid.map_axes axis) p
-      in
-      let p =
-        combine op
-          (List.concat
-             (List.mapi (fun j x -> Option.to_list (lift j x)) operands))
-      in
-      if cut p r then Grid.uncut p ~axis:r else p
-  | Into -> (
-      match operands with
-      | (Some p, _) :: _ -> p
-      | _ ->
-          let p = combine op ps in
-          List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p))
+        if cut p r then Grid.uncut p ~axis:r else p
+    | Into -> (
+        match operands with
+        | (Some p, _) :: _ -> p
+        | _ ->
+            let p = combine op ps in
+            List.fold_left (fun p (a, _) -> Grid.uncut p ~axis:a) p (Grid.cuts p))
+  in
+  { grid; backend }
 
 let same_devices p q =
-  let dp = Placement.devices p and dq = Placement.devices q in
+  let dp = devices_of p and dq = devices_of q in
   List.compare_lengths dp dq = 0 && List.for_all (fun d -> List.memq d dq) dp
 
 (* Views of whole shards of one split storage, each on its own device. A
@@ -1422,17 +1368,26 @@ let whole_shards xs =
     when List.for_all
            (fun (c, v, p) ->
              c == cell && whole c v
-             && List.compare_length_with (Placement.devices p) 1 = 0)
+             && List.compare_length_with (devices_of p) 1 = 0)
            views ->
-      Some (Placement.devices cell.placement)
+      Some (devices_of cell.placement)
   | _ -> None
 
-(* [route op rule xs] is where [op] runs over [xs]. Placed operands on different
-   device sets raise, but for [whole_shards]. *)
+let mixed op p q =
+  invalid_arg
+    (Format.asprintf "Nx.%s: operands on %a and %a; place one of them" op
+       pp_placement p pp_placement q)
+
+(* [route op rule xs] is where [op] runs over [xs]. Placed operands with
+   different backends raise, and so do those on different device sets, but for
+   [whole_shards]. *)
 let route op rule xs =
   match List.filter_map (fun (P x) -> placement_of x) xs with
   | [] -> On_host
   | p :: rest -> (
+      (match List.find_opt (fun q -> q.backend != p.backend) rest with
+      | Some q -> mixed op p q
+      | None -> ());
       match List.find_opt (fun q -> not (same_devices p q)) rest with
       | None ->
           At
@@ -1440,12 +1395,8 @@ let route op rule xs =
                (List.map (fun (P x as o) -> (placement_of x, rank o)) xs))
       | Some q -> (
           match whole_shards xs with
-          | Some ds -> At (Placement.replicated ds)
-          | None ->
-              invalid_arg
-                (Format.asprintf
-                   "Nx.%s: operands on %a and %a; place one of them" op
-                   Placement.pp p Placement.pp q)))
+          | Some ds -> At { grid = Grid.v ds [ List.length ds ] []; backend = p.backend }
+          | None -> mixed op p q))
 
 (* [routing e] is the name, rule and operands by which the operation that
    performs [e] is routed, and [None] for an effect that no operation routes:
@@ -1560,27 +1511,13 @@ let settle : type a b. route -> (a, b) Nx_backend.t -> (a, b) t =
           (Elements.gather (Nx_backend.to_host h)
              (View.create ~offset:(View.offset (Nx_backend.view h)) [||]))
           shape
-      else (Placement.memory p).place p (Host h)
+      else (memory_of p).place p (Host h)
 
 (* [routed e x f] runs [f] over [x], no host tensor, where the operation that
    performs [e] runs. *)
 let routed e x f =
   let r = route_of e in
   settle r (f (host_of x))
-
-let unary_op e host_op t_in =
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with Host t -> Host (host_op t) | _ -> routed e t_in host_op)
-
-let binary_op e host_op a b =
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (host_op a b)
-    | _ ->
-        let r = route_of e in
-        settle r (host_op (host_of a) (host_of b)))
 
 (* Movements
 
@@ -1683,7 +1620,7 @@ let split_axis ~axis ~n shape m =
 let fates p shape m =
   List.map
     (fun (axis, n) -> (axis, n, split_axis ~axis ~n shape m))
-    (Grid.cuts p)
+    (Grid.cuts p.grid)
 
 (* [localize shape m fates] is [m] as one tile of a value of shape [shape] sees
    it, [fates] giving each cut axis, its number of tiles and what [m] does to
@@ -1721,18 +1658,21 @@ let localize shape m fates =
    moves where the movement puts it, and a cut to one tile keeps the devices
    that hold that tile. *)
 let placement_after p fates =
-  let p =
+  let g =
     List.fold_left
-      (fun p (axis, _, fate) ->
-        match fate with Shard j -> Grid.select p ~axis j | Split _ -> p)
-      p fates
+      (fun g (axis, _, fate) ->
+        match fate with Shard j -> Grid.select g ~axis j | Split _ -> g)
+      p.grid fates
   in
-  Grid.map_axes
-    (fun a ->
-      match List.find (fun (axis, _, _) -> axis = a) fates with
-      | _, _, Split a' -> a'
-      | _, _, Shard _ -> a)
-    p
+  let grid =
+    Grid.map_axes
+      (fun a ->
+        match List.find (fun (axis, _, _) -> axis = a) fates with
+        | _, _, Split a' -> a'
+        | _, _, Shard _ -> a)
+      g
+  in
+  { p with grid }
 
 (* [moved_placement p shape m] is the placement of a value of shape [shape] at
    [p] moved by [m]. Raises [Invalid_argument] as [split_axis] does. *)
@@ -1741,197 +1681,777 @@ let moved_placement p shape m = placement_after p (fates p shape m)
 (* [split_view p v m] is the placement and per-shard view of a value at [p]
    whose per-shard view is [v], moved by [m]. *)
 let split_view p v m =
-  match Grid.cuts p with
+  match Grid.cuts p.grid with
   | [] -> (p, move_view v m)
   | _ ->
       let shape = global p (View.shape v) in
       let fates = fates p shape m in
       (placement_after p fates, move_view v (localize shape m fates))
 
-let movement_op e host_op t_in arg =
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (t_in, movement_of e) with
-    | Host t, _ -> Host (host_op t arg)
-    | Placed r, Some (_, m) ->
-        let r_placement, r_view = split_view r.r_placement r.r_view m in
-        Placed { r with r_id = fresh_id (); r_placement; r_view }
-    | Placed _, None -> invalid_arg "Nx_effect.movement_op: not a movement"
-    | Traced _, _ -> outside_trace ())
+(* The host backend
 
-(* Binary operations *)
+   nx.c's kernels over nx's values. Host operands run in place. Otherwise the
+   operation reads its operands' elements to the host through their backends,
+   runs there, and [settle] places the result where [route] says, through the
+   memory of the result's devices: today's routing, whatever the operands'
+   backend, so a backend that includes this one keeps it. *)
 
-let add a b = binary_op (E_add { a; b }) Nx_backend.add a b
-let sub a b = binary_op (E_sub { a; b }) Nx_backend.sub a b
-let mul a b = binary_op (E_mul { a; b }) Nx_backend.mul a b
-let max a b = binary_op (E_max { a; b }) Nx_backend.max a b
-let min a b = binary_op (E_min { a; b }) Nx_backend.min a b
-let mod_ a b = binary_op (E_mod { a; b }) Nx_backend.mod_ a b
-let pow a b = binary_op (E_pow { a; b }) Nx_backend.pow a b
-let xor a b = binary_op (E_xor { a; b }) Nx_backend.xor a b
-let or_ a b = binary_op (E_or { a; b }) Nx_backend.or_ a b
-let and_ a b = binary_op (E_and { a; b }) Nx_backend.and_ a b
-let atan2 a b = binary_op (E_atan2 { a; b }) Nx_backend.atan2 a b
-let fdiv a b = binary_op (E_fdiv { a; b }) Nx_backend.fdiv a b
-let idiv a b = binary_op (E_idiv { a; b }) Nx_backend.idiv a b
-
-(* Comparison operations *)
-
-(* [routed2 e a b f] runs [f] over [a] and [b], one no host tensor, where the
-   operation that performs [e] runs. *)
+(* The route is decided before anything is read. *)
 let routed2 e a b f =
   let r = route_of e in
   settle r (f (host_of a) (host_of b))
+let unary e op x = match x with Host t -> Host (op t) | _ -> routed e x op
+
+let binary e op a b =
+  match (a, b) with
+  | Host a, Host b -> Host (op a b)
+  | _ -> routed2 e a b op
+
+let moved e op x arg =
+  match (x, movement_of e) with
+  | Host t, _ -> Host (op t arg)
+  | Placed r, Some (_, m) ->
+      let r_placement, r_view = split_view r.r_placement r.r_view m in
+      Placed { r with r_id = fresh_id (); r_placement; r_view }
+  | Placed _, None -> invalid_arg "Nx_effect.moved: not a movement"
+  | Traced _, _ -> outside_trace ()
+
+let create p make =
+  if is_host_placement p then Host (make ()) else settle (At p) (make ())
+
+let reduce_effect ~op ~axes t_in =
+  match op with
+  | `Sum -> E_reduce_sum { t_in; axes }
+  | `Prod -> E_reduce_prod { t_in; axes }
+  | `Max -> E_reduce_max { t_in; axes }
+  | `Min -> E_reduce_min { t_in; axes }
+
+module Host_backend = struct
+  let name = "host"
+  let runs_on _ = true
+
+  let to_host : type a b. (a, b) t -> Nx_device.Buffer.t = function
+    | Host t -> Nx_backend.to_host t
+    | Placed r -> read_elements r
+    | Traced _ -> outside_trace ()
+
+  let buffer p dtype shape =
+    create p (fun () -> Nx_backend.buffer host_context dtype shape)
+
+  let full p dtype shape value =
+    create p (fun () -> Nx_backend.full host_context dtype shape value)
+
+  let from_host p dtype buffer =
+    create p (fun () -> Nx_backend.from_host host_context dtype buffer)
+
+  let add a b = binary (E_add { a; b }) Nx_backend.add a b
+  let sub a b = binary (E_sub { a; b }) Nx_backend.sub a b
+  let mul a b = binary (E_mul { a; b }) Nx_backend.mul a b
+  let fdiv a b = binary (E_fdiv { a; b }) Nx_backend.fdiv a b
+  let idiv a b = binary (E_idiv { a; b }) Nx_backend.idiv a b
+  let mod_ a b = binary (E_mod { a; b }) Nx_backend.mod_ a b
+  let pow a b = binary (E_pow { a; b }) Nx_backend.pow a b
+  let atan2 a b = binary (E_atan2 { a; b }) Nx_backend.atan2 a b
+  let cmpeq a b = binary (E_cmpeq { a; b }) Nx_backend.cmpeq a b
+  let cmpne a b = binary (E_cmpne { a; b }) Nx_backend.cmpne a b
+  let cmplt a b = binary (E_cmplt { a; b }) Nx_backend.cmplt a b
+  let cmple a b = binary (E_cmple { a; b }) Nx_backend.cmple a b
+  let max a b = binary (E_max { a; b }) Nx_backend.max a b
+  let min a b = binary (E_min { a; b }) Nx_backend.min a b
+  let xor a b = binary (E_xor { a; b }) Nx_backend.xor a b
+  let or_ a b = binary (E_or { a; b }) Nx_backend.or_ a b
+  let and_ a b = binary (E_and { a; b }) Nx_backend.and_ a b
+  let neg t = unary (E_neg { t_in = t }) Nx_backend.neg t
+  let recip t = unary (E_recip { t_in = t }) Nx_backend.recip t
+  let abs t = unary (E_abs { t_in = t }) Nx_backend.abs t
+  let sqrt t = unary (E_sqrt { t_in = t }) Nx_backend.sqrt t
+  let sign t = unary (E_sign { t_in = t }) Nx_backend.sign t
+  let exp t = unary (E_exp { t_in = t }) Nx_backend.exp t
+  let log t = unary (E_log { t_in = t }) Nx_backend.log t
+  let sin t = unary (E_sin { t_in = t }) Nx_backend.sin t
+  let cos t = unary (E_cos { t_in = t }) Nx_backend.cos t
+  let tan t = unary (E_tan { t_in = t }) Nx_backend.tan t
+  let asin t = unary (E_asin { t_in = t }) Nx_backend.asin t
+  let acos t = unary (E_acos { t_in = t }) Nx_backend.acos t
+  let atan t = unary (E_atan { t_in = t }) Nx_backend.atan t
+  let sinh t = unary (E_sinh { t_in = t }) Nx_backend.sinh t
+  let cosh t = unary (E_cosh { t_in = t }) Nx_backend.cosh t
+  let tanh t = unary (E_tanh { t_in = t }) Nx_backend.tanh t
+  let trunc t = unary (E_trunc { t_in = t }) Nx_backend.trunc t
+  let ceil t = unary (E_ceil { t_in = t }) Nx_backend.ceil t
+  let floor t = unary (E_floor { t_in = t }) Nx_backend.floor t
+  let round t = unary (E_round { t_in = t }) Nx_backend.round t
+  let erf t = unary (E_erf { t_in = t }) Nx_backend.erf t
+
+  let where condition if_true if_false =
+    match (condition, if_true, if_false) with
+    | Host c, Host a, Host b -> Host (Nx_backend.where c a b)
+    | _ ->
+        let r = route_of (E_where { condition; if_true; if_false }) in
+        settle r
+          (Nx_backend.where (host_of condition) (host_of if_true)
+             (host_of if_false))
+
+  let reduce ~op ~axes t_in =
+    unary (reduce_effect ~op ~axes t_in) (Nx_backend.reduce ~op ~axes) t_in
+
+  let argmax ~axis ~keepdims t_in =
+    unary
+      (E_argmax { t_in; axis; keepdims })
+      (Nx_backend.argmax ~axis ~keepdims)
+      t_in
+
+  let argmin ~axis ~keepdims t_in =
+    unary
+      (E_argmin { t_in; axis; keepdims })
+      (Nx_backend.argmin ~axis ~keepdims)
+      t_in
+
+  let associative_scan ~axis ~op t_in =
+    unary
+      (E_associative_scan { t_in; axis; op })
+      (Nx_backend.associative_scan ~axis ~op)
+      t_in
+
+  let sort ~axis ~descending t_in =
+    unary
+      (E_sort { t_in; axis; descending })
+      (Nx_backend.sort ~axis ~descending)
+      t_in
+
+  let argsort ~axis ~descending t_in =
+    unary
+      (E_argsort { t_in; axis; descending })
+      (Nx_backend.argsort ~axis ~descending)
+      t_in
+
+  let expand t_in new_target_shape =
+    moved
+      (E_expand { t_in; new_target_shape })
+      Nx_backend.expand t_in new_target_shape
+
+  let reshape t_in new_shape =
+    moved (E_reshape { t_in; new_shape }) Nx_backend.reshape t_in new_shape
+
+  let permute t_in axes =
+    moved (E_permute { t_in; axes }) Nx_backend.permute t_in axes
+
+  let shrink t_in limits =
+    moved (E_shrink { t_in; limits }) Nx_backend.shrink t_in limits
+
+  let flip t_in dims_to_flip =
+    moved (E_flip { t_in; dims_to_flip }) Nx_backend.flip t_in dims_to_flip
+
+  let sliding_window t_in ~axis ~window ~step =
+    moved
+      (E_sliding_window { t_in; axis; window; step })
+      (fun t () -> Nx_backend.sliding_window t ~axis ~window ~step)
+      t_in ()
+
+  let pad t_in padding_config fill_value =
+    unary
+      (E_pad { t_in; padding_config; fill_value })
+      (fun t -> Nx_backend.pad t padding_config fill_value)
+      t_in
+
+  let cat t_list ~axis =
+    if List.for_all (function Host _ -> true | _ -> false) t_list then
+      Host (Nx_backend.cat (List.map host_of t_list) ~axis)
+    else
+      let r = route_of (E_cat { t_list; axis }) in
+      settle r (Nx_backend.cat (List.map host_of t_list) ~axis)
+
+  let cast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
+      (c, d) t =
+    match t_in with
+    | Host t -> Host (Nx_backend.cast ~dtype t)
+    | _ -> routed (E_cast { t_in; target_dtype = dtype }) t_in (Nx_backend.cast ~dtype)
+
+  let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
+      (c, d) t =
+    match t_in with
+    | Host t -> Host (Nx_backend.bitcast ~dtype t)
+    | _ ->
+        routed
+          (E_bitcast { t_in; target_dtype = dtype })
+          t_in (Nx_backend.bitcast ~dtype)
+
+  (* A placed value whose view covers its storage is already contiguous. *)
+  let contiguous t_in =
+    match t_in with
+    | Host t -> Host (Nx_backend.contiguous t)
+    | Placed r when covers r -> Placed { r with r_id = fresh_id () }
+    | _ -> routed (E_contiguous { t_in }) t_in Fun.id
+
+  let copy t_in = unary (E_copy { t_in }) Nx_backend.copy t_in
+  let threefry key ctr = binary (E_threefry { key; ctr }) Nx_backend.threefry key ctr
+
+  let gather data indices ~axis =
+    binary
+      (E_gather { data; indices; axis })
+      (fun d i -> Nx_backend.gather d i ~axis)
+      data indices
+
+  let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
+    match (data_template, indices, updates) with
+    | Host d, Host i, Host u ->
+        Host
+          (Nx_backend.scatter ~mode ~unique_indices d ~indices:i ~updates:u
+             ~axis)
+    | _ ->
+        let r =
+          route_of
+            (E_scatter
+               { data_template; indices; updates; axis; mode; unique_indices })
+        in
+        settle r
+          (Nx_backend.scatter ~mode ~unique_indices (host_of data_template)
+             ~indices:(host_of indices) ~updates:(host_of updates) ~axis)
+
+  let update t_in ~starts v =
+    match (t_in, starts, v) with
+    | Host t, Host s, Host v -> Host (Nx_backend.update t ~starts:s v)
+    | _ ->
+        let r = route_of (E_update { t_in; starts; v }) in
+        settle r
+          (Nx_backend.update (host_of t_in) ~starts:(host_of starts) (host_of v))
+
+  let unfold t_in ~kernel_size ~stride ~dilation ~padding =
+    unary
+      (E_unfold { t_in; kernel_size; stride; dilation; padding })
+      (fun t -> Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding)
+      t_in
+
+  let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
+    unary
+      (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
+      (fun t ->
+        Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+      t_in
+
+  let matmul a b = binary (E_matmul { a; b }) Nx_backend.matmul a b
+  let fft t ~axes = unary (E_fft { t; axes }) (Nx_backend.fft ~axes) t
+  let ifft t ~axes = unary (E_ifft { t; axes }) (Nx_backend.ifft ~axes) t
+
+  let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Nx_dtype.t)
+      ~axes : (Complex.t, c) t =
+    match t with
+    | Host h -> Host (Nx_backend.rfft h ~dtype ~axes)
+    | _ -> routed (E_rfft { t; dtype; axes }) t (Nx_backend.rfft ~dtype ~axes)
+
+  let irfft (type a c) ?s (t : (Complex.t, a) t)
+      ~(dtype : (float, c) Nx_dtype.t) ~axes : (float, c) t =
+    match t with
+    | Host h -> Host (Nx_backend.irfft ?s h ~dtype ~axes)
+    | _ ->
+        routed (E_irfft { t; dtype; axes; s }) t (Nx_backend.irfft ?s ~dtype ~axes)
+
+  let cholesky ~upper t_in =
+    unary (E_cholesky { t_in; upper }) (Nx_backend.cholesky ~upper) t_in
+
+  let qr ~reduced t_in =
+    let r = route_of (E_qr { t_in; reduced }) in
+    let q, rr = Nx_backend.qr ~reduced (host_of t_in) in
+    (settle r q, settle r rr)
+
+  let lu t_in =
+    let r = route_of (E_lu { t_in }) in
+    let lu, pivots, perm = Nx_backend.lu (host_of t_in) in
+    (settle r lu, settle r pivots, settle r perm)
+
+  let svd ~full_matrices t_in =
+    let r = route_of (E_svd { t_in; full_matrices }) in
+    let u, s, vt = Nx_backend.svd ~full_matrices (host_of t_in) in
+    (settle r u, settle r s, settle r vt)
+
+  let eigvals t_in = unary (E_eigvals { t_in }) Nx_backend.eigvals t_in
+
+  let eig t_in =
+    let r = route_of (E_eig { t_in }) in
+    let vals, vecs = Nx_backend.eig (host_of t_in) in
+    (settle r vals, settle r vecs)
+
+  let eigvalsh t_in = unary (E_eigvalsh { t_in }) Nx_backend.eigvalsh t_in
+
+  let eigh t_in =
+    let r = route_of (E_eigh { t_in }) in
+    let vals, vecs = Nx_backend.eigh (host_of t_in) in
+    (settle r vals, settle r vecs)
+
+  let solve_triangular ~upper ~transpose ~unit_diag a b =
+    binary
+      (E_solve_triangular { a; b; upper; transpose; unit_diag })
+      (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag)
+      a b
+end
+
+(* Backends *)
+
+module Backend = struct
+  module type S = Backend_sig.S
+
+  type t = backend
+
+  exception Refused of string
+
+  let () =
+    Printexc.register_printer (function
+      | Refused reason -> Some (Printf.sprintf "Nx.Backend.Refused(%S)" reason)
+      | _ -> None)
+
+  let name (module B : S) = B.name
+  let equal : t -> t -> bool = ( == )
+
+  module Host : S = Host_backend
+
+  let host : t = (module Host)
+  let () = host_backend := Some host
+end
+
+(* Placements *)
+
+module Placement = struct
+  type t = placement
+
+  let v backend grid = { grid; backend }
+  let grid p = p.grid
+  let backend p = p.backend
+  let host = { grid = Grid.device Device.host; backend = Backend.host }
+  let devices = devices_of
+  let memory = memory_of
+  let is_host = is_host_placement
+  let cuts p = Grid.cuts p.grid
+  let uncut p ~axis = { p with grid = Grid.uncut p.grid ~axis }
+  let map_axes f p = { p with grid = Grid.map_axes f p.grid }
+
+  let check what backend ds =
+    let fail fmt =
+      Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
+    in
+    let rec distinct = function
+      | [] -> ()
+      | d :: rest ->
+          if List.memq d rest then fail "%s appears twice" d.d_name;
+          distinct rest
+    in
+    let (module B : Backend.S) = backend in
+    match ds with
+    | [] -> fail "no device"
+    | d :: rest ->
+        distinct ds;
+        List.iter
+          (fun d' ->
+            if d'.d_memory != d.d_memory then
+              fail "%s and %s have different memories" d.d_name d'.d_name)
+          rest;
+        List.iter
+          (fun d -> if not (B.runs_on d) then fail "%s does not run on %s" B.name d.d_name)
+          ds
+
+  let device ?(backend = Backend.host) d =
+    check "device" backend [ d ];
+    { grid = Grid.device d; backend }
+
+  let replicated ?(backend = Backend.host) ds =
+    check "replicated" backend ds;
+    { grid = Grid.v ds [ List.length ds ] []; backend }
+
+  let sharded ?(backend = Backend.host) ~axis ds =
+    if axis < 0 then
+      invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
+    check "sharded" backend ds;
+    { grid = Grid.v ds [ List.length ds ] [ (axis, [ 0 ]) ]; backend }
+
+  let check_shape = check_shape
+  let window = window_of
+
+  (* The placement of a value with a new leading axis, and of one without its
+     leading axis, which no cut may name. *)
+  let with_leading_axis p = map_axes succ p
+
+  let without_leading_axis p =
+    if List.mem_assoc 0 (cuts p) then None else Some (map_axes pred p)
+
+  let equal p q = p.backend == q.backend && Grid.equal ( == ) p.grid q.grid
+  let pp = pp_placement
+end
+
+(* Lenses, continued *)
+
+(* A value made beside a placed one is a full copy on each of its devices, with
+   its backend. The frontend asks for a context each time it builds a constant
+   beside an operand, so the host's is one value. *)
+let context : type a b. (a, b) t -> context = function
+  | Host _ -> Placement.host
+  | Placed r ->
+      let p = r.r_placement in
+      Placement.replicated ~backend:p.backend (devices_of p)
+  | Traced t -> t.t_context
+
+(* Whether a creation at [p] makes a host tensor. The frontend's contexts on the
+   host are [Placement.host] itself, so the first test decides the common
+   case. *)
+let on_host (p : context) = p == Placement.host || is_host_placement p
+
+let placement (type a b) (x : (a, b) t) : placement =
+  try Effect.perform (E_placement x)
+  with Effect.Unhandled _ -> (
+    match x with
+    | Host _ -> Placement.host
+    | Placed r -> r.r_placement
+    | Traced _ -> outside_trace ())
+
+(* The host engine's storage of a host value, and the view's elements of a
+   placed one, read by its backend: readers take [contiguous] first, so the view
+   is the storage. *)
+let to_host (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
+  try Effect.perform (E_to_host x)
+  with Effect.Unhandled _ -> (
+    match x with
+    | Host t -> Nx_backend.to_host t
+    | Placed r ->
+        let (module B : Backend.S) = r.r_placement.backend in
+        B.to_host x
+    | Traced _ -> outside_trace ())
+
+(* Moving. A placed value moved to a placement that differs from its own only
+   in backend is a view of the same storage: every backend computes over its
+   devices' memory. *)
+
+let move (type a b) p (x : (a, b) t) : (a, b) t =
+  let move () =
+    match x with
+    | Traced _ -> outside_trace ()
+    | Placed r when is_host_placement p -> Host (read_host r)
+    | Placed r when Grid.equal ( == ) r.r_placement.grid p.grid ->
+        Placed { r with r_id = fresh_id (); r_placement = p }
+    | Host _ | Placed _ ->
+        check_shape "Nx.place" p (View.shape (view x));
+        (memory_of p).place p x
+  in
+  match x with
+  | Placed r -> Cell.with_borrow r.r_cell move
+  | Host _ | Traced _ -> move ()
+
+(* A value already at [p] is returned without an effect: an effect's result is
+   always a fresh value, which the transformations take for a new node. *)
+let place (type a b) p (x : (a, b) t) : (a, b) t =
+  if Placement.equal (placement x) p then
+    match x with
+    | Placed r -> Cell.with_borrow r.r_cell (fun () -> x)
+    | Host _ | Traced _ -> x
+  else
+    try Effect.perform (E_place { placement = p; t_in = x })
+    with Effect.Unhandled _ -> move p x
+
+(* Dispatch
+
+   Every operation first performs its effect. Unhandled, operands all on the
+   host run nx.c directly, and any other operands run on the backend their
+   placed ones share: operands with two backends raise. *)
+
+let backend_among op xs =
+  let p =
+    List.fold_left
+      (fun acc (P x) ->
+        match (x, acc) with
+        | Host _, _ -> acc
+        | Traced _, _ -> outside_trace ()
+        | Placed r, None -> Some r.r_placement
+        | Placed r, Some p ->
+            if r.r_placement.backend == p.backend then acc
+            else mixed op p r.r_placement)
+      None xs
+  in
+  match p with Some p -> p.backend | None -> Backend.host
+
+(* The backend that runs the operation performing [e]. *)
+let backend_of e =
+  match routing e with
+  | Some (op, _, xs) -> backend_among op xs
+  | None -> (
+      match movement_of e with
+      | Some (x, _) -> backend_among "move" [ x ]
+      | None -> invalid_arg "Nx_effect.backend_of: no operation performs this")
+
+let unary_op e host_op pick t_in =
+  try Effect.perform e
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Host t -> Host (host_op t)
+    | _ -> pick (backend_of e) t_in)
+
+let binary_op e host_op pick a b =
+  try Effect.perform e
+  with Effect.Unhandled _ -> (
+    match (a, b) with
+    | Host a, Host b -> Host (host_op a b)
+    | _ -> pick (backend_of e) a b)
+
+let movement_op e host_op pick t_in arg =
+  try Effect.perform e
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Host t -> Host (host_op t arg)
+    | _ -> pick (backend_of e) t_in arg)
+
+(* Binary operations *)
+
+let add a b =
+  binary_op (E_add { a; b }) Nx_backend.add
+    (fun (module B : Backend.S) -> B.add) a b
+
+let sub a b =
+  binary_op (E_sub { a; b }) Nx_backend.sub
+    (fun (module B : Backend.S) -> B.sub) a b
+
+let mul a b =
+  binary_op (E_mul { a; b }) Nx_backend.mul
+    (fun (module B : Backend.S) -> B.mul) a b
+
+let max a b =
+  binary_op (E_max { a; b }) Nx_backend.max
+    (fun (module B : Backend.S) -> B.max) a b
+
+let min a b =
+  binary_op (E_min { a; b }) Nx_backend.min
+    (fun (module B : Backend.S) -> B.min) a b
+
+let mod_ a b =
+  binary_op (E_mod { a; b }) Nx_backend.mod_
+    (fun (module B : Backend.S) -> B.mod_) a b
+
+let pow a b =
+  binary_op (E_pow { a; b }) Nx_backend.pow
+    (fun (module B : Backend.S) -> B.pow) a b
+
+let xor a b =
+  binary_op (E_xor { a; b }) Nx_backend.xor
+    (fun (module B : Backend.S) -> B.xor) a b
+
+let or_ a b =
+  binary_op (E_or { a; b }) Nx_backend.or_
+    (fun (module B : Backend.S) -> B.or_) a b
+
+let and_ a b =
+  binary_op (E_and { a; b }) Nx_backend.and_
+    (fun (module B : Backend.S) -> B.and_) a b
+
+let atan2 a b =
+  binary_op (E_atan2 { a; b }) Nx_backend.atan2
+    (fun (module B : Backend.S) -> B.atan2) a b
+
+let fdiv a b =
+  binary_op (E_fdiv { a; b }) Nx_backend.fdiv
+    (fun (module B : Backend.S) -> B.fdiv) a b
+
+let idiv a b =
+  binary_op (E_idiv { a; b }) Nx_backend.idiv
+    (fun (module B : Backend.S) -> B.idiv) a b
+
+(* Comparison operations *)
 
 let cmpeq a b =
-  let e = E_cmpeq { a; b } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (Nx_backend.cmpeq a b)
-    | _ -> routed2 e a b Nx_backend.cmpeq)
+  binary_op (E_cmpeq { a; b }) Nx_backend.cmpeq
+    (fun (module B : Backend.S) -> B.cmpeq) a b
 
 let cmpne a b =
-  let e = E_cmpne { a; b } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (Nx_backend.cmpne a b)
-    | _ -> routed2 e a b Nx_backend.cmpne)
+  binary_op (E_cmpne { a; b }) Nx_backend.cmpne
+    (fun (module B : Backend.S) -> B.cmpne) a b
 
 let cmplt a b =
-  let e = E_cmplt { a; b } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (Nx_backend.cmplt a b)
-    | _ -> routed2 e a b Nx_backend.cmplt)
+  binary_op (E_cmplt { a; b }) Nx_backend.cmplt
+    (fun (module B : Backend.S) -> B.cmplt) a b
 
 let cmple a b =
-  let e = E_cmple { a; b } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (Nx_backend.cmple a b)
-    | _ -> routed2 e a b Nx_backend.cmple)
+  binary_op (E_cmple { a; b }) Nx_backend.cmple
+    (fun (module B : Backend.S) -> B.cmple) a b
 
 (* Unary operations *)
 
-let neg t = unary_op (E_neg { t_in = t }) Nx_backend.neg t
-let sin t = unary_op (E_sin { t_in = t }) Nx_backend.sin t
-let sqrt t = unary_op (E_sqrt { t_in = t }) Nx_backend.sqrt t
-let recip t = unary_op (E_recip { t_in = t }) Nx_backend.recip t
-let log t = unary_op (E_log { t_in = t }) Nx_backend.log t
-let exp t = unary_op (E_exp { t_in = t }) Nx_backend.exp t
-let cos t = unary_op (E_cos { t_in = t }) Nx_backend.cos t
-let abs t = unary_op (E_abs { t_in = t }) Nx_backend.abs t
-let sign t = unary_op (E_sign { t_in = t }) Nx_backend.sign t
-let tan t = unary_op (E_tan { t_in = t }) Nx_backend.tan t
-let asin t = unary_op (E_asin { t_in = t }) Nx_backend.asin t
-let acos t = unary_op (E_acos { t_in = t }) Nx_backend.acos t
-let atan t = unary_op (E_atan { t_in = t }) Nx_backend.atan t
-let sinh t = unary_op (E_sinh { t_in = t }) Nx_backend.sinh t
-let cosh t = unary_op (E_cosh { t_in = t }) Nx_backend.cosh t
-let tanh t = unary_op (E_tanh { t_in = t }) Nx_backend.tanh t
-let trunc t = unary_op (E_trunc { t_in = t }) Nx_backend.trunc t
-let ceil t = unary_op (E_ceil { t_in = t }) Nx_backend.ceil t
-let floor t = unary_op (E_floor { t_in = t }) Nx_backend.floor t
-let round t = unary_op (E_round { t_in = t }) Nx_backend.round t
-let erf t = unary_op (E_erf { t_in = t }) Nx_backend.erf t
+let neg t =
+  unary_op (E_neg { t_in = t }) Nx_backend.neg
+    (fun (module B : Backend.S) -> B.neg) t
+
+let sin t =
+  unary_op (E_sin { t_in = t }) Nx_backend.sin
+    (fun (module B : Backend.S) -> B.sin) t
+
+let sqrt t =
+  unary_op (E_sqrt { t_in = t }) Nx_backend.sqrt
+    (fun (module B : Backend.S) -> B.sqrt) t
+
+let recip t =
+  unary_op (E_recip { t_in = t }) Nx_backend.recip
+    (fun (module B : Backend.S) -> B.recip) t
+
+let log t =
+  unary_op (E_log { t_in = t }) Nx_backend.log
+    (fun (module B : Backend.S) -> B.log) t
+
+let exp t =
+  unary_op (E_exp { t_in = t }) Nx_backend.exp
+    (fun (module B : Backend.S) -> B.exp) t
+
+let cos t =
+  unary_op (E_cos { t_in = t }) Nx_backend.cos
+    (fun (module B : Backend.S) -> B.cos) t
+
+let abs t =
+  unary_op (E_abs { t_in = t }) Nx_backend.abs
+    (fun (module B : Backend.S) -> B.abs) t
+
+let sign t =
+  unary_op (E_sign { t_in = t }) Nx_backend.sign
+    (fun (module B : Backend.S) -> B.sign) t
+
+let tan t =
+  unary_op (E_tan { t_in = t }) Nx_backend.tan
+    (fun (module B : Backend.S) -> B.tan) t
+
+let asin t =
+  unary_op (E_asin { t_in = t }) Nx_backend.asin
+    (fun (module B : Backend.S) -> B.asin) t
+
+let acos t =
+  unary_op (E_acos { t_in = t }) Nx_backend.acos
+    (fun (module B : Backend.S) -> B.acos) t
+
+let atan t =
+  unary_op (E_atan { t_in = t }) Nx_backend.atan
+    (fun (module B : Backend.S) -> B.atan) t
+
+let sinh t =
+  unary_op (E_sinh { t_in = t }) Nx_backend.sinh
+    (fun (module B : Backend.S) -> B.sinh) t
+
+let cosh t =
+  unary_op (E_cosh { t_in = t }) Nx_backend.cosh
+    (fun (module B : Backend.S) -> B.cosh) t
+
+let tanh t =
+  unary_op (E_tanh { t_in = t }) Nx_backend.tanh
+    (fun (module B : Backend.S) -> B.tanh) t
+
+let trunc t =
+  unary_op (E_trunc { t_in = t }) Nx_backend.trunc
+    (fun (module B : Backend.S) -> B.trunc) t
+
+let ceil t =
+  unary_op (E_ceil { t_in = t }) Nx_backend.ceil
+    (fun (module B : Backend.S) -> B.ceil) t
+
+let floor t =
+  unary_op (E_floor { t_in = t }) Nx_backend.floor
+    (fun (module B : Backend.S) -> B.floor) t
+
+let round t =
+  unary_op (E_round { t_in = t }) Nx_backend.round
+    (fun (module B : Backend.S) -> B.round) t
+
+let erf t =
+  unary_op (E_erf { t_in = t }) Nx_backend.erf
+    (fun (module B : Backend.S) -> B.erf) t
 
 let op_psum t_in =
   try Effect.perform (E_psum { t_in })
   with Effect.Unhandled _ -> failwith "psum must be used under vmap"
 
-(* Reduction operations. The host case of each operation below calls its backend
+(* Reduction operations. The host case of each operation below calls nx.c
    directly, allocating nothing beyond the effect and the result. *)
 
 let reduce ~op ~axes t_in =
-  let eff =
-    match op with
-    | `Sum -> E_reduce_sum { t_in; axes }
-    | `Prod -> E_reduce_prod { t_in; axes }
-    | `Max -> E_reduce_max { t_in; axes }
-    | `Min -> E_reduce_min { t_in; axes }
-  in
-  try Effect.perform eff
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.reduce ~op ~axes t)
-    | _ -> routed eff t_in (Nx_backend.reduce ~op ~axes))
+  unary_op
+    (reduce_effect ~op ~axes t_in)
+    (Nx_backend.reduce ~op ~axes)
+    (fun (module B : Backend.S) -> B.reduce ~op ~axes)
+    t_in
 
 let argmax ~axis ~keepdims t_in =
-  let e = E_argmax { t_in; axis; keepdims } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.argmax ~axis ~keepdims t)
-    | _ -> routed e t_in (Nx_backend.argmax ~axis ~keepdims))
+  unary_op
+    (E_argmax { t_in; axis; keepdims })
+    (Nx_backend.argmax ~axis ~keepdims)
+    (fun (module B : Backend.S) -> B.argmax ~axis ~keepdims)
+    t_in
 
 let argmin ~axis ~keepdims t_in =
-  let e = E_argmin { t_in; axis; keepdims } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.argmin ~axis ~keepdims t)
-    | _ -> routed e t_in (Nx_backend.argmin ~axis ~keepdims))
+  unary_op
+    (E_argmin { t_in; axis; keepdims })
+    (Nx_backend.argmin ~axis ~keepdims)
+    (fun (module B : Backend.S) -> B.argmin ~axis ~keepdims)
+    t_in
 
 let associative_scan ~axis ~op t_in =
-  let e = E_associative_scan { t_in; axis; op } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.associative_scan ~axis ~op t)
-    | _ -> routed e t_in (Nx_backend.associative_scan ~axis ~op))
+  unary_op
+    (E_associative_scan { t_in; axis; op })
+    (Nx_backend.associative_scan ~axis ~op)
+    (fun (module B : Backend.S) -> B.associative_scan ~axis ~op)
+    t_in
 
 let sort ~axis ~descending t_in =
-  let e = E_sort { t_in; axis; descending } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.sort ~axis ~descending t)
-    | _ -> routed e t_in (Nx_backend.sort ~axis ~descending))
+  unary_op
+    (E_sort { t_in; axis; descending })
+    (Nx_backend.sort ~axis ~descending)
+    (fun (module B : Backend.S) -> B.sort ~axis ~descending)
+    t_in
 
 let argsort ~axis ~descending t_in =
-  let e = E_argsort { t_in; axis; descending } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.argsort ~axis ~descending t)
-    | _ -> routed e t_in (Nx_backend.argsort ~axis ~descending))
+  unary_op
+    (E_argsort { t_in; axis; descending })
+    (Nx_backend.argsort ~axis ~descending)
+    (fun (module B : Backend.S) -> B.argsort ~axis ~descending)
+    t_in
 
 (* Movement operations *)
 
 let reshape t_in new_shape =
-  movement_op (E_reshape { t_in; new_shape }) Nx_backend.reshape t_in new_shape
+  movement_op
+    (E_reshape { t_in; new_shape })
+    Nx_backend.reshape
+    (fun (module B : Backend.S) -> B.reshape)
+    t_in new_shape
 
 let expand t_in new_target_shape =
   movement_op
     (E_expand { t_in; new_target_shape })
-    Nx_backend.expand t_in new_target_shape
+    Nx_backend.expand
+    (fun (module B : Backend.S) -> B.expand)
+    t_in new_target_shape
 
 let permute t_in axes =
-  movement_op (E_permute { t_in; axes }) Nx_backend.permute t_in axes
+  movement_op
+    (E_permute { t_in; axes })
+    Nx_backend.permute
+    (fun (module B : Backend.S) -> B.permute)
+    t_in axes
 
 let shrink t_in limits =
-  movement_op (E_shrink { t_in; limits }) Nx_backend.shrink t_in limits
+  movement_op
+    (E_shrink { t_in; limits })
+    Nx_backend.shrink
+    (fun (module B : Backend.S) -> B.shrink)
+    t_in limits
 
 let flip t_in dims_to_flip =
-  movement_op (E_flip { t_in; dims_to_flip }) Nx_backend.flip t_in dims_to_flip
+  movement_op
+    (E_flip { t_in; dims_to_flip })
+    Nx_backend.flip
+    (fun (module B : Backend.S) -> B.flip)
+    t_in dims_to_flip
 
 let sliding_window t_in ~axis ~window ~step =
   movement_op
     (E_sliding_window { t_in; axis; window; step })
     (fun t () -> Nx_backend.sliding_window t ~axis ~window ~step)
+    (fun (module B : Backend.S) t () -> B.sliding_window t ~axis ~window ~step)
     t_in ()
 
 let pad t_in padding_config fill_value =
-  let e = E_pad { t_in; padding_config; fill_value } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.pad t padding_config fill_value)
-    | _ -> routed e t_in (fun t -> Nx_backend.pad t padding_config fill_value))
+  unary_op
+    (E_pad { t_in; padding_config; fill_value })
+    (fun t -> Nx_backend.pad t padding_config fill_value)
+    (fun (module B : Backend.S) t -> B.pad t padding_config fill_value)
+    t_in
 
 (* Creation operations. A value created at a placement lives there, and a
    scalar there is held by nx and allocates nothing. A filled value of more
@@ -1944,7 +2464,9 @@ let buffer (ctx : context) dtype shape_arr =
     try Effect.perform (E_buffer { context = ctx; dtype; size_in_elements })
     with Effect.Unhandled _ ->
       if on_host ctx then Host (Nx_backend.buffer host_context dtype shape_arr)
-      else settle (At ctx) (Nx_backend.buffer host_context dtype shape_arr)
+      else
+        let (module B : Backend.S) = ctx.backend in
+        B.buffer ctx dtype shape_arr
   in
   reshape flat shape_arr
 
@@ -1969,37 +2491,31 @@ let full (ctx : context) dtype shape_arr value =
      the device. *)
   match Effect.perform (E_const_scalar { context = ctx; value; dtype }) with
   | scalar -> broadcast scalar shape_arr
-  | exception Effect.Unhandled _ -> (
+  | exception Effect.Unhandled _ ->
       if on_host ctx then
         Host (Nx_backend.full host_context dtype shape_arr value)
-      else settle (At ctx) (Nx_backend.full host_context dtype shape_arr value))
+      else
+        let (module B : Backend.S) = ctx.backend in
+        B.full ctx dtype shape_arr value
 
 let from_host (ctx : context) dtype buffer =
   check_host "from_host" dtype buffer;
   try Effect.perform (E_from_host { context = ctx; dtype; buffer })
-  with Effect.Unhandled _ -> (
+  with Effect.Unhandled _ ->
     if on_host ctx then Host (Nx_backend.from_host host_context dtype buffer)
-    else settle (At ctx) (Nx_backend.from_host host_context dtype buffer))
+    else
+      let (module B : Backend.S) = ctx.backend in
+      B.from_host ctx dtype buffer
 
-(* Copy operations. A placed value whose view covers its storage is already
-   contiguous. *)
+(* Copy operations *)
 
 let contiguous t_in =
-  let e = E_contiguous { t_in } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.contiguous t)
-    | Placed r when covers r -> Placed { r with r_id = fresh_id () }
-    | _ -> routed e t_in Fun.id)
+  unary_op (E_contiguous { t_in }) Nx_backend.contiguous
+    (fun (module B : Backend.S) -> B.contiguous) t_in
 
 let copy t_in =
-  let e = E_copy { t_in } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.copy t)
-    | _ -> routed e t_in Nx_backend.copy)
+  unary_op (E_copy { t_in }) Nx_backend.copy
+    (fun (module B : Backend.S) -> B.copy) t_in
 
 (* The host buffer of exactly [x]'s elements in C order: its storage when it is
    contiguous. *)
@@ -2018,10 +2534,8 @@ let where condition if_true if_false =
     match (condition, if_true, if_false) with
     | Host c, Host a, Host b -> Host (Nx_backend.where c a b)
     | _ ->
-        let r = route_of e in
-        settle r
-          (Nx_backend.where (host_of condition) (host_of if_true)
-             (host_of if_false)))
+        let (module B : Backend.S) = backend_of e in
+        B.where condition if_true if_false)
 
 (* Cat *)
 
@@ -2032,38 +2546,35 @@ let cat t_list ~axis =
     if List.for_all (function Host _ -> true | _ -> false) t_list then
       Host (Nx_backend.cat (List.map host_of t_list) ~axis)
     else
-      let r = route_of e in
-      settle r (Nx_backend.cat (List.map host_of t_list) ~axis)
+      let (module B : Backend.S) = backend_of e in
+      B.cat t_list ~axis
 
 (* Cast *)
 
 let cast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
     (c, d) t =
-  let e = E_cast { t_in; target_dtype = dtype } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.cast ~dtype t)
-    | _ -> routed e t_in (Nx_backend.cast ~dtype))
+  unary_op
+    (E_cast { t_in; target_dtype = dtype })
+    (Nx_backend.cast ~dtype)
+    (fun (module B : Backend.S) -> B.cast ~dtype)
+    t_in
 
 let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
     (c, d) t =
-  let e = E_bitcast { t_in; target_dtype = dtype } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.bitcast ~dtype t)
-    | _ -> routed e t_in (Nx_backend.bitcast ~dtype))
+  unary_op
+    (E_bitcast { t_in; target_dtype = dtype })
+    (Nx_backend.bitcast ~dtype)
+    (fun (module B : Backend.S) -> B.bitcast ~dtype)
+    t_in
 
 (* Indexed access *)
 
 let gather data indices ~axis =
-  let e = E_gather { data; indices; axis } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (data, indices) with
-    | Host d, Host i -> Host (Nx_backend.gather d i ~axis)
-    | _ -> routed2 e data indices (fun d i -> Nx_backend.gather d i ~axis))
+  binary_op
+    (E_gather { data; indices; axis })
+    (fun d i -> Nx_backend.gather d i ~axis)
+    (fun (module B : Backend.S) d i -> B.gather d i ~axis)
+    data indices
 
 let update t_in ~starts v =
   let e = E_update { t_in; starts; v } in
@@ -2072,9 +2583,8 @@ let update t_in ~starts v =
     match (t_in, starts, v) with
     | Host t, Host s, Host v -> Host (Nx_backend.update t ~starts:s v)
     | _ ->
-        let r = route_of e in
-        settle r
-          (Nx_backend.update (host_of t_in) ~starts:(host_of starts) (host_of v)))
+        let (module B : Backend.S) = backend_of e in
+        B.update t_in ~starts v)
 
 let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
   let e =
@@ -2088,20 +2598,14 @@ let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
           (Nx_backend.scatter ~mode ~unique_indices d ~indices:i ~updates:u
              ~axis)
     | _ ->
-        let r = route_of e in
-        settle r
-          (Nx_backend.scatter ~mode ~unique_indices (host_of data_template)
-             ~indices:(host_of indices) ~updates:(host_of updates) ~axis))
+        let (module B : Backend.S) = backend_of e in
+        B.scatter ~mode ~unique_indices data_template ~indices ~updates ~axis)
 
 (* Random *)
 
 let threefry key ctr =
-  let e = E_threefry { key; ctr } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (key, ctr) with
-    | Host k, Host c -> Host (Nx_backend.threefry k c)
-    | _ -> routed2 e key ctr Nx_backend.threefry)
+  binary_op (E_threefry { key; ctr }) Nx_backend.threefry
+    (fun (module B : Backend.S) -> B.threefry) key ctr
 
 (* The index of the current lane along the innermost mapped axis. The vmap
    handler answers with a per-lane (batched) index; with no handler there is a
@@ -2114,150 +2618,110 @@ let axis_index ctx =
 (* Window operations *)
 
 let unfold t_in ~kernel_size ~stride ~dilation ~padding =
-  let e = E_unfold { t_in; kernel_size; stride; dilation; padding } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t ->
-        Host (Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding)
-    | _ ->
-        routed e t_in (fun t ->
-            Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding))
+  unary_op
+    (E_unfold { t_in; kernel_size; stride; dilation; padding })
+    (fun t -> Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding)
+    (fun (module B : Backend.S) t ->
+      B.unfold t ~kernel_size ~stride ~dilation ~padding)
+    t_in
 
 let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
-  let e =
-    E_fold { t_in; output_size; kernel_size; stride; dilation; padding }
-  in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t ->
-        Host
-          (Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation
-             ~padding)
-    | _ ->
-        routed e t_in (fun t ->
-            Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation
-              ~padding))
+  unary_op
+    (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
+    (fun t ->
+      Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+    (fun (module B : Backend.S) t ->
+      B.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+    t_in
 
 (* Matrix operations *)
 
 let matmul a b =
-  let e = E_matmul { a; b } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b -> Host (Nx_backend.matmul a b)
-    | _ -> routed2 e a b Nx_backend.matmul)
+  binary_op (E_matmul { a; b }) Nx_backend.matmul
+    (fun (module B : Backend.S) -> B.matmul) a b
 
 (* FFT operations *)
 
 let fft t ~axes =
-  let e = E_fft { t; axes } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t with
-    | Host h -> Host (Nx_backend.fft h ~axes)
-    | _ -> routed e t (Nx_backend.fft ~axes))
+  unary_op (E_fft { t; axes }) (Nx_backend.fft ~axes)
+    (fun (module B : Backend.S) -> B.fft ~axes) t
 
 let ifft t ~axes =
-  let e = E_ifft { t; axes } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t with
-    | Host h -> Host (Nx_backend.ifft h ~axes)
-    | _ -> routed e t (Nx_backend.ifft ~axes))
+  unary_op (E_ifft { t; axes }) (Nx_backend.ifft ~axes)
+    (fun (module B : Backend.S) -> B.ifft ~axes) t
 
 let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Nx_dtype.t)
     ~axes : (Complex.t, c) t =
-  let e = E_rfft { t; dtype; axes } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t with
-    | Host h -> Host (Nx_backend.rfft h ~dtype ~axes)
-    | _ -> routed e t (Nx_backend.rfft ~dtype ~axes))
+  unary_op
+    (E_rfft { t; dtype; axes })
+    (Nx_backend.rfft ~dtype ~axes)
+    (fun (module B : Backend.S) -> B.rfft ~dtype ~axes)
+    t
 
 let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Nx_dtype.t)
     ~axes : (float, c) t =
-  let e = E_irfft { t; dtype; axes; s } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t with
-    | Host h -> Host (Nx_backend.irfft ?s h ~dtype ~axes)
-    | _ -> routed e t (Nx_backend.irfft ?s ~dtype ~axes))
+  unary_op
+    (E_irfft { t; dtype; axes; s })
+    (Nx_backend.irfft ?s ~dtype ~axes)
+    (fun (module B : Backend.S) -> B.irfft ?s ~dtype ~axes)
+    t
 
-(* Linear algebra *)
+(* Linear algebra. The decompositions run on the backend even on the host:
+   their host case settles its results as a placed call's does. *)
 
 let cholesky ~upper t_in =
-  let e = E_cholesky { t_in; upper } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.cholesky ~upper t)
-    | _ -> routed e t_in (Nx_backend.cholesky ~upper))
+  unary_op
+    (E_cholesky { t_in; upper })
+    (Nx_backend.cholesky ~upper)
+    (fun (module B : Backend.S) -> B.cholesky ~upper)
+    t_in
 
 let qr ~reduced t_in =
   let e = E_qr { t_in; reduced } in
   try Effect.perform e
   with Effect.Unhandled _ ->
-    let r = route_of e in
-    let q, rr = Nx_backend.qr ~reduced (host_of t_in) in
-    (settle r q, settle r rr)
+    let (module B : Backend.S) = backend_of e in
+    B.qr ~reduced t_in
 
 let lu t_in =
   let e = E_lu { t_in } in
   try Effect.perform e
   with Effect.Unhandled _ ->
-    let r = route_of e in
-    let lu, pivots, perm = Nx_backend.lu (host_of t_in) in
-    (settle r lu, settle r pivots, settle r perm)
+    let (module B : Backend.S) = backend_of e in
+    B.lu t_in
 
 let svd ~full_matrices t_in =
   let e = E_svd { t_in; full_matrices } in
   try Effect.perform e
   with Effect.Unhandled _ ->
-    let r = route_of e in
-    let u, s, vt = Nx_backend.svd ~full_matrices (host_of t_in) in
-    (settle r u, settle r s, settle r vt)
+    let (module B : Backend.S) = backend_of e in
+    B.svd ~full_matrices t_in
 
 let eigvals t_in =
-  let e = E_eigvals { t_in } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.eigvals t)
-    | _ -> routed e t_in Nx_backend.eigvals)
+  unary_op (E_eigvals { t_in }) Nx_backend.eigvals
+    (fun (module B : Backend.S) -> B.eigvals) t_in
 
 let eig t_in =
   let e = E_eig { t_in } in
   try Effect.perform e
   with Effect.Unhandled _ ->
-    let r = route_of e in
-    let vals, vecs = Nx_backend.eig (host_of t_in) in
-    (settle r vals, settle r vecs)
+    let (module B : Backend.S) = backend_of e in
+    B.eig t_in
 
 let eigvalsh t_in =
-  let e = E_eigvalsh { t_in } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match t_in with
-    | Host t -> Host (Nx_backend.eigvalsh t)
-    | _ -> routed e t_in Nx_backend.eigvalsh)
+  unary_op (E_eigvalsh { t_in }) Nx_backend.eigvalsh
+    (fun (module B : Backend.S) -> B.eigvalsh) t_in
 
 let eigh t_in =
   let e = E_eigh { t_in } in
   try Effect.perform e
   with Effect.Unhandled _ ->
-    let r = route_of e in
-    let vals, vecs = Nx_backend.eigh (host_of t_in) in
-    (settle r vals, settle r vecs)
+    let (module B : Backend.S) = backend_of e in
+    B.eigh t_in
 
 let solve_triangular ~upper ~transpose ~unit_diag a b =
-  let e = E_solve_triangular { a; b; upper; transpose; unit_diag } in
-  try Effect.perform e
-  with Effect.Unhandled _ -> (
-    match (a, b) with
-    | Host a, Host b ->
-        Host (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag a b)
-    | _ ->
-        routed2 e a b (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag))
+  binary_op
+    (E_solve_triangular { a; b; upper; transpose; unit_diag })
+    (Nx_backend.solve_triangular ~upper ~transpose ~unit_diag)
+    (fun (module B : Backend.S) -> B.solve_triangular ~upper ~transpose ~unit_diag)
+    a b

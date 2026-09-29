@@ -12,4 +12,4 @@
  (package nx)
  (files nx.mli)
  (preludes prelude.ml)
- (libraries nx unix))
+ (libraries nx nx.effect unix))

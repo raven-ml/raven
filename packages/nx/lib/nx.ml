@@ -11,6 +11,7 @@ exception Linalg_error = Nx_core.Backend_intf.Linalg_error
 let context = Nx_effect.Placement.host
 
 module Device = Nx_effect.Device
+module Backend = Nx_effect.Backend
 
 module Placement = Nx_effect.Placement
 
