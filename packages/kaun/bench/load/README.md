@@ -24,6 +24,27 @@ and, for the Metal rows, a Mac.
 
 ## Results
 
+2026-09-29, the checkpoint loaded through the disk device: loading reads the
+header, and each entry is a value on the disk. Placing one on the CPU device or
+Metal maps the file copy-on-write and borrows its pages, and a cast reads the
+entry through the same mapping. Against main at 8e2c7f6db, which mapped the
+file at load, one process per run, main and the disk device alternating, on the
+machine below under load averages of 11 to 23. Medians of the import time and
+the peak memory footprint, over the number of pairs in parentheses:
+
+| dtype | device | main | disk device |
+| --- | --- | --- | --- |
+| as stored | none (3) | 0.049 s, 0.01 GB | 0.001 s, 0.01 GB |
+| as stored | CPU (3) | 0.049 s, 2.16 GB | 0.050 s, 2.11 GB |
+| as stored | METAL (3) | 0.451 s, 0.30 GB | 0.410 s, 0.29 GB |
+| float32 | none (15) | 0.544 s, 4.96 GB | 0.548 s, 4.96 GB |
+| float32 | CPU (8) | 0.618 s, 9.12 GB | 0.582 s, 9.12 GB |
+| float32 | METAL (8) | 3.05 s, 6.38 GB | 3.09 s, 6.38 GB |
+
+The import with no device and the stored dtype no longer maps the file, which
+main's load did in 0.05 s; the CPU device's import maps it instead. The other
+differences are within the spread of the pairs.
+
 2026-09-19, Apple M1 Max, 32 GB, macOS 26.3.1, warm file cache and warm kernel
 cache, the machine under other load (load average about 9). Llama 3.2 1B, 2.47
 GB stored at bfloat16. Times are cumulative from process start.
@@ -60,7 +81,7 @@ compiled call, as stored:
 | METAL | 5.82 s, 8.14 s | 3.25 s, 3.70 s | 3.07 s, 3.53 s |
 | CPU | 4.81 s, 10.76 s | 2.76 s, 4.99 s | 2.56 s, 4.50 s |
 
-An upload reads a tensor over a mapped file from the file itself, since
+An upload read a tensor over a mapped file from the file itself, since
 walking the mapping is bound by page faults at a fraction of the disk's speed.
 Warm, at this size, the mapping was 0.1 to 0.3 s faster. At 13.76 GB it never
 is: placing a synthetic gpt-oss-20b on Metal took 28.6 s cold and 26.0 s warm
