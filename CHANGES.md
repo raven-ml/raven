@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.with_debug` prints every operation with its operands' dtypes and
+  shapes (`mul float32[3] float32[3]`); it printed the output shape of some
+  operations and skipped others, such as the Fourier transforms and linear
+  algebra.
 - New `Rune.lane_index ?axis ()`: the calling lane's index in the map named
   `axis`, or in the innermost anonymous map, as `Rune.lanes` addresses maps;
   `0` outside any. It replaces `Nx.Rng.fold_in_axis`.
@@ -2861,6 +2865,11 @@ thread.
 
 ### Nx
 
+- **Breaking (effect handlers):** nx's operations are the constructors of one
+  type, `Nx_effect.Op.t`, which one effect, `E_op`, carries; the per-operation
+  effects (`E_add`, `E_reduce_sum`, ...) are gone. The entry functions are one
+  per constructor (`Nx_effect.binary Add a b`), and `Nx_effect.to_host` is
+  `Nx_effect.read`. New library `nx.backend` names the operations' kinds.
 - `Nx.copy` always gives storage of its own, and `Nx.contiguous` returns a
   value whose bytes are already C-contiguous from its first element unchanged,
   a placed view included; it copied a placed view that did not cover its

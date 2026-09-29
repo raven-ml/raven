@@ -317,7 +317,7 @@ let expand shape_spec x =
 let cast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
   match Nx_dtype.equal_witness (dtype x) dt with
   | Some Equal -> x
-  | None -> B.cast ~dtype:dt x
+  | None -> B.cast dt x
 
 let astype dt x = cast dt x
 
@@ -343,7 +343,7 @@ let bitcast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
       (Printf.sprintf "their widths differ (%d and %d bits)"
          (8 * Nx_dtype.itemsize src)
          (8 * Nx_dtype.itemsize dt));
-  B.bitcast ~dtype:dt x
+  B.bitcast dt x
 
 let contiguous x = B.contiguous x
 let copy x = B.copy x
@@ -405,7 +405,7 @@ let to_bigarray x =
       err "to_bigarray" "Bigarray has no %s kind"
         (Nx_dtype.to_string (B.dtype x))
   | Some k ->
-      let ba = Nx_device.Buffer.bigarray k (B.to_host (copy x)) in
+      let ba = Nx_device.Buffer.bigarray k (B.read (copy x)) in
       Bigarray.reshape (Bigarray.genarray_of_array1 ba) (shape x)
 
 let of_bigarray (type a b) ctx
@@ -436,52 +436,54 @@ let binop op a b =
 
 let cmpop op a b = binop op a b
 
-let add a b = binop B.add a b
+let add a b = binop (B.binary Add) a b
 let add_s t s = add t (scalar_like t s)
-let sub a b = binop B.sub a b
+let sub a b = binop (B.binary Sub) a b
 let sub_s t s = sub t (scalar_like t s)
 let rsub_s s t = sub (scalar_like t s) t
-let mul a b = binop B.mul a b
+let mul a b = binop (B.binary Mul) a b
 let mul_s t s = mul t (scalar_like t s)
 
 let div a b =
   let dt = B.dtype a in
-  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop B.idiv a b
-  else binop B.fdiv a b
+  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop (B.binary Idiv) a b
+  else binop (B.binary Fdiv) a b
 
 let div_s t s = div t (scalar_like t s)
 let rdiv_s s t = div (scalar_like t s) t
-let pow a b = binop B.pow a b
+let pow a b = binop (B.binary Pow) a b
 let pow_s t s = pow t (scalar_like t s)
 let rpow_s s t = pow (scalar_like t s) t
-let maximum a b = binop B.max a b
+let maximum a b = binop (B.binary Maximum) a b
 let maximum_s t s = maximum t (scalar_like t s)
-let minimum a b = binop B.min a b
+let minimum a b = binop (B.binary Minimum) a b
 let minimum_s t s = minimum t (scalar_like t s)
-let mod_ a b = binop B.mod_ a b
+let mod_ a b = binop (B.binary Mod) a b
 let mod_s t s = mod_ t (scalar_like t s)
 let rmod_s s t = mod_ (scalar_like t s) t
-let bitwise_xor a b = binop B.xor a b
-let bitwise_or a b = binop B.or_ a b
-let bitwise_and a b = binop B.and_ a b
+let bitwise_xor a b = binop (B.binary Xor) a b
+let bitwise_or a b = binop (B.binary Or) a b
+let bitwise_and a b = binop (B.binary And) a b
 
 (* ───── Logical and Comparison Operations ───── *)
 
 (* A logical operation reads non-zero as true and gives zero or one of the
    operands' dtype. *)
-let truth x = cmpop B.cmpne x (scalar_like x (Nx_dtype.zero (dtype x)))
+let truth x =
+  cmpop (B.cmp Not_equal) x (scalar_like x (Nx_dtype.zero (dtype x)))
 let logical op a b = cast (dtype a) (binop op (truth a) (truth b))
-let logical_and a b = logical B.and_ a b
-let logical_or a b = logical B.or_ a b
-let logical_xor a b = logical B.xor a b
+let logical_and a b = logical (B.binary And) a b
+let logical_or a b = logical (B.binary Or) a b
+let logical_xor a b = logical (B.binary Xor) a b
 
 let logical_not x =
-  cast (dtype x) (cmpop B.cmpeq x (scalar_like x (Nx_dtype.zero (dtype x))))
+  cast (dtype x)
+    (cmpop (B.cmp Equal) x (scalar_like x (Nx_dtype.zero (dtype x))))
 
-let cmpeq a b = cmpop B.cmpeq a b
-let cmpne a b = cmpop B.cmpne a b
-let cmplt a b = cmpop B.cmplt a b
-let cmple a b = cmpop B.cmple a b
+let cmpeq a b = cmpop (B.cmp Equal) a b
+let cmpne a b = cmpop (B.cmp Not_equal) a b
+let cmplt a b = cmpop (B.cmp Less) a b
+let cmple a b = cmpop (B.cmp Less_equal) a b
 let cmpgt a b = cmplt b a
 let cmpge a b = cmple b a
 let less = cmplt
@@ -500,21 +502,21 @@ let greater_equal_s a s = greater_equal a (scalar_like a s)
 (* ───── Element-wise Unary Operations ───── *)
 
 let unaryop op x = op x
-let neg x = unaryop B.neg x
+let neg x = unaryop (B.unary Neg) x
 
 let bitwise_not x =
   let dt = dtype x in
-  binop B.xor x
+  binop (B.binary Xor) x
     (broadcast_to (shape x)
        (B.full (B.context x) dt [||] (Nx_dtype.minus_one dt)))
 
-let sin x = unaryop B.sin x
-let cos x = unaryop B.cos x
-let sqrt x = unaryop B.sqrt x
-let recip x = unaryop B.recip x
-let log x = unaryop B.log x
-let exp x = unaryop B.exp x
-let abs x = unaryop B.abs x
+let sin x = unaryop (B.unary Sin) x
+let cos x = unaryop (B.unary Cos) x
+let sqrt x = unaryop (B.unary Sqrt) x
+let recip x = unaryop (B.unary Recip) x
+let log x = unaryop (B.unary Log) x
+let exp x = unaryop (B.unary Exp) x
+let abs x = unaryop (B.unary Abs) x
 
 (* A function composed of several operations computes a narrow float at
    float32 and rounds once, as an operation of the backend does. *)
@@ -539,9 +541,9 @@ let log2 x =
     x
 
 let exp2 x = rpow_s (Nx_dtype.of_float (dtype x) 2.0) x
-let tan x = unaryop B.tan x
+let tan x = unaryop (B.unary Tan) x
 let square x = mul x x
-let sign x = unaryop B.sign x
+let sign x = unaryop (B.unary Sign) x
 let relu x = maximum_s x (Nx_dtype.zero (dtype x))
 
 (* [exp] only ever sees [-|x|], so it cannot overflow, and a negative [x]
@@ -561,16 +563,16 @@ let sigmoid x =
     x
 
 let rsqrt x = at_float32 { f = (fun x -> recip (sqrt x)) } x
-let asin x = unaryop B.asin x
-let acos x = unaryop B.acos x
-let atan x = unaryop B.atan x
-let sinh x = unaryop B.sinh x
-let cosh x = unaryop B.cosh x
-let tanh x = unaryop B.tanh x
-let trunc x = unaryop B.trunc x
-let ceil x = unaryop B.ceil x
-let floor x = unaryop B.floor x
-let round x = unaryop B.round x
+let asin x = unaryop (B.unary Asin) x
+let acos x = unaryop (B.unary Acos) x
+let atan x = unaryop (B.unary Atan) x
+let sinh x = unaryop (B.unary Sinh) x
+let cosh x = unaryop (B.unary Cosh) x
+let tanh x = unaryop (B.unary Tanh) x
+let trunc x = unaryop (B.unary Trunc) x
+let ceil x = unaryop (B.unary Ceil) x
+let floor x = unaryop (B.unary Floor) x
+let round x = unaryop (B.unary Round) x
 
 let isinf x =
   if not (Nx_dtype.is_float (dtype x)) then
@@ -735,7 +737,7 @@ let atanh x =
 
 (* ───── Binary Mathematical Functions ───── *)
 
-let atan2 y x = binop B.atan2 y x
+let atan2 y x = binop (B.binary Atan2) y x
 
 (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
 let hypot x y =
@@ -779,7 +781,7 @@ let reduce_op op ?axes ?(keepdims = false) x =
       if ax < 0 || ax >= rank then
         err "reduce" "axis %d out of bounds for %dD tensor" ax rank)
     axes_to_reduce;
-  let reduced = B.reduce ~op ~axes:axes_to_reduce x in
+  let reduced = B.reduce (B.reduce_kind op) ~axes:axes_to_reduce x in
   (* The backend drops the reduced axes; reinsert them as size 1 on
      request. *)
   if keepdims then
@@ -806,7 +808,7 @@ let associative_scan ~axis op x =
     let a = if axis < 0 then axis + rank else axis in
     if a < 0 || a >= rank then
       err "associative_scan" "axis %d out of bounds for %dD tensor" axis rank
-    else B.associative_scan ~axis:a ~op x
+    else B.scan (B.reduce_kind op) ~axis:a x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
   let sh = shape x in
@@ -897,7 +899,7 @@ let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
       (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
       identity
   else
-    let reduced = B.reduce ~op ~axes:axes_to_reduce bool_t in
+    let reduced = B.reduce (B.reduce_kind op) ~axes:axes_to_reduce bool_t in
     if keepdims then
       reshape
         (Shape.reduce_output_shape input_shape axes_to_reduce true)
@@ -930,7 +932,7 @@ let pad padding_config fill_value x =
           "pad: padding values, negative values not allowed, use shrink or \
            slice to remove elements")
     padding_config;
-  B.pad x padding_config fill_value
+  B.pad padding_config fill_value x
 
 let shrink shrink_args x = B.shrink x shrink_args
 
@@ -1136,7 +1138,7 @@ let cat_tensors ~axis tensors =
       invalid_arg
         "concatenate: tensor list cannot be empty, provide at least one \
          tensor"
-  | _ -> B.cat tensors ~axis
+  | _ -> B.cat ~axis tensors
 
 let roll ?axis shift x =
   let original_shape = shape x in
@@ -1483,7 +1485,7 @@ let triu ?k x = triangular_mask ~op:"triu" ~cmp:less_equal ?k x
 
 let take ?axis ~indices t =
   match axis with
-  | None -> B.gather (flatten t) indices ~axis:0
+  | None -> B.gather ~axis:0 indices (flatten t)
   | Some axis ->
       let t_shape = shape t in
       let axis = resolve_single_axis t axis in
@@ -1499,7 +1501,7 @@ let take ?axis ~indices t =
       let idx_broadcast =
         broadcast_to broadcast_shape (reshape expanded_shape idx)
       in
-      let out = B.gather t idx_broadcast ~axis in
+      let out = B.gather ~axis idx_broadcast t in
       let out_shape = Array.copy t_shape in
       out_shape.(axis) <- n_idx;
       reshape out_shape out
@@ -1519,7 +1521,7 @@ let take_along_axis ~axis ~indices t =
           "shape, dimension %d: indices has %d but tensor has %d" i
           idx_shape.(i) dim)
     t_shape;
-  B.gather t indices ~axis
+  B.gather ~axis indices t
 
 (* ───── Indexing and Slicing ───── *)
 
@@ -1735,7 +1737,7 @@ let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
   let values =
     if shape values = idx_shape then values else broadcast_to idx_shape values
   in
-  B.scatter ~mode ~unique_indices t ~indices ~updates:values ~axis
+  B.scatter ~mode ~unique:unique_indices ~axis ~indices ~updates:values t
 
 (* ───── Functional update ───── *)
 
@@ -1917,7 +1919,7 @@ let set specs v x =
             (contiguous (reshape target_shape v))
         in
         let result =
-          B.scatter ~mode:`Set ~unique_indices:true x_flat
+          B.scatter ~mode:`Set ~unique:true x_flat
             ~indices:(reshape [| numel !flat_idx |] !flat_idx)
             ~updates:y_flat ~axis:0
         in
@@ -2073,11 +2075,11 @@ let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
   if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int32 0l)
   else
     let axis = sort_axis "sort" x axis in
-    (B.sort ~axis ~descending x, B.argsort ~axis ~descending x)
+    (B.sort ~descending ~axis x, B.argsort ~descending ~axis x)
 
 let argsort ?(descending = false) ?(axis = -1) x =
   if ndim x = 0 then scalar (B.context x) Nx_dtype.int32 0l
-  else B.argsort ~axis:(sort_axis "argsort" x axis) ~descending x
+  else B.argsort ~descending ~axis:(sort_axis "argsort" x axis) x
 
 (* The tensor and axis an arg-reduction runs along. Its indices are int32, so
    the axis holds at most [Int32.max_int] entries, checked before flattening. *)
@@ -2097,13 +2099,20 @@ let arg_axis op ?axis x =
     err op "axis of %d entries, more than an int32 index reaches" n;
   match a with None -> (flatten x, 0) | Some a -> (x, a)
 
+(* [y], an argument reduction of [x] along [axis], with that axis kept as one
+   when [keepdims]. *)
+let keep_axis ~keepdims ~axis x y =
+  if keepdims then
+    reshape (Shape.reduce_output_shape (shape x) [| axis |] true) y
+  else y
+
 let argmax ?axis ?(keepdims = false) x =
   let x', axis = arg_axis "argmax" ?axis x in
-  B.argmax ~axis ~keepdims x'
+  keep_axis ~keepdims ~axis x' (B.arg_reduce Argmax ~axis x')
 
 let argmin ?axis ?(keepdims = false) x =
   let x', axis = arg_axis "argmin" ?axis x in
-  B.argmin ~axis ~keepdims x'
+  keep_axis ~keepdims ~axis x' (B.arg_reduce Argmin ~axis x')
 
 (* Above this many entries [top_k] stops taking one greatest entry per pass
    over the axis, each pass waiting on the one before it, and selects them by
@@ -3164,7 +3173,7 @@ module Rng = struct
       let edge x =
         maximum (lit (-.limit))
           (minimum (lit limit)
-             (unaryop B.erf (mul x (lit (1.0 /. Float.sqrt 2.0)))))
+             (unaryop (B.unary Erf) (mul x (lit (1.0 /. Float.sqrt 2.0)))))
       in
       let lo = edge lower and hi = edge upper in
       let u = uniform k compute (shape lower) in
@@ -3440,7 +3449,7 @@ let diag_construct k v =
     in
     if k >= 0 then
       (* [v_i] at [i, i+k]: one index per row along axis 1. *)
-      B.scatter ~mode:`Set ~unique_indices:true template
+      B.scatter ~mode:`Set ~unique:true template
         ~indices:
           (extend ~axis:0 ~dtype:Nx_dtype.int32 [| pad; 1 |]
              (reshape [| n; 1 |]
@@ -3450,7 +3459,7 @@ let diag_construct k v =
         ~axis:1
     else
       (* [v_j] at [j+|k|, j]: one index per column along axis 0. *)
-      B.scatter ~mode:`Set ~unique_indices:true template
+      B.scatter ~mode:`Set ~unique:true template
         ~indices:
           (extend ~axis:1 ~dtype:Nx_dtype.int32 [| 1; pad |]
              (reshape [| 1; n |]
@@ -4823,7 +4832,7 @@ let pad_or_truncate_for_fft x axes s =
           if target > cur then (
             let pad_config = Array.make (ndim !acc) (0, 0) in
             pad_config.(ax) <- (0, target - cur);
-            acc := B.pad !acc pad_config (Nx_dtype.zero (dtype !acc)))
+            acc := B.pad pad_config (Nx_dtype.zero (dtype !acc)) !acc)
           else if target < cur then
             acc :=
               B.shrink !acc
@@ -4884,7 +4893,7 @@ let fftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
   | _ -> ());
   let xp = pad_or_truncate_for_fft x axes_list s in
   let scale = fft_norm_scale norm axes_list xp in
-  let r = B.fft xp ~axes:(Array.of_list axes_list) in
+  let r = B.fft ~inverse:false ~axes:(Array.of_list axes_list) xp in
   apply_fft_scale scale r
 
 let ifftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
@@ -4901,7 +4910,7 @@ let ifftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
   | _ -> ());
   let xp = pad_or_truncate_for_fft x axes_list s in
   let scale = ifft_norm_scale norm axes_list xp in
-  let r = B.ifft xp ~axes:(Array.of_list axes_list) in
+  let r = B.fft ~inverse:true ~axes:(Array.of_list axes_list) xp in
   apply_fft_scale scale r
 
 let rfftn dtype ?axes ?s ?(norm = `Backward) x =
@@ -4918,7 +4927,7 @@ let rfftn dtype ?axes ?s ?(norm = `Backward) x =
   | _ -> ());
   let xp = pad_or_truncate_for_fft x axes_list s in
   let scale = fft_norm_scale norm axes_list xp in
-  let r = B.rfft xp ~dtype ~axes:(Array.of_list axes_list) in
+  let r = B.rfft dtype ~axes:(Array.of_list axes_list) xp in
   apply_fft_scale scale r
 
 (* The backend's real transforms read and write float32 and float64. A
@@ -4979,7 +4988,7 @@ let irfftn dtype ?axes ?s ?(norm = `Backward) x =
         in
         pad_or_truncate_for_fft x axes_list (Some targets)
   in
-  let r = B.irfft ?s:s_param x ~dtype ~axes:(Array.of_list axes_list) in
+  let r = B.irfft ?s:s_param dtype ~axes:(Array.of_list axes_list) x in
   if norm_scale <> 1.0 then
     mul r (scalar (B.context r) (B.dtype r) norm_scale)
   else r
@@ -5616,7 +5625,7 @@ let standardize ?axes ?mean:mean_param ?variance:variance_param
        (add variance_tensor
           (scalar_like x (Nx_dtype.of_float (dtype x) epsilon))))
 
-let erf x = unaryop B.erf x
+let erf x = unaryop (B.unary Erf) x
 
 let sliding_window ?axis ~window ?(step = 1) x =
   let r = ndim x in

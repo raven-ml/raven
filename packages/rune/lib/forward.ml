@@ -3,22 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Forward-mode differentiation as an effect handler over Nx operations.
+(* Forward-mode differentiation as an interpreter of Nx operations.
 
-   Tangents propagate eagerly: every intercepted operation computes its primal
-   by re-performing the operation in the enclosing context, and, if any input
+   Tangents propagate eagerly: every operation computes its primal by
+   evaluating the operation in the enclosing interpretation, and, if any input
    has a tangent in the store, computes and stores the output tangent
    immediately. There is no tape and no second pass. A tensor absent from the
    store is a constant with zero tangent.
 
-   Tangent arithmetic is re-performed in the enclosing context too, so composing
+   Tangent arithmetic runs in the enclosing interpretation too, so composing
    with grad (forward-over-reverse and reverse-over-forward) and nesting jvp
    both work.
 
-   Every Nx effect constructor is matched explicitly, with the same three
-   deliberate categories as the reverse engine: zero-derivative operations fall
-   through untracked; operations with no rule yet raise when an input is active;
-   mutation always raises. *)
+   Every operation is matched explicitly, and the compiler checks it, with the
+   same deliberate categories as the reverse engine: zero-derivative operations
+   stay inactive; operations with no rule yet raise when an input is active. *)
 
 open Nx_effect
 module T = Nx
@@ -80,44 +79,333 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
     if inputs_active then err_no_rule op else out ()
   in
 
+  (* Each operation: its primal is the operation itself, evaluated in the
+     enclosing interpretation, and its tangent is computed at once when an
+     operand is active. A linear operation's tangent is the operation on the
+     tangent. *)
+  let run : type c. c Op.t -> c =
+   fun op ->
+    match[@warning "@4@8"] op with
+    | Unary (k, x) -> (
+        match k with
+        (* On complex dtypes [sign z = z / |z|] is not piecewise constant. *)
+        | Sign when Nx_dtype.is_complex (dtype x) ->
+            let out = eval op in
+            lift1 out x (Derivs.sign_push x out)
+        | Sign | Trunc | Ceil | Floor | Round -> eval op
+        | Neg -> lift1 (eval op) x T.neg
+        | Sin -> lift1 (eval op) x (fun dx -> T.mul dx (T.cos x))
+        | Cos -> lift1 (eval op) x (fun dx -> T.mul dx (T.neg (T.sin x)))
+        | Tan -> lift1 (eval op) x (fun dx -> T.mul dx (Derivs.tan' x))
+        | Asin -> lift1 (eval op) x (fun dx -> T.mul dx (Derivs.asin' x))
+        | Acos ->
+            lift1 (eval op) x (fun dx -> T.mul dx (T.neg (Derivs.asin' x)))
+        | Atan -> lift1 (eval op) x (fun dx -> T.mul dx (Derivs.atan' x))
+        | Sinh -> lift1 (eval op) x (fun dx -> T.mul dx (T.cosh x))
+        | Cosh -> lift1 (eval op) x (fun dx -> T.mul dx (T.sinh x))
+        | Tanh ->
+            let out = eval op in
+            lift1 out x (fun dx -> T.mul dx (Derivs.tanh' out))
+        | Exp ->
+            let out = eval op in
+            lift1 out x (fun dx -> T.mul dx out)
+        | Log -> lift1 (eval op) x (fun dx -> T.mul dx (T.recip x))
+        | Sqrt ->
+            let out = eval op in
+            lift1 out x (fun dx -> T.mul dx (Derivs.sqrt' out))
+        | Recip -> lift1 (eval op) x (fun dx -> T.mul dx (Derivs.recip' x))
+        (* On complex dtypes [abs] is the modulus: real-valued, and not
+           holomorphic. Its pushforward conjugates the direction — going
+           through [sign z] itself would flip the sign of the imaginary
+           contribution — and keeps the real part of the product, since a
+           real-valued output cannot move in the imaginary direction. Both are
+           the identity on real dtypes. *)
+        | Abs ->
+            lift1 (eval op) x (fun dx ->
+                Derivs.real_part (T.mul dx (T.conjugate (T.sign x))))
+        | Erf -> lift1 (eval op) x (fun dx -> T.mul dx (Derivs.erf' x)))
+    | Binary (k, a, b) -> (
+        match k with
+        | Idiv | And | Or | Xor -> eval op
+        | Add -> lift2 (eval op) a b T.add
+        | Sub -> lift2 (eval op) a b T.sub
+        | Mul ->
+            lift2 (eval op) a b (fun da db -> T.add (T.mul da b) (T.mul a db))
+        | Fdiv ->
+            lift2 (eval op) a b (fun da db ->
+                T.sub (T.div da b) (T.mul (T.div a (T.mul b b)) db))
+        | Pow ->
+            let out = eval op in
+            lift2 out a b (fun da db ->
+                T.add
+                  (T.mul da (Derivs.pow_wrt_base a b))
+                  (T.mul db (Derivs.pow_wrt_exp a out)))
+        | Maximum ->
+            let out = eval op in
+            lift2 out a b (fun da db ->
+                let mask = T.cast (dtype out) (T.greater a b) in
+                T.add (T.mul da mask)
+                  (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
+        | Minimum ->
+            let out = eval op in
+            lift2 out a b (fun da db ->
+                let mask = T.cast (dtype out) (T.less a b) in
+                T.add (T.mul da mask)
+                  (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
+        | Atan2 ->
+            lift2 (eval op) a b (fun da db ->
+                let denom = T.add (T.mul a a) (T.mul b b) in
+                T.sub (T.mul da (T.div b denom)) (T.mul db (T.div a denom)))
+        | Mod -> no_rule "mod" (active a || active b) (fun () -> eval op))
+    | Compare _ | Arg_reduce _ | Argsort _ | Threefry _ | Read _ -> eval op
+    | Convert (Bitcast, _, _) -> eval op
+    | Convert (Cast, dtype, x) -> lift1 (eval op) x (fun dx -> T.cast dtype dx)
+    | Where (condition, if_true, if_false) ->
+        let out = eval op in
+        if active if_true || active if_false then begin
+          let mask = T.cast (dtype out) condition in
+          let dt_ = tan_or_zeros if_true and df = tan_or_zeros if_false in
+          set_tangent out
+            (T.add (T.mul dt_ mask)
+               (T.mul df (T.rsub_s (Derivs.one_like mask) mask)))
+        end;
+        out
+    (* Placement and movement are linear: the tangent moves with its primal. *)
+    | Place (p, x) -> lift1 (eval op) x (place p)
+    | Move (x, m) -> lift1 (eval op) x (fun dx -> move dx m)
+    | Contiguous x -> lift1 (eval op) x Fun.id
+    (* The fill value is a constant: the tangent pads with zero. *)
+    | Pad (padding, _, x) ->
+        lift1 (eval op) x (fun dx -> pad padding (Nx_dtype.zero (dtype x)) dx)
+    | Cat (axis, xs) ->
+        let out = eval op in
+        if List.exists active xs then
+          set_tangent out (cat ~axis (List.map tan_or_zeros xs));
+        out
+    (* Reductions *)
+    | Reduce (Sum, axes, x) ->
+        lift1 (eval op) x (fun dx -> T.sum dx ~axes:(Array.to_list axes))
+    | Reduce ((Max | Min), axes, x) ->
+        let out = eval op in
+        let axes = Array.to_list axes in
+        lift1 out x (fun dx ->
+            T.sum ~axes (T.mul dx (Derivs.extrema' ~axes x out)))
+    | Reduce (Prod, axes, x) ->
+        let out = eval op in
+        let axes = Array.to_list axes in
+        lift1 out x (fun dx ->
+            T.sum ~axes (T.mul dx (Derivs.prod' ~axes x out)))
+    (* Sorting: a sort is a gather at the argsort indices. *)
+    | Sort { descending; axis; x } ->
+        lift1 (eval op) x (fun dx ->
+            let indices = argsort ~descending ~axis x in
+            gather ~axis indices dx)
+    (* Scans *)
+    | Scan (k, axis, x) ->
+        let out = eval op in
+        lift1 out x (fun dx ->
+            match k with
+            | Sum -> scan Sum ~axis dx
+            | Prod ->
+                (* d cumprod_k = cumprod_k * sum_{i<=k} dx_i / x_i; requires
+                   nonzero inputs, like the reverse rule. *)
+                let ratio = T.div dx x in
+                T.mul out (scan Sum ~axis ratio)
+            | Max | Min ->
+                (* The tangent flows from positions where the running extremum
+                   strictly improves. *)
+                let shape = T.shape out in
+                let ndim = Array.length shape in
+                let axis_norm = if axis < 0 then axis + ndim else axis in
+                let dt = dtype x in
+                let boundary =
+                  match k with
+                  | Max -> Nx_dtype.min_value dt
+                  | Sum | Prod | Min -> Nx_dtype.max_value dt
+                in
+                let pad_left =
+                  Array.mapi
+                    (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
+                    shape
+                in
+                let padded = T.pad pad_left boundary out in
+                let slice_specs = Array.map (fun dim -> T.R (0, dim)) shape in
+                let shifted = T.slice (Array.to_list slice_specs) padded in
+                let active_mask =
+                  match k with
+                  | Max -> T.greater out shifted
+                  | Sum | Prod | Min -> T.less out shifted
+                in
+                (* Positions where the extremum does not improve keep a zero
+                   tangent rather than carrying the previous extremum's
+                   tangent; this matches the reverse rule (they are transposes
+                   of each other). *)
+                T.mul dx (T.cast dt active_mask))
+    (* Gather / scatter *)
+    | Gather (axis, indices, data) ->
+        lift1 (eval op) data (fun dx -> gather ~axis indices dx)
+    | Scatter { mode; unique; axis; indices; updates; into } ->
+        let out = eval op in
+        if active into || active updates then begin
+          let d_template =
+            match mode with
+            | `Add -> tan_or_zeros into
+            | `Set ->
+                let mask =
+                  scatter ~mode:`Set ~unique ~axis ~indices
+                    ~updates:(T.zeros_like updates) (T.ones_like into)
+                in
+                T.mul (tan_or_zeros into) mask
+          in
+          let d_updates =
+            scatter ~mode ~unique ~axis ~indices ~updates:(tan_or_zeros updates)
+              (T.zeros_like into)
+          in
+          set_tangent out (T.add d_template d_updates)
+        end;
+        out
+    (* The window write is linear in [x] and [v] together. *)
+    | Update (x, starts, v) ->
+        let out = eval op in
+        if active x || active v then
+          set_tangent out (update (tan_or_zeros x) ~starts (tan_or_zeros v));
+        out
+    (* Windowing: unfold and fold are linear. *)
+    | Unfold { kernel_size; stride; dilation; padding; x } ->
+        lift1 (eval op) x (fun dx ->
+            unfold dx ~kernel_size ~stride ~dilation ~padding)
+    | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
+        lift1 (eval op) x (fun dx ->
+            fold dx ~output_size ~kernel_size ~stride ~dilation ~padding)
+    (* Matrix multiplication *)
+    | Matmul (a, b) ->
+        let out = eval op in
+        (match (tangent a, tangent b) with
+        | None, None -> ()
+        | Some da, None -> set_tangent out (matmul da b)
+        | None, Some db -> set_tangent out (matmul a db)
+        | Some da, Some db ->
+            set_tangent out (T.add (matmul da b) (matmul a db)));
+        out
+    (* FFT: linear operations apply to the tangent. *)
+    | Fft { inverse; axes; x } ->
+        lift1 (eval op) x (fun dx -> fft ~inverse ~axes dx)
+    | Rfft { dtype; axes; x } ->
+        lift1 (eval op) x (fun dx -> rfft dtype ~axes dx)
+    | Irfft { dtype; axes; s; x } ->
+        lift1 (eval op) x (fun dx -> irfft ?s dtype ~axes dx)
+    (* Linear algebra *)
+    (* The factor reads the Hermitian matrix H that A's strict lower triangle
+       and the real part of its diagonal name, H = L Lᴴ, so dL = L
+       Φ(L^-1 dH L^-H), with Φ the lower triangle less half the diagonal.
+       Under [upper] the factor is U = Lᴴ. *)
+    | Cholesky { upper; x } ->
+        let out = eval op in
+        lift1 out x (fun da ->
+            let l = if upper then Derivs.adjoint out else out in
+            let dh =
+              let low = T.tril ~k:(-1) da in
+              T.add
+                (T.add low (Derivs.adjoint low))
+                (Derivs.diag_matrix (Derivs.real_part (T.diagonal da)))
+            in
+            let left =
+              solve_triangular ~upper:false ~transpose:false ~unit_diag:false l
+            in
+            let m = Derivs.adjoint (left (Derivs.adjoint (left dh))) in
+            let phi =
+              let diag_m = T.diagonal m in
+              let two = Nx_dtype.of_float (T.dtype diag_m) 2.0 in
+              T.sub (T.tril m) (Derivs.diag_matrix (T.div_s diag_m two))
+            in
+            let dl = T.matmul l phi in
+            if upper then Derivs.adjoint dl else dl)
+    | Solve_triangular { upper; transpose; unit_diag; a; b } ->
+        let out = eval op in
+        if active a || active b then begin
+          (* A_op X = B, so A_op dX = dB - dA_op X, with dA restricted to the
+             triangle the solve reads. A_op is Aᴴ under [transpose]: the
+             conjugate transpose on complex. *)
+          let db = tan_or_zeros b in
+          let rhs =
+            match tangent a with
+            | None -> db
+            | Some da ->
+                let da_used =
+                  let tri = if upper then T.triu da else T.tril da in
+                  if unit_diag then
+                    T.sub tri (Derivs.diag_matrix (T.diagonal tri))
+                  else tri
+                in
+                let da_op =
+                  if transpose then T.conjugate (T.matrix_transpose da_used)
+                  else da_used
+                in
+                let out_2d, was_1d =
+                  if T.ndim out = T.ndim a - 1 then
+                    (T.unsqueeze ~axes:[ -1 ] out, true)
+                  else (out, false)
+                in
+                let prod = T.matmul da_op out_2d in
+                let prod =
+                  if was_1d then T.reshape (T.shape b) prod else prod
+                in
+                T.sub db prod
+          in
+          set_tangent out (solve_triangular ~upper ~transpose ~unit_diag a rhs)
+        end;
+        out
+    | Qr { x; _ } -> if active x then err_no_rule "qr" else eval op
+    | Lu x ->
+        let ((packed, _, perm) as out) = eval op in
+        (match tangent x with
+        | None -> ()
+        | Some da ->
+            if T.dim (-1) x <> T.dim (-2) x then
+              err_no_rule "lu of a rectangular matrix";
+            (* P A = L U. X = L^-1 P dA U^-1 is L^-1 dL, strictly lower, plus
+               dU U^-1, upper: dL = L tril_-1(X) and dU = triu(X) U, packed as
+               the factors are. *)
+            let pda =
+              T.take_along_axis ~axis:(-2)
+                ~indices:
+                  (T.broadcast_to (T.shape da) (T.unsqueeze ~axes:[ -1 ] perm))
+                da
+            in
+            let y =
+              solve_triangular ~upper:false ~transpose:false ~unit_diag:true
+                packed pda
+            in
+            let x =
+              T.matrix_transpose
+                (solve_triangular ~upper:false ~transpose:false
+                   ~unit_diag:false (T.matrix_transpose packed)
+                   (T.matrix_transpose y))
+            in
+            let l =
+              T.add (T.tril ~k:(-1) packed)
+                (T.eye (T.dtype packed) (T.dim (-1) packed))
+            in
+            set_tangent packed
+              (T.add
+                 (T.matmul l (T.tril ~k:(-1) x))
+                 (T.matmul (T.triu x) (T.triu packed))));
+        out
+    | Svd { x; _ } -> no_rule "svd" (active x) (fun () -> eval op)
+    | Eig { vectors; x } ->
+        no_rule (if vectors then "eig" else "eigvals") (active x) (fun () ->
+            eval op)
+    | Eigh { vectors; x } ->
+        no_rule (if vectors then "eigh" else "eigvalsh") (active x) (fun () ->
+            eval op)
+  in
+
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     if not (Gate.enabled ()) then None
     else
       match eff with
-      (* Constants: RNG and metadata. Fresh outputs are inactive. *)
-      | E_view _ -> None
-      | E_to_host _ -> None
-      | E_threefry _ -> None
-      (* Placement is linear: the tangent moves with its primal. *)
-      | E_place { placement; t_in } ->
-          Some (fun () -> lift1 (place placement t_in) t_in (place placement))
-      | E_placement _ -> None
-      (* Zero derivative: boolean, bitwise and integer results. *)
-      | E_cmpeq _ -> None
-      | E_cmpne _ -> None
-      | E_cmplt _ -> None
-      | E_cmple _ -> None
-      | E_xor _ -> None
-      | E_or _ -> None
-      | E_and _ -> None
-      | E_bitcast _ -> None
-      | E_idiv _ -> None
-      | E_argmax _ -> None
-      | E_argmin _ -> None
-      | E_argsort _ -> None
-      (* On complex dtypes [sign z = z / |z|] is not piecewise constant. *)
-      | E_sign { t_in } when Nx_dtype.is_complex (dtype t_in) ->
-          Some
-            (fun () ->
-              let out = sign t_in in
-              lift1 out t_in (Derivs.sign_push t_in out))
-      (* Zero derivative: piecewise-constant real functions. *)
-      | E_sign _ -> None
-      | E_trunc _ -> None
-      | E_ceil _ -> None
-      | E_floor _ -> None
-      | E_round _ -> None
+      | E_op op -> Some (fun () -> run op)
       (* Scan. When a stager lies beyond, the scan passes on as the scan of its
          jvp: the carry and the rows gain the tangents of their active leaves,
          the outputs those of theirs, and the step runs the body under a nested
@@ -199,488 +487,9 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                   | exception Grow carried -> attempt carried
                 in
                 attempt (flags req.req_carry))
-      (* Binary arithmetic *)
-      | E_add { a; b } -> Some (fun () -> lift2 (add a b) a b T.add)
-      | E_sub { a; b } -> Some (fun () -> lift2 (sub a b) a b T.sub)
-      | E_mul { a; b } ->
-          Some
-            (fun () ->
-              lift2 (mul a b) a b (fun da db -> T.add (T.mul da b) (T.mul a db)))
-      | E_fdiv { a; b } ->
-          Some
-            (fun () ->
-              lift2 (fdiv a b) a b (fun da db ->
-                  T.sub (T.div da b) (T.mul (T.div a (T.mul b b)) db)))
-      | E_pow { a; b } ->
-          Some
-            (fun () ->
-              let out = pow a b in
-              lift2 out a b (fun da db ->
-                  T.add
-                    (T.mul da (Derivs.pow_wrt_base a b))
-                    (T.mul db (Derivs.pow_wrt_exp a out))))
-      | E_max { a; b } ->
-          Some
-            (fun () ->
-              let out = max a b in
-              lift2 out a b (fun da db ->
-                  let mask = T.cast (dtype out) (T.greater a b) in
-                  T.add (T.mul da mask)
-                    (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
-      | E_min { a; b } ->
-          Some
-            (fun () ->
-              let out = min a b in
-              lift2 out a b (fun da db ->
-                  let mask = T.cast (dtype out) (T.less a b) in
-                  T.add (T.mul da mask)
-                    (T.mul db (T.rsub_s (Derivs.one_like mask) mask))))
-      | E_atan2 { a; b } ->
-          Some
-            (fun () ->
-              lift2 (atan2 a b) a b (fun da db ->
-                  let denom = T.add (T.mul a a) (T.mul b b) in
-                  T.sub (T.mul da (T.div b denom)) (T.mul db (T.div a denom))))
-      | E_mod { a; b } ->
-          Some
-            (fun () ->
-              no_rule "mod" (active a || active b) (fun () -> mod_ a b))
-      (* Unary arithmetic *)
-      | E_neg { t_in } -> Some (fun () -> lift1 (neg t_in) t_in T.neg)
-      | E_sin { t_in } ->
-          Some
-            (fun () -> lift1 (sin t_in) t_in (fun dx -> T.mul dx (T.cos t_in)))
-      | E_cos { t_in } ->
-          Some
-            (fun () ->
-              lift1 (cos t_in) t_in (fun dx -> T.mul dx (T.neg (T.sin t_in))))
-      | E_tan { t_in } ->
-          Some
-            (fun () ->
-              lift1 (tan t_in) t_in (fun dx -> T.mul dx (Derivs.tan' t_in)))
-      | E_asin { t_in } ->
-          Some
-            (fun () ->
-              lift1 (asin t_in) t_in (fun dx -> T.mul dx (Derivs.asin' t_in)))
-      | E_acos { t_in } ->
-          Some
-            (fun () ->
-              lift1 (acos t_in) t_in (fun dx ->
-                  T.mul dx (T.neg (Derivs.asin' t_in))))
-      | E_atan { t_in } ->
-          Some
-            (fun () ->
-              lift1 (atan t_in) t_in (fun dx -> T.mul dx (Derivs.atan' t_in)))
-      | E_sinh { t_in } ->
-          Some
-            (fun () ->
-              lift1 (sinh t_in) t_in (fun dx -> T.mul dx (T.cosh t_in)))
-      | E_cosh { t_in } ->
-          Some
-            (fun () ->
-              lift1 (cosh t_in) t_in (fun dx -> T.mul dx (T.sinh t_in)))
-      | E_tanh { t_in } ->
-          Some
-            (fun () ->
-              let out = tanh t_in in
-              lift1 out t_in (fun dx -> T.mul dx (Derivs.tanh' out)))
-      | E_exp { t_in } ->
-          Some
-            (fun () ->
-              let out = exp t_in in
-              lift1 out t_in (fun dx -> T.mul dx out))
-      | E_log { t_in } ->
-          Some
-            (fun () ->
-              lift1 (log t_in) t_in (fun dx -> T.mul dx (T.recip t_in)))
-      | E_sqrt { t_in } ->
-          Some
-            (fun () ->
-              let out = sqrt t_in in
-              lift1 out t_in (fun dx -> T.mul dx (Derivs.sqrt' out)))
-      | E_recip { t_in } ->
-          Some
-            (fun () ->
-              lift1 (recip t_in) t_in (fun dx -> T.mul dx (Derivs.recip' t_in)))
-      (* On complex dtypes [abs] is the modulus: real-valued, and not
-         holomorphic. Its pushforward conjugates the direction — going through
-         [sign z] itself would flip the sign of the imaginary contribution — and
-         keeps the real part of the product, since a real-valued output cannot
-         move in the imaginary direction. Both are the identity on real
-         dtypes. *)
-      | E_abs { t_in } ->
-          Some
-            (fun () ->
-              lift1 (abs t_in) t_in (fun dx ->
-                  Derivs.real_part (T.mul dx (T.conjugate (T.sign t_in)))))
-      | E_erf { t_in } ->
-          Some
-            (fun () ->
-              lift1 (erf t_in) t_in (fun dx -> T.mul dx (Derivs.erf' t_in)))
-      (* Selection *)
-      | E_where { condition; if_true; if_false } ->
-          Some
-            (fun () ->
-              let out = where condition if_true if_false in
-              if active if_true || active if_false then begin
-                let mask = T.cast (dtype out) condition in
-                let dt_ = tan_or_zeros if_true and df = tan_or_zeros if_false in
-                set_tangent out
-                  (T.add (T.mul dt_ mask)
-                     (T.mul df (T.rsub_s (Derivs.one_like mask) mask)))
-              end;
-              out)
-      (* Movement: linear ops apply to the tangent unchanged. *)
-      | E_reshape { t_in; new_shape } ->
-          Some
-            (fun () ->
-              lift1 (reshape t_in new_shape) t_in (fun dx ->
-                  reshape dx new_shape))
-      | E_permute { t_in; axes } ->
-          Some
-            (fun () ->
-              lift1 (permute t_in axes) t_in (fun dx -> permute dx axes))
-      | E_expand { t_in; new_target_shape } ->
-          Some
-            (fun () ->
-              lift1 (expand t_in new_target_shape) t_in (fun dx ->
-                  expand dx new_target_shape))
-      | E_pad { t_in; padding_config; fill_value } ->
-          Some
-            (fun () ->
-              (* The fill value is a constant: the tangent pads with zero. *)
-              lift1 (pad t_in padding_config fill_value) t_in (fun dx ->
-                  pad dx padding_config (Nx_dtype.zero (dtype t_in))))
-      | E_shrink { t_in; limits } ->
-          Some
-            (fun () ->
-              lift1 (shrink t_in limits) t_in (fun dx -> shrink dx limits))
-      | E_flip { t_in; dims_to_flip } ->
-          Some
-            (fun () ->
-              lift1 (flip t_in dims_to_flip) t_in (fun dx ->
-                  flip dx dims_to_flip))
-      | E_sliding_window { t_in; axis; window; step } ->
-          Some
-            (fun () ->
-              lift1 (sliding_window t_in ~axis ~window ~step) t_in (fun dx ->
-                  sliding_window dx ~axis ~window ~step))
-      | E_cat { t_list; axis } ->
-          Some
-            (fun () ->
-              let out = cat t_list ~axis in
-              if List.exists active t_list then
-                set_tangent out (cat (List.map tan_or_zeros t_list) ~axis);
-              out)
-      | E_cast { t_in; target_dtype } ->
-          Some
-            (fun () ->
-              lift1 (cast ~dtype:target_dtype t_in) t_in (fun dx ->
-                  T.cast target_dtype dx))
-      | E_contiguous { t_in } -> Some (fun () -> lift1 (copy t_in) t_in Fun.id)
-      (* Reductions *)
-      | E_reduce_sum { t_in; axes } ->
-          Some
-            (fun () ->
-              lift1 (reduce ~op:`Sum ~axes t_in) t_in (fun dx ->
-                  T.sum dx ~axes:(Array.to_list axes)))
-      | E_reduce_max { t_in; axes } ->
-          Some
-            (fun () ->
-              let out = reduce ~op:`Max ~axes t_in in
-              let axes = Array.to_list axes in
-              lift1 out t_in (fun dx ->
-                  T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
-      | E_reduce_min { t_in; axes } ->
-          Some
-            (fun () ->
-              let out = reduce ~op:`Min ~axes t_in in
-              let axes = Array.to_list axes in
-              lift1 out t_in (fun dx ->
-                  T.sum ~axes (T.mul dx (Derivs.extrema' ~axes t_in out))))
-      | E_reduce_prod { t_in; axes } ->
-          Some
-            (fun () ->
-              let out = reduce ~op:`Prod ~axes t_in in
-              let axes = Array.to_list axes in
-              lift1 out t_in (fun dx ->
-                  T.sum ~axes (T.mul dx (Derivs.prod' ~axes t_in out))))
-      (* Sorting: a sort is a gather at the argsort indices. *)
-      | E_sort { t_in; axis; descending } ->
-          Some
-            (fun () ->
-              lift1 (sort ~axis ~descending t_in) t_in (fun dx ->
-                  let indices = argsort ~axis ~descending t_in in
-                  gather dx indices ~axis))
-      (* Scans *)
-      | E_associative_scan { t_in; axis; op } ->
-          Some
-            (fun () ->
-              let out = associative_scan ~axis ~op t_in in
-              lift1 out t_in (fun dx ->
-                  match op with
-                  | `Sum -> associative_scan ~axis ~op:`Sum dx
-                  | `Prod ->
-                      (* d cumprod_k = cumprod_k * sum_{i<=k} dx_i / x_i;
-                         requires nonzero inputs, like the reverse rule. *)
-                      let ratio = T.div dx t_in in
-                      T.mul out (associative_scan ~axis ~op:`Sum ratio)
-                  | `Max | `Min ->
-                      (* The tangent flows from positions where the running
-                         extremum strictly improves. *)
-                      let shape = T.shape out in
-                      let ndim = Array.length shape in
-                      let axis_norm = if axis < 0 then axis + ndim else axis in
-                      let dt = dtype t_in in
-                      let boundary =
-                        match op with
-                        | `Max -> Nx_dtype.min_value dt
-                        | _ -> Nx_dtype.max_value dt
-                      in
-                      let pad_left =
-                        Array.mapi
-                          (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
-                          shape
-                      in
-                      let padded = T.pad pad_left boundary out in
-                      let slice_specs =
-                        Array.map (fun dim -> T.R (0, dim)) shape
-                      in
-                      let shifted =
-                        T.slice (Array.to_list slice_specs) padded
-                      in
-                      let active_mask =
-                        match op with
-                        | `Max -> T.greater out shifted
-                        | _ -> T.less out shifted
-                      in
-                      (* Positions where the extremum does not improve keep a
-                         zero tangent rather than carrying the previous
-                         extremum's tangent; this matches the reverse rule (they
-                         are transposes of each other). *)
-                      T.mul dx (T.cast dt active_mask)))
-      (* Gather / scatter *)
-      | E_gather { data; indices; axis } ->
-          Some
-            (fun () ->
-              lift1 (gather data indices ~axis) data (fun dx ->
-                  gather dx indices ~axis))
-      | E_scatter
-          { data_template; indices; updates; axis; mode; unique_indices } ->
-          Some
-            (fun () ->
-              let out =
-                scatter ~mode ~unique_indices data_template ~indices ~updates
-                  ~axis
-              in
-              if active data_template || active updates then begin
-                let d_template =
-                  match mode with
-                  | `Add -> tan_or_zeros data_template
-                  | `Set ->
-                      let mask =
-                        scatter ~mode:`Set ~unique_indices
-                          (T.ones_like data_template)
-                          ~indices ~updates:(T.zeros_like updates) ~axis
-                      in
-                      T.mul (tan_or_zeros data_template) mask
-                in
-                let d_updates =
-                  scatter ~mode ~unique_indices
-                    (T.zeros_like data_template)
-                    ~indices ~updates:(tan_or_zeros updates) ~axis
-                in
-                set_tangent out (T.add d_template d_updates)
-              end;
-              out)
-      (* The window write is linear in [t_in] and [v] together. *)
-      | E_update { t_in; starts; v } ->
-          Some
-            (fun () ->
-              let out = update t_in ~starts v in
-              if active t_in || active v then
-                set_tangent out
-                  (update (tan_or_zeros t_in) ~starts (tan_or_zeros v));
-              out)
-      (* Windowing: unfold and fold are linear. *)
-      | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
-          Some
-            (fun () ->
-              lift1 (unfold t_in ~kernel_size ~stride ~dilation ~padding) t_in
-                (fun dx -> unfold dx ~kernel_size ~stride ~dilation ~padding))
-      | E_fold { t_in; output_size; kernel_size; stride; dilation; padding } ->
-          Some
-            (fun () ->
-              lift1
-                (fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding)
-                t_in (fun dx ->
-                  fold dx ~output_size ~kernel_size ~stride ~dilation ~padding))
-      (* Matrix multiplication *)
-      | E_matmul { a; b } ->
-          Some
-            (fun () ->
-              let out = matmul a b in
-              (match (tangent a, tangent b) with
-              | None, None -> ()
-              | da, db ->
-                  let terms =
-                    List.filter_map Fun.id
-                      [
-                        Option.map (fun da -> matmul da b) da;
-                        Option.map (fun db -> matmul a db) db;
-                      ]
-                  in
-                  let tan =
-                    match terms with
-                    | [ t ] -> t
-                    | [ t1; t2 ] -> T.add t1 t2
-                    | _ -> assert false
-                  in
-                  set_tangent out tan);
-              out)
-      (* FFT: linear operations apply to the tangent. *)
-      | E_fft { t; axes } ->
-          Some (fun () -> lift1 (fft t ~axes) t (fun dx -> fft dx ~axes))
-      | E_ifft { t; axes } ->
-          Some (fun () -> lift1 (ifft t ~axes) t (fun dx -> ifft dx ~axes))
-      | E_rfft { t; dtype; axes } ->
-          Some
-            (fun () ->
-              lift1 (rfft t ~dtype ~axes) t (fun dx -> rfft dx ~dtype ~axes))
-      | E_irfft { t; dtype; axes; s } ->
-          Some
-            (fun () ->
-              lift1 (irfft t ~axes ?s ~dtype) t (fun dx ->
-                  irfft dx ~axes ?s ~dtype))
       (* A gather is linear. *)
       | Axis.E_lanes { axis; t_in } ->
           Some (fun () -> lift1 (Axis.lanes axis t_in) t_in (Axis.lanes axis))
-      (* Linear algebra *)
-      (* The factor reads the Hermitian matrix H that A's strict lower
-         triangle and the real part of its diagonal name, H = L Lᴴ, so dL = L
-         Φ(L^-1 dH L^-H), with Φ the lower triangle less half the diagonal.
-         Under [upper] the factor is U = Lᴴ. *)
-      | E_cholesky { t_in; upper } ->
-          Some
-            (fun () ->
-              let out = cholesky ~upper t_in in
-              lift1 out t_in (fun da ->
-                  let l = if upper then Derivs.adjoint out else out in
-                  let dh =
-                    let low = T.tril ~k:(-1) da in
-                    T.add
-                      (T.add low (Derivs.adjoint low))
-                      (Derivs.diag_matrix (Derivs.real_part (T.diagonal da)))
-                  in
-                  let left =
-                    solve_triangular ~upper:false ~transpose:false
-                      ~unit_diag:false l
-                  in
-                  let m = Derivs.adjoint (left (Derivs.adjoint (left dh))) in
-                  let phi =
-                    let diag_m = T.diagonal m in
-                    let two = Nx_dtype.of_float (T.dtype diag_m) 2.0 in
-                    T.sub (T.tril m) (Derivs.diag_matrix (T.div_s diag_m two))
-                  in
-                  let dl = T.matmul l phi in
-                  if upper then Derivs.adjoint dl else dl))
-      | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
-          Some
-            (fun () ->
-              let out = solve_triangular ~upper ~transpose ~unit_diag a b in
-              if active a || active b then begin
-                (* A_op X = B, so A_op dX = dB - dA_op X, with dA restricted to
-                   the triangle the solve reads. A_op is Aᴴ under [transpose]:
-                   the conjugate transpose on complex. *)
-                let db = tan_or_zeros b in
-                let rhs =
-                  match tangent a with
-                  | None -> db
-                  | Some da ->
-                      let da_used =
-                        let tri = if upper then T.triu da else T.tril da in
-                        if unit_diag then
-                          T.sub tri (Derivs.diag_matrix (T.diagonal tri))
-                        else tri
-                      in
-                      let da_op =
-                        if transpose then
-                          T.conjugate (T.matrix_transpose da_used)
-                        else da_used
-                      in
-                      let out_2d, was_1d =
-                        if T.ndim out = T.ndim a - 1 then
-                          (T.unsqueeze ~axes:[ -1 ] out, true)
-                        else (out, false)
-                      in
-                      let prod = T.matmul da_op out_2d in
-                      let prod =
-                        if was_1d then T.reshape (T.shape b) prod else prod
-                      in
-                      T.sub db prod
-                in
-                set_tangent out
-                  (solve_triangular ~upper ~transpose ~unit_diag a rhs)
-              end;
-              out)
-      | E_qr { t_in; reduced } ->
-          Some
-            (fun () ->
-              if active t_in then err_no_rule "qr" else qr ~reduced t_in)
-      | E_lu { t_in } ->
-          Some
-            (fun () ->
-              let ((packed, _, perm) as out) = lu t_in in
-              (match tangent t_in with
-              | None -> ()
-              | Some da ->
-                  if T.dim (-1) t_in <> T.dim (-2) t_in then
-                    err_no_rule "lu of a rectangular matrix";
-                  (* P A = L U. X = L^-1 P dA U^-1 is L^-1 dL, strictly lower,
-                     plus dU U^-1, upper: dL = L tril_-1(X) and dU = triu(X) U,
-                     packed as the factors are. *)
-                  let pda =
-                    T.take_along_axis ~axis:(-2)
-                      ~indices:
-                        (T.broadcast_to (T.shape da)
-                           (T.unsqueeze ~axes:[ -1 ] perm))
-                      da
-                  in
-                  let y =
-                    solve_triangular ~upper:false ~transpose:false
-                      ~unit_diag:true packed pda
-                  in
-                  let x =
-                    T.matrix_transpose
-                      (solve_triangular ~upper:false ~transpose:false
-                         ~unit_diag:false
-                         (T.matrix_transpose packed)
-                         (T.matrix_transpose y))
-                  in
-                  let l =
-                    T.add (T.tril ~k:(-1) packed)
-                      (T.eye (T.dtype packed) (T.dim (-1) packed))
-                  in
-                  set_tangent packed
-                    (T.add
-                       (T.matmul l (T.tril ~k:(-1) x))
-                       (T.matmul (T.triu x) (T.triu packed))));
-              out)
-      | E_svd { t_in; full_matrices } ->
-          Some
-            (fun () ->
-              no_rule "svd" (active t_in) (fun () -> svd ~full_matrices t_in))
-      | E_eigvals { t_in } ->
-          Some
-            (fun () -> no_rule "eigvals" (active t_in) (fun () -> eigvals t_in))
-      | E_eig { t_in } ->
-          Some (fun () -> no_rule "eig" (active t_in) (fun () -> eig t_in))
-      | E_eigvalsh { t_in } ->
-          Some
-            (fun () ->
-              no_rule "eigvalsh" (active t_in) (fun () -> eigvalsh t_in))
-      | E_eigh { t_in } ->
-          Some (fun () -> no_rule "eigh" (active t_in) (fun () -> eigh t_in))
       (* Custom rules. *)
       | Custom.E_custom_jvp
           (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
@@ -847,9 +656,6 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                            (Apply { ids; x = dx; transpose })))
               | Dequant _ -> ());
               y)
-      (* Effects from other libraries fall through. A new Nx tensor operation
-         must be added to this match: an unmatched tensor effect would be
-         differentiated as a constant. *)
       | _ -> None
   in
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =

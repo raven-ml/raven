@@ -131,8 +131,8 @@ let test_with_debug_logs_and_preserves () =
     let rec go i = i + n <= m && (String.sub log i n = sub || go (i + 1)) in
     go 0
   in
-  is_true ~msg:"logs mul" (contains "mul ->");
-  is_true ~msg:"logs reduce_sum" (contains "reduce_sum ->")
+  is_true ~msg:"logs mul" (contains "mul float32[3] float32[3]");
+  is_true ~msg:"logs sum" (contains "sum float32[3]")
 
 (* The backward pass holds cotangents as the lazy views its pulls produce and
    materializes where a reshape needs it and where a gradient leaves the tape. A

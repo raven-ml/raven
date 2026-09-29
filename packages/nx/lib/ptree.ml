@@ -376,7 +376,7 @@ let cast_tensor (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) tensor) :
     (c, d) tensor =
   match Nx_dtype.equal_witness (Nx_effect.dtype x) dt with
   | Some Type.Equal -> x
-  | None -> Nx_effect.cast ~dtype:dt x
+  | None -> Nx_effect.cast dt x
 
 module Payload = struct
   let map (module U : S) (f : Path.t -> 'a -> 'b) (x : 'a U.t) : 'b U.t =

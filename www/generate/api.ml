@@ -16,6 +16,7 @@ let libraries =
         ("nx", "Nx");
         ("nx.cpu", "Nx_cpu");
         ("nx.array", "Nx_array");
+        ("nx.backend", "Nx_backend");
         ("nx.device", "Nx_device");
         ("nx.dtype", "Nx_dtype");
         ("nx.effect", "Nx_effect");

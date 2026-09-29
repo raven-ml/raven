@@ -25,7 +25,7 @@ and place : type a b.
     Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
  fun p x ->
   let x = Nx.place Nx.Placement.host x in
-  let mem = Nx_array.Elements.gather (Nx_effect.to_host x) (Nx_effect.view x) in
+  let mem = Nx_array.Elements.gather (Nx_effect.read x) (Nx_effect.view x) in
   Nx_effect.placed p (Nx.dtype x)
     (Nx_array.View.create (Nx.shape x))
     (Nx_effect.cell ~placement:p

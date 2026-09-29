@@ -26,6 +26,7 @@
   nx
   nx.quant
   nx.effect
+  nx.backend
   nx.cpu
   nx.device
   unix

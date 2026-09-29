@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Vectorizing maps as an effect handler over Nx operations.
+(* Vectorizing maps as an interpreter of Nx operations.
 
    The mapped function is written for unbatched values. Under the handler, every
    tensor is either batched — it physically carries the batch dimension,
@@ -20,13 +20,13 @@
 
    The virtual view presents the remainder as contiguous even when the batched
    tensor is not; rules compensate by forcing contiguity before reshapes.
-   Operations whose operands are all constants fall through unintercepted.
+   Operations whose operands are all constants are evaluated as they are.
    Nested vmaps stack: each handler owns its batched set and batch size, and the
    translations one level emits are re-translated by the level above.
 
-   Every Nx effect constructor is matched explicitly; operations without a
-   batching rule raise when an operand is batched rather than silently producing
-   wrong shapes. *)
+   Every operation is matched explicitly, and the compiler checks it; operations
+   without a batching rule raise when an operand is batched rather than
+   silently producing wrong shapes. *)
 
 open Nx_effect
 module T = Nx
@@ -86,6 +86,68 @@ let sum_lanes st v =
 (* Axis parameters count from the virtual shape; the batch dimension sits at 0,
    so non-negative axes shift by one and negative axes are unchanged. *)
 let taxis ax = if ax >= 0 then ax + 1 else ax
+
+(* [x], physically batched, moved by [m]: the batch dimension enters shape
+   parameters and shifts axes by one. *)
+let move_batched st x m =
+  match (m : move) with
+  | Reshape shape ->
+      reshape (contiguous x) (Array.append [| st.batch_size |] shape)
+  | Permute axes ->
+      permute x (Array.append [| 0 |] (Array.map (fun d -> d + 1) axes))
+  | Expand shape -> to_batched st x shape
+  | Shrink limits -> shrink x (Array.append [| (0, st.batch_size) |] limits)
+  | Flip dims -> flip x (Array.append [| false |] dims)
+  (* The trailing window axis lands at the physical end, which is the virtual
+     end shifted past the batch dimension. *)
+  | Window { axis; size; step } ->
+      sliding_window x ~axis:(taxis axis) ~window:size ~step
+
+(* The window write of [v] into [x] at [starts], one of them batched. *)
+let update_batched st x starts v =
+  let t = ensure_batched st x and v' = ensure_batched st v in
+  if batched st starts then begin
+    (* A window per example: along each axis the rows are gathered from [v]
+       at the example's offset, clamped, and kept where they fall inside the
+       window. *)
+    let starts = ensure_batched st starts in
+    let b = st.batch_size in
+    let tshape = vshape st x and vs = vshape st v in
+    let rank = Array.length tshape in
+    let win = ref v' and mask = ref None in
+    for ax = 0 to rank - 1 do
+      let n = tshape.(ax) and len = vs.(ax) in
+      let start = T.reshape [| b; 1 |] (T.slice [ T.A; T.I ax ] starts) in
+      let rel = T.sub (T.reshape [| 1; n |] (T.arange T.int32 0 n 1)) start in
+      let inside =
+        T.logical_and (T.greater_equal_s rel 0l)
+          (T.less_s rel (Int32.of_int len))
+      in
+      let idx = T.clamp ~min:0l ~max:(Int32.of_int (len - 1)) rel in
+      let along =
+        Array.init (rank + 1) (fun d ->
+            if d = 0 then b else if d = ax + 1 then n else 1)
+      in
+      let shp =
+        Array.mapi (fun d s -> if d = ax + 1 then n else s) (T.shape !win)
+      in
+      win :=
+        T.take_along_axis ~axis:(ax + 1)
+          ~indices:(T.broadcast_to shp (T.reshape along idx))
+          !win;
+      let inside = T.reshape along inside in
+      mask :=
+        Some
+          (match !mask with
+          | None -> inside
+          | Some m -> T.logical_and m inside)
+    done;
+    match !mask with None -> v' | Some mask -> T.where mask !win t
+  end
+  else
+    (* The batch axis is never written: its start is 0 and [v]'s batch extent
+       is the whole axis. *)
+    update t ~starts:(pad [| (1, 0) |] 0l starts) v'
 
 (* Quantised products. The lane becomes a leading axis of the weight's parts, of
    [ids] and of [x], a unit axis where one is unbatched, after [pad] unit axes
@@ -147,28 +209,157 @@ let quant (type a b) st w (op : (a, b) Nx_quant.Effect.op) : (a, b) t =
         T.reshape (Array.append (Array.sub s 0 (r - 2)) [| s.(r - 1) |]) y
       else y
 
-(* Polymorphic recursion: the nested fibers spawned for custom rules run at the
-   rule's own result type. *)
 let rec handler : type r. state -> (r, r) Effect.Deep.handler =
  fun (st : state) ->
   let open Effect.Deep in
-  (* Elementwise operations: broadcast all operands to the common batched shape
-     and apply the operation unchanged. *)
-  let elt1 (type a b c d) (op : (a, b) t -> (c, d) t) (x : (a, b) t) =
-    let out = op x in
+  let b x = batched st x in
+  (* [out], marked batched. *)
+  let lane out =
     mark st out;
     out
   in
-  let elt2 (type a b c d) (op : (a, b) t -> (a, b) t -> (c, d) t)
+  (* Elementwise operations: broadcast all operands to the common batched shape
+     and apply the operation unchanged. *)
+  let elt2 (type a b c d) (f : (a, b) t -> (a, b) t -> (c, d) t)
       (a_in : (a, b) t) (b_in : (a, b) t) =
     let target = broadcast_shapes (vshape st a_in) (vshape st b_in) in
-    let out = op (to_batched st a_in target) (to_batched st b_in target) in
-    mark st out;
-    out
+    lane (f (to_batched st a_in target) (to_batched st b_in target))
+  in
+  (* Each operation with a batched operand is translated to its batched form:
+     shape parameters gain a leading batch entry, axis parameters shift by one,
+     and constants meeting batched operands are lifted with a broadcast view.
+     Operations whose operands are all constants of the map are evaluated as
+     they are. *)
+  let run : type c. c Op.t -> c =
+   fun op ->
+    match[@warning "@4@8"] op with
+    | Unary (k, x) -> if b x then lane (unary k x) else eval op
+    | Binary (k, x, y) -> if b x || b y then elt2 (binary k) x y else eval op
+    | Compare (k, x, y) -> if b x || b y then elt2 (cmp k) x y else eval op
+    | Threefry (key, ctr) ->
+        if b key || b ctr then elt2 threefry key ctr else eval op
+    | Convert (k, dtype, x) ->
+        if b x then
+          lane
+            (match k with Cast -> cast dtype x | Bitcast -> bitcast dtype x)
+        else eval op
+    | Contiguous x -> if b x then lane (copy x) else eval op
+    | Where (c, x, y) ->
+        if b c || b x || b y then
+          let target =
+            broadcast_shapes
+              (broadcast_shapes (vshape st c) (vshape st x))
+              (vshape st y)
+          in
+          lane
+            (where (to_batched st c target) (to_batched st x target)
+               (to_batched st y target))
+        else eval op
+    (* Reading the value of a batched tensor would expose the physical, batched
+       buffer to code that believes it is unbatched. *)
+    | Read x ->
+        if b x then
+          invalid_arg
+            "Rune: cannot read the value of a batched tensor inside vmap; \
+             return it from the mapped function instead"
+        else eval op
+    (* Placement: the batch axis sits in front of a split axis. *)
+    | Place (p, x) ->
+        if b x then lane (place (Nx_effect.Placement.with_leading_axis p) x)
+        else eval op
+    (* Movement: insert the batch dimension into shape parameters. *)
+    | Move (x, m) -> if b x then lane (move_batched st x m) else eval op
+    | Pad (padding, v, x) ->
+        if b x then lane (pad (Array.append [| (0, 0) |] padding) v x)
+        else eval op
+    | Cat (axis, xs) ->
+        if List.exists b xs then
+          lane (cat ~axis:(taxis axis) (List.map (ensure_batched st) xs))
+        else eval op
+    (* Reductions and scans *)
+    | Reduce (k, axes, x) ->
+        if b x then lane (reduce k ~axes:(Array.map taxis axes) x) else eval op
+    | Scan (k, axis, x) ->
+        if b x then lane (scan k ~axis:(taxis axis) x) else eval op
+    | Arg_reduce (k, axis, x) ->
+        if b x then lane (arg_reduce k ~axis:(taxis axis) x) else eval op
+    | Sort { descending; axis; x } ->
+        if b x then lane (sort ~descending ~axis:(taxis axis) x) else eval op
+    | Argsort { descending; axis; x } ->
+        if b x then lane (argsort ~descending ~axis:(taxis axis) x)
+        else eval op
+    (* Gather / scatter: operands agree on rank, so all are lifted. *)
+    | Gather (axis, indices, data) ->
+        if b data || b indices then
+          lane
+            (gather ~axis:(taxis axis)
+               (ensure_batched st indices)
+               (ensure_batched st data))
+        else eval op
+    | Scatter { mode; unique; axis; indices; updates; into } ->
+        if b into || b indices || b updates then
+          lane
+            (scatter ~mode ~unique ~axis:(taxis axis)
+               ~indices:(ensure_batched st indices)
+               ~updates:(ensure_batched st updates)
+               (ensure_batched st into))
+        else eval op
+    | Update (x, starts, v) ->
+        if b x || b starts || b v then lane (update_batched st x starts v)
+        else eval op
+    (* Matrix multiplication: the frontend promotes vectors to matrices against
+       virtual shapes before this operation, and the backend broadcasts leading
+       batch dimensions positionally. Plain matrices need no translation, the
+       batch axis being the only leading dimension. When an operand carries
+       leading dimensions of its own, both operands are lifted to the batched
+       form at a common leading rank first; otherwise the batch axis of one
+       would align against the other's first batch dimension. *)
+    | Matmul (x, y) ->
+        if b x || b y then
+          let sa = vshape st x and sb = vshape st y in
+          let lead s = Array.sub s 0 (Array.length s - 2) in
+          let l =
+            Stdlib.max (Array.length (lead sa)) (Array.length (lead sb))
+          in
+          if l = 0 then lane (matmul x y)
+          else
+            let padded s =
+              Array.append (Array.make (l - Array.length (lead s)) 1) s
+            in
+            lane
+              (matmul
+                 (to_batched st x (padded sa))
+                 (to_batched st y (padded sb)))
+        else eval op
+    (* Windowing: both address the last spatial dimensions and pass every
+       leading dimension through untouched, so the batch dimension rides along
+       as one more leading dimension and no parameter shifts. *)
+    | Unfold { x; _ } -> if b x then lane (eval op) else eval op
+    | Fold { x; _ } -> if b x then lane (eval op) else eval op
+    (* FFT: the transformed axes shift past the batch dimension; sizes ([s]) are
+       per-axis and unchanged. *)
+    | Fft { inverse; axes; x } ->
+        if b x then lane (fft ~inverse ~axes:(Array.map taxis axes) x)
+        else eval op
+    | Rfft { dtype; axes; x } ->
+        if b x then lane (rfft dtype ~axes:(Array.map taxis axes) x)
+        else eval op
+    | Irfft { dtype; axes; s; x } ->
+        if b x then lane (irfft ?s dtype ~axes:(Array.map taxis axes) x)
+        else eval op
+    | Cholesky { x; _ } -> if b x then no_rule "cholesky" () else eval op
+    | Qr { x; _ } -> if b x then no_rule "qr" () else eval op
+    | Lu x -> if b x then no_rule "lu" () else eval op
+    | Svd { x; _ } -> if b x then no_rule "svd" () else eval op
+    | Eig { x; _ } -> if b x then no_rule (Op.name op) () else eval op
+    | Eigh { x; _ } -> if b x then no_rule (Op.name op) () else eval op
+    | Solve_triangular { a; b = y; _ } ->
+        if b a || b y then no_rule "solve_triangular" () else eval op
   in
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     match eff with
+    | E_op op -> Some (fun () -> run op)
     (* Shape queries: batched tensors present their unbatched remainder, as a
        contiguous view. *)
     | E_view x ->
@@ -178,22 +369,7 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
               let s = T.shape x in
               Nx_array.View.create (Array.sub s 1 (Array.length s - 1)))
         else None
-    (* Reading the value of a batched tensor would expose the physical, batched
-       buffer to code that believes it is unbatched. *)
-    | E_to_host x ->
-        if batched st x then
-          Some
-            (fun () ->
-              invalid_arg
-                "Rune: cannot read the value of a batched tensor inside vmap; \
-                 return it from the mapped function instead")
-        else None
-    (* Placement: the batch axis sits in front of a split axis. A lane of a map
-       over the split axis has no placement of its own. *)
-    | E_place { placement = p; t_in } when batched st t_in ->
-        let p = Nx_effect.Placement.with_leading_axis p in
-        Some (fun () -> elt1 (place p) t_in)
-    | E_place _ -> None
+    (* A lane of a map over the split axis has no placement of its own. *)
     | E_placement x when batched st x ->
         Some
           (fun () ->
@@ -202,44 +378,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
                 invalid_arg
                   "Rune: a lane of vmap over a split axis has no placement"
             | Some p -> p)
-    | E_placement _ -> None
-    (* Elementwise binary *)
-    | E_add { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 add a b)
-    | E_sub { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 sub a b)
-    | E_mul { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 mul a b)
-    | E_fdiv { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 fdiv a b)
-    | E_idiv { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 idiv a b)
-    | E_pow { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 pow a b)
-    | E_mod { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 mod_ a b)
-    | E_max { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 max a b)
-    | E_min { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 min a b)
-    | E_atan2 { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 atan2 a b)
-    | E_xor { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 xor a b)
-    | E_or { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 or_ a b)
-    | E_and { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 and_ a b)
-    | E_cmpeq { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 cmpeq a b)
-    | E_cmpne { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 cmpne a b)
-    | E_cmplt { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 cmplt a b)
-    | E_cmple { a; b } when batched st a || batched st b ->
-        Some (fun () -> elt2 cmple a b)
-    | E_threefry { key; ctr } when batched st key || batched st ctr ->
-        Some (fun () -> elt2 threefry key ctr)
     (* The lane index is the per-lane iota [0 .. batch_size-1], carried as a
        batched scalar, so that a key folded with it decorrelates the lanes. A
        named map answers only the calls that name it. *)
@@ -268,335 +406,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = T.swapaxes 0 1 (Axis.lanes axis t_in) in
             mark st out;
             out)
-    (* Elementwise unary *)
-    | E_neg { t_in } when batched st t_in -> Some (fun () -> elt1 neg t_in)
-    | E_sin { t_in } when batched st t_in -> Some (fun () -> elt1 sin t_in)
-    | E_cos { t_in } when batched st t_in -> Some (fun () -> elt1 cos t_in)
-    | E_tan { t_in } when batched st t_in -> Some (fun () -> elt1 tan t_in)
-    | E_asin { t_in } when batched st t_in -> Some (fun () -> elt1 asin t_in)
-    | E_acos { t_in } when batched st t_in -> Some (fun () -> elt1 acos t_in)
-    | E_atan { t_in } when batched st t_in -> Some (fun () -> elt1 atan t_in)
-    | E_sinh { t_in } when batched st t_in -> Some (fun () -> elt1 sinh t_in)
-    | E_cosh { t_in } when batched st t_in -> Some (fun () -> elt1 cosh t_in)
-    | E_tanh { t_in } when batched st t_in -> Some (fun () -> elt1 tanh t_in)
-    | E_exp { t_in } when batched st t_in -> Some (fun () -> elt1 exp t_in)
-    | E_log { t_in } when batched st t_in -> Some (fun () -> elt1 log t_in)
-    | E_sqrt { t_in } when batched st t_in -> Some (fun () -> elt1 sqrt t_in)
-    | E_recip { t_in } when batched st t_in -> Some (fun () -> elt1 recip t_in)
-    | E_abs { t_in } when batched st t_in -> Some (fun () -> elt1 abs t_in)
-    | E_sign { t_in } when batched st t_in -> Some (fun () -> elt1 sign t_in)
-    | E_erf { t_in } when batched st t_in -> Some (fun () -> elt1 erf t_in)
-    | E_trunc { t_in } when batched st t_in -> Some (fun () -> elt1 trunc t_in)
-    | E_ceil { t_in } when batched st t_in -> Some (fun () -> elt1 ceil t_in)
-    | E_floor { t_in } when batched st t_in -> Some (fun () -> elt1 floor t_in)
-    | E_round { t_in } when batched st t_in -> Some (fun () -> elt1 round t_in)
-    | E_contiguous { t_in } when batched st t_in ->
-        Some (fun () -> elt1 copy t_in)
-    | E_cast { t_in; target_dtype } when batched st t_in ->
-        Some (fun () -> elt1 (cast ~dtype:target_dtype) t_in)
-    | E_bitcast { t_in; target_dtype } when batched st t_in ->
-        Some (fun () -> elt1 (bitcast ~dtype:target_dtype) t_in)
-    (* Selection *)
-    | E_where { condition; if_true; if_false }
-      when batched st condition || batched st if_true || batched st if_false ->
-        Some
-          (fun () ->
-            let target =
-              broadcast_shapes
-                (broadcast_shapes (vshape st condition) (vshape st if_true))
-                (vshape st if_false)
-            in
-            let out =
-              where
-                (to_batched st condition target)
-                (to_batched st if_true target)
-                (to_batched st if_false target)
-            in
-            mark st out;
-            out)
-    (* Movement: insert the batch dimension into shape parameters. *)
-    | E_reshape { t_in; new_shape } when batched st t_in ->
-        Some
-          (fun () ->
-            let out =
-              reshape (contiguous t_in)
-                (Array.append [| st.batch_size |] new_shape)
-            in
-            mark st out;
-            out)
-    | E_permute { t_in; axes } when batched st t_in ->
-        Some
-          (fun () ->
-            let axes' =
-              Array.append [| 0 |] (Array.map (fun d -> d + 1) axes)
-            in
-            let out = permute t_in axes' in
-            mark st out;
-            out)
-    | E_expand { t_in; new_target_shape } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = to_batched st t_in new_target_shape in
-            mark st out;
-            out)
-    | E_pad { t_in; padding_config; fill_value } when batched st t_in ->
-        Some
-          (fun () ->
-            let out =
-              pad t_in (Array.append [| (0, 0) |] padding_config) fill_value
-            in
-            mark st out;
-            out)
-    | E_shrink { t_in; limits } when batched st t_in ->
-        Some
-          (fun () ->
-            let out =
-              shrink t_in (Array.append [| (0, st.batch_size) |] limits)
-            in
-            mark st out;
-            out)
-    | E_flip { t_in; dims_to_flip } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = flip t_in (Array.append [| false |] dims_to_flip) in
-            mark st out;
-            out)
-    | E_sliding_window { t_in; axis; window; step } when batched st t_in ->
-        Some
-          (fun () ->
-            (* The trailing window axis lands at the physical end, which is the
-               virtual end shifted past the batch dimension. *)
-            let out = sliding_window t_in ~axis:(taxis axis) ~window ~step in
-            mark st out;
-            out)
-    | E_cat { t_list; axis } when List.exists (batched st) t_list ->
-        Some
-          (fun () ->
-            let out =
-              cat (List.map (ensure_batched st) t_list) ~axis:(taxis axis)
-            in
-            mark st out;
-            out)
-    (* Reductions and scans *)
-    | E_reduce_sum { t_in; axes } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = reduce ~op:`Sum ~axes:(Array.map taxis axes) t_in in
-            mark st out;
-            out)
-    | E_reduce_max { t_in; axes } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = reduce ~op:`Max ~axes:(Array.map taxis axes) t_in in
-            mark st out;
-            out)
-    | E_reduce_min { t_in; axes } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = reduce ~op:`Min ~axes:(Array.map taxis axes) t_in in
-            mark st out;
-            out)
-    | E_reduce_prod { t_in; axes } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = reduce ~op:`Prod ~axes:(Array.map taxis axes) t_in in
-            mark st out;
-            out)
-    | E_associative_scan { t_in; axis; op } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = associative_scan ~axis:(taxis axis) ~op t_in in
-            mark st out;
-            out)
-    | E_argmax { t_in; axis; keepdims } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = argmax ~axis:(taxis axis) ~keepdims t_in in
-            mark st out;
-            out)
-    | E_argmin { t_in; axis; keepdims } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = argmin ~axis:(taxis axis) ~keepdims t_in in
-            mark st out;
-            out)
-    | E_sort { t_in; axis; descending } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = sort ~axis:(taxis axis) ~descending t_in in
-            mark st out;
-            out)
-    | E_argsort { t_in; axis; descending } when batched st t_in ->
-        Some
-          (fun () ->
-            let out = argsort ~axis:(taxis axis) ~descending t_in in
-            mark st out;
-            out)
-    (* Gather / scatter: operands agree on rank, so all are lifted. *)
-    | E_gather { data; indices; axis }
-      when batched st data || batched st indices ->
-        Some
-          (fun () ->
-            let out =
-              gather (ensure_batched st data)
-                (ensure_batched st indices)
-                ~axis:(taxis axis)
-            in
-            mark st out;
-            out)
-    | E_scatter { data_template; indices; updates; axis; mode; unique_indices }
-      when batched st data_template || batched st indices || batched st updates
-      ->
-        Some
-          (fun () ->
-            let out =
-              scatter ~mode ~unique_indices
-                (ensure_batched st data_template)
-                ~indices:(ensure_batched st indices)
-                ~updates:(ensure_batched st updates)
-                ~axis:(taxis axis)
-            in
-            mark st out;
-            out)
-    | E_update { t_in; starts; v }
-      when batched st t_in || batched st starts || batched st v ->
-        Some
-          (fun () ->
-            let t = ensure_batched st t_in and v = ensure_batched st v in
-            let out =
-              if batched st starts then begin
-                (* A window per example: along each axis the rows are gathered
-                   from [v] at the example's offset, clamped, and kept where
-                   they fall inside the window. *)
-                let starts = ensure_batched st starts in
-                let b = st.batch_size in
-                let tshape = vshape st t_in and vs = vshape st v in
-                let rank = Array.length tshape in
-                let win = ref v and mask = ref None in
-                for ax = 0 to rank - 1 do
-                  let n = tshape.(ax) and len = vs.(ax) in
-                  let start =
-                    T.reshape [| b; 1 |] (T.slice [ T.A; T.I ax ] starts)
-                  in
-                  let rel =
-                    T.sub (T.reshape [| 1; n |] (T.arange T.int32 0 n 1)) start
-                  in
-                  let inside =
-                    T.logical_and (T.greater_equal_s rel 0l)
-                      (T.less_s rel (Int32.of_int len))
-                  in
-                  let idx = T.clamp ~min:0l ~max:(Int32.of_int (len - 1)) rel in
-                  let along =
-                    Array.init (rank + 1) (fun d ->
-                        if d = 0 then b else if d = ax + 1 then n else 1)
-                  in
-                  let shp =
-                    Array.mapi
-                      (fun d s -> if d = ax + 1 then n else s)
-                      (T.shape !win)
-                  in
-                  win :=
-                    T.take_along_axis ~axis:(ax + 1)
-                      ~indices:(T.broadcast_to shp (T.reshape along idx))
-                      !win;
-                  let inside = T.reshape along inside in
-                  mask :=
-                    Some
-                      (match !mask with
-                      | None -> inside
-                      | Some m -> T.logical_and m inside)
-                done;
-                match !mask with None -> v | Some mask -> T.where mask !win t
-              end
-              else
-                (* The batch axis is never written: its start is 0 and [v]'s
-                   batch extent is the whole axis. *)
-                update t ~starts:(pad starts [| (1, 0) |] 0l) v
-            in
-            mark st out;
-            out)
-    (* Matrix multiplication: the frontend promotes vectors to matrices against
-       virtual shapes before this effect is performed, and the backend
-       broadcasts leading batch dimensions positionally. Plain matrices need no
-       translation, the batch axis being the only leading dimension. When an
-       operand carries leading dimensions of its own, both operands are lifted
-       to the batched form at a common leading rank first; otherwise the batch
-       axis of one would align against the other's first batch dimension. *)
-    | E_matmul { a; b } when batched st a || batched st b ->
-        Some
-          (fun () ->
-            let sa = vshape st a and sb = vshape st b in
-            let lead s = Array.sub s 0 (Array.length s - 2) in
-            let l =
-              Stdlib.max (Array.length (lead sa)) (Array.length (lead sb))
-            in
-            let out =
-              if l = 0 then matmul a b
-              else
-                let padded s =
-                  Array.append (Array.make (l - Array.length (lead s)) 1) s
-                in
-                matmul
-                  (to_batched st a (padded sa))
-                  (to_batched st b (padded sb))
-            in
-            mark st out;
-            out)
-    (* Windowing: both address the last spatial dimensions and pass every
-       leading dimension through untouched, so the batch dimension rides along
-       as one more leading dimension and no parameter shifts. *)
-    | E_unfold { t_in; kernel_size; stride; dilation; padding }
-      when batched st t_in ->
-        Some
-          (fun () ->
-            let out = unfold t_in ~kernel_size ~stride ~dilation ~padding in
-            mark st out;
-            out)
-    | E_fold { t_in; output_size; kernel_size; stride; dilation; padding }
-      when batched st t_in ->
-        Some
-          (fun () ->
-            let out =
-              fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
-            in
-            mark st out;
-            out)
-    (* FFT: the transformed axes shift past the batch dimension; sizes ([s]) are
-       per-axis and unchanged. *)
-    | E_fft { t; axes } when batched st t ->
-        Some
-          (fun () ->
-            let out = fft t ~axes:(Array.map taxis axes) in
-            mark st out;
-            out)
-    | E_ifft { t; axes } when batched st t ->
-        Some
-          (fun () ->
-            let out = ifft t ~axes:(Array.map taxis axes) in
-            mark st out;
-            out)
-    | E_rfft { t; dtype; axes } when batched st t ->
-        Some
-          (fun () ->
-            let out = rfft t ~dtype ~axes:(Array.map taxis axes) in
-            mark st out;
-            out)
-    | E_irfft { t; dtype; axes; s } when batched st t ->
-        Some
-          (fun () ->
-            let out = irfft t ~axes:(Array.map taxis axes) ?s ~dtype in
-            mark st out;
-            out)
-    | E_cholesky { t_in; _ } when batched st t_in -> Some (no_rule "cholesky")
-    | E_qr { t_in; _ } when batched st t_in -> Some (no_rule "qr")
-    | E_lu { t_in } when batched st t_in -> Some (no_rule "lu")
-    | E_svd { t_in; _ } when batched st t_in -> Some (no_rule "svd")
-    | E_eigvals { t_in } when batched st t_in -> Some (no_rule "eigvals")
-    | E_eig { t_in } when batched st t_in -> Some (no_rule "eig")
-    | E_eigvalsh { t_in } when batched st t_in -> Some (no_rule "eigvalsh")
-    | E_eigh { t_in } when batched st t_in -> Some (no_rule "eigh")
-    | E_solve_triangular { a; b; _ } when batched st a || batched st b ->
-        Some (no_rule "solve_triangular")
     (* Custom rules. A custom call passes on as the custom call of its batched
        functions, as a remat does, whatever its parameters: any of them may read
        a tensor this map batches, which only this handler reads as lanes. Each
@@ -826,9 +635,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = quant st w op in
             mark st out;
             out)
-    (* Operations on constants, and effects from other libraries, fall through.
-       A new Nx tensor operation must be added to this match: an unmatched
-       batched operand would silently produce wrong shapes. *)
     | _ -> None
   in
   let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =

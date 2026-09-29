@@ -133,7 +133,7 @@ let layout =
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
 (* The storage of [t]: views share it, copies do not. *)
-let storage t = Nx_effect.to_host t
+let storage t = Nx_effect.read t
 
 (* Whether host buffers [a] and [b] have a byte of memory in common. *)
 let share_memory a b =
@@ -876,7 +876,7 @@ module Devices = struct
     let devices = Nx.Placement.devices p in
     let windows = List.map (Nx.Placement.window p (Nx.shape h)) devices in
     let shards =
-      List.map (fun w -> Nx_effect.to_host (Nx.copy (Nx.shrink w h))) windows
+      List.map (fun w -> Nx_effect.read (Nx.copy (Nx.shrink w h))) windows
     in
     let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
     Nx_effect.placed p (Nx.dtype x)

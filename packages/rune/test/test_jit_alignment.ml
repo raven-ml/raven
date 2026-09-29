@@ -26,7 +26,7 @@ let offset_by_one f =
   equal ~msg:"offset" int 1 offset;
   let address =
     Nativeint.add
-      (Nx_device.Buffer.host_address (Nx_effect.to_host t))
+      (Nx_device.Buffer.host_address (Nx_effect.read t))
       (Nativeint.of_int (offset * 4))
   in
   equal ~msg:"address modulo 16" nativeint 4n (Nativeint.rem address 16n);

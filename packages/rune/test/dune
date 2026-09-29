@@ -173,3 +173,11 @@
  (modules test_jit_cuda)
  (package rune)
  (libraries rune nx nx.array windtrap rune_test_support tolk tolk.cuda))
+
+; An interpreter that forgets an operation does not compile.
+
+(cram
+ (applies_to exhaustive)
+ (package rune)
+ (deps
+  (package nx)))

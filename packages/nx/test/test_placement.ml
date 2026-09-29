@@ -706,7 +706,7 @@ let reads =
               counted (fun () -> Nx.to_array p);
               counted (fun () -> Nx.item [ 5; 2 ] s);
               counted (fun () ->
-                  Nx_effect.to_host (Nx.slice [ R (4, 6); R (1, 4) ] s));
+                  Nx_effect.read (Nx.slice [ R (4, 6); R (1, 4) ] s));
             ];
           equal placement on1 (Nx.placement p);
           equal string
