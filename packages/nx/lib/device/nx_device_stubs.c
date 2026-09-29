@@ -3,21 +3,35 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#define _GNU_SOURCE
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include "nx_device.h"
 
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #else
+#include <dlfcn.h>
 #include <sched.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
+#endif
+
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <pthread.h>
 #endif
 
 /* Copies at least this large release the runtime while they run. */
@@ -159,4 +173,134 @@ intnat caml_nx_device_wait_u64(intnat addr, int64_t v, intnat timeout_ms) {
 value caml_nx_device_wait_u64_byte(value addr, value v, value timeout_ms) {
   return Val_long(caml_nx_device_wait_u64(Nativeint_val(addr), Int64_val(v),
                                           Long_val(timeout_ms)));
+}
+
+/* Host programs */
+
+/* Code is never writable and executable at once. Elsewhere than arm64 macOS,
+   it is mapped writable, filled, then made executable. arm64 macOS maps
+   MAP_JIT memory, whose write protection each thread lifts for itself. */
+
+static void code_fail(const char *what) {
+  char msg[256];
+#ifdef _WIN32
+  snprintf(msg, sizeof msg, "Nx_device.Program.load: %s: error %lu", what,
+           (unsigned long)GetLastError());
+#else
+  snprintf(msg, sizeof msg, "Nx_device.Program.load: %s: %s", what,
+           strerror(errno));
+#endif
+  caml_failwith(msg);
+}
+
+value caml_nx_device_code_alloc(value v_size) {
+  size_t size = (size_t)Long_val(v_size);
+#ifdef _WIN32
+  void *p = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  if (p == NULL) code_fail("no executable memory");
+#else
+  int flags = MAP_PRIVATE | MAP_ANON;
+  int prot = PROT_READ | PROT_WRITE;
+#if defined(__APPLE__) && defined(__aarch64__)
+  flags |= MAP_JIT;
+  prot |= PROT_EXEC;
+#endif
+  void *p = mmap(NULL, size, prot, flags, -1, 0);
+  if (p == MAP_FAILED) code_fail("no executable memory");
+#endif
+  return caml_copy_nativeint((intnat)p);
+}
+
+value caml_nx_device_code_install(value v_addr, value v_code) {
+  char *p = (char *)Nativeint_val(v_addr);
+  size_t n = caml_string_length(v_code);
+#ifdef _WIN32
+  DWORD old;
+  memcpy(p, Bytes_val(v_code), n);
+  if (!VirtualProtect(p, n, PAGE_EXECUTE_READ, &old))
+    code_fail("cannot make the code executable");
+  FlushInstructionCache(GetCurrentProcess(), p, n);
+#else
+#if defined(__APPLE__) && defined(__aarch64__)
+  pthread_jit_write_protect_np(0);
+  memcpy(p, Bytes_val(v_code), n);
+  pthread_jit_write_protect_np(1);
+#else
+  memcpy(p, Bytes_val(v_code), n);
+  if (mprotect(p, n, PROT_READ | PROT_EXEC) != 0)
+    code_fail("cannot make the code executable");
+#endif
+  __builtin___clear_cache(p, p + n);
+#endif
+  return Val_unit;
+}
+
+value caml_nx_device_code_free(value v_addr, value v_size) {
+  void *p = (void *)Nativeint_val(v_addr);
+#ifdef _WIN32
+  (void)v_size;
+  VirtualFree(p, 0, MEM_RELEASE);
+#else
+  munmap(p, (size_t)Long_val(v_size));
+#endif
+  return Val_unit;
+}
+
+/* The address of [name] in the process: in the libraries it loaded, which hold
+   the C and math libraries, then in the compiler's runtime. [0] if none
+   defines it. */
+value caml_nx_device_symbol(value v_name) {
+  const char *name = String_val(v_name);
+  void *a = NULL;
+#ifdef _WIN32
+  HANDLE modules = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, 0);
+  if (modules != INVALID_HANDLE_VALUE) {
+    MODULEENTRY32 m;
+    m.dwSize = sizeof m;
+    for (BOOL more = Module32First(modules, &m); more && a == NULL;
+         more = Module32Next(modules, &m))
+      a = (void *)GetProcAddress(m.hModule, name);
+    CloseHandle(modules);
+  }
+#else
+  a = dlsym(RTLD_DEFAULT, name);
+#ifdef __linux__
+  /* Loads run with the host taken, one at a time. */
+  static void *rt = NULL;
+  if (a == NULL && rt == NULL) rt = dlopen("libgcc_s.so.1", RTLD_LAZY);
+  if (a == NULL && rt != NULL) a = dlsym(rt, name);
+#endif
+#endif
+  return caml_copy_nativeint((intnat)a);
+}
+
+/* Runs [f(buffers, values)] with the runtime released. The buffers' addresses
+   and the values are read first, into memory the collector does not move. */
+#define NX_DEVICE_CALL_WORDS 32
+
+value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
+  CAMLparam3(v_entry, v_buffers, v_values);
+  mlsize_t nb = Wosize_val(v_buffers), nv = Wosize_val(v_values);
+  void *small_b[NX_DEVICE_CALL_WORDS];
+  int64_t small_v[NX_DEVICE_CALL_WORDS];
+  void **b = small_b;
+  int64_t *v = small_v;
+  if (nb > NX_DEVICE_CALL_WORDS) b = malloc(nb * sizeof *b);
+  if (nv > NX_DEVICE_CALL_WORDS) v = malloc(nv * sizeof *v);
+  if (b == NULL || v == NULL) {
+    if (b != small_b) free(b);
+    if (v != small_v) free(v);
+    caml_raise_out_of_memory();
+  }
+  for (mlsize_t i = 0; i < nb; i++)
+    b[i] = nx_device_buffer_host(Field(v_buffers, i));
+  for (mlsize_t i = 0; i < nv; i++) v[i] = (int64_t)Long_val(Field(v_values, i));
+  void (*f)(void **, const int64_t *) =
+      (void (*)(void **, const int64_t *))Nativeint_val(v_entry);
+  caml_release_runtime_system();
+  f(b, v);
+  caml_acquire_runtime_system();
+  if (b != small_b) free(b);
+  if (v != small_v) free(v);
+  CAMLreturn(Val_unit);
 }

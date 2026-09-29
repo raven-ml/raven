@@ -1,12 +1,14 @@
 (library
  (name nx_device)
  (public_name nx.device)
- (libraries nx_dtype)
+ (libraries nx_dtype nx_device_elf)
  (install_c_headers nx_device)
  (foreign_stubs
   (language c)
   (names nx_device_stubs)
-  (flags :standard -std=c11 -O2 -Wall -Wextra)))
+  (flags :standard -std=c11 -O2 -Wall -Wextra))
+ (c_library_flags
+  (:include dl_flags.sexp)))
 
 (rule
  (target host_arch.ml)
@@ -14,3 +16,24 @@
   (with-stdout-to
    host_arch.ml
    (echo "let architecture = \"%{ocaml-config:architecture}\"\n"))))
+
+; dlopen is a library of its own on Linux; elsewhere it is part of the C
+; library (macOS) or of kernel32 (Windows).
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (= %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "(-ldl)"))))
+
+(rule
+ (target dl_flags.sexp)
+ (enabled_if
+  (<> %{system} linux))
+ (action
+  (with-stdout-to
+   dl_flags.sexp
+   (echo "()"))))

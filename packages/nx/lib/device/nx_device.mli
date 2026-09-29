@@ -11,8 +11,8 @@
     one storage format ({!Nx_dtype.Scalar.t}) on one device, and copied between
     devices by {!Buffer.copy}. The host addresses the memory of some GPUs, such
     as Metal's, and not that of others, such as CUDA's, AMD's and NV's, whose
-    device copies it. A GPU also loads {!Program}s, which the libraries that
-    submit work to it launch.
+    device copies it. A device also loads {!Program}s: the host calls its own,
+    and the libraries that submit work to a GPU launch the GPU's.
 
     Work runs on a device asynchronously. Each device has a {e timeline}: the
     value its last submitted work signals when it completes. {!synchronize}
@@ -69,8 +69,9 @@ type t
 
 val host : t
 (** [host] is the host, named ["CPU"], with a budget of [max_int]. Its buffers
-    are memory of the process's heap, which it does not cache. It loads no
-    programs. *)
+    are memory of the process's heap, which it does not cache. On x86_64 and
+    arm64 it loads programs, which {!Program.call} runs; elsewhere it loads
+    none. *)
 
 val name : t -> string
 (** [name d] is [d]'s name: ["CPU"] for the host, ["METAL"] for the Metal GPU,
@@ -349,8 +350,9 @@ module Program : sig
   type device := t
 
   type t
-  (** The type for programs: a function of a binary, loaded on a device. The
-      libraries that submit work launch them; this module does not. *)
+  (** The type for programs: a function of a binary, loaded on a device. A
+      program of the {!host} is run by {!call}; a GPU's are launched by the
+      libraries that submit work to it. *)
 
   val load : device -> binary:string -> name:string -> t
   (** [load d ~binary ~name] is the function [name] of [binary], a compiled
@@ -359,8 +361,21 @@ module Program : sig
       AMD, a cubin for NV. Loading the same binary and name on [d] again returns
       the same program.
 
+      For the {!host}, [binary] is a 64-bit little-endian ELF relocatable object
+      for the machine's instruction set, as
+      [clang -c -fPIC --target=ARCH-none-unknown-elf] makes it with [ARCH]
+      [x86_64] or [arm64]. Its code may call the functions of the libraries the
+      process has loaded, such as the C and math libraries, and of the
+      compiler's runtime library ([libgcc_s] on Linux), and has no writable
+      data, such as [.data] or [.bss]: the host loads it into memory that is
+      executable and never writable. That memory is freed once the program is
+      unreachable, so loading the same binary and name again returns the same
+      program only while it is reachable.
+
       Raises [Invalid_argument] if [d] loads no programs, and [Failure] with the
-      driver's message if it rejects [binary] or has no function [name]. *)
+      driver's message if it rejects [binary] or has no function [name]; on the
+      host, with the reason it cannot load [binary], such as a symbol that no
+      library defines. *)
 
   val device : t -> device
   (** [device p] is the device [p] is loaded on. *)
@@ -371,7 +386,30 @@ module Program : sig
   val handle : t -> nativeint
   (** [handle p] is the driver's object for [p], such as a
       [MTLComputePipelineState], a [CUfunction], the address of an AMD kernel
-      descriptor, or the address of an NV function's first instruction. *)
+      descriptor, or the address of an NV function's first instruction. On the
+      host, it is the address of the function's first instruction. *)
+
+  val call : t -> Buffer.t array -> int array -> unit
+  (** [call p buffers values] runs the host program [p] in the calling domain
+      and returns once it returns. [p] is called as the C function
+
+      {v void f(void **buffers, const int64_t *values); v}
+
+      given the host address of each buffer's first byte
+      ({!Buffer.host_address}) and each value as a 64-bit integer, in order. It follows the
+      platform's C calling convention: an object compiled for x86_64 ELF
+      declares [__attribute__((ms_abi))] on Windows, and code for arm64 leaves
+      the register [x18] alone ([-ffixed-x18]), which macOS and Windows reserve.
+
+      The OCaml runtime is released while [p] runs, so other threads and domains
+      go on; the buffers stay reachable until it returns. The call is outside
+      the devices' ordering, as an access at {!Buffer.host_address} is: it does
+      not take the host, and several domains may run programs at once.
+      Synchronize the devices whose work touches [buffers] first.
+
+      Raises [Invalid_argument] if [p] is not on the {!host} or the host does
+      not address the memory of a buffer of [buffers], and [Failure] with a
+      failed device's error if that device can reach a buffer of [buffers]. *)
 end
 
 (** {1:stats Statistics} *)
@@ -540,7 +578,8 @@ val make :
       host must address all of the device's memory, and copies are host memory
       copies.
     - [load ~binary ~name] loads a program, raising [Failure] if the driver
-      rejects it. Without [load], the device loads no programs.
+      rejects it. The device keeps the programs it loads for its life. Without
+      [load], it loads no programs.
     - [signal m] is how the device signals completion and is waited for, given
       [m], the memory of its {!timeline}. Without it, work signals by storing
       into the timeline's signal word, and waits poll it.

@@ -2761,6 +2761,12 @@ thread.
 
 ### Nx
 
+- `Nx_device.host` loads programs on x86_64 and arm64: `Nx_device.Program.load`
+  links an ELF relocatable object compiled for the machine, resolving its
+  calls to the C and math libraries, into memory that is executable and never
+  writable, and frees it once the program is unreachable. The new
+  `Nx_device.Program.call` runs a host program on buffers and integer values,
+  with the OCaml runtime released.
 - **Breaking:** the `nx.backend` virtual library is removed. `nx.c` is an
   ordinary library, `Nx_c` (it was `Nx_backend`), without `create_context`;
   nx always links it, and another implementation of the operations is a

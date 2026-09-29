@@ -39,7 +39,9 @@ type t = {
   host_memory : allocator option;
   mapping : mapping option;
   copy_queue : copy_queue option;
-  load : (binary:string -> name:string -> nativeint) option;
+  load :
+    (binary:string -> name:string -> nativeint * (unit -> unit) option) option;
+      (* a program's handle, and how it is released if it can be *)
   signal : signal option;
   sleep : (int -> unit) option;
   timeout_ms : int Atomic.t;
@@ -57,7 +59,8 @@ type t = {
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
          work signals *)
-  programs : (string * string, program) Hashtbl.t;
+  programs : (string * string, cached) Hashtbl.t;
+  dropped : dropped list Atomic.t;
   mutable held : keep list; (* retained memory, and what it keeps *)
   mutable budget : int;
   allocated : int Atomic.t;
@@ -95,6 +98,17 @@ and links = {
    [borrows] changes only with the device taken. *)
 and mapped = { on : t; mapped : memory; mutable borrows : int }
 and program = { p_device : t; p_name : string; p_handle : nativeint }
+
+(* A program that its device can release is cached weakly, and released once
+   unreachable; the others are kept for the device's life. *)
+and cached = Kept of program | Collectable of program Weak.t
+
+(* An unreachable program, to release. *)
+and dropped = {
+  key : string * string;
+  cell : program Weak.t;
+  unload : unit -> unit;
+}
 
 exception Out_of_memory of t * int
 
@@ -229,6 +243,7 @@ let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
       cache = Hashtbl.create 16;
       pending = Hashtbl.create 4;
       programs = Hashtbl.create 16;
+      dropped = Atomic.make [];
       held = [];
       budget;
       allocated = Atomic.make 0;
@@ -247,8 +262,15 @@ let default_timeout_ms = 30_000
 let host =
   (* Buffer.create takes host memory from the heap, never from [alloc]. *)
   let alloc _ = assert false in
+  let load =
+    Option.map
+      (fun load ~binary ~name ->
+        let entry, free = load ~binary ~name in
+        (entry, Some free))
+      Host_program.load
+  in
   create ~name:"CPU" ~arch:host_arch ~budget:max_int ~alloc ~free:ignore
-    ~host_memory:None ~mapping:None ~copy_queue:None ~load:None ~signal:None
+    ~host_memory:None ~mapping:None ~copy_queue:None ~load ~signal:None
     ~sleep:None ~timeout_ms:default_timeout_ms ~synchronized:ignore
     ~finalize:(fun ~failed:_ -> ())
 
@@ -361,9 +383,11 @@ let mapped_address (m : memory) a =
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
-let rec release d b =
-  let l = Atomic.get d.released in
-  if not (Atomic.compare_and_set d.released l (b :: l)) then release d b
+let rec push r x =
+  let l = Atomic.get r in
+  if not (Atomic.compare_and_set r l (x :: l)) then push r x
+
+let release d b = push d.released b
 
 (* Frees [memories], each with its function, once no work of [d] can use them.
    If that work cannot be waited for, the memory is retained: kept with [keep],
@@ -409,12 +433,25 @@ let release_cache d n =
     free_all d ~owned:!bytes ~keep:() !freed
   end
 
+(* An unreachable program leaves the cache, unless a load replaced it there, and
+   is released at once: only the host releases programs, and it runs them in the
+   domains that call them, which keep them reachable. *)
+let unload d =
+  List.iter
+    (fun { key; cell; unload } ->
+      (match Hashtbl.find_opt d.programs key with
+      | Some (Collectable c) when c == cell -> Hashtbl.remove d.programs key
+      | _ -> ());
+      unload ())
+    (Atomic.exchange d.dropped [])
+
 (* Unreachable owned memory returns to the cache without a wait: work is ordered
    after earlier work on the queue. A mapping is unmapped once the last borrow
    of it is unreachable and the borrowing device's work is done. Host memory
    never comes here: it is the heap's, returned when the collector finds its
    base unreachable. *)
 let reclaim d =
+  unload d;
   match Atomic.exchange d.released [] with
   | [] -> ()
   | bases ->
@@ -1037,6 +1074,14 @@ end
 module Program = struct
   type t = program
 
+  let cached d key =
+    match Hashtbl.find_opt d.programs key with
+    | Some (Kept p) -> Some p
+    | Some (Collectable cell) -> Weak.get cell 0
+    | None -> None
+
+  (* The finaliser runs once the weak pointer is erased: no lookup can find a
+     program whose release is queued. *)
   let load d ~binary ~name =
     match d.load with
     | None ->
@@ -1044,18 +1089,48 @@ module Program = struct
           (Printf.sprintf "Nx_device.Program.load: %s loads no programs" d.name)
     | Some load ->
         with_devices [ d ] (fun () ->
-            match Hashtbl.find_opt d.programs (binary, name) with
+            let key = (binary, name) in
+            match cached d key with
             | Some p -> p
             | None ->
-                let p =
-                  { p_device = d; p_name = name; p_handle = load ~binary ~name }
-                in
-                Hashtbl.add d.programs (binary, name) p;
+                let handle, unload = load ~binary ~name in
+                let p = { p_device = d; p_name = name; p_handle = handle } in
+                (match unload with
+                | None -> Hashtbl.replace d.programs key (Kept p)
+                | Some unload ->
+                    let cell = Weak.create 1 in
+                    Weak.set cell 0 (Some p);
+                    Hashtbl.replace d.programs key (Collectable cell);
+                    Gc.finalise_last
+                      (fun () -> push d.dropped { key; cell; unload })
+                      p);
                 p)
 
   let device p = p.p_device
   let name p = p.p_name
   let handle p = p.p_handle
+
+  external call_host : nativeint -> Buffer.t array -> int array -> unit
+    = "caml_nx_device_call"
+
+  let call p buffers values =
+    let fail fmt =
+      Printf.ksprintf
+        (fun m -> invalid_arg ("Nx_device.Program.call: " ^ m))
+        fmt
+    in
+    if not (p.p_device == host) then
+      fail "the program is on %s, not CPU" p.p_device.name;
+    Array.iter
+      (fun (b : Buffer.t) ->
+        if Option.is_none b.base.memory.host then
+          fail "the host does not address %s memory" b.base.owner.name;
+        Buffer.reachable b)
+      buffers;
+    call_host p.p_handle buffers values;
+    (* The program runs with the runtime released: it must stay reachable, and
+       its code mapped, until it returns. *)
+    ignore (Sys.opaque_identity p)
 end
 
 (* Statistics *)
@@ -1132,6 +1207,9 @@ let make ~name ~arch ~budget ~(memory : allocator) ?host_memory ?mapping
   if Option.is_some sleep && Option.is_some signal then
     fail "%s sleeps on the signal word but signals in its own way" name;
   let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
+  let load =
+    Option.map (fun load ~binary ~name -> (load ~binary ~name, None)) load
+  in
   create ~name ~arch ~budget ~alloc ~free:memory.free ~host_memory ~mapping
     ~copy_queue ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize
 

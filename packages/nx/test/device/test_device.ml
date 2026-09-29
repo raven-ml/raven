@@ -1137,8 +1137,8 @@ let refusals =
           B.copy ~src:(external_ S.UInt8 4) ~dst:(B.create host S.UInt8 4));
       raise_ "a copy between buffers of different sizes" (fun () ->
           B.copy ~src:(B.create host S.UInt8 4) ~dst:(B.create host S.UInt8 3));
-      raise_ "a program on the host" (fun () ->
-          Nx_device.Program.load host ~binary:"" ~name:"f");
+      raise_ "a program on a device that loads none" (fun () ->
+          Nx_device.Program.load (fake ()).dev ~binary:"lib" ~name:"f");
       raise_ ~exn:(Exn.failure ~substring:"rejected")
         "a program its driver rejects, with its message" (fun () ->
           Nx_device.Program.load (rejecting ()) ~binary:"lib" ~name:"f");
