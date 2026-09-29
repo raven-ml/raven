@@ -145,7 +145,8 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
    on the kernel's semantic key, the device instance, and [program_config] (so tag-only
    differences share a compiled program, and a kernel compiled under one
    configuration is never served under another). [runtimes] memoizes the
-   device dispatch handle built from a PROGRAM's compiled binary. Weak owner
+   device dispatch handle built from a PROGRAM's compiled binary, keyed on the
+   PROGRAM node alone like the reference's runtime cache. Weak owner
    keys let replaced devices and their cache entries retire together. Build
    callbacks run outside cache locks; simultaneous misses publish one winner. *)
 
@@ -188,7 +189,7 @@ let cache_key ~device ~ast_key =
 
 type device_cache = {
   programs : (string, Tolk_uop.Uop.t) Hashtbl.t;
-  runtimes : (string, Device.prog) Hashtbl.t;
+  runtimes : (bool * int, Device.prog) Hashtbl.t;
   lock : Mutex.t;
 }
 
@@ -377,8 +378,7 @@ let program_args (info : Tolk_uop.Uop.program_info) args =
 (* Device dispatch handle for a compiled PROGRAM, cached per node and device. *)
 let get_runtime ?(queue = false) ~device program =
   let module U = Tolk_uop.Uop in
-  let ckey = cache_key ~device ~ast_key:
-      ((if queue then "queue:" else "kernel:") ^ string_of_int (U.tag program)) in
+  let ckey = queue, U.tag program in
   let cache = device_cache device in
   match with_cache_lock cache.lock (fun () -> Hashtbl.find_opt cache.runtimes ckey) with
   | Some prg -> prg

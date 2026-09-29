@@ -1303,5 +1303,26 @@ let () =
             let v = Realize.resolve (Realize.exec_context ()) view in
             equal int 2 (Device.Buffer.size v);
             equal int 16 (Device.Buffer.offset v));
+          test "replays keep one runtime under changed compile settings"
+            (fun () ->
+              let loaded = ref 0 and launched = ref 0 in
+              let device = cache_device "TEST:replay-runtime" (fun object_ ->
+                  ignore object_;
+                  incr loaded;
+                  let call buffers ~global ~local ~vals ~wait ~timeout =
+                    ignore (buffers, global, local, vals, wait, timeout);
+                    incr launched;
+                    None in
+                  Device.{call; free = (fun () -> ()); handle = 0n}) in
+              let body = U.sink ~kernel_info:(kernel_info "replay_runtime") [] in
+              let to_program device body = ignore device; program_of body in
+              let linear = Realize.compile_linear ~device ~to_program (cache_linear body) in
+              run_cached device linear;
+              Helpers.Context_var.with_context
+                [ B (Helpers.noopt, 1);
+                  B (Helpers.dev, [ Target.of_string "TEST:MISSING" ]) ]
+                (fun () -> run_cached device linear);
+              equal int 1 !loaded;
+              equal int 2 !launched);
         ];
     ])

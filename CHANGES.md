@@ -167,6 +167,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` replays launch a compiled kernel without reading the environment
+  or selecting a renderer: the runtime cache key rendered every compile
+  setting on each launch (32 to 25 µs of host time per kernel on the CPU).
+
 - `Rune.jvp` and `Rune.vmap` of a `Rune.scan` compile as one loop under
   `Rune.jit`, where they unrolled every step. The loop's carry gains a tangent
   or a lane only where one reaches it, so `vmap` over tangents around `jvp`
