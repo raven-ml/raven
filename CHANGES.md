@@ -2810,6 +2810,11 @@ thread.
 
 ### Nx
 
+- `Nx.svd`, `Nx.svdvals`, `Nx.qr`, `Nx.eigh` and `Nx.eigvalsh` keep their
+  accuracy on a matrix of subnormal or huge entries. They now scale it into
+  range by a power of two and scale the results back. `svd` of a float64
+  matrix of subnormals gave singular values off by half, and `qr` lost
+  digits in the subnormal range.
 - New `Nx_device.Buffer.consume ~why b`: a buffer over `b`'s memory that
   kills every earlier handle to it, whose use then raises
   `Invalid_argument why`. `Buffer.spans` tells whether a buffer is all of its

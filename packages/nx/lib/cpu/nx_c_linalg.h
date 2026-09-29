@@ -291,6 +291,62 @@ static la_compute la_compute_of(nx_c_dtype dt) {
   }
 }
 
+/* ── Range scaling (LAPACK's xGESVD and xSYEVD) ──────────────────────────
+
+   A factorization forms sums of squares and products of entries, which under-
+   or overflow once the largest magnitude amax leaves [smlnum, 1/smlnum],
+   smlnum = sqrt(safmin) / eps of the compute type. la_range_scale is the power
+   of two that brings amax into that range, or 1 when amax lies there already or
+   is zero or not finite. A power of two scales exactly, subnormals included.
+   The singular values or eigenvalues of the scaled matrix are divided by it;
+   the vectors do not change. */
+static inline double la_range_scale(la_compute lc, double amax) {
+  double smlnum = (lc == LA_F32 || lc == LA_C32)
+                      ? sqrt((double)FLT_MIN) / FLT_EPSILON
+                      : sqrt(DBL_MIN) / DBL_EPSILON;
+  if (!(amax > 0.0) || !isfinite(amax)) return 1.0;
+  if (amax < smlnum) return ldexp(1.0, (int)ceil(log2(smlnum / amax)));
+  if (amax > 1.0 / smlnum)
+    return ldexp(1.0, (int)floor(log2(1.0 / smlnum / amax)));
+  return 1.0;
+}
+
+/* The largest magnitude of the m×n matrix a (row stride ld) of compute type
+   lc, NaN if it holds one. */
+static inline double la_amax(la_compute lc, const void *a, int64_t m,
+                             int64_t n, int64_t ld) {
+  double amax = 0.0;
+  for (int64_t i = 0; i < m; i++)
+    for (int64_t j = 0; j < n; j++) {
+      int64_t k = i * ld + j;
+      double v;
+      switch (lc) {
+        case LA_F32: v = fabs((double)((const float *)a)[k]); break;
+        case LA_F64: v = fabs(((const double *)a)[k]); break;
+        case LA_C32: v = (double)cabsf(((const nx_c_complex32 *)a)[k]); break;
+        default: v = cabs(((const nx_c_complex64 *)a)[k]); break;
+      }
+      if (isnan(v)) return v;
+      if (v > amax) amax = v;
+    }
+  return amax;
+}
+
+/* The m×n matrix a (row stride ld) of compute type lc multiplied by c. */
+static inline void la_scale(la_compute lc, void *a, int64_t m, int64_t n,
+                            int64_t ld, double c) {
+  for (int64_t i = 0; i < m; i++)
+    for (int64_t j = 0; j < n; j++) {
+      int64_t k = i * ld + j;
+      switch (lc) {
+        case LA_F32: ((float *)a)[k] *= (float)c; break;
+        case LA_F64: ((double *)a)[k] *= c; break;
+        case LA_C32: ((nx_c_complex32 *)a)[k] *= (float)c; break;
+        default: ((nx_c_complex64 *)a)[k] *= c; break;
+      }
+    }
+}
+
 /* ── Unpack / pack: strided storage <-> contiguous compute buffer ─────────
 
    Generated per storage dtype (all compute dtypes; the non-float ones are never

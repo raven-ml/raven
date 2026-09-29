@@ -302,8 +302,12 @@ static void la_qr_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->r_bs, x->r->offset, x->esz,
                   (const char *)x->r->data, &rb);
     mv->unpack(inb, x->in_rs, x->in_cs, m, n, work, n);
+    /* The reflectors, so Q, are those of any multiple of A; R scales with A. */
+    double cs = la_range_scale(x->lc, la_amax(x->lc, work, m, n, n));
+    if (cs != 1.0) la_scale(x->lc, work, m, n, n, cs);
     cd->qr(work, m, n, n, tau, V, Vc, T, W, P, g);
     cd->qrq(work, m, n, n, tau, qbuf, nq, nq, V, Vc, T, W, P, g);
+    if (cs != 1.0) la_scale(x->lc, work, nq, n, n, 1.0 / cs);
     mv->packR(work, n, nq, n, (char *)rb, x->r_rs, x->r_cs);
     mv->packfull(qbuf, nq, m, nq, (char *)qb, x->q_rs, x->q_cs);
   }

@@ -1235,11 +1235,12 @@ let at_scale =
             (Nx.complex Nx.complex128 ~re:b ~im:(Nx.mul_s b 0.5)));
       cases
         ~name:(fun (name, s) -> Printf.sprintf "%s scaled by %g" name s)
-        "a matrix of extreme magnitude has the factors of its unscaled copy, \
-         scaled"
+        "a matrix of extreme magnitude has the factors of what it holds, \
+         unscaled, scaled"
         [
           ("float64", 1e-170);
           ("float64", 1e-300);
+          ("float64", 1e-310);
           ("float64", 1e170);
           ("float64", 1e300);
           ("float32", 1e-20);
@@ -1251,24 +1252,26 @@ let at_scale =
           let (F d as fd) = dtype_named name in
           let a = entries [| 6; 5 |] in
           let h = real_part (hermitian ~complex:false [| 6; 6 |]) in
-          let at x = Nx.cast d.dtype x
-          and scaled x = Nx.cast d.dtype (Nx.mul_s x s) in
+          let scaled x = Nx.cast d.dtype (Nx.mul_s x s) in
           let unscale x = Nx.div_s (Nx.cast Nx.float64 x) s in
+          (* Scaling rounds, to fewer bits where the entries turn subnormal:
+             the reference is the matrix the factorization is given. *)
+          let held x = Nx.cast d.dtype (unscale (scaled x)) in
           small ~msg:"svdvals" (bound fd 6)
             (rel
-               ~expected:(Nx.svdvals (at a))
+               ~expected:(Nx.svdvals (held a))
                (unscale (Nx.svdvals (scaled a))));
           small ~msg:"qr's R" (bound fd 6)
             (rel
-               ~expected:(snd (Nx.qr (at a)))
+               ~expected:(snd (Nx.qr (held a)))
                (unscale (snd (Nx.qr (scaled a)))));
           small ~msg:"eigvalsh" (bound fd 6)
             (rel
-               ~expected:(Nx.eigvalsh (at h))
+               ~expected:(Nx.eigvalsh (held h))
                (unscale (Nx.eigvalsh (scaled h))));
           small ~msg:"eigh's w" (bound fd 6)
             (rel
-               ~expected:(Nx.eigvalsh (at h))
+               ~expected:(Nx.eigvalsh (held h))
                (unscale (fst (Nx.eigh (scaled h))))));
       cases
         ~name:(Format.asprintf "%a" pp_shape)
@@ -1989,7 +1992,7 @@ let eigs =
         cases
           ~name:(fun s -> Printf.sprintf "scaled by %g" s)
           "a matrix of extreme magnitude has the spectrum of its scaled copy"
-          [ 1e-170; 1e-300; 1e170; 1e300 ]
+          [ 1e-170; 1e-300; 1e-310; 1e170; 1e300 ]
           (fun s ->
             let rows, expected = real_rows 7 in
             let a = Nx.mul_s (matrix_of_rows Nx.float64 rows) s in

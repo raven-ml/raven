@@ -1722,6 +1722,8 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset,
                   (int64_t)sizeof(double), (const char *)x->w->data, &wb);
     mv->unpack(inb, x->in_rs, x->in_cs, n, n, work, n);
+    double cs = la_range_scale(x->lc, la_amax(x->lc, work, n, n, n));
+    if (cs != 1.0) la_scale(x->lc, work, n, n, n, cs);
     cd->tridiag(work, n, n, d, e, tau, wv, tW, tWc, tP, tg);
     if (!x->vectors || x->use_dc) {
       if (x->is_double) {
@@ -1744,7 +1746,7 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
         continue;
       }
       double *wd = (double *)wb;
-      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dd[i];
+      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dd[i] / cs;
       continue;
     }
     if (x->use_dc) {
@@ -1771,7 +1773,7 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                          base + x->off_qt, base + x->off_qw, base + x->off_qp,
                          dcgemm);
       double *wd = (double *)wb;
-      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dd[i];
+      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dd[i] / cs;
       const char *vb;
       la_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, x->esz,
                     (const char *)x->v->data, &vb);
@@ -1788,10 +1790,10 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     double *wd = (double *)wb;
     if (x->is_double) {
       const double *dv = (const double *)d;
-      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dv[i];
+      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = dv[i] / cs;
     } else {
       const float *dv = (const float *)d;
-      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = (double)dv[i];
+      for (int64_t i = 0; i < n; i++) wd[i * x->w_cs] = (double)dv[i] / cs;
     }
     const char *vb;
     la_batch_base(bt, x->batch_nd, x->bshape, x->v_bs, x->v->offset, x->esz,

@@ -2630,6 +2630,8 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->s_bs, x->s->offset,
                   (int64_t)sizeof(double), (const char *)x->s->data, &sb);
     mv->unpack(inb, x->in_rs, x->in_cs, m, n, wa, n);
+    double cs = la_range_scale(x->lc, la_amax(x->lc, wa, m, n, n));
+    if (cs != 1.0) la_scale(x->lc, wa, m, n, n, cs);
     if (!x->trans)
       cd->cpc(wa, n, P, pc, m, n);
     else
@@ -2666,7 +2668,7 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
         if (x->werr[worker] == NX_C_OK) x->werr[worker] = st;
         continue;
       }
-      for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = dd[i];
+      for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = dd[i] / cs;
     } else {
       cd->formp(P, pc, pc, taup, V1, pc);
       nx_c_status st = cd->bdsvd(d, e, U1, pr, ncu_p, V1, pc, pc);
@@ -2676,10 +2678,10 @@ static void la_svd_body(int64_t lo, int64_t hi, int worker, void *vctx) {
       }
       if (x->is_double) {
         const double *dv = (const double *)d;
-        for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = dv[i];
+        for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = dv[i] / cs;
       } else {
         const float *dv = (const float *)d;
-        for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = (double)dv[i];
+        for (int64_t i = 0; i < k; i++) sd[i * x->s_cs] = (double)dv[i] / cs;
       }
     }
     const char *ub;
