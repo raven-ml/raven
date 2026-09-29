@@ -44,6 +44,10 @@ _Thread_local char nx_c_consumed[256];
 void nx_c_raise(const char *op, nx_c_status status) {
   if (status && strcmp(status, NX_C_ERR_CONSUMED) == 0)
     caml_invalid_argument(nx_c_consumed);
+  /* A dtype an operation does not take is the caller's to avoid. */
+  if (status && (strcmp(status, NX_C_ERR_UNSUPPORTED_DTYPE) == 0 ||
+                 strcmp(status, NX_C_ERR_PACKED) == 0))
+    nx_c_raise_invalid(op, status);
   char buf[256];
   snprintf(buf, sizeof buf, "%s: %s", op, status ? status : "unknown error");
   caml_failwith(buf);

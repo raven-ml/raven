@@ -491,10 +491,20 @@ let integer_dtypes =
        int_dtypes)
 
 let packed_ints =
-  test "int4 and uint4 refuse arithmetic (nx.mli is silent)" (fun () ->
-      raises_match
-        (function Failure _ | Invalid_argument _ -> true | _ -> false)
-        (fun () -> Nx.add (Nx.zeros Nx.int4 [| 2 |]) (Nx.zeros Nx.int4 [| 2 |])))
+  let q = Nx.zeros Nx.int4 [| 2 |] and b = Nx.ones Nx.bool [| 2 |] in
+  cases "int4 computes nothing, and bool no arithmetic"
+    ~name:(fun (n, _) -> n)
+    [
+      ("int4 add", fun () -> ignore (Nx.add q q));
+      ("int4 maximum", fun () -> ignore (Nx.maximum q q));
+      ("int4 equal", fun () -> ignore (Nx.equal q q));
+      ("int4 sort", fun () -> ignore (Nx.sort q));
+      ("bool add", fun () -> ignore (Nx.add b b));
+      ("bool neg", fun () -> ignore (Nx.neg b));
+      ("bool sum", fun () -> ignore (Nx.sum b));
+      ("bool cumsum", fun () -> ignore (Nx.cumsum b));
+    ]
+    (fun (_, f) -> raises_invalid_arg f)
 
 (* Complex numbers *)
 

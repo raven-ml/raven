@@ -1254,8 +1254,8 @@ let at_scale =
           let h = real_part (hermitian ~complex:false [| 6; 6 |]) in
           let scaled x = Nx.cast d.dtype (Nx.mul_s x s) in
           let unscale x = Nx.div_s (Nx.cast Nx.float64 x) s in
-          (* Scaling rounds, to fewer bits where the entries turn subnormal:
-             the reference is the matrix the factorization is given. *)
+          (* Scaling rounds, to fewer bits where the entries turn subnormal: the
+             reference is the matrix the factorization is given. *)
           let held x = Nx.cast d.dtype (unscale (scaled x)) in
           small ~msg:"svdvals" (bound fd 6)
             (rel
@@ -2323,13 +2323,13 @@ let routes =
              (1300, 260, 130);
            ])
         run;
-      test "matmul refuses bool and 4-bit operands (nx.mli is silent)"
+      test "matmul refuses bool and 4-bit operands, as arithmetic does"
         (fun () ->
-          raises_match Exn.failure (fun () ->
+          raises_invalid_arg (fun () ->
               Nx.matmul
                 (Nx.ones Nx.bool [| 2; 2 |])
                 (Nx.ones Nx.bool [| 2; 2 |]));
-          raises_match Exn.failure (fun () ->
+          raises_invalid_arg (fun () ->
               Nx.matmul
                 (Nx.zeros Nx.int4 [| 2; 2 |])
                 (Nx.zeros Nx.int4 [| 2; 2 |])));

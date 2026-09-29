@@ -76,7 +76,15 @@ type ('a, 'b) dtype = ('a, 'b) Nx_dtype.t =
   | Complex128 : (Complex.t, complex64_elt) dtype
   | Bool : (bool, bool_elt) dtype
       (** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
-          element type ['a] to its buffer representation ['b]. *)
+          element type ['a] to its buffer representation ['b].
+
+          [int4] and [uint4] are storage formats: their values move, cast and
+          are read and written, and every computation on them raises
+          [Invalid_argument]; cast them to a wider integer to compute. [bool]
+          values compare, combine logically and bitwise, select ({!where}),
+          sort and reduce by {!max} and {!min}; arithmetic on them (sums,
+          products, negation, cumulative sums, {!matmul}) raises
+          [Invalid_argument]. *)
 
 (** {2:tensor_aliases Tensor aliases} *)
 

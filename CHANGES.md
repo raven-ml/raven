@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- An operation on a dtype it does not take raises `Invalid_argument`, where
+  it raised `Failure`: every computation on `int4` or `uint4`, and arithmetic
+  on `bool` (sums, products, negation, cumulative sums, `Nx.matmul`). The
+  dtype documentation states which operations each takes.
 - `Nx.argmax` and `Nx.argmin` raise `Invalid_argument` on an axis of more
   than `Int32.max_int` entries, which their int32 indices cannot reach, and
   say so. They raised `Failure` from the C backend, after flattening, which
