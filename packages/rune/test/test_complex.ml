@@ -160,10 +160,25 @@ let linear_tests =
         z3;
     ]
 
+(* [sign z] is [z / |z|] on complex: a point of the unit circle that turns with
+   [z], so unlike the real sign it has a derivative. [abs]'s own pullback goes
+   through it, so a second derivative of the modulus reaches it too. *)
+
+let modulus_grad z = Rune.grad' (fun z -> Nx.sum (Nx.magnitude f64 z)) z
+
+let sign_tests =
+  List.concat
+    [
+      both "sign" Nx.sign z3;
+      both "sign of a product" (fun z -> Nx.sign (Nx.mul z (b3 ()))) z3;
+      both "abs, second order" modulus_grad z3;
+    ]
+
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
     group "modulus" modulus_tests;
+    group "sign" sign_tests;
     group "transforms" transform_tests;
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;

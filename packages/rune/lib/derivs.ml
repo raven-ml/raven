@@ -23,6 +23,25 @@ let real_part (type a b) (x : (a, b) T.t) : (a, b) T.t =
     T.cast (T.dtype x) (T.cast T.float64 x)
   else x
 
+(* On complex dtypes [sign z = z / |z|] turns with [z]. Its derivative along [v]
+   is [i s Im(conj s * v) / |z|], with [s = sign z]: only the component of [v]
+   tangent to the unit circle moves it. [i Im w] is [w] less its real part. The
+   derivative is taken as zero at the origin, where [sign] is [0]. *)
+let inv_modulus z =
+  let m = T.abs z in
+  let origin = T.equal m (T.zeros_like m) in
+  T.where origin (T.zeros_like m) (T.recip (T.where origin (T.ones_like m) m))
+
+let sign_push z s v =
+  let w = T.mul (T.conjugate s) v in
+  T.mul (T.mul s (T.sub w (real_part w))) (inv_modulus z)
+
+(* [sign_pull z s g] is [i conj s Im(s * g) / |z|], the transpose of [sign_push]
+   under the pairing [Re (g * v)]. *)
+let sign_pull z s g =
+  let w = T.mul s g in
+  T.mul (T.mul (T.conjugate s) (T.sub w (real_part w))) (inv_modulus z)
+
 (* [d] as a diagonal matrix: a [..; n] stack of diagonals gives the [..; n; n]
    stack of matrices carrying them, so the linalg rules stay batched. *)
 let diag_matrix (type a b) (d : (a, b) T.t) : (a, b) T.t =

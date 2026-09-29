@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.grad`, `vjp` and `jvp` differentiate `Nx.sign` on complex tensors,
+  where it is `z / |z|` and turns with `z`. It had a zero derivative, as on
+  real tensors, so a gradient through a complex `sign` was silently zero and
+  the second derivative of `Nx.abs` on complex was wrong.
 - A compiled function's first call with a warm compile cache is about a
   quarter faster: 15.3 s to 11.0-12.3 s for GPT-2's training step on Metal.
   Rebinding a cached program's parameters looked each node up in the list of

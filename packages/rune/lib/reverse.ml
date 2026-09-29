@@ -162,6 +162,12 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_argmax _ -> None
       | E_argmin _ -> None
       | E_argsort _ -> None
+      (* On complex dtypes [sign z = z / |z|] is not piecewise constant. *)
+      | E_sign { t_in } when Nx_dtype.is_complex (dtype t_in) ->
+          Some
+            (fun () ->
+              let out = sign t_in in
+              pull1 out t_in (Derivs.sign_pull t_in out))
       (* Zero derivative: piecewise-constant real functions. *)
       | E_sign _ -> None
       | E_trunc _ -> None
