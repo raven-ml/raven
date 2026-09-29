@@ -5,7 +5,7 @@
 
 (tests
  (names
-  test_nx_placement
+  test_placement
   test_rng
   test_ptree
   test_values
