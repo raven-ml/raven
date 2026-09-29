@@ -243,11 +243,12 @@ let intersect_clip clip polys =
 (* Images *)
 
 let draw_image canvas clip m ~x ~y ~w ~h data =
-  let data = Nx.contiguous data in
   let shape = Nx.shape data in
   let rows = shape.(0) and cols = shape.(1) in
   let channels = if Array.length shape = 3 then shape.(2) else 1 in
-  let buf = Nx.data data and off = Nx.offset data in
+  let pixels =
+    Bigarray.reshape_1 (Nx.to_bigarray data) (rows * cols * channels)
+  in
   let corners =
     Polyline.of_path m
       (Path.polygon [| x; x +. w; x +. w; x |] [| y; y; y +. h; y +. h |])
@@ -271,8 +272,8 @@ let draw_image canvas clip m ~x ~y ~w ~h data =
           let s = Int.max 1 (Int.min 4 (int_of_float (Float.ceil ratio))) in
           let samples = float (s * s) in
           let sample col row c =
-            Nx_buffer.unsafe_get buf
-              (off + (((row * cols) + col) * channels) + c)
+            Bigarray.Array1.unsafe_get pixels
+              ((((row * cols) + col) * channels) + c)
           in
           for py = py0 to py1 - 1 do
             for px = px0 to px1 - 1 do

@@ -188,32 +188,9 @@ let image_object st ?smask data ~rows ~cols ~channels =
   add st.doc (stream ~compress:false dict (idat (Nx_io.encode_png data)))
 
 (* [split_alpha data] is the RGB and alpha planes of an RGBA image. *)
-let split_alpha data ~rows ~cols =
-  let data = Nx.contiguous data in
-  let buf = Nx.data data and off = Nx.offset data in
-  let rgb =
-    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
-      (rows * cols * 3)
-  in
-  let alpha =
-    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout (rows * cols)
-  in
-  for i = 0 to (rows * cols) - 1 do
-    Bigarray.Array1.unsafe_set rgb (3 * i)
-      (Nx_buffer.unsafe_get buf (off + (4 * i)));
-    Bigarray.Array1.unsafe_set rgb
-      ((3 * i) + 1)
-      (Nx_buffer.unsafe_get buf (off + (4 * i) + 1));
-    Bigarray.Array1.unsafe_set rgb
-      ((3 * i) + 2)
-      (Nx_buffer.unsafe_get buf (off + (4 * i) + 2));
-    Bigarray.Array1.unsafe_set alpha i
-      (Nx_buffer.unsafe_get buf (off + (4 * i) + 3))
-  done;
-  let tensor a shape =
-    Nx.of_bigarray (Bigarray.reshape (Bigarray.genarray_of_array1 a) shape)
-  in
-  (tensor rgb [| rows; cols; 3 |], tensor alpha [| rows; cols |])
+let split_alpha data =
+  ( Nx.contiguous (Nx.slice [ A; A; R (0, 3) ] data),
+    Nx.contiguous (Nx.slice [ A; A; I 3 ] data) )
 
 let image_xobject st data =
   let shape = Nx.shape data in
@@ -221,7 +198,7 @@ let image_xobject st data =
   let channels = if Array.length shape = 3 then shape.(2) else 1 in
   let number =
     if channels = 4 then begin
-      let rgb, alpha = split_alpha data ~rows ~cols in
+      let rgb, alpha = split_alpha data in
       let smask = image_object st alpha ~rows ~cols ~channels:1 in
       image_object st ~smask rgb ~rows ~cols ~channels:3
     end

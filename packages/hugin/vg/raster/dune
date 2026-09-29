@@ -2,4 +2,4 @@
  (name hugin_vg_raster)
  (public_name hugin.vg.raster)
  (private_modules polyline stroker)
- (libraries hugin.vg nx nx.buffer))
+ (libraries hugin.vg nx))
