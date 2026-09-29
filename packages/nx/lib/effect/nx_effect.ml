@@ -314,8 +314,10 @@ type context = device context_of
 
 (* A value of one element that nx holds itself: a scalar created in a device
    context, or a one-element result. It allocates nothing on the device; an
-   engine passes it to a program as it passes a host value. *)
-type storage += Held : ('a, 'b) Nx_dtype.t * 'a -> storage
+   engine passes it to a program as it passes a host value. The element is a
+   buffer of it alone, as stored: a float read as an OCaml float would quiet a
+   signalling NaN. *)
+type storage += Held : ('a, 'b) Nx_buffer.t -> storage
 
 let id_counter = Atomic.make 0
 let fresh_id () = Atomic.fetch_and_add id_counter 1 + 1
@@ -407,17 +409,56 @@ end
 
 (* Reading placed values *)
 
+let bytes_of b = Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret Nx_dtype.uint8 b)
+
+let is_nibble (type a b) (dt : (a, b) Nx_dtype.t) =
+  match dt with Nx_dtype.Int4 | Nx_dtype.UInt4 -> true | _ -> false
+
+(* The element of [b] at [i], as a buffer of it alone, copied as stored. 4-bit
+   elements are copied as values. *)
+let element (type a b) (b : (a, b) Nx_buffer.t) i =
+  let dt = Nx_buffer.dtype b in
+  let e = Nx_buffer.create dt 1 in
+  if is_nibble dt then Nx_buffer.set e 0 (Nx_buffer.get b i)
+  else begin
+    let w = Nx_dtype.itemsize dt in
+    Bigarray.Array1.blit
+      (Bigarray.Array1.sub (bytes_of b) (i * w) w)
+      (bytes_of e)
+  end;
+  e
+
+(* [repeat e dst] fills [dst] with the one element of [e], copied as stored. *)
+let repeat (type a b) (e : (a, b) Nx_buffer.t) (dst : (a, b) Nx_buffer.t) =
+  let dt = Nx_buffer.dtype e in
+  if is_nibble dt then Nx_buffer.fill dst (Nx_buffer.get e 0)
+  else begin
+    let d = bytes_of dst and w = Nx_dtype.itemsize dt in
+    let total = Bigarray.Array1.dim d in
+    if total > 0 then begin
+      Bigarray.Array1.blit (bytes_of e) (Bigarray.Array1.sub d 0 w);
+      let filled = ref w in
+      while !filled < total do
+        let k = Int.min !filled (total - !filled) in
+        Bigarray.Array1.blit
+          (Bigarray.Array1.sub d 0 k)
+          (Bigarray.Array1.sub d !filled k);
+        filled := !filled + k
+      done
+    end
+  end
+
 (* The elements of a placed value's view. A held value's are its one element,
    broadcast. *)
 let read_elements (type a b) (r : (a, b) resident) : (a, b) Nx_buffer.t =
   Cell.with_borrow r.r_cell (fun () ->
   match r.r_cell.state with
   | Consumed k -> consumed k
-  | Live (Held (dt, v)) -> (
+  | Live (Held e) -> (
       let buf = Nx_buffer.create r.r_dtype (View.numel r.r_view) in
-      match Nx_dtype.equal_witness dt r.r_dtype with
+      match Nx_dtype.equal_witness (Nx_buffer.dtype e) r.r_dtype with
       | Some Type.Equal ->
-          Nx_buffer.fill buf v;
+          repeat e buf;
           buf
       | None -> assert false)
   | Live _ -> (List.hd (Grid.devices r.r_cell.placement)).d_engine.read r)
@@ -718,15 +759,15 @@ let assemble (type a b) (r : (a, b) resident) window
         pieces;
       dst
 
-(* A held value of shape [shape] on [p]. The engine is asked to place an empty
-   value of the dtype first, which allocates nothing and raises if [p] cannot
-   hold the dtype. *)
-let held p dtype value shape =
+(* A held value of shape [shape] on [p], of the one element of [e]. The engine
+   is asked to place an empty value of the dtype first, which allocates nothing
+   and raises if [p] cannot hold the dtype. *)
+let held p e shape =
+  let dtype = Nx_buffer.dtype e in
   ignore
     ((Placement.engine p).place p
        (Host (Nx_backend.buffer host_context dtype [| 0 |])));
-  placed p dtype (View.create shape)
-    (cell ~placement:p ~length:1 (Held (dtype, value)))
+  placed p dtype (View.create shape) (cell ~placement:p ~length:1 (Held e))
 
 (* A hash for identity tables. A placed or traced value hashes by its id, which
    never changes; a host tensor by its structure, which no table sees change,
@@ -1434,10 +1475,9 @@ let settle : type a b. route -> (a, b) Nx_backend.t -> (a, b) t =
   | At p ->
       let shape = View.shape (Nx_backend.view h) in
       if Array.fold_left ( * ) 1 shape = 1 then
-        let v =
-          Nx_buffer.get (Nx_backend.to_host h) (View.offset (Nx_backend.view h))
-        in
-        held p (Nx_backend.dtype h) v shape
+        held p
+          (element (Nx_backend.to_host h) (View.offset (Nx_backend.view h)))
+          shape
       else (Placement.engine p).place p (Host h)
 
 (* [routed e x f] runs [f] over [x], no host tensor, where the operation that
@@ -1836,7 +1876,10 @@ let const_scalar (ctx : context) value dtype =
   with Effect.Unhandled _ -> (
     match ctx with
     | Host c -> Host (Nx_backend.full c dtype [||] value)
-    | On ds -> held (Placement.replicated ds) dtype value [||])
+    | On ds ->
+        let e = Nx_buffer.create dtype 1 in
+        Nx_buffer.set e 0 value;
+        held (Placement.replicated ds) e [||])
 
 let broadcast scalar shape_arr =
   if Array.length shape_arr = 0 then scalar

@@ -77,29 +77,45 @@ let extent v =
     (View.shape v);
   (!lo, !hi + 1)
 
-(* [v]'s elements in C order, from [src], the storage elements from [base]
-   on. *)
+(* [v]'s elements in C order, from [src], the storage elements from [base] on.
+   Elements are copied as integer words of their width, [k] words to an element:
+   a float read as an OCaml float would quiet a signalling NaN. 4-bit elements
+   are copied as values. *)
 let gather (type a b) (src : (a, b) Nx_buffer.t) ~base v =
-  let shape = View.shape v and strides = View.strides v in
-  let rank = Array.length shape in
   let dst = Nx_buffer.create (Nx_buffer.dtype src) (View.numel v) in
-  let idx = Array.make rank 0 in
-  for k = 0 to Nx_buffer.length dst - 1 do
-    let off = ref (View.offset v - base) in
-    for a = 0 to rank - 1 do
-      off := !off + (idx.(a) * strides.(a))
-    done;
-    Nx_buffer.unsafe_set dst k (Nx_buffer.unsafe_get src !off);
-    let a = ref (rank - 1) in
-    while !a >= 0 do
-      idx.(!a) <- idx.(!a) + 1;
-      if idx.(!a) < shape.(!a) then a := -1
-      else begin
-        idx.(!a) <- 0;
-        decr a
-      end
+  let copy (type c d) (src : (c, d) Nx_buffer.t) (dst : (c, d) Nx_buffer.t) k =
+    let shape = Array.append (View.shape v) [| k |] in
+    let strides = Array.append (Array.map (( * ) k) (View.strides v)) [| 1 |] in
+    let rank = Array.length shape in
+    let idx = Array.make rank 0 in
+    for w = 0 to Nx_buffer.length dst - 1 do
+      let off = ref ((View.offset v - base) * k) in
+      for a = 0 to rank - 1 do
+        off := !off + (idx.(a) * strides.(a))
+      done;
+      Nx_buffer.unsafe_set dst w (Nx_buffer.unsafe_get src !off);
+      let a = ref (rank - 1) in
+      while !a >= 0 do
+        idx.(!a) <- idx.(!a) + 1;
+        if idx.(!a) < shape.(!a) then a := -1
+        else begin
+          idx.(!a) <- 0;
+          decr a
+        end
+      done
     done
-  done;
+  in
+  let words (type c d) (word : (c, d) Nx_dtype.t) k =
+    copy (Nx_buffer.reinterpret word src) (Nx_buffer.reinterpret word dst) k
+  in
+  (match Nx_buffer.dtype src with
+  | Nx_dtype.Int4 | Nx_dtype.UInt4 -> copy src dst 1
+  | dt -> (
+      match Nx_dtype.itemsize dt with
+      | 1 -> words Nx_dtype.Int8 1
+      | 2 -> words Nx_dtype.Int16 1
+      | 4 -> words Nx_dtype.Int32 1
+      | n -> words Nx_dtype.Int64 (n / 8)));
   dst
 
 (* The elements of view [v] of [b], whose elements are of [dt]. Int4 storage is

@@ -739,7 +739,7 @@ let identities =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
                     (Nx_core.View.create [| 1 |])
                     (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
-                       (Nx_effect.Held (Nx.float32, 1.)))
+                       (Nx_effect.Held (Nx_buffer.create Nx.float32 1)))
                 in
                 d.d_id
                 :: List.map Nx_effect.identity_hash

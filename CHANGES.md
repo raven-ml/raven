@@ -2746,6 +2746,10 @@ thread.
 
 ### Nx
 
+- Values on devices keep a float's bits. A one-element result on a device, and
+  a view of a value on a runtime device (`Nx.Device.of_runtime`) read back
+  through a transpose, flip or other strided layout, passed their elements
+  through OCaml floats, which quiet a signalling NaN.
 - New `nx.cuda.device` library: `Nx_cuda_device.v 0` opens an NVIDIA GPU as
   an `Nx_device.t` named `CUDA` (`CUDA:1`, ... for the others) on its primary
   context, which it makes current only during its own driver calls, so other
