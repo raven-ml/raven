@@ -3,6 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+#include <caml/alloc.h>
 #include <caml/mlvalues.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -20,4 +21,11 @@ value test_nx_device_memmove(value dst, value src, value n) {
   memmove((void *)Nativeint_val(dst), (const void *)Nativeint_val(src),
           (size_t)Long_val(n));
   return Val_unit;
+}
+
+#include "nx_device.h"
+
+/* The host address of a buffer as C code reads it. */
+value test_nx_device_buffer_host(value b) {
+  return caml_copy_nativeint((intnat)nx_device_buffer_host(b));
 }

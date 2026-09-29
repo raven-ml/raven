@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* The field order of [memory], [base] and [Buffer.t] up to the fields
+   nx_device.h reads is its C ABI. *)
 type memory = {
   host : nativeint option;
   device : nativeint;
@@ -18,6 +20,7 @@ type mapping = {
 }
 
 type copy = dst:nativeint -> src:nativeint -> int -> int -> unit
+type file = { path : string; size : int; mtime : float; inode : int }
 
 (* What must stay reachable for as long as a base does. Host memory is the
    bigarray that holds it from its first byte: views of it join that bigarray's
@@ -78,6 +81,7 @@ and base = {
   reached : t list Atomic.t;
       (* other devices whose work may still write this memory: the source of a
          transfer into it that could not be waited for *)
+  file : file option; (* the file this memory maps, from its first byte *)
 }
 
 (* A mapping of a host base on a device, shared by the device's borrows of it.
@@ -485,6 +489,13 @@ let () =
 (* Buffers *)
 
 module Buffer = struct
+  type nonrec file = file = {
+    path : string;
+    size : int;
+    mtime : float;
+    inode : int;
+  }
+
   type t = {
     base : base;
     offset : int; (* bytes into [base.memory] *)
@@ -532,8 +543,8 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; device = 0n; handle = 0n }
 
-  let base ?(bytes = 0) ?(pinned = false) ?source ~borrowed ~keep ~extent d
-      memory =
+  let base ?(bytes = 0) ?(pinned = false) ?source ?file ~borrowed ~keep ~extent
+      d memory =
     {
       owner = d;
       memory;
@@ -545,6 +556,7 @@ module Buffer = struct
       source;
       maps = Atomic.make [];
       reached = Atomic.make [];
+      file;
     }
 
   let empty ~borrowed d s n =
@@ -607,13 +619,52 @@ module Buffer = struct
         Gc.finalise (release d) base;
         { base; offset = 0; dtype = s; length = n }
 
-  let of_bigarray ba =
+  (* The format of the elements of [k]. *)
+  let format_of_kind (type a b) (k : (a, b) Bigarray.kind) =
+    match k with
+    | Bigarray.Float16 -> Nx_dtype.Scalar.Float16
+    | Bigarray.Float32 -> Float32
+    | Bigarray.Float64 -> Float64
+    | Bigarray.Int8_signed -> Int8
+    | Bigarray.Int8_unsigned | Bigarray.Char -> UInt8
+    | Bigarray.Int16_signed -> Int16
+    | Bigarray.Int16_unsigned -> UInt16
+    | Bigarray.Int32 -> Int32
+    | Bigarray.Int64 -> Int64
+    | Bigarray.Complex32 -> Complex64
+    | Bigarray.Complex64 -> Complex128
+    | Bigarray.Int | Bigarray.Nativeint ->
+        invalid_arg
+          "Nx_device.Buffer.of_bigarray: the kind is no storage format"
+
+  let of_bigarray ?file ba =
+    let dtype = format_of_kind (Bigarray.Array1.kind ba) in
+    let extent = Bigarray.Array1.size_in_bytes ba in
+    Option.iter
+      (fun f ->
+        if f.size <> extent then
+          invalid_arg
+            (Printf.sprintf
+               "Nx_device.Buffer.of_bigarray: %s has %d bytes, the mapping %d"
+               f.path f.size extent))
+      file;
     let ba = shared ba in
-    let length = Bigarray.Array1.dim ba in
     let base =
-      base ~borrowed:true ~keep:(Host ba) ~extent:length host (heap_memory ba)
+      base ?file ~borrowed:true ~keep:(Host ba) ~extent host (heap_memory ba)
     in
-    { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length }
+    { base; offset = 0; dtype; length = Bigarray.Array1.dim ba }
+
+  let rec origin base =
+    match base.file with
+    | Some f -> Some (f, base)
+    | None -> Option.bind base.source (fun (src, _) -> origin src)
+
+  let file b =
+    match (origin b.base, host_of b) with
+    | Some (f, base), Some a ->
+        Some
+          (f, Nativeint.to_int (Nativeint.sub a (Option.get base.memory.host)))
+    | _ -> None
 
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory

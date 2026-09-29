@@ -252,6 +252,76 @@ let test_of_bigarray () =
 (* More bytes than a page on every platform. *)
 let pages = 1 lsl 16
 
+let test_of_bigarray_kinds () =
+  let check (type a b) (k : (a, b) Bigarray.kind) s =
+    let ba = Bigarray.Array1.create k Bigarray.c_layout 3 in
+    let b = B.of_bigarray ba in
+    is_true ~msg:(S.to_string s) (S.equal (B.dtype b) s);
+    equal ~msg:"length" int 3 (B.length b);
+    equal ~msg:"same memory" int 0
+      (compare (B.host_address b)
+         (B.host_address (B.of_bigarray (Bigarray.Array1.sub ba 0 3))))
+  in
+  check Bigarray.float16 S.Float16;
+  check Bigarray.float32 S.Float32;
+  check Bigarray.float64 S.Float64;
+  check Bigarray.int8_signed S.Int8;
+  check Bigarray.int8_unsigned S.UInt8;
+  check Bigarray.char S.UInt8;
+  check Bigarray.int16_signed S.Int16;
+  check Bigarray.int16_unsigned S.UInt16;
+  check Bigarray.int32 S.Int32;
+  check Bigarray.int64 S.Int64;
+  check Bigarray.complex32 S.Complex64;
+  check Bigarray.complex64 S.Complex128;
+  let f = Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 2 in
+  f.{1} <- 1.5;
+  equal ~msg:"its bytes" bytes
+    [ 0; 0; 0; 0; 0; 0; 0xc0; 0x3f ]
+    (read (B.of_bigarray f));
+  let inv = Exn.invalid_arg ~substring:"no storage format" in
+  raises_match inv (fun () ->
+      B.of_bigarray (Bigarray.Array1.create Bigarray.int Bigarray.c_layout 1));
+  raises_match inv (fun () ->
+      B.of_bigarray
+        (Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 1))
+
+let test_file () =
+  let file = { B.path = "/weights"; size = pages; mtime = 1.; inode = 2 } in
+  let origin b =
+    Option.map (fun ((f : B.file), off) -> (f.path, off)) (B.file b)
+  in
+  let origin_t = option (pair string int) in
+  (* Page-aligned, as a mapping of a file is, so that a device can borrow it. *)
+  let mapped =
+    B.bigarray Bigarray.int8_unsigned (B.create Nx_device.host S.UInt8 pages)
+  in
+  let b = B.of_bigarray ~file mapped in
+  equal ~msg:"the mapping" origin_t (Some ("/weights", 0)) (origin b);
+  equal ~msg:"a view" origin_t
+    (Some ("/weights", 4))
+    (origin (B.view b ~offset:4 S.Float32 1));
+  let m = device ~mapping:(fst (map_host ())) (driver ()) in
+  equal ~msg:"a borrow of a view" origin_t
+    (Some ("/weights", 2))
+    (origin (B.borrow m (B.view b ~offset:2 S.UInt8 6)));
+  equal ~msg:"other memory" origin_t None
+    (origin (B.of_bigarray (host_bytes 8)));
+  equal ~msg:"owned memory" origin_t None
+    (origin (B.create Nx_device.host S.UInt8 8));
+  raises_match (Exn.invalid_arg ~substring:"the mapping 7") (fun () ->
+      B.of_bigarray ~file (host_bytes 7))
+
+external c_host : B.t -> nativeint = "test_nx_device_buffer_host"
+
+let test_c_host () =
+  let b = B.create Nx_device.host S.Float32 4 in
+  let v = B.view b ~offset:8 S.UInt8 4 in
+  equal ~msg:"a buffer" nativeint (B.host_address b) (c_host b);
+  equal ~msg:"a view" nativeint (B.host_address v) (c_host v);
+  let o = B.view (B.of_bigarray (host_bytes 16)) ~offset:3 S.UInt8 5 in
+  equal ~msg:"a borrowed view" nativeint (B.host_address o) (c_host o)
+
 let test_borrow () =
   let b = B.of_bigarray (bytes_of_list [ 1; 2 ]) in
   is_true ~msg:"host borrows itself" (B.borrow Nx_device.host b == b);
@@ -1090,6 +1160,9 @@ let () =
              test "copies and views" test_copy_and_views;
              test "of_bigarray" test_of_bigarray;
              test "host memory is counted and capped" test_host_memory;
+             test "of_bigarray of every kind" test_of_bigarray_kinds;
+             test "mapped files" test_file;
+             test "nx_device.h reads the host address" test_c_host;
              test "borrow" test_borrow;
              test "borrows share one mapping" test_borrow_shared;
              test "no external host memory" test_external_on_host;

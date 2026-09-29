@@ -2,6 +2,7 @@
  (name nx_device)
  (public_name nx.device)
  (libraries nx_dtype)
+ (install_c_headers nx_device)
  (foreign_stubs
   (language c)
   (names nx_device_stubs)

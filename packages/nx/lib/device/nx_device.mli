@@ -170,14 +170,42 @@ module Buffer : sig
       than [max_int] bytes, and {!Out_of_memory} if [d] cannot allocate its
       bytes. *)
 
+  type file = {
+    path : string;  (** The absolute path the file was opened by. *)
+    size : int;  (** Its size in bytes when it was mapped. *)
+    mtime : float;  (** Its modification time when it was mapped. *)
+    inode : int;  (** Its inode number when it was mapped, [0] where none. *)
+  }
+  (** The type for the identity of a mapped file. A path may name another file
+      later: a reader of [path] checks that the file it opens has this size,
+      modification time and inode. *)
+
   val of_bigarray :
-    (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
-  (** [of_bigarray ba] is a borrowed buffer of format [UInt8] on {!host} over
-      [ba]'s bytes, without a copy. A write through either is seen through the
+    ?file:file -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> t
+  (** [of_bigarray ?file ba] is a borrowed buffer on {!host} over [ba]'s
+      elements, without a copy, of the format of [ba]'s kind: [Float16],
+      [Float32], [Float64], [Int8], [UInt8] for [Int8_unsigned] and [Char],
+      [Int16], [UInt16], [Int32], [Int64], [Complex64] for [Complex32] and
+      [Complex128] for [Complex64]. A write through either is seen through the
       other. The buffer keeps [ba] reachable. When [ba] is over memory that
       OCaml does not manage, such as memory a C library allocated, its owner
       must keep that memory alive for as long as the buffer and its views are
-      reachable. *)
+      reachable.
+
+      [file], if given, says that [ba] maps the whole of [file] from its first
+      byte, as [Unix.map_file] at position [0] does: {!val-file} then answers
+      for the result, its views and its borrows.
+
+      Raises [Invalid_argument] if [ba]'s kind is [Int] or [Nativeint], which
+      are no storage format, or if [file] is given and its [size] is not [ba]'s
+      size in bytes. *)
+
+  val file : t -> (file * int) option
+  (** [file b] is the file [b]'s memory maps and the offset in it of [b]'s first
+      byte, if [b] is a buffer of {!of_bigarray} given a [file], or a view or a
+      borrow of one. It is [None] for any other buffer. A copy of [b]'s bytes
+      elsewhere, such as to a device, can read them from the file with ordinary
+      reads instead of faulting them in through the mapping. *)
 
   val borrow : device -> t -> t
   (** [borrow d b] is a borrowed buffer on [d] over the memory of the host
@@ -280,7 +308,11 @@ module Buffer : sig
 
   (** {2:low Low-level}
 
-      For the libraries that submit work over buffers. *)
+      For the libraries that submit work over buffers. C code reads the host
+      address of a buffer value with [nx_device_buffer_host] from the header
+      [nx_device.h], which [nx.device] installs: it reads the value's fields
+      without allocating, and the address stays valid while the value is
+      reachable. *)
 
   val address : t -> nativeint
   (** [address b] is the address of [b]'s first byte in its device's address
