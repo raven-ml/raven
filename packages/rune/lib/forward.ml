@@ -553,9 +553,6 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
             (fun k ->
               lift1 k (irfft t ~axes ?s ~dtype) t (fun dx ->
                   irfft dx ~axes ?s ~dtype))
-      | E_psum { t_in } ->
-          Some
-            (fun k -> no_rule k "psum" (active t_in) (fun () -> op_psum t_in))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some
@@ -683,6 +680,14 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | E_eigh { t_in } ->
           Some (fun k -> no_rule k "eigh" (active t_in) (fun () -> eigh t_in))
       (* Custom rules. *)
+      (* Lane gathers are linear: the tangent is the gather of the tangent. *)
+      | Lanes.E_lanes { axis; t_in } ->
+          Some
+            (fun k ->
+              lift1 k (Lanes.lanes axis t_in) t_in (fun dx ->
+                  Lanes.lanes axis dx))
+      (* A total's addition passes on: it has no tangent. *)
+      | Total.E_total_add _ -> None
       | Custom.E_custom_jvp
           (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
           Some
@@ -718,18 +723,22 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
                      ~that:"jvp's tangents" set y dy);
                 continue k y
               end)
-      | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
+      | Custom.E_custom_vjp
+          (Custom.Vjp_call { params_s; result_s; params; fwd; _ }) ->
           Some
             (fun k ->
+              let y, _ = fwd params in
               if
-                Nx.Ptree.fold params_s
-                  (fun _ leaf any -> any || active leaf)
-                  params false
-              then
+                not
+                  (Nx.Ptree.fold params_s
+                     (fun _ leaf any -> any || active leaf)
+                     params false)
+              then continue k y
+              else if Structure.has_tensor result_s y then
                 invalid_arg
                   "Rune: a custom_vjp function is not forward-differentiable; \
                    define a custom_jvp rule instead"
-              else continue k (fst (fwd params)))
+              else continue k y)
       (* Gradient checkpointing. The call passes on as the remat of [f]'s jvp: a
          function of the call's arguments that gives each argument it receives
          the tangent of the call's argument at its position, runs [f] under this

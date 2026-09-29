@@ -25,12 +25,20 @@
 type t
 (** A tape. Create one per differentiation, discard after {!backward}. *)
 
-val create : ?parent:t -> unit -> t
+val create : ?parent:t -> ?rerun:bool -> unit -> t
 (** [create ?parent ()] is an empty tape. A tape with a [parent] differentiates
     a computation that runs inside the parent's: a tensor the parent tracks
     becomes a leaf of the tape when the tape first checks it ({!tracked}), and
     {!captures} lists those leaves so that their cotangents can go back to the
-    parent. *)
+    parent.
+
+    [rerun] marks a tape whose differentiated code runs again: the staged
+    backward step of a scan and a remat's recomputation do. A tape created under
+    a rerun tape is one too. Transformations drop a total addition made under a
+    rerun tape rather than let it count twice. *)
+
+val rerun : t -> bool
+(** [rerun tape] is whether [tape] re-runs code the forward pass already ran. *)
 
 (** {1:tracking Forward pass} *)
 

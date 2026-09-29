@@ -235,6 +235,59 @@ let test_jvp_of_vmap_of_custom_jvp () =
   let _, dy = Rune.jvp' (fun x -> Rune.vmap' my_sin_fwd x) xs v in
   check_arr ~msg:"jvp of vmapped custom" (to_arr (Nx.mul v (Nx.cos xs))) dy
 
+(* A result with no tensor has nothing to differentiate: the mode that has no
+   rule runs the function in place of raising. *)
+
+let test_unit_result_custom_jvp_under_grad () =
+  let runs = ref 0 in
+  let mark x =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.unit
+      ~f:(fun _ -> incr runs)
+      ~jvp:(fun _ _ -> ((), ()))
+      x
+  in
+  let g =
+    Rune.grad'
+      (fun x ->
+        let () = mark x in
+        Nx.sum (Nx.mul x x))
+      (vec64 [| 1.0; 2.0; 3.0 |])
+  in
+  check_arr ~msg:"gradient" [| 2.0; 4.0; 6.0 |] g;
+  equal ~msg:"f ran once" int 1 !runs
+
+let test_unit_result_custom_vjp_under_jvp () =
+  let runs = ref 0 in
+  let mark x =
+    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.unit
+      ~fwd:(fun _ -> incr runs; ((), ()))
+      ~bwd:(fun () () -> Nx.zeros_like x)
+      x
+  in
+  let y, dy =
+    Rune.jvp'
+      (fun x ->
+        let () = mark x in
+        Nx.sum (Nx.mul x x))
+      (vec64 [| 1.0; 2.0; 3.0 |]) (vec64 [| 1.0; 1.0; 1.0 |])
+  in
+  check_arr ~msg:"value" [| 14.0 |] y;
+  check_arr ~msg:"tangent" [| 12.0 |] dy;
+  equal ~msg:"fwd ran once" int 1 !runs
+
+let test_vmap_uses_the_batched_rule () =
+  (* A deliberately wrong rule proves the rule itself runs under the map, not
+     [f] with the rule dropped. *)
+  let fake x =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor ~f:(fun x -> Nx.mul_s x 2.0)
+      ~jvp:(fun _ dx -> (Nx.mul_s dx 0.0, Nx.mul_s dx 100.0))
+      x
+  in
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let v = tangent_like xs in
+  let _, dy = Rune.jvp' (fun x -> Rune.vmap' fake x) xs v in
+  check_arr ~msg:"the batched rule" (to_arr (Nx.mul_s v 100.0)) dy
+
 let test_compiled_custom_vjp () =
   let f x = Nx.sum (Nx.mul (fake_grad_sin x) x) in
   let compiled = Rune.jit' ~devices:[ Rune.device "CPU" ] (Rune.grad' f) in
@@ -306,6 +359,14 @@ let tests =
           test_grad_of_vmap_of_custom;
         test "jvp of vmap keeps the mapped tangent shape"
           test_jvp_of_vmap_of_custom_jvp;
+        test "vmap uses the batched rule" test_vmap_uses_the_batched_rule;
+      ];
+    group "no-tensor results"
+      [
+        test "a unit-result custom_jvp under grad runs f"
+          test_unit_result_custom_jvp_under_grad;
+        test "a unit-result custom_vjp under jvp runs fwd"
+          test_unit_result_custom_vjp_under_jvp;
       ];
     group "compiled rules"
       [

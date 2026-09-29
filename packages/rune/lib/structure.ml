@@ -23,6 +23,10 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let alias x = Nx_effect.reshape x (Nx.shape x)
 let aliases s v = Ptree.map s (fun _ x -> alias x) v
 
+(* [has_tensor s x] is whether [s]'s walk of [x] visits a tensor: a structure
+   with no tensor position has nothing a transformation can differentiate. *)
+let has_tensor s x = Ptree.fold s (fun _ _ any -> true) x false
+
 (* Mismatches *)
 
 let describe path =

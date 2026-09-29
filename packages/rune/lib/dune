@@ -15,9 +15,11 @@
   jit
   jit_cache
   jit_device
+  lanes
   scan
   quant
-  structure)
+  structure
+  total)
  (foreign_stubs
   (language c)
   (names rune_stubs))

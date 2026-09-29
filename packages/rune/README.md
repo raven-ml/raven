@@ -56,7 +56,14 @@ nest into records, so models compose structurally — see
 - **Gradient checkpointing** — `remat` recomputes a sub-computation in
   the backward pass, trading compute for memory
 - **Custom rules** — `custom_vjp` and `custom_jvp` override
-  differentiation for a function you know a better rule for
+  differentiation for a function you know a better rule for; a
+  `custom_jvp` whose result holds no tensor runs its function under reverse
+  mode, and `vmap` passes a batched `custom_jvp` on as the batched function
+  and rule
+- **Totals and lanes** — `Total` collects a write-only sum code anywhere
+  inside a function adds to, threading it through `scan` bodies and `remat`
+  calls and summing it over a `vmap`'s lanes; `axis` names a map and `lanes`
+  reads its lanes as data
 - **Gradient checking** — `check_grads` compares reverse mode against
   finite differences
 - **Control flow** — `scan`, `cond`, `while_loop` combinators with
@@ -116,7 +123,7 @@ Rune aims to fail loudly rather than return wrong gradients.
 Current gaps:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule
-  for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally
+  for `svd`, `eig`, `eigh`, and `mod`; forward mode additionally
   lacks `qr`. Differentiating through them raises `Invalid_argument` —
   `detach` the input if gradients should not flow through. (`cholesky`,
   reverse-mode `qr`, and the whole FFT family are supported.)

@@ -20,7 +20,7 @@
    gradient fall into two deliberate categories: - zero derivative (comparisons,
    bitwise and integer ops, bitcasts, rounding, argmax/argmin/argsort, RNG,
    tensor creation): fall through untracked, which yields the correct zero
-   gradient; - no rule implemented (svd, eig, eigh, psum, mod): raise when an
+   gradient; - no rule implemented (svd, eig, eigh, mod): raise when an
    input is tracked instead of silently producing a zero gradient — detach the
    input if differentiation should not flow through it. *)
 
@@ -124,7 +124,7 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
     if inputs_tracked then err_no_rule op else continue k (out ())
   in
 
-  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+  let body : type c. c Effect.t -> ((c, _) continuation -> _) option =
    fun eff ->
     if not (Gate.enabled ()) then None
     else
@@ -163,6 +163,13 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
       | E_ceil _ -> None
       | E_floor _ -> None
       | E_round _ -> None
+      (* A total's addition passes on: reverse first runs the function and
+         drops what it re-runs (the rerun case above). *)
+      | Total.E_total_add _ -> None
+      (* A lane gather's operand carries no cotangent: no consumer needs the
+         transpose. *)
+      | Lanes.E_lanes { t_in; _ } ->
+          if tracked t_in then err_no_rule "lanes" else None
       (* Staged scan. When a stager lies beyond, the scan passes on and the
          tape records its transpose, a scan too (see [staged_scan]). Otherwise
          the eager fold runs under a nested instance of this handler, taping
@@ -830,9 +837,6 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                          Complex.zero
                          (shrink_axis last (1, n - m + 1) head))
                   else head))
-      | E_psum { t_in } ->
-          Some
-            (fun k -> no_rule k "psum" (tracked t_in) (fun () -> op_psum t_in))
       (* Linear algebra *)
       | E_cholesky { t_in; upper } ->
           Some
@@ -1021,7 +1025,9 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
           Some (fun k -> no_rule k "eigh" (tracked t_in) (fun () -> eigh t_in))
       (* Custom rules. The forward function runs in the enclosing context: this
          handler replaces its internals with the user's rule, while enclosing
-         transformations see the forward computation itself. *)
+         transformations see the forward computation itself. A function this
+         handler runs over a rerun tape runs under a handler that drops total
+         additions: the code already ran once. *)
       | Custom.E_custom_vjp
           (Custom.Vjp_call { params_s; result_s; params; fwd; bwd }) ->
           Some
@@ -1031,7 +1037,11 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                   (fun _ leaf any -> any || tracked leaf)
                   params false
               in
-              let y, res = fwd params in
+              let y, res =
+                if Tape.rerun tape then
+                  Total.with_no_additions (fun () -> fwd params)
+                else fwd params
+              in
               (* A result that is one of the parameters is aliased, so its
                  cotangent is the result's alone. *)
               let y = if any then Structure.aliases result_s y else y in
@@ -1059,18 +1069,30 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
                            params (bwd res cts)))
               end;
               continue k y)
-      | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
+      (* A custom_jvp whose result holds no tensor has nothing to
+         differentiate: reverse runs [f] in place of a rule it cannot apply, so
+         a unit-result mark sits in the same model trained with [grad]. A
+         tensor result still raises. *)
+      | Custom.E_custom_jvp
+          (Custom.Jvp_call { params_s; result_s; params; f; _ }) ->
           Some
             (fun k ->
+              let y =
+                if Tape.rerun tape then
+                  Total.with_no_additions (fun () -> f params)
+                else f params
+              in
               if
-                Nx.Ptree.fold params_s
-                  (fun _ leaf any -> any || tracked leaf)
-                  params false
-              then
+                not
+                  (Nx.Ptree.fold params_s
+                     (fun _ leaf any -> any || tracked leaf)
+                     params false)
+              then continue k y
+              else if Structure.has_tensor result_s y then
                 invalid_arg
                   "Rune: a custom_jvp function is not reverse-differentiable; \
                    define a custom_vjp rule instead"
-              else continue k (f params))
+              else continue k y)
       (* Gradient checkpointing. The call passes on with [f] run under this
          handler over a scratch tape linked to this one, which tells whether the
          result depends on a tracked tensor: an argument, or one [f] captures.
@@ -1175,6 +1197,15 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
          differentiated as a constant. *)
       | _ -> None
   in
+  (* A total's addition on a rerun tape re-runs code the forward pass already
+     ran: it is dropped rather than counted twice. The drop precedes the
+     [no_grad] check, since an addition is never taped. *)
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff ->
+    match eff with
+    | Total.E_total_add _ when Tape.rerun tape -> Some (fun k -> continue k ())
+    | _ -> body eff
+  in
   { retc = Fun.id; exnc = raise; effc }
 
 (* A staged scan passes on with its step run under this handler over a scratch
@@ -1209,7 +1240,8 @@ and staged_scan tape (req : Scan.scan_req) : Scan.scan_res =
     let dc, acc = Scan.split nc carry in
     let c, row = Scan.split nc row in
     let x, dy = Scan.split nx row in
-    let t = Tape.create ~parent:tape () in
+    (* The backward pass re-runs the forward step: additions count once. *)
+    let t = Tape.create ~rerun:true ~parent:tape () in
     List.iter (fun (Nx.P l) -> Tape.track t l) (c @ captures);
     List.iter2 (fun r (Nx.P l) -> if r then Tape.track t l) tracked x;
     let c', y =
@@ -1286,7 +1318,8 @@ and recompute : type p q.
       (Nx.Ptree.rebuild params_s ~like:params
          (Remat.barrier ~after (fst (Nx.Ptree.flatten params_s params))))
   in
-  let run = Tape.create ~parent:tape () in
+  (* The recomputation re-runs the forward function: additions count once. *)
+  let run = Tape.create ~rerun:true ~parent:tape () in
   ignore
     (Structure.map2 "Rune.remat" params_s ~this:"the arguments"
        ~that:"their barriers"

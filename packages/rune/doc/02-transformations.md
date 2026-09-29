@@ -288,7 +288,7 @@ let () =
   (* [2. 4. 6.] — from the custom rule *)
 ```
 
-Each gradient leaf must match its parameter leaf's shape and dtype. Enclosing transformations (an outer `grad`, a `vmap`) see the forward computation itself; only the innermost reverse-mode transformation applies the rule. Differentiating a `custom_vjp` call in forward mode raises — define a `custom_jvp` rule for that.
+Each gradient leaf must match its parameter leaf's shape and dtype. Enclosing transformations (an outer `grad`, a `vmap`) see the forward computation itself; only the innermost reverse-mode transformation applies the rule. Differentiating a `custom_vjp` call in forward mode raises — define a `custom_jvp` rule for that — unless the call's result holds no tensor, in which case there is nothing to differentiate and `fwd` runs in place of the rule.
 
 ### custom_jvp
 
@@ -308,7 +308,50 @@ let () =
   (* [2. 4. 6.] — from the custom rule *)
 ```
 
-With no transformation in scope, both constructs just run the plain forward function.
+A `custom_jvp` whose result holds no tensor has nothing to differentiate: reverse mode and `vmap`-without-forward run its `f` in place of raising, so a mark (see below) sits in the same model trained with `grad`. A `custom_jvp` with a tensor result is otherwise reverse-differentiable only through the `custom_vjp` rule, and `vmap` passes a batched `custom_jvp` on as the batched `f` and the batched rule, so the rule — not `f` — runs under the map. With no transformation in scope, both constructs just run the plain forward function.
+
+## Totals and Lanes
+
+A total is a write-only sum that code anywhere inside a function adds to and that the caller reads when the function returns:
+
+```ocaml
+let () =
+  let total = Rune.Total.make () in
+  let cell h x =
+    let h = Nx.tanh (Nx.add h x) in
+    Rune.Total.add total (Nx.sum x);
+    (h, h)
+  in
+  let xs = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let run, path =
+    Rune.Total.collect total ~zero:(Nx.zeros Nx.float32 [||]) (fun () ->
+      Rune.scan' ~f:cell ~init:(Nx.zeros Nx.float32 [| 2 |]) xs)
+  in
+  ignore run;
+  Printf.printf "path: %s\n" (Nx.to_string path)
+  (* [21] — the rows' sums, accumulated across the fold *)
+```
+
+`Total.collect t ~zero f` runs `f` and returns its result with `zero` plus everything `f` added to `t`. Nothing reads a total before its `collect` returns, so an addition never changes a value the function computes, and an addition outside every scope is a no-op. The scope owns the total and discharges it itself: it threads it through `scan` bodies and `remat` calls, drops additions that reverse mode re-runs, sums them over a `vmap`'s lanes (counting a constant once per lane), and passes them on under `jvp`. A staged loop therefore stays one loop, and a replay, a restarted trace or a reverse-mode rerun neither loses nor repeats an addition. Open the scope inside the compiled function and return the total to compile it: a `jit` inside a scope runs its function eagerly, as it does inside `grad` and `vmap`.
+
+`Rune.axis ()` names a map. `Rune.vmap ~axis:a` gives its map the name `a`, and inside it `Rune.lanes a x` is every lane's `x` stacked on a new leading axis, as data: the map's whole batch, whether `x` is one lane's value (batched) or the same in every lane (broadcast):
+
+```ocaml
+let () =
+  let a = Rune.axis () in
+  let dirs = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
+  let wide =
+    Rune.vmap ~axis:a Nx.Ptree.(tensor @-> returns tensor)
+      (fun _ -> Rune.lanes a (Nx.ones Nx.float32 [| 3 |]))
+      dirs
+  in
+  Format.printf "wide: %a@." Nx.pp_shape (Nx.shape wide)
+  (* [2; 2; 3]: each direction lane holds the [2; 3] gather, broadcast *)
+```
+
+The map named `a` answers the call itself, so the value is a constant of that map and enclosing transformations see the gather; every other map passes the call on and keeps its own lanes. Outside any map named `a`, `lanes a x` is one lane. `jvp` gathers the tangent with the primal; `grad` raises when the operand is tracked, since no consumer needs the transpose.
+
+The two together let code anywhere in a model report a `k×k` curvature block: a `custom_jvp` with a unit result whose rule gathers the direction lanes and adds the block to a total the driver collects. A marked little loss then reports its Gauss-Newton curvature from nested functions, from inside a recurrence, a `remat` or the caller's own `vmap`, and the same model trains under `grad` — the mark is inert there.
 
 ## Gradient Checking
 
@@ -418,7 +461,7 @@ let () =
 
 Rune fails loudly rather than returning wrong gradients:
 
-- **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `psum`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
+- **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
 - **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
 - **`Rune.jit` rejects data-dependent `cond`/`while_loop` predicates**; a scalar the compiled program would need to branch on cannot be read at trace time.
 

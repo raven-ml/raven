@@ -105,7 +105,7 @@ The differentiation handlers share a tracing gate. `no_grad f` turns interceptio
 Every Nx effect constructor is matched explicitly by each engine. Operations without a rule fall into three deliberate categories:
 
 - **Zero derivative** (comparisons, bitwise and integer ops, rounding, `argmax`/`argsort`, RNG, tensor creation): these fall through untracked, which yields the correct zero gradient.
-- **No rule implemented** (`svd`, `eig`, `eigh`, `psum`, `mod` in reverse mode; the decompositions under `vmap`): these raise when an input is tracked, instead of silently producing a zero gradient. `detach` the input if differentiation should not flow through it.
+- **No rule implemented** (`svd`, `eig`, `eigh`, `mod` in reverse mode; the decompositions under `vmap`): these raise when an input is tracked, instead of silently producing a zero gradient. `detach` the input if differentiation should not flow through it.
 
 The intent is that rune never returns a wrong gradient quietly.
 

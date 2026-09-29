@@ -34,9 +34,14 @@ module T = Nx
 let err_no_rule op =
   invalid_arg (Printf.sprintf "Rune: vmap has no batching rule for %s" op)
 
-type state = { batch_size : int; batched : Tensor_map.Ids.t }
+type state = {
+  batch_size : int;
+  batched : Tensor_map.Ids.t;
+  axis : Lanes.axis option;
+}
 
-let create ~batch_size = { batch_size; batched = Tensor_map.Ids.create () }
+let create ?axis ~batch_size () =
+  { batch_size; batched = Tensor_map.Ids.create (); axis }
 let mark st x = Tensor_map.Ids.add st.batched x
 let batched st x = Tensor_map.Ids.mem st.batched x
 
@@ -233,13 +238,55 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some (fun k -> elt2 k threefry key ctr)
     (* The mapped-axis index is the per-lane iota [0 .. batch_size-1], carried
        as a batched scalar so that a key folded with it (Nx.Rng.fold_in_axis)
-       decorrelates the lanes. *)
-    | E_axis_index ->
+       decorrelates the lanes. A named map answers no collective but its
+       gather: it passes the index on, so a model's own maps — not the
+       direction map — are what a sketched model's randomness folds in. *)
+    | E_axis_index when Option.is_none st.axis ->
         Some
           (fun k ->
             let idx = T.arange Nx.int32 0 st.batch_size 1 in
             mark st idx;
             continue k idx)
+    | E_axis_index -> None
+    (* Lane gathers. The map that owns the name answers with a fresh alias of
+       the batched operand — a constant of the map — or with a broadcast of an
+       unbatched one. Every other map re-performs the gather on the physical
+       operand and puts its own lane axis in front. A map named another way, or
+       no map at all, passes the call on. *)
+    | Lanes.E_lanes { axis; t_in } -> (
+        match st.axis with
+        | Some a when Lanes.same a axis ->
+            Some
+              (fun k ->
+                let out =
+                  if batched st t_in then Structure.alias t_in
+                  else
+                    T.broadcast_to
+                      (Array.append [| st.batch_size |] (T.shape t_in))
+                      t_in
+                in
+                continue k out)
+        | _ ->
+            if batched st t_in then
+              Some
+                (fun k ->
+                  let out = T.swapaxes 0 1 (Lanes.lanes axis t_in) in
+                  mark st out;
+                  continue k out)
+            else None)
+    (* A total's addition crosses the map: the sum of its lanes' additions, or
+       the lane count times a constant of the map. *)
+    | Total.E_total_add (t, v) ->
+        Some
+          (fun k ->
+            let v =
+              if batched st v then T.sum ~axes:[ 0 ] v
+              else
+                T.mul_s v
+                  (Nx_dtype.of_float (T.dtype v) (float_of_int st.batch_size))
+            in
+            Total.perform t v;
+            continue k ())
     (* Elementwise unary *)
     | E_neg { t_in } when batched st t_in -> Some (fun k -> elt1 k neg t_in)
     | E_sin { t_in } when batched st t_in -> Some (fun k -> elt1 k sin t_in)
@@ -560,7 +607,6 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let out = irfft t ~axes:(Array.map taxis axes) ?s ~dtype in
             mark st out;
             continue k out)
-    | E_psum { t_in } when batched st t_in -> err_no_rule "psum"
     | E_cholesky { t_in; _ } when batched st t_in -> err_no_rule "cholesky"
     | E_qr { t_in; _ } when batched st t_in -> err_no_rule "qr"
     | E_lu { t_in } when batched st t_in -> err_no_rule "lu"
@@ -571,12 +617,14 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_eigh { t_in } when batched st t_in -> err_no_rule "eigh"
     | E_solve_triangular { a; b; _ } when batched st a || batched st b ->
         err_no_rule "solve_triangular"
-    (* Custom rules: vmap batches the forward function. The call runs in a
-       nested fiber under this same handler state, so its operations are
-       translated like any other code and enclosing transformations see the
-       batched forward computation. Letting the call fall through instead would
-       hand physically batched tensors to an enclosing differentiation outside
-       the batching scope. Calls on constants do fall through. *)
+    (* Custom rules: vmap batches the forward function of a custom_vjp, and
+       passes a batched custom_jvp on as the custom call of the batched forward
+       function and the batched rule, remat's pattern, in place of running [f]
+       and dropping the rule. Each marks the physical arguments at the batched
+       positions and runs under this handler's state, and the batched rule
+       returns primal and tangent physically batched at every position where
+       either is batched, as forward's shape check requires. Calls on constants
+       do fall through. *)
     | Custom.E_custom_vjp (Custom.Vjp_call { params_s; params; fwd; _ }) ->
         if
           not
@@ -589,7 +637,8 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             (fun k ->
               continue k
                 (match_with (fun () -> fst (fwd params)) () (handler st)))
-    | Custom.E_custom_jvp (Custom.Jvp_call { params_s; params; f; _ }) ->
+    | Custom.E_custom_jvp
+        (Custom.Jvp_call { params_s; result_s; params; f; jvp }) ->
         if
           not
             (Nx.Ptree.fold params_s
@@ -599,7 +648,81 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         else
           Some
             (fun k ->
-              continue k (match_with (fun () -> f params) () (handler st)))
+              let flags =
+                List.map
+                  (fun (Nx.P p) -> batched st p)
+                  (fst (Nx.Ptree.flatten params_s params))
+              in
+              let mark_args params =
+                List.iter2
+                  (fun (Nx.P p) b -> if b then mark st p)
+                  (fst (Nx.Ptree.flatten params_s params))
+                  flags
+              in
+              let result_flags y =
+                List.map
+                  (fun (Nx.P l) -> batched st l)
+                  (fst (Nx.Ptree.flatten result_s y))
+              in
+              (* [out] records the batched positions of the result the body
+                 receives back, whichever path produced it: the batched forward
+                 function, or the batched rule an enclosing transformation
+                 applies. *)
+              let out = ref [] in
+              let f' params =
+                mark_args params;
+                let y = match_with (fun () -> f params) () (handler st) in
+                out := result_flags y;
+                y
+              in
+              let jvp' params tangents =
+                mark_args params;
+                List.iter2
+                  (fun (Nx.P t) b -> if b then mark st t)
+                  (fst (Nx.Ptree.flatten params_s tangents))
+                  flags;
+                let y, dy =
+                  match_with (fun () -> jvp params tangents) () (handler st)
+                in
+                (* The batched rule returns primal and tangent physically
+                   batched at every position where either is batched. *)
+                let flags =
+                  List.map2 ( || ) (result_flags y) (result_flags dy)
+                in
+                let batch flags x =
+                  let rest = ref flags in
+                  Nx.Ptree.map result_s
+                    (fun _ l ->
+                      match !rest with
+                      | [] -> assert false
+                      | b :: tl ->
+                          rest := tl;
+                          if b && not (batched st l) then begin
+                            let l = ensure_batched st l in
+                            mark st l;
+                            l
+                          end
+                          else l)
+                    x
+                in
+                let y = batch flags y and dy = batch flags dy in
+                (* An enclosing transformation aliases the primal in its own
+                   context, which drops its marks; record them so the result
+                   is marked again when it returns here. *)
+                out := result_flags y;
+                (y, dy)
+              in
+              let y =
+                Custom.custom_jvp params_s result_s ~f:f' ~jvp:jvp' params
+              in
+              (match !out with
+              | [] -> ()
+              | out ->
+                  List.iter2
+                    (fun (Nx.P l) b -> if b then mark st l)
+                    (fst (Nx.Ptree.flatten result_s y))
+                    out);
+              continue k y)
     (* Gradient checkpointing: the remat passes on with its function batched, so
        that the enclosing context recomputes the batched computation, the
        tensors [f] captures included. The batched function receives the physical

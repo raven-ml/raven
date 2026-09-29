@@ -9,17 +9,23 @@ type t = {
   pulls : (unit -> unit) Dynarray.t;
   parent : t option;
   mutable captures : Nx.packed list;
+  rerun : bool;
 }
 
-let create ?parent () =
+let create ?parent ?(rerun = false) () =
+  let rerun =
+    rerun || match parent with Some parent -> parent.rerun | None -> false
+  in
   {
     tracked = Tensor_map.Ids.create ();
     cotangents = Tensor_map.create ();
     pulls = Dynarray.create ();
     parent;
     captures = [];
+    rerun;
   }
 
+let rerun tape = tape.rerun
 let track tape x = Tensor_map.Ids.add tape.tracked x
 
 let rec tracked tape x =

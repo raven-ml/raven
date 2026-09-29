@@ -167,6 +167,21 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- New `Rune.Total`, `Rune.axis` and `Rune.lanes`, and an optional `~axis` on
+  `Rune.vmap` and `Rune.vmap'`. A total is a write-only sum that code anywhere
+  inside a function adds to and the caller reads when it returns
+  (`Total.collect t ~zero f` returns [f]'s result with the sum); the scope
+  threads its total through `scan` bodies and `remat` calls itself, drops the
+  additions reverse mode re-runs, and sums them over a `vmap`'s lanes. `lanes a
+  x` is every lane's `x` of the map named `a`, stacked on a new leading axis,
+  so code anywhere in a model can gather the map's whole batch as data.
+- `Rune.custom_jvp` with a result that holds no tensor no longer raises under
+  reverse mode: there is nothing to differentiate, so its `f` runs in place of
+  the rule (the mirror case, `custom_vjp` under forward mode, runs `fwd`).
+  `Rune.vmap` now passes a batched `custom_jvp` on as the custom call of the
+  batched `f` and the batched rule, where it ran `f` and dropped the rule, so a
+  rule applies to a call inside the caller's own map too.
+
 - `Rune.jvp` and `Rune.vmap` of a gradient through a `Rune.scan`, and
   `Rune.grad` of one, compile as loops under `Rune.jit`, where they unrolled
   every step: the gradient's reversed loop is now a scan itself, which every
@@ -2747,6 +2762,9 @@ thread.
 
 ### Nx
 
+- **Breaking (effect handlers):** the `E_psum` effect and `Nx_effect.op_psum`
+  are removed. It had no public caller, no batching rule and no backend
+  operation; `Nx.sum ~axes:[0]` over a map's lanes is the same sum.
 - **Breaking:** the `nx.buffer` library and its `Nx_buffer` type are removed,
   and with them `Nx.data`, `Nx.to_buffer`, `Nx.of_buffer`, `Nx.offset` and
   `Nx.strides`. A tensor's storage is a host `Nx_device.Buffer.t` that only

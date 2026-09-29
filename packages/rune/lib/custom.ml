@@ -13,10 +13,13 @@
 
    Dispatch is by handler stacking: the innermost transformation that
    understands the effect applies its treatment. A differentiation of the wrong
-   mode raises (a custom vjp is not forward-differentiable, and vice versa);
-   vmap batches the forward function, so only a differentiation inside the vmap
-   applies the rule. When no handler intercepts — no transformation in scope —
-   the plain forward function runs at the call site. *)
+   mode raises, unless the call's result holds no tensor — there is nothing to
+   differentiate then, and the function that mode runs in its own context ([fwd]
+   or [f]) runs in place of the rule. vmap batches the forward function of a
+   [custom_vjp], and passes a batched [custom_jvp] on as the custom call of the
+   batched [f] and the batched rule. When no handler intercepts — no
+   transformation in scope — the plain forward function runs at the call
+   site. *)
 
 type 'q vjp_call =
   | Vjp_call : {

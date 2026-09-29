@@ -161,9 +161,65 @@ val jvp_aux :
     it produces a real tangent. Both are the identity on real dtypes, so real
     gradients are unaffected. *)
 
+(** {1:totals Totals and lanes}
+
+    A total is a write-only sum that code anywhere inside a function adds to
+    and that the caller reads when the function returns, and a map's lanes are
+    the whole [k]-lane batch of a value, as data. Together they let a mark — a
+    {!val-custom_jvp} with no tensor result — report a [k×k] curvature block
+    from anywhere in a model, whatever maps and transformations enclose it. *)
+
+(** Write-only sums. *)
+module Total : sig
+  type ('a, 'b) t
+  (** The type for totals of a tensor of dtype [('a, 'b)]. *)
+
+  val make : unit -> ('a, 'b) t
+  (** [make ()] is a fresh total. *)
+
+  val add : ('a, 'b) t -> ('a, 'b) Nx.t -> unit
+  (** [add t v] adds [v] to the innermost open {!val-collect} of [t], and does
+      nothing if none is open. Nothing reads a total before its [collect]
+      returns, so an addition never changes a value the function computes, and
+      an addition that reaches no scope is unobservable.
+
+      Raises [Invalid_argument] at the call if [v] differs from the scope's
+      [zero] in shape or dtype. *)
+
+  val collect :
+    ('a, 'b) t -> zero:('a, 'b) Nx.t -> (unit -> 'r) -> 'r * ('a, 'b) Nx.t
+  (** [collect t ~zero f] runs [f] with [t]'s scope open and returns its result
+      with [zero] plus everything [f] added to [t] while it ran. The scope owns
+      the total: it threads it through {!scan} and {!remat} bodies itself, so a
+      staged loop stays one loop, and a replay, a restarted trace or a
+      reverse-mode rerun neither loses nor repeats an addition. It runs [f] as
+      a transformation, so a {!val-jit} inside it runs its function eagerly;
+      open the scope inside the compiled function and return the total to
+      compile one. If [f] raises, [collect] raises the same exception; an
+      addition made before an exception that [f] itself catches counts. *)
+end
+
+type axis
+(** The type for map names, from {!axis}. *)
+
+val axis : unit -> axis
+(** [axis ()] is a fresh name for a map. Give it to {!val-vmap} to name the map
+    and read its lanes with {!lanes}. *)
+
+val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [lanes a x] is every lane's [x] stacked on a new leading axis, inside the
+    map named [a]. A batched [x] gives its physical lanes; an unbatched [x] is
+    broadcast, the same in every lane. Outside any map named [a] it is one
+    lane, [unsqueeze ~axes:[0] x].
+
+    The map named [a] answers the call itself and passes no other collective
+    on, so a model's own maps cannot capture a gather meant for [a], and [lanes
+    a] inside them still addresses [a]. *)
+
 (** {1:vmap Vectorizing maps} *)
 
-val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+val vmap :
+  ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 (** [vmap s f] is [f] mapped over axis 0 of every tensor of its arguments. [s]
     is [f]'s signature, one structure per argument and one for the result:
 
@@ -195,9 +251,16 @@ val vmap : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     ({!Nx.Ptree.consumes}); and when applied to its arguments if they have no
     tensor, if a tensor is a scalar, or if two tensors differ in the length of
     their axis 0, naming each tensor by its path, as {!val-jit}'s messages do:
-    ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]. *)
+    ["Rune.vmap: 1: 3 rows along axis 0, 0: 2"].
 
-val vmap' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+    Give the map a name with [~axis] ({!axis}) to read its lanes with
+    {!lanes}; an anonymous map passes a lane gather on. *)
+
+val vmap' :
+  ?axis:axis ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
 (** [vmap' f x] is [vmap Nx.Ptree.(tensor @-> returns tensor) f x]: [f] mapped
     over axis 0 of [x], its result stacked along a new axis 0.
 
@@ -220,14 +283,16 @@ val custom_vjp :
     used; the gradients have structure [p], and each tensor its parameter's
     dtype and shape. [residual] is what [fwd] returned beside its result.
     Enclosing transformations (an outer {!grad}, {!val-vmap}) see the forward
-    computation itself.
+    computation itself: {!val-vmap} batches [fwd]'s operations.
 
     A tensor of the result that is one of [params] is a new value there: its
     cotangent is the result's alone.
 
-    Raises [Invalid_argument] if the call is differentiated in forward mode
-    (define a {!custom_jvp} rule for that), or if [bwd]'s gradients differ from
-    [params] in their visits or in a tensor's dtype. *)
+    Raises [Invalid_argument] if the call is differentiated in forward mode and
+    its result holds a tensor (define a {!custom_jvp} rule for that), or if
+    [bwd]'s gradients differ from [params] in their visits or in a tensor's
+    dtype. A result with no tensor has nothing to differentiate, so forward
+    mode runs [fwd] in place of raising. *)
 
 val custom_jvp :
   'p Nx.Ptree.t ->
@@ -243,10 +308,15 @@ val custom_jvp :
     result that is one of [params] is a new value there: the parameter keeps its
     own tangent.
 
-    Raises [Invalid_argument] if the call is differentiated in reverse mode
-    (define a {!custom_vjp} rule for that), or if [jvp]'s tangents differ from
-    its result in their visits, or a tangent from its result tensor in dtype or
-    shape. *)
+    {!val-vmap} carries a batched [custom_jvp] on as the custom call of the
+    batched [f] and the batched rule, instead of running [f] and dropping the
+    rule, so the rule runs for a call inside the caller's own map too.
+
+    Raises [Invalid_argument] if the call is differentiated in reverse mode and
+    its result holds a tensor (define a {!custom_vjp} rule for that), or if
+    [jvp]'s tangents differ from its result in their visits, or a tangent from
+    its result tensor in dtype or shape. A result with no tensor has nothing to
+    differentiate, so reverse mode runs [f] in place of raising. *)
 
 (** {1:tensor Single-tensor variants} *)
 
