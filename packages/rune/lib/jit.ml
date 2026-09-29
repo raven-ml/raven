@@ -2769,6 +2769,43 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
     then stage_scan ~places:next ~seen st req
     else raise Scan.Not_staged
   else
+    (* A carry the body returns unchanged is loop-invariant. The loop does not
+       carry it: the body reads its initial value from the carry's slot, which
+       the program writes once before the loop, as it writes the storage of a
+       value made before the loop, and the scan returns that value. *)
+    let all_slots = c_slots and all_carry = req_carry in
+    let unchanged =
+      in_scan_body st loop_body (fun () ->
+          List.map2
+            (fun (Nx.P c) s ->
+              let (Nx.P ph) = s.s_ph in
+              U.equal
+                (F.Tensor.uop (tolk_of st c))
+                (F.Tensor.uop (tolk_of st ph)))
+            c_next c_slots)
+    in
+    List.iter2
+      (fun (s, u) (Nx.P c) ->
+        if u then
+          loop_body.invariants <-
+            U.after ~src:s.s_node
+              ~deps:
+                [
+                  store_placed s.s_place s.s_node s.s_shape
+                    (resharded st s.s_place c);
+                ]
+            :: loop_body.invariants)
+      (List.combine c_slots unchanged)
+      req_carry;
+    let carried l =
+      List.filter_map
+        (fun (u, x) -> if u then None else Some x)
+        (List.combine unchanged l)
+    in
+    let c_slots = carried c_slots
+    and c_next = carried c_next
+    and writes = carried writes
+    and req_carry = carried req_carry in
     let y_outs =
       in_scan_body st loop_body (fun () ->
           List.map
@@ -2941,16 +2978,23 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
       loop_call st l ~body_linear ~resolve_node ~reversed:req_reverse ~n
         ~invariants:loop_body.invariants
     in
+    let rec finals unchanged slots inits pairs =
+      match (unchanged, slots, inits, pairs) with
+      | [], [], [], [] -> []
+      | true :: unchanged, s :: slots, Nx.P c :: inits, pairs ->
+          (s.s_shape, s.s_place, resharded st s.s_place c)
+          :: finals unchanged slots inits pairs
+      | false :: unchanged, s :: slots, _ :: inits, pair :: pairs ->
+          ( s.s_shape,
+            s.s_place,
+            placed_tensor s.s_place
+              (written_by call (final_carry ~n pair))
+              s.s_shape )
+          :: finals unchanged slots inits pairs
+      | _ -> assert false
+    in
     let r_carry =
-      placeholders st req_carry
-        (List.map2
-           (fun s pair ->
-             ( s.s_shape,
-               s.s_place,
-               placed_tensor s.s_place
-                 (written_by call (final_carry ~n pair))
-                 s.s_shape ))
-           c_slots pairs)
+      placeholders st all_carry (finals unchanged all_slots all_carry pairs)
     in
     let r_ys =
       placeholders st y

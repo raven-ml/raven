@@ -376,8 +376,9 @@ Along the consumer's path:
 
 - Three public values (`Total`, `axis`, `lanes`), the type `axis`, and
   `?axis` on `vmap` and `vmap'`.
-- The scope claims every scan it would stage: a body with no additions still
-  carries the total, `k²` floats per scan here.
+- The scope claims every scan it would stage. A body with no additions returns
+  the sum's carry unchanged, and staging drops a carry the body returns
+  unchanged from the loop, so the claim costs such a loop nothing.
 - Law 6 is a contract no check can enforce when the loss has unmarked terms.
   Averaging marked losses over trials after a `vmap`, the natural style of a
   per-trial model, scales the loss and `C` by `1/M` and leaves the matrix

@@ -165,6 +165,35 @@ let test_remat () =
   check_arr ~msg:"compiled result" (to_arr (Nx.sin x)) y;
   check_arr ~msg:"compiled" expected total
 
+(* A scope around a staged scan whose body adds nothing costs the loop nothing:
+   the carry of its sum comes out of the body unchanged and is no loop state. *)
+let test_a_scope_with_no_additions () =
+  let t = Rune.Total.make () in
+  let plain w xs = Nx.sum (rollout ~add:(fun _ _ -> ()) t w h0 xs) in
+  let scoped w xs =
+    let y, total =
+      Rune.Total.collect t ~zero:(zero ()) (fun () -> plain w xs)
+    in
+    Nx.add y total
+  in
+  let kernels_per_step f =
+    let per_replay n =
+      let xs = series 2 [| n; 3 |] in
+      let g = Rune.jit' (fun w -> f w xs) in
+      ignore (g w0);
+      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
+      ignore (g w0);
+      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
+    in
+    (per_replay 8 - per_replay 4) / 4
+  in
+  equal ~msg:"kernels per step" int (kernels_per_step plain)
+    (kernels_per_step scoped);
+  let xs = series 2 [| 5; 3 |] in
+  check_arr ~eps:1e-9 ~msg:"value"
+    (to_arr (plain w0 xs))
+    (Rune.jit' (fun w -> scoped w xs) w0)
+
 (* An exception raised while the scope runs a scan or a remat reaches the code
    that called it, which may catch it inside the scope. *)
 let test_exceptions_reach_the_performer () =
@@ -735,6 +764,8 @@ let tests =
           test_key_scope_inside_a_scope;
         test "restarted traces discard their additions"
           test_restarts_through_a_scope;
+        test "a scope with no additions costs a staged scan nothing"
+          test_a_scope_with_no_additions;
         test "an exception reaches the performer"
           test_exceptions_reach_the_performer;
         test "placement restarts discard their additions"

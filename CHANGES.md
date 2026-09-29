@@ -172,6 +172,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A scan staged under `Rune.jit` no longer copies a carry its body returns
+  unchanged at every step: the loop reads its initial value and the scan
+  returns it. A `Rune.Total` scope around a scan whose body adds nothing adds
+  such a carry, so it now costs the loop nothing.
+
 - `Rune.vmap` passes a `Rune.custom_vjp` on as the custom call of its batched
   `fwd` and batched `bwd`, where it ran `fwd` batched and dropped `bwd`: a
   `grad` around a map now applies the rule to the map's lanes, summing the

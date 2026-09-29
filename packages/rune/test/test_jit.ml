@@ -1611,6 +1611,91 @@ let test_grad_of_scan_refuses_a_capture_the_forward_did_not_read () =
     (fun () ->
       ignore (Rune.jit Nx.Ptree.(p @-> returns p) (Rune.grad p loss) (w0, w1)))
 
+(* A carry the body returns unchanged is not loop state: each step launches the
+   kernels of the scan that reads it as a capture, and the scan returns its
+   initial value. Its gradient, taken by the backward loop, and a trace
+   restarted to place the other carries keep their values. *)
+let test_scan_drops_an_unchanged_carry () =
+  let as_carry (w, c) xs =
+    let (h, c), ys =
+      Rune.scan
+        Nx.Ptree.(pair tensor tensor)
+        Nx.Ptree.tensor Nx.Ptree.tensor
+        ~f:(fun (h, c) x ->
+          let h = cell w h (Nx.add x c) in
+          ((h, c), h))
+        ~init:(h0, c) xs
+    in
+    Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
+  in
+  let as_capture (w, c) xs =
+    let h, ys =
+      Rune.scan'
+        ~f:(fun h x ->
+          let h = cell w h (Nx.add x c) in
+          (h, h))
+        ~init:h0 xs
+    in
+    Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
+  in
+  let p = Nx.Ptree.(pair tensor tensor) in
+  let c0 = series 3 [| 3 |] in
+  let kernels_per_step f =
+    let per_replay n =
+      let xs = series 2 [| n; 3 |] in
+      let g = Rune.jit Nx.Ptree.(p @-> returns tensor) (fun wc -> f wc xs) in
+      ignore (g (w0, c0));
+      let before = (Tolk.Helpers.Global_counters.snapshot ()).kernel_count in
+      ignore (g (w0, c0));
+      (Tolk.Helpers.Global_counters.snapshot ()).kernel_count - before
+    in
+    (per_replay 8 - per_replay 4) / 4
+  in
+  equal ~msg:"kernels per step" int
+    (kernels_per_step as_capture)
+    (kernels_per_step as_carry);
+  let xs = series 2 [| 5; 3 |] in
+  check_arr ~eps:1e-5 ~msg:"value"
+    (to_arr (as_carry (w0, c0) xs))
+    (Rune.jit
+       Nx.Ptree.(p @-> returns tensor)
+       (fun wc -> as_carry wc xs)
+       (w0, c0));
+  let gw, gc = Rune.grad p (fun wc -> as_carry wc xs) (w0, c0) in
+  let gw', gc' =
+    Rune.jit
+      Nx.Ptree.(p @-> returns p)
+      (Rune.grad p (fun wc -> as_carry wc xs))
+      (w0, c0)
+  in
+  check_arr ~eps:1e-4 ~msg:"gradient of w" (to_arr gw) gw';
+  check_arr ~eps:1e-4 ~msg:"gradient of the carry" (to_arr gc) gc';
+  let devices = List.map Rune.device [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ] in
+  let traces = ref 0 in
+  let placed xs =
+    let (a, c), ys =
+      Rune.scan
+        Nx.Ptree.(pair tensor tensor)
+        Nx.Ptree.tensor Nx.Ptree.tensor
+        ~f:(fun (a, c) x ->
+          incr traces;
+          let a = Nx.add (Nx.mul_s a 0.5) (Nx.add x c) in
+          ((a, c), a))
+        ~init:(Nx.zeros f32 [| 16 |], series 4 [| 16 |])
+        xs
+    in
+    Nx.add (Nx.sum a) (Nx.add (Nx.sum c) (Nx.sum ys))
+  in
+  let xs = series 5 [| 6; 16 |] in
+  let expected = placed xs in
+  traces := 0;
+  let y =
+    Rune.jit' ~devices placed
+      (Nx.place (Nx.Placement.sharded ~axis:1 devices) xs)
+  in
+  equal ~msg:"the trace restarted" bool true (!traces > 1);
+  check_arr ~eps:1e-4 ~msg:"placed" (to_arr expected) y
+
 (* Buffer sharing: strided leaves must fall back to copies, views with an offset
    must read the right span, and each call must return tensors with their own
    storage. *)
@@ -5129,6 +5214,8 @@ let tests =
           test_grad_of_scan_ignores_undifferentiated_captures;
         test "grad of a scan refuses a capture the forward did not read"
           test_grad_of_scan_refuses_a_capture_the_forward_did_not_read;
+        test "a scan drops a carry its body returns unchanged"
+          test_scan_drops_an_unchanged_carry;
       ];
     group "sliding windows"
       [
