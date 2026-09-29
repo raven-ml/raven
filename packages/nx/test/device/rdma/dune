@@ -1,0 +1,22 @@
+; test_rdma runs anywhere. test_rdma_hw copies between two machines' adapters:
+; it runs when NX_RDMA_TEST names the other machine's server, HOST:PORT, whose
+; key is in the file NX_RDMA_TEST_KEY, and each machine has an adapter this
+; process may take; it skips elsewhere.
+
+(test
+ (name test_rdma)
+ (modules test_rdma)
+ (package nx)
+ (libraries
+  nx.rdma.device
+  nx.remote.device
+  nx.device
+  nx.device.support
+  unix
+  windtrap))
+
+(test
+ (name test_rdma_hw)
+ (modules test_rdma_hw)
+ (package nx)
+ (libraries nx.rdma.device nx.remote.device nx.device nx.dtype windtrap))

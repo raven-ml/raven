@@ -2805,6 +2805,12 @@ thread.
 
 ### Nx
 
+- New `nx.rdma.device`: Broadcom BCM57608 RoCE adapters, which the runtime
+  drives itself on this machine or another (`Nx_rdma_device.get ?host i`).
+  Once an adapter is open on each of two machines, `Nx_device.Buffer.copy`
+  between their GPUs' memory goes from GPU to GPU over RoCE, through the
+  adapters closest to the GPUs, in sends and receives of up to 1 GiB, instead
+  of through the hosts.
 - `Nx_amd_device` and `Nx_nv_device` open another machine's GPUs:
   `get ~host i` and `count ~host ()`, given the host `Nx_remote_device.connect`
   gave, drive that machine's GPU `i` under `Pci` through its server, as

@@ -1,0 +1,7 @@
+{
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/infiniband/hw/bnxt_re/qplib_rcfw.h?h=v6.18": "66b3bdc5cab53a66e401ef3edf42628140ec397b866acbf97274415acaf111ef",
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/infiniband/hw/bnxt_re/qplib_res.h?h=v6.18": "8ac637f48116e60403e370e701da897431299b44a1f67f24764804de935f0eba",
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/infiniband/hw/bnxt_re/roce_hsi.h?h=v6.18": "e216b594566ea0cb396842651f13f1e4e7e66fc88b5583f0ad50a5ddddd7078d",
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/net/ethernet/broadcom/bnxt/bnxt_hwrm.h?h=v6.18": "d6e3ed8c92d97bf7de655f5d710d26ac50166be0aa64b423aeffc8102cc7c4c9",
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/linux/bnxt/hsi.h?h=v6.18": "af1161abdd3c22ea87248a03c920164aa0ed0fb2de50fddb962f5c0e7ca1797a"
+}
