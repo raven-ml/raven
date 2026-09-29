@@ -111,6 +111,15 @@ static int64_t now_ms(void) {
 #endif
 }
 
+intnat caml_nx_device_now_ms(value unit) {
+  (void)unit;
+  return (intnat)now_ms();
+}
+
+value caml_nx_device_now_ms_byte(value unit) {
+  return Val_long(caml_nx_device_now_ms(unit));
+}
+
 static void yield(void) {
 #ifdef _WIN32
   SwitchToThread();

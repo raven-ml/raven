@@ -41,8 +41,10 @@ type t = {
   copy_queue : copy_queue option;
   load : (binary:string -> name:string -> nativeint) option;
   signal : signal option;
+  sleep : (int -> unit) option;
   timeout_ms : int Atomic.t;
   synchronized : unit -> unit;
+  finalize : failed:bool -> unit;
   timeline : memory; (* [signaled; submitted] *)
   timeline_keep : keep;
   mutable staging : nativeint option;
@@ -136,6 +138,10 @@ external wait_u64 :
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 
+external now_ms : unit -> (int[@untagged])
+  = "caml_nx_device_now_ms_byte" "caml_nx_device_now_ms"
+[@@noalloc]
+
 let page = page_size ()
 
 (* [shared ba] is [ba] with the proxy of its storage made. The runtime makes a
@@ -193,7 +199,7 @@ let timeline_of (host_memory : allocator option) =
       | None -> failwith "Nx_device.make: no memory for the timeline")
 
 let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
-    ~load ~signal ~timeout_ms ~synchronized =
+    ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize =
   let timeline, timeline_keep = timeline_of host_memory in
   let words = Option.get timeline.host in
   store_u64 words 0L;
@@ -211,8 +217,10 @@ let create ~name ~arch ~budget ~alloc ~free ~host_memory ~mapping ~copy_queue
       load;
       copy_queue = Option.map (fun copy_queue -> copy_queue timeline) copy_queue;
       signal = Option.map (fun signal -> signal timeline) signal;
+      sleep;
       timeout_ms = Atomic.make timeout_ms;
       synchronized;
+      finalize;
       timeline;
       timeline_keep;
       staging = None;
@@ -241,7 +249,8 @@ let host =
   let alloc _ = assert false in
   create ~name:"CPU" ~arch:host_arch ~budget:max_int ~alloc ~free:ignore
     ~host_memory:None ~mapping:None ~copy_queue:None ~load:None ~signal:None
-    ~timeout_ms:default_timeout_ms ~synchronized:ignore
+    ~sleep:None ~timeout_ms:default_timeout_ms ~synchronized:ignore
+    ~finalize:(fun ~failed:_ -> ())
 
 let name d = d.name
 let arch d = d.arch
@@ -268,12 +277,45 @@ let fail d msg =
 
 let check d = Option.iter failwith (Atomic.get d.failed)
 
+(* How long a wait sees the signal word still before it lets the device sleep on
+   its interrupts. *)
+let sleep_after_ms = 200
+
+(* Polls the signal word for [v]. Once the word has stayed still for
+   [sleep_after_ms], the device sleeps between polls, and once more before a
+   hang is declared, so a fault it reports names the cause. The timeout counts
+   from the word's last move. *)
+let poll d v sleep =
+  let word = timeline_address d and target = Int64.of_int v in
+  let reached w = Int64.unsigned_compare w target >= 0 in
+  let rec go seen still_since =
+    let w = load_u64 word and now = now_ms () in
+    let still_since = if w <> seen then now else still_since in
+    let still = now - still_since in
+    let left = Atomic.get d.timeout_ms - still in
+    if reached w then true
+    else if left <= 0 then begin
+      sleep 1;
+      reached (load_u64 word)
+    end
+    else if still < sleep_after_ms then
+      wait_u64 word target (Int.min (sleep_after_ms - still) left) <> 0
+      || go w still_since
+    else begin
+      sleep (Int.min sleep_after_ms left);
+      go w still_since
+    end
+  in
+  let w = load_u64 word in
+  go w (now_ms ())
+
 let wait_signal d v =
   check d;
   match
-    match d.signal with
-    | Some s -> s.wait v ~timeout_ms:(Atomic.get d.timeout_ms)
-    | None ->
+    match (d.signal, d.sleep) with
+    | Some s, _ -> s.wait v ~timeout_ms:(Atomic.get d.timeout_ms)
+    | None, Some sleep -> poll d v sleep
+    | None, None ->
         wait_u64 (timeline_address d) (Int64.of_int v) (Atomic.get d.timeout_ms)
         <> 0
   with
@@ -477,15 +519,21 @@ let timeout d = Atomic.get d.timeout_ms
 (* [fits d max_int] fails whenever [d] caches anything. *)
 let free_cache d = with_devices [ d ] (fun () -> release_cache d max_int)
 
+(* At exit every device is finalized, a failed one too: its hardware may still
+   reach the memory the process is about to release. *)
 let () =
   at_exit (fun () ->
       List.iter
         (fun d ->
-          if Atomic.get d.failed = None then
-            try synchronize d
-            with e ->
-              Printf.eprintf "%s synchronization failed before exiting: %s\n%!"
-                d.name (Printexc.to_string e))
+          let report what e =
+            Printf.eprintf "%s %s failed before exiting: %s\n%!" d.name what
+              (Printexc.to_string e)
+          in
+          Mutex.protect d.lock (fun () ->
+              (if failed d = None then
+                 try sync d with e -> report "synchronization" e);
+              try d.finalize ~failed:(failed d <> None)
+              with e -> report "finalization" e))
         (Atomic.get opened))
 
 (* Buffers *)
@@ -1072,8 +1120,8 @@ let timeline d =
 (* Vendor runtimes *)
 
 let make ~name ~arch ~budget ~(memory : allocator) ?host_memory ?mapping
-    ?copy_queue ?load ?signal ?(timeout_ms = default_timeout_ms)
-    ?(synchronized = ignore) () =
+    ?copy_queue ?load ?signal ?sleep ?(timeout_ms = default_timeout_ms)
+    ?(synchronized = ignore) ?(finalize = fun ~failed:_ -> ()) () =
   let fail fmt =
     Printf.ksprintf (fun m -> invalid_arg ("Nx_device.make: " ^ m)) fmt
   in
@@ -1081,9 +1129,11 @@ let make ~name ~arch ~budget ~(memory : allocator) ?host_memory ?mapping
   if timeout_ms <= 0 then fail "timeout %d ms" timeout_ms;
   if Option.is_some copy_queue && Option.is_none mapping then
     fail "%s has a copy queue but maps no host memory" name;
+  if Option.is_some sleep && Option.is_some signal then
+    fail "%s sleeps on the signal word but signals in its own way" name;
   let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
   create ~name ~arch ~budget ~alloc ~free:memory.free ~host_memory ~mapping
-    ~copy_queue ~load ~signal ~timeout_ms ~synchronized
+    ~copy_queue ~load ~signal ~sleep ~timeout_ms ~synchronized ~finalize
 
 let external_buffer d m s n =
   if d == host then

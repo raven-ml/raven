@@ -98,7 +98,7 @@ let staging_bytes = 128 lsl 20
 let peer name = String.starts_with ~prefix:"PEER" name
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
-    ?signal ?load ?timeout_ms ?synchronized () =
+    ?signal ?load ?timeout_ms ?synchronized ?sleep ?finalize () =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -182,7 +182,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
       ?copy_queue:(if far then Some copy_queue else None)
       ?signal:
         (if far then Some queue_signal else Option.map (fun s _ -> s) signal)
-      ?load ?timeout_ms ?synchronized ()
+      ?load ?timeout_ms ?synchronized ?sleep ?finalize ()
   in
   { dev; drv }
 
@@ -1417,6 +1417,118 @@ let failures =
       test "memory that a failed wait could not free is retained" test_retained;
     ]
 
+(* Sleep and finalize *)
+
+(* A device that sleeps on its interrupts sleeps only once its signal word has
+   stayed still for 200 ms, and once more, briefly, before it is declared
+   hung. *)
+let test_sleep () =
+  let sleeps = ref [] in
+  let sleep ms = sleeps := ms :: !sleeps in
+  let d = (fake ~name:"SLEEPY" ~sleep ()).dev in
+  let v = Nx_device.submit d ~touches:[] Fun.id in
+  let word = B.host_address (Nx_device.timeline d) in
+  let late =
+    Domain.spawn (fun () ->
+        Unix.sleepf 0.7;
+        store_signal word v)
+  in
+  Nx_device.synchronize d;
+  Domain.join late;
+  is_true ~msg:"slept while still" (List.length !sleeps >= 2);
+  is_true ~msg:"for 200 ms each" (List.for_all (fun ms -> ms = 200) !sleeps);
+  sleeps := [];
+  let busy = (fake ~name:"BUSY" ~sleep ()).dev in
+  let word = B.host_address (Nx_device.timeline busy) in
+  let v =
+    List.fold_left
+      (fun _ _ -> Nx_device.submit busy ~touches:[] Fun.id)
+      0 (List.init 5 Fun.id)
+  in
+  let progress =
+    Domain.spawn (fun () ->
+        for k = 1 to v do
+          Unix.sleepf 0.1;
+          store_signal word k
+        done)
+  in
+  Nx_device.synchronize busy;
+  Domain.join progress;
+  equal ~msg:"no sleep while the word moves" (list int) [] !sleeps;
+  let still = (fake ~name:"STILL" ~sleep ~timeout_ms:500 ()).dev in
+  ignore (Nx_device.submit still ~touches:[] Fun.id);
+  raises (Failure "STILL hang detected") (fun () -> Nx_device.synchronize still);
+  equal ~msg:"a last brief sleep before the hang" int 1 (List.hd !sleeps)
+
+(* At exit every device finalizes, told whether it failed: a healthy one after
+   synchronizing, a failed one without, and one that hangs at exit once its
+   synchronization failed. The exit happens in a child process of this test. *)
+let finalize_child () =
+  let say name ~failed =
+    Printf.printf "%s finalized, failed %b\n" name failed
+  in
+  let healthy = (fake ~name:"HEALTHY" ~finalize:(say "HEALTHY") ()).dev in
+  ignore (Nx_device.submit healthy ~touches:[] Fun.id);
+  store_signal (B.host_address (Nx_device.timeline healthy)) 1;
+  let broken =
+    (fake ~name:"BROKEN" ~timeout_ms:50 ~finalize:(say "BROKEN") ()).dev
+  in
+  ignore (Nx_device.submit broken ~touches:[] Fun.id);
+  (try Nx_device.synchronize broken with Failure _ -> ());
+  let hanging =
+    (fake ~name:"HANGING" ~timeout_ms:50 ~finalize:(say "HANGING") ()).dev
+  in
+  ignore (Nx_device.submit hanging ~touches:[] Fun.id);
+  ignore (fake ~name:"RAISING" ~finalize:(fun ~failed:_ -> failwith "boom") ());
+  exit 0
+
+let test_finalize () =
+  let env =
+    Array.append [| "NX_DEVICE_FINALIZE_CHILD=1" |] (Unix.environment ())
+  in
+  let ic, oc, ec =
+    Unix.open_process_args_full Sys.executable_name [| Sys.executable_name |]
+      env
+  in
+  close_out oc;
+  let out = In_channel.input_all ic and err = In_channel.input_all ec in
+  ignore (Unix.close_process_full (ic, oc, ec));
+  equal ~msg:"every device finalizes" (list string)
+    [
+      "BROKEN finalized, failed true";
+      "HANGING finalized, failed true";
+      "HEALTHY finalized, failed false";
+    ]
+    (List.sort compare (String.split_on_char '\n' (String.trim out)));
+  contains ~msg:"a failed exit synchronization is reported"
+    ~sub:"HANGING synchronization failed" err;
+  contains ~msg:"a raising finalize is reported" ~sub:"boom" err
+
+let hooks =
+  group "sleep and finalize"
+    [
+      test
+        "a device sleeps on its interrupts once its signal word stays still, \
+         and once more before a hang"
+        test_sleep;
+      test "a fault found asleep fails the device with the driver's message"
+        (fun () ->
+          let sleep _ = failwith "page fault at 0x1000" in
+          let d = (fake ~name:"FAULTED" ~sleep ()).dev in
+          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          let fault = Failure "FAULTED: page fault at 0x1000" in
+          raises fault (fun () -> Nx_device.synchronize d);
+          raises fault (fun () -> B.create d S.UInt8 1));
+      test "a device that signals in its own way cannot sleep" (fun () ->
+          raises
+            (Invalid_argument
+               "Nx_device.make: NEAR sleeps on the signal word but signals in \
+                its own way") (fun () ->
+              fake ~signal:(signal (fun _ -> true)) ~sleep:ignore ()));
+      test "finalize runs at exit on every device, told whether it failed"
+        test_finalize;
+    ]
+
 let devices =
   group "devices"
     [
@@ -1434,6 +1546,7 @@ let devices =
     ]
 
 let () =
+  if Sys.getenv_opt "NX_DEVICE_FINALIZE_CHILD" = Some "1" then finalize_child ();
   exit
     (run "nx.device"
-       [ devices; memory; laws; buffers; refusals; timeline; failures ])
+       [ devices; memory; laws; buffers; refusals; timeline; failures; hooks ])

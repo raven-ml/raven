@@ -513,12 +513,14 @@ val make :
   ?copy_queue:(memory -> copy_queue) ->
   ?load:(binary:string -> name:string -> nativeint) ->
   ?signal:(memory -> signal) ->
+  ?sleep:(int -> unit) ->
   ?timeout_ms:int ->
   ?synchronized:(unit -> unit) ->
+  ?finalize:(failed:bool -> unit) ->
   unit ->
   t
 (** [make ~name ~arch ~budget ~memory ?host_memory ?mapping ?copy_queue ?load
-     ?signal ?timeout_ms ?synchronized ()] is a new device:
+     ?signal ?sleep ?timeout_ms ?synchronized ?finalize ()] is a new device:
     - [memory] allocates the device's own memory, and [host_memory] the host
       memory that its work addresses, for {!Buffer.create}[ ~host:true]: memory
       the host addresses. Without [host_memory], [memory] serves both, and the
@@ -538,18 +540,32 @@ val make :
     - [signal m] is how the device signals completion and is waited for, given
       [m], the memory of its {!timeline}. Without it, work signals by storing
       into the timeline's signal word, and waits poll it.
+    - [sleep ms], without [signal], runs once a wait has seen the signal word
+      stay still for 200 milliseconds, and again each time it returns while the
+      word stays still: it blocks for at most [ms] milliseconds, at most 200 and
+      never past the timeout, on the device's interrupts or events, and raises
+      [Failure] with the driver's message if the device reports a fault, which
+      fails the device. Before a wait declares the device hung, it runs once
+      more with [ms = 1], so a fault reported late still names its cause.
+      Without it, waits only poll.
     - [timeout_ms] is the device's initial {!timeout}. Defaults to [30_000].
       Without [signal], the timeout restarts whenever the signal word moves.
     - [synchronized ()] runs at the end of each synchronization of the device.
       Defaults to doing nothing.
+    - [finalize ~failed] runs once when the program exits, whether or not the
+      device has failed: after the device synchronized if it had not, with
+      [failed] telling whether it has failed by then. It leaves the hardware as
+      the next open of it expects and, for a failed device, at least stops the
+      device's access to the memory the process is about to release. An
+      exception it raises is printed and ignored. Defaults to doing nothing.
 
     These functions run while the device is taken, and must not use it through
     this module. Blocking driver calls should release the OCaml runtime.
 
     Raises [Invalid_argument] if [budget < 0], if [timeout_ms <= 0], if
-    [copy_queue] is given without [mapping], or if [host_memory] gives memory
-    the host does not address, and [Failure] if [host_memory] has no memory for
-    the timeline. *)
+    [copy_queue] is given without [mapping], if [sleep] is given with [signal],
+    or if [host_memory] gives memory the host does not address, and [Failure] if
+    [host_memory] has no memory for the timeline. *)
 
 val external_buffer : t -> memory -> Nx_dtype.Scalar.t -> int -> Buffer.t
 (** [external_buffer d m s n] is a borrowed buffer of [n] elements of format [s]

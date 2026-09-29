@@ -2757,6 +2757,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.make` takes `?sleep`, which lets a polling device block on its
+  interrupts once its signal word stays still and report the fault it finds,
+  and `?finalize`, which runs at exit on every device, failed or not.
 - `Nx_device.Buffer.create`, `Buffer.view` and `Nx_device.external_buffer`
   take every element count whose bytes fit in `max_int`, as documented. They
   refused counts whose bits overflowed, from an eighth of that size (such as
