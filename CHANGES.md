@@ -2805,6 +2805,10 @@ thread.
 
 ### Nx
 
+- New `Nx_device.Buffer.consume ~why b`: a buffer over `b`'s memory that
+  kills every earlier handle to it, whose use then raises
+  `Invalid_argument why`. `Buffer.spans` tells whether a buffer is all of its
+  memory, which consumption needs.
 - `Nx_device_support.Remote` bounds what it reads from a server: an answer
   announcing more than it can be fails the connection instead of allocating
   it, and a page size that is no power of two is refused at connection.

@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The field order of [memory], [base] and [Buffer.t] up to the fields
-   nx_device.h reads is its C ABI. *)
+(* The field order of [memory], [base], [life] and [Buffer.t] up to the
+   fields nx_device.h reads is its C ABI. *)
 type memory = {
   host : nativeint option;
   device : nativeint;
@@ -124,7 +124,14 @@ and base = {
       (* for a borrow, the host memory it maps, and the mapping *)
   links : links Atomic.t;
   file : file option; (* the file this memory maps, from its first byte *)
+  mutable life : life;
 }
+
+(* Whether a base's buffers may reach its memory. A consumed base is [Dead],
+   and the base its consumption made in its place, over the same memory, is its
+   [Heir]: it keeps the dead one, whose finaliser releases the memory,
+   reachable. *)
+and life = Live | Heir of base | Dead of string
 
 (* The other devices that reach a base's memory, changed together. *)
 and links = {
@@ -830,7 +837,14 @@ module Buffer = struct
   let length b = b.length
   let is_borrowed b = b.base.borrowed
   let ( +! ) a n = Nativeint.add a (Nativeint.of_int n)
-  let address b = b.base.memory.device +! b.offset
+
+  (* Raises unless [b]'s memory was not consumed since [b] was made. *)
+  let live b =
+    match b.base.life with Dead why -> invalid_arg why | Live | Heir _ -> ()
+
+  let address b =
+    live b;
+    b.base.memory.device +! b.offset
 
   (* [b]'s address in the address space of its machine's host, if that host
      addresses it. *)
@@ -838,6 +852,7 @@ module Buffer = struct
   let local b = host_of b.base.owner == host
 
   let host_address b =
+    live b;
     match hosted b with
     | Some a when local b -> a
     | Some _ ->
@@ -855,7 +870,10 @@ module Buffer = struct
   let handle b = b.base.memory.handle
 
   (* Raises the error of a failed device that can reach [b]'s memory. *)
-  let reachable b = Option.iter failwith (failure_of b.base)
+  let reachable b =
+    live b;
+    Option.iter failwith (failure_of b.base)
+
   let offset b = b.offset
 
   (* No byte of it is ever read or written, so the host addresses it. *)
@@ -874,6 +892,7 @@ module Buffer = struct
       source;
       links = Atomic.make { maps = []; reached = [] };
       file;
+      life = Live;
     }
 
   let empty ~borrowed d s n =
@@ -1002,6 +1021,7 @@ module Buffer = struct
         fmt
     in
     let h = host_of d in
+    live b;
     if not (b.base.owner == h) then
       fail "the buffer is on %s, not %s" b.base.owner.name h.name;
     if d == h then b
@@ -1059,6 +1079,18 @@ module Buffer = struct
         (Nx_dtype.Scalar.to_string s)
         size;
     { b with offset = b.offset + offset; dtype = s; length = n }
+
+  let spans b = b.offset = 0 && nbytes b = b.base.extent
+
+  let consume ~why b =
+    live b;
+    if not (spans b) then
+      invalid_arg
+        "Nx_device.Buffer.consume: the buffer is a window of its memory";
+    let base = b.base in
+    let heir = { base with life = Heir base } in
+    base.life <- Dead why;
+    { b with base = heir }
 
   let bigarray (type a b) (k : (a, b) Bigarray.kind) buf :
       (a, b, Bigarray.c_layout) Bigarray.Array1.t =

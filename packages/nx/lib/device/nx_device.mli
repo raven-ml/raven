@@ -287,6 +287,26 @@ module Buffer : sig
       inside [b]'s, or if its first byte is not aligned to the size of one
       element of [s]. *)
 
+  val spans : t -> bool
+  (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in, as
+      those of a buffer {!create} or {!of_bigarray} made are, and not those of a
+      {!view} of part of it. *)
+
+  val consume : why:string -> t -> t
+  (** [consume ~why b] is a buffer over [b]'s memory, and kills every other
+      buffer over that memory made before: [b] and its views. Reaching a dead
+      buffer's bytes ({!address}, {!host_address}, {!bigarray}, {!copy},
+      {!borrow}, {!Program.call}, or a kernel reading it) raises
+      [Invalid_argument why]. The result, and the views made of it, are live;
+      the memory stays owned or borrowed as [b]'s was.
+
+      A library that takes over memory it was handed, such as a compiled call
+      that writes its result over an argument, consumes the argument's buffer,
+      so that no earlier handle observes the new contents.
+
+      Raises [Invalid_argument] if [b] is dead or does not {!spans} its memory:
+      consuming a window of it would kill the rest. *)
+
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
       there. It first synchronizes the devices of [src] and [dst]. A copy

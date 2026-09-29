@@ -28,6 +28,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #if defined(_WIN32)
 #include <malloc.h>
@@ -435,6 +436,14 @@ typedef const char *nx_c_status;
 #define NX_C_ERR_SHAPE "shape mismatch"
 #define NX_C_ERR_EMPTY_REDUCE "reduction over empty axis has no identity"
 #define NX_C_ERR_ALLOC "out of memory"
+/* The operand's buffer was consumed: the raisers raise Invalid_argument with
+   the reason nx_c_consumed holds. */
+#define NX_C_ERR_CONSUMED "consumed buffer"
+
+/* Why the operand whose status is NX_C_ERR_CONSUMED was consumed, per thread:
+   nx_c_ndarray_of_value copies it here, as the reason is an OCaml string that
+   the raise's allocation may move. */
+extern _Thread_local char nx_c_consumed[256];
 
 /* Funnel raisers, implemented in nx_c_engine.c. Call ONLY with the runtime lock
    held (before caml_enter_blocking_section, or after re-acquiring). The op name
@@ -467,13 +476,19 @@ typedef struct {
    rooted by the funnel) needs no local rooting here. Never raises — validates
    rank cheaply and reports via status; the funnel raises on non-NULL. */
 static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
+  value v_buffer = Field(v, NX_C_FFI_DATA);
+  if (!nx_device_buffer_live(v_buffer)) {
+    snprintf(nx_c_consumed, sizeof nx_c_consumed, "%s",
+             nx_device_buffer_why(v_buffer));
+    return NX_C_ERR_CONSUMED;
+  }
   value v_view = Field(v, NX_C_FFI_VIEW);
   value v_shape = Field(v_view, NX_C_FFI_VIEW_SHAPE);
   value v_strides = Field(v_view, NX_C_FFI_VIEW_STRIDES);
   int ndim = (int)Wosize_val(v_shape);
   if (ndim > NX_C_MAX_NDIM) return NX_C_ERR_NDIM;
   if ((int)Wosize_val(v_strides) != ndim) return NX_C_ERR_RANK_MISMATCH;
-  out->data = nx_device_buffer_host(Field(v, NX_C_FFI_DATA));
+  out->data = nx_device_buffer_host(v_buffer);
   out->ndim = ndim;
   out->offset = Long_val(Field(v_view, NX_C_FFI_VIEW_OFFSET));
   for (int i = 0; i < ndim; i++) {

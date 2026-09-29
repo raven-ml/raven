@@ -969,6 +969,46 @@ let buffers =
   group "buffers"
     [
       test
+        "a consumed buffer's handles are dead, the buffer consume returns is \
+         live over the same bytes" (fun () ->
+          let b = of_string "abcdefgh" in
+          let before = B.view b ~offset:2 S.UInt8 4 in
+          let c = B.consume ~why:"taken" b in
+          let dead f =
+            raises (Invalid_argument "taken") (fun () -> ignore (f ()))
+          in
+          dead (fun () -> B.host_address b);
+          dead (fun () -> B.address before);
+          dead (fun () -> B.bigarray Bigarray.char b);
+          dead (fun () -> B.view b ~offset:0 S.UInt8 1);
+          dead (fun () -> B.copy ~src:before ~dst:(B.create host S.UInt8 4));
+          dead (fun () -> B.copy ~src:(of_string "abcdefgh") ~dst:b);
+          dead (fun () -> B.consume ~why:"again" b);
+          equal
+            (pair string string)
+            ("abcdefgh", "cdef")
+            (read c, read (B.view c ~offset:2 S.UInt8 4));
+          equal bool true (B.is_borrowed c));
+      test
+        "a buffer consumed twice: each dead handle names the consumption that \
+         killed it, and the memory stays owned" (fun () ->
+          let b = B.create host S.Float32 4 in
+          let c = B.consume ~why:"first" b in
+          let d = B.consume ~why:"second" c in
+          let dead why b =
+            raises (Invalid_argument why) (fun () -> ignore (B.host_address b))
+          in
+          dead "first" b;
+          dead "second" c;
+          equal (pair int bool) (4, false) (B.length d, B.is_borrowed d));
+      test "only a buffer that spans its memory can be consumed" (fun () ->
+          let b = B.create host S.UInt8 8 in
+          let window = B.view b ~offset:0 S.UInt8 4 in
+          equal (pair bool bool) (true, false) (B.spans b, B.spans window);
+          raises_match Exn.invalid_arg (fun () ->
+              ignore (B.consume ~why:"window" window));
+          equal bool true (B.spans (B.consume ~why:"whole" b)));
+      test
         "a buffer over a mapped file answers for it, as do its views and \
          borrows, and no other buffer does" (fun () ->
           let file =

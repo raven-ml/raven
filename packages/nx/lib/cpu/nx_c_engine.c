@@ -39,13 +39,19 @@
    caml_invalid_argument copy the message into an OCaml string, so a stack
    buffer is sufficient and nothing leaks. */
 
+_Thread_local char nx_c_consumed[256];
+
 void nx_c_raise(const char *op, nx_c_status status) {
+  if (status && strcmp(status, NX_C_ERR_CONSUMED) == 0)
+    caml_invalid_argument(nx_c_consumed);
   char buf[256];
   snprintf(buf, sizeof buf, "%s: %s", op, status ? status : "unknown error");
   caml_failwith(buf);
 }
 
 void nx_c_raise_invalid(const char *op, nx_c_status status) {
+  if (status && strcmp(status, NX_C_ERR_CONSUMED) == 0)
+    caml_invalid_argument(nx_c_consumed);
   char buf[256];
   snprintf(buf, sizeof buf, "%s: %s", op, status ? status : "invalid argument");
   caml_invalid_argument(buf);

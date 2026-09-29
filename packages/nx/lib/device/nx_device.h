@@ -29,6 +29,20 @@ static inline void *nx_device_buffer_host(value b) {
   return (char *)Nativeint_val(Field(host, 0)) + Long_val(Field(b, 1));
 }
 
+/* Whether the Nx_device.Buffer.t [b] is live: its memory was not consumed
+   (Nx_device.Buffer.consume) since [b] was made. [base]'s [life] (slot 10) is
+   [Live], an immediate, [Heir] (tag 0) or [Dead] (tag 1). */
+static inline int nx_device_buffer_live(value b) {
+  value life = Field(Field(b, 0), 10);
+  return Is_long(life) || Tag_val(life) != 1;
+}
+
+/* Why the dead Nx_device.Buffer.t [b] was consumed: [Dead]'s string, valid
+   until the next allocation. */
+static inline const char *nx_device_buffer_why(value b) {
+  return String_val(Field(Field(Field(b, 0), 10), 0));
+}
+
 /* The host clock: nanoseconds of the monotonic clock that
    Nx_device.Profile.now reads, and that the timestamps of a device of
    Nx_device.Host_clock are readings of. On macOS it is mach time, Metal's
