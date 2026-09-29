@@ -1508,6 +1508,11 @@ module Buffer = struct
            match Atomic.get profile with
            | None -> move ~timed:false route ~src ~dst n
            | Some c -> profiled c route ~src ~dst n);
+        (* A borrow's memory is its host's, which the copy counts in. *)
+        let holder b =
+          match b.base.source with Some (m, _) -> m.owner | None -> device b
+        in
+        let s = holder src and d = holder dst in
         if d != s then begin
           s.bytes_out <- s.bytes_out + n;
           d.bytes_in <- d.bytes_in + n

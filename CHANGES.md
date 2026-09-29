@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.copy` counts a copy through a borrow as traffic of the
+  host, whose memory a borrow is. It counted it in the borrowing device's
+  `bytes_in` and `bytes_out`, although borrowed memory is never counted in a
+  device's statistics.
 - `Nx_device.Buffer.borrow` refuses every host buffer `create` made of fewer
   than 64 KiB. It borrowed one when the allocator happened to place it on a
   page, so the same program borrowed on one run or machine and raised on

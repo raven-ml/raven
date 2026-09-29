@@ -331,9 +331,13 @@ module Model = struct
     r.holding.holders <- r.holding.holders + 1;
     { r with off = r.off + offset; dtype = s; length = n; dropped = false }
 
+  (* A host buffer that create made of fewer than 64 KiB is refused, wherever it
+     starts. *)
   let borrow d r =
     alive r;
-    if r.device <> None || d.name = "NEAR" then invalid_arg "borrow";
+    if
+      r.device <> None || d.name = "NEAR" || (size r > 0 && not r.memory.on_page)
+    then invalid_arg "borrow";
     let maps = if size r > 0 then Some r.memory else None in
     let mapped = mappings d in
     let holding = { owned = 0; holders = 1; maps } in
@@ -351,13 +355,16 @@ module Model = struct
       dropped = false;
     }
 
+  (* The device whose memory [r] is: a borrow's is its host's. *)
+  let holder r = if r.borrowed then None else r.device
+
   let fill r s =
     String.iteri (fun i c -> r.memory.cells.(r.off + i) <- Char.code c) s
 
   let write seed r =
     alive r;
     fill r (pattern seed (size r));
-    Option.iter (fun d -> d.bytes_in <- d.bytes_in + size r) r.device
+    Option.iter (fun d -> d.bytes_in <- d.bytes_in + size r) (holder r)
 
   (* A copy reads all of its source first: a borrow and the memory it borrows
      are two buffers, which may overlap. *)
@@ -371,15 +378,15 @@ module Model = struct
     let cells = Array.sub src.memory.cells src.off n in
     Array.blit cells 0 dst.memory.cells dst.off n;
     let between =
-      match (src.device, dst.device) with
+      match (holder src, holder dst) with
       | Some a, Some b -> a != b
       | a, b -> Option.is_some a || Option.is_some b
     in
     cover "a copy between devices" (n > 0 && between);
     cover "a copy within one memory" (n > 0 && src.memory == dst.memory);
     if between then begin
-      Option.iter (fun s -> s.bytes_out <- s.bytes_out + n) src.device;
-      Option.iter (fun d -> d.bytes_in <- d.bytes_in + n) dst.device
+      Option.iter (fun s -> s.bytes_out <- s.bytes_out + n) (holder src);
+      Option.iter (fun d -> d.bytes_in <- d.bytes_in + n) (holder dst)
     end
 
   (* The [n] bytes at [a] in a buffer of [src] bytes and at [b] in one of [dst]
@@ -619,11 +626,9 @@ let commands =
         cached d.fake.dev);
   ]
   @
-  (* A small host buffer may start on a page by chance, and then borrows. Listed
-     twice, so that memory is often borrowed again. *)
+  (* Listed twice, so that memory is often borrowed again. *)
   let borrow =
     command "borrow"
-      ~pre:(fun _ (r : Model.buffer) -> r.device <> None || r.memory.on_page)
       (dev ^-> buf ^-> makes buf)
       Model.borrow
       (fun d s -> some (B.borrow d.fake.dev (get s)))
@@ -637,8 +642,7 @@ let memory =
         "buffers hold what was written through them and their views, and \
          devices hold their live buffers and cache within their budget and \
          count what is copied (nx_device.mli is silent on the alignment of a \
-         new buffer: 16 bytes assumed; and on copies through a borrow: they \
-         count as copies of its device)"
+         new buffer: 16 bytes assumed)"
         commands;
       test
         "four domains create, write and read buffers of one device at once, \

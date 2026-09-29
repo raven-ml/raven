@@ -312,8 +312,9 @@ module Buffer : sig
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
       there. It first synchronizes the devices of [src] and [dst]. A copy
-      between two devices counts in [src]'s [bytes_out] and in [dst]'s
-      [bytes_in].
+      between the memory of two devices counts in the [bytes_out] of the device
+      whose memory [src] is and in the [bytes_in] of [dst]'s; a borrow's memory
+      is its host's.
 
       Between memory that the host addresses, the host copies the bytes.
       Otherwise a device copies them on its copy queue, as work on its timeline:
