@@ -8,7 +8,7 @@
   test_nx_placement
   test_nx_fft
   test_nx_fft_oracle
-  test_nx_rng
+  test_rng
   test_nx_stft
   test_ptree
   test_values
