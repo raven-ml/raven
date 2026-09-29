@@ -969,6 +969,169 @@ let test_staged_slots () =
     (String.sub bytes (2 * slot) 100)
     (read tail)
 
+(* The disk *)
+
+let disk = Nx_device.disk
+
+(* A file holding [contents]. *)
+let file_of contents =
+  let path = temp_file () in
+  Out_channel.with_open_bin path (fun oc -> output_string oc contents);
+  path
+
+(* The bytes of the file at [path], read with the system's reads. *)
+let contents path = In_channel.with_open_bin path In_channel.input_all
+
+let transferred d =
+  let s = stats d in
+  Nx_device.Stats.(bytes_in s, bytes_out s)
+
+(* A copy between a file and host memory, both ways, of more bytes than one read
+   or write request moves, from and to an odd offset. *)
+let test_file_round_trip () =
+  let n = (5 lsl 20) + 12345 and at = 4097 in
+  let bytes = pattern 3 n in
+  let path = temp_file () in
+  let file = B.create_file path (at + n + 3) in
+  write (B.view file ~offset:at S.UInt8 n) bytes;
+  let on_disk = contents path in
+  equal ~msg:"the file" int (at + n + 3) (String.length on_disk);
+  equal ~msg:"bytes written" string bytes (String.sub on_disk at n);
+  equal ~msg:"around them" string
+    (String.make at '\000' ^ String.make 3 '\000')
+    (String.sub on_disk 0 at ^ String.sub on_disk (at + n) 3);
+  equal ~msg:"bytes read" string bytes
+    (read (B.view (B.of_file path) ~offset:at S.UInt8 n))
+
+(* Through a device whose memory the host does not address: the file's bytes are
+   read into staging slots that the device copies, and a device's written from
+   them. *)
+let test_file_staged () =
+  let f = far () in
+  let slot = 64 lsl 20 in
+  let n = (2 * slot) + (slot / 2) + 12345 and at = 1001 in
+  let bytes = pattern 5 n in
+  let file =
+    B.view (B.create_file (temp_file ()) (at + n)) ~offset:at S.UInt8 n
+  in
+  let dev = B.create f.dev S.UInt8 n in
+  write dev bytes;
+  let staged = f.drv.staged in
+  B.copy ~src:dev ~dst:file;
+  equal ~msg:"slots written from the device" int 3 (f.drv.staged - staged);
+  let back = B.create f.dev S.UInt8 n in
+  B.copy ~src:file ~dst:back;
+  equal ~msg:"slots read into the device" int 6 (f.drv.staged - staged);
+  let other = B.create_file (temp_file ()) n in
+  B.copy ~src:file ~dst:other;
+  is_true ~msg:"bytes through the device and back" (read back = bytes);
+  is_true ~msg:"bytes from file to file" (read other = bytes)
+
+let test_file_closes () =
+  let path = file_of "old" in
+  let b = B.of_file path in
+  let replacement = file_of "new" in
+  Sys.rename replacement path;
+  equal ~msg:"the file opened" string "old" (read b);
+  equal ~msg:"the file now at its path" string "new" (read (B.of_file path));
+  if not Sys.win32 then begin
+    let descriptors () = Array.length (Sys.readdir "/dev/fd") in
+    Gc.full_major ();
+    Nx_device.synchronize disk;
+    let before = descriptors () in
+    let opened = List.init 20 (fun _ -> B.of_file path) in
+    equal ~msg:"open" int (before + 20) (descriptors ());
+    ignore (Sys.opaque_identity opened);
+    Gc.full_major ();
+    Nx_device.synchronize disk;
+    equal ~msg:"closed" int before (descriptors ())
+  end
+
+(* A borrow of a file's bytes is its mapping: the host and a device that maps
+   host memory read the file's bytes in place, a write through it stays in the
+   process, and the mapping outlives the file's buffers while it is borrowed. *)
+let test_file_borrows () =
+  let sharing = fake ~name:"SHARING" ~maps:true () in
+  let bytes = pattern 7 (3 * page) in
+  let path = file_of bytes in
+  let read_before = Nx_device.Stats.bytes_out (stats disk) in
+  let on_host, on_device =
+    let file = B.of_file path in
+    let window = B.view file ~offset:page S.UInt8 page in
+    (B.borrow host window, B.borrow sharing.dev window)
+  in
+  Gc.full_major ();
+  Nx_device.synchronize disk;
+  equal ~msg:"the host's" string (String.sub bytes page page) (read on_host);
+  equal ~msg:"a device's" string (String.sub bytes page page) (read on_device);
+  equal ~msg:"bytes read" int read_before
+    (Nx_device.Stats.bytes_out (stats disk));
+  let pages = B.bigarray Bigarray.char on_host in
+  pages.{0} <- 'z';
+  equal ~msg:"a write, through the device's" char 'z' (read on_device).[0];
+  equal ~msg:"and not in the file" string bytes (contents path)
+
+let disks =
+  group "disk"
+    [
+      test "DISK has no processor and a budget of max_int" (fun () ->
+          equal (triple string string int) ("DISK", "", max_int)
+            (Nx_device.name disk, Nx_device.arch disk, Nx_device.budget disk));
+      test "a file is its bytes on DISK, borrowed, which a copy reads"
+        (fun () ->
+          let b = B.of_file (file_of "hello world") in
+          equal
+            (quad string bool int string)
+            ("DISK", true, 11, "hello world")
+            (Nx_device.name (B.device b), B.is_borrowed b, B.length b, read b);
+          equal ~msg:"a view" string "world"
+            (read (B.view b ~offset:6 S.UInt8 5)));
+      test "a new file is zero until a copy writes it, at any offset" (fun () ->
+          let path = temp_file () in
+          let b = B.create_file path 10 in
+          equal ~msg:"zeros" string (String.make 10 '\000') (read b);
+          write (B.view b ~offset:3 S.UInt8 5) "abcde";
+          equal string "\000\000\000abcde\000\000" (contents path);
+          equal ~msg:"read again" string (contents path) (read (B.of_file path)));
+      test "a view of a file's bytes is of any format, at any byte" (fun () ->
+          let bytes = pattern 9 64 in
+          let f = B.view (B.of_file (file_of bytes)) ~offset:3 S.Float32 4 in
+          let h = B.create host S.Float32 4 in
+          B.copy ~src:f ~dst:h;
+          equal string (String.sub bytes 3 16)
+            (read (B.view h ~offset:0 S.UInt8 16)));
+      test "a copy of a file's bytes to or from memory moves every byte"
+        test_file_round_trip;
+      test
+        "a copy through a device that the host does not address goes through \
+         staging, and file to file too"
+        test_file_staged;
+      test
+        "a read counts in DISK's bytes_out and a write in its bytes_in, \
+         allocating nothing" (fun () ->
+          let b = B.create_file (temp_file ()) 8 in
+          let (i0, o0), (hi0, ho0) = (transferred disk, transferred host) in
+          write b "abcdefgh";
+          ignore (read (B.view b ~offset:2 S.UInt8 3));
+          let (i1, o1), (hi1, ho1) = (transferred disk, transferred host) in
+          equal (list int) [ 8; 3; 3; 8; 0 ]
+            [ i1 - i0; o1 - o0; hi1 - hi0; ho1 - ho0; allocated disk ]);
+      test
+        "a file is read through the descriptor it was opened with, which \
+         closes once its buffers are collected"
+        test_file_closes;
+      test
+        "a borrow of a file's bytes is its pages, copy-on-write, kept while \
+         borrowed"
+        test_file_borrows;
+      test "a read past the end of a file truncated since, naming it" (fun () ->
+          let path = file_of (String.make 10 'x') in
+          let b = B.of_file path in
+          Unix.truncate path 4;
+          raises_match (Exn.failure ~substring:path) (fun () ->
+              read (B.view b ~offset:2 S.UInt8 5)));
+    ]
+
 let buffers =
   group "buffers"
     [
@@ -1143,7 +1306,6 @@ let refusals =
   let rejecting () =
     (fake ~load:(fun ~binary:_ ~name:_ -> failwith "rejected") ()).dev
   in
-  let file = { B.path = "/f"; size = 7; mtime = 0.; inode = 0 } in
   let raise_ ?(exn = Exn.invalid_arg ?substring:None) name f =
     (name, fun () -> raises_match exn (fun () -> ignore (f ())))
   in
@@ -1185,8 +1347,6 @@ let refusals =
       raise_ "a bigarray of Nativeint" (fun () ->
           B.of_bigarray
             (Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 1));
-      raise_ "a file whose size is not its bigarray's" (fun () ->
-          B.of_bigarray ~file (chars 8));
       raise_ "a bigarray of Int over a buffer" (fun () ->
           B.bigarray Bigarray.int (B.create host S.Int64 1));
       raise_ "a bigarray over a device's buffer" (fun () ->
@@ -1212,6 +1372,29 @@ let refusals =
       raise_ ~exn:(Exn.failure ~substring:"rejected")
         "a program its driver rejects, with its message" (fun () ->
           Nx_device.Program.load (rejecting ()) ~binary:"lib" ~name:"f");
+      raise_ "a buffer of DISK made by create" (fun () ->
+          B.create Nx_device.disk S.UInt8 1);
+      raise_ "external memory on DISK" (fun () ->
+          Nx_device.external_buffer Nx_device.disk unaddressed S.UInt8 1);
+      raise_ "a new file of -1 bytes" (fun () ->
+          B.create_file (temp_file ()) (-1));
+      raise_ ~exn:(Exn.sys_error ~substring:"missing")
+        "a file that does not exist, naming it" (fun () ->
+          B.of_file (Filename.concat (temp_dir ()) "missing"));
+      raise_ ~exn:(Exn.sys_error ~substring:"not a regular file") "a directory"
+        (fun () -> B.of_file (temp_dir ()));
+      raise_ "a copy into a file opened for reading" (fun () ->
+          B.copy ~src:(of_string "a") ~dst:(B.of_file (file_of "b")));
+      raise_ "a bigarray over a file's bytes" (fun () ->
+          B.bigarray Bigarray.char (B.of_file (file_of "a")));
+      raise_ "the host address of a file's bytes" (fun () ->
+          B.host_address (B.of_file (file_of "a")));
+      raise_ "a borrow of a file's bytes by a device apart from the host"
+        (fun () -> B.borrow far_one.dev (B.of_file (file_of "a")));
+      raise_ "a borrow of a file's bytes not aligned to their elements"
+        (fun () ->
+          B.borrow host
+            (B.view (B.of_file (file_of "abcdef")) ~offset:1 S.Int16 2));
     ]
     (fun (_, check) -> check ())
 
@@ -2508,6 +2691,7 @@ let () =
          memory;
          laws;
          buffers;
+         disks;
          refusals;
          timeline;
          failures;

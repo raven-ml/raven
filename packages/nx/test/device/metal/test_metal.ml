@@ -133,6 +133,42 @@ let memory =
           equal (pair int int)
             (B.nbytes b, B.nbytes b)
             Nx_device.Stats.(bytes_in d, bytes_out d));
+      test
+        "a file's bytes are read straight into its memory and written from it, \
+         with no work on its timeline" (fun () ->
+          let n = (3 lsl 20) + 12345 in
+          let bytes = pattern 11 n in
+          let path = temp_file () in
+          Out_channel.with_open_bin path (fun oc -> output_string oc bytes);
+          let b =
+            B.view (B.create metal S.UInt8 (n + 16)) ~offset:16 S.UInt8 n
+          in
+          let v = Nx_device.submitted metal in
+          B.copy ~src:(B.of_file path) ~dst:b;
+          is_true ~msg:"read" (read b = bytes);
+          let out = temp_file () in
+          B.copy ~src:b ~dst:(B.create_file out n);
+          is_true ~msg:"written"
+            (In_channel.with_open_bin out In_channel.input_all = bytes);
+          equal ~msg:"work submitted" int v (Nx_device.submitted metal));
+      test "a borrow of a file's bytes is the file's pages, read where they lie"
+        (fun () ->
+          let bytes = pattern 13 ((1 lsl 20) + 4099) in
+          let path = temp_file () in
+          Out_channel.with_open_bin path (fun oc -> output_string oc bytes);
+          let before = Nx_device.stats Nx_device.disk in
+          let b =
+            B.borrow metal
+              (B.view (B.of_file path) ~offset:4 S.UInt8
+                 (String.length bytes - 4))
+          in
+          equal (pair bool string) (true, "METAL")
+            (B.is_borrowed b, Nx_device.name (B.device b));
+          is_true ~msg:"its bytes"
+            (read b = String.sub bytes 4 (String.length bytes - 4));
+          equal ~msg:"bytes read from the file" int 0
+            Nx_device.Stats.(
+              bytes_out (diff before (Nx_device.stats Nx_device.disk))));
       test "a borrow of host memory shares its bytes" (fun () ->
           let whole = B.create Nx_device.host S.UInt8 page in
           let host = B.view whole ~offset:37 S.UInt8 5 in

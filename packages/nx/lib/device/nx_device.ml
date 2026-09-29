@@ -125,6 +125,7 @@ and base = {
   links : links Atomic.t;
   file : file option; (* the file this memory maps, from its first byte *)
   mutable life : life;
+  opened : opened option; (* on the disk, the file *)
 }
 
 (* Whether a base's buffers may reach its memory. A consumed base is [Dead], and
@@ -145,6 +146,10 @@ and links = {
    [borrows] changes only with the device taken. *)
 and mapped = { on : t; mapped : memory; mutable borrows : int }
 and program = { p_device : t; p_name : string; p_handle : nativeint }
+
+(* A file a disk buffer is over: its memory's handle is the descriptor. Its
+   pages are the host memory of its mapping, made at its first borrow. *)
+and opened = { path : string; writable : bool; mutable pages : base option }
 
 (* A program that its device can release is cached weakly, and released once
    unreachable; the others are kept for the device's life. *)
@@ -231,6 +236,42 @@ external now_ms : unit -> (int[@untagged])
   = "caml_nx_device_now_ms_byte" "caml_nx_device_now_ms"
 [@@noalloc]
 
+(* Files *)
+
+external file_open : string -> bool -> int -> int * nativeint * int
+  = "caml_nx_device_file_open"
+
+external file_close : nativeint -> unit = "caml_nx_device_file_close"
+
+external file_read :
+  (nativeint[@unboxed]) ->
+  (int[@untagged]) ->
+  (nativeint[@unboxed]) ->
+  (int[@untagged]) ->
+  (int[@untagged]) = "caml_nx_device_file_read_byte" "caml_nx_device_file_read"
+
+external file_write :
+  (nativeint[@unboxed]) ->
+  (int[@untagged]) ->
+  (nativeint[@unboxed]) ->
+  (int[@untagged]) ->
+  (int[@untagged])
+  = "caml_nx_device_file_write_byte" "caml_nx_device_file_write"
+
+external error_message : int -> string = "caml_nx_device_error_message"
+
+external file_map :
+  nativeint ->
+  int ->
+  int * (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  = "caml_nx_device_file_map"
+
+external file_advise : nativeint -> int -> int -> unit
+  = "caml_nx_device_file_advise"
+
+(* The codes [file_open] gives, besides the system's. *)
+let not_regular = -1
+let too_many = -2
 let page = page_size ()
 
 (* [shared ba] is [ba] with the proxy of its storage made. The runtime makes a
@@ -420,11 +461,28 @@ let host =
     ~finalize:(fun ~failed:_ -> ())
     ~clock:Host_clock ~resolve:ignore
 
+(* The disk's buffers are files, which it opens and never allocates. It has no
+   processor. *)
+let disk =
+  let alloc _ = assert false in
+  create ~name:"DISK" ~arch:"" ~machine:(Some host) ~io:None ~budget:max_int
+    ~alloc ~free:ignore ~host_memory:None ~mapping:None ~copy_queue:None
+    ~load:None ~call:None ~link:None ~dma:None ~signal:None ~sleep:None
+    ~timeout_ms:default_timeout_ms ~synchronized:ignore
+    ~finalize:(fun ~failed:_ -> ())
+    ~clock:Host_clock ~resolve:ignore
+
 let name d = d.name
 let arch d = d.arch
 let equal = ( == )
 let budget d = d.budget
 let host_of d = match d.machine with Some h -> h | None -> d
+
+let shares_host_memory d =
+  d == host
+  || host_of d == host
+     && Option.is_none d.copy_queue
+     && Option.is_some d.mapping
 
 (* How the process reaches the memory of [d]'s machine: [None] on this one. *)
 let io_of d = (host_of d).io
@@ -686,6 +744,9 @@ let reclaim d =
           | Some (src, m) ->
               m.borrows <- m.borrows - 1;
               if m.borrows = 0 then emptied := (src, m) :: !emptied
+          | None when Option.is_some b.opened ->
+              (* No read or write of a file outlives the copy that made it. *)
+              file_close b.memory.handle
           | None when (Atomic.get b.links).reached <> [] ->
               (* Another device's work may still write it. *)
               ignore (Atomic.fetch_and_add d.allocated (-b.bytes));
@@ -808,6 +869,8 @@ module Buffer = struct
     inode : int;
   }
 
+  type device = t
+
   type t = buffer = {
     base : base;
     offset : int; (* bytes into [base.memory] *)
@@ -879,7 +942,7 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; device = 0n; handle = 0n }
 
-  let base ?(bytes = 0) ?(pinned = false) ?source ?file ~borrowed ~keep ~extent
+  let base ?(bytes = 0) ?(pinned = false) ?source ?file ?opened ~borrowed ~keep ~extent
       d memory =
     {
       owner = d;
@@ -892,6 +955,7 @@ module Buffer = struct
       source;
       links = Atomic.make { maps = []; reached = [] };
       file;
+      opened;
       life = Live;
     }
 
@@ -925,7 +989,15 @@ module Buffer = struct
     Gc.full_major ();
     host_heap n ~collected:true
 
+  let not_files fn =
+    invalid_arg
+      (Printf.sprintf
+         "Nx_device.%s: DISK buffers are files: open one with Buffer.of_file \
+          or Buffer.create_file"
+         fn)
+
   let create ?host:(pinned = false) d s n =
+    if d == disk then not_files "Buffer.create";
     match checked_nbytes "create" s n with
     | 0 -> empty ~borrowed:false d s n
     | bytes when d == host ->
@@ -1011,17 +1083,70 @@ module Buffer = struct
           (f, Nativeint.to_int (Nativeint.sub a (Option.get base.memory.host)))
     | _ -> None
 
+  (* A file is opened with the disk taken, so that the descriptors of the files
+     already collected are closed first. An open refused for too many open files
+     collects the unreachable buffers, whose descriptors the collector cannot
+     see, and tries once more. *)
+  let open_file path ~create n =
+    let rec go ~collected =
+      match file_open path create n with
+      | 0, fd, size -> (fd, size)
+      | code, _, _ when code = too_many && not collected ->
+          Gc.full_major ();
+          reclaim disk;
+          go ~collected:true
+      | code, _, _ when code = not_regular ->
+          raise (Sys_error (path ^ ": not a regular file"))
+      | code, _, _ when code = too_many ->
+          raise (Sys_error (path ^ ": too many open files"))
+      | code, _, _ -> raise (Sys_error (path ^ ": " ^ error_message code))
+    in
+    let fd, size = with_devices [ disk ] (fun () -> go ~collected:false) in
+    let memory = { host = None; device = 0n; handle = fd } in
+    let base =
+      base ~borrowed:true ~keep:(Keep ())
+        ~opened:{ path; writable = create; pages = None }
+        ~extent:size disk memory
+    in
+    Gc.finalise (release disk) base;
+    { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length = size }
+
+  let of_file path = open_file path ~create:false 0
+
+  let create_file path n =
+    if n < 0 then
+      invalid_arg (Printf.sprintf "Nx_device.Buffer.create_file: %d bytes" n);
+    open_file path ~create:true n
+
+  let file_of b = Option.get b.base.opened
+
+  (* A file's pages are its mapping on the host, made once and kept with the
+     file. *)
+  let pages b =
+    let f = file_of b in
+    with_devices [ disk ] (fun () ->
+        match f.pages with
+        | Some base -> base
+        | None -> (
+            match file_map b.base.memory.handle b.base.extent with
+            | 0, ba ->
+                let base =
+                  base ~borrowed:true ~keep:(Host ba) ~extent:b.base.extent host
+                    (heap_memory ba)
+                in
+                f.pages <- Some base;
+                base
+            | code, _ -> failwith (f.path ^ ": " ^ error_message code)))
+
+  let borrow_fail fmt =
+    Printf.ksprintf (fun m -> invalid_arg ("Nx_device.Buffer.borrow: " ^ m)) fmt
+
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory
      of another buffer then never shares its pages. *)
-  let borrow d b =
-    let fail fmt =
-      Printf.ksprintf
-        (fun m -> invalid_arg ("Nx_device.Buffer.borrow: " ^ m))
-        fmt
-    in
+  let borrow_host d b =
+    let fail fmt = borrow_fail fmt in
     let h = host_of d in
-    live b;
     if not (b.base.owner == h) then
       fail "the buffer is on %s, not %s" b.base.owner.name h.name;
     if d == h then b
@@ -1072,6 +1197,31 @@ module Buffer = struct
           Gc.finalise (release d) base;
           { base; offset = skip + b.offset; dtype = b.dtype; length = b.length }
 
+  (* A file's bytes are borrowed from its pages, by devices that share the
+     host's memory. *)
+  let borrow_file d b =
+    let fail fmt = borrow_fail fmt in
+    let f = file_of b in
+    if not (shares_host_memory d) then
+      fail "%s does not share the host's memory: copy %s's bytes to it" d.name
+        f.path;
+    let size = Int.max 1 (Nx_dtype.Scalar.bitsize b.dtype / 8) in
+    if b.offset mod size <> 0 then
+      fail "byte %d of %s is not aligned to %s's %d bytes" b.offset f.path
+        (Nx_dtype.Scalar.to_string b.dtype)
+        size;
+    if nbytes b = 0 then empty ~borrowed:true d b.dtype b.length
+    else begin
+      (* A device faulting a file's pages in reads a few times slower than the
+         disk; the host reads them as it needs them. *)
+      if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
+      borrow_host d { b with base = pages b }
+    end
+
+  let borrow d b =
+    live b;
+    if b.base.owner == disk then borrow_file d b else borrow_host d b
+
   let view b ~offset s n =
     let fail fmt =
       Printf.ksprintf (fun m -> invalid_arg ("Nx_device.Buffer.view: " ^ m)) fmt
@@ -1081,8 +1231,12 @@ module Buffer = struct
     if offset > nbytes b - bytes then
       fail "%d bytes at offset %d do not fit in %d bytes" bytes offset
         (nbytes b);
+    (* A file's bytes are read and written at any offset. *)
     let size = Int.max 1 (Nx_dtype.Scalar.bitsize s / 8) in
-    if Nativeint.rem (address b +! offset) (Nativeint.of_int size) <> 0n then
+    if
+      b.base.owner != disk
+      && Nativeint.rem (address b +! offset) (Nativeint.of_int size) <> 0n
+    then
       fail "offset %d is not aligned to %s's %d bytes" offset
         (Nx_dtype.Scalar.to_string s)
         size;
@@ -1210,6 +1364,15 @@ module Buffer = struct
   let length_of n i = Int.min chunk (n - (i * chunk))
   let slot i = i land 1 * chunk
 
+  (* Runs [f], the host's side of a copy of [e]: if it raises, [e]'s copies are
+     waited for first, so that none outlives the call. *)
+  let settled e f =
+    match f () with
+    | () -> ()
+    | exception ex ->
+        wait_signal e (submitted e);
+        raise ex
+
   (* The host fills one slot while [e] copies the other: [fill a pos len] puts
      the [len] bytes of the source from its byte [pos] at [a], in the memory of
      [e]'s host. *)
@@ -1218,7 +1381,7 @@ module Buffer = struct
     let last = [| 0; 0 |] in
     for i = 0 to chunks n - 1 do
       if i >= 2 then wait_signal e last.(i land 1);
-      fill (at +! slot i) (i * chunk) (length_of n i);
+      settled e (fun () -> fill (at +! slot i) (i * chunk) (length_of n i));
       last.(i land 1) <-
         enqueue_copy ~timed ~first:(i = 0)
           ~last:(i = chunks n - 1)
@@ -1250,7 +1413,7 @@ module Buffer = struct
     fill 1;
     for i = 0 to chunks n - 1 do
       wait_signal e last.(i land 1);
-      drain (at +! slot i) (i * chunk) (length_of n i);
+      settled e (fun () -> drain (at +! slot i) (i * chunk) (length_of n i));
       fill (i + 2)
     done
 
@@ -1374,6 +1537,53 @@ module Buffer = struct
       from_host ~timed ~first ~last dst ~pos len k
     done
 
+  (* [read b ~pos a n] reads the [n] bytes of the disk buffer [b] from its byte
+     [pos] into host memory at [a]. *)
+  let read b ~pos a n =
+    let f = file_of b and at = b.offset + pos in
+    match file_read b.base.memory.handle at a n with
+    | k when k = n -> ()
+    | k when k >= 0 ->
+        failwith
+          (Printf.sprintf "%s: the file ends at byte %d, before byte %d" f.path
+             (at + k) (at + n))
+    | code -> failwith (f.path ^ ": " ^ error_message (-code))
+
+  (* [write b ~pos a n] writes the [n] bytes of host memory at [a] into the disk
+     buffer [b] from its byte [pos]. *)
+  let write b ~pos a n =
+    let f = file_of b in
+    let code = file_write b.base.memory.handle (b.offset + pos) a n in
+    if code < 0 then failwith (f.path ^ ": " ^ error_message (-code))
+
+  (* A copy from or to the disk reads or writes its file: straight from or into
+     memory the host addresses, and through the host's staging memory otherwise,
+     which the device of the other buffer copies to or from. *)
+  let file_copy ~timed ~src ~dst n =
+    match (device src == disk, device dst == disk) with
+    | true, true ->
+        let a = slots host in
+        for i = 0 to chunks n - 1 do
+          read src ~pos:(i * chunk) a (length_of n i);
+          write dst ~pos:(i * chunk) a (length_of n i)
+        done
+    | true, false -> (
+        match hosted dst with
+        | Some a -> read src ~pos:0 a n
+        | None ->
+            let e = device dst in
+            stage_in ~timed e (queue e)
+              ~fill:(fun a pos len -> read src ~pos a len)
+              ~dst:(address dst) n)
+    | false, _ -> (
+        match hosted src with
+        | Some a -> write dst ~pos:0 a n
+        | None ->
+            let e = device src in
+            stage_out ~timed e (queue e) ~src:(address src)
+              ~drain:(fun a pos len -> write dst ~pos a len)
+              n)
+
   (* The first device with a link that carries a copy of [src] into [dst]. *)
   let link_for ~src ~dst =
     List.find_map
@@ -1391,6 +1601,8 @@ module Buffer = struct
     | Bounce
     | Across
     | Link of link
+    | File of device option
+  (* from or to the disk, staged by the device whose copy queue it names *)
 
   (* The route of a copy of [src] into [dst], and the devices it takes besides
      the two: the hosts whose staging memory or [io] it uses, a link's
@@ -1399,7 +1611,13 @@ module Buffer = struct
     let s = device src and d = device dst in
     let h = host_of s in
     let remote = if Option.is_some h.io then [ h ] else [] in
-    if h != host_of d then
+    if s == disk || d == disk then
+      let other = if s == disk then dst else src in
+      let e = device other in
+      if e == disk then (File None, [ host ])
+      else if hosted other = None then (File (Some e), [ host ])
+      else (File None, [])
+    else if h != host_of d then
       match link_for ~src ~dst with
       | Some l -> (Link l, l.through)
       | None -> (Across, [ h; host_of d; host ])
@@ -1426,6 +1644,7 @@ module Buffer = struct
         List.filter_map
           (fun b -> if hosted b = None then Some (device b) else None)
           [ src; dst ]
+    | File e -> Option.to_list e
 
   let move ~timed route ~src ~dst n =
     let s = device src and d = device dst in
@@ -1461,6 +1680,7 @@ module Buffer = struct
                 add_reached dst.base t)
               l.through;
             failwith msg)
+    | File _ -> file_copy ~timed ~src ~dst n
 
   (* A profiled copy is a span of the host on the calling domain's lane, and one
      on the copy lane of each device whose copy queue ran it, from its timestamp
@@ -1498,6 +1718,10 @@ module Buffer = struct
       && dst.offset < src.offset + n
     then fail "the source and destination overlap";
     let s = device src and d = device dst in
+    if (s == disk || d == disk) && not (local src && local dst) then
+      fail "DISK copies to and from the devices of this machine";
+    if d == disk && not (file_of dst).writable then
+      fail "%s is open for reading only" (file_of dst).path;
     let route, also = route ~src ~dst in
     with_devices (s :: d :: also) (fun () ->
         sync s;
@@ -1976,6 +2200,7 @@ let make_host ~name ~arch ~budget ~(memory : allocator) ~io ?load ?call
     ~synchronized ~finalize ~clock:Host_clock ~resolve:ignore
 
 let external_buffer d m s n =
+  if d == disk then Buffer.not_files "external_buffer";
   if d == host then
     invalid_arg
       "Nx_device.external_buffer: CPU memory is borrowed with \

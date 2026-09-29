@@ -5,14 +5,15 @@
 
 (** Devices, their memory and their programs.
 
-    A device is hardware with memory: the {!host}, or a GPU that a vendor
-    library such as [nx.metal.device], [nx.cuda.device], [nx.amd.device] or
-    [nx.nv.device] opens. Memory is held in {!Buffer}s, a number of elements of
-    one storage format ({!Nx_dtype.Scalar.t}) on one device, and copied between
-    devices by {!Buffer.copy}. The host addresses the memory of some GPUs, such
-    as Metal's, and not that of others, such as CUDA's, AMD's and NV's, whose
-    device copies it. A device also loads {!Program}s: the host calls its own,
-    and the libraries that submit work to a GPU launch the GPU's.
+    A device is hardware with memory: the {!host}, the {!disk}, or a GPU that a
+    vendor library such as [nx.metal.device], [nx.cuda.device], [nx.amd.device]
+    or [nx.nv.device] opens. Memory is held in {!Buffer}s, a number of elements
+    of one storage format ({!Nx_dtype.Scalar.t}) on one device, and copied
+    between devices by {!Buffer.copy}. The host addresses the memory of some
+    GPUs, such as Metal's, and not that of others, such as CUDA's, AMD's and
+    NV's, whose device copies it. The disk's memory is files, which a copy reads
+    and writes. A device also loads {!Program}s: the host calls its own, and the
+    libraries that submit work to a GPU launch the GPU's.
 
     Work runs on a device asynchronously. Each device has a {e timeline}: the
     value its last submitted work signals when it completes. {!synchronize}
@@ -82,13 +83,28 @@ val host : t
     arm64 it loads programs, which {!Program.call} runs; elsewhere it loads
     none. *)
 
+val disk : t
+(** [disk] is this machine's file system, named ["DISK"], with a budget of
+    [max_int]. Its buffers are byte ranges of files ({!Buffer.of_file},
+    {!Buffer.create_file}), which the host does not address: {!Buffer.copy}
+    reads and writes them, and {!Buffer.borrow} maps them. It allocates no
+    memory, runs no work, loads no programs and never fails. *)
+
+val shares_host_memory : t -> bool
+(** [shares_host_memory d] is [true] iff [d]'s memory and the host's are one:
+    [d] is this machine's, the host addresses all of [d]'s memory and [d] maps
+    the host's, as for the {!host} and Metal. It is [false] for the {!disk} and
+    for GPUs whose own memory the host does not address, such as CUDA, AMD and
+    NV GPUs. *)
+
 val name : t -> string
-(** [name d] is [d]'s name: ["CPU"] for the host, ["METAL"] for the Metal GPU,
-    ["CUDA"], ["CUDA:1"], ... for CUDA GPUs, ["AMD"], ["AMD:1"], ... for AMD
-    GPUs, ["NV"], ["NV:1"], ... for NVIDIA GPUs opened without CUDA, and
-    ["RDMA"], ["RDMA:1"], ... for RDMA network adapters. The devices of another
-    machine are named so, followed by [@] and the machine as it was connected
-    to, such as ["CPU@10.0.0.2:6667"] and ["AMD:1@10.0.0.2:6667"]. *)
+(** [name d] is [d]'s name: ["CPU"] for the host, ["DISK"] for the disk,
+    ["METAL"] for the Metal GPU, ["CUDA"], ["CUDA:1"], ... for CUDA GPUs,
+    ["AMD"], ["AMD:1"], ... for AMD GPUs, ["NV"], ["NV:1"], ... for NVIDIA GPUs
+    opened without CUDA, and ["RDMA"], ["RDMA:1"], ... for RDMA network
+    adapters. The devices of another machine are named so, followed by [@] and
+    the machine as it was connected to, such as ["CPU@10.0.0.2:6667"] and
+    ["AMD:1@10.0.0.2:6667"]. *)
 
 val host_of : t -> t
 (** [host_of d] is the host of the machine [d] is attached to: {!host} for the
@@ -99,7 +115,8 @@ val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor: the machine's instruction
     set for the host, such as ["arm64"] or ["x86_64"], the GPU family for Metal,
     such as ["Apple7"], the compute capability for CUDA and NV, such as
-    ["sm_86"], and the graphics target for AMD, such as ["gfx1100"]. *)
+    ["sm_86"], the graphics target for AMD, such as ["gfx1100"], and [""] for
+    the disk, which has no processor. *)
 
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
@@ -178,7 +195,8 @@ module Buffer : sig
       and x86_64 and of Metal; a big-endian host holds its own byte order.
 
       A buffer is {e owned} when {!create} made it and {e borrowed} when it is
-      over memory that something else holds ({!of_bigarray}, {!borrow}); a
+      over memory that something else holds ({!of_bigarray}, {!borrow}, and the
+      files of {!of_file} and {!create_file}, which outlive their buffers); a
       {!view} is as the buffer it views. Owned memory returns to its device once
       the buffer and all its views are unreachable. Borrowed memory is never
       cached, and never counted in a device's budget or statistics. *)
@@ -197,9 +215,9 @@ module Buffer : sig
       On the {!host}, buffers of at least 64 KiB (four pages where pages are
       larger) start on a page, so that devices can {!borrow} them.
 
-      Raises [Invalid_argument] if [n < 0] or if [n] elements of [s] take more
-      than [max_int] bytes, and {!Out_of_memory} if [d] cannot allocate its
-      bytes. *)
+      Raises [Invalid_argument] if [d] is {!disk}, whose buffers are files, if
+      [n < 0] or if [n] elements of [s] take more than [max_int] bytes, and
+      {!Out_of_memory} if [d] cannot allocate its bytes. *)
 
   type file = {
     path : string;  (** The absolute path the file was opened by. *)
@@ -240,6 +258,33 @@ module Buffer : sig
       elsewhere, such as to a device, can read them from the file with ordinary
       reads instead of faulting them in through the mapping. *)
 
+  val of_file : string -> t
+  (** [of_file path] is the bytes of the regular file [path] on {!disk}, as
+      [UInt8] elements, one per byte, for reading: {!copy} reads them, and
+      refuses to write them. Its length is the file's size when it is opened.
+
+      The buffer holds the file open, and its views share it: they read the file
+      that was opened, even once [path] is renamed, removed or replaced. The
+      file is closed once the buffer and all its views are unreachable, at the
+      disk's next operation, such as another {!of_file}, and its mapping once
+      its borrows ({!borrow}) are unreachable too. A file changed in place while
+      it is open changes what they read, and a read past a new end of the file
+      raises; a borrow of its pages asks more of the file.
+
+      Raises [Sys_error] naming [path] if it cannot be opened for reading or is
+      not a regular file. *)
+
+  val create_file : string -> int -> t
+  (** [create_file path n] is the file at [path], created, or emptied if it
+      exists, and sized to [n] bytes, as a buffer of [n] [UInt8] elements on
+      {!disk} for reading and writing: {!copy} reads and writes them. Its bytes
+      read as zero until they are written. It holds the file open as {!of_file}
+      does. A write reaches the file when {!copy} returns, and the storage once
+      the system flushes the file, which a sync of the file forces.
+
+      Raises [Invalid_argument] if [n < 0], and [Sys_error] naming [path] if it
+      cannot be created. *)
+
   val borrow : device -> t -> t
   (** [borrow d b] is a borrowed buffer on [d] over the memory of the buffer [b]
       of [d]'s host ({!host_of}), without a copy, of [b]'s format and length. A
@@ -259,10 +304,27 @@ module Buffer : sig
       nothing. On CUDA, mapping page-locks the memory, which must be writable:
       memory mapped read-only cannot be borrowed there.
 
-      Raises [Invalid_argument] if [b] is not on [d]'s host, if [d] cannot
-      address the host's memory, if [b] is a host buffer {!create} made of fewer
-      than 64 KiB, if the memory [b] is a view of does not start on a page, or
-      if [d]'s driver refuses to map it, with the driver's reason. *)
+      A buffer [b] of a file on the {!disk} ({!of_file}) is borrowed from the
+      file's pages: the disk maps the whole file into host memory at the first
+      borrow of any of its buffers, and keeps the mapping while a borrow of it
+      or the file's buffers are reachable. The mapping is copy-on-write: a write
+      through a borrow changes the process's copy of a page, never the file, and
+      is seen through the other borrows of that page. A device other than the
+      host has the system read the borrowed bytes ahead of their use; the host
+      reads them as it needs them. The file must not change while a borrow is
+      reachable: a write to it, by a {!copy} or by another process, may show
+      through pages the process has not written, and a truncation makes a read
+      of the pages cut off kill the process. Only a device that shares the
+      host's memory ({!shares_host_memory}) borrows a file's bytes; the others
+      {!copy} them into their memory.
+
+      Raises [Invalid_argument] if [b] is on neither [d]'s host nor the {!disk},
+      if [d] cannot address the host's memory, if [b] is a host buffer {!create}
+      made of fewer than 64 KiB, if the memory [b] is a view of does not start
+      on a page, or if [d]'s driver refuses to map it, with the driver's reason;
+      for [b] on the disk, if [d] does not share the host's
+      memory or if [b]'s first byte is not aligned to the size of one of its
+      elements. Raises [Failure] naming the file if the system cannot map it. *)
 
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
@@ -287,7 +349,8 @@ module Buffer : sig
       Raises [Invalid_argument] if [offset] or [n] is negative, if [n] elements
       of [s] take more than [max_int] bytes, if the view's bytes do not lie
       inside [b]'s, or if its first byte is not aligned to the size of one
-      element of [s]. *)
+      element of [s], except on {!disk}, whose files are read and written at any
+      byte. *)
 
   val spans : t -> bool
   (** [spans b] is [true] iff [b]'s bytes are all of the memory it lies in, as
@@ -336,17 +399,26 @@ module Buffer : sig
       through this process, to memory the destination's host addresses. A link
       that fails fails its devices, which may still write [dst].
 
+      A copy from the {!disk} reads the file, and a copy to it writes the file:
+      straight into or from memory that the host addresses, and otherwise
+      through the staging memory, which the other buffer's device copies from or
+      into while the host reads or writes the other slot. A copy from the disk
+      to the disk goes through the staging memory too.
+
       Raises [Invalid_argument] if [src] and [dst] have different sizes in
-      bytes, if they overlap in the memory of one buffer, or if the host does
-      not address the memory of a device that has no copy queue;
-      [Failure "NAME hang detected"] if a device involved does not signal in
-      time; [Failure] with the driver's message if a device's driver reports a
-      fault or errs while the copy is enqueued, which fails that device;
-      [Failure] with a failed device's error if that device can reach [src] or
-      [dst]; [Failure] with the error of another machine's host that the network
-      failed, which fails that host; and [Failure] if a device cannot map the
-      staging memory, or [Stdlib.Out_of_memory] if the host cannot allocate it,
-      which fail no device. *)
+      bytes, if they overlap in the memory of one buffer, if [dst] is a buffer
+      of {!of_file}, if one is on the disk and the other on another machine, or
+      if the host does not address the memory of a device that has no copy
+      queue; [Failure] naming the file if a read or a write of a file fails or a
+      read reaches its end, as in a file truncated since it was opened, which
+      fails no device; [Failure "NAME hang detected"] if a device involved does
+      not signal in time; [Failure] with the driver's message if a device's
+      driver reports a fault or errs while the copy is enqueued, which fails
+      that device; [Failure] with a failed device's error if that device can
+      reach [src] or [dst]; [Failure] with the error of another machine's host
+      that the network failed, which fails that host; and [Failure] if a device
+      cannot map the staging memory, or [Stdlib.Out_of_memory] if the host
+      cannot allocate it, which fail no device. *)
 
   val bigarray :
     ('a, 'b) Bigarray.kind -> t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
@@ -384,7 +456,8 @@ module Buffer : sig
 
   val address : t -> nativeint
   (** [address b] is the address of [b]'s first byte in its device's address
-      space, as the device's work reads it. *)
+      space, as the device's work reads it, and its offset in its file on the
+      {!disk}. *)
 
   val host_address : t -> nativeint
   (** [host_address b] is the address of [b]'s first byte in the host's address
@@ -397,8 +470,9 @@ module Buffer : sig
 
   val handle : t -> nativeint
   (** [handle b] is the driver's object for the memory [b] lies in, such as a
-      [MTLBuffer] or the start of a CUDA allocation, and [0n] on the host. [b]
-      starts {!offset} bytes into it. *)
+      [MTLBuffer] or the start of a CUDA allocation, [0n] on the host, and the
+      file's descriptor on the {!disk} (a [HANDLE] on Windows). [b] starts
+      {!offset} bytes into it. *)
 
   val offset : t -> int
   (** [offset b] is the byte offset of [b]'s first byte in {!handle}[ b]. *)
@@ -910,5 +984,5 @@ val external_buffer : t -> memory -> Nx_dtype.Scalar.t -> int -> Buffer.t
     such buffers on it, and check that [m] is [d]'s memory first.
 
     Raises [Invalid_argument] if [d] is {!host}, whose memory
-    {!Buffer.of_bigarray} borrows, if [n < 0], or if [n] elements of [s] take
-    more than [max_int] bytes. *)
+    {!Buffer.of_bigarray} borrows, or {!disk}, whose buffers are files, if
+    [n < 0], or if [n] elements of [s] take more than [max_int] bytes. *)

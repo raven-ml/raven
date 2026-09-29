@@ -2832,6 +2832,15 @@ thread.
 
 ### Nx
 
+- New `Nx_device.disk`, the file system as a device. `Nx_device.Buffer.of_file`
+  and `Buffer.create_file` make buffers of files' bytes, and `Buffer.copy`
+  reads and writes them: straight into or out of memory the host addresses,
+  and through the host's staging memory for a GPU whose memory it does not
+  address, the GPU copying one slot while the host reads or writes the other.
+  On Linux the reads and writes go through io_uring where the kernel allows
+  it. `Buffer.borrow` of a file's bytes by the host, or by a device whose
+  memory is the host's (`Nx_device.shares_host_memory`), maps the file
+  copy-on-write.
 - A read of a strided view of a value on a runtime device, such as a
   transposed weight on Metal, gathers its elements with `Nx_cpu.copy`, about
   five times faster than element by element.
