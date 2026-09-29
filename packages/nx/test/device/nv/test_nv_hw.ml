@@ -391,12 +391,12 @@ let peer_boundaries max () =
         ~from:1 3 (view b 6 n))
     (around max)
 
-(* Copies of 16 bytes one after the other, more than the copy channel has
-   entries, which wraps its ring and the runtime's command segments many times:
-   every copy lands where it should. *)
+(* Copies of 16 bytes one after the other, three times as many as the copy
+   channel has entries, which wraps its ring three times and the runtime's
+   command segments many more: every copy lands where it should. *)
 let test_ring_wraps () =
   let d = device () in
-  let copies = (Nx_nv_device.handles d).copy.entries + 17 in
+  let copies = (3 * (Nx_nv_device.handles d).copy.entries) + 17 in
   let n = 16 * copies in
   let src = B.create Nx_device.host S.UInt8 n in
   write_pattern 2 src;
