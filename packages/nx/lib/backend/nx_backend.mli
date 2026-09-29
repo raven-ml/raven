@@ -21,6 +21,15 @@
 
 include Nx_core.Backend_intf.S
 
+val view : ('a, 'b) t -> Nx_core.View.t
+(** [view t] is [t]'s shape, strides and offset over its buffer, in elements. *)
+
+val dtype : ('a, 'b) t -> ('a, 'b) Nx_dtype.t
+(** [dtype t] is [t]'s dtype. *)
+
+val context : ('a, 'b) t -> context
+(** [context t] is the context [t] was made in. *)
+
 val create_context : unit -> context
 (** [create_context ()] builds a fresh execution context for this engine. The
     host engine needs no parameters: a device index is part of a device's name,

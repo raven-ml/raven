@@ -3,7 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Make (B : Backend_intf.S) = struct
+module Make (B : sig
+  include Backend_intf.S
+
+  val view : ('a, 'b) t -> View.t
+  val dtype : ('a, 'b) t -> ('a, 'b) Nx_dtype.t
+  val context : ('a, 'b) t -> context
+end) =
+struct
   module B = B
 
   let err op fmt =

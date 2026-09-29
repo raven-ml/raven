@@ -32,12 +32,12 @@ let () =
         Some (Printf.sprintf "Nx.Linalg_error(%s): %s" op detail)
     | _ -> None)
 
-(** Backend interface for Nx tensor operations.
+(** Nx's operations.
 
-    This module type defines the contract between Nx's frontend and its
-    pluggable backends. Backends may execute operations eagerly (C backend),
-    raise effects for JIT compilation (Rune), build computation graphs, or
-    implement other execution strategies.
+    This module type lists every operation nx computes, once. It is implemented
+    at two levels: by kernel libraries over their own handles (nx.c's [Nx_c],
+    nx-oxcaml), and by backends over nx's values, where the type of values is
+    nx's tensor and the context is a placement ([Nx.Backend.S]).
 
     {1 Design Philosophy}
 
@@ -65,14 +65,15 @@ let () =
       tensor.
     - Movement operations manipulate view metadata (shape, strides, offset)
       without copying data when possible.
+    - A value's view, dtype and context are the value's own: a kernel library
+      provides them beside this signature, and nx answers them for its values.
 
     {1 Extended backend operations}
 
-    The mandatory contract is exactly the operations declared below. The effect
-    layer ([nx.effect]) implements all of them and adds an extended tier that
-    Rune relies on but a conforming backend need not provide: [const_scalar]
-    (materialize a scalar without a host round-trip), placement ([place],
-    [placement]) and [psum]. Those live outside this module type. *)
+    The effect layer ([nx.effect]) adds an extended tier that Rune relies on
+    but a backend does not provide: [const_scalar] (a scalar nx holds itself),
+    placement ([place], [placement]) and [psum]. Those live outside this module
+    type. *)
 module type S = sig
   (** {1 Types} *)
 
@@ -81,40 +82,24 @@ module type S = sig
       type that tags the dtype for type safety. *)
 
   type context
-  (** Backend execution context.
+  (** The context in which creation operations make values. For nx's values it
+      is a placement; a kernel library chooses its own, such as nx.c's [unit]. *)
 
-      Carries backend-specific state such as memory pools, device handles,
-      command queues, or computation graphs.
-
-      Construction is absent from this module type: [S] describes operations
-      over an existing context, and the frontend never builds one. Engines that
-      implement the [nx.backend] virtual library additionally provide
-      [create_context : unit -> context] (see [backend/nx_backend.mli]). *)
-
-  (** {1 Tensor Properties} *)
-
-  val view : ('a, 'b) t -> View.t
-  (** [view t] returns the strided view metadata describing [t]'s logical layout
-      (shape, strides, offset) over its underlying buffer. *)
-
-  val dtype : ('a, 'b) t -> ('a, 'b) Nx_dtype.t
-  (** [dtype t] returns the element type of [t]. *)
-
-  val context : ('a, 'b) t -> context
-  (** [context t] returns the execution context that owns [t]. *)
+  (** {1 Reading} *)
 
   val to_host : ('a, 'b) t -> Nx_device.Buffer.t
   (** [to_host t] is [t]'s storage as a buffer on {!Nx_device.host}, of format
-      [Nx_dtype.Scalar.of_dtype (dtype t)]. A backend whose storage is host
+      [Nx_dtype.Scalar.of_dtype] of [t]'s dtype. A backend whose storage is host
       memory returns it without a copy, and any other backend copies it out. The
       buffer is read-only by contract: a tensor is a value, the frontend never
       writes through the buffer, and neither may a caller. It may be memory the
       process does not own, such as the pages of a mapped file.
 
       The buffer is {e not} necessarily contiguous nor sized to the logical
-      element count. Interpret it through {!view} (offset and strides): for a
+      element count. Interpret it through [t]'s view (offset and strides): for a
       strided view it may exceed the tensor's logical extent and be laid out
-      non-contiguously. *)
+      non-contiguously. Callers that want the elements alone take
+      [contiguous t] first. *)
 
   (** {1 Tensor Creation} *)
 

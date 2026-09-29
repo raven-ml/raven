@@ -2757,6 +2757,11 @@ thread.
 
 ### Nx
 
+- **Breaking (backends):** `Nx_core.Backend_intf.S` no longer declares `view`,
+  `dtype` and `context`. They describe a value, which carries them, so a
+  backend over nx's values would only repeat nx's answers. A kernel library
+  keeps them as its own functions, and `Nx_core.Make_frontend` asks for them
+  beside the signature.
 - `Nx.qr` without `~mode` returns the reduced factorization, as documented.
   It returned the complete one: an `m × m` `Q` and an `m × n` `R` for a tall
   `m × n` matrix.
