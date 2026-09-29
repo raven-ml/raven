@@ -2812,6 +2812,13 @@ thread.
   eigenvalues, such as a Hermitian tridiagonal with paired eigenvalues, which
   raised `Linalg_error` for want of convergence. The QR iteration's shift lost
   half its digits to cancellation there; it is now computed as LAPACK does.
+- New `nx.nv.device` library: NVIDIA GPUs as `Nx_device.t`s named `"NV"`,
+  `"NV:1"`, ... on Linux without CUDA, through NVIDIA's kernel driver
+  (releases 570, 580 and 610) or over PCI without it (`~interface:Pci`),
+  which boots the GPU's GSP with firmware it verifies by digest. NV and CUDA
+  devices are separate devices, even on one GPU. Copies run on the GPU's copy
+  engine with a 64-bit timeline, and a GPU fault fails the device with its
+  report within 200 ms of a stalled wait.
 - New `nx.amd.device` library: AMD GPUs as `Nx_device.t`s on Linux, through
   the `amdgpu` kernel driver or over PCI without it (`~interface:Pci`), which
   boots the GPU with firmware it verifies by digest and caches per user.

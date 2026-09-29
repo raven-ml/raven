@@ -1,0 +1,14 @@
+{
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/gpu/drm/nouveau/include/nvfw/fw.h?h=v6.18": "29524e3b1586a674924d5019a2f694b5eb47737032e75c91b4ba2c443cf5e27a",
+ "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/drivers/gpu/drm/nouveau/include/nvfw/hs.h?h=v6.18": "d9d2e5d09de9af6f943a9a7a997a571585c63285a2cc7e43c77c8c41b2449580",
+ "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/2af9f1f0f7de4988432d4ae875b5858ffdb09cc2.tar.gz": "ce56c65a43268f20f535a0c1a71e3df990ed8fd18c7c24b2d0f7152f7cebf834",
+ "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/570.144.tar.gz": "33229a246d6c9f0781702e95b847aef87d6845216246ba284d5a6ae46a400849",
+ "https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/610.43.03.tar.gz": "9df87d753cd9c05aa0eedc462af9b35debb549a657136e863282f94c96ee2640",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/booter_load-570.144.bin": "8b293e19b637c5e22c87a2428d1c71bb13e0904e8a88ac6b3c6c1f2679c6e37a",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ad102/gsp/bootloader-570.144.bin": "65ab2e6b6e0fca95365c4deac79a34582abcfeb15b6ae234138f22e7183118a8",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/booter_load-570.144.bin": "4497e3eff7e95c774b8a569d17b27c08c9650158d10b229d2be81cdcad9a085b",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/bootloader-570.144.bin": "82428f532240727e95bb3083fbaaba9b2cc7b937314323f2d546ce7245f27fad",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/ga102/gsp/gsp-570.144.bin": "a8c3ebeed280323aedb51c061f321e73379cce7a9ae643a33dd03915df027f7f",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/bootloader-570.144.bin": "d40b48e431d1707dc77af3605db358ed7a32ebfc2830eb74de2eddb4d3025071",
+ "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/0a6871b19abf5d6e024b5d208b101ae53e7fa0de/nvidia/gb202/gsp/fmc-570.144.bin": "cb59a35c1d4bd1274d7267fd10243c29f843ff41c851b9cbd59f5af2ddd7fece"
+}

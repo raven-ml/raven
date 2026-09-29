@@ -6,13 +6,13 @@
 (** Devices, their memory and their programs.
 
     A device is hardware with memory: the {!host}, or a GPU that a vendor
-    library such as [nx.metal.device], [nx.cuda.device] or [nx.amd.device]
-    opens. Memory is held in {!Buffer}s, a number of elements of one storage
-    format ({!Nx_dtype.Scalar.t}) on one device, and copied between devices by
-    {!Buffer.copy}. The host addresses the memory of some GPUs, such as Metal's,
-    and not that of others, such as CUDA's and AMD's, whose device copies it. A
-    GPU also loads {!Program}s, which the libraries that submit work to it
-    launch.
+    library such as [nx.metal.device], [nx.cuda.device], [nx.amd.device] or
+    [nx.nv.device] opens. Memory is held in {!Buffer}s, a number of elements of
+    one storage format ({!Nx_dtype.Scalar.t}) on one device, and copied between
+    devices by {!Buffer.copy}. The host addresses the memory of some GPUs, such
+    as Metal's, and not that of others, such as CUDA's, AMD's and NV's, whose
+    device copies it. A GPU also loads {!Program}s, which the libraries that
+    submit work to it launch.
 
     Work runs on a device asynchronously. Each device has a {e timeline}: the
     value its last submitted work signals when it completes. {!synchronize}
@@ -74,14 +74,14 @@ val host : t
 
 val name : t -> string
 (** [name d] is [d]'s name: ["CPU"] for the host, ["METAL"] for the Metal GPU,
-    ["CUDA"], ["CUDA:1"], ... for CUDA GPUs and ["AMD"], ["AMD:1"], ... for AMD
-    GPUs. *)
+    ["CUDA"], ["CUDA:1"], ... for CUDA GPUs, ["AMD"], ["AMD:1"], ... for AMD
+    GPUs, and ["NV"], ["NV:1"], ... for NVIDIA GPUs opened without CUDA. *)
 
 val arch : t -> string
 (** [arch d] is the architecture of [d]'s processor: the machine's instruction
     set for the host, such as ["arm64"] or ["x86_64"], the GPU family for Metal,
-    such as ["Apple7"], the compute capability for CUDA, such as ["sm_86"], and
-    the graphics target for AMD, such as ["gfx1100"]. *)
+    such as ["Apple7"], the compute capability for CUDA and NV, such as
+    ["sm_86"], and the graphics target for AMD, such as ["gfx1100"]. *)
 
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
@@ -356,8 +356,8 @@ module Program : sig
   (** [load d ~binary ~name] is the function [name] of [binary], a compiled
       library in [d]'s format: a metallib for Metal, a CUDA module (cubin,
       fatbin, or PTX, which the driver compiles) for CUDA, a code object for
-      AMD. Loading the same binary and name on [d] again returns the same
-      program.
+      AMD, a cubin for NV. Loading the same binary and name on [d] again returns
+      the same program.
 
       Raises [Invalid_argument] if [d] loads no programs, and [Failure] with the
       driver's message if it rejects [binary] or has no function [name]. *)
@@ -370,8 +370,8 @@ module Program : sig
 
   val handle : t -> nativeint
   (** [handle p] is the driver's object for [p], such as a
-      [MTLComputePipelineState], a [CUfunction], or the address of an AMD kernel
-      descriptor. *)
+      [MTLComputePipelineState], a [CUfunction], the address of an AMD kernel
+      descriptor, or the address of an NV function's first instruction. *)
 end
 
 (** {1:stats Statistics} *)

@@ -1,0 +1,15 @@
+; test_nv runs anywhere. test_nv_hw runs on a machine with an NVIDIA GPU and
+; skips elsewhere; over PCI it takes a GPU from its kernel driver, so it does
+; only when NX_NV_PCI_TEST names the index of a GPU it may take.
+
+(test
+ (name test_nv)
+ (modules test_nv)
+ (package nx)
+ (libraries nx.nv.device nx.device windtrap))
+
+(test
+ (name test_nv_hw)
+ (modules test_nv_hw)
+ (package nx)
+ (libraries nx_test nx.nv.device nx.device nx.dtype windtrap))

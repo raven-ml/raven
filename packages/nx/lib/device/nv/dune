@@ -1,0 +1,8 @@
+(library
+ (name nx_nv_device)
+ (public_name nx.nv.device)
+ (libraries nx.device nx.device.support nx.dtype unix)
+ (foreign_stubs
+  (language c)
+  (names nx_nv_device_stubs)
+  (flags :standard -std=c11 -O2 -Wall -Wextra)))
