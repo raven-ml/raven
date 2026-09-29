@@ -296,6 +296,9 @@ let linalg_tests =
             Nx.cholesky spd)
           (Nx.create f64 [| 2; 2; 2 |]
              [| 0.9; -0.4; 0.3; 1.2; 1.1; 0.2; -0.5; 0.8 |]));
+    test "cholesky reads the lower triangle" (fun () ->
+        check_jvp ~msg:"cholesky of a lower triangle" Nx.cholesky
+          (mat64 3 3 [| 4.0; 9.0; -2.0; 1.0; 3.0; 5.0; -0.3; 0.4; 2.5 |]));
     test "lu (square, batched)" (fun () ->
         check_jvp ~msg:"lu" ~tol:5e-3
           (fun x ->

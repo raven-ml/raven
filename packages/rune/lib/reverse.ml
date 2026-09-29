@@ -847,37 +847,40 @@ let rec handler : type r. Tape.t -> (r, r) Effect.Deep.handler =
               no_rule "Rune.lanes" (tracked t_in) (fun () ->
                   Axis.lanes axis t_in))
       (* Linear algebra *)
+      (* The factor reads the Hermitian matrix that A's strict lower triangle
+         and the real part of its diagonal name, H = L Lᴴ. The rule works on
+         L̄ = conj g, the cotangent under the pairing Re tr(L̄ᴴ dL), where a
+         product transposes to its conjugate transpose: with Φ the lower
+         triangle less half the diagonal and S = L^-H Φ(Lᴴ L̄) L^-1, H's
+         cotangent is the Hermitian part of S, and A's lower triangle collects
+         it twice below the diagonal and once on it, in the real part. Under
+         [upper] the factor is U = Lᴴ, and L̄ = gᵀ. *)
       | E_cholesky { t_in; upper } ->
           Some
             (fun () ->
-              let l = cholesky ~upper t_in in
-              pull1 l t_in (fun dl ->
-                  let l_lower, dl_lower =
-                    if upper then (T.matrix_transpose l, T.matrix_transpose dl)
-                    else (l, dl)
+              let out = cholesky ~upper t_in in
+              pull1 out t_in (fun g ->
+                  let l, lbar =
+                    if upper then (Derivs.adjoint out, T.matrix_transpose g)
+                    else (out, T.conjugate g)
                   in
-                  let c = T.matmul (T.matrix_transpose l_lower) dl_lower in
-                  let p =
-                    (* Strict lower + half diagonal. *)
+                  let c = T.matmul (Derivs.adjoint l) lbar in
+                  let phi =
                     let diag_c = T.diagonal c in
                     let two = Nx_dtype.of_float (T.dtype diag_c) 2.0 in
                     T.sub (T.tril c) (Derivs.diag_matrix (T.div_s diag_c two))
                   in
-                  let z =
+                  (* L^-H Φ L^-1, the right-hand inverse as the adjoint of a
+                     left one. *)
+                  let left =
                     solve_triangular ~upper:false ~transpose:true
-                      ~unit_diag:false l_lower p
+                      ~unit_diag:false l
                   in
-                  let y =
-                    solve_triangular ~upper:false ~transpose:true
-                      ~unit_diag:false l_lower (T.matrix_transpose z)
-                  in
-                  let s = T.matrix_transpose y in
-                  let da_sym =
-                    T.sub
-                      (T.add s (T.matrix_transpose s))
-                      (Derivs.diag_matrix (T.diagonal s))
-                  in
-                  T.tril da_sym))
+                  let s = Derivs.adjoint (left (Derivs.adjoint (left phi))) in
+                  T.conjugate
+                    (T.sub
+                       (T.tril (T.add s (Derivs.adjoint s)))
+                       (Derivs.diag_matrix (Derivs.real_part (T.diagonal s))))))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
             (fun () ->

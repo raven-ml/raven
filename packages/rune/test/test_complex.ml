@@ -226,6 +226,35 @@ let solve_tests =
       both "inv" Nx.inv m33;
     ]
 
+(* The lower triangle of a Hermitian positive-definite matrix, with an imaginary
+   part on the diagonal and values above it, neither of which the factorisation
+   reads. *)
+let hpd () =
+  cmat 3 3
+    [|
+      (4.0, 0.2);
+      (0.9, -1.2);
+      (0.5, 0.8);
+      (1.0, 0.5);
+      (3.0, -0.4);
+      (-0.6, 0.3);
+      (-0.3, 0.7);
+      (0.4, -0.2);
+      (2.5, 0.1);
+    |]
+
+let cholesky_tests =
+  List.concat
+    [
+      both "lower" (fun z -> Nx.cholesky z) hpd;
+      both "upper" (fun z -> Nx.cholesky ~upper:true z) hpd;
+      both "of a Gram matrix"
+        (fun z ->
+          let g = Nx.matmul z (Nx.conjugate (Nx.matrix_transpose z)) in
+          Nx.cholesky (Nx.add g (Nx.eye c128 3)))
+        m33;
+    ]
+
 let tests =
   [
     group "holomorphic rules" holomorphic_tests;
@@ -235,6 +264,7 @@ let tests =
     group "component access" accessor_tests;
     group "linear and movement rules" linear_tests;
     group "triangular solves" solve_tests;
+    group "cholesky" cholesky_tests;
   ]
 
 let () = exit (run "rune complex" tests)

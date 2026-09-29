@@ -42,6 +42,9 @@ let sign_pull z s g =
   let w = T.mul s g in
   T.mul (T.mul (T.conjugate s) (T.sub w (real_part w))) (inv_modulus z)
 
+(* The conjugate transpose of the last two axes. *)
+let adjoint x = T.conjugate (T.matrix_transpose x)
+
 (* [d] as a diagonal matrix: a [..; n] stack of diagonals gives the [..; n; n]
    stack of matrices carrying them, so the linalg rules stay batched. *)
 let diag_matrix (type a b) (d : (a, b) T.t) : (a, b) T.t =

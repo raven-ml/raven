@@ -561,34 +561,34 @@ let rec handler : type r. Tensor_map.t -> (r, r) Effect.Deep.handler =
       | Axis.E_lanes { axis; t_in } ->
           Some (fun () -> lift1 (Axis.lanes axis t_in) t_in (Axis.lanes axis))
       (* Linear algebra *)
+      (* The factor reads the Hermitian matrix H that A's strict lower
+         triangle and the real part of its diagonal name, H = L Lᴴ, so dL = L
+         Φ(L^-1 dH L^-H), with Φ the lower triangle less half the diagonal.
+         Under [upper] the factor is U = Lᴴ. *)
       | E_cholesky { t_in; upper } ->
           Some
             (fun () ->
-              let l = cholesky ~upper t_in in
-              lift1 l t_in (fun da ->
-                  (* dL = L phi(L^-1 dA L^-T), phi = strict lower + half
-                     diagonal. *)
-                  let l_lower, da_lower =
-                    if upper then (T.matrix_transpose l, T.matrix_transpose da)
-                    else (l, da)
+              let out = cholesky ~upper t_in in
+              lift1 out t_in (fun da ->
+                  let l = if upper then Derivs.adjoint out else out in
+                  let dh =
+                    let low = T.tril ~k:(-1) da in
+                    T.add
+                      (T.add low (Derivs.adjoint low))
+                      (Derivs.diag_matrix (Derivs.real_part (T.diagonal da)))
                   in
-                  let w =
+                  let left =
                     solve_triangular ~upper:false ~transpose:false
-                      ~unit_diag:false l_lower da_lower
+                      ~unit_diag:false l
                   in
-                  let m =
-                    T.matrix_transpose
-                      (solve_triangular ~upper:false ~transpose:false
-                         ~unit_diag:false l_lower (T.matrix_transpose w))
-                  in
+                  let m = Derivs.adjoint (left (Derivs.adjoint (left dh))) in
                   let phi =
-                    (* Strict lower + half diagonal. *)
                     let diag_m = T.diagonal m in
                     let two = Nx_dtype.of_float (T.dtype diag_m) 2.0 in
                     T.sub (T.tril m) (Derivs.diag_matrix (T.div_s diag_m two))
                   in
-                  let dl_lower = T.matmul l_lower phi in
-                  if upper then T.matrix_transpose dl_lower else dl_lower))
+                  let dl = T.matmul l phi in
+                  if upper then Derivs.adjoint dl else dl))
       | E_solve_triangular { a; b; upper; transpose; unit_diag } ->
           Some
             (fun () ->

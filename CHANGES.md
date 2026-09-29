@@ -172,6 +172,11 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Gradients and tangents of `Nx.cholesky` are right on complex Hermitian
+  matrices, which the rules treated as symmetric, and follow what the
+  factorisation reads: the lower triangle and the real part of the diagonal.
+  `Rune.jvp` read the upper triangle of the tangent too, so a tangent that
+  was not symmetric gave a wrong result on real matrices as well.
 - Gradients through `Nx.solve_triangular`, `Nx.solve` and `Nx.inv` on complex
   matrices are right. The reverse rule solved against the conjugate
   transpose where the plain transpose is needed, and with `~transpose:true`
