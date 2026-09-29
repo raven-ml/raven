@@ -7,7 +7,7 @@
    its kernels. *)
 
 module D = Amd_defs
-module Elf = Nx_device_support.Elf
+module Elf = Nx_device_elf
 
 type kernel = {
   descriptor : int; (* image offsets *)
@@ -33,7 +33,12 @@ let image binary =
     (fun (r : Elf.relocation) ->
       if r.kind <> r_amdgpu_rel64 then
         failwith (Printf.sprintf "an unknown AMD GPU relocation %d" r.kind);
-      Bytes.set_int64_le b r.at (Int64.of_int (r.target - r.at + r.addend)))
+      match r.target with
+      | Offset target ->
+          Bytes.set_int64_le b r.at (Int64.of_int (target - r.at + r.addend))
+      | Undefined s ->
+          failwith
+            (Printf.sprintf "the code object refers to an undefined symbol %s" s))
     o.relocations;
   let n = Bytes.length b in
   let padded = Bytes.make ((n + 3) / 4 * 4) '\000' in

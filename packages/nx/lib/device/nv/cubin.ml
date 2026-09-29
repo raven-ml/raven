@@ -6,11 +6,12 @@
 (* Cubins: the ELF objects of NVIDIA's compilers, laid out as the GPU runs them,
    with what a launch of one of their functions needs. *)
 
-module Elf = Nx_device_support.Elf
+module Elf = Nx_device_elf
 
 type t = {
   image : string; (* laid out, with room after it for the GPU's prefetch *)
-  relocations : Elf.relocation list;
+  relocations : (int * int * int) list;
+      (* (image offset to patch, target offset plus addend, type) *)
   entry : int; (* offsets are in the image *)
   code_bytes : int;
   registers : int;
@@ -103,13 +104,20 @@ let load binary ~name =
            attributes s.contents
          else []))
     o.sections;
-  List.iter
-    (fun (r : Elf.relocation) ->
-      if not (List.mem r.kind [ 2; 0x38; 0x39 ]) then
-        failwith
-          (Printf.sprintf "the cubin has a relocation of unknown type 0x%x"
-             r.kind))
-    o.relocations;
+  let relocations =
+    List.map
+      (fun (r : Elf.relocation) ->
+        if not (List.mem r.kind [ 2; 0x38; 0x39 ]) then
+          failwith
+            (Printf.sprintf "the cubin has a relocation of unknown type 0x%x"
+               r.kind);
+        match r.target with
+        | Offset target -> (r.at, target + r.addend, r.kind)
+        | Undefined s ->
+            failwith
+              (Printf.sprintf "the cubin refers to an undefined symbol %s" s))
+      o.relocations
+  in
   let image =
     o.image
     ^ String.make
@@ -119,7 +127,7 @@ let load binary ~name =
   in
   {
     image;
-    relocations = o.relocations;
+    relocations;
     entry = text.offset;
     code_bytes = text.size;
     registers = !registers;
@@ -135,14 +143,14 @@ let load binary ~name =
 let relocate c ~base =
   let b = Bytes.of_string c.image in
   List.iter
-    (fun (r : Elf.relocation) ->
-      let v = base + r.target + r.addend in
-      match r.kind with
-      | 2 -> Bytes.set_int64_le b r.at (Int64.of_int v)
+    (fun (at, target, kind) ->
+      let v = base + target in
+      match kind with
+      | 2 -> Bytes.set_int64_le b at (Int64.of_int v)
       | 0x38 ->
-          Bytes.set_int32_le b (r.at + 4) (Int32.of_int (v land 0xffff_ffff))
+          Bytes.set_int32_le b (at + 4) (Int32.of_int (v land 0xffff_ffff))
       | _ ->
-          Bytes.set_int32_le b (r.at + 4)
+          Bytes.set_int32_le b (at + 4)
             (Int32.of_int ((v lsr 32) land 0xffff_ffff)))
     c.relocations;
   Bytes.to_string b

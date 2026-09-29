@@ -1,0 +1,4 @@
+(test
+ (name test_elf)
+ (package nx)
+ (libraries nx.device.elf windtrap))

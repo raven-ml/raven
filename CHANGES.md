@@ -2826,8 +2826,10 @@ thread.
 - New `nx.amd.device` library: AMD GPUs as `Nx_device.t`s on Linux, through
   the `amdgpu` kernel driver or over PCI without it (`~interface:Pci`), which
   boots the GPU with firmware it verifies by digest and caches per user.
-- New `nx.device.support` library: the PCI, memory, page-table, ELF and
-  firmware support shared by runtimes that drive a GPU without its driver.
+- New `nx.device.support` library: the PCI, memory, page-table and firmware
+  support shared by runtimes that drive a GPU without its driver.
+- New `nx.device.elf` library, `Nx_device_elf`: the layout of ELF objects into
+  images, which host programs, GPU programs and firmware share.
 - `Nx_device.make` takes `?sleep`, which lets a polling device block on its
   interrupts once its signal word stays still and report the fault it finds,
   and `?finalize`, which runs at exit on every device, failed or not.

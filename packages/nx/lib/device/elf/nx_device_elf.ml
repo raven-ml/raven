@@ -6,14 +6,18 @@
 type section = {
   name : string;
   kind : int;
+  flags : int;
   offset : int;
   size : int;
   contents : string;
 }
 
-type relocation = { at : int; target : int; kind : int; addend : int }
+type target = Offset of int | Undefined of string
+type relocation = { at : int; target : target; kind : int; addend : int }
 
 type t = {
+  kind : int;
+  machine : int;
   image : string;
   sections : section list;
   symbols : (string * int) list;
@@ -30,6 +34,7 @@ let sht_rel = 9
 type header = {
   h_name : string;
   h_kind : int;
+  h_flags : int;
   h_addr : int;
   h_size : int;
   h_contents : string;
@@ -42,7 +47,9 @@ type header = {
 type symbol = { s_name : string; s_shndx : int; s_value : int }
 
 let load ?(align = 1) obj =
-  let fail fmt = Printf.ksprintf (fun m -> failwith ("Elf.load: " ^ m)) fmt in
+  let fail fmt =
+    Printf.ksprintf (fun m -> failwith ("Nx_device_elf.load: " ^ m)) fmt
+  in
   let len = String.length obj in
   let check off n =
     if off < 0 || n < 0 || off > len - n then fail "truncated"
@@ -84,6 +91,7 @@ let load ?(align = 1) obj =
         {
           h_name = cstring names name;
           h_kind = kind;
+          h_flags = u64 (h + 8);
           h_addr = addr;
           h_size = size;
           h_contents = (if kind = sht_nobits then "" else sub offset size);
@@ -173,10 +181,11 @@ let load ?(align = 1) obj =
         let sym = Int64.to_int (Int64.shift_right_logical info 32) in
         if sym >= Array.length table then fail "a relocation's symbol %d" sym;
         let s = table.(sym) in
-        if s.s_shndx = 0 then fail "an undefined symbol %s" s.s_name;
         {
           at = resolve h.h_info (Int64.to_int (get 0));
-          target = resolve s.s_shndx s.s_value;
+          target =
+            (if s.s_shndx = 0 then Undefined s.s_name
+             else Offset (resolve s.s_shndx s.s_value));
           kind = Int64.to_int (Int64.logand info 0xffff_ffffL);
           addend = (if rela then Int64.to_int (get 16) else 0);
         })
@@ -202,12 +211,20 @@ let load ?(align = 1) obj =
            {
              name = h.h_name;
              kind = h.h_kind;
+             flags = h.h_flags;
              offset;
              size = h.h_size;
              contents = h.h_contents;
            })
          headers)
   in
-  { image = Bytes.to_string image; sections; symbols; relocations }
+  {
+    kind = u16 16;
+    machine = u16 18;
+    image = Bytes.to_string image;
+    sections;
+    symbols;
+    relocations;
+  }
 
 let symbol o name = List.assoc_opt name o.symbols

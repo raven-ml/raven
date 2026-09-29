@@ -9,8 +9,8 @@
     ({!Pci}), reads and writes its registers and memory ({!Mmio}), allocates and
     pins the system memory the GPU reaches ({!Sysmem}), manages the GPU's
     physical memory, address space and page tables ({!Tlsf}, {!Page_table},
-    {!Pci_memory}), lays out programs and firmware ({!Elf}), and loads the
-    firmware it was validated with ({!Firmware}).
+    {!Pci_memory}), and loads the firmware it was validated with ({!Firmware}).
+    Programs and firmware are laid out with [nx.device.elf].
 
     {b Admission.} A module belongs here iff the runtimes of several vendors
     share it and it knows nothing about any of them. A vendor's formats and
@@ -29,5 +29,4 @@ module Sysmem = Sysmem
 module Tlsf = Tlsf
 module Page_table = Page_table
 module Pci_memory = Pci_memory
-module Elf = Elf
 module Firmware = Firmware

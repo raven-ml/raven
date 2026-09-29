@@ -9,5 +9,4 @@ module Sysmem = Sysmem
 module Tlsf = Tlsf
 module Page_table = Page_table
 module Pci_memory = Pci_memory
-module Elf = Elf
 module Firmware = Firmware

@@ -11,7 +11,7 @@
 module D = Nv_defs
 module P = Params
 module Mmio = Nx_device_support.Mmio
-module Elf = Nx_device_support.Elf
+module Elf = Nx_device_elf
 module Pci = Nx_device_support.Pci
 module Page_table = Nx_device_support.Page_table
 

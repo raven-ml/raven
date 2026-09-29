@@ -11,7 +11,7 @@
 module D = Nv_defs
 module P = Params
 module Mmio = Nx_device_support.Mmio
-module Elf = Nx_device_support.Elf
+module Elf = Nx_device_elf
 
 let gsp_falcon = 0x110000
 let sec2 = 0x840000
