@@ -172,7 +172,51 @@ let failed_wait_retains_staging () =
       equal ~msg:"a subsequent successful copy retires its own staging" int 1 !freed;
       equal int 64 !live)
 
+(* A copy between two host-memory devices takes the owners of both: the
+   destination's synchronize runs inside the copy and may start another copy
+   between the same devices, as a caller replaying a program does. *)
+let nested_copy_between_host_devices () =
+  let pending = ref None in
+  let synchronize () =
+    match !pending with
+    | None -> ()
+    | Some copy ->
+        pending := None;
+        copy ()
+  in
+  let name = "CPU:storage-copy-owners" in
+  let renderer = Device.renderer (Device.get "CPU") in
+  ignore
+    (Device.make ~name
+       ~allocator:
+         (Device.Allocator.Pack (Storage.Host_allocator.make ~synchronize))
+       ~renderer_set:
+         (Device.Renderer_set.make ~device:name
+            [ ("CLANG", fun _ -> renderer) ])
+       ~synchronize:(fun _ -> synchronize ())
+       ());
+  let buffer device =
+    let b = B.on_device ~device ~size:16 ~dtype:Dtype.uint8 () in
+    B.ensure_allocated b;
+    b
+  in
+  let source c =
+    let b = buffer "CPU" in
+    B.copyin b (Bytes.make 16 c);
+    b
+  in
+  let first = buffer name and second = buffer name in
+  let a = source 'a' and b = source 'b' in
+  pending := Some (fun () -> B.copy_from ~dst:second ~src:b);
+  B.copy_from ~dst:first ~src:a;
+  equal ~msg:"the outer copy" string (String.make 16 'a')
+    (Bytes.to_string (B.as_bytes first));
+  equal ~msg:"the copy its synchronize started" string (String.make 16 'b')
+    (Bytes.to_string (B.as_bytes second))
+
 let () = exit (run __FILE__
     [test "non-host byte copies use bounded ordered staging" (roundtrip 0);
      test "non-host offset views preserve bytes outside staging chunks" (roundtrip 1);
-     test "failed staging teardown reports errors and retains backing" failed_wait_retains_staging])
+     test "failed staging teardown reports errors and retains backing" failed_wait_retains_staging;
+     test "a copy between host devices holds both their owners"
+       nested_copy_between_host_devices])

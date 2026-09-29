@@ -863,11 +863,16 @@ let exec_copy ctx ~device call =
                 ~dest_device:(Device.Buffer.device dest)
                 ~src_device:(Device.Buffer.device src)
             in
+            (* The copy takes the owners of both buffers, their mappings
+               included, for its whole length: a device's synchronize inside
+               it may start another copy between the same devices, which can
+               only use owners already held. *)
             let run () =
-              ignore
-                (Runner.call runner [ dest; src ] ctx.var_vals ~wait:ctx.wait
-                   ~timeout:None
-                  : float option);
+              Device.Buffer.with_buffers [ dest; src ] (fun () ->
+                  ignore
+                    (Runner.call runner [ dest; src ] ctx.var_vals
+                       ~wait:ctx.wait ~timeout:None
+                      : float option));
               None
             in
             ignore

@@ -744,6 +744,11 @@ thread.
 
 ### Tolk (new)
 
+- `Device.Buffer.copy_from` between two host-memory devices holds both
+  devices' owners for the whole copy. A copy that one of them started from its
+  synchronize while the first was running, as a replaying caller does, raised
+  `Invalid_argument "device operation: owner was not prepared"`.
+
 - Fix building Tolk's CUDA ABI tests on Windows by declaring the timing and
   system functions used by the runtime's C stubs.
 
