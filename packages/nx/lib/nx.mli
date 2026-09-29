@@ -3002,7 +3002,8 @@ val fft :
   (Complex.t, 'a) t
 (** [fft ?axis ?n ?norm x] is the 1-D discrete Fourier transform along [axis].
     [axis] defaults to [-1]. [n] truncates or zero-pads the input. [norm]
-    defaults to [`Backward].
+    defaults to [`Backward]. The transform of no points ([n = 0], or an empty
+    axis) is empty.
 
     See also {!ifft}, {!rfft}. *)
 
@@ -3065,7 +3066,8 @@ val rfft :
   (Complex.t, 'b) t
 (** [rfft dtype ?axis ?n ?norm x] is the 1-D FFT of real input, stored as
     [dtype]. Returns only the non-redundant positive frequencies; the output
-    size along the transformed axis is [n/2 + 1].
+    size along the transformed axis is [n/2 + 1]. For no points that is one bin,
+    the empty sum, zero under every [norm].
 
     [dtype] selects the storage precision of the result, independent of the
     input's: the natural pairings are [float32] with [complex64] and [float64]
@@ -3096,8 +3098,10 @@ val irfft :
     output stored as [dtype]. Assumes Hermitian symmetry: it reads only the real
     part of the DC bin and, for an even [n], of the Nyquist bin. [n] defaults to
     [2 * (m - 1)] for [m] bins along [axis], and the bins are cropped or
-    zero-padded to the [n/2 + 1] it reads. As with {!rfft}, [dtype] selects the
-    storage precision independent of the input's.
+    zero-padded to the [n/2 + 1] it reads: one bin inverts, by default, the
+    {!rfft} of no points and gives an empty result, and [~n:1] gives its
+    constant signal. As with {!rfft}, [dtype] selects the storage precision
+    independent of the input's.
 
     See also {!rfft}. *)
 

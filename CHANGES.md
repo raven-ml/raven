@@ -2810,6 +2810,10 @@ thread.
 
 ### Nx
 
+- `Nx.rfft` and the other transforms of no points are zero under every norm.
+  Under `Forward and `Ortho they scaled the empty sum by 1/0 and gave NaN. The
+  docs of `Nx.fft`, `Nx.rfft` and `Nx.irfft` now state what a transform of no
+  points, and the inverse of one bin, return.
 - An operation on a dtype it does not take raises `Invalid_argument`, where
   it raised `Failure`: every computation on `int4` or `uint4`, and arithmetic
   on `bool` (sums, products, negation, cumulative sums, `Nx.matmul`). The

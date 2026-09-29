@@ -50,8 +50,7 @@ let eps64 = f64.eps
 
 (* Comparison *)
 
-(* NaN equals NaN: a transform of an empty axis scaled by 1/0 gives NaN on both
-   sides. *)
+(* NaN equals NaN, as the transform of a NaN is NaN on both sides. *)
 let near tol a b =
   (Float.is_nan a && Float.is_nan b) || a = b || Float.abs (a -. b) <= tol
 
@@ -117,9 +116,10 @@ let dft ~sign x = dft_at ~sign x (Array.init (Array.length x) Fun.id)
 let resize n zero lane =
   Array.init n (fun i -> if i < Array.length lane then lane.(i) else zero)
 
-(* The factor a transform over [n] points applies under [norm]. *)
+(* The factor a transform over [n] points applies under [norm]. A transform of
+   no points is empty sums, zero, whatever it is scaled by. *)
 let factor ~inverse norm n =
-  let n = Float.of_int n in
+  let n = Float.of_int (Int.max 1 n) in
   match (Option.value norm ~default:`Backward, inverse) with
   | `Backward, false | `Forward, true -> 1.
   | `Backward, true | `Forward, false -> 1. /. n

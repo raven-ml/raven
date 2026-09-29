@@ -4832,26 +4832,33 @@ let pad_or_truncate_for_fft x axes s =
         axes;
       !acc
 
+(* The factors that divide a transform of [n] points by [n] and by its square
+   root. A transform of no points has nothing to scale: each of its outputs is
+   an empty sum, zero, under every norm. *)
+let per_length n = if n = 0 then 1.0 else 1.0 /. float_of_int n
+let per_sqrt_length n =
+  if n = 0 then 1.0 else 1.0 /. Stdlib.sqrt (float_of_int n)
+
 let fft_norm_scale norm axes_list x =
   match norm with
   | `Backward -> 1.0
   | `Forward ->
       let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
-      1.0 /. float_of_int n
+      per_length n
   | `Ortho ->
       let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
-      1.0 /. Stdlib.sqrt (float_of_int n)
+      per_sqrt_length n
 
 (* Inverse: Backward↔Forward swapped, Ortho unchanged *)
 let ifft_norm_scale norm axes_list x =
   match norm with
   | `Backward ->
       let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
-      1.0 /. float_of_int n
+      per_length n
   | `Forward -> 1.0
   | `Ortho ->
       let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
-      1.0 /. Stdlib.sqrt (float_of_int n)
+      per_sqrt_length n
 
 let apply_fft_scale (type a) scale (result : (Complex.t, a) t) :
     (Complex.t, a) t =
@@ -4948,9 +4955,9 @@ let irfftn dtype ?axes ?s ?(norm = `Backward) x =
   let norm_scale =
     let n = List.fold_left ( * ) 1 output_sizes in
     match norm with
-    | `Backward -> 1.0 /. float_of_int n
+    | `Backward -> per_length n
     | `Forward -> 1.0
-    | `Ortho -> 1.0 /. Stdlib.sqrt (float_of_int n)
+    | `Ortho -> per_sqrt_length n
   in
   let s_param =
     match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
@@ -5458,8 +5465,8 @@ let real_transform (type a) ~op ~family ~inverse ~type_ ~axis ~norm
   let scale =
     match (inverse, norm) with
     | false, `Backward | true, `Forward -> 1.0
-    | false, `Forward | true, `Backward -> 1.0 /. float_of_int length
-    | _, `Ortho -> 1.0 /. Stdlib.sqrt (float_of_int length)
+    | false, `Forward | true, `Backward -> per_length length
+    | _, `Ortho -> per_sqrt_length length
   in
   let transformed =
     if scale = 1.0 then transformed else mul_s transformed scale
