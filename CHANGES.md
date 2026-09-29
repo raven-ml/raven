@@ -2805,6 +2805,10 @@ thread.
 
 ### Nx
 
+- Host operations allocate less: the host array holds its view, and binary
+  operations, comparisons and `Nx.where` over operands of one shape skip
+  broadcasting. A one-element `Nx.add` allocates 93 words (238 before) and
+  `Nx.shape` 9 (40 before).
 - **Breaking:** the `nx.c` library is `nx.cpu`, and its module `Nx_c` is
   `Nx_cpu`.
 - **Breaking:** the `nx.core` library is `nx.array`, whose `Nx_array.t` is an

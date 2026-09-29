@@ -18,7 +18,8 @@ val numel : t -> int
     [numel [||]] is [1]. *)
 
 val equal : t -> t -> bool
-(** [equal s0 s1] is [true] iff [s0] and [s1] are structurally equal. *)
+(** [equal s0 s1] is [true] iff [s0] and [s1] have the same dimensions. It
+    allocates nothing. *)
 
 (** {1:strides Strides} *)
 

@@ -220,7 +220,8 @@ let reshape shape_spec x =
     (fun d ->
       if d < 0 then err "reshape" "shape specification, dimension %d < -1" d)
     target_shape;
-  if current_shape = target_shape then x else B.reshape x target_shape
+  if Shape.equal current_shape target_shape then x
+  else B.reshape x target_shape
 
 let broadcast_shapes shape_a shape_b =
   let rank_a = Array.length shape_a in
@@ -249,7 +250,7 @@ let broadcast_to new_shape x =
       if dim < 0 then err "broadcast_to" "target shape, dimension %d < 0" dim)
     new_shape;
   let current_shape = shape x in
-  if current_shape = new_shape then x
+  if Shape.equal current_shape new_shape then x
   else
     let rank_current = Array.length current_shape in
     let rank_target = Array.length new_shape in
@@ -285,8 +286,11 @@ let broadcast_to new_shape x =
 
 let broadcasted ?(reverse = false) x y =
   let a, b = if reverse then (y, x) else (x, y) in
-  let broadcast_shape = broadcast_shapes (shape a) (shape b) in
-  (broadcast_to broadcast_shape a, broadcast_to broadcast_shape b)
+  let sa = shape a and sb = shape b in
+  if Shape.equal sa sb then (a, b)
+  else
+    let s = broadcast_shapes sa sb in
+    (broadcast_to s a, broadcast_to s b)
 
 (* Like [broadcast_to] but [-1] keeps the original dimension. *)
 let expand shape_spec x =
@@ -422,13 +426,15 @@ let to_array x = Array.init (numel x) (elements x)
 
 (* ───── Element-wise Binary Operations ───── *)
 
+(* Operands of one shape are passed as they are. *)
 let binop op a b =
-  let a', b' = broadcasted a b in
-  op a' b'
+  let sa = shape a and sb = shape b in
+  if Shape.equal sa sb then op a b
+  else
+    let s = broadcast_shapes sa sb in
+    op (broadcast_to s a) (broadcast_to s b)
 
-let cmpop op a b =
-  let a', b' = broadcasted a b in
-  op a' b'
+let cmpop op a b = binop op a b
 
 let add a b = binop B.add a b
 let add_s t s = add t (scalar_like t s)
@@ -439,10 +445,9 @@ let mul a b = binop B.mul a b
 let mul_s t s = mul t (scalar_like t s)
 
 let div a b =
-  let a', b' = broadcasted a b in
-  let dt = B.dtype a' in
-  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then B.idiv a' b'
-  else B.fdiv a' b'
+  let dt = B.dtype a in
+  if Nx_dtype.is_int dt || Nx_dtype.is_uint dt then binop B.idiv a b
+  else binop B.fdiv a b
 
 let div_s t s = div t (scalar_like t s)
 let rdiv_s s t = div (scalar_like t s) t
@@ -618,12 +623,12 @@ let clip = clamp
 (* ───── Ternary Operations ───── *)
 
 let where cond if_true if_false =
-  let target = Shape.broadcast (shape if_true) (shape if_false) in
-  let target = Shape.broadcast target (shape cond) in
-  let cond_b = broadcast_to target cond in
-  let if_true_b = broadcast_to target if_true in
-  let if_false_b = broadcast_to target if_false in
-  B.where cond_b if_true_b if_false_b
+  let sc = shape cond and st = shape if_true and sf = shape if_false in
+  if Shape.equal sc st && Shape.equal st sf then B.where cond if_true if_false
+  else
+    let target = Shape.broadcast (Shape.broadcast st sf) sc in
+    B.where (broadcast_to target cond) (broadcast_to target if_true)
+      (broadcast_to target if_false)
 
 (* An arithmetic shift: [t / 2^n] rounded toward negative infinity. *)
 let rshift x n =

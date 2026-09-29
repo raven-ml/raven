@@ -17,7 +17,15 @@ let numel shape =
   let n = Array.length shape in
   if n = 0 then 1 else Array.fold_left ( * ) 1 shape
 
-let equal = ( = )
+let equal a b =
+  let n = Array.length a in
+  n = Array.length b
+  &&
+  let i = ref 0 in
+  while !i < n && Array.unsafe_get a !i = Array.unsafe_get b !i do
+    incr i
+  done;
+  !i = n
 
 let c_contiguous_strides shape =
   let n = Array.length shape in
