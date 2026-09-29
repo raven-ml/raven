@@ -2805,6 +2805,10 @@ thread.
 
 ### Nx
 
+- `Nx_amd_device` under `Pci` turns the GPU's bus mastering on in a partial
+  boot too. A GPU left clean by the previous process boots partially, and one
+  on another machine had its bus mastering turned off by `nx-remote` when that
+  process left, so the next open could not reach system memory.
 - `nx-remote` frees a client's memory only once the DMA of the functions it
   took is off, and leaks it, saying so, when that fails; releasing a function
   turns its bus mastering off. A client's system memory at an address must lie

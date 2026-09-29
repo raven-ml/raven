@@ -1514,7 +1514,12 @@ let boot ?firmware pci =
       smu_init t
     end
   end
-  else if not d.is_vf then tmr_init t;
+  else begin
+    (* The GPU keeps its state across a partial boot, but a server that stopped
+       its DMA when its last client left turned bus mastering off. *)
+    set_bus_master pci true;
+    if not d.is_vf then tmr_init t
+  end;
   Page_table.booted mm;
   gfx_init t;
   sdma_init t;
