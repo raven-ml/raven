@@ -12,11 +12,13 @@ strided, low-precision, integer, or otherwise ineligible products.
 
 ## Representation and ABI
 
-The OCaml tensor record and `nx_c_ndarray` agree on four fields in this order:
-buffer, shape, strides, and offset. Shapes, strides, and offsets are expressed
-in logical elements. Packed 4-bit dtypes are the only exception at the storage
-boundary. `test/test_backend_c.ml` pins the record layout and the mapping from
-`Nx_buffer` kinds to C dtype tags.
+The OCaml tensor record crosses the FFI with five fields in this order: buffer,
+shape, strides, offset, and dtype. The buffer is a host `Nx_device.Buffer.t`,
+whose first byte C reads with `nx_device_buffer_host` from nx.device's
+`nx_device.h`; the dtype's constructor index is its C dtype tag. Shapes,
+strides, and offsets are expressed in logical elements. Packed 4-bit dtypes are
+the only exception at the storage boundary. `test/test_backend_c.ml` pins the
+record layout and the mapping from dtypes to C dtype tags.
 
 Kernel tables use designated initializers indexed by the dtype enum. Unsupported
 dtype entries remain null and must be rejected by the common driver before a

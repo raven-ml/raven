@@ -21,14 +21,6 @@ module Placement = Nx_effect.Placement
 let place = Nx_effect.place
 let placement = Nx_effect.placement
 
-let data x =
-  match x with
-  | Nx_effect.Placed _ ->
-      invalid_arg
-        "Nx.data: a placed value has no host storage; read it with to_buffer, \
-         or place it on the host"
-  | Nx_effect.Host _ | Nx_effect.Traced _ -> F.data x
-
 module Ptree = Ptree
 
 type packed = Nx_effect.packed = P : ('a, 'b) t -> packed
@@ -108,9 +100,7 @@ let geomspace dtype ?endpoint start stop num =
   F.geomspace (Lazy.force context) dtype ?endpoint start stop num
 
 let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
-let of_buffer ba ~shape = F.of_buffer (Lazy.force context) ~shape ba
 let to_bigarray = F.to_bigarray
-let to_buffer = F.to_buffer
 let rand dtype shape = F.rand (Lazy.force context) dtype shape
 let randn dtype shape = F.randn (Lazy.force context) dtype shape
 let randint ?low ~high shape = F.randint (Lazy.force context) ?low ~high shape

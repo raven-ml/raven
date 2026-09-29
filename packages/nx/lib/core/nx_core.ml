@@ -5,5 +5,6 @@
 
 module Shape = Shape
 module View = View
+module Elements = Elements
 module Backend_intf = Backend_intf
 module Make_frontend = Frontend.Make

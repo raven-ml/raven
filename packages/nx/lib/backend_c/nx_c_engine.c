@@ -1357,7 +1357,7 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
 
 /* One place maps a status to an exception kind. Precondition and empty-axis
    violations are the caller's bad argument (Invalid_argument); everything else
-   (unsupported dtype, packed, bad kind, the argreduce cap, allocation) is a
+   (unsupported dtype, packed, the argreduce cap, allocation) is a
    Failure. Runs only on the cold error path, so strcmp is free. */
 NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   if (strcmp(s, NX_C_ERR_EMPTY_REDUCE) == 0 || strcmp(s, NX_C_ERR_AXES) == 0 ||
@@ -1367,14 +1367,6 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status s) {
   nx_c_raise(op, s);
 }
 
-/* dtype + element size of an operand, or a bad-kind status. */
-static nx_c_status nx_c_operand_dtype(value v, nx_c_dtype *dt, int64_t *elem) {
-  nx_c_dtype d = nx_c_dtype_of_value(v);
-  if (d == NX_C_DTYPE_COUNT) return NX_C_ERR_BAD_KIND;
-  *dt = d;
-  *elem = nx_c_elem_size(d);
-  return NX_C_OK;
-}
 
 void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class cls,
                     int nin, const value *vals, void *ctx) {
@@ -1387,9 +1379,8 @@ void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class 
   for (int k = 0; k < nop; k++) {
     nx_c_status s = nx_c_ndarray_of_value(vals[k], &ops[k]);
     if (s != NX_C_OK) nx_c_raise(op, s);
-    nx_c_dtype dk;
-    s = nx_c_operand_dtype(vals[k], &dk, &elem[k]);
-    if (s != NX_C_OK) nx_c_raise(op, s);
+    nx_c_dtype dk = nx_c_dtype_of_value(vals[k]);
+    elem[k] = nx_c_elem_size(dk);
     /* A packed operand of a compute op yields a poison 0 element size; reject it
        here rather than let coalescing build zero-length runs. */
     if (elem[k] == 0) nx_c_raise(op, NX_C_ERR_PACKED);
@@ -1446,14 +1437,10 @@ void nx_c_fold_funnel(const char *op, const nx_c_fold_table *tbl,
   s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) nx_c_raise(op, s);
 
-  nx_c_dtype dt;
-  int64_t in_elem;
-  s = nx_c_operand_dtype(vin, &dt, &in_elem);
-  if (s != NX_C_OK) nx_c_raise(op, s);
-  nx_c_dtype odt;
-  int64_t out_elem;
-  s = nx_c_operand_dtype(vout, &odt, &out_elem);
-  if (s != NX_C_OK) nx_c_raise(op, s);
+  nx_c_dtype dt = nx_c_dtype_of_value(vin);
+  int64_t in_elem = nx_c_elem_size(dt);
+  nx_c_dtype odt = nx_c_dtype_of_value(vout);
+  int64_t out_elem = nx_c_elem_size(odt);
 
   int n_reduce = (int)Wosize_val(vaxes);
   if (n_reduce > NX_C_MAX_NDIM) nx_c_raise(op, NX_C_ERR_NDIM);
@@ -1477,10 +1464,8 @@ void nx_c_argreduce_funnel(const char *op, const nx_c_arg_table *tbl,
   s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) nx_c_raise(op, s);
 
-  nx_c_dtype dt;
-  int64_t in_elem;
-  s = nx_c_operand_dtype(vin, &dt, &in_elem);
-  if (s != NX_C_OK) nx_c_raise(op, s);
+  nx_c_dtype dt = nx_c_dtype_of_value(vin);
+  int64_t in_elem = nx_c_elem_size(dt);
 
   nx_c_ndarray sq;
   s = nx_c_squeeze_out(&in, &out, &axis, 1, &sq);
@@ -1498,14 +1483,10 @@ void nx_c_scan_funnel(const char *op, const nx_c_scan_table *tbl,
   s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) nx_c_raise(op, s);
 
-  nx_c_dtype dt;
-  int64_t in_elem;
-  s = nx_c_operand_dtype(vin, &dt, &in_elem);
-  if (s != NX_C_OK) nx_c_raise(op, s);
-  nx_c_dtype odt;
-  int64_t out_elem;
-  s = nx_c_operand_dtype(vout, &odt, &out_elem);
-  if (s != NX_C_OK) nx_c_raise(op, s);
+  nx_c_dtype dt = nx_c_dtype_of_value(vin);
+  int64_t in_elem = nx_c_elem_size(dt);
+  nx_c_dtype odt = nx_c_dtype_of_value(vout);
+  int64_t out_elem = nx_c_elem_size(odt);
 
   s = nx_c_scan_run(tbl, dt, &in, in_elem, &out, out_elem, axis, cls, ctx);
   if (s != NX_C_OK) nx_c_raise_status(op, s);

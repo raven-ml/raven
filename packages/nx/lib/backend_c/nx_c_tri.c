@@ -568,7 +568,6 @@ CAMLprim value caml_nx_c_cholesky(value vout, value vin, value vupper) {
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) la_raise("cholesky", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("cholesky", NX_C_ERR_BAD_KIND);
   s = nx_c_cholesky_run(&in, &out, dt, Bool_val(vupper));
   if (s != NX_C_OK) la_raise("cholesky", s);
   CAMLreturn(Val_unit);
@@ -586,7 +585,6 @@ CAMLprim value caml_nx_c_solve_triangular(value vout, value va, value vb,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) la_raise("solve_triangular", s);
   nx_c_dtype dt = nx_c_dtype_of_value(va);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("solve_triangular", NX_C_ERR_BAD_KIND);
   int flags = Int_val(vflags);
   s = nx_c_trsm_run(&a, &b, &out, dt, flags & 1, (flags >> 1) & 1,
                    (flags >> 2) & 1);

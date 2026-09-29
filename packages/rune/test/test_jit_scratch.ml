@@ -38,13 +38,13 @@ let independent_uploads_keep_their_bytes () =
   let outer = Nx.place placement first in
   let inner = Option.get !nested in
   let check value tensor =
-    let bytes = Nx.to_buffer tensor in
+    let bytes = Nx.to_bigarray tensor in
     List.iter
       (fun index ->
         equal
           ~msg:(Printf.sprintf "byte %d" index)
           int value
-          (Nx_buffer.get bytes index))
+          (Bigarray.Genarray.get bytes [| index |]))
       [ 0; size / 2; size - 1 ]
   in
   check 17 outer;
@@ -208,24 +208,18 @@ let reads_keep_their_resident_owner_alive () =
   let placement = Nx.Placement.device (Rune.device name) in
   let[@inline never] read_temporary () =
     let placed = Nx.place placement (Nx.full Nx.uint8 [| 32 |] 91) in
-    (* [to_buffer] first checks the storage length, then tail-calls the final
-       read. Collect during that final host mapping, after its cell is unpacked. *)
-    let mappings = ref 0 in
+    (* Collect during the read's host mapping, after its cell is unpacked. *)
     pending := Some (fun () ->
-        incr mappings;
-        if !mappings = 2 then begin
-          pending := None;
-          (try raise_collection_marker () with Exit -> ());
-          Gc.full_major ();
-          ignore (Rune.jit_stats ());
-          equal ~msg:"a read owns its storage until the copy completes" int 0
-            !frees
-        end);
-    Nx.to_buffer placed
+        pending := None;
+        (try raise_collection_marker () with Exit -> ());
+        Gc.full_major ();
+        ignore (Rune.jit_stats ());
+        equal ~msg:"a read owns its storage until the copy completes" int 0
+          !frees);
+    Nx.to_array placed
   in
   let actual = read_temporary () in
-  equal (array int) (Array.make 32 91)
-    (Array.init (Nx_buffer.length actual) (Nx_buffer.get actual));
+  equal (array int) (Array.make 32 91) actual;
   is_true ~msg:"the final read reached the collection hook"
     (Option.is_none !pending);
   (try raise_collection_marker () with Exit -> ());

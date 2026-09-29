@@ -3,24 +3,25 @@
    Residual-property checks complement the backend contract: factor,
    reconstruct, and bound the relative residual by c·n·ε. Positive-definite
    inputs are built as A = M·Mᴴ + n·I (Hermitian PD by construction). Buffers
-   come from Nx_buffer so every compute dtype and the upcast (f16→f32) path is
-   exercised.
+   are typed host buffers so every compute dtype and the upcast (f16→f32) path
+   is exercised.
 
    Public linalg semantics run under the normal Nx test suite. This direct-FFI
    gauntlet is kept separate because its large eig/SVD fixtures deliberately
    force internal algorithm and workspace branches. *)
 
-module Buf = Nx_buffer
+module Buf = Nx_c_test_buf
 open Bigarray
 open Windtrap
 
 let ok name cond = is_true ~msg:name cond
 
 type ('a, 'b) ffi = {
-  buffer : ('a, 'b, c_layout) Genarray.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : ('a, 'b) Nx_dtype.t;
 }
 
 external cholesky : ('a, 'b) ffi -> ('a, 'b) ffi -> bool -> unit
@@ -52,10 +53,11 @@ external svd :
 
 let ffi buf shape strides =
   {
-    buffer = Buf.to_genarray buf [| Buf.length buf |];
+    buffer = Buf.storage buf;
     shape;
     strides;
     offset = 0;
+    dtype = Buf.dtype buf;
   }
 
 let contig shape =

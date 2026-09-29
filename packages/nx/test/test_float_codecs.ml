@@ -20,8 +20,8 @@
    those, and random float64 values between 2^-40 and 2^24. *)
 
 open Windtrap
-module B = Nx_buffer
 module S = Nx_dtype.Scalar
+module E = Nx_core.Elements
 
 (* Reference *)
 
@@ -83,21 +83,23 @@ let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 (* Codecs *)
 
 let codec f x = S.decode f.scalar (S.encode f.scalar x)
+let element dtype = Nx_device.Buffer.create Nx_device.host (S.of_dtype dtype) 1
+let byte b = Nx_device.Buffer.bigarray Bigarray.int8_unsigned b
 
 let nx_value dtype x =
-  let b = B.create dtype 1 in
-  B.set b 0 x;
-  B.get b 0
+  let b = element dtype in
+  E.set dtype b 0 x;
+  E.get dtype b 0
 
 let nx_code dtype x =
-  let b = B.create dtype 1 in
-  B.set b 0 x;
-  B.get (B.reinterpret Nx_dtype.uint8 b) 0
+  let b = element dtype in
+  E.set dtype b 0 x;
+  (byte b).{0}
 
 let nx_decode dtype code =
-  let b = B.create dtype 1 in
-  B.set (B.reinterpret Nx_dtype.uint8 b) 0 code;
-  B.get b 0
+  let b = element dtype in
+  (byte b).{0} <- code;
+  E.get dtype b 0
 
 (* Inputs *)
 
@@ -220,7 +222,7 @@ let check_codes f ~is_nan () =
     else equal ~msg:(msg ^ " re-encodes") int code (S.encode f.scalar v)
   done
 
-(* A store and a load go through the buffer stubs' copy of the codec. *)
+(* An element's store and load go through the same codec. *)
 let check_buffer_codes dtype f () =
   for code = 0 to 255 do
     let msg = Printf.sprintf "%s code 0x%02x" (name f) code in

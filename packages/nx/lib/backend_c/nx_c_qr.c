@@ -426,7 +426,6 @@ CAMLprim value caml_nx_c_qr(value vq, value vr, value vin, value vreduced) {
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vr, &r);
   if (s != NX_C_OK) la_raise("qr", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("qr", NX_C_ERR_BAD_KIND);
   s = nx_c_qr_run(&in, &q, &r, dt, Bool_val(vreduced));
   if (s != NX_C_OK) la_raise("qr", s);
   CAMLreturn(Val_unit);

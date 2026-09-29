@@ -59,13 +59,12 @@ let load_image ~grayscale path =
   let width, height = probe src in
   let channels = if grayscale then 1 else 3 in
   let length = checked_pixels width height channels in
-  let buffer = Nx_buffer.create Nx_dtype.UInt8 length in
-  let dst = Nx_buffer.to_bigarray1 buffer in
+  let dst = Array1.create int8_unsigned c_layout length in
   decode src dst grayscale;
   let shape =
     if grayscale then [| height; width |] else [| height; width; 3 |]
   in
-  Nx.of_buffer buffer ~shape
+  Nx.of_bigarray (reshape (genarray_of_array1 dst) shape)
 
 let encode_to_path ~encode ~exclusive path data ~width ~height ~channels =
   let flags =

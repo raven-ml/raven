@@ -2,13 +2,12 @@
    operation is not eligible for Accelerate. This benchmark intentionally uses a
    backend-local maintenance hook; public matmul stays in packages/nx/bench. *)
 
-module Buffer = Nx_buffer
-
 type ('a, 'b) ffi = {
-  buffer : ('a, 'b) Buffer.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : ('a, 'b) Nx_dtype.t;
 }
 
 external owned_matmul : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
@@ -24,12 +23,17 @@ let row_major shape =
 
 let make shape =
   let elements = Array.fold_left ( * ) 1 shape in
-  let buffer = Buffer.create Nx_dtype.float32 elements in
-  for index = 0 to elements - 1 do
-    Buffer.set buffer index
-      (Float.sin (float_of_int (index * 17 mod 1021)) *. 0.25)
-  done;
-  { buffer; shape; strides = row_major shape; offset = 0 }
+  let values =
+    Bigarray.Array1.init Bigarray.float32 Bigarray.c_layout elements
+      (fun index -> Float.sin (float_of_int (index * 17 mod 1021)) *. 0.25)
+  in
+  {
+    buffer = Nx_device.Buffer.of_bigarray values;
+    shape;
+    strides = row_major shape;
+    offset = 0;
+    dtype = Nx_dtype.float32;
+  }
 
 let case ?a_strides name a_shape b_shape c_shape =
   let a = make a_shape in

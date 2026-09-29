@@ -52,7 +52,7 @@
    strided run (transpose materialize, pad interior, cat slice) is a typed
    word-copy loop. Packed rows are absent from NX_C_FOR_EACH_COMPUTE_DTYPE, so their table
    slots stay NULL and the map driver reports NX_C_ERR_PACKED. */
-#define NX_C_COPY_KERNEL(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_COPY_KERNEL(sfx, storage, compute, ld, st, cat)                    \
   static void nx_c_copy_##sfx(char *const *ptrs, const int64_t *steps,          \
                              int64_t n, void *ctx) {                           \
     (void)ctx;                                                                 \
@@ -71,7 +71,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_COPY_KERNEL)
 
 static const nx_c_map_table nx_c_copy_table = {
     .fn = {
-#define NX_C_COPY_ROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_COPY_ROW(sfx, storage, compute, ld, st, cat)                       \
   [NX_C_DTYPE_##sfx] = nx_c_copy_##sfx,
         NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_COPY_ROW)
 #undef NX_C_COPY_ROW
@@ -222,7 +222,6 @@ CAMLprim value caml_nx_c_pad(value vout, value vin, value vfill,
   if (s != NX_C_OK) nx_c_raise("pad", s);
 
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("pad", NX_C_ERR_BAD_KIND);
   if (out.ndim != in.ndim || (int)Wosize_val(vpad_before) != out.ndim)
     nx_c_raise_invalid("pad", NX_C_ERR_SHAPE);
   int64_t esize = nx_c_elem_size(dt);
@@ -271,7 +270,6 @@ CAMLprim value caml_nx_c_cat(value vout, value vinputs, value vaxis) {
   nx_c_status s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) nx_c_raise("cat", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("cat", NX_C_ERR_BAD_KIND);
   if (axis < 0 || axis >= out.ndim) nx_c_raise_invalid("cat", NX_C_ERR_AXIS);
   int64_t esize = nx_c_elem_size(dt);
   int64_t e2[2] = {esize, esize};
@@ -414,7 +412,6 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vindices, &indices);
   if (s != NX_C_OK) nx_c_raise("gather", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("gather", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("gather", NX_C_ERR_PACKED);
   s = nx_c_gather_run(&data, &indices, &out, Int_val(vaxis), nx_c_elem_size(dt));
   if (s != NX_C_OK) nx_c_raise_status("gather", s);
@@ -451,7 +448,7 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
 #define NX_C_MOVE_ADD_NX_C_CAT_BOOL(a, b) ((a) + (b))
 
 typedef void nx_c_scatter_add_fn(char *out, const char *upd);
-#define NX_C_SCATTER_ADD(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_SCATTER_ADD(sfx, storage, compute, ld, st, cat)                   \
   static void nx_c_scatter_add_##sfx(char *out, const char *upd) {             \
     nx_c_st_##sfx(out,                                                         \
                  NX_C_MOVE_ADD_##cat(nx_c_ld_##sfx(out), nx_c_ld_##sfx(upd)));   \
@@ -460,7 +457,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ADD)
 #undef NX_C_SCATTER_ADD
 
 static nx_c_scatter_add_fn *const nx_c_scatter_add_tbl[NX_C_DTYPE_COUNT] = {
-#define NX_C_SCATTER_ADD_ROW(sfx, kind, storage, compute, ld, st, cat)         \
+#define NX_C_SCATTER_ADD_ROW(sfx, storage, compute, ld, st, cat)               \
   [NX_C_DTYPE_##sfx] = nx_c_scatter_add_##sfx,
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ADD_ROW)
 #undef NX_C_SCATTER_ADD_ROW
@@ -536,7 +533,6 @@ CAMLprim value caml_nx_c_scatter(value vout, value vindices, value vupdates,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vupdates, &updates);
   if (s != NX_C_OK) nx_c_raise("scatter", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("scatter", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("scatter", NX_C_ERR_PACKED);
   s = nx_c_scatter_run(&out, &indices, &updates, Int_val(vaxis), Int_val(vmode),
                       dt, nx_c_elem_size(dt));
@@ -865,7 +861,7 @@ typedef struct {
   void (*store)(char *out, const nx_c_acc *acc);
 } nx_c_foldelem;
 
-#define NX_C_FOLD_OPS(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_FOLD_OPS(sfx, storage, compute, ld, st, cat)                      \
   static void nx_c_fold_zero_##sfx(nx_c_acc *a) { *(compute *)a = (compute)0; } \
   static void nx_c_fold_accum_##sfx(nx_c_acc *a, const char *in) {              \
     *(compute *)a =                                                           \
@@ -878,7 +874,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FOLD_OPS)
 #undef NX_C_FOLD_OPS
 
 static const nx_c_foldelem nx_c_fold_tbl[NX_C_DTYPE_COUNT] = {
-#define NX_C_FOLD_ROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_FOLD_ROW(sfx, storage, compute, ld, st, cat)                      \
   [NX_C_DTYPE_##sfx] = {nx_c_fold_zero_##sfx, nx_c_fold_accum_##sfx,             \
                        nx_c_fold_store_##sfx},
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FOLD_ROW)
@@ -948,7 +944,6 @@ CAMLprim value caml_nx_c_unfold(value vout, value vin, value vkernel,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise("unfold", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("unfold", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(dt)) nx_c_raise("unfold", NX_C_ERR_PACKED);
 
   int K = (int)Wosize_val(vkernel);
@@ -987,7 +982,6 @@ CAMLprim value caml_nx_c_fold(value vout, value vin, value voutput_size,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise("fold", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vout);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise("fold", NX_C_ERR_BAD_KIND);
   const nx_c_foldelem *ops = &nx_c_fold_tbl[dt];
   if (ops->accum == NULL)
     nx_c_raise("fold", nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED

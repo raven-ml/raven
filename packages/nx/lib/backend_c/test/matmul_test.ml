@@ -1,35 +1,36 @@
 (* Internal correctness checks for nx_c_matmul.c.
 
    Test-local externals bind the GEMM stubs directly over FFI records mirroring
-   the four slots the C reads (buffer/shape/strides/offset). Buffers come from
-   Nx_buffer, so every dtype — including the extended kinds (bf16, fp8, u32/u64)
-   that have no standard Bigarray kind — is exercised through to_genarray.
+   the five slots the C reads (buffer/shape/strides/offset/dtype). Buffers are
+   typed host buffers, so every dtype — including the extended ones (bf16, fp8,
+   u32/u64) that have no standard Bigarray kind — is exercised.
 
    Correctness gate (before any tuning): every path is checked against an
    independent f64 (or exact-integer / complex) reference, and the blocked
    kernel is cross-checked against the fully independent direct loop, one dot
    per output (mode 2), over every size, transpose combo, offset, batch
-   broadcast, and dtype. Inputs are read back through Nx_buffer.get so the
-   reference uses the ACTUAL quantized operands: for low-precision dtypes the
-   only slack is f32-accumulation plus a single output-quantization step.
+   broadcast, and dtype. Inputs are read back through Buf.get so the reference
+   uses the ACTUAL quantized operands: for low-precision dtypes the only slack
+   is f32-accumulation plus a single output-quantization step.
 
    Public matmul semantics live in the Nx backend contract; this suite retains
    owned-kernel, workspace, worker-partition, and Accelerate-routing checks. *)
 
-module Buf = Nx_buffer
+module Buf = Nx_c_test_buf
 open Bigarray
 open Windtrap
 
 let ok name cond = is_true ~msg:name cond
 
-(* FFI operand: slots 0-3 are buffer/shape/strides/offset, exactly what the C
-   reads (the nx_c.h NX_C_FFI slots). A flat 1-D genarray carries the storage
-   and its kind; the logical shape/strides/offset drive the C entirely. *)
+(* FFI operand: slots 0-4 are buffer/shape/strides/offset/dtype, exactly what
+   the C reads (the nx_c.h NX_C_FFI slots). A flat host buffer carries the
+   storage; the logical shape/strides/offset drive the C entirely. *)
 type ('a, 'b) ffi = {
-  buffer : ('a, 'b, c_layout) Genarray.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : ('a, 'b) Nx_dtype.t;
 }
 
 external mm : ('a, 'b) ffi -> ('a, 'b) ffi -> ('a, 'b) ffi -> unit
@@ -58,7 +59,7 @@ external accel_set_override : int -> unit
   = "caml_nx_c_matmul_accel_set_override"
 
 let ffi ?(offset = 0) buf shape strides =
-  { buffer = Buf.to_genarray buf [| Buf.length buf |]; shape; strides; offset }
+  { buffer = Buf.storage buf; shape; strides; offset; dtype = Buf.dtype buf }
 
 (* ── Real dtypes (float-valued kinds: f16 f32 f64 bf16 fp8e4m3 fp8e5m2) ──── *)
 

@@ -16,12 +16,12 @@
   test_fft
   test_io
   test_quant
-  test_runtime)
+  test_runtime
+  test_elements)
  (package nx)
  (modules :standard \ test_format test_float_codecs)
  (libraries
   nx.dtype
-  nx.buffer
   nx
   nx.core
   nx.effect
@@ -48,4 +48,4 @@
  (name test_float_codecs)
  (package nx)
  (modules test_float_codecs)
- (libraries nx nx.dtype nx.buffer windtrap))
+ (libraries nx nx.dtype nx.device nx.core windtrap))

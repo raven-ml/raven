@@ -103,12 +103,13 @@ module type S = sig
   val context : ('a, 'b) t -> context
   (** [context t] returns the execution context that owns [t]. *)
 
-  val to_host : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-  (** [to_host t] returns [t]'s storage as a host buffer. A backend that holds
-      host memory shares it without a copy, and any other backend copies it out.
-      The buffer is read-only by contract: a tensor is a value, the frontend
-      never writes through the buffer, and neither may a caller. It may be
-      memory the process does not own, such as the pages of a mapped file.
+  val to_host : ('a, 'b) t -> Nx_device.Buffer.t
+  (** [to_host t] is [t]'s storage as a buffer on {!Nx_device.host}, of format
+      [Nx_dtype.Scalar.of_dtype (dtype t)]. A backend whose storage is host
+      memory returns it without a copy, and any other backend copies it out. The
+      buffer is read-only by contract: a tensor is a value, the frontend never
+      writes through the buffer, and neither may a caller. It may be memory the
+      process does not own, such as the pages of a mapped file.
 
       The buffer is {e not} necessarily contiguous nor sized to the logical
       element count. Interpret it through {!view} (offset and strides): for a
@@ -135,14 +136,16 @@ module type S = sig
       {b Backend must:} return a C-contiguous tensor of the given shape and
       dtype with all elements set to [value]. *)
 
-  val from_host : context -> ('a, 'b) Nx_buffer.t -> ('a, 'b) t
-  (** [from_host ctx buf] creates a tensor from a flat, C-contiguous host
-      buffer.
+  val from_host :
+    context -> ('a, 'b) Nx_dtype.t -> Nx_device.Buffer.t -> ('a, 'b) t
+  (** [from_host ctx dtype buf] is the one-dimensional tensor of the
+      [Nx_device.Buffer.length buf] elements of [buf].
 
       CPU backends may share the buffer directly (zero-copy). GPU backends copy
       from host to device.
 
-      {b Frontend guarantees:} [buf] is C-contiguous. *)
+      {b Frontend guarantees:} [buf] is on {!Nx_device.host} and its format is
+      [Nx_dtype.Scalar.of_dtype dtype]. *)
 
   (** {1 Element-wise Binary Operations}
 

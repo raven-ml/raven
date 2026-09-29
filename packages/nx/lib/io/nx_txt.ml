@@ -405,16 +405,16 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
           let oc = open_out_gen flags perm out in
           Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
           write_comment_lines oc comments newline header;
-          let buf = Nx.to_buffer arr in
+          let get = Nx_core.Elements.get S.kind (Storage.of_tensor arr) in
           (match ndim with
           | 0 ->
-              S.print oc (Nx_buffer.get buf 0);
+              S.print oc (get 0);
               output_string oc newline
           | 1 ->
               let n = shape.(0) in
               for j = 0 to n - 1 do
                 if j > 0 then output_string oc sep;
-                S.print oc (Nx_buffer.unsafe_get buf j)
+                S.print oc (get j)
               done;
               output_string oc newline
           | _ ->
@@ -422,7 +422,7 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
               for i = 0 to rows - 1 do
                 for j = 0 to cols - 1 do
                   if j > 0 then output_string oc sep;
-                  S.print oc (Nx_buffer.unsafe_get buf ((i * cols) + j))
+                  S.print oc (get ((i * cols) + j))
                 done;
                 output_string oc newline
               done);
@@ -491,16 +491,17 @@ let load ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows (type a b)
             let rows = Array.of_list (List.rev !rows_rev) in
             let row_count = Array.length rows in
             let n = row_count * cols in
-            let buf = Nx_buffer.create S.kind n in
+            let buf = Storage.create S.kind n in
+            let set = Nx_core.Elements.set S.kind buf in
             for i = 0 to row_count - 1 do
               let row = rows.(i) in
               for j = 0 to cols - 1 do
                 match S.parse row.(j) with
-                | Ok v -> Nx_buffer.set buf ((i * cols) + j) v
+                | Ok v -> set ((i * cols) + j) v
                 | Error err -> raise_notrace (Parse_error err)
               done
             done;
-            let t = Nx.of_buffer buf ~shape:[| row_count; cols |] in
+            let t = Storage.tensor S.kind buf [| row_count; cols |] in
             let result =
               if row_count = 1 then Nx.reshape [| cols |] t
               else if cols = 1 then Nx.reshape [| row_count |] t

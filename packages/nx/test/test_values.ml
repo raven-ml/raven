@@ -13,14 +13,14 @@ open Nx_test
 
 let elt = Ref.witness int32
 
-(* Every live tensor equals its model, and its buffer, offset and strides locate
-   each element as [Nx.data] documents. *)
+(* Every live tensor equals its model, and its view's offset and strides locate
+   each element in its storage. *)
 let t =
   abstract "t"
     ~pp:(Ref.pp (fun ppf v -> Format.fprintf ppf "%ld" v))
     ~invariant:(fun r s ->
       equal elt r (Ref.of_nx s);
-      equal ~msg:"data, offset and strides locate each element" elt r
+      equal ~msg:"offset and strides locate each element" elt r
         (Ref.of_layout s))
 
 let shape = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 4)

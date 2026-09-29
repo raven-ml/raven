@@ -232,7 +232,7 @@
    (modular for ints, converting for f16/bf16/fp8, normalizing for bool). fini
    depends only on the dtype, so one instance per compute dtype serves every
    reduction that supports it. */
-#define NX_C_DEF_FINI(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_DEF_FINI(sfx, storage, compute, ld, st, cat)                       \
   static void nx_c_fini_##sfx(char *out, const nx_c_acc *acc, void *ctx) {       \
     (void)ctx;                                                                 \
     nx_c_st_##sfx(out, acc->NX_C_ACCF_##compute);                                \
@@ -243,7 +243,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_DEF_FINI)
 /* Streaming scatter: convert the n compute-type accumulators to storage and
    write the strided output slice. Depends only on the dtype (not the op), so one
    instance per compute dtype is shared by every reduction's stream table. */
-#define NX_C_DEF_SCATTER(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_DEF_SCATTER(sfx, storage, compute, ld, st, cat)                    \
   static void nx_c_scatter_##sfx(char *out, int64_t out_step, const void *accs, \
                                 int64_t n, void *ctx) {                        \
     (void)ctx;                                                                 \
@@ -268,7 +268,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_DEF_SCATTER)
 #define NX_C_INIT_ZO_NX_C_CAT_UINT(sfx, compute) NX_C_INIT_ZO(sfx, compute)
 #define NX_C_INIT_ZO_NX_C_CAT_COMPLEX(sfx, compute) NX_C_INIT_ZO(sfx, compute)
 #define NX_C_INIT_ZO_NX_C_CAT_BOOL(sfx, compute)
-#define NX_C_INIT_ZO_ROW(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_INIT_ZO_ROW(sfx, storage, compute, ld, st, cat)                    \
   NX_C_INIT_ZO_##cat(sfx, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_INIT_ZO_ROW)
 #undef NX_C_INIT_ZO_ROW
@@ -297,7 +297,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_INIT_ZO_ROW)
   NX_C_INIT_MM(sfx, compute, NX_C_MAXSENT_##compute, NX_C_MINSENT_##compute)
 #define NX_C_INIT_MM_NX_C_CAT_BOOL(sfx, compute) NX_C_INIT_MM(sfx, compute, 0, 1)
 #define NX_C_INIT_MM_NX_C_CAT_COMPLEX(sfx, compute)
-#define NX_C_INIT_MM_ROW(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_INIT_MM_ROW(sfx, storage, compute, ld, st, cat)                    \
   NX_C_INIT_MM_##cat(sfx, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_INIT_MM_ROW)
 #undef NX_C_INIT_MM_ROW
@@ -322,7 +322,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_INIT_MM_ROW)
 #define NX_C_SUM_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)                    \
   NX_C_REDUCE_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
 #define NX_C_SUM_STEP_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_SUM_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_SUM_STEP_ROW(sfx, storage, compute, ld, st, cat)                   \
   NX_C_SUM_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SUM_STEP_ROW)
 #undef NX_C_SUM_STEP_ROW
@@ -342,7 +342,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SUM_STEP_ROW)
 #define NX_C_PROD_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)                   \
   NX_C_REDUCE_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD)
 #define NX_C_PROD_STEP_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_PROD_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)            \
+#define NX_C_PROD_STEP_ROW(sfx, storage, compute, ld, st, cat)                  \
   NX_C_PROD_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STEP_ROW)
 #undef NX_C_PROD_STEP_ROW
@@ -362,7 +362,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STEP_ROW)
 #define NX_C_MAX_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                       \
   NX_C_REDUCE_STEP(max, sfx, storage, compute, NX_C_CMB_MAXB)
 #define NX_C_MAX_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_MAX_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_MAX_STEP_ROW(sfx, storage, compute, ld, st, cat)                   \
   NX_C_MAX_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STEP_ROW)
 #undef NX_C_MAX_STEP_ROW
@@ -382,7 +382,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STEP_ROW)
 #define NX_C_MIN_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                       \
   NX_C_REDUCE_STEP(min, sfx, storage, compute, NX_C_CMB_MINB)
 #define NX_C_MIN_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_MIN_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_MIN_STEP_ROW(sfx, storage, compute, ld, st, cat)                   \
   NX_C_MIN_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
 #undef NX_C_MIN_STEP_ROW
@@ -406,7 +406,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
 #define NX_C_SUM_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)                  \
   NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
 #define NX_C_SUM_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_SUM_STREAM_ROW(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_SUM_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_SUM_STREAM_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SUM_STREAM_ROW)
 #undef NX_C_SUM_STREAM_ROW
@@ -425,7 +425,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SUM_STREAM_ROW)
 #define NX_C_PROD_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)                 \
   NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD)
 #define NX_C_PROD_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_PROD_STREAM_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_PROD_STREAM_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_PROD_STREAM_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STREAM_ROW)
 #undef NX_C_PROD_STREAM_ROW
@@ -444,7 +444,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STREAM_ROW)
 #define NX_C_MAX_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)                     \
   NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXB)
 #define NX_C_MAX_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_MAX_STREAM_ROW(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_MAX_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_MAX_STREAM_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STREAM_ROW)
 #undef NX_C_MAX_STREAM_ROW
@@ -463,7 +463,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STREAM_ROW)
 #define NX_C_MIN_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)                     \
   NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINB)
 #define NX_C_MIN_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_MIN_STREAM_ROW(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_MIN_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_MIN_STREAM_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STREAM_ROW)
 #undef NX_C_MIN_STREAM_ROW
@@ -483,7 +483,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STREAM_ROW)
 #define NX_C_ARGMAX_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                    \
   NX_C_ARG_STEP(argmax, sfx, storage, compute, NX_C_ACMP_MAXI)
 #define NX_C_ARGMAX_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_ARGMAX_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_ARGMAX_STEP_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_ARGMAX_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ARGMAX_STEP_ROW)
 #undef NX_C_ARGMAX_STEP_ROW
@@ -502,7 +502,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ARGMAX_STEP_ROW)
 #define NX_C_ARGMIN_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                    \
   NX_C_ARG_STEP(argmin, sfx, storage, compute, NX_C_ACMP_MINI)
 #define NX_C_ARGMIN_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_ARGMIN_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_ARGMIN_STEP_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_ARGMIN_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ARGMIN_STEP_ROW)
 #undef NX_C_ARGMIN_STEP_ROW
@@ -522,7 +522,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ARGMIN_STEP_ROW)
 #define NX_C_CUMSUM_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)                 \
   NX_C_SCAN_STEP(cumsum, sfx, storage, compute, NX_C_CMB_SUM)
 #define NX_C_CUMSUM_STEP_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_CUMSUM_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_CUMSUM_STEP_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_CUMSUM_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMSUM_STEP_ROW)
 #undef NX_C_CUMSUM_STEP_ROW
@@ -541,7 +541,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMSUM_STEP_ROW)
 #define NX_C_CUMPROD_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)                \
   NX_C_SCAN_STEP(cumprod, sfx, storage, compute, NX_C_CMB_PROD)
 #define NX_C_CUMPROD_STEP_NX_C_CAT_BOOL(sfx, storage, compute)
-#define NX_C_CUMPROD_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)         \
+#define NX_C_CUMPROD_STEP_ROW(sfx, storage, compute, ld, st, cat)               \
   NX_C_CUMPROD_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMPROD_STEP_ROW)
 #undef NX_C_CUMPROD_STEP_ROW
@@ -560,7 +560,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMPROD_STEP_ROW)
 #define NX_C_CUMMAX_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                    \
   NX_C_SCAN_STEP(cummax, sfx, storage, compute, NX_C_CMB_MAXB)
 #define NX_C_CUMMAX_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_CUMMAX_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_CUMMAX_STEP_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_CUMMAX_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMAX_STEP_ROW)
 #undef NX_C_CUMMAX_STEP_ROW
@@ -579,7 +579,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMAX_STEP_ROW)
 #define NX_C_CUMMIN_STEP_NX_C_CAT_BOOL(sfx, storage, compute)                    \
   NX_C_SCAN_STEP(cummin, sfx, storage, compute, NX_C_CMB_MINB)
 #define NX_C_CUMMIN_STEP_NX_C_CAT_COMPLEX(sfx, storage, compute)
-#define NX_C_CUMMIN_STEP_ROW(sfx, kind, storage, compute, ld, st, cat)          \
+#define NX_C_CUMMIN_STEP_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_CUMMIN_STEP_##cat(sfx, storage, compute)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMIN_STEP_ROW)
 #undef NX_C_CUMMIN_STEP_ROW
@@ -612,60 +612,60 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMIN_STEP_ROW)
 #define NX_C_SUP_ORD_NX_C_CAT_BOOL 1
 
 static const nx_c_fold_table nx_c_sum_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_zero)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_fold_table nx_c_prod_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_one)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_fold_table nx_c_max_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_max)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_max_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_fold_table nx_c_min_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_min)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_min_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
@@ -676,102 +676,102 @@ static const nx_c_fold_table nx_c_min_table = {
    op streams that dtype; NULL elsewhere makes the driver fall back to the
    per-output path. */
 static const nx_c_stream_table nx_c_sum_stream_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_scatter)
     .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_stream_table nx_c_prod_stream_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_scatter)
     .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_stream_table nx_c_max_stream_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_max_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_scatter)
     .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_stream_table nx_c_min_stream_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_min_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_scatter)
     .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_arg_table nx_c_argmax_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_argmax_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_arg_table nx_c_argmin_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_argmin_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_scan_table nx_c_cumsum_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_zero)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_cumsum_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_scan_table nx_c_cumprod_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_one)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_cumprod_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_scan_table nx_c_cummax_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_max)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_cummax_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
 static const nx_c_scan_table nx_c_cummin_table = {
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_min)
     .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-#define NX_C_G(sfx, kind, storage, compute, ld, st, cat)                        \
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_cummin_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G

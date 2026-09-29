@@ -14,6 +14,9 @@ module Shape = Shape
 module View = View
 (** Strided tensor views. *)
 
+module Elements = Elements
+(** Elements of host buffers as values of a dtype. *)
+
 module Backend_intf = Backend_intf
 (** Backend interface used by frontend functors. *)
 

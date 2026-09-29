@@ -17,7 +17,6 @@
 
 open Nx_core
 
-type ('a, 'b) buffer = ('a, 'b) Nx_buffer.t
 type context = unit
 
 let create_context () = ()
@@ -26,15 +25,15 @@ let create_context () = ()
 
    FIELD ORDER IS ABI: [t] is passed to C directly, no per-call FFI record. The
    engine reads an operand at fixed record slots (nx_c.h NX_C_FFI_ markers):
-   slot 0 buffer (the bigarray), 1 shape, 2 strides, 3 offset — strides and
-   offset in ELEMENT units, exactly as View provides. C never touches slot 4
-   (dtype, which it derives from the bigarray kind) or slot 5 (context).
-   Reordering these six fields silently misreads every operand; the layout is
-   pinned by the ABI echo test in test/test_backend_c.ml, not by convention.
-   This declaration order MUST match {buffer; shape; strides; offset; dtype;
-   context}. *)
+   slot 0 buffer (a host Nx_device.Buffer.t, read through nx_device.h), 1 shape,
+   2 strides, 3 offset — strides and offset in ELEMENT units, exactly as View
+   provides — and 4 dtype, whose constructor index is the C dtype tag. C never
+   touches slot 5 (context). Reordering these six fields silently misreads every
+   operand; the layout is pinned by the ABI echo test in test/test_backend_c.ml,
+   not by convention. This declaration order MUST match {buffer; shape; strides;
+   offset; dtype; context}. *)
 type ('a, 'b) t = {
-  buffer : ('a, 'b) buffer;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
@@ -55,7 +54,9 @@ let to_host (t : ('a, 'b) t) = t.buffer
 
 let create_tensor ctx dtype shape =
   let size = Array.fold_left ( * ) 1 shape in
-  let buffer = Nx_buffer.create dtype size in
+  let buffer =
+    Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dtype) size
+  in
   {
     buffer;
     shape;
@@ -69,15 +70,13 @@ let buffer ctx dtype shape = create_tensor ctx dtype shape
 
 let full ctx dtype shape value =
   let t = create_tensor ctx dtype shape in
-  Nx_buffer.fill t.buffer value;
+  Elements.fill dtype t.buffer value;
   t
 
-let from_host ctx buf =
-  let dtype = Nx_buffer.dtype buf in
-  let n = Nx_buffer.length buf in
+let from_host ctx dtype buf =
   {
     buffer = buf;
-    shape = [| n |];
+    shape = [| Nx_device.Buffer.length buf |];
     strides = [| 1 |];
     offset = 0;
     dtype;
@@ -279,7 +278,10 @@ let cast ~dtype x =
    same memory read at the new kind. *)
 let bitcast ~dtype x =
   {
-    buffer = Nx_buffer.reinterpret dtype x.buffer;
+    buffer =
+      Nx_device.Buffer.view x.buffer ~offset:0
+        (Nx_dtype.Scalar.of_dtype dtype)
+        (Nx_device.Buffer.length x.buffer);
     shape = x.shape;
     strides = x.strides;
     offset = x.offset;
@@ -488,11 +490,10 @@ let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
       invalid_arg "update: packed dtypes unsupported"
   | _ -> ());
   let out = copy t in
+  let start = Elements.get Nx_dtype.int32 starts.buffer in
   let corner =
     Array.init (Array.length t.shape) (fun i ->
-        Int32.to_int
-          (Nx_buffer.get starts.buffer
-             (starts.offset + (i * starts.strides.(0)))))
+        Int32.to_int (start (starts.offset + (i * starts.strides.(0)))))
   in
   let bounds = Array.mapi (fun i c -> (c, c + v.shape.(i))) corner in
   caml_copy (of_view out (View.shrink (view out) bounds)) v;

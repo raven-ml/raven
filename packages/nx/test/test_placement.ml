@@ -655,9 +655,9 @@ let results =
             | Nx_effect.Placed r -> Nx_effect.covers r
             | _ -> false);
           (match (cell_of filled).state with
-          | Live (Mem (_, shards)) ->
+          | Live (Mem shards) ->
               equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
-                (List.map Nx_buffer.length shards)
+                (List.map Nx_device.Buffer.length shards)
           | _ -> fail "expected storage of the test engine");
           equal (tensor float_exact)
             (Nx.mul_s (iota [| 2; 3 |]) 2.)
@@ -694,8 +694,7 @@ let reads =
           equal placement on1 (Nx.placement p);
           equal string
             (Nx.to_string (Nx.transpose (iota [| 8; 6 |])))
-            (Nx.to_string (Nx.transpose s));
-          raises_invalid_arg (fun () -> Nx.data p));
+            (Nx.to_string (Nx.transpose s)));
       test "views share their cell; a window's contiguous copy does not"
         (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |]) in
@@ -739,7 +738,9 @@ let identities =
                   Nx_effect.placed (Nx.Placement.device d) Nx.float32
                     (Nx_core.View.create [| 1 |])
                     (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
-                       (Nx_effect.Held (Nx_buffer.create Nx.float32 1)))
+                       (Nx_effect.Held
+                          (Nx_device.Buffer.create Nx_device.host
+                             Nx_dtype.Scalar.Float32 1)))
                 in
                 d.d_id
                 :: List.map Nx_effect.identity_hash

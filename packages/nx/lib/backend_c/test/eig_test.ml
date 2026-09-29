@@ -16,21 +16,22 @@
    conformance eig-general matrix, complex-input matrices (the single-shift
    path), plus batched and f32-upcast cases.
 
-   Test-local externals bind the C stub directly; nx_buffer builds the typed
+   Test-local externals bind the C stub directly over typed host buffers: the
    input buffers (incl. low-precision upcast and single/double complex) and the
    complex128 output buffers. The hard convergence fixtures run only under the
    backend-stress alias. *)
 
-module Buf = Nx_buffer
+module Buf = Nx_c_test_buf
 open Bigarray
 
 let ok name cond = if not cond then failwith name
 
 type ('a, 'b) ffi = {
-  buffer : ('a, 'b, c_layout) Genarray.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : ('a, 'b) Nx_dtype.t;
 }
 
 (* eig w v in vectors — w and v are ALWAYS complex128; the dispatch dtype comes
@@ -42,10 +43,11 @@ external eig_ext :
 
 let ffi buf shape strides =
   {
-    buffer = Buf.to_genarray buf [| Buf.length buf |];
+    buffer = Buf.storage buf;
     shape;
     strides;
     offset = 0;
+    dtype = Buf.dtype buf;
   }
 
 let contig shape =

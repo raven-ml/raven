@@ -227,14 +227,14 @@ typedef void nx_c_sort_slice_fn(char *o, int64_t os, const char *in, int64_t is,
                                int64_t n, int desc, int arg, void *scr);
 
 static nx_c_sort_slice_fn *const nx_c_sort_fn[NX_C_DTYPE_COUNT] = {
-#define NX_C_ROW(sfx, kind, storage, compute, ld, st, cat)                      \
+#define NX_C_ROW(sfx, storage, compute, ld, st, cat)                            \
   [NX_C_DTYPE_##sfx] = nx_c_sort_slice_##sfx,
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
 #undef NX_C_ROW
 };
 
 static const int64_t nx_c_sort_pair_size[NX_C_DTYPE_COUNT] = {
-#define NX_C_ROW(sfx, kind, storage, compute, ld, st, cat)                      \
+#define NX_C_ROW(sfx, storage, compute, ld, st, cat)                            \
   [NX_C_DTYPE_##sfx] = (int64_t)sizeof(nx_c_pair_##sfx),
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ROW)
 #undef NX_C_ROW
@@ -365,7 +365,6 @@ static void nx_c_sort_stub(const char *op, value vout, value vin, int axis,
   if (s != NX_C_OK) nx_c_raise(op, s);
 
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) nx_c_raise(op, NX_C_ERR_BAD_KIND);
   int64_t in_elem = nx_c_elem_size(dt);
   if (in_elem == 0) nx_c_raise(op, NX_C_ERR_PACKED);
   int64_t out_elem = is_arg ? (int64_t)sizeof(int32_t) : in_elem;

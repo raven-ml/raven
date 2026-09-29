@@ -9,44 +9,6 @@ module B = Nx_device.Buffer
 (* One buffer per device of the cell's placement, in its order. *)
 type Nx_effect.storage += Runtime of B.t list
 
-(* Nx_buffer conversion
-
-   Cells and engines still exchange elements as Nx_buffer; these two functions
-   are where they meet device buffers. *)
-
-let bigarray_of_bytes raw =
-  let ba =
-    Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
-      (Bytes.length raw)
-  in
-  Bytes.iteri (fun i c -> ba.{i} <- Char.code c) raw;
-  ba
-
-let bytes_of (type a b) (nb : (a, b) Nx_buffer.t) =
-  B.of_bigarray
-    (Nx_buffer.to_bigarray1 (Nx_buffer.reinterpret Nx_dtype.uint8 nb))
-
-(* Int4 elements have no byte view: they go through their packed bytes. *)
-let copy_in (type a b) (nb : (a, b) Nx_buffer.t) dst =
-  match Nx_buffer.dtype nb with
-  | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
-      let raw = Bytes.create (B.nbytes dst) in
-      Nx_buffer.blit_to_bytes nb raw;
-      B.copy ~src:(B.of_bigarray (bigarray_of_bytes raw)) ~dst
-  | _ -> B.copy ~src:(bytes_of nb) ~dst
-
-let copy_out (type a b) src (nb : (a, b) Nx_buffer.t) =
-  match Nx_buffer.dtype nb with
-  | Nx_dtype.Int4 | Nx_dtype.UInt4 ->
-      let ba =
-        Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
-          (B.nbytes src)
-      in
-      B.copy ~src ~dst:(B.of_bigarray ba);
-      let raw = Bytes.init (B.nbytes src) (fun i -> Char.chr ba.{i}) in
-      Nx_buffer.blit_from_bytes raw nb
-  | _ -> B.copy ~src ~dst:(bytes_of nb)
-
 (* Devices *)
 
 let lock = Mutex.create ()
@@ -77,66 +39,30 @@ let extent v =
     (View.shape v);
   (!lo, !hi + 1)
 
-(* [v]'s elements in C order, from [src], the storage elements from [base] on.
-   Elements are copied as integer words of their width, [k] words to an element:
-   a float read as an OCaml float would quiet a signalling NaN. 4-bit elements
-   are copied as values. *)
-let gather (type a b) (src : (a, b) Nx_buffer.t) ~base v =
-  let dst = Nx_buffer.create (Nx_buffer.dtype src) (View.numel v) in
-  let copy (type c d) (src : (c, d) Nx_buffer.t) (dst : (c, d) Nx_buffer.t) k =
-    let shape = Array.append (View.shape v) [| k |] in
-    let strides = Array.append (Array.map (( * ) k) (View.strides v)) [| 1 |] in
-    let rank = Array.length shape in
-    let idx = Array.make rank 0 in
-    for w = 0 to Nx_buffer.length dst - 1 do
-      let off = ref ((View.offset v - base) * k) in
-      for a = 0 to rank - 1 do
-        off := !off + (idx.(a) * strides.(a))
-      done;
-      Nx_buffer.unsafe_set dst w (Nx_buffer.unsafe_get src !off);
-      let a = ref (rank - 1) in
-      while !a >= 0 do
-        idx.(!a) <- idx.(!a) + 1;
-        if idx.(!a) < shape.(!a) then a := -1
-        else begin
-          idx.(!a) <- 0;
-          decr a
-        end
-      done
-    done
-  in
-  let words (type c d) (word : (c, d) Nx_dtype.t) k =
-    copy (Nx_buffer.reinterpret word src) (Nx_buffer.reinterpret word dst) k
-  in
-  (match Nx_buffer.dtype src with
-  | Nx_dtype.Int4 | Nx_dtype.UInt4 -> copy src dst 1
-  | dt -> (
-      match Nx_dtype.itemsize dt with
-      | 1 -> words Nx_dtype.Int8 1
-      | 2 -> words Nx_dtype.Int16 1
-      | 4 -> words Nx_dtype.Int32 1
-      | n -> words Nx_dtype.Int64 (n / 8)));
-  dst
-
-(* The elements of view [v] of [b], whose elements are of [dt]. Int4 storage is
-   read whole: its elements may not start on a byte. *)
-let read_view (type a b) (dt : (a, b) Nx_dtype.t) b v =
+(* The elements of view [v] of [b]. Int4 storage is read whole: its elements may
+   not start on a byte. *)
+let read_view b v =
+  let s = B.dtype b in
   let n = View.numel v in
-  if n = 0 then Nx_buffer.create dt 0
+  if n = 0 then B.create Nx_device.host s 0
   else
     let lo, hi =
-      match dt with
-      | Nx_dtype.Int4 | Nx_dtype.UInt4 -> (0, B.length b)
+      match s with
+      | Nx_dtype.Scalar.Int4 | UInt4 -> (0, B.length b)
       | _ -> extent v
     in
-    let span = Nx_buffer.create dt (hi - lo) in
-    copy_out
-      (B.view b ~offset:(lo * Nx_dtype.itemsize dt) (B.dtype b) (hi - lo))
-      span;
+    let span = B.create Nx_device.host s (hi - lo) in
+    B.copy
+      ~src:(B.view b ~offset:(lo * Nx_dtype.Scalar.bitsize s / 8) s (hi - lo))
+      ~dst:span;
     if View.is_c_contiguous v && hi - lo = n && View.offset v = lo then span
-    else gather span ~base:lo v
+    else
+      Elements.gather span
+        (View.create
+           ~offset:(View.offset v - lo)
+           ~strides:(View.strides v) (View.shape v))
 
-let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
+let read : type a b. (a, b) Nx_effect.resident -> Nx_device.Buffer.t =
  fun r ->
   match Nx_effect.Cell.state r.r_cell with
   | Live (Runtime bufs) ->
@@ -147,19 +73,16 @@ let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
       let shape = Nx_effect.global r.r_placement (View.shape r.r_view) in
       Nx_effect.assemble r
         (Array.map (fun n -> (0, n)) shape)
-        (fun d v -> read_view r.r_dtype (buffer_on d) v)
+        (fun d v -> read_view (buffer_on d) v)
   | _ -> assert false (* nx reads held and consumed values itself *)
 
 (* Placing *)
 
-(* The elements of [t] in C order, as a buffer of exactly them. *)
+(* The elements of [t] in C order, as a host buffer of exactly them. *)
 let elements t =
   let buf = Nx_backend.to_host t and v = Nx_backend.view t in
-  if
-    View.is_c_contiguous v
-    && View.offset v = 0
-    && Nx_buffer.length buf = View.numel v
-  then buf
+  if View.is_c_contiguous v && View.offset v = 0 then
+    B.view buf ~offset:0 (B.dtype buf) (View.numel v)
   else Nx_backend.to_host (Nx_backend.copy t)
 
 let place : type a b.
@@ -176,7 +99,7 @@ let place : type a b.
     List.map2
       (fun d w ->
         let b = create d s n in
-        if n > 0 then copy_in (elements (Nx_backend.shrink h w)) b;
+        if n > 0 then B.copy ~src:(elements (Nx_backend.shrink h w)) ~dst:b;
         b)
       ds windows
   in

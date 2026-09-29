@@ -34,29 +34,35 @@ let kind_of_dtype : Safetensors.dtype -> kind = function
   | U64 -> K UInt64
 
 (* [tensor mapping kind shape ~off ~len] is the entry of [len] bytes at byte
-   [off] of [mapping]. It is a view of [mapping] when its address suits [kind],
-   and a copy in the machine's byte order otherwise. *)
+   [off] of the host buffer [mapping]. It is a view of [mapping] when its
+   address suits [kind], and a copy in the machine's byte order otherwise. *)
 let tensor (type a b) mapping (kind : (a, b) Nx_dtype.t) shape ~off ~len =
   let size = Nx_dtype.itemsize kind in
-  let bytes = Nx_buffer.of_bigarray1 (Bigarray.Array1.sub mapping off len) in
+  let n = len / size in
   let aligned =
-    let mask = Nativeint.of_int (size - 1) in
-    Nativeint.logand (Nx_buffer.unsafe_data_ptr bytes) mask = 0n
+    let first =
+      Nativeint.add
+        (Nx_device.Buffer.host_address mapping)
+        (Nativeint.of_int off)
+    in
+    Nativeint.rem first (Nativeint.of_int size) = 0n
   in
   let buffer =
-    if len = 0 then Nx_buffer.create kind 0
-    else if aligned && not Sys.big_endian then Nx_buffer.reinterpret kind bytes
+    if aligned && not Sys.big_endian then
+      Nx_device.Buffer.view mapping ~offset:off
+        (Nx_dtype.Scalar.of_dtype kind)
+        n
     else begin
-      let n = len / size in
-      let buffer = Nx_buffer.create kind n in
-      let dst = Bigarray.reshape_1 (Nx_buffer.to_genarray buffer [| n |]) n in
-      Nx_io_codec.blit_bytes ~src:mapping ~src_off:off ~dst ~dst_off:0 ~len;
+      let buffer = Storage.create kind n in
+      let dst = Storage.bytes buffer in
+      Nx_io_codec.blit_bytes ~src:(Storage.bytes mapping) ~src_off:off ~dst
+        ~dst_off:0 ~len;
       if Sys.big_endian then
         Nx_io_codec.byteswap dst ~element_size:size ~elements:n;
       buffer
     end
   in
-  Nx.P (Nx.of_buffer buffer ~shape)
+  Nx.P (Storage.tensor kind buffer shape)
 
 let read_exactly fd n =
   let buf = Bytes.create n in
@@ -108,10 +114,15 @@ let map_validated path fd =
         if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
         else path
       in
-      Nx_buffer.register_file
-        { path; size = file_len; mtime = stat.st_mtime; inode = stat.st_ino }
-        (Nx_buffer.of_bigarray1 mapping);
-      (metadata, prefix + header_len, mapping)
+      let file =
+        {
+          Nx_device.Buffer.path;
+          size = file_len;
+          mtime = stat.st_mtime;
+          inode = stat.st_ino;
+        }
+      in
+      (metadata, prefix + header_len, Nx_device.Buffer.of_bigarray ~file mapping)
 
 let load_safetensors path =
   try
@@ -146,10 +157,11 @@ let load_safetensors path =
 
 (* Saving *)
 
-(* The SafeTensors dtype of [t] and its elements' bytes, in row-major order and
-   little-endian, as stored: a float's bits are copied, never read as a
-   float. *)
-let tensor_to_bytes (type a b) (t : (a, b) Nx.t) =
+(* [tensor_data t] is the SafeTensors dtype of [t] and its elements' bytes, in
+   row-major order and little-endian, as stored: [t]'s own storage on a
+   little-endian host when [t] is contiguous, and a float's bits are copied,
+   never read as a float. *)
+let tensor_data (type a b) (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
     | Bool -> BOOL
@@ -171,19 +183,18 @@ let tensor_to_bytes (type a b) (t : (a, b) Nx.t) =
         fail_msg "unsupported dtype for safetensors: %s"
           (Nx_dtype.to_string dtype)
   in
+  let bytes = Storage.bytes (Storage.of_tensor t) in
   let size = Nx.itemsize t in
-  let bytes = Bytes.create (Nx.nbytes t) in
-  Nx_buffer.blit_to_bytes (Nx.to_buffer t) bytes;
-  if Sys.big_endian then
-    for e = 0 to Nx.numel t - 1 do
-      for i = 0 to (size / 2) - 1 do
-        let lo = (e * size) + i and hi = (e * size) + size - 1 - i in
-        let c = Bytes.get bytes lo in
-        Bytes.set bytes lo (Bytes.get bytes hi);
-        Bytes.set bytes hi c
-      done
-    done;
-  (dtype, Bytes.unsafe_to_string bytes)
+  if Sys.big_endian && size > 1 then begin
+    let swapped =
+      Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout
+        (Bigarray.Array1.dim bytes)
+    in
+    Bigarray.Array1.blit bytes swapped;
+    Nx_io_codec.byteswap swapped ~element_size:size ~elements:(Nx.numel t);
+    (dtype, swapped)
+  end
+  else (dtype, bytes)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;
@@ -207,7 +218,7 @@ let save_safetensors ?(overwrite = true) path items =
     List.map
       (fun (name, Nx.P arr) ->
         let shape = Array.to_list (Nx.shape arr) in
-        let dtype, data = tensor_to_bytes arr in
+        let dtype, data = tensor_data arr in
         match Safetensors.tensor_view_new ~dtype ~shape ~data with
         | Ok view -> (name, view)
         | Error err ->

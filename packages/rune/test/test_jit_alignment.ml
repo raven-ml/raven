@@ -22,11 +22,12 @@ let offset_by_one f =
   let whole = Nx.create f32 [| n + 1 |] (Array.init (n + 1) f) in
   let t = Nx.slice [ Nx.R (1, n + 1) ] whole in
   is_true ~msg:"contiguous" (Nx.is_c_contiguous t);
-  equal ~msg:"offset" int 1 (Nx.offset t);
+  let offset = Nx_core.View.offset (Nx_effect.view t) in
+  equal ~msg:"offset" int 1 offset;
   let address =
     Nativeint.add
-      (Nx_buffer.unsafe_data_ptr (Nx.to_buffer t))
-      (Nativeint.of_int (Nx.offset t * 4))
+      (Nx_device.Buffer.host_address (Nx_effect.to_host t))
+      (Nativeint.of_int (offset * 4))
   in
   equal ~msg:"address modulo 16" nativeint 4n (Nativeint.rem address 16n);
   t

@@ -132,17 +132,20 @@ let layout =
 
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
-(* Where each element of [t] is in its buffer, in row-major order, as [Nx.data]
-   documents: element [idx] is at [offset + sum idx.(d) * strides.(d) /
-   itemsize]. *)
+(* The storage of [t]: views share it, copies do not. *)
+let storage t = Nx_effect.to_host t
+
+(* Where each element of [t] is in its storage, in row-major order: element
+   [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
 let positions t =
-  let st = Array.map (fun b -> b / Nx.itemsize t) (Nx.strides t) in
+  let v = Nx_effect.view t in
+  let st = Nx_core.View.strides v in
   Array.init (Nx.numel t) (fun k ->
-      let p = ref (Nx.offset t) in
+      let p = ref (Nx_core.View.offset v) in
       Array.iteri (fun d i -> p := !p + (i * st.(d))) (unravel (Nx.shape t) k);
       !p)
 
-(* Whether the elements of [t] follow each other in its buffer. *)
+(* Whether the elements of [t] follow each other in its storage. *)
 let consecutive t =
   let pos = positions t in
   Array.for_all Fun.id (Array.mapi (fun k p -> p = pos.(0) + k) pos)
@@ -189,11 +192,12 @@ module Ref = struct
   let get t idx = t.data.(ravel t.shape idx)
   let of_nx s = { shape = Nx.shape s; data = Nx.to_array s }
 
-  (* The elements of [s] read from its buffer where [positions] says. *)
+  (* The elements of [s] read from its storage where [positions] says. *)
   let of_layout s =
     {
       shape = Nx.shape s;
-      data = Array.map (Nx_buffer.get (Nx.data s)) (positions s);
+      data =
+        Array.map (Nx_core.Elements.get (Nx.dtype s) (storage s)) (positions s);
     }
 
   let witness w =
@@ -825,43 +829,31 @@ let int_compare ~signed a b =
    their own, one buffer per device of a value's placement in its order (a split
    value's shards, a replicated value's copies), and count what moves. *)
 module Devices = struct
-  type Nx_effect.storage +=
-    | Mem : ('a, 'b) Nx_dtype.t * ('a, 'b) Nx_buffer.t list -> Nx_effect.storage
+  type Nx_effect.storage += Mem of Nx_device.Buffer.t list
 
   let elements_read = ref 0
   let uploads = ref 0
 
   (* The elements view [v] reaches in [mem], in C order. *)
-  let gather (type a b) (mem : (a, b) Nx_buffer.t) v : (a, b) Nx_buffer.t =
-    let shape = Nx_core.View.shape v and strides = Nx_core.View.strides v in
-    let n = Nx_core.View.numel v in
-    let dst = Nx_buffer.create (Nx_buffer.dtype mem) n in
-    for i = 0 to n - 1 do
-      let off = ref (Nx_core.View.offset v) in
-      Array.iteri (fun d k -> off := !off + (k * strides.(d))) (unravel shape i);
-      Nx_buffer.set dst i (Nx_buffer.get mem !off)
-    done;
-    elements_read := !elements_read + n;
-    dst
+  let gather mem v =
+    elements_read := !elements_read + Nx_core.View.numel v;
+    Nx_core.Elements.gather mem v
 
   let rec engine =
     {
       Nx_effect.read =
-        (fun (type a b) (r : (a, b) Nx_effect.resident) : (a, b) Nx_buffer.t ->
+        (fun r ->
           match r.r_cell.state with
-          | Live (Mem (dt, shards)) -> (
-              match Nx_dtype.equal_witness dt r.r_dtype with
-              | Some Type.Equal ->
-                  let shape =
-                    Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)
-                  in
-                  Nx_effect.assemble r
-                    (Array.map (fun n -> (0, n)) shape)
-                    (fun d v ->
-                      let devices = Nx.Placement.devices r.r_cell.placement in
-                      let k = Option.get (List.find_index (( == ) d) devices) in
-                      gather (List.nth shards k) v)
-              | None -> assert false)
+          | Live (Mem shards) ->
+              let shape =
+                Nx_effect.global r.r_placement (Nx_core.View.shape r.r_view)
+              in
+              Nx_effect.assemble r
+                (Array.map (fun n -> (0, n)) shape)
+                (fun d v ->
+                  let devices = Nx.Placement.devices r.r_cell.placement in
+                  let k = Option.get (List.find_index (( == ) d) devices) in
+                  gather (List.nth shards k) v)
           | _ -> assert false);
       place = (fun p x -> place p x);
     }
@@ -874,14 +866,14 @@ module Devices = struct
     let devices = Nx.Placement.devices p in
     let windows = List.map (Nx.Placement.window p (Nx.shape h)) devices in
     let shards =
-      List.map (fun w -> Nx.to_buffer (Nx.copy (Nx.shrink w h))) windows
+      List.map (fun w -> Nx_effect.to_host (Nx.copy (Nx.shrink w h))) windows
     in
     let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
     Nx_effect.placed p (Nx.dtype x)
       (Nx_core.View.create shape)
       (Nx_effect.cell ~placement:p
          ~length:(Array.fold_left ( * ) 1 shape)
-         (Mem (Nx.dtype x, shards)))
+         (Mem shards))
 
   let d1 = Nx_effect.Device.make "TEST:1" engine
   let d2 = Nx_effect.Device.make "TEST:2" engine
@@ -905,9 +897,13 @@ module Stored = struct
      row-major order. *)
 
   let storage (Nx.P t) =
-    let bytes = Bytes.create (Nx.nbytes t) in
-    Nx_buffer.blit_to_bytes (Nx.to_buffer t) bytes;
-    (Nx_dtype.to_string (Nx.dtype t), Nx.shape t, Bytes.unsafe_to_string bytes)
+    let t = Nx.contiguous t in
+    let b = Nx_effect.to_host t in
+    let b = Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t) in
+    let bytes = Nx_device.Buffer.bigarray Bigarray.char b in
+    ( Nx_dtype.to_string (Nx.dtype t),
+      Nx.shape t,
+      String.init (Bigarray.Array1.dim bytes) (Bigarray.Array1.get bytes) )
 
   let pp_packed ppf (Nx.P t as p) =
     let _, _, bytes = storage p in

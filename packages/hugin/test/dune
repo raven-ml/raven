@@ -22,7 +22,7 @@
   nx
   nx.dtype
   nx.core
-  nx.buffer
+  nx.device
   nx.effect
   nx.io
   str

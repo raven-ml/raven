@@ -6,7 +6,11 @@
 open Error
 
 let strf = Printf.sprintf
-let npy_to_nx (Npy.P (buffer, shape)) = Nx.P (Nx.of_buffer buffer ~shape)
+
+let npy_to_nx (Npy.P (kind, buffer, shape)) =
+  Nx.P (Storage.tensor kind buffer shape)
+
+let nx_to_npy t = Npy.P (Nx.dtype t, Storage.of_tensor t, Nx.shape t)
 
 (* Uniform exception-to-result conversion *)
 let wrap_exn f =
@@ -23,9 +27,7 @@ let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
 
 let save_npy ?(overwrite = true) path arr =
   wrap_exn @@ fun () ->
-  let buf = Nx.to_buffer arr in
-  let shape = Nx.shape arr in
-  let packed = Npy.P (buf, shape) in
+  let packed = nx_to_npy arr in
   (if not overwrite then Npy.write ~exclusive:true packed path
    else
      let temp = Temp_file.sibling path in
@@ -66,8 +68,7 @@ let save_npz ?(overwrite = true) path items =
     let zo = Zip_archive.open_out ~exclusive output in
     try
       List.iter
-        (fun (name, Nx.P nx) ->
-          Zip_archive.add_npy zo name (Npy.P (Nx.to_buffer nx, Nx.shape nx)))
+        (fun (name, Nx.P nx) -> Zip_archive.add_npy zo name (nx_to_npy nx))
         items;
       Zip_archive.close_out zo
     with exn ->

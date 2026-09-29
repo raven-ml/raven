@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 open Import
-open Nx_buffer
 
 let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
@@ -40,44 +39,22 @@ let par pool vol f =
     Parallel.parallel_for pool 0 (vol - 1) f
   else f 0 vol
 
-let to_host (type a b) (t : (a, b) t) :
-    (a, b) Nx_buffer.t =
+let to_host (type a b) (t : (a, b) t) : Nx_device.Buffer.t =
   let n = numel t.view in
-  match t.dtype with
-  | Nx_dtype.Float64 ->
-    (match t.buffer with
-     | Float64 arr -> of_bigarray1 (Array.unboxed_float64_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Float32 ->
-    (match t.buffer with
-     | Float32 arr -> of_bigarray1 (Array.unboxed_float32_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Int64 ->
-    (match t.buffer with
-     | Int64 arr -> of_bigarray1 (Array.unboxed_int64_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Int32 ->
-    (match t.buffer with
-     | Int32 arr -> of_bigarray1 (Array.unboxed_int32_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Int8 ->
-    (match t.buffer with
-     | Int8 arr -> of_bigarray1 (Array.unboxed_int8_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Int16 ->
-    (match t.buffer with
-     | Int16 arr -> of_bigarray1 (Array.unboxed_int16_to_ba arr n)
-     | _ -> assert false)
-  | Nx_dtype.Bool ->
-    (match t.buffer with
-     | Bool arr ->
-       let ba = Nx_buffer.create Nx_dtype.Bool n in
-       for i = 0 to n - 1 do
-         Nx_buffer.unsafe_set ba i arr.(i)
-       done;
-       ba
-     | _ -> assert false)
-  | _ -> invalid_arg "to_host: unsupported dtype"
+  match t.buffer with
+  | Float64 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_float64_to_ba arr n)
+  | Float32 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_float32_to_ba arr n)
+  | Int64 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_int64_to_ba arr n)
+  | Int32 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_int32_to_ba arr n)
+  | Int8 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_int8_to_ba arr n)
+  | Int16 arr -> Nx_device.Buffer.of_bigarray (Array.unboxed_int16_to_ba arr n)
+  | Bool arr ->
+    let bytes =
+      Bigarray.Array1.init Bigarray.int8_unsigned Bigarray.c_layout n (fun i ->
+          Bool.to_int arr.(i))
+    in
+    Nx_device.Buffer.view (Nx_device.Buffer.of_bigarray bytes) ~offset:0
+      Nx_dtype.Scalar.Bool n
 
 let buffer (type a b) context (dtype : (a, b) Nx_dtype.t) (shape_arr : int array) :
     (a, b) t =
@@ -1046,48 +1023,51 @@ let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Nx_dtype.int32
   | _ -> invalid_arg "argsort: unsupported dtype");
   out
 
-let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
-    (a, b) t =
-  let dtype = Nx_buffer.dtype array in
-  let size = Nx_buffer.length array in
+let from_host (type a b) ctx (dtype : (a, b) Nx_dtype.t) buf : (a, b) t =
+  let size = Nx_device.Buffer.length buf in
   let view = View.create [| size |] in
-  (* [to_bigarray1] raises for extended kinds, so view lazily inside the
-     standard-kind arms. *)
   match dtype with
   | Nx_dtype.Float64 ->
     let unboxed_array =
-      Array.ba_to_unboxed_float_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_float_array
+        (Nx_device.Buffer.bigarray Bigarray.float64 buf)
     in
     { context = ctx; dtype; buffer = Float64 unboxed_array; view }
   | Nx_dtype.Float32 ->
     let unboxed_array =
-      Array.ba_to_unboxed_float32_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_float32_array
+        (Nx_device.Buffer.bigarray Bigarray.float32 buf)
     in
     { context = ctx; dtype; buffer = Float32 unboxed_array; view }
   | Nx_dtype.Int64 ->
     let unboxed_array =
-      Array.ba_to_unboxed_int64_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_int64_array
+        (Nx_device.Buffer.bigarray Bigarray.int64 buf)
     in
     { context = ctx; dtype; buffer = Int64 unboxed_array; view }
   | Nx_dtype.Int32 ->
     let unboxed_array =
-      Array.ba_to_unboxed_int32_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_int32_array
+        (Nx_device.Buffer.bigarray Bigarray.int32 buf)
     in
     { context = ctx; dtype; buffer = Int32 unboxed_array; view }
   | Nx_dtype.Int8 ->
     let unboxed_array =
-      Array.ba_to_unboxed_int8_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_int8_array
+        (Nx_device.Buffer.bigarray Bigarray.int8_signed buf)
     in
     { context = ctx; dtype; buffer = Int8 unboxed_array; view }
   | Nx_dtype.Int16 ->
     let unboxed_array =
-      Array.ba_to_unboxed_int16_array (Nx_buffer.to_bigarray1 array)
+      Array.ba_to_unboxed_int16_array
+        (Nx_device.Buffer.bigarray Bigarray.int16_signed buf)
     in
     { context = ctx; dtype; buffer = Int16 unboxed_array; view }
   | Nx_dtype.Bool ->
+    let bytes = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf in
     let unboxed_array = Array.make size false in
     for i = 0 to size - 1 do
-      unboxed_array.(i) <- Nx_buffer.unsafe_get array i
+      unboxed_array.(i) <- Bigarray.Array1.get bytes i <> 0
     done;
     { context = ctx; dtype; buffer = Bool unboxed_array; view }
   | _ -> invalid_arg "from_host: unsupported dtype"
@@ -1468,7 +1448,11 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
 let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
     =
   let host = to_host (contiguous x) in
-  let out = from_host x.context (Nx_buffer.reinterpret dtype host) in
+  let out =
+    from_host x.context dtype
+      (Nx_device.Buffer.view host ~offset:0 (Nx_dtype.Scalar.of_dtype dtype)
+         (Nx_device.Buffer.length host))
+  in
   { out with view = View.reshape out.view (shape x.view) }
 
 let copy (type a b) (t : (a, b) t) : (a, b) t =

@@ -29,7 +29,8 @@ type header = {
   data_size : int;
 }
 
-type packed = P : ('a, 'b) Nx_buffer.t * int array -> packed
+type packed =
+  | P : ('a, 'b) Nx_dtype.t * Nx_device.Buffer.t * int array -> packed
 
 type encoded =
   | E : {
@@ -319,13 +320,10 @@ type payload =
   | Stored of { src : bytes; off : int }
   | Deflated of { src : bytes; src_off : int; src_len : int; skip : int }
 
-let flat_buffer buffer elements =
-  Bigarray.reshape_1 (Nx_buffer.to_genarray buffer [| elements |]) elements
-
 let materialize header payload =
   let (K kind) = header.kind in
-  let buffer = Nx_buffer.create kind header.elements in
-  let destination = flat_buffer buffer header.elements in
+  let buffer = Storage.create kind header.elements in
+  let destination = Storage.bytes buffer in
   let fill target =
     match payload with
     | Stored { src; off } ->
@@ -349,7 +347,7 @@ let materialize header payload =
   if header.swap_endian then
     Nx_io_codec.byteswap destination ~element_size:header.element_size
       ~elements:header.elements;
-  (P (buffer, Array.copy header.shape), crc)
+  (P (kind, buffer, Array.copy header.shape), crc)
 
 let map_file fd size =
   if size = 0 then Array1.create int8_unsigned c_layout 0
@@ -424,16 +422,12 @@ let encode_header kind shape =
   in
   magic ^ String.make 1 (Char.chr version) ^ "\x00" ^ length_bytes ^ header
 
-let encode (P (buffer, shape)) =
-  let kind = Nx_buffer.dtype buffer in
-  let data_size =
-    checked_mul "NPY payload" (Nx_buffer.length buffer) (Nx_dtype.itemsize kind)
-  in
+let encode (P (kind, buffer, shape)) =
   E
     {
       header = encode_header kind shape;
-      data = flat_buffer buffer (Nx_buffer.length buffer);
-      data_size;
+      data = Storage.bytes buffer;
+      data_size = Nx_device.Buffer.nbytes buffer;
     }
 
 let really_write_string fd text =

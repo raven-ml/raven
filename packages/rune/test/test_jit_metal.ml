@@ -533,19 +533,17 @@ let with_mapped_f32 values f =
       let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
       let stat = Unix.fstat fd in
       let mapping =
-        Nx_buffer.of_bigarray1
+        Nx_device.Buffer.of_bigarray
+          ~file:
+            { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
           (Bigarray.array1_of_genarray
              (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
                 [| -1 |]))
       in
       Unix.close fd;
-      Nx_buffer.register_file
-        { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
-        mapping;
       f
-        (Nx.of_buffer
-           (Nx_buffer.reinterpret Nx_dtype.Float32 mapping)
-           ~shape:[| n |]))
+        (Nx_effect.from_host Nx_effect.host_tensor_context Nx_dtype.float32
+           (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Float32 n)))
 
 (* A weight over a mapped file placed on Metal is the file's pages, borrowed:
    nothing is uploaded or counted, and the transpose is kept. *)
@@ -558,9 +556,10 @@ let test_place_from_a_mapped_file () =
   let placed, up = delta (fun () -> on_metal (Nx.matrix_transpose w)) in
   equal ~msg:"nothing is uploaded" int 0 up;
   equal ~msg:"nothing is counted" int 0 (resident () - base);
+  let strides x = Nx_core.View.strides (Nx_effect.view x) in
   equal ~msg:"the view is kept" (array int)
-    (Nx.strides (Nx.matrix_transpose w))
-    (Nx.strides placed);
+    (strides (Nx.matrix_transpose w))
+    (strides placed);
   let g =
     Rune.jit' ~devices:[ Rune.device "METAL" ] (fun x -> Nx.matmul x placed)
   in

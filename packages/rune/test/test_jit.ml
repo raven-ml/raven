@@ -3059,7 +3059,7 @@ let test_chunked_offset () =
   let n = (chunk / 4) + 4099 in
   let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
   is_true ~msg:"contiguous at an offset"
-    (Nx.is_c_contiguous x && Nx.offset x = 3);
+    (Nx.is_c_contiguous x && Nx_core.View.offset (Nx_effect.view x) = 3);
   check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
 
 let test_chunked_strided () =
@@ -3170,7 +3170,7 @@ let test_duplicate_outputs_are_two_values () =
         { u = y; v = y })
   in
   let r = host { u = vec32 [| 2.0 |]; v = vec32 [| 3.0 |] } in
-  is_true ~msg:"on the host too" (Nx.to_buffer r.u != Nx.to_buffer r.v);
+  is_true ~msg:"on the host too" (Nx_effect.to_host r.u != Nx_effect.to_host r.v);
   check_arr ~msg:"host value" [| 6.0 |] r.u;
   check_arr ~msg:"host copy" [| 6.0 |] r.v
 
@@ -3981,16 +3981,15 @@ let mapped_int32 ~byte n =
   let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
   let stat = Unix.fstat fd in
   let mapping =
-    Nx_buffer.of_bigarray1
+    Nx_device.Buffer.of_bigarray
+      ~file:{ path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
       (Bigarray.array1_of_genarray
          (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
             [| -1 |]))
   in
   Unix.close fd;
-  Nx_buffer.register_file
-    { path; size = 4 * n; mtime = stat.st_mtime; inode = stat.st_ino }
-    mapping;
-  ( Nx.of_buffer (Nx_buffer.reinterpret Nx_dtype.Int32 mapping) ~shape:[| n |],
+  ( Nx_effect.from_host Nx_effect.host_tensor_context Nx_dtype.int32
+      (Nx_device.Buffer.view mapping ~offset:0 Nx_dtype.Scalar.Int32 n),
     path )
 
 let first_byte i = Char.chr (i * 7 land 0xff)
@@ -4000,17 +3999,18 @@ let remove_mapped path =
   full_major ();
   try Sys.remove path with Sys_error _ when Sys.win32 -> ()
 
+let strides x = Nx_core.View.strides (Nx_effect.view x)
+
 (* [x] placed from its file is its view of the file's pages, bit for bit [x]. *)
 let check_placed_from_file ~msg x =
   is_true
     ~msg:(msg ^ ": over a mapped file")
-    (Nx_buffer.file_range (Nx.data x) <> None);
+    (Nx_device.Buffer.file (Nx_effect.to_host x) <> None);
   let base = resident () in
   let from_file, up, _ = delta (fun () -> place x) in
   equal ~msg:(msg ^ ": bytes uploaded") int 0 up;
   equal ~msg:(msg ^ ": bytes counted") int 0 (resident () - base);
-  equal ~msg:(msg ^ ": the view") (array int) (Nx.strides x)
-    (Nx.strides from_file);
+  equal ~msg:(msg ^ ": the view") (array int) (strides x) (strides from_file);
   equal ~msg:(msg ^ ": elements") (array int32)
     (Nx.to_array (Nx.copy x))
     (Nx.to_array from_file)

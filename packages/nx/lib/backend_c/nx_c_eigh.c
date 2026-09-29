@@ -1776,7 +1776,6 @@ CAMLprim value caml_nx_c_eigh(value vw, value vv, value vin, value vvectors) {
   if (s == NX_C_OK && vectors) s = nx_c_ndarray_of_value(vv, &v);
   if (s != NX_C_OK) la_raise("eigh", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("eigh", NX_C_ERR_BAD_KIND);
   s = nx_c_eigh_run(&in, &w, vectors ? &v : NULL, dt, vectors);
   if (s != NX_C_OK) la_raise("eigh", s);
   CAMLreturn(Val_unit);

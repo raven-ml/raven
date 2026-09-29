@@ -101,15 +101,9 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Tensor Properties ───── *)
 
-  let data x = B.to_host x
   let shape x = View.shape (B.view x)
   let dtype x = B.dtype x
   let itemsize x = Nx_dtype.itemsize (B.dtype x)
-
-  let strides x =
-    let view = B.view x in
-    let itemsize = itemsize x in
-    Array.map (fun s -> s * itemsize) (View.strides view)
 
   let dim i x =
     let shape = View.shape (B.view x) in
@@ -123,7 +117,6 @@ module Make (B : Backend_intf.S) = struct
   let size x = View.numel (B.view x)
   let numel x = size x
   let nbytes x = numel x * itemsize x
-  let offset x = View.offset (B.view x)
   let is_c_contiguous x = View.is_c_contiguous (B.view x)
 
   (* ───── Internal Utilities ───── *)
@@ -351,6 +344,12 @@ module Make (B : Backend_intf.S) = struct
   let contiguous x = B.contiguous x
   let copy x = B.copy x
 
+  (* The reader of [x]'s elements in C order, from index 0. *)
+  let elements x = Elements.get (B.dtype x) (B.to_host (contiguous x))
+
+  let host_buffer dtype n =
+    Nx_device.Buffer.create Nx_device.host (Nx_dtype.Scalar.of_dtype dtype) n
+
   let check_shape op shape =
     if Array.exists (fun d -> d < 0) shape then
       err op "shape %s, dimensions must be >= 0" (Shape.to_string shape)
@@ -361,11 +360,9 @@ module Make (B : Backend_intf.S) = struct
     if Array.length arr <> n then
       err "create" "array size, got %d elements, expected %d" (Array.length arr)
         n;
-    let bigarray = Nx_buffer.create dtype n in
-    for i = 0 to n - 1 do
-      Nx_buffer.unsafe_set bigarray i arr.(i)
-    done;
-    let tensor_1d = B.from_host ctx bigarray in
+    let buf = host_buffer dtype n in
+    Array.iteri (Elements.set dtype buf) arr;
+    let tensor_1d = B.from_host ctx dtype buf in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
     else B.reshape tensor_1d shape
 
@@ -401,35 +398,22 @@ module Make (B : Backend_intf.S) = struct
   let fill value x = full_like x value
   let ones_like x = full_like x (Nx_dtype.one (B.dtype x))
 
-  let to_buffer x =
-    let t =
-      let t = if is_c_contiguous x && offset x = 0 then x else contiguous x in
-      let buffer = data t in
-      if Nx_buffer.length buffer = numel t then t else copy t
-    in
-    data t
-
   let to_bigarray x =
-    if Option.is_none (Nx_dtype.to_bigarray_kind (B.dtype x)) then
-      err "to_bigarray" "Bigarray has no %s kind"
-        (Nx_dtype.to_string (B.dtype x));
-    let ga = Nx_buffer.to_genarray (to_buffer (copy x)) (shape x) in
-    (Obj.magic ga : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
-
-  let of_buffer ctx ~shape buf = reshape shape (B.from_host ctx buf)
+    match Nx_dtype.to_bigarray_kind (B.dtype x) with
+    | None ->
+        err "to_bigarray" "Bigarray has no %s kind"
+          (Nx_dtype.to_string (B.dtype x))
+    | Some k ->
+        let ba = Nx_device.Buffer.bigarray k (B.to_host (copy x)) in
+        Bigarray.reshape (Bigarray.genarray_of_array1 ba) (shape x)
 
   let of_bigarray ctx ba =
-    let ga_ext : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t =
-      Obj.magic ba
-    in
-    of_buffer ctx
-      ~shape:(Bigarray.Genarray.dims ga_ext)
-      (Nx_buffer.of_genarray ga_ext)
+    let shape = Bigarray.Genarray.dims ba in
+    let flat = Bigarray.reshape_1 ba (Array.fold_left ( * ) 1 shape) in
+    let dtype = Nx_dtype.of_bigarray_kind (Bigarray.Genarray.kind ba) in
+    reshape shape (B.from_host ctx dtype (Nx_device.Buffer.of_bigarray flat))
 
-  let to_array x =
-    let ba = data (contiguous x) in
-    let n = numel x in
-    Array.init n (fun i -> Nx_buffer.get ba i)
+  let to_array x = Array.init (numel x) (elements x)
 
   (* ───── Element-wise Binary Operations ───── *)
 
@@ -1713,7 +1697,7 @@ module Make (B : Backend_intf.S) = struct
     let t = contiguous (get indices x) in
     if numel t <> 1 then
       err "unsafe_get" "expected scalar result, got %d elements" (numel t);
-    Nx_buffer.get (data t) 0
+    elements t 0
 
   let slice specs t = slice_internal specs t
 
@@ -5748,8 +5732,7 @@ module Make (B : Backend_intf.S) = struct
 
   let pp (type a b) fmt (x : (a, b) t) =
     let open Format in
-    (* The elements in C order, indexed from 0. *)
-    let buffer = to_buffer x in
+    let element = elements x in
     let dtype = dtype x in
     let shape = shape x in
     let ndim = Array.length shape in
@@ -5777,7 +5760,7 @@ module Make (B : Backend_intf.S) = struct
       | Complex128 -> fprintf fmt "(%g%+gi)" elt.re elt.im
     in
     let edge = 2 in
-    if ndim = 0 then pp_element fmt (Nx_buffer.unsafe_get buffer 0)
+    if ndim = 0 then pp_element fmt (element 0)
     else
       let strides = Shape.c_contiguous_strides shape in
       let sep fmt axis first =
@@ -5789,8 +5772,7 @@ module Make (B : Backend_intf.S) = struct
         let depth = List.length indices in
         if depth = ndim then
           let md_index = Array.of_list indices in
-          pp_element fmt
-            (Nx_buffer.unsafe_get buffer (Shape.ravel_index md_index strides))
+          pp_element fmt (element (Shape.ravel_index md_index strides))
         else
           let axis = depth in
           let dim_size = shape.(axis) in
@@ -5833,27 +5815,25 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Higher-order Functions ───── *)
 
   let map_item f x =
-    let src = data (contiguous x) in
-    let sz = size x in
-    let dst = Nx_buffer.create (dtype x) sz in
+    let src = elements x and sz = size x in
+    let dst = host_buffer (dtype x) sz in
+    let set = Elements.set (dtype x) dst in
     for i = 0 to sz - 1 do
-      Nx_buffer.unsafe_set dst i (f (Nx_buffer.unsafe_get src i))
+      set i (f (src i))
     done;
-    of_buffer (B.context x) ~shape:(shape x) dst
+    reshape (shape x) (B.from_host (B.context x) (dtype x) dst)
 
   let iter_item f x =
-    let src = data (contiguous x) in
-    let sz = size x in
-    for i = 0 to sz - 1 do
-      f (Nx_buffer.unsafe_get src i)
+    let src = elements x in
+    for i = 0 to size x - 1 do
+      f (src i)
     done
 
   let fold_item f init x =
-    let src = data (contiguous x) in
-    let sz = size x in
+    let src = elements x in
     let acc = ref init in
-    for i = 0 to sz - 1 do
-      acc := f !acc (Nx_buffer.unsafe_get src i)
+    for i = 0 to size x - 1 do
+      acc := f !acc (src i)
     done;
     !acc
 

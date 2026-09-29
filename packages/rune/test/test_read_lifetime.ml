@@ -24,16 +24,16 @@ let mapped n =
   let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
   let st = Unix.fstat fd in
   let m =
-    Nx_buffer.of_bigarray1
+    Nx_device.Buffer.of_bigarray
+      ~file:{ path; size = 4 * n; mtime = st.st_mtime; inode = st.st_ino }
       (Bigarray.array1_of_genarray
          (Unix.map_file fd Bigarray.int8_unsigned Bigarray.c_layout false
             [| -1 |]))
   in
   Unix.close fd;
-  Nx_buffer.register_file
-    { path; size = 4 * n; mtime = st.st_mtime; inode = st.st_ino }
-    m;
-  (Nx.of_buffer (Nx_buffer.reinterpret Nx_dtype.Int32 m) ~shape:[| n |], path)
+  ( Nx_effect.from_host Nx_effect.host_tensor_context Nx_dtype.int32
+      (Nx_device.Buffer.view m ~offset:0 Nx_dtype.Scalar.Int32 n),
+    path )
 
 (* [f ()] with a full collection at every bigarray allocation. *)
 let collecting f =

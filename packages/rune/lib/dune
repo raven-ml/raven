@@ -18,6 +18,9 @@
   scan
   quant
   structure)
+ (foreign_stubs
+  (language c)
+  (names rune_stubs))
  (libraries
   nx.dtype
   nx.core
@@ -25,7 +28,7 @@
   nx.quant
   nx.effect
   nx.backend
-  nx.buffer
+  nx.device
   unix
   threads
   tolk.uop

@@ -5,7 +5,7 @@ open Windtrap
 module B = Nx_backend
 module F = Nx_core.Make_frontend (B)
 
-external dtype_tag : ('a, 'b) Nx_buffer.t -> int = "caml_nx_c_dtype_tag"
+external dtype_tag : ('a, 'b) B.t -> int = "caml_nx_c_dtype_tag"
 
 let ctx = B.create_context ()
 
@@ -18,8 +18,8 @@ let tests =
   group "binding-abi"
     [
       test "t-field-order" (fun () ->
-          (* C reads buffer/shape/strides/offset at record slots 0-3. An offset,
-             non-contiguous view makes a slot mismatch observable. *)
+          (* C reads buffer/shape/strides/offset/dtype at record slots 0-4. An
+             offset, non-contiguous view makes a slot mismatch observable. *)
           let base =
             F.create ctx F.float64 [| 3; 4 |]
               (Array.init 12 (fun i -> float_of_int i))
@@ -28,14 +28,14 @@ let tests =
           let expected = [| -1.; -2.; -3.; -5.; -6.; -7. |] in
           equal ~msg:"neg over strided offset view" (array fexact) expected
             (F.to_array (B.neg input)));
-      test "kind-to-tag" (fun () ->
+      test "dtype-to-tag" (fun () ->
           (* In [Nx_dtype.t]'s constructor order, which the tag follows. *)
           List.iteri
             (fun tag (Dtype dt) ->
-              let buffer = Nx_buffer.create dt 1 in
               equal
                 ~msg:(Printf.sprintf "%s tag" (Nx_dtype.to_string dt))
-                int tag (dtype_tag buffer))
+                int tag
+                (dtype_tag (B.buffer ctx dt [| 1 |])))
             Nx_dtype.
               [
                 Dtype float16;

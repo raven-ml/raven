@@ -2,13 +2,14 @@
 
 open Bigarray
 open Windtrap
-module Buf = Nx_buffer
+module Buf = Nx_c_test_buf
 
 type ('a, 'b) ffi = {
-  buffer : ('a, 'b, c_layout) Genarray.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : ('a, 'b) Nx_dtype.t;
 }
 
 external sort :
@@ -35,10 +36,11 @@ let ffi ?(offset = 0) ?strides ?shape buffer =
   let shape = Option.value shape ~default:[| len |] in
   let strides = Option.value strides ~default:(row_major shape) in
   {
-    buffer = Buf.to_genarray buffer [| Int.max 1 len |];
+    buffer = Buf.storage buffer;
     shape;
     strides;
     offset;
+    dtype = Buf.dtype buffer;
   }
 
 let buffer kind values =
@@ -47,8 +49,8 @@ let buffer kind values =
   result
 
 let test_cast_converters () =
-  equal ~msg:"f16/bf16 converters match Nx_buffer over the exhaustive corpus"
-    int 0
+  equal ~msg:"f16/bf16 converters match nx.dtype over the exhaustive corpus" int
+    0
     (cast_convert_selfcheck ())
 
 let test_sort_rejects_aliased_output () =

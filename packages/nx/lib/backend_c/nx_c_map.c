@@ -278,7 +278,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TN_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TN_NX_C_CAT_COMPLEX(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TN_NX_C_CAT_BOOL(op, sfx)
-#define NX_C_TROW_NUM(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_TROW_NUM(sfx, storage, compute, ld, st, cat)                       \
   NX_C_TN_##cat(NX_C_CUROP, sfx) /* sint,uint,float,complex */
 
 #define NX_C_TFC_NX_C_CAT_SINT(op, sfx)
@@ -286,7 +286,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TFC_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TFC_NX_C_CAT_COMPLEX(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TFC_NX_C_CAT_BOOL(op, sfx)
-#define NX_C_TROW_FC(sfx, kind, storage, compute, ld, st, cat)                  \
+#define NX_C_TROW_FC(sfx, storage, compute, ld, st, cat)                        \
   NX_C_TFC_##cat(NX_C_CUROP, sfx) /* float,complex */
 
 #define NX_C_TFO_NX_C_CAT_SINT(op, sfx)
@@ -294,7 +294,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TFO_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TFO_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TFO_NX_C_CAT_BOOL(op, sfx)
-#define NX_C_TROW_FLOAT(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_TROW_FLOAT(sfx, storage, compute, ld, st, cat)                     \
   NX_C_TFO_##cat(NX_C_CUROP, sfx) /* float only */
 
 #define NX_C_TIF_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -302,7 +302,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TIF_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TIF_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TIF_NX_C_CAT_BOOL(op, sfx)
-#define NX_C_TROW_INTF(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_TROW_INTF(sfx, storage, compute, ld, st, cat)                      \
   NX_C_TIF_##cat(NX_C_CUROP, sfx) /* sint,uint,float */
 
 #define NX_C_TMM_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -310,7 +310,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TMM_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TMM_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TMM_NX_C_CAT_BOOL(op, sfx) NX_C_TE(op, sfx)
-#define NX_C_TROW_MINMAX(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_TROW_MINMAX(sfx, storage, compute, ld, st, cat)                    \
   NX_C_TMM_##cat(NX_C_CUROP, sfx) /* sint,uint,float,bool */
 
 #define NX_C_TBW_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -318,7 +318,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TBW_NX_C_CAT_FLOAT(op, sfx)
 #define NX_C_TBW_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TBW_NX_C_CAT_BOOL(op, sfx) NX_C_TE(op, sfx)
-#define NX_C_TROW_BITWISE(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_TROW_BITWISE(sfx, storage, compute, ld, st, cat)                   \
   NX_C_TBW_##cat(NX_C_CUROP, sfx) /* sint,uint,bool */
 
 #define NX_C_TSH_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -326,7 +326,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TSH_NX_C_CAT_FLOAT(op, sfx)
 #define NX_C_TSH_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TSH_NX_C_CAT_BOOL(op, sfx)
-#define NX_C_TROW_SHIFT(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_TROW_SHIFT(sfx, storage, compute, ld, st, cat)                     \
   NX_C_TSH_##cat(NX_C_CUROP, sfx) /* sint,uint */
 
 #define NX_C_TAL_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -334,7 +334,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TAL_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TAL_NX_C_CAT_COMPLEX(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TAL_NX_C_CAT_BOOL(op, sfx) NX_C_TE(op, sfx)
-#define NX_C_TROW_ALL(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_TROW_ALL(sfx, storage, compute, ld, st, cat)                       \
   NX_C_TAL_##cat(NX_C_CUROP, sfx) /* every compute dtype */
 
 #define NX_C_TOR_NX_C_CAT_SINT(op, sfx) NX_C_TE(op, sfx)
@@ -342,7 +342,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TOR_NX_C_CAT_FLOAT(op, sfx) NX_C_TE(op, sfx)
 #define NX_C_TOR_NX_C_CAT_COMPLEX(op, sfx)
 #define NX_C_TOR_NX_C_CAT_BOOL(op, sfx) NX_C_TE(op, sfx)
-#define NX_C_TROW_ORD(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_TROW_ORD(sfx, storage, compute, ld, st, cat)                       \
   NX_C_TOR_##cat(NX_C_CUROP, sfx) /* sint,uint,float,bool (no ordered complex) */
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -363,7 +363,7 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_NEG_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
   NX_C_UK(neg, sfx, storage, compute, ld, st, (-(vx)))
 #define NX_C_NEG_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_NEG_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_NEG_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_NEG_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_NEG_KROW)
 
@@ -376,7 +376,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_NEG_KROW)
 #define NX_C_RECIP_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)               \
   NX_C_UK(recip, sfx, storage, compute, ld, st, ((compute)1 / (vx)))
 #define NX_C_RECIP_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_RECIP_KROW(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_RECIP_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_RECIP_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_RECIP_KROW)
 
@@ -393,7 +393,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_RECIP_KROW)
   NX_C_UK(abs, sfx, storage, compute, ld, st,                                   \
          (compute)NX_C_MFN(cabs, compute)(vx))
 #define NX_C_ABS_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_ABS_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_ABS_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_ABS_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ABS_KROW)
 
@@ -413,7 +413,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ABS_KROW)
               ? (compute)0                                                     \
               : (vx) / NX_C_MFN(cabs, compute)(vx)))
 #define NX_C_SIGN_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_SIGN_KROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_SIGN_KROW(sfx, storage, compute, ld, st, cat)                      \
   NX_C_SIGN_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SIGN_KROW)
 
@@ -446,7 +446,7 @@ static const nx_c_map_table nx_c_sign_table = {
 #define NX_C_TRK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_TRK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_TRK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_TRANS_KROW(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_TRANS_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_TRK_##cat(sfx, storage, compute, ld, st)
 
 #define NX_C_TRANS(op)                                                          \
@@ -499,7 +499,7 @@ NX_C_TRANS(sqrt)
 #define NX_C_FOK_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FOK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_FOK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_FO_KROW(sfx, kind, storage, compute, ld, st, cat)                  \
+#define NX_C_FO_KROW(sfx, storage, compute, ld, st, cat)                        \
   NX_C_FOK_##cat(sfx, storage, compute, ld, st)
 #define NX_C_CUROP erf
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FO_KROW)
@@ -518,7 +518,7 @@ static const nx_c_map_table nx_c_erf_table = {
          NX_C_MFN(NX_C_CUROP, compute)(vx))
 #define NX_C_RNK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_RNK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_RND_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_RND_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_RNK_##cat(sfx, storage, compute, ld, st)
 
 #define NX_C_ROUNDOP(op)                                                        \
@@ -558,7 +558,7 @@ NX_C_ROUNDOP(round)
 #define NX_C_ARK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                 \
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
 #define NX_C_ARK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_ARITH_KROW(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_ARITH_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_ARK_##cat(sfx, storage, compute, ld, st)
 
 #define NX_C_ARITH(op, sym)                                                     \
@@ -596,7 +596,7 @@ NX_C_ARITH(mul, *)
          NX_C_MFN(trunc, compute)((va) / (vb)))
 #define NX_C_IDIV_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_IDIV_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_IDIV_KROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_IDIV_KROW(sfx, storage, compute, ld, st, cat)                      \
   NX_C_IDIV_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_IDIV_KROW)
 #define NX_C_CUROP idiv
@@ -612,7 +612,7 @@ static const nx_c_map_table nx_c_idiv_table = {
 #define NX_C_FDIV_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_FDIV_KROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_FDIV_KROW(sfx, storage, compute, ld, st, cat)                      \
   NX_C_FDIV_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FDIV_KROW)
 #define NX_C_CUROP fdiv
@@ -632,7 +632,7 @@ static const nx_c_map_table nx_c_fdiv_table = {
   NX_C_BK(mod, sfx, storage, compute, ld, st, NX_C_MFN(fmod, compute)(va, vb))
 #define NX_C_MOD_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_MOD_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_MOD_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_MOD_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_MOD_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MOD_KROW)
 #define NX_C_CUROP mod
@@ -657,7 +657,7 @@ static const nx_c_map_table nx_c_mod_table = {
          ((isnan(va) || isnan(vb)) ? (compute)NAN                              \
                                    : ((va)NX_C_CURSYM(vb) ? (va) : (vb))))
 #define NX_C_MMK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
-#define NX_C_MINMAX_KROW(sfx, kind, storage, compute, ld, st, cat)              \
+#define NX_C_MINMAX_KROW(sfx, storage, compute, ld, st, cat)                    \
   NX_C_MMK_##cat(sfx, storage, compute, ld, st)
 
 #define NX_C_MINMAX(op)                                                         \
@@ -688,7 +688,7 @@ NX_C_MINMAX(min)
   NX_C_BK(pow, sfx, storage, compute, ld, st,                                   \
          NX_C_MFN(cpow, compute)((va), (vb)))
 #define NX_C_POW_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_POW_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_POW_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_POW_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_POW_KROW)
 #define NX_C_CUROP pow
@@ -704,7 +704,7 @@ static const nx_c_map_table nx_c_pow_table = {
 #define NX_C_ATAN2_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_ATAN2_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_ATAN2_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_ATAN2_KROW(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_ATAN2_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_ATAN2_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_ATAN2_KROW)
 #define NX_C_CUROP atan2
@@ -722,7 +722,7 @@ static const nx_c_map_table nx_c_atan2_table = {
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, ((va)NX_C_CURSYM(vb)))
 #define NX_C_BWK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)
 #define NX_C_BWK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
-#define NX_C_BITWISE_KROW(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_BITWISE_KROW(sfx, storage, compute, ld, st, cat)                   \
   NX_C_BWK_##cat(sfx, storage, compute, ld, st)
 
 #define NX_C_BITWISE(op)                                                        \
@@ -763,7 +763,7 @@ NX_C_BITWISE(and)
 #define NX_C_SHL_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)
 #define NX_C_SHL_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_SHL_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_SHL_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_SHL_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_SHL_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SHL_KROW)
 #define NX_C_CUROP shl
@@ -783,7 +783,7 @@ static const nx_c_map_table nx_c_shl_table = {
 #define NX_C_SHR_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)
 #define NX_C_SHR_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_SHR_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
-#define NX_C_SHR_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_SHR_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_SHR_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SHR_KROW)
 #define NX_C_CUROP shr
@@ -806,7 +806,7 @@ static const nx_c_map_table nx_c_shr_table = {
   NX_C_CMPK(NX_C_CUROP, sfx, storage, compute, ld, ((va)NX_C_CURSYM(vb)))
 #define NX_C_CEQK_NX_C_CAT_BOOL(sfx, storage, compute, ld)                       \
   NX_C_CMPK(NX_C_CUROP, sfx, storage, compute, ld, ((va)NX_C_CURSYM(vb)))
-#define NX_C_CEQ_KROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_CEQ_KROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_CEQK_##cat(sfx, storage, compute, ld)
 
 #define NX_C_CMPEQ(op)                                                          \
@@ -835,7 +835,7 @@ NX_C_CMPEQ(cmpne)
 #define NX_C_CORDK_NX_C_CAT_BOOL(sfx, storage, compute, ld)                      \
   NX_C_CMPK(NX_C_CUROP, sfx, storage, compute, ld, ((va)NX_C_CURSYM(vb)))
 #define NX_C_CORDK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld)
-#define NX_C_CORD_KROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_CORD_KROW(sfx, storage, compute, ld, st, cat)                      \
   NX_C_CORDK_##cat(sfx, storage, compute, ld)
 
 #define NX_C_CMPORD(op)                                                         \
@@ -914,7 +914,7 @@ NX_C_CMPORD(cmple)
       }                                                                        \
     }                                                                          \
   }
-#define NX_C_WHERE_KROW(sfx, kind, storage, compute, ld, st, cat)               \
+#define NX_C_WHERE_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_WK(sfx, storage)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_WHERE_KROW)
 #define NX_C_CUROP where
@@ -1050,18 +1050,18 @@ static inline uint16_t nx_c_f32_to_bf16(float f) {
   X(A, f32, float, float, NX_C_CAT_FLOAT)                                       \
   X(A, f64, double, double, NX_C_CAT_FLOAT)                                     \
   X(A, bf16, uint16_t, float, NX_C_CAT_FLOAT)                                   \
-  X(A, f8e4m3, caml_ba_fp8_e4m3, float, NX_C_CAT_FLOAT)                         \
-  X(A, f8e5m2, caml_ba_fp8_e5m2, float, NX_C_CAT_FLOAT)                         \
+  X(A, f8e4m3, uint8_t, float, NX_C_CAT_FLOAT)                                  \
+  X(A, f8e5m2, uint8_t, float, NX_C_CAT_FLOAT)                                  \
   X(A, i8, int8_t, int64_t, NX_C_CAT_SINT) X(A, u8, uint8_t, int64_t, NX_C_CAT_UINT) \
   X(A, i16, int16_t, int64_t, NX_C_CAT_SINT)                                    \
   X(A, u16, uint16_t, int64_t, NX_C_CAT_UINT)                                   \
   X(A, i32, int32_t, int64_t, NX_C_CAT_SINT)                                    \
-  X(A, u32, caml_ba_uint32, uint64_t, NX_C_CAT_UINT)                            \
+  X(A, u32, uint32_t, uint64_t, NX_C_CAT_UINT)                                  \
   X(A, i64, int64_t, int64_t, NX_C_CAT_SINT)                                    \
-  X(A, u64, caml_ba_uint64, uint64_t, NX_C_CAT_UINT)                            \
+  X(A, u64, uint64_t, uint64_t, NX_C_CAT_UINT)                                  \
   X(A, c32, nx_c_complex32, nx_c_complex32, NX_C_CAT_COMPLEX)                     \
   X(A, c64, nx_c_complex64, nx_c_complex64, NX_C_CAT_COMPLEX)                     \
-  X(A, bool_, caml_ba_bool, uint8_t, NX_C_CAT_BOOL)
+  X(A, bool_, uint8_t, uint8_t, NX_C_CAT_BOOL)
 
 /* The header's _Static_assert pins the dtype enum but not this local list; pin
    its length to the table's compute-row count so a dtype added to the table but
@@ -1069,7 +1069,7 @@ static inline uint16_t nx_c_f32_to_bf16(float f) {
    untested pair. (Counts, not identity — a wrong row still shows up as a NULL
    cast slot and a failing test.) */
 #define NX_C_CAST_DST_CNT(A, dsfx, dstorage, dcompute, dcat) +1
-#define NX_C_COMPUTE_CNT(sfx, kind, storage, compute, ld, st, cat) +1
+#define NX_C_COMPUTE_CNT(sfx, storage, compute, ld, st, cat) +1
 _Static_assert((0 NX_C_CAST_DST_LIST(NX_C_CAST_DST_CNT, _)) ==
                    (0 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_COMPUTE_CNT)),
                "cast dst list drifted from the dtype table");
@@ -1110,7 +1110,7 @@ _Static_assert((0 NX_C_CAST_DST_LIST(NX_C_CAST_DST_CNT, _)) ==
       }                                                                        \
     }                                                                          \
   }
-#define NX_C_CAST_KGEN_SRC(ssfx, kind, sstorage, scompute, sld, sst, scat)      \
+#define NX_C_CAST_KGEN_SRC(ssfx, sstorage, scompute, sld, sst, scat)            \
   NX_C_CAST_DST_LIST(NX_C_CAST_KI, (ssfx, sstorage, scompute, sld, scat))
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_KGEN_SRC)
 
@@ -1122,7 +1122,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_KGEN_SRC)
 #define NX_C_CAST_TE2(ssfx, dsfx) NX_C_CAST_TE3(ssfx, dsfx)
 #define NX_C_CAST_TE3(ssfx, dsfx)                                               \
   [NX_C_DTYPE_##dsfx] = nx_c_cast_##ssfx##_to_##dsfx,
-#define NX_C_CAST_SRCTBL(ssfx, kind, sstorage, scompute, sld, sst, scat)        \
+#define NX_C_CAST_SRCTBL(ssfx, sstorage, scompute, sld, sst, scat)              \
   [NX_C_DTYPE_##ssfx] = {.fn = {NX_C_CAST_DST_LIST(NX_C_CAST_TE, (ssfx))}},
 static const nx_c_map_table nx_c_cast_tables[NX_C_DTYPE_COUNT] = {
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_SRCTBL)};
@@ -1157,7 +1157,7 @@ typedef void nx_c_castp_from(char *dbase, const uint8_t *sbytes, int64_t soff,
                      : (uint8_t)((*bp & 0xF0) | nib);                          \
     }                                                                          \
   }
-#define NX_C_CASTP_TO_ROW(sfx, kind, storage, compute, ld, st, cat)             \
+#define NX_C_CASTP_TO_ROW(sfx, storage, compute, ld, st, cat)                   \
   NX_C_CASTP_TO_KERN(i4, nx_c_f2i4_s, sfx, storage, compute, ld, cat)            \
   NX_C_CASTP_TO_KERN(u4, nx_c_f2i4_u, sfx, storage, compute, ld, cat)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_ROW)
@@ -1186,18 +1186,18 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_ROW)
       pO[i] = (storage)st(NX_C_CASTVAL_##dcat(compute, sfx, NX_C_CAT_UINT, v));  \
     }                                                                          \
   }
-#define NX_C_CASTP_FROM_ROW(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_CASTP_FROM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_CASTP_FROM_I4(sfx, storage, compute, st, cat)                            \
   NX_C_CASTP_FROM_U4(sfx, storage, compute, st, cat)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_FROM_ROW)
 
-#define NX_C_CASTP_TO_I4_TE(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_CASTP_TO_I4_TE(sfx, storage, compute, ld, st, cat)                 \
   [NX_C_DTYPE_##sfx] = nx_c_castp_##sfx##_to_i4,
-#define NX_C_CASTP_TO_U4_TE(sfx, kind, storage, compute, ld, st, cat)           \
+#define NX_C_CASTP_TO_U4_TE(sfx, storage, compute, ld, st, cat)                 \
   [NX_C_DTYPE_##sfx] = nx_c_castp_##sfx##_to_u4,
-#define NX_C_CASTP_FROM_I4_TE(sfx, kind, storage, compute, ld, st, cat)         \
+#define NX_C_CASTP_FROM_I4_TE(sfx, storage, compute, ld, st, cat)               \
   [NX_C_DTYPE_##sfx] = nx_c_castp_i4_to_##sfx,
-#define NX_C_CASTP_FROM_U4_TE(sfx, kind, storage, compute, ld, st, cat)         \
+#define NX_C_CASTP_FROM_U4_TE(sfx, storage, compute, ld, st, cat)               \
   [NX_C_DTYPE_##sfx] = nx_c_castp_u4_to_##sfx,
 static nx_c_castp_to *const nx_c_castp_to_i4[NX_C_DTYPE_COUNT] = {
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_TO_I4_TE)};
@@ -1321,8 +1321,6 @@ static void nx_c_cmp_run(const char *op, const nx_c_map_table *tbl, value vout,
   if ((s = nx_c_ndarray_of_value(vb, &ops[2])) != NX_C_OK) nx_c_raise(op, s);
   nx_c_dtype in = nx_c_dtype_of_value(va);
   nx_c_dtype out = nx_c_dtype_of_value(vout);
-  if (in == NX_C_DTYPE_COUNT || out == NX_C_DTYPE_COUNT)
-    nx_c_raise(op, NX_C_ERR_BAD_KIND);
   int64_t elem[3] = {nx_c_elem_size(out), nx_c_elem_size(in), nx_c_elem_size(in)};
   s = nx_c_map_run(tbl, in, 2, ops, elem, NX_C_COST_BANDWIDTH, NULL);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
@@ -1350,8 +1348,6 @@ CAMLprim value caml_nx_c_cast(value vout, value va) {
   if ((s = nx_c_ndarray_of_value(va, &ops[1])) != NX_C_OK) nx_c_raise("cast", s);
   nx_c_dtype dst = nx_c_dtype_of_value(vout);
   nx_c_dtype src = nx_c_dtype_of_value(va);
-  if (dst == NX_C_DTYPE_COUNT || src == NX_C_DTYPE_COUNT)
-    nx_c_raise("cast", NX_C_ERR_BAD_KIND);
   if (nx_c_dtype_is_packed(src) || nx_c_dtype_is_packed(dst)) {
     s = nx_c_cast_packed(src, dst, &ops[0], &ops[1]);
   } else {

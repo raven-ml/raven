@@ -576,13 +576,10 @@ let json_to_metadata j : (metadata, error) result =
 
 (* Tensor views *)
 
-type tensor_view = {
-  dtype : dtype;
-  shape : int list;
-  data : string;
-  offset : int;
-  length : int;
-}
+type bytes_ba =
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+type tensor_view = { dtype : dtype; shape : int list; data : bytes_ba }
 
 let tensor_view_new ~dtype ~shape ~data =
   let nbits =
@@ -612,11 +609,10 @@ let tensor_view_new ~dtype ~shape ~data =
       if Int64.rem nb 8L <> 0L then Error Misaligned_slice
       else
         let size = Int64.to_int (Int64.div nb 8L) in
-        if String.length data <> size then
-          Error
-            (Invalid_tensor_view
-               (dtype_to_string dtype, shape, String.length data))
-        else Ok { dtype; shape; data; offset = 0; length = size }
+        let length = Bigarray.Array1.dim data in
+        if length <> size then
+          Error (Invalid_tensor_view (dtype_to_string dtype, shape, length))
+        else Ok { dtype; shape; data }
 
 (* Header *)
 
@@ -650,7 +646,7 @@ let prepare data data_info =
   let tensors = ref [] in
   List.iter
     (fun (name, t) ->
-      let n = t.length in
+      let n = Bigarray.Array1.dim t.data in
       let ti =
         {
           dtype = t.dtype;
@@ -686,26 +682,25 @@ let prepare data data_info =
   Ok (n_aligned, header_bytes, !offset, List.rev !tensors)
 
 let serialize_to_file data data_info filename =
-  let* n_aligned, header_bytes, total_data_len, tensors =
-    prepare data data_info
-  in
-  let total = header_len_bytes + n_aligned + total_data_len in
-  let b = Bytes.create total in
-  write_u64_le b 0 (Int64.of_int n_aligned);
-  Bytes.blit_string header_bytes 0 b header_len_bytes n_aligned;
-  let pos = ref (header_len_bytes + n_aligned) in
-  List.iter
-    (fun (tv : tensor_view) ->
-      Bytes.blit_string tv.data tv.offset b !pos tv.length;
-      pos := !pos + tv.length)
-    tensors;
+  let* n_aligned, header_bytes, _, tensors = prepare data data_info in
+  let header = Bytes.create (header_len_bytes + n_aligned) in
+  write_u64_le header 0 (Int64.of_int n_aligned);
+  Bytes.blit_string header_bytes 0 header header_len_bytes n_aligned;
   try
-    let oc = open_out_bin filename in
+    let fd =
+      Unix.openfile filename
+        [ Unix.O_WRONLY; Unix.O_CREAT; Unix.O_TRUNC; Unix.O_CLOEXEC ]
+        0o666
+    in
     Fun.protect
-      ~finally:(fun () -> close_out oc)
+      ~finally:(fun () -> Unix.close fd)
       (fun () ->
-        output_bytes oc b;
-        flush oc;
-        Unix.fsync (Unix.descr_of_out_channel oc));
+        ignore (Unix.write fd header 0 (Bytes.length header));
+        List.iter
+          (fun (tv : tensor_view) ->
+            Nx_io_codec.write_all fd tv.data ~off:0
+              ~len:(Bigarray.Array1.dim tv.data))
+          tensors;
+        Unix.fsync fd);
     Ok ()
   with e -> Error (Io_error (Printexc.to_string e))

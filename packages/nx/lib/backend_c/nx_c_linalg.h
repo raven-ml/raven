@@ -207,7 +207,7 @@ static la_compute la_compute_of(nx_c_dtype dt) {
    base + (i*rs + k*cs)*esz through nx_c_ld (converting to the compute type) into a
    dense n×lda buffer. pack_tri writes the lower (or upper) triangle back through
    nx_c_st and zeroes the other triangle — the cholesky output shape. */
-#define LA_GEN_MOVE(sfx, kind, storage, compute, ld, st, cat)                  \
+#define LA_GEN_MOVE(sfx, storage, compute, ld, st, cat)                        \
   static void la_unpack_##sfx(const char *src, int64_t rs, int64_t cs,         \
                               int64_t rows, int64_t cols, void *vdst,          \
                               int64_t ld_) {                                   \
@@ -265,7 +265,7 @@ typedef struct {
 } la_move_desc;
 
 static const la_move_desc la_move[NX_C_DTYPE_COUNT] = {
-#define LA_MOVE_ROW(sfx, kind, storage, compute, ld, st, cat)                  \
+#define LA_MOVE_ROW(sfx, storage, compute, ld, st, cat)                        \
   [NX_C_DTYPE_##sfx] = {la_unpack_##sfx, la_packtri_##sfx, la_packfull_##sfx,   \
                        la_packR_##sfx},
     NX_C_FOR_EACH_COMPUTE_DTYPE(LA_MOVE_ROW)

@@ -59,7 +59,9 @@ let round_trips ~save ~load cases =
       prop (c.name ^ " tensors round trip bit for bit") c.tensors (fun t ->
           cover "an empty tensor" (Nx.numel t = 0);
           cover "a scalar" (Nx.ndim t = 0);
-          cover "a view" ((not (Nx.is_c_contiguous t)) || Nx.offset t <> 0);
+          cover "a view"
+            ((not (Nx.is_c_contiguous t))
+            || Nx_core.View.offset (Nx_effect.view t) <> 0);
           Law.round_trip packed string (saved "" save) load (Nx.P t)))
     cases
 
@@ -350,8 +352,8 @@ let safetensors =
   let file_range archive name =
     let (Nx.P t) = Hashtbl.find archive name in
     Option.map
-      (fun ((file : Nx_buffer.file), offset) -> (file.path, offset))
-      (Nx_buffer.file_range (Nx.to_buffer t))
+      (fun ((file : Nx_device.Buffer.file), offset) -> (file.path, offset))
+      (Nx_device.Buffer.file (Nx_effect.to_host t))
   in
   group "safetensors"
     [

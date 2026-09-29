@@ -2949,7 +2949,6 @@ CAMLprim value caml_nx_c_svd(value vu, value vs, value vvt, value vin) {
   if (st == NX_C_OK) st = nx_c_ndarray_of_value(vvt, &vt);
   if (st != NX_C_OK) la_raise("svd", st);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("svd", NX_C_ERR_BAD_KIND);
   st = nx_c_svd_run(&in, &u, &s, &vt, dt);
   if (st != NX_C_OK) la_raise("svd", st);
   CAMLreturn(Val_unit);

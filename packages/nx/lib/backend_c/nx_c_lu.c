@@ -231,7 +231,6 @@ CAMLprim value caml_nx_c_lu(value vlu, value vpiv, value vperm, value vin) {
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vperm, &perm);
   if (s != NX_C_OK) la_raise("lu", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) la_raise("lu", NX_C_ERR_BAD_KIND);
   s = nx_c_lu_run(&in, &lu, &piv, &perm, dt);
   if (s != NX_C_OK) la_raise("lu", s);
   CAMLreturn(Val_unit);

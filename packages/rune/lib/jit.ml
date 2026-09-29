@@ -49,6 +49,7 @@ module U = Tolk_uop.Uop
 module TD = Tolk_uop.Dtype
 module ND = Nx_dtype
 module NV = Nx_core.View
+module HB = Nx_device.Buffer
 
 exception Jit_error of string
 
@@ -61,6 +62,8 @@ let unsupported op =
     op
 
 (* Dtypes *)
+
+let host_buffer dt n = HB.create Nx_device.host (ND.Scalar.of_dtype dt) n
 
 let tolk_dtype dt =
   match TD.of_scalar (ND.Scalar.of_dtype dt) with
@@ -1246,7 +1249,8 @@ let window_indices ~spatial_padded ~kernel_size ~stride ~dilation =
   for d = k - 2 downto 0 do
     sp_strides.(d) <- sp_strides.(d + 1) * spatial_padded.(d + 1)
   done;
-  let idx = Nx_buffer.create ND.int32 (kernel_prod * nwin) in
+  let idx = host_buffer ND.int32 (kernel_prod * nwin) in
+  let entries = HB.bigarray Bigarray.int32 idx in
   let k_pos = Array.make k 0 in
   let w_pos = Array.make k 0 in
   let bump pos limits =
@@ -1272,7 +1276,7 @@ let window_indices ~spatial_padded ~kernel_size ~stride ~dilation =
           + ((w_pos.(d) * stride.(d)) + (k_pos.(d) * dilation.(d)))
             * sp_strides.(d)
       done;
-      Nx_buffer.unsafe_set idx !p (Int32.of_int !off);
+      Bigarray.Array1.unsafe_set entries !p (Int32.of_int !off);
       incr p;
       bump w_pos out_sp
     done;
@@ -1284,7 +1288,7 @@ let no_padding = Array.for_all (fun (b, a) -> b = 0 && a = 0)
 
 (* Lift the index constant and broadcast it over the leading dimensions. *)
 let window_index_tensor st idx lead n =
-  let it = tolk_of st (Nx_effect.from_host st.st_ctx idx) in
+  let it = tolk_of st (Nx_effect.from_host st.st_ctx ND.int32 idx) in
   let it = F.Movement.reshape it (List.map (fun _ -> 1) lead @ [ n ]) in
   F.Movement.expand it (lead @ [ n ])
 
@@ -2064,10 +2068,10 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let ph = Nx_effect.const_scalar st.st_ctx value dtype in
             Tensor_map.Tbl.replace st.table (Key ph) tt;
             continue k ph)
-    | E_from_host { array; _ } ->
+    | E_from_host { dtype; buffer; _ } ->
         Some
           (fun k ->
-            let ph = Nx_effect.from_host st.st_ctx array in
+            let ph = Nx_effect.from_host st.st_ctx dtype buffer in
             ignore (lift_const st ph);
             continue k ph)
     (* Binary arithmetic *)
@@ -2419,12 +2423,12 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             let zero = scalar_of (dt v) (ND.zero (dt v)) in
             if rank = 0 then ret k (dt t_in) tv
             else if not (is_traced starts) then begin
-              let host = Nx_effect.to_host starts in
+              let start =
+                Nx_core.Elements.get ND.int32 (Nx_effect.to_host starts)
+              in
               let sv = Nx_effect.view starts in
               let s k =
-                Int32.to_int
-                  (Nx_buffer.get host
-                     (NV.offset sv + (k * (NV.strides sv).(0))))
+                Int32.to_int (start (NV.offset sv + (k * (NV.strides sv).(0))))
               in
               let pads =
                 List.init rank (fun k ->
@@ -2980,8 +2984,7 @@ let wrap_tensor : type a b. (a, b) Nx_effect.t -> Tolk.Device.Buffer.t option =
     let dt = Nx_effect.dtype x in
     let host = Nx_effect.to_host x in
     let ptr =
-      Nativeint.add
-        (Nx_buffer.unsafe_data_ptr host)
+      Nativeint.add (HB.host_address host)
         (Nativeint.of_int (NV.offset v * ND.itemsize dt))
     in
     Some
@@ -2991,7 +2994,7 @@ let wrap_tensor : type a b. (a, b) Nx_effect.t -> Tolk.Device.Buffer.t option =
 
 (* A host buffer wired as a kernel output: the computed tensor is built on it
    directly. *)
-type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
+type host_out = Host : ('a, 'b) ND.t * HB.t -> host_out
 
 (* Chunked transfers
 
@@ -3029,6 +3032,39 @@ let with_window buf ~off ~len f =
     ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
     (fun () -> f w)
 
+(* Host staging. Transfers stage bytes, which the host buffers' memory is
+   copied into and out of. *)
+
+external host_to_bytes : nativeint -> bytes -> int -> int -> unit
+  = "caml_rune_host_to_bytes"
+[@@noalloc]
+
+external bytes_to_host : bytes -> int -> nativeint -> int -> unit
+  = "caml_rune_bytes_to_host"
+[@@noalloc]
+
+(* The address of the [len] bytes of the host buffer [host] from byte [off],
+   which [bytes] holds. The bounds are checked without a sum, which an offset
+   near [max_int] would wrap. *)
+let host_range host ~off ~len bytes =
+  let n = HB.nbytes host in
+  if off < 0 || len < 0 || off > n || len > n - off || len > Bytes.length bytes
+  then
+    invalid_arg
+      (Printf.sprintf "Rune: %d bytes at %d of a %d-byte buffer" len off
+         (HB.nbytes host));
+  Nativeint.add (HB.host_address host) (Nativeint.of_int off)
+
+(* [read_host host ~off bytes len] copies the [len] bytes of [host] from byte
+   [off] into [bytes]; [write_host] copies them the other way. *)
+let read_host host ~off bytes len =
+  host_to_bytes (host_range host ~off ~len bytes) bytes 0 len;
+  ignore (Sys.opaque_identity host)
+
+let write_host bytes len host ~off =
+  bytes_to_host bytes 0 (host_range host ~off ~len bytes) len;
+  ignore (Sys.opaque_identity host)
+
 (* File-backed sources
 
    A host buffer over a mapped file is copied fastest by reading the file: a
@@ -3037,7 +3073,7 @@ let with_window buf ~off ~len f =
    device buffers it is copied into. The path may name another file by now, so
    the file opened must be the one that was mapped. *)
 
-let open_file (file : Nx_buffer.file) =
+let open_file (file : HB.file) =
   match Unix.openfile file.path [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 with
   | exception Unix.Unix_error _ -> None
   | fd -> (
@@ -3069,7 +3105,7 @@ let read_at fd ~pos bytes len =
 (* [with_file_source host f] runs [f] with a reader of [host]'s bytes from its
    file, [None] when [host] is not a mapped file that can still be read. *)
 let with_file_source host f =
-  match Nx_buffer.file_range host with
+  match HB.file host with
   | None -> f None
   | Some (file, base) -> (
       match open_file file with
@@ -3122,7 +3158,7 @@ let read_base : type a b.
  fun sc x ->
   let v = Nx_effect.view x in
   let host = Nx_effect.to_host x in
-  match (Nx_buffer.file_range host, base_layout v) with
+  match (HB.file host, base_layout v) with
   | None, _ | _, None -> None
   | Some _, Some (shape, axes) ->
       with_file_source host @@ fun read ->
@@ -3130,14 +3166,14 @@ let read_base : type a b.
       let dt = Nx_effect.dtype x in
       let item = ND.itemsize dt in
       let n = numel shape in
-      let run = Nx_buffer.create dt n in
+      let run = host_buffer dt n in
       let chunk = chunk_bytes / item in
       let pos = ref 0 and ok = ref true in
       while !ok && !pos < n do
         let len = Int.min chunk (n - !pos) in
         let bytes = scratch_bytes sc (len * item) in
         ok := read ~pos:((NV.offset v + !pos) * item) bytes (len * item);
-        if !ok then Nx_buffer.blit_from_bytes ~dst_off:!pos ~len bytes run;
+        if !ok then write_host bytes (len * item) run ~off:(!pos * item);
         pos := !pos + len
       done;
       if not !ok then None
@@ -3145,7 +3181,7 @@ let read_base : type a b.
         Some
           (Nx_effect.permute
              (Nx_effect.reshape
-                (Nx_effect.from_host (Nx_effect.context x) run)
+                (Nx_effect.from_host (Nx_effect.context x) dt run)
                 shape)
              axes)
 
@@ -3184,7 +3220,7 @@ let rec copyin_at : type a b.
       (* A file that can no longer be read is left for the mapping. *)
       if not from_file then begin
         read := None;
-        Nx_buffer.blit_to_bytes ~src_off ~len host bytes
+        read_host host ~off:(src_off * item) bytes (len * item)
       end;
       with_window buf
         ~off:(off + (!pos * item))
@@ -3233,10 +3269,10 @@ let copyin_tensor sc buf x =
 
 (* Copy a device buffer's contents into [host] from element [dst_off] on. *)
 let copyout_into : type a b.
-    scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) Nx_buffer.t -> unit
+    scratch -> Tolk.Device.Buffer.t -> dst_off:int -> (a, b) ND.t -> HB.t -> unit
     =
- fun sc buf ~dst_off host ->
-  let item = ND.itemsize (Nx_buffer.dtype host) in
+ fun sc buf ~dst_off dt host ->
+  let item = ND.itemsize dt in
   let n = Tolk.Device.Buffer.nbytes buf / item in
   let chunk = chunk_bytes / item in
   let pos = ref 0 in
@@ -3245,7 +3281,7 @@ let copyout_into : type a b.
     let bytes = scratch_bytes sc (len * item) in
     with_window buf ~off:(!pos * item) ~len:(len * item) (fun w ->
         Tolk.Device.Buffer.copyout w bytes);
-    Nx_buffer.blit_from_bytes ~dst_off:(dst_off + !pos) ~len bytes host;
+    write_host bytes (len * item) host ~off:((dst_off + !pos) * item);
     update_stats (fun s ->
         { s with bytes_from_device = s.bytes_from_device + (len * item) });
     pos := !pos + len
@@ -3283,9 +3319,9 @@ let read_out : type a b.
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
  fun sc ctx dtv shape buf ->
-  let host = Nx_buffer.create dtv (numel shape) in
-  copyout_into sc buf ~dst_off:0 host;
-  Nx_effect.reshape (Nx_effect.from_host ctx host) shape
+  let host = host_buffer dtv (numel shape) in
+  copyout_into sc buf ~dst_off:0 dtv host;
+  Nx_effect.reshape (Nx_effect.from_host ctx dtv host) shape
 
 (* The device engine
 
@@ -3294,187 +3330,96 @@ let read_out : type a b.
    the elements are copied straight out of the buffer's own memory; elsewhere
    the range the view reaches is copied out first. *)
 
-(* Copy the elements [v] reaches into [dst] in C order, from [src], which holds
-   the storage's elements from [base] on. *)
-let gather_elements : type a b.
-    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
- fun src ~base v dst ->
-  let shape = NV.shape v and strides = NV.strides v in
-  let rank = Array.length shape in
-  let idx = Array.make rank 0 and off = ref (NV.offset v - base) in
-  for i = 0 to Nx_buffer.length dst - 1 do
-    Nx_buffer.unsafe_set dst i (Nx_buffer.unsafe_get src !off);
-    let d = ref (rank - 1) in
-    while !d >= 0 do
-      idx.(!d) <- idx.(!d) + 1;
-      off := !off + strides.(!d);
-      if idx.(!d) < shape.(!d) then d := -1
-      else begin
-        off := !off - (strides.(!d) * shape.(!d));
-        idx.(!d) <- 0;
-        decr d
-      end
-    done
-  done
-
-(* [gather_elements] for words of a bigarray kind: when the view's last axis is
-   contiguous, each run along it is copied whole. *)
-let gather_words : type a b.
-    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
- fun src ~base v dst ->
-  let shape = NV.shape v and strides = NV.strides v in
-  let rank = Array.length shape in
-  if rank = 0 || strides.(rank - 1) <> 1 || Nx_buffer.length dst = 0 then
-    gather_elements src ~base v dst
-  else begin
-    let s = Nx_buffer.to_bigarray1 src and d = Nx_buffer.to_bigarray1 dst in
-    let run = shape.(rank - 1) in
-    let idx = Array.make rank 0 and off = ref (NV.offset v - base) in
-    for row = 0 to (Nx_buffer.length dst / run) - 1 do
-      Bigarray.Array1.blit
-        (Bigarray.Array1.sub s !off run)
-        (Bigarray.Array1.sub d (row * run) run);
-      let a = ref (rank - 2) in
-      while !a >= 0 do
-        idx.(!a) <- idx.(!a) + 1;
-        off := !off + strides.(!a);
-        if idx.(!a) < shape.(!a) then a := -1
-        else begin
-          off := !off - (strides.(!a) * shape.(!a));
-          idx.(!a) <- 0;
-          decr a
-        end
-      done
-    done
-  end
-
-(* [gather_elements] over the elements' bits, read as integers of their width: a
-   float read into an OCaml float would quiet a signalling NaN. An element of 16
-   bytes is two 8-byte words; 4-bit elements are copied as values. *)
-let gather_view : type a b.
-    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t -> unit =
- fun src ~base v dst ->
-  let as_words (type c d) (word : (c, d) ND.t) w =
-    let shape = NV.shape v and strides = NV.strides v in
-    let words =
-      if w = 1 then v
-      else
-        NV.create
-          ~offset:(NV.offset v * w)
-          ~strides:(Array.append (Array.map (fun s -> s * w) strides) [| 1 |])
-          (Array.append shape [| w |])
-    in
-    gather_words
-      (Nx_buffer.reinterpret word src)
-      ~base:(base * w) words
-      (Nx_buffer.reinterpret word dst)
-  in
-  match Nx_buffer.dtype src with
-  | ND.Int4 | ND.UInt4 -> gather_elements src ~base v dst
-  | kind -> (
-      match ND.itemsize kind with
-      | 1 -> as_words ND.Int8 1
-      | 2 -> as_words ND.Int16 1
-      | 4 -> as_words ND.Int32 1
-      | 8 -> as_words ND.Int64 1
-      | n -> as_words ND.Int64 (n / 8))
-
-(* [with_storage_range dt buf ~lo ~hi f] is [f src how], [src] the elements of
-   [buf]'s storage from [lo] to [hi] on the host: [`Borrowed] from the buffer's
-   memory when the host addresses it, [`Copied] otherwise. A buffer's finaliser
-   frees its memory, so [buf] stays reachable until [f] returns, and a borrowed
-   [src] must not outlive [f]. *)
-let with_storage_range : type a b c.
-    (a, b) ND.t ->
-    Tolk.Device.Buffer.t ->
-    lo:int ->
-    hi:int ->
-    ((a, b) Nx_buffer.t -> [ `Borrowed | `Copied ] -> c) ->
-    c =
- fun dt buf ~lo ~hi f ->
+(* [with_storage_range dt buf ~lo ~hi f] is [f src how], [src] a host buffer of
+   the elements of [buf]'s storage from [lo] to [hi]: [`Borrowed] from the
+   buffer's memory when the host addresses it, [`Copied] otherwise. A buffer's
+   finaliser frees its memory, so [buf] stays reachable until [f] returns, and a
+   borrowed [src] must not outlive [f]. *)
+let with_storage_range dt buf ~lo ~hi f =
   let item = ND.itemsize dt in
   match Tolk.Device.Buffer.as_buffer buf with
   | Some mem ->
       let bytes = Bigarray.Array1.sub mem (lo * item) ((hi - lo) * item) in
-      let r =
-        f (Nx_buffer.reinterpret dt (Nx_buffer.of_bigarray1 bytes)) `Borrowed
+      let src =
+        HB.view (HB.of_bigarray bytes) ~offset:0 (ND.Scalar.of_dtype dt)
+          (hi - lo)
       in
+      let r = f src `Borrowed in
       ignore (Sys.opaque_identity buf);
       r
   | None ->
-      let host = Nx_buffer.create dt (hi - lo) in
+      let host = host_buffer dt (hi - lo) in
       with_window buf ~off:(lo * item)
         ~len:((hi - lo) * item)
-        (fun w -> copyout_into (Hashtbl.create 1) w ~dst_off:0 host);
+        (fun w -> copyout_into (Hashtbl.create 1) w ~dst_off:0 dt host);
       f host `Copied
 
-(* The elements of view [v] of one buffer's storage. *)
+(* The view [v] measured from element [base] of the storage. *)
+let from_base v ~base =
+  NV.create ~offset:(NV.offset v - base) ~strides:(NV.strides v) (NV.shape v)
+
 (* The elements [v] reaches in [src], which holds the storage from element
    [base] on, copied in C order by the host engine's strided copy, when they are
-   exactly [src] seen through a permutation of axes (a transposed weight); [None]
-   otherwise. They are copied as integers of their width, which keeps a float's
-   bits (see [gather_view]). *)
-let permuted_copy : type a b.
-    (a, b) Nx_buffer.t -> base:int -> NV.t -> (a, b) Nx_buffer.t option =
- fun src ~base v ->
-  let shifted =
-    NV.create ~offset:(NV.offset v - base) ~strides:(NV.strides v) (NV.shape v)
-  in
+   exactly [src] seen through a permutation of axes (a transposed weight);
+   [None] otherwise. They are copied as integers of their width, which keeps a
+   float's bits. *)
+let permuted_copy src ~base v =
+  let shifted = from_base v ~base in
   let words (type c d) (word : (c, d) ND.t) (shape, axes) =
+    let n = HB.length src in
     let t =
-      Nx_backend.from_host Nx_effect.host_context
-        (Nx_buffer.reinterpret word src)
+      Nx_backend.from_host Nx_effect.host_context word
+        (HB.view src ~offset:0 (ND.Scalar.of_dtype word) n)
     in
     let t = Nx_backend.permute (Nx_backend.reshape t shape) axes in
     Some
-      (Nx_buffer.reinterpret (Nx_buffer.dtype src)
-         (Nx_backend.to_host (Nx_backend.contiguous t)))
+      (HB.view
+         (Nx_backend.to_host (Nx_backend.contiguous t))
+         ~offset:0 (HB.dtype src) n)
   in
   match base_layout shifted with
   | Some ((shape, _) as layout)
-    when NV.offset shifted = 0 && numel shape = Nx_buffer.length src -> (
-      match Nx_buffer.dtype src with
-      | ND.Int4 | ND.UInt4 -> None
-      | kind -> (
-          match ND.itemsize kind with
-          | 1 -> words ND.Int8 layout
-          | 2 -> words ND.Int16 layout
-          | 4 -> words ND.Int32 layout
-          | 8 -> words ND.Int64 layout
-          | _ -> None))
+    when NV.offset shifted = 0 && numel shape = HB.length src -> (
+      match ND.Scalar.bitsize (HB.dtype src) with
+      | 8 -> words ND.Int8 layout
+      | 16 -> words ND.Int16 layout
+      | 32 -> words ND.Int32 layout
+      | 64 -> words ND.Int64 layout
+      | _ -> None)
   | _ -> None
 
-let read_window : type a b.
-    (a, b) ND.t -> Tolk.Device.Buffer.t -> NV.t -> (a, b) Nx_buffer.t =
- fun dt buf v ->
+let read_window dt buf v =
   let n = NV.numel v in
-  if n = 0 then Nx_buffer.create dt 0
+  if n = 0 then host_buffer dt 0
   else
     let lo, hi = extent v in
     with_storage_range dt buf ~lo ~hi @@ fun src how ->
     if how = `Borrowed then
       update_stats (fun s ->
-          { s with bytes_from_device = s.bytes_from_device + (n * ND.itemsize dt) });
+          {
+            s with
+            bytes_from_device = s.bytes_from_device + (n * ND.itemsize dt);
+          });
     if NV.is_c_contiguous v && how = `Copied then src
     else
       match
         if NV.is_c_contiguous v then None else permuted_copy src ~base:lo v
       with
       | Some dst -> dst
-      | None ->
-          let dst = Nx_buffer.create dt n in
-          if NV.is_c_contiguous v then Nx_buffer.blit ~src ~dst
-          else gather_view src ~base:lo v dst;
+      | None when NV.is_c_contiguous v ->
+          let dst = host_buffer dt n in
+          HB.copy ~src ~dst;
           dst
+      | None -> Nx_core.Elements.gather src (from_base v ~base:lo)
 
-let read : type a b. (a, b) Nx_effect.resident -> (a, b) Nx_buffer.t =
+let read : type a b. (a, b) Nx_effect.resident -> HB.t =
  fun r ->
   Fun.protect ~finally:(fun () -> ignore (Sys.opaque_identity r)) @@ fun () ->
   Tolk.Device.Buffer.with_operation (fun () -> ());
   match store_of r.r_cell with
   | None -> assert false (* nx reads held and consumed values itself *)
   | Some { s_bufs = []; _ } ->
-      Nx_buffer.create r.r_dtype 0 (* an empty value has no buffer *)
+      host_buffer r.r_dtype 0 (* an empty value has no buffer *)
   | Some s ->
       let shape = Nx_effect.global r.r_placement (NV.shape r.r_view) in
       Nx_effect.assemble r
@@ -3621,7 +3566,7 @@ let transfer : type a b.
           in
           copyin_at sc buf
             ~off:(!r0 * row * item)
-            (Nx_effect.from_host Nx_effect.host_tensor_context host);
+            (Nx_effect.from_host Nx_effect.host_tensor_context dt host);
           r0 := r1
         done
       end)
@@ -3659,7 +3604,7 @@ let borrow : type a b.
   let dt = Nx_effect.dtype h in
   let item = ND.itemsize dt in
   let host = Nx_effect.to_host h in
-  let ptr = Nx_buffer.unsafe_data_ptr host in
+  let ptr = HB.host_address host in
   (* Each window's elements [lo] to [hi] of [host], its buffer's first byte, and
      its view of that buffer. *)
   let span w =
@@ -3785,7 +3730,7 @@ and place_on : type a b.
     | `Host h
       when numel local > 0
            && List.for_all Tolk.Device.shares_host_memory devs
-           && Nx_buffer.file_range (Nx_effect.to_host h) <> None ->
+           && HB.file (Nx_effect.to_host h) <> None ->
         borrow sc devs h windows
     | _ -> None
   in
@@ -3794,7 +3739,7 @@ and place_on : type a b.
   | None ->
       let nolru =
         match source with
-        | `Host h -> Nx_buffer.file_range (Nx_effect.to_host h) <> None
+        | `Host h -> HB.file (Nx_effect.to_host h) <> None
         | `Stored _ -> false
       in
       let bufs =
@@ -5167,11 +5112,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           if c.cp_zero_copy then
             begin if (not reserved) && not (Hashtbl.mem out_hosts tag) then begin
               let n = numel (shape_of ph) in
-              let host = Nx_buffer.create odt n in
+              let host = host_buffer odt n in
               let buf =
                 Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
-                  ~source:host
-                  (Nx_buffer.unsafe_data_ptr host)
+                  ~source:host (HB.host_address host)
               in
               supply node [buf];
               Hashtbl.add out_hosts tag (Host (odt, host))
@@ -5296,7 +5240,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
            | None ->
                Nx.P
                  (Nx_effect.reshape
-                    (Nx_effect.from_host c.cp_ctx (Nx_buffer.create dt 0))
+                    (Nx_effect.from_host c.cp_ctx dt (host_buffer dt 0))
                     shape)
            | Some node -> (
                let tag = U.tag node in
@@ -5307,16 +5251,14 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                        let host =
                          if c.cp_first.(j) then host
                          else begin
-                           let copy =
-                             Nx_buffer.create hdt (Nx_buffer.length host)
-                           in
-                           Nx_buffer.blit ~src:host ~dst:copy;
+                           let copy = host_buffer hdt (HB.length host) in
+                           HB.copy ~src:host ~dst:copy;
                            copy
                          end
                        in
                        Nx.P
                          (Nx_effect.reshape
-                            (Nx_effect.from_host c.cp_ctx host)
+                            (Nx_effect.from_host c.cp_ctx dt host)
                             shape)
                    | None -> assert false)
                | None -> (

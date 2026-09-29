@@ -163,33 +163,11 @@ val unpack : ('a, 'b) dtype -> packed -> ('a, 'b) t
 
 (** {1:properties Properties} *)
 
-val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-(** [data t] is the underlying flat buffer of [t], shared with [t] without a
-    copy and read-only by contract: a tensor is a value, so writing the buffer
-    after wrapping is outside the contract (the same contract as
-    [Bytes.unsafe_to_string]). The buffer may be larger than the tensor's
-    logical extent when [t] is a strided view.
-
-    Element [[i0; ...; ik]] of [t] is at buffer index
-    [offset t + i0 * s0 + ... + ik * sk], where [sj] is [strides t.(j)] divided
-    by {!itemsize}. Reading the buffer this way walks a tensor of any layout
-    without allocating, unlike {!item}. See {!iter_item} and {!fold_item} for
-    whole-tensor traversal.
-
-    Raises [Invalid_argument] if [t] is placed on a device: it has no host
-    storage. Read it with {!to_buffer}, or {!place} it on the host. *)
-
 val shape : ('a, 'b) t -> int array
 (** [shape t] is the dimensions of [t]. A scalar tensor has shape [|\||]. *)
 
 val dtype : ('a, 'b) t -> ('a, 'b) dtype
 (** [dtype t] is the data type of [t]. *)
-
-val strides : ('a, 'b) t -> int array
-(** [strides t] is the byte stride for each dimension of [t]. Every tensor has
-    strides, including non-contiguous views; divide by {!itemsize} for element
-    strides. With {!offset} and {!data}, they locate each element of [t] in its
-    buffer. *)
 
 val dim : int -> ('a, 'b) t -> int
 (** [dim i t] is the size of dimension [i].
@@ -208,9 +186,6 @@ val numel : ('a, 'b) t -> int
 val nbytes : ('a, 'b) t -> int
 (** [nbytes t] is [numel t * itemsize t]. *)
 
-val offset : ('a, 'b) t -> int
-(** [offset t] is the element offset of [t] in its underlying buffer. *)
-
 val is_c_contiguous : ('a, 'b) t -> bool
 (** [is_c_contiguous t] is [true] iff [t]'s elements are laid out contiguously
     in row-major (C) order.
@@ -218,19 +193,15 @@ val is_c_contiguous : ('a, 'b) t -> bool
     See also {!contiguous}. *)
 
 val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
-(** [to_bigarray t] is a contiguous bigarray with the same shape and data as
-    [t]. Always copies.
+(** [to_bigarray t] is a fresh C-layout bigarray of [t]'s shape holding [t]'s
+    elements. It always copies, so writing it leaves [t] unchanged. Loop over it
+    for element access that allocates nothing per element.
 
-    Raises [Invalid_argument] if [t]'s dtype is an extended type not supported
-    by [Bigarray].
+    Raises [Invalid_argument] if [t]'s dtype has no {!Bigarray.kind}: bfloat16,
+    the float8 dtypes, int4, uint4, uint32, uint64 and bool. {!bitcast} to the
+    integers of their width first, which have one, for all but the last three.
 
     See also {!of_bigarray}. *)
-
-val to_buffer : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-(** [to_buffer t] is a flat, contiguous buffer of [t]'s data.
-
-    Returns the underlying buffer directly when [t] is already contiguous with
-    zero offset and matching size; copies otherwise. *)
 
 val to_array : ('a, 'b) t -> 'a array
 (** [to_array t] is a fresh OCaml array containing the elements of [t] in
@@ -259,7 +230,7 @@ val to_array : ('a, 'b) t -> 'a array
     a {!take} along it, give a full copy on each device; and an operation along
     the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
     linear algebra on its last two axes, {!fft} over it) raises. A read
-    ({!item}, {!to_array}, {!to_buffer}, {!pp}, a save) copies the elements it
+    ({!item}, {!to_array}, {!to_bigarray}, {!pp}, a save) copies the elements it
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
@@ -595,16 +566,16 @@ val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
     See also {!tril}. *)
 
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] is a tensor over [ba]'s memory, without a copy. The tensor
-    takes ownership: the caller must not write [ba] afterwards. Fill a bigarray,
-    then wrap it, to build a tensor element by element.
+(** [of_bigarray ba] is a tensor of [ba]'s shape over [ba]'s memory, without a
+    copy, of the dtype of [ba]'s kind. The tensor takes ownership: the caller
+    must not write [ba] afterwards. Fill a bigarray, then wrap it, to build a
+    tensor element by element. A tensor of a dtype with no {!Bigarray.kind} is
+    built from the integers of its width with {!bitcast}, such as a bfloat16 one
+    from [int16_unsigned] elements.
+
+    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint].
 
     See also {!to_bigarray}, which always copies. *)
-
-val of_buffer : ('a, 'b) Nx_buffer.t -> shape:int array -> ('a, 'b) t
-(** [of_buffer buf ~shape] is a tensor viewing [buf] with the given [shape],
-    without a copy; the tensor takes ownership of [buf] as {!of_bigarray} does.
-    The product of [shape] must equal the buffer length. *)
 
 val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
 (** [one_hot ~num_classes indices] is a one-hot encoded tensor.
@@ -1378,7 +1349,7 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
 
 val contiguous : ('a, 'b) t -> ('a, 'b) t
 (** [contiguous t] is [t], sharing its storage, if [t] is C-contiguous from the
-    start of its storage ({!offset} [0]), or a fresh contiguous copy otherwise.
+    start of its storage, or a fresh contiguous copy otherwise.
 
     See also {!is_c_contiguous}, {!copy}. *)
 
@@ -1387,10 +1358,9 @@ val copy : ('a, 'b) t -> ('a, 'b) t
     contiguous.
 
     {@ocaml[
-      # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        let y = copy x in
-        data y == data x
-      - : bool = false
+      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+        is_c_contiguous (copy (transpose x))
+      - : bool = true
     ]}
 
     See also {!contiguous}. *)
@@ -1489,8 +1459,8 @@ val item : int list -> ('a, 'b) t -> 'a
     dimensions.
 
     Each call allocates its index list. To visit every element, use {!iter_item}
-    or {!fold_item}; for indexed reads in a hot loop, read {!data} at {!offset}
-    plus the element strides, as described there.
+    or {!fold_item}; for indexed reads in a hot loop, index the bigarray of
+    {!to_bigarray}.
 
     Raises [Invalid_argument] if the number of indices is wrong or any index is
     out of bounds.

@@ -99,30 +99,27 @@ let conversions =
         (Law.round_trip same
            (Testable.contramap Nx.of_bigarray same)
            Nx.to_bigarray Nx.of_bigarray);
-      prop "to_buffer and of_buffer round trip through the shape" viewed
-        (fun t ->
-          Law.round_trip same pass Nx.to_buffer
-            (Nx.of_buffer ~shape:(Nx.shape t))
-            t);
       prop "copy has the values and storage of its own" viewed (fun t ->
           let c = Nx.copy t in
           equal same t c;
           is_true ~msg:"copy is contiguous" (Nx.is_c_contiguous c);
           is_false ~msg:"copy shares no storage"
-            (Nx.numel t > 0 && Nx.data c == Nx.data t));
+            (Nx.numel t > 0 && storage c == storage t));
       prop "contiguous has the values, in a contiguous layout" viewed (fun t ->
           let c = Nx.contiguous t in
           equal same t c;
           is_true (Nx.is_c_contiguous c));
       test "contiguous of a contiguous tensor shares its storage" (fun () ->
           let t = Nx.zeros Nx.int32 [| 2; 3 |] in
-          is_true (Nx.data (Nx.contiguous t) == Nx.data t));
+          is_true (storage (Nx.contiguous t) == storage t));
       prop ~examples:[ without_first ]
         "contiguous shares the storage of a C-contiguous tensor at offset 0, \
          and copies one past it"
         laid_out (fun (_, t) ->
           if Nx.is_c_contiguous t then
-            equal bool (Nx.offset t = 0) (Nx.data (Nx.contiguous t) == Nx.data t));
+            equal bool
+              (Nx_core.View.offset (Nx_effect.view t) = 0)
+              (storage (Nx.contiguous t) == storage t));
       test "to_bigarray copies, so writing the bigarray leaves the tensor"
         (fun () ->
           let t = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
@@ -131,19 +128,14 @@ let conversions =
       test "to_bigarray refuses a dtype Bigarray has no kind for" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.to_bigarray (Nx.zeros Nx.bfloat16 [| 2 |])));
-      prop "to_buffer holds exactly the elements" viewed (fun t ->
-          equal int (Nx.numel t) (Nx_buffer.length (Nx.to_buffer t)));
-      test
-        "to_buffer is the tensor's own buffer when it is contiguous from \
-         offset 0" (fun () ->
-          let t = Nx.zeros Nx.int32 [| 2; 3 |] in
-          is_true (Nx.to_buffer t == Nx.data t));
-      test "of_buffer refuses a shape of another size (nx.mli states no error)"
-        (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.of_buffer
-                (Nx.to_buffer (Nx.zeros Nx.int32 [| 4 |]))
-                ~shape:[| 3 |]));
+      test "of_bigarray is over the bigarray's memory" (fun () ->
+          let ba =
+            Bigarray.Array1.init Bigarray.int32 Bigarray.c_layout 6 Int32.of_int
+          in
+          let t = Nx.of_bigarray (Bigarray.genarray_of_array1 ba) in
+          equal nativeint
+            (Nx_device.Buffer.host_address (Nx_device.Buffer.of_bigarray ba))
+            (Nx_device.Buffer.host_address (storage t)));
     ]
 
 let iteration =

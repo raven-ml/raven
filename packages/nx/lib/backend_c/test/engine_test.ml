@@ -11,14 +11,16 @@
 open Bigarray
 open Windtrap
 
-(* FFI operand mirroring the four slots the engine reads (the nx_c.h NX_C_FFI
-   markers): buffer, shape, strides, offset at record slots 0-3. Declaration
-   order IS that slot order; the echo_neg round-trip below pins it. *)
+(* FFI operand mirroring the five slots the engine reads (the nx_c.h NX_C_FFI
+   markers): buffer, shape, strides, offset and dtype at record slots 0-4.
+   Declaration order IS that slot order; the echo_neg round-trip below pins
+   it. *)
 type ffi = {
-  buffer : (float, float64_elt, c_layout) Array1.t;
+  buffer : Nx_device.Buffer.t;
   shape : int array;
   strides : int array;
   offset : int;
+  dtype : (float, float64_elt) Nx_dtype.t;
 }
 
 external selftest : unit -> int = "caml_nx_c_selftest"
@@ -36,7 +38,13 @@ let mk ?(offset = 0) ?strides ?shape buffer =
     match shape with Some s -> s | None -> [| Array1.dim buffer |]
   in
   let strides = match strides with Some s -> s | None -> [| 1 |] in
-  { buffer; shape; strides; offset }
+  {
+    buffer = Nx_device.Buffer.of_bigarray buffer;
+    shape;
+    strides;
+    offset;
+    dtype = Nx_dtype.float64;
+  }
 
 let test_engine () =
   (* Driver-level self-test (builds nx_c_ndarray structs directly in C). *)

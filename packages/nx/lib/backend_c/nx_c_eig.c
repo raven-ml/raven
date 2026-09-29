@@ -970,7 +970,7 @@ static void eig_balbak_c(eig_cplx *z, int n, int low, int igh,
 #define EIG_UNP_NX_C_CAT_SINT(sfx, storage)
 #define EIG_UNP_NX_C_CAT_UINT(sfx, storage)
 #define EIG_UNP_NX_C_CAT_BOOL(sfx, storage)
-#define EIG_UNP_ROW(sfx, kind, storage, compute, ld, st, cat)                  \
+#define EIG_UNP_ROW(sfx, storage, compute, ld, st, cat)                        \
   EIG_UNP_##cat(sfx, storage)
 NX_C_FOR_EACH_COMPUTE_DTYPE(EIG_UNP_ROW)
 #undef EIG_UNP_ROW
@@ -1322,7 +1322,6 @@ CAMLprim value caml_nx_c_eig(value vw, value vv, value vin, value vvectors) {
   if (s == NX_C_OK && vectors) s = nx_c_ndarray_of_value(vv, &v);
   if (s != NX_C_OK) eig_raise("eig", s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt == NX_C_DTYPE_COUNT) eig_raise("eig", NX_C_ERR_BAD_KIND);
   s = nx_c_eig_run(&in, &w, vectors ? &v : NULL, dt, vectors);
   if (s != NX_C_OK) eig_raise("eig", s);
   CAMLreturn(Val_unit);

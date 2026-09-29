@@ -1500,7 +1500,7 @@ static void fft_stub(const char *op, value vout, value vin, value vaxes,
   if (s == NX_C_OK) s = nx_c_ndarray_of_value(vout, &out);
   if (s != NX_C_OK) fft_raise(op, s);
   nx_c_dtype dt = nx_c_dtype_of_value(vin);
-  if (dt != NX_C_DTYPE_c32 && dt != NX_C_DTYPE_c64) fft_raise(op, NX_C_ERR_BAD_KIND);
+  if (dt != NX_C_DTYPE_c32 && dt != NX_C_DTYPE_c64) fft_raise(op, NX_C_ERR_UNSUPPORTED_DTYPE);
   int axes[NX_C_MAX_NDIM];
   int naxes = read_axes(vaxes, axes);
   s = nx_c_fft_run(&in, &out, dt, axes, naxes, sign);
@@ -1528,7 +1528,7 @@ CAMLprim value caml_nx_c_rfft(value vout, value vin, value vaxes) {
   nx_c_dtype out_dt = nx_c_dtype_of_value(vout);
   if ((in_dt != NX_C_DTYPE_f32 && in_dt != NX_C_DTYPE_f64) ||
       (out_dt != NX_C_DTYPE_c32 && out_dt != NX_C_DTYPE_c64))
-    fft_raise("rfft", NX_C_ERR_BAD_KIND);
+    fft_raise("rfft", NX_C_ERR_UNSUPPORTED_DTYPE);
   int axes[NX_C_MAX_NDIM];
   int naxes = read_axes(vaxes, axes);
   s = nx_c_rfft_run(&in, &out, in_dt, out_dt, axes, naxes);
@@ -1548,7 +1548,7 @@ CAMLprim value caml_nx_c_irfft(value vout, value vin, value vaxes, value vs) {
   nx_c_dtype out_dt = nx_c_dtype_of_value(vout);
   if ((in_dt != NX_C_DTYPE_c32 && in_dt != NX_C_DTYPE_c64) ||
       (out_dt != NX_C_DTYPE_f32 && out_dt != NX_C_DTYPE_f64))
-    fft_raise("irfft", NX_C_ERR_BAD_KIND);
+    fft_raise("irfft", NX_C_ERR_UNSUPPORTED_DTYPE);
   int axes[NX_C_MAX_NDIM];
   int naxes = read_axes(vaxes, axes);
   int64_t s_last = 0;

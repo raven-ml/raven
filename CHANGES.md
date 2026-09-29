@@ -243,7 +243,8 @@ All notable changes to this project will be documented in this file.
   ownership counts or racing first-time cache initialization. `no_grad` and
   transformation scopes no longer leak across domains or system threads.
 
-- Keep placed storage alive until `Nx.to_buffer` finishes reading it.
+- Keep placed storage alive until a read of it (`Nx.to_array`, `Nx.pp`)
+  finishes.
   Collected values now hand ownership to one deferred-release path; failed
   allocator cleanup retains its backing without losing other queued releases.
 - Preserve `Rune.jit_stats` transfer counts and live-byte totals across
@@ -2746,6 +2747,20 @@ thread.
 
 ### Nx
 
+- **Breaking:** the `nx.buffer` library and its `Nx_buffer` type are removed,
+  and with them `Nx.data`, `Nx.to_buffer`, `Nx.of_buffer`, `Nx.offset` and
+  `Nx.strides`. A tensor's storage is a host `Nx_device.Buffer.t` that only
+  nx's own libraries reach. Read elements with `to_array`, `item`,
+  `iter_item` or `fold_item`, or loop over the bigarray that `to_bigarray`
+  returns; build a tensor with `create`, `init` or `of_bigarray`, which still
+  takes the bigarray's memory without a copy. A bfloat16, float8, uint32 or
+  uint64 tensor is `bitcast` from the integers of its width.
+- **Breaking (backends):** `Nx_core.Backend_intf.S.to_host` and `from_host`
+  exchange host `Nx_device.Buffer.t`s, and `from_host` takes the dtype.
+  `Nx_core.Elements` reads and writes a host buffer's elements as values of a
+  dtype.
+- `Nx_io.save_safetensors` writes each tensor's storage to the file as it is,
+  where it built a string per tensor and then a copy of the whole file.
 - Values on devices keep a float's bits. A one-element result on a device, and
   a view of a value on a runtime device (`Nx.Device.of_runtime`) read back
   through a transpose, flip or other strided layout, passed their elements
@@ -2783,11 +2798,6 @@ thread.
 - Vendor libraries describe their devices to `Nx_device.make` with allocator,
   mapping and copy queue records, and wrap memory another library allocated
   with `Nx_device.external_buffer`.
-- `Nx_buffer.reinterpret` of a buffer made by `Nx_buffer.of_bigarray1` could
-  return a view over freed memory when two domains reinterpreted the buffer at
-  once: each view could get its own reference count on the storage, and one
-  count reached zero while the other view was alive. Views are now taken one
-  at a time.
 - New `nx.device` library: devices and their memory without the tensor layer.
   It provides the host (`Nx_device.host`) and device buffers of a storage
   format (`Nx_device.Buffer`) that are owned, borrowed or byte-offset views.
@@ -2817,12 +2827,6 @@ thread.
 - `Nx.sigmoid` of a large negative number is the subnormal its exact value
   rounds to. It computed `1 / (1 + exp(-x))`, whose `exp` overflows below
   about -88.7 at float32 and -709.8 at float64, and returned 0 there.
-- `Nx_buffer.genarray_change_layout` keeps the dtype of a genarray of an
-  extended dtype. It dropped it, so a bfloat16 genarray came back as float16
-  and an int4 one as uint8.
-- `Nx_buffer.blit_from_bytes` and `Nx_buffer.blit_to_bytes` refuse an offset
-  and length whose sum overflows. Such a pair passed the bounds checks, so a
-  copy at an offset near `max_int` wrote or read outside the buffer.
 - `Nx_io.save_txt` writes uint32 and uint64 elements as their unsigned
   values, as numpy does, and `Nx_io.load_txt` reads them back. The largest
   uint32 was written as `-1`, and a uint32 of `2147483648` or more, or a
@@ -3034,11 +3038,7 @@ thread.
   `float16`, which rounds through `float32` first. tolk folds constants with
   them.
 - **Breaking:** dtypes move to a new library, `nx.dtype`, which depends on
-  nothing: `Nx_core.Dtype` is `Nx_dtype`, and `Nx_buffer`'s kinds are its
-  dtypes. `('a, 'b) Nx_buffer.kind` is `('a, 'b) Nx_dtype.t`,
-  `Nx_buffer.kind` and `genarray_kind` are `Nx_buffer.dtype` and
-  `genarray_dtype`, `kind_name` and `kind_size_in_bytes` are
-  `Nx_dtype.to_string` and `itemsize`, and `to_stdlib_kind` is
+  nothing: `Nx_core.Dtype` is `Nx_dtype`, and `to_stdlib_kind` is
   `Nx_dtype.to_bigarray_kind`, which returns an option. `Nx_dtype.Scalar`
   names storage formats without type parameters, for code that moves or
   compiles bytes. `Nx_core.Dtype.packed`, `pack` and `Packed` are gone.
@@ -3135,26 +3135,17 @@ thread.
   compiles under `Rune.jit`, except to or from float8, which the compiler
   emulates and `Rune.jit` refuses; it maps under `vmap` and has zero
   derivative.
-- `Nx_buffer.create` documents what it does: the contents of a new buffer are
-  unspecified. It claimed a zero fill, which only some element kinds got, so a
-  new `float32` buffer could hold NaN; call `Nx_buffer.fill` for zeros.
 - Add `Nx.Device`, `Nx.Placement`, `Nx.place` and `Nx.placement`: a value
   can live on a device a runtime opens, and where it lives is a value. An
   operation on placed operands returns a placed result, host operands join
   them, and operands on two devices raise `Invalid_argument`.
-- A read of a placed value (`item`, `to_array`, `to_buffer`, `pp`) copies the
-  elements it reads and leaves the value where it is. `Nx.data` of a placed
-  value raises: it has no host storage.
+- A read of a placed value (`item`, `to_array`, `to_bigarray`, `pp`) copies
+  the elements it reads and leaves the value where it is.
 
 - Fix `Nx_io.load_safetensors` and `save_safetensors` corrupting Unicode and
   control characters in tensor names. Decode JSON Unicode escapes and surrogate
   pairs, emit valid JSON escapes, and reject malformed string escapes.
 
-- Add `Nx_buffer.register_file` and `Nx_buffer.file_range`. A buffer whose
-  memory lies inside a recorded file mapping, views and reinterpretations
-  included, answers with the file and the byte offset of its first element, so
-  that an upload can read the bytes from the file instead of faulting them in
-  through the mapping. `Nx_io.load_safetensors` records its mappings.
 - `Nx_io.load_safetensors` maps the file instead of reading it: loading reads
   the header only, and each tensor is a view of the file whose pages are read
   when first used. It used to hold the file twice in memory and copy every
@@ -3167,10 +3158,6 @@ thread.
   loads 16-bit entries at odd offsets instead of raising, and rejects a file
   whose length disagrees with its header, a header that names a tensor twice,
   and anything that is not a regular file. Its errors name the file.
-- Add `Nx_buffer.reinterpret kind buf`, `buf`'s memory read as elements of
-  `kind` without a copy. It is the only way to view existing memory, such as a
-  mapped file, as `bfloat16`, `float8`, `bool`, `uint32` or `uint64`, whose
-  kinds only allocation could set before.
 - `Nx_io.save_safetensors` no longer truncates its destination in place: it
   writes a temporary file beside it, syncs it and renames it, so a crash or a
   failed save leaves the previous file whole. If the rename is refused the
@@ -3207,11 +3194,11 @@ thread.
   functional `set specs v t` returns `t` with `v` at the selected positions,
   and a new index form `D (start, len)` selects a run from a run-time start,
   so a KV-cache write traces once for every position. Views, broadcasts and
-  overlapping windows are ordinary tensors; `data` lends storage read-only and
-  `of_bigarray` and `of_buffer` take ownership. Tensor-valued indices
-  (`take`, `scatter`) must lie in range: the C backend no longer wraps
-  negatives and raises `Invalid_argument` instead of `Failure`. Build tensors
-  element by element with `create`, `init`, `stack` or a filled bigarray.
+  overlapping windows are ordinary tensors; `of_bigarray` takes ownership.
+  Tensor-valued indices (`take`, `scatter`) must lie in range: the C backend
+  no longer wraps negatives and raises `Invalid_argument` instead of
+  `Failure`. Build tensors element by element with `create`, `init`, `stack`
+  or a filled bigarray.
 - The backend contract gains `update`, the pure window write `set` lowers to
   for single indices, unit-step ranges and run-time runs; a compiler can
   perform it in place.
@@ -3564,35 +3551,8 @@ thread.
   rounding now keeps the sticky bits, so round-to-nearest-even resolves ties
   correctly. Both conversions apply to buffer element access and every C
   kernel operating on float8 tensors.
-- The js_of_ocaml stubs for extended dtypes now compute the same values as
-  the C implementation. Previously on JavaScript, `Nx_buffer.kind` returned
-  the wrong dtype for every buffer, creating a bfloat16/float8/bool buffer
-  raised, bfloat16 stores truncated instead of rounding, int4 stores raised
-  on out-of-range values instead of clamping, uint64 element access threw,
-  and the bytes blits read garbage.
-- Fix int4/uint4 offset arithmetic in `Nx_buffer.blit_from_bytes` and
-  `blit_to_bytes`: source and destination offsets disagreed about nibble
-  packing (one side counted a byte per element, the other rounded the byte
-  offset up), silently corrupting any copy with a nonzero offset. Offsets are
-  element offsets mapping to byte `off / 2` on both sides; odd offsets now
-  raise `Invalid_argument`, as does an odd length that does not reach the end
-  of the destination buffer.
-- `Nx_buffer.to_bigarray1` now raises `Invalid_argument` for extended kinds
-  (bfloat16, float8, int4, uint32/64, bool) instead of returning a bigarray
-  that standard operations silently misread — `Bigarray.Array1.get` decoded
-  bfloat16 bits as float16, and int4 buffers read out of bounds.
-  `of_bigarray1` and `of_genarray` likewise reject `Char`, `Int` and
-  `Nativeint` bigarrays, which buffers never supported. Marshalling buffers is
-  now documented as unsupported (it silently dropped the extended kind).
-- Merge `Nx_buffer.kind` and `Dtype.t` into a single GADT: a dtype now *is*
-  the buffer kind (`('a, 'b) Dtype.t = ('a, 'b) Nx_buffer.kind`).
-  `Dtype.of_buffer_kind` and `Dtype.to_buffer_kind` are gone — pass the dtype
-  directly. `Nx_buffer` constructors and values now use the dtype spellings
-  (`Int8`/`int8` instead of `Int8_signed`/`int8_signed`, `Complex64` for the
-  8-byte complex, `Complex128` for the 16-byte one), and the extended element
-  types are renamed accordingly (`int4_elt`, `uint4_elt`, `int8_elt`,
-  `uint8_elt`, `int16_elt`, `uint16_elt`). New `Nx_buffer.kind_name` names a
-  kind; `Dtype.to_string` is now an alias for it.
+- The extended element types are renamed `int4_elt`, `uint4_elt`,
+  `int8_elt`, `uint8_elt`, `int16_elt` and `uint16_elt`.
 - Reductions along non-innermost axes stream rows instead of striding a cache
   line per element: `sum ~axes:[0]` on 512×512 is ~9.6× faster (and `mean`
   with it), with bit-for-bit identical results.
@@ -3647,9 +3607,6 @@ thread.
 - Fix `` `Add``-mode scatter on the C backend to accumulate updates into the
   template's values instead of a zeroed buffer, matching the jit lowering
   and the autodiff rule.
-- Add `Nx_buffer.unsafe_data_ptr`: the address of a buffer's first element,
-  for wrapping tensor memory in external systems without copying. The caller
-  must keep the buffer reachable while the pointer is in use.
 - Fix `rfft` and `irfft` bypassing the effect-based backend dispatch: they
   called the C backend directly, making them invisible to every effect
   handler (autodiff, vmap, jit). They now perform `E_rfft`/`E_irfft` like

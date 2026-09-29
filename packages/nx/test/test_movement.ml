@@ -247,7 +247,7 @@ let flattening =
           let f = Nx.flatten t in
           equal ints (Ref.reshape target (Ref.of_nx t)) (Ref.of_nx f);
           if viewable t target then
-            is_true ~msg:"a view" (Nx.data f == Nx.data t));
+            is_true ~msg:"a view" (storage f == storage t));
       prop "ravel is reshape to one axis" shape (fun s ->
           equal same
             (Nx.reshape [| -1 |] (tensor_of s))
@@ -313,7 +313,7 @@ let reshapes =
             let r = Nx.reshape target t in
             equal ints (Ref.reshape target (Ref.of_nx t)) (Ref.of_nx r);
             is_true ~msg:"the result shares its source's storage"
-              (Nx.data r == Nx.data t)
+              (storage r == storage t)
           end
           else begin
             cover "a layout no reshape can view" true;
@@ -342,7 +342,7 @@ let views =
   let shares name f =
     test (name ^ " is a view of its source") (fun () ->
         let t = tensor_of [| 4; 6 |] in
-        is_true (Nx.data (f t) == Nx.data t))
+        is_true (storage (f t) == storage t))
   in
   group "views"
     [
@@ -368,8 +368,8 @@ let views =
           List.hd (Nx.broadcast_arrays [ t; Nx.zeros Nx.int32 [| 2; 1; 1 |] ]));
       test "copy and concatenate never share" (fun () ->
           let t = tensor_of [| 2; 3 |] in
-          is_false (Nx.data (Nx.copy t) == Nx.data t);
-          is_false (Nx.data (Nx.concatenate ~axis:0 [ t ]) == Nx.data t));
+          is_false (storage (Nx.copy t) == storage t);
+          is_false (storage (Nx.concatenate ~axis:0 [ t ]) == storage t));
       test
         "shrink refuses a range past its axis or ending before it starts \
          (nx.mli states no error)" (fun () ->

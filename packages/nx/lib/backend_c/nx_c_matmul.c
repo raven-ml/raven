@@ -387,7 +387,7 @@ MM_GEN_MICRO(nx_c_micro_c64, nx_c_complex64, 8)
 #define MM_LANE_DOT(i) s[i]
 #define MM_LANE_ROW(i) lanes[(i) * n + j]
 
-#define MM_GEN(sfx, kind, storage, compute, ld, st, cat)                       \
+#define MM_GEN(sfx, storage, compute, ld, st, cat)                             \
   static void mm_pack_a_##sfx(void *vdst, const void *vsrc, int64_t rs,        \
                               int64_t cs, int64_t row0, int64_t mc, int64_t k, \
                               int MR) {                                        \
@@ -595,7 +595,7 @@ typedef struct {
   int64_t csize; /* bytes of one compute element */
 } nx_c_mm_desc;
 
-#define MM_DESC_ROW(sfx, kind, storage, compute, ld, st, cat)                  \
+#define MM_DESC_ROW(sfx, storage, compute, ld, st, cat)                        \
   [NX_C_DTYPE_##sfx] = {mm_pack_a_##sfx,                                        \
                        mm_pack_b_##sfx,                                        \
                        mm_store_##sfx,                                         \
@@ -1548,8 +1548,6 @@ static nx_c_status nx_c_matmul_extract(value va, value vb, value vc,
   nx_c_dtype da = nx_c_dtype_of_value(va);
   nx_c_dtype db = nx_c_dtype_of_value(vb);
   nx_c_dtype dc = nx_c_dtype_of_value(vc);
-  if (da == NX_C_DTYPE_COUNT || db == NX_C_DTYPE_COUNT || dc == NX_C_DTYPE_COUNT)
-    return NX_C_ERR_BAD_KIND;
   if (da != db || da != dc) return MM_ERR_DTYPE_MISMATCH;
   *dt = da;
   return NX_C_OK;

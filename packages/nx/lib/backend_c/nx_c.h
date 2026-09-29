@@ -6,15 +6,14 @@
 /* nx_c.h — the dtype table and ABIs for the backend_c CPU backend.
 
    This is the single source of truth below the kernel line. From one X-macro
-   table it generates the dtype enum, the kind translation, the element-size,
-   class, per-dtype load/store, and saturating float->int converters. It also
+   table it generates the dtype enum, the element-size, class, per-dtype load/store, and saturating float->int converters. It also
    defines the metadata struct crossing the FFI, the inner-loop kernel ABIs and
    their dispatch-table types, the status protocol, and the parallel-policy
    declarations. Everything else in the backend is generated from or built
    against this file; see README.md for the maintained architecture.
 
-   Layering: this header pulls in the caml value/bigarray headers and the
-   buffer layer's extended kinds and f16/bf16/fp8 converters, but NOT
+   Layering: this header pulls in the caml value header, nx.device's buffer
+   accessor and nx.dtype's f16/bf16/fp8 converters, but NOT
    caml/fail.h or caml/threads.h. A translation unit that includes only this
    header therefore *cannot* raise an OCaml exception or touch the runtime
    lock — the "kernels never call the runtime" rule is enforced by what is
@@ -33,11 +32,10 @@
 #include <malloc.h>
 #endif
 
-#include <caml/bigarray.h>
 #include <caml/mlvalues.h>
 
-#include "nx_buffer_stubs.h" /* extended kinds */
-#include "nx_dtype.h"        /* f16/bf16/fp8 converters */
+#include "nx_device.h" /* buffer host addresses */
+#include "nx_dtype.h"  /* f16/bf16/fp8 converters */
 
 /* Prefixed to avoid colliding with backend_c's unprefixed complex typedefs
    should a translation unit ever pull in both backends' headers. */
@@ -81,21 +79,22 @@ static inline void nx_c_aligned_free(void *p) {
    in nx_c_ndarray — no dynamic allocation on the FFI path. */
 #define NX_C_MAX_NDIM 32
 
-/* The first four fields of Nx_backend.t cross the FFI in a fixed order, and that
+/* The first five fields of Nx_backend.t cross the FFI in a fixed order, and that
    order IS ABI: an operand value is read at exactly these slots.
-       0 data     the bigarray
+       0 data     a host Nx_device.Buffer.t
        1 shape    int array
        2 strides  int array, ELEMENT units
        3 offset   int, ELEMENT units
+       4 dtype    Nx_dtype.t, a constant constructor whose index is the tag
    Nx_backend.t is {buffer; shape; strides; offset; dtype; context}: C reads
-   slots 0-3 and never touches slot 4 (dtype — redundant here,
-   since C derives it from the bigarray kind) or later. The layout is pinned by
-   the binding layer's echo test, not by convention; reordering these four
-   silently misreads every operand. */
+   slots 0-4 and never touches slot 5. The layout is pinned by the binding
+   layer's echo test, not by convention; reordering these five silently
+   misreads every operand. */
 #define NX_C_FFI_DATA 0
 #define NX_C_FFI_SHAPE 1
 #define NX_C_FFI_STRIDES 2
 #define NX_C_FFI_OFFSET 3
+#define NX_C_FFI_DTYPE 4
 
 #if defined(__GNUC__) || defined(__clang__)
 #define NX_C_NORETURN __attribute__((noreturn))
@@ -110,18 +109,16 @@ static inline void nx_c_aligned_free(void *p) {
    ONE table in Nx_dtype.t declaration order, so the generated enum values
    equal its constructor indices (0=Float16 … 18=Bool) and NX_C_DTYPE_COUNT
    falls out as the trailing enumerator — the correspondence is pinned by a
-   _Static_assert below and by the binding's kind->tag test, never by hand. Two
+   _Static_assert below and by the binding's dtype->tag test, never by hand. Two
    iterators project the single table: NX_C_FOR_EACH_DTYPE walks all 19 rows
-   (enum, kind switch, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
+   (enum, class, size); NX_C_FOR_EACH_COMPUTE_DTYPE walks only the
    compute rows (load/store, float->int, kernel dispatch tables) — packed rows
    expand to nothing via the `sel` selector, so no compute code is ever
    emitted for int4/uint4 and no second list exists to drift.
 
-   Row: X(A, suffix, kind, storage, compute, load, store, cat, sel)
+   Row: X(A, suffix, storage, compute, load, store, cat, sel)
      A        threaded generator (supplied by the iterator, not by callers).
      suffix   identifier tail; yields NX_C_DTYPE_<suffix>, nx_c_ld_<suffix>, ...
-     kind     bigarray kind constant (CAML_BA_* / NX_BA_*). The ONLY place
-              kinds are named.
      storage  C type of one stored element. Element size is sizeof(storage)
               (packed rows report 0), so there is no separate, driftable size.
      compute  C type kernels compute in. Small ints widen so wrap-on-store
@@ -165,63 +162,62 @@ static inline void nx_c_aligned_free(void *p) {
 #define NX_C_BOOL_ST(x) ((x) != 0)
 
 #define NX_C_DTYPE_TABLE(X, A)                                                  \
-  X(A, f16, CAML_BA_FLOAT16, uint16_t, float, half_to_float, float_to_half,    \
+  X(A, f16, uint16_t, float, half_to_float, float_to_half,                     \
     NX_C_CAT_FLOAT, NX_C_COMPUTE)                                                \
-  X(A, f32, CAML_BA_FLOAT32, float, float, NX_C_ID, NX_C_ID, NX_C_CAT_FLOAT,      \
+  X(A, f32, float, float, NX_C_ID, NX_C_ID, NX_C_CAT_FLOAT,                       \
     NX_C_COMPUTE)                                                               \
-  X(A, f64, CAML_BA_FLOAT64, double, double, NX_C_ID, NX_C_ID, NX_C_CAT_FLOAT,    \
+  X(A, f64, double, double, NX_C_ID, NX_C_ID, NX_C_CAT_FLOAT,                     \
     NX_C_COMPUTE)                                                               \
-  X(A, bf16, NX_BA_BFLOAT16, uint16_t, float, bfloat16_to_float,               \
+  X(A, bf16, uint16_t, float, bfloat16_to_float,                               \
     float_to_bfloat16, NX_C_CAT_FLOAT, NX_C_COMPUTE)                             \
-  X(A, f8e4m3, NX_BA_FP8_E4M3, caml_ba_fp8_e4m3, float, fp8_e4m3_to_float,     \
+  X(A, f8e4m3, uint8_t, float, fp8_e4m3_to_float,                              \
     float_to_fp8_e4m3, NX_C_CAT_FLOAT, NX_C_COMPUTE)                             \
-  X(A, f8e5m2, NX_BA_FP8_E5M2, caml_ba_fp8_e5m2, float, fp8_e5m2_to_float,     \
+  X(A, f8e5m2, uint8_t, float, fp8_e5m2_to_float,                              \
     float_to_fp8_e5m2, NX_C_CAT_FLOAT, NX_C_COMPUTE)                             \
-  X(A, i4, NX_BA_INT4, uint8_t, void, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,            \
+  X(A, i4, uint8_t, void, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,                        \
     NX_C_PACKED)                                                                \
-  X(A, u4, NX_BA_UINT4, uint8_t, void, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,           \
+  X(A, u4, uint8_t, void, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,                        \
     NX_C_PACKED)                                                                \
-  X(A, i8, CAML_BA_SINT8, int8_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,       \
+  X(A, i8, int8_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,                      \
     NX_C_COMPUTE)                                                               \
-  X(A, u8, CAML_BA_UINT8, uint8_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,      \
+  X(A, u8, uint8_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,                     \
     NX_C_COMPUTE)                                                               \
-  X(A, i16, CAML_BA_SINT16, int16_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,    \
+  X(A, i16, int16_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,                    \
     NX_C_COMPUTE)                                                               \
-  X(A, u16, CAML_BA_UINT16, uint16_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,   \
+  X(A, u16, uint16_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_UINT,                   \
     NX_C_COMPUTE)                                                               \
-  X(A, i32, CAML_BA_INT32, int32_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,     \
+  X(A, i32, int32_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,                    \
     NX_C_COMPUTE)                                                               \
-  X(A, u32, NX_BA_UINT32, caml_ba_uint32, uint64_t, NX_C_ID, NX_C_ID,            \
+  X(A, u32, uint32_t, uint64_t, NX_C_ID, NX_C_ID,                                \
     NX_C_CAT_UINT, NX_C_COMPUTE)                                                 \
-  X(A, i64, CAML_BA_INT64, int64_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,     \
+  X(A, i64, int64_t, int64_t, NX_C_ID, NX_C_ID, NX_C_CAT_SINT,                    \
     NX_C_COMPUTE)                                                               \
-  X(A, u64, NX_BA_UINT64, caml_ba_uint64, uint64_t, NX_C_ID, NX_C_ID,            \
+  X(A, u64, uint64_t, uint64_t, NX_C_ID, NX_C_ID,                                \
     NX_C_CAT_UINT, NX_C_COMPUTE)                                                 \
-  X(A, c32, CAML_BA_COMPLEX32, nx_c_complex32, nx_c_complex32, NX_C_ID, NX_C_ID,   \
+  X(A, c32, nx_c_complex32, nx_c_complex32, NX_C_ID, NX_C_ID,                      \
     NX_C_CAT_COMPLEX, NX_C_COMPUTE)                                              \
-  X(A, c64, CAML_BA_COMPLEX64, nx_c_complex64, nx_c_complex64, NX_C_ID, NX_C_ID,   \
+  X(A, c64, nx_c_complex64, nx_c_complex64, NX_C_ID, NX_C_ID,                      \
     NX_C_CAT_COMPLEX, NX_C_COMPUTE)                                              \
-  X(A, bool_, NX_BA_BOOL, caml_ba_bool, uint8_t, NX_C_BOOL_LD, NX_C_BOOL_ST,     \
+  X(A, bool_, uint8_t, uint8_t, NX_C_BOOL_LD, NX_C_BOOL_ST,                      \
     NX_C_CAT_BOOL, NX_C_COMPUTE)
 
 /* Full iteration: G receives all eight columns (including cat and sel). */
-#define NX_C_FULL(G, sfx, kind, storage, compute, ld, st, cat, sel)            \
-  G(sfx, kind, storage, compute, ld, st, cat, sel)
+#define NX_C_FULL(G, sfx, storage, compute, ld, st, cat, sel)                  \
+  G(sfx, storage, compute, ld, st, cat, sel)
 #define NX_C_FOR_EACH_DTYPE(G) NX_C_DTYPE_TABLE(NX_C_FULL, G)
 
 /* Compute-only iteration: packed rows expand to nothing; G receives the first
    seven columns (sel is consumed by the filter). */
-#define NX_C_FILTER(G, sfx, kind, storage, compute, ld, st, cat, sel)          \
-  NX_C_FILTER_##sel(G, sfx, kind, storage, compute, ld, st, cat)
-#define NX_C_FILTER_NX_C_COMPUTE(G, sfx, kind, storage, compute, ld, st, cat)    \
-  G(sfx, kind, storage, compute, ld, st, cat)
-#define NX_C_FILTER_NX_C_PACKED(G, sfx, kind, storage, compute, ld, st, cat)
+#define NX_C_FILTER(G, sfx, storage, compute, ld, st, cat, sel)                \
+  NX_C_FILTER_##sel(G, sfx, storage, compute, ld, st, cat)
+#define NX_C_FILTER_NX_C_COMPUTE(G, sfx, storage, compute, ld, st, cat)          \
+  G(sfx, storage, compute, ld, st, cat)
+#define NX_C_FILTER_NX_C_PACKED(G, sfx, storage, compute, ld, st, cat)
 #define NX_C_FOR_EACH_COMPUTE_DTYPE(G) NX_C_DTYPE_TABLE(NX_C_FILTER, G)
 
-/* Dense dtype enum in tag order. NX_C_DTYPE_COUNT is the slot count and doubles
-   as the "not a dtype" sentinel returned by nx_c_dtype_of_kind. */
+/* Dense dtype enum in tag order. NX_C_DTYPE_COUNT is the slot count. */
 typedef enum {
-#define NX_C_ENUM_ROW(sfx, kind, storage, compute, ld, st, cat, sel)           \
+#define NX_C_ENUM_ROW(sfx, storage, compute, ld, st, cat, sel)                 \
   NX_C_DTYPE_##sfx,
   NX_C_FOR_EACH_DTYPE(NX_C_ENUM_ROW)
 #undef NX_C_ENUM_ROW
@@ -230,7 +226,7 @@ typedef enum {
 
 /* nx_c_dtype must equal Nx_dtype.t's constructor index; pin the anchors (and
    the packed boundary, the likeliest drift point) at compile time. The
-   binding's per-dtype kind->tag test pins the rest. */
+   binding's per-dtype dtype->tag test pins the rest. */
 _Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f8e5m2 == 5 && NX_C_DTYPE_i4 == 6 &&
                    NX_C_DTYPE_u4 == 7 && NX_C_DTYPE_i8 == 8 && NX_C_DTYPE_u64 == 15 &&
                    NX_C_DTYPE_bool_ == 18 && NX_C_DTYPE_COUNT == 19,
@@ -253,7 +249,7 @@ _Static_assert(NX_C_DTYPE_f16 == 0 && NX_C_DTYPE_f8e5m2 == 5 && NX_C_DTYPE_i4 ==
    elements are naturally aligned (offsets are element multiples of an aligned
    base), so the aliased access is well-defined. Unused instances are
    `static inline`, so they draw no warnings. */
-#define NX_C_LDST_ROW(sfx, kind, storage, compute, ld, st, cat)                \
+#define NX_C_LDST_ROW(sfx, storage, compute, ld, st, cat)                      \
   static inline compute nx_c_ld_##sfx(const void *p) {                          \
     return (compute)(ld(*(const storage *)(p)));                              \
   }                                                                            \
@@ -288,14 +284,13 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_LDST_ROW)
 #define NX_C_F2I_NX_C_CAT_FLOAT(sfx, storage)
 #define NX_C_F2I_NX_C_CAT_COMPLEX(sfx, storage)
 #define NX_C_F2I_NX_C_CAT_BOOL(sfx, storage)
-#define NX_C_F2I_ROW(sfx, kind, storage, compute, ld, st, cat)                 \
+#define NX_C_F2I_ROW(sfx, storage, compute, ld, st, cat)                       \
   NX_C_F2I_##cat(sfx, storage)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_F2I_ROW)
 #undef NX_C_F2I_ROW
 
 /* ── Derived dtype accessors ──────────────────────────────────────────────
-   All generated from the one table, keeping size and kind handling in one
-   place. dt is bounds-checked as
+   All generated from the one table, keeping size handling in one place. dt is bounds-checked as
    `(unsigned)dt < COUNT`, which rejects negatives and out-of-range in one
    comparison with no -Wtype-limits risk. */
 
@@ -308,7 +303,7 @@ static inline int nx_c_dtype_class(nx_c_dtype dt) {
 #define NX_C_CATBITS_NX_C_CAT_BOOL NX_C_CLASS_BOOL
 #define NX_C_PACKEDBIT_NX_C_COMPUTE 0
 #define NX_C_PACKEDBIT_NX_C_PACKED NX_C_CLASS_PACKED
-#define NX_C_CLASS_ROW(sfx, kind, storage, compute, ld, st, cat, sel)          \
+#define NX_C_CLASS_ROW(sfx, storage, compute, ld, st, cat, sel)                \
   [NX_C_DTYPE_##sfx] = NX_C_CATBITS_##cat | NX_C_PACKEDBIT_##sel,
       NX_C_FOR_EACH_DTYPE(NX_C_CLASS_ROW)
 #undef NX_C_CLASS_ROW
@@ -347,7 +342,7 @@ static inline int64_t nx_c_elem_size(nx_c_dtype dt) {
   static const int64_t sizes[NX_C_DTYPE_COUNT] = {
 #define NX_C_SIZE_NX_C_COMPUTE(storage) (int64_t)sizeof(storage)
 #define NX_C_SIZE_NX_C_PACKED(storage) 0
-#define NX_C_SIZE_ROW(sfx, kind, storage, compute, ld, st, cat, sel)           \
+#define NX_C_SIZE_ROW(sfx, storage, compute, ld, st, cat, sel)                 \
   [NX_C_DTYPE_##sfx] = NX_C_SIZE_##sel(storage),
       NX_C_FOR_EACH_DTYPE(NX_C_SIZE_ROW)
 #undef NX_C_SIZE_ROW
@@ -362,21 +357,6 @@ static inline int64_t nx_c_elem_size(nx_c_dtype dt) {
 static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
   if (nx_c_dtype_is_packed(dt)) return (count + 1) / 2;
   return count * nx_c_elem_size(dt);
-}
-
-/* The one kind switch in the entire backend. Returns NX_C_DTYPE_COUNT for an
-   unrecognized kind (including the OCaml native-int kinds, which nx's Dtype.t
-   cannot construct); the funnel maps that to a raised NX_C_ERR_BAD_KIND. */
-static inline nx_c_dtype nx_c_dtype_of_kind(int kind) {
-  switch (kind) {
-#define NX_C_KIND_ROW(sfx, kind_, storage, compute, ld, st, cat, sel)          \
-  case kind_:                                                                  \
-    return NX_C_DTYPE_##sfx;
-    NX_C_FOR_EACH_DTYPE(NX_C_KIND_ROW)
-#undef NX_C_KIND_ROW
-    default:
-      return NX_C_DTYPE_COUNT;
-  }
 }
 
 /* ── Dtype semantics the kernel families must honor ───────────────────────
@@ -440,7 +420,6 @@ typedef const char *nx_c_status;
 
 #define NX_C_ERR_NDIM "ndim exceeds NX_C_MAX_NDIM"
 #define NX_C_ERR_RANK_MISMATCH "shape and strides rank disagree"
-#define NX_C_ERR_BAD_KIND "unsupported bigarray kind"
 #define NX_C_ERR_UNSUPPORTED_DTYPE "dtype not supported for this operation"
 #define NX_C_ERR_PACKED "packed dtype not supported for this operation"
 #define NX_C_ERR_SHAPE "shape mismatch"
@@ -461,7 +440,7 @@ NX_C_NORETURN void nx_c_raise_invalid(const char *op, nx_c_status status);
    units, exactly as OCaml provides; the engine multiplies by nx_c_elem_size to
    get the byte steps the kernel ABI wants — that conversion happens in exactly
    one place. Entries [ndim, NX_C_MAX_NDIM) are unspecified; consumers read only
-   [0, ndim). `data` is the bigarray base; the first live element is at
+   [0, ndim). `data` is the buffer's first byte; the first live element is at
    data + offset*elem_size. */
 typedef struct {
   void *data;
@@ -483,7 +462,7 @@ static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   int ndim = (int)Wosize_val(v_shape);
   if (ndim > NX_C_MAX_NDIM) return NX_C_ERR_NDIM;
   if ((int)Wosize_val(v_strides) != ndim) return NX_C_ERR_RANK_MISMATCH;
-  out->data = Caml_ba_array_val(Field(v, NX_C_FFI_DATA))->data;
+  out->data = nx_device_buffer_host(Field(v, NX_C_FFI_DATA));
   out->ndim = ndim;
   out->offset = Long_val(Field(v, NX_C_FFI_OFFSET));
   for (int i = 0; i < ndim; i++) {
@@ -493,10 +472,9 @@ static inline nx_c_status nx_c_ndarray_of_value(value v, nx_c_ndarray *out) {
   return NX_C_OK;
 }
 
-/* Dtype of an FFI operand, from its bigarray kind. Lock held, no allocation. */
+/* Dtype of an FFI operand, its constructor index. Lock held, no allocation. */
 static inline nx_c_dtype nx_c_dtype_of_value(value v) {
-  return nx_c_dtype_of_kind(
-      nx_buffer_get_kind(Caml_ba_array_val(Field(v, NX_C_FFI_DATA))));
+  return (nx_c_dtype)Long_val(Field(v, NX_C_FFI_DTYPE));
 }
 
 /* ── Kernel ABIs ──────────────────────────────────────────────────────────

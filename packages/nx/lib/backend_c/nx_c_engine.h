@@ -52,7 +52,7 @@
 /* The single status -> exception-kind classifier, so every family (map, move,
    sort, ...) raises identically: Invalid_argument for precondition and empty-
    axis violations (a bad user/binding argument), Failure for everything else
-   (unsupported dtype, packed, bad kind, argreduce cap, allocation). A family
+   (unsupported dtype, packed, argreduce cap, allocation). A family
    stub that catches a driver's non-NULL status routes it here rather than
    hand-rolling its own map — that divergence is exactly what this forecloses.
    Same contract as nx_c_raise/nx_c_raise_invalid (nx_c.h): call ONLY with the
