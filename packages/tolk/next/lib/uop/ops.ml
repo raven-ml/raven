@@ -278,9 +278,7 @@ module rec Calls : sig
     table : int;
     inputs : (Node.t * int * string) list;
     slots : (string * int) list;
-    host_deps : (string * string) list;
     written_bufs : Node.t list;
-    skip_wait : bool;
   }
 
   type call_info = {
@@ -451,9 +449,7 @@ let equal_hcq_info (h0 : hcq_info) (h1 : hcq_info) =
          u0 == u1 && Int.equal i0 i1 && String.equal a0 a1)
        h0.inputs h1.inputs
   && h0.slots = h1.slots
-  && h0.host_deps = h1.host_deps
   && List.equal ( == ) h0.written_bufs h1.written_bufs
-  && Bool.equal h0.skip_wait h1.skip_wait
 
 let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name
@@ -908,7 +904,7 @@ and repr_hcq_info (h : hcq_info) =
   let pair f g (a, b) = repr_tuple [ f a; g b ] in
   strf
     "HCQInfo(device=%s, kernels=%s, estimates=%s, nargs=%d, table=%d, \
-     inputs=%s, slots=%s, host_deps=%s, written_bufs=%s, skip_wait=%s)"
+     inputs=%s, slots=%s, written_bufs=%s)"
     (repr_tuple (List.map repr_string h.device))
     (repr_tuple (List.map repr_hcq_kernel h.kernels))
     (repr_estimates h.estimates)
@@ -919,9 +915,7 @@ and repr_hcq_info (h : hcq_info) =
             repr_tuple [ repr u; string_of_int slot; repr_string space ])
           h.inputs))
     (repr_tuple (List.map (pair repr_string string_of_int) h.slots))
-    (repr_tuple (List.map (pair repr_string repr_string) h.host_deps))
     (repr_tuple (List.map repr h.written_bufs))
-    (repr_bool h.skip_wait)
 
 and repr_arg = function
   | No_arg -> "None"

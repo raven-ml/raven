@@ -655,7 +655,7 @@ def hcq_calls():
     b = UOp.new_buffer("AMD", 4, dtypes.float, 3)
     kernel = (("AMD",), "k", Estimates(1, 2, 3), (0, 1), b"key", (0,), ((0,), (0,)))
     info = HCQInfo(("AMD",), kernels=(kernel,), estimates=Estimates(1, 2, 3), nargs=2, table=1, inputs=((b, 0, "GLOBAL"),),
-                   slots=(("AMD", 1),), host_deps=(("CPU", "AMD"),), written_bufs=(b,), skip_wait=True)
+                   slots=(("AMD", 1),), written_bufs=(b,))
     return UOp.sink(UOp.custom_function("f").call(b, aux=info), UOp.custom_function("f").call(b, aux=HCQInfo(("AMD",))))
 
 

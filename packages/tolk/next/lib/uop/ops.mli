@@ -261,21 +261,19 @@ type hcq_info = {
   nargs : int;  (** The number of arguments, once lowered; [0] before. *)
   table : int;  (** The argument holding the address table, or [-1]. *)
   inputs : (t * int * string) list;
-      (** Each input: the storage, its argument slot and its address space. *)
+      (** Each address the table holds from the run's storage, in table order:
+          the storage, the byte offset and the device the address is taken on.
+      *)
   slots : (string * int) list;
       (** Each device's position of its batch slots among the arguments. *)
-  host_deps : (string * string) list;
-      (** Each memory owner with a device that accesses it from outside. *)
   written_bufs : t list;  (** The arguments the call writes. *)
-  skip_wait : bool;  (** The call is not waited on alone. *)
 }
 (** The type for the data of a call that submits command queues. *)
 
 val pp_hcq_info : Format.formatter -> hcq_info -> unit
 (** [pp_hcq_info] formats
     [HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, lds=0,
-     mem=0), nargs=0, table=-1, inputs=(), slots=(), host_deps=(),
-     written_bufs=(), skip_wait=False)]. *)
+     mem=0), nargs=0, table=-1, inputs=(), slots=(), written_bufs=())]. *)
 
 type call_info = {
   name : string option;  (** The name of the function called. *)

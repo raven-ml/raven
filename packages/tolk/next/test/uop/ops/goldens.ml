@@ -628,9 +628,7 @@ let hcq_calls () =
       table = 1;
       inputs = [ (b, 0, "GLOBAL") ];
       slots = [ ("AMD", 1) ];
-      host_deps = [ ("CPU", "AMD") ];
       written_bufs = [ b ];
-      skip_wait = true;
     }
   in
   let zero : estimates = { ops = Int 0; lds = Int 0; mem = Int 0 } in
@@ -643,9 +641,7 @@ let hcq_calls () =
       table = -1;
       inputs = [];
       slots = [];
-      host_deps = [];
       written_bufs = [];
-      skip_wait = false;
     }
   in
   sink

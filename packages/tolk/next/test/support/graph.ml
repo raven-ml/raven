@@ -634,20 +634,9 @@ let hcq_kernel : Ops.hcq_kernel codec =
   { write; read }
 
 let hcq_info : Ops.hcq_info codec =
-  let make device kernels estimates nargs table inputs slots host_deps
-      written_bufs skip_wait : Ops.hcq_info =
-    {
-      device;
-      kernels;
-      estimates;
-      nargs;
-      table;
-      inputs;
-      slots;
-      host_deps;
-      written_bufs;
-      skip_wait;
-    }
+  let make device kernels estimates nargs table inputs slots written_bufs :
+      Ops.hcq_info =
+    { device; kernels; estimates; nargs; table; inputs; slots; written_bufs }
   in
   let get (f : Ops.hcq_info -> _) = f in
   let no_cost = estimates.read (Record ("Estimates", [])) in
@@ -661,12 +650,8 @@ let hcq_info : Ops.hcq_info codec =
        (list (triple node int str))
        (get (fun h -> h.inputs))
   |> field "slots" ~default:[] (list (pair str int)) (get (fun h -> h.slots))
-  |> field "host_deps" ~default:[]
-       (list (pair str str))
-       (get (fun h -> h.host_deps))
   |> field "written_bufs" ~default:[] (list node)
        (get (fun h -> h.written_bufs))
-  |> field "skip_wait" ~default:false bool (get (fun h -> h.skip_wait))
   |> finish
 
 (* A call that precompiles its backward pass differentiates, which tolk.next

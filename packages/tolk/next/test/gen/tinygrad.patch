@@ -341,6 +341,31 @@ index 14add12..80e0ec5 100644
  # numpy and torch dtype interop
  
  def _to_np_dtype(dtype:DType) -> type|None:
+diff --git a/tinygrad/engine/realize.py b/tinygrad/engine/realize.py
+index 5461074..37fbf14 100644
+--- a/tinygrad/engine/realize.py
++++ b/tinygrad/engine/realize.py
+@@ -83,7 +83,7 @@ def track_stats(ctx:ExecContext, call:UOp, st:decimal.Decimal, ets:list[float|No
+       cpu_events.append(ProfilePointEvent(device, "exec", len(cpu_events), {"var_vals": ctx.var_vals,
+         "bufs": [b.trace_num for b in bufs], "name": display_name, "outputs": outputs, "inputs": inputs}, ts=st))
+     if DEBUG < (3 if stats is None and isinstance(call.arg.aux, HCQInfo) else 2) or not ctx.update_stats: continue
+-    if et is None and not getattr(call.arg.aux, "skip_wait", False):
++    if et is None:
+       Device[device].synchronize()
+       et, st = float(perf_counter_us() - st)*1e-6, perf_counter_us()
+       GlobalCounters.time_sum_s += et
+@@ -184,10 +184,9 @@ def exec_hcq(ctx:ExecContext, call:UOp, ast:UOp) -> list[float|None]:
+   if (info:=call.arg.aux).inputs:
+     addrs = [cast(Buffer, _resolve(u, ctx.input_uops).buffer).get_buf(dev) + off for u, off, dev in info.inputs]
+     cast(Buffer, call.src[1 + info.table].buffer).host.view(fmt='Q')[:len(addrs)] = array.array('Q', addrs)
+-  ctx = replace(ctx, wait=ctx.wait and not info.skip_wait,
++  ctx = replace(ctx,
+                 var_vals={**ctx.var_vals, **{k: v for d in info.device for k, v in cast(Any, Device[d]).var_vals.items()}})
+   ets = exec_kernel(ctx, call, ast, devices=(Device[info.device[0]].host,))
+-  for host, dev in info.host_deps: Device[host].pending[Device[dev]] = Device[dev].timeline.host.view(fmt='Q')[1]
+   if not (ctx.wait or PROFILE): return ets
+ 
+   slots = {d: cast(Buffer, call.src[1 + i].buffer) for d, i in info.slots}
 diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
 index deb9684..8bc2d81 100644
 --- a/tinygrad/helpers.py
@@ -354,6 +379,52 @@ index deb9684..8bc2d81 100644
  
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
+diff --git a/tinygrad/runtime/support/hcq2.py b/tinygrad/runtime/support/hcq2.py
+index 1f6134e..24949cf 100644
+--- a/tinygrad/runtime/support/hcq2.py
++++ b/tinygrad/runtime/support/hcq2.py
+@@ -30,11 +30,8 @@ class HCQInfo:
+   table:int = -1
+   inputs:tuple[tuple[UOp, int, str], ...] = ()
+   slots:tuple[tuple[str, int], ...] = () # per device, the position of its batch slots in the args
+-  host_deps:tuple[tuple[str, str], ...] = () # (memory owner, accessing device)
+   written_bufs:tuple[UOp, ...] = () # write args
+ 
+-  skip_wait:bool = False # TODO: remove. an rdma copy between nodes is two batches, so waiting on the first alone deadlocks
+-
+ def all_devices_in(d:Any, c:frozenset[str]) -> bool: return {x.split(":")[0] for x in to_tuple(d)} <= c
+ 
+ def get_enqueue_devs(call:UOp) -> Any|None:
+@@ -282,7 +279,7 @@ def _build_queues(ctx:BatchCtx) -> dict[tuple[tuple[str, ...], str], list[UOp]]:
+     q.extend([*waits, bump])
+   return queues
+ 
+-def _finalize_batch(ctx:BatchCtx, skip_wait:bool=False) -> UOp:
++def _finalize_batch(ctx:BatchCtx) -> UOp:
+   queues = _build_queues(ctx)
+ 
+   # re-arm the batch signals before submitting queues in first-use order
+@@ -304,10 +301,7 @@ def _finalize_batch(ctx:BatchCtx, skip_wait:bool=False) -> UOp:
+   bufs = [tuple(b.arg.slot for b, _ in a) if all(b.op is Ops.PARAM and lane is None for b, lane in a) else () for a in args]
+   kerns = tuple(zip([d for _, d, _ in ctx.batch], names, estimates, stamps, profile_keys, bufs, [get_call_outs_ins(c) for c, _, _ in ctx.batch]))
+   written_bufs = tuple(dedup(b for c, _, _ in ctx.batch for b in get_call_written_bufs(c)))
+-  host_deps = tuple(dedup((host, devs[0]) for call, devs, _ in ctx.batch for buf in get_call_arg_uops(call)
+-                         for host in to_tuple(buf.device) if host not in ctx.queues))
+-  info = HCQInfo(tuple(ctx.queues), skip_wait=skip_wait, kernels=kerns, written_bufs=written_bufs,
+-                 estimates=sum(estimates, start=Estimates()).simplify(), host_deps=host_deps)
++  info = HCQInfo(tuple(ctx.queues), kernels=kerns, written_bufs=written_bufs, estimates=sum(estimates, start=Estimates()).simplify())
+   return sink.call(*(ctx.slots.values() if ctx.profile else ()), aux=info)
+ 
+ @rewrite_group(new_ctx=False)
+@@ -329,7 +323,7 @@ def sched_batches(l:UOp, profile:bool) -> UOp:
+     nodes:dict[str, list] = {}
+     for e in grp: nodes.setdefault(Device[e[1][0]].peer_group if hcq else "", []).append(e)
+     batches = list(nodes.values())
+-    for batch in batches: srcs += [_finalize_batch(BatchCtx(batch, profile), batch is not batches[-1])] if hcq else [c for c, _, _ in batch]
++    for batch in batches: srcs += [_finalize_batch(BatchCtx(batch, profile))] if hcq else [c for c, _, _ in batch]
+   return l.replace(src=tuple(srcs))
+ 
+ # *****************
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

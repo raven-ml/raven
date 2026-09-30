@@ -11,7 +11,9 @@ the tinygrad checkout, which must be clean and at TINYGRAD, with
 `gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
 rewrites keep IEEE and modular values, and its constants a NaN's bits, as
 tolk.next's do (DIVERGENCES D13, D24 and D27), and its constant arithmetic
-compute what the README's CPython rows say.
+compute what the README's CPython rows say; it also removes `HCQInfo`'s
+`host_deps` and `skip_wait`, which tolk.next's `Ops.hcq_info` does not have
+(see the README).
 Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
 limits the run to those generators; by default all run.
 

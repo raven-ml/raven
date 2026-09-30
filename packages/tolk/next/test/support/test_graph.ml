@@ -154,9 +154,7 @@ let kinds =
           table = 2;
           inputs = [ (buffer, 0, "GLOBAL") ];
           slots = [ ("AMD", 1) ];
-          host_deps = [ ("CPU", "AMD") ];
           written_bufs = [ buffer ];
-          skip_wait = true;
         }
       in
       Ops.v

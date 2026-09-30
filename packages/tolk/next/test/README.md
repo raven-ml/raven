@@ -260,7 +260,7 @@ The records, with their fields in order:
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
 | `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile` and `precompile_backward` booleans, `aux` none or `HCQInfo`, `dtype` data type |
 | `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable` boolean |
-| `HCQInfo` | `device` a tuple of strings, `kernels` a tuple of `(<devices>, <name>, <estimates>, <stamp slots>, <profile key>, <input slots>, (<outs>, <ins>))`, `estimates` `Estimates`, `nargs` and `table` integers, `inputs` a tuple of `(<node>, <integer>, <string>)`, `slots` a tuple of `(<string>, <integer>)`, `host_deps` a tuple of string pairs, `written_bufs` a tuple of nodes, `skip_wait` boolean |
+| `HCQInfo` | `device` a tuple of strings, `kernels` a tuple of `(<devices>, <name>, <estimates>, <stamp slots>, <profile key>, <input slots>, (<outs>, <ins>))`, `estimates` `Estimates`, `nargs` and `table` integers, `inputs` a tuple of `(<node>, <integer>, <string>)`, `slots` a tuple of `(<string>, <integer>)`, `written_bufs` a tuple of nodes |
 
 A device is a string, or a tuple of strings for a sharded value. The
 enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a

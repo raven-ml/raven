@@ -282,19 +282,17 @@ let tags =
 
 (* Queue calls *)
 
-let hcq ?(skip_wait = false) device : Ops.hcq_info =
+let hcq ?(nargs = 0) device : Ops.hcq_info =
   let zero : Ops.estimates = { ops = Int 0; lds = Int 0; mem = Int 0 } in
   {
     device;
     kernels = [];
     estimates = zero;
-    nargs = 0;
+    nargs;
     table = -1;
     inputs = [];
     slots = [];
-    host_deps = [];
     written_bufs = [];
-    skip_wait;
   }
 
 let hcq_calls =
@@ -304,7 +302,7 @@ let hcq_calls =
           equal string
             "HCQInfo(device=('AMD',), kernels=(), estimates=Estimates(ops=0, \
              lds=0, mem=0), nargs=0, table=-1, inputs=(), slots=(), \
-             host_deps=(), written_bufs=(), skip_wait=False)"
+             written_bufs=())"
             (Format.asprintf "%a"
                (fun ppf ->
                  Format.pp_set_margin ppf 10_000;
@@ -314,8 +312,7 @@ let hcq_calls =
           let call aux = Ops.call ?aux (Ops.sink []) [] in
           is_true (call (Some (hcq [ "AMD" ])) == call (Some (hcq [ "AMD" ])));
           is_false
-            (call (Some (hcq [ "AMD" ]))
-            == call (Some (hcq ~skip_wait:true [ "AMD" ])));
+            (call (Some (hcq [ "AMD" ])) == call (Some (hcq ~nargs:1 [ "AMD" ])));
           is_false (call (Some (hcq [ "AMD" ])) == call None));
     ]
 
