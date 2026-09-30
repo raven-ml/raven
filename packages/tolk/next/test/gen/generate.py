@@ -7,8 +7,11 @@
     uv run packages/tolk/next/test/gen/generate.py [--check] [MODULE...]
 
 Each generator file `gen/<path>.py` runs in a fresh interpreter against
-the tinygrad checkout, which must be clean and at TINYGRAD. MODULE, such as
-`dtype` or `uop/op`, limits the run to those generators; by default all run.
+the tinygrad checkout, which must be clean and at TINYGRAD, with
+`gen/tinygrad.patch` applied to a copy of it: the patch makes tinygrad's
+rewrites keep IEEE and modular values, as tolk.next's do (DIVERGENCES D24).
+Moving TINYGRAD means re-applying it. MODULE, such as `dtype` or `uop/op`,
+limits the run to those generators; by default all run.
 
 Without --check, the goldens and the manifest are written, goldens that a
 generator no longer declares are removed, and each change is listed: review
@@ -30,6 +33,7 @@ TINYGRAD = "79af1ca70e7021f504919c4ff5631245acc33ed6"
 HERE = Path(__file__).resolve().parent
 TEST = HERE.parent
 MANIFEST = HERE / "manifest"
+PATCH = HERE / "tinygrad.patch"
 HEADER = f"# tinygrad {TINYGRAD}\n"
 
 # The child runs the generator, then makes each golden in a process of its own,
@@ -71,6 +75,17 @@ def check_checkout(tinygrad):
         sys.exit(f"{tinygrad} is at {head}, not at {TINYGRAD}")
     if git(tinygrad, "status", "--porcelain", "--untracked-files=no"):
         sys.exit(f"{tinygrad} has local changes")
+
+
+def patched(tinygrad, scratch):
+    """A copy of the checkout's HEAD in `scratch`, with PATCH applied."""
+    tree = Path(scratch) / "tinygrad"
+    tree.mkdir()
+    archive = subprocess.run(["git", "-C", str(tinygrad), "archive", "HEAD"], capture_output=True, check=True)
+    subprocess.run(["tar", "-x", "-C", str(tree)], input=archive.stdout, check=True)
+    subprocess.run(["git", "init", "-q", str(tree)], check=True)
+    subprocess.run(["git", "-C", str(tree), "apply", str(PATCH)], check=True)
+    return tree
 
 
 def generators(modules):
@@ -130,8 +145,10 @@ def main():
     if args.modules and not manifest.startswith(HEADER):
         sys.exit("the goldens are from another tinygrad commit: regenerate them all")
     goldens = {}
-    for module, generator in selected.items():
-        goldens.update(run(module, generator, tinygrad))
+    with tempfile.TemporaryDirectory(prefix="tolk-next-tinygrad-") as scratch:
+        tree = patched(tinygrad, scratch)
+        for module, generator in selected.items():
+            goldens.update(run(module, generator, tree))
     # A golden belongs to the generator of its directory. A full run owns every
     # golden, including those of a generator that no longer exists.
     recorded = set(manifest.splitlines()[1:])

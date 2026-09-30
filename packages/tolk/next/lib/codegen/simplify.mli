@@ -55,11 +55,11 @@ val pm_reduce_unparented : (unit, Ops.t) Ops.Pattern_matcher.t
 
 val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_reduce_collapse] is the rewrites that compute a sum over a range in
-    closed form: {!pm_reduce_unparented}; comparisons [x + y < c] and
-    [x * y < c] solved for [x] when [y] and [c] do not depend on a range; the
-    sum of a value over the part of a range where it is selected by bounds on
-    the range, as the size of that part times the value; sums distributed over
-    additions; and {!Symbolic.symbolic}.
+    closed form: {!pm_reduce_unparented}; integer comparisons [x + y < c] and
+    [x * y < c] solved for [x] when [y] and [c] do not depend on a range and no
+    value wraps ({!Ops.exact}); the sum of a value over the part of a range
+    where it is selected by bounds on the range, as the size of that part times
+    the value; sums distributed over additions; and {!Symbolic.symbolic}.
 
     Raises [Invalid_argument] on a sum over a range of size [1]: the range folds
     to [0], which {!pm_reduce_unparented} refuses. *)

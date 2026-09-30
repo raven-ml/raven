@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+module V = Dtype.Value
 
 let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
@@ -124,7 +125,7 @@ let mark_gated ctx idx =
   Tbl.iter
     (fun r c ->
       match Tbl.find_opt ctx r with
-      | Some b when not Dtype.Value.(vmax b < vmax c) -> ()
+      | Some b when not V.(vmax b < vmax c) -> ()
       | _ -> Tbl.replace ctx r c)
     guards;
   (* ...but a range that is ever unguarded cannot shrink. *)
@@ -242,6 +243,13 @@ let sum_between ?lower ?upper r value =
     in
     Some O.(maximum (hi - lo) (int 0) * value)
 
+(* Solving [x + y] against [c] for [x] computes [x + y] and [c - y], which is
+   exact for integers where neither wraps. *)
+let solves_sum x y c =
+  Dtype.is_int (dtype y)
+  && exact (dtype y)
+       V.[ vmin x + vmin y; vmax x + vmax y; vmin c - vmax y; vmax c - vmin y ]
+
 let pm_reduce_collapse =
   let var = Upat.var and zero = Upat.O.int 0 in
   let range = Upat.op Op.Range ~name:"r" in
@@ -258,16 +266,26 @@ let pm_reduce_collapse =
             Upat.O.(var "x" + var "y" < var "c")
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
-              if no_range y && no_range c then Some O.(x < c - y) else None);
-          (* Lift x * y out of a reduction. *)
+              if no_range y && no_range c && solves_sum x y c then
+                Some O.(x < c - y)
+              else None);
+          (* Lift x * y out of a reduction, where nothing wraps. *)
           rule
             Upat.O.(var "x" * var "y" < var "c")
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
+              let products =
+                List.concat_map
+                  (fun a -> V.[ a * vmin y; a * vmax y ])
+                  [ vmin x; vmax x ]
+              and ceilings =
+                V.[ vmin c + vmin y - of_int 1; vmax c + vmax y - of_int 1 ]
+              in
               if
                 no_range y && no_range c
                 && Dtype.is_int (dtype y)
-                && Dtype.Value.(vmin y > of_int 0)
+                && V.(vmin y > of_int 0)
+                && exact (dtype y) (products @ ceilings)
               then Some O.(x < (c + y - int 1) // y)
               else None);
           (* The sum over r in [0, n) of [lower <= r < upper] * value is max
@@ -316,13 +334,18 @@ let pm_reduce_load_collapse =
       pm_reduce_collapse;
       Pattern_matcher.v
         [
-          (* Lift x + y out of a reduction on an inequality. *)
+          (* Lift x + y out of a reduction on an inequality, where no cast
+             narrows. *)
           rule
-            Upat.O.(Upat.or_casted (var "x" + var "y") <> var "c")
+            Upat.O.(Upat.or_casted ~name:"s" (var "x" + var "y") <> var "c")
             (fun m ->
               let x = m "x" and y = m "y" and c = m "c" in
-              if no_range y && no_range c then
-                Some O.(x <> cast c (dtype y) - y)
+              let dt = dtype y in
+              if
+                no_range y && no_range c && solves_sum x y c
+                && Dtype.can_lossless_cast dt (dtype (m "s"))
+                && exact dt V.[ vmin c; vmax c ]
+              then Some O.(x <> cast c dt - y)
               else None);
           (* A sum of a load gated on its index equal to the range is the load
              at that index. *)

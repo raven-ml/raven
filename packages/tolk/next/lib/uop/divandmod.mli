@@ -16,7 +16,8 @@ val div_and_mod_symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [div_and_mod_symbolic] rewrites divisions and remainders. With [x] and [y]
     nodes and [a], [c] and [d] constants:
 
-    - [(x // c + a) // d] is [(x + a * c) // (c * d)] when [d] is positive;
+    - [(x // c + a) // d] is [(x + a * c) // (c * d)] when [d] is positive and,
+      for a committed integer [x], no value wraps ({!Ops.exact});
     - for a weak integer [x] and [c % d] other than [c], [(x + c) // d] is
       [(x + c % d) // d + c // d], and [(x + c) % d] is [(x + c % d) % d].
 

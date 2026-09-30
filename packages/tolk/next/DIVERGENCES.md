@@ -324,7 +324,7 @@ the Exclusions of `README.md`.
   (`uncast_const`), which leaves the unwrapped literal bare. tinygrad's own
   `TestModularWraparound` expects the wrapped results and is marked
   `xfail_broken_const_wraparound`.
-- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and `:438`;
+- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and `:447`;
   `lib/uop/uop_weak.ml:203` (`uncast_const`).
 - **Differs:** a committed constant, a cast of a literal to a type of known
   width, is read wrapped to that width: by an operation that folds, by a cast
@@ -335,7 +335,11 @@ the Exclusions of `README.md`.
   folds to another key than the unfolded graph computes, and the int64 cast
   of the int32 constant `2^31` folds to `2^31` where the machine gives
   `-2^31`, and `x < uint8 300` compares against a bare `300`, which folds to
-  `true`, where the machine compares against `44`.
+  `true`, where the machine compares against `44`. Reading at the width also
+  changes which wrong answer `c0 + x < c1 → x < c1 - c0` gives where the offset
+  wraps: on uint8, `u + uint8 -1 < 255` becomes `u < 0` here, `false` for 255
+  inputs, where tinygrad's `u < 256` is `true`, wrong for one. D24 keeps that
+  rule to offsets that do not wrap, so neither applies.
 - **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
   must draw the numbers eager nx draws.
 - **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › an
@@ -343,7 +347,9 @@ the Exclusions of `README.md`.
   committed constant, a uint8 remainder), `symbolic_simple › constants › a
   comparison reads a committed constant at its width` (the uncast), and
   `tinygrad › tests.golden › TestModularWraparound.<test>` and
-  `TestThreefryConstFolding.test_threefry`, which check the machine value.
+  `TestThreefryConstFolding.test_threefry`, which check the machine value;
+  the offset's interaction with D24: `integers wrap (D24) › an offset crosses
+  a comparison only where neither side wraps` (the committed case).
 
 ## D14. Folded comparisons treat NaN as IEEE does
 
@@ -500,3 +506,60 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Decomp_dtype` suite: `emulated 64-bit integers › an
   emulated cast of a float32 to a 64-bit integer converts no float to a word
   that cannot hold it`.
+
+## D24. Rewrites keep IEEE and modular values
+
+- **tinygrad:** the rules and bounds each facet names below.
+- **tolk.next:** each facet's lines below; `test/gen/tinygrad.patch`, the same
+  restrictions applied to tinygrad, which `test/gen/generate.py` applies to a
+  copy of the checkout before generating the goldens and which is re-applied
+  when the pin moves.
+- **Differs:** tinygrad's rewrites assume that integers never wrap. A rewrite
+  here keeps the value compiled code computes: an integer of a committed
+  type wraps at its width, as C's unsigned arithmetic, Metal, CUDA and nx do,
+  and the lowering computes signed arithmetic on the unsigned bit pattern. Index
+  arithmetic is weak (`Weak_int`), never wraps, and keeps every fold
+  tinygrad makes; so does a committed integer whose values provably fit its
+  type (`Ops.exact`).
+  - **Integer bounds wrap.** tinygrad: `uop/ops.py:1104-1163` (`_min_max`),
+    `:1154-1164` (a cast), `:1147-1149` (a constant table). tolk.next:
+    `lib/uop/ops.ml:1472` (`min_max`), `:1546` (`cast_bounds`), `:1514`. The
+    bounds of a committed integer that leave its type are the type's; an
+    integer cast to an integer keeps its interval, which then wraps, where
+    tinygrad clamps a signed target to the overlap; a constant table holding a
+    NaN has its type's bounds, as a NaN constant has. tinygrad folds uint8
+    `(u + 1) < 1` to `false`, which is `true` at 255, int8 `(y + 100) < 0`
+    for `y` in `[0, 50]` to `false`, which is `true` at 40, and
+    `cast (cast (y + 100) uint8) int32` to one cast, `-116` where the machine
+    gives `140`.
+  - **Wrapping rules.** tinygrad: `uop/symbolic.py:282` (`(x // c1) // c2`),
+    `:285` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
+    `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
+    (`x + y <> c` under a cast). tolk.next: `lib/uop/symbolic.ml:832,841`,
+    `lib/uop/divandmod.ml:250`, `lib/codegen/simplify.ml:248,264,272,337`.
+    Each applies to a committed integer only where every value it computes
+    fits the type; the comparisons of `Simplify` apply to integers only, since
+    moving a float term rounds, and `x + y <> c` only under a cast that does
+    not narrow. tinygrad folds uint8 `u - 1 < 255` for every `u`, int32
+    `(w // 2 + 2^30) // 2` at `2^30` to `-268435456` where the machine gives
+    `805306368`, and `(w // 65536) // 65536` to a division by `2^32`, which
+    wraps to `0`.
+- **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result, alone
+  or fused, meets its class against eager nx, whose integer arithmetic is
+  modular; rune's `check_wrapping_comparisons` runs compiled comparisons of
+  wrapped narrow integers against eager nx.
+- **Pinned by:** each facet by value tests, which evaluate a graph with the
+  reference interpreter before and after the rewrite at bindings that wrap:
+  - integer bounds: the `Ops` suite, `bounds › a committed integer that can
+    leave its type has its bounds (D24)`, `› an integer cast to a signed type
+    it leaves wraps (D24)`, `› a constant table holding a NaN has its type's
+    bounds (D24)` and the law `› bounds hold the value a committed integer
+    wraps to (D24)`;
+  - wrapping rules: the `Symbolic` suite, `integers wrap (D24)` (every test);
+    the `Divandmod` suite, `nested divisions › a committed division stays
+    where x + a * c wraps (D24)`; the `Simplify` suite, `solving comparisons
+    (D24)` (every test);
+  - the goldens, generated from the patched tinygrad, among them tinygrad's
+    loop counters (`Linearizer`'s `two_loops*` and `wait_loop*`, `Postrange`'s
+    `loop_counter*`), whose `c + 1 < n` over a loaded int32 no longer becomes
+    `c < n - 1`.

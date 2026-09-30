@@ -210,6 +210,32 @@ let compare_value (v0 : Dtype.value) (v1 : Dtype.value) =
 let ordered_value = Testable.with_compare compare_value value
 let gen_point = Gen.pair (Gen.int_range (-8) 8) (Gen.int_range 1 5)
 
+(* D24: an operation on a committed integer, as compiled code computes it, wraps
+   at the type's width. [x o y], then [o'] with [x] again, over narrow variables
+   of 61 values starting anywhere in their type, at a point of each. *)
+let gen_wrapping =
+  let narrow = Dtype.[ Int8; Uint8; Int16; Uint16 ] in
+  let ops = Op.[ Add; Sub; Mul; Xor; Shl ] in
+  Gen.triple
+    (Gen.of_list ~pp:(Testable.pp dtype) narrow)
+    (Gen.pair (Gen.of_list ~pp:Op.pp ops) (Gen.of_list ~pp:Op.pp ops))
+    (Gen.triple (Gen.int_range 0 65535) (Gen.int_range 0 65535)
+       (Gen.int_range 0 60))
+
+let wrapping_case (dt, (o0, o1), (a, b, k)) =
+  let lo = Z.to_int (Dtype.Value.to_z (Dtype.min dt))
+  and hi = Z.to_int (Dtype.Value.to_z (Dtype.max dt)) in
+  let start n = min hi (lo + (n mod (hi - lo + 1))) in
+  let x0 = start a and y0 = start b in
+  let x1 = min hi (x0 + 60) and y1 = min hi (y0 + 60) in
+  let x = variable dt (i x0) (i x1) "x" and y = variable dt (i y0) (i y1) "y" in
+  let apply u o v =
+    if o = Op.Shl then Ops.O.(u lsl Ops.int ~dtype:dt 3) else Ops.alu u o [ v ]
+  in
+  let u = apply (apply x o0 y) o1 x in
+  let vars = [ ("x", i (min x1 (x0 + k))); ("y", i (max y0 (y1 - k))) ] in
+  (u, vars)
+
 let bounds_group =
   group "bounds"
     [
@@ -244,6 +270,14 @@ let bounds_group =
           let v = eval [ ("v0", i x0); ("v1", i x1) ] u in
           at_most ordered_value ~than:v (Ops.vmin u);
           at_least ordered_value ~than:v (Ops.vmax u));
+      prop "bounds hold the value a committed integer wraps to (D24)"
+        gen_wrapping (fun case ->
+          let u, vars = wrapping_case case in
+          match Interpreter.eval ~vars u with
+          | #Dtype.value as v ->
+              at_most ordered_value ~than:v (Ops.vmin u);
+              at_least ordered_value ~than:v (Ops.vmax u)
+          | `Invalid -> fail "Invalid in an expression without one");
       prop "vmin is at most vmax" Nodes.gen_recipe (fun r ->
           let u = Nodes.build (Nodes.leaves ()) r in
           at_most ordered_value ~than:(Ops.vmax u) (Ops.vmin u));
@@ -398,6 +432,47 @@ let bounds_group =
           check_bounds
             (Ops.cast (Ops.float ~dtype:Float32 4.5) Int32)
             (int_bounds 4 4));
+      test "a committed integer that can leave its type has its bounds (D24)"
+        (fun () ->
+          let full dt = (Dtype.min dt, Dtype.max dt) in
+          let u = var ~dtype:Uint8 "u" 0 255 and y = var ~dtype:Int8 "y" 0 50 in
+          check_bounds Ops.O.(u + int 1) (full Uint8);
+          check_bounds Ops.O.(u - int 1) (full Uint8);
+          check_bounds Ops.O.(y + int 100) (full Int8);
+          check_bounds Ops.O.(y * int 4) (full Int8);
+          check_bounds Ops.O.(y lsl int 2) (full Int8);
+          check_bounds Ops.O.(u lxor int (-1)) (full Uint8);
+          check_bounds Ops.O.(y + int 50) (int_bounds 50 100);
+          check_bounds Ops.O.(weak_var "w" 0 50 * int 4) (int_bounds 0 200));
+      test "an integer cast to a signed type it leaves wraps (D24)" (fun () ->
+          let w = var "w" 0 255 in
+          check_bounds (Ops.cast w Int8) (Dtype.min Int8, Dtype.max Int8);
+          check_bounds (Ops.cast (var "v" 0 100) Int8) (int_bounds 0 100);
+          check_bounds (Ops.cast (Ops.cast w Uint8) Int32) (int_bounds 0 255));
+      test "a constant table holding a NaN has its type's bounds (D24)"
+        (fun () ->
+          let bits x =
+            let b = Bytes.create 4 in
+            Bytes.set_int32_le b 0 (Int32.bits_of_float x);
+            Bytes.to_string b
+          in
+          let table =
+            Ops.bitcast
+              (Ops.v
+                 ~arg:
+                   (Bytes
+                      (String.concat "" (List.map bits [ 1.; Float.nan; 2. ])))
+                 Op.Binary)
+              Float32
+          in
+          check_bounds
+            (Ops.load (Ops.index table [ Ops.range (Int 3) [ 0 ] ]) [])
+            (Dtype.min Float32, Dtype.max Float32));
+      test "exact is whether committed integer values fit their type" (fun () ->
+          is_true (Ops.exact Int8 [ i (-128); i 127 ]);
+          is_false (Ops.exact Int8 [ i 0; i 128 ]);
+          is_false (Ops.exact Uint8 [ i (-1) ]);
+          is_true (Ops.exact Weak_int [ i (-1); `Int (Z.shift_left Z.one 100) ]));
       test "overflows is whether the bounds leave the type" (fun () ->
           is_true (Ops.overflows (weak_var "x" 0 200) Int8);
           is_false (Ops.overflows (weak_var "x" (-128) 127) Int8);

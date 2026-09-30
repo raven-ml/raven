@@ -113,15 +113,16 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       greater; a selection that computes a maximum is {!Ops.maximum};
     - {b constants}: two applications of an associative operation to constants
       fold the constants together; [(x // c1) // c2] is [x // (c1 * c2)] for
-      positive [c2]; constants move to the end of sums and products;
-    - {b comparisons}, on integers: [c0 + x < c1] is [x < c1 - c0];
-      [c0 * x < c1] divides both sides by [c0], rounding up, and flips [x]'s
-      sign if [c0] is negative; [x // d < c] is [x < c * d] for positive [d] and
-      [c * d < x] for negative [d]; in [x < c] with [c] positive, a divisor [d]
-      common to [c] and the coefficients of some terms of [x], whose other terms
-      stay within [0] and [d - 1], divides out; [-x < -y] is [y < x];
-      [not (x < 1)] with [x] a sum of non-negative terms with positive
-      coefficients drops the coefficients;
+      positive [c2] where [c1 * c2] does not wrap ({!Ops.exact}); constants move
+      to the end of sums and products;
+    - {b comparisons}, on integers: [c0 + x < c1] is [x < c1 - c0] where neither
+      side wraps; [c0 * x < c1] divides both sides by [c0], rounding up, and
+      flips [x]'s sign if [c0] is negative; [x // d < c] is [x < c * d] for
+      positive [d] and [c * d < x] for negative [d]; in [x < c] with [c]
+      positive, a divisor [d] common to [c] and the coefficients of some terms
+      of [x], whose other terms stay within [0] and [d - 1], divides out;
+      [-x < -y] is [y < x]; [not (x < 1)] with [x] a sum of non-negative terms
+      with positive coefficients drops the coefficients;
     - {b ranges}: a range modulo its end is the range, and divided by its end is
       [0];
     - {b casts}: a cast through a type that holds every value of the operand is

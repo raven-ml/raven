@@ -394,6 +394,43 @@ let reduce_simplifying =
             (reduce_simplify (sum (f32 3.) [ r ])));
     ]
 
+(* D24: a comparison is solved for x only where nothing wraps, and never for
+   floats, where moving a term rounds. Each graph is evaluated before and after
+   the pass at bindings where the solved form would differ. *)
+let solving =
+  let u = var ~dtype:Uint8 "u" 0 255 and v = var ~dtype:Uint8 "v" 1 255 in
+  let same_value pass g vars buffers =
+    equal Dtypes.const
+      (Interpreter.eval ~vars ~buffers g)
+      (Interpreter.eval ~vars ~buffers (pass g))
+  in
+  group "solving comparisons (D24)"
+    [
+      test "x + y < c is solved only where nothing wraps" (fun () ->
+          same_value collapse
+            Ops.O.(u + v < Ops.int 50)
+            [ ("u", i 10); ("v", i 100) ]
+            []);
+      test "x * y < c is solved only where nothing wraps" (fun () ->
+          same_value collapse
+            Ops.O.(u * v < Ops.int 50)
+            [ ("u", i 100); ("v", i 3) ]
+            []);
+      test "a float x + y < c is left, where moving y rounds" (fun () ->
+          let fvar name = var ~dtype:Float32 name 0 1 in
+          let lt = Ops.O.(fvar "x" + fvar "y" < fvar "c") in
+          equal uop lt (collapse lt);
+          same_value collapse lt
+            [ ("x", `Float 5.); ("y", `Float 1e8); ("c", `Float 100000008.) ]
+            []);
+      test "x + y <> c under a narrowing cast is left" (fun () ->
+          let r = reduce_range 10 0 and y = var ~dtype:Int32 "y" 250 260 in
+          let x = Ops.cast r Int32 in
+          let hit = Ops.O.(Ops.cast (x + y) Uint8 <> Ops.int ~dtype:Uint8 2) in
+          let counted = sum (Ops.where hit (f32 1.) zero) [ r ] in
+          same_value load_collapse counted [ ("y", i 250) ] []);
+    ]
+
 let load_collapsing =
   let r = reduce_range 10 0 in
   let table = buf ~size:10 Float32 in
@@ -785,6 +822,7 @@ let () =
          unparented;
          collapsing;
          reduce_simplifying;
+         solving;
          load_collapsing;
          laws;
          kernels;

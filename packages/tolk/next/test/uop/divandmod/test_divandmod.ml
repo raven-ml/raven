@@ -40,6 +40,15 @@ let nested_divisions =
         Ops.O.(((var ~dtype:Int32 "x" 0 100 // int 2) + int 3) // int 4);
       rewrites "split_nested_divisions_by_a_negative_divisor"
         Ops.O.(((x // int 2) + int 3) // int (-4));
+      test "a committed division stays where x + a * c wraps (D24)" (fun () ->
+          let k = 1 lsl 30 in
+          let w = var ~dtype:Int32 "w" 0 k in
+          let d = Ops.O.(((w // int 2) + int k) // int 2) in
+          is_none (rewrite d);
+          let vars = [ ("w", i k) ] in
+          equal Dtypes.const
+            (`Int (Z.of_int 805306368))
+            (Interpreter.eval ~vars (once d)));
     ]
 
 (* (x + c) // d and (x + c) % d *)

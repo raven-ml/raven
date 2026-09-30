@@ -247,12 +247,18 @@ let div_and_mod_symbolic =
     v
       [
         (* Fast inline rules *)
-        (* (x // c + a) // d is (x + a * c) // (c * d) for c > 0, d > 0 *)
+        (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, where
+           nothing wraps *)
         rule
           Upat.(((var "x" // cvar "c") + cvar "a") // cvar "d")
           (fun m ->
             let x = m "x" and c = m "c" and a = m "a" and d = m "d" in
-            if V.(vmin d > zero) then Some O.((x + (a * c)) // (c * d))
+            let ac = V.(vmin a * vmin c) and cd = V.(vmin c * vmin d) in
+            let values =
+              V.[ vmin a; vmin c; vmin d; ac; cd; vmin x + ac; vmax x + ac ]
+            in
+            if V.(vmin d > zero) && exact (dtype x) values then
+              Some O.((x + (a * c)) // (c * d))
             else None);
         (* (x + c) // d is (x + c % d) // d + c // d, and (x + c) % d is (x + c
            % d) % d: the multiple of d leaves the constant, for any d <> 0 *)

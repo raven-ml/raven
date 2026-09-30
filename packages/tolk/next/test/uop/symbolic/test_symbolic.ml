@@ -753,6 +753,59 @@ let comparisons =
           by_symbolic e e);
     ]
 
+(* D24: integers wrap at a committed width, so a rewrite that computes as
+   unbounded integers do applies there only where nothing wraps. Each graph is
+   evaluated before and after [sym] at bindings where something wraps. *)
+
+let keeps_machine_value ?(by = sym) u points =
+  let after = by u in
+  List.iter
+    (fun vars ->
+      let msg = Format.asprintf "at %a" pp_binding vars in
+      equal ~msg Dtypes.const (Interpreter.eval ~vars u)
+        (Interpreter.eval ~vars after))
+    points
+
+let wrapping =
+  let u = var ~dtype:Uint8 "u" 0 255 and y = var ~dtype:Int8 "y" 0 50 in
+  let at_u n = [ ("u", i n) ] and at_y n = [ ("y", i n) ] in
+  group "integers wrap (D24)"
+    [
+      test "an offset crosses a comparison only where neither side wraps"
+        (fun () ->
+          let points = List.map at_u [ 0; 5; 255 ] in
+          keeps_machine_value Ops.O.(u - int 1 < int 255) points;
+          keeps_machine_value
+            Ops.O.(u - Ops.int ~dtype:Uint8 1 < Ops.int ~dtype:Uint8 255)
+            points;
+          keeps_machine_value Ops.O.(u + int 1 < int 1) points;
+          keeps_machine_value
+            Ops.O.(y + int 100 < int 0)
+            (List.map at_y [ 10; 40 ]));
+      test "a comparison folds from bounds only where they do not wrap"
+        (fun () ->
+          let points = List.map at_y [ 10; 40 ] in
+          keeps_machine_value Ops.O.(y * int 4 < int 0) points;
+          keeps_machine_value Ops.O.(y lsl int 2 < int 0) points;
+          keeps_machine_value
+            Ops.O.(Ops.cast (var "w" 0 255) Int8 < int 0)
+            [ [ ("w", i 100) ]; [ ("w", i 200) ] ];
+          keeps_machine_value
+            Ops.O.(u lxor int (-1) < int 0)
+            (List.map at_u [ 0; 5 ]));
+      test "a chain of integer casts is one cast only where the value fits"
+        (fun () ->
+          keeps_machine_value
+            (Ops.cast (Ops.cast Ops.O.(y + int 100) Uint8) Int32)
+            (List.map at_y [ 10; 40 ]));
+      test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
+          let w =
+            Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)
+          in
+          let u = Ops.O.(w // int 65536 // int 65536) in
+          by_symbolic u u);
+    ]
+
 let ranges =
   let r = Ops.range (Int 8) [ 0 ] in
   group "ranges"
@@ -1365,6 +1418,7 @@ let () =
          symbolic_simple;
          commutative;
          symbolic_group;
+         wrapping;
          conditions;
          sym_group;
          installation;

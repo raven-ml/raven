@@ -1467,12 +1467,20 @@ let extremes = function
 let clamped_types = Dtype.floats @ Dtype.sints @ Dtype.weaks
 
 (* Bounds read only the sources their rule needs, so they recurse rather than
-   fill the whole graph below. *)
+   fill the whole graph below. A committed integer wraps at its width, so bounds
+   that leave its type are the type's. *)
 let rec min_max u =
   match u.min_max_memo with
   | Some b -> b
   | None ->
-      let b = compute_min_max u in
+      let ((lo, hi) as b) = compute_min_max u and dt = u.dtype in
+      let b =
+        if
+          List.mem dt Dtype.ints
+          && Value.(lo < Dtype.min dt || Dtype.max dt < hi)
+        then (Dtype.min dt, Dtype.max dt)
+        else b
+      in
       u.min_max_memo <- Some b;
       b
 
@@ -1505,7 +1513,11 @@ and compute_min_max u : Dtype.value * Dtype.value =
           (fst (extremes (List.map fst bs)), snd (extremes (List.map snd bs)))
       | Op.Load, _ when (buf_uop (src0 ())).op = Op.Binary -> (
           match (buf_uop (src0 ())).arg with
-          | Bytes b -> extremes (table_values dt b)
+          | Bytes b ->
+              let values = table_values dt b in
+              let is_nan = function `Float x -> Float.is_nan x | _ -> false in
+              if List.exists is_nan values then (Dtype.min dt, Dtype.max dt)
+              else extremes values
           | _ -> invalid_arg "a constant table needs bytes")
       | Op.Const, Const ((`Bool _ | `Int _) as c) -> (c, c)
       | Op.Const, Const (`Float x) when not (Float.is_nan x) ->
@@ -1520,16 +1532,18 @@ and compute_min_max u : Dtype.value * Dtype.value =
         ->
           bounds (src0 ())
       | Op.Cast, _ -> (
-          match cast_bounds dt (bounds (src0 ())) with
+          let x = src0 () in
+          match cast_bounds x.dtype dt (bounds x) with
           | Some b -> b
           | None -> (Dtype.min dt, Dtype.max dt))
       | _ -> (Dtype.min dt, Dtype.max dt))
 
 (* Rounding is monotone, so a cast maps bounds to bounds: toward zero into an
-   integer, to nearest into a float. A signed or float target holds the part of
-   the source range that overlaps it; overflow is undefined, and a NaN bound
-   overlaps nothing. *)
-and cast_bounds dt (lo, hi) =
+   integer, to nearest into a float. An integer keeps its value in an integer
+   type, where [min_max] wraps it. Otherwise a signed or float target holds the
+   part of the source range that overlaps it; a float overflowing an integer is
+   undefined, and a NaN bound overlaps nothing. *)
+and cast_bounds src dt (lo, hi) =
   let round (x : Dtype.value) : Dtype.value =
     match x with
     | `Float f when not (Float.is_finite f) -> x
@@ -1540,7 +1554,8 @@ and cast_bounds dt (lo, hi) =
         else x
   in
   let lo, hi = (round lo, round hi) in
-  if
+  if Dtype.is_int dt && not (Dtype.is_float src) then Some (lo, hi)
+  else if
     Dtype.is_unsigned dt
     && Value.( <= ) (`Int Z.zero) lo
     && Value.( <= ) hi (Dtype.max dt)
@@ -1645,6 +1660,10 @@ let vmax u = snd (min_max u)
 
 let overflows u dt =
   Value.( < ) (vmin u) (Dtype.min dt) || Value.( < ) (Dtype.max dt) (vmax u)
+
+let exact dt vs =
+  (not (List.mem dt Dtype.ints))
+  || List.for_all (fun v -> Value.(Dtype.min dt <= v && v <= Dtype.max dt)) vs
 
 (* Simplification *)
 

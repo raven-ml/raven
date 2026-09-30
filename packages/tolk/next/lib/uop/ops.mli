@@ -710,10 +710,17 @@ val vmax : t -> Dtype.value
 (** [vmax u] is an upper bound of every value [u] can take. Bounds follow
     interval arithmetic through the integer operations, comparisons, selections,
     casts and loads from constant tables; elsewhere they are the bounds of [u]'s
-    type. *)
+    type. A committed integer wraps at its width, so an interval that leaves its
+    type gives the type's bounds, and so does a table holding a NaN. *)
 
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)
+
+val exact : Dtype.t -> Dtype.value list -> bool
+(** [exact dt vs] is [true] iff [dt] is not a committed integer type, or each of
+    [vs] is one of its values. Arithmetic on a committed integer type wraps at
+    its width, so it computes what unbounded integers do only where every value
+    it takes, [vs], is [exact]. *)
 
 val exec_alu :
   ?truncate_output:bool -> Op.t -> Dtype.t -> Dtype.const list -> Dtype.const

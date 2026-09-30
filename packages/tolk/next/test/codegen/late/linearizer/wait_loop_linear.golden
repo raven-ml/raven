@@ -10,14 +10,14 @@
 8 Ops.INDEX dtypes.int [7, 4]
 9 Ops.CONST dtypes.weakint [] 1
 10 Ops.CAST dtypes.int [9] dtypes.int
-11 Ops.CONST dtypes.weakint [] 9
+11 Ops.CONST dtypes.weakint [] 10
 12 Ops.CAST dtypes.int [11] dtypes.int
 13 Ops.RANGE dtypes.void [2] (0, AxisType.WEAK)
 14 Ops.AFTER dtypes.int [7, 13]
 15 Ops.INDEX dtypes.int [14, 4]
 16 Ops.LOAD dtypes.int [15]
 17 Ops.ADD dtypes.int [16, 10]
-18 Ops.CMPLT dtypes.bool [16, 12]
+18 Ops.CMPLT dtypes.bool [17, 12]
 19 Ops.STORE dtypes.void [8, 17]
 20 Ops.BACKEDGE dtypes.void [19, 13, 18]
 21 Ops.AFTER dtypes.int [7, 20]

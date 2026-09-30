@@ -312,8 +312,11 @@ A codegen pass's input is recorded where the pipeline hands it over:
 environment, and makes each golden in a process forked from it, so that no
 golden sees the state another left in tinygrad, such as its buffer numbering.
 It runs against the tinygrad checkout `_tinygrad_next` of the main
-working tree, which must be clean and at the commit the script pins. No
-Python runs at test time. To regenerate:
+working tree, which must be clean and at the commit the script pins, through
+a copy of it with `gen/tinygrad.patch` applied: the patch gives tinygrad's
+rewrites the restrictions that keep IEEE and modular values (DIVERGENCES D24),
+so that the goldens hold the graphs tolk.next makes. No Python runs at test
+time. To regenerate:
 
 1. `uv run packages/tolk/next/test/gen/generate.py --check` writes nothing,
    prints the diff of every golden that would change, and fails if one would.
@@ -325,5 +328,6 @@ Python runs at test time. To regenerate:
    explain each change from tinygrad's source.
 
 To move to another tinygrad commit, check it out in `_tinygrad_next`, change
-`TINYGRAD` in `gen/generate.py`, and regenerate: every golden changes its
-header, and the diff shows what else moved.
+`TINYGRAD` in `gen/generate.py`, re-apply `gen/tinygrad.patch` to the new
+commit and save it again (`git diff` in a patched copy), and regenerate: every
+golden changes its header, and the diff shows what else moved.

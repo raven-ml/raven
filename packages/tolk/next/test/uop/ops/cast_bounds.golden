@@ -53,7 +53,7 @@ dtypes.weakint	-300	300	dtypes.float	-300.0	300.0
 dtypes.weakint	-300	300	dtypes.double	-300.0	300.0
 dtypes.weakint	-300	300	dtypes.weakfloat	-300	300
 dtypes.weakint	0	255	dtypes.bool	False	True
-dtypes.weakint	0	255	dtypes.char	0	127
+dtypes.weakint	0	255	dtypes.char	-128	127
 dtypes.weakint	0	255	dtypes.uchar	0	255
 dtypes.weakint	0	255	dtypes.short	0	255
 dtypes.weakint	0	255	dtypes.int	0	255
@@ -66,7 +66,7 @@ dtypes.weakint	0	255	dtypes.float	0.0	255.0
 dtypes.weakint	0	255	dtypes.double	0.0	255.0
 dtypes.weakint	0	255	dtypes.weakfloat	0	255
 dtypes.weakint	-255	0	dtypes.bool	False	True
-dtypes.weakint	-255	0	dtypes.char	-128	0
+dtypes.weakint	-255	0	dtypes.char	-128	127
 dtypes.weakint	-255	0	dtypes.uchar	0	255
 dtypes.weakint	-255	0	dtypes.short	-255	0
 dtypes.weakint	-255	0	dtypes.int	-255	0
@@ -92,9 +92,9 @@ dtypes.weakint	200	300	dtypes.float	200.0	300.0
 dtypes.weakint	200	300	dtypes.double	200.0	300.0
 dtypes.weakint	200	300	dtypes.weakfloat	200	300
 dtypes.weakint	0	16777219	dtypes.bool	False	True
-dtypes.weakint	0	16777219	dtypes.char	0	127
+dtypes.weakint	0	16777219	dtypes.char	-128	127
 dtypes.weakint	0	16777219	dtypes.uchar	0	255
-dtypes.weakint	0	16777219	dtypes.short	0	32767
+dtypes.weakint	0	16777219	dtypes.short	-32768	32767
 dtypes.weakint	0	16777219	dtypes.int	0	16777219
 dtypes.weakint	0	16777219	dtypes.uint	0	16777219
 dtypes.weakint	0	16777219	dtypes.long	0	16777219
@@ -131,9 +131,9 @@ dtypes.int	5	7	dtypes.double	5.0	7.0
 dtypes.int	5	7	dtypes.weakint	5	7
 dtypes.int	5	7	dtypes.weakfloat	5	7
 dtypes.int	0	16777219	dtypes.bool	False	True
-dtypes.int	0	16777219	dtypes.char	0	127
+dtypes.int	0	16777219	dtypes.char	-128	127
 dtypes.int	0	16777219	dtypes.uchar	0	255
-dtypes.int	0	16777219	dtypes.short	0	32767
+dtypes.int	0	16777219	dtypes.short	-32768	32767
 dtypes.int	0	16777219	dtypes.uint	0	16777219
 dtypes.int	0	16777219	dtypes.long	0	16777219
 dtypes.int	0	16777219	dtypes.ulong	0	16777219
@@ -144,7 +144,7 @@ dtypes.int	0	16777219	dtypes.double	0.0	16777219.0
 dtypes.int	0	16777219	dtypes.weakint	0	16777219
 dtypes.int	0	16777219	dtypes.weakfloat	0	16777219
 dtypes.uchar	0	255	dtypes.bool	False	True
-dtypes.uchar	0	255	dtypes.char	0	127
+dtypes.uchar	0	255	dtypes.char	-128	127
 dtypes.uchar	0	255	dtypes.short	0	255
 dtypes.uchar	0	255	dtypes.int	0	255
 dtypes.uchar	0	255	dtypes.uint	0	255

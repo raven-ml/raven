@@ -20,8 +20,8 @@
 18 Ops.CONST dtypes.weakint [] 1
 19 Ops.ADD dtypes.int [17, 18]
 20 Ops.STORE dtypes.void [13, 19]
-21 Ops.CONST dtypes.weakint [] 2
-22 Ops.CMPLT dtypes.bool [17, 21]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CMPLT dtypes.bool [19, 21]
 23 Ops.BACKEDGE dtypes.void [20, 15, 22]
 24 Ops.AFTER dtypes.int [12, 23]
 25 Ops.INDEX dtypes.int [24, 8]

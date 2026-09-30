@@ -829,18 +829,25 @@ let symbolic =
                   Some (alu (m "x") o [ alu (m "c1") o [ m "c2" ] ])))
             (Op.Set.to_list Op.Set.associative)
         @ [
-            (* (x//c1)//c2 -> x//(c1*c2) for c2>0 *)
+            (* (x//c1)//c2 -> x//(c1*c2) for c2>0, where c1*c2 does not wrap *)
             rule
               Upat.(var "x" // cvar "c1" // cvar "c2")
               (fun m ->
-                let c2 = m "c2" in
-                if V.(vmin c2 > zero) then Some O.(m "x" // (m "c1" * c2))
+                let c1 = vmin (m "c1") and c2 = vmin (m "c2") in
+                if V.(c2 > zero) && exact (dtype (m "x")) V.[ c1; c2; c1 * c2 ]
+                then Some O.(m "x" // (m "c1" * m "c2"))
                 else None);
             (* Lt *)
-            (* c0+x<c1 -> x < c1-c0 *)
+            (* c0+x<c1 -> x < c1-c0, where neither side wraps *)
             rule
               Upat.(cvar "c0" + var ~dtype:int_like "x" < cvar "c1")
-              (fun m -> Some O.(m "x" < m "c1" - m "c0"));
+              (fun m ->
+                let x = m "x" and c0 = vmin (m "c0") and c1 = vmin (m "c1") in
+                if
+                  exact (dtype x)
+                    V.[ c0; c1; vmin x + c0; vmax x + c0; c1 - c0 ]
+                then Some O.(x < m "c1" - m "c0")
+                else None);
             (* c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0)) *)
             rule
               Upat.(cvar "c0" * var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c1")

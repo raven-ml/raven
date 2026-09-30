@@ -1,0 +1,135 @@
+diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
+index 4136f84..87efccf 100644
+--- a/tinygrad/codegen/simplify.py
++++ b/tinygrad/codegen/simplify.py
+@@ -1,9 +1,9 @@
+ import itertools
+ from typing import Callable
+-from tinygrad.uop.ops import UOp, PatternMatcher, UPat, Ops, graph_rewrite, _substitute, range_start, AxisType
++from tinygrad.uop.ops import UOp, PatternMatcher, UPat, Ops, graph_rewrite, _substitute, range_start, AxisType, exact
+ from tinygrad.uop.symbolic import symbolic
+ from tinygrad.helpers import partition, dedup
+-from tinygrad.dtype import dtypes
++from tinygrad.dtype import dtypes, can_lossless_cast
+ 
+ def flatten_range(r:UOp) -> UOp|None:
+   off = range_start[r.op]
+@@ -97,10 +97,12 @@ pm_reduce_unparented = PatternMatcher([
+ 
+ pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
+   # lift x+y out of reduce on lt
+-  ((UPat.var("x")+UPat.var("y")) < UPat.var("c"), lambda x,y,c: (x < (c-y)) if no_range(y) and no_range(c) else None),
++  ((UPat.var("x")+UPat.var("y")) < UPat.var("c"), lambda x,y,c: (x < (c-y)) if no_range(y) and no_range(c) and dtypes.is_int(y.dtype)
++    and exact(y.dtype, x.vmin+y.vmin, x.vmax+y.vmax, c.vmin-y.vmax, c.vmax-y.vmin) else None),
+   # lift x*y out of reduce
+   ((UPat.var("x")*UPat.var("y")) < UPat.var("c"),
+-   lambda x,y,c: (x < ((c+y-1) // y)) if no_range(y) and no_range(c) and dtypes.is_int(y.dtype) and y.vmin > 0 else None),
++   lambda x,y,c: (x < ((c+y-1) // y)) if no_range(y) and no_range(c) and dtypes.is_int(y.dtype) and y.vmin > 0
++     and exact(y.dtype, x.vmin*y.vmin, x.vmin*y.vmax, x.vmax*y.vmin, x.vmax*y.vmax, c.vmin+y.vmin-1, c.vmax+y.vmax-1) else None),
+   # sum over r in [0,N) of [lower<=r<upper]*val -> max(min(upper,N) - max(lower,0), 0) * val
+   (UPat.any(
+     (UPat(Ops.RANGE, name="r") < UPat.var("upper")).where(UPat.var("val"), 0),
+@@ -120,7 +122,9 @@ pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
+ 
+ pm_reduce_load_collapse = pm_reduce_collapse + PatternMatcher([
+   # lift x+y out of reduce on ne
+-  ((UPat.var("x")+UPat.var("y")).or_casted() != UPat.var("c"), lambda x,y,c: (x != (c.cast(y.dtype)-y)) if no_range(y) and no_range(c) else None),
++  ((UPat.var("x")+UPat.var("y")).or_casted(name="s") != UPat.var("c"), lambda x,y,c,s: (x != (c.cast(y.dtype)-y))
++    if no_range(y) and no_range(c) and dtypes.is_int(y.dtype) and can_lossless_cast(y.dtype, s.dtype)
++    and exact(y.dtype, c.vmin, c.vmax, x.vmin+y.vmin, x.vmax+y.vmax, c.vmin-y.vmax, c.vmax-y.vmin) else None),
+   # reduce on gated load becomes can substitute the range and remove the reduce
+   ((UPat.var("idx")!=(UPat(Ops.RANGE, name="r").or_casted())).where(0, UPat.var("expr")).reduce(UPat.var("r"), arg=Ops.ADD),
+    lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
+diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
+index 5a9905e..7246f9b 100644
+--- a/tinygrad/uop/divandmod.py
++++ b/tinygrad/uop/divandmod.py
+@@ -1,5 +1,5 @@
+ import functools, itertools, math
+-from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp
++from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, exact
+ from tinygrad.dtype import dtypes
+ from tinygrad.helpers import unwrap
+ 
+@@ -98,7 +98,8 @@ def fold_divmod_general(d: UOp) -> UOp|None:
+ div_and_mod_symbolic = PatternMatcher([
+   # ** 1. Fast Inline Rules **
+   # (x//c+a)//d -> (x+a*c)//(c*d) for c>0, d>0
+-  ((UPat.var("x")//UPat.cvar("c") + UPat.cvar("a"))//UPat.cvar("d"), lambda x,c,a,d: (x+a*c)//(c*d) if d.vmin>0 else None),
++  ((UPat.var("x")//UPat.cvar("c") + UPat.cvar("a"))//UPat.cvar("d"), lambda x,c,a,d: (x+a*c)//(c*d) if d.vmin>0 and
++    exact(x.dtype, a.vmin, c.vmin, d.vmin, a.vmin*c.vmin, c.vmin*d.vmin, x.vmin+a.vmin*c.vmin, x.vmax+a.vmin*c.vmin) else None),
+   # (x+c)//d -> (x+c%d)//d + c//d ; (x+c)%d -> (x+c%d)%d  (split the multiple of d out of the const, holds for any d!=0)
+   (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
+     lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
+diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
+index 2842d7e..89766e0 100644
+--- a/tinygrad/uop/ops.py
++++ b/tinygrad/uop/ops.py
+@@ -92,6 +92,8 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+   return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
+ 
+ def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
++# a committed integer wraps at its width: arithmetic on it is exact only where every value it takes fits
++def exact(dt:DType, *vs) -> bool: return dt not in dtypes.ints or all(dt.min <= v <= dt.max for v in vs)
+ def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
+ 
+ def range_str(u:UOp, color=False) -> str:
+@@ -1102,6 +1104,11 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+   def vmax(self) -> PyConst: return self._min_max[1]
+   @functools.cached_property
+   def _min_max(self) -> tuple[PyConst, PyConst]:
++    # a committed integer wraps at its width, so bounds that leave its type are the type's
++    lo, hi = self._interval
++    return (self.dtype.min, self.dtype.max) if self.dtype in dtypes.ints and (lo < self.dtype.min or self.dtype.max < hi) else (lo, hi)
++  @functools.cached_property
++  def _interval(self) -> tuple[PyConst, PyConst]:
+     if self.op in GroupOp.Binary and not dtypes.is_float(self.dtype):
+       (s0_vmin, s0_vmax), (s1_vmin, s1_vmax) = self.src[0]._min_max, self.src[1]._min_max
+       if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
+@@ -1146,7 +1153,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+     if self.op is Ops.STACK: return min(x.vmin for x in self.src), max(x.vmax for x in self.src)
+     # a load from a constant table is one of its values
+     if self.op is Ops.LOAD and (b:=self.src[0].buf_uop).op is Ops.BINARY:
+-      return min(e:=memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()), max(e)
++      e = memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()
++      return (self.dtype.min, self.dtype.max) if any(v != v for v in e) else (min(e), max(e))
+     # a NAN is outside every interval
+     if self.op is Ops.CONST and self.val is not Invalid and not (isinstance(self.val, float) and math.isnan(self.val)): return self.val, self.val
+     if self.op is Ops.PAD: return min(self.src[0].vmin, 0), max(self.src[0].vmax, 0)  # PAD adds zeros
+@@ -1156,6 +1164,8 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+       smin, smax = self.src[0]._min_max
+       trunc = truncate.get(self.dtype) if dtypes.is_float(self.dtype) else math.trunc if dtypes.is_int(self.dtype) else None
+       if trunc is not None: smin, smax = (trunc(v) if math.isfinite(v) else v for v in (smin, smax))
++      # an integer keeps its value in an integer type, where _min_max wraps it
++      if dtypes.is_int(self.dtype) and not dtypes.is_float(self.src[0].dtype): return smin, smax
+       if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
+       # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
+       if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
+diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
+index 2eb2e96..3364787 100644
+--- a/tinygrad/uop/symbolic.py
++++ b/tinygrad/uop/symbolic.py
+@@ -1,7 +1,7 @@
+ # all of symbolic lives here now
+ import math
+ from collections import defaultdict
+-from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype
++from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact
+ from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, bitcast, truncate
+ from tinygrad.helpers import partition, all_same, prod, flatten, unwrap, IMAGE, dedup
+ from tinygrad.uop.divandmod import div_and_mod_symbolic
+@@ -279,10 +279,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   *((UPat.var("x").alu(op, UPat.cvar("c1")).alu(op, UPat.cvar("c2")).named("f"),
+      lambda f,x,c1,c2: x.alu(f.op,c1.alu(f.op,c2))) for op in GroupOp.Associative),
+   # (x//c1)//c2 -> x//(c1*c2) for c2>0
+-  ((UPat.var("x") // UPat.cvar("c1")) // UPat.cvar("c2"), lambda x,c1,c2: x//(c1*c2) if c2.vmin>0 else None),
++  ((UPat.var("x") // UPat.cvar("c1")) // UPat.cvar("c2"),
++   lambda x,c1,c2: x//(c1*c2) if c2.vmin>0 and exact(x.dtype, c1.vmin, c2.vmin, c1.vmin*c2.vmin) else None),
+   # ** lt **
+   # c0+x<c1 -> x < c1-c0
+-  ((UPat.cvar("c0") + UPat.var("x", dtype=dtypes.ints+(dtypes.weakint,))) < UPat.cvar("c1"), lambda x,c0,c1: x<(c1-c0)),
++  ((UPat.cvar("c0") + UPat.var("x", dtype=dtypes.ints+(dtypes.weakint,))) < UPat.cvar("c1"),
++   lambda x,c0,c1: x<(c1-c0) if exact(x.dtype, c0.vmin, c1.vmin, x.vmin+c0.vmin, x.vmax+c0.vmin, c1.vmin-c0.vmin) else None),
+   # c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0))
+   ((UPat.cvar("c0")*UPat.var("x", dtype=dtypes.weakint))<UPat.cvar("c1"),
+    lambda x,c0,c1: (x if c0.val > 0 else -x)<-(-c1.val//abs(c0.val)) if abs(c0.val) > 1 else None),
