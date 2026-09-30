@@ -32,12 +32,6 @@ import tinygrad.runtime.support.compiler_amd as compiler_amd
 # comgr is absent where the goldens are generated, and no case compiles.
 compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)
 
-import tinygrad.runtime.support.compiler_cuda as compiler_cuda
-
-# On macOS, making a CUDA renderer starts its compiler in a docker container,
-# which can outlive the generator and hold its output open; no case compiles.
-compiler_cuda.NVRTCCompiler.server = lambda self, *args: None
-
 import tinygrad.runtime.ops_metal as ops_metal
 
 # Making a Metal renderer starts Metal's code generation service, whose threads

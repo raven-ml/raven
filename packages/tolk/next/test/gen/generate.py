@@ -41,8 +41,27 @@ HEADER = f"# tinygrad {TINYGRAD}\n"
 # forked from the generator's, so that no golden sees the state another left in
 # tinygrad (buffer numbering, caches). It writes the goldens to a file, out of
 # reach of anything tinygrad prints.
+#
+# On macOS, a compiler that tinygrad makes for a CUDA renderer starts a compile
+# server in a docker container, which can outlive the generator and hold its
+# output open. No golden compiles through a server, so the child stubs
+# `Compiler.server` when `tinygrad.device` is imported: then, and not before,
+# since a generator sets tinygrad's environment before importing it.
 CHILD = """
-import json, os, runpy, sys, golden
+import importlib.abc, importlib.machinery, json, os, runpy, sys, golden
+
+class NoCompileServer(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name != "tinygrad.device": return None
+        spec = importlib.machinery.PathFinder.find_spec(name, path)
+        exec_module = spec.loader.exec_module
+        def stubbed(module):
+            exec_module(module)
+            module.Compiler.server = lambda self, *args: None
+        spec.loader.exec_module = stubbed
+        return spec
+
+sys.meta_path.insert(0, NoCompileServer())
 runpy.run_path(sys.argv[1])
 goldens = []
 for name, body in golden.GOLDENS:
