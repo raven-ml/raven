@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakfloat [] 9.0
+1 Ops.CONST dtypes.weakfloat [] 4.0
+2 Ops.CAST dtypes.float [1] dtypes.float
+3 Ops.RECIPROCAL dtypes.float [2]
+4 Ops.MUL dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakfloat [] 2.25
+6 Ops.CAST dtypes.float [5] dtypes.float
+7 Ops.SINK dtypes.void [4, 6] tag="simplify"
+8 Ops.SINK dtypes.void [7]
+

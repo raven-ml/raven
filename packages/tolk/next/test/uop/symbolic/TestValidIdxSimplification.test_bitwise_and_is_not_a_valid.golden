@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 16
+1 Ops.RANGE dtypes.weakint [0] (0, AxisType.WEAK)
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.CONST dtypes.weakint [] 12
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.AND dtypes.int [2, 4]
+6 Ops.AND dtypes.int [5, 2]
+7 Ops.SINK dtypes.void [6]
+8 Ops.AND dtypes.int [2, 3]
+9 Ops.AND dtypes.int [8, 2]
+10 Ops.SINK dtypes.void [9]
+11 Ops.SINK dtypes.void [7, 10] tag="sym+pm_move_where_on_load"
+12 Ops.SINK dtypes.void [9, 9] tag=("simplify", -2147483648, 2147483647)
+13 Ops.SINK dtypes.void [11, 12]
+

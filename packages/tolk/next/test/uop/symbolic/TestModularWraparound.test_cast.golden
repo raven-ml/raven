@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 2882344918
+1 Ops.CAST dtypes.uint [0] dtypes.uint
+2 Ops.CAST dtypes.uchar [1] dtypes.uchar
+3 Ops.CAST dtypes.uchar [0] dtypes.uchar
+4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 0, 255)
+5 Ops.SINK dtypes.void [4]
+

@@ -1,0 +1,34 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-20, 20), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 10
+2 Ops.FLOORMOD dtypes.weakint [0, 1]
+3 Ops.SINK dtypes.void [2, 2] tag=("sym", 0, 9)
+4 Ops.SINK dtypes.void [0, 0] tag=("simplify", -20, 20)
+5 Ops.SINK dtypes.void [2, 2] tag=("commutative", 0, 9)
+6 Ops.SINK dtypes.void [2, 2] tag=("simplify", 0, 9)
+7 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-20, 0), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+8 Ops.FLOORMOD dtypes.weakint [7, 1]
+9 Ops.SINK dtypes.void [8, 8] tag=("sym", 0, 9)
+10 Ops.SINK dtypes.void [7, 7] tag=("simplify", -20, 0)
+11 Ops.SINK dtypes.void [8, 8] tag=("commutative", 0, 9)
+12 Ops.SINK dtypes.void [8, 8] tag=("simplify", 0, 9)
+13 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-20, 1), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+14 Ops.FLOORMOD dtypes.weakint [13, 1]
+15 Ops.SINK dtypes.void [14, 14] tag=("sym", 0, 9)
+16 Ops.SINK dtypes.void [13, 13] tag=("simplify", -20, 1)
+17 Ops.SINK dtypes.void [14, 14] tag=("commutative", 0, 9)
+18 Ops.SINK dtypes.void [14, 14] tag=("simplify", 0, 9)
+19 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 20), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+20 Ops.FLOORMOD dtypes.weakint [19, 1]
+21 Ops.SINK dtypes.void [20, 20] tag=("sym", 0, 9)
+22 Ops.SINK dtypes.void [19, 19] tag=("simplify", 0, 20)
+23 Ops.SINK dtypes.void [20, 20] tag=("commutative", 0, 9)
+24 Ops.SINK dtypes.void [20, 20] tag=("simplify", 0, 9)
+25 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-1, 20), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+26 Ops.FLOORMOD dtypes.weakint [25, 1]
+27 Ops.SINK dtypes.void [26, 26] tag=("sym", 0, 9)
+28 Ops.SINK dtypes.void [25, 25] tag=("simplify", -1, 20)
+29 Ops.SINK dtypes.void [26, 26] tag=("commutative", 0, 9)
+30 Ops.SINK dtypes.void [26, 26] tag=("simplify", 0, 9)
+31 Ops.SINK dtypes.void [3, 4, 5, 6, 9, 10, 11, 12, 15, 16, 17, 18, 21, 22, 23, 24, 27, 28, 29, 30]
+

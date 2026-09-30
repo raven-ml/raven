@@ -1,0 +1,81 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.MUL dtypes.weakint [0, 1]
+3 Ops.CONST dtypes.weakint [] 13
+4 Ops.CMPLT dtypes.bool [2, 3]
+5 Ops.CMPLT dtypes.bool [0, 1]
+6 Ops.SINK dtypes.void [4, 5] tag=("sym", False, True)
+7 Ops.SINK dtypes.void [0, 0] tag=("simplify", 0, 5)
+8 Ops.SINK dtypes.void [5, 5] tag=("commutative", False, True)
+9 Ops.SINK dtypes.void [5, 5] tag=("simplify", False, True)
+10 Ops.CONST dtypes.weakint [] 16
+11 Ops.CMPLT dtypes.bool [2, 10]
+12 Ops.SINK dtypes.void [11, 5] tag=("sym", False, True)
+13 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-5, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+14 Ops.MUL dtypes.weakint [13, 1]
+15 Ops.CONST dtypes.weakint [] -13
+16 Ops.CMPLT dtypes.bool [14, 15]
+17 Ops.CONST dtypes.weakint [] -3
+18 Ops.CMPLT dtypes.bool [13, 17]
+19 Ops.SINK dtypes.void [16, 18] tag=("sym", False, True)
+20 Ops.SINK dtypes.void [13, 13] tag=("simplify", -5, 5)
+21 Ops.SINK dtypes.void [18, 18] tag=("commutative", False, True)
+22 Ops.SINK dtypes.void [18, 18] tag=("simplify", False, True)
+23 Ops.CONST dtypes.weakint [] -4
+24 Ops.MUL dtypes.weakint [13, 23]
+25 Ops.CMPLT dtypes.bool [24, 3]
+26 Ops.CONST dtypes.weakint [] -1
+27 Ops.MUL dtypes.weakint [13, 26]
+28 Ops.CMPLT dtypes.bool [27, 1]
+29 Ops.SINK dtypes.void [25, 28] tag=("sym", False, True)
+30 Ops.SINK dtypes.void [28, 28] tag=("commutative", False, True)
+31 Ops.SINK dtypes.void [28, 28] tag=("simplify", False, True)
+32 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481985), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+33 Ops.CONST dtypes.weakint [] 2
+34 Ops.MUL dtypes.weakint [32, 33]
+35 Ops.CONST dtypes.weakint [] 18014398509481985
+36 Ops.CMPLT dtypes.bool [34, 35]
+37 Ops.CONST dtypes.weakint [] 9007199254740993
+38 Ops.CMPLT dtypes.bool [32, 37]
+39 Ops.SINK dtypes.void [36, 38] tag=("sym", False, True)
+40 Ops.SINK dtypes.void [32, 32] tag=("simplify", 0, 18014398509481985)
+41 Ops.SINK dtypes.void [38, 38] tag=("commutative", False, True)
+42 Ops.SINK dtypes.void [38, 38] tag=("simplify", False, True)
+43 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 18014398509481983), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+44 Ops.CONST dtypes.weakint [] -2
+45 Ops.MUL dtypes.weakint [43, 44]
+46 Ops.CONST dtypes.weakint [] -18014398509481983
+47 Ops.CMPLT dtypes.bool [45, 46]
+48 Ops.MUL dtypes.weakint [43, 26]
+49 Ops.CONST dtypes.weakint [] -9007199254740991
+50 Ops.CMPLT dtypes.bool [48, 49]
+51 Ops.SINK dtypes.void [47, 50] tag=("sym", False, True)
+52 Ops.SINK dtypes.void [43, 43] tag=("simplify", 0, 18014398509481983)
+53 Ops.SINK dtypes.void [50, 50] tag=("commutative", False, True)
+54 Ops.SINK dtypes.void [50, 50] tag=("simplify", False, True)
+55 Ops.MUL dtypes.weakint [0, 44]
+56 Ops.CONST dtypes.weakint [] 0
+57 Ops.CMPLT dtypes.bool [55, 56]
+58 Ops.MUL dtypes.weakint [0, 26]
+59 Ops.CMPLT dtypes.bool [58, 56]
+60 Ops.SINK dtypes.void [57, 59] tag=("sym", False, True)
+61 Ops.SINK dtypes.void [59, 59] tag=("commutative", False, True)
+62 Ops.SINK dtypes.void [59, 59] tag=("simplify", False, True)
+63 Ops.CONST dtypes.weakint [] 12
+64 Ops.CMPLT dtypes.bool [2, 63]
+65 Ops.CONST dtypes.bool [] True
+66 Ops.CMPNE dtypes.bool [64, 65]
+67 Ops.CONST dtypes.weakint [] 3
+68 Ops.CMPLT dtypes.bool [0, 67]
+69 Ops.CMPNE dtypes.bool [68, 65]
+70 Ops.SINK dtypes.void [66, 69] tag=("sym", False, True)
+71 Ops.SINK dtypes.void [69, 69] tag=("commutative", False, True)
+72 Ops.SINK dtypes.void [69, 69] tag=("simplify", False, True)
+73 Ops.CMPNE dtypes.bool [4, 65]
+74 Ops.CMPNE dtypes.bool [5, 65]
+75 Ops.SINK dtypes.void [73, 74] tag=("sym", False, True)
+76 Ops.SINK dtypes.void [74, 74] tag=("commutative", False, True)
+77 Ops.SINK dtypes.void [74, 74] tag=("simplify", False, True)
+78 Ops.SINK dtypes.void [6, 7, 8, 9, 12, 19, 20, 21, 22, 29, 30, 31, 39, 40, 41, 42, 51, 52, 53, 54, 60, 61, 62, 70, 71, 72, 75, 76, 77]
+

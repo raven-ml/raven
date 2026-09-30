@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 2882344918
+1 Ops.CAST dtypes.uint [0] dtypes.uint
+2 Ops.CONST dtypes.weakint [] 2864434397
+3 Ops.MUL dtypes.uint [1, 2]
+4 Ops.CONST dtypes.weakint [] 11
+5 Ops.FLOORDIV dtypes.uint [3, 4]
+6 Ops.CONST dtypes.weakint [] 750571629739758586
+7 Ops.CAST dtypes.uint [6] dtypes.uint
+8 Ops.SINK dtypes.void [5, 7] tag=("simplify", 0, 4294967295)
+9 Ops.SINK dtypes.void [8]
+

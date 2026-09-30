@@ -1,0 +1,33 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+1 Ops.CONST dtypes.weakint [] 1024
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+5 Ops.MUL dtypes.weakint [4, 3]
+6 Ops.RANGE dtypes.weakint [3] (2, AxisType.WEAK)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CMPLT dtypes.bool [2, 7]
+9 Ops.CONST dtypes.weakint [] -1
+10 Ops.CMPLT dtypes.bool [2, 9]
+11 Ops.CONST dtypes.bool [] True
+12 Ops.CMPNE dtypes.bool [10, 11]
+13 Ops.AND dtypes.bool [8, 12]
+14 Ops.CONST dtypes.bool [] Invalid
+15 Ops.WHERE dtypes.weakint [13, 2, 14]
+16 Ops.INDEX dtypes.float [0, 15]
+17 Ops.LOAD dtypes.float [16]
+18 Ops.SINK dtypes.void [17]
+19 Ops.WHERE dtypes.weakint [8, 2, 14]
+20 Ops.INDEX dtypes.float [0, 19]
+21 Ops.LOAD dtypes.float [20]
+22 Ops.SINK dtypes.void [21]
+23 Ops.SINK dtypes.void [18, 22] tag="sym+pm_move_where_on_load"
+24 Ops.SINK dtypes.void [2, 2] tag=("simplify", 0, 1023)
+25 Ops.SINK dtypes.void [2, 2] tag=("commutative", 0, 1023)
+26 Ops.SINK dtypes.void [4, 4] tag=("simplify", 0, 3)
+27 Ops.SINK dtypes.void [6, 6] tag=("simplify", 0, 3)
+28 Ops.SINK dtypes.void [8, 8] tag=("commutative", False, True)
+29 Ops.SINK dtypes.void [8, 8] tag=("simplify", False, True)
+30 Ops.SINK dtypes.void [23, 24, 25, 26, 27, 28, 29]
+

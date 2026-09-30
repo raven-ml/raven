@@ -985,3 +985,143 @@ laws check every quotient against `Z.div` in the interpreter.
 | old: `unit/frontend/test_run.ml` `constant_integer_division` | compiled CDIV, CMOD, FLOORDIV and FLOORMOD of int32 and uint32 by 2 to 2^31 - 1 | `DO › late_patterns › lowered divisions compute truncating and floor quotients and remainders` (the same values, lowered by both matchers and evaluated); the compiled run is the executor's (L7) |
 | old: `unit/uop/test_symbolic.ml` "constant THREEFRY is not UOp-folded" (2 tests) | THREEFRY of constants is not folded | dropped here: Symbolic's section |
 | old: `unit/test_cstyle.ml` "renderer op capabilities match cstyle render surface" | no renderer claims MAX, MULACC or THREEFRY | dropped here: `Renderer.Cstyle`'s (L5) |
+
+## Symbolic
+
+The suite is `Tolk_next.Symbolic` (`uop/symbolic/`), written `S` below. Its
+group `S › tinygrad › tests.golden` replays tinygrad's tests:
+`gen/uop/symbolic.py` runs each test and records every simplification it asks
+for (a rewrite by one of `symbolic.py`'s matchers, `simplify`,
+`simplify_valid`), with its result and the bounds tinygrad gives the result.
+The replay of a test, `<Class>.<test>`, checks that Symbolic makes the same
+rewrite, that the bounds are the same, and that an integer graph keeps its
+value at bindings of its leaves wherever nothing wraps, and a graph of
+constants the value the machine computes: the claim tinygrad proves with z3.
+The rendered strings of `helper_test_variable` are compared as nodes: tinygrad
+evaluates each string into the node it checks, and the golden holds that node.
+`S › tinygrad › sym simplifies random integer expressions as tinygrad does`
+replays 200 random expressions the same way, and `S › laws` state the laws on
+expressions generated here, weak and at committed widths.
+
+tinygrad folds committed constants without wrapping them to their width, which
+its own `TestModularWraparound` marks as expected failures; tolk.next reads
+them at their width (D13). The replays whose folds differ from tinygrad's for
+it check that each result is the machine's value instead, and name D13.
+
+### tinygrad: null/test_uop_symbolic.py, test_symbolic_failures.py, test_simplify_valid_idx.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic (every test but the four below, 184 tests) | `sym` of each expression and its bounds; `commutative` of each expected expression; `simplify`, `ssimplify`, `gcd` and `divide_exact` results | `S › tinygrad › tests.golden › TestSymbolic.<test>` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `S › tinygrad's other tests › equal expressions are the same node, and operand order counts` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `S › tinygrad's other tests › divide_exact gives up on what does not divide` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (Divandmod's section) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers (plan, L3 ruling) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicPickle (2 tests) | a variable survives pickling | dropped: pickling is Python's; a graph's text form round-trips in the graph format (test support's `Graph` suite) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicNumeric (9 tests) | a rewrite of a constant is its value, and bounds hold every value | `S › tinygrad › tests.golden › TestSymbolicNumeric.<test>`; `S › laws › sym keeps the value of an integer expression where nothing wraps` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_simple, test_compound, test_dedup | `variables` lists each variable once, sorted | `S › tinygrad's other tests › variables lists each variable once, sorted by name` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_variable_min_eq_max_bind_folds | a bound variable of one value folds | `S › tinygrad › tests.golden › TestSymbolicVariables.test_variable_min_eq_max_bind_folds` |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer, test_sym_infer_floordiv_floormod, test_sym_infer_with_cast | `sym_infer` of sums, products, floor division and casts | `O › sym_infer › an integer is itself`; `O › sym_infer › a node takes its variables' values`; `O › sym_infer › divisions round as their operations say`; `O › sym_infer › a cast converts without truncating to a width` (Ops' section) |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_with_bitcast | `sym_infer` through bit reinterpretations | `S › tinygrad's other tests › sym_infer reads bits through bit reinterpretations` |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_deeply_nested | `sym_infer` of an expression 200 deep | `S › tinygrad's other tests › sym_infer evaluates an expression nested 200 deep` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicSymbolicOps | none | dropped: a string literal in tinygrad, not a test |
+| tinygrad: null/test_uop_symbolic.py::TestInvalidIndex (7 tests), TestStoreLoadFolding, TestGatedUopGivenValid (2 tests), TestSymbolicRealWorld | invalid gates, store and load folding, gated index simplification, a real index | `S › tinygrad › tests.golden › <Class>.<test>`; the rendered text of test_resnet_half is Render's |
+| tinygrad: null/test_uop_symbolic.py::TestMoveWhereOnLoad::test_bool_index_preserves_dtype | the rewrite keeps a boolean index's type, which `type_verify` checks | `S › tinygrad › tests.golden › TestMoveWhereOnLoad.test_bool_index_preserves_dtype` (reading the golden checks every node's derived type) |
+| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_backedge_preserves_constant_condition | a constant backedge condition stays | `S › tinygrad › tests.golden › TestRangeSplitting.test_backedge_preserves_constant_condition`; `S › symbolic › ordering › a backedge keeps a constant condition` |
+| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_range_split_on_mod | `pm_split_ranges` | dropped here: `codegen/simplify.py`'s matchers, Simplify's section (L3) |
+| tinygrad: null/test_uop_symbolic.py::TestBounds::test_unrolled_arange | bounds of an arange index | `S › tinygrad's other tests › the bounds of an unrolled arange's index` |
+| tinygrad: null/test_uop_symbolic.py::TestBounds::test_where_float_consts | bounds of float selections and their casts | `S › tinygrad's other tests › the bounds of selections between float constants` |
+| tinygrad: null/test_uop_symbolic.py::TestFuzzFailure::test_fuzz_failure1, null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying keeps the value at a binding | `S › tinygrad › tests.golden › TestFuzzFailure.test_fuzz_failure<n>` (the value law at the extremes and random bindings of every record) |
+| tinygrad: null/test_simplify_valid_idx.py::TestValidIdxSimplification (every test but the one below, 13 tests) | `sym` with `pm_move_where_on_load` on gated loads; `simplify_valid` | `S › tinygrad › tests.golden › TestValidIdxSimplification.<test>` |
+| tinygrad: null/test_simplify_valid_idx.py::TestValidIdxSimplification::test_valid_becomes_const1_z3 | z3 proves the gated index of test_valid_becomes_const1 is `r0*1568`, and not a wrong one | `S › tinygrad's other tests › an index simplified under its gate keeps its value where it holds`; that z3 refutes a wrong index tests the prover, dropped |
+| tinygrad: null/test_simplify_valid_idx.py::TestDropTrueGate::test_const_gate_clause_is_not_moved_to_load | a constant clause stays in the selection | `S › tinygrad › tests.golden › TestDropTrueGate.test_const_gate_clause_is_not_moved_to_load`; `S › conditions › pm_move_where_on_load › a constant clause stays` |
+| tinygrad: null/test_simplify_valid_idx.py::TestDropTrueGate::test_drop_true_gate_on_index | `indexing_simplify` drops a true gate | dropped here: `codegen/late/coalesce.py`, Codegen's section (L4) |
+| tinygrad: null/test_simplify_valid_idx.py::TestImageSimplification (18 tests), TestImageStore | image indexing | dropped: images are not ported (README) |
+| tinygrad: null/test_simplify_valid_idx.py::TestRangeShrink (8 tests) | the code generation pipeline shrinks guarded ranges | dropped here: `full_rewrite`, Codegen's section (L4) |
+
+### tinygrad: null/test_const_folding.py, runtime/test_const_folding.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_const_folding.py::TestWeakConstFolding (4 tests), TestBitcastConstFolding::test_out_of_range_source_value, test_scalar_bitcast | weak constants fold exactly; a bitcast of a constant folds | `S › tinygrad › tests.golden › <Class>.<test>` |
+| tinygrad: null/test_const_folding.py::TestThreefryConstFolding::test_threefry | a threefry of constants folds once decomposed | `S › tinygrad › tests.golden › TestThreefryConstFolding.test_threefry` (the machine's value, D13) |
+| tinygrad: null/test_const_folding.py::TestBitcastConstFolding::test_vec_bitcast | a bitcast of a stack of constants | dropped here: the lanes fold after devectorizing, `full_rewrite`, Codegen's section (L4) |
+| tinygrad: null/test_const_folding.py::TestMovedConstFolding (5 tests), TestReduceOpsConstFolding::test_sum_output_dtype | constant folding in `Tensor` programs | dropped: `Tensor` surface, the frontend is nx |
+| tinygrad: runtime/test_const_folding.py::TestMovedConstFolding (2 tests), TestReduceOpsConstFolding (9 tests), TestMultiConstFolding (2 tests) | constant folding in `Tensor` programs run on a device | dropped: `Tensor` surface and execution |
+| tinygrad: runtime/test_const_folding.py::TestTautologicalCompare (5 tests) | `x < x`, `x == x` and `x != x` on tensors | dropped: `Tensor` surface; the folds are `S › symbolic_simple › zeros › x < x is false`, `S › symbolic_simple › zeros › x <> x is false for integers and booleans`, `S › symbolic_simple › zeros › x <> x stays for floats, which may be NaN` |
+
+### tinygrad: the tests of other files that other sections leave to Symbolic's
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_graph.py::TestGraphRewriteConst (2 tests), TestGraphRewrite::test_commutative_work, test_consts_go_last_right_away, test_consts_go_last, TestUOpGraph::test_where_same_fold, test_where_const_fold, test_depth_2_const_fold | `sym` and `simplify` fold stacks, order operands, move constants last, fold selections | `S › tinygrad › tests.golden › <Class>.<test>` |
+| tinygrad: null/test_uop_graph.py::TestModularWraparound (6 tests, xfail in tinygrad) | `simplify` folds constants modulo their width | `S › tinygrad › tests.golden › TestModularWraparound.<test>` (test_div, test_neg and test_payne_hanek_reduction_bug: the machine's value, D13, which tinygrad's own tests expect) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_rtruediv, test_float_direct, test_ssimplify, test_x_lt_x, test_plus_ordering_lt | `simplify` under `float`, `bool` and `ssimplify` | `S › tinygrad › tests.golden › TestUOpResolve.<test>` |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_remove_invalid_stack_lanes, and the `pm_remove_invalid` half of test_invalid_dtype_and_consumers | `pm_remove_invalid` zeroes invalid lanes and gates | `S › tinygrad › tests.golden › TestDTypeFromUOp.test_remove_invalid_stack_lanes`; `S › pm_remove_invalid › a gate's invalid is 0 of the gate's type`; `S › pm_remove_invalid › a float gate's invalid is 0.0 of its type` |
+| tinygrad: null/test_uops.py::TestSafeCast (3 tests), TestUOpMethod::test_cmp_self_folding_multidim | `simplify` removes casts, folds `x < x` on shaped nodes | `S › tinygrad › tests.golden › <Class>.<test>` |
+| tinygrad: null/test_graph_rewrite.py::TestBottomUpRewrite::test_const_folding | bottom-up and top-down `symbolic_simple` reach one fold | `S › tinygrad › tests.golden › TestBottomUpRewrite.test_const_folding` (both directions are recorded) |
+| tinygrad: null/test_graph_rewrite.py::TestEdgeCasesAndSpecialOperations::test_full_graph_rewrite_transcendental_edge_cases | `log2(-1)` folds to NaN and `1/0` to infinity | `S › tinygrad's other tests › log2 of -1 folds to NaN and the reciprocal of 0 to infinity` |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_committed_const_conversion_folds, test_derivable_const_rounds_at_the_derived_width | a cast of a committed constant folds; `x * 1` and `x * -1` fold after a literal is rounded | `S › tinygrad › tests.golden › TestWeakPromotion.<test>` (`symbolic_simple` alone and with `pm_commit_weak`) |
+| tinygrad: `null/test_uop_symbolic.py` (the eight `.render()` asserts) | the rewritten expression renders as written | `S › tinygrad › tests.golden › <Class>.<test>` for the rewrite; the text is Render's |
+
+### old tolk: unit/uop/test_symbolic.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/uop/test_symbolic.ml "x + 0 -> x", "x * 1 -> x", identity_fold (9 tests) | identities | `S › symbolic_simple › identities › x + 0, x lxor 0 and x lor 0 are x`; `S › symbolic_simple › identities › x * 1 and x // 1 are x`; `S › symbolic_simple › zeros › x % x, x lxor x and x land 0 are 0`; `cdiv(x, 1)` is dropped, below |
+| old: unit/uop/test_symbolic.ml "int neutral chain -> x", "associative combine", associative_fold, combine_terms | `((x + 1) * 1) + -1`, `(x + 3) + 5`, `x + x` | `S › symbolic › constants › two associative operations on constants fold them`; `S › symbolic › terms › like terms combine` |
+| old: unit/uop/test_symbolic.ml "x // x -> 1", "x % x -> 0", "x < x -> false", self_fold "x floordiv x", "x ^ x", "x < x" | self folding | `S › symbolic_simple › identities › x // x is 1`; `S › symbolic_simple › zeros › x < x is false`; `S › symbolic_simple › zeros › x % x, x lxor x and x land 0 are 0` |
+| old: unit/uop/test_symbolic.ml self_fold "cdiv(x, x)", "cdiv(x, -1) -> -x", identity_fold "cdiv(x, 1)", bool_cast_fold "cmod(x, x)", divandmod_tests (2 tests), lt_fold "lt cdiv fold", divmod_reconstitute "cdiv/cmod recombine" (2 tests) | truncating division folds like floor division | dropped: tinygrad HEAD's rules fold floor division only; truncating division appears when floor division is decomposed (Codegen, L4) |
+| old: unit/uop/test_symbolic.ml "cast const -> const", "cast(const(3), float32)", "cast to same dtype" | casts of constants and to their own type | `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type`; `S › symbolic_simple › casts › a cast or bitcast to its operand's type is its operand` |
+| old: unit/uop/test_symbolic.ml "x \| !x -> true", "!!x -> x", "!c.where(t, f) -> c.where(f, t)" | boolean identities, either side of the negation | `S › symbolic › terms › x lor not x is true`; `S › symbolic_simple › identities › a double negation is x`; `S › symbolic › selections › a selection by a negation swaps its branches` |
+| old: unit/uop/test_symbolic.ml "an offset crosses a comparison only without wrapping" | `c0 + x < c1` over uint8 keeps a wrapping offset | dropped: tinygrad HEAD moves the offset under the rules' contract that nothing wraps, which `S › laws › sym keeps the value of an integer expression where nothing wraps` states |
+| old: unit/uop/test_symbolic.ml "a cast constant keeps its wrapped value" | `x < uint8 300` is `x < 44` | `S › symbolic_simple › constants › a comparison reads a committed constant at its width` (D13) |
+| old: unit/uop/test_symbolic.ml "a non-finite cast to an integer stays a cast" | a cast of an infinity or NaN to an integer stays | `S › symbolic_simple › constants › a cast of an infinity or a NaN to an integer stays a cast` |
+| old: unit/uop/test_symbolic.ml "constant cdiv/cmod use truncating semantics", const_fold (every test) | constants fold, truncating and floor division round as they say, a zero divisor gives 0 or the dividend, stacks fold lane by lane | `S › symbolic_simple › constants › a truncating division of constants rounds toward zero`; `S › symbolic_simple › constants › a division of constants by zero is 0, a remainder the dividend`; `S › symbolic_simple › constants › an operation on committed constants computes at their width`; `S › symbolic_simple › constants › an operation on stacks of constants folds lane by lane`; `S › symbolic_simple › constants › a where, a comparison and a negation of stacks fold lane by lane`; the values of floor division are `O › exec_alu` |
+| old: unit/uop/test_symbolic.ml "invalid gate survives zero multiply", "non-weak invalid comparison gates bool result", "direct invalid comparison keeps bool dtype", "invalid gate cast stays gated", invalid_where (2 tests) | operations move inside an invalid gate | `S › invalid values › a binary operation moves inside the gate of its first operand` (a product and a comparison); `S › invalid values › a cast moves inside the gate`; `S › invalid values › a comparison of invalid is left`; `S › invalid values › a selection by invalid is invalid`; `S › invalid values › a gate on a condition moves out of the selection`; `S › tinygrad › tests.golden › TestInvalidIndex.test_invalid_times_0` |
+| old: unit/uop/test_symbolic.ml "where closure folds a nested condition", "where closure keeps unrelated conditions", "where closure precedes gate merging", "a nonzero where becomes a guard", where_fold (every test but the last) | selection folding | `S › symbolic › selections` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_where_closure_folding_before_gate_merge` |
+| old: unit/uop/test_symbolic.ml where_fold "where eq one zero flips to ne zero one" | `CMPEQ` | dropped: tinygrad HEAD has no `CMPEQ`; equality is `logical_not` of `<>` |
+| old: unit/uop/test_symbolic.ml "constant guards stay out of index validity" | a constant clause stays in the selection | `S › conditions › pm_move_where_on_load › a constant clause stays` |
+| old: unit/uop/test_symbolic.ml "cast(bool) != const folds", bool_cast_fold's three `cast(bool -> int)` tests | a boolean cast to an integer compared to a constant | `S › symbolic_simple › identities › a boolean cast to an integer and compared to 0 is the boolean`; `... compared to 1 is its negation`; `... differs from any other integer` |
+| old: unit/uop/test_symbolic.ml "constant BITCAST folds", "double BITCAST collapses", "bitcast const float32 to int32 folds" | bitcasts of constants and chains | `S › symbolic_simple › casts › a bitcast of a constant has the same bits`; `S › symbolic_simple › casts › two bitcasts are one` |
+| old: unit/uop/test_symbolic.ml "STACK const bitcast folds", bool_cast_fold "cast STACK const folds lane-wise", "bitcast STACK const folds lane-wise" | a cast or bitcast of a stack of constants folds lane by lane | dropped here: tinygrad HEAD folds those lanes after devectorizing (Codegen, L4) |
+| old: unit/uop/test_symbolic.ml "constant THREEFRY is not UOp-folded", bool_cast_fold "constant Threefry is not folded" | threefry of constants stays | `S › symbolic_simple › constants › a threefry of constants stays` |
+| old: unit/uop/test_symbolic.ml "INDEX(STACK const) folds", index lane pushing (3 tests) | an index of a stack by a constant is its element | `M › indexing › index_a_stack_by_a_constant.golden` (Movement's section); the fold at construction is Ops' |
+| old: unit/uop/test_symbolic.ml spec "full_spec accepts value INDEX lane selection" | the specification | dropped here: Spec's section |
+| old: unit/uop/test_symbolic.ml "NaN cmpeq folds to false" | NaN is not equal to itself | `S › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` |
+| old: unit/uop/test_symbolic.ml divmod_reconstitute "floor div/mod recombine", "scaled nested floor div/mod recombine" | a remainder and a quotient recombine | `S › symbolic_simple › recombination` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_mod_recombine_with_outer_mul` |
+| old: unit/uop/test_symbolic.ml divmod_reconstitute "nested floor div/mod recombine with a positive symbolic radix", "symbolic range coordinates recover the flattened index" | recombination by a symbolic radix | dropped: tinygrad HEAD recombines constant radices only (`_quotient_base` needs a constant divisor) |
+| old: unit/uop/test_symbolic.ml range_fold (2 tests) | a range of one value is 0; a range of a symbolic end is not | `S › symbolic › bounds › a range of a constant end with one value is 0`; `S › symbolic › bounds › a range of a symbolic end is not folded` |
+| old: unit/uop/test_symbolic.ml bool_cast_fold "bool MUL → AND", "pow constant exponent rewrites by squaring", "nested where" | boolean products; powers of constants; nested selections | `S › symbolic_simple › booleans › a boolean product is a conjunction`; `S › symbolic_simple › powers › a power of constants is its value`; `S › symbolic › selections › nested selections sharing a false branch merge by conjunction` |
+| old: unit/uop/test_symbolic.ml lt_fold (every test but "lt cdiv fold") | comparisons fold; a float comparison keeps its rounding; `(x / y) / z` | `S › symbolic › comparisons` (every test, `c0 + x < c1 stays for floats, where moving c0 rounds` among them); `S › symbolic › terms › (x / y) / z is x / (y * z)` |
+| old: unit/uop/test_symbolic.ml where_fold "cast stays outside a conditional", "Boolean selection stays inside its integer cast" | a cast of a selection stays | `S › symbolic › selections › a cast of a selection stays outside it`; `S › tinygrad › tests.golden › TestSymbolic.test_where_cast` |
+| old: unit/uop/test_symbolic.ml reduce "mul-term hoist floats non-range factors out of a lowered reduce" | factors move out of a kernel reduction | `S › sym › factors independent of a sum's ranges move out of it`; `S › sym › only non-negative factors move out of a maximum` |
+| old: unit/uop/test_symbolic.ml reduce "add tensor reduce floats const and preserves axes" | a tensor-level reduction keeps the factors that vary along its axes | dropped: `sym` runs on kernels, whose reductions name their ranges; tinygrad HEAD's `reduce_mul_chain` reads a reduction's ranges and does not see a tensor-level one's axes |
+| old: unit/uop/test_symbolic.ml load_store (3 tests) | loads and stores of invalid and gated indices | `S › invalid values › a load from an invalid index is its alternative, or 0`; `S › sym › storing a selection of the loaded value stores where it differs` |
+| old: unit/uop/test_symbolic.ml sigmoid (3 tests) | `x * (1 / (1 + x))` stays at float | dropped: tinygrad HEAD rewrites it, `S › sym › x * (1 / (1 + x)) is 1 - 1 / (1 + x)`; the old precision divergence had no admitted reason |
+| old: unit/uop/test_symbolic.ml simplify_valid (3 tests) | a bitwise and is no valid; a clause others read comes first; the rewrite fires on the raw predicate | `S › tinygrad › tests.golden › TestValidIdxSimplification.test_bitwise_and_is_not_a_valid`; `S › conditions › simplify_valid › a clause on an expression others read is applied first`; `S › conditions › pm_simplify_valid › a conjunction is simplified` |
+| old: unit/uop/test_symbolic.ml uop_given_valid "a load keeps its own gate" | `uop_given_valid` leaves a load's gate | dropped: tinygrad HEAD substitutes into the load's gate; `pm_simplify_valid` leaves a gated value that reads an index alone (`S › tinygrad › tests.golden › TestInvalidIndex.test_gated_load_keeps_index_valid`) |
+| old: unit/uop/test_symbolic.ml uop_given_valid "a clause on a loaded value still applies" | a clause bounds a loaded value | `S › conditions › uop_given_valid › a clause on a loaded value bounds it` |
+| old: unit/uop/test_symbolic.ml masked_div | `(x & -4) // 4` | `S › symbolic_simple › zeros › a mask of the bits a division by a power of two drops is removed` |
+| old: unit/uop/test_symbolic.ml unpack_u64 (3 tests) | a packed 64-bit integer unpacks, a wide high half does not | `S › symbolic_simple › powers › a 64-bit integer packed from two halves unpacks to the half read` |
+| old: unit/uop/test_symbolic.ml mop_cleanup (5 tests) | movement cleanups | Movement's section |
+| old: unit/uop/test_symbolic.ml remove_invalid (3 tests) | invalid gates and lanes become zeros of their type | `S › pm_remove_invalid` (every test) |
+| old: unit/uop/test_symbolic.ml "END preserves effects" | an end of folded ranges is its store; a live range stays; a constant backedge condition stays | `S › symbolic › ordering › an end of constant ranges only is its store`; `S › symbolic › ordering › an end drops the ranges that became constants`; `S › symbolic › ordering › a backedge keeps a constant condition` |
+| old: unit/uop/test_symbolic.ml "distributed negation keeps scaled terms shared" | a negated sum distributes and folds its coefficients; a float one stays | `S › sym › a negated sum with a scaled term folds each term's coefficient`; the float half is dropped: tinygrad HEAD distributes a negation over a float sum too, `S › sym › -(x + y) is -x + -y` |
+| old: unit/uop/test_symbolic.ml rule body promotion (4 tests) | a rule builds weak constants and promotes an integer exponent | `S › symbolic_simple › powers › c ** x computes in float for an integer exponent`; `S › symbolic › terms › a term's new coefficient is a weak constant`; the nested division is Divandmod's section |
+| old: unit/uop/test_symbolic.ml integer width folding (4 tests) | 64-bit arithmetic that fits computes in 32 bits; bounded cast chains collapse | `S › symbolic › casts › 64-bit arithmetic that can overflow 32 bits stays`; `S › symbolic › casts › a cast chain of a bounded integer is one cast, of an unbounded one two` |
+| old: unit/engine/test_symbolic.ml (every test) | symbolic sizes run on a device | dropped here: execution, Engine's section (L7) |
+| old: unit/codegen/test_simplify.ml (every group but node_vmin / node_vmax) | `codegen/simplify.py`'s matchers | dropped here: Simplify's section (L3) |
+| old: unit/codegen/test_simplify.ml node_vmin / node_vmax (17 tests) | bounds of nodes | Ops' section (`O › bounds`) |
+
+### Other sections' rows left to Symbolic's
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/uop/test_uop.ml commutative_axes_use_lexical_argument_order | `simplify` orders commutative operands | `S › commutative › two sums of the same weak integer terms are the same node`; `S › laws › commutative orders the operands of a weak integer sum` |
+| old: unit/uop/test_uop.ml division_promotes_integer_operands (its folding) | a float division of integers folds | `S › tinygrad › tests.golden › TestUOpResolve.test_rtruediv` |
+| old: unit/uop/test_uop.ml smax_smin_fold_when_bounds_decide, sprod_simplifies (their folding) | maxima and products fold | `S › symbolic › bounds › a maximum of operands whose bounds do not overlap is the greater`; `S › symbolic › constants › two associative operations on constants fold them` |
+| old: unit/uop/test_uop.ml exact_symbolic_bounds (`parse_valid`) | a clause reads as a bound | `S › conditions › uop_given_valid › a clause bounds an expression`; `S › conditions › uop_given_valid › a negated clause bounds an expression from below`; `S › conditions › uop_given_valid › a clause that is not a bound is ignored` |
+| old: unit/uop/test_weak.ml late_simplification_preserves_committed_literals, consecutive_weak_casts_preserve_integer_conversion (the folded value) | casts of committed constants fold | `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type`; `S › tinygrad › tests.golden › TestWeakPromotion.test_committed_const_conversion_folds` |
+| old: unit/codegen/test_decompositions.ml "POW promotes weak exponents before parity arithmetic" | a power is computed by `xpow` | `S › sym › a power is computed from exp2 and log2` |
+| old: unit/codegen/test_divandmod.ml simplify_preserves_index_values, adjacent_bit_extracts_recombine, quotient_partner_recombines_through_a_merged_divisor, shifted_quotient_partner_recombines | the whole rule set keeps values and recombines | `S › laws › sym keeps the value of an integer expression where nothing wraps`; `S › symbolic_simple › recombination` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_div_mod_recombine_merged_quotient`, `TestSymbolic.test_div_mod_recombine_shifted_quotient` |

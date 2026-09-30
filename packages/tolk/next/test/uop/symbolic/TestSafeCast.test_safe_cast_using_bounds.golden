@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.ulong [] ParamArg(slot=-1, dtype=dtypes.ulong, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CAST dtypes.short [0] dtypes.short
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.CAST dtypes.int [0] dtypes.int
+4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 1, 10)
+5 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(-10, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+6 Ops.CAST dtypes.char [5] dtypes.char
+7 Ops.CAST dtypes.long [6] dtypes.long
+8 Ops.CAST dtypes.long [5] dtypes.long
+9 Ops.SINK dtypes.void [7, 8] tag=("simplify", -10, 10)
+10 Ops.CAST dtypes.float [6] dtypes.float
+11 Ops.CAST dtypes.float [5] dtypes.float
+12 Ops.SINK dtypes.void [10, 11] tag="simplify"
+13 Ops.SINK dtypes.void [4, 9, 12]
+

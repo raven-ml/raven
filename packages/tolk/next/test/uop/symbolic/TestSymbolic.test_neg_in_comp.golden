@@ -1,0 +1,15 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] -1
+2 Ops.MUL dtypes.weakint [0, 1]
+3 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 3), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+4 Ops.MUL dtypes.weakint [3, 1]
+5 Ops.CMPLT dtypes.bool [2, 4]
+6 Ops.CMPLT dtypes.bool [3, 0]
+7 Ops.SINK dtypes.void [5, 6] tag=("sym", False, True)
+8 Ops.SINK dtypes.void [3, 3] tag=("simplify", 0, 3)
+9 Ops.SINK dtypes.void [0, 0] tag=("simplify", 0, 3)
+10 Ops.SINK dtypes.void [6, 6] tag=("commutative", False, True)
+11 Ops.SINK dtypes.void [6, 6] tag=("simplify", False, True)
+12 Ops.SINK dtypes.void [7, 8, 9, 10, 11]
+

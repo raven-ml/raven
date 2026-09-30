@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.SPECIAL dtypes.weakint [0] "lidx0"
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.SPECIAL dtypes.weakint [2] "gidx0"
+4 Ops.MUL dtypes.weakint [3, 0]
+5 Ops.ADD dtypes.weakint [1, 4]
+6 Ops.CONST dtypes.weakint [] 5
+7 Ops.CMPLT dtypes.bool [5, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+9 Ops.CONST dtypes.weakint [] 4
+10 Ops.RANGE dtypes.weakint [9] (2, AxisType.WEAK)
+11 Ops.MUL dtypes.weakint [10, 6]
+12 Ops.ADD dtypes.weakint [5, 11]
+13 Ops.CONST dtypes.weakint [] 40
+14 Ops.ADD dtypes.weakint [12, 13]
+15 Ops.CONST dtypes.bool [] Invalid
+16 Ops.WHERE dtypes.weakint [7, 14, 15]
+17 Ops.INDEX dtypes.float [8, 16]
+18 Ops.LOAD dtypes.float [17]
+19 Ops.CAST dtypes.bool [18] dtypes.bool
+20 Ops.CONST dtypes.bool [] True
+21 Ops.CMPNE dtypes.bool [19, 20]
+22 Ops.AND dtypes.bool [7, 21]
+23 Ops.SINK dtypes.void [22] tag="simplify_valid"
+24 Ops.SINK dtypes.void [23]
+

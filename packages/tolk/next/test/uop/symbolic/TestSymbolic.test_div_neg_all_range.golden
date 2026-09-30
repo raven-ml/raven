@@ -1,0 +1,67 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 124), multiple_of=1, name="gidx", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] -1
+2 Ops.MUL dtypes.weakint [0, 1]
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="lidx", addrspace=AddrSpace.ALU)
+6 Ops.MUL dtypes.weakint [5, 1]
+7 Ops.ADD dtypes.weakint [4, 6]
+8 Ops.CONST dtypes.weakint [] 999
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.CONST dtypes.weakint [] -4
+11 Ops.FLOORDIV dtypes.weakint [9, 10]
+12 Ops.CONST dtypes.weakint [] 250
+13 Ops.ADD dtypes.weakint [11, 12]
+14 Ops.CONST dtypes.weakint [] -8
+15 Ops.MUL dtypes.weakint [0, 14]
+16 Ops.ADD dtypes.weakint [15, 6]
+17 Ops.ADD dtypes.weakint [16, 1]
+18 Ops.FLOORDIV dtypes.weakint [17, 10]
+19 Ops.SINK dtypes.void [13, 18] tag=("sym", 0, 250)
+20 Ops.SINK dtypes.void [0, 0] tag=("simplify", 0, 124)
+21 Ops.SINK dtypes.void [5, 5] tag=("simplify", 0, 7)
+22 Ops.ADD dtypes.weakint [6, 15]
+23 Ops.ADD dtypes.weakint [22, 1]
+24 Ops.FLOORDIV dtypes.weakint [23, 10]
+25 Ops.SINK dtypes.void [24, 18] tag=("commutative", 0, 250)
+26 Ops.SINK dtypes.void [18, 18] tag=("simplify", 0, 250)
+27 Ops.CONST dtypes.weakint [] 1000
+28 Ops.ADD dtypes.weakint [7, 27]
+29 Ops.FLOORDIV dtypes.weakint [28, 10]
+30 Ops.ADD dtypes.weakint [29, 12]
+31 Ops.FLOORDIV dtypes.weakint [16, 10]
+32 Ops.SINK dtypes.void [30, 31] tag=("sym", 0, 249)
+33 Ops.FLOORDIV dtypes.weakint [22, 10]
+34 Ops.SINK dtypes.void [33, 31] tag=("commutative", 0, 249)
+35 Ops.SINK dtypes.void [31, 31] tag=("simplify", 0, 249)
+36 Ops.CONST dtypes.weakint [] 1001
+37 Ops.ADD dtypes.weakint [7, 36]
+38 Ops.FLOORDIV dtypes.weakint [37, 10]
+39 Ops.ADD dtypes.weakint [38, 12]
+40 Ops.CONST dtypes.weakint [] -3
+41 Ops.ADD dtypes.weakint [16, 40]
+42 Ops.FLOORDIV dtypes.weakint [41, 10]
+43 Ops.ADD dtypes.weakint [42, 1]
+44 Ops.SINK dtypes.void [39, 43] tag=("sym", -1, 249)
+45 Ops.ADD dtypes.weakint [22, 40]
+46 Ops.FLOORDIV dtypes.weakint [45, 10]
+47 Ops.ADD dtypes.weakint [46, 1]
+48 Ops.SINK dtypes.void [47, 43] tag=("commutative", -1, 249)
+49 Ops.SINK dtypes.void [43, 43] tag=("simplify", -1, 249)
+50 Ops.CONST dtypes.weakint [] 1002
+51 Ops.ADD dtypes.weakint [7, 50]
+52 Ops.FLOORDIV dtypes.weakint [51, 10]
+53 Ops.ADD dtypes.weakint [52, 12]
+54 Ops.CONST dtypes.weakint [] -2
+55 Ops.ADD dtypes.weakint [16, 54]
+56 Ops.FLOORDIV dtypes.weakint [55, 10]
+57 Ops.ADD dtypes.weakint [56, 1]
+58 Ops.SINK dtypes.void [53, 57] tag=("sym", -1, 249)
+59 Ops.ADD dtypes.weakint [22, 54]
+60 Ops.FLOORDIV dtypes.weakint [59, 10]
+61 Ops.ADD dtypes.weakint [60, 1]
+62 Ops.SINK dtypes.void [61, 57] tag=("commutative", -1, 249)
+63 Ops.SINK dtypes.void [57, 57] tag=("simplify", -1, 249)
+64 Ops.SINK dtypes.void [19, 20, 21, 25, 26, 32, 34, 35, 44, 48, 49, 58, 62, 63]
+

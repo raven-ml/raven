@@ -1,0 +1,29 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 3), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.BITCAST dtypes.float [0] dtypes.float
+2 Ops.BITCAST dtypes.int [1] dtypes.int
+3 Ops.SINK dtypes.void [2, 0] tag=("sym", 0, 3)
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.bfloat16 [4] dtypes.bfloat16
+6 Ops.BITCAST dtypes.ushort [5] dtypes.ushort
+7 Ops.CONST dtypes.weakint [] 16256
+8 Ops.CAST dtypes.ushort [7] dtypes.ushort
+9 Ops.SINK dtypes.void [6, 8] tag=("sym", 16256, 16256)
+10 Ops.BITCAST dtypes.bfloat16 [8] dtypes.bfloat16
+11 Ops.SINK dtypes.void [10, 5] tag="sym"
+12 Ops.CAST dtypes.fp8e4m3 [4] dtypes.fp8e4m3
+13 Ops.BITCAST dtypes.uchar [12] dtypes.uchar
+14 Ops.CONST dtypes.weakint [] 56
+15 Ops.CAST dtypes.uchar [14] dtypes.uchar
+16 Ops.SINK dtypes.void [13, 15] tag=("sym", 56, 56)
+17 Ops.BITCAST dtypes.fp8e4m3 [15] dtypes.fp8e4m3
+18 Ops.SINK dtypes.void [17, 12] tag="sym"
+19 Ops.CAST dtypes.fp8e5m2 [4] dtypes.fp8e5m2
+20 Ops.BITCAST dtypes.uchar [19] dtypes.uchar
+21 Ops.CONST dtypes.weakint [] 60
+22 Ops.CAST dtypes.uchar [21] dtypes.uchar
+23 Ops.SINK dtypes.void [20, 22] tag=("sym", 60, 60)
+24 Ops.BITCAST dtypes.fp8e5m2 [22] dtypes.fp8e5m2
+25 Ops.SINK dtypes.void [24, 19] tag="sym"
+26 Ops.SINK dtypes.void [3, 9, 11, 16, 18, 23, 25]
+

@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakfloat [] 1.0
+1 Ops.CAST dtypes.half [0] dtypes.half
+2 Ops.CONST dtypes.bool [] Invalid
+3 Ops.STACK dtypes.half [1, 2]
+4 Ops.CONST dtypes.weakfloat [] 0.0
+5 Ops.CAST dtypes.half [4] dtypes.half
+6 Ops.STACK dtypes.half [1, 5]
+7 Ops.SINK dtypes.void [3, 6] tag="pm_remove_invalid"
+8 Ops.SINK dtypes.void [7]
+

@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.FLOORMOD dtypes.weakint [0, 1]
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 0, 0)
+5 Ops.MUL dtypes.weakint [0, 1]
+6 Ops.CONST dtypes.weakint [] 32
+7 Ops.SINK dtypes.void [5, 6] tag=("simplify", 32, 32)
+8 Ops.SINK dtypes.void [4, 7]
+

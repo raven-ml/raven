@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3000000000
+1 Ops.CAST dtypes.int [0] dtypes.int
+2 Ops.BITCAST dtypes.uint [1] dtypes.uint
+3 Ops.CAST dtypes.uint [0] dtypes.uint
+4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 3000000000, 3000000000)
+5 Ops.CONST dtypes.weakint [] 70000
+6 Ops.CAST dtypes.short [5] dtypes.short
+7 Ops.BITCAST dtypes.ushort [6] dtypes.ushort
+8 Ops.CONST dtypes.weakint [] 4464
+9 Ops.CAST dtypes.ushort [8] dtypes.ushort
+10 Ops.SINK dtypes.void [7, 9] tag=("simplify", 4464, 4464)
+11 Ops.CONST dtypes.weakint [] -5
+12 Ops.CAST dtypes.uint [11] dtypes.uint
+13 Ops.BITCAST dtypes.int [12] dtypes.int
+14 Ops.CAST dtypes.int [11] dtypes.int
+15 Ops.SINK dtypes.void [13, 14] tag=("simplify", -5, -5)
+16 Ops.SINK dtypes.void [4, 10, 15]
+

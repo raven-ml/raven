@@ -1,0 +1,50 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 8), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 77
+2 Ops.CMPLT dtypes.bool [0, 1]
+3 Ops.CONST dtypes.bool [] True
+4 Ops.SINK dtypes.void [2, 3] tag=("sym", True, True)
+5 Ops.SINK dtypes.void [3, 3] tag=("commutative", True, True)
+6 Ops.SINK dtypes.void [3, 3] tag=("simplify", True, True)
+7 Ops.CONST dtypes.weakint [] 9
+8 Ops.CMPLT dtypes.bool [0, 7]
+9 Ops.SINK dtypes.void [8, 3] tag=("sym", True, True)
+10 Ops.CONST dtypes.weakint [] 8
+11 Ops.CMPLT dtypes.bool [0, 10]
+12 Ops.SINK dtypes.void [11, 11] tag=("sym", False, True)
+13 Ops.SINK dtypes.void [0, 0] tag=("simplify", 3, 8)
+14 Ops.SINK dtypes.void [11, 11] tag=("commutative", False, True)
+15 Ops.SINK dtypes.void [11, 11] tag=("simplify", False, True)
+16 Ops.CONST dtypes.weakint [] 4
+17 Ops.CMPLT dtypes.bool [0, 16]
+18 Ops.SINK dtypes.void [17, 17] tag=("sym", False, True)
+19 Ops.SINK dtypes.void [17, 17] tag=("commutative", False, True)
+20 Ops.SINK dtypes.void [17, 17] tag=("simplify", False, True)
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CMPLT dtypes.bool [0, 21]
+23 Ops.CONST dtypes.bool [] False
+24 Ops.SINK dtypes.void [22, 23] tag=("sym", False, False)
+25 Ops.SINK dtypes.void [23, 23] tag=("commutative", False, False)
+26 Ops.SINK dtypes.void [23, 23] tag=("simplify", False, False)
+27 Ops.CONST dtypes.weakint [] 2
+28 Ops.CMPLT dtypes.bool [0, 27]
+29 Ops.SINK dtypes.void [28, 23] tag=("sym", False, False)
+30 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 4), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+31 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(5, 6), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+32 Ops.CMPLT dtypes.bool [30, 31]
+33 Ops.SINK dtypes.void [32, 3] tag=("sym", True, True)
+34 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 5), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+35 Ops.CMPLT dtypes.bool [34, 31]
+36 Ops.SINK dtypes.void [35, 35] tag=("sym", False, True)
+37 Ops.SINK dtypes.void [34, 34] tag=("simplify", 3, 5)
+38 Ops.SINK dtypes.void [31, 31] tag=("simplify", 5, 6)
+39 Ops.SINK dtypes.void [35, 35] tag=("commutative", False, True)
+40 Ops.SINK dtypes.void [35, 35] tag=("simplify", False, True)
+41 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(5, 6), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+42 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(3, 5), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+43 Ops.CMPLT dtypes.bool [41, 42]
+44 Ops.SINK dtypes.void [43, 23] tag=("sym", False, False)
+45 Ops.CMPLT dtypes.bool [30, 30]
+46 Ops.SINK dtypes.void [45, 23] tag=("sym", False, False)
+47 Ops.SINK dtypes.void [4, 5, 6, 9, 12, 13, 14, 15, 18, 19, 20, 24, 25, 26, 29, 33, 36, 37, 38, 39, 40, 44, 46]
+

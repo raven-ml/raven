@@ -1,0 +1,18 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakfloat [] 4.0
+1 Ops.SIN dtypes.weakfloat [0]
+2 Ops.CONST dtypes.weakfloat [] -0.7568024953079283
+3 Ops.SINK dtypes.void [1, 2] tag="simplify"
+4 Ops.LOG2 dtypes.weakfloat [0]
+5 Ops.CONST dtypes.weakfloat [] 2.0
+6 Ops.SINK dtypes.void [4, 5] tag="simplify"
+7 Ops.EXP2 dtypes.weakfloat [0]
+8 Ops.CONST dtypes.weakfloat [] 16.0
+9 Ops.SINK dtypes.void [7, 8] tag="simplify"
+10 Ops.SQRT dtypes.weakfloat [0]
+11 Ops.SINK dtypes.void [10, 5] tag="simplify"
+12 Ops.RECIPROCAL dtypes.weakfloat [0]
+13 Ops.CONST dtypes.weakfloat [] 0.25
+14 Ops.SINK dtypes.void [12, 13] tag="simplify"
+15 Ops.SINK dtypes.void [3, 6, 9, 11, 14]
+

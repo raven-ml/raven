@@ -1,0 +1,47 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 3
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 8
+8 Ops.CMPLT dtypes.bool [6, 7]
+9 Ops.FLOORDIV dtypes.weakint [6, 7]
+10 Ops.RANGE dtypes.weakint [1] (2, AxisType.WEAK)
+11 Ops.MUL dtypes.weakint [10, 3]
+12 Ops.ADD dtypes.weakint [9, 11]
+13 Ops.RANGE dtypes.weakint [1] (3, AxisType.WEAK)
+14 Ops.ADD dtypes.weakint [12, 13]
+15 Ops.FLOORMOD dtypes.weakint [14, 1]
+16 Ops.CONST dtypes.weakint [] 2
+17 Ops.CMPLT dtypes.bool [15, 16]
+18 Ops.AND dtypes.bool [8, 17]
+19 Ops.ADD dtypes.weakint [2, 5]
+20 Ops.ADD dtypes.weakint [19, 10]
+21 Ops.ADD dtypes.weakint [20, 13]
+22 Ops.CONST dtypes.bool [] Invalid
+23 Ops.WHERE dtypes.weakint [18, 21, 22]
+24 Ops.INDEX dtypes.float [0, 23]
+25 Ops.LOAD dtypes.float [24]
+26 Ops.SINK dtypes.void [25]
+27 Ops.ADD dtypes.weakint [11, 13]
+28 Ops.FLOORMOD dtypes.weakint [27, 1]
+29 Ops.CMPLT dtypes.bool [28, 16]
+30 Ops.AND dtypes.bool [8, 29]
+31 Ops.WHERE dtypes.weakint [30, 21, 22]
+32 Ops.INDEX dtypes.float [0, 31]
+33 Ops.LOAD dtypes.float [32]
+34 Ops.SINK dtypes.void [33]
+35 Ops.SINK dtypes.void [26, 34] tag="sym+pm_move_where_on_load"
+36 Ops.SINK dtypes.void [2, 2] tag=("simplify", 0, 3)
+37 Ops.SINK dtypes.void [5, 5] tag=("simplify", 0, 3)
+38 Ops.SINK dtypes.void [10, 10] tag=("simplify", 0, 3)
+39 Ops.SINK dtypes.void [13, 13] tag=("simplify", 0, 3)
+40 Ops.SINK dtypes.void [21, 21] tag=("commutative", 0, 12)
+41 Ops.SINK dtypes.void [21, 21] tag=("simplify", 0, 12)
+42 Ops.SINK dtypes.void [30, 30] tag=("commutative", False, True)
+43 Ops.SINK dtypes.void [30, 30] tag=("simplify", False, True)
+44 Ops.SINK dtypes.void [35, 36, 37, 38, 39, 40, 41, 42, 43]
+

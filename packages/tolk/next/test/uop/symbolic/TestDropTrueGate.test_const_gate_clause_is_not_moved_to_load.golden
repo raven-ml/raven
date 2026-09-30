@@ -1,0 +1,23 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.bool [] True
+1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+2 Ops.CONST dtypes.weakint [] 32
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.RANGE dtypes.weakint [2] (1, AxisType.WEAK)
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 31
+7 Ops.CMPLT dtypes.bool [5, 6]
+8 Ops.CMPNE dtypes.bool [7, 0]
+9 Ops.MUL dtypes.weakint [4, 2]
+10 Ops.ADD dtypes.weakint [5, 9]
+11 Ops.CONST dtypes.weakint [] -1
+12 Ops.MUL dtypes.weakint [6, 11]
+13 Ops.ADD dtypes.weakint [10, 12]
+14 Ops.CONST dtypes.bool [] Invalid
+15 Ops.WHERE dtypes.weakint [8, 13, 14]
+16 Ops.INDEX dtypes.float [1, 15]
+17 Ops.CONST dtypes.weakfloat [] 0.0
+18 Ops.WHERE dtypes.float [0, 16, 17]
+19 Ops.SINK dtypes.void [18, 18] tag="pm_move_where_on_load"
+20 Ops.SINK dtypes.void [19]
+

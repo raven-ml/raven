@@ -1,0 +1,37 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+1 Ops.CONST dtypes.weakint [] 5
+2 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.SPECIAL dtypes.weakint [3] "lidx0"
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 19
+8 Ops.CMPLT dtypes.bool [6, 7]
+9 Ops.CONST dtypes.bool [] True
+10 Ops.CMPNE dtypes.bool [8, 9]
+11 Ops.CONST dtypes.weakint [] -1
+12 Ops.MUL dtypes.weakint [7, 11]
+13 Ops.ADD dtypes.weakint [6, 12]
+14 Ops.CONST dtypes.bool [] Invalid
+15 Ops.WHERE dtypes.weakint [10, 13, 14]
+16 Ops.INDEX dtypes.float [0, 15]
+17 Ops.LOAD dtypes.float [16]
+18 Ops.SINK dtypes.void [17]
+19 Ops.ADD dtypes.weakint [5, 4]
+20 Ops.CMPLT dtypes.bool [19, 7]
+21 Ops.CMPNE dtypes.bool [20, 9]
+22 Ops.CONST dtypes.weakint [] 0
+23 Ops.WHERE dtypes.weakint [21, 22, 14]
+24 Ops.INDEX dtypes.float [0, 23]
+25 Ops.LOAD dtypes.float [24]
+26 Ops.SINK dtypes.void [25]
+27 Ops.SINK dtypes.void [18, 26] tag="sym+pm_move_where_on_load"
+28 Ops.SINK dtypes.void [22, 22] tag=("commutative", 0, 0)
+29 Ops.SINK dtypes.void [22, 22] tag=("simplify", 0, 0)
+30 Ops.SINK dtypes.void [5, 5] tag=("simplify", 0, 3)
+31 Ops.SINK dtypes.void [2, 2] tag=("simplify", 0, 4)
+32 Ops.SINK dtypes.void [21, 21] tag=("commutative", False, True)
+33 Ops.SINK dtypes.void [21, 21] tag=("simplify", False, True)
+34 Ops.SINK dtypes.void [27, 28, 29, 30, 31, 32, 33]
+

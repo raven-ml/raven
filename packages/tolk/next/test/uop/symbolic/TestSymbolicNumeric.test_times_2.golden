@@ -1,0 +1,38 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 0
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.MUL dtypes.weakint [0, 1]
+3 Ops.SINK dtypes.void [2, 0] tag=("sym", 0, 0)
+4 Ops.CONST dtypes.weakint [] 1
+5 Ops.MUL dtypes.weakint [4, 1]
+6 Ops.SINK dtypes.void [5, 1] tag=("sym", 2, 2)
+7 Ops.MUL dtypes.weakint [1, 1]
+8 Ops.CONST dtypes.weakint [] 4
+9 Ops.SINK dtypes.void [7, 8] tag=("sym", 4, 4)
+10 Ops.CONST dtypes.weakint [] 3
+11 Ops.MUL dtypes.weakint [10, 1]
+12 Ops.CONST dtypes.weakint [] 6
+13 Ops.SINK dtypes.void [11, 12] tag=("sym", 6, 6)
+14 Ops.MUL dtypes.weakint [8, 1]
+15 Ops.CONST dtypes.weakint [] 8
+16 Ops.SINK dtypes.void [14, 15] tag=("sym", 8, 8)
+17 Ops.CONST dtypes.weakint [] 5
+18 Ops.MUL dtypes.weakint [17, 1]
+19 Ops.CONST dtypes.weakint [] 10
+20 Ops.SINK dtypes.void [18, 19] tag=("sym", 10, 10)
+21 Ops.MUL dtypes.weakint [12, 1]
+22 Ops.CONST dtypes.weakint [] 12
+23 Ops.SINK dtypes.void [21, 22] tag=("sym", 12, 12)
+24 Ops.CONST dtypes.weakint [] 7
+25 Ops.MUL dtypes.weakint [24, 1]
+26 Ops.CONST dtypes.weakint [] 14
+27 Ops.SINK dtypes.void [25, 26] tag=("sym", 14, 14)
+28 Ops.MUL dtypes.weakint [15, 1]
+29 Ops.CONST dtypes.weakint [] 16
+30 Ops.SINK dtypes.void [28, 29] tag=("sym", 16, 16)
+31 Ops.CONST dtypes.weakint [] 9
+32 Ops.MUL dtypes.weakint [31, 1]
+33 Ops.CONST dtypes.weakint [] 18
+34 Ops.SINK dtypes.void [32, 33] tag=("sym", 18, 18)
+35 Ops.SINK dtypes.void [3, 6, 9, 13, 16, 20, 23, 27, 30, 34]
+

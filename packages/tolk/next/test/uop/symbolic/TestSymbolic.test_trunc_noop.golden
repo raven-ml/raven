@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.TRUNC dtypes.int [0]
+2 Ops.SINK dtypes.void [1, 0] tag=("sym", 1, 10)
+3 Ops.SINK dtypes.void [0, 0] tag=("simplify", 1, 10)
+4 Ops.SINK dtypes.void [0, 0] tag=("commutative", 1, 10)
+5 Ops.SINK dtypes.void [2, 3, 4]
+

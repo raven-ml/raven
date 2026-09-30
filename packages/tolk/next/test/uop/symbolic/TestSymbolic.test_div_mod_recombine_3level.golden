@@ -1,0 +1,86 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 150527), multiple_of=1, name="gidx", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.FLOORDIV dtypes.weakint [0, 1]
+3 Ops.CONST dtypes.weakint [] 224
+4 Ops.FLOORMOD dtypes.weakint [2, 3]
+5 Ops.MUL dtypes.weakint [4, 1]
+6 Ops.FLOORMOD dtypes.weakint [0, 1]
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 672
+9 Ops.FLOORDIV dtypes.weakint [0, 8]
+10 Ops.MUL dtypes.weakint [9, 8]
+11 Ops.ADD dtypes.weakint [7, 10]
+12 Ops.SINK dtypes.void [11, 0] tag=("sym", 0, 150527)
+13 Ops.SINK dtypes.void [0, 0] tag=("simplify", 0, 150527)
+14 Ops.SINK dtypes.void [0, 0] tag=("commutative", 0, 150527)
+15 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 384), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+16 Ops.CONST dtypes.weakint [] 11
+17 Ops.FLOORDIV dtypes.weakint [15, 16]
+18 Ops.CONST dtypes.weakint [] 7
+19 Ops.FLOORMOD dtypes.weakint [17, 18]
+20 Ops.MUL dtypes.weakint [19, 16]
+21 Ops.FLOORMOD dtypes.weakint [15, 16]
+22 Ops.ADD dtypes.weakint [20, 21]
+23 Ops.CONST dtypes.weakint [] 77
+24 Ops.FLOORDIV dtypes.weakint [15, 23]
+25 Ops.MUL dtypes.weakint [24, 23]
+26 Ops.ADD dtypes.weakint [22, 25]
+27 Ops.SINK dtypes.void [26, 15] tag=("sym", 0, 384)
+28 Ops.SINK dtypes.void [15, 15] tag=("simplify", 0, 384)
+29 Ops.SINK dtypes.void [15, 15] tag=("commutative", 0, 384)
+30 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 209), multiple_of=1, name="x2", addrspace=AddrSpace.ALU)
+31 Ops.FLOORDIV dtypes.weakint [30, 18]
+32 Ops.CONST dtypes.weakint [] 6
+33 Ops.FLOORMOD dtypes.weakint [31, 32]
+34 Ops.CONST dtypes.weakint [] 14
+35 Ops.MUL dtypes.weakint [33, 34]
+36 Ops.CONST dtypes.weakint [] 42
+37 Ops.FLOORDIV dtypes.weakint [30, 36]
+38 Ops.CONST dtypes.weakint [] 84
+39 Ops.MUL dtypes.weakint [37, 38]
+40 Ops.ADD dtypes.weakint [35, 39]
+41 Ops.MUL dtypes.weakint [31, 34]
+42 Ops.SINK dtypes.void [40, 41] tag=("sym", 0, 406)
+43 Ops.SINK dtypes.void [30, 30] tag=("simplify", 0, 209)
+44 Ops.SINK dtypes.void [41, 41] tag=("commutative", 0, 406)
+45 Ops.SINK dtypes.void [41, 41] tag=("simplify", 0, 406)
+46 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(-1000, 1000), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+47 Ops.FLOORDIV dtypes.weakint [46, 1]
+48 Ops.FLOORMOD dtypes.weakint [47, 3]
+49 Ops.MUL dtypes.weakint [48, 1]
+50 Ops.FLOORMOD dtypes.weakint [46, 1]
+51 Ops.ADD dtypes.weakint [49, 50]
+52 Ops.FLOORDIV dtypes.weakint [46, 8]
+53 Ops.MUL dtypes.weakint [52, 8]
+54 Ops.ADD dtypes.weakint [51, 53]
+55 Ops.SINK dtypes.void [54, 46] tag=("sym", -1000, 1000)
+56 Ops.SINK dtypes.void [46, 46] tag=("simplify", -1000, 1000)
+57 Ops.SINK dtypes.void [46, 46] tag=("commutative", -1000, 1000)
+58 Ops.FLOORMOD dtypes.weakint [47, 18]
+59 Ops.MUL dtypes.weakint [58, 1]
+60 Ops.CONST dtypes.weakint [] 21
+61 Ops.FLOORDIV dtypes.weakint [46, 60]
+62 Ops.MUL dtypes.weakint [61, 60]
+63 Ops.ADD dtypes.weakint [59, 62]
+64 Ops.MUL dtypes.weakint [47, 1]
+65 Ops.SINK dtypes.void [63, 64] tag=("sym", -1002, 999)
+66 Ops.SINK dtypes.void [64, 64] tag=("commutative", -1002, 999)
+67 Ops.SINK dtypes.void [64, 64] tag=("simplify", -1002, 999)
+68 Ops.CONST dtypes.weakint [] 600
+69 Ops.FLOORDIV dtypes.weakint [0, 68]
+70 Ops.MUL dtypes.weakint [69, 68]
+71 Ops.ADD dtypes.weakint [5, 70]
+72 Ops.ADD dtypes.weakint [70, 5]
+73 Ops.SINK dtypes.void [71, 72] tag=("sym", 0, 150669)
+74 Ops.SINK dtypes.void [72, 72] tag=("commutative", 0, 150669)
+75 Ops.SINK dtypes.void [72, 72] tag=("simplify", 0, 150669)
+76 Ops.CONST dtypes.weakint [] 700
+77 Ops.MUL dtypes.weakint [9, 76]
+78 Ops.ADD dtypes.weakint [5, 77]
+79 Ops.ADD dtypes.weakint [77, 5]
+80 Ops.SINK dtypes.void [78, 79] tag=("sym", 0, 156769)
+81 Ops.SINK dtypes.void [79, 79] tag=("commutative", 0, 156769)
+82 Ops.SINK dtypes.void [79, 79] tag=("simplify", 0, 156769)
+83 Ops.SINK dtypes.void [12, 13, 14, 27, 28, 29, 42, 43, 44, 45, 55, 56, 57, 65, 66, 67, 73, 74, 75, 80, 81, 82]
+
