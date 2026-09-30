@@ -1,0 +1,46 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+name	arg	tag
+none	None	None
+int	42	None
+negative int	-3	None
+huge int	1267650600228229401496703205376	None
+float	ConstFloat(1.5)	None
+negative zero	ConstFloat(-0.0)	None
+nan	ConstFloat(nan)	None
+inf	ConstFloat(inf)	None
+bool	True	None
+invalid	Invalid	None
+dtype	dtypes.half	None
+range	(0, AxisType.REDUCE)	None
+range with sub-axes	(1, 0, AxisType.UPCAST)	None
+negative range	(-1, AxisType.DEVICE)	None
+reduce	(Ops.ADD, 1)	None
+special	'gidx0'	None
+permute	(1, 0)	None
+flip	(False, True)	None
+device	'CUDA'	None
+devices	('CPU:0', 'CPU:1')	None
+mselect	1	None
+unshard	(0,)	None
+allreduce	(Ops.ADD, ('CPU:0', 'CPU:1'))	None
+custom	('barrier();', dtypes.void)	None
+ins	('s_endpgm', dtypes.void)	None
+binary	b'\x7fELF\x00\n\'"'	None
+source	"int x = 'a';\n"	None
+param	ParamArg(3, dtypes.float, 256)	None
+scalar param	ParamArg(1, dtypes.int)	None
+variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU)	None
+bound variable	ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name='n', addrspace=AddrSpace.ALU, val=3)	None
+named local buffer	ParamArg(2, dtypes.int, 4, name='buf', addrspace=AddrSpace.LOCAL)	'buf'
+volatile param	ParamArg(0, dtypes.uint, 4, device='CPU', volatile=True)	None
+alloc	ParamArg(7, dtypes.float, 4, device='CPU')	None
+kernel	KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0)	None
+kernel with opts	KernelInfo(name='kern', applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.TC, axis=0, arg=(-1, 2, 1)), Opt(op=OptOps.PADTO, axis=1, arg=32), Opt(op=OptOps.SWAP, axis=0, arg=1)), opts_to_apply=(Opt(op=OptOps.PADTO, axis=0, arg=4),), estimates=Estimates(ops=1, lds=2, mem=3), beam=2)	None
+bufferize	BufferizeOpts(device='CPU', addrspace=AddrSpace.LOCAL, removable=False)	None
+bufferize without device	BufferizeOpts(device=None, addrspace=AddrSpace.GLOBAL, removable=True)	None
+call	CallInfo(None, 'f', False, False)	None
+call returning	CallInfo(None, None, True, False, dtype=dtypes.int)	None
+program	ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), vars=(), globals=(0, 1), outs=(0,), ins=(1,), target=CPU:CLANG)	None
+wmma	((8, 16, 16), dtypes.half, 32, ((((0,), 2), ((1,), 2)), (((2,), 2),), (((3,), 2),)))	None
+tagged	1	('x', 1, True, dtypes.int, ())
+bytes tag	2	b"\x00a'"

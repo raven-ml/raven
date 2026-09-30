@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.SQRT dtypes.float [0]
+2 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+3 Ops.SQRT dtypes.float [2]
+4 Ops.EXP2 dtypes.float [0]
+5 Ops.LOG2 dtypes.float [2]
+6 Ops.RECIPROCAL dtypes.float [2]
+7 Ops.RECIPROCAL dtypes.float [0]
+8 Ops.TRUNC dtypes.float [2]
+9 Ops.CMPLT dtypes.bool [2, 8]
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.CONST dtypes.weakfloat [] -1.0
+12 Ops.MUL dtypes.weakfloat [10, 11]
+13 Ops.ADD dtypes.float [8, 12]
+14 Ops.WHERE dtypes.float [9, 13, 8]
+15 Ops.CONST dtypes.weakint [] 4
+16 Ops.SQRT dtypes.weakfloat [15]
+17 Ops.CAST dtypes.half [2] dtypes.half
+18 Ops.EXP2 dtypes.half [17]
+19 Ops.SINK dtypes.void [1, 3, 4, 5, 6, 7, 8, 14, 16, 18]
+

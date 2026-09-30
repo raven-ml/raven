@@ -1,0 +1,37 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=24)
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CONST dtypes.weakint [] 3
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [1, 2, 3]
+5 Ops.RESHAPE dtypes.float [0, 4]
+6 Ops.CONST dtypes.weakint [] 6
+7 Ops.STACK dtypes.weakint [6, 3]
+8 Ops.RESHAPE dtypes.float [5, 7]
+9 Ops.CONST dtypes.weakint [] 12
+10 Ops.STACK dtypes.weakint [9, 1]
+11 Ops.RESHAPE dtypes.float [5, 10]
+12 Ops.PERMUTE dtypes.float [5] (2, 0, 1)
+13 Ops.PERMUTE dtypes.float [5] (0, 2, 1)
+14 Ops.FLIP dtypes.float [5] (True, False, True)
+15 Ops.FLIP dtypes.float [5] (False, False, True)
+16 Ops.CONST dtypes.weakint [] 0
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.STACK dtypes.weakint [16, 16, 17]
+19 Ops.STACK dtypes.weakint [17, 2, 1]
+20 Ops.SHRINK dtypes.float [5, 18, 19]
+21 Ops.STACK dtypes.weakint [16, 16, 16]
+22 Ops.SHRINK dtypes.float [5, 21, 19]
+23 Ops.STACK dtypes.weakint [17, 16, 16]
+24 Ops.STACK dtypes.weakint [2, 2, 6]
+25 Ops.PAD dtypes.float [5, 23, 24]
+26 Ops.CONST dtypes.weakint [] 5
+27 Ops.STACK dtypes.weakint [1, 26, 6]
+28 Ops.PAD dtypes.float [5, 21, 27]
+29 Ops.CONST dtypes.weakint [] 24
+30 Ops.RESHAPE dtypes.float [5, 29]
+31 Ops.STACK dtypes.weakint [1, 9]
+32 Ops.RESHAPE dtypes.float [5, 31]
+33 Ops.RESHAPE dtypes.float [32, 4]
+34 Ops.SINK dtypes.void [8, 11, 5, 12, 13, 5, 14, 15, 20, 5, 22, 25, 28, 30, 32, 8, 33]
+

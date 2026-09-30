@@ -1,0 +1,18 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+2 Ops.CMPLT dtypes.bool [0, 1]
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.WHERE dtypes.int [2, 0, 3]
+5 Ops.CONST dtypes.weakfloat [] 1.5
+6 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+7 Ops.WHERE dtypes.float [2, 5, 6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.WHERE dtypes.weakint [2, 8, 9]
+11 Ops.PARAM dtypes.half [] ParamArg(slot=-1, dtype=dtypes.half, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+12 Ops.CAST dtypes.float [11] dtypes.float
+13 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+14 Ops.WHERE dtypes.float [2, 12, 13]
+15 Ops.SINK dtypes.void [4, 7, 10, 14]
+

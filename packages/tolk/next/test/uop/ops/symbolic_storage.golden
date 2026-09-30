@@ -1,0 +1,18 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.STACK dtypes.weakint [5, 5]
+7 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+8 Ops.STACK dtypes.weakint [1, 7]
+9 Ops.SHRINK dtypes.float [4, 6, 8]
+10 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=8)
+11 Ops.SHRINK dtypes.int [10, 5, 7]
+12 Ops.ALLOC dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=16)
+13 Ops.RESHAPE dtypes.float [12, 3]
+14 Ops.SHRINK dtypes.float [13, 6, 8]
+15 Ops.SINK dtypes.void [9, 11, 14]
+

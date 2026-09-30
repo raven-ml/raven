@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dtype	bytes	vmin	vmax
+dtypes.bool	000100	False	True
+dtypes.char	807f05	-128	127
+dtypes.uchar	030901	1	9
+dtypes.short	0080ff7f	-32768	32767
+dtypes.ushort	00800100	1	32768
+dtypes.int	ffffffff05000000	-1	5
+dtypes.uint	ffffffff05000000	5	4294967295
+dtypes.long	ffffffffffffffff0700000000000000	-1	7
+dtypes.ulong	ffffffffffffffff0700000000000000	7	18446744073709551615
+dtypes.half	003c00c0	-2.0	1.0
+dtypes.float	0000c03f000020c1	-10.0	1.5
+dtypes.double	000000000000f83f00000000000000c0	-2.0	1.5

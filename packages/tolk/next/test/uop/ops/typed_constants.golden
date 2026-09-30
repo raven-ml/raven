@@ -1,0 +1,24 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.CAST dtypes.int [0] dtypes.int
+2 Ops.CONST dtypes.bool [] True
+3 Ops.CONST dtypes.weakfloat [] 1.5
+4 Ops.CONST dtypes.weakfloat [] 2.0
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.CAST dtypes.int [6] dtypes.int
+8 Ops.CONST dtypes.bool [] Invalid
+9 Ops.CONST dtypes.weakint [] 300
+10 Ops.CAST dtypes.char [9] dtypes.char
+11 Ops.CAST dtypes.bool [2] dtypes.bool
+12 Ops.CONST dtypes.weakfloat [] 1.0
+13 Ops.CAST dtypes.float [12] dtypes.float
+14 Ops.CONST dtypes.weakfloat [] 2.5
+15 Ops.CAST dtypes.float [14] dtypes.float
+16 Ops.STACK dtypes.float [13, 15, 13]
+17 Ops.CAST dtypes.char [6] dtypes.char
+18 Ops.CONST dtypes.weakint [] 2
+19 Ops.CAST dtypes.char [18] dtypes.char
+20 Ops.STACK dtypes.char [17, 19]
+21 Ops.SINK dtypes.void [1, 2, 3, 5, 7, 2, 8, 10, 11, 16, 20]
+

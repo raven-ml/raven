@@ -1,0 +1,41 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.STACK dtypes.weakint [1, 1]
+3 Ops.RESHAPE dtypes.float [0, 2]
+4 Ops.CONST dtypes.weakint [] 1
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.STACK dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 6
+8 Ops.STACK dtypes.weakint [7, 7]
+9 Ops.PAD dtypes.float [3, 6, 8]
+10 Ops.CONST dtypes.bool [] True
+11 Ops.EXPAND dtypes.bool [10, 2]
+12 Ops.CONST dtypes.weakint [] 0
+13 Ops.STACK dtypes.weakint [4, 12]
+14 Ops.STACK dtypes.weakint [7, 1]
+15 Ops.PAD dtypes.bool [11, 13, 14]
+16 Ops.PAD dtypes.float [3, 13, 14]
+17 Ops.CONST dtypes.weakfloat [] 1.5
+18 Ops.WHERE dtypes.float [15, 16, 17]
+19 Ops.CONST dtypes.weakint [] 3
+20 Ops.STACK dtypes.weakint [19, 5]
+21 Ops.SHRINK dtypes.float [3, 13, 20]
+22 Ops.STACK dtypes.weakint [12, 12]
+23 Ops.CONST dtypes.weakint [] 5
+24 Ops.STACK dtypes.weakint [23, 5]
+25 Ops.PAD dtypes.float [21, 22, 24]
+26 Ops.PAD dtypes.bool [11, 22, 14]
+27 Ops.PAD dtypes.float [3, 22, 14]
+28 Ops.CONST dtypes.weakfloat [] 2.0
+29 Ops.WHERE dtypes.float [26, 27, 28]
+30 Ops.STACK dtypes.weakint [19, 1]
+31 Ops.EXPAND dtypes.bool [10, 30]
+32 Ops.STACK dtypes.weakint [1, 7]
+33 Ops.PAD dtypes.bool [31, 13, 32]
+34 Ops.SHRINK dtypes.float [3, 22, 30]
+35 Ops.PAD dtypes.float [34, 13, 32]
+36 Ops.CONST dtypes.weakfloat [] -1.0
+37 Ops.WHERE dtypes.float [33, 35, 36]
+38 Ops.SINK dtypes.void [9, 18, 25, 29, 37]
+

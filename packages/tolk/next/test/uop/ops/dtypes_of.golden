@@ -1,0 +1,950 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+op	a	b	dtype
+Ops.ADD	dtypes.bool	dtypes.bool	dtypes.bool
+Ops.ADD	dtypes.bool	dtypes.weakint	dtypes.weakint
+Ops.ADD	dtypes.bool	dtypes.char	dtypes.char
+Ops.ADD	dtypes.bool	dtypes.uchar	dtypes.uchar
+Ops.ADD	dtypes.bool	dtypes.int	dtypes.int
+Ops.ADD	dtypes.bool	dtypes.uint	dtypes.uint
+Ops.ADD	dtypes.bool	dtypes.long	dtypes.long
+Ops.ADD	dtypes.bool	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.bool	dtypes.half	dtypes.half
+Ops.ADD	dtypes.bool	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.bool	dtypes.float	dtypes.float
+Ops.ADD	dtypes.bool	dtypes.double	dtypes.double
+Ops.ADD	dtypes.weakint	dtypes.bool	dtypes.weakint
+Ops.ADD	dtypes.weakint	dtypes.weakint	dtypes.weakint
+Ops.ADD	dtypes.weakint	dtypes.char	dtypes.char
+Ops.ADD	dtypes.weakint	dtypes.uchar	dtypes.uchar
+Ops.ADD	dtypes.weakint	dtypes.int	dtypes.int
+Ops.ADD	dtypes.weakint	dtypes.uint	dtypes.uint
+Ops.ADD	dtypes.weakint	dtypes.long	dtypes.long
+Ops.ADD	dtypes.weakint	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.weakint	dtypes.half	dtypes.half
+Ops.ADD	dtypes.weakint	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.weakint	dtypes.float	dtypes.float
+Ops.ADD	dtypes.weakint	dtypes.double	dtypes.double
+Ops.ADD	dtypes.char	dtypes.bool	dtypes.char
+Ops.ADD	dtypes.char	dtypes.weakint	dtypes.char
+Ops.ADD	dtypes.char	dtypes.char	dtypes.char
+Ops.ADD	dtypes.char	dtypes.uchar	dtypes.short
+Ops.ADD	dtypes.char	dtypes.int	dtypes.int
+Ops.ADD	dtypes.char	dtypes.uint	dtypes.long
+Ops.ADD	dtypes.char	dtypes.long	dtypes.long
+Ops.ADD	dtypes.char	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.char	dtypes.half	dtypes.half
+Ops.ADD	dtypes.char	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.char	dtypes.float	dtypes.float
+Ops.ADD	dtypes.char	dtypes.double	dtypes.double
+Ops.ADD	dtypes.uchar	dtypes.bool	dtypes.uchar
+Ops.ADD	dtypes.uchar	dtypes.weakint	dtypes.uchar
+Ops.ADD	dtypes.uchar	dtypes.char	dtypes.short
+Ops.ADD	dtypes.uchar	dtypes.uchar	dtypes.uchar
+Ops.ADD	dtypes.uchar	dtypes.int	dtypes.int
+Ops.ADD	dtypes.uchar	dtypes.uint	dtypes.uint
+Ops.ADD	dtypes.uchar	dtypes.long	dtypes.long
+Ops.ADD	dtypes.uchar	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.uchar	dtypes.half	dtypes.half
+Ops.ADD	dtypes.uchar	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.uchar	dtypes.float	dtypes.float
+Ops.ADD	dtypes.uchar	dtypes.double	dtypes.double
+Ops.ADD	dtypes.int	dtypes.bool	dtypes.int
+Ops.ADD	dtypes.int	dtypes.weakint	dtypes.int
+Ops.ADD	dtypes.int	dtypes.char	dtypes.int
+Ops.ADD	dtypes.int	dtypes.uchar	dtypes.int
+Ops.ADD	dtypes.int	dtypes.int	dtypes.int
+Ops.ADD	dtypes.int	dtypes.uint	dtypes.long
+Ops.ADD	dtypes.int	dtypes.long	dtypes.long
+Ops.ADD	dtypes.int	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.int	dtypes.half	dtypes.half
+Ops.ADD	dtypes.int	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.int	dtypes.float	dtypes.float
+Ops.ADD	dtypes.int	dtypes.double	dtypes.double
+Ops.ADD	dtypes.uint	dtypes.bool	dtypes.uint
+Ops.ADD	dtypes.uint	dtypes.weakint	dtypes.uint
+Ops.ADD	dtypes.uint	dtypes.char	dtypes.long
+Ops.ADD	dtypes.uint	dtypes.uchar	dtypes.uint
+Ops.ADD	dtypes.uint	dtypes.int	dtypes.long
+Ops.ADD	dtypes.uint	dtypes.uint	dtypes.uint
+Ops.ADD	dtypes.uint	dtypes.long	dtypes.long
+Ops.ADD	dtypes.uint	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.uint	dtypes.half	dtypes.half
+Ops.ADD	dtypes.uint	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.uint	dtypes.float	dtypes.float
+Ops.ADD	dtypes.uint	dtypes.double	dtypes.double
+Ops.ADD	dtypes.long	dtypes.bool	dtypes.long
+Ops.ADD	dtypes.long	dtypes.weakint	dtypes.long
+Ops.ADD	dtypes.long	dtypes.char	dtypes.long
+Ops.ADD	dtypes.long	dtypes.uchar	dtypes.long
+Ops.ADD	dtypes.long	dtypes.int	dtypes.long
+Ops.ADD	dtypes.long	dtypes.uint	dtypes.long
+Ops.ADD	dtypes.long	dtypes.long	dtypes.long
+Ops.ADD	dtypes.long	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.long	dtypes.half	dtypes.half
+Ops.ADD	dtypes.long	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.long	dtypes.float	dtypes.float
+Ops.ADD	dtypes.long	dtypes.double	dtypes.double
+Ops.ADD	dtypes.weakfloat	dtypes.bool	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.weakint	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.char	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.uchar	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.int	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.uint	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.long	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.weakfloat	dtypes.weakfloat
+Ops.ADD	dtypes.weakfloat	dtypes.half	dtypes.half
+Ops.ADD	dtypes.weakfloat	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.weakfloat	dtypes.float	dtypes.float
+Ops.ADD	dtypes.weakfloat	dtypes.double	dtypes.double
+Ops.ADD	dtypes.half	dtypes.bool	dtypes.half
+Ops.ADD	dtypes.half	dtypes.weakint	dtypes.half
+Ops.ADD	dtypes.half	dtypes.char	dtypes.half
+Ops.ADD	dtypes.half	dtypes.uchar	dtypes.half
+Ops.ADD	dtypes.half	dtypes.int	dtypes.half
+Ops.ADD	dtypes.half	dtypes.uint	dtypes.half
+Ops.ADD	dtypes.half	dtypes.long	dtypes.half
+Ops.ADD	dtypes.half	dtypes.weakfloat	dtypes.half
+Ops.ADD	dtypes.half	dtypes.half	dtypes.half
+Ops.ADD	dtypes.half	dtypes.bfloat16	dtypes.float
+Ops.ADD	dtypes.half	dtypes.float	dtypes.float
+Ops.ADD	dtypes.half	dtypes.double	dtypes.double
+Ops.ADD	dtypes.bfloat16	dtypes.bool	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.weakint	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.char	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.uchar	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.int	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.uint	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.long	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.weakfloat	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.half	dtypes.float
+Ops.ADD	dtypes.bfloat16	dtypes.bfloat16	dtypes.bfloat16
+Ops.ADD	dtypes.bfloat16	dtypes.float	dtypes.float
+Ops.ADD	dtypes.bfloat16	dtypes.double	dtypes.double
+Ops.ADD	dtypes.float	dtypes.bool	dtypes.float
+Ops.ADD	dtypes.float	dtypes.weakint	dtypes.float
+Ops.ADD	dtypes.float	dtypes.char	dtypes.float
+Ops.ADD	dtypes.float	dtypes.uchar	dtypes.float
+Ops.ADD	dtypes.float	dtypes.int	dtypes.float
+Ops.ADD	dtypes.float	dtypes.uint	dtypes.float
+Ops.ADD	dtypes.float	dtypes.long	dtypes.float
+Ops.ADD	dtypes.float	dtypes.weakfloat	dtypes.float
+Ops.ADD	dtypes.float	dtypes.half	dtypes.float
+Ops.ADD	dtypes.float	dtypes.bfloat16	dtypes.float
+Ops.ADD	dtypes.float	dtypes.float	dtypes.float
+Ops.ADD	dtypes.float	dtypes.double	dtypes.double
+Ops.ADD	dtypes.double	dtypes.bool	dtypes.double
+Ops.ADD	dtypes.double	dtypes.weakint	dtypes.double
+Ops.ADD	dtypes.double	dtypes.char	dtypes.double
+Ops.ADD	dtypes.double	dtypes.uchar	dtypes.double
+Ops.ADD	dtypes.double	dtypes.int	dtypes.double
+Ops.ADD	dtypes.double	dtypes.uint	dtypes.double
+Ops.ADD	dtypes.double	dtypes.long	dtypes.double
+Ops.ADD	dtypes.double	dtypes.weakfloat	dtypes.double
+Ops.ADD	dtypes.double	dtypes.half	dtypes.double
+Ops.ADD	dtypes.double	dtypes.bfloat16	dtypes.double
+Ops.ADD	dtypes.double	dtypes.float	dtypes.double
+Ops.ADD	dtypes.double	dtypes.double	dtypes.double
+Ops.MAX	dtypes.bool	dtypes.bool	dtypes.bool
+Ops.MAX	dtypes.bool	dtypes.weakint	dtypes.weakint
+Ops.MAX	dtypes.bool	dtypes.char	dtypes.char
+Ops.MAX	dtypes.bool	dtypes.uchar	dtypes.uchar
+Ops.MAX	dtypes.bool	dtypes.int	dtypes.int
+Ops.MAX	dtypes.bool	dtypes.uint	dtypes.uint
+Ops.MAX	dtypes.bool	dtypes.long	dtypes.long
+Ops.MAX	dtypes.bool	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.bool	dtypes.half	dtypes.half
+Ops.MAX	dtypes.bool	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.bool	dtypes.float	dtypes.float
+Ops.MAX	dtypes.bool	dtypes.double	dtypes.double
+Ops.MAX	dtypes.weakint	dtypes.bool	dtypes.weakint
+Ops.MAX	dtypes.weakint	dtypes.weakint	dtypes.weakint
+Ops.MAX	dtypes.weakint	dtypes.char	dtypes.char
+Ops.MAX	dtypes.weakint	dtypes.uchar	dtypes.uchar
+Ops.MAX	dtypes.weakint	dtypes.int	dtypes.int
+Ops.MAX	dtypes.weakint	dtypes.uint	dtypes.uint
+Ops.MAX	dtypes.weakint	dtypes.long	dtypes.long
+Ops.MAX	dtypes.weakint	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.weakint	dtypes.half	dtypes.half
+Ops.MAX	dtypes.weakint	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.weakint	dtypes.float	dtypes.float
+Ops.MAX	dtypes.weakint	dtypes.double	dtypes.double
+Ops.MAX	dtypes.char	dtypes.bool	dtypes.char
+Ops.MAX	dtypes.char	dtypes.weakint	dtypes.char
+Ops.MAX	dtypes.char	dtypes.char	dtypes.char
+Ops.MAX	dtypes.char	dtypes.uchar	dtypes.short
+Ops.MAX	dtypes.char	dtypes.int	dtypes.int
+Ops.MAX	dtypes.char	dtypes.uint	dtypes.long
+Ops.MAX	dtypes.char	dtypes.long	dtypes.long
+Ops.MAX	dtypes.char	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.char	dtypes.half	dtypes.half
+Ops.MAX	dtypes.char	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.char	dtypes.float	dtypes.float
+Ops.MAX	dtypes.char	dtypes.double	dtypes.double
+Ops.MAX	dtypes.uchar	dtypes.bool	dtypes.uchar
+Ops.MAX	dtypes.uchar	dtypes.weakint	dtypes.uchar
+Ops.MAX	dtypes.uchar	dtypes.char	dtypes.short
+Ops.MAX	dtypes.uchar	dtypes.uchar	dtypes.uchar
+Ops.MAX	dtypes.uchar	dtypes.int	dtypes.int
+Ops.MAX	dtypes.uchar	dtypes.uint	dtypes.uint
+Ops.MAX	dtypes.uchar	dtypes.long	dtypes.long
+Ops.MAX	dtypes.uchar	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.uchar	dtypes.half	dtypes.half
+Ops.MAX	dtypes.uchar	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.uchar	dtypes.float	dtypes.float
+Ops.MAX	dtypes.uchar	dtypes.double	dtypes.double
+Ops.MAX	dtypes.int	dtypes.bool	dtypes.int
+Ops.MAX	dtypes.int	dtypes.weakint	dtypes.int
+Ops.MAX	dtypes.int	dtypes.char	dtypes.int
+Ops.MAX	dtypes.int	dtypes.uchar	dtypes.int
+Ops.MAX	dtypes.int	dtypes.int	dtypes.int
+Ops.MAX	dtypes.int	dtypes.uint	dtypes.long
+Ops.MAX	dtypes.int	dtypes.long	dtypes.long
+Ops.MAX	dtypes.int	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.int	dtypes.half	dtypes.half
+Ops.MAX	dtypes.int	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.int	dtypes.float	dtypes.float
+Ops.MAX	dtypes.int	dtypes.double	dtypes.double
+Ops.MAX	dtypes.uint	dtypes.bool	dtypes.uint
+Ops.MAX	dtypes.uint	dtypes.weakint	dtypes.uint
+Ops.MAX	dtypes.uint	dtypes.char	dtypes.long
+Ops.MAX	dtypes.uint	dtypes.uchar	dtypes.uint
+Ops.MAX	dtypes.uint	dtypes.int	dtypes.long
+Ops.MAX	dtypes.uint	dtypes.uint	dtypes.uint
+Ops.MAX	dtypes.uint	dtypes.long	dtypes.long
+Ops.MAX	dtypes.uint	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.uint	dtypes.half	dtypes.half
+Ops.MAX	dtypes.uint	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.uint	dtypes.float	dtypes.float
+Ops.MAX	dtypes.uint	dtypes.double	dtypes.double
+Ops.MAX	dtypes.long	dtypes.bool	dtypes.long
+Ops.MAX	dtypes.long	dtypes.weakint	dtypes.long
+Ops.MAX	dtypes.long	dtypes.char	dtypes.long
+Ops.MAX	dtypes.long	dtypes.uchar	dtypes.long
+Ops.MAX	dtypes.long	dtypes.int	dtypes.long
+Ops.MAX	dtypes.long	dtypes.uint	dtypes.long
+Ops.MAX	dtypes.long	dtypes.long	dtypes.long
+Ops.MAX	dtypes.long	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.long	dtypes.half	dtypes.half
+Ops.MAX	dtypes.long	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.long	dtypes.float	dtypes.float
+Ops.MAX	dtypes.long	dtypes.double	dtypes.double
+Ops.MAX	dtypes.weakfloat	dtypes.bool	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.weakint	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.char	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.uchar	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.int	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.uint	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.long	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.weakfloat	dtypes.weakfloat
+Ops.MAX	dtypes.weakfloat	dtypes.half	dtypes.half
+Ops.MAX	dtypes.weakfloat	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.weakfloat	dtypes.float	dtypes.float
+Ops.MAX	dtypes.weakfloat	dtypes.double	dtypes.double
+Ops.MAX	dtypes.half	dtypes.bool	dtypes.half
+Ops.MAX	dtypes.half	dtypes.weakint	dtypes.half
+Ops.MAX	dtypes.half	dtypes.char	dtypes.half
+Ops.MAX	dtypes.half	dtypes.uchar	dtypes.half
+Ops.MAX	dtypes.half	dtypes.int	dtypes.half
+Ops.MAX	dtypes.half	dtypes.uint	dtypes.half
+Ops.MAX	dtypes.half	dtypes.long	dtypes.half
+Ops.MAX	dtypes.half	dtypes.weakfloat	dtypes.half
+Ops.MAX	dtypes.half	dtypes.half	dtypes.half
+Ops.MAX	dtypes.half	dtypes.bfloat16	dtypes.float
+Ops.MAX	dtypes.half	dtypes.float	dtypes.float
+Ops.MAX	dtypes.half	dtypes.double	dtypes.double
+Ops.MAX	dtypes.bfloat16	dtypes.bool	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.weakint	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.char	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.uchar	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.int	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.uint	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.long	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.weakfloat	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.half	dtypes.float
+Ops.MAX	dtypes.bfloat16	dtypes.bfloat16	dtypes.bfloat16
+Ops.MAX	dtypes.bfloat16	dtypes.float	dtypes.float
+Ops.MAX	dtypes.bfloat16	dtypes.double	dtypes.double
+Ops.MAX	dtypes.float	dtypes.bool	dtypes.float
+Ops.MAX	dtypes.float	dtypes.weakint	dtypes.float
+Ops.MAX	dtypes.float	dtypes.char	dtypes.float
+Ops.MAX	dtypes.float	dtypes.uchar	dtypes.float
+Ops.MAX	dtypes.float	dtypes.int	dtypes.float
+Ops.MAX	dtypes.float	dtypes.uint	dtypes.float
+Ops.MAX	dtypes.float	dtypes.long	dtypes.float
+Ops.MAX	dtypes.float	dtypes.weakfloat	dtypes.float
+Ops.MAX	dtypes.float	dtypes.half	dtypes.float
+Ops.MAX	dtypes.float	dtypes.bfloat16	dtypes.float
+Ops.MAX	dtypes.float	dtypes.float	dtypes.float
+Ops.MAX	dtypes.float	dtypes.double	dtypes.double
+Ops.MAX	dtypes.double	dtypes.bool	dtypes.double
+Ops.MAX	dtypes.double	dtypes.weakint	dtypes.double
+Ops.MAX	dtypes.double	dtypes.char	dtypes.double
+Ops.MAX	dtypes.double	dtypes.uchar	dtypes.double
+Ops.MAX	dtypes.double	dtypes.int	dtypes.double
+Ops.MAX	dtypes.double	dtypes.uint	dtypes.double
+Ops.MAX	dtypes.double	dtypes.long	dtypes.double
+Ops.MAX	dtypes.double	dtypes.weakfloat	dtypes.double
+Ops.MAX	dtypes.double	dtypes.half	dtypes.double
+Ops.MAX	dtypes.double	dtypes.bfloat16	dtypes.double
+Ops.MAX	dtypes.double	dtypes.float	dtypes.double
+Ops.MAX	dtypes.double	dtypes.double	dtypes.double
+Ops.CMPLT	dtypes.bool	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.bool	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.weakint	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.char	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.uchar	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.int	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.uint	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.long	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.weakfloat	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.half	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.bfloat16	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.float	dtypes.double	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.bool	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.weakint	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.char	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.uchar	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.int	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.uint	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.long	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.weakfloat	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.half	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.bfloat16	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.float	dtypes.bool
+Ops.CMPLT	dtypes.double	dtypes.double	dtypes.bool
+Ops.FDIV	dtypes.bool	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.weakint	dtypes.weakfloat
+Ops.FDIV	dtypes.bool	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.bool	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.bool	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.bool	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.bool	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.weakint	dtypes.bool	dtypes.weakfloat
+Ops.FDIV	dtypes.weakint	dtypes.weakint	dtypes.weakfloat
+Ops.FDIV	dtypes.weakint	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.weakint	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.weakint	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.weakint	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.weakint	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.char	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.char	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.char	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.char	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.char	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.uchar	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.uchar	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.uchar	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.uchar	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.uchar	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.int	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.int	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.int	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.int	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.int	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.uint	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.uint	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.uint	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.uint	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.uint	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.long	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.long	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.long	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.long	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.long	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.weakfloat	dtypes.bool	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.weakint	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.char	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.uchar	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.int	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.uint	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.long	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.weakfloat	dtypes.weakfloat
+Ops.FDIV	dtypes.weakfloat	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.weakfloat	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.weakfloat	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.weakfloat	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.half	dtypes.bool	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.weakint	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.char	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.uchar	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.int	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.uint	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.long	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.weakfloat	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.half	dtypes.half
+Ops.FDIV	dtypes.half	dtypes.bfloat16	dtypes.float
+Ops.FDIV	dtypes.half	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.half	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.bfloat16	dtypes.bool	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.weakint	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.char	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.uchar	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.int	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.uint	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.long	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.weakfloat	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.half	dtypes.float
+Ops.FDIV	dtypes.bfloat16	dtypes.bfloat16	dtypes.bfloat16
+Ops.FDIV	dtypes.bfloat16	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.bfloat16	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.float	dtypes.bool	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.weakint	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.char	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.uchar	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.int	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.uint	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.long	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.weakfloat	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.half	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.bfloat16	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.float	dtypes.float
+Ops.FDIV	dtypes.float	dtypes.double	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.bool	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.weakint	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.char	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.uchar	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.int	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.uint	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.long	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.weakfloat	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.half	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.bfloat16	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.float	dtypes.double
+Ops.FDIV	dtypes.double	dtypes.double	dtypes.double
+Ops.SHL	dtypes.bool	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.bool	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.weakint	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.char	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.uchar	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.int	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.uint	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.long	dtypes.weakint
+Ops.SHL	dtypes.weakint	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.weakint	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.weakint	dtypes.char
+Ops.SHL	dtypes.char	dtypes.char	dtypes.char
+Ops.SHL	dtypes.char	dtypes.uchar	dtypes.char
+Ops.SHL	dtypes.char	dtypes.int	dtypes.char
+Ops.SHL	dtypes.char	dtypes.uint	dtypes.char
+Ops.SHL	dtypes.char	dtypes.long	dtypes.char
+Ops.SHL	dtypes.char	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.char	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.weakint	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.char	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.uchar	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.int	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.uint	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.long	dtypes.uchar
+Ops.SHL	dtypes.uchar	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.uchar	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.weakint	dtypes.int
+Ops.SHL	dtypes.int	dtypes.char	dtypes.int
+Ops.SHL	dtypes.int	dtypes.uchar	dtypes.int
+Ops.SHL	dtypes.int	dtypes.int	dtypes.int
+Ops.SHL	dtypes.int	dtypes.uint	dtypes.int
+Ops.SHL	dtypes.int	dtypes.long	dtypes.int
+Ops.SHL	dtypes.int	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.int	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.weakint	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.char	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.uchar	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.int	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.uint	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.long	dtypes.uint
+Ops.SHL	dtypes.uint	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.uint	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.weakint	dtypes.long
+Ops.SHL	dtypes.long	dtypes.char	dtypes.long
+Ops.SHL	dtypes.long	dtypes.uchar	dtypes.long
+Ops.SHL	dtypes.long	dtypes.int	dtypes.long
+Ops.SHL	dtypes.long	dtypes.uint	dtypes.long
+Ops.SHL	dtypes.long	dtypes.long	dtypes.long
+Ops.SHL	dtypes.long	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.long	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.weakfloat	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.half	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.bfloat16	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.float	dtypes.double	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.bool	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.weakint	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.char	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.uchar	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.int	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.uint	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.long	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.weakfloat	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.half	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.bfloat16	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.float	raises RuntimeError
+Ops.SHL	dtypes.double	dtypes.double	raises RuntimeError
+Ops.THREEFRY	dtypes.bool	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.bool	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.weakint	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.char	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.uchar	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.int	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.uint	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.long	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.weakfloat	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.half	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.bfloat16	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.float	dtypes.double	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.bool	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.weakint	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.char	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.uchar	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.int	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.uint	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.long	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.weakfloat	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.half	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.bfloat16	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.float	dtypes.ulong
+Ops.THREEFRY	dtypes.double	dtypes.double	dtypes.ulong
+Ops.SQRT	dtypes.bool	-	dtypes.float
+Ops.SQRT	dtypes.weakint	-	dtypes.weakfloat
+Ops.SQRT	dtypes.char	-	dtypes.float
+Ops.SQRT	dtypes.uchar	-	dtypes.float
+Ops.SQRT	dtypes.int	-	dtypes.float
+Ops.SQRT	dtypes.uint	-	dtypes.float
+Ops.SQRT	dtypes.long	-	dtypes.float
+Ops.SQRT	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.SQRT	dtypes.half	-	dtypes.half
+Ops.SQRT	dtypes.bfloat16	-	dtypes.bfloat16
+Ops.SQRT	dtypes.float	-	dtypes.float
+Ops.SQRT	dtypes.double	-	dtypes.double
+Ops.EXP2	dtypes.bool	-	dtypes.float
+Ops.EXP2	dtypes.weakint	-	dtypes.weakfloat
+Ops.EXP2	dtypes.char	-	dtypes.float
+Ops.EXP2	dtypes.uchar	-	dtypes.float
+Ops.EXP2	dtypes.int	-	dtypes.float
+Ops.EXP2	dtypes.uint	-	dtypes.float
+Ops.EXP2	dtypes.long	-	dtypes.float
+Ops.EXP2	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.EXP2	dtypes.half	-	dtypes.half
+Ops.EXP2	dtypes.bfloat16	-	dtypes.bfloat16
+Ops.EXP2	dtypes.float	-	dtypes.float
+Ops.EXP2	dtypes.double	-	dtypes.double
+Ops.RECIPROCAL	dtypes.bool	-	dtypes.float
+Ops.RECIPROCAL	dtypes.weakint	-	dtypes.weakfloat
+Ops.RECIPROCAL	dtypes.char	-	dtypes.float
+Ops.RECIPROCAL	dtypes.uchar	-	dtypes.float
+Ops.RECIPROCAL	dtypes.int	-	dtypes.float
+Ops.RECIPROCAL	dtypes.uint	-	dtypes.float
+Ops.RECIPROCAL	dtypes.long	-	dtypes.float
+Ops.RECIPROCAL	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.RECIPROCAL	dtypes.half	-	dtypes.half
+Ops.RECIPROCAL	dtypes.bfloat16	-	dtypes.bfloat16
+Ops.RECIPROCAL	dtypes.float	-	dtypes.float
+Ops.RECIPROCAL	dtypes.double	-	dtypes.double
+Ops.NEG	dtypes.bool	-	dtypes.bool
+Ops.NEG	dtypes.weakint	-	dtypes.weakint
+Ops.NEG	dtypes.char	-	dtypes.char
+Ops.NEG	dtypes.uchar	-	dtypes.uchar
+Ops.NEG	dtypes.int	-	dtypes.int
+Ops.NEG	dtypes.uint	-	dtypes.uint
+Ops.NEG	dtypes.long	-	dtypes.long
+Ops.NEG	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.NEG	dtypes.half	-	dtypes.half
+Ops.NEG	dtypes.bfloat16	-	dtypes.bfloat16
+Ops.NEG	dtypes.float	-	dtypes.float
+Ops.NEG	dtypes.double	-	dtypes.double
+Ops.TRUNC	dtypes.bool	-	dtypes.bool
+Ops.TRUNC	dtypes.weakint	-	dtypes.weakint
+Ops.TRUNC	dtypes.char	-	dtypes.char
+Ops.TRUNC	dtypes.uchar	-	dtypes.uchar
+Ops.TRUNC	dtypes.int	-	dtypes.int
+Ops.TRUNC	dtypes.uint	-	dtypes.uint
+Ops.TRUNC	dtypes.long	-	dtypes.long
+Ops.TRUNC	dtypes.weakfloat	-	dtypes.weakfloat
+Ops.TRUNC	dtypes.half	-	dtypes.half
+Ops.TRUNC	dtypes.bfloat16	-	dtypes.bfloat16
+Ops.TRUNC	dtypes.float	-	dtypes.float
+Ops.TRUNC	dtypes.double	-	dtypes.double
+Ops.WHERE	dtypes.bool	dtypes.bool	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.weakint	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.char	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.uchar	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.int	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.uint	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.long	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.weakfloat	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.half	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.bfloat16	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.float	dtypes.float
+Ops.WHERE	dtypes.bool	dtypes.double	dtypes.double
+Ops.WHERE	dtypes.weakint	dtypes.bool	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.weakint	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.char	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.uchar	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.int	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.uint	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.long	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.weakfloat	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.half	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.bfloat16	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.float	raises RuntimeError
+Ops.WHERE	dtypes.weakint	dtypes.double	raises RuntimeError

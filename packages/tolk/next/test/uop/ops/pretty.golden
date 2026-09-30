@@ -1,0 +1,45 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+UOp(Ops.CONST, arg=42, src=())
+
+UOp(Ops.ADD, arg=None, src=(
+  UOp(Ops.CONST, arg=42, src=()),
+  UOp(Ops.CONST, arg=3, src=()),))
+
+UOp(Ops.ADD, arg=None, src=(
+  x0:=UOp(Ops.CONST, arg=42, src=()),
+  x0,))
+
+UOp(Ops.MUL, arg=None, src=(
+  x0:=UOp(Ops.ADD, arg=None, src=(
+    x1:=UOp(Ops.CONST, arg=1, src=()),
+    x1,)),
+  x0,))
+
+UOp(Ops.CONST, arg=42, tag=x, src=())
+
+UOp(Ops.CONST, arg=42, tag=('y', 1), src=())
+
+UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name='n', addrspace=AddrSpace.ALU), src=())
+
+UOp(Ops.SINK, arg=KernelInfo(name='test', applied_opts=(), opts_to_apply=None, estimates=None, beam=0), src=(
+  UOp(Ops.ADD, arg=None, src=(
+    x1:=UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 8), multiple_of=1, name='n', addrspace=AddrSpace.ALU), src=()),
+    UOp(Ops.CONST, arg=1, src=()),)),
+  UOp(Ops.MUL, arg=None, src=(
+    x1,
+    UOp(Ops.CONST, arg=2, src=()),)),))
+
+UOp(Ops.RANGE, arg=(0, AxisType.REDUCE), src=(
+  UOp(Ops.CONST, arg=4, src=()),))
+
+UOp(Ops.CAST, arg=dtypes.int, src=(
+  UOp(Ops.CONST, arg=3, src=()),))
+
+UOp(Ops.CONST, arg=ConstFloat(1.5), src=())
+
+UOp(Ops.RESHAPE, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(0, dtypes.float, 6), src=()),
+  UOp(Ops.STACK, arg=None, src=(
+    UOp(Ops.CONST, arg=2, src=()),
+    UOp(Ops.CONST, arg=3, src=()),)),))
+

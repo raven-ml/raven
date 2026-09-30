@@ -218,6 +218,318 @@ An old test's line is the line of the call its assertion checks.
 | tinygrad: `null/test_graph_rewrite.py`, `null/test_uop_graph.py` | `UPat(GroupOp.All)` matches every operation | `Tolk_next.Op › Set.mem › of all always holds`; each test belongs to its own module's section |
 | tinygrad: `null/test_viz.py::TestViz::test_colored_label`, `test_colored_label_multiline`, `test_inf_loop`, `TestVizGC::test_gc_uop_in_arg` | PYLITERAL and REWRITE_ERROR nodes in the graph viewer | dropped: viz is excluded; `Tolk_next.Op › Op › has no counterpart for exactly REWRITE_ERROR and PYLITERAL` |
 
+## Ops
+
+The suite is `Tolk_next.Ops` (`uop/ops/`), written `O` below. A golden
+check is named after its golden, and a table golden's rows are tests keyed by
+their input cells. Graph goldens are the `O › graphs` group, one test per
+golden. `L2` marks the mixin tests folded into this module (plan §9, L2).
+
+A test marked `(L3)` needs the symbolic rules, which Symbolic installs at L3:
+it is tagged `L3` and left out of the default run until then. Its pair,
+`O › resolve › simplify rejects a graph other than constants while the symbolic rules are not installed`,
+is tagged `pre-L3` and pins the time before.
+
+Tests of tinygrad that run a later module's rewrites (`sym`, `symbolic`,
+`full_rewrite`, `to_uops_list`, `pm_mops`, the renderers, `Estimates`) belong
+to that module's section; each is listed here once, with its owner.
+
+### tinygrad: null/test_uop_graph.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_graph.py::TestTuplize::test_equality_is_identity | structural order is zero exactly on equal nodes, and ignores tags | `O › compare_structure › is zero exactly on equal graphs, when untagged`; `O › compare_structure › ignores tags` |
+| tinygrad: null/test_uop_graph.py::TestTuplize::test_deep_shared_subgraphs | deep graphs differing at the bottom order both ways, quickly | `O › compare_structure › tells apart deep graphs that differ only at the bottom` |
+| tinygrad: null/test_uop_graph.py::TestTuplize::test_does_not_retain_uops | the cached tuple does not keep nodes alive | `O › identity › a node nothing references is collected`; `compare_structure` caches nothing |
+| tinygrad: null/test_uop_graph.py::TestGraphRewriteConst (2 tests) | `sym` folds an index of a constant stack and a sum of stacks | Symbolic's section (`sym`); the index fold at construction is `O › kernel nodes › an index of a stack by a constant is the element` |
+| tinygrad: null/test_uop_graph.py::TestModularWraparound (6 tests, xfail) | `simplify` folds constants modulo the width | Symbolic's section (`simplify` with `symbolic`); the wrapping itself is `O › exec_alu › exec_alu_values.golden` |
+| tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_dedup | a rewrite keeps equal nodes shared | `O › graph_rewrite › keeps shared nodes shared` |
+| tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_no_dedup_args (xfail) | a node inside a variable's bounds | dropped: a variable's bounds are values (`Dtype.value`), so a node cannot be one |
+| tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_simple, test_depth_2_late, test_double, test_triple, test_diamond, test_magic_4 | `simple_pm` folds to a fixed point | `O › graph_rewrite › folds to a fixed point` |
+| tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_depth_2_fold | a rule's result is rewritten in turn | `O › graph_rewrite › rewrites a node's result in turn` |
+| tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_commutative_work, test_consts_go_last_right_away, test_consts_go_last | `simplify` orders operands | Symbolic's section |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_where_same_fold, test_where_const_fold, test_depth_2_const_fold | `simplify` folds selections and sums | Symbolic's section |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_const_cast, test_cast_alu_fold, test_double_cast_fold, test_bitcast_to_same_dtype_fold, test_sub_with_cast_folds, test_where_on_gated_load_fold, test_where_on_gated_load_folds_swapped_branches, test_where_on_gated_load_with_cast, test_where_on_casted_gated_load_extra_cond, test_where_on_casted_gated_load_extra_cond_swapped, test_where_in_store_becomes_gate, test_load_idx_becomes_int, test_load_idx_no_math_on_loaded, test_fold_gated_load, test_fold_gated_load_local, test_fold_gated_store | the codegen pipeline folds kernels | Codegen's section (`full_rewrite`, `to_uops_list`) |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_devectorize_derives_lane_dtype, test_devectorize_zero_sized_scalar_expand | devectorizing | Codegen's section |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_gep_vec_const_fold | an index of a stack by a constant is its element | `O › kernel nodes › an index of a stack by a constant is the element`; `O › graphs › kernel_nodes.golden` |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_after_end | an end closes its range, and an after on it too | `O › ranges › an end closes its ranges, and an after ordered on it too` |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_external_call_preserves_ranges | a call to a function keeps its arguments' ranges | `O › ranges › a call to an external function keeps its arguments' ranges` |
+| tinygrad: null/test_uop_graph.py::TestUOpGraph::test_backedge_preserves_outer_range | a backedge closes its loop only | `O › ranges › a backedge closes its loop and keeps the condition's other ranges` |
+| tinygrad: null/test_uop_graph.py::TestReduceCollapse (2 tests) | `pm_reduce_collapse`, `full_rewrite` | Codegen's section |
+| tinygrad: null/test_uop_graph.py::TestMovementOps (2 tests) | `pm_mops` folds reshapes into indices | Schedule.Prepare's section |
+| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | Schedule.Rangeify's section; `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
+| tinygrad: null/test_uop_graph.py::TestUOpTags::test_inc_by_one | a tag makes a rewrite apply once, and removing tags reopens it | `O › graph_rewrite › tags let a rewrite apply once` (it checks the graphs, since folding the sums is `simplify`'s) |
+| tinygrad: null/test_uop_graph.py::TestUOpGetItem (18 tests) | `UOp.__getitem__` | dropped: `__getitem__` is not ported (README exclusions); its shrink, permute and index are `O › graphs › movement.golden` and `O › graphs › kernel_nodes.golden` |
+| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_row, test_broadcast_col, test_broadcast_lower_dim, test_broadcast_scalar, test_broadcast_symbolic_same_shape | elementwise operations broadcast shapes | `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › shapes › an elementwise operation keeps a symbolic shape` (L3) |
+| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_axes | `broadcast_axes`, symbolic sizes, rejection | `O › shapes › broadcast_axes is the axes broadcasting adds or expands`; `O › shapes › broadcast_axes compares symbolic sizes` (L3) |
+
+### tinygrad: null/test_pattern_matcher.py, test_rewrite_bottom_up_gate.py, test_graph_rewrite.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_simple_match | a constant pattern with a type | `O › Upat › matches a constant of a type` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_upat_any | `UPat.any` tries each alternative | `O › Upat › any matches through any of its alternatives` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_minimum_len | `allow_any_len` takes more sources, not fewer | `O › Upat › allow_any_len takes more sources, never fewer` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_match_sz_0 (skipped) | a rule with a closure | `O › Pattern_matcher › rule_ctx reads the context`: OCaml rules are closures, so tinygrad's skip reason is gone |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_match_sz_0_ctx | a rule reads a context, and an empty source list matches exactly | `O › Pattern_matcher › rule_ctx reads the context` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_uop | one operation | `O › Upat › matches an operation, and no other` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_uop_set | a set of operations | `O › Upat › matches any operation of a set` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_arg | arguments compare as numbers | `O › Upat › matches an argument as a number: 0, 0.0 and false are equal` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_filter_arg | a rule filters on its sources | `O › Upat › the sources of a rule filter it` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_dup_name | a name used twice | `O › Upat › a name used twice matches one node` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_dtype, test_dtype_set | one type, several types | `O › Upat › matches a type among several` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_src_one | ordered sources, exact count | `O › Upat › src matches the sources in order, and exactly as many` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_src_permutations | sources in any order | `O › Upat › perm matches the sources in any order` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_src_repeat | a repeated source pattern | `O › Upat › each matches every source` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_allow_len | `allow_any_len` | `O › Upat › allow_any_len takes more sources, never fewer` |
+| tinygrad: null/test_pattern_matcher.py::TestPatternMatcher::test_deep_src_permutations | nested permutations | `O › Upat › permutations nest` |
+| tinygrad: null/test_rewrite_bottom_up_gate.py::TestBottomUpGate (2 tests) | a gate keeps the node and skips its sources | `O › graph_rewrite › a gate keeps a bottom-up node and leaves its sources unvisited` |
+| tinygrad: null/test_graph_rewrite.py::TestModuloAndDivisionFolding::test_graph_rewrite_div_folding_bug | `full_rewrite` of a stack comparison | Codegen's section |
+| tinygrad: null/test_graph_rewrite.py::TestEdgeCasesAndSpecialOperations::test_full_graph_rewrite_transcendental_edge_cases | log2 of -1 is NaN, 1/0 is +inf, folded by `full_rewrite` | Codegen's section; the values are `O › exec_alu › exec_alu_values.golden` (op=Ops.LOG2, op=Ops.RECIPROCAL) |
+| tinygrad: null/test_graph_rewrite.py::TestGEPAndVectorizeRewrite (3 tests) | index and stack folding by `full_rewrite` | Codegen's section; the construction-time fold is `O › kernel nodes › an index of a stack by a constant is the element` |
+| tinygrad: null/test_graph_rewrite.py::TestBottomUpRewrite::test_const_folding | bottom-up and top-down reach the same fold with `symbolic_simple` | Symbolic's section; the law on this module's own rules is `O › fixed points › bottom-up reaches the same fixed point on these rules` |
+| tinygrad: null/test_graph_rewrite.py::TestSubstitute::test_simple, test_double, test_diamond | substitution everywhere | `O › substitute › replaces a node wherever it is` |
+| tinygrad: null/test_graph_rewrite.py::TestSubstitute::test_sin, test_sin_to_sqrt, test_double_sin_to_sqrt | the node nearest the root is replaced first | `O › substitute › replaces the node nearest the root first` |
+| tinygrad: null/test_graph_rewrite.py::TestSubstitute::test_tagged_replace | a rebuilt node keeps its tag | `O › substitute › keeps a rebuilt node's tag` |
+| tinygrad: null/test_graph_rewrite.py::TestRecurse::test_no_inf_loop, test_no_inf_loop_bottom_up | a rule that returns its node declines | `O › graph_rewrite › a rule that returns its node declines, whatever the direction`; the `TrackedPatternMatcher` half is dropped: match tracking is not ported (README exclusions) |
+| tinygrad: null/test_graph_rewrite.py::TestRecurse::test_inf_loop, test_inf_loop_bottom_up | a rule pair that bounces is rejected | `O › graph_rewrite › rejects rules that never settle, whatever the direction` |
+| tinygrad: null/test_graph_rewrite.py::TestRecurse::test_self_referential_replacement, test_indirect_rewrite_dependency_cycle | a replacement that depends on itself is rejected | `O › graph_rewrite › rejects a replacement that depends on the node it replaces` (the message's `SIN@`/`SQRT@` labels are Python ids, not ported) |
+| tinygrad: null/test_graph_rewrite.py::TestRecurse::test_self_referential_call_argument | a call whose argument is the node it replaces | `O › graph_rewrite › rejects a call whose argument depends on the call` |
+| tinygrad: null/test_graph_rewrite.py::TestCallRewrite::test_wrap_node_in_call | a node becomes a call holding it, in every mode | `O › calls › a node can become a call that holds it` |
+| tinygrad: null/test_graph_rewrite.py::TestCallRewrite::test_body_shared_with_argument | a body is entered only with `enter_calls` | `O › calls › a body is rewritten only with enter_calls, its arguments always` |
+| tinygrad: null/test_graph_rewrite.py::TestCallRewrite::test_body_shared_with_sibling | a sibling of the body is rewritten, the body is not | `O › calls › a body shared with a sibling is left alone, the sibling rewritten` |
+| tinygrad: null/test_graph_rewrite.py::TestBidirectional::test_simple | `bpm` visits before the sources, `pm` after | `O › graph_rewrite › bpm rewrites before the sources and the matcher after them` |
+| tinygrad: null/test_graph_rewrite.py::TestStopEarly::test_stop_early | `extra_pm` never enters a replacement | `O › substitute › rewrites with extra_pm too, never inside a replacement` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_simple_substitute, test_walk_topdown_rewrites_children, test_walk_topdown_diamond | a top-down walk substitutes | `O › walk › top-down, substitutes once` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_does_not_traverse_into_replacement | top-down walk against the greedy rewrite | `O › walk › top-down, does not enter a replacement` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_no_fixed_point | a bouncing rule applies once | `O › walk › top-down, applies a bouncing rule once`; `O › graph_rewrite › rejects rules that never settle, whatever the direction` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_children_rewritten_before_parent | sources first | `O › walk › top-down, rewrites the sources before the rebuilt node` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_self_referential_replacement | a replacement holding its node | `O › walk › top-down, accepts a replacement that holds the replaced node` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_topdown_visit_order | post-order | `O › walk › top-down, visits after the sources` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bottomup_simple_substitute, test_walk_bottomup_does_not_traverse_into_replacement, test_walk_bottomup_unmatched_falls_through_to_children | a bottom-up walk | `O › walk › bottom-up, substitutes once and never enters a replacement` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bottomup_parent_match_skips_children | a matched node's sources are skipped | `O › walk › bottom-up, a matched node's sources are never visited` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bottomup_no_fixed_point | a bouncing rule applies once | `O › walk › bottom-up, applies a bouncing rule once` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bottomup_visit_order | pre-order | `O › walk › bottom-up, visits before the sources` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bidirectional_visit_order | `bpm` pre-order, `pm` post-order | `O › walk › both ways, bpm visits before the sources and the matcher after` |
+| tinygrad: null/test_graph_rewrite.py::TestWalkRewrite::test_walk_bidirectional_bpm_short_circuits | a `bpm` match skips the node's `pm` | `O › walk › both ways, a bpm match skips the node's sources and its matcher` |
+
+### tinygrad: null/test_uop_repr.py, test_uop_resolve.py, test_uop_vmin_vmax.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_repr.py::TestUOpRepr (4 tests) | `repr` of a node, with `x0:=` sharing | `O › printing › pretty.golden` (every node of the tests, and tags, kernels, ranges and typed constants) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_simple_int, test_int_add, test_rfloordiv, and the integer half of test_weak_const | `int()` of a typed, weak or summed integer | `O › resolve › to_int, to_float and to_bool read a literal`; `O › resolve › to_int reads a typed constant and an integer sum of constants` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_weak_const (float half) | `float()` of a weak float | `O › resolve › to_int, to_float and to_bool read a literal` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_rtruediv, test_float_direct, test_ssimplify | float and remainder folding | Symbolic's section: without `symbolic` a float sum has no single-valued bounds |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_lt, test_leq, test_ne, test_ne_f, test_ngt | comparisons of constants | `O › resolve › to_bool decides comparisons of constants` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_ambiguous_less_than | `resolve` falls back to its default | `O › resolve › resolve takes the default when the comparison is undecided` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_var_cmp_t, test_var_cmp_t2, test_var_cmp_f, test_var_cmp_f2, test_max | bounds decide a comparison | `O › resolve › to_bool decides a comparison the bounds decide` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_true, test_and_false | an absorbing boolean decides | `O › resolve › to_bool decides a disjunction with true and a conjunction with false` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_false, test_and_true, test_x_lt_xp1, test_var_cmp_range, test_var_cmp_assert | an undecided condition raises | `O › resolve › to_bool rejects a condition with two possible values` (L3) |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_x_lt_x, test_plus_ordering_lt | `simplify` folds `x < x` and `i+j < j+i` | Symbolic's section |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_constant | a constant | `O › bounds › a constant is its own bounds` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_copy | a copy and a contiguous pass bounds through | `O › bounds › a copy and a contiguous keep their source's bounds` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_cmpne | `!=` of constants | `O › bounds › a comparison of constants is decided` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_addition_with_variable, test_vmin_vmax_subtraction_with_variable, test_vmin_vmax_multiplication_with_variable, test_vmin_vmax_with_negative_multiplication, test_vmin_vmax_with_negative_multiplication2 | interval arithmetic | `O › bounds › a variable offset or scaled moves its bounds`; `O › bounds › binary_bounds.golden` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_and_with_variable, test_vmin_vmax_and_with_negative_variable | masks | `O › bounds › a mask bounds a variable by the mask`; `O › bounds › binary_bounds.golden` (op=Ops.AND) |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_variable_inside_special | a hardware index | `O › bounds › a hardware index counts from 0 to below its end` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_multiplication_0_inf | `0.0 * load` is unbounded, not NaN | `O › bounds › a product with an unbounded float is unbounded, never NaN` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_nested_min_max | max then min | `O › bounds › maximum then minimum clamps` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_where | selections | `O › bounds › a selection spans both branches` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_shl, test_vmin_vmax_shr | shifts by a constant | `O › bounds › a shift by a constant shifts the bounds`; `O › bounds › binary_bounds.golden` (op=Ops.SHL, Ops.SHR) |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_cast_unsigned, test_vmin_vmax_cast, test_vmin_vmax_cast_float_to_int, test_vmin_vmax_cast_int_to_float_grid | casts keep the part that fits, rounded | `O › bounds › cast_bounds.golden`; `O › bounds › a variable cast to float, bool or unsigned`; `O › bounds › a typed constant outside its type has the type's bounds`; `O › bounds › a NaN constant has its type's bounds`; the `simplify` of `x != int(x)` is Symbolic's |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_xor_neg1 | `x ^ -1` | `O › bounds › binary_bounds.golden` (op=Ops.XOR b_lo=-1) |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_invalid | Invalid has no single value | `O › bounds › Invalid has no single value` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_invalid_vconst | a stack with Invalid lanes | `O › bounds › a stack's bounds span its values, Invalid left out` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxDivMod (7 tests) | division and remainder, constant and symbolic divisors, empty numerators | `O › bounds › binary_bounds.golden` (op=Ops.FLOORDIV, Ops.FLOORMOD, Ops.CDIV, Ops.CMOD); `O › bounds › an empty range divides to 0` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxVConst (5 tests) | constant stacks of integers, floats, booleans | `O › bounds › a stack's bounds span its values, Invalid left out` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxVConst::test_vmin_vmax_vector_with_gep | a load of an int buffer divided by 32 | `O › bounds › a load of an integer buffer has its type's bounds` |
+| tinygrad: null/test_uop_vmin_vmax.py::TestConstFactor (7 tests; 1 skipped) | `const_factor` | `O › divisibility › const_factor is a known divisor`; the skipped `(x*3)*5` case is dropped: tinygrad skips it as broken |
+| tinygrad: null/test_uop_vmin_vmax.py::TestDivides (7 tests; 1 skipped) | `divides` | `O › divisibility › divides divides a known multiple`; the skipped `(x*6)/6` case is dropped: tinygrad skips it as broken |
+
+### tinygrad: null/test_uops.py, test_uops_stats.py, runtime/test_uops.py
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_broadcastable_promotion, test_same_dtype_fast_path | broadcastable operations promote | `O › data types › dtypes_of.golden`; `O › data types › promo_dtype is the shared type, or the least upper one` |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_where_promotion | a selection promotes its branches | `O › data types › dtypes_of.golden` (op=Ops.WHERE); `O › graphs › validity.golden` |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_const_dtype_from_value | a constant's type comes from its value | `O › data types › a constant's data type is its literal's`; the tuple argument is dropped: `arg` has no tuple constant |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_const_default_dtype_is_derived | the same under `SPEC=2` | `O › data types › a constant's data type is its literal's`; the `SPEC=2` check is Spec's section |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_invalid_dtype_and_consumers | Invalid is boolean, ignores the type, and stays last | `O › constants › Invalid ignores the type`; `O › graphs › typed_constants.golden`; `O › graphs › stacks.golden`; `Tensor.invalids` is dropped (Tensor surface); `type_verify` is Spec's; `pm_remove_invalid` is Symbolic's |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_remove_invalid_stack_lanes | `pm_remove_invalid` | Symbolic's section |
+| tinygrad: null/test_uops.py::TestMemoryCoalescing, TestLowerIndexDtype (3 tests) | coalescing, `pm_lower_weak` | Codegen's section and Uop_weak's section |
+| tinygrad: null/test_uops.py::TestSafeCast (3 tests) | `simplify` removes casts | Symbolic's section |
+| tinygrad: null/test_uops.py::TestConstFloatEq::test_nan_eq_ne_agree, test_invalid_eq_defers_to_reflected | Python's `==`/`!=` protocol on constants | dropped: constants compare with `Dtype.equal_const`, which Dtype's section tests |
+| tinygrad: null/test_uops.py::TestConstFloatEq::test_matchers_agree_on_nan | a NaN argument matches a NaN constant | `O › Upat › a NaN argument matches a NaN constant`; the compiled matcher is dropped (the pattern compiler is not ported) |
+| tinygrad: null/test_uops.py::TestExecALU::test_sqrt | sqrt of 0 | `O › exec_alu › sqrt of zero is zero` |
+| tinygrad: null/test_uops.py::TestExecALU::test_trunc_nonfinite, test_invalid_poison, test_div, test_floordiv, test_floormod, test_recip, test_bool_cmplt, test_bool_cmpne, test_bool_where, test_overflow | `exec_alu` values, truncation, Invalid | `O › exec_alu › exec_alu_values.golden` (every operand of these tests is a row); `O › exec_alu › Invalid poisons every binary operation` |
+| tinygrad: null/test_uops.py::TestGatedStoreRewrite (3 tests), TestFastIdiv (13 tests) | gated stores, fast division | Codegen's section |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_compare_alu_same_src_different_arg (skipped) | nodes are ordered by `<` | dropped: tinygrad skips it; `O › identity › compare is a total order that agrees with equal` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `O › variables › variables are sorted by name, with a device range's device number` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_const_factor | `const_factor` of a hardware index | `O › divisibility › const_factor is a known divisor` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_cmp_self_folding_multidim | `simplify` folds `x < x` | Symbolic's section |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_replace | `replace` changes a field, and rejects an unknown one | `O › identity › replace is the node itself when nothing changes`; the unknown field is dropped: labelled arguments make it a type error |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_const_zero_neg_zero_different | 0.0 and -0.0 are different nodes | `O › identity › zero and negative zero are different nodes` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_const_nan_same | NaN constants are one node | `O › identity › every NaN is the same node` |
+| tinygrad: null/test_uops.py::TestUOpStr (3 tests) | `str` is compact and `eval` reads it back | Render's section; `eval` is dropped (Python source) |
+| tinygrad: null/test_uops.py::TestUPatHelpers::test_location | a pattern records its source location | dropped: `UPat.location` serves match statistics, not ported (README exclusions) |
+| tinygrad: null/test_uops.py::TestUopsObject::test_timing | building 10k constants | dropped: a timing print |
+| tinygrad: null/test_uops.py::TestUopsObject::test_nested | the device of a 10k-deep graph | `O › several devices › the device of a deep graph needs no deep recursion` |
+| tinygrad: null/test_uops.py::TestUOpRender (7 tests) | `render` | Render's section |
+| tinygrad: null/test_uops.py::TestContiguousViewOffset (7 tests) | `contiguous_view_offset` | Schedule.Prepare's section: `contiguous_view` is one of its functions (D4) |
+| tinygrad: null/test_uops.py::TestBitcastBufferView, TestLocalAccess, TestAssembly | renderer output | the renderers' sections |
+| tinygrad: null/test_uops_stats.py (all) | kernel cost estimates | Renderer's section (`Estimates.from_uops`) and the engine's (`estimate_uop`) |
+| tinygrad: runtime/test_uops.py::TestFloatUOps, TestNonFloatUOps, TestBoolUOps | a device computes each operation as Python does | the Python side is `O › exec_alu › exec_alu_values.golden`; the device side is an Exec test of the renderer layers |
+| tinygrad: runtime/test_uops.py::TestBitcastBufferView, TestLocalAccess, TestZeroRange, TestUOpPrograms | kernels run on a device | Exec tests of the renderer layers |
+
+### L2: null/test_tensor_uop_mixin.py, test_tensor_uop_representation.py
+
+A `Tensor` and a UOp built by the same calls must be the same node. tolk.next
+has no `Tensor`, so each kept method's UOp graph is a golden instead.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_mul_float_int, test_mul_bool_int | mixed types promote with a cast | `O › elementwise › a binary operation promotes its operands to their least upper type`; `UOp.arange` is dropped (not kept) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_add_scalar_float_on_int | a float literal on an int | `O › graphs › weak_promotion.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_tensor_by_tensor, test_div_int_by_int, test_div_broadcast_tensor_by_tensor | true division | `O › graphs › division.golden`; `O › graphs › constant_division.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_sum_by_sum, test_isclose | `sum`, `isclose` | dropped: not kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_floordiv_int, test_floordiv_float, test_rfloordiv_int, test_mod_int, test_mod_float, test_div_trunc_int, test_div_trunc_float, test_fmod_int, test_fmod_float, test_floordiv_bool, test_mod_bool, test_fmod_bool | rounding divisions by type | `O › graphs › constant_division.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone | `clone` | `O › graphs › clones.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone_deviceless_const | a clone of a constant goes to the default device | dropped: there is no default device (RFC 0010 Law 9); `O › storage › a clone of a weak value commits its type` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpGradient | `gradient` | dropped: rune owns differentiation |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpGetitem (all) | `__getitem__` | dropped: not ported (README exclusions) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCumalu, TestTensorUOpCumMinMax, TestTensorUOpArgMinMax, TestTensorUOpSequential, TestTensorUOpOneHot, TestTensorUOpSort, TestTensorUOpAllclose, TestTensorUOpRand, TestTensorUOpGather, TestTensorUOpInterpolate, TestTensorUOpLoss, TestTensorUOpScatter, TestTensorUOpScatterReduce, TestTensorUOpMaskedSelect, TestTensorUOpNonzero, TestTensorUOpPool, TestTensorUOpConv2d, TestTensorUOpHashing, TestTensorUOpEinsum, TestTensorUOpSoftmax, TestTensorUOpQR, TestTensorUOpSVD | the other `Tensor` methods | dropped: not kept (plan §3, L2); rune's lowering |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCast::test_cast_str_dtype, TestTensorUOpBitcast::test_bitcast_str_dtype | a type named by a string | dropped: types are `Dtype.t` values; reading a name is `Dtype.of_string` (Dtype's section) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_dtype | a bitcast to the same type is the node | `O › elementwise › a cast or bitcast to the node's own type is the node` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_and_diff_size | bitcasts that keep, widen or narrow the element | `O › graphs › bitcasts.golden`; `O › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCat (4 tests) | `cat` along each axis, three inputs, a negative axis | `O › graphs › concatenation.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_flat, test_pad_flat_negative, test_pad_grouped_none | constant padding, negative, `None` axes | `O › graphs › padding.golden` (the flat spelling is `Tensor` syntax; the interface takes one pair per axis) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_circular, test_pad_circular_zero_after, test_pad_reflect, test_pad_reflect_negative, test_pad_replicate, test_pad_replicate_negative | other padding modes | dropped: only constant padding is kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_dim0, test_stack_dim1, test_stack_3tensors, test_stack_new_last, test_stack_mixed_dtype | `stack` | `O › graphs › stacks.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_index_dtype | a stack of weak constants | `O › graphs › bitcasts.golden` (its last node) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_dtype_string | a type named by a string | dropped: types are values |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_dtype_override | `empty_like` with a type is storage | `O › graphs › clones.golden`; `O › several devices › empty_like on one device takes a sharded value's whole shape` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device | a sharded value's `empty_like` on one device | `O › several devices › empty_like on one device takes a sharded value's whole shape`; the singleton-tuple spelling is dropped: canonicalizing devices is Device's (L6) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: canonicalizing devices is Device's (L6) |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_empty, test_empty_like | `empty`, `empty_like` | `O › graphs › clones.golden` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_full, test_full_kwargs, test_full_symbolic_fill, test_zeros, test_ones, test_invalids, test_arange, test_arange_empty, test_arange_step, test_linspace, test_linspace_one_step, test_eye, test_eye_rect, test_triu, test_triu_diagonal, test_tril, test_tril_diagonal | other creation methods | dropped: not kept (plan §3, L2) |
+| tinygrad: null/test_tensor_uop_representation.py (5 tests) | a realized `Tensor` is a BUFFER | dropped: realization is rune's (D3) |
+
+### old tolk: unit/uop/test_uop.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/uop/test_uop.ml full_width_scalar_bindings | int64 extremes bind, pass through `vals` and infer | `O › bounds › a constant at its type's edge has exact bounds`; `O › variables › bind binds a value within the range`; dropped for `vals` and `sym_infer`: variable values are OCaml ints, as the executor passes them |
+| old: unit/uop/test_uop.ml constants_preserve_operand_shape | `const_like` keeps shape and type | `O › constants › const_like expands to the node's shape, in its type`; `O › graphs › constants_like.golden` |
+| old: unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types, binary_argument_layout, incomplete_program_has_no_binary | `to_elf` and its argument layout | Device's section: `to_elf` becomes one of its functions (D4) |
+| old: unit/uop/test_uop.ml commutative_axes_use_lexical_argument_order | `simplify` orders ranges | Symbolic's section |
+| old: unit/uop/test_uop.ml ops_access, ops_tinygrad_order, group_algebra | operations and their groups | Op's section |
+| old: unit/uop/test_uop.ml hashcons_identity | equal constructions are one node | `O › identity › building a graph twice gives the same node` |
+| old: unit/uop/test_uop.ml hashcons_churn_compacts_dead_buckets, hashcons_resize_discards_retired_bucket_accounting | the old hash table's buckets | dropped: they test the old table's internals; the contract is `O › identity › a node nothing references is collected` |
+| old: unit/uop/test_uop.ml concurrent_buffer_slots | slots from several domains are distinct | `O › storage › unique_num never returns a number twice, from any domain`; `reserve_buffer_slots` is dropped (not in tinygrad) |
+| old: unit/uop/test_uop.ml add_has_two_srcs, infix_builds_mul | construction and operators | `O › graphs › subtraction.golden`; `O › elementwise › the operators are the named operations` |
+| old: unit/uop/test_uop.ml validity_accessors_accept_invalid_and_generic_values | `get_idx`/`get_valid` of Invalid and plain values | `O › graphs › validity.golden` |
+| old: unit/uop/test_uop.ml bool_folds_are_logical, mixed_folds_promote | `usum`/`uprod` on booleans, with promotion | `O › elementwise › usum and uprod fold booleans with or and and`; `O › elementwise › a weak constant takes the other operand's kind and stays weak`; `O › graphs › sums_and_products.golden` |
+| old: unit/uop/test_uop.ml param_arg_symbolic_constructor | a variable is a scalar parameter with bounds | `O › variables › a variable is a named scalar with a range`; `O › arguments › reprs.golden` (name=variable) |
+| old: unit/uop/test_uop.ml arithmetic_helpers_tinygrad_parity | the division operators, `const_factor`, `divides`, `divide_exact`, `gcd` | `O › graphs › division.golden`; `O › divisibility` (every test); `O › divisibility › a typed constant is a cast, whose divisors are not known` records tinygrad's answer for a typed constant, where the old suite divided it |
+| old: unit/uop/test_uop.ml bind_requires_concrete_value, bind_validates_range, unbind_splits_bound_variables | `bind`, `unbind` | `O › variables` (every test); the `as_bind` view is dropped: a bound variable is its argument's value |
+| old: unit/uop/test_uop.ml integer_bounds_parity | bounds of empty ranges, hardware indices, floor division and remainder, int64 and uint64 edges | `O › bounds › a hardware index counts from 0 to below its end`; `O › bounds › an empty range divides to 0`; `O › bounds › binary_bounds.golden`; `O › bounds › a constant at its type's edge has exact bounds` |
+| old: unit/uop/test_uop.ml wrapping_integer_bounds, unsigned_arithmetic_bounds_cover_emission | bounds widen to the type when arithmetic may wrap | dropped: tinygrad's bounds do not wrap; overflow is undefined. The new contract is `O › bounds › bounds hold every value the expression takes` and the exact rows of `O › bounds › binary_bounds.golden` (dtype=dtypes.char, dtypes.uchar, dtypes.uint) |
+| old: unit/uop/test_uop.ml cast_bounds | casts keep what fits | `O › bounds › cast_bounds.golden` |
+| old: unit/uop/test_uop.ml flat_storage_parameters | a parameter is flat storage viewed as its shape | `O › graphs › storage.golden`; `O › graphs › symbolic_storage` (L3); `O › shapes › max_shape takes a symbolic size's greatest value` (L3); the image parameter is dropped (images are not ported) |
+| old: unit/uop/test_uop.ml backward_slice_tracks_shared_dependencies | `backward_slice` | `O › graphs › backward_slice is the reached nodes without the root or call bodies` |
+| old: unit/uop/test_uop.ml allocations_preserve_shape_and_address_space | `alloc` keeps shape, type and address space | `O › graphs › storage.golden`; `O › graphs › storage_like.golden`; the rejection of a local `alloc` with a device is dropped: tinygrad checks it in `placeholder` only (`O › storage › placeholder rejects a device for local storage`) |
+| old: unit/uop/test_uop.ml placeholder_checks_shape_product, max_numel_checks_host_range, max_numel_handles_zero_after_large_dimensions | sizes past the largest int, and empty axes | `O › shapes › placeholder rejects a size past the largest int (assumed: the interface is silent)`; `O › shapes › max_numel is 0 when an axis is empty` |
+| old: unit/uop/test_uop.ml movement_dimensions_do_not_wrap | a shrink past the largest int is rejected | `O › shapes › a shrink past the largest int is rejected, not wrapped` |
+| old: unit/uop/test_uop.ml bitcast_dimensions_remain_exact_until_host_conversion | a byte count past the largest int | dropped: sizes are OCaml ints; see `O › shapes › placeholder rejects a size past the largest int (assumed: the interface is silent)` |
+| old: unit/uop/test_uop.ml exact_symbolic_bounds | bounds are exact at any size; NaN bounds; a fractional cast | `O › bounds › bounds are exact integers, whatever their size`; `O › bounds › a NaN constant has its type's bounds`; `O › bounds › a typed constant outside its type has the type's bounds`; `parse_valid` is Symbolic's section |
+| old: unit/uop/test_uop.ml stack_stage_slice_constructors, stack_promotes_all_operands, stack_prepends_leading_dim | stacks and stages | `O › graphs › stacks.golden`; `O › shapes › a stack prepends its length`; `O › shapes › a stage puts its ranges' sizes in front` |
+| old: unit/uop/test_uop.ml uop_constructor_parity_shortcuts | shortcuts that return the node, an index of a stack | `O › elementwise › a cast or bitcast to the node's own type is the node`; `O › kernel nodes › an index of a stack by a constant is the element`; `O › kernel nodes › an index of a stack by a negative constant counts from the end, as a Python tuple`; `O › kernel nodes › an end of no ranges, and an after of nothing, are the node`; `O › elementwise › contiguous stages a placed value, and is the node otherwise`; the rendered strings are Render's |
+| old: unit/uop/test_uop.ml const_scalar_payload_constructors | typed constants, NaN, -0.0, Invalid | `O › graphs › typed_constants.golden`; `O › identity › every NaN is the same node`; `O › identity › zero and negative zero are different nodes`; `O › constants › Invalid ignores the type` |
+| old: unit/uop/test_uop.ml call_constructor_parity | `call` and `call_with_outputs` | `O › calls › call rejects a body that computes a value`; `O › calls › call rejects a range leaking out of its body, but a device range`; `O › graphs › outputs.golden` |
+| old: unit/uop/test_uop.ml deviceless_partition_selection | an MSTACK of unplaced lanes | dropped: a placement names its devices (`device` has no absent lane), as tinygrad's `device` returns a tuple of strings |
+| old: unit/uop/test_uop.ml property_helpers_parity | sharding axis, shard shapes, bounds, movement arguments, stages, storage views, call output shapes | `O › several devices` (axis, sharding, shard shapes and bounds tests); `O › movement › marg reads each movement's argument and rejects other nodes`; `O › storage › a stage is its own base and storage, without buffer identity`; `O › storage › buf_uop is the storage a node accesses`; `O › graphs › symbolic_outputs` (L3) (a call output's shape takes the call's argument); `O › graphs › constants_like.golden` |
+| old: unit/uop/test_uop.ml reduce_layouts | tensor and kernel reductions | `O › graphs › reductions.golden`; `O › graphs › kernel_nodes.golden` |
+| old: unit/uop/test_uop.ml binary_and_getaddr_dtypes | BINARY is bytes, GETADDR is uint64 | `O › shapes › binary code is a vector of its bytes`; `O › graphs › getaddrs.golden` |
+| old: unit/uop/test_uop.ml void_and_value_op_shapes | effects have no shape, typed instructions are scalars | `O › shapes › shape_opt is None for effects and program structure`; `O › shapes › a typed instruction is a scalar, and a custom node broadcasts its sources` |
+| old: unit/uop/test_uop.ml prepend_expand | an expand prepends | `O › shapes › an expand prepends its sizes` |
+| old: unit/uop/test_uop.ml bitcast_size_change | a bitcast rescales the last axis | `O › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
+| old: unit/uop/test_uop.ml child_ops_reports_child_op_set | the set of a node's source operations | dropped: it is the matcher's private early-reject memo; its behaviour is `O › Pattern_matcher › early_reject skips a rule unless the sources hold its operations` |
+| old: unit/uop/test_uop.ml property_caches_release_nodes | memoized properties do not keep nodes alive | `O › identity › a node nothing references is collected` |
+| old: unit/uop/test_uop.ml exec_alu_folds_and_absorbs_invalids, exec_alu_exact_scalars, scalar_width_boundaries, exec_alu_weak_intermediates, exec_alu_trunc_keeps_nonfinite | `exec_alu` | `O › exec_alu › exec_alu_values.golden`; `O › exec_alu › truncating is Dtype.truncate of the exact result`; `O › exec_alu › Invalid poisons every binary operation` |
+| old: unit/uop/test_uop.ml exec_alu_float_division | FDIV folds with IEEE values | dropped: tinygrad's `exec_alu` has no FDIV (`O › exec_alu › exec_alu_values.golden` row op=Ops.FDIV raises); division folds through RECIPROCAL, whose rows hold the IEEE values |
+| old: unit/uop/test_uop.ml scalar_float_to_weak_integer | a float becomes a weak integer exactly | Dtype's section (`Dtype.const`) |
+| old: unit/uop/test_uop.ml alu_unary_promotes_transcendentals | transcendentals widen to a float | `O › data types › dtypes_of.golden` (op=Ops.SQRT, Ops.EXP2, Ops.RECIPROCAL); the rejection of a binary operation is dropped: `alu` applies an operation as given |
+| old: unit/uop/test_uop.ml division_promotes_integer_operands | FDIV of integers is a float | `O › data types › dtypes_of.golden` (op=Ops.FDIV); its folding is Symbolic's |
+| old: unit/uop/test_uop.ml runtime_realization_state_parity | realized buffers | dropped: realization is rune's (D3) |
+| old: unit/uop/test_uop.ml semantic_tag_and_side_metadata | a tag is identity, not in the key; metadata aside | `O › identity › a tag is part of the node`; `O › key › ignores tags`; metadata is dropped (not ported) |
+| old: unit/uop/test_uop.ml info_function_names_follow_tinygrad | kernel function names | `O › arguments › function_name is the name as an identifier`; the program's name is Renderer's |
+| old: unit/uop/test_uop.ml cache_info_semantic_key_parity | the key tells beams apart and ignores aux | `O › key › tells arguments apart`; `O › key › ignores a call's auxiliary data`; serialization is dropped (not ported) |
+| old: unit/uop/test_uop.ml remove_all_tags_parity | `remove_all_tags` | `O › module matchers › remove_all_tags removes every tag, and leaves an untagged graph alone`; metadata is dropped (not ported) |
+| old: unit/uop/test_uop.ml program_constructor_prefix_layouts | PROGRAM source layouts | Spec's section: the interface builds programs with `v` |
+| old: unit/uop/test_uop.ml program_info_from_sink_parity, program_launch_dims_floor_divmod | `ProgramInfo.from_sink`, launch sizes | `O › programs` (every test) |
+| old: unit/uop/test_uop.ml sym_infer_host_scalars | `sym_infer` on casts, bound variables, huge values | `O › sym_infer` (every test); values past the largest int are dropped: `sym_infer` returns an OCaml int |
+| old: unit/uop/test_uop.ml debug_prints_toposort_like_tinygrad, debug_prints_ranges_and_supplied_list_sources, debug_prints_tinygrad_dtype_reprs, debug_prints_float_and_special_args_like_tinygrad, debug_prints_direct_string_args_like_tinygrad, debug_prints_ranges_in_tinygrad_arg_order, debug_prints_reduce_arg_tuple, debug_listing_omits_tags | the listing `print_uops` writes | Render's section; the argument texts are `O › arguments › reprs.golden` |
+| old: unit/uop/test_uop.ml debug_prints_rich_args_dataclass_style | argument reprs | `O › arguments › reprs.golden`; `O › arguments › each payload formats as its argument does` |
+| old: unit/uop/test_uop.ml debug_print_ignores_side_metadata | metadata is not printed | dropped: metadata is not ported |
+| old: unit/uop/test_uop.ml upat_matches_add, upat_captures_operands | a pattern matches and names | `O › Upat › matches an operation, and no other`; `O › Upat › match_ names the nodes of each way a pattern matches` |
+| old: unit/uop/test_uop.ml pattern_matcher_rewrites | identity rules | `O › fixed points` (the rule `x + 0`) |
+| old: unit/uop/test_uop.ml upat_operator_surface_matches_tinygrad | `/`, `//`, `%`, `cdiv`, `cmod` patterns | `O › elementwise patterns › floor division and remainder operators match their operations`; `O › elementwise patterns › a binary pattern matches the node its operation builds` |
+| old: unit/uop/test_uop.ml pattern_matcher_context_rewrites | a rule reads a context | `O › Pattern_matcher › rule_ctx reads the context`; `O › Pattern_matcher › with_ctx joins a matcher without context to one with` |
+| old: unit/uop/test_uop.ml upat_matches_node_tags | tags narrow a pattern | `O › Upat › a tag narrows the nodes a pattern matches` |
+| old: unit/uop/test_uop.ml upat_numeric_literals | arguments compare exactly as numbers | `O › Upat › matches integers and floats exactly`; `O › Upat › matches an argument as a number: 0, 0.0 and false are equal` |
+| old: unit/uop/test_uop.ml pattern_matcher_rejects_opless_rules, context_matcher_rejects_opless_rules | a rule needs an operation | `O › Pattern_matcher › v rejects a rule whose pattern has no operation` |
+| old: unit/uop/test_uop.ml custom_early_reject_skips_callback | `early_reject` | `O › Pattern_matcher › early_reject skips a rule unless the sources hold its operations` |
+| old: unit/uop/test_uop.ml upat_dtype_matches_scalar_of_vector | a scalar type matches a vector | dropped: tinygrad HEAD has no vector types; `O › Upat › matches a type among several` |
+| old: unit/uop/test_uop.ml upat_explicit_source_patterns | fixed, permuted, repeated and alternative sources | `O › Upat › src matches the sources in order, and exactly as many`; `O › Upat › perm matches the sources in any order`; `O › Upat › each matches every source`; `O › Upat › allow_any_len takes more sources, never fewer`; `O › Upat › any matches through any of its alternatives` |
+| old: unit/uop/test_uop.ml upat_matches_reduce_arg | a reduce pattern's operation | `O › Upat › a reduce pattern names its operation in the argument` |
+| old: unit/uop/test_uop.ml upat_rejects_reserved_ctx_capture | the name `ctx` | `O › Upat › v rejects two ways of matching sources` (the name `ctx` is allowed, as tinygrad's interpreter allows it) |
+| old: unit/uop/test_uop.ml upat_permutation_matches_are_deduplicated | one naming per distinct match | dropped: tinygrad lists a naming per permutation of distinct source patterns; `O › Upat › match_ names the nodes of each way a pattern matches` |
+| old: unit/uop/test_uop.ml pattern_matcher_ignores_self_replacement | a rule returning its node declines | `O › Pattern_matcher › the first rule that matches and does not decline wins` |
+| old: unit/uop/test_uop.ml graph_rewrite_walk_does_not_enter_replacements | walk | `O › walk › top-down, does not enter a replacement` |
+| old: unit/uop/test_uop.ml graph_rewrite_bpm_runs_before_post_order | `bpm` then `pm` | `O › graph_rewrite › bpm rewrites before the sources and the matcher after them` |
+| old: unit/uop/test_uop.ml graph_rewrite_walk_bpm_short_circuits_replacement | a walk's `bpm` match skips the subtree | `O › walk › both ways, a bpm match skips the node's sources and its matcher` |
+| old: unit/uop/test_uop.ml graph_rewrite_bottom_up_gate_skips_post_and_children | a gate | `O › graph_rewrite › a gate keeps a bottom-up node and leaves its sources unvisited` |
+| old: unit/uop/test_uop.ml graph_rewrite_walk_bottom_up_gate_skips_post_and_children | a gate in a walk | dropped: tinygrad's walk does not catch the gate (question sent to the implementer) |
+| old: unit/uop/test_uop.ml graph_rewrite_enters_native_callee | a callee's dependencies are rewritten with the caller | dropped: tinygrad leaves call bodies alone without `enter_calls` (`O › calls › a body is rewritten only with enter_calls, its arguments always`) |
+| old: unit/uop/test_uop.ml graph_rewrite_skips_call_body_by_default | the body is left, the arguments rewritten | `O › calls › a body is rewritten only with enter_calls, its arguments always` |
+| old: unit/uop/test_uop.ml graph_rewrite_pins_call_body_on_every_path | a body reached another way is left alone | dropped: tinygrad rewrites a node reached outside the call; `O › calls › a body shared with a sibling is left alone, the sibling rewritten` |
+| old: unit/uop/test_uop.ml graph_rewrite_detects_bottom_up_cycles, graph_rewrite_detects_top_down_cycles | cycles are rejected | `O › graph_rewrite › rejects rules that never settle, whatever the direction` |
+| old: unit/uop/test_uop.ml after_closes_ranges_from_dependencies | an after closes what its dependencies end | `O › ranges › an end closes its ranges, and an after ordered on it too` |
+| old: unit/uop/test_uop.ml shared_ending_dependencies_have_bounded_allocations | ranges of shared barriers allocate little | dropped: an allocation measure of the old range cache; ranges are computed over a gated toposort (`O › shapes › the shape of a deep graph needs no deep recursion` shows the shape) |
+| old: unit/uop/test_uop.ml nested_ending_dependencies_preserve_live_range_order, range_order_and_membership_share_scope | ranges through nested ends, in order | `O › ranges › an after of a barrier over an end closes the ended range`; the order and `ranges_subset` are dropped: the interface leaves the order open, and `ranges_subset` is not in tinygrad |
+| old: unit/uop/test_uop.ml linear_closes_ranges | LINEAR closes its ranges | `O › ranges › a linear program closes the ranges it lays out` |
+| old: unit/uop/test_uop.ml resolve_decides_comparisons_from_bounds | `resolve` | `O › resolve › resolve takes the default when the comparison is undecided` (L3); `O › resolve › resolve rejects a node that is not boolean` |
+| old: unit/uop/test_uop.ml smax_smin_fold_when_bounds_decide | `smax`/`smin` | `O › resolve › smax and smin of integers are integers`; `O › resolve › smax and smin of a symbolic size bound it as max and min do` (L3); folding to a node is Symbolic's |
+| old: unit/uop/test_uop.ml sprod_simplifies | `sprod` | `O › Sint › prod multiplies from 1`; folding is Symbolic's |
+| old: unit/uop/test_uop.ml inferred_broadcast_shapes_are_checked, broadcast_shape_symbolic_and_raising | broadcasting | `O › shapes › broadcast_shape aligns right and keeps the size that is not 1`; `O › shapes › broadcast_shape rejects two sizes other than 1`; `O › shapes › an elementwise operation rejects sources that do not broadcast` |
+
+### old tolk: unit/uop/test_spec.ml, unit/uop/test_serialize.ml, unit/frontend/test_frontend.ml, unit/test_contiguous_view.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/uop/test_spec.ml "Where non-bool cond rejected", "Cmplt returns bool", "Stack derives child dtype", "Empty Stack void accepted" | the types construction derives | `O › data types › dtypes_of.golden`; `O › shapes › a stack prepends its length` |
+| old: unit/uop/test_spec.ml "Param without Param_arg rejected", "Buffer without Param_arg rejected" | storage needs a ParamArg | `O › data types › an operation whose type is its argument's needs that argument` |
+| old: unit/uop/test_spec.ml "Reduce op arg required", "Reduce rejects old Op arg" | a reduction's argument | dropped: `arg`'s `Reduce` constructor makes both unrepresentable |
+| old: unit/uop/test_spec.ml "call outputs reject invalid positions" | `output_pos` | `O › calls › call_with_outputs rejects output positions that do not ascend within the arguments` |
+| old: unit/uop/test_spec.ml "bind accepts a variable and constant", "bind accepts a 64-bit variable", "variable supplies the bound literal dtype" | `bind` | `O › variables › bind binds a value within the range`; `O › bounds › a constant at its type's edge has exact bounds` |
+| old: unit/uop/test_spec.ml "bind rejects a nonconstant value", "bind rejects a call parameter" | `bind` refuses a node or a parameter | dropped for the node: `bind` takes a value; `O › variables › bind rejects a bound variable, a value out of range, and a value off its multiple` rejects a parameter |
+| old: unit/uop/test_spec.ml "Movement validates shape contracts" | movements check their shapes | `O › shapes › a movement checks its argument against its source's shape` |
+| old: unit/uop/test_spec.ml (every other test) | the specification's verdicts | Spec's section |
+| old: unit/uop/test_serialize.ml (10 tests) | exporting and importing graphs | dropped: pickling is not ported (README exclusions); the graph format lives in test support |
+| old: unit/frontend/test_frontend.ml movement group (reshape, -1, same shape, size mismatch, expand, -1 axis, permute, negative axes, flip, pad, large padding, shrink, squeeze, flatten, unflatten) | movements on UOps | `O › graphs › movement.golden`; `O › graphs › expansion.golden`; `O › graphs › squeezes.golden`; `O › movement` (every test); unsqueeze, transpose, repeat, unfold and split are dropped (not kept, plan §3 L2) |
+| old: unit/frontend/test_frontend.ml broadcast group | `broadcast_shape`, broadcasting in arithmetic, a stretch is one expand permuted back | `O › shapes › broadcast_shape aligns right and keeps the size that is not 1`; `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › graphs › expansion.golden` |
+| old: unit/frontend/test_frontend.ml elementwise group (sub, div, neg, comparisons, eq, floordiv, mod, float div, int by float divisor, minimum, sqrt, where, promotion, const_like) | elementwise construction | `O › elementwise` (every test); `O › graphs › subtraction.golden`, `division.golden`, `constant_division.golden`, `comparisons.golden`, `extrema.golden`, `unary.golden`, `selection.golden`, `constants_like.golden`; relu is dropped (not kept) |
+| old: unit/frontend/test_frontend.ml dtype group (cast, same dtype, bitcast needs concrete types, element_size, weak contiguous) | casts and their checks | `O › elementwise › a cast or bitcast to the node's own type is the node`; `O › elementwise › a bitcast rejects a weak type on either side`; `O › elementwise › element_size is the type's size, and rejects a weak type`; `O › elementwise › contiguous stages a placed value, and is the node otherwise`; `is_floating_point` is dropped (not kept) |
+| old: unit/frontend/test_frontend.ml creation group ("a weak clone has a concrete dtype and fresh storage", "empty storage rejects weak dtypes", "numel checks concrete products...", "scalar const has empty shape") | clones, empty storage, numel | `O › storage › a clone of a weak value commits its type`; `O › storage › storage rejects a weak type`; `O › shapes › ndim, numel, max_shape and max_numel read the shape`; the rest of the group is dropped (Tensor registration, zeros, ones, full: not kept) |
+| old: unit/frontend/test_frontend.ml op group (cat, stack), pool group (shrink_to, pad_to), scan group (pad_constant) | kept methods | `O › graphs › concatenation.golden`; `O › graphs › stacks.golden`; `O › graphs › movement.golden`; `O › graphs › padding.golden`; the other tests of these groups are dropped (not kept) |
+| old: unit/frontend/test_frontend.ml elementwise2 group (pow, cdiv, fmod, lshift, rshift) | kept operations | `O › graphs › powers.golden`; `O › graphs › division.golden`; `O › graphs › bitwise.golden`; round, clamp, copysign, logaddexp, lerp, isnan and the other functions are dropped (not kept) |
+| old: unit/frontend/test_frontend.ml scalar operand dtype group ("narrow int keeps its width through an int-scalar op", "a literal does not widen the tensor it meets", "scalar constructors are weak") | weak literals | `O › graphs › weak_promotion.golden`; `O › elementwise › a weak constant takes the other operand's kind and stays weak`; the activation tests are dropped (not kept) |
+| old: unit/frontend/test_frontend.ml shape_memo group | a deep diamond's shape is cheap | `O › shapes › the shape of a deep graph needs no deep recursion` |
+| old: unit/frontend/test_frontend.ml reduce, index, logspace, creation2, pad_modes, scatter, select, sort, conv groups, and the rest of op, scan, pool | `Tensor` methods | dropped: not kept (plan §3, L2); rune's lowering |
+| old: unit/frontend/test_frontend.ml assignment sharding group | assigning to sharded tensors | dropped: the `Tensor` surface is rune's |
+| old: unit/test_contiguous_view.ml (17 tests) | contiguous views of storage | Schedule.Prepare's section: `contiguous_view` is one of its functions (D4) |
+
 ## Transcendental
 
 Outcomes are tests of the suite `Tolk_next.Transcendental`. The graph goldens

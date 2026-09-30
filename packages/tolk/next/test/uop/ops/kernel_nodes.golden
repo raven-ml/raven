@@ -1,0 +1,38 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+5 Ops.CONST dtypes.weakint [] 16
+6 Ops.RANGE dtypes.weakint [5] (0, AxisType.WEAK)
+7 Ops.INDEX dtypes.float [4, 6]
+8 Ops.LOAD dtypes.float [7]
+9 Ops.REDUCE dtypes.float [8, 6] (Ops.ADD, 0)
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.ADD dtypes.float [9, 10]
+12 Ops.CONST dtypes.weakint [] 2
+13 Ops.CMPLT dtypes.bool [2, 12]
+14 Ops.STORE dtypes.void [3, 11, 13]
+15 Ops.END dtypes.void [14, 6]
+16 Ops.AFTER dtypes.float [9, 14]
+17 Ops.BARRIER dtypes.void [14]
+18 Ops.NOOP dtypes.void []
+19 Ops.RANGE dtypes.void [18] (3, AxisType.WEAK)
+20 Ops.CONST dtypes.weakint [] 8
+21 Ops.CAST dtypes.int [20] dtypes.int
+22 Ops.RANGE dtypes.int [21] (2, AxisType.UPCAST)
+23 Ops.CONST dtypes.weakint [] 1
+24 Ops.RANGE dtypes.void [18] (1, AxisType.WEAK)
+25 Ops.CMPLT dtypes.bool [6, 12]
+26 Ops.BACKEDGE dtypes.void [23, 24, 25]
+27 Ops.CONST dtypes.weakint [] 3
+28 Ops.INDEX dtypes.float [4, 27]
+29 Ops.CAST dtypes.int [12] dtypes.int
+30 Ops.CAST dtypes.int [23] dtypes.int
+31 Ops.CAST dtypes.int [27] dtypes.int
+32 Ops.STACK dtypes.int [30, 29, 31]
+33 Ops.INDEX dtypes.int [32, 30]
+34 Ops.GROUP dtypes.void [14, 14]
+35 Ops.SINK dtypes.void [15, 14, 16, 9, 17, 19, 22, 26, 28, 29, 33, 34, 14]
+

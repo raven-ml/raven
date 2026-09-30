@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+axis_type	letter	color	position
+AxisType.DEVICE	d	green	-2
+AxisType.GLOBAL	g	blue	0
+AxisType.WARP	w	CYAN	1
+AxisType.LOCAL	l	cyan	2
+AxisType.WEAK	L	WHITE	-1
+AxisType.REDUCE	R	red	4
+AxisType.UPCAST	u	yellow	3
+AxisType.UNROLL	r	magenta	5
+AxisType.PLACEHOLDER	raises KeyError	raises KeyError	raises KeyError
+AxisType.LOOP	L	WHITE	-1

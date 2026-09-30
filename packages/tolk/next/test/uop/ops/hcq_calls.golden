@@ -1,0 +1,7 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CUSTOM_FUNCTION dtypes.void [] "f"
+1 Ops.BUFFER dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=4, device="AMD")
+2 Ops.CALL dtypes.void [0, 1] CallInfo(aux=HCQInfo(device=("AMD",), kernels=((("AMD",), "k", Estimates(ops=1, lds=2, mem=3), (0, 1), b"key", (0,), ((0,), (0,))),), estimates=Estimates(ops=1, lds=2, mem=3), nargs=2, table=1, inputs=((%1, 0, "GLOBAL"),), slots=(("AMD", 1),), host_deps=(("CPU", "AMD"),), written_bufs=(%1,), skip_wait=True))
+3 Ops.CALL dtypes.void [0, 1] CallInfo(aux=HCQInfo(device=("AMD",)))
+4 Ops.SINK dtypes.void [2, 3]
+

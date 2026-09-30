@@ -1,0 +1,36 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.ALLOC dtypes.float [] ParamArg(slot=1000, dtype=dtypes.float, size=4, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 4), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+3 Ops.SHRINK dtypes.float [0, 1, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
+5 Ops.SHRINK dtypes.float [4, 1, 2]
+6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+7 Ops.SHRINK dtypes.float [6, 1, 2]
+8 Ops.CONST dtypes.weakfloat [] 1.0
+9 Ops.ADD dtypes.float [7, 8]
+10 Ops.STORE dtypes.void [5, 9]
+11 Ops.SINK dtypes.void [10]
+12 Ops.CALL dtypes.void [11, 3, 4, 7] CallInfo()
+13 Ops.AFTER dtypes.float [3, 12]
+14 Ops.ALLOC dtypes.float [] ParamArg(slot=1001, dtype=dtypes.float, size=5)
+15 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8)
+16 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, vmin_vmax=(1, 8), name="d", addrspace=AddrSpace.ALU)
+17 Ops.SHRINK dtypes.float [15, 1, 16]
+18 Ops.CAST dtypes.float [8] dtypes.float
+19 Ops.EXPAND dtypes.float [18, 16]
+20 Ops.STORE dtypes.void [17, 19]
+21 Ops.SINK dtypes.void [20]
+22 Ops.CONST dtypes.weakint [] 5
+23 Ops.CALL dtypes.void [21, 22, 14] CallInfo()
+24 Ops.AFTER dtypes.float [14, 23]
+25 Ops.ALLOC dtypes.int [] ParamArg(slot=1002, dtype=dtypes.int, size=8, device="CPU", bind_on_realize=True)
+26 Ops.CONST dtypes.weakint [] 2
+27 Ops.CONST dtypes.weakint [] 4
+28 Ops.STACK dtypes.weakint [26, 27]
+29 Ops.RESHAPE dtypes.int [25, 28]
+30 Ops.STACK dtypes.weakint [1, 1]
+31 Ops.STACK dtypes.weakint [26, 2]
+32 Ops.SHRINK dtypes.int [29, 30, 31]
+33 Ops.SINK dtypes.void [13, 24, 32]
+

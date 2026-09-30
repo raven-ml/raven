@@ -1,0 +1,18 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 10), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+2 Ops.CMPLT dtypes.bool [0, 1]
+3 Ops.CMPLT dtypes.bool [1, 0]
+4 Ops.CONST dtypes.bool [] True
+5 Ops.CMPNE dtypes.bool [3, 4]
+6 Ops.CMPNE dtypes.bool [2, 4]
+7 Ops.CMPNE dtypes.bool [0, 1]
+8 Ops.CMPNE dtypes.bool [7, 4]
+9 Ops.CONST dtypes.weakint [] 3
+10 Ops.CMPLT dtypes.bool [0, 9]
+11 Ops.CMPLT dtypes.bool [9, 0]
+12 Ops.PARAM dtypes.float [] ParamArg(slot=-1, dtype=dtypes.float, vmin_vmax=(-10.0, 10.0), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+13 Ops.CONST dtypes.weakfloat [] 1.0
+14 Ops.CMPLT dtypes.bool [12, 13]
+15 Ops.SINK dtypes.void [2, 3, 5, 6, 7, 8, 10, 11, 14]
+
