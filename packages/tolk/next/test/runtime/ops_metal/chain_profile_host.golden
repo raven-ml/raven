@@ -1,0 +1,75 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(volatile unsigned long* restrict slots_0_14, unsigned long* restrict None_1_1, volatile unsigned long* restrict mtl_cb_2_1, volatile unsigned long* restrict mtl_enc_3_1, unsigned long* restrict mtl_sel_4_20, volatile unsigned char* restrict None_5_592, const unsigned long value_metal_) {
+  unsigned long val0 = (*(None_1_1+0));
+  unsigned long val1 = (*(mtl_sel_4_20+10));
+  unsigned long val2 = (*(mtl_sel_4_20+11));
+  unsigned long val3 = (*(mtl_sel_4_20+13));
+  unsigned long val4 = (*(mtl_sel_4_20+18));
+  unsigned long val5 = (*(mtl_sel_4_20+19));
+  unsigned long val6 = (*(mtl_sel_4_20+2));
+  unsigned long val7 = (*(mtl_sel_4_20+5));
+  unsigned long val8 = (*(mtl_sel_4_20+6));
+  unsigned long val9 = (*(mtl_sel_4_20+7));
+  unsigned long val10 = (*(mtl_sel_4_20+8));
+  *(slots_0_14+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  for (unsigned long Lidx0 = 0; Lidx0 < 2ul; Lidx0++) {
+    unsigned long val11 = (*(mtl_sel_4_20+0));
+    unsigned long alu2 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val11), (unsigned long)(val7)));
+    *(mtl_cb_2_1+0) = alu2;
+    unsigned long val12 = (*(mtl_cb_2_1+0));
+    unsigned long alu4 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val12), (unsigned long)(val8)));
+    *(mtl_enc_3_1+0) = alu4;
+    unsigned long val13 = (*(mtl_enc_3_1+0));
+    (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val13), (unsigned long)(val9), (unsigned long)(val6)));
+    unsigned long val14 = (*(mtl_enc_3_1+0));
+    unsigned long val15 = (*(((unsigned long*)(None_5_592))+69));
+    (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val14), (unsigned long)(val3), (unsigned long)(val15), (unsigned long)(Lidx0), (unsigned long)(1ul)));
+    unsigned long val16 = (*(mtl_enc_3_1+0));
+    (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val16), (unsigned long)(val10), (unsigned long)(val6)));
+    unsigned long val17 = (*(mtl_enc_3_1+0));
+    (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val17), (unsigned long)(val1)));
+    unsigned long alu10 = (Lidx0<<2ul);
+    unsigned long alu11 = (3ul+alu10);
+    unsigned long val18 = (*(slots_0_14+alu11));
+    unsigned long alu12 = (5ul+alu10);
+    unsigned long val19 = (*(slots_0_14+alu12));
+    unsigned long alu13 = ((val19!=0ul)?0ul:val18);
+    (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(alu13), (unsigned long)(val5)));
+    unsigned long alu15 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(alu2), (unsigned long)(val4)));
+    *(slots_0_14+alu12) = 0ul;
+    *(slots_0_14+alu11) = alu15;
+    unsigned long val20 = (*(mtl_cb_2_1+0));
+    (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val20), (unsigned long)(val2)));
+  }
+  unsigned long val21 = (*(mtl_sel_4_20+1));
+  unsigned long val22 = (*(mtl_sel_4_20+9));
+  unsigned long val23 = (*(mtl_sel_4_20+0));
+  unsigned long alu20 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val23), (unsigned long)(val7)));
+  *(mtl_cb_2_1+0) = alu20;
+  unsigned long val24 = (*(mtl_cb_2_1+0));
+  unsigned long alu22 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(val24), (unsigned long)(val8)));
+  *(mtl_enc_3_1+0) = alu22;
+  unsigned long val25 = (*(mtl_enc_3_1+0));
+  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val25), (unsigned long)(val9), (unsigned long)(val6)));
+  unsigned long val26 = (*(mtl_enc_3_1+0));
+  unsigned long val27 = (*(((unsigned long*)(None_5_592))+69));
+  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val26), (unsigned long)(val3), (unsigned long)(val27), (unsigned long)(2ul), (unsigned long)(1ul)));
+  unsigned long val28 = (*(mtl_enc_3_1+0));
+  (((void(*)(unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val28), (unsigned long)(val10), (unsigned long)(val6)));
+  unsigned long val29 = (*(mtl_enc_3_1+0));
+  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val29), (unsigned long)(val1)));
+  unsigned long val30 = (*(slots_0_14+11));
+  unsigned long val31 = (*(slots_0_14+13));
+  unsigned long alu28 = ((val31!=0ul)?0ul:val30);
+  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(alu28), (unsigned long)(val5)));
+  unsigned long alu30 = (((unsigned long(*)(unsigned long, unsigned long))(val0))((unsigned long)(alu20), (unsigned long)(val4)));
+  *(slots_0_14+13) = 0ul;
+  *(slots_0_14+11) = alu30;
+  unsigned long val32 = (*(mtl_cb_2_1+0));
+  (((void(*)(unsigned long, unsigned long, unsigned long, unsigned long))(val0))((unsigned long)(val32), (unsigned long)(val22), (unsigned long)(val21), (unsigned long)(value_metal_)));
+  unsigned long val33 = (*(mtl_cb_2_1+0));
+  (((void(*)(unsigned long, unsigned long))(val0))((unsigned long)(val33), (unsigned long)(val2)));
+}
+

@@ -1,0 +1,48 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="METAL")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.SHRINK dtypes.float [0, 2, 4]
+6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="METAL")
+7 Ops.SHRINK dtypes.float [6, 2, 4]
+8 Ops.LOAD dtypes.float [7]
+9 Ops.INDEX dtypes.float [8, 2]
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.CAST dtypes.float [10] dtypes.float
+12 Ops.ADD dtypes.float [9, 11]
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.INDEX dtypes.float [8, 14]
+16 Ops.ADD dtypes.float [15, 11]
+17 Ops.CONST dtypes.weakint [] 2
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.INDEX dtypes.float [8, 18]
+20 Ops.ADD dtypes.float [19, 11]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.INDEX dtypes.float [8, 22]
+24 Ops.ADD dtypes.float [23, 11]
+25 Ops.STACK dtypes.float [12, 16, 20, 24]
+26 Ops.STORE dtypes.void [5, 25]
+27 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=4, lds=32, mem=32))
+28 Ops.SINK dtypes.void [26, 26, 26, 26] KernelInfo(name="E_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),))
+29 Ops.LINEAR dtypes.void [0, 6, 1, 2, 3, 4, 7, 8, 9, 13, 14, 15, 17, 18, 19, 21, 22, 23, 10, 11, 12, 16, 20, 24, 25, 5, 26, 28]
+30 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_4; device float* data1_4; };\nkernel void E_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_4 = args.data0_4; device float* data1_4 = args.data1_4;\n  float4 val0 = (*((device float4*)((data1_4+0))));\n  *((device float4*)((data0_4+0))) = float4((val0.x+1.0f),(val0.y+1.0f),(val0.z+1.0f),(val0.w+1.0f));\n}"
+31 Ops.BINARY dtypes.uchar [] b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_4; device float* data1_4; };\nkernel void E_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_4 = args.data0_4; device float* data1_4 = args.data1_4;\n  float4 val0 = (*((device float4*)((data1_4+0))));\n  *((device float4*)((data0_4+0))) = float4((val0.x+1.0f),(val0.y+1.0f),(val0.z+1.0f),(val0.w+1.0f));\n}"
+32 Ops.PROGRAM dtypes.void [27, 29, 30, 31] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", arch="Apple7"))
+33 Ops.BUFFER dtypes.char [] ParamArg(slot=7, dtype=dtypes.char, size=512, device="METAL")
+34 Ops.CONST dtypes.weakint [] 16
+35 Ops.SHRINK dtypes.char [33, 1, 34]
+36 Ops.BITCAST dtypes.float [35] dtypes.float
+37 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="METAL")
+38 Ops.CALL dtypes.void [32, 36, 37] CallInfo()
+39 Ops.CONST dtypes.weakint [] 256
+40 Ops.SHRINK dtypes.char [33, 39, 34]
+41 Ops.BITCAST dtypes.float [40] dtypes.float
+42 Ops.CALL dtypes.void [32, 41, 36] CallInfo()
+43 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4, device="METAL")
+44 Ops.CALL dtypes.void [32, 43, 41] CallInfo()
+45 Ops.LINEAR dtypes.void [38, 42, 44]
+

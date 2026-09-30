@@ -2701,3 +2701,27 @@ run touches. The survivors:
 | tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › recorded` (assign, setitem, read_then_overwrite; slow) |
 | old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests), in Device's section | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule`; the copy itself is nx.device's |
 | tinygrad: null/test_tensor_uop_representation.py (5 tests), old: unit/uop/test_uop.ml runtime_realization_state_parity, in Ops' section | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |
+
+## Ops_metal
+
+`O` is the `Ops_metal` suite (`test/runtime/ops_metal`). Its goldens come from
+tinygrad's `MetalQueue` on a METAL device described without a GPU, with D1, D7
+and D34 applied in the generator: for each of eight cases (Apple9, Apple7 and
+Mac2 families, no residency set, a profiled chain and a profiled single
+command, a launch size that reads a variable, and copies to the host between
+batches), the schedule `sched_batches` receives, the schedule `compile_linear`
+returns and its host programs' source. It needs no GPU and no MTLCompiler.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, `.submit` (no test) | the argument layout, the indirect command buffer's placeholder and the messages of the host program | `O › recorded cases › *_compiled.golden`, `*_host.golden` (8 cases) |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `residency.value is None` | an encoder declares the buffers resident without a residency set | `O › recorded cases › chain_no_residency_set` |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `int(arch[5:]) < 9` | before Apple9, the encoder sets each pipeline | `O › recorded cases › chain_apple7`, `chain_mac2` |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, the stamps | a profiled command runs in a command buffer of its own, which its stamps hold | `O › recorded cases › chain_profile` (a range over the commands but the last), `one_profile`; D7 and D34 |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes | a launch size that reads a variable is set on the command | `O › recorded cases › variable` |
+| tinygrad: `runtime/ops_metal.py` `get_enqueue_devs` on METAL | Metal's copies are the host's, between batches | `O › recorded cases › host_split` |
+| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_lower` (`mtl_poll`) | a host program reads the timeline from the event | dropped: no host program reads a timeline (D1) |
+| tinygrad: runtime/test_wait_loop.py | host loops that wait on a signal | the `Hcq2` suite's: no Metal host program waits (D1) |
+| tinygrad: device/metal/test_metal.py::TestMetal::test_alloc_oom, test_failed_newLibraryWithData, test_free | the device's memory and pipelines | nx.metal.device's suite |

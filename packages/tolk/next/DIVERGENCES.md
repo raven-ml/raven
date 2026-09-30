@@ -41,7 +41,10 @@ under Exclusions in `README.md`, not a divergence.
   batch's previous run, and its record of the value that run signals, are the
   engine's (`Submission.wait`), before it writes the address table and calls
   the host program, so the slots lose the timeline's slot. Runs of one linked
-  batch stay serialized, as RFC 0012 requires.
+  batch stay serialized, as RFC 0012 requires. With no load of a timeline in
+  a host program, Metal's `pm_lower` (`runtime/ops_metal.py:192-194`), which
+  reads a timeline's first word from the device's event (`mtl_poll`), has
+  nothing to lower and is not ported.
 - **Reason:** (c). nx.device's runtime writes the submitted value and never
   publishes it (RFC 0011, Amendment 2), and `Submission.wait` has the timeout,
   `Lost` and Metal's completion that a spin in the host program lacks.
@@ -223,7 +226,9 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `runtime/support/hcq2.py:231,240,301`.
 - **tolk.next:** `lib/runtime/support/hcq2.ml:713` (`stamps`), `:638` (the
-  slots).
+  slots); `lib/runtime/ops_metal.ml` (`submit`), which writes a command's
+  command buffer over words 3 and 5 of the device's slots, where tinygrad's
+  are 5 and 7 (`runtime/ops_metal.py:159-160`).
 - **Differs:** a device's slots are its queue signals, then two slots per call
   when profiling, with no slot of the timeline between them (D1). A call's two
   slots are adjacent, so its start and end stamps are words 1 and 3 of one
@@ -996,3 +1001,27 @@ the Exclusions of `README.md`.
   old reduction fails; `› payne_hanek_reduction removes quarter turns`; and
   the `payne_hanek_*`, `xsin_*` and `values` goldens, from the equally
   patched tinygrad.
+
+## D34. A profiled Metal command buffer waits in its stamps retained
+
+- **tinygrad:** `runtime/ops_metal.py:155-160` (`MetalQueue.submit` writes
+  the command buffer over a command's start stamp and `0` over its end
+  stamp), `:275-285` (`synchronize` reads their times, then drains the
+  autorelease pool that holds the command buffer).
+- **tolk.next:** `lib/runtime/ops_metal.ml` (`selectors`, and the stamps in
+  `submit`).
+- **Differs:** the host program sends the command buffer `retain` and writes
+  what it returns over the start stamp. Before that it sends `release` to the
+  start stamp's command buffer if the end stamp is still `0`: a run of the
+  batch whose times were never read left it there. A stamp whose times were
+  read, or that was never written, is sent to `nil`, which does nothing. The
+  selectors `retain` and `release` follow tinygrad's in the `mtl_sel` words.
+- **Reason:** (c). nx.device's Metal library reads a command buffer's times at
+  the device's next synchronization, which may run on another domain than the
+  run that committed it, and releases it then (RFC 0011, Amendment 2): a
+  command buffer that only an autorelease pool holds may be freed, and its
+  address reused, before that.
+- **Pinned by:** the Ops_metal suite (`test/runtime/ops_metal`):
+  `recorded cases › chain_profile`, `› one_profile`, whose host programs are
+  tinygrad's with D34 applied by their generator
+  (`gen/runtime/ops_metal.py`).
