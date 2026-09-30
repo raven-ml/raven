@@ -250,24 +250,12 @@ let finfo dt =
 
 (* Conversions *)
 
-(* A value as a float, rounded to nearest: an integer beyond the doubles is an
-   infinity. *)
-let to_float : value -> float = function
-  | `Bool b -> if b then 1. else 0.
-  | `Float x -> x
-  | `Int n -> Z.to_float n
-
 (* A value as an integer. A float has none: rounding it is the caller's. *)
-let to_int : value -> Z.t = function
+let integer : value -> Z.t = function
   | `Bool b -> Z.of_int (Bool.to_int b)
   | `Int n -> n
   | `Float x ->
       invalid_arg (strf "%s is a float, not an integer" (float_repr x))
-
-let is_nonzero : value -> bool = function
-  | `Bool b -> b
-  | `Int n -> not (Z.equal n Z.zero)
-  | `Float x -> x <> 0.
 
 (* Arithmetic on values *)
 
@@ -276,12 +264,31 @@ module Value = struct
 
   let of_int n = `Int (Z.of_int n)
 
+  let to_float : t -> float = function
+    | `Bool b -> if b then 1. else 0.
+    | `Int n -> Z.to_float n
+    | `Float x -> x
+
+  let to_z : t -> Z.t = function
+    | `Float x when not (Float.is_finite x) ->
+        invalid_arg (strf "%s has no integer value" (float_repr x))
+    | `Float x -> Z.of_float x
+    | v -> integer v
+
+  let to_int v =
+    let n = to_z v in
+    if Z.fits_int n then Z.to_int n
+    else invalid_arg (strf "%s does not fit an int" (Z.to_string n))
+
+  let to_bool : t -> bool = function
+    | `Bool b -> b
+    | `Int n -> not (Z.equal n Z.zero)
+    | `Float x -> x <> 0.
+
   (* A value as a number: a [`Bool] counts as [0] or [1]. *)
   let number : t -> [ `Int of Z.t | `Float of float ] = function
     | `Bool b -> `Int (Z.of_int (Bool.to_int b))
     | (`Int _ | `Float _) as v -> v
-
-  let float_of = function `Int n -> Z.to_float n | `Float x -> x
 
   (* The order of the integer [n] and the float [x], exactly, or [None] if [x]
      is NaN. *)
@@ -317,7 +324,7 @@ module Value = struct
   let arith int_op float_op v0 v1 =
     match (number v0, number v1) with
     | `Int n0, `Int n1 -> `Int (int_op n0 n1)
-    | v0, v1 -> `Float (float_op (float_of v0) (float_of v1))
+    | v0, v1 -> `Float (float_op (to_float (v0 :> t)) (to_float (v1 :> t)))
 
   (* Floats divide as CPython's float_divmod does: through fmod, whose remainder
      is exact, then moved to the divisor's sign. *)
@@ -490,9 +497,9 @@ let storage_fmt dt =
 
 let to_storage_scalar dt (v : value) : value =
   match dt with
-  | Float16 -> `Float (round Float16 (to_float v))
+  | Float16 -> `Float (round Float16 (Value.to_float v))
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Int (Z.of_int (encode dt (to_float v)))
+      `Int (Z.of_int (encode dt (Value.to_float v)))
   | _ -> v
 
 let from_storage_scalar dt (s : value) : value =
@@ -517,10 +524,10 @@ let truncate dt (v : value) : value =
   match dt with
   | Void -> invalid_arg "void has no value"
   | Weak_int | Weak_float -> v
-  | Bool -> `Bool (is_nonzero v)
-  | dt when is_float dt -> `Float (truncate_float dt (to_float v))
-  | dt when is_unsigned dt -> `Int (Z.extract (to_int v) 0 (bitsize dt))
-  | dt -> `Int (Z.signed_extract (to_int v) 0 (bitsize dt))
+  | Bool -> `Bool (Value.to_bool v)
+  | dt when is_float dt -> `Float (truncate_float dt (Value.to_float v))
+  | dt when is_unsigned dt -> `Int (Z.extract (integer v) 0 (bitsize dt))
+  | dt -> `Int (Z.signed_extract (integer v) 0 (bitsize dt))
 
 (* The integer data type whose storage stores [dt]'s. *)
 let storage_int dt =
@@ -532,14 +539,16 @@ let storage_int dt =
 (* The bits that store [s], a value of [dt]'s storage format. *)
 let pack dt (s : value) =
   match dt with
-  | Bool -> if is_nonzero s then Z.one else Z.zero
-  | Float16 -> Z.of_int (encode Float16 (to_float s))
-  | Float32 -> Z.extract (Z.of_int32 (Int32.bits_of_float (to_float s))) 0 32
-  | Float64 -> Z.extract (Z.of_int64 (Int64.bits_of_float (to_float s))) 0 64
+  | Bool -> if Value.to_bool s then Z.one else Z.zero
+  | Float16 -> Z.of_int (encode Float16 (Value.to_float s))
+  | Float32 ->
+      Z.extract (Z.of_int32 (Int32.bits_of_float (Value.to_float s))) 0 32
+  | Float64 ->
+      Z.extract (Z.of_int64 (Int64.bits_of_float (Value.to_float s))) 0 64
   | Void | Weak_int | Weak_float ->
       invalid_arg (Format.asprintf "%a has no storage" pp dt)
   | dt ->
-      let dt = storage_int dt and n = to_int s in
+      let dt = storage_int dt and n = integer s in
       if Z.lt n (int_min dt) || Z.gt n (int_max dt) then
         invalid_arg
           (Format.asprintf "%a is out of the range of %a" Z.pp_print n pp dt);
@@ -584,18 +593,13 @@ let max dt : value =
 let const dt (c : [< const ]) : const =
   match c with
   | `Invalid -> `Invalid
-  | #value as v -> (
+  | #value as v ->
       let v =
         match v with `Float x when Float.is_nan x -> `Float nan | v -> v
       in
-      if is_float dt then `Float (truncate_float dt (to_float v))
-      else if is_bool dt then `Bool (is_nonzero v)
-      else
-        match v with
-        | `Float x when not (Float.is_finite x) ->
-            invalid_arg (Format.asprintf "%s is not a %a" (float_repr x) pp dt)
-        | `Float x -> `Int (Z.of_float x)
-        | v -> `Int (to_int v))
+      if is_float dt then `Float (truncate_float dt (Value.to_float v))
+      else if is_bool dt then `Bool (Value.to_bool v)
+      else `Int (Value.to_z v)
 
 (* Names and defaults *)
 
@@ -663,13 +667,12 @@ let of_consts (cs : [< const ] list) =
   | dt :: dts -> (
       match List.fold_left greatest dt dts with
       | Weak_int ->
-          let integer (c : [< const ]) =
+          let integral (c : [< const ]) =
             match c with
-            | `Int n -> Some n
-            | `Bool b -> Some (Z.of_int (Bool.to_int b))
+            | (`Int _ | `Bool _) as v -> Some (integer v)
             | `Float _ | `Invalid -> None
           in
-          let ns = List.filter_map integer cs in
+          let ns = List.filter_map integral cs in
           let lo = List.fold_left Z.min (List.hd ns) ns in
           let hi = List.fold_left Z.max (List.hd ns) ns in
           commit_int lo hi

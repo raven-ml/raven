@@ -57,6 +57,26 @@ module Value : sig
   val of_int : int -> t
   (** [of_int n] is [`Int n]. *)
 
+  val to_float : t -> float
+  (** [to_float v] is [v] as a float: [0.] or [1.] for a [`Bool], and an integer
+      rounded to nearest, ties to even, or to the infinity of its sign if it
+      rounds past the greatest double. *)
+
+  val to_z : t -> Z.t
+  (** [to_z v] is [v] as an integer: [0] or [1] for a [`Bool], and a float
+      rounded towards zero.
+
+      Raises [Invalid_argument] if [v] is an infinity or a NaN. *)
+
+  val to_int : t -> int
+  (** [to_int v] is [to_z v] as an [int].
+
+      Raises [Invalid_argument] if [v] is an infinity or a NaN, or if [to_z v]
+      does not fit an [int]. *)
+
+  val to_bool : t -> bool
+  (** [to_bool v] is [true] iff [v] is not zero: a NaN is [true]. *)
+
   val compare : t -> t -> int
   (** [compare v0 v1] is a total order on values by magnitude, where NaN is less
       than every other value and equal to itself. Values of equal magnitude
