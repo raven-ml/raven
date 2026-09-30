@@ -244,14 +244,13 @@ let key_tests =
     ]
 
 (* Threefry-2x32-20 is the backend contract's block function, which nx.mli names
-   only as Threefry; [Nx_effect.threefry] is the backend of [Nx]. The known
-   answers are Random123's. Every row of the distribution table draws from many
-   blocks at once. *)
+   only as Threefry, [Nx.Op.Threefry]. The known answers are Random123's. Every
+   row of the distribution table draws from many blocks at once. *)
 let threefry =
   test "threefry gives the known answers of Threefry-2x32-20" (fun () ->
       let answer k c =
         let block w = Nx.create Nx.int32 [| 2 |] w in
-        Nx.to_array (Nx_effect.threefry (block k) (block c))
+        Nx.to_array (Nx.Op.eval (Threefry (block k, block c)))
       in
       equal (array int32)
         [| 1797259609l; -1715843330l |]

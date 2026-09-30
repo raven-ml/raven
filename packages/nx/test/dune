@@ -17,10 +17,18 @@
   test_runtime
   test_backend
   test_conformance
+  test_intercept
   test_allocation)
  (package nx)
  (modules :standard \ test_format)
- (libraries nx.dtype nx nx.array nx.backend nx.cpu nx.effect nx.device unix
+ (libraries
+  nx.dtype
+  nx
+  nx.array
+  nx.backend
+  nx.cpu
+  nx.device
+  unix
   windtrap
   nx_test))
 

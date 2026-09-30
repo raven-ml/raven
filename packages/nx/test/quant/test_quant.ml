@@ -518,7 +518,7 @@ let others =
           let codes = place [| 4; 6; 32 |]
           and scales = place [| 4; 6; 2 |]
           and bad = place [| 4; 6; 3 |] in
-          elements_read := 0;
+          let sent = bytes_out () in
           let w =
             Nx.Ptree.map Nx_quant.ptree
               (fun _ t -> t)
@@ -536,7 +536,7 @@ let others =
           equal
             (pair int (tensor float_exact))
             (0, Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
-            (!elements_read, y);
+            (bytes_out () - sent, y);
           equal (array int) [| 4; 6; 64 |] (Nx_quant.shape w));
       test
         "visits the case, then codes before scales; rebuild and place keep the \

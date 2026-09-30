@@ -50,7 +50,7 @@ let vec a = Nx.create Nx.float32 [| Array.length a |] a
 let floats = tensor float_exact
 
 let is_placed (type a b) (x : (a, b) Nx.t) =
-  match x with Nx_effect.Placed _ -> true | Host _ | Traced _ -> false
+  match Nx.Repr.v x with Placed _ -> true | Host _ | Traced _ -> false
 
 let backends =
   group "backends"
@@ -140,9 +140,10 @@ let backends =
           let q = Nx.Placement.device r1 in
           let y = Nx.place q x in
           is_true (Nx.Placement.equal (Nx.placement y) q);
-          (match (x, y) with
-          | Nx_effect.Placed a, Nx_effect.Placed b ->
-              is_true ~msg:"one storage" (a.r_cell == b.r_cell)
+          (match (Nx.Repr.v x, Nx.Repr.v y) with
+          | Placed a, Placed b ->
+              is_true ~msg:"one storage"
+                (Nx.Repr.Placed.storage a == Nx.Repr.Placed.storage b)
           | _ -> fail "expected placed values");
           equal floats (vec [| 1.; 2. |]) y);
       test

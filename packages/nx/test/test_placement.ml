@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Devices and placement, on test devices that hold their storage in host memory
-   of their own and count what moves. A placed value equals its host value under
-   every movement, or refuses exactly the movements that would move elements
-   between devices; results live with their operands; reads copy; views share
-   their cell. *)
+(* Devices and placement, on test runtimes over host memory, which count the
+   bytes they receive and send. A placed value equals its host value under every
+   movement, or refuses exactly the movements that would move elements between
+   devices; results live with their operands; reads copy; views share their
+   storage. *)
 
 open Windtrap
 open Nx_test
@@ -110,50 +110,17 @@ let placements =
           cover "equal placements" same;
           equal bool same (Nx.Placement.equal p (make b)));
       test
-        "refuse no devices, a repeated device, mixed memories, a negative \
-         axis, and windows of a device they lack or an axis that does not \
-         divide" (fun () ->
+        "refuse no devices, a repeated device, a negative axis, and windows of \
+         a device they lack or an axis that does not divide" (fun () ->
           let s = Nx.Placement.sharded ~axis:1 [ d1; d2; d3 ] in
           refuses
             [
               (fun () -> ignore (Nx.Placement.replicated []));
               (fun () -> ignore (Nx.Placement.replicated [ d1; d1 ]));
-              (fun () -> ignore (Nx.Placement.sharded ~axis:0 [ d1; other ]));
               (fun () -> ignore (Nx.Placement.sharded ~axis:(-1) [ d1; d2 ]));
               (fun () -> ignore (Nx.Placement.window s [| 2; 6 |] d4));
               (fun () -> ignore (Nx.Placement.window s [| 2; 5 |] d1));
               (fun () -> ignore (Nx.Placement.window s [| 6 |] d1));
-            ]);
-      (* Grids are built inside nx.effect only. *)
-      test "a grid is kept in normal form and compared by its windows"
-        (fun () ->
-          let grid extents cuts =
-            Nx_effect.Placement.v Nx_cpu.backend
-              (Nx_effect.Grid.v four extents cuts)
-          in
-          List.iter
-            (fun (a, b) -> equal placement a b)
-            [
-              ( Nx.Placement.sharded ~axis:0 four,
-                grid [ 2; 2 ] [ (0, [ 0; 1 ]) ] );
-              (Nx.Placement.replicated four, grid [ 2; 2 ] []);
-              ( Nx.Placement.sharded ~axis:1 four,
-                grid [ 1; 4; 1 ] [ (1, [ 1 ]) ] );
-              ( Nx.Placement.sharded ~axis:0 [ d1; d3; d2; d4 ],
-                grid [ 2; 2 ] [ (0, [ 1; 0 ]) ] );
-            ];
-          equal windows
-            [| (2, 4); (0, 3) |]
-            (Nx.Placement.window
-               (grid [ 2; 2 ] [ (0, [ 0 ]); (1, [ 1 ]) ])
-               [| 4; 6 |] d3);
-          equal windows
-            [| (0, 2); (0, 6) |]
-            (Nx.Placement.window (grid [ 2; 2 ] [ (0, [ 0 ]) ]) [| 4; 6 |] d2);
-          refuses
-            [
-              (fun () -> ignore (grid [ 2; 3 ] []));
-              (fun () -> ignore (grid [ 2; 2 ] [ (0, [ 0 ]); (1, [ 0 ]) ]));
             ]);
     ]
 
@@ -213,7 +180,7 @@ let place_tests =
       test "a consumed value is neither placed nor read, and keeps its shape"
         (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |]) in
-          (cell_of p).state <- Consumed { path = "2.keys" };
+          consume (storage_of p) ~path:"2.keys";
           raises_match (Exn.invalid_arg ~substring:"consumed at 2.keys")
             (fun () -> Nx.place on1 p);
           raises_invalid_arg (fun () -> Nx.to_array p);
@@ -342,7 +309,7 @@ let kinds host =
 let move_both ((shape, where), steps) =
   let host = iota shape in
   let placed = Nx.place (to_placement where) host in
-  let cell = cell_of placed in
+  let storage = storage_of placed in
   List.fold_left
     (fun state (kind, pick) ->
       match state with
@@ -357,7 +324,7 @@ let move_both ((shape, where), steps) =
           let m = List.nth cs (pick mod List.length cs) in
           let msg = Format.asprintf "%a" pp_movement m in
           let expected = fate (Nx.shape host) m where in
-          let uploaded = !uploads and read = !elements_read in
+          let received = bytes_in () and sent = bytes_out () in
           match (move m placed, expected) with
           | exception Invalid_argument e ->
               cover "a refusal" true;
@@ -374,16 +341,18 @@ let move_both ((shape, where), steps) =
                 | Some (_, _, Split _), One _ -> true
                 | _ -> false);
               let host = move m host in
-              equal ~msg (pair int int) (uploaded, read)
-                (!uploads, !elements_read);
+              equal ~msg (pair int int) (received, sent)
+                (bytes_in (), bytes_out ());
               equal ~msg placement (to_placement where) (Nx.placement moved);
-              is_true ~msg:(msg ^ ": the source's cell") (cell_of moved == cell);
+              is_true
+                ~msg:(msg ^ ": the source's storage")
+                (storage_of moved == storage);
               equal ~msg (tensor float_exact) host moved;
               Some (host, moved, where)))
     (Some (host, placed, where))
     steps
   |> Option.iter (fun (_, moved, _) ->
-      cell.state <- Consumed { path = "0" };
+      consume storage ~path:"0";
       raises_invalid_arg (fun () -> Nx.to_array moved))
 
 let movements =
@@ -399,35 +368,22 @@ let movements =
            (Gen.list ~size:(Gen.int_range 1 3)
               (Gen.pair (Gen.int_range 0 5) (Gen.int_range 0 10_000))))
         move_both;
-      test "a value cut along two axes moves by the whole shapes" (fun () ->
-          let p =
-            Nx_effect.Placement.v Nx_cpu.backend
-              (Nx_effect.Grid.v four [ 2; 2 ] [ (0, [ 0 ]); (1, [ 1 ]) ])
-          in
-          let x = Nx.reshape [| 2; 4 |] (iota [| 8 |]) in
-          let s = Nx.place p x in
-          let r = Nx.reshape [| 2; 2; 2 |] s and row = Nx.slice [ I 1 ] s in
-          equal (pair placement placement)
-            (p, Nx.Placement.sharded ~axis:0 [ d3; d4 ])
-            (Nx.placement r, Nx.placement row);
-          equal
-            (pair (tensor float_exact) (tensor float_exact))
-            (Nx.reshape [| 2; 2; 2 |] x, Nx.slice [ I 1 ] x)
-            (r, row);
-          raises_invalid_arg (fun () -> Nx.reshape [| 8 |] s));
       test "a view off its storage's devices is refused" (fun () ->
           match
-            Nx.place (Nx.Placement.sharded ~axis:0 four) (iota [| 8; 6 |])
+            Nx.Repr.v
+              (Nx.place (Nx.Placement.sharded ~axis:0 four) (iota [| 8; 6 |]))
           with
-          | Nx_effect.Placed r ->
+          | Placed r ->
+              let view = Nx.Repr.Placed.view r
+              and storage = Nx.Repr.Placed.storage r in
               raises_invalid_arg (fun () ->
-                  Nx_effect.placed
+                  Nx.Repr.Placed.v
                     (Nx.Placement.device other)
-                    r.r_dtype r.r_view r.r_cell);
+                    Nx.float32 view storage);
               ignore
-                (Nx_effect.placed (Nx.Placement.device d2) r.r_dtype r.r_view
-                   r.r_cell)
-          | _ -> fail "expected a placed value");
+                (Nx.Repr.Placed.v (Nx.Placement.device d2) Nx.float32 view
+                   storage)
+          | Host _ | Traced _ -> fail "expected a placed value");
     ]
 
 (* Results *)
@@ -542,11 +498,11 @@ let results =
             (match (wa, wb, expected) with
             | Some (Copies _), Some (Split _), Ok _ -> true
             | _ -> false);
-          elements_read := 0;
+          let sent = bytes_out () in
           match (agreeing (fun () -> Nx.add (at wa x) (at wb y)), expected) with
           | exception Invalid_argument _ ->
               equal ~msg:"refused, having read nothing" (pair bool int) (true, 0)
-                (Result.is_error expected, !elements_read)
+                (Result.is_error expected, bytes_out () - sent)
           | _, Error () -> fail "the operands' devices or splits differ"
           | z, Ok w ->
               equal placement
@@ -719,45 +675,48 @@ let results =
           raises_invalid_arg (fun () ->
               Nx.Op.placement (Binary (Add, traced cols, at_rows))));
       test
-        "a constant made on a device is one element placed there, and a \
-         filled value is uploaded split like its model" (fun () ->
+        "the devices receive a constant made there as one element, a result as \
+         its elements, and a filled value split like its model" (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |])
           and split = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
           let sp = Nx.sum p and ss = Nx.sum split in
-          let uploads_of f =
-            let before = !uploads in
+          let received f =
+            let before = bytes_in () in
             let y = f () in
-            (!uploads - before, y)
+            (bytes_in () - before, y)
           in
           let made =
             [
-              uploads_of (fun () -> Nx.mul_s p 2.);
-              uploads_of (fun () -> Nx.zeros_like p);
-              uploads_of (fun () -> Nx.zeros_like sp);
-              uploads_of (fun () -> Nx.full_like ss 2.);
-              uploads_of (fun () -> Nx.ones_like (Nx.transpose split));
+              received (fun () -> Nx.mul_s p 2.);
+              received (fun () -> Nx.zeros_like p);
+              received (fun () -> Nx.zeros_like sp);
+              received (fun () -> Nx.full_like ss 2.);
+              received (fun () -> Nx.ones_like (Nx.transpose split));
             ]
           in
           equal
             (list (pair int placement))
             [
-              (2, on1);
-              (2, on1);
-              (1, on1);
-              (1, Nx.Placement.replicated four);
-              (2, Nx.Placement.sharded ~axis:1 four);
+              (4 + 24, on1);
+              (4 + 24, on1);
+              (4, on1);
+              (4 * 4, Nx.Placement.replicated four);
+              ((4 * 4) + 192, Nx.Placement.sharded ~axis:1 four);
             ]
             (List.map (fun (n, y) -> (n, Nx.placement y)) made);
           let z = snd (List.nth made 1) and filled = snd (List.nth made 4) in
           is_true ~msg:"a filled value's view covers its storage"
-            (match z with
-            | Nx_effect.Placed r -> Nx_effect.covers r
-            | _ -> false);
-          (match (cell_of filled).state with
-          | Live (Mem shards) ->
-              equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
-                (List.map Nx_device.Buffer.length shards)
-          | _ -> fail "expected storage of the test memory");
+            (match Nx.Repr.v z with
+            | Placed r ->
+                Nx_array.View.is_c_contiguous (Nx.Repr.Placed.view r)
+                && Nx_array.View.numel (Nx.Repr.Placed.view r)
+                   = Nx_device.Buffer.length
+                       (List.hd
+                          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage r)))
+            | Host _ | Traced _ -> false);
+          equal ~msg:"a slice on each device" (list int) [ 12; 12; 12; 12 ]
+            (List.map Nx_device.Buffer.length
+               (Nx.Repr.Storage.buffers (storage_of filled)));
           equal (tensor float_exact)
             (Nx.mul_s (iota [| 2; 3 |]) 2.)
             (snd (List.hd made));
@@ -771,41 +730,42 @@ let results =
 let reads =
   group "reads and views"
     [
-      test "a read copies what it reads and leaves the value where it is"
-        (fun () ->
+      test
+        "a read copies the span of storage it reads and leaves the value where \
+         it is" (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |])
           and s =
             Nx.place (Nx.Placement.sharded ~axis:0 four) (iota [| 8; 6 |])
           in
           let counted f =
-            elements_read := 0;
+            let sent = bytes_out () in
             ignore (f ());
-            !elements_read
+            bytes_out () - sent
           in
-          equal (list int) [ 1; 6; 1; 6 ]
+          equal (list int) [ 4; 24; 4; 36 ]
             [
               counted (fun () -> Nx.item [ 1; 2 ] p);
               counted (fun () -> Nx.to_array p);
               counted (fun () -> Nx.item [ 5; 2 ] s);
               counted (fun () ->
-                  Nx_effect.read (Nx.slice [ R (4, 6); R (1, 4) ] s));
+                  Nx.Op.eval (Read (Nx.slice [ R (4, 6); R (1, 4) ] s)));
             ];
           equal placement on1 (Nx.placement p);
           equal string
             (Nx.to_string (Nx.transpose (iota [| 8; 6 |])))
             (Nx.to_string (Nx.transpose s)));
-      test "views share their cell, a contiguous one too; a copy does not"
+      test "views share their storage, a contiguous one too; a copy does not"
         (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |]) in
           let v = Nx.transpose (Nx.slice [ R (0, 1) ] p) in
           let c = Nx.copy v in
           equal (list bool) [ true; true; false ]
             [
-              cell_of v == cell_of p;
-              cell_of (Nx.contiguous v) == cell_of p;
-              cell_of c == cell_of p;
+              storage_of v == storage_of p;
+              storage_of (Nx.contiguous v) == storage_of p;
+              storage_of c == storage_of p;
             ];
-          (cell_of p).state <- Consumed { path = "0" };
+          consume (storage_of p) ~path:"0";
           refuses
             [
               (fun () -> ignore (Nx.to_array v));
@@ -818,11 +778,7 @@ let reads =
 
 let claims =
   let open Nx.Repr.Storage in
-  let fresh () =
-    match Nx.Repr.v (Nx.place on1 (iota [| 2; 3 |])) with
-    | Placed p -> Nx.Repr.Placed.storage p
-    | Host _ | Traced _ -> fail "expected a placed value"
-  in
+  let fresh () = storage_of (Nx.place on1 (iota [| 2; 3 |])) in
   group "claims"
     [
       test "readers share a storage, and a sole reader upgrades to consume it"
@@ -864,16 +820,22 @@ let claims =
 
 (* Identities *)
 
-type (_, _) Nx_effect.node += Identity_probe : ('a, 'b) Nx_effect.node
+type (_, _) Nx.Repr.node += Identity_probe : ('a, 'b) Nx.Repr.node
 
-let traced d =
-  let p = Nx.Placement.device d in
-  Nx_effect.traced p p Nx.float32 [| 1 |] Identity_probe
+let traced () =
+  Nx.Repr.Traced.v ~context:on1 on1 Nx.float32 [| 1 |] Identity_probe
+
+let identity x =
+  match Nx.Repr.v x with
+  | Placed p -> Nx.Repr.Placed.id p
+  | Traced t -> Nx.Repr.Traced.id t
+  | Host _ -> fail "a host value has no identity"
 
 let identities =
   group "identities"
     [
       test "constructors on several domains give distinct identities" (fun () ->
+          let storage = storage_of (Nx.place on1 (Nx.scalar Nx.float32 1.)) in
           let start = Atomic.make false in
           let ids () =
             while not (Atomic.get start) do
@@ -881,16 +843,12 @@ let identities =
             done;
             List.concat_map
               (fun _ ->
-                let d = Nx_effect.Device.make "IDENTITY" memory in
                 let v =
-                  Nx_effect.placed (Nx.Placement.device d) Nx.float32
+                  Nx.Repr.Placed.v on1 Nx.float32
                     (Nx_array.View.create [| 1 |])
-                    (Nx_effect.cell ~placement:(Nx.Placement.device d) ~length:1
-                       (Nx_effect.Runtime [ Nx_array.Elements.create Nx.float32 1 ]))
+                    storage
                 in
-                d.d_id
-                :: List.map Nx_effect.identity_hash
-                     [ v; traced d; Nx_effect.reshape v [| 1; 1 |] ])
+                List.map identity [ v; traced (); Nx.reshape [| 1; 1 |] v ])
               (List.init 4096 Fun.id)
           in
           let workers = List.init 4 (fun _ -> Domain.spawn ids) in
@@ -898,29 +856,16 @@ let identities =
           let ids = List.concat_map Domain.join workers in
           equal int (List.length ids)
             (List.length (List.sort_uniq Int.compare ids)));
-      test "the trace frontier separates existing and new traces" (fun () ->
-          let before = Nx_effect.identity_hash (traced d1) in
-          let horizon = Nx_effect.next_traced_id () in
-          equal ~msg:"observing the frontier allocates no identity" int horizon
-            (Nx_effect.next_traced_id ());
-          let after = Nx_effect.identity_hash (traced d1) in
-          let device = Nx_effect.Device.make "FRONTIER" memory in
-          let later = Nx_effect.identity_hash (traced d1) in
-          equal ~msg:"the next trace starts at the frontier" int horizon after;
-          less int ~than:horizon before;
-          equal (list bool) [ true; true ]
-            [ after < device.d_id; device.d_id < later ]);
+      test "a value made later has a greater identity" (fun () ->
+          let before = identity (traced ()) in
+          let placed = identity (Nx.place on1 (Nx.scalar Nx.float32 1.)) in
+          let after = identity (traced ()) in
+          equal (list bool) [ true; true ] [ before < placed; placed < after ]);
     ]
 
 let () =
   exit
     (run "nx placement"
        [
-         placements;
-         place_tests;
-         movements;
-         results;
-         reads;
-         claims;
-         identities;
+         placements; place_tests; movements; results; reads; claims; identities;
        ])

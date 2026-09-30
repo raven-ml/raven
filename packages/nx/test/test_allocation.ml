@@ -53,10 +53,14 @@ let host_path =
     [
       test "add allocates its result" (fun () ->
           let shape = [| 1 |] in
-          let x = Nx_effect.alloc Nx.float32 shape in
-          let y = Nx_effect.alloc Nx.float32 shape in
+          let alloc () =
+            let view = Nx_array.View.create shape in
+            let buffer = Nx_array.Elements.create Nx.float32 1 in
+            { Nx_array.dtype = Nx.float32; view; buffer }
+          in
+          let x = alloc () and y = alloc () in
           let kernel () =
-            let dst = Nx_effect.alloc Nx.float32 shape in
+            let dst = alloc () in
             Nx_cpu.binary Add x y ~dst;
             dst
           in

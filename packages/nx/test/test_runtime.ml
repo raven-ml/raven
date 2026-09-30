@@ -38,8 +38,8 @@ let devices =
           equal (array float_exact) [| 2.; 4.; 6. |] (Nx.to_array y));
     ]
 
-(* A buffer that reaches the host engine is on the host and of the value's
-   format, whether a caller hands it over or a device's memory reads it back. *)
+(* A buffer a caller hands to the host engine is on the host and of the value's
+   format. *)
 let host_buffers =
   let not_host = Exn.invalid_arg ~substring:"not CPU"
   and other_format = Exn.invalid_arg ~substring:"float64 buffer read as float32"
@@ -47,27 +47,14 @@ let host_buffers =
   and float64 = Nx_array.Elements.create Nx.float64 4 in
   group "host buffers"
     [
-      test "from_host refuses a buffer on a device or of another format"
+      test "Nx.Repr.host refuses a buffer on a device or of another format"
         (fun () ->
           let from_host b =
-            Nx_effect.from_host Nx_effect.Placement.host Nx.float32 b
+            let view = Nx_array.View.create [| Nx_device.Buffer.length b |] in
+            Nx.Repr.host { dtype = Nx.float32; view; buffer = b }
           in
           raises_match not_host (fun () -> from_host on_device);
           raises_match other_format (fun () -> from_host float64));
-      test "a read of a buffer on a device or of another format raises"
-        (fun () ->
-          let reading b =
-            let d =
-              Nx_effect.Device.make "READS"
-                { Devices.memory with read = (fun _ -> b) }
-            in
-            let x =
-              Nx.place (Nx.Placement.device d) (Nx.zeros Nx.float32 [| 4 |])
-            in
-            fun () -> Nx.place Nx.Placement.host x
-          in
-          raises_match not_host (reading on_device);
-          raises_match other_format (reading float64));
     ]
 
 (* Values on the disk: files, which the host reads where they lie, in their
@@ -109,7 +96,7 @@ let disk =
           let z, bytes = reads (fun () -> Nx.place Nx.Placement.host y) in
           equal ~msg:"placed on the host, its pages" int 0 bytes;
           is_false ~msg:"a view of them"
-            (Nx_array.View.is_c_contiguous (Nx_effect.view z));
+            (Nx_array.View.is_c_contiguous (view z));
           equal (array int32)
             (Nx.to_array (Nx.transpose (Nx.slice [ Nx.R (1, 3) ] x)))
             (Nx.to_array z));

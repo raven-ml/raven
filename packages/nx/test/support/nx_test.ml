@@ -132,8 +132,31 @@ let layout =
 
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
-(* The storage of [t]: views share it, copies do not. *)
-let storage t = Nx_effect.read t
+(* The view of [t]'s storage: a host value's, or each device's of a placed
+   one. *)
+let view t =
+  match Nx.Repr.v t with
+  | Host a -> a.view
+  | Placed p -> Nx.Repr.Placed.view p
+  | Traced _ -> fail "a traced value has no view"
+
+(* The storage of [t], the first device's for a placed one: views share it,
+   copies do not. *)
+let storage t =
+  match Nx.Repr.v t with
+  | Host a -> a.buffer
+  | Placed p -> List.hd (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
+  | Traced _ -> fail "a traced value has no storage"
+
+(* The elements of [t] in C order, in a host buffer. *)
+let elements t =
+  let t =
+    match Nx.Repr.v t with
+    | Placed _ -> t
+    | Host _ | Traced _ -> Nx.contiguous t
+  in
+  let b = Nx.Op.eval (Read t) in
+  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t)
 
 (* Whether buffers [a] and [b] have a byte of memory in common. *)
 let share_memory = Nx_device.Buffer.overlaps
@@ -141,7 +164,7 @@ let share_memory = Nx_device.Buffer.overlaps
 (* Where each element of [t] is in its storage, in row-major order: element
    [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
 let positions t =
-  let v = Nx_effect.view t in
+  let v = view t in
   let st = Nx_array.View.strides v in
   Array.init (Nx.numel t) (fun k ->
       let p = ref (Nx_array.View.offset v) in
@@ -828,69 +851,44 @@ let int_value ~bits ~signed =
 let int_compare ~signed a b =
   if signed then Int64.compare a b else Int64.unsigned_compare a b
 
-(* Test devices: a memory whose devices hold their storage in host memory of
-   their own, one buffer per device of a value's placement in its order (a split
-   value's shards, a replicated value's copies), and count what moves. *)
+(* Test devices: runtimes over host memory, whose statistics count the bytes
+   they receive and send. *)
 module Devices = struct
-  type Nx_effect.storage += Mem of Nx_device.Buffer.t list
+  let runtime name =
+    Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+      (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-  let elements_read = ref 0
-  let uploads = ref 0
+  let runtimes = List.map runtime [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
 
-  (* The elements view [v] reaches in [mem], in C order. *)
-  let gather mem v =
-    elements_read := !elements_read + Nx_array.View.numel v;
-    Nx_array.Elements.gather mem v
+  let d1, d2, d3, d4 =
+    match List.map Nx.Device.of_runtime runtimes with
+    | [ d1; d2; d3; d4 ] -> (d1, d2, d3, d4)
+    | _ -> assert false
 
-  let rec memory =
-    {
-      Nx_effect.read =
-        (fun r ->
-          match r.r_cell.state with
-          | Live (Mem shards) ->
-              let shape =
-                Nx_effect.global r.r_placement (Nx_array.View.shape r.r_view)
-              in
-              Nx_effect.assemble r
-                (Array.map (fun n -> (0, n)) shape)
-                (fun d v ->
-                  let devices = Nx.Placement.devices r.r_cell.placement in
-                  let k = Option.get (List.find_index (( == ) d) devices) in
-                  gather (List.nth shards k) v)
-          | _ -> assert false);
-      place = (fun p x -> place p x);
-    }
+  (* A device beside the four. *)
+  let other = Nx.Device.of_runtime (runtime "OTHER")
 
-  and place : type a b.
-      Nx_effect.placement -> (a, b) Nx_effect.t -> (a, b) Nx_effect.t =
-   fun p x ->
-    if Nx.numel x > 0 then incr uploads;
-    let h = Nx.place Nx.Placement.host x in
-    let devices = Nx.Placement.devices p in
-    let windows = List.map (Nx.Placement.window p (Nx.shape h)) devices in
-    let shards =
-      List.map (fun w -> Nx_effect.read (Nx.copy (Nx.shrink w h))) windows
-    in
-    let shape = Array.map (fun (lo, hi) -> hi - lo) (List.hd windows) in
-    Nx_effect.placed p (Nx.dtype x)
-      (Nx_array.View.create shape)
-      (Nx_effect.cell ~placement:p
-         ~length:(Array.fold_left ( * ) 1 shape)
-         (Mem shards))
+  let total count =
+    List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 runtimes
 
-  let d1 = Nx_effect.Device.make "TEST:1" memory
-  let d2 = Nx_effect.Device.make "TEST:2" memory
-  let d3 = Nx_effect.Device.make "TEST:3" memory
-  let d4 = Nx_effect.Device.make "TEST:4" memory
-
-  (* A device of another memory. *)
-  let other = Nx_effect.Device.make "OTHER" { memory with place = memory.place }
+  (* The bytes the four devices have received, and sent. *)
+  let bytes_in () = total Nx_device.Stats.bytes_in
+  let bytes_out () = total Nx_device.Stats.bytes_out
   let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
-  let cell_of (type a b) (x : (a, b) Nx.t) =
-    match x with
-    | Nx_effect.Placed r -> r.r_cell
-    | _ -> fail "expected a placed value"
+  (* The storage of the placed value [x]. *)
+  let storage_of x =
+    match Nx.Repr.v x with
+    | Placed p -> Nx.Repr.Placed.storage p
+    | Host _ | Traced _ -> fail "expected a placed value"
+
+  (* [s] consumed at [path], as a compiled call consumes it. *)
+  let consume s ~path =
+    Nx.Repr.Storage.borrow s;
+    Nx.Repr.Storage.upgrade s;
+    Nx.Repr.Storage.consume s ~path;
+    ignore (Nx.Repr.Storage.finish s);
+    Nx.Repr.Storage.release s
 end
 
 (* Tensors of every dtype as they are stored: drawn as bit patterns under every
@@ -900,9 +898,7 @@ module Stored = struct
      row-major order. *)
 
   let storage (Nx.P t) =
-    let bytes =
-      Nx_device.Buffer.bigarray Bigarray.char (Nx_effect.elements t)
-    in
+    let bytes = Nx_device.Buffer.bigarray Bigarray.char (elements t) in
     ( Nx_dtype.to_string (Nx.dtype t),
       Nx.shape t,
       String.init (Bigarray.Array1.dim bytes) (Bigarray.Array1.get bytes) )
@@ -1096,13 +1092,18 @@ module Runtimes = struct
   (* [x] written to a fresh file, as a value on the disk over it. *)
   let on_disk x =
     let module B = Nx_device.Buffer in
-    let src = Nx_effect.elements x and path = temp_file () in
+    let src = elements x and path = temp_file () in
     let pp = Format.pp_print_string in
     B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-    Nx_effect.of_buffer (Nx.dtype x) (Nx.shape x)
-      (B.view
-         (require_ok ~pp (B.of_file path))
-         ~offset:0 (B.dtype src) (B.length src))
+    let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+    Nx.Repr.Placed.v p (Nx.dtype x)
+      (Nx_array.View.create (Nx.shape x))
+      (Nx.Repr.Storage.v p
+         [
+           B.view
+             (require_ok ~pp (B.of_file path))
+             ~offset:0 (B.dtype src) (B.length src);
+         ])
 
   (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
   let tight r f =

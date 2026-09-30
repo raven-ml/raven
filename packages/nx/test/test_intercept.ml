@@ -9,7 +9,7 @@
    whether an interpreter is installed anywhere. *)
 
 open Windtrap
-module E = Nx_effect
+module E = Nx.Op
 
 let x = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |]
 
@@ -17,7 +17,7 @@ let x = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |]
 let recording () =
   let names = ref [] in
   let run op =
-    names := E.Op.name op :: !names;
+    names := E.name op :: !names;
     E.eval op
   in
   ({ E.run }, names)
@@ -42,7 +42,9 @@ let extent =
             ignore (Nx.neg x);
             E.eval op
           in
-          ignore (E.intercept outer (fun () -> E.intercept { run } (fun () -> Nx.add x x)));
+          ignore
+            (E.intercept outer (fun () ->
+                 E.intercept { run } (fun () -> Nx.add x x)));
           equal names [ "add"; "neg" ] !seen);
       test "a domain spawned inside the extent is outside it" (fun () ->
           let i, seen = recording () in
@@ -86,8 +88,8 @@ let failing =
           is_false (E.intercepted ()));
     ]
 
-(* A program over many kinds of operation: elementwise, comparison,
-   selection, reduction, scan, product, movement, sorting and conversion. *)
+(* A program over many kinds of operation: elementwise, comparison, selection,
+   reduction, scan, product, movement, sorting and conversion. *)
 let program () =
   let m = Nx.reshape [| 3; 1 |] x in
   let p = Nx.matmul m (Nx.transpose m) in
@@ -121,10 +123,11 @@ let unobservable =
           while not (Atomic.get entered) do
             Domain.cpu_relax ()
           done;
-          let y = Fun.protect ~finally:(fun () -> Atomic.set finished true) program in
+          let y =
+            Fun.protect ~finally:(fun () -> Atomic.set finished true) program
+          in
           Domain.join other;
           equal (array float_exact) (Nx.to_array (program ())) (Nx.to_array y));
     ]
 
-let () =
-  exit (run "nx.effect interception" [ extent; asking; failing; unobservable ])
+let () = exit (run "nx interception" [ extent; asking; failing; unobservable ])
