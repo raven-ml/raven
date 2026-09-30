@@ -681,6 +681,17 @@ the Exclusions of `README.md`.
     A polynomial starts from its first coefficient and `xlog2` adds its low
     term only in float32, so the decompositions no longer rely on the float
     folds of `0. * x` and `x + 0` to be what tinygrad renders.
+  - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:102-104`
+    (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
+    operand). tolk.next: waiting for Codegen (L4), whose `pm_wmma_add` does
+    the same. A WMMA built for a sum starts from a zero accumulator, and the
+    running sum used to be added to it, `+0. + acc`, which only the float
+    `x + 0` fold removed: with that fold kept to `-0.`, every tensor-core
+    loop added `+0.` to each accumulator element on every iteration. The
+    running sum now replaces a zero accumulator: the sum's identity is the
+    accumulator's initial value, set once before the loop, and the
+    lowering adds `+0.` to the result, so a partial sum's zero sign, which
+    the rounded sum class leaves open, is all that differs.
 - **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result, alone
   or fused, meets its class against eager nx, whose integer arithmetic is
   modular and whose floats follow IEEE. rune's `check_wrapping_comparisons`,
@@ -710,6 +721,10 @@ the Exclusions of `README.md`.
     stays (D24)`;
   - transcendental polynomials: the `Transcendental` goldens, generated from
     the patched tinygrad, whose value tables are unchanged;
+  - tensor-core accumulators: the `Cstyle` sources of every tensor core
+    (`sources › by default › metal_tc_*`, `hip_tc_*`, `metal_matmul`), whose
+    loops add nothing to the accumulator, as tinygrad's; Codegen's suite (L4)
+    brings the value test of an accumulator at `-0.`;
   - the goldens, generated from the patched tinygrad.
 
 ## D25. Compilers keep each product and sum its own rounding

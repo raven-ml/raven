@@ -1,3 +1,25 @@
+diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
+index efb2e82..8c64ddb 100644
+--- a/tinygrad/codegen/__init__.py
++++ b/tinygrad/codegen/__init__.py
+@@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
+     src.append(b.replace(src=tuple([x.index(*idx) for x in src_expanded])))
+   return UOp.stack(*src).reshape(b.shape)
+ 
++# a sum's identity is the zero accumulator a WMMA starts from: the running sum replaces it, so no addition of +0.0 stays in the loop
++def wmma_accumulate(wmma:UOp, add:UOp) -> UOp:
++  acc = wmma.src[2]
++  lanes = [s.src[0] if s.op is Ops.CAST else s for s in acc.src] if acc.op is Ops.STACK else []
++  zero = bool(lanes) and all(s.op is Ops.CONST and s.arg == 0 for s in lanes)
++  return UOp(wmma.op, src=(wmma.src[0], wmma.src[1], add if zero else acc+add), arg=wmma.arg)
++
+ pm_wmma_add = PatternMatcher([
+-  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"),
+-   lambda add, wmma: UOp(wmma.op, src=(wmma.src[0], wmma.src[1], wmma.src[2]+add), arg=wmma.arg)),
++  (UPat(Ops.WMMA, name="wmma") + UPat.var("add"), wmma_accumulate),
+   # push permute/reshape to the other side of the add
+   (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
+     lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
 index 62c3191..613eda4 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
