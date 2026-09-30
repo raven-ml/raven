@@ -2630,13 +2630,17 @@ the two-domain test fails on each of three runs. The survivors:
 - dismissed in the source as equivalent (five), and, equivalent too, any
   parameter or any tagged node counting as a placeholder in a batch's
   patches, which hold only placeholders and storage;
-- the dismissed `||` as `&&` in the storage a batch's patches reach, which
-  drops that storage from the buffers a run touches: every batch of the NULL
-  devices touches the host's memory through their signal words, so the host
-  counts the batch's work as pending whether or not the storage is touched
-  (`EN › batches › a host kernel runs once the copy that feeds it landed`
-  passes either way); a device whose signal word is its own memory would tell
-  the two apart;
+- `||` as `&&` in the storage a batch's patches reach, which drops that
+  storage from the buffers a run touches: `Nx_device.submit` records pending
+  work per device, and a batch of the NULL devices touches the host's memory
+  through their signal words and its address table, so the host counts the
+  batch's work as pending whether or not the storage is touched (`EN ›
+  batches › a host kernel runs once the copy that feeds it landed` passes
+  either way). A `Device_local` device, whose signal word is its own pinned
+  memory (CUDA, AMD, NV), takes the signal word off the host; the address
+  table of a batch with link-folded storage stays a placeholder of the host,
+  so the pin, on hardware, needs a batch that touches no other memory of the
+  host;
 - `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
