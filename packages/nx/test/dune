@@ -16,6 +16,7 @@
   test_fft
   test_runtime
   test_backend
+  test_conformance
   test_allocation)
  (package nx)
  (modules :standard \ test_format)
