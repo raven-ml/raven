@@ -43,7 +43,7 @@ type op =
   | Cholesky of bool
   | Qr of bool
   | Lu
-  | Svd of bool
+  | Svd
   | Solve_triangular of bool * bool * bool
 
 (* A fill value as a key holds it: a float by its bits, since [-0.] and each NaN
@@ -59,11 +59,11 @@ let fill_const = function
   | Float_bits b -> `Float (Int64.float_of_bits b)
   | Value c -> c
 
-(* The results of [op] over the operands' nodes [xs], one per destination of the
-   dtypes [dsts]. *)
+(* The results of [op] over the operands' nodes [xs], one per destination node
+   of [dsts], of its dtype and shape. *)
 let lower op xs dsts =
   match (op, xs) with
-  | Cast, [ x ] -> [ Lower_arith.cast (List.hd dsts) x ]
+  | Cast, [ x ] -> [ Lower_arith.cast (Ops.dtype (List.hd dsts)) x ]
   | Unary k, [ x ] -> [ Lower_arith.unary k x ]
   | Binary k, [ x; y ] -> [ Lower_arith.binary k x y ]
   | Compare k, [ x; y ] -> [ Lower_arith.compare k x y ]
@@ -96,7 +96,16 @@ let lower op xs dsts =
   | Lu, [ x ] ->
       let lu, pivots, perm = Lower_linalg.lu x in
       [ lu; pivots; perm ]
-  | Svd full_matrices, [ x ] ->
+  | Svd, [ x ] ->
+      (* The factors are full when [u] and [vt] are square. *)
+      let square f =
+        match List.rev (Ops.max_shape f) with
+        | n :: m :: _ -> n = m
+        | _ -> false
+      in
+      let full_matrices =
+        List.for_all square [ List.hd dsts; List.nth dsts 2 ]
+      in
       let u, s, vt = Lower_linalg.svd ~full_matrices x in
       [ u; s; vt ]
   | Solve_triangular (upper, transpose, unit_diag), [ a; b ] ->
@@ -233,12 +242,14 @@ let compile key d arrays dsts =
       (Lower.strided b a.view start, Some b)
   in
   let operands = List.map2 node arrays operands
-  and results = List.map (fun (l : layout) -> l.dtype) outs
   and outs = List.map2 node dsts outs in
-  let results = lower key.op (List.map fst operands) results in
+  let results = lower key.op (List.map fst operands) (List.map fst outs) in
   let stores =
     List.map2
-      (fun (view, _) value -> Ops.after view [ Ops.store view value ])
+      (fun (view, _) value ->
+        if Ops.max_shape value <> Ops.max_shape view then
+          invalid_arg "a lowered result of another shape than its destination";
+        Ops.after view [ Ops.store view value ])
       outs results
   in
   let linear, _ = Schedule.create_linear_with_vars (Ops.sink stores) in
@@ -418,14 +429,7 @@ module Kernels = struct
   let cholesky ~upper x ~dst = run "cholesky" (Cholesky upper) [ A x ] [ A dst ]
   let qr ~reduced x ~q ~r = run "qr" (Qr reduced) [ A x ] [ A q; A r ]
   let lu x ~lu ~pivots ~perm = run "lu" Lu [ A x ] [ A lu; A pivots; A perm ]
-
-  (* The factors are full when [u] is square and [vt] has [x]'s columns. *)
-  let svd (x : ('a, 'b) Nx_array.t) ~(u : ('a, 'b) Nx_array.t) ~s
-      ~(vt : ('a, 'b) Nx_array.t) =
-    let dim i a = View.dim (View.ndim a.Nx_array.view - i) a.view in
-    let full = dim 1 u = dim 2 x && dim 2 vt = dim 1 x in
-    run "svd" (Svd full) [ A x ] [ A u; A s; A vt ]
-
+  let svd x ~u ~s ~vt = run "svd" Svd [ A x ] [ A u; A s; A vt ]
   let eig _ ~values:_ ~vectors:_ = refused "eig"
   let eigh _ ~values:_ ~vectors:_ = refused "eigh"
 
