@@ -1,0 +1,129 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=4, name="cuda_0", device="CPU")
+1 Ops.PARAM dtypes.ulong [] ParamArg(slot=1, dtype=dtypes.ulong, size=2, name="slots_1", device="CPU", volatile=True)
+2 Ops.CONST dtypes.weakint [] 0
+3 Ops.CAST dtypes.int [2] dtypes.int
+4 Ops.INDEX dtypes.ulong [1, 3]
+5 Ops.CAST dtypes.ulong [2] dtypes.ulong
+6 Ops.STORE dtypes.void [4, 5]
+7 Ops.BARRIER dtypes.void [6]
+8 Ops.AFTER dtypes.ulong [0, 7]
+9 Ops.PARAM dtypes.ulong [] ParamArg(slot=2, dtype=dtypes.ulong, size=1, name="None_2", device="CPU")
+10 Ops.INDEX dtypes.ulong [9, 3]
+11 Ops.LOAD dtypes.ulong [10]
+12 Ops.CUSTOM_FUNCTION dtypes.void [11] "cuStreamWriteValue64_v2"
+13 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=1, name="None_3", device="CPU")
+14 Ops.INDEX dtypes.ulong [13, 3]
+15 Ops.LOAD dtypes.ulong [14]
+16 Ops.CUSTOM_FUNCTION dtypes.void [15] "cuLaunchKernel"
+17 Ops.PARAM dtypes.ulong [] ParamArg(slot=4, dtype=dtypes.ulong, size=1, name="None_4", device="CPU")
+18 Ops.INDEX dtypes.ulong [17, 3]
+19 Ops.LOAD dtypes.ulong [18]
+20 Ops.PARAM dtypes.int [] ParamArg(slot=11, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.PARAM dtypes.ulong [] ParamArg(slot=5, dtype=dtypes.ulong, size=1, name="None_5", device="CPU")
+24 Ops.INDEX dtypes.ulong [23, 3]
+25 Ops.LOAD dtypes.ulong [24]
+26 Ops.CUSTOM_FUNCTION dtypes.void [25] "cuStreamWaitValue64_v2"
+27 Ops.PARAM dtypes.ulong [] ParamArg(slot=6, dtype=dtypes.ulong, size=1, name="None_6", device="CPU")
+28 Ops.INDEX dtypes.ulong [27, 3]
+29 Ops.LOAD dtypes.ulong [28]
+30 Ops.CUSTOM_FUNCTION dtypes.void [29] "cuCtxSetCurrent"
+31 Ops.INDEX dtypes.ulong [8, 3]
+32 Ops.LOAD dtypes.ulong [31]
+33 Ops.CALL dtypes.uint [30, 32] CallInfo(dtype=dtypes.uint)
+34 Ops.AFTER dtypes.ulong [8, 33]
+35 Ops.INDEX dtypes.ulong [34, 22]
+36 Ops.LOAD dtypes.ulong [35]
+37 Ops.PARAM dtypes.ulong [] ParamArg(slot=7, dtype=dtypes.ulong, size=1, name="inputs_7", device="CPU")
+38 Ops.INDEX dtypes.ulong [37, 3]
+39 Ops.LOAD dtypes.ulong [38]
+40 Ops.PARAM dtypes.ulong [] ParamArg(slot=10, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="submitted_cuda", addrspace=AddrSpace.ALU)
+41 Ops.CALL dtypes.uint [26, 36, 39, 40, 3] CallInfo(dtype=dtypes.uint)
+42 Ops.AFTER dtypes.ulong [8, 41]
+43 Ops.INDEX dtypes.ulong [42, 22]
+44 Ops.LOAD dtypes.ulong [43]
+45 Ops.PARAM dtypes.uchar [] ParamArg(slot=8, dtype=dtypes.uchar, size=40, name="cmdbuf_compute_0_8", device="CPU")
+46 Ops.PARAM dtypes.uchar [] ParamArg(slot=9, dtype=dtypes.uchar, size=28, name="kernargs_compute_0_9", device="CPU")
+47 Ops.AFTER dtypes.uchar [46, 7]
+48 Ops.BITCAST dtypes.int [47] dtypes.int
+49 Ops.CONST dtypes.weakint [] 6
+50 Ops.CAST dtypes.int [49] dtypes.int
+51 Ops.INDEX dtypes.int [48, 50]
+52 Ops.STORE dtypes.void [51, 20]
+53 Ops.AFTER dtypes.uchar [45, 7, 52]
+54 Ops.INDEX dtypes.uchar [53, 3]
+55 Ops.CALL dtypes.uint [16, 19, 20, 22, 22, 22, 22, 22, 3, 44, 5, 54] CallInfo(dtype=dtypes.uint)
+56 Ops.AFTER dtypes.ulong [8, 55]
+57 Ops.INDEX dtypes.ulong [56, 22]
+58 Ops.LOAD dtypes.ulong [57]
+59 Ops.PARAM dtypes.ulong [] ParamArg(slot=12, dtype=dtypes.ulong, vmin_vmax=(0, 4611686018427387903), multiple_of=1, name="value_cuda", addrspace=AddrSpace.ALU)
+60 Ops.CALL dtypes.uint [12, 58, 39, 59, 3] CallInfo(dtype=dtypes.uint)
+61 Ops.AFTER dtypes.ulong [8, 60]
+62 Ops.CONST dtypes.weakint [] 3
+63 Ops.CAST dtypes.int [62] dtypes.int
+64 Ops.INDEX dtypes.ulong [61, 63]
+65 Ops.CAST dtypes.ulong [60] dtypes.ulong
+66 Ops.STORE dtypes.void [64, 65]
+67 Ops.SINK dtypes.void [66] KernelInfo(name="hcq_submit", estimates=Estimates()) tag=1
+68 Ops.LINEAR dtypes.void [0, 1, 9, 13, 17, 23, 27, 37, 45, 46, 40, 20, 59, 2, 3, 10, 11, 14, 15, 18, 19, 24, 25, 28, 29, 38, 39, 4, 5, 6, 7, 8, 31, 32, 30, 33, 34, 21, 22, 35, 36, 26, 41, 42, 43, 44, 47, 49, 50, 48, 51, 52, 53, 54, 16, 55, 56, 57, 58, 12, 60, 61, 62, 63, 64, 65, 66, 67]
+69 Ops.SOURCE dtypes.void [] "\nvoid hcq_submit(unsigned long* restrict cuda_0_4, volatile unsigned long* restrict slots_1_2, unsigned long* restrict None_2_1, unsigned long* restrict None_3_1, unsigned long* restrict None_4_1, unsigned long* restrict None_5_1, unsigned long* restrict None_6_1, unsigned long* restrict inputs_7_1, unsigned char* restrict cmdbuf_compute_0_8_40, unsigned char* restrict kernargs_compute_0_9_28, const unsigned long submitted_cuda_, const int v_, const unsigned long value_cuda_) {\n  unsigned long val0 = (*(None_2_1+0));\n  unsigned long val1 = (*(None_3_1+0));\n  unsigned long val2 = (*(None_4_1+0));\n  unsigned long val3 = (*(None_5_1+0));\n  unsigned long val4 = (*(None_6_1+0));\n  unsigned long val5 = (*(inputs_7_1+0));\n  *(slots_1_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val6 = (*(cuda_0_4+0));\n  unsigned int alu2 = (((unsigned int(*)(unsigned long))(val4))((unsigned long)(val6)));\n  unsigned long val7 = (*(cuda_0_4+1));\n  unsigned int alu3 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val3))((unsigned long)(val7), (unsigned long)(val5), (unsigned long)(submitted_cuda_), (int)(0)));\n  unsigned long val8 = (*(cuda_0_4+1));\n  *(((int*)(kernargs_compute_0_9_28))+6) = v_;\n  unsigned int alu5 = (((unsigned int(*)(unsigned long, int, int, int, int, int, int, int, unsigned long, unsigned long, unsigned char*))(val1))((unsigned long)(val2), (int)(v_), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(0), (unsigned long)(val8), (unsigned long)(0ul), (unsigned char*)((cmdbuf_compute_0_8_40+0))));\n  unsigned long val9 = (*(cuda_0_4+1));\n  unsigned int alu6 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val0))((unsigned long)(val9), (unsigned long)(val5), (unsigned long)(value_cuda_), (int)(0)));\n  *(cuda_0_4+3) = ((unsigned long)(alu6));\n}\n"
+70 Ops.BINARY dtypes.uchar [] b"\nvoid hcq_submit(unsigned long* restrict cuda_0_4, volatile unsigned long* restrict slots_1_2, unsigned long* restrict None_2_1, unsigned long* restrict None_3_1, unsigned long* restrict None_4_1, unsigned long* restrict None_5_1, unsigned long* restrict None_6_1, unsigned long* restrict inputs_7_1, unsigned char* restrict cmdbuf_compute_0_8_40, unsigned char* restrict kernargs_compute_0_9_28, const unsigned long submitted_cuda_, const int v_, const unsigned long value_cuda_) {\n  unsigned long val0 = (*(None_2_1+0));\n  unsigned long val1 = (*(None_3_1+0));\n  unsigned long val2 = (*(None_4_1+0));\n  unsigned long val3 = (*(None_5_1+0));\n  unsigned long val4 = (*(None_6_1+0));\n  unsigned long val5 = (*(inputs_7_1+0));\n  *(slots_1_2+0) = 0ul;\n  __atomic_thread_fence(__ATOMIC_SEQ_CST);\n  unsigned long val6 = (*(cuda_0_4+0));\n  unsigned int alu2 = (((unsigned int(*)(unsigned long))(val4))((unsigned long)(val6)));\n  unsigned long val7 = (*(cuda_0_4+1));\n  unsigned int alu3 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val3))((unsigned long)(val7), (unsigned long)(val5), (unsigned long)(submitted_cuda_), (int)(0)));\n  unsigned long val8 = (*(cuda_0_4+1));\n  *(((int*)(kernargs_compute_0_9_28))+6) = v_;\n  unsigned int alu5 = (((unsigned int(*)(unsigned long, int, int, int, int, int, int, int, unsigned long, unsigned long, unsigned char*))(val1))((unsigned long)(val2), (int)(v_), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(0), (unsigned long)(val8), (unsigned long)(0ul), (unsigned char*)((cmdbuf_compute_0_8_40+0))));\n  unsigned long val9 = (*(cuda_0_4+1));\n  unsigned int alu6 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val0))((unsigned long)(val9), (unsigned long)(val5), (unsigned long)(value_cuda_), (int)(0)));\n  *(cuda_0_4+3) = ((unsigned long)(alu6));\n}\n"
+71 Ops.PROGRAM dtypes.void [67, 68, 69, 70] ProgramInfo(vars=(%40, %20, %59), globals=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), outs=(0, 1, 9), ins=(0, 2, 3, 4, 5, 6, 7), target=Target(device="CPU", arch="x86_64,x86-64"))
+72 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=4, name="cuda", device=("CUDA",)) tag="cuda"
+73 Ops.PARAM dtypes.ulong [] ParamArg(slot=3, dtype=dtypes.ulong, size=2, name="slots", device=("CUDA",), volatile=True) tag="slots"
+74 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "cuda", "cuStreamWriteValue64_v2")
+75 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "cuda", "cuLaunchKernel")
+76 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("function", b"typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_v(float* data0_10, float* data1_10, const int v_) {\n  int gidx0 = blockIdx.x; /* v */\n  float val0 = (*(data1_10+gidx0));\n  *(data0_10+gidx0) = (val0+1.0f);\n}", "E_v")
+77 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "cuda", "cuStreamWaitValue64_v2")
+78 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, device="CPU") tag=("cfunc", "cuda", "cuCtxSetCurrent")
+79 Ops.PARAM dtypes.ulong [] ParamArg(slot=7, dtype=dtypes.ulong, size=1, name="inputs", device="CPU") tag="inputs"
+80 Ops.PARAM dtypes.uchar [] ParamArg(slot=6, dtype=dtypes.uchar, size=40, name="cmdbuf_compute_0", device=("CUDA",)) tag="cmdbuf_compute_0"
+81 Ops.PARAM dtypes.uchar [] ParamArg(slot=5, dtype=dtypes.uchar, size=28, name="kernargs_compute_0", device=("CUDA",)) tag="kernargs_compute_0"
+82 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+83 Ops.CONST dtypes.weakint [] 4
+84 Ops.MUL dtypes.int [21, 82]
+85 Ops.MUL dtypes.int [83, 84]
+86 Ops.ADD dtypes.int [2, 85]
+87 Ops.ADD dtypes.int [86, 85]
+88 Ops.MUL dtypes.int [83, 82]
+89 Ops.ADD dtypes.int [2, 88]
+90 Ops.ADD dtypes.int [89, 88]
+91 Ops.CONST dtypes.weakint [] 8
+92 Ops.MUL dtypes.int [82, 91]
+93 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CUDA")
+94 Ops.CALL dtypes.void [71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81] CallInfo(aux=HCQInfo(device=("CUDA",), kernels=((("CUDA",), "E_v", Estimates(ops=%82, lds=%87, mem=%90), (), b"\xec\xf9\xb1\xe0/\x0fA\xc6\xd2\xb4\x0d\x92\xf3\xe5\xe2N9B\x83!(\xe4\x84^@_\xb3\x1bA\xe3\xce$", (), ((0,), (1,))),), estimates=Estimates(ops=%82, lds=%92, mem=%92), nargs=10, table=7, slots=(("CUDA", 1),), written_bufs=(%93,)))
+95 Ops.BINARY dtypes.uchar [] b"\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+96 Ops.STORE dtypes.void [80, 95]
+97 Ops.BINARY dtypes.uchar [] b"\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+98 Ops.STORE dtypes.void [81, 97]
+99 Ops.CONST dtypes.weakint [] 24
+100 Ops.SHRINK dtypes.uchar [81, 2, 99]
+101 Ops.BITCAST dtypes.ulong [100] dtypes.ulong
+102 Ops.CONST dtypes.weakint [] 2
+103 Ops.STACK dtypes.weakint [21, 102]
+104 Ops.INDEX dtypes.ulong [101, 103]
+105 Ops.GETADDR dtypes.ulong [93] "CUDA"
+106 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="CUDA")
+107 Ops.GETADDR dtypes.ulong [106] "CUDA"
+108 Ops.STACK dtypes.ulong [105, 107]
+109 Ops.STORE dtypes.void [104, 108]
+110 Ops.BITCAST dtypes.ulong [80] dtypes.ulong
+111 Ops.STACK dtypes.weakint [21, 62]
+112 Ops.INDEX dtypes.ulong [110, 111]
+113 Ops.GETADDR dtypes.ulong [81] "CUDA"
+114 Ops.ADD dtypes.ulong [113, 91]
+115 Ops.STACK dtypes.ulong [114, 113]
+116 Ops.STORE dtypes.void [112, 115]
+117 Ops.SHRINK dtypes.ulong [79, 2, 2]
+118 Ops.STACK dtypes.weakint [2]
+119 Ops.INDEX dtypes.ulong [117, 118]
+120 Ops.PARAM dtypes.ulong [] ParamArg(slot=0, dtype=dtypes.ulong, size=1, name="timeline", device=("CUDA",), volatile=True) tag="timeline"
+121 Ops.BITCAST dtypes.uchar [120] dtypes.uchar
+122 Ops.GETADDR dtypes.ulong [121] "CUDA"
+123 Ops.STACK dtypes.ulong [122]
+124 Ops.STORE dtypes.void [119, 123]
+125 Ops.AFTER dtypes.void [94, 96, 98, 109, 116, 124]
+126 Ops.LINEAR dtypes.void [125]
+

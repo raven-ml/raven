@@ -1,0 +1,16 @@
+; CACHEDB is a directory of the sandbox, as Clang's compiler is made with its
+; cache.
+
+(test
+ (name test_ops_cuda)
+ (modules test_ops_cuda)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))

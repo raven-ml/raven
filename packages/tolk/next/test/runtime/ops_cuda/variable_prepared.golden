@@ -1,0 +1,33 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=10, device="CUDA")
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+2 Ops.SPECIAL dtypes.int [1] "gidx0"
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="CUDA")
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.LOAD dtypes.float [5]
+7 Ops.CONST dtypes.weakfloat [] 1.0
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.ADD dtypes.float [6, 8]
+10 Ops.STORE dtypes.void [3, 9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CONST dtypes.weakint [] 4
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.MUL dtypes.int [13, 1]
+15 Ops.MUL dtypes.int [12, 14]
+16 Ops.ADD dtypes.int [11, 15]
+17 Ops.ADD dtypes.int [16, 15]
+18 Ops.MUL dtypes.int [12, 1]
+19 Ops.ADD dtypes.int [11, 18]
+20 Ops.ADD dtypes.int [19, 18]
+21 Ops.SINK dtypes.void [10] KernelInfo(name="E_v", estimates=Estimates(ops=%1, lds=%17, mem=%20)) tag=1
+22 Ops.SINK dtypes.void [10] KernelInfo(name="E_v") tag=1
+23 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 7, 8, 9, 10, 22]
+24 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_v(float* data0_10, float* data1_10, const int v_) {\n  int gidx0 = blockIdx.x; /* v */\n  float val0 = (*(data1_10+gidx0));\n  *(data0_10+gidx0) = (val0+1.0f);\n}"
+25 Ops.BINARY dtypes.uchar [] b"typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_v(float* data0_10, float* data1_10, const int v_) {\n  int gidx0 = blockIdx.x; /* v */\n  float val0 = (*(data1_10+gidx0));\n  *(data0_10+gidx0) = (val0+1.0f);\n}"
+26 Ops.PROGRAM dtypes.void [21, 23, 24, 25] ProgramInfo(global_size=(%1, 1, 1), vars=(%1,), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", arch="sm_89"))
+27 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CUDA")
+28 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=10, device="CUDA")
+29 Ops.CALL dtypes.void [26, 27, 28] CallInfo()
+30 Ops.LINEAR dtypes.void [29]
+

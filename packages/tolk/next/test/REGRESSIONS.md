@@ -2807,3 +2807,28 @@ the `slow` alias, built on macOS only).
 | old: `unit/test_runtime_metal.ml` "beam timing replays compiled Metal queues" | | the engine's `measure` and L7's `Search` |
 | old: `unit/test_runtime_metal.ml` "multi-device calls ...", "a sharded kernel on two Metal devices ..." | | dropped: a Mac has one Metal device |
 | old: `unit/test_runtime_metal.ml` "CPU kernels map Metal storage ...", "Metal kernels map borrowed host memory ..." | | dropped here: borrows are nx.device's, and the engine's `link` suite |
+
+## Ops_cuda
+
+`C` is the `Ops_cuda` suite (`test/runtime/ops_cuda`). Its goldens come from
+tinygrad's `CUDAQueue` on a CUDA device described without a GPU (sm_89, which
+reaches the host's memory), with D1 and D36 applied in the generator: for each
+of six cases (a chain, a profiled chain, a launch size that reads a variable,
+a copy in from the host and its profiled form, and copies to the host between
+batches), the schedule `sched_batches` receives, the schedule `compile_linear`
+returns and its host programs' source. It needs no GPU and no driver.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.launch`, `.exec` (no test) | the arguments after their size, the launch's extra words on the queue, `cuLaunchKernel` on the compute stream | `C › recorded cases › chain`, `variable` (a launch size that reads a variable) |
+| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.copy`, `.wait`, `.signal` (no test) | copies on the copy stream, waits and writes of 64-bit words between the streams | `C › recorded cases › copy_in`, `host_split` |
+| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.timestamp` (no test) | a host function stamps a slot | `C › recorded cases › chain_profile`, `copy_in_profile` |
+| tinygrad: `runtime/ops_cuda.py` `CUDAQueue.submit` (no test) | the status of the last call is stored | `C › recorded cases › *_host.golden` |
+| tinygrad: `runtime/ops_cuda.py` `CUDADevice.pm_bufferize`, `handles`, `stamp`, `function` | the engine's words of a batch | the engine's CUDA module |
+| tinygrad: `runtime/ops_cuda.py` `CUDAAllocator`, `CUDADevice._wait_signal`, `count` | memory, peer maps and waits | nx.cuda.device's suite |
+| tinygrad: `runtime/ops_cuda.py` the `MOCK` interface (`test/mockgpu/cuda`) | a CUDA driver in Python | dropped: no mock drivers (plan §10) |
+| old: `unit/test_cuda_queue.ml` "compiles mixed-width arguments and symbolic launch dimensions" | | `C › recorded cases › variable`; argument layout is `Hcq2.layout_args`'s |
+| old: `unit/test_cuda_queue.ml` "profiles compute and copy calls with native host callbacks" | | `C › recorded cases › copy_in_profile` |
+| old: `unit/test_cuda_queue.ml` "compiles dependencies crossing compute and copy queues" | | `C › recorded cases › copy_in`, `host_split` |
+| old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
+| old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |

@@ -1051,3 +1051,23 @@ the Exclusions of `README.md`.
   with zero cast to a float is zero (D35)", "a shard of a sum of a product with
   zero is zero (D35)", and the law "a rewritten value holds the value computed
   whole" over every drawn program.
+
+## D36. A CUDA host program reads a function's address from a word
+
+- **tinygrad:** `runtime/ops_cuda.py:23` (`extern`: a `Buffer` of the host
+  placed at an address), `:38` (`CUDAQueue.extern`: the address of such a
+  buffer), `:51` (a kernel's function) and `:64` (the host function that
+  stamps a slot).
+- **tolk.next:** `lib/runtime/ops_cuda.ml` (`extern`).
+- **Differs:** a kernel's `CUfunction` and the stamping host function reach
+  the host program as words it loads, from placeholders of the host tagged
+  `("function", lib, name)` and `"stamp"`, which the engine fills when it
+  links the batch. tinygrad takes them as the address of a buffer placed at
+  the function, which the batch loads from its address table.
+- **Reason:** (c). nx.device's buffers are memory: none lies at a function's
+  address, and a placeholder's storage is a buffer. A word holding the
+  address is how a C function already reaches a host program
+  (`Hcq2.ccall`).
+- **Pinned by:** the Ops_cuda suite (`test/runtime/ops_cuda`): `recorded
+  cases`, whose host programs are tinygrad's with D36 applied by their
+  generator (`gen/runtime/ops_cuda.py`).

@@ -1,0 +1,26 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(unsigned long* restrict cuda_0_4, volatile unsigned long* restrict slots_1_2, unsigned long* restrict None_2_1, unsigned long* restrict None_3_1, unsigned long* restrict None_4_1, unsigned long* restrict None_5_1, unsigned long* restrict None_6_1, unsigned long* restrict inputs_7_1, unsigned char* restrict cmdbuf_compute_0_8_120, const unsigned long submitted_cuda_, const unsigned long value_cuda_) {
+  unsigned long val0 = (*(None_2_1+0));
+  unsigned long val1 = (*(None_3_1+0));
+  unsigned long val2 = (*(None_4_1+0));
+  unsigned long val3 = (*(None_5_1+0));
+  unsigned long val4 = (*(None_6_1+0));
+  unsigned long val5 = (*(inputs_7_1+0));
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val6 = (*(cuda_0_4+0));
+  unsigned int alu2 = (((unsigned int(*)(unsigned long))(val4))((unsigned long)(val6)));
+  unsigned long val7 = (*(cuda_0_4+1));
+  unsigned int alu3 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val3))((unsigned long)(val7), (unsigned long)(val5), (unsigned long)(submitted_cuda_), (int)(0)));
+  unsigned long val8 = (*(cuda_0_4+1));
+  unsigned int alu4 = (((unsigned int(*)(unsigned long, int, int, int, int, int, int, int, unsigned long, unsigned long, unsigned char*))(val1))((unsigned long)(val2), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(0), (unsigned long)(val8), (unsigned long)(0ul), (unsigned char*)((cmdbuf_compute_0_8_120+0))));
+  unsigned long val9 = (*(cuda_0_4+1));
+  unsigned int alu5 = (((unsigned int(*)(unsigned long, int, int, int, int, int, int, int, unsigned long, unsigned long, unsigned char*))(val1))((unsigned long)(val2), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(0), (unsigned long)(val9), (unsigned long)(0ul), (unsigned char*)((cmdbuf_compute_0_8_120+40))));
+  unsigned long val10 = (*(cuda_0_4+1));
+  unsigned int alu6 = (((unsigned int(*)(unsigned long, int, int, int, int, int, int, int, unsigned long, unsigned long, unsigned char*))(val1))((unsigned long)(val2), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(1), (int)(0), (unsigned long)(val10), (unsigned long)(0ul), (unsigned char*)((cmdbuf_compute_0_8_120+80))));
+  unsigned long val11 = (*(cuda_0_4+1));
+  unsigned int alu7 = (((unsigned int(*)(unsigned long, unsigned long, unsigned long, int))(val0))((unsigned long)(val11), (unsigned long)(val5), (unsigned long)(value_cuda_), (int)(0)));
+  *(cuda_0_4+3) = ((unsigned long)(alu7));
+}
+
