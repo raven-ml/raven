@@ -101,6 +101,10 @@ val pp_device : Format.formatter -> device -> unit
 (** [pp_device] formats a placement as a quoted name or a tuple of quoted names:
     ['CPU'], [('CPU:0', 'CPU:1')]. *)
 
+val is_disk_device : device -> bool
+(** [is_disk_device d] is [true] iff a device of [d] is a disk: its name, up to
+    its first [:], is [DISK] in any case. *)
+
 (** {1:sint Symbolic integers} *)
 
 (** The type for symbolic integers: an integer, or an integer node whose value

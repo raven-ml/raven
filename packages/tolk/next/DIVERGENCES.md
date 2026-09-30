@@ -50,7 +50,9 @@ the Exclusions of `README.md`.
   state: `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for rune
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
-  (`uop/ops.py:856-993`) are rune's.
+  (`uop/ops.py:856-993`) are rune's. Whether storage is bound is the
+  operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
+  `ParamArg.buffer` (`uop/spec.py:149,153,266,268`) hold by construction.
 - **Reason:** (c).
 - **Pinned by:** waiting for L6 and L7; for `Ops`, its suite
   (`test/uop/ops`): `storage › new_buffer takes the next slot without one`
@@ -61,8 +63,8 @@ the Exclusions of `README.md`.
 - **tinygrad:** the imports inside functions that Python uses to hide a cycle:
   - `uop/ops.py:15,204,270,517,935,1167-1190,1572` calls `symbolic`, `render`,
     `spec`, `upat`, `schedule.prepare`, `mixin.rand` and `renderer`;
-  - `uop/spec.py:287-289` against `codegen.opt`, `schedule.rangeify` and
-    `renderer`;
+  - `uop/spec.py:7,287-289` against `device`, `codegen.opt`,
+    `schedule.rangeify` and `renderer`;
   - `renderer/__init__.py` imports `device.Compiler`, while `device.Compiled`
     holds renderers;
   - `codegen/opt/postrange.py:267,273` against `search` and `heuristic`, with
@@ -95,9 +97,12 @@ the Exclusions of `README.md`.
     `ops.py` calls them and a module cannot call a later one; the elementwise
     ones, which patterns share with nodes, are one functor applied to both;
   - the small types that `ops` and `spec` name from later files
-    (`Estimates`, `BufferizeOpts`) are defined in the earliest module that
-    needs them; `Opt`, whose file depends on nothing, stays in its own
-    module;
+    (`Estimates`, `BufferizeOpts`), and `device.py`'s `is_disk_device`, are
+    defined in the earliest module that needs them; `Opt`, whose file
+    depends on nothing, stays in its own module;
+  - `spec.py`'s imports of `codegen.opt`, `schedule.rangeify` and
+    `renderer` serve only `pyrender_globals`, which is not ported (see the
+    README), so they need no break;
   - `Compiler` is defined ahead of the renderers, and `Device` follows
     `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` lands with
@@ -132,7 +137,7 @@ the Exclusions of `README.md`.
   tolk.next picks the renderer and compiler from the `arch` and never parses
   the name, with one exception: a name starting with `DISK` is a disk, as
   tinygrad reserves it and nx.device names its disk devices
-  (`Ops.on_disk`, `copy_to_device`, `clone`).
+  (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
 - **Pinned by:** waiting for L6 for targets; for the disk, the `Ops`
   suite: `several devices › on_disk holds for one disk device`, `several
