@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+emulated	supported
+''	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.double dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+'long'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+'int64'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+'double'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.double dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+'half,long'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+'ulong'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.double dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool
+',long,'	dtypes.fp8e4m3 dtypes.fp8e5m2 dtypes.fp8e4m3fnuz dtypes.fp8e5m2fnuz dtypes.half dtypes.bfloat16 dtypes.float dtypes.uchar dtypes.ushort dtypes.uint dtypes.ulong dtypes.char dtypes.short dtypes.int dtypes.long dtypes.bool

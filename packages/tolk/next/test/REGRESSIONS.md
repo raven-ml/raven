@@ -867,3 +867,66 @@ until then.
 | old: `lib/uop/render.mli` `python_float_string`, `compare_uops` | CPython's float repr; the structural order | dropped here: `Dtype.pp_const` and `Ops.compare_structure`, in their modules' suites |
 | old: `test/parity/helpers.ml` (`uops_to_string` listings) | parity cases compared as listings | dropped: graph goldens use the graph format, which keeps what a listing drops (test/README.md) |
 | old: `test/unit/codegen/test_linearizer.ml` (`Render.pp_uops` as a failure printer) | none | dropped: no claim |
+
+## Renderer
+
+The suite is `Tolk_next.Renderer` (`renderer/renderer/`), written `R` below.
+`kernels.golden` holds the kernels of `null/test_uops_stats.py`, linearized as
+`to_program` linearizes them, and `estimates.golden` what `Estimates.from_uops`
+gives for each, with and without `ignore_indexing`; `symbolic_kernels.golden`
+and `symbolic_estimates.golden` hold kernels over a variable and their
+estimates at three of its values.
+
+A kernel's trip counts are typed constants, casts of literals, which only the
+symbolic rules fold: every recorded kernel is tagged `L3`, and
+`R › estimates of hand-written kernels › a typed trip count needs the symbolic rules`,
+tagged `pre-L3`, pins the time before. The tests tagged `assert-compile` run in
+a second process with `ASSERT_COMPILE=1`, since a process reads the variable
+once; the default process runs with `ASSERT_COMPILE=0`.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `null/test_uops_stats.py::TestMemoryCount::test_add`, `test_add_const`, `test_expanded`, `test_self_add`, `test_self_add_transposed`, `test_self_add_assign` | `mem` counts each buffer once, a broadcast read at its own size | `R › estimates of recorded kernels › estimates.golden › case=add_uint8`, `add_const_uint8`, `add_expanded_uint8`, `self_add_uint8`, `self_add_transposed_uint8`, `self_add_assign_uint8` (L3) |
+| tinygrad: `null/test_uops_stats.py::TestMemoryCount::test_add_slice`, `test_both_expanded` | none | dropped: skipped in tinygrad ("depends on subbuffer working", "no longer supported") |
+| tinygrad: `null/test_uops_stats.py::TestMemoryCount::test_copyout` | a copy's estimate | dropped: `estimate_uop` of a copy is `engine/realize.py`'s (L7), not `from_uops` |
+| tinygrad: `null/test_uops_stats.py::TestUOpsStatsMatmulHalf` (3 tests) | `GlobalCounters.global_ops` of emulated tensor-core matmuls | dropped: counters of a run on the PYTHON device, the executor's (L7); the count of a tensor core product is `R › estimates of hand-written kernels › counts a tensor core product as 2NMK shared among its threads` and `estimates.golden › case=gemm_tc_half` |
+| tinygrad: `null/test_uops_stats.py::TestUOpsStats::test_isa_store_estimate` | a store of one int32 counts 4 bytes in `lds` and `mem` | `R › estimates of hand-written kernels › counts the bytes a store writes` (the X86 renderer is excluded; its estimate is `from_uops` before instruction selection) |
+| tinygrad: `null/test_uops_stats.py::TestUOpsStats::test_simple_add`, `test_simple_add_sq`, `test_cat_equal_pieces`, `test_simple_matmul`, `test_simple_matmul_8192` | `ops` and `mem` of elementwise, concatenation and matmul kernels | `R › estimates of recorded kernels › estimates.golden › case=simple_add`, `simple_add_sq`, `cat_equal_pieces`, `cat_unequal_pieces`, `simple_matmul`, `simple_matmul_8192` (L3) |
+| tinygrad: `null/test_uops_stats.py::TestUOpsStats::test_mulacc` | a `MULACC` has the stats of a `MUL` and an `ADD` | `R › estimates of hand-written kernels › counts a multiply-add as a multiply and an add` |
+| tinygrad: `null/test_uops_stats.py::TestStatsOptimized::test_gemm`, `test_gemm_one_upcasted`, `test_gemm_upcasted`, `test_gemm_upcasted_locals`, `test_gemm_group`, `test_reduce` | `ops`, `mem` and `lds` of a 64x64 gemm under optimisations, and of a sum | `R › estimates of recorded kernels › estimates.golden › case=gemm`, `gemm_one_upcasted`, `gemm_upcasted`, `gemm_upcasted_locals`, `gemm_group`, `reduce` (L3; the kernels with locals on CUDA) |
+| tinygrad: `null/test_uops_stats.py::TestStatsOptimized::test_gemm_tc_unroll`, `test_gemm_tc_unroll_half` | a tensor-core gemm | `R › estimates of recorded kernels › estimates.golden › case=gemm_tc_half` (L3); the float gemm refuses the TC optimisation on sm_80 without TF32 and tinygrad skips it, and the half one is skipped in tinygrad |
+| tinygrad: `null/test_device.py::TestCompiler::test_compile_cached` | a miss compiles and fills the disk cache | `R › Compiler › compile_cached compiles a source once and keeps its binary` |
+| tinygrad: `null/test_device.py::TestCompiler::test_compile_cached_disabled` | with `CCACHE=0` nothing is cached | `R › Compiler › compile_cached compiles every time with ccache off when made` |
+| tinygrad: `null/test_device.py::TestCompiler::test_device_compile` | a device compiles with `CCACHE=0` | dropped: realizes on a device, the executor's (L7) |
+| tinygrad: `null/test_method_cache.py` (`compiler.compile_cached = None`) | the method cache avoids compiling again | dropped: `engine/realize.py`'s cache (L7) |
+| tinygrad: `device/metal/test_metal.py`, `device/amd/test_llvm.py` (`CompileError`) | a toolchain rejects bad source | dropped here: the Metal and AMD compilers' sections (L5, L7); `R › Compiler › compile raises what the toolchain rejects` pins the propagation |
+| tinygrad: `device/cl/test_ocl.py::TestCLProgram::test_compile_cached` | a hit does not compile | dropped: OpenCL is excluded; `R › Compiler › compile_cached returns the binary the table holds` pins the hit |
+| tinygrad: `null/*`, `runtime/*` (28 files: `supported_dtypes()` in skip conditions) | none | dropped: skip conditions, no claim |
+| tinygrad: `renderer/__init__.py` `Renderer.supported_dtypes` (no test) | every data type, without double when long is emulated | `R › supported_dtypes › supported_dtypes.golden` (7 settings: none, `long`, `int64`, `double`, `half,long`, `ulong`, `,long,`); `keeps only native data types, in order`; `keeps double when the target lacks long natively`; `rejects an emulated name that is no data type` |
+| tinygrad: `renderer/__init__.py` `with_storage` (no test; used by `ptx.py`, `nir.py`) | an access restated at another type retypes its storage | `R › with_storage › restated.golden` (8 accesses: of a parameter, gated, loaded, after a store, of a buffer, of local and register storage, at its own type); laws: restates the storage and keeps every other source, identity at the storage's type, round trip, idempotent; `rejects a node whose first sources reach no storage` |
+| tinygrad: `renderer/__init__.py` `Estimates.__add__`, `simplify`, and `from_uops` branches with no test (loops, `SPECIAL`, registers, the `END` gate of `ignore_indexing`) | the arithmetic of estimates, and each rule of the count | `R › add and zero` (laws: associative, commutative, neutral zero); `R › simplify` (L3: value kept, idempotent); `R › estimates of hand-written kernels` (one test per rule) |
+| tinygrad: `renderer/__init__.py` `Renderer` class attributes, `render`, `Compiler()` | the base renderer's defaults | `R › v › defaults describe a target that renders nothing`, `render raises by default`, `the default compiler returns its source and caches nothing`, `native holds for every data type by default`, `keeps the fields it is given` |
+| tinygrad: `device.py` `Compiler.compile_cached` `ASSERT_COMPILE` (no test) | a miss is refused under `ASSERT_COMPILE` | `R › ASSERT_COMPILE` (5 tests: refused naming the source, refused without a cachekey, a held binary returned, refused while the disk cache is disabled, `compile` unaffected); `R › Compiler › compile_cached compiles while ASSERT_COMPILE holds 0` |
+| tinygrad: `renderer/__init__.py` `Renderer.asm`, `__reduce__`; `device.py` `Compiler.server`, `compile_server` | assembly, pickling, a compile server | dropped: the ISA path is excluded, OCaml does not pickle, and compilation workers are domains (D5) |
+| old: `unit/test_program_spec.ml` "Estimates.of_program" › "counts basic ALU ops" | two ALU ops count two | `R › estimates of hand-written kernels › counts each arithmetic operation once` |
+| old: `unit/test_program_spec.ml` "mulacc counts as 2 FLOPs" | | `R › estimates of hand-written kernels › counts a multiply-add as a multiply and an add` |
+| old: `unit/test_program_spec.ml` "wmma counts 2*M*N*K per warp, divided across threads", "wmma thread count divides the FLOP factor" | | `R › estimates of hand-written kernels › counts a tensor core product as 2NMK shared among its threads` (32 and 64 threads) |
+| old: `unit/test_program_spec.ml` "wmma FLOPs scale with the loop multiplier", "loop multiplier stacks" | | `R › estimates of hand-written kernels › counts the operations of a range once per iteration`, `multiplies the trip counts of nested ranges` |
+| old: `unit/test_program_spec.ml` "an unbounded loop contributes no multiplier" | | `R › estimates of hand-written kernels › counts a loop without trip count as one iteration` |
+| old: `unit/test_program_spec.ml` "a loop bounded by a loaded value counts at its bound" | the count takes the bound of a loaded trip count | dropped: tinygrad keeps such a trip count symbolic (`mults *= u.src[0].ssimplify()`), and the old count was a divergence without an entry |
+| old: `unit/test_program_spec.ml` "special multiplier stacks" | | `R › estimates of hand-written kernels › multiplies everything after a hardware index by its size` |
+| old: `unit/test_program_spec.ml` "load/store tracks lds and memory bytes" | | `R › estimates of hand-written kernels › counts the loads and the stores of a buffer apart in mem`, `counts the bytes a store writes` |
+| old: `unit/test_program_spec.ml` "index arithmetic excluded from FLOPs" | | `R › estimates of hand-written kernels › ignore_indexing leaves out the operations of indices` (the old walk always ignored indexing; `from_uops` does so under `ignore_indexing`) |
+| old: `unit/test_program_spec.ml` "repeated reads cap memory at buffer size" | | `R › estimates of hand-written kernels › counts every read in lds and a buffer read again once in mem` |
+| old: `unit/test_program_spec.ml` "Symbolic estimates" › "every operation contributes its symbolic loop count" | | `R › estimates of symbolic kernels › a symbolic trip count counts at the value of its variable` (L3) |
+| old: `unit/test_program_spec.ml` "adding estimates preserves equal symbolic contributions" | | `R › add and zero › add sums symbolic counts` (L3) |
+| old: `unit/test_program_spec.ml` "final FLOPs simplify a cancelling symbolic loop bound" | | `R › estimates of symbolic kernels › a trip count that simplifies to an integer counts as one` (L3) |
+| old: `unit/test_program_spec.ml` "Exact estimates" › "concrete sums retain values beyond a host integer", "nested loop multiplicities retain their exact product", "memory footprints and loop traffic retain exact byte counts", "WMMA division follows the exact numerator product", "loaded trip bounds retain the full scalar width" | counts past `max_int` stay exact | dropped: counts are `Ops.sint`, whose arithmetic raises past `int` (Ops' suite); `R › add and zero › add past max_int raises rather than wrapping` pins that nothing wraps |
+| old: `unit/test_program_spec.ml` "symbolic traffic is capped at the buffer footprint" | | `R › estimates of symbolic kernels › reads are capped at the buffer for each value of a variable` (L3) |
+| old: `unit/test_program_spec.ml` "exact estimates can be forwarded", "symbolic estimates require caller handling" | `Program_spec.Estimates.of_uop` | dropped: `Program_spec` has no counterpart; estimates are `Ops.estimates` |
+| old: `unit/test_diskcache.ml` "compiler cache policy follows nested contexts and worker snapshots" | `CCACHE` read when a compiler is made, `CACHELEVEL=0` compiles without caching | `R › Compiler › ccache is read when the compiler is made`, `compile_cached compiles every time with ccache off when made`, `compile_cached compiles every time with the disk cache disabled`; worker snapshots are gone with Helpers' contexts (Helpers' section) |
+| old: `unit/test_diskcache.ml` "assert compile permits hits and blocks every cache miss" | | `R › ASSERT_COMPILE` (the whole group); the old refusal raised `Compile_error`, tinygrad asserts, and tolk.next raises `Invalid_argument` |
+| old: `unit/runtime/cpu/test_compiler.ml` (5 tests) | Clang's output and errors | dropped here: `Compiler_cpu`'s section (L5) |
+| old: `unit/test_cstyle.ml` (`Renderer.supports_dtype Cstyle.qcom`) | a target's data types | dropped here: `Renderer.Cstyle`'s section (L5); QCOM is excluded |
+| old: `unit/test_runtime_cpu.ml` `test_emulated_long_buffer_arithmetic`, `test_emulated_long_division`, `test_emulated_compact_float_storage` (`~supports_dtype`) | emulated types in generated code | dropped here: the decompositions' sections (L4) and CPU execution (L5) |
+| old: `lib/renderer.mli` `supported_ops`, `all_supported_ops`, `emulated_float_dtypes`, `image_pitch_alignment`, `with_target`, `with_compiler` | | dropped: not in tinygrad's `Renderer`; images are excluded |

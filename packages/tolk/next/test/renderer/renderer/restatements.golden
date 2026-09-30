@@ -1,0 +1,10 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src	dtype
+index_of_param	0	dtypes.uchar
+gated_index_of_param	1	dtypes.uchar
+load_of_param	2	dtypes.uchar
+index_after_store	3	dtypes.int
+index_of_buffer	4	dtypes.ushort
+index_of_local_alloc	5	dtypes.uint
+index_of_register_alloc	6	dtypes.int
+index_at_its_own_type	7	dtypes.bool

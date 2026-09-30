@@ -78,6 +78,14 @@ helpers/settings.golden
 helpers/sizes.golden
 helpers/targets.golden
 helpers/text.golden
+renderer/renderer/accesses.golden
+renderer/renderer/estimates.golden
+renderer/renderer/kernels.golden
+renderer/renderer/restated.golden
+renderer/renderer/restatements.golden
+renderer/renderer/supported_dtypes.golden
+renderer/renderer/symbolic_estimates.golden
+renderer/renderer/symbolic_kernels.golden
 renderer/tc/amd.golden
 renderer/tc/cuda.golden
 renderer/tc/frag_coords.golden

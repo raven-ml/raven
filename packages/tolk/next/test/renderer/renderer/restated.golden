@@ -1,0 +1,28 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=16)
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.uchar [0, 2]
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.CMPLT dtypes.bool [2, 4]
+6 Ops.INDEX dtypes.uchar [0, 2, 5]
+7 Ops.LOAD dtypes.uchar [3]
+8 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=16)
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
+10 Ops.INDEX dtypes.float [9, 2]
+11 Ops.CONST dtypes.weakfloat [] 1.0
+12 Ops.CAST dtypes.float [11] dtypes.float
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.AFTER dtypes.int [8, 13]
+15 Ops.INDEX dtypes.int [14, 2]
+16 Ops.BUFFER dtypes.ushort [] ParamArg(slot=3, dtype=dtypes.ushort, size=16, device="CPU")
+17 Ops.INDEX dtypes.ushort [16, 2]
+18 Ops.ALLOC dtypes.uint [] ParamArg(slot=2, dtype=dtypes.uint, size=16, addrspace=AddrSpace.LOCAL)
+19 Ops.INDEX dtypes.uint [18, 2]
+20 Ops.ALLOC dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=4, addrspace=AddrSpace.REG)
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.INDEX dtypes.int [20, 21]
+23 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=16)
+24 Ops.INDEX dtypes.bool [23, 2]
+25 Ops.SINK dtypes.void [3, 6, 7, 15, 17, 19, 22, 24]
+
