@@ -227,3 +227,46 @@ the Exclusions of `README.md`.
 - **Reason:** (a): OCaml's standard library has MD5 and BLAKE2, not SHA-256.
 - **Pinned by:** the `Ops` suite: `key › ignores tags` and `key › tells
   arguments apart`.
+
+## D13. Folding reads committed constants at their width
+
+- **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`) and `:154-155` (the
+  collapse of committed const conversions), which read a constant with
+  `UOp.val` (`uop/ops.py:259-263`), unwrapped. tinygrad's own
+  `TestModularWraparound` expects the wrapped results and is marked
+  `xfail_broken_const_wraparound`.
+- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and
+  `:438`.
+- **Differs:** a committed constant, a cast of a literal to a type of known
+  width, is read wrapped to that width: by an operation that folds, and by a
+  cast of it that collapses. The folded result is still kept mathematical,
+  for emission to wrap. tinygrad reads the unwrapped value, so a fold that
+  reads high bits gives what no machine computes: `(uint32 0xFFFFFFFF + 1) >> 1`
+  folds to `2147483648` where the machine gives `0`, `threefry2x32(5, 10)`
+  folds to another key than the unfolded graph computes, and the int64 cast
+  of the int32 constant `2^31` folds to `2^31` where the machine gives
+  `-2^31`.
+- **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
+  must draw the numbers eager nx draws.
+- **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › an
+  operation reads committed constants at their width` (a fold, a cast of a
+  committed constant, a uint8 remainder), and `tinygrad › tests.golden ›
+  TestModularWraparound.<test>` and `TestThreefryConstFolding.test_threefry`,
+  which check the machine value.
+
+## D14. Folded comparisons treat NaN as IEEE does
+
+- **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`), whose operands come
+  from `UOp.val` (`uop/ops.py:259-263`) as `ConstFloat`s (`dtype.py:8-22`).
+  `ConstFloat` makes NaN equal to NaN on purpose, so that NaN constants
+  intern as one node, and `exec_alu` compares with it: `nan != nan` and
+  `nan < nan` fold to `False`, where `exec_alu` on floats gives `True` and
+  `False`.
+- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`); constants are
+  interned by `Dtype.equal_const`, and `exec_alu` compares floats.
+- **Differs:** a folded comparison of NaN constants follows IEEE: `nan <> nan`
+  is `true`.
+- **Reason:** (b): `Nx.not_equal x x` on a NaN is `true` in eager nx, and
+  rune's jitted graph, whose constants fold here, must agree.
+- **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › NaN is
+  unequal to itself when constants fold, as IEEE says`.
