@@ -447,12 +447,14 @@ let word_of dt =
 (* Where tolk.next departs from tinygrad, a value converts as tinygrad converts
    another, whose own golden row checks it.
 
-   D9. bfloat16 rounds once from the double: a float that tinygrad's float32
-   step rounds onto a bfloat16 tie converts as the bfloat16 above it.
+   D9. Narrow floats round once: a float that tinygrad's float32 step rounds
+   onto a bfloat16 tie converts as the bfloat16 above it.
 
    Excluded (README): CPython's refusal to convert an integer whose magnitude
    rounds to 2^1024 or more (at least 2^1024 - 2^970) to a float. Where tinygrad
-   raises, such an integer converts as the infinity of its sign. *)
+   raises, such an integer converts to a double as the infinity of its sign, and
+   to a narrower float as the greatest double does: the finite value it is
+   overflows every narrower float alike. *)
 let beyond_doubles = Z.sub (Z.shift_left Z.one 1024) (Z.shift_left Z.one 970)
 let bfloat16_ties = [ 1.0039062500000002; 1. +. 0x1p-8 +. 0x1p-40 ]
 
@@ -461,8 +463,11 @@ let as_tinygrad dt cell = function
       Some (`Float 1.0078125)
   | `Int n
     when Dtype.is_float dt && Z.geq (Z.abs n) beyond_doubles && raised cell ->
-      Some
-        (`Float (if Z.sign n < 0 then Float.neg_infinity else Float.infinity))
+      let big =
+        if Dtype.(equal dt Float64 || equal dt Weak_float) then Float.infinity
+        else Float.max_float
+      in
+      Some (`Float (if Z.sign n < 0 then -.big else big))
   | _ -> None
 
 (* Storage moves a NaN's bits: every word encodes back to itself through its
@@ -587,6 +592,18 @@ let truncation =
         ~examples:bfloat16_ties finite_float (fun f ->
           nearest_bfloat16 (Float.abs f)
             (truncated Dtype.Bfloat16 (Float.abs f)));
+      test "an integer rounds to a narrower float once, from its value"
+        (fun () ->
+          (* Past 2^53 the double rounds an integer onto a tie of the narrower
+             float, which it would then round to even. *)
+          let z = Z.of_string "9042383626829825" in
+          equal value
+            (Dtype.bitcast Uint16 Bfloat16 (`Int (Z.of_int 0x5a01)))
+            (Dtype.truncate Bfloat16 (`Int z));
+          let z = Z.(shift_left one 60 + shift_left one 36 + one) in
+          equal value
+            (`Float (Float.ldexp 1. 60 +. Float.ldexp 1. 37))
+            (Dtype.truncate Float32 (`Int z)));
       cases "an infinity is NaN in an 8-bit float without infinities"
         ~name:alias
         Dtype.[ Fp8e4m3; Fp8e4m3fnuz; Fp8e5m2fnuz ]

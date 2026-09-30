@@ -501,11 +501,34 @@ let storage_fmt dt =
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> Some 'B'
   | dt -> fmt dt
 
+(* An integer as a double rounded to odd: towards zero, with the last bit set if
+   bits were dropped. A float of fewer bits rounded to nearest from it is the
+   integer rounded to nearest once. An integer past every double is the greatest
+   double, which every narrower float overflows as it would. *)
+let float_of_integer z =
+  let a = Z.abs z in
+  let shift = Z.numbits a - 53 in
+  if shift <= 0 then Z.to_float z
+  else
+    let q = Z.shift_right a shift in
+    let q = if Z.equal (Z.shift_left q shift) a then q else Z.logor q Z.one in
+    let x = Float.ldexp (Z.to_float q) shift in
+    let x = if Float.is_finite x then x else Float.max_float in
+    if Z.sign z < 0 then -.x else x
+
+(* [v] as a float to round to [dt]: an integer reaches a float narrower than a
+   double once, so exactly or rounded to odd. *)
+let float_value dt (v : value) =
+  match (dt, v) with
+  | (Float64 | Weak_float), _ -> Value.to_float v
+  | _, `Int z -> float_of_integer z
+  | _ -> Value.to_float v
+
 let to_storage_scalar dt (v : value) : value =
   match dt with
-  | Float16 -> `Float (round Float16 (Value.to_float v))
+  | Float16 -> `Float (round Float16 (float_value dt v))
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Int (Z.of_int (encode dt (Value.to_float v)))
+      `Int (Z.of_int (encode dt (float_value dt v)))
   | _ -> v
 
 let from_storage_scalar dt (s : value) : value =
@@ -543,7 +566,7 @@ let truncate dt (v : value) : value =
   | Void -> invalid_arg "void has no value"
   | Weak_int | Weak_float -> v
   | Bool -> `Bool (Value.to_bool v)
-  | dt when is_float dt -> `Float (truncate_float dt (Value.to_float v))
+  | dt when is_float dt -> `Float (truncate_float dt (float_value dt v))
   | dt when is_unsigned dt -> `Int (Z.extract (integer v) 0 (bitsize dt))
   | dt -> `Int (Z.signed_extract (integer v) 0 (bitsize dt))
 
@@ -625,7 +648,7 @@ let const dt (c : [< const ]) : const =
       let v =
         match v with `Float x when Float.is_nan x -> `Float nan | v -> v
       in
-      if is_float dt then `Float (truncate_float dt (Value.to_float v))
+      if is_float dt then `Float (truncate_float dt (float_value dt v))
       else if is_bool dt then `Bool (Value.to_bool v)
       else `Int (Value.to_z v)
 

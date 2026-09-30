@@ -175,22 +175,26 @@ the Exclusions of `README.md`.
   key and value put` and `Helpers › Diskcache › behaves as a table of entries
   per table`.
 
-## D9. bfloat16 rounds once from the double
+## D9. Narrow floats round once
 
 - **tinygrad:** `dtype.py:230-234` (`float_to_bf16` rounds to float32 with
-  `truncate[dtypes.float]`, then to bfloat16).
+  `truncate[dtypes.float]`, then to bfloat16); `dtype.py:84` (`const`
+  converts an integer to a float through a double, `float(val)`).
 - **tolk.next:** `lib/dtype.ml:469-490` (`encode_format`, one rounding for
-  every narrow float).
+  every narrow float; `float_of_integer`).
 - **Differs:** a double rounds to bfloat16 once, to nearest even. The two
   differ when the float32 lands on a bfloat16 tie: `1 + 2^-8 + 2^-40` is
-  `1.0078125` here and `1.0` in tinygrad.
-- **Reason:** (b). rune folds bfloat16 constants from OCaml floats, and a
+  `1.0078125` here and `1.0` in tinygrad. An integer converts to a float
+  narrower than a double once, from its exact value: `9042383626829825` is
+  bfloat16 `0x5a01` here and `0x5a00` in tinygrad, whose double rounds it onto
+  a tie.
+- **Reason:** (b). rune folds constants from OCaml floats and integers, and a
   folded constant must be the value nx's eager cast gives, which rounds once.
-  The codegen layer's bfloat16 cast must compute the same, or get a row of its
-  own.
+  The codegen layer's casts must compute the same, or get a row of their own.
 - **Pinned by:** `Dtype › truncate › truncation.golden` (the near-tie rows,
-  stated in code) and `Dtype › truncate › bfloat16 rounds once, to the
-  nearest, ties to even`; and a rune test at L9.
+  stated in code), `Dtype › truncate › bfloat16 rounds once, to the nearest,
+  ties to even` and `Dtype › truncate › an integer rounds to a narrower float
+  once, from its value`; and a rune test at L9.
 
 ## D10. A float8 NaN keeps its sign when decoded
 

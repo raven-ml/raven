@@ -219,10 +219,10 @@ val max : t -> value
 val const : t -> [< const ] -> const
 (** [const dt c] is [c] as a constant of [dt]. [`Invalid] is itself. For a float
     [dt] it is a [`Float], [c] truncated to [dt] ({!truncate}), with every NaN
-    the same NaN; an integer that rounds past the greatest double converts as
-    the infinity of its sign. For {!Bool} it is [`Bool], [true] iff [c] is
-    nonzero. Otherwise it is an [`Int]: a float rounded towards zero, and an
-    integer unchanged, even out of [dt]'s bounds.
+    the same NaN; an integer is rounded once, from its exact value, as a finite
+    value. For {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is
+    an [`Int]: a float rounded towards zero, and an integer unchanged, even out
+    of [dt]'s bounds.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
     a float nor {!Bool}. *)
@@ -406,8 +406,10 @@ val truncate : t -> value -> value
       quiet, as a conversion makes it: a signalling NaN becomes quiet with the
       same payload. It keeps its sign, except in the [fnuz] formats, whose one
       NaN decodes as a positive NaN; a 16-bit or wider float keeps the top of
-      its payload, and an 8-bit float has one NaN per sign. An integer that
-      rounds past the greatest double converts as the infinity of its sign.
+      its payload, and an 8-bit float has one NaN per sign. An integer is
+      rounded once, from its exact value, as a finite value: one that rounds
+      past the greatest double is the infinity of its sign in {!Float64}, and
+      overflows a narrower float.
     - for an integer of known width, [v] wrapped to [dt]'s width in two's
       complement;
     - for {!Bool}, [true] iff [v] is nonzero;
