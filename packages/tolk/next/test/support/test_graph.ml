@@ -69,6 +69,9 @@ let kinds =
     ("an unshard of one axis", Ops.v ~src:[ x ] ~arg:(Axes [ 0 ]) Unshard);
     ("a flip", Ops.v ~src:[ x ] ~arg:(Flips [ true; false ]) Flip);
     ("a launch dimension", Ops.v ~src:[ int 4 ] ~arg:(String "gidx0") Special);
+    ( "a flagged load",
+      Ops.v ~src:[ Ops.index buffer [ int 0 ] ] ~arg:(String "nontemporal") Load
+    );
     ( "a source with every escape",
       Ops.v ~arg:(String "a\"b\\c\nd\te\x00\xc3\xa9") Source );
     ("bytes", Ops.v ~arg:(Bytes "\x7fELF\x00") Binary);

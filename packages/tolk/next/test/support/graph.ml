@@ -757,7 +757,7 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Mselect -> Shard (int.read v)
   | Permute | Unshard -> Axes ((list int).read v)
   | Flip -> Flips ((list bool).read v)
-  | Special | Custom_function | Source -> String (str.read v)
+  | Special | Custom_function | Source | Load | Store -> String (str.read v)
   | Linear -> (
       match v with
       | Str s -> String s

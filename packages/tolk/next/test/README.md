@@ -187,7 +187,8 @@ about 330,000 graphs, and refused none.
 
 | Op | Arg |
 |---|---|
-| the ALU ops, `LOAD`, `STORE`, `INDEX`, `SHRINK`, `STACK`, `RESHAPE`, `EXPAND`, `PAD`, `AFTER`, `GROUP`, `END`, `BARRIER`, `IF`, `ENDIF`, `NOOP`, `BACKEDGE`, `MSTACK`, `DETACH`, `CONTIGUOUS_BACKWARD` | none |
+| the ALU ops, `INDEX`, `SHRINK`, `STACK`, `RESHAPE`, `EXPAND`, `PAD`, `AFTER`, `GROUP`, `END`, `BARRIER`, `IF`, `ENDIF`, `NOOP`, `BACKEDGE`, `MSTACK`, `DETACH`, `CONTIGUOUS_BACKWARD` | none |
+| `LOAD`, `STORE` | none, or a string: a flag of the access, such as `"nontemporal"` |
 | `CONST` | an integer, a boolean, a float or `Invalid`; its dtype follows from the kind: `dtypes.weakint`, `dtypes.bool`, `dtypes.weakfloat` and `dtypes.bool` |
 | `CAST`, `BITCAST` | the target data type |
 | `PERMUTE` | a tuple of integers, the order of the axes |
