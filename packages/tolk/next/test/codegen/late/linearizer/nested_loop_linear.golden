@@ -1,0 +1,36 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
+1 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
+2 Ops.NOOP dtypes.void []
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.INDEX dtypes.int [1, 4]
+6 Ops.STORE dtypes.void [5, 4]
+7 Ops.AFTER dtypes.int [1, 6]
+8 Ops.INDEX dtypes.int [7, 4]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.CONST dtypes.weakint [] 3
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.CONST dtypes.weakint [] 4
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.RANGE dtypes.int [14] (0, AxisType.WEAK)
+16 Ops.MUL dtypes.int [15, 12]
+17 Ops.ADD dtypes.int [12, 16]
+18 Ops.RANGE dtypes.void [2, 15] (1, AxisType.WEAK)
+19 Ops.AFTER dtypes.int [7, 18, 15]
+20 Ops.INDEX dtypes.int [19, 4]
+21 Ops.LOAD dtypes.int [20]
+22 Ops.ADD dtypes.int [21, 10]
+23 Ops.CMPLT dtypes.bool [22, 17]
+24 Ops.STORE dtypes.void [8, 22]
+25 Ops.BACKEDGE dtypes.void [24, 18, 23]
+26 Ops.END dtypes.void [25, 15]
+27 Ops.AFTER dtypes.int [7, 26]
+28 Ops.INDEX dtypes.int [27, 4]
+29 Ops.LOAD dtypes.int [28]
+30 Ops.INDEX dtypes.int [0, 4]
+31 Ops.STORE dtypes.void [30, 29]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="nested_loop") tag=1
+33 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+

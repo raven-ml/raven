@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+one_range	0
+ranges_in_order	1
+ranges_out_of_order	2
+axis_types	3
+identities_of_parts	4
+repeated_range	5
+ranges_of_a_source	6
+source_and_its_range	7
+source_without_ranges	8
+no_range	9
+closed_ranges_of_a_source	10
+ended_twice	11

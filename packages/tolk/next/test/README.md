@@ -272,6 +272,12 @@ def matmul():
     return boundary(a @ b)
 ```
 
+A codegen pass's input is recorded where the pipeline hands it over:
+`graph.kernels(*tensors)` is the kernels a `Tensor` program compiles, and
+`graph.stage(name, kernel, renderer)` is the sink that compiling `kernel` for
+`renderer` hands to the pass `name`, a `graph_rewrite` by its name or
+`"linearize"`.
+
 `gen/generate.py` runs each generator in a fresh interpreter, with a scrubbed
 environment, and makes each golden in a process forked from it, so that no
 golden sees the state another left in tinygrad, such as its buffer numbering.

@@ -1,0 +1,59 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.LOOP)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.STORE dtypes.void [3, 5]
+7 Ops.END dtypes.void [6, 2]
+8 Ops.SINK dtypes.void [7]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
+10 Ops.RANGE dtypes.weakint [1] (1, AxisType.LOOP)
+11 Ops.INDEX dtypes.float [9, 10]
+12 Ops.STORE dtypes.void [11, 5]
+13 Ops.END dtypes.void [12, 10]
+14 Ops.SINK dtypes.void [7, 13]
+15 Ops.SINK dtypes.void [13, 7]
+16 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16)
+17 Ops.RANGE dtypes.weakint [1] (2, AxisType.LOOP)
+18 Ops.INDEX dtypes.float [16, 17]
+19 Ops.STORE dtypes.void [18, 5]
+20 Ops.END dtypes.void [19, 17]
+21 Ops.SINK dtypes.void [7, 13, 20]
+22 Ops.AFTER dtypes.float [0, 7]
+23 Ops.INDEX dtypes.float [22, 10]
+24 Ops.LOAD dtypes.float [23]
+25 Ops.STORE dtypes.void [11, 24]
+26 Ops.END dtypes.void [25, 10]
+27 Ops.SINK dtypes.void [26, 7]
+28 Ops.AFTER dtypes.float [9, 26]
+29 Ops.INDEX dtypes.float [28, 17]
+30 Ops.LOAD dtypes.float [29]
+31 Ops.STORE dtypes.void [18, 30]
+32 Ops.END dtypes.void [31, 17]
+33 Ops.SINK dtypes.void [32, 26]
+34 Ops.RANGE dtypes.weakint [1] (9, AxisType.LOOP)
+35 Ops.ADD dtypes.weakint [2, 34]
+36 Ops.INDEX dtypes.float [0, 35]
+37 Ops.STORE dtypes.void [36, 5]
+38 Ops.END dtypes.void [37, 2]
+39 Ops.ADD dtypes.weakint [10, 34]
+40 Ops.INDEX dtypes.float [9, 39]
+41 Ops.STORE dtypes.void [40, 5]
+42 Ops.END dtypes.void [41, 10]
+43 Ops.GROUP dtypes.void [38, 42]
+44 Ops.END dtypes.void [43, 34]
+45 Ops.SINK dtypes.void [44]
+46 Ops.AFTER dtypes.float [0, 38]
+47 Ops.INDEX dtypes.float [46, 10]
+48 Ops.LOAD dtypes.float [47]
+49 Ops.STORE dtypes.void [40, 48]
+50 Ops.END dtypes.void [49, 10]
+51 Ops.GROUP dtypes.void [50, 38]
+52 Ops.END dtypes.void [51, 34]
+53 Ops.SINK dtypes.void [52]
+54 Ops.SINK dtypes.void [44, 20]
+55 Ops.SINK dtypes.void [6]
+56 Ops.SINK dtypes.void [8, 14, 15, 21, 27, 33, 45, 53, 54, 55]
+

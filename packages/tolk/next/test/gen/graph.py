@@ -4,8 +4,10 @@ A graph is its nodes in topological order, one line each:
 
     <index> <op> <dtype> [<source indices>] [<arg>] [tag=<tag>]
 
-`write(sink)` is the text of the graph under `sink`, and `boundary(*tensors)`
-is the sink that a tinygrad `Tensor` program hands to the compiler.
+`write(sink)` is the text of the graph under `sink`, `boundary(*tensors)`
+is the sink that a tinygrad `Tensor` program hands to the compiler, and
+`stage(name, kernel, renderer)` is the sink that compiling a kernel hands to
+one pass of the codegen pipeline.
 """
 
 import dataclasses
@@ -126,3 +128,38 @@ def boundary(*tensors):
     finally:
         tinygrad.tensor.create_linear_with_vars = schedule
     raise RuntimeError("realizing the tensors scheduled nothing")
+
+
+def kernels(*tensors):
+    """The kernels that realizing `tensors` compiles, in order."""
+    from tinygrad import Tensor
+    from tinygrad.uop.ops import Ops
+
+    return [call.src[0] for call in Tensor.schedule_linear(*tensors).src if call.src[0].op is Ops.SINK]
+
+
+def stage(name, kernel, renderer):
+    """The sink that compiling `kernel` for `renderer` hands to the pass `name`
+    of the codegen pipeline: a `graph_rewrite` by its name, or "linearize"."""
+    import tinygrad.codegen
+    from tinygrad.uop.ops import KernelInfo
+
+    if kernel.arg is None: kernel = kernel.replace(arg=KernelInfo())
+    full = lambda: tinygrad.codegen.full_rewrite_to_sink(kernel, renderer, optimize=kernel.tag is None)
+    if name == "linearize": return full()
+
+    class Captured(Exception):
+        pass
+
+    def capture(sink, *args, name=None, **kwargs):
+        if name == wanted: raise Captured(sink)
+        return rewrite(sink, *args, name=name, **kwargs)
+
+    wanted, rewrite, tinygrad.codegen.graph_rewrite = name, tinygrad.codegen.graph_rewrite, capture
+    try:
+        full()
+    except Captured as e:
+        return e.args[0]
+    finally:
+        tinygrad.codegen.graph_rewrite = rewrite
+    raise RuntimeError(f"compiling the kernel runs no pass {name!r}")

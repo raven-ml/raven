@@ -1,0 +1,55 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4096, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx1"
+4 Ops.CONST dtypes.weakint [] 16
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SPECIAL dtypes.int [5] "gidx0"
+7 Ops.CONST dtypes.weakint [] 2
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.SHL dtypes.int [6, 8]
+10 Ops.ADD dtypes.int [3, 9]
+11 Ops.SPECIAL dtypes.int [5] "gidx1"
+12 Ops.CONST dtypes.weakint [] 8
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.SHL dtypes.int [11, 13]
+15 Ops.SPECIAL dtypes.int [2] "lidx0"
+16 Ops.CONST dtypes.weakint [] 6
+17 Ops.CAST dtypes.int [16] dtypes.int
+18 Ops.SHL dtypes.int [15, 17]
+19 Ops.ADD dtypes.int [14, 18]
+20 Ops.ADD dtypes.int [10, 19]
+21 Ops.INDEX dtypes.float [0, 20]
+22 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+23 Ops.CONST dtypes.weakint [] 0
+24 Ops.CAST dtypes.int [23] dtypes.int
+25 Ops.INDEX dtypes.float [22, 24]
+26 Ops.CONST dtypes.weakfloat [] 0.0
+27 Ops.CAST dtypes.float [26] dtypes.float
+28 Ops.STORE dtypes.void [25, 27]
+29 Ops.CONST dtypes.weakint [] 64
+30 Ops.CAST dtypes.int [29] dtypes.int
+31 Ops.RANGE dtypes.int [30] (0, AxisType.REDUCE)
+32 Ops.AFTER dtypes.float [22, 28, 31]
+33 Ops.INDEX dtypes.float [32, 24]
+34 Ops.LOAD dtypes.float [33]
+35 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+36 Ops.ADD dtypes.int [19, 31]
+37 Ops.INDEX dtypes.float [35, 36]
+38 Ops.LOAD dtypes.float [37]
+39 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4096, device="CPU")
+40 Ops.SHL dtypes.int [31, 17]
+41 Ops.ADD dtypes.int [10, 40]
+42 Ops.INDEX dtypes.float [39, 41]
+43 Ops.LOAD dtypes.float [42]
+44 Ops.MUL dtypes.float [38, 43]
+45 Ops.ADD dtypes.float [34, 44]
+46 Ops.STORE dtypes.void [33, 45]
+47 Ops.END dtypes.void [46, 31]
+48 Ops.AFTER dtypes.float [22, 47]
+49 Ops.INDEX dtypes.float [48, 24]
+50 Ops.LOAD dtypes.float [49]
+51 Ops.STORE dtypes.void [21, 50]
+52 Ops.SINK dtypes.void [51] KernelInfo(name="r_16_16_4_4_64", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.LOCAL)))) tag=1
+

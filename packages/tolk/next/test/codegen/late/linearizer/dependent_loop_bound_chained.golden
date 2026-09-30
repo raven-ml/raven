@@ -1,0 +1,35 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CAST dtypes.int [2] dtypes.int
+4 Ops.RANGE dtypes.int [3] (0, AxisType.LOOP)
+5 Ops.MUL dtypes.int [4, 3]
+6 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=4)
+7 Ops.INDEX dtypes.int [6, 4]
+8 Ops.LOAD dtypes.int [7]
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.MAX dtypes.int [8, 10]
+12 Ops.CONST dtypes.weakint [] -1
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.XOR dtypes.int [11, 13]
+15 Ops.CONST dtypes.weakint [] -5
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.MAX dtypes.int [14, 16]
+18 Ops.XOR dtypes.int [17, 13]
+19 Ops.RANGE dtypes.int [18, 4] (1, AxisType.WEAK)
+20 Ops.ADD dtypes.int [5, 19]
+21 Ops.INDEX dtypes.int [1, 20]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.CAST dtypes.int [22] dtypes.int
+24 Ops.STORE dtypes.void [21, 23]
+25 Ops.END dtypes.void [24, 19]
+26 Ops.AFTER dtypes.int [0, 25]
+27 Ops.INDEX dtypes.int [26, 4]
+28 Ops.CONST dtypes.weakint [] 2
+29 Ops.CAST dtypes.int [28] dtypes.int
+30 Ops.STORE dtypes.void [27, 29]
+31 Ops.END dtypes.void [30, 4]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_4_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))") tag=1
+

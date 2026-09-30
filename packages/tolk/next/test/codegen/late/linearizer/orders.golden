@@ -1,0 +1,18 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+empty	0
+params_by_slot	1
+variables_by_name	2
+params_before_constants	3
+buffers_before_local_buffers	4
+loads_early_stores_late	5
+structure_breaks_ties	6
+constants_by_their_text	7
+hoisted_load	8
+run_count	9
+empty_range_runs_none	10
+end_before_load	11
+unended_range	12
+after_value	13
+after_store	14
+empty_group	15

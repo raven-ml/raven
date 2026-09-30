@@ -1,0 +1,75 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.LOOP)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.CONST dtypes.weakfloat [] 1.0
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.STORE dtypes.void [3, 5]
+7 Ops.END dtypes.void [6, 2]
+8 Ops.SINK dtypes.void [7]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
+10 Ops.RANGE dtypes.weakint [1, 7] (1, AxisType.LOOP)
+11 Ops.INDEX dtypes.float [9, 10]
+12 Ops.STORE dtypes.void [11, 5]
+13 Ops.END dtypes.void [12, 10]
+14 Ops.SINK dtypes.void [7, 13]
+15 Ops.RANGE dtypes.weakint [1] (1, AxisType.LOOP)
+16 Ops.INDEX dtypes.float [9, 15]
+17 Ops.STORE dtypes.void [16, 5]
+18 Ops.END dtypes.void [17, 15]
+19 Ops.RANGE dtypes.weakint [1, 18] (0, AxisType.LOOP)
+20 Ops.INDEX dtypes.float [0, 19]
+21 Ops.STORE dtypes.void [20, 5]
+22 Ops.END dtypes.void [21, 19]
+23 Ops.SINK dtypes.void [18, 22]
+24 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16)
+25 Ops.RANGE dtypes.weakint [1, 13] (2, AxisType.LOOP)
+26 Ops.INDEX dtypes.float [24, 25]
+27 Ops.STORE dtypes.void [26, 5]
+28 Ops.END dtypes.void [27, 25]
+29 Ops.SINK dtypes.void [7, 13, 28]
+30 Ops.AFTER dtypes.float [0, 7]
+31 Ops.INDEX dtypes.float [30, 10]
+32 Ops.LOAD dtypes.float [31]
+33 Ops.STORE dtypes.void [11, 32]
+34 Ops.END dtypes.void [33, 10]
+35 Ops.SINK dtypes.void [34, 7]
+36 Ops.RANGE dtypes.weakint [1, 34] (2, AxisType.LOOP)
+37 Ops.INDEX dtypes.float [24, 36]
+38 Ops.AFTER dtypes.float [9, 34]
+39 Ops.INDEX dtypes.float [38, 36]
+40 Ops.LOAD dtypes.float [39]
+41 Ops.STORE dtypes.void [37, 40]
+42 Ops.END dtypes.void [41, 36]
+43 Ops.SINK dtypes.void [42, 34]
+44 Ops.RANGE dtypes.weakint [1] (9, AxisType.LOOP)
+45 Ops.RANGE dtypes.weakint [1, 44] (0, AxisType.LOOP)
+46 Ops.ADD dtypes.weakint [45, 44]
+47 Ops.INDEX dtypes.float [0, 46]
+48 Ops.STORE dtypes.void [47, 5]
+49 Ops.END dtypes.void [48, 45]
+50 Ops.RANGE dtypes.weakint [1, 49] (1, AxisType.LOOP)
+51 Ops.ADD dtypes.weakint [50, 44]
+52 Ops.INDEX dtypes.float [9, 51]
+53 Ops.STORE dtypes.void [52, 5]
+54 Ops.END dtypes.void [53, 50]
+55 Ops.GROUP dtypes.void [49, 54]
+56 Ops.END dtypes.void [55, 44]
+57 Ops.SINK dtypes.void [56]
+58 Ops.AFTER dtypes.float [0, 49]
+59 Ops.INDEX dtypes.float [58, 50]
+60 Ops.LOAD dtypes.float [59]
+61 Ops.STORE dtypes.void [52, 60]
+62 Ops.END dtypes.void [61, 50]
+63 Ops.GROUP dtypes.void [62, 49]
+64 Ops.END dtypes.void [63, 44]
+65 Ops.SINK dtypes.void [64]
+66 Ops.RANGE dtypes.weakint [1, 56] (2, AxisType.LOOP)
+67 Ops.INDEX dtypes.float [24, 66]
+68 Ops.STORE dtypes.void [67, 5]
+69 Ops.END dtypes.void [68, 66]
+70 Ops.SINK dtypes.void [56, 69]
+71 Ops.SINK dtypes.void [6]
+72 Ops.SINK dtypes.void [8, 14, 23, 29, 35, 43, 57, 65, 70, 71]
+

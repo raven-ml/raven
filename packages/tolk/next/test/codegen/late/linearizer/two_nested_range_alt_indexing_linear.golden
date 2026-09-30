@@ -1,0 +1,49 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=2, device="CPU")
+2 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.INDEX dtypes.float [2, 4]
+6 Ops.CONST dtypes.weakfloat [] 0.0
+7 Ops.CAST dtypes.float [6] dtypes.float
+8 Ops.CONST dtypes.weakfloat [] 2.0
+9 Ops.CAST dtypes.float [8] dtypes.float
+10 Ops.CONST dtypes.weakint [] -1
+11 Ops.CAST dtypes.int [10] dtypes.int
+12 Ops.CONST dtypes.weakint [] 2
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.CONST dtypes.weakint [] 3
+15 Ops.CAST dtypes.int [14] dtypes.int
+16 Ops.CONST dtypes.weakint [] 4
+17 Ops.CAST dtypes.int [16] dtypes.int
+18 Ops.STORE dtypes.void [5, 7]
+19 Ops.RANGE dtypes.int [17] (0, AxisType.REDUCE)
+20 Ops.ADD dtypes.int [19, 11]
+21 Ops.INDEX dtypes.float [1, 20]
+22 Ops.CMPLT dtypes.bool [4, 19]
+23 Ops.CMPLT dtypes.bool [19, 15]
+24 Ops.AND dtypes.bool [22, 23]
+25 Ops.LOAD dtypes.float [21, 7, 24]
+26 Ops.RANGE dtypes.int [15, 19] (1, AxisType.REDUCE)
+27 Ops.AFTER dtypes.float [2, 18, 19, 26]
+28 Ops.INDEX dtypes.float [27, 4]
+29 Ops.LOAD dtypes.float [28]
+30 Ops.CMPLT dtypes.bool [4, 26]
+31 Ops.CMPLT dtypes.bool [26, 13]
+32 Ops.AND dtypes.bool [30, 31]
+33 Ops.AND dtypes.bool [24, 32]
+34 Ops.WHERE dtypes.float [32, 25, 7]
+35 Ops.WHERE dtypes.float [33, 34, 9]
+36 Ops.ADD dtypes.float [29, 35]
+37 Ops.STORE dtypes.void [28, 36]
+38 Ops.END dtypes.void [37, 26]
+39 Ops.END dtypes.void [38, 19]
+40 Ops.AFTER dtypes.float [2, 39]
+41 Ops.INDEX dtypes.float [40, 4]
+42 Ops.LOAD dtypes.float [41]
+43 Ops.INDEX dtypes.float [0, 4]
+44 Ops.STORE dtypes.void [43, 42]
+45 Ops.SINK dtypes.void [44] KernelInfo(name="r_4_3") tag=1
+46 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+
