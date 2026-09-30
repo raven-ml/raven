@@ -513,6 +513,18 @@ def pools():
 
 
 @graph
+def running():
+    p = UOp.param(0, dtypes.float, (3, 5))
+    return UOp.sink(p._split_cumalu(1, Ops.ADD), p._split_cumalu(0, Ops.MAX), p._split_cumalu(-1, Ops.MUL))
+
+
+@graph
+def aranges():
+    return UOp.sink(UOp.arange(5), UOp.arange(2, 9, 3), UOp.arange(4, 0, -1), UOp.arange(3, dtype=dtypes.int64),
+                    UOp.arange(3, dtype=dtypes.float), UOp.arange(0))
+
+
+@graph
 def padding():
     p = UOp.param(0, dtypes.float, (4, 4))
     return UOp.sink(p.pad(((1, 1), (2, 0)), value=0.0), p.pad(((1, 1), None), value=1.5), p.pad(((-1, 2), (0, -2))),

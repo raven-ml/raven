@@ -293,6 +293,17 @@ let movement =
           rejects (fun () -> Ops.reshape p (ints [ -1; -1 ])));
       test "reshape rejects a different number of elements" (fun () ->
           rejects (fun () -> Ops.reshape p (ints [ 5; 5 ])));
+      test "cumalu past 512 elements runs in two stages" (fun () ->
+          let sums = Ops.cumalu (Ops.arange ~dtype:Int32 600) 0 Op.Add in
+          equal (list int)
+            (List.init 600 (fun i -> i * (i + 1) / 2))
+            (List.map
+               (function `Int z -> Z.to_int z | _ -> -1)
+               (Array.to_list (List.hd (Tensors.eval sums)))));
+      test "arange rejects a step of 0 and a dtype that cannot hold it"
+        (fun () ->
+          rejects (fun () -> Ops.arange ~step:0 4);
+          rejects (fun () -> Ops.arange ~dtype:Int8 200));
       test "rop rejects a repeated axis" (fun () ->
           rejects (fun () -> Ops.rop p Op.Add [ 1; 1 ]));
       test "permute rejects an order that is not a permutation" (fun () ->

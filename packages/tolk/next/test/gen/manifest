@@ -3503,6 +3503,7 @@ uop/movement/remove_a_reshape_to_the_source_shape.golden
 uop/movement/remove_the_identity_permute.golden
 uop/movement/stack_the_elements_of_a_node_in_order.golden
 uop/op/ops.golden
+uop/ops/aranges.golden
 uop/ops/axis_types.golden
 uop/ops/binary_bounds.golden
 uop/ops/bitcasts.golden
@@ -3538,6 +3539,7 @@ uop/ops/powers.golden
 uop/ops/pretty.golden
 uop/ops/reductions.golden
 uop/ops/reprs.golden
+uop/ops/running.golden
 uop/ops/selection.golden
 uop/ops/sets.golden
 uop/ops/shards.golden

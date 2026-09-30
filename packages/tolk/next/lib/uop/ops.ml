@@ -2851,6 +2851,95 @@ let cat ?(axis = 0) u rest =
     in
     usum (List.hd padded) (List.tl padded)
 
+(* Running operations *)
+
+let split_cumalu = 256
+
+(* [None] for each axis of [u] but [axis], which is [Some p]. *)
+let at_axis u axis p =
+  List.init (ndim u) (fun i -> if i = axis then Some p else None)
+
+let swap u a b =
+  permute u
+    (List.init (ndim u) (fun i -> if i = a then b else if i = b then a else i))
+
+let running_size u axis =
+  match List.nth (shape u) axis with
+  | Int n -> n
+  | Sym _ -> invalid_arg "a running operation along an axis of symbolic size"
+
+(* The running [op] along the last axis of [u]: over each element's window of
+   the elements up to it, the axis padded before with [op]'s identity. *)
+let pooled_cumalu u op =
+  let last = ndim u - 1 in
+  let n = running_size u last in
+  let value = identity_element op u.dtype in
+  rop
+    (pool (pad ~value u (at_axis u last (Int (n - 1), Int 0))) [ n ])
+    op
+    [ last + 1 ]
+
+let cumalu u axis op =
+  let axis = resolve_dim u axis and last = ndim u - 1 in
+  let s = running_size u axis and t = swap u axis last in
+  if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
+  else if s <= 2 * split_cumalu then swap (pooled_cumalu t op) axis last
+  else
+    let value = identity_element op u.dtype in
+    let rounded = Helpers.round_up s split_cumalu in
+    let t = pad ~value t (at_axis t last (Int (rounded - s), Int 0)) in
+    let chunks =
+      pooled_cumalu
+        (unflatten t last [ Int (rounded / split_cumalu); Int split_cumalu ])
+        op
+    in
+    let ends =
+      squeeze ~axis:(last + 1)
+        (shrink chunks
+           (at_axis chunks (last + 1)
+              (Int (split_cumalu - 1), Int split_cumalu)))
+    in
+    let base =
+      pad ~value (pooled_cumalu ends op) (at_axis ends last (Int 1, Int (-1)))
+    in
+    let combine =
+      if Op.equal op Op.Add then add
+      else if Op.equal op Op.Mul then mul
+      else maximum
+    in
+    let whole =
+      flatten ~start:last
+        (combine chunks (reshape base (shape base @ [ Int 1 ])))
+    in
+    swap
+      (shrink whole (at_axis whole last (Int (rounded - s), Int rounded)))
+      axis last
+
+let arange ?(start = 0) ?(step = 1) ?dtype stop =
+  if step = 0 then invalid_arg "an arange of step 0";
+  let lo, hi =
+    if step > 0 then (start, stop - step) else (stop - step, start)
+  in
+  let dt =
+    match dtype with
+    | Some dt -> dt
+    | None -> Dtype.commit_int (Z.of_int lo) (Z.of_int hi)
+  in
+  if
+    Value.(`Int (Z.of_int lo) < Dtype.min dt)
+    || Value.(Dtype.max dt < `Int (Z.of_int hi))
+  then
+    invalid_argf "arange [%d, %d) is not representable in %s" start stop
+      (repr_dtype dt);
+  let n = Helpers.ceildiv (stop - start) step in
+  let full dt c k = expand (const ~dtype:dt (`Int (Z.of_int c))) [ Int k ] in
+  if n <= 0 then full dt 0 0
+  else
+    let acc =
+      if Dtype.is_float dt then Dtype.least_upper [ dt; Float32 ] else dt
+    in
+    cast (add (pooled_cumalu (full acc step n) Op.Add) (int (start - step))) dt
+
 (* Several devices *)
 
 let rec axis u =

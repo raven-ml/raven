@@ -1,0 +1,90 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=15)
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CONST dtypes.weakint [] 5
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.CONST dtypes.weakint [] 4
+7 Ops.STACK dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.weakint [] 9
+9 Ops.STACK dtypes.weakint [1, 8]
+10 Ops.PAD dtypes.float [4, 7, 9]
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.STACK dtypes.weakint [1, 11, 8]
+13 Ops.RESHAPE dtypes.float [10, 12]
+14 Ops.RESHAPE dtypes.float [13, 9]
+15 Ops.CONST dtypes.weakint [] 6
+16 Ops.EXPAND dtypes.float [14, 15]
+17 Ops.PERMUTE dtypes.float [16] (1, 0, 2)
+18 Ops.CONST dtypes.weakint [] 54
+19 Ops.STACK dtypes.weakint [1, 18]
+20 Ops.RESHAPE dtypes.float [17, 19]
+21 Ops.STACK dtypes.weakint [5, 5]
+22 Ops.CONST dtypes.weakint [] 50
+23 Ops.STACK dtypes.weakint [1, 22]
+24 Ops.SHRINK dtypes.float [20, 21, 23]
+25 Ops.CONST dtypes.weakint [] 10
+26 Ops.STACK dtypes.weakint [1, 2, 25]
+27 Ops.RESHAPE dtypes.float [24, 26]
+28 Ops.STACK dtypes.weakint [5, 5, 5]
+29 Ops.STACK dtypes.weakint [1, 2, 2]
+30 Ops.SHRINK dtypes.float [27, 28, 29]
+31 Ops.STACK dtypes.weakint [1, 2, 2, 11]
+32 Ops.RESHAPE dtypes.float [30, 31]
+33 Ops.RESHAPE dtypes.float [32, 29]
+34 Ops.PERMUTE dtypes.float [33] (0, 2, 1)
+35 Ops.PERMUTE dtypes.float [34] (2, 0, 1)
+36 Ops.REDUCE dtypes.float [35] (Ops.ADD, 1)
+37 Ops.CONST dtypes.bool [] True
+38 Ops.STACK dtypes.weakint [2, 1]
+39 Ops.EXPAND dtypes.bool [37, 38]
+40 Ops.CONST dtypes.weakint [] 2
+41 Ops.STACK dtypes.weakint [5, 40]
+42 Ops.STACK dtypes.weakint [2, 2]
+43 Ops.PAD dtypes.bool [39, 41, 42]
+44 Ops.PERMUTE dtypes.float [4] (1, 0)
+45 Ops.PAD dtypes.float [44, 41, 42]
+46 Ops.CONST dtypes.weakfloat [] -inf
+47 Ops.WHERE dtypes.float [43, 45, 46]
+48 Ops.STACK dtypes.weakint [2, 11, 2]
+49 Ops.RESHAPE dtypes.float [47, 48]
+50 Ops.RESHAPE dtypes.float [49, 42]
+51 Ops.EXPAND dtypes.float [50, 6]
+52 Ops.PERMUTE dtypes.float [51] (1, 0, 2)
+53 Ops.CONST dtypes.weakint [] 20
+54 Ops.STACK dtypes.weakint [2, 53]
+55 Ops.RESHAPE dtypes.float [52, 54]
+56 Ops.CONST dtypes.weakint [] 18
+57 Ops.STACK dtypes.weakint [2, 56]
+58 Ops.SHRINK dtypes.float [55, 21, 57]
+59 Ops.STACK dtypes.weakint [2, 1, 15]
+60 Ops.RESHAPE dtypes.float [58, 59]
+61 Ops.STACK dtypes.weakint [2, 1, 1]
+62 Ops.SHRINK dtypes.float [60, 28, 61]
+63 Ops.STACK dtypes.weakint [2, 1, 1, 11]
+64 Ops.RESHAPE dtypes.float [62, 63]
+65 Ops.RESHAPE dtypes.float [64, 61]
+66 Ops.PERMUTE dtypes.float [65] (0, 2, 1)
+67 Ops.PERMUTE dtypes.float [66] (2, 0, 1)
+68 Ops.REDUCE dtypes.float [67] (Ops.MAX, 1)
+69 Ops.PERMUTE dtypes.float [68] (1, 0)
+70 Ops.EXPAND dtypes.bool [37, 3]
+71 Ops.PAD dtypes.bool [70, 7, 9]
+72 Ops.CONST dtypes.weakfloat [] 1.0
+73 Ops.WHERE dtypes.float [71, 10, 72]
+74 Ops.RESHAPE dtypes.float [73, 12]
+75 Ops.RESHAPE dtypes.float [74, 9]
+76 Ops.EXPAND dtypes.float [75, 15]
+77 Ops.PERMUTE dtypes.float [76] (1, 0, 2)
+78 Ops.RESHAPE dtypes.float [77, 19]
+79 Ops.SHRINK dtypes.float [78, 21, 23]
+80 Ops.RESHAPE dtypes.float [79, 26]
+81 Ops.SHRINK dtypes.float [80, 28, 29]
+82 Ops.RESHAPE dtypes.float [81, 31]
+83 Ops.RESHAPE dtypes.float [82, 29]
+84 Ops.PERMUTE dtypes.float [83] (0, 2, 1)
+85 Ops.PERMUTE dtypes.float [84] (2, 0, 1)
+86 Ops.REDUCE dtypes.float [85] (Ops.MUL, 1)
+87 Ops.SINK dtypes.void [36, 69, 86]
+

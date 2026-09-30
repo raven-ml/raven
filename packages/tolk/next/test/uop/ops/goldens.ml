@@ -306,6 +306,21 @@ let pools () =
       repeat p [ 3; 1; 1; 2 ];
     ]
 
+let running () =
+  let p = param [ 3; 5 ] 0 Float32 in
+  sink [ cumalu p 1 Op.Add; cumalu p 0 Op.Max; cumalu p (-1) Op.Mul ]
+
+let aranges () =
+  sink
+    [
+      arange 5;
+      arange ~start:2 ~step:3 9;
+      arange ~start:4 ~step:(-1) 0;
+      arange ~dtype:Int64 3;
+      arange ~dtype:Float32 3;
+      arange 0;
+    ]
+
 let padding () =
   let p = param [ 4; 4 ] 0 Float32 in
   sink
@@ -704,6 +719,8 @@ let all =
     ("stacks", stacks, false);
     ("concatenation", concatenation, false);
     ("pools", pools, false);
+    ("running", running, false);
+    ("aranges", aranges, false);
     ("padding", padding, false);
     ("reductions", reductions, false);
     ("constants_like", constants_like, false);

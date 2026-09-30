@@ -1090,6 +1090,26 @@ val pool : ?stride:int list -> ?dilation:int list -> t -> int list -> t
 val cat : ?axis:int -> t -> t list -> t
 (** [cat ~axis u rest] concatenates [u :: rest] along [axis] (default [0]). *)
 
+val cumalu : t -> int -> Op.t -> t
+(** [cumalu u axis op] is the inclusive running [op] ({!Op.Add}, {!Op.Mul} or
+    {!Op.Max}) of [u] along [axis], at [u]'s type: each element reduces the
+    window of the elements up to it. Past 512 elements it runs in two stages,
+    within chunks of 256 and across the chunks' last elements. It is [u] if an
+    axis of [u] is empty.
+
+    Raises [Invalid_argument] if [axis] has a symbolic size. *)
+
+val arange : ?start:int -> ?step:int -> ?dtype:Dtype.t -> int -> t
+(** [arange ~start ~step ~dtype stop] is the vector of the integers from [start]
+    (default [0]) up to [stop], excluded, by [step] (default [1]), down to it
+    for a negative [step], of type [dtype] (default the first of
+    {!Dtype.default_int}, {!Dtype.Int32}, {!Dtype.Int64} and {!Dtype.Uint64}
+    that holds them). It is empty if [stop] is not beyond [start]. Its elements
+    are running sums of [step].
+
+    Raises [Invalid_argument] if [step] is [0] or [dtype] does not hold the
+    integers. *)
+
 val nbytes : t -> int
 (** [nbytes u] is the number of bytes of [u]'s elements. *)
 
