@@ -45,6 +45,7 @@ type device = {
   device : Nx_device.t;
   compiler : Hcq2.device;
   placeholder : Ops.t -> Nx_device.Buffer.t option;
+  submitting : unit -> unit;
 }
 
 (* The compiler has no queue encoder of Metal, CUDA, AMD or NV yet: every device
@@ -59,6 +60,7 @@ let device devices name =
     device = d;
     compiler = { Hcq2.target; queues = None };
     placeholder = (fun _ -> None);
+    submitting = ignore;
   }
 
 (* Host programs *)
@@ -140,6 +142,7 @@ type batch = {
   named : string -> Nx_device.t; (* the devices of the schedule, by name *)
   host_program : Program.t;
   queues : Nx_device.t list;
+  submitting : (unit -> unit) list; (* each device's, before the host program *)
   arguments : B.t list; (* by argument slot *)
   table : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   reached : B.t list; (* the linked storage its words address *)
@@ -341,10 +344,18 @@ let signal_word_tag = Ops.Tag.String "timeline"
 (* The storage of a batch's placeholder [u]: the signal word of its device for
    ["timeline"], the address of a C function for a [("cfunc", lib, f)] tuple,
    and pinned memory, which the host program writes, for any other. *)
-let placeholder device u =
+(* The vendor whose commands name a placeholder gives its storage: its own
+   device's, or a device of the batch's, such as the vendor that owns a C
+   function its host program calls. *)
+let placeholder device queues u =
   let dev = device (List.hd (names u)) in
   let d = dev.device in
-  match dev.placeholder u with
+  let named =
+    List.find_map
+      (fun n -> (device n).placeholder u)
+      (List.hd (names u) :: queues)
+  in
+  match named with
   | Some b -> b
   | None -> (
       match Ops.tag u with
@@ -366,7 +377,7 @@ let link_batch ~device ~storage ~keep call patches =
   List.iter
     (fun u ->
       if is_placeholder u && not (Ops.Tbl.mem storage u) then
-        Ops.Tbl.replace storage u [ placeholder device u ])
+        Ops.Tbl.replace storage u [ placeholder device info.device u ])
     (args @ patched);
   let reached =
     List.filter_map
@@ -408,6 +419,7 @@ let link_batch ~device ~storage ~keep call patches =
     info;
     named = (fun n -> (device n).device);
     host_program = Program.load host (Ops.body call);
+    submitting = List.map (fun n -> (device n).submitting) info.device;
     queues;
     arguments;
     table;
@@ -465,6 +477,7 @@ let run_batch ~vars storage slots b =
         | Some v -> v
         | None -> value vars 0 u
       in
+      List.iter (fun f -> f ()) b.submitting;
       Nx_device.Program.call prg.program
         (Array.of_list (List.map (List.nth b.arguments) prg.globals))
         (Array.of_list (List.map bind prg.vars));

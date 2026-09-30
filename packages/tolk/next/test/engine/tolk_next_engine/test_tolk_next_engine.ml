@@ -961,6 +961,48 @@ let waits_for_another_device () =
   Null_device.synchronize ();
   equal values a (Run.values Float32 dst)
 
+(* The NULL devices, where [b] is the storage of the placeholder tagged
+   [tag]. *)
+let with_tag tag b n =
+  let dev = on_null n in
+  let placeholder u =
+    match Ops.tag u with
+    | Some (String t) when t = tag -> Some b
+    | _ -> dev.placeholder u
+  in
+  { dev with placeholder }
+
+(* A batch of [d] alone whose host program runs [effects], then signals [d]. *)
+let host_program ~(devices : string -> Engine.device) d effects =
+  let info : Ops.hcq_info =
+    {
+      device = [ d ];
+      kernels = [];
+      estimates = { ops = Int 0; lds = Int 0; mem = Int 0 };
+      nargs = 0;
+      table = -1;
+      inputs = [];
+      slots = [];
+      written_bufs = [];
+    }
+  in
+  let signal =
+    Ops.store (Ops.index (Hcq2.signal_word d) [ Ops.int 0 ]) (Hcq2.value d)
+  in
+  let body =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"host_program" ())
+      (effects @ [ signal ])
+  in
+  let lowered =
+    Hcq2.lower_call
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.call ~aux:info body [])
+  in
+  Realize.lower_and_compile
+    ~targets:(fun n -> (devices n).compiler.target)
+    (Ops.v Op.Linear ~src:[ lowered ])
+
 (* A batch of CPU:1 alone whose host program writes the address of memory of
    CPU:2, which a slow kernel of CPU:2 fills first, into a word of CPU:1. Its
    queues name no CPU:2, so the run waits for CPU:2 on the host before it calls
@@ -983,44 +1025,10 @@ let waits_for_a_device_its_queues_do_not_name ~as_input () =
       [ 1 ] Uint64
   in
   let address = Nx_device.Buffer.create (nd d) UInt64 1 in
-  let devices n =
-    let dev = on_null n in
-    let placeholder u =
-      match Ops.tag u with
-      | Some (String "address") -> Some address
-      | _ -> dev.placeholder u
-    in
-    { dev with placeholder }
-  in
-  let info : Ops.hcq_info =
-    {
-      device = [ d ];
-      kernels = [];
-      estimates = { ops = Int 0; lds = Int 0; mem = Int 0 };
-      nargs = 0;
-      table = -1;
-      inputs = [];
-      slots = [];
-      written_bufs = [];
-    }
-  in
-  let body =
-    Ops.sink
-      ~kernel:(Ops.kernel_info ~name:"host_address" ())
-      [
-        Ops.store (Ops.index word [ Ops.int 0 ]) (Ops.getaddr ~device:d src);
-        Ops.store (Ops.index (Hcq2.signal_word d) [ Ops.int 0 ]) (Hcq2.value d);
-      ]
-  in
-  let lowered =
-    Hcq2.lower_call
-      ~devices:(fun n -> (devices n).compiler)
-      (Ops.call ~aux:info body [])
-  in
+  let devices = with_tag "address" address in
   let compiled =
-    Realize.lower_and_compile
-      ~targets:(fun n -> (devices n).compiler.target)
-      (Ops.v Op.Linear ~src:[ lowered ])
+    host_program ~devices d
+      [ Ops.store (Ops.index word [ Ops.int 0 ]) (Ops.getaddr ~device:d src) ]
   in
   let bound = if as_input then [] else [ (y, [ filler ]) ] in
   let writes = Engine.link ~devices ~bound compiled in
@@ -1121,6 +1129,43 @@ let spans_on_lanes () =
     [ ("compute", true); ("copy", false) ]
     lanes
 
+(* A host program of CPU:1 calls a C function of the host, CPU, which gives no
+   word for its address: CPU:1, the batch's device, gives it. *)
+let calls_a_function_of_the_host () =
+  let d = "CPU:1" in
+  let out =
+    Ops.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
+      [ 1 ] Int32
+  in
+  let ffs =
+    Hcq2.ccall ~host:"CPU" ~lib:"libc" ~ret:Int32 "ffs"
+      [ Ops.int ~dtype:Int32 0x10 ]
+  in
+  let result = Nx_device.Buffer.create (Null_device.device d) Int32 1 in
+  let devices = with_tag "result" result in
+  let compiled =
+    host_program ~devices d [ Ops.store (Ops.index out [ Ops.int 0 ]) ffs ]
+  in
+  Engine.run (Engine.link ~devices compiled) [||];
+  Null_device.synchronize ();
+  equal values [| `Int (Z.of_int 5) |] (Run.values Int32 result)
+
+(* Each run of a batch on a device runs the device's submitting hook once. *)
+let runs_the_submitting_hook () =
+  let hooked = ref 0 in
+  let devices n =
+    if n = "CPU:1" then
+      { (on_null n) with submitting = (fun () -> incr hooked) }
+    else on_null n
+  in
+  let s, vars, big = parameterized ~devices "copy" in
+  let slots = slots (storage_of ~devices big) in
+  for _ = 1 to 3 do
+    Engine.run ~vars s slots
+  done;
+  Null_device.synchronize ();
+  equal int 3 !hooked
+
 let refuses_an_unknown_library () =
   let y, filled = fill "CPU:1" 7. in
   let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
@@ -1158,6 +1203,10 @@ let batches =
         reads_a_view_of_each_shard;
       test "a kernel is a span of its compute lane and a copy of its copy lane"
         spans_on_lanes;
+      test "a host program calls a C function through the batch's device"
+        calls_a_function_of_the_host;
+      test "each run of a batch runs its device's submitting hook once"
+        runs_the_submitting_hook;
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"

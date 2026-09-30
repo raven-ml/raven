@@ -194,4 +194,5 @@ let devices ?(copy_queue = true) () =
         Tolk_next_engine.device = d;
         compiler = { target = Tolk_next_engine.target d; queues = Some queues };
         placeholder = placeholder name;
+        submitting = ignore;
       }

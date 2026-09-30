@@ -48,9 +48,18 @@ type device = {
           [devices]): its target, and the command queues its vendor encodes, if
           it runs work from queues. *)
   placeholder : Ops.t -> Nx_device.Buffer.t option;
-      (** [placeholder u] is the storage of the placeholder [u] of a batch if
-          the vendor's commands name it, such as the objects of the vendor
-          library's low-level section, and [None] for the others. *)
+      (** [placeholder u] is the storage of the placeholder [u] of a batch on
+          this device if the vendor's commands name it, such as the objects of
+          the vendor library's low-level section or a word holding the address
+          of a C function they call, and [None] for the others. It is asked for
+          the placeholders on the device and for those of the batches the device
+          runs, wherever they are, such as a C function's word on the host. *)
+  submitting : unit -> unit;
+      (** [submitting ()] runs inside each submission of a batch on the device,
+          once the batch waited for its previous run and before its host
+          program, when the device's objects cannot change: the time to write
+          the words that change between runs, such as the buffers Metal's work
+          declares resident. *)
 }
 (** The type for devices as the engine runs work on them. *)
 
@@ -111,12 +120,12 @@ val link :
     - Each storage node ({!Tolk_next.Op.Buffer}) is bound to its buffers in
       [bound] (default [[]]), one per device of its placement, and allocated
       otherwise ({!Nx_device.Buffer.create}).
-    - Each placeholder of a batch is the storage its device's [placeholder]
-      gives it, if any. Otherwise the signal word placeholder of a device is
-      that device's {!Nx_device.signal_word}, and any other is allocated in
-      pinned memory of its device ({!Nx_device.Buffer.create}[ ~pinned:true]),
-      which the host and the device see coherently, since the batch's host
-      program writes it.
+    - Each placeholder of a batch is the storage that its device's
+      [placeholder], or that of a device of the batch, gives it, if any.
+      Otherwise the signal word placeholder of a device is that device's
+      {!Nx_device.signal_word}, and any other is allocated in pinned memory of
+      its device ({!Nx_device.Buffer.create}[ ~pinned:true]), which the host and
+      the device see coherently, since the batch's host program writes it.
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.
