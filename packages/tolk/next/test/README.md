@@ -186,7 +186,7 @@ topological order:
 |---|---|
 | none, booleans | `None`, `True`, `False` |
 | integer | decimal, of any size: `-3`, `340282366920938463463374607431768211456` |
-| float | the shortest decimal that reads back as the same double, as Python's `repr` writes it: `1.0`, `-0.0`, `1e-05`, `1e+16`, `inf`, `-inf`, `nan` |
+| float | the shortest decimal that reads back as the same double, as Python's `repr` writes it: `1.0`, `-0.0`, `1e-05`, `1e+16`, `inf`, `-inf`; `nan` for the positive quiet NaN, and any other NaN as its bits in hex: `nan(0xfffffc0000000000)` |
 | the invalid constant | `Invalid` |
 | string | in double quotes; `"`, `\`, newline and tab escaped as `\"`, `\\`, `\n` and `\t`, and every other byte outside printable ASCII as `\xHH` |
 | bytes | as a string, prefixed with `b`: `b"\x7fELF"` |

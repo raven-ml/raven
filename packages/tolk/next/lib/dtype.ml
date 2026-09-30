@@ -12,7 +12,6 @@ let strf = Printf.sprintf
 type value = [ `Bool of bool | `Int of Z.t | `Float of float ]
 type const = [ value | `Invalid ]
 
-(* The bits of the NaN every constant NaN becomes, which a bitcast reveals. *)
 let nan = Int64.float_of_bits 0x7FF8_0000_0000_0000L
 
 let equal_const (c0 : [< const ]) (c1 : [< const ]) =
@@ -20,13 +19,15 @@ let equal_const (c0 : [< const ]) (c1 : [< const ]) =
   | `Bool b0, `Bool b1 -> Bool.equal b0 b1
   | `Int n0, `Int n1 -> Z.equal n0 n1
   | `Float x0, `Float x1 ->
-      (Float.is_nan x0 && Float.is_nan x1)
-      || Int64.equal (Int64.bits_of_float x0) (Int64.bits_of_float x1)
+      Int64.equal (Int64.bits_of_float x0) (Int64.bits_of_float x1)
   | `Invalid, `Invalid -> true
   | _ -> false
 
-(* Hashtbl.hash hashes every NaN alike, and -0.0 like 0.0. *)
-let hash_const (c : [< const ]) = Hashtbl.hash c
+(* Hashtbl.hash would hash every NaN alike, and -0.0 like 0.0. *)
+let hash_const (c : [< const ]) =
+  match (c :> const) with
+  | `Float x -> Hashtbl.hash (Int64.bits_of_float x)
+  | c -> Hashtbl.hash c
 
 (* The fewest significant digits that read back as [x], a finite float, and
    where their decimal point goes: [x] reads as 0.[digits] times 10 to the
@@ -641,13 +642,17 @@ let max dt : value =
   else if is_float dt then `Float (float_max dt)
   else `Bool true
 
+(* A NaN constant is the NaN [dt] stores for it, a signalling one included: a
+   bitcast of the constant reveals its bits, which a conversion would quiet. *)
 let const dt (c : [< const ]) : const =
   match c with
   | `Invalid -> `Invalid
+  | `Float x when Float.is_nan x && is_float dt -> (
+      match dt with
+      | Float32 -> `Float (float32_of_bits (float32_bits x))
+      | Float64 | Weak_float -> `Float x
+      | dt -> `Float (round dt x))
   | #value as v ->
-      let v =
-        match v with `Float x when Float.is_nan x -> `Float nan | v -> v
-      in
       if is_float dt then `Float (truncate_float dt (float_value dt v))
       else if is_bool dt then `Bool (Value.to_bool v)
       else `Int (Value.to_z v)

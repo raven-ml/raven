@@ -47,24 +47,31 @@ let any_const =
          (1, Gen.map (fun f -> `Float f) (Gen.of_list (0. :: -0. :: nans)));
        ])
 
-(* The same constant built anew: an integer from its digits, and a NaN with
-   other bits. *)
+(* The same constant built anew: an integer from its digits, and a float from
+   its bits. *)
 let respell = function
   | `Int n -> `Int (Z.of_string (Z.to_string n))
-  | `Float f when Float.is_nan f ->
-      let bits = Int64.bits_of_float f in
-      `Float (List.find (fun g -> Int64.bits_of_float g <> bits) nans)
+  | `Float f -> `Float (Int64.float_of_bits (Int64.bits_of_float f))
   | c -> c
 
 let const_equality =
   Testable.make ~pp:(Testable.pp const) ~equal:Dtype.equal_const
 
+(* The witness's equality, with floats the same when their bits are. *)
+let same_const c0 c1 =
+  match (c0, c1) with
+  | `Float f0, `Float f1 ->
+      Int64.equal (Int64.bits_of_float f0) (Int64.bits_of_float f1)
+  | _ -> Testable.equal const c0 c1
+
 let constants =
   group "constants"
     [
-      test "every NaN is the same constant" (fun () ->
+      test "NaNs of different bits are different constants" (fun () ->
           List.iter
-            (fun f -> equal const_equality (`Float Float.nan) (`Float f))
+            (fun f ->
+              if Int64.bits_of_float f <> Int64.bits_of_float Float.nan then
+                not_equal const_equality (`Float Float.nan) (`Float f))
             nans);
       test "zero and negative zero are different constants" (fun () ->
           not_equal const_equality (`Float 0.) (`Float (-0.)));
@@ -75,19 +82,11 @@ let constants =
       prop "equal_const is an equivalence"
         (Gen.pair any_const any_const)
         (Law.equivalence const_equality);
-      prop "equal_const is the witness's equality"
+      prop "equal_const is equality of kinds and payloads, floats by their bits"
         (Gen.pair any_const any_const) (fun (c0, c1) ->
-          equal bool (Testable.equal const c0 c1) (Dtype.equal_const c0 c1));
-      test "every NaN hashes alike" (fun () ->
-          List.iter
-            (fun f ->
-              equal int
-                (Dtype.hash_const (`Float Float.nan))
-                (Dtype.hash_const (`Float f)))
-            nans);
+          equal bool (same_const c0 c1) (Dtype.equal_const c0 c1));
       prop "equal constants hash alike" any_const (fun c ->
-          cover "a NaN with other bits"
-            (match c with `Float f -> Float.is_nan f | _ -> false);
+          cover "a NaN" (match c with `Float f -> Float.is_nan f | _ -> false);
           cover "an integer built anew"
             (match c with `Int _ -> true | _ -> false);
           equal int (Dtype.hash_const c) (Dtype.hash_const (respell c)));
@@ -818,6 +817,19 @@ let consts =
           | `Invalid -> equal const `Invalid (Dtype.const dt c));
       prop "const is idempotent" constable (fun (dt, c) ->
           Law.idempotent const (Dtype.const dt) c);
+      cases "const keeps the bits of every 8- and 16-bit float word" ~name:alias
+        Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
+        (fun dt ->
+          let w = word_of dt in
+          for word = 0 to (1 lsl (8 * Dtype.itemsize dt)) - 1 do
+            let word = `Int (Z.of_int word) in
+            match Dtype.const dt (Dtype.bitcast w dt word) with
+            | #Dtype.value as v ->
+                equal
+                  ~msg:(Format.asprintf "%a" (Testable.pp value) word)
+                  value word (Dtype.bitcast dt w v)
+            | `Invalid -> fail "Invalid"
+          done);
     ]
 
 (* Values *)

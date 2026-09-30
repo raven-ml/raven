@@ -796,3 +796,33 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Cstyle` suite, `negation › a minus before a minus is
   apart › *` (every renderer), `› Clang compiles and runs a difference with a
   negated operand` and `› … with a negative constant`.
+
+## D27. Constants keep a NaN's bits
+
+- **tinygrad:** `dtype.py:79-82` (`DType.const` makes every NaN `math.nan`),
+  `dtype.py:16-19` (`ConstFloat` compares every NaN equal to every other), and
+  `uop/symbolic.py:23-26` (`fold_bitcast` converts the constant with
+  `truncate` before reading its bits).
+- **tolk.next:** `lib/dtype.ml:17` (`equal_const`), `:27` (`hash_const`) and
+  `:647` (`const`); `lib/uop/symbolic.ml:82` (`fold_bitcast`);
+  `test/gen/tinygrad.patch`, which applies the same rules to tinygrad before
+  the goldens are generated.
+- **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
+  and the payload its type holds, a signalling NaN staying one, and constants
+  compare and hash by their bits, so NaNs of different bits are different
+  nodes. `fold_bitcast` reads a float constant as its type stores it, where
+  tinygrad's conversion quiets a signalling NaN and makes an 8-bit NaN
+  canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives
+  `0x7d01`, where tinygrad gives `0x7e00`, and a negative float32 NaN's bits
+  survive a fold, where tinygrad makes them `0x7fc00000`. A NaN an operation
+  makes from other values is `Dtype.nan`, tinygrad's `math.nan`.
+- **Reason:** (b), as D20's: a kernel's bitcast and nx's are byte
+  reinterpretations, so a bitcast that rune folds must keep the bits as they
+  do, and a rewrite must keep a graph's value.
+- **Pinned by:** the `Ops` suite, `identity › NaN constants of different bits
+  are different nodes`; the `Symbolic` suite, `casts › a bitcast round trip of
+  every 8- and 16-bit word folds to its value`, which evaluates each graph
+  with the reference interpreter before and after `simplify`; the `Dtype`
+  suite, `const › const keeps the bits of every 8- and 16-bit float word`;
+  and, at L9, a rune test: a jitted `Nx.bitcast` of a NaN constant keeps its
+  bits.

@@ -3484,13 +3484,13 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
           if Value.( < ) (`Int Z.zero) x then
             `Float (Float.log2 (Value.to_float x))
           else if Value.( = ) x (`Int Z.zero) then `Float Float.neg_infinity
-          else `Float Float.nan)
+          else `Float Dtype.nan)
   | Op.Exp2 -> unary py_exp2
   | Op.Sqrt ->
       unary (fun x ->
           if Value.( <= ) (`Int Z.zero) x then
             `Float (Float.sqrt (Value.to_float x))
-          else `Float Float.nan)
+          else `Float Dtype.nan)
   | Op.Reciprocal ->
       unary (fun x ->
           let f = Value.to_float x in
@@ -3500,7 +3500,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
       unary (fun x ->
           let f = Value.to_float x in
           `Float
-            (if Float.equal (Float.abs f) Float.infinity then Float.nan
+            (if Float.equal (Float.abs f) Float.infinity then Dtype.nan
              else Float.sin f))
   | Op.Pow -> binary py_pow
   | Op.Trunc ->

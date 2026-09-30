@@ -424,6 +424,21 @@ let casts =
             (Ops.bitcast (Ops.bitcast x Float32) Uint32)
             (Ops.bitcast x Uint32);
           folds_to (Ops.bitcast (Ops.bitcast x Float32) Int32) x);
+      (* D27. A folded bitcast reads a float constant's bits as its type stores
+         them, where tinygrad converts it first and a NaN loses its bits. *)
+      cases
+        "a bitcast round trip of every 8- and 16-bit word folds to its value"
+        ~name:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
+        (fun mid ->
+          let w = if Dtype.itemsize mid = 1 then Dtype.Uint8 else Uint16 in
+          for word = 0 to (1 lsl (8 * Dtype.itemsize mid)) - 1 do
+            let u = Ops.bitcast (Ops.bitcast (Ops.int ~dtype:w word) mid) w in
+            equal
+              ~msg:(Printf.sprintf "0x%x" word)
+              Dtypes.const (Interpreter.eval u)
+              (Interpreter.eval (Ops.simplify u))
+          done);
       test "a bitcast of a constant to another width stays" (fun () ->
           let widened = Ops.bitcast (int32 1) Int64 in
           folds_to widened widened);

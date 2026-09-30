@@ -259,7 +259,7 @@ let xsin ?(fast = false) ?(switch_over = 30.0) d =
         (sin_poly_small r_small q_small)
         (sin_poly_large r q)
   in
-  let nan = float_like d Float.nan in
+  let nan = float_like d Dtype.nan in
   lazy_map_numbers d ~inf:nan ~neg_inf:nan ~nan O.(result * x_sign)
 
 let xexp2 d =
@@ -307,7 +307,7 @@ let xexp2 d =
   in
   let u = where O.(d >= int upper) (float_like d infinity) u in
   let u = where O.(d < int lower) (float_like d 0.) u in
-  where O.(d <> d) (float_like d Float.nan) u
+  where O.(d <> d) (float_like d Dtype.nan) u
 
 let xlog2 d =
   check d;
@@ -346,8 +346,8 @@ let xlog2 d =
   in
   let r = where O.(d <> float infinity) r (float_like r infinity) in
   let r = where O.(d <> float 0.0) r (float_like r neg_infinity) in
-  let r = where O.(d < float (-0.0)) (float_like r Float.nan) r in
-  let r = where O.(d <> d) (float_like r Float.nan) r in
+  let r = where O.(d < float (-0.0)) (float_like r Dtype.nan) r in
+  let r = where O.(d <> d) (float_like r Dtype.nan) r in
   (* Some targets do not find -0.0 equal to 0.0; its reciprocal is -inf. *)
   where O.(reciprocal d <> float neg_infinity) r (float_like r neg_infinity)
 
@@ -363,7 +363,7 @@ let xpow base exponent =
   let is_odd = cast (mod_ (cast magnitude Int32) (int 2)) Bool in
   let neg_base =
     where non_int
-      (where O.(base <> float neg_infinity) (float_like ret Float.nan) ret)
+      (where O.(base <> float neg_infinity) (float_like ret Dtype.nan) ret)
       (where is_odd O.(-ret) ret)
   in
   (* x ** 0 is 1, 0 ** 0 and inf ** 0 included. *)

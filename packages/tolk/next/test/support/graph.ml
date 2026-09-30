@@ -74,6 +74,10 @@ let rec print index = function
   | None_ -> "None"
   | Bool b -> if b then "True" else "False"
   | Int z -> Z.to_string z
+  | Float f
+    when Float.is_nan f
+         && not (Int64.equal (Int64.bits_of_float f) 0x7FF8_0000_0000_0000L) ->
+      strf "nan(0x%016Lx)" (Int64.bits_of_float f)
   | Float f -> Format.asprintf "%a" Dtype.pp_const (`Float f)
   | Invalid -> "Invalid"
   | Str s -> quote s
@@ -206,6 +210,11 @@ let rec parse nodes c =
       | "True", _ -> Bool true
       | "False", _ -> Bool false
       | "Invalid", _ -> Invalid
+      | "nan", Some '(' ->
+          advance c;
+          let bits = take_while c is_ident in
+          expect c ")";
+          Float (Int64.float_of_bits (Int64.of_string bits))
       | ("inf" | "nan"), _ -> Float (float_of_string id)
       | _, Some '.' ->
           advance c;

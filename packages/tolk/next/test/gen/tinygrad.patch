@@ -1,3 +1,18 @@
+diff --git a/test/null/test_const_folding.py b/test/null/test_const_folding.py
+index 2dd371d..fe528fb 100644
+--- a/test/null/test_const_folding.py
++++ b/test/null/test_const_folding.py
+@@ -42,7 +42,9 @@ class TestBitcastConstFolding(unittest.TestCase):
+       for (from_dt, from_v), (to_dt, to_v) in itertools.product(cases.items(), cases.items()):
+         if not math.isnan(from_v):
+           r = UOp.const(from_v, from_dt).bitcast(to_dt).simplify()
+-          self.assertIs(r, UOp.const(to_v, to_dt), f"{from_dt} -> {to_dt} ({from_v} -> {to_v})")
++          # a NaN constant keeps the bits it folds from, which are not float('nan')'s
++          if math.isnan(to_v): self.assertTrue(math.isnan(r.val), f"{from_dt} -> {to_dt} ({from_v} -> {to_v})")
++          else: self.assertIs(r, UOp.const(to_v, to_dt), f"{from_dt} -> {to_dt} ({from_v} -> {to_v})")
+ 
+     t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
+     t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
 index efb2e82..8c64ddb 100644
 --- a/tinygrad/codegen/__init__.py
@@ -104,6 +119,79 @@ index 4136f84..391690e 100644
    # reduce on gated load becomes can substitute the range and remove the reduce
    ((UPat.var("idx")!=(UPat(Ops.RANGE, name="r").or_casted())).where(0, UPat.var("expr")).reduce(UPat.var("r"), arg=Ops.ADD),
     lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
+diff --git a/tinygrad/dtype.py b/tinygrad/dtype.py
+index 14add12..80e0ec5 100644
+--- a/tinygrad/dtype.py
++++ b/tinygrad/dtype.py
+@@ -6,7 +6,7 @@ from tinygrad.helpers import getenv, DEFAULT_FLOAT, DEFAULT_INT
+ from enum import IntEnum, auto
+ 
+ class ConstFloat(float):
+-  """Float subclass that distinguishes -0.0 from 0.0 and where nan == nan."""
++  """Float subclass that distinguishes -0.0 from 0.0 and NaNs of different bits."""
+   __slots__ = ('bits',)
+   bits: int
+   def __new__(cls, v:float):
+@@ -15,7 +15,7 @@ class ConstFloat(float):
+     return obj
+   def __eq__(self, other):
+     if self is other: return True
+-    if isinstance(other, float) and math.isnan(self) and math.isnan(other): return True
++    if isinstance(other, float) and math.isnan(self) and math.isnan(other): return self.bits == struct.unpack('<Q', struct.pack('<d', other))[0]
+     return float.__eq__(self, other)
+   def __ne__(self, other): return res if (res:=self.__eq__(other)) is NotImplemented else not res  # float.__ne__ disagrees with __eq__ on nan
+   def __hash__(self): return hash(self.bits)
+@@ -78,8 +78,8 @@ class DType(metaclass=DTypeMetaClass):
+     return float("inf") if dtypes.is_float(self) else True
+   def const(self, val: ConstType):
+     if isinstance(val, InvalidType): return val
+-    # NOTE: float('nan') != float('nan'), so we canonicalize here
+-    if isinstance(val, float) and math.isnan(val): val = math.nan
++    # a NaN keeps its sign and the payload the dtype holds, which a bitcast reveals
++    if isinstance(val, float) and math.isnan(val) and dtypes.is_float(self): return ConstFloat(held_nan(val, self))
+     # int is the default. wrap floats in ConstFloat to distinguish -0.0 from 0.0 in cache
+     return ConstFloat(truncate.get(self, float)(float(val))) if dtypes.is_float(self) else bool(val) if dtypes.is_bool(self) else int(val)
+ 
+@@ -299,12 +299,39 @@ truncate: dict[DType, Callable] = {dtypes.bool: bool,
+   **{getattr(dtypes, n): (lambda x, c=getattr(ctypes, f'c_{n}'): c(x).value)
+      for n in ('float', 'double', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64')}}
+ 
++# A NaN's bits move by hand: struct and the float conversions quiet a signalling NaN and drop a half's payload. These are the
++# formats whose NaNs have payloads, with their mantissa widths.
++_nan_mant = {dtypes.float16: 10, dtypes.bfloat16: 7, dtypes.float32: 23, dtypes.float64: 52, dtypes.fp8e5m2: 2}
++def _double_bits(x:float) -> int: return struct.unpack('<Q', struct.pack('<d', x))[0]
++def _double_of_bits(b:int) -> float: return struct.unpack('<d', struct.pack('<Q', b))[0]
++
++def held_nan(x:float, dtype:DType) -> float:
++  """The NaN `dtype` stores for the NaN `x`: its sign and the leading payload bits `dtype` has room for, quiet if there are none."""
++  if dtype == dtypes.fp8e4m3: return math.copysign(math.nan, x)
++  if dtype in dtypes.fp8_fnuz: return math.nan
++  if dtype not in _nan_mant: return x
++  b, mant = _double_bits(x), _nan_mant[dtype]
++  return _double_of_bits(b & ~((1 << 52) - 1) | (b & (((1 << mant) - 1) << (52 - mant)) or 1 << 51))
++
+ def bitcast(x, in_dtype:DType, out_dtype:DType):
+   assert in_dtype.itemsize == out_dtype.itemsize, "bitcast itemsize mismatch"
+   packed = struct.pack(storage_fmt_for_dtype(in_dtype), to_storage_scalar(x, in_dtype))
+   out_val = struct.unpack(storage_fmt_for_dtype(out_dtype), packed)[0]
+   return from_storage_scalar(out_val, out_dtype)
+ 
++def exact_bitcast(x, in_dtype:DType, out_dtype:DType):
++  """`bitcast`, with a NaN's bits kept, as a kernel's bitcast keeps them."""
++  n = in_dtype.itemsize * 8
++  word_fmt = {8: 'B', 16: 'H', 32: 'I', 64: 'Q'}[n]
++  if in_dtype in _nan_mant and isinstance(x, float) and math.isnan(x):
++    b, mant = _double_bits(held_nan(x, in_dtype)), _nan_mant[in_dtype]
++    word = (b >> 63) << (n - 1) | ((1 << (n - 1 - mant)) - 1) << mant | (b >> (52 - mant)) & ((1 << mant) - 1)
++  else: word = struct.unpack(word_fmt, struct.pack(storage_fmt_for_dtype(in_dtype), to_storage_scalar(x, in_dtype)))[0]
++  if out_dtype in _nan_mant and (mant := _nan_mant[out_dtype]) and (word >> mant) & ((1 << (n - 1 - mant)) - 1) == (1 << (n - 1 - mant)) - 1 \
++      and word & ((1 << mant) - 1):
++    return _double_of_bits((word >> (n - 1)) << 63 | 0x7FF << 52 | (word & ((1 << mant) - 1)) << (52 - mant))
++  return from_storage_scalar(struct.unpack(storage_fmt_for_dtype(out_dtype), struct.pack(word_fmt, word))[0], out_dtype)
++
+ # numpy and torch dtype interop
+ 
+ def _to_np_dtype(dtype:DType) -> type|None:
 diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
 index deb9684..8bc2d81 100644
 --- a/tinygrad/helpers.py
@@ -207,19 +295,21 @@ index 2842d7e..f2897c1 100644
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..a308892 100644
+index 2eb2e96..537f8aa 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
-@@ -1,7 +1,7 @@
+@@ -1,8 +1,8 @@
  # all of symbolic lives here now
  import math
  from collections import defaultdict
 -from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype
+-from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, bitcast, truncate
 +from tinygrad.uop.ops import Ops, PatternMatcher, UPat, UOp, GroupOp, exec_alu, promo_dtype, exact
- from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, bitcast, truncate
++from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, exact_bitcast, truncate
  from tinygrad.helpers import partition, all_same, prod, flatten, unwrap, IMAGE, dedup
  from tinygrad.uop.divandmod import div_and_mod_symbolic
-@@ -13,10 +13,20 @@ from tinygrad.codegen.decomp.transcendental import xpow
+ from tinygrad.uop.movement import mop_cleanup
+@@ -13,20 +13,44 @@ from tinygrad.codegen.decomp.transcendental import xpow
  
  # ******** phase 1 of symbolic used to live in ops, it's the most generic folding rules ********
  
@@ -242,12 +332,17 @@ index 2eb2e96..a308892 100644
    if int(c.val) == c.val: return (y := x.pow(c.val//2)) * y * (x if c.val%2 == 1 else 1)
    return None
  
-@@ -25,8 +35,21 @@ def fold_bitcast(root:UOp, c:UOp) -> UOp|None:
-   # the value is mathematical and may not fit: reading it as bits is the emission that pins it to the stated width
-   return root.const_like(bitcast(truncate[c.dtype](c.val), c.dtype, root.dtype))
- 
+ def fold_bitcast(root:UOp, c:UOp) -> UOp|None:
+   if c.dtype.itemsize != root.dtype.itemsize: return None
+-  # the value is mathematical and may not fit: reading it as bits is the emission that pins it to the stated width
+-  return root.const_like(bitcast(truncate[c.dtype](c.val), c.dtype, root.dtype))
+-
 -# no truncate: ints stay mathematical past the fold (emission truncates); floats re-round in the mint
 -def fold_const_alu(a:UOp) -> UOp: return a.const_like(exec_alu(a.op, a.dtype, [const_arg(s) for s in a.src], False))
++  # the value is read as its type stores it: an integer is mathematical and may not fit, so it wraps to the stated width,
++  # and a NaN keeps its bits, which a conversion would quiet
++  return root.const_like(exact_bitcast(c.dtype.const(c.val) if dtypes.is_float(c.dtype) else truncate[c.dtype](c.val), c.dtype, root.dtype))
++
 +# a committed integer holds its type's value: a weak integer operand the operation commits is read, and a committed integer
 +# result written, at their width; floats re-round in the mint
 +def fold_const_alu(a:UOp) -> UOp:
@@ -266,7 +361,7 @@ index 2eb2e96..a308892 100644
  
  def _quotient_base(q:UOp, base:UOp, div:int) -> UOp|None:
    # the B with q == B//div and B%div == base%div, or None. only such congruence is needed to recombine, and canonicalization
-@@ -114,7 +137,9 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
+@@ -114,7 +138,9 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
  
  symbolic_simple = pm_data_invalid + PatternMatcher([
    # ** self folding **
@@ -277,7 +372,7 @@ index 2eb2e96..a308892 100644
    (UPat({Ops.SHL, Ops.SHR}, src=(UPat.var("x"), UPat.const(0))), lambda x: x),          # x<<0 / x>>0 -> x
    (UPat.var("x") * 1, lambda x: x),    # x*1 -> x
    (UPat.var("x") // UPat.var("x"), lambda x: x.const_like(1)), # x//x -> 1
-@@ -166,14 +191,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -166,14 +192,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    (UPat.var('x', dtype=dtypes.bool).maximum(UPat.var('y', dtype=dtypes.bool)), lambda x,y: x|y),
    # *** div rules ***
    (UPat.cvar('x', arg=0) / 0, lambda x: x.const_like(float('nan'))),   # 0/0 -> nan
@@ -294,7 +389,7 @@ index 2eb2e96..a308892 100644
    # *** cast/bitcast ***
    (UPat((Ops.CAST, Ops.BITCAST), name="root"), lambda root: root.src[0] if root.dtype == root.src[0].dtype else None),
    # a BITCAST reads its operand at the width it states, so a weak const is nonsense here: the bare arm is bool only
-@@ -187,7 +206,7 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+@@ -187,7 +207,7 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
    # ** pow **
    (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
    # positive const ** x
@@ -303,7 +398,7 @@ index 2eb2e96..a308892 100644
    # unpack a uint64 packed from two uint32 (threefry)
    (((UPat.var(None, dtypes.uint64)<<32) | UPat.var('y', dtypes.uint32).cast(dtypes.uint64)).cast(dtypes.uint32), lambda y: y),
    (((UPat.var('x', dtypes.uint32).cast(dtypes.uint64)<<32) | UPat.var(None, dtypes.uint32).cast(dtypes.uint64))>>32,
-@@ -236,16 +255,15 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -236,16 +256,15 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    # ** boolean algebra **
    # TODO: make a more general or folder like simplify_valid
    (UPat.var("x", dtype=dtypes.bool) | UPat.var("x", dtype=dtypes.bool).logical_not(), lambda x: x.const_like(True)),  # x|!x -> True
@@ -328,7 +423,7 @@ index 2eb2e96..a308892 100644
    (UPat.cvar("y") * (UPat.var("x", dtype=dtypes.weakint) + UPat.cvar("c")), lambda x,y,c: (y*x)+(y*c)),  # y*(x+c) -> y*x + y*c
    # ** where folding **
    (UPat.var("cond", dtype=dtypes.bool).logical_not().where(UPat.var("t"), UPat.var("f")),
-@@ -261,28 +279,32 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -261,28 +280,32 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    (UPat(GroupOp.Binary, name="alu", src=(UPat.var("c").where(UPat.var("t"), UPat.var("f")), UPat.var("c").where(UPat.var("tt"), UPat.var("ff")))), \
     lambda alu,c,t,tt,f,ff: c.where(t.alu(alu.op, tt), f.alu(alu.op, ff)) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
    # if its a plus we add the associative variation too
@@ -370,7 +465,7 @@ index 2eb2e96..a308892 100644
    # c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0))
    ((UPat.cvar("c0")*UPat.var("x", dtype=dtypes.weakint))<UPat.cvar("c1"),
     lambda x,c0,c1: (x if c0.val > 0 else -x)<-(-c1.val//abs(c0.val)) if abs(c0.val) > 1 else None),
-@@ -290,8 +312,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+@@ -290,8 +313,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
    ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
     lambda x,d,c: (x<c.val*d.val) if d.val > 0 else (x>c.val*d.val) if d.val < 0 else None),
    # ** move add/mul consts to end (NOTE: this is still happening before constant folding) **
@@ -381,7 +476,7 @@ index 2eb2e96..a308892 100644
    # *** rules from symbolic ***
    # generic lt folding
    (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val) if 0 < c.val else None),
-@@ -387,8 +409,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -387,8 +410,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -392,7 +487,7 @@ index 2eb2e96..a308892 100644
    inside, outside = [], []
    for m in r.src[0].split_uop(Ops.MUL):
      m_parents = m.backward_slice
-@@ -460,16 +483,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -460,16 +484,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

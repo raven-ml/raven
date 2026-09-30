@@ -186,7 +186,7 @@ let arguments =
                (Queue { devices = [ "A" ]; queue = "q" })));
       test "equal_arg compares constants by their bits and nodes physically"
         (fun () ->
-          is_true
+          is_false
             (Ops.equal_arg
                (Const (`Float Float.nan))
                (Const (`Float (-.Float.nan))));
@@ -411,10 +411,14 @@ let identity =
           is_true (Sys.opaque_identity u0 == u1));
       test "zero and negative zero are different nodes" (fun () ->
           is_false (Ops.float 0. == Ops.float (-0.)));
-      test "every NaN is the same node" (fun () ->
-          is_true
+      (* D27. A NaN constant keeps its bits, where tinygrad makes every NaN
+         constant the same. *)
+      test "NaN constants of different bits are different nodes" (fun () ->
+          is_false
             (Ops.float Float.nan
-            == Ops.float (Int64.float_of_bits 0x7FF0_0000_0000_0001L)));
+            == Ops.float (Int64.float_of_bits 0x7FF4_0000_0000_0000L));
+          is_false (Ops.float Float.nan == Ops.float (-.Float.nan));
+          is_true (Ops.float Float.nan == Ops.float Float.nan));
       test "an integer and a boolean of equal value are different nodes"
         (fun () ->
           is_false (Ops.int 1 == Ops.bool true);

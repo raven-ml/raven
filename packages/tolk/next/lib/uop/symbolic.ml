@@ -83,10 +83,14 @@ let fold_bitcast root c =
   let dt = dtype c in
   if Dtype.itemsize dt <> Dtype.itemsize (dtype root) then None
   else
-    (* the value is mathematical and may not fit: reading it as bits is the
-       emission that pins it to the stated width *)
-    let bits = Dtype.bitcast dt (dtype root) (Dtype.truncate dt (num c)) in
-    Some (const_v root bits)
+    (* the value is read as [dt] stores it: an integer is mathematical and may
+       not fit, so it wraps to the stated width, and a NaN keeps its bits, which
+       a conversion would quiet *)
+    let v =
+      if Dtype.is_float dt then number (Dtype.const dt (num c))
+      else Dtype.truncate dt (num c)
+    in
+    Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
 (* A committed integer holds its type's value, so a fold reads a committed
    operand, and a weak integer operand the operation commits, at the width of
@@ -513,7 +517,7 @@ let symbolic_simple =
           (* Div rules *)
           rule
             Upat.(cvar ~arg:(`Int Z.zero) "x" / int 0)
-            (fun m -> Some (const_like (m "x") (`Float Float.nan)));
+            (fun m -> Some (const_like (m "x") (`Float Dtype.nan)));
           (* x*0 -> 0 or 0*x -> 0, for integers: a float product by zero is NaN
              at an infinity or a NaN, and -0. at a negative x *)
           rule

@@ -26,11 +26,14 @@ type const = [ value | `Invalid ]
 (** The type for constants: a value, or [`Invalid], the value of an element that
     is masked out. *)
 
+val nan : float
+(** [nan] is the positive quiet NaN whose payload is zero: the NaN a constant
+    takes when an operation makes one from operands that are not NaNs. *)
+
 val equal_const : [< const ] -> [< const ] -> bool
 (** [equal_const c0 c1] is [true] iff [c0] and [c1] are the same constant: the
     same constructor with the same payload. Floats are the same when their bits
-    are, so [0.0] and [-0.0] differ, and every NaN is the same as every other.
-*)
+    are, so [0.0] and [-0.0] differ, and so do NaNs of different bits. *)
 
 val hash_const : [< const ] -> int
 (** [hash_const c] is a hash of [c], compatible with {!equal_const}. *)
@@ -218,11 +221,12 @@ val max : t -> value
 
 val const : t -> [< const ] -> const
 (** [const dt c] is [c] as a constant of [dt]. [`Invalid] is itself. For a float
-    [dt] it is a [`Float], [c] truncated to [dt] ({!truncate}), with every NaN
-    the same NaN; an integer is rounded once, from its exact value, as a finite
-    value. For {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is
-    an [`Int]: a float rounded towards zero, and an integer unchanged, even out
-    of [dt]'s bounds.
+    [dt] it is a [`Float], [c] truncated to [dt] ({!truncate}), except that a
+    NaN keeps its sign and the payload [dt] holds, a signalling NaN staying one;
+    an integer is rounded once, from its exact value, as a finite value. For
+    {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is an [`Int]:
+    a float rounded towards zero, and an integer unchanged, even out of [dt]'s
+    bounds.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
     a float nor {!Bool}. *)

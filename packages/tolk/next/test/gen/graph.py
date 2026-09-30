@@ -12,6 +12,8 @@ one pass of the codegen pipeline.
 
 import dataclasses
 import enum
+import math
+import struct
 
 from tinygrad.dtype import DType, InvalidType
 from tinygrad.uop.ops import UOp
@@ -37,6 +39,12 @@ def string(s, prefix=""):
 RUNTIME = {("ParamArg", "buffer")}
 
 
+def nan(x):
+    """A NaN: `nan` for the positive quiet NaN, else its bits, which a bitcast reveals."""
+    bits = struct.unpack("<Q", struct.pack("<d", x))[0]
+    return "nan" if bits == 0x7FF8_0000_0000_0000 else f"nan(0x{bits:016x})"
+
+
 def fields(x):
     """The fields of the record `x` that differ from their default, in order."""
     for f in dataclasses.fields(x):
@@ -54,7 +62,7 @@ def value(x, index):
     if isinstance(x, InvalidType): return "Invalid"
     if isinstance(x, enum.Enum): return f"{type(x).__name__}.{x.name}"
     if isinstance(x, int): return str(x)
-    if isinstance(x, float): return float.__repr__(x)
+    if isinstance(x, float): return nan(x) if math.isnan(x) else float.__repr__(x)
     if isinstance(x, str): return string(x)
     if isinstance(x, bytes): return string(x, prefix="b")
     if isinstance(x, DType): return repr(x)

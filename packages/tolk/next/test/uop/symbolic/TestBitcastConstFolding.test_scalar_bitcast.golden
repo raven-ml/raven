@@ -54,7 +54,7 @@
 52 Ops.CAST dtypes.ushort [51] dtypes.ushort
 53 Ops.SINK dtypes.void [50, 52] tag=("simplify", 65535, 65535)
 54 Ops.BITCAST dtypes.half [48] dtypes.half
-55 Ops.CONST dtypes.weakfloat [] nan
+55 Ops.CONST dtypes.weakfloat [] nan(0xfffffc0000000000)
 56 Ops.CAST dtypes.half [55] dtypes.half
 57 Ops.SINK dtypes.void [54, 56] tag="simplify"
 58 Ops.BITCAST dtypes.short [52] dtypes.short
@@ -69,126 +69,128 @@
 67 Ops.CAST dtypes.uint [66] dtypes.uint
 68 Ops.SINK dtypes.void [65, 67] tag=("simplify", 4294967295, 4294967295)
 69 Ops.BITCAST dtypes.float [63] dtypes.float
-70 Ops.CAST dtypes.float [55] dtypes.float
-71 Ops.SINK dtypes.void [69, 70] tag="simplify"
-72 Ops.BITCAST dtypes.int [67] dtypes.int
-73 Ops.SINK dtypes.void [72, 63] tag=("simplify", -1, -1)
-74 Ops.SINK dtypes.void [67, 67] tag=("simplify", 4294967295, 4294967295)
-75 Ops.BITCAST dtypes.float [67] dtypes.float
-76 Ops.SINK dtypes.void [75, 70] tag="simplify"
-77 Ops.CAST dtypes.long [38] dtypes.long
-78 Ops.SINK dtypes.void [77, 77] tag=("simplify", -1, -1)
-79 Ops.BITCAST dtypes.ulong [77] dtypes.ulong
-80 Ops.CONST dtypes.weakint [] 18446744073709551615
-81 Ops.CAST dtypes.ulong [80] dtypes.ulong
-82 Ops.SINK dtypes.void [79, 81] tag="simplify"
-83 Ops.BITCAST dtypes.double [77] dtypes.double
-84 Ops.CAST dtypes.double [55] dtypes.double
-85 Ops.SINK dtypes.void [83, 84] tag="simplify"
-86 Ops.BITCAST dtypes.long [81] dtypes.long
-87 Ops.SINK dtypes.void [86, 77] tag=("simplify", -1, -1)
-88 Ops.SINK dtypes.void [81, 81] tag="simplify"
-89 Ops.BITCAST dtypes.double [81] dtypes.double
-90 Ops.SINK dtypes.void [89, 84] tag="simplify"
-91 Ops.CONST dtypes.weakint [] -128
-92 Ops.CAST dtypes.char [91] dtypes.char
-93 Ops.SINK dtypes.void [92, 92] tag=("simplify", -128, -128)
-94 Ops.BITCAST dtypes.uchar [92] dtypes.uchar
-95 Ops.CONST dtypes.weakint [] 128
-96 Ops.CAST dtypes.uchar [95] dtypes.uchar
-97 Ops.SINK dtypes.void [94, 96] tag=("simplify", 128, 128)
-98 Ops.BITCAST dtypes.char [96] dtypes.char
-99 Ops.SINK dtypes.void [98, 92] tag=("simplify", -128, -128)
-100 Ops.SINK dtypes.void [96, 96] tag=("simplify", 128, 128)
-101 Ops.CONST dtypes.weakint [] -32768
-102 Ops.CAST dtypes.short [101] dtypes.short
-103 Ops.SINK dtypes.void [102, 102] tag=("simplify", -32768, -32768)
-104 Ops.BITCAST dtypes.ushort [102] dtypes.ushort
-105 Ops.CONST dtypes.weakint [] 32768
-106 Ops.CAST dtypes.ushort [105] dtypes.ushort
-107 Ops.SINK dtypes.void [104, 106] tag=("simplify", 32768, 32768)
-108 Ops.BITCAST dtypes.short [106] dtypes.short
-109 Ops.SINK dtypes.void [108, 102] tag=("simplify", -32768, -32768)
-110 Ops.SINK dtypes.void [106, 106] tag=("simplify", 32768, 32768)
-111 Ops.CONST dtypes.weakint [] -2147483648
-112 Ops.CAST dtypes.int [111] dtypes.int
-113 Ops.SINK dtypes.void [112, 112] tag=("simplify", -2147483648, -2147483648)
-114 Ops.BITCAST dtypes.uint [112] dtypes.uint
-115 Ops.CONST dtypes.weakint [] 2147483648
-116 Ops.CAST dtypes.uint [115] dtypes.uint
-117 Ops.SINK dtypes.void [114, 116] tag=("simplify", 2147483648, 2147483648)
-118 Ops.BITCAST dtypes.int [116] dtypes.int
-119 Ops.SINK dtypes.void [118, 112] tag=("simplify", -2147483648, -2147483648)
-120 Ops.SINK dtypes.void [116, 116] tag=("simplify", 2147483648, 2147483648)
-121 Ops.CONST dtypes.weakint [] -9223372036854775808
-122 Ops.CAST dtypes.long [121] dtypes.long
-123 Ops.SINK dtypes.void [122, 122] tag="simplify"
-124 Ops.BITCAST dtypes.ulong [122] dtypes.ulong
-125 Ops.CONST dtypes.weakint [] 9223372036854775808
-126 Ops.CAST dtypes.ulong [125] dtypes.ulong
-127 Ops.SINK dtypes.void [124, 126] tag="simplify"
-128 Ops.BITCAST dtypes.long [126] dtypes.long
-129 Ops.SINK dtypes.void [128, 122] tag="simplify"
-130 Ops.SINK dtypes.void [126, 126] tag="simplify"
-131 Ops.CONST dtypes.weakint [] 13496
-132 Ops.CAST dtypes.short [131] dtypes.short
-133 Ops.SINK dtypes.void [132, 132] tag=("simplify", 13496, 13496)
-134 Ops.BITCAST dtypes.ushort [132] dtypes.ushort
-135 Ops.CAST dtypes.ushort [131] dtypes.ushort
-136 Ops.SINK dtypes.void [134, 135] tag=("simplify", 13496, 13496)
-137 Ops.BITCAST dtypes.half [132] dtypes.half
-138 Ops.CONST dtypes.weakfloat [] 0.294921875
-139 Ops.CAST dtypes.half [138] dtypes.half
-140 Ops.SINK dtypes.void [137, 139] tag="simplify"
-141 Ops.BITCAST dtypes.short [135] dtypes.short
-142 Ops.SINK dtypes.void [141, 132] tag=("simplify", 13496, 13496)
-143 Ops.SINK dtypes.void [135, 135] tag=("simplify", 13496, 13496)
-144 Ops.BITCAST dtypes.half [135] dtypes.half
-145 Ops.SINK dtypes.void [144, 139] tag="simplify"
-146 Ops.BITCAST dtypes.short [139] dtypes.short
-147 Ops.SINK dtypes.void [146, 132] tag=("simplify", 13496, 13496)
-148 Ops.BITCAST dtypes.ushort [139] dtypes.ushort
-149 Ops.SINK dtypes.void [148, 135] tag=("simplify", 13496, 13496)
-150 Ops.SINK dtypes.void [139, 139] tag="simplify"
-151 Ops.CONST dtypes.weakint [] 1050081145
-152 Ops.CAST dtypes.int [151] dtypes.int
-153 Ops.SINK dtypes.void [152, 152] tag=("simplify", 1050081145, 1050081145)
-154 Ops.BITCAST dtypes.uint [152] dtypes.uint
-155 Ops.CAST dtypes.uint [151] dtypes.uint
-156 Ops.SINK dtypes.void [154, 155] tag=("simplify", 1050081145, 1050081145)
-157 Ops.BITCAST dtypes.float [152] dtypes.float
-158 Ops.CONST dtypes.weakfloat [] 0.29485681653022766
-159 Ops.CAST dtypes.float [158] dtypes.float
-160 Ops.SINK dtypes.void [157, 159] tag="simplify"
-161 Ops.BITCAST dtypes.int [155] dtypes.int
-162 Ops.SINK dtypes.void [161, 152] tag=("simplify", 1050081145, 1050081145)
-163 Ops.SINK dtypes.void [155, 155] tag=("simplify", 1050081145, 1050081145)
-164 Ops.BITCAST dtypes.float [155] dtypes.float
-165 Ops.SINK dtypes.void [164, 159] tag="simplify"
-166 Ops.BITCAST dtypes.int [159] dtypes.int
-167 Ops.SINK dtypes.void [166, 152] tag=("simplify", 1050081145, 1050081145)
-168 Ops.BITCAST dtypes.uint [159] dtypes.uint
-169 Ops.SINK dtypes.void [168, 155] tag=("simplify", 1050081145, 1050081145)
-170 Ops.SINK dtypes.void [159, 159] tag="simplify"
-171 Ops.CONST dtypes.weakint [] 4598983288165178391
-172 Ops.CAST dtypes.long [171] dtypes.long
-173 Ops.SINK dtypes.void [172, 172] tag=("simplify", 4598983288165178391, 4598983288165178391)
-174 Ops.BITCAST dtypes.ulong [172] dtypes.ulong
-175 Ops.CAST dtypes.ulong [171] dtypes.ulong
-176 Ops.SINK dtypes.void [174, 175] tag=("simplify", 4598983288165178391, 4598983288165178391)
-177 Ops.BITCAST dtypes.double [172] dtypes.double
-178 Ops.CONST dtypes.weakfloat [] 0.29485681936461233
-179 Ops.CAST dtypes.double [178] dtypes.double
-180 Ops.SINK dtypes.void [177, 179] tag="simplify"
-181 Ops.BITCAST dtypes.long [175] dtypes.long
-182 Ops.SINK dtypes.void [181, 172] tag=("simplify", 4598983288165178391, 4598983288165178391)
-183 Ops.SINK dtypes.void [175, 175] tag=("simplify", 4598983288165178391, 4598983288165178391)
-184 Ops.BITCAST dtypes.double [175] dtypes.double
-185 Ops.SINK dtypes.void [184, 179] tag="simplify"
-186 Ops.BITCAST dtypes.long [179] dtypes.long
-187 Ops.SINK dtypes.void [186, 172] tag=("simplify", 4598983288165178391, 4598983288165178391)
-188 Ops.BITCAST dtypes.ulong [179] dtypes.ulong
-189 Ops.SINK dtypes.void [188, 175] tag=("simplify", 4598983288165178391, 4598983288165178391)
-190 Ops.SINK dtypes.void [179, 179] tag="simplify"
-191 Ops.SINK dtypes.void [2, 5, 8, 10, 11, 13, 15, 17, 18, 21, 24, 27, 29, 30, 32, 34, 36, 37, 40, 44, 46, 47, 49, 53, 57, 59, 60, 62, 64, 68, 71, 73, 74, 76, 78, 82, 85, 87, 88, 90, 93, 97, 99, 100, 103, 107, 109, 110, 113, 117, 119, 120, 123, 127, 129, 130, 133, 136, 140, 142, 143, 145, 147, 149, 150, 153, 156, 160, 162, 163, 165, 167, 169, 170, 173, 176, 180, 182, 183, 185, 187, 189, 190]
+70 Ops.CONST dtypes.weakfloat [] nan(0xffffffffe0000000)
+71 Ops.CAST dtypes.float [70] dtypes.float
+72 Ops.SINK dtypes.void [69, 71] tag="simplify"
+73 Ops.BITCAST dtypes.int [67] dtypes.int
+74 Ops.SINK dtypes.void [73, 63] tag=("simplify", -1, -1)
+75 Ops.SINK dtypes.void [67, 67] tag=("simplify", 4294967295, 4294967295)
+76 Ops.BITCAST dtypes.float [67] dtypes.float
+77 Ops.SINK dtypes.void [76, 71] tag="simplify"
+78 Ops.CAST dtypes.long [38] dtypes.long
+79 Ops.SINK dtypes.void [78, 78] tag=("simplify", -1, -1)
+80 Ops.BITCAST dtypes.ulong [78] dtypes.ulong
+81 Ops.CONST dtypes.weakint [] 18446744073709551615
+82 Ops.CAST dtypes.ulong [81] dtypes.ulong
+83 Ops.SINK dtypes.void [80, 82] tag="simplify"
+84 Ops.BITCAST dtypes.double [78] dtypes.double
+85 Ops.CONST dtypes.weakfloat [] nan(0xffffffffffffffff)
+86 Ops.CAST dtypes.double [85] dtypes.double
+87 Ops.SINK dtypes.void [84, 86] tag="simplify"
+88 Ops.BITCAST dtypes.long [82] dtypes.long
+89 Ops.SINK dtypes.void [88, 78] tag=("simplify", -1, -1)
+90 Ops.SINK dtypes.void [82, 82] tag="simplify"
+91 Ops.BITCAST dtypes.double [82] dtypes.double
+92 Ops.SINK dtypes.void [91, 86] tag="simplify"
+93 Ops.CONST dtypes.weakint [] -128
+94 Ops.CAST dtypes.char [93] dtypes.char
+95 Ops.SINK dtypes.void [94, 94] tag=("simplify", -128, -128)
+96 Ops.BITCAST dtypes.uchar [94] dtypes.uchar
+97 Ops.CONST dtypes.weakint [] 128
+98 Ops.CAST dtypes.uchar [97] dtypes.uchar
+99 Ops.SINK dtypes.void [96, 98] tag=("simplify", 128, 128)
+100 Ops.BITCAST dtypes.char [98] dtypes.char
+101 Ops.SINK dtypes.void [100, 94] tag=("simplify", -128, -128)
+102 Ops.SINK dtypes.void [98, 98] tag=("simplify", 128, 128)
+103 Ops.CONST dtypes.weakint [] -32768
+104 Ops.CAST dtypes.short [103] dtypes.short
+105 Ops.SINK dtypes.void [104, 104] tag=("simplify", -32768, -32768)
+106 Ops.BITCAST dtypes.ushort [104] dtypes.ushort
+107 Ops.CONST dtypes.weakint [] 32768
+108 Ops.CAST dtypes.ushort [107] dtypes.ushort
+109 Ops.SINK dtypes.void [106, 108] tag=("simplify", 32768, 32768)
+110 Ops.BITCAST dtypes.short [108] dtypes.short
+111 Ops.SINK dtypes.void [110, 104] tag=("simplify", -32768, -32768)
+112 Ops.SINK dtypes.void [108, 108] tag=("simplify", 32768, 32768)
+113 Ops.CONST dtypes.weakint [] -2147483648
+114 Ops.CAST dtypes.int [113] dtypes.int
+115 Ops.SINK dtypes.void [114, 114] tag=("simplify", -2147483648, -2147483648)
+116 Ops.BITCAST dtypes.uint [114] dtypes.uint
+117 Ops.CONST dtypes.weakint [] 2147483648
+118 Ops.CAST dtypes.uint [117] dtypes.uint
+119 Ops.SINK dtypes.void [116, 118] tag=("simplify", 2147483648, 2147483648)
+120 Ops.BITCAST dtypes.int [118] dtypes.int
+121 Ops.SINK dtypes.void [120, 114] tag=("simplify", -2147483648, -2147483648)
+122 Ops.SINK dtypes.void [118, 118] tag=("simplify", 2147483648, 2147483648)
+123 Ops.CONST dtypes.weakint [] -9223372036854775808
+124 Ops.CAST dtypes.long [123] dtypes.long
+125 Ops.SINK dtypes.void [124, 124] tag="simplify"
+126 Ops.BITCAST dtypes.ulong [124] dtypes.ulong
+127 Ops.CONST dtypes.weakint [] 9223372036854775808
+128 Ops.CAST dtypes.ulong [127] dtypes.ulong
+129 Ops.SINK dtypes.void [126, 128] tag="simplify"
+130 Ops.BITCAST dtypes.long [128] dtypes.long
+131 Ops.SINK dtypes.void [130, 124] tag="simplify"
+132 Ops.SINK dtypes.void [128, 128] tag="simplify"
+133 Ops.CONST dtypes.weakint [] 13496
+134 Ops.CAST dtypes.short [133] dtypes.short
+135 Ops.SINK dtypes.void [134, 134] tag=("simplify", 13496, 13496)
+136 Ops.BITCAST dtypes.ushort [134] dtypes.ushort
+137 Ops.CAST dtypes.ushort [133] dtypes.ushort
+138 Ops.SINK dtypes.void [136, 137] tag=("simplify", 13496, 13496)
+139 Ops.BITCAST dtypes.half [134] dtypes.half
+140 Ops.CONST dtypes.weakfloat [] 0.294921875
+141 Ops.CAST dtypes.half [140] dtypes.half
+142 Ops.SINK dtypes.void [139, 141] tag="simplify"
+143 Ops.BITCAST dtypes.short [137] dtypes.short
+144 Ops.SINK dtypes.void [143, 134] tag=("simplify", 13496, 13496)
+145 Ops.SINK dtypes.void [137, 137] tag=("simplify", 13496, 13496)
+146 Ops.BITCAST dtypes.half [137] dtypes.half
+147 Ops.SINK dtypes.void [146, 141] tag="simplify"
+148 Ops.BITCAST dtypes.short [141] dtypes.short
+149 Ops.SINK dtypes.void [148, 134] tag=("simplify", 13496, 13496)
+150 Ops.BITCAST dtypes.ushort [141] dtypes.ushort
+151 Ops.SINK dtypes.void [150, 137] tag=("simplify", 13496, 13496)
+152 Ops.SINK dtypes.void [141, 141] tag="simplify"
+153 Ops.CONST dtypes.weakint [] 1050081145
+154 Ops.CAST dtypes.int [153] dtypes.int
+155 Ops.SINK dtypes.void [154, 154] tag=("simplify", 1050081145, 1050081145)
+156 Ops.BITCAST dtypes.uint [154] dtypes.uint
+157 Ops.CAST dtypes.uint [153] dtypes.uint
+158 Ops.SINK dtypes.void [156, 157] tag=("simplify", 1050081145, 1050081145)
+159 Ops.BITCAST dtypes.float [154] dtypes.float
+160 Ops.CONST dtypes.weakfloat [] 0.29485681653022766
+161 Ops.CAST dtypes.float [160] dtypes.float
+162 Ops.SINK dtypes.void [159, 161] tag="simplify"
+163 Ops.BITCAST dtypes.int [157] dtypes.int
+164 Ops.SINK dtypes.void [163, 154] tag=("simplify", 1050081145, 1050081145)
+165 Ops.SINK dtypes.void [157, 157] tag=("simplify", 1050081145, 1050081145)
+166 Ops.BITCAST dtypes.float [157] dtypes.float
+167 Ops.SINK dtypes.void [166, 161] tag="simplify"
+168 Ops.BITCAST dtypes.int [161] dtypes.int
+169 Ops.SINK dtypes.void [168, 154] tag=("simplify", 1050081145, 1050081145)
+170 Ops.BITCAST dtypes.uint [161] dtypes.uint
+171 Ops.SINK dtypes.void [170, 157] tag=("simplify", 1050081145, 1050081145)
+172 Ops.SINK dtypes.void [161, 161] tag="simplify"
+173 Ops.CONST dtypes.weakint [] 4598983288165178391
+174 Ops.CAST dtypes.long [173] dtypes.long
+175 Ops.SINK dtypes.void [174, 174] tag=("simplify", 4598983288165178391, 4598983288165178391)
+176 Ops.BITCAST dtypes.ulong [174] dtypes.ulong
+177 Ops.CAST dtypes.ulong [173] dtypes.ulong
+178 Ops.SINK dtypes.void [176, 177] tag=("simplify", 4598983288165178391, 4598983288165178391)
+179 Ops.BITCAST dtypes.double [174] dtypes.double
+180 Ops.CONST dtypes.weakfloat [] 0.29485681936461233
+181 Ops.CAST dtypes.double [180] dtypes.double
+182 Ops.SINK dtypes.void [179, 181] tag="simplify"
+183 Ops.BITCAST dtypes.long [177] dtypes.long
+184 Ops.SINK dtypes.void [183, 174] tag=("simplify", 4598983288165178391, 4598983288165178391)
+185 Ops.SINK dtypes.void [177, 177] tag=("simplify", 4598983288165178391, 4598983288165178391)
+186 Ops.BITCAST dtypes.double [177] dtypes.double
+187 Ops.SINK dtypes.void [186, 181] tag="simplify"
+188 Ops.BITCAST dtypes.long [181] dtypes.long
+189 Ops.SINK dtypes.void [188, 174] tag=("simplify", 4598983288165178391, 4598983288165178391)
+190 Ops.BITCAST dtypes.ulong [181] dtypes.ulong
+191 Ops.SINK dtypes.void [190, 177] tag=("simplify", 4598983288165178391, 4598983288165178391)
+192 Ops.SINK dtypes.void [181, 181] tag="simplify"
+193 Ops.SINK dtypes.void [2, 5, 8, 10, 11, 13, 15, 17, 18, 21, 24, 27, 29, 30, 32, 34, 36, 37, 40, 44, 46, 47, 49, 53, 57, 59, 60, 62, 64, 68, 72, 74, 75, 77, 79, 83, 87, 89, 90, 92, 95, 99, 101, 102, 105, 109, 111, 112, 115, 119, 121, 122, 125, 129, 131, 132, 135, 138, 142, 144, 145, 147, 149, 151, 152, 155, 158, 162, 164, 165, 167, 169, 171, 172, 175, 178, 182, 184, 185, 187, 189, 191, 192]
 
