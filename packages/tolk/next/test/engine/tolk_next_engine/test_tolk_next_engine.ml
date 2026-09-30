@@ -830,6 +830,35 @@ let spans_each_kernel () =
   not_equal (list string) [] kernels;
   equal (slist string String.compare) kernels spans
 
+(* A kernel on [d] that fills four floats with [x]. *)
+let fill d x =
+  let i = Ops.range (Int 4) [ 0 ] in
+  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"fill" ())
+      [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
+  in
+  let y = Ops.new_buffer (Single d) 4 Float32 in
+  (y, Ops.call kernel [ y ])
+
+(* At [DEBUG=1], a run of a schedule of [n] fills on the host. *)
+let run_of_fills n =
+  let fills = List.init n (fun _ -> fill "CPU" 1.) in
+  let bound =
+    List.map (fun (y, _) -> (y, [ Run.buffer host Float32 a ])) fills
+  in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:(List.map snd fills))
+  in
+  let s = Engine.link ~devices ~bound compiled in
+  Helpers.context [ B (Helpers.debug, 1) ] (fun () -> Engine.run s [||]);
+  List.filter
+    (String.starts_with ~prefix:"jit execs")
+    (String.split_on_char '\n' (output ()))
+
 let runs =
   group "runs"
     [
@@ -843,6 +872,10 @@ let runs =
         holds_its_storage;
       test "each kernel of a run is a span of the host under a profile"
         spans_each_kernel;
+      test "at DEBUG=1, a run of ten calls says how many it runs" (fun () ->
+          equal (list string) [ "jit execs 10 calls" ] (run_of_fills 10));
+      test "at DEBUG=1, a run of nine calls says nothing" (fun () ->
+          equal (list string) [] (run_of_fills 9));
     ]
 
 (* Measuring *)
@@ -946,18 +979,6 @@ let signals_once_per_run ?(devices = on_null) () =
   Nx_device.synchronize d;
   equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
   equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
-
-(* A kernel on [d] that fills four floats with [x]. *)
-let fill d x =
-  let i = Ops.range (Int 4) [ 0 ] in
-  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
-  let kernel =
-    Ops.sink
-      ~kernel:(Ops.kernel_info ~name:"fill" ())
-      [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
-  in
-  let y = Ops.new_buffer (Single d) 4 Float32 in
-  (y, Ops.call kernel [ y ])
 
 let link_calls ?profile ~bound calls =
   let devices = on_null in

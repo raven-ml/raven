@@ -171,11 +171,13 @@ val run :
     work that wrote it, as {!Nx_device.synchronize} does. Runs of [s] are
     serialized: a run starts once the previous one returned.
 
-    When the setting {!Tolk_next.Helpers.debug} is [2] or more, [run] prints a
-    line for each kernel on standard output: its device, how many kernels ran
-    before it, its name, its number of arguments, and its time and throughput. A
-    host program and a copy are timed on the host clock. A batch synchronizes
-    its devices once submitted, and its kernels' times are their spans as the
+    When the setting {!Tolk_next.Helpers.debug} is [1] or more and [s] runs ten
+    calls or more, [run] first prints ["jit execs n calls"] on standard output,
+    [n] its number of calls. When it is [2] or more, [run] prints a line for
+    each kernel on standard output: its device, how many kernels ran before it,
+    its name, its number of arguments, and its time and throughput. A host
+    program and a copy are timed on the host clock. A batch synchronizes its
+    devices once submitted, and its kernels' times are their spans as the
     devices stamp them, unless a profile is being taken elsewhere, whose spans
     they are: their lines then have no time.
 

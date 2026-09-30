@@ -790,6 +790,9 @@ let rec run_call ~vars t slots = function
 
 let run ?(vars = []) t slots =
   check_slots t slots;
+  let n = List.length t.calls in
+  if Helpers.Context_var.value Helpers.debug >= 1 && n >= 10 then
+    Printf.printf "jit execs %d calls\n%!" n;
   Mutex.protect t.lock (fun () -> List.iter (run_call ~vars t slots) t.calls)
 
 (* Measuring *)
