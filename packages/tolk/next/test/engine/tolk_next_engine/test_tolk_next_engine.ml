@@ -543,13 +543,13 @@ let parameterized ?(devices = devices) name =
   in
   (Engine.link ~devices compiled, vars, Ops.substitute big parameters)
 
-let runs_on_its_slots name () =
-  let s, vars, big = parameterized name in
+let runs_on_its_slots ?(devices = devices) name () =
+  let s, vars, big = parameterized ~devices name in
   List.iter
     (fun storage ->
       Engine.run ~vars s (slots storage);
       equal slot_values (expected ~vars big storage) (by_slot storage contents))
-    [ storage_of big; storage_of ~seed:5 big ]
+    [ storage_of ~devices big; storage_of ~devices ~seed:5 big ]
 
 (* A range of three trips around a call of a kernel that adds one to four
    floats, each trip on the next four of twelve. *)
@@ -765,10 +765,10 @@ let serialized ?(devices = devices) name () =
 (* A run's allocations and loads are the profile's Allocation and Load events,
    and a run that allocates nothing leaves every device's allocated bytes as
    they were, or fewer, since the collector may return memory meanwhile. *)
-let allocates_nothing ?(devices = devices) name () =
+let allocates_nothing ?(devices = devices)
+    ?(names = [ "CPU"; "CPU:1"; "CPU:2"; "CPU:3" ]) name () =
   let s, vars, big = parameterized ~devices name in
   let slots = slots (storage_of ~devices big) in
-  let names = [ "CPU"; "CPU:1"; "CPU:2"; "CPU:3" ] in
   Engine.run ~vars s slots;
   let stats () = List.map (fun n -> Nx_device.stats (devices n).device) names in
   Gc.full_major ();
@@ -935,15 +935,15 @@ let computes_on_null name =
       equal slot_values (expected ~vars big storage) (by_slot storage contents))
 
 (* Each run of a batch on a device signals the device's next value, once. *)
-let signals_once_per_run () =
-  let s, vars, big = parameterized ~devices:on_null "copy" in
-  let slots = slots (storage_of ~devices:on_null big) in
-  let d = Null_device.device "CPU:1" in
+let signals_once_per_run ?(devices = on_null) () =
+  let s, vars, big = parameterized ~devices "copy" in
+  let slots = slots (storage_of ~devices big) in
+  let d = (devices "CPU:1").device in
   let before = Nx_device.submitted d in
   for _ = 1 to 3 do
     Engine.run ~vars s slots
   done;
-  Null_device.synchronize ();
+  Nx_device.synchronize d;
   equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
   equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
 
@@ -1304,7 +1304,7 @@ let batches =
       group "recorded"
         (List.map computes_on_null [ "copy"; "shard_add"; "variable_offset" ]);
       test "each run of a batch signals its device's next value once"
-        signals_once_per_run;
+        (signals_once_per_run ~devices:on_null);
       test
         "runs of one batched schedule from two domains each compute their own"
         (serialized ~devices:on_null "copy");
@@ -1371,6 +1371,62 @@ let batches =
           less float_exact ~than:1. t);
     ]
 
+(* Metal
+
+   The recorded programs copy from the host into CPU:1, which is the Metal
+   device here, and compute on it: a batch of Metal's queues, whose host
+   programs the host runs. Metal signals completion in its own way, through a
+   shared event. *)
+
+let on_metal name =
+  match Metal.device with
+  | None -> skip ~reason:"no Metal device" ()
+  | Some m -> Engine.device [ ("CPU", host); ("CPU:1", m) ] name
+
+let metal_names = [ "CPU"; "CPU:1" ]
+
+let computes_on_metal name =
+  slow (name ^ " writes what its tensors compute") (fun () ->
+      let big = program name in
+      let s, vars, storage = linked ~devices:on_metal big in
+      Engine.run ~vars s (slots storage);
+      equal slot_values (expected ~vars big storage) (by_slot storage contents))
+
+(* A kernel of Metal, [out = a * n + b] over [2^18] floats, as [measure] runs it
+   on scratch buffers. *)
+let metal_axpy () =
+  let t = (on_metal "CPU:1").compiler.target in
+  match Device.renderer ~arch:t.arch t.device with
+  | Error why -> fail why
+  | Ok r -> Codegen.to_program (kernel ~name:"metal_axpy" ~size:(1 lsl 18) ()) r
+
+let metal =
+  group "Metal"
+    [
+      group "recorded"
+        (List.map computes_on_metal [ "copy"; "copy_one"; "copy_view" ]);
+      cases ~tags:[ "slow" ] ~name:Fun.id
+        "a batch runs on the buffers each run binds to its parameters"
+        [ "copy"; "copy_view" ] (fun name ->
+          runs_on_its_slots ~devices:on_metal name ());
+      slow "each run of a batch signals the device's next value once"
+        (signals_once_per_run ~devices:on_metal);
+      slow
+        "runs of one batched schedule from two domains each compute their own"
+        (serialized ~devices:on_metal "copy");
+      slow "a run of a batch allocates and loads nothing"
+        (allocates_nothing ~devices:on_metal ~names:metal_names "copy");
+      slow "a program's run on Metal takes a positive time, under a second"
+        (fun () ->
+          let t =
+            Engine.measure
+              ~vars:[ ("n", 3) ]
+              ~devices:on_metal "CPU:1" (metal_axpy ())
+          in
+          greater float_exact ~than:0. t;
+          less float_exact ~than:1. t);
+    ]
+
 let () =
   exit
     (run "Tolk_next_engine"
@@ -1383,4 +1439,5 @@ let () =
          runs;
          measures;
          batches;
+         metal;
        ])

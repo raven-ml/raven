@@ -1,6 +1,6 @@
 ; The suite runs the Schedule suite's recorded programs and the Linearizer
-; suite's loops. Metal exists on macOS alone. CACHEDB is a directory
-; of the sandbox, as Clang's compiler is made with its cache.
+; suite's loops. Metal exists on macOS alone, and its tests are slow. CACHEDB
+; is a directory of the sandbox, as Clang's compiler is made with its cache.
 
 (test
  (name test_tolk_next_engine)
@@ -28,3 +28,16 @@
    CACHEDB
    cache
    (run %{test} --exclude-tag slow))))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (sandbox always)
+  (glob_files ../../schedule/schedule/*.golden)
+  (glob_files ../../codegen/late/linearizer/*.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_tolk_next_engine.exe} --tag slow))))

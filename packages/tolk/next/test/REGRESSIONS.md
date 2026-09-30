@@ -2656,7 +2656,11 @@ the engine's half of D1 (each run signals its device's next value once), D7
 (each kernel's span on its compute lane, each copy's on its copy lane), runs
 from two domains, and the waits of RFC 0011's Amendment 2, on the device and
 on the host. The batches' encoding and the rest of their execution, the fence
-under latency included, are the Hcq2 suite's (`H`). `EN › link and run › recorded` runs the Schedule suite's recorded
+under latency included, are the Hcq2 suite's (`H`). `EN › Metal` (slow, on
+macOS) runs the recorded copies on the Metal device, from the host: what they
+write, the buffers each run binds, one signal per run through Metal's shared
+event, runs from two domains, no allocation or load during a run, and
+`measure`'s stamps; the rest of Metal's execution is the Ops_metal suite's. `EN › link and run › recorded` runs the Schedule suite's recorded
 programs end to end: each is scheduled, compiled for the devices it names
 (the host and test devices of the host's memory, `Run.devices`), linked with
 its storage bound to buffers of small integers, and run, and its storage then
@@ -2690,9 +2694,10 @@ run touches. The survivors:
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
 - `info.table < 0` as `<= 0`: a batch whose host program reads its address
-  table first takes it as its first argument, and the NULL devices' batches
-  read their submission's word first, as tinygrad's NULL batches read their
-  doorbell.
+  table first takes it as its first argument, and no batch here does. The
+  NULL devices' batches read their submission's word first, as tinygrad's
+  NULL batches read their doorbell, and Metal's read `objc_msgSend`'s word
+  first, or their slots under a profile.
 
 ### tinygrad
 
