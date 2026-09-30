@@ -155,7 +155,7 @@ type batch = {
    each value of ranges. *)
 type call =
   | Kernel of { call : Ops.t; lanes : Program.t list }
-  | Copy of { dst : Ops.t; src : Ops.t }
+  | Copy of { call : Ops.t; dst : Ops.t; src : Ops.t }
   | Batch of batch
   | Range of { ranges : Ops.t list; body : call list }
 
@@ -586,7 +586,7 @@ let link ~devices ?(bound = []) linear =
     match (Ops.op body, hcq_info call) with
     | Op.Store, _ -> (
         match Realize.get_call_arg_uops call with
-        | [ dst; src ] -> Copy { dst; src }
+        | [ dst; src ] -> Copy { call; dst; src }
         | _ -> fail fn "a copy of other than two buffers")
     | Op.Program, Some _ ->
         let patches =
@@ -631,11 +631,101 @@ let check_slots t slots =
         ns bs)
     t.params
 
+(* Reports *)
+
+let reporting () = Helpers.Context_var.value Helpers.debug >= 2
+let kernels_run = Atomic.make 0
+
+(* One line per kernel, as [DEBUG=2] prints it: its device, how many kernels ran
+   before it, its name, its number of arguments and, when known, its time and
+   throughput. *)
+let report ~device ~name ~args ~vars (e : Ops.estimates) time =
+  let count = Atomic.fetch_and_add kernels_run 1 + 1 in
+  let timing =
+    match time with
+    | None -> ""
+    | Some s ->
+        let per x = Float.of_int (Ops.sym_infer x vars) /. Float.max s 1e-20 in
+        Printf.sprintf " tm %s (%7.0f GFLOPS %4.0f GB/s)"
+          (Helpers.time_to_str ~w:9 s)
+          (per e.ops *. 1e-9)
+          (per e.mem *. 1e-9)
+  in
+  let device = String.sub device 0 (Int.min 7 (String.length device)) in
+  Printf.printf "*** %-7s %4d %s arg %2d%s\n%!" device count
+    (Helpers.ansipad name 46) args timing
+
+(* The seconds [f] takes on the host clock. *)
+let seconds f =
+  let t0 = Nx_device.Profile.now () in
+  f ();
+  Float.of_int (Nx_device.Profile.now () - t0) *. 1e-9
+
+(* A batch's kernels run on its devices, which stamp them: under a profile of
+   its own, the batch reports each kernel's span once its devices synchronized.
+   While a profile is taken elsewhere, the spans are that profile's, and the
+   batch reports no time. *)
+let run_reported ~vars storage slots b =
+  let own =
+    if Nx_device.Profile.enabled () then None
+    else try Some (Nx_device.Profile.start ()) with Invalid_argument _ -> None
+  in
+  let events =
+    match run_batch ~vars storage slots b with
+    | () -> (
+        match own with
+        | Some p -> Nx_device.Profile.stop p
+        | None ->
+            List.iter Nx_device.synchronize b.queues;
+            [])
+    | exception e ->
+        Option.iter (fun p -> ignore (Nx_device.Profile.stop p)) own;
+        raise e
+  in
+  let spans = ref events in
+  let span d name =
+    let rec take = function
+      | [] -> (None, [])
+      | Nx_device.Profile.Span sp :: rest when sp.device == d && sp.name = name
+        ->
+          (Some (Float.of_int (sp.stop - sp.start) *. 1e-9), rest)
+      | e :: rest ->
+          let found, rest = take rest in
+          (found, e :: rest)
+    in
+    let found, rest = take !spans in
+    spans := rest;
+    found
+  in
+  List.iter
+    (fun (k : Ops.hcq_kernel) ->
+      List.iter
+        (fun dn ->
+          report ~device:dn ~name:k.name
+            ~args:(List.length k.input_slots)
+            ~vars k.estimates
+            (span (b.named dn) k.name))
+        k.devices)
+    b.info.kernels
+
 let rec run_call ~vars t slots = function
-  | Copy { dst; src } ->
+  | Copy { call; dst; src } ->
       let dsts = view t.storage slots vars dst
       and srcs = view t.storage slots vars src in
-      List.iteri (fun i dst -> B.copy ~src:(lane srcs i) ~dst) dsts
+      List.iteri
+        (fun i dst ->
+          let copy () = B.copy ~src:(lane srcs i) ~dst in
+          if reporting () then
+            report
+              ~device:(Nx_device.name (B.device dst))
+              ~name:
+                (Realize.get_call_name ~var_vals:vars call
+                   (Realize.get_call_arg_uops call))
+              ~args:2 ~vars
+              (Realize.estimate_uop call)
+              (Some (seconds copy))
+          else copy ())
+        dsts
   | Kernel { call; lanes } ->
       let prg = Ops.body call in
       let args =
@@ -664,9 +754,22 @@ let rec run_call ~vars t slots = function
                  then ds
                  else d :: ds)
                [] buffers);
-          Nx_device.Program.call p.program (Array.of_list buffers)
-            (Array.of_list (List.map (value vars i) vals)))
+          let call_program () =
+            Nx_device.Program.call p.program (Array.of_list buffers)
+              (Array.of_list (List.map (value vars i) vals))
+          in
+          if reporting () then
+            report
+              ~device:(Nx_device.name (B.device (List.hd buffers)))
+              ~name:
+                (Realize.get_call_name ~var_vals:vars call
+                   (Realize.get_call_arg_uops call))
+              ~args:(List.length buffers) ~vars
+              (Realize.estimate_uop call)
+              (Some (seconds call_program))
+          else call_program ())
         lanes
+  | Batch b when reporting () -> run_reported ~vars t.storage slots b
   | Batch b -> run_batch ~vars t.storage slots b
   | Range { ranges; body } ->
       let rec trips vars = function

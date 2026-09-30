@@ -1174,6 +1174,54 @@ let runs_the_submitting_hook () =
   Null_device.synchronize ();
   equal int 3 !hooked
 
+(* The time a [DEBUG=2] line gives its kernel, in seconds, from its words ["tm";
+   "12.30us"]. *)
+let seconds_of words =
+  let rec time = function
+    | "tm" :: t :: _ -> t
+    | _ :: rest -> time rest
+    | [] -> failwith "the line gives no time"
+  in
+  let t = time words in
+  let digits, scale =
+    if String.ends_with ~suffix:"us" t then (String.length t - 2, 1e-6)
+    else if String.ends_with ~suffix:"ms" t then (String.length t - 2, 1e-3)
+    else (String.length t - 1, 1.)
+  in
+  float_of_string (String.sub t 0 digits) *. scale
+
+(* At [DEBUG=2], a run of three kernels on CPU:1, whose queue starts 50 ms after
+   its submission, prints a line for each, timed by the kernel's stamps: the
+   time leaves the latency out. *)
+let reports_each_kernel () =
+  let fills = List.init 3 (fun k -> fill "CPU:1" (Float.of_int k)) in
+  let bound =
+    List.map
+      (fun (y, _) -> (y, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]))
+      fills
+  in
+  Helpers.context
+    [ B (Helpers.debug, 2) ]
+    (fun () ->
+      let s = link_calls ~bound (List.map snd fills) in
+      Null_device.with_latency 0.05 (fun () -> Engine.run s [||]));
+  let lines =
+    List.filter_map
+      (fun line ->
+        if String.starts_with ~prefix:"*** " line then
+          Some (List.filter (( <> ) "") (String.split_on_char ' ' line))
+        else None)
+      (String.split_on_char '\n' (output ()))
+  in
+  equal int ~msg:"one line per kernel" 3 (List.length lines);
+  List.iter
+    (fun words ->
+      equal string ~msg:"device" "CPU:1" (List.nth words 1);
+      let t = seconds_of words in
+      at_least float_exact ~msg:"time" ~than:0. t;
+      less float_exact ~msg:"time" ~than:0.05 t)
+    lines
+
 let refuses_an_unknown_library () =
   let y, filled = fill "CPU:1" 7. in
   let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
@@ -1215,6 +1263,8 @@ let batches =
         calls_a_function_of_the_host;
       test "each run of a batch runs its device's submitting hook once"
         runs_the_submitting_hook;
+      test "at DEBUG=2, a run prints one line per kernel, timed by its stamps"
+        reports_each_kernel;
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"

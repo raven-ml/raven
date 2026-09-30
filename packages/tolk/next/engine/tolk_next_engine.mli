@@ -165,6 +165,14 @@ val run :
     work that wrote it, as {!Nx_device.synchronize} does. Runs of [s] are
     serialized: a run starts once the previous one returned.
 
+    When the setting {!Tolk_next.Helpers.debug} is [2] or more, [run] prints a
+    line for each kernel on standard output: its device, how many kernels ran
+    before it, its name, its number of arguments, and its time and throughput. A
+    host program and a copy are timed on the host clock. A batch synchronizes
+    its devices once submitted, and its kernels' times are their spans as the
+    devices stamp them, unless a profile is being taken elsewhere, whose spans
+    they are: their lines then have no time.
+
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
     buffers of its placement's devices, each holding its parameter's bytes, or
     if a variable is unbound, and {!Nx_device.Lost} as the devices do. *)
