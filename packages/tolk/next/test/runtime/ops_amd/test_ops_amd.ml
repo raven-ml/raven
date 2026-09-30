@@ -731,9 +731,11 @@ let splits =
           let ps =
             pieces ~trips:10_000 g "gfx942" "chain_gfx942" "aql_compute_0"
           in
-          is_true ~msg:"several batches" (List.length ps > 1);
-          equal ~msg:"every trip" int 10_000
-            (List.fold_left (fun n (t, _) -> n + t) 0 ps);
+          (* Two batches of 5,000 trips, each 64 bytes a trip. *)
+          equal ~msg:"trips and AQL bytes of each batch"
+            (list (pair int int))
+            [ (5_000, 320_128); (5_000, 320_128) ]
+            ps;
           List.iter (fun (_, bytes) -> at_most int ~than:(ring / 2) bytes) ps);
       test
         "a range of 1,000 copies runs as batches of up to a quarter of the \
@@ -743,9 +745,10 @@ let splits =
           let ps =
             pieces ~copy:true ~trips:1_000 g "gfx1100" "chain" "cmdbuf_copy_0"
           in
-          is_true ~msg:"several batches" (List.length ps > 1);
-          equal ~msg:"every trip" int 1_000
-            (List.fold_left (fun n (t, _) -> n + t) 0 ps);
+          equal ~msg:"trips and command bytes of each batch"
+            (list (pair int int))
+            [ (500, 14_064); (500, 14_064) ]
+            ps;
           List.iter (fun (_, bytes) -> at_most int ~than:(ring / 4) bytes) ps);
     ]
 
