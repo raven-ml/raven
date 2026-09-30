@@ -4220,6 +4220,9 @@ Ops.POW	dtypes.double	[-0.0, -1.0]	True	inf
 Ops.POW	dtypes.double	[-8.0, 0.3333333333333333]	True	nan
 Ops.POW	dtypes.double	[-2.0, 3.0]	True	-8.0
 Ops.POW	dtypes.double	[-2.0, 0.5]	True	nan
+Ops.POW	dtypes.double	[-inf, 0.5]	True	inf
+Ops.POW	dtypes.double	[-inf, 3.0]	True	-inf
+Ops.POW	dtypes.double	[-inf, -0.5]	True	0.0
 Ops.CMPEQ	dtypes.bool	[9007199254740993, 9007199254740992.0]	True	False
 Ops.CMPEQ	dtypes.bool	[9007199254740992.0, 9007199254740993]	True	False
 Ops.CMPEQ	dtypes.bool	[1, 1.0]	True	True

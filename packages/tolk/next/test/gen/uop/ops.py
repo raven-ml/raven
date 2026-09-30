@@ -121,7 +121,8 @@ def alu_rows():
     for op in (Ops.CDIV, Ops.FLOORDIV, Ops.CMOD, Ops.FLOORMOD):
         for pair in [(7, 2.0), (-7.0, 2), (7, -2.5)]: row(op, dtypes.weakfloat, pair)
     for op, pair in [(Ops.POW, (2, 3)), (Ops.POW, (0, 0)), (Ops.POW, (2.0, -1.0)), (Ops.POW, (0.0, -1.0)),
-                     (Ops.POW, (-0.0, -1.0)), (Ops.POW, (-8.0, 1 / 3)), (Ops.POW, (-2.0, 3.0)), (Ops.POW, (-2.0, 0.5))]:
+                     (Ops.POW, (-0.0, -1.0)), (Ops.POW, (-8.0, 1 / 3)), (Ops.POW, (-2.0, 3.0)), (Ops.POW, (-2.0, 0.5)),
+                     (Ops.POW, (-math.inf, 0.5)), (Ops.POW, (-math.inf, 3.0)), (Ops.POW, (-math.inf, -0.5))]:
         row(op, dtypes.double, pair)
     # comparisons between an integer and a float are exact
     for op in COMPARISONS:

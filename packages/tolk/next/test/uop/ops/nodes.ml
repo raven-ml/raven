@@ -241,12 +241,26 @@ let gen_tag =
 
 let tag = Testable.make ~pp:Ops.Tag.pp ~equal:Ops.Tag.equal
 
+(* A pair of tags, equal a quarter of the time: the second is then a fresh copy
+   of the first. *)
+let gen_tag_pair =
+  let rec copy : Ops.Tag.t -> Ops.Tag.t = function
+    | String s -> String (String.init (String.length s) (String.get s))
+    | Bytes s -> Bytes (String.init (String.length s) (String.get s))
+    | Tuple l -> Tuple (List.map copy l)
+    | t -> t
+  in
+  Gen.frequency
+    [
+      (1, Gen.map (fun t -> (t, copy t)) gen_tag); (3, Gen.pair gen_tag gen_tag);
+    ]
+
 let tags =
   group "Tag"
     [
       prop "equal is an equivalence" (Gen.pair gen_tag gen_tag)
         (Law.equivalence tag);
-      prop "hash agrees with equal" (Gen.pair gen_tag gen_tag) (fun (t0, t1) ->
+      prop "hash agrees with equal" gen_tag_pair (fun (t0, t1) ->
           cover "equal tags" (Ops.Tag.equal t0 t1);
           if Ops.Tag.equal t0 t1 then
             equal int (Ops.Tag.hash t0) (Ops.Tag.hash t1));
@@ -541,6 +555,20 @@ let keys =
           let u0 = build vars r0 and u1 = build vars r1 in
           assume (u0 != u1);
           not_equal string (Ops.key u0) (Ops.key u1));
+      test "tells apart an operation, a type, an argument and a source"
+        (fun () ->
+          let x = var "x" 0 4 and y = var "y" 0 4 in
+          let a = Ops.O.(x + y) in
+          List.iter
+            (fun (what, b) ->
+              not_equal ~msg:what string (Ops.key a) (Ops.key b))
+            [
+              ("operation", Ops.O.(x * y));
+              ("type", Ops.cast a Int64);
+              ("argument", Ops.O.(x + var "y" 0 5));
+              ("source", Ops.O.(y + x));
+            ];
+          equal int 32 (String.length (Ops.key a)));
       test "ignores tags" (fun () ->
           let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
           equal string (Ops.key a) (Ops.key (Ops.rtag ~tag:(String "t") a)));
@@ -895,6 +923,15 @@ let shapes =
           equal shape
             (ints [ 2; 6 ])
             (Ops.shape (Ops.index p [ Ops.int 1; Ops.consts [ i 0; i 1 ] ])));
+      test "an index past the source's axes takes only its indices' shapes"
+        (fun () ->
+          equal shape []
+            (Ops.shape (Ops.index (Ops.param 0 Float32) [ Ops.int 0 ]));
+          equal shape []
+            (Ops.shape
+               (Ops.index
+                  (Ops.param ~shape:(ints [ 4 ]) 0 Float32)
+                  [ Ops.int 0; Ops.int 1 ])));
       test "a stage puts its ranges' sizes in front" (fun () ->
           let r = Ops.range (Int 3) [ 0 ] in
           equal shape

@@ -296,6 +296,8 @@ let movement =
           rejects (fun () -> Ops.reshape p (ints [ -1; -1 ])));
       test "reshape rejects a different number of elements" (fun () ->
           rejects (fun () -> Ops.reshape p (ints [ 5; 5 ])));
+      test "rop rejects a repeated axis" (fun () ->
+          rejects (fun () -> Ops.rop p Op.Add [ 1; 1 ]));
       test "permute rejects an order that is not a permutation" (fun () ->
           rejects (fun () -> Ops.permute p [ 0; 0; 1 ]);
           rejects (fun () -> Ops.permute p [ 0; 1 ]);
@@ -489,6 +491,12 @@ let devices =
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           is_true (Ops.shard_slice (Ops.int 1) 0 d == Ops.int 1);
           rejects (fun () -> Ops.shard_slice (param [ 3 ] 0 Float32) 0 d));
+      test ~tags:[ l3 ]
+        "shard_slice rejects a size whose divisibility is not decided"
+        (fun () ->
+          let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
+          let x = Ops.param ~shape:[ Sym (weak_var "x" 0 10) ] 0 Float32 in
+          rejects (fun () -> Ops.shard_slice x 0 d));
       test "unshard rejects unequal lengths and a repeated axis" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           rejects (fun () -> Ops.unshard ~ranges:[ d; d ] m [ 0 ]);
@@ -497,6 +505,7 @@ let devices =
           let p = param ~device:cpu [ 4 ] 0 Float32 in
           rejects (fun () -> Ops.copy_to_device p (Single "DISK:/tmp/f"));
           rejects (fun () -> Ops.copy_to_device p (Single "disk"));
+          rejects (fun () -> Ops.copy_to_device p (Single "disk:0"));
           rejects (fun () -> Ops.copy_to_device p (Multi [ "CPU"; "DISK:x" ]));
           rejects (fun () -> Ops.copy_to_device (Ops.int 1) cpu));
       test "allreduce rejects a value on one device" (fun () ->
@@ -629,10 +638,13 @@ let storage =
           is_true (Ops.buf_uop s == s);
           is_false (Ops.has_buffer_identity s);
           equal shape (ints [ 2; 4 ]) (Ops.shape s));
-      test "clone rejects a disk" (fun () ->
-          rejects (fun () ->
-              Ops.clone ~device:(Single "DISK:/tmp/f")
-                (param ~device:cpu [ 4 ] 0 Float32)));
+      test "clone rejects a disk, named in any case" (fun () ->
+          let p = param ~device:cpu [ 4 ] 0 Float32 in
+          rejects (fun () -> Ops.clone ~device:(Single "DISK:/tmp/f") p);
+          rejects (fun () -> Ops.clone ~device:(Single "disk:0") p);
+          is_true
+            (Ops.equal_device (Single "DISKS")
+               (Option.get (Ops.device (Ops.clone ~device:(Single "DISKS") p)))));
       test "new_buffer takes the next slot without one" (fun () ->
           let slot u =
             match Ops.arg u with Param p -> p.slot | _ -> fail "a buffer"

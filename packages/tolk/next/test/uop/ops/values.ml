@@ -608,6 +608,11 @@ let divisibility =
           is_some (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Z.of_int 4));
           is_some (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Z.of_int 2));
           equal (option uop) (Some x) (Ops.divides x Z.one));
+      test "divides divides a float constant only into an integer" (fun () ->
+          is_none (Ops.divides (Ops.float 2.5) (Z.of_int 2));
+          equal (option uop)
+            (Some (Ops.float 2.))
+            (Ops.divides (Ops.float 4.) (Z.of_int 2)));
       test "a typed constant is a cast, whose divisors are not known" (fun () ->
           is_none (Ops.divides (Ops.int ~dtype:Int32 8) (Z.of_int 2));
           equal z Z.one (Ops.const_factor (Ops.int ~dtype:Int32 8)));
