@@ -1,0 +1,17 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+arch	cores
+"sm_"	raises ValueError
+"sm_x"	raises ValueError
+"sm_7"	none
+"sm_70"	none
+"sm_74"	none
+"sm_75"	cuda_sm75
+"sm_79"	cuda_sm75
+"sm_80"	cuda_sm80
+"sm_86"	cuda_sm80
+"sm_88"	cuda_sm80
+"sm_89"	cuda_sm89
+"sm_90"	cuda_sm89
+"sm_90a"	raises ValueError
+"sm_120"	cuda_sm89
+"gfx89"	cuda_sm89

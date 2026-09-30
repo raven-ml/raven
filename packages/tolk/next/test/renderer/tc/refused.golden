@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	frag_a	frag_b	frag_c	accepted
+metal as it is	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	True
+rdna3 broadcasts an N bit across A's lanes	m0 m1 m2 m3 n0/k0 k1 k2 k3	n0 n1 n2 n3 m0/k0 k1 k2 k3	n0 n1 n2 n3 m0/m1 m2 m3	True
+cdna4 holds a high K bit in an element	m0 m1 m2 m3 k4 k5/k0 k1 k2 k3 k6	n0 n1 n2 n3 k4 k5/k0 k1 k2 k3 k6	n0 n1 n2 n3 m2 m3/m0 m1	True
+A has a lane fewer than C	m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+B has a lane more than C	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2 m3/n0	n1 m0 m1 n2 m2/n0	False
+A holds a bit twice	k1 m0 m0 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+A holds a bit twice besides every bit of its tile	k1 m0 m1 k2 m2/k0 m0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+A holds a bit as a lane and as an element	k1 m0 m1 k0 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+A lacks an element	k1 m0 m1 k2 m2/	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+A's element is an N bit	k1 m0 m1 k2 m2/n0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+B's element is an M bit	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/m0	n1 m0 m1 n2 m2/n0	False
+C's element is a K bit	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/k0	False
+C's lane is a K bit	k1 m0 m1 k2 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 k2 m2/n0	False
+B names an N bit beyond the tile	k1 m0 m1 k2 m2/k0	n1 k0 k1 n3 k2/n0	n1 m0 m1 n2 m2/n0	False
+A names a negative bit	k1 m0 m1 k2 m-1/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+A and B order K differently	k2 m0 m1 k1 m2/k0	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False
+B trades an N bit for an M bit	k1 m0 m1 k2 m2/k0	n1 k0 k1 m0 k2/n0	n1 m0 m1 n2 m2/n0	False
+A broadcasts an N bit that C lacks	k1 m0 m1 k2 n3/k0 m2	n1 k0 k1 n2 k2/n0	n1 m0 m1 n2 m2/n0	False

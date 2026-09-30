@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+arch	cores
+"gfx942"	amd_cdna3
+"gfx950"	amd_cdna4
+"gfx1200"	amd_rdna4
+"gfx1201"	amd_rdna4
+"gfx1100"	amd_rdna3
+"gfx1151"	amd_rdna3
+"gfx90a"	amd_rdna3
+"gfx94"	amd_rdna3
+"gfx9420"	amd_rdna3
+""	amd_rdna3

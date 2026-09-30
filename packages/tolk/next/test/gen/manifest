@@ -29,6 +29,11 @@ helpers/settings.golden
 helpers/sizes.golden
 helpers/targets.golden
 helpers/text.golden
+renderer/tc/amd.golden
+renderer/tc/cuda.golden
+renderer/tc/frag_coords.golden
+renderer/tc/refused.golden
+renderer/tc/tensor_cores.golden
 support/matmul.golden
 support/sum_of_cast.golden
 support/sum_of_cast_kernels.golden
