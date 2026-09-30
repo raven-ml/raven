@@ -326,6 +326,21 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
     Raises [Invalid_argument] if a range runs calls on devices with queues and
     on others, or on devices of two kinds. *)
 
+val stages : devices:(string -> device) -> Ops.t -> bool
+(** [stages ~devices e] is [true] iff the range around calls [e] ({!Op.End})
+    runs as a loop inside one batch ({!sched_batches}), each run of it one
+    submission whatever its trips. Its calls, compiled or not, must all be
+    enqueued, on devices of one kind. It is [false] when a call is a host
+    program (its buffers' devices have no queues), a copy the host makes (on
+    Metal, whose memory the host copies), or when its calls run on devices of
+    two kinds; the range then runs its trips one by one, or unrolled.
+
+    A staged range takes memory for each trip, made at link: [n] trips of [k]
+    calls take [n·k] commands and [n·k] copies of their arguments, about 160
+    bytes a call on queues of words and 264 on Metal, so 1,000 trips of 30
+    kernels take about 5 MB and 8 MB. Unrolling instead holds a graph for each
+    trip, which grows with [n] as well, and more. *)
+
 val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
     program, a kernel of the host of its first device ({!queues.host}):

@@ -2624,7 +2624,7 @@ with `HCQ_NUM_SDMA` set.
 | — | D1 | `H › timeline values (D1)` (9 tests); the goldens |
 | — | D7 | `H › stamp slots (D7)` (4 tests) |
 | — | D12 | `H › profile keys (D12)` (2 tests) |
-| — | D30 | `H › ranges (D30)` (9 tests); `H › Deps › a write that does not trim keeps the accesses to the bytes it writes`, `› forgotten accesses are no longer followed` |
+| — | D30 | `H › ranges (D30)` (11 tests); `H › Deps › a write that does not trim keeps the accesses to the bytes it writes`, `› forgotten accesses are no longer followed` |
 
 ### old tolk
 

@@ -424,7 +424,8 @@ let get_enqueue_devs devices call =
   else
     let b = body call in
     match (op b, Realize.get_call_arg_uops call) with
-    | (Op.Program | Op.Store), (_ :: _ as bufs) ->
+    (* A kernel not compiled yet is enqueued as its program will be. *)
+    | (Op.Program | Op.Sink | Op.Store), (_ :: _ as bufs) ->
         (* Copies push from the source: writes to a peer are faster than
            reads. *)
         let bufs = if op b = Op.Store then List.rev bufs else bufs in
@@ -1114,23 +1115,41 @@ let finalize_batch ctx =
   in
   call ~aux:info sink (if ctx.profile then List.map snd ctx.slots else [])
 
-(* The devices a range's calls are enqueued on, all of one kind, or [None] when
-   none is. *)
-let rec range_devs devices e =
-  if op e <> Op.End then get_enqueue_devs devices e
+(* Where a range's calls run: on devices with queues, all of one kind, on the
+   host, or where one batch cannot run them. *)
+type placement = Enqueued of string list | Host | Mixed of string
+
+let rec range_placement devices e =
+  if op e <> Op.End then
+    match get_enqueue_devs devices e with
+    | Some ds -> Enqueued ds
+    | None -> Host
   else
-    let ds = List.map (range_devs devices) (range_body e) in
-    if List.for_all Option.is_none ds then None
-    else if List.exists Option.is_none ds then
-      invalid_arg
-        "a range runs its calls on devices with queues, or all on the host"
-    else
-      let devs =
-        List.sort_uniq String.compare (List.concat_map Option.get ds)
-      in
-      match List.sort_uniq String.compare (List.map (kind devices) devs) with
-      | [ _ ] -> Some devs
-      | _ -> invalid_arg "a range runs its calls on devices of one kind"
+    let ps = List.map (range_placement devices) (range_body e) in
+    match List.find_opt (function Mixed _ -> true | _ -> false) ps with
+    | Some mixed -> mixed
+    | None when List.for_all (( = ) Host) ps -> Host
+    | None when List.mem Host ps ->
+        Mixed
+          "a range runs its calls on devices with queues, or all on the host"
+    | None -> (
+        let devs =
+          List.sort_uniq String.compare
+            (List.concat_map (function Enqueued ds -> ds | _ -> []) ps)
+        in
+        match List.sort_uniq String.compare (List.map (kind devices) devs) with
+        | [ _ ] -> Enqueued devs
+        | _ -> Mixed "a range runs its calls on devices of one kind")
+
+let range_devs devices e =
+  match range_placement devices e with
+  | Enqueued ds -> Some ds
+  | Host -> None
+  | Mixed why -> invalid_arg why
+
+let stages ~devices e =
+  op e = Op.End
+  && match range_placement devices e with Enqueued _ -> true | _ -> false
 
 let rec sched_batches ~devices ~profile l =
   (* The calls in a range that no device with queues runs are the engine's, once

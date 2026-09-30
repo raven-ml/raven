@@ -1307,6 +1307,21 @@ let ranges =
       agrees "a batched range agrees with running its trips one by one" (let _, _, e = ranged "CPU:2" in [ e ]);
       agrees "a trip's copy waits for the kernel of the trip before, on another queue" [ staged "CPU:1" ];
       agrees ~latency:0.01 "a staged range agrees under queue latency" [ staged "CPU:2" ];
+      test "a range of kernels on devices with queues stages, compiled or not" (fun () ->
+          let src = storage ~n:12 "CPU:1" and dst = storage ~n:12 "CPU:1" in
+          let stages = Hcq2.stages ~devices:(kinds ()) in
+          is_true ~msg:"not compiled" (stages (Ops.end_ (kernel_adds (window dst) (window src)) [ r ]));
+          is_true ~msg:"compiled" (stages (Ops.end_ (adds (window dst) (window src)) [ r ]));
+          is_true ~msg:"with a copy" (stages (staged "CPU:1")));
+      test "a range with a host program, a host copy or two kinds of device does not stage" (fun () ->
+          let stages = Hcq2.stages ~devices:(kinds ()) in
+          let on d = kernel_adds (window (storage ~n:12 d)) (storage d) in
+          is_false ~msg:"a host program" (stages (Ops.end_ (linear [ on "CPU:1"; on "CPU" ]) [ r ]));
+          is_false ~msg:"all on the host" (stages (Ops.end_ (on "CPU") [ r ]));
+          is_false ~msg:"a Metal copy"
+            (stages (Ops.end_ (linear [ on "METAL:0"; Ops.store_call (storage "METAL:0") (window (storage ~n:12 "METAL:0")) ]) [ r ]));
+          is_false ~msg:"two kinds" (stages (Ops.end_ (linear [ on "AMD:0"; on "NV:0" ]) [ r ]));
+          is_false ~msg:"no range" (stages (on "CPU:1")));
       test "a range of calls on the host and on queues is refused" (fun () ->
           let e = Ops.end_ (linear [ adds (window (storage ~n:12 "CPU:1")) (storage "CPU:1"); adds (storage "CPU") (storage "CPU") ]) [ r ] in
           raises_match Exn.invalid_arg (fun () -> sched [ e ]));
