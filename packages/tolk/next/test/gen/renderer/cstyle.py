@@ -8,12 +8,18 @@ whose sources are its nodes in order. The table `cases` gives each case's
 position among them, the target and the renderer, and the settings it is
 rendered under; the source of case `c` is the text golden `c`.
 
+tolk.next writes each operation on a narrow scalar as a cast of itself to its
+type (D17), so the source of a kernel with such an operation is tinygrad's
+source for the kernel with those casts: the table's column `narrowed` gives
+the position of that kernel in `kernels`, and its text golden is its source.
+
 The rewrites are a table `rewrites`, whose rows give the position of an input
 in `rewrite_inputs` and of its result in `rewritten`. The table `declarations`
 holds what each renderer declares for a target, and `written` how each writes
 its native operations.
 """
 
+from collections import Counter
 from dataclasses import replace
 import os
 
@@ -421,15 +427,57 @@ def all_cases():
 CASES = all_cases()
 
 
+# D17: an operation is narrowed when it is inlined into its one user, which does
+# not store it, and computes on a scalar that C promotes: a char or a short, or
+# Clang's __fp16.
+
+def narrowing(ren, uops):
+    """`uops` with each operation D17 narrows followed by a cast to its type, or
+    None if it narrows none."""
+    promoted = (dtypes.char, dtypes.uchar, dtypes.short, dtypes.ushort) + \
+        ((dtypes.half,) if isinstance(ren, ClangRenderer) else ())
+    children = Counter(v for u in uops for v in u.src)
+    user = {v: u for u in uops for v in u.src}
+    def narrowed(u):
+        return u.op in GroupOp.ALU - {Ops.WHERE} and children[u] == 1 and u.max_numel() == 1 and u.dtype in promoted \
+            and not (user[u].op is Ops.STORE and user[u].src[1] is u)
+    if not any(narrowed(u) for u in uops): return None
+    out, new = [], {}
+    for u in uops:
+        nu = u.replace(src=tuple(new.get(v, v) for v in u.src))
+        out.append(nu)
+        new[u] = UOp(Ops.CAST, src=(nu,), arg=nu.dtype) if narrowed(u) else nu
+        if new[u] is not nu: out.append(new[u])
+    return out
+
+
+def kernel_of(name, make, setting):
+    """The kernel of a case, and the kernel whose tinygrad source is its source
+    (D17), the same unless the case renders by default."""
+    ren = renderer(name)
+    uops = list(make(ren))
+    return uops, (narrowing(ren, uops) if not setting else None) or uops
+
+
 @graph
 def kernels():
-    return UOp.sink(*[UOp(Ops.LINEAR, src=tuple(make(renderer(name))), arg=case) for case, name, make, _ in CASES])
+    linears = []
+    for case, name, make, setting in CASES:
+        uops, written = kernel_of(name, make, setting)
+        linears.append(UOp(Ops.LINEAR, src=tuple(uops), arg=case))
+        if written is not uops: linears.append(UOp(Ops.LINEAR, src=tuple(written), arg=case + "_narrowed"))
+    return UOp.sink(*linears)
 
 
 @table
 def cases():
-    rows = [(case, str(i), *cells(TARGETS[name]), setting or "-") for i, (case, name, _, setting) in enumerate(CASES)]
-    return ["case", "kernel", *TARGET_COLUMNS, "setting"], rows
+    rows, i = [], 0
+    for case, name, make, setting in CASES:
+        uops, written = kernel_of(name, make, setting)
+        narrowed = "-" if written is uops else str(i + 1)
+        rows.append((case, str(i), *cells(TARGETS[name]), setting or "-", narrowed))
+        i += 1 if written is uops else 2
+    return ["case", "kernel", *TARGET_COLUMNS, "setting", "narrowed"], rows
 
 
 def source(case, name, make, setting):
@@ -437,8 +485,7 @@ def source(case, name, make, setting):
         if setting:
             key, value = setting.split("=")
             os.environ[key] = value
-        ren = renderer(name)
-        return ren.render(list(make(ren)))
+        return renderer(name).render(kernel_of(name, make, setting)[1])
     body.__name__ = case
     return body
 

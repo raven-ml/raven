@@ -8,7 +8,7 @@ void E_4_4(float* restrict data0_16, float* restrict data1_16, short* restrict d
     short val2 = (*(data2_16+(alu0+3)));
     short val3 = (*(data2_16+alu0));
     float4 val4 = (*((float4*)((data1_16+alu0))));
-    *((float4*)((data0_16+alu0))) = (float4){((float)(((((short)(val4[0]))+val3)*((short)(3))))),((float)(((((short)(val4[1]))+val0)*((short)(3))))),((float)(((((short)(val4[2]))+val1)*((short)(3))))),((float)(((((short)(val4[3]))+val2)*((short)(3)))))};
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((short)((((short)((((short)(val4[0]))+val3)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4[1]))+val0)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4[2]))+val1)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4[3]))+val2)))*((short)(3)))))))};
   }
 }
 

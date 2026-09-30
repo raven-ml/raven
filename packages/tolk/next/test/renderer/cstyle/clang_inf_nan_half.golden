@@ -16,7 +16,7 @@ void E_4_4(__fp16* restrict data0_16, __fp16* restrict data1_16) {
     __fp16 alu10 = ((val0[3]<((__fp16)(-1.0f)))?((__fp16)(__builtin_nanf(""))):val0[3]);
     __fp16 alu11 = ((((__fp16)(0.0f))<val0[3])?val0[3]:((__fp16)(__builtin_inff())));
     __fp16 alu12 = ((val0[3]<((__fp16)(1.0f)))?((__fp16)(-__builtin_inff())):val0[3]);
-    *((__fp164*)((data0_16+alu0))) = (__fp164){(alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12)};
+    *((__fp164*)((data0_16+alu0))) = (__fp164){((__fp16)((((__fp16)((alu2+alu1)))+alu3))),((__fp16)((((__fp16)((alu5+alu4)))+alu6))),((__fp16)((((__fp16)((alu8+alu7)))+alu9))),((__fp16)((((__fp16)((alu11+alu10)))+alu12)))};
   }
 }
 

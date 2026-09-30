@@ -11,5 +11,5 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* da
   short val2 = (*(data2_16+(alu0+3)));
   short val3 = (*(data2_16+alu0));
   float4 val4 = (*((float4*)((data1_16+alu0))));
-  *((float4*)((data0_16+alu0))) = make_float4(((float)(((((short)(val4.x))+val3)*((short)(3))))),((float)(((((short)(val4.y))+val0)*((short)(3))))),((float)(((((short)(val4.z))+val1)*((short)(3))))),((float)(((((short)(val4.w))+val2)*((short)(3))))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((short)((((short)((((short)(val4.x))+val3)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.y))+val0)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.z))+val1)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.w))+val2)))*((short)(3))))))));
 }

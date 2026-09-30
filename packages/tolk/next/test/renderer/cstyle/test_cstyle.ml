@@ -146,6 +146,70 @@ let sources =
       group ~tags:[ "unaligned" ] "with ALIGNED=0" (sources_under "ALIGNED=0");
     ]
 
+(* D17: C computes an operation on a char, a short or Clang's __fp16 in a wider
+   type, so the source casts each such operation back to its type: an operation
+   on a scalar of one of these types, inlined into its one user, which does not
+   store it. The source of a kernel is then tinygrad's for the kernel with those
+   casts, which [with_d17_casts row uops] builds and cases.golden's column
+   narrowed names. *)
+
+let narrow_scalars row =
+  Dtype.[ Int8; Uint8; Int16; Uint16 ]
+  @ if row "renderer" = "CLANG" then [ Dtype.Float16 ] else []
+
+let with_d17_casts row uops =
+  let children = Ops.Tbl.create 256 and user = Ops.Tbl.create 256 in
+  let count v = Option.value ~default:0 (Ops.Tbl.find_opt children v) in
+  List.iter
+    (fun u ->
+      List.iter
+        (fun v ->
+          Ops.Tbl.replace children v (count v + 1);
+          Ops.Tbl.replace user v u)
+        (Ops.src u))
+    uops;
+  let stores u =
+    let s = Ops.Tbl.find user u in
+    Op.equal (Ops.op s) Store && Ops.equal (Ops.nth s 1) u
+  in
+  let narrowed u =
+    Op.Set.mem (Ops.op u) Op.Set.alu
+    && (not (Op.equal (Ops.op u) Where))
+    && count u = 1
+    && Ops.max_numel u = 1
+    && List.mem (Ops.dtype u) (narrow_scalars row)
+    && not (stores u)
+  in
+  let rebuilt = Ops.Tbl.create 256 in
+  let find v = Option.value ~default:v (Ops.Tbl.find_opt rebuilt v) in
+  List.concat_map
+    (fun u ->
+      let u' = Ops.replace ~src:(List.map find (Ops.src u)) u in
+      if narrowed u then begin
+        let cast = Ops.v Cast ~src:[ u' ] ~arg:(Dtype (Ops.dtype u')) in
+        Ops.Tbl.replace rebuilt u cast;
+        [ u'; cast ]
+      end
+      else begin
+        Ops.Tbl.replace rebuilt u u';
+        [ u' ]
+      end)
+    uops
+
+let written_kernel row =
+  match row "narrowed" with
+  | "-" -> kernel row
+  | i -> Ops.src (Lazy.force kernels).(int_of_string i)
+
+let narrowing =
+  group "narrowing (D17)"
+    [
+      Golden.cases "cases.golden" (fun row ->
+          if row "setting" = "-" then
+            equal (list Uops.uop) (written_kernel row)
+              (with_d17_casts row (kernel row)));
+    ]
+
 (* Rewrites *)
 
 let rewrite_inputs =
@@ -743,12 +807,6 @@ let not_interpreted =
     ("clang_register_cast", "reads registers at another type");
   ]
 
-(* C computes on char operands in int, and the source converts only the value it
-   stores: an intermediate value out of the char's range does not wrap. The
-   inputs keep halves and shorts exact, so their promotion shows only in the
-   tests of execution above. *)
-let promoted = [ "clang_dtype_unsigned_char"; "clang_dtype_signed_char" ]
-
 let clang_rows =
   List.filter
     (fun row -> row "renderer" = "CLANG" && row "setting" = "-")
@@ -837,17 +895,63 @@ let interpreted uops (buffers, vars) =
 let agrees_with_the_interpreter row =
   let uops = kernel row in
   let k = lazy (Host.load (Lazy.force host) uops) in
-  let law =
-    prop ~count:10 (row "case") (draw_inputs uops)
-      (fun ((buffers, vars) as inputs) ->
-        equal
-          (list (pair int values))
-          (interpreted uops inputs)
-          (Host.run ~vars (Lazy.force k) buffers))
-  in
-  if List.mem (row "case") promoted then
-    xfail ~reason:"C promotes char operands to int" law
-  else law
+  prop ~count:10 (row "case") (draw_inputs uops)
+    (fun ((buffers, vars) as inputs) ->
+      equal
+        (list (pair int values))
+        (interpreted uops inputs)
+        (Host.run ~vars (Lazy.force k) buffers))
+
+(* An element of a kernel over a narrow type, drawn over the whole type so that
+   its operations wrap and round: an element of the narrow type is any of its
+   values, bounds included, and a float the kernel converts to it is one the
+   narrow type holds, since C leaves an integer conversion out of range
+   undefined. *)
+let narrow_element narrow dt =
+  if Dtype.equal dt narrow || not (Dtype.is_float dt) then Dtypes.value_of dt
+  else
+    Gen.map
+      (function `Int z -> `Float (Z.to_float z) | #Dtype.value as v -> v)
+      (Dtypes.value_of narrow)
+
+let narrow_types = Dtype.[ Int8; Uint8; Int16; Uint16; Float16 ]
+
+(* The narrow type a kernel computes on: that of its first narrow load. *)
+let narrow_of uops =
+  List.find_map
+    (fun u ->
+      if Op.equal (Ops.op u) Load && List.mem (Ops.dtype u) narrow_types then
+        Some (Ops.dtype u)
+      else None)
+    uops
+
+let draw_narrow_inputs narrow uops =
+  let cons g rest = Gen.bind g (fun x -> Gen.map (fun r -> x :: r) rest) in
+  List.fold_right
+    (fun (slot, dt, n) ->
+      cons
+        (Gen.map
+           (fun a -> (slot, a))
+           (Gen.array ~size:(Gen.constant n) (narrow_element narrow dt))))
+    (buffers_of uops) (Gen.constant [])
+  |> Gen.map (fun buffers -> (buffers, []))
+  |> Gen.with_pp pp_inputs
+
+let narrow_rows =
+  List.filter
+    (fun row -> Option.is_some (narrow_of (kernel row)))
+    interpreted_rows
+
+let wraps_and_rounds_as_the_interpreter row =
+  let uops = kernel row in
+  let narrow = Option.get (narrow_of uops) in
+  let k = lazy (Host.load (Lazy.force host) uops) in
+  prop ~count:20 (row "case") (draw_narrow_inputs narrow uops)
+    (fun ((buffers, _) as inputs) ->
+      equal
+        (list (pair int values))
+        (interpreted uops inputs)
+        (Host.run (Lazy.force k) buffers))
 
 let compiles_and_loads row =
   test (row "case") (fun () ->
@@ -878,17 +982,18 @@ let execution =
       test "reads two uint registers as a ulong through a cast of their address"
         reads_registers_as_a_ulong;
       test "passes named parameters" passes_named_parameters;
-      xfail ~reason:"C promotes __fp16 operands to float"
-        (test "rounds each operation on halves to a half"
-           rounds_each_operation_on_halves);
-      xfail ~reason:"C promotes char operands to int"
-        (test "wraps each operation on unsigned chars"
-           wraps_each_operation_on_chars);
+      test "rounds each operation on halves to a half (D17)"
+        rounds_each_operation_on_halves;
+      test "wraps each operation on unsigned chars (D17)"
+        wraps_each_operation_on_chars;
       group ~tags:[ "slow" ] "every kernel compiles and loads"
         (List.map compiles_and_loads clang_rows);
       group ~tags:[ "slow" ]
         "every kernel the interpreter runs writes what it computes"
         (List.map agrees_with_the_interpreter interpreted_rows);
+      group ~tags:[ "slow" ]
+        "a kernel over a narrow type wraps and rounds as the interpreter (D17)"
+        (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
     ]
 
 let () =
@@ -896,6 +1001,7 @@ let () =
     (run "Tolk_next.Cstyle"
        [
          sources;
+         narrowing;
          rewrites;
          declarations;
          written;

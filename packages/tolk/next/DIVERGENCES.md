@@ -322,3 +322,35 @@ the Exclusions of `README.md`.
   of the `Cstyle` suite and rune's rendering of a kernel for inspection.
 - **Pinned by:** waiting for the compilers' suites: making each compiler
   without its library succeeds, and compiling with it raises `Compile_error`.
+
+## D17. Each operation on a narrow scalar is narrowed in the source
+
+- **tinygrad:** `renderer/cstyle.py:245-250` (an ALU used once is inlined into
+  its user, whatever its type) with `:66-67` (the operator text).
+- **tolk.next:** `lib/renderer/cstyle.ml:86,565,771` (`promoted`), `:622-632`
+  (`narrowed`), `:714-718` (the cast) and `:348` (an operand's parentheses).
+- **Differs:** C, C++ and Metal compute an operation on a `char`,
+  `unsigned char`, `short` or `unsigned short` in `int`, and Clang computes
+  one on an `__fp16`, a storage format, in `float`. Only an assignment
+  narrows the result back, so an inlined operation neither wraps nor rounds
+  until the kernel stores: `(uchar)16 + 86` times `3`, cast to float, gives
+  `306` where each operation wrapping gives `50`. The source is tinygrad's
+  for the kernel with a cast to its own type after each inlined scalar
+  operation of one of these types that its user does not store. Vectors are not promoted, and CUDA's `__half` and
+  `nv_bfloat16`, HIP's `_Float16` and Metal's `half` and `bfloat` compute
+  natively, so they keep tinygrad's source; so does every kernel without such
+  an inlined operation. Clang's, HIP's and Metal's rules were checked with
+  their compilers; CUDA's rests on the operators `cuda_fp16.hpp` and
+  `cuda_bf16.hpp` declare, and is on the hardware checks of
+  `test/README.md`.
+- **Reason:** (b). Eager nx and compiled code agree: nx computes each
+  operation in its own type, as the folder (`Ops.exec_alu`) and tinygrad's
+  interpreter do.
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `narrowing
+  (D17)`, which checks for every kernel that the kernel whose tinygrad source
+  is its source is the kernel with those casts, and `sources`, which compares
+  the 21 sources it changes with tinygrad's for that kernel; `execution on
+  the host › wraps each operation on unsigned chars (D17)` and `rounds each
+  operation on halves to a half (D17)`; and the slow `a kernel over a narrow
+  type wraps and rounds as the interpreter (D17)`, over each type's whole
+  range.

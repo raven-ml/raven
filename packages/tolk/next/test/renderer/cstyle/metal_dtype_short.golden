@@ -11,5 +11,5 @@ kernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_p
   short val2 = (*(data2_16+(alu0+3)));
   short val3 = (*(data2_16+alu0));
   float4 val4 = (*((device float4*)((data1_16+alu0))));
-  *((device float4*)((data0_16+alu0))) = float4(((float)(((((short)(val4.x))+val3)*((short)(3))))),((float)(((((short)(val4.y))+val0)*((short)(3))))),((float)(((((short)(val4.z))+val1)*((short)(3))))),((float)(((((short)(val4.w))+val2)*((short)(3))))));
+  *((device float4*)((data0_16+alu0))) = float4(((float)(((short)((((short)((((short)(val4.x))+val3)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.y))+val0)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.z))+val1)))*((short)(3))))))),((float)(((short)((((short)((((short)(val4.w))+val2)))*((short)(3))))))));
 }

@@ -18,10 +18,10 @@ void E_210_16_4(unsigned char* restrict data0_13440, unsigned char* restrict dat
       int alu5 = (alu1+96);
       unsigned char val7 = (*(data1_33600+((alu5>>7)+alu0)));
       int alu6 = ((Lidx2<<6)+(Lidx3<<2));
-      *(data0_13440+(alu6+1)) = ((unsigned char)((((unsigned short)(val3))+(((unsigned short)(((((short)(((signed char)((val4-val3)))))*((short)((((float)((alu3&127)))+0.5f))))+((short)(64)))))>>((unsigned short)(7u))))));
-      *(data0_13440+(alu6+2)) = ((unsigned char)((((unsigned short)(val5))+(((unsigned short)(((((short)(((signed char)((val6-val5)))))*((short)((((float)((alu4&127)))+0.5f))))+((short)(64)))))>>((unsigned short)(7u))))));
-      *(data0_13440+(alu6+3)) = ((unsigned char)((((unsigned short)(val0))+(((unsigned short)(((((short)(((signed char)((val1-val0)))))*((short)((((float)((alu2&127)))+0.5f))))+((short)(64)))))>>((unsigned short)(7u))))));
-      *(data0_13440+alu6) = ((unsigned char)((((unsigned short)(val7))+(((unsigned short)(((((short)(((signed char)((val2-val7)))))*((short)((((float)((alu5&127)))+0.5f))))+((short)(64)))))>>((unsigned short)(7u))))));
+      *(data0_13440+(alu6+1)) = ((unsigned char)(((unsigned short)((((unsigned short)(val3))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val4-val3)))))))*((short)((((float)((alu3&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu6+2)) = ((unsigned char)(((unsigned short)((((unsigned short)(val5))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val6-val5)))))))*((short)((((float)((alu4&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+(alu6+3)) = ((unsigned char)(((unsigned short)((((unsigned short)(val0))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val1-val0)))))))*((short)((((float)((alu2&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
+      *(data0_13440+alu6) = ((unsigned char)(((unsigned short)((((unsigned short)(val7))+((unsigned short)((((unsigned short)(((short)((((short)((((short)(((signed char)(((unsigned char)((val2-val7)))))))*((short)((((float)((alu5&127)))+0.5f))))))+((short)(64)))))))>>((unsigned short)(7u))))))))));
     }
   }
 }

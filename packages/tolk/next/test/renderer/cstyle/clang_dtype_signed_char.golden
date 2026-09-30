@@ -8,7 +8,7 @@ void E_4_4(float* restrict data0_16, float* restrict data1_16, signed char* rest
     signed char val2 = (*(data2_16+(alu0+3)));
     signed char val3 = (*(data2_16+alu0));
     float4 val4 = (*((float4*)((data1_16+alu0))));
-    *((float4*)((data0_16+alu0))) = (float4){((float)(((((signed char)(val4[0]))+val3)*((signed char)(3))))),((float)(((((signed char)(val4[1]))+val0)*((signed char)(3))))),((float)(((((signed char)(val4[2]))+val1)*((signed char)(3))))),((float)(((((signed char)(val4[3]))+val2)*((signed char)(3)))))};
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((signed char)((((signed char)((((signed char)(val4[0]))+val3)))*((signed char)(3))))))),((float)(((signed char)((((signed char)((((signed char)(val4[1]))+val0)))*((signed char)(3))))))),((float)(((signed char)((((signed char)((((signed char)(val4[2]))+val1)))*((signed char)(3))))))),((float)(((signed char)((((signed char)((((signed char)(val4[3]))+val2)))*((signed char)(3)))))))};
   }
 }
 

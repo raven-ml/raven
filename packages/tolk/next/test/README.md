@@ -52,6 +52,18 @@ A suite that has slow tests adds a rule to the `slow` alias:
 tests has no such rule, since `--tag slow` then selects nothing, which windtrap
 reports as a failure.
 
+## Hardware checks
+
+What no machine of the default run could check, to verify on the hardware
+named:
+
+- **NVIDIA:** a CUDA kernel stores an infinity converted to e5m2 as an
+  infinity and to e4m3 as a NaN of its sign (D16), and `__half` and
+  `nv_bfloat16` operations compute in their own type, as `cuda_fp16.hpp` and
+  `cuda_bf16.hpp` declare (D17).
+- **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
+  an infinity a NaN in fp8 and keeps it in bf8 (D16).
+
 ## Coverage and mutation
 
 The library carries windtrap's coverage and mutation backends, which do

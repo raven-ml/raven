@@ -83,11 +83,16 @@ type lang = {
   type_map : (Dtype.t * string) list;
   infinity : string;
   nan : string;
+  promoted : Dtype.t list; (* scalars whose operations compute wider *)
   code_for_op : (Op.t * (string list -> Dtype.t -> string)) list;
   string_rewrite : (ctx, string) Pattern_matcher.t;
 }
 
-and ctx = { lang : lang; r : string Tbl.t }
+and ctx = {
+  lang : lang;
+  r : string Tbl.t;
+  narrowed : unit Tbl.t; (* the inlined operations cast to their type *)
+}
 
 let ( .%{} ) ctx u =
   match Tbl.find_opt ctx.r u with
@@ -337,8 +342,11 @@ let base_rewrite =
           let x = m "x" in
           let assoc = Op.Set.of_list Op.[ Add; Mul; Xor; Or; And ] in
           let operand v =
-            if is (op x) v && Op.Set.mem (op x) assoc then
-              Helpers.strip_parens ctx.%{v}
+            if
+              is (op x) v
+              && Op.Set.mem (op x) assoc
+              && not (Tbl.mem ctx.narrowed v)
+            then Helpers.strip_parens ctx.%{v}
             else ctx.%{v}
           in
           Option.map
@@ -554,6 +562,7 @@ let cstyle =
     type_map = [];
     infinity = "INFINITY";
     nan = "NAN";
+    promoted = Dtype.[ Int8; Uint8; Int16; Uint16 ];
     code_for_op;
     string_rewrite = base_rewrite;
   }
@@ -599,12 +608,29 @@ let special_name u =
 
 let render_uops l uops =
   let r = Tbl.create 256 and child_count = Tbl.create 256 in
-  let ctx = { lang = l; r } in
+  let user = Tbl.create 256 in
+  let ctx = { lang = l; r; narrowed = Tbl.create 16 } in
   let children u = Option.value (Tbl.find_opt child_count u) ~default:0 in
   List.iter
     (fun u ->
-      List.iter (fun v -> Tbl.replace child_count v (children v + 1)) (src u))
+      List.iter
+        (fun v ->
+          Tbl.replace child_count v (children v + 1);
+          Tbl.replace user v u)
+        (src u))
     uops;
+  (* C computes an operation on narrow scalars in a wider type, which only an
+     assignment narrows back: an inlined operation that is not stored is cast to
+     its type, so that each operation rounds or wraps as the kernel says *)
+  let narrowed u =
+    Op.Set.mem (op u) Op.Set.alu
+    && List.mem (dtype u) l.promoted
+    && max_numel u = 1
+    &&
+    match Tbl.find_opt user u with
+    | Some s -> not (is Op.Store s && nth s 1 == u)
+    | None -> true
+  in
   let expand_ssa = Helpers.getenv "EXPAND_SSA" 0 <> 0 in
   let bufs = ref []
   and kernel = ref []
@@ -685,7 +711,12 @@ let render_uops l uops =
           | None -> failed u
         in
         if Op.Set.mem o closes then decr depth;
-        if inlined u then Tbl.replace r u line
+        if inlined u then
+          if narrowed u then begin
+            Tbl.replace ctx.narrowed u ();
+            Tbl.replace r u (strf "(%s)" (render_cast ctx u line))
+          end
+          else Tbl.replace r u line
         else begin
           let declared =
             (not (Op.Set.mem o undeclared))
@@ -736,6 +767,8 @@ let clang_lang =
     barrier = "__atomic_thread_fence(__ATOMIC_SEQ_CST);";
     buffer_suffix = " restrict";
     type_map = [ (Dtype.Bool, "_Bool"); (Dtype.Float16, "__fp16") ];
+    (* __fp16 is a storage format: its operations compute in float *)
+    promoted = Dtype.Float16 :: cstyle.promoted;
     code_for_op =
       override
         (List.filter (fun (o, _) -> not (List.mem o dropped)) code_for_op)
