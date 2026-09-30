@@ -741,6 +741,141 @@ let consts =
           Law.idempotent const (Dtype.const dt) c);
     ]
 
+(* Values *)
+
+(* Excluded (README): CPython's refusal to convert an integer whose magnitude
+   rounds to 2^1024 or more to a float. Where Python raises, such an integer
+   operates with a float as the infinity of its sign. *)
+let to_infinity = function
+  | `Int n when Z.geq (Z.abs n) beyond_doubles ->
+      `Float (if Z.sign n < 0 then Float.neg_infinity else Float.infinity)
+  | v -> v
+
+let arithmetic cell op a b =
+  if raised cell then equal value (op (to_infinity a) (to_infinity b)) (op a b)
+  else equal value (value_of_cell cell) (op a b)
+
+let magnitude =
+  Testable.with_compare Dtype.Value.compare
+    (Testable.make ~pp:(Testable.pp value) ~equal:(fun a b ->
+         Dtype.Value.compare a b = 0))
+
+let operand =
+  Gen.with_pp (Testable.pp value)
+    (Gen.frequency
+       [
+         (1, Gen.map (fun b -> `Bool b) Gen.bool);
+         (3, Gen.map (fun n -> `Int n) integer);
+         (1, Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range (-3) 3));
+         (3, Gen.map (fun f -> `Float f) Gen.any_float);
+         ( 1,
+           Gen.map
+             (fun f -> `Float f)
+             (Gen.of_list [ 0.; -0.; 1.; -1.; 0x1p53 ]) );
+       ])
+
+let number =
+  Gen.such_that
+    (function `Float f -> not (Float.is_nan f) | _ -> true)
+    operand
+
+let integers = Gen.map (fun n -> `Int n) integer
+let is_nan = function `Float f -> Float.is_nan f | _ -> false
+
+let values =
+  let open Dtype.Value in
+  group "values"
+    [
+      Golden.cases "values.golden" ~key:[ "a"; "b" ] (fun cell ->
+          let a = value_of_cell (cell "a") and b = value_of_cell (cell "b") in
+          equal bool (bool_cell (cell "lt")) (a < b);
+          equal bool (bool_cell (cell "le")) (a <= b);
+          equal bool (bool_cell (cell "eq")) (a = b);
+          equal bool (bool_cell (cell "ne")) (a <> b);
+          equal ~msg:"min" value (value_of_cell (cell "min")) (min a b);
+          equal ~msg:"max" value (value_of_cell (cell "max")) (max a b);
+          arithmetic (cell "add") ( + ) a b;
+          arithmetic (cell "sub") ( - ) a b;
+          arithmetic (cell "mul") ( * ) a b);
+      Golden.cases "negated.golden" (fun cell ->
+          equal value
+            (value_of_cell (cell "negated"))
+            (-value_of_cell (cell "a")));
+      test "of_int is an integer" (fun () ->
+          equal value (`Int (Z.of_int (-7))) (of_int (-7));
+          equal value (`Int (Z.of_int Stdlib.max_int)) (of_int Stdlib.max_int));
+      prop "compare is a total order by magnitude"
+        (Gen.triple operand operand operand)
+        (Law.order magnitude);
+      prop "compare agrees with < and = away from NaN" (Gen.pair number number)
+        (fun (a, b) ->
+          let c = compare a b in
+          equal ~msg:"<" bool (a < b) (Stdlib.( < ) c 0);
+          equal ~msg:"=" bool (a = b) (Stdlib.( = ) c 0));
+      prop "NaN is less than every other value and unordered by <" number
+        (fun v ->
+          let nan = `Float Float.nan in
+          less int ~than:0 (compare nan v);
+          equal int 0 (compare nan nan);
+          is_false (nan < v || v < nan || nan = v || nan <= v || v >= nan);
+          is_true (nan <> v));
+      prop "the comparisons are derived from < and =" (Gen.pair operand operand)
+        (fun (a, b) ->
+          equal ~msg:"<>" bool (not (a = b)) (a <> b);
+          equal ~msg:"<=" bool (a < b || a = b) (a <= b);
+          equal ~msg:">" bool (b < a) (a > b);
+          equal ~msg:">=" bool (b <= a) (a >= b));
+      prop "min and max return an argument, the least and the greatest"
+        (Gen.pair number number) (fun (a, b) ->
+          let lo = min a b and hi = max a b in
+          is_true ~msg:"min is an argument" (lo == a || lo == b);
+          is_true ~msg:"max is an argument" (hi == a || hi == b);
+          at_most magnitude ~than:a lo;
+          at_most magnitude ~than:b lo;
+          at_least magnitude ~than:a hi;
+          at_least magnitude ~than:b hi);
+      prop "addition and multiplication are commutative"
+        (Gen.pair operand operand) (fun (a, b) ->
+          Law.commutative value ( + ) (a, b);
+          Law.commutative value ( * ) (a, b));
+      prop "integer arithmetic is exact" (Gen.pair integers integers)
+        (fun (a, b) ->
+          match (a, b) with
+          | `Int m, `Int n ->
+              equal ~msg:"+" value (`Int (Z.add m n)) (a + b);
+              equal ~msg:"-" value (`Int (Z.sub m n)) (a - b);
+              equal ~msg:"*" value (`Int (Z.mul m n)) (a * b)
+          | _ -> fail "not integers");
+      prop "multiplication distributes over addition on integers"
+        (Gen.triple integers integers integers)
+        (Law.distributive value ( * ) ~over:( + ));
+      prop "float arithmetic is the float's"
+        (Gen.pair Gen.any_float Gen.any_float) (fun (x, y) ->
+          equal ~msg:"+" value (`Float (Float.add x y)) (`Float x + `Float y);
+          equal ~msg:"-" value (`Float (Float.sub x y)) (`Float x - `Float y);
+          equal ~msg:"*" value (`Float (Float.mul x y)) (`Float x * `Float y));
+      (* An integer zero has no sign, so -0.0 - 0 is -0.0 while -0.0 + -0 is
+         0.0. *)
+      prop "subtraction adds the negation of anything but an integer zero"
+        (Gen.pair operand
+           (Gen.such_that
+              (function
+                | `Int n -> not (Z.equal n Z.zero)
+                | `Bool b -> b
+                | `Float _ -> true)
+              operand))
+        (fun (a, b) -> equal value (a + -b) (a - b));
+      prop "negation is an involution on integers and floats"
+        (Gen.such_that (function `Bool _ -> false | _ -> true) operand)
+        (Law.involutive value ( ~- ));
+      prop "a bool counts as an integer" (Gen.pair Gen.bool operand)
+        (fun (b, v) ->
+          let n = `Int (if b then Z.one else Z.zero) in
+          equal ~msg:"+" value (n + v) (`Bool b + v);
+          equal ~msg:"*" value (n * v) (`Bool b * v);
+          equal ~msg:"-" value (-n) (-`Bool b));
+    ]
+
 let () =
   exit
     (run "tolk.next.dtype"
@@ -757,4 +892,5 @@ let () =
          storage;
          bitcasts;
          consts;
+         values;
        ])

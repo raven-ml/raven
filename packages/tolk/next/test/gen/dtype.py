@@ -201,3 +201,24 @@ def bitcasts():
     pairs = [(a, b) for a in dtypes.all for b in dtypes.all if a.itemsize == b.itemsize]
     return ["from", "to", "value", "bitcast"], [(a, b, value(x), attempt(bitcast, x, a, b))
                                                 for a, b in pairs for x in bitcast_values(a)]
+
+
+# Values
+
+OPERANDS = [True, False, 0, 1, -1, 3, 2**53 - 1, 2**53, 2**53 + 1, 2**63, 2**64, 2**1100, -2**1100,
+            0.0, -0.0, 0.5, -1.5, 2.0**53, 1e308, -1e308, float("inf"), float("-inf"), float("nan")]
+
+
+@table
+def values():
+    """Python's comparisons and arithmetic on every pair of operands."""
+    ops = {"lt": lambda a, b: a < b, "le": lambda a, b: a <= b, "eq": lambda a, b: a == b,
+           "ne": lambda a, b: a != b, "min": min, "max": max,
+           "add": lambda a, b: a + b, "sub": lambda a, b: a - b, "mul": lambda a, b: a * b}
+    return ["a", "b", *ops], [(value(a), value(b), *(attempt(op, a, b) for op in ops.values()))
+                              for a in OPERANDS for b in OPERANDS]
+
+
+@table
+def negated():
+    return ["a", "negated"], [(value(a), -a) for a in OPERANDS]

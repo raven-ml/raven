@@ -10,12 +10,14 @@ dtype/least_upper.golden
 dtype/least_upper_triples.golden
 dtype/lossless_cast.golden
 dtype/names.golden
+dtype/negated.golden
 dtype/of_const.golden
 dtype/of_consts.golden
 dtype/projections.golden
 dtype/properties.golden
 dtype/reencode.golden
 dtype/truncation.golden
+dtype/values.golden
 helpers/colors.golden
 helpers/device_targets.golden
 helpers/division.golden
