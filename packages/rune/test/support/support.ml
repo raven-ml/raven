@@ -14,24 +14,45 @@ let vec64 xs = Nx.create f64 [| Array.length xs |] xs
 let mat64 r c xs = Nx.create f64 [| r; c |] xs
 let to_arr t = Nx.to_array t
 
+(* The view of [x]'s storage: a host value's, or each device's of a placed
+   one. *)
+let view x =
+  match Nx.Repr.v x with
+  | Host a -> a.view
+  | Placed p -> Nx.Repr.Placed.view p
+  | Traced _ -> fail "a traced value has no view"
+
+(* The buffer that holds a host value's elements. *)
+let storage x =
+  match Nx.Repr.v x with
+  | Host a -> a.buffer
+  | Placed _ | Traced _ -> fail "expected a host value"
+
+(* The value of [shape] whose elements, of [dtype], are the file bytes [b], on
+   the disk. *)
+let on_disk dtype shape b =
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p dtype (Nx_array.View.create shape)
+    (Nx.Repr.Storage.v p [ b ])
+
+(* The storage of a placed value. *)
+let storage_of x =
+  match Nx.Repr.v x with
+  | Placed p -> Nx.Repr.Placed.storage p
+  | Host _ | Traced _ -> fail "expected a placed value"
+
+(* Whether the storage behind a placed value is bound by [n] programs and
+   live. *)
+let bound_by n x =
+  let s = storage_of x in
+  Nx.Repr.Storage.pins s = n && Nx.Repr.Storage.live s
+
 (* Collections that release every value no longer reachable. With backtraces
    recorded, the runtime keeps the last exception raised alive, and an
    operation's fallback catches [Effect.Unhandled] carrying its operands:
    raising one more exception first lets that value go. Each finaliser on the
    way to a storage (a compiled function's, then its bound values') takes a
    collection, so collect until the resident bytes stay put twice. *)
-(* The cell a placed value's storage belongs to. *)
-let cell_of (type a b) (x : (a, b) Nx.t) =
-  match x with
-  | Nx_effect.Placed r -> r.r_cell
-  | Host _ | Traced _ -> fail "expected a placed value"
-
-(* Whether the storage behind a placed value is bound by [n] programs and
-   live. *)
-let bound_by n x =
-  let c = cell_of x in
-  Atomic.get c.bound = n && match c.state with Live _ -> true | Consumed _ -> false
-
 let[@inline never] raise_exit () = raise Exit
 
 let full_major () =

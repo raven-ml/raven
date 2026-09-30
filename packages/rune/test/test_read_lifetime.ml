@@ -24,8 +24,10 @@ let on_disk n =
   done;
   close_out oc;
   let file = Result.get_ok (Nx_device.Buffer.of_file path) in
-  ( Nx_effect.of_buffer Nx_dtype.int32 [| n |]
-      (Nx_device.Buffer.view file ~offset:2 Nx_dtype.Scalar.Int32 n),
+  let disk = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  ( Nx.Repr.Placed.v disk Nx_dtype.int32 (Nx_array.View.create [| n |])
+      (Nx.Repr.Storage.v disk
+         [ Nx_device.Buffer.view file ~offset:2 Nx_dtype.Scalar.Int32 n ]),
     path )
 
 (* [f ()] with a full collection at every bigarray allocation. *)

@@ -3144,7 +3144,7 @@ let test_chunked_offset () =
   let n = (chunk / 4) + 4099 in
   let x = Nx.slice [ Nx.R (3, n + 3) ] (Nx.arange Nx.int32 0 (n + 5) 1) in
   is_true ~msg:"contiguous at an offset"
-    (Nx.is_c_contiguous x && Nx_array.View.offset (Nx_effect.view x) = 3);
+    (Nx.is_c_contiguous x && Nx_array.View.offset (view x) = 3);
   check_transfers ~msg:"offset" (fun x -> Nx.add_s x 1l) x
 
 let test_chunked_strided () =
@@ -3231,7 +3231,7 @@ let test_duplicate_outputs_are_two_values () =
   in
   let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
   is_true ~msg:"two values" (r.u != r.v);
-  is_true ~msg:"with storage of their own" (cell_of r.u != cell_of r.v);
+  is_true ~msg:"with storage of their own" (storage_of r.u != storage_of r.v);
   check_arr ~msg:"readable" [| 3.0 |] r.u;
   check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v;
   let x = place (vec32 [| 4.0; 5.0 |]) in
@@ -3242,9 +3242,9 @@ let test_duplicate_outputs_are_two_values () =
   in
   let r = twice x in
   is_true ~msg:"a read input returned twice is two copies"
-    (cell_of r.u != cell_of r.v
-    && cell_of r.u != cell_of x
-    && cell_of r.v != cell_of x);
+    (storage_of r.u != storage_of r.v
+    && storage_of r.u != storage_of x
+    && storage_of r.v != storage_of x);
   check_arr ~msg:"first copy" [| 4.0; 5.0 |] r.u;
   check_arr ~msg:"second copy" [| 4.0; 5.0 |] r.v;
   let host =
@@ -3255,7 +3255,7 @@ let test_duplicate_outputs_are_two_values () =
         { u = y; v = y })
   in
   let r = host { u = vec32 [| 2.0 |]; v = vec32 [| 3.0 |] } in
-  let address x = Nx_device.Buffer.address (Nx_effect.read x) in
+  let address x = Nx_device.Buffer.address (storage x) in
   is_false ~msg:"on the host too" (Nativeint.equal (address r.u) (address r.v));
   check_arr ~msg:"host value" [| 6.0 |] r.u;
   check_arr ~msg:"host copy" [| 6.0 |] r.v
@@ -3485,7 +3485,7 @@ let test_buffer_freed_under_a_running_kernel () =
    47 s there. *)
 let test_traced_values_have_no_storage () =
   let is_traced (type a b) (x : (a, b) Nx.t) =
-    match x with Nx_effect.Traced _ -> true | Host _ | Placed _ -> false
+    match Nx.Repr.v x with Traced _ -> true | Host _ | Placed _ -> false
   in
   let seen = ref [] in
   let f x =
@@ -4070,7 +4070,7 @@ let disk_int32 ~byte n =
   done;
   close_out oc;
   let file = Result.get_ok (Nx_device.Buffer.of_file path) in
-  ( Nx_effect.of_buffer Nx_dtype.int32 [| n |]
+  ( on_disk Nx_dtype.int32 [| n |]
       (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Int32 n),
     path )
 
@@ -4084,7 +4084,7 @@ let remove_file path =
 let read_from_disk () =
   Nx_device.Stats.bytes_out (Nx_device.stats Nx_device.disk)
 
-let strides x = Nx_array.View.strides (Nx_effect.view x)
+let strides x = Nx_array.View.strides (view x)
 
 (* [x] placed from the disk on CPU:1, whose memory is the host's, is its view of
    the file's pages, bit for bit [x]: nothing is uploaded or counted, and the
@@ -4147,7 +4147,7 @@ let test_disk_unaligned () =
     ~finally:(fun () -> remove_file path)
     (fun () ->
       let x =
-        Nx_effect.of_buffer Nx_dtype.int32
+        on_disk Nx_dtype.int32
           [| n - 1 |]
           (Nx_device.Buffer.view
              (Result.get_ok (Nx_device.Buffer.of_file path))
@@ -4438,7 +4438,8 @@ let test_split_capture_is_bound () =
   let x = Nx.place rows (rows86 ()) in
   let y, up, _ = delta (fun () -> g x) in
   equal ~msg:"binding a split capture uploads nothing" int 0 up;
-  equal ~msg:"the program counts the binding" int 1 (Atomic.get (cell_of w).bound);
+  equal ~msg:"the program counts the binding" int 1
+    (Nx.Repr.Storage.pins (storage_of w));
   equal ~msg:"value" (array float_exact)
     (Nx.to_array (Nx.mul_s (rows86 ()) 1.5))
     (Nx.to_array y);
@@ -4636,7 +4637,8 @@ let test_bound_capture_is_shared () =
         check_arr ~msg:"second function" [| 3.0; 4.0; 5.0 |] (g2 x))
   in
   equal ~msg:"only the inputs are uploaded" int 24 up;
-  equal ~msg:"one storage, bound by both functions" int 2 (Atomic.get (cell_of w).bound);
+  equal ~msg:"one storage, bound by both functions" int 2
+    (Nx.Repr.Storage.pins (storage_of w));
   ignore (Sys.opaque_identity (g1, g2, w))
 
 (* Each worker owns its compiled functions; only the immutable capture's cell
@@ -4665,7 +4667,7 @@ let[@inline never] compile_independent_shared_captures w =
   in
   let owners = Array.map Domain.join workers in
   equal ~msg:"all independent program bindings are counted" int
-    (domains * programs) (Atomic.get (cell_of w).bound);
+    (domains * programs) (Nx.Repr.Storage.pins (storage_of w));
   ignore (Sys.opaque_identity owners);
   owners.(0).(0)
 
@@ -4674,7 +4676,7 @@ let test_independent_shared_captures () =
   let surviving = compile_independent_shared_captures w in
   Domain.join (Domain.spawn full_major);
   equal ~msg:"collected bindings retire while the surviving graph stays bound"
-    int 1 (Atomic.get (cell_of w).bound);
+    int 1 (Nx.Repr.Storage.pins (storage_of w));
   check_arr ~msg:"the surviving graph still reads its captured view"
     (Array.init 8 (fun i -> float_of_int i +. 3.))
     (surviving (vec32 (Array.make 8 3.)));
@@ -4729,7 +4731,8 @@ let test_consuming_a_bound_storage () =
   equal ~msg:"the bound input seeds with no transfer" int 0 up;
   equal ~msg:"and lends nothing" int 0
     ((Rune.jit_stats ()).reused_bytes - before);
-  is_true ~msg:"the result has storage of its own" (cell_of z != cell_of w);
+  is_true ~msg:"the result has storage of its own"
+    (storage_of z != storage_of w);
   check_arr ~msg:"the result" [| 1.0; 2.0; 3.0 |] z;
   raises_consumed (fun () -> to_arr w);
   check_arr ~msg:"the program that binds it replays with it" [| 2.0; 4.0; 6.0 |]
@@ -4761,21 +4764,21 @@ let test_bound_capture_returned_is_a_copy () =
 
 (* Not inlined: once it returns, nothing but the collector's own bookkeeping
    refers to the placed value or to the function that bound it. It returns a
-   weak pointer to the value's cell, whose finaliser releases the storage. *)
+   weak pointer to the value's storage, whose finaliser releases it. *)
 let[@inline never] bind_and_drop () =
   let w = place (vec32 [| 1.0; 2.0; 3.0 |]) in
   let g = Rune.jit' ~devices:[ cpu1 ] (fun x -> Nx.mul x w) in
   check_arr ~msg:"result" [| 2.0; 4.0; 6.0 |] (g (vec32 [| 2.0; 2.0; 2.0 |]));
-  let cell = Weak.create 1 in
-  Weak.set cell 0 (Some (cell_of w));
-  cell
+  let storage = Weak.create 1 in
+  Weak.set storage 0 (Some (storage_of w));
+  storage
 
 let test_bound_buffer_is_released_with_its_owners () =
-  let cell = bind_and_drop () in
+  let storage = bind_and_drop () in
   let before = resident () in
   full_major ();
-  is_true ~msg:"the cell is collected once its owners are"
-    (Option.is_none (Weak.get cell 0));
+  is_true ~msg:"the storage is collected once its owners are"
+    (Option.is_none (Weak.get storage 0));
   is_true ~msg:"and its storage released" (resident () <= before - 12)
 
 let with_budget bytes f =

@@ -538,7 +538,7 @@ let with_disk_f32 values f =
       close_out oc;
       let file = Result.get_ok (Nx_device.Buffer.of_file path) in
       f
-        (Nx_effect.of_buffer Nx_dtype.float32 [| n |]
+        (on_disk Nx_dtype.float32 [| n |]
            (Nx_device.Buffer.view file ~offset:0 Nx_dtype.Scalar.Float32 n)))
 
 (* A weight on the disk placed on Metal is the file's pages, borrowed: nothing
@@ -552,7 +552,7 @@ let test_place_from_the_disk () =
   let placed, up = delta (fun () -> on_metal (Nx.matrix_transpose w)) in
   equal ~msg:"nothing is uploaded" int 0 up;
   equal ~msg:"nothing is counted" int 0 (resident () - base);
-  let strides x = Nx_array.View.strides (Nx_effect.view x) in
+  let strides x = Nx_array.View.strides (view x) in
   equal ~msg:"the view is kept" (array int)
     (strides (Nx.matrix_transpose w))
     (strides placed);

@@ -4,7 +4,7 @@ This page explains how rune implements its transformations with OCaml 5 effect h
 
 ## The Core Idea
 
-Every Nx tensor operation is a value of one type, `Nx_effect.Op.t` — `Binary (Add, x, y)`, `Reduce (Sum, axes, x)`, and so on. Rune's transformations are interpreters of those operations: functions from an operation to its result, each installed with `Nx_effect.intercept` for the extent of the function it transforms. An operation performed inside that extent is delivered to the interpreter as one OCaml 5 effect. While no interpreter is installed anywhere, Nx performs no effect and computes each operation directly.
+Every Nx tensor operation is a value of one type, `Nx.Op.t` — `Binary (Add, x, y)`, `Reduce (Sum, axes, x)`, and so on. Rune's transformations are interpreters of those operations: functions from an operation to its result, each installed with `Nx.Op.intercept` for the extent of the function it transforms. An operation performed inside that extent is delivered to the interpreter as one OCaml 5 effect. While no interpreter is installed anywhere, Nx performs no effect and computes each operation directly.
 
 Each interpreter matches every kind of operation, and the compiler checks that none is missing. They use them differently:
 

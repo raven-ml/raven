@@ -1,8 +1,8 @@
 (* An interpreter that forgets [Read]. *)
 
-open Nx_effect
+open Nx.Op
 
-let run : type r. r Op.t -> r =
+let run : type r. r t -> r =
  fun op ->
   match[@warning "@4@8"] op with
   | Unary _ | Binary _ | Compare _ | Where _ | Reduce _ | Scan _

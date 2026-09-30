@@ -3,10 +3,10 @@ One that forgets an operation does not compile, and neither does one that
 covers what it forgets with a wildcard.
 
   $ for d in $(echo "$OCAMLPATH" | tr ':' ' '); do
-  >   if [ -d "$d/nx/effect" ]; then lib=$d/nx; fi
+  >   if [ -f "$d/nx/META" ]; then lib=$d/nx; fi
   > done
   $ compile () {
-  >   ocamlc -I $lib/effect -I $lib/array -I $lib/backend -I $lib/cpu \
+  >   ocamlc -I $lib -I $lib/effect -I $lib/array -I $lib/backend -I $lib/cpu \
   >     -I $lib/device -I $lib/dtype -c "$1" 2>&1 | grep Error
   > }
   $ compile forgets.ml

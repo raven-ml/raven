@@ -504,9 +504,10 @@ let failed_trace_releases_capture_pin () =
       let capture = Rune.jit' ~devices:[device] (fun x ->
           ignore (Nx.add x weight); raise Exit) in
       raises Exit (fun () -> ignore (capture (Nx.full Nx.float32 [|4|] 2.)));
-      let cell = match weight with Nx_effect.Placed r -> r.r_cell
+      let storage = match Nx.Repr.v weight with
+        | Placed r -> Nx.Repr.Placed.storage r
         | Host _ | Traced _ -> fail "expected placed storage" in
-      equal int 0 (Atomic.get cell.bound);
+      equal int 0 (Nx.Repr.Storage.pins storage);
       equal (array float_exact) (Array.make 4 4.) (Nx.to_array ((donor ()) weight)))
 
 let destructive_failure_consumes_aliases () =
