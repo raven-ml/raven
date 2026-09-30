@@ -230,6 +230,17 @@ let text =
 let rejects substring text =
   raises_match (Exn.failure ~substring) (fun () -> Graph.of_string text)
 
+let slots =
+  test "reading takes the graph's slots from fresh storage" (fun () ->
+      let sink =
+        Graph.of_string
+          "0 Ops.BUFFER dtypes.float [] ParamArg(slot=9000, \
+           dtype=dtypes.float, size=4)\n"
+      in
+      let fresh = Ops.new_buffer (Single "CPU") 4 Float32 in
+      is_true ~msg:"new storage is not the graph's" (not (Ops.equal sink fresh));
+      greater Windtrap.int ~than:9000 (Ops.unique_num ()))
+
 let errors =
   group "reading"
     [
@@ -268,4 +279,4 @@ let errors =
             "0 Ops.CONST dtypes.weakint [] 1 tag=1 2\n");
     ]
 
-let () = exit (run "Graph" [ goldens; round_trip; text; errors ])
+let () = exit (run "Graph" [ goldens; round_trip; text; slots; errors ])
