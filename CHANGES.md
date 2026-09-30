@@ -2889,6 +2889,10 @@ thread.
 
 ### Nx
 
+- An NV device has room for a submission once each of its channels' rings is at
+  most half full, as an AMD device's rings are, so `Nx_device.submit` waits for
+  it and compiled code that writes the rings never overruns the entries the
+  GPU has not fetched.
 - **Breaking:** `Nx.Op.interpreter` gains `claims`, and `Nx.Op.intercept`
   hands its interpreter only the operations it claims. An unclaimed operation
   reaches the enclosing interpretation directly, without being performed

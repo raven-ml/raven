@@ -325,6 +325,20 @@ let run n ch ~timeline ~signal v body =
 
 let channels n = Option.get n.channels
 
+(* Whether each channel has room for half its ring, the most a submission writes
+   into it: a ring whose entries are all written reads as empty, so at most
+   [entries - 1] may be unfetched. *)
+let room n () =
+  match n.channels with
+  | None -> true
+  | Some (compute, copy) ->
+      let half (c : Pushbuf.channel) =
+        let put = Int64.to_int (Mmio.get64 c.put 0) in
+        2 * ((put - Mmio.get32 c.gp_get 0 + c.entries) mod c.entries)
+        < c.entries
+      in
+      half compute && half copy
+
 (* The pairs of GPUs, (lower index, higher), whose peer access the driver
    refused: it is one per pair, so copies between them go through host memory in
    both directions. *)
@@ -893,7 +907,7 @@ let make_device n ?finalize () =
     Driver.device ~name:(name n.index) ~arch:(arch n.props.sm_version)
       ~host:n.machine ~budget:(budget n)
       ~completion:(Sleep (sleep n))
-      ~load:(load n) ~peer:(peer n) ~dma:(dma n) ?finalize
+      ~load:(load n) ~peer:(peer n) ~dma:(dma n) ~room:(room n) ?finalize
       (Device_local
          {
            memory = allocator n Vram;

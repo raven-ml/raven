@@ -188,7 +188,10 @@ type channel = {
 (** The type for channels, the GPU's hardware queues. A writer, with the device
     taken:
     - waits until [gp_get] leaves room: at most [entries - 1] entries written
-      and not fetched, where [entries] is the length of [ring];
+      and not fetched, where [entries] is the length of [ring]. Inside
+      {!Nx_device.submit}, each channel has room for half its ring, which
+      [submit] waits for: work submitted there writes at most half a ring into
+      each channel and need not wait;
     - writes its entry at [put mod entries]: the address of its segment, which
       lies below [2{^40}], and the segment's length in 32-bit words, in the
       entry format of the channel's class ({!props}[.gpfifo_class]);
