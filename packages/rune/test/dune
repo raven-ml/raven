@@ -22,7 +22,8 @@
   test_device_lists
   test_rng
   test_total
-  test_half)
+  test_half
+  test_composition)
  (modules
   test_grad
   test_ops
@@ -38,7 +39,8 @@
   test_device_lists
   test_rng
   test_total
-  test_half)
+  test_half
+  test_composition)
  (package rune)
  (libraries
   rune
