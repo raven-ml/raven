@@ -2767,11 +2767,39 @@ returns and its host programs' source. It needs no GPU and no MTLCompiler.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, `.submit` (no test) | the argument layout, the indirect command buffer's placeholder and the messages of the host program | `O › recorded cases › *_compiled.golden`, `*_host.golden` (8 cases) |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `residency.value is None` | an encoder declares the buffers resident without a residency set | `O › recorded cases › chain_no_residency_set` |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `int(arch[5:]) < 9` | before Apple9, the encoder sets each pipeline | `O › recorded cases › chain_apple7`, `chain_mac2` |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `residency.value is None` | an encoder declares the buffers resident without a residency set | `O › recorded cases › chain_no_residency_set`: the engine's table of resources runs only where Metal has no residency sets (before macOS 15), and no such Mac runs `OX`, so the recorded host program is its only check |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `int(arch[5:]) < 9` | before Apple9, the encoder sets each pipeline | `O › recorded cases › chain_apple7`, `chain_mac2`; `OX` runs it on GPUs before Apple9, such as the M1's |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, the stamps | a profiled command runs in a command buffer of its own, which its stamps hold | `O › recorded cases › chain_profile` (a range over the commands but the last), `one_profile`; D7 and D34 |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes | a launch size that reads a variable is set on the command | `O › recorded cases › variable` |
 | tinygrad: `runtime/ops_metal.py` `get_enqueue_devs` on METAL | Metal's copies are the host's, between batches | `O › recorded cases › host_split` |
 | tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_lower` (`mtl_poll`) | a host program reads the timeline from the event | dropped: no host program reads a timeline (D1) |
 | tinygrad: runtime/test_wait_loop.py | host loops that wait on a signal | the `Hcq2` suite's: no Metal host program waits (D1) |
 | tinygrad: device/metal/test_metal.py::TestMetal::test_alloc_oom, test_failed_newLibraryWithData, test_free | the device's memory and pipelines | nx.metal.device's suite |
+
+### Execution
+
+`OX` runs batches through `tolk.engine` on the Mac's GPU (`test_ops_metal_exec`,
+the `slow` alias, built on macOS only).
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_bufferize`, `sels`, `new_icb`, `new_slots` (no test) | the engine's words of a batch | `OX › execution` (9 tests) |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies out, in and out between the GPU and the host | `OX › copies out, in and out again leave the host the bytes copied in` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch serves new inputs on each run | `OX › a run waits for its batch's previous run before it rewrites the batch's arguments` (eight inputs, run without synchronizing) |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic | a symbolic size on each run | `OX › a launch size that reads a variable is set on each run` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents | | dropped: tinygrad skips it on METAL, which maps nothing |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_compile_and_link_are_idempotent, test_caches_hold_no_buffers, test_jit_has_no_rt_buffers | the jit's caches and runtime ring | dropped here: the captured jit is L8's; the engine has no runtime ring |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Fence, TestHCQ2FFI | the fence and C calls on the CPU | the `Hcq2` and `Engine` suites' |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `OX › a profile records a span of each kernel on the device, in order`; `OX › a profiled batch run twice keeps the second run's spans` (D34) |
+| DIVERGENCES D30 | a range around calls, one submission per trip | `OX › each trip of a range runs its kernel on its own window` |
+| old: `unit/test_metal_completion.ml` (7 tests) | the old runtime's command ownership, completion order and retirement | dropped: completion and command buffers are nx.device's (`Submission`, `resolve`) |
+| old: `unit/test_runtime_metal.ml` "an argument structure of 15/16/29/33 buffers ..." | many buffers dispatch and rebind | `OX › a kernel of 33 buffers runs from its arguments' buffer`: one argument buffer, so no direct dispatch |
+| old: `unit/test_runtime_metal.ml` "replays symbolic local workgroup dimensions" | | `OX › a launch size that reads a variable is set on each run` |
+| old: `unit/test_runtime_metal.ml` "replays a multi-kernel chain in order", "compile and run one kernel", "exec is ordered" | | `OX › a chain of kernels computes what the interpreter says` |
+| old: `unit/test_runtime_metal.ml` "collects GPU timestamps across profiled replay", "wait returns gpu time" | | `OX › a profile records a span ...`, `› a profiled batch run twice ...` |
+| old: `unit/test_runtime_metal.ml` "relaunches without an intervening synchronize" | | `OX › a run waits for its batch's previous run ...` |
+| old: `unit/test_runtime_metal.ml` "shared copies respect buffer view offsets", "buffer views copy at byte offsets", "as_buffer aliases ...", "nested buffer views ...", "LRU-reused buffers ...", "collects dropped views ..." | | dropped: buffers and copies are nx.device's |
+| old: `unit/test_runtime_metal.ml` tensor-core, reduction and typed-argument tests | kernels' values | dropped here: kernels are the codegen and renderer suites'; their execution on Metal is L9's graph parity |
+| old: `unit/test_runtime_metal.ml` "beam timing replays compiled Metal queues" | | the engine's `measure` and L7's `Search` |
+| old: `unit/test_runtime_metal.ml` "multi-device calls ...", "a sharded kernel on two Metal devices ..." | | dropped: a Mac has one Metal device |
+| old: `unit/test_runtime_metal.ml` "CPU kernels map Metal storage ...", "Metal kernels map borrowed host memory ..." | | dropped here: borrows are nx.device's, and the engine's `link` suite |

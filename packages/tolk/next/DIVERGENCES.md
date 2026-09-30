@@ -1024,4 +1024,7 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Ops_metal suite (`test/runtime/ops_metal`):
   `recorded cases › chain_profile`, `› one_profile`, whose host programs are
   tinygrad's with D34 applied by their generator
-  (`gen/runtime/ops_metal.py`).
+  (`gen/runtime/ops_metal.py`); on macOS, `execution › a profile records a
+  span of each kernel on the device, in order` and `› a profiled batch run
+  twice keeps the second run's spans`, which releases the first run's command
+  buffer (slow).

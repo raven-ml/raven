@@ -48,20 +48,29 @@ type device = {
   submitting : unit -> unit;
 }
 
-(* The compiler has no queue encoder of Metal, CUDA, AMD or NV yet: every device
-   runs its calls one by one. *)
+(* The compiler has no queue encoder of CUDA, AMD or NV yet: those devices run
+   their calls one by one. *)
 let device devices name =
   let d = find "device" devices name in
   (* The disk runs no program: its copies are the runtime's. *)
   let target =
     if d == Nx_device.disk then Helpers.target "DISK" else target d
   in
-  {
-    device = d;
-    compiler = { Hcq2.target; queues = None };
-    placeholder = (fun _ -> None);
-    submitting = ignore;
-  }
+  match Metal.queues devices name d with
+  | Some (queues, placeholder, submitting) ->
+      {
+        device = d;
+        compiler = { Hcq2.target; queues = Some queues };
+        placeholder;
+        submitting;
+      }
+  | None ->
+      {
+        device = d;
+        compiler = { Hcq2.target; queues = None };
+        placeholder = (fun _ -> None);
+        submitting = ignore;
+      }
 
 (* Host programs *)
 

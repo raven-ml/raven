@@ -3,6 +3,7 @@
 
 (test
  (name test_ops_metal)
+ (modules test_ops_metal)
  (package tolk)
  (libraries windtrap tolk.next tolk_next_test zarith)
  (deps
@@ -13,3 +14,32 @@
    CACHEDB
    cache
    (run %{test} --exclude-tag slow))))
+
+; Running batches on the GPU needs a Mac, and is slow.
+
+(executable
+ (name test_ops_metal_exec)
+ (modules test_ops_metal_exec)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries
+  windtrap
+  tolk.next
+  tolk.next.engine
+  tolk_next_test
+  nx.device
+  nx.metal.device
+  zarith))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (enabled_if
+  (= %{system} macosx))
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_ops_metal_exec.exe} --tag slow))))
