@@ -2875,6 +2875,11 @@ thread.
 
 ### Nx
 
+- `Nx_metal_device` gives compiled code what it needs to submit work itself:
+  `msg_send`, the address of `objc_msgSend`, `selector`, which registers an
+  Objective-C selector, and `indirect_commands`, which records dispatches of
+  loaded programs into an indirect command buffer that lives as long as its
+  argument buffer.
 - **Breaking:** `Nx_device.Driver.mapping` is a variant: `Identity` for a
   device that addresses host memory at its host addresses, whose borrows are
   the memory itself at any address, and `Pages { map; unmap }` for a driver

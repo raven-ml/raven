@@ -250,6 +250,69 @@ value caml_nx_metal_resolve(value v_words) {
   return Val_unit;
 }
 
+value caml_nx_metal_msg_send(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)&objc_msgSend);
+}
+
+/* A selector is an opaque word: its bits cross as they are. */
+value caml_nx_metal_selector(value v_name) {
+  SEL selector = sel_registerName(String_val(v_name));
+  intnat word;
+  memcpy(&word, &selector, sizeof word);
+  return caml_copy_nativeint(word);
+}
+
+value caml_nx_metal_max_threads(value v_pipeline) {
+  id<MTLComputePipelineState> pipeline = Object_val(v_pipeline);
+  return Val_long((intnat)pipeline.maxTotalThreadsPerThreadgroup);
+}
+
+/* An indirect command buffer of one concurrent dispatch per pipeline of
+   [v_pipelines], each after the ones before it, with [v_buffer] as its kernel
+   buffer 0: the words [v_launches] give each its offset in the buffer, then
+   its threadgroups per grid and threads per threadgroup on three axes. The
+   result is the indirect command buffer, then each command, all retained. */
+value caml_nx_metal_new_icb(value v_device, value v_buffer, value v_pipelines,
+                            value v_launches) {
+  CAMLparam4(v_device, v_buffer, v_pipelines, v_launches);
+  CAMLlocal2(result, v);
+  id<MTLDevice> device = Object_val(v_device);
+  id<MTLBuffer> buffer = Object_val(v_buffer);
+  mlsize_t n = Wosize_val(v_pipelines);
+  id<MTLIndirectCommandBuffer> icb = nil;
+  @autoreleasepool {
+    MTLIndirectCommandBufferDescriptor *descriptor =
+        [[MTLIndirectCommandBufferDescriptor alloc] init];
+    descriptor.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
+    descriptor.maxKernelBufferBindCount = 1;
+    icb = [device newIndirectCommandBufferWithDescriptor:descriptor
+                                         maxCommandCount:(n > 0 ? n : 1)
+                                                 options:0];
+    [descriptor release];
+  }
+  if (icb == nil)
+    caml_failwith("cannot create an indirect command buffer: does the GPU "
+                  "support them?");
+  result = caml_alloc(n + 1, 0);
+  v = caml_copy_nativeint((intnat)icb);
+  Store_field(result, 0, v);
+  for (mlsize_t i = 0; i < n; i++) {
+    id<MTLIndirectComputeCommand> command =
+        [[icb indirectComputeCommandAtIndex:i] retain];
+    intnat w[7];
+    for (int k = 0; k < 7; k++) w[k] = Long_val(Field(v_launches, 7 * i + k));
+    [command setComputePipelineState:Object_val(Field(v_pipelines, i))];
+    [command setKernelBuffer:buffer offset:(NSUInteger)w[0] atIndex:0];
+    [command concurrentDispatchThreadgroups:MTLSizeMake(w[1], w[2], w[3])
+                      threadsPerThreadgroup:MTLSizeMake(w[4], w[5], w[6])];
+    [command setBarrier];
+    v = caml_copy_nativeint((intnat)command);
+    Store_field(result, i + 1, v);
+  }
+  CAMLreturn(result);
+}
+
 /* The autorelease pool of the thread that synchronizes, cycled at the end of
    each synchronization so that objects autoreleased by submissions outside
    any pool are drained. */

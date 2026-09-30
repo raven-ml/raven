@@ -28,6 +28,16 @@ external dispatch :
   nativeint ->
   unit = "test_metal_dispatch_byte" "test_metal_dispatch"
 
+external execute :
+  nativeint ->
+  nativeint ->
+  nativeint ->
+  nativeint array ->
+  nativeint ->
+  int ->
+  int ->
+  unit = "test_metal_execute_byte" "test_metal_execute"
+
 let metal = Nx_metal_device.v 0
 let m = Option.get (Nx_metal_device.of_device metal)
 
@@ -417,6 +427,73 @@ let dispatch_profile =
             (!before <= s.start && s.start <= s.stop && s.stop <= !after)
       | l -> fail (Printf.sprintf "%d events" (List.length l)))
 
+(* A command of [fill] over [threads] threads, its arguments at [offset]. *)
+let fill_command ?(local = (1, 1, 1)) ~offset threads =
+  {
+    Nx_metal_device.program = program ~binary:(Lazy.force library) ~name:"fill";
+    offset;
+    global = (threads, 1, 1);
+    local;
+  }
+
+let submitters =
+  group "submitters"
+    [
+      test "msg_send is the address of a function" (fun () ->
+          not_equal nativeint 0n Nx_metal_device.msg_send);
+      test "a selector is registered once per name" (fun () ->
+          let s = Nx_metal_device.selector "commandBuffer" in
+          not_equal nativeint 0n s;
+          equal nativeint s (Nx_metal_device.selector "commandBuffer");
+          not_equal nativeint s (Nx_metal_device.selector "commit"));
+      test "an indirect command buffer runs each dispatch on its arguments"
+        (fun () ->
+          let outs = List.init 2 (fun _ -> B.create metal S.UInt32 4) in
+          let args = B.create metal S.UInt8 512 in
+          let words = B.bigarray Bigarray.int64 (borrow_host args) in
+          List.iteri
+            (fun i out -> words.{32 * i} <- Int64.of_nativeint (B.address out))
+            outs;
+          let cmds =
+            List.init 2 (fun i -> fill_command ~offset:(256 * i) (4 - (2 * i)))
+          in
+          match Nx_metal_device.indirect_commands m args cmds with
+          | Error why -> fail why
+          | Ok (icb, commands) ->
+              equal int 2 (List.length commands);
+              List.iter (not_equal nativeint 0n) (icb :: commands);
+              Nx_device.submit [ metal ] ~touches:(args :: outs) (fun s ->
+                  execute (Nx_metal_device.queue m) (Nx_metal_device.event m)
+                    (Nx_metal_device.fence m)
+                    (Nx_metal_device.resources m)
+                    icb 2
+                    (Nx_device.Submission.value s metal));
+              Nx_device.synchronize metal;
+              let values out =
+                let a = B.bigarray Bigarray.int32 (borrow_host out) in
+                List.init 2 (fun i -> Int32.to_int a.{i})
+              in
+              equal
+                (list (list int))
+                [ [ 1; 4 ]; [ 1; 4 ] ]
+                (List.map values outs));
+      test
+        "a dispatch of more threads per threadgroup than its pipeline's is \
+         refused" (fun () ->
+          let args = B.create metal S.UInt8 256 in
+          match
+            Nx_metal_device.indirect_commands m args
+              [ fill_command ~local:(1 lsl 16, 1, 1) ~offset:0 1 ]
+          with
+          | Ok _ -> fail "made"
+          | Error why -> Windtrap.contains ~sub:"bigger than" why);
+      test "arguments of another device are refused" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              Nx_metal_device.indirect_commands m
+                (B.create Nx_device.host S.UInt8 256)
+                [ fill_command ~offset:0 1 ]));
+    ]
+
 let () =
   exit
     (run "nx.metal.device"
@@ -424,6 +501,7 @@ let () =
          opening;
          memory;
          work;
+         submitters;
          group "profiles" (dispatch_profile :: Nx_test.Profiles.copies [ metal ]);
          group "nx" (Nx_test.Runtimes.laws [ metal ]);
        ])

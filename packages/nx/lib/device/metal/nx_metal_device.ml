@@ -34,6 +34,15 @@ external signaled : nativeint -> int = "caml_nx_metal_signaled"
 external wait : nativeint -> int -> int -> bool = "caml_nx_metal_wait"
 external cycle_pool : unit -> unit = "caml_nx_metal_cycle_pool"
 external resolve : nativeint -> unit = "caml_nx_metal_resolve"
+external msg_send : unit -> nativeint = "caml_nx_metal_msg_send"
+external selector : string -> nativeint = "caml_nx_metal_selector"
+external max_threads : nativeint -> int = "caml_nx_metal_max_threads"
+
+(* The indirect command buffer, then each command, of the dispatches of the
+   pipelines on the buffer, each with its offset and its six launch sizes. *)
+external new_icb :
+  nativeint -> nativeint -> nativeint array -> int array -> nativeint array
+  = "caml_nx_metal_new_icb"
 
 type t = {
   dev : Nx_device.t;
@@ -162,3 +171,59 @@ let resource m b =
   else None
 
 let resources m = Array.of_seq (Hashtbl.to_seq_keys m.resources)
+let msg_send = msg_send ()
+
+type command = {
+  program : Nx_device.Program.t;
+  offset : int;
+  global : int * int * int;
+  local : int * int * int;
+}
+
+let indirect_commands m args cmds =
+  let invalid fmt =
+    Printf.ksprintf invalid_arg ("Nx_metal_device.indirect_commands: " ^^ fmt)
+  in
+  let buffer =
+    match resource m args with
+    | Some b -> b
+    | None -> invalid "the arguments are not on %s" (Nx_device.name m.dev)
+  in
+  let pipeline c =
+    if not (Nx_device.equal (Nx_device.Program.device c.program) m.dev) then
+      invalid "%s is not loaded on %s"
+        (Nx_device.Program.name c.program)
+        (Nx_device.name m.dev);
+    Nx_device.Program.handle c.program
+  in
+  let pipelines = List.map pipeline cmds in
+  let too_large c p =
+    let x, y, z = c.local in
+    if x * y * z > max_threads p then
+      Some
+        (Printf.sprintf "%s: local size (%d, %d, %d) bigger than %d"
+           (Nx_device.Program.name c.program)
+           x y z (max_threads p))
+    else None
+  in
+  match List.find_map Fun.id (List.map2 too_large cmds pipelines) with
+  | Some why -> Error why
+  | None -> (
+      let launch c =
+        let gx, gy, gz = c.global and lx, ly, lz = c.local in
+        [| Nx_device.Buffer.offset args + c.offset; gx; gy; gz; lx; ly; lz |]
+      in
+      match
+        new_icb m.mtl buffer (Array.of_list pipelines)
+          (Array.concat (List.map launch cmds))
+      with
+      | exception Failure why -> Error why
+      | objects ->
+          let objects = Array.to_list objects in
+          let programs = List.map (fun c -> c.program) cmds in
+          Gc.finalise
+            (fun _ ->
+              ignore (Sys.opaque_identity programs);
+              List.iter release objects)
+            args;
+          Ok (List.hd objects, List.tl objects))

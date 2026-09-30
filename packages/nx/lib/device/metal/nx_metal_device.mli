@@ -88,3 +88,44 @@ val resources : t -> nativeint array
     declare resident with [useResources:count:usage:] when the device has no
     residency set. It is empty when it has one. Read it inside
     {!Nx_device.submit}, where no allocation changes it. *)
+
+val msg_send : nativeint
+(** [msg_send] is the address of [objc_msgSend], which a compiled host program
+    calls to send the Objective-C messages that encode and commit its work:
+    with the type of the method it sends, receiver and selector first. *)
+
+val selector : string -> nativeint
+(** [selector name] is the selector [name], such as ["commandBuffer"] or
+    ["encodeSignalEvent:value:"], registered with the Objective-C runtime: the
+    word a compiled host program passes {!msg_send} for that message. *)
+
+(** {2:icb Indirect command buffers} *)
+
+type command = {
+  program : Nx_device.Program.t;  (** Its pipeline: a program of the device. *)
+  offset : int;
+      (** The byte offset of its arguments in the buffer of arguments, bound as
+          its kernel buffer 0. *)
+  global : int * int * int;  (** Its threadgroups per grid. *)
+  local : int * int * int;  (** Its threads per threadgroup. *)
+}
+(** The type for the dispatches of an indirect command buffer. *)
+
+val indirect_commands :
+  t ->
+  Nx_device.Buffer.t ->
+  command list ->
+  (nativeint * nativeint list, string) result
+(** [indirect_commands m args cmds] is an [MTLIndirectCommandBuffer] of [cmds],
+    each a concurrent dispatch of its program on its arguments in [args], a
+    buffer of [m]'s device, that runs after the dispatches before it; and the
+    [MTLIndirectComputeCommand] of each dispatch, in order. They are released
+    once [args] is unreachable, and the programs of [cmds] stay loaded until
+    then. Work that runs the indirect command buffer lists [args] in its
+    {!Nx_device.submit}'s [touches].
+
+    [Error msg] if a command's threads per threadgroup exceed its pipeline's
+    maximum, or if Metal cannot make the indirect command buffer.
+
+    Raises [Invalid_argument] if [args] is not a buffer of [m]'s device or if a
+    program of [cmds] is not loaded on it. *)

@@ -137,3 +137,42 @@ value test_metal_dispatch_byte(value *argv, int argc) {
   return test_metal_dispatch(argv[0], argv[1], argv[2], argv[3], argv[4],
                              argv[5], argv[6], argv[7], argv[8]);
 }
+
+/* Runs the [v_count] commands of the indirect command buffer [v_icb] as timeline
+   work signalling [v_value]. */
+value test_metal_execute(value v_queue, value v_event, value v_fence,
+                         value v_resources, value v_icb, value v_count,
+                         value v_value) {
+  CAMLparam5(v_queue, v_event, v_fence, v_resources, v_icb);
+  CAMLxparam2(v_count, v_value);
+  id<MTLCommandQueue> queue = Object_val(v_queue);
+  @autoreleasepool {
+    id<MTLCommandBuffer> command = [queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [command computeCommandEncoder];
+    [encoder waitForFence:Object_val(v_fence)];
+    mlsize_t count = Wosize_val(v_resources);
+    if (count > 0) {
+      id<MTLResource> *resources = malloc(count * sizeof(id));
+      for (mlsize_t i = 0; i < count; i++)
+        resources[i] = Object_val(Field(v_resources, i));
+      [encoder useResources:resources
+                      count:count
+                      usage:MTLResourceUsageRead | MTLResourceUsageWrite];
+      free(resources);
+    }
+    [encoder executeCommandsInBuffer:Object_val(v_icb)
+                           withRange:NSMakeRange(0, (NSUInteger)Long_val(v_count))];
+    [encoder updateFence:Object_val(v_fence)];
+    [encoder endEncoding];
+    [command encodeSignalEvent:Object_val(v_event)
+                         value:(uint64_t)Long_val(v_value)];
+    [command commit];
+  }
+  CAMLreturn(Val_unit);
+}
+
+value test_metal_execute_byte(value *argv, int argc) {
+  (void)argc;
+  return test_metal_execute(argv[0], argv[1], argv[2], argv[3], argv[4],
+                            argv[5], argv[6]);
+}
