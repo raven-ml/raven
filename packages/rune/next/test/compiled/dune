@@ -1,0 +1,42 @@
+; The suite runs the compiled backend on the host by default; its Metal tests
+; and its cost figures are slow. CACHEDB is a directory of the sandbox, so that
+; every run compiles its programs.
+
+(test
+ (name test_compiled)
+ (package rune)
+ (libraries
+  windtrap
+  rune.next
+  rune_next_test
+  nx_test
+  nx
+  nx.array
+  nx.backend
+  nx.cpu
+  nx.device
+  nx.dtype
+  tolk.next
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml)))
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_compiled.exe} --tag slow))))
