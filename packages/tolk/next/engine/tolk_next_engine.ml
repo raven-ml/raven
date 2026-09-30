@@ -213,7 +213,8 @@ let lane buffers i = match buffers with [ b ] -> b | bs -> List.nth bs i
 
 (* [b]'s address on [d], through [d]'s borrow of it, which [keep] keeps. *)
 let address keep d b =
-  if B.device b == d then B.address b
+  if (B.device b == d) [@mutate off "a device's borrow of its own buffer is it"]
+  then B.address b
   else
     match B.borrow d b with
     | Ok m ->
@@ -289,7 +290,7 @@ let le dt (v : Dtype.value) =
 
 let write b off s =
   let n = String.length s in
-  if n > 0 then
+  if (n > 0) [@mutate off "a copy of no bytes writes nothing"] then
     let src = Bigarray.(Array1.init char c_layout n (String.get s)) in
     B.copy ~src:(B.of_bigarray src) ~dst:(at b off n)
 
@@ -370,8 +371,11 @@ let link_batch ~device ~storage ~keep call patches =
   let reached =
     List.filter_map
       (fun u ->
-        if Ops.op u = Op.Buffer || is_placeholder u then
-          Some (Ops.Tbl.find storage u)
+        if
+          (Ops.op u = Op.Buffer
+          || is_placeholder u)
+          [@mutate off "patches reach only storage and placeholders"]
+        then Some (Ops.Tbl.find storage u)
         else None)
       patched
     |> List.concat
@@ -430,7 +434,8 @@ let run_batch ~vars storage slots b =
   Nx_device.submit b.queues ~touches (fun s ->
       List.iteri
         (fun i d ->
-          if b.last.(i) > 0 then Nx_device.Submission.wait s d b.last.(i))
+          if (b.last.(i) > 0) [@mutate off "a wait for 0 returns at once"] then
+            Nx_device.Submission.wait s d b.last.(i))
         b.queues;
       List.iter
         (fun (d', v) ->
@@ -639,7 +644,12 @@ let rec run_call ~vars t slots = function
             (List.fold_left
                (fun ds b ->
                  let d = B.device b in
-                 if List.memq d ds then ds else d :: ds)
+                 if
+                   List.memq d ds
+                   [@mutate
+                     off "a second synchronization finds nothing to wait for"]
+                 then ds
+                 else d :: ds)
                [] buffers);
           Nx_device.Program.call p.program (Array.of_list buffers)
             (Array.of_list (List.map (value vars i) vals)))
