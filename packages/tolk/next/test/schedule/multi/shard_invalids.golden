@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=8, device="CPU")
+1 Ops.CONST dtypes.bool [] Invalid
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.EXPAND dtypes.bool [1, 2]
+4 Ops.STORE dtypes.void [0, 3]
+5 Ops.AFTER dtypes.bool [0, 4]
+6 Ops.PARAM dtypes.bool [] ParamArg(slot=1, dtype=dtypes.bool, size=4, device=("CPU", "CPU:1"))
+7 Ops.CONST dtypes.weakint [] 2
+8 Ops.RANGE dtypes.weakint [7] (-1, AxisType.DEVICE)
+9 Ops.UNSHARD dtypes.bool [6, 8] (0,)
+10 Ops.COPY dtypes.bool [5, 8] ("CPU", "CPU:1")
+11 Ops.CONST dtypes.weakint [] 4
+12 Ops.MUL dtypes.weakint [8, 11]
+13 Ops.SHRINK dtypes.bool [10, 12, 11]
+14 Ops.UNSHARD dtypes.bool [13, 8] (0,)
+15 Ops.STORE dtypes.void [9, 14]
+16 Ops.AFTER dtypes.bool [9, 15]
+17 Ops.SINK dtypes.void [5, 16]
+

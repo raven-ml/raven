@@ -1,0 +1,34 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device=("CPU", "CPU:1"))
+6 Ops.STACK dtypes.weakint [1, 1]
+7 Ops.RESHAPE dtypes.float [5, 6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.STACK dtypes.weakint [1, 8, 1]
+10 Ops.RESHAPE dtypes.float [7, 9]
+11 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device=("CPU", "CPU:1"))
+12 Ops.RESHAPE dtypes.float [11, 3]
+13 Ops.STACK dtypes.weakint [8, 1, 2]
+14 Ops.RESHAPE dtypes.float [12, 13]
+15 Ops.PERMUTE dtypes.float [14] (0, 2, 1)
+16 Ops.MUL dtypes.float [10, 15]
+17 Ops.PERMUTE dtypes.float [16] (2, 0, 1)
+18 Ops.REDUCE dtypes.float [17] (Ops.ADD, 1)
+19 Ops.STAGE dtypes.float [18]
+20 Ops.MSELECT dtypes.float [19] 0
+21 Ops.COPY dtypes.float [20] "CPU"
+22 Ops.COPY dtypes.float [20] "CPU:1"
+23 Ops.MSTACK dtypes.float [21, 22]
+24 Ops.MSELECT dtypes.float [19] 1
+25 Ops.COPY dtypes.float [24] "CPU"
+26 Ops.COPY dtypes.float [24] "CPU:1"
+27 Ops.MSTACK dtypes.float [25, 26]
+28 Ops.ADD dtypes.float [23, 27]
+29 Ops.STORE dtypes.void [4, 28]
+30 Ops.AFTER dtypes.float [4, 29]
+31 Ops.SINK dtypes.void [30]
+

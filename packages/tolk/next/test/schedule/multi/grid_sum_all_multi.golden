@@ -1,0 +1,42 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+1 Ops.STACK dtypes.void []
+2 Ops.RESHAPE dtypes.float [0, 1]
+3 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.STACK dtypes.weakint [4, 4]
+6 Ops.RESHAPE dtypes.float [3, 5]
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.STACK dtypes.weakint [7, 7]
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.STACK dtypes.weakint [9, 4]
+11 Ops.SHRINK dtypes.float [6, 8, 10]
+12 Ops.STACK dtypes.weakint [9, 9]
+13 Ops.SHRINK dtypes.float [11, 8, 12]
+14 Ops.COPY dtypes.float [13] "CPU:0"
+15 Ops.STACK dtypes.weakint [7, 9]
+16 Ops.SHRINK dtypes.float [11, 15, 12]
+17 Ops.COPY dtypes.float [16] "CPU:1"
+18 Ops.STACK dtypes.weakint [9, 7]
+19 Ops.SHRINK dtypes.float [6, 18, 10]
+20 Ops.SHRINK dtypes.float [19, 8, 12]
+21 Ops.COPY dtypes.float [20] "CPU:2"
+22 Ops.SHRINK dtypes.float [19, 15, 12]
+23 Ops.COPY dtypes.float [22] "CPU:3"
+24 Ops.MSTACK dtypes.float [14, 17, 21, 23]
+25 Ops.RANGE dtypes.weakint [4] (-1, AxisType.DEVICE)
+26 Ops.FLOORDIV dtypes.weakint [25, 9]
+27 Ops.MUL dtypes.weakint [26, 9]
+28 Ops.STACK dtypes.weakint [27, 7]
+29 Ops.STACK dtypes.weakint [4, 9]
+30 Ops.PAD dtypes.float [24, 28, 29]
+31 Ops.FLOORMOD dtypes.weakint [25, 9]
+32 Ops.MUL dtypes.weakint [31, 9]
+33 Ops.STACK dtypes.weakint [7, 32]
+34 Ops.PAD dtypes.float [30, 33, 5]
+35 Ops.ALLREDUCE dtypes.float [34] (Ops.ADD, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
+36 Ops.REDUCE dtypes.float [35] (Ops.ADD, 2)
+37 Ops.STORE dtypes.void [2, 36]
+38 Ops.AFTER dtypes.float [2, 37]
+39 Ops.SINK dtypes.void [38]
+

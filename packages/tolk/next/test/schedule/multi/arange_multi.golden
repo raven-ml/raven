@@ -1,0 +1,53 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device=("CPU", "CPU:1"))
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.STACK dtypes.weakint [5, 5]
+7 Ops.SHRINK dtypes.float [4, 6, 3]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device=("CPU", "CPU:1"))
+9 Ops.RESHAPE dtypes.float [8, 3]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.CAST dtypes.int [10] dtypes.int
+12 Ops.CONST dtypes.weakint [] 16
+13 Ops.EXPAND dtypes.int [11, 12]
+14 Ops.CONST dtypes.weakint [] 15
+15 Ops.CONST dtypes.weakint [] 31
+16 Ops.PAD dtypes.int [13, 14, 15]
+17 Ops.STACK dtypes.weakint [10, 15]
+18 Ops.RESHAPE dtypes.int [16, 17]
+19 Ops.RESHAPE dtypes.int [18, 15]
+20 Ops.CONST dtypes.weakint [] 17
+21 Ops.EXPAND dtypes.int [19, 20]
+22 Ops.CONST dtypes.weakint [] 527
+23 Ops.RESHAPE dtypes.int [21, 22]
+24 Ops.CONST dtypes.weakint [] 512
+25 Ops.SHRINK dtypes.int [23, 5, 24]
+26 Ops.CONST dtypes.weakint [] 32
+27 Ops.STACK dtypes.weakint [12, 26]
+28 Ops.RESHAPE dtypes.int [25, 27]
+29 Ops.STACK dtypes.weakint [12, 12]
+30 Ops.SHRINK dtypes.int [28, 6, 29]
+31 Ops.STACK dtypes.weakint [12, 12, 10]
+32 Ops.RESHAPE dtypes.int [30, 31]
+33 Ops.RESHAPE dtypes.int [32, 29]
+34 Ops.PERMUTE dtypes.int [33] (1, 0)
+35 Ops.PERMUTE dtypes.int [34] (1, 0)
+36 Ops.REDUCE dtypes.int [35] (Ops.ADD, 1)
+37 Ops.CONST dtypes.weakint [] -1
+38 Ops.ADD dtypes.int [36, 37]
+39 Ops.STACK dtypes.weakint [2, 2]
+40 Ops.RESHAPE dtypes.int [38, 39]
+41 Ops.CAST dtypes.float [40] dtypes.float
+42 Ops.RANGE dtypes.weakint [1] (-1, AxisType.DEVICE)
+43 Ops.MUL dtypes.weakint [42, 1]
+44 Ops.STACK dtypes.weakint [43, 5]
+45 Ops.SHRINK dtypes.float [41, 44, 3]
+46 Ops.ADD dtypes.float [9, 45]
+47 Ops.STORE dtypes.void [7, 46]
+48 Ops.AFTER dtypes.float [4, 47]
+49 Ops.UNSHARD dtypes.float [48, 42] (0,)
+50 Ops.SINK dtypes.void [49]
+

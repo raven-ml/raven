@@ -2032,3 +2032,98 @@ calls never return fail. One mutant survives, equivalent: `j < i` as `<=` in
 | old: unit/engine/test_realize.ml "parallel lowering retains call order, deduplicates, and permits nested batches" | order kept; nested batches make progress | `WK › law › keeps the order of l when later elements finish first`; `WK › nesting › calls from f compute List.map and share the budget`. Deduplication is the lowering's |
 | old: unit/engine/test_realize.ml "beam lowering stays in the caller" | no pool under BEAM | dropped here: realize.py chooses not to use the pool, which is the lowering's |
 | old: lib/engine/worker.mli (no test) | "The first parallel batch fixes the shared admission limit from PARALLEL" | dropped: each call reads its caller's PARALLEL |
+
+## Multi
+
+The suite is `Tolk_next.Multi` (`schedule/multi/`), written `MU` below.
+`MU › multi_pm › recorded › programs` holds what tinygrad's `multi_pm` makes of
+the graph that scheduling a `Tensor` program on 2, 4 or 8 CPU devices hands it
+(`<program>_multi.golden`), and `› kernels` what it makes of kernels sharded
+across a workgroup's threads. `MU › multi_pm › values` states, on each
+recorded program `Tensors` can run, that the rewrite keeps what the program
+writes, and `MU › multi_pm › laws` that a generated sharded value, after a few
+operations, holds on each device the value computed whole; its values draw
+grids of 2 by 2 and 2 by 4 devices. The other groups state one rule each.
+`test_multi_early` runs under `LATE_ALLREDUCE=0`, which the library reads once,
+in a process of its own, so that each branch of that setting is tested by the
+process that takes it. Every mutant of `multi.ml` the suites reach is killed;
+the setting's own check runs at initialisation, outside every test, and each
+of its branches fails one process's tests.
+
+D21 is pinned by `MU › multi_pm › two sharded axes ›` "a reshape divides each
+sharded axis by its own count (D21)" and "a reshape of a mesh of 2 by 4 devices
+keeps each tile (D21)"; D23 by `MU › multi_pm › shard selections › a selection
+of a movement by the device range takes the selected device's position (D23)`
+and by the law's first example.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_half, test_allreduce_cast_bf16 | a sum of a half or bfloat16 cast up crosses the devices in 16 bits, and in 32 without `ALLREDUCE_CAST` | `MU › multi_pm › recorded › programs › allreduce_cast_multi.golden`, `allreduce_no_cast_multi.golden`, `allreduce_cast_bfloat16_multi.golden`; `MU › multi_pm › reductions ›` "a value cast up from a half crosses the devices as a half", "… from a bfloat16 …", "without allreduce_cast, it crosses in the type it is reduced in" |
+| tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_float32_noop | | `MU › … › allreduce_cast_float_multi.golden` |
+| tinygrad: null/test_multitensor.py::TestMultiRamUsage (13 tests) | bytes each device holds | dropped here: memory is Memory's section and the executor's |
+| tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_replicated_scalar, test_multi_add_replicated_scalar | a sharded value times a scalar on every device stays sharded | `MU › … › add_replicated_scalar_multi.golden`, its value; `MU › multi_pm › arithmetic › a scalar source is kept as it is` |
+| tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_call_scalar | a per-device scalar from a call | `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards`; the value is the executor's |
+| tinygrad: null/test_multitensor.py::TestMultiAxis::test_reshape_shard_invalid, TestMultiTensor::test_shard_reshape_cross_boundary | a reshape that moves elements between shards raises | `MU › multi_pm › movements › a reshape that moves elements between shards is refused` |
+| tinygrad: null/test_multitensor.py::TestMultiAxis::test_reshape_shard_valid | | `MU › multi_pm › movements › a reshape keeps a sharded axis whole`; `reshape_split_multi.golden`, `reshape_inner_multi.golden` |
+| tinygrad: null/test_multitensor.py::TestMultiAxis::test_uop_shard_axis_none, test_empty_like_sharded, test_symbolic_reshape_shard_axis; TestMultiTensor::test_shard_like, test_shard_not_multiple | `UOp.axis`, `shard`, `empty_like` | dropped here: `Ops`' constructors and properties, Ops' section |
+| tinygrad: null/test_multitensor.py::TestMultiTensor::test_bn_ast_on_devices; TestBatchNorm::test_synced_vs_unsynced_bn | a batch norm on 4 devices | `MU › … › batchnorm_stats_multi.golden`, `batchnorm_stats_1_multi.golden`, their values; one kernel per device is Rangeify's |
+| tinygrad: null/test_multitensor.py::TestMultiTensor::test_init_rand_with_multiple_devices_fail, test_rand_like_* (5 tests) | | dropped: `Tensor` surface, the frontend is nx |
+| tinygrad: null/test_multitensor.py::TestBackendMultiTensor::test_shard_invalids_contiguous | | `MU › … › shard_invalids_multi.golden`; its kernel count is Rangeify's |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_to, test_shard, test_shard_empty, test_shard_same_device, test_numpy, test_tensor_from_multi | | `MU › … › shard_multi.golden`, `replicate_multi.golden`, `gather_multi.golden`, their values; `MU › multi_pm › copies`; the rest is the `Tensor` surface |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_four_add, test_elementwise_dtype, test_shard_elementwise, test_simple_add, test_simple_add_X, test_simple_add_W, test_simple_add_XW, test_alu_deviceless_const, test_add_rank_expand_shard | | `MU › … › add_multi.golden`, `add_four_multi.golden`, `add_eight_multi.golden`, `add_whole_multi.golden`, `add_broadcast_multi.golden`, `cast_half_multi.golden`, `arange_multi.golden`, `expand_multi.golden`, their values; `MU › multi_pm › arithmetic`; `MU › multi_pm › laws` |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_shrink_on_shard_axis, test_const_like_shrink_on_shard_axis, test_arange_shrink | | `MU › … › shrink_one_shard_multi.golden`, its value; `MU › multi_pm › movements › a shrink to one device's shard places that shard on every device`; the laws' `select shard` step |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_simple_reduce, test_shard_reduce, test_shard_plus_one_sum, test_shard_plus_one_sum_d0, test_allreduce_shard_ring_sum | | `MU › … › sum_sharded_axis_multi.golden`, `sum_other_axis_multi.golden`, `sum_all_multi.golden`, `max_sharded_axis_multi.golden`, their values; `MU › multi_pm › reductions`; the ring is Allreduce's section |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_stack | | `MU › … › stack_multi.golden`; `MU › multi_pm › arithmetic › a stack of values sharded alike stacks their shards` |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_allreduce_naive, test_allreduce_ring, test_allreduce_all2all, test_fuzz_allreduce | an allreduce of a sharded value | `MU › … › explicit_allreduce_multi.golden`; `MU › multi_pm › reductions › an allreduce of a sharded value reduces its shards`; the algorithms are Allreduce's section |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_allreduce_cast_half, test_allreduce_cast_half_assign | | `MU › … › allreduce_cast_multi.golden`; the kernel counts are Rangeify's |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_multiple_to_single_device, test_to_single_device_gather_memory | | `MU › … › gather_multi.golden`, `gather_four_multi.golden`, `select_first_multi.golden`, their values; `MU › multi_pm › copies`; memory is Memory's section |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_matmul_shard_none, _X_0, _X_1, _W_0, _W_1, _0_0, _0_1, _1_0, _1_1 (9 tests), test_double_matmul_shard_* (4 tests) | | `MU › … › matmul_rows_multi.golden` (X 0), `matmul_columns_multi.golden` (W 1), `matmul_contracted_multi.golden` (1, 0), `matmul_resharded_multi.golden` (0, 0), `double_matmul_multi.golden`, their values; the laws |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_conv_data_shard, test_conv_bias_data_shard | | `MU › … › conv_multi.golden`, its value |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_embedding, test_rmsnorm, test_sdpa_causal_shard_batch | | `MU › … › embedding_multi.golden`, `rmsnorm_multi.golden`, `attention_multi.golden`, their values |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_flip, test_reshape_on_axis, test_shard_reshape | | `MU › … › flip_multi.golden`, `reshape_split_multi.golden`, `reshape_inner_multi.golden`, their values; `MU › multi_pm › movements` |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_gradient, test_backprop_conv, test_backprop_conv_wino, test_backward_sum, test_embedding_backward, test_embedding_backward_shard_weight, test_lr_scheduler_OneCycleLR | | dropped: gradients, tolk.next does not differentiate |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_shard_no_recompile, test_shard_beam, test_copy_jit, test_allreduce_*_jit, test_multitensor_jit_*, test_multi_tensor_jit_*, test_data_parallel_* | | dropped here: the captured jit (L8) and the end-to-end suite |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_assign_kv_cache_multi, test_mlb_assign_change_axis, test_clone | | `MU › … › assign_multi.golden`, `assign_shard_multi.golden`, `variable_shrink_multi.golden`, their values; the jit is L8's |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_symbolic_broadcast_copy, test_symbolic_broadcast_consumed | | `MU › multi_pm › copies › a copy of a value on one device to several is a copy to each`; `variable_shrink_multi.golden` |
+| tinygrad: runtime/test_multitensor.py::TestMultiTensor::test_rand_on_multiple_devices*, test_rand_like_on_shard*, test_full_like_on_shard*, test_dropout_on_shard*, test_shard_memory, test_multi_const_folding; TestHandleData; TestMultiFromUnrenderable | | dropped: `Tensor` surface and the executor |
+| tinygrad: runtime/test_multitensor.py::TestMultiBufferView::test_shrink_2d, test_reshape_then_shrink, test_chained_shrink, test_4_devices | a view of a sharded buffer | `MU › … › shrink_rows_multi.golden`, `reshape_then_shrink_multi.golden`, `shrink_chained_multi.golden`, `shrink_element_multi.golden`, their values; that the view needs no kernel is the scheduler's |
+| tinygrad: runtime/test_multitensor.py::Test2DShard (6 tests) | two axes sharded as a grid of devices | `MU › … › grid_add_multi.golden`, `grid_sum_all_multi.golden`, `grid_sum_other_axis_multi.golden`, `grid_matmul_multi.golden`, `grid_to_one_multi.golden`, their values; the laws draw grids |
+| tinygrad: runtime/test_multitensor.py::TestShrinkMultiTensorShardedAxis::test_shrink_bad_args | | `MU › multi_pm › movements › a shrink of part of a sharded axis is refused`, `a shrink of another axis shrinks each shard` |
+| tinygrad: runtime/test_multitensor.py::TestShrinkMultiTensorShardedAxis::test_ops, test_add_two_partitions, test_add_different_tensors | operations on one device's shard | `MU › … › add_two_partitions_multi.golden`, its value; the laws' `select shard` step followed by operations |
+| tinygrad: runtime/test_multitensor.py::TestBatchNorm (4 tests) | | `batchnorm_stats`; the backward passes are dropped, as above |
+| tinygrad: runtime/test_multitensor.py::TestMultiSetitem::test_setitem_scalar_axis0, test_setitem_slice_cross_shard, test_setitem_full_slice, test_setitem_stride, test_setitem_single_shard, test_setitem_tensor_value_replicated, test_setitem_tensor_value_sharded_aligned | | `MU › … › setitem_row_multi.golden`, `setitem_rows_multi.golden`, `setitem_columns_multi.golden`, `setitem_stride_multi.golden`, `setitem_replicated_value_multi.golden`, `setitem_sharded_value_multi.golden`, their values |
+| tinygrad: runtime/test_multitensor.py::TestMultiSetitem::test_setitem_scalar_axis_none | a replicated value holds no shard | dropped: no rule of `multi_pm` applies |
+| tinygrad: runtime/test_multitensor.py::TestTensorOps::test_interpolate, test_bitcast | | `MU › … › interpolate_multi.golden`, `bitcast_multi.golden`, their values |
+| tinygrad: runtime/test_multitensor.py::TestMultiTransformer | | dropped here: the end-to-end suite |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex::test_contiguous_fragment_index, test_strided_fragment_index | an index into a thread's rows | `MU › multi_pm › recorded › kernels › fragment_blocks_multi.golden`, `fragment_strided_multi.golden`; `MU › multi_pm › fragments` |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardIndex::test_fragment_index_cannot_shard | | `MU › multi_pm › fragments › an index into rows another thread holds is refused` |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardAlu (2 tests) | | `MU › … › kernels › alu_scalar_multi.golden`, `alu_whole_multi.golden` |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardStore::test_store_unshard_value, test_store_unshard_value_2axis, test_store_load_reg_fragment | | `MU › … › kernels › store_value_multi.golden`, `store_value_two_axes_multi.golden`, `store_load_multi.golden`; `MU › multi_pm › stores and calls` |
+| tinygrad: runtime/test_custom_kernel.py::TestUnshardStore::test_store_load_local_fragment | an expected failure at run time | dropped: what fails is the kernel's execution; its rewrite is `store_load`'s |
+| tinygrad: runtime/test_custom_kernel.py::test_simple_sharded, test_sharded_add_one; runtime/test_function.py multi-device custom kernels | a custom kernel on shards | `MU › … › custom_kernel_multi.golden`, `inline_function_multi.golden`; `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards` |
+
+### old tolk: unit/engine/test_multi.ml, unit/engine/test_collectives.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_multi.ml "flat sharded params allocate only their local maximum", "axes sort with ranges and close their scope" | `max_shape`, `sharding` and `ranges` of an Unshard | dropped here: `Ops`' properties, Ops' section |
+| old: unit/engine/test_multi.ml "reshape divides each axis by its own range count" | | `MU › multi_pm › two sharded axes › a reshape divides each sharded axis by its own count (D21)` |
+| old: unit/engine/test_multi.ml "multi-axis ALU slices whole tiles locally" | | `MU › multi_pm › two sharded axes › an operation with a whole value takes its tile of it` |
+| old: unit/engine/test_multi.ml "an operand of lower rank keeps its axis where it broadcasts" | `axis` of a broadcast operation | dropped here: `Ops.axis`, Ops' section |
+| old: unit/engine/test_multi.ml "permutation keeps the owning range with its axis" | | `MU › multi_pm › two sharded axes › a permute keeps each range with its axis` |
+| old: unit/engine/test_multi.ml "own-shard shrink resolves one axis at a time" | | `MU › multi_pm › two sharded axes › a shrink to one axis's own shard keeps the other's sharding`; `MU › multi_pm › fragments › a shrink to a thread's own shard removes its sharding` |
+| old: unit/engine/test_multi.ml "thread indices resolve only their owned shard" | | `MU › multi_pm › fragments` (3 tests) |
+| old: unit/engine/test_multi.ml "unsharded stores select each fragment's destination" | | `MU › multi_pm › stores and calls › a store of a sharded value into a whole one stores into its part`; `store_value_multi.golden` |
+| old: unit/engine/test_multi.ml "two-axis device gather preserves every tile" | | `MU › … › grid_to_one_multi.golden`, its value; the laws draw grids |
+| old: unit/engine/test_multi.ml "partial multi-axis allreduce is rejected" | | `MU › multi_pm › reductions › a reduction of some sharded axes but not all is refused` |
+| old: unit/engine/test_multi.ml group "Resolution" (2 tests) | resolving Mstack and Mselect to device buffers | dropped: rune's executor |
+| old: unit/engine/test_multi.ml group "Execution" (7 tests) | shard, gather, elementwise, broadcast and reductions on 2 and 4 devices | `MU › multi_pm › values` (`shard`, `gather`, `add`, `add_broadcast`, `sum_sharded_axis`, `max_sharded_axis`, `sum_other_axis`); `MU › multi_pm › laws` |
+| old: unit/engine/test_multi.ml group "Kernels over split storage" (7 tests) | old tolk's `scatter_indexed` and `block_matmul` on split storage | dropped: old tolk's frontend operations; an index that crosses shards is `MU › multi_pm › fragments › an index into rows another thread holds is refused` |
+| old: unit/engine/test_multi.ml group "Cuda" | | dropped: hardware and the executor |
+| old: unit/engine/test_collectives.ml group "copies" | copies of rows of a staged value | `MU › … › shrink_one_shard_multi.golden`, `select_first_multi.golden`; the bytes moved are Memory's and the executor's |
+| old: unit/engine/test_collectives.ml group "all-gather" | gathers of a sharded value, on one axis and on a grid | `MU › … › gather_multi.golden`, `gather_four_multi.golden`, `grid_to_one_multi.golden`, their values; that a gather is one call and the bytes each device holds are dropped: tinygrad has no all-gather call |
+| old: unit/engine/test_collectives.ml group "reduce-scatter", "an allreduce also used whole is reduced once" | resharding | `MU › … › add_resharded_multi.golden`, `matmul_resharded_multi.golden`, `reshard_devices_multi.golden`, their values; `MU › multi_pm › arithmetic › sources sharded differently are resharded on the result's axis`; tinygrad has no reduce-scatter call |
+| old: unit/engine/test_collectives.ml "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST" | | `MU › multi_pm › reductions › a value cast up from a half crosses the devices as a half` |
+| old: unit/engine/test_collectives.ml "an allreduce in a call body raises" | | dropped: tinygrad expands an allreduce in a call body; `MU › … › inline_function_multi.golden` rewrites a body |

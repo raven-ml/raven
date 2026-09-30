@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.STACK dtypes.weakint [1, 2, 1, 1]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, addrspace=AddrSpace.REG)
+6 Ops.CONST dtypes.weakint [] 1
+7 Ops.STACK dtypes.weakint [1, 6, 6, 1]
+8 Ops.RESHAPE dtypes.float [5, 7]
+9 Ops.RANGE dtypes.weakint [2] (0, AxisType.LOCAL)
+10 Ops.RANGE dtypes.weakint [1] (1, AxisType.LOCAL)
+11 Ops.UNSHARD dtypes.float [8, 9, 10] (1, 2)
+12 Ops.CONST dtypes.weakfloat [] 0.0
+13 Ops.CAST dtypes.float [12] dtypes.float
+14 Ops.EXPAND dtypes.float [13, 3]
+15 Ops.STORE dtypes.void [11, 14]
+16 Ops.AFTER dtypes.float [11, 15]
+17 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+18 Ops.RESHAPE dtypes.float [17, 3]
+19 Ops.ADD dtypes.float [16, 18]
+20 Ops.STORE dtypes.void [4, 19]
+21 Ops.END dtypes.void [20, 10, 9]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="store_value_two_axes", opts_to_apply=())
+

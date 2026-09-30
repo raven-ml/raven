@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=0, dtype=dtypes.bfloat16, size=4, device=("CPU", "CPU:1"))
+1 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=1, dtype=dtypes.bfloat16, size=4, device=("CPU", "CPU:1"))
+2 Ops.MSELECT dtypes.bfloat16 [1] 0
+3 Ops.COPY dtypes.bfloat16 [2] "CPU"
+4 Ops.COPY dtypes.bfloat16 [2] "CPU:1"
+5 Ops.MSTACK dtypes.bfloat16 [3, 4]
+6 Ops.MSELECT dtypes.bfloat16 [1] 1
+7 Ops.COPY dtypes.bfloat16 [6] "CPU"
+8 Ops.COPY dtypes.bfloat16 [6] "CPU:1"
+9 Ops.MSTACK dtypes.bfloat16 [7, 8]
+10 Ops.ADD dtypes.bfloat16 [5, 9]
+11 Ops.STORE dtypes.void [0, 10]
+12 Ops.AFTER dtypes.bfloat16 [0, 11]
+13 Ops.SINK dtypes.void [12]
+
