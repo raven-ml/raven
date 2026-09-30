@@ -1,0 +1,17 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
+2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+3 Ops.MSELECT dtypes.float [2] 0
+4 Ops.COPY dtypes.float [3, 1] ("CPU:0", "CPU:1", "CPU:2", "CPU:3")
+5 Ops.MSELECT dtypes.float [2] 1
+6 Ops.COPY dtypes.float [5, 1] ("CPU:0", "CPU:1", "CPU:2", "CPU:3")
+7 Ops.ADD dtypes.float [4, 6]
+8 Ops.MSELECT dtypes.float [2] 2
+9 Ops.COPY dtypes.float [8, 1] ("CPU:0", "CPU:1", "CPU:2", "CPU:3")
+10 Ops.ADD dtypes.float [7, 9]
+11 Ops.MSELECT dtypes.float [2] 3
+12 Ops.COPY dtypes.float [11, 1] ("CPU:0", "CPU:1", "CPU:2", "CPU:3")
+13 Ops.ADD dtypes.float [10, 12]
+14 Ops.SINK dtypes.void [13]
+

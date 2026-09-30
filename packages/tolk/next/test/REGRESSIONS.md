@@ -1764,3 +1764,44 @@ movements are removed afterwards.
 | old: golden/rangeify `binop_permute`, `binop_reshape`, `contiguous_add`, `diamond`, `elementwise_3way`, `elementwise_add`, `expand_permute`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_sum` (each on 5 renderers) | the kernels of each program | the ranges: `IX › run_rangeify › recorded graphs ›` `binop_permute`, `binop_reshape`, `contiguous_add`, `shared_sum`, `elementwise_three`, `add`, `children_dont_push`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_consumers`; the rendered sources are the renderers' and the end-to-end suites (L4, L5) |
 | old: golden/rangeify `llama_*` (5 cases), `test_llama.ml` | a small Llama's kernels | dropped here: the end-to-end suite; its operations are recorded here as `rmsnorm`, `attention`, `softmax`, `matmul`, `embedding` |
 
+## Allreduce
+
+The suite is `Tolk_next.Allreduce` (`schedule/allreduce/`), written `AR`
+below. `AR › handle_allreduce › recorded` holds tinygrad's expansion of
+allreduces on 2 to 8 CPU devices under each algorithm's settings
+(`<case>_handled.golden`), and `AR › create_allreduce_function › recorded`
+the function of some (`<case>_function.golden`, its new storage numbered as
+tinygrad's); `AR › handle_allreduce › values` and `› laws` state that an
+expansion and a function hold, on each device, the elementwise reduction of the
+shards (`Tensors`), on the recorded cases and on generated ones;
+`AR › handle_allreduce › algorithms` states which algorithm applies and how
+each moves values between devices. One mutant survives, equivalent:
+`(i + step) mod ndev` as `i - step` in the ring's source index, which is read
+only at step 0.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_ring | a ring on 4 devices makes 2N(N-1) copies along a ring | `AR › handle_allreduce › algorithms › a ring moves values only to the next device` |
+| tinygrad: null/test_allreduce.py::TestRingAllReduce::test_schedule_naive | a naive allreduce makes N(N-1) copies between distinct devices | `AR › handle_allreduce › algorithms › a naive allreduce copies each shard to every device`; its two kernels are the scheduler's section |
+| tinygrad: schedule/allreduce.py, the hierarchical branch of `handle_allreduce` (no upstream test) | a hierarchical allreduce to one device | D19: `AR › handle_allreduce › recorded › nodes_to_one_device_handled.golden, landed on its device (D19)` states the corrected graph from tinygrad's; `AR › rules › a hierarchical allreduce to one device lands there (D19)` checks its value and placement, and its function's. A known upstream defect: tinygrad leaves the value on every device, and `create_allreduce_function` then stores it into storage on the one target device |
+| tinygrad: null/test_allreduce.py::TestAllreduceCast (3 tests) | `ALLREDUCE_CAST` keeps 16-bit copies | dropped here: the cast is `schedule/multi.py`'s, Multi's section |
+| tinygrad: null/test_multitensor.py::TestMultiRamUsage::test_multi_layer_allreduce, test_allreduce_cast_dtype_memory | memory of allreduces | dropped here: Memory's and Multi's sections |
+| tinygrad: null/test_multitensor.py (the other tests) | sharding, multi-device ALU, batch norm | dropped here: Multi's section |
+
+### old tolk: unit/engine/test_collectives.ml, unit/engine/test_multi.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_collectives.ml "replicas agree bit for bit" (each strategy, 2 to 8 devices) | every device holds the same sums | `AR › handle_allreduce › values › <case> reduces its shards`; `AR › handle_allreduce › laws › an expansion reduces its shards` (each device's elements equal the reduction's exactly) |
+| old: unit/engine/test_collectives.ml "replicas keep a sum's -0" | an allreduce of -0 is -0 | dropped: the reduction identity; RFC 0012's lowering decides. Every compiled sum starts from +0, so a sum of -0 is +0 on one device as on several |
+| old: unit/engine/test_collectives.ml "a realized allreduce holds no more than a consumed one" | memory | dropped here: Memory's section |
+| old: unit/engine/test_collectives.ml "a realized allreduce of a symbolic slice keeps its values", "blocks of a symbolic slice equal the allreduce's rows under boxes" | a symbolic allreduce | `AR › handle_allreduce › recorded › naive_symbolic_handled.golden`, `naive_symbolic_function.golden`; `AR › handle_allreduce › algorithms › a symbolic shape is kept, and a function stores its greatest` (a symbolic shape takes the naive algorithm, whatever the settings); the values need the executor |
+| old: unit/engine/test_collectives.ml groups "copies", "all-gather", "reduce-scatter", "an allreduce also used whole is reduced once", "an allreduce in a call body raises", "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST", the training harness | old tolk's collective calls and resharding | dropped here: tinygrad has no all-gather or reduce-scatter call; resharding and the cast are Multi's section, the harness the end-to-end suite |
+| old: unit/engine/test_multi.ml "forced ring handles aligned empty chunks on four devices", "hierarchical scalar handles empty chunks" | chunks of no element | `AR › handle_allreduce › laws › an expansion reduces its shards` (covers "a chunk is empty" and "devices form nodes") |
+| old: unit/engine/test_multi.ml "forced strategies reduce uneven chunks on four devices" | | `AR › handle_allreduce › recorded › ring_uneven_chunks_handled.golden`; `AR › handle_allreduce › values › ring_uneven_chunks reduces its shards`; the laws |
+| old: unit/engine/test_multi.ml "each forced strategy schedules its own collective" | | `AR › handle_allreduce › recorded` (`naive_two_devices`, `ring_two_devices`, `all2all`, `nodes_of_two` differ); `AR › handle_allreduce › algorithms › the algorithm is the first that applies` |
+| old: unit/engine/test_multi.ml "hierarchical maximum handles negative values" | | `AR › handle_allreduce › recorded › nodes_of_three_handled.golden` (a maximum); the laws draw negative elements and maxima |
+| old: unit/engine/test_multi.ml "symbolic allreduce retains logical sizes under forced ring" | | `AR › handle_allreduce › algorithms › a symbolic shape is kept, and a function stores its greatest` |
+| old: unit/engine/test_multi.ml groups "Ownership", "Resolution", "Execution", "Kernels over split storage", "Cuda", "partial multi-axis allreduce is rejected" | | dropped here: Multi's section, and the executor's |

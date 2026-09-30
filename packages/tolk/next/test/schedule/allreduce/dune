@@ -1,0 +1,16 @@
+(test
+ (name test_allreduce)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{exe:test_allreduce.exe} --tag slow)))

@@ -1,0 +1,62 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
+2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=300000, device=("CPU:0", "CPU:1", "CPU:2"))
+3 Ops.CONST dtypes.weakint [] 300
+4 Ops.CONST dtypes.weakint [] 1000
+5 Ops.STACK dtypes.weakint [3, 4]
+6 Ops.RESHAPE dtypes.float [2, 5]
+7 Ops.MSELECT dtypes.float [6] 0
+8 Ops.CONST dtypes.weakint [] 300000
+9 Ops.RESHAPE dtypes.float [7, 8]
+10 Ops.CONST dtypes.weakint [] 0
+11 Ops.CONST dtypes.weakint [] 100000
+12 Ops.SHRINK dtypes.float [9, 10, 11]
+13 Ops.COPY dtypes.float [12] "CPU:0"
+14 Ops.MSELECT dtypes.float [6] 1
+15 Ops.RESHAPE dtypes.float [14, 8]
+16 Ops.SHRINK dtypes.float [15, 10, 11]
+17 Ops.COPY dtypes.float [16] "CPU:0"
+18 Ops.ADD dtypes.float [13, 17]
+19 Ops.MSELECT dtypes.float [6] 2
+20 Ops.RESHAPE dtypes.float [19, 8]
+21 Ops.SHRINK dtypes.float [20, 10, 11]
+22 Ops.COPY dtypes.float [21] "CPU:0"
+23 Ops.ADD dtypes.float [18, 22]
+24 Ops.COPY dtypes.float [23] "CPU:0"
+25 Ops.COPY dtypes.float [23] "CPU:1"
+26 Ops.COPY dtypes.float [23] "CPU:2"
+27 Ops.MSTACK dtypes.float [24, 25, 26]
+28 Ops.PAD dtypes.float [27, 10, 8]
+29 Ops.SHRINK dtypes.float [9, 11, 11]
+30 Ops.COPY dtypes.float [29] "CPU:1"
+31 Ops.SHRINK dtypes.float [15, 11, 11]
+32 Ops.COPY dtypes.float [31] "CPU:1"
+33 Ops.ADD dtypes.float [30, 32]
+34 Ops.SHRINK dtypes.float [20, 11, 11]
+35 Ops.COPY dtypes.float [34] "CPU:1"
+36 Ops.ADD dtypes.float [33, 35]
+37 Ops.COPY dtypes.float [36] "CPU:0"
+38 Ops.COPY dtypes.float [36] "CPU:1"
+39 Ops.COPY dtypes.float [36] "CPU:2"
+40 Ops.MSTACK dtypes.float [37, 38, 39]
+41 Ops.PAD dtypes.float [40, 11, 8]
+42 Ops.ADD dtypes.float [28, 41]
+43 Ops.CONST dtypes.weakint [] 200000
+44 Ops.SHRINK dtypes.float [9, 43, 11]
+45 Ops.COPY dtypes.float [44] "CPU:2"
+46 Ops.SHRINK dtypes.float [15, 43, 11]
+47 Ops.COPY dtypes.float [46] "CPU:2"
+48 Ops.ADD dtypes.float [45, 47]
+49 Ops.SHRINK dtypes.float [20, 43, 11]
+50 Ops.COPY dtypes.float [49] "CPU:2"
+51 Ops.ADD dtypes.float [48, 50]
+52 Ops.COPY dtypes.float [51] "CPU:0"
+53 Ops.COPY dtypes.float [51] "CPU:1"
+54 Ops.COPY dtypes.float [51] "CPU:2"
+55 Ops.MSTACK dtypes.float [52, 53, 54]
+56 Ops.PAD dtypes.float [55, 43, 8]
+57 Ops.ADD dtypes.float [42, 56]
+58 Ops.RESHAPE dtypes.float [57, 5]
+59 Ops.SINK dtypes.void [58]
+

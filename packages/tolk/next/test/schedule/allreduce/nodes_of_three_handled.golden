@@ -1,0 +1,102 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 6
+1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
+2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=12, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3", "CPU:4", "CPU:5"))
+3 Ops.MSELECT dtypes.float [2] 0
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.SHRINK dtypes.float [3, 4, 5]
+7 Ops.COPY dtypes.float [6] "CPU:0"
+8 Ops.MSELECT dtypes.float [2] 1
+9 Ops.SHRINK dtypes.float [8, 4, 5]
+10 Ops.COPY dtypes.float [9] "CPU:0"
+11 Ops.MAX dtypes.float [7, 10]
+12 Ops.MSELECT dtypes.float [2] 2
+13 Ops.SHRINK dtypes.float [12, 4, 5]
+14 Ops.COPY dtypes.float [13] "CPU:0"
+15 Ops.MAX dtypes.float [11, 14]
+16 Ops.MSELECT dtypes.float [2] 3
+17 Ops.SHRINK dtypes.float [16, 4, 5]
+18 Ops.COPY dtypes.float [17] "CPU:3"
+19 Ops.MSELECT dtypes.float [2] 4
+20 Ops.SHRINK dtypes.float [19, 4, 5]
+21 Ops.COPY dtypes.float [20] "CPU:3"
+22 Ops.MAX dtypes.float [18, 21]
+23 Ops.MSELECT dtypes.float [2] 5
+24 Ops.SHRINK dtypes.float [23, 4, 5]
+25 Ops.COPY dtypes.float [24] "CPU:3"
+26 Ops.MAX dtypes.float [22, 25]
+27 Ops.COPY dtypes.float [26] "CPU:0"
+28 Ops.MAX dtypes.float [15, 27]
+29 Ops.COPY dtypes.float [28] "CPU:0"
+30 Ops.COPY dtypes.float [28] "CPU:1"
+31 Ops.COPY dtypes.float [28] "CPU:2"
+32 Ops.COPY dtypes.float [15] "CPU:3"
+33 Ops.MAX dtypes.float [26, 32]
+34 Ops.COPY dtypes.float [33] "CPU:3"
+35 Ops.COPY dtypes.float [33] "CPU:4"
+36 Ops.COPY dtypes.float [33] "CPU:5"
+37 Ops.MSTACK dtypes.float [29, 30, 31, 34, 35, 36]
+38 Ops.CONST dtypes.weakint [] 12
+39 Ops.PAD dtypes.float [37, 4, 38]
+40 Ops.SHRINK dtypes.float [3, 5, 5]
+41 Ops.COPY dtypes.float [40] "CPU:1"
+42 Ops.SHRINK dtypes.float [8, 5, 5]
+43 Ops.COPY dtypes.float [42] "CPU:1"
+44 Ops.MAX dtypes.float [41, 43]
+45 Ops.SHRINK dtypes.float [12, 5, 5]
+46 Ops.COPY dtypes.float [45] "CPU:1"
+47 Ops.MAX dtypes.float [44, 46]
+48 Ops.SHRINK dtypes.float [16, 5, 5]
+49 Ops.COPY dtypes.float [48] "CPU:4"
+50 Ops.SHRINK dtypes.float [19, 5, 5]
+51 Ops.COPY dtypes.float [50] "CPU:4"
+52 Ops.MAX dtypes.float [49, 51]
+53 Ops.SHRINK dtypes.float [23, 5, 5]
+54 Ops.COPY dtypes.float [53] "CPU:4"
+55 Ops.MAX dtypes.float [52, 54]
+56 Ops.COPY dtypes.float [55] "CPU:1"
+57 Ops.MAX dtypes.float [47, 56]
+58 Ops.COPY dtypes.float [57] "CPU:0"
+59 Ops.COPY dtypes.float [57] "CPU:1"
+60 Ops.COPY dtypes.float [57] "CPU:2"
+61 Ops.COPY dtypes.float [47] "CPU:4"
+62 Ops.MAX dtypes.float [55, 61]
+63 Ops.COPY dtypes.float [62] "CPU:3"
+64 Ops.COPY dtypes.float [62] "CPU:4"
+65 Ops.COPY dtypes.float [62] "CPU:5"
+66 Ops.MSTACK dtypes.float [58, 59, 60, 63, 64, 65]
+67 Ops.PAD dtypes.float [66, 5, 38]
+68 Ops.ADD dtypes.float [39, 67]
+69 Ops.CONST dtypes.weakint [] 8
+70 Ops.SHRINK dtypes.float [3, 69, 5]
+71 Ops.COPY dtypes.float [70] "CPU:2"
+72 Ops.SHRINK dtypes.float [8, 69, 5]
+73 Ops.COPY dtypes.float [72] "CPU:2"
+74 Ops.MAX dtypes.float [71, 73]
+75 Ops.SHRINK dtypes.float [12, 69, 5]
+76 Ops.COPY dtypes.float [75] "CPU:2"
+77 Ops.MAX dtypes.float [74, 76]
+78 Ops.SHRINK dtypes.float [16, 69, 5]
+79 Ops.COPY dtypes.float [78] "CPU:5"
+80 Ops.SHRINK dtypes.float [19, 69, 5]
+81 Ops.COPY dtypes.float [80] "CPU:5"
+82 Ops.MAX dtypes.float [79, 81]
+83 Ops.SHRINK dtypes.float [23, 69, 5]
+84 Ops.COPY dtypes.float [83] "CPU:5"
+85 Ops.MAX dtypes.float [82, 84]
+86 Ops.COPY dtypes.float [85] "CPU:2"
+87 Ops.MAX dtypes.float [77, 86]
+88 Ops.COPY dtypes.float [87] "CPU:0"
+89 Ops.COPY dtypes.float [87] "CPU:1"
+90 Ops.COPY dtypes.float [87] "CPU:2"
+91 Ops.COPY dtypes.float [77] "CPU:5"
+92 Ops.MAX dtypes.float [85, 91]
+93 Ops.COPY dtypes.float [92] "CPU:3"
+94 Ops.COPY dtypes.float [92] "CPU:4"
+95 Ops.COPY dtypes.float [92] "CPU:5"
+96 Ops.MSTACK dtypes.float [88, 89, 90, 93, 94, 95]
+97 Ops.PAD dtypes.float [96, 69, 38]
+98 Ops.ADD dtypes.float [68, 97]
+99 Ops.SINK dtypes.void [98]
+

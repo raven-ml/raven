@@ -1,0 +1,53 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
+2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=8, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+3 Ops.MSELECT dtypes.float [2] 0
+4 Ops.CONST dtypes.weakint [] 0
+5 Ops.SHRINK dtypes.float [3, 4, 0]
+6 Ops.COPY dtypes.float [5] "CPU:0"
+7 Ops.MSELECT dtypes.float [2] 1
+8 Ops.SHRINK dtypes.float [7, 4, 0]
+9 Ops.COPY dtypes.float [8] "CPU:0"
+10 Ops.ADD dtypes.float [6, 9]
+11 Ops.MSELECT dtypes.float [2] 2
+12 Ops.SHRINK dtypes.float [11, 4, 0]
+13 Ops.COPY dtypes.float [12] "CPU:2"
+14 Ops.MSELECT dtypes.float [2] 3
+15 Ops.SHRINK dtypes.float [14, 4, 0]
+16 Ops.COPY dtypes.float [15] "CPU:2"
+17 Ops.ADD dtypes.float [13, 16]
+18 Ops.COPY dtypes.float [17] "CPU:0"
+19 Ops.ADD dtypes.float [10, 18]
+20 Ops.COPY dtypes.float [19] "CPU:0"
+21 Ops.COPY dtypes.float [19] "CPU:1"
+22 Ops.COPY dtypes.float [10] "CPU:2"
+23 Ops.ADD dtypes.float [17, 22]
+24 Ops.COPY dtypes.float [23] "CPU:2"
+25 Ops.COPY dtypes.float [23] "CPU:3"
+26 Ops.MSTACK dtypes.float [20, 21, 24, 25]
+27 Ops.CONST dtypes.weakint [] 8
+28 Ops.PAD dtypes.float [26, 4, 27]
+29 Ops.SHRINK dtypes.float [3, 0, 0]
+30 Ops.COPY dtypes.float [29] "CPU:1"
+31 Ops.SHRINK dtypes.float [7, 0, 0]
+32 Ops.COPY dtypes.float [31] "CPU:1"
+33 Ops.ADD dtypes.float [30, 32]
+34 Ops.SHRINK dtypes.float [11, 0, 0]
+35 Ops.COPY dtypes.float [34] "CPU:3"
+36 Ops.SHRINK dtypes.float [14, 0, 0]
+37 Ops.COPY dtypes.float [36] "CPU:3"
+38 Ops.ADD dtypes.float [35, 37]
+39 Ops.COPY dtypes.float [38] "CPU:1"
+40 Ops.ADD dtypes.float [33, 39]
+41 Ops.COPY dtypes.float [40] "CPU:0"
+42 Ops.COPY dtypes.float [40] "CPU:1"
+43 Ops.COPY dtypes.float [33] "CPU:3"
+44 Ops.ADD dtypes.float [38, 43]
+45 Ops.COPY dtypes.float [44] "CPU:2"
+46 Ops.COPY dtypes.float [44] "CPU:3"
+47 Ops.MSTACK dtypes.float [41, 42, 45, 46]
+48 Ops.PAD dtypes.float [47, 0, 27]
+49 Ops.ADD dtypes.float [28, 48]
+50 Ops.SINK dtypes.void [49]
+

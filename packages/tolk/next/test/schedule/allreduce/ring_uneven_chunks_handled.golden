@@ -1,0 +1,58 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.RANGE dtypes.weakint [0] (-1, AxisType.DEVICE)
+2 Ops.BUFFER dtypes.float [1] ParamArg(slot=0, dtype=dtypes.float, size=15, device=("CPU:0", "CPU:1", "CPU:2"))
+3 Ops.CONST dtypes.weakint [] 5
+4 Ops.STACK dtypes.weakint [0, 3]
+5 Ops.RESHAPE dtypes.float [2, 4]
+6 Ops.CONST dtypes.weakint [] 15
+7 Ops.RESHAPE dtypes.float [5, 6]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.SHRINK dtypes.float [7, 8, 3]
+10 Ops.MSELECT dtypes.float [9] 0
+11 Ops.COPY dtypes.float [10] "CPU:1"
+12 Ops.MSELECT dtypes.float [9] 1
+13 Ops.COPY dtypes.float [12] "CPU:1"
+14 Ops.ADD dtypes.float [11, 13]
+15 Ops.COPY dtypes.float [14] "CPU:2"
+16 Ops.MSELECT dtypes.float [9] 2
+17 Ops.COPY dtypes.float [16] "CPU:2"
+18 Ops.ADD dtypes.float [15, 17]
+19 Ops.COPY dtypes.float [18] "CPU:0"
+20 Ops.COPY dtypes.float [19] "CPU:1"
+21 Ops.MSTACK dtypes.float [19, 20, 18]
+22 Ops.PAD dtypes.float [21, 8, 6]
+23 Ops.SHRINK dtypes.float [7, 3, 3]
+24 Ops.MSELECT dtypes.float [23] 1
+25 Ops.COPY dtypes.float [24] "CPU:2"
+26 Ops.MSELECT dtypes.float [23] 2
+27 Ops.COPY dtypes.float [26] "CPU:2"
+28 Ops.ADD dtypes.float [25, 27]
+29 Ops.COPY dtypes.float [28] "CPU:0"
+30 Ops.MSELECT dtypes.float [23] 0
+31 Ops.COPY dtypes.float [30] "CPU:0"
+32 Ops.ADD dtypes.float [29, 31]
+33 Ops.COPY dtypes.float [32] "CPU:1"
+34 Ops.COPY dtypes.float [33] "CPU:2"
+35 Ops.MSTACK dtypes.float [32, 33, 34]
+36 Ops.PAD dtypes.float [35, 3, 6]
+37 Ops.ADD dtypes.float [22, 36]
+38 Ops.CONST dtypes.weakint [] 10
+39 Ops.SHRINK dtypes.float [7, 38, 3]
+40 Ops.MSELECT dtypes.float [39] 2
+41 Ops.COPY dtypes.float [40] "CPU:0"
+42 Ops.MSELECT dtypes.float [39] 0
+43 Ops.COPY dtypes.float [42] "CPU:0"
+44 Ops.ADD dtypes.float [41, 43]
+45 Ops.COPY dtypes.float [44] "CPU:1"
+46 Ops.MSELECT dtypes.float [39] 1
+47 Ops.COPY dtypes.float [46] "CPU:1"
+48 Ops.ADD dtypes.float [45, 47]
+49 Ops.COPY dtypes.float [48] "CPU:2"
+50 Ops.COPY dtypes.float [49] "CPU:0"
+51 Ops.MSTACK dtypes.float [50, 48, 49]
+52 Ops.PAD dtypes.float [51, 38, 6]
+53 Ops.ADD dtypes.float [37, 52]
+54 Ops.RESHAPE dtypes.float [53, 4]
+55 Ops.SINK dtypes.void [54]
+

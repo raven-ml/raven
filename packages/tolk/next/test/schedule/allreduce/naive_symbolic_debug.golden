@@ -1,0 +1,6 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+NAIVE ALLREDUCE 4xUOp(Ops.MUL, arg=None, src=(
+  UOp(Ops.MUL, arg=None, src=(
+    UOp(Ops.CONST, arg=1, src=()),
+    UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 16), multiple_of=1, name='v', addrspace=AddrSpace.ALU), src=()),)),
+  UOp(Ops.CONST, arg=4, src=()),)) | dtypes.float

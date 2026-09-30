@@ -1,0 +1,74 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.ALLOC dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU:0")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU:0")
+6 Ops.RESHAPE dtypes.float [5, 3]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+8 Ops.RESHAPE dtypes.float [7, 3]
+9 Ops.CONST dtypes.weakint [] 32
+10 Ops.RESHAPE dtypes.float [8, 9]
+11 Ops.MSELECT dtypes.float [10] 0
+12 Ops.COPY dtypes.float [11] "CPU:1"
+13 Ops.MSELECT dtypes.float [10] 1
+14 Ops.COPY dtypes.float [13] "CPU:1"
+15 Ops.ADD dtypes.float [12, 14]
+16 Ops.COPY dtypes.float [15] "CPU:2"
+17 Ops.MSELECT dtypes.float [10] 2
+18 Ops.COPY dtypes.float [17] "CPU:2"
+19 Ops.ADD dtypes.float [16, 18]
+20 Ops.COPY dtypes.float [19] "CPU:3"
+21 Ops.MSELECT dtypes.float [10] 3
+22 Ops.COPY dtypes.float [21] "CPU:3"
+23 Ops.ADD dtypes.float [20, 22]
+24 Ops.COPY dtypes.float [23] "CPU:0"
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.SHRINK dtypes.float [10, 9, 25]
+27 Ops.MSELECT dtypes.float [26] 1
+28 Ops.COPY dtypes.float [27] "CPU:2"
+29 Ops.MSELECT dtypes.float [26] 2
+30 Ops.COPY dtypes.float [29] "CPU:2"
+31 Ops.ADD dtypes.float [28, 30]
+32 Ops.COPY dtypes.float [31] "CPU:3"
+33 Ops.MSELECT dtypes.float [26] 3
+34 Ops.COPY dtypes.float [33] "CPU:3"
+35 Ops.ADD dtypes.float [32, 34]
+36 Ops.COPY dtypes.float [35] "CPU:0"
+37 Ops.MSELECT dtypes.float [26] 0
+38 Ops.COPY dtypes.float [37] "CPU:0"
+39 Ops.ADD dtypes.float [36, 38]
+40 Ops.COPY dtypes.float [39] "CPU:0"
+41 Ops.PAD dtypes.float [40, 9, 9]
+42 Ops.ADD dtypes.float [24, 41]
+43 Ops.COPY dtypes.float [29] "CPU:3"
+44 Ops.ADD dtypes.float [43, 34]
+45 Ops.COPY dtypes.float [44] "CPU:0"
+46 Ops.ADD dtypes.float [45, 38]
+47 Ops.COPY dtypes.float [46] "CPU:1"
+48 Ops.COPY dtypes.float [27] "CPU:1"
+49 Ops.ADD dtypes.float [47, 48]
+50 Ops.COPY dtypes.float [49] "CPU:0"
+51 Ops.PAD dtypes.float [50, 9, 9]
+52 Ops.ADD dtypes.float [42, 51]
+53 Ops.COPY dtypes.float [33] "CPU:0"
+54 Ops.ADD dtypes.float [53, 38]
+55 Ops.COPY dtypes.float [54] "CPU:1"
+56 Ops.ADD dtypes.float [55, 48]
+57 Ops.COPY dtypes.float [56] "CPU:2"
+58 Ops.ADD dtypes.float [57, 30]
+59 Ops.COPY dtypes.float [58] "CPU:0"
+60 Ops.PAD dtypes.float [59, 9, 9]
+61 Ops.ADD dtypes.float [52, 60]
+62 Ops.RESHAPE dtypes.float [61, 3]
+63 Ops.STORE dtypes.void [6, 62]
+64 Ops.AFTER dtypes.float [6, 63]
+65 Ops.SINK dtypes.void [64]
+66 Ops.RANGE dtypes.weakint [1] (-1, AxisType.DEVICE)
+67 Ops.BUFFER dtypes.float [66] ParamArg(slot=0, dtype=dtypes.float, size=32, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+68 Ops.RESHAPE dtypes.float [67, 3]
+69 Ops.CALL dtypes.void [65, 0, 68] CallInfo(name="allreduce", precompile=True)
+70 Ops.AFTER dtypes.float [4, 69]
+71 Ops.SINK dtypes.void [70]
+
