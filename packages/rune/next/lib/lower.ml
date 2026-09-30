@@ -197,21 +197,19 @@ type capture = {
   view : View.t;
   at : Placement.t;
   node : Ops.t;
+  buffer : Ops.t;
+  buffers : Nx_device.Buffer.t list;
 }
 
 type scope = {
   renderer : Device.t -> Renderer.t;
-  mutable dtypes : (Device.t * Dtype.t list) list;
   mutable names : (string * Device.t) list;
   mutable captures : capture list;
-  mutable bound : (Ops.t * Nx_device.Buffer.t list) list;
 }
 
-let scope ~renderer =
-  { renderer; dtypes = []; names = []; captures = []; bound = [] }
-
+let scope ~renderer = { renderer; names = []; captures = [] }
 let devices s = List.rev s.names
-let captures s = List.rev s.bound
+let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
 
 (* The name that [s]'s nodes give [d]. *)
 let name s d =
@@ -225,15 +223,7 @@ let name s d =
   n
 
 let supports s d dt =
-  let dts =
-    match List.find_opt (fun (d', _) -> Device.equal d d') s.dtypes with
-    | Some (_, dts) -> dts
-    | None ->
-        let dts = Renderer.supported_dtypes (s.renderer d) in
-        s.dtypes <- (d, dts) :: s.dtypes;
-        dts
-  in
-  List.exists (Dtype.equal dt) dts
+  List.exists (Dtype.equal dt) (Renderer.supported_dtypes (s.renderer d))
 
 (* [check s what p dt] is the counterpart of [dt] if every device of [p]
    computes it. *)
@@ -334,14 +324,9 @@ let uop : type a b. (a, b) Nx.t -> Ops.t =
   | Repr.Host _ | Repr.Placed _ ->
       invalid_arg "not a value traced by a compiled function"
 
-(* Storage
+(* Storage *)
 
-   A value over storage, a capture or a parameter, is a node of the run of its
-   storage that its view reaches, viewed by movements. The run starts at the
-   element at or below the first one reached whose offset is a multiple of 16
-   bytes, since kernels load up to 16 bytes at a time from where a buffer
-   starts. *)
-
+(* Kernels load up to 16 bytes at a time from where a buffer starts. *)
 let alignment = 16
 
 (* The storage of a value that is not traced, one buffer per device of its
@@ -380,16 +365,10 @@ let run tdt v =
   let start = lo - (lo mod per) in
   (start, hi - start)
 
-let held s what p tdt shape bufs v =
-  let start, span = run tdt v in
-  let buffer = Ops.new_buffer (device_of s p) span tdt in
-  let isz = Dtype.itemsize tdt in
-  let view b =
-    Nx_device.Buffer.view b ~offset:(start * isz) (Nx_device.Buffer.dtype b)
-      span
-  in
-  s.bound <- (buffer, List.map view bufs) :: s.bound;
-  viewed what buffer p shape v start
+(* The constant [c] broadcast to [shape]. *)
+let broadcast c shape =
+  let shape = Array.to_list shape in
+  Ops.expand (Ops.reshape c (ints (List.map (fun _ -> 1) shape))) (ints shape)
 
 let param s ~slot x =
   let what = "an argument" in
@@ -399,9 +378,7 @@ let param s ~slot x =
   let shape = Nx.shape x in
   let u =
     if View.numel v = 0 then
-      Ops.expand
-        (Ops.const ~dtype:tdt (`Int Z.zero))
-        (ints (Array.to_list shape))
+      broadcast (Ops.const ~dtype:tdt (`Int Z.zero)) shape
     else
       let start, span = run tdt v in
       viewed what
@@ -410,18 +387,7 @@ let param s ~slot x =
   in
   traced p (Nx.dtype x) u
 
-(* Captures
-
-   A value the traced function closes over is bound once, at the placement of
-   the operation that meets it. One that reaches a single element is that
-   element, a constant: read from its storage when the host owns it, and once
-   from its device otherwise. Any other is storage the program holds, at that
-   placement, where [Nx.place] puts it first if it lies elsewhere. *)
-
-(* The constant [c] broadcast to [shape]. *)
-let broadcast c shape =
-  let shape = Array.to_list shape in
-  Ops.expand (Ops.reshape c (ints (List.map (fun _ -> 1) shape))) (ints shape)
+(* Captures *)
 
 let same_view v0 v1 =
   View.offset v0 = View.offset v1
@@ -456,8 +422,18 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
     match List.find_opt same s.captures with
     | Some c -> c.node
     | None ->
-        let node = held s what p tdt shape bufs v in
-        s.captures <- { storage = key; view = v; at = p; node } :: s.captures;
+        let start, span = run tdt v in
+        let buffer = Ops.new_buffer (device_of s p) span tdt in
+        let view b =
+          Nx_device.Buffer.view b
+            ~offset:(start * Dtype.itemsize tdt)
+            (Nx_device.Buffer.dtype b) span
+        in
+        let node = viewed what buffer p shape v start in
+        let buffers = List.map view bufs in
+        s.captures <-
+          { storage = key; view = v; at = p; node; buffer; buffers }
+          :: s.captures;
         node
 
 (* [capture s what p x] is the node of [x], a value that is not traced, at [p]:

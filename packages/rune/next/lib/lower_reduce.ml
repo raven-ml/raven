@@ -50,13 +50,11 @@ let values dt k = if Dtype.is_float dt then Ops.bitcast (flip k) dt else k
 
 (* Reductions and scans
 
-   A sum or a product accumulates in [Dtype.sum_acc]'s type, unsigned for the
-   signed integers, whose overflow C, Metal and CUDA leave undefined, and is
-   converted once to the operand's dtype. A float sum adds [+0.] to its result:
-   a kernel starts a loop's accumulator from [+0.], but sums the terms alone
-   when no loop is left, over an axis of one element or one it unrolls whole. An
-   extreme is a maximum of keys, through their order-reversing complement for a
-   minimum. *)
+   Signed integers accumulate unsigned, since C, Metal and CUDA leave their
+   overflow undefined. A float sum adds [+0.] to its result: a kernel starts a
+   loop's accumulator from [+0.], but sums the terms alone when no loop is left,
+   over an axis of one element or one it unrolls whole. An extreme is a maximum
+   of keys, through their order-reversing complement for a minimum. *)
 
 let accumulator dt =
   let acc = Dtype.sum_acc dt in
