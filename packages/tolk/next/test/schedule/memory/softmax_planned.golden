@@ -1,0 +1,58 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU")
+1 Ops.CONST dtypes.weakint [] 64
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+5 Ops.MUL dtypes.weakint [2, 1]
+6 Ops.RANGE dtypes.weakint [1] (0, AxisType.REDUCE)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.float [4, 7]
+9 Ops.REDUCE dtypes.float [8, 6] (Ops.MAX, 0)
+10 Ops.STORE dtypes.void [3, 9]
+11 Ops.END dtypes.void [10, 2]
+12 Ops.SINK dtypes.void [11] KernelInfo()
+13 Ops.BUFFER dtypes.char [] ParamArg(slot=6, dtype=dtypes.char, size=512, device="CPU")
+14 Ops.CONST dtypes.weakint [] 0
+15 Ops.CONST dtypes.weakint [] 256
+16 Ops.SHRINK dtypes.char [13, 14, 15]
+17 Ops.BITCAST dtypes.float [16] dtypes.float
+18 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+19 Ops.CALL dtypes.void [12, 17, 18] CallInfo()
+20 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=64, device="CPU")
+21 Ops.INDEX dtypes.float [20, 2]
+22 Ops.CONST dtypes.weakfloat [] -1.0
+23 Ops.MUL dtypes.float [21, 22]
+24 Ops.ADD dtypes.float [8, 23]
+25 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+26 Ops.MUL dtypes.float [24, 25]
+27 Ops.EXP2 dtypes.float [26]
+28 Ops.REDUCE dtypes.float [27, 6] (Ops.ADD, 0)
+29 Ops.STORE dtypes.void [3, 28]
+30 Ops.END dtypes.void [29, 2]
+31 Ops.SINK dtypes.void [30] KernelInfo()
+32 Ops.SHRINK dtypes.char [13, 15, 15]
+33 Ops.BITCAST dtypes.float [32] dtypes.float
+34 Ops.CALL dtypes.void [31, 33, 18, 17] CallInfo()
+35 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4096, device="CPU")
+36 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+37 Ops.MUL dtypes.weakint [36, 1]
+38 Ops.ADD dtypes.weakint [37, 2]
+39 Ops.INDEX dtypes.float [35, 38]
+40 Ops.INDEX dtypes.float [4, 38]
+41 Ops.INDEX dtypes.float [20, 36]
+42 Ops.MUL dtypes.float [41, 22]
+43 Ops.ADD dtypes.float [40, 42]
+44 Ops.MUL dtypes.float [43, 25]
+45 Ops.EXP2 dtypes.float [44]
+46 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
+47 Ops.INDEX dtypes.float [46, 36]
+48 Ops.RECIPROCAL dtypes.float [47]
+49 Ops.MUL dtypes.float [45, 48]
+50 Ops.STORE dtypes.void [39, 49]
+51 Ops.END dtypes.void [50, 36, 2]
+52 Ops.SINK dtypes.void [51] KernelInfo()
+53 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=4096, device="CPU")
+54 Ops.CALL dtypes.void [52, 53, 18, 17, 33] CallInfo()
+55 Ops.LINEAR dtypes.void [19, 34, 54]
+

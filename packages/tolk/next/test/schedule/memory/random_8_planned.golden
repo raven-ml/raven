@@ -1,0 +1,68 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=257, device="CPU")
+1 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4096, device="CPU")
+2 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=255, device="CPU")
+3 Ops.BUFFER dtypes.char [] ParamArg(slot=3, dtype=dtypes.char, size=1048576, device="CPU")
+4 Ops.SINK dtypes.void [0, 1, 2, 3]
+5 Ops.BUFFER dtypes.char [] ParamArg(slot=10, dtype=dtypes.char, size=2119680, device="CPU")
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.CONST dtypes.weakint [] 257
+8 Ops.SHRINK dtypes.char [5, 6, 7]
+9 Ops.CONST dtypes.weakint [] 512
+10 Ops.CONST dtypes.weakint [] 16384
+11 Ops.SHRINK dtypes.char [5, 9, 10]
+12 Ops.BITCAST dtypes.float [11] dtypes.float
+13 Ops.CONST dtypes.weakint [] 16896
+14 Ops.CONST dtypes.weakint [] 1020
+15 Ops.SHRINK dtypes.char [5, 13, 14]
+16 Ops.BITCAST dtypes.float [15] dtypes.float
+17 Ops.CONST dtypes.weakint [] 17920
+18 Ops.CONST dtypes.weakint [] 1048576
+19 Ops.SHRINK dtypes.char [5, 17, 18]
+20 Ops.CALL dtypes.void [4, 8, 12, 16, 19] CallInfo()
+21 Ops.BUFFER dtypes.char [] ParamArg(slot=4, dtype=dtypes.char, size=257, device="CPU")
+22 Ops.SINK dtypes.void [1, 21]
+23 Ops.CONST dtypes.weakint [] 1066496
+24 Ops.SHRINK dtypes.char [5, 23, 7]
+25 Ops.CALL dtypes.void [22, 12, 24] CallInfo()
+26 Ops.BUFFER dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=1000, device="CPU")
+27 Ops.SINK dtypes.void [26, 2]
+28 Ops.BUFFER dtypes.char [] ParamArg(slot=11, dtype=dtypes.char, size=3831552, device="CPU")
+29 Ops.CONST dtypes.weakint [] 4000
+30 Ops.SHRINK dtypes.char [28, 6, 29]
+31 Ops.BITCAST dtypes.float [30] dtypes.float
+32 Ops.CALL dtypes.void [27, 31, 16] CallInfo()
+33 Ops.BUFFER dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=1000, device="CPU")
+34 Ops.SINK dtypes.void [3, 33, 26, 1]
+35 Ops.CONST dtypes.weakint [] 1067008
+36 Ops.SHRINK dtypes.char [5, 35, 29]
+37 Ops.BITCAST dtypes.float [36] dtypes.float
+38 Ops.CALL dtypes.void [34, 19, 37, 31, 12] CallInfo()
+39 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1000, device="CPU")
+40 Ops.PARAM dtypes.char [] ParamArg(slot=1, dtype=dtypes.char, size=3827413, device="CPU")
+41 Ops.STORE dtypes.void [39, 40]
+42 Ops.CONST dtypes.weakint [] 4096
+43 Ops.CONST dtypes.weakint [] 3827413
+44 Ops.SHRINK dtypes.char [28, 42, 43]
+45 Ops.CALL dtypes.void [41, 31, 44] CallInfo()
+46 Ops.BUFFER dtypes.char [] ParamArg(slot=8, dtype=dtypes.char, size=255, device="CPU")
+47 Ops.SINK dtypes.void [1, 2, 46, 3]
+48 Ops.CALL dtypes.void [47, 12, 16, 46, 19] CallInfo()
+49 Ops.BUFFER dtypes.char [] ParamArg(slot=7, dtype=dtypes.char, size=3827413, device="CPU")
+50 Ops.BUFFER dtypes.char [] ParamArg(slot=9, dtype=dtypes.char, size=1048576, device="CPU")
+51 Ops.SINK dtypes.void [3, 26, 49, 50]
+52 Ops.CONST dtypes.weakint [] 1071104
+53 Ops.SHRINK dtypes.char [5, 52, 18]
+54 Ops.CALL dtypes.void [51, 19, 31, 44, 53] CallInfo()
+55 Ops.SINK dtypes.void [49, 33, 26]
+56 Ops.CALL dtypes.void [55, 44, 37, 31] CallInfo()
+57 Ops.SINK dtypes.void [49, 2, 50, 33]
+58 Ops.CALL dtypes.void [57, 44, 16, 53, 37] CallInfo()
+59 Ops.SINK dtypes.void [3]
+60 Ops.CALL dtypes.void [59, 19] CallInfo()
+61 Ops.SINK dtypes.void [33, 0]
+62 Ops.CALL dtypes.void [61, 37, 8] CallInfo()
+63 Ops.SINK dtypes.void [21]
+64 Ops.CALL dtypes.void [63, 24] CallInfo()
+65 Ops.LINEAR dtypes.void [20, 25, 32, 38, 45, 48, 54, 56, 58, 60, 62, 64, 60]
+

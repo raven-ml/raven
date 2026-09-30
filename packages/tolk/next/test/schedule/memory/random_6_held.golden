@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.BUFFER dtypes.char [] ParamArg(slot=9, dtype=dtypes.char, size=257, device="CPU")
+2 Ops.BUFFER dtypes.float [] ParamArg(slot=10, dtype=dtypes.float, size=1, device="CPU")
+3 Ops.BUFFER dtypes.float [] ParamArg(slot=11, dtype=dtypes.float, size=1048576, device="CPU")
+4 Ops.BUFFER dtypes.char [] ParamArg(slot=18, dtype=dtypes.char, size=65536, device="CPU")
+5 Ops.SINK dtypes.void [0, 1, 2, 3, 4]
+

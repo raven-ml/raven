@@ -1,0 +1,42 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=3299690, device="CPU")
+1 Ops.SINK dtypes.void [0]
+2 Ops.CALL dtypes.void [1, 0] CallInfo()
+3 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=65536, device="CPU")
+4 Ops.SINK dtypes.void [3]
+5 Ops.CALL dtypes.void [4, 3] CallInfo()
+6 Ops.BUFFER dtypes.char [] ParamArg(slot=2, dtype=dtypes.char, size=255, device="CPU")
+7 Ops.BUFFER dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=1048576, device="CPU")
+8 Ops.BUFFER dtypes.char [] ParamArg(slot=4, dtype=dtypes.char, size=1048576, device="CPU")
+9 Ops.SINK dtypes.void [3, 6, 7, 8]
+10 Ops.CALL dtypes.void [9, 3, 6, 7, 8] CallInfo()
+11 Ops.SINK dtypes.void [7]
+12 Ops.CALL dtypes.void [11, 7] CallInfo()
+13 Ops.BUFFER dtypes.char [] ParamArg(slot=5, dtype=dtypes.char, size=4096, device="CPU")
+14 Ops.BUFFER dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=2383702, device="CPU")
+15 Ops.SINK dtypes.void [3, 13, 14, 7]
+16 Ops.CALL dtypes.void [15, 3, 13, 14, 7] CallInfo()
+17 Ops.SINK dtypes.void [6, 8, 13]
+18 Ops.CALL dtypes.void [17, 6, 8, 13] CallInfo()
+19 Ops.SINK dtypes.void [14]
+20 Ops.CALL dtypes.void [19, 14] CallInfo()
+21 Ops.SINK dtypes.void [6]
+22 Ops.CALL dtypes.void [21, 6] CallInfo()
+23 Ops.SINK dtypes.void [3, 6]
+24 Ops.CALL dtypes.void [23, 3, 6] CallInfo()
+25 Ops.SINK dtypes.void [13]
+26 Ops.CALL dtypes.void [25, 13] CallInfo()
+27 Ops.SINK dtypes.void [7, 3]
+28 Ops.CALL dtypes.void [27, 7, 3] CallInfo()
+29 Ops.SINK dtypes.void [13, 8, 0, 6]
+30 Ops.CALL dtypes.void [29, 13, 8, 0, 6] CallInfo()
+31 Ops.SINK dtypes.void [14, 3, 13]
+32 Ops.CALL dtypes.void [31, 14, 3, 13] CallInfo()
+33 Ops.SINK dtypes.void [8]
+34 Ops.CALL dtypes.void [33, 8] CallInfo()
+35 Ops.SINK dtypes.void [14, 6, 0]
+36 Ops.CALL dtypes.void [35, 14, 6, 0] CallInfo()
+37 Ops.SINK dtypes.void [13, 6, 8, 0]
+38 Ops.CALL dtypes.void [37, 13, 6, 8, 0] CallInfo()
+39 Ops.LINEAR dtypes.void [2, 5, 10, 5, 12, 16, 18, 2, 20, 22, 5, 24, 26, 28, 30, 28, 32, 34, 36, 38]
+

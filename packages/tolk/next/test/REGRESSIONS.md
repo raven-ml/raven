@@ -1842,3 +1842,35 @@ can take.
 | old: unit/runtime/support/test_memory.ml group "shared virtual addresses" (2 tests) | domains allocate from one allocator under a lock | dropped: tinygrad's allocator has no concurrency contract, and tolk.next carries none it lacks |
 | old: unit/runtime/support/test_memory.ml groups "Map_range", "Unmap_range", "Page_tables", "Alloc_vaddr", "Palloc", "Valloc", "Vfree", "Identity_map", "Six_level_dual" | the memory manager and its page tables | dropped here: `Support_memory` ports the TLSF allocator; the memory manager of the same tinygrad file is the runtime's |
 | old: unit/test_amd_amdev.ml (TLSF as a virtual address allocator) | | dropped here: the AMD device's section |
+
+## Memory
+
+The suite is `Tolk_next.Memory` (`schedule/memory/`), written `ME` below.
+`ME › memory_plan_rewrite › recorded` holds tinygrad's plans of schedules and
+their held buffers (`<case>_planned.golden`, its arenas numbered as
+tinygrad's): the schedules of tinygrad's `test_memory_planner.py`, random
+ones, and those `linear_with_vars` plans for `Tensor` programs on CPU devices.
+`ME › memory_plan_rewrite › laws` states, over generated schedules, that a
+planned buffer is the bytes of an arena at a block, viewed as its type; that
+buffers alive at once share no byte; that copies and other calls use arenas of
+their own; and that held buffers stay.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer, test_simple_pinned, test_all_pinned | live buffers never overlap; held buffers stay | `ME › memory_plan_rewrite › recorded › simple_planned.golden`, `some_held_planned.golden`, `all_held_planned.golden`; `ME › memory_plan_rewrite › rules › a schedule of held buffers only is itself`; the laws |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer_offset, test_buffer_offset, test_buffer_offset2, test_all_offsets_of_one | buffers passed again by later calls (their `base=` aliases the same buffer) | `ME › memory_plan_rewrite › recorded › reused_planned.golden`; the laws (generated calls pass a buffer again) |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_small_buffers | buffers under a block | `ME › memory_plan_rewrite › recorded › very_small_planned.golden` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_big_buffers | buffers of 2^64 and 2^128 bytes | `ME › memory_plan_rewrite › recorded › big_planned.golden` (up to 2^50 elements); sizes past OCaml's `int` are dropped: storage sizes are `int` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | `ME › memory_plan_rewrite › recorded › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`; the laws |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › recorded › copies_held_mixed_planned.golden`; the laws |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`; the laws (a copy's buffers live for as many calls again) |
+| tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › recorded › disk_planned.golden` and `ME › memory_plan_rewrite › rules › a schedule on a disk is itself` |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/test_engine_schedule.ml "concurrent memory plans keep arenas distinct" | plans on several domains take distinct arena slots | `ME › memory_plan_rewrite › rules › each plan's arenas take new slots`; that the counter is safe across domains is `Ops.unique_num`'s, Ops' section |
+| old: unit/engine/test_schedule.ml "memory plans internal buffers when not capturing" | the executor plans unless it captures | dropped here: when to plan is the executor's (rune) |

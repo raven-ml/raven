@@ -1,0 +1,4 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.char [] ParamArg(slot=8, dtype=dtypes.char, size=255, device="CPU")
+1 Ops.SINK dtypes.void [0]
+
