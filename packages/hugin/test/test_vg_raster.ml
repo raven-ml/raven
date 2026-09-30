@@ -381,9 +381,9 @@ let test_image_placed () =
   in
   let expected = draw data in
   let placed = Placed.place data in
-  let reads = !Placed.reads in
+  let read = Placed.bytes_read () in
   let img = draw placed in
-  equal ~msg:"one read" int (reads + 1) !Placed.reads;
+  equal ~msg:"one read" int (read + Nx.nbytes data) (Placed.bytes_read ());
   equal ~msg:"the pixels" (array int) (Nx.to_array expected) (Nx.to_array img)
 
 let test_image_gray_and_alpha () =

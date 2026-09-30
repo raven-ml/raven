@@ -23,7 +23,6 @@
   nx.dtype
   nx.array
   nx.device
-  nx.effect
   nx.io
   str
   windtrap))
