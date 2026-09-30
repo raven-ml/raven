@@ -208,7 +208,7 @@ module Repr = struct
   let v x = x
 
   let host (a : ('a, 'b) Nx_array.t) =
-    Nx_effect.check_host "Repr.host" a.dtype a.buffer;
+    Nx_effect.check_host "Nx.Repr.host" a.dtype a.buffer;
     if not (within a.view (Nx_device.Buffer.length a.buffer)) then
       invalid_arg "Nx.Repr.host: the view reaches outside the buffer";
     Nx_effect.Host a

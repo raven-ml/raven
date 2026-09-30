@@ -462,7 +462,7 @@ let whole_view r =
 let check_host fn dtype buffer =
   if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
     invalid_arg
-      (Printf.sprintf "Nx_effect.%s: the buffer is on %s, not CPU" fn
+      (Printf.sprintf "%s: the buffer is on %s, not CPU" fn
          (Nx_device.name (Nx_device.Buffer.device buffer)));
   if
     not
@@ -471,7 +471,7 @@ let check_host fn dtype buffer =
          (Nx_dtype.Scalar.of_dtype dtype))
   then
     invalid_arg
-      (Printf.sprintf "Nx_effect.%s: a %s buffer read as %s" fn
+      (Printf.sprintf "%s: a %s buffer read as %s" fn
          (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
          (Nx_dtype.to_string dtype))
 
@@ -495,7 +495,7 @@ let file_run (type a b) (r : (a, b) resident) =
    kernels. *)
 let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   let buffer = read_elements r in
-  check_host "read" r.r_dtype buffer;
+  check_host "Nx_effect.read" r.r_dtype buffer;
   { dtype = r.r_dtype; view = View.create (View.shape (whole_view r)); buffer }
 
 (* A value on the disk is read where it lies, in its file's pages, and keeps its
@@ -2623,7 +2623,7 @@ let full (ctx : context) dtype shape_arr value =
       if n <= 1 then x else if copies == ctx then copy x else place ctx x
 
 let from_host (ctx : context) dtype buffer =
-  check_host "from_host" dtype buffer;
+  check_host "Nx_effect.from_host" dtype buffer;
   let x =
     Host
       {
