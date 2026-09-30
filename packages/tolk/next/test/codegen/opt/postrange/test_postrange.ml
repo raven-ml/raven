@@ -81,14 +81,21 @@ let keeps_writes before after =
     (Kernel_opts.writes before)
     (Kernel_opts.writes after)
 
-let is_refusal = function Opt.Kernel_opt_error _ -> true | _ -> false
-let refuses f = raises_match is_refusal f
+let raises_invalid_arg f = raises_match (fun e -> Exn.invalid_arg e) f
 
-(* tinygrad raises ValueError where a condition it checks cannot be decided, and
-   the port Invalid_argument. *)
-let refuses_as = function
-  | "KernelOptError" -> refuses
-  | "ValueError" -> raises_match (fun e -> Exn.invalid_arg e)
+(* [apply k o] applies [o], which must apply. *)
+let apply ?append_opt k o =
+  match K.apply_opt ?append_opt k o with
+  | Ok axes -> axes
+  | Error msg -> failf "%a does not apply: %s" Opt.pp o msg
+
+(* An optimisation that does not apply, tinygrad's KernelOptError, is an
+   [Error]. tinygrad raises ValueError where a condition it checks cannot be
+   decided, and the port Invalid_argument. *)
+let refuses_as error f =
+  match error with
+  | "KernelOptError" -> is_true ~msg:"refused" (Result.is_error (f ()))
+  | "ValueError" -> raises_invalid_arg f
   | error -> failf "no refusal %s" error
 
 let split ?(top = false) axis amount target =
@@ -134,17 +141,16 @@ let optimised =
        (fun c ->
          match c.refused with
          | None -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c)
-         | Some (error, _) ->
+         | Some _ ->
+             (* apply_opts raises Invalid_argument where apply_opt refuses *)
              test (c.name ^ " is refused") (fun () ->
-                 refuses_as error (fun () -> optimize c)))
+                 raises_invalid_arg (fun () -> optimize c)))
        recorded_cases)
 
 let leaves_as_it_was c (error, refused) =
   recorded ~settings:c.settings (fun () ->
       let k = scheduler c in
-      List.iteri
-        (fun i o -> if i < refused then ignore (K.apply_opt k o))
-        c.opts;
+      List.iteri (fun i o -> if i < refused then ignore (apply k o)) c.opts;
       let ast = K.ast k and applied = K.applied_opts k in
       refuses_as error (fun () -> K.apply_opt k (List.nth c.opts refused));
       equal Uops.uop ast (K.ast k);
@@ -168,9 +174,7 @@ let axes =
           let c = case (cell "case") in
           recorded ~settings:c.settings (fun () ->
               let k = scheduler c in
-              let made =
-                List.fold_left (fun _ o -> K.apply_opt k o) [] c.opts
-              in
+              let made = List.fold_left (fun _ o -> apply k o) [] c.opts in
               let ints = repr_list Format.pp_print_int in
               let count column n =
                 equal ~msg:column int (int_of_string (cell column)) n
@@ -209,7 +213,7 @@ let colors =
               in
               K.convert_loop_to_global k;
               List.iter
-                (fun o -> ignore (K.apply_opt k o))
+                (fun o -> ignore (apply k o))
                 (Kernel_opts.opts_of_cell (cell "opts"));
               equal string (cell "colored_shape") (escaped (K.colored_shape k));
               equal string (cell "name")
@@ -231,31 +235,31 @@ let schedulers =
         (fun () ->
           let k = sum_rows_64 () in
           let ast = K.ast k and copy = K.copy k in
-          ignore (K.apply_opt copy upcast_4);
+          ignore (apply copy upcast_4);
           equal Uops.uop ast (K.ast k);
           equal (list Kernel_opts.opt) [] (K.applied_opts k));
       test "an optimisation applied to the original leaves its copy as it was"
         (fun () ->
           let k = sum_rows_64 () in
           let copy = K.copy k in
-          ignore (K.apply_opt k upcast_4);
+          ignore (apply k upcast_4);
           equal Uops.uop (K.ast (sum_rows_64 ())) (K.ast copy);
           equal (list Kernel_opts.opt) [] (K.applied_opts copy));
       test "apply_opt records each optimisation it applies, in order" (fun () ->
           let k = sum_rows_64 () in
-          ignore (K.apply_opt k upcast_4);
-          ignore (K.apply_opt k (split 2 4 Unroll));
+          ignore (apply k upcast_4);
+          ignore (apply k (split 2 4 Unroll));
           equal (list Kernel_opts.opt)
             [ upcast_4; split 2 4 Unroll ]
             (K.applied_opts k));
       test "apply_opt ~append_opt:false leaves the optimisation unrecorded"
         (fun () ->
           let k = sum_rows_64 () in
-          ignore (K.apply_opt ~append_opt:false k upcast_4);
+          ignore (apply ~append_opt:false k upcast_4);
           equal (list Kernel_opts.opt) [] (K.applied_opts k));
       test "get_optimized_ast names the kernel name_override" (fun () ->
           let k = sum_rows_64 () in
-          ignore (K.apply_opt k upcast_4);
+          ignore (apply k upcast_4);
           let ast = K.get_optimized_ast ~name_override:"fused" k in
           equal string "fused" (info ast).name;
           equal (list Kernel_opts.opt) [ upcast_4 ] (info ast).applied_opts;
@@ -317,14 +321,12 @@ let shifts =
           let new_rng = Ops.range ~axis_type:Upcast (Int 4) [ 99 ] in
           let _, (_, made) = shifted ~new_rng 0 4 Upcast in
           equal Uops.uop new_rng made);
-      test "refuses a target its axis's role cannot split to" (fun () ->
-          refuses (fun () -> shifted 1 4 Upcast));
+      test "raises Invalid_argument on a target its axis's role cannot split to"
+        (fun () -> raises_invalid_arg (fun () -> shifted 1 4 Upcast));
       test "raises Invalid_argument on an amount of 1" (fun () ->
-          raises_match
-            (fun e -> Exn.invalid_arg e)
-            (fun () -> shifted 0 1 Upcast));
-      test "refuses an amount that does not divide the axis" (fun () ->
-          refuses (fun () -> shifted 0 3 Upcast));
+          raises_invalid_arg (fun () -> shifted 0 1 Upcast));
+      test "raises Invalid_argument on an amount that does not divide the axis"
+        (fun () -> raises_invalid_arg (fun () -> shifted 0 3 Upcast));
       cases ~name "keeps the kernel's writes, once flattened" splits
         (fun (n, target, amount, top) ->
           let k, _ = shifted ~top n amount target in
@@ -351,7 +353,7 @@ let applied ast = (info ast).applied_opts
 let never_searched _ = fail "apply_opts searched a kernel it must not optimise"
 
 let upcasting k =
-  ignore (K.apply_opt k upcast_4);
+  ignore (apply k upcast_4);
   k
 
 let without_opts ast =
@@ -548,8 +550,8 @@ let fuzz (name, ren, opts) =
     (fun o ->
       let ast = K.ast k and applied = K.applied_opts k in
       match K.apply_opt k o with
-      | _ -> ()
-      | exception Opt.Kernel_opt_error _ ->
+      | Ok _ -> ()
+      | Error _ ->
           equal Uops.uop ast (K.ast k);
           equal (list Kernel_opts.opt) applied (K.applied_opts k))
     opts;

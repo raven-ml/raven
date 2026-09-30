@@ -197,7 +197,7 @@ let refuses_as_tinygrad row =
     String.sub (row "outcome") 16 (String.length (row "outcome") - 16)
   in
   raises_match
-    (function Opt.Kernel_opt_error m -> String.equal m message | _ -> false)
+    (function Invalid_argument m -> String.equal m message | _ -> false)
     (fun () -> program row)
 
 let stages =
@@ -502,7 +502,7 @@ let recording () =
   let asked = ref [] in
   let beam w s =
     asked := w :: !asked;
-    ignore (Postrange.Scheduler.apply_opt s upcast4);
+    ignore (Result.get_ok (Postrange.Scheduler.apply_opt s upcast4));
     s
   in
   (asked, beam)

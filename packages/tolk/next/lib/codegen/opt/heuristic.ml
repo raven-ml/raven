@@ -11,12 +11,15 @@ module K = Postrange.Scheduler
 let setting = Helpers.Context_var.value
 let debug () = setting Helpers.debug
 
+(* A split the heuristic has checked applies. *)
 let split ?(top = false) k axis amount target =
-  K.apply_opt k (Opt.Split { axis; amount; target; top })
+  match K.apply_opt k (Opt.Split { axis; amount; target; top }) with
+  | Ok axes -> axes
+  | Error msg -> invalid_arg msg
 
-(* A split that may not apply. *)
-let try_split k axis amount target =
-  try ignore (split k axis amount target) with Opt.Kernel_opt_error _ -> ()
+(* A split that may not apply: whether it did. *)
+let try_split ?(top = false) k axis amount target =
+  Result.is_ok (K.apply_opt k (Opt.Split { axis; amount; target; top }))
 
 (* A size is known when it is an integer, which a constant beyond an int also
    is. *)
@@ -64,8 +67,8 @@ let tensor_cores k =
       (fun axis ->
         let tk = K.copy k in
         match K.apply_opt tk (Opt.Tc { axis; tc_select; tc_opt; use_tc }) with
-        | exception Opt.Kernel_opt_error _ -> None
-        | rngs ->
+        | Error _ -> None
+        | Ok rngs ->
             let rngs = Array.of_list rngs in
             let split i size target =
               let axis = index_of rngs.(i) (K.rngs tk) in
@@ -148,9 +151,10 @@ let matvec k =
                     (Render.render first_reduce_rng)
                     blocksize threads_per_row rows_per_thread;
                 if threads_per_row > 1 then
-                  try_split k
-                    (List.hd (K.axes_of k [ Reduce ]))
-                    threads_per_row Opt.Local;
+                  ignore
+                    (try_split k
+                       (List.hd (K.axes_of k [ Reduce ]))
+                       threads_per_row Opt.Local);
                 if blocksize > 1 then
                   ignore (split k global_idx blocksize Opt.Local);
                 if rows_per_thread > 1 then
@@ -169,10 +173,7 @@ let group k =
   then
     ignore
       (List.find_opt
-         (fun axis ->
-           match split ~top:true k axis 16 Opt.Local with
-           | _ -> true
-           | exception Opt.Kernel_opt_error _ -> false)
+         (fun axis -> try_split ~top:true k axis 16 Opt.Local)
          (List.filteri (fun i _ -> i < 3) (K.axes_of k [ Reduce ])))
 
 (* if there are small dims with lots of valid masks, upcast them (they might be
@@ -277,28 +278,27 @@ let upcast_more k =
 (* if last reduce dim is small(ish), loop unroll the reduce. NOTE: this can fail
    on multireduce with mismatching dimensions, this is okay *)
 let unroll k =
-  try
-    let small n = holds Sint.(K.upcast_size k <= Int n) in
-    if
-      K.unrollable_dims k <> []
-      && (small 4 || K.axes_of k [ Unroll ] = [])
-      && holds Sint.(K.upcast_size k < Int 64)
-    then
-      let s = size_at k (last (K.unrollable_dims k)) in
-      let at_most n x = Z.(leq x (of_int n)) in
-      if at_most 32 s then begin
-        ignore (split k (last (K.unrollable_dims k)) 0 Opt.Unroll);
+  let small n = holds Sint.(K.upcast_size k <= Int n) in
+  if
+    K.unrollable_dims k <> []
+    && (small 4 || K.axes_of k [ Unroll ] = [])
+    && holds Sint.(K.upcast_size k < Int 64)
+  then
+    let s = size_at k (last (K.unrollable_dims k)) in
+    let at_most n x = Z.(leq x (of_int n)) in
+    if at_most 32 s then
+      begin if try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll then
         (* if it's small, upcast a second reduce dimension too *)
         match K.unrollable_dims k with
         | [] -> ()
         | dims ->
             if at_most 3 s && at_most 3 (size_at k (last dims)) then
-              ignore (split k (last dims) 0 Opt.Unroll)
+              ignore (try_split k (last dims) 0 Opt.Unroll)
       end
-      else
-        let axis = last (K.unrollable_dims k) in
-        if divisible (shape_at k axis) 4 then ignore (split k axis 4 Opt.Unroll)
-  with Opt.Kernel_opt_error _ -> ()
+    else
+      let axis = last (K.unrollable_dims k) in
+      if divisible (shape_at k axis) 4 then
+        ignore (try_split k axis 4 Opt.Unroll)
 
 (* if nothing at all is upcasted and it's easy to, do an upcast *)
 let upcast_one k =

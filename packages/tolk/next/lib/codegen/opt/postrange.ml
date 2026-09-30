@@ -9,7 +9,12 @@ open Ops
 module V = Dtype.Value
 
 let strf = Printf.sprintf
-let check = Opt.check
+
+(* An optimisation that does not apply to a kernel refuses with a reason;
+   [Scheduler.apply_opt] returns it. *)
+exception Refused of string
+
+let check cond msg = if not cond then raise_notrace (Refused msg)
 
 let role : Opt.target -> Axis_type.t = function
   | Upcast -> Upcast
@@ -188,22 +193,24 @@ module Scheduler = struct
     k.next_range <- n + 1;
     range ~axis_type:(role t) ~dtype (sint_of_z amount) [ n ]
 
-  let shift_by ?(top = false) ?new_rng k rng amount target =
-    check
-      (List.mem (axis_type rng) (split_targets target))
-      (Format.asprintf "a %a axis comes from a %a axis, not a %a one"
-         Axis_type.pp (role target) pp_types (split_targets target) Axis_type.pp
-         (axis_type rng));
-    let old_sz =
+  (* The size of [rng] divided by [amount], if [rng] can be split for
+     [target]. *)
+  let split_size k rng amount target =
+    if not (List.mem (axis_type rng) (split_targets target)) then
+      Error
+        (Format.asprintf "a %a axis comes from a %a axis, not a %a one"
+           Axis_type.pp (role target) pp_types (split_targets target)
+           Axis_type.pp (axis_type rng))
+    else
       match divides (nth rng 0) amount with
-      | Some s -> s
+      | Some s -> Ok s
       | None ->
-          raise
-            (Opt.Kernel_opt_error
-               (strf "%s does not divide %s in %s" (Z.to_string amount)
-                  (Render.render (nth rng 0))
-                  (colored_shape k)))
-    in
+          Error
+            (strf "%s does not divide %s in %s" (Z.to_string amount)
+               (Render.render (nth rng 0))
+               (colored_shape k))
+
+  let shift_by ?(top = false) ?new_rng k rng amount target old_sz =
     let new_rng =
       match new_rng with
       | Some r -> r
@@ -222,9 +229,18 @@ module Scheduler = struct
       (amount <= 1)
       [@mutate off "a split by 1 also fails, when its rewrite cycles"]
     then invalid_arg (strf "a split takes more than 1, not %d" amount);
-    shift_by ?top ?new_rng k rng (Z.of_int amount) target
+    let amount = Z.of_int amount in
+    match split_size k rng amount target with
+    | Ok old_sz -> shift_by ?top ?new_rng k rng amount target old_sz
+    | Error msg -> invalid_arg msg
 
-  let rec apply_opt ?(append_opt = true) k (opt : Opt.t) =
+  (* [shift_to], refusing where it cannot split. *)
+  let split ?top ?new_rng k rng amount target =
+    match split_size k rng amount target with
+    | Ok old_sz -> shift_by ?top ?new_rng k rng amount target old_sz
+    | Error msg -> raise_notrace (Refused msg)
+
+  let rec apply ?(append_opt = true) k (opt : Opt.t) =
     let axis_rng axis =
       check
         (0 <= axis && axis < shape_len k)
@@ -282,7 +298,7 @@ module Scheduler = struct
                       (Nodes.to_list (ranges (List.hd reduces)))))
                 "cannot have a group inside another reduce"
           end;
-          let replaced, new_rng = shift_by ~top k rng amt target in
+          let replaced, new_rng = split ~top k rng amt target in
           [ replaced; new_rng ]
       | Tc { axis; tc_select; tc_opt; use_tc } -> (
           check (k.applied_opts = []) "tensor core opts must be first";
@@ -298,7 +314,7 @@ module Scheduler = struct
             "use_tensor_cores value is not valid";
           match apply_tc_opt k use_tc axis tc_select tc_opt with
           | Some axes -> axes
-          | None -> raise (Opt.Kernel_opt_error "no tensor core available"))
+          | None -> raise_notrace (Refused "no tensor core available"))
       | Padto { axis; amount } ->
           let rng = axis_rng axis in
           check (amount > 1) (strf "padto arg is a multiple > 1, not %d" amount);
@@ -374,7 +390,7 @@ module Scheduler = struct
     let reduceop =
       match reduceops k with
       | r :: _ -> r
-      | [] -> raise (Opt.Kernel_opt_error "no reduce ops for TensorCore")
+      | [] -> raise_notrace (Refused "no reduce ops for TensorCore")
     in
     let mul =
       let s = nth reduceop 0 in
@@ -456,13 +472,12 @@ module Scheduler = struct
             (fun i a ->
               if not (Z.equal (Z.rem (size a) (Z.of_int dims.(i))) Z.zero) then begin
                 if opt_level < 2 then
-                  raise
-                    (Opt.Kernel_opt_error "tc padding requires opt_level >= 2");
+                  raise_notrace (Refused "tc padding requires opt_level >= 2");
                 (* PADTO might fail *)
                 let axis = index_of a (rngs k) in
                 axes.(i) <-
                   List.hd
-                    (apply_opt ~append_opt:false k
+                    (apply ~append_opt:false k
                        (Padto { axis; amount = dims.(i) }))
               end)
             axes;
@@ -474,19 +489,20 @@ module Scheduler = struct
               let replaced, r =
                 match index_of_bit c tc.frag_c.lanes with
                 | Some j ->
-                    shift_to k axes.(d) 2 Local
+                    split k axes.(d) (Z.of_int 2) Local
                       ~new_rng:
                         (let p = 1 lsl j in
                          O.(warp // int p % int 2))
                 | None ->
-                    shift_to k axes.(d) 2 (if d = 2 then Unroll else Upcast)
+                    split k axes.(d) (Z.of_int 2)
+                      (if d = 2 then Unroll else Upcast)
               in
               axes.(d) <- replaced;
               (c, r))
             (Tc.axis_coords tc)
         in
         match shape () with
-        | exception Opt.Kernel_opt_error _ ->
+        | exception Refused _ ->
             k.ast <- saved;
             None
         | ne ->
@@ -503,8 +519,8 @@ module Scheduler = struct
       with
       | [ r ] -> r
       | rs ->
-          raise
-            (Opt.Kernel_opt_error
+          raise_notrace
+            (Refused
                (strf "%d reductions run over the tensor core's K axis, not one"
                   (List.length rs)))
     in
@@ -584,6 +600,11 @@ module Scheduler = struct
     in
     go 0 l
 
+  let apply_opt ?append_opt k opt =
+    match apply ?append_opt k opt with
+    | axes -> Ok axes
+    | exception Refused msg -> Error msg
+
   let get_optimized_ast ?name_override k =
     let name =
       match name_override with
@@ -631,7 +652,12 @@ let apply_opts ?beam ~hand_coded ast ren =
     let k =
       match (info, beam) with
       | Some { opts_to_apply = Some opts; _ }, _ ->
-          List.iter (fun o -> ignore (Scheduler.apply_opt k o)) opts;
+          let apply o =
+            match Scheduler.apply_opt k o with
+            | Ok _ -> ()
+            | Error msg -> invalid_arg msg
+          in
+          List.iter apply opts;
           k
       | _, Some search -> search k
       | _

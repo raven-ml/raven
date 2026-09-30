@@ -56,7 +56,3 @@ let pp ppf o =
     | Swap s -> ("SWAP", string_of_int s.with_axis)
   in
   Format.fprintf ppf "Opt(op=OptOps.%s, axis=%d, arg=%s)" op (axis o) arg
-
-exception Kernel_opt_error of string
-
-let check cond msg = if not cond then raise (Kernel_opt_error msg)

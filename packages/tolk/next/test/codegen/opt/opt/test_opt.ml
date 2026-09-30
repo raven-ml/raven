@@ -87,16 +87,4 @@ let order =
           not_equal int 0 (Opt.compare (split Unroll) (split Local)));
     ]
 
-(* Errors *)
-
-let errors =
-  group "check"
-    [
-      test "is unit when its condition holds" (fun () ->
-          Opt.check true "unused");
-      test "raises its message when its condition fails" (fun () ->
-          raises (Opt.Kernel_opt_error "padto arg is a multiple > 1, not 1")
-            (fun () -> Opt.check false "padto arg is a multiple > 1, not 1"));
-    ]
-
-let () = exit (Windtrap.run "Tolk_next.Opt" [ printing; order; errors ])
+let () = exit (Windtrap.run "Tolk_next.Opt" [ printing; order ])

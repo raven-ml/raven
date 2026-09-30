@@ -42,14 +42,3 @@ val compare : t -> t -> int
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats [Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST))]. *)
-
-(** {1:errors Errors} *)
-
-exception Kernel_opt_error of string
-(** Raised when an optimisation does not apply to a kernel; the message says
-    why. *)
-
-val check : bool -> string -> unit
-(** [check cond msg] is [()] if [cond] holds.
-
-    Raises {!Kernel_opt_error} with [msg] otherwise. *)

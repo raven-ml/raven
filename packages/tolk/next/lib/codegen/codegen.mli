@@ -46,9 +46,9 @@ val full_rewrite_to_sink :
     fails is first printed on standard output ({!Render.pp_uops}).
 
     Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
-    {!Ops.kernel_info}, if its beam search is asked for without [beam], if a
-    check fails, or if a pass does. Raises {!Opt.Kernel_opt_error} if an
-    optimisation its argument lists does not apply. *)
+    {!Ops.kernel_info}, if its beam search is asked for without [beam], if an
+    optimisation its argument lists does not apply, with the reason, if a check
+    fails, or if a pass does. *)
 
 (** {1:linearizing Linearizing} *)
 

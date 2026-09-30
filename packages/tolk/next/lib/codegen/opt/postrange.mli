@@ -125,17 +125,17 @@ module Scheduler : sig
       role, a new range unless [new_rng] is given. [r] becomes
       [r' * amount + s], or [s * size r' + r'] if [top] (default [false]).
 
-      Raises {!Opt.Kernel_opt_error} if [r]'s role is not among
-      [split_targets target], or [amount] does not divide [r]'s size. Raises
-      [Invalid_argument] if [amount] is not greater than [1]. *)
+      Raises [Invalid_argument] if [amount] is not greater than [1], if [r]'s
+      role is not among [split_targets target], or if [amount] does not divide
+      [r]'s size. *)
 
-  val apply_opt : ?append_opt:bool -> t -> Opt.t -> Ops.t list
+  val apply_opt : ?append_opt:bool -> t -> Opt.t -> (Ops.t list, string) result
   (** [apply_opt k opt] applies [opt] to [k], records it among [k]'s applied
-      optimisations if [append_opt] (default [true]), and is the axes it made: a
-      split's [[r'; s]] ({!shift_to}), a pad's grown axis, a tensor core's three
-      axes [N], [M] and [K], and [[]] for a swap.
+      optimisations if [append_opt] (default [true]), and is [Ok] the axes it
+      made: a split's [[r'; s]] ({!shift_to}), a pad's grown axis, a tensor
+      core's three axes [N], [M] and [K], and [[]] for a swap.
 
-      Raises {!Opt.Kernel_opt_error} if [opt] does not apply, leaving [k] as it
+      It is [Error] with the reason if [opt] does not apply, leaving [k] as it
       was unless a tensor core's reduction is found ambiguous after its axes are
       split. It does not apply when its axis is out of range, a split's target
       cannot come from its axis's role, or exceeds what the renderer allows (32
@@ -176,5 +176,5 @@ val apply_opts :
     applied, or it buffers values ({!Op.Stage}), applies [hand_coded]. A kernel
     [ast] that is tagged is returned as it is.
 
-    Raises {!Opt.Kernel_opt_error} if an optimisation asked for does not apply.
-*)
+    Raises [Invalid_argument] if an optimisation asked for does not apply, with
+    the reason {!Scheduler.apply_opt} gives. *)
