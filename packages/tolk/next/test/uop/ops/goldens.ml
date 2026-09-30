@@ -670,55 +670,54 @@ let minted sink =
   in
   graph_rewrite ~walk:true ~ctx:() sink renumber
 
-(* Each golden, the graph built for it, whether it mints slots, and whether its
-   shapes need the symbolic rules. *)
+(* Each golden, the graph built for it, and whether it mints slots. *)
 let all =
   [
-    ("typed_constants", typed_constants, false, false);
-    ("ccast", ccast, false, false);
-    ("subtraction", subtraction, false, false);
-    ("negation", negation, false, false);
-    ("weak_promotion", weak_promotion, false, false);
-    ("division", division, false, false);
-    ("constant_division", constant_division, false, false);
-    ("comparisons", comparisons, false, false);
-    ("bitwise", bitwise, false, false);
-    ("extrema", extrema, false, false);
-    ("selection", selection, false, false);
-    ("unary", unary, false, false);
-    ("powers", powers, false, false);
-    ("sums_and_products", sums_and_products, false, false);
-    ("casts", casts, false, false);
-    ("bitcasts", bitcasts, false, false);
-    ("movement", movement, false, false);
-    ("expansion", expansion, false, false);
-    ("squeezes", squeezes, false, false);
-    ("stacks", stacks, false, false);
-    ("concatenation", concatenation, false, false);
-    ("padding", padding, false, false);
-    ("reductions", reductions, false, false);
-    ("constants_like", constants_like, false, false);
-    ("kernel_nodes", kernel_nodes, false, false);
-    ("validity", validity, false, false);
-    ("contraction", contraction, false, false);
-    ("storage", storage, false, false);
-    ("storage_like", storage_like, false, false);
-    ("sets", sets, false, false);
-    ("shards", shards, false, false);
-    ("calls", calls, false, false);
-    ("custom_kernels", custom_kernels, false, false);
-    ("variables_and_binding", variables_and_binding, false, false);
-    ("getaddrs", getaddrs, false, false);
-    ("instructions", instructions, false, false);
-    ("wmmas", wmmas, false, false);
-    ("substitution", substitution, false, false);
-    ("hcq_calls", hcq_calls, false, false);
-    ("clones", clones, true, false);
-    ("outputs", outputs, true, false);
-    ("symbolic_storage", symbolic_storage, false, true);
-    ("symbolic_shards", symbolic_shards, false, true);
-    ("symbolic_shard_slices", symbolic_shard_slices, false, true);
-    ("symbolic_outputs", symbolic_outputs, true, true);
+    ("typed_constants", typed_constants, false);
+    ("ccast", ccast, false);
+    ("subtraction", subtraction, false);
+    ("negation", negation, false);
+    ("weak_promotion", weak_promotion, false);
+    ("division", division, false);
+    ("constant_division", constant_division, false);
+    ("comparisons", comparisons, false);
+    ("bitwise", bitwise, false);
+    ("extrema", extrema, false);
+    ("selection", selection, false);
+    ("unary", unary, false);
+    ("powers", powers, false);
+    ("sums_and_products", sums_and_products, false);
+    ("casts", casts, false);
+    ("bitcasts", bitcasts, false);
+    ("movement", movement, false);
+    ("expansion", expansion, false);
+    ("squeezes", squeezes, false);
+    ("stacks", stacks, false);
+    ("concatenation", concatenation, false);
+    ("padding", padding, false);
+    ("reductions", reductions, false);
+    ("constants_like", constants_like, false);
+    ("kernel_nodes", kernel_nodes, false);
+    ("validity", validity, false);
+    ("contraction", contraction, false);
+    ("storage", storage, false);
+    ("storage_like", storage_like, false);
+    ("sets", sets, false);
+    ("shards", shards, false);
+    ("calls", calls, false);
+    ("custom_kernels", custom_kernels, false);
+    ("variables_and_binding", variables_and_binding, false);
+    ("getaddrs", getaddrs, false);
+    ("instructions", instructions, false);
+    ("wmmas", wmmas, false);
+    ("substitution", substitution, false);
+    ("hcq_calls", hcq_calls, false);
+    ("clones", clones, true);
+    ("outputs", outputs, true);
+    ("symbolic_storage", symbolic_storage, false);
+    ("symbolic_shards", symbolic_shards, false);
+    ("symbolic_shard_slices", symbolic_shard_slices, false);
+    ("symbolic_outputs", symbolic_outputs, true);
   ]
 
 (* The nodes of pretty.golden, in order. *)

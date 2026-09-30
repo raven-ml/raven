@@ -32,13 +32,6 @@ let shape = list sint
 let device = Testable.make ~pp:Ops.pp_device ~equal:Ops.equal_device
 let addr_space = Testable.make ~pp:Dtype.pp_addr_space ~equal:( = )
 
-(* The tag of the tests that need the symbolic rules, which land with L3. *)
-let l3 = "L3"
-
-(* The tag of the tests of the time before L3, when the symbolic rules are not
-   installed. *)
-let pre_l3 = "pre-L3"
-
 let rejects ?__POS__ f =
   raises_match ?__POS__ (Exn.invalid_arg ?substring:None) f
 

@@ -15,12 +15,9 @@ let param ?device shape slot dt = Ops.param ?device ~shape:(ints shape) slot dt
 let graph_goldens =
   group "graphs"
     (List.map
-       (fun (name, build, minted, symbolic) ->
-         let check =
-           Golden.graph (name ^ ".golden") (fun () ->
-               if minted then Goldens.minted (build ()) else build ())
-         in
-         if symbolic then group ~tags:[ l3 ] name [ check ] else check)
+       (fun (name, build, minted) ->
+         Golden.graph (name ^ ".golden") (fun () ->
+             if minted then Goldens.minted (build ()) else build ()))
        Goldens.all)
 
 (* Elementwise *)
@@ -318,7 +315,7 @@ let movement =
             (match Ops.marg r with Reshape s -> s | _ -> fail "a reshape");
           equal shape (ints [ 6; 4 ]) (Ops.as_shape (Ops.nth r 1));
           equal shape (ints [ 3 ]) (Ops.as_shape (Ops.int 3)));
-      test ~tags:[ l3 ] "as_shape of a node is the node" (fun () ->
+      test "as_shape of a node is the node" (fun () ->
           let n = weak_var "n" 1 4 in
           equal shape [ Sym n ] (Ops.as_shape n));
       test "marg reads each movement's argument and rejects other nodes"
@@ -491,8 +488,7 @@ let devices =
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           is_true (Ops.shard_slice (Ops.int 1) 0 d == Ops.int 1);
           rejects (fun () -> Ops.shard_slice (param [ 3 ] 0 Float32) 0 d));
-      test ~tags:[ l3 ]
-        "shard_slice rejects a size whose divisibility is not decided"
+      test "shard_slice rejects a size whose divisibility is not decided"
         (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           let x = Ops.param ~shape:[ Sym (weak_var "x" 0 10) ] 0 Float32 in

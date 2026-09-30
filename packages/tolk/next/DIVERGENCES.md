@@ -115,9 +115,9 @@ the Exclusions of `README.md`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
 - **Pinned by:** waiting for L4 through L8; for `Ops`, its suite
-  (`test/uop/ops`): `resolve › simplify rejects a graph other than constants
-  while the symbolic rules are not installed` (before L3), and at L3 the law
-  that `simplify` returns a sink of constants and stacks of constants itself;
+  (`test/uop/ops`): `resolve › simplify leaves a constant, and a sink of
+  constants and stacks of constants, alone`, and the `resolve` tests that
+  simplify with `Symbolic`'s rules;
   `printing › pretty.golden`; `elementwise patterns › the pattern operators
   are the named pattern operations`; `queue calls › pp_hcq_info formats every
   field, as the record's repr`.

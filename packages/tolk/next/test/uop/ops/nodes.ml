@@ -830,7 +830,7 @@ let shapes =
           equal (list int) []
             (Ops.broadcast_axes (ints [ 1; 8 ]) (ints [ 1; 8 ]));
           rejects (fun () -> Ops.broadcast_axes (ints [ 4; 8 ]) (ints [ 8 ])));
-      test ~tags:[ l3 ] "broadcast_axes compares symbolic sizes" (fun () ->
+      test "broadcast_axes compares symbolic sizes" (fun () ->
           let t = t_var () in
           equal (list int) []
             (Ops.broadcast_axes [ Sym t; Int 8 ] [ Sym t; Int 8 ]);
@@ -848,8 +848,7 @@ let shapes =
             (ints [ 4; 8 ])
             (Ops.shape Ops.O.(row * Ops.expand (Ops.float 2.) (ints [ 8 ])));
           equal shape (ints [ 4; 8 ]) (Ops.shape Ops.O.(row * float 2.)));
-      test ~tags:[ l3 ] "an elementwise operation keeps a symbolic shape"
-        (fun () ->
+      test "an elementwise operation keeps a symbolic shape" (fun () ->
           let t = t_var () in
           let sym = Ops.expand (Ops.float 1.) [ Int 1; Int 1; Sym t ] in
           equal shape [ Int 1; Int 1; Sym t ] (Ops.shape Ops.O.(sym + sym)));
@@ -970,8 +969,7 @@ let shapes =
           equal sint (Int 12)
             (Ops.numel (Ops.param ~shape:(ints [ 3; 4 ]) 1 Float32));
           equal sint (Int 1) (Ops.numel (Ops.param 2 Float32)));
-      test ~tags:[ l3 ] "max_shape takes a symbolic size's greatest value"
-        (fun () ->
+      test "max_shape takes a symbolic size's greatest value" (fun () ->
           let n = weak_var "n" 1 8 in
           let p = Ops.param ~shape:[ Int 3; Sym n ] 0 Float32 in
           equal (list int) [ 3; 8 ] (Ops.max_shape p);
@@ -1075,8 +1073,7 @@ let shapes =
           rejects (fun () ->
               Ops.shape (Ops.mop p (Pad [ (Int 3, Int 2); (Int 0, Int 3) ])));
           rejects (fun () -> Ops.shape (Ops.mop p (Flip [ true ]))));
-      test ~tags:[ l3 ]
-        "a symbolic reshape is accepted unless its sizes provably differ"
+      test "a symbolic reshape is accepted unless its sizes provably differ"
         (fun () ->
           let n = weak_var "n" 1 8 in
           let p = Ops.param ~shape:[ Sym n ] 0 Float32 in

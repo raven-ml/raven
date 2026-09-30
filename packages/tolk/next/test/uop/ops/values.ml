@@ -413,30 +413,20 @@ let resolving =
           equal z (Z.of_int 5) (Ops.to_int (Ops.int 5));
           equal float_exact 1.5 (Ops.to_float (Ops.float 1.5));
           is_true (Ops.to_bool (Ops.bool true)));
-      test
-        "simplify rejects a graph other than constants while the symbolic \
-         rules are not installed"
-        ~tags:[ pre_l3 ] (fun () ->
-          rejects (fun () -> Ops.simplify (Ops.int ~dtype:Int32 3));
-          rejects (fun () -> Ops.simplify Ops.O.(int 4 < int 7));
-          rejects (fun () -> Ops.resolve Ops.O.(weak_var "i" 1 10 < int 4));
-          rejects (fun () -> Ops.simplify (Ops.sink [ Ops.O.(int 1 + int 2) ])));
-      test ~tags:[ l3 ]
-        "to_int reads a typed constant and an integer sum of constants"
+      test "to_int reads a typed constant and an integer sum of constants"
         (fun () ->
           equal z (Z.of_int 4) (Ops.to_int (Ops.int ~dtype:Int32 4));
           equal z (Z.of_int 11)
             (Ops.to_int Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
           equal z (Z.of_int 2)
             (Ops.to_int Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
-      test ~tags:[ l3 ] "to_bool decides comparisons of constants" (fun () ->
+      test "to_bool decides comparisons of constants" (fun () ->
           is_true (Ops.to_bool Ops.O.(int 4 < int 7));
           is_true (Ops.to_bool Ops.O.(int 4 <= int 4));
           is_true (Ops.to_bool Ops.O.(int 4 <> int 7));
           is_false (Ops.to_bool Ops.O.(int 4 <> int 4));
           is_false (Ops.to_bool Ops.O.(int 4 > int 7)));
-      test ~tags:[ l3 ] "to_bool decides a comparison the bounds decide"
-        (fun () ->
+      test "to_bool decides a comparison the bounds decide" (fun () ->
           let v = weak_var "i" 1 10 in
           is_true (Ops.to_bool Ops.O.(v < int 20));
           is_true (Ops.to_bool Ops.O.(v // int 2 < int 20));
@@ -445,13 +435,12 @@ let resolving =
           let x = weak_var "x" 1 10 and y = weak_var "y" 5 10 in
           is_true (Ops.to_bool Ops.O.(Ops.maximum x y < int 20));
           is_false (Ops.to_bool Ops.O.(Ops.maximum x y < int 3)));
-      test ~tags:[ l3 ]
+      test
         "to_bool decides a disjunction with true and a conjunction with false"
         (fun () ->
           is_true (Ops.to_bool Ops.O.(flag "b" lor bool true));
           is_false (Ops.to_bool Ops.O.(flag "b" land bool false)));
-      test ~tags:[ l3 ] "to_bool rejects a condition with two possible values"
-        (fun () ->
+      test "to_bool rejects a condition with two possible values" (fun () ->
           let v = weak_var "i" 1 10 in
           rejects (fun () -> Ops.to_bool Ops.O.(flag "b" lor bool false));
           rejects (fun () -> Ops.to_bool Ops.O.(flag "b" land bool true));
@@ -463,8 +452,8 @@ let resolving =
           rejects (fun () -> Ops.to_int (Ops.bool true));
           rejects (fun () -> Ops.to_int (Ops.float 1.));
           rejects (fun () -> Ops.to_float (Ops.int 1)));
-      test ~tags:[ l3 ]
-        "resolve takes the default when the comparison is undecided" (fun () ->
+      test "resolve takes the default when the comparison is undecided"
+        (fun () ->
           let u = weak_var "i" 1 10 in
           is_true (Ops.resolve Ops.O.(u < int 4));
           is_false (Ops.resolve ~default:false Ops.O.(u < int 4));
@@ -489,7 +478,7 @@ let resolving =
           is_true (Ops.simplify s == s));
       test "ssimplify is an integer constant as an integer" (fun () ->
           equal sint (Int 3) (Ops.ssimplify (Ops.int 3)));
-      test ~tags:[ l3 ] "ssimplify reads a typed integer constant" (fun () ->
+      test "ssimplify reads a typed integer constant" (fun () ->
           equal sint (Int 3) (Ops.ssimplify (Ops.int ~dtype:Int32 3)));
       test "smax and smin of integers are integers" (fun () ->
           equal sint (Int 5) (Ops.smax [ Int 2; Int 5 ]);
@@ -497,8 +486,8 @@ let resolving =
           equal sint (Int 7) (Ops.smax [ Int 7 ]);
           rejects (fun () -> Ops.smax []);
           rejects (fun () -> Ops.smin []));
-      test ~tags:[ l3 ]
-        "smax and smin of a symbolic size bound it as max and min do" (fun () ->
+      test "smax and smin of a symbolic size bound it as max and min do"
+        (fun () ->
           let v = weak_var "v" 3 10 in
           let bounds_of = function
             | Ops.Sym u -> bounds u
@@ -549,7 +538,7 @@ let sint_module =
       test "resolve is a known condition's value" (fun () ->
           is_true (Ops.Sint.resolve (Known true));
           is_false (Ops.Sint.resolve ~default:true (Known false)));
-      test ~tags:[ l3 ] "resolve decides a node by its bounds" (fun () ->
+      test "resolve decides a node by its bounds" (fun () ->
           is_true (Ops.Sint.resolve Ops.Sint.(Sym n < Int 9));
           is_false (Ops.Sint.resolve ~default:false Ops.Sint.(Sym n < Int 5));
           is_true (Ops.Sint.resolve Ops.Sint.(Sym n <> Int 0)));
@@ -671,13 +660,13 @@ let inference =
     [
       test "an integer is itself" (fun () ->
           equal int 5 (Ops.sym_infer (Int 5) []));
-      test ~tags:[ l3 ] "a node takes its variables' values" (fun () ->
+      test "a node takes its variables' values" (fun () ->
           let n = weak_var "n" 0 100 in
           equal int 7
             (Ops.sym_infer (Sym Ops.O.((n * int 2) + int 1)) [ ("n", 3) ]);
           equal int 9
             (Ops.sym_infer (Sym Ops.O.(Ops.bind n (i 7) + int 1)) [ ("n", 8) ]));
-      test ~tags:[ l3 ] "divisions round as their operations say" (fun () ->
+      test "divisions round as their operations say" (fun () ->
           let n = weak_var "n" (-10) 10 in
           equal int (-3) (Ops.sym_infer (Sym Ops.O.(n // int 3)) [ ("n", -7) ]);
           equal int 2 (Ops.sym_infer (Sym Ops.O.(n % int 3)) [ ("n", -7) ]);
@@ -689,8 +678,7 @@ let inference =
             (Ops.sym_infer
                (Sym (Ops.alu n Op.Cmod [ Ops.int 3 ]))
                [ ("n", -7) ]));
-      test ~tags:[ l3 ] "a cast converts without truncating to a width"
-        (fun () ->
+      test "a cast converts without truncating to a width" (fun () ->
           let n = weak_var "n" (-1000) 1000 in
           let half = Ops.O.(Ops.cast n Float32 / float 2.) in
           equal int 7
@@ -701,7 +689,7 @@ let inference =
             (Ops.sym_infer
                (Sym (Ops.cast (Ops.cast n Int8) Weak_int))
                [ ("n", 300) ]));
-      test ~tags:[ l3 ] "a missing variable is rejected" (fun () ->
+      test "a missing variable is rejected" (fun () ->
           rejects (fun () -> Ops.sym_infer (Sym (weak_var "n" 0 4)) []));
     ]
 
@@ -785,8 +773,7 @@ let programs =
           in
           raises_match (Exn.invalid_arg ~substring:"extent") (fun () ->
               Ops.vals info []));
-      test ~tags:[ l3 ] "program_info_of_sink reads symbolic launch sizes"
-        (fun () ->
+      test "program_info_of_sink reads symbolic launch sizes" (fun () ->
           let core_id = alu_param ~hi:3 "core_id" 0
           and n = alu_param ~lo:2 "n" 1 in
           let input = Ops.param ~shape:(ints [ 16 ]) 2 Float32
@@ -839,7 +826,7 @@ let programs =
           equal (list int) [ 0; 5 ] info.outs;
           equal (list int) [ 0; 5 ] info.ins;
           equal (list int) [ 1; 1; 1 ] (fst (Ops.launch_dims info [])));
-      test ~tags:[ l3 ] "launch sizes divide as their operations say" (fun () ->
+      test "launch sizes divide as their operations say" (fun () ->
           let n = alu_param ~lo:(-10) ~hi:10 "n" 0 in
           let info =
             Ops.program_info_of_sink
@@ -851,7 +838,7 @@ let programs =
           in
           equal (list int) [ -3; 2; 1 ]
             (fst (Ops.launch_dims info [ ("n", -7) ])));
-      test ~tags:[ l3 ] "launch_dims rejects a missing variable" (fun () ->
+      test "launch_dims rejects a missing variable" (fun () ->
           let extent = alu_param "extent" 0 in
           let info =
             Ops.program_info_of_sink
