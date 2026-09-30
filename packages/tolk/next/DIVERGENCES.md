@@ -1028,3 +1028,26 @@ the Exclusions of `README.md`.
   span of each kernel on the device, in order` and `› a profiled batch run
   twice keeps the second run's spans`, which releases the first run's command
   buffer (slow).
+
+## D35. A selection of a value on no device is that value
+
+- **tinygrad:** `schedule/multi.py:24-27` (`lower_broadcast_copy` simplifies
+  the copy's source and reads its device), `uop/ops.py:895` (the device of an
+  `MSELECT` asserts that its source is on several devices).
+- **tolk.next:** `lib/schedule/multi.ml:75-87` (`pm_unselect_deviceless`,
+  applied in `lower_broadcast_copy`).
+- **Differs:** after simplifying the source of a copy to several devices,
+  every shard selection of a value on no device is replaced by that value, so
+  the copy stacks it on each device. tinygrad raises instead. Simplifying folds
+  an integer product with zero on a sharded value to a constant, which has no
+  device, and the selection above it then has no shards to select: a shard of
+  such a product that a cast, a sum or a max follows raises "mselect must be on
+  tuple device, getting None". The fold is right, since a constant is on no
+  device, so the fix is in the selection, not in the fold.
+- **Reason:** (b). rune lowers sharded integer code, where multiplying by zero
+  and then reducing or casting is ordinary, onto this rewrite; the reference
+  refuses such programs.
+- **Pinned by:** `Tolk_next.Multi › multi_pm › laws ›` "a shard of a product
+  with zero cast to a float is zero (D35)", "a shard of a sum of a product with
+  zero is zero (D35)", and the law "a rewritten value holds the value computed
+  whole" over every drawn program.

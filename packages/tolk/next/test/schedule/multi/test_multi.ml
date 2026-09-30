@@ -449,30 +449,9 @@ let build d =
 
 let device k = function [ t ] -> t | ts -> List.nth ts k
 
-(* [refused_by_tinygrad d] is [true] if [d] selects a shard of a product with
-   zero that a cast or a reduction follows. tinygrad's rewrite refuses it:
-   simplifying the copy of the shard folds the value to a constant, and a
-   constant has no shards to select. *)
-let refused_by_tinygrad d =
-  let folds = function Cast | Sum _ | Max _ -> true | _ -> false in
-  let rec after_zero = function
-    | [] -> false
-    | Scale 0 :: rest -> then_folded rest || after_zero rest
-    | _ :: rest -> after_zero rest
-  and then_folded = function
-    | [] -> false
-    | step :: rest when folds step ->
-        List.exists (function Select _ -> true | _ -> false) rest
-    | _ :: rest -> then_folded rest
-  in
-  after_zero d.steps
-
-let holds_whole d =
-  assume (not (refused_by_tinygrad d));
-  let v, axes, buffers = build d in
-  cover "a value stays sharded" (axes <> []);
-  cover "a sharded axis is reduced across devices"
-    (List.exists (fun n -> Ops.op n = Allreduce) (Ops.toposort (multi v)));
+(* [agrees v buffers] checks that the rewritten [v] holds on each device the
+   value computed whole. *)
+let agrees v buffers =
   let whole = Tensors.eval ~buffers v in
   let rewritten = Tensors.eval ~buffers (multi v) in
   List.iteri
@@ -481,6 +460,17 @@ let holds_whole d =
         ~msg:(Printf.sprintf "device %d" k)
         (array Dtypes.const) (device k whole) (device k rewritten))
     (if List.length rewritten > List.length whole then rewritten else whole)
+
+let holds_whole d =
+  let v, axes, buffers = build d in
+  cover "a value stays sharded" (axes <> []);
+  cover "a sharded axis is reduced across devices"
+    (List.exists (fun n -> Ops.op n = Allreduce) (Ops.toposort (multi v)));
+  agrees v buffers
+
+let holds_whole_once d =
+  let v, _, buffers = build d in
+  agrees v buffers
 
 (* Counterexamples found before: one device's shard of a sum with a whole value,
    whose part of the whole is taken at the device range. *)
@@ -502,35 +492,30 @@ let examples =
     };
   ]
 
-let refused_as_in_tinygrad name d =
-  test (name ^ " is refused, as in tinygrad") (fun () ->
-      let v, _, _ = build d in
-      raises_match
-        (Exn.invalid_arg
-           ~substring:"a shard selection needs a value on several devices")
-        (fun () -> multi v))
-
 let laws =
   group "multi_pm › laws"
     [
       prop ~examples "a rewritten value holds the value computed whole" drawn
         holds_whole;
-      refused_as_in_tinygrad "a shard of a product with zero cast to a float"
-        {
-          n = 2;
-          shape = [ 2; 1; 1 ];
-          axis = 0;
-          grid = false;
-          steps = [ Scale 0; Cast; Select 0 ];
-        };
-      refused_as_in_tinygrad "a shard of a sum of a product with zero"
-        {
-          n = 2;
-          shape = [ 2; 2; 1 ];
-          axis = 0;
-          grid = false;
-          steps = [ Scale 0; Sum 1; Select 0 ];
-        };
+      test "a shard of a product with zero cast to a float is zero (D35)"
+        (fun () ->
+          holds_whole_once
+            {
+              n = 2;
+              shape = [ 2; 1; 1 ];
+              axis = 0;
+              grid = false;
+              steps = [ Scale 0; Cast; Select 0 ];
+            });
+      test "a shard of a sum of a product with zero is zero (D35)" (fun () ->
+          holds_whole_once
+            {
+              n = 2;
+              shape = [ 2; 2; 1 ];
+              axis = 0;
+              grid = false;
+              steps = [ Scale 0; Sum 1; Select 0 ];
+            });
     ]
 
 (* Rules

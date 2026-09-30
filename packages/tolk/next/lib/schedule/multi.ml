@@ -71,10 +71,20 @@ let mstack_early_shrink ms shrink =
   in
   replace ms ~src:(List.mapi each (src ms))
 
+(* A selection of a value on no device is that value (D35). *)
+let pm_unselect_deviceless =
+  Pattern_matcher.v
+    [
+      rule
+        (Upat.op Op.Mselect ~src:[ Upat.var "x" ])
+        (fun m ->
+          if Option.is_none (device (m "x")) then Some (m "x") else None);
+    ]
+
 let lower_broadcast_copy c x =
   match (device c, device x) with
   | Some (Multi ds), Some (Single _) ->
-      let sx = simplify x in
+      let sx = graph_rewrite ~ctx:() (simplify x) pm_unselect_deviceless in
       if Option.is_none (device sx) then
         Some (v Op.Mstack ~src:(List.map (fun _ -> sx) ds))
       else
