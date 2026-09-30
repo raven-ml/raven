@@ -16,7 +16,7 @@
    leading batch entry, axis parameters shift by one, and constants meeting
    lanes are lifted with a broadcast view.
 
-   A lane presents itself as contiguous even when its batched tensor is not;
+   A lane presents itself as T.contiguous even when its batched tensor is not;
    rules compensate by forcing contiguity before reshapes. Operations whose
    operands are all constants are evaluated as they are. Nested maps stack:
    each owns its lanes and batch size, and the translations one level emits,
@@ -27,7 +27,8 @@
    without a batching rule raise when an operand is a lane rather than silently
    producing wrong shapes. *)
 
-open Nx_effect
+open Nx.Op
+open Prim
 module T = Nx
 
 let no_rule op () =
@@ -37,28 +38,34 @@ type state = { batch_size : int; axis : Axis.t option }
 
 let create ?axis ~batch_size () = { batch_size; axis }
 
-type (_, _) Nx_effect.node +=
-  | Lane : { map : state; batched : ('a, 'b) t } -> ('a, 'b) Nx_effect.node
+type (_, _) Nx.Repr.node +=
+  | Lane : { map : state; batched : ('a, 'b) T.t } -> ('a, 'b) Nx.Repr.node
 
 (* [lane st x] is the lane of [st] whose batched tensor is [x]. *)
-let lane (type a b) st (x : (a, b) t) : (a, b) t =
+let lane (type a b) st (x : (a, b) T.t) : (a, b) T.t =
   let s = T.shape x in
-  traced (context x)
-    (Placement.without_leading_axis (placement x))
-    (dtype x)
+  Nx.Repr.Traced.v ~context:(Nx.Repr.context x)
+    (T.Placement.without_leading_axis (T.placement x))
+    (T.dtype x)
     (Array.sub s 1 (Array.length s - 1))
     (Lane { map = st; batched = x })
 
-let batched (type a b) st (x : (a, b) t) =
-  match x with
-  | Traced { t_node = Lane { map; _ }; _ } -> map == st
-  | Host _ | Placed _ | Traced _ -> false
+let batched (type a b) st (x : (a, b) T.t) =
+  match Nx.Repr.v x with
+  | Traced t -> (
+      match Nx.Repr.Traced.node t with
+      | Lane { map; _ } -> map == st
+      | _ -> false)
+  | Host _ | Placed _ -> false
 
 (* The tensor [x] stands for outside [st]: a lane's batched tensor, or [x]. *)
-let physical (type a b) st (x : (a, b) t) : (a, b) t =
-  match x with
-  | Traced { t_node = Lane { map; batched }; _ } when map == st -> batched
-  | Host _ | Placed _ | Traced _ -> x
+let physical (type a b) st (x : (a, b) T.t) : (a, b) T.t =
+  match Nx.Repr.v x with
+  | Traced t -> (
+      match Nx.Repr.Traced.node t with
+      | Lane { map; batched } when map == st -> batched
+      | _ -> x)
+  | Host _ | Placed _ -> x
 
 let broadcast_shapes sa sb =
   let ra = Array.length sa and rb = Array.length sb in
@@ -82,7 +89,7 @@ let to_batched st x target =
     let lead = if batched st x then st.batch_size else 1 in
     let x =
       reshape
-        (contiguous (physical st x))
+        (T.contiguous (physical st x))
         (Array.concat [ [| lead |]; ones; s ])
     in
     expand x (Array.append [| st.batch_size |] target)
@@ -106,7 +113,7 @@ let move_batched st x m =
   let p = physical st x in
   match (m : move) with
   | Reshape shape ->
-      reshape (contiguous p) (Array.append [| st.batch_size |] shape)
+      reshape (T.contiguous p) (Array.append [| st.batch_size |] shape)
   | Permute axes ->
       permute p (Array.append [| 0 |] (Array.map (fun d -> d + 1) axes))
   | Expand shape -> to_batched st x shape
@@ -193,7 +200,7 @@ let quant_batched (type a b) st (Nx_quant.Mxfp4 { codes; scales })
   | Dequant _ -> false
 
 (* The batched result of a quantised product with a lane among its operands. *)
-let quant (type a b) st w (op : (a, b) Nx_quant.Effect.op) : (a, b) t =
+let quant (type a b) st w (op : (a, b) Nx_quant.Effect.op) : (a, b) T.t =
   match op with
   | Dequant _ -> Nx_quant.Effect.perform (lift_weight st ~pad:0 w) op
   | Apply { ids; x; transpose } ->
@@ -255,8 +262,8 @@ let rec install : type a. state -> (unit -> a) -> a =
   let p x = physical st x in
   (* Elementwise operations: broadcast all operands to the common batched shape
      and apply the operation unchanged. *)
-  let elt2 (type a b c d) (f : (a, b) t -> (a, b) t -> (c, d) t)
-      (a_in : (a, b) t) (b_in : (a, b) t) =
+  let elt2 (type a b c d) (f : (a, b) T.t -> (a, b) T.t -> (c, d) T.t)
+      (a_in : (a, b) T.t) (b_in : (a, b) T.t) =
     let target = broadcast_shapes (T.shape a_in) (T.shape b_in) in
     lane st (f (to_batched st a_in target) (to_batched st b_in target))
   in
@@ -265,7 +272,7 @@ let rec install : type a. state -> (unit -> a) -> a =
      one, and constants meeting lanes are lifted with a broadcast view.
      Operations whose operands are all constants of the map are evaluated as
      they are. *)
-  let run : type c. c Op.t -> c =
+  let run : type c. c Nx.Op.t -> c =
    fun op ->
     match[@warning "@4@8"] op with
     | Unary (k, x) -> if b x then lane st (unary k (p x)) else eval op
@@ -302,7 +309,7 @@ let rec install : type a. state -> (unit -> a) -> a =
     (* Placement: the batch axis sits in front of a split axis. *)
     | Place (q, x) ->
         if b x then
-          lane st (place (Nx_effect.Placement.with_leading_axis q) (p x))
+          lane st (place (T.Placement.with_leading_axis q) (p x))
         else eval op
     (* Movement: insert the batch dimension into shape parameters. *)
     | Move (x, m) -> if b x then lane st (move_batched st x m) else eval op
@@ -399,8 +406,8 @@ let rec install : type a. state -> (unit -> a) -> a =
     | Qr { x; _ } -> if b x then no_rule "qr" () else eval op
     | Lu x -> if b x then no_rule "lu" () else eval op
     | Svd { x; _ } -> if b x then no_rule "svd" () else eval op
-    | Eig { x; _ } -> if b x then no_rule (Op.name op) () else eval op
-    | Eigh { x; _ } -> if b x then no_rule (Op.name op) () else eval op
+    | Eig { x; _ } -> if b x then no_rule (Nx.Op.name op) () else eval op
+    | Eigh { x; _ } -> if b x then no_rule (Nx.Op.name op) () else eval op
     | Solve_triangular { a; b = y; _ } ->
         if b a || b y then no_rule "solve_triangular" () else eval op
   in
@@ -489,7 +496,7 @@ let rec install : type a. state -> (unit -> a) -> a =
             install st (fun () -> jvp (relanes_of ps) (lanes_of dps))
           in
           let both = ref [] in
-          let batch_both (type a b) (y : (a, b) t) (dy : (a, b) t) =
+          let batch_both (type a b) (y : (a, b) T.t) (dy : (a, b) T.t) =
             let l = b y || b dy in
             both := l :: !both;
             if l then (ensure_batched st y, ensure_batched st dy) else (y, dy)
@@ -635,6 +642,6 @@ let rec install : type a. state -> (unit -> a) -> a =
    fun eff -> Option.map Answer.deliver (rule eff)
   in
   match_with
-    (fun () -> Nx_effect.intercept { run } f)
+    (fun () -> intercept { run } f)
     ()
     { retc = Fun.id; exnc = raise; effc }

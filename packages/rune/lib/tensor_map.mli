@@ -13,15 +13,15 @@
 
     This module is the single home of that pattern; the reverse tape, the
     forward tangent store and jit's constant tables build on it. A key hashes by
-    [Nx_effect.identity_hash]: a placed or traced value by its id, so keying one
-    never reads it. *)
+    its identity: a placed or traced value by its id, so keying one never reads
+    it. *)
 
-type key = Key : ('a, 'b) Nx_effect.t -> key
+type key = Key : ('a, 'b) Nx.t -> key
 
-val same : ('a, 'b) Nx_effect.t -> ('c, 'd) Nx_effect.t -> bool
+val same : ('a, 'b) Nx.t -> ('c, 'd) Nx.t -> bool
 (** [same a b] is [true] iff [a] and [b] are one tensor. *)
 
-val fresh : ('a, 'b) Nx_effect.t -> ('c, 'd) Nx_effect.t -> unit
+val fresh : ('a, 'b) Nx.t -> ('c, 'd) Nx.t -> unit
 (** [fresh out x] checks that an operation's result [out] is not its operand
     [x]: a table keyed by identity would take the two for one node.
 

@@ -19,7 +19,8 @@
    same deliberate categories as the reverse engine: zero-derivative operations
    stay inactive; operations with no rule yet raise when an input is active. *)
 
-open Nx_effect
+open Nx.Op
+open Prim
 module T = Nx
 
 let err_no_rule op =
@@ -61,8 +62,8 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
 
   (* [lift1 out x dfun] stores [dfun dx] as the tangent of [out] when [x] has
      tangent [dx]. *)
-  let lift1 (type a b c d) (out : (a, b) t) (x : (c, d) t)
-      (dfun : (c, d) t -> (a, b) t) =
+  let lift1 (type a b c d) (out : (a, b) T.t) (x : (c, d) T.t)
+      (dfun : (c, d) T.t -> (a, b) T.t) =
     Tensor_map.fresh out x;
     (match tangent x with None -> () | Some dx -> set_tangent out (dfun dx));
     out
@@ -70,8 +71,8 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
 
   (* [lift2 out a b make] stores [make da db] as the tangent of [out] when
      either input is active; the inactive side gets a zero tangent. *)
-  let lift2 (type a b) (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
-      (make : (a, b) t -> (a, b) t -> (a, b) t) =
+  let lift2 (type a b) (out : (a, b) T.t) (a_in : (a, b) T.t)
+      (b_in : (a, b) T.t) (make : (a, b) T.t -> (a, b) T.t -> (a, b) T.t) =
     Tensor_map.fresh out a_in;
     Tensor_map.fresh out b_in;
     if active a_in || active b_in then
@@ -87,13 +88,13 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
      enclosing interpretation, and its tangent is computed at once when an
      operand is active. A linear operation's tangent is the operation on the
      tangent. *)
-  let run : type c. c Op.t -> c =
+  let run : type c. c Nx.Op.t -> c =
    fun op ->
     match[@warning "@4@8"] op with
     | Unary (k, x) -> (
         match k with
         (* On complex dtypes [sign z = z / |z|] is not piecewise constant. *)
-        | Sign when Nx_dtype.is_complex (dtype x) ->
+        | Sign when Nx_dtype.is_complex (T.dtype x) ->
             let out = eval op in
             lift1 out x (Derivs.sign_push x out)
         | Sign | Trunc | Ceil | Floor | Round -> eval op
@@ -147,13 +148,13 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
         | Maximum ->
             let out = eval op in
             lift2 out a b (fun da db ->
-                let mask = T.cast (dtype out) (T.greater a b) in
+                let mask = T.cast (T.dtype out) (T.greater a b) in
                 T.add (T.mul da mask)
                   (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
         | Minimum ->
             let out = eval op in
             lift2 out a b (fun da db ->
-                let mask = T.cast (dtype out) (T.less a b) in
+                let mask = T.cast (T.dtype out) (T.less a b) in
                 T.add (T.mul da mask)
                   (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
         | Atan2 ->
@@ -167,7 +168,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     | Where (condition, if_true, if_false) ->
         let out = eval op in
         if active if_true || active if_false then begin
-          let mask = T.cast (dtype out) condition in
+          let mask = T.cast (T.dtype out) condition in
           let dt_ = tan_or_zeros if_true and df = tan_or_zeros if_false in
           set_tangent out
             (T.add (T.mul dt_ mask)
@@ -180,7 +181,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     | Contiguous x -> lift1 (eval op) x Fun.id
     (* The fill value is a constant: the tangent pads with zero. *)
     | Pad (padding, _, x) ->
-        lift1 (eval op) x (fun dx -> pad padding (Nx_dtype.zero (dtype x)) dx)
+        lift1 (eval op) x (fun dx -> pad padding (Nx_dtype.zero (T.dtype x)) dx)
     | Cat (axis, xs) ->
         let out = eval op in
         if List.exists active xs then
@@ -221,7 +222,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
                 let shape = T.shape out in
                 let ndim = Array.length shape in
                 let axis_norm = if axis < 0 then axis + ndim else axis in
-                let dt = dtype x in
+                let dt = T.dtype x in
                 let boundary =
                   match k with
                   | Max -> Nx_dtype.min_value dt
@@ -367,7 +368,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
         | Some da ->
             if T.dim (-1) x <> T.dim (-2) x then
               err_no_rule "lu of a rectangular matrix";
-            (* P A = L U. X = L^-1 P dA U^-1 is L^-1 dL, strictly lower, plus
+            (* P A = L U. X = L^-1 Nx.P dA U^-1 is L^-1 dL, strictly lower, plus
                dU U^-1, upper: dL = L tril_-1(X) and dU = triu(X) U, packed as
                the factors are. *)
             let pda =
@@ -424,16 +425,17 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
             let fold () = install tangents (fun () -> Scan.eager req) in
             Scan.pass_on ~fold @@ fun () ->
               let exception Grow of bool list in
-              let flags = List.map (fun (P l) -> active l) in
+              let flags = List.map (fun (Nx.P l) -> active l) in
               let tangents_of actives leaves =
                 List.concat
                   (List.map2
-                     (fun a (P l) -> if a then [ P (tan_or_zeros l) ] else [])
+                     (fun a (Nx.P l) ->
+                       if a then [ Nx.P (tan_or_zeros l) ] else [])
                      actives leaves)
               in
               let seed actives leaves ts =
                 List.iter
-                  (fun (P l, d) ->
+                  (fun (Nx.P l, d) ->
                     Tensor_map.set tangents l (T.unpack (T.dtype l) d))
                   (zip actives leaves ts)
               in
@@ -469,7 +471,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
                 | res ->
                     let set actives (leaves, ts) =
                       List.iter
-                        (fun (P l, d) ->
+                        (fun (Nx.P l, d) ->
                           set_tangent l (T.unpack (T.dtype l) d))
                         (zip actives leaves ts);
                       leaves
@@ -553,13 +555,13 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
           (fun () ->
             let dparams =
               List.map
-                (fun (P p) -> Option.map (fun d -> P d) (tangent p))
+                (fun (Nx.P p) -> Option.map (fun d -> Nx.P d) (tangent p))
                 (fst (Nx.Ptree.flatten params_s params))
             in
             let active_out = ref [] in
             let f' params =
               List.iter2
-                (fun (P p) d ->
+                (fun (Nx.P p) d ->
                   Option.iter
                     (fun d ->
                       Tensor_map.set tangents p (T.unpack (T.dtype p) d))
@@ -568,10 +570,10 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
                 dparams;
               let y = install tangents (fun () -> f params) in
               let ys = fst (Nx.Ptree.flatten result_s y) in
-              active_out := List.map (fun (P l) -> active l) ys;
+              active_out := List.map (fun (Nx.P l) -> active l) ys;
               ( y,
                 List.filter_map
-                  (fun (P l) -> Option.map (fun d -> P d) (tangent l))
+                  (fun (Nx.P l) -> Option.map (fun d -> Nx.P d) (tangent l))
                   ys )
             in
             let y, dy =
@@ -587,7 +589,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
             in
             ignore
               (List.fold_left2
-                 (fun dy (P l) is_active ->
+                 (fun dy (Nx.P l) is_active ->
                    match (is_active, dy) with
                    | true, d :: dy ->
                        set_tangent l (T.unpack (T.dtype l) d);
@@ -605,7 +607,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     | Remat.E_barrier { values; after } ->
         let tangents =
           List.filter_map
-            (fun (P v) -> Option.map (fun d -> P d) (tangent v))
+            (fun (Nx.P v) -> Option.map (fun d -> Nx.P d) (tangent v))
             values
         in
         if tangents = [] then None
@@ -624,7 +626,7 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
               let out, tangents = split values out in
               ignore
                 (List.fold_left2
-                   (fun tangents (P v) o ->
+                   (fun tangents (Nx.P v) o ->
                      match (tangent v, tangents) with
                      | Some _, d :: tangents ->
                          set_tangent
@@ -661,6 +663,6 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
   (* While paused, every operation passes on as it is. *)
   let run op = if !paused > 0 then eval op else run op in
   match_with
-    (fun () -> Nx_effect.intercept { run } f)
+    (fun () -> intercept { run } f)
     ()
     { retc = Fun.id; exnc = raise; effc }

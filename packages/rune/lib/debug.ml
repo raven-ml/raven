@@ -8,7 +8,7 @@
    other transformations compose as usual. It treats every operation alike, so
    it names none. *)
 
-open Nx_effect
+open Nx.Op
 module T = Nx
 
 let shape_string s =
@@ -18,7 +18,7 @@ let rec install : type a. Format.formatter -> (unit -> a) -> a =
  fun ppf f ->
   let open Effect.Deep in
   (* Logs [name] with the output shape, then continues with the output. *)
-  let obs (type a b) name (out : (a, b) t) =
+  let obs (type a b) name (out : (a, b) T.t) =
     Format.fprintf ppf "%s -> %s@." name (shape_string (T.shape out));
     out
   in
@@ -45,11 +45,11 @@ let rec install : type a. Format.formatter -> (unit -> a) -> a =
    fun eff -> Option.map Answer.deliver (rule eff)
   in
   let run op =
-    Format.fprintf ppf "%a@." Op.pp op;
+    Format.fprintf ppf "%a@." Nx.Op.pp op;
     eval op
   in
   match_with
-    (fun () -> Nx_effect.intercept { run } f)
+    (fun () -> intercept { run } f)
     ()
     { retc = Fun.id; exnc = raise; effc }
 

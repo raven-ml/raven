@@ -13,6 +13,7 @@
   debug
   tensor_map
   answer
+  prim
   pause
   derivs
   jit

@@ -20,7 +20,7 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
    enclosing transformations observe, so an outer [grad] or [vmap] sees the
    argument flow into it. *)
 
-let alias x = Nx_effect.reshape x (Nx.shape x)
+let alias x = Nx.Op.eval (Move (x, Reshape (Nx.shape x)))
 let aliases s v = Ptree.map s (fun _ x -> alias x) v
 
 (* [holds_tensor s v] is [true] iff [v] has a tensor. *)

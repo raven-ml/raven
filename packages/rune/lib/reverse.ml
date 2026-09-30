@@ -25,7 +25,8 @@
    producing a zero gradient — detach the input if differentiation should not
    flow through it. *)
 
-open Nx_effect
+open Nx.Op
+open Prim
 module T = Nx
 
 (* Reduce a cotangent to the shape of a broadcast source. *)
@@ -90,8 +91,8 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
 
   (* [pull1 out x f] records: cotangent of [x] += [f] applied to the cotangent
      of [out]. Skips recording when [x] is untracked. *)
-  let pull1 (type a b c d) (out : (a, b) t) (x : (c, d) t)
-      (f : (a, b) t -> (c, d) t) =
+  let pull1 (type a b c d) (out : (a, b) T.t) (x : (c, d) T.t)
+      (f : (a, b) T.t -> (c, d) T.t) =
     Tensor_map.fresh out x;
     if tracked x then begin
       track out;
@@ -105,8 +106,8 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
 
   (* [pull2 out a b fa fb] is [pull1] for binary arithmetic: contributions are
      reduced back to each input's shape to undo broadcasting. *)
-  let pull2 (type a b) (out : (a, b) t) (a_in : (a, b) t) (b_in : (a, b) t)
-      (fa : (a, b) t -> (a, b) t) (fb : (a, b) t -> (a, b) t) =
+  let pull2 (type a b) (out : (a, b) T.t) (a_in : (a, b) T.t)
+      (b_in : (a, b) T.t) (fa : (a, b) T.t -> (a, b) T.t) (fb : (a, b) T.t -> (a, b) T.t) =
     Tensor_map.fresh out a_in;
     Tensor_map.fresh out b_in;
     let ta = tracked a_in and tb = tracked b_in in
@@ -141,13 +142,13 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
      integer ops, bitcasts, rounding, argmax/argmin/argsort, RNG, reads), whose
      outputs stay untracked; and no rule implemented (svd, eig, eigh, mod),
      which raise when an operand is tracked. *)
-  let run : type c. c Op.t -> c =
+  let run : type c. c Nx.Op.t -> c =
    fun op ->
     match[@warning "@4@8"] op with
     | Unary (k, x) -> (
         match k with
         (* On complex dtypes [sign z = z / |z|] is not piecewise constant. *)
-        | Sign when Nx_dtype.is_complex (dtype x) ->
+        | Sign when Nx_dtype.is_complex (T.dtype x) ->
             let out = eval op in
             pull1 out x (Derivs.sign_pull x out)
         | Sign | Trunc | Ceil | Floor | Round -> eval op
@@ -219,7 +220,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
     | Compare _ | Arg_reduce _ | Argsort _ | Threefry _ | Read _ -> eval op
     | Convert (Bitcast, _, _) -> eval op
     | Convert (Cast, _, x) ->
-        pull1 (eval op) x (fun g -> T.cast (dtype x) g)
+        pull1 (eval op) x (fun g -> T.cast (T.dtype x) g)
     | Where (condition, if_true, if_false) ->
         let out = eval op in
         let tt = tracked if_true and tf = tracked if_false in
@@ -243,7 +244,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
     (* Placement is linear: a cotangent moves back to its primal's placement,
        taken now, while the primal is in reach of the handlers above. *)
     | Place (_, x) ->
-        let back = placement x in
+        let back = T.placement x in
         pull1 (eval op) x (place back)
     (* Movement: linear ops whose pull is the transpose movement. *)
     | Move (x, Reshape _) ->
@@ -266,7 +267,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
               (start, total - start - len))
             limits
         in
-        pull1 out x (fun g -> pad pads (Nx_dtype.zero (dtype x)) g)
+        pull1 out x (fun g -> pad pads (Nx_dtype.zero (T.dtype x)) g)
     | Move (x, Flip dims) -> pull1 (eval op) x (fun g -> flip g dims)
     | Move (x, Window { axis; size = window; step }) ->
         (* The transpose is overlap-add: input position [w*step + j] accumulates
@@ -415,7 +416,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
                 (* The cotangent flows to positions where the running extremum
                    strictly improves. *)
                 let shape = T.shape out in
-                let dt = dtype x in
+                let dt = T.dtype x in
                 let boundary =
                   match k with
                   | Max -> Nx_dtype.min_value dt
@@ -1052,7 +1053,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
   (* While paused, every operation passes on as it is. *)
   let run op = if !paused > 0 then eval op else run op in
   match_with
-    (fun () -> Nx_effect.intercept { run } f)
+    (fun () -> intercept { run } f)
     ()
     { retc = Fun.id; exnc = raise; effc }
 
