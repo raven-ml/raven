@@ -1654,8 +1654,8 @@ sources are compared once D16's guard is written back as tinygrad writes it
 (`CS › sources`, `tinygrad_of_d16`). A kernel with an operation D17 narrows has a second kernel
 recorded, the same with a cast after each such operation, and its golden is
 tinygrad's source for that kernel (`CS › narrowing (D17)`). Execution runs on the host through the
-test executor `Host` (`support/host.ml`), which compiles each kernel with an
-entry of the host's calling convention.
+engine (`support/run.ml`), which compiles each kernel with nx.device's entry
+(D28).
 
 | Source | Behaviour | Outcome |
 |---|---|---|

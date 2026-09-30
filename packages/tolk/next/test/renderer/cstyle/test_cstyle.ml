@@ -1,6 +1,8 @@
 open Windtrap
 open Tolk_next
 
+(* The host's target, as the engine gives it. *)
+let host_target = Tolk_next_engine.target Nx_device.host
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let tensor_core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
 
@@ -594,8 +596,8 @@ let bf16_truncation =
 
 (* Execution *)
 
-let host = lazy (Cstyle.clang Host.target)
-let loaded name = Host.load (Lazy.force host) (kernel (find_case name))
+let host = lazy (Cstyle.clang host_target)
+let loaded name = Run.program (Lazy.force host) (kernel (find_case name))
 let floats xs = Array.map (fun x -> `Float x) xs
 let ints xs = Array.map (fun n -> `Int (Z.of_int n)) xs
 let slot s outputs = List.assoc s outputs
@@ -604,12 +606,13 @@ let values = array Dtypes.value
 let adds_two_buffers () =
   let a = Array.init 64 Float.of_int
   and b = Array.init 64 (fun i -> Float.of_int (100 - i)) in
-  let out = Host.run (loaded "clang_add") [ (1, floats a); (2, floats b) ] in
+  let out = Run.on_host (loaded "clang_add") [ (1, floats a); (2, floats b) ] in
   equal values (floats (Array.make 64 100.)) (slot 0 out)
 
 let sums_a_buffer () =
   let out =
-    Host.run (loaded "clang_sum") [ (1, floats (Array.init 256 Float.of_int)) ]
+    Run.on_host (loaded "clang_sum")
+      [ (1, floats (Array.init 256 Float.of_int)) ]
   in
   equal values (floats [| 32640. |]) (slot 0 out)
 
@@ -617,13 +620,13 @@ let sums_a_buffer () =
    writes as a literal. *)
 let takes_the_maximum_of_a_literal () =
   let k = loaded "clang_inline_const_alu" in
-  let max_of x = slot 0 (Host.run k [ (1, ints [| x |]) ]) in
+  let max_of x = slot 0 (Run.on_host k [ (1, ints [| x |]) ]) in
   equal values (ints [| 1 |]) (max_of 1);
   equal values (ints [| -0x7fffffff |]) (max_of (-0x80000000))
 
 let stores_where_its_gate_holds () =
   let out =
-    Host.run
+    Run.on_host
       (loaded "clang_gated_store_in_loop")
       [ (0, ints (Array.make 16 (-1))) ]
   in
@@ -633,7 +636,7 @@ let stores_where_its_gate_holds () =
 
 let loads_zero_outside_its_padding () =
   let x = Array.init 14 (fun i -> Float.of_int (i + 1)) in
-  let out = Host.run (loaded "clang_padded") [ (1, floats x) ] in
+  let out = Run.on_host (loaded "clang_padded") [ (1, floats x) ] in
   let expected =
     Array.init 16 (fun i -> if i = 0 || i = 15 then 1. else x.(i - 1) +. 1.)
   in
@@ -641,17 +644,17 @@ let loads_zero_outside_its_padding () =
 
 let loops_until_its_test_fails () =
   let k = loaded "clang_unbounded_loop" in
-  let after start = slot 0 (Host.run k [ (0, ints [| start |]) ]) in
+  let after start = slot 0 (Run.on_host k [ (0, ints [| start |]) ]) in
   equal values ~msg:"from 0" (ints [| 10 |]) (after 0);
   equal values ~msg:"from 12, the body runs once" (ints [| 13 |]) (after 12)
 
 let reads_a_constant_table () =
-  let out = Host.run (loaded "clang_table") [] in
+  let out = Run.on_host (loaded "clang_table") [] in
   equal values (ints [| 0; 127; 128; 255 |]) (slot 0 out)
 
 let passes_variables_of_32_and_64_bits () =
   let out =
-    Host.run
+    Run.on_host
       ~vars:[ ("start", 2); ("offset", 1 lsl 40) ]
       (loaded "clang_scalar_params")
       []
@@ -660,12 +663,12 @@ let passes_variables_of_32_and_64_bits () =
 
 let runs_custom_code () =
   let x = [| -2.5; 0.; 3.; -0. |] in
-  let out = Host.run (loaded "clang_custom") [ (1, floats x) ] in
+  let out = Run.on_host (loaded "clang_custom") [ (1, floats x) ] in
   equal values (floats (Array.map Float.abs x)) (slot 0 out)
 
 let accesses_volatile_buffers () =
   let out =
-    Host.run (loaded "clang_volatile") [ (1, ints [| 1; 2; 3; -4 |]) ]
+    Run.on_host (loaded "clang_volatile") [ (1, ints [| 1; 2; 3; -4 |]) ]
   in
   equal values (ints [| 2; 3; 4; -3 |]) (slot 0 out)
 
@@ -692,7 +695,7 @@ let stores_each_constant_as_its_type_holds_it () =
       (Float64, `Float 3.14);
     ]
   in
-  let out = Host.run (loaded "clang_constants") [] in
+  let out = Run.on_host (loaded "clang_constants") [] in
   List.iteri
     (fun slot (dt, v) ->
       equal values
@@ -704,12 +707,12 @@ let stores_each_constant_as_its_type_holds_it () =
 (* The kernel reads the four chars 1, 2, 3 and 4 as one little-endian uint,
    clears its low byte and stores it to the first char. *)
 let reads_chars_as_a_uint name () =
-  let out = Host.run (loaded name) [ (0, ints [| 1; 2; 3; 4 |]) ] in
+  let out = Run.on_host (loaded name) [ (0, ints [| 1; 2; 3; 4 |]) ] in
   equal values (ints [| 0; 2; 3; 4 |]) (slot 0 out)
 
 (* The registers hold the uints 1 and 2, read as one little-endian ulong. *)
 let reads_registers_as_a_ulong () =
-  let out = Host.run (loaded "clang_register_cast") [] in
+  let out = Run.on_host (loaded "clang_register_cast") [] in
   equal values [| `Int (Z.of_string "0x200000001") |] (slot 0 out)
 
 let picks_a_lane_by_a_variable () =
@@ -718,12 +721,12 @@ let picks_a_lane_by_a_variable () =
     (fun lane ->
       equal values ~msg:(string_of_int lane)
         (floats [| Float.of_int (lane + 1) |])
-        (slot 0 (Host.run ~vars:[ ("lane", lane) ] k [])))
+        (slot 0 (Run.on_host ~vars:[ ("lane", lane) ] k [])))
     [ 0; 1; 2; 3 ]
 
 let passes_named_parameters () =
   let out =
-    Host.run
+    Run.on_host
       ~vars:[ ("for", 5) ]
       (loaded "clang_named_params")
       [ (0, floats [| 1.; 2.; 3.; 4. |]) ]
@@ -741,7 +744,7 @@ let rounds_each_operation_on_halves () =
   let x = [| 1.; 0.1; 65504.; -3. |] and y = [| 2.; 1.; 1.; 0.5 |] in
   let x = Array.concat [ x; x; x; x ] and y = Array.concat [ y; y; y; y ] in
   let out =
-    Host.run
+    Run.on_host
       (loaded "clang_dtype_half")
       [ (1, floats x); (2, floats (Array.map half y)) ]
   in
@@ -750,7 +753,7 @@ let rounds_each_operation_on_halves () =
 
 let wraps_each_operation_on_chars () =
   let out =
-    Host.run
+    Run.on_host
       (loaded "clang_dtype_unsigned_char")
       [ (1, floats (Array.make 16 16.)); (2, ints (Array.make 16 86)) ]
   in
@@ -874,13 +877,13 @@ let interpreted uops (buffers, vars) =
 
 let agrees_with_the_interpreter row =
   let uops = kernel row in
-  let k = lazy (Host.load (Lazy.force host) uops) in
+  let k = lazy (Run.program (Lazy.force host) uops) in
   prop ~count:10 (row "case") (draw_inputs uops)
     (fun ((buffers, vars) as inputs) ->
       equal
         (list (pair int values))
         (interpreted uops inputs)
-        (Host.run ~vars (Lazy.force k) buffers))
+        (Run.on_host ~vars (Lazy.force k) buffers))
 
 (* An element of a kernel over a narrow type, drawn over the whole type so that
    its operations wrap and round: an element of the narrow type is any of its
@@ -925,17 +928,17 @@ let narrow_rows =
 let wraps_and_rounds_as_the_interpreter row =
   let uops = kernel row in
   let narrow = Option.get (narrow_of uops) in
-  let k = lazy (Host.load (Lazy.force host) uops) in
+  let k = lazy (Run.program (Lazy.force host) uops) in
   prop ~count:20 (row "case") (draw_narrow_inputs narrow uops)
     (fun ((buffers, _) as inputs) ->
       equal
         (list (pair int values))
         (interpreted uops inputs)
-        (Host.run (Lazy.force k) buffers))
+        (Run.on_host (Lazy.force k) buffers))
 
 let compiles_and_loads row =
   test (row "case") (fun () ->
-      ignore (Host.load (Lazy.force host) (kernel row)))
+      ignore (Run.program (Lazy.force host) (kernel row)))
 
 let execution =
   group "execution on the host"
@@ -1009,17 +1012,20 @@ let negation =
       test "Clang compiles and runs a difference with a negated operand"
         (fun () ->
           let k =
-            Host.load (Lazy.force host) (lane (fun x y -> minus x (negated y)))
+            Run.program (Lazy.force host)
+              (lane (fun x y -> minus x (negated y)))
           in
-          let out = Host.run k [ (1, [| `Float 1. |]); (2, [| `Float 2. |]) ] in
+          let out =
+            Run.on_host k [ (1, [| `Float 1. |]); (2, [| `Float 2. |]) ]
+          in
           equal values [| `Float 3. |] (List.assoc 0 out));
       test "Clang compiles and runs a difference with a negative constant"
         (fun () ->
           let k =
-            Host.load (Lazy.force host)
+            Run.program (Lazy.force host)
               (lane (fun x _ -> minus x (Ops.float ~dtype:Float32 (-1.5))))
           in
-          let out = Host.run k [ (1, [| `Float 1. |]) ] in
+          let out = Run.on_host k [ (1, [| `Float 1. |]) ] in
           equal values [| `Float 2.5 |] (List.assoc 0 out));
     ]
 

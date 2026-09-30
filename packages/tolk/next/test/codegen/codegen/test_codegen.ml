@@ -1,6 +1,8 @@
 open Windtrap
 open Tolk_next
 
+(* The host's target, as the engine gives it. *)
+let host_target = Tolk_next_engine.target Nx_device.host
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* Two graphs are the same when their texts are, and a failure is the diff of
@@ -294,9 +296,9 @@ let clang_rows_lowered_to_stores =
     rows
 
 (* The host's program is linearized for the host, then compiled by
-   [Host.load]. *)
-let host = lazy (Cstyle.clang Host.target)
-let host_uncompiled = lazy (renderer_for Host.target)
+   [Run.program]. *)
+let host = lazy (Cstyle.clang host_target)
+let host_uncompiled = lazy (renderer_for host_target)
 
 (* The elements of each buffer that the run wrote: those it changed, and those
    the kernel writes, whose values may equal what they held. *)
@@ -392,8 +394,8 @@ let runs_as_interpreted name () =
   let kernel = buffer_dtypes (Ops.toposort k)
   and program = buffer_dtypes uops in
   let outputs =
-    Host.run ~vars:(Kernel_opts.variables k)
-      (Host.load (Lazy.force host) uops)
+    Run.on_host ~vars:(Kernel_opts.variables k)
+      (Run.program (Lazy.force host) uops)
       (stored ~kernel ~program (Kernel_opts.inputs k))
   in
   equal (list Kernel_opts.write) (Kernel_opts.writes k)

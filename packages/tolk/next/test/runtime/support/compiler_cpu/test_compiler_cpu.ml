@@ -2,6 +2,9 @@ open Windtrap
 open Tolk_next
 module Compiler = Renderer.Compiler
 
+(* The host's target, as the engine gives it. *)
+let host_target = Tolk_next_engine.target Nx_device.host
+
 (* Sources *)
 
 let increment = "int increment(int x) { return x + 1; }"
@@ -176,7 +179,7 @@ let tinygrad =
           equal ~msg:text bool vmov (has_infix ~affix:"vmov" text));
       test "a half addition on an Apple processor converts nothing" (fun () ->
           on_macos_arm64 ();
-          let arch = Host.target.arch in
+          let arch = host_target.arch in
           not_contains ~sub:"fcvt" (disassembly arch (rendered arch "half_add")));
     ]
 
@@ -184,8 +187,8 @@ let tinygrad =
 
 let floats xs = Array.map (fun x -> `Float x) xs
 let values = array Dtypes.value
-let host = lazy (Cstyle.clang Host.target)
-let loaded name = Host.load (Lazy.force host) (kernel name)
+let host = lazy (Cstyle.clang host_target)
+let loaded name = Run.program (Lazy.force host) (kernel name)
 
 let execution =
   group "execution on the host"
@@ -193,18 +196,20 @@ let execution =
       test "a compiled kernel adds two buffers" (fun () ->
           let a = Array.init 16 Float.of_int
           and b = Array.init 16 (fun i -> Float.of_int (100 - i)) in
-          let out = Host.run (loaded "add") [ (1, floats a); (2, floats b) ] in
+          let out =
+            Run.on_host (loaded "add") [ (1, floats a); (2, floats b) ]
+          in
           equal values (floats (Array.make 16 100.)) (List.assoc 0 out));
       test "a compiled square root runs without a library" (fun () ->
           let squares = Array.init 16 (fun i -> Float.of_int (i * i)) in
-          let out = Host.run (loaded "sqrt") [ (1, floats squares) ] in
+          let out = Run.on_host (loaded "sqrt") [ (1, floats squares) ] in
           equal values (floats (Array.init 16 Float.of_int)) (List.assoc 0 out));
       test "a product and a sum round twice, never fused" (fun () ->
           (* (1 + 2^-12)^2 rounds to 1 + 2^-11, a tie to even, so the sum with
              -(1 + 2^-11) is 0; a fused multiply-add keeps the 2^-24. *)
           let x = 1. +. 0x1p-12 in
           let out =
-            Host.run (loaded "muladd")
+            Run.on_host (loaded "muladd")
               [
                 (1, floats (Array.make 16 x));
                 (2, floats (Array.make 16 x));

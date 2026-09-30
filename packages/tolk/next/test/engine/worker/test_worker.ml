@@ -2,6 +2,9 @@ open Windtrap
 open Tolk_next
 open Helpers
 
+(* The host's target, as the engine gives it. *)
+let host_target = Tolk_next_engine.target Nx_device.host
+
 exception Failed of int
 
 let with_parallel p f = context [ B (parallel, p) ] f
@@ -483,8 +486,8 @@ let binaries =
     (list string)
 
 let compiles_as_serial () =
-  let renderer = Cstyle.clang Host.target in
-  let clang = Compiler_cpu.clang Host.target.arch in
+  let renderer = Cstyle.clang host_target in
+  let clang = Compiler_cpu.clang host_target.arch in
   let sources =
     List.map (fun k -> renderer.render (Ops.src k)) (Lazy.force kernels)
   in
