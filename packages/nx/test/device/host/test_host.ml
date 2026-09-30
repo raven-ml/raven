@@ -85,17 +85,11 @@ let test_arguments () =
    and the host's programs by address. *)
 let test_devices () =
   let module Driver = Nx_device.Driver in
-  let identity =
-    {
-      Driver.map = (fun a n -> Ok (Driver.Region.v ~host:a a n));
-      unmap = ignore;
-    }
-  in
   let cpu i =
     Driver.device
       ~name:(Printf.sprintf "CPU:%d" i)
       ~arch ~budget:max_int
-      (Host_visible { memory = Driver.host_memory; mapping = Some identity })
+      (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
   in
   let d = cpu 1 in
   is_true ~msg:"it shares the host's memory" (Nx_device.shares_host_memory d);

@@ -2875,6 +2875,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Driver.mapping` is a variant: `Identity` for a
+  device that addresses host memory at its host addresses, whose borrows are
+  the memory itself at any address, and `Pages { map; unmap }` for a driver
+  that maps whole pages. A test device over the host's memory borrows another
+  one's small buffers and signal word, which the page rule refused.
 - A float `Nx.sum` that is exactly zero is `0.`: a sum is `0.` plus its terms,
   on every path. The sum over axis 0 of a C-contiguous matrix started from its
   first row, so the column sums of a 2 x 3 matrix of `-0.` were `-0.` where

@@ -88,14 +88,15 @@ let open_metal mtl =
   let mapping =
     if unified mtl then
       Some
-        {
-          Driver.map =
-            (fun a n ->
-              match region (wrap mtl a n) with
-              | Some r -> Ok r
-              | None -> Error "Metal cannot wrap it in a buffer");
-          unmap = free;
-        }
+        (Driver.Pages
+           {
+             map =
+               (fun a n ->
+                 match region (wrap mtl a n) with
+                 | Some r -> Ok r
+                 | None -> Error "Metal cannot wrap it in a buffer");
+             unmap = free;
+           })
     else None
   in
   let signal =

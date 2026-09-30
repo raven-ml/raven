@@ -15,10 +15,12 @@ type region = {
 type signal = { signaled : unit -> int; wait : int -> timeout_ms:int -> bool }
 type allocator = { alloc : int -> region option; free : region -> unit }
 
-type mapping = {
-  map : nativeint -> int -> (region, string) result;
-  unmap : region -> unit;
-}
+type mapping =
+  | Identity
+  | Pages of {
+      map : nativeint -> int -> (region, string) result;
+      unmap : region -> unit;
+    }
 
 type copy = dst:nativeint -> src:nativeint -> int -> signal:int -> unit
 
@@ -562,9 +564,9 @@ let host =
       Host_program.load
   in
   create ~name:"CPU" ~arch:host_arch ~machine:None ~remote:None ~io:None
-    ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapping:None
-    ~queue:None ~peer:None ~load ~call:None ~link:None ~dma:None
-    ~completion:Poll ~synchronized:ignore
+    ~budget:max_int ~alloc ~free:ignore ~host_memory:None
+    ~mapping:(Some Identity) ~queue:None ~peer:None ~load ~call:None ~link:None
+    ~dma:None ~completion:Poll ~synchronized:ignore
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
 
@@ -1255,6 +1257,24 @@ module Buffer = struct
     Gc.finalise (release d) base;
     { base; offset = m.skip + b.offset; dtype = b.dtype; length = b.length }
 
+  (* A device whose mapping is the identity addresses host memory at its host
+     addresses: its borrow is over the memory itself, with no page to lock and
+     no driver to call. It keeps [b], whose memory is its source, so that the
+     memory's device reaches it. On a host, a bigarray that owns nothing makes
+     the memory the host's buffer. *)
+  let identity d b =
+    let src = b.base in
+    let a = Option.get src.memory.host in
+    let region = { src.memory with address = a } in
+    let keep =
+      if d == host then Device (external_bytes a region.nbytes, b) else Keep b
+    in
+    let mapped =
+      { on = d; mapped = region; skip = 0; unmap = ignore; borrows = 1 }
+    in
+    let base = base ~source:(src, mapped) ~borrowed:true ~keep d region in
+    { b with base }
+
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory
      of another buffer then never shares its pages. *)
@@ -1262,12 +1282,13 @@ module Buffer = struct
     let h = host_of d and src = b.base in
     let first = Option.get src.memory.host in
     match d.mapping with
-    | _ when d == h -> Ok b
+    | _ when d == h && src.owner == h -> Ok b
     | None -> refuse "%s cannot address host memory" d.name
+    | Some Identity -> Ok (identity d b)
     (* A host buffer nx made starts on a page from [aligned_from] bytes; a
        smaller one is refused wherever it happens to start, so that whether it
        borrows does not depend on the allocator. *)
-    | Some _
+    | Some (Pages _)
       when src.owner == host && (not src.borrowed)
            && src.memory.nbytes < aligned_from ->
         refuse
@@ -1275,22 +1296,22 @@ module Buffer = struct
            whole pages; host buffers start on one from %d bytes"
           src.memory.nbytes d.name aligned_from
     (* Another machine's pages are its own; its devices check them. *)
-    | Some _ when h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n
-      ->
+    | Some (Pages _)
+      when h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n ->
         refuse
           "the host memory at 0x%nx does not start on a page, and %s maps \
            whole pages; host buffers start on one from %d bytes"
           first d.name aligned_from
-    | Some mapping -> (
+    | Some (Pages { map; unmap }) -> (
         let map () =
           Result.map
             (fun (mapped : region) ->
               ( mapped,
                 Nativeint.to_int (Nativeint.sub first (Option.get mapped.host))
               ))
-            (mapping.map first src.memory.nbytes)
+            (map first src.memory.nbytes)
         in
-        match share d src ~map ~unmap:mapping.unmap with
+        match share d src ~map ~unmap with
         | Error why ->
             refuse "%s cannot map the host memory at 0x%nx: %s" d.name first why
         | Ok m -> Ok (borrowed d b m))
@@ -1329,25 +1350,6 @@ module Buffer = struct
           if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
           borrow_host d { b with base = pages })
 
-  (* The host maps system memory of another device as the identity: the host's
-     buffer is over the memory's host addresses, through a bigarray that owns
-     nothing and a base that keeps [b], whose source it is so that the device
-     can reach it. *)
-  let borrow_system b =
-    let src = b.base in
-    let a = Option.get src.memory.host in
-    let region = { src.memory with address = a } in
-    let ba = external_bytes a region.nbytes in
-    let mapped =
-      { on = host; mapped = region; skip = 0; unmap = ignore; borrows = 1 }
-    in
-    let base =
-      base ~source:(src, mapped) ~borrowed:true
-        ~keep:(Device (ba, b))
-        host region
-    in
-    { b with base }
-
   (* [b] over the memory its borrows map, down to memory no borrow holds. *)
   let rec root b =
     match b.base.source with
@@ -1376,8 +1378,7 @@ module Buffer = struct
       else if o == disk then borrow_file d r
       else if o == host_of d then borrow_host d r
       else if r.base.pinned || Option.is_none o.copy_queue then
-        if d == host then Ok (borrow_system r)
-        else if Option.is_none d.machine then
+        if Option.is_none d.machine && d != host then
           refuse "%s is reached over the network, and maps no memory" d.name
         else borrow_host d r
       else borrow_peer d r
@@ -1507,9 +1508,15 @@ module Buffer = struct
     | None -> (
         let h = host_of e in
         let first = slots h in
-        match (Option.get e.mapping).map first (2 * chunk) with
-        | Ok m ->
-            let a = mapped_address m first in
+        match
+          match Option.get e.mapping with
+          | Identity -> Ok first
+          | Pages { map; _ } ->
+              Result.map
+                (fun m -> mapped_address m first)
+                (map first (2 * chunk))
+        with
+        | Ok a ->
             e.staging <- Some a;
             a
         | Error why ->
@@ -1639,21 +1646,23 @@ module Buffer = struct
       match mapping_on e b.base with
       | Some m -> f (Some (m.mapped.address +! (m.skip + b.offset)))
       | None when b.base.pinned -> (
-          let mapping = Option.get e.mapping in
           let first = Option.get b.base.memory.host in
-          match driver e (fun () -> mapping.map first b.base.memory.nbytes) with
-          | Error _ -> f None
-          | Ok m -> (
-              match f (Some (mapped_address m (Option.get (hosted b)))) with
-              | r -> (
-                  match mapping.unmap m with
-                  | () -> r
-                  | exception Failure why ->
+          match Option.get e.mapping with
+          | Identity -> f (hosted b)
+          | Pages { map; unmap } -> (
+              match driver e (fun () -> map first b.base.memory.nbytes) with
+              | Error _ -> f None
+              | Ok m -> (
+                  match f (Some (mapped_address m (Option.get (hosted b)))) with
+                  | r -> (
+                      match unmap m with
+                      | () -> r
+                      | exception Failure why ->
+                          add_reached b.base e;
+                          fail e why)
+                  | exception e' ->
                       add_reached b.base e;
-                      fail e why)
-              | exception e' ->
-                  add_reached b.base e;
-                  raise e'))
+                      raise e')))
       | None -> f None
 
   (* [e] copies [src], which its host addresses, into [dst], its memory. *)
@@ -2451,10 +2460,12 @@ module Driver = struct
     free : region -> unit;
   }
 
-  type nonrec mapping = mapping = {
-    map : nativeint -> int -> (region, string) result;
-    unmap : region -> unit;
-  }
+  type nonrec mapping = mapping =
+    | Identity
+    | Pages of {
+        map : nativeint -> int -> (region, string) result;
+        unmap : region -> unit;
+      }
 
   type nonrec copy = copy
   type nonrec clock = clock = Host_clock | Device_clock of { hz : int }

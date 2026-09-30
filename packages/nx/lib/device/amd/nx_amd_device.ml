@@ -210,7 +210,7 @@ let mapping a =
             | _ -> ())
     | None -> ()
   in
-  { Driver.map; unmap }
+  Driver.Pages { map; unmap }
 
 (* Queues *)
 

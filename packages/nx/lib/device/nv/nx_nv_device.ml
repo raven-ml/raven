@@ -291,7 +291,7 @@ let mapping n =
         | Pci_gpu p, Some (Pci_mem mem) -> Pci_memory.unmap p.memory mem
         | Pci_gpu _, _ -> ())
   in
-  { Driver.map; unmap }
+  Driver.Pages { map; unmap }
 
 (* Channels *)
 

@@ -283,28 +283,29 @@ module Buffer : sig
 
       [d] maps [b]'s memory by where it lives:
       - a file's bytes on the {!disk}, through the file's pages, below;
-      - system memory, which [d]'s mapping of host memory maps: memory of [d]'s
-        host ({!host_of}), of a device described as [Host_visible]
-        ({!Driver.memory}), such as Metal and test devices over the host's
-        memory, and the pinned memory of any device ({!create}). The {!host}'s
-        mapping is the identity: its borrow of such memory is over the memory's
-        host addresses, without a copy;
+      - system memory, which [d]'s mapping of host memory ({!Driver.mapping})
+        maps: memory of [d]'s host ({!host_of}), of a device described as
+        [Host_visible] ({!Driver.memory}), such as Metal and test devices over
+        the host's memory, and the pinned memory of any device ({!create}).
+        Through an [Identity] mapping, such as the {!host}'s, the borrow is over
+        the memory's host addresses, without a copy;
       - the own memory of a [Device_local] device, such as a CUDA, AMD or NV
         GPU's, which [d]'s driver maps ({!Driver.device}'s [peer]) once per
         region, even where a memory BAR gives it a host address. The mapping
         lasts until that device frees the memory, and [d] can reach it until
         then.
 
-      [d] maps the whole host memory that [b] is a view of, once: the borrows on
-      [d] of views of that memory share one mapping, which [d] releases once
-      they are all unreachable. A mapping covers whole pages, so that memory
-      must start on a page. Host buffers that {!create} makes start on one from
-      64 KiB (four pages where pages are larger), and smaller ones cannot be
-      borrowed, wherever they start; {!copy} moves them through staging memory.
-      Memory-mapped files start on a page. Memory that {!of_bigarray} wraps
-      borrows if it starts on one. A buffer of no bytes always borrows, mapping
-      nothing. On CUDA, mapping page-locks the memory, which must be writable:
-      memory mapped read-only cannot be borrowed there.
+      Through a [Pages] mapping, [d] maps the whole host memory that [b] is a
+      view of, once: the borrows on [d] of views of that memory share one
+      mapping, which [d] releases once they are all unreachable. A mapping
+      covers whole pages, so that memory must start on a page. Host buffers that
+      {!create} makes start on one from 64 KiB (four pages where pages are
+      larger), and smaller ones cannot be borrowed, wherever they start; {!copy}
+      moves them through staging memory. Memory-mapped files start on a page.
+      Memory that {!of_bigarray} wraps borrows if it starts on one. On CUDA,
+      mapping page-locks the memory, which must be writable: memory mapped
+      read-only cannot be borrowed there. A buffer of no bytes always borrows,
+      mapping nothing.
 
       A buffer [b] of a file on the {!disk} ({!of_file}) is borrowed from the
       file's pages: the disk maps the whole file into host memory at the first
@@ -322,11 +323,12 @@ module Buffer : sig
 
       [Error why] if [d] cannot map that kind of memory (a host maps no
       [Device_local] memory, and another machine's host none of its devices'),
-      if [b] is a host buffer {!create} made of fewer than 64 KiB, if the memory
-      [b] is a view of does not start on a page, or if [d]'s driver refuses to
-      map it, with the driver's reason; for [b] on the disk, if [d] does not
-      share the host's memory, if [b]'s first byte is not aligned to the size of
-      one of its elements, or if the system cannot map the file, naming it.
+      if, through a [Pages] mapping, [b] is a host buffer {!create} made of
+      fewer than 64 KiB, the memory [b] is a view of does not start on a page,
+      or [d]'s driver refuses to map it, with the driver's reason; for [b] on
+      the disk, if [d] does not share the host's memory, if [b]'s first byte is
+      not aligned to the size of one of its elements, or if the system cannot
+      map the file, naming it.
 
       Raises [Invalid_argument] if [b] is on another machine or is dead
       ({!consume}), and {!Lost} if [d] is lost. *)
@@ -893,16 +895,23 @@ module Driver : sig
       cached for reuse first, and the device synchronizes before it frees it to
       the driver, so no work still uses it. *)
 
-  type mapping = {
-    map : nativeint -> int -> (Region.t, string) result;
-        (** [map a n] maps the [n] bytes of host memory at [a], which start on a
-            page, for the device: a region whose host address is at or below
-            [a], or [Error why] if the driver refuses. *)
-    unmap : Region.t -> unit;
-        (** [unmap r] releases a mapping [map] made, once the device
-            synchronized. *)
-  }
-  (** The type for the mappings of host memory into a device's address space. *)
+  (** The type for how a device addresses host memory. *)
+  type mapping =
+    | Identity
+        (** The device addresses host memory at its host addresses, as the
+            {!host} and the test devices over its memory do. A borrow is the
+            memory itself: it maps nothing and calls no driver. *)
+    | Pages of {
+        map : nativeint -> int -> (Region.t, string) result;
+            (** [map a n] maps the [n] bytes of host memory at [a], which start
+                on a page, for the device: a region whose host address is at or
+                below [a], or [Error why] if the driver refuses. *)
+        unmap : Region.t -> unit;
+            (** [unmap r] releases a mapping [map] made, once the device
+                synchronized. *)
+      }
+        (** The device's driver maps host memory into its address space, whole
+            pages at a time, such as by page-locking it. *)
 
   type copy = dst:nativeint -> src:nativeint -> int -> signal:int -> unit
   (** The type for enqueueing copies. [copy ~dst ~src n ~signal] enqueues on the
@@ -1056,9 +1065,9 @@ module Driver : sig
   (** [host_memory] allocates memory of this process's heap, as the {!host}
       does: regions of at least 64 KiB (four pages where pages are larger) start
       on a page. Its regions' addresses are host addresses. A device described
-      with it, and a mapping that is the identity, shares the host's memory,
-      such as the test devices ["CPU:1"], ["CPU:2"], ... of a program that runs
-      multi-device work on the host. *)
+      with it and the [Identity] mapping shares the host's memory, such as the
+      test devices ["CPU:1"], ["CPU:2"], ... of a program that runs multi-device
+      work on the host. *)
 
   val host_programs : host_programs
   (** [host_programs] loads and calls programs on this machine's host, as

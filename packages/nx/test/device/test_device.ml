@@ -219,7 +219,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     }
   in
   let unmap _ = drv.mapped <- drv.mapped - 1 in
-  let mapping = { Driver.map; unmap } in
+  let mapping = Driver.Pages { map; unmap } in
   let memory : Driver.memory =
     if far then
       Device_local
@@ -1277,12 +1277,9 @@ let test_bigarray_overlaps () =
 (* Devices over the host's memory, as test devices are: system memory, which one
    maps for the other through its mapping of host memory. *)
 let test_system_borrows () =
-  let identity =
-    { Driver.map = (fun a n -> Ok (Region.v ~host:a a n)); unmap = ignore }
-  in
   let cpu name =
     Driver.device ~name ~arch:"test" ~budget:max_int
-      (Host_visible { memory = Driver.host_memory; mapping = Some identity })
+      (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
   in
   let c1 = cpu "CPU:1" and c2 = cpu "CPU:2" in
   let b = B.create c2 S.UInt8 page in
@@ -1300,6 +1297,21 @@ let test_system_borrows () =
   (match B.borrow host (B.create far_one.dev S.UInt8 page) with
   | Ok _ -> fail "the host borrowed a Device_local device's memory"
   | Error why -> contains ~msg:"refused" ~sub:"cannot address" why);
+  (* The identity maps no page: memory that starts anywhere borrows. *)
+  let small = B.create c2 S.UInt8 8 in
+  write small "abcdefgh";
+  let small_on_c1 = borrow c1 small in
+  equal ~msg:"a small buffer, at its host address" (pair string nativeint)
+    ("abcdefgh", B.address small)
+    (read small_on_c1, B.address small_on_c1);
+  let word = borrow c1 (Nx_device.signal_word c2) in
+  equal ~msg:"another device's signal word, at its host address" nativeint
+    (B.address (Nx_device.signal_word c2))
+    (B.address word);
+  equal ~msg:"a small host buffer, through the identity" string "wxyz"
+    (let hb = B.create host S.UInt8 4 in
+     write hb "wxyz";
+     read (borrow c1 hb));
   let unaddressed =
     Driver.device ~name:"UNADDRESSED" ~arch:"test" ~budget:max_int
       (Host_visible
@@ -1317,7 +1329,7 @@ let borrows =
     [
       test
         "system memory of another device borrows through the mapping of host \
-         memory"
+         memory, the identity's at any address"
         test_system_borrows;
       test "another device's memory borrows through its driver's peer mapping"
         test_peer_borrows;
@@ -1468,7 +1480,7 @@ let refusals =
       {
         memory;
         host_memory;
-        mapping = { map = (fun _ _ -> Error ""); unmap = ignore };
+        mapping = Pages { map = (fun _ _ -> Error ""); unmap = ignore };
         queue = (fun ~timeline -> queue ?clock ~timeline ());
       }
   in
@@ -1478,7 +1490,7 @@ let refusals =
   in
   let refusing () =
     let mapping =
-      { Driver.map = (fun _ _ -> Error "locked"); unmap = ignore }
+      Driver.Pages { map = (fun _ _ -> Error "locked"); unmap = ignore }
     in
     make (Host_visible { memory; mapping = Some mapping })
   in
@@ -2004,13 +2016,14 @@ let faulty what =
     }
   in
   let mapping =
-    {
-      Driver.map =
-        (fun a n ->
-          fault "map";
-          Ok (Region.v ~host:a a n));
-      unmap = (fun _ -> fault "unmap");
-    }
+    Driver.Pages
+      {
+        map =
+          (fun a n ->
+            fault "map";
+            Ok (Region.v ~host:a a n));
+        unmap = (fun _ -> fault "unmap");
+      }
   in
   Driver.device ~name:"FAULTY" ~arch:"test" ~budget:max_int
     ~peer:(fun _ r ->
@@ -2923,7 +2936,7 @@ let remote_gpu ?(name = "GPU") m =
        {
          memory = { alloc = block keep ~addressed:false; free };
          host_memory = { alloc = block keep ~addressed:true; free };
-         mapping = { map; unmap = ignore };
+         mapping = Pages { map; unmap = ignore };
          queue;
        })
 
