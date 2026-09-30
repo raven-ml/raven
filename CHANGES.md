@@ -2875,6 +2875,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_amd_device.kernel`'s `code` is the uploaded code object as
+  a buffer of the device, not its address, so a submitter names the program's
+  memory as storage it touches.
 - A scalar broadcast by `Nx_array.View.expand`, or by an `Expand` movement
   evaluated with `Nx.Op.eval`, is no longer reported C-contiguous by
   `View.is_c_contiguous`. A reshape of it read past its one element and failed.

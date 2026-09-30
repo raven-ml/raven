@@ -209,7 +209,10 @@ val props : t -> props
 (** [props a] is the GPU's properties. *)
 
 type kernel = {
-  code : nativeint;  (** The address of the uploaded code object. *)
+  code : Nx_device.Buffer.t;
+      (** The uploaded code object: its image, as the ELF object lays it out
+          ({!Nx_device_elf.load}), relocated, in memory of the device that the
+          device keeps for as long as it lives. *)
   descriptor : nativeint;  (** The address of the kernel descriptor. *)
   entry : nativeint;  (** The address of the kernel's first instruction. *)
   rsrc1 : int;  (** [COMPUTE_PGM_RSRC1] as dispatched. *)

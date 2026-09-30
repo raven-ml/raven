@@ -257,8 +257,14 @@ let test_programs () =
       let k = Option.get (Nx_amd_device.kernel p) in
       equal ~msg:"the handle is the descriptor" nativeint k.descriptor
         (Nx_device.Program.handle p);
+      let code = B.address k.code
+      and end_ =
+        Nativeint.add (B.address k.code) (Nativeint.of_int (B.nbytes k.code))
+      in
       is_true ~msg:"inside the code"
-        (k.descriptor >= k.code && k.entry >= k.code);
+        (k.descriptor >= code && k.entry >= code && k.descriptor < end_
+       && k.entry < end_);
+      equal ~msg:"on the device" bool true (Nx_device.equal (B.device k.code) d);
       is_true ~msg:"room for its pointer" (k.kernarg_segment >= 8);
       match Nx_device.Program.load d ~binary ~name:"absent" with
       | Ok _ -> fail "loaded an absent function"

@@ -48,7 +48,7 @@ type props = {
 }
 
 type kernel = {
-  code : nativeint;
+  code : Nx_device.Buffer.t;
   descriptor : nativeint;
   entry : nativeint;
   rsrc1 : int;
@@ -82,7 +82,7 @@ type t = {
   borrows : (int, mem) Hashtbl.t; (* host memory mapped for borrows *)
   reach : (int, bool) Hashtbl.t; (* whether it reaches a peer, by index *)
   kernels : (nativeint, kernel) Hashtbl.t; (* by descriptor address, under hw *)
-  images : (string, mem) Hashtbl.t; (* uploaded code objects *)
+  images : (string, Nx_device.Buffer.t) Hashtbl.t; (* uploaded code objects *)
   props : props;
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
@@ -374,18 +374,23 @@ let dma a r =
 
 (* Programs *)
 
-(* The code object [binary], uploaded once. *)
+(* The code object [binary], uploaded once, as a buffer of the device. *)
 let upload a binary img =
   match Hashtbl.find_opt a.images binary with
-  | Some mem -> Some mem
+  | Some code -> Some code
   | None ->
       Option.map
         (fun mem ->
           register a mem;
           Mmio.write (Option.get (host_view mem)) 0 img;
           Mmio.barrier ();
-          Hashtbl.replace a.images binary mem;
-          mem)
+          let n = String.length img in
+          let code =
+            Driver.buffer (Option.get a.dev) (region_of mem n)
+              Nx_dtype.Scalar.UInt8 n
+          in
+          Hashtbl.replace a.images binary code;
+          code)
         (alloc_mem a Visible (String.length img))
 
 (* A code object the device cannot run, or has no memory for, is refused, and
@@ -403,11 +408,12 @@ let load a ~binary ~entry:name =
       match upload a binary img with
       | None -> Error "no GPU memory for the program"
       | Some code ->
-          let base = va code in
-          let at off = Nativeint.of_int (base + off) in
+          let at off =
+            Nativeint.add (Nx_device.Buffer.address code) (Nativeint.of_int off)
+          in
           let kernel =
             {
-              code = Nativeint.of_int base;
+              code;
               descriptor = at k.descriptor;
               entry = at k.entry;
               rsrc1 = k.rsrc1;
