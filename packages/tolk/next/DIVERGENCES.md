@@ -952,13 +952,15 @@ the Exclusions of `README.md`.
   only), `:357,379-385` (`HWQueue.loop` repeats the command bytes and their
   words), `:467-476` (`bufferize_cmdbuf` merges each nested linear once) and
   `:50-54` (`unwrap_view` reads constant offsets); `runtime/ops_metal.py:103`
-  (`MetalQueue` inherits `HWQueue.loop`, whose bytes it does not use).
+  (`MetalQueue` inherits `HWQueue.loop`, whose bytes it does not use);
+  `uop/weak.py:27-33` (`cast_weak_srcs`).
 - **tolk.next:** `lib/runtime/support/hcq2.ml`: `range_placement`, which
   `stages` reads, and `item` in `sched_batches`, the positions and the two
   visits of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
-  of `lower_call`, and the kernels not compiled yet of `get_enqueue_devs`;
-  `lib/runtime/ops_metal.ml` and `lib/runtime/ops_cuda.ml` (`loop`).
+  of `lower_call` and `word64`, and the kernels not compiled yet of
+  `get_enqueue_devs`; `lib/runtime/ops_metal.ml` and
+  `lib/runtime/ops_cuda.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
@@ -969,30 +971,43 @@ the Exclusions of `README.md`.
   (for the value `0` in the first trip). Each group of patched words loops
   over ranges of its own, since a program ends a range once. Metal repeats a
   loop's indirect commands and their arguments, and CUDA's host program
-  loops over its launches, each trip's reading its trip's extra words. A range whose calls none is
-  enqueued stays a range around them, reading `range_value` variables that
-  the engine binds on each trip; one that mixes the two, or two kinds of
-  device, is refused. `get_enqueue_devs` takes a kernel not compiled yet as
-  its program, so that `stages` answers on a schedule before it compiles. `n` trips of `k` calls take `n·k` commands and `n·k`
-  copies of their arguments, made at link: a command and its arguments take
-  160 bytes on the NULL queues and 264 on Metal, so 1,000 trips of 30 kernels
-  take about 5 MB and 8 MB. The alternative, a trace unrolled per trip, holds
-  a graph per trip, which grows with `n` too, and more.
+  loops over its launches, each trip's reading its trip's extra words.
+  - An address that moves with a range (its storage's plus the view's offset)
+    and a position a signal stores are 64-bit words built from the range's
+    weak integers, which `word64` commits at 64 bits. Left weak, the unsigned
+    64-bit cast commits them at the least type above it and their own 32-bit
+    signed width, which is a float, and an offset past 2^24 bytes rounds to
+    another trip's. tinygrad's loop builds no such word: its offsets only
+    index the command buffer.
+  - A range whose calls none is enqueued stays a range around them, reading
+    `range_value` variables that the engine binds on each trip; one that
+    mixes the two, or two kinds of device, is refused. `get_enqueue_devs`
+    takes a kernel not compiled yet as its program, so that `stages` answers
+    on a schedule before it compiles.
+  - `n` trips of `k` calls take `n·k` commands and `n·k` copies of their
+    arguments, made at link: a command and its arguments take 160 bytes on
+    the NULL queues and 264 on Metal, so 1,000 trips of 30 kernels take about
+    5 MB and 8 MB. The alternative, a trace unrolled per trip, holds a graph
+    per trip, which grows with `n` too, and more.
 - **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
   inside a range and runs them as one submission, whatever the trip count
   (Law 6); tinygrad's scheduler never hands `hcq2.py` a range.
 - **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
-  (D30)`, among them `› a range with a host program, a host copy or two
-  kinds of device does not stage`, `› a run of a batched range is one submission, whatever
-  its trips` and `› a trip's copy waits for the kernel of the trip before, on
-  another queue`, and `Deps › a write that does not trim keeps the accesses to
-  the bytes it writes`, `› forgotten accesses are no longer followed`; on
-  macOS, the Ops_metal execution suite: `execution › each trip of a range runs
-  its kernel on its own window`, `› a range of 20000 trips runs from one
-  indirect command buffer` and `› a profiled range records a span of each
-  trip's kernel` (slow); the Ops_cuda suite (`test/runtime/ops_cuda`):
-  `loops (D30) › a range is a loop of the host program around its
-  launches`.
+  (D30)`, among them `› a range with a host program, a host copy or two kinds
+  of device does not stage`, `› a run of a batched range is one submission,
+  whatever its trips`, `› a trip's copy waits for the kernel of the trip
+  before, on another queue`, `› a ranged batch's addresses are integers,
+  profiled or not` and `› a trip reads its window past what a float offset
+  holds`, and `Deps › a write that does not trim keeps the accesses to the
+  bytes it writes`, `› forgotten accesses are no longer followed`; the
+  Ops_metal suite (`test/runtime/ops_metal`): `loops (D30) › a range's
+  addresses are integers, profiled or not`, and on macOS `execution › each
+  trip of a range runs its kernel on its own window`, `› a range of 20000
+  trips runs from one indirect command buffer` and `› a profiled range
+  records a span of each trip's kernel` (slow); the Ops_cuda suite
+  (`test/runtime/ops_cuda`): `loops (D30) › a range is a loop of the host
+  program around its launches` and `› a range's addresses are integers,
+  profiled or not`.
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 

@@ -96,4 +96,66 @@ let recorded =
            ])
        cases)
 
-let () = exit (run "Tolk_next.Ops_metal" [ recorded ])
+(* Loops (DIVERGENCES D30) *)
+
+let uncompiled =
+  Renderer.with_compiler (Renderer.Compiler.v Fun.id) (Cstyle.clang host_target)
+
+(* A range of three trips around a kernel on METAL adding one to each window of
+   four floats. *)
+let ranged () =
+  let r = Ops.range (Int 3) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let param slot =
+    Ops.param ~shape:[ Int 4 ] ~device:(Single "METAL") slot Float32
+  in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let x = Ops.load (Ops.index (param 1) [ i ]) [] in
+  let st =
+    Ops.store
+      (Ops.index (param 0) [ i ])
+      (Ops.add x (Ops.float ~dtype:Float32 1.))
+  in
+  let kernel =
+    Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ]
+  in
+  let buf () = Ops.new_buffer (Single "METAL") 12 Float32 in
+  Ops.end_
+    (Ops.call
+       (Codegen.to_program kernel uncompiled)
+       [ window (buf ()); window (buf ()) ])
+    [ r ]
+
+(* Whether [s] holds [sub]. *)
+let contains s sub =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+let loops =
+  group "loops (D30)"
+    [
+      test "a range's addresses are integers, profiled or not" (fun () ->
+          List.iter
+            (fun (arch, residency_set, profile) ->
+              let src =
+                host_sources
+                  (plain (fun () ->
+                       Hcq2.compile_linear ~profile
+                         ~devices:(recorded_devices ~arch ~residency_set)
+                         (Ops.v Linear ~src:[ ranged () ])))
+              in
+              is_false ~msg:"float" (contains src "float"))
+            [
+              ("Apple9", true, false);
+              ("Apple7", false, false);
+              ("Apple9", true, true);
+            ]);
+    ]
+
+let () = exit (run "Tolk_next.Ops_metal" [ recorded; loops ])

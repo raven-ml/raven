@@ -1261,9 +1261,54 @@ let staged d =
 let windows_bound src dst =
   [ (src, [ new_floats "CPU:1" (Array.init 12 float_of_int) ]); (dst, [ new_floats "CPU:1" (Array.make 12 0.) ]) ]
 
+(* Whether [s] holds [sub]. *)
+let contains s sub =
+  let n = String.length sub in
+  let rec go i = i + n <= String.length s && (String.sub s i n = sub || go (i + 1)) in
+  go 0
+
+(* Buffers of [n] floats of [d], the [i]th holding [f i]. *)
+let big_floats d n f =
+  let b = Nx_device.Buffer.create (nx d) Float32 n in
+  let a = Nx_device.Buffer.bigarray Bigarray.float32 (host_view b) in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.unsafe_set a i (f i)
+  done;
+  b
+
+(* Two trips of a kernel adding one to windows of four floats [2^24 + 1] floats
+   apart: the second trip's window is [2^26 + 4] bytes in, which a float does
+   not hold. *)
+let reads_its_window_past_a_float () =
+  let stride = (1 lsl 24) + 1 in
+  let n = stride + 4 in
+  let r = Ops.range (Int 2) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int stride) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let src = storage ~n "CPU:1" and dst = storage ~n "CPU:1" in
+  let bound =
+    [ (src, [ big_floats "CPU:1" n (fun i -> Float.of_int (i mod 1000)) ]); (dst, [ big_floats "CPU:1" n (fun _ -> 0.) ]) ]
+  in
+  ignore (run_calls ~bound [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ]);
+  let a = Nx_device.Buffer.bigarray Bigarray.float32 (host_view (List.hd (List.assq dst bound))) in
+  equal (list float_exact) ~msg:"the second trip's window"
+    (List.init 4 (fun i -> Float.of_int (((stride + i) mod 1000) + 1)))
+    (List.init 4 (fun i -> a.{stride + i}))
+
 let ranges =
   group "ranges (D30)"
     [
+      test "a ranged batch's addresses are integers, profiled or not" (fun () ->
+          let _, _, e = ranged "CPU:1" in
+          let e = Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e in
+          List.iter
+            (fun profile ->
+              let src = host_sources (Hcq2.compile_linear ~profile ~devices:(recorded_devices ()) (linear [ e ])) in
+              is_false ~msg:"float" (contains src "float"))
+            [ false; true ]);
+      test "a trip reads its window past what a float offset holds" reads_its_window_past_a_float;
       test "a range of enqueued calls is a loop in the queue of their batch" (fun () ->
           let _, _, e = ranged "CPU:1" in
           let compiled = sched [ Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e ] in

@@ -150,6 +150,14 @@ let function_words =
             (List.sort_uniq String.compare (List.map placement words)));
     ]
 
+(* Whether [s] holds [sub]. *)
+let contains s sub =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
 (* A range of three trips around a launch on CUDA, each trip on its own window
    of four floats. *)
 let ranged () =
@@ -173,16 +181,19 @@ let loops =
                      (Ops.v Linear ~src:[ ranged () ])))
           in
           (* The launch's extra words are five 64-bit words a trip. *)
-          let contains sub =
-            let n = String.length sub in
-            let rec go i =
-              i + n <= String.length src
-              && (String.sub src i n = sub || go (i + 1))
-            in
-            go 0
-          in
-          is_true ~msg:"a loop of three trips" (contains "< 3; Lidx");
-          is_true ~msg:"each trip's extra words" (contains "*40)))"));
+          is_true ~msg:"a loop of three trips" (contains src "< 3; Lidx");
+          is_true ~msg:"each trip's extra words" (contains src "*40)))"));
+      test "a range's addresses are integers, profiled or not" (fun () ->
+          List.iter
+            (fun profile ->
+              let src =
+                host_sources
+                  (plain (fun () ->
+                       Hcq2.compile_linear ~profile ~devices:recorded_devices
+                         (Ops.v Linear ~src:[ ranged () ])))
+              in
+              is_false ~msg:"float" (contains src "float"))
+            [ false; true ]);
     ]
 
 let () = exit (run "Tolk_next.Ops_cuda" [ recorded; function_words; loops ])
