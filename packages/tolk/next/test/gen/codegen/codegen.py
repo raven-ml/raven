@@ -43,7 +43,7 @@ from graph import kernels as scheduled
 from tinygrad import Tensor, Variable, dtypes, nn
 from tinygrad.codegen import do_to_program, full_rewrite_to_sink
 from tinygrad.codegen.opt import KernelOptError, Opt, OptOps
-from tinygrad.dtype import AddrSpace
+from tinygrad.dtype import AddrSpace, Invalid
 from tinygrad.helpers import DEV, Context, Target
 from tinygrad.renderer.cstyle import ClangRenderer, CUDARenderer, HIPRenderer, MetalRenderer
 from tinygrad.schedule.rangeify import BufferizeOpts
@@ -401,6 +401,17 @@ def sqrt_of_int():
     return out.index(r).store(UOp(Ops.SQRT, src=(a.index(r).load(),))).end(r).sink(arg=KernelInfo())
 
 
+def invalid_lanes():
+    """rune's fold of a float32 [2; 1] with output size [1; 1], kernel [1; 2], stride [1; 1], dilation [1; 2] and
+    padding [(0, 0); (1, 1)]: every window lies in the padding, so each lane of the unrolled reduce reads Invalid and
+    the vector folds to a scalar that the reduce's lanes still index (D53)."""
+    out, x = UOp.param(0, dtypes.float, 1, device="CPU"), UOp.param(1, dtypes.float, 2, device="CPU")
+    r1, r0 = UOp.range(4, 1, AxisType.REDUCE), UOp.range(2, 0, AxisType.REDUCE)
+    j = r1 * 3 + 1
+    value = ((r1 < 3) & ((r0 < 1) & (j % 5 < 1))).where(x.index((r1 < 3).where(j // 5, UOp.const(Invalid))), 0.0)
+    return out.index(UOp.const(0)).store(value.reduce(r0, r1, arg=Ops.ADD) + 0.0).sink(arg=KernelInfo())
+
+
 def dependent_loop_bound():
     # null/test_linearizer_rewrite.py::test_dependent_loop_bound
     buf, out, counts = UOp.param(0, dtypes.int, 16), UOp.param(1, dtypes.int, 4), UOp.param(2, dtypes.int, 4)
@@ -649,6 +660,7 @@ HAND = {
     "weak_product_permuted": lambda: last((empty(2, 4, dtype=dtypes.int32) * 2147483648).reshape(4, 2).permute(1, 0).contiguous()),
     "reduce_shapeless_const_unroll": reduce_shapeless_const_unroll,
     "sqrt_of_int": sqrt_of_int,
+    "invalid_lanes": invalid_lanes,
     # runtime/test_custom_kernel.py
     "custom_arange": lambda: custom(empty(16), fxn=custom_arange),
     "custom_eye": lambda: custom(empty(8, 8), fxn=custom_eye),

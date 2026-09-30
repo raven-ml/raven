@@ -359,15 +359,20 @@ let of_words ~dt ~st ws =
   in
   Dtype.bitcast (unsigned dt) dt (`Int z)
 
+(* A buffer the lowering left unread, as a load that folded away, is not
+   bound. *)
 let stored ~kernel ~program buffers =
-  List.map
+  List.filter_map
     (fun (slot, values) ->
-      let dt = List.assoc slot kernel and st = List.assoc slot program in
-      if Dtype.equal dt st then (slot, values)
-      else
-        ( slot,
-          Array.of_list (List.concat_map (words ~dt ~st) (Array.to_list values))
-        ))
+      let dt = List.assoc slot kernel in
+      Option.map
+        (fun st ->
+          if Dtype.equal dt st then (slot, values)
+          else
+            ( slot,
+              Array.of_list
+                (List.concat_map (words ~dt ~st) (Array.to_list values)) ))
+        (List.assoc_opt slot program))
     buffers
 
 let read_back ~kernel ~program buffers =
@@ -1588,6 +1593,19 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
+(* Lanes of a scalar (D53) *)
+
+let lanes =
+  group "lanes of a scalar (D53)"
+    [
+      test "a vector folded to a scalar is rendered as that scalar on Metal"
+        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_metal"));
+      test
+        "on the host, the program of a vector folded to a scalar writes what \
+         its kernel writes"
+        (runs_as_interpreted "invalid_lanes");
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -1853,6 +1871,7 @@ let () =
          lowering_claims;
          whole_graphs;
          accumulators;
+         lanes;
          gated_stores;
          divisions;
          range_shrinking;

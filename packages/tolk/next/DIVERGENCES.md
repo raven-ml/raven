@@ -1349,3 +1349,27 @@ the Exclusions of `README.md`.
   the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
   CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
   which is on the hardware checks of `test/README.md`.
+
+## D53. A lane of a scalar value is that value
+
+- **tinygrad:** `codegen/__init__.py:137-158` (`devectorizer2`, whose rules
+  read a lane of a value through an `INDEX` by a constant); `uop/symbolic.py:104`
+  (a stack of `Invalid` folds to one `Invalid`, without its width).
+- **tolk.next:** `lib/codegen/codegen.ml:273` (the rule of `devectorizer2`),
+  and `test/gen/tinygrad.patch`, which adds the same rule to the goldens'
+  tinygrad.
+- **Differs:** an `INDEX` by a constant of a value of shape `()` is that
+  value: a scalar stands for every lane. A reduce unrolled into lanes indexes
+  each lane of its source, and a fold may leave that source a scalar: when
+  every lane of an index is `Invalid`, the stack folds to one `Invalid`, the
+  gated load to a scalar `0`, and the value to a scalar. tinygrad keeps the
+  lane accesses, and renders a scalar's component, which Metal reads as
+  `alu1.x` of a `float`, and C as `alu1[0]`, which no compiler takes.
+- **Reason:** (b). rune lowers `Nx.combine_patches` to such a kernel when
+  every window lies in the padding (output `[1; 1]`, kernel `[1; 2]`,
+  dilation `[1; 2]`, padding `[(0, 0); (1, 1)]`), and compiles it for Metal.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `lanes of a
+  scalar (D53) › a vector folded to a scalar is rendered as that scalar on
+  Metal` and `› on the host, the program of a vector folded to a scalar writes
+  what its kernel writes`; and the case `invalid_lanes` of every target in
+  `stages`, from the patched tinygrad.

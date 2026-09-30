@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..8c64ddb 100644
+index efb2e82..aaf6999 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
@@ -35,6 +35,15 @@ index efb2e82..8c64ddb 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
+@@ -139,6 +145,8 @@ devectorizer2 = pm_mops+PatternMatcher([
+   (UPat(GroupOp.Elementwise|{Ops.LOAD,Ops.STORE}, name="b"), do_devectorize),
+   # INDEX without src is nothing (TODO: this should be in mop_cleanup)
+   (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),
++  # a scalar value stands for every lane: its lane is itself (a fold may drop a value's width, as a stack of Invalid folds to Invalid)
++  (UPat(Ops.INDEX, src=(UPat.var('x'), UPat.cvar())), lambda x: x if x._shape == () and x.addrspace is AddrSpace.ALU else None),
+   # unpack WMMA
+   (UPat(Ops.WMMA, name="u"), do_stack_wmma),
+   # stacked INDEX is many INDEX
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
 index 62c3191..e7c789e 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
