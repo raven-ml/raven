@@ -15,8 +15,9 @@ val numbered_like : Ops.t -> Ops.t -> Ops.t
     {!Tolk_next.Ops.toposort} visits them, call bodies included. A pass numbers
     the storage it makes from a counter that the process shares, so the numbers
     are no property of the pass; this compares a graph with a golden up to them.
-    It is [u] if the two graphs make different numbers of storage, which a
-    comparison then shows. *)
+    The storage that the queue data of a call names ({!Tolk_next.Ops.hcq_info})
+    is renumbered with it. It is [u] if the two graphs make different numbers of
+    storage, which a comparison then shows. *)
 
 val binaries_as_sources : Ops.t -> Ops.t
 (** [binaries_as_sources u] is [u] with the binary of each compiled program
@@ -33,3 +34,9 @@ val placeholders_like : Ops.t -> Ops.t -> Ops.t
     As storage, placeholders are numbered from the counter the process shares,
     so this compares a graph with a golden up to their numbers. It is [u] if the
     two graphs hold different numbers of them. *)
+
+val without_profile_keys : Ops.t -> Ops.t
+(** [without_profile_keys u] is [u] without the profile key of each kernel its
+    command-queue calls enqueue ({!Tolk_next.Ops.hcq_kernel}). A kernel's key is
+    its program's BLAKE2 digest, where tinygrad's is a SHA-256 (DIVERGENCES
+    D12), so a graph is compared with a golden without them. *)

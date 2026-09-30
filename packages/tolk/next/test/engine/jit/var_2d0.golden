@@ -1,0 +1,41 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=10, device="CPU")
+1 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="j", addrspace=AddrSpace.ALU)
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=100, device="CPU")
+5 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+6 Ops.RANGE dtypes.weakint [5] (0, AxisType.REDUCE)
+7 Ops.CONST dtypes.weakint [] 10
+8 Ops.MUL dtypes.weakint [6, 7]
+9 Ops.ADD dtypes.weakint [8, 2]
+10 Ops.INDEX dtypes.float [4, 9]
+11 Ops.REDUCE dtypes.float [10, 6] (Ops.ADD, 0)
+12 Ops.CAST dtypes.float [5] dtypes.float
+13 Ops.RECIPROCAL dtypes.float [12]
+14 Ops.MUL dtypes.float [11, 13]
+15 Ops.STORE dtypes.void [3, 14]
+16 Ops.END dtypes.void [15, 2]
+17 Ops.SINK dtypes.void [16] KernelInfo()
+18 Ops.BUFFER dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=10, device="CPU")
+19 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=100, device="CPU")
+20 Ops.CALL dtypes.void [17, 18, 19] CallInfo()
+21 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CPU")
+22 Ops.INDEX dtypes.float [21, 2]
+23 Ops.CONST dtypes.weakfloat [] -1.0
+24 Ops.MUL dtypes.float [22, 23]
+25 Ops.ADD dtypes.float [10, 24]
+26 Ops.MUL dtypes.float [25, 25]
+27 Ops.REDUCE dtypes.float [26, 6] (Ops.ADD, 0)
+28 Ops.CONST dtypes.weakint [] -1
+29 Ops.ADD dtypes.weakint [5, 28]
+30 Ops.CAST dtypes.float [29] dtypes.float
+31 Ops.RECIPROCAL dtypes.float [30]
+32 Ops.MUL dtypes.float [27, 31]
+33 Ops.STORE dtypes.void [3, 32]
+34 Ops.END dtypes.void [33, 2]
+35 Ops.SINK dtypes.void [34] KernelInfo()
+36 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=10, device="CPU")
+37 Ops.CALL dtypes.void [35, 36, 19, 18] CallInfo()
+38 Ops.LINEAR dtypes.void [20, 37]
+

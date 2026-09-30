@@ -108,22 +108,10 @@ let recorded_devices ?(copy_queue = true) () =
       in
       { Hcq2.target = recorded_target; queues = Some queues }
 
-(* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is
-   a SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
-let without_profile_keys u =
-  let unkeyed c =
-    match Ops.arg c with
-    | Call ({ aux = Some info; _ } as ci) ->
-        let kernels = List.map (fun (k : Ops.hcq_kernel) -> { k with profile_key = None }) info.kernels in
-        Some (c, Ops.replace ~arg:(Call { ci with aux = Some { info with kernels } }) c)
-    | _ -> None
-  in
-  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))
-
 let recorded_graph file actual =
   test file (fun () ->
       let golden = Golden.sink file in
-      let same u = Graph.to_string (without_profile_keys u) in
+      let same u = Graph.to_string (Uops.without_profile_keys u) in
       equal text (same golden) (same (Uops.placeholders_like golden (actual ()))))
 
 let host_sources linear =

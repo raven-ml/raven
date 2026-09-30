@@ -114,7 +114,7 @@ def patched(tinygrad, scratch):
 def generators(modules):
     found = {path.relative_to(HERE).with_suffix("").as_posix(): path
              for path in sorted(HERE.rglob("*.py"))
-             if path.parent != HERE or path.name not in ("generate.py", "golden.py", "graph.py", "hcq2_d1.py")}
+             if path.parent != HERE or path.name not in ("generate.py", "golden.py", "graph.py", "hcq2_d1.py", "hcq2_null.py")}
     unknown = [module for module in modules if module not in found]
     if unknown:
         sys.exit(f"no generator for {', '.join(unknown)}; generators: {', '.join(found)}")

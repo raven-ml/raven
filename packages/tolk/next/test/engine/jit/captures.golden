@@ -1,0 +1,69 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	vars
+input_view	-
+chain_of_three	-
+add	-
+assign	-
+assign_int8	-
+copyin	-
+clone	-
+transfers	-
+several_devs	-
+view_bitcast	-
+multiple_outputs	-
+weight	-
+assign_input	-
+lazy_grad	-
+copy_inside	-
+weights_copy	-
+weights_independent_copy	-
+weights_kernel	-
+held_constant	-
+accumulator	-
+split_simple	-
+split_cpu	-
+split_cpu_several	-
+split_multidev	-
+split_multidev_xfer	-
+split_multidev_copy	-
+explicit	-
+implicit_input	-
+implicit_output	-
+implicit_io	-
+sum	-
+two_kernels	-
+cat_window	-
+shift_window	-
+slice_assign	pos=2
+masked_select	-
+nonzero	-
+plus1	i=3
+inner_bound_var_view	-
+plus1_pad_view	i=3
+plus1_pad	i=3
+symbolic_add	i=3
+symbolic_matmul	i=3
+mixed_with_no_symbol_kernel	i=3
+symbolic_attention	i=3
+cat_dim0	i=3
+cat_dim1	i=3
+cat_dim0_two_vars	i=3 j=2
+cat_dim1_two_vars	i=3 j=2
+two_vars_plus1_ij	i=3 j=2
+two_vars_plus1_ji	i=3 j=2
+symbolic_shrink	i=3
+symbolic_slice	i=3
+slice_var_shape	i=3
+ones_sum	i=3
+mean	i=3
+mean0	i=3
+mean1	i=3
+mean_2d	i=3 j=2
+mean_2d0	i=3 j=2
+mean_2d1	i=3 j=2
+var	i=3
+var0	i=3
+var1	i=3
+var_2d	i=3 j=2
+var_2d0	i=3 j=2
+var_2d1	i=3 j=2

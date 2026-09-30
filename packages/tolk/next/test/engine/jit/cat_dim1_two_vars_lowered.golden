@@ -1,0 +1,77 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=60, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 20
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.MUL dtypes.int [3, 5]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+8 Ops.PARAM dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="j", addrspace=AddrSpace.ALU)
+9 Ops.ADD dtypes.int [7, 8]
+10 Ops.RANGE dtypes.int [9, 3] (1, AxisType.WEAK)
+11 Ops.ADD dtypes.int [6, 10]
+12 Ops.INDEX dtypes.float [0, 11]
+13 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=30, device="CPU")
+14 Ops.CONST dtypes.weakint [] 10
+15 Ops.CAST dtypes.int [14] dtypes.int
+16 Ops.MUL dtypes.int [3, 15]
+17 Ops.ADD dtypes.int [16, 10]
+18 Ops.INDEX dtypes.float [13, 17]
+19 Ops.CONST dtypes.weakfloat [] 0.0
+20 Ops.CAST dtypes.float [19] dtypes.float
+21 Ops.CMPLT dtypes.bool [10, 7]
+22 Ops.LOAD dtypes.float [18, 20, 21]
+23 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=30, device="CPU")
+24 Ops.SUB dtypes.int [10, 7]
+25 Ops.ADD dtypes.int [24, 16]
+26 Ops.CONST dtypes.weakint [] 30
+27 Ops.CAST dtypes.int [26] dtypes.int
+28 Ops.CMOD dtypes.int [25, 27]
+29 Ops.CONST dtypes.weakint [] 0
+30 Ops.CAST dtypes.int [29] dtypes.int
+31 Ops.CMPNE dtypes.bool [28, 30]
+32 Ops.CMPLT dtypes.bool [25, 30]
+33 Ops.AND dtypes.bool [31, 32]
+34 Ops.WHERE dtypes.int [33, 27, 30]
+35 Ops.ADD dtypes.int [28, 34]
+36 Ops.INDEX dtypes.float [23, 35]
+37 Ops.CONST dtypes.bool [] True
+38 Ops.CAST dtypes.bool [37] dtypes.bool
+39 Ops.CMPNE dtypes.bool [21, 38]
+40 Ops.CMPLT dtypes.bool [10, 9]
+41 Ops.AND dtypes.bool [39, 40]
+42 Ops.LOAD dtypes.float [36, 20, 41]
+43 Ops.ADD dtypes.float [22, 42]
+44 Ops.STORE dtypes.void [12, 43]
+45 Ops.END dtypes.void [44, 10]
+46 Ops.END dtypes.void [45, 3]
+47 Ops.CONST dtypes.weakint [] 15
+48 Ops.MUL dtypes.int [9, 47]
+49 Ops.CONST dtypes.weakint [] 4
+50 Ops.MUL dtypes.int [1, 9]
+51 Ops.MUL dtypes.int [49, 50]
+52 Ops.ADD dtypes.int [29, 51]
+53 Ops.ADD dtypes.int [52, 51]
+54 Ops.ADD dtypes.int [53, 51]
+55 Ops.CONST dtypes.weakint [] 12
+56 Ops.MUL dtypes.int [9, 55]
+57 Ops.CONST dtypes.weakint [] -1
+58 Ops.XOR dtypes.int [56, 57]
+59 Ops.CONST dtypes.weakint [] -121
+60 Ops.MAX dtypes.int [58, 59]
+61 Ops.XOR dtypes.int [60, 57]
+62 Ops.ADD dtypes.int [29, 61]
+63 Ops.ADD dtypes.int [62, 61]
+64 Ops.ADD dtypes.int [63, 56]
+65 Ops.SINK dtypes.void [46] KernelInfo(name="E_3_(i+j)", estimates=Estimates(ops=%48, lds=%54, mem=%64)) tag=1
+66 Ops.SINK dtypes.void [46] KernelInfo(name="E_3_(i+j)") tag=1
+67 Ops.LINEAR dtypes.void [0, 13, 23, 7, 8, 37, 38, 19, 20, 29, 30, 14, 15, 4, 5, 1, 2, 26, 27, 9, 3, 16, 6, 10, 17, 18, 21, 22, 24, 25, 28, 32, 31, 33, 34, 35, 36, 40, 39, 41, 42, 11, 12, 43, 44, 45, 46, 66]
+68 Ops.SOURCE dtypes.void [] "\nvoid E_3_28i2Bj29(float* restrict data0_60, float* restrict data1_30, float* restrict data2_30, const int i_, const int j_) {\n  int alu0 = (i_+j_);\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    int alu1 = (Lidx0*10);\n    for (int Lidx1 = 0; Lidx1 < alu0; Lidx1++) {\n      _Bool alu2 = (Lidx1<i_);\n      float val0 = (alu2?*(data1_30+(alu1+Lidx1)):0.0f);\n      int alu3 = ((Lidx1-i_)+alu1);\n      int alu4 = (alu3%30);\n      int alu5 = (((alu4!=0)&(alu3<0))?30:0);\n      float val1 = (((alu2!=1)&(Lidx1<alu0))?*(data2_30+(alu4+alu5)):0.0f);\n      *(data0_60+((Lidx0*20)+Lidx1)) = (val0+val1);\n    }\n  }\n}\n"
+69 Ops.BINARY dtypes.uchar [] b"\nvoid E_3_28i2Bj29(float* restrict data0_60, float* restrict data1_30, float* restrict data2_30, const int i_, const int j_) {\n  int alu0 = (i_+j_);\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    int alu1 = (Lidx0*10);\n    for (int Lidx1 = 0; Lidx1 < alu0; Lidx1++) {\n      _Bool alu2 = (Lidx1<i_);\n      float val0 = (alu2?*(data1_30+(alu1+Lidx1)):0.0f);\n      int alu3 = ((Lidx1-i_)+alu1);\n      int alu4 = (alu3%30);\n      int alu5 = (((alu4!=0)&(alu3<0))?30:0);\n      float val1 = (((alu2!=1)&(Lidx1<alu0))?*(data2_30+(alu4+alu5)):0.0f);\n      *(data0_60+((Lidx0*20)+Lidx1)) = (val0+val1);\n    }\n  }\n}\n"
+70 Ops.PROGRAM dtypes.void [65, 67, 68, 69] ProgramInfo(vars=(%7, %8), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+71 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=60, device="CPU")
+72 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=30, device="CPU")
+73 Ops.CALL dtypes.void [70, 71, 72, 13] CallInfo()
+74 Ops.LINEAR dtypes.void [73]
+

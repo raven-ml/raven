@@ -10,6 +10,23 @@ let uop =
   Windtrap.Testable.with_compare Ops.compare
     (Windtrap.Testable.make ~pp:pp_uop ~equal:Ops.equal)
 
+(* [substituted u subs] is [u] with [subs] applied, the storage that the
+   queue data of its calls names included. *)
+let substituted u subs =
+  let u = Ops.substitute ~enter_calls:true u subs in
+  let mapped n = Option.value (List.assq_opt n subs) ~default:n in
+  let requeued c =
+    match Ops.arg c with
+    | Call ({ aux = Some info; _ } as ci) ->
+        let inputs = List.map (fun (b, o, d) -> (mapped b, o, d)) info.inputs in
+        let written_bufs = List.map mapped info.written_bufs in
+        let aux = Some { info with inputs; written_bufs } in
+        Some (c, Ops.replace ~arg:(Call { ci with aux }) c)
+    | _ -> None
+  in
+  Ops.substitute ~enter_calls:true u
+    (List.filter_map requeued (Ops.toposort u))
+
 let numbered_like like u =
   let made op g = List.filter (fun n -> Ops.op n = op) (Ops.toposort g) in
   let renumbered mine theirs =
@@ -23,7 +40,7 @@ let numbered_like like u =
       (fun op -> List.map2 renumbered (made op u) (made op like))
       Op.[ Alloc; Buffer ]
   with
-  | subs -> Ops.substitute ~enter_calls:true u subs
+  | subs -> substituted u subs
   | exception Invalid_argument _ -> u
 
 let binaries_as_sources u =
@@ -50,5 +67,19 @@ let placeholders_like like u =
     | _ -> (mine, mine)
   in
   match List.map2 renumbered (placeholders u) (placeholders like) with
-  | subs -> Ops.substitute ~enter_calls:true u subs
+  | subs -> substituted u subs
   | exception Invalid_argument _ -> u
+
+let without_profile_keys u =
+  let unkeyed c =
+    match Ops.arg c with
+    | Call ({ aux = Some info; _ } as ci) ->
+        let kernels =
+          List.map
+            (fun (k : Ops.hcq_kernel) -> { k with profile_key = None })
+            info.kernels
+        in
+        Some (c, Ops.replace ~arg:(Call { ci with aux = Some { info with kernels } }) c)
+    | _ -> None
+  in
+  Ops.substitute u (List.filter_map unkeyed (Ops.toposort u))

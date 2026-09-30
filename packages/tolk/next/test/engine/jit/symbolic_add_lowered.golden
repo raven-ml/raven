@@ -1,0 +1,44 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=30, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 10
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.MUL dtypes.int [3, 5]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, vmin_vmax=(1, 10), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+8 Ops.RANGE dtypes.int [7, 3] (1, AxisType.WEAK)
+9 Ops.ADD dtypes.int [6, 8]
+10 Ops.INDEX dtypes.float [0, 9]
+11 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=30, device="CPU")
+12 Ops.INDEX dtypes.float [11, 9]
+13 Ops.LOAD dtypes.float [12]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=30, device="CPU")
+15 Ops.INDEX dtypes.float [14, 9]
+16 Ops.LOAD dtypes.float [15]
+17 Ops.ADD dtypes.float [13, 16]
+18 Ops.STORE dtypes.void [10, 17]
+19 Ops.END dtypes.void [18, 8]
+20 Ops.END dtypes.void [19, 3]
+21 Ops.MUL dtypes.int [1, 7]
+22 Ops.CONST dtypes.weakint [] 0
+23 Ops.CONST dtypes.weakint [] 4
+24 Ops.MUL dtypes.int [23, 21]
+25 Ops.ADD dtypes.int [22, 24]
+26 Ops.ADD dtypes.int [25, 24]
+27 Ops.ADD dtypes.int [26, 24]
+28 Ops.CONST dtypes.weakint [] 12
+29 Ops.MUL dtypes.int [7, 28]
+30 Ops.ADD dtypes.int [22, 29]
+31 Ops.ADD dtypes.int [30, 29]
+32 Ops.ADD dtypes.int [31, 29]
+33 Ops.SINK dtypes.void [20] KernelInfo(name="E_3_i", estimates=Estimates(ops=%21, lds=%27, mem=%32)) tag=1
+34 Ops.SINK dtypes.void [20] KernelInfo(name="E_3_i") tag=1
+35 Ops.LINEAR dtypes.void [0, 11, 14, 7, 4, 5, 1, 2, 3, 6, 8, 9, 12, 13, 15, 16, 10, 17, 18, 19, 20, 34]
+36 Ops.SOURCE dtypes.void [] "\nvoid E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < i_; Lidx1++) {\n      int alu0 = ((Lidx0*10)+Lidx1);\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
+37 Ops.BINARY dtypes.uchar [] b"\nvoid E_3_i(float* restrict data0_30, float* restrict data1_30, float* restrict data2_30, const int i_) {\n  for (int Lidx0 = 0; Lidx0 < 3; Lidx0++) {\n    for (int Lidx1 = 0; Lidx1 < i_; Lidx1++) {\n      int alu0 = ((Lidx0*10)+Lidx1);\n      float val0 = (*(data1_30+alu0));\n      float val1 = (*(data2_30+alu0));\n      *(data0_30+alu0) = (val0+val1);\n    }\n  }\n}\n"
+38 Ops.PROGRAM dtypes.void [33, 35, 36, 37] ProgramInfo(vars=(%7,), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+39 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=30, device="CPU")
+40 Ops.CALL dtypes.void [38, 39, 0, 11] CallInfo()
+41 Ops.LINEAR dtypes.void [40]
+

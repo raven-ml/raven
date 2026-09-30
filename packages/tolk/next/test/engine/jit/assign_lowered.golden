@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.LOAD dtypes.float [3]
+5 Ops.CONST dtypes.weakfloat [] 1.0
+6 Ops.CAST dtypes.float [5] dtypes.float
+7 Ops.ADD dtypes.float [4, 6]
+8 Ops.STORE dtypes.void [3, 7]
+9 Ops.SINK dtypes.void [8] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+10 Ops.SINK dtypes.void [8] KernelInfo(name="E") tag=1
+11 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 10]
+12 Ops.SOURCE dtypes.void [] "\nvoid E(float* restrict data0_1) {\n  float val0 = (*(data0_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
+13 Ops.BINARY dtypes.uchar [] b"\nvoid E(float* restrict data0_1) {\n  float val0 = (*(data0_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
+14 Ops.PROGRAM dtypes.void [9, 11, 12, 13] ProgramInfo(globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", arch="x86_64,x86-64"))
+15 Ops.CALL dtypes.void [14, 0] CallInfo()
+16 Ops.LINEAR dtypes.void [15]
+

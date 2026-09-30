@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.LOAD dtypes.int [3]
+5 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=1, device="CPU")
+6 Ops.INDEX dtypes.int [5, 2]
+7 Ops.LOAD dtypes.int [6]
+8 Ops.ADD dtypes.int [4, 7]
+9 Ops.STORE dtypes.void [3, 8]
+10 Ops.SINK dtypes.void [9] KernelInfo(name="E", estimates=Estimates(ops=1, lds=12, mem=12)) tag=1
+11 Ops.SINK dtypes.void [9] KernelInfo(name="E") tag=1
+12 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 4, 6, 7, 8, 9, 11]
+13 Ops.SOURCE dtypes.void [] "\nvoid E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data0_1+0));\n  int val1 = (*(data1_1+0));\n  *(data0_1+0) = (val0+val1);\n}\n"
+14 Ops.BINARY dtypes.uchar [] b"\nvoid E(int* restrict data0_1, int* restrict data1_1) {\n  int val0 = (*(data0_1+0));\n  int val1 = (*(data1_1+0));\n  *(data0_1+0) = (val0+val1);\n}\n"
+15 Ops.PROGRAM dtypes.void [10, 12, 13, 14] ProgramInfo(globals=(0, 1), outs=(0,), ins=(0, 1), target=Target(device="CPU", arch="x86_64,x86-64"))
+16 Ops.BUFFER dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=1, device="CPU")
+17 Ops.CALL dtypes.void [15, 16, 0] CallInfo()
+18 Ops.LINEAR dtypes.void [17]
+

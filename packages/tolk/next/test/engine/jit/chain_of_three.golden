@@ -1,0 +1,37 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU")
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.MUL dtypes.weakint [2, 1]
+4 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.INDEX dtypes.float [0, 5]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU")
+8 Ops.INDEX dtypes.float [7, 5]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=64, device="CPU")
+10 Ops.INDEX dtypes.float [9, 5]
+11 Ops.ADD dtypes.float [8, 10]
+12 Ops.STORE dtypes.void [6, 11]
+13 Ops.END dtypes.void [12, 2, 4]
+14 Ops.SINK dtypes.void [13] KernelInfo()
+15 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=64, device="CPU")
+16 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU")
+17 Ops.BUFFER dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
+18 Ops.CALL dtypes.void [14, 15, 16, 17] CallInfo()
+19 Ops.CONST dtypes.weakfloat [] 2.0
+20 Ops.MUL dtypes.float [8, 19]
+21 Ops.STORE dtypes.void [6, 20]
+22 Ops.END dtypes.void [21, 2, 4]
+23 Ops.SINK dtypes.void [22] KernelInfo()
+24 Ops.BUFFER dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=64, device="CPU")
+25 Ops.CALL dtypes.void [23, 24, 15] CallInfo()
+26 Ops.CONST dtypes.weakfloat [] -1.0
+27 Ops.MUL dtypes.float [10, 26]
+28 Ops.ADD dtypes.float [8, 27]
+29 Ops.STORE dtypes.void [6, 28]
+30 Ops.END dtypes.void [29, 2, 4]
+31 Ops.SINK dtypes.void [30] KernelInfo()
+32 Ops.BUFFER dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=64, device="CPU")
+33 Ops.CALL dtypes.void [31, 32, 24, 16] CallInfo()
+34 Ops.LINEAR dtypes.void [18, 25, 33]
+

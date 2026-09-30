@@ -1,0 +1,37 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, device="CPU")
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.LOAD dtypes.float [5]
+7 Ops.CONST dtypes.weakfloat [] 1.0
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.ADD dtypes.float [6, 8]
+10 Ops.STORE dtypes.void [3, 9]
+11 Ops.SINK dtypes.void [10] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+12 Ops.SINK dtypes.void [10] KernelInfo(name="E") tag=1
+13 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 7, 8, 9, 10, 12]
+14 Ops.SOURCE dtypes.void [] "\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
+15 Ops.BINARY dtypes.uchar [] b"\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0+1.0f);\n}\n"
+16 Ops.PROGRAM dtypes.void [11, 13, 14, 15] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+17 Ops.BUFFER dtypes.char [] ParamArg(slot=4, dtype=dtypes.char, size=256, device="CPU")
+18 Ops.CONST dtypes.weakint [] 4
+19 Ops.SHRINK dtypes.char [17, 1, 18]
+20 Ops.BITCAST dtypes.float [19] dtypes.float
+21 Ops.CALL dtypes.void [16, 20, 0] CallInfo()
+22 Ops.CONST dtypes.weakfloat [] 2.0
+23 Ops.CAST dtypes.float [22] dtypes.float
+24 Ops.MUL dtypes.float [6, 23]
+25 Ops.STORE dtypes.void [3, 24]
+26 Ops.SINK dtypes.void [25] KernelInfo(name="E", estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+27 Ops.SINK dtypes.void [25] KernelInfo(name="E") tag=1
+28 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 22, 23, 24, 25, 27]
+29 Ops.SOURCE dtypes.void [] "\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+30 Ops.BINARY dtypes.uchar [] b"\nvoid E(float* restrict data0_1, float* restrict data1_1) {\n  float val0 = (*(data1_1+0));\n  *(data0_1+0) = (val0*2.0f);\n}\n"
+31 Ops.PROGRAM dtypes.void [26, 28, 29, 30] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", arch="x86_64,x86-64"))
+32 Ops.BUFFER dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=1, device="CPU")
+33 Ops.CALL dtypes.void [31, 32, 20] CallInfo()
+34 Ops.LINEAR dtypes.void [21, 33]
+
