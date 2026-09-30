@@ -1,0 +1,76 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.STACK dtypes.weakint [1, 1]
+3 Ops.RESHAPE dtypes.float [0, 2]
+4 Ops.ALLOC dtypes.float [] ParamArg(slot=13, dtype=dtypes.float, size=16, device="CPU")
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+6 Ops.MSELECT dtypes.float [5] 0
+7 Ops.STORE dtypes.void [4, 6]
+8 Ops.AFTER dtypes.float [4, 7]
+9 Ops.RESHAPE dtypes.float [8, 2]
+10 Ops.ALLOC dtypes.float [] ParamArg(slot=14, dtype=dtypes.float, size=16, device="CPU:1")
+11 Ops.STORE dtypes.void [10, 6]
+12 Ops.AFTER dtypes.float [10, 11]
+13 Ops.RESHAPE dtypes.float [12, 2]
+14 Ops.ALLOC dtypes.float [] ParamArg(slot=15, dtype=dtypes.float, size=16, device="CPU:2")
+15 Ops.STORE dtypes.void [14, 6]
+16 Ops.AFTER dtypes.float [14, 15]
+17 Ops.RESHAPE dtypes.float [16, 2]
+18 Ops.ALLOC dtypes.float [] ParamArg(slot=16, dtype=dtypes.float, size=16, device="CPU:3")
+19 Ops.STORE dtypes.void [18, 6]
+20 Ops.AFTER dtypes.float [18, 19]
+21 Ops.RESHAPE dtypes.float [20, 2]
+22 Ops.MSTACK dtypes.float [9, 13, 17, 21]
+23 Ops.ALLOC dtypes.float [] ParamArg(slot=17, dtype=dtypes.float, size=16, device="CPU")
+24 Ops.MSELECT dtypes.float [5] 1
+25 Ops.STORE dtypes.void [23, 24]
+26 Ops.AFTER dtypes.float [23, 25]
+27 Ops.RESHAPE dtypes.float [26, 2]
+28 Ops.RESHAPE dtypes.float [24, 2]
+29 Ops.ALLOC dtypes.float [] ParamArg(slot=18, dtype=dtypes.float, size=16, device="CPU:2")
+30 Ops.STORE dtypes.void [29, 24]
+31 Ops.AFTER dtypes.float [29, 30]
+32 Ops.RESHAPE dtypes.float [31, 2]
+33 Ops.ALLOC dtypes.float [] ParamArg(slot=19, dtype=dtypes.float, size=16, device="CPU:3")
+34 Ops.STORE dtypes.void [33, 24]
+35 Ops.AFTER dtypes.float [33, 34]
+36 Ops.RESHAPE dtypes.float [35, 2]
+37 Ops.MSTACK dtypes.float [27, 28, 32, 36]
+38 Ops.ADD dtypes.float [22, 37]
+39 Ops.ALLOC dtypes.float [] ParamArg(slot=20, dtype=dtypes.float, size=16, device="CPU")
+40 Ops.MSELECT dtypes.float [5] 2
+41 Ops.STORE dtypes.void [39, 40]
+42 Ops.AFTER dtypes.float [39, 41]
+43 Ops.RESHAPE dtypes.float [42, 2]
+44 Ops.ALLOC dtypes.float [] ParamArg(slot=21, dtype=dtypes.float, size=16, device="CPU:1")
+45 Ops.STORE dtypes.void [44, 40]
+46 Ops.AFTER dtypes.float [44, 45]
+47 Ops.RESHAPE dtypes.float [46, 2]
+48 Ops.RESHAPE dtypes.float [40, 2]
+49 Ops.ALLOC dtypes.float [] ParamArg(slot=22, dtype=dtypes.float, size=16, device="CPU:3")
+50 Ops.STORE dtypes.void [49, 40]
+51 Ops.AFTER dtypes.float [49, 50]
+52 Ops.RESHAPE dtypes.float [51, 2]
+53 Ops.MSTACK dtypes.float [43, 47, 48, 52]
+54 Ops.ADD dtypes.float [38, 53]
+55 Ops.ALLOC dtypes.float [] ParamArg(slot=23, dtype=dtypes.float, size=16, device="CPU")
+56 Ops.MSELECT dtypes.float [5] 3
+57 Ops.STORE dtypes.void [55, 56]
+58 Ops.AFTER dtypes.float [55, 57]
+59 Ops.RESHAPE dtypes.float [58, 2]
+60 Ops.ALLOC dtypes.float [] ParamArg(slot=24, dtype=dtypes.float, size=16, device="CPU:1")
+61 Ops.STORE dtypes.void [60, 56]
+62 Ops.AFTER dtypes.float [60, 61]
+63 Ops.RESHAPE dtypes.float [62, 2]
+64 Ops.ALLOC dtypes.float [] ParamArg(slot=25, dtype=dtypes.float, size=16, device="CPU:2")
+65 Ops.STORE dtypes.void [64, 56]
+66 Ops.AFTER dtypes.float [64, 65]
+67 Ops.RESHAPE dtypes.float [66, 2]
+68 Ops.RESHAPE dtypes.float [56, 2]
+69 Ops.MSTACK dtypes.float [59, 63, 67, 68]
+70 Ops.ADD dtypes.float [54, 69]
+71 Ops.STORE dtypes.void [3, 70]
+72 Ops.AFTER dtypes.float [0, 71]
+73 Ops.SINK dtypes.void [72]
+

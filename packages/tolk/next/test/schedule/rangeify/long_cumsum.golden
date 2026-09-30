@@ -1,0 +1,59 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CONST dtypes.weakint [] 256
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1024, device="CPU")
+6 Ops.RESHAPE dtypes.float [5, 3]
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.CONST dtypes.weakint [] 255
+9 Ops.STACK dtypes.weakint [7, 8]
+10 Ops.CONST dtypes.weakint [] 511
+11 Ops.STACK dtypes.weakint [1, 10]
+12 Ops.PAD dtypes.float [6, 9, 11]
+13 Ops.CONST dtypes.weakint [] 257
+14 Ops.EXPAND dtypes.float [12, 13]
+15 Ops.PERMUTE dtypes.float [14] (1, 0, 2)
+16 Ops.CONST dtypes.weakint [] 131327
+17 Ops.STACK dtypes.weakint [1, 16]
+18 Ops.RESHAPE dtypes.float [15, 17]
+19 Ops.STACK dtypes.weakint [7, 7]
+20 Ops.CONST dtypes.weakint [] 131072
+21 Ops.STACK dtypes.weakint [1, 20]
+22 Ops.SHRINK dtypes.float [18, 19, 21]
+23 Ops.CONST dtypes.weakint [] 512
+24 Ops.STACK dtypes.weakint [1, 2, 23]
+25 Ops.RESHAPE dtypes.float [22, 24]
+26 Ops.STACK dtypes.weakint [7, 7, 7]
+27 Ops.STACK dtypes.weakint [1, 2, 2]
+28 Ops.SHRINK dtypes.float [25, 26, 27]
+29 Ops.PERMUTE dtypes.float [28] (1, 0, 2)
+30 Ops.REDUCE dtypes.float [29] (Ops.ADD, 1)
+31 Ops.CONST dtypes.weakint [] 1
+32 Ops.STACK dtypes.weakint [1, 31]
+33 Ops.SHRINK dtypes.float [30, 9, 32]
+34 Ops.RESHAPE dtypes.float [33, 1]
+35 Ops.CONST dtypes.weakint [] 3
+36 Ops.CONST dtypes.weakint [] 7
+37 Ops.PAD dtypes.float [34, 35, 36]
+38 Ops.CONST dtypes.weakint [] 5
+39 Ops.EXPAND dtypes.float [37, 38]
+40 Ops.CONST dtypes.weakint [] 35
+41 Ops.RESHAPE dtypes.float [39, 40]
+42 Ops.CONST dtypes.weakint [] 32
+43 Ops.SHRINK dtypes.float [41, 7, 42]
+44 Ops.CONST dtypes.weakint [] 8
+45 Ops.STACK dtypes.weakint [1, 44]
+46 Ops.RESHAPE dtypes.float [43, 45]
+47 Ops.STACK dtypes.weakint [1, 1]
+48 Ops.SHRINK dtypes.float [46, 19, 47]
+49 Ops.REDUCE dtypes.float [48] (Ops.ADD, 1)
+50 Ops.SHRINK dtypes.float [49, 7, 35]
+51 Ops.PAD dtypes.float [50, 31, 1]
+52 Ops.RESHAPE dtypes.float [51, 32]
+53 Ops.ADD dtypes.float [30, 52]
+54 Ops.STORE dtypes.void [4, 53]
+55 Ops.AFTER dtypes.float [0, 54]
+56 Ops.SINK dtypes.void [55]
+

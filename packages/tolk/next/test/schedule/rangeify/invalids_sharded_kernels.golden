@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=8, device="CPU") tag=()
+1 Ops.PARAM dtypes.bool [] ParamArg(slot=1, dtype=dtypes.bool, size=4, device=("CPU", "CPU:1")) tag=()
+2 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=4, device=("CPU", "CPU:1"))
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (0, AxisType.WEAK)
+5 Ops.INDEX dtypes.bool [2, 4]
+6 Ops.PARAM dtypes.bool [] ParamArg(slot=1, dtype=dtypes.bool, size=4, device=("CPU", "CPU:1"))
+7 Ops.INDEX dtypes.bool [6, 4]
+8 Ops.STORE dtypes.void [5, 7]
+9 Ops.END dtypes.void [8, 4]
+10 Ops.SINK dtypes.void [9] KernelInfo()
+11 Ops.ALLOC dtypes.bool [] ParamArg(slot=3, dtype=dtypes.bool, size=4, device="CPU")
+12 Ops.ALLOC dtypes.bool [] ParamArg(slot=4, dtype=dtypes.bool, size=4, device="CPU:1")
+13 Ops.MSTACK dtypes.bool [11, 12]
+14 Ops.CALL dtypes.void [10, 1, 13] CallInfo()
+15 Ops.AFTER dtypes.bool [1, 14]
+16 Ops.SINK dtypes.void [0, 15]
+

@@ -1,0 +1,46 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=4, device="CPU")
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [3, 1]
+5 Ops.RESHAPE dtypes.float [2, 4]
+6 Ops.PERMUTE dtypes.float [5] (1, 0)
+7 Ops.REDUCE dtypes.float [6] (Ops.MAX, 1)
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.STACK dtypes.weakint [3, 8]
+10 Ops.RESHAPE dtypes.float [7, 9]
+11 Ops.CMPNE dtypes.bool [5, 10]
+12 Ops.CONST dtypes.bool [] True
+13 Ops.CMPNE dtypes.bool [11, 12]
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.CONST dtypes.weakint [] -1
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.EXPAND dtypes.int [16, 1]
+18 Ops.CONST dtypes.weakint [] 7
+19 Ops.CONST dtypes.weakint [] 15
+20 Ops.PAD dtypes.int [17, 18, 19]
+21 Ops.CONST dtypes.weakint [] 9
+22 Ops.EXPAND dtypes.int [20, 21]
+23 Ops.CONST dtypes.weakint [] 135
+24 Ops.RESHAPE dtypes.int [22, 23]
+25 Ops.CONST dtypes.weakint [] 0
+26 Ops.CONST dtypes.weakint [] 128
+27 Ops.SHRINK dtypes.int [24, 25, 26]
+28 Ops.CONST dtypes.weakint [] 16
+29 Ops.STACK dtypes.weakint [1, 28]
+30 Ops.RESHAPE dtypes.int [27, 29]
+31 Ops.STACK dtypes.weakint [25, 25]
+32 Ops.STACK dtypes.weakint [1, 1]
+33 Ops.SHRINK dtypes.int [30, 31, 32]
+34 Ops.REDUCE dtypes.int [33] (Ops.ADD, 1)
+35 Ops.ADD dtypes.int [34, 21]
+36 Ops.MUL dtypes.int [14, 35]
+37 Ops.PERMUTE dtypes.int [36] (1, 0)
+38 Ops.REDUCE dtypes.int [37] (Ops.MAX, 1)
+39 Ops.MUL dtypes.int [38, 15]
+40 Ops.ADD dtypes.int [1, 39]
+41 Ops.STORE dtypes.void [0, 40]
+42 Ops.AFTER dtypes.int [0, 41]
+43 Ops.SINK dtypes.void [42]
+

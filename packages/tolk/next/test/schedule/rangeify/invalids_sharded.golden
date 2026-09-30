@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=8, device="CPU")
+1 Ops.CONST dtypes.bool [] Invalid
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.EXPAND dtypes.bool [1, 2]
+4 Ops.STORE dtypes.void [0, 3]
+5 Ops.AFTER dtypes.bool [0, 4]
+6 Ops.PARAM dtypes.bool [] ParamArg(slot=1, dtype=dtypes.bool, size=4, device=("CPU", "CPU:1"))
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.CONST dtypes.weakint [] 4
+9 Ops.SHRINK dtypes.bool [6, 7, 8]
+10 Ops.ALLOC dtypes.bool [] ParamArg(slot=3, dtype=dtypes.bool, size=4, device="CPU")
+11 Ops.SHRINK dtypes.bool [5, 7, 8]
+12 Ops.STORE dtypes.void [10, 11]
+13 Ops.AFTER dtypes.bool [10, 12]
+14 Ops.ALLOC dtypes.bool [] ParamArg(slot=4, dtype=dtypes.bool, size=4, device="CPU:1")
+15 Ops.ALLOC dtypes.bool [] ParamArg(slot=5, dtype=dtypes.bool, size=4, device="CPU")
+16 Ops.SHRINK dtypes.bool [5, 8, 8]
+17 Ops.STORE dtypes.void [15, 16]
+18 Ops.AFTER dtypes.bool [15, 17]
+19 Ops.STORE dtypes.void [14, 18]
+20 Ops.AFTER dtypes.bool [14, 19]
+21 Ops.MSTACK dtypes.bool [13, 20]
+22 Ops.STORE dtypes.void [9, 21]
+23 Ops.AFTER dtypes.bool [6, 22]
+24 Ops.SINK dtypes.void [5, 23]
+

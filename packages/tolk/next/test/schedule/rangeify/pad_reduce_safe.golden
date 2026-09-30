@@ -1,0 +1,28 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.STACK dtypes.void []
+2 Ops.RESHAPE dtypes.float [0, 1]
+3 Ops.CONST dtypes.bool [] True
+4 Ops.CONST dtypes.weakint [] 3
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.CONST dtypes.weakint [] 5
+7 Ops.STACK dtypes.weakint [4, 5, 6]
+8 Ops.EXPAND dtypes.bool [3, 7]
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.STACK dtypes.weakint [9, 9, 9]
+11 Ops.CONST dtypes.weakint [] 6
+12 Ops.STACK dtypes.weakint [5, 6, 11]
+13 Ops.PAD dtypes.bool [8, 10, 12]
+14 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=60, device="CPU")
+15 Ops.RESHAPE dtypes.float [14, 7]
+16 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=60, device="CPU")
+17 Ops.RESHAPE dtypes.float [16, 7]
+18 Ops.ADD dtypes.float [15, 17]
+19 Ops.PAD dtypes.float [18, 10, 12]
+20 Ops.CONST dtypes.weakfloat [] 1.0
+21 Ops.WHERE dtypes.float [13, 19, 20]
+22 Ops.REDUCE dtypes.float [21] (Ops.ADD, 3)
+23 Ops.STORE dtypes.void [2, 22]
+24 Ops.AFTER dtypes.float [0, 23]
+25 Ops.SINK dtypes.void [24]
+

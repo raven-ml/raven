@@ -1,0 +1,5 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=8, device="CPU") tag=()
+1 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device="CPU") tag=()
+2 Ops.SINK dtypes.void [0, 1]
+
