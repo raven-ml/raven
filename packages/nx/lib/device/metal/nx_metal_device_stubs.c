@@ -232,19 +232,19 @@ value caml_nx_metal_wait(value v_event, value v_value, value v_timeout_ms) {
   return Val_bool(signaled);
 }
 
-/* Writes the GPU start and end times of the command buffer that the first of
-   the two words at [v_words] holds, if the second is 0, over them as host
-   nanoseconds, and releases the command buffer. GPUStartTime and GPUEndTime
-   are mach time in seconds, the host clock. */
+/* Writes the GPU start and end times of the command buffer that the stamp word
+   of the first of the two slots at [v_words] holds, if the second's is 0, over
+   them as host nanoseconds, and releases the command buffer. GPUStartTime and
+   GPUEndTime are mach time in seconds, the host clock. */
 value caml_nx_metal_resolve(value v_words) {
   uint64_t *words = (uint64_t *)Nativeint_val(v_words);
-  if (words[0] != 0 && words[1] == 0) {
-    id<MTLCommandBuffer> command = (id)(uintptr_t)words[0];
+  if (words[1] != 0 && words[3] == 0) {
+    id<MTLCommandBuffer> command = (id)(uintptr_t)words[1];
     caml_release_runtime_system();
     [command waitUntilCompleted];
     caml_acquire_runtime_system();
-    words[0] = (uint64_t)llround(command.GPUStartTime * 1e9);
-    words[1] = (uint64_t)llround(command.GPUEndTime * 1e9);
+    words[1] = (uint64_t)llround(command.GPUStartTime * 1e9);
+    words[3] = (uint64_t)llround(command.GPUEndTime * 1e9);
     [command release];
   }
   return Val_unit;

@@ -35,17 +35,13 @@ external wait : nativeint -> int -> int -> bool = "caml_nx_metal_wait"
 external cycle_pool : unit -> unit = "caml_nx_metal_cycle_pool"
 external resolve : nativeint -> unit = "caml_nx_metal_resolve"
 
-type handles = {
-  device : nativeint;
+type t = {
+  dev : Nx_device.t;
+  mtl : nativeint;
   queue : nativeint;
   event : nativeint;
   fence : nativeint;
   residency_set : nativeint option;
-}
-
-type metal = {
-  dev : Nx_device.t;
-  handles : handles;
   resources : (nativeint, unit) Hashtbl.t;
       (* the buffers to declare resident, without a residency set *)
 }
@@ -71,15 +67,7 @@ let open_metal mtl =
   let residency_set =
     match new_residency_set mtl queue with 0n -> None | set -> Some set
   in
-  let handles =
-    {
-      device = mtl;
-      queue;
-      event = new_event mtl;
-      fence = new_fence mtl;
-      residency_set;
-    }
-  in
+  let event = new_event mtl and fence = new_fence mtl in
   let resources = Hashtbl.create 64 in
   let resident buffer add =
     match residency_set with
@@ -112,8 +100,8 @@ let open_metal mtl =
   in
   let signal =
     {
-      Driver.signaled = (fun () -> signaled handles.event);
-      wait = (fun v ~timeout_ms -> wait handles.event v timeout_ms);
+      Driver.signaled = (fun () -> signaled event);
+      wait = (fun v ~timeout_ms -> wait event v timeout_ms);
     }
   in
   let dev =
@@ -127,7 +115,7 @@ let open_metal mtl =
       (Host_visible
          { memory = { alloc = (fun n -> region (alloc mtl n)); free }; mapping })
   in
-  { dev; handles; resources }
+  { dev; mtl; queue; event; fence; residency_set; resources }
 
 let get i =
   if i < 0 then invalid_arg (Printf.sprintf "Nx_metal_device.get: %d < 0" i);
@@ -156,16 +144,20 @@ let get i =
 
 let v i = match get i with Ok d -> d | Error msg -> failwith msg
 
-let metal fn d =
+let of_device d =
   match Atomic.get opened with
-  | Some m when Nx_device.equal m.dev d -> m
-  | _ ->
-      invalid_arg
-        (Printf.sprintf "Nx_metal_device.%s: %s is not a Metal device" fn
-           (Nx_device.name d))
+  | Some m when Nx_device.equal m.dev d -> Some m
+  | _ -> None
 
-let handles d = (metal "handles" d).handles
+let mtl_device m = m.mtl
+let queue m = m.queue
+let event m = m.event
+let fence m = m.fence
+let residency_set m = m.residency_set
 
-let resources d =
-  let m = metal "resources" d in
-  Array.of_seq (Hashtbl.to_seq_keys m.resources)
+let resource m b =
+  if Nx_device.equal (Nx_device.Buffer.device b) m.dev then
+    Some (Region.handle (Region.of_buffer b))
+  else None
+
+let resources m = Array.of_seq (Hashtbl.to_seq_keys m.resources)

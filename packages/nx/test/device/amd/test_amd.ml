@@ -15,8 +15,6 @@ let no_gpu () =
     || Nx_amd_device.count ~interface:Pci () > 0
   then skip ~reason:"this machine has an AMD GPU" ()
 
-let not_amd = Exn.invalid_arg ~substring:"CPU is not an AMD device"
-
 (* Another machine without GPUs: this process serves it on the loopback, then
    stops serving it. *)
 let test_other_machine () =
@@ -72,9 +70,6 @@ let () =
          test "a negative index is refused" (fun () ->
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
                  Nx_amd_device.get (-1)));
-         test "the queries refuse devices of other vendors" (fun () ->
-             let host = Nx_device.host in
-             raises_match not_amd (fun () -> Nx_amd_device.interface host);
-             raises_match not_amd (fun () -> Nx_amd_device.handles host);
-             raises_match not_amd (fun () -> Nx_amd_device.scratch host 16));
+         test "a device of another vendor has no AMD queues" (fun () ->
+             is_true (Option.is_none (Nx_amd_device.of_device Nx_device.host)));
        ])

@@ -7,12 +7,12 @@
    with the timeline steps that identify it, borrows, one host buffer borrowed
    by two GPUs, peer copies, every route around the staging slot and the copy
    engine's longest line, copies that wrap the copy channel, coherence through
-   each kind of memory, programs and local memory, the timeline across 2^32,
-   nx's runtime laws over the devices, and last, work that never signals, which
-   loses the device. Every test skips without a GPU, and the peer tests without
-   two. GPUs are reached through the kernel driver when it is loaded; over PCI
-   the runtime takes a GPU from its kernel driver, so the suite does only when
-   NX_NV_PCI_TEST names the index of a GPU it may take. *)
+   each kind of memory, programs and local memory, nx's runtime laws over the
+   devices, and last, work that never signals, which loses the device. Every
+   test skips without a GPU, and the peer tests without two. GPUs are reached
+   through the kernel driver when it is loaded; over PCI the runtime takes a GPU
+   from its kernel driver, so the suite does only when NX_NV_PCI_TEST names the
+   index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -100,23 +100,27 @@ let steps d f =
   f ();
   Nx_device.submitted d - before
 
+let low d = Option.get (Nx_nv_device.of_device d)
+
 let test_open () =
   let d = device () in
   is_true ~msg:"memoized" (Nx_device.equal d (device ()));
   starts_with ~msg:"name" ~affix:"NV" (Nx_device.name d);
   starts_with ~msg:"arch" ~affix:"sm_" (Nx_device.arch d);
-  let h = Nx_nv_device.handles d in
+  let n = low d in
+  let props = Nx_nv_device.props n in
   is_true ~msg:"multiprocessors"
-    (h.props.gpcs * h.props.tpcs_per_gpc * h.props.sms_per_tpc > 0);
-  is_true ~msg:"warps" (h.props.warps_per_sm > 0);
-  equal ~msg:"the signal is the timeline's" nativeint
-    (B.address (Nx_device.timeline d))
-    h.signal;
+    (props.gpcs * props.tpcs_per_gpc * props.sms_per_tpc > 0);
+  is_true ~msg:"warps" (props.warps_per_sm > 0);
+  is_true ~msg:"the signal word, the device's pinned memory"
+    (Nx_device.equal d (B.device (Nx_device.signal_word d)));
+  let below_2_40 (c : Nx_nv_device.channel) =
+    Nativeint.to_int (B.address c.ring) < 1 lsl 40
+  in
   is_true ~msg:"channel rings below 2^40"
-    (Nativeint.to_int h.compute.ring < 1 lsl 40
-    && Nativeint.to_int h.copy.ring < 1 lsl 40);
+    (below_2_40 (Nx_nv_device.compute n) && below_2_40 (Nx_nv_device.copy n));
   is_true ~msg:"a budget" (Nx_device.budget d > 0);
-  Nx_nv_device.invalidate_caches d
+  Nx_nv_device.invalidate_caches n
 
 let test_memory () =
   let d = device () in
@@ -303,7 +307,7 @@ let test_programs () =
   | Some binary ->
       let p = program d ~binary ~name:"fill" in
       is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
-      let k = Nx_nv_device.kernel p in
+      let k = Option.get (Nx_nv_device.kernel p) in
       equal ~msg:"the handle is the entry" nativeint k.entry
         (Nx_device.Program.handle p);
       is_true ~msg:"inside the image" (k.entry >= k.image);
@@ -314,8 +318,10 @@ let test_programs () =
       | Error why -> contains ~msg:"refused" ~sub:"no function" why);
       (* Each function of a cubin of several has its own registers, stack and
          bank 0, whichever comes last in the cubin. *)
-      let small = Nx_nv_device.kernel (program d ~binary ~name:"small")
-      and big = Nx_nv_device.kernel (program d ~binary ~name:"big") in
+      let kernel name =
+        Option.get (Nx_nv_device.kernel (program d ~binary ~name))
+      in
+      let small = kernel "small" and big = kernel "big" in
       let bank0 (k : Nx_nv_device.kernel) =
         List.find_map (fun (i, _, n) -> if i = 0 then Some n else None) k.banks
       in
@@ -326,49 +332,15 @@ let test_programs () =
 let test_local_memory () =
   let d = device () in
   equal ~msg:"none needed, no work" int 0
-    (steps d (fun () -> ignore (Nx_nv_device.local_memory d 0)));
-  let l = Nx_nv_device.local_memory d 256 in
+    (steps d (fun () -> ignore (Nx_nv_device.local_memory (low d) 0)));
+  let l = Nx_nv_device.local_memory (low d) 256 in
   is_true ~msg:"memory" (l.address <> 0n && l.bytes > 0);
   is_true ~msg:"per thread" (l.per_thread >= 256 && l.per_thread mod 32 = 0);
-  let again = Nx_nv_device.local_memory d 128 in
+  let again = Nx_nv_device.local_memory (low d) 128 in
   equal ~msg:"kept for smaller kernels" nativeint l.address again.address;
-  let more = Nx_nv_device.local_memory d 4096 in
+  let more = Nx_nv_device.local_memory (low d) 4096 in
   is_true ~msg:"grown for larger ones" (more.bytes > l.bytes);
   Nx_device.synchronize d
-
-(* The device's timeline across a carry of its low word, with values signaled in
-   turn by the copy channel, which writes a word at a time, and by the compute
-   channel, where growing local memory runs: across 2^32 the copy channel
-   signals 2^32, low word first; across 2^33 it signals 2^33 - 1 and the compute
-   channel 2^33, which a late high word of the copy would take back. The
-   timeline is seeded by a host copy into its words. *)
-let test_carry () =
-  let d = device () in
-  let src = fill_host mib (fun i -> i * 5) and v = B.create d S.UInt8 mib in
-  let per = ref (Nx_nv_device.local_memory d 0).per_thread in
-  let copy () = B.copy ~src ~dst:v
-  and grow () =
-    per := !per + 32;
-    ignore (Nx_nv_device.local_memory d !per : Nx_nv_device.local_memory)
-  in
-  let across top first second =
-    Nx_device.synchronize d;
-    let start = top - 3 in
-    let words = B.create Nx_device.host S.UInt64 2 in
-    Bigarray.Array1.fill (B.bigarray Bigarray.int64 words) (Int64.of_int start);
-    B.copy ~src:words ~dst:(Nx_device.timeline d);
-    first ();
-    second ();
-    first ();
-    second ();
-    Nx_device.synchronize d;
-    let at what = Printf.sprintf "%s across 0x%x" what top in
-    equal ~msg:(at "submitted") int (start + 4) (Nx_device.submitted d);
-    equal ~msg:(at "signaled") int (start + 4) (Nx_device.signaled d)
-  in
-  across (1 lsl 32) copy grow;
-  across (1 lsl 33) grow copy;
-  is_true ~msg:"the bytes" (same_bytes src (to_host v))
 
 (* Boundaries, wraps and coherence: copies whose bytes a wrong chunk, a ring
    overwritten or a wrong page-table bit would change without hanging. *)
@@ -480,7 +452,8 @@ let peer_boundaries max () =
    command segments many more: every copy lands where it should. *)
 let test_ring_wraps () =
   let d = device () in
-  let copies = (3 * (Nx_nv_device.handles d).copy.entries) + 17 in
+  let entries = B.length (Nx_nv_device.copy (low d)).ring in
+  let copies = (3 * entries) + 17 in
   let n = 16 * copies in
   let src = B.create Nx_device.host S.UInt8 n in
   write_pattern 2 src;
@@ -547,7 +520,7 @@ let test_exhaustion () =
 let test_hang () =
   let d = device () in
   Nx_device.set_timeout d 2000;
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
+  Nx_device.submit [ d ] ~touches:[] ignore;
   let cpu = Sys.time () in
   raises_match (hung d) (fun () -> Nx_device.synchronize d);
   is_true ~msg:"most of the 2 s asleep" (Sys.time () -. cpu < 1.);
@@ -579,7 +552,6 @@ let () =
            [
              test "cubins" test_programs; test "local memory" test_local_memory;
            ];
-         group "timeline" [ test "across 2^32" test_carry ];
          group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"

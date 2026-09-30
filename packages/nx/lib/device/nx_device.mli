@@ -134,7 +134,7 @@ exception Lost of t * string
       {!Buffer.copy}, {!Buffer.bigarray} and {!Program.call} that reaches memory
       [d] can reach. {!Buffer.view} does not. {!stats} answers, as do the
       functions that do not take [d]: {!name}, {!arch}, {!budget}, {!submitted},
-      {!signaled} and {!timeline}.
+      {!signaled} and {!signal_word}.
     - Other devices do not wait for [d]'s work, and their other operations are
       unaffected.
     - [d] never reclaims memory again: its buffers, and the host memory it
@@ -274,8 +274,8 @@ module Buffer : sig
       through either is seen through the other, once the devices involved are
       synchronized. The result keeps [b] reachable. [borrow d b] is [Ok b] for
       [b] on [d], so [borrow host b] is [Ok b] for [b] on the host. Work that
-      reads or writes through the result touches the memory's device: its
-      {!submit} lists it in [touches].
+      reads or writes through the result lists it in its {!submit}'s [touches],
+      which reaches the memory's device too.
 
       A borrow of a borrow maps the memory the first one maps: [borrow d b] for
       [b] a borrow on another device of host memory is [d]'s borrow of that host
@@ -540,11 +540,13 @@ module Program : sig
       {v void f(void **buffers, const int64_t *values); v}
 
       given the host address of each buffer's first byte ({!Buffer.address} on
-      the host) and each value as a 64-bit integer, in order. It follows the
-      platform's C calling convention: on Windows, an object compiled for x86_64
-      ELF declares [__attribute__((ms_abi))] on its entry and on the library
-      functions it calls, and code for arm64 leaves the register [x18] alone
-      ([-ffixed-x18]), which macOS and Windows reserve.
+      the host) and each value as a 64-bit integer, in order. A value lies
+      between -2{^ 62} and 2{^ 62} - 1, the range of an OCaml [int] on 64-bit
+      platforms, which holds timeline values, sizes and device addresses. It
+      follows the platform's C calling convention: on Windows, an object
+      compiled for x86_64 ELF declares [__attribute__((ms_abi))] on its entry
+      and on the library functions it calls, and code for arm64 leaves the
+      register [x18] alone ([-ffixed-x18]), which macOS and Windows reserve.
 
       The OCaml runtime is released while [p] runs, so other threads and domains
       go on; the buffers stay reachable until it returns. The call is outside
@@ -617,11 +619,11 @@ val stats : t -> Stats.t
     {!stop}. While it is taken, the devices record {!event}s: {e spans} of work
     on a device, changes of its allocated memory, and the programs it loads.
     Spans come from the host ({!span}), from the runtime's own copies and calls
-    of host programs, and from the libraries that submit work ({!record}). Every
-    time is on the host's clock, {!now}: the times a device stamps on its own
-    clock are calibrated against it when the profile is stopped.
-    {!output_chrome_trace} writes the events in Chrome's trace event format,
-    which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
+    of host programs, and from the libraries that submit work
+    ({!Submission.record}). Every time is on the host's clock, {!now}: the times
+    a device stamps on its own clock are calibrated against it when the profile
+    is stopped. {!output_chrome_trace} writes the events in Chrome's trace event
+    format, which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
     [chrome://tracing] load.
 
     When no profile is taken, recording costs a read of one atomic value and
@@ -693,18 +695,6 @@ module Profile : sig
       [name] on the lane of the calling domain of the {!host}, from the call
       until [f] returns or raises. *)
 
-  val record : device -> lane:string -> name:string -> Buffer.t -> unit
-  (** [record d ~lane ~name stamps] records a span of work named [name] on
-      [lane] of [d], whose start and stop timestamps the work writes into the
-      two elements of [stamps], on [d]'s clock. Call it once the {!submit} of
-      that work returned. The stamps are read at [d]'s next synchronization,
-      which waits for the work: they must stay the work's until then, and a
-      later record of the same stamps before then replaces this one. It does
-      nothing unless a profile is being taken.
-
-      Raises [Invalid_argument] if [stamps] is not two [UInt64] that [d]'s host
-      addresses. *)
-
   val output_chrome_trace : out_channel -> event list -> unit
   (** [output_chrome_trace oc events] writes [events] to [oc] in Chrome's trace
       event format, JSON: a process for each device, named after it, with a
@@ -717,26 +707,106 @@ end
 
 (** {1:submitting Submitting work}
 
-    For the libraries that submit work to a device. Work is submitted inside
-    {!submit}, which orders it after the device's earlier work and gives it the
-    value it must signal on completion. *)
+    For the libraries that submit work to devices. Work is submitted inside
+    {!submit}, which takes the devices involved, gives each device's work the
+    value it signals on completion, and says what the work must wait for. *)
 
-val submit : t -> touches:t list -> (int -> 'a) -> 'a
-(** [submit d ~touches f] is [f v], run with [d] and the devices of [touches]
-    taken, where [v] is the next value of [d]'s timeline. [f] submits work to
-    [d] that signals [v] when it completes, and whose memory accesses reach [d]
-    and the devices of [touches]. Work through a buffer borrowed from the host
-    ({!Buffer.borrow}) touches the host: list {!host} in [touches]. Once [f]
-    returns, [v] is [d]'s submitted value, and {!synchronize} on each device of
-    [touches] waits for [v] on [d].
+(** Submissions in progress. *)
+module Submission : sig
+  type device := t
 
-    If [f] raises, nothing is recorded, so [f] may raise only before it commits
-    any work: committed work that signals [v] would signal a value the next
-    submission takes again.
+  type t
+  (** The type for the submission {!submit} runs [f] with. *)
 
-    [f] must not use [d] or the devices of [touches] through this module, which
-    they are taken by: it submits through the handles its vendor library gives.
-*)
+  val value : t -> device -> int
+  (** [value s d] is the value [d]'s work in [s] signals on completion: one more
+      than {!submitted}[ d].
+
+      Raises [Invalid_argument] if [d] is not a device of [s]. *)
+
+  val waits : t -> (device * int) list
+  (** [waits s] is the work of other devices that [s]'s work must wait for
+      before it touches its buffers: [(d', v)] is complete once [d'] signals
+      [v], which its work stores into {!signal_word}[ d'].
+
+      There is one pair for each device of [D], by the order the devices were
+      opened. [D] is the devices of [s] and the devices of the buffers [s]
+      touches ({!Buffer.device}), less those whose waits cannot be encoded: a
+      device whose work does not store its values into its signal word
+      ({!Driver.Signal}), and one whose signal word a device of [s] does not
+      address, of another machine or with no mapping of host memory. Hosts and
+      the disk are never in [D]. [D], and so the shape of [waits s], depends on
+      these devices alone: a program built once for them takes the same
+      arguments at every submission, and only the values change.
+
+      [v] is the latest value of [d'] whose work touched the memory the buffers
+      reach, or a value [d'] has signaled already, whose wait does nothing.
+      Before [f] runs, {!submit} waits on the host for any other work that
+      touched that memory: that of devices outside [D]. A device's own earlier
+      work is ordered by its vendor's rule. *)
+
+  val wait : t -> device -> int -> unit
+  (** [wait s d v] blocks the host until [d] has signaled [v], for work that
+      [s]'s devices cannot wait for on their queues. [d] may be any device [s]
+      took, the devices of [s] included: a submitter that must see the previous
+      use of its memory complete before it rewrites it, such as a program's
+      arguments, waits for the value that use signals. It returns at once for a
+      value a wait already saw signaled.
+
+      Raises [Invalid_argument] if [s] did not take [d] or [v > submitted d],
+      and {!Lost} if [d] does not signal [v] within its {!timeout}. *)
+
+  val record : t -> device -> lane:string -> name:string -> Buffer.t -> unit
+  (** [record s d ~lane ~name stamps] records a span of [d]'s work in [s] named
+      [name] on [lane] of [d]. [stamps] is four [UInt64], two slots of 16 bytes:
+      the work writes its start time into the second word and its stop time into
+      the fourth, on [d]'s clock. The span is kept if [f] returns, and its
+      stamps are read at [d]'s next synchronization, which waits for the work:
+      they must stay the work's until then, and a later record of the same
+      stamps before then replaces this one. It does nothing unless a profile is
+      being taken ({!Profile.enabled}).
+
+      Raises [Invalid_argument] if [d] is not a device of [s], or if [stamps] is
+      not four [UInt64] that [d]'s host addresses. *)
+end
+
+val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
+(** [submit ds ~touches f] is [f s], where [s] submits work to the devices of
+    [ds] whose memory accesses are through the buffers of [touches]. [ds] is a
+    set.
+
+    It takes the devices of [ds], those of the buffers of [touches], and those
+    whose memory the buffers reach: a borrow's device and the device of the
+    memory it maps. It waits on the host for the work [s]'s work cannot wait for
+    itself ({!Submission.waits}), then runs [f s]. For each device [d] of [ds],
+    [f] enqueues work that:
+    - completes after all of [d]'s earlier work;
+    - waits for each pair of {!Submission.waits}[ s], on the device by reading
+      {!signal_word}[ d'], or on the host with {!Submission.wait};
+    - then signals {!Submission.value}[ s d], by storing it into
+      {!signal_word}[ d] or in the vendor's own way ({!Driver.Signal}).
+
+    A device's values thus complete in order, which {!signaled} and
+    {!synchronize} rely on. How work waits for the value before its own is its
+    vendor's encoding, which its library's low-level section states.
+
+    When [f] returns, [s] commits: each value is its device's {!submitted}
+    value, {!synchronize} on each device whose memory the buffers reach waits
+    for the work, and the spans of {!Submission.record} are kept. If [f] raises,
+    nothing is committed, so [f] may raise only before it enqueues any work. A
+    {!Lost} that [f] raises loses its device, as a driver error after work was
+    enqueued leaves the queue in an unknown state.
+
+    Inside [f], the devices are used only through {!Submission}, {!submitted},
+    {!signaled}, {!signal_word}, the buffers' properties and low-level
+    accessors, {!Program.handle}, {!Program.call} of a host program, and
+    {!Profile.enabled}. Vendor setup that allocates, such as AMD's scratch
+    memory, runs before [submit]. [submit] allocates no device memory.
+
+    Raises [Invalid_argument] if [ds] is empty or has a host or the disk, which
+    run no submitted work, or if a buffer of [touches] is on the disk or dead
+    ({!Buffer.consume}), and {!Lost} if a device it takes is lost or a lost
+    device can reach a buffer of [touches]. *)
 
 val submitted : t -> int
 (** [submitted d] is the value [d]'s last submitted work signals, [0] before any
@@ -746,14 +816,14 @@ val signaled : t -> int
 (** [signaled d] is the last value [d] signaled. Work that signals
     [v <= signaled d] has completed. *)
 
-val timeline : t -> Buffer.t
-(** [timeline d] is a buffer of two [UInt64] that [d]'s host and [d]'s work
-    address: a signal word, then [d]'s submitted value. It is [d]'s pinned
-    memory when [d]'s memory is [Device_local] ({!Driver.memory}), such as
-    page-locked memory on CUDA, and memory of its host ({!host_of}) otherwise.
-    Work signals by storing its value into the signal word, which {!signaled}
-    reads, unless the device signals in its own way: Metal's shared event
-    reports through {!signaled} alone and leaves the signal word at [0]. *)
+val signal_word : t -> Buffer.t
+(** [signal_word d] is one [UInt64] that [d]'s host and [d]'s work address, into
+    which [d]'s work stores the values it signals, and which {!signaled} reads.
+    It is [d]'s pinned memory when [d]'s memory is [Device_local]
+    ({!Driver.memory}), such as page-locked memory on CUDA, and memory of its
+    host ({!host_of}) otherwise, so the devices of its machine borrow it
+    ({!Buffer.borrow}). A device that signals in its own way ({!Driver.Signal})
+    leaves it at [0], as Metal's shared event does. *)
 
 (** {1:drivers Drivers}
 
@@ -892,8 +962,9 @@ module Driver : sig
             - [mapping] maps host memory for {!Buffer.borrow} and for the host's
               staging memory.
             - [queue ~timeline] is its copy queue, given the region of its
-              {!timeline}, which the runtime allocates first from [host_memory].
-        *)
+              timeline, which the runtime allocates first from [host_memory]:
+              its {!signal_word}, a word that aligns what follows, and two slots
+              of 16 bytes for the copy queue's timestamps. *)
 
   type signal = {
     signaled : unit -> int;  (** The last value the device signaled. *)
@@ -908,21 +979,23 @@ module Driver : sig
   (** The type for how a device's work completes. *)
   type completion =
     | Poll
-        (** Work signals by storing its value into the {!timeline}'s signal
-            word, and waits poll it. The timeout restarts whenever the word
-            moves. *)
-    | Sleep of (int -> unit)
-        (** As [Poll], and [sleep ms] runs once a wait has seen the signal word
-            stay still for 200 milliseconds, and again each time it returns
-            while the word stays still: it blocks for at most [ms] milliseconds,
-            at most 200 and never past the timeout, on the device's interrupts
-            or events, and raises [Failure] with the driver's message if the
-            device reports a fault, which loses the device. Before a wait
-            declares the device hung, it runs once more with [ms = 1], so a
-            fault reported late still names its cause. *)
+        (** Work signals by storing its value into its {!signal_word}, and waits
+            poll it. The timeout restarts whenever the word moves. *)
+    | Sleep of (timeline:Region.t -> int -> unit)
+        (** As [Poll], and, given the region of its timeline, [sleep ms] runs
+            once a wait has seen the signal word stay still for 200
+            milliseconds, and again each time it returns while the word stays
+            still: it blocks for at most [ms] milliseconds, at most 200 and
+            never past the timeout, on the device's interrupts or events, and
+            raises [Failure] with the driver's message if the device reports a
+            fault, which loses the device. Before a wait declares the device
+            hung, it runs once more with [ms = 1], so a fault reported late
+            still names its cause. *)
     | Signal of (timeline:Region.t -> signal)
-        (** The device signals in its own way, given the region of its
-            {!timeline}. *)
+        (** The device signals in its own way, given the region of its timeline,
+            and never through its {!signal_word}, which stays [0]. The work of
+            other devices cannot wait for it on their queues: {!submit} waits
+            for it on the host. *)
 
   type dma = {
     bus : string;
@@ -1042,11 +1115,11 @@ module Driver : sig
       - [dma r] is how the other PCI functions of the device's machine reach its
         memory [r], or [Error why] ({!val-dma}). Without it, the device
         describes no memory.
-      - [resolve a] runs once the work of a span that {!Profile.record} recorded
-        on the device completed, before the runtime reads its stamps, with the
-        host address [a] of the stamps: it writes the timestamps that the
-        device's work does not write itself. It runs before [synchronized].
-        Defaults to doing nothing.
+      - [resolve a] runs once the work of a span that {!Submission.record}
+        recorded on the device completed, before the runtime reads its stamps,
+        with the host address [a] of the stamps' two slots: it writes the
+        timestamps that the device's work does not write itself. It runs before
+        [synchronized]. Defaults to doing nothing.
       - [synchronized ()] runs at the end of each synchronization of the device.
         Defaults to doing nothing.
       - [finalize ~failed] runs once when the program exits, whether or not the

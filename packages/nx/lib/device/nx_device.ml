@@ -33,7 +33,7 @@ type clock = Host_clock | Device_clock of { hz : int }
 
 type completion =
   | Poll
-  | Sleep of (int -> unit)
+  | Sleep of (timeline:region -> int -> unit)
   | Signal of (timeline:region -> signal)
 
 type host_programs = {
@@ -92,8 +92,7 @@ type t = {
   finalize : failed:bool -> unit;
   clock : clock;
   resolve : nativeint -> unit;
-  timeline : region;
-      (* [signaled; submitted], then two 16-byte slots of timestamps *)
+  timeline : region; (* the signal word, then two 16-byte slots of timestamps *)
   timeline_keep : keep;
   last : int Atomic.t; (* the submitted value, which only this module writes *)
   settled : int Atomic.t; (* the latest value a wait saw signaled *)
@@ -212,7 +211,8 @@ and event =
 
 and collector = { events : event list Atomic.t }
 
-(* A span whose stamps are the two words at [address], which [stamps] keeps. *)
+(* A span whose stamps are in the two 16-byte slots at [address], which [stamps]
+   keeps. *)
 and pending = {
   address : nativeint;
   stamps : keep;
@@ -434,8 +434,9 @@ let write_word io a v =
 (* The timeline is memory that the device's machine's host and the device's work
    address: the device's host memory when it allocates some, the heap on this
    machine, the host's memory on another. It lives as long as the device. Its
-   two words are followed by two slots of 16 bytes, whose second words take the
-   timestamps of the device's copy queue. *)
+   first word is the signal word, and after a word that aligns them come two
+   slots of 16 bytes, whose second words take the timestamps of the device's
+   copy queue. *)
 let timeline_bytes = 48
 
 let timeline_of ~host_alloc (host_memory : allocator option) =
@@ -473,12 +474,11 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
   let machine_io = match machine with Some h -> h.io | None -> io in
   let words = Option.get timeline.host in
   write_word machine_io words 0L;
-  write_word machine_io (Nativeint.add words 8n) 0L;
   let copy_queue = Option.map (fun queue -> queue ~timeline) queue in
   let signal, sleep =
     match completion with
     | Poll -> (None, None)
-    | Sleep sleep -> (None, Some sleep)
+    | Sleep sleep -> (None, Some (sleep ~timeline))
     | Signal signal -> (Some (signal ~timeline), None)
   in
   let d =
@@ -604,10 +604,7 @@ let signaled d =
   | Some s -> s.signaled ()
   | None -> Int64.to_int (read_word (io_of d) (timeline_address d))
 
-(* Records [v] as [d]'s submitted value, in the timeline's second word too. *)
-let commit d v =
-  write_word (io_of d) (Nativeint.add (timeline_address d) 8n) (Int64.of_int v);
-  Atomic.set d.last v
+let commit d v = Atomic.set d.last v
 
 (* A device that hung or faulted is in an unknown state: its first error loses
    it for good, and every later operation raises that error at once. *)
@@ -690,10 +687,8 @@ let failed d = Atomic.get d.failed
    a fault, it fails [d]. *)
 let enqueue d (f : signal:int -> unit) =
   let v = submitted d + 1 in
-  (try
-     f ~signal:v;
-     commit d v
-   with Failure why -> fail d why);
+  driver d (fun () -> f ~signal:v);
+  commit d v;
   v
 
 (* Timestamp slot [i] of [d]'s timeline memory, as [d]'s work addresses it, and
@@ -706,8 +701,9 @@ let stamp d i =
     (read_word (io_of d)
        (Nativeint.add (timeline_address d) (Nativeint.of_int (24 + (16 * i)))))
 
-(* Reads the stamps of the spans recorded on [d], whose work is done. A later
-   record of the same stamps replaced the earlier ones. *)
+(* Reads the stamps of the spans recorded on [d], whose work is done: the second
+   words of their two slots. A later record of the same stamps replaced the
+   earlier ones. *)
 let read_spans d =
   match Atomic.get d.spans with
   | [] -> ()
@@ -719,9 +715,9 @@ let read_spans d =
             Hashtbl.add seen p.address ();
             driver d (fun () -> d.resolve p.address);
             let io = io_of d in
-            let start = Int64.to_int (read_word io p.address)
+            let start = Int64.to_int (read_word io (Nativeint.add p.address 8n))
             and stop =
-              Int64.to_int (read_word io (Nativeint.add p.address 8n))
+              Int64.to_int (read_word io (Nativeint.add p.address 24n))
             in
             (* [resolve] may release the runtime: the stamps must outlive their
                reads. *)
@@ -2077,22 +2073,151 @@ let stats d =
 
 (* Submitting work *)
 
-let submit d ~touches f =
-  with_devices (d :: touches) (fun () ->
-      let v = submitted d + 1 in
-      let r = f v in
-      (try commit d v with Failure why -> fail d why);
-      List.iter
-        (fun t -> if t != d then Hashtbl.replace t.pending d.id (d, v))
-        touches;
-      r)
+module Submission = struct
+  type device = t
 
-let timeline d =
+  type t = {
+    devices : device list; (* the devices whose work it is *)
+    values : int array; (* the value of each, in order *)
+    taken : device list;
+    waits : (device * int) list;
+    mutable spans : (device * pending) list;
+  }
+
+  let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.Submission." ^^ fmt)
+
+  let value s d =
+    let rec find i = function
+      | [] -> invalid "value: %s is not a device of the submission" d.name
+      | d' :: ds -> if d' == d then s.values.(i) else find (i + 1) ds
+    in
+    find 0 s.devices
+
+  let waits s = s.waits
+
+  let wait s d v =
+    if not (List.memq d s.taken) then
+      invalid "wait: %s is not taken by the submission" d.name;
+    if v > submitted d then
+      invalid "wait: %s has submitted %d, not %d" d.name (submitted d) v;
+    wait_signal d v
+
+  let record s d ~lane ~name (stamps : buffer) =
+    if not (List.memq d s.devices) then
+      invalid "record: %s is not a device of the submission" d.name;
+    if stamps.dtype <> Nx_dtype.Scalar.UInt64 || stamps.length <> 4 then
+      invalid "record: the stamps are not four UInt64";
+    match (stamps.base.memory.host, Atomic.get profile) with
+    | None, _ ->
+        invalid "record: the host does not address the stamps on %s"
+          stamps.base.owner.name
+    | Some _, _ when host_of stamps.base.owner != host_of d ->
+        invalid "record: the stamps on %s are not of %s's machine"
+          stamps.base.owner.name d.name
+    | Some _, None -> ()
+    | Some a, Some into ->
+        let address = Nativeint.add a (Nativeint.of_int stamps.offset) in
+        s.spans <-
+          (d, { address; stamps = Keep stamps; lane; name; into }) :: s.spans
+end
+
+let by_id a b = Int.compare a.id b.id
+
+(* The devices whose memory [b] reaches: its own, and those of the memory its
+   borrows map. *)
+let rec reach b =
+  b.owner :: (match b.source with Some (src, _) -> reach src | None -> [])
+
+let runs_work d = Option.is_some d.machine && d != disk
+
+(* Whether the work of every device of [ds] can wait on [d']'s signal word: [d']
+   stores its values into it, and each device of [ds] addresses it, as memory of
+   its own machine that it maps. *)
+let encodable ds d' =
+  runs_work d' && Option.is_none d'.signal
+  && List.for_all
+       (fun d ->
+         d == d' || (host_of d == host_of d' && Option.is_some d.mapping))
+       ds
+
+let submit ds ~touches f =
+  let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.submit: " ^^ fmt) in
+  let ds = List.sort_uniq by_id ds in
+  if ds = [] then invalid "no device";
+  List.iter
+    (fun d -> if not (runs_work d) then invalid "%s runs no work" d.name)
+    ds;
+  List.iter
+    (fun (b : buffer) ->
+      if b.base.owner == disk then invalid "a buffer on the disk")
+    touches;
+  let reached =
+    List.sort_uniq by_id (List.concat_map (fun b -> reach b.base) touches)
+  in
+  let on =
+    List.sort_uniq by_id
+      (ds @ List.map (fun (b : buffer) -> b.base.owner) touches)
+  in
+  let taken = List.sort_uniq by_id (on @ reached) in
+  with_devices taken @@ fun () ->
+  List.iter Buffer.reachable touches;
+  (* The latest value each device's work touched the reached memory with. *)
+  let latest = Hashtbl.create 8 in
+  let note (d', v) =
+    (* A lost device's work never completes; the memory it can reach raises its
+       loss instead. *)
+    if failed d' = None then
+      match Hashtbl.find_opt latest d'.id with
+      | Some (_, v') when v' >= v -> ()
+      | _ -> Hashtbl.replace latest d'.id (d', v)
+  in
+  List.iter
+    (fun t ->
+      if runs_work t then note (t, submitted t);
+      Hashtbl.iter (fun _ p -> note p) t.pending)
+    reached;
+  let d_set = List.filter (encodable ds) on in
+  (* A device's own earlier work is ordered by its vendor's rule. *)
+  let alone d' = match ds with [ d ] -> d == d' | _ -> false in
+  Hashtbl.iter
+    (fun _ (d', v) ->
+      if not (List.memq d' d_set || alone d') then wait_signal d' v)
+    latest;
+  let waits =
+    List.map
+      (fun d' ->
+        match Hashtbl.find_opt latest d'.id with
+        | Some (_, v) -> (d', v)
+        | None -> (d', Atomic.get d'.settled))
+      d_set
+  in
+  let s =
+    {
+      Submission.devices = ds;
+      values = Array.of_list (List.map (fun d -> submitted d + 1) ds);
+      taken;
+      waits;
+      spans = [];
+    }
+  in
+  let r = f s in
+  List.iteri (fun i d -> commit d s.values.(i)) ds;
+  List.iter
+    (fun t ->
+      List.iteri
+        (fun i d ->
+          if t != d then Hashtbl.replace t.pending d.id (d, s.values.(i)))
+        ds)
+    reached;
+  List.iter (fun (d, p) -> push d.spans p) (List.rev s.spans);
+  r
+
+let signal_word d =
   let owner = if Option.is_some d.host_memory then d else host_of d in
   let base =
     Buffer.base ~borrowed:true ~keep:d.timeline_keep owner d.timeline
   in
-  { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 2 }
+  { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 1 }
 
 (* Profiles *)
 
@@ -2137,27 +2262,6 @@ module Profile = struct
             let bt = Printexc.get_raw_backtrace () in
             record ();
             Printexc.raise_with_backtrace e bt)
-
-  let record d ~lane ~name (stamps : Buffer.t) =
-    if stamps.dtype <> Nx_dtype.Scalar.UInt64 || stamps.length <> 2 then
-      invalid_arg "Nx_device.Profile.record: the stamps are not two UInt64";
-    match (stamps.base.memory.host, Atomic.get profile) with
-    | None, _ ->
-        invalid_arg
-          (Printf.sprintf
-             "Nx_device.Profile.record: the host does not address the stamps \
-              on %s"
-             stamps.base.owner.name)
-    | Some _, _ when host_of stamps.base.owner != host_of d ->
-        invalid_arg
-          (Printf.sprintf
-             "Nx_device.Profile.record: the stamps on %s are not of %s's \
-              machine"
-             stamps.base.owner.name d.name)
-    | Some _, None -> ()
-    | Some a, Some into ->
-        let address = Nativeint.add a (Nativeint.of_int stamps.offset) in
-        push d.spans { address; stamps = Keep stamps; lane; name; into }
 
   (* The host time of a tick of [d]'s clock of [hz] ticks per second. The sample
      whose wait brackets its stamp most narrowly bounds the error best. *)
@@ -2378,7 +2482,7 @@ module Driver = struct
 
   type nonrec completion = completion =
     | Poll
-    | Sleep of (int -> unit)
+    | Sleep of (timeline:region -> int -> unit)
     | Signal of (timeline:region -> signal)
 
   type nonrec dma = dma = { bus : string; pages : (int * int) list }

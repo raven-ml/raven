@@ -80,14 +80,12 @@ external load_module : nativeint -> string -> nativeint = "caml_nx_cuda_module"
 external get_function : nativeint -> nativeint -> string -> nativeint
   = "caml_nx_cuda_function"
 
-type handles = {
+type t = {
+  dev : Nx_device.t;
   context : nativeint;
   compute : nativeint;
   copy : nativeint;
-  signal : nativeint;
 }
-
-type cuda = { dev : Nx_device.t; handles : handles }
 
 (* Page-locked host memory *)
 
@@ -177,7 +175,7 @@ let loaded () =
       driver := Some r;
       r
 
-let opened : (int * cuda) list Atomic.t = Atomic.make []
+let opened : (int * t) list Atomic.t = Atomic.make []
 
 let find d =
   List.find_map
@@ -237,20 +235,18 @@ let open_cuda i ~arch ~budget ctx =
         (fun d ->
           Option.map
             (fun c ~dst ~src n ~signal:v ->
-              peer ctx copy_stream signal dst c.handles.context src n v)
+              peer ctx copy_stream signal dst c.context src n v)
             (find d));
       stamp =
         (fun ~slot ~signal:v -> stamp ctx copy_stream signal (host_word slot) v);
       clock = Host_clock;
     }
   in
-  let signal ~timeline =
+  (* A sleep waits for the signal word to move, and queries the streams each
+     millisecond for a fault. *)
+  let sleep ~timeline ms =
     let word = Option.get (Region.host_address timeline) in
-    {
-      Driver.signaled = (fun () -> signaled word);
-      wait =
-        (fun v ~timeout_ms -> wait ctx compute copy_stream word v timeout_ms);
-    }
+    ignore (wait ctx compute copy_stream word (signaled word + 1) ms)
   in
   let memory =
     {
@@ -260,7 +256,7 @@ let open_cuda i ~arch ~budget ctx =
     }
   in
   match
-    Driver.device ~name:(name i) ~arch ~budget ~completion:(Signal signal)
+    Driver.device ~name:(name i) ~arch ~budget ~completion:(Sleep sleep)
       ~load:(loader ctx)
       (Device_local
          {
@@ -270,9 +266,7 @@ let open_cuda i ~arch ~budget ctx =
            queue;
          })
   with
-  | dev ->
-      let signal = Nx_device.Buffer.address (Nx_device.timeline dev) in
-      { dev; handles = { context = ctx; compute; copy = copy_stream; signal } }
+  | dev -> { dev; context = ctx; compute; copy = copy_stream }
   | exception e ->
       stream_destroy ctx compute;
       stream_destroy ctx copy_stream;
@@ -335,7 +329,10 @@ let cuda fn d =
         (Printf.sprintf "Nx_cuda_device.%s: %s is not a CUDA device" fn
            (Nx_device.name d))
 
-let handles d = (cuda "handles" d).handles
+let of_device = find
+let context c = c.context
+let compute c = c.compute
+let copy c = c.copy
 
 (* The whole allocation under [a], viewed from [a]. *)
 let of_address d a s n =
@@ -345,15 +342,13 @@ let of_address d a s n =
       (fun m -> invalid_arg ("Nx_cuda_device.of_address: " ^ m))
       fmt
   in
-  match pointer c.handles.context a with
+  match pointer c.context a with
   | None -> fail "the driver knows no memory at 0x%nx" a
-  | Some (owner, _, _) when owner <> c.handles.context ->
+  | Some (owner, _, _) when owner <> c.context ->
       fail "0x%nx is not memory of %s's context" a (Nx_device.name d)
   | Some (_, start, size) ->
       let host =
-        match host_pointer c.handles.context start with
-        | 0n -> None
-        | host -> Some host
+        match host_pointer c.context start with 0n -> None | host -> Some host
       in
       let region = Region.v ?host ~handle:start start size in
       let whole = Driver.buffer d region Nx_dtype.Scalar.UInt8 size in

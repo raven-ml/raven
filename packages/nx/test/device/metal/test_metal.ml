@@ -29,6 +29,23 @@ external dispatch :
   unit = "test_metal_dispatch_byte" "test_metal_dispatch"
 
 let metal = Nx_metal_device.v 0
+let m = Option.get (Nx_metal_device.of_device metal)
+
+let borrow_host b =
+  match B.borrow Nx_device.host b with Ok b -> b | Error why -> failwith why
+
+(* Launches [p] over [threads] threads writing [out] to Metal, and is its
+   value. *)
+let launch ?(stamps = 0n) ?(record = ignore) p out threads =
+  Nx_device.submit [ metal ] ~touches:[ out ] (fun s ->
+      let v = Nx_device.Submission.value s metal in
+      record s;
+      dispatch (Nx_metal_device.queue m) (Nx_metal_device.event m)
+        (Nx_metal_device.fence m)
+        (Nx_metal_device.resources m)
+        (Nx_device.Program.handle p)
+        (B.address out) threads v stamps;
+      v)
 
 (* [metal]'s borrow of [b], which it maps. *)
 let borrow b =
@@ -95,10 +112,15 @@ let opening =
           equal string "METAL" (Nx_device.name metal);
           starts_with ~affix:"Apple" (Nx_device.arch metal);
           greater int ~than:0 (Nx_device.budget metal));
-      test "its handles are Metal objects" (fun () ->
-          let h = Nx_metal_device.handles metal in
+      test "its low-level accessors are Metal objects" (fun () ->
           List.iter (not_equal nativeint 0n)
-            [ h.device; h.queue; h.event; h.fence ]);
+            Nx_metal_device.[ mtl_device m; queue m; event m; fence m ];
+          let b = B.create metal S.UInt8 16 in
+          equal ~msg:"a buffer's MTLBuffer" (option nativeint)
+            (Some Nx_device.Driver.Region.(handle (of_buffer b)))
+            (Nx_metal_device.resource m b);
+          equal ~msg:"none of the host's buffers" (option nativeint) None
+            (Nx_metal_device.resource m (B.create Nx_device.host S.UInt8 16)));
       cases ~name:fst "refuse"
         [
           ("a device past the count", fun () -> is_error (Nx_metal_device.get 1));
@@ -112,14 +134,10 @@ let opening =
             fun () ->
               raises_match Exn.invalid_arg (fun () -> Nx_metal_device.get (-1))
           );
-          ( "the handles of the host",
+          ( "the Metal objects of the host",
             fun () ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Nx_metal_device.handles Nx_device.host) );
-          ( "the resources of the host",
-            fun () ->
-              raises_match Exn.invalid_arg (fun () ->
-                  Nx_metal_device.resources Nx_device.host) );
+              is_true
+                (Option.is_none (Nx_metal_device.of_device Nx_device.host)) );
         ]
         (fun (_, check) -> check ());
     ]
@@ -218,23 +236,23 @@ let memory =
       test
         "every allocation and borrow is resident while it lives, in the \
          residency set where Metal has one" (fun () ->
-          let set = (Nx_metal_device.handles metal).residency_set in
+          let set = Nx_metal_device.residency_set m in
           let resident b =
             let buffer = Nx_device.Driver.Region.(handle (of_buffer b)) in
             match set with
             | Some set -> contains set buffer
-            | None -> Array.mem buffer (Nx_metal_device.resources metal)
+            | None -> Array.mem buffer (Nx_metal_device.resources m)
           in
           let held () =
             Gc.full_major ();
             ignore (Nx_device.stats metal);
             match set with
             | Some set -> allocation_count set
-            | None -> Array.length (Nx_metal_device.resources metal)
+            | None -> Array.length (Nx_metal_device.resources m)
           in
           if set <> None then
             equal ~msg:"no resources beside the set" int 0
-              (Array.length (Nx_metal_device.resources metal));
+              (Array.length (Nx_metal_device.resources m));
           let b = B.create metal S.UInt8 16 in
           is_true ~msg:"an allocation" (resident b);
           let before = held () in
@@ -274,15 +292,7 @@ let work =
         (fun () ->
           let p = program ~binary:(Lazy.force library) ~name:"fill" in
           let out = B.create metal S.UInt32 8 in
-          let h = Nx_metal_device.handles metal in
-          let v =
-            Nx_device.submit metal ~touches:[] (fun v ->
-                dispatch h.queue h.event h.fence
-                  (Nx_metal_device.resources metal)
-                  (Nx_device.Program.handle p)
-                  (B.address out) 8 v 0n;
-                v)
-          in
+          let v = launch p out 8 in
           equal int v (Nx_device.submitted metal);
           let words = Array.init 8 (fun i -> (i * 3) + 1) in
           let bytes =
@@ -296,19 +306,9 @@ let work =
          kernel wrote there once Metal is synchronized" (fun () ->
           let p = program ~binary:(Lazy.force library) ~name:"fill" in
           let out = B.create metal S.UInt32 8 in
-          let h = Nx_metal_device.handles metal in
-          ignore
-            (Nx_device.submit metal ~touches:[] (fun v ->
-                 dispatch h.queue h.event h.fence
-                   (Nx_metal_device.resources metal)
-                   (Nx_device.Program.handle p)
-                   (B.address out) 8 v 0n));
+          ignore (launch p out 8);
           Nx_device.synchronize metal;
-          let on_host =
-            match B.borrow Nx_device.host out with
-            | Ok b -> b
-            | Error why -> fail why
-          in
+          let on_host = borrow_host out in
           is_true ~msg:"on the host, over the Metal buffer"
             (Nx_device.equal (B.device on_host) Nx_device.host
             && B.overlaps on_host out);
@@ -318,23 +318,43 @@ let work =
             (List.init 8 (Bigarray.Array1.get v)));
       test
         "the host waits for work that touched it, which signals on the shared \
-         event and leaves the timeline's signal word at 0" (fun () ->
-          let h = Nx_metal_device.handles metal in
+         event and leaves its signal word at 0" (fun () ->
           let signaled = Atomic.make false in
+          let hb = B.create Nx_device.host S.UInt8 8 in
           let domain =
-            Nx_device.submit metal ~touches:[ Nx_device.host ] (fun v ->
+            Nx_device.submit [ metal ] ~touches:[ hb ] (fun s ->
+                let v = Nx_device.Submission.value s metal in
                 Domain.spawn (fun () ->
                     Unix.sleepf 0.05;
                     Atomic.set signaled true;
-                    set_signaled h.event v))
+                    set_signaled (Nx_metal_device.event m) v))
           in
           Nx_device.synchronize Nx_device.host;
           is_true (Atomic.get signaled);
           Domain.join domain;
-          let words = B.bigarray Bigarray.int64 (Nx_device.timeline metal) in
-          equal (pair int64 int)
-            (0L, Nx_device.submitted metal)
-            (words.{0}, Int64.to_int words.{1}));
+          let word = B.bigarray Bigarray.int64 (Nx_device.signal_word metal) in
+          equal int64 0L word.{0});
+      test
+        "its work is waited for by no queue of another device, and a \
+         submission sees its previous kernel complete before it rewrites its \
+         buffer" (fun () ->
+          let p = program ~binary:(Lazy.force library) ~name:"fill" in
+          let out = B.create metal S.UInt32 8 in
+          let words = B.bigarray Bigarray.int32 (borrow_host out) in
+          let first = launch p out 8 in
+          Nx_device.submit [ metal ] ~touches:[ out ] (fun s ->
+              equal ~msg:"no waits" int 0
+                (List.length (Nx_device.Submission.waits s));
+              Nx_device.Submission.wait s metal first;
+              at_least ~msg:"the previous kernel signaled" int ~than:first
+                (Nx_device.signaled metal);
+              for i = 0 to 7 do
+                words.{i} <- 0l
+              done;
+              set_signaled (Nx_metal_device.event m)
+                (Nx_device.Submission.value s metal));
+          equal ~msg:"rewritten after the kernel" string (String.make 32 '\000')
+            (read out));
     ]
 
 module P = Nx_device.Profile
@@ -362,21 +382,20 @@ let dispatch_profile =
   test
     "a dispatch is a span of its command buffer's GPU times on the host clock, \
      and the first load of its program an event" (fun () ->
-      let h = Nx_metal_device.handles metal in
       let out = B.create metal S.UInt32 64 in
-      let stamps = B.create Nx_device.host S.UInt64 2 in
+      let stamps = B.create Nx_device.host S.UInt64 4 in
       let binary = Lazy.force twice in
       let before = ref 0 and after = ref 0 in
       let events =
         profiled (fun () ->
             let p = program ~binary ~name:"twice" in
             before := P.now ();
-            Nx_device.submit metal ~touches:[] (fun v ->
-                dispatch h.queue h.event h.fence
-                  (Nx_metal_device.resources metal)
-                  (Nx_device.Program.handle p)
-                  (B.address out) 64 v (B.address stamps));
-            P.record metal ~lane:"compute" ~name:"twice" stamps;
+            ignore
+              (launch ~stamps:(B.address stamps)
+                 ~record:(fun s ->
+                   Nx_device.Submission.record s metal ~lane:"compute"
+                     ~name:"twice" stamps)
+                 p out 64);
             Nx_device.synchronize metal;
             after := P.now ())
       in

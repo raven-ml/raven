@@ -17,8 +17,17 @@ external linux : unit -> bool = "caml_nx_amd_linux"
 type interface = Kernel | Pci
 
 type queue = {
-  ring : nativeint;
-  ring_bytes : int;
+  ring : Nx_device.Buffer.t;
+  read_ptr : Nx_device.Buffer.t;
+  write_ptr : Nx_device.Buffer.t;
+  put : Nx_device.Buffer.t;
+  doorbell : Nx_device.Buffer.t;
+}
+
+(* A queue's words, as the host and the GPU address them: the ring and its size,
+   and the 64-bit words. *)
+type words = {
+  ring : nativeint * int;
   read_ptr : nativeint;
   write_ptr : nativeint;
   put : nativeint;
@@ -36,14 +45,6 @@ type props = {
   waves_per_cu : int;
   lds_bytes : int;
   scratch_slots_per_cu : int;
-}
-
-type handles = {
-  compute : queue;
-  aql : bool;
-  sdma : queue list;
-  signal : nativeint;
-  props : props;
 }
 
 type kernel = {
@@ -72,7 +73,7 @@ type mem = Kfd_mem of Kfd.mem | Am_mem of Pci_memory.memory
 
 module Int_map = Map.Make (Int)
 
-type amd = {
+type t = {
   index : int;
   machine : Nx_device.t; (* the host of the GPU's machine *)
   gpu : gpu;
@@ -86,13 +87,14 @@ type amd = {
   scratch_lock : Mutex.t;
   mutable scratch : (Nx_device.Buffer.t * int) option;
   mutable aql_desc : Mmio.t option; (* the AQL queue's descriptor *)
-  mutable handles : handles option;
+  mutable queues : (queue * bool * queue list) option;
+      (* the compute queue, whether it takes AQL packets, the SDMA queues *)
   mutable dev : Nx_device.t option;
 }
 
 (* Memory of a device and the peers it is mapped on, which their borrows and
    transfers add to while the owner is not taken. *)
-and alloc = { mem : mem; peers : amd list Atomic.t }
+and alloc = { mem : mem; peers : t list Atomic.t }
 
 let va = function Kfd_mem m -> m.va | Am_mem m -> m.mapping.va
 let size = function Kfd_mem m -> m.size | Am_mem m -> m.mapping.size
@@ -222,12 +224,14 @@ let range a x n =
   | Kfd_gpu _ -> Mmio.v x n
 
 let sdma_queue a (q : queue) =
+  let word b = range a (Nx_device.Buffer.address b) 8 in
   {
-    Sdma.ring = range a q.ring q.ring_bytes;
-    read_ptr = range a q.read_ptr 8;
-    write_ptr = range a q.write_ptr 8;
-    put = range a q.put 8;
-    doorbell = range a q.doorbell 8;
+    Sdma.ring =
+      range a (Nx_device.Buffer.address q.ring) (Nx_device.Buffer.nbytes q.ring);
+    read_ptr = word q.read_ptr;
+    write_ptr = word q.write_ptr;
+    put = word q.put;
+    doorbell = word q.doorbell;
   }
 
 let sdma_family (props : props) =
@@ -244,7 +248,7 @@ let max_copy (props : props) =
   else 0x400000
 
 (* The opened GPUs, by the host of their machine and index there. *)
-let opened : ((Nx_device.t * int) * amd) list Atomic.t = Atomic.make []
+let opened : ((Nx_device.t * int) * t) list Atomic.t = Atomic.make []
 
 let amd_of d =
   List.find_map
@@ -309,8 +313,8 @@ let queue a ~timeline =
   let family = sdma_family props and max = max_copy props in
   let enqueue words =
     let q =
-      match a.handles with
-      | Some h -> sdma_queue a (List.hd h.sdma)
+      match a.queues with
+      | Some (_, _, sdma) -> sdma_queue a (List.hd sdma)
       | None -> failwith "the SDMA queue is not set up"
     in
     let timeout_ms =
@@ -444,15 +448,8 @@ let aql_scratch a desc b n =
     (Scratch.descriptor g ~base (Nx_device.Buffer.nbytes b));
   Mmio.set32 desc (fst compute_tmpring_size) (Scratch.tmpring_size g n)
 
-let scratch d n =
-  let a =
-    match amd_of d with
-    | Some a -> a
-    | None ->
-        invalid_arg
-          (Printf.sprintf "Nx_amd_device.scratch: %s is not an AMD device"
-             (Nx_device.name d))
-  in
+let scratch a n =
+  let d = Option.get a.dev in
   Mutex.protect a.scratch_lock (fun () ->
       let n = Int.max n 128 in
       let b, n =
@@ -639,8 +636,7 @@ let create_queue a ~kind spec ~idx =
   Mmio.set64 (Option.get (host_view put)) 0 0L;
   let q =
     {
-      ring = addr ring;
-      ring_bytes = spec.ring_bytes;
+      ring = (addr ring, spec.ring_bytes);
       read_ptr = rptr;
       write_ptr = wptr;
       put = addr put;
@@ -652,8 +648,9 @@ let create_queue a ~kind spec ~idx =
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
     Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
-      ~host:a.machine ~budget ~completion:(Sleep sleep) ~load:(load a)
-      ~peer:(peer a) ~dma:(dma a) ?finalize
+      ~host:a.machine ~budget
+      ~completion:(Sleep (fun ~timeline:_ -> sleep))
+      ~load:(load a) ~peer:(peer a) ~dma:(dma a) ?finalize
       (Device_local
          {
            memory = allocator a Vram;
@@ -696,20 +693,31 @@ let record ~machine ~index ~gpu ~props =
     scratch_lock = Mutex.create ();
     scratch = None;
     aql_desc = None;
-    handles = None;
+    queues = None;
     dev = None;
   }
 
+(* The words of a queue, as buffers of [dev] at addresses the host and the GPU
+   share. *)
+let queue_buffers dev (w : words) =
+  let buffer (x, n) =
+    Driver.buffer dev (Region.v ~host:x x n) Nx_dtype.Scalar.UInt8 n
+  in
+  let word x =
+    Nx_device.Buffer.view (buffer (x, 8)) ~offset:0 Nx_dtype.Scalar.UInt64 1
+  in
+  ({
+     ring = buffer w.ring;
+     read_ptr = word w.read_ptr;
+     write_ptr = word w.write_ptr;
+     put = word w.put;
+     doorbell = word w.doorbell;
+   }
+    : queue)
+
 let finish a dev (compute, aql, sdma) =
-  a.handles <-
-    Some
-      {
-        compute;
-        aql;
-        sdma;
-        signal = Nx_device.Buffer.address (Nx_device.timeline dev);
-        props = a.props;
-      }
+  let q = queue_buffers dev in
+  a.queues <- Some (q compute, aql, List.map q sdma)
 
 let open_kfd index =
   let k = Kfd.open_gpu index in
@@ -887,25 +895,17 @@ let v ?host ?interface ?firmware i =
   | Ok d -> d
   | Error msg -> failwith msg
 
-let amd fn d =
-  match amd_of d with
-  | Some a -> a
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Nx_amd_device.%s: %s is not an AMD device" fn
-           (Nx_device.name d))
-
-let interface d =
-  match (amd "interface" d).gpu with Kfd_gpu _ -> Kernel | Am_gpu _ -> Pci
-
-let handles d = Option.get (amd "handles" d).handles
+let of_device = amd_of
+let interface a = match a.gpu with Kfd_gpu _ -> Kernel | Am_gpu _ -> Pci
+let queues a = Option.get a.queues
+let compute a = match queues a with c, _, _ -> c
+let aql a = match queues a with _, aql, _ -> aql
+let sdma a = match queues a with _, _, sdma -> sdma
+let props a = a.props
 
 let kernel p =
-  let d = Nx_device.Program.device p in
-  let a = amd "kernel" d in
-  match
-    with_hw a (fun () ->
-        Hashtbl.find_opt a.kernels (Nx_device.Program.handle p))
-  with
-  | Some k -> k
-  | None -> invalid_arg "Nx_amd_device.kernel: the program is not an AMD kernel"
+  Option.bind
+    (amd_of (Nx_device.Program.device p))
+    (fun a ->
+      with_hw a (fun () ->
+          Hashtbl.find_opt a.kernels (Nx_device.Program.handle p)))

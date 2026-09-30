@@ -114,8 +114,10 @@ let opening =
       is_true (Nx_cuda_device.v 0 == d);
       starts_with ~affix:"CUDA: no device"
         (require_error (Nx_cuda_device.get (Nx_cuda_device.count ())));
-      raises_match (Exn.invalid_arg ~substring:"not a CUDA device") (fun () ->
-          Nx_cuda_device.handles Nx_device.host))
+      is_true ~msg:"no driver objects for the host"
+        (Option.is_none (Nx_cuda_device.of_device Nx_device.host)))
+
+let context d = Nx_cuda_device.context (Option.get (Nx_cuda_device.of_device d))
 
 let memory =
   group "memory"
@@ -296,8 +298,8 @@ let borrowing =
         "of_address is a borrowed view of another library's allocation, which \
          the host addresses when it is page-locked" (fun () ->
           let d = cuda () in
-          let h = Nx_cuda_device.handles d in
-          let a = foreign_alloc h.context 64 in
+          let ctx = context d in
+          let a = foreign_alloc ctx 64 in
           let b = Nx_cuda_device.of_address d a S.Int32 16 in
           is_true ~msg:"borrowed" (B.is_borrowed b);
           B.copy ~src:(host_of 64 Fun.id) ~dst:b;
@@ -308,7 +310,7 @@ let borrowing =
           equal ~msg:"the allocation and the offset" (pair nativeint int) (a, 16)
             (Nx_device.Driver.Region.(handle (of_buffer inner)), B.offset inner);
           holds ~msg:"inner bytes" inner (fun i -> 16 + i);
-          let host, device = foreign_host_alloc h.context 64 in
+          let host, device = foreign_host_alloc ctx 64 in
           equal ~msg:"page-locked memory" (option nativeint) (Some host)
             (hosted (Nx_cuda_device.of_address d device S.UInt8 64)));
       cases
@@ -330,7 +332,7 @@ let borrowing =
         ]
         (fun (_, why, f) ->
           let d = cuda () in
-          let h = (Nx_cuda_device.handles d).context in
+          let h = context d in
           raises_match (Exn.invalid_arg ~substring:why) (fun () -> f d h));
     ]
 
@@ -353,12 +355,17 @@ let ptx =
 }
 |}
 
-(* Launches [double_index] over [out] as timeline work. *)
-let double_index d out =
-  let h = Nx_cuda_device.handles d in
+(* Launches [double_index] over the address [out] as timeline work that touches
+   [touches]. *)
+let double_index d ~touches out =
+  let c = Option.get (Nx_cuda_device.of_device d) in
   let f = program d ~binary:ptx ~name:"double_index" in
-  Nx_device.submit d ~touches:[] (fun v ->
-      launch h.context h.compute h.signal (Nx_device.Program.handle f) out v)
+  Nx_device.submit [ d ] ~touches (fun s ->
+      launch (Nx_cuda_device.context c) (Nx_cuda_device.compute c)
+        (B.address (Nx_device.signal_word d))
+        (Nx_device.Program.handle f)
+        out
+        (Nx_device.Submission.value s d))
 
 let programs =
   group "programs"
@@ -377,7 +384,7 @@ let programs =
         (fun () ->
           let d = cuda () in
           let out = B.create d S.Int32 256 in
-          double_index d (B.address out);
+          double_index d ~touches:[ out ] (B.address out);
           Nx_device.synchronize d;
           equal int (Nx_device.submitted d) (Nx_device.signaled d);
           let host = B.create Nx_device.host S.Int32 256 in
@@ -386,15 +393,12 @@ let programs =
           equal (array int32)
             (Array.init 256 (fun i -> Int32.of_int (2 * i)))
             (Array.init 256 (Bigarray.Array1.get ba)));
-      test
-        "the timeline is page-locked memory of the device whose first word is \
-         the signal" (fun () ->
+      test "the signal word is page-locked memory of the device" (fun () ->
           let d = cuda () in
-          let t = Nx_device.timeline d in
+          let t = Nx_device.signal_word d in
           is_true (Nx_device.equal (B.device t) d);
-          equal nativeint (Nx_cuda_device.handles d).signal (B.address t);
           Nx_device.synchronize d;
-          let words = B.create Nx_device.host S.UInt64 2 in
+          let words = B.create Nx_device.host S.UInt64 1 in
           B.copy ~src:t ~dst:words;
           equal int (Nx_device.signaled d)
             (Int64.to_int (B.bigarray Bigarray.int64 words).{0}));
@@ -406,7 +410,7 @@ let fault =
   test "a fault loses the device with the driver's error" (fun () ->
       let d = cuda () in
       let b = B.create d S.UInt8 8 in
-      double_index d 0n;
+      double_index d ~touches:[] 0n;
       let illegal = function
         | Nx_device.Lost (d', why) ->
             d' == d && String.starts_with ~prefix:"CUDA_ERROR_" why

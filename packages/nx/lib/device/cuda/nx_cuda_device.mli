@@ -36,12 +36,14 @@
     the driver compiles when it loads it.
 
     {b Faults and hangs.} A fault on the GPU, such as an illegal address, loses
-    the device ({!Nx_device.Lost}) with the driver's error when a wait finds it;
-    so does a driver error while the runtime enqueues a copy, since the context
-    may then be unusable. Work that does not signal within the device's
-    {!Nx_device.timeout}, 30 seconds unless {!Nx_device.set_timeout} sets
-    another, loses the device too: raise the timeout before submitting kernels
-    that run longer.
+    the device ({!Nx_device.Lost}) with the driver's error when a wait finds it:
+    a wait polls the signal word, and once the word has stayed still for 200 ms
+    it also queries the streams each millisecond, so a fault is found up to 200
+    ms after it happened; so does a driver error while the runtime enqueues a
+    copy, since the context may then be unusable. Work that does not signal
+    within the device's {!Nx_device.timeout}, 30 seconds unless
+    {!Nx_device.set_timeout} sets another, loses the device too: raise the
+    timeout before submitting kernels that run longer.
 
     {b Other CUDA libraries.} Devices use the GPU's primary context, which the
     CUDA runtime API and the libraries over it share. The runtime makes it
@@ -93,29 +95,30 @@ val of_address :
 
     For the libraries that submit work to a CUDA device, inside
     {!Nx_device.submit}. They reach the driver by loading it by its standard
-    name, which gives them the library this one loaded, and make [context]
+    name, which gives them the library this one loaded, and make {!context}
     current on the submitting thread.
 
-    Work for the timeline value [v] first waits on its stream for the signal
-    word to reach [v - 1] ([cuStreamWaitValue64_v2] with
+    Work for the value [v] first waits on its stream for the signal word
+    ({!Nx_device.signal_word}) to reach [v - 1] ([cuStreamWaitValue64_v2] with
     [CU_STREAM_WAIT_VALUE_GEQ]), and ends by writing [v] into it
     ([cuStreamWriteValue64_v2]). The values thus complete in order across the
-    two streams. The device's own copies follow the same rule. *)
+    two streams. The device's own copies follow the same rule. Work waits for
+    another device's pair of {!Nx_device.Submission.waits} in the same way, on
+    that device's signal word, which it addresses by its borrow of it
+    ({!Nx_device.Buffer.borrow}). *)
 
-type handles = {
-  context : nativeint;  (** The GPU's primary [CUcontext]. *)
-  compute : nativeint;  (** The non-blocking [CUstream] for kernels. *)
-  copy : nativeint;
-      (** The non-blocking [CUstream] for copies, which {!Nx_device.Buffer.copy}
-          uses. *)
-  signal : nativeint;
-      (** The device address of the signal word, the first word of
-          {!Nx_device.timeline}: page-locked host memory that holds the last
-          value the device signaled. *)
-}
+type t
 (** The type for the driver objects of a device. *)
 
-val handles : Nx_device.t -> handles
-(** [handles d] is the driver objects of [d].
+val of_device : Nx_device.t -> t option
+(** [of_device d] is the driver objects of [d], if [d] is a CUDA device. *)
 
-    Raises [Invalid_argument] if [d] is not a CUDA device. *)
+val context : t -> nativeint
+(** [context c] is the GPU's primary [CUcontext]. *)
+
+val compute : t -> nativeint
+(** [compute c] is the non-blocking [CUstream] for kernels. *)
+
+val copy : t -> nativeint
+(** [copy c] is the non-blocking [CUstream] for copies, which
+    {!Nx_device.Buffer.copy} uses. *)

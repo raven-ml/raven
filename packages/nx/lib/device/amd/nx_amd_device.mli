@@ -127,11 +127,6 @@ val v :
 (** [v i] is like {!get} but raises [Failure] with [get]'s message when the GPU
     cannot be opened. *)
 
-val interface : Nx_device.t -> interface
-(** [interface d] is the interface [d] was opened through.
-
-    Raises [Invalid_argument] if [d] is not an AMD device. *)
-
 (** {1:low Low-level}
 
     For the libraries that submit work to an AMD device, inside
@@ -140,24 +135,38 @@ val interface : Nx_device.t -> interface
     host data path (HDP), since the host's writes to GPU memory through the BAR,
     such as uploaded programs, are not otherwise visible to it.
 
-    Work for the timeline value [v] first waits on its queue until the low 32
-    bits of the signal word, the first word of {!Nx_device.timeline}, equal
-    [v - 1], and ends by writing [v] into it: all 64 bits in one write, or its
-    low 32 bits and then, only when they are [0], its high 32 bits. The values
-    thus complete in order across the queues, and a high word written late never
-    takes the word back. The device's own copies follow the same rule on the
-    SDMA queue. *)
+    Work for the value [v] first waits on its queue until the low 32 bits of the
+    signal word ({!Nx_device.signal_word}) equal [v - 1], and ends by writing
+    [v] into it: all 64 bits in one write, or its low 32 bits and then, only
+    when they are [0], its high 32 bits. The values thus complete in order
+    across the queues, and a high word written late never takes the word back.
+    The device's own copies follow the same rule on the SDMA queue. Work waits
+    for another device's pair of {!Nx_device.Submission.waits} on that device's
+    signal word with a greater-or-equal test. *)
+
+type t
+(** The type for the queues and properties of a device. *)
+
+val of_device : Nx_device.t -> t option
+(** [of_device d] is the queues and properties of [d], if [d] is an AMD device.
+*)
+
+val interface : t -> interface
+(** [interface a] is the interface the device was opened through. *)
 
 type queue = {
-  ring : nativeint;  (** The ring's first byte. *)
-  ring_bytes : int;  (** The ring's size in bytes, a power of two. *)
-  read_ptr : nativeint;
+  ring : Nx_device.Buffer.t;
+      (** The ring, whose size ({!Nx_device.Buffer.nbytes}) is a power of two.
+      *)
+  read_ptr : Nx_device.Buffer.t;
       (** The 64-bit position up to which the engine has read the ring. *)
-  write_ptr : nativeint;  (** The 64-bit position the engine reads up to. *)
-  put : nativeint;
+  write_ptr : Nx_device.Buffer.t;
+      (** The 64-bit position the engine reads up to. *)
+  put : Nx_device.Buffer.t;
       (** The 64-bit position after the last packet written, where the next
           writer appends. *)
-  doorbell : nativeint;  (** The 64-bit doorbell that wakes the engine. *)
+  doorbell : Nx_device.Buffer.t;
+      (** The 64-bit doorbell that wakes the engine. *)
 }
 (** The type for hardware queues. Positions count dwords on a PM4 queue, 64-byte
     packets on an AQL queue, and bytes on an SDMA queue, and grow without
@@ -185,23 +194,19 @@ type props = {
 }
 (** The type for the GPU's properties that its work depends on. *)
 
-type handles = {
-  compute : queue;  (** The compute queue. *)
-  aql : bool;
-      (** [true] iff the compute queue takes AQL packets, which it does on GPUs
-          of several XCCs; it takes PM4 packets otherwise. *)
-  sdma : queue list;
-      (** The SDMA copy queues: one, or one per GPU of the machine up to eight
-          on a virtual function. {!Nx_device.Buffer.copy} uses the first. *)
-  signal : nativeint;  (** The address of the timeline's signal word. *)
-  props : props;  (** The GPU's properties. *)
-}
-(** The type for the queues and properties of a device. *)
+val compute : t -> queue
+(** [compute a] is the compute queue. *)
 
-val handles : Nx_device.t -> handles
-(** [handles d] is the queues and properties of [d].
+val aql : t -> bool
+(** [aql a] is [true] iff the compute queue takes AQL packets, which it does on
+    GPUs of several XCCs; it takes PM4 packets otherwise. *)
 
-    Raises [Invalid_argument] if [d] is not an AMD device. *)
+val sdma : t -> queue list
+(** [sdma a] is the SDMA copy queues: one, or one per GPU of the machine up to
+    eight on a virtual function. {!Nx_device.Buffer.copy} uses the first. *)
+
+val props : t -> props
+(** [props a] is the GPU's properties. *)
 
 type kernel = {
   code : nativeint;  (** The address of the uploaded code object. *)
@@ -220,11 +225,9 @@ type kernel = {
 }
 (** The type for the dispatch parameters of a kernel. *)
 
-val kernel : Nx_device.Program.t -> kernel
-(** [kernel p] is the dispatch parameters of [p]. Its
-    {!Nx_device.Program.handle} is its [descriptor].
-
-    Raises [Invalid_argument] if [p] is not loaded on an AMD device. *)
+val kernel : Nx_device.Program.t -> kernel option
+(** [kernel p] is the dispatch parameters of [p], if [p] is loaded on an AMD
+    device. Its {!Nx_device.Program.handle} is its [descriptor]. *)
 
 type scratch = {
   address : nativeint;  (** The scratch memory's first byte. *)
@@ -233,11 +236,10 @@ type scratch = {
 }
 (** The type for the scratch memory of a device's kernels. *)
 
-val scratch : Nx_device.t -> int -> scratch
-(** [scratch d n] is [d]'s scratch memory for kernels of up to [n] scratch bytes
-    per lane, grown if smaller, and on an AQL queue written into the queue's
-    descriptor. Memory it replaces returns to [d] once unreachable. Call it
-    before {!Nx_device.submit}, not inside.
+val scratch : t -> int -> scratch
+(** [scratch a n] is the device's scratch memory for kernels of up to [n]
+    scratch bytes per lane, grown if smaller, and on an AQL queue written into
+    the queue's descriptor. Memory it replaces returns to the device once
+    unreachable. Call it before {!Nx_device.submit}, not inside.
 
-    Raises [Invalid_argument] if [d] is not an AMD device, and
-    {!Nx_device.Out_of_memory} if [d] cannot allocate it. *)
+    Raises {!Nx_device.Out_of_memory} if the device cannot allocate it. *)

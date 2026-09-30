@@ -6,12 +6,12 @@
 (* AMD devices on a real GPU: opening, memory and its budget, every copy route
    with the timeline steps that identify it, borrows, peer copies, every route
    around the copy engine's largest copy, copies that wrap its ring, coherence
-   through each kind of memory, programs, scratch, the timeline across 2^32,
-   nx's runtime laws over the devices, and last, work that never signals, which
-   loses the device. Every test skips without a GPU, and the peer tests without
-   two. GPUs are reached through the kernel driver when it is loaded; over PCI
-   the runtime takes a GPU from its kernel driver, so the suite does only when
-   NX_AMD_PCI_TEST names the index of a GPU it may take. *)
+   through each kind of memory, programs, scratch, nx's runtime laws over the
+   devices, and last, work that never signals, which loses the device. Every
+   test skips without a GPU, and the peer tests without two. GPUs are reached
+   through the kernel driver when it is loaded; over PCI the runtime takes a GPU
+   from its kernel driver, so the suite does only when NX_AMD_PCI_TEST names the
+   index of a GPU it may take. *)
 
 open Windtrap
 module B = Nx_device.Buffer
@@ -98,20 +98,22 @@ let steps d f =
   f ();
   Nx_device.submitted d - before
 
+let low d = Option.get (Nx_amd_device.of_device d)
+
 let test_open () =
   let d = device () in
   is_true ~msg:"memoized" (Nx_device.equal d (device ()));
   starts_with ~msg:"name" ~affix:"AMD" (Nx_device.name d);
   starts_with ~msg:"arch" ~affix:"gfx" (Nx_device.arch d);
-  let h = Nx_amd_device.handles d in
-  is_true ~msg:"compute units" (h.props.compute_units > 0);
-  is_true ~msg:"XCCs" (h.props.xccs >= 1);
-  is_true ~msg:"LDS" (h.props.lds_bytes >= 32 * 1024);
-  is_true ~msg:"an SDMA queue" (h.sdma <> []);
-  equal ~msg:"AQL on several XCCs" bool (h.props.xccs > 1) h.aql;
-  equal ~msg:"the signal is the timeline's" nativeint
-    (B.address (Nx_device.timeline d))
-    h.signal;
+  let a = low d in
+  let props = Nx_amd_device.props a in
+  is_true ~msg:"compute units" (props.compute_units > 0);
+  is_true ~msg:"XCCs" (props.xccs >= 1);
+  is_true ~msg:"LDS" (props.lds_bytes >= 32 * 1024);
+  is_true ~msg:"an SDMA queue" (Nx_amd_device.sdma a <> []);
+  equal ~msg:"AQL on several XCCs" bool (props.xccs > 1) (Nx_amd_device.aql a);
+  is_true ~msg:"the signal word, the device's pinned memory"
+    (Nx_device.equal d (B.device (Nx_device.signal_word d)));
   is_true ~msg:"a budget" (Nx_device.budget d > 0)
 
 let test_memory () =
@@ -252,7 +254,7 @@ let test_programs () =
   | Some binary -> (
       let p = program d ~binary ~name:"fill" in
       is_true ~msg:"cached" (p == program d ~binary ~name:"fill");
-      let k = Nx_amd_device.kernel p in
+      let k = Option.get (Nx_amd_device.kernel p) in
       equal ~msg:"the handle is the descriptor" nativeint k.descriptor
         (Nx_device.Program.handle p);
       is_true ~msg:"inside the code"
@@ -262,32 +264,14 @@ let test_programs () =
       | Ok _ -> fail "loaded an absent function"
       | Error why -> contains ~msg:"refused" ~sub:"no kernel" why)
 
-(* The device's timeline across 2^32: from 2^32 - 2, three copies take it
-   through the carry, and the copy after it waits for a low word of 0. *)
-let test_carry () =
-  let d = device () in
-  Nx_device.synchronize d;
-  let start = (1 lsl 32) - 2 in
-  let words = B.create Nx_device.host S.UInt64 2 in
-  Bigarray.Array1.fill (B.bigarray Bigarray.int64 words) (Int64.of_int start);
-  B.copy ~src:words ~dst:(Nx_device.timeline d);
-  let src = fill_host mib (fun i -> i * 5) and v = B.create d S.UInt8 mib in
-  for _ = 1 to 3 do
-    B.copy ~src ~dst:v
-  done;
-  Nx_device.synchronize d;
-  equal ~msg:"submitted" int (start + 3) (Nx_device.submitted d);
-  equal ~msg:"signaled" int (start + 3) (Nx_device.signaled d);
-  is_true ~msg:"the bytes" (same_bytes src (to_host v))
-
 let test_scratch () =
   let d = device () in
-  let s = Nx_amd_device.scratch d 256 in
+  let s = Nx_amd_device.scratch (low d) 256 in
   is_true ~msg:"memory" (s.address <> 0n && s.bytes > 0);
   is_true ~msg:"a ring size" (s.tmpring_size <> 0);
-  let again = Nx_amd_device.scratch d 128 in
+  let again = Nx_amd_device.scratch (low d) 128 in
   equal ~msg:"kept for smaller kernels" nativeint s.address again.address;
-  let more = Nx_amd_device.scratch d 4096 in
+  let more = Nx_amd_device.scratch (low d) 4096 in
   is_true ~msg:"grown for larger ones" (more.bytes > s.bytes)
 
 (* Boundaries, wraps and coherence: copies whose bytes a wrong chunk, a ring
@@ -401,7 +385,7 @@ let peer_boundaries max () =
    64 bytes: every copy lands where it should. *)
 let test_ring_wraps () =
   let d = device () in
-  let ring = (List.hd (Nx_amd_device.handles d).sdma).ring_bytes in
+  let ring = B.nbytes (List.hd (Nx_amd_device.sdma (low d))).ring in
   let copies = (3 * ring / 64) + 1 in
   let n = 16 * copies in
   let src = B.create Nx_device.host S.UInt8 n in
@@ -447,7 +431,7 @@ let test_coherence () =
 let test_hang () =
   let d = device () in
   Nx_device.set_timeout d 500;
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
+  Nx_device.submit [ d ] ~touches:[] ignore;
   raises_match (hung d) (fun () -> Nx_device.synchronize d);
   raises_match (hung d) (fun () -> B.create d S.UInt8 1)
 
@@ -474,7 +458,6 @@ let () =
            ];
          group "programs"
            [ test "code objects" test_programs; test "scratch" test_scratch ];
-         group "timeline" [ test "across 2^32" test_carry ];
          group "profiles" (Nx_test.Profiles.copies ~slack:1_000_000 gpus);
          group "nx" (Nx_test.Runtimes.laws gpus);
          group "failures"

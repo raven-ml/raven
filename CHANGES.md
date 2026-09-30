@@ -2871,6 +2871,29 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.submit` takes a set of devices and the buffers the
+  work touches, and runs `f` with an `Nx_device.Submission.t`: `value` is each
+  device's value, `waits` is one `(device, value)` pair for each device of the
+  submission and of its buffers, a fixed shape a compiled program can take as
+  arguments, and `wait` blocks the host until a device signals a value, such
+  as the previous run of a program whose arguments are rewritten. Work that
+  the submission's queues cannot wait for is waited for on the host first.
+- **Breaking:** `Nx_device.Profile.record` is `Nx_device.Submission.record`,
+  and its stamps are two 16-byte slots, with the start stamp in the second
+  word and the stop stamp in the fourth. `Nx_device.timeline` is
+  `Nx_device.signal_word`, one word: the runtime no longer writes the
+  submitted value into the device's memory, which nothing read and which cost
+  a round trip per submission to another machine's device.
+- **Breaking:** the vendors' low-level sections are a type `t`, `of_device`
+  and accessors in place of the `handles` records, such as
+  `Nx_metal_device.queue`, `Nx_cuda_device.compute`, `Nx_amd_device.sdma` and
+  `Nx_nv_device.copy`. AMD's queue words and NV's channel words are
+  `Nx_device.Buffer.t`s, and `kernel` returns an `option`.
+- CUDA devices complete by `Sleep` rather than `Signal`, since their work
+  stores its values into the signal word, which other devices' queues can
+  then wait on. A fault is found up to 200 ms later than before.
+  `Nx_device.Driver.Sleep` receives the region of the device's timeline, as
+  `Signal` does.
 - `Nx.cast` from `int64` or `uint64` to `bfloat16`, `float16` or a float8 type
   rounds once, from the integer's exact value. Past 2^53 it went through a
   double, which can round the integer onto a tie of the narrow type and then

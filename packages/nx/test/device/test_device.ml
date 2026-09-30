@@ -240,7 +240,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     match (far, signal, sleep) with
     | true, _, _ -> Signal queue_signal
     | false, Some s, _ -> Signal (fun ~timeline:_ -> s)
-    | false, None, Some sleep -> Sleep sleep
+    | false, None, Some sleep -> Sleep (fun ~timeline:_ -> sleep)
     | false, None, None -> Poll
   in
   let dev =
@@ -266,11 +266,16 @@ let never waits =
       incr waits;
       false)
 
+(* Submits work of [d] alone that touches [touches], and is [f] of the value the
+   work signals. *)
+let submit ?(touches = []) d f =
+  Nx_device.submit [ d ] ~touches (fun s -> f (Nx_device.Submission.value s d))
+
 (* Signals [v] on [d]'s timeline after 50 ms from another domain, as the device
    would, and records that it did. *)
 let signal_later d v =
   let signaled = Atomic.make false in
-  let word = B.address (Nx_device.timeline d) in
+  let word = B.address (Nx_device.signal_word d) in
   let domain =
     Domain.spawn (fun () ->
         Unix.sleepf 0.05;
@@ -964,7 +969,7 @@ let test_borrow_lifetime () =
     let hb = B.create host S.UInt8 (1 lsl 20) in
     Gc.finalise_last (fun () -> collected := true) hb;
     let bm = borrow g.dev hb in
-    ignore (Nx_device.submit g.dev ~touches:[ host ] Fun.id);
+    ignore (submit g.dev ~touches:[ bm ] Fun.id);
     ignore (Sys.opaque_identity bm))
     ();
   Gc.full_major ();
@@ -1603,9 +1608,7 @@ let programs =
 
 (* Timeline *)
 
-let words t =
-  let ba = B.bigarray Bigarray.int64 t in
-  (Int64.to_int ba.{0}, Int64.to_int ba.{1})
+let word t = Int64.to_int (B.bigarray Bigarray.int64 t).{0}
 
 let timeline =
   group "timeline"
@@ -1616,49 +1619,47 @@ let timeline =
           let d = (fake ()).dev in
           equal (pair int int) (0, 0)
             (Nx_device.submitted d, Nx_device.signaled d);
-          equal int 1 (Nx_device.submit d ~touches:[] Fun.id);
+          equal int 1 (submit d Fun.id);
           raises (Failure "encode") (fun () ->
-              Nx_device.submit d ~touches:[] (fun _ -> failwith "encode"));
-          let t = Nx_device.timeline d in
-          equal ~msg:"two UInt64 of the host" (triple string string int)
-            ("CPU", "uint64", 2)
+              submit d (fun _ -> failwith "encode"));
+          let t = Nx_device.signal_word d in
+          equal ~msg:"one UInt64 of the host" (triple string string int)
+            ("CPU", "uint64", 1)
             (Nx_device.name (B.device t), S.to_string (B.dtype t), B.length t);
-          equal ~msg:"the signal word, then the submitted value" (pair int int)
-            (0, 1) (words t);
+          equal ~msg:"not signaled by the submission" int 0 (word t);
           store_signal (B.address t) 1;
           equal ~msg:"signaled" int 1 (Nx_device.signaled d));
       test "is the host memory of a device that allocates some" (fun () ->
           let f = far () in
-          is_true (Nx_device.equal f.dev (B.device (Nx_device.timeline f.dev))));
+          is_true
+            (Nx_device.equal f.dev (B.device (Nx_device.signal_word f.dev))));
       test
         "of a device with its own signal reports through it, and leaves the \
          signal word at 0" (fun () ->
           let d = (fake ~signal:(signal ~signaled:5 (fun _ -> true)) ()).dev in
-          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          ignore (submit d Fun.id);
           Nx_device.synchronize d;
           equal int 5 (Nx_device.signaled d);
-          equal (pair int int) (0, 1) (words (Nx_device.timeline d)));
+          equal int 0 (word (Nx_device.signal_word d)));
       cases ~name:fst "waits for work"
         [
           ("of its device in synchronize", fun a _ -> ([], a));
           ( "of another device that touched the host, in its synchronize",
-            fun _ _ -> ([ host ], host) );
+            fun _ _ -> ([ B.create host S.UInt8 8 ], host) );
           ( "of another device that touched it, in its synchronize",
-            fun _ b -> ([ b ], b) );
+            fun _ b -> ([ B.create b S.UInt8 8 ], b) );
         ]
         (fun (_, pick) ->
           let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
           let touches, waiter = pick a b in
-          let signaled, domain = Nx_device.submit a ~touches (signal_later a) in
+          let signaled, domain = submit a ~touches (signal_later a) in
           Nx_device.synchronize waiter;
           is_true ~msg:"signaled" (Atomic.get signaled);
           Domain.join domain);
       test "a copy waits for its devices' work first" (fun () ->
           let d = (fake ()).dev in
           let b = B.create d S.UInt8 1 in
-          let signaled, domain =
-            Nx_device.submit d ~touches:[] (signal_later d)
-          in
+          let signaled, domain = submit d (signal_later d) in
           write b "x";
           is_true ~msg:"signaled" (Atomic.get signaled);
           Domain.join domain);
@@ -1681,17 +1682,15 @@ let timeline =
           equal (pair int int) (30_000, 30_000)
             (Nx_device.timeout d, Driver.default_timeout);
           Nx_device.set_timeout d 7;
-          Nx_device.submit d ~touches:[] ignore;
+          submit d ignore;
           Nx_device.synchronize d;
           equal int 7 !seen);
       test
         "a wait without a signal restarts its timeout whenever the signal word \
          moves" (fun () ->
           let d = (fake ~name:"SLOW" ~timeout_ms:200 ()).dev in
-          let word = B.address (Nx_device.timeline d) in
-          List.iter
-            (fun _ -> ignore (Nx_device.submit d ~touches:[] Fun.id))
-            [ 1; 2; 3 ];
+          let word = B.address (Nx_device.signal_word d) in
+          List.iter (fun _ -> ignore (submit d Fun.id)) [ 1; 2; 3 ];
           let progress =
             Domain.spawn (fun () ->
                 for k = 1 to 3 do
@@ -1705,9 +1704,162 @@ let timeline =
             (Unix.gettimeofday () -. t0);
           Domain.join progress;
           let stuck = (fake ~name:"STUCK" ~timeout_ms:200 ()).dev in
-          ignore (Nx_device.submit stuck ~touches:[] Fun.id);
+          ignore (submit stuck Fun.id);
           raises_match (lost stuck "hang detected") (fun () ->
               Nx_device.synchronize stuck));
+    ]
+
+(* Submissions *)
+
+(* Signals each device's submitted work, as the device would. *)
+let settle ds =
+  List.iter
+    (fun d ->
+      store_signal (B.address (Nx_device.signal_word d)) (Nx_device.submitted d))
+    ds
+
+let named = List.map (fun (d, v) -> (Nx_device.name d, v))
+
+let waits_of ds ~touches =
+  Nx_device.submit ds ~touches Nx_device.Submission.waits
+
+let test_waits () =
+  let a = (fake ~name:"A" ~maps:true ()).dev
+  and b = (fake ~name:"B" ~maps:true ()).dev
+  and c = (fake ~name:"C" ~maps:true ()).dev in
+  let on_b = B.create b S.UInt8 8 in
+  let waits () = named (waits_of [ a ] ~touches:[ on_b ]) in
+  equal ~msg:"nothing pending: values signaled already"
+    (list (pair string int))
+    [ ("A", 0); ("B", 0) ]
+    (waits ());
+  settle [ a ];
+  ignore (submit b ~touches:[ on_b ] Fun.id);
+  equal ~msg:"the latest work on the memory"
+    (list (pair string int))
+    [ ("A", 1); ("B", 1) ]
+    (waits ());
+  settle [ a; b ];
+  let signaled, domain = submit c ~touches:[ on_b ] (signal_later c) in
+  equal ~msg:"the same devices" (list string) [ "A"; "B" ]
+    (List.map fst (waits ()));
+  is_true ~msg:"work of a device outside them, waited for on the host"
+    (Atomic.get signaled);
+  Domain.join domain;
+  equal ~msg:"never the host" (list string) [ "A" ]
+    (List.map fst (named (waits_of [ a ] ~touches:[ B.create host S.UInt8 8 ])));
+  settle [ a ]
+
+let test_host_waits () =
+  let own_waits = ref 0 in
+  let own =
+    (fake ~name:"OWN" ~maps:true
+       ~signal:
+         (signal (fun _ ->
+              incr own_waits;
+              true))
+       ())
+      .dev
+  in
+  let a = (fake ~name:"A" ~maps:true ()).dev
+  and plain = (fake ~name:"PLAIN" ()).dev in
+  let on_own = B.create own S.UInt8 8 and on_a = B.create a S.UInt8 8 in
+  ignore (submit own ~touches:[ on_own ] Fun.id);
+  equal ~msg:"its own earlier work is its own to order" int 0 !own_waits;
+  equal ~msg:"a device that signals in its own way is left out" (list string)
+    [ "A" ]
+    (List.map fst (named (waits_of [ a ] ~touches:[ on_own ])));
+  equal ~msg:"and its work is waited for on the host" int 1 !own_waits;
+  settle [ a ];
+  let signaled, domain = submit a ~touches:[ on_a ] (signal_later a) in
+  equal
+    ~msg:
+      "a device whose signal word the submission's devices cannot address is \
+       left out"
+    (list string) [ "PLAIN" ]
+    (List.map fst (named (waits_of [ plain ] ~touches:[ on_a ])));
+  is_true ~msg:"and its work is waited for on the host" (Atomic.get signaled);
+  Domain.join domain;
+  settle [ plain ]
+
+let test_wait () =
+  let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
+  let signaled, domain = submit a (signal_later a) in
+  Nx_device.submit [ a ] ~touches:[] (fun s ->
+      Nx_device.Submission.wait s a (Nx_device.submitted a);
+      is_true ~msg:"the previous work completed" (Atomic.get signaled);
+      raises_match ~msg:"a value not submitted" Exn.invalid_arg (fun () ->
+          Nx_device.Submission.wait s a (Nx_device.Submission.value s a));
+      raises_match ~msg:"a device not taken" Exn.invalid_arg (fun () ->
+          Nx_device.Submission.wait s b 0));
+  Domain.join domain;
+  settle [ a ];
+  let stuck = (fake ~name:"STUCK" ~timeout_ms:50 ()).dev in
+  ignore (submit stuck Fun.id);
+  raises_match ~msg:"a value that does not arrive" (lost stuck "hang detected")
+    (fun () ->
+      Nx_device.submit [ stuck ] ~touches:[] (fun s ->
+          Nx_device.Submission.wait s stuck 1));
+  equal ~msg:"nothing committed" int 1 (Nx_device.submitted stuck)
+
+let test_values () =
+  let a = (fake ~name:"A" ()).dev
+  and b = (fake ~name:"B" ()).dev
+  and c = (fake ~name:"C" ()).dev in
+  ignore (submit a Fun.id);
+  settle [ a ];
+  let hb = B.create host S.UInt8 8 in
+  let values =
+    Nx_device.submit [ b; a; b ] ~touches:[ hb ] (fun s ->
+        raises_match ~msg:"of a device outside it" Exn.invalid_arg (fun () ->
+            Nx_device.Submission.value s c);
+        List.map (Nx_device.Submission.value s) [ a; b ])
+  in
+  equal ~msg:"one more than each device's submitted value" (list int) [ 2; 1 ]
+    values;
+  equal ~msg:"committed" (list int) [ 2; 1 ]
+    (List.map Nx_device.submitted [ a; b ]);
+  let from_a, on_a = signal_later a 2 and from_b, on_b = signal_later b 1 in
+  Nx_device.synchronize host;
+  is_true ~msg:"the host waits for the work of both"
+    (Atomic.get from_a && Atomic.get from_b);
+  List.iter Domain.join [ on_a; on_b ]
+
+let test_submit_refusals () =
+  let a = (fake ()).dev in
+  let refused ~msg ds touches =
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        Nx_device.submit ds ~touches ignore)
+  in
+  refused ~msg:"no device" [] [];
+  refused ~msg:"the host" [ host ] [];
+  refused ~msg:"the disk" [ Nx_device.disk ] [];
+  refused ~msg:"a buffer on the disk" [ a ] [ create_file (temp_file ()) 8 ];
+  let b = B.create a S.UInt8 8 in
+  ignore (B.consume ~why:"consumed" b);
+  refused ~msg:"a dead buffer" [ a ] [ b ];
+  equal ~msg:"nothing submitted" int 0 (Nx_device.submitted a)
+
+let submissions =
+  group "submissions"
+    [
+      test
+        "wait for one pair per device of the submission and of its buffers, \
+         whatever is pending, and for the rest on the host"
+        test_waits;
+      test
+        "wait on the host for a device that signals in its own way, or whose \
+         signal word they cannot address"
+        test_host_waits;
+      test
+        "wait on the host for a value of a device they took, within its timeout"
+        test_wait;
+      test
+        "give each device the value after its submitted one, and commit them \
+         together"
+        test_values;
+      test "refuse no device, a host, the disk, and disk or dead buffers"
+        test_submit_refusals;
     ]
 
 (* Failures *)
@@ -1716,7 +1868,7 @@ let test_hang () =
   let waits = ref 0 in
   let d = (fake ~name:"HUNG" ~signal:(never waits) ()).dev in
   let b = B.create d S.UInt8 8 in
-  ignore (Nx_device.submit d ~touches:[] Fun.id);
+  ignore (submit d Fun.id);
   (match Nx_device.synchronize d with
   | () -> fail "synchronized a hung device"
   | exception e ->
@@ -1727,7 +1879,7 @@ let test_hang () =
       (fun () -> Nx_device.synchronize d);
       (fun () -> ignore (B.create d S.UInt8 1));
       (fun () -> ignore (B.borrow d b));
-      (fun () -> ignore (Nx_device.submit d ~touches:[] Fun.id));
+      (fun () -> ignore (submit d Fun.id));
       (fun () -> ignore (read b));
       (fun () -> Nx_device.set_budget d 0);
       (fun () -> Nx_device.free_cache d);
@@ -1737,7 +1889,7 @@ let test_hang () =
     (Nx_device.name d, Nx_device.arch d);
   equal ~msg:"budget, submitted, signaled" (triple int int int) (max_int, 1, 0)
     (Nx_device.budget d, Nx_device.submitted d, Nx_device.signaled d);
-  equal ~msg:"its timeline" int 2 (B.length (Nx_device.timeline d));
+  equal ~msg:"its signal word" int 1 (B.length (Nx_device.signal_word d));
   Gc.full_major ();
   equal ~msg:"allocated for good" int 8 (allocated d)
 
@@ -1746,7 +1898,7 @@ let test_scope () =
   let gpu = (fake ~name:"GPU" ~maps:true ~signal:(never waits) ()).dev in
   let shared = B.view (B.create host S.UInt8 page) ~offset:0 S.UInt8 8 in
   let mapped = borrow gpu shared in
-  ignore (Nx_device.submit gpu ~touches:[ host ] Fun.id);
+  ignore (submit gpu ~touches:[ mapped ] Fun.id);
   let failed = lost gpu "hang detected" in
   raises_match failed (fun () -> Nx_device.synchronize gpu);
   Nx_device.synchronize host;
@@ -1781,7 +1933,7 @@ let test_unmapped () =
   dropped (fun () -> borrow gpu shared);
   ignore (stats gpu);
   hung := true;
-  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
+  ignore (submit gpu Fun.id);
   raises_match (lost gpu "hang detected") (fun () -> Nx_device.synchronize gpu);
   write shared "abcd";
   equal string "abcd" (read shared)
@@ -1792,7 +1944,7 @@ let test_cut_short () =
   let shared = B.create host S.UInt8 page in
   dropped (fun () ->
       let b = borrow gpu shared in
-      Nx_device.submit gpu ~touches:[ host ] (fun _ -> Sys.opaque_identity b));
+      submit gpu ~touches:[ b ] (fun _ -> Sys.opaque_identity b));
   hung := true;
   let failed = lost gpu "hang detected" in
   raises_match failed (fun () -> Nx_device.synchronize gpu);
@@ -1819,7 +1971,7 @@ let test_hung_transfer () =
 let test_retained () =
   let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
   dropped (fun () -> B.create f.dev S.UInt8 600);
-  ignore (Nx_device.submit f.dev ~touches:[] Fun.id);
+  ignore (submit f.dev Fun.id);
   raises_match (lost f.dev "hang detected") (fun () ->
       Nx_device.free_cache f.dev);
   equal ~msg:"retained, cached and freed" (triple int int int) (600, 0, 0)
@@ -1909,8 +2061,13 @@ let test_faulting_callbacks () =
       Fun.protect
         ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
         (fun () ->
-          Nx_device.Profile.record d ~lane:"l" ~name:"n"
-            (B.create host S.UInt64 2);
+          let v =
+            Nx_device.submit [ d ] ~touches:[] (fun s ->
+                Nx_device.Submission.record s d ~lane:"l" ~name:"n"
+                  (B.create host S.UInt64 4);
+                Nx_device.Submission.value s d)
+          in
+          store_signal (B.address (Nx_device.signal_word d)) v;
           Nx_device.synchronize d))
 
 (* A free that faults partway: the memory freed before it is gone, and the
@@ -1947,7 +2104,7 @@ let failures =
         (fun () ->
           let signal = signal (fun _ -> failwith "page fault") in
           let d = (fake ~name:"FAULTY" ~signal ()).dev in
-          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          ignore (submit d Fun.id);
           let fault = lost d "page fault" in
           raises_match fault (fun () -> Nx_device.synchronize d);
           raises_match fault (fun () -> B.create d S.UInt8 1));
@@ -1983,8 +2140,8 @@ let test_sleep () =
   let sleeps = ref [] in
   let sleep ms = sleeps := ms :: !sleeps in
   let d = (fake ~name:"SLEEPY" ~sleep ()).dev in
-  let v = Nx_device.submit d ~touches:[] Fun.id in
-  let word = B.address (Nx_device.timeline d) in
+  let v = submit d Fun.id in
+  let word = B.address (Nx_device.signal_word d) in
   let late =
     Domain.spawn (fun () ->
         Unix.sleepf 0.7;
@@ -1996,11 +2153,9 @@ let test_sleep () =
   is_true ~msg:"for 200 ms each" (List.for_all (fun ms -> ms = 200) !sleeps);
   sleeps := [];
   let busy = (fake ~name:"BUSY" ~sleep ()).dev in
-  let word = B.address (Nx_device.timeline busy) in
+  let word = B.address (Nx_device.signal_word busy) in
   let v =
-    List.fold_left
-      (fun _ _ -> Nx_device.submit busy ~touches:[] Fun.id)
-      0 (List.init 5 Fun.id)
+    List.fold_left (fun _ _ -> submit busy Fun.id) 0 (List.init 5 Fun.id)
   in
   let progress =
     Domain.spawn (fun () ->
@@ -2013,7 +2168,7 @@ let test_sleep () =
   Domain.join progress;
   equal ~msg:"no sleep while the word moves" (list int) [] !sleeps;
   let still = (fake ~name:"STILL" ~sleep ~timeout_ms:500 ()).dev in
-  ignore (Nx_device.submit still ~touches:[] Fun.id);
+  ignore (submit still Fun.id);
   raises_match (lost still "hang detected") (fun () ->
       Nx_device.synchronize still);
   equal ~msg:"a last brief sleep before the hang" int 1 (List.hd !sleeps)
@@ -2026,17 +2181,17 @@ let finalize_child () =
     Printf.printf "%s finalized, failed %b\n" name failed
   in
   let healthy = (fake ~name:"HEALTHY" ~finalize:(say "HEALTHY") ()).dev in
-  ignore (Nx_device.submit healthy ~touches:[] Fun.id);
-  store_signal (B.address (Nx_device.timeline healthy)) 1;
+  ignore (submit healthy Fun.id);
+  store_signal (B.address (Nx_device.signal_word healthy)) 1;
   let broken =
     (fake ~name:"BROKEN" ~timeout_ms:50 ~finalize:(say "BROKEN") ()).dev
   in
-  ignore (Nx_device.submit broken ~touches:[] Fun.id);
+  ignore (submit broken Fun.id);
   (try Nx_device.synchronize broken with Nx_device.Lost _ -> ());
   let hanging =
     (fake ~name:"HANGING" ~timeout_ms:50 ~finalize:(say "HANGING") ()).dev
   in
-  ignore (Nx_device.submit hanging ~touches:[] Fun.id);
+  ignore (submit hanging Fun.id);
   ignore (fake ~name:"RAISING" ~finalize:(fun ~failed:_ -> failwith "boom") ());
   exit 0
 
@@ -2073,7 +2228,7 @@ let hooks =
         (fun () ->
           let sleep _ = failwith "page fault at 0x1000" in
           let d = (fake ~name:"FAULTED" ~sleep ()).dev in
-          ignore (Nx_device.submit d ~touches:[] Fun.id);
+          ignore (submit d Fun.id);
           let fault = lost d "page fault at 0x1000" in
           raises_match fault (fun () -> Nx_device.synchronize d);
           raises_match fault (fun () -> B.create d S.UInt8 1));
@@ -2146,19 +2301,24 @@ let within ?(slack = 0) ~outer inner =
 
 let main_lane = Printf.sprintf "domain %d" (Domain.self () :> int)
 
-(* Work on [d] that a domain does after 50 ms: it writes [t0] and [t1] into
-   [stamps], then signals once [d]'s earlier work has, as work completes in
+(* Work on [d], recorded as the spans [names] of [stamps], that a domain does
+   after 50 ms: it writes [t0] and [t1] into the stamp words of [stamps]'s two
+   slots, then signals once [d]'s earlier work has, as work completes in
    order. *)
-let stamped d stamps (t0, t1) =
-  let timeline = Nx_device.timeline d in
+let stamped d stamps names (t0, t1) =
+  let timeline = Nx_device.signal_word d in
   let word = B.address timeline
   and signal = B.bigarray Bigarray.int64 timeline in
   let ba = B.bigarray Bigarray.int64 stamps in
-  Nx_device.submit d ~touches:[] (fun v ->
+  Nx_device.submit [ d ] ~touches:[] (fun s ->
+      List.iter
+        (fun (lane, name) -> Nx_device.Submission.record s d ~lane ~name stamps)
+        names;
+      let v = Nx_device.Submission.value s d in
       Domain.spawn (fun () ->
           Unix.sleepf 0.05;
-          ba.{0} <- Int64.of_int t0;
-          ba.{1} <- Int64.of_int t1;
+          ba.{1} <- Int64.of_int t0;
+          ba.{3} <- Int64.of_int t1;
           while Int64.to_int signal.{0} < v - 1 do
             Domain.cpu_relax ()
           done;
@@ -2207,7 +2367,7 @@ let test_host_spans () =
 
 let test_off () =
   let d = (fake ()).dev in
-  let stamps = B.create host S.UInt64 2 in
+  let stamps = B.create host S.UInt64 4 in
   let f () = () in
   let words loop =
     let before = Gc.minor_words () in
@@ -2217,26 +2377,30 @@ let test_off () =
     Gc.minor_words () -. before
   in
   let idle = words ignore in
-  equal ~msg:"words allocated" float_exact idle
-    (words (fun () ->
-         P.span "x" f;
-         P.record d ~lane:"compute" ~name:"x" stamps;
-         ignore (Sys.opaque_identity (P.enabled ()))));
-  let v = Nx_device.submit d ~touches:[] Fun.id in
-  store_signal (B.address (Nx_device.timeline d)) v;
+  let v =
+    Nx_device.submit [ d ] ~touches:[] (fun s ->
+        equal ~msg:"words allocated" float_exact idle
+          (words (fun () ->
+               P.span "x" f;
+               Nx_device.Submission.record s d ~lane:"compute" ~name:"x" stamps;
+               ignore (Sys.opaque_identity (P.enabled ()))));
+        Nx_device.Submission.value s d)
+  in
+  store_signal (B.address (Nx_device.signal_word d)) v;
   let events = profiled (fun () -> Nx_device.synchronize d) in
   equal ~msg:"spans recorded before" (list span_) [] (spans events)
 
 let test_submitted () =
   let d = (fake ~name:"GPU" ()).dev in
-  let stamps = B.create host S.UInt64 2 and again = B.create host S.UInt64 2 in
+  let stamps = B.create host S.UInt64 4 and again = B.create host S.UInt64 4 in
   let events =
     profiled (fun () ->
-        let first = stamped d stamps (100, 250) in
-        P.record d ~lane:"compute" ~name:"replaced" stamps;
-        P.record d ~lane:"compute" ~name:"kernel" stamps;
-        let second = stamped d again (300, 420) in
-        P.record d ~lane:"copy" ~name:"next" again;
+        let first =
+          stamped d stamps
+            [ ("compute", "replaced"); ("compute", "kernel") ]
+            (100, 250)
+        in
+        let second = stamped d again [ ("copy", "next") ] (300, 420) in
         Nx_device.synchronize d;
         List.iter Domain.join [ first; second ])
   in
@@ -2251,19 +2415,19 @@ let test_resolve () =
   let log = ref [] in
   let resolve a =
     log := "resolve" :: !log;
-    store_signal a 7;
-    store_signal (Nativeint.add a 8n) 9
+    store_signal (Nativeint.add a 8n) 7;
+    store_signal (Nativeint.add a 24n) 9
   in
   let d =
     (fake ~resolve ~synchronized:(fun () -> log := "synchronized" :: !log) ())
       .dev
   in
-  let stamps = B.create host S.UInt64 2 in
+  let stamps = B.create host S.UInt64 4 in
   let events =
     profiled (fun () ->
-        ignore (Nx_device.submit d ~touches:[] Fun.id);
-        P.record d ~lane:"compute" ~name:"k" stamps;
-        store_signal (B.address (Nx_device.timeline d)) 1;
+        Nx_device.submit [ d ] ~touches:[] (fun s ->
+            Nx_device.Submission.record s d ~lane:"compute" ~name:"k" stamps);
+        store_signal (B.address (Nx_device.signal_word d)) 1;
         Nx_device.synchronize d)
   in
   equal
@@ -2367,11 +2531,11 @@ let test_program_events () =
 
 let test_failed_spans () =
   let d = (fake ~name:"HUNG" ~timeout_ms:50 ~signal:(never (ref 0)) ()).dev in
-  let stamps = B.create host S.UInt64 2 in
+  let stamps = B.create host S.UInt64 4 in
   let events =
     profiled (fun () ->
-        ignore (Nx_device.submit d ~touches:[] Fun.id);
-        P.record d ~lane:"compute" ~name:"lost" stamps;
+        Nx_device.submit [ d ] ~touches:[] (fun s ->
+            Nx_device.Submission.record s d ~lane:"compute" ~name:"lost" stamps);
         P.span "kept" ignore)
   in
   equal (list where)
@@ -2633,6 +2797,28 @@ let test_output () =
     | Arr l -> List.map (str "ph") l
     | _ -> [ "?" ])
 
+let test_record () =
+  let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
+  let stamps = B.create host S.UInt64 4 in
+  let events =
+    profiled (fun () ->
+        Nx_device.submit [ a ] ~touches:[] (fun s ->
+            raises_match ~msg:"a device outside the submission" Exn.invalid_arg
+              (fun () ->
+                Nx_device.Submission.record s b ~lane:"l" ~name:"n" stamps);
+            raises_match ~msg:"stamps of one slot" Exn.invalid_arg (fun () ->
+                Nx_device.Submission.record s a ~lane:"l" ~name:"n"
+                  (B.create host S.UInt64 2)));
+        raises (Failure "encode") (fun () ->
+            Nx_device.submit [ a ] ~touches:[] (fun s ->
+                Nx_device.Submission.record s a ~lane:"l" ~name:"dropped" stamps;
+                failwith "encode"));
+        settle [ a ];
+        Nx_device.synchronize a)
+  in
+  equal ~msg:"no span of a submission that raised" (list span_) []
+    (spans events)
+
 let profiles =
   group "profiles"
     [
@@ -2648,6 +2834,10 @@ let profiles =
          of the same stamps replacing the earlier"
         test_submitted;
       test "let the device resolve stamps before they are read" test_resolve;
+      test
+        "refuse a span of a device outside its submission or of one slot, and \
+         keep none of a submission that raised"
+        test_record;
       test
         "make each copy a span of the host, and each a copy queue ran a span \
          of its copy lane inside it"
@@ -2801,7 +2991,7 @@ let test_remote_gpu () =
   B.copy ~src:pinned ~dst:on;
   equal ~msg:"from its host memory" string (pattern 3 5000) (read on);
   let r = !(m.reads) in
-  ignore (Nx_device.submit gpu ~touches:[] Fun.id);
+  ignore (submit gpu Fun.id);
   (* The work never signals: the wait polls the far word until it times out. *)
   Nx_device.set_timeout gpu 50;
   raises_match (lost gpu "hang detected") (fun () -> Nx_device.synchronize gpu);
@@ -2839,9 +3029,12 @@ let test_machine_down () =
   raises_match (lost m.mhost down) (fun () -> B.copy ~src:near ~dst:hb);
   raises_match (lost m.mhost down) (fun () -> B.create m.mhost S.UInt8 8);
   raises_match (lost m.mhost down) (fun () -> B.copy ~src:near ~dst:on);
-  (* The GPU is lost once an operation of its own meets the machine. *)
-  raises_match (lost gpu down) (fun () ->
-      Nx_device.submit gpu ~touches:[] ignore);
+  (* The GPU is lost once an operation of its own meets the machine, which a
+     submission does not: the runtime publishes no submitted value. *)
+  let c = calls m in
+  ignore (submit gpu Fun.id);
+  equal ~msg:"a submission reaches no machine" int c (calls m);
+  raises_match (lost gpu down) (fun () -> Nx_device.synchronize gpu);
   let c = calls m in
   raises_match (lost gpu down) (fun () -> Nx_device.synchronize gpu);
   equal ~msg:"a lost device reaches its machine no more" int c (calls m);
@@ -3008,6 +3201,7 @@ let () =
          disks;
          refusals;
          timeline;
+         submissions;
          failures;
          hooks;
          profiles;

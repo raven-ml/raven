@@ -63,6 +63,15 @@ named:
   `cuda_bf16.hpp` declare (D17).
 - **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
   an infinity a NaN in fp8 and keeps it in bf8 (D16).
+- **CUDA (nx.cuda.device):** a device waits with the `Sleep` completion: the
+  runtime polls the signal word, and after 200 ms of stillness the sleep
+  queries both streams each millisecond, so a fault loses the device with the
+  driver's error and a kernel that never signals hangs after the timeout
+  (`test_cuda.ml`'s fault test, `test_cuda_hang.ml`).
+- **AMD and NV (nx.amd.device, nx.nv.device):** the queue and channel words
+  are buffers at the address the host and the GPU share, and the device's
+  own submissions (NV's engine binding and local memory) run through
+  `Nx_device.submit` (`test_amd_hw.ml`, `test_nv_hw.ml`).
 
 ## Coverage and mutation
 

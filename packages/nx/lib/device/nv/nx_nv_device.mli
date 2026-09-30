@@ -140,47 +140,55 @@ val v :
 (** [v i] is like {!get} but raises [Failure] with [get]'s message when the GPU
     cannot be opened. *)
 
-val interface : Nx_device.t -> interface
-(** [interface d] is the interface [d] was opened through.
-
-    Raises [Invalid_argument] if [d] is not an NV device. *)
-
 (** {1:low Low-level}
 
     For the libraries that submit work to an NV device, inside
     {!Nx_device.submit}: they write methods into pushbuffers and hand the
     pushbuffers to the device's channels. Every address below is the GPU's.
 
-    Work for the timeline value [v] first acquires, on its channel, the
-    semaphore at the signal word, the first word of {!Nx_device.timeline}, with
-    the 64-bit circular greater-or-equal test against [v - 1], and ends by
-    writing [v] into the signal word: with one 64-bit semaphore release, or with
-    a one-word release of its low 32 bits followed, when they are [0], by one of
-    its high 32 bits. Mid-write the word never reads above its old value, and a
-    late high word never takes it back. The values thus complete in order across
-    the channels. The device's own copies follow the same rule on the copy
-    channel. The memory the device allocates lies below [2{^40}]. *)
+    Work for the value [v] first acquires, on its channel, the semaphore at the
+    signal word ({!Nx_device.signal_word}), with the 64-bit circular
+    greater-or-equal test against [v - 1], and ends by writing [v] into the
+    signal word: with one 64-bit semaphore release, or with a one-word release
+    of its low 32 bits followed, when they are [0], by one of its high 32 bits.
+    Mid-write the word never reads above its old value, and a late high word
+    never takes it back. The values thus complete in order across the channels.
+    The device's own copies follow the same rule on the copy channel. Work waits
+    for another device's pair of {!Nx_device.Submission.waits} the same way, on
+    that device's signal word. The memory the device allocates lies below
+    [2{^40}], and a semaphore that records a timestamp writes 16 bytes, which
+    start on 16 bytes. *)
+
+type t
+(** The type for the channels and properties of a device. *)
+
+val of_device : Nx_device.t -> t option
+(** [of_device d] is the channels and properties of [d], if [d] is an NV device.
+*)
+
+val interface : t -> interface
+(** [interface n] is the interface the device was opened through. *)
 
 type channel = {
-  ring : nativeint;
-      (** The channel's GPFIFO: [entries] 64-bit entries, each naming a
-          pushbuffer segment. The host writes it at this address too. *)
-  entries : int;  (** The number of entries of the ring. *)
-  gp_get : nativeint;
+  ring : Nx_device.Buffer.t;
+      (** The channel's GPFIFO: 64-bit entries, each naming a pushbuffer
+          segment. The host writes it at its GPU address too. *)
+  gp_get : Nx_device.Buffer.t;
       (** The 32-bit index of the next entry the GPU fetches, which the GPU
           stores and the host reads. *)
-  gp_put : nativeint;
+  gp_put : Nx_device.Buffer.t;
       (** The 32-bit index after the last entry written, which the GPU reads. *)
-  put : nativeint;
+  put : Nx_device.Buffer.t;
       (** The 64-bit count of the entries ever written, which grows without
           wrapping. *)
-  doorbell : nativeint;  (** The 32-bit doorbell that wakes the channel. *)
+  doorbell : Nx_device.Buffer.t;
+      (** The 32-bit doorbell that wakes the channel. *)
   token : int;  (** The work submit token the doorbell takes. *)
 }
 (** The type for channels, the GPU's hardware queues. A writer, with the device
     taken:
     - waits until [gp_get] leaves room: at most [entries - 1] entries written
-      and not fetched;
+      and not fetched, where [entries] is the length of [ring];
     - writes its entry at [put mod entries]: the address of its segment, which
       lies below [2{^40}], and the segment's length in 32-bit words, in the
       entry format of the channel's class ({!props}[.gpfifo_class]);
@@ -204,24 +212,21 @@ type props = {
 }
 (** The type for the GPU's properties that its work depends on. *)
 
-type handles = {
-  compute : channel;  (** The compute channel, bound to [compute_class]. *)
-  copy : channel;
-      (** The copy channel, bound to [dma_class], on which
-          {!Nx_device.Buffer.copy} runs. *)
-  signal : nativeint;  (** The address of the timeline's signal word. *)
-  shared_window : nativeint;
-      (** The address at which kernels' shared memory appears. *)
-  local_window : nativeint;
-      (** The address at which kernels' local memory appears. *)
-  props : props;  (** The GPU's properties. *)
-}
-(** The type for the channels and properties of a device. *)
+val compute : t -> channel
+(** [compute n] is the compute channel, bound to [compute_class]. *)
 
-val handles : Nx_device.t -> handles
-(** [handles d] is the channels and properties of [d].
+val copy : t -> channel
+(** [copy n] is the copy channel, bound to [dma_class], on which
+    {!Nx_device.Buffer.copy} runs. *)
 
-    Raises [Invalid_argument] if [d] is not an NV device. *)
+val shared_window : t -> nativeint
+(** [shared_window n] is the address at which kernels' shared memory appears. *)
+
+val local_window : t -> nativeint
+(** [local_window n] is the address at which kernels' local memory appears. *)
+
+val props : t -> props
+(** [props n] is the GPU's properties. *)
 
 type kernel = {
   image : nativeint;  (** The address of the uploaded cubin. *)
@@ -243,11 +248,9 @@ type kernel = {
 }
 (** The type for the launch parameters of a kernel. *)
 
-val kernel : Nx_device.Program.t -> kernel
-(** [kernel p] is the launch parameters of [p]. Its {!Nx_device.Program.handle}
-    is its [entry].
-
-    Raises [Invalid_argument] if [p] is not loaded on an NV device. *)
+val kernel : Nx_device.Program.t -> kernel option
+(** [kernel p] is the launch parameters of [p], if [p] is loaded on an NV
+    device. Its {!Nx_device.Program.handle} is its [entry]. *)
 
 type local_memory = {
   address : nativeint;  (** The local memory's first byte. *)
@@ -256,19 +259,17 @@ type local_memory = {
 }
 (** The type for the local memory of a device's kernels. *)
 
-val local_memory : Nx_device.t -> int -> local_memory
-(** [local_memory d n] is [d]'s local memory for kernels of up to [n] bytes per
-    thread, grown if smaller: its address is set on the compute channel as work
-    on [d]'s timeline. Kernels that need none ([n <= 0]) get no memory, of 0
-    bytes at address 0, until a larger [n] allocates some. Memory it replaces
-    returns to [d] once unreachable. Call it before {!Nx_device.submit}, not
-    inside.
+val local_memory : t -> int -> local_memory
+(** [local_memory n bytes] is the device's local memory for kernels of up to
+    [bytes] bytes per thread, grown if smaller: its address is set on the
+    compute channel as work on the device's timeline. Kernels that need none
+    ([bytes <= 0]) get no memory, of 0 bytes at address 0, until a larger
+    [bytes] allocates some. Memory it replaces returns to the device once
+    unreachable. Call it before {!Nx_device.submit}, not inside.
 
-    Raises [Invalid_argument] if [d] is not an NV device, and
-    {!Nx_device.Out_of_memory} if [d] cannot allocate it. *)
+    Raises {!Nx_device.Out_of_memory} if the device cannot allocate it. *)
 
-val invalidate_caches : Nx_device.t -> unit
-(** [invalidate_caches d] writes back and invalidates [d]'s caches, so that the
-    next work starts with them cold, as timing kernels in isolation needs.
-
-    Raises [Invalid_argument] if [d] is not an NV device. *)
+val invalidate_caches : t -> unit
+(** [invalidate_caches n] writes back and invalidates the device's caches, so
+    that the next work starts with them cold, as timing kernels in isolation
+    needs. *)

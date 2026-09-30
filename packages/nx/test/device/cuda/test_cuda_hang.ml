@@ -17,9 +17,12 @@ external stall : nativeint -> nativeint -> nativeint -> int -> unit
 let test_hang () =
   if Nx_cuda_device.count () = 0 then skip ~reason:"no CUDA device" ();
   let d = Nx_cuda_device.v 0 in
-  let h = Nx_cuda_device.handles d in
+  let c = Option.get (Nx_cuda_device.of_device d) in
   Nx_device.set_timeout d 500;
-  Nx_device.submit d ~touches:[] (stall h.context h.compute h.signal);
+  Nx_device.submit [ d ] ~touches:[] (fun s ->
+      stall (Nx_cuda_device.context c) (Nx_cuda_device.compute c)
+        (B.address (Nx_device.signal_word d))
+        (Nx_device.Submission.value s d));
   let hung = function
     | Nx_device.Lost (d', why) -> d' == d && why = "hang detected"
     | _ -> false

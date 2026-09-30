@@ -19,12 +19,11 @@ external linux : unit -> bool = "caml_nx_nv_linux"
 type interface = Kernel | Pci
 
 type channel = {
-  ring : nativeint;
-  entries : int;
-  gp_get : nativeint;
-  gp_put : nativeint;
-  put : nativeint;
-  doorbell : nativeint;
+  ring : Nx_device.Buffer.t;
+  gp_get : Nx_device.Buffer.t;
+  gp_put : Nx_device.Buffer.t;
+  put : Nx_device.Buffer.t;
+  doorbell : Nx_device.Buffer.t;
   token : int;
 }
 
@@ -38,15 +37,6 @@ type props = {
   gpfifo_class : int;
   compute_class : int;
   dma_class : int;
-}
-
-type handles = {
-  compute : channel;
-  copy : channel;
-  signal : nativeint;
-  shared_window : nativeint;
-  local_window : nativeint;
-  props : props;
 }
 
 type kernel = {
@@ -87,7 +77,7 @@ type objects = {
   mutable debugger : int;
 }
 
-type nv = {
+type t = {
   index : int;
   machine : Nx_device.t; (* the host of the GPU's machine *)
   gpu : gpu;
@@ -105,17 +95,17 @@ type nv = {
   props : props;
   mutable ring : Pushbuf.ring option;
   mutable channels : (Pushbuf.channel * Pushbuf.channel) option;
-  mutable handles : handles option;
+  mutable public : (channel * channel) option;
+      (* the compute and copy channels, as their words' buffers *)
   local_lock : Mutex.t;
   mutable local : (Nx_device.Buffer.t * int) option;
   mutable dev : Nx_device.t option;
-  mutable word : Mmio.t option; (* the timeline's signal word *)
   mutable ready : bool; (* whether its open succeeded *)
 }
 
 (* Memory of a device and the peers it is mapped on, which their borrows and
    transfers add to while the owner is not taken. *)
-and alloc = { mem : mem; peers : nv list Atomic.t }
+and alloc = { mem : mem; peers : t list Atomic.t }
 
 let va = function Kernel_mem m -> m.va | Pci_mem m -> m.mapping.va
 let size = function Kernel_mem m -> m.size | Pci_mem m -> m.mapping.size
@@ -238,7 +228,7 @@ let keep n kind what bytes =
   m
 
 (* The opened GPUs, by the host of their machine and index there. *)
-let opened : ((Nx_device.t * int) * nv) list Atomic.t = Atomic.make []
+let opened : ((Nx_device.t * int) * t) list Atomic.t = Atomic.make []
 
 let nv_of d =
   List.find_map
@@ -536,9 +526,9 @@ let check_faults n =
 (* The sleep of a wait whose timeline stayed still for 200 ms: it checks for
    faults, then polls the signal word every millisecond for at most [ms], so
    that the check runs once a sleep, at most every 200 ms. *)
-let sleep n ms =
+let sleep n ~timeline ms =
   check_faults n;
-  let word = Option.get n.word in
+  let word = signal_word n timeline in
   let seen = Mmio.get64 word 0 and until = Nvdev.now_ms () + ms in
   while Mmio.get64 word 0 = seen && Nvdev.now_ms () < until do
     Unix.sleepf 0.001
@@ -675,14 +665,19 @@ let new_channel n ~keep ~taken ~buf ~put ~doorbell ~offset ~entries ~engine
     token = P.get t D.Work_submit_token.work_submit_token;
   }
 
-let public_channel (c : Pushbuf.channel) =
+(* A channel's words, as buffers of [dev] at addresses the host and the GPU
+   share. *)
+let public_channel dev (c : Pushbuf.channel) =
+  let buffer m s n =
+    let x = Mmio.address m in
+    Driver.buffer dev (Region.v ~host:x x (Mmio.length m)) s n
+  in
   {
-    ring = Mmio.address c.ring;
-    entries = c.entries;
-    gp_get = Mmio.address c.gp_get;
-    gp_put = Mmio.address c.gp_put;
-    put = Mmio.address c.put;
-    doorbell = Mmio.address c.doorbell;
+    ring = buffer c.ring Nx_dtype.Scalar.UInt64 c.entries;
+    gp_get = buffer c.gp_get Nx_dtype.Scalar.UInt32 1;
+    gp_put = buffer c.gp_put Nx_dtype.Scalar.UInt32 1;
+    put = buffer c.put Nx_dtype.Scalar.UInt64 1;
+    doorbell = buffer c.doorbell Nx_dtype.Scalar.UInt32 1;
     token = c.token;
   }
 
@@ -837,11 +832,10 @@ let setup ~taken ~machine ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes
       props;
       ring = None;
       channels = None;
-      handles = None;
+      public = None;
       local_lock = Mutex.create ();
       local = None;
       dev = None;
-      word = None;
       ready = false;
     }
   in
@@ -874,11 +868,12 @@ let setup ~taken ~machine ~index ~gpu ~(rm : Rm.t) ~instance ~doorbell ~classes
 (* Binds the engines and the memory windows on the channels. *)
 let bind_engines n =
   let d = Option.get n.dev in
-  let tl = Region.of_buffer (Nx_device.timeline d) in
+  let tl = Region.of_buffer (Nx_device.signal_word d) in
   let compute, copy = channels n in
   let hi v = (v lsr 32) land 0xffff_ffff and lo v = v land 0xffff_ffff in
-  Nx_device.submit d ~touches:[] (fun v ->
-      run n compute ~timeline:tl ~signal:Pushbuf.release v
+  Nx_device.submit [ d ] ~touches:[] (fun s ->
+      run n compute ~timeline:tl ~signal:Pushbuf.release
+        (Nx_device.Submission.value s d)
         (Pushbuf.methods Pushbuf.compute D.nvc6c0_set_object
            [ n.props.compute_class ]
         @ Pushbuf.methods Pushbuf.compute
@@ -887,8 +882,9 @@ let bind_engines n =
         @ Pushbuf.methods Pushbuf.compute
             D.nvc6c0_set_shader_shared_memory_window_a
             [ hi shared_window; lo shared_window ]));
-  Nx_device.submit d ~touches:[] (fun v ->
-      run n copy ~timeline:tl ~signal:Pushbuf.release v
+  Nx_device.submit [ d ] ~touches:[] (fun s ->
+      run n copy ~timeline:tl ~signal:Pushbuf.release
+        (Nx_device.Submission.value s d)
         (Pushbuf.methods Pushbuf.copy_engine D.nvc6c0_set_object
            [ n.props.dma_class ]))
 
@@ -907,18 +903,8 @@ let make_device n ?finalize () =
          })
   in
   n.dev <- Some dev;
-  n.word <- Some (range n (Nx_device.Buffer.address (Nx_device.timeline dev)) 8);
   let compute, copy = channels n in
-  n.handles <-
-    Some
-      {
-        compute = public_channel compute;
-        copy = public_channel copy;
-        signal = Nx_device.Buffer.address (Nx_device.timeline dev);
-        shared_window = Nativeint.of_int shared_window;
-        local_window = Nativeint.of_int local_window;
-        props = n.props;
-      };
+  n.public <- Some (public_channel dev compute, public_channel dev copy);
   bind_engines n
 
 (* A failed open gives back what it took, so that a later one can open the GPU:
@@ -1158,30 +1144,23 @@ let v ?host ?interface ?firmware i =
   | Ok d -> d
   | Error msg -> failwith msg
 
-let nv fn d =
-  match nv_of d with
-  | Some n -> n
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Nx_nv_device.%s: %s is not an NV device" fn
-           (Nx_device.name d))
-
-let interface d =
-  match (nv "interface" d).gpu with Kernel_gpu _ -> Kernel | Pci_gpu _ -> Pci
-
-let handles d = Option.get (nv "handles" d).handles
+let of_device = nv_of
+let interface n = match n.gpu with Kernel_gpu _ -> Kernel | Pci_gpu _ -> Pci
+let compute n = fst (Option.get n.public)
+let copy n = snd (Option.get n.public)
+let shared_window _ = Nativeint.of_int shared_window
+let local_window _ = Nativeint.of_int local_window
+let props n = n.props
 
 let kernel p =
-  let n = nv "kernel" (Nx_device.Program.device p) in
-  match
-    with_hw n (fun () ->
-        Hashtbl.find_opt n.kernels (Nx_device.Program.handle p))
-  with
-  | Some k -> k
-  | None -> invalid_arg "Nx_nv_device.kernel: the program is not an NV kernel"
+  Option.bind
+    (nv_of (Nx_device.Program.device p))
+    (fun n ->
+      with_hw n (fun () ->
+          Hashtbl.find_opt n.kernels (Nx_device.Program.handle p)))
 
-let local_memory d bytes =
-  let n = nv "local_memory" d in
+let local_memory n bytes =
+  let d = Option.get n.dev in
   Mutex.protect n.local_lock (fun () ->
       match n.local with
       | Some (b, per) when per >= bytes ->
@@ -1202,13 +1181,13 @@ let local_memory d bytes =
           let size = round_up (per_tpc * p.tpcs_per_gpc * p.gpcs) 0x20000 in
           let b = Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8 size in
           let addr = Nativeint.to_int (Nx_device.Buffer.address b) in
-          let timeline = Nx_device.timeline d in
-          let tl = Region.of_buffer timeline in
+          let tl = Region.of_buffer (Nx_device.signal_word d) in
           let hi v = (v lsr 32) land 0xffff_ffff
           and lo v = v land 0xffff_ffff in
           let compute, _ = channels n in
-          Nx_device.submit d ~touches:[] (fun v ->
-              run n compute ~timeline:tl ~signal:Pushbuf.release v
+          Nx_device.submit [ d ] ~touches:[] (fun s ->
+              run n compute ~timeline:tl ~signal:Pushbuf.release
+                (Nx_device.Submission.value s d)
                 (Pushbuf.methods Pushbuf.compute
                    D.nvc6c0_set_shader_local_memory_a
                    [ hi addr; lo addr ]
@@ -1218,8 +1197,7 @@ let local_memory d bytes =
           n.local <- Some (b, per);
           { address = Nativeint.of_int addr; bytes = size; per_thread = per })
 
-let invalidate_caches d =
-  let n = nv "invalidate_caches" d in
+let invalidate_caches n =
   match n.gpu with
   | Pci_gpu _ ->
       n.rm.control n.obj.subdevice
