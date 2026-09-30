@@ -2832,3 +2832,23 @@ returns and its host programs' source. It needs no GPU and no driver.
 | old: `unit/test_cuda_queue.ml` "compiles dependencies crossing compute and copy queues" | | `C › recorded cases › copy_in`, `host_split` |
 | old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
 | old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |
+
+## Jit
+
+`Jit` holds `jit_lower`, the part of `engine/jit.py` that is the compiler's.
+`CapturedJit`'s link and replay are `Tolk_next_engine.link` and `run`. The rest
+of the file is the `Tensor` surface, which rune's compiled call replaces
+(RFC 0012). Its cases start with the module's test pass. The parts of
+`engine/jit.py` that are not ported:
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `engine/jit.py` `prune_linear` | with `prune=True`, a capture runs once the calls that none of its inputs feeds, and replays the rest | dropped: rune never runs a capture's kernels once; the values they compute are captures, which the compiled function holds (RFC 0012) |
+| tinygrad: `engine/jit.py` `_copy_input`, `CapturedJit._written_uops` | a replay copies each input its program writes into fresh storage first | dropped: rune copies consumed storage that cannot lend before the run, and a program writes no other input (RFC 0012, Replaying) |
+| tinygrad: `engine/jit.py` `JitError` | the jit's exception | dropped: its raisers are `_copy_input` and the `Tensor` surface (arguments that differ from the capture's, nothing captured, a result that is no `Tensor`); rune's compiled call raises its own `Jit_error` (RFC 0012) |
+| tinygrad: `engine/jit.py` `CapturedJit.linear` | a captured schedule is linked once, outside the link cache | `Tolk_next_engine.link`: the engine keeps no link cache |
+| tinygrad: `engine/jit.py` `CapturedJit.__call__` | a replay runs the linked schedule on the call's inputs and variables, and at `DEBUG=1` says how many calls it runs | `Tolk_next_engine.run`; `EN › runs › at DEBUG=1, a run of ten calls says how many it runs`, `… of nine calls says nothing` |
+| tinygrad: `engine/jit.py` `CapturedJit._symbolic_ret` | results of symbolic shape are rebound to the call's variables | dropped: `Tensor` surface; rune wraps each result (RFC 0012) |
+| tinygrad: `engine/jit.py` `CapturedJit.free_intermediates` | the planned buffers are freed on demand | dropped: a linked schedule holds its arenas while it is reachable (`EN › runs › a linked schedule holds its storage while it is reachable`) |
+| tinygrad: `engine/jit.py` `CapturedJit.__reduce__`, `_TinyJit.__reduce__` | a captured jit pickles | dropped: no persistent cache (RFC 0012) |
+| tinygrad: `engine/jit.py` `_prepare_jit_inputs`, `_TinyJit`, `TinyJit` | the warm-up count, capture, argument checks and `Tensor` rebinding | dropped: `Tensor` surface; rune's compiled call traces directly and checks its keys (RFC 0012) |
