@@ -738,14 +738,15 @@ val exec_alu :
     (default [true]). Integers are unbounded before truncation. Out-of-domain
     values follow IEEE: [log2 0.] is [-inf], [sqrt] of a negative is NaN,
     [1. /. 0.] is an infinity of the operand's sign, [sin] of an infinity is
-    NaN, and an overflowing [exp2] or [pow] is the infinity IEEE gives.
-    {!Op.Fdiv} is IEEE division: a zero divisor gives an infinity of the
-    quotient's sign, and [0. /. 0.] is NaN. {!Op.Trunc} of a float is IEEE's, a
-    float of its operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if
-    [x < y] and [x] otherwise, as compiled code computes it, so a NaN wins only
-    as the first operand. A binary operation on [`Invalid] is [`Invalid].
-    {!Op.Where} is the branch it picks, [`Invalid] included; its condition must
-    not be [`Invalid].
+    NaN, and an overflowing [exp2] or [pow] is the infinity IEEE gives. The NaN
+    of an operation none of whose operands is NaN is {!Dtype.nan}, whatever the
+    host gives. {!Op.Fdiv} is IEEE division: a zero divisor gives an infinity of
+    the quotient's sign, and [0. /. 0.] is NaN. {!Op.Trunc} of a float is
+    IEEE's, a float of its operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is
+    [y] if [x < y] and [x] otherwise, as compiled code computes it, so a NaN
+    wins only as the first operand. A binary operation on [`Invalid] is
+    [`Invalid]. {!Op.Where} is the branch it picks, [`Invalid] included; its
+    condition must not be [`Invalid].
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
     arguments do not fit it, as for a shift by a negative count, which has no

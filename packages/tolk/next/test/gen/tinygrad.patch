@@ -265,7 +265,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..afd8f92 100644
+index 2842d7e..c6bdbf0 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -353,6 +353,15 @@ index 2842d7e..afd8f92 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
+@@ -1420,6 +1444,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+     return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
+   if op in GroupOp.Binary and Invalid in operands: return Invalid
+   alu = python_alu[op](*operands)
++  # the nan of an invalid operation is the canonical one, whatever the host's FPU makes of it
++  if isinstance(alu, float) and math.isnan(alu) and not any(isinstance(x, float) and math.isnan(x) for x in operands): alu = math.nan
+   if truncate_output and (truncate_fxn:=truncate.get(dtype)) is not None: return truncate_fxn(alu)
+   return alu
+ 
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
 index 2eb2e96..537f8aa 100644
 --- a/tinygrad/uop/symbolic.py

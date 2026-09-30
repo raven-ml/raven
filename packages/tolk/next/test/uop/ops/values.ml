@@ -63,6 +63,36 @@ let exec_alu =
         (fun () ->
           equal const (f Float.nan) (alu Float32 Op.Max [ f Float.nan; f 1. ]);
           equal const (f 1.) (alu Float32 Op.Max [ f 1.; f Float.nan ]));
+      test
+        "an invalid operation's NaN is the canonical positive quiet NaN, \
+         whatever the host gives (D27)" (fun () ->
+          let inf = Float.infinity in
+          (* The bits, since NaNs compare equal as values. x86 gives
+             0xfff8000000000000. *)
+          let bits = function
+            | `Float x -> Printf.sprintf "%Lx" (Int64.bits_of_float x)
+            | c -> str Dtype.pp_const c
+          in
+          List.iter
+            (fun dt ->
+              let nan = bits (Dtype.truncate dt (f Dtype.nan) :> Dtype.const) in
+              List.iter
+                (fun (o, args) ->
+                  equal ~msg:(str Op.pp o) string nan (bits (alu dt o args)))
+                Op.
+                  [
+                    (Add, [ f inf; f (-.inf) ]);
+                    (Sub, [ f inf; f inf ]);
+                    (Mul, [ f 0.; f inf ]);
+                    (Fdiv, [ f 0.; f 0. ]);
+                    (Fdiv, [ f inf; f (-.inf) ]);
+                    (Sqrt, [ f (-1.) ]);
+                    (Log2, [ f (-1.) ]);
+                    (Sin, [ f inf ]);
+                    (Pow, [ f (-2.); f 0.5 ]);
+                  ])
+            Dtype.[ Float32; Float64 ];
+          equal string "7ff8000000000000" (bits (f Dtype.nan)));
       test "a shift by a negative count has no value" (fun () ->
           List.iter
             (fun o ->

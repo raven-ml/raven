@@ -824,12 +824,18 @@ the Exclusions of `README.md`.
   canonical. So folding `bitcast(bitcast(0x7d01, half), uint16)` gives
   `0x7d01`, where tinygrad gives `0x7e00`, and a negative float32 NaN's bits
   survive a fold, where tinygrad makes them `0x7fc00000`. A NaN an operation
-  makes from other values is `Dtype.nan`, tinygrad's `math.nan`.
+  makes from other values is `Dtype.nan`, tinygrad's `math.nan`, whatever the
+  host's FPU gives, so that folding does not depend on the host: `exec_alu`
+  makes the NaN of an invalid operation (`inf - inf`, `0 * inf`, `0 / 0`, a
+  square root or logarithm of a negative) canonical, where x86 gives a
+  negative NaN, and so does the patched tinygrad's.
 - **Reason:** (b), as D20's: a kernel's bitcast and nx's are byte
   reinterpretations, so a bitcast that rune folds must keep the bits as they
   do, and a rewrite must keep a graph's value.
 - **Pinned by:** `Tolk_next.Ops › identity › NaN constants of different bits
-  are different nodes`; `Tolk_next.Symbolic › symbolic_simple › casts › a
+  are different nodes`; `Tolk_next.Ops › exec_alu › an invalid operation's
+  NaN is the canonical positive quiet NaN, whatever the host gives (D27)`,
+  which compares bits and fails on an x86 host without the canonical NaN; `Tolk_next.Symbolic › symbolic_simple › casts › a
   bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
   with the reference interpreter before and after `simplify`;
   `Tolk_next.Dtype › const › const keeps the bits of every 8- and 16-bit float

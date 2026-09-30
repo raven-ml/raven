@@ -3552,7 +3552,17 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
         match if Value.to_bool (as_value c) then x else y with
         | `Invalid -> `Invalid
         | #Dtype.value as v -> truncate v)
-    | _ -> truncate (python_alu op (List.map as_value args))
+    | _ ->
+        let args = List.map as_value args in
+        let is_nan = function `Float f -> Float.is_nan f | _ -> false in
+        (* The NaN of an invalid operation is the canonical one, whatever the
+           host's FPU makes of it: x86 gives a negative NaN. *)
+        let v =
+          match python_alu op args with
+          | v when is_nan v && not (List.exists is_nan args) -> `Float Dtype.nan
+          | v -> v
+        in
+        truncate v
 
 let sym_infer (s : sint) vars =
   match s with
