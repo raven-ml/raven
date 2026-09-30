@@ -4,7 +4,7 @@ open Dtypes
 
 let x ?(slot = 0) dt = Ops.param slot dt
 let int n = `Int (Z.of_int n)
-let eval ?vars ?params u = Interpreter.eval ?vars ?params u
+let eval ?vars ?params ?buffers u = Interpreter.eval ?vars ?params ?buffers u
 let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
@@ -137,5 +137,136 @@ let commits =
                (Ops.maximum (Ops.int (-1)) x8)));
     ]
 
+let reductions =
+  let r = Ops.range ~axis_type:Reduce (Int 4) [ 0 ]
+  and s = Ops.range ~axis_type:Reduce (Int 3) [ 1 ]
+  and o = Ops.range (Int 5) [ 2 ] in
+  let over rs op u = Ops.reduce u op rs in
+  let int32 u = Ops.cast u Dtype.Int32 in
+  group "reductions"
+    [
+      test "a sum adds its value at each value of its range" (fun () ->
+          equal const (int 6) (eval (over [ r ] Add (int32 r))));
+      test "a product and a maximum fold their operation" (fun () ->
+          let one_more = int32 Ops.O.(r + int 1) in
+          equal const (int 24) (eval (over [ r ] Mul one_more));
+          equal const (int 4) (eval (over [ r ] Max one_more)));
+      test "a reduction over two ranges runs over every pair" (fun () ->
+          equal const (int 66)
+            (eval (over [ r; s ] Add (int32 Ops.O.((r * int 3) + s)))));
+      test "a reduction reads the ranges it runs inside" (fun () ->
+          equal const (int 10)
+            (eval
+               ~vars:[ ("r2", int 1) ]
+               (over [ r ] Add (int32 Ops.O.(r + o)))));
+      test "a reduction binds its range, whatever vars binds" (fun () ->
+          equal const (int 6)
+            (eval ~vars:[ ("r0", int 3) ] (over [ r ] Add (int32 r))));
+      test "a reduction over an empty range is its identity" (fun () ->
+          let empty = Ops.range ~axis_type:Reduce (Int 0) [ 3 ] in
+          equal const (int 0) (eval (over [ empty ] Add (int32 empty)));
+          equal const (int (-2147483648))
+            (eval (over [ empty ] Max (int32 empty))));
+      test "a range's end may be a variable" (fun () ->
+          let n = Ops.range ~axis_type:Reduce (Sym (var "n")) [ 4 ] in
+          equal const (int 10)
+            (eval ~vars:[ ("n", int 5) ] (over [ n ] Add (int32 n))));
+      test "a reduction of an invalid value is invalid" (fun () ->
+          equal const `Invalid
+            (eval (over [ r ] Add (Ops.valid (int32 r) Ops.O.(r < int 2)))));
+      test "a reduction over a node that is not a range is refused" (fun () ->
+          rejects (fun () ->
+              eval
+                (Ops.v
+                   ~src:[ int32 r; Ops.O.(r + int 1) ]
+                   ~arg:(Reduce { op = Add; num_axes = 0 })
+                   Reduce)));
+      test "an integer sum past its type overflows" (fun () ->
+          let big = Ops.int ~dtype:Dtype.Int8 100 in
+          is_true (Interpreter.overflows (over [ r ] Add big));
+          is_false (Interpreter.overflows (over [ r ] Add (int32 r))));
+    ]
+
+let storage =
+  let table = Ops.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
+  let elements = [ (0, Array.map int [| 10; 11; 12; 13 |]) ] in
+  let i = var "i" in
+  let at v u = eval ~vars:[ ("i", int v) ] ~buffers:elements u in
+  group "storage"
+    [
+      test "an index reads the element at its index" (fun () ->
+          equal const (int 12) (at 2 (Ops.index table [ i ])));
+      test "a load is the value it loads" (fun () ->
+          equal const (int 13) (at 3 (Ops.load (Ops.index table [ i ]) [])));
+      test "an index at an invalid index is invalid" (fun () ->
+          equal const `Invalid
+            (at 7 (Ops.index table [ Ops.valid i Ops.O.(i < int 4) ])));
+      test "an index outside the storage is refused" (fun () ->
+          rejects (fun () -> at 4 (Ops.index table [ i ])));
+      test "storage without elements is refused" (fun () ->
+          rejects (fun () ->
+              eval ~vars:[ ("i", int 0) ] (Ops.index table [ i ])));
+    ]
+
+let kernels =
+  let out = Ops.param ~shape:[ Int 16 ] 0 Dtype.Int32 in
+  let r = Ops.range (Int 4) [ 0 ] and s = Ops.range (Int 2) [ 1 ] in
+  let store ?gate index value =
+    Ops.store ?gate (Ops.index out [ index ]) value
+  in
+  let int32 u = Ops.cast u Dtype.Int32 in
+  let writes u = Interpreter.writes u in
+  let write = triple Windtrap.int Windtrap.int value in
+  group "writes"
+    [
+      test "a store writes at each value of the ranges it runs inside"
+        (fun () ->
+          equal (list write)
+            [ (0, 0, int 0); (0, 2, int 1); (0, 4, int 2); (0, 6, int 3) ]
+            (writes (Ops.end_ (store Ops.O.(r * int 2) (int32 r)) [ r ])));
+      test "a store inside two ranges writes at every pair" (fun () ->
+          let u = Ops.end_ (store Ops.O.((r * int 2) + s) (int32 s)) [ r; s ] in
+          equal Windtrap.int 8 (List.length (writes u)));
+      test "a store where its index is invalid writes nothing" (fun () ->
+          let index = Ops.valid r Ops.O.(r < int 1) in
+          equal (list write)
+            [ (0, 0, int 0) ]
+            (writes (Ops.end_ (store index (int32 r)) [ r ])));
+      test "a store of an invalid value writes nothing" (fun () ->
+          let value = Ops.valid (int32 r) Ops.O.(r < int 1) in
+          equal (list write)
+            [ (0, 0, int 0) ]
+            (writes (Ops.end_ (store r value) [ r ])));
+      test "a store where its gate fails writes nothing" (fun () ->
+          let u = Ops.end_ (store ~gate:Ops.O.(r < int 1) r (int32 r)) [ r ] in
+          equal (list write) [ (0, 0, int 0) ] (writes u));
+      test "a store repeated with the same value is one write" (fun () ->
+          equal (list write)
+            [ (0, 3, int 7) ]
+            (writes
+               (Ops.end_
+                  (store (Ops.int 3) (Ops.int ~dtype:Dtype.Int32 7))
+                  [ r ])));
+      test "a store's value may read storage and reduce" (fun () ->
+          let table = Ops.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
+          let total = Ops.reduce (Ops.index table [ s ]) Add [ s ] in
+          equal (list write)
+            [ (0, 0, int 5) ]
+            (Interpreter.writes
+               ~buffers:[ (1, Array.map int [| 2; 3; 9; 9 |]) ]
+               (store (Ops.int 0) total)));
+    ]
+
 let () =
-  exit (run "Interpreter" [ interpreter; leaves; invalid; overflows; commits ])
+  exit
+    (run "Interpreter"
+       [
+         interpreter;
+         leaves;
+         invalid;
+         overflows;
+         commits;
+         reductions;
+         storage;
+         kernels;
+       ])

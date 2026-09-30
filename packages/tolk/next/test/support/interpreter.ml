@@ -63,6 +63,7 @@ let node ~check vars params values u =
       match List.assoc_opt slot params with
       | Some v -> (v :> Dtype.const)
       | None -> invalid_arg (Printf.sprintf "parameter %d has no value" slot))
+  | Load, _, v :: _ -> v
   | Where, _, `Invalid :: _ -> `Invalid
   | op, _, src when op <> Op.Where && List.exists is_invalid src -> `Invalid
   | Cast, _, [ (#Dtype.value as v) ] -> held ~check (Ops.dtype u) v
@@ -75,19 +76,98 @@ let node ~check vars params values u =
       | `Invalid -> `Invalid)
   | op, _, _ -> invalid_arg (Format.asprintf "cannot evaluate %a" Op.pp op)
 
-let fold ~check ~vars ~params u =
-  let values = Ops.Tbl.create 64 in
-  List.iter
-    (fun n -> Ops.Tbl.replace values n (node ~check vars params values n))
-    (Ops.toposort u);
-  Ops.Tbl.find values u
+(* [over eval vars ranges f acc] folds [f] over the bindings of [vars] extended
+   by each value of [ranges], the last varying fastest, where [eval] gives the
+   value of a range's end under a binding. *)
+let rec over eval vars ranges f acc =
+  match ranges with
+  | [] -> f vars acc
+  | r :: rs -> (
+      if Ops.op r <> Op.Range then
+        invalid_arg "cannot evaluate a loop over a node that is not a range";
+      match eval vars (Ops.nth r 0) with
+      | `Int n ->
+          let name = Option.get (name r) and acc = ref acc in
+          for i = 0 to Z.to_int n - 1 do
+            acc := over eval ((name, `Int (Z.of_int i)) :: vars) rs f !acc
+          done;
+          !acc
+      | _ -> invalid_arg "a range's end is not an integer")
 
-let eval ?(vars = []) ?(params = []) u =
-  fold ~check:(fun _ _ -> ()) ~vars ~params u
+(* A reduction and an index evaluate their sources themselves: a reduction at
+   each value of its ranges, an index without reading its storage. *)
+let rec fold ~check ~vars ~params ~buffers u =
+  let values = Ops.Tbl.create 64 in
+  let rec value n =
+    match Ops.Tbl.find_opt values n with
+    | Some v -> v
+    | None ->
+        let v =
+          match Ops.op n with
+          | Reduce -> reduction ~check ~vars ~params ~buffers n
+          | Index -> read ~check ~vars ~params ~buffers n
+          | _ ->
+              List.iter (fun s -> ignore (value s)) (Ops.src n);
+              node ~check vars params values n
+        in
+        Ops.Tbl.replace values n v;
+        v
+  in
+  value u
+
+and reduction ~check ~vars ~params ~buffers red =
+  let op =
+    match Ops.arg red with
+    | Reduce { op; num_axes = 0 } -> op
+    | _ -> invalid_arg "cannot evaluate a reduction of axes"
+  in
+  let dt = Ops.dtype red in
+  let value, ranges =
+    match Ops.src red with
+    | v :: rs -> (v, rs)
+    | [] -> invalid_arg "a reduction has no value"
+  in
+  let combine vars (acc : Dtype.const) =
+    match (acc, fold ~check ~vars ~params ~buffers value) with
+    | (#Dtype.value as acc), (#Dtype.value as v) -> (
+        match Ops.exec_alu ~truncate_output:false op dt [ acc; v ] with
+        | #Dtype.value as v -> held ~check dt v
+        | `Invalid -> `Invalid)
+    | _ -> `Invalid
+  in
+  let eval vars u = fold ~check ~vars ~params ~buffers u in
+  over eval vars ranges combine (Ops.identity_element op dt)
+
+and read ~check ~vars ~params ~buffers index =
+  match Ops.src index with
+  | [ storage; i ] -> (
+      let slot = storage_slot storage in
+      let elements =
+        match List.assoc_opt slot buffers with
+        | Some elements -> elements
+        | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
+      in
+      match fold ~check ~vars ~params ~buffers i with
+      | `Invalid -> `Invalid
+      | `Int i when Z.(geq i zero && lt i (of_int (Array.length elements))) ->
+          (elements.(Z.to_int i) :> Dtype.const)
+      | c ->
+          invalid_arg
+            (Format.asprintf "index %a is outside buffer %d" Dtype.pp_const c
+               slot))
+  | _ -> invalid_arg "cannot evaluate an index by more than one index"
+
+and storage_slot u =
+  match Ops.arg u with
+  | Param { slot; size = Some _; _ } -> slot
+  | _ -> invalid_arg "cannot evaluate an index of a node that is not storage"
+
+let eval ?(vars = []) ?(params = []) ?(buffers = []) u =
+  fold ~check:(fun _ _ -> ()) ~vars ~params ~buffers u
 
 exception Overflow
 
-let overflows ?(vars = []) ?(params = []) u =
+let overflows ?(vars = []) ?(params = []) ?(buffers = []) u =
   let check dt (v : Dtype.value) =
     match v with
     | `Int z when Dtype.is_int dt && dt <> Dtype.Weak_int ->
@@ -95,6 +175,50 @@ let overflows ?(vars = []) ?(params = []) u =
         if Z.lt z lo || Z.gt z hi then raise Overflow
     | _ -> ()
   in
-  match fold ~check ~vars ~params u with
+  match fold ~check ~vars ~params ~buffers u with
   | _ -> false
   | exception Overflow -> true
+
+(* Kernels *)
+
+let compare_write (s0, i0, v0) (s1, i1, v1) =
+  match Int.compare s0 s1 with
+  | 0 -> (
+      match Int.compare i0 i1 with 0 -> Dtype.Value.compare v0 v1 | c -> c)
+  | c -> c
+
+let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
+  let check _ _ = () in
+  let eval vars u = fold ~check ~vars ~params ~buffers u in
+  let store s =
+    let dst, value, gate =
+      match Ops.src s with
+      | [ dst; value ] -> (dst, value, None)
+      | [ dst; value; gate ] -> (dst, value, Some gate)
+      | _ -> invalid_arg "a store has a destination, a value and a gate"
+    in
+    let slot, index =
+      match (Ops.op dst, Ops.src dst) with
+      | Index, [ storage; index ] -> (storage_slot storage, index)
+      | _ -> invalid_arg "cannot evaluate a store through more than one index"
+    in
+    let inside = Ops.ranges s in
+    let ranges =
+      List.filter
+        (fun n -> Ops.op n = Op.Range && Ops.Nodes.mem n inside)
+        (Ops.toposort s)
+    in
+    let write vars acc =
+      let opened =
+        match gate with
+        | None -> true
+        | Some g -> Dtype.equal_const (eval vars g) (`Bool true)
+      in
+      match (eval vars index, eval vars value) with
+      | `Int i, (#Dtype.value as v) when opened -> (slot, Z.to_int i, v) :: acc
+      | _ -> acc
+    in
+    over eval vars ranges write []
+  in
+  let stores = List.filter (fun n -> Ops.op n = Op.Store) (Ops.toposort u) in
+  List.sort_uniq compare_write (List.concat_map store stores)
