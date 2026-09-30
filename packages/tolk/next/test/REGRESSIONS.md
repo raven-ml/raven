@@ -2153,7 +2153,8 @@ across a workgroup's threads. `MU › multi_pm › values` states, on each
 recorded program `Tensors` can run, that the rewrite keeps what the program
 writes, and `MU › multi_pm › laws` that a generated sharded value, after a few
 operations, holds on each device the value computed whole; its values draw
-grids of 2 by 2 and 2 by 4 devices. The other groups state one rule each.
+grids of 2 by 2 and 2 by 4 devices, and it leaves out the programs tinygrad's
+rewrite refuses. The other groups state one rule each.
 `test_multi_early` runs under `LATE_ALLREDUCE=0`, which the library reads once,
 in a process of its own, so that each branch of that setting is tested by the
 process that takes it. Every mutant of `multi.ml` the suites reach is killed;
@@ -2172,6 +2173,7 @@ and by the law's first example.
 |---|---|---|
 | tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_half, test_allreduce_cast_bf16 | a sum of a half or bfloat16 cast up crosses the devices in 16 bits, and in 32 without `ALLREDUCE_CAST` | `MU › multi_pm › recorded › programs › allreduce_cast_multi.golden`, `allreduce_no_cast_multi.golden`, `allreduce_cast_bfloat16_multi.golden`; `MU › multi_pm › reductions ›` "a value cast up from a half crosses the devices as a half", "… from a bfloat16 …", "without allreduce_cast, it crosses in the type it is reduced in" |
 | tinygrad: null/test_allreduce.py::TestAllreduceCast::test_allreduce_cast_float32_noop | | `MU › … › allreduce_cast_float_multi.golden` |
+| tinygrad: schedule/multi.py:24 `lower_broadcast_copy` on a selected shard of a product with zero (no upstream test) | refused: tinygrad HEAD raises "mselect must be on tuple device, getting None" when a product with zero, then a cast or a reduction, is selected, since simplifying the copy of the shard folds it to a constant | `MU › multi_pm › laws ›` "a shard of a product with zero cast to a float is refused, as in tinygrad", "a shard of a sum of a product with zero is refused, as in tinygrad"; the law leaves these programs out |
 | tinygrad: null/test_multitensor.py::TestMultiRamUsage (13 tests) | bytes each device holds | dropped here: memory is Memory's section and the executor's |
 | tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_replicated_scalar, test_multi_add_replicated_scalar | a sharded value times a scalar on every device stays sharded | `MU › … › add_replicated_scalar_multi.golden`, its value; `MU › multi_pm › arithmetic › a scalar source is kept as it is` |
 | tinygrad: null/test_multitensor.py::TestMultiScalarALU::test_multi_times_call_scalar | a per-device scalar from a call | `MU › multi_pm › stores and calls › a call of a compiled function passes its arguments' shards`; the value is the executor's |
