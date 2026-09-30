@@ -208,6 +208,10 @@ codegen/codegen/int8_metal_narrowed.golden
 codegen/codegen/invalid_lanes_clang.golden
 codegen/codegen/invalid_lanes_cuda.golden
 codegen/codegen/invalid_lanes_hip.golden
+codegen/codegen/invalid_lanes_int8_clang.golden
+codegen/codegen/invalid_lanes_int8_cuda.golden
+codegen/codegen/invalid_lanes_int8_hip.golden
+codegen/codegen/invalid_lanes_int8_metal.golden
 codegen/codegen/invalid_lanes_metal.golden
 codegen/codegen/kernels.golden
 codegen/codegen/layernorm_clang.golden

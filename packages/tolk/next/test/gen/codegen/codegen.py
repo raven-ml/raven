@@ -412,6 +412,16 @@ def invalid_lanes():
     return out.index(UOp.const(0)).store(value.reduce(r0, r1, arg=Ops.ADD) + 0.0).sink(arg=KernelInfo())
 
 
+
+def invalid_lanes_int8():
+    """rune's fold of an int8 [2; 1] with output size [1], kernel [2], dilation [2] and padding [(1, 1)], summed in
+    uint: every window lies in the padding, so the unrolled sum folds to a constant that its lanes still index (D53)."""
+    out, x = UOp.param(0, dtypes.char, 1, device="CPU"), UOp.param(1, dtypes.char, 2, device="CPU")
+    r = UOp.range(4, 0, AxisType.REDUCE)
+    j = r * 3 + 1
+    value = ((r < 3) & (j % 5 < 1)).where(x.index((r < 3).where(j // 5, UOp.const(Invalid))), UOp.const(0))
+    return out.index(UOp.const(0)).store(value.cast(dtypes.uint).reduce(r, arg=Ops.ADD).cast(dtypes.char)).sink(arg=KernelInfo())
+
 def dependent_loop_bound():
     # null/test_linearizer_rewrite.py::test_dependent_loop_bound
     buf, out, counts = UOp.param(0, dtypes.int, 16), UOp.param(1, dtypes.int, 4), UOp.param(2, dtypes.int, 4)
@@ -661,6 +671,7 @@ HAND = {
     "reduce_shapeless_const_unroll": reduce_shapeless_const_unroll,
     "sqrt_of_int": sqrt_of_int,
     "invalid_lanes": invalid_lanes,
+    "invalid_lanes_int8": invalid_lanes_int8,
     # runtime/test_custom_kernel.py
     "custom_arange": lambda: custom(empty(16), fxn=custom_arange),
     "custom_eye": lambda: custom(empty(8, 8), fxn=custom_eye),

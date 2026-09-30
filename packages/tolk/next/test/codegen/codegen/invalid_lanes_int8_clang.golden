@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.char [0, 2]
+4 Ops.CAST dtypes.char [1] dtypes.char
+5 Ops.STORE dtypes.void [3, 4]
+6 Ops.SINK dtypes.void [5] KernelInfo(name="r_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UNROLL)),)) tag=1
+7 Ops.SINK dtypes.void [5] KernelInfo(name="r_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UNROLL)),), estimates=Estimates(lds=1, mem=1)) tag=1
+8 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6]
+9 Ops.SOURCE dtypes.void [] "\nvoid r_4(signed char* restrict data0_1) {\n  *(data0_1+0) = ((signed char)(0));\n}\n"
+10 Ops.PROGRAM dtypes.void [7, 8, 9] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+11 Ops.SINK dtypes.void [6, 10]
+

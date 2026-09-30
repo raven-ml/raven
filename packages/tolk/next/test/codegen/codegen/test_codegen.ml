@@ -1595,6 +1595,23 @@ let accumulators =
 
 (* Lanes of a scalar (D53) *)
 
+(* A read of a lane by a constant, from a value without lanes: a scalar, or a
+   constant. *)
+let reads_a_lane_of_a_scalar u =
+  let constant c = is Const c || (is Cast c && is Const (Ops.nth c 0)) in
+  is Index u
+  &&
+  match Ops.src u with
+  | [ x; c ] ->
+      constant c
+      && Ops.shape_opt x = Some []
+      && Ops.addrspace x = Some Dtype.Alu
+  | _ -> false
+
+let reads_no_lane_of_a_scalar row =
+  equal (list Uops.uop) []
+    (List.filter reads_a_lane_of_a_scalar (instructions row))
+
 let lanes =
   group "lanes of a scalar (D53)"
     [
@@ -1604,6 +1621,14 @@ let lanes =
         "on the host, the program of a vector folded to a scalar writes what \
          its kernel writes"
         (runs_as_interpreted "invalid_lanes");
+      test "a sum folded to a constant is rendered as that constant on Metal"
+        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_int8_metal"));
+      test
+        "on the host, the program of a sum folded to a constant writes what \
+         its kernel writes"
+        (runs_as_interpreted "invalid_lanes_int8");
+      group "no program reads a lane of a scalar or a constant"
+        (per_row ~only:compiles reads_no_lane_of_a_scalar);
     ]
 
 (* Errors *)

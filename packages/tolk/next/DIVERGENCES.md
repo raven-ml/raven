@@ -1369,14 +1369,21 @@ the Exclusions of `README.md`.
   value: a scalar stands for every lane. A reduce unrolled into lanes indexes
   each lane of its source, and a fold may leave that source a scalar: when
   every lane of an index is `Invalid`, the stack folds to one `Invalid`, the
-  gated load to a scalar `0`, and the value to a scalar. tinygrad keeps the
-  lane accesses, and renders a scalar's component, which Metal reads as
-  `alu1.x` of a `float`, and C as `alu1[0]`, which no compiler takes.
+  gated load to a scalar `0`, and the value to a scalar, or a whole sum to a
+  constant. tinygrad keeps the lane accesses, and renders a scalar's
+  component: Metal reads `alu1.x` of a `float`, and C writes `alu1[0]` and
+  `0u[0]`, which no compiler takes.
 - **Reason:** (b). rune lowers `Nx.combine_patches` to such a kernel when
   every window lies in the padding (output `[1; 1]`, kernel `[1; 2]`,
-  dilation `[1; 2]`, padding `[(0, 0); (1, 1)]`), and compiles it for Metal.
+  dilation `[1; 2]`, padding `[(0, 0); (1, 1)]` of a float32 `[2; 1]`, or
+  output `[1]`, kernel `[2]`, dilation `[2]`, padding `[(1, 1)]` of an int8
+  `[2; 1]`), and compiles it for the host and Metal.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `lanes of a
   scalar (D53) › a vector folded to a scalar is rendered as that scalar on
-  Metal` and `› on the host, the program of a vector folded to a scalar writes
-  what its kernel writes`; and the case `invalid_lanes` of every target in
-  `stages`, from the patched tinygrad.
+  Metal`, `› on the host, the program of a vector folded to a scalar writes
+  what its kernel writes`, `› a sum folded to a constant is rendered as that
+  constant on Metal`, `› on the host, the program of a sum folded to a
+  constant writes what its kernel writes` and, on every case, `› no program
+  reads a lane of a scalar or a constant`; and the cases `invalid_lanes` and
+  `invalid_lanes_int8` of every target in `stages`, from the patched
+  tinygrad.
