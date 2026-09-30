@@ -152,7 +152,7 @@ module Target = struct
   let empty =
     { device = ""; renderer = ""; arch = ""; interface = ""; indices = "" }
 
-  let parse s =
+  let of_string s =
     let too_many sep s =
       Error (Printf.sprintf "too many '%c' in target string: '%s'" sep s)
     in
@@ -188,14 +188,16 @@ module Target = struct
     done;
     String.sub s 0 !n
 
-  let to_string t =
+  let pp ppf t =
     let fst = join [ t.interface; t.indices ] in
-    (if fst = "" then "" else fst ^ "+") ^ join [ t.device; t.renderer; t.arch ]
+    if fst <> "" then Format.fprintf ppf "%s+" fst;
+    Format.pp_print_string ppf (join [ t.device; t.renderer; t.arch ])
 end
 
 let parse_targets s =
   let add t acc =
-    Result.bind acc (fun ts -> Result.map (fun t -> t :: ts) (Target.parse t))
+    Result.bind acc (fun ts ->
+        Result.map (fun t -> t :: ts) (Target.of_string t))
   in
   List.fold_right add (String.split_on_char ';' s) (Ok [])
 

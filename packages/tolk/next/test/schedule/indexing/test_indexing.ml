@@ -564,7 +564,7 @@ let count op u = List.length (all op u)
 let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
 
 let range_of r =
-  (Ops.axis_id r, Ops.axis_type r, Z.to_int (Ops.to_int (Ops.nth r 0)))
+  (Ops.axis_id r, Ops.axis_type r, Z.to_int (Ops.to_z (Ops.nth r 0)))
 
 let ranges_of u = List.sort compare (List.map range_of (all Range u))
 let ranges_witness = list (triple (list int) axis_type int)

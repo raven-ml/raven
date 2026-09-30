@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk_next
 
-let cpu = Result.get_ok (Helpers.Target.parse "CPU:CLANG:x86_64,x86-64")
+let cpu = Result.get_ok (Helpers.Target.of_string "CPU:CLANG:x86_64,x86-64")
 let vector = Renderer.v cpu
 let scalar = Renderer.v ~supports_float4:false cpu
 
@@ -27,7 +27,7 @@ let value k =
 
 let store_at buf i = Ops.store (at buf (Ops.int i)) (value i)
 let stores buf offsets = Ops.sink (List.map (store_at buf) offsets)
-let int_of u = Z.to_int (Ops.to_int u)
+let int_of u = Z.to_int (Ops.to_z u)
 
 (* The accesses of [sink], each as the constant offset it starts at and the
    number of elements it reads or writes. *)
@@ -409,14 +409,18 @@ let readme =
           equal Uops.uop u (simplify u));
       test "a DSP renderer merges as any other: aligned runs of four at most"
         (fun () ->
-          let dsp = Renderer.v (Result.get_ok (Helpers.Target.parse "DSP")) in
+          let dsp =
+            Renderer.v (Result.get_ok (Helpers.Target.of_string "DSP"))
+          in
           equal runs
             [ (1, 1); (2, 2); (4, 4); (8, 1) ]
             (accesses Op.Load
                (coalesce ~renderer:dsp
                   (loads buf (List.init 8 (fun k -> k + 1))))));
       test "a DSP renderer leaves 8-bit integers alone" (fun () ->
-          let dsp = Renderer.v (Result.get_ok (Helpers.Target.parse "DSP")) in
+          let dsp =
+            Renderer.v (Result.get_ok (Helpers.Target.of_string "DSP"))
+          in
           let char = Ops.param ~shape:[ Int 64 ] 2 Int8 in
           equal runs
             [ (0, 1); (1, 1); (2, 1); (3, 1) ]

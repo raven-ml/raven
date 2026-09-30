@@ -393,7 +393,8 @@ val sum_acc : t -> t
     least {!Uint32} for the unsigned integers, at least {!Int32} for {!Bool} and
     the other integers, and for floats at least the data type named by the
     environment variable [SUM_DTYPE], read once, when it is first needed, or
-    {!Float32} if it is unset.
+    {!Float32} if it is unset. rune's lowering takes the accumulator of a sum
+    reduction from it.
 
     Raises [Invalid_argument] if [dt] is {!Void}, or if [SUM_DTYPE] does not
     name a data type. *)

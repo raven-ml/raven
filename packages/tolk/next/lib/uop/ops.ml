@@ -414,10 +414,8 @@ let equal_estimates (e0 : estimates) (e1 : estimates) =
 
 let equal_kernel_info (k0 : kernel_info) (k1 : kernel_info) =
   String.equal k0.name k1.name
-  && List.equal (fun a b -> Opt.compare a b = 0) k0.applied_opts k1.applied_opts
-  && Option.equal
-       (List.equal (fun a b -> Opt.compare a b = 0))
-       k0.opts_to_apply k1.opts_to_apply
+  && List.equal Opt.equal k0.applied_opts k1.applied_opts
+  && Option.equal (List.equal Opt.equal) k0.opts_to_apply k1.opts_to_apply
   && Option.equal equal_estimates k0.estimates k1.estimates
   && Int.equal k0.beam k1.beam
 
@@ -568,7 +566,8 @@ let node op src arg tag dtype id =
   }
 
 (* The whole-specification check that construction runs when the setting [SPEC]
-   is 2 or more; [Spec] installs it. *)
+   is 2 or more; [Spec] installs it. Nodes built while the library is
+   initialised, before [Spec] installs it, are not checked. *)
 let construction_check : (t -> unit) option Atomic.t = Atomic.make None
 
 (* Data types *)
@@ -890,7 +889,7 @@ and repr_program_info (p : program_info) =
     (repr_tuple (List.map repr_sint p.local_size))
     (repr_tuple (List.map repr p.vars))
     (ints p.globals) (ints p.outs) (ints p.ins)
-    (Helpers.Target.to_string p.target)
+    (Format.asprintf "%a" Helpers.Target.pp p.target)
 
 and repr_hcq_kernel (k : hcq_kernel) =
   let ints l = repr_tuple (List.map string_of_int l) in
@@ -1085,8 +1084,8 @@ let identity_element op dt : Dtype.const =
 module Value = Dtype.Value
 
 (* Division rounding toward zero ([cdiv]) or down ([floordiv]), and its
-   remainder, as the helpers of the same names: a zero divisor gives the
-   quotient zero, a float one if an operand is a float. *)
+   remainder: a zero divisor gives the quotient zero, a float one if an operand
+   is a float. *)
 let divide op ~toward_zero (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   let zero = Value.of_int 0 in
   let abs v = if Value.(v < zero) then Value.(~-v) else v in
@@ -1738,7 +1737,7 @@ let to_bool u =
   | `Bool b -> b
   | v -> invalid_argf "%s is not a boolean" (repr_const v)
 
-let to_int u =
+let to_z u =
   match eval u ~kinds:(Dtype.Weak_int :: Dtype.ints) ~what:"an integer" with
   | (`Int _ | `Bool _) as v -> Value.to_z v
   | v -> invalid_argf "%s is not an integer" (repr_const v)
@@ -2798,7 +2797,7 @@ let element_size x =
 let nbytes u =
   match numel u with
   | Int n -> n * element_size u
-  | Sym s -> Z.to_int (to_int s) * element_size u
+  | Sym s -> Z.to_int (to_z s) * element_size u
 
 let contiguous x =
   if List.mem x.dtype Dtype.weaks then x
@@ -3358,7 +3357,6 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
   | _ -> (u, identity_element op u.dtype)
 
 (* Multisets of nodes, in order of first insertion. *)
-(* Multisets of nodes, in order of first insertion. *)
 let add_count k counts t =
   match List.assq_opt t counts with
   | Some _ ->
@@ -3464,9 +3462,6 @@ let bitwise op fb fz (x : Dtype.value) (y : Dtype.value) : Dtype.value =
       let a, b = int_operands op x y in
       `Int (fz a b)
 
-(* Division and remainder on numbers: rounding toward zero ([cdiv]) or down
-   ([floordiv]), [0] on a zero divisor, the remainder completing the
-   division. *)
 let python_alu op (args : Dtype.value list) : Dtype.value =
   let unary f =
     match args with

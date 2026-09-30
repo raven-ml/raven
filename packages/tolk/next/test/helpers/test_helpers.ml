@@ -28,7 +28,7 @@ let no_target =
 
 let parse_targets s =
   List.map
-    (fun t -> require_ok ~pp:Format.pp_print_string (Target.parse t))
+    (fun t -> require_ok ~pp:Format.pp_print_string (Target.of_string t))
     (String.split_on_char ';' s)
 
 (* An integer drawn across the edges of [int]. *)
@@ -385,7 +385,10 @@ let word v = S (v, Fun.id)
 
 let settings =
   [
-    S (dev, fun ts -> String.concat ";" (List.map Target.to_string ts));
+    S
+      ( dev,
+        fun ts ->
+          String.concat ";" (List.map (Format.asprintf "%a" Target.pp) ts) );
     number debug;
     number beam;
     switch noopt;
@@ -689,7 +692,7 @@ let gen_target =
 
 let parsed_like_tinygrad cell =
   let input = cell "input" in
-  match Target.parse input with
+  match Target.of_string input with
   | Error e when raised (cell "device") -> contains ~sub:(cell "names") e
   | Error e -> failf "tinygrad parses %S, parse fails with %S" input e
   | Ok t ->
@@ -703,23 +706,24 @@ let parsed_like_tinygrad cell =
             indices = cell "indices";
           }
         t;
-      equal string (cell "to_string") (Target.to_string t)
+      equal string (cell "to_string") (Format.asprintf "%a" Target.pp t)
 
 let target_like_tinygrad cell =
   context
     [ B (dev, parse_targets (cell "dev")) ]
     (fun () ->
       equal string (cell "target")
-        (Target.to_string (target ~arch:(cell "arch") (cell "device"))))
+        (Format.asprintf "%a" Target.pp
+           (target ~arch:(cell "arch") (cell "device"))))
 
 let targets =
   group "Target"
     [
-      as_tinygrad "parse reads a target as tinygrad does" "targets.golden"
+      as_tinygrad "of_string reads a target as tinygrad does" "targets.golden"
         parsed_like_tinygrad;
-      prop "parse reads back what to_string writes" gen_target
-        (Law.round_trip target_w string Target.to_string (fun s ->
-             require_ok ~pp:Format.pp_print_string (Target.parse s)));
+      prop "of_string reads back what pp writes" gen_target
+        (Law.round_trip target_w string (Format.asprintf "%a" Target.pp)
+           (fun s -> require_ok ~pp:Format.pp_print_string (Target.of_string s)));
       as_tinygrad
         ~key:[ "dev"; "device"; "arch" ]
         "target picks a device's target as tinygrad does"
@@ -736,7 +740,7 @@ let targets =
             [ B (dev, parse_targets "PCI:2,0+NV:CUDA:sm_89") ]
             (fun () ->
               equal string "PCI:2,0+NV:CUDA:sm_89"
-                (Target.to_string (target ~arch:"sm_90" "NV"))));
+                (Format.asprintf "%a" Target.pp (target ~arch:"sm_90" "NV"))));
     ]
 
 (* Integers and lists *)

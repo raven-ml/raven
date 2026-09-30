@@ -20,7 +20,9 @@ type t =
   | Tc of { axis : int; tc_select : int; tc_opt : int; use_tc : int }
       (** Use a tensor core on the reduction at [axis]: [tc_select] picks the
           core ([-1] the first that fits), [tc_opt] how far to relax its
-          requirements, from 0 to 2, and [use_tc] how to use it, 1 or 2. *)
+          requirements, from 0 to 2, and [use_tc] how to use it, 1 or 2.
+          [tc_opt] and [use_tc] carry the levels of the settings
+          {!Helpers.tc_opt} and {!Helpers.use_tc} as the settings hold them. *)
   | Split of { axis : int; amount : int; target : target; top : bool }
       (** Split [amount] out of [axis] into a new axis for [target], taken from
           the outer end if [top]. An [amount] of [0] takes the whole axis. *)
@@ -30,6 +32,9 @@ type t =
 
 val axis : t -> int
 (** [axis o] is the axis [o] acts on. *)
+
+val equal : t -> t -> bool
+(** [equal o0 o1] is [true] iff [o0] and [o1] are the same optimisation. *)
 
 val compare : t -> t -> int
 (** [compare o0 o1] orders optimisations by kind ({!Tc}, {!Split}, {!Padto},

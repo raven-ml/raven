@@ -54,7 +54,7 @@ let gated_load valid idx =
 (* Inspection *)
 
 let ranges u = List.filter (fun n -> Ops.op n = Range) (Ops.toposort u)
-let size r = Z.to_int (Ops.to_int (Ops.nth r 0))
+let size r = Z.to_int (Ops.to_z (Ops.nth r 0))
 let sizes u = List.sort compare (List.map size (ranges u))
 
 let count op u =

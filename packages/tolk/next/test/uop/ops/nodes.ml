@@ -479,8 +479,8 @@ let identity =
                    { (Ops.program_info_of_sink (Ops.sink [])) with target })
               Op.Program
           in
-          let cpu = Result.get_ok (Helpers.Target.parse "CPU") in
-          let cuda = Result.get_ok (Helpers.Target.parse "CUDA") in
+          let cpu = Result.get_ok (Helpers.Target.of_string "CPU") in
+          let cuda = Result.get_ok (Helpers.Target.of_string "CUDA") in
           is_false (program cpu == program cuda);
           is_false
             (Ops.range ~axis_type:Reduce (Int 4) [ 0 ]

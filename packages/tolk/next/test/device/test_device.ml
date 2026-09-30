@@ -7,7 +7,7 @@ let refuses ?substring f = raises_match (Exn.invalid_arg ?substring) f
 (* Targets *)
 
 let target_of_string s =
-  require_ok ~pp:Format.pp_print_string (Helpers.Target.parse s)
+  require_ok ~pp:Format.pp_print_string (Helpers.Target.of_string s)
 
 let targets_of_cell s = List.map target_of_string (String.split_on_char ';' s)
 let under dev f = Helpers.context [ B (Helpers.dev, targets_of_cell dev) ] f
@@ -22,7 +22,8 @@ let renderer_named = function
 let renderer_w =
   Testable.make
     ~pp:(fun ppf (r : Renderer.t) ->
-      Format.fprintf ppf "%s for %s" r.name (Helpers.Target.to_string r.target))
+      Format.fprintf ppf "%s for %s" r.name
+        (Format.asprintf "%a" Helpers.Target.pp r.target))
     ~equal:(fun (r0 : Renderer.t) r1 ->
       r0.name = r1.name && r0.target = r1.target)
 
@@ -37,7 +38,8 @@ let message_of_renderer name target =
   match renderer_named name target with
   | exception Invalid_argument m -> m
   | _ ->
-      failf "%s makes a renderer for %s" name (Helpers.Target.to_string target)
+      failf "%s makes a renderer for %s" name
+        (Format.asprintf "%a" Helpers.Target.pp target)
 
 let selected_like_tinygrad cell =
   under (cell "dev") (fun () ->
@@ -70,7 +72,7 @@ let selection =
         ];
       test "renders for the setting's target of the device" (fun () ->
           equal string "PCI:1+AMD:HIP:gfx942"
-            (Helpers.Target.to_string
+            (Format.asprintf "%a" Helpers.Target.pp
                (chosen ~dev:"CPU::x86_64,x86-64;PCI:1+AMD:HIP:gfx942"
                   ~arch:"gfx1100" "AMD")
                  .target));
@@ -127,7 +129,7 @@ let named_never_parsed =
 
 (* Memoisation *)
 
-let pp_target ppf t = Format.pp_print_string ppf (Helpers.Target.to_string t)
+let pp_target = Helpers.Target.pp
 
 (* The settings and architectures a query draws from, so that queries often
    share a target and often differ by one field. *)
@@ -264,7 +266,8 @@ let shape_of_cell cell =
 let compiled_like_tinygrad cell =
   let elf = elf_of (cell "program") in
   equal string (cell "name") elf.name;
-  equal string (cell "target") (Helpers.Target.to_string elf.target);
+  equal string (cell "target")
+    (Format.asprintf "%a" Helpers.Target.pp elf.target);
   equal int (int_of_cell (cell "params")) (List.length elf.signature);
   equal int (int_of_cell (cell "lib_bytes")) (String.length elf.lib)
 
@@ -457,7 +460,7 @@ let of_program =
             (Elf.of_program (program ~name:"a_b." ~globals:[] ~vars:[] [])).name);
       test "takes the target of the program, whatever rendered it" (fun () ->
           equal string "PCI:1+AMD:HIP:gfx1100"
-            (Helpers.Target.to_string
+            (Format.asprintf "%a" Helpers.Target.pp
                (Elf.of_program (program ~globals:[ 0 ] ~vars:[] [ buffer 0 ]))
                  .target));
       test "compiles a program of no parameter to an empty signature" (fun () ->

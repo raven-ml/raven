@@ -227,7 +227,7 @@ let view u =
   let bytes = match Ops.op u with Bitcast -> Ops.nth u 0 | _ -> u in
   match Ops.src bytes with
   | [ arena; offset; length ] when Ops.op bytes = Shrink ->
-      Some (arena, Z.to_int (Ops.to_int offset), Z.to_int (Ops.to_int length))
+      Some (arena, Z.to_int (Ops.to_z offset), Z.to_int (Ops.to_z length))
   | _ -> None
 
 let lifetimes d =

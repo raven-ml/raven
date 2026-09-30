@@ -103,10 +103,9 @@ module Tiny_elf = struct
 
   let pp ppf e =
     Format.fprintf ppf
-      "TinyELF(lib=%a, name=%a, target=%s, signature=%a, profile_key=%a)"
-      Ops.pp_arg (bytes e.lib) Ops.pp_arg (string e.name)
-      (Helpers.Target.to_string e.target)
-      (pp_tuple pp_param) e.signature (pp_literal bytes) e.profile_key
+      "TinyELF(lib=%a, name=%a, target=%a, signature=%a, profile_key=%a)"
+      Ops.pp_arg (bytes e.lib) Ops.pp_arg (string e.name) Helpers.Target.pp
+      e.target (pp_tuple pp_param) e.signature (pp_literal bytes) e.profile_key
 
   let iter_sig ?(offset = 0) signature =
     let place offset p =

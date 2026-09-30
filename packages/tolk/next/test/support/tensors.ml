@@ -28,7 +28,7 @@ let device_ranges u =
     (fun r acc -> if Ops.axis_type r = Device then r :: acc else acc)
     (Ops.ranges u) []
 
-let count r = Z.to_int (Ops.to_int (Ops.nth r 0))
+let count r = Z.to_int (Ops.to_z (Ops.nth r 0))
 
 let on_device k u =
   Ops.ssimplify

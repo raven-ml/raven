@@ -13,7 +13,7 @@ let var ?(dtype = Dtype.Int32) name lo hi =
 
 let v ?dtype name lo hi = var ?dtype name (Z.of_int lo) (Z.of_int hi)
 let param ?(slot = 0) dt = Ops.param slot dt
-let target = Result.get_ok (Helpers.Target.parse "")
+let target = Result.get_ok (Helpers.Target.of_string "")
 
 (* [everything] widens to any type; [nothing] has no type to widen to. *)
 let everything = Renderer.v target

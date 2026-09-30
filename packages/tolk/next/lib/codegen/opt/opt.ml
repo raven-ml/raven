@@ -34,6 +34,8 @@ let compare o0 o1 =
       | c -> c)
   | c -> c
 
+let equal o0 o1 = compare o0 o1 = 0
+
 let target_name = function
   | Upcast -> "AxisType.UPCAST"
   | Unroll -> "AxisType.UNROLL"

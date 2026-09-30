@@ -11,7 +11,7 @@ let v ?(dtype = Dtype.Weak_int) name lo hi =
   Ops.variable ~dtype name (i lo) (i hi)
 
 let ints = List.map (fun n -> Ops.Int n)
-let target = Result.get_ok (Helpers.Target.parse "")
+let target = Result.get_ok (Helpers.Target.of_string "")
 
 let renderer ?global_max ?local_max ?global_prod_max () =
   Renderer.v ?global_max ?local_max ?global_prod_max target
@@ -28,7 +28,7 @@ let specials idxs =
   |> List.sort_uniq Ops.compare
   |> List.map (fun u ->
       match (Ops.arg u, Ops.src u) with
-      | String name, [ size ] -> (name, Ops.to_int size)
+      | String name, [ size ] -> (name, Ops.to_z size)
       | _ -> failf "%a is not a hardware index" Ops.pp u)
   |> List.sort (fun (n0, _) (n1, _) -> String.compare n0 n1)
 

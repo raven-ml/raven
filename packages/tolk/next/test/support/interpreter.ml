@@ -213,10 +213,10 @@ and read ~check ~vars ~params ~buffers index =
       | `Invalid, _ | _, `Invalid -> `Invalid
       | `Int o, `Int k -> (
           (match length with
-          | Some n when not Z.(geq k zero && lt k (Ops.to_int n)) ->
+          | Some n when not Z.(geq k zero && lt k (Ops.to_z n)) ->
               invalid_arg
                 (Format.asprintf "lane %a is outside a vector of %a" Z.pp_print
-                   k Z.pp_print (Ops.to_int n))
+                   k Z.pp_print (Ops.to_z n))
           | _ -> ());
           match Z.add o k with
           | e when Z.(geq e zero && lt e (of_int (Array.length elements))) ->
@@ -274,7 +274,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
       | Index, [ storage; index ] -> (storage_slot storage, index, [ value ])
       | Shrink, [ storage; offset; length ]
         when Ops.op value = Op.Stack
-             && Z.equal (Ops.to_int length)
+             && Z.equal (Ops.to_z length)
                   (Z.of_int (List.length (Ops.src value))) ->
           (storage_slot storage, offset, Ops.src value)
       | Shrink, _ ->

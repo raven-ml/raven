@@ -113,22 +113,22 @@ module Target : sig
   }
   (** The type for targets. *)
 
-  val parse : string -> (t, string) result
-  (** [parse s] parses [s], written
+  val of_string : string -> (t, string) result
+  (** [of_string s] reads [s], written
       [[INTERFACE[:INDICES]+]DEVICE[:RENDERER[:ARCH]]]. [DEVICE] and [RENDERER]
       are uppercased; the other fields are kept as written. It is an error if
       [s] has more than one [+], naming [s], or if the part after the [+] has
       more than two [:], naming that part. *)
 
-  val to_string : t -> string
-  (** [to_string t] is [t] written as {!parse} reads it, without trailing
+  val pp : Format.formatter -> t -> unit
+  (** [pp] formats a target as {!of_string} reads it, without trailing
       separators. *)
 end
 
 val dev : Target.t list Context_var.t
 (** [dev] is the targets requested for devices, from the variable [DEV]: a
-    [;]-separated list of targets in {!Target.parse}'s syntax. It defaults to a
-    single empty target.
+    [;]-separated list of targets in {!Target.of_string}'s syntax. It defaults
+    to a single empty target.
 
     Raises [Invalid_argument] at initialization if [DEV] holds a malformed
     target. *)
@@ -278,8 +278,8 @@ val allow_tf32 : bool Context_var.t
     NVIDIA devices, from [ALLOW_TF32]. Defaults to [false]. *)
 
 val scache : int Context_var.t
-(** [scache] is whether schedules are cached in memory, from [SCACHE]: [0]
-    not at all, [1] or more in memory. Defaults to [1]. *)
+(** [scache] is whether schedules are cached in memory, from [SCACHE]: [0] not
+    at all, [1] or more in memory. Defaults to [1]. *)
 
 val disallow_broadcast : bool Context_var.t
 (** [disallow_broadcast] makes an elementwise operation on operands of different

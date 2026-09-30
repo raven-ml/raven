@@ -20,7 +20,7 @@
 
     {b Construction.} {!v} builds any node; the constructors below build the
     common ones with the defaults and checks of each operation. Arithmetic
-    promotes its operands to a common data type and shape
+    promotes its operands to a common data type, and has their broadcast shape
     ({!module-type-Elementwise}).
 
     {b Shapes.} A node's shape is a list of {!sint}: integers, or integer nodes
@@ -386,7 +386,7 @@ val v : ?src:t list -> ?arg:arg -> ?tag:Tag.t -> Op.t -> t
     a [Const], {!Op.Cast} and {!Op.Bitcast} a [Dtype], {!Op.Param}, {!Op.Buffer}
     and {!Op.Alloc} a [Param], {!Op.Custom}, {!Op.Customi} and {!Op.Ins} a
     [Code]. When the setting {!Helpers.spec} is 2 or more, the node is also
-    checked against the whole specification.
+    checked against the whole specification, the first time it is built.
 
     Raises [Invalid_argument] if no type can be derived, as for a {!Op.Where}
     whose condition is not boolean, or if the check fails. *)
@@ -652,8 +652,8 @@ val to_bool : t -> bool
     Raises [Invalid_argument] if [u] is not boolean or its simplification has
     more than one possible value. *)
 
-val to_int : t -> Z.t
-(** [to_int u] is the value of the integer node [u], as {!to_bool}. *)
+val to_z : t -> Z.t
+(** [to_z u] is the value of the integer node [u], as {!to_bool}. *)
 
 val to_float : t -> float
 (** [to_float u] is the value of the float node [u], as {!to_bool}. *)
@@ -1340,9 +1340,10 @@ val custom_kernel : t list -> (t list -> t) -> t list
 (** Elementwise operations.
 
     Nodes ({!Ops}) and patterns ({!Upat}) share them. On nodes, a binary
-    operation first promotes its operands: to their least upper type
-    ({!Dtype.least_upper}), a weak constant staying weak, and to a common shape.
-    On patterns, each builds the pattern of the node the operation builds. *)
+    operation first promotes its operands to their least upper type
+    ({!Dtype.least_upper}), a weak constant staying weak; the node's shape is
+    their broadcast shape ({!broadcast_shape}). On patterns, each builds the
+    pattern of the node the operation builds. *)
 module type Elementwise = sig
   type t
 

@@ -487,17 +487,17 @@ let bounds_group =
 let resolving =
   group "resolve"
     [
-      test "to_int, to_float and to_bool read a literal" (fun () ->
-          equal z (Z.of_int 5) (Ops.to_int (Ops.int 5));
+      test "to_z, to_float and to_bool read a literal" (fun () ->
+          equal z (Z.of_int 5) (Ops.to_z (Ops.int 5));
           equal float_exact 1.5 (Ops.to_float (Ops.float 1.5));
           is_true (Ops.to_bool (Ops.bool true)));
-      test "to_int reads a typed constant and an integer sum of constants"
+      test "to_z reads a typed constant and an integer sum of constants"
         (fun () ->
-          equal z (Z.of_int 4) (Ops.to_int (Ops.int ~dtype:Int32 4));
+          equal z (Z.of_int 4) (Ops.to_z (Ops.int ~dtype:Int32 4));
           equal z (Z.of_int 11)
-            (Ops.to_int Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
+            (Ops.to_z Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
           equal z (Z.of_int 2)
-            (Ops.to_int Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
+            (Ops.to_z Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
       test "to_bool decides comparisons of constants" (fun () ->
           is_true (Ops.to_bool Ops.O.(int 4 < int 7));
           is_true (Ops.to_bool Ops.O.(int 4 <= int 4));
@@ -525,10 +525,10 @@ let resolving =
           rejects (fun () -> Ops.to_bool Ops.O.(v < v + int 1));
           rejects (fun () -> Ops.to_bool Ops.O.((v > int 4) lor (v < int 6)));
           rejects (fun () -> Ops.to_bool Ops.O.(v < int 5)));
-      test "to_bool, to_int and to_float reject another type" (fun () ->
+      test "to_bool, to_z and to_float reject another type" (fun () ->
           rejects (fun () -> Ops.to_bool (Ops.int 1));
-          rejects (fun () -> Ops.to_int (Ops.bool true));
-          rejects (fun () -> Ops.to_int (Ops.float 1.));
+          rejects (fun () -> Ops.to_z (Ops.bool true));
+          rejects (fun () -> Ops.to_z (Ops.float 1.));
           rejects (fun () -> Ops.to_float (Ops.int 1)));
       test "resolve takes the default when the comparison is undecided"
         (fun () ->
@@ -926,7 +926,7 @@ let programs =
               Ops.vals info []);
           rejects (fun () -> Ops.launch_dims info []));
       test "program_info_of_sink records its target" (fun () ->
-          let target = Result.get_ok (Helpers.Target.parse "CPU:CLANG") in
+          let target = Result.get_ok (Helpers.Target.of_string "CPU:CLANG") in
           is_true
             ((Ops.program_info_of_sink ~target (Ops.sink [])).target = target));
     ]

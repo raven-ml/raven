@@ -8,7 +8,7 @@ open Tolk_next
 open Dtypes
 module PM = Ops.Pattern_matcher
 
-let target = Result.get_ok (Helpers.Target.parse "")
+let target = Result.get_ok (Helpers.Target.of_string "")
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* Targets and the pass *)
