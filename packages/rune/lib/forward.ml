@@ -69,14 +69,21 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     out
   in
 
-  (* [lift2 out a b make] stores [make da db] as the tangent of [out] when
-     either input is active; the inactive side gets a zero tangent. *)
+  (* [lift2 out a b fa fb] stores the sum of [fa da] and [fb db] as the tangent
+     of [out], with a term only for an input that has a tangent. An input
+     without one adds no term: its coefficient can be infinite or NaN where the
+     input is constant, as the exponent's [log a] of a power at [a = 0], and
+     must not meet a zero. *)
   let lift2 (type a b) (out : (a, b) T.t) (a_in : (a, b) T.t)
-      (b_in : (a, b) T.t) (make : (a, b) T.t -> (a, b) T.t -> (a, b) T.t) =
+      (b_in : (a, b) T.t) (fa : (a, b) T.t -> (a, b) T.t)
+      (fb : (a, b) T.t -> (a, b) T.t) =
     Tensor_map.fresh out a_in;
     Tensor_map.fresh out b_in;
-    if active a_in || active b_in then
-      set_tangent out (make (tan_or_zeros a_in) (tan_or_zeros b_in));
+    (match (tangent a_in, tangent b_in) with
+    | None, None -> ()
+    | Some da, None -> set_tangent out (fa da)
+    | None, Some db -> set_tangent out (fb db)
+    | Some da, Some db -> set_tangent out (T.add (fa da) (fb db)));
     out
   in
 
@@ -132,35 +139,40 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     | Binary (k, a, b) -> (
         match k with
         | Idiv | And | Or | Xor -> eval op
-        | Add -> lift2 (eval op) a b T.add
-        | Sub -> lift2 (eval op) a b T.sub
+        | Add -> lift2 (eval op) a b Fun.id Fun.id
+        | Sub -> lift2 (eval op) a b Fun.id T.neg
         | Mul ->
-            lift2 (eval op) a b (fun da db -> T.add (T.mul da b) (T.mul a db))
+            lift2 (eval op) a b (fun da -> T.mul da b) (fun db -> T.mul a db)
         | Fdiv ->
-            lift2 (eval op) a b (fun da db ->
-                T.sub (T.div da b) (T.mul (T.div a (T.mul b b)) db))
+            lift2 (eval op) a b
+              (fun da -> T.div da b)
+              (fun db -> T.neg (T.mul (T.div a (T.mul b b)) db))
         | Pow ->
             let out = eval op in
-            lift2 out a b (fun da db ->
-                T.add
-                  (T.mul da (Derivs.pow_wrt_base a b))
-                  (T.mul db (Derivs.pow_wrt_exp a out)))
+            lift2 out a b
+              (fun da -> T.mul da (Derivs.pow_wrt_base a b))
+              (fun db -> T.mul db (Derivs.pow_wrt_exp a out))
         | Maximum ->
             let out = eval op in
-            lift2 out a b (fun da db ->
-                let mask = T.cast (T.dtype out) (T.greater a b) in
-                T.add (T.mul da mask)
-                  (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
+            let mask = lazy (T.cast (T.dtype out) (T.greater a b)) in
+            lift2 out a b
+              (fun da -> T.mul da (Lazy.force mask))
+              (fun db ->
+                let mask = Lazy.force mask in
+                T.mul db (T.rsub_s (Derivs.one_like mask) mask))
         | Minimum ->
             let out = eval op in
-            lift2 out a b (fun da db ->
-                let mask = T.cast (T.dtype out) (T.less a b) in
-                T.add (T.mul da mask)
-                  (T.mul db (T.rsub_s (Derivs.one_like mask) mask)))
+            let mask = lazy (T.cast (T.dtype out) (T.less a b)) in
+            lift2 out a b
+              (fun da -> T.mul da (Lazy.force mask))
+              (fun db ->
+                let mask = Lazy.force mask in
+                T.mul db (T.rsub_s (Derivs.one_like mask) mask))
         | Atan2 ->
-            lift2 (eval op) a b (fun da db ->
-                let denom = T.add (T.mul a a) (T.mul b b) in
-                T.sub (T.mul da (T.div b denom)) (T.mul db (T.div a denom)))
+            let denom = lazy (T.add (T.mul a a) (T.mul b b)) in
+            lift2 (eval op) a b
+              (fun da -> T.mul da (T.div b (Lazy.force denom)))
+              (fun db -> T.neg (T.mul db (T.div a (Lazy.force denom))))
         | Mod -> no_rule "mod" (active a || active b) (fun () -> eval op))
     | Compare _ | Arg_reduce _ | Argsort _ | Threefry _ | Read _ -> eval op
     | Convert (Bitcast, _, _) -> eval op

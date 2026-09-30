@@ -246,6 +246,71 @@ let scan_tests =
         check_jvp ~msg:"cumprod" (Nx.cumprod ~axis:1) (m23_pos ()));
   ]
 
+(* Transposes
+
+   A tangent map and its pullback are transposes of each other: [<J v, w>] is
+   [<v, Jᵀ w>] for every direction [v] and cotangent [w]. The points are drawn
+   with zeros, repeated values and ties, where the rules have their edges. *)
+
+let pp_floats ppf xs =
+  Format.fprintf ppf "[%a]"
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       (fun ppf x -> Format.fprintf ppf "%g" x))
+    (Array.to_list xs)
+
+let point =
+  let open Gen in
+  let edgy =
+    frequency
+      [ (3, float_range (-3.) 3.); (2, of_list [ 0.; 1.; -1.; 2.; -0. ]) ]
+  in
+  let* n = int_range 1 6 in
+  let+ x = array ~size:(constant n) edgy
+  and+ v = array ~size:(constant n) (float_range (-2.) 2.)
+  and+ w = array ~size:(constant n) (float_range (-2.) 2.) in
+  (x, v, w)
+
+let pp_point ppf (x, v, w) =
+  Format.fprintf ppf "x %a, v %a, w %a" pp_floats x pp_floats v pp_floats w
+
+let transposes name f =
+  prop (name ^ ": jvp is the transpose of vjp")
+    (Gen.with_pp pp_point point)
+    (fun (x, v, w) ->
+      let x = vec64 x and v = vec64 v and w = vec64 w in
+      let _, jv = Rune.jvp' f x v and _, jtw = Rune.vjp' f x w in
+      equal
+        (float_rel ~rel:1e-9 ~abs:1e-9)
+        (Nx.item [] (Nx.sum (Nx.mul jv w)))
+        (Nx.item [] (Nx.sum (Nx.mul v jtw))))
+
+let one = vec64 [| 1.0 |]
+
+let constant_operand_tests =
+  [
+    test "a power with a constant exponent has tangent 0 at a zero base"
+      (fun () ->
+        let square x = Nx.pow_s x 2.0 in
+        check_arr ~msg:"jvp" [| 0.0 |]
+          (snd (Rune.jvp' square (vec64 [| 0.0 |]) one));
+        check_arr ~msg:"grad" [| 0.0 |]
+          (Rune.grad' (fun x -> Nx.sum (square x)) (vec64 [| 0.0 |])));
+    test "a product by a constant has a finite tangent at an infinite operand"
+      (fun () ->
+        check_arr ~msg:"jvp" [| 2.0 |]
+          (snd
+             (Rune.jvp' (fun x -> Nx.mul_s x 2.0) (vec64 [| Float.infinity |]) one)));
+    transposes "x ** 2" (fun x -> Nx.pow_s x 2.0);
+    transposes "x ** 3" (fun x -> Nx.pow_s x 3.0);
+    transposes "2 x" (fun x -> Nx.mul_s x 2.0);
+    transposes "x / 2" (fun x -> Nx.div_s x 2.0);
+    transposes "maximum x 0" (fun x -> Nx.maximum x (Nx.zeros_like x));
+    transposes "minimum 0 x" (fun x -> Nx.minimum (Nx.zeros_like x) x);
+    transposes "atan2 x 1" (fun x -> Nx.atan2 x (Nx.ones_like x));
+    transposes "atan2 1 x" (fun x -> Nx.atan2 (Nx.ones_like x) x);
+  ]
+
 let a2 () = mat64 2 3 [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |]
 let b2 () = mat64 3 2 [| 1.1; 0.3; -0.8; 0.6; 0.4; -1.5 |]
 
@@ -437,6 +502,7 @@ let tests =
       ];
     group "unary rules" unary_tests;
     group "binary rules" binary_tests;
+    group "operands without a tangent" constant_operand_tests;
     group "broadcasting" broadcast_tests;
     group "reduction rules" reduction_tests;
     group "movement rules" movement_tests;

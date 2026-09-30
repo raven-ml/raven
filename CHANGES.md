@@ -172,6 +172,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jvp` of `x ** 2.` at `x = 0` is `0` instead of NaN, as `Rune.grad`
+  gives. Forward mode filled an operand without a tangent with zeros and
+  multiplied them by its coefficient, which is infinite or NaN where the
+  operand is constant (the exponent's `log x` at `0`, an infinite factor of a
+  product). A binary operation now builds terms only for operands with a
+  tangent.
 - Compiled `Nx.maximum`, `Nx.minimum`, `Nx.cummax`, `Nx.cummin`, `Nx.argmax`,
   `Nx.argmin`, `Nx.sort` and `Nx.argsort` order `-0.` below `0.`, as eager
   now does: a compiled `maximum` of two zeros returned its second operand, and
