@@ -717,10 +717,22 @@ let timed d name f =
     | Some ns -> ns
     | None -> invalid_arg ("Tolk_next_engine.measure: no span of " ^ name)
 
+(* A run shorter than a tick of its clock measures 0: the mean of runs that take
+   [enough_ns] in all is off by at most a tick in [enough_ns]. *)
+let enough_ns = 10_000
+let most_runs = 1000
+
+let mean_ns run =
+  let rec go runs total =
+    if total >= enough_ns || runs >= most_runs then
+      Float.of_int total /. Float.of_int runs
+    else go (runs + 1) (total + run ())
+  in
+  go 1 (run ())
+
 let measure ?(cold = false) ?(vars = []) ~devices name prg =
   let dev = devices name in
   let d = dev.device in
-  if cold then invalidate_caches d;
   let elf = Device.Tiny_elf.of_program prg in
   let info = match Ops.arg prg with Ops.Program i -> i | _ -> assert false in
   let buffers =
@@ -730,12 +742,14 @@ let measure ?(cold = false) ?(vars = []) ~devices name prg =
     B.create d Nx_dtype.Scalar.UInt8
       (max 1 (List.fold_left ( * ) (Dtype.itemsize param.dtype) param.shape))
   in
-  let ns =
+  let run =
     match dev.compiler.queues with
     | None ->
         let p = Program.load d prg in
         let bs = List.map scratch buffers in
-        timed (Nx_device.host_of d) elf.name (fun () -> Program.run ~vars p bs)
+        fun () ->
+          timed (Nx_device.host_of d) elf.name (fun () ->
+              Program.run ~vars p bs)
     | Some _ ->
         let nslots = 1 + List.fold_left max 0 info.globals in
         let buffer slot =
@@ -755,6 +769,9 @@ let measure ?(cold = false) ?(vars = []) ~devices name prg =
         in
         let s = link ~devices linear in
         let slots = Array.init nslots (fun slot -> [ scratch (buffer slot) ]) in
-        timed d elf.name (fun () -> run ~vars s slots)
+        fun () -> timed d elf.name (fun () -> run ~vars s slots)
   in
-  Float.of_int ns *. 1e-9
+  mean_ns (fun () ->
+      if cold then invalidate_caches d;
+      run ())
+  *. 1e-9

@@ -880,6 +880,14 @@ let measures =
           greater float_exact ~than:0. t;
           less float_exact ~than:1. t;
           is_true taken);
+      test "a four-element kernel takes a positive time, below a clock tick"
+        (fun () ->
+          for _ = 1 to 20 do
+            greater float_exact ~than:0.
+              (Engine.measure
+                 ~vars:[ ("n", 3) ]
+                 ~devices "CPU" (Lazy.force axpy))
+          done);
       test "a name the map does not hold is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               Engine.measure
