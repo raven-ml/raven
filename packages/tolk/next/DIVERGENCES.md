@@ -49,7 +49,8 @@ under Exclusions in `README.md`, not a divergence.
   values (D1)`, whose recorded batches and host programs are tinygrad's with
   D1 applied by their generator (`gen/runtime/support/hcq2.py`), and `linking
   and running › a run waits for its batch's previous run before it rewrites
-  the batch's memory`.
+  the batch's memory`; and the Engine suite (`test/engine/tolk_next_engine`):
+  `batches › each run of a batch signals its device's next value once`.
 
 ## D2. Withdrawn
 
@@ -228,7 +229,9 @@ the Exclusions of `README.md`.
   Amendment 2, GAP-3).
 - **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `stamp slots
   (D7)` and `linking and running › a profile records a span of each kernel on
-  its device, in order`.
+  its device, in order`; and the Engine suite (`test/engine/tolk_next_engine`):
+  `batches › a kernel is a span of its compute lane and a copy of its copy
+  lane`.
 
 ## D8. The disk cache maps strings to strings
 

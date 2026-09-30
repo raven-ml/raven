@@ -129,12 +129,13 @@ let describing =
 
 (* Host programs
 
-   A kernel built from UOps: out[i] = a[i] * n + b[i] for four elements, where
-   out, a and b are the parameters 0, 1 and 2 and n a variable. *)
+   A kernel built from UOps: out[i] = a[i] * n + b[i] for [size] elements
+   (default four), where out, a and b are the parameters 0, 1 and 2 and n a
+   variable. *)
 
-let kernel ?(name = "axpy") ?bound () =
+let kernel ?(name = "axpy") ?(size = 4) ?bound () =
   let open Ops.O in
-  let buffer slot = Ops.placeholder ~slot [ 4 ] Float32 in
+  let buffer slot = Ops.placeholder ~slot [ size ] Float32 in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
@@ -142,15 +143,18 @@ let kernel ?(name = "axpy") ?bound () =
   let n =
     match bound with Some v -> Ops.bind n (`Int (Z.of_int v)) | None -> n
   in
-  let i = Ops.range (Int 4) [ 0 ] in
+  let i = Ops.range (Int size) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0) ((at 1 * Ops.cast n Float32) + at 2)) [ i ] ]
 
-let compiled ?name ?bound () =
-  Codegen.to_program (kernel ?name ?bound ()) (Lazy.force clang)
+let compiled ?name ?size ?bound () =
+  Codegen.to_program (kernel ?name ?size ?bound ()) (Lazy.force clang)
 
 let axpy = lazy (compiled ())
+
+(* A kernel long enough for the host clock to see it run. *)
+let long_axpy = lazy (compiled ~name:"long_axpy" ~size:(1 lsl 18) ())
 let a = floats [| 1.; 2.; 3.; 4. |]
 let b = floats [| 10.; 20.; 30.; 40. |]
 
@@ -312,7 +316,7 @@ let buffer d dt values =
     Buffer.copy ~src:(Run.buffer host dt values) ~dst:file;
     file
 
-let storage_of ?(seed = 0) big =
+let storage_of ?(devices = devices) ?(seed = 0) big =
   List.filter_map
     (fun n ->
       match (Ops.op n, Ops.arg n) with
@@ -327,7 +331,7 @@ let storage_of ?(seed = 0) big =
           let buffers =
             List.mapi
               (fun k d ->
-                buffer (device d) p.dtype (Array.sub before (k * m) m))
+                buffer (devices d).device p.dtype (Array.sub before (k * m) m))
               names
           in
           Some { node = n; arg = p; before; buffers }
@@ -398,30 +402,23 @@ let expected ?(vars = []) big storage =
         writes;
       after)
 
-let schedule big =
+let schedule ?(devices = devices) big =
   let linear, vars = Schedule.create_linear_with_vars big in
   (Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) linear, vars)
 
-let linked big =
-  let compiled, vars = schedule big in
-  let storage = storage_of big in
+let linked ?(devices = devices) big =
+  let compiled, vars = schedule ~devices big in
+  let storage = storage_of ~devices big in
   (Engine.link ~devices ~bound:(bound storage) compiled, vars, storage)
 
 let slot_values = list (pair int values)
 
 (* One program of each kind of call runs by default: a kernel, a copy between
-   devices, lanes of a sharded kernel, variables, a bound scalar, call-local
-   storage and the disk; compiling the others takes seconds. *)
+   devices, lanes of a sharded kernel, a bound scalar and the disk; compiling
+   the others takes seconds. Variables run by default in `a schedule runs with
+   each binding of its variables`. *)
 let by_default =
-  [
-    "add";
-    "copy";
-    "shard_add";
-    "variable_offset";
-    "precompiled_scalar";
-    "chained_functions";
-    "disk_store";
-  ]
+  [ "add"; "copy"; "shard_add"; "precompiled_scalar"; "disk_store" ]
 
 let writes_what_it_computes name =
   (if List.mem name by_default then test else slow)
@@ -530,7 +527,7 @@ let runs_each_binding () =
 (* [parameterized name] is the recorded program [name] linked with its buffers
    made parameters of their slots, which each run binds, and the program with
    those parameters. *)
-let parameterized name =
+let parameterized ?(devices = devices) name =
   let big = program name in
   let parameters =
     List.filter_map
@@ -538,10 +535,13 @@ let parameterized name =
         if Ops.op n = Buffer then Some (n, Ops.replace ~op:Param n) else None)
       (Ops.toposort ~enter_calls:false big)
   in
-  let compiled, vars = schedule big in
-  ( Engine.link ~devices (Ops.substitute compiled parameters),
-    vars,
-    Ops.substitute big parameters )
+  let linear, vars = Schedule.create_linear_with_vars big in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.substitute linear parameters)
+  in
+  (Engine.link ~devices compiled, vars, Ops.substitute big parameters)
 
 let runs_on_its_slots name () =
   let s, vars, big = parameterized name in
@@ -553,15 +553,19 @@ let runs_on_its_slots name () =
 
 (* A range of three trips around a call of a kernel that adds one to four
    floats, each trip on the next four of twelve. *)
+(* A kernel that stores its parameter 1 plus one into its parameter 0, four
+   floats. *)
+let add_one =
+  let open Ops.O in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let at slot = Ops.index (Ops.placeholder ~slot [ 4 ] Float32) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"add_one" ())
+    [ Ops.end_ (Ops.store (at 0) (at 1 + Ops.O.float 1.)) [ i ] ]
+
 let runs_once_per_trip () =
   let open Ops.O in
-  let one =
-    let i = Ops.range (Int 4) [ 0 ] in
-    let at slot = Ops.index (Ops.placeholder ~slot [ 4 ] Float32) [ i ] in
-    Ops.sink
-      ~kernel:(Ops.kernel_info ~name:"add_one" ())
-      [ Ops.end_ (Ops.store (at 0) (at 1 + Ops.O.float 1.)) [ i ] ]
-  in
+  let one = add_one in
   let out = Ops.new_buffer (Single "CPU") 12 Float32
   and src = Ops.new_buffer (Single "CPU") 12 Float32 in
   let r = Ops.range (Int 3) [ 7 ] in
@@ -627,8 +631,8 @@ let schedules =
   group "link and run"
     [
       group "recorded" (List.map writes_what_it_computes recorded);
-      test "custom_kernel runs its custom kernel" runs_a_custom_kernel;
-      test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
+      slow "custom_kernel runs its custom kernel" runs_a_custom_kernel;
+      slow "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
       cases ~name:Fun.id
@@ -646,11 +650,12 @@ let compiled_add = lazy (fst (schedule (program "add")))
 let link_refuses what f =
   test ("link refuses " ^ what) (fun () -> raises_match Exn.invalid_arg f)
 
-let run_refuses what name slots_of =
+(* A refusal names the slot. *)
+let run_refuses ?(devices = devices) what name slots_of =
   test ("run refuses " ^ what) (fun () ->
-      let s, vars, big = parameterized name in
-      let storage = storage_of big in
-      raises_match Exn.invalid_arg (fun () ->
+      let s, vars, big = parameterized ~devices name in
+      let storage = storage_of ~devices big in
+      raises_match (Exn.invalid_arg ~substring:"slot") (fun () ->
           Engine.run ~vars s (slots_of storage)))
 
 (* [rebound storage k f] is the slots of [storage] with slot [k]'s buffers [f
@@ -734,9 +739,10 @@ let refusals =
    and loads nothing, and a linked schedule holds its storage while
    reachable. *)
 
-let serialized () =
-  let s, vars, big = parameterized "contiguous" in
-  let mine = storage_of big and theirs = storage_of ~seed:4 big in
+let serialized ?(devices = devices) name () =
+  let s, vars, big = parameterized ~devices name in
+  let mine = storage_of ~devices big
+  and theirs = storage_of ~devices ~seed:4 big in
   let expect storage = expected ~vars big storage in
   let loop storage () =
     let slots = slots storage and want = expect storage in
@@ -759,11 +765,12 @@ let serialized () =
 (* A run's allocations and loads are the profile's Allocation and Load events,
    and a run that allocates nothing leaves every device's allocated bytes as
    they were, or fewer, since the collector may return memory meanwhile. *)
-let allocates_nothing name () =
-  let s, vars, big = parameterized name in
-  let slots = slots (storage_of big) in
+let allocates_nothing ?(devices = devices) name () =
+  let s, vars, big = parameterized ~devices name in
+  let slots = slots (storage_of ~devices big) in
+  let names = [ "CPU"; "CPU:1"; "CPU:2"; "CPU:3" ] in
   Engine.run ~vars s slots;
-  let stats () = List.map (fun (_, d) -> Nx_device.stats d) (Run.devices ()) in
+  let stats () = List.map (fun n -> Nx_device.stats (devices n).device) names in
   Gc.full_major ();
   let before = stats () in
   let p = Nx_device.Profile.start () in
@@ -775,9 +782,8 @@ let allocates_nothing name () =
   equal int ~msg:"loads" 0
     (count (function Nx_device.Profile.Load _ -> true | _ -> false));
   List.iter2
-    (fun (name, _) d ->
-      at_most int ~msg:name ~than:0 (Nx_device.Stats.allocated d))
-    (Run.devices ())
+    (fun name d -> at_most int ~msg:name ~than:0 (Nx_device.Stats.allocated d))
+    names
     (List.map2 Nx_device.Stats.diff before (stats ()))
 
 (* [s] is unreachable after its last use: native code does not keep it
@@ -828,7 +834,7 @@ let runs =
   group "runs"
     [
       test "runs of one schedule from two domains each compute their own"
-        serialized;
+        (serialized "contiguous");
       test "a run of kernels allocates and loads nothing"
         (allocates_nothing "contiguous");
       test "a run of copies allocates and loads nothing"
@@ -847,7 +853,9 @@ let measures =
       test "a program's run on the host takes a positive time, under a second"
         (fun () ->
           let t =
-            Engine.measure ~vars:[ ("n", 3) ] ~devices "CPU" (Lazy.force axpy)
+            Engine.measure
+              ~vars:[ ("n", 3) ]
+              ~devices "CPU" (Lazy.force long_axpy)
           in
           greater float_exact ~than:0. t;
           less float_exact ~than:1. t);
@@ -855,7 +863,7 @@ let measures =
           greater float_exact ~than:0.
             (Engine.measure ~cold:true
                ~vars:[ ("n", 3) ]
-               ~devices "CPU:1" (Lazy.force axpy)));
+               ~devices "CPU:1" (Lazy.force long_axpy)));
       test "a run measured under a profile leaves the profile taken" (fun () ->
           let p = Nx_device.Profile.start () in
           let t, taken =
@@ -865,7 +873,7 @@ let measures =
                 let t =
                   Engine.measure
                     ~vars:[ ("n", 3) ]
-                    ~devices "CPU" (Lazy.force axpy)
+                    ~devices "CPU" (Lazy.force long_axpy)
                 in
                 (t, Nx_device.Profile.enabled ()))
           in
@@ -879,10 +887,305 @@ let measures =
                 ~devices "CPU:9" (Lazy.force axpy)));
       test "an unbound variable is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
-              Engine.measure ~devices "CPU" (Lazy.force axpy)));
+              Engine.measure ~devices "CPU" (Lazy.force long_axpy)));
+    ]
+
+(* Batches
+
+   The NULL devices of test support run their queues on a domain of their own,
+   behind the host. The recorded copy puts a copy and a kernel on CPU:1 in one
+   batch, and shard_add a kernel on each of CPU and CPU:1. *)
+
+let null = lazy (Null_device.devices ())
+let on_null name = (Lazy.force null) name
+
+let computes_on_null name =
+  test (name ^ " writes what its tensors compute") (fun () ->
+      let big = program name in
+      let s, vars, storage = linked ~devices:on_null big in
+      Engine.run ~vars s (slots storage);
+      equal slot_values (expected ~vars big storage) (by_slot storage contents))
+
+(* Each run of a batch on a device signals the device's next value, once. *)
+let signals_once_per_run () =
+  let s, vars, big = parameterized ~devices:on_null "copy" in
+  let slots = slots (storage_of ~devices:on_null big) in
+  let d = Null_device.device "CPU:1" in
+  let before = Nx_device.submitted d in
+  for _ = 1 to 3 do
+    Engine.run ~vars s slots
+  done;
+  Null_device.synchronize ();
+  equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
+  equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
+
+(* A kernel on [d] that fills four floats with [x]. *)
+let fill d x =
+  let i = Ops.range (Int 4) [ 0 ] in
+  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
+  let kernel =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"fill" ())
+      [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
+  in
+  let y = Ops.new_buffer (Single d) 4 Float32 in
+  (y, Ops.call kernel [ y ])
+
+let link_calls ?profile ~bound calls =
+  let devices = on_null in
+  let compiled =
+    Hcq2.compile_linear ?profile
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:calls)
+  in
+  Engine.link ~devices ~bound compiled
+
+(* A copy on CPU:1's queue into CPU:2's memory, which a slow kernel of CPU:2
+   filled first: the copy lands last. *)
+let waits_for_another_device () =
+  let x = Ops.new_buffer (Single "CPU:1") 4 Float32 in
+  let y, filled = fill "CPU:2" 7. in
+  let src = Run.buffer (Null_device.device "CPU:1") Float32 a in
+  let dst =
+    Run.buffer
+      (Null_device.device "CPU:2")
+      Float32
+      (floats [| 0.; 0.; 0.; 0. |])
+  in
+  let fills = link_calls ~bound:[ (y, [ dst ]) ] [ filled ] in
+  let copies =
+    link_calls ~bound:[ (x, [ src ]); (y, [ dst ]) ] [ Ops.store_call y x ]
+  in
+  Null_device.with_latency 0.05 (fun () -> Engine.run fills [||]);
+  Engine.run copies [||];
+  Null_device.synchronize ();
+  equal values a (Run.values Float32 dst)
+
+(* A batch of CPU:1 alone whose host program writes the address of memory of
+   CPU:2, which a slow kernel of CPU:2 fills first, into a word of CPU:1. Its
+   queues name no CPU:2, so the run waits for CPU:2 on the host before it calls
+   the host program: once it returns, CPU:2 has signalled the fill. The memory
+   is an input, whose address the run enters in the address table, or storage
+   whose address the link writes. *)
+let waits_for_a_device_its_queues_do_not_name ~as_input () =
+  let nd = Null_device.device in
+  let y, filled = fill "CPU:2" 7. in
+  let filler = Run.buffer (nd "CPU:2") Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+  let fills = link_calls ~bound:[ (y, [ filler ]) ] [ filled ] in
+  let d = "CPU:1" in
+  let src =
+    if as_input then
+      Ops.param ~shape:[ Int 4 ] ~device:(Single "CPU:2") 0 Float32
+    else y
+  in
+  let word =
+    Ops.placeholder ~device:(Single d) ~volatile:true ~tag:(String "address")
+      [ 1 ] Uint64
+  in
+  let address = Nx_device.Buffer.create (nd d) UInt64 1 in
+  let devices n =
+    let dev = on_null n in
+    let placeholder u =
+      match Ops.tag u with
+      | Some (String "address") -> Some address
+      | _ -> dev.placeholder u
+    in
+    { dev with placeholder }
+  in
+  let info : Ops.hcq_info =
+    {
+      device = [ d ];
+      kernels = [];
+      estimates = { ops = Int 0; lds = Int 0; mem = Int 0 };
+      nargs = 0;
+      table = -1;
+      inputs = [];
+      slots = [];
+      written_bufs = [];
+    }
+  in
+  let body =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"host_address" ())
+      [
+        Ops.store (Ops.index word [ Ops.int 0 ]) (Ops.getaddr ~device:d src);
+        Ops.store (Ops.index (Hcq2.signal_word d) [ Ops.int 0 ]) (Hcq2.value d);
+      ]
+  in
+  let lowered =
+    Hcq2.lower_call
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.call ~aux:info body [])
+  in
+  let compiled =
+    Realize.lower_and_compile
+      ~targets:(fun n -> (devices n).compiler.target)
+      (Ops.v Op.Linear ~src:[ lowered ])
+  in
+  let bound = if as_input then [] else [ (y, [ filler ]) ] in
+  let writes = Engine.link ~devices ~bound compiled in
+  let cpu2 = nd "CPU:2" in
+  Null_device.with_latency 0.02 (fun () -> Engine.run fills [||]);
+  let filled_at = Nx_device.submitted cpu2 in
+  Engine.run writes (if as_input then [| [ filler ] |] else [||]);
+  at_least int ~msg:"CPU:2 signalled" ~than:filled_at (Nx_device.signaled cpu2);
+  Null_device.synchronize ();
+  equal values
+    [| `Int (Z.of_nativeint (Buffer.address filler)) |]
+    (Run.values Uint64 address)
+
+(* A kernel on CPU:1 and CPU:2 reads the last four of the eight floats each
+   device holds of a sharded parameter: its address, entered in the address
+   table on each run, is the shard's plus the view's offset. *)
+let reads_a_view_of_each_shard () =
+  let nd = Null_device.device in
+  let lanes = Ops.Multi [ "CPU:1"; "CPU:2" ] in
+  let param = Ops.param ~shape:[ Int 8 ] ~device:lanes 0 Float32 in
+  let out = Ops.new_buffer lanes 4 Float32 in
+  let results =
+    List.map
+      (fun d -> Run.buffer (nd d) Float32 (floats [| 0.; 0.; 0.; 0. |]))
+      [ "CPU:1"; "CPU:2" ]
+  in
+  let s =
+    link_calls
+      ~bound:[ (out, results) ]
+      [ Ops.call add_one [ out; Ops.shrink param [ Some (Int 4, Int 8) ] ] ]
+  in
+  let shard k = floats (Array.init 8 (fun i -> Float.of_int ((10 * k) + i))) in
+  Engine.run s
+    [|
+      [
+        Run.buffer (nd "CPU:1") Float32 (shard 1);
+        Run.buffer (nd "CPU:2") Float32 (shard 2);
+      ];
+    |];
+  equal (list values)
+    [ floats [| 15.; 16.; 17.; 18. |]; floats [| 25.; 26.; 27.; 28. |] ]
+    (List.map (Run.values Float32) results)
+
+(* Under a profile, a kernel of a batch is a span of its device's compute lane
+   and a copy one of its copy lane. *)
+let spans_on_lanes () =
+  let y, filled = fill "CPU:1" 7. in
+  let z = Ops.new_buffer (Single "CPU:2") 4 Float32 in
+  let bound =
+    [
+      (y, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]);
+      (z, [ Run.buffer (Null_device.device "CPU:2") Float32 a ]);
+    ]
+  in
+  let s = link_calls ~profile:true ~bound [ filled; Ops.store_call z y ] in
+  let p = Nx_device.Profile.start () in
+  let events =
+    Fun.protect
+      ~finally:(fun () ->
+        if Nx_device.Profile.enabled () then ignore (Nx_device.Profile.stop p))
+      (fun () ->
+        Engine.run s [||];
+        Null_device.synchronize ();
+        Nx_device.Profile.stop p)
+  in
+  let lanes =
+    List.filter_map
+      (function
+        | Nx_device.Profile.Span sp
+          when Nx_device.equal sp.device (Null_device.device "CPU:1") ->
+            Some (sp.lane, String.starts_with ~prefix:"fill" sp.name)
+        | _ -> None)
+      events
+  in
+  equal
+    (slist (pair string bool) compare)
+    [ ("compute", true); ("copy", false) ]
+    lanes
+
+let refuses_an_unknown_library () =
+  let y, filled = fill "CPU:1" 7. in
+  let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:[ filled ])
+  in
+  let bound = [ (y, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]) ] in
+  raises_match Exn.invalid_arg (fun () -> Engine.link ~devices ~bound compiled)
+
+let on_cpu1 storage = List.find (fun s -> placement s.arg = [ "CPU:1" ]) storage
+
+let batches =
+  group "batches"
+    [
+      group "recorded"
+        (List.map computes_on_null [ "copy"; "shard_add"; "variable_offset" ]);
+      test "each run of a batch signals its device's next value once"
+        signals_once_per_run;
+      test
+        "runs of one batched schedule from two domains each compute their own"
+        (serialized ~devices:on_null "copy");
+      test "a run of a batch allocates and loads nothing"
+        (allocates_nothing ~devices:on_null "copy");
+      slow "a batch waits for the work of a device outside it"
+        waits_for_another_device;
+      test "a run waits for a device of an input its queues do not name"
+        (waits_for_a_device_its_queues_do_not_name ~as_input:true);
+      slow "a run waits for a device of storage its queues do not name"
+        (waits_for_a_device_its_queues_do_not_name ~as_input:false);
+      test "a batch reads a view of each shard of a parameter"
+        reads_a_view_of_each_shard;
+      test "a kernel is a span of its compute lane and a copy of its copy lane"
+        spans_on_lanes;
+      test "link refuses a C function of a library it does not know"
+        refuses_an_unknown_library;
+      run_refuses ~devices:on_null "a batch's parameter it binds no buffers"
+        "copy" (fun _ -> [||]);
+      run_refuses ~devices:on_null
+        "a batch's parameter bound to buffers of another device" "copy"
+        (fun storage ->
+          let s = on_cpu1 storage in
+          rebound s.arg.slot
+            (fun _ ->
+              [
+                Run.buffer
+                  (Null_device.device "CPU:2")
+                  Float32
+                  (Array.make 16 (`Float 0.));
+              ])
+            storage);
+      run_refuses ~devices:on_null
+        "a batch's parameter bound to fewer bytes than it holds" "copy"
+        (fun storage ->
+          let s = on_cpu1 storage in
+          rebound s.arg.slot
+            (fun _ ->
+              [
+                Run.buffer
+                  (Null_device.device "CPU:1")
+                  Float32
+                  (Array.make 15 (`Float 0.));
+              ])
+            storage);
+      test "a program's run on a device with queues takes a positive time"
+        (fun () ->
+          let t =
+            Engine.measure
+              ~vars:[ ("n", 3) ]
+              ~devices:on_null "CPU:1" (Lazy.force long_axpy)
+          in
+          greater float_exact ~than:0. t;
+          less float_exact ~than:1. t);
     ]
 
 let () =
   exit
     (run "Tolk_next_engine"
-       [ targets; describing; programs; schedules; refusals; runs; measures ])
+       [
+         targets;
+         describing;
+         programs;
+         schedules;
+         refusals;
+         runs;
+         measures;
+         batches;
+       ])

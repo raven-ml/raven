@@ -2606,7 +2606,13 @@ with `HCQ_NUM_SDMA` set.
 ## Engine
 
 The suite is `Tolk_next_engine` (`engine/tolk_next_engine/`), written `EN`
-below. `EN › link and run › recorded` runs the Schedule suite's recorded
+below. `EN › batches` runs batches on the NULL devices of test support
+(`Null_device`), whose queues run behind the host on a domain of their own:
+the engine's half of D1 (each run signals its device's next value once), D7
+(each kernel's span on its compute lane, each copy's on its copy lane), runs
+from two domains, and the waits of RFC 0011's Amendment 2, on the device and
+on the host. The batches' encoding and the rest of their execution, the fence
+under latency included, are the Hcq2 suite's (`H`). `EN › link and run › recorded` runs the Schedule suite's recorded
 programs end to end: each is scheduled, compiled for the devices it names
 (the host and test devices of the host's memory, `Run.devices`), linked with
 its storage bound to buffers of small integers, and run, and its storage then
@@ -2616,16 +2622,26 @@ runs with. One program of each kind of call runs by default, the rest are slow.
 parameters` makes a program's buffers parameters of the compiled schedule and
 runs it on two sets of buffers.
 
-Kernels compile on the Worker's domains, and OCaml refuses `Unix.fork` in a
-process that has spawned one, so mutation testing runs with `PARALLEL=0` and
-leaves out `EN › runs › runs of one schedule from two domains each compute
-their own`. With the run lock removed, that test fails on each of three runs.
-Survivors, classified:
+Kernels compile on the Worker's domains and the NULL devices run their queues
+on one, and OCaml refuses `Unix.fork` in a process that has spawned a domain,
+so each of `tolk_next_engine.ml`'s 60 mutants is armed in a process of its own
+(`--arm`) over the default run: 50 fail it. With the run lock removed by hand,
+the two-domain test fails on each of three runs. The survivors:
+- dismissed in the source as equivalent (five), and, equivalent too, any
+  parameter or any tagged node counting as a placeholder in a batch's
+  patches, which hold only placeholders and storage;
+- the dismissed `||` as `&&` in the storage a batch's patches reach, which
+  drops that storage from the buffers a run touches: here the run still waits
+  for the storage's device, since the batch's other touches share host memory
+  with it (`EN › batches › a run waits for a device of storage its queues do
+  not name`, slow);
 - `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
-- `Ops.op e = Op.After` as `<>` in the nodes `link` allocates: only a batch is
-  ordered after link patches.
+- `info.table < 0` as `<= 0`: a batch whose host program reads its address
+  table first takes it as its first argument, and the NULL devices' batches
+  read their submission's word first, as tinygrad's NULL batches read their
+  doorbell.
 
 ### tinygrad
 
@@ -2641,7 +2657,7 @@ Survivors, classified:
 | tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop, test_nested_loop_in_range, test_two_sequential_loops, test_loop_in_loop | do-while loops count to 10, 12, 25 and 12 | `EN › Program › loops ›` "wait_loop runs its loops to 10", "nested_loop …", "two_loops …", "loop_in_loop …", from the Linearizer's goldens |
 | tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop_spec | the loop under `SPEC=2` | dropped: the specification is Spec's; the loop runs in `EN › Program › loops` |
 | tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spins on a host word another thread sets | dropped: every wait of a run is `Submission.wait` (D1), so no program the engine runs spins on the host |
-| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_kernel_run_wait | a kernel run is one profile range named after the kernel | `EN › runs › each kernel of a run is a span of the host under a profile` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_kernel_run_wait | a kernel run is one profile range named after the kernel | `EN › runs › each kernel of a run is a span of the host under a profile`; on a device with queues, `EN › batches › a kernel is a span of its compute lane and a copy of its copy lane` |
 | tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_copyin, test_profile_multiops, test_profile_multidev, TestSimpleProfiler::test_profiler, TestProfiler::test_cpu_profile | copies and host ranges are profile events | dropped: nx.device records its copies and host spans (`Nx_device.Profile`) |
 | tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_multidev_transfer, test_profile_graph, test_dev_jitter_matrix | device-to-device transfers, graph events and clock jitter | dropped: hardware with two devices, and nx.device's calibration |
 | tinygrad: runtime/test_search.py::TestSearch::test_beam_symbolic_kernel | beam search applies optimisations to a symbolic kernel | dropped here: the search is `Codegen.Opt.Search`'s; the measurement it takes is `EN › measure` |
@@ -2670,6 +2686,9 @@ Survivors, classified:
 | old: unit/engine/test_realize.ml "replays resolve storage views without building nodes" | | dropped: the nodes a run builds are not observable; that it allocates no device memory is `EN › runs › a run of kernels allocates and loads nothing` |
 | old: unit/engine/test_realize.ml "execution counters retain exact large costs" | | dropped: the engine keeps no counters; a call's cost is `Realize.estimate_uop` |
 | old: unit/engine/test_realize.ml "keys cached programs by exact device name", "same-named devices use their own runtime loader" | a program is loaded per device | `EN › Program › a binary loaded twice is loaded once`; loading per device of a call is `EN › link and run › recorded › shard_add writes what its tensors compute` |
+| old: unit/engine/test_realize.ml "concurrent submissions retain their own address tables", "independent links serialize reservations on their shared device timeline", "submission addresses are resolved after preparation" | runs of one batch rewrite its address table only once the previous run is done | `EN › batches › runs of one batched schedule from two domains each compute their own`; `H › linking and running › a run waits for its batch's previous run before it rewrites the batch's memory` |
+| old: unit/engine/test_realize.ml "timing samples forward timeout and release transient runtimes", "failed timing dispatch drains before runtime release", "failed timing drain preserves its runtime" | timing a program on a device | `EN › batches › a program's run on a device with queues takes a positive time`, `EN › measure`; the runtimes they release are old tolk's |
+| old: unit/engine/test_link.ml allocation_specs, in Hcq2's section | command buffers uncached, volatile placeholders in memory the host sees | dropped: link keeps its placeholders, so which memory holds them is not observable; on the NULL devices it is one allocator. A vendor's placeholders are its `placeholder`'s, which link binds (`EN › batches › link refuses a C function of a library it does not know`) |
 
 ### Deferred to the engine by other sections
 
