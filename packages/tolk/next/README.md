@@ -63,7 +63,8 @@ is scope, not a divergence: the part left out is listed here, and
 |---|---|
 | `tensor.py`, `function.py`, `nn/*`, and the `Tensor` surface of `mixin/*`: dtype shorthands, creation, reductions, randomness, the composite ops of `mixin/op.py` | nx and kaun are raven's frontend, and tinygrad's decompositions there are rune's lowering. The mixin methods `UOp` itself uses stay in the IR. |
 | `TinyJit`, `_TinyJit` and `_prepare_jit_inputs` in `engine/jit.py` | the `Tensor` surface of the jit; rune walks the parameters with `Ptree`. |
-| `CapturedJit`, the device registry and the lazy `Buffer` of `device.py`, and running a schedule | execution is rune's; tolk.next returns what to run (see D3). |
+| `CapturedJit`, the device registry, `BufferSpec` and the lazy `Buffer` of `device.py`, and running a schedule | execution is rune's; tolk.next returns what to run (see D3). |
+| `device.py` but `TinyELF` and `Compiled`'s choice of renderer: `ALL_DEVICES`, `HCQ_RUNTIME_DEV`, `canonicalize_device`, `MultiBuffer`, `BufferStorage`, the allocators, `Program`, the rest of `Compiled` (its timeline, runtime buffers, signal waits, synchronization, interfaces and `pm_bufferize`) and `enumerate_devices_str`; the renderers that `Compiled` lists but tolk.next does not port (LLVM, LVP, X86, PTX, NVCC, NAK, HIPCC) | the runtime is rune's and nx.device's (see D3), and those renderers are excluded above. |
 | Pickling a captured jit (`CapturedJit.__reduce__`) | raven has no persistent jit cache. |
 | `mixin/gradient.py` and the `compute_gradient` path | rune owns differentiation. |
 | `llm/*` | models are examples or a package of their own, never part of the compiler. |
@@ -135,7 +136,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The setting `CAPTURING` of `helpers.py` | it gates jit capture (`schedule/__init__.py:296`), which is rune's (see D3). |
 | `GlobalCounters` and the settings `MAX_BUFFER_SIZE` and `VALIDATE_WITH_CPU` of `helpers.py` | they are read where kernels run and buffers are allocated (`VALIDATE_WITH_CPU` at `engine/realize.py:283`), which is rune's (see D3); tolk.next keeps `compile_linear`'s `validate` argument and the `pm_validate` rewrite. |
 | The setting `ALLOW_DEVICE_USAGE` of `helpers.py`, and the contexts that set it (`codegen/__init__.py:464`, `codegen/opt/postrange.py:270`, `engine/worker.py:9`, `function.py:61`) | the guard is structural: tolk.next cannot open a device. |
-| The other settings of `helpers.py` whose readers are not ported: `IMAGE`, `JIT`, `WINO`, `TRACEMETA`, `TRAINING`, `LRU`, `HCQ2`, `FUSE_OPTIM`, `USE_ATOMICS`, `CAPTURE_PROCESS_REPLAY`, `NULL_ALLOW_COPYOUT`, `VIZ`, `PROFILE`; the `PYTEST_XDIST_WORKER_COUNT` share of `PARALLEL`'s default; the `{DEV}_CC` migration check | image paths, the `Tensor` frontend and `TinyJit`, nx.device's allocators, the legacy AMD queue path, `nn`, process replay, the NULL device, viz and profiling are excluded above; raven never read `{DEV}_CC`. |
+| The other settings of `helpers.py` whose readers are not ported: `IMAGE`, `JIT`, `WINO`, `TRACEMETA`, `TRAINING`, `LRU`, `HCQ2`, `FUSE_OPTIM`, `USE_ATOMICS`, `CAPTURE_PROCESS_REPLAY`, `NULL_ALLOW_COPYOUT`, `VIZ`, `PROFILE`; the `PYTEST_XDIST_WORKER_COUNT` share of `PARALLEL`'s default; the `{DEV}_CC` migration check, and the `{DEV}_{RENDERER}` one of `Compiled._select_renderer` in `device.py` (`:484`) | image paths, the `Tensor` frontend and `TinyJit`, nx.device's allocators, the legacy AMD queue path, `nn`, process replay, the NULL device, viz and profiling are excluded above; raven never read `{DEV}_CC` or `{DEV}_{RENDERER}`. |
 
 ## Tests and ledgers
 

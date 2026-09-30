@@ -40,7 +40,8 @@ the Exclusions of `README.md`.
 ## D3. device.py and the ops_*.py files are split
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
-- **tolk.next:** waiting for L6 and L7; `lib/uop/ops.ml:227` (`param_arg`),
+- **tolk.next:** `lib/device.ml` (the compiler half of `device.py`), waiting
+  for L7 for the `ops_*.py` files; `lib/uop/ops.ml:227` (`param_arg`),
   `:3005` (`new_buffer`).
 - **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
   and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
@@ -133,14 +134,15 @@ the Exclusions of `README.md`.
 ## D6. Devices are named, never parsed
 
 - **tinygrad:** `device.py:26,36,395,491` (device strings split at `:`).
-- **tolk.next:** waiting for L6.
+- **tolk.next:** `lib/device.ml:122` (`renderers`), `:145` (`renderer`).
 - **Differs:** the caller gives a target, a device name and its `arch`;
   tolk.next picks the renderer and compiler from the `arch` and never parses
   the name, with one exception: a name starting with `DISK` is a disk, as
   tinygrad reserves it and nx.device names its disk devices
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
-- **Pinned by:** waiting for L6 for targets; for the disk, the `Ops`
+- **Pinned by:** for targets, the `Device` suite (`test/device`); for the
+  disk, the `Ops`
   suite: `several devices › on_disk holds for one disk device`, `several
   devices › copy_to_device rejects a disk and a weak type` and `storage ›
   clone rejects a disk`.
