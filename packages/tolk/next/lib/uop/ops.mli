@@ -710,8 +710,16 @@ val vmax : t -> Dtype.value
 (** [vmax u] is an upper bound of every value [u] can take. Bounds follow
     interval arithmetic through the integer operations, comparisons, selections,
     casts and loads from constant tables; elsewhere they are the bounds of [u]'s
-    type. A committed integer wraps at its width, so an interval that leaves its
-    type gives the type's bounds, and so does a table holding a NaN. *)
+    type. A committed integer wraps at its width, and so does a weak integer
+    operand of an operation on one ({!operand_bounds}): an interval that leaves
+    its type is one value wrapped, or the type's bounds. A table holding a NaN
+    has its type's bounds. *)
+
+val operand_bounds : t -> t -> Dtype.value * Dtype.value
+(** [operand_bounds u s] is the bounds of [u]'s source [s] as [u] reads it: an
+    operation on a committed integer commits a weak integer operand to its type,
+    which wraps it, so bounds that leave the type are one value wrapped, or the
+    type's. *)
 
 val overflows : t -> Dtype.t -> bool
 (** [overflows u dt] is [true] iff [u]'s bounds reach outside [dt]'s. *)

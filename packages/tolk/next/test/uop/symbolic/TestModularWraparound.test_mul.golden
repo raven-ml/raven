@@ -3,8 +3,8 @@
 1 Ops.CAST dtypes.uint [0] dtypes.uint
 2 Ops.CONST dtypes.weakint [] 2864434397
 3 Ops.MUL dtypes.uint [1, 2]
-4 Ops.CONST dtypes.weakint [] 8256287927137344446
+4 Ops.CONST dtypes.weakint [] 1147018174
 5 Ops.CAST dtypes.uint [4] dtypes.uint
-6 Ops.SINK dtypes.void [3, 5] tag=("simplify", 0, 4294967295)
+6 Ops.SINK dtypes.void [3, 5] tag=("simplify", 1147018174, 1147018174)
 7 Ops.SINK dtypes.void [6]
 

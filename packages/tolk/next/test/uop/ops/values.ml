@@ -424,8 +424,11 @@ let bounds_group =
           check_bounds (Ops.cast x Float32) (f (-10.), f 10.);
           check_bounds (Ops.cast x Bool) (`Bool false, `Bool true);
           check_bounds (Ops.cast x Uint32) (Dtype.min Uint32, Dtype.max Uint32));
-      test "a typed constant outside its type has the type's bounds" (fun () ->
-          check_bounds (Ops.int ~dtype:Int8 300) (Dtype.min Int8, Dtype.max Int8);
+      test
+        "a typed integer constant outside its type is bounded by its wrapped \
+         value, a non-finite one by the type (D13)" (fun () ->
+          check_bounds (Ops.int ~dtype:Int8 300) (int_bounds 44 44);
+          check_bounds (Ops.int ~dtype:Uint8 (-1)) (int_bounds 255 255);
           check_bounds
             (Ops.cast (Ops.float Float.infinity) Int32)
             (Dtype.min Int32, Dtype.max Int32);

@@ -1466,27 +1466,39 @@ let extremes = function
 (* The types a cast's bounds are clamped to. *)
 let clamped_types = Dtype.floats @ Dtype.sints @ Dtype.weaks
 
+(* A committed integer wraps at its width: bounds that leave its type are one
+   value wrapped, or the type's. *)
+let at_width dt ((lo, hi) as b : Dtype.value * Dtype.value) =
+  match (lo, hi) with
+  | `Int _, `Int _
+    when List.mem dt Dtype.ints
+         && Value.(lo < Dtype.min dt || Dtype.max dt < hi) ->
+      if Value.(lo = hi) then
+        let v = Dtype.truncate dt lo in
+        (v, v)
+      else (Dtype.min dt, Dtype.max dt)
+  | _ -> b
+
 (* Bounds read only the sources their rule needs, so they recurse rather than
-   fill the whole graph below. A committed integer wraps at its width, so bounds
-   that leave its type are the type's. *)
+   fill the whole graph below. A node's bounds, and those of an operand an
+   operation commits to its type, are at their width. *)
 let rec min_max u =
   match u.min_max_memo with
   | Some b -> b
   | None ->
-      let ((lo, hi) as b) = compute_min_max u and dt = u.dtype in
-      let b =
-        if
-          List.mem dt Dtype.ints
-          && Value.(lo < Dtype.min dt || Dtype.max dt < hi)
-        then (Dtype.min dt, Dtype.max dt)
-        else b
-      in
+      let b = at_width u.dtype (compute_min_max u) in
       u.min_max_memo <- Some b;
       b
 
+and operand_bounds u s =
+  let operands =
+    if Op.Set.mem u.op Op.Set.comparison then promo_dtype u.src else u.dtype
+  in
+  at_width operands (min_max s)
+
 and compute_min_max u : Dtype.value * Dtype.value =
-  let bounds x = min_max x in
   let dt = u.dtype in
+  let bounds x = operand_bounds u x in
   let binary =
     if Op.Set.mem u.op Op.Set.binary && not (Dtype.is_float dt) then
       match u.src with
@@ -1533,7 +1545,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
           bounds (src0 ())
       | Op.Cast, _ -> (
           let x = src0 () in
-          match cast_bounds x.dtype dt (bounds x) with
+          match cast_bounds x.dtype dt (min_max x) with
           | Some b -> b
           | None -> (Dtype.min dt, Dtype.max dt))
       | _ -> (Dtype.min dt, Dtype.max dt))

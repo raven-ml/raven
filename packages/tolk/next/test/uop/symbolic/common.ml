@@ -22,11 +22,9 @@ let sym u = rewrite Symbolic.sym u
 (* Values
 
    The law that a rewrite keeps the value: at bindings of an expression's
-   leaves, the rewritten expression evaluates to what the expression does, and
-   within the bounds it claims. The rules reason on bounds as integers do, so
-   the law holds wherever no operation or cast of the expression leaves its
-   type, which the machine would wrap. A graph of constants has no binding to
-   choose: it folds to what the machine computes, wrapping included. *)
+   leaves, the rewritten expression evaluates to what the expression does, as
+   the machine computes it, wrapping included, and within the bounds it
+   claims. *)
 
 (* Exact graphs *)
 
@@ -136,18 +134,18 @@ let within_bounds ~msg u v =
         failf "%s: %a is outside the bounds [%a, %a]" msg Dtype.pp_const v
           Dtype.pp_const lo Dtype.pp_const hi
 
-(* [keeps_value ~name before after] checks that [after] has [before]'s value at
-   [count] bindings of their leaves, their extremes first, where [before]
-   divides by no zero and, unless it is a graph of constants, wraps nothing, and
-   that the value is within [after]'s bounds. It checks nothing unless both are
-   exact. *)
-let keeps_value ?(count = 16) ~name before after =
+(* [keeps_value ~wrapping ~name before after] checks that [after] has [before]'s
+   value at [count] bindings of their leaves, their extremes first, where
+   [before] divides by no zero and, unless [wrapping] (default [false]) or it is
+   a graph of constants, wraps nothing, and that the value is within [after]'s
+   bounds. It checks nothing unless both are exact. *)
+let keeps_value ?(count = 16) ?(wrapping = false) ~name before after =
   if exact before && exact after then begin
     let rng = Random.State.make [| Hashtbl.hash (name, Ops.key before) |] in
     let constants = not (List.exists is_leaf (Ops.toposort before)) in
     let defined env =
       defined env before
-      && (constants || not (Interpreter.overflows ~vars:env before))
+      && (wrapping || constants || not (Interpreter.overflows ~vars:env before))
     in
     for k = 0 to count - 1 do
       match bindings rng k [ before; after ] with

@@ -57,31 +57,15 @@ let record u =
   | [ input ] -> { kind; bounds; input; result = None }
   | _ -> failf "a record of %d nodes" (List.length (Ops.src u))
 
-(* D13: tolk.next reads a committed constant at its width, where tinygrad reads
-   it unwrapped, so these tests' folds differ from the goldens. There the replay
-   states what tolk.next computes instead: the machine's value. *)
-let reads_constants_at_their_width =
-  [
-    "TestThreefryConstFolding.test_threefry";
-    "TestModularWraparound.test_div";
-    "TestModularWraparound.test_neg";
-    "TestModularWraparound.test_payne_hanek_reduction_bug";
-  ]
-
 let replay test k r =
   let msg = Printf.sprintf "%s, record %d (%s)" test k r.kind in
-  let result = simplification r.kind r.input in
-  if List.mem test reads_constants_at_their_width then
-    keeps_value ~name:msg r.input (Option.value result ~default:r.input)
-  else begin
-    equal ~msg (option uop) r.result result;
-    Option.iter
-      (fun (lo, hi) ->
-        let out = Option.get r.result in
-        equal ~msg (pair value value) (lo, hi) (Ops.vmin out, Ops.vmax out))
-      r.bounds;
-    keeps_value ~name:msg r.input (Option.value r.result ~default:r.input)
-  end
+  equal ~msg (option uop) r.result (simplification r.kind r.input);
+  Option.iter
+    (fun (lo, hi) ->
+      let out = Option.get r.result in
+      equal ~msg (pair value value) (lo, hi) (Ops.vmin out, Ops.vmax out))
+    r.bounds;
+  keeps_value ~name:msg r.input (Option.value r.result ~default:r.input)
 
 let replay_all name =
   let records = Ops.src (Golden.sink (name ^ ".golden")) in

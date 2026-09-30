@@ -320,40 +320,61 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Ops` suite: `key › ignores tags` and `key › tells
   arguments apart`.
 
-## D13. Folding reads committed constants at their width
+## D13. Folding reads and writes committed constants at their width
 
-- **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`) and `:154-155` (the
-  collapse of committed const conversions), which read a constant with
-  `UOp.val` (`uop/ops.py:259-263`), unwrapped; `uop/weak.py:82-87`
-  (`uncast_const`), which leaves the unwrapped literal bare. tinygrad's own
-  `TestModularWraparound` expects the wrapped results and is marked
-  `xfail_broken_const_wraparound`.
-- **tolk.next:** `lib/uop/symbolic.ml:95` (`fold_const_alu`) and `:458`;
+- **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`, whose result keeps
+  the unwrapped value, `truncate_output=False`) and `:154-155` (the collapse
+  of committed const conversions), which read a constant with `UOp.val`
+  (`uop/ops.py:259-263`), unwrapped; `uop/ops.py:1104-1163` (`_min_max`),
+  which bounds a weak operand of a committed operation by its unwrapped value;
+  `uop/weak.py:82-87` (`uncast_const`), which leaves the literal bare.
+  tinygrad's own `TestModularWraparound` expects the wrapped results and is
+  marked `xfail_broken_const_wraparound`.
+- **tolk.next:** `lib/uop/symbolic.ml:96` (`fold_const_alu`) and `:463`;
+  `lib/uop/ops.ml:1471` (`at_width`) and `:1493` (`operand_bounds`);
   `lib/uop/uop_weak.ml:203` (`uncast_const`).
-- **Differs:** a committed constant, a cast of a literal to a type of known
-  width, is read wrapped to that width: by an operation that folds, by a cast
-  of it that collapses, and where its cast is dropped for a bare literal. The folded result is still kept mathematical,
-  for emission to wrap. tinygrad reads the unwrapped value, so a fold that
-  reads high bits gives what no machine computes: `(uint32 0xFFFFFFFF + 1) >> 1`
-  folds to `2147483648` where the machine gives `0`, `threefry2x32(5, 10)`
-  folds to another key than the unfolded graph computes, and the int64 cast
-  of the int32 constant `2^31` folds to `2^31` where the machine gives
-  `-2^31`, and `x < uint8 300` compares against a bare `300`, which folds to
-  `true`, where the machine compares against `44`. Reading at the width also
-  changes which wrong answer `c0 + x < c1 → x < c1 - c0` gives where the offset
-  wraps: on uint8, `u + uint8 -1 < 255` becomes `u < 0` here, `false` for 255
-  inputs, where tinygrad's `u < 256` is `true`, wrong for one. D24 keeps that
-  rule to offsets that do not wrap, so neither applies.
+- **Differs:** a committed integer constant holds its type's value. A fold
+  reads a committed constant, a cast of a literal to a type of known width,
+  wrapped to that width, and so does a cast of it that collapses; it reads a
+  weak integer operand of an operation on a committed integer at that
+  operation's width, as compiled code commits it; and it writes a committed
+  integer result wrapped. The bounds read operands, and bound constants, the
+  same way. So `uncast_const` only ever drops a cast whose literal fits. This
+  reverses tinygrad's clause that a folded integer is kept mathematical, for
+  emission to wrap: the emission never saw the mathematical value, since every
+  later fold and bound read it first. tinygrad reads the unwrapped value, so a
+  fold gives what no machine computes: `(uint32 0xFFFFFFFF + 1) >> 1` folds to
+  `2147483648` where the machine gives `0`, `threefry2x32(5, 10)` folds to
+  another key than the unfolded graph computes, the int64 cast of the int32
+  constant `2^31` folds to `2^31` where the machine gives `-2^31`, and
+  `x < uint8 300` compares against `300` where the machine compares against
+  `44`. On uint8, `max(-3, a)` becomes `a` where the machine computes
+  `max(253, a)`; on uint32, `max(1, b) // -2` folds to `-1`, which is
+  `4294967295`, where the machine divides by `4294967294` and gives `0`; and
+  `max(-max(b % 2, -c), b)` at `c = 2` becomes `b` where the machine gives
+  `2`, since `-c` folded to `-254`. A maximum by bounds that keeps a weak
+  operand commits it to the maximum's type, so the operations that read it do
+  not lose their width. Reading at the width also keeps
+  `c0 + x < c1 → x < c1 - c0` from a wrong answer where the offset wraps: on
+  uint8, `u + uint8 -1 < 255` would become `u < 0`; D24 keeps that rule to
+  offsets that do not wrap.
 - **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
-  must draw the numbers eager nx draws.
+  must draw the numbers eager nx draws, and RFC 0012's Law 1: every integer
+  expression's compiled value is eager nx's modular one.
 - **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › an
   operation reads committed constants at their width` (a fold, a cast of a
   committed constant, a uint8 remainder), `symbolic_simple › constants › a
-  comparison reads a committed constant at its width` (the uncast), and
+  comparison reads a committed constant at its width` (the uncast),
+  `committed constants hold their type's value (D13)` (each case above,
+  evaluated before and after), the law `laws › sym keeps the value of an
+  integer expression at a committed width, wrapping included`, and
   `tinygrad › tests.golden › TestModularWraparound.<test>` and
-  `TestThreefryConstFolding.test_threefry`, which check the machine value;
-  the offset's interaction with D24: `integers wrap (D24) › an offset crosses
-  a comparison only where neither side wraps` (the committed case).
+  `TestThreefryConstFolding.test_threefry`, whose goldens, generated with the
+  same change in `test/gen/tinygrad.patch`, hold the machine values; the
+  `Ops` suite: `bounds › a typed integer constant outside its type is bounded
+  by its wrapped value, a non-finite one by the type (D13)`; the offset's
+  interaction with D24: `integers wrap (D24) › an offset crosses a comparison
+  only where neither side wraps` (the committed case).
 
 ## D14. Folded comparisons treat NaN as IEEE does
 
@@ -363,7 +384,7 @@ the Exclusions of `README.md`.
   intern as one node, and `exec_alu` compares with it: `nan != nan` and
   `nan < nan` fold to `False`, where `exec_alu` on floats gives `True` and
   `False`.
-- **tolk.next:** `lib/uop/symbolic.ml:95` (`fold_const_alu`); constants are
+- **tolk.next:** `lib/uop/symbolic.ml:96` (`fold_const_alu`); constants are
   interned by `Dtype.equal_const`, and `exec_alu` compares floats.
 - **Differs:** a folded comparison of NaN constants follows IEEE: `nan <> nan`
   is `true`.
@@ -574,7 +595,7 @@ the Exclusions of `README.md`.
   roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
   - **Integer bounds wrap.** tinygrad: `uop/ops.py:1104-1163` (`_min_max`),
     `:1154-1164` (a cast), `:1147-1149` (a constant table). tolk.next:
-    `lib/uop/ops.ml:1472` (`min_max`), `:1546` (`cast_bounds`), `:1514`. The
+    `lib/uop/ops.ml:1485` (`min_max`), `:1558` (`cast_bounds`), `:1526`. The
     bounds of a committed integer that leave its type are the type's; an
     integer cast to an integer keeps its interval, which then wraps, where
     tinygrad clamps a signed target to the overlap; a constant table holding a
@@ -586,7 +607,7 @@ the Exclusions of `README.md`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:282` (`(x // c1) // c2`),
     `:285` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
     `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
-    (`x + y <> c` under a cast). tolk.next: `lib/uop/symbolic.ml:835,844`,
+    (`x + y <> c` under a cast). tolk.next: `lib/uop/symbolic.ml:848,857`,
     `lib/uop/divandmod.ml:252`, `lib/codegen/simplify.ml:252,268,276,344`.
     Each applies to a committed integer only where every value it computes
     fits the type; the comparisons of `Simplify` apply to integers only, since
@@ -597,7 +618,7 @@ the Exclusions of `README.md`.
     wraps to `0`.
   - **Float folds.** tinygrad: `uop/symbolic.py:117` (`x + 0`), `:170-176`
     (`x / x`, `(x * y) / y`, `x * 0`), `:247` (`(x / y) / z`). tolk.next:
-    `lib/uop/symbolic.ml:339,512`. A float `x + 0` is `x` only for `-0.`
+    `lib/uop/symbolic.ml:344,517`. A float `x + 0` is `x` only for `-0.`
     (`-0. + +0.` is `+0.`); `x * 0` is `0` for integers and booleans only (a
     float product by zero is NaN at an infinity or a NaN and `-0.` at a
     negative `x`); `x / x`, `(x * y) / y` and `(x / y) / z` are gone, since
@@ -606,14 +627,14 @@ the Exclusions of `README.md`.
     `1e20 / 1e40` is `0.`.
   - **Signed zeros.** tinygrad: `uop/symbolic.py:248` (`-(x + c)`), `:267`
     (complementary selections), `:472` (`-(x + y)`). tolk.next:
-    `lib/uop/symbolic.ml:699,767,1289`. For integers and booleans only:
+    `lib/uop/symbolic.ml:704,772,1302`. For integers and booleans only:
     `-(x + 3)` at `x = -3` is `-0.`, where `-x + -3` is `+0.`, and
     `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
     `-0.`.
   - **Reassociation.** tinygrad: `uop/symbolic.py:240-246` (like terms),
     `:264-265` (a sum of two selections), `:279-280` (two constants of an
     associative operation), `:293-294` (constants to the end), `:390-398,470`
-    (`reduce_mul_chain`). tolk.next: `lib/uop/symbolic.ml:674,755,818,874,1129`.
+    (`reduce_mul_chain`). tolk.next: `lib/uop/symbolic.ml:679,760,831,887,1142`.
     Sums, products and maxima regroup for integers and booleans only, and a
     factor leaves a float reduction nowhere: `(x + 1e8) + -1e8` at `x = 1` is
     `0.`, where `x + 0.` is `1.`; `(y + x) + x` at `y = 1`, `x = 2^-24` is
@@ -624,7 +645,7 @@ the Exclusions of `README.md`.
     `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
     `x + x` is still `x * 2`, which is exact.
   - **Maxima.** tinygrad: `uop/symbolic.py:273-275`. tolk.next:
-    `lib/uop/symbolic.ml:799,809`. A maximum by bounds applies to integers
+    `lib/uop/symbolic.ml:804,814`. A maximum by bounds applies to integers
     only, since a float's bounds leave out NaN and the order of zeros:
     `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
     computes a maximum becomes one only when its two constants are one node:
@@ -636,7 +657,7 @@ the Exclusions of `README.md`.
     is `1e-8`, where `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it
     is `1.`.
   - **Pow.** tinygrad: `uop/symbolic.py:16-21` (`simplify_pow`), `:190`
-    (`c ** x`). tolk.next: `lib/uop/symbolic.ml:61,567`. The reciprocal of the
+    (`c ** x`). tolk.next: `lib/uop/symbolic.ml:61,572`. The reciprocal of the
     base is taken for exponents of magnitude at least 1 only, where the power
     overflows whenever the reciprocal does: `1e-40 ** -0.8` is `1e32`, where
     `(1 / 1e-40) ** 0.8` is `inf`. A float half-integer power selects `+0.`

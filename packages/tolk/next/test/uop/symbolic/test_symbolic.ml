@@ -820,6 +820,32 @@ let wrapping =
           by_symbolic u u);
     ]
 
+(* D13: a committed integer constant holds its type's value. A fold reads a weak
+   operand of an operation on a committed integer, and writes its result, at
+   that type's width, and so do the bounds. *)
+let committed_constants =
+  let v ?(dtype = Dtype.Uint8) name lo hi = var ~dtype name lo hi in
+  let b = v "b" 0 1 and d = v "d" 1 2 and a = v "a" 0 1 in
+  group "committed constants hold their type's value (D13)"
+    [
+      test "a weak operand is read at the width of the operation" (fun () ->
+          let b32 = v ~dtype:Uint32 "b" 0 1 in
+          keeps_machine_value
+            Ops.O.(Ops.maximum (int 1) b32 // int (-2))
+            [ [ ("b", i 0) ]; [ ("b", i 1) ] ];
+          keeps_machine_value
+            Ops.O.(Ops.where (int (-3) < b) a (int (-3)) // d)
+            [ [ ("a", i 0); ("b", i 1); ("d", i 2) ] ];
+          keeps_machine_value
+            (Ops.maximum (Ops.int (-3)) a)
+            [ [ ("a", i 0) ]; [ ("a", i 1) ] ]);
+      test "a folded result is written at its width" (fun () ->
+          let c = v "c" 2 2 in
+          keeps_machine_value
+            Ops.O.(Ops.maximum ~-(Ops.maximum (b % int 2) ~-c) b)
+            [ [ ("b", i 0); ("c", i 2) ]; [ ("b", i 1); ("c", i 2) ] ]);
+    ]
+
 (* D24: floats keep IEEE's values, signed zeros, infinities, NaN and subnormals
    included. Each graph is evaluated before and after the rewrite, with [f], [g]
    and [h] bound to the given float32 values, at points where the rewrite that
@@ -1500,6 +1526,12 @@ let laws =
       scenario_law
         "symbolic keeps the value of an integer expression where nothing wraps"
         (fun e -> keeps_value ~name:"symbolic" e (symbolic e));
+      prop ~count:1000
+        "sym keeps the value of an integer expression at a committed width, \
+         wrapping included"
+        committed_scenario (fun s ->
+          let e = node s in
+          keeps_value ~wrapping:true ~name:"sym" e (sym e));
       prop "sym keeps a float expression's value bit for bit at special values"
         float_scenario (fun f ->
           let e = float_node f in
@@ -1529,6 +1561,7 @@ let () =
          commutative;
          symbolic_group;
          wrapping;
+         committed_constants;
          floats;
          conditions;
          sym_group;

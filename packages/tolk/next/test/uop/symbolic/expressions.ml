@@ -176,6 +176,8 @@ let scenario =
     Gen.(frequency [ (3, constant Dtype.Weak_int); (2, of_list dtypes) ])
 
 let weak_scenario = scenario_of (Gen.constant Dtype.Weak_int)
+let committed_scenario = scenario_of (Gen.of_list (List.tl dtypes))
+
 (* Floats *)
 
 type float_expr =

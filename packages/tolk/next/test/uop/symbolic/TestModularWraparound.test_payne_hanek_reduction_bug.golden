@@ -15,8 +15,8 @@
 13 Ops.ADD dtypes.ulong [11, 12]
 14 Ops.CONST dtypes.weakint [] 4611686018427387904
 15 Ops.FLOORDIV dtypes.ulong [13, 14]
-16 Ops.CONST dtypes.weakint [] 47
+16 Ops.CONST dtypes.weakint [] 0
 17 Ops.CAST dtypes.ulong [16] dtypes.ulong
-18 Ops.SINK dtypes.void [15, 17] tag=("simplify", 47, 47)
+18 Ops.SINK dtypes.void [15, 17] tag=("simplify", 0, 0)
 19 Ops.SINK dtypes.void [18]
 

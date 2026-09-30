@@ -3,7 +3,8 @@
 1 Ops.CAST dtypes.uchar [0] dtypes.uchar
 2 Ops.CONST dtypes.weakint [] -1
 3 Ops.MUL dtypes.uchar [1, 2]
-4 Ops.CAST dtypes.uchar [2] dtypes.uchar
-5 Ops.SINK dtypes.void [3, 4] tag=("simplify", 0, 255)
-6 Ops.SINK dtypes.void [5]
+4 Ops.CONST dtypes.weakint [] 255
+5 Ops.CAST dtypes.uchar [4] dtypes.uchar
+6 Ops.SINK dtypes.void [3, 5] tag=("simplify", 255, 255)
+7 Ops.SINK dtypes.void [6]
 

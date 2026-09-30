@@ -88,17 +88,23 @@ let fold_bitcast root c =
     let bits = Dtype.bitcast dt (dtype root) (Dtype.truncate dt (num c)) in
     Some (const_v root bits)
 
-(* no truncate: ints stay mathematical past the fold (emission truncates);
-   floats re-round in the mint. So a committed operand is read at its width, as
-   the machine holds it. A stack folds lane by lane, and each lane is truncated.
-   A shift by a negative count has no value, and does not fold. *)
+(* A committed integer holds its type's value, so a fold reads a committed
+   operand, and a weak integer operand the operation commits, at the width of
+   the operation's operands, and writes a committed integer result at its width;
+   floats re-round in the mint. A stack folds lane by lane. A shift by a
+   negative count has no value, and does not fold. *)
 let fold_const_alu a =
-  let alu ?truncate_output args =
-    exec_alu ?truncate_output (op a) (dtype a) args
+  let alu args = exec_alu (op a) (dtype a) args in
+  let operands =
+    if Op.Set.mem (op a) Op.Set.comparison then promo_dtype (src a) else dtype a
   in
   let read s =
     match (op s, value s) with
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
+    | Op.Const, (`Int _ as v)
+      when Dtype.equal (dtype s) Dtype.Weak_int && List.mem operands Dtype.ints
+      ->
+        (at operands v :> Dtype.const)
     | _, c -> c
   in
   let defined args =
@@ -110,8 +116,7 @@ let fold_const_alu a =
   match List.filter stack (src a) with
   | [] ->
       let args = List.map read (src a) in
-      if defined args then Some (const_like a (alu ~truncate_output:false args))
-      else None
+      if defined args then Some (const_like a (alu args)) else None
   | stacks ->
       let count =
         List.fold_left (fun n s -> max n (List.length (src s))) 0 stacks
@@ -808,11 +813,19 @@ let symbolic =
                if m "b" == m "c" then Some (maximum (m "a") (m "b")) else None);
            (* a float maximum's bounds leave out NaN and the order of zeros *)
            rule
-             Upat.(maximum (var ~dtype:int_or_bool "x") (var "y"))
+             Upat.(named "m" (maximum (var ~dtype:int_or_bool "x") (var "y")))
              (fun m ->
-               let x = m "x" and y = m "y" in
-               if V.(vmin x >= vmax y) then Some x
-               else if V.(vmax x <= vmin y) then Some y
+               let mx = m "m" and x = m "x" and y = m "y" in
+               let (x0, x1), (y0, y1) =
+                 (operand_bounds mx x, operand_bounds mx y)
+               in
+               (* the operand kept is committed to the maximum's type *)
+               let keep u =
+                 if List.mem (dtype u) Dtype.weaks then ccast u (dtype mx)
+                 else u
+               in
+               if V.(x0 >= y1) then Some (keep x)
+               else if V.(x1 <= y0) then Some (keep y)
                else None);
          ]
         (* Two stage ALU folding; sums, products and maxima for integers: in

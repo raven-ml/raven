@@ -154,7 +154,7 @@
 152 Ops.ADD dtypes.uint [141, 42]
 153 Ops.CAST dtypes.ulong [152] dtypes.ulong
 154 Ops.OR dtypes.ulong [151, 153]
-155 Ops.CONST dtypes.weakint [] 73289708621060751413853568081933772425119479444588033598658365036298992111362298387533196351495982275863054069553
+155 Ops.CONST dtypes.weakint [] 6264663365535751564
 156 Ops.CAST dtypes.ulong [155] dtypes.ulong
 157 Ops.SINK dtypes.void [154, 156] tag="simplify"
 158 Ops.SINK dtypes.void [157]

@@ -3,6 +3,6 @@
 1 Ops.CAST dtypes.uint [0] dtypes.uint
 2 Ops.CAST dtypes.uchar [1] dtypes.uchar
 3 Ops.CAST dtypes.uchar [0] dtypes.uchar
-4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 0, 255)
+4 Ops.SINK dtypes.void [2, 3] tag=("simplify", 214, 214)
 5 Ops.SINK dtypes.void [4]
 
