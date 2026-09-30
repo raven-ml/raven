@@ -2871,6 +2871,9 @@ thread.
 
 ### Nx
 
+- A host buffer is about twice as cheap to make: `Nx_device.Buffer.create` of a
+  few bytes takes 75 ns where it took 158, so a one-element `Nx.add` takes
+  161 ns where it took 237, and one of 64 KiB takes 0.85 µs where it took 3 µs.
 - **Breaking:** vendor libraries describe their devices with
   `Nx_device.Driver.device` and `Driver.host`, whose memory is `Host_visible` or
   `Device_local` and whose work completes by `Poll`, `Sleep` or `Signal`; they

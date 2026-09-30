@@ -6,6 +6,7 @@
 #define _GNU_SOURCE
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -36,6 +37,81 @@
 
 /* Copies at least this large release the runtime while they run. */
 #define NX_DEVICE_BLOCKING_BYTES (1 << 16)
+
+/* The bytes of the host's heap that live buffers hold. A buffer reserves its
+   bytes against the host's budget and holds a token, a custom block whose
+   finaliser returns them: the collector runs it where it frees the block,
+   with no OCaml function to call. */
+static _Atomic intnat heap_bytes;
+
+intnat caml_nx_device_heap_bytes(value unit) {
+  (void)unit;
+  return atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+}
+
+value caml_nx_device_heap_bytes_byte(value unit) {
+  return Val_long(caml_nx_device_heap_bytes(unit));
+}
+
+value caml_nx_device_heap_reserve(intnat n, intnat budget) {
+  intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  do {
+    if (n > budget - held) return Val_false;
+  } while (!atomic_compare_exchange_weak_explicit(
+      &heap_bytes, &held, held + n, memory_order_relaxed,
+      memory_order_relaxed));
+  return Val_true;
+}
+
+value caml_nx_device_heap_reserve_byte(value n, value budget) {
+  return caml_nx_device_heap_reserve(Long_val(n), Long_val(budget));
+}
+
+value caml_nx_device_heap_return(intnat n) {
+  atomic_fetch_sub_explicit(&heap_bytes, n, memory_order_relaxed);
+  return Val_unit;
+}
+
+value caml_nx_device_heap_return_byte(value n) {
+  return caml_nx_device_heap_return(Long_val(n));
+}
+
+static void heap_token_finalize(value v) {
+  caml_nx_device_heap_return(*(intnat *)Data_custom_val(v));
+}
+
+static struct custom_operations heap_token_ops = {
+    "nx.device.heap_token",     heap_token_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+/* A token that returns [v_n] reserved bytes once it is collected. */
+value caml_nx_device_heap_token(value v_n) {
+  value v = caml_alloc_custom(&heap_token_ops, sizeof(intnat), 0, 1);
+  *(intnat *)Data_custom_val(v) = Long_val(v_n);
+  return v;
+}
+
+/* [v_n] bytes of the heap on a page, as a [char] bigarray that frees them, or
+   [None] where the C library aligns nothing that [free] releases (Windows). */
+value caml_nx_device_heap_aligned(value v_page, value v_n) {
+  CAMLparam2(v_page, v_n);
+#ifdef _WIN32
+  (void)v_page;
+  (void)v_n;
+  CAMLreturn(Val_none);
+#else
+  CAMLlocal1(ba);
+  void *data = NULL;
+  if (posix_memalign(&data, (size_t)Long_val(v_page), (size_t)Long_val(v_n)))
+    caml_raise_out_of_memory();
+  intnat dim = Long_val(v_n);
+  ba = caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1,
+                     data, &dim);
+  CAMLreturn(caml_alloc_some(ba));
+#endif
+}
 
 value caml_nx_device_page_size(value unit) {
   (void)unit;
@@ -74,6 +150,27 @@ value caml_nx_device_memmove_byte(value dst, value src, value n) {
 
 extern value caml_ba_sub(value vb, value vofs, value vlen);
 
+/* Gives the managed array [b] the proxy that its sub-arrays share, if it has
+   none. The runtime makes it at the first sub without synchronization; here it
+   is made at most once, whatever the domains that view [b] at once. Its first
+   reference is [b]'s own, as the runtime counts it. */
+static void ensure_proxy(struct caml_ba_array *b) {
+  _Atomic(struct caml_ba_proxy *) *slot =
+      (_Atomic(struct caml_ba_proxy *) *)&b->proxy;
+  if ((b->flags & CAML_BA_MANAGED_MASK) == CAML_BA_EXTERNAL ||
+      atomic_load_explicit(slot, memory_order_acquire) != NULL)
+    return;
+  struct caml_ba_proxy *proxy = malloc(sizeof *proxy);
+  if (proxy == NULL) caml_raise_out_of_memory();
+  atomic_store_explicit(&proxy->refcount, 1, memory_order_relaxed);
+  proxy->data = b->data;
+  proxy->size = b->flags & CAML_BA_MAPPED_FILE ? caml_ba_byte_size(b) : 0;
+  struct caml_ba_proxy *none = NULL;
+  if (!atomic_compare_exchange_strong_explicit(
+          slot, &none, proxy, memory_order_acq_rel, memory_order_acquire))
+    free(proxy);
+}
+
 /* [v_len] elements of kind [v_kind] from byte [v_offset] of [v_src]. The
    header comes from [caml_ba_sub] over the whole of [v_src], so it joins
    [v_src]'s storage, which lives as long as any array over it. Its data,
@@ -83,6 +180,7 @@ value caml_nx_device_bigarray_view(value v_src, value v_kind, value v_offset,
                                    value v_len) {
   CAMLparam2(v_src, v_kind);
   CAMLlocal1(view);
+  ensure_proxy(Caml_ba_array_val(v_src));
   view = caml_ba_sub(v_src, Val_long(0),
                      Val_long(Caml_ba_array_val(v_src)->dim[0]));
   struct caml_ba_array *b = Caml_ba_array_val(view);

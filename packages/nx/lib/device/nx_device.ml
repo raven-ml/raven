@@ -48,6 +48,15 @@ type host_programs = {
 type keep =
   | Keep : 'a -> keep
   | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
+  | Heap : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * heap_token -> keep
+
+(* The host memory of [create] is kept with its token: a custom block whose
+   finaliser returns the reserved bytes to the host's count. *)
+and heap_token
+
+(* The bytes a device allocated: an atomic count, or the host's, which the
+   finalisers of its buffers' tokens return. *)
+type allocated = Count of int Atomic.t | Heap_bytes
 
 type t = {
   id : int;
@@ -106,7 +115,7 @@ type t = {
          first *)
   mutable held : keep list; (* retained memory, and what it keeps *)
   mutable budget : int;
-  allocated : int Atomic.t;
+  allocated : allocated;
   mutable cached : int;
   mutable retained : int;
   mutable bytes_in : int;
@@ -253,6 +262,26 @@ external wait_u64 :
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 
+external heap_bytes : unit -> (int[@untagged])
+  = "caml_nx_device_heap_bytes_byte" "caml_nx_device_heap_bytes"
+[@@noalloc]
+
+external heap_reserve : (int[@untagged]) -> (int[@untagged]) -> bool
+  = "caml_nx_device_heap_reserve_byte" "caml_nx_device_heap_reserve"
+[@@noalloc]
+
+external heap_return : (int[@untagged]) -> unit
+  = "caml_nx_device_heap_return_byte" "caml_nx_device_heap_return"
+[@@noalloc]
+
+external heap_token : int -> heap_token = "caml_nx_device_heap_token"
+
+external heap_aligned :
+  int ->
+  int ->
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t option
+  = "caml_nx_device_heap_aligned"
+
 external now_ns : unit -> (int[@untagged])
   = "caml_nx_device_now_ns_byte" "caml_nx_device_now_ns"
 [@@noalloc]
@@ -300,8 +329,10 @@ let too_many = -2
 let page = page_size ()
 
 (* [shared ba] is [ba] with the proxy of its storage made. The runtime makes a
-   proxy on a bigarray's first sub without synchronization, so a keep must have
-   one before views of it can be taken from several domains. *)
+   proxy on a bigarray's first sub without synchronization, which
+   [bigarray_view] makes safe for the bigarrays this module alone views: one
+   that other code may view, such as one of [of_bigarray], is kept through a sub
+   of it. *)
 let shared ba = Bigarray.Array1.sub ba 0 (Bigarray.Array1.dim ba)
 
 let heap_memory ba =
@@ -319,18 +350,22 @@ let heap_memory ba =
    buffer; smaller buffers are copied through staging instead. *)
 let aligned_from = Int.max (64 * 1024) (4 * page)
 
-(* [n] bytes of the heap. The sub that aligns them also makes their proxy. *)
+(* [n] bytes of the heap, on a page from [aligned_from]: allocated there, or cut
+   from a page of more bytes where the C library aligns nothing it frees. *)
 let heap n =
   if n < aligned_from then
-    shared (Bigarray.Array1.create Bigarray.char Bigarray.c_layout n)
-  else if n > max_int - page then raise Stdlib.Out_of_memory
+    Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
   else
-    let ba =
-      Bigarray.Array1.create Bigarray.char Bigarray.c_layout (n + page - 1)
-    in
-    let a = Nativeint.to_int (bigarray_address ba) in
-    let skip = (page - (a mod page)) mod page in
-    Bigarray.Array1.sub ba skip n
+    match heap_aligned page n with
+    | Some ba -> ba
+    | None ->
+        if n > max_int - page then raise Stdlib.Out_of_memory;
+        let ba =
+          Bigarray.Array1.create Bigarray.char Bigarray.c_layout (n + page - 1)
+        in
+        let a = Nativeint.to_int (bigarray_address ba) in
+        let skip = (page - (a mod page)) mod page in
+        Bigarray.Array1.sub ba skip n
 
 (* Profiling *)
 
@@ -342,13 +377,20 @@ let rec push r x =
   let l = Atomic.get r in
   if not (Atomic.compare_and_set r l (x :: l)) then push r x
 
+let allocated d =
+  match d.allocated with Count c -> Atomic.get c | Heap_bytes -> heap_bytes ()
+
+let allocate_bytes d n =
+  match d.allocated with
+  | Count c -> ignore (Atomic.fetch_and_add c n)
+  | Heap_bytes -> heap_return (-n)
+
 let memory_changed d =
   match Atomic.get profile with
   | None -> ()
   | Some c ->
       push c.events
-        (Allocation
-           { device = d; time = now_ns (); allocated = Atomic.get d.allocated })
+        (Allocation { device = d; time = now_ns (); allocated = allocated d })
 
 (* The lane of the calling domain on the host. *)
 let domain_lane () = Printf.sprintf "domain %d" (Domain.self () :> int)
@@ -473,7 +515,10 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       spans = Atomic.make [];
       held = [];
       budget;
-      allocated = Atomic.make 0;
+      allocated =
+        (match (machine, io) with
+        | None, None -> Heap_bytes
+        | Some _, _ | _, Some _ -> Count (Atomic.make 0));
       cached = 0;
       retained = 0;
       bytes_in = 0;
@@ -702,6 +747,7 @@ let rec update_links base f =
   let l = Atomic.get base.links in
   if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
 
+let no_links = { maps = []; reached = [] }
 let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
 
 let mapping_on d base =
@@ -748,7 +794,7 @@ let free_of d ~pinned =
   | Some (a : allocator) when pinned -> a.free
   | _ -> d.free
 
-let fits d n = n <= d.budget - Atomic.get d.allocated - d.cached - d.retained
+let fits d n = n <= d.budget - allocated d - d.cached - d.retained
 
 (* Runs what other devices that map [m] registered, before [d] frees it: they
    unmap it. Memory one of them could not unmap is retained. [d] is
@@ -812,7 +858,7 @@ let reclaim d =
   match Atomic.exchange d.released [] with
   | [] -> ()
   | bases ->
-      let emptied = ref [] and allocated = Atomic.get d.allocated in
+      let emptied = ref [] and before = allocated d in
       List.iter
         (fun b ->
           match b.source with
@@ -824,11 +870,11 @@ let reclaim d =
               file_close b.memory.handle
           | None when (Atomic.get b.links).reached <> [] ->
               (* Another device's work may still write it. *)
-              ignore (Atomic.fetch_and_add d.allocated (-b.bytes));
+              allocate_bytes d (-b.bytes);
               d.retained <- d.retained + b.bytes;
               d.held <- Keep b :: d.held
           | None ->
-              ignore (Atomic.fetch_and_add d.allocated (-b.bytes));
+              allocate_bytes d (-b.bytes);
               let key = (b.bytes, b.pinned) in
               let ms =
                 Option.value ~default:[] (Hashtbl.find_opt d.cache key)
@@ -836,7 +882,7 @@ let reclaim d =
               Hashtbl.replace d.cache key (b.memory :: ms);
               d.cached <- d.cached + b.bytes)
         bases;
-      if Atomic.get d.allocated <> allocated then memory_changed d;
+      if allocated d <> before then memory_changed d;
       (match !emptied with
       | [] -> ()
       | emptied ->
@@ -1008,7 +1054,7 @@ module Buffer = struct
       borrowed;
       keep;
       source;
-      links = Atomic.make { maps = []; reached = [] };
+      links = Atomic.make no_links;
       file;
       life = Live;
     }
@@ -1018,23 +1064,20 @@ module Buffer = struct
     { base; offset = 0; dtype = s; length = n }
 
   (* Host memory takes neither the host nor its release list: its bytes are
-     reserved atomically against the budget and returned by a finaliser that
-     does not resurrect the base, so the memory is freed in the collection that
-     finds it unreachable. No wait is needed: a device's work reaches host
-     memory only through a borrow, which keeps it alive. *)
-  let rec reserve n =
-    let a = Atomic.get host.allocated in
-    n <= host.budget - a
-    && (Atomic.compare_and_set host.allocated a (a + n) || reserve n)
+     reserved atomically against the budget and returned by the finaliser of a
+     token the base keeps, which the collector runs where it frees the token, in
+     the collection that finds the base unreachable. No wait is needed: a
+     device's work reaches host memory only through a borrow, which keeps it
+     alive. *)
 
   (* [n] reserved bytes of the heap. A refused reservation or allocation
      collects garbage once and tries again. *)
   let rec host_heap n ~collected =
-    if reserve n then (
+    if heap_reserve n host.budget then (
       match heap n with
       | ba -> ba
       | exception Stdlib.Out_of_memory ->
-          ignore (Atomic.fetch_and_add host.allocated (-n));
+          heap_return n;
           host_refused n ~collected)
     else host_refused n ~collected
 
@@ -1058,22 +1101,32 @@ module Buffer = struct
         check host;
         if bytes > host.budget then raise (Out_of_memory (host, bytes));
         let ba = host_heap bytes ~collected:false in
-        memory_changed host;
         let base =
-          base ~bytes ~borrowed:false ~keep:(Host ba) d (heap_memory ba)
+          {
+            owner = host;
+            memory = heap_memory ba;
+            bytes;
+            pinned = false;
+            borrowed = false;
+            keep = Heap (ba, heap_token bytes);
+            source = None;
+            links = Atomic.make no_links;
+            file = None;
+            life = Live;
+          }
         in
-        Gc.finalise_last
-          (fun () ->
-            ignore (Atomic.fetch_and_add host.allocated (-bytes));
-            memory_changed host)
-          base;
+        (* While a profile is taken, the return of the bytes is recorded too. *)
+        if Atomic.get profile <> None then begin
+          memory_changed host;
+          Gc.finalise_last (fun () -> memory_changed host) base
+        end;
         { base; offset = 0; dtype = s; length = n }
     | bytes ->
         let pinned = pinned && Option.is_some d.host_memory in
         let memory, keep =
           with_devices [ d ] (fun () ->
               let m = allocate d bytes ~pinned ~collected:false in
-              ignore (Atomic.fetch_and_add d.allocated bytes);
+              allocate_bytes d bytes;
               memory_changed d;
               m)
         in
@@ -1381,6 +1434,7 @@ module Buffer = struct
     else
       match buf.base.keep with
       | Host ba -> bigarray_view ba k buf.offset (bytes / size)
+      | Heap (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
       | Keep _ -> assert false (* host memory is always a bigarray's *)
 
   (* Copies. The devices involved are taken and synchronized. A device's copy is
@@ -1982,7 +2036,7 @@ let stats d =
   Mutex.protect d.lock (fun () ->
       (if failed d = None then try reclaim d with Lost _ -> ());
       {
-        Stats.allocated = Atomic.get d.allocated;
+        Stats.allocated = allocated d;
         cached = d.cached;
         retained = d.retained;
         bytes_in = d.bytes_in;

@@ -643,7 +643,11 @@ module Profile : sig
         time : int;
         allocated : int;
             (** The device's {!Stats.allocated} bytes from [time] on. *)
-      }  (** A change of the memory a device allocated. *)
+      }
+        (** A change of the memory a device allocated. The {!host} records each
+            allocation, and the return of the memory of the buffers it allocated
+            while a profile was taken: its other buffers return theirs without a
+            record, which its next record counts. *)
     | Load of {
         program : Program.t;
         binary : string;  (** The binary it was loaded from. *)
