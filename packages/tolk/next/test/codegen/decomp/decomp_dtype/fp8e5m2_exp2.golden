@@ -1,0 +1,89 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.fp8e5m2 [] ParamArg(slot=0, dtype=dtypes.fp8e5m2, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.MUL dtypes.int [3, 1]
+5 Ops.SHRINK dtypes.fp8e5m2 [0, 4, 2]
+6 Ops.PARAM dtypes.fp8e5m2 [] ParamArg(slot=1, dtype=dtypes.fp8e5m2, size=16, device="CPU")
+7 Ops.SHRINK dtypes.fp8e5m2 [6, 4, 2]
+8 Ops.LOAD dtypes.fp8e5m2 [7]
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.INDEX dtypes.fp8e5m2 [8, 10]
+12 Ops.EXP2 dtypes.fp8e5m2 [11]
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.INDEX dtypes.fp8e5m2 [8, 14]
+16 Ops.EXP2 dtypes.fp8e5m2 [15]
+17 Ops.CONST dtypes.weakint [] 2
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.INDEX dtypes.fp8e5m2 [8, 18]
+20 Ops.EXP2 dtypes.fp8e5m2 [19]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.INDEX dtypes.fp8e5m2 [8, 22]
+24 Ops.EXP2 dtypes.fp8e5m2 [23]
+25 Ops.STACK dtypes.fp8e5m2 [12, 16, 20, 24]
+26 Ops.STORE dtypes.void [5, 25]
+27 Ops.GROUP dtypes.void [26, 26, 26, 26]
+28 Ops.END dtypes.void [27, 3]
+29 Ops.SINK dtypes.void [28] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+30 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=16, device="CPU") tag=dtypes.fp8e5m2
+31 Ops.ADD dtypes.int [4, 9]
+32 Ops.INDEX dtypes.uchar [30, 31] tag=dtypes.fp8e5m2
+33 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=16, device="CPU") tag=dtypes.fp8e5m2
+34 Ops.INDEX dtypes.uchar [33, 31] tag=dtypes.fp8e5m2
+35 Ops.LOAD dtypes.uchar [34]
+36 Ops.CUSTOM dtypes.float [35] ("f2f fp8e5m2 float True", dtypes.float)
+37 Ops.ADD dtypes.int [4, 13]
+38 Ops.INDEX dtypes.uchar [33, 37] tag=dtypes.fp8e5m2
+39 Ops.LOAD dtypes.uchar [38]
+40 Ops.CUSTOM dtypes.float [39] ("f2f fp8e5m2 float True", dtypes.float)
+41 Ops.ADD dtypes.int [4, 17]
+42 Ops.INDEX dtypes.uchar [33, 41] tag=dtypes.fp8e5m2
+43 Ops.LOAD dtypes.uchar [42]
+44 Ops.CUSTOM dtypes.float [43] ("f2f fp8e5m2 float True", dtypes.float)
+45 Ops.ADD dtypes.int [4, 21]
+46 Ops.INDEX dtypes.uchar [33, 45] tag=dtypes.fp8e5m2
+47 Ops.LOAD dtypes.uchar [46]
+48 Ops.CUSTOM dtypes.float [47] ("f2f fp8e5m2 float True", dtypes.float)
+49 Ops.STACK dtypes.float [36, 40, 44, 48]
+50 Ops.CAST dtypes.float [49] dtypes.float
+51 Ops.INDEX dtypes.float [50, 10]
+52 Ops.CAST dtypes.float [51] dtypes.float
+53 Ops.EXP2 dtypes.float [52]
+54 Ops.CAST dtypes.float [53] dtypes.float
+55 Ops.BITCAST dtypes.uint [54] dtypes.uint
+56 Ops.CUSTOM dtypes.uchar [55] ("f2f float fp8e5m2 True", dtypes.uchar)
+57 Ops.STORE dtypes.void [32, 56]
+58 Ops.INDEX dtypes.uchar [30, 37] tag=dtypes.fp8e5m2
+59 Ops.INDEX dtypes.float [50, 14]
+60 Ops.CAST dtypes.float [59] dtypes.float
+61 Ops.EXP2 dtypes.float [60]
+62 Ops.CAST dtypes.float [61] dtypes.float
+63 Ops.BITCAST dtypes.uint [62] dtypes.uint
+64 Ops.CUSTOM dtypes.uchar [63] ("f2f float fp8e5m2 True", dtypes.uchar)
+65 Ops.STORE dtypes.void [58, 64]
+66 Ops.INDEX dtypes.uchar [30, 41] tag=dtypes.fp8e5m2
+67 Ops.INDEX dtypes.float [50, 18]
+68 Ops.CAST dtypes.float [67] dtypes.float
+69 Ops.EXP2 dtypes.float [68]
+70 Ops.CAST dtypes.float [69] dtypes.float
+71 Ops.BITCAST dtypes.uint [70] dtypes.uint
+72 Ops.CUSTOM dtypes.uchar [71] ("f2f float fp8e5m2 True", dtypes.uchar)
+73 Ops.STORE dtypes.void [66, 72]
+74 Ops.INDEX dtypes.uchar [30, 45] tag=dtypes.fp8e5m2
+75 Ops.INDEX dtypes.float [50, 22]
+76 Ops.CAST dtypes.float [75] dtypes.float
+77 Ops.EXP2 dtypes.float [76]
+78 Ops.CAST dtypes.float [77] dtypes.float
+79 Ops.BITCAST dtypes.uint [78] dtypes.uint
+80 Ops.CUSTOM dtypes.uchar [79] ("f2f float fp8e5m2 True", dtypes.uchar)
+81 Ops.STORE dtypes.void [74, 80]
+82 Ops.GROUP dtypes.void [57, 65, 73, 81]
+83 Ops.GROUP dtypes.void [82, 82, 82, 82]
+84 Ops.END dtypes.void [83, 3]
+85 Ops.SINK dtypes.void [84] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+86 Ops.SINK dtypes.void [29, 85]
+

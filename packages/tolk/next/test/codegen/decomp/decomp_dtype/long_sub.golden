@@ -1,0 +1,293 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.long [] ParamArg(slot=0, dtype=dtypes.long, size=8, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.MUL dtypes.int [3, 4]
+6 Ops.INDEX dtypes.long [0, 5]
+7 Ops.PARAM dtypes.long [] ParamArg(slot=1, dtype=dtypes.long, size=8, device="CPU")
+8 Ops.INDEX dtypes.long [7, 5]
+9 Ops.LOAD dtypes.long [8]
+10 Ops.PARAM dtypes.long [] ParamArg(slot=2, dtype=dtypes.long, size=8, device="CPU")
+11 Ops.INDEX dtypes.long [10, 5]
+12 Ops.LOAD dtypes.long [11]
+13 Ops.CONST dtypes.weakint [] -1
+14 Ops.MUL dtypes.long [12, 13]
+15 Ops.ADD dtypes.long [9, 14]
+16 Ops.STORE dtypes.void [6, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.ADD dtypes.int [5, 17]
+19 Ops.INDEX dtypes.long [0, 18]
+20 Ops.INDEX dtypes.long [7, 18]
+21 Ops.LOAD dtypes.long [20]
+22 Ops.INDEX dtypes.long [10, 18]
+23 Ops.LOAD dtypes.long [22]
+24 Ops.MUL dtypes.long [23, 13]
+25 Ops.ADD dtypes.long [21, 24]
+26 Ops.STORE dtypes.void [19, 25]
+27 Ops.ADD dtypes.int [5, 1]
+28 Ops.INDEX dtypes.long [0, 27]
+29 Ops.INDEX dtypes.long [7, 27]
+30 Ops.LOAD dtypes.long [29]
+31 Ops.INDEX dtypes.long [10, 27]
+32 Ops.LOAD dtypes.long [31]
+33 Ops.MUL dtypes.long [32, 13]
+34 Ops.ADD dtypes.long [30, 33]
+35 Ops.STORE dtypes.void [28, 34]
+36 Ops.CONST dtypes.weakint [] 3
+37 Ops.ADD dtypes.int [5, 36]
+38 Ops.INDEX dtypes.long [0, 37]
+39 Ops.INDEX dtypes.long [7, 37]
+40 Ops.LOAD dtypes.long [39]
+41 Ops.INDEX dtypes.long [10, 37]
+42 Ops.LOAD dtypes.long [41]
+43 Ops.MUL dtypes.long [42, 13]
+44 Ops.ADD dtypes.long [40, 43]
+45 Ops.STORE dtypes.void [38, 44]
+46 Ops.GROUP dtypes.void [16, 26, 35, 45]
+47 Ops.END dtypes.void [46, 3]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+49 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16, device="CPU")
+50 Ops.MUL dtypes.int [5, 1]
+51 Ops.CONST dtypes.weakint [] 0
+52 Ops.ADD dtypes.int [50, 51]
+53 Ops.INDEX dtypes.int [49, 52]
+54 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=16, device="CPU")
+55 Ops.INDEX dtypes.int [54, 52]
+56 Ops.LOAD dtypes.int [55]
+57 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=16, device="CPU")
+58 Ops.INDEX dtypes.int [57, 52]
+59 Ops.LOAD dtypes.int [58]
+60 Ops.BITCAST dtypes.uint [59] dtypes.uint
+61 Ops.CONST dtypes.weakint [] 65535
+62 Ops.AND dtypes.uint [60, 61]
+63 Ops.CAST dtypes.int [13] dtypes.int
+64 Ops.BITCAST dtypes.uint [63] dtypes.uint
+65 Ops.CONST dtypes.weakint [] 65536
+66 Ops.FLOORDIV dtypes.uint [64, 65]
+67 Ops.MUL dtypes.uint [62, 66]
+68 Ops.MUL dtypes.uint [67, 65]
+69 Ops.BITCAST dtypes.int [68] dtypes.int
+70 Ops.FLOORDIV dtypes.uint [60, 65]
+71 Ops.AND dtypes.uint [64, 61]
+72 Ops.MUL dtypes.uint [70, 71]
+73 Ops.MUL dtypes.uint [72, 65]
+74 Ops.BITCAST dtypes.int [73] dtypes.int
+75 Ops.ADD dtypes.int [69, 74]
+76 Ops.MUL dtypes.uint [62, 71]
+77 Ops.BITCAST dtypes.int [76] dtypes.int
+78 Ops.ADD dtypes.int [75, 77]
+79 Ops.ADD dtypes.int [56, 78]
+80 Ops.STORE dtypes.void [53, 79]
+81 Ops.ADD dtypes.int [50, 17]
+82 Ops.INDEX dtypes.int [49, 81]
+83 Ops.INDEX dtypes.int [54, 81]
+84 Ops.LOAD dtypes.int [83]
+85 Ops.FLOORDIV dtypes.uint [67, 65]
+86 Ops.BITCAST dtypes.int [85] dtypes.int
+87 Ops.FLOORDIV dtypes.uint [72, 65]
+88 Ops.BITCAST dtypes.int [87] dtypes.int
+89 Ops.ADD dtypes.int [86, 88]
+90 Ops.BITCAST dtypes.uint [75] dtypes.uint
+91 Ops.BITCAST dtypes.uint [69] dtypes.uint
+92 Ops.CMPLT dtypes.bool [90, 91]
+93 Ops.CAST dtypes.int [92] dtypes.int
+94 Ops.ADD dtypes.int [89, 93]
+95 Ops.MUL dtypes.uint [70, 66]
+96 Ops.BITCAST dtypes.int [95] dtypes.int
+97 Ops.MUL dtypes.int [59, 63]
+98 Ops.ADD dtypes.int [96, 97]
+99 Ops.INDEX dtypes.int [57, 81]
+100 Ops.LOAD dtypes.int [99]
+101 Ops.MUL dtypes.int [100, 63]
+102 Ops.ADD dtypes.int [98, 101]
+103 Ops.ADD dtypes.int [94, 102]
+104 Ops.BITCAST dtypes.uint [78] dtypes.uint
+105 Ops.CMPLT dtypes.bool [104, 90]
+106 Ops.CAST dtypes.int [105] dtypes.int
+107 Ops.ADD dtypes.int [103, 106]
+108 Ops.ADD dtypes.int [84, 107]
+109 Ops.BITCAST dtypes.uint [79] dtypes.uint
+110 Ops.BITCAST dtypes.uint [56] dtypes.uint
+111 Ops.CMPLT dtypes.bool [109, 110]
+112 Ops.CAST dtypes.int [111] dtypes.int
+113 Ops.ADD dtypes.int [108, 112]
+114 Ops.STORE dtypes.void [82, 113]
+115 Ops.GROUP dtypes.void [80, 114]
+116 Ops.MUL dtypes.int [18, 1]
+117 Ops.ADD dtypes.int [116, 51]
+118 Ops.INDEX dtypes.int [49, 117]
+119 Ops.INDEX dtypes.int [54, 117]
+120 Ops.LOAD dtypes.int [119]
+121 Ops.INDEX dtypes.int [57, 117]
+122 Ops.LOAD dtypes.int [121]
+123 Ops.BITCAST dtypes.uint [122] dtypes.uint
+124 Ops.AND dtypes.uint [123, 61]
+125 Ops.MUL dtypes.uint [124, 66]
+126 Ops.MUL dtypes.uint [125, 65]
+127 Ops.BITCAST dtypes.int [126] dtypes.int
+128 Ops.FLOORDIV dtypes.uint [123, 65]
+129 Ops.MUL dtypes.uint [128, 71]
+130 Ops.MUL dtypes.uint [129, 65]
+131 Ops.BITCAST dtypes.int [130] dtypes.int
+132 Ops.ADD dtypes.int [127, 131]
+133 Ops.MUL dtypes.uint [124, 71]
+134 Ops.BITCAST dtypes.int [133] dtypes.int
+135 Ops.ADD dtypes.int [132, 134]
+136 Ops.ADD dtypes.int [120, 135]
+137 Ops.STORE dtypes.void [118, 136]
+138 Ops.ADD dtypes.int [116, 17]
+139 Ops.INDEX dtypes.int [49, 138]
+140 Ops.INDEX dtypes.int [54, 138]
+141 Ops.LOAD dtypes.int [140]
+142 Ops.FLOORDIV dtypes.uint [125, 65]
+143 Ops.BITCAST dtypes.int [142] dtypes.int
+144 Ops.FLOORDIV dtypes.uint [129, 65]
+145 Ops.BITCAST dtypes.int [144] dtypes.int
+146 Ops.ADD dtypes.int [143, 145]
+147 Ops.BITCAST dtypes.uint [132] dtypes.uint
+148 Ops.BITCAST dtypes.uint [127] dtypes.uint
+149 Ops.CMPLT dtypes.bool [147, 148]
+150 Ops.CAST dtypes.int [149] dtypes.int
+151 Ops.ADD dtypes.int [146, 150]
+152 Ops.MUL dtypes.uint [128, 66]
+153 Ops.BITCAST dtypes.int [152] dtypes.int
+154 Ops.MUL dtypes.int [122, 63]
+155 Ops.ADD dtypes.int [153, 154]
+156 Ops.INDEX dtypes.int [57, 138]
+157 Ops.LOAD dtypes.int [156]
+158 Ops.MUL dtypes.int [157, 63]
+159 Ops.ADD dtypes.int [155, 158]
+160 Ops.ADD dtypes.int [151, 159]
+161 Ops.BITCAST dtypes.uint [135] dtypes.uint
+162 Ops.CMPLT dtypes.bool [161, 147]
+163 Ops.CAST dtypes.int [162] dtypes.int
+164 Ops.ADD dtypes.int [160, 163]
+165 Ops.ADD dtypes.int [141, 164]
+166 Ops.BITCAST dtypes.uint [136] dtypes.uint
+167 Ops.BITCAST dtypes.uint [120] dtypes.uint
+168 Ops.CMPLT dtypes.bool [166, 167]
+169 Ops.CAST dtypes.int [168] dtypes.int
+170 Ops.ADD dtypes.int [165, 169]
+171 Ops.STORE dtypes.void [139, 170]
+172 Ops.GROUP dtypes.void [137, 171]
+173 Ops.MUL dtypes.int [27, 1]
+174 Ops.ADD dtypes.int [173, 51]
+175 Ops.INDEX dtypes.int [49, 174]
+176 Ops.INDEX dtypes.int [54, 174]
+177 Ops.LOAD dtypes.int [176]
+178 Ops.INDEX dtypes.int [57, 174]
+179 Ops.LOAD dtypes.int [178]
+180 Ops.BITCAST dtypes.uint [179] dtypes.uint
+181 Ops.AND dtypes.uint [180, 61]
+182 Ops.MUL dtypes.uint [181, 66]
+183 Ops.MUL dtypes.uint [182, 65]
+184 Ops.BITCAST dtypes.int [183] dtypes.int
+185 Ops.FLOORDIV dtypes.uint [180, 65]
+186 Ops.MUL dtypes.uint [185, 71]
+187 Ops.MUL dtypes.uint [186, 65]
+188 Ops.BITCAST dtypes.int [187] dtypes.int
+189 Ops.ADD dtypes.int [184, 188]
+190 Ops.MUL dtypes.uint [181, 71]
+191 Ops.BITCAST dtypes.int [190] dtypes.int
+192 Ops.ADD dtypes.int [189, 191]
+193 Ops.ADD dtypes.int [177, 192]
+194 Ops.STORE dtypes.void [175, 193]
+195 Ops.ADD dtypes.int [173, 17]
+196 Ops.INDEX dtypes.int [49, 195]
+197 Ops.INDEX dtypes.int [54, 195]
+198 Ops.LOAD dtypes.int [197]
+199 Ops.FLOORDIV dtypes.uint [182, 65]
+200 Ops.BITCAST dtypes.int [199] dtypes.int
+201 Ops.FLOORDIV dtypes.uint [186, 65]
+202 Ops.BITCAST dtypes.int [201] dtypes.int
+203 Ops.ADD dtypes.int [200, 202]
+204 Ops.BITCAST dtypes.uint [189] dtypes.uint
+205 Ops.BITCAST dtypes.uint [184] dtypes.uint
+206 Ops.CMPLT dtypes.bool [204, 205]
+207 Ops.CAST dtypes.int [206] dtypes.int
+208 Ops.ADD dtypes.int [203, 207]
+209 Ops.MUL dtypes.uint [185, 66]
+210 Ops.BITCAST dtypes.int [209] dtypes.int
+211 Ops.MUL dtypes.int [179, 63]
+212 Ops.ADD dtypes.int [210, 211]
+213 Ops.INDEX dtypes.int [57, 195]
+214 Ops.LOAD dtypes.int [213]
+215 Ops.MUL dtypes.int [214, 63]
+216 Ops.ADD dtypes.int [212, 215]
+217 Ops.ADD dtypes.int [208, 216]
+218 Ops.BITCAST dtypes.uint [192] dtypes.uint
+219 Ops.CMPLT dtypes.bool [218, 204]
+220 Ops.CAST dtypes.int [219] dtypes.int
+221 Ops.ADD dtypes.int [217, 220]
+222 Ops.ADD dtypes.int [198, 221]
+223 Ops.BITCAST dtypes.uint [193] dtypes.uint
+224 Ops.BITCAST dtypes.uint [177] dtypes.uint
+225 Ops.CMPLT dtypes.bool [223, 224]
+226 Ops.CAST dtypes.int [225] dtypes.int
+227 Ops.ADD dtypes.int [222, 226]
+228 Ops.STORE dtypes.void [196, 227]
+229 Ops.GROUP dtypes.void [194, 228]
+230 Ops.MUL dtypes.int [37, 1]
+231 Ops.ADD dtypes.int [230, 51]
+232 Ops.INDEX dtypes.int [49, 231]
+233 Ops.INDEX dtypes.int [54, 231]
+234 Ops.LOAD dtypes.int [233]
+235 Ops.INDEX dtypes.int [57, 231]
+236 Ops.LOAD dtypes.int [235]
+237 Ops.BITCAST dtypes.uint [236] dtypes.uint
+238 Ops.AND dtypes.uint [237, 61]
+239 Ops.MUL dtypes.uint [238, 66]
+240 Ops.MUL dtypes.uint [239, 65]
+241 Ops.BITCAST dtypes.int [240] dtypes.int
+242 Ops.FLOORDIV dtypes.uint [237, 65]
+243 Ops.MUL dtypes.uint [242, 71]
+244 Ops.MUL dtypes.uint [243, 65]
+245 Ops.BITCAST dtypes.int [244] dtypes.int
+246 Ops.ADD dtypes.int [241, 245]
+247 Ops.MUL dtypes.uint [238, 71]
+248 Ops.BITCAST dtypes.int [247] dtypes.int
+249 Ops.ADD dtypes.int [246, 248]
+250 Ops.ADD dtypes.int [234, 249]
+251 Ops.STORE dtypes.void [232, 250]
+252 Ops.ADD dtypes.int [230, 17]
+253 Ops.INDEX dtypes.int [49, 252]
+254 Ops.INDEX dtypes.int [54, 252]
+255 Ops.LOAD dtypes.int [254]
+256 Ops.FLOORDIV dtypes.uint [239, 65]
+257 Ops.BITCAST dtypes.int [256] dtypes.int
+258 Ops.FLOORDIV dtypes.uint [243, 65]
+259 Ops.BITCAST dtypes.int [258] dtypes.int
+260 Ops.ADD dtypes.int [257, 259]
+261 Ops.BITCAST dtypes.uint [246] dtypes.uint
+262 Ops.BITCAST dtypes.uint [241] dtypes.uint
+263 Ops.CMPLT dtypes.bool [261, 262]
+264 Ops.CAST dtypes.int [263] dtypes.int
+265 Ops.ADD dtypes.int [260, 264]
+266 Ops.MUL dtypes.uint [242, 66]
+267 Ops.BITCAST dtypes.int [266] dtypes.int
+268 Ops.MUL dtypes.int [236, 63]
+269 Ops.ADD dtypes.int [267, 268]
+270 Ops.INDEX dtypes.int [57, 252]
+271 Ops.LOAD dtypes.int [270]
+272 Ops.MUL dtypes.int [271, 63]
+273 Ops.ADD dtypes.int [269, 272]
+274 Ops.ADD dtypes.int [265, 273]
+275 Ops.BITCAST dtypes.uint [249] dtypes.uint
+276 Ops.CMPLT dtypes.bool [275, 261]
+277 Ops.CAST dtypes.int [276] dtypes.int
+278 Ops.ADD dtypes.int [274, 277]
+279 Ops.ADD dtypes.int [255, 278]
+280 Ops.BITCAST dtypes.uint [250] dtypes.uint
+281 Ops.BITCAST dtypes.uint [234] dtypes.uint
+282 Ops.CMPLT dtypes.bool [280, 281]
+283 Ops.CAST dtypes.int [282] dtypes.int
+284 Ops.ADD dtypes.int [279, 283]
+285 Ops.STORE dtypes.void [253, 284]
+286 Ops.GROUP dtypes.void [251, 285]
+287 Ops.GROUP dtypes.void [115, 172, 229, 286]
+288 Ops.END dtypes.void [287, 3]
+289 Ops.SINK dtypes.void [288] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+290 Ops.SINK dtypes.void [48, 289]
+

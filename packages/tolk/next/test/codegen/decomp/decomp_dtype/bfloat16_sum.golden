@@ -1,0 +1,107 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=0, dtype=dtypes.bfloat16, size=4, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (1, AxisType.WEAK)
+4 Ops.INDEX dtypes.bfloat16 [0, 3]
+5 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=1, dtype=dtypes.bfloat16, size=32, device="CPU")
+6 Ops.CONST dtypes.weakint [] 8
+7 Ops.MUL dtypes.int [3, 6]
+8 Ops.INDEX dtypes.bfloat16 [5, 7]
+9 Ops.LOAD dtypes.bfloat16 [8]
+10 Ops.CAST dtypes.float [9] dtypes.float
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.ADD dtypes.int [7, 11]
+13 Ops.INDEX dtypes.bfloat16 [5, 12]
+14 Ops.LOAD dtypes.bfloat16 [13]
+15 Ops.CAST dtypes.float [14] dtypes.float
+16 Ops.ADD dtypes.float [10, 15]
+17 Ops.CONST dtypes.weakint [] 2
+18 Ops.ADD dtypes.int [7, 17]
+19 Ops.INDEX dtypes.bfloat16 [5, 18]
+20 Ops.LOAD dtypes.bfloat16 [19]
+21 Ops.CAST dtypes.float [20] dtypes.float
+22 Ops.ADD dtypes.float [16, 21]
+23 Ops.CONST dtypes.weakint [] 3
+24 Ops.ADD dtypes.int [7, 23]
+25 Ops.INDEX dtypes.bfloat16 [5, 24]
+26 Ops.LOAD dtypes.bfloat16 [25]
+27 Ops.CAST dtypes.float [26] dtypes.float
+28 Ops.ADD dtypes.float [22, 27]
+29 Ops.ADD dtypes.int [7, 1]
+30 Ops.INDEX dtypes.bfloat16 [5, 29]
+31 Ops.LOAD dtypes.bfloat16 [30]
+32 Ops.CAST dtypes.float [31] dtypes.float
+33 Ops.ADD dtypes.float [28, 32]
+34 Ops.CONST dtypes.weakint [] 5
+35 Ops.ADD dtypes.int [7, 34]
+36 Ops.INDEX dtypes.bfloat16 [5, 35]
+37 Ops.LOAD dtypes.bfloat16 [36]
+38 Ops.CAST dtypes.float [37] dtypes.float
+39 Ops.ADD dtypes.float [33, 38]
+40 Ops.CONST dtypes.weakint [] 6
+41 Ops.ADD dtypes.int [7, 40]
+42 Ops.INDEX dtypes.bfloat16 [5, 41]
+43 Ops.LOAD dtypes.bfloat16 [42]
+44 Ops.CAST dtypes.float [43] dtypes.float
+45 Ops.ADD dtypes.float [39, 44]
+46 Ops.CONST dtypes.weakint [] 7
+47 Ops.ADD dtypes.int [7, 46]
+48 Ops.INDEX dtypes.bfloat16 [5, 47]
+49 Ops.LOAD dtypes.bfloat16 [48]
+50 Ops.CAST dtypes.float [49] dtypes.float
+51 Ops.ADD dtypes.float [45, 50]
+52 Ops.CAST dtypes.bfloat16 [51] dtypes.bfloat16
+53 Ops.STORE dtypes.void [4, 52]
+54 Ops.END dtypes.void [53, 3]
+55 Ops.SINK dtypes.void [54] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+56 Ops.PARAM dtypes.ushort [] ParamArg(slot=0, dtype=dtypes.ushort, size=4, device="CPU") tag=dtypes.bfloat16
+57 Ops.INDEX dtypes.ushort [56, 3] tag=dtypes.bfloat16
+58 Ops.PARAM dtypes.ushort [] ParamArg(slot=1, dtype=dtypes.ushort, size=32, device="CPU") tag=dtypes.bfloat16
+59 Ops.INDEX dtypes.ushort [58, 7] tag=dtypes.bfloat16
+60 Ops.LOAD dtypes.ushort [59]
+61 Ops.CUSTOM dtypes.float [60] ("f2f bfloat16 float True", dtypes.float)
+62 Ops.CAST dtypes.float [61] dtypes.float
+63 Ops.INDEX dtypes.ushort [58, 12] tag=dtypes.bfloat16
+64 Ops.LOAD dtypes.ushort [63]
+65 Ops.CUSTOM dtypes.float [64] ("f2f bfloat16 float True", dtypes.float)
+66 Ops.CAST dtypes.float [65] dtypes.float
+67 Ops.ADD dtypes.float [62, 66]
+68 Ops.INDEX dtypes.ushort [58, 18] tag=dtypes.bfloat16
+69 Ops.LOAD dtypes.ushort [68]
+70 Ops.CUSTOM dtypes.float [69] ("f2f bfloat16 float True", dtypes.float)
+71 Ops.CAST dtypes.float [70] dtypes.float
+72 Ops.ADD dtypes.float [67, 71]
+73 Ops.INDEX dtypes.ushort [58, 24] tag=dtypes.bfloat16
+74 Ops.LOAD dtypes.ushort [73]
+75 Ops.CUSTOM dtypes.float [74] ("f2f bfloat16 float True", dtypes.float)
+76 Ops.CAST dtypes.float [75] dtypes.float
+77 Ops.ADD dtypes.float [72, 76]
+78 Ops.INDEX dtypes.ushort [58, 29] tag=dtypes.bfloat16
+79 Ops.LOAD dtypes.ushort [78]
+80 Ops.CUSTOM dtypes.float [79] ("f2f bfloat16 float True", dtypes.float)
+81 Ops.CAST dtypes.float [80] dtypes.float
+82 Ops.ADD dtypes.float [77, 81]
+83 Ops.INDEX dtypes.ushort [58, 35] tag=dtypes.bfloat16
+84 Ops.LOAD dtypes.ushort [83]
+85 Ops.CUSTOM dtypes.float [84] ("f2f bfloat16 float True", dtypes.float)
+86 Ops.CAST dtypes.float [85] dtypes.float
+87 Ops.ADD dtypes.float [82, 86]
+88 Ops.INDEX dtypes.ushort [58, 41] tag=dtypes.bfloat16
+89 Ops.LOAD dtypes.ushort [88]
+90 Ops.CUSTOM dtypes.float [89] ("f2f bfloat16 float True", dtypes.float)
+91 Ops.CAST dtypes.float [90] dtypes.float
+92 Ops.ADD dtypes.float [87, 91]
+93 Ops.INDEX dtypes.ushort [58, 47] tag=dtypes.bfloat16
+94 Ops.LOAD dtypes.ushort [93]
+95 Ops.CUSTOM dtypes.float [94] ("f2f bfloat16 float True", dtypes.float)
+96 Ops.CAST dtypes.float [95] dtypes.float
+97 Ops.ADD dtypes.float [92, 96]
+98 Ops.CUSTOM dtypes.float [97] ("f2f_clamp bfloat16 True", dtypes.float)
+99 Ops.BITCAST dtypes.uint [98] dtypes.uint
+100 Ops.CUSTOM dtypes.ushort [99] ("f2f float bfloat16 True", dtypes.ushort)
+101 Ops.STORE dtypes.void [57, 100]
+102 Ops.END dtypes.void [101, 3]
+103 Ops.SINK dtypes.void [102] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+104 Ops.SINK dtypes.void [55, 103]
+

@@ -1,0 +1,148 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.long [] ParamArg(slot=0, dtype=dtypes.long, size=8, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.MUL dtypes.int [3, 4]
+6 Ops.INDEX dtypes.long [0, 5]
+7 Ops.PARAM dtypes.long [] ParamArg(slot=1, dtype=dtypes.long, size=8, device="CPU")
+8 Ops.INDEX dtypes.long [7, 5]
+9 Ops.LOAD dtypes.long [8]
+10 Ops.CONST dtypes.weakint [] 3
+11 Ops.SHL dtypes.long [9, 10]
+12 Ops.STORE dtypes.void [6, 11]
+13 Ops.CONST dtypes.weakint [] 1
+14 Ops.ADD dtypes.int [5, 13]
+15 Ops.INDEX dtypes.long [0, 14]
+16 Ops.INDEX dtypes.long [7, 14]
+17 Ops.LOAD dtypes.long [16]
+18 Ops.SHL dtypes.long [17, 10]
+19 Ops.STORE dtypes.void [15, 18]
+20 Ops.ADD dtypes.int [5, 1]
+21 Ops.INDEX dtypes.long [0, 20]
+22 Ops.INDEX dtypes.long [7, 20]
+23 Ops.LOAD dtypes.long [22]
+24 Ops.SHL dtypes.long [23, 10]
+25 Ops.STORE dtypes.void [21, 24]
+26 Ops.ADD dtypes.int [5, 10]
+27 Ops.INDEX dtypes.long [0, 26]
+28 Ops.INDEX dtypes.long [7, 26]
+29 Ops.LOAD dtypes.long [28]
+30 Ops.SHL dtypes.long [29, 10]
+31 Ops.STORE dtypes.void [27, 30]
+32 Ops.GROUP dtypes.void [12, 19, 25, 31]
+33 Ops.END dtypes.void [32, 3]
+34 Ops.SINK dtypes.void [33] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+35 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16, device="CPU")
+36 Ops.MUL dtypes.int [5, 1]
+37 Ops.CONST dtypes.weakint [] 0
+38 Ops.ADD dtypes.int [36, 37]
+39 Ops.INDEX dtypes.int [35, 38]
+40 Ops.CAST dtypes.int [10] dtypes.int
+41 Ops.CONST dtypes.weakint [] 32
+42 Ops.CMPLT dtypes.bool [40, 41]
+43 Ops.CONST dtypes.bool [] True
+44 Ops.CMPNE dtypes.bool [42, 43]
+45 Ops.CAST dtypes.int [37] dtypes.int
+46 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=16, device="CPU")
+47 Ops.INDEX dtypes.int [46, 38]
+48 Ops.LOAD dtypes.int [47]
+49 Ops.BITCAST dtypes.uint [48] dtypes.uint
+50 Ops.CONST dtypes.weakint [] 31
+51 Ops.AND dtypes.int [40, 50]
+52 Ops.CAST dtypes.uint [51] dtypes.uint
+53 Ops.SHL dtypes.uint [49, 52]
+54 Ops.BITCAST dtypes.int [53] dtypes.int
+55 Ops.WHERE dtypes.int [44, 45, 54]
+56 Ops.STORE dtypes.void [39, 55]
+57 Ops.ADD dtypes.int [36, 13]
+58 Ops.INDEX dtypes.int [35, 57]
+59 Ops.INDEX dtypes.int [46, 57]
+60 Ops.LOAD dtypes.int [59]
+61 Ops.BITCAST dtypes.uint [60] dtypes.uint
+62 Ops.SHL dtypes.uint [61, 52]
+63 Ops.SHR dtypes.uint [49, 13]
+64 Ops.CONST dtypes.weakint [] -1
+65 Ops.MUL dtypes.uint [52, 64]
+66 Ops.ADD dtypes.uint [50, 65]
+67 Ops.SHR dtypes.uint [63, 66]
+68 Ops.OR dtypes.uint [62, 67]
+69 Ops.BITCAST dtypes.int [68] dtypes.int
+70 Ops.WHERE dtypes.int [44, 54, 69]
+71 Ops.STORE dtypes.void [58, 70]
+72 Ops.GROUP dtypes.void [56, 71]
+73 Ops.MUL dtypes.int [14, 1]
+74 Ops.ADD dtypes.int [73, 37]
+75 Ops.INDEX dtypes.int [35, 74]
+76 Ops.INDEX dtypes.int [46, 74]
+77 Ops.LOAD dtypes.int [76]
+78 Ops.BITCAST dtypes.uint [77] dtypes.uint
+79 Ops.SHL dtypes.uint [78, 52]
+80 Ops.BITCAST dtypes.int [79] dtypes.int
+81 Ops.WHERE dtypes.int [44, 45, 80]
+82 Ops.STORE dtypes.void [75, 81]
+83 Ops.ADD dtypes.int [73, 13]
+84 Ops.INDEX dtypes.int [35, 83]
+85 Ops.INDEX dtypes.int [46, 83]
+86 Ops.LOAD dtypes.int [85]
+87 Ops.BITCAST dtypes.uint [86] dtypes.uint
+88 Ops.SHL dtypes.uint [87, 52]
+89 Ops.SHR dtypes.uint [78, 13]
+90 Ops.SHR dtypes.uint [89, 66]
+91 Ops.OR dtypes.uint [88, 90]
+92 Ops.BITCAST dtypes.int [91] dtypes.int
+93 Ops.WHERE dtypes.int [44, 80, 92]
+94 Ops.STORE dtypes.void [84, 93]
+95 Ops.GROUP dtypes.void [82, 94]
+96 Ops.MUL dtypes.int [20, 1]
+97 Ops.ADD dtypes.int [96, 37]
+98 Ops.INDEX dtypes.int [35, 97]
+99 Ops.INDEX dtypes.int [46, 97]
+100 Ops.LOAD dtypes.int [99]
+101 Ops.BITCAST dtypes.uint [100] dtypes.uint
+102 Ops.SHL dtypes.uint [101, 52]
+103 Ops.BITCAST dtypes.int [102] dtypes.int
+104 Ops.WHERE dtypes.int [44, 45, 103]
+105 Ops.STORE dtypes.void [98, 104]
+106 Ops.ADD dtypes.int [96, 13]
+107 Ops.INDEX dtypes.int [35, 106]
+108 Ops.INDEX dtypes.int [46, 106]
+109 Ops.LOAD dtypes.int [108]
+110 Ops.BITCAST dtypes.uint [109] dtypes.uint
+111 Ops.SHL dtypes.uint [110, 52]
+112 Ops.SHR dtypes.uint [101, 13]
+113 Ops.SHR dtypes.uint [112, 66]
+114 Ops.OR dtypes.uint [111, 113]
+115 Ops.BITCAST dtypes.int [114] dtypes.int
+116 Ops.WHERE dtypes.int [44, 103, 115]
+117 Ops.STORE dtypes.void [107, 116]
+118 Ops.GROUP dtypes.void [105, 117]
+119 Ops.MUL dtypes.int [26, 1]
+120 Ops.ADD dtypes.int [119, 37]
+121 Ops.INDEX dtypes.int [35, 120]
+122 Ops.INDEX dtypes.int [46, 120]
+123 Ops.LOAD dtypes.int [122]
+124 Ops.BITCAST dtypes.uint [123] dtypes.uint
+125 Ops.SHL dtypes.uint [124, 52]
+126 Ops.BITCAST dtypes.int [125] dtypes.int
+127 Ops.WHERE dtypes.int [44, 45, 126]
+128 Ops.STORE dtypes.void [121, 127]
+129 Ops.ADD dtypes.int [119, 13]
+130 Ops.INDEX dtypes.int [35, 129]
+131 Ops.INDEX dtypes.int [46, 129]
+132 Ops.LOAD dtypes.int [131]
+133 Ops.BITCAST dtypes.uint [132] dtypes.uint
+134 Ops.SHL dtypes.uint [133, 52]
+135 Ops.SHR dtypes.uint [124, 13]
+136 Ops.SHR dtypes.uint [135, 66]
+137 Ops.OR dtypes.uint [134, 136]
+138 Ops.BITCAST dtypes.int [137] dtypes.int
+139 Ops.WHERE dtypes.int [44, 126, 138]
+140 Ops.STORE dtypes.void [130, 139]
+141 Ops.GROUP dtypes.void [128, 140]
+142 Ops.GROUP dtypes.void [72, 95, 118, 141]
+143 Ops.END dtypes.void [142, 3]
+144 Ops.SINK dtypes.void [143] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+145 Ops.SINK dtypes.void [34, 144]
+

@@ -205,15 +205,28 @@ the Exclusions of `README.md`.
     finite value plus half an ulp, the tie rounding to even; an 8-bit float
     saturates to its greatest finite value;
   - an infinity stays one in e5m2 and becomes the NaN of e4m3 and the `fnuz`
-    formats, of its sign where the format has one (D10).
+    formats, of its sign where the format has one (D10);
+  - an emulated narrow-float copy quiets a signalling NaN, and a native copy
+    keeps its bits: an emulated target widens a load to float32 and narrows the
+    store back, and a conversion quiets a signalling NaN.
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
   the type, so it must give the bits a native one gives.
 - **Pinned by:** `Dtype › truncate › truncation.golden` (the near-tie rows,
   stated in code), `Dtype › truncate › bfloat16 rounds once, to the nearest,
   ties to even` and `Dtype › truncate › an integer rounds to a narrower float
-  once, from its value`; for emulation, the `Decomp_dtype` suite
-  (`test/codegen/decomp_dtype`), one test per facet; and a rune test at L9.
+  once, from its value`; for emulation, one test per facet in
+  `Decomp_dtype › D9` (`test/codegen/decomp/decomp_dtype`): `an emulated
+  narrow float keeps its subnormals, both ways`, `a 16-bit float overflows
+  from its greatest value plus half an ulp, the tie to infinity`, `an
+  infinity stays one in e5m2 and is the NaN of e4m3 and the fnuz formats,
+  and a finite overflow saturates`, `a double, or an integer more precise
+  than a float32, rounds once`, `an emulated 64-bit integer converts to a
+  float32 once`, `an fnuz format stores an underflow to negative zero as
+  positive zero`, and `an emulated narrow-float copy quiets a signalling NaN;
+  a native copy keeps its bits`; the `Decomp_dtype › goldens`, which are
+  tinygrad's graphs with `f2f` and `f2f_clamp` replaced by these conversions;
+  and a rune test at L9.
 
 ## D10. A float8 NaN keeps its sign when decoded
 

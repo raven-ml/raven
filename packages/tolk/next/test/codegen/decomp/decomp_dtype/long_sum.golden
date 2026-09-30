@@ -1,0 +1,162 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.long [] ParamArg(slot=0, dtype=dtypes.long, size=4, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (1, AxisType.WEAK)
+4 Ops.INDEX dtypes.long [0, 3]
+5 Ops.PARAM dtypes.long [] ParamArg(slot=1, dtype=dtypes.long, size=32, device="CPU")
+6 Ops.CONST dtypes.weakint [] 8
+7 Ops.MUL dtypes.int [3, 6]
+8 Ops.INDEX dtypes.long [5, 7]
+9 Ops.LOAD dtypes.long [8]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.ADD dtypes.int [7, 10]
+12 Ops.INDEX dtypes.long [5, 11]
+13 Ops.LOAD dtypes.long [12]
+14 Ops.ADD dtypes.long [9, 13]
+15 Ops.CONST dtypes.weakint [] 2
+16 Ops.ADD dtypes.int [7, 15]
+17 Ops.INDEX dtypes.long [5, 16]
+18 Ops.LOAD dtypes.long [17]
+19 Ops.ADD dtypes.long [14, 18]
+20 Ops.CONST dtypes.weakint [] 3
+21 Ops.ADD dtypes.int [7, 20]
+22 Ops.INDEX dtypes.long [5, 21]
+23 Ops.LOAD dtypes.long [22]
+24 Ops.ADD dtypes.long [19, 23]
+25 Ops.ADD dtypes.int [7, 1]
+26 Ops.INDEX dtypes.long [5, 25]
+27 Ops.LOAD dtypes.long [26]
+28 Ops.ADD dtypes.long [24, 27]
+29 Ops.CONST dtypes.weakint [] 5
+30 Ops.ADD dtypes.int [7, 29]
+31 Ops.INDEX dtypes.long [5, 30]
+32 Ops.LOAD dtypes.long [31]
+33 Ops.ADD dtypes.long [28, 32]
+34 Ops.CONST dtypes.weakint [] 6
+35 Ops.ADD dtypes.int [7, 34]
+36 Ops.INDEX dtypes.long [5, 35]
+37 Ops.LOAD dtypes.long [36]
+38 Ops.ADD dtypes.long [33, 37]
+39 Ops.CONST dtypes.weakint [] 7
+40 Ops.ADD dtypes.int [7, 39]
+41 Ops.INDEX dtypes.long [5, 40]
+42 Ops.LOAD dtypes.long [41]
+43 Ops.ADD dtypes.long [38, 42]
+44 Ops.STORE dtypes.void [4, 43]
+45 Ops.END dtypes.void [44, 3]
+46 Ops.SINK dtypes.void [45] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+47 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=8, device="CPU")
+48 Ops.MUL dtypes.int [3, 15]
+49 Ops.CONST dtypes.weakint [] 0
+50 Ops.ADD dtypes.int [48, 49]
+51 Ops.INDEX dtypes.int [47, 50]
+52 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=64, device="CPU")
+53 Ops.MUL dtypes.int [7, 15]
+54 Ops.ADD dtypes.int [53, 49]
+55 Ops.INDEX dtypes.int [52, 54]
+56 Ops.LOAD dtypes.int [55]
+57 Ops.MUL dtypes.int [11, 15]
+58 Ops.ADD dtypes.int [57, 49]
+59 Ops.INDEX dtypes.int [52, 58]
+60 Ops.LOAD dtypes.int [59]
+61 Ops.ADD dtypes.int [56, 60]
+62 Ops.MUL dtypes.int [16, 15]
+63 Ops.ADD dtypes.int [62, 49]
+64 Ops.INDEX dtypes.int [52, 63]
+65 Ops.LOAD dtypes.int [64]
+66 Ops.ADD dtypes.int [61, 65]
+67 Ops.MUL dtypes.int [21, 15]
+68 Ops.ADD dtypes.int [67, 49]
+69 Ops.INDEX dtypes.int [52, 68]
+70 Ops.LOAD dtypes.int [69]
+71 Ops.ADD dtypes.int [66, 70]
+72 Ops.MUL dtypes.int [25, 15]
+73 Ops.ADD dtypes.int [72, 49]
+74 Ops.INDEX dtypes.int [52, 73]
+75 Ops.LOAD dtypes.int [74]
+76 Ops.ADD dtypes.int [71, 75]
+77 Ops.MUL dtypes.int [30, 15]
+78 Ops.ADD dtypes.int [77, 49]
+79 Ops.INDEX dtypes.int [52, 78]
+80 Ops.LOAD dtypes.int [79]
+81 Ops.ADD dtypes.int [76, 80]
+82 Ops.MUL dtypes.int [35, 15]
+83 Ops.ADD dtypes.int [82, 49]
+84 Ops.INDEX dtypes.int [52, 83]
+85 Ops.LOAD dtypes.int [84]
+86 Ops.ADD dtypes.int [81, 85]
+87 Ops.MUL dtypes.int [40, 15]
+88 Ops.ADD dtypes.int [87, 49]
+89 Ops.INDEX dtypes.int [52, 88]
+90 Ops.LOAD dtypes.int [89]
+91 Ops.ADD dtypes.int [86, 90]
+92 Ops.STORE dtypes.void [51, 91]
+93 Ops.ADD dtypes.int [48, 10]
+94 Ops.INDEX dtypes.int [47, 93]
+95 Ops.ADD dtypes.int [53, 10]
+96 Ops.INDEX dtypes.int [52, 95]
+97 Ops.LOAD dtypes.int [96]
+98 Ops.ADD dtypes.int [57, 10]
+99 Ops.INDEX dtypes.int [52, 98]
+100 Ops.LOAD dtypes.int [99]
+101 Ops.ADD dtypes.int [97, 100]
+102 Ops.BITCAST dtypes.uint [61] dtypes.uint
+103 Ops.BITCAST dtypes.uint [56] dtypes.uint
+104 Ops.CMPLT dtypes.bool [102, 103]
+105 Ops.CAST dtypes.int [104] dtypes.int
+106 Ops.ADD dtypes.int [101, 105]
+107 Ops.ADD dtypes.int [62, 10]
+108 Ops.INDEX dtypes.int [52, 107]
+109 Ops.LOAD dtypes.int [108]
+110 Ops.ADD dtypes.int [106, 109]
+111 Ops.BITCAST dtypes.uint [66] dtypes.uint
+112 Ops.CMPLT dtypes.bool [111, 102]
+113 Ops.CAST dtypes.int [112] dtypes.int
+114 Ops.ADD dtypes.int [110, 113]
+115 Ops.ADD dtypes.int [67, 10]
+116 Ops.INDEX dtypes.int [52, 115]
+117 Ops.LOAD dtypes.int [116]
+118 Ops.ADD dtypes.int [114, 117]
+119 Ops.BITCAST dtypes.uint [71] dtypes.uint
+120 Ops.CMPLT dtypes.bool [119, 111]
+121 Ops.CAST dtypes.int [120] dtypes.int
+122 Ops.ADD dtypes.int [118, 121]
+123 Ops.ADD dtypes.int [72, 10]
+124 Ops.INDEX dtypes.int [52, 123]
+125 Ops.LOAD dtypes.int [124]
+126 Ops.ADD dtypes.int [122, 125]
+127 Ops.BITCAST dtypes.uint [76] dtypes.uint
+128 Ops.CMPLT dtypes.bool [127, 119]
+129 Ops.CAST dtypes.int [128] dtypes.int
+130 Ops.ADD dtypes.int [126, 129]
+131 Ops.ADD dtypes.int [77, 10]
+132 Ops.INDEX dtypes.int [52, 131]
+133 Ops.LOAD dtypes.int [132]
+134 Ops.ADD dtypes.int [130, 133]
+135 Ops.BITCAST dtypes.uint [81] dtypes.uint
+136 Ops.CMPLT dtypes.bool [135, 127]
+137 Ops.CAST dtypes.int [136] dtypes.int
+138 Ops.ADD dtypes.int [134, 137]
+139 Ops.ADD dtypes.int [82, 10]
+140 Ops.INDEX dtypes.int [52, 139]
+141 Ops.LOAD dtypes.int [140]
+142 Ops.ADD dtypes.int [138, 141]
+143 Ops.BITCAST dtypes.uint [86] dtypes.uint
+144 Ops.CMPLT dtypes.bool [143, 135]
+145 Ops.CAST dtypes.int [144] dtypes.int
+146 Ops.ADD dtypes.int [142, 145]
+147 Ops.ADD dtypes.int [87, 10]
+148 Ops.INDEX dtypes.int [52, 147]
+149 Ops.LOAD dtypes.int [148]
+150 Ops.ADD dtypes.int [146, 149]
+151 Ops.BITCAST dtypes.uint [91] dtypes.uint
+152 Ops.CMPLT dtypes.bool [151, 143]
+153 Ops.CAST dtypes.int [152] dtypes.int
+154 Ops.ADD dtypes.int [150, 153]
+155 Ops.STORE dtypes.void [94, 154]
+156 Ops.GROUP dtypes.void [92, 155]
+157 Ops.END dtypes.void [156, 3]
+158 Ops.SINK dtypes.void [157] KernelInfo(name="r_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(0, AxisType.UNROLL)),)) tag=1
+159 Ops.SINK dtypes.void [46, 158]
+
