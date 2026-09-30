@@ -31,8 +31,7 @@ let sym u = rewrite Symbolic.sym u
 (* Exact graphs *)
 
 (* The graphs the law covers: integer and boolean arithmetic over constants and
-   leaves, which rewriting keeps exact. Float rewrites may round differently ([1
-   / (x * c)] is [(1 / x) * (1 / c)]) and are left to the goldens. *)
+   leaves. Floats have their own law, at IEEE's special values. *)
 let exact u =
   let node n =
     (not (Dtype.is_float (Ops.dtype n)))
@@ -160,3 +159,63 @@ let keeps_value ?(count = 16) ~name before after =
       | _ -> ()
     done
   end
+
+(* Floats
+
+   The law that a rewrite keeps a float value bit for bit: at bindings of an
+   expression's scalar parameters to IEEE's special values, the rewritten
+   expression evaluates to what the expression does, signed zeros, infinities
+   and subnormals included; any NaN is every NaN, since neither nx nor a target
+   pins a computed NaN's bits. *)
+
+let float32 x = Dtype.truncate Float32 (`Float x)
+
+let specials =
+  List.map float32
+    [
+      0.;
+      -0.;
+      Float.infinity;
+      Float.neg_infinity;
+      Float.nan;
+      Int32.float_of_bits 0x7f7fffffl;
+      Int32.float_of_bits 0xff7fffffl;
+      Int32.float_of_bits 1l;
+      Int32.float_of_bits 0x80000001l;
+      Int32.float_of_bits 0x007fffffl;
+      1.;
+      -1.;
+      0.5;
+      3.;
+      1e30;
+    ]
+
+let same_float : Dtype.const Testable.t =
+  let nan = function `Float x -> Float.is_nan x | _ -> false in
+  Testable.make ~pp:Dtype.pp_const ~equal:(fun v0 v1 ->
+      (nan v0 && nan v1) || Testable.equal Dtypes.const v0 v1)
+
+(* [keeps_float_value ~name before after] checks that [after] has [before]'s
+   value at [count] bindings of the scalar parameters of slots [0] to [2] to
+   specials: the first binds each of them to each special in turn, the others at
+   random. *)
+let keeps_float_value ?(count = 24) ~name before after =
+  let rng = Random.State.make [| Hashtbl.hash (name, Ops.key before) |] in
+  let n = List.length specials in
+  for k = 0 to count - 1 do
+    let pick slot =
+      if k < n then List.nth specials ((k + slot) mod n)
+      else List.nth specials (Random.State.int rng n)
+    in
+    let params = List.init 3 (fun slot -> (slot, pick slot)) in
+    let msg =
+      Format.asprintf "%s at %a" name
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
+           (fun ppf (s, v) -> Format.fprintf ppf "p%d=%a" s Dtype.pp_const v))
+        params
+    in
+    equal ~msg same_float
+      (Interpreter.eval ~params before)
+      (Interpreter.eval ~params after)
+  done

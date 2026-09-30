@@ -20,9 +20,9 @@
 18 Ops.ADD dtypes.weakint [16, 17]
 19 Ops.WHERE dtypes.weakint [10, 18, 11]
 20 Ops.INDEX dtypes.float [14, 19]
-21 Ops.REDUCE dtypes.float [20, 17] (Ops.ADD, 0)
-22 Ops.CONST dtypes.weakfloat [] 100.0
-23 Ops.MUL dtypes.float [21, 22]
+21 Ops.CONST dtypes.weakfloat [] 100.0
+22 Ops.MUL dtypes.float [20, 21]
+23 Ops.REDUCE dtypes.float [22, 17] (Ops.ADD, 0)
 24 Ops.STORE dtypes.void [13, 23]
 25 Ops.END dtypes.void [24, 2, 5]
 26 Ops.SINK dtypes.void [25] KernelInfo(name="r_4_8_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)))) tag=1

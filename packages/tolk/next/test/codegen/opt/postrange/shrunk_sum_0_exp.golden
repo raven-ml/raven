@@ -9,11 +9,13 @@
 7 Ops.MUL dtypes.weakint [5, 6]
 8 Ops.ADD dtypes.weakint [7, 2]
 9 Ops.INDEX dtypes.float [4, 8]
-10 Ops.REDUCE dtypes.float [9, 5] (Ops.ADD, 0)
-11 Ops.CONST dtypes.weakfloat [] 144.26950408889633
-12 Ops.MUL dtypes.float [10, 11]
-13 Ops.EXP2 dtypes.float [12]
-14 Ops.STORE dtypes.void [3, 13]
-15 Ops.END dtypes.void [14, 2]
-16 Ops.SINK dtypes.void [15] KernelInfo()
+10 Ops.CONST dtypes.weakfloat [] 100.0
+11 Ops.MUL dtypes.float [9, 10]
+12 Ops.REDUCE dtypes.float [11, 5] (Ops.ADD, 0)
+13 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+14 Ops.MUL dtypes.float [12, 13]
+15 Ops.EXP2 dtypes.float [14]
+16 Ops.STORE dtypes.void [3, 15]
+17 Ops.END dtypes.void [16, 2]
+18 Ops.SINK dtypes.void [17] KernelInfo()
 

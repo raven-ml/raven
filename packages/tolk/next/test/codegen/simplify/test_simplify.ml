@@ -320,11 +320,17 @@ let collapsing =
           equal uop
             Ops.O.(sum x [ r ] + Ops.float 20.)
             (collapse (sum Ops.O.(x + two) [ r ])));
-      test "a product by a comparison cast from a boolean is a selection"
+      test
+        "an integer product by a comparison cast from a boolean is a selection"
         (fun () ->
           let c = Ops.O.(r < Ops.int 3) in
-          equal uop (Ops.where c two zero)
-            (collapse Ops.O.(two * Ops.cast c Float32)));
+          equal uop
+            (Ops.where c (i32 2) (Ops.int 0))
+            (collapse Ops.O.(i32 2 * Ops.cast c Int32)));
+      test "a float product by a comparison cast from a boolean stays (D24)"
+        (fun () ->
+          let u = Ops.O.(two * Ops.cast Ops.O.(r < Ops.int 3) Float32) in
+          equal int 0 (count Where (collapse u)));
       test "a parameter guarding a sum is lifted out of it" (fun () ->
           let p = Ops.param 0 Bool in
           let u =
@@ -395,8 +401,9 @@ let reduce_simplifying =
     ]
 
 (* D24: a comparison is solved for x only where nothing wraps, and never for
-   floats, where moving a term rounds. Each graph is evaluated before and after
-   the pass at bindings where the solved form would differ. *)
+   floats, where moving a term rounds; a float sum counted in closed form and a
+   float product by a mask keep IEEE's values. Each graph is evaluated before
+   and after the pass at bindings where the rewritten form would differ. *)
 let solving =
   let u = var ~dtype:Uint8 "u" 0 255 and v = var ~dtype:Uint8 "v" 1 255 in
   let same_value pass g vars buffers =
@@ -404,7 +411,7 @@ let solving =
       (Interpreter.eval ~vars ~buffers g)
       (Interpreter.eval ~vars ~buffers (pass g))
   in
-  group "solving comparisons (D24)"
+  group "keeping values (D24)"
     [
       test "x + y < c is solved only where nothing wraps" (fun () ->
           same_value collapse
@@ -423,6 +430,30 @@ let solving =
           same_value collapse lt
             [ ("x", `Float 5.); ("y", `Float 1e8); ("c", `Float 100000008.) ]
             []);
+      test
+        "a float sum over an empty part of a range is +0., whatever the value"
+        (fun () ->
+          let r = reduce_range 4 0
+          and k = var "k" 0 4
+          and x = Ops.param 0 Float32 in
+          let u = sum (Ops.where Ops.O.(r < k) x zero) [ r ] in
+          List.iter
+            (fun (kv, xv) ->
+              let vars = [ ("k", i kv) ] and params = [ (0, `Float xv) ] in
+              equal Dtypes.const
+                (Interpreter.eval ~vars ~params u)
+                (Interpreter.eval ~vars ~params (collapse u)))
+            [ (0, Float.infinity); (0, Float.nan); (2, 1.5) ]);
+      test "a float product by a boolean mask keeps its value" (fun () ->
+          let x = Ops.param 0 Float32 and g = Ops.param 1 Bool in
+          let u = Ops.O.(x * Ops.cast g Float32) in
+          List.iter
+            (fun xv ->
+              let params = [ (0, `Float xv); (1, `Bool false) ] in
+              equal Dtypes.const
+                (Interpreter.eval ~params u)
+                (Interpreter.eval ~params (collapse u)))
+            [ -1.; Float.infinity ]);
       test "x + y <> c under a narrowing cast is left" (fun () ->
           let r = reduce_range 10 0 and y = var ~dtype:Int32 "y" 250 260 in
           let x = Ops.cast r Int32 in
@@ -737,8 +768,13 @@ let laws =
           let u = sum_of s in
           keeps_value ~name:"sum" u (reduce_simplify u));
       prop "pm_reduce_simplify computes a sum of a function of its range" sums
-        (fun ((_, _, v, _) as drawn) ->
+        (fun ((_, s, v, dt) as drawn) ->
           assume (v <> Range_value);
+          (* A float product by a mask stays, since it is not a selection at an
+             infinity or a negative value (D24). *)
+          assume
+            (not
+               (Dtype.is_float dt && match s with Mask _ -> true | _ -> false));
           let u = reduce_simplify (sum_of drawn) in
           equal int 0 (count Reduce u));
     ]

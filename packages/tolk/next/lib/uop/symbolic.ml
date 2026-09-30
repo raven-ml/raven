@@ -64,15 +64,25 @@ let dedup l = Helpers.dedup (module Node) l
 
 (* Phase 1: the most generic folding rules *)
 
+(* The reciprocal overflows only where a power of magnitude at least 1 does, and
+   [sqrt] gives -0. and NaN at -0. and -inf, where a half-integer power is +0.
+   and +inf. *)
 let simplify_pow x c =
   let c = num c and pow x v = pow x (lit v) in
   let h = V.(c - `Float 0.5) in
   match c with
   | `Float f when not (Float.is_finite f) -> None
-  | _ when V.(c < zero) -> Some (pow (reciprocal x) V.(-c))
+  | _ when V.(c <= `Float (-1.)) -> Some (pow (reciprocal x) V.(-c))
+  | _ when V.(c < zero) -> None
   | _ when V.(c = zero) -> Some (const_v x one)
   | _ when V.(h < c && `Float (Float.trunc (to_float h) +. 0.5) = c) ->
-      Some (mul (pow x h) (sqrt x))
+      let p = mul (pow x h) (sqrt x) in
+      if not (Dtype.is_float (dtype x)) then Some p
+      else
+        let special v r =
+          where O.(x <> float v) r (const_like x (`Float (Float.abs v)))
+        in
+        Some (special Float.neg_infinity (special 0. p))
   | _ when V.(`Int (to_z c) = c) ->
       let y = pow x V.(c // of_int 2) in
       Some O.(y * y * if V.(c % of_int 2 = one) then x else int 1)
@@ -335,12 +345,22 @@ let symbolic_simple =
       pm
         [
           (* Self folding *)
+          (* a float x + 0 is x only for -0., since -0. + +0. is +0. *)
           rule
             (Upat.v
                ~op:(ops [ Op.Add; Op.Xor; Op.Or ])
-               ~perm:Upat.[ var "x"; int 0 ]
-               ())
-            (fun m -> Some (m "x"));
+               ~perm:Upat.[ var "x"; named "c" (int 0) ]
+               ~name:"a" ())
+            (fun m ->
+              let a = m "a" in
+              let negative_zero =
+                match value (m "c") with
+                | `Float z -> Float.sign_bit z
+                | _ -> false
+              in
+              if op a = Op.Add && Dtype.is_float (dtype a) && not negative_zero
+              then None
+              else Some (m "x"));
           rule
             (Upat.v
                ~op:(ops [ Op.Shl; Op.Shr ])
@@ -498,25 +518,11 @@ let symbolic_simple =
           rule
             Upat.(cvar ~arg:(`Int Z.zero) "x" / int 0)
             (fun m -> Some (const_like (m "x") (`Float Float.nan)));
-          (* can be wrong if x or x2 is 0 *)
-          rule Upat.(var "x" / var "x") (fun m -> Some (const_v (m "x") one));
-          rule Upat.(var "x" * var "x2" / var "x2") (fun m -> Some (m "x"));
-          (* x*0 -> 0 or 0*x -> 0. if x is nan or inf it should render the nan
-             value. NOTE: this can be wrong for loaded NaN *)
+          (* x*0 -> 0 or 0*x -> 0, for integers: a float product by zero is NaN
+             at an infinity or a NaN, and -0. at a negative x *)
           rule
-            Upat.(var "x" * int 0)
-            (fun m ->
-              let x = m "x" in
-              let special =
-                is_const x
-                &&
-                match value x with
-                | `Float f -> not (Float.is_finite f)
-                | _ -> false
-              in
-              Some
-                (if special then const_like x (`Float Float.nan)
-                 else const_v x zero));
+            Upat.(var ~dtype:int_or_bool "x" * int 0)
+            (fun m -> Some (const_v (m "x") zero));
           (* Cast/bitcast *)
           rule
             (Upat.v ~op:(ops [ Op.Cast; Op.Bitcast ]) ~name:"root" ())
@@ -567,7 +573,7 @@ let symbolic_simple =
               let c = m "c" in
               let cv = num c in
               if V.(cv = one) then Some c
-              else if V.(cv > zero) then
+              else if V.(cv > zero && cv < `Float Float.infinity) then
                 Some (exp2 O.(m "x" * float (Float.log2 (V.to_float cv))))
               else None);
           (* unpack a uint64 packed from two uint32 (threefry) *)
@@ -674,32 +680,34 @@ let symbolic =
                var ~dtype:boolean "x" lor logical_not (var ~dtype:boolean "x"))
              (fun m -> Some (const_like (m "x") (`Bool true)));
            (* Combine terms *)
+           (* like terms combine for integers: in floats each product and
+              sum rounds *)
            rule
-             Upat.((var "x" * cvar "c0") + (var "x" * cvar "c1"))
+             Upat.(
+               (var ~dtype:int_or_bool "x" * cvar "c0") + (var "x" * cvar "c1"))
              (fun m -> Some O.(m "x" * (m "c0" + m "c1")));
            rule
-             Upat.(var "y" + (var "x" * cvar "c0") + (var "x" * cvar "c1"))
+             Upat.(
+               var "y"
+               + (var ~dtype:int_or_bool "x" * cvar "c0")
+               + (var "x" * cvar "c1"))
              (fun m -> Some O.(m "y" + (m "x" * (m "c0" + m "c1"))));
            rule
-             Upat.(var "x" + (var "x" * cvar "c"))
+             Upat.(var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
              (fun m -> Some O.(m "x" * (m "c" + int 1)));
            rule
-             Upat.(var "y" + var "x" + (var "x" * cvar "c"))
+             Upat.(var "y" + var ~dtype:int_or_bool "x" + (var "x" * cvar "c"))
              (fun m -> Some O.(m "y" + (m "x" * (m "c" + int 1))));
            rule
-             Upat.(var "y" + (var "x" * cvar "c") + var "x")
+             Upat.(var "y" + (var ~dtype:int_or_bool "x" * cvar "c") + var "x")
              (fun m -> Some O.(m "y" + (m "x" * (m "c" + int 1))));
            rule Upat.(var "x" + var "x") (fun m -> Some O.(m "x" * int 2));
            rule
-             Upat.(var "y" + var "x" + var "x")
+             Upat.(var "y" + var ~dtype:int_or_bool "x" + var "x")
              (fun m -> Some O.(m "y" + (m "x" * int 2)));
+           (* -(x+c) -> -x + -c, for integers: -(x + c) is -0. at x = -c *)
            rule
-             Upat.(var "x" / var "x2" / var "x3")
-             (fun m ->
-               let x2 = m "x2" and x3 = m "x3" in
-               if x2 == x3 then None else Some O.(m "x" / (x2 * x3)));
-           rule
-             Upat.(int (-1) * (var "x" + cvar "c"))
+             Upat.(int (-1) * (var ~dtype:int_or_bool "x" + cvar "c"))
              (fun m -> Some O.(-m "x" + -m "c"));
            rule
              Upat.(cvar "y" * (var ~dtype:[ Dtype.Weak_int ] "x" + cvar "c"))
@@ -753,10 +761,11 @@ let symbolic =
                if both_const t tt || both_const f ff then
                  Some (where (m "c") (alu t o [ tt ]) (alu f o [ ff ]))
                else None);
-           (* if its a plus we add the associative variation too *)
+           (* if its a plus we add the associative variation too, for integers:
+              it reassociates the sum *)
            rule
              Upat.(
-               var "y"
+               var ~dtype:int_or_bool "y"
                + where (var "c") (var "t") (var "f")
                + where (var "c") (var "tt") (var "ff"))
              (fun m ->
@@ -765,10 +774,10 @@ let symbolic =
                  Some O.(m "y" + where (m "c") (t + tt) (f + ff))
                else None);
            (* complementary zero branches under the same condition select
-              directly *)
+              directly, for integers: a float t + 0 is +0. at t = -0. *)
            rule
              Upat.(
-               where (var "c") (var "t") (int 0)
+               where (var "c") (var ~dtype:int_or_bool "t") (int 0)
                + where (var "c") (int 0) (var "f"))
              (fun m -> Some (where (m "c") (m "t") (m "f")));
            (* ALU/variable min==max -> CONST *)
@@ -796,34 +805,37 @@ let symbolic =
              (fun m ->
                let x = m "x" in
                if V.(vmin x = vmax x) then Some (const_v x (vmin x)) else None);
-           (* max folding *)
+           (* max folding, when the selection's constants are one node: -0. and
+              +0. are equal, and NaN is unequal to itself *)
            rule
              Upat.(where (cvar "a" < var "b") (var "b") (cvar "c"))
              (fun m ->
-               if V.(num (m "a") = num (m "c")) then
-                 Some (maximum (m "a") (m "b"))
-               else None);
+               if m "a" == m "c" then Some (maximum (m "a") (m "b")) else None);
            rule
              Upat.(where (var "a" < cvar "b") (cvar "c") (var "a"))
              (fun m ->
-               if V.(num (m "b") = num (m "c")) then
-                 Some (maximum (m "a") (m "b"))
-               else None);
+               if m "b" == m "c" then Some (maximum (m "a") (m "b")) else None);
+           (* a float maximum's bounds leave out NaN and the order of zeros *)
            rule
-             Upat.(maximum (var "x") (var "y"))
+             Upat.(maximum (var ~dtype:int_or_bool "x") (var "y"))
              (fun m ->
                let x = m "x" and y = m "y" in
                if V.(vmin x >= vmax y) then Some x
                else if V.(vmax x <= vmin y) then Some y
                else None);
          ]
-        (* Two stage ALU folding *)
+        (* Two stage ALU folding; sums, products and maxima for integers: in
+           floats each step rounds, and a maximum keeps a NaN only as its first
+           operand *)
         @ List.map
             (fun o ->
+              let dtype =
+                if List.mem o Op.[ Add; Mul; Max ] then Some int_or_bool
+                else None
+              in
+              let x = Upat.var ?dtype "x" in
               rule
-                Upat.(
-                  named "f"
-                    (alu (alu (var "x") o [ cvar "c1" ]) o [ cvar "c2" ]))
+                Upat.(named "f" (alu (alu x o [ cvar "c1" ]) o [ cvar "c2" ]))
                 (fun m ->
                   let o = op (m "f") in
                   Some (alu (m "x") o [ alu (m "c1") o [ m "c2" ] ])))
@@ -869,14 +881,14 @@ let symbolic =
                 else if V.(d < zero) then Some O.(x > cd)
                 else None);
             (* Move add/mul consts to end (NOTE: this is still happening before
-               constant folding) *)
+               constant folding), for integers: it reassociates *)
             rule
-              Upat.(var "x" + cvar "c1" + var "y")
+              Upat.(var ~dtype:int_or_bool "x" + cvar "c1" + var "y")
               (fun m ->
                 let y = m "y" in
                 if is_const y then None else Some O.(m "x" + y + m "c1"));
             rule
-              Upat.(var "x" * cvar "c1" * var "y")
+              Upat.(var ~dtype:int_or_bool "x" * cvar "c1" * var "y")
               (fun m ->
                 let y = m "y" in
                 if is_const y then None else Some O.(m "x" * y * m "c1"));
@@ -1121,9 +1133,12 @@ let simplify_valid valid =
 
 (* Phase 3: the complete symbolic *)
 
+(* A float factor moved out of a sum changes its rounding, and out of a maximum
+   its NaN and signed zeros. *)
 let reduce_mul_chain r =
   match arg r with
-  | Reduce { op = (Op.Add | Op.Max) as rop; _ } -> (
+  | Reduce { op = (Op.Add | Op.Max) as rop; _ }
+    when not (Dtype.is_float (dtype r)) -> (
       let ranges = List.tl (src r) in
       let outside m =
         let parents = backward_slice m in
@@ -1247,7 +1262,6 @@ let sym =
   let gated_store idx cond x =
     store (index (nth idx 0) [ valid (nth idx 1) cond ]) x
   in
-  let d = Upat.(named "d" (reciprocal (int 1 + var "x"))) in
   Pattern_matcher.concat
     [
       symbolic;
@@ -1275,36 +1289,13 @@ let sym =
             (Upat.op Op.Store
                ~src:Upat.[ indexed; where (var "cond") (var "val") invalid_pat ])
             (fun m -> Some (gated_store (m "index") (m "cond") (m "val")));
-          (* 1/(x^c) -> (1/x)^c *)
-          rule
-            Upat.(reciprocal (var "x" * var "x"))
-            (fun m ->
-              let r = reciprocal (m "x") in
-              Some (mul r r));
-          rule
-            Upat.(reciprocal (var "x" * var "x" * var "x"))
-            (fun m ->
-              let r = reciprocal (m "x") in
-              Some O.(r * r * r));
-          (* 1/(x*c) -> (1/c)*(1/x) *)
-          rule
-            Upat.(reciprocal (var "x" * cvar "c"))
-            (fun m -> Some (mul (reciprocal (m "x")) (reciprocal (m "c"))));
-          (* x*/(1+x) -> 1-1/(1+x) *)
-          rule Upat.(var "x" * d) (fun m -> Some O.(int 1 - m "d"));
-          rule
-            Upat.(var "x" * (d * var "y"))
-            (fun m -> Some O.(m "y" * (int 1 - m "d")));
-          rule
-            Upat.(var "x" * (d + var "y"))
-            (fun m -> Some O.(int 1 - m "d" + (m "x" * m "y")));
           (* reduce mul chain, move muls after the reduce *)
           rule
             (Upat.reduce ~name:"r" ~allow_any_len:true (Upat.op Op.Mul) [])
             (fun m -> reduce_mul_chain (m "r"));
           (* Combine terms (opinionated) *)
           rule
-            Upat.(int (-1) * (var "x" + var "y"))
+            Upat.(int (-1) * (var ~dtype:int_or_bool "x" + var "y"))
             (fun m -> Some O.(-m "x" + -m "y"));
           (* (x+y)*c -> x*c+y*c. only for int, float has inf*0=nan issue *)
           rule

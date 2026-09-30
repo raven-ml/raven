@@ -16,9 +16,9 @@
 14 Ops.CONST dtypes.bool [] Invalid
 15 Ops.WHERE dtypes.weakint [9, 13, 14]
 16 Ops.INDEX dtypes.float [7, 15]
-17 Ops.REDUCE dtypes.float [16, 12] (Ops.ADD, 0)
-18 Ops.CONST dtypes.weakfloat [] -1.0
-19 Ops.MUL dtypes.float [17, 18]
+17 Ops.CONST dtypes.weakfloat [] -1.0
+18 Ops.MUL dtypes.float [16, 17]
+19 Ops.REDUCE dtypes.float [18, 12] (Ops.ADD, 0)
 20 Ops.CONST dtypes.weakfloat [] -inf
 21 Ops.CAST dtypes.float [20] dtypes.float
 22 Ops.WHERE dtypes.float [6, 19, 21]

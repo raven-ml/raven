@@ -12,17 +12,23 @@
     ({!Ops.vmin}, {!Ops.vmax}) and on the conditions that guard them. They come
     in three matchers, each containing the one before: {!symbolic_simple} folds
     one node at a time, {!symbolic} matches deeper and canonicalises index
-    arithmetic, and {!sym} adds the rewrites of loads, stores, reductions and
-    reciprocals that code generation relies on.
+    arithmetic, and {!sym} adds the rewrites of loads, stores and reductions
+    that code generation relies on.
+
+    {b Values.} Every rewrite keeps each value bit for bit, IEEE's signed zeros,
+    infinities, NaN and subnormals included, and wraps integers at their type,
+    as compiled code computes them. The exceptions are the rounding of powers: a
+    constant power is computed by products and square roots, and {!sym} computes
+    every other one as [exp2 (y * log2 x)] ({!Transcendental.xpow}), as is
+    [c ** x] for a positive finite constant [c]. So the rewrites that
+    reassociate or distribute arithmetic, or rely on it never overflowing, apply
+    to integers only, and to a committed integer only where no value it computes
+    wraps ({!Ops.exact}); a weak integer, such as an index, never wraps.
 
     {b Invalid values.} An index that is {!Ops.invalid} where a condition fails,
     [where cond x invalid], is a {e gated} value ({!invalid_gate}). The rewrites
     keep the gate outermost, so that it reaches the load or store that reads the
     index, which then does nothing where the gate fails.
-
-    {b Exceptions.} A few float rewrites assume operands that are neither zero,
-    NaN nor infinite: [x / x] is [1], [x * y / y] is [x], and [x * 0] is [0]
-    unless [x] is a constant NaN or infinity.
 
     {b Installation.} Initialising the module makes {!symbolic} the rules of
     {!Ops.simplify}, and so of {!Ops.resolve} and of every shape computation. *)
@@ -49,22 +55,22 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       an invalid index does nothing, and a load from one is its alternative
       value, or [0];
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],
-      [x * 1] and [x // 1] are [x]; [x // -1] is [-x]; [x // x] is [1];
-      [(x lxor y) lxor y] is [x]; [(x % y) % y] is [x % y]; a boolean [x land c]
-      and [x lor c] with [c] constant are [x] or [c]; [x <> false], a double
-      negation, [where x true false] and an idempotent operation of [x] with
-      itself are [x]; [where x false true] is the negation of [x]; a boolean
-      cast to an integer and compared to [0] or [1] is the boolean or its
-      negation, and to any other integer [true]; the truncation of an integer is
-      itself;
+      [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
+      [-x]; [x // x] is [1]; [(x lxor y) lxor y] is [x]; [(x % y) % y] is
+      [x % y]; a boolean [x land c] and [x lor c] with [c] constant are [x] or
+      [c]; [x <> false], a double negation, [where x true false] and an
+      idempotent operation of [x] with itself are [x]; [where x false true] is
+      the negation of [x]; a boolean cast to an integer and compared to [0] or
+      [1] is the boolean or its negation, and to any other integer [true]; the
+      truncation of an integer is itself;
     - {b recombination}: in a weak integer sum, [(b % d) * m] and a term
       [q * (d * m)], where [q] is [b' // d] for some [b'] congruent to [b]
       modulo [d] up to constants, recombine into [b' * m]; where [q] is
       [(b' // d) % k] with [k] positive, into [(b' % (d * k)) * m];
     - {b zeros}: [x < x] is [false], [x <> x] is [false] for integers and
-      booleans, [x % x], [x lxor x] and [x land 0] are [0]; a mask that clears
-      only bits that a right shift or a division by a power of two drops is
-      removed;
+      booleans, [x % x], [x lxor x] and [x land 0] are [0], and so is [x * 0]
+      for integers and booleans; a mask that clears only bits that a right shift
+      or a division by a power of two drops is removed;
     - {b constants}: an arithmetic operation on constants is its value
       ({!Ops.exec_alu}), except {!Op.Threefry}; weak constants keep their
       mathematical value, and an operation mixing weak and committed constants
@@ -77,10 +83,11 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       type that holds every value of the result's type, back to that type, is
       its operand; two bitcasts are one; a cast to a boolean is [x <> 0];
     - {b powers}: [x ** c], for a constant [c] that is an integer or a half
-      integer, is a product of powers of [x], its reciprocal and its square
-      root; [c ** x] is [c] if [c = 1], and [exp2 (x * log2 c)] for positive
-      [c]; a 64-bit integer packed from two 32-bit halves and unpacked again is
-      the half read;
+      integer, [0] or at least [1] in magnitude, is a product of powers of [x],
+      its reciprocal and its square root, a float half-integer power being [+0.]
+      at [-0.] and [+inf] at [-inf]; [c ** x] is [c] if [c = 1], and
+      [exp2 (x * log2 c)] for positive finite [c]; a 64-bit integer packed from
+      two 32-bit halves and unpacked again is the half read;
     - {b selections}: a selection between equal values is that value, and a
       selection by a constant is the branch it picks, keeping the selection's
       type;
@@ -96,25 +103,28 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [symbolic] is {!symbolic_simple} and {!commutative}, followed by rewrites
     that match deeper:
 
-    - {b terms}: [x lor not x] is [true]; like terms combine, [x * c0 + x * c1]
-      into [x * (c0 + c1)] and [x + x] into [x * 2], also as the last two terms
-      of a longer sum; [(x / y) / z] is [x / (y * z)]; [-(x + c)] is [-x + -c],
-      and [c * (x + c')] is [c * x + c * c'] for a weak integer [x];
+    - {b terms}: [x lor not x] is [true]; [x + x] is [x * 2]; for integers, like
+      terms combine, [x * c0 + x * c1] into [x * (c0 + c1)] and [y + x + x] into
+      [y + x * 2], also as the last two terms of a longer sum, and [-(x + c)] is
+      [-x + -c]; [c * (x + c')] is [c * x + c * c'] for a weak integer [x];
     - {b selections}: a selection by a negation swaps its branches; within
       [where c t f], [c] is [true] in [t] and [false] in [f], unless an
       {!Op.Index} is involved; [where g x 0 <> 0] is [g land (x <> 0)]; nested
       selections sharing a branch merge their conditions with [land] or [lor];
       an operation on two selections by the same condition, one of whose branch
       pairs is constant, selects between the operations on the branches, also as
-      the last two terms of a sum; [where c t 0 + where c 0 f] is [where c t f];
+      the last two terms of an integer sum; for integers,
+      [where c t 0 + where c 0 f] is [where c t f];
     - {b bounds}: a comparison, division, remainder, variable, {!Op.After},
       {!Op.Special} or range with a constant end whose bounds are equal is that
-      constant; a maximum of two operands whose bounds do not overlap is the
-      greater; a selection that computes a maximum is {!Ops.maximum};
+      constant; an integer maximum of two operands whose bounds do not overlap
+      is the greater; a selection that computes a maximum, [where (a < b) b a]
+      with [a] or [b] a constant, is {!Ops.maximum};
     - {b constants}: two applications of an associative operation to constants
-      fold the constants together; [(x // c1) // c2] is [x // (c1 * c2)] for
-      positive [c2] where [c1 * c2] does not wrap ({!Ops.exact}); constants move
-      to the end of sums and products;
+      fold the constants together, sums, products and maxima for integers only;
+      [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]
+      does not wrap ({!Ops.exact}); constants move to the end of integer sums
+      and products;
     - {b comparisons}, on integers: [c0 + x < c1] is [x < c1 - c0] where neither
       side wraps; [c0 * x < c1] divides both sides by [c0], rounding up, and
       flips [x]'s sign if [c0] is negative; [x // d < c] is [x < c * d] for
@@ -187,13 +197,10 @@ val sym : (unit, Ops.t) Ops.Pattern_matcher.t
       nothing; storing [where g alt (load index)] stores [alt] where [g] holds;
       storing {!Ops.invalid} does nothing, and storing a gated value stores it
       where its gate holds;
-    - {b reciprocals}: [1 / (x * x)] and [1 / (x * x * x)] are products of
-      [1 / x]; [1 / (x * c)] is [(1 / x) * (1 / c)]; [x * (1 / (1 + x))] is
-      [1 - 1 / (1 + x)], also times [y] or plus [y];
-    - {b reductions}: the factors of a reduced product that do not depend on the
-      reduction's ranges move out of a sum, and out of a maximum when they are
-      non-negative;
-    - {b terms}: [-(x + y)] is [-x + -y], and [(x + y) * c] is [x * c + y * c]
-      for weak integers;
+    - {b reductions}: the factors of an integer reduced product that do not
+      depend on the reduction's ranges move out of a sum, and out of a maximum
+      when they are non-negative;
+    - {b terms}: for integers, [-(x + y)] is [-x + -y], and [(x + y) * c] is
+      [x * c + y * c] for weak integers;
 
     then cleans up groups and sinks ({!pm_clean_up_group_sink}). *)

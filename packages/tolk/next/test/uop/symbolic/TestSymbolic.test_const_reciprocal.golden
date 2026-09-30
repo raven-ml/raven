@@ -4,10 +4,10 @@
 2 Ops.MUL dtypes.float [0, 1]
 3 Ops.RECIPROCAL dtypes.float [2]
 4 Ops.MUL dtypes.float [0, 3]
-5 Ops.RECIPROCAL dtypes.float [1]
-6 Ops.SINK dtypes.void [4, 5] tag="sym"
-7 Ops.SINK dtypes.void [1, 1] tag="simplify"
-8 Ops.SINK dtypes.void [5, 5] tag="commutative"
-9 Ops.SINK dtypes.void [5, 5] tag="simplify"
-10 Ops.SINK dtypes.void [6, 7, 8, 9]
+5 Ops.SINK dtypes.void [4, 4] tag="sym"
+6 Ops.SINK dtypes.void [1, 1] tag="simplify"
+7 Ops.RECIPROCAL dtypes.float [1]
+8 Ops.SINK dtypes.void [7, 7] tag="commutative"
+9 Ops.SINK dtypes.void [4, 4] tag="simplify"
+10 Ops.SINK dtypes.void [5, 6, 8, 9]
 

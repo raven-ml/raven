@@ -10,9 +10,9 @@
 8 Ops.RANGE dtypes.weakint [6] (0, AxisType.REDUCE)
 9 Ops.ADD dtypes.weakint [7, 8]
 10 Ops.INDEX dtypes.float [3, 9]
-11 Ops.REDUCE dtypes.float [10, 8] (Ops.ADD, 0)
-12 Ops.CONST dtypes.weakfloat [] -1.0
-13 Ops.MUL dtypes.float [11, 12]
+11 Ops.CONST dtypes.weakfloat [] -1.0
+12 Ops.MUL dtypes.float [10, 11]
+13 Ops.REDUCE dtypes.float [12, 8] (Ops.ADD, 0)
 14 Ops.REDUCE dtypes.float [13, 5] (Ops.MAX, 0)
 15 Ops.STORE dtypes.void [2, 14]
 16 Ops.SINK dtypes.void [15] KernelInfo()

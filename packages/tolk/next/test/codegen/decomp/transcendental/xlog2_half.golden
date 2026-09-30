@@ -12,64 +12,61 @@
 10 Ops.CMPNE dtypes.bool [0, 9]
 11 Ops.CONST dtypes.weakfloat [] inf
 12 Ops.CMPNE dtypes.bool [0, 11]
-13 Ops.CONST dtypes.weakfloat [] 6.097555160522461e-05
-14 Ops.CAST dtypes.half [13] dtypes.half
-15 Ops.CMPLT dtypes.bool [0, 14]
-16 Ops.CONST dtypes.weakfloat [] 1024.0
-17 Ops.MUL dtypes.half [0, 16]
-18 Ops.WHERE dtypes.half [15, 17, 0]
-19 Ops.BITCAST dtypes.short [18] dtypes.short
-20 Ops.CONST dtypes.weakfloat [] 1.3333333333333333
-21 Ops.MUL dtypes.half [18, 20]
-22 Ops.BITCAST dtypes.short [21] dtypes.short
-23 Ops.CONST dtypes.weakint [] 1024
-24 Ops.FLOORDIV dtypes.short [22, 23]
-25 Ops.CONST dtypes.weakint [] 31
-26 Ops.AND dtypes.short [24, 25]
-27 Ops.CONST dtypes.weakint [] 15
-28 Ops.CONST dtypes.weakint [] -1
-29 Ops.MUL dtypes.weakint [27, 28]
-30 Ops.ADD dtypes.short [26, 29]
-31 Ops.CAST dtypes.half [30] dtypes.half
-32 Ops.CONST dtypes.weakfloat [] -1.0
-33 Ops.MUL dtypes.half [31, 32]
-34 Ops.CAST dtypes.short [33] dtypes.short
-35 Ops.MUL dtypes.short [34, 23]
-36 Ops.ADD dtypes.short [19, 35]
-37 Ops.BITCAST dtypes.half [36] dtypes.half
-38 Ops.CONST dtypes.weakfloat [] 1.0
-39 Ops.MUL dtypes.weakfloat [38, 32]
-40 Ops.ADD dtypes.half [37, 39]
-41 Ops.ADD dtypes.half [37, 38]
-42 Ops.RECIPROCAL dtypes.half [41]
-43 Ops.MUL dtypes.half [40, 42]
-44 Ops.MUL dtypes.half [43, 43]
-45 Ops.MUL dtypes.half [9, 44]
-46 Ops.CONST dtypes.weakfloat [] 0.4374550283
-47 Ops.ADD dtypes.half [45, 46]
-48 Ops.MUL dtypes.half [47, 44]
-49 Ops.CONST dtypes.weakfloat [] 0.5764790177
-50 Ops.ADD dtypes.half [48, 49]
-51 Ops.MUL dtypes.half [50, 44]
-52 Ops.CONST dtypes.weakfloat [] 0.961801290512
-53 Ops.ADD dtypes.half [51, 52]
-54 Ops.MUL dtypes.half [43, 44]
-55 Ops.MUL dtypes.half [53, 54]
-56 Ops.CONST dtypes.weakfloat [] 10.0
-57 Ops.MUL dtypes.weakfloat [56, 32]
-58 Ops.ADD dtypes.half [31, 57]
-59 Ops.WHERE dtypes.half [15, 58, 31]
-60 Ops.ADD dtypes.half [55, 59]
-61 Ops.CONST dtypes.weakfloat [] 2.885390043258667
-62 Ops.MUL dtypes.half [43, 61]
-63 Ops.ADD dtypes.half [60, 62]
-64 Ops.ADD dtypes.half [63, 9]
-65 Ops.CAST dtypes.half [11] dtypes.half
-66 Ops.WHERE dtypes.half [12, 64, 65]
-67 Ops.CAST dtypes.half [2] dtypes.half
-68 Ops.WHERE dtypes.half [10, 66, 67]
-69 Ops.WHERE dtypes.half [8, 6, 68]
-70 Ops.WHERE dtypes.half [4, 6, 69]
-71 Ops.WHERE dtypes.half [3, 70, 67]
-72 Ops.SINK dtypes.void [71]
+13 Ops.CONST dtypes.weakfloat [] 0.4374550283
+14 Ops.CONST dtypes.weakfloat [] 6.097555160522461e-05
+15 Ops.CAST dtypes.half [14] dtypes.half
+16 Ops.CMPLT dtypes.bool [0, 15]
+17 Ops.CONST dtypes.weakfloat [] 1024.0
+18 Ops.MUL dtypes.half [0, 17]
+19 Ops.WHERE dtypes.half [16, 18, 0]
+20 Ops.BITCAST dtypes.short [19] dtypes.short
+21 Ops.CONST dtypes.weakfloat [] 1.3333333333333333
+22 Ops.MUL dtypes.half [19, 21]
+23 Ops.BITCAST dtypes.short [22] dtypes.short
+24 Ops.CONST dtypes.weakint [] 1024
+25 Ops.FLOORDIV dtypes.short [23, 24]
+26 Ops.CONST dtypes.weakint [] 31
+27 Ops.AND dtypes.short [25, 26]
+28 Ops.CONST dtypes.weakint [] 15
+29 Ops.CONST dtypes.weakint [] -1
+30 Ops.MUL dtypes.weakint [28, 29]
+31 Ops.ADD dtypes.short [27, 30]
+32 Ops.CAST dtypes.half [31] dtypes.half
+33 Ops.CONST dtypes.weakfloat [] -1.0
+34 Ops.MUL dtypes.half [32, 33]
+35 Ops.CAST dtypes.short [34] dtypes.short
+36 Ops.MUL dtypes.short [35, 24]
+37 Ops.ADD dtypes.short [20, 36]
+38 Ops.BITCAST dtypes.half [37] dtypes.half
+39 Ops.CONST dtypes.weakfloat [] 1.0
+40 Ops.MUL dtypes.weakfloat [39, 33]
+41 Ops.ADD dtypes.half [38, 40]
+42 Ops.ADD dtypes.half [38, 39]
+43 Ops.RECIPROCAL dtypes.half [42]
+44 Ops.MUL dtypes.half [41, 43]
+45 Ops.MUL dtypes.half [44, 44]
+46 Ops.MUL dtypes.half [13, 45]
+47 Ops.CONST dtypes.weakfloat [] 0.5764790177
+48 Ops.ADD dtypes.half [46, 47]
+49 Ops.MUL dtypes.half [48, 45]
+50 Ops.CONST dtypes.weakfloat [] 0.961801290512
+51 Ops.ADD dtypes.half [49, 50]
+52 Ops.MUL dtypes.half [44, 45]
+53 Ops.MUL dtypes.half [51, 52]
+54 Ops.CONST dtypes.weakfloat [] 10.0
+55 Ops.MUL dtypes.weakfloat [54, 33]
+56 Ops.ADD dtypes.half [32, 55]
+57 Ops.WHERE dtypes.half [16, 56, 32]
+58 Ops.ADD dtypes.half [53, 57]
+59 Ops.CONST dtypes.weakfloat [] 2.885390043258667
+60 Ops.MUL dtypes.half [44, 59]
+61 Ops.ADD dtypes.half [58, 60]
+62 Ops.CAST dtypes.half [11] dtypes.half
+63 Ops.WHERE dtypes.half [12, 61, 62]
+64 Ops.CAST dtypes.half [2] dtypes.half
+65 Ops.WHERE dtypes.half [10, 63, 64]
+66 Ops.WHERE dtypes.half [8, 6, 65]
+67 Ops.WHERE dtypes.half [4, 6, 66]
+68 Ops.WHERE dtypes.half [3, 67, 64]
+69 Ops.SINK dtypes.void [68]
 

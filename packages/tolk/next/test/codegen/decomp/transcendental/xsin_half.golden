@@ -49,168 +49,164 @@
 47 Ops.ADD dtypes.float [39, 46]
 48 Ops.ADD dtypes.float [37, 47]
 49 Ops.CAST dtypes.half [48] dtypes.half
-50 Ops.MUL dtypes.half [49, 49]
-51 Ops.MUL dtypes.half [8, 50]
-52 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
-53 Ops.ADD dtypes.half [51, 52]
-54 Ops.MUL dtypes.half [53, 50]
-55 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
-56 Ops.ADD dtypes.half [54, 55]
-57 Ops.MUL dtypes.half [56, 50]
-58 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
-59 Ops.ADD dtypes.half [57, 58]
-60 Ops.MUL dtypes.half [59, 50]
-61 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
-62 Ops.ADD dtypes.half [60, 61]
-63 Ops.MUL dtypes.half [62, 50]
-64 Ops.ADD dtypes.half [63, 17]
-65 Ops.MUL dtypes.half [49, 64]
-66 Ops.CAST dtypes.int [33] dtypes.int
-67 Ops.CONST dtypes.weakint [] 1
-68 Ops.AND dtypes.int [66, 67]
-69 Ops.CONST dtypes.weakint [] 0
-70 Ops.CMPNE dtypes.bool [68, 69]
-71 Ops.WHERE dtypes.half [70, 16, 18]
-72 Ops.MUL dtypes.half [65, 71]
-73 Ops.BITCAST dtypes.ushort [21] dtypes.ushort
-74 Ops.CONST dtypes.weakint [] 33791
-75 Ops.AND dtypes.ushort [73, 74]
-76 Ops.CONST dtypes.weakint [] 14336
-77 Ops.OR dtypes.ushort [75, 76]
-78 Ops.BITCAST dtypes.half [77] dtypes.half
-79 Ops.CMPLT dtypes.bool [78, 29]
-80 Ops.CAST dtypes.float [78] dtypes.float
-81 Ops.CONST dtypes.weakfloat [] 4294967296.0
-82 Ops.MUL dtypes.float [80, 81]
-83 Ops.CAST dtypes.ulong [82] dtypes.ulong
-84 Ops.CONST dtypes.weakint [] 1024
-85 Ops.FLOORDIV dtypes.ushort [73, 84]
-86 Ops.CONST dtypes.weakint [] 31
-87 Ops.AND dtypes.ushort [85, 86]
-88 Ops.CONST dtypes.weakint [] 15
-89 Ops.CONST dtypes.weakint [] -1
-90 Ops.MUL dtypes.weakint [88, 89]
-91 Ops.ADD dtypes.ushort [87, 90]
-92 Ops.ADD dtypes.ushort [91, 67]
-93 Ops.CAST dtypes.ulong [92] dtypes.ulong
-94 Ops.CONST dtypes.weakint [] 32
-95 Ops.FLOORDIV dtypes.ulong [93, 94]
-96 Ops.CMPNE dtypes.bool [95, 69]
-97 Ops.CMPNE dtypes.bool [95, 67]
-98 Ops.CONST dtypes.weakint [] 2
-99 Ops.CMPNE dtypes.bool [95, 98]
-100 Ops.CONST dtypes.weakint [] 3
-101 Ops.CMPNE dtypes.bool [95, 100]
-102 Ops.CONST dtypes.weakint [] 4
-103 Ops.CMPNE dtypes.bool [95, 102]
-104 Ops.CONST dtypes.weakint [] 5
-105 Ops.CMPNE dtypes.bool [95, 104]
-106 Ops.CAST dtypes.uint [69] dtypes.uint
-107 Ops.CONST dtypes.weakint [] 920167782
-108 Ops.CAST dtypes.uint [107] dtypes.uint
-109 Ops.WHERE dtypes.uint [105, 106, 108]
-110 Ops.CONST dtypes.weakint [] 2102212464
-111 Ops.CAST dtypes.uint [110] dtypes.uint
-112 Ops.WHERE dtypes.uint [103, 109, 111]
-113 Ops.CONST dtypes.weakint [] 2131351028
-114 Ops.CAST dtypes.uint [113] dtypes.uint
-115 Ops.WHERE dtypes.uint [101, 112, 114]
-116 Ops.CONST dtypes.weakint [] 2475754826
-117 Ops.CAST dtypes.uint [116] dtypes.uint
-118 Ops.WHERE dtypes.uint [99, 115, 117]
-119 Ops.CONST dtypes.weakint [] 683565275
-120 Ops.CAST dtypes.uint [119] dtypes.uint
-121 Ops.WHERE dtypes.uint [97, 118, 120]
-122 Ops.WHERE dtypes.uint [96, 121, 106]
-123 Ops.CAST dtypes.ulong [122] dtypes.ulong
-124 Ops.CAST dtypes.int [92] dtypes.int
-125 Ops.AND dtypes.int [124, 86]
-126 Ops.CAST dtypes.ulong [125] dtypes.ulong
-127 Ops.SHL dtypes.ulong [123, 126]
-128 Ops.CAST dtypes.uint [127] dtypes.uint
-129 Ops.WHERE dtypes.uint [103, 106, 108]
-130 Ops.WHERE dtypes.uint [101, 129, 111]
-131 Ops.WHERE dtypes.uint [99, 130, 114]
-132 Ops.WHERE dtypes.uint [97, 131, 117]
-133 Ops.WHERE dtypes.uint [96, 132, 120]
-134 Ops.CAST dtypes.ulong [133] dtypes.ulong
-135 Ops.MUL dtypes.int [125, 89]
-136 Ops.ADD dtypes.int [94, 135]
-137 Ops.CAST dtypes.ulong [136] dtypes.ulong
-138 Ops.SHR dtypes.ulong [134, 137]
-139 Ops.CAST dtypes.uint [138] dtypes.uint
-140 Ops.OR dtypes.uint [128, 139]
-141 Ops.CAST dtypes.ulong [140] dtypes.ulong
-142 Ops.MUL dtypes.ulong [83, 141]
-143 Ops.CONST dtypes.weakint [] 4294967296
-144 Ops.MUL dtypes.ulong [142, 143]
-145 Ops.SHL dtypes.ulong [134, 126]
-146 Ops.CAST dtypes.uint [145] dtypes.uint
-147 Ops.WHERE dtypes.uint [101, 106, 108]
-148 Ops.WHERE dtypes.uint [99, 147, 111]
-149 Ops.WHERE dtypes.uint [97, 148, 114]
-150 Ops.WHERE dtypes.uint [96, 149, 117]
-151 Ops.CAST dtypes.ulong [150] dtypes.ulong
-152 Ops.SHR dtypes.ulong [151, 137]
-153 Ops.CAST dtypes.uint [152] dtypes.uint
-154 Ops.OR dtypes.uint [146, 153]
-155 Ops.CAST dtypes.ulong [154] dtypes.ulong
-156 Ops.MUL dtypes.ulong [83, 155]
-157 Ops.ADD dtypes.ulong [144, 156]
-158 Ops.SHL dtypes.ulong [151, 126]
-159 Ops.CAST dtypes.uint [158] dtypes.uint
-160 Ops.WHERE dtypes.uint [99, 106, 108]
-161 Ops.WHERE dtypes.uint [97, 160, 111]
-162 Ops.WHERE dtypes.uint [96, 161, 114]
-163 Ops.CAST dtypes.ulong [162] dtypes.ulong
-164 Ops.SHR dtypes.ulong [163, 137]
-165 Ops.CAST dtypes.uint [164] dtypes.uint
-166 Ops.OR dtypes.uint [159, 165]
-167 Ops.CAST dtypes.ulong [166] dtypes.ulong
-168 Ops.MUL dtypes.ulong [83, 167]
-169 Ops.FLOORDIV dtypes.ulong [168, 143]
-170 Ops.ADD dtypes.ulong [157, 169]
-171 Ops.CONST dtypes.weakint [] 4611686018427387903
-172 Ops.AND dtypes.ulong [170, 171]
-173 Ops.CAST dtypes.float [172] dtypes.float
-174 Ops.CONST dtypes.weakfloat [] 3.4061215800865545e-19
-175 Ops.MUL dtypes.float [173, 174]
-176 Ops.CAST dtypes.half [175] dtypes.half
-177 Ops.CONST dtypes.weakfloat [] 1.5707963267948966
-178 Ops.MUL dtypes.weakfloat [177, 15]
-179 Ops.ADD dtypes.half [176, 178]
-180 Ops.WHERE dtypes.half [79, 176, 179]
-181 Ops.CONST dtypes.weakint [] 4611686018427387904
-182 Ops.FLOORDIV dtypes.ulong [170, 181]
-183 Ops.CAST dtypes.int [182] dtypes.int
-184 Ops.ADD dtypes.int [183, 67]
-185 Ops.WHERE dtypes.int [79, 183, 184]
-186 Ops.AND dtypes.int [185, 67]
-187 Ops.CMPNE dtypes.bool [186, 69]
-188 Ops.CONST dtypes.weakfloat [] 1.5703125
-189 Ops.CAST dtypes.half [188] dtypes.half
-190 Ops.WHERE dtypes.half [187, 189, 9]
-191 Ops.ADD dtypes.half [180, 190]
-192 Ops.MUL dtypes.half [191, 191]
-193 Ops.MUL dtypes.half [8, 192]
-194 Ops.ADD dtypes.half [193, 52]
-195 Ops.MUL dtypes.half [194, 192]
-196 Ops.ADD dtypes.half [195, 55]
-197 Ops.MUL dtypes.half [196, 192]
-198 Ops.ADD dtypes.half [197, 58]
-199 Ops.MUL dtypes.half [198, 192]
-200 Ops.ADD dtypes.half [199, 61]
-201 Ops.MUL dtypes.half [200, 192]
-202 Ops.ADD dtypes.half [201, 17]
-203 Ops.MUL dtypes.half [191, 202]
-204 Ops.AND dtypes.int [185, 98]
-205 Ops.CMPNE dtypes.bool [204, 69]
-206 Ops.WHERE dtypes.half [205, 16, 18]
-207 Ops.MUL dtypes.half [203, 206]
-208 Ops.WHERE dtypes.half [23, 72, 207]
-209 Ops.MUL dtypes.half [208, 20]
-210 Ops.WHERE dtypes.half [7, 209, 5]
-211 Ops.WHERE dtypes.half [3, 5, 210]
-212 Ops.WHERE dtypes.half [2, 211, 5]
-213 Ops.SINK dtypes.void [212]
+50 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
+51 Ops.MUL dtypes.half [49, 49]
+52 Ops.MUL dtypes.half [50, 51]
+53 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
+54 Ops.ADD dtypes.half [52, 53]
+55 Ops.MUL dtypes.half [54, 51]
+56 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
+57 Ops.ADD dtypes.half [55, 56]
+58 Ops.MUL dtypes.half [57, 51]
+59 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
+60 Ops.ADD dtypes.half [58, 59]
+61 Ops.MUL dtypes.half [60, 51]
+62 Ops.ADD dtypes.half [61, 17]
+63 Ops.MUL dtypes.half [49, 62]
+64 Ops.CAST dtypes.int [33] dtypes.int
+65 Ops.CONST dtypes.weakint [] 1
+66 Ops.AND dtypes.int [64, 65]
+67 Ops.CONST dtypes.weakint [] 0
+68 Ops.CMPNE dtypes.bool [66, 67]
+69 Ops.WHERE dtypes.half [68, 16, 18]
+70 Ops.MUL dtypes.half [63, 69]
+71 Ops.BITCAST dtypes.ushort [21] dtypes.ushort
+72 Ops.CONST dtypes.weakint [] 33791
+73 Ops.AND dtypes.ushort [71, 72]
+74 Ops.CONST dtypes.weakint [] 14336
+75 Ops.OR dtypes.ushort [73, 74]
+76 Ops.BITCAST dtypes.half [75] dtypes.half
+77 Ops.CMPLT dtypes.bool [76, 29]
+78 Ops.CAST dtypes.float [76] dtypes.float
+79 Ops.CONST dtypes.weakfloat [] 4294967296.0
+80 Ops.MUL dtypes.float [78, 79]
+81 Ops.CAST dtypes.ulong [80] dtypes.ulong
+82 Ops.CONST dtypes.weakint [] 1024
+83 Ops.FLOORDIV dtypes.ushort [71, 82]
+84 Ops.CONST dtypes.weakint [] 31
+85 Ops.AND dtypes.ushort [83, 84]
+86 Ops.CONST dtypes.weakint [] 15
+87 Ops.CONST dtypes.weakint [] -1
+88 Ops.MUL dtypes.weakint [86, 87]
+89 Ops.ADD dtypes.ushort [85, 88]
+90 Ops.ADD dtypes.ushort [89, 65]
+91 Ops.CAST dtypes.ulong [90] dtypes.ulong
+92 Ops.CONST dtypes.weakint [] 32
+93 Ops.FLOORDIV dtypes.ulong [91, 92]
+94 Ops.CMPNE dtypes.bool [93, 67]
+95 Ops.CMPNE dtypes.bool [93, 65]
+96 Ops.CONST dtypes.weakint [] 2
+97 Ops.CMPNE dtypes.bool [93, 96]
+98 Ops.CONST dtypes.weakint [] 3
+99 Ops.CMPNE dtypes.bool [93, 98]
+100 Ops.CONST dtypes.weakint [] 4
+101 Ops.CMPNE dtypes.bool [93, 100]
+102 Ops.CONST dtypes.weakint [] 5
+103 Ops.CMPNE dtypes.bool [93, 102]
+104 Ops.CAST dtypes.uint [67] dtypes.uint
+105 Ops.CONST dtypes.weakint [] 920167782
+106 Ops.CAST dtypes.uint [105] dtypes.uint
+107 Ops.WHERE dtypes.uint [103, 104, 106]
+108 Ops.CONST dtypes.weakint [] 2102212464
+109 Ops.CAST dtypes.uint [108] dtypes.uint
+110 Ops.WHERE dtypes.uint [101, 107, 109]
+111 Ops.CONST dtypes.weakint [] 2131351028
+112 Ops.CAST dtypes.uint [111] dtypes.uint
+113 Ops.WHERE dtypes.uint [99, 110, 112]
+114 Ops.CONST dtypes.weakint [] 2475754826
+115 Ops.CAST dtypes.uint [114] dtypes.uint
+116 Ops.WHERE dtypes.uint [97, 113, 115]
+117 Ops.CONST dtypes.weakint [] 683565275
+118 Ops.CAST dtypes.uint [117] dtypes.uint
+119 Ops.WHERE dtypes.uint [95, 116, 118]
+120 Ops.WHERE dtypes.uint [94, 119, 104]
+121 Ops.CAST dtypes.ulong [120] dtypes.ulong
+122 Ops.CAST dtypes.int [90] dtypes.int
+123 Ops.AND dtypes.int [122, 84]
+124 Ops.CAST dtypes.ulong [123] dtypes.ulong
+125 Ops.SHL dtypes.ulong [121, 124]
+126 Ops.CAST dtypes.uint [125] dtypes.uint
+127 Ops.WHERE dtypes.uint [101, 104, 106]
+128 Ops.WHERE dtypes.uint [99, 127, 109]
+129 Ops.WHERE dtypes.uint [97, 128, 112]
+130 Ops.WHERE dtypes.uint [95, 129, 115]
+131 Ops.WHERE dtypes.uint [94, 130, 118]
+132 Ops.CAST dtypes.ulong [131] dtypes.ulong
+133 Ops.MUL dtypes.int [123, 87]
+134 Ops.ADD dtypes.int [92, 133]
+135 Ops.CAST dtypes.ulong [134] dtypes.ulong
+136 Ops.SHR dtypes.ulong [132, 135]
+137 Ops.CAST dtypes.uint [136] dtypes.uint
+138 Ops.OR dtypes.uint [126, 137]
+139 Ops.CAST dtypes.ulong [138] dtypes.ulong
+140 Ops.MUL dtypes.ulong [81, 139]
+141 Ops.CONST dtypes.weakint [] 4294967296
+142 Ops.MUL dtypes.ulong [140, 141]
+143 Ops.SHL dtypes.ulong [132, 124]
+144 Ops.CAST dtypes.uint [143] dtypes.uint
+145 Ops.WHERE dtypes.uint [99, 104, 106]
+146 Ops.WHERE dtypes.uint [97, 145, 109]
+147 Ops.WHERE dtypes.uint [95, 146, 112]
+148 Ops.WHERE dtypes.uint [94, 147, 115]
+149 Ops.CAST dtypes.ulong [148] dtypes.ulong
+150 Ops.SHR dtypes.ulong [149, 135]
+151 Ops.CAST dtypes.uint [150] dtypes.uint
+152 Ops.OR dtypes.uint [144, 151]
+153 Ops.CAST dtypes.ulong [152] dtypes.ulong
+154 Ops.MUL dtypes.ulong [81, 153]
+155 Ops.ADD dtypes.ulong [142, 154]
+156 Ops.SHL dtypes.ulong [149, 124]
+157 Ops.CAST dtypes.uint [156] dtypes.uint
+158 Ops.WHERE dtypes.uint [97, 104, 106]
+159 Ops.WHERE dtypes.uint [95, 158, 109]
+160 Ops.WHERE dtypes.uint [94, 159, 112]
+161 Ops.CAST dtypes.ulong [160] dtypes.ulong
+162 Ops.SHR dtypes.ulong [161, 135]
+163 Ops.CAST dtypes.uint [162] dtypes.uint
+164 Ops.OR dtypes.uint [157, 163]
+165 Ops.CAST dtypes.ulong [164] dtypes.ulong
+166 Ops.MUL dtypes.ulong [81, 165]
+167 Ops.FLOORDIV dtypes.ulong [166, 141]
+168 Ops.ADD dtypes.ulong [155, 167]
+169 Ops.CONST dtypes.weakint [] 4611686018427387903
+170 Ops.AND dtypes.ulong [168, 169]
+171 Ops.CAST dtypes.float [170] dtypes.float
+172 Ops.CONST dtypes.weakfloat [] 3.4061215800865545e-19
+173 Ops.MUL dtypes.float [171, 172]
+174 Ops.CAST dtypes.half [173] dtypes.half
+175 Ops.CONST dtypes.weakfloat [] 1.5707963267948966
+176 Ops.MUL dtypes.weakfloat [175, 15]
+177 Ops.ADD dtypes.half [174, 176]
+178 Ops.WHERE dtypes.half [77, 174, 177]
+179 Ops.CONST dtypes.weakint [] 4611686018427387904
+180 Ops.FLOORDIV dtypes.ulong [168, 179]
+181 Ops.CAST dtypes.int [180] dtypes.int
+182 Ops.ADD dtypes.int [181, 65]
+183 Ops.WHERE dtypes.int [77, 181, 182]
+184 Ops.AND dtypes.int [183, 65]
+185 Ops.CMPNE dtypes.bool [184, 67]
+186 Ops.CONST dtypes.weakfloat [] 1.5703125
+187 Ops.CAST dtypes.half [186] dtypes.half
+188 Ops.WHERE dtypes.half [185, 187, 9]
+189 Ops.ADD dtypes.half [178, 188]
+190 Ops.MUL dtypes.half [189, 189]
+191 Ops.MUL dtypes.half [50, 190]
+192 Ops.ADD dtypes.half [191, 53]
+193 Ops.MUL dtypes.half [192, 190]
+194 Ops.ADD dtypes.half [193, 56]
+195 Ops.MUL dtypes.half [194, 190]
+196 Ops.ADD dtypes.half [195, 59]
+197 Ops.MUL dtypes.half [196, 190]
+198 Ops.ADD dtypes.half [197, 17]
+199 Ops.MUL dtypes.half [189, 198]
+200 Ops.AND dtypes.int [183, 96]
+201 Ops.CMPNE dtypes.bool [200, 67]
+202 Ops.WHERE dtypes.half [201, 16, 18]
+203 Ops.MUL dtypes.half [199, 202]
+204 Ops.WHERE dtypes.half [23, 70, 203]
+205 Ops.MUL dtypes.half [204, 20]
+206 Ops.WHERE dtypes.half [7, 205, 5]
+207 Ops.WHERE dtypes.half [3, 5, 206]
+208 Ops.WHERE dtypes.half [2, 207, 5]
+209 Ops.SINK dtypes.void [208]
 

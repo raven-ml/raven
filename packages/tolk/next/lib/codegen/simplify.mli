@@ -59,7 +59,10 @@ val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
     [x * y < c] solved for [x] when [y] and [c] do not depend on a range and no
     value wraps ({!Ops.exact}); the sum of a value over the part of a range
     where it is selected by bounds on the range, as the size of that part times
-    the value; sums distributed over additions; and {!Symbolic.symbolic}.
+    the value, and [+0.] for a float over an empty part; sums distributed over
+    additions; an integer product by a boolean cast as a selection; and
+    {!Symbolic.symbolic}. A float sum so computed is its terms added in another
+    order, which rounds differently.
 
     Raises [Invalid_argument] on a sum over a range of size [1]: the range folds
     to [0], which {!pm_reduce_unparented} refuses. *)

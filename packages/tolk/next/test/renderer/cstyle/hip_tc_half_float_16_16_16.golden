@@ -46,7 +46,7 @@ extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_si
     half4 val17 = (*((half4*)((data1_512+(alu10+4)))));
     half4 val18 = (*((half4*)((data1_512+(alu10+8)))));
     half4 val19 = (*((half4*)((data1_512+alu10))));
-    float8 wmma0 = __WMMA_16_16_16_half_float(make_half16(val19.x,val19.y,val19.z,val19.w,val17.x,val17.y,val17.z,val17.w,val18.x,val18.y,val18.z,val18.w,val16.x,val16.y,val16.z,val16.w), make_half16(val15,val3,val10,val11,val12,val13,val14,val0,val1,val2,val4,val5,val6,val7,val8,val9), make_float8((*(buf0+0)),(*(buf0+1)),(*(buf0+4)),(*(buf0+5)),(*(buf0+2)),(*(buf0+3)),(*(buf0+6)),(*(buf0+7))));
+    float8 wmma0 = __WMMA_16_16_16_half_float(make_half16(val19.x,val19.y,val19.z,val19.w,val17.x,val17.y,val17.z,val17.w,val18.x,val18.y,val18.z,val18.w,val16.x,val16.y,val16.z,val16.w), make_half16(val15,val3,val10,val11,val12,val13,val14,val0,val1,val2,val4,val5,val6,val7,val8,val9), make_float8((0.0f+(*(buf0+0))),(0.0f+(*(buf0+1))),(0.0f+(*(buf0+4))),(0.0f+(*(buf0+5))),(0.0f+(*(buf0+2))),(0.0f+(*(buf0+3))),(0.0f+(*(buf0+6))),(0.0f+(*(buf0+7)))));
     *(buf0+0) = wmma0[0];
     *(buf0+1) = wmma0[1];
     *(buf0+2) = wmma0[4];

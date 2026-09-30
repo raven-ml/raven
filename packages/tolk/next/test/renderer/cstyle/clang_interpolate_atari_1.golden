@@ -4,7 +4,7 @@ void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1
   for (int Lidx2 = 0; Lidx2 < 64; Lidx2++) {
     int alu0 = (Lidx2*420);
     int alu1 = (alu0+146);
-    short cast0 = ((short)((((float)((alu1&127)))+0.5f)));
+    short cast0 = ((short)(((((float)((alu1&127)))*0.0078125f*128.0f)+0.5f)));
     for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
       int alu2 = (Lidx3<<2);
       int alu3 = (((alu1>>7)<<6)+alu2);

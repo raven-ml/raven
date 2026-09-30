@@ -324,7 +324,7 @@ the Exclusions of `README.md`.
   (`uncast_const`), which leaves the unwrapped literal bare. tinygrad's own
   `TestModularWraparound` expects the wrapped results and is marked
   `xfail_broken_const_wraparound`.
-- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and `:447`;
+- **tolk.next:** `lib/uop/symbolic.ml:104` (`fold_const_alu`) and `:467`;
   `lib/uop/uop_weak.ml:203` (`uncast_const`).
 - **Differs:** a committed constant, a cast of a literal to a type of known
   width, is read wrapped to that width: by an operation that folds, by a cast
@@ -359,7 +359,7 @@ the Exclusions of `README.md`.
   intern as one node, and `exec_alu` compares with it: `nan != nan` and
   `nan < nan` fold to `False`, where `exec_alu` on floats gives `True` and
   `False`.
-- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`); constants are
+- **tolk.next:** `lib/uop/symbolic.ml:104` (`fold_const_alu`); constants are
   interned by `Dtype.equal_const`, and `exec_alu` compares floats.
 - **Differs:** a folded comparison of NaN constants follows IEEE: `nan <> nan`
   is `true`.
@@ -514,13 +514,18 @@ the Exclusions of `README.md`.
   restrictions applied to tinygrad, which `test/gen/generate.py` applies to a
   copy of the checkout before generating the goldens and which is re-applied
   when the pin moves.
-- **Differs:** tinygrad's rewrites assume that integers never wrap. A rewrite
-  here keeps the value compiled code computes: an integer of a committed
-  type wraps at its width, as C's unsigned arithmetic, Metal, CUDA and nx do,
-  and the lowering computes signed arithmetic on the unsigned bit pattern. Index
-  arithmetic is weak (`Weak_int`), never wraps, and keeps every fold
-  tinygrad makes; so does a committed integer whose values provably fit its
-  type (`Ops.exact`).
+- **Differs:** tinygrad's rewrites assume real arithmetic: integers that never
+  wrap and floats that neither round, overflow, nor carry signed zeros and NaN.
+  A rewrite here keeps the value compiled code computes, bit for bit: an
+  integer of a committed type wraps at its width, as C's unsigned arithmetic,
+  Metal, CUDA and nx do, and the lowering computes signed arithmetic on the
+  unsigned bit pattern; a float follows IEEE. A rewrite that holds only in
+  real arithmetic applies to integers and booleans, and to a committed integer
+  only where no value it computes wraps (`Ops.exact`). Index arithmetic is weak
+  (`Weak_int`), never wraps, and keeps every fold tinygrad makes, so the
+  restrictions touch float and committed-integer values only. The one rounding
+  that stays is that of powers, a constant one computed by products and square
+  roots and any other as `exp2 (y * log2 x)` (`Transcendental.xpow`).
   - **Integer bounds wrap.** tinygrad: `uop/ops.py:1104-1163` (`_min_max`),
     `:1154-1164` (a cast), `:1147-1149` (a constant table). tolk.next:
     `lib/uop/ops.ml:1472` (`min_max`), `:1546` (`cast_bounds`), `:1514`. The
@@ -535,8 +540,8 @@ the Exclusions of `README.md`.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:282` (`(x // c1) // c2`),
     `:285` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
     `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
-    (`x + y <> c` under a cast). tolk.next: `lib/uop/symbolic.ml:832,841`,
-    `lib/uop/divandmod.ml:250`, `lib/codegen/simplify.ml:248,264,272,337`.
+    (`x + y <> c` under a cast). tolk.next: `lib/uop/symbolic.ml:844,853`,
+    `lib/uop/divandmod.ml:250`, `lib/codegen/simplify.ml:256,272,280,348`.
     Each applies to a committed integer only where every value it computes
     fits the type; the comparisons of `Simplify` apply to integers only, since
     moving a float term rounds, and `x + y <> c` only under a cast that does
@@ -544,12 +549,79 @@ the Exclusions of `README.md`.
     `(w // 2 + 2^30) // 2` at `2^30` to `-268435456` where the machine gives
     `805306368`, and `(w // 65536) // 65536` to a division by `2^32`, which
     wraps to `0`.
+  - **Float folds.** tinygrad: `uop/symbolic.py:117` (`x + 0`), `:170-176`
+    (`x / x`, `(x * y) / y`, `x * 0`), `:247` (`(x / y) / z`). tolk.next:
+    `lib/uop/symbolic.ml:348,521`. A float `x + 0` is `x` only for `-0.`
+    (`-0. + +0.` is `+0.`); `x * 0` is `0` for integers and booleans only (a
+    float product by zero is NaN at an infinity or a NaN and `-0.` at a
+    negative `x`); `x / x`, `(x * y) / y` and `(x / y) / z` are gone, since
+    true division is always a float: `x / x` is NaN at 0, `(1e10 * 1e30) /
+    1e30` is `inf`, and `(1e20 / 1e20) / 1e20` is `1e-20` where
+    `1e20 / 1e40` is `0.`.
+  - **Signed zeros.** tinygrad: `uop/symbolic.py:248` (`-(x + c)`), `:267`
+    (complementary selections), `:472` (`-(x + y)`). tolk.next:
+    `lib/uop/symbolic.ml:708,776,1298`. For integers and booleans only:
+    `-(x + 3)` at `x = -3` is `-0.`, where `-x + -3` is `+0.`, and
+    `where c t 0 + where c 0 f` at `t = -0.` is `+0.`, where `where c t f` is
+    `-0.`.
+  - **Reassociation.** tinygrad: `uop/symbolic.py:240-246` (like terms),
+    `:264-265` (a sum of two selections), `:279-280` (two constants of an
+    associative operation), `:293-294` (constants to the end), `:390-398,470`
+    (`reduce_mul_chain`). tolk.next: `lib/uop/symbolic.ml:683,764,827,883,1138`.
+    Sums, products and maxima regroup for integers and booleans only, and a
+    factor leaves a float reduction nowhere: `(x + 1e8) + -1e8` at `x = 1` is
+    `0.`, where `x + 0.` is `1.`; `(y + x) + x` at `y = 1`, `x = 2^-24` is
+    `1.`, where `y + x * 2` is `1.0000001`; `x * 1.1 + x * 2.2` at `1.` is
+    `3.3000002`, where `x * 3.3` is `3.2999999`; a sum over `r < 3` of
+    `(r * 2e38) * 0.25` is `inf`, where `0.25 * 2e38` times the sum of `r` is
+    finite; and a maximum keeps a NaN only as its first operand, so
+    `max (NaN, max (x, 0.))` is NaN, where `max (x, max (0., NaN))` is `x`.
+    `x + x` is still `x * 2`, which is exact.
+  - **Maxima.** tinygrad: `uop/symbolic.py:273-275`. tolk.next:
+    `lib/uop/symbolic.ml:808,818`. A maximum by bounds applies to integers
+    only, since a float's bounds leave out NaN and the order of zeros:
+    `max (x, inf)` at NaN is NaN, where the fold gives `inf`. A selection that
+    computes a maximum becomes one only when its two constants are one node:
+    `where (x < -0.) 0. x` at `-1e-45` is `+0.`, where `max (x, -0.)` is
+    `-0.`.
+  - **Reciprocal and sigmoid forms.** tinygrad: `uop/symbolic.py:463-468`.
+    tolk.next: the rules are left out of `sym`. `1 / (x * x)` at `1e20` is
+    `0.`, where `(1 / x) * (1 / x)` is `1e-40`; `x * (1 / (1 + x))` at `1e-8`
+    is `1e-8`, where `1 - 1 / (1 + x)` is `0.`, and at `inf` is NaN, where it
+    is `1.`.
+  - **Pow.** tinygrad: `uop/symbolic.py:16-21` (`simplify_pow`), `:190`
+    (`c ** x`). tolk.next: `lib/uop/symbolic.ml:70,576`. The reciprocal of the
+    base is taken for exponents of magnitude at least 1 only, where the power
+    overflows whenever the reciprocal does: `1e-40 ** -0.8` is `1e32`, where
+    `(1 / 1e-40) ** 0.8` is `inf`. A float half-integer power selects `+0.`
+    at `-0.` and `+inf` at `-inf`, where `sqrt` gives `-0.` and NaN. `c ** x`
+    goes to `xpow` for `c = inf`: `inf ** 0` is `1.`, where
+    `exp2 (0 * log2 inf)` is NaN.
+  - **Simplify's reductions.** tinygrad: `codegen/simplify.py:104-111`
+    (`sum_between`) and `:118` (a product by a boolean cast). tolk.next:
+    `lib/codegen/simplify.ml:235,330`. A float sum counted in closed form is
+    `+0.` over an empty part of its range, where `0 * inf` is NaN; a product by
+    a boolean cast is a selection for integers only (`-1. * 0.` is `-0.` and
+    `inf * 0.` NaN, where the selection gives `+0.`). A sum over a range its
+    value does not use, `x * n`, and a sum of a sum split in two stay: each is
+    the sum of the same terms in another association, which RFC 0012's rounded
+    sum class allows; a sum of `-0.` terms computed as `-0. * n` is `+0.` once
+    the lowering adds `+0.` to every float sum's result, which the `x + 0` fold
+    now keeps.
+  - **Transcendental polynomials.** tinygrad: `helpers.py:153` (`polyN`, from
+    `0.0`) and `codegen/decomp/transcendental.py:244` (`xlog2` adds an integer
+    `0` outside float32). tolk.next: `lib/codegen/decomp/transcendental.ml:195,343`.
+    A polynomial starts from its first coefficient and `xlog2` adds its low
+    term only in float32, so the decompositions no longer rely on the float
+    folds of `0. * x` and `x + 0` to be what tinygrad renders.
 - **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result, alone
   or fused, meets its class against eager nx, whose integer arithmetic is
-  modular; rune's `check_wrapping_comparisons` runs compiled comparisons of
-  wrapped narrow integers against eager nx.
+  modular and whose floats follow IEEE. rune's `check_wrapping_comparisons`,
+  `check_float_identities`, `check_signed_zeros` and `check_pow` run compiled
+  graphs of each kind against eager nx.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
-  reference interpreter before and after the rewrite at bindings that wrap:
+  reference interpreter before and after the rewrite at bindings where the
+  restricted rewrite changes the value:
   - integer bounds: the `Ops` suite, `bounds › a committed integer that can
     leave its type has its bounds (D24)`, `› an integer cast to a signed type
     it leaves wraps (D24)`, `› a constant table holding a NaN has its type's
@@ -557,9 +629,18 @@ the Exclusions of `README.md`.
     wraps to (D24)`;
   - wrapping rules: the `Symbolic` suite, `integers wrap (D24)` (every test);
     the `Divandmod` suite, `nested divisions › a committed division stays
-    where x + a * c wraps (D24)`; the `Simplify` suite, `solving comparisons
-    (D24)` (every test);
-  - the goldens, generated from the patched tinygrad, among them tinygrad's
-    loop counters (`Linearizer`'s `two_loops*` and `wait_loop*`, `Postrange`'s
-    `loop_counter*`), whose `c + 1 < n` over a loaded int32 no longer becomes
-    `c < n - 1`.
+    where x + a * c wraps (D24)`; the `Simplify` suite, `keeping values
+    (D24)`, its comparison tests;
+  - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
+    forms, pow: the `Symbolic` suite, `floats keep IEEE values (D24)`, one test
+    per facet, the structural tests marked D24 in `symbolic_simple`,
+    `symbolic` and `sym`, and the law `laws › sym keeps a float expression's
+    value bit for bit at special values`;
+  - Simplify's reductions: the `Simplify` suite, `keeping values (D24) › a
+    float sum over an empty part of a range is +0., whatever the value` and
+    `› a float product by a boolean mask keeps its value`, and
+    `pm_reduce_collapse › a float product by a comparison cast from a boolean
+    stays (D24)`;
+  - transcendental polynomials: the `Transcendental` goldens, generated from
+    the patched tinygrad, whose value tables are unchanged;
+  - the goldens, generated from the patched tinygrad.

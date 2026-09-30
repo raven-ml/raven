@@ -44,31 +44,29 @@
 42 Ops.ADD dtypes.float [38, 41]
 43 Ops.ADD dtypes.float [36, 42]
 44 Ops.ADD dtypes.float [34, 43]
-45 Ops.MUL dtypes.float [44, 44]
-46 Ops.MUL dtypes.float [8, 45]
-47 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
-48 Ops.ADD dtypes.float [46, 47]
-49 Ops.MUL dtypes.float [48, 45]
-50 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
-51 Ops.ADD dtypes.float [49, 50]
-52 Ops.MUL dtypes.float [51, 45]
-53 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
-54 Ops.ADD dtypes.float [52, 53]
-55 Ops.MUL dtypes.float [54, 45]
-56 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
-57 Ops.ADD dtypes.float [55, 56]
-58 Ops.MUL dtypes.float [57, 45]
-59 Ops.ADD dtypes.float [58, 17]
-60 Ops.MUL dtypes.float [44, 59]
-61 Ops.CONST dtypes.weakint [] 1
-62 Ops.AND dtypes.int [31, 61]
-63 Ops.CONST dtypes.weakint [] 0
-64 Ops.CMPNE dtypes.bool [62, 63]
-65 Ops.WHERE dtypes.float [64, 16, 18]
-66 Ops.MUL dtypes.float [60, 65]
-67 Ops.MUL dtypes.float [66, 20]
-68 Ops.WHERE dtypes.float [7, 67, 5]
-69 Ops.WHERE dtypes.float [3, 5, 68]
-70 Ops.WHERE dtypes.float [2, 69, 5]
-71 Ops.SINK dtypes.void [70]
+45 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
+46 Ops.MUL dtypes.float [44, 44]
+47 Ops.MUL dtypes.float [45, 46]
+48 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
+49 Ops.ADD dtypes.float [47, 48]
+50 Ops.MUL dtypes.float [49, 46]
+51 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
+52 Ops.ADD dtypes.float [50, 51]
+53 Ops.MUL dtypes.float [52, 46]
+54 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
+55 Ops.ADD dtypes.float [53, 54]
+56 Ops.MUL dtypes.float [55, 46]
+57 Ops.ADD dtypes.float [56, 17]
+58 Ops.MUL dtypes.float [44, 57]
+59 Ops.CONST dtypes.weakint [] 1
+60 Ops.AND dtypes.int [31, 59]
+61 Ops.CONST dtypes.weakint [] 0
+62 Ops.CMPNE dtypes.bool [60, 61]
+63 Ops.WHERE dtypes.float [62, 16, 18]
+64 Ops.MUL dtypes.float [58, 63]
+65 Ops.MUL dtypes.float [64, 20]
+66 Ops.WHERE dtypes.float [7, 65, 5]
+67 Ops.WHERE dtypes.float [3, 5, 66]
+68 Ops.WHERE dtypes.float [2, 67, 5]
+69 Ops.SINK dtypes.void [68]
 

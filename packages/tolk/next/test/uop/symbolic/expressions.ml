@@ -1,6 +1,7 @@
 (* Random integer expressions over bounded variables: index arithmetic as
    kernels compute it, weak or at a committed width, with divisions by constants
-   and by variables whose bounds exclude 0. *)
+   and by variables whose bounds exclude 0; and random float32 expressions over
+   scalar parameters and IEEE's special values. *)
 
 open Windtrap
 open Tolk_next
@@ -175,3 +176,79 @@ let scenario =
     Gen.(frequency [ (3, constant Dtype.Weak_int); (2, of_list dtypes) ])
 
 let weak_scenario = scenario_of (Gen.constant Dtype.Weak_int)
+(* Floats *)
+
+type float_expr =
+  | Param of int  (** The scalar float32 parameter of slot [i]. *)
+  | Special of int  (** The [i]th of {!Common.specials}, as a constant. *)
+  | Fneg of float_expr
+  | Fadd of float_expr * float_expr
+  | Fsub of float_expr * float_expr
+  | Fmul of float_expr * float_expr
+  | Fdiv of float_expr * float_expr
+  | Fmax of float_expr * float_expr
+  | Fselect of float_expr * float_expr * float_expr
+      (** [Fselect (a, c, b)] is [where (a < c) b a]. *)
+
+let rec pp_float ppf = function
+  | Param i -> Format.fprintf ppf "p%d" i
+  | Special i -> Dtype.pp_const ppf (List.nth Common.specials i)
+  | Fneg a -> Format.fprintf ppf "-%a" pp_float a
+  | Fadd (a, b) -> Format.fprintf ppf "(%a + %a)" pp_float a pp_float b
+  | Fsub (a, b) -> Format.fprintf ppf "(%a - %a)" pp_float a pp_float b
+  | Fmul (a, b) -> Format.fprintf ppf "(%a * %a)" pp_float a pp_float b
+  | Fdiv (a, b) -> Format.fprintf ppf "(%a / %a)" pp_float a pp_float b
+  | Fmax (a, b) -> Format.fprintf ppf "max(%a, %a)" pp_float a pp_float b
+  | Fselect (a, c, b) ->
+      Format.fprintf ppf "where(%a < %a, %a, %a)" pp_float a pp_float c pp_float
+        b pp_float a
+
+let rec float_node e =
+  Ops.O.(
+    match e with
+    | Param i -> Ops.param i Float32
+    | Special i ->
+        Ops.const ~dtype:Float32 (List.nth Common.specials i :> Dtype.const)
+    | Fneg a -> ~-(float_node a)
+    | Fadd (a, b) -> float_node a + float_node b
+    | Fsub (a, b) -> float_node a - float_node b
+    | Fmul (a, b) -> float_node a * float_node b
+    | Fdiv (a, b) -> float_node a / float_node b
+    | Fmax (a, b) -> Ops.maximum (float_node a) (float_node b)
+    | Fselect (a, c, b) ->
+        Ops.where (float_node a < float_node c) (float_node b) (float_node a))
+
+let rec float_expr depth =
+  let open Gen in
+  let leaf =
+    frequency
+      [
+        (3, map (fun i -> Param i) (int_range 0 2));
+        ( 2,
+          map
+            (fun i -> Special i)
+            (int_range 0 (List.length Common.specials - 1)) );
+      ]
+  in
+  if depth = 0 then leaf
+  else
+    let sub = float_expr (depth - 1) in
+    let binary f =
+      let+ a = sub and+ b = sub in
+      f a b
+    in
+    frequency
+      [
+        (2, leaf);
+        (1, map (fun a -> Fneg a) sub);
+        (2, binary (fun a b -> Fadd (a, b)));
+        (1, binary (fun a b -> Fsub (a, b)));
+        (2, binary (fun a b -> Fmul (a, b)));
+        (1, binary (fun a b -> Fdiv (a, b)));
+        (1, binary (fun a b -> Fmax (a, b)));
+        ( 1,
+          let+ a = sub and+ c = sub and+ b = sub in
+          Fselect (a, c, b) );
+      ]
+
+let float_scenario = Gen.with_pp pp_float (float_expr 4)

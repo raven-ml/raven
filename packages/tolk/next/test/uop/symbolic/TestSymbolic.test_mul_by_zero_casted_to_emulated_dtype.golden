@@ -4,7 +4,7 @@
 2 Ops.CAST dtypes.float [1] dtypes.float
 3 Ops.CAST dtypes.bfloat16 [2] dtypes.bfloat16
 4 Ops.MUL dtypes.bfloat16 [0, 3]
-5 Ops.CAST dtypes.bfloat16 [1] dtypes.bfloat16
+5 Ops.MUL dtypes.bfloat16 [0, 1]
 6 Ops.SINK dtypes.void [4, 5] tag="sym"
 7 Ops.SINK dtypes.void [6]
 

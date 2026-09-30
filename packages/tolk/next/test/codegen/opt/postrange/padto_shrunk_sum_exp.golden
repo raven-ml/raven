@@ -16,13 +16,15 @@
 14 Ops.CONST dtypes.bool [] Invalid
 15 Ops.WHERE dtypes.weakint [9, 13, 14]
 16 Ops.INDEX dtypes.float [7, 15]
-17 Ops.CONST dtypes.weakfloat [] 0.0
-18 Ops.CAST dtypes.float [17] dtypes.float
-19 Ops.WHERE dtypes.float [6, 16, 18]
-20 Ops.REDUCE dtypes.float [19, 4, 12] (Ops.ADD, 0)
-21 Ops.CONST dtypes.weakfloat [] 144.26950408889633
-22 Ops.MUL dtypes.float [20, 21]
-23 Ops.EXP2 dtypes.float [22]
-24 Ops.STORE dtypes.void [2, 23]
-25 Ops.SINK dtypes.void [24] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),)) tag=1
+17 Ops.CONST dtypes.weakfloat [] 100.0
+18 Ops.MUL dtypes.float [16, 17]
+19 Ops.CONST dtypes.weakfloat [] 0.0
+20 Ops.CAST dtypes.float [19] dtypes.float
+21 Ops.WHERE dtypes.float [6, 18, 20]
+22 Ops.REDUCE dtypes.float [21, 4, 12] (Ops.ADD, 0)
+23 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+24 Ops.MUL dtypes.float [22, 23]
+25 Ops.EXP2 dtypes.float [24]
+26 Ops.STORE dtypes.void [2, 25]
+27 Ops.SINK dtypes.void [26] KernelInfo(name="r_32_17", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=32),)) tag=1
 

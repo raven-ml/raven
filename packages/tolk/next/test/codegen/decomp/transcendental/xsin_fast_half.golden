@@ -47,32 +47,30 @@
 45 Ops.ADD dtypes.float [37, 44]
 46 Ops.ADD dtypes.float [35, 45]
 47 Ops.CAST dtypes.half [46] dtypes.half
-48 Ops.MUL dtypes.half [47, 47]
-49 Ops.MUL dtypes.half [8, 48]
-50 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
-51 Ops.ADD dtypes.half [49, 50]
-52 Ops.MUL dtypes.half [51, 48]
-53 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
-54 Ops.ADD dtypes.half [52, 53]
-55 Ops.MUL dtypes.half [54, 48]
-56 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
-57 Ops.ADD dtypes.half [55, 56]
-58 Ops.MUL dtypes.half [57, 48]
-59 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
-60 Ops.ADD dtypes.half [58, 59]
-61 Ops.MUL dtypes.half [60, 48]
-62 Ops.ADD dtypes.half [61, 17]
-63 Ops.MUL dtypes.half [47, 62]
-64 Ops.CAST dtypes.int [31] dtypes.int
-65 Ops.CONST dtypes.weakint [] 1
-66 Ops.AND dtypes.int [64, 65]
-67 Ops.CONST dtypes.weakint [] 0
-68 Ops.CMPNE dtypes.bool [66, 67]
-69 Ops.WHERE dtypes.half [68, 16, 18]
-70 Ops.MUL dtypes.half [63, 69]
-71 Ops.MUL dtypes.half [70, 20]
-72 Ops.WHERE dtypes.half [7, 71, 5]
-73 Ops.WHERE dtypes.half [3, 5, 72]
-74 Ops.WHERE dtypes.half [2, 73, 5]
-75 Ops.SINK dtypes.void [74]
+48 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
+49 Ops.MUL dtypes.half [47, 47]
+50 Ops.MUL dtypes.half [48, 49]
+51 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
+52 Ops.ADD dtypes.half [50, 51]
+53 Ops.MUL dtypes.half [52, 49]
+54 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
+55 Ops.ADD dtypes.half [53, 54]
+56 Ops.MUL dtypes.half [55, 49]
+57 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
+58 Ops.ADD dtypes.half [56, 57]
+59 Ops.MUL dtypes.half [58, 49]
+60 Ops.ADD dtypes.half [59, 17]
+61 Ops.MUL dtypes.half [47, 60]
+62 Ops.CAST dtypes.int [31] dtypes.int
+63 Ops.CONST dtypes.weakint [] 1
+64 Ops.AND dtypes.int [62, 63]
+65 Ops.CONST dtypes.weakint [] 0
+66 Ops.CMPNE dtypes.bool [64, 65]
+67 Ops.WHERE dtypes.half [66, 16, 18]
+68 Ops.MUL dtypes.half [61, 67]
+69 Ops.MUL dtypes.half [68, 20]
+70 Ops.WHERE dtypes.half [7, 69, 5]
+71 Ops.WHERE dtypes.half [3, 5, 70]
+72 Ops.WHERE dtypes.half [2, 71, 5]
+73 Ops.SINK dtypes.void [72]
 

@@ -1,5 +1,19 @@
+diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
+index 62c3191..613eda4 100644
+--- a/tinygrad/codegen/decomp/transcendental.py
++++ b/tinygrad/codegen/decomp/transcendental.py
+@@ -241,7 +241,8 @@ def xlog2(d:UOp) -> UOp:
+   else:
+     t = polyN(x2, [0.4374550283e+0, 0.5764790177e+0, 0.9618012905120])
+     # s_lo term (x*3.27e-08) only for float32 - underflows in float16
+-    r = t * (x * x2) + e + x * 2.8853900432586669922 + (x * 3.2734474483568488616e-08 if d.dtype == dtypes.float32 else 0)
++    r = t * (x * x2) + e + x * 2.8853900432586669922
++    if d.dtype == dtypes.float32: r = r + x * 3.2734474483568488616e-08
+ 
+   # log2(Inf) = Inf
+   r = d.ne(math.inf).where(r, r.const_like(math.inf))
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
-index 4136f84..87efccf 100644
+index 4136f84..391690e 100644
 --- a/tinygrad/codegen/simplify.py
 +++ b/tinygrad/codegen/simplify.py
 @@ -1,9 +1,9 @@
@@ -14,7 +28,20 @@ index 4136f84..87efccf 100644
  
  def flatten_range(r:UOp) -> UOp|None:
    off = range_start[r.op]
-@@ -97,10 +97,12 @@ pm_reduce_unparented = PatternMatcher([
+@@ -78,6 +78,12 @@ pm_split_ranges = PatternMatcher([
+ 
+ def no_range(u:UOp) -> bool: return not any(x.op is Ops.RANGE for x in u.backward_slice_with_self)
+ 
++# a float sum of no terms is 0 whatever the value, where 0 times inf is nan
++def sum_between(r:UOp, val:UOp, lower:UOp|None, upper:UOp|None) -> UOp|None:
++  if not no_range(val): return None
++  count = ((upper.minimum(r.src[0]) if upper is not None else r.src[0]) - (lower.maximum(0) if lower is not None else r.const_like(0))).maximum(0)
++  return (0 < count).where(count * val, val.const_like(0.0)) if dtypes.is_float(val.dtype) else count * val
++
+ def reduce_unparented(red:UOp) -> UOp|None:
+   if red.arg[0] not in {Ops.ADD, Ops.MAX, Ops.MUL}: return None
+   assert all(x.op is Ops.RANGE for x in red.src[1:]), "some reduce srcs aren't ranges"
+@@ -97,30 +103,33 @@ pm_reduce_unparented = PatternMatcher([
  
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
@@ -29,7 +56,22 @@ index 4136f84..87efccf 100644
    # sum over r in [0,N) of [lower<=r<upper]*val -> max(min(upper,N) - max(lower,0), 0) * val
    (UPat.any(
      (UPat(Ops.RANGE, name="r") < UPat.var("upper")).where(UPat.var("val"), 0),
-@@ -120,7 +122,9 @@ pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
+     (UPat(Ops.RANGE, name="r") < UPat.var("lower")).where(0, UPat.var("val")),
+     ((UPat.var("r")<UPat.var("lower")).logical_not()&(UPat(Ops.RANGE, name="r")<UPat.var("upper"))).where(UPat.var("val"), 0),
+-  ).reduce(UPat.var("r"), arg=Ops.ADD), lambda r,val,lower=None,upper=None:
+-    ((upper.minimum(r.src[0]) if upper is not None else r.src[0]) -
+-     (lower.maximum(0) if lower is not None else r.const_like(0))).maximum(0) * val if no_range(val) else None),
++  ).reduce(UPat.var("r"), arg=Ops.ADD), lambda r,val,lower=None,upper=None: sum_between(r, val, lower, upper)),
+   ((UPat.var("x")+UPat.var("y")).reduce(arg=Ops.ADD, allow_any_len=True, name="r"),
+    lambda x,y,r: x.reduce(*r.src[1:], arg=Ops.ADD) + y.reduce(*r.src[1:],arg=Ops.ADD)),
+   # AND on WHERE
+   ((UPat(Ops.PARAM, name="x") & UPat.var("y")).where(UPat.var("c"), 0).reduce(arg=Ops.ADD, allow_any_len=True, name="r"),
+     lambda x,y,c,r: y.where(c, 0).reduce(*r.src[1:], arg=Ops.ADD)*x),
+   # MUL casted bool
+-  ((UPat.var("x") * UPat.var("gate", dtype=dtypes.bool).cast()), lambda x,gate: gate.where(x, 0)),
++  # for integers: a float product by 0 is nan at inf and -0.0 at a negative x
++  ((UPat.var("x", (dtypes.bool, dtypes.weakint)+dtypes.ints) * UPat.var("gate", dtype=dtypes.bool).cast()), lambda x,gate: gate.where(x, 0)),
+ ])+symbolic
  
  pm_reduce_load_collapse = pm_reduce_collapse + PatternMatcher([
    # lift x+y out of reduce on ne
@@ -40,6 +82,19 @@ index 4136f84..87efccf 100644
    # reduce on gated load becomes can substitute the range and remove the reduce
    ((UPat.var("idx")!=(UPat(Ops.RANGE, name="r").or_casted())).where(0, UPat.var("expr")).reduce(UPat.var("r"), arg=Ops.ADD),
     lambda r,idx,expr: (v:=(idx.cast(r.dtype) >= 0) & (idx.cast(r.dtype) < r.src[0])).where(expr.substitute({r:idx.cast(r.dtype).valid(v)}),0)),
+diff --git a/tinygrad/helpers.py b/tinygrad/helpers.py
+index deb9684..8bc2d81 100644
+--- a/tinygrad/helpers.py
++++ b/tinygrad/helpers.py
+@@ -150,7 +150,7 @@ def select_first_inited(candidates:Sequence[Callable[...,T]], err_msg:str, cache
+ def pluralize(st:str, cnt:int): return f"{cnt} {st}"+('' if cnt == 1 else 's')
+ 
+ # for length N coefficients `p`, returns p[0] * x**(N-1) + p[1] * x**(N-2) + ... + p[-2] * x + p[-1]
+-def polyN(x:T, p:list[float]) -> T: return functools.reduce(lambda acc,c: acc*x+c, p, 0.0)  # type: ignore
++def polyN(x:T, p:list[float]) -> T: return functools.reduce(lambda acc,c: acc*x+c, p[1:], p[0])  # type: ignore
+ 
+ @functools.cache
+ def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py
@@ -106,7 +161,7 @@ index 2842d7e..89766e0 100644
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..3364787 100644
+index 2eb2e96..dfd36ce 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,7 +1,7 @@
@@ -118,8 +173,120 @@ index 2eb2e96..3364787 100644
  from tinygrad.dtype import PyConst, dtypes, can_lossless_cast, Invalid, bitcast, truncate
  from tinygrad.helpers import partition, all_same, prod, flatten, unwrap, IMAGE, dedup
  from tinygrad.uop.divandmod import div_and_mod_symbolic
-@@ -279,10 +279,12 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
-   *((UPat.var("x").alu(op, UPat.cvar("c1")).alu(op, UPat.cvar("c2")).named("f"),
+@@ -13,10 +13,20 @@ from tinygrad.codegen.decomp.transcendental import xpow
+ 
+ # ******** phase 1 of symbolic used to live in ops, it's the most generic folding rules ********
+ 
++int_or_bool = (dtypes.bool, dtypes.weakint) + dtypes.ints
++
++# the reciprocal overflows only where a power of magnitude at least 1 does, and sqrt gives -0.0 and nan at -0.0 and -inf,
++# where a half-integer power is +0.0 and +inf
+ def simplify_pow(x:UOp, c:UOp) -> UOp|None:
+-  if c.val < 0: return x.reciprocal().pow(-c.val)
++  if not math.isfinite(c.val): return None
++  if c.val <= -1: return x.reciprocal().pow(-c.val)
++  if c.val < 0: return None
+   if c.val == 0: return x.const_like(1)
+-  if (h := c.val-0.5) < c.val and int(h)+0.5 == c.val: return x.pow(h) * x.sqrt()
++  if (h := c.val-0.5) < c.val and int(h)+0.5 == c.val:
++    p = x.pow(h) * x.sqrt()
++    if not dtypes.is_float(x.dtype): return p
++    special = lambda v, r: x.ne(v).where(r, x.const_like(abs(v)))
++    return special(-math.inf, special(0.0, p))
+   if int(c.val) == c.val: return (y := x.pow(c.val//2)) * y * (x if c.val%2 == 1 else 1)
+   return None
+ 
+@@ -114,7 +124,9 @@ def fold_const_where(gate:UOp, c0:UOp, c1:UOp, w:UOp) -> UOp:
+ 
+ symbolic_simple = pm_data_invalid + PatternMatcher([
+   # ** self folding **
+-  (UPat({Ops.ADD, Ops.XOR, Ops.OR}, src=[UPat.var("x"), UPat.const(0)]), lambda x: x),  # x+0 / x^0 / x|0 -> x
++  # x+0 / x^0 / x|0 -> x; a float x + 0 only for -0.0, since -0.0 + +0.0 is +0.0
++  (UPat({Ops.ADD, Ops.XOR, Ops.OR}, name="a", src=[UPat.var("x"), UPat.const(0).named("c")]),
++   lambda a,x,c: None if a.op is Ops.ADD and dtypes.is_float(a.dtype) and math.copysign(1.0, c.arg) > 0 else x),
+   (UPat({Ops.SHL, Ops.SHR}, src=(UPat.var("x"), UPat.const(0))), lambda x: x),          # x<<0 / x>>0 -> x
+   (UPat.var("x") * 1, lambda x: x),    # x*1 -> x
+   (UPat.var("x") // UPat.var("x"), lambda x: x.const_like(1)), # x//x -> 1
+@@ -166,14 +178,8 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+   (UPat.var('x', dtype=dtypes.bool).maximum(UPat.var('y', dtype=dtypes.bool)), lambda x,y: x|y),
+   # *** div rules ***
+   (UPat.cvar('x', arg=0) / 0, lambda x: x.const_like(float('nan'))),   # 0/0 -> nan
+-  # can be wrong if x or x2 is 0
+-  (UPat.var("x") / UPat.var("x"), lambda x: x.const_like(1)),          # x/x -> 1
+-  ((UPat.var("x") * UPat.var("x2")) / UPat.var("x2"), lambda x,x2: x), # (x*x2)/x2 -> x
+-  # x*0 -> 0 or 0*x -> 0
+-  # if x is nan or inf it should render the nan value.
+-  # NOTE: this can be wrong for loaded NaN
+-  (UPat.var("x") * 0, lambda x: x.const_like(float("nan") if x.op is Ops.CONST
+-                                             and isinstance(x.val, float) and (math.isnan(x.val) or math.isinf(x.val)) else 0)),
++  # x*0 -> 0 or 0*x -> 0, for integers: a float product by zero is nan at inf or nan, and -0.0 at a negative x
++  (UPat.var("x", dtype=int_or_bool) * 0, lambda x: x.const_like(0)),
+   # *** cast/bitcast ***
+   (UPat((Ops.CAST, Ops.BITCAST), name="root"), lambda root: root.src[0] if root.dtype == root.src[0].dtype else None),
+   # a BITCAST reads its operand at the width it states, so a weak const is nonsense here: the bare arm is bool only
+@@ -187,7 +193,7 @@ symbolic_simple = pm_data_invalid + PatternMatcher([
+   # ** pow **
+   (UPat.var("x").alu(Ops.POW, UPat.cvar("c")), simplify_pow),
+   # positive const ** x
+-  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")), lambda c,x: c if c.val == 1 else (x*math.log2(c.val)).exp2() if c.val > 0 else None),
++  (UPat.cvar("c").alu(Ops.POW, UPat.var("x")), lambda c,x: c if c.val == 1 else (x*math.log2(c.val)).exp2() if 0 < c.val < math.inf else None),
+   # unpack a uint64 packed from two uint32 (threefry)
+   (((UPat.var(None, dtypes.uint64)<<32) | UPat.var('y', dtypes.uint32).cast(dtypes.uint64)).cast(dtypes.uint32), lambda y: y),
+   (((UPat.var('x', dtypes.uint32).cast(dtypes.uint64)<<32) | UPat.var(None, dtypes.uint32).cast(dtypes.uint64))>>32,
+@@ -236,16 +242,15 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   # ** boolean algebra **
+   # TODO: make a more general or folder like simplify_valid
+   (UPat.var("x", dtype=dtypes.bool) | UPat.var("x", dtype=dtypes.bool).logical_not(), lambda x: x.const_like(True)),  # x|!x -> True
+-  # ** combine terms **
+-  (UPat.var("x") * UPat.cvar("c0") + UPat.var("x") * UPat.cvar("c1"), lambda x,c0,c1: x*(c0+c1)), # (x*c0)+(x*c1) -> x*(c0+c1)
+-  ((UPat.var("y") + UPat.var("x") * UPat.cvar("c0")) + UPat.var("x") * UPat.cvar("c1"), lambda x,y,c0,c1: y+x*(c0+c1)),
+-  (UPat.var("x") + UPat.var("x") * UPat.cvar("c"), lambda x,c: x*(c+1)), # (x+x*c)-> x*(c+1)
+-  ((UPat.var("y") + UPat.var("x")) + UPat.var("x") * UPat.cvar("c"), lambda x,y,c: y+x*(c+1)),
+-  ((UPat.var("y") + UPat.var("x") * UPat.cvar("c")) + UPat.var("x"), lambda x,y,c: y+x*(c+1)),
++  # ** combine terms **, for integers: in floats each product and sum rounds
++  (UPat.var("x", int_or_bool) * UPat.cvar("c0") + UPat.var("x") * UPat.cvar("c1"), lambda x,c0,c1: x*(c0+c1)), # (x*c0)+(x*c1) -> x*(c0+c1)
++  ((UPat.var("y") + UPat.var("x", int_or_bool) * UPat.cvar("c0")) + UPat.var("x") * UPat.cvar("c1"), lambda x,y,c0,c1: y+x*(c0+c1)),
++  (UPat.var("x", int_or_bool) + UPat.var("x") * UPat.cvar("c"), lambda x,c: x*(c+1)), # (x+x*c)-> x*(c+1)
++  ((UPat.var("y") + UPat.var("x", int_or_bool)) + UPat.var("x") * UPat.cvar("c"), lambda x,y,c: y+x*(c+1)),
++  ((UPat.var("y") + UPat.var("x", int_or_bool) * UPat.cvar("c")) + UPat.var("x"), lambda x,y,c: y+x*(c+1)),
+   (UPat.var("x") + UPat.var("x"), lambda x: x*2), # (x+x)-> x*2
+-  ((UPat.var("y") + UPat.var("x")) + UPat.var("x"), lambda y,x: y+x*2),
+-  ((UPat.var("x") / UPat.var("x2")) / UPat.var("x3"), lambda x,x2,x3: x/(x2*x3) if x2 is not x3 else None), # (x/x2)/x3 -> x/(x2*x3)
+-  (-1 * (UPat.var("x") + UPat.cvar("c")), lambda x,c: (-x)+(-c)),  # -(x+c) -> -x + -c
++  ((UPat.var("y") + UPat.var("x", int_or_bool)) + UPat.var("x"), lambda y,x: y+x*2),
++  (-1 * (UPat.var("x", int_or_bool) + UPat.cvar("c")), lambda x,c: (-x)+(-c)),  # -(x+c) -> -x + -c, for integers: -0.0 at x = -c
+   (UPat.cvar("y") * (UPat.var("x", dtype=dtypes.weakint) + UPat.cvar("c")), lambda x,y,c: (y*x)+(y*c)),  # y*(x+c) -> y*x + y*c
+   # ** where folding **
+   (UPat.var("cond", dtype=dtypes.bool).logical_not().where(UPat.var("t"), UPat.var("f")),
+@@ -261,28 +266,32 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   (UPat(GroupOp.Binary, name="alu", src=(UPat.var("c").where(UPat.var("t"), UPat.var("f")), UPat.var("c").where(UPat.var("tt"), UPat.var("ff")))), \
+    lambda alu,c,t,tt,f,ff: c.where(t.alu(alu.op, tt), f.alu(alu.op, ff)) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
+   # if its a plus we add the associative variation too
+-  ((UPat.var("y")+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
++  ((UPat.var("y", int_or_bool)+UPat.var("c").where(UPat.var("t"), UPat.var("f"))) + UPat.var("c").where(UPat.var("tt"), UPat.var("ff")), \
+    lambda y,c,t,tt,f,ff: y+c.where(t+tt, f+ff) if t.op == tt.op == Ops.CONST or f.op == ff.op == Ops.CONST else None),
+   # complementary zero branches under the same condition select directly
+-  (UPat.var("c").where(UPat.var("t"), 0) + UPat.var("c").where(0, UPat.var("f")), lambda c,t,f: c.where(t, f)),
++  (UPat.var("c").where(UPat.var("t", int_or_bool), 0) + UPat.var("c").where(0, UPat.var("f")), lambda c,t,f: c.where(t, f)),
+   # ALU/variable min==max -> CONST
+   (UPat({Ops.CMPLT, Ops.CMPNE, Ops.FLOORDIV, Ops.FLOORMOD, Ops.PARAM, Ops.AFTER, Ops.SPECIAL}, name="x"),
+    lambda x: x.const_like(x.vmin) if x.vmin == x.vmax else None),
+   (UPat(Ops.RANGE, src=(UPat.cvar().or_casted(),), name="x"), lambda x: x.const_like(x.vmin) if x.vmin == x.vmax else None),
+-  # max folding
+-  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
+-  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b.val == c.val else None),
+-  (UPat.maximum(UPat.var("x"), UPat.var("y")), lambda x,y: x if x.vmin >= y.vmax else y if x.vmax <= y.vmin else None),
++  # max folding, when the selection's constants are one node: -0.0 and +0.0 are equal, and nan is unequal to itself
++  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a is c else None),
++  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b is c else None),
++  # a float maximum's bounds leave out nan and the order of zeros
++  (UPat.maximum(UPat.var("x", int_or_bool), UPat.var("y")), lambda x,y: x if x.vmin >= y.vmax else y if x.vmax <= y.vmin else None),
+   # TODO: why does this rule break beautiful_mnist?
+   #((UPat.var("x")+UPat.var("z")).maximum(UPat.var("y")+UPat.var("z")), lambda x,y,z: x.maximum(y) + z),
+   # ** two stage ALU folding **
+-  *((UPat.var("x").alu(op, UPat.cvar("c1")).alu(op, UPat.cvar("c2")).named("f"),
++  # sums, products and maxima for integers: in floats each step rounds, and a maximum keeps a nan only as its first operand
++  *((UPat.var("x", int_or_bool if op in {Ops.ADD, Ops.MUL, Ops.MAX} else None).alu(op, UPat.cvar("c1")).alu(op, UPat.cvar("c2")).named("f"),
       lambda f,x,c1,c2: x.alu(f.op,c1.alu(f.op,c2))) for op in GroupOp.Associative),
    # (x//c1)//c2 -> x//(c1*c2) for c2>0
 -  ((UPat.var("x") // UPat.cvar("c1")) // UPat.cvar("c2"), lambda x,c1,c2: x//(c1*c2) if c2.vmin>0 else None),
@@ -133,3 +300,43 @@ index 2eb2e96..3364787 100644
    # c0*x<c1 -> sign(c0)*x < ceil(c1/abs(c0))
    ((UPat.cvar("c0")*UPat.var("x", dtype=dtypes.weakint))<UPat.cvar("c1"),
     lambda x,c0,c1: (x if c0.val > 0 else -x)<-(-c1.val//abs(c0.val)) if abs(c0.val) > 1 else None),
+@@ -290,8 +299,8 @@ symbolic = symbolic_simple+commutative+PatternMatcher([
+   ((UPat.var("x", dtype=dtypes.weakint)//UPat.cvar("d"))<UPat.cvar("c"),
+    lambda x,d,c: (x<c.val*d.val) if d.val > 0 else (x>c.val*d.val) if d.val < 0 else None),
+   # ** move add/mul consts to end (NOTE: this is still happening before constant folding) **
+-  ((UPat.var("x") + UPat.cvar("c1")) + UPat.var("y"), lambda x,c1,y: (x+y)+c1 if y.op is not Ops.CONST else None),
+-  ((UPat.var("x") * UPat.cvar("c1")) * UPat.var("y"), lambda x,c1,y: (x*y)*c1 if y.op is not Ops.CONST else None),
++  ((UPat.var("x", int_or_bool) + UPat.cvar("c1")) + UPat.var("y"), lambda x,c1,y: (x+y)+c1 if y.op is not Ops.CONST else None),
++  ((UPat.var("x", int_or_bool) * UPat.cvar("c1")) * UPat.var("y"), lambda x,c1,y: (x*y)*c1 if y.op is not Ops.CONST else None),
+   # *** rules from symbolic ***
+   # generic lt folding
+   (UPat.var("x", dtypes.weakint)<UPat.cvar("c"), lambda x,c: lt_folding(x, c.val) if 0 < c.val else None),
+@@ -387,8 +396,9 @@ def simplify_valid(valid:UOp) -> UOp|None:
+ 
+ # ******** phase 3 is the complete symbolic ********
+ 
++# a float factor moved out of a sum changes its rounding, and out of a maximum its nan and signed zeros
+ def reduce_mul_chain(r:UOp) -> UOp|None:
+-  if r.arg[0] not in {Ops.ADD, Ops.MAX}: return None
++  if r.arg[0] not in {Ops.ADD, Ops.MAX} or dtypes.is_float(r.dtype): return None
+   inside, outside = [], []
+   for m in r.src[0].split_uop(Ops.MUL):
+     m_parents = m.backward_slice
+@@ -460,16 +470,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+   # store of where with invalid -> gated store
+   (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
+    lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),
+-  ((UPat.var("x") * UPat.var("x")).reciprocal(), lambda x: x.reciprocal()*x.reciprocal()),  # 1/(x^c) -> (1/x)^c
+-  ((UPat.var("x") * UPat.var("x") * UPat.var("x")).reciprocal(), lambda x: x.reciprocal()*x.reciprocal()*x.reciprocal()),
+-  ((UPat.var("x") * UPat.cvar("c")).reciprocal(), lambda x,c: x.reciprocal()*c.reciprocal()), # 1/(x*c) -> (1/c)*(1/x)
+-  (UPat.var("x") * ((1+UPat.var("x")).reciprocal().named("d")), lambda x,d: 1-d), # x*/(1+x) -> 1-1/(1+x)
+-  (UPat.var("x") * ((1+UPat.var("x")).reciprocal().named("d")*UPat.var("y")), lambda x,y,d: y*(1-d)),
+-  (UPat.var("x") * ((1+UPat.var("x")).reciprocal().named("d")+UPat.var("y")), lambda x,y,d: (1-d)+x*y),
+   # reduce mul chain, move muls after the reduce
+   (UPat(Ops.MUL).reduce(name="r", allow_any_len=True), reduce_mul_chain),
+   # ** combine terms (opinionated) **
+-  (-1 * (UPat.var("x") + UPat.var("y")), lambda x,y: (-x)+(-y)),  # -(x+y) -> -x + -y
++  (-1 * (UPat.var("x", int_or_bool) + UPat.var("y")), lambda x,y: (-x)+(-y)),  # -(x+y) -> -x + -y, for integers
+   # (x+y)*c -> x*c+y*c. only for int, float has inf*0=nan issue
+   ((UPat.var("x", dtypes.weakint) + UPat.var("y")) * UPat.cvar("c"), lambda x,y,c: x*c+y*c),
+ ])+pm_clean_up_group_sink

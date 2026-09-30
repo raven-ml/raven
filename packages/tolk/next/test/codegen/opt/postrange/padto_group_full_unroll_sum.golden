@@ -33,13 +33,13 @@
 31 Ops.CONST dtypes.bool [] Invalid
 32 Ops.WHERE dtypes.weakint [18, 30, 31]
 33 Ops.INDEX dtypes.float [16, 32]
-34 Ops.MUL dtypes.float [33, 33]
-35 Ops.CONST dtypes.weakfloat [] 0.0
-36 Ops.CAST dtypes.float [35] dtypes.float
-37 Ops.WHERE dtypes.float [15, 34, 36]
-38 Ops.REDUCE dtypes.float [37, 27, 22, 9, 12] (Ops.ADD, 0)
-39 Ops.CONST dtypes.weakfloat [] 0.25
-40 Ops.MUL dtypes.float [38, 39]
+34 Ops.CONST dtypes.weakfloat [] 0.5
+35 Ops.MUL dtypes.float [33, 34]
+36 Ops.MUL dtypes.float [35, 35]
+37 Ops.CONST dtypes.weakfloat [] 0.0
+38 Ops.CAST dtypes.float [37] dtypes.float
+39 Ops.WHERE dtypes.float [15, 36, 38]
+40 Ops.REDUCE dtypes.float [39, 27, 22, 9, 12] (Ops.ADD, 0)
 41 Ops.STORE dtypes.void [7, 40]
 42 Ops.END dtypes.void [41, 2, 5]
 43 Ops.SINK dtypes.void [42] KernelInfo(name="r_4_256_7_2_32", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(256, AxisType.LOCAL, True)), Opt(op=OptOps.PADTO, axis=3, arg=32), Opt(op=OptOps.SPLIT, axis=3, arg=(0, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(7, AxisType.UPCAST)))) tag=1

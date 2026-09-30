@@ -230,7 +230,8 @@ let pm_reduce_unparented =
           reduce_unparented (m "red"));
     ]
 
-(* The sum of [value] over the part of [r] within [lower, upper). *)
+(* The sum of [value] over the part of [r] within [lower, upper). A float sum of
+   no terms is 0 whatever the value, where 0 times an infinity is NaN. *)
 let sum_between ?lower ?upper r value =
   if not (no_range value) then None
   else
@@ -241,7 +242,14 @@ let sum_between ?lower ?upper r value =
       | Some l -> maximum l (int 0)
       | None -> const_like r (`Int Z.zero)
     in
-    Some O.(maximum (hi - lo) (int 0) * value)
+    let count = maximum O.(hi - lo) (int 0) in
+    if Dtype.is_float (dtype value) then
+      Some
+        (where
+           O.(int 0 < count)
+           O.(count * value)
+           (const_like value (`Float 0.)))
+    else Some O.(count * value)
 
 (* Solving [x + y] against [c] for [x] computes [x + y] and [c - y], which is
    exact for integers where neither wraps. *)
@@ -319,9 +327,12 @@ let pm_reduce_collapse =
                   (var "c") zero))
             (fun m ->
               Some O.(over (m "r") (where (m "y") (m "c") (int 0)) * m "x"));
-          (* A multiplication by a boolean cast. *)
+          (* A multiplication by a boolean cast, for integers: a float product
+             by 0 is NaN at an infinity and -0. at a negative x. *)
           rule
-            Upat.O.(var "x" * Upat.f (var ~dtype:[ Dtype.Bool ] "gate") Op.Cast)
+            Upat.O.(
+              var ~dtype:(Dtype.Bool :: Dtype.Weak_int :: Dtype.ints) "x"
+              * Upat.f (var ~dtype:[ Dtype.Bool ] "gate") Op.Cast)
             (fun m -> Some (where (m "gate") (m "x") (int 0)));
         ];
       Symbolic.symbolic;

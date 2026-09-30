@@ -192,8 +192,10 @@ let cody_waite_reduction d =
 
 (* Approximate sine on small angle *)
 
-let poly_n x p =
-  List.fold_left (fun acc c -> O.((acc * x) + float c)) (float 0.) p
+let poly_n x = function
+  | c :: cs ->
+      List.fold_left (fun acc c -> O.((acc * x) + float c)) (float c) cs
+  | [] -> invalid_arg "a polynomial without coefficients"
 
 let trig_poly d coeff32 coeff64 =
   O.(d * poly_n (d * d) (if dtype d = Float64 then coeff64 else coeff32))
@@ -337,11 +339,10 @@ let xlog2 d =
       O.((t * (x * x2)) + e + (x * float 2.885390081777926774))
     else
       let t = poly_n x2 [ 0.4374550283e+0; 0.5764790177e+0; 0.9618012905120 ] in
+      let hi = O.((t * (x * x2)) + e + (x * float 2.8853900432586669922)) in
       (* The low part of the constant underflows in float16. *)
-      let s_lo =
-        if dt = Float32 then O.(x * float 3.2734474483568488616e-08) else int 0
-      in
-      O.((t * (x * x2)) + e + (x * float 2.8853900432586669922) + s_lo)
+      if dt = Float32 then O.(hi + (x * float 3.2734474483568488616e-08))
+      else hi
   in
   let r = where O.(d <> float infinity) r (float_like r infinity) in
   let r = where O.(d <> float 0.0) r (float_like r neg_infinity) in

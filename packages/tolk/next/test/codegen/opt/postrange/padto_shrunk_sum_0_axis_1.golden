@@ -15,12 +15,12 @@
 13 Ops.CONST dtypes.bool [] Invalid
 14 Ops.WHERE dtypes.weakint [9, 12, 13]
 15 Ops.INDEX dtypes.float [7, 14]
-16 Ops.CONST dtypes.weakfloat [] 0.0
-17 Ops.CAST dtypes.float [16] dtypes.float
-18 Ops.WHERE dtypes.float [6, 15, 17]
-19 Ops.REDUCE dtypes.float [18, 5] (Ops.ADD, 0)
-20 Ops.CONST dtypes.weakfloat [] 100.0
-21 Ops.MUL dtypes.float [19, 20]
+16 Ops.CONST dtypes.weakfloat [] 100.0
+17 Ops.MUL dtypes.float [15, 16]
+18 Ops.CONST dtypes.weakfloat [] 0.0
+19 Ops.CAST dtypes.float [18] dtypes.float
+20 Ops.WHERE dtypes.float [6, 17, 19]
+21 Ops.REDUCE dtypes.float [20, 5] (Ops.ADD, 0)
 22 Ops.STORE dtypes.void [3, 21]
 23 Ops.END dtypes.void [22, 2]
 24 Ops.SINK dtypes.void [23] KernelInfo(name="r_17_32", applied_opts=(Opt(op=OptOps.PADTO, axis=1, arg=32),)) tag=1

@@ -380,12 +380,14 @@ let constants =
           match Ops.arg nan with
           | Const (`Float v) when Float.is_nan v -> ()
           | _ -> failf "0 / 0 is@ %a" (Testable.pp uop) nan);
-      test "x / x is 1 and (x * y) / y is x, for floats" (fun () ->
-          folds_to Ops.O.(f / f) (Ops.float ~dtype:Float32 1.);
-          folds_to Ops.O.(f * g / g) f);
-      test "x * 0 is 0" (fun () ->
+      test "x / x and (x * y) / y stay, for floats (D24)" (fun () ->
+          folds_to Ops.O.(f / f) Ops.O.(f / f);
+          folds_to Ops.O.(f * g / g) Ops.O.(f * g / g));
+      test "x * 0 is 0 for integers and booleans, and stays for floats (D24)"
+        (fun () ->
           folds_to Ops.O.(a * int 0) (Ops.int 0);
-          folds_to Ops.O.(f * float 0.) (Ops.float ~dtype:Float32 0.));
+          folds_to Ops.O.(cond * bool false) (Ops.bool false);
+          folds_to Ops.O.(f * float 0.) Ops.O.(f * float 0.));
     ]
 
 let booleans =
@@ -442,10 +444,19 @@ let powers =
       test "x ** 1 is x, x ** 2 is x * x" (fun () ->
           by_symbolic (Ops.pow f (Ops.float 1.)) f;
           by_symbolic (Ops.pow f (Ops.float 2.)) Ops.O.(f * f));
-      test "x ** 0.5 is the square root of x" (fun () ->
-          by_symbolic (Ops.pow f (Ops.float 0.5)) (Ops.sqrt f));
+      test "x ** 0.5 is the square root of x, +0. at -0. and +inf at -inf"
+        (fun () ->
+          let special v r =
+            Ops.where Ops.O.(f <> float v) r (Ops.float (Float.abs v))
+          in
+          by_symbolic
+            (Ops.pow f (Ops.float 0.5))
+            (special Float.neg_infinity (special 0. (Ops.sqrt f))));
       test "x ** -1 is the reciprocal of x" (fun () ->
           by_symbolic (Ops.pow f (Ops.float (-1.))) (Ops.reciprocal f));
+      test "x ** c stays for c between -1 and 0 (D24)" (fun () ->
+          let p = Ops.pow f (Ops.float (-0.8)) in
+          by_symbolic p p);
       test "a power of constants is its value" (fun () ->
           by_symbolic
             (Ops.pow (Ops.float ~dtype:Float32 3.) (Ops.float 2.))
@@ -567,13 +578,16 @@ let terms =
           let n = Ops.param 5 Dtype.Int32 in
           by_symbolic Ops.O.(n + n) Ops.O.(n * int 2);
           folds_to Ops.O.(n // int (-1)) Ops.O.(n * int (-1)));
-      test "(x / y) / z is x / (y * z)" (fun () ->
+      test "(x / y) / z stays (D24)" (fun () ->
           let h = Ops.param 3 Dtype.Float32 in
-          by_symbolic Ops.O.(f / g / h) Ops.O.(f / (g * h)));
-      test "-(x + c) is -x + -c" (fun () ->
+          by_symbolic Ops.O.(f / g / h) Ops.O.(f / g / h));
+      test "-(x + c) is -x + -c for integers, and stays for floats (D24)"
+        (fun () ->
           by_symbolic
             Ops.O.(int (-1) * (a + int 3))
-            Ops.O.((a * int (-1)) + int (-3)));
+            Ops.O.((a * int (-1)) + int (-3));
+          let neg = Ops.O.(float (-1.) * (f + float 3.)) in
+          by_symbolic neg neg);
       test "c * (x + c') is c * x + c * c'" (fun () ->
           by_symbolic Ops.O.(int 2 * (a + int 3)) Ops.O.((a * int 2) + int 6));
     ]
@@ -804,6 +818,95 @@ let wrapping =
           in
           let u = Ops.O.(w // int 65536 // int 65536) in
           by_symbolic u u);
+    ]
+
+(* D24: floats keep IEEE's values, signed zeros, infinities, NaN and subnormals
+   included. Each graph is evaluated before and after the rewrite, with [f], [g]
+   and [h] bound to the given float32 values, at points where the rewrite that
+   D24 restricts changes the value. *)
+
+let keeps_float_bits ?(by = sym) u points =
+  let after = by u in
+  List.iter
+    (fun values ->
+      let params =
+        List.mapi (fun k v -> (List.nth [ 0; 1; 3 ] k, float32 v)) values
+      in
+      let msg =
+        Format.asprintf "at %a"
+          (Format.pp_print_list
+             ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
+             Format.pp_print_float)
+          values
+      in
+      equal ~msg same_float
+        (Interpreter.eval ~params u)
+        (Interpreter.eval ~params after))
+    points
+
+let floats =
+  let h = Ops.param 3 Dtype.Float32 and inf = Float.infinity in
+  let cond = Ops.O.(f < float 1.) in
+  group "floats keep IEEE values (D24)"
+    [
+      test "float folds: identities that IEEE does not keep" (fun () ->
+          keeps_float_bits Ops.O.(f + float 0.) [ [ -0. ] ];
+          keeps_float_bits
+            Ops.O.(f * float 0.)
+            [ [ inf ]; [ -1. ]; [ Float.nan ] ];
+          keeps_float_bits Ops.O.(f / f) [ [ 0. ]; [ inf ] ];
+          keeps_float_bits Ops.O.(f * g / g) [ [ 1e10; 1e30 ] ];
+          keeps_float_bits Ops.O.(f / g / h) [ [ 1e20; 1e20; 1e20 ] ]);
+      test "signed zeros: a negated sum and complementary selections" (fun () ->
+          keeps_float_bits Ops.O.(float (-1.) * (f + float 3.)) [ [ -3. ] ];
+          keeps_float_bits Ops.O.(float (-1.) * (f + g)) [ [ 1.; -1. ] ];
+          keeps_float_bits
+            Ops.O.(Ops.where cond g (float 0.) + Ops.where cond (float 0.) h)
+            [ [ 0.; -0.; 5. ] ]);
+      test "reassociation: constants, like terms and selections of a sum"
+        (fun () ->
+          let tiny = Float.ldexp 1. (-24) in
+          keeps_float_bits Ops.O.(f + float 1e8 + float (-1e8)) [ [ 1. ] ];
+          keeps_float_bits Ops.O.(f * float 1e30 * float 1e-30) [ [ 1e10 ] ];
+          keeps_float_bits Ops.O.(f + float 1e8 + g) [ [ 3.; 3. ] ];
+          keeps_float_bits Ops.O.(g + f + f) [ [ tiny; 1. ] ];
+          keeps_float_bits Ops.O.((f * float 1.1) + (f * float 2.2)) [ [ 1. ] ];
+          keeps_float_bits
+            Ops.O.(
+              g
+              + Ops.where cond (float tiny) (float 0.)
+              + Ops.where cond (float tiny) (float 0.))
+            [ [ 0.; 1. ] ];
+          let r = Ops.range ~axis_type:Reduce (Int 3) [ 2 ] in
+          keeps_float_bits
+            (Ops.reduce Ops.O.(Ops.cast r Float32 * f * g) Add [ r ])
+            [ [ 2e38; 0.25 ] ]);
+      test "reciprocal and sigmoid forms stay" (fun () ->
+          let d = Ops.reciprocal Ops.O.(float 1. + f) in
+          keeps_float_bits (Ops.reciprocal Ops.O.(f * f)) [ [ 1e20 ] ];
+          keeps_float_bits (Ops.reciprocal Ops.O.(f * float 1e10)) [ [ 1e30 ] ];
+          keeps_float_bits Ops.O.(f * d) [ [ 1e-8 ]; [ inf ] ]);
+      test "maxima: a NaN operand and the order of zeros" (fun () ->
+          let nan = Ops.O.(float inf + float (-.inf)) in
+          keeps_float_bits
+            (Ops.maximum nan (Ops.maximum f (Ops.float 0.)))
+            [ [ 1. ] ];
+          keeps_float_bits
+            (Ops.where Ops.O.(f < float (-0.)) (Ops.float 0.) f)
+            [ [ -1e-45 ] ];
+          keeps_float_bits (Ops.maximum f (Ops.float inf)) [ [ Float.nan ] ]);
+      test "powers keep pow's special values" (fun () ->
+          let by = symbolic in
+          keeps_float_bits ~by
+            (Ops.pow f (Ops.float 2.5))
+            [ [ -.inf ]; [ -0. ] ];
+          keeps_float_bits ~by
+            (Ops.pow f (Ops.float 0.5))
+            [ [ -0. ]; [ -.inf ] ];
+          keeps_float_bits ~by (Ops.pow f (Ops.float (-0.8))) [ [ 1e-40 ] ];
+          keeps_float_bits ~by
+            (Ops.pow (Ops.float ~dtype:Float32 inf) f)
+            [ [ 0. ] ]);
     ]
 
 let ranges =
@@ -1150,10 +1253,12 @@ let sym_group =
       test "storing what a load of the same index reads does nothing" (fun () ->
           simplifies_to (Ops.store index (Ops.load index [])) (raw Noop []);
           simplifies_to
-            (Ops.store index Ops.O.(Ops.load index [] + float 0.))
+            (Ops.store index Ops.O.(Ops.load index [] + float (-0.)))
             (raw Noop []));
       test "storing a changed load stays" (fun () ->
           let st = Ops.store index Ops.O.(Ops.load index [] + float 1.) in
+          simplifies_to st st;
+          let st = Ops.store index Ops.O.(Ops.load index [] + float 0.) in
           simplifies_to st st);
       test "storing a selection of the loaded value stores where it differs"
         (fun () ->
@@ -1166,39 +1271,40 @@ let sym_group =
           simplifies_to
             (Ops.store index (Ops.valid f cond))
             (Ops.store (Ops.index buf [ Ops.valid a cond ]) f));
-      test "the reciprocal of a square or a cube is a product of reciprocals"
-        (fun () ->
-          simplifies_to
-            (Ops.reciprocal Ops.O.(f * f))
-            Ops.O.(Ops.reciprocal f * Ops.reciprocal f);
-          simplifies_to
-            (Ops.reciprocal Ops.O.(f * f * f))
-            Ops.O.(Ops.reciprocal f * Ops.reciprocal f * Ops.reciprocal f));
-      test "the reciprocal of x * c is the product of reciprocals" (fun () ->
-          simplifies_to
-            (Ops.reciprocal Ops.O.(f * float 2.))
-            Ops.O.(Ops.reciprocal f * float 0.5));
-      test "x * (1 / (1 + x)) is 1 - 1 / (1 + x)" (fun () ->
+      test "reciprocals of products stay (D24)" (fun () ->
           let d = Ops.reciprocal Ops.O.(float 1. + f) in
-          simplifies_to Ops.O.(f * d) Ops.O.(float 1. - d);
-          simplifies_to Ops.O.(f * (d * g)) Ops.O.(g * (float 1. - d));
-          simplifies_to
-            Ops.O.(f * (d + g))
-            Ops.O.((d * float (-1.)) + (f * g) + float 1.));
+          List.iter
+            (fun u -> simplifies_to u u)
+            [
+              Ops.reciprocal Ops.O.(f * f);
+              Ops.reciprocal Ops.O.(f * f * f);
+              Ops.reciprocal Ops.O.(f * float 2.);
+              Ops.O.(f * d);
+              Ops.O.(f * (d * g));
+              Ops.O.(f * (d + g));
+            ]);
       test "factors independent of a sum's ranges move out of it" (fun () ->
-          let body = Ops.O.(Ops.cast reduce_range Float32 * f) in
+          let body = Ops.O.(Ops.cast reduce_range Int32 * x) in
           simplifies_to
             (Ops.reduce body Add [ reduce_range ])
             Ops.O.(
-              Ops.reduce (Ops.cast reduce_range Float32) Add [ reduce_range ]
-              * f));
+              Ops.reduce (Ops.cast reduce_range Int32) Add [ reduce_range ] * x));
       test "a product wholly independent of a sum's ranges moves out whole"
         (fun () ->
           simplifies_to
-            (Ops.reduce Ops.O.(f * g) Add [ reduce_range ])
+            (Ops.reduce Ops.O.(x * y) Add [ reduce_range ])
             Ops.O.(
-              Ops.reduce (Ops.float ~dtype:Float32 1.) Add [ reduce_range ]
-              * (f * g)));
+              Ops.reduce (Ops.int ~dtype:Int32 1) Add [ reduce_range ] * (x * y)));
+      test "factors stay in a float sum or maximum (D24)" (fun () ->
+          List.iter
+            (fun o ->
+              let red =
+                Ops.reduce
+                  Ops.O.(Ops.cast reduce_range Float32 * f)
+                  o [ reduce_range ]
+              in
+              simplifies_to red red)
+            [ Add; Max ]);
       test "factors stay in a reduction other than a sum or a maximum"
         (fun () ->
           let red =
@@ -1217,13 +1323,13 @@ let sym_group =
           let body = Ops.O.(Ops.cast reduce_range Int32 * v) in
           let red = Ops.reduce body Max [ reduce_range ] in
           simplifies_to red red);
-      test "-(x + y) is -x + -y" (fun () ->
+      test "-(x + y) is -x + -y for integers, and stays for floats (D24)"
+        (fun () ->
           simplifies_to
             Ops.O.(int (-1) * (a + b))
             Ops.O.((a * int (-1)) + (b * int (-1)));
-          simplifies_to
-            Ops.O.((f + g) * float (-1.))
-            Ops.O.((f * float (-1.)) + (g * float (-1.))));
+          let neg = Ops.O.((f + g) * float (-1.)) in
+          simplifies_to neg neg);
       test "a negated sum with a scaled term folds each term's coefficient"
         (fun () ->
           let x = var "px" (-10) 10 and y = var "py" (-10) 10 in
@@ -1394,6 +1500,10 @@ let laws =
       scenario_law
         "symbolic keeps the value of an integer expression where nothing wraps"
         (fun e -> keeps_value ~name:"symbolic" e (symbolic e));
+      prop "sym keeps a float expression's value bit for bit at special values"
+        float_scenario (fun f ->
+          let e = float_node f in
+          keeps_float_value ~name:"sym" e (sym e));
       scenario_law "sym is idempotent" (fun e -> Law.idempotent uop sym e);
       prop "a graph of constants folds to what the machine computes" scenario
         (fun s ->
@@ -1419,6 +1529,7 @@ let () =
          commutative;
          symbolic_group;
          wrapping;
+         floats;
          conditions;
          sym_group;
          installation;
