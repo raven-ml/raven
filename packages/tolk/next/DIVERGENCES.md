@@ -73,7 +73,8 @@ the Exclusions of `README.md`.
 - **tolk.next:** waiting for L2 through L8, each break with its layer; for
   `uop/ops.py`, `lib/uop/ops.ml:572` (`construction_check`), `:1651`
   (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
-  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`).
+  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`); and
+  `lib/uop/render.ml:202` (`render`), `:212` (`srender`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
