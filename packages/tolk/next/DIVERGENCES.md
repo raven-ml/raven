@@ -489,6 +489,28 @@ the Exclusions of `README.md`.
   every e5m2 code, and the `reencode.golden` and `truncation.golden` NaN rows,
   stated in code.
 
+## D21. A reshape of a value sharded on two axes divides each by its own count
+
+- **tinygrad:** `schedule/multi.py:139` (`reshape_multi`), which divides every
+  sharded axis of the new shape by the shard count of the loop variable `rng`
+  left over from `:130`: the count of the last sharded axis. On a value
+  sharded on two axes with different counts, the shard's reshape has the
+  wrong size, and scheduling fails. Repro, a 2×4 mesh on eight devices:
+  `rng = UOp.range(8, -1, AxisType.DEVICE); r0, r1 = rng // 4, rng % 4`,
+  `t = Tensor(Tensor.arange(48).float().reshape(4, 12).contiguous().realize().uop.copy_to_device(devs)._shard(0, r0)._shard(1, r1).unshard((0, 1), (r0, r1)))`,
+  then `(t.reshape(4, 12, 1) * 2).to("CPU").schedule_linear()` raises
+  `ValueError: size mismatch, can't reshape ((2, 3)) -> ((1, 3, 1))`.
+- **tolk.next:** `lib/schedule/multi.ml:362` (`reshape_multi`).
+- **Differs:** each sharded axis of the new shape is divided by the shard
+  count of its own range, so the shard of the repro reshapes to `(2, 3, 1)`.
+  When the sharded axes share one count, the two agree.
+- **Reason:** (b): rune's multi-axis placement (RFC 0005's meshes, data by
+  tensor parallelism), where a mesh's two axes have different shard counts.
+- **Pinned by:** the `Multi` suite: `two sharded axes › a reshape divides
+  each sharded axis by its own count (D21)` and `a reshape of a mesh of 2 by
+  4 devices keeps each tile (D21)`, and the law `laws › a rewritten value
+  holds the value computed whole` on grids of 2 by 2 and 2 by 4 devices.
+
 ## D22. An emulated long converts no float past its words' range
 
 - **tinygrad:** `codegen/decomp/dtype.py:33-34` (`l2i` makes a long's low
@@ -506,6 +528,26 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Decomp_dtype` suite: `emulated 64-bit integers › an
   emulated cast of a float32 to a 64-bit integer converts no float to a word
   that cannot hold it`.
+
+## D23. A shard selected through a movement reads its own shard
+
+- **tinygrad:** `schedule/multi.py:40-41` (`replace_allreduce`), which moves
+  an `MSELECT` before a movement and keeps the movement's arguments as they
+  are. When they hold the device range, as a sharded shrink's start
+  `drange * n` does, the selected value, now on one device, still reads the
+  range, and so reads the shard of whichever device runs it. Repro:
+  `x = Tensor([10.,20.]).shard(("CPU:0","CPU:1"), 0).realize(); w = Tensor([1.,2.]).to(("CPU:0","CPU:1")).realize(); (x + w)[0:1].tolist()`
+  raises `RuntimeError: unbound Variable '_device_num'`.
+- **tolk.next:** `lib/schedule/multi.ml:131` (the rule), with `:54`
+  (`at_device`).
+- **Differs:** the movement's arguments take the selected shard's position
+  for the device range, as a shrink moved before an `MSTACK` already does
+  (`_apply_shrink`), and are simplified.
+- **Reason:** (b): rune's sharded programs, where a shard is selected from a
+  value computed from a sharded and a replicated one.
+- **Pinned by:** the `Multi` suite: `a selection of a movement by the device
+  range takes the selected device's position (D23)`, and the law `laws › a
+  rewritten value holds the value computed whole`.
 
 ## D24. Rewrites keep IEEE and modular values
 
