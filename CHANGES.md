@@ -2875,6 +2875,11 @@ thread.
 
 ### Nx
 
+- `Nx_device.submit` waits, for at most each device's timeout, until the
+  device's queues have room for a submission, as `Driver.device`'s new `room`
+  says, and loses a device whose queues stay full. An AMD device has room once
+  each of its rings is at most half full, so work submitted by compiled code
+  never overwrites packets its engine has not read.
 - **Breaking:** `Nx_amd_device.scratch` returns the scratch memory as a buffer
   of the device; the record of its address, size and `COMPUTE_TMPRING_SIZE`
   is gone, since the ring size depends on each kernel.

@@ -91,6 +91,8 @@ type t = {
   sleep : (int -> unit) option;
   timeout_ms : int Atomic.t;
   synchronized : unit -> unit;
+  room : unit -> bool;
+      (* whether each of its queues has room for a submission *)
   finalize : failed:bool -> unit;
   clock : clock;
   resolve : nativeint -> unit;
@@ -463,7 +465,7 @@ let timeline_of ~host_alloc (host_memory : allocator option) =
 let default_timeout = 30_000
 
 let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
-    ~mapping ~queue ~peer ~load ~call ~link ~dma ~completion ~synchronized
+    ~mapping ~queue ~peer ~load ~call ~link ~dma ~completion ~synchronized ~room
     ~finalize ~resolve =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
@@ -506,6 +508,7 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       sleep;
       timeout_ms = Atomic.make default_timeout;
       synchronized;
+      room;
       finalize;
       clock = (match copy_queue with Some q -> q.clock | None -> Host_clock);
       resolve;
@@ -567,6 +570,7 @@ let host =
     ~budget:max_int ~alloc ~free:ignore ~host_memory:None
     ~mapping:(Some Identity) ~queue:None ~peer:None ~load ~call:None ~link:None
     ~dma:None ~completion:Poll ~synchronized:ignore
+    ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
 
@@ -578,6 +582,7 @@ let disk =
     ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapping:None
     ~queue:None ~peer:None ~load:None ~call:None ~link:None ~dma:None
     ~completion:Poll ~synchronized:ignore
+    ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
 
@@ -684,6 +689,21 @@ let wait_signal d v =
     | exception Failure why -> fail d why
 
 let failed d = Atomic.get d.failed
+
+(* Waits until each of [d]'s queues has room for a submission, for at most its
+   timeout. *)
+let wait_room d =
+  let start = now_ms () in
+  let rec go () =
+    if not (driver d d.room) then
+      if now_ms () - start > Atomic.get d.timeout_ms then
+        fail d "no room in its queues"
+      else begin
+        Domain.cpu_relax ();
+        go ()
+      end
+  in
+  go ()
 
 (* A driver error while enqueueing leaves [d]'s queue in an unknown state: like
    a fault, it fails [d]. *)
@@ -2200,6 +2220,7 @@ let submit ds ~touches f =
         | None -> (d', Atomic.get d'.settled))
       d_set
   in
+  List.iter wait_room ds;
   let s =
     {
       Submission.devices = ds;
@@ -2551,7 +2572,7 @@ module Driver = struct
 
   let device ~name ~arch ~budget ?(host = host) ?(completion = Poll) ?load ?peer
       ?link ?dma ?(resolve = ignore) ?(synchronized = ignore)
-      ?(finalize = fun ~failed:_ -> ()) memory =
+      ?(room = fun () -> true) ?(finalize = fun ~failed:_ -> ()) memory =
     if budget < 0 then refuse "device" "budget %d < 0" budget;
     if Option.is_some host.machine then
       refuse "device" "%s is not a host" host.name;
@@ -2581,7 +2602,7 @@ module Driver = struct
     create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
       ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
       ~mapping ~queue ~peer ~load ~call:None ~link ~dma ~completion
-      ~synchronized ~finalize ~resolve
+      ~synchronized ~room ~finalize ~resolve
 
   let buffer d (r : region) s n =
     if d == disk then Buffer.not_files "Driver.buffer";
@@ -2622,6 +2643,7 @@ module Driver = struct
       ~io:(Some io) ~budget:max_int ~alloc:(owned memory) ~free:memory.free
       ~host_memory:None ~mapping:None ~queue:None ~peer:None ~load
       ~call:(Option.map (fun p -> p.call) programs)
-      ~link:None ~dma:None ~completion:Poll ~synchronized ~finalize
-      ~resolve:ignore
+      ~link:None ~dma:None ~completion:Poll ~synchronized
+      ~room:(fun () -> true)
+      ~finalize ~resolve:ignore
 end

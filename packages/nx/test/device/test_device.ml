@@ -124,7 +124,7 @@ let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     ?signal ?load ?peer ?timeout_ms ?synchronized ?sleep ?finalize ?clock
-    ?resolve () =
+    ?resolve ?room () =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -245,7 +245,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
   in
   let dev =
     Driver.device ~name ~arch:"test" ~budget ~completion ?load ?peer
-      ?synchronized ?finalize ?resolve memory
+      ?synchronized ?finalize ?resolve ?room memory
   in
   Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
@@ -1719,6 +1719,27 @@ let timeline =
           ignore (submit stuck Fun.id);
           raises_match (lost stuck "hang detected") (fun () ->
               Nx_device.synchronize stuck));
+      test "a submission runs once its device's queues have room" (fun () ->
+          let asked = ref 0 in
+          let room () =
+            incr asked;
+            !asked > 3
+          in
+          let d = (fake ~name:"ROOMY" ~room ()).dev in
+          equal int 1 (submit d Fun.id);
+          equal ~msg:"asked until there was room" int 4 !asked;
+          store_signal (B.address (Nx_device.signal_word d)) 1);
+      test
+        "a device whose queues stay full through its timeout is lost, and the \
+         submission commits nothing" (fun () ->
+          let ran = ref false in
+          let d =
+            (fake ~name:"FULL" ~timeout_ms:50 ~room:(fun () -> false) ()).dev
+          in
+          raises_match (lost d "no room in its queues") (fun () ->
+              submit d (fun _ -> ran := true));
+          is_false ~msg:"no work enqueued" !ran;
+          equal int 0 (Nx_device.submitted d));
     ]
 
 (* Submissions *)

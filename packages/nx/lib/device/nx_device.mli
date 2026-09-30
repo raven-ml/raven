@@ -780,8 +780,9 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
     It takes the devices of [ds], those of the buffers of [touches], and those
     whose memory the buffers reach: a borrow's device and the device of the
     memory it maps. It waits on the host for the work [s]'s work cannot wait for
-    itself ({!Submission.waits}), then runs [f s]. For each device [d] of [ds],
-    [f] enqueues work that:
+    itself ({!Submission.waits}) and until each device of [ds] has room in its
+    queues for a submission ({!Driver.device}'s [room]), then runs [f s]. For
+    each device [d] of [ds], [f] enqueues work that:
     - completes after all of [d]'s earlier work;
     - waits for each pair of {!Submission.waits}[ s], on the device by reading
       {!signal_word}[ d'], or on the host with {!Submission.wait};
@@ -807,8 +808,9 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
 
     Raises [Invalid_argument] if [ds] is empty or has a host or the disk, which
     run no submitted work, or if a buffer of [touches] is on the disk or dead
-    ({!Buffer.consume}), and {!Lost} if a device it takes is lost or a lost
-    device can reach a buffer of [touches]. *)
+    ({!Buffer.consume}), and {!Lost} if a device it takes is lost, if a lost
+    device can reach a buffer of [touches], or if a device of [ds] has no room
+    in its queues within its {!timeout}. *)
 
 val submitted : t -> int
 (** [submitted d] is the value [d]'s last submitted work signals, [0] before any
@@ -1094,6 +1096,7 @@ module Driver : sig
     ?dma:(Region.t -> (dma, string) result) ->
     ?resolve:(nativeint -> unit) ->
     ?synchronized:(unit -> unit) ->
+    ?room:(unit -> bool) ->
     ?finalize:(failed:bool -> unit) ->
     memory ->
     device
@@ -1131,6 +1134,12 @@ module Driver : sig
         [synchronized]. Defaults to doing nothing.
       - [synchronized ()] runs at the end of each synchronization of the device.
         Defaults to doing nothing.
+      - [room ()] is [true] iff each queue that submitted work writes has room
+        for what one submission writes, as the device's library bounds it (its
+        low-level section). {!submit} waits for it on each of its devices before
+        it runs [f], for at most the device's {!timeout}, and loses the device
+        if it stays [false]; a [Failure] it raises loses the device. Defaults to
+        [true].
       - [finalize ~failed] runs once when the program exits, whether or not the
         device is lost: after the device synchronized if it was not, with
         [failed] telling whether it is lost by then. It leaves the hardware as

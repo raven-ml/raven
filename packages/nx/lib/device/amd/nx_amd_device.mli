@@ -172,7 +172,10 @@ type queue = {
     packets on an AQL queue, and bytes on an SDMA queue, and grow without
     wrapping; a packet's place in the ring is its position modulo the ring's
     size. A writer, with the device taken:
-    - waits until [read_ptr] leaves room for its packets;
+    - waits until [read_ptr] leaves room for its packets. Inside
+      {!Nx_device.submit}, each queue has room for half its ring, which [submit]
+      waits for: work submitted there writes at most half a ring into each queue
+      and need not wait;
     - writes them from [put] on. On an SDMA queue a packet never wraps: if the
       packets do not fit before the ring's end, the writer zeroes the rest of
       the ring and writes them from its start;

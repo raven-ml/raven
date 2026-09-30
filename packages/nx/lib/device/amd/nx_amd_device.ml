@@ -642,12 +642,28 @@ let create_queue a ~kind spec ~idx =
   in
   (q, if aql then Some gart_view else None)
 
+(* Whether each queue has room for half its ring, the most a submission writes
+   into it. Positions count dwords on a PM4 queue, 64-byte packets on an AQL
+   queue and bytes on an SDMA queue. *)
+let room a () =
+  match a.queues with
+  | None -> true
+  | Some (compute, aql, sdma) ->
+      let half unit (q : queue) =
+        let word b =
+          Int64.to_int (Mmio.get64 (range a (Nx_device.Buffer.address b) 8) 0)
+        in
+        let ring = Nx_device.Buffer.nbytes q.ring in
+        2 * ((word q.put - word q.read_ptr) * unit land (ring - 1)) <= ring
+      in
+      half (if aql then 64 else 4) compute && List.for_all (half 1) sdma
+
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
     Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
       ~host:a.machine ~budget
       ~completion:(Sleep (fun ~timeline:_ -> sleep))
-      ~load:(load a) ~peer:(peer a) ~dma:(dma a) ?finalize
+      ~load:(load a) ~peer:(peer a) ~dma:(dma a) ~room:(room a) ?finalize
       (Device_local
          {
            memory = allocator a Vram;
