@@ -84,7 +84,9 @@ val beam_search :
     cold runs, with each variable of [k]'s kernel ({!Ops.variables}) bound to
     the middle of its bounds, [(vmin + vmax) / 2] rounded down. A measurement
     that raises [Failure] drops its candidate; any other exception is raised by
-    the search.
+    the search. The search limits neither a compilation nor a run: a candidate
+    whose compilation or run hangs hangs the search, one more reason to run it
+    offline.
 
     The beam holds up to [amt] kernels, and starts as [k], of an infinite time.
     Each round:
