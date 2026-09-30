@@ -927,16 +927,16 @@ let signals_once_per_run () =
   equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
   equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
 
-(* A kernel on [d] that fills [size] floats (default four) with [x]. *)
-let fill ?(size = 4) d x =
-  let i = Ops.range (Int size) [ 0 ] in
-  let out = Ops.placeholder ~slot:0 [ size ] Float32 in
+(* A kernel on [d] that fills four floats with [x]. *)
+let fill d x =
+  let i = Ops.range (Int 4) [ 0 ] in
+  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
   let kernel =
     Ops.sink
       ~kernel:(Ops.kernel_info ~name:"fill" ())
       [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
   in
-  let y = Ops.new_buffer (Single d) size Float32 in
+  let y = Ops.new_buffer (Single d) 4 Float32 in
   (y, Ops.call kernel [ y ])
 
 let link_calls ?profile ~bound calls =
@@ -1011,24 +1011,37 @@ let host_program ~(devices : string -> Engine.device) d effects =
     ~targets:(fun n -> (devices n).compiler.target)
     (Ops.v Op.Linear ~src:[ lowered ])
 
+(* Work of [d] from a submitter of its own, such as a vendor's kernel launcher,
+   that touches [b] alone: 50 ms after its submission, a domain fills [b] with
+   [x], then stores the work's value into [d]'s signal word. *)
+let fill_later d b x =
+  Nx_device.submit [ d ] ~touches:[ b ] (fun s ->
+      let v = Nx_device.Submission.value s d in
+      let borrowed b = Result.get_ok (Buffer.borrow host b) in
+      let elements = borrowed b and word = borrowed (Nx_device.signal_word d) in
+      let t0 = Nx_device.Profile.now () in
+      Domain.spawn (fun () ->
+          while Nx_device.Profile.now () - t0 < 50_000_000 do
+            Domain.cpu_relax ()
+          done;
+          Bigarray.Array1.fill (Buffer.bigarray Bigarray.float32 elements) x;
+          (Buffer.bigarray Bigarray.int64 word).{0} <- Int64.of_int v))
+
 (* A copy from CPU:2, a device without queues, into CPU:1's memory, which the
-   schedule puts on CPU:1's queue, once a slow kernel of CPU:2 filled the
-   source. No queue of the batch waits for CPU:2, so the run waits for it on the
-   host. The source is an input, whose address the run enters in the address
-   table, or storage whose address the link writes, 256 KiB, a region of its
-   own: no other buffer the run touches shares CPU:2's pending work. *)
+   schedule puts on CPU:1's queue, while other work of CPU:2 fills the source.
+   No queue of the batch waits for CPU:2, so the run waits for it on the host.
+   The source is an input, whose address the run enters in the address table, or
+   storage whose address the link writes, which only the storage the link
+   reaches puts among the buffers the run touches. *)
 let waits_for_a_device_without_queues ~as_input () =
-  let size = 1 lsl 16 in
-  let y, filled = fill ~size "CPU:2" 7. in
-  let zeros d =
-    Run.buffer (Null_device.device d) Float32 (Array.make size (`Float 0.))
-  in
+  let nd = Null_device.device in
+  let y = Ops.new_buffer (Single "CPU:2") 4 Float32
+  and x = Ops.new_buffer (Single "CPU:1") 4 Float32 in
+  let zeros d = Run.buffer (nd d) Float32 (floats [| 0.; 0.; 0.; 0. |]) in
   let filler = zeros "CPU:2" and result = zeros "CPU:1" in
-  let fills = link_calls ~bound:[ (y, [ filler ]) ] [ filled ] in
-  let x = Ops.new_buffer (Single "CPU:1") size Float32 in
   let src =
     if as_input then
-      Ops.param ~shape:[ Int size ] ~device:(Single "CPU:2") 0 Float32
+      Ops.param ~shape:[ Int 4 ] ~device:(Single "CPU:2") 0 Float32
     else y
   in
   let devices n = if n = "CPU:2" then devices n else on_null n in
@@ -1041,13 +1054,11 @@ let waits_for_a_device_without_queues ~as_input () =
     (x, [ result ]) :: (if as_input then [] else [ (y, [ filler ]) ])
   in
   let copies = Engine.link ~devices ~bound compiled in
-  Null_device.with_latency 0.05 (fun () -> Engine.run fills [||]);
+  let filling = fill_later (nd "CPU:2") filler 7. in
   Engine.run copies (if as_input then [| [ filler ] |] else [||]);
   Null_device.synchronize ();
-  equal values
-    [| `Float 7. |]
-    (Array.of_list
-       (List.sort_uniq compare (Array.to_list (Run.values Float32 result))))
+  Domain.join filling;
+  equal values (floats [| 7.; 7.; 7.; 7. |]) (Run.values Float32 result)
 
 (* A slow copy from CPU:1 into storage of the host that the link allocates,
    enqueued on CPU:1's queue with the storage's address folded in at link, then

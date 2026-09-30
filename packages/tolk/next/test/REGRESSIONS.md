@@ -2625,21 +2625,16 @@ runs it on two sets of buffers.
 Kernels compile on the Worker's domains and the NULL devices run their queues
 on one, and OCaml refuses `Unix.fork` in a process that has spawned a domain,
 so each of `tolk_next_engine.ml`'s 60 mutants is armed in a process of its own
-(`--arm`) over the default run: 50 fail it. With the run lock removed by hand,
-the two-domain test fails on each of three runs. The survivors:
+(`--arm`) over the default run: 51 fail it. With the run lock removed by hand,
+the two-domain test fails on each of three runs. `||` as `&&` in the storage
+a batch's patches reach drops that storage from the buffers a run touches,
+which alone tell `Nx_device.submit` about link-folded storage of a device
+outside the batch: `EN › batches › a run waits for a device without queues of
+storage` fails, since the work that fills its source touches nothing else the
+run touches. The survivors:
 - dismissed in the source as equivalent (five), and, equivalent too, any
   parameter or any tagged node counting as a placeholder in a batch's
   patches, which hold only placeholders and storage;
-- `||` as `&&` in the storage a batch's patches reach, which drops that
-  storage from the buffers a run touches. The touches are what tell
-  `Nx_device.submit` about link-folded storage of a device outside the
-  batch, such as one without queues, so the batch waits for that device's
-  work and leaves its own pending there. The mutant stays unmarked, and is
-  masked here: `Nx_device.submit` records pending work per device, and every
-  batch of the NULL devices touches the host through their signal words and
-  its address table, so the host counts the batch as pending whether or not
-  the storage is touched (`EN › batches › a host kernel runs once the copy
-  that feeds it landed` passes either way);
 - `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
