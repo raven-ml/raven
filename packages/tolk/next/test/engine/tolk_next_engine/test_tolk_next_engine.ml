@@ -927,16 +927,16 @@ let signals_once_per_run () =
   equal int ~msg:"submitted" (before + 3) (Nx_device.submitted d);
   equal int ~msg:"signaled" (before + 3) (Nx_device.signaled d)
 
-(* A kernel on [d] that fills four floats with [x]. *)
-let fill d x =
-  let i = Ops.range (Int 4) [ 0 ] in
-  let out = Ops.placeholder ~slot:0 [ 4 ] Float32 in
+(* A kernel on [d] that fills [size] floats (default four) with [x]. *)
+let fill ?(size = 4) d x =
+  let i = Ops.range (Int size) [ 0 ] in
+  let out = Ops.placeholder ~slot:0 [ size ] Float32 in
   let kernel =
     Ops.sink
       ~kernel:(Ops.kernel_info ~name:"fill" ())
       [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.O.float x)) [ i ] ]
   in
-  let y = Ops.new_buffer (Single d) 4 Float32 in
+  let y = Ops.new_buffer (Single d) size Float32 in
   (y, Ops.call kernel [ y ])
 
 let link_calls ?profile ~bound calls =
@@ -1011,44 +1011,43 @@ let host_program ~(devices : string -> Engine.device) d effects =
     ~targets:(fun n -> (devices n).compiler.target)
     (Ops.v Op.Linear ~src:[ lowered ])
 
-(* A batch of CPU:1 alone whose host program writes the address of memory of
-   CPU:2, which a slow kernel of CPU:2 fills first, into a word of CPU:1. Its
-   queues name no CPU:2, so the run waits for CPU:2 on the host before it calls
-   the host program: once it returns, CPU:2 has signalled the fill. The memory
-   is an input, whose address the run enters in the address table, or storage
-   whose address the link writes. *)
-let waits_for_a_device_its_queues_do_not_name ~as_input () =
-  let nd = Null_device.device in
-  let y, filled = fill "CPU:2" 7. in
-  let filler = Run.buffer (nd "CPU:2") Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+(* A copy from CPU:2, a device without queues, into CPU:1's memory, which the
+   schedule puts on CPU:1's queue, once a slow kernel of CPU:2 filled the
+   source. No queue of the batch waits for CPU:2, so the run waits for it on the
+   host. The source is an input, whose address the run enters in the address
+   table, or storage whose address the link writes, 256 KiB, a region of its
+   own: no other buffer the run touches shares CPU:2's pending work. *)
+let waits_for_a_device_without_queues ~as_input () =
+  let size = 1 lsl 16 in
+  let y, filled = fill ~size "CPU:2" 7. in
+  let zeros d =
+    Run.buffer (Null_device.device d) Float32 (Array.make size (`Float 0.))
+  in
+  let filler = zeros "CPU:2" and result = zeros "CPU:1" in
   let fills = link_calls ~bound:[ (y, [ filler ]) ] [ filled ] in
-  let d = "CPU:1" in
+  let x = Ops.new_buffer (Single "CPU:1") size Float32 in
   let src =
     if as_input then
-      Ops.param ~shape:[ Int 4 ] ~device:(Single "CPU:2") 0 Float32
+      Ops.param ~shape:[ Int size ] ~device:(Single "CPU:2") 0 Float32
     else y
   in
-  let word =
-    Ops.placeholder ~device:(Single d) ~volatile:true ~tag:(String "address")
-      [ 1 ] Uint64
-  in
-  let address = Nx_device.Buffer.create (nd d) UInt64 1 in
-  let devices = with_tag "address" address in
+  let devices n = if n = "CPU:2" then devices n else on_null n in
   let compiled =
-    host_program ~devices d
-      [ Ops.store (Ops.index word [ Ops.int 0 ]) (Ops.getaddr ~device:d src) ]
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:[ Ops.store_call x src ])
   in
-  let bound = if as_input then [] else [ (y, [ filler ]) ] in
-  let writes = Engine.link ~devices ~bound compiled in
-  let cpu2 = nd "CPU:2" in
-  Null_device.with_latency 0.02 (fun () -> Engine.run fills [||]);
-  let filled_at = Nx_device.submitted cpu2 in
-  Engine.run writes (if as_input then [| [ filler ] |] else [||]);
-  at_least int ~msg:"CPU:2 signalled" ~than:filled_at (Nx_device.signaled cpu2);
+  let bound =
+    (x, [ result ]) :: (if as_input then [] else [ (y, [ filler ]) ])
+  in
+  let copies = Engine.link ~devices ~bound compiled in
+  Null_device.with_latency 0.05 (fun () -> Engine.run fills [||]);
+  Engine.run copies (if as_input then [| [ filler ] |] else [||]);
   Null_device.synchronize ();
   equal values
-    [| `Int (Z.of_nativeint (Buffer.address filler)) |]
-    (Run.values Uint64 address)
+    [| `Float 7. |]
+    (Array.of_list
+       (List.sort_uniq compare (Array.to_list (Run.values Float32 result))))
 
 (* A slow copy from CPU:1 into storage of the host that the link allocates,
    enqueued on CPU:1's queue with the storage's address folded in at link, then
@@ -1249,10 +1248,10 @@ let batches =
         (allocates_nothing ~devices:on_null "copy");
       slow "a batch waits for the work of a device outside it"
         waits_for_another_device;
-      test "a run waits for a device of an input its queues do not name"
-        (waits_for_a_device_its_queues_do_not_name ~as_input:true);
-      slow "a run waits for a device of storage its queues do not name"
-        (waits_for_a_device_its_queues_do_not_name ~as_input:false);
+      test "a run waits for a device without queues of an input"
+        (waits_for_a_device_without_queues ~as_input:true);
+      test "a run waits for a device without queues of storage"
+        (waits_for_a_device_without_queues ~as_input:false);
       test "a host kernel runs once the copy that feeds it landed"
         leaves_its_work_pending_on_the_host;
       test "a batch reads a view of each shard of a parameter"

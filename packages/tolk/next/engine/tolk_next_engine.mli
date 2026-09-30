@@ -154,12 +154,14 @@ val run :
     - a batch is one {!Nx_device.submit} over its devices that touches every
       buffer it reaches. It first waits for the work of its previous run on each
       of its devices ({!Nx_device.Submission.wait}), since the runs share its
-      memory, and on the host for the work of devices outside the batch
-      ({!Nx_device.Submission.waits}). It then writes its inputs' addresses into
-      its address table and calls its host program with each device's last
-      submitted value and the value its work signals
-      ({!Nx_device.Submission.value}). While a profile is taken, it records each
-      kernel's span on each of its devices ({!Nx_device.Submission.record}).
+      memory, and on the host for the work of the devices whose memory it
+      reaches but that are not the batch's, such as the source of a copy from a
+      device without queues ({!Nx_device.Submission.waits}): no queue of the
+      batch waits for them. It then writes its inputs' addresses into its
+      address table and calls its host program with each device's last submitted
+      value and the value its work signals ({!Nx_device.Submission.value}).
+      While a profile is taken, it records each kernel's span on each of its
+      devices ({!Nx_device.Submission.record}).
 
     [run] returns once every call is queued: a read of a result waits for the
     work that wrote it, as {!Nx_device.synchronize} does. Runs of [s] are

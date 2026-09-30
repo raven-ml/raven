@@ -251,12 +251,16 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
 (** [sched_batches ~devices ~profile linear] is [linear] with each run of
     consecutive calls enqueued on devices with queues replaced by one batch per
     kind of device ({!Helpers.Target.t.device}), in the order the kinds first
-    appear. A call is enqueued on the device of its buffers that has queues, the
-    source's for a copy, and a program runs on its compute queue
-    (["COMPUTE:0"]), a copy on a copy queue (["COPY:0"], or with
+    appear. A call is enqueued on the devices of its first buffer whose devices
+    all have queues, a copy's source first, and a program runs on its compute
+    queue (["COMPUTE:0"]), a copy on a copy queue (["COPY:0"], or with
     {!Helpers.all2all}, one of up to eight between AMD devices, or the
-    [HCQ_NUM_SDMA] of them). A call is not enqueued when a device of its buffers
-    has no queues, and neither is a copy on Metal, whose memory the host copies.
+    [HCQ_NUM_SDMA] of them). A call is not enqueued when no buffer's devices all
+    have queues, and neither is a copy on Metal, whose memory the host copies.
+    Its other buffers may be memory of devices without queues, such as the
+    source of a copy into a device with queues: those devices are not the
+    batch's, and no queue of the batch waits for their work, which the batch's
+    runner waits for.
 
     A range around calls ({!Op.End} of a call, or of an {!Op.Linear} of calls)
     stays a range, around its calls batched on their own, with each of its
@@ -270,7 +274,7 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
     commands, ordered after the submissions before it and after the batch's
     fence. The commands of a queue are, in order:
     - once, a memory barrier, and waits for the work submitted before the batch
-      on its device and on the devices whose memory its calls touch
+      on its device and on the devices with queues whose memory its calls touch
       ([signal_word d] at least [submitted d]);
     - for each call: waits for the calls on other queues it depends on
       ({!Deps}), each a wait for the queue's signal to reach the call's position
