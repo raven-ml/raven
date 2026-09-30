@@ -7,7 +7,7 @@ for one of three reasons only:
 - **(a) an OCaml constraint:** acyclic modules, static types, the GC, domains;
 - **(b) a named consumer:** a raven call site that fails without it;
 - **(c) the executor's contract:** nx.device's submission protocol, which
-  rune drives with tolk.next's output.
+  `tolk.next.engine` drives with the compiler's output.
 
 Taste, speed without a measurement, and "the old tolk did it" are not reasons.
 A difference in numerics also needs a failing rune test, since nx semantics
@@ -45,13 +45,14 @@ the Exclusions of `README.md`.
   `:3005` (`new_buffer`).
 - **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
   and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
-  (queues, `pm_encode`, program data), all returning data. The registry, the
-  lazy `Buffer` and running a schedule are rune's; allocators, programs,
-  drivers and profile events are nx.device's. So a node holds no runtime
-  state: `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for rune
+  (queues, `pm_encode`, program data), all returning data. The lazy `Buffer`
+  and running a schedule are `tolk.next.engine`'s (L7), which has no
+  registry of devices by name; allocators, programs, drivers and profile
+  events are nx.device's. So a node of the compiler holds no runtime state:
+  `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
   `_base_buffer_is_realized`, `from_buffer` and `_frompy`
-  (`uop/ops.py:856-993`) are rune's. Whether storage is bound is the
+  (`uop/ops.py:856-993`) are the engine's. Whether storage is bound is the
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
   `ParamArg.buffer` (`uop/spec.py:149,153,266,268`) hold by construction.
 - **Reason:** (c).

@@ -197,8 +197,9 @@ topological order:
 | record | `<Name>(<field>=<value>, ...)`, fields in declaration order, each field left out when it holds its default |
 
 A record's fields that are runtime state are never written: `ParamArg.buffer`
-holds a device buffer, which rune owns. A graph whose `CallInfo` holds a
-gradient function cannot be written, since tolk.next does not differentiate.
+holds a device buffer, which `tolk.next.engine` owns. A graph whose `CallInfo`
+holds a gradient function cannot be written, since tolk.next does not
+differentiate.
 Node metadata, a side table of debugging names outside the node, is not
 written either.
 

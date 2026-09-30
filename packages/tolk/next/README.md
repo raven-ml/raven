@@ -1,11 +1,13 @@
 # tolk.next
 
 tolk.next is tolk rebuilt on tinygrad at commit
-`79af1ca70e7021f504919c4ff5631245acc33ed6`. It turns tensor graphs into
-compiled programs, as data: source, binaries, memory plans and the queue
-programs that launch them. It is a compiler and depends on no runtime; rune
-runs its output on `nx.device`, which owns every driver. It is internal to
-raven until it replaces the `tolk` library.
+`79af1ca70e7021f504919c4ff5631245acc33ed6`. It is two libraries. `tolk.next`
+is a compiler: it depends on no runtime, takes a sink and a target, and
+returns data. That data is source, binaries, memory plans and the queue
+programs that launch them. `tolk.next.engine` runs that data over
+`nx.device`, which owns every driver. rune lowers nx programs to tolk.next and
+drives the engine. tolk.next is internal to raven until it replaces the `tolk`
+library.
 
 ## Layout
 
@@ -63,15 +65,15 @@ is scope, not a divergence: the part left out is listed here, and
 |---|---|
 | `tensor.py`, `function.py`, `nn/*`, and the `Tensor` surface of `mixin/*`: dtype shorthands, creation, reductions, randomness, the composite ops of `mixin/op.py` | nx and kaun are raven's frontend, and tinygrad's decompositions there are rune's lowering. The mixin methods `UOp` itself uses stay in the IR. |
 | `TinyJit`, `_TinyJit` and `_prepare_jit_inputs` in `engine/jit.py` | the `Tensor` surface of the jit; rune walks the parameters with `Ptree`. |
-| `CapturedJit`, the device registry, `BufferSpec` and the lazy `Buffer` of `device.py`, and running a schedule | execution is rune's; tolk.next returns what to run (see D3). |
-| `device.py` but `TinyELF` and `Compiled`'s choice of renderer: `ALL_DEVICES`, `HCQ_RUNTIME_DEV`, `canonicalize_device`, `MultiBuffer`, `BufferStorage`, the allocators, `Program`, the rest of `Compiled` (its timeline, runtime buffers, signal waits, synchronization, interfaces and `pm_bufferize`) and `enumerate_devices_str`; the renderers that `Compiled` lists but tolk.next does not port (LLVM, LVP, X86, PTX, NVCC, NAK, HIPCC) | the runtime is rune's and nx.device's (see D3), and those renderers are excluded above. |
+| The device registry of `device.py`, which finds a device by its name | the engine has no registry: the trace hands `link` the device of each buffer (RFC 0012). |
+| `device.py` but `TinyELF` and `Compiled`'s choice of renderer: `ALL_DEVICES`, `HCQ_RUNTIME_DEV`, `canonicalize_device`, `MultiBuffer`, `BufferStorage`, the allocators, `Program`, the rest of `Compiled` (its timeline, runtime buffers, signal waits, synchronization, interfaces and `pm_bufferize`) and `enumerate_devices_str`; the renderers that `Compiled` lists but tolk.next does not port (LLVM, LVP, X86, PTX, NVCC, NAK, HIPCC) | the runtime is `tolk.next.engine`'s and nx.device's (see D3), and those renderers are excluded above. |
 | Pickling a captured jit (`CapturedJit.__reduce__`) | raven has no persistent jit cache. |
 | `mixin/gradient.py` and the `compute_gradient` path | rune owns differentiation. |
 | `llm/*` | models are examples or a package of their own, never part of the compiler. |
 | `viz/*` and the viz hooks in `helpers.py` | a Python web UI. |
 | `tqdm`, `fetch` and `fetch_fw` in `helpers.py` | progress bars and downloads belong to the programs and packages that need them. |
 | The profile events of `helpers.py` and `device.py` | nx.device's `Profile` records them. |
-| The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it, and rune drives it (see D3). |
+| The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it, and `tolk.next.engine` drives it (see D3). |
 | `runtime/support/memory.py` but its `TLSFAllocator`: `MMIOInterface`, `BumpAllocator`, `AddrSpace`, `VirtMapping`, `PageTableTraverseContext`, `MemoryManager` | they map and allocate device memory, which is nx.device's (see D3). The TLSF stays, as `Support_memory.Tlsf_allocator`, since the memory planner places buffers with it. |
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
 | `pm_validate_wmma_rdna3`, `pm_validate_wmma_rdna4` and `pm_validate_wmma_cdna` in `renderer/tc.py` | only `renderer/llvmir.py`, excluded above, applies them. |
@@ -81,8 +83,8 @@ is scope, not a divergence: the part left out is listed here, and
 | The `output` argument of `create_allreduce_function` in `schedule/allreduce.py` | no caller passes it: the function always allocates its output. |
 | `runtime/support/compileserver.py`, with `Compiler.server` and `Compiler.compile_server` in `device.py`, which start it and talk to it | compilation workers are domains (see D5). |
 | `runtime/support/c.py` but `DLL.findlib`, and in `findlib` the macOS shortcut for `libc` and `m` (`:94`), since no caller loads either: the ctypes structures, pointers and bindings, and `runtime/autogen/*` | raven has no ctypes: the compilers' C stubs declare the few NVRTC and comgr functions they call, and load the library that `C.findlib` finds. The second name under which tinygrad loads comgr 3 (`comgr_3`, with its override `COMGR_3_PATH`) is scope: both names search the same paths, and `lib<p>.so[.0-9]*` finds ROCm 6's `libamd_comgr.so.2` and ROCm 7's `libamd_comgr.so.3` alike (ROCm 7's name is from its release layout, unverified on an install), so tolk.next loads one library, found by `findlib`, and picks the constants of its version. |
-| `runtime/ops_metal.py` but `MetalCompiler`: the device, allocator, programs and queues; and in `MetalCompiler`, the import of the LLVM library before MTLCompiler (`:34`), which only keeps tinygrad's own LLVM from sharing MTLCompiler's symbols, `__reduce__`, and `disassemble`, which runs a checkout of the applegpu disassembler under tinygrad's `extra/` | the runtime half is rune's and nx.device's (see D3); tolk.next loads no LLVM, has no pickling, and has no `extra/`. One code generation service serves the process, where tinygrad makes one per compiler. |
-| `pretty_ptx` in `runtime/support/compiler_cuda.py` | it colours PTX for the `DEBUG>=5` print of `runtime/ops_cuda.py`, which loads programs and is rune's (see D3). |
+| `runtime/ops_metal.py` but `MetalCompiler`: the device, allocator, programs and queues; and in `MetalCompiler`, the import of the LLVM library before MTLCompiler (`:34`), which only keeps tinygrad's own LLVM from sharing MTLCompiler's symbols, `__reduce__`, and `disassemble`, which runs a checkout of the applegpu disassembler under tinygrad's `extra/` | the runtime half is `tolk.next.engine`'s and nx.device's (see D3); tolk.next loads no LLVM, has no pickling, and has no `extra/`. One code generation service serves the process, where tinygrad makes one per compiler. |
+| `pretty_ptx` in `runtime/support/compiler_cuda.py` | it colours PTX for the `DEBUG>=5` print of `runtime/ops_cuda.py`, which loads programs and is `tolk.next.engine`'s (see D3). |
 | `jitlink_check` and `osx_docker_cmd` in `runtime/support/compiler_cuda.py`, with the macOS branches of `NVRTCCompiler` | they serve the PTX compiler and the compile server, both excluded above. |
 | The `cachekey` argument of `ClangCompiler` in `runtime/support/compiler_cpu.py` | no caller passes it. |
 | `ImageDType` and image paths | only OpenCL and QCOM use them. |
@@ -91,7 +93,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The DSP renderer of `runtime/ops_dsp.py`, the DSP lengths of `memory_coalescing` in `codegen/late/coalesce.py` (`:138`), the DSP upcast limit of `Scheduler.apply_opt` in `codegen/opt/postrange.py` (`:122`) and the DSP upcasts of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:113-118`) | Qualcomm's Hexagon DSP is not a raven target. |
 | The QCOM grouping limit and workgroups of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:82`, `:164-176`) | QCOM's OpenCL renderer is excluded above. |
 | The `IMAGE` branches of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:49-59`, `:103-107`) | image paths, excluded above. |
-| `args_from_ast` in `codegen/opt/postrange.py` (`:256-258`), which allocates device buffers for beam search | allocating buffers to measure a kernel is execution, which is rune's (see D3); a search takes its measurement as a function. |
+| `args_from_ast` in `codegen/opt/postrange.py` (`:256-258`), which allocates device buffers for beam search | allocating buffers to measure a kernel is execution, which is `tolk.next.engine`'s (see D3); a search takes its measurement as a function, which the engine passes. |
 | The numpy and torch interop of `dtype.py` (`_to_np_dtype`, `_from_np_dtype`, `_to_torch_dtype`, `_from_torch_dtype`) | raven's arrays are nx's, and rune maps nx's types onto `Dtype`. |
 | `dtypes.int8s`, `int16s`, `int32s` and `int64s` in `dtype.py` | only the x86 ISA renderer, excluded above, reads them. |
 | `uop/validate.py`, whole: every function in it builds z3 terms, and its one entry point, `validate_index_with_z3`, is the optional z3 check of `uop/spec.py` | raven has no SMT solver among its dependencies. With `CHECK_OOB`, an access whose index bounds do not prove it in range fails the check, and says that the bound could not be proven without a solver. |
@@ -137,7 +139,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The settings `OPENPILOT_HACKS` and `FLOAT16` of `helpers.py` | they gate openpilot's `pm_fold_moved_after` pass (`schedule/prepare.py:45-60,276`), excluded with it. |
 | The setting `CAPTURING` of `helpers.py` | its reader, jit capture (`schedule/__init__.py:296`), is the `capturing` argument of `Schedule.create_linear_with_vars`, which the jit passes. |
 | The disk half of `SCACHE=2` in `schedule/__init__.py` (`:129-131,137`), which pickles a schedule into the disk cache | tolk.next has no serializer of graphs in the library, and `Diskcache` stores strings (see D8); `SCACHE=2` caches in memory, as `1` does. The row ends if the measurement of gpt-oss's first call (RFC 0012) asks for a schedule cache that outlives the process. |
-| `GlobalCounters` and the settings `MAX_BUFFER_SIZE` and `VALIDATE_WITH_CPU` of `helpers.py` | they are read where kernels run and buffers are allocated (`VALIDATE_WITH_CPU` at `engine/realize.py:283`), which is rune's (see D3); tolk.next keeps `compile_linear`'s `validate` argument and the `pm_validate` rewrite. |
+| `GlobalCounters` and the settings `MAX_BUFFER_SIZE` and `VALIDATE_WITH_CPU` of `helpers.py` | they are read where kernels run and buffers are allocated (`VALIDATE_WITH_CPU` at `engine/realize.py:283`), which is `tolk.next.engine`'s (see D3); tolk.next keeps `compile_linear`'s `validate` argument and the `pm_validate` rewrite. |
 | The setting `ALLOW_DEVICE_USAGE` of `helpers.py`, and the contexts that set it (`codegen/__init__.py:464`, `codegen/opt/postrange.py:270`, `engine/worker.py:9`, `function.py:61`) | the guard is structural: tolk.next cannot open a device. |
 | The other settings of `helpers.py` whose readers are not ported: `IMAGE`, `JIT`, `WINO`, `TRACEMETA`, `TRAINING`, `LRU`, `HCQ2`, `FUSE_OPTIM`, `USE_ATOMICS`, `CAPTURE_PROCESS_REPLAY`, `NULL_ALLOW_COPYOUT`, `VIZ`, `PROFILE`; the `PYTEST_XDIST_WORKER_COUNT` share of `PARALLEL`'s default; the `{DEV}_CC` migration check, and the `{DEV}_{RENDERER}` one of `Compiled._select_renderer` in `device.py` (`:484`) | image paths, the `Tensor` frontend and `TinyJit`, nx.device's allocators, the legacy AMD queue path, `nn`, process replay, the NULL device, viz and profiling are excluded above; raven never read `{DEV}_CC` or `{DEV}_{RENDERER}`. |
 
