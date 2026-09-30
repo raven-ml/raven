@@ -612,9 +612,9 @@ they read are these goldens.
 The suite is `Tolk_next.Opt` (`codegen/opt/opt/`), written `P` below.
 
 tinygrad orders two optimisations as the tuples `(op, axis, arg)`, and cannot
-compare two splits of one axis and amount into different targets, since
-`AxisType` has no order: `comparisons.golden` leaves those pairs out, and
-`P › order › compare is a total order` covers them. A split that is not from
+compare two splits of one axis and amount into different targets, a host
+accident recorded in the README's CPython rows: `comparisons.golden` leaves
+those pairs out, and `P › order › compare is a total order` covers them. A split that is not from
 the top is `(amount, target)` in tinygrad whether or not it spells the
 `False`; the heuristic never spells it, and tolk.next prints it the same way.
 
