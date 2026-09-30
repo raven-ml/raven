@@ -13,16 +13,6 @@ let ops = Op.Set.of_list
 let strf = Printf.sprintf
 let dedup l = Helpers.dedup (module Ops) l
 let u64 n = int ~dtype:Dtype.Uint64 n
-
-(* A weak integer, such as an offset that moves with a range, as a 64-bit word.
-   Its arithmetic commits at 64 bits here: left weak, it would commit at its own
-   width, 32 bits while its bounds fit, and the least type above a 32-bit signed
-   and a 64-bit unsigned integer is a float. *)
-let word64 o =
-  cast
-    (graph_rewrite ~ctx:() (cast o Dtype.Int64) Uop_weak.pm_commit_weak)
-    Dtype.Uint64
-
 let ins name src = v Op.Ins ~src ~arg:(Code { code = name; dtype = Dtype.Void })
 let binary s = v Op.Binary ~arg:(Bytes s)
 let part u a b = shrink u [ Some (Int a, Int b) ]
@@ -737,7 +727,7 @@ let signal_value ?(behind = []) ~inside p =
   | c, Some m ->
       List.fold_left
         (fun v r -> where (lt r (int 1)) (u64 0) v)
-        (word64 (add m (int (c + 1))))
+        (cast (add m (int (c + 1))) Dtype.Uint64)
         behind
 
 let ranges_of e = List.map fst e.strides
@@ -1616,7 +1606,7 @@ let lower_call ~devices call =
            let addr = load (index table [ int (slot_of n) ]) [] in
            match moving with
            | None -> (g, addr)
-           | Some o -> (g, add addr (word64 o)))
+           | Some o -> (g, add addr (cast o Dtype.Uint64)))
          normalized)
   in
   (lt_patches :=

@@ -45,7 +45,10 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
       kind commits [u]'s weak sources at the least upper type of [dt], [u]'s
       committed type and each weak source's committed type, and casts the result
-      to [dt].
+      to [dt]. Where that type is a float, as it is for a 64-bit unsigned [dt]
+      over a signed width, they commit at {!Dtype.Int64} instead, or at
+      {!Dtype.Uint64} where one of the committed types is: an integer cast
+      computes in integers.
 
     It runs with every rewrite that can build a weak constant, and must reach
     its fixed point before {!pm_lower_weak} gives defaults. *)

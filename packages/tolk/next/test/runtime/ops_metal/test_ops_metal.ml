@@ -137,6 +137,50 @@ let contains s sub =
   in
   go 0
 
+(* A kernel on METAL of a variable's quarter, rounded up, of threads: its launch
+   size is an expression of the variable, which the host program computes on
+   each run, as the kernel's compilation committed it. *)
+let quarter_sized () =
+  let n = Ops.variable "n" (`Int Z.one) (`Int (Z.of_int 1024)) in
+  let size = Ops.O.((n + Ops.int 3) // Ops.int 4) in
+  let param slot =
+    Ops.param ~shape:[ Int 256 ] ~device:(Single "METAL") slot Float32
+  in
+  let i = Ops.range (Sym size) [ 0 ] in
+  let x = Ops.load (Ops.index (param 1) [ i ]) [] in
+  let st =
+    Ops.store
+      (Ops.index (param 0) [ i ])
+      (Ops.add x (Ops.float ~dtype:Float32 1.))
+  in
+  let kernel =
+    Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ]
+  in
+  let metal =
+    Renderer.with_compiler
+      (Renderer.Compiler.v Fun.id)
+      (Cstyle.metal { host_target with device = "METAL"; arch = "Apple9" })
+  in
+  let buf () = Ops.new_buffer (Single "METAL") 256 Float32 in
+  Ops.call
+    (Codegen.to_program kernel metal)
+    [ buf (); buf (); Ops.bind n (`Int (Z.of_int 100)) ]
+
+let sizes =
+  group "launch sizes"
+    [
+      test "a launch size of an expression is computed in integers" (fun () ->
+          let src =
+            host_sources
+              (plain (fun () ->
+                   Hcq2.compile_linear
+                     ~devices:
+                       (recorded_devices ~arch:"Apple9" ~residency_set:true)
+                     (Ops.v Linear ~src:[ quarter_sized () ])))
+          in
+          is_false ~msg:"float" (contains src "float"));
+    ]
+
 let loops =
   group "loops (D30)"
     [
@@ -158,4 +202,4 @@ let loops =
             ]);
     ]
 
-let () = exit (run "Tolk_next.Ops_metal" [ recorded; loops ])
+let () = exit (run "Tolk_next.Ops_metal" [ recorded; loops; sizes ])

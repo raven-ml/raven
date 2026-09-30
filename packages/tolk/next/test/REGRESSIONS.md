@@ -731,6 +731,7 @@ pass.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
+| DIVERGENCES D44 | an integer cast of a weak expression computes in integers, a 64-bit unsigned one included | `W › pm_commit_weak › a 64-bit unsigned cast of a weak expression keeps its value past a float's precision (D44)`, `W › laws › pm_commit_weak computes an integer cast in integers (D44)` |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_expression_anchors_at_strong_lub | a cast commits a mixed expression at the cast's width, whatever the default float | `W › pm_commit_weak › cast_anchors_a_mixed_expression_at_the_cast.golden`; the `Tensor` half is dropped: `Tensor` surface, the frontend is nx |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_cast_weak_expression_commits_at_cast_floor | a cast below the default float never narrows | `W › pm_commit_weak › cast_never_narrows_below_the_default_float.golden` |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_store_weak_value_uses_destination_dtype | a store commits a weak value at its destination's type | `W › pm_commit_weak › store_commits_its_value_at_the_destination.golden` |
@@ -2797,6 +2798,7 @@ the `slow` alias, built on macOS only).
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Fence, TestHCQ2FFI | the fence and C calls on the CPU | the `Hcq2` and `Engine` suites' |
 | tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `OX › a profile records a span of each kernel on the device, in order`; `OX › a profiled batch run twice keeps the second run's spans` (D34) |
 | DIVERGENCES D30 | a range's addresses, integers whatever the element type | `O › loops (D30) › a range's addresses are integers, profiled or not` |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes (`d.cast(dtypes.uint64)`) | a launch size of an expression, cast to a 64-bit word, stays an integer: the kernel's compilation commits it | `O › launch sizes › a launch size of an expression is computed in integers` |
 | DIVERGENCES D30 | a range around calls, a loop of indirect commands in one submission | `OX › each trip of a range runs its kernel on its own window`, `› a range of 20000 trips runs from one indirect command buffer`, `› a profiled range records a span of each trip's kernel` |
 | old: `unit/test_metal_completion.ml` (7 tests) | the old runtime's command ownership, completion order and retirement | dropped: completion and command buffers are nx.device's (`Submission`, `resolve`) |
 | old: `unit/test_runtime_metal.ml` "an argument structure of 15/16/29/33 buffers ..." | many buffers dispatch and rebind | `OX › a kernel of 33 buffers runs from its arguments' buffer`: one argument buffer, so no direct dispatch |

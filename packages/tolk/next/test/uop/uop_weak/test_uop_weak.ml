@@ -57,6 +57,17 @@ let commit ?default_float = rewrites ?default_float Uop_weak.pm_commit_weak
 let pm_commit_weak =
   group "pm_commit_weak"
     [
+      test
+        "a 64-bit unsigned cast of a weak expression keeps its value past a \
+         float's precision (D44)" (fun () ->
+          let b = var "b" 0 (pow2 40) in
+          let u = Ops.cast Ops.O.((b * int 3) + int 1) Uint64 in
+          equal Dtypes.const
+            (i ((3 * (pow2 30 + 1)) + 1))
+            (Interpreter.eval
+               ~vars:[ ("b", i (pow2 30 + 1)) ]
+               (rewrite Uop_weak.pm_lower_weak
+                  (rewrite Uop_weak.pm_commit_weak u))));
       commit "peer_keeps_a_derivable_literal_bare" Ops.O.(small Int8 + int 3);
       commit "peer_rounds_a_derivable_literal"
         Ops.O.(loaded_float * float (-0.9999999893980771));
@@ -312,6 +323,10 @@ let bare_consumers sink =
     (fun u -> Ops.op u <> Op.Cast && List.exists bare (Ops.src u))
     (Ops.toposort sink)
 
+let integer_type =
+  Gen.of_list ~pp:(Testable.pp Dtypes.dtype)
+    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
 let laws =
   let sink es = Ops.sink (List.map build es) in
   group "laws"
@@ -331,6 +346,16 @@ let laws =
           let u = sink es in
           equal values (values_of env u)
             (values_of env (rewrite Uop_weak.pm_commit_weak u)));
+      prop "pm_commit_weak computes an integer cast in integers (D44)"
+        (Gen.pair gen_expr integer_type) (fun (es, dt) ->
+          let committed =
+            rewrite Uop_weak.pm_commit_weak
+              (Ops.sink (List.map (fun e -> Ops.cast (build e) dt) es))
+          in
+          equal (list Uops.uop) []
+            (List.filter
+               (fun u -> Dtype.is_float (Ops.dtype u))
+               (Ops.toposort committed)));
       prop "pm_cast_const states the width of every constant" gen_expr
         (fun es ->
           equal (list Uops.uop) []

@@ -64,7 +64,17 @@ let cast_weak_srcs c u =
         (fun s -> if weak s then Some (committed s) else None)
         (src u)
     in
-    let dt = Dtype.least_upper (dtype c :: committed u :: srcs) in
+    let widths = committed u :: srcs in
+    let dt = Dtype.least_upper (dtype c :: widths) in
+    (* An integer cast never computes in a float, which the lattice puts above a
+       64-bit unsigned and a signed integer (DIVERGENCES D44): the node computes
+       at 64 bits, unsigned only where its bounds pass a signed integer's. *)
+    let dt =
+      if Dtype.is_int (dtype c) && Dtype.is_float dt then
+        if List.exists (Dtype.equal Dtype.Uint64) widths then Dtype.Uint64
+        else Dtype.Int64
+      else dt
+    in
     Option.map (fun ret -> cast ret (dtype c)) (commit_srcs_at u dt)
 
 (* Rides every rewrite that can build a weak constant, and must reach its fixed

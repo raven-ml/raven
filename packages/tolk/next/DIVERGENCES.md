@@ -958,7 +958,7 @@ the Exclusions of `README.md`.
   `stages` reads, and `item` in `sched_batches`, the positions and the two
   visits of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
-  of `lower_call` and `word64`, and the kernels not compiled yet of
+  of `lower_call`, and the kernels not compiled yet of
   `get_enqueue_devs`; `lib/runtime/ops_metal.ml` and
   `lib/runtime/ops_cuda.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
@@ -973,12 +973,9 @@ the Exclusions of `README.md`.
   loop's indirect commands and their arguments, and CUDA's host program
   loops over its launches, each trip's reading its trip's extra words.
   - An address that moves with a range (its storage's plus the view's offset)
-    and a position a signal stores are 64-bit words built from the range's
-    weak integers, which `word64` commits at 64 bits. Left weak, the unsigned
-    64-bit cast commits them at the least type above it and their own 32-bit
-    signed width, which is a float, and an offset past 2^24 bytes rounds to
-    another trip's. tinygrad's loop builds no such word: its offsets only
-    index the command buffer.
+    and a position a signal stores are 64-bit words cast from the range's weak
+    integers, which D44 computes in integers. tinygrad's loop builds no such
+    word: its offsets only index the command buffer.
   - A range whose calls none is enqueued stays a range around them, reading
     `range_value` variables that the engine binds on each trip; one that
     mixes the two, or two kinds of device, is refused. `get_enqueue_devs`
@@ -1146,6 +1143,32 @@ the Exclusions of `README.md`.
   run › a planned buffer a range writes is not placed over one it leaves` and
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half.
+
+## D44. An integer cast of a weak expression computes in integers
+
+- **tinygrad:** `uop/weak.py:27-33` (`cast_weak_srcs`), `dtype.py:180-194`
+  (`promo_lattice`, `least_upper_dtype`).
+- **tolk.next:** `lib/uop/uop_weak.ml:55` (`cast_weak_srcs`).
+- **Differs:** a cast to a committed type over a weak expression commits the
+  expression at the least upper type of the cast's type and the committed
+  types of the expression and its weak sources. In the lattice, a 64-bit
+  unsigned integer and any signed one meet only at a float, so tinygrad
+  computes such an expression, `(b * 3 + 1).cast(dtypes.uint64)` for one, in
+  float32, and a value past 2^24 rounds. Where that least upper type is a
+  float and the cast's type an integer, the expression commits at `Int64`
+  here, or at `Uint64` where one of the committed types is: an integer cast
+  computes in integers, and converting the 64-bit result to the cast's type is
+  C's conversion of the integer. Every other cast commits as tinygrad's does.
+- **Reason:** (b). The host programs of staged scans (D30) compute each trip's
+  addresses and signal positions as 64-bit unsigned words cast from a range's
+  weak integers, and computed them in float: an offset past 2^24 bytes read
+  another trip's window.
+- **Pinned by:** the Uop_weak suite (`test/uop/uop_weak`): `pm_commit_weak ›
+  a 64-bit unsigned cast of a weak expression keeps its value past a float's
+  precision (D44)` and `laws › pm_commit_weak computes an integer cast in
+  integers (D44)`; the Hcq2, Ops_cuda and Ops_metal suites' `a range's
+  addresses are integers, profiled or not` and the Hcq2 suite's `ranges (D30)
+  › a trip reads its window past what a float offset holds`.
 
 ## D45. Staging memory is a placeholder of the host
 
