@@ -360,7 +360,8 @@ let chooses_the_fastest =
   let pp ppf (kernel, amt, seed) =
     Format.fprintf ppf "%s, width %d, seed %d" kernel amt seed
   in
-  prop ~count:20 "a search chooses the fastest program it measured"
+  prop ~tags:[ "slow" ] ~count:20
+    "a search chooses the fastest program it measured"
     Gen.(
       with_pp pp
         (triple
@@ -715,6 +716,39 @@ let under_environment =
                 "BEAM_SEARCH:"; "BEAM failed for opts"; "BEAM_SEARCH: final tm=";
               ]
             (output ()));
+      Golden.cases ~key:[ "kernel"; "target"; "amt" ]
+        "searches_environment.golden" (fun cell ->
+          let measure, calls = recording (golden_time ~failing:false) in
+          let k =
+            search ~measure
+              (int_of_string (cell "amt"))
+              (scheduled (cell "kernel") (cell "target"))
+          in
+          equal opts (Kernel_opts.opts_of_cell (cell "opts")) (K.applied_opts k);
+          equal ~msg:"measurements" int
+            (int_of_string (cell "measurements"))
+            (List.length (calls ())));
+      test
+        "a candidate of more than 1000 times the fewest operations is not \
+         measured" (fun () ->
+          let is_pad = function Opt.Padto _ -> true | _ -> false in
+          let k = scheduled "transpose_33" "metal" in
+          let pads =
+            List.filter
+              (fun (_, k') -> List.exists is_pad (K.applied_opts k'))
+              (quietly (fun () -> Search.get_kernel_actions k))
+          in
+          is_true ~msg:"a pad is a candidate" (pads <> []);
+          ignore (output ());
+          let measure, calls = recording (golden_time ~failing:false) in
+          ignore (search ~measure 1 k);
+          contains ~sub:"too much compute" (output ());
+          is_true ~msg:"measured" (calls () <> []);
+          List.iter
+            (fun c ->
+              is_true ~msg:"a pad was measured"
+                (not (List.exists is_pad (kernel_info c.prg).applied_opts)))
+            (calls ()));
       test "kernels of too many lanes are reported under BEAM_LOG_SURPASS_MAX"
         (fun () ->
           ignore (output ());

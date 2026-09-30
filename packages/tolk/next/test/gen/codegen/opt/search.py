@@ -3,7 +3,7 @@ the candidates it makes of real kernels, and the kernels it chooses under a
 measurement that computes each program's time.
 
 `actions` lists the table in order, and `actions_padto` the table under
-`BEAM_PADTO=1 TC=2 TC_OPT=0`, which the module reads when it is imported. A
+ENVIRONMENT, whose variables the module reads when it is imported. A
 kernel golden, named after the kernel, is the sink that compiling a real kernel
 hands to `apply_opts`. `targets` lists the renderers.
 
@@ -16,8 +16,13 @@ measurement `time` below in place of running programs: its optimisations, and
 how many times it measured. No program is compiled: the binary of a program is
 its source's bytes. The measurement is a function of what the program's kernel
 and launch record, so that tolk.next's suite can compute it too.
+`searches_environment` lists the same under ENVIRONMENT: there a transposing
+copy has no arithmetic, and each pad adds a selection per element, so the
+search leaves out the pads, which cost more than a thousand times the fewest
+operations.
 """
 
+import contextlib
 import importlib
 import os
 
@@ -74,16 +79,28 @@ def actions():
     return ["action", "opt"], list(enumerate(search.actions))
 
 
-@table
-def actions_padto():
-    os.environ.update(BEAM_PADTO="1", TC="2", TC_OPT="0")
+# The variables of the process in which tolk.next's suite checks what they
+# change, less those that only print.
+ENVIRONMENT = {"BEAM_PADTO": "1", "TC": "2", "TC_OPT": "0", "BEAM_STRICT_MODE": "1", "BEAM_UOPS_MAX": "43"}
+
+
+@contextlib.contextmanager
+def environment():
+    os.environ.update(ENVIRONMENT)
     getenv.cache_clear()
+    importlib.reload(search)
     try:
-        return ["action", "opt"], list(enumerate(importlib.reload(search).actions))
+        yield
     finally:
-        for k in ("BEAM_PADTO", "TC", "TC_OPT"): del os.environ[k]
+        for k in ENVIRONMENT: del os.environ[k]
         getenv.cache_clear()
         importlib.reload(search)
+
+
+@table
+def actions_padto():
+    with environment():
+        return ["action", "opt"], list(enumerate(search.actions))
 
 
 # Kernels
@@ -102,6 +119,7 @@ KERNELS = {
     "add_small": lambda: last(empty(16) + 1),
     "add": lambda: last(empty(64, 64) + empty(64, 64)),
     "add_large": lambda: last(empty(1024, 1024) + 1),
+    "transpose_33": lambda: last(empty(33, 33).T.contiguous()),
     "add_3d": lambda: last(empty(16, 16, 4096) + empty(16, 1, 4096)),
     "sum_rows": lambda: last(empty(32, 32).sum(1)),
     "sum_3x3": lambda: last(empty(4096, 3, 3).sum((1, 2))),
@@ -231,3 +249,10 @@ def searches():
         opts, count = searched(kernel, target, amt, failing, allow_test_size)
         rows.append((kernel, target, amt, failing, allow_test_size, repr(opts), count))
     return ["kernel", "target", "amt", "failing", "allow_test_size", "opts", "measurements"], rows
+
+
+@table
+def searches_environment():
+    with environment():
+        opts, count = searched("transpose_33", "metal", 1)
+    return ["kernel", "target", "amt", "opts", "measurements"], [("transpose_33", "metal", 1, repr(opts), count)]

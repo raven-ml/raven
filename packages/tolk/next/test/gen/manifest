@@ -1662,10 +1662,12 @@ codegen/opt/search/matmul_half.golden
 codegen/opt/search/matmul_small.golden
 codegen/opt/search/pad_7x7.golden
 codegen/opt/search/searches.golden
+codegen/opt/search/searches_environment.golden
 codegen/opt/search/sum_3x3.golden
 codegen/opt/search/sum_rows.golden
 codegen/opt/search/symbolic.golden
 codegen/opt/search/targets.golden
+codegen/opt/search/transpose_33.golden
 codegen/opt/search/variable.golden
 codegen/opt/search/variable_rows.golden
 codegen/simplify/arange.golden
