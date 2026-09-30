@@ -29,9 +29,10 @@ let float1 f x = if narrow x then Ops.cast (f (widen x)) (dtype x) else f x
 let float2 f x y =
   if narrow x then Ops.cast (f (widen x) (widen y)) (dtype x) else f x y
 
-(* The unsigned integer of [x]'s width, [x] a float of at least 32 bits. *)
-let bits x =
-  Ops.bitcast x (if Dtype.itemsize (dtype x) = 8 then Dtype.Uint64 else Uint32)
+(* The unsigned integer of [dt]'s width, [uint32] for a narrower one: the bits
+   of a float of at least 32 bits, and the width at which integers wrap. *)
+let unsigned dt = if Dtype.itemsize dt = 8 then Dtype.Uint64 else Dtype.Uint32
+let bits x = Ops.bitcast x (unsigned (dtype x))
 
 (* The bits of the float [x] with the sign bit only, or all bits but it. *)
 let sign_mask x = Z.shift_left Z.one ((8 * Dtype.itemsize (dtype x)) - 1)
@@ -47,8 +48,6 @@ let sign_bit x =
    promote integers narrower than [int] to [int], whose products overflow: a
    wrapping operation computes on the unsigned bit pattern, at 32 bits for the
    narrow widths, and narrows back. *)
-
-let unsigned dt = if Dtype.itemsize dt = 8 then Dtype.Uint64 else Dtype.Uint32
 
 let lift x =
   let u = unsigned (dtype x) in

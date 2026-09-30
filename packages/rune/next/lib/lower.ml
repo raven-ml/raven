@@ -98,9 +98,7 @@ let rec nests shape strides = function
 (* [window flat start n] is the [n] elements of the flat node [flat] from
    [start], padded where [flat] ends first: those elements are never read. *)
 let window flat start n =
-  let size =
-    match Ops.shape flat with [ Ops.Int size ] -> size | _ -> assert false
-  in
+  let size = Ops.max_numel flat in
   let flat =
     if start + n <= size then flat
     else Ops.pad flat [ Some (Ops.Int 0, Ops.Int (start + n - size)) ]
@@ -316,18 +314,15 @@ let home x = if on_disk x then Placement.host else Nx.placement x
 
 (* Traced values *)
 
-let shape_of u =
-  Array.of_list
-    (List.map
-       (function Ops.Int n -> n | Ops.Sym _ -> assert false)
-       (Ops.shape u))
-
 (* A value made beside one at [p] is a full copy on each of its devices. *)
 let context p =
   if Placement.equal p Placement.host then Placement.host
   else Placement.replicated ~backend:(Placement.backend p) (Placement.devices p)
 
-let traced p dt u = Repr.Traced.v ~context:(context p) p dt (shape_of u) (Uop u)
+let traced p dt u =
+  Repr.Traced.v ~context:(context p) p dt
+    (Array.of_list (Ops.max_shape u))
+    (Uop u)
 
 let uop : type a b. (a, b) Nx.t -> Ops.t =
  fun x ->

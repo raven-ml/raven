@@ -8,46 +8,10 @@ open Tolk_next
 let dtype = Ops.dtype
 let is_float u = Dtype.is_float (dtype u)
 let int u n = Ops.const_like u (`Int (Z.of_int n))
-
-let size u axis =
-  match List.nth (Ops.shape u) axis with
-  | Ops.Int n -> n
-  | Ops.Sym _ -> invalid_arg "an axis of symbolic size"
-
-let signed dt =
-  match Dtype.itemsize dt with
-  | 1 -> Dtype.Int8
-  | 2 -> Int16
-  | 4 -> Int32
-  | _ -> Int64
-
-let unsigned dt =
-  match Dtype.itemsize dt with
-  | 1 -> Dtype.Uint8
-  | 2 -> Uint16
-  | 4 -> Uint32
-  | _ -> Uint64
-
-(* Axes *)
-
-let unsqueeze u axis =
-  let s = Ops.shape u in
-  Ops.reshape u
-    (List.filteri (fun i _ -> i < axis) s
-    @ (Ops.Int 1 :: List.filteri (fun i _ -> i >= axis) s))
-
-let shrink_axis u axis lo hi =
-  Ops.shrink u
-    (List.mapi
-       (fun i _ -> if i = axis then Some (Ops.Int lo, Ops.Int hi) else None)
-       (Ops.shape u))
-
-let pad_axis ~value u axis before after =
-  Ops.pad ~value u
-    (List.mapi
-       (fun i _ ->
-         if i = axis then Some (Ops.Int before, Ops.Int after) else None)
-       (Ops.shape u))
+let size u axis = List.nth (Ops.max_shape u) axis
+let width dts dt = List.find (fun d -> Dtype.itemsize d = Dtype.itemsize dt) dts
+let signed = width Dtype.sints
+let unsigned = width Dtype.uints
 
 (* The vector [u] laid along [axis] of [rank] axes, the others of one
    element. *)
@@ -132,7 +96,7 @@ let scan k ~axis x = combine (fun op u -> Ops.cumalu u axis op) k x
    furthest from the axis's length. *)
 let argmax x axis =
   let n = size x axis in
-  let m = Ops.eq x (unsqueeze (Ops.rop x Op.Max [ axis ]) axis) in
+  let m = Ops.eq x (Ops.unsqueeze (Ops.rop x Op.Max [ axis ]) axis) in
   let down = Ops.arange ~start:n ~step:(-1) 0 in
   let down =
     Ops.reshape down
@@ -158,7 +122,8 @@ let bit_length n =
   let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
   go n 0
 
-let halves u axis = (shrink_axis u axis 0 1, shrink_axis u axis 1 2)
+let halves u axis =
+  match Ops.split ~axis u [ 1; 1 ] with [ a; b ] -> (a, b) | _ -> assert false
 
 (* [bitonic ~descending x axis] is the integers [x] sorted along [axis]. The
    axis, padded to a power of two with elements that sort last, is split into
@@ -172,7 +137,11 @@ let bitonic ~descending x axis =
       if descending then Dtype.min (dtype x) else Dtype.max (dtype x)
     in
     let x =
-      pad_axis ~value:(fill :> Dtype.const) x axis 0 ((1 lsl stages) - n)
+      Ops.pad_to
+        ~value:(fill :> Dtype.const)
+        x
+        (List.init (Ops.ndim x) (fun d ->
+             if d = axis then Some (Ops.Int (1 lsl stages)) else None))
     in
     let x = Ops.unflatten x axis (List.init stages (fun _ -> Ops.Int 2)) in
     let r = Ops.ndim x in
@@ -242,7 +211,7 @@ let take x axis p =
   in
   let hot =
     Ops.eq
-      (unsqueeze p (axis + 1))
+      (Ops.unsqueeze p (axis + 1))
       (along
          (Ops.ndim p + 1)
          (axis + 1)
@@ -250,7 +219,7 @@ let take x axis p =
   in
   let picked =
     Ops.where hot
-      (Ops.expand (unsqueeze bits axis) (Ops.shape hot))
+      (Ops.expand (Ops.unsqueeze bits axis) (Ops.shape hot))
       (Ops.const_like ~dtype:(dtype bits) hot (`Int Z.zero))
   in
   let r = Ops.rop picked Op.Add [ axis + 1 ] in

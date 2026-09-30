@@ -9,17 +9,6 @@ let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l
 let pads padding = List.map (fun (b, a) -> Some (Ops.Int b, Ops.Int a)) padding
 
-let dims u =
-  List.map (function Ops.Int n -> n | Ops.Sym _ -> assert false) (Ops.shape u)
-
-let unsqueeze u = Ops.reshape u (Ops.shape u @ [ Ops.Int 1 ])
-
-(* [swap u a b] exchanges the axes [a] and [b] of [u]. *)
-let swap u a b =
-  Ops.permute u
-    (List.init (Ops.ndim u) (fun i ->
-         if i = a then b else if i = b then a else i))
-
 (* [along rank axis v] is the vector [v] as the axis [axis] of a node of [rank]
    axes. *)
 let along rank axis v =
@@ -29,7 +18,7 @@ let along rank axis v =
 
 (* [one_hot idx n] is whether each index of [idx] is each position of a new last
    axis of [n] elements. *)
-let one_hot idx n = Ops.eq (unsqueeze idx) (Ops.arange n)
+let one_hot idx n = Ops.eq (Ops.unsqueeze idx (-1)) (Ops.arange n)
 
 (* Bits
 
@@ -38,11 +27,7 @@ let one_hot idx n = Ops.eq (unsqueeze idx) (Ops.arange n)
    signalling NaN. *)
 
 let unsigned dt =
-  match Dtype.itemsize dt with
-  | 1 -> Dtype.Uint8
-  | 2 -> Dtype.Uint16
-  | 4 -> Dtype.Uint32
-  | _ -> Dtype.Uint64
+  List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
 
 let bits u =
   if Dtype.equal (dtype u) Bool then Ops.cast u Uint8
@@ -76,7 +61,7 @@ let pad padding fill x =
 (* Pieces of one length are stacked. Pieces of different lengths are each
    selected on the stretch they fill. *)
 let cat axis xs =
-  let length u = List.nth (dims u) axis in
+  let length u = List.nth (Ops.max_shape u) axis in
   match (List.filter (fun u -> length u > 0) xs, xs) with
   | _, [] -> invalid_arg "a concatenation of no nodes"
   | [], x :: _ -> x
@@ -105,7 +90,7 @@ let cat axis xs =
    new last axis, as the reference builds them. *)
 
 let gather axis indices x =
-  let n = List.nth (dims x) axis and r = Ops.ndim x in
+  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
   let x =
     Ops.shrink_to x
       (List.mapi
@@ -113,17 +98,20 @@ let gather axis indices x =
          (Ops.shape indices))
   in
   of_bits (dtype x)
-    (pick (one_hot indices n) (swap (unsqueeze (bits x)) axis r))
+    (pick (one_hot indices n)
+       (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis r))
 
 let scatter ~mode ~unique ~axis ~indices ~updates x =
-  let n = List.nth (dims x) axis and r = Ops.ndim x in
+  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
   (* Each position of [x] against each update along [axis], moved last. *)
   let within u = Ops.pad_to u (List.map Option.some (Ops.shape x) @ [ None ]) in
-  let mask = within (swap (one_hot indices n) axis r) in
+  let mask = within (Ops.transpose (one_hot indices n) axis r) in
   let src =
     within
-      (swap
-         (Ops.expand (unsqueeze updates) (Ops.shape updates @ [ Ops.Int n ]))
+      (Ops.transpose
+         (Ops.expand
+            (Ops.unsqueeze updates (-1))
+            (Ops.shape updates @ [ Ops.Int n ]))
          axis r)
   in
   let reached = Ops.rop mask Op.Max [ r ] in
@@ -132,7 +120,7 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
       let added = Ops.where mask src (Ops.const_like src (`Int Z.zero)) in
       Ops.where reached
         (Lower_reduce.reduce Sum ~axes:[ r ]
-           (Ops.cat ~axis:r (unsqueeze x) [ added ]))
+           (Ops.cat ~axis:r (Ops.unsqueeze x (-1)) [ added ]))
         x
   | `Set ->
       (* The last update that reaches each position is the one of highest index
@@ -140,11 +128,13 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
       let last =
         if unique then mask
         else
-          let order = along (r + 1) r (Ops.arange (List.nth (dims mask) r)) in
+          let order =
+            along (r + 1) r (Ops.arange (List.nth (Ops.max_shape mask) r))
+          in
           let latest =
             Ops.rop (Ops.where mask order (Ops.int (-1))) Op.Max [ r ]
           in
-          Ops.eq order (unsqueeze latest)
+          Ops.eq order (Ops.unsqueeze latest (-1))
       in
       Ops.where reached (of_bits (dtype x) (pick last (bits src))) x
 
@@ -152,7 +142,7 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
    the positions of [x] along that axis against those of [v] as a one-hot mask,
    as a gather builds it. Along an axis [v] fills, the start is 0. *)
 let update x ~starts v =
-  let n = dims x and k = dims v and r = Ops.ndim x in
+  let n = Ops.max_shape x and k = Ops.max_shape v and r = Ops.ndim x in
   let moved =
     List.filter (fun d -> List.nth k d < List.nth n d) (List.init r Fun.id)
   in
@@ -162,7 +152,9 @@ let update x ~starts v =
   let shift b d =
     let at = along (r + 1) d (Ops.arange (List.nth n d)) in
     let offset = along (r + 1) r (Ops.arange (List.nth k d)) in
-    pick (Ops.eq at (Ops.add offset (start d))) (swap (unsqueeze b) d r)
+    pick
+      (Ops.eq at (Ops.add offset (start d)))
+      (Ops.transpose (Ops.unsqueeze b (-1)) d r)
   in
   let inside d =
     let at = along r d (Ops.arange (List.nth n d)) in
@@ -185,7 +177,7 @@ let product = List.fold_left ( * ) 1
 let unfold ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
   let lead = Ops.ndim x - k in
-  let kept = List.filteri (fun d _ -> d < lead) (dims x) in
+  let kept = List.filteri (fun d _ -> d < lead) (Ops.max_shape x) in
   let padded =
     Ops.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
   in
@@ -195,7 +187,7 @@ let unfold ~kernel_size ~stride ~dilation ~padding x =
       (Array.to_list kernel_size)
   in
   let counts =
-    List.filteri (fun d _ -> d >= lead && d < lead + k) (dims windows)
+    List.filteri (fun d _ -> d >= lead && d < lead + k) (Ops.max_shape windows)
   in
   Ops.reshape
     (Ops.permute windows
@@ -233,7 +225,7 @@ let cut ~kernel ~stride ~dilation ~size =
 let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
   let lead = Ops.ndim x - 2 in
-  let kept = List.filteri (fun d _ -> d < lead) (dims x) in
+  let kept = List.filteri (fun d _ -> d < lead) (Ops.max_shape x) in
   let cuts =
     List.init k (fun a ->
         let before, after = padding.(a) in
