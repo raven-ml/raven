@@ -182,6 +182,17 @@ let splitting =
                   (ranges (split (modulo (r 8) 2))))));
       test "a range taken modulo a number that does not divide its size stays"
         (fun () -> equal (list int) [ 7 ] (split_sizes (modulo (r 7) 3)));
+      test "a remainder by a constant that is not an integer leaves the range"
+        (fun () ->
+          List.iter
+            (fun c ->
+              let r = r 8 in
+              let u =
+                kernel
+                  [ Ops.end_ (store_at r (Ops.alu r Floormod [ c ])) [ r ] ]
+              in
+              equal uop u (split u))
+            [ Ops.bool true; Ops.float 2. ]);
       test "a truncating remainder is no modulo" (fun () ->
           let r = r 12 in
           let u =
