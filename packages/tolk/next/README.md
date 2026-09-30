@@ -83,7 +83,10 @@ is scope, not a divergence: the part left out is listed here, and
 | `ImageDType` and image paths | only OpenCL and QCOM use them. |
 | The `IMAGE` branch of `gated_given_valid` in `uop/symbolic.py` (`:431`) | an image path, excluded above. |
 | `_drop_valid_stmts`, `simplify_valid_image_load`, `image_valid_dims`, `transform_to_image`, `store_image` and `pm_simplify_add_image` in `codegen/late/coalesce.py`, and the image lengths of its `memory_coalescing` (`:141`) | image paths, excluded above. |
-| The DSP renderer of `runtime/ops_dsp.py`, and the DSP lengths of `memory_coalescing` in `codegen/late/coalesce.py` (`:138`) | Qualcomm's Hexagon DSP is not a raven target. |
+| The DSP renderer of `runtime/ops_dsp.py`, the DSP lengths of `memory_coalescing` in `codegen/late/coalesce.py` (`:138`), the DSP upcast limit of `Scheduler.apply_opt` in `codegen/opt/postrange.py` (`:122`) and the DSP upcasts of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:113-118`) | Qualcomm's Hexagon DSP is not a raven target. |
+| The QCOM grouping limit and workgroups of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:82`, `:164-176`) | QCOM's OpenCL renderer is excluded above. |
+| The `IMAGE` branches of `hand_coded_optimizations` in `codegen/opt/heuristic.py` (`:49-59`, `:103-107`) | image paths, excluded above. |
+| `args_from_ast` in `codegen/opt/postrange.py` (`:256-258`), which allocates device buffers for beam search | allocating buffers to measure a kernel is execution, which is rune's (see D3); a search takes its measurement as a function. |
 | The numpy and torch interop of `dtype.py` (`_to_np_dtype`, `_from_np_dtype`, `_to_torch_dtype`, `_from_torch_dtype`) | raven's arrays are nx's, and rune maps nx's types onto `Dtype`. |
 | `dtypes.int8s`, `int16s`, `int32s` and `int64s` in `dtype.py` | only the x86 ISA renderer, excluded above, reads them. |
 | `uop/validate.py`, whole: every function in it builds z3 terms, and its one entry point, `validate_index_with_z3`, is the optional z3 check of `uop/spec.py` | raven has no SMT solver among its dependencies. With `CHECK_OOB`, an access whose index bounds do not prove it in range fails the check, and says that the bound could not be proven without a solver. |
