@@ -275,24 +275,6 @@ let ordered =
          else Some (runs_in_order name))
        kernel_graphs)
 
-(* [apart big linear] is [linear] with the buffers it makes, which [big] does
-   not hold, in slots of their own. *)
-let apart big linear =
-  let held = Ops.backward_slice_with_self big in
-  let made =
-    List.filter
-      (fun n -> Ops.op n = Buffer && not (Ops.Nodes.mem n held))
-      (Ops.toposort linear)
-  in
-  Ops.substitute linear
-    (List.mapi
-       (fun k n ->
-         match Ops.arg n with
-         | Param p ->
-             (n, Ops.replace ~arg:(Param { p with slot = 100_000 + k }) n)
-         | _ -> (n, n))
-       made)
-
 let unplanned big = fst (Schedule.create_linear_with_vars ~capturing:true big)
 
 let computes big =
@@ -306,8 +288,7 @@ let computes big =
   let into_given = List.filter (fun (s, _, _) -> List.mem s slots) in
   equal (list write)
     (Tensors.writes ~buffers big)
-    (into_given
-       (Kernel_graphs.linear_writes ~vars ~buffers (apart big (unplanned big))))
+    (into_given (Kernel_graphs.linear_writes ~vars ~buffers (unplanned big)))
 
 (* Tensors runs no movement that a variable reaches. *)
 let has_variables u =

@@ -127,8 +127,7 @@ let recorded =
    given, its parameters and buffers (Tensors); call-local storage ({!Op.Alloc})
    is scratch, which preparing may remove or add. Memory holds small integers,
    the same on each device of a replicated buffer and different on each device
-   of a sharded one; the storage the preparation makes is numbered apart from
-   it. *)
+   of a sharded one. *)
 
 let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
 
@@ -167,21 +166,6 @@ let filled u =
       (p.slot, Array.init (size * devices p.device) at))
     (storage u)
 
-(* [apart given u] is [u] with the storage it makes and [given] does not hold in
-   slots of their own. *)
-let apart given u =
-  let held = Ops.backward_slice_with_self given in
-  let made =
-    List.filter
-      (fun (n, _) -> Ops.op n = Alloc && not (Ops.Nodes.mem n held))
-      (storage u)
-  in
-  Ops.substitute ~enter_calls:true u
-    (List.mapi
-       (fun k (n, (p : Ops.param_arg)) ->
-         (n, Ops.replace ~arg:(Param { p with slot = 1000 + k }) n))
-       made)
-
 let close = Testable.float_rel ~rel:1e-6 ~abs:0.
 
 let value =
@@ -205,7 +189,7 @@ let keeps_writes name =
       let into_given = List.filter (fun (s, _, _) -> List.mem s given) in
       equal (list write)
         (into_given (Tensors.writes ~buffers sink))
-        (into_given (Tensors.writes ~buffers (apart sink (prepared name)))))
+        (into_given (Tensors.writes ~buffers (prepared name))))
 
 (* Programs the law does not apply to: a call of a kernel or of a compiled
    schedule, which Tensors does not run, and a symbolic shape. *)
