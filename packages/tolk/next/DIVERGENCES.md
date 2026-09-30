@@ -148,7 +148,10 @@ the Exclusions of `README.md`.
     one reader; the device's queue encoders, which `hcq2.py` finds in the
     device registry (`Device[d].pm_encode`, `has_copy_queue`, `host`), are
     given by the caller in its description of each device (`Hcq2.device`);
-  - the compiler modules precede `Cstyle`.
+  - the compiler modules precede `Cstyle`, and `ops_metal.py`'s
+    `MetalCompiler`, which `cstyle.py` imports inside `MetalRenderer`, is
+    `Compiler_metal`, one of them, since the rest of `ops_metal.py`,
+    `Ops_metal`, follows `Hcq2`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
 - **Pinned by:** waiting for L5 through L8; for `Codegen`:
@@ -429,8 +432,8 @@ the Exclusions of `README.md`.
   creates its code generation service), each when the compiler is made, so
   making the renderer that holds it fails without the library.
 - **tolk.next:** `lib/runtime/support/compiler_cuda.ml` (`nvrtc`),
-  `lib/runtime/support/compiler_amd.ml` (`hip`), `lib/runtime/ops_metal.ml`
-  (`compiler`).
+  `lib/runtime/support/compiler_amd.ml` (`hip`),
+  `lib/runtime/support/compiler_metal.ml` (`compiler`).
 - **Differs:** making a compiler loads nothing. The library is loaded at the
   first compile, once per process, and a compile without it raises
   `Compile_error` with the reason.
@@ -439,7 +442,7 @@ the Exclusions of `README.md`.
   of the `Cstyle` suite and rune's rendering of a kernel for inspection.
 - **Pinned by:** `Tolk_next.Compiler_cuda › a library that does not load`,
   `Tolk_next.Compiler_amd › a library that does not load` and
-  `Tolk_next.Ops_metal › a library that does not load`, run where the library's
+  `Tolk_next.Compiler_metal › a library that does not load`, run where the library's
   variable names a file that is no library: making the compiler succeeds, each
   compile raises `Compile_error`, and a cached binary is served without a load.
   Where the library is absent, `› without NVRTC on the machine`,
@@ -808,8 +811,8 @@ the Exclusions of `README.md`.
 - **tolk.next:** `lib/runtime/support/compiler_cpu.ml` (`-ffp-contract=off`),
   `lib/runtime/support/compiler_amd.ml` (`-ffp-contract=off`),
   `lib/runtime/support/compiler_cuda.ml` (`--fmad=false`),
-  `lib/runtime/ops_metal.ml` (`#pragma METAL fp contract(off)` before the
-  source); `lib/helpers.ml` (`Diskcache.version` 2, since a cached binary
+  `lib/runtime/support/compiler_metal.ml` (`#pragma METAL fp contract(off)`
+  before the source); `lib/helpers.ml` (`Diskcache.version` 2, since a cached binary
   compiled with contraction answers the same key).
 - **Differs:** each compiler would fuse a product and a sum that a rendered
   expression holds together, `a*b + c`, into one multiply-add with one
@@ -825,7 +828,7 @@ the Exclusions of `README.md`.
   are exact only where each operation rounds as written.
 - **Pinned by:** `Tolk_next.Compiler_cpu › execution on the host › a product
   and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
-  where a fused multiply-add gives `2^-24`); `Tolk_next.Ops_metal ›
+  where a fused multiply-add gives `2^-24`); `Tolk_next.Compiler_metal ›
   MTLCompiler › a product and a sum compile under the no-contraction pragma
   (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
   `2^-24` without the pragma and 0 with it, and still `2^-24` with

@@ -58,9 +58,9 @@ let cache =
     [
       test "libraries are cached in the table compile_metal_direct" (fun () ->
           equal (option string) (Some "compile_metal_direct")
-            (Compiler.cachekey (Ops_metal.compiler ())));
+            (Compiler.cachekey (Compiler_metal.compiler ())));
       test "libraries are not cached without ccache" (fun () ->
-          is_none (Compiler.cachekey (ccache_off Ops_metal.compiler)));
+          is_none (Compiler.cachekey (ccache_off Compiler_metal.compiler)));
     ]
 
 (* Without MTLCompiler on the machine (D15) *)
@@ -73,7 +73,7 @@ let without_mtlcompiler =
         (fun () ->
           match
             rejection (fun () ->
-                Compiler.compile (Ops_metal.compiler ()) (kernel "add"))
+                Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
           with
           | None -> skip ~reason:"MTLCompiler is on the machine" ()
           | Some msg -> in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
@@ -83,7 +83,7 @@ let without_mtlcompiler =
    own, where MTLCOMPILER_PATH names a file that is no library. *)
 
 let load_failure () =
-  rejection (fun () -> Compiler.compile (Ops_metal.compiler ()) (kernel "add"))
+  rejection (fun () -> Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
 
 let not_a_library =
   group ~tags:[ "no-library" ] "a library that does not load"
@@ -104,7 +104,7 @@ let not_a_library =
           is_some (List.hd msgs);
           List.iter (equal (option string) (List.hd msgs)) msgs);
       test "a cached library is served without loading MTLCompiler" (fun () ->
-          let metal = Ops_metal.compiler () in
+          let metal = Compiler_metal.compiler () in
           let table = Option.get (Compiler.cachekey metal) in
           Helpers.Diskcache.put ~table (kernel "add") "cached library";
           equal string "cached library"
@@ -119,7 +119,7 @@ let metal =
       test "compiles a kernel to a Metal library" (fun () ->
           is_metal_library
             (with_metal (fun () ->
-                 Compiler.compile (Ops_metal.compiler ()) (kernel "add"))));
+                 Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))));
       test "a source that draws warnings compiles to a Metal library" (fun () ->
           let src =
             "#include <metal_stdlib>\n\
@@ -127,11 +127,11 @@ let metal =
              = 0; }"
           in
           is_metal_library
-            (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
+            (with_metal (fun () -> Compiler.compile (Compiler_metal.compiler ()) src)));
       test "a rejected source raises Compile_error with the compiler's message"
         (fun () ->
           match
-            Compiler.compile (Ops_metal.compiler ()) "this is not valid metal"
+            Compiler.compile (Compiler_metal.compiler ()) "this is not valid metal"
           with
           | _ -> fail "the compiler accepted a source that is not Metal"
           | exception Compiler.Compile_error msg when absent msg ->
@@ -145,7 +145,7 @@ let metal =
               (metal_version ()) (kernel "versioned")
           in
           is_metal_library
-            (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
+            (with_metal (fun () -> Compiler.compile (Compiler_metal.compiler ()) src)));
       test "a product and a sum compile under the no-contraction pragma (D25)"
         (fun () ->
           let src =
@@ -155,17 +155,17 @@ let metal =
              c[0]; }"
           in
           is_metal_library
-            (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
+            (with_metal (fun () -> Compiler.compile (Compiler_metal.compiler ()) src)));
       test "fast math is off" (fun () ->
           let src =
             "#ifdef __FAST_MATH__\n#error fast math\n#endif\n" ^ kernel "exact"
           in
           is_metal_library
-            (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
+            (with_metal (fun () -> Compiler.compile (Compiler_metal.compiler ()) src)));
       test "compiles from several domains at once" (fun () ->
           let names = List.init 4 (Printf.sprintf "k%d") in
           let compile name () =
-            Compiler.compile (Ops_metal.compiler ()) (kernel name)
+            Compiler.compile (Compiler_metal.compiler ()) (kernel name)
           in
           ignore (with_metal (compile "warm"));
           let domains =
@@ -173,7 +173,7 @@ let metal =
           in
           List.iter is_metal_library (List.map Domain.join domains));
       test "disassembly prints nothing" (fun () ->
-          let metal = Ops_metal.compiler () in
+          let metal = Compiler_metal.compiler () in
           let lib =
             with_metal (fun () -> Compiler.compile metal (kernel "add"))
           in
@@ -185,5 +185,5 @@ let metal =
 
 let () =
   exit
-    (run "Tolk_next.Ops_metal"
+    (run "Tolk_next.Compiler_metal"
        [ cache; without_mtlcompiler; not_a_library; metal ])

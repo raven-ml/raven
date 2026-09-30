@@ -1675,7 +1675,7 @@ engine (`support/run.ml`), which compiles each kernel with nx.device's entry
 | tinygrad: `null/test_compile_failures.py::TestCompileFailures::test_interpolate_atari`, `test_add_max_uchar` | kernels that once failed to compile | `CS › sources › clang_interpolate_atari_0`, `_1`, `clang_add_max_uchar`; slow: `CS › execution on the host › every kernel compiles and loads` |
 | tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | Clang on arm64 adds halves without converting | dropped here: disassembly is `Compiler_cpu`'s; that each `__fp16` operation rounds to a half is `CS › execution on the host › rounds each operation on halves to a half (D17)` |
 | tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | the architecture's features reach the compiled code (`vmov` with `avx`) | dropped here: the compiler's flags are `Compiler_cpu`'s; `CS › declarations › cachekey` pins that Clang's cache table is named after the architecture |
-| tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success`, `test_compile_error` | Metal compiles a kernel, and refuses bad source | slow: `CS › every GPU kernel compiles with its target's toolchain › metal_*` (49 kernels; `metal_transcendental_bf16` is xfail: tinygrad's graph truncates a bfloat without the float cast, D18); the refusal is `Ops_metal`'s |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success`, `test_compile_error` | Metal compiles a kernel, and refuses bad source | slow: `CS › every GPU kernel compiles with its target's toolchain › metal_*` (49 kernels; `metal_transcendental_bf16` is xfail: tinygrad's graph truncates a bfloat without the float cast, D18); the refusal is `Compiler_metal`'s |
 | tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | Metal memory and pipelines | dropped: the device's, nx.device and `tolk.next.engine` (plan §1a) |
 | tinygrad: `renderer/cstyle.py` CUDA and HIP sources through NVRTC and comgr (no test) | the sources compile | slow: `CS › every GPU kernel compiles with its target's toolchain › cuda_*`, `hip_*`, skipped where the library is absent |
 | tinygrad: `device/cpu/test_call.py::TestExternalCall::test_call_out_param`, `test_call_ret` | a call of a function pointer, with an out parameter or a result | `CS › sources › clang_call_out`, `clang_call_ret`; their execution needs a host callback, which the executor does not provide |
@@ -1836,10 +1836,11 @@ are slow and skip without it; no machine here has ROCm, so they have not run.
 | old: `unit/test_runtime_amd.ml` "load failure is retried, not latched" | a failed load is tried again | dropped: tinygrad loads comgr once, at import; `AMD › a library that does not load › every compile raises the same Compile_error` pins the latch |
 | old: `unit/test_runtime_amd.ml` "compiles a trivial HIP kernel", "broken source raises Compile_error" | | slow: `AMD › comgr › compiles a kernel to a code object`, `a rejected source raises Compile_error with comgr's log` |
 
-## Ops_metal
+## Compiler_metal
 
-The suite is `Tolk_next.Ops_metal` (`runtime/ops_metal/`), written `M` below.
-It covers `MetalCompiler`, the part of `ops_metal.py` in scope. MTLCompiler is
+The suite is `Tolk_next.Compiler_metal` (`runtime/support/compiler_metal/`),
+written `M` below. It covers `MetalCompiler`, the part of `ops_metal.py` that
+precedes `Cstyle` (DIVERGENCES D4). MTLCompiler is
 loaded once per process, so the tests tagged `no-library` run in a second
 process, where `MTLCOMPILER_PATH` names a file that is no library. The tests
 of MTLCompiler itself skip elsewhere than on macOS.

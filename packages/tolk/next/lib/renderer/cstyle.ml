@@ -955,7 +955,7 @@ let metal (target : Helpers.Target.t) =
     ~extra_matcher:metal_extra_matcher ~code_for_op:metal_lang.code_for_op
     ~native
     ~render:(render metal_kernel metal_lang)
-    ~compiler:(Ops_metal.compiler ()) target
+    ~compiler:(Compiler_metal.compiler ()) target
 
 (* CUDA *)
 
