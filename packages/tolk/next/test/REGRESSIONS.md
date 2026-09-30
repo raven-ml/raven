@@ -1985,3 +1985,42 @@ domains share a renderer cannot run under mutation testing, which forks.
 | Helpers: tinygrad null/test_device.py::TestCompiler (3 tests); old unit/test_diskcache.ml:319, :322 | the compiler cache | Renderer's section: `Compiler` is `Renderer.Compiler` |
 | Ops: tinygrad null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device, test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: devices are named, never canonicalized (D6); rune names them |
 | Ops: old unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types, binary_argument_layout, incomplete_program_has_no_binary | | this section's old tolk rows |
+
+## Worker
+
+The suite is `Tolk_next.Worker` (`engine/worker/`), written `WK` below.
+`WK › law` states `map f l = List.map f l` over generated functions and
+lists under PARALLEL -1, 0, 1, 2, 3 and 8. The other groups pin the budget,
+nesting, failure and settings clauses of the interface. Tests make
+applications meet, so that they run at once on distinct domains, and count
+the applications running at once. `WK › compiling` compiles the Clang kernels
+of `Compiler_cpu`'s `kernels.golden` on domains and serially. Every test but
+two spawns domains, and OCaml refuses `Unix.fork` in a process that has, so
+mutation testing arms each of `worker.ml`'s mutants in a process of its own
+(`--arm`). Every group bounds its tests at 30 s, so the four mutants whose
+calls never return fail. One mutant survives, equivalent: `j < i` as `<=` in
+`fail`, since each index fails at most once.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: engine/worker.py `get_worker_pool` (no test) | `PARALLEL=0` gives no pool, so the caller compiles | `WK › domains › applies every element on the calling domain under › PARALLEL=-1`, `PARALLEL=0`, `PARALLEL=1` |
+| tinygrad: engine/worker.py `get_worker_pool` (no test) | a daemon worker makes no pool of its own | `WK › nesting › a call from f while the outer call holds every domain stays on f's`, `calls from f compute List.map and share the budget` |
+| tinygrad: engine/worker.py `Pool(PARALLEL.value, ...)` (no test) | at most PARALLEL workers | `WK › domains › runs at most PARALLEL applications at once under`, `shares PARALLEL - 1 domains between concurrent calls`, `works on the calling domain alone when no domain is free`, `holds at most one domain fewer than its elements`, `gives its domains back when it returns or raises`, `computes List.map with PARALLEL above the runtime's domain limit` |
+| tinygrad: engine/worker.py `_init_worker`, `_without_main`, `_spawnv_passfds`, `BEAM_MAX_TASKS_PER_CHILD`, `terminate_worker_pool` (no test) | worker processes' context, SIGINT, recycling and teardown | dropped: compilation workers are domains that live for one call (D5) |
+| tinygrad: engine/realize.py:245-255, codegen/opt/search.py:116-168 (`pool.imap_unordered` over indexed tasks) | results placed by task index | `WK › law › map f l is List.map f l`, `keeps the order of l when later elements finish first`, `applies f once to each element under`; `WK › compiling › compiles Clang kernels to the binaries of a serial compilation` |
+| tinygrad: a worker process's `Context` (helpers.py:169-186) | a worker's overrides stay in its process | `WK › settings › a setting bound in an application is seen by it alone`, `applications building nodes keep their own CHECK_OOB` (D5) |
+| tinygrad: null/test_schedule.py:2076, null/test_viz.py:46 (`PARALLEL=0`) | their suites compile in process | dropped: they pin nothing of the pool |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/test_runtime_search.ml parallel_failure_joins_workers (`Stack_overflow`) | started workers finish before the failure propagates; workers see the caller's settings | `WK › failure › raises only after the applications it started have ended`, `raises the exception of the lowest failing element`; `WK › settings › every application sees the caller's settings` |
+| old: unit/test_runtime_search.ml parallel_failure_joins_workers (`Sys.Break`), sequential_compile_interrupt | an interruption propagates, and stops compilation | `WK › failure › stops applying f once an element raised, under › PARALLEL=0`, `PARALLEL=4`; an interruption is an exception like any other |
+| old: unit/test_runtime_search.ml completed_compile_budget (2 tests) | over-budget compilations are discarded before timing | dropped here: the beam search's time budget is the search's, not the pool's |
+| old: unit/engine/test_realize.ml "positive scopes reuse shared admission and zero compiles inline" | the caller's settings reach workers; concurrent batches share the budget; `PARALLEL=0` compiles on the caller | `WK › settings › every application sees the caller's settings`, `concurrent callers each pass their own settings`; `WK › domains › shares PARALLEL - 1 domains between concurrent calls`, `applies every element on the calling domain under`. That the first batch fixes the limit for later ones is dropped: each call reads its caller's PARALLEL |
+| old: unit/engine/test_realize.ml "parallel lowering retains call order, deduplicates, and permits nested batches" | order kept; nested batches make progress | `WK › law › keeps the order of l when later elements finish first`; `WK › nesting › calls from f compute List.map and share the budget`. Deduplication is the lowering's |
+| old: unit/engine/test_realize.ml "beam lowering stays in the caller" | no pool under BEAM | dropped here: realize.py chooses not to use the pool, which is the lowering's |
+| old: lib/engine/worker.mli (no test) | "The first parallel batch fixes the shared admission limit from PARALLEL" | dropped: each call reads its caller's PARALLEL |
