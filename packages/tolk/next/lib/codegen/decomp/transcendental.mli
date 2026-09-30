@@ -18,7 +18,9 @@
     and zeros. Elsewhere their results are within a relative error of [5e-3]
     plus an absolute error of [1e-2] of the exact value in {!Dtype.Float16},
     [1e-5] plus [2e-5] in {!Dtype.Float32}, and [1e-5] plus [3e-2] in
-    {!Dtype.Float64}, whose sine loses absolute precision as its argument grows.
+    {!Dtype.Float64}. The sine of a {!Dtype.Float64} meets that bound for
+    arguments below [1e7] in magnitude; beyond, its absolute error grows by
+    about [4e-10] times the argument.
 
     {b Errors.} A function given a node of another type than it is defined for
     raises [Invalid_argument]. *)
