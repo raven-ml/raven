@@ -11,8 +11,9 @@
     process. The library, [libamd_comgr], is loaded at the first compile, once
     per process, from where {!C.findlib} finds it: the file [COMGR_PATH] names,
     then [lib/libamd_comgr.so] in the directory [ROCM_PATH] names ([/opt/rocm]
-    by default), then the system's library directories. Its major version picks
-    its numbering of languages and actions, which version 3 changed. *)
+    by default, read once, {!Helpers.getenv_string}), then the system's library
+    directories. Its major version picks its numbering of languages and actions,
+    which version 3 changed. *)
 
 val hip : string -> Renderer.Compiler.t
 (** [hip arch] is the compiler of HIP source to executable code objects for the

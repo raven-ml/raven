@@ -10,7 +10,7 @@
     Clang compiles the source to a relocatable ELF object that is freestanding:
     it calls no library, so a loader places it in memory and runs it as it is.
     The Clang run is the program named by the environment variable [CC], [clang]
-    by default ({!Helpers.getenv_string}). *)
+    by default, read once, at the first compile ({!Helpers.getenv_string}). *)
 
 val clang : string -> Renderer.Compiler.t
 (** [clang arch] is the compiler of C source to objects for [arch], written
@@ -33,5 +33,5 @@ val clang : string -> Renderer.Compiler.t
     the source or does not run, and {!Renderer.Compiler.disassemble} prints what
     [objdump -d] prints ({!Helpers.cpu_objdump}).
 
-    Raises [Invalid_argument] naming [arch] if it has fewer than two fields or
-    its [MACHINE] is another. *)
+    Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
+    naming its [MACHINE] if that is another. *)
