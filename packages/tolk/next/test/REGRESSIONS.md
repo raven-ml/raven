@@ -2248,8 +2248,9 @@ of hand-built graphs for the rules no program reaches
 evaluable graph writes the same into its parameters and buffers before and
 after (`Tensors`); call-local storage is scratch. `PR › pm_mops › laws` states
 that an index of a chain of movements, rewritten, reads the element they place
-there, and `PR › contiguous_view › laws` that a view is exactly a run of its
-storage. The other groups state one rule each.
+there, and `PR › contiguous_view › laws` that a view found is exactly a run of
+its storage and that reshapes, shrinks and permutes are found exactly when they
+are one. The other groups state one rule each.
 
 Three mutants of `prepare.ml` survive, all equivalent: `op item = After && op s
 = Store` as `||` (an item that is not an after of a store is kept whichever
@@ -2286,6 +2287,8 @@ lasts only while the index carries it, and a caller masks padded values.
 | tinygrad: schedule/prepare.py `pm_mops` on a padded view (no upstream test) | an index through a pad, then a reshape to an axis of one element, an expand, or a shrink onto an axis of one element, loses the pad's gate | `PR › pm_mops › pads` (3 tests), as tinygrad HEAD for an upstream report: `graph_rewrite(p._mop(Ops.RESHAPE,(1,)).pad(((0,1),)).index(r), pm_mops)` with `p` a 1-element param is `INDEX(p, 0)`; a 6-element param reshaped (3,2), padded `((0,3),(2,6))` and shrunk `((0,1),(0,3))`, indexed by two ranges, is `INDEX(p, 0)`; a 2-element param expanded by `(2,)` and padded `((1,3),(0,2))` is `INDEX(p, r1)` |
 | tinygrad: schedule/prepare.py `pm_fold_moved_after`, `OPENPILOT_HACKS`, `FLOAT16` | | dropped: excluded (README) |
 | tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
+| tinygrad: uop/ops.py:934 `contiguous_view` on flips that cancel across a reshape (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(2, 1, 16)` view flipped on axis 0, reshaped to `(2, 16)` and flipped on axis 0 again, which is the identity | `PR › contiguous_view › flips that cancel across a reshape are not found` |
+| tinygrad: uop/ops.py:934 `contiguous_view` on a read within one copy of an expanded value (no upstream test) | a run it does not find: tinygrad HEAD gives `None` for a `(1, 2, 4, 2)` view expanded to `(2, 2, 4, 2)`, reshaped to `(32,)` and shrunk to `(6, 9)`, elements 6 to 8 of the storage | `PR › contiguous_view › a read within one copy of an expanded value is not found` |
 
 ### old tolk
 
@@ -2297,7 +2300,7 @@ lasts only while the index carries it, and a caller masks padded values.
 | old: unit/test_contiguous_view.ml "subword byte offsets retain typed anchors", "one-element bitcast views preserve byte extent" | | `PR › contiguous_view ›` "bytes within an element are a view of the bytes", "bytes on whole elements start at their element", "a bitcast of a view with an axis of one element is a view" |
 | old: unit/test_contiguous_view.ml "empty views preserve offsets and storage anchors" | an empty view | `PR › contiguous_view › an empty view is no view`, as tinygrad |
 | old: unit/test_contiguous_view.ml "symbolic leading views compose their flattened index" | a symbolic view at an offset | `PR › contiguous_view › a view of a symbolic size is no view`, as tinygrad |
-| old: unit/test_contiguous_view.ml "existing movement views preserve byte offsets", "view offsets use exact arithmetic before host narrowing", "caller tags are preserved without certifying strided views", "constant folding preserves tensor shape during view proofs" | | the law `PR › contiguous_view › laws › a view is exactly a run of its storage`; offsets count elements of the storage's type, as tinygrad's |
+| old: unit/test_contiguous_view.ml "existing movement views preserve byte offsets", "view offsets use exact arithmetic before host narrowing", "caller tags are preserved without certifying strided views", "constant folding preserves tensor shape during view proofs" | | the laws `PR › contiguous_view › laws`; offsets count elements of the storage's type, as tinygrad's |
 | old: unit/test_contiguous_view.ml "unsupported backends reject typed views" | | dropped: CL and WebGPU are excluded (README) |
 | old: unit/test_contiguous_view.ml "storage windows retain allocation boundaries", "storage windows retain typed effects", "partition storage requires owned lanes", "partial reshape compares symbolic suffix dimensions", "partial reshape uses symbolic prefix dimensions" | old tolk's `Indexing.storage_window` and partial reshapes | the partial reshape is `PR › pm_mops › rules ›` "an index of a reshape's leading axes indexes its source when the trailing axes are kept", "an index of a reshape whose trailing axes change is left as it is"; storage windows were old tolk's, tinygrad has none |
 | old: unit/test_schedule_rangeify.ml group "early_movement_pass" | | `PR › pm_mops › rules` (7 tests), `PR › pm_mops › laws` |

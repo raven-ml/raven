@@ -334,11 +334,11 @@ let rec factors k n =
     let+ rest = factors (k - 1) (n / d) in
     d :: rest
 
-(* A movement other than a pad that fits [shape]. *)
-let movement shape : Ops.movement Gen.t =
+(* A movement of one of [kinds] that fits [shape]. *)
+let movement kinds shape : Ops.movement Gen.t =
   let open Gen in
   let per_axis f = each (List.map f shape) in
-  let* kind = of_list [ `Reshape; `Expand; `Shrink; `Permute; `Flip ] in
+  let* kind = of_list kinds in
   match kind with
   | `Reshape ->
       let* k = int_range 1 3 in
@@ -363,13 +363,13 @@ let movement shape : Ops.movement Gen.t =
       Ops.Flip f
 
 (* A shape of up to three axes of up to four elements, and up to three movements
-   of it other than pads, in turn. *)
-let chain =
+   of one of [kinds], in turn. *)
+let chains kinds =
   let open Gen in
   let rec moves shape k =
     if k = 0 then constant []
     else
-      let* m = movement shape in
+      let* m = movement kinds shape in
       let next = concrete (Ops.mop (stored shape) m) in
       let+ rest = moves next (k - 1) in
       m :: rest
@@ -383,6 +383,7 @@ let chain =
         (pp_list Format.pp_print_int)
         shape)
 
+let chain = chains [ `Reshape; `Expand; `Shrink; `Permute; `Flip ]
 let moved (shape, ms) = List.fold_left Ops.mop (stored shape) ms
 let iota n = Array.init n (fun j -> `Float (float_of_int (j + 1)))
 
@@ -458,9 +459,12 @@ let pads =
 
 (* contiguous_view
 
-   The law: a view is [Some (b, offset)] exactly when its elements, in row-major
-   order, are [b]'s from [offset] on (Tensors), [b] holding distinct
-   elements. *)
+   The laws: a view found, [Some (b, offset)], has its elements, in row-major
+   order, [b]'s from [offset] on (Tensors), [b] holding distinct elements; and
+   reshapes, shrinks and permutes are found exactly when their elements are such
+   a run. Two runs are not found, as in tinygrad, whose rewrite of the index
+   does not reach them: flips that cancel across a reshape, and a read within
+   one copy of an expanded value. *)
 
 let view_witness = option (pair uop int)
 
@@ -483,6 +487,14 @@ let contiguous_views =
         (Ops.shrink x [ None; Some (Int 2, Int 4) ]);
       case "a permute reorders" None (Ops.permute x [ 1; 0 ]);
       case "a flip reorders" None (Ops.flip x [ 1 ]);
+      (let x = Ops.reshape b (ints [ 2; 1; 16 ]) in
+       case "flips that cancel across a reshape are not found" None
+         (Ops.flip (Ops.reshape (Ops.flip x [ 0 ]) (ints [ 2; 16 ])) [ 0 ]));
+      (let x = stored [ 1; 2; 4; 2 ] in
+       case "a read within one copy of an expanded value is not found" None
+         (Ops.shrink
+            (Ops.reshape (Ops.expand x (ints [ 2; 2; 4; 2 ])) (ints [ 32 ]))
+            [ Some (Int 6, Int 9) ]));
       case "an expand repeats" None
         (Ops.expand (Ops.reshape b (ints [ 1; 32 ])) (ints [ 2; 32 ]));
       case "a pad adds elements" None (Ops.pad b [ Some (Int 1, Int 0) ]);
@@ -528,25 +540,43 @@ let is_run memory elements =
   let at off = Array.for_all2 ( = ) elements (Array.sub memory off n) in
   List.find_opt at (List.init (max 0 (m - n + 1)) Fun.id)
 
-let viewed_exactly (shape, ms) =
+(* [viewed chain] is the view found for the movement of [chain], and the run of
+   its storage that its elements are, if they are one. *)
+let viewed (shape, ms) =
   let u = moved (shape, ms) in
   let memory = iota (size shape) in
-  let base = flat (size shape) in
   let elements =
     match Tensors.eval ~buffers:[ (1, memory) ] u with
     | [ e ] ->
         Array.map (function #Dtype.value as v -> v | `Invalid -> `Float nan) e
     | _ -> fail "a movement of a value on one device is on one device"
   in
-  let run = is_run memory elements in
+  let run =
+    Option.map (fun off -> (flat (size shape), off)) (is_run memory elements)
+  in
+  (Prepare.contiguous_view u, run)
+
+let found_is_a_run chain =
+  match viewed chain with
+  | None, _ -> ()
+  | (Some _ as found), run ->
+      cover "a view" true;
+      equal view_witness run found
+
+let found_exactly_when_a_run chain =
+  let found, run = viewed chain in
   cover "a view" (Option.is_some run);
-  equal view_witness
-    (Option.map (fun off -> (base, off)) run)
-    (Prepare.contiguous_view u)
+  equal view_witness run found
 
 let contiguous_view_laws =
   group "contiguous_view › laws"
-    [ prop "a view is exactly a run of its storage" chain viewed_exactly ]
+    [
+      prop "a view found is exactly a run of its storage" chain found_is_a_run;
+      prop
+        "reshapes, shrinks and permutes are found exactly when they are a run"
+        (chains [ `Reshape; `Shrink; `Permute ])
+        found_exactly_when_a_run;
+    ]
 
 (* Rules
 
