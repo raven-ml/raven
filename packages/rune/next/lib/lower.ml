@@ -548,106 +548,79 @@ let place s what p q x =
 
 let op : type r. scope -> r Nx.Op.t -> r =
  fun s o ->
-  let what = Nx.Op.name o in
-  let p = Nx.Op.placement o in
+  let what = Nx.Op.name o and p = Nx.Op.placement o in
   let ret dt u =
     ignore (check s what p dt);
     traced p dt u
   in
-  let refuse () = jit_error "cannot compile %s" what in
+  let like x u = ret (Nx.dtype x) u in
+  let n x = node s what p x in
   match[@warning "@4@8"] o with
-  | Unary (k, x) -> ret (Nx.dtype x) (Lower_arith.unary k (node s what p x))
-  | Binary (k, x, y) ->
-      ret (Nx.dtype x)
-        (Lower_arith.binary k (node s what p x) (node s what p y))
-  | Compare (k, x, y) ->
-      ret Nx_dtype.bool
-        (Lower_arith.compare k (node s what p x) (node s what p y))
-  | Where (c, x, y) ->
-      ret (Nx.dtype x)
-        (Ops.where (node s what p c) (node s what p x) (node s what p y))
-  | Convert (Cast, dt, x) ->
-      ret dt (Lower_arith.cast (check s what p dt) (node s what p x))
+  | Unary (k, x) -> like x (Lower_arith.unary k (n x))
+  | Binary (k, x, y) -> like x (Lower_arith.binary k (n x) (n y))
+  | Compare (k, x, y) -> ret Nx_dtype.bool (Lower_arith.compare k (n x) (n y))
+  | Where (c, x, y) -> like x (Ops.where (n c) (n x) (n y))
+  | Convert (Cast, dt, x) -> ret dt (Lower_arith.cast (check s what p dt) (n x))
   | Convert (Bitcast, dt, x) ->
-      ret dt (Lower_arith.bitcast (check s what p dt) (node s what p x))
+      ret dt (Lower_arith.bitcast (check s what p dt) (n x))
   | Threefry (key, counter) ->
-      let k = node s what p key in
+      let k = n key in
       if not (Ops.op_in_backward_slice_with_self k [ Op.Param ]) then
         jit_error
           "a random draw from a key that does not depend on the function's \
            arguments would repeat on every call; pass the key as an argument";
-      ret Nx_dtype.int32 (Lower_arith.threefry k (node s what p counter))
+      ret Nx_dtype.int32 (Lower_arith.threefry k (n counter))
   | Reduce (k, axes, x) ->
-      ret (Nx.dtype x)
-        (Lower_reduce.reduce k ~axes:(Array.to_list axes) (node s what p x))
-  | Scan (k, axis, x) ->
-      ret (Nx.dtype x) (Lower_reduce.scan k ~axis (node s what p x))
+      like x (Lower_reduce.reduce k ~axes:(Array.to_list axes) (n x))
+  | Scan (k, axis, x) -> like x (Lower_reduce.scan k ~axis (n x))
   | Arg_reduce (k, axis, x) ->
-      ret Nx_dtype.int32 (Lower_reduce.arg_reduce k ~axis (node s what p x))
+      ret Nx_dtype.int32 (Lower_reduce.arg_reduce k ~axis (n x))
   | Sort { descending; axis; x } ->
-      ret (Nx.dtype x) (Lower_reduce.sort ~descending ~axis (node s what p x))
+      like x (Lower_reduce.sort ~descending ~axis (n x))
   | Argsort { descending; axis; x } ->
-      ret Nx_dtype.int32
-        (Lower_reduce.argsort ~descending ~axis (node s what p x))
+      ret Nx_dtype.int32 (Lower_reduce.argsort ~descending ~axis (n x))
   | Pad (padding, fill, x) ->
-      let dt = Nx.dtype x in
-      ret dt (Lower_index.pad padding (const dt fill) (node s what p x))
+      like x (Lower_index.pad padding (const (Nx.dtype x) fill) (n x))
   | Cat (axis, xs) -> (
       match xs with
       | [] -> invalid_arg "a concatenation of no values"
-      | x :: _ ->
-          ret (Nx.dtype x) (Lower_index.cat axis (List.map (node s what p) xs)))
+      | x :: _ -> like x (Lower_index.cat axis (List.map n xs)))
   | Gather (axis, indices, x) ->
-      ret (Nx.dtype x)
-        (Lower_index.gather axis (node s what p indices) (node s what p x))
+      like x (Lower_index.gather axis (n indices) (n x))
   | Scatter { mode; unique; axis; indices; updates; into } ->
-      ret (Nx.dtype into)
-        (Lower_index.scatter ~mode ~unique ~axis
-           ~indices:(node s what p indices) ~updates:(node s what p updates)
-           (node s what p into))
+      like into
+        (Lower_index.scatter ~mode ~unique ~axis ~indices:(n indices)
+           ~updates:(n updates) (n into))
   | Update (x, starts, v) ->
-      ret (Nx.dtype x)
-        (Lower_index.update (node s what p x) ~starts:(node s what p starts)
-           (node s what p v))
+      like x (Lower_index.update (n x) ~starts:(n starts) (n v))
   | Unfold { kernel_size; stride; dilation; padding; x } ->
-      ret (Nx.dtype x)
-        (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding
-           (node s what p x))
+      like x (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding (n x))
   | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
-      ret (Nx.dtype x)
+      like x
         (Lower_index.fold ~output_size ~kernel_size ~stride ~dilation ~padding
-           (node s what p x))
-  | Matmul (x, y) ->
-      ret (Nx.dtype x) (Lower_linalg.matmul (node s what p x) (node s what p y))
-  | Cholesky { upper; x } ->
-      ret (Nx.dtype x) (Lower_linalg.cholesky ~upper (node s what p x))
+           (n x))
+  | Matmul (x, y) -> like x (Lower_linalg.matmul (n x) (n y))
+  | Cholesky { upper; x } -> like x (Lower_linalg.cholesky ~upper (n x))
   | Qr { reduced; x } ->
-      let q, r = Lower_linalg.qr ~reduced (node s what p x) in
-      (ret (Nx.dtype x) q, ret (Nx.dtype x) r)
+      let q, r = Lower_linalg.qr ~reduced (n x) in
+      (like x q, like x r)
   | Lu x ->
-      let lu, pivots, perm = Lower_linalg.lu (node s what p x) in
-      (ret (Nx.dtype x) lu, ret Nx_dtype.int32 pivots, ret Nx_dtype.int32 perm)
+      let lu, pivots, perm = Lower_linalg.lu (n x) in
+      (like x lu, ret Nx_dtype.int32 pivots, ret Nx_dtype.int32 perm)
   | Svd { full_matrices; x } ->
-      let u, sv, vt = Lower_linalg.svd ~full_matrices (node s what p x) in
-      (ret (Nx.dtype x) u, ret Nx_dtype.float64 sv, ret (Nx.dtype x) vt)
+      let u, sv, vt = Lower_linalg.svd ~full_matrices (n x) in
+      (like x u, ret Nx_dtype.float64 sv, like x vt)
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
-      ret (Nx.dtype b)
-        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag
-           (node s what p a) (node s what p b))
-  | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ -> refuse ()
-  | Contiguous x -> ret (Nx.dtype x) (Ops.contiguous (node s what p x))
-  | Move (x, m) ->
-      let q = home x in
-      let u =
-        match Repr.v x with
-        | Repr.Traced _ -> uop x
-        | Repr.Host _ | Repr.Placed _ -> capture s what q x
-      in
-      ret (Nx.dtype x) (move u m)
+      like b
+        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (n a) (n b))
+  | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ ->
+      jit_error "cannot compile %s" what
+  | Contiguous x -> like x (Ops.contiguous (n x))
+  | Move (x, m) -> like x (move (node s what (home x) x) m)
   | Place (q, x) -> (
       match Repr.v x with
-      | Repr.Traced _ -> ret (Nx.dtype x) (place s what (Nx.placement x) q x)
-      | Repr.Host _ | Repr.Placed _ -> ret (Nx.dtype x) (capture s what q x))
+      | Repr.Traced _ -> like x (place s what (Nx.placement x) q x)
+      | Repr.Host _ | Repr.Placed _ -> like x (capture s what q x))
   | Read x -> (
       match Repr.v x with
       | Repr.Traced _ ->
