@@ -17,7 +17,14 @@
     takes the next link in turn, since runs of one link are serialized.
 
     A kernel queues its program on the device and returns: a read of the result
-    waits for it, as for any work on the device.
+    waits for it, as for any work on the device. While a profile is taken
+    ({!Nx_device.Profile}), each compilation is a span of the host named
+    [compile] and the kernel's name, such as ["compile binary"].
+
+    nx computes every placement's values on the host until it hands backends the
+    arrays of their devices: through nx, a placement on a GPU with {!backend}
+    computes on the host, with the host's programs, and the kernels
+    ({!Nx_backend.kernels}) run on a GPU's arrays when they are given them.
 
     {b Numerics.} Each operation computes what nx documents, to the class of its
     row in the lowering's table: exactly, within a rounded sum, or within a
@@ -28,9 +35,9 @@
 
     {b Refusals.} A kernel raises {!Nx_backend.Refused} before any work, naming
     the operation, for the Fourier transforms, [eig] and [eigh]; for [int4],
-    [uint4], [complex64] and [complex128]; and for a dtype the device's target
-    does not compute, such as [float64] on Metal, which [svd]'s singular values
-    need. *)
+    [uint4], [complex64] and [complex128]; for arrays of a device it does not
+    run on (see {!backend}); and for a dtype the device's target does not
+    compute, such as [float64] on Metal, which [svd]'s singular values need. *)
 
 val backend : Nx_backend.t
 (** [backend] is the backend of compiled programs, named ["compiled"]. It runs

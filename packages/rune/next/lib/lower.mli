@@ -38,6 +38,24 @@ val dtype : ('a, 'b) Nx_dtype.t -> Dtype.t option
     {!Dtype.Fp8e4m3} and {!Dtype.Fp8e5m2}. It is [None] for [int4], [uint4],
     [complex64] and [complex128], which no graph holds. *)
 
+val const : ('a, 'b) Nx_dtype.t -> 'a -> Dtype.const
+(** [const dt v] is the element [v] of [dt] as a constant.
+
+    Raises [Invalid_argument] on a complex element. *)
+
+(** {1:storage Views over storage} *)
+
+val span : Dtype.t -> Nx_array.View.t -> int * int
+(** [span dt v] is the run of elements of [dt] that the non-empty view [v]
+    reaches, from the element at or below the first one it reaches whose offset
+    is a multiple of 16 bytes, through the last one: [(start, length)]. Kernels
+    load up to 16 bytes at a time from where a buffer starts. *)
+
+val strided : Ops.t -> Nx_array.View.t -> int -> Ops.t
+(** [strided flat v start] is the view [v] over the node [flat] of its storage's
+    elements from element [start] on: movements that reach the elements [v]
+    reaches, in [v]'s shape. *)
+
 (** {1:traces Traces} *)
 
 type scope

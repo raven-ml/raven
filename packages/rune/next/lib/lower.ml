@@ -357,9 +357,7 @@ let viewed what u p shape v start =
   | Split axis -> Ops.unshard local [ axis ]
   | One | Copies -> local
 
-(* The run of elements [v] reaches from its aligned start, as [(start,
-   span)]. *)
-let run tdt v =
+let span tdt v =
   let lo, hi = View.extent v in
   let per = Int.max 1 (alignment / Dtype.itemsize tdt) in
   let start = lo - (lo mod per) in
@@ -380,7 +378,7 @@ let param s ~slot x =
     if View.numel v = 0 then
       broadcast (Ops.const ~dtype:tdt (`Int Z.zero)) shape
     else
-      let start, span = run tdt v in
+      let start, span = span tdt v in
       viewed what
         (Ops.param ~shape:[ Ops.Int span ] ~device:(device_of s p) slot tdt)
         p shape v start
@@ -422,7 +420,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
     match List.find_opt same s.captures with
     | Some c -> c.node
     | None ->
-        let start, span = run tdt v in
+        let start, span = span tdt v in
         let buffer = Ops.new_buffer (device_of s p) span tdt in
         let view b =
           Nx_device.Buffer.view b

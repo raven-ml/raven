@@ -1,7 +1,15 @@
 (library
  (name rune_next)
  (public_name rune.next)
- (libraries nx nx.dtype nx.array nx.backend nx.device tolk.next zarith)
+ (libraries
+  nx
+  nx.dtype
+  nx.array
+  nx.backend
+  nx.device
+  tolk.next
+  tolk.next.engine
+  zarith)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
