@@ -20,8 +20,9 @@
 18 Ops.MUL dtypes.half [13, 17]
 19 Ops.CAST dtypes.float [18] dtypes.float
 20 Ops.REDUCE dtypes.float [19, 11] (Ops.ADD, 0)
-21 Ops.MAX dtypes.float [7, 20]
-22 Ops.STORE dtypes.void [6, 21]
-23 Ops.END dtypes.void [22, 2, 4]
-24 Ops.SINK dtypes.void [23] KernelInfo()
+21 Ops.CMPLT dtypes.bool [7, 20]
+22 Ops.WHERE dtypes.float [21, 20, 7]
+23 Ops.STORE dtypes.void [6, 22]
+24 Ops.END dtypes.void [23, 2, 4]
+25 Ops.SINK dtypes.void [24] KernelInfo()
 

@@ -121,8 +121,8 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       {!Op.Special} or range with a constant end whose bounds are equal is that
       constant; an integer maximum of two operands whose bounds, as it reads
       them ({!Ops.operand_bounds}), do not overlap is the greater, committed to
-      its type; a selection that computes a maximum, [where (a < b) b a] with
-      [a] or [b] a constant, is {!Ops.maximum};
+      its type; an integer selection that computes a maximum,
+      [where (a < b) b a] with [a] or [b] a constant, is {!Ops.maximum};
     - {b constants}: two applications of an associative operation to constants
       fold the constants together, sums, products and maxima for integers only;
       [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]

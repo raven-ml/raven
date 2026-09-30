@@ -75,8 +75,9 @@
 73 Ops.STACK dtypes.float [72, 72, 72, 72, 72, 72, 72, 72]
 74 Ops.WMMA dtypes.float [67, 71, 73] ((16, 16, 16), dtypes.half, 32, ((((5,), 2), ((4,), 2), ((3,), 2), ((9,), 2)), (((5,), 2), ((4,), 2), ((3,), 2), ((9,), 2)), (((5,), 2), ((4,), 2), ((3,), 2), ((9,), 1))))
 75 Ops.REDUCE dtypes.float [74, 53, 55] (Ops.ADD, 0)
-76 Ops.MAX dtypes.float [42, 75]
-77 Ops.STORE dtypes.void [41, 76]
-78 Ops.END dtypes.void [77, 2, 5, 8, 11, 15, 21]
-79 Ops.SINK dtypes.void [78] KernelInfo(name="r_32_2_2_2_2_2_2", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UNROLL)))) tag=1
+76 Ops.CMPLT dtypes.bool [42, 75]
+77 Ops.WHERE dtypes.float [76, 75, 42]
+78 Ops.STORE dtypes.void [41, 77]
+79 Ops.END dtypes.void [78, 2, 5, 8, 11, 15, 21]
+80 Ops.SINK dtypes.void [79] KernelInfo(name="r_32_2_2_2_2_2_2", applied_opts=(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)), Opt(op=OptOps.SPLIT, axis=4, arg=(2, AxisType.UNROLL)))) tag=1
 

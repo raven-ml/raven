@@ -805,16 +805,26 @@ let symbolic =
              (fun m ->
                let x = m "x" in
                if V.(vmin x = vmax x) then Some (const_v x (vmin x)) else None);
-           (* max folding, when the selection's constants are one node: -0. and
-              +0. are equal, and NaN is unequal to itself *)
+           (* max folding, for integers: a float selection keeps IEEE's NaN and
+              signed zeros where a maximum does not *)
            rule
-             Upat.(where (cvar "a" < var "b") (var "b") (cvar "c"))
+             Upat.(
+               where
+                 (cvar "a" < var ~dtype:int_or_bool "b")
+                 (var "b") (cvar "c"))
              (fun m ->
-               if m "a" == m "c" then Some (maximum (m "a") (m "b")) else None);
+               if V.(num (m "a") = num (m "c")) then
+                 Some (maximum (m "a") (m "b"))
+               else None);
            rule
-             Upat.(where (var "a" < cvar "b") (cvar "c") (var "a"))
+             Upat.(
+               where
+                 (var ~dtype:int_or_bool "a" < cvar "b")
+                 (cvar "c") (var "a"))
              (fun m ->
-               if m "b" == m "c" then Some (maximum (m "a") (m "b")) else None);
+               if V.(num (m "b") = num (m "c")) then
+                 Some (maximum (m "a") (m "b"))
+               else None);
            (* a float maximum's bounds leave out NaN and the order of zeros *)
            rule
              Upat.(named "m" (maximum (var ~dtype:int_or_bool "x") (var "y")))

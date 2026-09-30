@@ -936,6 +936,24 @@ let floats =
             (Ops.where Ops.O.(f < float (-0.)) (Ops.float 0.) f)
             [ [ -1e-45 ] ];
           keeps_float_bits (Ops.maximum f (Ops.float inf)) [ [ Float.nan ] ]);
+      test "a Dekker split and product keep their low parts" (fun () ->
+          let split x =
+            let c = Ops.O.(x * float 4097.) in
+            let hi = Ops.O.(c - (c - x)) in
+            (hi, Ops.O.(x - hi))
+          in
+          let fh, fl = split f and gh, gl = split g in
+          let p = Ops.O.(f * g) in
+          let err = Ops.O.((fh * gh) - p + (fh * gl) + (fl * gh) + (fl * gl)) in
+          let points = [ [ 1.1; 3.14159 ]; [ 0.1; 7.3 ]; [ 1e10; 1e-10 ] ] in
+          List.iter (fun u -> keeps_float_bits u points) [ fh; fl; err ];
+          is_true
+            (Interpreter.eval ~params:[ (0, float32 1.1) ] (sym fl) <> `Float 0.));
+      test "a float selection that computes a maximum stays" (fun () ->
+          let u = Ops.where Ops.O.(f < float 0.) (Ops.float 0.) f in
+          simplifies_to ~by:symbolic u u;
+          let u = Ops.where Ops.O.(float 0. < f) f (Ops.float 0.) in
+          simplifies_to ~by:symbolic u u);
       test "powers keep pow's special values" (fun () ->
           let by = symbolic in
           keeps_float_bits ~by

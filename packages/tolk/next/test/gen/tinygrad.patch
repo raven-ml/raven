@@ -363,7 +363,7 @@ index 2842d7e..c6bdbf0 100644
    return alu
  
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..537f8aa 100644
+index 2eb2e96..36f0b24 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -509,9 +509,9 @@ index 2eb2e96..537f8aa 100644
 -  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
 -  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b.val == c.val else None),
 -  (UPat.maximum(UPat.var("x"), UPat.var("y")), lambda x,y: x if x.vmin >= y.vmax else y if x.vmax <= y.vmin else None),
-+  # max folding, when the selection's constants are one node: -0.0 and +0.0 are equal, and nan is unequal to itself
-+  ((UPat.cvar("a") < UPat.var("b")).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a is c else None),
-+  ((UPat.var("a") < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b is c else None),
++  # max folding, for integers: a float selection keeps IEEE's nan and signed zeros where a maximum does not
++  ((UPat.cvar("a") < UPat.var("b", int_or_bool)).where(UPat.var("b"), UPat.cvar("c")), lambda a,b,c: UOp.maximum(a,b) if a.val == c.val else None),
++  ((UPat.var("a", int_or_bool) < UPat.cvar("b")).where(UPat.cvar("c"), UPat.var("a")), lambda a,b,c: UOp.maximum(a,b) if b.val == c.val else None),
 +  # a float maximum's bounds leave out nan and the order of zeros
 +  (UPat.maximum(UPat.var("x", int_or_bool), UPat.var("y")).named("m"), max_by_bounds),
    # TODO: why does this rule break beautiful_mnist?

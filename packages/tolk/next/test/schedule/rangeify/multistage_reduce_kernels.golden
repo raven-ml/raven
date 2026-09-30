@@ -15,13 +15,14 @@
 13 Ops.ADD dtypes.weakint [10, 12]
 14 Ops.INDEX dtypes.float [6, 13]
 15 Ops.REDUCE dtypes.float [14, 9] (Ops.ADD, 0)
-16 Ops.MAX dtypes.float [5, 15]
-17 Ops.REDUCE dtypes.float [16, 7] (Ops.ADD, 0)
-18 Ops.STORE dtypes.void [4, 17]
-19 Ops.END dtypes.void [18, 3]
-20 Ops.SINK dtypes.void [19] KernelInfo()
-21 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32768, device="CPU") tag=()
-22 Ops.CALL dtypes.void [20, 0, 21] CallInfo()
-23 Ops.AFTER dtypes.float [0, 22]
-24 Ops.SINK dtypes.void [23]
+16 Ops.CMPLT dtypes.bool [5, 15]
+17 Ops.WHERE dtypes.float [16, 15, 5]
+18 Ops.REDUCE dtypes.float [17, 7] (Ops.ADD, 0)
+19 Ops.STORE dtypes.void [4, 18]
+20 Ops.END dtypes.void [19, 3]
+21 Ops.SINK dtypes.void [20] KernelInfo()
+22 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32768, device="CPU") tag=()
+23 Ops.CALL dtypes.void [21, 0, 22] CallInfo()
+24 Ops.AFTER dtypes.float [0, 23]
+25 Ops.SINK dtypes.void [24]
 
