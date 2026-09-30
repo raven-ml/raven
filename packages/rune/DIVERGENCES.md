@@ -575,7 +575,10 @@ target's run lands.
   (`qr`).
 - **Differs:** tinygrad's reflections, with `r`'s elements below the diagonal
   selected as `+0.`: tinygrad leaves there the rounding error of the zeros the
-  reflections make. `float16` computes at `float32`, and the reduced factors
+  reflections make. Each quotient is `Ops.FDIV`, rounded once, where tinygrad
+  multiplies by the reciprocal and rounds twice: IEEE division is the rule of
+  every rune composition, as of tolk's arithmetic (D9, D24), and it takes the
+  measured maxima from 6.9 and 13.5 to 2.4 and 3.7. `float16` computes at `float32`, and the reduced factors
   are the leading columns of `q` and rows of `r`. The signs agree in meaning
   only: a column with no element below the diagonal is still reflected, where
   nx.cpu, as LAPACK, takes no reflection, so a diagonal element of `r` may
@@ -584,15 +587,17 @@ target's run lands.
   accuracy. Compiled code never raises `No_convergence`.
 - **nx:** `nx_backend.mli`, `qr`: `q` orthonormal, `r` upper triangular; nx
   pins no factor's signs.
-- **Class:** measured bound: within `32 max(m, n) u` of the largest element of
+- **Class:** measured bound: within `16 max(m, n) u` of the largest element of
   eager's factors, up to the signs of the diagonal of `r`, for well-conditioned
   matrices of up to 5 x 5; measured maxima over 300 such matrices, in units of
-  `max(m, n) u`: 6.9 (`float32`), 13.5 (`float64`), 0.5 (`float16`, `u` its
+  `max(m, n) u`: 2.4 (`float32`), 3.7 (`float64`), 0.5 (`float16`, `u` its
   own).
 - **Reason:** (b).
 - **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
   reflection`, `› one element`, `› no column: q is the identity`, `› batch
-  axes`; the construction by `graph parity › qr_q`, `› qr_r`.
+  axes`; the construction, its single-rounding quotients included, by `graph
+  parity › qr_q`, `› qr_r`, whose generator builds tinygrad's reflections with
+  `Ops.FDIV`.
 
 ### L3. SVD sweeps to the roundoff and completes its vectors
 
@@ -606,21 +611,22 @@ target's run lands.
     for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
     leave `float64` values of random 9 x 9 matrices `3.4e5 num u` from
     eager's and of 16 x 16 ones `5.6e10 num u`; the sweeps needed grow with
-    `num` (8 at 48 in `float64`), and these reach `1.6 num u` to 48;
+    `num` (8 at 48 in `float64`), and these reach `1.8 num u` to 48;
   - `u`'s columns are the reflections that triangularize the sorted rotated
     columns, each with the sign of its diagonal element. tinygrad divides each
     column by its singular value, which leaves a column of zeros for a zero
     singular value and an inaccurate one for a small one. The columns are
     sorted by `Lower_reduce.argsort`, which is stable;
+  - each quotient of the rotations is `Ops.FDIV`, rounded once, as in L2;
   - the values are `float64`, refused (`Jit_error`) on a target without it,
     such as Metal. Compiled code never raises `No_convergence`: it runs its
     fixed sweeps, and NaN in `a` gives NaN values, as eager does.
 - **nx:** `nx.mli`, `svd`: `a = U diag(S) Vh`, `S` descending, non-negative,
   a zero one `+0`; `nx_backend.mli`: `u` and `vt` orthonormal.
-- **Class:** measured bound: within `32 max(m, n) u` of the largest singular
+- **Class:** measured bound: within `16 max(m, n) u` of the largest singular
   value for the values, and of one for the orthonormality of the vectors and
   the reconstruction, for well-conditioned matrices of up to 4 x 4; measured
-  maxima, in units of `max(m, n) u`: 8.1 (`float32`), 13.5 (`float64`), 0.5
+  maxima, in units of `max(m, n) u`: 3.1 (`float32`), 4.0 (`float64`), 0.5
   (`float16`, `u` its own).
 - **Reason:** (b).
 - **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 12 x 12

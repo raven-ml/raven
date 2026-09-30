@@ -5,7 +5,7 @@ R with the zeros below its diagonal that it selects. Each operand is a buffer
 on the CPU."""
 
 from tinygrad import Tensor, dtypes
-from tinygrad.uop.ops import UOp
+from tinygrad.uop.ops import Ops, UOp
 
 from golden import graph
 
@@ -21,10 +21,17 @@ def kernels(t):
     return UOp.sink(*[call.src[0] for call in linear.src])
 
 
+def fdiv(a, b):
+    """`a / b` rounded once, where tinygrad's division multiplies by `1 / b`:
+    the lowering divides operands of one shape, `b` expanded to `a`'s."""
+    return a.alu(Ops.FDIV, b.expand(a.shape))
+
+
 def qr(a):
-    """tinygrad's `qr` (`mixin/op.py:1799`), with the sign of the first element
-    written as the lowering writes it: -1 below zero and 1 elsewhere, which is
-    `x0.ne(0).where(x0.sign(), 1)` at every value, NaN included."""
+    """tinygrad's `qr` (`mixin/op.py:1799`) as the lowering builds it: each
+    quotient rounded once (`fdiv`), and the sign of the first element written
+    -1 below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at
+    every value, NaN included."""
     m, n = a.shape[-2:]
     R, Q = a, Tensor.eye(m, dtype=a.dtype)
     idx = Tensor.arange(m)
@@ -34,8 +41,8 @@ def qr(a):
         x0 = at_i.where(x, 0).sum(-1, keepdim=True)
         sgn, active = (x0 < 0).where(x0.const_like(-1), x0.const_like(1)), norm.ne(0)
         u0 = x0 + sgn * norm
-        v = (at_i.where(u0, x) / active.where(u0, 1)).unsqueeze(-1)
-        w = active.where(sgn * u0 / active.where(norm, 1), 0).unsqueeze(-1) * v
+        v = fdiv(at_i.where(u0, x), active.where(u0, 1)).unsqueeze(-1)
+        w = active.where(fdiv(sgn * u0, active.where(norm, 1)), 0).unsqueeze(-1) * v
         R = R - w @ (v.transpose(-2, -1) @ R)
         Q = Q - (Q @ v) @ w.transpose(-2, -1)
     return Q, R

@@ -84,11 +84,11 @@ let householder a =
     let sgn = direction x0 in
     let active = Ops.ne norm (zero norm) in
     let u0 = Ops.O.(x0 + (sgn * norm)) in
-    let v = Ops.div (Ops.where at_i u0 x) (Ops.where active u0 (float u0 1.)) in
+    let v = fdiv (Ops.where at_i u0 x) (Ops.where active u0 (float u0 1.)) in
     let v = Ops.unsqueeze v (-1) in
     let tau =
       Ops.where active
-        (Ops.div (Ops.mul sgn u0) (Ops.where active norm (float norm 1.)))
+        (fdiv (Ops.mul sgn u0) (Ops.where active norm (float norm 1.)))
         (zero norm)
     in
     let w = Ops.mul (Ops.unsqueeze tau (-1)) v in
@@ -173,13 +173,13 @@ let rotate (u, v, p) =
   in
   let rot = Ops.ne gamma (zero gamma) in
   let one = float gamma 1. and two = float gamma 2. in
-  let tau = Ops.O.((beta - alpha) / (two * Ops.where rot gamma one)) in
+  let tau = fdiv Ops.O.(beta - alpha) Ops.O.(two * Ops.where rot gamma one) in
   let t =
-    Ops.O.(
-      direction tau / (Lower_arith.unary Abs tau + Ops.sqrt (one + (tau * tau))))
+    fdiv (direction tau)
+      Ops.O.(Lower_arith.unary Abs tau + Ops.sqrt (one + (tau * tau)))
   in
   let t = Ops.where rot t (zero t) in
-  let c = Ops.reciprocal (Ops.sqrt Ops.O.(one + (t * t))) in
+  let c = fdiv one (Ops.sqrt Ops.O.(one + (t * t))) in
   let s = Ops.O.(c * t) in
   let mi, mj = halves (transpose selected) (-2) in
   let col x = Ops.unsqueeze x (-1) and row x = Ops.unsqueeze x (-2) in

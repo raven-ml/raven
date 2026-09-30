@@ -541,7 +541,7 @@ let qr =
                       let n =
                         float_of_int (Int.max (Nx.dim 0 a) (Nx.dim 1 a))
                       in
-                      qr_agrees ~bound:(32. *. n *. u) ~mode a))
+                      qr_agrees ~bound:(16. *. n *. u) ~mode a))
                 [ `Reduced; `Complete ]);
         };
       test "batch axes" (fun () ->
@@ -603,7 +603,7 @@ let svd =
                       let n =
                         float_of_int (Int.max (Nx.dim 0 a) (Nx.dim 1 a))
                       in
-                      svd_agrees ~bound:(32. *. n *. u) ~full_matrices a))
+                      svd_agrees ~bound:(16. *. n *. u) ~full_matrices a))
                 [ false; true ]);
         };
       test "batch axes" (fun () ->
