@@ -588,10 +588,24 @@ def kernel_input(kernel):
     return INPUTS[kernel]
 
 
+def widened_cases(renderer):
+    """A product of narrow floats widened to float32 first, which a core that
+    adds float32 products multiplies from the narrow floats."""
+    for name, dtype in (("half", dtypes.half), ("bfloat", dtypes.bfloat16)):
+        kernel = f"tc_widened_{name}"
+        KERNELS[kernel] = lambda dtype=dtype: last(empty(64, 64, dtype=dtype).float() @ empty(64, 64, dtype=dtype).float())
+        case(f"tc_{renderer}_widened_{name}", kernel, renderer, [tensor_core()])
+        # shaped for the core without its multiply-accumulate, small enough to evaluate
+        KERNELS[f"{kernel}_16"] = lambda dtype=dtype: last(empty(16, 16, dtype=dtype).float() @ empty(16, 16, dtype=dtype).float())
+        case(f"tc_{renderer}_widened_{name}_shaped", f"{kernel}_16", renderer, [tensor_core(use_tc=2)])
+
+
 for renderer in ["metal", "cuda", "amd"]:
     tensor_core_cases(renderer)
     half_accumulate_cases(renderer)
 multi_reduce_cases("metal")
+widened_cases("cuda")
+widened_cases("amd")
 loop_acc_cases("amd")
 case("tc_cuda_float_without_tf32", "tc_cuda_5", "cuda", [tensor_core()])
 case("tc_nv_float_without_tf32", "tc_cuda_5", "nv", [tensor_core()])

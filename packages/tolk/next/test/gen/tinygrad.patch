@@ -49,6 +49,44 @@ index 62c3191..613eda4 100644
  
    # log2(Inf) = Inf
    r = d.ne(math.inf).where(r, r.const_like(math.inf))
+diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
+index f80c800..060072f 100644
+--- a/tinygrad/codegen/opt/postrange.py
++++ b/tinygrad/codegen/opt/postrange.py
+@@ -173,6 +173,14 @@ class Scheduler:
+     if append_opt: self.applied_opts.append(opt)
+     return ret
+ 
++  @staticmethod
++  def _tc_operand(tc, x:UOp) -> UOp|None:
++    # a float32 operand widened from the core's narrow float, when the core adds float32 products: the core multiplies exactly, as float32 does
++    if x.dtype == tc.dtype_in: return x
++    if x.op is Ops.CAST and x.src[0].dtype == tc.dtype_in and dtypes.is_float(tc.dtype_in) and tc.dtype_in.itemsize < 4 \
++       and x.dtype == dtypes.float and tc.dtype_out == dtypes.float: return x.src[0]
++    return None
++
+   def _apply_tc_opt(self, use_tensor_cores:int, axis:int, tc_select:int, opt_level:int) -> None|list[UOp]:
+     if not (reduceops := self.reduceops): raise KernelOptError("no reduce ops for TensorCore")
+     reduceop = reduceops[0]
+@@ -182,7 +190,7 @@ class Scheduler:
+       in0, in1 = mul.src
+       for tc in self.ren.tensor_cores if tc_select == -1 else [self.ren.tensor_cores[tc_select]]:
+         if self.ren.target.device in ("CUDA", "NV") and tc.dtype_in == dtypes.float and not ALLOW_TF32: continue
+-        if tc.dtype_in == in0.dtype and tc.dtype_in == in1.dtype and tc.dtype_out == reduceop.dtype:
++        if self._tc_operand(tc, in0) is not None and self._tc_operand(tc, in1) is not None and tc.dtype_out == reduceop.dtype:
+           # tensor cores have three ranges. X, Y, and REDUCE
+           in0_ranges = sorted([u for u in in0.ranges if u not in in1.ranges], key=lambda x: x.arg[0], reverse=True)
+           in1_ranges = sorted([u for u in in1.ranges if u not in in0.ranges], key=lambda x: x.arg[0], reverse=True)
+@@ -219,7 +227,8 @@ class Scheduler:
+             reduceop = get_single_element([x for x in self.reduceops if axes[2] in UOp.sink(*x.src[1:]).ranges])
+             gate, mul = (r0.src[0], r0.src[1]) if (r0:=reduceop.src[0]).op is Ops.WHERE else (None, r0)
+             if mul.op is Ops.CAST: mul = mul.src[0]
+-            ins = mul.src if gate is None else tuple(gate.where(x, UOp.const(0, x.dtype)) for x in mul.src)
++            ins = tuple(self._tc_operand(tc, x) for x in mul.src)
++            ins = ins if gate is None else tuple(gate.where(x, UOp.const(0, x.dtype)) for x in ins)
+             srcs = [x.substitute({ne[a]: ne[b] for a,b in rl.items()}, walk=True) for x,rl in zip(ins, tc.relabel())]
+ 
+             # get upcast axes for the tensor cores
 diff --git a/tinygrad/codegen/simplify.py b/tinygrad/codegen/simplify.py
 index 4136f84..391690e 100644
 --- a/tinygrad/codegen/simplify.py

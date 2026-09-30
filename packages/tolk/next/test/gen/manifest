@@ -1514,6 +1514,10 @@ codegen/opt/postrange/tc_amd_tiled_extra_locals.golden
 codegen/opt/postrange/tc_amd_tiled_use_tc_2.golden
 codegen/opt/postrange/tc_amd_unroll.golden
 codegen/opt/postrange/tc_amd_unroll_relu.golden
+codegen/opt/postrange/tc_amd_widened_bfloat.golden
+codegen/opt/postrange/tc_amd_widened_bfloat_shaped.golden
+codegen/opt/postrange/tc_amd_widened_half.golden
+codegen/opt/postrange/tc_amd_widened_half_shaped.golden
 codegen/opt/postrange/tc_cuda_0.golden
 codegen/opt/postrange/tc_cuda_0_basic.golden
 codegen/opt/postrange/tc_cuda_0_padded.golden
@@ -1566,6 +1570,10 @@ codegen/opt/postrange/tc_cuda_tiled_extra_locals.golden
 codegen/opt/postrange/tc_cuda_tiled_use_tc_2.golden
 codegen/opt/postrange/tc_cuda_unroll.golden
 codegen/opt/postrange/tc_cuda_unroll_relu.golden
+codegen/opt/postrange/tc_cuda_widened_bfloat.golden
+codegen/opt/postrange/tc_cuda_widened_bfloat_shaped.golden
+codegen/opt/postrange/tc_cuda_widened_half.golden
+codegen/opt/postrange/tc_cuda_widened_half_shaped.golden
 codegen/opt/postrange/tc_metal_0.golden
 codegen/opt/postrange/tc_metal_0_basic.golden
 codegen/opt/postrange/tc_metal_0_padded.golden
@@ -1627,6 +1635,10 @@ codegen/opt/postrange/tc_metal_tiled_use_tc_2.golden
 codegen/opt/postrange/tc_metal_unroll.golden
 codegen/opt/postrange/tc_metal_unroll_relu.golden
 codegen/opt/postrange/tc_nv_float.golden
+codegen/opt/postrange/tc_widened_bfloat.golden
+codegen/opt/postrange/tc_widened_bfloat_16.golden
+codegen/opt/postrange/tc_widened_half.golden
+codegen/opt/postrange/tc_widened_half_16.golden
 codegen/opt/postrange/top_split_upcast.golden
 codegen/opt/postrange/unroll_32.golden
 codegen/opt/postrange/upcast_16.golden

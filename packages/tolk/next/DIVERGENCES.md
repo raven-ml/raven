@@ -856,3 +856,35 @@ the Exclusions of `README.md`.
 - **Pinned by:** the `Codegen` suite, `programs › a host program's binary
   holds nx.device's entry after the kernel` and `› a host program runs
   through Program.call, with ten scalars past the argument registers`.
+
+## D29. A float32 tensor core takes operands widened from its narrow input
+
+- **tinygrad:** `codegen/opt/postrange.py:185` (`_apply_tc_opt`: a core
+  applies only when both operands of the multiply have its input dtype),
+  `:222` (the core multiplies the multiply's own operands).
+- **tolk.next:** `lib/codegen/opt/postrange.ml` (`tc_operand`, `try_core`,
+  `use_wmma`); `test/gen/tinygrad.patch`, which gives tinygrad's matcher the
+  same rule before the goldens are generated.
+- **Differs:** a core whose input is a narrow float (`half`, `bfloat16`, an
+  8-bit float) and whose output is `float32` also takes a `float32` operand
+  that is a cast of its input dtype, and multiplies the narrow value. The
+  product of two narrow floats is exact in `float32`, and the core computes
+  it exactly, so the widened product and the core agree bit for bit; a core
+  with a narrow output still takes no widened operand, since its products
+  round. Cores are tried in the renderer's order, so Metal, whose `float32`
+  core comes first, keeps it. tinygrad never builds the widened form, which
+  its `dot` does not make, so no golden it made before changes: `generate.py
+  --check` matches every one with the patch applied.
+- **Reason:** (b). rune's `Matmul` lowering computes nx's products of narrow
+  floats, which are exact, as `MUL(CAST f32 a, CAST f32 b)` summed at
+  `float32` (RFC 0012, the `Matmul` row); without this rule it takes no
+  tensor core on CUDA or HIP, where the `float32` core is TF32 or absent, and
+  gpt-oss's `float16` and `bfloat16` products on CUDA lose theirs.
+- **Pinned by:** the Postrange suite, `apply_opts optimises a kernel as
+  tinygrad does › tc_{cuda,amd}_widened_{half,bfloat}.golden` (the core
+  applies on CUDA sm_89 and HIP gfx1100) and
+  `› tc_{cuda,amd}_widened_{half,bfloat}_shaped.golden`, with `optimising
+  keeps a kernel's writes › small kernels › tc_*_widened_*_shaped` (shaped for
+  the core, the kernel keeps its values); rune's
+  `Rune_next.Lower_linalg › tensor cores › cuda › *`. The core's exact product
+  is README's hardware check.

@@ -64,6 +64,10 @@ named:
 - **Contraction (D25):** a CUDA kernel compiled with `--fmad=false` and a HIP
   kernel compiled with `-ffp-contract=off` compute `a*b + c` with two
   roundings: `(1 + 2^-12)^2 - (1 + 2^-11)` is 0, not `2^-24`.
+- **Widened tensor-core operands (D29):** on CUDA and HIP, a `float32`
+  matrix product of `half` and `bfloat16` values widened first, run on the
+  narrow-in, `float32`-out core, equals the same product computed in
+  `float32`.
 - **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
   an infinity a NaN in fp8 and keeps it in bf8 (D16).
 - **CUDA (nx.cuda.device):** a device waits with the `Sleep` completion: the
@@ -319,7 +323,8 @@ It runs against the tinygrad checkout `_tinygrad_next` of the main
 working tree, which must be clean and at the commit the script pins, through
 a copy of it with `gen/tinygrad.patch` applied: the patch gives tinygrad's
 rewrites the restrictions that keep IEEE and modular values (DIVERGENCES D24),
-so that the goldens hold the graphs tolk.next makes. No Python runs at test
+and its tensor-core matcher the widened operands of D29, so that the goldens
+hold the graphs tolk.next makes. No Python runs at test
 time. To regenerate:
 
 1. `uv run packages/tolk/next/test/gen/generate.py --check` writes nothing,

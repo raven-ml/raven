@@ -240,6 +240,22 @@ module Scheduler = struct
     | Ok old_sz -> shift_by ?top ?new_rng k rng amount target old_sz
     | Error msg -> raise_notrace (Refused msg)
 
+  (* [tc_operand tc u] is what the core [tc] multiplies for the operand [u]: [u]
+     at the core's input type, or the narrow float that [u] widens to float32
+     when the core adds float32 products, since it multiplies two narrow floats
+     exactly, as float32 does. *)
+  let tc_operand (tc : Tc.t) u =
+    if Dtype.equal (dtype u) tc.dtype_in then Some u
+    else if
+      op u = Op.Cast
+      && Dtype.equal (dtype (nth u 0)) tc.dtype_in
+      && Dtype.is_float tc.dtype_in
+      && Dtype.itemsize tc.dtype_in < 4
+      && Dtype.equal (dtype u) Dtype.Float32
+      && Dtype.equal tc.dtype_out Dtype.Float32
+    then Some (nth u 0)
+    else None
+
   let rec apply ?(append_opt = true) k (opt : Opt.t) =
     let axis_rng axis =
       check
@@ -414,10 +430,9 @@ module Scheduler = struct
       && not (Helpers.Context_var.value Helpers.allow_tf32)
     then None
     else if
-      not
-        (Dtype.equal tc.dtype_in (dtype in0)
-        && Dtype.equal tc.dtype_in (dtype in1)
-        && Dtype.equal tc.dtype_out (dtype reduceop))
+      Option.is_none (tc_operand tc in0)
+      || Option.is_none (tc_operand tc in1)
+      || not (Dtype.equal tc.dtype_out (dtype reduceop))
     then None
     else
       (* tensor cores have three ranges. X, Y, and REDUCE *)
@@ -529,13 +544,14 @@ module Scheduler = struct
       if op r0 = Op.Where then (Some (nth r0 0), nth r0 1) else (None, r0)
     in
     let mul = if op mul = Op.Cast then nth mul 0 else mul in
+    let ins = List.map (fun x -> Option.get (tc_operand tc x)) (src mul) in
     let ins =
       match gate with
-      | None -> src mul
+      | None -> ins
       | Some g ->
           List.map
             (fun x -> where g x (const ~dtype:(dtype x) (`Int Z.zero)))
-            (src mul)
+            ins
     in
     let relabel_a, relabel_b = Tc.relabel tc in
     let srcs =

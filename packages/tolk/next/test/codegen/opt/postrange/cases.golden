@@ -312,6 +312,14 @@ tc_metal_conv_5	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=5, arg=(-1, 2, 1)),)
 tc_metal_conv_6	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=6, arg=(-1, 2, 1)),)		ok	
 tc_metal_conv_7	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=7, arg=(-1, 2, 1)),)		ok	
 tc_metal_conv_8	tc_metal_conv	metal	(Opt(op=OptOps.TC, axis=8, arg=(-1, 2, 1)),)		ok	
+tc_cuda_widened_half	tc_widened_half	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
+tc_cuda_widened_half_shaped	tc_widened_half_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
+tc_cuda_widened_bfloat	tc_widened_bfloat	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
+tc_cuda_widened_bfloat_shaped	tc_widened_bfloat_16	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
+tc_amd_widened_half	tc_widened_half	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
+tc_amd_widened_half_shaped	tc_widened_half_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
+tc_amd_widened_bfloat	tc_widened_bfloat	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		ok	
+tc_amd_widened_bfloat_shaped	tc_widened_bfloat_16	amd	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 2)),)		ok	
 tc_amd_loop_acc_tc	tc_amd_loop_acc	amd	(Opt(op=OptOps.TC, axis=0, arg=(0, 0, 1)),)		KernelOptError	0
 tc_cuda_float_without_tf32	tc_cuda_5	cuda	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
 tc_nv_float_without_tf32	tc_cuda_5	nv	(Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1)),)		KernelOptError	0
