@@ -62,6 +62,17 @@ let dtypes =
 
 (* Captures *)
 
+(* A grid of [r] by [c] elements windowed along its rows, then along the columns
+   of each window, each by a size and a step. *)
+let windowed =
+  let open Gen in
+  let window n = pair (int_range 1 n) (int_range 1 3) in
+  let* r, c = pair (int_range 1 6) (int_range 1 6) in
+  let+ (w0, s0), (w1, s1) = pair (window r) (window c) in
+  ( (r, c, w0, s0, w1, s1),
+    Nx.sliding_window ~axis:1 ~window:w1 ~step:s1
+      (Nx.sliding_window ~axis:0 ~window:w0 ~step:s0 (grid r c)) )
+
 let bound s = List.length (Lower.captures s)
 
 let captures =
@@ -72,6 +83,15 @@ let captures =
       test "overlapping windows are read from their storage" (fun () ->
           let x = Nx.sliding_window ~window:3 ~step:1 (arange 6) in
           exact x (snd (copied x)));
+      prop "windows of windows of any size and step are read from their storage"
+        (Gen.map snd
+           (Gen.with_pp
+              (fun ppf ((r, c, w0, s0, w1, s1), _) ->
+                Format.fprintf ppf
+                  "%dx%d, windows of %d every %d, then of %d every %d" r c w0 s0
+                  w1 s1)
+              windowed))
+        (fun x -> exact x (snd (copied x)));
       test "windows of windows are read from their storage" (fun () ->
           let x =
             Nx.sliding_window ~axis:1 ~window:2

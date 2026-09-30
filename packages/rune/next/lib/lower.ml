@@ -64,18 +64,23 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
    flat node of those elements the same view is movements: a broadcast axis is
    an expand, a negative stride a flip, and the stepped axes, by decreasing
    stride, are rows of a reshape cut by a shrink when each stride nests in the
-   one before it. Overlapping windows are built as [pool] builds them: the
-   storage repeated end to end and read back in rows one element longer, so that
-   each row starts one element further on. *)
+   one before it. Overlapping axes are windows of [pool]. *)
 
-let ceil_div a b = (a + b - 1) / b
 let ints l = List.map (fun n -> Ops.Int n) l
 
-let shrink_axis u axis lo hi =
-  Ops.shrink u
-    (List.mapi
-       (fun i _ -> if i = axis then Some (Ops.Int lo, Ops.Int hi) else None)
-       (Ops.shape u))
+(* [windows u axis size] is [Ops.pool] along [axis] of [u]: the windows take
+   [axis]'s place, and their elements are a new last axis. *)
+let windows ?(step = 1) ?(dilation = 1) u axis size =
+  let r = Ops.ndim u in
+  let last = List.filter (( <> ) axis) (List.init r Fun.id) @ [ axis ] in
+  let w =
+    Ops.pool ~stride:[ step ] ~dilation:[ dilation ] (Ops.permute u last)
+      [ size ]
+  in
+  Ops.permute w
+    (List.init r (fun a ->
+         if a = axis then r - 1 else if a < axis then a else a - 1)
+    @ [ r ])
 
 (* The stepped axes of a view, by decreasing magnitude of stride. *)
 let stepped shape strides =
@@ -100,7 +105,7 @@ let window flat start n =
     if start + n <= size then flat
     else Ops.pad flat [ Some (Ops.Int 0, Ops.Int (start + n - size)) ]
   in
-  shrink_axis flat 0 start (start + n)
+  Ops.shrink flat [ Some (Ops.Int start, Ops.Int (start + n)) ]
 
 (* The stepped [axes] as rows of reshapes cut by shrinks. *)
 let nested flat start shape strides axes =
@@ -120,57 +125,30 @@ let nested flat start shape strides axes =
   in
   Ops.reshape t (ints (List.map (fun a -> shape.(a)) axes))
 
-(* The stepped [axes] from the innermost out. Before an axis of size [n] and
-   stride [s], [u] holds, at [p] and inner indices [i], the element [p] plus the
-   inner offset of [i]. Rows of [u] one element longer than [u]'s first axis
-   start one element further on, and each [s]th element of a row is the new
-   axis. *)
+(* The stepped [axes] from the innermost out, each the windows of its stride
+   over the axis before it. *)
 let overlapping flat start shape strides axes =
   let extent =
     List.fold_left
       (fun e a -> e + ((shape.(a) - 1) * Int.abs strides.(a)))
       1 axes
   in
-  let step (u, m) a =
-    let n = shape.(a) and s = Int.abs strides.(a) in
-    let inner = List.tl (Ops.shape u) in
-    let m' = m - ((n - 1) * s) and w = ((n - 1) * s) + 1 in
-    let k = ceil_div (m' * (m + 1)) m in
-    let u = Ops.reshape u (Ops.Int 1 :: Ops.shape u) in
-    let u = Ops.expand u (Ops.Int k :: List.tl (Ops.shape u)) in
-    let u = Ops.reshape u (Ops.Int (k * m) :: inner) in
-    let u = shrink_axis u 0 0 (m' * (m + 1)) in
-    let u = Ops.reshape u (Ops.Int m' :: Ops.Int (m + 1) :: inner) in
-    let u = shrink_axis u 1 0 w in
-    let u =
-      Ops.pad u
-        (None
-        :: Some (Ops.Int 0, Ops.Int ((n * s) - w))
-        :: List.map (fun _ -> None) inner)
-    in
-    let u = Ops.reshape u (Ops.Int m' :: Ops.Int n :: Ops.Int s :: inner) in
-    let u = shrink_axis u 2 0 1 in
-    (Ops.reshape u (Ops.Int m' :: Ops.Int n :: inner), m')
-  in
-  let u, _ =
-    List.fold_left step (window flat start extent, extent) (List.rev axes)
-  in
-  Ops.reshape u (List.tl (Ops.shape u))
+  let step u a = windows ~dilation:(Int.abs strides.(a)) u 0 shape.(a) in
+  let u = List.fold_left step (window flat start extent) (List.rev axes) in
+  (* The innermost axis came first, and the leading axis has one element. *)
+  let k = List.length axes in
+  Ops.reshape
+    (Ops.permute u (0 :: List.init k (fun i -> k - i)))
+    (ints (List.map (fun a -> shape.(a)) axes))
 
-(* Whether [strides] lay [shape] out in C order: the stride of each axis of more
-   than one element is the number of elements after it. *)
-let c_order shape strides =
-  let rec go d after =
-    d < 0
-    || ((shape.(d) = 1 || strides.(d) = after) && go (d - 1) (after * shape.(d)))
-  in
-  go (Array.length shape - 1) 1
-
-(* [strided flat ~offset shape strides] is the view of [shape] and [strides]
-   from element [offset] of the flat node [flat]. *)
-let strided flat ~offset shape strides =
+(* [strided flat v origin] is the view [v] over the flat node [flat] of its
+   storage from element [origin]. *)
+let strided flat v origin =
+  let offset = View.offset v - origin
+  and shape = View.shape v
+  and strides = View.strides v in
   let r = Array.length shape in
-  if c_order shape strides then
+  if View.is_c_contiguous v then
     Ops.reshape
       (window flat offset (Array.fold_left ( * ) 1 shape))
       (ints (Array.to_list shape))
@@ -394,9 +372,7 @@ let storage : type a b.
    the flat node [u] of its storage from element [start]: each device's view,
    reassembled when [p] splits the value. *)
 let viewed what u p shape v start =
-  let local =
-    strided u ~offset:(View.offset v - start) (View.shape v) (View.strides v)
-  in
+  let local = strided u v start in
   match layout what p shape with
   | Split axis -> Ops.unshard local [ axis ]
   | One | Copies -> local
@@ -520,16 +496,7 @@ let move u : Nx.Op.move -> Ops.t = function
   | Flip dims ->
       Ops.flip u
         (List.filter (fun a -> dims.(a)) (List.init (Array.length dims) Fun.id))
-  | Window { axis; size; step } ->
-      (* The windows along [axis] take its place, and their elements are a new
-         last axis. *)
-      let r = Array.length (shape_of u) in
-      let last = List.filter (( <> ) axis) (List.init r Fun.id) @ [ axis ] in
-      let windows = Ops.pool ~stride:[ step ] (Ops.permute u last) [ size ] in
-      Ops.permute windows
-        (List.init r (fun a ->
-             if a = axis then r - 1 else if a < axis then a else a - 1)
-        @ [ r ])
+  | Window { axis; size; step } -> windows ~step u axis size
 
 (* [place s what p q x] is the traced [x], at [p], at [q]: the same node where
    [q] lays it out alike, copied to [q]'s devices, or split over them. *)
