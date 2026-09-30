@@ -750,8 +750,6 @@ let divides_like_tinygrad cell =
         raises ~msg:column Division_by_zero (fun () -> f x y)
     | expected -> equal ~msg:column int (int_of_string expected) (f x y)
   in
-  check "cdiv" cdiv;
-  check "cmod" cmod;
   check "floordiv" floordiv;
   check "floormod" floormod;
   check "ceildiv" ceildiv;
@@ -797,9 +795,6 @@ let integers =
     [
       as_tinygrad ~key:[ "x"; "y" ] "divide as tinygrad does" "division.golden"
         divides_like_tinygrad;
-      prop "cdiv and cmod are OCaml's truncated division" gen_division
-        (fun (x, y) ->
-          equal (pair int int) (x / y, x mod y) (cdiv x y, cmod x y));
       prop
         "floordiv and floormod split x into y times a quotient and a remainder \
          of y's sign"

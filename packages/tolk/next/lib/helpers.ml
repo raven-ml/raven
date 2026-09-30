@@ -304,8 +304,6 @@ let fdiv x y =
 
 let ceildiv num amt = -fdiv num (-amt)
 let round_up num amt = fdiv (num + amt - 1) amt * amt
-let cdiv x y = if y = 0 then 0 else x / y
-let cmod x y = x - (cdiv x y * y)
 let floordiv x y = if y = 0 then 0 else fdiv x y
 let floormod x y = x - (floordiv x y * y)
 let lo32 x = x land 0xFFFF_FFFF

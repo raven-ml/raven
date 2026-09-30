@@ -320,14 +320,6 @@ val round_up : int -> int -> int
 
     Raises [Division_by_zero] if [amt] is [0]. *)
 
-val cdiv : int -> int -> int
-(** [cdiv x y] is [x / y] rounded towards zero, as in C, and [0] if [y] is [0].
-*)
-
-val cmod : int -> int -> int
-(** [cmod x y] is [x - cdiv x y * y]: the remainder of C's division, with the
-    sign of [x]. It is [x] if [y] is [0]. *)
-
 val floordiv : int -> int -> int
 (** [floordiv x y] is [x / y] rounded down, and [0] if [y] is [0]. *)
 

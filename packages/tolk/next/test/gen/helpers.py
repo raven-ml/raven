@@ -12,9 +12,9 @@ import string
 
 from golden import table
 from tinygrad import helpers
-from tinygrad.helpers import (DEV, Context, ContextVar, Target, ansilen, ansistrip, cdiv, ceildiv, cmod, colored,
-                              floordiv, floormod, getenv, round_up, select_by_name, size_to_str, strip_parens,
-                              time_to_str, to_function_name)
+from tinygrad.helpers import (DEV, Context, ContextVar, Target, ansilen, ansistrip, ceildiv, colored, floordiv,
+                              floormod, getenv, round_up, select_by_name, size_to_str, strip_parens, time_to_str,
+                              to_function_name)
 
 
 def literal(s):
@@ -86,9 +86,9 @@ DENOMINATORS = [-5, -4, -2, -1, 0, 1, 2, 4, 5, 1000]
 
 @table
 def division():
-    columns = ["x", "y", "cdiv", "cmod", "floordiv", "floormod", "ceildiv", "round_up"]
+    columns = ["x", "y", "floordiv", "floormod", "ceildiv", "round_up"]
     # round_up is specified for positive and zero divisors only.
-    return columns, [(x, y, cdiv(x, y), cmod(x, y), floordiv(x, y), floormod(x, y), outcome(ceildiv, x, y),
+    return columns, [(x, y, floordiv(x, y), floormod(x, y), outcome(ceildiv, x, y),
                       outcome(round_up, x, y) if y >= 0 else None)
                      for x in NUMERATORS for y in DENOMINATORS]
 
