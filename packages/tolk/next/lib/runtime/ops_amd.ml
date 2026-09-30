@@ -614,10 +614,11 @@ let compute_queue ~host gpu q : Hcq2.commands =
       (* A submission writes at most half the ring, which the device leaves room
          for (DIVERGENCES D39). *)
       if 2 * size > gpu.compute_ring then
-        invalid_arg
-          (Printf.sprintf
-             "AQL packets of %d bytes exceed half their ring of %d bytes" size
-             gpu.compute_ring);
+        raise
+          (Hcq2.Over_capacity
+             (Printf.sprintf
+                "AQL packets of %d bytes exceed half their ring of %d bytes"
+                size gpu.compute_ring));
       push cmdbuf
         (Hcq2.bufferize_cmdbuf q "aql" host)
         ~unit:64 ~doorbell_lag:1 ()
@@ -745,11 +746,12 @@ let copy_queue ~host gpu q : Hcq2.commands =
     (* Zeroing the tail can double what a submission writes, which is at most
        half the ring (DIVERGENCES D39). *)
     if 4 * (size_dw * 4) > ring then
-      invalid_arg
-        (Printf.sprintf
-           "an SDMA command buffer of %d bytes exceeds a quarter of its ring \
-            of %d bytes"
-           (size_dw * 4) ring);
+      raise
+        (Hcq2.Over_capacity
+           (Printf.sprintf
+              "an SDMA command buffer of %d bytes exceeds a quarter of its \
+               ring of %d bytes"
+              (size_dw * 4) ring));
     let put_b = load (index put [ int 0 ]) [] in
     let ring_bytes = rs * 4 in
     let tail = cast O.(put_b % int ring_bytes // int 4) Dtype.Int32 in

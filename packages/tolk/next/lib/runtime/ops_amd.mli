@@ -97,9 +97,10 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
     [exec] and [copy] raise [Invalid_argument] on a queue that does not run
     them, and a command of a copy queue [gpu] lacks raises [Invalid_argument]. A
     submission writes at most half of each ring, the room the device leaves it:
-    [submit] raises [Invalid_argument] if a copy queue's packets exceed a
+    [submit] raises {!Hcq2.Over_capacity} if a copy queue's packets exceed a
     quarter of its ring, since zeroing the ring's tail can double what they
-    take, or if the AQL packets exceed half of theirs.
+    take, or if the AQL packets exceed half of theirs, and the batch is then
+    split into several submissions.
 
     Raises [Invalid_argument] if [gpu] has several dies and its compute queue
     takes PM4 packets, or if [gpu.target] is none of [(9, 4, 2)], [(9, 5, 0)]

@@ -72,10 +72,9 @@ let gpu = function
   | name -> fail ("no GPU " ^ name)
 
 (* The host, and AMD, whose queues address the host's memory. *)
-let recorded_devices name = function
+let gpu_devices (g : Ops_amd.gpu) = function
   | "CPU" -> { Hcq2.target = host_target; queues = None }
   | _ ->
-      let g = gpu name in
       let m, n, s = g.target in
       {
         Hcq2.target =
@@ -87,6 +86,8 @@ let recorded_devices name = function
         queues =
           Some (Ops_amd.queues ~host:"CPU" ~reaches:(String.equal "CPU") g);
       }
+
+let recorded_devices name = gpu_devices (gpu name)
 
 (* A kernel's profile key is its program's BLAKE2 digest, where tinygrad's is a
    SHA-256 (DIVERGENCES D12): recorded graphs are compared without them. *)
@@ -458,18 +459,18 @@ let room =
       test "an SDMA command buffer of up to a quarter of its ring submits"
         (fun () -> submits small "COPY:0" (copies 2));
       test
-        "a larger SDMA command buffer is refused, since zeroing the tail \
-         doubles it" (fun () ->
+        "a larger SDMA command buffer is over its queue's capacity, since \
+         zeroing the tail doubles it" (fun () ->
           raises
-            (Invalid_argument
+            (Hcq2.Over_capacity
                "an SDMA command buffer of 84 bytes exceeds a quarter of its \
                 ring of 224 bytes") (fun () ->
               submits small "COPY:0" (copies 3)));
       test "AQL packets of up to half their ring submit" (fun () ->
           submits aql "COMPUTE:0" (signals 1));
-      test "more AQL packets are refused" (fun () ->
+      test "more AQL packets are over their queue's capacity" (fun () ->
           raises
-            (Invalid_argument
+            (Hcq2.Over_capacity
                "AQL packets of 192 bytes exceed half their ring of 256 bytes")
             (fun () -> submits aql "COMPUTE:0" (signals 2)));
     ]
@@ -611,7 +612,7 @@ let code_object case =
 
 (* A range of three trips around a kernel adding one on [name]'s AMD device,
    each trip on its own window of four floats, as a schedule. *)
-let ranged name case =
+let ranged ?(trips = 3) ?(copy = false) name case =
   let g = gpu name in
   let m, n, s = g.target in
   let target =
@@ -635,16 +636,18 @@ let ranged name case =
   let kernel =
     Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ]
   in
-  let r = Ops.range (Int 3) [ 7 ] in
+  let r = Ops.range (Int trips) [ 7 ] in
   let window u =
     let start = Ops.mul r (Ops.int 4) in
     Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
   in
-  let buf () = Ops.new_buffer (Single "AMD") 12 Float32 in
+  let buf () = Ops.new_buffer (Single "AMD") (4 * trips) Float32 in
   let call =
-    Ops.call
-      (Codegen.to_program kernel renderer)
-      [ window (buf ()); window (buf ()) ]
+    if copy then Ops.store_call (window (buf ())) (window (buf ()))
+    else
+      Ops.call
+        (Codegen.to_program kernel renderer)
+        [ window (buf ()); window (buf ()) ]
   in
   Ops.v Linear ~src:[ Ops.end_ call [ r ] ]
 
@@ -688,7 +691,74 @@ let loops =
           is_false ~msg:"addresses in integers" (contains "float"));
     ]
 
+(* Batches split at their queues' capacity (DIVERGENCES D39) *)
+
+(* The batches of a range of [trips] trips of a kernel, or of a copy, on a
+   device [g] like the one [name] names, each with its trips and the bytes its
+   queue's ring takes, from the placeholder [tag]. *)
+let pieces ?copy ~trips g name case tag =
+  let linear =
+    plain (fun () ->
+        Hcq2.compile_linear ~devices:(gpu_devices g)
+          (ranged ?copy ~trips name case))
+  in
+  List.map
+    (fun b ->
+      let trips =
+        match Ops.arg (Ops.without_after b) with
+        | Call { aux = Some info; _ } -> List.length info.kernels
+        | _ -> fail "a batch has its kernels"
+      in
+      let bytes =
+        List.find_map
+          (fun u ->
+            match Ops.tag u with
+            | Some (String t) when t = tag -> Some (Ops.max_numel u)
+            | _ -> None)
+          (Ops.toposort ~enter_calls:true b)
+      in
+      (trips, Option.get bytes))
+    (List.filter is_batch (Ops.src linear))
+
+let splits =
+  group "splits (D39)"
+    [
+      test
+        "a range of 10,000 trips on AQL runs as batches of up to half the ring"
+        (fun () ->
+          let ring = 1024 * 1024 in
+          let g = { (gpu "gfx942") with compute_ring = ring } in
+          let ps =
+            pieces ~trips:10_000 g "gfx942" "chain_gfx942" "aql_compute_0"
+          in
+          is_true ~msg:"several batches" (List.length ps > 1);
+          equal ~msg:"every trip" int 10_000
+            (List.fold_left (fun n (t, _) -> n + t) 0 ps);
+          List.iter (fun (_, bytes) -> at_most int ~than:(ring / 2) bytes) ps);
+      test
+        "a range of 1,000 copies runs as batches of up to a quarter of the \
+         copy ring" (fun () ->
+          let ring = 64 * 1024 in
+          let g = { (gpu "gfx1100") with copy_rings = [ ring ] } in
+          let ps =
+            pieces ~copy:true ~trips:1_000 g "gfx1100" "chain" "cmdbuf_copy_0"
+          in
+          is_true ~msg:"several batches" (List.length ps > 1);
+          equal ~msg:"every trip" int 1_000
+            (List.fold_left (fun n (t, _) -> n + t) 0 ps);
+          List.iter (fun (_, bytes) -> at_most int ~than:(ring / 4) bytes) ps);
+    ]
+
 let () =
   exit
     (run "Tolk_next.Ops_amd"
-       [ recorded; recorded_words; carry_law; room; linking; refusals; loops ])
+       [
+         recorded;
+         recorded_words;
+         carry_law;
+         room;
+         splits;
+         linking;
+         refusals;
+         loops;
+       ])

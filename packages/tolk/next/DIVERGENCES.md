@@ -1197,17 +1197,24 @@ the Exclusions of `README.md`.
   queue refuses only a command buffer larger than its ring.
 - **tolk.next:** `lib/runtime/ops_amd.ml:599` (the AQL queue's `submit`) and
   `:733` (the copy queue's).
-- **Differs:** a submission writes at most half of each ring. The copy
-  queue refuses a command buffer over a quarter of its ring, since zeroing
-  the tail when it does not fit before the ring's end can double what it
-  takes, and the AQL queue refuses packets over half of its. nx.device waits,
-  before the host program runs, until each ring of the device is at most
-  half full, so no host program overwrites packets its engine has not read.
+- **Differs:** a submission writes at most half of each ring. A copy
+  queue's command buffer over a quarter of its ring, since zeroing the tail
+  when it does not fit before the ring's end can double what it takes, and
+  AQL packets over half of theirs, are over the queue's capacity
+  (`Hcq2.Over_capacity`): the batch runs as several submissions, its calls or
+  a range's trips split between them, and only a call too large for its
+  queue on its own is refused. nx.device waits, before the host program runs,
+  until each ring of the device is at most half full, so no host program
+  overwrites packets its engine has not read. The copy queue keeps streaming
+  its command buffer into its ring, as tinygrad's does: an SDMA indirect
+  buffer on a user queue is used by nothing this port can check against.
 - **Reason:** (c). nx.device's queue writers wait until the engine leaves room
   (the AMD library's low-level section), and a host program cannot wait with
   the device's timeout nor lose it; `Nx_device.submit` does, through the
   driver's `room`.
-- **Pinned by:** the Ops_amd suite: `room (D39)`; nx.device's suite: `timeline ›
+- **Pinned by:** the Ops_amd suite: `room (D39)` and `splits (D39)`, a range
+  of 10,000 trips on AQL and one of 1,000 copies, each split into batches
+  within their queue's share; nx.device's suite: `timeline ›
   a submission runs once its device's queues have room` and `› a device whose
   queues stay full through its timeout is lost ...`.
 
