@@ -17,8 +17,9 @@ Each entry gives the tinygrad file and line, the tolk.next file and line, what
 differs, its reason, and the test that pins it. An entry whose test does not
 exist yet names the layer that brings it; the entry is rejected at that
 layer's review if the test is still missing. An entry goes when its reason
-goes. Keeping only part of a file is scope, recorded under Exclusions in
-`README.md`, not a divergence.
+goes. Entries are in the order of their numbers, and a number is never
+reused, since tests cite them. Keeping only part of a file is scope, recorded
+under Exclusions in `README.md`, not a divergence.
 
 ## D1. Timeline values are parameters
 
@@ -41,8 +42,8 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
 - **tolk.next:** `lib/device.ml` (the compiler half of `device.py`), waiting
-  for L7 for the `ops_*.py` files; `lib/uop/ops.ml:227` (`param_arg`),
-  `:3005` (`new_buffer`).
+  for L7 for the `ops_*.py` files; `lib/uop/ops.ml:229` (the type
+  `param_arg`), `:3110` (`param_arg`), `:3131` (`new_buffer`).
 - **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
   and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
   (queues, `pm_encode`, program data), all returning data. The lazy `Buffer`
@@ -75,16 +76,16 @@ the Exclusions of `README.md`.
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
 - **tolk.next:** waiting for L2 through L8, each break with its layer; for
-  `uop/ops.py`, `lib/uop/ops.ml:572` (`construction_check`), `:1651`
-  (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
-  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`);
+  `uop/ops.py`, `lib/uop/ops.ml:571` (`construction_check`), `:1683`
+  (`simplify_hook`), `:4446` (`Private`), `:1188` (`Make_elementwise`),
+  `:814` (`repr`), `:243` (`bufferize_opts`), `:261` (`Calls`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml` (`Compiler`); `lib/schedule/prepare.ml`
   (`contiguous_view`); `lib/schedule/schedule.ml` (`pm_flatten_linear`); and
   `lib/codegen/codegen.ml:621` (`apply_opts`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
-    module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
+    module: `contiguous_view` and its matcher go to `Prepare`,
     `to_elf` to `Device`, and `render` and `srender` to `Render`;
   - `engine/realize.py`'s `pm_flatten_linear`, which `schedule/__init__.py`
     imports, is `Schedule.pm_flatten_linear`, since `Realize` follows
@@ -223,7 +224,7 @@ the Exclusions of `README.md`.
     first; `f2f` flushes subnormals to zero both ways; `f2f_clamp` sends a
     finite value above the greatest one to infinity in the 16-bit floats, and
     saturates infinities in the 8-bit floats.
-- **tolk.next:** `lib/dtype.ml:469-490` (`encode_format`, one rounding for
+- **tolk.next:** `lib/dtype.ml:470-491` (`encode_format`, one rounding for
   every narrow float; `float_of_integer`); `lib/codegen/decomp/decomp_dtype.ml`
   (`long_to_float`, `f2f_clamp`, `narrow`, `f2f`).
 - **Differs:** converting to a narrow float rounds once, to nearest with ties
@@ -269,7 +270,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `dtype.py:279` (`fp8_to_float` returns `math.nan` for
   e4m3's NaN codes, whatever their sign bit).
-- **tolk.next:** `lib/dtype.ml:430-447` (`decode_format`).
+- **tolk.next:** `lib/dtype.ml:431-448` (`decode_format`).
 - **Differs:** e4m3's `0xff` decodes to a negative NaN, so it encodes back to
   `0xff`, where tinygrad gives `0x7f`. e5m2 already kept the sign.
 - **Reason:** (b). nx's decoder keeps the sign, so a value read eagerly and a
@@ -277,36 +278,6 @@ the Exclusions of `README.md`.
   trip.
 - **Pinned by:** `Dtype › storage › a NaN decodes with the sign of its bits`;
   and a rune test at L9.
-
-## D16. CUDA keeps a float8 infinity special
-
-- **tinygrad:** `renderer/cstyle.py:33,42` (a cast to `__nv_fp8_e4m3` or
-  `__nv_fp8_e5m2` is the constructor, which converts with
-  `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
-- **tolk.next:** `lib/renderer/cstyle.ml:961-974` (`fp8_infinity`,
-  `cuda_fp8_guard`, `is_fp8_guarded`), `:1018-1036` (the two rules of
-  `cuda_lang`) and `:1144` (the helper in the prefix).
-- **Differs:** the saturating conversion turns ±inf into ±max. tolk.next
-  keeps an infinity special, as `Dtype.truncate` does: it stays an infinity
-  in e5m2 and becomes a NaN of its sign in e4m3, which has no infinity. A
-  cast of a float value calls `tg_fp8`, a helper the kernel declares only
-  when it has such a cast, which converts with the constructor and then
-  writes the bits of the special value if the input was infinite. An
-  infinite constant is its bits, through `tg_bitcast`. Finite values,
-  including those that overflow the format, still saturate. HIP needs no
-  guard: on gfx950, `f32_to_fp8` clamps only finite values, and the
-  non-saturating `cvt_pk_{fp8,bf8}_f32` it then calls keeps an infinity in
-  bf8 and makes it NaN in fp8, which is unverified on hardware.
-- **Reason:** (b). nx's float8 encoder keeps infinities special, and a
-  jitted kernel must store what eager nx stores for the same cast.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`):
-  `float8 infinities on CUDA (D16)`, which checks where the guard is declared,
-  the byte each infinity writes and the bits of infinite e5m2 constants;
-  `sources › by default › cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`,
-  `cuda_inf_nan_float8_e4m3` and `cuda_inf_nan_float8_e5m2`, which compare
-  with tinygrad's source once the guard is written back as tinygrad writes
-  it; and `every GPU kernel compiles with its target's toolchain › cuda_*`
-  (slow, skipped without NVRTC). A rune test at L9 checks the stored values.
 
 ## D11. Kernel optimisations are typed
 
@@ -329,10 +300,11 @@ the Exclusions of `README.md`.
 - **tinygrad:** `uop/ops.py:266-268` (`key`, the SHA-256 of
   `str((op, dtype, arg))` followed by the keys of the sources).
 - **tolk.next:** `lib/uop/ops.ml:1063` (`key`).
-- **Differs:** the same text is digested with BLAKE2b-256. No key is ever
-  compared with a key tinygrad computed: keys name compiled programs in caches
-  that tolk.next alone writes.
-- **Reason:** (a): OCaml's standard library has MD5 and BLAKE2, not SHA-256.
+- **Differs:** the same text is digested with BLAKE2b-256.
+- **Reason:** (a). No key is ever compared with a key tinygrad computed: keys
+  name compiled programs in caches that tolk.next alone writes, so the digest
+  is free to differ, and tolk.next takes the one OCaml's standard library
+  has, which has MD5 and BLAKE2 but not SHA-256.
 - **Pinned by:** the `Ops` suite: `key › ignores tags` and `key › tells
   arguments apart`.
 
@@ -434,6 +406,36 @@ the Exclusions of `README.md`.
   `› without comgr on the machine` and `› without MTLCompiler on the machine`
   pin the error that names the library and its variable.
 
+## D16. CUDA keeps a float8 infinity special
+
+- **tinygrad:** `renderer/cstyle.py:33,42` (a cast to `__nv_fp8_e4m3` or
+  `__nv_fp8_e5m2` is the constructor, which converts with
+  `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
+- **tolk.next:** `lib/renderer/cstyle.ml:961-974` (`fp8_infinity`,
+  `cuda_fp8_guard`, `is_fp8_guarded`), `:1018-1036` (the two rules of
+  `cuda_lang`) and `:1144` (the helper in the prefix).
+- **Differs:** the saturating conversion turns ±inf into ±max. tolk.next
+  keeps an infinity special, as `Dtype.truncate` does: it stays an infinity
+  in e5m2 and becomes a NaN of its sign in e4m3, which has no infinity. A
+  cast of a float value calls `tg_fp8`, a helper the kernel declares only
+  when it has such a cast, which converts with the constructor and then
+  writes the bits of the special value if the input was infinite. An
+  infinite constant is its bits, through `tg_bitcast`. Finite values,
+  including those that overflow the format, still saturate. HIP needs no
+  guard: on gfx950, `f32_to_fp8` clamps only finite values, and the
+  non-saturating `cvt_pk_{fp8,bf8}_f32` it then calls keeps an infinity in
+  bf8 and makes it NaN in fp8, which is unverified on hardware.
+- **Reason:** (b). nx's float8 encoder keeps infinities special, and a
+  jitted kernel must store what eager nx stores for the same cast.
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`):
+  `float8 infinities on CUDA (D16)`, which checks where the guard is declared,
+  the byte each infinity writes and the bits of infinite e5m2 constants;
+  `sources › by default › cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`,
+  `cuda_inf_nan_float8_e4m3` and `cuda_inf_nan_float8_e5m2`, which compare
+  with tinygrad's source once the guard is written back as tinygrad writes
+  it; and `every GPU kernel compiles with its target's toolchain › cuda_*`
+  (slow, skipped without NVRTC). A rune test at L9 checks the stored values.
+
 ## D17. Each operation on a narrow scalar is narrowed in the source
 
 - **tinygrad:** `renderer/cstyle.py:245-250` (an ALU used once is inlined into
@@ -517,8 +519,8 @@ the Exclusions of `README.md`.
 - **tinygrad:** `dtype.py:251,278` (`float_to_fp8` stores every e5m2 NaN as
   `0x7f` of its sign, and `fp8_to_float` decodes every NaN code as `math.nan`
   of its sign).
-- **tolk.next:** `lib/dtype.ml:411-447` (`nan_of_payload`, `nan_payload` and
-  `decode_format`) and `:469-490` (`encode_format`).
+- **tolk.next:** `lib/dtype.ml:412-448` (`nan_of_payload`, `nan_payload` and
+  `decode_format`) and `:470-491` (`encode_format`).
 - **Differs:** storage moves an e5m2 NaN's two payload bits through the double,
   as it moves the payload of the 16-bit formats, so `bitcast` keeps every e5m2
   code: `0x7d` and `0x7e` come back as themselves, where tinygrad gives `0x7f`,
@@ -528,7 +530,8 @@ the Exclusions of `README.md`.
   a bitcast that rune folds must keep the bits as they do.
 - **Pinned by:** the `Dtype` suite (`test/dtype`): the bitcast round trip on
   every e5m2 code, and the `reencode.golden` and `truncation.golden` NaN rows,
-  stated in code.
+  stated in code; and a rune test at L9: a jitted `Nx.bitcast` of every e5m2
+  code keeps it.
 
 ## D21. A reshape of a value sharded on two axes divides each by its own count
 

@@ -185,6 +185,10 @@ let kinds =
     ("a tuple tag", Ops.v ~src:[ x ] ~tag:(Tuple [ Int 0; Dtype Int32 ]) Add);
     ("a bytes tag", Ops.rtag ~tag:(Bytes "\x01") x);
     ("a string tag", Ops.rtag ~tag:(String "mergeable") x);
+    ( "a chain of 100000 nodes",
+      List.fold_left
+        (fun u _ -> Ops.v ~src:[ u ] Neg)
+        x (List.init 100_000 Fun.id) );
   ]
 
 let round_trip =
