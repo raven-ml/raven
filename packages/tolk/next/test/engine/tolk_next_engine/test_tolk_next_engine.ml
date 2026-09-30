@@ -880,6 +880,26 @@ let measures =
           greater float_exact ~than:0. t;
           less float_exact ~than:1. t;
           is_true taken);
+      test "a kernel longer than 10 us is run once" (fun () ->
+          let p = Nx_device.Profile.start () in
+          let spans =
+            Fun.protect
+              ~finally:(fun () ->
+                if Nx_device.Profile.enabled () then
+                  ignore (Nx_device.Profile.stop p))
+              (fun () ->
+                ignore
+                  (Engine.measure
+                     ~vars:[ ("n", 3) ]
+                     ~devices "CPU" (Lazy.force long_axpy));
+                List.filter
+                  (function
+                    | Nx_device.Profile.Span sp ->
+                        String.starts_with ~prefix:"long_axpy" sp.name
+                    | _ -> false)
+                  (Nx_device.Profile.stop p))
+          in
+          equal int 1 (List.length spans));
       test "a four-element kernel takes a positive time, below a clock tick"
         (fun () ->
           for _ = 1 to 20 do
@@ -1200,6 +1220,45 @@ let seconds_of words =
   in
   float_of_string (String.sub t 0 digits) *. scale
 
+(* The words of each line [DEBUG=2] printed so far. *)
+let reported () =
+  List.filter_map
+    (fun line ->
+      if String.starts_with ~prefix:"*** " line then
+        Some (List.filter (( <> ) "") (String.split_on_char ' ' line))
+      else None)
+    (String.split_on_char '\n' (output ()))
+
+(* Each line counts the kernels run before it: one more than the line before. *)
+let counts_up lines =
+  let counts = List.map (fun words -> int_of_string (List.nth words 2)) lines in
+  match counts with
+  | [] -> ()
+  | first :: _ ->
+      equal (list int) ~msg:"counts"
+        (List.init (List.length counts) (fun k -> first + k))
+        counts
+
+(* At [DEBUG=2], the recorded copy runs its copy into CPU:1 and its kernel on
+   the host devices, each a line timed on the host clock. *)
+let reports_host_calls () =
+  let big = program "copy" in
+  Helpers.context
+    [ B (Helpers.debug, 2) ]
+    (fun () ->
+      let s, vars, storage = linked big in
+      Engine.run ~vars s (slots storage));
+  let lines = reported () in
+  equal int ~msg:"a copy and a kernel" 2 (List.length lines);
+  counts_up lines;
+  List.iter
+    (fun words ->
+      equal string ~msg:"device" "CPU:1" (List.nth words 1);
+      let t = seconds_of words in
+      greater float_exact ~msg:"time" ~than:0. t;
+      less float_exact ~msg:"time" ~than:1. t)
+    lines
+
 (* At [DEBUG=2], a run of three kernels on CPU:1, whose queue starts 50 ms after
    its submission, prints a line for each, timed by the kernel's stamps: the
    time leaves the latency out. *)
@@ -1215,15 +1274,9 @@ let reports_each_kernel () =
     (fun () ->
       let s = link_calls ~bound (List.map snd fills) in
       Null_device.with_latency 0.05 (fun () -> Engine.run s [||]));
-  let lines =
-    List.filter_map
-      (fun line ->
-        if String.starts_with ~prefix:"*** " line then
-          Some (List.filter (( <> ) "") (String.split_on_char ' ' line))
-        else None)
-      (String.split_on_char '\n' (output ()))
-  in
+  let lines = reported () in
   equal int ~msg:"one line per kernel" 3 (List.length lines);
+  counts_up lines;
   List.iter
     (fun words ->
       equal string ~msg:"device" "CPU:1" (List.nth words 1);
@@ -1275,6 +1328,8 @@ let batches =
         runs_the_submitting_hook;
       test "at DEBUG=2, a run prints one line per kernel, timed by its stamps"
         reports_each_kernel;
+      test "at DEBUG=2, a host copy and a host kernel print a timed line each"
+        reports_host_calls;
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"

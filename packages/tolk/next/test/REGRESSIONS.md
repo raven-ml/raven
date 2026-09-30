@@ -2627,8 +2627,8 @@ runs it on two sets of buffers.
 
 Kernels compile on the Worker's domains and the NULL devices run their queues
 on one, and OCaml refuses `Unix.fork` in a process that has spawned a domain,
-so each of `tolk_next_engine.ml`'s 60 mutants is armed in a process of its own
-(`--arm`) over the default run: 51 fail it. With the run lock removed by hand,
+so each of `tolk_next_engine.ml`'s 75 mutants is armed in a process of its own
+(`--arm`) over the default run: 62 fail it. With the run lock removed by hand,
 the two-domain test fails on each of three runs. `||` as `&&` in the storage
 a batch's patches reach drops that storage from the buffers a run touches,
 which alone tell `Nx_device.submit` about link-folded storage of a device
@@ -2637,7 +2637,14 @@ storage` fails, since the work that fills its source touches nothing else the
 run touches. The survivors:
 - dismissed in the source as equivalent (five), and, equivalent too, any
   parameter or any tagged node counting as a placeholder in a batch's
-  patches, which hold only placeholders and storage;
+  patches, which hold only placeholders and storage, and `>` for `>=` in
+  either bound of `measure`'s repetitions, off by one run of 1000 or one
+  nanosecond of 10 000;
+- the kernel count of a `DEBUG=2` line, one less: the count is the process's,
+  so a test sees only that each line counts one more than the line before;
+- `sp.device == d && sp.name = name` as `||` in a batch's `DEBUG=2` lines: a
+  batch's kernels take their devices' spans in order, so the first span of the
+  device is the kernel's own;
 - `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
