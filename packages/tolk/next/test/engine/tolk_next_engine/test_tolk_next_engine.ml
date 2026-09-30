@@ -1425,6 +1425,28 @@ let staged_runs_from_two_domains () =
   equal values ~msg:"first" a (Run.values Float32 into_first);
   equal values ~msg:"second" xs (Run.values Float32 into_second)
 
+(* The minor words a run of a batch of one kernel on CPU:1 of [devices]
+   allocates on the calling domain, the run before it having linked and loaded
+   everything. *)
+let batch_run_words ?(devices = on_null) () =
+  let y, filled = fill "CPU:1" 7. in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:[ filled ])
+  in
+  let d = (devices "CPU:1").device in
+  let s =
+    Engine.link ~devices ~bound:[ (y, [ Run.buffer d Float32 a ]) ] compiled
+  in
+  Engine.run s [||];
+  Nx_device.synchronize d;
+  let before = Gc.minor_words () in
+  Engine.run s [||];
+  let words = Gc.minor_words () -. before in
+  Nx_device.synchronize d;
+  Float.to_int words
+
 let refuses_an_unknown_library () =
   let y, filled = fill "CPU:1" 7. in
   let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
@@ -1476,6 +1498,8 @@ let batches =
         staged_runs_take_turns;
       test "staged runs of two programs from two domains each copy their own"
         staged_runs_from_two_domains;
+      test "a run of a batch of one kernel allocates at most 800 minor words"
+        (fun () -> at_most int ~than:800 (batch_run_words ()));
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"
@@ -1562,6 +1586,8 @@ let metal =
         (serialized ~devices:on_metal "copy");
       slow "a run of a batch allocates and loads nothing"
         (allocates_nothing ~devices:on_metal ~names:metal_names "copy");
+      slow "a run of a batch of one kernel allocates at most 650 minor words"
+        (fun () -> at_most int ~than:650 (batch_run_words ~devices:on_metal ()));
       slow "a program's run on Metal takes a positive time, under a second"
         (fun () ->
           let t =

@@ -158,17 +158,46 @@ let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
 
 module B = Nx_device.Buffer
 
+(* Where an input of a batch is: the buffers of a parameter's slot, storage the
+   link holds, or a stack of views. *)
+type source = Slot of int | Held of B.t list | Stack of Ops.t
+
+(* An input of a batch's address table, resolved at link: its storage, its
+   shard, its byte offset and the device whose address the table holds. *)
+type input = {
+  source : source;
+  shard : int option;
+  offset : int;
+  on : Nx_device.t;
+}
+
+(* The value of a host program's variable on each run: a constant, a device's
+   last submitted value or the value its work signals, or the schedule's. *)
+type binder =
+  | Fixed of int
+  | Submitted of Nx_device.t
+  | Signals of Nx_device.t
+  | Var of Ops.t
+
 (* A batch, as linked: its host program, the devices whose queues it submits,
-   its arguments, and the values its previous run signals on each device. *)
+   its arguments, and the values its previous run signals on each device. What
+   depends on the linked schedule alone is resolved once, so that a run
+   allocates little. *)
 type batch = {
   info : Ops.hcq_info;
-  named : string -> Nx_device.t; (* the devices of the schedule, by name *)
+  named : string -> Nx_device.t; (* the devices of the batch, by name *)
   host_program : Program.t;
-  queues : Nx_device.t list;
+  devices : Nx_device.t list; (* whose queues it submits *)
+  queues : Nx_device.t array; (* the same, by index *)
   submitting : (unit -> unit) list; (* each device's, before the host program *)
   arguments : B.t list; (* by argument slot *)
+  buffers : B.t array; (* the host program's, in the order of its globals *)
+  binders : binder array; (* the host program's variables, in order *)
+  values : int array; (* the variables' values of the run being made *)
+  inputs : input array; (* the address table's entries, in order *)
+  input_buffers : B.t array; (* the inputs' buffers of the run being made *)
+  touched : B.t list; (* the arguments and the storage its words address *)
   table : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
-  reached : B.t list; (* the linked storage its words address *)
   last : int array;
   mutable kept : B.t list; (* the borrows its run's addresses map *)
 }
@@ -185,10 +214,10 @@ type call =
 type t = {
   lock : Mutex.t; (* runs share the storage: one at a time *)
   calls : call list;
-  params : (int * Ops.t) list; (* the parameters the runs bind, by slot *)
+  params : (int * Nx_device.t list * int) list;
+      (* the parameters the runs bind: slot, devices and bytes *)
   storage : B.t list Ops.Tbl.t; (* by node, a buffer per device *)
   borrows : B.t list; (* the borrows link's addresses map *)
-  named : string -> Nx_device.t; (* the devices of the schedule, by name *)
 }
 
 let names u =
@@ -453,72 +482,95 @@ let link_batch ~device ~storage ~keep call patches =
       keep hb;
       B.bigarray Bigarray.int64 hb
   in
+  let named = List.map (fun n -> (n, (device n).device)) info.device in
+  let named n = List.assoc n named in
+  let host_program = Program.load host (Ops.body call) in
+  let binder u =
+    if Ops.op u = Op.Const then Fixed (int_of_const u)
+    else
+      let name = Ops.expr u in
+      let is var =
+        List.find_opt (fun n -> Ops.expr (var n) = name) info.device
+      in
+      match (is Hcq2.submitted, is Hcq2.value) with
+      | Some n, _ -> Submitted (named n)
+      | None, Some n -> Signals (named n)
+      | None, None -> Var u
+  in
+  let input (base, off, dev) =
+    let base, shard, inner = Hcq2.unwrap_lane base in
+    let source =
+      match (Ops.op base, Ops.arg base) with
+      | Op.Param, Ops.Param p when Option.is_none (Ops.tag base) -> Slot p.slot
+      | (Op.Param | Op.Buffer), _ -> Held (Ops.Tbl.find storage base)
+      | _ -> Stack base
+    in
+    { source; shard; offset = off + inner; on = named dev }
+  in
+  let inputs = Array.of_list (List.map input info.inputs) in
+  let binders = Array.of_list (List.map binder host_program.vars) in
   {
     info;
-    named = (fun n -> (device n).device);
-    host_program = Program.load host (Ops.body call);
+    named;
+    host_program;
     submitting = List.map (fun n -> (device n).submitting) info.device;
-    queues;
+    devices = queues;
+    queues = Array.of_list queues;
     arguments;
+    buffers = Array.of_list (List.map (List.nth arguments) host_program.globals);
+    binders;
+    values = Array.make (Array.length binders) 0;
+    inputs;
+    input_buffers = Array.make (Array.length inputs) (List.hd arguments);
+    touched = arguments @ reached;
     table;
-    reached;
     last = Array.make (List.length queues) 0;
     kept = [];
   }
 
 let run_batch ~vars storage slots b =
-  let info = b.info in
-  let inputs =
-    List.map
-      (fun (base, off, dev) ->
-        let base, shard, inner = Hcq2.unwrap_lane base in
-        let bs = holds storage slots vars base in
-        ( (match shard with Some i -> List.nth bs i | None -> List.hd bs),
-          off + inner,
-          dev ))
-      info.inputs
-  in
-  let touches =
-    b.arguments @ b.reached @ List.map (fun (x, _, _) -> x) inputs
-  in
-  Nx_device.submit b.queues ~touches (fun s ->
-      List.iteri
-        (fun i d ->
-          if (b.last.(i) > 0) [@mutate off "a wait for 0 returns at once"] then
-            Nx_device.Submission.wait s d b.last.(i))
-        b.queues;
+  let touches = ref b.touched in
+  for k = 0 to Array.length b.inputs - 1 do
+    let i = b.inputs.(k) in
+    let bs =
+      match i.source with
+      | Slot s -> slots.(s)
+      | Held bs -> bs
+      | Stack u -> holds storage slots vars u
+    in
+    let x = match i.shard with Some j -> List.nth bs j | None -> List.hd bs in
+    b.input_buffers.(k) <- x;
+    touches := x :: !touches
+  done;
+  Nx_device.submit b.devices ~touches:!touches (fun s ->
+      for i = 0 to Array.length b.queues - 1 do
+        if (b.last.(i) > 0) [@mutate off "a wait for 0 returns at once"] then
+          Nx_device.Submission.wait s b.queues.(i) b.last.(i)
+      done;
       List.iter
         (fun (d', v) ->
-          if not (List.memq d' b.queues) then Nx_device.Submission.wait s d' v)
+          if not (List.memq d' b.devices) then Nx_device.Submission.wait s d' v)
         (Nx_device.Submission.waits s);
-      let kept = ref [] in
-      List.iteri
-        (fun k (x, off, dev) ->
-          let d = b.named dev in
-          b.table.{k} <-
-            Int64.of_nativeint
-              (Nativeint.add
-                 (address (fun m -> kept := m :: !kept) d x)
-                 (Nativeint.of_int off)))
-        inputs;
-      b.kept <- !kept;
-      let prg = b.host_program in
-      let timeline name dn =
-        let d = b.named dn in
-        if name = Ops.expr (Hcq2.submitted dn) then Some (Nx_device.submitted d)
-        else if name = Ops.expr (Hcq2.value dn) then
-          Some (Nx_device.Submission.value s d)
-        else None
-      in
-      let bind u =
-        match List.find_map (timeline (Ops.expr u)) info.device with
-        | Some v -> v
-        | None -> value vars 0 u
-      in
+      b.kept <- [];
+      let keep m = b.kept <- m :: b.kept in
+      for k = 0 to Array.length b.inputs - 1 do
+        let i = b.inputs.(k) in
+        b.table.{k} <-
+          Int64.of_nativeint
+            (Nativeint.add
+               (address keep i.on b.input_buffers.(k))
+               (Nativeint.of_int i.offset))
+      done;
+      for i = 0 to Array.length b.binders - 1 do
+        b.values.(i) <-
+          (match b.binders.(i) with
+          | Fixed v -> v
+          | Submitted d -> Nx_device.submitted d
+          | Signals d -> Nx_device.Submission.value s d
+          | Var u -> value vars 0 u)
+      done;
       List.iter (fun f -> f ()) b.submitting;
-      Nx_device.Program.call prg.program
-        (Array.of_list (List.map (List.nth b.arguments) prg.globals))
-        (Array.of_list (List.map bind prg.vars));
+      Nx_device.Program.call b.host_program.program b.buffers b.values;
       if Nx_device.Profile.enabled () then
         List.iter
           (fun (k : Ops.hcq_kernel) ->
@@ -528,7 +580,7 @@ let run_batch ~vars storage slots b =
                   (fun dn ->
                     let d = b.named dn in
                     let slots =
-                      List.nth b.arguments (List.assoc dn info.slots)
+                      List.nth b.arguments (List.assoc dn b.info.slots)
                     in
                     Nx_device.Submission.record s d
                       ~lane:
@@ -540,10 +592,10 @@ let run_batch ~vars storage slots b =
                          Nx_dtype.Scalar.UInt64 4))
                   k.devices
             | [] -> ())
-          info.kernels;
-      List.iteri
-        (fun i d -> b.last.(i) <- Nx_device.Submission.value s d)
-        b.queues)
+          b.info.kernels;
+      for i = 0 to Array.length b.queues - 1 do
+        b.last.(i) <- Nx_device.Submission.value s b.queues.(i)
+      done)
 
 (* The calls of a schedule's entry: itself, or those a range is around. *)
 let rec calls_of entry =
@@ -603,6 +655,7 @@ let link ~devices ?(bound = []) linear =
            | Ops.Param p when is_slot u -> Some (p.slot, u)
            | _ -> None)
          nodes)
+    |> List.map (fun (slot, u) -> (slot, List.map nx (names u), bytes u))
   in
   let borrows = ref [] in
   let keep m = borrows := m :: !borrows in
@@ -641,32 +694,26 @@ let link ~devices ?(bound = []) linear =
     | o, _ -> fail fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
   in
   let calls = List.map linked entries in
-  {
-    lock = Mutex.create ();
-    calls;
-    params;
-    storage;
-    borrows = !borrows;
-    named = nx;
-  }
+  { lock = Mutex.create (); calls; params; storage; borrows = !borrows }
 
 let check_slots t slots =
   let fn = "Tolk_next_engine.run" in
   List.iter
-    (fun (slot, u) ->
+    (fun (slot, ds, n) ->
       if slot >= Array.length slots then fail fn "no buffers for slot %d" slot;
-      let ns = names u and bs = slots.(slot) in
-      if List.length bs <> List.length ns then
-        fail fn "slot %d takes %d buffers, not %d" slot (List.length ns)
+      let bs = slots.(slot) in
+      if List.length bs <> List.length ds then
+        fail fn "slot %d takes %d buffers, not %d" slot (List.length ds)
           (List.length bs);
       List.iter2
-        (fun n b ->
-          if B.device b != t.named n then
-            fail fn "slot %d takes a buffer of %s, not of %s" slot n
+        (fun d b ->
+          if B.device b != d then
+            fail fn "slot %d takes a buffer of %s, not of %s" slot
+              (Nx_device.name d)
               (Nx_device.name (B.device b));
-          if B.nbytes b < bytes u then
-            fail fn "slot %d takes %d bytes, not %d" slot (bytes u) (B.nbytes b))
-        ns bs)
+          if B.nbytes b < n then
+            fail fn "slot %d takes %d bytes, not %d" slot n (B.nbytes b))
+        ds bs)
     t.params
 
 (* Reports *)
@@ -714,7 +761,7 @@ let run_reported ~vars storage slots b =
         match own with
         | Some p -> Nx_device.Profile.stop p
         | None ->
-            List.iter Nx_device.synchronize b.queues;
+            Array.iter Nx_device.synchronize b.queues;
             [])
     | exception e ->
         Option.iter (fun p -> ignore (Nx_device.Profile.stop p)) own;
