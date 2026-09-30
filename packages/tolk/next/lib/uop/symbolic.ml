@@ -89,8 +89,8 @@ let fold_bitcast root c =
 
 (* no truncate: ints stay mathematical past the fold (emission truncates);
    floats re-round in the mint. So a committed operand is read at its width, as
-   the machine holds it. A stack folds lane by lane, and each lane is
-   truncated. *)
+   the machine holds it. A stack folds lane by lane, and each lane is truncated.
+   A shift by a negative count has no value, and does not fold. *)
 let fold_const_alu a =
   let alu ?truncate_output args =
     exec_alu ?truncate_output (op a) (dtype a) args
@@ -100,16 +100,26 @@ let fold_const_alu a =
     | Op.Cast, (#Dtype.value as v) -> (at (dtype s) v :> Dtype.const)
     | _, c -> c
   in
+  let defined args =
+    match (op a, args) with
+    | (Op.Shl | Op.Shr), [ _; (#Dtype.value as n) ] -> V.(n >= zero)
+    | _ -> true
+  in
   let stack s = op s = Op.Stack in
   match List.filter stack (src a) with
-  | [] -> const_like a (alu ~truncate_output:false (List.map read (src a)))
+  | [] ->
+      let args = List.map read (src a) in
+      if defined args then Some (const_like a (alu ~truncate_output:false args))
+      else None
   | stacks ->
       let count =
         List.fold_left (fun n s -> max n (List.length (src s))) 0 stacks
       in
       let lane i s = read (if stack s then nth s i else s) in
-      consts ~dtype:(dtype a)
-        (List.init count (fun i -> alu (List.map (lane i) (src a))))
+      let lanes = List.init count (fun i -> List.map (lane i) (src a)) in
+      if List.for_all defined lanes then
+        Some (consts ~dtype:(dtype a) (List.map alu lanes))
+      else None
 
 (* the B with q == B//div and B%div == base%div, or None. only such congruence
    is needed to recombine, and canonicalization moves consts freely: the
@@ -454,12 +464,12 @@ let symbolic_simple =
             (Upat.v
                ~op:(Op.Set.diff Op.Set.alu (ops [ Op.Threefry ]))
                ~each:bare_const ~name:"a" ())
-            (fun m -> Some (fold_const_alu (m "a")));
+            (fun m -> fold_const_alu (m "a"));
           rule
             (Upat.v
                ~op:(Op.Set.diff Op.Set.alu (ops [ Op.Threefry ]))
                ~each:casted_const ~name:"a" ())
-            (fun m -> Some (fold_const_alu (m "a")));
+            (fun m -> fold_const_alu (m "a"));
           rule
             (Upat.v
                ~op:(Op.Set.diff Op.Set.binary (ops [ Op.Threefry ]))
