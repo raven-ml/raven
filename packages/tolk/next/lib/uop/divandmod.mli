@@ -50,3 +50,24 @@ val div_and_mod_symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
     divisor that is always [0], or a positive constant divisor and a dividend
     with a term that is the constant [0] or a product by it. The symbolic rules
     fold such a term away before these rules see it. *)
+
+(** {1:values Values of constants}
+
+    A rule that computes with the value of {!Ops.invalid}, which is no number,
+    does not apply: it reads each constant with {!number}, and declines through
+    {!rule}. The rules of {!Symbolic} share them. *)
+
+exception Not_a_number
+(** The exception {!number} raises on [`Invalid]. *)
+
+val number : Dtype.const -> Dtype.value
+(** [number c] is the value of [c].
+
+    Raises {!Not_a_number} if [c] is [`Invalid]. *)
+
+val rule :
+  Ops.Upat.t ->
+  ((string -> Ops.t) -> Ops.t option) ->
+  ('ctx, Ops.t) Ops.Pattern_matcher.rule
+(** [rule p f] is [Ops.Pattern_matcher.rule p f], which declines where [f]
+    raises {!Not_a_number}. *)

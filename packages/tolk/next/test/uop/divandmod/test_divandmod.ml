@@ -186,6 +186,17 @@ let zero_divisors =
           raises_on Ops.O.(any // int 0));
     ]
 
+(* Invalid *)
+
+let invalid =
+  group "invalid values"
+    [
+      test "a rule that computes with the value of invalid does not apply"
+        (fun () ->
+          is_none (rewrite Ops.O.((x + Ops.invalid) // int 3));
+          is_none (rewrite Ops.O.((x + Ops.invalid) % int 3)));
+    ]
+
 (* tinygrad's tests *)
 
 let goldens =
@@ -346,6 +357,7 @@ let () =
          constant_divisors;
          other_divisors;
          zero_divisors;
+         invalid;
          tinygrad_tests;
          values;
        ])

@@ -8,14 +8,17 @@
 open Ops
 module V = Dtype.Value
 
-let zero = V.of_int 0
+exception Not_a_number
 
 let number : Dtype.const -> V.t = function
   | #Dtype.value as v -> v
-  | `Invalid -> invalid_arg "Invalid is not a number"
+  | `Invalid -> raise_notrace Not_a_number
 
+let rule p f =
+  Pattern_matcher.rule p (fun m -> try f m with Not_a_number -> None)
+
+let zero = V.of_int 0
 let num u = number (value u)
-let as_z = function `Int n -> n | _ -> invalid_arg "not an integer"
 
 (* Python's integers in node arithmetic: [lit n] is the weak literal an integer
    becomes, and [sum] starts from the integer 0, as Python's does. *)
@@ -25,9 +28,7 @@ let size u = Nodes.cardinal (backward_slice u)
 let zero_like u = const_like u (zero :> Dtype.const)
 
 (* [first rules] is the result of the first rule that applies. *)
-let rec first = function
-  | [] -> None
-  | rule :: rules -> ( match rule () with None -> first rules | ret -> ret)
+let first = List.find_map (fun rule -> rule ())
 
 (* itertools.product: the first list varies slowest. *)
 let rec product = function
@@ -37,7 +38,8 @@ let rec product = function
         (fun x -> Seq.map (List.cons x) (product rest))
         (List.to_seq xs)
 
-(* Memoised on index nodes, for as long as the node lives. *)
+(* Memoised on index nodes, for as long as the node lives; compilation runs on
+   domains, so the table is locked. *)
 module Memo = Ephemeron.K1.Make (struct
   type nonrec t = t
 
@@ -84,14 +86,14 @@ and fold d =
     let nested_div () =
       if is_mod || op x <> Op.Floormod then None
       else
-        match divides (nth x 1) (as_z c) with
+        match divides (nth x 1) (V.to_z c) with
         | Some k when V.(vmin k > zero) -> Some O.(nth x 0 // y % k)
         | _ -> None
     in
     (* remove_nested_mod in a sum: (a % 4 + b) % 2 is (a + b) % 2 *)
     let remove_nested_mod () =
       let unnest u =
-        if op u = Op.Floormod && Option.is_some (divides (nth u 1) (as_z c))
+        if op u = Op.Floormod && Option.is_some (divides (nth u 1) (V.to_z c))
         then nth u 0
         else u
       in
@@ -104,7 +106,7 @@ and fold d =
       let factors = List.map (fun u -> `Int (const_factor u)) uops_no_const in
       let terms =
         List.map2
-          (fun u f -> Option.get (divides u (as_z f)))
+          (fun u f -> Option.get (divides u (V.to_z f)))
           uops_no_const factors
       in
       (* fold_divmod_congruence: fold if x is congruent to an expression whose
@@ -140,11 +142,12 @@ and fold d =
       (* gcd_with_remainder: factor out the common gcd of the numerator *)
       let gcd_with_remainder () =
         let g =
-          `Int (List.fold_left (fun g f -> Z.gcd g (as_z f)) (as_z c) factors)
+          `Int
+            (List.fold_left (fun g f -> Z.gcd g (V.to_z f)) (V.to_z c) factors)
         in
         if V.(g <= of_int 1) then None
         else
-          let x_g = simplify (Option.get (divides x_peeled (as_z g))) in
+          let x_g = simplify (Option.get (divides x_peeled (V.to_z g))) in
           let new_x = O.(x_g + lit V.(const // g % (c // g))) in
           if V.(vmin new_x < zero) then None
           else if is_mod then
@@ -219,7 +222,7 @@ and fold d =
         match divide_exact u y with
         | Some q -> (q :: quo, rem)
         | None when op y = Op.Const && V.(f % c <> f) ->
-            let t = Option.get (divides u (as_z f)) in
+            let t = Option.get (divides u (V.to_z f)) in
             let q = if is_mod then zero_like u else O.(t * lit V.(f // c)) in
             (q :: quo, O.(t * lit V.(f % c)) :: rem)
         | None -> (quo, u :: rem)
@@ -243,41 +246,40 @@ and fold d =
 let floor_ops = Op.Set.of_list [ Op.Floordiv; Op.Floormod ]
 
 let div_and_mod_symbolic =
-  Pattern_matcher.(
-    v
-      [
-        (* Fast inline rules *)
-        (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, where
+  Pattern_matcher.v
+    [
+      (* Fast inline rules *)
+      (* (x // c + a) // d is (x + a * c) // (c * d) for d > 0, where
            nothing wraps *)
-        rule
-          Upat.(((var "x" // cvar "c") + cvar "a") // cvar "d")
-          (fun m ->
-            let x = m "x" and c = m "c" and a = m "a" and d = m "d" in
-            let ac = V.(vmin a * vmin c) and cd = V.(vmin c * vmin d) in
-            let values =
-              V.[ vmin a; vmin c; vmin d; ac; cd; vmin x + ac; vmax x + ac ]
-            in
-            if V.(vmin d > zero) && exact (dtype x) values then
-              Some O.((x + (a * c)) // (c * d))
-            else None);
-        (* (x + c) // d is (x + c % d) // d + c // d, and (x + c) % d is (x + c
-           % d) % d: the multiple of d leaves the constant, for any d <> 0 *)
-        rule
-          (Upat.v ~op:floor_ops
-             ~src:
-               [
-                 Upat.(var "x" ~dtype:[ Dtype.Weak_int ] + cvar "c");
-                 Upat.cvar "d";
-               ]
-             ~name:"n" ())
-          (fun m ->
-            let x = m "x" and c = num (m "c") and d = m "d" in
-            let dv = num d in
-            if V.(dv = zero || c % dv = c) then None
-            else if op (m "n") = Op.Floordiv then
-              Some O.(((x + lit V.(c % dv)) // d) + lit V.(c // dv))
-            else Some O.((x + lit V.(c % dv)) % d));
-        (* Slow rules *)
-        rule (Upat.v ~op:floor_ops ~dtype:[ Dtype.Weak_int ] ~name:"d" ())
-          (fun m -> fold_divmod_general (m "d"));
-      ])
+      rule
+        Upat.(((var "x" // cvar "c") + cvar "a") // cvar "d")
+        (fun m ->
+          let x = m "x" and c = m "c" and a = m "a" and d = m "d" in
+          let ac = V.(vmin a * vmin c) and cd = V.(vmin c * vmin d) in
+          let values =
+            V.[ vmin a; vmin c; vmin d; ac; cd; vmin x + ac; vmax x + ac ]
+          in
+          if V.(vmin d > zero) && exact (dtype x) values then
+            Some O.((x + (a * c)) // (c * d))
+          else None);
+      (* (x + c) // d is (x + c % d) // d + c // d, and (x + c) % d is (x + c %
+         d) % d: the multiple of d leaves the constant, for any d <> 0 *)
+      rule
+        (Upat.v ~op:floor_ops
+           ~src:
+             [
+               Upat.(var "x" ~dtype:[ Dtype.Weak_int ] + cvar "c");
+               Upat.cvar "d";
+             ]
+           ~name:"n" ())
+        (fun m ->
+          let x = m "x" and c = num (m "c") and d = m "d" in
+          let dv = num d in
+          if V.(dv = zero || c % dv = c) then None
+          else if op (m "n") = Op.Floordiv then
+            Some O.(((x + lit V.(c % dv)) // d) + lit V.(c // dv))
+          else Some O.((x + lit V.(c % dv)) % d));
+      (* Slow rules *)
+      rule (Upat.v ~op:floor_ops ~dtype:[ Dtype.Weak_int ] ~name:"d" ())
+        (fun m -> fold_divmod_general (m "d"));
+    ]

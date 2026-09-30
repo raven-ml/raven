@@ -6,15 +6,8 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Divandmod
 module V = Dtype.Value
-
-(* A rule that reads the value of Invalid, which is no number, does not
-   apply. *)
-exception Not_a_number
-
-let number : Dtype.const -> V.t = function
-  | #Dtype.value as v -> v
-  | `Invalid -> raise_notrace Not_a_number
 
 let num u = number (value u)
 
@@ -24,9 +17,6 @@ let pop_num ?op u =
 
 let equals u v =
   match value u with #Dtype.value as x -> V.(x = v) | _ -> false
-
-let rule p f =
-  Pattern_matcher.rule p (fun m -> try f m with Not_a_number -> None)
 
 let pm = Pattern_matcher.v
 let ops = Op.Set.of_list
@@ -53,14 +43,15 @@ let at dt v =
   if not (convertible dt v) then raise_notrace Not_a_number;
   Dtype.truncate dt (number (Dtype.const dt v))
 
-module Node = struct
-  type t = Ops.t
+let dedup l =
+  Helpers.dedup
+    (module struct
+      type t = Ops.t
 
-  let equal = ( == )
-  let hash = hash
-end
-
-let dedup l = Helpers.dedup (module Node) l
+      let equal = ( == )
+      let hash = hash
+    end)
+    l
 
 (* Phase 1: the most generic folding rules *)
 
@@ -1035,9 +1026,9 @@ let parse_valid v =
     (* c < X -> X >= c+1 (a const on the left is a lower bound on the right),
        and X < c -> X <= c-1 *)
   else if int_lt v && is_const (nth v 0) then
-    match num (nth v 0) with
-    | c -> Some (nth v 1, false, Z.succ (V.to_z c))
-    | exception Not_a_number -> None
+    match value (nth v 0) with
+    | #Dtype.value as c -> Some (nth v 1, false, Z.succ (V.to_z c))
+    | `Invalid -> None
   else if int_lt v then Some (nth v 0, true, Z.pred (V.to_z (vmax (nth v 1))))
   else None
 

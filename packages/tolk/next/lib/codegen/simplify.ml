@@ -6,26 +6,24 @@
   ---------------------------------------------------------------------------*)
 
 open Ops
+open Divandmod
 module V = Dtype.Value
 
-let rule = Pattern_matcher.rule
 let rule_ctx = Pattern_matcher.rule_ctx
-let ops l = Op.Set.of_list l
 
-(* The nodes of [l], each once, in order. *)
 let dedup l =
-  let seen = Tbl.create 16 in
-  List.filter
-    (fun x ->
-      if Tbl.mem seen x then false
-      else (
-        Tbl.add seen x ();
-        true))
+  Helpers.dedup
+    (module struct
+      type t = Ops.t
+
+      let equal = ( == )
+      let hash = hash
+    end)
     l
 
 let flatten_range r =
   let off = Option.get (range_start (op r)) in
-  match List.filteri (fun i _ -> i >= off) (src r) with
+  match List.drop off (src r) with
   | [] -> None
   | rngs ->
       let flat =
@@ -33,15 +31,13 @@ let flatten_range r =
           (fun s -> if op s = Op.Range then [ s ] else Nodes.to_list (ranges s))
           rngs
       in
-      Some
-        (replace r
-           ~src:(List.filteri (fun i _ -> i < off) (src r) @ dedup flat))
+      Some (replace r ~src:(List.take off (src r) @ dedup flat))
 
 let pm_flatten_range =
   Pattern_matcher.v
     [
       rule
-        (Upat.v ~op:(ops [ Op.Reduce; Op.End ]) ~name:"r" ())
+        (Upat.v ~op:(Op.Set.of_list [ Op.Reduce; Op.End ]) ~name:"r" ())
         (fun m -> flatten_range (m "r"));
     ]
 
@@ -149,7 +145,7 @@ let pm_simplify_ranges =
   Pattern_matcher.v
     [
       rule
-        (Upat.v ~op:(ops [ Op.End; Op.Reduce ]) ~name:"u" ())
+        (Upat.v ~op:(Op.Set.of_list [ Op.End; Op.Reduce ]) ~name:"u" ())
         (fun m -> simplify_merge_adjacent (m "u"));
       rule_ctx (Upat.op Op.Index ~name:"idx") (fun ctx m ->
           mark_gated ctx (m "idx");
