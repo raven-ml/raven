@@ -174,7 +174,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `dtype.py:230-234` (`float_to_bf16` rounds to float32 with
   `truncate[dtypes.float]`, then to bfloat16).
-- **tolk.next:** `lib/dtype.ml:345-364` (`encode_format`, one rounding for
+- **tolk.next:** `lib/dtype.ml:469-490` (`encode_format`, one rounding for
   every narrow float).
 - **Differs:** a double rounds to bfloat16 once, to nearest even. The two
   differ when the float32 lands on a bfloat16 tie: `1 + 2^-8 + 2^-40` is
@@ -191,7 +191,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `dtype.py:279` (`fp8_to_float` returns `math.nan` for
   e4m3's NaN codes, whatever their sign bit).
-- **tolk.next:** `lib/dtype.ml:308-324` (`decode_format`).
+- **tolk.next:** `lib/dtype.ml:430-447` (`decode_format`).
 - **Differs:** e4m3's `0xff` decodes to a negative NaN, so it encodes back to
   `0xff`, where tinygrad gives `0x7f`. e5m2 already kept the sign.
 - **Reason:** (b). nx's decoder keeps the sign, so a value read eagerly and a
@@ -406,3 +406,22 @@ the Exclusions of `README.md`.
   its copy to the target, and `rules › a hierarchical allreduce to one device
   lands there (D19)`, which evaluates the value and the function on two
   devices and finds the reduction on the target alone.
+
+## D20. Storage keeps an e5m2 NaN's payload
+
+- **tinygrad:** `dtype.py:251,278` (`float_to_fp8` stores every e5m2 NaN as
+  `0x7f` of its sign, and `fp8_to_float` decodes every NaN code as `math.nan`
+  of its sign).
+- **tolk.next:** `lib/dtype.ml:411-447` (`nan_of_payload`, `nan_payload` and
+  `decode_format`) and `:469-490` (`encode_format`).
+- **Differs:** storage moves an e5m2 NaN's two payload bits through the double,
+  as it moves the payload of the 16-bit formats, so `bitcast` keeps every e5m2
+  code: `0x7d` and `0x7e` come back as themselves, where tinygrad gives `0x7f`,
+  and the canonical NaN stores as `0x7e`, its quiet code. A conversion still
+  gives `0x7f` of its sign, as nx's encoder does.
+- **Reason:** (b). A kernel's bitcast and nx's are byte reinterpretations, so
+  a bitcast that rune folds must keep the bits as they do.
+- **Pinned by:** the `Dtype` suite (`test/dtype`): the bitcast round trip on
+  every e5m2 code, and the `reencode.golden` and `truncation.golden` NaN rows,
+  stated in code.
+

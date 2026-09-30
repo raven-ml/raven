@@ -402,11 +402,12 @@ val truncate : t -> value -> value
       precision, to nearest with ties to even. A finite value that overflows a
       16-bit or wider float is an infinity, and one that overflows an 8-bit
       float is its greatest finite value of the same sign. An infinity is itself
-      where the format has infinities, and its NaN where it has none. A NaN, or
-      an infinity that became one, keeps its sign, except in the [fnuz] formats,
-      whose one NaN decodes as a positive NaN; a 16-bit NaN also keeps the top
-      of its payload. An integer that rounds past the greatest double converts
-      as the infinity of its sign.
+      where the format has infinities, and its NaN where it has none. A NaN is
+      quiet, as a conversion makes it: a signalling NaN becomes quiet with the
+      same payload. It keeps its sign, except in the [fnuz] formats, whose one
+      NaN decodes as a positive NaN; a 16-bit or wider float keeps the top of
+      its payload, and an 8-bit float has one NaN per sign. An integer that
+      rounds past the greatest double converts as the infinity of its sign.
     - for an integer of known width, [v] wrapped to [dt]'s width in two's
       complement;
     - for {!Bool}, [true] iff [v] is nonzero;
@@ -422,21 +423,24 @@ val storage_fmt : t -> char option
 
 val to_storage_scalar : t -> value -> value
 (** [to_storage_scalar dt v] is the value that stores [v] in {!storage_fmt}: [v]
-    truncated for {!Float16}, the [`Int] of the bits that encode [v] for
-    {!Bfloat16} and the 8-bit floats, and [v] itself otherwise. *)
+    rounded to {!Float16}, the [`Int] of the bits that encode [v] for
+    {!Bfloat16} and the 8-bit floats, and [v] itself otherwise. Storage moves a
+    NaN's bits and does not quiet it: a NaN keeps its sign and as much of its
+    payload, quiet bit included, as the format holds. *)
 
 val from_storage_scalar : t -> value -> value
 (** [from_storage_scalar dt s] is the value stored by [s], the inverse of
     {!to_storage_scalar}: the [`Float] that the low bits of [s] encode for
-    {!Bfloat16} and the 8-bit floats, a NaN with the sign of its bits, and [s]
-    itself otherwise.
+    {!Bfloat16} and the 8-bit floats, a NaN with the sign and payload of its
+    bits, and [s] itself otherwise.
 
     Raises [Invalid_argument] if [dt] is {!Bfloat16} or an 8-bit float and [s]
     is not an [`Int]. *)
 
 val bitcast : t -> t -> value -> value
 (** [bitcast d0 d1 v] is the [d1] value stored by the bits that store [v] as a
-    [d0] value.
+    [d0] value. Its bits are kept exactly, a signalling NaN's included, so
+    [bitcast d1 d0 (bitcast d0 d1 c) = c] for every [c] that [d0] stores.
 
     Raises [Invalid_argument] if [d0] and [d1] have different {!itemsize}s, if
     either has no {!storage_fmt}, if [v] is a float and [d0] an integer, or if

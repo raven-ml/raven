@@ -404,15 +404,39 @@ let float_format dt =
   | Fp8e5m2fnuz -> f 8 2 16 0x7F 0x80 Fnuz
   | dt -> invalid_arg (Format.asprintf "%a is not a narrow float" pp dt)
 
+(* A NaN's bits: the double NaN of sign [negative] whose leading [mant] mantissa
+   bits, quiet bit first, are [payload], and back. The bits move by hand, since
+   the hardware's conversions between floats and doubles set the quiet bit of a
+   signalling NaN. *)
+let nan_of_payload ~mant ~negative payload =
+  let bits =
+    Int64.(
+      logor 0x7FF0_0000_0000_0000L (shift_left (of_int payload) (52 - mant)))
+  in
+  Int64.float_of_bits
+    (if negative then Int64.logor Int64.min_int bits else bits)
+
+(* A payload whose leading bits are all zero is the quiet NaN's. *)
+let nan_payload ~mant x =
+  let p =
+    Int64.(
+      to_int
+        (shift_right_logical
+           (logand (bits_of_float x) 0xF_FFFF_FFFF_FFFFL)
+           (52 - mant)))
+  in
+  if p = 0 then 1 lsl (mant - 1) else p
+
 let decode_format f code =
-  let sign = if code lsr (f.bits - 1) = 1 then -1. else 1. in
+  let negative = code lsr (f.bits - 1) = 1 in
+  let sign = if negative then -1. else 1. in
   let q = code land ((1 lsl (f.bits - 1)) - 1) in
   if f.specials = Fnuz && code = f.nan then nan
-  else if q > f.top then
-    let special =
-      if f.specials = Ieee && q = f.top + 1 then Float.infinity else nan
-    in
-    Float.copy_sign special sign
+  else if f.specials = Ieee && q = f.top + 1 then
+    Float.copy_sign Float.infinity sign
+  else if f.specials = Ieee && q > f.top then
+    nan_of_payload ~mant:f.mant ~negative (q land ((1 lsl f.mant) - 1))
+  else if q > f.top then Float.copy_sign nan sign
   else
     let exp = q lsr f.mant and m = q land ((1 lsl f.mant) - 1) in
     let v =
@@ -440,10 +464,13 @@ let nearest ~mant ~emin x =
 
 (* Past the greatest finite value, 16-bit formats give their infinity and 8-bit
    ones saturate to it. An infinity stays one where the format has infinities,
-   and is its NaN where it has none. *)
+   and is its NaN where it has none. A NaN keeps the leading bits of its payload
+   where the format has room for them. *)
 let encode_format f x =
   let sign = if Float.sign_bit x then 1 lsl (f.bits - 1) else 0 in
-  if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
+  if Float.is_nan x && f.specials = Ieee then
+    sign lor (f.top + 1) lor nan_payload ~mant:f.mant x
+  else if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
     if f.specials = Fnuz then f.nan else sign lor f.nan
   else
     let emin = 1 - f.bias in
@@ -462,29 +489,8 @@ let encode_format f x =
     in
     if f.specials = Fnuz && q = 0 then 0 else sign lor q
 
-(* The 16-bit formats carry a NaN's payload as a float32 does, in the top of its
-   mantissa with the quiet bit set, as nx's codecs do. The 8-bit formats have
-   one NaN per sign. *)
-let decode dt code =
-  let f = float_format dt in
-  if f.bits = 16 && code land 0x7FFF > f.top + 1 then
-    let payload = code land ((1 lsl f.mant) - 1) in
-    let sign = code lsr 15 in
-    Int32.float_of_bits
-      (Int32.of_int
-         ((sign lsl 31) lor 0x7FC0_0000 lor (payload lsl (23 - f.mant))))
-  else decode_format f code
-
-let encode dt x =
-  let f = float_format dt in
-  if f.bits = 16 && Float.is_nan x then
-    let bits = Int32.to_int (Int32.bits_of_float x) land 0xFFFF_FFFF in
-    let quiet = 1 lsl (f.mant - 1) in
-    ((bits lsr 31) lsl 15)
-    lor (f.top + 1) lor quiet
-    lor ((bits land 0x7F_FFFF) lsr (23 - f.mant))
-  else encode_format f x
-
+let decode dt code = decode_format (float_format dt) code
+let encode dt x = encode_format (float_format dt) x
 let round dt x = decode dt (encode dt x)
 
 (* Casts *)
@@ -512,9 +518,21 @@ let from_storage_scalar dt (s : value) : value =
             (Format.asprintf "%a is not a storage of %a" pp_const s pp dt))
   | _ -> s
 
-(* A float of [dt]'s precision. The weak float and the doubles keep all. *)
+(* A conversion to [dt]'s precision. It quiets a signalling NaN and keeps its
+   payload, as IEEE conversions do, and an 8-bit float gives its canonical NaN
+   of the same sign, as nx's encoders do. The weak float and the doubles keep
+   every other value. *)
 let truncate_float dt x =
+  let x =
+    if Float.is_nan x then
+      Int64.(float_of_bits (logor (bits_of_float x) 0x0008_0000_0000_0000L))
+    else x
+  in
   match dt with
+  | (Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz) when Float.is_nan x ->
+      let f = float_format dt in
+      let sign = if Float.sign_bit x && f.specials <> Fnuz then 0x80 else 0 in
+      decode_format f (sign lor f.nan)
   | Float16 | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
       round dt x
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float x)
@@ -536,13 +554,24 @@ let storage_int dt =
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> Uint8
   | dt -> dt
 
+(* A float32's bits and back, a NaN's moved by hand to keep a signalling one. *)
+let float32_bits x =
+  if Float.is_nan x then
+    (if Float.sign_bit x then 0x8000_0000 else 0)
+    lor 0x7F80_0000 lor nan_payload ~mant:23 x
+  else Int32.to_int (Int32.bits_of_float x) land 0xFFFF_FFFF
+
+let float32_of_bits b =
+  if b land 0x7F80_0000 = 0x7F80_0000 && b land 0x7F_FFFF <> 0 then
+    nan_of_payload ~mant:23 ~negative:(b lsr 31 = 1) (b land 0x7F_FFFF)
+  else Int32.float_of_bits (Int32.of_int b)
+
 (* The bits that store [s], a value of [dt]'s storage format. *)
 let pack dt (s : value) =
   match dt with
   | Bool -> if Value.to_bool s then Z.one else Z.zero
   | Float16 -> Z.of_int (encode Float16 (Value.to_float s))
-  | Float32 ->
-      Z.extract (Z.of_int32 (Int32.bits_of_float (Value.to_float s))) 0 32
+  | Float32 -> Z.of_int (float32_bits (Value.to_float s))
   | Float64 ->
       Z.extract (Z.of_int64 (Int64.bits_of_float (Value.to_float s))) 0 64
   | Void | Weak_int | Weak_float ->
@@ -559,8 +588,7 @@ let unpack dt bits : value =
   match dt with
   | Bool -> `Bool (not (Z.equal bits Z.zero))
   | Float16 -> `Float (decode Float16 (Z.to_int bits))
-  | Float32 ->
-      `Float (Int32.float_of_bits (Z.to_int32 (Z.signed_extract bits 0 32)))
+  | Float32 -> `Float (float32_of_bits (Z.to_int bits))
   | Float64 ->
       `Float (Int64.float_of_bits (Z.to_int64 (Z.signed_extract bits 0 64)))
   | dt ->
