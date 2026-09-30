@@ -8,6 +8,7 @@ tinygrad's Python emulator computes them, and written as `float.hex` prints
 them.
 """
 
+import fractions
 import math
 import random
 import struct
@@ -176,3 +177,45 @@ def pow_values():
                     continue
                 rows.append((name, cell(b), cell(e), cell(result)))
     return ["dtype", "base", "exponent", "result"], rows
+
+
+# The remainders of angles near multiples of pi/2, from pi to 1400 bits
+
+def pi_scaled(bits):
+    """pi * 2^bits, by Machin's formula in integers."""
+    prec = bits + 64
+    def arctan_inv(n):
+        x, s, k, sign = (1 << prec) // n, 0, 0, 1
+        while x:
+            s += sign * (x // (2 * k + 1))
+            x //= n * n
+            k, sign = k + 1, -sign
+        return s
+    return (16 * arctan_inv(5) - 4 * arctan_inv(239)) >> 64
+
+
+PI_BITS = 1400
+PI_SCALED = pi_scaled(PI_BITS)
+
+
+def reduced(x):
+    """x = q * pi/2 + r with |r| <= pi/4: r rounded to a double, and q modulo 4."""
+    num, den = x.as_integer_ratio()
+    # x / (pi/2) = 2 num 2^PI_BITS / (den PI_SCALED), rounded to the nearest integer
+    q = (4 * num * 2**PI_BITS + den * PI_SCALED) // (2 * den * PI_SCALED)
+    r = fractions.Fraction(num, den) - fractions.Fraction(q * PI_SCALED, 2 * 2**PI_BITS)
+    return float(r), q % 4
+
+
+@table
+def payne_hanek_near_multiples():
+    rows = []
+    integers = [355.0, 103993.0, 104348.0, 208341.0, 312689.0, 833719.0, 1146408.0, 4272943.0]
+    for name, dt in (("float", dtypes.float), ("double", dtypes.double)):
+        near = [k * math.pi / 2 for k in (10**6, 10**9 + 7, 10**15 + 3, 2.0**60, 2.0**100)] + [1e20, 1e30]
+        if dt == dtypes.double: near += [6381956970095103 * 2.0**797, 1e22, 1e300, 1.7e308]
+        for v in integers + near:
+            v = truncate[dt](v)
+            r, q = reduced(v)
+            rows.append((name, cell(v), cell(r), q))
+    return ["dtype", "x", "r", "quadrant"], rows

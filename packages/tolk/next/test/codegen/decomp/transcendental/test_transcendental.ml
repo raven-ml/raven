@@ -281,7 +281,7 @@ let reductions =
         ~name:(fun (v, _, _) -> Printf.sprintf "%.17g" v)
         "payne_hanek_reduction removes quarter turns"
         [
-          ((12. *. Float.pi) +. 0.1, 0.1 -. (Float.pi /. 2.), 1);
+          ((12. *. Float.pi) +. 0.1, 0.1, 0);
           (12. *. Float.pi, 0., 4);
           ((12. *. Float.pi) -. 0.1, -0.1, 4);
         ]
@@ -290,6 +290,23 @@ let reductions =
           let eval u = Interpreter.eval ~params:[ (0, `Float v) ] u in
           equal (close ~atol:1e-8 ~rtol:1e-7) r (as_float (eval rem));
           equal int q (as_int (eval quadrant)));
+      (* The remainder at an angle near a multiple of pi/2, against pi to 1400
+         bits: within two ulps of the reference, with its quadrant, for a
+         float64's every exponent. *)
+      Golden.cases ~key:[ "dtype"; "x" ] "payne_hanek_near_multiples.golden"
+        (fun cell ->
+          let dt = dtype_named (cell "dtype") in
+          let rem, quadrant = T.payne_hanek_reduction (x dt) in
+          let eval u =
+            Interpreter.eval ~params:[ (0, value_of_cell (cell "x")) ] u
+          in
+          let rtol = if dt = Float64 then 0x1p-51 else 0x1p-22 in
+          equal int
+            (int_of_string (cell "quadrant"))
+            (as_int (eval quadrant) land 3);
+          equal (close ~atol:0. ~rtol)
+            (as_float (value_of_cell (cell "r")))
+            (as_float (eval rem)));
       test "cody_waite_reduction removes half turns" (fun () ->
           let v = (12. *. Float.pi) +. 0.1 in
           let rem, quadrant = T.cody_waite_reduction (x Dtype.Float64) in
@@ -418,15 +435,14 @@ let refused_types =
 let tolerance = function
   | Dtype.Float16 -> (1e-2, 5e-3)
   | Dtype.Float32 -> (2e-5, 1e-5)
-  | _ -> (3e-2, 1e-5)
+  | _ -> (1e-14, 1e-14)
 
 let inputs dt ~lo ~hi =
   Gen.with_pp Format.pp_print_float (Gen.map (round dt) (Gen.float_range lo hi))
 
-(* tinygrad checks sine below 1e8. A double's sine loses about 4e-10 of absolute
-   precision per unit of its argument, and passes 3e-2 near 7.7e7 (values.golden
-   pins it there), so a double is drawn below 1e7. *)
-let sine_bound = function Dtype.Float64 -> (-1e7, 1e7) | _ -> (-1e8, 1e8)
+(* tinygrad checks sine below 1e8; a double is drawn from its whole range, which
+   the exact reduction keeps within an ulp or two (D31). *)
+let sine_bound = function Dtype.Float64 -> (-1e300, 1e300) | _ -> (-1e8, 1e8)
 
 let accurate name f reference ~bound =
   List.map

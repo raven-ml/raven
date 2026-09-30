@@ -73,8 +73,9 @@ val payne_hanek_reduction : Ops.t -> Ops.t * Ops.t
 (** [payne_hanek_reduction d] is [(r, q)] with [d = q * pi/2 + r] and
     [|r| <= pi/4], for [1 <= d], infinities excluded. [r] has [d]'s type and [q]
     is a {!Dtype.Int32} whose value modulo 4 is the quadrant of [d]. It
-    multiplies [d] by 190 bits of [2/pi], which keeps [r] exact to [d]'s
-    precision whatever [d]'s magnitude. *)
+    multiplies [d]'s whole mantissa by the bits of [1/(2pi)] at its exponent, to
+    128 bits of the fraction, which keeps [r] within an ulp or two of the exact
+    remainder whatever [d]'s magnitude. *)
 
 val cody_waite_reduction : Ops.t -> Ops.t * Ops.t
 (** [cody_waite_reduction d] is [(r, q)] with [d = q * pi + r] and

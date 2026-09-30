@@ -898,3 +898,39 @@ the Exclusions of `README.md`.
   the core, the kernel keeps its values); rune's
   `Rune_next.Lower_linalg › tensor cores › cuda › *`. The core's exact product
   is README's hardware check.
+
+## D31. Payne-Hanek reduces exactly, to the nearest quadrant
+
+- **tinygrad:** `codegen/decomp/transcendental.py:66-113`
+  (`payne_hanek_reduction`) and `:164-166` (`sin_poly_large`).
+- **tolk.next:** `lib/codegen/decomp/transcendental.ml:110`
+  (`one_over_two_pi`), `:156` (`payne_hanek_reduction`) and `:315`
+  (`sin_poly_large`); `test/gen/tinygrad.patch`, which gives tinygrad the same
+  reduction before the goldens are generated.
+- **Differs:** tinygrad rounds the quotient on `f < 0.5`, where `f` is
+  frexp's mantissa, always at least 0.5, so it always returns the fraction
+  less a quarter turn and the next quadrant: `|r|` reaches `pi/2`, and a tiny
+  remainder loses its low bits in the subtraction (4.4e-8 absolute in
+  float32). It also multiplies only 32 bits of the mantissa by 96 bits of
+  `2/pi` from a table of 190 bits, so a float64 is reduced wrong from about 30
+  up, and beyond the table's bits for large exponents. Here the quotient
+  rounds to the nearest quadrant on the fraction's top bit, so `|r| <= pi/4`;
+  the whole mantissa, 24 bits or 53 in two words, is multiplied by the bits of
+  `1/(2pi)` at its exponent, from a table of 1312 bits that covers a
+  float64's greatest exponent, to 128 bits of the fraction, carried word by
+  word; and the remainder is the signed fraction's two 64-bit halves, each
+  converted and scaled. The remainder is within an ulp or two of the exact
+  one in float32 and float64, `6381956970095103 * 2^797`, the float64 nearest
+  a multiple of `pi/2`, included. `sin_poly_large` takes the sine of an odd
+  quadrant as `sin (pi/2 - |r|)`, which stays within the polynomial's range
+  for the nearest remainder.
+- **Reason:** (b): rune's `sin` and `cos` reduce by `pi/2` with this
+  reduction beyond `2^12` in float32 and `2^22` in float64, where their exact
+  Cody-Waite parts stop (RFC 0012), and tolk's own `xsin` uses it beyond its
+  switch-over; both must give nx's sine there.
+- **Pinned by:** `Tolk_next.Transcendental › reductions ›
+  payne_hanek_near_multiples.golden`, remainders and quadrants of float32 and
+  float64 angles near multiples of `pi/2`, from pi to 1400 bits, which the
+  old reduction fails; `› payne_hanek_reduction removes quarter turns`; and
+  the `payne_hanek_*`, `xsin_*` and `values` goldens, from the equally
+  patched tinygrad.

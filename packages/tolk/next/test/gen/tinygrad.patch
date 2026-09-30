@@ -36,10 +36,121 @@ index efb2e82..8c64ddb 100644
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
-index 62c3191..613eda4 100644
+index 62c3191..e7c789e 100644
 --- a/tinygrad/codegen/decomp/transcendental.py
 +++ b/tinygrad/codegen/decomp/transcendental.py
-@@ -241,7 +241,8 @@ def xlog2(d:UOp) -> UOp:
+@@ -63,6 +63,13 @@ def frexp(v:UOp) -> tuple[UOp, UOp]:
+   return mantissa, exp
+ 
+ # *** reduction algorithms for sine ***
++# 1/(2pi) in 32-bit words, the first its integer part: 1312 bits, as a float64's greatest exponent needs
++ONE_OVER_TWO_PI = [0x00000000, 0x28be60db, 0x9391054a, 0x7f09d5f4, 0x7d4d3770, 0x36d8a566, 0x4f10e410, 0x7f9458ea,
++  0xf7aef158, 0x6dc91b8e, 0x909374b8, 0x01924bba, 0x82746487, 0x3f877ac7, 0x2c4a69cf, 0xba208d7d, 0x4baed121, 0x3a671c09,
++  0xad17df90, 0x4e64758e, 0x60d4ce7d, 0x272117e2, 0xef7e4a0e, 0xc7fe25ff, 0xf7816603, 0xfbcbc462, 0xd6829b47, 0xdb4d9fb3,
++  0xc9f2c26d, 0xd3d18fd9, 0xa797fa8b, 0x5d49eeb1, 0xfaf97c5e, 0xcf41ce7d, 0xe294a4ba, 0x9afed7ec, 0x47e35742, 0x1580cc11,
++  0xbf1edaea, 0xfc33ef08, 0x26bd0d87, 0x6a78e458]
++
+ def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
+   """
+   Performs Payne-Hanek Reduction: computes the remainder of `d` modulo pi/2 for the values `d` where
+@@ -70,47 +77,49 @@ def payne_hanek_reduction(d:UOp) -> tuple[UOp, UOp]:
+   Returns a tuple of `(r, q)`:
+   - `r`[d.dtype] is the reminder value corresponding to `round_to_nearest(x % pi/2)`.
+   - `q`[int32] is an integer, and q % 4 is corresponding to the quadrant of the original angle `d`.
++  The whole mantissa is multiplied by 1/(2pi), exactly to 128 bits of the fraction, so a float64 keeps every bit.
+   """
+   assert d.dtype in TRANSCENDENTAL_DTYPES
+-  # https://stackoverflow.com/questions/30463616/payne-hanek-algorithm-implementation-in-c/30465751#30465751
+-  # 190 bits of 2/pi for Payne-Hanek style argument reduction
+-  two_over_pi_f = [0x00000000, 0x28be60db, 0x9391054a, 0x7f09d5f4, 0x7d4d3770, 0x36d8a566, 0x4f10e410]
+-
+   intermediate_dtype = dtypes.float32 if d.dtype == dtypes.float16 else d.dtype
+-
++  # d = m * 2^(e - W), the integer m of W bits in K words of 32 bits
++  W, K, max_exp = (53, 2, 1024) if intermediate_dtype == dtypes.float64 else (24, 1, 128)
+   f, e = frexp(d)
+-  ia = (f.cast(intermediate_dtype) * 4.294967296e9).cast(dtypes.uint64)
+-  # extract 96 relevant bits of 2/pi based on magnitude of argument
+-  i = shr(e.cast(dtypes.uint64), 5)
+-  e = e.cast(dtypes.int32) & 31
+-  offset = 32 - e
+-
+-  def _take(an:UOp, offset:int, count:int=0) -> UOp:
+-    """an = two_over_pi_f[i+offset]"""
+-    if count+offset < len(two_over_pi_f) - 1:
+-      an = i.ne(count).where(_take(an, offset, count=count+1), an.const_like(two_over_pi_f[count+offset]))
+-    return an
+-  def _shl_lazy(x:UOp, y:UOp): return (x.cast(dtypes.uint64) << y.cast(dtypes.uint64)).cast(dtypes.uint32)
+-  def _shr_lazy(x:UOp, y:UOp): return (x.cast(dtypes.uint64) >> y.cast(dtypes.uint64)).cast(dtypes.uint32)
+-
+-  a = [_take(UOp.const(0, dtypes.uint32), i) for i in range(4)]
+-  #  (two_over_pi_f[Int(i) + n] << e) | (two_over_pi_f[Int(i) + n+1] >> (nbits - e))
+-  # Note: e >= 1 for all numbers d >= 1.0. assume e != 0
+-  hi = _shl_lazy(a[0], e) | _shr_lazy(a[1], offset)
+-  mi = _shl_lazy(a[1], e) | _shr_lazy(a[2], offset)
+-  lo = _shl_lazy(a[2], e) | _shr_lazy(a[3], offset)
+-
+-  def _hp_mul(x:UOp, y:UOp) -> UOp: return x.cast(dtypes.uint64) * y.cast(dtypes.uint64)
+-  # compute x * 2/pi
+-  p = shl(_hp_mul(ia, hi), 32) + _hp_mul(ia, mi) + shr(_hp_mul(ia, lo), 32)
+-
+-  # round quotient to nearest
+-  q = shr(p, 62).cast(dtypes.int32)
+-  p = p & 0x3fffffffffffffff
+-  r = (p.cast(intermediate_dtype) * (3.4061215800865545e-19)).cast(d.dtype)
+-
+-  # if fraction >= 0.5, r -= pi/2, q += 1
+-  return (f<0.5).where(r, r - math.pi/2), (f<0.5).where(q, q + 1)
++  m = (f.cast(intermediate_dtype) * float(2**W)).cast(dtypes.uint64)
++  ms = [m & 0xffffffff, shr(m, 32)][:K]
++  # d/(2pi) * 2^128 mod 2^128 comes from the words of 1/(2pi) at d's exponent, with G words below it for the carries
++  G = 2
++  L = 4 + K + G
++  E = (e.cast(dtypes.int32) + (128 - W)).maximum(0)
++  i, s = E // 32, (E & 31).cast(dtypes.uint64)
++  table = ONE_OVER_TWO_PI[:(max_exp - W + 128) // 32 - 3 + L + 1]
++  def word(offset:int) -> UOp:
++    """table[i+offset], 0 outside the table"""
++    ret = UOp.const(0, dtypes.uint64)
++    for count in reversed(range(max(0, -offset), len(table) - offset)):
++      ret = i.ne(count).where(ret, ret.const_like(table[count + offset]))
++    return ret
++  a = [word(j - 3) for j in range(L + 1)]
++  b = [((a[j] << s) | (a[j + 1] >> (32 - s))) & 0xffffffff for j in range(L)]
++  # columns of 32 bits, from G+1 words below the binary point to the top word
++  terms: dict[int, list[UOp]] = {c: [] for c in range(-G - 1, 4)}
++  for k in range(K):
++    for j in range(L):
++      p, c = ms[k] * b[j], k - j + 3
++      if -G - 1 <= c <= 3: terms[c].append(p & 0xffffffff)
++      if -G - 1 <= c + 1 <= 3: terms[c + 1].append(shr(p, 32))
++  z: list[UOp] = []
++  carry: list[UOp] = []
++  for c in range(-G - 1, 4):
++    col = functools.reduce(lambda x, y: x + y, terms[c] + carry)
++    z.append(col & 0xffffffff)
++    carry = [shr(col, 32)]
++  zh, zl = shl(z[-1], 32) | z[-2], shl(z[-3], 32) | z[-4]
++  # round the quotient to the nearest quadrant: from half a quadrant up, the remainder is the fraction less a quadrant
++  half = shr(zh, 61) & 1
++  q = (shr(zh, 62) + half).cast(dtypes.int32)
++  hi = (zh & 0x3fffffffffffffff).cast(dtypes.int64) - shl(half.cast(dtypes.int64), 62)
++  r = hi.cast(intermediate_dtype) * (2 * math.pi / 2**64) + zl.cast(intermediate_dtype) * (2 * math.pi / 2**128)
++  return r.cast(d.dtype), q
+ 
+ def cody_waite_reduction(d:UOp) -> tuple[UOp, UOp]:
+   """
+@@ -162,7 +171,8 @@ def sin_poly_small(d:UOp, q:UOp) -> UOp:
+   return r * _ifand(q, 1).where(r.const_like(-1), r.const_like(1))
+ 
+ def sin_poly_large(d:UOp, q:UOp) -> UOp:
+-  r = sin_poly(d + _ifand(q, 1).where(d.const_like(math.pi / 2), d.const_like(0)))
++  # an odd quadrant's sine is the cosine of the remainder, sin(pi/2 - |d|), within the polynomial's range
++  r = sin_poly(_ifand(q, 1).where(math.pi / 2 - (d < 0).where(-d, d), d))
+   return r * _ifand(q, 2).where(r.const_like(-1), r.const_like(1))
+ 
+ # *** toplevel functions for xsin/xlog2/xexp2 ***
+@@ -241,7 +251,8 @@ def xlog2(d:UOp) -> UOp:
    else:
      t = polyN(x2, [0.4374550283e+0, 0.5764790177e+0, 0.9618012905120])
      # s_lo term (x*3.27e-08) only for float32 - underflows in float16

@@ -809,6 +809,7 @@ codegen/decomp/transcendental/patterns_sqrt_bfloat16.golden
 codegen/decomp/transcendental/payne_hanek_double.golden
 codegen/decomp/transcendental/payne_hanek_float.golden
 codegen/decomp/transcendental/payne_hanek_half.golden
+codegen/decomp/transcendental/payne_hanek_near_multiples.golden
 codegen/decomp/transcendental/pow2if_int.golden
 codegen/decomp/transcendental/pow2if_long.golden
 codegen/decomp/transcendental/pow2if_short.golden

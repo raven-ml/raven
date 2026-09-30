@@ -105,8 +105,9 @@ let frexp v =
 
 (* Reduction algorithms for sine *)
 
-(* 190 bits of 2/pi *)
-let two_over_pi_f =
+(* 1/(2pi) in 32-bit words, the first its integer part: 1312 bits, as a
+   float64's greatest exponent needs *)
+let one_over_two_pi =
   [|
     0x00000000;
     0x28be60db;
@@ -115,43 +116,125 @@ let two_over_pi_f =
     0x7d4d3770;
     0x36d8a566;
     0x4f10e410;
+    0x7f9458ea;
+    0xf7aef158;
+    0x6dc91b8e;
+    0x909374b8;
+    0x01924bba;
+    0x82746487;
+    0x3f877ac7;
+    0x2c4a69cf;
+    0xba208d7d;
+    0x4baed121;
+    0x3a671c09;
+    0xad17df90;
+    0x4e64758e;
+    0x60d4ce7d;
+    0x272117e2;
+    0xef7e4a0e;
+    0xc7fe25ff;
+    0xf7816603;
+    0xfbcbc462;
+    0xd6829b47;
+    0xdb4d9fb3;
+    0xc9f2c26d;
+    0xd3d18fd9;
+    0xa797fa8b;
+    0x5d49eeb1;
+    0xfaf97c5e;
+    0xcf41ce7d;
+    0xe294a4ba;
+    0x9afed7ec;
+    0x47e35742;
+    0x1580cc11;
+    0xbf1edaea;
+    0xfc33ef08;
+    0x26bd0d87;
+    0x6a78e458;
   |]
 
 let payne_hanek_reduction d =
   check d;
   let dt = dtype d in
   let intermediate_dtype : Dtype.t = if dt = Float16 then Float32 else dt in
+  (* d = m * 2^(e - w), the integer m of w bits in k words of 32 bits *)
+  let w, k, max_exp =
+    if intermediate_dtype = Float64 then (53, 2, 1024) else (24, 1, 128)
+  in
   let f, e = frexp d in
-  let ia = cast O.(cast f intermediate_dtype * float 4.294967296e9) Uint64 in
-  (* The 96 bits of 2/pi that matter for the argument's magnitude. *)
-  let i = shr (cast e Uint64) 5 in
-  let e = O.(cast e Int32 land int 31) in
-  let offset = O.(int 32 - e) in
-  let rec take an offset count =
-    if count + offset >= Array.length two_over_pi_f - 1 then an
-    else
-      where
-        O.(i <> int count)
-        (take an offset (count + 1))
-        (int_like an two_over_pi_f.(count + offset))
+  let m =
+    cast O.(cast f intermediate_dtype * float (Float.ldexp 1. w)) Uint64
   in
-  let shl_lazy x y = cast O.(cast x Uint64 lsl cast y Uint64) Uint32 in
-  let shr_lazy x y = cast O.(cast x Uint64 lsr cast y Uint64) Uint32 in
-  let a = Array.init 4 (fun o -> take (int ~dtype:Uint32 0) o 0) in
-  (* e >= 1 for every d >= 1, so no shift is by 32. *)
-  let hi = O.(shl_lazy a.(0) e lor shr_lazy a.(1) offset) in
-  let mi = O.(shl_lazy a.(1) e lor shr_lazy a.(2) offset) in
-  let lo = O.(shl_lazy a.(2) e lor shr_lazy a.(3) offset) in
-  let hp_mul x y = O.(cast x Uint64 * cast y Uint64) in
-  let p = O.(shl (hp_mul ia hi) 32 + hp_mul ia mi + shr (hp_mul ia lo) 32) in
-  let q = cast (shr p 62) Int32 in
-  let p = O.(p land int 0x3fffffffffffffff) in
+  let ms =
+    List.filteri (fun i _ -> i < k) [ O.(m land int 0xffffffff); shr m 32 ]
+  in
+  (* d/(2pi) * 2^128 mod 2^128 comes from the words of 1/(2pi) at d's exponent,
+     with g words below it for the carries *)
+  let g = 2 in
+  let l = 4 + k + g in
+  let shift = 128 - w in
+  let e = maximum O.(cast e Int32 + int shift) (int 0) in
+  let i = O.(e // int 32) and s = cast O.(e land int 31) Uint64 in
+  let table =
+    Array.sub one_over_two_pi 0 (((max_exp - w + 128) / 32) - 3 + l + 1)
+  in
+  let word offset =
+    let ret = ref (int ~dtype:Uint64 0) in
+    for count = Array.length table - offset - 1 downto max 0 (-offset) do
+      ret :=
+        where O.(i <> int count) !ret (int_like !ret table.(count + offset))
+    done;
+    !ret
+  in
+  let a = Array.init (l + 1) (fun j -> word (j - 3)) in
+  let b =
+    List.init l (fun j ->
+        let next = a.(j + 1) in
+        O.((a.(j) lsl s) lor (next lsr (int 32 - s)) land int 0xffffffff))
+  in
+  (* columns of 32 bits, from g + 1 words below the binary point to the top
+     word *)
+  let terms = Array.make (g + 5) [] in
+  let push c t = terms.(c + g + 1) <- terms.(c + g + 1) @ [ t ] in
+  List.iteri
+    (fun k mk ->
+      List.iteri
+        (fun j bj ->
+          let p = O.(mk * bj) and c = k - j + 3 in
+          if -g - 1 <= c && c <= 3 then push c O.(p land int 0xffffffff);
+          if -g - 1 <= c + 1 && c + 1 <= 3 then push (c + 1) (shr p 32))
+        b)
+    ms;
+  let z, _ =
+    Array.fold_left
+      (fun (z, carry) ts ->
+        let col =
+          match ts @ carry with
+          | t :: rest -> List.fold_left add t rest
+          | [] -> invalid_arg "an empty column"
+        in
+        (z @ [ O.(col land int 0xffffffff) ], [ shr col 32 ]))
+      ([], []) terms
+  in
+  let zh, zl =
+    match List.rev z with
+    | z3 :: z2 :: z1 :: z0 :: _ -> (O.(shl z3 32 lor z2), O.(shl z1 32 lor z0))
+    | _ -> invalid_arg "fewer than four columns"
+  in
+  (* The quotient rounds to the nearest quadrant: from half a quadrant up, the
+     remainder is the fraction less a quadrant. *)
+  let half = O.(shr zh 61 land int 1) in
+  let q = cast O.(shr zh 62 + half) Int32 in
+  let hi =
+    O.(cast (zh land int 0x3fffffffffffffff) Int64 - shl (cast half Int64) 62)
+  in
   let r =
-    cast O.(cast p intermediate_dtype * float 3.4061215800865545e-19) dt
+    O.(
+      (cast hi intermediate_dtype * float (2. *. Float.pi /. Float.ldexp 1. 64))
+      + cast zl intermediate_dtype
+        * float (2. *. Float.pi /. Float.ldexp 1. 128))
   in
-  (* A fraction of a quadrant from 0.5 up rounds the quotient up. *)
-  let low = O.(f < float 0.5) in
-  (where low r O.(r - float (Float.pi /. 2.)), where low q O.(q + int 1))
+  (cast r dt, q)
 
 let cody_waite_reduction d =
   let m_1_pi = 0.318309886183790671537767526745028724 in
@@ -227,11 +310,12 @@ let ifand q n = O.(q land int n <> int 0)
 let sign_if cond r = O.(r * where cond (int_like r (-1)) (int_like r 1))
 let sin_poly_small d q = sign_if (ifand q 1) (sin_poly d)
 
+(* An odd quadrant's sine is the cosine of the remainder, sin (pi/2 - |d|),
+   within the polynomial's range. *)
 let sin_poly_large d q =
-  let shift =
-    where (ifand q 1) (float_like d (Float.pi /. 2.)) (int_like d 0)
-  in
-  sign_if (ifand q 2) (sin_poly O.(d + shift))
+  let magnitude = where O.(d < int 0) O.(-d) d in
+  let d = where (ifand q 1) O.(float (Float.pi /. 2.) - magnitude) d in
+  sign_if (ifand q 2) (sin_poly d)
 
 (* Toplevel functions for xsin, xlog2 and xexp2 *)
 
