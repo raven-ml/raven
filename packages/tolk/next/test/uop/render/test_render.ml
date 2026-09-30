@@ -2,7 +2,6 @@ open Windtrap
 open Tolk_next
 
 let uop = Testable.make ~pp:Ops.pp ~equal:Ops.equal
-
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let var name lo hi = Ops.variable name (`Int (Z.of_int lo)) (`Int (Z.of_int hi))
 let a = var "a" 1 5
@@ -20,16 +19,30 @@ let variables = List.map (fun name -> (name, var name 0 9)) [ "a"; "b"; "c" ]
 let symbols =
   Op.
     [
-      ("//", Floordiv); ("<<", Shl); (">>", Shr); ("!=", Cmpne); ("*", Mul);
-      ("%", Floormod); ("+", Add); ("-", Sub); ("&", And); ("^", Xor);
-      ("|", Or); ("<", Cmplt);
+      ("//", Floordiv);
+      ("<<", Shl);
+      (">>", Shr);
+      ("!=", Cmpne);
+      ("*", Mul);
+      ("%", Floormod);
+      ("+", Add);
+      ("-", Sub);
+      ("&", And);
+      ("^", Xor);
+      ("|", Or);
+      ("<", Cmplt);
     ]
 
 (* Python's precedence levels, from the loosest. *)
 let levels =
   Op.
     [
-      [ Cmplt; Cmpne ]; [ Or ]; [ Xor ]; [ And ]; [ Shl; Shr ]; [ Add; Sub ];
+      [ Cmplt; Cmpne ];
+      [ Or ];
+      [ Xor ];
+      [ And ];
+      [ Shl; Shr ];
+      [ Add; Sub ];
       [ Mul; Floordiv; Floormod ];
     ]
 
@@ -147,7 +160,7 @@ let render =
       test "writes the operators of O as they read" (fun () ->
           let b = var "b" 0 9 and c = var "c" 0 9 in
           equal string "(a*b+c)"
-            (Render.render ~simplify:false Ops.O.(a * b + c));
+            (Render.render ~simplify:false Ops.O.((a * b) + c));
           equal string "((a+b)*c)"
             (Render.render ~simplify:false Ops.O.((a + b) * c)));
       prop "an expression reads back as the tree it writes" expression
@@ -241,8 +254,7 @@ let positions = Gen.list ~size:(Gen.int_range 0 10) (Gen.int_range 0 22)
 let one_line_per_node positions =
   let program = sources "program.golden" in
   let lines =
-    String.split_on_char '\n'
-      (listing (List.map (List.nth program) positions))
+    String.split_on_char '\n' (listing (List.map (List.nth program) positions))
   in
   equal int (max 1 (List.length positions)) (List.length lines);
   List.iteri
@@ -264,5 +276,4 @@ let pp_uops =
           positions one_line_per_node;
       ])
 
-let () =
-  exit (run "Tolk_next.Render" [ render; simplified; srender; pp_uops ])
+let () = exit (run "Tolk_next.Render" [ render; simplified; srender; pp_uops ])
