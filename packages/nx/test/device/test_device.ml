@@ -1906,6 +1906,29 @@ let test_faulting_callbacks () =
             (B.create host S.UInt64 2);
           Nx_device.synchronize d))
 
+(* A free that faults partway: the memory freed before it is gone, and the
+   memory from it on is retained, kept for the life of the process. *)
+let test_fault_midway () =
+  let keep = Hashtbl.create 4 and frees = ref 0 in
+  let memory =
+    {
+      Driver.alloc = block keep ~addressed:true;
+      free =
+        (fun r ->
+          incr frees;
+          if !frees = 2 then failwith "free fault";
+          Hashtbl.remove keep (Region.address r));
+    }
+  in
+  let d =
+    Driver.device ~name:"MIDWAY" ~arch:"test" ~budget:max_int
+      (Host_visible { memory; mapping = None })
+  in
+  dropped (fun () -> List.init 3 (fun _ -> B.create d S.UInt8 8));
+  raises_match (lost d "free fault") (fun () -> Nx_device.free_cache d);
+  equal ~msg:"retained, and held by the driver" (pair int int) (16, 2)
+    (Nx_device.Stats.retained (stats d), Hashtbl.length keep)
+
 let failures =
   group "failures"
     [
@@ -1940,6 +1963,8 @@ let failures =
       test "memory that a hung wait could not free is retained" test_retained;
       test "a driver callback that raises Failure loses its device"
         test_faulting_callbacks;
+      test "a free that faults midway retains the memory from it on"
+        test_fault_midway;
     ]
 
 (* Sleep and finalize *)
