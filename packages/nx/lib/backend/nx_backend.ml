@@ -44,7 +44,6 @@ type binary =
 type compare = Equal | Not_equal | Less | Less_equal
 type reduce = Sum | Prod | Max | Min
 type arg_reduce = Argmax | Argmin
-type conversion = Cast | Bitcast
 
 exception Refused of string
 
@@ -95,6 +94,9 @@ module type S = sig
     dst:('a, 'b) Nx_array.t ->
     unit
 
+  val cast : ('a, 'b) Nx_array.t -> dst:('c, 'd) Nx_array.t -> unit
+  val threefry : int32_array -> int32_array -> dst:int32_array -> unit
+
   val reduce :
     reduce ->
     axes:int array ->
@@ -132,8 +134,7 @@ module type S = sig
   val cat :
     axis:int -> ('a, 'b) Nx_array.t list -> dst:('a, 'b) Nx_array.t -> unit
 
-  val cast : ('a, 'b) Nx_array.t -> dst:('c, 'd) Nx_array.t -> unit
-  val threefry : int32_array -> int32_array -> dst:int32_array -> unit
+  val contiguous : ('a, 'b) Nx_array.t -> dst:('a, 'b) Nx_array.t -> unit
 
   val gather :
     axis:int ->
@@ -203,8 +204,6 @@ module type S = sig
     (Complex.t, 'b) Nx_array.t ->
     dst:(float, 'c) Nx_array.t ->
     unit
-
-  val contiguous : ('a, 'b) Nx_array.t -> dst:('a, 'b) Nx_array.t -> unit
 
   val cholesky :
     upper:bool -> ('a, 'b) Nx_array.t -> dst:('a, 'b) Nx_array.t -> unit
