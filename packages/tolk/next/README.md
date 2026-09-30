@@ -32,7 +32,8 @@ A module is named after its file, with two rules:
   by a Stdlib module, takes its directory's name as a prefix:
   `codegen/decomp/dtype.py` is `lib/codegen/decomp/decomp_dtype.ml`,
   `Decomp_dtype`, since `dtype.py` is `Dtype`. Without the prefix a module
-  would hide the other one from the whole library.
+  would hide the other one from the whole library. Of two such files, the one
+  tolk.next keeps only part of takes the prefix.
 
 The modules not named after their file:
 
@@ -46,6 +47,7 @@ The modules not named after their file:
 | `codegen/opt/__init__.py` | `lib/codegen/opt/opt.ml` | `Opt` |
 | `renderer/__init__.py` | `lib/renderer/renderer.ml` | `Renderer` |
 | `schedule/__init__.py` | `lib/schedule/schedule.ml` | `Schedule` |
+| `runtime/support/memory.py` (its `TLSFAllocator`) | `lib/runtime/support/support_memory.ml` | `Support_memory` (`schedule/memory.py`) |
 
 The mixins have no files: the methods `UOp` keeps from `mixin/*.py` are
 folded into `Ops`. No other in-scope file shares its name with
@@ -69,11 +71,12 @@ is scope, not a divergence: the part left out is listed here, and
 | `tqdm`, `fetch` and `fetch_fw` in `helpers.py` | progress bars and downloads belong to the programs and packages that need them. |
 | The profile events of `helpers.py` and `device.py` | nx.device's `Profile` records them. |
 | The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it, and rune drives it (see D3). |
+| `runtime/support/memory.py` but its `TLSFAllocator`: `MMIOInterface`, `BumpAllocator`, `AddrSpace`, `VirtMapping`, `PageTableTraverseContext`, `MemoryManager` | they map and allocate device memory, which is nx.device's (see D3). The TLSF stays, as `Support_memory.Tlsf_allocator`, since the memory planner places buffers with it. |
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
 | `pm_validate_wmma_rdna3`, `pm_validate_wmma_rdna4` and `pm_validate_wmma_cdna` in `renderer/tc.py` | only `renderer/llvmir.py`, excluded above, applies them. |
 | A node as the shift count of `shl` and `shr` in `codegen/decomp/transcendental.py` | every caller shifts by a number. |
 | `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, the ISA branches of `codegen/__init__.py`, and `Renderer.asm` in `renderer/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
-| The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |
+| The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py`; and the refusal of `schedule/memory.py`'s `_can_plan` to plan buffers on `CL` and `WEBGPU` devices, which cannot view a buffer | not raven targets, or they need a full toolchain. |
 | The `output` argument of `create_allreduce_function` in `schedule/allreduce.py` | no caller passes it: the function always allocates its output. |
 | `runtime/support/compileserver.py`, with `Compiler.server` and `Compiler.compile_server` in `device.py`, which start it and talk to it | compilation workers are domains (see D5). |
 | `runtime/support/c.py` but `DLL.findlib`, and in `findlib` the macOS shortcut for `libc` and `m` (`:94`), since no caller loads either: the ctypes structures, pointers and bindings, and `runtime/autogen/*` | raven has no ctypes: the compilers' C stubs declare the few NVRTC and comgr functions they call, and load the library that `C.findlib` finds. The second name under which tinygrad loads comgr 3 (`comgr_3`, with its override `COMGR_3_PATH`) is scope: both names search the same paths, and `lib<p>.so[.0-9]*` finds ROCm 6's `libamd_comgr.so.2` and ROCm 7's `libamd_comgr.so.3` alike (ROCm 7's name is from its release layout, unverified on an install), so tolk.next loads one library, found by `findlib`, and picks the constants of its version. |
