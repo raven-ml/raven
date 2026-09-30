@@ -288,7 +288,8 @@ def matmul():
 A codegen pass's input is recorded where the pipeline hands it over:
 `graph.kernels(*tensors)` is the kernels a `Tensor` program compiles, and
 `graph.stage(name, kernel, renderer)` is the sink that compiling `kernel` for
-`renderer` hands to the pass `name`, a `graph_rewrite` by its name or
+`renderer` hands to the pass `name`: a `graph_rewrite` by its name,
+`"apply_opts"` (the kernel that kernel optimization receives) or
 `"linearize"`.
 
 `gen/generate.py` runs each generator in a fresh interpreter, with a scrubbed

@@ -2,51 +2,6 @@ open Windtrap
 open Tolk_next
 
 let show o = Format.asprintf "%a" Opt.pp o
-
-let opt =
-  Testable.make ~pp:Opt.pp ~equal:( = ) |> Testable.with_compare Opt.compare
-
-(* Reads an Opt as tinygrad prints it: [Opt(op=OptOps.SPLIT, axis=0, arg=(4,
-   AxisType.UPCAST))]. *)
-let opt_of_repr s =
-  let target = function
-    | "AxisType.UPCAST" -> Opt.Upcast
-    | "AxisType.UNROLL" -> Unroll
-    | "AxisType.LOCAL" -> Local
-    | t -> failf "no split target %s" t
-  in
-  let top = function
-    | "True" -> true
-    | "False" -> false
-    | b -> failf "no boolean %s" b
-  in
-  Scanf.sscanf s "Opt(op=OptOps.%[A-Z], axis=%d, arg=%s@\n" (fun op axis arg ->
-      let arg = String.sub arg 0 (String.length arg - 1) in
-      let parts =
-        if String.starts_with ~prefix:"(" arg then
-          String.split_on_char ',' (String.sub arg 1 (String.length arg - 2))
-          |> List.map String.trim
-        else [ arg ]
-      in
-      match (op, parts) with
-      | "TC", [ s; o; u ] ->
-          Opt.Tc
-            {
-              axis;
-              tc_select = int_of_string s;
-              tc_opt = int_of_string o;
-              use_tc = int_of_string u;
-            }
-      | "SPLIT", [ a; t ] ->
-          Split
-            { axis; amount = int_of_string a; target = target t; top = false }
-      | "SPLIT", [ a; t; b ] ->
-          Split
-            { axis; amount = int_of_string a; target = target t; top = top b }
-      | "PADTO", [ a ] -> Padto { axis; amount = int_of_string a }
-      | "SWAP", [ w ] -> Swap { axis; with_axis = int_of_string w }
-      | _ -> failf "no optimisation %s" s)
-
 let gen_axis = Gen.int_range (-1) 3
 let gen_small = Gen.int_range (-1) 4
 
@@ -86,14 +41,15 @@ let printing =
       group "pp is tinygrad's repr"
         [
           Golden.cases "reprs.golden" (fun cell ->
-              equal string (cell "opt") (show (opt_of_repr (cell "opt"))));
+              equal string (cell "opt")
+                (show (Kernel_opts.opt_of_cell (cell "opt"))));
         ];
       group "axis is the axis tinygrad prints"
         [
           Golden.cases "reprs.golden" (fun cell ->
               equal int
                 (int_of_string (cell "axis"))
-                (Opt.axis (opt_of_repr (cell "opt"))));
+                (Opt.axis (Kernel_opts.opt_of_cell (cell "opt"))));
         ];
       test "a split that is not from the top prints without its flag" (fun () ->
           equal string "Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL))"
@@ -113,13 +69,13 @@ let order =
                 (order_of_cell (cell "order"))
                 (Int.compare
                    (Opt.compare
-                      (opt_of_repr (cell "a"))
-                      (opt_of_repr (cell "b")))
+                      (Kernel_opts.opt_of_cell (cell "a"))
+                      (Kernel_opts.opt_of_cell (cell "b")))
                    0));
         ];
       prop "compare is a total order"
         (Gen.triple gen_opt gen_opt gen_opt)
-        (Law.order opt);
+        (Law.order Kernel_opts.opt);
       prop "compare is 0 exactly on equal optimisations"
         (Gen.pair gen_opt gen_opt) (fun (o0, o1) ->
           equal bool (o0 = o1) (Opt.compare o0 o1 = 0));

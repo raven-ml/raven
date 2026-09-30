@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8192, device="CPU")
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 256
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.float [0, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8192, device="CPU")
+9 Ops.INDEX dtypes.float [8, 6]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device="CPU")
+11 Ops.INDEX dtypes.float [10, 2]
+12 Ops.CONST dtypes.weakfloat [] -1.0
+13 Ops.MUL dtypes.float [11, 12]
+14 Ops.ADD dtypes.float [9, 13]
+15 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+16 Ops.MUL dtypes.float [14, 15]
+17 Ops.EXP2 dtypes.float [16]
+18 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=32, device="CPU")
+19 Ops.INDEX dtypes.float [18, 2]
+20 Ops.RECIPROCAL dtypes.float [19]
+21 Ops.MUL dtypes.float [17, 20]
+22 Ops.STORE dtypes.void [7, 21]
+23 Ops.END dtypes.void [22, 2, 5]
+24 Ops.SINK dtypes.void [23] KernelInfo()
+

@@ -1,0 +1,31 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.INDEX dtypes.float [0, 1]
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.RANGE dtypes.weakint [3] (1, AxisType.REDUCE)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CMPLT dtypes.bool [4, 5]
+7 Ops.RANGE dtypes.weakint [3] (0, AxisType.REDUCE)
+8 Ops.CONST dtypes.weakint [] 3
+9 Ops.CMPLT dtypes.bool [7, 8]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=6, device="CPU")
+11 Ops.CONST dtypes.bool [] True
+12 Ops.AND dtypes.bool [9, 11]
+13 Ops.AND dtypes.bool [6, 12]
+14 Ops.MUL dtypes.weakint [4, 8]
+15 Ops.ADD dtypes.weakint [14, 7]
+16 Ops.CONST dtypes.bool [] Invalid
+17 Ops.WHERE dtypes.weakint [13, 15, 16]
+18 Ops.INDEX dtypes.float [10, 17]
+19 Ops.CONST dtypes.weakfloat [] -inf
+20 Ops.CAST dtypes.float [19] dtypes.float
+21 Ops.WHERE dtypes.float [9, 18, 20]
+22 Ops.REDUCE dtypes.float [21, 7] (Ops.MAX, 0)
+23 Ops.CONST dtypes.weakfloat [] 0.0
+24 Ops.CAST dtypes.float [23] dtypes.float
+25 Ops.WHERE dtypes.float [6, 22, 24]
+26 Ops.REDUCE dtypes.float [25, 4] (Ops.ADD, 0)
+27 Ops.STORE dtypes.void [2, 26]
+28 Ops.SINK dtypes.void [27] KernelInfo(name="r_4_4", applied_opts=(Opt(op=OptOps.PADTO, axis=0, arg=4), Opt(op=OptOps.PADTO, axis=1, arg=4))) tag=1
+

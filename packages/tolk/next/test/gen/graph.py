@@ -140,7 +140,8 @@ def kernels(*tensors):
 
 def stage(name, kernel, renderer):
     """The sink that compiling `kernel` for `renderer` hands to the pass `name`
-    of the codegen pipeline: a `graph_rewrite` by its name, or "linearize"."""
+    of the codegen pipeline: a `graph_rewrite` by its name, "apply_opts", or
+    "linearize"."""
     import tinygrad.codegen
     from tinygrad.uop.ops import KernelInfo
 
@@ -155,11 +156,16 @@ def stage(name, kernel, renderer):
         if name == wanted: raise Captured(sink)
         return rewrite(sink, *args, name=name, **kwargs)
 
-    wanted, rewrite, tinygrad.codegen.graph_rewrite = name, tinygrad.codegen.graph_rewrite, capture
+    def capture_opts(sink, *args, **kwargs):
+        raise Captured(sink)
+
+    wanted, rewrite, opts = name, tinygrad.codegen.graph_rewrite, tinygrad.codegen.apply_opts
+    if name == "apply_opts": tinygrad.codegen.apply_opts = capture_opts
+    else: tinygrad.codegen.graph_rewrite = capture
     try:
         full()
     except Captured as e:
         return e.args[0]
     finally:
-        tinygrad.codegen.graph_rewrite = rewrite
+        tinygrad.codegen.graph_rewrite, tinygrad.codegen.apply_opts = rewrite, opts
     raise RuntimeError(f"compiling the kernel runs no pass {name!r}")

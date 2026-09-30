@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+renderer	device	arch	has_local	has_shared	shared_max	tensor_cores
+cpu	CPU	x86_64,x86-64	False	True	32768	0
+metal	METAL	Apple9	True	True	32768	5
+cuda	CUDA	sm_89	True	True	49152	8
+nv	NV	sm_89	True	True	49152	8
+amd	AMD	gfx1100	True	True	65536	4
+small_shared			True	True	64	0

@@ -1347,6 +1347,126 @@ processes of their own with the variable set.
 | old: `unit/test_cstyle.ml` vector pointer casts and `__builtin_nontemporal_load` | rendering vector accesses | dropped here: `Renderer.Cstyle`'s section (L5) |
 | old: `parity/*/stage7_*.expected` | vector accesses in whole compiled kernels | dropped here: end-to-end parity (plan §4, slow); the kernel goldens compare this pass alone |
 
+## Postrange
+
+The suite is `Tolk_next.Postrange` (`codegen/opt/postrange/`), written `PR`
+below. A kernel golden is the sink that compiling a real kernel hands to
+`apply_opts`. `cases.golden` lists 316 cases, each a kernel, a renderer
+(`renderers.golden`: CPU, Metal, CUDA sm_89 and AMD gfx1100, the last three
+with their tensor cores), the optimisations asked for, the settings, and
+tinygrad's outcome. An accepted case's graph golden is what `apply_opts`
+returns (`PR › apply_opts optimises a kernel as tinygrad does`). A refused
+case also checks that the refused optimisation leaves the scheduler as it
+was (`PR › a refused optimisation leaves the scheduler as it was`), and
+`axes.golden` is the scheduler's view after the optimisations: every axis
+query, the coloured shape, and the axes the last one made (`PR › the
+scheduler's axes after optimising are tinygrad's`). tinygrad's runtime tests
+compare the outputs of a kernel run with and without the optimisations. Here
+the interpreter compares the writes, before and after, of every accepted
+case up to 2^18 iterations that it can evaluate (`PR › optimising keeps a
+kernel's writes`, slow above 2^12). The slow fuzzer applies 400 random
+sequences to ten small kernels (`PR › each random optimisation is refused as
+a whole or keeps the kernel's writes`).
+
+Cases are named in the table below by their `cases.golden` row. tinygrad's
+`Tensor.rand(...).realize()` inputs become `Tensor.empty`, which schedules
+the same kernels.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/test_kernel_opts.py::test_opt_without_axis`, `test_swap_invalid_arg` (`None`, `True`), `test_padto_arg` (`True`) | an axis or argument that is no integer | dropped: `Opt.t`'s fields are integers and its split targets a closed type (static types, Opt's section); the integer arguments are `swap_invalid_arg_0`, `swap_invalid_arg_1`, `padto_arg_*` |
+| tinygrad: `runtime/test_kernel_opts.py::test_local_and_grouped_reduce` | locals, groups and upcasts on `sqrt + sum.exp` | `local_and_grouped_reduce_0` to `_10` |
+| tinygrad: `runtime/test_kernel_opts.py::test_grouped_reduce_with_local_upcast_padto` | groups with pads and full splits | `sum_and_max_grouped`, `flip_pad_sum_grouped`, `strided_conv_grouped` |
+| tinygrad: `runtime/test_kernel_opts.py::test_unrolled_padded_cumsum` | | `cumsum_unrolled_padded` |
+| tinygrad: `runtime/test_kernel_opts.py::test_upcasts`, `test_full_upcast` | | `elementwise_upcast_2`, `_4`, `_8`, `elementwise_full_upcast` |
+| tinygrad: `runtime/test_kernel_opts.py::test_matmul`, `test_matmul_upcast_group` | | `matmul_0` to `_8`, `matmul_upcast_group` |
+| tinygrad: `runtime/test_kernel_opts.py::test_double_reduce` | | `double_reduce_0` to `_13` |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_matmul`, `test_padto_upcasted_not_ok` | pads, and a pad of an upcast axis refused | `padto_matmul_*`, `padto_upcasted_*` (`_6` to `_8` refused) |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_sum_ok`, `test_padto_sum`, `test_padto_max`, `test_padto_where`, `test_padto_where_multioutput` | pads under sums, maxima, casts, comparisons and two outputs | `padto_shrunk_*`, `padto_exp_sum*`, `padto_compare_sum*`, `padto_max_*`, `padto_where*` |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_group_full_unroll_sum`, `test_padto_unrolled_sum`, `test_padto_unrolled_max`, `test_padto_unrolled_upcast`, `test_padto_unrolled_prod` | | `padto_group_full_unroll_sum`, `padto_unrolled_*` |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_nested_reduce` | the pad's gate and the inner reduction's identity | `padto_nested_*`; the values `wanna_output` checks are the writes law's |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_unindexed_reduce`, `test_padto_reduce_identity`, `test_padto_masked_reduce` | | `padto_unindexed_*`, `padto_twice`, `padto_all`, `padto_masked_*`, `padto_prefix_masked_sum` |
+| tinygrad: `runtime/test_kernel_opts.py::test_padto_arg` | a multiple of at most 1 | `padto_arg_0` to `_2` |
+| tinygrad: `runtime/test_kernel_opts.py::test_color_shapes_with_local` | the colour of each axis | `color_shapes_*`; `PR › the shape and name of a kernel are coloured by the roles of its axes › colors.golden` |
+| tinygrad: `runtime/test_kernel_opts.py::test_arange_opts`, `test_top_split_non_reduce_axis`, `test_double_sum_group` | | `arange_local*`, `top_split_upcast`, `double_sum_*` (refused: a group inside another reduction) |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores`, `test_tensor_cores_codegen` | each tensor core of each renderer, on its own dimensions | `tc_<renderer>_<n>_basic` for every tensor core; the rendered instructions are the renderers' (L5) |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_padded_uops`, `test_tensor_cores_padded` | a pad only from `tc_opt=2`, never a pad of more than four times the work | `tc_<renderer>_0_padded_*`, `_small_n`, `_small_m`, `_small_k`, on each renderer's first tensor core |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_extra_locals`, `test_tensor_cores_upcast_shared_axis`, `test_tensor_core_opts` | optimisations after a tensor core | `tc_<renderer>_tiled_extra_locals`, `tc_<renderer>_batched_upcast`, `tc_<renderer>_half_128_*` |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_padto_warp`, `test_tensor_cores_group_reduce`, `test_tensor_cores_failed_padto`, `test_tensor_cores_nested_reduce`, `test_tensor_cores_contracted_m` | refusals after or in a tensor core; a failed pad leaves the kernel | `tc_<renderer>_padto_warp`, `_group_*`, `_failed_padto`, `_nested_reduce`, `_contracted_m`, each checked to leave the scheduler as it was |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_padto_unroll`, `test_tensor_cores_padto_masked_operand`, `test_tc_shape_padded`, `test_tc_padto_full_upcast` | | `tc_<renderer>_padto_unroll`, `_padto_shifted_operand`, `_padto_masked_operand`, `_shape_padded`, `_padto_full_upcast` |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_multi_reduce` | the nine choices of axes of a convolution | `tc_metal_conv_0` to `_8` |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_unroll_phi`, `test_tensor_cores_unroll_casted_phi`, `test_tensor_cores_unroll_casted_phi_with_children` | an unroll after a tensor core | `tc_<renderer>_unroll`, `tc_<renderer>_unroll_relu`; where the accumulator lives is the expander's (L4, Codegen) |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_nan`, `test_tensor_cores_emulated_half`, `test_tensor_cores_partial_sum_in_accumulator` | values computed on a device | dropped here: execution (plan §4, slow, L5) |
+| tinygrad: `ALLOW_TF32` on CUDA (`postrange.py:170`) | a float tensor core only with TF32 allowed | `tc_cuda_5_basic` (allowed), `tc_cuda_float_without_tf32` (refused) |
+| tinygrad: `null/test_custom_kernel.py::test_gemm_group_refused`, `test_gemm_unroll_refused`, `test_loop_acc_gemm_tc_refused` | an axis with no reduction cannot be grouped or unrolled; a serial loop takes no tensor core | `custom_gemm_group`, `custom_gemm_unroll`, `tc_amd_loop_acc_tc` |
+| tinygrad: `runtime/test_custom_kernel.py::test_local_reduce` | reduced local and warp axes | `local_sum_axes`, `warp_sum_axes` (`axes.golden`) |
+| tinygrad: `runtime/test_custom_kernel.py::test_split_range_id_free_of_loop` | a split's new axis takes an identity after a loop's | `loop_counter_upcast` (`made`: `2:2:UPCAST`) |
+| tinygrad: `runtime/test_custom_kernel.py::test_stage_then_reduce` | weak axes outside a buffered value stay weak | `stage_then_reduce_globals`, `stage_outside_an_output_globals` |
+| tinygrad: `runtime/test_custom_kernel.py` `test_group_reduce_split_range`, `test_nested_group_reduce`, `test_reg_stage_then_reduce`, `test_reg_placeholder_then_reduce`, the gated and unshard tests | lowering of kernels that ask for no optimisation | dropped here: the expander, local buffers and control flow (L4, Codegen) |
+| tinygrad: `null/test_linearizer_rewrite.py::test_kernel_info` | no optimisation when none is asked; a kernel keeps its name | `PR › apply_opts › applies nothing to a kernel that asks for no optimisation`; `› keeps a kernel's name other than test` |
+| tinygrad: `runtime/test_linearizer.py`, `null/test_linearizer.py`, `runtime/test_opt_gemm.py`, `null/test_uops.py::test_mulacc_unrolled`, `null/test_gen_float4.py`, `null/test_uops_stats.py` (the gemm estimates) | kernels optimised to test later passes | dropped here: those passes' sections (Coalesce, Linearizer, Codegen, Renderer's estimates) |
+| tinygrad: `codegen/opt/postrange.py` `apply_opt` checks (no test) | each check's boundary | `split_axis_negative`, `split_axis_past_end`, `split_last_axis`, `padto_axis_past_end`, `swap_axis_past_end`, `split_amount_one`, `split_amount_negative`, `local_without_locals`, `unroll_over_32`/`unroll_32`, `upcast_over_16`/`upcast_16`, `upcast_reduce`, `unroll_global`, `split_not_dividing`, `group_over_shared_memory`/`group_at_shared_memory`, `local_after_group_over_shared_memory`, `unroll_without_reduce`, `padto_upcast_axis`, `padto_quadruple`/`padto_under_quadruple`, `padto_symbolic_axis`, `split_symbolic_axis`, `padto_warp_axis`, `swap_not_global`, `swap_on_cpu`, `tc_on_cpu`, `tc_not_first`, `tc_negative_axis`, `tc_select_*`, `tc_opt_out_of_range`, `tc_use_tc_*`, `tc_without_reduce`, `tc_on_max`, `tc_axis_out_of_choices` |
+| tinygrad: `codegen/opt/postrange.py` `split_targets`, `Scheduler.copy`, `shift_to`, `get_optimized_ast`, `apply_opts` (no test) | | `PR › split_targets`, `PR › Scheduler`, `PR › shift_to`, `PR › apply_opts`; a split by 1 stalls tinygrad's rewrite, and raises up front here: `PR › shift_to › raises Invalid_argument on an amount of 1` |
+| tinygrad: `codegen/opt/postrange.py` `args_from_ast`, BEAM search | device buffers for a search | dropped: execution is rune's (README); `apply_opts` takes the search as `~beam`, `PR › apply_opts › searches with beam instead, when given` |
+| tinygrad: `codegen/opt/postrange.py:112` the DSP upcast cap | | dropped: DSP is excluded (README) |
+| tinygrad: `postrange.py:114` a shared-memory check whose symbolic size cannot be decided raises `ValueError` | | `group_maybe_beyond_symbolic_shared_memory`, refused with `Invalid_argument`; `group_within_symbolic_shared_memory` fits |
+| old: `unit/codegen/test_postrange.ml` "splits range evenly", "input_new_rng is used as provided node", "rejects non-divisible amount" | | `PR › shift_to › splits an axis into its quotient and a new axis of the amount`, `› makes the new axis of the range it is given`, `› refuses an amount that does not divide the axis` |
+| old: `unit/codegen/test_postrange.ml` "top=true reverses expression order", "full amount creates size-1 replaced range", "replaced range drops old parents like tinygrad replace" | | `PR › shift_to › keeps the kernel's writes, once flattened` (from the top); `elementwise_full_upcast` (the size-1 axis leaves `axes.golden`); every split's graph golden |
+| old: `unit/codegen/test_postrange.ml` "SPLIT uses absolute reduction axis indices", "LOCAL accepts a contracted reduction axis", "GROUPTOP on reduce creates a local reduction range", "UNROLL after GROUPTOP", "combined LOCAL + GROUPTOP + UNROLL + UPCAST", "double GROUPTOP on reduce", "LOCAL splits global into local tile", "UPCAST on global range", "UPCAST with amount=0 uses full range size", "UPCAST with amount=0 uses vmax extent" | | `matmul_*`, `double_reduce_*`, `local_and_grouped_reduce_*` and their `axes.golden` rows |
+| old: `unit/codegen/test_postrange.ml` "SPLIT rejects reduction kinds without a REDUCE owner", "SPLIT validates amount and target before changing state", "UPCAST rejects amount > 16", "UNROLL rejects amount > 32", "UPCAST rejects reduce axis", "UNROLL rejects non-reduce axis", "LOCAL without renderer locals rejected", "shared memory budget exceeded" | | the boundary cases above; a split to a reduce, warp or global role cannot be written (`Opt.target`) |
+| old: `unit/codegen/test_postrange.ml` "shared memory products cannot overflow the host integer" | a 2^60 local axis | `group_beyond_host_integers` |
+| old: `unit/codegen/test_postrange.ml` "shared memory budgets prove symbolic local extents" | fits at 8, refused at 16 | `group_within_symbolic_shared_memory`; at 16 tinygrad cannot decide and raises (the row above) |
+| old: `unit/codegen/test_postrange.ml` "shift_to validates source kinds and preserves index dtype" | | `PR › shift_to › refuses a target its axis's role cannot split to`; an int32 axis is refused by tinygrad, whose size is then a cast (`split_int32_axis`) |
+| old: `unit/codegen/test_postrange.ml` "local and warp reductions retain independent output threads" | | `local_sum_axes`, `warp_sum_axes` |
+| old: `unit/codegen/test_postrange.ml` "PADTO preserves extents beyond host integers" | | `padto_beyond_host_integers`; a whole-axis split of it, `local_whole_axis_beyond_host_integers` |
+| old: `unit/codegen/test_postrange.ml` "PADTO pads axis to next multiple", "PADTO keeps store target as Index", "PADTO keeps load sources as guarded Index nodes", "PADTO preserves existing index validity", "PADTO guards unsafe pad ops in reduce backward slice", "PADTO guards max reduce on reduce axis" | | `padto_matmul_*`, `padto_masked_*`, `padto_exp_sum*`, `padto_max_*` graph goldens |
+| old: `unit/codegen/test_postrange.ml` "PADTO rejects upcast axis", "PADTO rejects warp axes", "PADTO rejects a multiple of one" | | `padto_upcast_axis`, `padto_warp_axis`, `padto_arg_2` |
+| old: `unit/codegen/test_postrange.ml` "SWAP exchanges equal-sized axes without erasing unrelated tags", "SWAP exchanges two global axes", "SWAP exchanges full range identity arguments", "SWAP rejects non-global axes" | | `swap_keeps_tags`, `swap_globals`, `swap_then_split`, `swap_not_global` |
+| old: `unit/codegen/test_postrange.ml` "upcast products remain exact beyond host integers" | 2^64 | `upcasts_beyond_host_integers` (`upcast_size`) |
+| old: `unit/codegen/test_postrange.ml` "upcast products retain symbolic extents" | | `group_within_symbolic_shared_memory` (`full_shape` holds `n`); no Tensor program upcasts a symbolic axis, since `upcastable_dims` leaves it out |
+| old: `unit/codegen/test_postrange.ml` "rngs sorted by axis_to_pos then axis", "rngs filters out size-1 ranges", "upcastable_dims and unrollable_dims" | | every `axes.golden` row |
+| old: `unit/codegen/test_postrange.ml` "conditional loops are scopes rather than numeric optimization axes" | | `loop_counter_upcast` |
+| old: `unit/codegen/test_postrange.ml` "copy preserves independent optimization state" | | `PR › Scheduler › an optimisation applied to a copy leaves the original as it was`, `› ... to the original leaves its copy as it was` |
+| old: `unit/codegen/test_postrange.ml` "loop-to-global ignores ranges closed by nested END tails" | | `nested_end_globals` |
+| old: `unit/codegen/test_postrange.ml` "postrange flatten preserves closed range dependencies", "postrange flatten does not merge through extra floor div" | | `flatten_keeps_a_closed_extent`; every graph golden flattens |
+| old: `unit/codegen/test_postrange.ml` "filters symbolic params and sorts by slot" (`bufs_from_ast`) | | dropped: `args_from_ast` is rune's (README) |
+| old: `unit/codegen/test_postrange.ml` "get_optimized_ast produces valid kernel_info", "get_optimized_ast name generation", "kernel identity does not depend on earlier compilations" | | `PR › Scheduler › get_optimized_ast names the kernel name_override`; `PR › apply_opts › names a kernel named test after its reduction and its axes`; every golden's name, all optimised in one process |
+| old: `unit/codegen/test_postrange.ml` "apply_opts respects opts_to_apply", "opts_to_apply applied in order", "beam_search closure is called", "hand_coded closure is called", "already-optimized kernel returns unchanged" | | every accepted case; `PR › apply_opts` |
+| old: `unit/codegen/test_postrange.ml` "LOOP ranges become GLOBAL on GPU", "LOOP ranges stay LOOP on CPU", "reduce ranges stay REDUCE after conversion" | | `PR › apply_opts › hand-optimises a kernel that asks for nothing, after making its weak outputs global`; `PR › Scheduler › convert_loop_to_global leaves a kernel for a renderer without locals` |
+| old: `unit/codegen/test_postrange.ml` "TC basic apply creates WMMA", "TC with padding (tc_opt=2)", "TC rejects non-reduce kernel", "TC rejects invalid tc_select", "TC must be first opt", "TC use_tc=2 skips WMMA construction" | | `tc_*_basic`, `tc_*_padded_2`, `tc_without_reduce`, `tc_select_*`, `tc_not_first`, `tc_*_tiled_use_tc_2` |
+| old: `unit/opt_fuzz/tolk_opt_fuzz.ml` | random optimisations against the unoptimised kernel, run on a device | `PR › each random optimisation is refused as a whole or keeps the kernel's writes` (slow), on the interpreter; running compiled kernels is the executor's (L5) |
+
+## Heuristic
+
+The suite is `Tolk_next.Heuristic` (`codegen/opt/heuristic/`), written `H`
+below. `cases.golden` holds 173 cases: 37 real kernels on the CPU, Metal,
+CUDA sm_89 and AMD gfx1100 renderers, the matrix multiplications under `TC=0`,
+`TC=2`, `TC_MIN_GLOBALS`, `TC_OPT` and `TC_SELECT`, and the matrix-vector
+layout under `MV` and `MV_*`, with the optimisations that
+`hand_coded_optimizations` chose (`H › the optimisations chosen are
+tinygrad's › applied_opts`). The graph golden named after a case is what
+`apply_opts` returns (`› the optimised kernel`). The writes law is
+Postrange's.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `codegen/opt/heuristic.py` (no test targets it) | tensor cores, then matrix-vector, grouping, masked upcasts, upcasts, unrolls, the default upcast and locals | `H › the optimisations chosen are tinygrad's` (every row); the branches by kernel: tensor cores `matmul_half_*`, `batched_matmul_half_*`, `conv_half_*_tc_opt_1`, `matmul_half_ragged_*_tc_opt_2`; matrix-vector `vecmat_*`, and no match for an operand that is no load (`vecmat_of_exp_*`) or a global axis that 16 does not divide (`vecmat_1000_*`); grouping `sum_*`, `sum_rows_*`, `max_rows_*`, `cumsum_*`, and the first reduce axis refused, the next taken, `sum_two_axes_*`; masked upcasts `stack_*`, `pad_*`, at their bounds of 7 (`stack_7_*`, `stack_8_*`) and 49 (`pad_7x7_*`, `pad_7x8_*`); upcasts `matmul_*`, `conv_*`; unrolls `sum_17_*`, `sum_100_*`, `sum_3x3_*`, `conv_*`, and no second one after 3 when the next is 5 (`sum_5_by_3_*`); locals `add_broadcast_*`, `transpose_*`, `outer_add_*` (an axis made wholly local shifts the next) |
+| tinygrad: `USE_TC`, `TC_OPT`, `TC_SELECT`, `TC_MIN_GLOBALS`, `ALLOW_TF32` | | `matmul_half_<renderer>_no_tc`, `_tc_shape`, `_tc_min_globals` (N upcast skipped), `_tc_min_globals_1` (taken), `_tc_select_2`, `conv_half_<renderer>_tc_opt_1`, `matmul_half_ragged_<renderer>_tc_opt_2`, `matmul_cuda_tf32` |
+| tinygrad: `hand_coded_optimizations` makes a copy | the scheduler it is given is left as it was | `H › hand_coded_optimizations leaves the scheduler it is given as it was` (every kernel) |
+| tinygrad: `MV`, `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`, `MV_ROWS_PER_THREAD` | the layout off, sizes of 1 skipped, all sizes 1 | their defaults, `vecmat_*`; read once from the environment, the others run in processes of their own (the suite's dune): `vecmat_<renderer>_mv_0`, `_mv_block_rows_1`, `_mv_sizes_1` |
+| tinygrad: the `IMAGE`, `QCOM` and `DSP` branches | | dropped: images, QCOM and DSP are excluded (README) |
+| tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_partial_sum_in_accumulator` | the heuristic's tiling after a tensor core | `matmul_half_*` (the tiling); where the partial sums accumulate is the expander's (L4, Codegen) |
+| old: `unit/codegen/test_heuristic.ml` "applies GROUPTOP when upcastable prod small", "early return after grouping", "skips grouping when upcastable prod large" | | `sum_rows_*`, `sum_rows_wide_*` |
+| old: `unit/codegen/test_heuristic.ml` "full unrolls small reduce", "split unrolls large reduce by 4", "double unrolls tiny reduces" | | `sum_17_*`, `sum_100_*`, `conv_*` (two unrolls of 3) |
+| old: `unit/codegen/test_heuristic.ml` "applies 4x upcast when nothing upcasted" | | `add_*`, `add_small_*` |
+| old: `unit/codegen/test_heuristic.ml` "broadcast upcast prefers lower stride axis", "upcast size bounded by 32" | | `add_broadcast_*`, `matmul_cpu`, `conv_*` |
+| old: `unit/codegen/test_heuristic.ml` "detects matvec and applies GROUP LOCAL UPCAST", "matvec early return prevents further opts", "rejects LOAD(INDEX) matvec shape", "matvec skipped on CPU" | | `vecmat_metal`, `_cuda`, `_amd`; `matvec_*` (no match: grouped); `vecmat_cpu` |
+| old: `unit/codegen/test_heuristic.ml` "upcasts small WHERE-guarded dim" | | `stack_*`, `pad_*` |
+| old: `unit/codegen/test_heuristic.ml` "applies locals on GPU", "at most 3 locals", "local budget respected", "expand axis gets larger LOCAL from budget", "deleted_shape adjusts axis indices" | | `add_*`, `conv_*`, `add_broadcast_*`, `transpose_*`, `outer_add_*` on Metal, CUDA and AMD |
+| old: `unit/codegen/test_heuristic.ml` "elementwise on GPU", "reduce on GPU with grouping", "reduce on GPU without grouping", "matmul on GPU", "elementwise on CPU", "large kernel on CPU" | | `add_*`, `sum_*`, `sum_cols_*`, `matmul_*`, `add_large_*` |
+| old: `unit/codegen/test_heuristic.ml` "tensor-core upcasts preserve requested global occupancy" | | `matmul_half_*_tc_min_globals` |
+| old: `unit/codegen/test_heuristic.ml` the `IMAGE` group, "IMAGE default occupancy floor skips small global grid", "IMAGE occupancy accounts for cumulative global upcasts", "QCOM uses a smaller grouping threshold" | | dropped: images and QCOM are excluded (README) |
+
 ## Cstyle
 
 The suite is `Tolk_next.Cstyle` (`renderer/cstyle/`), written `CS` below.

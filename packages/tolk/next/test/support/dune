@@ -1,6 +1,6 @@
 (library
  (name tolk_next_test)
- (modules golden graph dtypes interpreter uops)
+ (modules golden graph dtypes interpreter uops kernel_opts)
  (wrapped false)
  (libraries windtrap tolk.next zarith))
 

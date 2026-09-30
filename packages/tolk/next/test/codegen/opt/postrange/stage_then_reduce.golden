@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32)
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.MUL dtypes.weakint [2, 5]
+7 Ops.RANGE dtypes.weakint [5] (1, AxisType.LOOP)
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.INDEX dtypes.float [4, 8]
+10 Ops.CONST dtypes.weakfloat [] 2.0
+11 Ops.MUL dtypes.float [9, 10]
+12 Ops.STAGE dtypes.float [11, 7] BufferizeOpts(device=None, addrspace=AddrSpace.LOCAL)
+13 Ops.RANGE dtypes.weakint [5] (2, AxisType.LOOP)
+14 Ops.INDEX dtypes.float [12, 13]
+15 Ops.REDUCE dtypes.float [14, 13] (Ops.ADD, 0)
+16 Ops.STORE dtypes.void [3, 15]
+17 Ops.END dtypes.void [16, 2]
+18 Ops.SINK dtypes.void [17] KernelInfo(opts_to_apply=())
+

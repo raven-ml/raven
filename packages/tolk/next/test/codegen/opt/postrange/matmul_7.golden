@@ -1,0 +1,44 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16384, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.GLOBAL)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (7, AxisType.UPCAST)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.MUL dtypes.weakint [6, 3]
+8 Ops.RANGE dtypes.weakint [3] (4, AxisType.LOCAL)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.MUL dtypes.weakint [9, 3]
+11 Ops.RANGE dtypes.weakint [3] (3, AxisType.LOCAL)
+12 Ops.ADD dtypes.weakint [10, 11]
+13 Ops.CONST dtypes.weakint [] 128
+14 Ops.MUL dtypes.weakint [12, 13]
+15 Ops.CONST dtypes.weakint [] 64
+16 Ops.RANGE dtypes.weakint [15] (2, AxisType.GLOBAL)
+17 Ops.MUL dtypes.weakint [16, 1]
+18 Ops.RANGE dtypes.weakint [1] (8, AxisType.UPCAST)
+19 Ops.ADD dtypes.weakint [17, 18]
+20 Ops.ADD dtypes.weakint [14, 19]
+21 Ops.INDEX dtypes.float [0, 20]
+22 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16384, device="CPU")
+23 Ops.RANGE dtypes.weakint [1] (5, AxisType.LOCAL)
+24 Ops.MUL dtypes.weakint [23, 3]
+25 Ops.RANGE dtypes.weakint [3] (6, AxisType.UNROLL)
+26 Ops.ADD dtypes.weakint [24, 25]
+27 Ops.CONST dtypes.weakint [] 16
+28 Ops.MUL dtypes.weakint [26, 27]
+29 Ops.RANGE dtypes.weakint [27] (0, AxisType.REDUCE)
+30 Ops.ADD dtypes.weakint [28, 29]
+31 Ops.ADD dtypes.weakint [14, 30]
+32 Ops.INDEX dtypes.float [22, 31]
+33 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16384, device="CPU")
+34 Ops.MUL dtypes.weakint [30, 13]
+35 Ops.ADD dtypes.weakint [34, 19]
+36 Ops.INDEX dtypes.float [33, 35]
+37 Ops.MUL dtypes.float [32, 36]
+38 Ops.REDUCE dtypes.float [37, 23, 25, 29] (Ops.ADD, 0)
+39 Ops.STORE dtypes.void [21, 38]
+40 Ops.END dtypes.void [39, 2, 5, 8, 11, 16, 18]
+41 Ops.SINK dtypes.void [40] KernelInfo(name="r_2_64_4_4_2_4_2_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)), Opt(op=OptOps.SPLIT, axis=4, arg=(8, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=4, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.UPCAST)))) tag=1
+

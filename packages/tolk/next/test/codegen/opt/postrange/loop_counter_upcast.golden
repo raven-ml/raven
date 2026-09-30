@@ -1,0 +1,36 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.MUL dtypes.weakint [2, 1]
+4 Ops.RANGE dtypes.weakint [1] (2, AxisType.UPCAST)
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.INDEX dtypes.float [0, 5]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4)
+8 Ops.INDEX dtypes.float [7, 5]
+9 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
+10 Ops.AFTER dtypes.int [9, 5]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.INDEX dtypes.int [10, 11]
+13 Ops.CAST dtypes.int [11] dtypes.int
+14 Ops.STORE dtypes.void [12, 13]
+15 Ops.AFTER dtypes.int [10, 14]
+16 Ops.INDEX dtypes.int [15, 11]
+17 Ops.NOOP dtypes.void []
+18 Ops.RANGE dtypes.void [17] (1, AxisType.WEAK)
+19 Ops.AFTER dtypes.int [15, 18]
+20 Ops.INDEX dtypes.int [19, 11]
+21 Ops.CONST dtypes.weakint [] 1
+22 Ops.ADD dtypes.int [20, 21]
+23 Ops.STORE dtypes.void [16, 22]
+24 Ops.CMPLT dtypes.bool [20, 1]
+25 Ops.BACKEDGE dtypes.void [23, 18, 24]
+26 Ops.AFTER dtypes.int [15, 25]
+27 Ops.INDEX dtypes.int [26, 11]
+28 Ops.CAST dtypes.float [27] dtypes.float
+29 Ops.ADD dtypes.float [8, 28]
+30 Ops.STORE dtypes.void [6, 29]
+31 Ops.END dtypes.void [30, 2, 4]
+32 Ops.AFTER dtypes.float [0, 31]
+33 Ops.SINK dtypes.void [32] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)) tag=1
+

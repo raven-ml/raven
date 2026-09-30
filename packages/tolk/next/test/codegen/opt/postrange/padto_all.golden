@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=7, device="CPU")
+1 Ops.CONST dtypes.weakint [] 7
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+3 Ops.INDEX dtypes.bool [0, 2]
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.RANGE dtypes.weakint [4] (0, AxisType.REDUCE)
+6 Ops.CONST dtypes.weakint [] 5
+7 Ops.CMPLT dtypes.bool [5, 6]
+8 Ops.CONST dtypes.weakfloat [] 0.0
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=35, device="CPU")
+10 Ops.CONST dtypes.bool [] True
+11 Ops.AND dtypes.bool [7, 10]
+12 Ops.MUL dtypes.weakint [2, 6]
+13 Ops.ADD dtypes.weakint [12, 5]
+14 Ops.CONST dtypes.bool [] Invalid
+15 Ops.WHERE dtypes.weakint [11, 13, 14]
+16 Ops.INDEX dtypes.float [9, 15]
+17 Ops.CMPLT dtypes.bool [8, 16]
+18 Ops.WHERE dtypes.bool [7, 17, 10]
+19 Ops.REDUCE dtypes.bool [18, 5] (Ops.MUL, 0)
+20 Ops.STORE dtypes.void [3, 19]
+21 Ops.END dtypes.void [20, 2]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="r_7_8", applied_opts=(Opt(op=OptOps.PADTO, axis=1, arg=8),)) tag=1
+

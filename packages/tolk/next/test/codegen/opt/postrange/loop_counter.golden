@@ -1,0 +1,34 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4)
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
+7 Ops.AFTER dtypes.int [6, 2]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.INDEX dtypes.int [7, 8]
+10 Ops.CAST dtypes.int [8] dtypes.int
+11 Ops.STORE dtypes.void [9, 10]
+12 Ops.AFTER dtypes.int [7, 11]
+13 Ops.INDEX dtypes.int [12, 8]
+14 Ops.NOOP dtypes.void []
+15 Ops.RANGE dtypes.void [14] (1, AxisType.WEAK)
+16 Ops.AFTER dtypes.int [12, 15]
+17 Ops.INDEX dtypes.int [16, 8]
+18 Ops.CONST dtypes.weakint [] 1
+19 Ops.ADD dtypes.int [17, 18]
+20 Ops.STORE dtypes.void [13, 19]
+21 Ops.CONST dtypes.weakint [] 2
+22 Ops.CMPLT dtypes.bool [17, 21]
+23 Ops.BACKEDGE dtypes.void [20, 15, 22]
+24 Ops.AFTER dtypes.int [12, 23]
+25 Ops.INDEX dtypes.int [24, 8]
+26 Ops.CAST dtypes.float [25] dtypes.float
+27 Ops.ADD dtypes.float [5, 26]
+28 Ops.STORE dtypes.void [3, 27]
+29 Ops.END dtypes.void [28, 2]
+30 Ops.AFTER dtypes.float [0, 29]
+31 Ops.SINK dtypes.void [30] KernelInfo(opts_to_apply=())
+

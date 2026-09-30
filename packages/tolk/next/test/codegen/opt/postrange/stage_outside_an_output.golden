@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (3, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.float [0, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32)
+9 Ops.CONST dtypes.weakint [] 8
+10 Ops.MUL dtypes.weakint [2, 9]
+11 Ops.RANGE dtypes.weakint [9] (1, AxisType.LOOP)
+12 Ops.ADD dtypes.weakint [10, 11]
+13 Ops.INDEX dtypes.float [8, 12]
+14 Ops.CONST dtypes.weakfloat [] 2.0
+15 Ops.MUL dtypes.float [13, 14]
+16 Ops.STAGE dtypes.float [15, 11] BufferizeOpts(device=None, addrspace=AddrSpace.LOCAL)
+17 Ops.RANGE dtypes.weakint [9] (2, AxisType.LOOP)
+18 Ops.INDEX dtypes.float [16, 17]
+19 Ops.REDUCE dtypes.float [18, 17] (Ops.ADD, 0)
+20 Ops.STORE dtypes.void [7, 19]
+21 Ops.END dtypes.void [20, 2, 5]
+22 Ops.SINK dtypes.void [21] KernelInfo(opts_to_apply=())
+
