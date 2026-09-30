@@ -825,11 +825,11 @@ let one_by_one name =
 
 (* Each storage node's values after running [calls] batched on the NULL
    device's queues, and one by one, from the same values. *)
-let agrees ?(heavy = false) name calls =
+let agrees ?(heavy = false) ?(latency = 0.) name calls =
   (if heavy then slow else test) name (fun () ->
       let results devices =
         let bound = bound_storage calls in
-        ignore (run_calls ~devices ~bound calls);
+        ignore (Null_device.with_latency latency (fun () -> run_calls ~devices ~bound calls));
         List.concat_map (fun (_, bs) -> List.map floats_of bs) bound
       in
       equal (list floats) (results one_by_one) (results (Null_device.devices ())))
@@ -867,7 +867,9 @@ let running =
          [ Ops.store_call b a; kernel_adds ~c:2. c b; Ops.store_call (storage "CPU:1") c ]);
       agrees "kernels on two devices at once agree with running them one by one"
         [ kernel_adds (storage "CPU:1") (storage "CPU:1"); kernel_adds ~c:5. (storage "CPU:2") (storage "CPU:2") ];
-      agrees "a batch split by a host kernel agrees with running them one by one"
+      (* The queues run late, so that a host kernel that did not wait for them
+         would read what they have not written yet. *)
+      agrees ~latency:0.02 "a batch split by a host kernel agrees with running them one by one"
         (let a = storage "CPU:1" and h = storage "CPU" and b = storage "CPU:1" in
          [
            kernel_adds a (storage "CPU:1");

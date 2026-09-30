@@ -2,17 +2,40 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 
 /* The queues host programs submitted, not yet taken by the device. */
 
-typedef struct stream { char *words; uint64_t size; struct stream *next; } stream;
+/* [start] is when the device may run a queue: its submission, delayed by the
+   latency set when it was submitted. */
+typedef struct stream {
+  char *words;
+  uint64_t size;
+  double start;
+  struct stream *next;
+} stream;
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static stream *first = NULL, *last = NULL;
 static long outstanding = 0; /* submitted, and not yet run to their end */
+static double latency = 0.;
+
+/* The time of day in seconds, as Unix.gettimeofday. */
+static double now(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_REALTIME, &t);
+  return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+}
+
+value tolk_null_set_latency(value s) {
+  pthread_mutex_lock(&lock);
+  latency = Double_val(s);
+  pthread_mutex_unlock(&lock);
+  return Val_unit;
+}
 
 /* Called by a batch's host program: [addr] holds [size] bytes of commands.
    [head] is the commands' first byte, which orders the call after the host
@@ -25,6 +48,7 @@ void tolk_null_submit(uint64_t addr, uint64_t size, uint64_t head) {
   s->size = size;
   s->next = NULL;
   pthread_mutex_lock(&lock);
+  s->start = now() + latency;
   if (last) last->next = s; else first = s;
   last = s;
   outstanding++;
@@ -36,10 +60,11 @@ value tolk_null_submit_address(value unit) {
   return caml_copy_nativeint((intnat)(uintptr_t)&tolk_null_submit);
 }
 
-/* The submitted command buffers, oldest first, as strings. */
+/* The submitted command buffers, oldest first, as strings with the time each
+   may start. */
 value tolk_null_take(value unit) {
   CAMLparam1(unit);
-  CAMLlocal3(list, cell, words);
+  CAMLlocal4(list, cell, words, entry);
   pthread_mutex_lock(&lock);
   stream *s = first;
   first = last = NULL;
@@ -50,8 +75,11 @@ value tolk_null_take(value unit) {
   while (rev) {
     stream *n = rev->next;
     words = caml_alloc_initialized_string(rev->size, rev->words);
+    entry = caml_alloc_tuple(2);
+    Store_field(entry, 0, words);
+    Store_field(entry, 1, caml_copy_double(rev->start));
     cell = caml_alloc_small(2, 0);
-    Field(cell, 0) = words;
+    Field(cell, 0) = entry;
     Field(cell, 1) = list;
     list = cell;
     free(rev->words);

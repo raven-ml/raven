@@ -2,7 +2,8 @@ open Tolk_next
 
 external submit_address : unit -> nativeint = "tolk_null_submit_address"
 external dlsym : string -> nativeint = "tolk_null_dlsym"
-external take : unit -> string list = "tolk_null_take"
+external take : unit -> (string * float) list = "tolk_null_take"
+external set_latency : float -> unit = "tolk_null_set_latency"
 external outstanding : unit -> int = "tolk_null_outstanding"
 external finished : int -> unit = "tolk_null_finished"
 external read : nativeint -> int = "tolk_null_load"
@@ -96,12 +97,11 @@ let placeholder name u =
 
 (* Running queues *)
 
-let latency = Atomic.make 0.
 let failure = Atomic.make None
 
 let with_latency s f =
-  Atomic.set latency s;
-  Fun.protect ~finally:(fun () -> Atomic.set latency 0.) f
+  set_latency s;
+  Fun.protect ~finally:(fun () -> set_latency 0.) f
 
 (* A queue being run: its command words, the next one's index, and when it may
    start. *)
@@ -141,7 +141,7 @@ let rec serve queues =
   if not (Atomic.get stop) then begin
     let now = Unix.gettimeofday () in
     let fresh =
-      List.map (fun s -> { words = words_of s; pc = 0; start = now +. Atomic.get latency }) (take ())
+      List.map (fun (s, start) -> { words = words_of s; pc = 0; start }) (take ())
     in
     let queues = queues @ fresh in
     let progressed = ref false in
