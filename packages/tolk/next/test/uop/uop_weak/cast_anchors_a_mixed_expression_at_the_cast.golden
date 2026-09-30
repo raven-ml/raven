@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CAST dtypes.int [0] dtypes.int
+2 Ops.CAST dtypes.weakfloat [1] dtypes.weakfloat
+3 Ops.CONST dtypes.weakfloat [] 1.0
+4 Ops.ADD dtypes.weakfloat [2, 3]
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.CAST dtypes.float [2] dtypes.float
+7 Ops.CAST dtypes.float [3] dtypes.float
+8 Ops.ADD dtypes.float [6, 7]
+9 Ops.SINK dtypes.void [5, 8]
+

@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.LOAD dtypes.float [3]
+5 Ops.CONST dtypes.weakfloat [] -0.9999999893980771
+6 Ops.MUL dtypes.float [4, 5]
+7 Ops.CONST dtypes.weakfloat [] -1.0
+8 Ops.MUL dtypes.float [4, 7]
+9 Ops.SINK dtypes.void [6, 8]
+

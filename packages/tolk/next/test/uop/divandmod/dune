@@ -1,0 +1,11 @@
+; Rewrites that simplify what they build need the symbolic rules, which a later
+; layer installs: the tests tagged L3 run once it does.
+
+(test
+ (name test_divandmod)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow --exclude-tag L3)))

@@ -1,0 +1,7 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 1
+1 Ops.CAST dtypes.int [0] dtypes.int
+2 Ops.PARAM dtypes.uint [] ParamArg(slot=-1, dtype=dtypes.uint, vmin_vmax=(0, 31), multiple_of=1, name="s", addrspace=AddrSpace.ALU)
+3 Ops.SHL dtypes.int [1, 2]
+4 Ops.SINK dtypes.void [3, 3]
+

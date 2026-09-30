@@ -4,7 +4,8 @@ open Dtypes
 
 let x ?(slot = 0) dt = Ops.param slot dt
 let int n = `Int (Z.of_int n)
-let eval ?params u = Interpreter.eval ?params u
+let eval ?vars ?params u = Interpreter.eval ?vars ?params u
+let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 
 let interpreter =
@@ -17,6 +18,11 @@ let interpreter =
             (eval ~params:[ (0, int 3); (1, int 7) ] (x ~slot:1 Dtype.Int32)));
       test "a parameter without a value is refused" (fun () ->
           rejects (fun () -> eval (x Dtype.Int32)));
+      test "a variable is the value bound to its name" (fun () ->
+          let u = Ops.sub (var "i") (var "j") in
+          equal value (int (-4)) (eval ~vars:[ ("j", int 7); ("i", int 3) ] u));
+      test "a variable without a value is refused, even with its slot given"
+        (fun () -> rejects (fun () -> eval ~params:[ (-1, int 3) ] (var "i")));
       test "an operation rounds its result to its type" (fun () ->
           let sum = Ops.add (x Dtype.Float16) (x ~slot:1 Dtype.Float16) in
           equal value (`Float 2048.)

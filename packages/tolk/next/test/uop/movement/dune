@@ -1,0 +1,11 @@
+; Offsets that are nodes need the symbolic rules, which a later layer installs:
+; the tests tagged L3 run once it does.
+
+(test
+ (name test_movement)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow --exclude-tag L3)))

@@ -1,0 +1,7 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 18446744073709551615
+1 Ops.SINK dtypes.void [0]
+2 Ops.CAST dtypes.ulong [0] dtypes.ulong
+3 Ops.SINK dtypes.void [2]
+4 Ops.SINK dtypes.void [1, 3]
+

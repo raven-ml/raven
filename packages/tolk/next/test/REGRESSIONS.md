@@ -627,3 +627,126 @@ the top is `(amount, target)` in tinygrad whether or not it spells the
 | tinygrad: `runtime/test_kernel_opts.py`, `runtime/test_linearizer.py`, `null/test_linearizer.py`, `runtime/test_opt_gemm.py`, `runtime/test_tensor_cores.py`, `null/test_uops.py`, `null/test_uops_stats.py`, `null/test_gen_float4.py`, `null/test_linearizer_rewrite.py`, `runtime/test_custom_kernel.py`, `null/test_custom_kernel.py` | optimisations applied to kernels, and the `KernelOptError` of those that do not apply | Postrange's section: `apply_opt` makes the checks, `Opt` only names them |
 | old: `unit/uop/test_uop.ml` debug_prints_rich_args_dataclass_style | "Opt repr" of a split into an upcast | `P › printing › pp is tinygrad's repr › reprs.golden › opt=Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))` |
 | old: `unit/codegen/test_postrange.ml`, `unit/opt_fuzz/tolk_opt_fuzz.ml` | applying optimisations | Postrange's section |
+
+## Uop_weak
+
+The suite is `Tolk_next.Uop_weak` (`uop/uop_weak/`), written `W` below. A golden
+check is named after its golden, which holds a graph and its rewrite by one
+pass. A test marked `(L3)` runs a pass together with Symbolic's rules and
+belongs to Symbolic's section.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_expression_anchors_at_strong_lub | a cast commits a mixed expression at the cast's width, whatever the default float | `W › pm_commit_weak › cast_anchors_a_mixed_expression_at_the_cast.golden`; the `Tensor` half is dropped: `Tensor` surface, the frontend is nx |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_cast_weak_expression_commits_at_cast_floor | a cast below the default float never narrows | `W › pm_commit_weak › cast_never_narrows_below_the_default_float.golden` |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_store_weak_value_uses_destination_dtype | a store commits a weak value at its destination's type | `W › pm_commit_weak › store_commits_its_value_at_the_destination.golden` |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_srcs_commit_only_at_a_concrete_lub | weak sources stay weak without a committed peer; a where's weak arm stays bare | `W › pm_commit_weak › weak_sources_stay_weak_without_a_committed_peer.golden`; `W › pm_commit_weak › where_keeps_a_weak_arm_bare.golden` |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_derivable_const_rounds_at_the_derived_width | a derivable literal is rounded to its peer's width, in place | `W › pm_commit_weak › peer_rounds_a_derivable_literal.golden`; the folds `x * 1` and `x * -1` that follow are Symbolic's (L3) |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_weak_shift_lhs_commits_the_node | a shift commits its weak operand, and so the node | `W › pm_commit_weak › shift_commits_its_weak_operand.golden` |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_committed_const_conversion_folds | `symbolic_simple` folds a cast of a committed constant | dropped: Symbolic's rules (L3) |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_uop_scalar_const_lifts_kind, test_weak_int_binop, test_float_unary_on_weakint_stays_weak | how arithmetic on nodes promotes weak constants, and the specification of weak bitwise operations | dropped: `Ops`' and `Dtype`'s sections (construction and promotion), and Spec's (L3) |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_rand_requires_concrete, test_reduce_strips_weakness, test_broadcasted_keeps_const_weak, test_div_sub_operand_kept_weak, test_changed_rows, test_unchanged_rows, test_dot_defers_weak, test_weak_transcendentals | the data types of `Tensor` operations | dropped: `Tensor` surface, the frontend is nx; rune's lowering maps nx's types |
+| tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_null_lowering, test_computed_float_index_lowers | a realized program stores no weak type | dropped: realizing a `Tensor` on a device, the engine's (L7) |
+| tinygrad: null/test_dtype_weak.py::TestWeakStorageBoundary::test_weak_has_no_storage | a `Tensor` of a weak type has no storage | dropped: `Tensor` surface; `Ops.param` and `Ops.new_buffer` refuse weak types in `Ops`' section |
+| tinygrad: null/test_dtype_weak.py::TestNoRedundantWide (2 tests) | a kernel computes in 64 bits only where its bounds need it | dropped: the whole codegen pipeline (`full_rewrite`), Codegen's section (L4) |
+| tinygrad: runtime/test_dtype_weak.py (every test) | weak `Tensor` values realized on a device: defaults, stacked and truncating weak casts, bounds through movements, storage | dropped: realizing `Tensor`s on a device, the engine's (L7) and rune's lowering; the conversions they check are `W › pm_lower_weak › lower_stacked_weak_casts_as_two_conversions.golden`, `W › pm_lower_weak › lower_a_weak_int_cast_of_a_float_as_a_conversion.golden` and `W › laws › pm_lower_weak keeps the values of what it lowers` |
+| tinygrad: null/test_uops.py::TestLowerIndexDtype::test_gated_shrink_lowers_to_selected_width | a gated shrink lowers to the width its bounds need, and no weak width is left but a literal's | `W › pm_lower_weak › lower_a_gated_shrink_to_the_width_its_bounds_need.golden`; `W › laws › pm_lower_weak leaves no weak width but a literal's` |
+| tinygrad: null/test_uops.py::TestLowerIndexDtype::test_reg_buffer_size_lowers | a register buffer's size lowers | `W › pm_lower_weak › lower_a_register_buffer_size.golden` |
+| tinygrad: null/test_simplify_valid_idx.py::TestImageSimplification::test_drop_gate_committed_in_the_index_pass | committing inside the index pass leaves the gate's copy of an expression shared | dropped: runs with `indexing_simplify` on image loads, Codegen's section (L4) |
+| old: unit/uop/test_weak.ml unconstrained_int_const_commits_at_int32 | an unconstrained integer lowers to int32 | `W › pm_lower_weak › lower_an_int_to_int32.golden` |
+| old: unit/uop/test_weak.ml unconstrained_overflowing_const_commits_at_int64 | an integer beyond int32 lowers to int64 | `W › pm_lower_weak › lower_an_int_beyond_int32_to_int64.golden` |
+| old: unit/uop/test_weak.ml unconstrained_float_const_commits_at_default_float | a weak float lowers to the default float | `W › pm_lower_weak › lower_a_float_to_the_default_float.golden` |
+| old: unit/uop/test_weak.ml uint64_width_and_unrepresentable_const | an integer beyond int64 lowers to uint64; one no 64-bit integer holds is refused | `W › pm_lower_weak › lower_an_int_beyond_int64_to_uint64.golden`; `W › pm_lower_weak › an int no 64-bit integer holds cannot be lowered` |
+| old: unit/uop/test_weak.ml peer_commits_weak_const_at_its_own_width | a derivable literal stays bare beside a committed peer | `W › pm_commit_weak › peer_keeps_a_derivable_literal_bare.golden` |
+| old: unit/uop/test_weak.ml peer_commits_weak_alu_by_cast | a weak expression commits at its peer's width | `W › pm_commit_weak › peer_commits_a_weak_expression.golden` |
+| old: unit/uop/test_weak.ml all_weak_sources_stay_weak | nothing commits without a committed peer | `W › pm_commit_weak › weak_sources_stay_weak_without_a_committed_peer.golden` |
+| old: unit/uop/test_weak.ml store_commits_value_at_destination_dtype | a store commits its value | `W › pm_commit_weak › store_commits_its_value_at_the_destination.golden` |
+| old: unit/uop/test_weak.ml consumer_cast_widens | a cast widens a weak expression | `W › pm_commit_weak › cast_widens_a_weak_expression.golden` |
+| old: unit/uop/test_weak.ml consumer_cast_never_narrows | a cast never narrows below the bounds | `W › pm_commit_weak › cast_never_narrows_below_the_bounds.golden` |
+| old: unit/uop/test_weak.ml cast_preserves_operand_widths | a cast commits a division's operands at their own bounds | `W › pm_commit_weak › cast_commits_operands_at_their_own_bounds.golden` |
+| old: unit/uop/test_weak.ml consecutive_weak_casts_preserve_integer_conversion | two stacked weak casts are two conversions | `W › pm_lower_weak › lower_stacked_weak_casts_as_two_conversions.golden`; `W › laws › pm_lower_weak keeps the values of what it lowers`; the folded value is Symbolic's (L3) |
+| old: unit/uop/test_weak.ml weak_integer_cast_is_a_value_conversion | a weak integer cast of a float converts its value | `W › pm_lower_weak › lower_a_weak_int_cast_of_a_float_as_a_conversion.golden`; `W › pm_lower_weak › lower_a_weak_int_cast_of_a_bool_as_a_conversion.golden` |
+| old: unit/uop/test_weak.ml range_arithmetic_lowers_to_concrete_int | range arithmetic lowers to int32 | `W › pm_lower_weak › lower_range_arithmetic.golden`; `W › laws › pm_lower_weak leaves no weak width but a literal's` |
+| old: unit/uop/test_weak.ml comparison_unifies_operand_widths | a comparison's operands lower to one width | `W › pm_lower_weak › lower_a_comparison.golden` |
+| old: unit/uop/test_weak.ml gated_long_index_narrows_for_small_buffers | a gated long index into a small buffer narrows | `W › pm_lower_weak › lower_a_gated_long_index_into_a_small_buffer_to_int32.golden` |
+| old: unit/uop/test_weak.ml gated_long_index_keeps_wide_storage | a gated long index into a huge buffer keeps int64 | `W › pm_lower_weak › lower_a_gated_long_index_into_a_huge_buffer_keeps_int64.golden` |
+| old: unit/uop/test_weak.ml uncast_preserves_operand_and_result_types | a committed literal loses its cast only where the node derives the same types | `W › pm_uncast_const › uncast_a_committed_literal.golden`; `W › pm_uncast_const › uncast_keeps_literals_with_no_committed_peer.golden`; `W › pm_uncast_const › uncast_keeps_a_shifted_literal.golden` |
+| old: unit/uop/test_weak.ml uncast_keeps_a_wrapping_cast | a cast that changes the literal's value stays | `W › pm_uncast_const › uncast_keeps_a_cast_that_wraps.golden`; `W › pm_uncast_const › uncast_drops_a_cast_that_fits.golden` |
+| old: unit/uop/test_weak.ml final_constants_state_width_on_each_edge | every constant gets its width at each consumer, booleans included, and the result is stable | `W › pm_cast_const › cast_consts_state_each_edge_width.golden`; `W › laws › pm_cast_const states the width of every constant`; `W › laws › pm_cast_const is idempotent` |
+| old: unit/uop/test_weak.ml late_simplification_preserves_committed_literals | `symbolic_simple` keeps an emulated operand's width, `symbolic` exposes literals | dropped: Symbolic's rules (L3) |
+| old: parity/weak_movement_width | a weak product beyond int32, reshaped and permuted, compiles for CPU and CUDA | dropped: an end-to-end parity case of the codegen stages, Codegen's section (L4) |
+
+## Movement
+
+The suite is `Tolk_next.Movement` (`uop/movement/`), written `M` below. A
+golden check is named after its golden, which holds a graph and its cleanup. A
+test marked `(L3)` builds offsets that are nodes, which `Ops.mop` simplifies
+with Symbolic's rules: it is tagged `L3` and left out of the default run until
+then.
+
+tinygrad tests `mop_cleanup` only through the passes that include it
+(`symbolic_simple`, `earliest_rewrites`, the codegen pipeline and the jit's
+input capture); those tests belong to their passes' sections.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/uop/test_symbolic.ml "adjacent SHRINKs compose every axis offset" | two shrinks merge, their starts summed on each axis | `M › shrinks › merge_two_shrinks.golden`; `M › shrinks › merge_three_shrinks.golden`; `M › laws › mop_cleanup keeps the elements a chain denotes` |
+| old: unit/uop/test_symbolic.ml "adjacent SHRINKs retain symbolic offsets and sizes" | shrinks with node starts and sizes merge | `M › shrinks › with the symbolic rules › merge_shrinks_of_symbolic_starts.golden` (L3) |
+| old: unit/uop/test_symbolic.ml "adjacent SHRINKs promote mixed offset widths" | starts of two committed widths are summed at the wider | `M › shrinks › with the symbolic rules › merge_shrinks_of_symbolic_starts.golden` (L3); the sum of two starts is `Ops`' arithmetic, whose promotion `Ops`' section pins |
+| old: unit/uop/test_symbolic.ml "adjacent scalar SHRINKs return the scalar" | two shrinks of a scalar are the scalar | dropped: a shrink of a scalar has no bounds, and tinygrad builds none (`_mop` returns the scalar); a bare one fails in `marg` |
+| old: unit/uop/test_symbolic.ml "INDEX on INDEX chains scalar coordinates" | an index of an index by scalars is one index | `M › indexing › index_an_index_by_scalars.golden` |
+| old: unit/uop/test_symbolic.ml index_stack_const_folds | a stack indexed by a constant is its source | `M › indexing › index_a_stack_by_a_constant.golden` |
+
+## Divandmod
+
+The suite is `Tolk_next.Divandmod` (`uop/divandmod/`), written `DM` below.
+Each golden holds divisions and remainders, each followed by its rewrite by
+`div_and_mod_symbolic` applied once, or by itself where no rule applies. A
+golden named after a claim holds one case, built in the suite. A golden
+`test_<name>.golden` holds every division and remainder of the tinygrad test of
+that name, which `gen/uop/divandmod.py` records while the test runs. A rewrite
+that simplifies more than constants on its way needs Symbolic's rules: its
+golden is `test_<name>_needs_symbolic.golden`, and its test, marked `(L3)`, is
+tagged `L3` and left out of the default run until then. The laws of `DM ›
+values` discard such a case meanwhile.
+
+tinygrad's symbolic tests assert what the whole rule set makes of an
+expression (`sym`, `simplify`): those claims are Symbolic's section (L3). Here
+each division and remainder they build is rewritten by this matcher alone.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_symbolic.py (every test that builds a division or a remainder, one golden each: TestSymbolic, TestSymbolicNumeric, TestSymInfer, TestSymbolicRealWorld, TestFuzzFailure, TestInvalidIndex, TestGatedUopGivenValid, TestRangeSplitting) | the rewrite of each division and remainder the test builds | `DM › tinygrad's tests › test_<name>.golden`; `DM › tinygrad's tests › with the symbolic rules › test_<name>_needs_symbolic.golden` (L3) for test_div_mod_recombine_large_coeff, test_div_mod_recombine_with_gcd, test_fuzz_failure7, test_mod_factor, test_mod_mod, test_multiple_of_cancellation, test_sum_div_complex1, test_sum_div_complex2, test_sum_div_some_partial_factor, test_sum_div_trim_const, test_symbolic_gcd_div; `DM › values › each rewrite of the goldens' divisions keeps the division's value` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (4 tests) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are values (`Ops.variable`); tinygrad's bounds arithmetic refuses a bound that is a node too |
+| tinygrad: null/test_uop_symbolic.py (the tests that build no division or remainder) | the other symbolic rules | dropped: Symbolic's section (L3) |
+| tinygrad: null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying an expression keeps its value | `DM › tinygrad's tests › test_fuzz_failure<n>.golden` (test_fuzz_failure1 is test_uop_symbolic.py's too); `DM › values › each rewrite of the goldens' divisions keeps the division's value`; the claim on the whole rule set is Symbolic's (L3) |
+| tinygrad: null/test_simplify_valid_idx.py (44 tests) | valid and index simplification | dropped: the `sym` rule set with `pm_move_where_on_load` and `indexing_simplify`, Symbolic's and Codegen's sections (L3, L4) |
+| old: unit/codegen/test_divandmod.ml positive_floor_div_does_not_rewrite_without_structure | a plain division stays | `DM › constant divisors › keep_a_plain_division.golden`; `DM › constant divisors › keep_a_plain_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml nested_div_fires | `(x // c + a) // d` merges | `DM › nested divisions › merge_nested_divisions.golden` |
+| old: unit/codegen/test_divandmod.ml nested_div_accepts_negative_inner_divisor | it merges for a negative inner divisor | `DM › nested divisions › merge_nested_divisions_by_a_negative_inner_divisor.golden` |
+| old: unit/codegen/test_divandmod.ml add_const_div_fires_for_negative_constant | the constant split holds for a negative constant | `DM › constant terms › split_a_negative_constant_out_of_a_division.golden` |
+| old: unit/codegen/test_divandmod.ml add_const_mod_splits_the_constant | `(x + c) % d` splits its constant | `DM › constant terms › split_the_constant_out_of_a_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml add_const_div_fires_for_negative_divisor | the constant split holds for a negative divisor | `DM › constant terms › split_the_constant_out_of_a_division_by_a_negative_divisor.golden`; `DM › nested divisions › split_nested_divisions_by_a_negative_divisor.golden` |
+| old: unit/codegen/test_divandmod.ml remove_nested_floormod_fires | a nested remainder in a sum drops | `DM › constant divisors › drop_a_nested_remainder_from_a_sum.golden` |
+| old: unit/codegen/test_divandmod.ml crossing_denominator_does_not_fold_zero_singleton | 0 divided by a divisor that can be 0 stays | `DM › other divisors › divide_zero_by_a_divisor_that_can_be_zero.golden` |
+| old: unit/codegen/test_divandmod.ml zero_denominator_raises_before_sentinel_bailout | a division by 0 raises whatever the numerator's bounds | `DM › zero divisors › a division of any integer by 0 raises Division_by_zero` |
+| old: unit/codegen/test_divandmod.ml singleton_quotient_floordiv_folds, singleton_quotient_floormod_folds | one possible quotient folds | `DM › one quotient › fold_a_division_with_one_quotient.golden`; `DM › one quotient › fold_a_remainder_with_one_quotient.golden`; `DM › values` |
+| old: unit/codegen/test_divandmod.ml cancel_one_sided_bounded_divisor_div, cancel_one_sided_bounded_divisor_mod | one quotient by a variable folds | `DM › one quotient › fold_a_division_by_a_variable_with_one_quotient.golden`; `DM › one quotient › fold_a_remainder_by_a_variable_with_one_quotient.golden` |
+| old: unit/codegen/test_divandmod.ml nested_single_term_mod_folds | `(a % 12) % 3` drops the inner remainder | `DM › constant divisors › drop_a_nested_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml nested_single_term_div_folds | `(a % 12) // 3` is `(a // 3) % 4` | `DM › constant divisors › nest_the_division_of_a_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml symbolic_gcd_divides_variable_denominator_div, symbolic_gcd_divides_variable_denominator_mod | a common node factor divides out | `DM › tinygrad's tests › test_symbolic_gcd_div.golden`; `DM › tinygrad's tests › with the symbolic rules › test_symbolic_gcd_div_needs_symbolic.golden` (L3) |
+| old: unit/codegen/test_divandmod.ml symbolic_gcd_divides_mixed_constant_factor | a common constant factor of a node divisor divides out | `DM › other divisors › divide_a_common_divisor_out_of_a_division_by_a_variable.golden`; `DM › other divisors › divide_a_common_divisor_out_of_a_remainder_by_a_variable.golden` |
+| old: unit/codegen/test_divandmod.ml factor_remainder_rejects_negative_denominator_range_for_div, factor_remainder_rejects_negative_denominator_range_for_mod | a divisor that can be negative keeps its multiples | `DM › other divisors › keep_a_division_by_a_variable_that_can_be_negative.golden`; `DM › other divisors › keep_a_remainder_by_a_variable_that_can_be_negative.golden` |
+| old: unit/codegen/test_divandmod.ml factor_remainder_still_accepts_positive_denominator_range | the multiples of a positive divisor leave | `DM › other divisors › take_the_multiples_of_a_variable_divisor_out_of_a_division.golden`; `DM › other divisors › take_the_multiples_of_a_variable_divisor_out_of_a_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml factor_remainder_floormod_splits_constant_factor_without_exact_quotient, factor_remainder_preserves_remainder_order | a constant factor splits out of a remainder, its terms in order | `DM › constant divisors › split_a_constant_factor_out_of_a_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml factor_remainder_floormod_splits_multiple_constant_factors | several constant factors split out | `DM › constant divisors › split_constant_factors_out_of_a_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml large_constant_residue_double_does_not_overflow_rewrite | huge coefficients stay exact | `DM › constant divisors › keep_a_division_of_huge_coefficients_exact.golden` |
+| old: unit/codegen/test_divandmod.ml nest_by_factor_divides_the_common_factor | `(2a + 3) // 4` divides the common factor out | `DM › constant divisors › with the symbolic rules › divide_a_common_factor_out_of_a_division.golden` (L3); `DM › constant divisors › with the symbolic rules › nest_a_division_by_a_factor_of_a_term.golden` (L3) |
+| old: unit/codegen/test_divandmod.ml property_folds_are_numerically_correct | every fold keeps the value | `DM › values › each rewrite of a random division keeps its value`; `DM › values › each rewrite of the goldens' divisions keeps the division's value` |
+| old: unit/codegen/test_divandmod.ml param_multiple_of_folds_mod_and_leaves_div | a declared multiple's remainder is 0 and its division stays | `DM › declared multiples` (4 goldens) |
+| old: unit/codegen/test_divandmod.ml param_without_multiple_of_does_not_fold | an undeclared multiple's remainder stays | `DM › constant divisors › keep_a_plain_remainder.golden` |
+| old: unit/codegen/test_divandmod.ml simplify_preserves_index_values, adjacent_bit_extracts_recombine, quotient_partner_recombines_through_a_merged_divisor, shifted_quotient_partner_recombines | the whole rule set keeps values and recombines quotients with remainders | dropped: Symbolic's rules and section (L3) |
+| old: unit/uop/test_symbolic.ml divandmod_tests (2 tests) | `Cdiv` and `Cmod` of a range by its size | dropped: truncating division is Symbolic's (L3) |
+| old: unit/uop/test_symbolic.ml "nested division commits newly built weak arithmetic" | merging nested divisions of committed integers casts the new constants | `DM › nested divisions › merge_nested_divisions_of_committed_integers.golden` |
+| old: unit/codegen/test_decompositions.ml early_floordiv_by_zero_raises, early_floormod_by_zero_raises | a division or remainder by 0 raises in the early rewrites | `DM › zero divisors › a division by the constant 0 raises Division_by_zero`; `DM › zero divisors › a remainder by the constant 0 raises Division_by_zero`; the early rewrites are Codegen's (L4) |

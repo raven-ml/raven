@@ -1,0 +1,10 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=2147483649)
+1 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+2 Ops.PARAM dtypes.long [] ParamArg(slot=-1, dtype=dtypes.long, vmin_vmax=(0, 2147483648), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+3 Ops.CONST dtypes.bool [] Invalid
+4 Ops.WHERE dtypes.long [1, 2, 3]
+5 Ops.INDEX dtypes.float [0, 4]
+6 Ops.SINK dtypes.void [5]
+7 Ops.SINK dtypes.void [6, 6]
+

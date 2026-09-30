@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 8
+1 Ops.RANGE dtypes.weakint [0] (0, AxisType.WEAK)
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.FLOORMOD dtypes.weakint [1, 2]
+4 Ops.FLOORDIV dtypes.weakint [0, 2]
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.RANGE dtypes.weakint [4] (0, 0, AxisType.WEAK)
+7 Ops.MUL dtypes.weakint [6, 2]
+8 Ops.RANGE dtypes.weakint [2] (0, 1, AxisType.WEAK)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.FLOORMOD dtypes.weakint [9, 2]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.MUL dtypes.weakint [6, 12]
+14 Ops.MUL dtypes.weakint [11, 13]
+15 Ops.ADD dtypes.weakint [11, 14]
+16 Ops.MUL dtypes.weakint [12, 8]
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.ADD dtypes.weakint [17, 11]
+19 Ops.CONST dtypes.weakint [] -1
+20 Ops.MUL dtypes.weakint [11, 19]
+21 Ops.ADD dtypes.weakint [18, 20]
+22 Ops.SINK dtypes.void [3, 3, 4, 5, 10, 21]
+

@@ -4,10 +4,14 @@ let value = function
   | #Dtype.value as v -> v
   | `Invalid -> invalid_arg "an invalid value has no value"
 
-let node params values u =
+let node vars params values u =
   let src = List.map (Ops.Tbl.find values) (Ops.src u) in
   match (Ops.op u, Ops.arg u, src) with
   | Const, Const c, [] -> value c
+  | Param, Param { name = Some name; _ }, [] when Ops.is_variable u -> (
+      match List.assoc_opt name vars with
+      | Some v -> v
+      | None -> invalid_arg (Printf.sprintf "variable %s has no value" name))
   | Param, Param { slot; size = None; _ }, [] -> (
       match List.assoc_opt slot params with
       | Some v -> v
@@ -20,9 +24,9 @@ let node params values u =
       value (Ops.exec_alu op (Ops.dtype u) (src :> Dtype.const list))
   | op, _, _ -> invalid_arg (Format.asprintf "cannot evaluate %a" Op.pp op)
 
-let eval ?(params = []) u =
+let eval ?(vars = []) ?(params = []) u =
   let values = Ops.Tbl.create 64 in
   List.iter
-    (fun n -> Ops.Tbl.replace values n (node params values n))
+    (fun n -> Ops.Tbl.replace values n (node vars params values n))
     (Ops.toposort u);
   Ops.Tbl.find values u

@@ -1,0 +1,7 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 7), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 20
+2 Ops.FLOORDIV dtypes.weakint [0, 1]
+3 Ops.CONST dtypes.weakint [] 0
+4 Ops.SINK dtypes.void [2, 3]
+

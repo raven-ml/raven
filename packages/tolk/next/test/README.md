@@ -71,6 +71,11 @@ A suite reads its goldens beside its executable, where dune copies them when
 the suite runs, so run it once with `runtest` before running it with
 `dune exec`.
 
+Each mutant runs in a child forked after a dry run of the suite, so a module
+that memoises its results (Divandmod's `fold_divmod_general`) answers the
+mutant from the dry run's cache: its survivors and unevaluated mutants are not
+verdicts. Rerun each with `--arm <site>`, which starts with an empty cache.
+
 ## Goldens
 
 A golden is output recorded from tinygrad, in a file `<name>.golden`. Its
