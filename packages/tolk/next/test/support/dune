@@ -1,6 +1,6 @@
 (library
  (name tolk_next_test)
- (modules golden graph dtypes interpreter tensors uops kernel_opts)
+ (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts)
  (wrapped false)
  (libraries windtrap tolk.next zarith))
 
@@ -22,8 +22,8 @@
    "let architecture = \"%{ocaml-config:architecture}\"\n")))
 
 (tests
- (names test_golden test_graph test_interpreter test_tensors)
- (modules test_golden test_graph test_interpreter test_tensors)
+ (names test_golden test_graph test_interpreter test_kernel_graphs test_tensors)
+ (modules test_golden test_graph test_interpreter test_kernel_graphs test_tensors)
  (package tolk)
  (libraries windtrap tolk.next zarith tolk_next_test)
  (deps

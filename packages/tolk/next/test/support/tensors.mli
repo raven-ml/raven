@@ -4,10 +4,12 @@
     ({!Tolk_next.Ops.shape}), stored row-major. Its value is computed node by
     node, as the operations define it:
 
-    - storage ({!Tolk_next.Op.Param}, {!Tolk_next.Op.Buffer},
-      {!Tolk_next.Op.Alloc}) of slot [s] and size [n], [1] for a scalar, holds
-      the elements [0] to [n - 1] of memory [s]; on several devices, device [k]
-      holds the elements [k * n] to [k * n + n - 1];
+    - storage ({!Tolk_next.Op.Param}, {!Tolk_next.Op.Buffer}) of slot [s] and
+      size [n], [1] for a scalar, holds the elements [0] to [n - 1] of memory
+      [s]; on several devices, device [k] holds the elements [k * n] to
+      [k * n + n - 1]. Call-local storage ({!Tolk_next.Op.Alloc}) is memory of
+      its own, apart from the numbering of the others, and holds [`Invalid]
+      until it is written;
     - a movement rearranges its source's elements: a reshape keeps their order,
       an expand broadcasts, a pad adds zeros, a shrink keeps a box, a permute
       and a flip reorder;
@@ -66,8 +68,9 @@ val writes :
   Ops.t ->
   (int * int * Dtype.value) list
 (** [writes ~buffers u] is what running [u] leaves in memory, from the memory
-    {!eval} starts from: each element [(s, i, v)] of memory [s] that a store
-    wrote, with the last value [v] it wrote, sorted by [s], then [i]. An element
-    whose last value is [`Invalid] is left out.
+    {!eval} starts from: each element [(s, i, v)] of memory [s], of parameters
+    and buffers, that a store wrote, with the last value [v] it wrote, sorted by
+    [s], then [i]. An element whose last value is [`Invalid] is left out, and so
+    is call-local storage, which is scratch.
 
     Raises [Invalid_argument] as {!eval} does. *)

@@ -1,8 +1,9 @@
 open Tolk_next
 
 (* An element carries the memory it views, if any, so that a store through a
-   movement of storage knows where it writes, and on which device. *)
-type place = { slot : int; index : int; device : int }
+   movement of storage knows where it writes, and on which device. Call-local
+   storage numbers its slots apart from parameters and buffers. *)
+type place = { scratch : bool; slot : int; index : int; device : int }
 type cell = { value : Dtype.const; at : place option }
 type tensor = { shape : int list; cells : cell array }
 
@@ -278,17 +279,22 @@ let unshard u axes shards =
 
 type memory = {
   buffers : (int * Dtype.value array) list;
-  written : (int * int, Dtype.const) Hashtbl.t;
+  written : (bool * int * int, Dtype.const) Hashtbl.t;
 }
 
-let initial m (slot, i) : Dtype.const =
-  match List.assoc_opt slot m.buffers with
+let initial m at : Dtype.const =
+  match List.assoc_opt at.slot m.buffers with
+  | _ when at.scratch -> `Invalid
   | None -> `Invalid
-  | Some a when i < Array.length a -> (a.(i) :> Dtype.const)
-  | Some _ -> fail "element %d is outside memory %d" i slot
+  | Some a when at.index < Array.length a -> (a.(at.index) :> Dtype.const)
+  | Some _ -> fail "element %d is outside memory %d" at.index at.slot
+
+let key at = (at.scratch, at.slot, at.index)
 
 let current m at =
-  match Hashtbl.find_opt m.written at with Some v -> v | None -> initial m at
+  match Hashtbl.find_opt m.written (key at) with
+  | Some v -> v
+  | None -> initial m at
 
 let storage m u =
   match Ops.arg u with
@@ -297,8 +303,9 @@ let storage m u =
       let shape = concrete u in
       List.init (devices device) (fun k ->
           let cell i =
-            let at = { slot; index = (k * n) + i; device = k } in
-            { value = initial m (slot, at.index); at = Some at }
+            let scratch = Ops.op u = Alloc in
+            let at = { scratch; slot; index = (k * n) + i; device = k } in
+            { value = initial m at; at = Some at }
           in
           { shape; cells = Array.init n cell })
   | _ -> fail "cannot evaluate a variable"
@@ -316,8 +323,7 @@ let store m dst value =
         (fun k c ->
           match c.at with
           | Some at ->
-              Hashtbl.replace m.written (at.slot, at.index)
-                (source at).cells.(k).value
+              Hashtbl.replace m.written (key at) (source at).cells.(k).value
           | None -> fail "a store's destination is not storage")
         d.cells)
     dst
@@ -331,7 +337,7 @@ let reread m v =
           Array.map
             (fun c ->
               match c.at with
-              | Some at -> { c with value = current m (at.slot, at.index) }
+              | Some at -> { c with value = current m at }
               | None -> c)
             t.cells;
       })
@@ -422,7 +428,9 @@ let writes ?(buffers = []) u =
   let m = { buffers; written = Hashtbl.create 64 } in
   ignore (run m [] u);
   Hashtbl.fold
-    (fun (s, i) v acc ->
-      match v with #Dtype.value as v -> (s, i, v) :: acc | `Invalid -> acc)
+    (fun (scratch, s, i) v acc ->
+      match v with
+      | #Dtype.value as v when not scratch -> (s, i, v) :: acc
+      | _ -> acc)
     m.written []
   |> List.sort (fun (s0, i0, _) (s1, i1, _) -> compare (s0, i0) (s1, i1))

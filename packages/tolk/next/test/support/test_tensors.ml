@@ -183,6 +183,12 @@ let effects =
                   [
                     Ops.store (p 1 3) (Ops.after out [ Ops.store out reversed ]);
                   ])));
+      test "call-local storage is memory of its own, and scratch" (fun () ->
+          let scratch = Ops.alloc ~slot:1 ~device:cpu [ Int 3 ] Int32 in
+          let staged = Ops.after scratch [ Ops.store scratch (p 1 3) ] in
+          equal write
+            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2) ]
+            (writes (into staged)));
       test "a call runs its body on its arguments" (fun () ->
           let body =
             Ops.sink
