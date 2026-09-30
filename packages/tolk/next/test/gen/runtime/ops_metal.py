@@ -137,6 +137,7 @@ CASES = {
     "chain_profile": (lambda: chain(empty(), 3), {"profile": True}),
     "one_profile": (lambda: chain(empty(), 1), {"profile": True}),
     "variable": (lambda: (empty(10)[:Variable("v", 1, 10).bind(3)] + 1).contiguous(), {}),
+    "variable_second": (lambda: ((empty(10) + 1).contiguous()[:Variable("v", 1, 10).bind(3)] * 2).contiguous(), {}),
     "host_split": (lambda: ((empty() + 1).contiguous().to("CPU") + 2).contiguous().to("METAL") + 3, {}),
 }
 

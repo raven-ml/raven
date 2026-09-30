@@ -2762,21 +2762,36 @@ run touches. The survivors:
 
 `O` is the `Ops_metal` suite (`test/runtime/ops_metal`). Its goldens come from
 tinygrad's `MetalQueue` on a METAL device described without a GPU, with D1, D7
-and D34 applied in the generator: for each of eight cases (Apple9, Apple7 and
+and D34 applied in the generator: for each of nine cases (Apple9, Apple7 and
 Mac2 families, no residency set, a profiled chain and a profiled single
-command, a launch size that reads a variable, and copies to the host between
-batches), the schedule `sched_batches` receives, the schedule `compile_linear`
-returns and its host programs' source. It needs no GPU and no MTLCompiler.
+command, a launch size that reads a variable on the first command and on the
+second, and copies to the host between batches), the schedule `sched_batches`
+receives, the schedule `compile_linear` returns and its host programs' source.
+It needs no GPU and no MTLCompiler.
+
+Coverage of `ops_metal.ml` is 95.7% (245 of 256 points) with `OX`. The code no
+test reaches: the refusals of a handle or selector the device lacks, of a
+family that is no Apple GPU's, of a command that is no compiled program, of a
+queue signalling no value and of a copy on the queue; `icb`'s answer for a tag
+whose commands it cannot read; the 8 bytes of arguments of a kernel of
+none, since a call takes its device from its arguments; and `reaches`, which a
+copy asks only of the device it is enqueued on, and Metal's copies are the
+host's. Each test compiles its case afresh. Of the 29 mutants `O` reaches, 28
+are killed. The survivor, `List.is_empty r` negated, is equivalent: it starts a
+command's extent of arguments 8 bytes past their offset, where its first
+argument, a 64-bit address, already ends. Of the 3 never reached, `off + 8`'s
+is the kernel of no arguments'; the two of a range's symbolic sizes fail `OX`
+when each is armed (`--arm`: Metal does not survive `fork`).
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, `.submit` (no test) | the argument layout, the indirect command buffer's placeholder and the messages of the host program | `O › recorded cases › *_compiled.golden`, `*_host.golden` (8 cases) |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, `.submit` (no test) | the argument layout, the indirect command buffer's placeholder and the messages of the host program | `O › recorded cases › *_compiled.golden`, `*_host.golden` (9 cases) |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `residency.value is None` | an encoder declares the buffers resident without a residency set | `O › recorded cases › chain_no_residency_set`: the engine's table of resources runs only where Metal has no residency sets (before macOS 15), and no such Mac runs `OX`, so the recorded host program is its only check |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, `int(arch[5:]) < 9` | before Apple9, the encoder sets each pipeline | `O › recorded cases › chain_apple7`, `chain_mac2`; `OX` runs it on GPUs before Apple9, such as the M1's |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.submit`, the stamps | a profiled command runs in a command buffer of its own, which its stamps hold | `O › recorded cases › chain_profile` (a range over the commands but the last), `one_profile`; D7 and D34 |
-| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes | a launch size that reads a variable is set on the command | `O › recorded cases › variable` |
+| tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes | a launch size that reads a variable is set on the command | `O › recorded cases › variable`, `variable_second` (the second command's) |
 | tinygrad: `runtime/ops_metal.py` `get_enqueue_devs` on METAL | Metal's copies are the host's, between batches | `O › recorded cases › host_split` |
 | tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_lower` (`mtl_poll`) | a host program reads the timeline from the event | dropped: no host program reads a timeline (D1) |
 | tinygrad: runtime/test_wait_loop.py | host loops that wait on a signal | the `Hcq2` suite's: no Metal host program waits (D1) |
@@ -2789,7 +2804,7 @@ the `slow` alias, built on macOS only).
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_bufferize`, `sels`, `new_icb`, `new_slots` (no test) | the engine's words of a batch | `OX › execution` (9 tests) |
+| tinygrad: `runtime/ops_metal.py` `MetalDevice.pm_bufferize`, `sels`, `new_icb`, `new_slots` (no test) | the engine's words of a batch | `OX › execution` (12 tests) |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies out, in and out between the GPU and the host | `OX › copies out, in and out again leave the host the bytes copied in` |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch serves new inputs on each run | `OX › a run waits for its batch's previous run before it rewrites the batch's arguments` (eight inputs, run without synchronizing) |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic | a symbolic size on each run | `OX › a launch size that reads a variable is set on each run` |
@@ -2798,8 +2813,10 @@ the `slow` alias, built on macOS only).
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Fence, TestHCQ2FFI | the fence and C calls on the CPU | the `Hcq2` and `Engine` suites' |
 | tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `OX › a profile records a span of each kernel on the device, in order`; `OX › a profiled batch run twice keeps the second run's spans` (D34) |
 | DIVERGENCES D30 | a range's addresses, integers whatever the element type | `O › loops (D30) › a range's addresses are integers, profiled or not` |
+| DIVERGENCES D30 | a loop's commands, once per trip at a trip's stride, after the commands before the loop | `O › loops (D30) › a loop's commands repeat once per trip, a trip apart, after the commands before it` |
 | tinygrad: `runtime/ops_metal.py` `MetalQueue.exec`, symbolic sizes (`d.cast(dtypes.uint64)`) | a launch size of an expression, cast to a 64-bit word, stays an integer: the kernel's compilation commits it | `O › launch sizes › a launch size of an expression is computed in integers` |
 | DIVERGENCES D30 | a range around calls, a loop of indirect commands in one submission | `OX › each trip of a range runs its kernel on its own window`, `› a range of 20000 trips runs from one indirect command buffer`, `› a profiled range records a span of each trip's kernel` |
+| DIVERGENCES D30 | each trip's command sets its own launch size that reads a variable | `OX › each trip of a range sets the launch size that reads a variable` |
 | old: `unit/test_metal_completion.ml` (7 tests) | the old runtime's command ownership, completion order and retirement | dropped: completion and command buffers are nx.device's (`Submission`, `resolve`) |
 | old: `unit/test_runtime_metal.ml` "an argument structure of 15/16/29/33 buffers ..." | many buffers dispatch and rebind | `OX › a kernel of 33 buffers runs from its arguments' buffer`: one argument buffer, so no direct dispatch |
 | old: `unit/test_runtime_metal.ml` "replays symbolic local workgroup dimensions" | | `OX › a launch size that reads a variable is set on each run` |
@@ -2822,6 +2839,13 @@ a copy in from the host and its profiled form, and copies to the host between
 batches), the schedule `sched_batches` receives, the schedule `compile_linear`
 returns and its host programs' source. It needs no GPU and no driver.
 
+Coverage of `ops_cuda.ml` is 98.3% (113 of 115 points). The code no test
+reaches: the refusal of a command that is no compiled program, and `submit`'s
+answer for a batch whose last command is a loop, since a batch ends with its
+timeline's signal. Each test compiles its case afresh, and mutation runs with
+`PARALLEL=1`, since `Worker` would otherwise spawn domains. The suite kills
+all 8 mutants of `ops_cuda.ml`.
+
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: `runtime/ops_cuda.py` `CUDAQueue.launch`, `.exec` (no test) | the arguments after their size, the launch's extra words on the queue, `cuLaunchKernel` on the compute stream | `C › recorded cases › chain`, `variable` (a launch size that reads a variable) |
@@ -2837,6 +2861,7 @@ returns and its host programs' source. It needs no GPU and no driver.
 | old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
 | old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |
 | DIVERGENCES D30 | a range around launches, a loop of the host program, its addresses integers | `C › loops (D30) › a range is a loop of the host program around its launches`, `› a range's addresses are integers, profiled or not` |
+| DIVERGENCES D30 | a trip's extra words follow the launches' before the loop | `C › loops (D30) › a loop's trip is its own launches' words, after the launches before` |
 
 ### Execution
 

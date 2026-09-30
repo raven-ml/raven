@@ -73,11 +73,12 @@ let recorded =
   group "recorded cases"
     (List.map
        (fun (case, profile) ->
-         let compiled =
-           lazy
-             (plain (fun () ->
-                  Hcq2.compile_linear ~profile ~devices:recorded_devices
-                    (Golden.sink (case ^ "_prepared.golden"))))
+         (* Each test compiles afresh: a mutant must not be answered from an
+            earlier compilation. *)
+         let compiled () =
+           plain (fun () ->
+               Hcq2.compile_linear ~profile ~devices:recorded_devices
+                 (Golden.sink (case ^ "_prepared.golden")))
          in
          group case
            [
@@ -87,9 +88,9 @@ let recorded =
                  equal text (same golden)
                    (same
                       (Uops.placeholders_like golden
-                         (Uops.binaries_as_sources (Lazy.force compiled)))));
+                         (Uops.binaries_as_sources (compiled ())))));
              Golden.text (case ^ "_host.golden") (fun () ->
-                 host_sources (Lazy.force compiled));
+                 host_sources (compiled ()));
            ])
        cases)
 
@@ -169,6 +170,9 @@ let ranged () =
   let buf () = Ops.new_buffer (Single "CUDA") 12 Float32 in
   Ops.end_ (adds (window (buf ())) (window (buf ()))) [ r ]
 
+(* The kernel adding one, alone. *)
+let once () = adds (storage "CUDA") (storage "CUDA")
+
 let loops =
   group "loops (D30)"
     [
@@ -183,6 +187,16 @@ let loops =
           (* The launch's extra words are five 64-bit words a trip. *)
           is_true ~msg:"a loop of three trips" (contains src "< 3; Lidx");
           is_true ~msg:"each trip's extra words" (contains src "*40)))"));
+      test "a loop's trip is its own launches' words, after the launches before"
+        (fun () ->
+          let src =
+            host_sources
+              (plain (fun () ->
+                   Hcq2.compile_linear ~devices:recorded_devices
+                     (Ops.v Linear ~src:[ once (); ranged () ])))
+          in
+          (* Each trip's extra words follow the launch's before the loop. *)
+          is_true ~msg:"each trip's extra words" (contains src "*40)+40)"));
       test "a range's addresses are integers, profiled or not" (fun () ->
           List.iter
             (fun profile ->

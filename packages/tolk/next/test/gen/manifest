@@ -2468,6 +2468,9 @@ runtime/ops_metal/one_profile_prepared.golden
 runtime/ops_metal/variable_compiled.golden
 runtime/ops_metal/variable_host.golden
 runtime/ops_metal/variable_prepared.golden
+runtime/ops_metal/variable_second_compiled.golden
+runtime/ops_metal/variable_second_host.golden
+runtime/ops_metal/variable_second_prepared.golden
 runtime/support/c/findlib_trees.golden
 runtime/support/compiler_cpu/kernels.golden
 runtime/support/hcq2/chain.golden

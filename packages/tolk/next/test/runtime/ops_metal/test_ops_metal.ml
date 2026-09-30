@@ -68,6 +68,7 @@ let cases =
     ("chain_profile", "Apple9", true, true);
     ("one_profile", "Apple9", true, true);
     ("variable", "Apple9", true, false);
+    ("variable_second", "Apple9", true, false);
     ("host_split", "Apple9", true, false);
   ]
 
@@ -75,12 +76,13 @@ let recorded =
   group "recorded cases"
     (List.map
        (fun (case, arch, residency_set, profile) ->
-         let compiled =
-           lazy
-             (plain (fun () ->
-                  Hcq2.compile_linear ~profile
-                    ~devices:(recorded_devices ~arch ~residency_set)
-                    (Golden.sink (case ^ "_prepared.golden"))))
+         (* Each test compiles afresh: a mutant must not be answered from an
+            earlier compilation. *)
+         let compiled () =
+           plain (fun () ->
+               Hcq2.compile_linear ~profile
+                 ~devices:(recorded_devices ~arch ~residency_set)
+                 (Golden.sink (case ^ "_prepared.golden")))
          in
          group case
            [
@@ -90,9 +92,9 @@ let recorded =
                  equal text (same golden)
                    (same
                       (Uops.placeholders_like golden
-                         (Uops.binaries_as_sources (Lazy.force compiled)))));
+                         (Uops.binaries_as_sources (compiled ())))));
              Golden.text (case ^ "_host.golden") (fun () ->
-                 host_sources (Lazy.force compiled));
+                 host_sources (compiled ()));
            ])
        cases)
 
@@ -101,14 +103,8 @@ let recorded =
 let uncompiled =
   Renderer.with_compiler (Renderer.Compiler.v Fun.id) (Cstyle.clang host_target)
 
-(* A range of three trips around a kernel on METAL adding one to each window of
-   four floats. *)
-let ranged () =
-  let r = Ops.range (Int 3) [ Ops.unique_num () ] in
-  let window u =
-    let start = Ops.mul r (Ops.int 4) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
-  in
+(* The kernel on METAL adding one to each of four floats. *)
+let adds_one () =
   let param slot =
     Ops.param ~shape:[ Int 4 ] ~device:(Single "METAL") slot Float32
   in
@@ -122,12 +118,29 @@ let ranged () =
   let kernel =
     Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ]
   in
+  Codegen.to_program kernel uncompiled
+
+(* A range of three trips around the kernel adding one to each window of four
+   floats. *)
+let ranged () =
+  let r = Ops.range (Int 3) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
   let buf () = Ops.new_buffer (Single "METAL") 12 Float32 in
-  Ops.end_
-    (Ops.call
-       (Codegen.to_program kernel uncompiled)
-       [ window (buf ()); window (buf ()) ])
-    [ r ]
+  Ops.end_ (Ops.call (adds_one ()) [ window (buf ()); window (buf ()) ]) [ r ]
+
+(* The kernel adding one, alone. *)
+let once () =
+  let buf () = Ops.new_buffer (Single "METAL") 4 Float32 in
+  Ops.call (adds_one ()) [ buf (); buf () ]
+
+(* The commands of the indirect command buffer of [linear]'s one batch. *)
+let icb_commands linear =
+  match List.filter_map Ops_metal.icb (Ops.toposort linear) with
+  | [ (cmds, _) ] -> cmds
+  | l -> failf "%d indirect command buffers, not one" (List.length l)
 
 (* Whether [s] holds [sub]. *)
 let contains s sub =
@@ -200,6 +213,20 @@ let loops =
               ("Apple7", false, false);
               ("Apple9", true, true);
             ]);
+      test
+        "a loop's commands repeat once per trip, a trip apart, after the \
+         commands before it" (fun () ->
+          let cmds =
+            icb_commands
+              (plain (fun () ->
+                   Hcq2.compile_linear
+                     ~devices:
+                       (recorded_devices ~arch:"Apple9" ~residency_set:true)
+                     (Ops.v Linear ~src:[ once (); ranged () ])))
+          in
+          (* Each command's arguments take 16 bytes, rounded up to 256. *)
+          equal (list int) [ 0; 256; 512; 768 ]
+            (List.map (fun (c : Ops_metal.command) -> c.offset) cmds));
     ]
 
 let () = exit (run "Tolk_next.Ops_metal" [ recorded; loops; sizes ])

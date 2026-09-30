@@ -294,6 +294,38 @@ let execution =
           Nx_device.synchronize (metal ());
           equal floats [| 9.; 9.; 9.; 9. |]
             (floats_of (List.hd (List.assq o bound))));
+      slow "each trip of a range sets the launch size that reads a variable"
+        (fun () ->
+          let v =
+            Ops.variable ~dtype:Int32 "v" (`Int Z.one) (`Int (Z.of_int 4))
+          in
+          let out = param (Single "METAL") 0 in
+          let i = Ops.range (Sym v) [ 0 ] in
+          let kernel =
+            Ops.sink
+              ~kernel:(Ops.kernel_info ~name:"up_to_v" ())
+              [
+                Ops.end_
+                  (Ops.store (Ops.index out [ i ])
+                     (Ops.float ~dtype:Float32 9.))
+                  [ i ];
+              ]
+          in
+          let r = Ops.range (Int 3) [ 7 ] in
+          let o = storage ~n:12 "METAL" in
+          let start = Ops.mul r (Ops.int 4) in
+          let window =
+            Ops.shrink o [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+          in
+          let bound = [ (o, [ new_floats "METAL" (Array.make 12 0.) ]) ] in
+          ignore
+            (run_calls
+               ~vars:[ ("v", 3) ]
+               ~bound
+               [ Ops.end_ (Ops.call kernel [ window ]) [ r ] ]);
+          equal floats
+            (Array.init 12 (fun k -> if k mod 4 < 3 then 9. else 0.))
+            (floats_of (List.hd (List.assq o bound))));
       slow "a kernel of 33 buffers runs from its arguments' buffer" (fun () ->
           let n = 32 in
           let out = param (Single "METAL") 0 in
