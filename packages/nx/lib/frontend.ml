@@ -2304,27 +2304,50 @@ let select (type c d) ~k (keys : (c, d) t) =
 
 (* The key of a float, a signed integer of its width that orders as a
    descending sort does: the bits, with the other bits of a negative float
-   flipped, both zeros one key, and NaN below every number. *)
+   flipped, and NaN below every number. -0, a negative float, keys just below
+   +0. *)
 let float_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) =
   let bits = bitcast kd x in
-  let least = full_like bits (Nx_dtype.min_value kd) in
-  (* The zeros merge on the bits: -0's are the least key's. Merging them on
-     the values would pass subnormals through float arithmetic, which a GPU
-     may flush. *)
-  let bits = where (equal bits least) (zeros_like bits) bits in
   let flipped =
     where
       (less bits (zeros_like bits))
       (bitwise_xor bits (full_like bits (Nx_dtype.max_value kd)))
       bits
   in
-  where (isnan x) least flipped
+  where (isnan x) (full_like bits (Nx_dtype.min_value kd)) flipped
 
 (* The key of an unsigned integer: its bits with the top one flipped, read
    signed. *)
 let unsigned_key (type a b c d) (kd : (c, d) Nx_dtype.t) (top : a)
     (x : (a, b) t) =
   bitcast kd (bitwise_xor x (full_like x top))
+
+(* [select_by_passes ~k ~axis keys] is the positions of the [k] greatest [keys]
+   along [axis], in the order of a stable descending sort, one pass over the
+   axis for each. *)
+let select_by_passes (type c d) ~k ~axis (keys : (c, d) t) =
+  let n = dim axis keys in
+  let along = Array.make (ndim keys) 1 in
+  along.(axis) <- n;
+  let position = reshape along (arange (B.context keys) Nx_dtype.int32 0 n 1) in
+  let low = full_like keys (Nx_dtype.min_value (dtype keys)) in
+  (* One round picks the first free entry that a descending sort would place
+     next. Comparing against the greatest key, under the free mask, keeps an
+     entry equal to [low] distinct from one already taken. *)
+  let pick free =
+    let greatest = max ~axes:[ axis ] ~keepdims:true (where free keys low) in
+    argmax ~axis ~keepdims:true
+      (cast Nx_dtype.int32 (logical_and free (equal keys greatest)))
+  in
+  let rec rounds i free acc =
+    if i = k then concatenate ~axis (List.rev acc)
+    else
+      let index = pick free in
+      rounds (i + 1)
+        (logical_and free (not_equal position index))
+        (index :: acc)
+  in
+  rounds 0 (ones (B.context keys) Nx_dtype.bool (shape keys)) []
 
 let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   let r = ndim x in
@@ -2336,81 +2359,42 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
   let dt = dtype x in
   if Nx_dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
-  let ctx = B.context x in
-  let indices =
-    if k > top_k_rounds then begin
-      let last = contiguous (moveaxis axis (-1) x) in
+  let positions (type c d) (keys : (c, d) t) =
+    if k <= top_k_rounds then select_by_passes ~k ~axis keys
+    else
+      let last = contiguous (moveaxis axis (-1) keys) in
       let batch = Array.sub (shape last) 0 (r - 1) in
       let b = Array.fold_left ( * ) 1 batch in
-      let rows = reshape [| b; n |] last in
-      let chosen : (int32, Nx_dtype.int32_elt) t =
-        if b = 0 then zeros ctx Nx_dtype.int32 [| 0; k |]
-        else
-          match dt with
-          | Nx_dtype.Float16 -> select ~k (float_key Nx_dtype.int16 rows)
-          | Nx_dtype.BFloat16 -> select ~k (float_key Nx_dtype.int16 rows)
-          | Nx_dtype.Float32 -> select ~k (float_key Nx_dtype.int32 rows)
-          | Nx_dtype.Float64 -> select ~k (float_key Nx_dtype.int64 rows)
-          | Nx_dtype.Float8_e4m3 ->
-              select ~k
-                (float_key Nx_dtype.int16 (cast Nx_dtype.float16 rows))
-          | Nx_dtype.Float8_e5m2 ->
-              select ~k
-                (float_key Nx_dtype.int16 (cast Nx_dtype.float16 rows))
-          | Nx_dtype.Int4 -> select ~k (cast Nx_dtype.int8 rows)
-          | Nx_dtype.Int8 -> select ~k rows
-          | Nx_dtype.Int16 -> select ~k rows
-          | Nx_dtype.Int32 -> select ~k rows
-          | Nx_dtype.Int64 -> select ~k rows
-          | Nx_dtype.UInt4 | Nx_dtype.Bool ->
-              select ~k
-                (unsigned_key Nx_dtype.int8 0x80 (cast Nx_dtype.uint8 rows))
-          | Nx_dtype.UInt8 -> select ~k (unsigned_key Nx_dtype.int8 0x80 rows)
-          | Nx_dtype.UInt16 ->
-              select ~k (unsigned_key Nx_dtype.int16 0x8000 rows)
-          | Nx_dtype.UInt32 ->
-              select ~k (unsigned_key Nx_dtype.int32 Int32.min_int rows)
-          | Nx_dtype.UInt64 ->
-              select ~k (unsigned_key Nx_dtype.int64 Int64.min_int rows)
-          | Nx_dtype.Complex64 | Nx_dtype.Complex128 -> assert false
+      let chosen =
+        if b = 0 then zeros (B.context x) Nx_dtype.int32 [| 0; k |]
+        else select ~k (reshape [| b; n |] last)
       in
       moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
-    end
-    else begin
-      let along = Array.make r 1 in
-      along.(axis) <- n;
-      let position = reshape along (arange ctx Nx_dtype.int32 0 n 1) in
-      let low = full_like x (Nx_dtype.min_value dt) in
-      let real =
-        if Nx_dtype.is_float dt then Some (logical_not (isnan x)) else None
-      in
-      (* One round picks the first free entry that a descending sort would
-         place next: the greatest number, and a NaN once no number is free.
-         Comparing against the maximum, under the free mask, keeps an entry
-         equal to [low] distinct from one already taken. *)
-      let pick free =
-        let live =
-          match real with None -> free | Some real -> logical_and free real
-        in
-        let greatest = max ~axes:[ axis ] ~keepdims:true (where live x low) in
-        let best = logical_and live (equal x greatest) in
-        let chosen =
-          match real with
-          | None -> best
-          | Some _ -> where (any ~axes:[ axis ] ~keepdims:true live) best free
-        in
-        argmax ~axis ~keepdims:true (cast Nx_dtype.int32 chosen)
-      in
-      let rec rounds i free acc =
-        if i = k then concatenate ~axis (List.rev acc)
-        else
-          let index = pick free in
-          rounds (i + 1)
-            (logical_and free (not_equal position index))
-            (index :: acc)
-      in
-      rounds 0 (ones ctx Nx_dtype.bool (shape x)) []
-    end
+  in
+  let indices =
+    match dt with
+    | Nx_dtype.Float16 -> positions (float_key Nx_dtype.int16 x)
+    | Nx_dtype.BFloat16 -> positions (float_key Nx_dtype.int16 x)
+    | Nx_dtype.Float32 -> positions (float_key Nx_dtype.int32 x)
+    | Nx_dtype.Float64 -> positions (float_key Nx_dtype.int64 x)
+    | Nx_dtype.Float8_e4m3 ->
+        positions (float_key Nx_dtype.int16 (cast Nx_dtype.float16 x))
+    | Nx_dtype.Float8_e5m2 ->
+        positions (float_key Nx_dtype.int16 (cast Nx_dtype.float16 x))
+    | Nx_dtype.Int4 -> positions (cast Nx_dtype.int8 x)
+    | Nx_dtype.Int8 -> positions x
+    | Nx_dtype.Int16 -> positions x
+    | Nx_dtype.Int32 -> positions x
+    | Nx_dtype.Int64 -> positions x
+    | Nx_dtype.UInt4 | Nx_dtype.Bool ->
+        positions (unsigned_key Nx_dtype.int8 0x80 (cast Nx_dtype.uint8 x))
+    | Nx_dtype.UInt8 -> positions (unsigned_key Nx_dtype.int8 0x80 x)
+    | Nx_dtype.UInt16 -> positions (unsigned_key Nx_dtype.int16 0x8000 x)
+    | Nx_dtype.UInt32 ->
+        positions (unsigned_key Nx_dtype.int32 Int32.min_int x)
+    | Nx_dtype.UInt64 ->
+        positions (unsigned_key Nx_dtype.int64 Int64.min_int x)
+    | Nx_dtype.Complex64 | Nx_dtype.Complex128 -> assert false
   in
   (take_along_axis ~axis ~indices x, indices)
 

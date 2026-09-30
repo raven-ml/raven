@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #if defined(_WIN32)
 #include <malloc.h>
 #endif
@@ -386,7 +387,45 @@ static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
    - Small-int and bool reductions accumulate in 64-bit (the compute widths
      above); f16/bf16/fp8 accumulate in float.
    - Complex has no mod and no ordered comparison; rounding/abs/sign on complex
-     are the kernel's concern (rejected loudly, never identity), not the ABI's. */
+     are the kernel's concern (rejected loudly, never identity), not the ABI's.
+   - Float max/min, elementwise, reduced or scanned, are IEEE 754-2019 maximum
+     and minimum: NaN propagates and -0 orders below +0. argmax/argmin and sort
+     order the zeros the same way. */
+
+/* ── Float extremes ───────────────────────────────────────────────────────
+
+   nx_c_fmax and nx_c_fmin are IEEE 754-2019 maximum and minimum of two floats
+   or two doubles: a NaN operand gives a NaN (a's when a is one), and -0 orders
+   below +0. A select takes the greater operand, or a when it is NaN; between
+   equal operands, and-ing (max) or or-ing (min) their bits picks the zero of
+   the right sign and leaves equal nonzero values as they are. Selects and bit
+   masks leave no branch, so a loop over independent lanes vectorizes. */
+#define NX_C_DEFINE_FEXTREMES(T, U)                                            \
+  static inline T nx_c_fmax_##T(T a, T b) {                                    \
+    T g = (a > b || a != a) ? a : b;                                           \
+    U gb, ab, tie = (U)0 - (U)(a == b);                                        \
+    memcpy(&gb, &g, sizeof g);                                                 \
+    memcpy(&ab, &a, sizeof a);                                                 \
+    gb &= ab | ~tie;                                                           \
+    memcpy(&g, &gb, sizeof g);                                                 \
+    return g;                                                                  \
+  }                                                                            \
+  static inline T nx_c_fmin_##T(T a, T b) {                                    \
+    T g = (a < b || a != a) ? a : b;                                           \
+    U gb, ab, tie = (U)0 - (U)(a == b);                                        \
+    memcpy(&gb, &g, sizeof g);                                                 \
+    memcpy(&ab, &a, sizeof a);                                                 \
+    gb |= ab & tie;                                                            \
+    memcpy(&g, &gb, sizeof g);                                                 \
+    return g;                                                                  \
+  }
+NX_C_DEFINE_FEXTREMES(float, uint32_t)
+NX_C_DEFINE_FEXTREMES(double, uint64_t)
+#undef NX_C_DEFINE_FEXTREMES
+#define nx_c_fmax(a, b)                                                        \
+  _Generic((a), float: nx_c_fmax_float, double: nx_c_fmax_double)(a, b)
+#define nx_c_fmin(a, b)                                                        \
+  _Generic((a), float: nx_c_fmin_float, double: nx_c_fmin_double)(a, b)
 
 /* ── Float summation order ────────────────────────────────────────────────
 

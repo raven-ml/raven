@@ -944,13 +944,12 @@ let float_bits x =
    Tolk's comparisons never let a NaN win, and its sort recovers positions by
    matching values for equality, which a NaN never satisfies. A float orders as
    its bits (see [float_bits]), with a negative value's magnitude bits flipped
-   so that the larger float is the larger integer. -0 is read as +0 so that
-   equal zeros tie ([`Tied]), or orders below +0 ([`Ordered]). Every NaN,
-   recognised on its bits (magnitude above infinity's), takes the greatest
-   integer ([`Greatest]) or the least ([`Least]); no number takes either. The -0
-   test compares bits: a float comparison may flush subnormals to zero. A
-   non-float [x] is its own key. *)
-let order_keys ~nan ~zeros x =
+   so that the larger float is the larger integer, and -0 orders just below +0.
+   Every NaN, recognised on its bits (magnitude above infinity's), takes the
+   greatest integer ([`Greatest]) or the least ([`Least]); no number takes
+   either. The bits keep the order of subnormals, which a float comparison may
+   flush to zero. A non-float [x] is its own key. *)
+let order_keys ~nan x =
   let dtype = F.Tensor.dtype x in
   if not (TD.is_float dtype) then (x, Fun.id)
   else
@@ -968,15 +967,6 @@ let order_keys ~nan ~zeros x =
       where
         (lt bits (F.Creation.const_like bits (F.Tensor.Sint 0)))
         (bitwise_xor bits max) bits
-    in
-    let zeros =
-      match zeros with
-      | `Tied ->
-          where
-            (eq bits (bound (Tolk_uop.Const.min_value int)))
-            (F.Creation.const_like bits (F.Tensor.Sint 0))
-            bits
-      | `Ordered -> bits
     in
     let values keys =
       F.Dtype_ops.cast
@@ -997,76 +987,27 @@ let order_keys ~nan ~zeros x =
     let nan_bits =
       gt (bitwise_and bits max) (bound (Tolk_uop.Const.int64 int infinity))
     in
-    (where nan_bits nan_key (flip zeros), values)
+    (where nan_bits nan_key (flip bits), values)
 
 (* A running maximum or minimum of [t] along [axis], as eager's: NaN from the
-   first NaN on, and the first of equal values, so that -0 and +0 keep their
-   order. Where int64 is native and a key of at most 32 bits leaves room for the
-   positions, one int64 scan orders the key, offset to be non-negative, above
-   the position, the earlier first, and the sign of a zero in the lowest bit:
-   the packed integer stays non-negative, since C and Metal leave a shift of a
-   negative integer undefined. The scanned high bits map back to the value and
-   the lowest restores a zero's sign. A float64 key, a device without int64 or a
-   longer axis scans the values and then marks NaN from its first occurrence in
-   a second scan. *)
+   first NaN on, and -0 below +0. Where the keys (see [order_keys]) are native
+   integers, the scan runs over them and maps back; each key stands for one
+   value, but for NaN. A float64 key on a device without int64 scans the values
+   and then marks NaN from its first occurrence in a second scan. *)
 let running ~packs ~axis ~op t =
   let scan = match op with `Max -> F.Op.cummax | `Min -> F.Op.cummin in
-  let dtype = F.Tensor.dtype t in
-  let n = List.nth (F.Tensor.shape t) axis in
-  let keys, values =
-    order_keys
-      ~nan:(match op with `Max -> `Greatest | `Min -> `Least)
-      ~zeros:`Tied t
-  in
-  let key_bits = TD.bitsize (F.Tensor.dtype keys) in
-  let shift = 63 - key_bits in
-  if not (TD.is_float dtype) then fst (scan ~axis t)
-  else if not (packs && key_bits <= 32 && 2 * n <= 1 lsl shift) then
-    nan_from_first ~axis t (fst (scan ~axis t))
+  if not (TD.is_float (F.Tensor.dtype t)) then fst (scan ~axis t)
   else
-    let open F.Elementwise in
-    let int t v = F.Creation.const_like t (F.Tensor.Sint v) in
-    let key_dtype = F.Tensor.dtype keys in
-    let least =
-      F.Tensor.of_uop (U.const (Tolk_uop.Const.min_value key_dtype))
+    let keys, values =
+      order_keys ~nan:(match op with `Max -> `Greatest | `Min -> `Least) t
     in
-    let wide, bits = float_bits t in
-    let ranks =
-      F.Movement.reshape
-        (F.Op.arange ~dtype:TD.int64 n)
-        (List.mapi (fun i _ -> if i = axis then n else 1) (F.Tensor.shape t))
-    in
-    let first =
-      match op with `Max -> sub (int ranks (n - 1)) ranks | `Min -> ranks
-    in
-    let low =
-      bitwise_or
-        (lshift first (int first 1))
-        (F.Dtype_ops.cast (eq bits least) TD.int64)
-    in
-    let offset = 1 lsl (key_bits - 1) in
-    let high = add (F.Dtype_ops.cast keys TD.int64) (int low offset) in
-    let scanned =
-      fst (scan ~axis (bitwise_or (lshift high (int high shift)) low))
-    in
-    let key =
-      F.Dtype_ops.cast
-        (sub (rshift scanned (int scanned shift)) (int scanned offset))
-        key_dtype
-    in
-    let signed_zero =
-      bitwise_and
-        (eq key (int key 0))
-        (eq (bitwise_and scanned (int scanned 1)) (int scanned 1))
-    in
-    let minus_zero =
-      F.Dtype_ops.cast (F.Dtype_ops.bitcast least (F.Tensor.dtype wide)) dtype
-    in
-    where signed_zero minus_zero (values key)
+    if packs || TD.bitsize (F.Tensor.dtype keys) <= 32 then
+      values (fst (scan ~axis keys))
+    else nan_from_first ~axis t (fst (scan ~axis t))
 
 (* The greatest or least element of [t] over [axes]: NaN when any element is
-   NaN, as eager's, and of -0 and +0 the greater for a maximum and the lesser
-   for a minimum, as IEEE orders them, where eager keeps the first. One integer
+   NaN, and of -0 and +0 the greater for a maximum and the lesser for a
+   minimum, as IEEE orders them and eager computes. One integer
    reduction over the keys (see [order_keys]) gives both, and keeps the order of
    subnormals that a float comparison flushes. *)
 let extreme ~op ~axes t =
@@ -1078,13 +1019,13 @@ let extreme ~op ~axes t =
   if not (TD.is_float (F.Tensor.dtype t)) then
     reduce ~axis:axes ~keepdim:false t
   else
-    let keys, values = order_keys ~nan ~zeros:`Ordered t in
+    let keys, values = order_keys ~nan t in
     values (reduce ~axis:axes ~keepdim:false keys)
 
-(* The keys a sort orders: NaN after every number in either direction, and equal
-   zeros tied, so that a stable sort keeps their order. *)
+(* The keys a sort orders: NaN after every number in either direction, and -0
+   before +0 ascending. *)
 let sort_keys ~descending x =
-  order_keys ~nan:(if descending then `Least else `Greatest) ~zeros:`Tied x
+  order_keys ~nan:(if descending then `Least else `Greatest) x
 
 (* Whether [st]'s device computes int64 natively, which the packed sort
    needs. *)
@@ -1152,10 +1093,10 @@ let argsort_graph ~packs ~dim ~descending x =
     along (positions (along first hi)) first
 
 (* [x] sorted along [dim]. A float sort returns [x]'s elements at the stable
-   positions that sort it, so a -0 or a NaN keeps its bits; mapped back from the
-   keys, every zero would come back as +0 and every NaN as one NaN (see
-   [order_keys]). Without native int64, recovering the positions costs n^2
-   operations, so the keys map back instead. An integer is its own key. *)
+   positions that sort it, so a NaN keeps its bits; mapped back from the keys,
+   every NaN would come back as one NaN (see [order_keys]). Without native
+   int64, recovering the positions costs n^2 operations, so the keys map back
+   instead. An integer is its own key. *)
 let sort_graph ~packs ~dim ~descending x =
   if TD.is_float (F.Tensor.dtype x) && packs then
     F.Op.gather x ~dim
@@ -2163,6 +2104,32 @@ let unary_graph dt : Nx_backend.unary -> F.Tensor.t -> F.Tensor.t = function
   | Floor -> if ND.is_float dt then F.Elementwise.floor else Fun.id
   | Round -> if ND.is_float dt then round_away else Fun.id
 
+(* The IEEE maximum or minimum of floats, as eager's: of two zeros, the one
+   with the sign bit clear for a maximum and set for a minimum, whichever the
+   operands' order. The zero and sign tests read bits, which a float comparison
+   may flush. *)
+let ieee_extreme ~op a b =
+  let extreme =
+    match op with
+    | `Max -> F.Elementwise.maximum
+    | `Min -> F.Elementwise.minimum
+  in
+  if not (TD.is_float (F.Tensor.dtype a)) then extreme a b
+  else
+    let open F.Elementwise in
+    let _, bits_a = float_bits a and _, bits_b = float_bits b in
+    let int = F.Tensor.dtype bits_a in
+    let magnitude = F.Tensor.of_uop (U.const (Tolk_uop.Const.max_value int)) in
+    let zero t = F.Creation.const_like t (F.Tensor.Sint 0) in
+    let is_zero bits = eq (bitwise_and bits magnitude) (zero bits) in
+    let negative = lt bits_a (zero bits_a) in
+    let tie =
+      match op with
+      | `Max -> where negative b a
+      | `Min -> where negative a b
+    in
+    where (bitwise_and (is_zero bits_a) (is_zero bits_b)) tie (extreme a b)
+
 let binary_graph : Nx_backend.binary -> F.Tensor.t -> F.Tensor.t -> F.Tensor.t
     = function
   | Add -> F.Elementwise.add
@@ -2170,8 +2137,8 @@ let binary_graph : Nx_backend.binary -> F.Tensor.t -> F.Tensor.t -> F.Tensor.t
   | Mul -> F.Elementwise.mul
   | Idiv -> F.Elementwise.cdiv
   | Fdiv -> F.Elementwise.div
-  | Maximum -> F.Elementwise.maximum
-  | Minimum -> F.Elementwise.minimum
+  | Maximum -> ieee_extreme ~op:`Max
+  | Minimum -> ieee_extreme ~op:`Min
   | Mod -> F.Elementwise.fmod
   | Pow -> F.Elementwise.pow
   | Xor -> F.Elementwise.bitwise_xor
@@ -2254,14 +2221,14 @@ let rec install : type a. state -> (unit -> a) -> a =
         ret (dt x) (extreme ~op:`Max ~axes:(Array.to_list axes) (go x))
     | Reduce (Min, axes, x) ->
         ret (dt x) (extreme ~op:`Min ~axes:(Array.to_list axes) (go x))
-    (* Over integer keys the first NaN is the extreme and zeros tie, so the
-       first of equal extremes is eager's position. *)
+    (* Over integer keys the first NaN is the extreme and -0 orders below +0,
+       so the first of equal extremes is eager's position. *)
     | Arg_reduce (Argmax, axis, x) ->
-        let keys, _ = order_keys ~nan:`Greatest ~zeros:`Tied (go x) in
+        let keys, _ = order_keys ~nan:`Greatest (go x) in
         ret ND.int32
           (F.Dtype_ops.cast (F.Op.argmax ~axis ~keepdim:false keys) TD.int32)
     | Arg_reduce (Argmin, axis, x) ->
-        let keys, _ = order_keys ~nan:`Least ~zeros:`Tied (go x) in
+        let keys, _ = order_keys ~nan:`Least (go x) in
         ret ND.int32
           (F.Dtype_ops.cast (F.Op.argmin ~axis ~keepdim:false keys) TD.int32)
     | Sort { descending; axis; x } ->

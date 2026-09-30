@@ -1929,13 +1929,13 @@ let test_vector_products_are_matmuls () =
 
 (* Compiled max and min are NaN when any element is NaN, as eager's, and of -0
    and +0 give the greater for a maximum and the lesser for a minimum, as IEEE
-   orders them, where eager keeps the first; [ieee] is that reference. Compiled
-   argmax and argmin agree with eager: the first NaN, and the first of equal
-   zeros. The compiled comparison ignored a NaN unless it came first: max [1;
-   nan; 0; 2] was 2 and its argmax 3, and Metal's flushed subnormals. Each row
-   of [short] is one case, reduced along its row and, transposed, along a
-   column; [long] reduces rows of 4096, which the reduction splits across
-   threads; [grid] reduces both axes. *)
+   orders them and eager computes; [ieee] is that reference. Compiled argmax
+   and argmin agree with eager: the first NaN, else the first element with the
+   extreme's bits. The compiled comparison ignored a NaN unless it came first:
+   max [1; nan; 0; 2] was 2 and its argmax 3, and Metal's flushed subnormals.
+   Each row of [short] is one case, reduced along its row and, transposed,
+   along a column; [long] reduces rows of 4096, which the reduction splits
+   across threads; [grid] reduces both axes. *)
 let test_extremes () =
   let nan = Float.nan in
   let short =
@@ -2084,27 +2084,39 @@ let test_long_scans_match_eager () =
   check "cummax" (Nx.cummax ~axis:0) values;
   check "cumprod" (Nx.cumprod ~axis:0) signs
 
-(* Of equal values a running maximum or minimum keeps the first, as eager does:
-   -0 and +0 are equal, so each keeps whichever zero came first. *)
-let test_scans_keep_the_first_zero () =
+(* A running maximum or minimum orders -0 below +0, compiled as eager. *)
+let test_scans_order_zeros () =
   List.iter
     (fun device ->
       List.iter
-        (fun (name, f, input) ->
+        (fun (name, f, input, expected) ->
           let x = vec32 input in
-          equal
-            ~msg:(Printf.sprintf "%s, %s" name device)
-            (array float_exact)
-            (to_arr (f x))
+          let msg = Printf.sprintf "%s, %s" name device in
+          equal ~msg:(msg ^ ", eager") (array float_exact) expected
+            (to_arr (f x));
+          equal ~msg (array float_exact) expected
             (to_arr (Rune.jit' ~devices:[ Rune.device device ] f x)))
         [
-          ("cummax [-0; 0]", Nx.cummax ~axis:0, [| -0.0; 0.0 |]);
-          ("cummax [0; -0]", Nx.cummax ~axis:0, [| 0.0; -0.0 |]);
-          ("cummin [0; -0]", Nx.cummin ~axis:0, [| 0.0; -0.0 |]);
-          ("cummin [-0; 0]", Nx.cummin ~axis:0, [| -0.0; 0.0 |]);
+          ( "cummax [-0; 0]",
+            Nx.cummax ~axis:0,
+            [| -0.0; 0.0 |],
+            [| -0.0; 0.0 |] );
+          ( "cummax [0; -0]",
+            Nx.cummax ~axis:0,
+            [| 0.0; -0.0 |],
+            [| 0.0; 0.0 |] );
+          ( "cummin [0; -0]",
+            Nx.cummin ~axis:0,
+            [| 0.0; -0.0 |],
+            [| 0.0; -0.0 |] );
+          ( "cummin [-0; 0]",
+            Nx.cummin ~axis:0,
+            [| -0.0; 0.0 |],
+            [| -0.0; -0.0 |] );
           ( "cummax [-1; -0; 0; -0]",
             Nx.cummax ~axis:0,
-            [| -1.0; -0.0; 0.0; -0.0 |] );
+            [| -1.0; -0.0; 0.0; -0.0 |],
+            [| -1.0; -0.0; 0.0; 0.0 |] );
         ])
     devices
 
@@ -5284,7 +5296,7 @@ let tests =
           test_small_int_scans_keep_dtype;
         test "long scans match eager" test_long_scans_match_eager;
         test "scans propagate NaN" test_scans_propagate_nan;
-        test "scans keep the first zero" test_scans_keep_the_first_zero;
+        test "scans order -0 below +0" test_scans_order_zeros;
         test "8-bit float scans along a long axis" test_fp8_long_scans;
       ];
     group "indexed access"

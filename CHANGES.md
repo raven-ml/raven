@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Compiled `Nx.maximum`, `Nx.minimum`, `Nx.cummax`, `Nx.cummin`, `Nx.argmax`,
+  `Nx.argmin`, `Nx.sort` and `Nx.argsort` order `-0.` below `0.`, as eager
+  now does: a compiled `maximum` of two zeros returned its second operand, and
+  the compiled scans, arg-reductions and sorts kept the first of two zeros.
 - **Breaking:** `Rune.vmap` hands the mapped function lanes, traced values of
   the unbatched shape that hold the batched tensor, instead of batched tensors
   whose shape queries answered unbatched. `Nx.placement` of a lane of a map
@@ -2871,6 +2875,14 @@ thread.
 
 ### Nx
 
+- `Nx.maximum`, `Nx.minimum`, `Nx.max`, `Nx.min`, `Nx.cummax` and `Nx.cummin`
+  are IEEE 754 maximum and minimum: NaN propagates and `-0.` is less than
+  `0.`. A tie of zeros returned an operand by position, so `max` of
+  `[-0.; 0.]` was `-0.` and of `[0.; -0.]` was `0.`, and an axis reduction's
+  zero depended on the layout. `Nx.argmax` and `Nx.argmin` return the index of
+  the element `max` and `min` return, and `Nx.sort`, `Nx.argsort` and
+  `Nx.top_k` put `-0.` before `0.` ascending, where they kept the zeros in
+  input order. Eager and compiled code agree on zeros.
 - `Nx.Repr.Storage` has the claims a compiled call takes on the storage its
   arguments reach: `borrow` and `release` for reading, `upgrade` to an
   exclusive claim, `consume`, and `finish`; `pin` and `unpin` for the programs

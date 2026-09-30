@@ -2027,13 +2027,17 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
     ]} *)
 
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [maximum a b] is the element-wise maximum of [a] and [b]. *)
+(** [maximum a b] is the element-wise maximum of [a] and [b]. On floats it is
+    the IEEE 754 maximum: NaN propagates, and [-0.] is less than [0.], so the
+    maximum of [-0.] and [0.] is [0.] in either order. *)
 
 val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [maximum_s t s] is the element-wise maximum of [t] and scalar [s]. *)
 
 val minimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [minimum a b] is the element-wise minimum of [a] and [b]. *)
+(** [minimum a b] is the element-wise minimum of [a] and [b]. On floats it is
+    the IEEE 754 minimum: NaN propagates, and [-0.] is less than [0.], so the
+    minimum of [-0.] and [0.] is [-0.] in either order. *)
 
 val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [minimum_s t s] is the element-wise minimum of [t] and scalar [s]. *)
@@ -2270,10 +2274,10 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [max ?axes ?keepdims t] is the maximum along [axes]. NaN propagates. When
-    the result is a zero and both signs occur, the eager result takes the sign
-    of the first zero it meets, and a compiled one ({!Rune.val-jit}) is [0.]
-    (IEEE maximum). [keepdims] defaults to [false].
+(** [max ?axes ?keepdims t] is the maximum along [axes], as {!maximum} orders
+    elements: NaN propagates and [-0.] is less than [0.]. The result does not
+    depend on the order the elements are combined in. [keepdims] defaults to
+    [false].
 
     {@ocaml[
       # create float32 [| 2; 3 |]
@@ -2283,10 +2287,10 @@ val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [min ?axes ?keepdims t] is the minimum along [axes]. NaN propagates. When
-    the result is a zero and both signs occur, the eager result takes the sign
-    of the first zero it meets, and a compiled one ({!Rune.val-jit}) is [-0.]
-    (IEEE minimum). [keepdims] defaults to [false]. *)
+(** [min ?axes ?keepdims t] is the minimum along [axes], as {!minimum} orders
+    elements: NaN propagates and [-0.] is less than [0.]. The result does not
+    depend on the order the elements are combined in. [keepdims] defaults to
+    [false]. *)
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
@@ -2312,16 +2316,18 @@ val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
     See also {!cumsum}. *)
 
 val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cummax ?axis t] is the inclusive cumulative maximum along [axis]. NaN
-    propagates for floating-point dtypes. When [axis] is omitted, it accumulates
-    the flattened tensor and keeps [t]'s shape.
+(** [cummax ?axis t] is the inclusive cumulative maximum along [axis], as
+    {!maximum} orders elements: NaN propagates and [-0.] is less than [0.]. When
+    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
+    shape.
 
     See also {!cummin}. *)
 
 val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cummin ?axis t] is the inclusive cumulative minimum along [axis]. NaN
-    propagates for floating-point dtypes. When [axis] is omitted, it accumulates
-    the flattened tensor and keeps [t]'s shape.
+(** [cummin ?axis t] is the inclusive cumulative minimum along [axis], as
+    {!minimum} orders elements: NaN propagates and [-0.] is less than [0.]. When
+    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
+    shape.
 
     See also {!cummax}. *)
 
@@ -2385,10 +2391,11 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
     See also {!all}. *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
-(** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]. Returns
-    the first occurrence for ties. A NaN counts as the maximum: the result is
-    the index of the first NaN. When [axis] is omitted, operates on the
-    flattened tensor. [keepdims] defaults to [false].
+(** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]: the
+    first index holding the element {!max} returns, so [-0.] and [0.] do not
+    tie and the argmax of [[-0.; 0.]] is [1]. A NaN counts as the maximum: the
+    result is the index of the first NaN. When [axis] is omitted, operates on
+    the flattened tensor. [keepdims] defaults to [false].
 
     Raises [Invalid_argument] if [axis] is out of bounds, or if it holds more
     than [Int32.max_int] entries, which an int32 index cannot reach.
@@ -2402,10 +2409,11 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
     See also {!argmin}. *)
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
-(** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]. Returns
-    the first occurrence for ties. A NaN counts as the minimum: the result is
-    the index of the first NaN. When [axis] is omitted, operates on the
-    flattened tensor. [keepdims] defaults to [false].
+(** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]: the
+    first index holding the element {!min} returns, so the argmin of
+    [[0.; -0.]] is [1]. A NaN counts as the minimum: the result is the index of
+    the first NaN. When [axis] is omitted, operates on the flattened tensor.
+    [keepdims] defaults to [false].
 
     Raises [Invalid_argument] as {!argmax} does.
 
@@ -2423,8 +2431,8 @@ val sort :
     [descending] defaults to [false]. [axis] defaults to [-1] (last).
 
     [sorted] is [take_along_axis ~axis ~indices t], bit for bit. The sort is
-    stable: equal elements keep their input order, [-0.] and [0.] and NaNs
-    included. NaN sorts to the end in either direction.
+    stable: equal elements keep their input order, NaNs included. [-0.] sorts
+    before [0.], and NaN sorts to the end in either direction.
 
     Raises [Invalid_argument] if [axis] is out of bounds.
 

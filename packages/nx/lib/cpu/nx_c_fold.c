@@ -19,9 +19,11 @@
    complex. The f32 (and every float) sum step carries ≥2 partial accumulators
    so the contiguous run autovectorizes and a 2^25-ones reduction does not stall
    a single float at 2^24; f16/bf16 sums accumulate in float so a 4096-/512-ones
-   run does not stall at the half/bfloat integer ceiling. max/min propagate NaN
-   for floats (any NaN in the extent wins); argmax/argmin agree (NaN wins, first
-   index). Complex has no ordered comparison, so max/min/argmax/argmin/cummax/
+   run does not stall at the half/bfloat integer ceiling. Float max/min are IEEE
+   754-2019 maximum and minimum: any NaN in the extent wins, and -0 orders below
+   +0, so the result depends on neither association nor traversal order.
+   argmax/argmin agree: the first NaN, else the first element with the extreme's
+   bits. Complex has no ordered comparison, so max/min/argmax/argmin/cummax/
    cummin leave complex NULL; bool has no arithmetic, so sum/prod/cumsum/cumprod
    leave bool NULL — bool max/min are or/and on 0/1.
 
@@ -61,9 +63,15 @@
 #define NX_C_MINSENT_uint64_t UINT64_MAX
 
 /* ── Per-element combine, folding value V into accumulator lvalue M ───────────
-   The float max/min forms propagate NaN: once M is NaN, (V > M) and (V < M) are
-   both false and only a NaN V re-arms the second clause, so the first NaN sticks
-   and later numbers cannot displace it — matching reduce_max/min. bool max/min
+   The float max/min forms are IEEE 754-2019 maximum and minimum. Once M is
+   NaN, the comparisons are all false and only a NaN V takes its place, so
+   later numbers cannot displace a NaN — matching reduce_max/min. Neither
+   greater nor less, V is equal to M or one is NaN: that rare branch takes a
+   NaN V, and between equal values lets the sign bit decide, which only
+   matters for zeros: max takes +0 over -0, min -0 over +0. The common branch
+   thus costs the two comparisons it always did. The lane forms, for the
+   streaming path whose accumulators are independent, are nx_c_fmax and
+   nx_c_fmin, whose selects vectorize where a branch would not. bool max/min
    are or/and on 0/1. V must be a plain variable (evaluated more than once). */
 #define NX_C_CMB_SUM(M, V) (M) += (V)
 #define NX_C_CMB_PROD(M, V) (M) *= (V)
@@ -77,28 +85,39 @@
   if ((V) > (M)) (M) = (V)
 #define NX_C_CMB_MINI(M, V) \
   if ((V) < (M)) (M) = (V)
-#define NX_C_CMB_MAXF(M, V)   \
-  if ((V) > (M))             \
-    (M) = (V);               \
-  else if ((V) != (V))       \
+#define NX_C_CMB_MAXF(M, V)                                   \
+  if ((V) > (M))                                             \
+    (M) = (V);                                               \
+  else if (!((V) < (M)) &&                                   \
+           ((V) != (V) || ((V) == (M) && signbit(M))))       \
   (M) = (V)
-#define NX_C_CMB_MINF(M, V)   \
-  if ((V) < (M))             \
-    (M) = (V);               \
-  else if ((V) != (V))       \
+#define NX_C_CMB_MINF(M, V)                                   \
+  if ((V) < (M))                                             \
+    (M) = (V);                                               \
+  else if (!((V) > (M)) &&                                   \
+           ((V) != (V) || ((V) == (M) && signbit(V))))       \
   (M) = (V)
+#define NX_C_CMB_MAXF_LANE(M, V) (M) = nx_c_fmax(M, V)
+#define NX_C_CMB_MINF_LANE(M, V) (M) = nx_c_fmin(M, V)
 #define NX_C_CMB_MAXB(M, V) (M) |= (V)
 #define NX_C_CMB_MINB(M, V) (M) &= (V)
 
 /* ── Comparison for argmax/argmin: does V displace the running best B? ────────
-   Strict, so ties keep the earlier index; the float forms also take V when it is
-   NaN and B is not, so the first NaN wins the index (agreeing with reduce). */
+   Strict, so ties keep the earlier index. Neither greater nor less, V is equal
+   to B or one is NaN: the float forms then take V when it is NaN and B is not,
+   so the first NaN wins the index, and take +0 over -0 for max and -0 over +0
+   for min, so the index is that of the first element with the bits reduce
+   returns. */
 #define NX_C_ACMP_MAXI(V, B) ((V) > (B))
 #define NX_C_ACMP_MINI(V, B) ((V) < (B))
-#define NX_C_ACMP_MAXF(V, B) \
-  (((V) > (B)) || (((V) != (V)) && !((B) != (B))))
-#define NX_C_ACMP_MINF(V, B) \
-  (((V) < (B)) || (((V) != (V)) && !((B) != (B))))
+#define NX_C_ACMP_MAXF(V, B)                                                    \
+  ((V) > (B) ||                                                                 \
+   (!((V) < (B)) && (((V) != (V) && (B) == (B)) ||                              \
+                     ((V) == (B) && signbit(B) && !signbit(V)))))
+#define NX_C_ACMP_MINF(V, B)                                                    \
+  ((V) < (B) ||                                                                 \
+   (!((V) > (B)) && (((V) != (V) && (B) == (B)) ||                              \
+                     ((V) == (B) && signbit(V) && !signbit(B)))))
 
 /* ── Kernel templates ────────────────────────────────────────────────────────
    One reduction/scan/argreduce body, specialized by the combine/compare macro.
@@ -394,9 +413,10 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
 
 /* Streaming steps, one per op over its supported categories. sum uses a single
    per-lane accumulator (not the per-output float multi-accumulator: the lanes
-   provide the vectorization here); the rest reuse the same combine macros as
-   their per-output steps, so the scalar semantics — including NaN propagation
-   for float max/min — are identical. */
+   provide the vectorization here); float max/min use the lane forms of their
+   combines; the rest reuse the same combine macros as their per-output steps.
+   The scalar semantics — including NaN propagation and the order of zeros for
+   float max/min — are identical. */
 #define NX_C_SUM_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
   NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
 #define NX_C_SUM_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
@@ -436,7 +456,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STREAM_ROW)
 #undef NX_C_PROD_STREAM_NX_C_CAT_BOOL
 
 #define NX_C_MAX_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXF)
+  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXF_LANE)
 #define NX_C_MAX_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
   NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXI)
 #define NX_C_MAX_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                     \
@@ -455,7 +475,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STREAM_ROW)
 #undef NX_C_MAX_STREAM_NX_C_CAT_COMPLEX
 
 #define NX_C_MIN_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINF)
+  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINF_LANE)
 #define NX_C_MIN_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
   NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINI)
 #define NX_C_MIN_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                     \

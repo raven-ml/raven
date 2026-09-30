@@ -542,9 +542,9 @@ let check_nan_comparisons ?devices () =
     (to_arr (masked x))
     (to_arr (Rune.jit' ?devices masked x))
 
-(* Max propagates NaN from either operand and keeps its second operand on a tie,
-   as eager's does: max (|x| + 1) (sin (x * inf)) is NaN and max (-0) (+0) is
-   +0. *)
+(* Max propagates NaN from either operand and orders -0 below +0, as eager's
+   does: max (|x| + 1) (sin (x * inf)) is NaN and max (-0) (+0) and max (+0)
+   (-0) are +0. *)
 let check_max_nan ?devices () =
   let check name f rows = check_same_bits ?devices name f (vec32 rows) in
   check "max (|x| + 1) (sin (x * inf))"

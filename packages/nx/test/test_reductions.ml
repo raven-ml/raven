@@ -151,12 +151,12 @@ let float_reductions =
             (tensor (close ~rel:1e-12 ~abs:1e-12 ()))
             (Nx.div_s (Nx.sum ?axes ~keepdims t) (Float.of_int count))
             (Nx.mean ?axes ~keepdims t));
-      prop "max and min propagate NaN"
+      prop "max and min propagate NaN and order -0 below +0"
         (with_axes (floats nonempty))
         (fun (t, axes, keepdims) ->
           assume (not (empty_axis t axes));
           let r = Ref.of_nx t in
-          let exact = Ref.witness (close ~rel:0. ()) in
+          let exact = Ref.witness float_exact in
           equal exact
             (Ref.reduce ?axes ~keepdims nanmax neg_infinity r)
             (Ref.of_nx (Nx.max ?axes ~keepdims t));
@@ -195,6 +195,10 @@ let float_reductions =
           raises_invalid_arg (fun () -> Nx.mean (Nx.zeros Nx.int32 [| 0 |])));
     ]
 
+(* Whether [x] is greater than [y] in the order of IEEE maximum, where -0 is
+   less than +0. *)
+let above x y = x > y || (x = y && Float.sign_bit y && not (Float.sign_bit x))
+
 (* The index of the first extreme, a NaN counting as the extreme. *)
 let first_extreme better lane =
   let best = ref 0 in
@@ -230,10 +234,10 @@ let arg_reductions =
     [
       check "argmax"
         (fun ?axis ~keepdims t -> Nx.argmax ?axis ~keepdims t)
-        ( > );
+        above;
       check "argmin"
         (fun ?axis ~keepdims t -> Nx.argmin ?axis ~keepdims t)
-        ( < );
+        (fun x y -> above y x);
       test "argmax refuses an axis out of bounds" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.argmax ~axis:2 (Nx.zeros Nx.float64 [| 2; 2 |])));
@@ -279,16 +283,119 @@ let scans =
       exact "cumprod"
         (fun ?axis t -> Nx.cumprod ?axis t)
         Int32.mul ints (int32s ranked) Ref.of_nx;
-      exact "cummax, propagating NaN,"
+      exact "cummax, propagating NaN and ordering -0 below +0,"
         (fun ?axis t -> Nx.cummax ?axis t)
-        nanmax
-        (Ref.witness (close ~rel:0. ()))
-        (floats ranked) Ref.of_nx;
-      exact "cummin, propagating NaN,"
+        nanmax (Ref.witness float_exact) (floats ranked) Ref.of_nx;
+      exact "cummin, propagating NaN and ordering -0 below +0,"
         (fun ?axis t -> Nx.cummin ?axis t)
-        nanmin
-        (Ref.witness (close ~rel:0. ()))
-        (floats ranked) Ref.of_nx;
+        nanmin (Ref.witness float_exact) (floats ranked) Ref.of_nx;
+    ]
+
+(* A float dtype, to run a case at each width. *)
+type float_dtype = F : string * (float, 'b) Nx.dtype -> float_dtype
+
+let float_dtypes =
+  [
+    F ("float16", Nx.float16);
+    F ("bfloat16", Nx.bfloat16);
+    F ("float32", Nx.float32);
+    F ("float64", Nx.float64);
+  ]
+
+(* The 2 x 3 matrix of [xs] in three layouts: contiguous, held transposed, and
+   every other column of a wider matrix. Each takes another path through the
+   reductions: along the contiguous axis, across it, and strided. *)
+let layouts dt xs =
+  let n = Array.length xs / 2 in
+  let wide =
+    Nx.create dt [| 2; 2 * n |]
+      (Array.init (4 * n) (fun i -> if i mod 2 = 0 then xs.(i / 2) else 7.))
+  in
+  [
+    ("contiguous", Nx.create dt [| 2; n |] xs);
+    ( "held transposed",
+      Nx.transpose
+        (Nx.create dt [| n; 2 |]
+           (Array.init (2 * n) (fun i -> xs.((i mod 2 * n) + (i / 2))))) );
+    ( "every other column",
+      Nx.squeeze ~axes:[ -1 ] (Nx.sliding_window ~axis:1 ~window:1 ~step:2 wide)
+    );
+  ]
+
+(* Both signs of zero meet in every row and every column. *)
+let mixed_zeros = [| -0.; 0.; -0.; 0.; -0.; 0. |]
+
+(* A check of a matrix at any float dtype, named after its dtype and layout. *)
+type check = { run : 'b. string -> (float, 'b) Nx.t -> unit }
+
+(* [on_every_path c] runs [c] on [mixed_zeros] at every float dtype and in
+   every layout. *)
+let on_every_path c =
+  List.iter
+    (fun (F (name, dt)) ->
+      List.iter
+        (fun (layout, t) -> c.run (name ^ ", " ^ layout) t)
+        (layouts dt mixed_zeros))
+    float_dtypes
+
+let signed_zeros =
+  group "signed zeros"
+    [
+      test "max is +0 and min -0 where both zeros meet, on every path"
+        (fun () ->
+          on_every_path
+            {
+              run =
+                (fun msg t ->
+                  List.iter
+                    (fun (axes, shape) ->
+                      let filled v = Nx.full (Nx.dtype t) shape v in
+                      equal ~msg:(msg ^ ", max") (tensor float_exact)
+                        (filled 0.) (Nx.max ?axes t);
+                      equal ~msg:(msg ^ ", min") (tensor float_exact)
+                        (filled (-0.)) (Nx.min ?axes t))
+                    [
+                      (None, [||]);
+                      (Some [ 0 ], [| 3 |]);
+                      (Some [ 1 ], [| 2 |]);
+                    ]);
+            });
+      test "argmax and argmin point at the zero max and min return" (fun () ->
+          let ints xs = Nx.create Nx.int32 [| Array.length xs |] xs in
+          on_every_path
+            {
+              run =
+                (fun msg t ->
+                  let equal what =
+                    equal ~msg:(msg ^ ", " ^ what) (tensor int32)
+                  in
+                  equal "argmax along rows" (ints [| 1l; 0l |])
+                    (Nx.argmax ~axis:1 t);
+                  equal "argmin along rows" (ints [| 0l; 1l |])
+                    (Nx.argmin ~axis:1 t);
+                  equal "argmax along columns" (ints [| 1l; 0l; 1l |])
+                    (Nx.argmax ~axis:0 t);
+                  equal "argmin along columns" (ints [| 0l; 1l; 0l |])
+                    (Nx.argmin ~axis:0 t));
+            });
+      test "cummax and cummin turn to the extreme zero" (fun () ->
+          List.iter
+            (fun (F (name, dt)) ->
+              let v xs = Nx.create dt [| Array.length xs |] xs in
+              equal ~msg:(name ^ ", cummax") (tensor float_exact)
+                (v [| -0.; 0.; 0. |])
+                (Nx.cummax (v [| -0.; 0.; -0. |]));
+              equal ~msg:(name ^ ", cummin") (tensor float_exact)
+                (v [| 0.; -0.; -0. |])
+                (Nx.cummin (v [| 0.; -0.; 0. |])))
+            float_dtypes);
+      test "NaN wins over both zeros" (fun () ->
+          let v xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+          let t = v [| -0.; Float.nan; 0. |] in
+          equal ~msg:"max" float_exact Float.nan (Nx.item [] (Nx.max t));
+          equal ~msg:"min" float_exact Float.nan (Nx.item [] (Nx.min t));
+          equal ~msg:"argmax" int32 1l (Nx.item [] (Nx.argmax t));
+          equal ~msg:"argmin" int32 1l (Nx.item [] (Nx.argmin t)));
     ]
 
 (* The normalisations, at float64 on finite values. *)
@@ -442,6 +549,7 @@ let () =
          float_reductions;
          arg_reductions;
          scans;
+         signed_zeros;
          normalisations;
          at_scale;
        ])

@@ -52,7 +52,7 @@ Device memory that backs an output is held until the output is garbage-collected
 
 ## Numerics
 
-A compiled program performs the operations the function performs. A sum over an axis (`Nx.sum`, `Nx.mean`, the contraction of `Nx.matmul`) is the sum of its terms in an unspecified association. The compiler may add the terms in another order than eager, split them across threads, and move a factor that does not vary along the summed axis out of the sum (`sum (0.125 * a * b)` becomes `0.125 * sum (a * b)`). Results then differ from eager's in rounding, and at overflow in whether a term overflows. A maximum over an axis is exact, except which zero it returns when -0 and +0 tie.
+A compiled program performs the operations the function performs. A sum over an axis (`Nx.sum`, `Nx.mean`, the contraction of `Nx.matmul`) is the sum of its terms in an unspecified association. The compiler may add the terms in another order than eager, split them across threads, and move a factor that does not vary along the summed axis out of the sum (`sum (0.125 * a * b)` becomes `0.125 * sum (a * b)`). Results then differ from eager's in rounding, and at overflow in whether a term overflows. A maximum over an axis is exact.
 
 Beyond that, compiled float results can differ from eager's in the last bits where the kernel compiler fuses a multiply and an add, where a division by a constant becomes a multiplication by its rounded reciprocal, and in transcendental functions, which are approximations within a few units in the last place (`Nx.pow` about 70); Metal flushes float32 subnormals to zero, a `float16` program on the CPU is not rounded after each operation, and signed integer overflow is undefined in the generated C.
 

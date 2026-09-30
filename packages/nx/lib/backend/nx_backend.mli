@@ -59,6 +59,8 @@ type binary =
   | Pow  (** [a] to the power [b]. *)
   | Atan2  (** The angle of [(b, a)] in radians, in \]-π, π\]. *)
   | Maximum
+      (** The IEEE 754 maximum on floats: NaN propagates and [-0] orders below
+          [+0], as for [Minimum], [Max] and [Min]. *)
   | Minimum
   | And  (** Bitwise on integers, logical on booleans, as [Or] and [Xor]. *)
   | Or
@@ -210,8 +212,8 @@ module type S = sig
     dst:int32_array ->
     unit
   (** [argsort ~descending ~axis x ~dst] writes the positions that sort [x]
-      along [axis] into [dst]. The sort is stable, and NaNs come last in either
-      direction. *)
+      along [axis] into [dst]. The sort is stable, [-0] orders below [+0], and
+      NaNs come last in either direction. *)
 
   (** {1:assembly Assembly} *)
 

@@ -643,9 +643,10 @@ static const nx_c_map_table nx_c_mod_table = {
     .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_INTF)}};
 #undef NX_C_CUROP
 
-/* max / min: NaN-propagating on floats, ordered on int/bool, rejected on
-   complex. The compute width carries signedness, so > / < are the right
-   signed/unsigned comparison per dtype. */
+/* max / min: IEEE 754-2019 maximum and minimum on floats (nx_c_fmax and
+   nx_c_fmin: NaN propagates, -0 orders below +0), ordered on int/bool,
+   rejected on complex. The compute width carries signedness, so > / < are the
+   right signed/unsigned comparison per dtype. */
 #define NX_C_MMK_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
          ((va)NX_C_CURSYM(vb) ? (va) : (vb)))
@@ -656,9 +657,7 @@ static const nx_c_map_table nx_c_mod_table = {
   NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
          ((va)NX_C_CURSYM(vb) ? (va) : (vb)))
 #define NX_C_MMK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
-  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
-         ((isnan(va) || isnan(vb)) ? (compute)NAN                              \
-                                   : ((va)NX_C_CURSYM(vb) ? (va) : (vb))))
+  NX_C_BK(NX_C_CUROP, sfx, storage, compute, ld, st, NX_C_CURFLOAT(va, vb))
 #define NX_C_MMK_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
 #define NX_C_MINMAX_KROW(sfx, storage, compute, ld, st, cat)                    \
   NX_C_MMK_##cat(sfx, storage, compute, ld, st)
@@ -670,12 +669,16 @@ static const nx_c_map_table nx_c_mod_table = {
 
 #define NX_C_CUROP max
 #define NX_C_CURSYM >
+#define NX_C_CURFLOAT nx_c_fmax
 NX_C_MINMAX(max)
+#undef NX_C_CURFLOAT
 #undef NX_C_CURSYM
 #undef NX_C_CUROP
 #define NX_C_CUROP min
 #define NX_C_CURSYM <
+#define NX_C_CURFLOAT nx_c_fmin
 NX_C_MINMAX(min)
+#undef NX_C_CURFLOAT
 #undef NX_C_CURSYM
 #undef NX_C_CUROP
 

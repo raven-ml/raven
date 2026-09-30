@@ -17,8 +17,8 @@
    stable LSD radix sort (a stable insertion sort on short slices). Argsort
    writes the positions; sort copies the input's elements at those positions,
    bit for bit. Stability comes from the algorithm, so equal elements keep their
-   input order in either direction, -0 and +0 and NaNs included, and sort's
-   values are exactly the input's elements at argsort's indices.
+   input order in either direction, NaNs included, and sort's values are
+   exactly the input's elements at argsort's indices. -0 sorts before +0.
 
    Each slice is read once through its stride into contiguous per-thread
    scratch, sorted there, and written to the (C-contiguous) output.
@@ -48,8 +48,9 @@
    word most significant, whose unsigned order is the element order:
    - an unsigned integer or bool is its own key;
    - a signed integer flips its sign bit;
-   - a float's bits map through nx_c_fkey: -0 takes +0's key, a negative value
-     complements its bits and a positive one sets its sign bit;
+   - a float's bits map through nx_c_fkey: a negative value, -0 included,
+     complements its bits and a positive one sets its sign bit, so -0's key is
+     just below +0's;
    - a complex value is two words, its real part's float key above its
      imaginary part's, which orders lexicographically.
    A descending sort complements the key. Every NaN, and every complex value
@@ -61,7 +62,6 @@
 #define NX_C_DEFINE_FKEY(W)                                                     \
   static inline uint##W##_t nx_c_fkey##W(uint##W##_t b) {                       \
     const uint##W##_t sign = (uint##W##_t)((uint##W##_t)1 << (W - 1));        \
-    if ((uint##W##_t)(b << 1) == 0) return sign;                               \
     return b & sign ? (uint##W##_t)~b : (uint##W##_t)(b | sign);                \
   }
 NX_C_DEFINE_FKEY(8)

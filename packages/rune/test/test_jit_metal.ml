@@ -605,7 +605,7 @@ let test_borrowed_storage_is_never_lent () =
     ]
 
 (* Metal flushes float32 subnormals to zero when it compares floats. A compiled
-   sort keeps them, in order, as eager does, and -0 ties with 0. *)
+   sort keeps them, in order, as eager does, and -0 sorts before 0. *)
 let test_sort_keeps_subnormals () =
   let x =
     vec32

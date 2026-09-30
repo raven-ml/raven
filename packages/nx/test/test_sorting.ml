@@ -8,8 +8,8 @@
 open Windtrap
 open Nx_test
 
-(* A dtype with the order of its elements: NaN after every number, and zeros of
-   both signs equal. *)
+(* A dtype with the order of its elements: NaN after every number, and -0 before
+   +0. *)
 type sortable =
   | S : {
       name : string;
@@ -23,6 +23,12 @@ type sortable =
       -> sortable
 
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
+
+(* The order of two numbers, -0 before +0. *)
+let compare_float a b =
+  if a < b then -1
+  else if a > b then 1
+  else Bool.compare (Float.sign_bit b) (Float.sign_bit a)
 
 let floats name dtype =
   S
@@ -38,7 +44,7 @@ let floats name dtype =
               Gen.of_list ~pp:pp_float
                 [ Float.nan; -0.; 0.; infinity; neg_infinity ] );
           ];
-      compare = (fun a b -> if a < b then -1 else if a > b then 1 else 0);
+      compare = compare_float;
       is_nan = Float.is_nan;
       exact = float_exact;
       pp = pp_float;
@@ -88,8 +94,8 @@ let sortables =
         exact = int32;
         pp = (fun ppf v -> Format.fprintf ppf "%lu" v);
       };
-    (* Complex numbers order by real part, then imaginary part; NaN in either
-       part sorts last. *)
+    (* Complex numbers order by real part, then imaginary part, each with -0
+       before +0; NaN in either part sorts last. *)
     S
       {
         name = "complex128";
@@ -99,7 +105,7 @@ let sortables =
              Gen.frequency
                [
                  (6, Gen.map float_of_int (Gen.int_range (-2) 2));
-                 (1, Gen.constant ~pp:pp_float Float.nan);
+                 (1, Gen.of_list ~pp:pp_float [ Float.nan; -0. ]);
                ]
            in
            Gen.(
@@ -107,8 +113,9 @@ let sortables =
              Complex.{ re; im }));
         compare =
           (fun (a : Complex.t) (b : Complex.t) ->
-            let c x y = if x < y then -1 else if x > y then 1 else 0 in
-            match c a.re b.re with 0 -> c a.im b.im | k -> k);
+            match compare_float a.re b.re with
+            | 0 -> compare_float a.im b.im
+            | k -> k);
         is_nan = (fun (z : Complex.t) -> Float.is_nan z.re || Float.is_nan z.im);
         exact =
           Testable.contramap
@@ -198,6 +205,15 @@ let sorts =
          ])
        sortables
     @ [
+        test "-0 sorts before +0, and after it descending" (fun () ->
+            let t = Nx.create Nx.float32 [| 4 |] [| 0.; -0.; 0.; -0. |] in
+            let check ~descending values indices =
+              let v, i = Nx.sort ~descending t in
+              equal ~msg:"values" (array float_exact) values (Nx.to_array v);
+              equal ~msg:"indices" (array int32) indices (Nx.to_array i)
+            in
+            check ~descending:false [| -0.; -0.; 0.; 0. |] [| 1l; 3l; 0l; 2l |];
+            check ~descending:true [| 0.; 0.; -0.; -0. |] [| 0l; 2l; 1l; 3l |]);
         test "sort refuses an axis out of bounds" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.sort ~axis:1 (Nx.zeros Nx.float32 [| 3 |])));
@@ -260,6 +276,24 @@ let top_ks =
           (fun (S s) -> List.mem s.name [ "float32"; "int32"; "uint16" ])
           sortables)
     @ [
+        test "top_k puts +0 before -0 and agrees with argmax, on each path"
+          (fun () ->
+            List.iter
+              (fun (k, n) ->
+                let xs = Array.make n (-1.) in
+                xs.(1) <- -0.;
+                xs.(3) <- 0.;
+                let t = Nx.create Nx.float32 [| n |] xs in
+                let msg = Printf.sprintf "k = %d of %d" k n in
+                let v, i = Nx.top_k ~k t in
+                equal ~msg (array float_exact) [| 0.; -0. |]
+                  (Array.sub (Nx.to_array v) 0 2);
+                equal ~msg (array int32) [| 3l; 1l |]
+                  (Array.sub (Nx.to_array i) 0 2);
+                equal ~msg int32
+                  (Nx.item [] (Nx.argmax t))
+                  (Nx.item [ 0 ] (snd (Nx.top_k ~k:1 t))))
+              [ (2, 5); (9, 100); (9, 3000) ]);
         test
           "top_k refuses a scalar, an axis out of bounds and a k past the axis"
           (fun () ->

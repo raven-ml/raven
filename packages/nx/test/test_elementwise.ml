@@ -209,8 +209,9 @@ let binary_ops =
          let check ~f32 (x, y) =
            let rel = tolerance ~f32 b.bexact in
            let round = if f32 then to_f32 else Fun.id in
-           equal
-             (Ref.witness (close ~rel ()))
+           (* An exact operation has IEEE's bits, a zero's sign included. *)
+           let witness = if b.bexact then float_exact else close ~rel () in
+           equal (Ref.witness witness)
              (Ref.map2
                 (fun u v -> round (b.bocaml u v))
                 (Ref.of_nx x) (Ref.of_nx y))
@@ -226,7 +227,26 @@ let binary_ops =
              (broadcast_pair Nx.float32)
              (check ~f32:true);
          ])
-       binary)
+       binary
+    @ [
+        test "maximum is +0 and minimum -0 of both zeros, in either order"
+          (fun () ->
+            let check (type b) name (dt : (float, b) Nx.dtype) =
+              let v x = Nx.create dt [| 1 |] [| x |] in
+              List.iter
+                (fun (a, b) ->
+                  let msg op = Printf.sprintf "%s %s (%g, %g)" name op a b in
+                  equal ~msg:(msg "maximum") float_exact 0.
+                    (Nx.item [ 0 ] (Nx.maximum (v a) (v b)));
+                  equal ~msg:(msg "minimum") float_exact (-0.)
+                    (Nx.item [ 0 ] (Nx.minimum (v a) (v b))))
+                [ (-0., 0.); (0., -0.) ]
+            in
+            check "float16" Nx.float16;
+            check "bfloat16" Nx.bfloat16;
+            check "float32" Nx.float32;
+            check "float64" Nx.float64);
+      ])
 
 (* A scalar variant is its operation against a scalar tensor, on either side. *)
 let scalar_variants =
