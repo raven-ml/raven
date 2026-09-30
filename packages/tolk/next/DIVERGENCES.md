@@ -380,3 +380,29 @@ the Exclusions of `README.md`.
   kernel that truncates a bfloat16`; `every GPU kernel compiles with its
   target's toolchain › metal_transcendental_bf16`, tinygrad's graph, is an
   expected failure.
+
+## D19. A hierarchical allreduce to one device lands there
+
+- **tinygrad:** `schedule/allreduce.py:28-34`, the hierarchical branch of
+  `handle_allreduce`, which returns before it reads the target device
+  (`:11`), so its result is on every device of the source even when the
+  allreduce targets one. `create_allreduce_function` (`:68-75`) then stores
+  that value into storage on the one target device. Repro: with
+  `ALLREDUCE_NODE_NDEVS=2`,
+  `UOp.new_buffer(("CPU:0","CPU:1","CPU:2","CPU:3"), 16, dtypes.float).allreduce(Ops.ADD, "CPU:0")`
+  handled by `handle_allreduce` gives an `MSTACK` on the four devices.
+- **tolk.next:** `lib/schedule/allreduce.ml:104` (`handle_allreduce`).
+- **Differs:** when the target is one device, the hierarchical branch copies
+  each reduced chunk there from the device of its rank in the first node, as
+  the ring and all-to-all branches copy their reduced chunks, and the result
+  is on that device.
+- **Reason:** (b): rune's multi-device reductions. A sharded sum reduced to
+  one device under `ALLREDUCE_NODE_NDEVS`, the multi-node setting, would
+  otherwise compute a value on every device and store it into storage on
+  one.
+- **Pinned by:** the `Allreduce` suite: `handle_allreduce › recorded ›
+  nodes_to_one_device_handled.golden, landed on its device (D19)`, which
+  states tinygrad's golden in code with each gather of a chunk replaced by
+  its copy to the target, and `rules › a hierarchical allreduce to one device
+  lands there (D19)`, which evaluates the value and the function on two
+  devices and finds the reduction on the target alone.
