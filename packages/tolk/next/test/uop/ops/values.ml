@@ -63,6 +63,13 @@ let exec_alu =
         (fun () ->
           equal const (f Float.nan) (alu Float32 Op.Max [ f Float.nan; f 1. ]);
           equal const (f 1.) (alu Float32 Op.Max [ f 1.; f Float.nan ]));
+      test "a shift by a negative count has no value" (fun () ->
+          List.iter
+            (fun o ->
+              raises_match
+                (Exn.invalid_arg ~substring:"a shift by a negative count, -1")
+                (fun () -> ignore (alu Int32 o [ i 8; i (-1) ])))
+            Op.[ Shl; Shr ]);
       test "an overflowing power is an infinity of the base's sign" (fun () ->
           equal const (f Float.infinity) (alu Float64 Op.Pow [ f 2.; f 10000. ]);
           equal const (f Float.neg_infinity)

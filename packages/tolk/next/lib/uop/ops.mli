@@ -730,7 +730,8 @@ val exec_alu :
     condition must not be [`Invalid].
 
     Raises [Invalid_argument] if [op] is not an arithmetic operation or the
-    arguments do not fit it. *)
+    arguments do not fit it, as for a shift by a negative count, which has no
+    value. *)
 
 val sym_infer : sint -> (string * int) list -> int
 (** [sym_infer s vars] is the value of [s] with each variable named in [vars]

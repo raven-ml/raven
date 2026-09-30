@@ -3325,6 +3325,13 @@ let int_operands op (x : Dtype.value) (y : Dtype.value) =
   | `Float _, _ | _, `Float _ -> invalid_argf "%s needs integers" (Op.name op)
   | _ -> (Value.to_z x, Value.to_z y)
 
+(* A shift's operands, its count as an [int]. *)
+let shift_operands op x y =
+  let a, b = int_operands op x y in
+  if Z.sign b < 0 then
+    invalid_argf "a shift by a negative count, %s, has no value" (Z.to_string b);
+  (a, Z.to_int b)
+
 let bitwise op fb fz (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
   | `Bool a, `Bool b -> `Bool (fb a b)
@@ -3388,12 +3395,12 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.And -> binary (bitwise op ( && ) Z.logand)
   | Op.Shr ->
       binary (fun x y ->
-          let a, b = int_operands op x y in
-          `Int (Z.shift_right a (Z.to_int b)))
+          let a, k = shift_operands op x y in
+          `Int (Z.shift_right a k))
   | Op.Shl ->
       binary (fun x y ->
-          let a, b = int_operands op x y in
-          `Int (Z.shift_left a (Z.to_int b)))
+          let a, k = shift_operands op x y in
+          `Int (Z.shift_left a k))
   | Op.Max -> binary Value.max
   | Op.Cmod -> binary (divide `Remainder ~toward_zero:true)
   | Op.Cdiv -> binary (divide `Quotient ~toward_zero:true)
