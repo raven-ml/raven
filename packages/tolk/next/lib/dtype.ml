@@ -319,6 +319,25 @@ module Value = struct
     | `Int n0, `Int n1 -> `Int (int_op n0 n1)
     | v0, v1 -> `Float (float_op (float_of v0) (float_of v1))
 
+  (* Floats divide as CPython's float_divmod does: through fmod, whose remainder
+     is exact, then moved to the divisor's sign. *)
+  let float_divmod x y =
+    if y = 0. then raise Division_by_zero;
+    let m = Float.rem x y in
+    let d = (x -. m) /. y in
+    let d, m =
+      if m = 0. then (d, Float.copy_sign 0. y)
+      else if not (Bool.equal (y < 0.) (m < 0.)) then (d -. 1., m +. y)
+      else (d, m)
+    in
+    let q =
+      if d = 0. then Float.copy_sign 0. (x /. y)
+      else
+        let f = Float.floor d in
+        if d -. f > 0.5 then f +. 1. else f
+    in
+    (q, m)
+
   let ( = ) v0 v1 = order v0 v1 = Some 0
   let ( <> ) v0 v1 = not (v0 = v1)
   let ( < ) v0 v1 = match order v0 v1 with Some c -> c < 0 | None -> false
@@ -334,6 +353,12 @@ module Value = struct
   let ( + ) = arith Z.add ( +. )
   let ( - ) = arith Z.sub ( -. )
   let ( * ) = arith Z.mul ( *. )
+  let ( // ) = arith Z.fdiv (fun x y -> fst (float_divmod x y))
+
+  let ( % ) =
+    arith
+      (fun n0 n1 -> Z.sub n0 (Z.mul n1 (Z.fdiv n0 n1)))
+      (fun x y -> snd (float_divmod x y))
 end
 
 let int_min dt =

@@ -98,6 +98,17 @@ module Value : sig
 
   val ( * ) : t -> t -> t
   (** [v0 * v1] is the product of [v0] and [v1]. *)
+
+  val ( // ) : t -> t -> t
+  (** [v0 // v1] is the quotient of [v0] by [v1] rounded down.
+
+      Raises [Division_by_zero] if [v1] is zero. *)
+
+  val ( % ) : t -> t -> t
+  (** [v0 % v1] is [v0 - (v0 // v1) * v1], of the sign of [v1] when it is not
+      zero: a float remainder is exact.
+
+      Raises [Division_by_zero] if [v1] is zero. *)
 end
 
 (** {1:addr Address spaces} *)
