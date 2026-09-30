@@ -68,6 +68,10 @@ named:
   matrix product of `half` and `bfloat16` values widened first, run on the
   narrow-in, `float32`-out core, equals the same product computed in
   `float32`.
+- **Division (D50):** a CUDA kernel compiled by NVRTC and a HIP kernel
+  compiled by comgr, at their default flags, divide floats with `/` as IEEE
+  does, rounding once: `3 / 7` is `0x3edb6db7`, where the product by the
+  reciprocal is `0x3edb6db8` (`division (D50)`'s operands).
 - **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
   an infinity a NaN in fp8 and keeps it in bf8 (D16).
 - **CUDA (nx.cuda.device):** a device waits with the `Sleep` completion: the

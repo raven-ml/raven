@@ -979,6 +979,74 @@ let execution =
         (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
     ]
 
+(* Division (D50)
+
+   A division, Ops.FDIV, is the language's [/] on every target, whether or not
+   the target lists it among its operations. Metal's is IEEE's division, rounded
+   once, which a product by the reciprocal is not for these operands. *)
+
+let dividends = [| 3.; 5.; 7.; 10.; 1.; -6.; 0.; -1. |]
+let divisors = [| 7.; 3.; 49.; 0.001; 0.; 3.; 0.; infinity |]
+let float32 x = Dtype.Value.to_float (Dtype.truncate Float32 (`Float x))
+let quotient i = float32 (float32 dividends.(i) /. float32 divisors.(i))
+
+let product_by_reciprocal i =
+  float32 (float32 dividends.(i) *. float32 (1. /. float32 divisors.(i)))
+
+(* [out[i] = a[i] / b[i]] over the eight operands, out, a and b the parameters
+   0, 1 and 2. *)
+let division =
+  let n = Array.length dividends in
+  let i = Ops.range (Int n) [ 0 ] in
+  let at slot = Ops.index (Ops.placeholder ~slot [ n ] Float32) [ i ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"fdiv" ())
+    [ Ops.end_ (Ops.store (at 0) (Ops.alu (at 1) Fdiv [ at 2 ])) [ i ] ]
+
+let divides_on_metal () =
+  match Metal.device with
+  | None -> skip ~reason:"no Metal device" ()
+  | Some m ->
+      let devices =
+        Tolk_next_engine.device [ ("CPU", Nx_device.host); ("CPU:1", m) ]
+      in
+      let n = Array.length dividends in
+      let buffer () = Ops.new_buffer (Single "CPU:1") n Float32 in
+      let out = buffer () and a = buffer () and b = buffer () in
+      let compiled =
+        Hcq2.compile_linear
+          ~devices:(fun d -> (devices d).compiler)
+          (Ops.v Op.Linear ~src:[ Ops.call division [ out; a; b ] ])
+      in
+      let on_metal xs = Run.buffer m Float32 (floats xs) in
+      let quotients = on_metal (Array.make n 0.) in
+      let s =
+        Tolk_next_engine.link ~devices
+          ~bound:
+            [
+              (out, [ quotients ]);
+              (a, [ on_metal dividends ]);
+              (b, [ on_metal divisors ]);
+            ]
+          compiled
+      in
+      Tolk_next_engine.run s [||];
+      equal values
+        (floats (Array.init n quotient))
+        (Run.values Float32 quotients)
+
+let division_group =
+  group "division (D50)"
+    [
+      test "the operands tell a quotient from a product by the reciprocal"
+        (fun () ->
+          is_true
+            (List.exists
+               (fun i -> quotient i <> product_by_reciprocal i)
+               (List.init (Array.length dividends) Fun.id)));
+      slow "Metal divides as IEEE does, rounding once" divides_on_metal;
+    ]
+
 (* Negation *)
 
 (* A kernel of one float lane: [data0[0] = f (data1[0], data2[0])]. *)
@@ -1046,4 +1114,5 @@ let () =
          compilation;
          bf16_truncation;
          execution;
+         division_group;
        ])

@@ -2109,6 +2109,10 @@ renderer/cstyle/clang_dtype_unsigned_int.golden
 renderer/cstyle/clang_dtype_unsigned_long.golden
 renderer/cstyle/clang_dtype_unsigned_short.golden
 renderer/cstyle/clang_dynamic_lane.golden
+renderer/cstyle/clang_fdiv_bf16.golden
+renderer/cstyle/clang_fdiv_double.golden
+renderer/cstyle/clang_fdiv_float.golden
+renderer/cstyle/clang_fdiv_half.golden
 renderer/cstyle/clang_gated_store_in_loop.golden
 renderer/cstyle/clang_idiv.golden
 renderer/cstyle/clang_inf_nan_bf16.golden
@@ -2159,6 +2163,10 @@ renderer/cstyle/cuda_dtype_unsigned_int.golden
 renderer/cstyle/cuda_dtype_unsigned_long.golden
 renderer/cstyle/cuda_dtype_unsigned_short.golden
 renderer/cstyle/cuda_dynamic_lane.golden
+renderer/cstyle/cuda_fdiv_bf16.golden
+renderer/cstyle/cuda_fdiv_double.golden
+renderer/cstyle/cuda_fdiv_float.golden
+renderer/cstyle/cuda_fdiv_half.golden
 renderer/cstyle/cuda_gated_store_in_loop.golden
 renderer/cstyle/cuda_gated_store_on_threads.golden
 renderer/cstyle/cuda_group_reduce.golden
@@ -2244,6 +2252,10 @@ renderer/cstyle/hip_dtype_unsigned_int.golden
 renderer/cstyle/hip_dtype_unsigned_long.golden
 renderer/cstyle/hip_dtype_unsigned_short.golden
 renderer/cstyle/hip_dynamic_lane.golden
+renderer/cstyle/hip_fdiv_bf16.golden
+renderer/cstyle/hip_fdiv_double.golden
+renderer/cstyle/hip_fdiv_float.golden
+renderer/cstyle/hip_fdiv_half.golden
 renderer/cstyle/hip_gated_store_in_loop.golden
 renderer/cstyle/hip_gated_store_on_threads.golden
 renderer/cstyle/hip_group_reduce.golden
@@ -2303,6 +2315,9 @@ renderer/cstyle/metal_dtype_unsigned_int.golden
 renderer/cstyle/metal_dtype_unsigned_long.golden
 renderer/cstyle/metal_dtype_unsigned_short.golden
 renderer/cstyle/metal_dynamic_lane.golden
+renderer/cstyle/metal_fdiv_bf16.golden
+renderer/cstyle/metal_fdiv_float.golden
+renderer/cstyle/metal_fdiv_half.golden
 renderer/cstyle/metal_gated_store_in_loop.golden
 renderer/cstyle/metal_gated_store_on_threads.golden
 renderer/cstyle/metal_group_reduce.golden

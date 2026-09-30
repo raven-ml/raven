@@ -352,6 +352,11 @@ let base_rewrite =
           Option.map
             (fun f -> f (List.map operand (src x)) (dtype x))
             (List.assoc_opt (op x) ctx.lang.code_for_op));
+      (* a division is written whether or not the target lists it, which decides
+         only whether code generation makes reciprocals divisions *)
+      r
+        (Upat.op ~src:[ Upat.var "a"; Upat.var "b" ] Op.Fdiv)
+        (fun ctx m -> Some (strf "(%s/%s)" ctx.%{m "a"} ctx.%{m "b"}));
       (* call an external function: the CUSTOM_FUNCTION body holds the callee (a
          function pointer), the other sources are the arguments *)
       r

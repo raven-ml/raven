@@ -1,10 +1,23 @@
 ; Settings are read once per process, so the cases rendered under EXPAND_SSA or
-; ALIGNED run in processes of their own, each with its variable set.
+; ALIGNED run in processes of their own, each with its variable set. Metal
+; exists on macOS alone.
 
 (test
  (name test_cstyle)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device zarith)
+ (libraries
+  windtrap
+  tolk.next
+  tolk_next_test
+  tolk_next_run
+  tolk.next.engine
+  nx.device
+  zarith
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml)))
  (deps
   (glob_files *.golden))
  (action

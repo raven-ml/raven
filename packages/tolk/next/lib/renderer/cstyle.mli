@@ -18,6 +18,11 @@
     lacks natively ({!Renderer.t.code_for_op}): code generation decomposes those
     before rendering.
 
+    A floating-point division ({!Op.Fdiv}) is the language's [/] on every
+    target, whether or not the target lists it among its native operations: that
+    list only decides whether code generation turns a reciprocal into a
+    division.
+
     Two settings are read once, when they are first needed:
     - [EXPAND_SSA] (default [0]): when nonzero, every value is a local variable;
     - [ALIGNED] (default [1]): when zero, {!clang}'s vector types are aligned to

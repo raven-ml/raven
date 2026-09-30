@@ -13,6 +13,9 @@ type (D17), so the source of a kernel with such an operation is tinygrad's
 source for the kernel with those casts: the table's column `narrowed` gives
 the position of that kernel in `kernels`, and its text golden is its source.
 
+tolk.next writes a division, `Ops.FDIV`, on every target (D50), so a source is
+the one tinygrad writes once its renderer lists `Ops.FDIV` as Clang does.
+
 The rewrites are a table `rewrites`, whose rows give the position of an input
 in `rewrite_inputs` and of its result in `rewritten`. The table `declarations`
 holds what each renderer declares for a target, and `written` how each writes
@@ -319,6 +322,17 @@ def named_params():
     return dst.index(r).store(src.index(r).load() + v.cast(dtypes.float)).end(r).sink(arg=KernelInfo(name="named"))
 
 
+def division(dt):
+    """out[i] = a[i] / b[i] by Ops.FDIV, a division that no Tensor program
+    builds on a target whose renderer does not list it."""
+    def make():
+        out, a, b = (UOp.param(i, dt, 16) for i in range(3))
+        r = UOp.range(16, 0, AxisType.LOOP)
+        quotient = a.index(r).load().alu(Ops.FDIV, b.index(r).load())
+        return out.index(r).store(quotient).end(r).sink(arg=KernelInfo(name="fdiv"))
+    return ast(make)
+
+
 # The cases of each target: its name and how its kernel is made from the
 # renderer.
 
@@ -355,6 +369,7 @@ def common(ren):
     cases += [(f"transcendental_{dtype_name(dt)}", transcendental(dt)) for dt in floats]
     fp8s = [dt for dt in dtypes.fp8s if dt in ren.supported_dtypes()]
     cases += [(f"inf_nan_{dtype_name(dt)}", specials(dt)) for dt in floats + fp8s]
+    cases += [(f"fdiv_{dtype_name(dt)}", division(dt)) for dt in floats]
     return cases
 
 
@@ -480,12 +495,21 @@ def cases():
     return ["case", "kernel", *TARGET_COLUMNS, "setting", "narrowed"], rows
 
 
+# D50: tolk.next writes a division, Ops.FDIV, on every target, as tinygrad's
+# Clang writes it; tinygrad's Metal, CUDA and HIP renderers do not list it, and
+# write it once it is added to their table as Clang has it.
+
+def writing_division(ren):
+    ren.code_for_op = {**ren.code_for_op, Ops.FDIV: ClangRenderer.code_for_op[Ops.FDIV]}
+    return ren
+
+
 def source(case, name, make, setting):
     def body():
         if setting:
             key, value = setting.split("=")
             os.environ[key] = value
-        return renderer(name).render(kernel_of(name, make, setting)[1])
+        return writing_division(renderer(name)).render(kernel_of(name, make, setting)[1])
     body.__name__ = case
     return body
 

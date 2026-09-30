@@ -1193,3 +1193,25 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
   of a staging buffer of the host where the queues cannot reach`, whose device
   description reaches every device but CPU:2.
+
+## D50. Every C-style renderer writes a division
+
+- **tinygrad:** `renderer/cstyle.py:139-147` (`CStyleLanguage.code_for_op`
+  has no `FDIV`) and `:277-280` (Clang's adds it); `codegen/decomp/op.py:122-125`
+  (a target that lists `FDIV` gets its reciprocals as divisions).
+- **tolk.next:** `lib/renderer/cstyle.ml:355-359` (the `FDIV` rule of
+  `base_rewrite`).
+- **Differs:** Metal, CUDA and HIP write an `FDIV` as `(a/b)`, as Clang does,
+  where tinygrad's renderers fail on it. Their tables still leave `FDIV` out,
+  so code generation keeps their reciprocals, and every kernel built from
+  tinygrad's operations keeps tinygrad's source.
+- **Reason:** (b). rune lowers nx's float division, and the power and the
+  arc tangent built on it, to `FDIV` (RFC 0012): eager nx divides as IEEE
+  does, rounding once, which a product by the reciprocal does not.
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
+  default › <target>_fdiv_<type>`, tinygrad's source once its renderer lists
+  `FDIV` as Clang does, for Clang, Metal, CUDA and HIP in each float type
+  they have; `division (D50) › the operands tell a quotient from a product by
+  the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
+  CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
+  which is on the hardware checks of `test/README.md`.
