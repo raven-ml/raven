@@ -1573,10 +1573,11 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
         let mask = Z.pred (Z.shift_left Z.one (Z.numbits (z s0_max))) in
         Some (zero, Value.min s0_max (`Int (Z.logand (z s1_max) mask)))
   | Op.Mul -> corners mul
-  | Op.Shl when c1 && ints [ s0_min; s0_max; s1_min ] ->
+  (* A shift by a negative count is undefined: its bounds are the type's. *)
+  | Op.Shl when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
       let k = Z.to_int (z s1_min) in
       Some (`Int (Z.shift_left (z s0_min) k), `Int (Z.shift_left (z s0_max) k))
-  | Op.Shr when c1 && ints [ s0_min; s0_max; s1_min ] ->
+  | Op.Shr when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
       let k = Z.to_int (z s1_min) in
       Some (`Int (Z.shift_right (z s0_min) k), `Int (Z.shift_right (z s0_max) k))
   | Op.Cmod when c1 && lt zero s1_max ->

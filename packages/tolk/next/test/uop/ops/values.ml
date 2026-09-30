@@ -332,6 +332,11 @@ let bounds_group =
           check_bounds
             Ops.O.(weak_var "x" 0 10 lsr int 2)
             (int_bounds 0 (10 lsr 2)));
+      test "a shift by a negative constant has its type's bounds" (fun () ->
+          let x = var "x" 0 10 in
+          let count = Ops.cast (Ops.int (-1)) Int32 in
+          check_bounds Ops.O.(x lsl count) (Dtype.min Int32, Dtype.max Int32);
+          check_bounds Ops.O.(x lsr count) (Dtype.min Int32, Dtype.max Int32));
       test "a hardware index counts from 0 to below its end" (fun () ->
           check_bounds
             (Ops.special (Sym (var "i" 1 10)) "gidx0")
