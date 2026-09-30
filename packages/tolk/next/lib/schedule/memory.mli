@@ -22,12 +22,15 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     {!Op.Linear} of calls run in order, with its buffers placed in arenas.
 
     A buffer is planned unless it is among [held_bufs] (default [[]]), whose
-    contents outlive the schedule, or lives on a disk. It lives from the first
-    call that takes it ({!collect_bufs}) to the last. The buffers of copies, the
-    calls whose body is an {!Op.Store}, are planned apart from the others on
-    each device, so that planning adds no dependency between copies and kernels,
-    and each lives for as many calls again after its last, so that a copy is not
-    overwritten while it may still run.
+    contents outlive the schedule, lives on a disk, or is reached through a view
+    ({!Op.Shrink}, {!Op.Bitcast}, {!Op.After}) by some call. It lives from the
+    first call that takes it ({!collect_bufs}) to the last, a range around calls
+    ({!Op.End}) counting as one call that takes the buffers of each of its
+    calls. The buffers of copies, the calls whose body is an {!Op.Store}, are
+    planned apart from the others on each device, so that planning adds no
+    dependency between copies and kernels, and each lives for as many calls
+    again after its last, so that a copy is not overwritten while it may still
+    run.
 
     Each device and kind of buffer has one arena, an {!Op.Buffer} of
     {!Dtype.Int8} as large as its buffers need at once. A buffer's size is

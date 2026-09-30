@@ -14,6 +14,22 @@ let rec collect_bufs u =
   | Op.Mselect | Op.Mstack -> List.concat_map collect_bufs (src u)
   | _ -> []
 
+(* The buffers an argument reaches through a view. *)
+let rec viewed u =
+  match op u with
+  | Op.Shrink | Op.Bitcast | Op.After ->
+      let v = nth u 0 in
+      collect_bufs v @ viewed v
+  | Op.Mselect | Op.Mstack -> List.concat_map viewed (src u)
+  | _ -> []
+
+(* The calls an entry of a schedule runs: itself, or those a range runs. *)
+let rec calls si =
+  if op si <> Op.End then [ si ]
+  else
+    let body = nth si 0 in
+    if op body = Op.Linear then List.concat_map calls (src body) else calls body
+
 let can_plan held b =
   (not (Tbl.mem held b))
   && match device b with Some d -> not (is_disk_device d) | None -> true
@@ -29,24 +45,35 @@ let memory_plan_rewrite ?(held_bufs = []) linear =
        appearance. *)
     let first = Tbl.create 64 and last = Tbl.create 64 in
     let order = ref [] and copy_bufs = Tbl.create 16 in
+    (* A buffer a call reaches through a view stays where it is: the plan does
+       not see the calls that reach it that way. *)
+    let through_views = Tbl.create 16 in
     List.iteri
       (fun i si ->
-        let si_bufs =
-          List.filter (can_plan held)
-            (List.concat_map collect_bufs (List.tl (src si)))
-        in
         List.iter
-          (fun b ->
-            if not (Tbl.mem first b) then begin
-              Tbl.replace first b i;
-              order := b :: !order
-            end;
-            Tbl.replace last b i)
-          si_bufs;
-        if op (nth si 0) = Op.Store then
-          List.iter (fun b -> Tbl.replace copy_bufs b ()) si_bufs)
+          (fun call ->
+            let args = List.tl (src call) in
+            List.iter
+              (fun b -> Tbl.replace through_views b ())
+              (List.concat_map viewed args);
+            let call_bufs =
+              List.filter (can_plan held) (List.concat_map collect_bufs args)
+            in
+            List.iter
+              (fun b ->
+                if not (Tbl.mem first b) then begin
+                  Tbl.replace first b i;
+                  order := b :: !order
+                end;
+                Tbl.replace last b i)
+              call_bufs;
+            if op (nth call 0) = Op.Store then
+              List.iter (fun b -> Tbl.replace copy_bufs b ()) call_bufs)
+          (calls si))
       (src linear);
-    let bufs = List.rev !order in
+    let bufs =
+      List.filter (fun b -> not (Tbl.mem through_views b)) (List.rev !order)
+    in
     if List.is_empty bufs then linear
     else begin
       (* Copies and kernels plan in separate lanes, lest reuse add a dependency

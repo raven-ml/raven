@@ -595,6 +595,53 @@ let runs_once_per_trip () =
     (floats (Array.map (fun x -> x +. 1.) xs))
     (Run.values Float32 out_buffer)
 
+(* A memory-planned schedule: z = a + 1; in a range, y = b + 1, into [y] or into
+   a view of its first half; then z + 1 and y + 1 into outputs, each kernel on
+   the first four elements of its buffers. The range writes y before the call
+   that reads it, so the plan does not place y over z, which the range leaves
+   for the call after it. *)
+let plans_the_buffers_of_a_range ~through_a_view () =
+  let buf n = Ops.new_buffer (Single "CPU") n Float32 in
+  let a = buf 4 and b = buf 4 and z = buf 8 and y = buf 8 in
+  let out_z = buf 4 and out_y = buf 4 in
+  let r = Ops.range (Int 2) [ 7 ] in
+  let linear =
+    Ops.v Op.Linear
+      ~src:
+        [
+          Ops.call add_one [ z; a ];
+          Ops.end_
+            (Ops.call add_one
+               [
+                 (if through_a_view then Ops.shrink y [ Some (Int 0, Int 4) ]
+                  else y);
+                 b;
+               ])
+            [ r ];
+          Ops.call add_one [ out_z; z ];
+          Ops.call add_one [ out_y; y ];
+        ]
+  in
+  let planned =
+    Memory.memory_plan_rewrite ~held_bufs:[ a; b; out_z; out_y ] linear
+  in
+  let compiled =
+    Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler) planned
+  in
+  let zeros () = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+  let result_z = zeros () and result_y = zeros () in
+  let bound =
+    [
+      (a, [ Run.buffer host Float32 (floats [| 1.; 2.; 3.; 4. |]) ]);
+      (b, [ Run.buffer host Float32 (floats [| 10.; 20.; 30.; 40. |]) ]);
+      (out_z, [ result_z ]);
+      (out_y, [ result_y ]);
+    ]
+  in
+  Engine.run (Engine.link ~devices ~bound compiled) [||];
+  equal values (floats [| 3.; 4.; 5.; 6. |]) (Run.values Float32 result_z);
+  equal values (floats [| 12.; 22.; 32.; 42. |]) (Run.values Float32 result_y)
+
 (* A copy out of a device, a copy into it, and the copy out again: the last copy
    reads what the second wrote. *)
 let copies_in_order () =
@@ -640,6 +687,10 @@ let schedules =
         [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
           runs_on_its_slots name ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
+      test "a planned buffer a range writes is not placed over one it leaves"
+        (plans_the_buffers_of_a_range ~through_a_view:false);
+      test "a buffer a range writes through a view is not placed over another"
+        (plans_the_buffers_of_a_range ~through_a_view:true);
       test "copies run in the order of their schedule" copies_in_order;
     ]
 

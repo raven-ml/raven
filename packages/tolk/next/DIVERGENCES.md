@@ -1074,6 +1074,34 @@ the Exclusions of `README.md`.
   generator (`gen/runtime/ops_cuda.py`), and `function words (D36) › a batch
   over two devices reads a kernel's function from a word of each`.
 
+## D41. The memory plan sees a range's calls, and leaves buffers reached through views
+
+- **tinygrad:** `schedule/memory.py:28-33` (`memory_plan_rewrite` takes each
+  entry's buffers from its sources after the first, through `_collect_bufs`,
+  which passes buffers, `MSELECT` and `MSTACK` only).
+- **tolk.next:** `lib/schedule/memory.ml:18` (`viewed`), `:27` (`calls`) and
+  `memory_plan_rewrite`'s lifetimes (`through_views`).
+- **Differs:** an `END` of ranges around calls counts as one entry that takes
+  the buffers of each call it runs, and a buffer that some call reaches
+  through a view (`SHRINK`, `BITCAST`, `AFTER`) is not planned. tinygrad
+  takes an `END`'s sources after the first, its ranges, so a buffer used
+  inside a range lives only where it is used outside it; and a buffer reached
+  both directly and through a view lives only where it is reached directly.
+  Either way the plan can place it over bytes another buffer still needs. A
+  schedule that reaches a buffer only through views, as tinygrad's do, plans
+  as tinygrad's. The rule gives up the reuse of a buffer reached through a
+  view: a scan's stacked rows, its double-buffered carries and any other
+  viewed intermediate keep their own memory for the whole schedule, where
+  planning them through their views could share it once they are dead.
+- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
+  inside a range, whose arguments are views that move with it, of buffers
+  the calls after it read whole; tinygrad's scheduler hands the planner
+  neither.
+- **Pinned by:** the Engine suite (`test/engine/tolk_next_engine`): `link and
+  run › a planned buffer a range writes is not placed over one it leaves` and
+  `› a buffer a range writes through a view is not placed over another`, each
+  of which fails without its half.
+
 ## D45. Staging memory is a placeholder of the host
 
 - **tinygrad:** `runtime/support/hcq2.py:131-134` (`_staging`: a host
