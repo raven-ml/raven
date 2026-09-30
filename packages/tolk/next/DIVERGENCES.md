@@ -320,8 +320,14 @@ the Exclusions of `README.md`.
 - **Reason:** (b): `Cstyle`'s CUDA, HIP and Metal renderers are made, and
   render, on machines without NVRTC, comgr or MTLCompiler: the source goldens
   of the `Cstyle` suite and rune's rendering of a kernel for inspection.
-- **Pinned by:** waiting for the compilers' suites: making each compiler
-  without its library succeeds, and compiling with it raises `Compile_error`.
+- **Pinned by:** `Tolk_next.Compiler_cuda › a library that does not load`,
+  `Tolk_next.Compiler_amd › a library that does not load` and
+  `Tolk_next.Ops_metal › a library that does not load`, run where the library's
+  variable names a file that is no library: making the compiler succeeds, each
+  compile raises `Compile_error`, and a cached binary is served without a load.
+  Where the library is absent, `› without NVRTC on the machine`,
+  `› without comgr on the machine` and `› without MTLCompiler on the machine`
+  pin the error that names the library and its variable.
 
 ## D17. Each operation on a narrow scalar is narrowed in the source
 

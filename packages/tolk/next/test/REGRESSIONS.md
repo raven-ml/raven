@@ -1574,3 +1574,117 @@ entry of the host's calling convention.
 | Decomp_op: old `unit/codegen/test_decompositions.ml` "fast idiv is enabled for Metal" | | dropped: no renderer of `cstyle.py` turns fast division off at HEAD; `CS › sources › metal_idiv` pins Metal's division |
 | Decomp_op: old `unit/test_cstyle.ml` "renderer op capabilities match cstyle render surface" | | `CS › declarations › code_for_op` (no row lists `MAX`, `MULACC` or `THREEFRY`) |
 | Coalesce: old `unit/test_cstyle.ml` vector pointer casts and `__builtin_nontemporal_load` | | `CS › sources › *_matmul_upcasted`, `*_group_reduce_upcasted`, `hip_nontemporal` |
+
+## C
+
+The suite is `Tolk_next.C` (`runtime/support/c/`), written `C` below.
+`findlib_trees.golden` holds 41 searches of `DLL.findlib`, each a tree of
+files, an environment and the paths searched, with the file tinygrad finds:
+25 run as Linux searches and 16 as macOS's, whatever the platform that
+generated them, and each row runs on its own platform. No tinygrad test and no
+old tolk test covers `findlib`.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | `NAME_PATH` naming a file wins, an empty or missing one is passed over, a directory it names is searched first | `C › as tinygrad › findlib_trees.golden › platform=* case=name_path_*` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | `LD_LIBRARY_PATH` then the system's directories then `extra_paths`, in order, empty entries ignored, missing directories skipped | `C › as tinygrad › findlib_trees.golden › platform=* case=ld_library_path_*`, `extra_paths_order`, `missing_dirs_skipped`; `C › search order › searching two lists of directories finds the first of each search` (the law) |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | Linux: `lib<p>.so[.0-9]*` that starts as an ELF file; linker scripts, directories, dangling links and other names passed over | `C › as tinygrad › findlib_trees.golden › platform=linux case=version_*`, `linker_script_*`, `other_names_rejected`, `directory_named_as_library`, `symbolic_link_to_elf`, `dangling_symbolic_link` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | Linux: several ELF candidates in one directory | `C › one directory › the first ELF file in the order of names is found`, `a linker script first in the order of names is passed over`. tinygrad takes the first that `iterdir` lists, in an order the file system chooses |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | macOS: `lib<p>.dylib`, `<p>.dylib`, `<p>`, in that order per directory; a dangling link inside a framework | `C › as tinygrad › findlib_trees.golden › platform=darwin case=*`; `C › the system's directories › MTLCompiler is found among macOS's private frameworks` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | an absolute path is taken if it is a file, else the next path is searched; each path is searched through every directory before the next | `C › as tinygrad › findlib_trees.golden › platform=* case=absolute_*`, `paths_before_directories`, `name_path_dir_each_path` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | not found | `C › absence › a name nowhere is not found`, `no paths find nothing, even with a directory that holds the name`; `C › as tinygrad › findlib_trees.golden › platform=* case=not_found`, `no_paths` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | the system's directories on Linux, `/lib/<MULTIARCH>` among them | `C › the system's directories › the math library is found among Linux's library directories`; `C › multiarch › names a Linux machine` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` `libc` and `m` on macOS | `/usr/lib/lib<nm>.dylib` returned without a search | dropped: no caller of `C.findlib` loads the C or math library |
+
+## Compiler_cpu
+
+The suite is `Tolk_next.Compiler_cpu` (`runtime/support/compiler_cpu/`),
+written `CPU` below. `kernels.golden` holds the kernels it renders with
+`Cstyle.clang`: `add` and `half_add`, the `Tensor` programs of tinygrad's tests,
+and `sqrt`. CC is read once per process, so the tests tagged `no-clang` run in
+a second process, where CC names a program that does not exist. A test that
+compiles for a machine the installed Clang has no backend for, or disassembles
+an object the installed objdump cannot read, skips.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | `x86_64,x86-64,avx` puts `vmov` in the add kernel, `-avx` does not | `CPU › as tinygrad › the add kernel moves vectors with vmov iff AVX is on: › x86_64,x86-64,avx`, `› x86_64,x86-64,-avx` |
+| tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | on Apple's processors a half addition has no `fcvt` | `CPU › as tinygrad › a half addition on an Apple processor converts nothing` |
+| tinygrad: `null/test_elf.py::TestElfLoader::test_clang_jit_compiler_external_raise`, `test_load_clang_jit_strtab`, `test_link` | the loader refuses an unresolved symbol, reads `.rela.text`, links libm | dropped: loading is nx.device's (`Nx_device.Program`); that the compiled object needs nothing of a library is `CPU › execution on the host › a compiled square root runs without a library` |
+| tinygrad: `runtime/support/compiler_cpu.py` `-fno-math-errno` (no test) | a square root is an instruction, not a call | `CPU › objects › a square root is one instruction on › x86_64,x86-64`, `› arm64,generic`; `CPU › execution on the host › a compiled square root runs without a library` |
+| tinygrad: `runtime/support/compiler_cpu.py` `-ffixed-x18` (no test) | x18 is left alone on arm64 | `CPU › features › arm64 leaves x18 alone` |
+| tinygrad: `runtime/support/compiler_cpu.py` features (no test) | arm64 `f` is `+f` and `-f` is `+nof`; riscv64 joins features as extensions, `native` is `rv64g` | `CPU › features › a half addition on arm64 converts iff fp16 is off:` (2), `arm64 vectorizes with its SIMD registers`, `-simd on arm64 disables them`, `a feature on riscv64 is an extension the processor gains`; `CPU › objects › native on riscv64 is rv64g` |
+| tinygrad: `runtime/support/compiler_cpu.py` the arch assertion and `unsupported arch` | a malformed arch or another machine is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named:` (3), `another machine is refused, named:` (3) |
+| tinygrad: `runtime/support/compiler_cpu.py` `Compiler.__init__` cache key | `compile_clang_obj_` and the arch's fields joined by `_` | `CPU › cache › objects are cached in the table of the architecture` (3), `objects are not cached without ccache`; `CPU › without Clang › a cached object is served without running Clang` |
+| tinygrad: `runtime/support/compiler_cpu.py` `disassemble` | `objdump -d` of the object | `CPU › disassembly › prints what objdump prints of the object` |
+| old: `unit/runtime/cpu/test_compiler.ml` "outputs relocatable ELF for normalized host" | ELF magic, class, byte order, relocatable type, the host's machine | `CPU › objects › native is the host's processor` |
+| old: `unit/runtime/cpu/test_compiler.ml` "explicit architectures" | the ELF machine of `x86_64`, `arm64` and `riscv64` | `CPU › objects › compiles to a relocatable ELF object for › x86_64,x86-64`, `› arm64,generic`, `› riscv64,rv64g` |
+| old: `unit/runtime/cpu/test_compiler.ml` "architecture requires a CPU field" | `arm64` alone is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named: › "arm64"`; the old refusal was a `Compile_error` at compile, tinygrad's and tolk.next's is at construction |
+| old: `unit/runtime/cpu/test_compiler.ml` "output is parseable by ELF support" | the object has `.text` and the symbol | dropped: ELF parsing is nx.device's; `CPU › execution on the host › a compiled kernel adds two buffers` loads and runs the object |
+| old: `unit/runtime/cpu/test_compiler.ml` "invalid C raises Compile_error" | Clang's diagnostics in the error | `CPU › errors › a rejected source raises Compile_error with Clang's diagnostics`; `CPU › without Clang › a compile raises Compile_error naming the program CC names` |
+| old: `unit/test_elf.ml` external-call relocations of Clang objects | PLT32 relocations of an object | dropped: ELF relocation is nx.device's |
+| none | determinism | `CPU › objects › one source compiles to the same bytes` |
+
+## Compiler_cuda
+
+The suite is `Tolk_next.Compiler_cuda` (`runtime/support/compiler_cuda/`),
+written `CUDA` below. NVRTC is loaded once per process, so the tests tagged
+`no-library` run in a second process, where `NVRTC_PATH` names a file that is
+no library. The tests of NVRTC itself are slow and skip without it; they pass
+against NVRTC 12.8 on Linux arm64.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.compile` (no test) | PTX and cubins | slow: `CUDA › NVRTC › compiles a kernel to PTX`, `compiles a kernel to a cubin`, `compiles from several domains at once` |
+| tinygrad: `runtime/support/compiler_cuda.py` `nvrtc_check` | `Nvrtc Error`, NVRTC's error string and log | slow: `CUDA › NVRTC › a rejected source raises Compile_error with NVRTC's log` |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › cache` (4 tests); `CUDA › a library that does not load › a cached binary is served without loading NVRTC` |
+| tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
+| D15 | making the compiler loads nothing; the first compile raises | `CUDA › without NVRTC on the machine › a compile raises Compile_error naming nvrtc and NVRTC_PATH`; `CUDA › a library that does not load` (4 tests) |
+| tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk_next.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
+| old: `unit/test_cuda_abi.ml` "concurrent initialization publishes a complete driver table" | a load from several domains at once | `CUDA › a library that does not load › compiles from several domains at once raise it`; slow: `CUDA › NVRTC › compiles from several domains at once`. The driver table itself is the executor's (nx.device) |
+| old: `unit/test_cuda_abi.ml` "missing driver symbols stay failed across callers" | a failed load stays failed | `CUDA › a library that does not load › every compile raises the same Compile_error` |
+| old: `unit/test_cuda_abi.ml` the timestamp, submission, copy, host registration and shutdown tests (5) | the CUDA driver's queues and memory | dropped: the runtime is nx.device's and rune's (plan §1a) |
+| old: `unit/test_runtime_nv.ml` "the recorded nvrtc kernel parses to its recorded fields" | a recorded kernel | dropped: the NV runtime is nx.device's |
+
+## Compiler_amd
+
+The suite is `Tolk_next.Compiler_amd` (`runtime/support/compiler_amd/`),
+written `AMD` below. The tests tagged `no-library` run in a second process,
+where `COMGR_PATH` names a file that is no library. The tests of comgr itself
+are slow and skip without it; no machine here has ROCm, so they have not run.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/support/compiler_amd.py` `compile_hip` (no test) | HIP to a code object; `.text` sources assembled | slow: `AMD › comgr › compiles a kernel to a code object`, `assembles a source whose first line is .text`, `compiles from several domains at once` |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.compile` | comgr's failure is a `CompileError` | slow: `AMD › comgr › a rejected source raises Compile_error with comgr's log` |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` cache key | `compile_hip_<arch>` | `AMD › cache` (2 tests); `AMD › a library that does not load › a cached code object is served without loading comgr` |
+| tinygrad: `runtime/support/compiler_amd.py` `disassemble` | `llvm-objdump` of the code object | slow: `AMD › comgr › disassembles a code object` |
+| D15 | making the compiler loads nothing; the first compile raises | `AMD › without comgr on the machine › a compile raises Compile_error naming comgr and COMGR_PATH`; `AMD › a library that does not load` (4 tests) |
+| tinygrad: `external/external_test_hip_compile.py`, `external/external_benchmark_hip_compile.py` | compile time against a reference | dropped: benchmarks |
+| tinygrad: `amd/hw/*` (`HIPCompiler` through `amd/hw/helpers.py`) | instructions on AMD hardware | dropped: they run on the device, the executor's |
+| tinygrad: `device/amd/test_llvm.py` | `AMDLLVMCompiler` | dropped: the LLVM compilers are excluded (README) |
+| old: `unit/test_runtime_amd.ml` "missing comgr degrades to Failure" | a missing comgr fails at compile | `AMD › without comgr on the machine › a compile raises Compile_error naming comgr and COMGR_PATH`; tinygrad's and tolk.next's failure is a `Compile_error` |
+| old: `unit/test_runtime_amd.ml` "load failure is retried, not latched" | a failed load is tried again | dropped: tinygrad loads comgr once, at import; `AMD › a library that does not load › every compile raises the same Compile_error` pins the latch |
+| old: `unit/test_runtime_amd.ml` "compiles a trivial HIP kernel", "broken source raises Compile_error" | | slow: `AMD › comgr › compiles a kernel to a code object`, `a rejected source raises Compile_error with comgr's log` |
+
+## Ops_metal
+
+The suite is `Tolk_next.Ops_metal` (`runtime/ops_metal/`), written `M` below.
+It covers `MetalCompiler`, the part of `ops_metal.py` in scope. MTLCompiler is
+loaded once per process, so the tests tagged `no-library` run in a second
+process, where `MTLCOMPILER_PATH` names a file that is no library. The tests
+of MTLCompiler itself skip elsewhere than on macOS.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_success` | a kernel compiles to a library | `M › MTLCompiler › compiles a kernel to a Metal library` |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_compile_error` | `CompileError` on bad source | `M › MTLCompiler › a rejected source raises Compile_error with the compiler's message` |
+| tinygrad: `device/metal/test_metal.py::TestMetal::test_alloc_oom`, `test_failed_newLibraryWithData`, `test_free` | the device's memory and pipelines | dropped: the device is nx.device's and rune's (plan §1a) |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the reply's data starts after the header and the warnings | `M › MTLCompiler › a source that draws warnings compiles to a Metal library` |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler.compile` (no test) | the Metal version by macOS, `-fno-fast-math` | `M › MTLCompiler › the language is the latest the running macOS compiles kernels of`, `fast math is off` |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler.__reduce__` | one compiler per forked process | dropped: no pickling; `M › MTLCompiler › compiles from several domains at once` pins the concurrent use of one service |
+| tinygrad: `runtime/ops_metal.py` `MetalCompiler.disassemble` | the applegpu disassembler | `M › MTLCompiler › disassembly prints nothing` (README) |
+| tinygrad: `runtime/ops_metal.py` cache key | `compile_metal_direct` | `M › cache` (2 tests); `M › a library that does not load › a cached library is served without loading MTLCompiler` |
+| D15 | making the compiler loads nothing; the first compile raises | `M › without MTLCompiler on the machine › a compile raises Compile_error naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (4 tests) |
+| tinygrad: `external/external_metal_compile_fail.py` | a kernel that crashed Metal's compiler | dropped: a crash reproducer of a driver bug, outside tinygrad's suite |
+| old: `unit/test_runtime_metal.ml` "compile and run one kernel" | | dropped: running is the device's; compiling is `M › MTLCompiler › compiles a kernel to a Metal library` |

@@ -1257,6 +1257,8 @@ renderer/tc/cuda.golden
 renderer/tc/frag_coords.golden
 renderer/tc/refused.golden
 renderer/tc/tensor_cores.golden
+runtime/support/c/findlib_trees.golden
+runtime/support/compiler_cpu/kernels.golden
 support/matmul.golden
 support/sum_of_cast.golden
 support/sum_of_cast_kernels.golden

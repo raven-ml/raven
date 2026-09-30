@@ -1,0 +1,43 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+platform	case	lib	tree	name_path	ld_library_path	paths	extra_paths	found
+linux	name_path_file	tk-a	x/custom.bin=text e/libtk-a.so=elf	x/custom.bin	-	tk-a	e	x/custom.bin
+linux	name_path_missing_file	tkb	e/libtkb.so=elf	x/none.so	-	tkb	e	e/libtkb.so
+linux	name_path_empty	tkc	e/libtkc.so=elf	""	-	tkc	e	e/libtkc.so
+linux	name_path_dir_first	tkd	n/libtkd.so=elf l/libtkd.so=elf e/libtkd.so=elf	n	l	tkd	e	n/libtkd.so
+linux	name_path_dir_each_path	tke	n/libtkeb.so=elf	n	-	tkea tkeb	-	n/libtkeb.so
+linux	ld_library_path_before_extra	tkf	l/libtkf.so=elf e/libtkf.so=elf	-	l	tkf	e	l/libtkf.so
+linux	ld_library_path_order	tkg	l1/libtkg.so=elf l2/libtkg.so=elf	-	l2:l1	tkg	-	l2/libtkg.so
+linux	ld_library_path_empty_entries	tkh	l/libtkh.so=elf	-	::l:	tkh	-	l/libtkh.so
+linux	extra_paths_order	tki	e1/libtki.so=elf e2/libtki.so=elf	-	-	tki	e2 e1	e2/libtki.so
+linux	missing_dirs_skipped	tkj	e/libtkj.so=elf	-	gone	tkj	gone2 e	e/libtkj.so
+linux	linker_script_skipped	tkk	e/libtkk.so=text f/libtkk.so=elf	-	-	tkk	e f	f/libtkk.so
+linux	linker_script_beside_version	tkl	e/libtkl.so=text e/libtkl.so.2=elf	-	-	tkl	e	e/libtkl.so.2
+linux	version_digits_and_dots	tkm	e/libtkm.so.1.2.3=elf	-	-	tkm	e	e/libtkm.so.1.2.3
+linux	version_trailing_dot	tkn	e/libtkn.so.=elf	-	-	tkn	e	e/libtkn.so.
+linux	version_letters_rejected	tko	e/libtko.so.1a=elf e/libtko.so.x=elf e/libtko.so.1.gz=elf	-	-	tko	e	None
+linux	other_names_rejected	tkp	e/libtkp2.so=elf e/tkp.so=elf e/libtkp.dylib=elf e/tkp=elf e/libtkp.a=elf	-	-	tkp	e	None
+linux	directory_named_as_library	tkq	e/libtkq.so=dir f/libtkq.so=elf	-	-	tkq	e f	f/libtkq.so
+linux	symbolic_link_to_elf	tkr	t/libtkr.so.1=elf e/libtkr.so=@../t/libtkr.so.1	-	-	tkr	e	e/libtkr.so
+linux	dangling_symbolic_link	tks	e/libtks.so=@nowhere f/libtks.so=elf	-	-	tks	e f	f/libtks.so
+linux	absolute_file	tkt	a/whatever.txt=text e/libtkt.so=elf	-	-	/a/whatever.txt tkt	e	a/whatever.txt
+linux	absolute_missing_then_name	tku	e/libtku.so=elf	-	-	/a/none.so tku	e	e/libtku.so
+linux	absolute_directory_skipped	tkv	a/sub=dir e/libtkv.so=elf	-	-	/a/sub tkv	e	e/libtkv.so
+linux	paths_before_directories	tkw	l/libtkwb.so=elf e/libtkwa.so=elf	-	l	tkwa tkwb	e	e/libtkwa.so
+linux	not_found	tkx	e/other=text	-	-	tkx	e	None
+linux	no_paths	tky	e/libtky.so=elf	-	-	-	e	None
+darwin	name_path_file	td-a	x/custom=text e/libtd-a.dylib=text	x/custom	-	td-a	e	x/custom
+darwin	name_path_dir_first	tdb	n/libtdb.dylib=text l/libtdb.dylib=text e/libtdb.dylib=text	n	l	tdb	e	n/libtdb.dylib
+darwin	ld_library_path_before_extra	tdc	l/libtdc.dylib=text e/libtdc.dylib=text	-	l	tdc	e	l/libtdc.dylib
+darwin	ld_library_path_order	tdp	l1/libtdp.dylib=text l2/libtdp.dylib=text	-	l2:l1	tdp	-	l2/libtdp.dylib
+darwin	lib_dylib	tdd	e/libtdd.dylib=text	-	-	tdd	e	e/libtdd.dylib
+darwin	plain_dylib	tde	e/tde.dylib=text	-	-	tde	e	e/tde.dylib
+darwin	bare_name	tdf	e/tdf=text	-	-	tdf	e	e/tdf
+darwin	lib_dylib_first	tdg	e/libtdg.dylib=text e/tdg.dylib=text e/tdg=text	-	-	tdg	e	e/libtdg.dylib
+darwin	plain_dylib_before_bare	tdh	e/tdh.dylib=text e/tdh=text	-	-	tdh	e	e/tdh.dylib
+darwin	directory_before_name	tdi	e1/tdi=text e2/libtdi.dylib=text	-	-	tdi	e1 e2	e1/tdi
+darwin	elf_so_ignored	tdj	e/libtdj.so=elf e/libtdj.so.1=elf	-	-	tdj	e	None
+darwin	framework_dangling_link	tdk	e/tdk.framework/tdk=@Versions/A/tdk	-	-	tdk	e/tdk.framework	e/tdk.framework/tdk
+darwin	dangling_link_outside_framework	tdl	e/tdl=@nowhere f/tdl=text	-	-	tdl	e f	f/tdl
+darwin	directory_named_as_library	tdm	e/libtdm.dylib=dir e/tdm.dylib=text	-	-	tdm	e	e/tdm.dylib
+darwin	absolute_file	tdn	a/whatever.txt=text e/libtdn.dylib=text	-	-	/a/whatever.txt tdn	e	a/whatever.txt
+darwin	not_found	tdo	e/other=text	-	-	tdo	e	None

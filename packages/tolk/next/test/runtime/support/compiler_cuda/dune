@@ -1,0 +1,38 @@
+; Settings are read when the program starts, and NVRTC is loaded once per
+; process, so CACHEDB is set here, to a directory of the sandbox, and the tests
+; tagged no-library run in a second process, where NVRTC_PATH names a file that
+; is no library.
+
+(test
+ (name test_compiler_cuda)
+ (package tolk)
+ (libraries windtrap tolk.next)
+ (deps
+  (sandbox always)
+  not_a_library)
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run %{test} --exclude-tag slow --exclude-tag no-library)
+    (setenv
+     NVRTC_PATH
+     ./not_a_library
+     (run %{test} --tag no-library))))))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_compiler_cuda.exe} --tag slow))))
+
+(rule
+ (target not_a_library)
+ (action
+  (write-file %{target} "This file is no library.\n")))

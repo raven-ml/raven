@@ -1,0 +1,15 @@
+(test
+ (name test_c)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test unix)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow)))
+
+; The system the suite runs on, whose library search it checks.
+
+(rule
+ (target platform.ml)
+ (action
+  (write-file %{target} "let system = \"%{ocaml-config:system}\"\n")))
