@@ -897,26 +897,14 @@ let bitcast dt x = Ops.bitcast x dt
 
 let threefry key counter =
   let pack t =
-    let word i =
-      let s = Ops.shape t in
-      let last = List.length s - 1 in
-      Ops.reshape
-        (Ops.shrink t
-           (List.mapi
-              (fun a _ ->
-                if a = last then Some (Ops.Int i, Ops.Int (i + 1)) else None)
-              s))
-        (List.filteri (fun a _ -> a < last) s)
+    let wide w =
+      Ops.cast (Ops.bitcast (Ops.squeeze ~axis:(-1) w) Uint32) Uint64
     in
-    let wide w = Ops.cast (Ops.bitcast w Uint32) Uint64 in
-    Ops.bitwise_or
-      (Ops.shl (wide (word 1)) (int (wide (word 1)) 32))
-      (wide (word 0))
+    match Ops.split ~axis:(-1) t [ 1; 1 ] with
+    | [ lo; hi ] ->
+        Ops.bitwise_or (Ops.shl (wide hi) (int (wide hi) 32)) (wide lo)
+    | _ -> assert false
   in
   let bits = Ops.alu (pack counter) Op.Threefry [ pack key ] in
-  let word b =
-    let w = Ops.bitcast (Ops.cast b Uint32) Int32 in
-    Ops.reshape w (Ops.shape w @ [ Ops.Int 1 ])
-  in
-  let lo = word bits and hi = word (Ops.shr bits (int bits 32)) in
-  Ops.cat ~axis:(-1) lo [ hi ]
+  let word b = Ops.unsqueeze (Ops.bitcast (Ops.cast b Uint32) Int32) (-1) in
+  Ops.cat ~axis:(-1) (word bits) [ word (Ops.shr bits (int bits 32)) ]
