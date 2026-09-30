@@ -1317,6 +1317,77 @@ let diskcache =
               damaged overwrite);
         ]
 
+(* Programs *)
+
+let fails_with message f =
+  raises_match (function Failure m -> m = message | _ -> false) f
+
+(* The object of [src], compiled by the first of [compilers] that can, if
+   any. *)
+let compiled ?(flags = "") compilers src =
+  let obj = Filename.temp_file "tolk" ".o" in
+  List.find_map
+    (fun cc ->
+      match
+        system ~input:src (Printf.sprintf "%s %s -c -x c - -o %s" cc flags obj)
+      with
+      | _ -> Some (In_channel.with_open_bin obj In_channel.input_all)
+      | exception Failure _ -> None)
+    compilers
+
+let last_line s = List.hd (List.rev (String.split_on_char '\n' (String.trim s)))
+
+let programs =
+  group "programs"
+    [
+      test "system is the output of a command" (fun () ->
+          equal string "hello" (system "echo hello"));
+      test "system splits a command at runs of white space" (fun () ->
+          equal string "a b" (system "echo  a\t b"));
+      test "system gives the input on standard input" (fun () ->
+          equal string "abc" (system ~input:"abc" "cat"));
+      test "system is standard output and standard error, stripped" (fun () ->
+          equal string "out\nerr"
+            (system ~input:"echo; echo out; echo err 1>&2; echo" "sh"));
+      test "system fails with the exit code and the output" (fun () ->
+          fails_with "system: 'sh' failed with exit code 3\nwhy" (fun () ->
+              system ~input:"echo why; exit 3" "sh"));
+      test "system fails on a program that does not exist" (fun () ->
+          raises_match
+            (function Failure _ -> true | _ -> false)
+            (fun () -> system "tolk-no-such-program"));
+      test "system reports its output's size and time from DEBUG=1" (fun () ->
+          ignore (output ());
+          ignore (context [ B (debug, 1) ] (fun () -> system "echo hello"));
+          contains ~sub:"system: 'echo hello' returned 5 bytes in" (output ()));
+      test "cpu_objdump prints the instructions of an object" (fun () ->
+          match
+            compiled [ "cc"; "clang" ] "int answer(void) { return 42; }"
+          with
+          | None -> skip ~reason:"no C compiler" ()
+          | Some lib ->
+              ignore (output ());
+              cpu_objdump lib;
+              contains ~sub:"Disassembly of section" (output ()));
+      test
+        "amdgpu_disassemble prints a code object up to its end, without padding"
+        (fun () ->
+          match
+            compiled ~flags:"--target=amdgcn-amd-amdhsa -mcpu=gfx1100 -nogpulib"
+              [
+                "/opt/homebrew/opt/llvm/bin/clang";
+                "/opt/rocm/llvm/bin/clang";
+                "clang";
+              ]
+              "__attribute__((amdgpu_kernel)) void k(void) {}"
+          with
+          | None -> skip ~reason:"no clang for AMD GPUs" ()
+          | Some lib ->
+              ignore (output ());
+              amdgpu_disassemble lib;
+              contains ~sub:"s_endpgm" (last_line (output ())));
+    ]
+
 let () =
   match Sys.getenv_opt role with
   | Some r -> play r
@@ -1334,4 +1405,5 @@ let () =
              selection;
              terminal_text;
              diskcache;
+             programs;
            ])

@@ -468,3 +468,32 @@ module Diskcache : sig
   (** [clear ()] removes every entry of every table, of every version. Files
       under {!cachedb} that the cache did not write are kept. *)
 end
+
+(** {1:exec Programs} *)
+
+val system : ?input:string -> string -> string
+(** [system ~input cmd] is the output of the command [cmd], a program and its
+    arguments separated by spaces, run with [input] on its standard input or,
+    without [input], with the process's: what it writes on its standard output
+    and standard error, together, without the white space that starts and ends
+    it. With {!debug} at least 1, it prints how many bytes [cmd] returned and
+    how long it took.
+
+    Raises [Failure] naming [cmd] with the reason and output if [cmd] cannot run
+    or exits otherwise than with status [0]. *)
+
+val cpu_objdump : string -> unit
+(** [cpu_objdump lib] prints the instructions of the object file [lib], as
+    [objdump -d] prints them.
+
+    Raises [Failure] as {!system} if [objdump] fails. *)
+
+val amdgpu_disassemble : string -> unit
+(** [amdgpu_disassemble lib] prints the instructions of the AMD GPU code object
+    [lib], as [llvm-objdump -d] prints them, without the padding instructions
+    that end it ([s_nop 0] and [s_code_end]). [llvm-objdump] is Homebrew's on
+    macOS, and elsewhere the first of ROCm's and those named [llvm-objdump-21],
+    [llvm-objdump-20] and [llvm-objdump] on [PATH].
+
+    Raises [Failure] if there is no [llvm-objdump], or as {!system} if it fails.
+*)

@@ -695,3 +695,100 @@ module Diskcache = struct
           if is_table_dir name && Sys.is_directory dir then clear_table dir)
         (Sys.readdir cachedb)
 end
+
+(* Programs *)
+
+let with_temp_file contents f =
+  let path = Filename.temp_file "tolk" "" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove path)
+    (fun () ->
+      Out_channel.with_open_bin path (fun oc -> output_string oc contents);
+      f path)
+
+let read_file path = In_channel.with_open_bin path In_channel.input_all
+
+let system ?input cmd =
+  let start = Unix.gettimeofday () in
+  let prog, args =
+    match
+      String.split_on_char ' '
+        (String.map (fun c -> if is_space c then ' ' else c) cmd)
+      |> List.filter (( <> ) "")
+    with
+    | [] -> ("", [])
+    | prog :: args -> (prog, args)
+  in
+  let status, output =
+    with_temp_file "" @@ fun out ->
+    let run stdin =
+      Sys.command
+        (Filename.quote_command prog args ?stdin ~stdout:out ~stderr:out)
+    in
+    let status =
+      match input with
+      | None -> run None
+      | Some input -> with_temp_file input (fun path -> run (Some path))
+    in
+    (status, strip (read_file out))
+  in
+  if status <> 0 then
+    failwith
+      (Printf.sprintf "system: '%s' failed with exit code %d\n%s" cmd status
+         output);
+  if Context_var.value debug >= 1 then
+    Printf.printf "system: '%s' returned %d bytes in %.2f ms\n%!" cmd
+      (String.length output)
+      ((Unix.gettimeofday () -. start) *. 1e3);
+  output
+
+let cpu_objdump lib =
+  with_temp_file lib (fun path -> print_endline (system ("objdump -d " ^ path)))
+
+let which program =
+  let executable p =
+    Sys.file_exists p
+    && (not (Sys.is_directory p))
+    &&
+      try
+        Unix.access p [ X_OK ];
+        true
+      with Unix.Unix_error _ -> false
+  in
+  if Filename.is_implicit program then
+    let path = Option.value (Sys.getenv_opt "PATH") ~default:"" in
+    String.split_on_char (if Sys.win32 then ';' else ':') path
+    |> List.exists (fun dir -> executable (Filename.concat dir program))
+  else executable program
+
+let find_llvm_objdump () =
+  if Host_config.system = "macosx" then
+    "/opt/homebrew/opt/llvm/bin/llvm-objdump"
+  else
+    match
+      List.find_opt which
+        [
+          "/opt/rocm/llvm/bin/llvm-objdump";
+          "llvm-objdump-21";
+          "llvm-objdump-20";
+          "llvm-objdump";
+        ]
+    with
+    | Some p -> p
+    | None -> failwith "llvm-objdump not found"
+
+let amdgpu_disassemble lib =
+  let contains line pad =
+    let n = String.length pad in
+    let rec at i =
+      i + n <= String.length line && (String.sub line i n = pad || at (i + 1))
+    in
+    at 0
+  in
+  let is_padding line = contains line "s_nop 0" || contains line "s_code_end" in
+  let rec drop_padding = function
+    | l :: rest when is_padding l -> drop_padding rest
+    | asm -> asm
+  in
+  String.split_on_char '\n' (system ~input:lib (find_llvm_objdump () ^ " -d -"))
+  |> List.rev |> drop_padding |> List.rev |> String.concat "\n" |> print_endline
