@@ -1,0 +1,43 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	unchecked	checked
+a load at the first element	True	True
+a load at the last element	True	True
+a load one past the last element	True	False
+a load far past the last element	True	False
+a load at a negative constant	True	False
+a load at an int32 constant	True	True
+a load over the elements	True	True
+a load past the last element	True	False
+a load before the first element	True	False
+a load over a range as long as the buffer	True	True
+a load over a longer range	True	False
+a load over a guarded range	True	False
+a load over a range guarded too loosely	True	False
+a load over a guarded variable	True	False
+a load over a variable guarded on one side	True	False
+a load over half a longer range	True	True
+a load over a range modulo the length	True	True
+a load over a range modulo more than the length	True	False
+a load over a range masked to the length	True	True
+a load over a range shifted into the buffer	True	True
+a load over a range shifted past the buffer	True	False
+a load over a clamped variable	True	True
+a load over a variable clamped too little	True	False
+a load at the invalid index	True	True
+a gated load past the last element	True	False
+a gated load within the buffer	True	True
+a load of a cast index past the last element	True	False
+a load through two indexes	True	True
+a load of a shrink	True	True
+a load from a reshape over its elements	True	True
+a load from a reshape past its elements	True	False
+a load from a local buffer past its end	True	False
+a load from a local buffer within its end	True	False
+a load from a buffer after a store	True	False
+a store at the last element	True	True
+a store past the last element	True	False
+a store over a guarded variable	True	False
+a store over a variable guarded on one side	True	False
+a gated store past the last element	True	False
+a gated store within the buffer	True	True
+a store to a shrink past the last element	True	True

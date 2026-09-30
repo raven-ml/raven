@@ -366,6 +366,13 @@ uop/render/unrendered_rendered.golden
 uop/render/wide.golden
 uop/render/wide_listing.golden
 uop/render/wide_listing_colored.golden
+uop/spec/bounds.golden
+uop/spec/bounds_nodes.golden
+uop/spec/debug_listing.golden
+uop/spec/failures.golden
+uop/spec/failures_nodes.golden
+uop/spec/verdicts.golden
+uop/spec/verdicts_nodes.golden
 uop/uop_weak/cast_anchors_a_mixed_expression_at_the_cast.golden
 uop/uop_weak/cast_commits_operands_at_their_own_bounds.golden
 uop/uop_weak/cast_consts_give_underivable_literals_their_default.golden

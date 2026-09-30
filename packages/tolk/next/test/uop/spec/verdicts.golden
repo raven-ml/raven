@@ -1,0 +1,275 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	shared	tensor	program	hcq	full	kernel_graph
+a sink of a load	True	True	True	True	True	True
+a sink with kernel info	True	True	True	True	True	True
+an empty sink	True	True	True	True	True	True
+a noop	True	True	True	True	True	None
+an integer constant	True	True	True	True	True	True
+a float constant	True	True	True	True	True	True
+a boolean constant	True	True	True	True	True	True
+the invalid constant	True	True	False	True	True	True
+a constant with a source	None	None	False	None	False	None
+an empty stack	True	True	True	True	True	True
+a stack of int32	True	True	True	True	True	None
+a stack of int32 and a weak integer	True	True	False	True	True	None
+a stack of int32 and float32	False	False	False	False	False	None
+a stack of float32 and the invalid constant	True	True	False	True	True	None
+a stack of a scalar and a vector	False	False	False	False	False	None
+a where over float32	True	True	True	True	True	None
+a where over float32 and a weak float	True	True	False	True	True	None
+a where over int32 and float32	False	False	False	False	False	None
+a where over float32 and the invalid constant	True	True	False	True	True	None
+a where over the invalid constant	True	True	False	True	True	None
+a cmplt of int32	True	True	True	True	True	None
+a cmplt of int32 and float32	False	False	False	False	False	None
+a cmpne of int32	True	True	True	True	True	None
+a cmpne of int32 and float32	False	False	False	False	False	None
+a cmpeq of int32	True	True	True	True	True	None
+a cmpeq of int32 and float32	False	False	False	False	False	None
+a cmplt of int32 and a weak integer	True	True	False	True	True	None
+a cmplt of a weak float and float16	True	True	False	True	True	None
+a cmplt of the invalid constant and float32	True	True	False	True	True	None
+a cmplt of float32 and the invalid constant	True	True	False	True	True	None
+an and of float32	False	False	False	False	False	None
+an and of int32	True	True	True	True	True	None
+an or of float32	False	False	False	False	False	None
+an or of int32	True	True	True	True	True	None
+an xor of float32	False	False	False	False	False	None
+an xor of int32	True	True	True	True	True	None
+an and of weak floats	False	False	False	False	False	None
+an and of booleans	True	True	True	True	True	None
+an and of int32 and int8	False	False	False	False	False	None
+a shl of int32 by int32	True	True	True	True	True	None
+a shl of int8 by uint32	True	True	True	True	True	None
+a shl of int8 by int32	False	False	False	False	False	None
+a shr of int32 by int32	True	True	True	True	True	None
+a shr of int8 by uint32	True	True	True	True	True	None
+a shr of int8 by int32	False	False	False	False	False	None
+a shl of int8 by a weak integer	True	True	False	True	True	None
+a shl of uint64 by uint16	False	False	False	False	False	None
+a shl of the invalid constant by int32	True	True	False	True	True	None
+a cdiv of int32	True	True	True	True	True	None
+a cdiv of float32	False	False	False	False	False	None
+a cmod of int32	True	True	True	True	True	None
+a cmod of float32	False	False	False	False	False	None
+a floordiv of int32	True	True	True	True	True	None
+a floordiv of float32	False	False	False	False	False	None
+a floormod of int32	True	True	True	True	True	None
+a floormod of float32	False	False	False	False	False	None
+a cdiv of float32 by the invalid constant	True	True	False	True	True	None
+a cmod of the invalid constant by int32	True	True	False	True	True	None
+a cdiv of int32 by float32	False	False	False	False	False	None
+a sum of int32	True	True	True	True	True	None
+a sum of int32 and float32	False	False	False	False	False	None
+a sum of float16 and float32	False	False	False	False	False	None
+a sum of float32 and a weak float	True	True	False	True	True	None
+a sum of int32 and a weak integer	True	True	False	True	True	None
+a sum of float32 and the invalid constant	True	True	False	True	True	None
+a sum of weak integers	True	True	False	True	True	None
+a product of float64	True	True	True	True	True	None
+a maximum of uint8 and int8	False	False	False	False	False	None
+a subtraction of bfloat16	True	True	True	True	True	None
+a float division of int32	False	False	False	False	False	None
+a float division of float32	True	True	True	True	True	None
+a power of float32	True	True	True	True	True	None
+a multiply-add of float32	True	True	True	True	True	None
+a multiply-add of float32 and float16	False	False	False	False	False	None
+a threefry of uint64	True	True	True	True	True	None
+a negation of int32	True	True	True	True	True	None
+a truncation of float32	True	True	True	True	True	None
+a sin of float32	True	True	True	True	True	None
+a sin of int32	False	True	False	False	True	None
+a log2 of float32	True	True	True	True	True	None
+a log2 of int32	False	True	False	False	True	None
+a exp2 of float32	True	True	True	True	True	None
+a exp2 of int32	False	True	False	False	True	None
+a sqrt of float32	True	True	True	True	True	None
+a sqrt of int32	False	True	False	False	True	None
+a reciprocal of float32	True	True	True	True	True	None
+a reciprocal of int32	False	True	False	False	True	None
+a sin of the invalid constant	True	True	False	True	True	None
+a sin of a weak integer	True	True	False	True	True	None
+a cast of int32 to float32	True	True	True	True	True	None
+a bitcast of float32 to int32	True	True	True	True	True	True
+a cast of two sources	None	None	None	None	None	None
+a range	True	True	False	True	True	False
+a range with a nested axis	True	True	False	True	True	False
+a global int32 range	True	True	True	True	True	False
+a range with extra sources	True	True	False	True	True	False
+a loop header	True	True	True	True	True	False
+a device range	True	True	False	True	True	True
+an index by a weak integer	True	True	False	True	True	None
+an index by int32	True	True	True	True	True	None
+an index by two integers	True	True	False	True	True	None
+an index by a float	None	None	None	None	None	None
+an index by a boolean	None	None	None	None	None	None
+an index by the invalid constant	True	True	False	True	True	None
+an index by a guarded range	True	True	True	True	True	None
+an index of a stack	True	True	False	True	True	None
+an end of a store over a range	True	True	True	True	True	None
+an end of a store over two ranges	True	True	True	True	True	None
+an end of a store over an int32 range	True	True	True	True	True	None
+an end of a store over a constant	False	False	False	False	True	None
+an end of a store over a launch dimension	False	False	False	False	True	None
+an end of a store over a loop header	False	False	False	False	False	None
+an end of a value over a range	None	None	None	None	None	None
+an end of a store alone	True	True	True	True	True	None
+a backedge on a boolean	True	True	True	True	True	None
+a backedge on the invalid constant	False	False	False	False	False	None
+a backedge on a vector of booleans	False	False	False	False	False	None
+a backedge of a bounded range	None	None	None	None	None	None
+a backedge of a value	True	True	True	True	True	None
+a parameter	True	True	True	True	True	True
+a scalar parameter	True	True	True	True	True	True
+a named parameter on a device	True	True	True	True	True	True
+a variable	True	True	False	True	True	True
+an int32 variable	True	True	True	True	True	True
+a variable on a device	True	False	True	True	False	True
+a bound variable	True	True	True	True	True	True
+a local buffer	True	True	True	True	True	True
+a register buffer	True	True	True	True	True	True
+a global buffer	False	True	False	False	True	True
+a global buffer without a device	False	False	False	False	False	True
+a global buffer without a size	False	False	False	False	False	True
+a buffer on two devices	None	True	False	None	True	True
+a buffer on two devices without its range	False	False	False	False	False	False
+a buffer on two devices over three	None	False	False	None	False	False
+a buffer on two devices over a loop range	None	False	False	None	False	False
+a buffer on one device with a range	None	False	False	None	False	False
+an alu buffer	False	False	False	False	False	False
+a global allocation	None	True	False	None	True	True
+a global allocation on a device	None	True	False	None	True	True
+a global allocation without a size	None	True	False	None	True	True
+an allocation on two devices	None	True	False	None	True	True
+an allocation on two devices without its range	None	False	False	None	False	False
+a local allocation	None	True	True	None	True	False
+a register allocation	None	True	True	None	True	False
+a local allocation on a device	None	False	True	None	False	False
+an alu allocation	None	False	False	None	False	False
+binary data	True	True	True	True	True	None
+a group of stores	True	True	True	True	True	None
+a group of a value	None	None	None	None	None	None
+a parameter after a store	True	True	True	True	True	True
+an index after a store	True	True	True	True	True	None
+a reshape after a store	True	True	True	True	True	True
+a bitcast after a store	True	True	True	True	True	True
+an allocation after a store	True	True	True	True	True	True
+a staged value after a store	True	True	True	True	True	None
+an instruction after a store	True	True	True	True	True	None
+an after after a store	True	True	True	True	True	True
+a constant after a store	None	None	False	None	True	None
+a load after a store	None	None	None	None	True	None
+custom code	True	True	True	True	True	None
+inline custom code	True	True	True	True	True	None
+a void custom statement	True	True	True	True	True	None
+a custom function	True	True	True	True	True	None
+a custom function without sources	True	True	True	True	True	None
+a call of a sink	True	True	True	True	True	True
+a call of a store	True	True	True	True	True	True
+a call of a custom function	True	True	True	True	True	True
+a call of a constant	None	None	False	None	False	None
+a call of a load	None	None	None	None	None	None
+a barrier	True	True	True	True	True	None
+an instruction	True	True	True	True	True	None
+a wmma	True	True	True	True	True	None
+a load of an index	True	True	True	True	True	None
+a load of a cast index	True	True	True	True	True	None
+a load of a twice cast index	None	None	None	None	True	None
+a load of a bitcast index	None	None	None	None	True	None
+a load of a shrink	True	True	True	True	True	None
+a load of a parameter	None	None	None	None	True	None
+a gated load	True	True	True	True	True	None
+a gated load with a weak alternative	False	False	False	False	True	None
+a gated load with an int32 alternative	False	False	False	False	True	None
+a gated load with the invalid alternative	True	True	False	True	True	None
+a gated load by an int32 gate	None	None	None	None	True	None
+a store to an index	True	True	True	True	True	None
+a store to a cast index	True	True	True	True	True	None
+a store to a shrink	True	True	True	True	True	None
+a gated store	True	True	True	True	True	None
+a store to a parameter	True	True	True	True	True	None
+a store to an allocation	True	True	True	True	True	None
+a store to a global buffer	True	True	True	True	True	None
+a store to a staged value	True	True	True	True	True	None
+a store to a reshape of a parameter	True	True	True	True	True	None
+a store to a parameter after a store	True	True	True	True	True	None
+a store to an index after a store	None	None	None	None	True	None
+a store to a constant	False	False	False	False	True	None
+a store to a load	False	False	False	False	True	None
+a special over a weak integer	None	True	False	None	True	None
+a special over int32	None	None	True	None	True	None
+a reshape	None	True	False	None	True	None
+an expand	None	True	False	None	True	None
+a pad	None	True	False	None	True	None
+a pad by a shorter end	None	False	False	None	False	None
+a shrink	None	True	False	None	True	None
+a permute	None	True	False	None	True	None
+a flip	None	True	False	None	True	None
+a reduce	None	True	None	None	True	None
+a reduce over ranges	None	True	None	None	True	None
+a reduce over an int32 range	None	True	None	None	True	None
+a reduce over a uint32 range	None	False	None	None	False	None
+a reduce by sine	None	False	None	None	False	None
+a copy	None	True	None	None	True	None
+a copy to two devices	None	True	None	None	True	None
+a copy to two devices without its range	None	False	None	None	False	None
+a copy to a disk	None	False	None	None	False	None
+an allreduce	None	True	None	None	True	None
+an allreduce by sine	None	False	None	None	False	None
+an unshard	None	True	None	None	True	None
+an unshard over a derived range	None	True	None	None	True	None
+an unshard missing a range	None	False	None	None	False	None
+an unshard over an int32 range	None	False	None	None	False	None
+a selection of a shard	None	True	None	None	True	True
+a selection past the shards	None	False	None	None	False	False
+a selection on one device	None	False	None	None	False	False
+a stack of shards	None	True	None	None	True	True
+a stack of sharded values	None	False	None	None	False	False
+a stack of one value without a device	None	True	None	None	True	True
+a stack of values without a device	None	False	None	None	False	False
+a detach	None	True	None	None	True	None
+a contiguous backward	None	True	None	None	True	None
+a staged value	None	True	None	None	True	None
+a staged value over a range	None	True	None	None	True	None
+a linear	None	True	None	None	True	None
+a source	None	True	None	None	True	None
+a program of a sink	None	True	None	None	True	None
+a program of a sink and a linear	None	True	None	None	True	None
+a program of a sink, a linear and a source	None	True	None	None	True	None
+a compiled program	None	True	None	None	True	None
+a program of a linear	None	None	None	None	None	None
+a program of a parameter	None	None	None	True	True	None
+a program of a global buffer after a store	None	None	None	True	True	None
+a sum under a constant	True	True	False	True	True	None
+an int32 constant	True	True	True	True	True	True
+a shrink of a parameter by cast constants	None	True	True	None	True	None
+a shrink of a bitcast parameter by cast constants	None	True	True	None	True	None
+a shrink of a parameter by a variable	None	True	False	None	True	None
+a shrink of a load by cast constants	None	True	False	None	True	None
+an if on an index	None	None	True	None	True	None
+an if on a cast	None	None	True	None	True	None
+an if on a shrink	None	None	True	None	True	None
+an if on a load	None	None	None	None	None	None
+an if on an int32 gate	None	None	None	None	None	None
+an endif	None	None	True	None	True	None
+an endif of a store	None	None	None	None	None	None
+an address of a global buffer	None	None	None	True	True	None
+an address of an allocation	None	None	None	True	True	None
+an address of a buffer after a store	None	None	None	True	True	None
+an address of a stack of shards	None	None	None	True	True	None
+an address of a load	None	None	None	None	None	None
+a stack of parameters	True	True	True	True	True	True
+a stack of a sum	True	True	False	True	True	None
+a cast of a constant	True	True	True	True	True	True
+an after of a stack of shards	None	None	None	None	True	True
+binary data without bytes	False	False	False	False	False	None
+a custom function without a name	False	False	False	False	False	None
+a call without call info	False	False	False	False	False	True
+a wmma without an argument	False	False	False	False	False	None
+a special without a name	None	False	False	None	False	None
+a special over int32 without a name	None	None	False	None	False	None
+a permute without an order	None	False	False	None	False	None
+a reduce without an argument	None	False	None	None	False	None
+a copy without a device	None	False	None	None	False	None
+an allreduce without an argument	None	False	None	None	False	None
+an address without a device	None	None	None	False	False	None
