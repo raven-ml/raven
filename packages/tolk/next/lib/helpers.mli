@@ -278,8 +278,8 @@ val allow_tf32 : bool Context_var.t
     NVIDIA devices, from [ALLOW_TF32]. Defaults to [false]. *)
 
 val scache : int Context_var.t
-(** [scache] is how schedules are cached, from [SCACHE]: [0] not at all, [1] in
-    memory, [2] also in the {!Diskcache}. Defaults to [1]. *)
+(** [scache] is whether schedules are cached in memory, from [SCACHE]: [0]
+    not at all, [1] or more in memory. Defaults to [1]. *)
 
 val disallow_broadcast : bool Context_var.t
 (** [disallow_broadcast] makes an elementwise operation on operands of different

@@ -78,12 +78,15 @@ the Exclusions of `README.md`.
   (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
   `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
-  `lib/renderer/renderer.ml` (`Compiler`); and `lib/schedule/prepare.ml`
-  (`contiguous_view`).
+  `lib/renderer/renderer.ml` (`Compiler`); `lib/schedule/prepare.ml`
+  (`contiguous_view`); and `lib/schedule/schedule.ml` (`pm_flatten_linear`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
     `to_elf` to `Device`, and `render` and `srender` to `Render`;
+  - `engine/realize.py`'s `pm_flatten_linear`, which `schedule/__init__.py`
+    imports, is `Schedule.pm_flatten_linear`, since `Realize` follows
+    `Schedule`;
   - `simplify` stays in `Ops`, since reshaping, `resolve` and shapes call
     it: it rewrites with the `symbolic` matcher that `Symbolic` installs when
     the library is initialised, and the `SPEC` check at construction runs the
