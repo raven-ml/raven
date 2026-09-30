@@ -64,15 +64,13 @@ let wrapping2 f x y = back (dtype x) (f (lift x) (lift y))
 let recip x =
   if is_float x then float1 Ops.reciprocal x
   else
-    (* The integer quotient of 1: 1 at 1, -1 at -1, and 0 elsewhere, 0
+    (* The integer quotient of 1: [x] at 1 and -1, and 0 elsewhere, 0
        included. *)
-    let minus_one =
-      if is_signed x then Ops.eq x (int x (-1)) else Ops.bool false
+    let unit = Ops.eq x (int x 1) in
+    let unit =
+      if is_signed x then Ops.bitwise_or unit (Ops.eq x (int x (-1))) else unit
     in
-    where
-      (Ops.eq x (int x 1))
-      (int x 1)
-      (where minus_one (int x (-1)) (int x 0))
+    where unit x (int x 0)
 
 let abs x =
   if is_float x then
