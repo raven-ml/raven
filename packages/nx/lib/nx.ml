@@ -114,3 +114,104 @@ let truncated_normal lower upper =
 let fftfreq dtype ?d n = Frontend.fftfreq context dtype ?d n
 let rfftfreq dtype ?d n = Frontend.rfftfreq context dtype ?d n
 let hann dt n = Frontend.hann context dt n
+
+(* For transformations and file formats *)
+
+module Op = struct
+  include Nx_effect.Op
+
+  type conversion = Nx_effect.conversion = Cast | Bitcast
+
+  let eval = Nx_effect.eval
+  let placement = Nx_effect.result_placement
+
+  type interpreter = Nx_effect.interpreter = { run : 'r. 'r t -> 'r }
+
+  let intercept = Nx_effect.intercept
+  let intercepted = Nx_effect.intercepted
+end
+
+module Repr = struct
+  type ('a, 'b) node = ('a, 'b) Nx_effect.node = ..
+
+  (* Whether [v] reaches only elements [0] to [n - 1]. *)
+  let within v n =
+    Nx_array.View.numel v = 0
+    ||
+    let lo = ref (Nx_array.View.offset v)
+    and hi = ref (Nx_array.View.offset v) in
+    Array.iteri
+      (fun i d ->
+        let s = (Nx_array.View.strides v).(i) * (d - 1) in
+        if s < 0 then lo := !lo + s else hi := !hi + s)
+      (Nx_array.View.shape v);
+    !lo >= 0 && !hi < n
+
+  module Storage = struct
+    type t = Nx_effect.cell
+
+    let v p buffers =
+      let ds = Placement.devices p in
+      if List.compare_lengths ds buffers <> 0 then
+        invalid_arg "Nx.Repr.Storage.v: one buffer per device of the placement";
+      let length = Nx_device.Buffer.length (List.hd buffers) in
+      List.iter2
+        (fun d b ->
+          if Nx_device.Buffer.length b <> length then
+            invalid_arg "Nx.Repr.Storage.v: buffers of different lengths";
+          if Nx_device.Buffer.device b != Nx_effect.runtime_of d then
+            invalid_arg
+              (Printf.sprintf "Nx.Repr.Storage.v: a buffer for %s is on %s"
+                 (Device.name d)
+                 (Nx_device.name (Nx_device.Buffer.device b))))
+        ds buffers;
+      Nx_effect.cell ~placement:p ~length (Nx_effect.Runtime buffers)
+
+    let buffers (s : t) =
+      match Nx_effect.Cell.state s with
+      | Nx_effect.Live (Nx_effect.Runtime bs) -> bs
+      | Live _ ->
+          invalid_arg "Nx.Repr.Storage.buffers: storage in memory of its own"
+      | Consumed k -> invalid_arg (Nx_effect.why_consumed k)
+
+    let placement (s : t) = s.placement
+  end
+
+  module Placed = struct
+    type ('a, 'b) t = ('a, 'b) Nx_effect.resident
+
+    let v p dtype view (s : Storage.t) =
+      if not (within view s.length) then
+        invalid_arg "Nx.Repr.Placed.v: the view reaches outside the storage";
+      Nx_effect.placed p dtype view s
+
+    let id (x : ('a, 'b) t) = x.r_id
+    let view (x : ('a, 'b) t) = x.r_view
+    let storage (x : ('a, 'b) t) = x.r_cell
+  end
+
+  module Traced = struct
+    type ('a, 'b) t = ('a, 'b) Nx_effect.traced
+
+    let v ~context p dtype shape node =
+      Nx_effect.traced context p dtype shape node
+
+    let id (x : ('a, 'b) t) = x.t_id
+    let node (x : ('a, 'b) t) = x.t_node
+  end
+
+  type ('a, 'b) t = ('a, 'b) Nx_effect.t =
+    | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
+    | Placed : ('a, 'b) Placed.t -> ('a, 'b) t
+    | Traced : ('a, 'b) Traced.t -> ('a, 'b) t
+
+  let v x = x
+
+  let host (a : ('a, 'b) Nx_array.t) =
+    Nx_effect.check_host "Repr.host" a.dtype a.buffer;
+    if not (within a.view (Nx_device.Buffer.length a.buffer)) then
+      invalid_arg "Nx.Repr.host: the view reaches outside the buffer";
+    Nx_effect.Host a
+
+  let context = Nx_effect.context
+end

@@ -449,6 +449,54 @@ let join a b =
 let at where x =
   match where with None -> x | Some w -> Nx.place (to_placement w) x
 
+(* [agreeing f] is [f ()] with every operation it performs checked against
+   [Nx.Op.placement]: evaluation puts the result where it says, or raises what
+   it raises. *)
+let agreeing f =
+  let placed : type r. r Nx.Op.t -> r -> Nx.Placement.t option =
+   fun op r ->
+    match op with
+    | Unary _ -> Some (Nx.placement r)
+    | Binary _ -> Some (Nx.placement r)
+    | Compare _ -> Some (Nx.placement r)
+    | Where _ -> Some (Nx.placement r)
+    | Reduce _ -> Some (Nx.placement r)
+    | Scan _ -> Some (Nx.placement r)
+    | Sort _ -> Some (Nx.placement r)
+    | Pad _ -> Some (Nx.placement r)
+    | Cat _ -> Some (Nx.placement r)
+    | Convert _ -> Some (Nx.placement r)
+    | Gather _ -> Some (Nx.placement r)
+    | Matmul _ -> Some (Nx.placement r)
+    | Contiguous _ -> Some (Nx.placement r)
+    | Cholesky _ -> Some (Nx.placement r)
+    | Move _ -> Some (Nx.placement r)
+    | Place _ -> Some (Nx.placement r)
+    | _ -> None
+  in
+  let run : type r. r Nx.Op.t -> r =
+   fun op ->
+    let msg = Nx.Op.name op in
+    match Nx.Op.placement op with
+    | exception Invalid_argument why -> (
+        match Nx.Op.eval op with
+        | _ -> failf "%s: evaluates where Nx.Op.placement raises %S" msg why
+        | exception Invalid_argument raised ->
+            equal ~msg string why raised;
+            invalid_arg raised)
+    | p -> (
+        match Nx.Op.eval op with
+        | exception Invalid_argument raised ->
+            failf "%s: raises %S where Nx.Op.placement is %a" msg raised
+              Nx.Placement.pp p
+        | r ->
+            Option.iter (equal ~msg placement p) (placed op r);
+            r)
+  in
+  Nx.Op.intercept { run } f
+
+type (_, _) Nx.Repr.node += Probe : ('a, 'b) Nx.Repr.node
+
 let results =
   let ds = [ d1; d2 ] in
   let rows = Nx.Placement.sharded ~axis:0 ds
@@ -495,7 +543,7 @@ let results =
             | Some (Copies _), Some (Split _), Ok _ -> true
             | _ -> false);
           elements_read := 0;
-          match (Nx.add (at wa x) (at wb y), expected) with
+          match (agreeing (fun () -> Nx.add (at wa x) (at wb y)), expected) with
           | exception Invalid_argument _ ->
               equal ~msg:"refused, having read nothing" (pair bool int) (true, 0)
                 (Result.is_error expected, !elements_read)
@@ -548,7 +596,7 @@ let results =
           raises_match
             (Exn.invalid_arg
                ~substring:"place the value replicated or on one device first")
-            f);
+            (fun () -> agreeing f));
       cases "of an operation along the other axis keep the split" ~name:fst
         [
           ("a scalar operand", fun v -> Nx.add_s v 1.);
@@ -613,7 +661,7 @@ let results =
           );
         ]
         (fun (_, p, f) ->
-          let expected, y = f () in
+          let expected, y = agreeing f in
           equal placement p (Nx.placement y);
           equal (tensor float_exact) expected y);
       test "parts of shards that are not whole shards of one storage raise"
@@ -621,21 +669,55 @@ let results =
           let s = s () in
           let bottom = Nx.slice [ R (4, 8) ] s in
           refuses
+            (List.map
+               (fun f () -> agreeing f)
+               [
+                 (fun () -> ignore (Nx.roll ~axis:0 1 s));
+                 (fun () -> ignore (Nx.add (Nx.slice [ R (0, 2) ] s) bottom));
+                 (fun () ->
+                   ignore
+                     (Nx.add
+                        (Nx.broadcast_to [| 4; 6 |] (Nx.slice [ R (0, 1) ] s))
+                        bottom));
+                 (fun () ->
+                   ignore
+                     (Nx.add
+                        (Nx.slice [ R (0, 4) ] s)
+                        (Nx.place (Nx.Placement.device d2)
+                           (Nx.slice [ R (4, 8) ] x))));
+               ]));
+      prop
+        "of each operation live where Nx.Op.placement says, or raise as it does"
+        (Gen.pair operand operand) (fun (wa, wb) ->
+          let x = iota [| 4; 6 |] in
+          List.iter
+            (fun f -> try ignore (agreeing f) with Invalid_argument _ -> ())
             [
-              (fun () -> ignore (Nx.roll ~axis:0 1 s));
-              (fun () -> ignore (Nx.add (Nx.slice [ R (0, 2) ] s) bottom));
-              (fun () ->
-                ignore
-                  (Nx.add
-                     (Nx.broadcast_to [| 4; 6 |] (Nx.slice [ R (0, 1) ] s))
-                     bottom));
-              (fun () ->
-                ignore
-                  (Nx.add
-                     (Nx.slice [ R (0, 4) ] s)
-                     (Nx.place (Nx.Placement.device d2)
-                        (Nx.slice [ R (4, 8) ] x))));
+              (fun () -> Nx.matmul (at wa x) (at wb (Nx.transpose x)));
+              (fun () -> Nx.sum ~axes:[ 0 ] (at wa x));
+              (fun () -> Nx.cumsum ~axis:1 (at wa x));
+              (fun () -> Nx.concatenate ~axis:1 [ at wa x; at wb x ]);
+              (fun () -> Nx.slice [ R (0, 2) ] (at wa x));
+              (fun () -> Nx.slice [ L [ 3; 0 ] ] (at wa x));
+              (fun () -> Nx.where (Nx.less (at wa x) (at wb x)) (at wa x) x);
             ]);
+      test "Nx.Op.placement joins a traced operand as its placement says"
+        (fun () ->
+          let traced p =
+            Nx.Repr.Traced.v ~context:Nx.Placement.host p Nx.float32
+              (Nx.shape x) Probe
+          in
+          let at_rows = Nx.place rows x in
+          equal placement rows
+            (Nx.Op.placement (Binary (Add, traced rows, at_rows)));
+          equal placement rows
+            (Nx.Op.placement (Binary (Add, traced Nx.Placement.host, at_rows)));
+          equal placement copies
+            (Nx.Op.placement (Reduce (Sum, [| 0 |], traced rows)));
+          equal placement on1
+            (Nx.Op.placement (Move (traced rows, Shrink [| (0, 4); (0, 6) |])));
+          raises_invalid_arg (fun () ->
+              Nx.Op.placement (Binary (Add, traced cols, at_rows))));
       test
         "a constant made on a device is one element placed there, and a \
          filled value is uploaded split like its model" (fun () ->

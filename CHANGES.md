@@ -2871,6 +2871,14 @@ thread.
 
 ### Nx
 
+- New low-level section of `Nx`, for transformations and file formats: `Nx.Op`,
+  the operations as values with their interpretation (`eval`, `intercept`,
+  `intercepted`), where their results live (`placement`), and their `operands`,
+  `name` and `pp`; and `Nx.Repr`, the representation of a value (host arrays,
+  placed values over `Nx.Repr.Storage`, traced values with their `node`), whose
+  constructors check that a view stays within its storage.
+  `Nx.Placement.with_leading_axis` and `without_leading_axis` serve
+  transformations over a leading axis.
 - **Breaking:** `Nx_device.submit` takes a set of devices and the buffers the
   work touches, and runs `f` with an `Nx_device.Submission.t`: `value` is each
   device's value, `waits` is one `(device, value)` pair for each device of the

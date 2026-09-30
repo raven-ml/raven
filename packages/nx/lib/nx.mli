@@ -369,6 +369,17 @@ module Placement : sig
       Raises [Invalid_argument] if [d] is not one of [devices p], or if [p]
       splits an axis [shape] does not have or does not divide evenly. *)
 
+  val with_leading_axis : t -> t
+  (** [with_leading_axis p] is the placement of a value of one more axis in
+      front, split as [p] splits the others. It is for transformations that
+      map over a leading axis. *)
+
+  val without_leading_axis : t -> t
+  (** [without_leading_axis p] is the placement of a value without its first
+      axis: a device axis that split it then holds copies, and the other axes
+      shift down by one. It is for transformations that map over a leading
+      axis. *)
+
   val equal : t -> t -> bool
   (** [equal p p'] is [true] iff [p] and [p'] have the same backend and every
       device holds the same window of any value at [p] and at [p']. A list of
@@ -3584,3 +3595,329 @@ val pp_shape : Format.formatter -> int array -> unit
 
 val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
 (** [pp_dtype ppf dtype] formats [dtype] by name (e.g. [float32]). *)
+
+(** {1:low_level For transformations and file formats}
+
+    What a transformation and a file format need of nx's values: the operations
+    as values, their interpretation, and the representation of a value. Programs
+    never need this section. *)
+
+(** Operations as values.
+
+    Every operation nx computes or answers is a constructor of {!t}: those
+    computed by the placement's backend, and {!Move}, {!Place} and {!Read},
+    which nx answers itself. A transformation is an interpreter of these values,
+    installed with {!intercept}. *)
+module Op : sig
+  type move = Nx_effect.move =
+    | Reshape of int array
+    | Expand of int array
+    | Permute of int array
+    | Shrink of (int * int) array
+    | Flip of bool array
+    | Window of { axis : int; size : int; step : int }
+        (** The type for movements: views of a value's storage. *)
+
+  type conversion = Nx_effect.conversion =
+    | Cast
+    | Bitcast
+        (** The type for dtype conversions: [Cast] converts values, [Bitcast]
+            reads the bits of each element as one of another dtype of its width.
+        *)
+
+  type 'r t = 'r Nx_effect.Op.t =
+    | Unary : Nx_backend.unary * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
+    | Binary :
+        Nx_backend.binary * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Compare :
+        Nx_backend.compare * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
+        -> (bool, Nx_dtype.bool_elt) Nx_effect.t t
+    | Where :
+        (bool, Nx_dtype.bool_elt) Nx_effect.t
+        * ('a, 'b) Nx_effect.t
+        * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Reduce :
+        Nx_backend.reduce * int array * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Scan :
+        Nx_backend.reduce * int * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Arg_reduce :
+        Nx_backend.arg_reduce * int * ('a, 'b) Nx_effect.t
+        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+    | Sort : {
+        descending : bool;
+        axis : int;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Argsort : {
+        descending : bool;
+        axis : int;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+    | Pad :
+        (int * int) array * 'a * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Cat : int * ('a, 'b) Nx_effect.t list -> ('a, 'b) Nx_effect.t t
+    | Convert :
+        conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) Nx_effect.t
+        -> ('c, 'd) Nx_effect.t t
+    | Threefry :
+        (int32, Nx_dtype.int32_elt) Nx_effect.t
+        * (int32, Nx_dtype.int32_elt) Nx_effect.t
+        -> (int32, Nx_dtype.int32_elt) Nx_effect.t t
+    | Gather :
+        int * (int32, Nx_dtype.int32_elt) Nx_effect.t * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Scatter : {
+        mode : [ `Set | `Add ];
+        unique : bool;
+        axis : int;
+        indices : (int32, Nx_dtype.int32_elt) Nx_effect.t;
+        updates : ('a, 'b) Nx_effect.t;
+        into : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Update :
+        ('a, 'b) Nx_effect.t
+        * (int32, Nx_dtype.int32_elt) Nx_effect.t
+        * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Unfold : {
+        kernel_size : int array;
+        stride : int array;
+        dilation : int array;
+        padding : (int * int) array;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Fold : {
+        output_size : int array;
+        kernel_size : int array;
+        stride : int array;
+        dilation : int array;
+        padding : (int * int) array;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Matmul :
+        ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Fft : {
+        inverse : bool;
+        axes : int array;
+        x : (Complex.t, 'b) Nx_effect.t;
+      }
+        -> (Complex.t, 'b) Nx_effect.t t
+    | Rfft : {
+        dtype : (Complex.t, 'c) Nx_dtype.t;
+        axes : int array;
+        x : (float, 'b) Nx_effect.t;
+      }
+        -> (Complex.t, 'c) Nx_effect.t t
+    | Irfft : {
+        dtype : (float, 'c) Nx_dtype.t;
+        axes : int array;
+        s : int array option;
+        x : (Complex.t, 'b) Nx_effect.t;
+      }
+        -> (float, 'c) Nx_effect.t t
+    | Contiguous : ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
+    | Cholesky : {
+        upper : bool;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Qr : {
+        reduced : bool;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> (('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t) t
+    | Lu :
+        ('a, 'b) Nx_effect.t
+        -> (('a, 'b) Nx_effect.t
+           * (int32, Nx_dtype.int32_elt) Nx_effect.t
+           * (int32, Nx_dtype.int32_elt) Nx_effect.t)
+           t
+    | Svd : {
+        full_matrices : bool;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> (('a, 'b) Nx_effect.t
+           * (float, Nx_dtype.float64_elt) Nx_effect.t
+           * ('a, 'b) Nx_effect.t)
+           t
+    | Eig : {
+        vectors : bool;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ((Complex.t, Nx_dtype.complex64_elt) Nx_effect.t
+           * (Complex.t, Nx_dtype.complex64_elt) Nx_effect.t option)
+           t
+    | Eigh : {
+        vectors : bool;
+        x : ('a, 'b) Nx_effect.t;
+      }
+        -> ((float, Nx_dtype.float64_elt) Nx_effect.t
+           * ('a, 'b) Nx_effect.t option)
+           t
+    | Solve_triangular : {
+        upper : bool;
+        transpose : bool;
+        unit_diag : bool;
+        a : ('a, 'b) Nx_effect.t;
+        b : ('a, 'b) Nx_effect.t;
+      }
+        -> ('a, 'b) Nx_effect.t t
+    | Move : ('a, 'b) Nx_effect.t * move -> ('a, 'b) Nx_effect.t t
+    | Place : Placement.t * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
+    | Read : ('a, 'b) Nx_effect.t -> Nx_device.Buffer.t t
+
+  (** The type for operations whose result is ['r]. *)
+
+  val eval : 'r t -> 'r
+  (** [eval op] is [op]'s result in the current interpretation: delivered to the
+      interpreter around the caller, or computed when there is none. *)
+
+  val placement : 'r t -> Placement.t
+  (** [placement op] is where [op]'s result lives, as {!eval} with no
+      interpreter places it: host operands and values on the disk join any
+      placement, and a traced operand joins as its placement says. The result of
+      {!Read} is on the host.
+
+      Raises [Invalid_argument] as {!eval} does when the operands cannot meet:
+      placed operands with different backends or device sets, operands split
+      differently, an operation along a split axis, or a movement that would
+      move elements between devices. *)
+
+  val operands : 'r t -> packed list
+  (** [operands op] is [op]'s value operands, in order. *)
+
+  val name : 'r t -> string
+  (** [name op] is [op]'s name, as messages print it. *)
+
+  val pp : Format.formatter -> 'r t -> unit
+  (** [pp] formats an operation with its operands' dtypes and shapes, as in
+      [mul float32[3] float32[3]]. *)
+
+  type interpreter = Nx_effect.interpreter = { run : 'r. 'r t -> 'r }
+  (** The type for interpreters of operations. *)
+
+  val intercept : interpreter -> (unit -> 'a) -> 'a
+  (** [intercept i f] is [f ()] with every operation [f]'s fiber performs,
+      within its extent, delivered to [i.run]. [i.run] runs above every handler
+      [f] installs: an operation it issues reaches the interpretation around
+      [intercept], and an effect it performs the handlers around [intercept].
+      Fibers, threads and domains [f] starts are outside the extent. *)
+
+  val intercepted : unit -> bool
+  (** [intercepted ()] is [true] iff the calling fiber is inside the extent of
+      an {!intercept}, outside its interpreter. *)
+end
+
+(** The representation of values.
+
+    A value is an array on the host, a placed value over the storage of its
+    devices, or a traced value that an interpreter made, which has no bytes. *)
+module Repr : sig
+  type ('a, 'b) node = ('a, 'b) Nx_effect.node = ..
+  (** The type for the payload of traced values, which the interpreter that
+      makes them extends. *)
+
+  (** Storage: one runtime buffer per device of a placement. *)
+  module Storage : sig
+    type t = Nx_effect.cell
+    (** The type for storage. *)
+
+    val v : Placement.t -> Nx_device.Buffer.t list -> t
+    (** [v p buffers] is the storage of [buffers], one per device of [p], in
+        order, each of the same length and in the memory of its device.
+
+        Raises [Invalid_argument] otherwise. *)
+
+    val buffers : t -> Nx_device.Buffer.t list
+    (** [buffers s] is [s]'s buffers, one per device.
+
+        Raises [Invalid_argument] if [s] was consumed, or if its devices hold it
+        in memory of their own. *)
+
+    val placement : t -> Placement.t
+    (** [placement s] is where [s] lives. *)
+  end
+
+  (** Placed values. *)
+  module Placed : sig
+    type ('a, 'b) t = ('a, 'b) Nx_effect.resident
+    (** The type for placed values. *)
+
+    val v :
+      Placement.t ->
+      ('a, 'b) dtype ->
+      Nx_array.View.t ->
+      Storage.t ->
+      ('a, 'b) Nx_effect.t
+    (** [v p dtype view s] is the value of [dtype] at [p] whose elements, on
+        each device, are those [view] reaches in its storage [s].
+
+        Raises [Invalid_argument] if [p] is {!Placement.host}, if [view] reaches
+        an element outside [s], or if [s]'s devices do not hold [p]'s. *)
+
+    val id : ('a, 'b) t -> int
+    (** [id x] is [x]'s identity, for hashing: every placed value has its own.
+    *)
+
+    val view : ('a, 'b) t -> Nx_array.View.t
+    (** [view x] is the view each device has of its storage. *)
+
+    val storage : ('a, 'b) t -> Storage.t
+    (** [storage x] is [x]'s storage, shared with every view of it. *)
+  end
+
+  (** Traced values. *)
+  module Traced : sig
+    type ('a, 'b) t = ('a, 'b) Nx_effect.traced
+    (** The type for traced values. *)
+
+    val v :
+      context:Placement.t ->
+      Placement.t ->
+      ('a, 'b) dtype ->
+      int array ->
+      ('a, 'b) node ->
+      ('a, 'b) Nx_effect.t
+    (** [v ~context p dtype shape node] is a traced value of [dtype] and [shape]
+        at [p], whose payload is [node]. A value made beside it is made at
+        [context]. *)
+
+    val id : ('a, 'b) t -> int
+    (** [id x] is [x]'s identity: every traced value has its own, and a value
+        traced later has a larger one. *)
+
+    val node : ('a, 'b) t -> ('a, 'b) node
+    (** [node x] is [x]'s payload. *)
+  end
+
+  type ('a, 'b) t = ('a, 'b) Nx_effect.t =
+    | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
+    | Placed : ('a, 'b) Placed.t -> ('a, 'b) t
+    | Traced : ('a, 'b) Traced.t -> ('a, 'b) t
+        (** The type for the representation of values. *)
+
+  val v : ('a, 'b) Nx_effect.t -> ('a, 'b) t
+  (** [v x] is [x]'s representation. *)
+
+  val host : ('a, 'b) Nx_array.t -> ('a, 'b) Nx_effect.t
+  (** [host a] is the value at {!Placement.host} of array [a].
+
+      Raises [Invalid_argument] if [a]'s buffer is not on the host or not of
+      [a]'s dtype, or if [a]'s view reaches an element outside it. *)
+
+  val context : ('a, 'b) Nx_effect.t -> Placement.t
+  (** [context x] is where a value made beside [x] is made: the host for a host
+      value or one on the disk, a copy on each of [x]'s devices for a placed
+      one, and a traced value's context. *)
+end

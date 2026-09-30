@@ -1478,11 +1478,12 @@ let mixed op p q =
     (Format.asprintf "Nx.%s: operands on %a and %a; place one of them" op
        pp_placement p pp_placement q)
 
-(* [route op rule xs] is where [op] runs over [xs]. Placed operands with
+(* [route where op rule xs] is where [op] runs over [xs], [where] giving each
+   operand's placement, [None] for one that joins any. Placed operands with
    different backends raise, and so do those on different device sets, but for
    [whole_shards]. *)
-let route op rule xs =
-  match List.filter_map (fun (P x) -> placement_of x) xs with
+let route where op rule xs =
+  match List.filter_map where xs with
   | [] -> On_host
   | p :: rest -> (
       (match List.find_opt (fun q -> q.backend != p.backend) rest with
@@ -1491,8 +1492,7 @@ let route op rule xs =
       match List.find_opt (fun q -> not (same_devices p q)) rest with
       | None ->
           At
-            (result op rule
-               (List.map (fun (P x as o) -> (placement_of x, rank o)) xs))
+            (result op rule (List.map (fun o -> (where o, rank o)) xs))
       | Some q -> (
           match whole_shards xs with
           | Some ds -> At { grid = Grid.v ds [ List.length ds ] []; backend = p.backend }
@@ -1546,7 +1546,8 @@ let routing : type r. r Op.t -> routing =
 let route_of : type r. r Op.t -> route =
  fun op ->
   match routing op with
-  | Computes (rule, xs) -> route (Op.name op) rule xs
+  | Computes (rule, xs) ->
+      route (fun (P x) -> placement_of x) (Op.name op) rule xs
   | Moves _ | Places _ | Reads _ ->
       invalid_arg "Nx_effect.route_of: the operation computes nothing"
 
@@ -1807,6 +1808,26 @@ let placement (type a b) (x : (a, b) t) : placement =
   | Host _ -> Placement.host
   | Placed r -> r.r_placement
   | Traced t -> t.t_placement
+
+(* Where [op]'s result lives: where evaluation puts it, a traced operand joining
+   as its placement says. Raises [Invalid_argument] as evaluation does when the
+   operands cannot meet. *)
+let result_placement : type r. r Op.t -> placement =
+ fun op ->
+  let where (P x) =
+    match x with
+    | Traced t when is_host_placement t.t_placement -> None
+    | Traced t -> Some t.t_placement
+    | Host _ | Placed _ -> placement_of x
+  in
+  match routing op with
+  | Computes (rule, xs) -> (
+      match route where (Op.name op) rule xs with
+      | On_host -> Placement.host
+      | At p -> p)
+  | Moves (P x, m) -> moved_placement (placement x) (View.shape (view x)) m
+  | Places p -> p
+  | Reads _ -> Placement.host
 
 (* Dispatch
 
