@@ -1032,7 +1032,7 @@ let host_program ~(devices : string -> Engine.device) d effects =
     (Ops.v Op.Linear ~src:[ lowered ])
 
 (* Work of [d] from a submitter of its own, such as a vendor's kernel launcher,
-   that touches [b] alone: 50 ms after its submission, a domain fills [b] with
+   that touches [b] alone: 20 ms after its submission, a domain fills [b] with
    [x], then stores the work's value into [d]'s signal word. *)
 let fill_later d b x =
   Nx_device.submit [ d ] ~touches:[ b ] (fun s ->
@@ -1041,7 +1041,7 @@ let fill_later d b x =
       let elements = borrowed b and word = borrowed (Nx_device.signal_word d) in
       let t0 = Nx_device.Profile.now () in
       Domain.spawn (fun () ->
-          while Nx_device.Profile.now () - t0 < 50_000_000 do
+          while Nx_device.Profile.now () - t0 < 20_000_000 do
             Domain.cpu_relax ()
           done;
           Bigarray.Array1.fill (Buffer.bigarray Bigarray.float32 elements) x;
@@ -1098,7 +1098,7 @@ let leaves_its_work_pending_on_the_host () =
         ]
       [ Ops.store_call t x; Ops.call add_one [ out; t ] ]
   in
-  Null_device.with_latency 0.05 (fun () -> Engine.run s [||]);
+  Null_device.with_latency 0.02 (fun () -> Engine.run s [||]);
   equal values (floats [| 2.; 3.; 4.; 5. |]) (Run.values Float32 result)
 
 (* A kernel on CPU:1 and CPU:2 reads the last four of the eight floats each
@@ -1259,7 +1259,7 @@ let reports_host_calls () =
       less float_exact ~msg:"time" ~than:1. t)
     lines
 
-(* At [DEBUG=2], a run of three kernels on CPU:1, whose queue starts 50 ms after
+(* At [DEBUG=2], a run of three kernels on CPU:1, whose queue starts 20 ms after
    its submission, prints a line for each, timed by the kernel's stamps: the
    time leaves the latency out. *)
 let reports_each_kernel () =
@@ -1273,7 +1273,7 @@ let reports_each_kernel () =
     [ B (Helpers.debug, 2) ]
     (fun () ->
       let s = link_calls ~bound (List.map snd fills) in
-      Null_device.with_latency 0.05 (fun () -> Engine.run s [||]));
+      Null_device.with_latency 0.02 (fun () -> Engine.run s [||]));
   let lines = reported () in
   equal int ~msg:"one line per kernel" 3 (List.length lines);
   counts_up lines;
@@ -1282,7 +1282,7 @@ let reports_each_kernel () =
       equal string ~msg:"device" "CPU:1" (List.nth words 1);
       let t = seconds_of words in
       at_least float_exact ~msg:"time" ~than:0. t;
-      less float_exact ~msg:"time" ~than:0.05 t)
+      less float_exact ~msg:"time" ~than:0.02 t)
     lines
 
 let refuses_an_unknown_library () =
