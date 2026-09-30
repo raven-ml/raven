@@ -112,6 +112,12 @@ graph that the program hands to the compiler (`graph.boundary`), or any graph
 it builds. An output golden of a UOp graph (G-list) uses the same format, so
 tolk.next has one text form of a graph.
 
+In a suite, `Golden.sink "matmul.golden"` is the graph of an input golden, and
+`Golden.graph "kernel.golden" (fun () -> sink)` is the test that a graph is an
+output golden; its failure is a diff of the two texts. `Graph.of_string` and
+`Graph.to_string` read and write the text itself. Reading a node checks that
+its written dtype is the one tolk.next derives from its op, sources and arg.
+
 ### The graph format
 
 The body of a graph golden lists the nodes under a sink, one per line, in
@@ -216,8 +222,9 @@ The records, with their fields in order:
 
 A device is a string, or a tuple of strings for a sharded value. The
 enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
-boolean, an integer, a string, a data type, or a tuple of these, such as
-`(0, dtypes.int)`; it never holds a node. `PYLITERAL` and `REWRITE_ERROR` are
+boolean, an integer, a string, bytes (Metal's indirect command buffers tag
+with them), a data type, or a tuple of these, such as `(0, dtypes.int)`; it
+never holds a node. `PYLITERAL` and `REWRITE_ERROR` are
 excluded operations, and the arg kinds of the excluded ISA path (register
 records, integer instructions) are not part of the format.
 

@@ -20,6 +20,15 @@ let text file actual =
   Windtrap.test file (fun () ->
       Windtrap.equal Windtrap.text (body file) (actual ()))
 
+(* Graphs *)
+
+let graph file sink =
+  Windtrap.test file (fun () ->
+      Windtrap.equal Windtrap.text (body file) (Graph.to_string (sink ())))
+
+let sink file =
+  try Graph.of_string (body file) with Failure e -> failwith (file ^ ": " ^ e)
+
 (* Tables *)
 
 let table file =

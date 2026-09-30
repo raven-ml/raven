@@ -1,14 +1,14 @@
 (library
  (name tolk_next_test)
- (modules golden dtypes)
+ (modules golden graph dtypes)
  (wrapped false)
  (libraries windtrap tolk.next zarith))
 
-(test
- (name test_golden)
- (modules test_golden)
+(tests
+ (names test_golden test_graph)
+ (modules test_golden test_graph)
  (package tolk)
- (libraries windtrap tolk_next_test)
+ (libraries windtrap tolk.next zarith tolk_next_test)
  (deps
   (glob_files *.golden))
  (action

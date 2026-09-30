@@ -16,6 +16,18 @@ val text : string -> (unit -> string) -> Windtrap.test
 (** [text file actual] is the test, named [file], that [actual ()] is the body
     of the golden [file]. Its failure prints their diff. *)
 
+(** {1:graphs Graphs}
+
+    The body of a graph golden is a UOp graph in the text of {!Graph}. *)
+
+val graph : string -> (unit -> Tolk_next.Ops.t) -> Windtrap.test
+(** [graph file sink] is the test, named [file], that the graph under [sink ()]
+    is the graph golden [file]. Its failure prints the diff of their texts. *)
+
+val sink : string -> Tolk_next.Ops.t
+(** [sink file] is the sink of the graph golden [file] ({!Graph.of_string}).
+    Raises [Failure] naming [file] if its body is not a graph. *)
+
 (** {1:tables Tables}
 
     The body of a table golden is lines of cells separated by tabs: the column
