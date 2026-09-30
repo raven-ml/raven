@@ -124,3 +124,32 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 - **Pinned by:** `test/helpers`: `Helpers › Diskcache › get reads back any
   key and value put` and `Helpers › Diskcache › behaves as a table of entries
   per table`.
+
+## D9. bfloat16 rounds once from the double
+
+- **tinygrad:** `dtype.py:230-234` (`float_to_bf16` rounds to float32 with
+  `truncate[dtypes.float]`, then to bfloat16).
+- **tolk.next:** `lib/dtype.ml:372-395` (`encode`, one rounding for every
+  narrow float).
+- **Differs:** a double rounds to bfloat16 once, to nearest even. The two
+  differ when the float32 lands on a bfloat16 tie: `1 + 2^-8 + 2^-40` is
+  `1.0078125` here and `1.0` in tinygrad.
+- **Reason:** (b). rune folds bfloat16 constants from OCaml floats, and a
+  folded constant must be the value nx's eager cast gives, which rounds once.
+  The codegen layer's bfloat16 cast must compute the same, or get a row of its
+  own.
+- **Pinned by:** the `Dtype` suite (`test/dtype`), on the golden's near-tie
+  rows; and a rune test that the lowering brings.
+
+## D10. A float8 NaN keeps its sign when decoded
+
+- **tinygrad:** `dtype.py:279` (`fp8_to_float` returns `math.nan` for
+  e4m3's NaN codes, whatever their sign bit).
+- **tolk.next:** `lib/dtype.ml:336-351` (`decode`).
+- **Differs:** e4m3's `0xff` decodes to a negative NaN, so it encodes back to
+  `0xff`, where tinygrad gives `0x7f`. e5m2 already kept the sign.
+- **Reason:** (b). nx's decoder keeps the sign, so a value read eagerly and a
+  folded constant agree, and every NaN code keeps its sign through a round
+  trip.
+- **Pinned by:** the `Dtype` suite (`test/dtype`), on the golden's e4m3
+  `0xff` row.

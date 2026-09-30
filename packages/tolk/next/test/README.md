@@ -94,7 +94,7 @@ rest is its body. A golden check is one line:
   ```ocaml
   Golden.cases "least_upper.golden" ~key:[ "a"; "b" ] (fun cell ->
       equal dtype (dtype (cell "least_upper"))
-        (Dtype.least_upper (dtype (cell "a")) (dtype (cell "b"))))
+        (Dtype.least_upper [ dtype (cell "a"); dtype (cell "b") ]))
   ```
 
   `Golden.columns` and `Golden.rows` give the table itself, for a claim about

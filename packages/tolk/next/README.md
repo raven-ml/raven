@@ -70,6 +70,8 @@ is scope, not a divergence: the part left out is listed here, and
 | The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |
 | `runtime/support/compileserver.py` | compilation workers are domains (see D5). |
 | `ImageDType` and image paths | only OpenCL and QCOM use them. |
+| The numpy and torch interop of `dtype.py` (`_to_np_dtype`, `_from_np_dtype`, `_to_torch_dtype`, `_from_torch_dtype`) | raven's arrays are nx's, and rune maps nx's types onto `Dtype`. |
+| `dtypes.int8s`, `int16s`, `int32s` and `int64s` in `dtype.py` | only the x86 ISA renderer, excluded above, reads them. |
 | The z3 fallback of `uop/validate.py` | raven has no SMT solver among its dependencies. |
 | `pyrender` in `uop/render.py`, `test_pyrender` in `uop/spec.py`, the code generation of `uop/upat.py` | they generate Python source; tolk.next matches patterns directly (see D2). |
 | `Ops.PYLITERAL` and `Ops.REWRITE_ERROR` in `uop/__init__.py`, with the code that handles them (`uop/ops.py:129,332,377`, `uop/spec.py:116,239`) | produced only by the pattern compiler's code generation and viz, both excluded. `Tolk_next.Uop.Op › Op › has no counterpart for exactly REWRITE_ERROR and PYLITERAL` pins it. |
@@ -80,6 +82,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The parts of `helpers.py` OCaml's standard library provides: `flatten`, `partition`, `unwrap`, `merge_dicts`, `count` | `List.concat`, `List.partition`, `Option.get`, `Map.union` and a counter reference. |
 | The parts of `helpers.py` whose readers are not ported: `is_image_shape`; `polyN`, `strides_for_shape`, `canonicalize_strides` and `all_int` on symbolic integers (they live with the symbolic integer type in `Uop.Ops`); `round_down`, `next_power2`, `to_be32`, `to_be64`, `getbits`, `i2u`, `word_wrap`, `pad_bytes`, `colorize_float`, `temp`, `stderr_log`, `Timing`, `BASEDIR`, `WIN`, the `diskcache` decorator; `system`, `cpu_objdump`, `capstone_flatdump`, `amdgpu_disassemble` and `wait_cond`; `Metadata` | no tolk.next module uses them: the frontend, viz, pickling and the runtime that read them are excluded above. |
 | CPython's leniency in `int()` and `float()`, which `getenv` inherits: Unicode white space and decimal digits, and integers beyond OCaml's `int` | environment values are ASCII in practice, matching it needs Unicode tables with no consumer, and no setting needs integers beyond `int`. |
+| CPython's refusal to convert an integer of 2^1024 or more to a float (`float(x)` raises `OverflowError`), which `dtype.py`'s `const`, `truncate` and `bitcast` inherit | an accident of the host language: IEEE conversion rounds such an integer to the infinity of its sign, and `Dtype` converts it so in every float, as nx's encoders convert that infinity. |
 | openpilot's `pm_fold_moved_after` pass and its `found_after` rule in `schedule/prepare.py` (`:45-60,276`) | a workaround for openpilot's models, which raven does not run. |
 | The settings `OPENPILOT_HACKS` and `FLOAT16` of `helpers.py` | they gate openpilot's `pm_fold_moved_after` pass (`schedule/prepare.py:45-60,276`), excluded with it. |
 | The setting `CAPTURING` of `helpers.py` | it gates jit capture (`schedule/__init__.py:296`), which is rune's (see D3). |

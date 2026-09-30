@@ -4,7 +4,7 @@
  (name tolk_next)
  (public_name tolk.next)
  (private_modules host_config)
- (libraries unix)
+ (libraries unix zarith)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
