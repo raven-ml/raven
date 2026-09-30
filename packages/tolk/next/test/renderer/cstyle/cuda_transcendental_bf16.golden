@@ -1,0 +1,10 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_bf16.h>
+extern "C" __global__ void __launch_bounds__(1) E(nv_bfloat16* data0_1, nv_bfloat16* data1_1) {
+  nv_bfloat16 val0 = (*(data1_1+0));
+  *(data0_1+0) = (hexp2(val0)+hlog2(val0)+hsin(val0)+hsqrt(val0)+hrcp(val0)+htrunc(val0));
+}

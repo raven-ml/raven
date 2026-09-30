@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device bool* data0_1; device bool* data1_1; device signed char* data2_1; device unsigned char* data3_1; device short* data4_1; device unsigned short* data5_1; device int* data6_1; device uint* data7_1; device uint* data8_1; device long* data9_1; device unsigned long* data10_1; device unsigned long* data11_1; device half* data12_1; device bfloat* data13_1; device float* data14_1; };
+kernel void constants(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bool* data0_1 = args.data0_1; device bool* data1_1 = args.data1_1; device signed char* data2_1 = args.data2_1; device unsigned char* data3_1 = args.data3_1; device short* data4_1 = args.data4_1; device unsigned short* data5_1 = args.data5_1; device int* data6_1 = args.data6_1; device uint* data7_1 = args.data7_1; device uint* data8_1 = args.data8_1; device long* data9_1 = args.data9_1; device unsigned long* data10_1 = args.data10_1; device unsigned long* data11_1 = args.data11_1; device half* data12_1 = args.data12_1; device bfloat* data13_1 = args.data13_1; device float* data14_1 = args.data14_1;
+  *(data0_1+0) = 1;
+  *(data1_1+0) = 0;
+  *(data2_1+0) = ((signed char)(-3));
+  *(data3_1+0) = ((unsigned char)(200u));
+  *(data4_1+0) = ((short)(-300));
+  *(data5_1+0) = ((unsigned short)(60000u));
+  *(data6_1+0) = 42;
+  *(data7_1+0) = 42u;
+  *(data8_1+0) = 4294967295u;
+  *(data9_1+0) = 12345l;
+  *(data10_1+0) = 42ul;
+  *(data11_1+0) = 18446744073709551615ul;
+  *(data12_1+0) = ((half)(1.5f));
+  *(data13_1+0) = ((bfloat)(1.5f));
+  *(data14_1+0) = 3.14f;
+}

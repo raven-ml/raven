@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void call_out(unsigned long* restrict data0_1, int* restrict data1_2) {
+  unsigned long val0 = (*(data0_1+0));
+  (((void(*)(int, int*))(val0))((int)(3), (int*)((data1_2+0))));
+  int val1 = (*(data1_2+0));
+  *(data1_2+1) = (val1+1);
+}
+

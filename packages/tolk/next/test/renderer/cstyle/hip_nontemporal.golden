@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) nontemporal(float* data0_64, float* data1_64) {
+  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {
+    float val0 = __builtin_nontemporal_load((data1_64+Lidx0));
+    *(data0_64+Lidx0) = (val0*2.0f);
+  }
+}

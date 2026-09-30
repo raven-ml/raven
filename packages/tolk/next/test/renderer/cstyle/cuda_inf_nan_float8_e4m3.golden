@@ -1,0 +1,29 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp8.h>
+struct __align__(4) __nv_fp8_e4m34 { __nv_fp8_e4m3 x, y, z, w; }; __device__ __nv_fp8_e4m34 make___nv_fp8_e4m34(__nv_fp8_e4m3 x, __nv_fp8_e4m3 y, __nv_fp8_e4m3 z, __nv_fp8_e4m3 w) { __nv_fp8_e4m34 r={x, y, z, w}; return r; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(__nv_fp8_e4m3* data0_16, __nv_fp8_e4m3* data1_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  __nv_fp8_e4m34 val0 = (*((__nv_fp8_e4m34*)((data1_16+alu0))));
+  float cast0 = ((float)(val0.x));
+  float cast1 = ((float)(val0.y));
+  float cast2 = ((float)(val0.z));
+  float cast3 = ((float)(val0.w));
+  __nv_fp8_e4m3 alu1 = ((cast0<-1.0f)?((__nv_fp8_e4m3)(NAN)):val0.x);
+  __nv_fp8_e4m3 alu2 = ((0.0f<cast0)?val0.x:((__nv_fp8_e4m3)(NAN)));
+  __nv_fp8_e4m3 alu3 = ((cast1<-1.0f)?((__nv_fp8_e4m3)(NAN)):val0.y);
+  __nv_fp8_e4m3 alu4 = ((0.0f<cast1)?val0.y:((__nv_fp8_e4m3)(NAN)));
+  __nv_fp8_e4m3 alu5 = ((cast2<-1.0f)?((__nv_fp8_e4m3)(NAN)):val0.z);
+  __nv_fp8_e4m3 alu6 = ((0.0f<cast2)?val0.z:((__nv_fp8_e4m3)(NAN)));
+  __nv_fp8_e4m3 alu7 = ((cast3<-1.0f)?((__nv_fp8_e4m3)(NAN)):val0.w);
+  __nv_fp8_e4m3 alu8 = ((0.0f<cast3)?val0.w:((__nv_fp8_e4m3)(NAN)));
+  __nv_fp8_e4m3 alu9 = ((cast0<1.0f)?((__nv_fp8_e4m3)(NAN)):val0.x);
+  __nv_fp8_e4m3 alu10 = ((cast1<1.0f)?((__nv_fp8_e4m3)(NAN)):val0.y);
+  __nv_fp8_e4m3 alu11 = ((cast2<1.0f)?((__nv_fp8_e4m3)(NAN)):val0.z);
+  __nv_fp8_e4m3 alu12 = ((cast3<1.0f)?((__nv_fp8_e4m3)(NAN)):val0.w);
+  *((__nv_fp8_e4m34*)((data0_16+alu0))) = make___nv_fp8_e4m34(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(alu2))+((float)(alu1)))))))+((float)(alu9))))),((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(alu4))+((float)(alu3)))))))+((float)(alu10))))),((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(alu6))+((float)(alu5)))))))+((float)(alu11))))),((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(alu8))+((float)(alu7)))))))+((float)(alu12))))));
+}

@@ -1,0 +1,35 @@
+; Settings are read once per process, so the cases rendered under EXPAND_SSA or
+; ALIGNED run in processes of their own, each with its variable set.
+
+(test
+ (name test_cstyle)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test tolk_next_host zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (progn
+   (run
+    %{test}
+    --exclude-tag
+    slow
+    --exclude-tag
+    expand-ssa
+    --exclude-tag
+    unaligned)
+   (setenv
+    EXPAND_SSA
+    1
+    (run %{test} --tag expand-ssa))
+   (setenv
+    ALIGNED
+    0
+    (run %{test} --tag unaligned)))))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{exe:test_cstyle.exe} --tag slow)))

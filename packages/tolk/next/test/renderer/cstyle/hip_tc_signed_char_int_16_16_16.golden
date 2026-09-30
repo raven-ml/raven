@@ -1,0 +1,80 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef signed char signed_char16 __attribute__((ext_vector_type(16)));
+static inline __attribute__((device)) signed_char16 make_signed_char16(signed char x, signed char y, signed char z, signed char w, signed char a, signed char b, signed char c, signed char d, signed char e, signed char f, signed char g, signed char h, signed char i, signed char j, signed char k, signed char l) { return { x, y, z, w, a, b, c, d, e, f, g, h, i, j, k, l }; }
+typedef int int8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) int8 make_int8(int x, int y, int z, int w, int a, int b, int c, int d) { return { x, y, z, w, a, b, c, d }; }
+typedef int wmma_int4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) int8 __WMMA_16_16_16_signed_char_int(signed_char16 a, signed_char16 b, int8 c) {
+  return __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(true, __builtin_bit_cast(wmma_int4, a),
+    true, __builtin_bit_cast(wmma_int4, b), c, false);
+}
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) r_32_2_2_2_2_2(int* data0_256, signed char* data1_512, signed char* data2_512) {
+  int buf0[8];
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (lidx0&15);
+  *(buf0+0) = 0;
+  *(buf0+1) = 0;
+  *(buf0+2) = 0;
+  *(buf0+3) = 0;
+  *(buf0+4) = 0;
+  *(buf0+5) = 0;
+  *(buf0+6) = 0;
+  *(buf0+7) = 0;
+  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
+    int alu9 = ((alu0<<5)+(Ridx0<<4));
+    signed char val0 = (*(data1_512+(alu9+1)));
+    signed char val1 = (*(data1_512+(alu9+10)));
+    signed char val2 = (*(data1_512+(alu9+11)));
+    signed char val3 = (*(data1_512+(alu9+12)));
+    signed char val4 = (*(data1_512+(alu9+13)));
+    signed char val5 = (*(data1_512+(alu9+14)));
+    signed char val6 = (*(data1_512+(alu9+15)));
+    signed char val7 = (*(data1_512+(alu9+2)));
+    signed char val8 = (*(data1_512+(alu9+3)));
+    signed char val9 = (*(data1_512+(alu9+4)));
+    signed char val10 = (*(data1_512+(alu9+5)));
+    signed char val11 = (*(data1_512+(alu9+6)));
+    signed char val12 = (*(data1_512+(alu9+7)));
+    signed char val13 = (*(data1_512+(alu9+8)));
+    signed char val14 = (*(data1_512+(alu9+9)));
+    signed char val15 = (*(data1_512+alu9));
+    int alu10 = ((Ridx0<<8)+alu0);
+    signed char val16 = (*(data2_512+(alu10+112)));
+    signed char val17 = (*(data2_512+(alu10+128)));
+    signed char val18 = (*(data2_512+(alu10+144)));
+    signed char val19 = (*(data2_512+(alu10+16)));
+    signed char val20 = (*(data2_512+(alu10+160)));
+    signed char val21 = (*(data2_512+(alu10+176)));
+    signed char val22 = (*(data2_512+(alu10+192)));
+    signed char val23 = (*(data2_512+(alu10+208)));
+    signed char val24 = (*(data2_512+(alu10+224)));
+    signed char val25 = (*(data2_512+(alu10+240)));
+    signed char val26 = (*(data2_512+(alu10+32)));
+    signed char val27 = (*(data2_512+(alu10+48)));
+    signed char val28 = (*(data2_512+(alu10+64)));
+    signed char val29 = (*(data2_512+(alu10+80)));
+    signed char val30 = (*(data2_512+(alu10+96)));
+    signed char val31 = (*(data2_512+alu10));
+    int8 wmma0 = __WMMA_16_16_16_signed_char_int(make_signed_char16(val15,val0,val7,val8,val9,val10,val11,val12,val13,val14,val1,val2,val3,val4,val5,val6), make_signed_char16(val31,val19,val26,val27,val28,val29,val30,val16,val17,val18,val20,val21,val22,val23,val24,val25), make_int8((*(buf0+0)),(*(buf0+1)),(*(buf0+4)),(*(buf0+5)),(*(buf0+2)),(*(buf0+3)),(*(buf0+6)),(*(buf0+7))));
+    *(buf0+0) = wmma0[0];
+    *(buf0+1) = wmma0[1];
+    *(buf0+2) = wmma0[4];
+    *(buf0+3) = wmma0[5];
+    *(buf0+4) = wmma0[2];
+    *(buf0+5) = wmma0[3];
+    *(buf0+6) = wmma0[6];
+    *(buf0+7) = wmma0[7];
+  }
+  *(data0_256+lidx0) = (*(buf0+0));
+  *(data0_256+(lidx0+128)) = (*(buf0+2));
+  *(data0_256+(lidx0+160)) = (*(buf0+3));
+  *(data0_256+(lidx0+192)) = (*(buf0+6));
+  *(data0_256+(lidx0+224)) = (*(buf0+7));
+  *(data0_256+(lidx0+32)) = (*(buf0+1));
+  *(data0_256+(lidx0+64)) = (*(buf0+4));
+  *(data0_256+(lidx0+96)) = (*(buf0+5));
+}

@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device bfloat* data0_1; device bfloat* data1_1; };
+kernel void E(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device bfloat* data0_1 = args.data0_1; device bfloat* data1_1 = args.data1_1;
+  bfloat val0 = (*(data1_1+0));
+  float cast0 = as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(val0))))<<16u)));
+  uint cast1 = as_type<uint>((float)(exp2(cast0)));
+  uint alu0 = (((cast1&65535u)!=0u)?(cast1|65536u):cast1);
+  uint alu1 = (((-cast1&2139095040u)!=0u)?(cast1+((cast1>>16u)&1u)+32767u):alu0);
+  uint cast2 = as_type<uint>((float)(log2(cast0)));
+  uint alu2 = (((cast2&65535u)!=0u)?(cast2|65536u):cast2);
+  uint alu3 = (((-cast2&2139095040u)!=0u)?(cast2+((cast2>>16u)&1u)+32767u):alu2);
+  uint cast3 = as_type<uint>((float)(precise::sin(cast0)));
+  uint alu4 = (((cast3&65535u)!=0u)?(cast3|65536u):cast3);
+  uint alu5 = (((-cast3&2139095040u)!=0u)?(cast3+((cast3>>16u)&1u)+32767u):alu4);
+  uint cast4 = as_type<uint>((float)(sqrt(cast0)));
+  uint alu6 = (((cast4&65535u)!=0u)?(cast4|65536u):cast4);
+  uint alu7 = (((-cast4&2139095040u)!=0u)?(cast4+((cast4>>16u)&1u)+32767u):alu6);
+  *(data0_1+0) = (as_type<bfloat>((unsigned short)(((unsigned short)((alu1>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu3>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu5>>16u)))))+as_type<bfloat>((unsigned short)(((unsigned short)((alu7>>16u)))))+(1/val0)+trunc(val0));
+}

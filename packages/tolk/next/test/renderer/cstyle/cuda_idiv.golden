@@ -1,0 +1,28 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(int* data0_16, int* data1_16, int* data2_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  int4 val0 = (*((int4*)((data1_16+alu0))));
+  int4 val1 = (*((int4*)((data2_16+alu0))));
+  bool alu1 = (val0.x<0);
+  int alu2 = (val0.x%7);
+  bool alu3 = ((alu2!=0)&alu1);
+  bool alu4 = (val0.y<0);
+  int alu5 = (val0.y%7);
+  bool alu6 = ((alu5!=0)&alu4);
+  bool alu7 = (val0.z<0);
+  int alu8 = (val0.z%7);
+  bool alu9 = ((alu8!=0)&alu7);
+  bool alu10 = (val0.w<0);
+  int alu11 = (val0.w%7);
+  bool alu12 = ((alu11!=0)&alu10);
+  int alu13 = (alu3?7:0);
+  int alu14 = (alu6?7:0);
+  int alu15 = (alu9?7:0);
+  int alu16 = (alu12?7:0);
+  *((int4*)((data0_16+alu0))) = make_int4((((val0.x/7)-((int)(alu3)))+alu2+alu13+((val0.x/val1.x)-((int)((((val0.x%val1.x)!=0)&(alu1!=(val1.x<0))))))),(((val0.y/7)-((int)(alu6)))+alu5+alu14+((val0.y/val1.y)-((int)((((val0.y%val1.y)!=0)&(alu4!=(val1.y<0))))))),(((val0.z/7)-((int)(alu9)))+alu8+alu15+((val0.z/val1.z)-((int)((((val0.z%val1.z)!=0)&(alu7!=(val1.z<0))))))),(((val0.w/7)-((int)(alu12)))+alu11+alu16+((val0.w/val1.w)-((int)((((val0.w%val1.w)!=0)&(alu10!=(val1.w<0))))))));
+}

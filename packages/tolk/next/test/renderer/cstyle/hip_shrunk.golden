@@ -1,0 +1,10 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_28n2A429(float* data0_256, float* data1_256, const int n_) {
+  int gidx0 = __ockl_get_group_id(0); /* (n<<2) */
+  float val0 = (*(data1_256+gidx0));
+  *(data0_256+gidx0) = (val0+1.0f);
+}

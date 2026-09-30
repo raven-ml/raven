@@ -1,0 +1,71 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef long unsigned int size_t;
+#define half _Float16
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef half half4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) half4 make_half4(half x, half y, half z, half w) { return { x, y, z, w }; }
+typedef half half16 __attribute__((ext_vector_type(16)));
+static inline __attribute__((device)) half16 make_half16(half x, half y, half z, half w, half a, half b, half c, half d, half e, half f, half g, half h, half i, half j, half k, half l) { return { x, y, z, w, a, b, c, d, e, f, g, h, i, j, k, l }; }
+typedef half half8 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) half8 make_half8(half x, half y, half z, half w, half a, half b, half c, half d) { return { x, y, z, w, a, b, c, d }; }
+static inline __attribute__((device)) half8 __WMMA_16_16_16_half_half(half16 a, half16 b, half8 c) {
+  half16 c_frag = {}; half8 d; for (int n = 0; n < 8; n++) { c_frag[n*2] = c[n]; }
+  c_frag = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(a, b, c_frag, false);
+  for (int n = 0; n < 8; n++) { d[n] = c_frag[n*2]; } return d;
+}
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) r_32_2_2_2_2_2(half* data0_256, half* data1_512, half* data2_512) {
+  half buf0[8];
+  int lidx0 = __ockl_get_local_id(0); /* 32 */
+  int alu0 = (lidx0&15);
+  *(buf0+0) = ((half)(0.0f));
+  *(buf0+1) = ((half)(0.0f));
+  *(buf0+2) = ((half)(0.0f));
+  *(buf0+3) = ((half)(0.0f));
+  *(buf0+4) = ((half)(0.0f));
+  *(buf0+5) = ((half)(0.0f));
+  *(buf0+6) = ((half)(0.0f));
+  *(buf0+7) = ((half)(0.0f));
+  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
+    int alu9 = ((Ridx0<<8)+alu0);
+    half val0 = (*(data2_512+(alu9+112)));
+    half val1 = (*(data2_512+(alu9+128)));
+    half val2 = (*(data2_512+(alu9+144)));
+    half val3 = (*(data2_512+(alu9+16)));
+    half val4 = (*(data2_512+(alu9+160)));
+    half val5 = (*(data2_512+(alu9+176)));
+    half val6 = (*(data2_512+(alu9+192)));
+    half val7 = (*(data2_512+(alu9+208)));
+    half val8 = (*(data2_512+(alu9+224)));
+    half val9 = (*(data2_512+(alu9+240)));
+    half val10 = (*(data2_512+(alu9+32)));
+    half val11 = (*(data2_512+(alu9+48)));
+    half val12 = (*(data2_512+(alu9+64)));
+    half val13 = (*(data2_512+(alu9+80)));
+    half val14 = (*(data2_512+(alu9+96)));
+    half val15 = (*(data2_512+alu9));
+    int alu10 = ((alu0<<5)+(Ridx0<<4));
+    half4 val16 = (*((half4*)((data1_512+(alu10+12)))));
+    half4 val17 = (*((half4*)((data1_512+(alu10+4)))));
+    half4 val18 = (*((half4*)((data1_512+(alu10+8)))));
+    half4 val19 = (*((half4*)((data1_512+alu10))));
+    half8 wmma0 = __WMMA_16_16_16_half_half(make_half16(val19.x,val19.y,val19.z,val19.w,val17.x,val17.y,val17.z,val17.w,val18.x,val18.y,val18.z,val18.w,val16.x,val16.y,val16.z,val16.w), make_half16(val15,val3,val10,val11,val12,val13,val14,val0,val1,val2,val4,val5,val6,val7,val8,val9), make_half8((*(buf0+0)),(*(buf0+1)),(*(buf0+4)),(*(buf0+5)),(*(buf0+2)),(*(buf0+3)),(*(buf0+6)),(*(buf0+7))));
+    *(buf0+0) = wmma0[0];
+    *(buf0+1) = wmma0[1];
+    *(buf0+2) = wmma0[4];
+    *(buf0+3) = wmma0[5];
+    *(buf0+4) = wmma0[2];
+    *(buf0+5) = wmma0[3];
+    *(buf0+6) = wmma0[6];
+    *(buf0+7) = wmma0[7];
+  }
+  *(data0_256+lidx0) = (*(buf0+0));
+  *(data0_256+(lidx0+128)) = (*(buf0+2));
+  *(data0_256+(lidx0+160)) = (*(buf0+3));
+  *(data0_256+(lidx0+192)) = (*(buf0+6));
+  *(data0_256+(lidx0+224)) = (*(buf0+7));
+  *(data0_256+(lidx0+32)) = (*(buf0+1));
+  *(data0_256+(lidx0+64)) = (*(buf0+4));
+  *(data0_256+(lidx0+96)) = (*(buf0+5));
+}

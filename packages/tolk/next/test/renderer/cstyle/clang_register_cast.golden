@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void register_cast(unsigned long* restrict data0_1) {
+  unsigned int buf0[2];
+  *(buf0+0) = 1u;
+  *(buf0+1) = 2u;
+  *(data0_1+0) = (*((unsigned long*)(((unsigned long)((buf0+0))))));
+}
+

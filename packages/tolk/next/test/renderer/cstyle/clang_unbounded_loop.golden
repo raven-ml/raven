@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void unbounded(int* restrict data0_1) {
+  for (;;) {
+    int val0 = (*(data0_1+0));
+    *(data0_1+0) = (val0+1);
+    int val1 = (*(data0_1+0));
+    if (!((val1<10))) { break; }
+  }
+}
+

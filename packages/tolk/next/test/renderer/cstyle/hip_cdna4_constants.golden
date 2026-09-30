@@ -1,0 +1,29 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef __bf16 hip_bfloat16;
+#define half _Float16
+typedef unsigned char hip_bf8;
+typedef unsigned char hip_fp8;
+static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {
+  v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:448.0f,is_bf8?-57344.0f:-448.0f) : v;
+  return (unsigned char)(is_bf8?__builtin_amdgcn_cvt_pk_bf8_f32(v,v,0,false):__builtin_amdgcn_cvt_pk_fp8_f32(v,v,0,false));
+}
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) constants(bool* data0_1, bool* data1_1, signed char* data2_1, unsigned char* data3_1, short* data4_1, unsigned short* data5_1, int* data6_1, unsigned int* data7_1, unsigned int* data8_1, long* data9_1, unsigned long* data10_1, unsigned long* data11_1, half* data12_1, hip_bfloat16* data13_1, float* data14_1, double* data15_1, hip_fp8* data16_1, hip_bf8* data17_1) {
+  *(data0_1+0) = 1;
+  *(data1_1+0) = 0;
+  *(data2_1+0) = ((signed char)(-3));
+  *(data3_1+0) = ((unsigned char)(200u));
+  *(data4_1+0) = ((short)(-300));
+  *(data5_1+0) = ((unsigned short)(60000u));
+  *(data6_1+0) = 42;
+  *(data7_1+0) = 42u;
+  *(data8_1+0) = 4294967295u;
+  *(data9_1+0) = 12345l;
+  *(data10_1+0) = 42ul;
+  *(data11_1+0) = 18446744073709551615ul;
+  *(data12_1+0) = ((half)(1.5f));
+  *(data13_1+0) = ((hip_bfloat16)(1.5f));
+  *(data14_1+0) = 3.14f;
+  *(data15_1+0) = 3.14;
+  *(data16_1+0) = f32_to_fp8(1.0f, 0);
+  *(data17_1+0) = f32_to_fp8(1.0f, 1);
+}

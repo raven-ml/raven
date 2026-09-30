@@ -1,0 +1,37 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#define INFINITY (__builtin_inff())
+#define NAN (__builtin_nanf(""))
+typedef long unsigned int size_t;
+typedef unsigned char hip_bf8;
+typedef unsigned char hip_fp8;
+static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {
+  v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:448.0f,is_bf8?-57344.0f:-448.0f) : v;
+  return (unsigned char)(is_bf8?__builtin_amdgcn_cvt_pk_bf8_f32(v,v,0,false):__builtin_amdgcn_cvt_pk_fp8_f32(v,v,0,false));
+}
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef hip_fp8 hip_fp84 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) hip_fp84 make_hip_fp84(hip_fp8 x, hip_fp8 y, hip_fp8 z, hip_fp8 w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(hip_fp8* data0_16, hip_fp8* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  hip_fp84 val0 = (*((hip_fp84*)((data1_16+alu0))));
+  float cast0 = __builtin_amdgcn_cvt_f32_fp8((unsigned int)val0.x, 0);
+  float cast1 = __builtin_amdgcn_cvt_f32_fp8((unsigned int)val0.y, 0);
+  float cast2 = __builtin_amdgcn_cvt_f32_fp8((unsigned int)val0.z, 0);
+  float cast3 = __builtin_amdgcn_cvt_f32_fp8((unsigned int)val0.w, 0);
+  hip_fp8 alu1 = ((cast0<-1.0f)?f32_to_fp8(NAN, 0):val0.x);
+  hip_fp8 alu2 = ((0.0f<cast0)?val0.x:f32_to_fp8(NAN, 0));
+  hip_fp8 alu3 = ((cast1<-1.0f)?f32_to_fp8(NAN, 0):val0.y);
+  hip_fp8 alu4 = ((0.0f<cast1)?val0.y:f32_to_fp8(NAN, 0));
+  hip_fp8 alu5 = ((cast2<-1.0f)?f32_to_fp8(NAN, 0):val0.z);
+  hip_fp8 alu6 = ((0.0f<cast2)?val0.z:f32_to_fp8(NAN, 0));
+  hip_fp8 alu7 = ((cast3<-1.0f)?f32_to_fp8(NAN, 0):val0.w);
+  hip_fp8 alu8 = ((0.0f<cast3)?val0.w:f32_to_fp8(NAN, 0));
+  hip_fp8 alu9 = ((cast0<1.0f)?f32_to_fp8(NAN, 0):val0.x);
+  hip_fp8 alu10 = ((cast1<1.0f)?f32_to_fp8(NAN, 0):val0.y);
+  hip_fp8 alu11 = ((cast2<1.0f)?f32_to_fp8(NAN, 0):val0.z);
+  hip_fp8 alu12 = ((cast3<1.0f)?f32_to_fp8(NAN, 0):val0.w);
+  *((hip_fp84*)((data0_16+alu0))) = make_hip_fp84(f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu2, 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu1, 0)), 0), 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu9, 0)), 0),f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu4, 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu3, 0)), 0), 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu10, 0)), 0),f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu6, 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu5, 0)), 0), 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu11, 0)), 0),f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)f32_to_fp8((__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu8, 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu7, 0)), 0), 0)+__builtin_amdgcn_cvt_f32_fp8((unsigned int)alu12, 0)), 0));
+}

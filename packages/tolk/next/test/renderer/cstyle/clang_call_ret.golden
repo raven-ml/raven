@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void call_ret(unsigned long* restrict data0_1, int* restrict data1_1) {
+  unsigned long val0 = (*(data0_1+0));
+  int alu0 = (((int(*)(int))(val0))((int)(21)));
+  *(data1_1+0) = (alu0<<1);
+}
+

@@ -4,6 +4,23 @@
  (wrapped false)
  (libraries windtrap tolk.next zarith))
 
+; The executor of the tests that run kernels, apart so that only they link
+; nx.device.
+
+(library
+ (name tolk_next_host)
+ (modules host host_machine)
+ (private_modules host_machine)
+ (wrapped false)
+ (libraries tolk.next nx.device zarith))
+
+(rule
+ (target host_machine.ml)
+ (action
+  (write-file
+   %{target}
+   "let architecture = \"%{ocaml-config:architecture}\"\n")))
+
 (tests
  (names test_golden test_graph test_interpreter)
  (modules test_golden test_graph test_interpreter)

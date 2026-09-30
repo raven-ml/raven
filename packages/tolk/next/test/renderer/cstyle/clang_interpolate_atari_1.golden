@@ -1,0 +1,28 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void E_64_16_4(unsigned char* restrict data0_4096, unsigned char* restrict data1_13440) {
+  for (int Lidx2 = 0; Lidx2 < 64; Lidx2++) {
+    int alu0 = (Lidx2*420);
+    int alu1 = (alu0+146);
+    short cast0 = ((short)((((float)((alu1&127)))+0.5f)));
+    for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
+      int alu2 = (Lidx3<<2);
+      int alu3 = (((alu1>>7)<<6)+alu2);
+      unsigned char val0 = (*(data1_13440+(alu3+1)));
+      unsigned char val1 = (*(data1_13440+(alu3+2)));
+      unsigned char val2 = (*(data1_13440+(alu3+3)));
+      int alu4 = ((((alu0+273)>>7)<<6)+alu2);
+      unsigned char val3 = (*(data1_13440+(alu4+1)));
+      unsigned char val4 = (*(data1_13440+(alu4+2)));
+      unsigned char val5 = (*(data1_13440+(alu4+3)));
+      unsigned char val6 = (*(data1_13440+alu3));
+      unsigned char val7 = (*(data1_13440+alu4));
+      int alu5 = ((Lidx2<<6)+alu2);
+      *(data0_4096+(alu5+1)) = ((unsigned char)((((unsigned short)(val0))+(((unsigned short)(((((short)(((signed char)((val3-val0)))))*cast0)+((short)(64)))))>>((unsigned short)(7u))))));
+      *(data0_4096+(alu5+2)) = ((unsigned char)((((unsigned short)(val1))+(((unsigned short)(((((short)(((signed char)((val4-val1)))))*cast0)+((short)(64)))))>>((unsigned short)(7u))))));
+      *(data0_4096+(alu5+3)) = ((unsigned char)((((unsigned short)(val2))+(((unsigned short)(((((short)(((signed char)((val5-val2)))))*cast0)+((short)(64)))))>>((unsigned short)(7u))))));
+      *(data0_4096+alu5) = ((unsigned char)((((unsigned short)(val6))+(((unsigned short)(((((short)(((signed char)((val7-val6)))))*cast0)+((short)(64)))))>>((unsigned short)(7u))))));
+    }
+  }
+}
+

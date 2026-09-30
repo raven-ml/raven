@@ -1,0 +1,39 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#define INFINITY (__builtin_inff())
+#define NAN (__builtin_nanf(""))
+typedef long unsigned int size_t;
+typedef __bf16 hip_bfloat16;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(hip_bfloat16* data0_16, hip_bfloat16* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  int alu1 = (alu0+1);
+  hip_bfloat16 val0 = (*(data1_16+alu1));
+  int alu2 = (alu0+2);
+  hip_bfloat16 val1 = (*(data1_16+alu2));
+  int alu3 = (alu0+3);
+  hip_bfloat16 val2 = (*(data1_16+alu3));
+  hip_bfloat16 val3 = (*(data1_16+alu0));
+  float cast0 = ((float)(val0));
+  hip_bfloat16 alu4 = ((cast0<-1.0f)?((hip_bfloat16)(NAN)):val0);
+  hip_bfloat16 alu5 = ((0.0f<cast0)?val0:((hip_bfloat16)(INFINITY)));
+  hip_bfloat16 alu6 = ((cast0<1.0f)?((hip_bfloat16)(-INFINITY)):val0);
+  float cast1 = ((float)(val1));
+  hip_bfloat16 alu7 = ((cast1<-1.0f)?((hip_bfloat16)(NAN)):val1);
+  hip_bfloat16 alu8 = ((0.0f<cast1)?val1:((hip_bfloat16)(INFINITY)));
+  hip_bfloat16 alu9 = ((cast1<1.0f)?((hip_bfloat16)(-INFINITY)):val1);
+  float cast2 = ((float)(val2));
+  hip_bfloat16 alu10 = ((cast2<-1.0f)?((hip_bfloat16)(NAN)):val2);
+  hip_bfloat16 alu11 = ((0.0f<cast2)?val2:((hip_bfloat16)(INFINITY)));
+  hip_bfloat16 alu12 = ((cast2<1.0f)?((hip_bfloat16)(-INFINITY)):val2);
+  float cast3 = ((float)(val3));
+  hip_bfloat16 alu13 = ((cast3<-1.0f)?((hip_bfloat16)(NAN)):val3);
+  hip_bfloat16 alu14 = ((0.0f<cast3)?val3:((hip_bfloat16)(INFINITY)));
+  hip_bfloat16 alu15 = ((cast3<1.0f)?((hip_bfloat16)(-INFINITY)):val3);
+  *(data0_16+alu1) = ((hip_bfloat16)((((float)(((hip_bfloat16)((((float)(alu5))+((float)(alu4)))))))+((float)(alu6)))));
+  *(data0_16+alu2) = ((hip_bfloat16)((((float)(((hip_bfloat16)((((float)(alu8))+((float)(alu7)))))))+((float)(alu9)))));
+  *(data0_16+alu3) = ((hip_bfloat16)((((float)(((hip_bfloat16)((((float)(alu11))+((float)(alu10)))))))+((float)(alu12)))));
+  *(data0_16+alu0) = ((hip_bfloat16)((((float)(((hip_bfloat16)((((float)(alu14))+((float)(alu13)))))))+((float)(alu15)))));
+}

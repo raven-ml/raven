@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device half* data0_1; device half* data1_1; };
+kernel void E(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device half* data0_1 = args.data0_1; device half* data1_1 = args.data1_1;
+  half val0 = (*(data1_1+0));
+  *(data0_1+0) = (exp2(val0)+log2(val0)+precise::sin(val0)+sqrt(val0)+(1/val0)+trunc(val0));
+}

@@ -1,0 +1,9 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device signed char* data0_4; };
+kernel void packed(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device signed char* data0_4 = args.data0_4;
+  uint val0 = (*((device uint*)(((device uint*)((data0_4+0))))));
+  *(data0_4+0) = (val0&4294967040u);
+}

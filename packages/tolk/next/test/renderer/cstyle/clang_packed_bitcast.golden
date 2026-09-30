@@ -1,0 +1,7 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void packed(signed char* restrict data0_4) {
+  unsigned int val0 = (*((unsigned int*)(((unsigned int*)((data0_4+0))))));
+  *(data0_4+0) = (val0&4294967040u);
+}
+

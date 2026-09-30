@@ -1,0 +1,63 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#define INFINITY (__builtin_inff())
+#define NAN (__builtin_nanf(""))
+typedef long unsigned int size_t;
+typedef unsigned short hip_bfloat16;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(hip_bfloat16* data0_16, hip_bfloat16* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  int alu1 = (alu0+1);
+  hip_bfloat16 val0 = (*(data1_16+alu1));
+  int alu2 = (alu0+2);
+  hip_bfloat16 val1 = (*(data1_16+alu2));
+  int alu3 = (alu0+3);
+  hip_bfloat16 val2 = (*(data1_16+alu3));
+  hip_bfloat16 val3 = (*(data1_16+alu0));
+  float cast0 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(val0))))<<16u)));
+  hip_bfloat16 alu4 = ((0.0f<cast0)?val0:32640u);
+  hip_bfloat16 alu5 = ((cast0<-1.0f)?32704u:val0);
+  unsigned int cast1 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu4))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu5))))<<16u))))));
+  unsigned int alu6 = (((cast1&65535u)!=0u)?(cast1|65536u):cast1);
+  unsigned int alu7 = (((-cast1&2139095040u)!=0u)?(cast1+((cast1>>16u)&1u)+32767u):alu6);
+  float cast2 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(val1))))<<16u)));
+  hip_bfloat16 alu8 = ((0.0f<cast2)?val1:32640u);
+  hip_bfloat16 alu9 = ((cast2<-1.0f)?32704u:val1);
+  unsigned int cast3 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu8))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu9))))<<16u))))));
+  unsigned int alu10 = (((cast3&65535u)!=0u)?(cast3|65536u):cast3);
+  unsigned int alu11 = (((-cast3&2139095040u)!=0u)?(cast3+((cast3>>16u)&1u)+32767u):alu10);
+  float cast4 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(val2))))<<16u)));
+  hip_bfloat16 alu12 = ((0.0f<cast4)?val2:32640u);
+  hip_bfloat16 alu13 = ((cast4<-1.0f)?32704u:val2);
+  unsigned int cast5 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu12))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu13))))<<16u))))));
+  unsigned int alu14 = (((cast5&65535u)!=0u)?(cast5|65536u):cast5);
+  unsigned int alu15 = (((-cast5&2139095040u)!=0u)?(cast5+((cast5>>16u)&1u)+32767u):alu14);
+  float cast6 = __builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(val3))))<<16u)));
+  hip_bfloat16 alu16 = ((0.0f<cast6)?val3:32640u);
+  hip_bfloat16 alu17 = ((cast6<-1.0f)?32704u:val3);
+  unsigned int cast7 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu16))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu17))))<<16u))))));
+  unsigned int alu18 = (((cast7&65535u)!=0u)?(cast7|65536u):cast7);
+  unsigned int alu19 = (((-cast7&2139095040u)!=0u)?(cast7+((cast7>>16u)&1u)+32767u):alu18);
+  hip_bfloat16 alu20 = ((cast0<1.0f)?65408u:val0);
+  hip_bfloat16 alu21 = ((cast2<1.0f)?65408u:val1);
+  hip_bfloat16 alu22 = ((cast4<1.0f)?65408u:val2);
+  hip_bfloat16 alu23 = ((cast6<1.0f)?65408u:val3);
+  unsigned int cast8 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu7>>16u)))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu20))))<<16u))))));
+  unsigned int alu24 = (((cast8&65535u)!=0u)?(cast8|65536u):cast8);
+  unsigned int alu25 = (((-cast8&2139095040u)!=0u)?(cast8+((cast8>>16u)&1u)+32767u):alu24);
+  unsigned int cast9 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu11>>16u)))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu21))))<<16u))))));
+  unsigned int alu26 = (((cast9&65535u)!=0u)?(cast9|65536u):cast9);
+  unsigned int alu27 = (((-cast9&2139095040u)!=0u)?(cast9+((cast9>>16u)&1u)+32767u):alu26);
+  unsigned int cast10 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu15>>16u)))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu22))))<<16u))))));
+  unsigned int alu28 = (((cast10&65535u)!=0u)?(cast10|65536u):cast10);
+  unsigned int alu29 = (((-cast10&2139095040u)!=0u)?(cast10+((cast10>>16u)&1u)+32767u):alu28);
+  unsigned int cast11 = __builtin_bit_cast(unsigned int, (float)((__builtin_bit_cast(float, (unsigned int)((((unsigned int)(((unsigned short)((alu19>>16u)))))<<16u)))+__builtin_bit_cast(float, (unsigned int)((((unsigned int)(__builtin_bit_cast(unsigned short, (hip_bfloat16)(alu23))))<<16u))))));
+  unsigned int alu30 = (((cast11&65535u)!=0u)?(cast11|65536u):cast11);
+  unsigned int alu31 = (((-cast11&2139095040u)!=0u)?(cast11+((cast11>>16u)&1u)+32767u):alu30);
+  *(data0_16+alu1) = __builtin_bit_cast(hip_bfloat16, (unsigned short)(((unsigned short)((alu25>>16u)))));
+  *(data0_16+alu2) = __builtin_bit_cast(hip_bfloat16, (unsigned short)(((unsigned short)((alu27>>16u)))));
+  *(data0_16+alu3) = __builtin_bit_cast(hip_bfloat16, (unsigned short)(((unsigned short)((alu29>>16u)))));
+  *(data0_16+alu0) = __builtin_bit_cast(hip_bfloat16, (unsigned short)(((unsigned short)((alu31>>16u)))));
+}

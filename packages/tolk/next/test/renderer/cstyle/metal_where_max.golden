@@ -1,0 +1,24 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_16; device float* data1_16; device float* data2_16; };
+kernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args.data0_16; device float* data1_16 = args.data1_16; device float* data2_16 = args.data2_16;
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((device float4*)((data1_16+alu0))));
+  float4 val1 = (*((device float4*)((data2_16+alu0))));
+  bool alu1 = (val1.x<val0.x);
+  bool alu2 = (val1.y<val0.y);
+  bool alu3 = (val1.z<val0.z);
+  bool alu4 = (val1.w<val0.w);
+  float alu5 = (alu1?val0.x:val1.x);
+  float alu6 = (alu1?val1.x:alu5);
+  float alu7 = (alu2?val0.y:val1.y);
+  float alu8 = (alu2?val1.y:alu7);
+  float alu9 = (alu3?val0.z:val1.z);
+  float alu10 = (alu3?val1.z:alu9);
+  float alu11 = (alu4?val0.w:val1.w);
+  float alu12 = (alu4?val1.w:alu11);
+  *((device float4*)((data0_16+alu0))) = float4(alu6,alu8,alu10,alu12);
+}

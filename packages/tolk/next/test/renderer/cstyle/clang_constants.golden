@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void constants(_Bool* restrict data0_1, _Bool* restrict data1_1, signed char* restrict data2_1, unsigned char* restrict data3_1, short* restrict data4_1, unsigned short* restrict data5_1, int* restrict data6_1, unsigned int* restrict data7_1, unsigned int* restrict data8_1, long* restrict data9_1, unsigned long* restrict data10_1, unsigned long* restrict data11_1, __fp16* restrict data12_1, __bf16* restrict data13_1, float* restrict data14_1, double* restrict data15_1) {
+  *(data0_1+0) = 1;
+  *(data1_1+0) = 0;
+  *(data2_1+0) = ((signed char)(-3));
+  *(data3_1+0) = ((unsigned char)(200u));
+  *(data4_1+0) = ((short)(-300));
+  *(data5_1+0) = ((unsigned short)(60000u));
+  *(data6_1+0) = 42;
+  *(data7_1+0) = 42u;
+  *(data8_1+0) = 4294967295u;
+  *(data9_1+0) = 12345l;
+  *(data10_1+0) = 42ul;
+  *(data11_1+0) = 18446744073709551615ul;
+  *(data12_1+0) = ((__fp16)(1.5f));
+  *(data13_1+0) = ((__bf16)(1.5f));
+  *(data14_1+0) = 3.14f;
+  *(data15_1+0) = 3.14;
+}
+

@@ -1,0 +1,15 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16, double* data2_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((float4*)((data1_16+alu0))));
+  double val1 = (*(data2_16+(alu0+1)));
+  double val2 = (*(data2_16+(alu0+2)));
+  double val3 = (*(data2_16+(alu0+3)));
+  double val4 = (*(data2_16+alu0));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((((double)(val0.x))+val4)*3.0))),((float)(((((double)(val0.y))+val1)*3.0))),((float)(((((double)(val0.z))+val2)*3.0))),((float)(((((double)(val0.w))+val3)*3.0))));
+}

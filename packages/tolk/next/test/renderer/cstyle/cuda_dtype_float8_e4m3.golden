@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp8.h>
+struct __align__(4) __nv_fp8_e4m34 { __nv_fp8_e4m3 x, y, z, w; }; __device__ __nv_fp8_e4m34 make___nv_fp8_e4m34(__nv_fp8_e4m3 x, __nv_fp8_e4m3 y, __nv_fp8_e4m3 z, __nv_fp8_e4m3 w) { __nv_fp8_e4m34 r={x, y, z, w}; return r; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16, __nv_fp8_e4m3* data2_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  __nv_fp8_e4m34 val0 = (*((__nv_fp8_e4m34*)((data2_16+alu0))));
+  float4 val1 = (*((float4*)((data1_16+alu0))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)(val1.x))))+((float)(val0.x)))))))*3.0f))))),((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)(val1.y))))+((float)(val0.y)))))))*3.0f))))),((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)(val1.z))))+((float)(val0.z)))))))*3.0f))))),((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)((((float)(((__nv_fp8_e4m3)(val1.w))))+((float)(val0.w)))))))*3.0f))))));
+}

@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_16; device float* data1_16; device bfloat* data2_16; };
+kernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args.data0_16; device float* data1_16 = args.data1_16; device bfloat* data2_16 = args.data2_16;
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  bfloat val0 = (*(data2_16+(alu0+1)));
+  bfloat val1 = (*(data2_16+(alu0+2)));
+  bfloat val2 = (*(data2_16+(alu0+3)));
+  bfloat val3 = (*(data2_16+alu0));
+  float4 val4 = (*((device float4*)((data1_16+alu0))));
+  uint cast0 = as_type<uint>((float)(val4.x));
+  uint alu1 = (((cast0&65535u)!=0u)?(cast0|65536u):cast0);
+  uint alu2 = (((-cast0&2139095040u)!=0u)?(cast0+((cast0>>16u)&1u)+32767u):alu1);
+  uint cast1 = as_type<uint>((float)(val4.y));
+  uint alu3 = (((cast1&65535u)!=0u)?(cast1|65536u):cast1);
+  uint alu4 = (((-cast1&2139095040u)!=0u)?(cast1+((cast1>>16u)&1u)+32767u):alu3);
+  uint cast2 = as_type<uint>((float)(val4.z));
+  uint alu5 = (((cast2&65535u)!=0u)?(cast2|65536u):cast2);
+  uint alu6 = (((-cast2&2139095040u)!=0u)?(cast2+((cast2>>16u)&1u)+32767u):alu5);
+  uint cast3 = as_type<uint>((float)(val4.w));
+  uint alu7 = (((cast3&65535u)!=0u)?(cast3|65536u):cast3);
+  uint alu8 = (((-cast3&2139095040u)!=0u)?(cast3+((cast3>>16u)&1u)+32767u):alu7);
+  *((device float4*)((data0_16+alu0))) = float4(as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(((as_type<bfloat>((unsigned short)(((unsigned short)((alu2>>16u)))))+val3)*((bfloat)(3.0f)))))))<<16u))),as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(((as_type<bfloat>((unsigned short)(((unsigned short)((alu4>>16u)))))+val0)*((bfloat)(3.0f)))))))<<16u))),as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(((as_type<bfloat>((unsigned short)(((unsigned short)((alu6>>16u)))))+val1)*((bfloat)(3.0f)))))))<<16u))),as_type<float>((uint)((((uint)(as_type<unsigned short>((bfloat)(((as_type<bfloat>((unsigned short)(((unsigned short)((alu8>>16u)))))+val2)*((bfloat)(3.0f)))))))<<16u))));
+}

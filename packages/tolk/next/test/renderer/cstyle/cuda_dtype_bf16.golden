@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_bf16.h>
+extern "C" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16, nv_bfloat16* data2_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  nv_bfloat16 val0 = (*(data2_16+(alu0+1)));
+  nv_bfloat16 val1 = (*(data2_16+(alu0+2)));
+  nv_bfloat16 val2 = (*(data2_16+(alu0+3)));
+  nv_bfloat16 val3 = (*(data2_16+alu0));
+  float4 val4 = (*((float4*)((data1_16+alu0))));
+  *((float4*)((data0_16+alu0))) = make_float4(((float)(((((nv_bfloat16)(val4.x))+val3)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val4.y))+val0)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val4.z))+val1)*((nv_bfloat16)(3.0f))))),((float)(((((nv_bfloat16)(val4.w))+val2)*((nv_bfloat16)(3.0f))))));
+}

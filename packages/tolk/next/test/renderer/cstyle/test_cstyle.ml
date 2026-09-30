@@ -1,0 +1,908 @@
+open Windtrap
+open Tolk_next
+
+let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
+let tensor_core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
+
+let contains s sub =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
+(* Targets *)
+
+let target device renderer arch =
+  { Helpers.Target.device; renderer; arch; interface = ""; indices = "" }
+
+let renderer_for (t : Helpers.Target.t) =
+  match t.renderer with
+  | "CLANG" -> Cstyle.clang t
+  | "METAL" -> Cstyle.metal t
+  | "CUDA" -> Cstyle.cuda t
+  | "HIP" -> Cstyle.hip t
+  | r -> invalid_arg ("no renderer " ^ r)
+
+(* The target of a golden row, written in its columns device, renderer and
+   arch. *)
+let target_of_row row = target (row "device") (row "renderer") (row "arch")
+let renderer_of_row row = renderer_for (target_of_row row)
+let clang = Cstyle.clang (target "CPU" "CLANG" "x86_64,x86-64")
+let metal = Cstyle.metal (target "METAL" "METAL" "Apple9")
+let cuda = Cstyle.cuda (target "CUDA" "CUDA" "sm_89")
+let hip = Cstyle.hip (target "AMD" "HIP" "gfx1100")
+let render (r : Renderer.t) uops = r.render uops
+
+(* Sources *)
+
+(* The cases of kernels.golden are its sink's sources, each a linear program
+   named after its case, whose sources are the kernel's nodes in order. *)
+let kernels = lazy (Array.of_list (Ops.src (Golden.sink "kernels.golden")))
+let kernel row = Ops.src (Lazy.force kernels).(int_of_string (row "kernel"))
+let case_rows = Golden.rows "cases.golden"
+let find_case name = List.find (fun row -> row "case" = name) case_rows
+
+let source_of_case name =
+  render (renderer_of_row (find_case name)) (kernel (find_case name))
+
+(* D16: CUDA keeps a float8 infinity special where tinygrad saturates it. The
+   kernel declares the helper tg_fp8, and each conversion of a value to a float8
+   type T is tg_fp8<T>(value, byte), which converts as tinygrad's (T)(value) and
+   then writes the bits of the infinity's image, byte and its sign, if the value
+   was infinite. An infinite constant is tg_bitcast<T>((unsigned char)byte), the
+   bits of its image. [tinygrad_of_d16 src] is [src] with each of these written
+   back as tinygrad writes it. *)
+
+let fp8_helper =
+  "template <class T, class F> __device__ __forceinline__ T tg_fp8("
+
+let fp8_byte t infinity =
+  match Dtype.bitcast t Uint8 (`Float infinity) with
+  | `Int z -> Printf.sprintf "0x%02x" (Z.to_int z)
+  | _ -> invalid_arg "a byte is an integer"
+
+let fp8_of_name = function
+  | "__nv_fp8_e4m3" -> Dtype.Fp8e4m3
+  | "__nv_fp8_e5m2" -> Fp8e5m2
+  | t -> invalid_arg ("no CUDA float8 type " ^ t)
+
+(* [closing s i] is the index of the parenthesis that closes the one opened just
+   before [i], and the index of the last ", " at depth zero on the way. *)
+let closing s i =
+  let rec go i depth comma =
+    match s.[i] with
+    | '(' -> go (i + 1) (depth + 1) comma
+    | ')' when depth = 0 -> (i, comma)
+    | ')' -> go (i + 1) (depth - 1) comma
+    | ',' when depth = 0 -> go (i + 1) depth i
+    | _ -> go (i + 1) depth comma
+  in
+  go i 0 (-1)
+
+let starts_at s i prefix =
+  i + String.length prefix <= String.length s
+  && String.sub s i (String.length prefix) = prefix
+
+let starts_with prefix s = String.starts_with ~prefix s
+
+let rec tinygrad_of_d16 src =
+  let b = Buffer.create (String.length src) in
+  let rec scan i =
+    if i >= String.length src then ()
+    else if starts_at src i "tg_fp8<" then begin
+      let t_end = String.index_from src i '>' in
+      let t = String.sub src (i + 7) (t_end - i - 7) in
+      let close, comma = closing src (t_end + 2) in
+      let value = String.sub src (t_end + 2) (comma - t_end - 2) in
+      Printf.bprintf b "((%s)(%s))" t (tinygrad_of_d16 value);
+      scan (close + 1)
+    end
+    else if starts_at src i "(tg_bitcast<__nv_fp8_" then begin
+      let t_end = String.index_from src i '>' in
+      let t = String.sub src (i + 12) (t_end - i - 12) in
+      let close, _ = closing src (t_end + 2) in
+      let byte = String.sub src (close - 4) 4 in
+      let dt = fp8_of_name t in
+      let value =
+        if byte = fp8_byte dt infinity then "INFINITY"
+        else if byte = fp8_byte dt neg_infinity then "-INFINITY"
+        else invalid_arg ("no infinity of " ^ t ^ " is " ^ byte)
+      in
+      Printf.bprintf b "((%s)(%s))" t value;
+      scan (close + 2)
+    end
+    else begin
+      Buffer.add_char b src.[i];
+      scan (i + 1)
+    end
+  in
+  scan 0;
+  String.split_on_char '\n' (Buffer.contents b)
+  |> List.filter (fun line -> not (starts_with fp8_helper line))
+  |> String.concat "\n"
+
+let sources_under setting =
+  List.filter_map
+    (fun row ->
+      if row "setting" <> setting then None
+      else
+        let source () =
+          let src = render (renderer_of_row row) (kernel row) in
+          if row "renderer" = "CUDA" then tinygrad_of_d16 src else src
+        in
+        Some (Golden.text (row "case" ^ ".golden") source))
+    case_rows
+
+(* A setting is read once per process, so the cases rendered under one run in a
+   process of their own, which the stanza starts with the setting's variable set
+   and the setting's tag selected. *)
+let sources =
+  group "sources"
+    [
+      group "by default" (sources_under "-");
+      group ~tags:[ "expand-ssa" ] "with EXPAND_SSA=1"
+        (sources_under "EXPAND_SSA=1");
+      group ~tags:[ "unaligned" ] "with ALIGNED=0" (sources_under "ALIGNED=0");
+    ]
+
+(* Rewrites *)
+
+let rewrite_inputs =
+  lazy (Array.of_list (Ops.src (Golden.sink "rewrite_inputs.golden")))
+
+let rewritten = lazy (Array.of_list (Ops.src (Golden.sink "rewritten.golden")))
+let nth_of file row column = (Lazy.force file).(int_of_string (row column))
+
+let rewrites =
+  group "extra_matcher"
+    [
+      Golden.cases "rewrites.golden" (fun row ->
+          let r = renderer_of_row row in
+          equal Uops.uop
+            (nth_of rewritten row "output")
+            (Ops.graph_rewrite ~ctx:()
+               (nth_of rewrite_inputs row "input")
+               r.extra_matcher));
+    ]
+
+(* Declarations *)
+
+let sizes_of_cell = function
+  | "-" -> None
+  | s -> Some (List.map int_of_string (String.split_on_char ' ' s))
+
+let bool_of_cell = function
+  | "True" -> true
+  | "False" -> false
+  | s -> invalid_arg ("not a boolean: " ^ s)
+
+let joined sep pp xs = String.concat sep (List.map (Format.asprintf "%a" pp) xs)
+let or_dash = function "" -> "-" | s -> s
+
+let op_names (r : Renderer.t) =
+  List.sort String.compare (List.map (fun (op, _) -> Op.name op) r.code_for_op)
+  |> String.concat " "
+
+let declared column check =
+  group column
+    [
+      Golden.cases "declarations.golden" ~key:[ "device"; "arch" ] (fun row ->
+          check (renderer_of_row row) (row column));
+    ]
+
+let declarations =
+  group "declarations"
+    [
+      declared "supports_float4" (fun r cell ->
+          equal bool (bool_of_cell cell) r.supports_float4);
+      declared "has_local" (fun r cell ->
+          equal bool (bool_of_cell cell) r.has_local);
+      declared "has_shared" (fun r cell ->
+          equal bool (bool_of_cell cell) r.has_shared);
+      declared "global_max" (fun r cell ->
+          equal (option (list int)) (sizes_of_cell cell) (Some r.global_max));
+      declared "local_max" (fun r cell ->
+          equal (option (list int)) (sizes_of_cell cell) (Some r.local_max));
+      declared "global_prod_max" (fun r cell ->
+          equal (option (list int)) (sizes_of_cell cell) r.global_prod_max);
+      declared "shared_max" (fun r cell ->
+          equal int (int_of_string cell) r.shared_max);
+      declared "tensor_cores" (fun r cell ->
+          equal string cell (or_dash (joined " | " Tc.pp r.tensor_cores)));
+      declared "code_for_op" (fun r cell -> equal string cell (op_names r));
+      declared "supported" (fun r cell ->
+          equal string cell (joined " " Dtype.pp (Renderer.supported_dtypes r)));
+      declared "cachekey" (fun r cell ->
+          equal (option string) (Some cell)
+            (Renderer.Compiler.cachekey r.compiler));
+    ]
+
+(* Operations *)
+
+let written =
+  group "code_for_op"
+    [
+      Golden.cases "written.golden" ~key:[ "renderer"; "op"; "dtype" ]
+        (fun row ->
+          let r = renderer_of_row row in
+          let name = row "op" in
+          let op =
+            Result.get_ok
+              (Op.of_string (String.sub name 4 (String.length name - 4)))
+          in
+          let operands =
+            if Op.Set.mem op Op.Set.unary then [ "a" ]
+            else if Op.Set.mem op Op.Set.ternary then [ "a"; "b"; "c" ]
+            else [ "a"; "b" ]
+          in
+          let write = List.assoc op r.code_for_op in
+          equal string (row "written")
+            (write operands (Dtypes.dtype_of_cell (row "dtype"))));
+    ]
+
+(* Errors *)
+
+let errors =
+  group "architectures"
+    [
+      test "Clang rejects an architecture of one field" (fun () ->
+          rejects (fun () -> Cstyle.clang (target "CPU" "CLANG" "x86_64")));
+      test "Clang rejects a machine other than x86_64, arm64 and riscv64"
+        (fun () ->
+          rejects (fun () -> Cstyle.clang (target "CPU" "CLANG" "mips,generic")));
+      test "Metal rejects an Apple family that is no integer" (fun () ->
+          rejects (fun () -> Cstyle.metal (target "METAL" "METAL" "AppleX")));
+      test "Metal has no tensor cores on a family that is not Apple's"
+        (fun () ->
+          equal (list tensor_core) []
+            (Cstyle.metal (target "METAL" "METAL" "Mac2")).tensor_cores);
+      test "CUDA rejects an architecture without a compute capability"
+        (fun () -> rejects (fun () -> Cstyle.cuda (target "CUDA" "CUDA" "sm_")));
+    ]
+
+(* Parentheses *)
+
+(* Five operations in a row, each on the last's result: an associative operation
+   is written without the parentheses of its operands, and a subtraction keeps
+   them. *)
+let parentheses =
+  group "parentheses"
+    [
+      cases ~name:fst "an associative chain is written flat"
+        [
+          ("add", true);
+          ("mul", true);
+          ("xor", true);
+          ("or", true);
+          ("and", true);
+          ("sub", false);
+        ]
+        (fun (op, flat) ->
+          let src = source_of_case ("clang_chain_" ^ op) in
+          equal bool (not flat) (contains src "((((("));
+    ]
+
+(* Float8 infinities on CUDA (D16) *)
+
+(* A kernel converts a value to a float8 type when it casts to one anything but
+   a constant. *)
+let converts_to_fp8 uops =
+  List.exists
+    (fun u ->
+      Op.equal (Ops.op u) Cast
+      && List.mem (Ops.dtype u) Dtype.fp8s
+      && not (Op.equal (Ops.op (List.hd (Ops.src u))) Const))
+    uops
+
+let cuda_rows =
+  List.filter
+    (fun row -> row "renderer" = "CUDA" && row "setting" = "-")
+    case_rows
+
+let guard_only_where_converted () =
+  let guarded =
+    List.filter (fun row -> converts_to_fp8 (kernel row)) cuda_rows
+    |> List.map (fun row -> row "case")
+  in
+  equal (list string) ~msg:"the kernels that convert"
+    [
+      "cuda_dtype_float8_e4m3";
+      "cuda_dtype_float8_e5m2";
+      "cuda_inf_nan_float8_e4m3";
+      "cuda_inf_nan_float8_e5m2";
+    ]
+    guarded;
+  List.iter
+    (fun row ->
+      equal bool ~msg:(row "case")
+        (List.mem (row "case") guarded)
+        (contains (render cuda (kernel row)) fp8_helper))
+    cuda_rows
+
+let converts_with_the_infinity_byte (case, t, dt) =
+  let call = Printf.sprintf "tg_fp8<%s>(val1.x, %s)" t (fp8_byte dt infinity) in
+  satisfies
+    ~claim:("a source that converts by " ^ call)
+    string
+    (fun src -> contains src call)
+    (source_of_case case)
+
+let fp8_infinities =
+  group "float8 infinities on CUDA (D16)"
+    [
+      test "declares the guard exactly when it converts a value to a float8"
+        guard_only_where_converted;
+      cases
+        ~name:(fun (_, t, _) -> t)
+        "converts with the byte of the infinity's image"
+        [
+          ("cuda_dtype_float8_e4m3", "__nv_fp8_e4m3", Dtype.Fp8e4m3);
+          ("cuda_dtype_float8_e5m2", "__nv_fp8_e5m2", Fp8e5m2);
+        ]
+        converts_with_the_infinity_byte;
+      cases ~name:Fun.id "writes an infinite e5m2 constant as its bits"
+        [ "0x7c"; "0xfc" ] (fun byte ->
+          let bits = "tg_bitcast<__nv_fp8_e5m2>((unsigned char)" ^ byte ^ ")" in
+          satisfies
+            ~claim:("a source that writes " ^ bits)
+            string
+            (fun src -> contains src bits)
+            (source_of_case "cuda_inf_nan_float8_e5m2"));
+      test
+        "the image of an infinity is a NaN of its sign in e4m3 and itself in \
+         e5m2" (fun () ->
+          equal string "0x7f" (fp8_byte Fp8e4m3 infinity);
+          equal string "0xff" (fp8_byte Fp8e4m3 neg_infinity);
+          equal string "0x7c" (fp8_byte Fp8e5m2 infinity);
+          equal string "0xfc" (fp8_byte Fp8e5m2 neg_infinity));
+    ]
+
+(* Rendering *)
+
+let arity op =
+  if Op.Set.mem op Op.Set.unary then 1
+  else if Op.Set.mem op Op.Set.ternary then 3
+  else 2
+
+(* A kernel that stores one operation of loaded operands: the loads are named
+   val0, val1 and val2 in the order of the operands. *)
+let one_operation op dt =
+  let operand i = if Op.equal op Where && i = 0 then Dtype.Bool else dt in
+  let at slot dt =
+    Ops.index (Ops.param ~shape:[ Int 1 ] slot dt) [ Ops.int ~dtype:Int32 0 ]
+  in
+  let loads =
+    List.init (arity op) (fun i -> Ops.load (at (i + 1) (operand i)) [])
+  in
+  let value = Ops.v op ~src:loads in
+  Ops.toposort (Ops.sink [ Ops.store (at 0 (Ops.dtype value)) value ])
+
+let floats_only = Op.[ Exp2; Log2; Sin; Sqrt; Reciprocal; Trunc; Fdiv ]
+let ints_only = Op.[ Shl; Shr; And; Or; Xor; Cmod; Cdiv ]
+
+let operations =
+  let named =
+    [ ("clang", clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
+  in
+  List.concat_map
+    (fun (name, (r : Renderer.t)) ->
+      List.concat_map
+        (fun (op, _) ->
+          List.filter_map
+            (fun dt ->
+              let fits =
+                if List.mem op floats_only then Dtype.is_float dt
+                else if List.mem op ints_only then Dtype.is_int dt
+                else not (Dtype.is_bool dt)
+              in
+              if fits then Some (name, r, op, dt) else None)
+            (Renderer.supported_dtypes r))
+        r.code_for_op)
+    named
+  |> Gen.of_list
+  |> Gen.with_pp (fun ppf (name, _, op, dt) ->
+      Format.fprintf ppf "%s %a %a" name Op.pp op Dtype.pp dt)
+
+let writes_its_operation (_, (r : Renderer.t), op, dt) =
+  let operands = List.init (arity op) (Printf.sprintf "val%d") in
+  let expr = (List.assoc op r.code_for_op) operands dt in
+  let src = render r (one_operation op dt) in
+  satisfies
+    ~claim:("a source that stores " ^ expr)
+    string
+    (fun src -> contains src (" = " ^ expr ^ ";"))
+    src
+
+let named_cases = Gen.of_list (List.map (fun row -> row "case") case_rows)
+
+let keeps_no_state (a, b) =
+  let first = source_of_case a in
+  ignore (source_of_case b);
+  equal string first (source_of_case a)
+
+(* Nodes are shared, so the kernel stores to a slot no other kernel of the suite
+   has, and none of its nodes is alive elsewhere. *)
+let keeps_no_reference () =
+  let weak = Stdlib.Weak.create 1 in
+  let[@inline never] render_once () =
+    let at =
+      Ops.index
+        (Ops.param ~shape:[ Int 1 ] 7139 Float32)
+        [ Ops.int ~dtype:Int32 0 ]
+    in
+    let sink = Ops.sink [ Ops.store at (Ops.float ~dtype:Float32 7139.) ] in
+    Stdlib.Weak.set weak 0 (Some sink);
+    ignore (render clang (Ops.toposort sink))
+  in
+  render_once ();
+  Gc.full_major ();
+  is_false ~msg:"the kernel is still reachable" (Stdlib.Weak.check weak 0)
+
+let cuda_on_nv () =
+  let nv = Cstyle.cuda (target "NV" "CUDA" "sm_89") in
+  List.iter
+    (fun row ->
+      if row "renderer" = "CUDA" && row "setting" = "-" then
+        equal string ~msg:(row "case")
+          (render cuda (kernel row))
+          (render nv (kernel row)))
+    case_rows
+
+(* Custom code is a format string of its operands, read as Python's str.format
+   reads one. *)
+let custom code =
+  let at slot =
+    Ops.index
+      (Ops.param ~shape:[ Int 1 ] slot Float32)
+      [ Ops.int ~dtype:Int32 0 ]
+  in
+  let operands = [ Ops.load (at 1) []; Ops.load (at 2) [] ] in
+  let value =
+    Ops.v Customi ~src:operands ~arg:(Code { code; dtype = Float32 })
+  in
+  render clang (Ops.toposort (Ops.sink [ Ops.store (at 0) value ]))
+
+let formats_custom_code (code, expr) =
+  satisfies
+    ~claim:("a source that stores " ^ expr)
+    string
+    (fun src -> contains src (" = " ^ expr ^ ";"))
+    (custom code)
+
+let rendering =
+  group "rendering"
+    [
+      prop "writes each native operation as code_for_op does" operations
+        writes_its_operation;
+      prop "keeps no state from one kernel to the next"
+        (Gen.pair named_cases named_cases)
+        keeps_no_state;
+      test "keeps no reference to the kernel it rendered" keeps_no_reference;
+      cases ~name:fst "formats custom code as str.format does"
+        [
+          ("{0}+{1}", "val0+val1");
+          ("{1}-{0}", "val1-val0");
+          ("{}*{}", "val0*val1");
+          ("{{{0}}}", "{val0}");
+          ("f({0}) }}", "f(val0) }");
+        ]
+        formats_custom_code;
+      cases ~name:Fun.id "refuses custom code str.format refuses, naming it"
+        [ "f({0"; "{0}}"; "{0} } {1}"; "{2}"; "{x}" ] (fun code ->
+          raises_match (Exn.invalid_arg ~substring:code) (fun () -> custom code));
+      test "writes the same CUDA source for the CUDA and NV devices" cuda_on_nv;
+      cases
+        ~name:(fun (name, _) -> name)
+        "raises Invalid_argument on an operation the target lacks"
+        [ ("clang", clang); ("metal", metal); ("cuda", cuda); ("hip", hip) ]
+        (fun (_, r) -> rejects (fun () -> render r (one_operation Max Float32)));
+      cases ~name:fst
+        "raises Invalid_argument on a kernel of another target it cannot write"
+        [
+          ( "HIP gfx1100 converts to a float8 it lacks",
+            (hip, "hip_cdna4_dtype_float8_e4m3") );
+          ( "CUDA has no core for chars",
+            (cuda, "hip_tc_signed_char_int_16_16_16") );
+        ]
+        (fun (_, (r, case)) ->
+          rejects (fun () -> render r (kernel (find_case case))));
+    ]
+
+(* Compilation *)
+
+(* A machine without a target's toolchain refuses every source with the reason
+   it cannot load the library. *)
+let lacks_toolchain why =
+  starts_with "failed to load library" why
+  || starts_with "comgr not available" why
+
+(* The sources the toolchain rejects as tinygrad writes them. *)
+let rejected =
+  [
+    ( "metal_transcendental_bf16",
+      "a sum of bfloats is a float in Metal, which the store assigns to a \
+       bfloat" );
+  ]
+
+let compiles_with_its_toolchain row =
+  let t =
+    test (row "case") (fun () ->
+        let r = renderer_of_row row in
+        match Renderer.Compiler.compile r.compiler (render r (kernel row)) with
+        | _ -> ()
+        | exception Renderer.Compiler.Compile_error why when lacks_toolchain why
+          ->
+            skip ~reason:why ())
+  in
+  match List.assoc_opt (row "case") rejected with
+  | Some reason -> xfail ~reason t
+  | None -> t
+
+let gpu_rows =
+  List.filter
+    (fun row -> row "renderer" <> "CLANG" && row "setting" = "-")
+    case_rows
+
+let compilation =
+  group ~tags:[ "slow" ] "every GPU kernel compiles with its target's toolchain"
+    (List.map compiles_with_its_toolchain gpu_rows)
+
+(* Execution *)
+
+let host = lazy (Cstyle.clang Host.target)
+let loaded name = Host.load (Lazy.force host) (kernel (find_case name))
+let floats xs = Array.map (fun x -> `Float x) xs
+let ints xs = Array.map (fun n -> `Int (Z.of_int n)) xs
+let slot s outputs = List.assoc s outputs
+let values = array Dtypes.value
+
+let adds_two_buffers () =
+  let a = Array.init 64 Float.of_int
+  and b = Array.init 64 (fun i -> Float.of_int (100 - i)) in
+  let out = Host.run (loaded "clang_add") [ (1, floats a); (2, floats b) ] in
+  equal values (floats (Array.make 64 100.)) (slot 0 out)
+
+let sums_a_buffer () =
+  let out =
+    Host.run (loaded "clang_sum") [ (1, floats (Array.init 256 Float.of_int)) ]
+  in
+  equal values (floats [| 32640. |]) (slot 0 out)
+
+(* The operand of the maximum is the int one above the least, which the source
+   writes as a literal. *)
+let takes_the_maximum_of_a_literal () =
+  let k = loaded "clang_inline_const_alu" in
+  let max_of x = slot 0 (Host.run k [ (1, ints [| x |]) ]) in
+  equal values (ints [| 1 |]) (max_of 1);
+  equal values (ints [| -0x7fffffff |]) (max_of (-0x80000000))
+
+let stores_where_its_gate_holds () =
+  let out =
+    Host.run
+      (loaded "clang_gated_store_in_loop")
+      [ (0, ints (Array.make 16 (-1))) ]
+  in
+  equal values
+    (ints (Array.init 16 (fun i -> if i < 8 then i else -1)))
+    (slot 0 out)
+
+let loads_zero_outside_its_padding () =
+  let x = Array.init 14 (fun i -> Float.of_int (i + 1)) in
+  let out = Host.run (loaded "clang_padded") [ (1, floats x) ] in
+  let expected =
+    Array.init 16 (fun i -> if i = 0 || i = 15 then 1. else x.(i - 1) +. 1.)
+  in
+  equal values (floats expected) (slot 0 out)
+
+let loops_until_its_test_fails () =
+  let k = loaded "clang_unbounded_loop" in
+  let after start = slot 0 (Host.run k [ (0, ints [| start |]) ]) in
+  equal values ~msg:"from 0" (ints [| 10 |]) (after 0);
+  equal values ~msg:"from 12, the body runs once" (ints [| 13 |]) (after 12)
+
+let reads_a_constant_table () =
+  let out = Host.run (loaded "clang_table") [] in
+  equal values (ints [| 0; 127; 128; 255 |]) (slot 0 out)
+
+let passes_variables_of_32_and_64_bits () =
+  let out =
+    Host.run
+      ~vars:[ ("start", 2); ("offset", 1 lsl 40) ]
+      (loaded "clang_scalar_params")
+      []
+  in
+  equal values (ints (Array.init 4 (fun i -> i + 2 + (1 lsl 40)))) (slot 0 out)
+
+let runs_custom_code () =
+  let x = [| -2.5; 0.; 3.; -0. |] in
+  let out = Host.run (loaded "clang_custom") [ (1, floats x) ] in
+  equal values (floats (Array.map Float.abs x)) (slot 0 out)
+
+let accesses_volatile_buffers () =
+  let out =
+    Host.run (loaded "clang_volatile") [ (1, ints [| 1; 2; 3; -4 |]) ]
+  in
+  equal values (ints [| 2; 3; 4; -3 |]) (slot 0 out)
+
+(* Each constant is the value its type holds for the literal: -1 is the greatest
+   unsigned integer, and 3.14 is rounded once to its float. *)
+let stores_each_constant_as_its_type_holds_it () =
+  let literals : (Dtype.t * Dtype.value) list =
+    [
+      (Bool, `Bool true);
+      (Bool, `Bool false);
+      (Int8, `Int (Z.of_int (-3)));
+      (Uint8, `Int (Z.of_int 200));
+      (Int16, `Int (Z.of_int (-300)));
+      (Uint16, `Int (Z.of_int 60000));
+      (Int32, `Int (Z.of_int 42));
+      (Uint32, `Int (Z.of_int 42));
+      (Uint32, `Int Z.minus_one);
+      (Int64, `Int (Z.of_int 12345));
+      (Uint64, `Int (Z.of_int 42));
+      (Uint64, `Int Z.minus_one);
+      (Float16, `Float 1.5);
+      (Bfloat16, `Float 1.5);
+      (Float32, `Float 3.14);
+      (Float64, `Float 3.14);
+    ]
+  in
+  let out = Host.run (loaded "clang_constants") [] in
+  List.iteri
+    (fun slot (dt, v) ->
+      equal values
+        ~msg:(Format.asprintf "slot %d, %a" slot Dtype.pp dt)
+        [| Dtype.truncate dt v |]
+        (List.assoc slot out))
+    literals
+
+(* The kernel reads the four chars 1, 2, 3 and 4 as one little-endian uint,
+   clears its low byte and stores it to the first char. *)
+let reads_chars_as_a_uint name () =
+  let out = Host.run (loaded name) [ (0, ints [| 1; 2; 3; 4 |]) ] in
+  equal values (ints [| 0; 2; 3; 4 |]) (slot 0 out)
+
+(* The registers hold the uints 1 and 2, read as one little-endian ulong. *)
+let reads_registers_as_a_ulong () =
+  let out = Host.run (loaded "clang_register_cast") [] in
+  equal values [| `Int (Z.of_string "0x200000001") |] (slot 0 out)
+
+let picks_a_lane_by_a_variable () =
+  let k = loaded "clang_dynamic_lane" in
+  List.iter
+    (fun lane ->
+      equal values ~msg:(string_of_int lane)
+        (floats [| Float.of_int (lane + 1) |])
+        (slot 0 (Host.run ~vars:[ ("lane", lane) ] k [])))
+    [ 0; 1; 2; 3 ]
+
+let passes_named_parameters () =
+  let out =
+    Host.run
+      ~vars:[ ("for", 5) ]
+      (loaded "clang_named_params")
+      [ (0, floats [| 1.; 2.; 3.; 4. |]) ]
+  in
+  equal values (floats [| 6.; 7.; 8.; 9. |]) (slot 1 out)
+
+(* The kernel converts x to the narrow type, adds y and multiplies by 3, each
+   operation giving a value of the narrow type, then converts to float. *)
+let rounds_each_operation_on_halves () =
+  let half x =
+    match Dtype.truncate Float16 (`Float x) with
+    | `Float h -> h
+    | _ -> invalid_arg "a half is a float"
+  in
+  let x = [| 1.; 0.1; 65504.; -3. |] and y = [| 2.; 1.; 1.; 0.5 |] in
+  let x = Array.concat [ x; x; x; x ] and y = Array.concat [ y; y; y; y ] in
+  let out =
+    Host.run
+      (loaded "clang_dtype_half")
+      [ (1, floats x); (2, floats (Array.map half y)) ]
+  in
+  let expected i = half (half (half x.(i) +. y.(i)) *. 3.) in
+  equal values (floats (Array.init 16 expected)) (slot 0 out)
+
+let wraps_each_operation_on_chars () =
+  let out =
+    Host.run
+      (loaded "clang_dtype_unsigned_char")
+      [ (1, floats (Array.make 16 16.)); (2, ints (Array.make 16 86)) ]
+  in
+  equal values
+    (floats (Array.make 16 (Float.of_int ((16 + 86) * 3 land 0xff))))
+    (slot 0 out)
+
+(* Laws *)
+
+(* The interpreter computes the writes of a kernel graph, so it runs every Clang
+   case but these, each with its reason. *)
+let not_interpreted =
+  [
+    ("clang_call_out", "calls a function pointer the test cannot provide");
+    ("clang_call_ret", "calls a function pointer the test cannot provide");
+    ("clang_call_stack", "calls a function pointer the test cannot provide");
+    ("clang_unbounded_loop", "has a loop without a trip count");
+    ("clang_sum", "accumulates in registers");
+    ("clang_matmul", "accumulates in registers");
+    ("clang_matmul_upcasted", "accumulates in registers");
+    ("clang_add_max_uchar", "accumulates in registers");
+    ("clang_padded", "reads outside its buffer in the branch its gate discards");
+    ("clang_gated_store_in_loop", "gates its store with an if");
+    ("clang_custom", "runs custom code");
+    ("clang_table", "reads a constant table");
+    ("clang_transcendental_half", "divides with Ops.FDIV");
+    ("clang_transcendental_bf16", "divides with Ops.FDIV");
+    ("clang_transcendental_float", "divides with Ops.FDIV");
+    ("clang_transcendental_double", "divides with Ops.FDIV");
+    ("clang_packed_cast", "reads memory at another type");
+    ("clang_packed_bitcast", "reads memory at another type");
+    ("clang_dynamic_lane", "indexes a vector value");
+    ("clang_vector_cast", "stores a vector value");
+    ("clang_register_cast", "reads registers at another type");
+  ]
+
+(* C computes on char operands in int, and the source converts only the value it
+   stores: an intermediate value out of the char's range does not wrap. The
+   inputs keep halves and shorts exact, so their promotion shows only in the
+   tests of execution above. *)
+let promoted = [ "clang_dtype_unsigned_char"; "clang_dtype_signed_char" ]
+
+let clang_rows =
+  List.filter
+    (fun row -> row "renderer" = "CLANG" && row "setting" = "-")
+    case_rows
+
+let interpreted_rows =
+  List.filter
+    (fun row -> not (List.mem_assoc (row "case") not_interpreted))
+    clang_rows
+
+(* An element on which a kernel's arithmetic is exact and defined: a float is a
+   multiple of a half below 16, so that sums and products round nowhere and
+   convert to every integer type, and an integer is small and never zero, since
+   C leaves a division by zero and a signed overflow undefined. *)
+let element dt =
+  let open Gen in
+  if Dtype.is_float dt then
+    map (fun n -> `Float (Float.of_int n /. 2.)) (int_range 0 32)
+  else if Dtype.is_bool dt then map (fun b -> `Bool b) bool
+  else
+    let low = if Dtype.is_unsigned dt then 1 else -100 in
+    map (fun n -> `Int (Z.of_int (if n = 0 then 1 else n))) (int_range low 100)
+
+let buffers_of uops =
+  List.filter_map
+    (fun u ->
+      match Ops.arg u with
+      | Ops.Param ({ addrspace = Some Global; size = Some n; _ } as p) ->
+          Some (p.slot, p.dtype, n)
+      | _ -> None)
+    uops
+
+let variables_of uops =
+  List.filter_map
+    (fun u ->
+      match Ops.arg u with
+      | Ops.Param
+          {
+            addrspace = Some Alu;
+            name = Some name;
+            vmin_vmax = Some (`Int lo, `Int hi);
+            _;
+          } ->
+          Some (name, Z.to_int lo, Z.to_int hi)
+      | _ -> None)
+    uops
+
+let pp_inputs ppf (buffers, vars) =
+  List.iter (fun (name, v) -> Format.fprintf ppf "%s=%d@ " name v) vars;
+  List.iter
+    (fun (s, a) ->
+      Format.fprintf ppf "@[slot %d:%a@]@ " s
+        (fun ppf -> Array.iter (Format.fprintf ppf " %a" Dtype.pp_const))
+        a)
+    buffers
+
+let draw_inputs uops =
+  let cons g rest = Gen.bind g (fun x -> Gen.map (fun r -> x :: r) rest) in
+  let buffers =
+    List.fold_right
+      (fun (slot, dt, n) ->
+        cons
+          (Gen.map
+             (fun a -> (slot, a))
+             (Gen.array ~size:(Gen.constant n) (element dt))))
+      (buffers_of uops) (Gen.constant [])
+  and vars =
+    List.fold_right
+      (fun (name, lo, hi) ->
+        cons (Gen.map (fun v -> (name, v)) (Gen.int_range lo hi)))
+      (variables_of uops) (Gen.constant [])
+  in
+  Gen.with_pp pp_inputs (Gen.pair buffers vars)
+
+let interpreted uops (buffers, vars) =
+  let sink = List.nth uops (List.length uops - 1) in
+  let vars = List.map (fun (name, v) -> (name, `Int (Z.of_int v))) vars in
+  let writes = Interpreter.writes ~vars ~buffers sink in
+  List.map
+    (fun (slot, _, _) ->
+      let a = Array.copy (List.assoc slot buffers) in
+      List.iter (fun (s, i, v) -> if s = slot then a.(i) <- v) writes;
+      (slot, a))
+    (buffers_of uops)
+
+let agrees_with_the_interpreter row =
+  let uops = kernel row in
+  let k = lazy (Host.load (Lazy.force host) uops) in
+  let law =
+    prop ~count:10 (row "case") (draw_inputs uops)
+      (fun ((buffers, vars) as inputs) ->
+        equal
+          (list (pair int values))
+          (interpreted uops inputs)
+          (Host.run ~vars (Lazy.force k) buffers))
+  in
+  if List.mem (row "case") promoted then
+    xfail ~reason:"C promotes char operands to int" law
+  else law
+
+let compiles_and_loads row =
+  test (row "case") (fun () ->
+      ignore (Host.load (Lazy.force host) (kernel row)))
+
+let execution =
+  group "execution on the host"
+    [
+      test "adds two buffers" adds_two_buffers;
+      test "sums a buffer" sums_a_buffer;
+      test "takes the maximum of a load and a literal"
+        takes_the_maximum_of_a_literal;
+      test "stores only where its gate holds" stores_where_its_gate_holds;
+      test "loads zero outside its padding" loads_zero_outside_its_padding;
+      test "loops until its bottom test fails" loops_until_its_test_fails;
+      test "reads a constant table" reads_a_constant_table;
+      test "passes variables of 32 and 64 bits"
+        passes_variables_of_32_and_64_bits;
+      test "runs custom code" runs_custom_code;
+      test "accesses volatile buffers" accesses_volatile_buffers;
+      test "stores each constant as its type holds it"
+        stores_each_constant_as_its_type_holds_it;
+      test "reads four chars as a uint through a cast of their address"
+        (reads_chars_as_a_uint "clang_packed_cast");
+      test "reads four chars as a uint through a bitcast of their address"
+        (reads_chars_as_a_uint "clang_packed_bitcast");
+      test "picks a lane of a vector by a variable" picks_a_lane_by_a_variable;
+      test "reads two uint registers as a ulong through a cast of their address"
+        reads_registers_as_a_ulong;
+      test "passes named parameters" passes_named_parameters;
+      xfail ~reason:"C promotes __fp16 operands to float"
+        (test "rounds each operation on halves to a half"
+           rounds_each_operation_on_halves);
+      xfail ~reason:"C promotes char operands to int"
+        (test "wraps each operation on unsigned chars"
+           wraps_each_operation_on_chars);
+      group ~tags:[ "slow" ] "every kernel compiles and loads"
+        (List.map compiles_and_loads clang_rows);
+      group ~tags:[ "slow" ]
+        "every kernel the interpreter runs writes what it computes"
+        (List.map agrees_with_the_interpreter interpreted_rows);
+    ]
+
+let () =
+  exit
+    (run "Tolk_next.Cstyle"
+       [
+         sources;
+         rewrites;
+         declarations;
+         written;
+         errors;
+         parentheses;
+         fp8_infinities;
+         rendering;
+         compilation;
+         execution;
+       ])

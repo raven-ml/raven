@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef unsigned int uint;
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp16.h>
+struct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }
+extern "C" __global__ void __launch_bounds__(4) E_4_4(half* data0_16, half* data1_16) {
+  int lidx0 = threadIdx.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  half4 val0 = (*((half4*)((data1_16+alu0))));
+  half alu1 = ((val0.x<((half)(-1.0f)))?((half)(NAN)):val0.x);
+  half alu2 = ((((half)(0.0f))<val0.x)?val0.x:((half)(INFINITY)));
+  half alu3 = ((val0.x<((half)(1.0f)))?((half)(-INFINITY)):val0.x);
+  half alu4 = ((val0.y<((half)(-1.0f)))?((half)(NAN)):val0.y);
+  half alu5 = ((((half)(0.0f))<val0.y)?val0.y:((half)(INFINITY)));
+  half alu6 = ((val0.y<((half)(1.0f)))?((half)(-INFINITY)):val0.y);
+  half alu7 = ((val0.z<((half)(-1.0f)))?((half)(NAN)):val0.z);
+  half alu8 = ((((half)(0.0f))<val0.z)?val0.z:((half)(INFINITY)));
+  half alu9 = ((val0.z<((half)(1.0f)))?((half)(-INFINITY)):val0.z);
+  half alu10 = ((val0.w<((half)(-1.0f)))?((half)(NAN)):val0.w);
+  half alu11 = ((((half)(0.0f))<val0.w)?val0.w:((half)(INFINITY)));
+  half alu12 = ((val0.w<((half)(1.0f)))?((half)(-INFINITY)):val0.w);
+  *((half4*)((data0_16+alu0))) = make_half4((alu2+alu1+alu3),(alu5+alu4+alu6),(alu8+alu7+alu9),(alu11+alu10+alu12));
+}

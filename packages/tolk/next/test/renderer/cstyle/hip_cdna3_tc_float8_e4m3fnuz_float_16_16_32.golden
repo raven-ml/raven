@@ -1,0 +1,48 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef long unsigned int size_t;
+typedef unsigned char hip_bf8;
+typedef unsigned char hip_fp8;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+typedef hip_fp8 hip_fp84 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) hip_fp84 make_hip_fp84(hip_fp8 x, hip_fp8 y, hip_fp8 z, hip_fp8 w) { return { x, y, z, w }; }
+typedef hip_fp8 hip_fp88 __attribute__((ext_vector_type(8)));
+static inline __attribute__((device)) hip_fp88 make_hip_fp88(hip_fp8 x, hip_fp8 y, hip_fp8 z, hip_fp8 w, hip_fp8 a, hip_fp8 b, hip_fp8 c, hip_fp8 d) { return { x, y, z, w, a, b, c, d }; }
+#define __WMMA_16_16_32_float8_e4m3fnuz_float __builtin_amdgcn_mfma_f32_16x16x32_fp8_fp8
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 64))) r_64_2_2_2_2(float* data0_256, hip_fp8* data1_1024, hip_fp8* data2_1024) {
+  float buf0[4];
+  int lidx0 = __ockl_get_local_id(0); /* 64 */
+  int alu0 = (lidx0>>4);
+  int alu1 = (lidx0&15);
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
+    int alu6 = ((alu0<<7)+(Ridx0<<9)+alu1);
+    hip_fp8 val0 = (*(data2_1024+(alu6+112)));
+    hip_fp8 val1 = (*(data2_1024+(alu6+16)));
+    hip_fp8 val2 = (*(data2_1024+(alu6+32)));
+    hip_fp8 val3 = (*(data2_1024+(alu6+48)));
+    hip_fp8 val4 = (*(data2_1024+(alu6+64)));
+    hip_fp8 val5 = (*(data2_1024+(alu6+80)));
+    hip_fp8 val6 = (*(data2_1024+(alu6+96)));
+    hip_fp8 val7 = (*(data2_1024+alu6));
+    int alu7 = ((alu0<<3)+(Ridx0<<5)+(alu1<<6));
+    hip_fp84 val8 = (*((hip_fp84*)((data1_1024+(alu7+4)))));
+    hip_fp84 val9 = (*((hip_fp84*)((data1_1024+alu7))));
+    float4 wmma0 = __WMMA_16_16_32_float8_e4m3fnuz_float(__builtin_bit_cast(unsigned long, (hip_fp88)(make_hip_fp88(val9.x,val9.y,val9.z,val9.w,val8.x,val8.y,val8.z,val8.w))), __builtin_bit_cast(unsigned long, (hip_fp88)(make_hip_fp88(val7,val1,val2,val3,val4,val5,val6,val0))), make_float4(0.0f,0.0f,0.0f,0.0f), 0, 0, 0);
+    *(buf0+0) = ((*(buf0+0))+wmma0.x);
+    *(buf0+1) = ((*(buf0+1))+wmma0.y);
+    *(buf0+2) = ((*(buf0+2))+wmma0.z);
+    *(buf0+3) = ((*(buf0+3))+wmma0.w);
+  }
+  int alu13 = ((alu0<<6)+alu1);
+  *(data0_256+(alu13+16)) = (*(buf0+1));
+  *(data0_256+(alu13+32)) = (*(buf0+2));
+  *(data0_256+(alu13+48)) = (*(buf0+3));
+  *(data0_256+alu13) = (*(buf0+0));
+}

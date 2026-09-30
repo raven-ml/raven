@@ -1,0 +1,15 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef long unsigned int size_t;
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);
+extern "C" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);
+typedef float float4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }
+typedef int int4 __attribute__((ext_vector_type(4)));
+static inline __attribute__((device)) int4 make_int4(int x, int y, int z, int w) { return { x, y, z, w }; }
+extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 4))) E_4_4(int* data0_16, float* data1_16) {
+  int lidx0 = __ockl_get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((float4*)((data1_16+alu0))));
+  *((int4*)((data0_16+alu0))) = make_int4((__builtin_bit_cast(int, (float)(val0.x))+1),(__builtin_bit_cast(int, (float)(val0.y))+1),(__builtin_bit_cast(int, (float)(val0.z))+1),(__builtin_bit_cast(int, (float)(val0.w))+1));
+}

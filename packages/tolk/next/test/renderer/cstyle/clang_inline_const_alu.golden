@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void test(int* restrict data0_1, int* restrict data1_1) {
+  int val0 = (*(data1_1+0));
+  int alu0 = ((val0<-2147483647)?-2147483647:val0);
+  *(data0_1+0) = alu0;
+}
+

@@ -1,0 +1,6 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void lane(float* restrict data0_1, const int lane_) {
+  *(data0_1+0) = ((float4){1.0f,2.0f,3.0f,4.0f})[lane_];
+}
+

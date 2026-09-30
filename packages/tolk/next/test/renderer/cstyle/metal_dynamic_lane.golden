@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_1; int lane_; };
+kernel void lane(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_1 = args.data0_1; int lane_ = args.lane_;
+  *(data0_1+0) = (float4(1.0f,2.0f,3.0f,4.0f))[lane_];
+}

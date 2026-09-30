@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device float* data0_16; device float* data1_16; device uint* data2_16; };
+kernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device float* data0_16 = args.data0_16; device float* data1_16 = args.data1_16; device uint* data2_16 = args.data2_16;
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  uint4 val0 = (*((device uint4*)((data2_16+alu0))));
+  float4 val1 = (*((device float4*)((data1_16+alu0))));
+  *((device float4*)((data0_16+alu0))) = float4(((float)(((((uint)(val1.x))+val0.x)*3u))),((float)(((((uint)(val1.y))+val0.y)*3u))),((float)(((((uint)(val1.z))+val0.z)*3u))),((float)(((((uint)(val1.w))+val0.w)*3u))));
+}
