@@ -77,6 +77,7 @@ type t = {
   mapping : mapping option;
   copy_queue : queue option;
   peer : (t -> region -> (region, string) result) option;
+  reaches_peer : t -> bool; (* whether its driver maps a device's memory *)
   load :
     (binary:string ->
     entry:string ->
@@ -465,8 +466,8 @@ let timeline_of ~host_alloc (host_memory : allocator option) =
 let default_timeout = 30_000
 
 let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
-    ~mapping ~queue ~peer ~load ~call ~link ~dma ~completion ~synchronized ~room
-    ~finalize ~resolve =
+    ~mapping ~queue ~peer ~reaches_peer ~load ~call ~link ~dma ~completion
+    ~synchronized ~room ~finalize ~resolve =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
     match (machine, io) with
@@ -500,6 +501,7 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       mapping;
       copy_queue;
       peer;
+      reaches_peer;
       load;
       call;
       link;
@@ -568,8 +570,9 @@ let host =
   in
   create ~name:"CPU" ~arch:host_arch ~machine:None ~remote:None ~io:None
     ~budget:max_int ~alloc ~free:ignore ~host_memory:None
-    ~mapping:(Some Identity) ~queue:None ~peer:None ~load ~call:None ~link:None
-    ~dma:None ~completion:Poll ~synchronized:ignore
+    ~mapping:(Some Identity) ~queue:None ~peer:None
+    ~reaches_peer:(fun _ -> false)
+    ~load ~call:None ~link:None ~dma:None ~completion:Poll ~synchronized:ignore
     ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
@@ -580,8 +583,10 @@ let disk =
   let alloc _ = assert false in
   create ~name:"DISK" ~arch:"" ~machine:(Some host) ~remote:None ~io:None
     ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapping:None
-    ~queue:None ~peer:None ~load:None ~call:None ~link:None ~dma:None
-    ~completion:Poll ~synchronized:ignore
+    ~queue:None ~peer:None
+    ~reaches_peer:(fun _ -> false)
+    ~load:None ~call:None ~link:None ~dma:None ~completion:Poll
+    ~synchronized:ignore
     ~room:(fun () -> true)
     ~finalize:(fun ~failed:_ -> ())
     ~resolve:ignore
@@ -597,6 +602,17 @@ let shares_host_memory d =
   || host_of d == host
      && Option.is_none d.copy_queue
      && Option.is_some d.mapping
+
+(* Memory the host addresses, as the host's own and a device's over it are. *)
+let host_addressed d = Option.is_none d.copy_queue && Option.is_some d.mapping
+
+let reaches d d' =
+  d == d'
+  || (d != disk && d' != disk && host_of d == host_of d')
+     &&
+     if d' == host_of d then Option.is_some d.mapping
+     else if d == host_of d then host_addressed d'
+     else (host_addressed d' && Option.is_some d.mapping) || d.reaches_peer d'
 
 (* How the process reaches the memory of [d]'s machine: [None] on this one. *)
 let io_of d = (host_of d).io
@@ -2589,8 +2605,9 @@ module Driver = struct
   let name = compose
 
   let device ~name ~arch ~budget ?(host = host) ?(completion = Poll) ?load ?peer
-      ?link ?dma ?(resolve = ignore) ?(synchronized = ignore)
-      ?(room = fun () -> true) ?(finalize = fun ~failed:_ -> ()) memory =
+      ?(reaches = fun _ -> false) ?link ?dma ?(resolve = ignore)
+      ?(synchronized = ignore) ?(room = fun () -> true)
+      ?(finalize = fun ~failed:_ -> ()) memory =
     if budget < 0 then refuse "device" "budget %d < 0" budget;
     if Option.is_some host.machine then
       refuse "device" "%s is not a host" host.name;
@@ -2619,8 +2636,8 @@ module Driver = struct
     in
     create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
       ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
-      ~mapping ~queue ~peer ~load ~call:None ~link ~dma ~completion
-      ~synchronized ~room ~finalize ~resolve
+      ~mapping ~queue ~peer ~reaches_peer:reaches ~load ~call:None ~link ~dma
+      ~completion ~synchronized ~room ~finalize ~resolve
 
   let buffer d (r : region) s n =
     if d == disk then Buffer.not_files "Driver.buffer";
@@ -2659,7 +2676,9 @@ module Driver = struct
     in
     create ~name:("CPU@" ^ address) ~arch ~machine:None ~remote:(Some address)
       ~io:(Some io) ~budget:max_int ~alloc:(owned memory) ~free:memory.free
-      ~host_memory:None ~mapping:None ~queue:None ~peer:None ~load
+      ~host_memory:None ~mapping:None ~queue:None ~peer:None
+      ~reaches_peer:(fun _ -> false)
+      ~load
       ~call:(Option.map (fun p -> p.call) programs)
       ~link:None ~dma:None ~completion:Poll ~synchronized
       ~room:(fun () -> true)

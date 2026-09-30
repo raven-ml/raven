@@ -663,7 +663,10 @@ let make_device a ~budget ~sleep ?finalize () =
     Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
       ~host:a.machine ~budget
       ~completion:(Sleep (fun ~timeline:_ -> sleep))
-      ~load:(load a) ~peer:(peer a) ~dma:(dma a) ~room:(room a) ?finalize
+      ~load:(load a) ~peer:(peer a)
+      ~reaches:(fun d' ->
+        match amd_of d' with Some peer -> reaches a peer | None -> false)
+      ~dma:(dma a) ~room:(room a) ?finalize
       (Device_local
          {
            memory = allocator a Vram;

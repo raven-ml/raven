@@ -2875,6 +2875,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.reaches d d'` says whether `d`'s work addresses the memory of
+  `d'` once borrowed, without trying a borrow, and `Driver.device` takes the
+  driver's `reaches` for the peers it maps. An AMD device reaches the GPUs of
+  its machine that its copy engine reaches over a link or a large memory BAR.
 - `Nx_device.submit` allocates about half as much per call: it gathers the
   devices a submission takes, and the latest work pending on their memory, in
   short lists instead of sorted copies and a hash table. A submission to one

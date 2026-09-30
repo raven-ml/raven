@@ -124,7 +124,7 @@ let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     ?signal ?load ?peer ?timeout_ms ?synchronized ?sleep ?finalize ?clock
-    ?resolve ?room () =
+    ?resolve ?room ?reaches () =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -245,13 +245,13 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
   in
   let dev =
     Driver.device ~name ~arch:"test" ~budget ~completion ?load ?peer
-      ?synchronized ?finalize ?resolve ?room memory
+      ?synchronized ?finalize ?resolve ?room ?reaches memory
   in
   Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
 
-let far ?(name = "FAR") ?budget ?clock ?peer () =
-  fake ~name ?budget ~far:true ?clock ?peer ()
+let far ?(name = "FAR") ?budget ?clock ?peer ?reaches () =
+  fake ~name ?budget ~far:true ?clock ?peer ?reaches ()
 
 (* A signal whose waits answer [wait timeout_ms]. *)
 let signal ?(signaled = 0) wait =
@@ -3227,9 +3227,32 @@ let test_remote_programs () =
   ignore (stats m.mhost);
   equal ~msg:"an unreachable program is unloaded there" int 1 !unloaded
 
+let test_reach () =
+  let reaches = Nx_device.reaches in
+  let visible = (fake ~name:"VISIBLE" ~maps:true ()).dev in
+  let unmapped = (fake ~name:"UNMAPPED" ()).dev in
+  let f1 = (far ~name:"F1" ()).dev in
+  let f2 = (far ~name:"F2" ~reaches:(fun d -> d == f1) ()).dev in
+  let m = machine () in
+  let gpu = remote_gpu m in
+  is_true ~msg:"its own memory" (reaches f1 f1);
+  is_true ~msg:"the host's, mapped" (reaches f1 host && reaches visible host);
+  is_false ~msg:"the host's, unmapped" (reaches unmapped host);
+  is_true ~msg:"the host reaches memory it addresses" (reaches host visible);
+  is_false ~msg:"the host does not reach a GPU's own" (reaches host f1);
+  is_true ~msg:"memory the host addresses, through a mapping"
+    (reaches f1 visible);
+  is_false ~msg:"a peer its driver does not map" (reaches f1 f2);
+  is_true ~msg:"a peer its driver maps" (reaches f2 f1);
+  is_false ~msg:"the disk"
+    (reaches f1 Nx_device.disk || reaches Nx_device.disk host);
+  is_true ~msg:"its machine's host" (reaches gpu m.mhost);
+  is_false ~msg:"another machine's" (reaches gpu host || reaches f1 gpu)
+
 let machines =
   group "machines"
     [
+      test "which devices' memory a device's work reaches" test_reach;
       test "devices of another machine and their host" test_machines;
       test "another machine's host copies through its io" test_host_copies;
       test "a GPU of another machine" test_remote_gpu;

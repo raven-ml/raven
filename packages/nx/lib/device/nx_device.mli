@@ -84,6 +84,17 @@ val shares_host_memory : t -> bool
     {!disk} and for GPUs whose own memory the host does not address, such as
     CUDA, AMD and NV GPUs. *)
 
+val reaches : t -> t -> bool
+(** [reaches d d'] is [true] iff [d]'s work addresses the memory of [d'] once
+    [d] borrows it ({!Buffer.borrow}), as a compiler that places copies must
+    know before any buffer exists: [d]'s own; its machine's host's, when [d]
+    maps host memory ({!Driver.mapping}); for a host, the memory of a device of
+    its machine that the host addresses; for another device, memory of a device
+    of its machine that the host addresses, when [d] maps host memory, and the
+    memory of the devices its driver maps ({!Driver.device}'s [reaches]). It is
+    [false] for devices of two machines, and between the {!disk} and another
+    device. *)
+
 val name : t -> string
 (** [name d] is [d]'s name, [LOCAL] for the devices of this machine and
     [LOCAL@ADDRESS] for those of the machine at [ADDRESS]: ["CPU"] for the host,
@@ -1092,6 +1103,7 @@ module Driver : sig
     ?completion:completion ->
     ?load:(binary:string -> entry:string -> (nativeint, string) result) ->
     ?peer:(device -> Region.t -> (Region.t, string) result) ->
+    ?reaches:(device -> bool) ->
     ?link:(src:Buffer.t -> dst:Buffer.t -> link option) ->
     ?dma:(Region.t -> (dma, string) result) ->
     ?resolve:(nativeint -> unit) ->
@@ -1120,6 +1132,9 @@ module Driver : sig
         once the borrows of it are unreachable, and [peer] gives the same
         mapping. It runs with the device taken and [d'] free. Without it, the
         device borrows no other device's memory.
+      - [reaches d'] is [true] iff [peer] maps memory of the device [d'] of the
+        same machine, as the machine's topology fixes, without trying
+        ({!Nx_device.reaches}). Defaults to [false].
       - [link ~src ~dst] is how the device carries {!Buffer.copy} of [src] into
         [dst] when their devices are of two machines, if it does. Its [move]
         runs with the devices of [src], [dst] and [through] taken and those of
