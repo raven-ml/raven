@@ -930,6 +930,58 @@ let values =
           end);
     ]
 
+let conversions =
+  let open Dtype.Value in
+  group "conversions"
+    [
+      Golden.cases "conversions.golden" (fun cell ->
+          let v = value_of_cell (cell "value") in
+          (match cell "float" with
+          | c when raised c ->
+              equal ~msg:"to_float" value (to_infinity v) (`Float (to_float v))
+          | c ->
+              equal ~msg:"to_float" value (value_of_cell c)
+                (`Float (to_float v)));
+          (match cell "int" with
+          | c when raised c ->
+              rejects (fun () -> to_z v);
+              rejects (fun () -> to_int v)
+          | c ->
+              let n = Z.of_string c in
+              equal ~msg:"to_z" z n (to_z v);
+              if Z.fits_int n then
+                equal ~msg:"to_int" int (Z.to_int n) (to_int v)
+              else rejects (fun () -> to_int v));
+          equal ~msg:"to_bool" bool (bool_cell (cell "bool")) (to_bool v));
+      prop "to_float of a float is itself" Gen.any_float (fun f ->
+          equal value (`Float f) (`Float (to_float (`Float f))));
+      prop "to_z truncates a float towards zero" finite_float (fun f ->
+          equal z (Z.of_float (Float.trunc f)) (to_z (`Float f)));
+      prop "to_z of an integer is itself, and to_int where it fits" integer
+        (fun n ->
+          equal ~msg:"to_z" z n (to_z (`Int n));
+          if Z.fits_int n then
+            equal ~msg:"to_int" int (Z.to_int n) (to_int (`Int n))
+          else rejects (fun () -> to_int (`Int n)));
+      cases "to_int takes exactly the integers of int" ~name:Z.to_string
+        Z.
+          [
+            of_int Stdlib.min_int;
+            of_int Stdlib.max_int;
+            pred (of_int Stdlib.min_int);
+            succ (of_int Stdlib.max_int);
+          ]
+        (fun n ->
+          if Z.fits_int n then equal int (Z.to_int n) (to_int (`Int n))
+          else rejects (fun () -> to_int (`Int n)));
+      prop "to_bool is being unequal to zero" operand (fun v ->
+          equal bool (is_nan v || not (v = `Int Z.zero)) (to_bool v));
+      prop "to_float preserves the order of values" (Gen.pair operand operand)
+        (fun (a, b) ->
+          assume (not (is_nan a || is_nan b));
+          is_true ((not (a <= b)) || Stdlib.( <= ) (to_float a) (to_float b)));
+    ]
+
 let () =
   exit
     (run "tolk.next.dtype"
@@ -947,4 +999,5 @@ let () =
          bitcasts;
          consts;
          values;
+         conversions;
        ])

@@ -3,6 +3,7 @@ dtype/bitcasts.golden
 dtype/commit.golden
 dtype/const.golden
 dtype/const_repr.golden
+dtype/conversions.golden
 dtype/decode.golden
 dtype/finfo.golden
 dtype/groups.golden

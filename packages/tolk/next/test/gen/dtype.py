@@ -223,3 +223,11 @@ def values():
 @table
 def negated():
     return ["a", "negated"], [(value(a), -a) for a in OPERANDS]
+
+
+@table
+def conversions():
+    """Python's float(), int() and bool() of values."""
+    xs = [True, False, 0, 1, -1, 2**53 + 1, 2**53 + 3, 2**1024 - 2**970 - 1, 2**1024 - 2**970, 2**62 - 1, 2**62, -2**62, -2**62 - 1, 2**63, 2**1100, -2**1100,
+          0.0, -0.0, 0.5, -0.5, -1.7, 2.9, 1e300, 2.0**63, 5e-324, float("inf"), float("-inf"), float("nan")]
+    return ["value", "float", "int", "bool"], [(value(x), attempt(float, x), attempt(int, x), bool(x)) for x in xs]
