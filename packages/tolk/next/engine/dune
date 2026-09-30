@@ -1,0 +1,19 @@
+; The engine runs the compiler's schedules on nx.device: the only part of tolk
+; that opens a device. Metal exists on macOS alone.
+
+(library
+ (name tolk_next_engine)
+ (public_name tolk.next.engine)
+ (libraries
+  tolk.next
+  nx.device
+  nx.dtype
+  nx.cuda.device
+  nx.amd.device
+  nx.nv.device
+  zarith
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))

@@ -58,8 +58,8 @@ module Program : sig
 
   val load : Nx_device.t -> Ops.t -> t
   (** [load d prg] is the compiled program [prg] ({!Tolk_next.Op.Program}) of
-      the device [d], loaded on [d]'s host. A program is loaded once for each
-      host and binary: a later load of it returns the same program.
+      the device [d], loaded on [d]'s host. The host loads a binary once: later
+      loads of it share the loaded code.
 
       Raises [Invalid_argument] if [d]'s {!target} runs no host programs or if
       [prg] is not a compiled program, and [Failure] with the host's reason if
