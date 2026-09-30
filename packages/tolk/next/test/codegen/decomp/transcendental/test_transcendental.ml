@@ -17,13 +17,15 @@ let x ?(slot = 0) dt = Ops.param slot dt
 (* [at dt f v] is the value of [f] applied to a [dt] input holding [v]. *)
 let at dt f v = Interpreter.eval ~params:[ (0, `Float v) ] (f (x dt))
 
-let as_float = function
+let as_float v =
+  match (v :> Dtype.const) with
   | `Float f -> f
-  | v -> failf "%a is not a float" (Testable.pp value) v
+  | v -> failf "%a is not a float" (Testable.pp const) v
 
-let as_int = function
+let as_int v =
+  match (v :> Dtype.const) with
   | `Int n -> Z.to_int n
-  | v -> failf "%a is not an integer" (Testable.pp value) v
+  | v -> failf "%a is not an integer" (Testable.pp const) v
 
 let round dt f = as_float (Dtype.truncate dt (`Float f))
 
@@ -172,8 +174,8 @@ let recorded =
       Golden.cases ~key:[ "function"; "dtype"; "x" ] "values.golden"
         (fun cell ->
           let dt = dtype_named (cell "dtype") in
-          equal value
-            (value_of_cell (cell "result"))
+          equal const
+            (const_of_cell (cell "result"))
             (at dt
                (unary (cell "function"))
                (as_float (value_of_cell (cell "x")))));
@@ -186,8 +188,8 @@ let recorded =
               (1, value_of_cell (cell "exponent"));
             ]
           in
-          equal value
-            (value_of_cell (cell "result"))
+          equal const
+            (const_of_cell (cell "result"))
             (Interpreter.eval ~params (T.xpow (x dt) (x ~slot:1 dt))));
     ]
 
@@ -314,7 +316,7 @@ let specials =
         List.map
           (fun (v, expected) ->
             test (Printf.sprintf "%s %s %h is %h" name dname v expected)
-              (fun () -> equal value (`Float expected) (at dt f v)))
+              (fun () -> equal const (`Float expected) (at dt f v)))
           cases)
       floats
   in
@@ -346,13 +348,13 @@ let specials =
     @ [
         test "xexp2 of float overflows at 128 and underflows below -149"
           (fun () ->
-            equal value (`Float inf) (at Dtype.Float32 T.xexp2 128.);
-            equal value
+            equal const (`Float inf) (at Dtype.Float32 T.xexp2 128.);
+            equal const
               (`Float (Float.ldexp 1. (-149)))
               (at Dtype.Float32 T.xexp2 (-149.));
-            equal value (`Float 0.) (at Dtype.Float32 T.xexp2 (-151.)));
+            equal const (`Float 0.) (at Dtype.Float32 T.xexp2 (-151.)));
         test "xlog2 of the least subnormal float is -149" (fun () ->
-            equal value (`Float (-149.))
+            equal const (`Float (-149.))
               (at Dtype.Float32 T.xlog2 (Float.ldexp 1. (-149))));
       ])
 

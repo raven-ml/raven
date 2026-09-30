@@ -225,7 +225,7 @@ let keeps_value d env =
   assume (not (List.exists divides_by_zero (Ops.toposort d)));
   let r = rewritten_alone d in
   cover "rewritten" (not (Ops.equal d r));
-  equal Dtypes.value ~msg:"the value of the rewrite"
+  equal Dtypes.const ~msg:"the value of the rewrite"
     (Interpreter.eval ~vars:env d)
     (Interpreter.eval ~vars:env r)
 

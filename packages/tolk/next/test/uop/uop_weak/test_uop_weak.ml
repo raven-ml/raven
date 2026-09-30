@@ -298,7 +298,7 @@ let weak_non_constant u =
   List.mem (Ops.dtype u) Dtype.weaks && Ops.op u <> Op.Const
 
 let values_of env sink = List.map (Interpreter.eval ~vars:env) (Ops.src sink)
-let values = list Dtypes.value
+let values = list Dtypes.const
 
 (* The consumers of a bare weak constant other than [`Invalid], but for the
    casts that state its width. *)

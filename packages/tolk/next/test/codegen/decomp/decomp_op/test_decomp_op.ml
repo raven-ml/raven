@@ -71,7 +71,7 @@ let divides vmax d u =
     (fun n ->
       equal
         ~msg:(Format.asprintf "%a / %a" Z.pp_print n Z.pp_print d)
-        value
+        const
         (`Int (Z.div n d))
         (at [ ("x", `Int n) ] u))
     (numerators vmax d)
@@ -152,7 +152,7 @@ let fast_idiv_divides =
           cover "divides" true;
           cover "widens"
             (List.exists (fun u -> Ops.op u = Cast) (Ops.toposort u));
-          equal value (`Int (Z.div n d)) (at [ ("x", `Int n) ] u))
+          equal const (`Int (Z.div n d)) (at [ ("x", `Int n) ] u))
 
 (* A golden holds the dividend and its quotient. *)
 let quotient file x d =
@@ -188,7 +188,7 @@ let fast_idiv =
               (Decomp_op.fast_idiv everything (v ~dtype:Int64 "x" 0 100)
                  Z.(shift_left one 70))
           in
-          equal value (i 0) (at [ ("x", i 100) ] u));
+          equal const (i 0) (at [ ("x", i 100) ] u));
     ]
 
 (* threefry2x32 *)
@@ -201,7 +201,7 @@ let hash ~counter:(c0, c1) ~key:(k0, k1) =
   let u = Decomp_op.threefry2x32 (param Uint64) (param ~slot:1 Uint64) in
   match Interpreter.eval ~params:[ (0, word64 c0 c1); (1, word64 k0 k1) ] u with
   | `Int r -> Z.(to_int (extract r 0 32), to_int (extract r 32 32))
-  | c -> failf "a hash is an integer, not %a" (Testable.pp value) c
+  | c -> failf "a hash is an integer, not %a" (Testable.pp const) c
 
 let words = pair int int
 
@@ -381,7 +381,7 @@ let floor_rewrites_keep_values =
       let expected = if floor_mod then Z.(a - (b * q)) else q in
       let r = simplify_with set e in
       cover "rewritten" (not (Ops.equal r e));
-      equal value (`Int expected) (at (("a", `Int a) :: vars) r))
+      equal const (`Int expected) (at (("a", `Int a) :: vars) r))
 
 let simplifying =
   group "simplifying_patterns"
@@ -603,7 +603,7 @@ let truncations_keep_values =
       let renderer = if narrow then nothing else everything in
       let r = late_with ~disable_fast_idiv:false ~renderer (ops [ Shr ]) e in
       cover "rewritten" (not (Ops.equal r e));
-      equal value
+      equal const
         (`Int (if remainder then Z.rem a d else Z.div a d))
         (at [ ("a", `Int a) ] r))
 
@@ -643,7 +643,7 @@ let late_rules_keep_values =
       let vars = [ ("x", i x); ("y", i y); ("z", i z) ] in
       let r = late_with every_late_op e in
       cover "rewritten" (not (Ops.equal r e));
-      equal value (at vars e) (at vars r))
+      equal const (at vars e) (at vars r))
 
 (* The divisions of the old tolk's run of constant integer division, lowered as
    code generation lowers them: the simplifying patterns, then the late ones
@@ -692,7 +692,7 @@ let lowered_divisions =
               let check name e expected =
                 equal
                   ~msg:(Printf.sprintf "%d %s %d" n name divisor)
-                  value (`Int expected)
+                  const (`Int expected)
                   (at [ ("x", `Int a) ] (lower e))
               in
               let q = Z.fdiv a b in
