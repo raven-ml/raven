@@ -154,3 +154,19 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
   trip.
 - **Pinned by:** `Dtype › storage › a NaN decodes with the sign of its bits`;
   and a rune test at L9.
+
+## D11. Kernel optimisations are typed
+
+- **tinygrad:** `codegen/opt/__init__.py:9-15` (`Opt(op, axis, arg)`, with an
+  `arg` of any type), checked by `codegen/opt/postrange.py:109-164`.
+- **tolk.next:** `lib/codegen/opt/opt.ml` (`t`, `target`).
+- **Differs:** each kind of optimisation is a constructor with its own
+  fields, which stand for `OptOps` too, and a split's target is one of the
+  three axis types a split can make (`split_targets`, `postrange.py:14`). The
+  malformed arguments that `postrange.py` refuses at run time cannot be
+  built.
+- **Reason:** (a): static types.
+- **Pinned by:** the type itself, whose printing the `Ops` suite checks
+  against tinygrad's `Opt` repr (`reprs.golden`, the row "kernel with opts");
+  `Postrange`'s suite (L4) drops tinygrad's malformed-argument cases with
+  this entry as the reason.
