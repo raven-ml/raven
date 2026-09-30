@@ -872,14 +872,15 @@ let metal_lang =
         base_rewrite;
   }
 
-(* upcast to float32 the operations that have no bfloat16 *)
+(* upcast to float32 the operations that have no bfloat16: Metal computes them
+   in float, and a float does not convert to a bfloat implicitly *)
 let metal_extra_matcher =
   Pattern_matcher.append
     (Pattern_matcher.v
        [
          rule
            (Upat.v
-              ~op:(Op.Set.of_list Op.[ Sqrt; Exp2; Log2; Sin ])
+              ~op:(Op.Set.of_list Op.[ Sqrt; Exp2; Log2; Sin; Trunc ])
               ~dtype:[ Dtype.Bfloat16 ] ~name:"x" ())
            (fun m -> Some (cast (on_floats (m "x")) Dtype.Bfloat16));
        ])

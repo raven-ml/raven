@@ -585,8 +585,7 @@ let lacks_toolchain why =
 let rejected =
   [
     ( "metal_transcendental_bf16",
-      "a sum of bfloats is a float in Metal, which the store assigns to a \
-       bfloat" );
+      "tinygrad's graph truncates a bfloat without the float cast (D18)" );
   ]
 
 let compiles_with_its_toolchain row =
@@ -611,6 +610,60 @@ let gpu_rows =
 let compilation =
   group ~tags:[ "slow" ] "every GPU kernel compiles with its target's toolchain"
     (List.map compiles_with_its_toolchain gpu_rows)
+
+(* bfloat16 truncation on Metal (D18) *)
+
+(* Metal has no trunc of a bfloat: it truncates a float, so the extra matcher
+   truncates a bfloat16 in float32. *)
+let truncated_bf16 =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot Bfloat16) [ zero ] in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"trunc_bf16" ())
+    [ Ops.store (at 0) (Ops.trunc (Ops.load (at 1) [])) ]
+
+let through_metal_matcher sink =
+  Ops.graph_rewrite ~ctx:() sink metal.extra_matcher
+
+let truncs sink =
+  List.filter (fun u -> Op.equal (Ops.op u) Trunc) (Ops.toposort sink)
+
+let truncates_in_float () =
+  let rewritten = truncs (through_metal_matcher truncated_bf16) in
+  equal (list Dtypes.dtype) [ Dtype.Float32 ] (List.map Ops.dtype rewritten)
+
+(* The graph a kernel reaches the renderer as, after the rewrites that commit
+   its constants. *)
+let compiles_its_truncation () =
+  let sink =
+    List.fold_left
+      (fun sink m -> Ops.graph_rewrite ~ctx:() sink m)
+      (through_metal_matcher truncated_bf16)
+      [
+        Uop_weak.pm_commit_weak; Uop_weak.pm_lower_weak; Uop_weak.pm_cast_const;
+      ]
+  in
+  match
+    Renderer.Compiler.compile metal.compiler
+      (render metal (Linearizer.linearize sink))
+  with
+  | _ -> ()
+  | exception Renderer.Compiler.Compile_error why when lacks_toolchain why ->
+      skip ~reason:why ()
+
+let bf16_truncation =
+  group "bfloat16 truncation on Metal (D18)"
+    [
+      test "truncates a bfloat16 in float32" truncates_in_float;
+      test "leaves it to CUDA, which truncates a bfloat16 with htrunc"
+        (fun () ->
+          let rewritten =
+            truncs (Ops.graph_rewrite ~ctx:() truncated_bf16 cuda.extra_matcher)
+          in
+          equal (list Dtypes.dtype) [ Dtype.Bfloat16 ]
+            (List.map Ops.dtype rewritten));
+      slow "compiles a kernel that truncates a bfloat16" compiles_its_truncation;
+    ]
 
 (* Execution *)
 
@@ -1010,5 +1063,6 @@ let () =
          fp8_infinities;
          rendering;
          compilation;
+         bf16_truncation;
          execution;
        ])

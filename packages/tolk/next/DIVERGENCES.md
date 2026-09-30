@@ -205,9 +205,9 @@ the Exclusions of `README.md`.
 - **tinygrad:** `renderer/cstyle.py:33,42` (a cast to `__nv_fp8_e4m3` or
   `__nv_fp8_e5m2` is the constructor, which converts with
   `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
-- **tolk.next:** `lib/renderer/cstyle.ml:926-940` (`fp8_infinity`,
-  `cuda_fp8_guard`, `is_fp8_guarded`), `:984-1002` (the two rules of
-  `cuda_lang`) and `:1110` (the helper in the prefix).
+- **tolk.next:** `lib/renderer/cstyle.ml:961-974` (`fp8_infinity`,
+  `cuda_fp8_guard`, `is_fp8_guarded`), `:1018-1036` (the two rules of
+  `cuda_lang`) and `:1144` (the helper in the prefix).
 - **Differs:** the saturating conversion turns ±inf into ±max. tolk.next
   keeps an infinity special, as `Dtype.truncate` does: it stays an infinity
   in e5m2 and becomes a NaN of its sign in e4m3, which has no infinity. A
@@ -354,3 +354,23 @@ the Exclusions of `README.md`.
   operation on halves to a half (D17)`; and the slow `a kernel over a narrow
   type wraps and rounds as the interpreter (D17)`, over each type's whole
   range.
+
+## D18. Metal computes a bfloat trunc in float
+
+- **tinygrad:** `renderer/cstyle.py:368-372` (`MetalRenderer.extra_matcher`
+  computes `SQRT`, `EXP2`, `LOG2` and `SIN` of a bfloat16 in float32).
+- **tolk.next:** `lib/renderer/cstyle.ml:883` (`metal_extra_matcher`).
+- **Differs:** `TRUNC` of a bfloat16 is computed in float32 as well. Metal
+  has no `trunc` of a `bfloat`: `trunc(x)` converts `x` to `float` and
+  returns a `float`, which does not convert to a `bfloat` implicitly, so a
+  kernel that stores or adds it to a bfloat does not compile. The graph
+  handed to the renderer has a cast to float32 and back around each such
+  `TRUNC`.
+- **Reason:** (b). rune runs bfloat16 models on Metal (gpt-oss), where
+  `Nx.trunc`, `floor`, `ceil` and `round` of a bfloat16 lower to `TRUNC`.
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `bfloat16
+  truncation on Metal (D18) › truncates a bfloat16 in float32` and `leaves it
+  to CUDA, which truncates a bfloat16 with htrunc`, and the slow `compiles a
+  kernel that truncates a bfloat16`; `every GPU kernel compiles with its
+  target's toolchain › metal_transcendental_bf16`, tinygrad's graph, is an
+  expected failure.
