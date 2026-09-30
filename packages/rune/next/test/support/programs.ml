@@ -49,7 +49,6 @@ let compiled s y =
   | [ call ] ->
       let ren = Traces.host Nx.Device.host in
       let program = Codegen.to_program (Ops.body call) ren in
-      let kernel = Host.load ren (Ops.src (Ops.nth program 1)) in
       let args = Ops.src_without_body call in
       let bound =
         List.filter_map
@@ -57,7 +56,7 @@ let compiled s y =
             Option.map (fun v -> (k, v)) (List.assoc_opt (slot a) buffers))
           (List.mapi (fun k a -> (k, a)) args)
       in
-      let results = Host.run kernel bound in
+      let results = Run.on_host program bound in
       let k = Option.get (List.find_index (fun a -> slot a = slot out) args) in
       Nx.create dt (Nx.shape y)
         (Array.map
