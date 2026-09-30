@@ -382,11 +382,8 @@ let link_batch ~device ~storage ~keep call patches =
   let reached =
     List.filter_map
       (fun u ->
-        if
-          (Ops.op u = Op.Buffer
-          || is_placeholder u)
-          [@mutate off "patches reach only storage and placeholders"]
-        then Some (Ops.Tbl.find storage u)
+        if Ops.op u = Op.Buffer || is_placeholder u then
+          Some (Ops.Tbl.find storage u)
         else None)
       patched
     |> List.concat
