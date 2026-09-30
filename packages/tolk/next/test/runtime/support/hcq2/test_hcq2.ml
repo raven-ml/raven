@@ -1215,6 +1215,38 @@ let word_tests =
               (Ops.toposort ~enter_calls:true compiled)
           in
           equal (list int) [ 0; 256; 384 ] (List.sort_uniq Int.compare starts));
+      test "a region addressed through another region is laid out once, in the buffer of its name" (fun () ->
+          let d = "CPU:1" in
+          let region name src = Ops.v Linear ~src ~arg:(Region { name; align = 128 }) in
+          let bytes c = Ops.v Binary ~arg:(Bytes (String.make 8 c)) in
+          let through = region "inner" [ bytes 'a' ] and direct = region "inner" [ bytes 'b' ] in
+          let outer = region "outer" [ Ops.getaddr ~device:d through ] in
+          let null = Null_device.devices () in
+          let devices name =
+            let dev = null name in
+            match dev.compiler.queues with
+            | None -> dev
+            | Some qs ->
+                let commands q =
+                  let c = qs.commands q in
+                  let exec call prg =
+                    c.exec call prg;
+                    ignore (Hcq2.Queue.q q [ Ops.getaddr ~device:d outer; Ops.getaddr ~device:d direct ])
+                  in
+                  { c with exec }
+                in
+                { dev with compiler = { dev.compiler with queues = Some { qs with commands } } }
+          in
+          let compiled =
+            Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler)
+              (linear [ kernel_adds (storage d) (storage d) ])
+          in
+          let inner =
+            List.filter
+              (fun u -> Ops.tag u = Some (String "inner_compute_0"))
+              (Ops.toposort ~enter_calls:true compiled)
+          in
+          equal int 1 (List.length inner));
       test "a word written at several offsets is written by one loop" (fun () ->
           let d = "CPU:1" in
           let scratch = Ops.new_buffer (Single d) 1 Uint64 in

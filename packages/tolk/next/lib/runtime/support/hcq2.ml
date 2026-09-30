@@ -1316,8 +1316,9 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
 
 (* Encoding *)
 
-let rec bufferize_cmdbuf ?device q name =
-  let stream = Queue.contents q and patches = List.rev q.Queue.patches in
+(* The bytes of [q] and the words it patches in them. *)
+let contents q =
+  let patches = List.rev q.Queue.patches in
   (* One loop writes the words used at several offsets. *)
   let rt =
     List.filter
@@ -1367,11 +1368,14 @@ let rec bufferize_cmdbuf ?device q name =
               cast (shr w (int (32 * k))) Dtype.Uint32 )))
       looped
   in
-  let patches =
-    List.filter (fun (_, w) -> not (List.mem_assq w looped)) patches @ dwords
-  in
-  (* Nested linears, such as kernel arguments, merge into a buffer per name,
-     written before the stream. *)
+  ( Queue.contents q,
+    List.filter (fun (_, w) -> not (List.mem_assq w looped)) patches @ dwords )
+
+let bufferize_cmdbuf ?device q name =
+  let stream, patches = contents q in
+  (* The regions the words address, such as kernel arguments, directly or
+     through the words of a region, merge into a buffer per name, written before
+     the stream. *)
   let nested =
     dedup
       (List.concat_map
@@ -1395,6 +1399,27 @@ let rec bufferize_cmdbuf ?device q name =
   let align a =
     Queue.q q [ binary (String.make ((a - (q.size mod a)) mod a) '\000') ]
   in
+  (* The ranges a region's words read, directly or through the address of a
+     region that reads them: a linear hides its words' ranges. *)
+  let rec reads l =
+    dedup
+      (List.concat_map
+         (fun w ->
+           Nodes.to_list (ranges w)
+           @ List.concat_map
+               (fun g ->
+                 if op g = Op.Getaddr && op (nth g 0) = Op.Linear then
+                   reads (nth g 0)
+                 else [])
+               (toposort w))
+         (src l))
+  in
+  let placeholder ?(device = Ops.Multi q.devices) n stream =
+    placeholder ~device
+      ~tag:(Tag.String (to_name [ n; q.name ]))
+      [ String.length stream ]
+      Dtype.Uint8
+  in
   (* A region whose words read ranges, such as the arguments of a kernel in a
      loop, has a copy for each trip of those ranges, each at its alignment. *)
   let bufs =
@@ -1407,14 +1432,7 @@ let rec bufferize_cmdbuf ?device q name =
               let a = snd (region l) in
               let o = align a and first = List.length q.patches in
               let e = Queue.q q (src l) in
-              let rs =
-                List.filter
-                  (fun r -> List.memq r q.loops)
-                  (dedup
-                     (List.concat_map
-                        (fun w -> Nodes.to_list (ranges w))
-                        (src l)))
-              in
+              let rs = List.filter (fun r -> List.memq r q.loops) (reads l) in
               if rs <> [] then ignore (align a);
               let at =
                 List.fold_left
@@ -1427,31 +1445,27 @@ let rec bufferize_cmdbuf ?device q name =
               (l, (at, e - o)))
             (List.filter (fun l -> fst (region l) = n) nested)
         in
-        (offs, bufferize_cmdbuf q n))
+        let stream, patches = contents q in
+        (offs, (placeholder n stream, stream, patches)))
       names
   in
   let views =
     List.concat_map
-      (fun (offs, buf) ->
+      (fun (offs, (buf, _, _)) ->
         List.map
           (fun (l, (at, n)) ->
-            let buf = without_after buf in
             if is_int at then (l, part buf (int_of at) (int_of at + n))
             else (l, shrink buf [ Some (Sym at, Sym (add at (int n))) ]))
           offs)
       bufs
   in
-  let buf =
-    placeholder
-      ~device:(Option.value device ~default:(Ops.Multi q.devices))
-      ~tag:(Tag.String (to_name [ name; q.name ]))
-      [ String.length stream ]
-      Dtype.Uint8
+  let write (buf, stream, patches) =
+    let words = src (substitute (Ops.sink (List.map snd patches)) views) in
+    patch buf (List.combine (List.map fst patches) words) ~blob:stream
   in
-  let words = src (substitute (Ops.sink (List.map snd patches)) views) in
   after
-    (patch buf (List.combine (List.map fst patches) words) ~blob:stream)
-    (List.map snd bufs)
+    (write (placeholder ?device name stream, stream, patches))
+    (List.map (fun (_, b) -> write b) bufs)
 
 let encode_submit devices submit =
   let q = Queue.make (nth submit 0) in

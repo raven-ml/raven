@@ -964,8 +964,10 @@ the Exclusions of `README.md`.
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
-  linear whose words read the ranges, such as a kernel's arguments, has a copy
-  for each trip, which the trip's words address. A call's position counts
+  linear whose words read the ranges, directly or through the address of a
+  nested linear that reads them, such as a kernel's arguments or a launch
+  descriptor that addresses them, has a copy for each trip, which the trip's
+  words address. A call's position counts
   every run of the calls before it, and a call waits for the calls on other
   queues it depends on in the current trip and, after it, in the trip before
   (for the value `0` in the first trip). Each group of patched words loops
@@ -1252,14 +1254,18 @@ the Exclusions of `README.md`.
   nested `LINEAR` out on 128 bytes), `:479-481` (`encode_submit` bufferizes
   the queue's commands, then hands the buffer to `HWQueue.submit`).
 - **tolk.next:** `lib/uop/ops.ml` (the `Region` argument of `Op.Linear`),
-  `lib/runtime/support/hcq2.ml:1319` (`bufferize_cmdbuf`), `:1456`
+  `lib/runtime/support/hcq2.ml:1374` (`bufferize_cmdbuf`), `:1470`
   (`encode_submit`).
 - **Differs:** a nested `LINEAR`'s argument is a region, a name and an
   alignment that the vendor creating it states, 128 by default, and printed
   as the name alone then; `bufferize_cmdbuf` starts each region at its own
-  alignment. `commands.submit` takes no command buffer: `encode_submit` calls
-  it once every command is encoded, and the vendor finishes its queue, then
-  calls `bufferize_cmdbuf` itself, as AMD's AQL queue already bufferizes its
+  alignment. A region's words may address another region: every region the
+  command words address, directly or through the words of regions, is laid
+  out once, in the buffer of its name, where tinygrad lays a region addressed
+  through another out again in a buffer of its own, of the same name.
+  `commands.submit` takes no command buffer: `encode_submit` calls it once
+  every command is encoded, and the vendor finishes its queue, then calls
+  `bufferize_cmdbuf` itself, as AMD's AQL queue already bufferizes its
   packets on the host.
 - **Reason:** (b). NV's launch descriptors and constant buffers are regions
   (Ops_nv), so that a range's trips each get their own copy of them, as the
@@ -1268,10 +1274,14 @@ the Exclusions of `README.md`.
   by 8, and it is final only once the commands after it are encoded: the next
   launch chains onto it and the next signals are its releases. tinygrad
   patches a descriptor buffer whose address is known at launch; a region's
-  address is known only once its bytes are.
+  address is known only once its bytes are. A descriptor addresses its
+  constant buffer and the next descriptor of its chain, both regions, and
+  each must have one address.
 - **Pinned by:** `Tolk_next.Hcq2 › patch and bufferize_cmdbuf › each region
-  starts at its own alignment in the buffer of its name`; the Hcq2, NULL,
-  Metal, CUDA and AMD goldens, unchanged.
+  starts at its own alignment in the buffer of its name` and `› a region
+  addressed through another region is laid out once, in the buffer of its
+  name`; the Hcq2, NULL, Metal, CUDA and AMD goldens, unchanged.
+
 ## D44. An integer cast of a weak expression computes in integers
 
 - **tinygrad:** `uop/weak.py:27-33` (`cast_weak_srcs`), `dtype.py:180-194`
