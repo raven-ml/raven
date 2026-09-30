@@ -172,6 +172,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.vmap` hands the mapped function lanes, traced values of
+  the unbatched shape that hold the batched tensor, instead of batched tensors
+  whose shape queries answered unbatched. `Nx.placement` of a lane of a map
+  over an axis split across devices is a copy on each device; it raised.
 - **Breaking:** `Rune.no_grad` and `Rune.detach` pause the differentiations
   around the calling code, found through its handlers instead of a domain- and
   thread-local flag. A `grad` or `jvp` started inside `no_grad` differentiates;
@@ -2867,6 +2871,9 @@ thread.
 
 ### Nx
 
+- **Breaking (effect handlers):** `E_view` and `E_placement` are gone: a
+  value's shape and placement are its own, read with no interpreter involved,
+  and `Nx_effect.traced` takes the placement of the value it makes.
 - **Breaking (effect handlers):** a transformation installs its interpreter
   with `Nx_effect.intercept { run } f`, which hands `run` each operation `f`
   performs, and `Nx_effect.intercepted ()` tells whether one is installed

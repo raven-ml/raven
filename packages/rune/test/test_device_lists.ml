@@ -790,6 +790,25 @@ let test_two_collective_outputs () =
     out.Grad_and_loss.g;
   check_arr ~msg:"loss" [| 0.32 |] out.Grad_and_loss.loss
 
+(* A lane of [vmap] over an axis split across devices has a placement: the
+   batched value's without the mapped axis, whose cut then holds copies. A
+   value made beside the lane is such a copy. *)
+let test_lane_of_a_split_axis () =
+  let seen = ref None in
+  let y =
+    Rune.vmap'
+      (fun x ->
+        seen := Some (Nx.placement x);
+        Nx.add x (Nx.ones_like x))
+      (rows devs2 (m46 ()))
+  in
+  (match !seen with
+  | Some p ->
+      is_true ~msg:"a copy on each device"
+        (Nx.Placement.equal p (Nx.Placement.replicated devs2))
+  | None -> fail "the mapped function did not run");
+  check_arr ~msg:"values" (to_arr (Nx.add_s (m46 ()) 1.)) y
+
 (* Dropout per device: [vmap] over an axis split one slice per device, with
    [lane_index] folding each lane's index into the key the lanes share, so the
    devices' masks decorrelate. At [x = 1] the gradient of [sum (0.5 * x**2 *
@@ -1213,6 +1232,8 @@ let tests =
       [
         test "grad over a program runs eagerly"
           test_grad_over_a_program_runs_eagerly;
+        test "a lane of a split axis has a placement"
+          test_lane_of_a_split_axis;
         test "dropout per device decorrelates masks"
           test_dropout_per_device_decorrelates;
         test "two collectively reduced outputs" test_two_collective_outputs;

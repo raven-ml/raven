@@ -493,10 +493,9 @@ let check_capture : type a b. state -> (a, b) Nx_effect.t -> unit =
                     Nx.Placement.pp p Nx.Placement.pp q)))
   | _ -> ()
 
-(* A traced tensor's payload: the trace that made it, its node, and where it
-   lives in the program. *)
-type Nx_effect.node +=
-  | Node of { trace : int; tensor : F.Tensor.t; place : Nx.Placement.t }
+(* A traced tensor's payload: the trace that made it and its node. *)
+type (_, _) Nx_effect.node +=
+  | Node : { trace : int; tensor : F.Tensor.t } -> ('a, 'b) Nx_effect.node
 
 let trace_counter = Atomic.make 0
 
@@ -508,8 +507,8 @@ let here st = Nx.Placement.replicated st.st_devices
 let traced st place dt tt =
   check_dtype st dt "a value the function computes";
   let shape = Array.of_list (F.Tensor.shape tt) in
-  Nx_effect.traced st.st_ctx dt shape
-    (Node { trace = st.st_id; tensor = tt; place })
+  Nx_effect.traced st.st_ctx place dt shape
+    (Node { trace = st.st_id; tensor = tt })
 
 let is_traced = function Nx_effect.Traced _ -> true | _ -> false
 
@@ -579,7 +578,7 @@ let const_placement : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
 let placement_in : type a b. state -> (a, b) Nx_effect.t -> Nx.Placement.t =
  fun st x ->
   match x with
-  | Nx_effect.Traced { t_node = Node { place; _ }; _ } -> place
+  | Nx_effect.Traced { t_node = Node _; t_placement; _ } -> t_placement
   | _ -> const_placement st x
 
 (* Bind a tensor whose bytes exist outside the traced computation (a closure
@@ -852,7 +851,8 @@ let rec invariant st bodies ~t_id p tt =
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
   match x with
-  | Nx_effect.Traced { t_node = Node { trace; tensor; place }; t_id; _ }
+  | Nx_effect.Traced
+      { t_node = Node { trace; tensor }; t_placement = place; t_id; _ }
     when trace = st.st_id ->
       invariant st st.scan_bodies ~t_id place tensor
   | Nx_effect.Traced _ ->
@@ -1894,8 +1894,8 @@ let placeholders st leaves values =
   List.map2
     (fun (Nx.P leaf) (shape, place, value) ->
       Nx.P
-        (Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) shape
-           (Node { trace = st.st_id; tensor = value; place })))
+        (Nx_effect.traced st.st_ctx place (Nx_effect.dtype leaf) shape
+           (Node { trace = st.st_id; tensor = value })))
     leaves values
 
 (* Whether [leaves] are what [slots] stand for: of their shapes, at their
@@ -2423,9 +2423,6 @@ let rec install : type a. state -> (unit -> a) -> a =
   let rule : type c. c Effect.t -> (unit -> c) option =
    fun eff ->
     match eff with
-    (* A traced value lives where its operation put it, which is what the
-       gradient of a placement asks of its primal. *)
-    | E_placement x when is_traced x -> Some (fun () -> placement_in st x)
     (* Staged scans *)
     | Scan.E_scan_probe -> Some (fun () -> true)
     | Scan.E_scan req -> Some (fun () -> stage_scan st req)
@@ -4076,8 +4073,8 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
         List.map (fun d -> Tolk.Device.create_buffer ~size ~dtype:dtolk d) devs
       in
       let ph =
-        Nx_effect.traced st.st_ctx (Nx_effect.dtype leaf) (shape_of leaf)
-          (Node { trace = st.st_id; tensor = tt; place })
+        Nx_effect.traced st.st_ctx place (Nx_effect.dtype leaf) (shape_of leaf)
+          (Node { trace = st.st_id; tensor = tt })
       in
       placeholders := Nx.P ph :: !placeholders;
       tensors := tt :: !tensors;

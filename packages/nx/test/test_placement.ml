@@ -734,10 +734,11 @@ let reads =
 
 (* Identities *)
 
-type Nx_effect.node += Identity_probe
+type (_, _) Nx_effect.node += Identity_probe : ('a, 'b) Nx_effect.node
 
 let traced d =
-  Nx_effect.traced (Nx.Placement.device d) Nx.float32 [| 1 |] Identity_probe
+  let p = Nx.Placement.device d in
+  Nx_effect.traced p p Nx.float32 [| 1 |] Identity_probe
 
 let identities =
   group "identities"

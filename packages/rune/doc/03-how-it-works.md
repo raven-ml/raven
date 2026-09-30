@@ -88,16 +88,16 @@ Three kinds of rule need a conjugation of their own on the tape:
 
 Rules are checked against a finite-difference oracle in `packages/rune/test/test_complex.ml`. It perturbs each component of each input separately, assembles the real Jacobian, and compares both engines against it, so it measures the operation rather than trusting another rule. A new rule reachable on a complex dtype belongs there.
 
-## vmap: a Virtual View
+## vmap: Lanes
 
-The mapped function is written for unbatched values. Under the `vmap` handler, every tensor is either *batched* — it physically carries the batch dimension, canonically at axis 0 — or a constant of the map. Two mechanisms keep this transparent:
+The mapped function is written for unbatched values. Under `vmap`, every tensor is either a *lane* or a constant of the map. A lane is a traced value that holds its batched tensor, which physically carries the batch dimension at axis 0. Two properties keep this transparent:
 
-- **Shape queries are intercepted.** For batched tensors the handler answers with the unbatched remainder of the shape, so the function (and the Nx frontend itself) makes exactly the decisions of the unbatched program — broadcasting, promotion, reshapes.
-- **Each primitive is translated to its batched form.** Shape parameters gain a leading batch entry, axis parameters shift by one, and constants meeting batched operands are lifted with a broadcast view.
+- **A lane has the unbatched shape.** Its shape is the batched tensor's without the batch axis, and its placement the batched tensor's without that axis, so the function (and the Nx frontend itself) makes exactly the decisions of the unbatched program — broadcasting, promotion, reshapes. Reading a shape or a placement reads a field: nothing is intercepted.
+- **Each operation on a lane is translated to its batched form.** Shape parameters gain a leading batch entry, axis parameters shift by one, and constants meeting lanes are lifted with a broadcast view.
 
-Operations whose operands are all constants are evaluated as they are, and a result that does not depend on the mapped inputs is broadcast along the batch axis. Nested `vmap`s stack: each handler owns its batched set and batch size, and the translations one level emits are re-translated by the level above.
+Operations whose operands are all constants are evaluated as they are, and a result that does not depend on the mapped inputs is broadcast along the batch axis. Nested `vmap`s stack: each map owns its lanes and batch size, and the translations one level emits, over the enclosing map's lanes, are translated again by the level above. A lane of a map over an axis split across devices is a copy on each of them.
 
-Two consequences documented in [Transformations](02-transformations.md) follow directly from this design. Reading a batched tensor's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a `cond` predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
+Two consequences documented in [Transformations](02-transformations.md) follow directly from this design. Reading a lane's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a `cond` predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
 
 ## Custom Rules and remat
 

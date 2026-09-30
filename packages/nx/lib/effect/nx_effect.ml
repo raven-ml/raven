@@ -295,10 +295,11 @@ module rec Types : sig
 
   and ('a, 'b) traced = {
     t_id : int; (* fresh; identity tables key by it *)
+    t_placement : placement; (* where the value lives *)
     t_context : placement; (* where the trace creates its values *)
     t_dtype : ('a, 'b) Nx_dtype.t;
     t_view : View.t; (* C-contiguous over the tensor's shape *)
-    t_node : node; (* the tracer's payload *)
+    t_node : ('a, 'b) node; (* the tracer's payload *)
   }
 
   (* How a device holds bytes: the library that opens it reads and places the
@@ -318,7 +319,7 @@ module rec Types : sig
 
   and backend = (module Backend_sig.S)
   and storage = ..
-  and node = ..
+  and ('a, 'b) node = ..
 end =
   Types
 
@@ -961,11 +962,13 @@ let identity_hash : type a b. (a, b) t -> int = function
 
 (* Traced constructor *)
 
-let traced (type a b) (ctx : context) (dtype : (a, b) Nx_dtype.t)
-    (shape : int array) (node : node) : (a, b) t =
+let traced (type a b) (ctx : context) (p : placement)
+    (dtype : (a, b) Nx_dtype.t) (shape : int array) (node : (a, b) node) :
+    (a, b) t =
   Traced
     {
       t_id = fresh_id ();
+      t_placement = p;
       t_context = ctx;
       t_dtype = dtype;
       t_view = View.create shape;
@@ -980,30 +983,13 @@ type packed = P : ('a, 'b) t -> packed
 let intercepts = Atomic.make 0
 let intercepting () = Atomic.get intercepts > 0
 
-(* Effects *)
+(* Lenses. Metadata is the value's own: reading it runs no interpreter. *)
 
-type _ Effect.t +=
-  | E_view : ('a, 'b) t -> View.t Effect.t
-  | E_placement : ('a, 'b) t -> placement Effect.t
-
-(* Lenses. Under an interception the effect is performed first: a handler may
-   present a transformed view (vmap shows batched tensors without their batch
-   axis) or placement; only the unhandled fallback answers from the tensor. *)
-
-let direct_view (type a b) (x : (a, b) t) : View.t =
+let view (type a b) (x : (a, b) t) : View.t =
   match x with
   | Host t -> t.view
   | Placed r -> whole_view r
   | Traced t -> t.t_view
-
-let view (type a b) (x : (a, b) t) : View.t =
-  if not (intercepting ()) then direct_view x
-  else
-    let e = E_view x in
-    match Effect.perform e with
-    | v -> v
-    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
-        direct_view x
 
 let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
   | Host t -> t.dtype
@@ -2112,11 +2098,10 @@ module Placement = struct
   let window = window_of
 
   (* The placement of a value with a new leading axis, and of one without its
-     leading axis, which no cut may name. *)
+     leading axis: a grid axis that cut it then holds copies. *)
   let with_leading_axis p = map_axes succ p
-
   let without_leading_axis p =
-    if List.mem_assoc 0 (cuts p) then None else Some (map_axes pred p)
+    match cuts p with [] -> p | _ -> map_axes pred (uncut p ~axis:0)
 
   let equal p q = p.backend == q.backend && Grid.equal ( == ) p.grid q.grid
   let pp = pp_placement
@@ -2140,20 +2125,11 @@ let context : type a b. (a, b) t -> context = function
    case. *)
 let on_host (p : context) = p == Placement.host || is_host_placement p
 
-let direct_placement (type a b) (x : (a, b) t) : placement =
+let placement (type a b) (x : (a, b) t) : placement =
   match x with
   | Host _ -> Placement.host
   | Placed r -> r.r_placement
-  | Traced _ -> outside_trace ()
-
-let placement (type a b) (x : (a, b) t) : placement =
-  if not (intercepting ()) then direct_placement x
-  else
-    let e = E_placement x in
-    match Effect.perform e with
-    | p -> p
-    | exception Effect.Unhandled e' when Obj.repr e' == Obj.repr e ->
-        direct_placement x
+  | Traced t -> t.t_placement
 
 (* Dispatch
 
