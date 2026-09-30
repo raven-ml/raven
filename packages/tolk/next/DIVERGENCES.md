@@ -29,26 +29,32 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 - **Reason:** (c).
 - **Pinned by:** waiting for L7.
 
-## D2. The pattern matcher matches directly
+## D2. Withdrawn
 
-- **tinygrad:** `uop/upat.py:177-185` (`upat_compile` generates Python source
-  and runs it with `exec`).
-- **tolk.next:** waiting for L1.
-- **Differs:** a pattern is matched by walking it, without generating code.
-- **Reason:** (a).
-- **Pinned by:** waiting for L1.
+tinygrad matches patterns without generating code when `UPAT_COMPILE` is 0
+(`uop/ops.py:1545`, `upat_interpret`), and `UPat`, `PatternMatcher` and
+`graph_rewrite` live in `uop/ops.py`. tolk.next ports that path in
+`Ops`, so leaving out `uop/upat.py`, the pattern compiler, is scope: see
+the Exclusions of `README.md`.
 
 ## D3. device.py and the ops_*.py files are split
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
-- **tolk.next:** waiting for L6 and L7.
+- **tolk.next:** waiting for L6 and L7; `lib/uop/ops.ml:227` (`param_arg`),
+  `:3005` (`new_buffer`).
 - **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
   and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
   (queues, `pm_encode`, program data), all returning data. The registry, the
   lazy `Buffer` and running a schedule are rune's; allocators, programs,
-  drivers and profile events are nx.device's.
+  drivers and profile events are nx.device's. So a node holds no runtime
+  state: `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for rune
+  to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
+  `_base_buffer_is_realized`, `from_buffer` and `_frompy`
+  (`uop/ops.py:856-993`) are rune's.
 - **Reason:** (c).
-- **Pinned by:** waiting for L6 and L7.
+- **Pinned by:** waiting for L6 and L7; for `Ops`, its suite
+  (`test/uop/ops`): `storage › new_buffer takes the next slot without one`
+  and `reprs.golden`, where a `BUFFER` prints and interns by its slot alone.
 
 ## D4. Import cycles are broken
 
@@ -64,12 +70,33 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
-- **tolk.next:** waiting for L1 through L8, each break with its layer.
+- **tolk.next:** waiting for L2 through L8, each break with its layer; for
+  `uop/ops.py`, `lib/uop/ops.ml:572` (`construction_check`), `:1651`
+  (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
+  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
-    module (`Symbolic.simplify u`);
-  - the small types that `ops` and `spec` name (`Estimates`, `BufferizeOpts`,
-    `Opt`, `OptOps`) are defined in the earliest module that needs them;
+    module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
+    `to_elf` to `Device`, and `render` and `srender` to `Render`;
+  - `simplify` stays in `Ops`, since reshaping, `resolve` and shapes call
+    it: it rewrites with the `symbolic` matcher that `Symbolic` installs when
+    the library is initialised, and the `SPEC` check at construction runs the
+    matcher that `Spec` installs. Each is set once; `lib/dune` links the
+    library whole (`-linkall`), so both are set before any program runs, and
+    `simplify` raises if its rules are missing. A sink of constants and stacks
+    of constants is itself without the rules, which leave it as it is, so
+    shapes are built before they are installed;
+  - `CallInfo.aux`, `hcq2.py`'s `HCQInfo`, is the record `hcq_info` of
+    `Ops`, since call arguments hold it;
+  - `render.py`'s `pretty_print` is `Ops.pp`: it prints arguments
+    (`argstr`), and arguments print the nodes they hold, so the two recurse;
+  - the kept methods of `mixin/*.py` are functions of `Ops`, since
+    `ops.py` calls them and a module cannot call a later one; the elementwise
+    ones, which patterns share with nodes, are one functor applied to both;
+  - the small types that `ops` and `spec` name from later files
+    (`Estimates`, `BufferizeOpts`) are defined in the earliest module that
+    needs them; `Opt`, whose file depends on nothing, stays in its own
+    module;
   - `Compiler` is defined ahead of the renderers, and `Device` follows
     `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` lands with
@@ -80,7 +107,13 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** waiting for L1 through L8.
+- **Pinned by:** waiting for L4 through L8; for `Ops`, its suite
+  (`test/uop/ops`): `resolve › simplify rejects a graph other than constants
+  while the symbolic rules are not installed` (before L3), and at L3 the law
+  that `simplify` returns a sink of constants and stacks of constants itself;
+  `printing › pretty.golden`; `elementwise patterns › the pattern operators
+  are the named pattern operations`; `queue calls › pp_hcq_info formats every
+  field, as the record's repr`.
 
 ## D5. Compilation workers are domains
 
@@ -96,9 +129,14 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 - **tolk.next:** waiting for L6.
 - **Differs:** the caller gives a target, a device name and its `arch`;
   tolk.next picks the renderer and compiler from the `arch` and never parses
-  the name.
+  the name, with one exception: a name starting with `DISK` is a disk, as
+  tinygrad reserves it and nx.device names its disk devices
+  (`Ops.on_disk`, `copy_to_device`, `clone`).
 - **Reason:** (c).
-- **Pinned by:** waiting for L6.
+- **Pinned by:** waiting for L6 for targets; for the disk, the `Ops`
+  suite: `several devices › on_disk holds for one disk device`, `several
+  devices › copy_to_device rejects a disk and a weak type` and `storage ›
+  clone rejects a disk`.
 
 ## D7. Stamp slots follow `Submission.record`
 
@@ -170,3 +208,15 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
   against tinygrad's `Opt` repr (`reprs.golden`, the row "kernel with opts");
   `Postrange`'s suite (L4) drops tinygrad's malformed-argument cases with
   this entry as the reason.
+
+## D12. A node's key is a BLAKE2 digest
+
+- **tinygrad:** `uop/ops.py:266-268` (`key`, the SHA-256 of
+  `str((op, dtype, arg))` followed by the keys of the sources).
+- **tolk.next:** `lib/uop/ops.ml:1063` (`key`).
+- **Differs:** the same text is digested with BLAKE2b-256. No key is ever
+  compared with a key tinygrad computed: keys name compiled programs in caches
+  that tolk.next alone writes.
+- **Reason:** (a): OCaml's standard library has MD5 and BLAKE2, not SHA-256.
+- **Pinned by:** the `Ops` suite: `key › ignores tags` and `key › tells
+  arguments apart`.

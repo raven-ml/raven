@@ -5,6 +5,9 @@
  (public_name tolk.next)
  (private_modules host_config)
  (libraries unix zarith)
+ ; Modules install the rules that earlier modules apply (Ops' simplify
+ ; reads Symbolic's) when they are initialised: every program links them all.
+ (library_flags (-linkall))
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
