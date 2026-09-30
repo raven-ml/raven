@@ -1,0 +1,43 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=32, device="CPU")
+6 Ops.STACK dtypes.weakint [1, 2, 1]
+7 Ops.RESHAPE dtypes.uchar [5, 6]
+8 Ops.CONST dtypes.weakint [] 0
+9 Ops.STACK dtypes.weakint [8, 8, 8]
+10 Ops.CONST dtypes.weakint [] 1
+11 Ops.STACK dtypes.weakint [1, 2, 10]
+12 Ops.SHRINK dtypes.uchar [7, 9, 11]
+13 Ops.CAST dtypes.uint [12] dtypes.uint
+14 Ops.SHL dtypes.uint [13, 8]
+15 Ops.STACK dtypes.weakint [8, 8, 10]
+16 Ops.SHRINK dtypes.uchar [7, 15, 11]
+17 Ops.CAST dtypes.uint [16] dtypes.uint
+18 Ops.CONST dtypes.weakint [] 8
+19 Ops.SHL dtypes.uint [17, 18]
+20 Ops.ADD dtypes.uint [14, 19]
+21 Ops.STACK dtypes.weakint [8, 8, 2]
+22 Ops.SHRINK dtypes.uchar [7, 21, 11]
+23 Ops.CAST dtypes.uint [22] dtypes.uint
+24 Ops.CONST dtypes.weakint [] 16
+25 Ops.SHL dtypes.uint [23, 24]
+26 Ops.ADD dtypes.uint [20, 25]
+27 Ops.CONST dtypes.weakint [] 3
+28 Ops.STACK dtypes.weakint [8, 8, 27]
+29 Ops.SHRINK dtypes.uchar [7, 28, 11]
+30 Ops.CAST dtypes.uint [29] dtypes.uint
+31 Ops.CONST dtypes.weakint [] 24
+32 Ops.SHL dtypes.uint [30, 31]
+33 Ops.ADD dtypes.uint [26, 32]
+34 Ops.RESHAPE dtypes.uint [33, 3]
+35 Ops.BITCAST dtypes.float [34] dtypes.float
+36 Ops.CONST dtypes.weakfloat [] 2.0
+37 Ops.MUL dtypes.float [35, 36]
+38 Ops.STORE dtypes.void [4, 37]
+39 Ops.AFTER dtypes.float [0, 38]
+40 Ops.SINK dtypes.void [39]
+

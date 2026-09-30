@@ -2127,3 +2127,72 @@ and by the law's first example.
 | old: unit/engine/test_collectives.ml group "reduce-scatter", "an allreduce also used whole is reduced once" | resharding | `MU › … › add_resharded_multi.golden`, `matmul_resharded_multi.golden`, `reshard_devices_multi.golden`, their values; `MU › multi_pm › arithmetic › sources sharded differently are resharded on the result's axis`; tinygrad has no reduce-scatter call |
 | old: unit/engine/test_collectives.ml "float16 partials reduce-scatter in float16 under ALLREDUCE_CAST" | | `MU › multi_pm › reductions › a value cast up from a half crosses the devices as a half` |
 | old: unit/engine/test_collectives.ml "an allreduce in a call body raises" | | dropped: tinygrad expands an allreduce in a call body; `MU › … › inline_function_multi.golden` rewrites a body |
+
+## Prepare
+
+The suite is `Tolk_next.Prepare` (`schedule/prepare/`), written `PR` below.
+`PR › prepare_rangeify › recorded` holds what tinygrad's `prepare_rangeify`
+makes of the graph that scheduling a `Tensor` program on the CPU hands it, and
+of hand-built graphs for the rules no program reaches
+(`<name>_prepared.golden`), compared up to the numbers of the storage it makes
+(`Uops.numbered_like`). `PR › prepare_rangeify › values` states that each
+evaluable graph writes the same into its parameters and buffers before and
+after (`Tensors`); call-local storage is scratch. `PR › pm_mops › laws` states
+that an index of a chain of movements, rewritten, reads the element they place
+there, and `PR › contiguous_view › laws` that a view is exactly a run of its
+storage. The other groups state one rule each.
+
+Three mutants of `prepare.ml` survive, all equivalent: `op item = After && op s
+= Store` as `||` (an item that is not an after of a store is kept whichever
+source is taken), `s > 1` as `>=` in the split's axis ranges (an axis of one
+element has no divisor from 8 to 256, so whether it counts as broadcast never
+matters), and `ns > os` as `>=` in the bitcast expansion (equal sizes return
+before). `PR › pm_mops › pads` states `Indexing.apply_movement_op`'s
+contract that the pm_mops law leaves out: the validity a pad gives an index
+lasts only while the index carries it, and a caller masks padded values.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: runtime/test_assign.py::TestAssign::test_post_permuted_assignment, test_post_flipped_assignment, test_post_flipped_assignment_axis1, test_post_reshape_assignment | a value that reads its destination through a permute or flip is materialised first; through a reshape it is not | `PR › prepare_rangeify › recorded ›` `assign_permuted_self_prepared.golden`, `assign_flipped_self_prepared.golden`, `assign_reshaped_self_prepared.golden`, their values; `hazard_behind_other_after_prepared.golden`, `flip_of_other_prepared.golden` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_overlapping_shrink_assignment_forward, test_overlapping_shrink_assignment_reverse, test_nonoverlapping_shrink_assignment | a shrunk destination read through another shrink is materialised | `assign_shifted_self_prepared.golden`, `assign_disjoint_self_prepared.golden`, `assign_shrunk_self_prepared.golden`, `assign_shrunk_in_place_prepared.golden` (the destination's own shrink is safe), their values |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_bitcast, test_assign_bitcast_unrealized, test_assign_double_bitcast, test_assign_shrink_then_bitcast, test_assign_bitcast_different_size | a store into a bitcast stores the value bitcast | `assign_bitcast_prepared.golden`, `assign_double_bitcast_prepared.golden`, `assign_shrink_then_bitcast_prepared.golden`, `assign_bitcast_wider_prepared.golden`, their values; `PR › prepare_rangeify › earliest rewrites › a store into a bitcast of storage stores the value bitcast` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_cross_device, test_assign_temporary_copy_reshape | a store across devices is the copy | `assign_cross_device_prepared.golden`, `copy_into_storage_prepared.golden`, their values; `PR › … › a copy to another device than its destination's is stored first` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_shape_broadcast, test_assign_shape_broadcast_2d | | `assign_broadcast_prepared.golden`, its value |
+| tinygrad: runtime/test_assign.py::TestAssign::test_disk_assignment | | `assign_to_disk_1_prepared.golden` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_deviceless_const | | `assign_deviceless_const_prepared.golden`, its value |
+| tinygrad: runtime/test_assign.py::TestAssign::test_nested_after_contiguous_store, test_nested_after_contiguous_store_no_init | a store of a storage's own contents into itself | `assign_own_contents_prepared.golden`; `PR › … › the second of two equal stores into one storage is dropped` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_to_function_output, test_nested_function_assign | | `assign_to_function_output_prepared.golden`, `inline_function_prepared.golden`, their values |
+| tinygrad: runtime/test_assign.py, the other tests of TestAssign, and TestAssignOrdering, TestAssignToUnrealizedView, TestPartialAssignToSharedBuffer, TestAfterCachePatterns | the order of stores and reads, and kernel counts | dropped here: the order is the schedule's, the counts Rangeify's section; `assign_twice_prepared.golden`, `store_ordered_before_prepared.golden`, `placed_after_read_prepared.golden` hold the preparation of such graphs |
+| tinygrad: runtime/test_assign.py::TestMultiAssign (12 tests) | stores into sharded values | dropped here: Multi's section |
+| tinygrad: null/test_assign.py (4 tests), null/test_setitem_schedule.py (3 tests) | kernel counts | dropped here: Rangeify's section; `setitem_prepared.golden`, `setitem_tensor_prepared.golden` hold the preparation |
+| tinygrad: null/test_schedule.py::TestSchedule::test_zero_size, test_zero_size_alt, test_zero_size_assign, test_zero_size_children | empty values | `sum_of_nothing_prepared.golden`, `max_of_nothing_prepared.golden`, `add_nothing_prepared.golden`; `PR › … › a value with an empty axis is zero` |
+| tinygrad: null/test_schedule.py::TestSchedule::test_detach_assign, test_contiguous_backward_assign | | `detach_prepared.golden`, `contiguous_backward_prepared.golden`; `PR › … › a detach and a gradient marker are their source` |
+| tinygrad: null/test_schedule.py::TestSchedule::test_dedup_assign | | `PR › … › the second of two equal stores into one storage is dropped` |
+| tinygrad: null/test_schedule.py::TestSchedule::test_reduce_doesnt_split and the split tests | large reductions over few outputs split in two | `split_sum_prepared.golden`, `split_rows_prepared.golden`, `split_max_prepared.golden`, `split_expanded_prepared.golden` (a broadcast axis is not split), `split_unit_axis_prepared.golden`, `split_prime_prepared.golden` (no divisor), `split_at_threshold_prepared.golden`, `below_threshold_prepared.golden`, `no_split_prepared.golden`; `PR › … ›` "a split reduction keeps its first reduction's output within 2^22 elements", "a split takes the largest divisor from 256 down", "a split is announced at debug level 3", "a reduction of a symbolic shape is not split" |
+| tinygrad: null/test_schedule.py::TestSchedule::test_contiguous_buffer, test_double_contiguous_realizes_once, test_bitcast_fuses; TestCopyFolding (3 tests) | | `contiguous_of_storage_prepared.golden`, `bitcast_*_prepared.golden`, `copy_*_prepared.golden`, `clone_prepared.golden`; `PR › … › a materialisation of storage is the storage`; their kernel counts are Rangeify's |
+| tinygrad: schedule/prepare.py `pm_disk_copy` (no upstream test) | a disk copy reads its view without materialising it | `copy_from_disk_prepared.golden`, `copy_permuted_from_disk_prepared.golden`, `copy_staged_view_from_disk_prepared.golden`, `disk_staged_view_prepared.golden`, `bitcast_on_disk_prepared.golden`; `PR › … › a bitcast on a disk keeps its size` |
+| tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py (inline and precompiled functions) | calls inlined or compiled on their own | `custom_kernel_prepared.golden`, `inline_function_prepared.golden`, `inline_sharded_prepared.golden`, `inline_symbolic_prepared.golden`, `precompiled_function_prepared.golden`; `PR › prepare_rangeify › inline calls` (7 tests) |
+| tinygrad: schedule/prepare.py `pm_mops` on a padded view (no upstream test) | an index through a pad, then a reshape to an axis of one element, an expand, or a shrink onto an axis of one element, loses the pad's gate | `PR › pm_mops › pads` (3 tests), as tinygrad HEAD for an upstream report: `graph_rewrite(p._mop(Ops.RESHAPE,(1,)).pad(((0,1),)).index(r), pm_mops)` with `p` a 1-element param is `INDEX(p, 0)`; a 6-element param reshaped (3,2), padded `((0,3),(2,6))` and shrunk `((0,1),(0,3))`, indexed by two ranges, is `INDEX(p, 0)`; a 2-element param expanded by `(2,)` and padded `((1,3),(0,2))` is `INDEX(p, r1)` |
+| tinygrad: schedule/prepare.py `pm_fold_moved_after`, `OPENPILOT_HACKS`, `FLOAT16` | | dropped: excluded (README) |
+| tinygrad: uop/ops.py `contiguous_view` on CL and WEBGPU | no view | dropped: excluded (README) |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/test_contiguous_view.ml "cancelling movement chains prove a contiguous view" | | `PR › contiguous_view › two permutes that cancel are a view`; the law |
+| old: unit/test_contiguous_view.ml "prepend EXPAND respects contiguous storage" | | `PR › contiguous_view ›` "an expand of an axis of one element is a view", "an expand repeats" |
+| old: unit/test_contiguous_view.ml "view anchors retain pending effects" | | `PR › contiguous_view › a view of storage after its stores is a view of the ordered storage` |
+| old: unit/test_contiguous_view.ml "subword byte offsets retain typed anchors", "one-element bitcast views preserve byte extent" | | `PR › contiguous_view ›` "bytes within an element are a view of the bytes", "bytes on whole elements start at their element", "a bitcast of a view with an axis of one element is a view" |
+| old: unit/test_contiguous_view.ml "empty views preserve offsets and storage anchors" | an empty view | `PR › contiguous_view › an empty view is no view`, as tinygrad |
+| old: unit/test_contiguous_view.ml "symbolic leading views compose their flattened index" | a symbolic view at an offset | `PR › contiguous_view › a view of a symbolic size is no view`, as tinygrad |
+| old: unit/test_contiguous_view.ml "existing movement views preserve byte offsets", "view offsets use exact arithmetic before host narrowing", "caller tags are preserved without certifying strided views", "constant folding preserves tensor shape during view proofs" | | the law `PR › contiguous_view › laws › a view is exactly a run of its storage`; offsets count elements of the storage's type, as tinygrad's |
+| old: unit/test_contiguous_view.ml "unsupported backends reject typed views" | | dropped: CL and WebGPU are excluded (README) |
+| old: unit/test_contiguous_view.ml "storage windows retain allocation boundaries", "storage windows retain typed effects", "partition storage requires owned lanes", "partial reshape compares symbolic suffix dimensions", "partial reshape uses symbolic prefix dimensions" | old tolk's `Indexing.storage_window` and partial reshapes | the partial reshape is `PR › pm_mops › rules ›` "an index of a reshape's leading axes indexes its source when the trailing axes are kept", "an index of a reshape whose trailing axes change is left as it is"; storage windows were old tolk's, tinygrad has none |
+| old: unit/test_schedule_rangeify.ml group "early_movement_pass" | | `PR › pm_mops › rules` (7 tests), `PR › pm_mops › laws` |
+| old: unit/test_schedule_rangeify.ml group "split_reduce" | | the split rows above |
+| old: unit/test_schedule_rangeify.ml group "symbolic empty shapes" (3 tests) | an empty reduction keeps its identity | `sum_of_nothing_prepared.golden`, `max_of_nothing_prepared.golden`; symbolic empty shapes are dropped: tinygrad's rule reads a concrete zero |
+| old: unit/test_schedule_rangeify.ml group "moved materializations" (3 tests) | | dropped: openpilot's `pm_fold_moved_after`, excluded (README) |
+| old: unit/test_schedule_rangeify.ml group "symbolic storage views" (2 tests) | | `variable_shrink_prepared.golden`, `inline_symbolic_prepared.golden`; the removal of stages is Rangeify's section |
