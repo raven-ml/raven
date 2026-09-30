@@ -3501,7 +3501,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.Trunc ->
       unary (fun x ->
           match x with
-          | `Float f when not (Float.is_finite f) -> x
+          | `Float f -> `Float (Float.trunc f)
           | x -> `Int (Value.to_z x))
   | Op.Neg -> unary Value.( ~- )
   | Op.Add -> binary Value.( + )

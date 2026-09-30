@@ -3094,6 +3094,7 @@ Ops.POW	dtypes.half	[3.4028234663852886e+38, 2.0]	True	inf
 Ops.EXP2	dtypes.half	[0.0]	True	1.0
 Ops.EXP2	dtypes.half	[-0.0]	True	1.0
 Ops.EXP2	dtypes.half	[0.5]	True	1.4140625
+Ops.EXP2	dtypes.half	[-0.5]	True	0.70703125
 Ops.EXP2	dtypes.half	[1.0]	True	2.0
 Ops.EXP2	dtypes.half	[-1.0]	True	0.5
 Ops.EXP2	dtypes.half	[2.5]	True	5.65625
@@ -3111,6 +3112,7 @@ Ops.EXP2	dtypes.half	[nan]	True	nan
 Ops.LOG2	dtypes.half	[0.0]	True	-inf
 Ops.LOG2	dtypes.half	[-0.0]	True	-inf
 Ops.LOG2	dtypes.half	[0.5]	True	-1.0
+Ops.LOG2	dtypes.half	[-0.5]	True	nan
 Ops.LOG2	dtypes.half	[1.0]	True	0.0
 Ops.LOG2	dtypes.half	[-1.0]	True	nan
 Ops.LOG2	dtypes.half	[2.5]	True	1.322265625
@@ -3128,6 +3130,7 @@ Ops.LOG2	dtypes.half	[nan]	True	nan
 Ops.SIN	dtypes.half	[0.0]	True	0.0
 Ops.SIN	dtypes.half	[-0.0]	True	-0.0
 Ops.SIN	dtypes.half	[0.5]	True	0.4794921875
+Ops.SIN	dtypes.half	[-0.5]	True	-0.4794921875
 Ops.SIN	dtypes.half	[1.0]	True	0.84130859375
 Ops.SIN	dtypes.half	[-1.0]	True	-0.84130859375
 Ops.SIN	dtypes.half	[2.5]	True	0.5986328125
@@ -3145,6 +3148,7 @@ Ops.SIN	dtypes.half	[nan]	True	nan
 Ops.SQRT	dtypes.half	[0.0]	True	0.0
 Ops.SQRT	dtypes.half	[-0.0]	True	-0.0
 Ops.SQRT	dtypes.half	[0.5]	True	0.70703125
+Ops.SQRT	dtypes.half	[-0.5]	True	nan
 Ops.SQRT	dtypes.half	[1.0]	True	1.0
 Ops.SQRT	dtypes.half	[-1.0]	True	nan
 Ops.SQRT	dtypes.half	[2.5]	True	1.5810546875
@@ -3162,6 +3166,7 @@ Ops.SQRT	dtypes.half	[nan]	True	nan
 Ops.RECIPROCAL	dtypes.half	[0.0]	True	inf
 Ops.RECIPROCAL	dtypes.half	[-0.0]	True	-inf
 Ops.RECIPROCAL	dtypes.half	[0.5]	True	2.0
+Ops.RECIPROCAL	dtypes.half	[-0.5]	True	-2.0
 Ops.RECIPROCAL	dtypes.half	[1.0]	True	1.0
 Ops.RECIPROCAL	dtypes.half	[-1.0]	True	-1.0
 Ops.RECIPROCAL	dtypes.half	[2.5]	True	0.39990234375
@@ -3177,8 +3182,9 @@ Ops.RECIPROCAL	dtypes.half	[inf]	True	0.0
 Ops.RECIPROCAL	dtypes.half	[-inf]	True	-0.0
 Ops.RECIPROCAL	dtypes.half	[nan]	True	nan
 Ops.TRUNC	dtypes.half	[0.0]	True	0.0
-Ops.TRUNC	dtypes.half	[-0.0]	True	0.0
+Ops.TRUNC	dtypes.half	[-0.0]	True	-0.0
 Ops.TRUNC	dtypes.half	[0.5]	True	0.0
+Ops.TRUNC	dtypes.half	[-0.5]	True	-0.0
 Ops.TRUNC	dtypes.half	[1.0]	True	1.0
 Ops.TRUNC	dtypes.half	[-1.0]	True	-1.0
 Ops.TRUNC	dtypes.half	[2.5]	True	2.0
@@ -3196,6 +3202,7 @@ Ops.TRUNC	dtypes.half	[nan]	True	nan
 Ops.NEG	dtypes.half	[0.0]	True	-0.0
 Ops.NEG	dtypes.half	[-0.0]	True	0.0
 Ops.NEG	dtypes.half	[0.5]	True	-0.5
+Ops.NEG	dtypes.half	[-0.5]	True	0.5
 Ops.NEG	dtypes.half	[1.0]	True	-1.0
 Ops.NEG	dtypes.half	[-1.0]	True	1.0
 Ops.NEG	dtypes.half	[2.5]	True	-2.5
@@ -3336,6 +3343,7 @@ Ops.POW	dtypes.bfloat16	[3.4028234663852886e+38, 2.0]	True	inf
 Ops.EXP2	dtypes.bfloat16	[0.0]	True	1.0
 Ops.EXP2	dtypes.bfloat16	[-0.0]	True	1.0
 Ops.EXP2	dtypes.bfloat16	[0.5]	True	1.4140625
+Ops.EXP2	dtypes.bfloat16	[-0.5]	True	0.70703125
 Ops.EXP2	dtypes.bfloat16	[1.0]	True	2.0
 Ops.EXP2	dtypes.bfloat16	[-1.0]	True	0.5
 Ops.EXP2	dtypes.bfloat16	[2.5]	True	5.65625
@@ -3353,6 +3361,7 @@ Ops.EXP2	dtypes.bfloat16	[nan]	True	nan
 Ops.LOG2	dtypes.bfloat16	[0.0]	True	-inf
 Ops.LOG2	dtypes.bfloat16	[-0.0]	True	-inf
 Ops.LOG2	dtypes.bfloat16	[0.5]	True	-1.0
+Ops.LOG2	dtypes.bfloat16	[-0.5]	True	nan
 Ops.LOG2	dtypes.bfloat16	[1.0]	True	0.0
 Ops.LOG2	dtypes.bfloat16	[-1.0]	True	nan
 Ops.LOG2	dtypes.bfloat16	[2.5]	True	1.3203125
@@ -3370,6 +3379,7 @@ Ops.LOG2	dtypes.bfloat16	[nan]	True	nan
 Ops.SIN	dtypes.bfloat16	[0.0]	True	0.0
 Ops.SIN	dtypes.bfloat16	[-0.0]	True	-0.0
 Ops.SIN	dtypes.bfloat16	[0.5]	True	0.478515625
+Ops.SIN	dtypes.bfloat16	[-0.5]	True	-0.478515625
 Ops.SIN	dtypes.bfloat16	[1.0]	True	0.83984375
 Ops.SIN	dtypes.bfloat16	[-1.0]	True	-0.83984375
 Ops.SIN	dtypes.bfloat16	[2.5]	True	0.59765625
@@ -3387,6 +3397,7 @@ Ops.SIN	dtypes.bfloat16	[nan]	True	nan
 Ops.SQRT	dtypes.bfloat16	[0.0]	True	0.0
 Ops.SQRT	dtypes.bfloat16	[-0.0]	True	-0.0
 Ops.SQRT	dtypes.bfloat16	[0.5]	True	0.70703125
+Ops.SQRT	dtypes.bfloat16	[-0.5]	True	nan
 Ops.SQRT	dtypes.bfloat16	[1.0]	True	1.0
 Ops.SQRT	dtypes.bfloat16	[-1.0]	True	nan
 Ops.SQRT	dtypes.bfloat16	[2.5]	True	1.578125
@@ -3404,6 +3415,7 @@ Ops.SQRT	dtypes.bfloat16	[nan]	True	nan
 Ops.RECIPROCAL	dtypes.bfloat16	[0.0]	True	inf
 Ops.RECIPROCAL	dtypes.bfloat16	[-0.0]	True	-inf
 Ops.RECIPROCAL	dtypes.bfloat16	[0.5]	True	2.0
+Ops.RECIPROCAL	dtypes.bfloat16	[-0.5]	True	-2.0
 Ops.RECIPROCAL	dtypes.bfloat16	[1.0]	True	1.0
 Ops.RECIPROCAL	dtypes.bfloat16	[-1.0]	True	-1.0
 Ops.RECIPROCAL	dtypes.bfloat16	[2.5]	True	0.400390625
@@ -3419,8 +3431,9 @@ Ops.RECIPROCAL	dtypes.bfloat16	[inf]	True	0.0
 Ops.RECIPROCAL	dtypes.bfloat16	[-inf]	True	-0.0
 Ops.RECIPROCAL	dtypes.bfloat16	[nan]	True	nan
 Ops.TRUNC	dtypes.bfloat16	[0.0]	True	0.0
-Ops.TRUNC	dtypes.bfloat16	[-0.0]	True	0.0
+Ops.TRUNC	dtypes.bfloat16	[-0.0]	True	-0.0
 Ops.TRUNC	dtypes.bfloat16	[0.5]	True	0.0
+Ops.TRUNC	dtypes.bfloat16	[-0.5]	True	-0.0
 Ops.TRUNC	dtypes.bfloat16	[1.0]	True	1.0
 Ops.TRUNC	dtypes.bfloat16	[-1.0]	True	-1.0
 Ops.TRUNC	dtypes.bfloat16	[2.5]	True	2.0
@@ -3438,6 +3451,7 @@ Ops.TRUNC	dtypes.bfloat16	[nan]	True	nan
 Ops.NEG	dtypes.bfloat16	[0.0]	True	-0.0
 Ops.NEG	dtypes.bfloat16	[-0.0]	True	0.0
 Ops.NEG	dtypes.bfloat16	[0.5]	True	-0.5
+Ops.NEG	dtypes.bfloat16	[-0.5]	True	0.5
 Ops.NEG	dtypes.bfloat16	[1.0]	True	-1.0
 Ops.NEG	dtypes.bfloat16	[-1.0]	True	1.0
 Ops.NEG	dtypes.bfloat16	[2.5]	True	-2.5
@@ -3578,6 +3592,7 @@ Ops.POW	dtypes.float	[3.4028234663852886e+38, 2.0]	True	inf
 Ops.EXP2	dtypes.float	[0.0]	True	1.0
 Ops.EXP2	dtypes.float	[-0.0]	True	1.0
 Ops.EXP2	dtypes.float	[0.5]	True	1.4142135381698608
+Ops.EXP2	dtypes.float	[-0.5]	True	0.7071067690849304
 Ops.EXP2	dtypes.float	[1.0]	True	2.0
 Ops.EXP2	dtypes.float	[-1.0]	True	0.5
 Ops.EXP2	dtypes.float	[2.5]	True	5.656854152679443
@@ -3595,6 +3610,7 @@ Ops.EXP2	dtypes.float	[nan]	True	nan
 Ops.LOG2	dtypes.float	[0.0]	True	-inf
 Ops.LOG2	dtypes.float	[-0.0]	True	-inf
 Ops.LOG2	dtypes.float	[0.5]	True	-1.0
+Ops.LOG2	dtypes.float	[-0.5]	True	nan
 Ops.LOG2	dtypes.float	[1.0]	True	0.0
 Ops.LOG2	dtypes.float	[-1.0]	True	nan
 Ops.LOG2	dtypes.float	[2.5]	True	1.3219281435012817
@@ -3612,6 +3628,7 @@ Ops.LOG2	dtypes.float	[nan]	True	nan
 Ops.SIN	dtypes.float	[0.0]	True	0.0
 Ops.SIN	dtypes.float	[-0.0]	True	-0.0
 Ops.SIN	dtypes.float	[0.5]	True	0.4794255495071411
+Ops.SIN	dtypes.float	[-0.5]	True	-0.4794255495071411
 Ops.SIN	dtypes.float	[1.0]	True	0.8414709568023682
 Ops.SIN	dtypes.float	[-1.0]	True	-0.8414709568023682
 Ops.SIN	dtypes.float	[2.5]	True	0.5984721183776855
@@ -3629,6 +3646,7 @@ Ops.SIN	dtypes.float	[nan]	True	nan
 Ops.SQRT	dtypes.float	[0.0]	True	0.0
 Ops.SQRT	dtypes.float	[-0.0]	True	-0.0
 Ops.SQRT	dtypes.float	[0.5]	True	0.7071067690849304
+Ops.SQRT	dtypes.float	[-0.5]	True	nan
 Ops.SQRT	dtypes.float	[1.0]	True	1.0
 Ops.SQRT	dtypes.float	[-1.0]	True	nan
 Ops.SQRT	dtypes.float	[2.5]	True	1.5811388492584229
@@ -3646,6 +3664,7 @@ Ops.SQRT	dtypes.float	[nan]	True	nan
 Ops.RECIPROCAL	dtypes.float	[0.0]	True	inf
 Ops.RECIPROCAL	dtypes.float	[-0.0]	True	-inf
 Ops.RECIPROCAL	dtypes.float	[0.5]	True	2.0
+Ops.RECIPROCAL	dtypes.float	[-0.5]	True	-2.0
 Ops.RECIPROCAL	dtypes.float	[1.0]	True	1.0
 Ops.RECIPROCAL	dtypes.float	[-1.0]	True	-1.0
 Ops.RECIPROCAL	dtypes.float	[2.5]	True	0.4000000059604645
@@ -3661,8 +3680,9 @@ Ops.RECIPROCAL	dtypes.float	[inf]	True	0.0
 Ops.RECIPROCAL	dtypes.float	[-inf]	True	-0.0
 Ops.RECIPROCAL	dtypes.float	[nan]	True	nan
 Ops.TRUNC	dtypes.float	[0.0]	True	0.0
-Ops.TRUNC	dtypes.float	[-0.0]	True	0.0
+Ops.TRUNC	dtypes.float	[-0.0]	True	-0.0
 Ops.TRUNC	dtypes.float	[0.5]	True	0.0
+Ops.TRUNC	dtypes.float	[-0.5]	True	-0.0
 Ops.TRUNC	dtypes.float	[1.0]	True	1.0
 Ops.TRUNC	dtypes.float	[-1.0]	True	-1.0
 Ops.TRUNC	dtypes.float	[2.5]	True	2.0
@@ -3680,6 +3700,7 @@ Ops.TRUNC	dtypes.float	[nan]	True	nan
 Ops.NEG	dtypes.float	[0.0]	True	-0.0
 Ops.NEG	dtypes.float	[-0.0]	True	0.0
 Ops.NEG	dtypes.float	[0.5]	True	-0.5
+Ops.NEG	dtypes.float	[-0.5]	True	0.5
 Ops.NEG	dtypes.float	[1.0]	True	-1.0
 Ops.NEG	dtypes.float	[-1.0]	True	1.0
 Ops.NEG	dtypes.float	[2.5]	True	-2.5
@@ -3820,6 +3841,7 @@ Ops.POW	dtypes.double	[3.4028234663852886e+38, 2.0]	True	1.1579207543382391e+77
 Ops.EXP2	dtypes.double	[0.0]	True	1.0
 Ops.EXP2	dtypes.double	[-0.0]	True	1.0
 Ops.EXP2	dtypes.double	[0.5]	True	1.4142135623730951
+Ops.EXP2	dtypes.double	[-0.5]	True	0.7071067811865476
 Ops.EXP2	dtypes.double	[1.0]	True	2.0
 Ops.EXP2	dtypes.double	[-1.0]	True	0.5
 Ops.EXP2	dtypes.double	[2.5]	True	5.656854249492381
@@ -3837,6 +3859,7 @@ Ops.EXP2	dtypes.double	[nan]	True	nan
 Ops.LOG2	dtypes.double	[0.0]	True	-inf
 Ops.LOG2	dtypes.double	[-0.0]	True	-inf
 Ops.LOG2	dtypes.double	[0.5]	True	-1.0
+Ops.LOG2	dtypes.double	[-0.5]	True	nan
 Ops.LOG2	dtypes.double	[1.0]	True	0.0
 Ops.LOG2	dtypes.double	[-1.0]	True	nan
 Ops.LOG2	dtypes.double	[2.5]	True	1.3219280948873624
@@ -3854,6 +3877,7 @@ Ops.LOG2	dtypes.double	[nan]	True	nan
 Ops.SIN	dtypes.double	[0.0]	True	0.0
 Ops.SIN	dtypes.double	[-0.0]	True	-0.0
 Ops.SIN	dtypes.double	[0.5]	True	0.479425538604203
+Ops.SIN	dtypes.double	[-0.5]	True	-0.479425538604203
 Ops.SIN	dtypes.double	[1.0]	True	0.8414709848078965
 Ops.SIN	dtypes.double	[-1.0]	True	-0.8414709848078965
 Ops.SIN	dtypes.double	[2.5]	True	0.5984721441039564
@@ -3871,6 +3895,7 @@ Ops.SIN	dtypes.double	[nan]	True	nan
 Ops.SQRT	dtypes.double	[0.0]	True	0.0
 Ops.SQRT	dtypes.double	[-0.0]	True	-0.0
 Ops.SQRT	dtypes.double	[0.5]	True	0.7071067811865476
+Ops.SQRT	dtypes.double	[-0.5]	True	nan
 Ops.SQRT	dtypes.double	[1.0]	True	1.0
 Ops.SQRT	dtypes.double	[-1.0]	True	nan
 Ops.SQRT	dtypes.double	[2.5]	True	1.5811388300841898
@@ -3888,6 +3913,7 @@ Ops.SQRT	dtypes.double	[nan]	True	nan
 Ops.RECIPROCAL	dtypes.double	[0.0]	True	inf
 Ops.RECIPROCAL	dtypes.double	[-0.0]	True	-inf
 Ops.RECIPROCAL	dtypes.double	[0.5]	True	2.0
+Ops.RECIPROCAL	dtypes.double	[-0.5]	True	-2.0
 Ops.RECIPROCAL	dtypes.double	[1.0]	True	1.0
 Ops.RECIPROCAL	dtypes.double	[-1.0]	True	-1.0
 Ops.RECIPROCAL	dtypes.double	[2.5]	True	0.4
@@ -3903,8 +3929,9 @@ Ops.RECIPROCAL	dtypes.double	[inf]	True	0.0
 Ops.RECIPROCAL	dtypes.double	[-inf]	True	-0.0
 Ops.RECIPROCAL	dtypes.double	[nan]	True	nan
 Ops.TRUNC	dtypes.double	[0.0]	True	0.0
-Ops.TRUNC	dtypes.double	[-0.0]	True	0.0
+Ops.TRUNC	dtypes.double	[-0.0]	True	-0.0
 Ops.TRUNC	dtypes.double	[0.5]	True	0.0
+Ops.TRUNC	dtypes.double	[-0.5]	True	-0.0
 Ops.TRUNC	dtypes.double	[1.0]	True	1.0
 Ops.TRUNC	dtypes.double	[-1.0]	True	-1.0
 Ops.TRUNC	dtypes.double	[2.5]	True	2.0
@@ -3922,6 +3949,7 @@ Ops.TRUNC	dtypes.double	[nan]	True	nan
 Ops.NEG	dtypes.double	[0.0]	True	-0.0
 Ops.NEG	dtypes.double	[-0.0]	True	0.0
 Ops.NEG	dtypes.double	[0.5]	True	-0.5
+Ops.NEG	dtypes.double	[-0.5]	True	0.5
 Ops.NEG	dtypes.double	[1.0]	True	-1.0
 Ops.NEG	dtypes.double	[-1.0]	True	1.0
 Ops.NEG	dtypes.double	[2.5]	True	-2.5
@@ -4062,6 +4090,7 @@ Ops.POW	dtypes.weakfloat	[3.4028234663852886e+38, 2.0]	True	1.1579207543382391e+
 Ops.EXP2	dtypes.weakfloat	[0.0]	True	1.0
 Ops.EXP2	dtypes.weakfloat	[-0.0]	True	1.0
 Ops.EXP2	dtypes.weakfloat	[0.5]	True	1.4142135623730951
+Ops.EXP2	dtypes.weakfloat	[-0.5]	True	0.7071067811865476
 Ops.EXP2	dtypes.weakfloat	[1.0]	True	2.0
 Ops.EXP2	dtypes.weakfloat	[-1.0]	True	0.5
 Ops.EXP2	dtypes.weakfloat	[2.5]	True	5.656854249492381
@@ -4079,6 +4108,7 @@ Ops.EXP2	dtypes.weakfloat	[nan]	True	nan
 Ops.LOG2	dtypes.weakfloat	[0.0]	True	-inf
 Ops.LOG2	dtypes.weakfloat	[-0.0]	True	-inf
 Ops.LOG2	dtypes.weakfloat	[0.5]	True	-1.0
+Ops.LOG2	dtypes.weakfloat	[-0.5]	True	nan
 Ops.LOG2	dtypes.weakfloat	[1.0]	True	0.0
 Ops.LOG2	dtypes.weakfloat	[-1.0]	True	nan
 Ops.LOG2	dtypes.weakfloat	[2.5]	True	1.3219280948873624
@@ -4096,6 +4126,7 @@ Ops.LOG2	dtypes.weakfloat	[nan]	True	nan
 Ops.SIN	dtypes.weakfloat	[0.0]	True	0.0
 Ops.SIN	dtypes.weakfloat	[-0.0]	True	-0.0
 Ops.SIN	dtypes.weakfloat	[0.5]	True	0.479425538604203
+Ops.SIN	dtypes.weakfloat	[-0.5]	True	-0.479425538604203
 Ops.SIN	dtypes.weakfloat	[1.0]	True	0.8414709848078965
 Ops.SIN	dtypes.weakfloat	[-1.0]	True	-0.8414709848078965
 Ops.SIN	dtypes.weakfloat	[2.5]	True	0.5984721441039564
@@ -4113,6 +4144,7 @@ Ops.SIN	dtypes.weakfloat	[nan]	True	nan
 Ops.SQRT	dtypes.weakfloat	[0.0]	True	0.0
 Ops.SQRT	dtypes.weakfloat	[-0.0]	True	-0.0
 Ops.SQRT	dtypes.weakfloat	[0.5]	True	0.7071067811865476
+Ops.SQRT	dtypes.weakfloat	[-0.5]	True	nan
 Ops.SQRT	dtypes.weakfloat	[1.0]	True	1.0
 Ops.SQRT	dtypes.weakfloat	[-1.0]	True	nan
 Ops.SQRT	dtypes.weakfloat	[2.5]	True	1.5811388300841898
@@ -4130,6 +4162,7 @@ Ops.SQRT	dtypes.weakfloat	[nan]	True	nan
 Ops.RECIPROCAL	dtypes.weakfloat	[0.0]	True	inf
 Ops.RECIPROCAL	dtypes.weakfloat	[-0.0]	True	-inf
 Ops.RECIPROCAL	dtypes.weakfloat	[0.5]	True	2.0
+Ops.RECIPROCAL	dtypes.weakfloat	[-0.5]	True	-2.0
 Ops.RECIPROCAL	dtypes.weakfloat	[1.0]	True	1.0
 Ops.RECIPROCAL	dtypes.weakfloat	[-1.0]	True	-1.0
 Ops.RECIPROCAL	dtypes.weakfloat	[2.5]	True	0.4
@@ -4144,26 +4177,28 @@ Ops.RECIPROCAL	dtypes.weakfloat	[3.4028235677973366e+38]	True	2.9387359646368754
 Ops.RECIPROCAL	dtypes.weakfloat	[inf]	True	0.0
 Ops.RECIPROCAL	dtypes.weakfloat	[-inf]	True	-0.0
 Ops.RECIPROCAL	dtypes.weakfloat	[nan]	True	nan
-Ops.TRUNC	dtypes.weakfloat	[0.0]	True	0
-Ops.TRUNC	dtypes.weakfloat	[-0.0]	True	0
-Ops.TRUNC	dtypes.weakfloat	[0.5]	True	0
-Ops.TRUNC	dtypes.weakfloat	[1.0]	True	1
-Ops.TRUNC	dtypes.weakfloat	[-1.0]	True	-1
-Ops.TRUNC	dtypes.weakfloat	[2.5]	True	2
-Ops.TRUNC	dtypes.weakfloat	[-2.5]	True	-2
-Ops.TRUNC	dtypes.weakfloat	[3.0]	True	3
-Ops.TRUNC	dtypes.weakfloat	[4.0]	True	4
-Ops.TRUNC	dtypes.weakfloat	[1e-45]	True	0
-Ops.TRUNC	dtypes.weakfloat	[1e+300]	True	1000000000000000052504760255204420248704468581108159154915854115511802457988908195786371375080447864043704443832883878176942523235360430575644792184786706982848387200926575803737830233794788090059368953234970799945081119038967640880074652742780142494579258788820056842838115669472196386865459400540160
-Ops.TRUNC	dtypes.weakfloat	[65504.0]	True	65504
-Ops.TRUNC	dtypes.weakfloat	[65520.0]	True	65520
-Ops.TRUNC	dtypes.weakfloat	[3.4028235677973366e+38]	True	340282356779733661637539395458142568448
+Ops.TRUNC	dtypes.weakfloat	[0.0]	True	0.0
+Ops.TRUNC	dtypes.weakfloat	[-0.0]	True	-0.0
+Ops.TRUNC	dtypes.weakfloat	[0.5]	True	0.0
+Ops.TRUNC	dtypes.weakfloat	[-0.5]	True	-0.0
+Ops.TRUNC	dtypes.weakfloat	[1.0]	True	1.0
+Ops.TRUNC	dtypes.weakfloat	[-1.0]	True	-1.0
+Ops.TRUNC	dtypes.weakfloat	[2.5]	True	2.0
+Ops.TRUNC	dtypes.weakfloat	[-2.5]	True	-2.0
+Ops.TRUNC	dtypes.weakfloat	[3.0]	True	3.0
+Ops.TRUNC	dtypes.weakfloat	[4.0]	True	4.0
+Ops.TRUNC	dtypes.weakfloat	[1e-45]	True	0.0
+Ops.TRUNC	dtypes.weakfloat	[1e+300]	True	1e+300
+Ops.TRUNC	dtypes.weakfloat	[65504.0]	True	65504.0
+Ops.TRUNC	dtypes.weakfloat	[65520.0]	True	65520.0
+Ops.TRUNC	dtypes.weakfloat	[3.4028235677973366e+38]	True	3.4028235677973366e+38
 Ops.TRUNC	dtypes.weakfloat	[inf]	True	inf
 Ops.TRUNC	dtypes.weakfloat	[-inf]	True	-inf
 Ops.TRUNC	dtypes.weakfloat	[nan]	True	nan
 Ops.NEG	dtypes.weakfloat	[0.0]	True	-0.0
 Ops.NEG	dtypes.weakfloat	[-0.0]	True	0.0
 Ops.NEG	dtypes.weakfloat	[0.5]	True	-0.5
+Ops.NEG	dtypes.weakfloat	[-0.5]	True	0.5
 Ops.NEG	dtypes.weakfloat	[1.0]	True	-1.0
 Ops.NEG	dtypes.weakfloat	[-1.0]	True	1.0
 Ops.NEG	dtypes.weakfloat	[2.5]	True	-2.5

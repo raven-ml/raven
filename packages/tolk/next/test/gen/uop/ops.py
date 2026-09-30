@@ -54,7 +54,7 @@ FLOAT_PAIRS = [(0.0, 0.0), (1.0, -0.0), (-0.0, 0.0), (1.5, 2.5), (-2.5, 0.5), (7
                (math.nan, 1.0), (1.0, math.nan), (0.1, 0.2), (3.4028234663852886e38, 2.0)]
 BOOL_PAIRS = [(False, False), (False, True), (True, False), (True, True)]
 INT_UNARY = [0, 1, -1, 3, -7, 8, 127, -128, 255, 2**31 - 1, 2**63, -2**70]
-FLOAT_UNARY = [0.0, -0.0, 0.5, 1.0, -1.0, 2.5, -2.5, 3.0, 4.0, 1e-45, 1e300, 65504.0, 65520.0, 3.4028235677973366e38,
+FLOAT_UNARY = [0.0, -0.0, 0.5, -0.5, 1.0, -1.0, 2.5, -2.5, 3.0, 4.0, 1e-45, 1e300, 65504.0, 65520.0, 3.4028235677973366e38,
                math.inf, -math.inf, math.nan]
 
 INT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD, Ops.MAX, Ops.AND, Ops.OR,
