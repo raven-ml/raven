@@ -31,21 +31,37 @@ open Tolk_next
 val target : Nx_device.t -> Helpers.Target.t
 (** [target d] is what [d]'s programs are compiled for. A Metal, CUDA, AMD or NV
     device ([Nx_metal_device.of_device] and the others) has its vendor's device
-    kind and its {!Nx_device.arch}. Any other device whose memory its host
-    addresses, such as the host itself or a test device over the host's memory
-    ({!Nx_device.Driver.host_memory}), runs host programs: device ["CPU"],
-    renderer ["CLANG"], and architecture its host's {!Nx_device.arch} with the
-    processor [native] on this machine and [generic] on another.
+    kind and its {!Nx_device.arch}. A host, of this machine or another, and a
+    device that shares its host's memory ({!Nx_device.shares_host_memory}), such
+    as a test device over the host's memory ({!Nx_device.Driver.host_memory})
+    that maps the host's, run host programs: device ["CPU"], renderer ["CLANG"],
+    and architecture its host's {!Nx_device.arch} with the processor [native] on
+    this machine and [generic] on another.
 
-    Raises [Invalid_argument] if [d] runs no program: the disk, or a device
-    whose memory its host does not address and no vendor claims. *)
+    Raises [Invalid_argument] if [d] runs no program: the disk, or a device no
+    vendor claims that is no host and does not share its host's memory. *)
 
-val device : (string * Nx_device.t) list -> string -> Hcq2.device
-(** [device devices name] is the device [devices] maps [name] to, as the
-    compiler sees it ({!Tolk_next.Hcq2.compile_linear}'s [devices]): its
-    {!target}, and the command queues of a Metal, CUDA, AMD or NV device, whose
-    host programs the host of its machine runs and whose queues reach the memory
-    of the named devices it maps ({!Nx_device.Buffer.borrow}).
+type device = {
+  device : Nx_device.t;  (** The device. *)
+  compiler : Hcq2.device;
+      (** The device as the compiler sees it ({!Tolk_next.Hcq2.compile_linear}'s
+          [devices]): its target, and the command queues its vendor encodes, if
+          it runs work from queues. *)
+  placeholder : Ops.t -> Nx_device.Buffer.t option;
+      (** [placeholder u] is the storage of the placeholder [u] of a batch if
+          the vendor's commands name it, such as the objects of the vendor
+          library's low-level section, and [None] for the others. *)
+}
+(** The type for devices as the engine runs work on them. *)
+
+val device : (string * Nx_device.t) list -> string -> device
+(** [device devices name] is the device [devices] maps [name] to, with its
+    {!target}, or, for the disk, which runs no program, the target of the device
+    ["DISK"]. A Metal, CUDA, AMD or NV device has the command queues its
+    vendor's encoder writes, submitted by host programs of the host of its
+    machine, which [devices] must name; no such encoder exists yet, so every
+    device runs its calls one by one. A caller that runs work from queues of its
+    own, such as a test of the compiler, makes a {!device} of its own.
 
     Raises [Invalid_argument] if [devices] does not map [name]. *)
 
@@ -84,22 +100,23 @@ type t
 (** The type for linked schedules. *)
 
 val link :
-  devices:(string * Nx_device.t) list ->
+  devices:(string -> device) ->
   ?bound:(Ops.t * Nx_device.Buffer.t list) list ->
   Ops.t ->
   t
 (** [link ~devices ~bound linear] is the compiled schedule [linear]
-    ({!Tolk_next.Hcq2.compile_linear}) linked on [devices], which maps each
-    device name of [linear] to its device.
+    ({!Tolk_next.Hcq2.compile_linear}, compiled for
+    [fun n -> (devices n).compiler]) linked on [devices], which maps each device
+    name of [linear] to its device.
     - Each storage node ({!Tolk_next.Op.Buffer}) is bound to its buffers in
       [bound] (default [[]]), one per device of its placement, and allocated
       otherwise ({!Nx_device.Buffer.create}).
-    - Each placeholder of a batch is allocated on its device: a volatile one in
-      pinned memory ({!Nx_device.Buffer.create}[ ~pinned:true]), which the host
-      and the device see coherently. The signal word placeholder of a device is
-      that device's {!Nx_device.signal_word}, a C function's the function's
-      address, and the placeholders a vendor's commands name are the vendor's
-      objects, from its library's low-level section.
+    - Each placeholder of a batch is the storage its device's [placeholder]
+      gives it, if any. Otherwise the signal word placeholder of a device is
+      that device's {!Nx_device.signal_word}, and any other is allocated in
+      pinned memory of its device ({!Nx_device.Buffer.create}[ ~pinned:true]),
+      which the host and the device see coherently, since the batch's host
+      program writes it.
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.
@@ -109,7 +126,8 @@ val link :
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     [bound] gives a storage node buffers of other devices, sizes or number than
-    its placement, or if [linear] is not a compiled schedule;
+    its placement, if a batch names a C function of a library the engine does
+    not know, or if [linear] is not a compiled schedule;
     {!Nx_device.Out_of_memory} if a device cannot allocate its storage; and
     [Failure] if a device refuses a program's binary. *)
 
@@ -121,6 +139,9 @@ val run :
     (default [[]]). It runs the calls of [s] in order:
     - a host program is {!Program.run} on each device of its first argument;
     - a copy is {!Nx_device.Buffer.copy};
+    - a range around calls runs them once for each combination of the ranges'
+      values, the last range varying fastest, with each range's variable
+      ({!Tolk_next.Hcq2.range_value}) bound to its value;
     - a batch is one {!Nx_device.submit} over its devices that touches every
       buffer it reaches. It first waits for the work of its previous run on each
       of its devices ({!Nx_device.Submission.wait}), since the runs share its
@@ -144,17 +165,19 @@ val run :
 val measure :
   ?cold:bool ->
   ?vars:(string * int) list ->
-  devices:(string * Nx_device.t) list ->
+  devices:(string -> device) ->
   string ->
   Ops.t ->
   float
 (** [measure ~cold ~vars ~devices name prg] is the time in seconds of one run of
     the compiled program [prg] on the device [devices] maps [name] to, on
-    scratch buffers of its parameters' sizes, as the device times it: the span
-    between its stamps on a device with queues, the call on the host otherwise.
-    With [cold] (default [false]), the device's caches are invalidated first
-    where its vendor can ([Nx_nv_device.invalidate_caches]). It is the
-    measurement the compiler's search of kernel optimisations times its
-    candidates with.
+    scratch buffers of its parameters' sizes. It is timed by a profile of the
+    run ({!Nx_device.Profile}): the span of its kernel, which a device with
+    queues stamps and the host records around its call otherwise. While a
+    profile is taken already, it is the run and the device's synchronization on
+    the host clock. With [cold] (default [false]), the device's caches are
+    invalidated first where its vendor can ([Nx_nv_device.invalidate_caches]).
+    It is the measurement the compiler's search of kernel optimisations times
+    its candidates with.
 
     Raises as {!link} and {!run} do. *)

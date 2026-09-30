@@ -16,4 +16,8 @@
    metal.ml
    from
    (nx.metal.device -> metal.macos.ml)
-   (-> metal.other.ml))))
+   (-> metal.other.ml)))
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))
