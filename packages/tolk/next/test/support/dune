@@ -1,6 +1,6 @@
 (library
  (name tolk_next_test)
- (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts
+ (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts null_queue
   cuda_fp8)
  (wrapped false)
  (libraries windtrap tolk.next zarith))
