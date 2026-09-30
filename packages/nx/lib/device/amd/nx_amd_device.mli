@@ -140,9 +140,17 @@ val v :
     [v] into it: all 64 bits in one write, or its low 32 bits and then, only
     when they are [0], its high 32 bits. The values thus complete in order
     across the queues, and a high word written late never takes the word back.
-    The device's own copies follow the same rule on the SDMA queue. Work waits
-    for another device's pair of {!Nx_device.Submission.waits} on that device's
-    signal word with a greater-or-equal test. *)
+    The device's own copies follow the same rule on the SDMA queue.
+
+    A queue compares 32-bit words, and a test that the low half is at least a
+    value passes early once the value's low half wraps. So work waits on its
+    queue for another device [d'] only when [d'] is a device of the same
+    submission, and only for {!Nx_device.submitted}[ d'], the value of [d']'s
+    work before the submission: only the submission's own work on [d'] signals
+    past it, and it does so after the waiting work, so the wait is exact, a test
+    that the low 32 bits of [d']'s signal word equal the value's. Any other pair
+    of {!Nx_device.Submission.waits} is waited for on the host
+    ({!Nx_device.Submission.wait}). *)
 
 type t
 (** The type for the queues and properties of a device. *)
