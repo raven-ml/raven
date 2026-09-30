@@ -407,6 +407,8 @@ uop/render/program_listing.golden
 uop/render/program_listing_colored.golden
 uop/render/symbolic.golden
 uop/render/symbolic_rendered.golden
+uop/render/trees.golden
+uop/render/trees_rendered.golden
 uop/render/unrendered.golden
 uop/render/unrendered_rendered.golden
 uop/render/wide.golden

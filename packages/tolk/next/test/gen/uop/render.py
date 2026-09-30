@@ -8,11 +8,14 @@ gives each case's position among them and what `render` writes for it: with
 input is a sink whose sources are the list printed, in order.
 """
 
+import ast
+import functools
+
 from golden import graph, listing, table, text
 from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Context
 from tinygrad.uop import Ops
-from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, UOp
+from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, PatternMatcher, UOp
 
 
 def attempt(fn):
@@ -255,6 +258,83 @@ def symbolic(): return UOp.sink(*[u for _, u in SYMBOLIC])
 
 @table
 def symbolic_rendered(): return rendered(SYMBOLIC)
+
+
+# Simplifying trees of the binary operations, drawn as the suite's law draws
+# them. CPython raises ValueError on a shift by a negative count, where
+# tolk.next gives its bounds the type's and declines to fold it (the README's
+# negative-shift row): `simplified` is tinygrad with that rule applied, and
+# `tinygrad` is tinygrad as it is.
+
+SYMBOLS = {ast.Add: Ops.ADD, ast.Sub: Ops.SUB, ast.Mult: Ops.MUL, ast.FloorDiv: Ops.FLOORDIV, ast.Mod: Ops.FLOORMOD,
+           ast.LShift: Ops.SHL, ast.RShift: Ops.SHR, ast.BitAnd: Ops.AND, ast.BitOr: Ops.OR, ast.BitXor: Ops.XOR,
+           ast.Lt: Ops.CMPLT, ast.NotEq: Ops.CMPNE}
+TREE_VARIABLES = {n: UOp.variable(n, 0, 9) for n in "abc"}
+
+
+def tree(text):
+    def build(n):
+        if isinstance(n, ast.Name): return TREE_VARIABLES[n.id]
+        if isinstance(n, ast.Constant): return UOp.const(n.value)
+        if isinstance(n, ast.UnaryOp): return UOp.const(-n.operand.value)
+        if isinstance(n, ast.Compare): return binary(SYMBOLS[type(n.ops[0])], build(n.left), build(n.comparators[0]))
+        return binary(SYMBOLS[type(n.op)], build(n.left), build(n.right))
+    return build(ast.parse(text, mode="eval").body)
+
+
+TREES = [
+    # the bounds of a negative shift
+    "(4<(b>>-2^9))", "((b>>-2|-2)!=0)", "(-1|(b<<-3)%a&9)", "(a!=((c|5)>>-3))", "(2<(c+a+(c>>-2)))",
+    # folding a negative shift
+    "(b<(8<<-2))", "(c!=(0>>-3&5>>a))", "(b<(-2+-3<<-3-4))", "(4-((9>>-3&c)+-3))", "(7>>(6>>4)-4&c<<b)",
+    # the rule for (x&mask)>>k with a negative k
+    "(((a-c)*(b%c)&(5&c)>>-2)//b)", "((2&-1)%(c>>a)//(c>>(a|1))%((5&5<<b)>>-3))",
+    # a zero divisor
+    "(a%0)", "(0&0-(b&c//0))", "(b-(c//(2//5)^a))", "((7<<(c&-1)&b)%0)", "(6//(c%(3//9))|9)",
+    # a zero divisor behind a negative shift
+    "(b%(-1<<-2&(0&c))-((1<<b)-b//9)//b)", "(((0>>8)//(-3+a)>>(8<<-3|8//6))%(1>>1%(6&6)))",
+    "((a<(b&(a^a)))^((9//(c>>-1))!=((a<<a)//(5&b)))|(((5//1<<5//c)!=(6|b//0))|(b<(4&1&c<<c))))",
+]
+
+
+def declining_negative_shifts():
+    """Apply the negative-shift row to tinygrad, in this process."""
+    min_max = UOp.__dict__["_min_max"].func
+    def bounded(self):
+        if self.op in (Ops.SHL, Ops.SHR) and not dtypes.is_float(self.dtype):
+            lo, hi = self.src[1]._min_max
+            if lo == hi and type(lo) is int and lo < 0: return self.dtype.min, self.dtype.max
+        return min_max(self)
+    prop = functools.cached_property(bounded)
+    prop.__set_name__(UOp, "_min_max")
+    UOp._min_max = prop
+    def rewrite(self, uop, ctx=None):
+        if len(pats := self.pdict.get(uop.op, [])):
+            if (ler := uop.__dict__.get("_src_ops")) is None: uop.__dict__["_src_ops"] = ler = {u.op for u in uop.src}
+            for _, match, early_reject in pats:
+                if not early_reject.issubset(ler): continue
+                try: ret = match(uop, ctx)
+                except ValueError as e:
+                    if str(e) != "negative shift count": raise
+                    continue
+                if ret is not None and ret is not uop: return ret
+        return None
+    PatternMatcher.rewrite = rewrite
+
+
+@graph
+def trees(): return UOp.sink(*[tree(t) for t in TREES])
+
+
+@table
+def trees_rendered():
+    # tinygrad as it is first: a raise caches nothing, and the rule's bounds
+    # would stay cached on the nodes
+    uops = [tree(t) for t in TREES]
+    rows = [[t, str(i), attempt(u.render)] for i, (t, u) in enumerate(zip(TREES, uops))]
+    declining_negative_shifts()
+    for row, u in zip(rows, uops): row.append(attempt(u.render))
+    return ["case", "src", "tinygrad", "simplified"], rows
 
 
 # Listings

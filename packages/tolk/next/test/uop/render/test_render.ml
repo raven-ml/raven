@@ -172,6 +172,19 @@ let render =
                 (Ops.v Shrink ~src:[ storage; a; Ops.int 2 ])));
     ]
 
+(* The [simplified] column follows the README's negative-shift row: where
+   tinygrad raises CPython's ValueError on a shift by a negative count, a
+   shift's bounds are its type's and folding it declines. A zero divisor still
+   raises. *)
+let simplified_tree cell =
+  if cell "simplified" <> cell "tinygrad" then
+    equal string "raises ValueError" (cell "tinygrad");
+  let u = case "trees.golden" cell in
+  match cell "simplified" with
+  | "raises ZeroDivisionError" ->
+      raises Division_by_zero (fun () -> Render.render u)
+  | rendered -> equal string rendered (Render.render u)
+
 let simplified =
   group ~tags:[ l3 ] "render after simplifying"
     [
@@ -182,6 +195,7 @@ let simplified =
           let u = case "symbolic.golden" cell in
           equal string (cell "render") (Render.render ~simplify:false u);
           equal string (cell "simplified") (Render.render u));
+      Golden.cases "trees_rendered.golden" simplified_tree;
       prop "writes the simplified node" expression (fun u ->
           equal string
             (Render.render ~simplify:false (Ops.simplify u))
