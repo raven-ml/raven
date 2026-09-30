@@ -4,7 +4,7 @@
  (name tolk_next)
  (public_name tolk.next)
  (private_modules host_config)
- (libraries unix zarith)
+ (libraries unix zarith nx.device.elf)
  ; The compilers that run in the process find their vendor's library at run
  ; time, so that the library builds and runs without CUDA, ROCm or Metal.
  (foreign_stubs

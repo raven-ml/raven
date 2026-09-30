@@ -1,0 +1,26 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(volatile unsigned long* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned long* restrict put_value_compute_0_2_1, volatile unsigned long* restrict write_ptr_compute_0_3_1, volatile unsigned int* restrict ring_compute_0_4_4194304, unsigned char* restrict cmdbuf_compute_0_5_548, unsigned char* restrict ib_compute_0_7_16, const unsigned long submitted_amd_, const unsigned long value_amd_) {
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val0 = (*(put_value_compute_0_2_1+0));
+  *(((unsigned int*)(cmdbuf_compute_0_5_548))+18) = ((unsigned int)(submitted_amd_));
+  *(((unsigned long*)((cmdbuf_compute_0_5_548+0)))+67) = value_amd_;
+  int cast0 = ((int)((val0&4194303ul)));
+  int alu4 = ((4194304-cast0)^-1);
+  int alu5 = ((alu4<-5)?-5:alu4);
+  int alu6 = (alu5^-1);
+  for (int Lidx0 = 0; Lidx0 < alu6; Lidx0++) {
+    unsigned int val1 = (*(((unsigned int*)(ib_compute_0_7_16))+Lidx0));
+    *(ring_compute_0_4_4194304+(cast0+Lidx0)) = val1;
+  }
+  for (int Lidx1 = 0; Lidx1 < (4-alu6); Lidx1++) {
+    unsigned int val2 = (*(((unsigned int*)(ib_compute_0_7_16))+(alu6+Lidx1)));
+    *(ring_compute_0_4_4194304+Lidx1) = val2;
+  }
+  unsigned long alu11 = (val0+4ul);
+  *(write_ptr_compute_0_3_1+0) = alu11;
+  *(put_value_compute_0_2_1+0) = alu11;
+  *(doorbell_compute_0_0_1+0) = alu11;
+}
+

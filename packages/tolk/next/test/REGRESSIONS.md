@@ -2981,3 +2981,67 @@ ignored, and `JITBEAM` defaulting to 0 are killed. Two survive, equivalent:
 `~walk:false` in the substitution of the inputs, whose parameters hold no
 input to rewrite again, and planning with the inputs held, which the
 substitution has already replaced.
+
+## Ops_amd
+
+`A` is the `Ops_amd` suite (`test/runtime/ops_amd`). Its goldens come from
+tinygrad's `AMDComputeQueue`, `AMDComputeAQLQueue` and `AMDSDMAQueue` on an AMD
+device described without a GPU, whose kernels compile to real code objects
+(the old tolk's HIP fixture, and fixtures LLVM compiled once), with D1, D37,
+D38 and D48 applied in the generator: for each of fifteen cases (gfx1100,
+gfx1201, gfx942 on eight dies with AQL and on one with PM4; chains, profiles,
+copies to and from the host on SDMA 4.4.2, 5 and 6, profiled, and without copy
+queues, a copy over the copy engine's largest, a launch size that reads a
+variable on PM4 and AQL, and a kernel that reads its dispatch packet and
+scratch memory on PM4 and AQL),
+the schedule `sched_batches` receives, the schedule `compile_linear` returns
+and its host programs' source; and the words of the waits and signals on a
+signal word at the values that carry into its high half. It needs no GPU.
+
+Coverage of `ops_amd.ml` is 96.3% (547 of 568 points). The code no test
+reaches: the refusals of a code object with an unknown relocation or no
+`.rodata`, of a symbolic local size, of a command that is no compiled program
+or a command buffer that is no placeholder, of a queue name that is neither
+`COMPUTE` nor `COPY`, and of `copy` on the AQL queue; the `SET_UCONFIG_REG`
+branch of `wreg`, since every register written is an SH register; and the
+scratch buffer descriptor of the user registers, which no code object of the
+supported targets asks for, since they all have architected flat scratch.
+Of the 85 mutants the suite reaches, all are killed; the 4 never reached are
+in the `SET_UCONFIG_REG` branch.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue` (`pkt3`, `wreg`, `pred_exec`, `wait_reg_mem`, `acquire_mem`, `release_mem`, `memory_barrier`, `kernargs`, `exec`, `wait`, `timestamp`, `signal`, `submit`, `push`) (no test) | PM4 packets, the kernel arguments and the indirect buffer pushed on the ring | `A › recorded cases › chain`, `chain_gfx1201`, `chain_gfx942_cpx`, `profile`, `copies`, `variable`, `scratch` |
+| tinygrad: `runtime/ops_amd.py` `AMDComputeAQLQueue` (no test) | dispatch packets, PM4 runs wrapped as indirect buffers, the doorbell one behind, `pred_exec` on eight dies | `A › recorded cases › chain_gfx942`, `profile_gfx942`, `copies_gfx942`, `scratch_gfx942` |
+| tinygrad: `runtime/ops_amd.py` `AMDSDMAQueue` (no test) | copies in pieces of the largest copy, polls, fences, timestamps, the command buffer streamed into the ring with its tail zeroed | `A › recorded cases › copies`, `copies_gfx942`, `copies_profile` (SDMA timestamps), `large_copy` (SDMA 5: 4 MiB pieces) |
+| tinygrad: `runtime/ops_amd.py` `AMDDevice.has_copy_queue` false | copies become kernels on the compute queue | `A › recorded cases › copies_no_sdma` |
+| tinygrad: `runtime/ops_amd.py` `_amd_program_image`, `AMDDevice.tmpring_size` (no test) | the descriptor's fields, the gfx11 privilege bit, the LDS blocks in RSRC2, the scratch ring | `A › recorded cases › *` (every PM4 case writes them); the LDS check is nx.device's load (D38) |
+| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue.wait`, `.signal`, `AMDSDMAQueue.wait`, `.signal` at 2^32 | 32-bit compares and writes of 64-bit values | `A › signal_words.golden` (D37), `A › carry law (D37)` |
+| tinygrad: `runtime/ops_amd.py` `AMDComputeQueue.push`, `AMDSDMAQueue.submit` (no test) | the host program writes a ring from its put position | `A › room (D39)`: a submission writes at most half a ring, which nx.device leaves room for |
+| tinygrad: `runtime/ops_amd.py` `AMDDevice.queue_buffer`'s tags, `pm_bufferize`'s `scratch` and `program` (no test) | the placeholders the device's storage binds | `A › what the engine links` (3 tests: the queue words, a program and scratch memory, and every placeholder of every recorded batch) |
+| tinygrad: `runtime/ops_amd.py` `AMDDevice.__init__`'s target assertion, `sdma_queue`'s `unwrap`, the queues' missing `copy` and `exec` | refusals | `A › refusals` (4 tests) |
+| tinygrad: `runtime/ops_amd.py` `AMDSDMAQueue.write` | | dropped: its producer is RDMA (README Exclusions) |
+| tinygrad: external/external_test_amd.py::TestAMD::test_amd_ring_64bit_doorbell | a write pointer near 2^33, the ring wrapping | the host program's push splits at the ring's end in every `A › recorded cases` host program; on hardware, a ring's wrap is nx.amd.device's `copies that wrap the SDMA ring` |
+| tinygrad: runtime/test_hcq2.py | batches and the fence | the `Hcq2` and `Engine` suites' |
+| DIVERGENCES D30 | a range around calls, one submission per run | `A › loops (D30)` (PM4, and profiled AQL) |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: `golden/amdqueue` `wait_*`, `signal_*`, `timestamp_*`, `memory_barrier_*`, `exec_gfx1100` | PM4 words on gfx1100 and gfx942 | `A › recorded cases › chain*`, `profile*`, `A › signal_words.golden` |
+| old: `golden/amdqueue` `sdma_wait_*`, `sdma_signal_*`, `sdma_timestamp_*`, `sdma_copy_{small,exact,over_cap,large}_*` | SDMA words, chunk boundaries | `A › recorded cases › copies*`, `large_copy`, `A › signal_words.golden` |
+| old: `golden/amdqueue` `sdma_write32_*`, `sdma_write64_*` | | dropped: `write` is RDMA's |
+| old: `unit/test_runtime_amd.ml` "AQL" (2 tests) | AQL packets on one and several dies, predicated completion | `A › recorded cases › chain_gfx942`, `profile_gfx942` |
+| old: `unit/test_runtime_amd.ml` "Compiled queues": "profiling timestamps bracket ...", "compiles symbolic launch dimensions ...", "compiles dependencies between SDMA and compute", "executes SDMA wrapping with dispatch packets and minimum scratch" | | `A › recorded cases › profile`, `variable`, `copies`, `scratch` |
+| old: `unit/test_runtime_amd.ml` "PM4 compute dies use disjoint scratch slices" | | dropped: nx.device takes AQL packets on several dies, and `Ops_amd.queues` refuses PM4 packets there |
+| old: `unit/test_runtime_amd.ml` "retained PM4 links keep each device scratch", "Scratch" (7 tests) | | the scratch memory is nx.device's (`Nx_amd_device.scratch`), grown by the engine at link; the ring's words are `A › recorded cases › scratch` |
+| old: `unit/test_runtime_amd.ml` "a replay timeout suppresses publication ...", "a full ring times out ...", "upload and download publish to independent SDMA rings", "SDMA writes patch mixed-width values on replay" | | dropped here: ring room, timeouts and publication are nx.device's and the engine's |
+| old: `unit/test_runtime_amd.ml` "SDMA revision" | the largest copy by the copy engine's version | `A › recorded cases › large_copy` (5.0), `copies` (6.0), `copies_gfx942` (4.4.2) |
+| old: `unit/test_runtime_amd.ml` "Program" (5 tests) | the descriptor, relocations, code properties | `A › recorded cases › scratch*` (dispatch pointer, scratch) and every case; the refusal of excessive LDS is nx.device's load (D38) |
+| old: `unit/test_runtime_amd.ml` "Timeline" (4 tests) | rollover of 32-bit waits | `A › carry law (D37)`: values carry without a rollover protocol |
+| old: `unit/test_runtime_amd.ml` "File_io", "Mmio", "Buffer", "Q", "Signal", "Kfd_iface", "Pci_iface", "Device" | the old runtime | dropped: nx.amd.device's suite |
+| old: `unit/test_runtime_amd.ml` "Compiler" (4 tests) | comgr | the `Compiler_amd` suite's |
+| old: `unit/test_amd_tables.ml` | the generated register tables | dropped: `Amd_gpu` holds only the definitions `Ops_amd` encodes, generated from tinygrad's and checked by `gen.py --check`, and every recorded case checks them |

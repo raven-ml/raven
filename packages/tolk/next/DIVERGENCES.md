@@ -959,8 +959,8 @@ the Exclusions of `README.md`.
   visits of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
   of `lower_call`, and the kernels not compiled yet of
-  `get_enqueue_devs`; `lib/runtime/ops_metal.ml` and
-  `lib/runtime/ops_cuda.ml` (`loop`).
+  `get_enqueue_devs`; `lib/runtime/ops_metal.ml`, `lib/runtime/ops_cuda.ml`
+  and `lib/runtime/ops_amd.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
@@ -970,8 +970,11 @@ the Exclusions of `README.md`.
   queues it depends on in the current trip and, after it, in the trip before
   (for the value `0` in the first trip). Each group of patched words loops
   over ranges of its own, since a program ends a range once. Metal repeats a
-  loop's indirect commands and their arguments, and CUDA's host program
-  loops over its launches, each trip's reading its trip's extra words.
+  loop's indirect commands and their arguments, CUDA's host program loops
+  over its launches, each trip's reading its trip's extra words, and AMD's
+  AQL queue repeats a loop's packets, each trip's running its trip's bytes of
+  the command buffer (tinygrad's `AMDComputeAQLQueue` keeps its packets apart
+  from the bytes `HWQueue.loop` repeats).
   - An address that moves with a range (its storage's plus the view's offset)
     and a position a signal stores are 64-bit words cast from the range's weak
     integers, which D44 computes in integers. tinygrad's loop builds no such
@@ -1004,7 +1007,8 @@ the Exclusions of `README.md`.
   records a span of each trip's kernel` (slow); the Ops_cuda suite
   (`test/runtime/ops_cuda`): `loops (D30) › a range is a loop of the host
   program around its launches` and `› a range's addresses are integers,
-  profiled or not`.
+  profiled or not`; the Ops_amd suite (`test/runtime/ops_amd`): `loops
+  (D30)`.
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 
@@ -1116,6 +1120,90 @@ the Exclusions of `README.md`.
   NVIDIA GPU, `execution` (slow), whose every kernel reads its function from
   such a word.
 
+## D37. AMD's queues wait on a signal word for equality and write it whole
+
+- **tinygrad:** `runtime/ops_amd.py:402` (`AMDComputeQueue.wait`), `:409-412`
+  (`AMDComputeQueue.signal`), `:482-486` (`AMDSDMAQueue.wait`) and `:496-498`
+  (`AMDSDMAQueue.signal`).
+- **tolk.next:** `lib/runtime/ops_amd.ml:74` (`is_signal_word`), `:379`
+  (the compute queue's `wait`), `:395` (its `signal_mem`), `:677` (the copy
+  queue's `wait`) and `:709` (its `signal`).
+- **Differs:** tinygrad's queues compare the low 32 bits of a 64-bit word,
+  and write only them: the compute queue waits until they are at least the
+  value's (`WAIT_REG_MEM`, `>=`) and signals with `RELEASE_MEM` of the low 32
+  bits (`send_32_bit_low`); the copy queue polls for `>=` and fences the low 32
+  bits. A device's values pass 2^32, and then the word's high half is never
+  written, so a 64-bit reader never sees the value, and a wait for a value just
+  past the wrap passes on a word just before it (`0xfffffffd >= 5`). In
+  tolk.next a wait on a device's signal word, which is for the value its work
+  before the batch signals and which only the batch's own work passes, waits
+  until the low 32 bits equal the value's; a signal of a device's value writes
+  all 64 bits: in one `RELEASE_MEM` of 64-bit data on the compute queue, and on
+  a copy queue with a fence of the low 32 bits then, when they are `0`, a fence
+  of the high 32 bits, four NOPs otherwise, chosen by the host program since the
+  value is its variable. A high half is then written only when it changes, so
+  one that lands after a later value's write holds that value's high half, and
+  a wait on the low half never passes before its value is written. Waits and
+  signals of the queues' signals in the batch's slots, whose values are small,
+  keep tinygrad's encoding.
+- **Reason:** (c). nx.device's AMD library states this rule for every work on
+  an AMD device (its low-level section): its own copies wait for equality of
+  the low 32 bits and write the high half only when the low one is `0`, and a
+  batch's work shares their signal word.
+- **Pinned by:** the Ops_amd suite (`test/runtime/ops_amd`):
+  `signal_words.golden`, the words of the waits and signals at 2^32 - 1, 2^32,
+  2^32 + 1, 2^33 - 1 and 2^33 from tinygrad with D37 applied by its generator
+  (`gen/runtime/ops_amd.py`); `carry law (D37)`, which decodes them into
+  memory writes and checks, in every interleaving of three works' writes and
+  a wait, that the word never reads above the latest value whose work
+  completed and never goes below a value once its writes landed, and that
+  each wait passes only once its value is written; and every `recorded
+  cases` golden.
+
+## D38. An AMD program's code object is loaded by the engine
+
+- **tinygrad:** `runtime/ops_amd.py:533-541` (`amd_build_program` makes a
+  placeholder tagged `program` and stores the image into it at link), `:1032`
+  (`AMDDevice.program_buffer` allocates it), `:547-548` (`_amd_program_image`
+  refuses a kernel whose LDS exceeds the GPU's).
+- **tolk.next:** `lib/runtime/ops_amd.ml:153` (`amd_build_program`); the
+  engine's AMD module.
+- **Differs:** the program's placeholder is tagged
+  `("program", binary, name)`, and no link patch writes an image into it: the
+  engine loads the code object on the device (`Nx_device.Program.load`) and
+  binds the placeholder to the image nx.device uploaded (`Nx_amd_device.kernel`'s
+  `code`), whose layout is the one the compiler reads its descriptor from
+  (`Nx_device_elf`). The LDS check is the load's.
+- **Reason:** (c). Programs are nx.device's (D3): its AMD library uploads a
+  code object once per device into memory the GPU fetches from, flushes the
+  host data path, checks the kernel against the GPU and records the load in
+  profiles.
+- **Pinned by:** the Ops_amd suite: every `recorded cases` golden, from
+  tinygrad with D38 applied by its generator.
+
+## D39. A submission writes at most half of each AMD ring
+
+- **tinygrad:** `runtime/ops_amd.py:420-428` (`AMDComputeQueue.push`, which
+  the AQL queue's `submit` calls too) and `:500-520` (`AMDSDMAQueue.submit`):
+  the host program writes a submission's packets from the ring's put
+  position without looking at how far the engine has read, and the SDMA
+  queue refuses only a command buffer larger than its ring.
+- **tolk.next:** `lib/runtime/ops_amd.ml:599` (the AQL queue's `submit`) and
+  `:733` (the copy queue's).
+- **Differs:** a submission writes at most half of each ring. The copy
+  queue refuses a command buffer over a quarter of its ring, since zeroing
+  the tail when it does not fit before the ring's end can double what it
+  takes, and the AQL queue refuses packets over half of its. nx.device waits,
+  before the host program runs, until each ring of the device is at most
+  half full, so no host program overwrites packets its engine has not read.
+- **Reason:** (c). nx.device's queue writers wait until the engine leaves room
+  (the AMD library's low-level section), and a host program cannot wait with
+  the device's timeout nor lose it; `Nx_device.submit` does, through the
+  driver's `room`.
+- **Pinned by:** the Ops_amd suite: `room (D39)`; nx.device's suite: `timeline ›
+  a submission runs once its device's queues have room` and `› a device whose
+  queues stay full through its timeout is lost ...`.
+
 ## D41. The memory plan sees a range's calls, and leaves buffers reached through views
 
 - **tinygrad:** `schedule/memory.py:28-33` (`memory_plan_rewrite` takes each
@@ -1216,6 +1304,21 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
   of a staging buffer of the host where the queues cannot reach`, whose device
   description reaches every device but CPU:2.
+
+## D48. A kernel's dispatch packet in its arguments is words
+
+- **tinygrad:** `runtime/ops_amd.py:61-67` (`dispatch_packet`), `:361-364`
+  (`kernargs`).
+- **tolk.next:** `lib/runtime/ops_amd.ml:162` (`dispatch_packet`).
+- **Differs:** tinygrad gives a known grid size as a Python integer, which the
+  AQL queue turns into a 32-bit constant but the kernel arguments of the PM4
+  queue put as they are among the sources of a `LINEAR`: encoding a kernel
+  that reads its dispatch packet on a PM4 queue raises. tolk.next's grid sizes
+  are 32-bit constants in both.
+- **Reason:** (a). A node's sources are nodes: OCaml's types admit no integer
+  among them.
+- **Pinned by:** the Ops_amd suite: `recorded cases › scratch`, a kernel that
+  reads its dispatch packet and scratch memory, on a PM4 queue.
 
 ## D50. Every C-style renderer writes a division
 

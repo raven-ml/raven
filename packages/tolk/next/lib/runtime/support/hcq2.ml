@@ -70,9 +70,13 @@ module Queue = struct
         }
     | _ -> invalid_arg "a submission's commands name their queue"
 
+  let v ~devices name =
+    make (Ops.v Op.Linear ~arg:(Queue { devices; queue = name }))
+
   let devices q = q.devices
   let name q = q.name
   let size q = q.size
+  let words q = List.rev q.patches
 
   let append q s =
     let n = String.length s in

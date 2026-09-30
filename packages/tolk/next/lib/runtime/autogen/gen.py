@@ -8,7 +8,7 @@ tinygrad's autogen modules.
     uv run packages/tolk/next/lib/runtime/autogen/gen.py [--check]
 
 It imports tinygrad from `_tinygrad_next`, which must be at TINYGRAD, and
-writes each vendor's module beside this script: `nv_gpu.ml`. With --check it
+writes each vendor's module beside this script: `nv_gpu.ml` and `amd_gpu.ml`. With --check it
 writes nothing and fails if a committed module differs.
 
 A module holds only the constants its encoder reads, as the inventories below
@@ -115,7 +115,136 @@ def nv():
     return "\n".join(lines) + "\n"
 
 
-MODULES = {"nv_gpu.ml": nv}
+# AMD
+
+# PM4, the same in pm4_soc15.py (gfx9) and pm4_nv.py (gfx10 on).
+PM4_CONSTANTS = [
+    "PACKET_TYPE3", "PACKET3_SET_SH_REG", "PACKET3_SET_SH_REG_START", "PACKET3_SET_SH_REG_END", "PACKET3_SET_UCONFIG_REG",
+    "PACKET3_SET_UCONFIG_REG_START", "PACKET3_PRED_EXEC", "PACKET3_WAIT_REG_MEM", "PACKET3_ACQUIRE_MEM",
+    "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER",
+    "INDIRECT_BUFFER_VALID", "CACHE_FLUSH_AND_INV_TS_EVENT", "event_index__mec_release_mem__end_of_pipe",
+    "data_sel__mec_release_mem__send_32_bit_low", "data_sel__mec_release_mem__send_64_bit_data",
+    "data_sel__mec_release_mem__send_gpu_clock_counter", "int_sel__mec_release_mem__none",
+    "int_sel__mec_release_mem__send_interrupt_after_write_confirm",
+]
+# Fields, as the shift of their first bit: the headers give no width. RELEASE_MEM's fields are pm4_soc15.py's
+# DATA_SEL and INT_SEL, and pm4_nv.py's PACKET3_RELEASE_MEM_* of the same shifts.
+PM4_SHIFTS = ["WAIT_REG_MEM_MEM_SPACE", "WAIT_REG_MEM_OPERATION", "WAIT_REG_MEM_FUNCTION", "WAIT_REG_MEM_ENGINE",
+              "EVENT_TYPE", "EVENT_INDEX"]
+PM4_RELEASE_SHIFTS = {"DATA_SEL": "PACKET3_RELEASE_MEM_DATA_SEL", "INT_SEL": "PACKET3_RELEASE_MEM_INT_SEL",
+                      "EVENT_TYPE": "PACKET3_RELEASE_MEM_EVENT_TYPE", "EVENT_INDEX": "PACKET3_RELEASE_MEM_EVENT_INDEX"}
+PM4_NV_SHIFTS = [f"PACKET3_ACQUIRE_MEM_GCR_CNTL_{f}" for f in
+                 ("GLI_INV", "GLM_INV", "GLM_WB", "GLK_INV", "GLK_WB", "GLV_INV", "GL1_INV", "GL2_INV", "GL2_WB")]
+PM4_NV_CONSTANTS = [f"PACKET3_RELEASE_MEM_GCR_{f}" for f in ("GLV_INV", "GL1_INV", "GL2_INV", "GLM_WB", "GLM_INV", "GL2_WB", "SEQ")]
+PM4_SOC15_SHIFTS = [f"PACKET3_ACQUIRE_MEM_CP_COHER_CNTL_{f}" for f in
+                    ("SH_ICACHE_ACTION_ENA", "SH_KCACHE_ACTION_ENA", "TC_ACTION_ENA", "TCL1_ACTION_ENA", "TC_WB_ACTION_ENA")]
+PM4_SOC15_CONSTANTS = ["EOP_TC_WB_ACTION_EN", "EOP_TC_NC_ACTION_EN"]
+
+# SDMA, the same in sdma_4_0_0.py, sdma_5_0_0.py and sdma_6_0_0.py; the fence's memory type is from version 5.
+SDMA_CONSTANTS = ["SDMA_OP_NOP", "SDMA_OP_COPY", "SDMA_OP_FENCE", "SDMA_OP_TRAP", "SDMA_OP_POLL_REGMEM", "SDMA_OP_TIMESTAMP",
+                  "SDMA_SUBOP_COPY_LINEAR", "SDMA_SUBOP_TIMESTAMP_GET_GLOBAL"]
+SDMA_FIELDS = ["SDMA_PKT_COPY_LINEAR_HEADER_sub_op", "SDMA_PKT_TIMESTAMP_GET_HEADER_sub_op", "SDMA_PKT_POLL_REGMEM_HEADER_func",
+               "SDMA_PKT_POLL_REGMEM_HEADER_mem_poll", "SDMA_PKT_POLL_REGMEM_DW5_interval", "SDMA_PKT_POLL_REGMEM_DW5_retry_count"]
+
+# The compute registers the encoder writes, at their address in each graphics family's segment bases; and
+# COMPUTE_DISPATCH_INITIATOR's fields.
+GC_REGISTERS = ["regCOMPUTE_DISPATCH_INITIATOR", "regCOMPUTE_START_X", "regCOMPUTE_PGM_LO", "regCOMPUTE_DISPATCH_SCRATCH_BASE_LO",
+                "regCOMPUTE_PGM_RSRC1", "regCOMPUTE_RESOURCE_LIMITS", "regCOMPUTE_TMPRING_SIZE", "regCOMPUTE_RESTART_X",
+                "regCOMPUTE_PGM_RSRC3", "regCOMPUTE_USER_DATA_0"]
+GC_FAMILIES = {"gc_9_4_3": "vega", "gc_11_0_0": "navi", "gc_11_0_3": "navi", "gc_11_5_0": "navi", "gc_12_0_0": "navi"}
+INITIATOR_FIELDS = ["compute_shader_en", "force_start_at_000", "cs_w32_en"]
+# The host data path's flush registers of each bus interface family, as ops_amd.py's memory_barrier names them.
+NBIO_FAMILIES = {"nbio_4_3_0": "0", "nbio_7_2_0": "0", "nbio_7_7_0": "0", "nbio_7_9_0": "0", "nbio_7_11_0": "1", "nbif_6_3_1": "0"}
+
+HSA_CONSTANTS = ["HSA_PACKET_HEADER_TYPE", "HSA_PACKET_HEADER_BARRIER", "HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE",
+                 "HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE", "HSA_FENCE_SCOPE_SYSTEM", "HSA_PACKET_TYPE_VENDOR_SPECIFIC",
+                 "HSA_PACKET_TYPE_KERNEL_DISPATCH", "HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS",
+                 "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_PRIVATE_SEGMENT_BUFFER", "AMD_KERNEL_CODE_PROPERTIES_ENABLE_SGPR_DISPATCH_PTR"]
+DISPATCH_FIELDS = ["header", "setup", "workgroup_size_x", "grid_size_x", "private_segment_size", "group_segment_size",
+                   "kernel_object"]
+KD_FIELDS = ["group_segment_fixed_size", "private_segment_fixed_size", "kernarg_size", "kernel_code_entry_byte_offset",
+             "compute_pgm_rsrc3", "compute_pgm_rsrc1", "compute_pgm_rsrc2", "kernel_code_properties"]
+TMPRING_UNIONS = {"gfx9": "", "gfx11": "_GFX11", "gfx12": "_GFX12"}
+
+
+def same(what, values):
+    if len(set(values)) != 1: sys.exit(f"{what} differs: {values}")
+    return values[0]
+
+
+def shift(f): return (f(1)).bit_length() - 1
+
+
+def amd():
+    import ctypes, importlib
+    from tinygrad.runtime.autogen import hsa, amdgpu_kd
+    from tinygrad.runtime.autogen.am import regs
+    am = lambda n: importlib.import_module(f"tinygrad.runtime.autogen.am.{n}")
+    soc15, nv_pm4 = am("pm4_soc15"), am("pm4_nv")
+    sdmas = [am(f"sdma_{v}_0_0") for v in (4, 5, 6)]
+    lines = [HEADER, "(* PM4 *)", ""]
+    lines += [f"let {n.lower()} = {ml_value(same(n, [getattr(m, n) for m in (soc15, nv_pm4)]))}" for n in PM4_CONSTANTS]
+    lines += [f"let {n.lower()} = {same(n, [shift(getattr(m, n)) for m in (soc15, nv_pm4)])}" for n in PM4_SHIFTS]
+    lines += [f"let {n.lower()} = {same(n, [shift(getattr(soc15, n)), shift(getattr(nv_pm4, n_nv))])}"
+              for n, n_nv in PM4_RELEASE_SHIFTS.items() if n not in PM4_SHIFTS]
+    for n, n_nv in PM4_RELEASE_SHIFTS.items(): same(n, [shift(getattr(soc15, n)), shift(getattr(nv_pm4, n_nv))])
+    lines += ["", "(* pm4_nv.py alone, gfx10 on *)", ""]
+    lines += [f"let {n.lower()} = {shift(getattr(nv_pm4, n))}" for n in PM4_NV_SHIFTS]
+    lines += [f"let {n.lower()} = {ml_value(getattr(nv_pm4, n))}" for n in PM4_NV_CONSTANTS]
+    lines += ["", "(* pm4_soc15.py alone, gfx9 *)", ""]
+    lines += [f"let {n.lower()} = {shift(getattr(soc15, n))}" for n in PM4_SOC15_SHIFTS]
+    lines += [f"let {n.lower()} = {ml_value(getattr(soc15, n))}" for n in PM4_SOC15_CONSTANTS]
+    socs = [am(f"soc_{v}") for v in (9, 11, 12)]
+    lines += [f"let cs_partial_flush = {same('CS_PARTIAL_FLUSH', [s.CS_PARTIAL_FLUSH for s in socs])}"]
+    lines += ["", "(* SDMA *)", ""]
+    lines += [f"let {n.lower()} = {same(n, [getattr(m, n) for m in sdmas])}" for n in SDMA_CONSTANTS]
+
+    def field(m, n):
+        mask, sh = getattr(m, n + "_mask"), getattr(m, n + "_shift")
+        return (sh + mask.bit_length() - 1, sh)
+    lines += [f"let {n.lower()} = {ml_value(same(n, [field(m, n) for m in sdmas]))}" for n in SDMA_FIELDS]
+    lines += [f"let sdma_pkt_fence_header_mtype = "
+              f"{ml_value(same('mtype', [field(m, 'SDMA_PKT_FENCE_HEADER_mtype') for m in sdmas[1:]]))}"]
+    lines += ["", "(* Registers, by address *)", ""]
+    bases = {k: tuple(getattr(am(f"{k}_offsets"), f"GC_BASE__INST0_SEG{s}", 0) for s in range(6)) for k in ("vega", "navi")}
+    nbio_bases = {k: tuple(getattr(am(f"{k}_offsets"), f"NBIO_BASE__INST0_SEG{s}", 0) for s in range(9)) for k in ("vega", "navi")}
+
+    def addr(fam, base, n):
+        off, seg, _ = getattr(regs, fam)[n]
+        return base[seg] + off
+    for n in GC_REGISTERS:
+        navi = same(n, [addr(f, bases[b], n) for f, b in GC_FAMILIES.items() if b == "navi"])
+        gfx9 = addr("gc_9_4_3", bases["vega"], n)
+        lines += [f"let {n[3:].lower()} = {ml_value(navi)}"]
+        if gfx9 != navi: lines += [f"let {n[3:].lower()}_gfx9 = {ml_value(gfx9)}"]
+    for f in INITIATOR_FIELDS:
+        lo, hi = same(f, [getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2][f] for fam in GC_FAMILIES
+                          if f in getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2]])
+        lines += [f"let compute_dispatch_initiator_{f} = {ml_value((hi, lo))}"]
+    for f in ("regBIF_BX_PF{}_GPU_HDP_FLUSH_REQ", "regBIF_BX_PF{}_GPU_HDP_FLUSH_DONE"):
+        values = []
+        for fam, pf in NBIO_FAMILIES.items():
+            base = nbio_bases["vega" if fam == "nbio_7_9_0" else "navi"]
+            values.append(addr(fam, base, f.format(pf)))
+        lines += [f"let {f.format('')[3:].lower()} = {ml_value(same(f, values))}"]
+    lines += ["", "(* HSA and the kernel descriptor *)", ""]
+    lines += [f"let {n.lower()} = {ml_value(getattr(hsa, n))}" for n in HSA_CONSTANTS]
+    offsets = lambda t: {f[0]: f[2] for f in t._real_fields_}
+    dispatch = offsets(hsa.hsa_kernel_dispatch_packet_t)
+    lines += [f"let dispatch_{f} = {dispatch[f]}" for f in DISPATCH_FIELDS]
+    lines += [f"let dispatch_size = {ctypes.sizeof(hsa.hsa_kernel_dispatch_packet_t)}"]
+    kd = offsets(amdgpu_kd.llvm_amdhsa_kernel_descriptor_t)
+    lines += [f"let kd_{f} = {kd[f]}" for f in KD_FIELDS]
+    for g, u in TMPRING_UNIONS.items():
+        fields = {f[0]: f for f in getattr(hsa, f"union_COMPUTE_TMPRING_SIZE{u}_bitfields")._real_fields_}
+        for name in ("WAVES", "WAVESIZE"):
+            _, _, byte, width, bit = fields[name]
+            lo = 8 * byte + bit
+            lines += [f"let compute_tmpring_size_{name.lower()}_{g} = {ml_value((lo + width - 1, lo))}"]
+    return "\n".join(lines) + "\n"
+
+
+MODULES = {"nv_gpu.ml": nv, "amd_gpu.ml": amd}
 
 
 def main():

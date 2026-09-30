@@ -31,6 +31,10 @@ module Queue : sig
   (** The type for a queue being encoded: the bytes of its commands so far, and
       the words among them computed when the batch is linked or run. *)
 
+  val v : devices:string list -> string -> t
+  (** [v ~devices name] is an empty queue named [name] of the devices [devices],
+      the first submitting its commands. *)
+
   val devices : t -> string list
   (** [devices q] is the devices [q]'s commands run on, the first submitting
       them. *)
@@ -52,6 +56,11 @@ module Queue : sig
 
   val size : t -> int
   (** [size q] is the number of bytes [q] holds. *)
+
+  val words : t -> (Ops.t * Ops.t) list
+  (** [words q] is each word of [q] computed when the batch is linked or run,
+      with its byte offset, in the order it was appended. An offset is a
+      constant, or reads the range a repeated command is in. *)
 
   val get_dword : t -> int -> int
   (** [get_dword q off] is the 32-bit word at byte [off] of [q]. *)
