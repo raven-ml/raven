@@ -1073,3 +1073,43 @@ the Exclusions of `README.md`.
   cases`, whose host programs are tinygrad's with D36 applied by their
   generator (`gen/runtime/ops_cuda.py`), and `function words (D36) › a batch
   over two devices reads a kernel's function from a word of each`.
+
+## D45. Staging memory is a placeholder of the host
+
+- **tinygrad:** `runtime/support/hcq2.py:131-134` (`_staging`: a host
+  `Buffer` of 128 MiB, allocated once per device and kept), `:155-156`
+  (`stage_copy` names it by `UOp.from_buffer`).
+- **tolk.next:** `lib/runtime/support/hcq2.ml:457` (`staging_size`), `:472`
+  (the placeholder in `stage_copy`).
+- **Differs:** a copy between memory the queues cannot reach goes through the
+  two halves of a placeholder of the host tagged `"staging"`, of 128 MiB,
+  which the engine allocates when it links the batch, as it does every
+  placeholder. Each linked schedule that stages holds its own staging memory,
+  where tinygrad's schedules share one buffer per device.
+- **Reason:** (c). The compiler opens no device and allocates nothing
+  (plan §1a): storage it names is a placeholder, and the engine's link
+  allocates it.
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `compile_linear
+  › copies through the halves of a staging buffer of the host where the
+  queues cannot reach`, which finds one placeholder tagged `"staging"` of
+  128 MiB on the host, and six copies.
+
+## D46. Whether a device's queues reach memory is described, not tried
+
+- **tinygrad:** `runtime/support/hcq2.py:151-155` (`stage_copy` maps each
+  buffer on the device with `get_buf` and stages the copy when that raises).
+- **tolk.next:** `lib/runtime/support/hcq2.ml:467` (`reached`, from
+  `queues.reaches`).
+- **Differs:** the caller's description of a device says which other devices'
+  memory its queues address (`Hcq2.queues.reaches`), and a copy is staged when
+  either side's memory is not reached. tinygrad tries to map the buffers and
+  stages the copy on failure. A buffer that `reaches` admits but the device
+  cannot map fails when the engine links the batch (its borrow is refused)
+  instead of being staged.
+- **Reason:** (c). The compiler opens no device, so it cannot try a mapping;
+  the engine, which does, describes each device's reach from nx.device (the
+  memory its host addresses).
+- **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
+  of a staging buffer of the host where the queues cannot reach`, whose device
+  description reaches every device but CPU:2.
+
