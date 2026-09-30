@@ -366,6 +366,12 @@ let views =
       shares "sliding_window" (Nx.sliding_window ~window:2);
       shares "broadcast_arrays" (fun t ->
           List.hd (Nx.broadcast_arrays [ t; Nx.zeros Nx.int32 [| 2; 1; 1 |] ]));
+      test "a scalar expanded by a movement reshapes over its one element"
+        (fun () ->
+          let e = Nx.Op.eval (Move (Nx.scalar Nx.int32 7l, Expand [| 3 |])) in
+          equal same
+            (Nx.full Nx.int32 [| 3; 1 |] 7l)
+            (Nx.Op.eval (Move (e, Reshape [| 3; 1 |]))));
       test "copy and concatenate never share" (fun () ->
           let t = tensor_of [| 2; 3 |] in
           is_false (share_memory (storage (Nx.copy t)) (storage t));

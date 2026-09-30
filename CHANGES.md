@@ -2875,6 +2875,9 @@ thread.
 
 ### Nx
 
+- A scalar broadcast by `Nx_array.View.expand`, or by an `Expand` movement
+  evaluated with `Nx.Op.eval`, is no longer reported C-contiguous by
+  `View.is_c_contiguous`. A reshape of it read past its one element and failed.
 - `Nx_cuda_device` gives compiled code what it needs to enqueue work itself:
   `driver_function`, the address of an entry point of the driver it loaded,
   and `stamp`, a host function that stamps a word with the host clock.

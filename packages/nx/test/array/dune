@@ -1,4 +1,4 @@
-(test
- (name test_elements)
+(tests
+ (names test_elements test_view)
  (package nx)
  (libraries nx.array nx.device nx.dtype nx_test windtrap))

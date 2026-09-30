@@ -108,8 +108,7 @@ let expand view new_shape =
   let new_ndim = Array.length new_shape in
   (* Allow expanding a scalar to any shape *)
   if old_ndim = 0 then
-    let strides = Array.make new_ndim 0 in
-    { view with shape = new_shape; strides }
+    create ~offset:view.offset ~strides:(Array.make new_ndim 0) new_shape
   else if new_ndim <> old_ndim then
     err "expand" "rank mismatch: %d vs %d" new_ndim old_ndim
   else

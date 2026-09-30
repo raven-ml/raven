@@ -60,7 +60,10 @@ val stride : int -> t -> int
     Raises [Invalid_argument] if [axis] is outside [[0; ndim v - 1]]. *)
 
 val is_c_contiguous : t -> bool
-(** [is_c_contiguous v] is [true] iff [v] is recognized as C-contiguous. *)
+(** [is_c_contiguous v] is [true] iff the [k]th element of [v] in C order is at
+    storage position [offset v + k], for every [k]: the stride of each axis of
+    more than one element is the number of elements after it. An empty view is
+    C-contiguous. *)
 
 (** {1:transform Transformations} *)
 
