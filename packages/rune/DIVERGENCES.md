@@ -434,3 +434,112 @@ target's run lands.
 - **Reason:** (b).
 - **Pinned by:** `sorts › *`; the network's kernels by `graph parity ›
   argsort_int`, `argsort_int_descending`.
+
+### I1. A pad of `-0.`
+
+- **Reference:** `mixin/op.py:289` (`_pad_constant`: a fill equal to 0 is the
+  movement's zeros).
+- **Raven:** `lower_index.ml:64` (`pad`).
+- **Differs:** a fill of `-0.` is selected on the padding with `where`, as the
+  reference fills any other value; the reference takes `-0.` for 0 and pads
+  `+0.`.
+- **nx:** `nx_backend.mli`, `pad`: the padding holds the value given.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `assembly › a pad of -0. keeps its sign`.
+
+### I2. Pieces of different lengths are selected
+
+- **Reference:** `mixin/op.py:750` (`cat`: each piece zero-padded to the whole,
+  the pieces summed).
+- **Raven:** `lower_index.ml:78` (`cat`).
+- **Differs:** each piece is selected with `where` on the stretch it fills; the
+  reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
+  pieces are dropped first, and pieces of one length are stacked as the
+  reference stacks them.
+- **nx:** `nx_backend.mli`, `cat`: the arrays' elements, one after the other.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `assembly › pieces of different lengths keep -0.`,
+  `assembly › cat › *`.
+
+### I3. Gather over bit patterns
+
+- **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
+- **Raven:** `lower_index.ml:107` (`gather`), `:47` (`bits`), `:56` (`pick`).
+- **Differs:** the one-hot selection is summed over the elements' bit patterns
+  as unsigned integers of their width (booleans as `uint8`) and read back; the
+  reference sums the values, which turns a gathered `-0.` into `+0.`. An index
+  out of range selects nothing and reads the bits 0, `+0.`.
+- **nx:** `nx_backend.mli`, `gather`: the element at the index; an index
+  outside the axis reads zero.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `indexed access › a gathered -0. keeps its sign`,
+  `› an index out of range reads +0.`, `› gather › *`.
+
+### I4. Scatter keeps unreached positions and sets bits
+
+- **Reference:** `mixin/op.py:1077` (`_pre_scatter`), `:1127`
+  (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1168`
+  (`scatter` through `_masked_merge`, one `where` per update along the axis).
+- **Raven:** `lower_index.ml:118` (`scatter`);
+  `lower_reduce.ml:125` (`reduce`).
+- **Differs:**
+  - `Add`: a position no update reaches is `x`'s element, selected on the
+    mask of reached positions; the reference adds `x` to a sum of zeros there,
+    which turns a `-0.` into `+0.`. A reached position is `x` and its updates
+    summed from `+0.`, at `float32` or wider and rounded once; integers wrap
+    on the unsigned bit pattern (A2).
+  - `Set`: the bits of the last update that reaches a position, the one of
+    highest index along the axis (every reaching update with `unique`), are
+    selected by a one-hot sum over bit patterns, as I3, in one reduction. The
+    meaning agrees with the reference's `_masked_merge`, which also keeps the
+    last update; its construction, a chain of one `where` per update along the
+    axis, grows the graph with the number of updates.
+- **nx:** `nx_backend.mli`, `scatter`: `x` where no update lands, the last
+  duplicate wins under `Set`, every update adds under `Add`.
+- **Class:** exact; rounded sum for float `Add`.
+- **Reason:** (b); for `Set`'s construction, the consumer is `Nx.set`, whose
+  flat scatter carries one update per selected position, thousands of them,
+  where a graph that grows with the updates is unusable.
+- **Pinned by:** `indexed access › a position no update reaches keeps -0.`,
+  `› the last of duplicate positions is set`, `› scatter set › *`,
+  `› scatter set unique › *`, `› scatter add › *`.
+
+### I5. A window at a corner read at run time
+
+- **Reference:** `tensor.py:502` (`__setitem__`), `mixin/op.py:146` (advanced
+  setitem through `_masked_merge`). The reference's windows start at constants;
+  a corner computed by the program is only reachable as advanced indexing, a
+  mask of every window position against every position of `x`, merged by one
+  `where` per window position.
+- **Raven:** `lower_index.ml:154` (`update`).
+- **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
+  one-hot selection over bit patterns (I3), and the moved `v` is selected on
+  the window's mask; along an axis `v` fills, the start is 0.
+- **nx:** `nx_backend.mli`, `update`: `starts` is read when the kernel runs,
+  already clamped so that the window fits.
+- **Class:** exact.
+- **Reason:** (b); the consumer is kaun's decode, whose `Cache_index` (RFC
+  0002) writes a window at a position known only at run time, every step.
+- **Pinned by:** `indexed access › update › *`,
+  `› a window at constant starts`.
+
+### I6. Fold
+
+- **Reference:** none.
+- **Raven:** `lower_index.ml:233` (`fold`), `:210` (`cut`);
+  `lower_reduce.ml:125` (`reduce`).
+- **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
+  in reverse order, a shrink by a pad of zeros, and the copies of the input
+  summed, which sums the windows where they overlap, from `+0.`, at `float32`
+  or wider and rounded once. Integers wrap; booleans are whether any window
+  holds.
+- **nx:** `nx_backend.mli`, `fold`: the windows put back, summed where they
+  overlap.
+- **Class:** rounded sum.
+- **Reason:** (b).
+- **Pinned by:** `windows › fold › *`,
+  `windows › overlapping windows of -0. fold to +0.`,
+  `› a single window of -0. folds to +0.`.

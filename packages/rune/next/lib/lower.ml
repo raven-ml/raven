@@ -589,8 +589,34 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Argsort { descending; axis; x } ->
       ret Nx_dtype.int32
         (Lower_reduce.argsort ~descending ~axis (node s what p x))
-  | Pad _ | Cat _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ ->
-      refuse ()
+  | Pad (padding, fill, x) ->
+      let dt = Nx.dtype x in
+      ret dt (Lower_index.pad padding (const dt fill) (node s what p x))
+  | Cat (axis, xs) -> (
+      match xs with
+      | [] -> invalid_arg "a concatenation of no values"
+      | x :: _ ->
+          ret (Nx.dtype x) (Lower_index.cat axis (List.map (node s what p) xs)))
+  | Gather (axis, indices, x) ->
+      ret (Nx.dtype x)
+        (Lower_index.gather axis (node s what p indices) (node s what p x))
+  | Scatter { mode; unique; axis; indices; updates; into } ->
+      ret (Nx.dtype into)
+        (Lower_index.scatter ~mode ~unique ~axis
+           ~indices:(node s what p indices) ~updates:(node s what p updates)
+           (node s what p into))
+  | Update (x, starts, v) ->
+      ret (Nx.dtype x)
+        (Lower_index.update (node s what p x) ~starts:(node s what p starts)
+           (node s what p v))
+  | Unfold { kernel_size; stride; dilation; padding; x } ->
+      ret (Nx.dtype x)
+        (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding
+           (node s what p x))
+  | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
+      ret (Nx.dtype x)
+        (Lower_index.fold ~output_size ~kernel_size ~stride ~dilation ~padding
+           (node s what p x))
   | Matmul _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Solve_triangular _ ->
       refuse ()
   | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ -> refuse ()

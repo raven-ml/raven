@@ -37,6 +37,10 @@ lower_arith/tan_far64.golden
 lower_arith/tanh64.golden
 lower_arith/trunc.golden
 lower_arith/where.golden
+lower_index/cat_equal.golden
+lower_index/pad_value.golden
+lower_index/pad_zero.golden
+lower_index/unfold.golden
 lower_reduce/argmax_int.golden
 lower_reduce/argmin_int.golden
 lower_reduce/argsort_int.golden
