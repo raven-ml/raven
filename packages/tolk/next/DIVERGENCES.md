@@ -1138,19 +1138,27 @@ the Exclusions of `README.md`.
   `Buffer` of 128 MiB, allocated once per device and kept), `:155-156`
   (`stage_copy` names it by `UOp.from_buffer`).
 - **tolk.next:** `lib/runtime/support/hcq2.ml:457` (`staging_size`), `:472`
-  (the placeholder in `stage_copy`).
+  (the placeholder in `stage_copy`); `engine/tolk_next_engine.ml:360`
+  (`staging`).
 - **Differs:** a copy between memory the queues cannot reach goes through the
-  two halves of a placeholder of the host tagged `"staging"`, of 128 MiB,
-  which the engine allocates when it links the batch, as it does every
-  placeholder. Each linked schedule that stages holds its own staging memory,
-  where tinygrad's schedules share one buffer per device.
+  two halves of a placeholder of the host tagged `"staging"`, of 128 MiB. The
+  engine gives it, at link, the host's staging memory: one pinned buffer per
+  host, which every linked schedule shares and which is kept for the life of
+  the process, as tinygrad's is. Runs that stage through one host take turns
+  with it, whatever their devices, since each touches it; one area per device
+  would let them overlap for 128 MiB a device, and waits for a measured
+  bottleneck.
 - **Reason:** (c). The compiler opens no device and allocates nothing
   (plan §1a): storage it names is a placeholder, and the engine's link
   allocates it.
 - **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `compile_linear
   › copies through the halves of a staging buffer of the host where the
   queues cannot reach`, which finds one placeholder tagged `"staging"` of
-  128 MiB on the host, and six copies.
+  128 MiB on the host, and six copies; the Engine suite
+  (`test/engine/tolk_next_engine`): `batches › linked schedules that stage
+  share the host's staging memory`, `› staged runs of two programs on other
+  devices take turns` and `› staged runs of two programs from two domains each
+  copy their own`.
 
 ## D46. Whether a device's queues reach memory is described, not tried
 

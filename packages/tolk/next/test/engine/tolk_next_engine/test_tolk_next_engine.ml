@@ -1357,6 +1357,74 @@ let reports_each_kernel () =
       less float_exact ~msg:"time" ~than:0.02 t)
     lines
 
+(* Staging
+
+   NULL devices whose queues address the host's memory alone: a copy between two
+   of them stages through the host's staging memory. *)
+
+let apart = lazy (Null_device.devices ~reaches:(fun d -> d = "CPU") ())
+let on_apart name = (Lazy.force apart) name
+
+(* A program that copies [xs] from a buffer of [src] into one of [dst], staged,
+   and the destination buffer. *)
+let staged_copy src dst xs =
+  let x = Ops.new_buffer (Single src) 4 Float32
+  and y = Ops.new_buffer (Single dst) 4 Float32 in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (on_apart n).compiler)
+      (Ops.v Op.Linear ~src:[ Ops.store_call y x ])
+  in
+  let into =
+    Run.buffer (Null_device.device dst) Float32 (floats [| 0.; 0.; 0.; 0. |])
+  in
+  let bound =
+    [ (x, [ Run.buffer (Null_device.device src) Float32 xs ]); (y, [ into ]) ]
+  in
+  (Engine.link ~devices:on_apart ~bound compiled, into)
+
+(* Linking a second program that stages, while the first is reachable, allocates
+   no second staging memory on the host. *)
+let shares_the_staging_memory () =
+  let host_allocated () = Nx_device.Stats.allocated (Nx_device.stats host) in
+  let first, _ = staged_copy "CPU:1" "CPU:2" a in
+  let before = host_allocated () in
+  let second, _ = staged_copy "CPU:2" "CPU:3" a in
+  less int ~msg:"bytes the second link allocates on the host" ~than:(1 lsl 20)
+    (host_allocated () - before);
+  ignore (Sys.opaque_identity (first, second))
+
+(* Program A stages a copy from CPU:1 to CPU:2 on queues that start 50 ms late;
+   program B then stages one from CPU:3 to CPU:1 through the same memory. B's
+   run waits for A's staged work before it submits, so neither copy reads the
+   other's bytes. *)
+let staged_runs_take_turns () =
+  let xs = floats [| 100.; 101.; 102.; 103. |] in
+  let first, into_first = staged_copy "CPU:1" "CPU:2" a
+  and second, into_second = staged_copy "CPU:3" "CPU:1" xs in
+  Null_device.with_latency 0.05 (fun () -> Engine.run first [||]);
+  Engine.run second [||];
+  Null_device.synchronize ();
+  equal values ~msg:"first" a (Run.values Float32 into_first);
+  equal values ~msg:"second" xs (Run.values Float32 into_second)
+
+(* Two staging programs run from two domains, ten times each. *)
+let staged_runs_from_two_domains () =
+  let xs = floats [| 100.; 101.; 102.; 103. |] in
+  let first, into_first = staged_copy "CPU:1" "CPU:2" a
+  and second, into_second = staged_copy "CPU:3" "CPU:1" xs in
+  let runs s () =
+    for _ = 1 to 10 do
+      Engine.run s [||]
+    done
+  in
+  let d = Domain.spawn (runs first) in
+  runs second ();
+  Domain.join d;
+  Null_device.synchronize ();
+  equal values ~msg:"first" a (Run.values Float32 into_first);
+  equal values ~msg:"second" xs (Run.values Float32 into_second)
+
 let refuses_an_unknown_library () =
   let y, filled = fill "CPU:1" 7. in
   let devices n = { (on_null n) with placeholder = (fun _ -> None) } in
@@ -1402,6 +1470,12 @@ let batches =
         reports_each_kernel;
       test "at DEBUG=2, a host copy and a host kernel print a timed line each"
         reports_host_calls;
+      test "linked schedules that stage share the host's staging memory"
+        shares_the_staging_memory;
+      test "staged runs of two programs on other devices take turns"
+        staged_runs_take_turns;
+      test "staged runs of two programs from two domains each copy their own"
+        staged_runs_from_two_domains;
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"

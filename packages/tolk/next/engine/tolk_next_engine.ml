@@ -363,10 +363,27 @@ let apply storage addr p =
 (* Batches *)
 
 let signal_word_tag = Ops.Tag.String "timeline"
+let staging_tag = Ops.Tag.String "staging"
+
+(* The staging memory of each host, which the staged copies of every linked
+   schedule share (DIVERGENCES D45), kept for the life of the process: each run
+   that stages through it touches it, so nx.device orders the runs. *)
+let stagings = ref []
+let stagings_lock = Mutex.create ()
+
+let staging d n =
+  Mutex.protect stagings_lock @@ fun () ->
+  match List.assq_opt d !stagings with
+  | Some b when B.nbytes b >= n -> b
+  | _ ->
+      let b = B.create ~pinned:true d Nx_dtype.Scalar.UInt8 n in
+      stagings := (d, b) :: List.remove_assq d !stagings;
+      b
 
 (* The storage of a batch's placeholder [u]: the signal word of its device for
-   ["timeline"], the address of a C function for a [("cfunc", lib, f)] tuple,
-   and pinned memory, which the host program writes, for any other. *)
+   ["timeline"], the host's staging memory for ["staging"], the address of a C
+   function for a [("cfunc", lib, f)] tuple, and pinned memory, which the host
+   program writes, for any other. *)
 (* The vendor whose commands name a placeholder gives its storage: its own
    device's, or a device of the batch's, such as the vendor that owns a C
    function its host program calls. *)
@@ -383,6 +400,7 @@ let placeholder device queues u =
   | None -> (
       match Ops.tag u with
       | Some t when Ops.Tag.equal t signal_word_tag -> Nx_device.signal_word d
+      | Some t when Ops.Tag.equal t staging_tag -> staging d (bytes u)
       | Some (Ops.Tag.Tuple [ String "cfunc"; String lib; String _ ]) ->
           invalid_arg (strf "Tolk_next_engine.link: no C library %s" lib)
       | _ -> B.create ~pinned:true d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))

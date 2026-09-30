@@ -2702,6 +2702,7 @@ run touches. The survivors:
 
 | Source | Behaviour | Outcome |
 |---|---|---|
+| tinygrad: `runtime/support/hcq2.py` `_staging` (no test) | one staging buffer of 128 MiB per host, which every schedule's staged copies share | `EN › batches › linked schedules that stage share the host's staging memory`; their order: `› staged runs of two programs on other devices take turns`, `› staged runs of two programs from two domains each copy their own`, which the NULL devices also order through the host memory every batch touches (D45) |
 | tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | a linked schedule serves any input, whose address it does not keep | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` (contiguous, copy_view, shard_add) |
 | tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | compiling a schedule again returns the compiled one | dropped here: compile_linear's result is Hcq2's; the engine keeps no cache of links, and rune keeps its programs by key |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | a copy out, a copy in and a copy out run in order | `EN › link and run › copies run in the order of their schedule` |

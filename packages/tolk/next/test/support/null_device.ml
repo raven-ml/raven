@@ -37,7 +37,8 @@ let lock = Mutex.create ()
 let programs : (string, Nx_device.Program.t) Hashtbl.t = Hashtbl.create 16
 let events = Null_queue.events ()
 
-let loaded prg = Mutex.protect lock (fun () -> Hashtbl.find programs (Ops.key prg))
+let loaded prg =
+  Mutex.protect lock (fun () -> Hashtbl.find programs (Ops.key prg))
 
 let load prg =
   let key = Ops.key prg in
@@ -66,12 +67,22 @@ let commands q =
   in
   let copy dst src n =
     ignore
-      (Hcq2.Queue.q q [ u64 Null_queue.copy; Ops.getaddr ~device dst; Ops.getaddr ~device src; u64 n ])
+      (Hcq2.Queue.q q
+         [
+           u64 Null_queue.copy;
+           Ops.getaddr ~device dst;
+           Ops.getaddr ~device src;
+           u64 n;
+         ])
   in
   let submit cmdbuf =
     let head = Ops.cast (Ops.load (Ops.index cmdbuf [ Ops.int 0 ]) []) Uint64 in
     Hcq2.ccall ~host:device ~lib:"null" "tolk_null_submit"
-      [ Ops.getaddr ~device cmdbuf; u64 (Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf)); head ]
+      [
+        Ops.getaddr ~device cmdbuf;
+        u64 (Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf));
+        head;
+      ]
   in
   { c with exec; copy; submit }
 
@@ -84,14 +95,18 @@ let function_word name f =
   | None ->
       let b = Nx_device.Buffer.create (device name) UInt64 1 in
       let host = Result.get_ok (Nx_device.Buffer.borrow Nx_device.host b) in
-      let address = if f = "tolk_null_submit" then submit_address () else dlsym f in
-      (Nx_device.Buffer.bigarray Bigarray.int64 host).{0} <- Int64.of_nativeint address;
+      let address =
+        if f = "tolk_null_submit" then submit_address () else dlsym f
+      in
+      (Nx_device.Buffer.bigarray Bigarray.int64 host).{0} <-
+        Int64.of_nativeint address;
       Hashtbl.add function_words (name, f) b;
       b
 
 let placeholder name u =
   match Ops.tag u with
-  | Some (Tuple [ String "cfunc"; String _; String f ]) -> Some (function_word name f)
+  | Some (Tuple [ String "cfunc"; String _; String f ]) ->
+      Some (function_word name f)
   | _ -> None
 
 (* Running queues *)
@@ -106,15 +121,24 @@ let with_latency s f =
    start. *)
 type queue = { words : int array; mutable pc : int; start : float }
 
-let words_of s = Array.init (String.length s / 8) (fun k -> Int64.to_int (String.get_int64_le s (8 * k)))
+let words_of s =
+  Array.init
+    (String.length s / 8)
+    (fun k -> Int64.to_int (String.get_int64_le s (8 * k)))
+
 let addr n = Nativeint.of_int n
 
 let exec kernargs nargs event =
   let prg = Null_queue.program events event in
   let words = Array.init nargs (fun k -> read (addr (kernargs + (8 * k)))) in
   let signature = (Device.Tiny_elf.of_program prg).signature in
-  let buffers = List.length (List.filter (fun (p : Device.Tiny_elf.param) -> p.shape <> []) signature) in
-  call (Nx_device.Program.handle (loaded prg)) (Array.sub words 0 buffers)
+  let buffers =
+    List.length
+      (List.filter (fun (p : Device.Tiny_elf.param) -> p.shape <> []) signature)
+  in
+  call
+    (Nx_device.Program.handle (loaded prg))
+    (Array.sub words 0 buffers)
     (Array.sub words buffers (nargs - buffers))
 
 (* Runs [q]'s next command, and is [false] if it must wait. *)
@@ -123,13 +147,23 @@ let step q =
   let runs =
     match w 0 with
     | op when op = Null_queue.wait -> read (addr (w 1)) >= w 2
-    | op when op = Null_queue.exec -> exec (w 1) (w 2) (w 3); true
-    | op when op = Null_queue.copy -> copy (addr (w 1)) (addr (w 2)) (w 3); true
-    | op when op = Null_queue.store -> write (addr (w 1)) (w 2); true
-    | op when op = Null_queue.timestamp -> write (addr (w 1)) (Nx_device.Profile.now ()); true
+    | op when op = Null_queue.exec ->
+        exec (w 1) (w 2) (w 3);
+        true
+    | op when op = Null_queue.copy ->
+        copy (addr (w 1)) (addr (w 2)) (w 3);
+        true
+    | op when op = Null_queue.store ->
+        write (addr (w 1)) (w 2);
+        true
+    | op when op = Null_queue.timestamp ->
+        write (addr (w 1)) (Nx_device.Profile.now ());
+        true
     | op ->
         failwith
-          (Printf.sprintf "command %d of %d has the unknown code %d" (q.pc / 4) (Array.length q.words / 4) op)
+          (Printf.sprintf "command %d of %d has the unknown code %d" (q.pc / 4)
+             (Array.length q.words / 4)
+             op)
   in
   if runs then q.pc <- q.pc + 4;
   runs
@@ -140,7 +174,9 @@ let rec serve queues =
   if not (Atomic.get stop) then begin
     let now = Unix.gettimeofday () in
     let fresh =
-      List.map (fun (s, start) -> { words = words_of s; pc = 0; start }) (take ())
+      List.map
+        (fun (s, start) -> { words = words_of s; pc = 0; start })
+        (take ())
     in
     let queues = queues @ fresh in
     let progressed = ref false in
@@ -183,13 +219,13 @@ let synchronize () =
 
 (* Devices, as the engine runs work on them *)
 
-let devices ?(copy_queue = true) () =
+let devices ?(copy_queue = true) ?(reaches = fun _ -> true) () =
   Lazy.force server;
   function
   | "CPU" -> Tolk_next_engine.device [ ("CPU", Nx_device.host) ] "CPU"
   | name ->
       let d = device name in
-      let queues = { Hcq2.commands; copy_queue; host = "CPU"; reaches = (fun _ -> true) } in
+      let queues = { Hcq2.commands; copy_queue; host = "CPU"; reaches } in
       {
         Tolk_next_engine.device = d;
         compiler = { target = Tolk_next_engine.target d; queues = Some queues };
