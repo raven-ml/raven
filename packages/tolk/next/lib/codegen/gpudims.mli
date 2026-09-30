@@ -24,9 +24,11 @@ val grouped_dims :
     - if [dims] has more sizes than [max_sizes] or one exceeds its bound
       (counting a symbolic size at its upper bound), adjacent sizes are merged,
       the leftmost pair that fits first, until they fit;
-    - if merging fails, a size that exceeds its bound is split by its least
-      divisor, the quotient kept and the divisor moved to the next axis, until
-      each fits.
+    - if merging fails, the sizes are laid on three axes, and each axis in turn
+      whose size exceeds its bound is split by the size's least divisor until it
+      fits, the quotient kept and the divisor moved to the next axis. The last
+      axis's divisors move to the first, which is not checked again, so the
+      first size can end above its bound. A third axis of size [1] is dropped.
 
     If [reverse] (default [false]), [dims] are laid out on the axes in reverse
     order. A loop that keeps its own axis is that hardware index itself.

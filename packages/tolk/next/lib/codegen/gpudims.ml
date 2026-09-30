@@ -44,21 +44,34 @@ let rec group_dims dims max_sizes =
   else
     Option.bind (merge dims max_sizes) (fun dims -> group_dims dims max_sizes)
 
+(* Sizes as the grouping computes them: exact integers, whose intermediate
+   products may pass [int], or nodes. *)
+type size = N of Z.t | U of t
+
+let size = function Int n -> N (Z.of_int n) | Sym u -> U u
+let node = function N z -> const (`Int z) | U u -> u
+
+let ( *! ) a b =
+  match (a, b) with N x, N y -> N Z.(x * y) | _ -> U O.(node a * node b)
+
+let prod = List.fold_left ( *! ) (N Z.one)
+
 (* Split each dim that exceeds its axis by its least divisor, moving the divisor
    to the next axis. *)
 let split_dims dims max_sizes =
   let fits d m =
     match d with
-    | Int d -> d <= m
-    | Sym u -> Z.leq (Dtype.Value.to_z (vmax (simplify u))) (Z.of_int m)
+    | N d -> Z.leq d (Z.of_int m)
+    | U u -> Z.leq (Dtype.Value.to_z (vmax (simplify u))) (Z.of_int m)
   in
   let rec fit ds ms =
     match (ds, ms) with d :: ds, m :: ms -> fits d m && fit ds ms | _ -> true
   in
-  if fit dims max_sizes then dims
+  let sizes = List.map size dims in
+  if fit sizes max_sizes then sizes
   else
     let a =
-      Array.of_list (dims @ List.init (3 - List.length dims) (fun _ -> Int 1))
+      Array.of_list (sizes @ List.init (3 - List.length dims) (fun _ -> N Z.one))
     in
     let n = Array.length a in
     for i = 0 to n - 1 do
@@ -69,39 +82,41 @@ let split_dims dims max_sizes =
       in
       let rec limit () =
         match a.(i) with
-        | Int d when d > m ->
-            let last =
-              int_of_float (Float.ceil (Float.sqrt (float_of_int d)))
-            in
+        | N d when Z.gt d (Z.of_int m) ->
+            let last = Z.of_float (Float.ceil (Float.sqrt (Z.to_float d))) in
             let rec least k =
-              if k > last then 1 else if d mod k = 0 then k else least (k + 1)
+              if Z.gt k last then Z.one
+              else if Z.(equal (rem d k) zero) then k
+              else least (Z.succ k)
             in
-            let div = least 2 in
-            if div = 1 then cannot_limit dims max_sizes;
-            a.(i) <- Int (d / div);
+            let div = least (Z.of_int 2) in
+            if Z.equal div Z.one then cannot_limit dims max_sizes;
+            a.(i) <- N (Z.div d div);
             let next = (i + 1) mod n in
-            a.(next) <- Sint.(a.(next) * Int div);
+            a.(next) <- a.(next) *! N div;
             limit ()
-        | Int _ -> ()
+        | N _ -> ()
         (* A symbolic size that may exceed its bound cannot be split. *)
-        | Sym _ as d -> if not (fits d m) then cannot_limit dims max_sizes
+        | U _ as d -> if not (fits d m) then cannot_limit dims max_sizes
       in
       limit ()
     done;
-    let dims = Array.to_list a in
-    match a.(2) with Int 1 -> List.filteri (fun i _ -> i < 2) dims | _ -> dims
+    let sizes = Array.to_list a in
+    match a.(2) with
+    | N z when Z.equal z Z.one -> List.filteri (fun i _ -> i < 2) sizes
+    | _ -> sizes
 
-(* The product of the dims after each dim. *)
+(* The product of the sizes after each size. *)
 let rec suffix_prods = function
   | [] -> []
-  | _ :: rest -> Sint.prod rest :: suffix_prods rest
+  | _ :: rest -> prod rest :: suffix_prods rest
 
 let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
   if reverse then List.rev (grouped_dims prefix (List.rev dims) max_sizes)
   else
     let limited =
       match max_sizes with
-      | None -> dims
+      | None -> List.map size dims
       | Some max_sizes ->
           let limited =
             match group_dims dims max_sizes with
@@ -111,21 +126,24 @@ let rec grouped_dims ?(reverse = false) prefix dims max_sizes =
           if List.compare_lengths limited max_sizes > 0 then
             cannot_limit dims max_sizes;
           if List.equal Sint.equal limited dims then split_dims dims max_sizes
-          else limited
+          else List.map size limited
     in
     let raw_idxs =
-      List.mapi (fun i s -> special s (prefix ^ string_of_int i)) limited
+      List.mapi
+        (fun i s -> special (Sym (node s)) (prefix ^ string_of_int i))
+        limited
     in
     let flat =
       List.fold_left2
-        (fun acc idx p -> Sint.(acc + (Sym idx * p)))
-        (Int 0) raw_idxs (suffix_prods limited)
+        (fun acc idx p -> O.(acc + (idx * node p)))
+        (int 0) raw_idxs (suffix_prods limited)
     in
+    let sizes = List.map size dims in
     List.mapi
       (fun i (d, p) ->
-        let q = Sint.(flat // p) in
-        simplify (sint_to_uop (if i = 0 then q else Sint.(q % d))))
-      (List.combine dims (suffix_prods dims))
+        let q = O.(flat // node p) in
+        simplify (if i = 0 then q else O.(q % node d)))
+      (List.combine sizes (suffix_prods sizes))
 
 let add_gpudims (r : Renderer.t) s =
   let s_topo = toposort s in
