@@ -556,29 +556,18 @@ let two_sum a b =
 let odd_inverses n = List.init n (fun k -> 1. /. Float.of_int ((2 * k) + 3))
 
 let log2_parts a =
-  let u = unsigned (dtype a) in
-  let mbits, bias = if is64 a then (52, 1023) else (23, 127) in
-  (* Subnormals are scaled into the normals first. *)
+  let dt = dtype a in
+  let _, mbits = Dtype.finfo dt and bias = Transcendental.exponent_bias dt in
+  (* [frexp] takes a normal float: subnormals are scaled into the normals
+     first. *)
   let tiny = Ops.lt a (float a (Float.ldexp 1. (1 - bias))) in
   let a = where tiny (a *: float a (Float.ldexp 1. (mbits + 1))) a in
-  let b = Ops.bitcast a u in
-  let e =
-    Ops.cast (Ops.shr b (int b mbits)) (dtype a) -: float a (Float.of_int bias)
-  in
+  let m, e = Transcendental.frexp a in
+  let e = Ops.cast (Ops.bitcast e (if is64 a then Int64 else Int32)) dt in
   let e = where tiny (e -: float a (Float.of_int (mbits + 1))) e in
-  let fraction =
-    Ops.bitwise_and b
-      (Ops.const_like b (`Int (Z.pred (Z.shift_left Z.one mbits))))
-  in
-  let m =
-    Ops.bitcast
-      (Ops.bitwise_or fraction
-         (Ops.const_like b (`Int (Z.shift_left (Z.of_int bias) mbits))))
-      (dtype a)
-  in
-  let high = Ops.lt (float a (Float.sqrt 2.)) m in
-  let m = where high (m *: float a 0.5) m
-  and e = where high (e +: float a 1.) e in
+  let high = Ops.lt (float a (Float.sqrt 2. /. 2.)) m in
+  let m = where high m (m *: float a 2.)
+  and e = where high e (e -: float a 1.) in
   (* [s = (m - 1) / (m + 1)] in two parts; [m - 1] is exact. *)
   let num = m -: float a 1. in
   let den, den_lo = two_sum m (float a 1.) in
@@ -674,62 +663,47 @@ let pow_int x y =
    holds in 64 bits, then scaled by [y]'s exponent. *)
 
 let fmod x y =
-  let u = unsigned (dtype x) in
-  let wide = Dtype.Uint64 in
-  let mbits = if is64 x then 52 else 23 in
-  let emax = if is64 x then 2046 else 254 in
+  let dt = dtype x and wide = Dtype.Uint64 in
+  let _, mbits = Dtype.finfo dt and bias = Transcendental.exponent_bias dt in
   let chunk = 63 - mbits in
-  let bits_of v = Ops.bitcast (abs v) u in
-  let exponent b =
-    Ops.cast (Ops.shr b (Ops.const_like b (`Int (Z.of_int mbits)))) Dtype.Int64
-  in
+  let bits_of v = Ops.bitcast (abs v) (unsigned dt) in
+  let exponent b = Ops.cast (Ops.shr b (int b mbits)) Dtype.Int64 in
   let significand b =
-    let frac =
-      Ops.bitwise_and b
-        (Ops.const_like b (`Int (Z.pred (Z.shift_left Z.one mbits))))
-    in
-    let implicit = Ops.const_like b (`Int (Z.shift_left Z.one mbits)) in
+    let frac = Ops.bitwise_and b (int b ((1 lsl mbits) - 1)) in
     Ops.cast
       (where
-         (Ops.eq (exponent b) (Ops.const_like (exponent b) (`Int Z.zero)))
+         (Ops.eq (exponent b) (int (exponent b) 0))
          frac
-         (Ops.bitwise_or frac implicit))
+         (Ops.bitwise_or frac (int b (1 lsl mbits))))
       wide
   in
   let bx = bits_of x and by = bits_of y in
-  let normal e = Ops.maximum e (Ops.const_like e (`Int Z.one)) in
+  let normal e = Ops.maximum e (int e 1) in
   let ex = normal (exponent bx) and ey = normal (exponent by) in
   let mx = significand bx and my = significand by in
   let my = where (Ops.eq my (int my 0)) (int my 1) my in
   let d = ex -: ey in
-  let steps = (emax + chunk - 1) / chunk in
+  (* The greatest exponent field of a finite float is [2 bias]. *)
+  let steps = ((2 * bias) + chunk - 1) / chunk in
   let rec reduce k r =
     if k = steps then r
     else
       let left =
         Ops.maximum
-          (Ops.minimum
-             (d -: Ops.const_like d (`Int (Z.of_int (k * chunk))))
-             (Ops.const_like d (`Int (Z.of_int chunk))))
-          (Ops.const_like d (`Int Z.zero))
+          (Ops.minimum (d -: int d (k * chunk)) (int d chunk))
+          (int d 0)
       in
       reduce (k + 1) (Ops.fmod (Ops.shl r (Ops.cast left wide)) my)
   in
   let r = reduce 0 (Ops.fmod mx my) in
   (* [r * 2^(ey - bias - mbits)], in two exact steps when the scale is below the
      normal range. *)
-  let bias = if is64 x then 1023 else 127 in
-  let k = ey -: Ops.const_like ey (`Int (Z.of_int (bias + mbits))) in
-  let lowest = Ops.const_like k (`Int (Z.of_int (1 - bias))) in
-  let k1 = Ops.maximum k lowest in
+  let k = ey -: int ey (bias + mbits) in
+  let k1 = Ops.maximum k (int k (1 - bias)) in
   let pow2 k =
-    Ops.bitcast
-      (Ops.shl
-         (Ops.cast (k +: Ops.const_like k (`Int (Z.of_int bias))) u)
-         (Ops.const_like (Ops.cast k u) (`Int (Z.of_int mbits))))
-      (dtype x)
+    Transcendental.pow2if (Ops.cast k (if is64 x then Int64 else Int32)) dt
   in
-  let m = Ops.cast r (dtype x) *: pow2 k1 *: pow2 (k -: k1) in
+  let m = Ops.cast r dt *: pow2 k1 *: pow2 (k -: k1) in
   let ax = abs x and ay = abs y in
   let inf = float x Float.infinity in
   let m = where (Ops.lt ax ay) ax m in
