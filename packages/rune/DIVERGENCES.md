@@ -43,8 +43,8 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:74,84,103,125` (`neg`, `add`, `sub`,
   `mul`) and `pow`.
-- **Raven:** `lower_arith.ml:53` (`lift`, `wrapping1`, `wrapping2`), `:78`
-  (`abs`), `:644` (`pow_int`).
+- **Raven:** `lower_arith.ml:52` (`lift`, `wrapping1`, `wrapping2`), `:75`
+  (`abs`), `:630` (`pow_int`).
 - **Differs:** signed `Neg`, `Abs`, `Add`, `Sub`, `Mul` and integer `Pow`
   compute on the unsigned bit pattern: `uint32` for widths below 32 bits (C,
   Metal and CUDA promote them to `int`, whose products overflow), the unsigned
@@ -62,7 +62,7 @@ target's run lands.
 ### A3. Integer reciprocal
 
 - **Reference:** `mixin/elementwise.py:460` (`reciprocal`).
-- **Raven:** `lower_arith.ml:65` (`recip`).
+- **Raven:** `lower_arith.ml:64` (`recip`).
 - **Differs:** on integers, `1 / x` truncated: 1 at 1, -1 at -1, 0 elsewhere
   and at 0. tinygrad's reciprocal is a float operation.
 - **nx:** integer division by zero is zero (`nx.mli`, `div`).
@@ -73,7 +73,7 @@ target's run lands.
 ### A4. Absolute value
 
 - **Reference:** `mixin/elementwise.py:911` (`x * sign x`).
-- **Raven:** `lower_arith.ml:78` (`abs`).
+- **Raven:** `lower_arith.ml:75` (`abs`).
 - **Differs:** a float's sign bit is cleared, so `abs (-0.)` is `0.` and
   `abs nan` a NaN; tinygrad's product gives `-0.` at `-0.`. A signed integer is
   negated modularly (A2).
@@ -85,7 +85,7 @@ target's run lands.
 ### A5. Sign of NaN
 
 - **Reference:** `mixin/elementwise.py:901` (`sign`).
-- **Raven:** `lower_arith.ml:88` (`sign`).
+- **Raven:** `lower_arith.ml:85` (`sign`).
 - **Differs:** `sign nan` is NaN; tinygrad gives 1.
 - **nx:** `nx_backend.mli`, `Sign`: NaN for a NaN.
 - **Class:** exact.
@@ -95,7 +95,7 @@ target's run lands.
 ### A6. Rounding half away from zero
 
 - **Reference:** `mixin/elementwise.py:890` (`round`, half to even).
-- **Raven:** `lower_arith.ml:105` (`round`).
+- **Raven:** `lower_arith.ml:102` (`round`).
 - **Differs:** a half rounds away from zero, decided on the exact rest
   `x - trunc x`.
 - **nx:** `nx_backend.mli`, `Round`: C's `round`.
@@ -106,7 +106,7 @@ target's run lands.
 ### A7. Exponential in two parts
 
 - **Reference:** `mixin/elementwise.py:511` (`exp2 (x * 1/ln 2)`).
-- **Raven:** `lower_arith.ml:190` (`exp_parts`, `exp`).
+- **Raven:** `lower_arith.ml:187` (`exp_parts`, `exp`).
 - **Differs:** rounding the product `x log2 e` costs up to about `|x|` ulps.
   The product is kept in two parts (Dekker), `2^(t+e)` is `2^t (1 + e ln 2)`,
   and `2^t` is taken of `t` moved by a power of two multiplied in last, so that
@@ -121,7 +121,7 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:490` (`Ops.SIN`), `:500`
   (`sin (pi/2 - x)`).
-- **Raven:** `lower_arith.ml:251` (`quarter_turns`, `by_quadrant`, `sin`, `cos`).
+- **Raven:** `lower_arith.ml:248` (`quarter_turns`, `by_quadrant`, `sin`, `cos`).
 - **Differs:** `pi/2 - x` rounds first, so tinygrad's cosine is 0 at
   `f32(pi/2)`, where it is `-4.4e-8`; and the sine of a large argument is only
   as good as the target's own reduction, which on Clang loses the remainder
@@ -139,7 +139,7 @@ target's run lands.
 ### A9. Tangent of the accurate sine and cosine
 
 - **Reference:** `mixin/elementwise.py:921` (`sin / cos`).
-- **Raven:** `lower_arith.ml:283` (`tan`).
+- **Raven:** `lower_arith.ml:280` (`tan`).
 - **Differs:** through the sine and cosine (A8) only.
 - **nx:** `tan`, libm's.
 - **Class:** ulp, per target; budget 8.
@@ -150,8 +150,8 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:931,944` (Abramowitz-Stegun 4.4.46,
   `acos = pi/2 - asin`).
-- **Raven:** `lower_arith.ml:305` (`asin_small`, `half`), `:323` (`asin`),
-  `:324` (`acos`).
+- **Raven:** `lower_arith.ml:302` (`asin_small`, `half`), `:320` (`asin`),
+  `:329` (`acos`).
 - **Differs:** tinygrad's polynomial is float32-grade, has no relative accuracy
   near 0, and `pi/2 - asin` cancels near 1. The lowering refines the
   polynomial with Newton's steps on `sin y = t` (one in `float32`, two in
@@ -166,7 +166,7 @@ target's run lands.
 ### A11. Arctangent
 
 - **Reference:** `mixin/elementwise.py:954` (`asin (x / sqrt (1 + x^2))`).
-- **Raven:** `lower_arith.ml:343` (`atan_positive`, `atan`).
+- **Raven:** `lower_arith.ml:340` (`atan_positive`, `atan`).
 - **Differs:** `x^2` overflows past `1.8e19` in `float32`, where tinygrad's
   arctangent is 0. The lowering takes the arcsine form of `min (|x|, 1/|x|)`
   only, and `pi/2` less it past 1.
@@ -178,7 +178,7 @@ target's run lands.
 ### A12. Two-argument arctangent
 
 - **Reference:** none.
-- **Raven:** `lower_arith.ml:351` (`atan2`).
+- **Raven:** `lower_arith.ml:348` (`atan2`).
 - **Differs:** a raven composition: the arctangent of `|y| / |x|`, `pi` less it
   for a negative `x` (its sign bit), the sign of `y`, and C's values for both
   zeros and both infinities.
@@ -191,7 +191,7 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:1034,1046` (`(e^x -+ e^-x) / 2`), `:757`
   (`2 sigmoid (2x) - 1`).
-- **Raven:** `lower_arith.ml:378` (`sinh`), `:387` (`cosh`), `:391` (`tanh`).
+- **Raven:** `lower_arith.ml:375` (`sinh`), `:384` (`cosh`), `:388` (`tanh`).
 - **Differs:** `sinh` and `tanh` cancel near 0 (`tanh` is 0 below about
   `6e-8`), and `sinh` and `cosh` overflow for `x` in `(88.72, 89.42]` in
   `float32`. The lowering computes `e^|x| / 2 +- e^-|x| / 2` with the halving in
@@ -205,7 +205,7 @@ target's run lands.
 ### A14. Error function
 
 - **Reference:** `mixin/elementwise.py:1058` (Abramowitz-Stegun 7.1.26).
-- **Raven:** `lower_arith.ml:512` (`erf`).
+- **Raven:** `lower_arith.ml:509` (`erf`).
 - **Differs:** tinygrad's approximation has an absolute error of `1.5e-7` and
   no relative accuracy near 0. The lowering builds fdlibm's rational
   approximations on four intervals, the coefficients of its double precision
@@ -218,7 +218,7 @@ target's run lands.
 ### A15. True division
 
 - **Reference:** `mixin/elementwise.py:229` (`a * (1/b)`).
-- **Raven:** `lower_arith.ml:137` (`( /: )`).
+- **Raven:** `lower_arith.ml:134` (`( /: )`).
 - **Differs:** one rounding: `Ops.FDIV`, which tolk renders as `a / b`
   (tolk's ledger). tinygrad multiplies by the reciprocal, two roundings.
 - **nx:** `nx_backend.mli`, `Fdiv`: the IEEE 754 quotient.
@@ -230,7 +230,7 @@ target's run lands.
 ### A16. Integer quotient and remainder by 0 and -1
 
 - **Reference:** `mixin/elementwise.py:229,216` (`Ops.CDIV`, `Ops.CMOD`).
-- **Raven:** `lower_arith.ml:759` (`idiv`), `:766` (`rem`).
+- **Raven:** `lower_arith.ml:730` (`idiv`), `:737` (`rem`).
 - **Differs:** a quotient or remainder by 0 is 0, a remainder by -1 is 0, and
   the quotient of the least integer by -1 wraps. The divisor is made 1 in those
   lanes before dividing, since a kernel computes both sides of a selection and
@@ -244,7 +244,7 @@ target's run lands.
 ### A17. Exact float remainder
 
 - **Reference:** `mixin/elementwise.py:216` (`x - trunc (x * (1/y)) * y`).
-- **Raven:** `lower_arith.ml:679` (`fmod`).
+- **Raven:** `lower_arith.ml:665` (`fmod`).
 - **Differs:** tinygrad's composition rounds three times and fails for
   `|x/y| >= 2^24`. The lowering computes C's exact `fmod` on the significands
   as integers: `(mx 2^d) mod my`, `d` the exponent difference, reduced 40 bits
@@ -261,7 +261,7 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:548` (`Ops.POW`, `xpow` =
   `exp2 (y log2 |x|)`).
-- **Raven:** `lower_arith.ml:561` (`log2_parts`), `:603` (`pow_float`).
+- **Raven:** `lower_arith.ml:558` (`log2_parts`), `:589` (`pow_float`).
 - **Differs:** `y log2 |x|` carries `y` times the logarithm's error. The
   lowering takes `log2 |x|` to twice the precision (`|x| = m 2^e`,
   `ln m = 2 atanh s` with its leading term in two parts), keeps the product in
@@ -276,7 +276,7 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:378,393` (`Ops.MAX`; `minimum` as
   `-max(-x, -y)`).
-- **Raven:** `lower_arith.ml:777` (`extreme`).
+- **Raven:** `lower_arith.ml:748` (`extreme`).
 - **Differs:** IEEE 754-2019's maximum and minimum: NaN when an operand is NaN,
   and `-0.` below `0.`, read on the sign bit. tinygrad's `MAX` keeps the larger
   operand by comparison, which a NaN never is.
@@ -288,7 +288,7 @@ target's run lands.
 ### A20. Less than or equal
 
 - **Reference:** `mixin/elementwise.py:330` (`not (x > y)`).
-- **Raven:** `lower_arith.ml:845` (`compare`, `at_most`).
+- **Raven:** `lower_arith.ml:816` (`compare`, `at_most`).
 - **Differs:** `x < y or x = y`, false on NaN; tinygrad's is true on NaN.
 - **nx:** `nx.mli`, `less_equal`.
 - **Class:** exact.
@@ -299,7 +299,7 @@ target's run lands.
 ### A21. Saturating conversion to integers
 
 - **Reference:** `mixin/dtype.py:19` (`cast`).
-- **Raven:** `lower_arith.ml:858` (`saturate`).
+- **Raven:** `lower_arith.ml:829` (`saturate`).
 - **Differs:** a float converted to an integer is held at the integer's range
   and NaN is 0; the conversion itself sees only values in range. C leaves both
   undefined.
@@ -313,7 +313,7 @@ target's run lands.
 
 - **Reference:** `mixin/rand.py:14` (the key packed as `uint64`),
   `mixin/elementwise.py:457` (`Ops.THREEFRY`).
-- **Raven:** `lower_arith.ml:899` (`threefry`).
+- **Raven:** `lower_arith.ml:870` (`threefry`).
 - **Differs:** nx's words are `int32` pairs along the last axis, the low word
   first; the lowering packs each pair into a `uint64`, hashes, and unpacks.
 - **nx:** `nx_backend.mli`, `threefry`: Threefry-2x32-20, bit-identical under
@@ -326,7 +326,7 @@ target's run lands.
 ### A23. A double narrows through float32 rounded to odd
 
 - **Reference:** `mixin/dtype.py:19` (`cast`).
-- **Raven:** `lower_arith.ml:878` (`to_float32_odd`, `cast`).
+- **Raven:** `lower_arith.ml:849` (`to_float32_odd`, `cast`).
 - **Differs:** a `float64` converted to `float16`, `bfloat16` or an 8-bit float
   is first narrowed to `float32` rounded to odd (truncated, its last bit set
   when a discarded bit was), so that the conversion rounds once. tinygrad's
@@ -343,7 +343,7 @@ target's run lands.
 
 - **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:758`
   (`_split_cumalu`).
-- **Raven:** `lower_reduce.ml:97` (`accumulated`).
+- **Raven:** `lower_reduce.ml:63` (`accumulated`).
 - **Differs:** the lowering adds `+0.` to each float sum it computes, once per
   output, for `Reduce` and `Scan` with `Sum`. A kernel starts a loop's
   accumulator from `+0.`, but sums the terms alone when no loop is left (an
@@ -362,7 +362,7 @@ target's run lands.
 - **Reference:** `mixin/reduce.py:20` (`sum`: the `sum_acc_dtype`
   accumulator, converted back for the narrow floats only), `:47` (`prod`: at
   the operand's dtype).
-- **Raven:** `lower_reduce.ml:97` (`accumulated`).
+- **Raven:** `lower_reduce.ml:63` (`accumulated`).
 - **Differs:** a sum and a product both accumulate in `Dtype.sum_acc`'s type,
   unsigned for the signed integers, and convert once to the operand's dtype.
   tinygrad accumulates signed integers in a signed type, whose overflow C,
@@ -382,7 +382,7 @@ target's run lands.
 
 - **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
   (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
-- **Raven:** `lower_reduce.ml:73` (`keys`, `values`), `:111` (`extreme`).
+- **Raven:** `lower_reduce.ml:37` (`keys`, `values`), `:73` (`extreme`).
 - **Differs:** a float maximum is `Ops.MAX` over integer keys, the bits with a
   negative float's magnitude flipped and every NaN at the greatest key, mapped
   back to floats; a minimum takes the maximum of the keys' complements, every
@@ -401,7 +401,7 @@ target's run lands.
 ### R4. Arg-reductions order keys
 
 - **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
-- **Raven:** `lower_reduce.ml:133` (`argmax`), `:145` (`arg_reduce`).
+- **Raven:** `lower_reduce.ml:95` (`argmax`), `:107` (`arg_reduce`).
 - **Differs:** tinygrad's decomposition runs over R3's keys: the first element
   equal to the maximum of the keys, the first NaN if there is one, and `-0.`
   below `0.`. Over floats, tinygrad's equality with the maximum never holds for
@@ -417,8 +417,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:965`
   (`argsort`).
-- **Raven:** `lower_reduce.ml:166` (`bitonic`), `:224` (`positions`), `:236`
-  (`take`), `:259` (`argsort`), `:281` (`sort`).
+- **Raven:** `lower_reduce.ml:129` (`bitonic`), `:191` (`positions`), `:202`
+  (`take`), `:225` (`argsort`), `:247` (`sort`).
 - **Differs:** tinygrad's network sorts R3's keys, NaN at the greatest key
   ascending and the least descending, each read as the unsigned integer of its
   width and packed in an `int64` above its position, complemented for a
@@ -439,7 +439,7 @@ target's run lands.
 
 - **Reference:** `mixin/op.py:289` (`_pad_constant`: a fill equal to 0 is the
   movement's zeros).
-- **Raven:** `lower_index.ml:64` (`pad`).
+- **Raven:** `lower_index.ml:49` (`pad`).
 - **Differs:** a fill of `-0.` is selected on the padding with `where`, as the
   reference fills any other value; the reference takes `-0.` for 0 and pads
   `+0.`.
@@ -452,7 +452,7 @@ target's run lands.
 
 - **Reference:** `mixin/op.py:750` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
-- **Raven:** `lower_index.ml:78` (`cat`).
+- **Raven:** `lower_index.ml:63` (`cat`).
 - **Differs:** each piece is selected with `where` on the stretch it fills; the
   reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
   pieces are dropped first, and pieces of one length are stacked as the
@@ -466,7 +466,7 @@ target's run lands.
 ### I3. Gather over bit patterns
 
 - **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
-- **Raven:** `lower_index.ml:107` (`gather`), `:47` (`bits`), `:56` (`pick`).
+- **Raven:** `lower_index.ml:91` (`gather`), `:32` (`bits`), `:41` (`pick`).
 - **Differs:** the one-hot selection is summed over the elements' bit patterns
   as unsigned integers of their width (booleans as `uint8`) and read back; the
   reference sums the values, which turns a gathered `-0.` into `+0.`. An index
@@ -483,8 +483,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:1077` (`_pre_scatter`), `:1127`
   (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1168`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
-- **Raven:** `lower_index.ml:118` (`scatter`);
-  `lower_reduce.ml:125` (`reduce`).
+- **Raven:** `lower_index.ml:99` (`scatter`);
+  `lower_reduce.ml:87` (`reduce`).
 - **Differs:**
   - `Add`: a position no update reaches is `x`'s element, selected on the
     mask of reached positions; the reference adds `x` to a sum of zeros there,
@@ -514,7 +514,7 @@ target's run lands.
   a corner computed by the program is only reachable as advanced indexing, a
   mask of every window position against every position of `x`, merged by one
   `where` per window position.
-- **Raven:** `lower_index.ml:154` (`update`).
+- **Raven:** `lower_index.ml:139` (`update`).
 - **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
   one-hot selection over bit patterns (I3), and the moved `v` is selected on
   the window's mask; along an axis `v` fills, the start is 0.
@@ -529,8 +529,8 @@ target's run lands.
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:233` (`fold`), `:210` (`cut`);
-  `lower_reduce.ml:125` (`reduce`).
+- **Raven:** `lower_index.ml:220` (`fold`), `:206` (`cut`);
+  `lower_reduce.ml:87` (`reduce`).
 - **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
   in reverse order, a shrink by a pad of zeros, and the copies of the input
   summed, which sums the windows where they overlap, from `+0.`, at `float32`
