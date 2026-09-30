@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.BUFFER dtypes.uchar [] ParamArg(slot=4, dtype=dtypes.uchar, size=16, device="CPU")
+1 Ops.BUFFER dtypes.uchar [] ParamArg(slot=2, dtype=dtypes.uchar, size=16, device="CPU")
+2 Ops.BUFFER dtypes.uchar [] ParamArg(slot=3, dtype=dtypes.uchar, size=64, device="DISK:/tmp/tolk-next-schedule")
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.CONST dtypes.weakint [] 16
+5 Ops.SHRINK dtypes.uchar [2, 3, 4]
+6 Ops.COPY dtypes.uchar [5] "CPU"
+7 Ops.STORE dtypes.void [1, 6]
+8 Ops.AFTER dtypes.uchar [1, 7]
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.ADD dtypes.uchar [8, 9]
+11 Ops.STORE dtypes.void [0, 10]
+12 Ops.AFTER dtypes.uchar [0, 11]
+13 Ops.SINK dtypes.void [12]
+

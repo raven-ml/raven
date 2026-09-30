@@ -2275,3 +2275,95 @@ observable in a kernel graph of any program or hand-built graph tried:
 | old: unit/test_schedule_rangeify.ml "kernel splitting preserves independent symbolic ranges" | | `variable_offset`, `variable_staged`, `variable_read_twice`, `variable_reduce`, `variable_same`, `variable_two`, `symbolic_kept`, `symbolic_contiguous`: graphs and counts |
 | old: unit/test_schedule_scaling.ml group "get_kernel_graph scaling" | time over graph size | dropped: a timing, the benchmarks' |
 | old: golden/rangeify (138 cases: 17 programs on 5 renderers, and 5 Llama cases) | rendered kernels | the programs' kernel graphs are `RA › … recorded` (`elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `shared_sum`, `reduce_unary`, `reduce_reshape_binop`, `reduce_permute_binop`, `reduce_shrink`, `shrink_fuse`, `multistage_reduce`, `permute_through_reshape`, `reshape_chain`, `contiguous_add`, `children_dont_push`); the rendering is the renderers' and the end-to-end suite's (L4, L5); Llama is the end-to-end suite's |
+
+## Schedule
+
+The suite is `Tolk_next.Schedule` (`schedule/schedule/`), written `SC` below.
+`SC › create_linear_with_vars › recorded` holds, for each `Tensor` program
+realized on the CPU, the sink tinygrad hands `create_linear_with_vars`
+(`<program>.golden`) and the planned schedule it returns
+(`<program>_linear.golden`), compared up to the numbering of the buffers made;
+`var_vals.golden` holds the variables' values. `SC › create_schedule ›
+recorded` holds each kernel graph tinygrad hands `create_schedule` and the
+schedule it returns, and `arguments.golden` holds each graph's scalar
+arguments. `SC › create_schedule › values` states that running a schedule's
+calls in order (`Kernel_graphs.linear_writes`) writes what the kernel graph
+does. `SC › create_linear_with_vars › values` states the same end to end: the
+unplanned schedule of a program writes into its buffers what its tensors
+compute (Tensors). `SC › create_linear_with_vars › capturing` states that the
+schedule left unplanned under `capturing`, once planned with the program's
+buffers held, is the default one. `SC › create_linear_with_vars › cache`
+covers hits, misses, keys, the `DEBUG` line and domains; the cache tests
+schedule programs whose constant no other run used, so they hold in any order
+and on any rerun.
+
+The values laws leave out custom kernels (the Interpreter does not compile
+them), graphs on several devices, and graphs with calls that are not kernels.
+They also leave out `assign_bitcast`: its call passes a buffer and a bitcast of
+it as two arguments, one memory that storage keyed by slot cannot alias. The
+end-to-end law leaves out programs with variables, whose movements Tensors
+does not run.
+
+Coverage of `schedule.ml` is 97.9%. The code no test reaches:
+
+- the defensive refusals of a queued kernel that is not a call and of storage
+  without its argument;
+- a buffer bound twice in one invocation, and call-local storage without a
+  device: rangeify gives every allocation a device, and each is rewritten once;
+- a free variable (slot -1) outside a kernel body;
+- a call of an already compiled `Program`, which the jit makes;
+- a nested call's scalar argument that is not a variable.
+
+The domain tests spawn domains, and OCaml refuses `fork` after that, so mutation
+runs with `-e domains`. Of the 72 mutants reached, 69 are killed and 3
+survive:
+
+- `:228`, `op x = Param && addrspace x = Some Alu` as `||`: it also binds a
+  nested call's buffer arguments by position. That is observable only when a
+  nested call inherits an enclosing scalar at a slot where it passes a buffer,
+  which no program tried makes (`precompiled_scalar` passes its scalar).
+- `:291` and `:552`, the `SPEC` checks turned on by default and off under
+  `SPEC=1`: every graph the pipeline builds passes `Spec.tensor`
+  (`SC › create_linear_with_vars › spec`), so the checks are inert, as
+  Rangeify's `:641` is.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_schedule_cache.py::TestScheduleCache::test_bound_variable_var_vals | a bound variable's value | `SC › var_vals.golden` (`variable_shrink`, `variable_reduce`, `variable_two`, `variable_same`, `variable_offset`, `variable_unused`, `precompiled_scalar`) |
+| tinygrad: null/test_schedule_cache.py::TestScheduleCache::test_disable_schedule_cache | `SCACHE=0` neither writes nor reads the cache | `SC › create_linear_with_vars › cache ›` "with SCACHE=0 every schedule misses", "a body scheduled again is a hit under the key it missed on"; the profile-event count is dropped, being the profiler's |
+| tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_bound_variable_reuses_cache | | `SC › … › cache › a variable bound to another value is the same body` |
+| tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_simple | a repeated schedule does not grow the cache | `SC › … › cache ›` "a body scheduled again is a hit under the key it missed on", "a hit is the schedule the miss made" |
+| tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_chained_functions_with_local_allocations_reuse_cache | one body scheduled for three calls | `SC › … › cache › a function called three times is scheduled once` (tinygrad's `DEBUG=3` lines), `chained_functions`; `SC › … › cache › call-local storage in other slots is the same body` |
+| tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_custom_kernel, test_same_custom_function_reuses_cache | | `custom_kernel`: its schedule and linear; the cache key is structural, as the cache tests state |
+| tinygrad: runtime/test_schedule_cache.py::TestScheduleCache::test_simple_precompile | | `precompiled_function`; the backward pass is dropped, being the gradient's (L8) |
+| tinygrad: null/test_schedule.py, runtime/test_schedule.py (TestSchedule, TestLimitBufs, TestSwizzle, TestView) | kernel counts and realized values | Rangeify's section for the counts; the realized values are the `Tensor` surface (L8) |
+| tinygrad: runtime/test_buffer.py, runtime/test_subbuffer.py | device buffers and their views | dropped here: the device runtime's; the schedule's views are `SC › contiguous_mops_to_view` and `copy_view`, `disk_view_to`, `assign_bitcast` |
+| tinygrad: schedule/__init__.py `create_schedule`'s assertions | a cycle, an effect that is not a call, end, store or After, an end of something else, an argument that is not storage | `SC › create_schedule › rules` |
+| tinygrad: schedule/__init__.py `assert_all_same_devices` | | `SC › create_linear_with_vars › rules › a kernel on buffers of two devices is refused` |
+| tinygrad: schedule/__init__.py `create_linear_with_vars`'s bind mismatch | | `SC › create_linear_with_vars › rules ›` "two variables of one name bound to two values are refused", "… to one value are one" |
+| tinygrad: schedule/__init__.py `pm_copy_from_store` | copy kernels become stores | `copy`, `copy_one`, `copy_view`, `disk_to`, `disk_view_to`, `disk_store`: their linears |
+| tinygrad: schedule/__init__.py `lower_sink_to_linear`'s `DEBUG` print | | `SC › … › cache ›` "DEBUG=1 prints only schedules of several kernels", "DEBUG=0 prints nothing", "the time printed is the time scheduling took"; the caller's frame and the node count are the README's row on the `DEBUG` print |
+| tinygrad: schedule/__init__.py `SCACHE=2` | the disk cache | dropped: the README's row on the disk half of `SCACHE=2` |
+| tinygrad: schedule/__init__.py `SPEC` | | `SC › create_linear_with_vars › spec` |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_schedule.ml "cache callbacks can lower another schedule" | lowering a body while another is lowered | `precompiled_function`, `chained_functions`, `precompiled_scalar`: nested bodies scheduled inside their callers' |
+| old: unit/engine/test_schedule.ml "partitions AFTER dependencies like tinygrad", "orders a reader before a superseding writer (WAR)", "rejects cycles instead of returning empty or partial schedules" | | `SC › create_schedule › rules` (9 tests) and `SC › create_schedule › values`, with `read_then_overwrite` and `assign_double_diamond` |
+| old: unit/engine/test_schedule.ml "nested scalar arguments shadow and inherit lexical bindings" | | shadowing: `precompiled_scalar`; inheriting is the `:228` survivor above |
+| old: unit/engine/test_schedule.ml "resolves allocations per invocation while preserving owners", "nested calls own separate anonymous allocations" | | `chained_functions_linear.golden`, `precompiled_function_linear.golden` |
+| old: unit/engine/test_schedule.ml "PARAM slots count BIND arguments" | | `SC › arguments.golden` through `SC › create_schedule › values` (`precompiled_scalar_kernels`, `variable_*_kernels`) |
+| old: unit/engine/test_schedule.ml "returns only binds used by scheduled kernels" | | `SC › var_vals.golden › program=variable_unused` |
+| old: unit/engine/test_schedule.ml "memory-plans internal buffers when not capturing", "hands the unplanned schedule to an active capturer" | | `SC › create_linear_with_vars › capturing` (46 tests); the capturer itself is the jit's (L7) |
+| old: unit/engine/test_schedule.ml group "call arguments" (5 tests) | views as call arguments | `SC › contiguous_mops_to_view` (11 tests), `copy_view`, `disk_view_to`, `assign_bitcast`; the refusal of a written view is old tolk's `copy_call`, which tinygrad has no counterpart of |
+| old: unit/test_engine_schedule.ml "disk views move after explicit bulk transfers", "ordinary slices keep the base call input", "explicit contiguous views are normalized before their bases" | | `disk_view_to`, `copy_view`, `SC › contiguous_mops_to_view` |
+| old: unit/test_engine_schedule.ml "volatile inputs survive scheduling" | | dropped: tinygrad's `param_like` makes a buffer's parameter without its volatile mark (`uop/ops.py:1247`), so a schedule keeps none |
+| old: unit/test_engine_schedule.ml "AFTER partition ignores STORE and keeps kernel order", "AFTER dependencies use all producer kernels", "CALL args are resolved through AFTER to buffer uops" | | `SC › create_schedule › rules ›` "a kernel runs after the one it reads and before its overwriter", "a kernel overwriting a state runs after the kernel that made it", "a kernel reading storage before and after a write runs after it" |
+| old: unit/test_engine_schedule.ml "schedule cache uses semantic key", "schedule cache key is identical across bind values" | | `SC › … › cache ›` "two bodies miss under two keys", "call-local storage in other slots is the same body", "a variable bound to another value is the same body" |
+| old: unit/test_engine_schedule.ml "schedule cache keys on the settings scheduling reads" | | dropped: tinygrad keys a body on its structure alone (`function.key`) |
+| old: unit/test_engine_schedule.ml "create_linear_with_vars keeps only used binds", "transform_to_call keeps variable identity on bound PARAM", "create_linear_with_vars extracts the binding from CALL args" | | `SC › var_vals.golden`, `SC › create_linear_with_vars › recorded` (`variable_*`) |
+| old: unit/test_engine_schedule.ml "fresh internal buffer slots keep buffers distinct", "concurrent internal slots keep imported buffers distinct", "concurrent memory plans keep arenas distinct" | | `SC › … › cache ›` "domains scheduling one body at once schedule it alike" (each domain makes buffers of its own), "domains scheduling bodies at once schedule each as alone" |

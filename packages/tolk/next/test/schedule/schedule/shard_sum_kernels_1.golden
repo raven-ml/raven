@@ -1,0 +1,43 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device=("CPU", "CPU:1")) tag=()
+1 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device=("CPU", "CPU:1"))
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.INDEX dtypes.float [1, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device=("CPU", "CPU:1"))
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=8, device=("CPU", "CPU:1"))
+8 Ops.INDEX dtypes.float [7, 3]
+9 Ops.ADD dtypes.float [6, 8]
+10 Ops.STORE dtypes.void [4, 9]
+11 Ops.END dtypes.void [10, 3]
+12 Ops.SINK dtypes.void [11] KernelInfo()
+13 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device=("CPU", "CPU:1")) tag=()
+14 Ops.MSELECT dtypes.float [13] 0
+15 Ops.ALLOC dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=8, device="CPU:1")
+16 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device="CPU:1")
+17 Ops.INDEX dtypes.float [16, 3]
+18 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device="CPU")
+19 Ops.INDEX dtypes.float [18, 3]
+20 Ops.STORE dtypes.void [17, 19]
+21 Ops.END dtypes.void [20, 3]
+22 Ops.SINK dtypes.void [21] KernelInfo()
+23 Ops.CALL dtypes.void [22, 15, 14] CallInfo()
+24 Ops.AFTER dtypes.float [15, 23]
+25 Ops.MSTACK dtypes.float [14, 24]
+26 Ops.ALLOC dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=8, device="CPU")
+27 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device="CPU")
+28 Ops.INDEX dtypes.float [27, 3]
+29 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, device="CPU:1")
+30 Ops.INDEX dtypes.float [29, 3]
+31 Ops.STORE dtypes.void [28, 30]
+32 Ops.END dtypes.void [31, 3]
+33 Ops.SINK dtypes.void [32] KernelInfo()
+34 Ops.MSELECT dtypes.float [13] 1
+35 Ops.CALL dtypes.void [33, 26, 34] CallInfo()
+36 Ops.AFTER dtypes.float [26, 35]
+37 Ops.MSTACK dtypes.float [36, 34]
+38 Ops.CALL dtypes.void [12, 0, 25, 37] CallInfo()
+39 Ops.AFTER dtypes.float [0, 38]
+40 Ops.SINK dtypes.void [39]
+

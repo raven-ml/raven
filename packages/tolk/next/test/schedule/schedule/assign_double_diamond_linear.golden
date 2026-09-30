@@ -1,0 +1,47 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256, device="CPU")
+5 Ops.MUL dtypes.weakint [2, 1]
+6 Ops.RANGE dtypes.weakint [1] (0, AxisType.REDUCE)
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.INDEX dtypes.float [4, 7]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device="CPU")
+10 Ops.INDEX dtypes.float [9, 6]
+11 Ops.CONST dtypes.weakfloat [] -1.0
+12 Ops.MUL dtypes.float [10, 11]
+13 Ops.ADD dtypes.float [8, 12]
+14 Ops.REDUCE dtypes.float [13, 6] (Ops.ADD, 0)
+15 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16, device="CPU")
+16 Ops.INDEX dtypes.float [15, 2]
+17 Ops.MUL dtypes.float [14, 16]
+18 Ops.STORE dtypes.void [3, 17]
+19 Ops.END dtypes.void [18, 2]
+20 Ops.SINK dtypes.void [19] KernelInfo()
+21 Ops.BUFFER dtypes.char [] ParamArg(slot=10, dtype=dtypes.char, size=512, device="CPU")
+22 Ops.CONST dtypes.weakint [] 0
+23 Ops.CONST dtypes.weakint [] 64
+24 Ops.SHRINK dtypes.char [21, 22, 23]
+25 Ops.BITCAST dtypes.float [24] dtypes.float
+26 Ops.BUFFER dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=256, device="CPU")
+27 Ops.BUFFER dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=16, device="CPU")
+28 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=16, device="CPU")
+29 Ops.CALL dtypes.void [20, 25, 26, 27, 28] CallInfo()
+30 Ops.CONST dtypes.weakint [] 256
+31 Ops.SHRINK dtypes.char [21, 30, 23]
+32 Ops.BITCAST dtypes.float [31] dtypes.float
+33 Ops.BUFFER dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=256, device="CPU")
+34 Ops.CALL dtypes.void [20, 32, 33, 28, 27] CallInfo()
+35 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+36 Ops.INDEX dtypes.float [0, 35]
+37 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+38 Ops.INDEX dtypes.float [37, 35]
+39 Ops.STORE dtypes.void [36, 38]
+40 Ops.END dtypes.void [39, 35]
+41 Ops.SINK dtypes.void [40] KernelInfo()
+42 Ops.CALL dtypes.void [41, 28, 25] CallInfo()
+43 Ops.CALL dtypes.void [41, 27, 32] CallInfo()
+44 Ops.LINEAR dtypes.void [29, 34, 42, 43]
+
