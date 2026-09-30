@@ -265,7 +265,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..f2897c1 100644
+index 2842d7e..0b5ace8 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -332,6 +332,26 @@ index 2842d7e..f2897c1 100644
        if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
+@@ -1404,12 +1422,18 @@ def safe_pow(x, y):
+   except ZeroDivisionError: return math.inf
+   except ValueError: return math.inf if x > 0 else -math.inf
+ 
++def fdiv(x, y):
++  # IEEE division: a zero divisor gives an infinity of the quotient's sign, or nan
++  try: return x / y
++  except ZeroDivisionError: return math.nan if x == 0 or x != x else math.copysign(math.inf, x) * math.copysign(1.0, y)
++
+ python_alu: dict[Ops, Callable]  = {
+   Ops.LOG2: lambda x: math.log2(x) if x > 0 else -math.inf if x == 0 else math.nan, Ops.EXP2: safe_exp2,
+   Ops.SQRT: lambda x: math.sqrt(x) if x >= 0 else math.nan, Ops.RECIPROCAL: lambda x: 1/x if x != 0 else math.copysign(math.inf, x),
+   Ops.SIN: lambda x: math.sin(x) if not math.isinf(x) else math.nan, Ops.POW: safe_pow,
+   Ops.TRUNC: lambda x: math.trunc(x) if math.isfinite(x) else x,
+-  Ops.NEG: operator.neg, Ops.ADD: operator.add, Ops.SUB: operator.sub, Ops.MUL: operator.mul, Ops.CMPNE: operator.ne, Ops.CMPLT: operator.lt,
++  Ops.NEG: operator.neg, Ops.ADD: operator.add, Ops.SUB: operator.sub, Ops.MUL: operator.mul, Ops.FDIV: fdiv, Ops.CMPNE: operator.ne,
++  Ops.CMPLT: operator.lt,
+   Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
+   Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
+   Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
 index 2eb2e96..537f8aa 100644
 --- a/tinygrad/uop/symbolic.py

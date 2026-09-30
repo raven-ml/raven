@@ -322,10 +322,11 @@ golden sees the state another left in tinygrad, such as its buffer numbering.
 It runs against the tinygrad checkout `_tinygrad_next` of the main
 working tree, which must be clean and at the commit the script pins, through
 a copy of it with `gen/tinygrad.patch` applied: the patch gives tinygrad's
-rewrites the restrictions that keep IEEE and modular values (DIVERGENCES D24),
-and its tensor-core matcher the widened operands of D29, so that the goldens
-hold the graphs tolk.next makes. No Python runs at test
-time. To regenerate:
+rewrites the restrictions that keep IEEE and modular values, its constants
+a NaN's bits (DIVERGENCES D13, D24 and D27), its tensor-core matcher the
+widened operands of D29, and its constant arithmetic the corrections of the
+README's CPython rows, so that the goldens hold the graphs and values
+tolk.next makes. No Python runs at test time. To regenerate:
 
 1. `uv run packages/tolk/next/test/gen/generate.py --check` writes nothing,
    prints the diff of every golden that would change, and fails if one would.

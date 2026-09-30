@@ -3507,6 +3507,7 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.Add -> binary Value.( + )
   | Op.Sub -> binary Value.( - )
   | Op.Mul -> binary Value.( * )
+  | Op.Fdiv -> binary (fun x y -> `Float (Value.to_float x /. Value.to_float y))
   | Op.Cmpne -> binary (fun x y -> `Bool (not (Value.( = ) x y)))
   | Op.Cmplt -> binary (fun x y -> `Bool (Value.( < ) x y))
   | Op.Cmpeq -> binary (fun x y -> `Bool (Value.( = ) x y))

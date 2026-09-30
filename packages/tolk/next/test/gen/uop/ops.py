@@ -59,7 +59,7 @@ FLOAT_UNARY = [0.0, -0.0, 0.5, 1.0, -1.0, 2.5, -2.5, 3.0, 4.0, 1e-45, 1e300, 655
 
 INT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.CDIV, Ops.CMOD, Ops.FLOORDIV, Ops.FLOORMOD, Ops.MAX, Ops.AND, Ops.OR,
               Ops.XOR, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ]
-FLOAT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.MAX, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ, Ops.POW]
+FLOAT_BINARY = [Ops.ADD, Ops.SUB, Ops.MUL, Ops.FDIV, Ops.MAX, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ, Ops.POW]
 BOOL_BINARY = [Ops.ADD, Ops.MUL, Ops.AND, Ops.OR, Ops.XOR, Ops.MAX, Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ]
 FLOAT_UNARY_OPS = [Ops.EXP2, Ops.LOG2, Ops.SIN, Ops.SQRT, Ops.RECIPROCAL, Ops.TRUNC, Ops.NEG]
 COMPARISONS = {Ops.CMPLT, Ops.CMPNE, Ops.CMPEQ}
@@ -137,7 +137,7 @@ def alu_rows():
     row(Ops.WHERE, dtypes.weakint, (True, Invalid, 1))
     row(Ops.WHERE, dtypes.weakint, (False, Invalid, 1))
     # operations exec_alu has no rule for, and operands that do not fit
-    for op, dt, operands in [(Ops.FDIV, dtypes.float, (1.0, 2.0)), (Ops.THREEFRY, dtypes.uint64, (1, 2)),
+    for op, dt, operands in [(Ops.THREEFRY, dtypes.uint64, (1, 2)),
                              (Ops.SQRT, dtypes.float, (Invalid,)), (Ops.ADD, dtypes.int32, (1,)),
                              (Ops.WHERE, dtypes.int32, (True, 1))]:
         row(op, dt, operands)
