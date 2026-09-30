@@ -1874,3 +1874,62 @@ their own; and that held buffers stay.
 |---|---|---|
 | old: unit/test_engine_schedule.ml "concurrent memory plans keep arenas distinct" | plans on several domains take distinct arena slots | `ME › memory_plan_rewrite › rules › each plan's arenas take new slots`; that the counter is safe across domains is `Ops.unique_num`'s, Ops' section |
 | old: unit/engine/test_schedule.ml "memory plans internal buffers when not capturing" | the executor plans unless it captures | dropped here: when to plan is the executor's (rune) |
+
+## Device
+
+The suite is `Tolk_next.Device` (`device/`), written `DV` below.
+`renderers.golden` holds `Compiled._select_renderer` for 36 DEV settings, each
+device and each architecture the device reports (its own and none): the target
+it renders for, and the renderer it picks, the error of a target that names a
+renderer the device lacks, or the failure of the renderer itself, whose text
+is the renderer's own. A device lists the renderers of its `Compiled` that
+tolk.next ports. `<case>_program.golden` holds programs that `to_program`
+compiles for Clang and Metal, with the empty compiler so that no toolchain
+shapes them, and `elfs.golden`, `signatures.golden` and `layouts.golden` what
+`to_elf` and `TinyELF.iter_sig` give for each; `signatures.golden` and
+`reprs.golden` also hold tinygrad's repr, which the printers match. DEV is bound with
+`Helpers.context`, so every setting runs in one process. The test that two
+domains share a renderer cannot run under mutation testing, which forks.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | `CPU:TYPO` has no renderer; `CPU:CLANGJIT` suggests `CLANG` | `DV › renderer › picks a device's renderer as tinygrad does › renderers.golden` (`dev=CPU:TYPO`, `dev=CPU:CLANGJIT`, and a misspelling for each device); `DV › renderer › names the renderer a target misspells` |
+| tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | `renderers.golden` (`dev=::gfx942`, `dev=CUDA::sm_75`, ...); `DV › renderer › renders for the setting's target of the device` (the NULL device of the test is excluded) |
+| tinygrad: null/test_device.py::TestDevice::test_env_online | the renderer follows DEV within a context, and is remembered | `renderers.golden` under `Helpers.context`; `DV › renderer's memory › returns the same renderer to a second call`, `returns one renderer per target, whatever the order of the calls` |
+| tinygrad: null/test_device.py::TestDevice::test_env_overwrite_default_compiler | `DEV=CPU:LLVM`, `AMD:LLVM` pick another compiler | dropped: the LLVM renderers are excluded (README); `renderers.golden` pins that `CPU:LLVM` has no renderer and `CPU:CLANG` and `AMD:HIP` pick theirs |
+| tinygrad: null/test_device.py::TestDevice::test_compiler_autodetect_fallback | a renderer that fails to make gives way to the next | dropped here: each device has one ported renderer, so the fallback never runs; `Helpers.select_first_inited` is `Helpers › selection`'s. A failing renderer's own message is `DV › renderer › fails with the renderer's own message on an architecture it refuses` |
+| tinygrad: null/test_device.py::TestDevice::test_old_renderer_env_raises | `CPU_LLVM=1` is refused | dropped: the `{DEV}_{RENDERER}` migration check is not ported (README exclusions) |
+| tinygrad: null/test_device.py::TestDevice::test_canonicalize, test_lowercase_canonicalizes | `cpu`, `CL:0` and `disk:...` canonicalize | `DV › renderer takes a device's name as it is (D6)`: tolk.next never parses a name, and refuses `cpu`, `CPU:0` and `DISK:...` |
+| tinygrad: null/test_device.py::TestDevice::test_getitem_not_exist | `Device["TYPO"]` fails | `DV › renderer › raises on a name that is no device` |
+| tinygrad: null/test_device.py::TestDevice::test_nonexistent_iface, test_dev_id_out_of_range, test_old_device_env_raises, test_set_device_default_raises, test_dev_contextvar | interfaces, device indices, `Device.DEFAULT` | dropped: opening devices and the default device are rune's and nx.device's (D3) |
+| tinygrad: null/test_device.py::TestCompiler (3 tests) | the compiler cache | Renderer's section (`R › Compiler`) |
+| tinygrad: null/test_device.py::TestRunAsModule::test_module_runs | `enumerate_devices_str` | dropped: not ported (README exclusions) |
+| tinygrad: uop/ops.py `to_elf` (read by ops_cpu, ops_cuda, ops_metal, ops_nv, ops_qcom, realize) | buffers compacted in globals order, then variables | `DV › Tiny_elf.of_program › lays out the signature as tinygrad's to_elf does › signatures.golden`; `numbers buffers by their place among the globals, then variables` |
+| tinygrad: device.py `TinyELF.iter_sig` (read by ops_cpu, ops_hip, hcq2) | values packed from an offset, each aligned to its size | `DV › Tiny_elf.iter_sig › packs a signature as tinygrad's iter_sig does › layouts.golden` (offsets 0, 3 and 8); `packs each value at the next offset aligned to its size` |
+| tinygrad: test/helpers.py:146, test/amd/hw/*.py (`dev.runtime(prg.to_elf())`, hand-made `TinyELF`) | loading a program | dropped: loading is nx.device's (D3) |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/test_device.ml "compilation canonicalizes interleaved kernel arguments" | buffers in slots 7 and 2 and a variable take signature slots 0, 1, 2 | `DV › Tiny_elf.of_program › numbers buffers by their place among the globals, then variables` (its first example is this kernel); `signatures.golden` (`program=sparse`). The rendered prototype is Cstyle's |
+| old: unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types | name, lib, target, profile key, slots, shapes, names and types of `to_elf` | `DV › Tiny_elf.of_program › compiles as tinygrad's to_elf does`, `takes the program's binary as its lib`, `keys the program's profile with its key`, `takes the target of the program, whatever rendered it`, `signatures.golden` (named buffers and variables) |
+| old: unit/uop/test_uop.ml binary_argument_layout | a packed layout of a signature, refused for void and weak types | `DV › Tiny_elf.iter_sig › packs each value at the next offset aligned to its size`; the refusal is dropped: tinygrad's `iter_sig` refuses no type |
+| old: unit/uop/test_uop.ml incomplete_program_has_no_binary | `to_elf` of a sink or an uncompiled program | `DV › Tiny_elf.of_program › refuses a node that is no program, and a program not compiled` |
+| old: unit/test_program_spec.ml "bounded scalar metadata retains the complete ABI", "named scalar formals preserve binding order and deduplication" | variables follow the buffers, in order | `DV › Tiny_elf.of_program › numbers buffers by their place among the globals, then variables` |
+| old: unit/test_program_spec.ml "incomplete scalar metadata is rejected before ABI construction", "conflicting scalar declarations are rejected before dispatch", "buffer and scalar declarations share collision checks" | the old program record refused variables without names or bounds, and names that render alike | dropped: `Program_spec` has no counterpart, and tinygrad's `to_elf` checks neither; a variable's name and bounds are `Ops.variable`'s |
+| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests) | buffer copies, and their failure before the engine links | dropped: buffers are rune's (D3) |
+| old: unit/test_device.ml "device bootstrap registration rolls back failed initialization", "concurrent device lookup runs one opener", "incomplete devices are private to the initializing thread", "failed device initialization wakes waiting callers", "failed openers cannot publish provisional devices" | the device registry | dropped: the registry is rune's (D3) |
+| old: unit/test_device.ml "independent views share root ownership across domains", "program storage belongs to the device across links", "failed buffer finalizers are reported without retrying teardown", "buffer finalizers wait for device operations", "buffer finalizers wait for overlapping systhreads", "suspended device operations reject unrelated fibers", "foreign retirement waits for the active native owner", "buffer finalizers preserve queued retirement error timing", the three "teardown shares device ownership" tests, "foreign access completion is captured, coalesced and retried", "same-name foreign completions retain separate owners" | buffer and device lifetimes across domains and threads | dropped: storage and its lifetime are rune's and nx.device's (D3); tinygrad has none of these contracts |
+| old: unit/test_device.ml "host storage owns zeroed pages suitable for GPU registration", "per-device mappings share base ownership and release before storage", "opaque storage access requires a type identity", "BUFFER owns storage across execution contexts", the three "serialization" tests, "buffer byte ranges reject overflow", "empty storage never calls an allocator", "failed view allocation preserves ownership", "stale views refresh on every storage access", "external views refresh without freeing their owner" | allocators, views and storage | dropped: allocators and the lazy `Buffer` are rune's and nx.device's (D3) |
+
+### Rows other sections left to Device's
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| Helpers: tinygrad null/test_device.py::TestDevVar::test_dev_arch_override, TestDevice::test_nonexistent_renderer | | this section's rows for the same tests |
+| Helpers: tinygrad null/test_device.py::TestCompiler (3 tests); old unit/test_diskcache.ml:319, :322 | the compiler cache | Renderer's section: `Compiler` is `Renderer.Compiler` |
+| Ops: tinygrad null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device, test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: devices are named, never canonicalized (D6); rune names them |
+| Ops: old unit/uop/test_uop.ml compiled_signature_preserves_slots_and_types, binary_argument_layout, incomplete_program_has_no_binary | | this section's old tolk rows |

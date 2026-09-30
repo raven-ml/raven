@@ -1,0 +1,17 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+program	position	name	slot	dtype	shape	repr
+elementwise	0	None	0	dtypes.float	(16,)	(None, 0, dtypes.float, (16,))
+elementwise	1	None	1	dtypes.float	(16,)	(None, 1, dtypes.float, (16,))
+elementwise	2	None	2	dtypes.half	(16,)	(None, 2, dtypes.half, (16,))
+elementwise_metal	0	None	0	dtypes.float	(16,)	(None, 0, dtypes.float, (16,))
+elementwise_metal	1	None	1	dtypes.float	(16,)	(None, 1, dtypes.float, (16,))
+elementwise_metal	2	None	2	dtypes.half	(16,)	(None, 2, dtypes.half, (16,))
+sparse	0	None	0	dtypes.int	(1,)	(None, 0, dtypes.int, (1,))
+sparse	1	None	1	dtypes.int	(1,)	(None, 1, dtypes.int, (1,))
+sparse	2	'increment'	2	dtypes.int	()	('increment', 2, dtypes.int, ())
+scalars	0	'acc'	0	dtypes.long	(4,)	('acc', 0, dtypes.long, (4,))
+scalars	1	None	1	dtypes.char	(4,)	(None, 1, dtypes.char, (4,))
+scalars	2	'small'	2	dtypes.char	()	('small', 2, dtypes.char, ())
+scalars	3	'wide'	3	dtypes.long	()	('wide', 3, dtypes.long, ())
+scalars	4	'mid'	4	dtypes.int	()	('mid', 4, dtypes.int, ())
+fill	0	None	0	dtypes.float	(8,)	(None, 0, dtypes.float, (8,))

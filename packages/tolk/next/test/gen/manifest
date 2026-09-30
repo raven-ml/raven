@@ -952,6 +952,16 @@ codegen/simplify/transpose.golden
 codegen/simplify/transpose_split.golden
 codegen/simplify/triu.golden
 codegen/simplify/triu_collapsed.golden
+device/elementwise_metal_program.golden
+device/elementwise_program.golden
+device/elfs.golden
+device/fill_program.golden
+device/layouts.golden
+device/renderers.golden
+device/reprs.golden
+device/scalars_program.golden
+device/signatures.golden
+device/sparse_program.golden
 dtype/bitcasts.golden
 dtype/commit.golden
 dtype/const.golden

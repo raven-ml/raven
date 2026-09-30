@@ -141,8 +141,11 @@ the Exclusions of `README.md`.
   tinygrad reserves it and nx.device names its disk devices
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
-- **Pinned by:** for targets, the `Device` suite (`test/device`); for the
-  disk, the `Ops`
+- **Pinned by:** for targets, the `Device` suite: `renderer takes a
+  device's name as it is (D6)` (a name with an index, in lower case, or a
+  disk's, is no device, and a name gives no renderer or architecture) and
+  `renderer › picks a device's renderer as tinygrad does` (the architecture
+  comes from DEV or the caller); for the disk, the `Ops`
   suite: `several devices › on_disk holds for one disk device`, `several
   devices › copy_to_device rejects a disk and a weak type` and `storage ›
   clone rejects a disk`.

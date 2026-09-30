@@ -1,0 +1,47 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.SHRINK dtypes.float [0, 6, 2]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+9 Ops.SHRINK dtypes.float [8, 6, 2]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.INDEX dtypes.float [10, 12]
+14 Ops.PARAM dtypes.half [] ParamArg(slot=2, dtype=dtypes.half, size=16, device="CPU")
+15 Ops.SHRINK dtypes.half [14, 6, 2]
+16 Ops.LOAD dtypes.half [15]
+17 Ops.INDEX dtypes.half [16, 12]
+18 Ops.CAST dtypes.float [17] dtypes.float
+19 Ops.ADD dtypes.float [13, 18]
+20 Ops.CONST dtypes.weakint [] 1
+21 Ops.CAST dtypes.int [20] dtypes.int
+22 Ops.INDEX dtypes.float [10, 21]
+23 Ops.INDEX dtypes.half [16, 21]
+24 Ops.CAST dtypes.float [23] dtypes.float
+25 Ops.ADD dtypes.float [22, 24]
+26 Ops.INDEX dtypes.float [10, 5]
+27 Ops.INDEX dtypes.half [16, 5]
+28 Ops.CAST dtypes.float [27] dtypes.float
+29 Ops.ADD dtypes.float [26, 28]
+30 Ops.CONST dtypes.weakint [] 3
+31 Ops.CAST dtypes.int [30] dtypes.int
+32 Ops.INDEX dtypes.float [10, 31]
+33 Ops.INDEX dtypes.half [16, 31]
+34 Ops.CAST dtypes.float [33] dtypes.float
+35 Ops.ADD dtypes.float [32, 34]
+36 Ops.STACK dtypes.float [19, 25, 29, 35]
+37 Ops.STORE dtypes.void [7, 36]
+38 Ops.GROUP dtypes.void [37, 37, 37, 37]
+39 Ops.SINK dtypes.void [38] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=16, lds=160, mem=160)) tag=1
+40 Ops.SINK dtypes.void [38] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
+41 Ops.LINEAR dtypes.void [0, 8, 14, 1, 2, 3, 4, 5, 6, 15, 16, 9, 10, 11, 12, 17, 20, 21, 23, 27, 30, 31, 33, 13, 22, 26, 32, 18, 24, 28, 34, 19, 25, 29, 35, 36, 7, 37, 38, 40]
+42 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_16; device float* data1_16; device half* data2_16; };\nkernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_16 = args.data0_16; device float* data1_16 = args.data1_16; device half* data2_16 = args.data2_16;\n  int lidx0 = lid.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  half4 val0 = (*((device half4*)((data2_16+alu0))));\n  float4 val1 = (*((device float4*)((data1_16+alu0))));\n  *((device float4*)((data0_16+alu0))) = float4((val1.x+((float)(val0.x))),(val1.y+((float)(val0.y))),(val1.z+((float)(val0.z))),(val1.w+((float)(val0.w))));\n}"
+43 Ops.BINARY dtypes.uchar [] b"#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_16; device float* data1_16; device half* data2_16; };\nkernel void E_4_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_16 = args.data0_16; device float* data1_16 = args.data1_16; device half* data2_16 = args.data2_16;\n  int lidx0 = lid.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  half4 val0 = (*((device half4*)((data2_16+alu0))));\n  float4 val1 = (*((device float4*)((data1_16+alu0))));\n  *((device float4*)((data0_16+alu0))) = float4((val1.x+((float)(val0.x))),(val1.y+((float)(val0.y))),(val1.z+((float)(val0.z))),(val1.w+((float)(val0.w))));\n}"
+44 Ops.PROGRAM dtypes.void [39, 41, 42, 43] ProgramInfo(local_size=(4, 1, 1), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+

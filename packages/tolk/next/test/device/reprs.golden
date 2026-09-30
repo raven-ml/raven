@@ -1,0 +1,5 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	repr
+some	TinyELF(lib=b'\x7fELF\x00\'"', name='k', target=CPU:CLANG:x86_64,x86-64, signature=((None, 0, dtypes.float, (16,)), ('n', 1, dtypes.int, ())), profile_key=b'key\n')
+none	TinyELF(lib=b'', name='E_4', target=PCI:1+AMD:HIP:gfx1100, signature=((None, 0, dtypes.float, (16,)),), profile_key=None)
+empty	TinyELF(lib=b'lib', name='k', target=, signature=(), profile_key=None)

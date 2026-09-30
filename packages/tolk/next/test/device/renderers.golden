@@ -1,0 +1,362 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dev	device	arch	target	renderer	outcome	error
+	CPU		CPU	CLANG	renderer fails	
+	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+	METAL		METAL	METAL	ok	
+	METAL	Apple9	METAL::Apple9	METAL	ok	
+	CUDA		CUDA	CUDA	renderer fails	
+	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+	NV		NV	CUDA	renderer fails	
+	NV	sm_80	NV::sm_80	CUDA	ok	
+	AMD		AMD	HIP	ok	
+	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU	CPU		CPU	CLANG	renderer fails	
+CPU	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CPU	METAL		METAL	METAL	ok	
+CPU	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU	CUDA		CUDA	CUDA	renderer fails	
+CPU	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU	NV		NV	CUDA	renderer fails	
+CPU	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU	AMD		AMD	HIP	ok	
+CPU	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+METAL	CPU		CPU	CLANG	renderer fails	
+METAL	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+METAL	METAL		METAL	METAL	ok	
+METAL	METAL	Apple9	METAL::Apple9	METAL	ok	
+METAL	CUDA		CUDA	CUDA	renderer fails	
+METAL	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+METAL	NV		NV	CUDA	renderer fails	
+METAL	NV	sm_80	NV::sm_80	CUDA	ok	
+METAL	AMD		AMD	HIP	ok	
+METAL	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA	CPU		CPU	CLANG	renderer fails	
+CUDA	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA	METAL		METAL	METAL	ok	
+CUDA	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA	CUDA		CUDA	CUDA	renderer fails	
+CUDA	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CUDA	NV		NV	CUDA	renderer fails	
+CUDA	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA	AMD		AMD	HIP	ok	
+CUDA	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+NV	CPU		CPU	CLANG	renderer fails	
+NV	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+NV	METAL		METAL	METAL	ok	
+NV	METAL	Apple9	METAL::Apple9	METAL	ok	
+NV	CUDA		CUDA	CUDA	renderer fails	
+NV	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+NV	NV		NV	CUDA	renderer fails	
+NV	NV	sm_80	NV::sm_80	CUDA	ok	
+NV	AMD		AMD	HIP	ok	
+NV	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+AMD	CPU		CPU	CLANG	renderer fails	
+AMD	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+AMD	METAL		METAL	METAL	ok	
+AMD	METAL	Apple9	METAL::Apple9	METAL	ok	
+AMD	CUDA		CUDA	CUDA	renderer fails	
+AMD	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+AMD	NV		NV	CUDA	renderer fails	
+AMD	NV	sm_80	NV::sm_80	CUDA	ok	
+AMD	AMD		AMD	HIP	ok	
+AMD	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU:CLANG	CPU		CPU:CLANG	CLANG	renderer fails	
+CPU:CLANG	CPU	arm64,apple-m1	CPU:CLANG:arm64,apple-m1	CLANG	ok	
+CPU:CLANG	METAL		METAL	METAL	ok	
+CPU:CLANG	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU:CLANG	CUDA		CUDA	CUDA	renderer fails	
+CPU:CLANG	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU:CLANG	NV		NV	CUDA	renderer fails	
+CPU:CLANG	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU:CLANG	AMD		AMD	HIP	ok	
+CPU:CLANG	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+METAL:METAL	CPU		CPU	CLANG	renderer fails	
+METAL:METAL	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+METAL:METAL	METAL		METAL:METAL	METAL	ok	
+METAL:METAL	METAL	Apple9	METAL:METAL:Apple9	METAL	ok	
+METAL:METAL	CUDA		CUDA	CUDA	renderer fails	
+METAL:METAL	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+METAL:METAL	NV		NV	CUDA	renderer fails	
+METAL:METAL	NV	sm_80	NV::sm_80	CUDA	ok	
+METAL:METAL	AMD		AMD	HIP	ok	
+METAL:METAL	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA:CUDA	CPU		CPU	CLANG	renderer fails	
+CUDA:CUDA	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA:CUDA	METAL		METAL	METAL	ok	
+CUDA:CUDA	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA:CUDA	CUDA		CUDA:CUDA	CUDA	renderer fails	
+CUDA:CUDA	CUDA	sm_89	CUDA:CUDA:sm_89	CUDA	ok	
+CUDA:CUDA	NV		NV	CUDA	renderer fails	
+CUDA:CUDA	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA:CUDA	AMD		AMD	HIP	ok	
+CUDA:CUDA	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+NV:CUDA	CPU		CPU	CLANG	renderer fails	
+NV:CUDA	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+NV:CUDA	METAL		METAL	METAL	ok	
+NV:CUDA	METAL	Apple9	METAL::Apple9	METAL	ok	
+NV:CUDA	CUDA		CUDA	CUDA	renderer fails	
+NV:CUDA	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+NV:CUDA	NV		NV:CUDA	CUDA	renderer fails	
+NV:CUDA	NV	sm_80	NV:CUDA:sm_80	CUDA	ok	
+NV:CUDA	AMD		AMD	HIP	ok	
+NV:CUDA	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+AMD:HIP	CPU		CPU	CLANG	renderer fails	
+AMD:HIP	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+AMD:HIP	METAL		METAL	METAL	ok	
+AMD:HIP	METAL	Apple9	METAL::Apple9	METAL	ok	
+AMD:HIP	CUDA		CUDA	CUDA	renderer fails	
+AMD:HIP	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+AMD:HIP	NV		NV	CUDA	renderer fails	
+AMD:HIP	NV	sm_80	NV::sm_80	CUDA	ok	
+AMD:HIP	AMD		AMD:HIP	HIP	ok	
+AMD:HIP	AMD	gfx1100	AMD:HIP:gfx1100	HIP	ok	
+:CLANG	CPU		CPU:CLANG	CLANG	renderer fails	
+:CLANG	CPU	arm64,apple-m1	CPU:CLANG:arm64,apple-m1	CLANG	ok	
+:CLANG	METAL		METAL:CLANG		no renderer	METAL has no renderer 'CLANG'
+:CLANG	METAL	Apple9	METAL:CLANG:Apple9		no renderer	METAL has no renderer 'CLANG'
+:CLANG	CUDA		CUDA:CLANG		no renderer	CUDA has no renderer 'CLANG'
+:CLANG	CUDA	sm_89	CUDA:CLANG:sm_89		no renderer	CUDA has no renderer 'CLANG'
+:CLANG	NV		NV:CLANG		no renderer	NV has no renderer 'CLANG'
+:CLANG	NV	sm_80	NV:CLANG:sm_80		no renderer	NV has no renderer 'CLANG'
+:CLANG	AMD		AMD:CLANG		no renderer	AMD has no renderer 'CLANG'
+:CLANG	AMD	gfx1100	AMD:CLANG:gfx1100		no renderer	AMD has no renderer 'CLANG'
+:HIP	CPU		CPU:HIP		no renderer	CPU has no renderer 'HIP'
+:HIP	CPU	arm64,apple-m1	CPU:HIP:arm64,apple-m1		no renderer	CPU has no renderer 'HIP'
+:HIP	METAL		METAL:HIP		no renderer	METAL has no renderer 'HIP'
+:HIP	METAL	Apple9	METAL:HIP:Apple9		no renderer	METAL has no renderer 'HIP'
+:HIP	CUDA		CUDA:HIP		no renderer	CUDA has no renderer 'HIP'
+:HIP	CUDA	sm_89	CUDA:HIP:sm_89		no renderer	CUDA has no renderer 'HIP'
+:HIP	NV		NV:HIP		no renderer	NV has no renderer 'HIP'
+:HIP	NV	sm_80	NV:HIP:sm_80		no renderer	NV has no renderer 'HIP'
+:HIP	AMD		AMD:HIP	HIP	ok	
+:HIP	AMD	gfx1100	AMD:HIP:gfx1100	HIP	ok	
+::gfx942	CPU		CPU::gfx942	CLANG	renderer fails	
+::gfx942	CPU	arm64,apple-m1	CPU::gfx942	CLANG	renderer fails	
+::gfx942	METAL		METAL::gfx942	METAL	ok	
+::gfx942	METAL	Apple9	METAL::gfx942	METAL	ok	
+::gfx942	CUDA		CUDA::gfx942	CUDA	ok	
+::gfx942	CUDA	sm_89	CUDA::gfx942	CUDA	ok	
+::gfx942	NV		NV::gfx942	CUDA	ok	
+::gfx942	NV	sm_80	NV::gfx942	CUDA	ok	
+::gfx942	AMD		AMD::gfx942	HIP	ok	
+::gfx942	AMD	gfx1100	AMD::gfx942	HIP	ok	
+CPU::x86_64,znver2	CPU		CPU::x86_64,znver2	CLANG	ok	
+CPU::x86_64,znver2	CPU	arm64,apple-m1	CPU::x86_64,znver2	CLANG	ok	
+CPU::x86_64,znver2	METAL		METAL	METAL	ok	
+CPU::x86_64,znver2	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU::x86_64,znver2	CUDA		CUDA	CUDA	renderer fails	
+CPU::x86_64,znver2	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU::x86_64,znver2	NV		NV	CUDA	renderer fails	
+CPU::x86_64,znver2	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU::x86_64,znver2	AMD		AMD	HIP	ok	
+CPU::x86_64,znver2	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+METAL::Apple6	CPU		CPU	CLANG	renderer fails	
+METAL::Apple6	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+METAL::Apple6	METAL		METAL::Apple6	METAL	ok	
+METAL::Apple6	METAL	Apple9	METAL::Apple6	METAL	ok	
+METAL::Apple6	CUDA		CUDA	CUDA	renderer fails	
+METAL::Apple6	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+METAL::Apple6	NV		NV	CUDA	renderer fails	
+METAL::Apple6	NV	sm_80	NV::sm_80	CUDA	ok	
+METAL::Apple6	AMD		AMD	HIP	ok	
+METAL::Apple6	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA::sm_75	CPU		CPU	CLANG	renderer fails	
+CUDA::sm_75	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA::sm_75	METAL		METAL	METAL	ok	
+CUDA::sm_75	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA::sm_75	CUDA		CUDA::sm_75	CUDA	ok	
+CUDA::sm_75	CUDA	sm_89	CUDA::sm_75	CUDA	ok	
+CUDA::sm_75	NV		NV	CUDA	renderer fails	
+CUDA::sm_75	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA::sm_75	AMD		AMD	HIP	ok	
+CUDA::sm_75	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+NV::sm_90	CPU		CPU	CLANG	renderer fails	
+NV::sm_90	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+NV::sm_90	METAL		METAL	METAL	ok	
+NV::sm_90	METAL	Apple9	METAL::Apple9	METAL	ok	
+NV::sm_90	CUDA		CUDA	CUDA	renderer fails	
+NV::sm_90	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+NV::sm_90	NV		NV::sm_90	CUDA	ok	
+NV::sm_90	NV	sm_80	NV::sm_90	CUDA	ok	
+NV::sm_90	AMD		AMD	HIP	ok	
+NV::sm_90	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+AMD::gfx950	CPU		CPU	CLANG	renderer fails	
+AMD::gfx950	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+AMD::gfx950	METAL		METAL	METAL	ok	
+AMD::gfx950	METAL	Apple9	METAL::Apple9	METAL	ok	
+AMD::gfx950	CUDA		CUDA	CUDA	renderer fails	
+AMD::gfx950	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+AMD::gfx950	NV		NV	CUDA	renderer fails	
+AMD::gfx950	NV	sm_80	NV::sm_80	CUDA	ok	
+AMD::gfx950	AMD		AMD::gfx950	HIP	ok	
+AMD::gfx950	AMD	gfx1100	AMD::gfx950	HIP	ok	
+CPU:TYPO	CPU		CPU:TYPO		no renderer	CPU has no renderer 'TYPO'
+CPU:TYPO	CPU	arm64,apple-m1	CPU:TYPO:arm64,apple-m1		no renderer	CPU has no renderer 'TYPO'
+CPU:TYPO	METAL		METAL	METAL	ok	
+CPU:TYPO	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU:TYPO	CUDA		CUDA	CUDA	renderer fails	
+CPU:TYPO	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU:TYPO	NV		NV	CUDA	renderer fails	
+CPU:TYPO	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU:TYPO	AMD		AMD	HIP	ok	
+CPU:TYPO	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU:CLANGJIT	CPU		CPU:CLANGJIT		no renderer	CPU has no renderer 'CLANGJIT', did you mean: 'CLANG'?
+CPU:CLANGJIT	CPU	arm64,apple-m1	CPU:CLANGJIT:arm64,apple-m1		no renderer	CPU has no renderer 'CLANGJIT', did you mean: 'CLANG'?
+CPU:CLANGJIT	METAL		METAL	METAL	ok	
+CPU:CLANGJIT	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU:CLANGJIT	CUDA		CUDA	CUDA	renderer fails	
+CPU:CLANGJIT	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU:CLANGJIT	NV		NV	CUDA	renderer fails	
+CPU:CLANGJIT	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU:CLANGJIT	AMD		AMD	HIP	ok	
+CPU:CLANGJIT	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU:LLVM	CPU		CPU:LLVM		no renderer	CPU has no renderer 'LLVM'
+CPU:LLVM	CPU	arm64,apple-m1	CPU:LLVM:arm64,apple-m1		no renderer	CPU has no renderer 'LLVM'
+CPU:LLVM	METAL		METAL	METAL	ok	
+CPU:LLVM	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU:LLVM	CUDA		CUDA	CUDA	renderer fails	
+CPU:LLVM	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU:LLVM	NV		NV	CUDA	renderer fails	
+CPU:LLVM	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU:LLVM	AMD		AMD	HIP	ok	
+CPU:LLVM	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA:PTX	CPU		CPU	CLANG	renderer fails	
+CUDA:PTX	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA:PTX	METAL		METAL	METAL	ok	
+CUDA:PTX	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA:PTX	CUDA		CUDA:PTX		no renderer	CUDA has no renderer 'PTX'
+CUDA:PTX	CUDA	sm_89	CUDA:PTX:sm_89		no renderer	CUDA has no renderer 'PTX'
+CUDA:PTX	NV		NV	CUDA	renderer fails	
+CUDA:PTX	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA:PTX	AMD		AMD	HIP	ok	
+CUDA:PTX	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+NV:CUD	CPU		CPU	CLANG	renderer fails	
+NV:CUD	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+NV:CUD	METAL		METAL	METAL	ok	
+NV:CUD	METAL	Apple9	METAL::Apple9	METAL	ok	
+NV:CUD	CUDA		CUDA	CUDA	renderer fails	
+NV:CUD	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+NV:CUD	NV		NV:CUD		no renderer	NV has no renderer 'CUD', did you mean: 'CUDA'?
+NV:CUD	NV	sm_80	NV:CUD:sm_80		no renderer	NV has no renderer 'CUD', did you mean: 'CUDA'?
+NV:CUD	AMD		AMD	HIP	ok	
+NV:CUD	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+AMD:HIPP	CPU		CPU	CLANG	renderer fails	
+AMD:HIPP	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+AMD:HIPP	METAL		METAL	METAL	ok	
+AMD:HIPP	METAL	Apple9	METAL::Apple9	METAL	ok	
+AMD:HIPP	CUDA		CUDA	CUDA	renderer fails	
+AMD:HIPP	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+AMD:HIPP	NV		NV	CUDA	renderer fails	
+AMD:HIPP	NV	sm_80	NV::sm_80	CUDA	ok	
+AMD:HIPP	AMD		AMD:HIPP		no renderer	AMD has no renderer 'HIPP', did you mean: 'HIP'?
+AMD:HIPP	AMD	gfx1100	AMD:HIPP:gfx1100		no renderer	AMD has no renderer 'HIPP', did you mean: 'HIP'?
+METAL:METL	CPU		CPU	CLANG	renderer fails	
+METAL:METL	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+METAL:METL	METAL		METAL:METL		no renderer	METAL has no renderer 'METL', did you mean: 'METAL'?
+METAL:METL	METAL	Apple9	METAL:METL:Apple9		no renderer	METAL has no renderer 'METL', did you mean: 'METAL'?
+METAL:METL	CUDA		CUDA	CUDA	renderer fails	
+METAL:METL	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+METAL:METL	NV		NV	CUDA	renderer fails	
+METAL:METL	NV	sm_80	NV::sm_80	CUDA	ok	
+METAL:METL	AMD		AMD	HIP	ok	
+METAL:METL	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU::sparc,v9	CPU		CPU::sparc,v9	CLANG	renderer fails	
+CPU::sparc,v9	CPU	arm64,apple-m1	CPU::sparc,v9	CLANG	renderer fails	
+CPU::sparc,v9	METAL		METAL	METAL	ok	
+CPU::sparc,v9	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU::sparc,v9	CUDA		CUDA	CUDA	renderer fails	
+CPU::sparc,v9	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU::sparc,v9	NV		NV	CUDA	renderer fails	
+CPU::sparc,v9	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU::sparc,v9	AMD		AMD	HIP	ok	
+CPU::sparc,v9	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU::arm64	CPU		CPU::arm64	CLANG	renderer fails	
+CPU::arm64	CPU	arm64,apple-m1	CPU::arm64	CLANG	renderer fails	
+CPU::arm64	METAL		METAL	METAL	ok	
+CPU::arm64	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU::arm64	CUDA		CUDA	CUDA	renderer fails	
+CPU::arm64	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU::arm64	NV		NV	CUDA	renderer fails	
+CPU::arm64	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU::arm64	AMD		AMD	HIP	ok	
+CPU::arm64	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CPU::riscv64,native	CPU		CPU::riscv64,native	CLANG	ok	
+CPU::riscv64,native	CPU	arm64,apple-m1	CPU::riscv64,native	CLANG	ok	
+CPU::riscv64,native	METAL		METAL	METAL	ok	
+CPU::riscv64,native	METAL	Apple9	METAL::Apple9	METAL	ok	
+CPU::riscv64,native	CUDA		CUDA	CUDA	renderer fails	
+CPU::riscv64,native	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+CPU::riscv64,native	NV		NV	CUDA	renderer fails	
+CPU::riscv64,native	NV	sm_80	NV::sm_80	CUDA	ok	
+CPU::riscv64,native	AMD		AMD	HIP	ok	
+CPU::riscv64,native	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+METAL::AppleX	CPU		CPU	CLANG	renderer fails	
+METAL::AppleX	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+METAL::AppleX	METAL		METAL::AppleX	METAL	renderer fails	
+METAL::AppleX	METAL	Apple9	METAL::AppleX	METAL	renderer fails	
+METAL::AppleX	CUDA		CUDA	CUDA	renderer fails	
+METAL::AppleX	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+METAL::AppleX	NV		NV	CUDA	renderer fails	
+METAL::AppleX	NV	sm_80	NV::sm_80	CUDA	ok	
+METAL::AppleX	AMD		AMD	HIP	ok	
+METAL::AppleX	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA::sm_x	CPU		CPU	CLANG	renderer fails	
+CUDA::sm_x	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA::sm_x	METAL		METAL	METAL	ok	
+CUDA::sm_x	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA::sm_x	CUDA		CUDA::sm_x	CUDA	renderer fails	
+CUDA::sm_x	CUDA	sm_89	CUDA::sm_x	CUDA	renderer fails	
+CUDA::sm_x	NV		NV	CUDA	renderer fails	
+CUDA::sm_x	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA::sm_x	AMD		AMD	HIP	ok	
+CUDA::sm_x	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+CUDA::gfx1100	CPU		CPU	CLANG	renderer fails	
+CUDA::gfx1100	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+CUDA::gfx1100	METAL		METAL	METAL	ok	
+CUDA::gfx1100	METAL	Apple9	METAL::Apple9	METAL	ok	
+CUDA::gfx1100	CUDA		CUDA::gfx1100	CUDA	ok	
+CUDA::gfx1100	CUDA	sm_89	CUDA::gfx1100	CUDA	ok	
+CUDA::gfx1100	NV		NV	CUDA	renderer fails	
+CUDA::gfx1100	NV	sm_80	NV::sm_80	CUDA	ok	
+CUDA::gfx1100	AMD		AMD	HIP	ok	
+CUDA::gfx1100	AMD	gfx1100	AMD::gfx1100	HIP	ok	
+AMD:HIP;CPU:CLANG	CPU		CPU:CLANG	CLANG	renderer fails	
+AMD:HIP;CPU:CLANG	CPU	arm64,apple-m1	CPU:CLANG:arm64,apple-m1	CLANG	ok	
+AMD:HIP;CPU:CLANG	METAL		METAL	METAL	ok	
+AMD:HIP;CPU:CLANG	METAL	Apple9	METAL::Apple9	METAL	ok	
+AMD:HIP;CPU:CLANG	CUDA		CUDA	CUDA	renderer fails	
+AMD:HIP;CPU:CLANG	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+AMD:HIP;CPU:CLANG	NV		NV	CUDA	renderer fails	
+AMD:HIP;CPU:CLANG	NV	sm_80	NV::sm_80	CUDA	ok	
+AMD:HIP;CPU:CLANG	AMD		AMD:HIP	HIP	ok	
+AMD:HIP;CPU:CLANG	AMD	gfx1100	AMD:HIP:gfx1100	HIP	ok	
+PCI:1+AMD	CPU		CPU	CLANG	renderer fails	
+PCI:1+AMD	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+PCI:1+AMD	METAL		METAL	METAL	ok	
+PCI:1+AMD	METAL	Apple9	METAL::Apple9	METAL	ok	
+PCI:1+AMD	CUDA		CUDA	CUDA	renderer fails	
+PCI:1+AMD	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+PCI:1+AMD	NV		NV	CUDA	renderer fails	
+PCI:1+AMD	NV	sm_80	NV::sm_80	CUDA	ok	
+PCI:1+AMD	AMD		PCI:1+AMD	HIP	ok	
+PCI:1+AMD	AMD	gfx1100	PCI:1+AMD::gfx1100	HIP	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	CPU		CPU::x86_64,x86-64	CLANG	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	CPU	arm64,apple-m1	CPU::x86_64,x86-64	CLANG	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	METAL		METAL	METAL	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	METAL	Apple9	METAL::Apple9	METAL	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	CUDA		CUDA	CUDA	renderer fails	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	NV		NV	CUDA	renderer fails	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	NV	sm_80	NV::sm_80	CUDA	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	AMD		USB+AMD::gfx1201	HIP	ok	
+USB+AMD::gfx1201;CPU::x86_64,x86-64	AMD	gfx1100	USB+AMD::gfx1201	HIP	ok	
+QCOM;NV::sm_86	CPU		CPU	CLANG	renderer fails	
+QCOM;NV::sm_86	CPU	arm64,apple-m1	CPU::arm64,apple-m1	CLANG	ok	
+QCOM;NV::sm_86	METAL		METAL	METAL	ok	
+QCOM;NV::sm_86	METAL	Apple9	METAL::Apple9	METAL	ok	
+QCOM;NV::sm_86	CUDA		CUDA	CUDA	renderer fails	
+QCOM;NV::sm_86	CUDA	sm_89	CUDA::sm_89	CUDA	ok	
+QCOM;NV::sm_86	NV		NV::sm_86	CUDA	ok	
+QCOM;NV::sm_86	NV	sm_80	NV::sm_86	CUDA	ok	
+QCOM;NV::sm_86	AMD		AMD	HIP	ok	
+QCOM;NV::sm_86	AMD	gfx1100	AMD::gfx1100	HIP	ok	
