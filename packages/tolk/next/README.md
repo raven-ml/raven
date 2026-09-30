@@ -70,6 +70,7 @@ is scope, not a divergence: the part left out is listed here, and
 | The profile events of `helpers.py` and `device.py` | nx.device's `Profile` records them. |
 | The runtime: drivers, allocators, `Program`, memory, ELF loading, the driver half of each `runtime/ops_*.py` | nx.device owns it, and rune drives it (see D3). |
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
+| A node as the shift count of `shl` and `shr` in `codegen/decomp/transcendental.py` | every caller shifts by a number. |
 | `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, and the ISA branches of `codegen/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
 | The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |
 | `runtime/support/compileserver.py` | compilation workers are domains (see D5). |
