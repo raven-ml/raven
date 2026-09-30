@@ -127,9 +127,16 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers);
   `helpers.py:169-186` (`Context` and `ContextVar`, one value per process).
-- **tolk.next:** waiting for L7; `lib/helpers.ml:106` (`Context_var`) and
-  `:133` (`context`).
-- **Differs:** compilation runs on domains, not processes. A setting holds one
+- **tolk.next:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
+  `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`).
+- **Differs:** compilation runs on domains, not processes. `Worker.map`
+  spawns its domains for the call and joins them before it returns, where
+  tinygrad keeps a pool: an idle domain still takes part in every minor
+  collection. So the process machinery goes with the pool: the hidden
+  `__main__`, the copied environment, the ignored SIGINT, the recycling of
+  a worker after 16 tasks, and `terminate_worker_pool`. The workers' context
+  (`ALLOW_DEVICE_USAGE`, `VIZ`, `TRACK_MATCH_STATS`) goes too: the compiler
+  opens no device and has neither of the other settings. A setting holds one
   value per domain, where tinygrad holds one per process: a domain starts with
   the values of the domain that spawns it, and a `context` override is seen by
   its own domain only. A tinygrad worker process has its own settings, so a
@@ -139,7 +146,7 @@ the Exclusions of `README.md`.
 - **Reason:** (a).
 - **Pinned by:** the `Helpers` suite: `context › is not seen by the other
   domains` and `context › binds for the domains spawned while it runs`; the
-  rest waits for L7.
+  `Worker` suite.
 
 ## D6. Devices are named, never parsed
 
