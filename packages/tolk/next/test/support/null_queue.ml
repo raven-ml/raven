@@ -23,7 +23,6 @@ let event events k =
       i
 
 let program events e = Hashtbl.find events.programs e
-
 let u64 n = int ~dtype:Dtype.Uint64 n
 let device_name u = match device u with Some (Single d) -> d | _ -> ""
 
@@ -73,6 +72,7 @@ let commands events q : Hcq2.commands =
     timestamp =
       (fun slot -> cmd timestamp [ add (getaddr ~device:dev slot) (u64 8) ]);
     memory_barrier = (fun () -> ());
+    loop = Hcq2.Queue.loop q;
     submit =
       (fun cmdbuf ->
         let doorbell =

@@ -945,26 +945,48 @@ the Exclusions of `README.md`.
   `Rune_next.Lower_linalg › tensor cores › cuda › *`. The core's exact product
   is README's hardware check.
 
-## D30. A range around calls is batched per trip
+## D30. A range around calls is a loop in its batch
 
 - **tinygrad:** `schedule/__init__.py:72` (linearization drops a call's
   `END`); `runtime/support/hcq2.py:40-48` (`get_enqueue_devs` enqueues calls
-  only), `:50-54` (`unwrap_view` reads constant offsets), `:395-400`
-  (`_is_link_patch`) and `:515` (`lower_call`'s `normalize`).
-- **tolk.next:** `lib/runtime/support/hcq2.ml:906` (`trip` in
-  `sched_batches`), `:227` (`range_value`), `:171` (`view_offset`), `:543`
-  (`Deps.access`), `:298` (`is_link_patch`) and `:1278` (`normalize`).
-- **Differs:** an `END` of ranges around calls in a schedule stays around its
-  calls, batched on their own, with each range replaced in their arguments by
-  a variable of its value, which the engine binds on each trip. A view whose
-  offset moves with the range depends on every place it moves to, its address
-  is not a word known at link, and the batch adds the move to the address it
-  loads from its table. The range is one submission per trip, not one per
-  range.
-- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules a call
-  inside a range; tinygrad's scheduler never hands one to `hcq2.py`.
+  only), `:357,379-385` (`HWQueue.loop` repeats the command bytes and their
+  words), `:467-476` (`bufferize_cmdbuf` merges each nested linear once) and
+  `:50-54` (`unwrap_view` reads constant offsets); `runtime/ops_metal.py:103`
+  (`MetalQueue` inherits `HWQueue.loop`, whose bytes it does not use).
+- **tolk.next:** `lib/runtime/support/hcq2.ml`: `range_devs` and `item` in
+  `sched_batches`, the positions and the two visits of `make_ctx`,
+  `Queue.loop`, the copies per trip in `bufferize_cmdbuf`, the ranges of each
+  group in `patch`, and the moving offsets of `lower_call`;
+  `lib/runtime/ops_metal.ml` (`loop`).
+- **Differs:** an `END` of ranges around calls that are all enqueued, on
+  devices of one kind, belongs to their batch. Each queue its calls run on
+  loops over its commands of one trip, as `HWQueue.loop` does, and a nested
+  linear whose words read the ranges, such as a kernel's arguments, has a copy
+  for each trip, which the trip's words address. A call's position counts
+  every run of the calls before it, and a call waits for the calls on other
+  queues it depends on in the current trip and, after it, in the trip before
+  (for the value `0` in the first trip). Each group of patched words loops
+  over ranges of its own, since a program ends a range once. Metal repeats a
+  loop's indirect commands and their arguments. A range whose calls none is
+  enqueued stays a range around them, reading `range_value` variables that
+  the engine binds on each trip; one that mixes the two, or two kinds of
+  device, is refused. `n` trips of `k` calls take `n·k` commands and `n·k`
+  copies of their arguments, made at link: a command and its arguments take
+  160 bytes on the NULL queues and 264 on Metal, so 1,000 trips of 30 kernels
+  take about 5 MB and 8 MB. The alternative, a trace unrolled per trip, holds
+  a graph per trip, which grows with `n` too, and more.
+- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
+  inside a range and runs them as one submission, whatever the trip count
+  (Law 6); tinygrad's scheduler never hands `hcq2.py` a range.
 - **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
-  (D30)`.
+  (D30)`, among them `› a run of a batched range is one submission, whatever
+  its trips` and `› a trip's copy waits for the kernel of the trip before, on
+  another queue`, and `Deps › a write that does not trim keeps the accesses to
+  the bytes it writes`, `› forgotten accesses are no longer followed`; on
+  macOS, the Ops_metal execution suite: `execution › each trip of a range runs
+  its kernel on its own window`, `› a range of 20000 trips runs from one
+  indirect command buffer` and `› a profiled range records a span of each
+  trip's kernel` (slow).
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 

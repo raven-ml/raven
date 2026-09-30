@@ -77,6 +77,31 @@ let chained bufs =
 
 let slot u = match Ops.arg u with Param p -> p.slot | _ -> -1
 
+(* A range of [n] trips around a kernel that adds one to each window of four
+   floats. *)
+let ranged n =
+  let r = Ops.range (Int n) [ 7 ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let src = storage ~n:(4 * n) "METAL" and dst = storage ~n:(4 * n) "METAL" in
+  (src, dst, Ops.end_ (adds (window dst) (window src)) [ r ])
+
+let windows_bound n src dst =
+  [
+    (src, [ new_floats "METAL" (Array.init (4 * n) float_of_int) ]);
+    (dst, [ new_floats "METAL" (Array.make (4 * n) 0.) ]);
+  ]
+
+let windows n () =
+  let src, dst, e = ranged n in
+  let bound = windows_bound n src dst in
+  ignore (run_calls ~bound [ e ]);
+  equal floats
+    (Array.init (4 * n) (fun i -> float_of_int (i + 1)))
+    (floats_of (List.hd (List.assq dst bound)))
+
 let execution =
   group "execution"
     [
@@ -298,25 +323,32 @@ let execution =
           equal floats
             (Array.make 4 (float_of_int (n * (n - 1) / 2)))
             (floats_of (List.hd (List.assq o bound))));
-      slow "each trip of a range runs its kernel on its own window" (fun () ->
-          let r = Ops.range (Int 3) [ 7 ] in
-          let window u =
-            let start = Ops.mul r (Ops.int 4) in
-            Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+      slow "each trip of a range runs its kernel on its own window" (windows 3);
+      slow "a range of 20000 trips runs from one indirect command buffer"
+        (windows 20000);
+      slow "a profiled range records a span of each trip's kernel" (fun () ->
+          let src, dst, e = ranged 3 in
+          let p = Nx_device.Profile.start () in
+          let events =
+            Fun.protect
+              ~finally:(fun () ->
+                if Nx_device.Profile.enabled () then
+                  ignore (Nx_device.Profile.stop p))
+              (fun () ->
+                ignore
+                  (run_calls ~profile:true ~bound:(windows_bound 3 src dst)
+                     [ e ]);
+                Nx_device.Profile.stop p)
           in
-          let src = storage ~n:12 "METAL" and dst = storage ~n:12 "METAL" in
-          let bound =
-            [
-              (src, [ new_floats "METAL" (Array.init 12 float_of_int) ]);
-              (dst, [ new_floats "METAL" (Array.make 12 0.) ]);
-            ]
+          let spans =
+            List.filter
+              (function
+                | Nx_device.Profile.Span { device; _ } ->
+                    Nx_device.equal device (metal ())
+                | _ -> false)
+              events
           in
-          ignore
-            (run_calls ~bound
-               [ Ops.end_ (adds (window dst) (window src)) [ r ] ]);
-          equal floats
-            (Array.init 12 (fun i -> float_of_int (i + 1)))
-            (floats_of (List.hd (List.assq dst bound))));
+          equal int 3 (List.length spans));
     ]
 
 let () = exit (run "Tolk_next.Ops_metal (execution)" [ execution ])

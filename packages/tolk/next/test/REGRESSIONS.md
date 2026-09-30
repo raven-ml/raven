@@ -2624,7 +2624,7 @@ with `HCQ_NUM_SDMA` set.
 | — | D1 | `H › timeline values (D1)` (9 tests); the goldens |
 | — | D7 | `H › stamp slots (D7)` (4 tests) |
 | — | D12 | `H › profile keys (D12)` (2 tests) |
-| — | D30 | `H › ranges (D30)` (3 tests) |
+| — | D30 | `H › ranges (D30)` (9 tests); `H › Deps › a write that does not trim keeps the accesses to the bytes it writes`, `› forgotten accesses are no longer followed` |
 
 ### old tolk
 
@@ -2795,7 +2795,7 @@ the `slow` alias, built on macOS only).
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_compile_and_link_are_idempotent, test_caches_hold_no_buffers, test_jit_has_no_rt_buffers | the jit's caches and runtime ring | dropped here: the captured jit is L8's; the engine has no runtime ring |
 | tinygrad: runtime/test_hcq2.py::TestHCQ2Fence, TestHCQ2FFI | the fence and C calls on the CPU | the `Hcq2` and `Engine` suites' |
 | tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `OX › a profile records a span of each kernel on the device, in order`; `OX › a profiled batch run twice keeps the second run's spans` (D34) |
-| DIVERGENCES D30 | a range around calls, one submission per trip | `OX › each trip of a range runs its kernel on its own window` |
+| DIVERGENCES D30 | a range around calls, a loop of indirect commands in one submission | `OX › each trip of a range runs its kernel on its own window`, `› a range of 20000 trips runs from one indirect command buffer`, `› a profiled range records a span of each trip's kernel` |
 | old: `unit/test_metal_completion.ml` (7 tests) | the old runtime's command ownership, completion order and retirement | dropped: completion and command buffers are nx.device's (`Submission`, `resolve`) |
 | old: `unit/test_runtime_metal.ml` "an argument structure of 15/16/29/33 buffers ..." | many buffers dispatch and rebind | `OX › a kernel of 33 buffers runs from its arguments' buffer`: one argument buffer, so no direct dispatch |
 | old: `unit/test_runtime_metal.ml` "replays symbolic local workgroup dimensions" | | `OX › a launch size that reads a variable is set on each run` |
@@ -2832,6 +2832,7 @@ returns and its host programs' source. It needs no GPU and no driver.
 | old: `unit/test_cuda_queue.ml` "compiles dependencies crossing compute and copy queues" | | `C › recorded cases › copy_in`, `host_split` |
 | old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
 | old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |
+| DIVERGENCES D30 | a range around launches, a loop of the host program | `C › loops (D30) › a range is a loop of the host program around its launches` |
 
 ## Jit
 

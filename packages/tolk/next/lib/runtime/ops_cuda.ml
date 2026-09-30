@@ -26,10 +26,19 @@ let queue ~host q : Hcq2.commands =
   in
   let kernargs = placeholder ~device:dev [ 8 ] Dtype.Uint8 in
   let h = ref (cuda "cuCtxSetCurrent" [ load (index rt_vars [ int 0 ]) [] ]) in
-  (* Read after the last call. *)
+  (* The status of the last call, into [rt_vars]. *)
+  let status () =
+    store (index (after rt_vars [ !h ]) [ int 3 ]) (cast !h Dtype.Uint64)
+  in
+  (* The loops being encoded, innermost first. *)
+  let ranges = ref [] in
+  (* Read after the last call, and in each trip of the loops: every command
+     passes the stream, so none leaves its loop. *)
   let stream () =
     let copy = String.starts_with ~prefix:"COPY" (Hcq2.Queue.name q) in
-    load (index (after rt_vars [ !h ]) [ int (if copy then 2 else 1) ]) []
+    load
+      (index (after rt_vars (!h :: !ranges)) [ int (if copy then 2 else 1) ])
+      []
   in
   (* A function's address, from a word of the device's that the host reads
      (DIVERGENCES D36): a function is loaded on each device. *)
@@ -40,6 +49,9 @@ let queue ~host q : Hcq2.commands =
          [ int 0 ])
       []
   in
+  (* The launches of the loops being encoded, by where they read their extra
+     words: a launch in a loop reads its trip's copy. *)
+  let launches = ref [] in
   let launch func global local args =
     let rows = Hcq2.layout_args ~offset:8 args in
     let size =
@@ -59,11 +71,13 @@ let queue ~host q : Hcq2.commands =
       Hcq2.Queue.q q [ u64 1; add addr (int 8); u64 2; addr; u64 0 ] - 40
     in
     let size = function Int n -> cint n | Sym s -> s in
+    let at = index kernargs [ int extra ] in
+    launches := at :: !launches;
     h :=
       cuda "cuLaunchKernel"
         ((func :: List.map size global)
         @ List.map size local
-        @ [ cint 0; stream (); u64 0; index kernargs [ int extra ] ])
+        @ [ cint 0; stream (); u64 0; at ])
   in
   let exec call prg =
     let info =
@@ -115,10 +129,30 @@ let queue ~host q : Hcq2.commands =
           getaddr ~device:on (shrink slot [ Some (Int 1, Int 2) ]);
         ]
   in
+  (* A loop is a loop of the host program around its trip's calls, each trip's
+     launches reading their extra words from the trip's copy of them. *)
+  let loop r body =
+    let outer = !launches in
+    launches := [];
+    ranges := r :: !ranges;
+    let start = Hcq2.Queue.size q in
+    Hcq2.Queue.loop q r body;
+    let trip =
+      (Hcq2.Queue.size q - start) / (Dtype.Value.to_int (vmax r) + 1)
+    in
+    let moved =
+      List.map
+        (fun at -> (at, index kernargs [ add (nth at 1) (mul r (int trip)) ]))
+        !launches
+    in
+    h := substitute !h moved;
+    (* A trip ends with its status: a loop ends an effect. *)
+    h := end_ (status ()) [ r ];
+    ranges := List.tl !ranges;
+    launches := List.map snd moved @ outer
+  in
   let submit ka =
-    substitute
-      (store (index (after rt_vars [ !h ]) [ int 3 ]) (cast !h Dtype.Uint64))
-      [ (kernargs, ka) ]
+    substitute (if op !h = Op.End then !h else status ()) [ (kernargs, ka) ]
   in
   {
     exec;
@@ -127,6 +161,7 @@ let queue ~host q : Hcq2.commands =
     signal;
     timestamp;
     memory_barrier = (fun () -> ());
+    loop;
     submit;
   }
 

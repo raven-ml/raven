@@ -154,7 +154,8 @@ val run :
     - a copy is {!Nx_device.Buffer.copy};
     - a range around calls runs them once for each combination of the ranges'
       values, the last range varying fastest, with each range's variable
-      ({!Tolk_next.Hcq2.range_value}) bound to its value;
+      ({!Tolk_next.Hcq2.range_value}) bound to its value: host programs and
+      copies, since a batch holds the ranges of its calls as loops;
     - a batch is one {!Nx_device.submit} over its devices that touches every
       buffer it reaches. It first waits for the work of its previous run on each
       of its devices ({!Nx_device.Submission.wait}), since the runs share its

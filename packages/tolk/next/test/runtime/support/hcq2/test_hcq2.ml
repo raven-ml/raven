@@ -375,6 +375,18 @@ let deps_tests =
               Ops.mselect (s m 8 8) 0;
               s (Ops.mselect (s m 4 28) 0) 4 8;
             ]);
+      test "a write that does not trim keeps the accesses to the bytes it writes" (fun () ->
+          let t = Hcq2.Deps.make () in
+          ignore (access t [ v 0 4 ] [ 0 ] 0);
+          ignore (Hcq2.Deps.access ~trim:false t [ v 0 4 ] ~writes:[ 0 ] 1);
+          equal (list int) [ 0; 1 ] (access t [ v 0 4 ] [] 2));
+      test "forgotten accesses are no longer followed" (fun () ->
+          let t = Hcq2.Deps.make () in
+          ignore (access t [ v 0 4 ] [ 0 ] 0);
+          ignore (access t [ v 4 4 ] [ 0 ] 1);
+          Hcq2.Deps.forget t (fun x -> x = 0);
+          equal (list int) [] (access t [ v 0 4 ] [] 2);
+          equal (list int) [ 1 ] (access t [ v 4 4 ] [] 3));
       test "a write of other bytes keeps the dependencies" (fun () ->
           List.iter
             (fun writes ->
@@ -1227,7 +1239,7 @@ let loops =
           equal (list int) [ 40; 41; 42 ] (List.map (fun k -> u64_of b (8 * k)) [ 0; 1; 2 ]));
     ]
 
-(* DIVERGENCES D30: a range around calls is batched per trip *)
+(* DIVERGENCES D30: a range around calls is a loop in its batch *)
 
 let r = Ops.range (Int 3) [ 7 ]
 
@@ -1239,33 +1251,68 @@ let ranged d =
   let src = Ops.new_buffer (Single d) 12 Float32 and dst = Ops.new_buffer (Single d) 12 Float32 in
   (src, dst, Ops.end_ (kernel_adds (window dst) (window src)) [ r ])
 
+(* A copy of each window of [src] into [tmp] on the copy queue, then [tmp] plus
+   one into the window of [dst] on the compute queue: a trip's copy waits for
+   the kernel of the trip before, which reads [tmp]. *)
+let staged d =
+  let src = storage ~n:12 d and dst = storage ~n:12 d and tmp = storage d in
+  Ops.end_ (linear [ Ops.store_call tmp (window src); kernel_adds (window dst) tmp ]) [ r ]
+
+let windows_bound src dst =
+  [ (src, [ new_floats "CPU:1" (Array.init 12 float_of_int) ]); (dst, [ new_floats "CPU:1" (Array.make 12 0.) ]) ]
+
 let ranges =
   group "ranges (D30)"
     [
-      test "a range stays around its calls, batched on their own, reading its value"
-        (fun () ->
+      test "a range of enqueued calls is a loop in the queue of their batch" (fun () ->
           let _, _, e = ranged "CPU:1" in
-          let compiled_end =
-            match Ops.src (sched [ Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e ]) with
-            | [ u ] -> u
-            | us -> failf "one entry, not %d" (List.length us)
+          let compiled = sched [ Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e ] in
+          let batch =
+            match Ops.src compiled with [ u ] -> u | us -> failf "one entry, not %d" (List.length us)
           in
-          equal op ~msg:"an end" End (Ops.op compiled_end);
-          equal (list uop) ~msg:"its range" [ r ] (List.tl (Ops.src compiled_end));
-          let batch = Ops.nth compiled_end 0 in
           is_true ~msg:"a batch" (is_batch batch);
-          let inside = Ops.toposort batch in
-          is_true ~msg:"reads the range's value" (List.exists (fun n -> n == Hcq2.range_value r) inside);
-          is_false ~msg:"reads no range" (List.exists (fun n -> n == r) inside));
+          let loops = List.filter (fun n -> Ops.op n = End && List.memq r (List.tl (Ops.src n))) (Ops.toposort batch) in
+          equal int ~msg:"one loop over the range" 1 (List.length loops);
+          is_true ~msg:"around the queue's commands" (Ops.op (Ops.nth (List.hd loops) 0) = Linear));
       test "each trip of a batched range runs its calls on its own window" (fun () ->
           let src, dst, e = ranged "CPU:1" in
-          let bound =
-            [ (src, [ new_floats "CPU:1" (Array.init 12 float_of_int) ]); (dst, [ new_floats "CPU:1" (Array.make 12 0.) ]) ]
-          in
+          let bound = windows_bound src dst in
           ignore (run_calls ~bound [ e ]);
           equal floats (Array.init 12 (fun i -> float_of_int (i + 1))) (floats_of (List.hd (List.assq dst bound))));
-      agrees "a batched range agrees with running its trips one by one"
-        (let _, _, e = ranged "CPU:2" in [ e ]);
+      test "a run of a batched range is one submission, whatever its trips" (fun () ->
+          let src, dst, e = ranged "CPU:1" in
+          let d = Null_device.device "CPU:1" in
+          let s = run_calls ~bound:(windows_bound src dst) [ e ] in
+          let before = Nx_device.submitted d in
+          Tolk_next_engine.run s [||];
+          Tolk_next_engine.run s [||];
+          Null_device.synchronize ();
+          equal int (before + 2) (Nx_device.submitted d));
+      test "a profiled batched range records a span of each trip's kernel" (fun () ->
+          let src, dst, e = ranged "CPU:1" in
+          let p = Nx_device.Profile.start () in
+          let events =
+            Fun.protect
+              ~finally:(fun () -> if Nx_device.Profile.enabled () then ignore (Nx_device.Profile.stop p))
+              (fun () ->
+                ignore (run_calls ~profile:true ~bound:(windows_bound src dst) [ e ]);
+                Nx_device.Profile.stop p)
+          in
+          let spans =
+            List.filter
+              (function Nx_device.Profile.Span sp -> Nx_device.equal sp.device (Null_device.device "CPU:1") | _ -> false)
+              events
+          in
+          equal int 3 (List.length spans));
+      agrees "a batched range agrees with running its trips one by one" (let _, _, e = ranged "CPU:2" in [ e ]);
+      agrees "a trip's copy waits for the kernel of the trip before, on another queue" [ staged "CPU:1" ];
+      agrees ~latency:0.01 "a staged range agrees under queue latency" [ staged "CPU:2" ];
+      test "a range of calls on the host and on queues is refused" (fun () ->
+          let e = Ops.end_ (linear [ adds (window (storage ~n:12 "CPU:1")) (storage "CPU:1"); adds (storage "CPU") (storage "CPU") ]) [ r ] in
+          raises_match Exn.invalid_arg (fun () -> sched [ e ]));
+      test "a range of calls on devices of two kinds is refused" (fun () ->
+          let e = Ops.end_ (linear [ adds (window (storage ~n:12 "AMD:0")) (storage "AMD:0"); adds (storage "NV:0") (storage "NV:0") ]) [ r ] in
+          raises_match Exn.invalid_arg (fun () -> sched [ e ]));
     ]
 
 let () =

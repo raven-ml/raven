@@ -41,6 +41,7 @@ type commands = {
   signal : Ops.t -> Ops.t -> unit;
   timestamp : Ops.t -> unit;
   memory_barrier : unit -> unit;
+  loop : Ops.t -> (unit -> unit) -> unit;
   submit : Ops.t -> Ops.t;
 }
 
@@ -52,6 +53,7 @@ module Queue = struct
     mutable blob : Bytes.t;
     mutable size : int;
     mutable patches : (Ops.t * Ops.t) list;  (** Last first. *)
+    mutable loops : Ops.t list;  (** The ranges its commands loop over. *)
   }
 
   let make lin =
@@ -64,6 +66,7 @@ module Queue = struct
           blob = Bytes.create 256;
           size = 0;
           patches = [];
+          loops = [];
         }
     | _ -> invalid_arg "a submission's commands name their queue"
 
@@ -110,11 +113,44 @@ module Queue = struct
   let reset q =
     q.size <- 0;
     q.patches <- []
+
+  (* The bytes [q] wrote from [start] and the words it patches there, those
+     after its [first] patches, once for each trip of [r], each trip's moved by
+     its trip. *)
+  let repeat q start first r =
+    let trip = q.size - start in
+    let fresh, older =
+      List.partition_map
+        (fun (i, p) ->
+          if i < List.length q.patches - first then Left p else Right p)
+        (List.mapi (fun i p -> (i, p)) q.patches)
+    in
+    (* Each trip gets its words as dwords: a trip need not be 8-byte aligned. *)
+    let dwords =
+      List.concat_map
+        (fun (o, w) ->
+          List.init
+            (Dtype.itemsize (dtype w) / 4)
+            (fun k ->
+              ( add (add o (int (4 * k))) (mul r (int trip)),
+                cast (shr w (int (32 * k))) Dtype.Uint32 )))
+        (List.rev fresh)
+    in
+    q.patches <- List.rev_append dwords older;
+    let body = Bytes.sub_string q.blob start trip in
+    for _ = 1 to Dtype.Value.to_int (vmax r) do
+      append q body
+    done
+
+  let loop q r body =
+    q.loops <- r :: q.loops;
+    let start = q.size and first = List.length q.patches in
+    body ();
+    repeat q start first r
 end
 
 (* A queue runs its commands in order: each call and instruction, and a range
-   around commands, which repeats their bytes and moves each repeated word by
-   its trip. *)
+   around commands, which its vendor runs once per trip. *)
 let rec encode_command q cmds u =
   let bad () =
     invalid_arg (Format.asprintf "a queue has no command for %a" Op.pp (op u))
@@ -134,35 +170,8 @@ let rec encode_command q cmds u =
       | Code { code = "store"; _ }, [ dst; value ] -> cmds.signal dst value
       | _ -> bad ())
   | Op.End, [ body; r ] when op body = Op.Linear && op r = Op.Range ->
-      loop q cmds body r
+      cmds.loop r (fun () -> List.iter (encode_command q cmds) (src body))
   | _ -> bad ()
-
-and loop q cmds body r =
-  let start = q.Queue.size and first = List.length q.patches in
-  List.iter (encode_command q cmds) (src body);
-  let trip = q.size - start in
-  let fresh, older =
-    List.partition_map
-      (fun (i, p) ->
-        if i < List.length q.patches - first then Left p else Right p)
-      (List.mapi (fun i p -> (i, p)) q.patches)
-  in
-  (* Each trip gets its words as dwords: a trip need not be 8-byte aligned. *)
-  let dwords =
-    List.concat_map
-      (fun (o, w) ->
-        List.init
-          (Dtype.itemsize (dtype w) / 4)
-          (fun k ->
-            ( add (add o (int (4 * k))) (mul r (int trip)),
-              cast (shr w (int (32 * k))) Dtype.Uint32 )))
-      (List.rev fresh)
-  in
-  q.patches <- List.rev_append dwords older;
-  let body = Bytes.sub_string q.blob start trip in
-  for _ = 1 to Dtype.Value.to_int (vmax r) do
-    Queue.append q body
-  done
 
 (* Helpers *)
 
@@ -354,7 +363,23 @@ let patch ?blob buf rows =
               else div ~rounding:`Floor (sub o (int phase)) (int n))
             grp
         in
-        end_ (store (index view [ stack offs ]) (stack (List.map snd grp))) rngs)
+        (* Each group loops over ranges of its own: a program ends a range once.
+           A new number can be one a range of the group already has. *)
+        let rec own_range r =
+          let o =
+            range ~dtype:(dtype r)
+              (Int (Dtype.Value.to_int (vmax r) + 1))
+              [ unique_num () ]
+          in
+          if List.memq o rngs then own_range r else o
+        in
+        let fresh = List.map (fun r -> (r, own_range r)) rngs in
+        let own us = src (substitute (Ops.sink us) fresh) in
+        end_
+          (store
+             (index view [ stack (own offs) ])
+             (stack (own (List.map snd grp))))
+          (List.map snd fresh))
       groups
   in
   after buf (dep @ stores)
@@ -540,7 +565,16 @@ module Deps = struct
   let make () = { writes = H.create 16; reads = H.create 16 }
   let get m k = Option.value (H.find_opt m k) ~default:[]
 
-  let access t bufs ~writes x =
+  let forget t f =
+    let keep m =
+      H.filter_map_inplace
+        (fun _ es -> Some (List.filter (fun (_, _, x) -> not (f x)) es))
+        m
+    in
+    keep t.writes;
+    keep t.reads
+
+  let access ?(trim = true) t bufs ~writes x =
     let ranges =
       List.map
         (fun b ->
@@ -570,7 +604,7 @@ module Deps = struct
     List.iteri
       (fun i (k, s, e) ->
         if List.mem i writes then begin
-          let trim m =
+          let overwrite m =
             let kept =
               List.concat_map
                 (fun ((st, en, d) as entry) ->
@@ -583,8 +617,10 @@ module Deps = struct
             in
             H.replace m k kept
           in
-          trim t.writes;
-          trim t.reads;
+          if trim then begin
+            overwrite t.writes;
+            overwrite t.reads
+          end;
           H.replace t.writes k ((s, e, x) :: get t.writes k)
         end
         else H.replace t.reads k ((s, e, x) :: get t.reads k))
@@ -597,7 +633,32 @@ end
 
 (* Batches *)
 
-type entry = { call : Ops.t; devs : string list; queue : string }
+(* The calls of a batch, with the ranges around some of them: a range's calls
+   run once per trip, each trip the range's next value. *)
+type 'a item = One of 'a | Loop of Ops.t * 'a item list
+
+(* A call of a batch, the devices and queue it runs on, and its position in the
+   batch's run: [base] and, for each range around it, outermost first, the
+   range's value times the positions a trip of it takes. *)
+type entry = {
+  call : Ops.t;
+  devs : string list;
+  queue : string;
+  base : int;
+  strides : (Ops.t * int) list;
+}
+
+let trips r = Dtype.Value.to_int (vmax r) + 1
+
+let rec size items =
+  List.fold_left
+    (fun n -> function One _ -> n + 1 | Loop (r, b) -> n + (trips r * size b))
+    0 items
+
+(* The calls of a range, in order. *)
+let range_body e =
+  let b = nth e 0 in
+  if op b = Op.Linear then src b else [ b ]
 
 (* Ordered tables: the keys in the order they were first added. *)
 module Ordered = struct
@@ -615,16 +676,21 @@ module Ordered = struct
   let keys t = List.map fst t.items
 end
 
+(* A call as another call follows it: in the trip before the current one of each
+   range of [behind], which both are in. *)
+type dep = { tag : int; behind : Ops.t list }
+
 type ctx = {
   devices : string -> device;
   batch : entry array;
+  items : int item list;
   profile : bool;
-  tracker : (string * string * int) Deps.t;
+  waits : ((string * string) * dep) list array;
+      (** The calls each call waits for, with their queues. *)
   queues : (string, string list) Ordered.t;
       (** Each device's queues, in first use. *)
   last : (string * string, int) Ordered.t;
-  prev : int option array;
-  mutable signal_tags : int list;
+  signal_tags : int list;
   slots : (string * Ops.t) list;
   peers : (string * string, string list) Ordered.t;
       (** The other devices whose memory a queue touches. *)
@@ -635,41 +701,151 @@ let dev_queues ctx d = Option.value (Ordered.find ctx.queues d) ~default:[]
 let epilogue_queue ctx dev =
   match dev_queues ctx dev with [ q ] -> q | _ -> "COMPUTE:0"
 
-let make_ctx devices batch profile =
+(* The position of [p] as a call inside the ranges [inside] sees it, a constant
+   and the part that moves with ranges: in the current trip of the ranges both
+   are in, the trip before of those of [behind], and the last trip of the
+   others. *)
+let position ?(behind = []) ~inside p =
+  List.fold_left
+    (fun (c, m) (r, stride) ->
+      let moving () =
+        let t = mul r (int stride) in
+        Some (match m with None -> t | Some m -> add m t)
+      in
+      if List.memq r behind then (c - stride, moving ())
+      else if List.memq r inside then (c, moving ())
+      else (c + ((trips r - 1) * stride), m))
+    (p.base, None) p.strides
+
+(* The value [p]'s queue signals once [p] has run, as a call inside the ranges
+   [inside] waits for it; [0], which the queue holds from the start, in a
+   range's first trip for a call it follows from the trip before. *)
+let signal_value ?(behind = []) ~inside p =
+  match position ~behind ~inside p with
+  | c, None -> u64 (c + 1)
+  | c, Some m ->
+      List.fold_left
+        (fun v r -> where (lt r (int 1)) (u64 0) v)
+        (cast (add m (int (c + 1))) Dtype.Uint64)
+        behind
+
+let ranges_of e = List.map fst e.strides
+
+let make_ctx devices items profile =
+  let entries = ref [] and n = ref 0 in
+  let rec place base strides items =
+    List.map
+      (function
+        | One (call, devs, queue) ->
+            let tag = !n in
+            incr n;
+            entries := { call; devs; queue; base = !base; strides } :: !entries;
+            incr base;
+            One tag
+        | Loop (r, body) ->
+            let per_trip = size body in
+            let start = !base in
+            let body = place base (strides @ [ (r, per_trip) ]) body in
+            base := start + (trips r * per_trip);
+            Loop (r, body))
+      items
+  in
+  let items = place (ref 0) [] items in
+  let batch = Array.of_list (List.rev !entries) in
   let queues = Ordered.create ()
   and last = Ordered.create ()
   and peers = Ordered.create () in
-  let prev =
-    Array.mapi
-      (fun tag { call; devs; queue } ->
-        let d = List.hd devs in
-        let qs = Option.value (Ordered.find queues d) ~default:[] in
-        if not (List.mem queue qs) then Ordered.set queues d (qs @ [ queue ]);
-        let p = Ordered.find last (d, queue) in
-        Ordered.set last (d, queue) tag;
-        let touched =
-          List.concat_map devices_of (Realize.get_call_arg_uops call)
-          |> List.filter (fun x -> enqueues devices x && x <> d)
-          |> List.sort_uniq String.compare
-        in
-        List.iter
-          (fun x ->
-            let ps = Option.value (Ordered.find peers (d, queue)) ~default:[] in
-            if not (List.mem x ps) then Ordered.set peers (d, queue) (ps @ [ x ]);
-            if Ordered.find queues x = None then Ordered.set queues x [])
-          touched;
-        p)
-      batch
+  Array.iteri
+    (fun tag { call; devs; queue; _ } ->
+      let d = List.hd devs in
+      let qs = Option.value (Ordered.find queues d) ~default:[] in
+      if not (List.mem queue qs) then Ordered.set queues d (qs @ [ queue ]);
+      Ordered.set last (d, queue) tag;
+      let touched =
+        List.concat_map devices_of (Realize.get_call_arg_uops call)
+        |> List.filter (fun x -> enqueues devices x && x <> d)
+        |> List.sort_uniq String.compare
+      in
+      List.iter
+        (fun x ->
+          let ps = Option.value (Ordered.find peers (d, queue)) ~default:[] in
+          if not (List.mem x ps) then Ordered.set peers (d, queue) (ps @ [ x ]);
+          if Ordered.find queues x = None then Ordered.set queues x [])
+        touched)
+    batch;
+  (* The calls each call waits for. A range's calls are visited twice: first as
+     the trip before, recorded only, so that a call follows the calls after it
+     of the trip before, then as the current trip. *)
+  let tracker = Deps.make () and waits = Array.make (Array.length batch) [] in
+  let prev = Hashtbl.create 8 in
+  let rec visit ~behind ~recording items =
+    List.iter
+      (function
+        | One tag ->
+            let { call; devs; queue; _ } = batch.(tag) in
+            let device = List.hd devs in
+            let bufs = Realize.get_call_arg_uops call
+            and writes = fst (Realize.get_call_outs_ins call) in
+            let dep = { tag; behind } in
+            let found =
+              Deps.access ~trim:(not recording) tracker bufs ~writes
+                ((device, queue), dep)
+            in
+            let before =
+              Option.value (Hashtbl.find_opt prev (device, queue)) ~default:[]
+            in
+            Hashtbl.replace prev (device, queue) [ dep ];
+            if not recording then begin
+              (* The latest call to wait on of each producer's queue, in the
+                 current trip and in the trip before: calls of one queue run in
+                 order. *)
+              let latest = Ordered.create () in
+              List.iter
+                (fun (k, (d : dep)) ->
+                  if (d.behind <> [] || d.tag < tag) && k <> (device, queue)
+                  then
+                    let key = (k, d.behind) in
+                    match Ordered.find latest key with
+                    | Some (d' : dep) when d'.tag >= d.tag -> ()
+                    | _ -> Ordered.set latest key d)
+                found;
+              (* On NV, a wait breaks the chaining of launches, so the queue
+                 also waits for its previous launch. *)
+              if
+                latest.items <> []
+                && kind devices device = "NV"
+                && String.starts_with ~prefix:"COMPUTE" queue
+              then
+                List.iter
+                  (fun (d : dep) ->
+                    Ordered.set latest ((device, queue), d.behind) d)
+                  before;
+              waits.(tag) <- List.map (fun ((k, _), d) -> (k, d)) latest.items
+            end
+        | Loop (r, body) ->
+            let saved = Hashtbl.copy prev in
+            visit ~behind:(r :: behind) ~recording:true body;
+            Hashtbl.iter
+              (fun k ds ->
+                let before =
+                  Option.value (Hashtbl.find_opt saved k) ~default:[]
+                in
+                if ds != before then Hashtbl.replace prev k (before @ ds))
+              (Hashtbl.copy prev);
+            visit ~behind ~recording body;
+            Deps.forget tracker (fun (_, d) -> List.memq r d.behind))
+      items
   in
+  visit ~behind:[] ~recording:false items;
   let ctx =
     {
       devices;
       batch;
+      items;
       profile;
-      tracker = Deps.make ();
+      waits;
       queues;
       last;
-      prev;
       signal_tags = [];
       slots = [];
       peers;
@@ -682,15 +858,16 @@ let make_ctx devices batch profile =
         then Some tag
         else None)
       last.items
+    @ List.concat_map
+        (List.map (fun (_, (d : dep)) -> d.tag))
+        (Array.to_list waits)
   in
   (* A slot is [signal][timestamp], 16 bytes: the queue signals, then two per
-     call when profiling. *)
+     call's run when profiling. *)
   let slots =
     List.map
       (fun (dev, qs) ->
-        let n =
-          List.length qs + if profile then 2 * Array.length batch else 0
-        in
+        let n = List.length qs + if profile then 2 * size items else 0 in
         ( dev,
           placeholder ~device:(Multi [ dev ]) ~volatile:true
             ~tag:(Tag.String "slots")
@@ -700,7 +877,16 @@ let make_ctx devices batch profile =
   in
   { ctx with signal_tags; slots }
 
-let slot ctx dev i = part (List.assoc dev ctx.slots) (2 * i) ((2 * i) + 2)
+(* The slot [i] of a device, [i] an index that may move with ranges. *)
+let slot_at ctx dev (c, m) =
+  let slots = List.assoc dev ctx.slots in
+  match m with
+  | None -> part slots (2 * c) ((2 * c) + 2)
+  | Some m ->
+      let at = add (mul m (int 2)) (int (2 * c)) in
+      shrink slots [ Some (Sym at, Sym (add at (int 2))) ]
+
+let slot ctx dev i = slot_at ctx dev (i, None)
 
 let queue_signal ctx dev queue =
   let rec pos i = function
@@ -710,38 +896,25 @@ let queue_signal ctx dev queue =
   in
   slot ctx dev (pos 0 (dev_queues ctx dev))
 
-let stamps ctx dev tag =
+(* The slots of the stamps of a call's run, before and after it. *)
+let stamps ctx dev e =
   if ctx.profile then
-    let st = List.length (dev_queues ctx dev) + (2 * tag) in
-    [ st; st + 1 ]
+    let c, m = position ~inside:(ranges_of e) e in
+    let st = List.length (dev_queues ctx dev) + (2 * c) in
+    let m = Option.map (fun m -> mul m (int 2)) m in
+    [ (st, m); (st + 1, m) ]
   else []
 
-let wait_ins ctx { call; devs; queue } tag =
-  let device = List.hd devs in
-  let bufs = Realize.get_call_arg_uops call
-  and writes = fst (Realize.get_call_outs_ins call) in
-  (* The latest call to wait on of each producer's queue: calls of one queue run
-     in order. *)
-  let latest = Ordered.create () in
-  List.iter
-    (fun (d, q, t) ->
-      if t < tag && (d, q) <> (device, queue) then
-        Ordered.set latest (d, q)
-          (max t (Option.value (Ordered.find latest (d, q)) ~default:0)))
-    (Deps.access ctx.tracker bufs ~writes (device, queue, tag));
-  (* On NV, a wait breaks the chaining of launches, so the queue also waits for
-     its previous launch. *)
-  (match ctx.prev.(tag) with
-  | Some p
-    when latest.items <> []
-         && kind ctx.devices device = "NV"
-         && String.starts_with ~prefix:"COMPUTE" queue ->
-      Ordered.set latest (device, queue) p
-  | _ -> ());
-  ctx.signal_tags <- List.map snd latest.items @ ctx.signal_tags;
+let wait_ins ctx tag =
+  let inside = ranges_of ctx.batch.(tag) in
   List.map
-    (fun ((d, q), t) -> ins "wait" [ queue_signal ctx d q; u64 (t + 1) ])
-    latest.items
+    (fun ((d, q), dep) ->
+      ins "wait"
+        [
+          queue_signal ctx d q;
+          signal_value ~behind:dep.behind ~inside ctx.batch.(dep.tag);
+        ])
+    ctx.waits.(tag)
 
 (* A queue first waits for the earlier work of its device and of the peers it
    touches. *)
@@ -754,32 +927,50 @@ let start_ins ctx dev queue =
             (Option.value (Ordered.find ctx.peers (dev, queue)) ~default:[]))
 
 let build_queues ctx =
-  (* All the waits first, to find the calls that must signal. *)
-  let call_waits = Array.mapi (fun tag e -> wait_ins ctx e tag) ctx.batch in
+  let key tag = (ctx.batch.(tag).devs, ctx.batch.(tag).queue) in
+  let commands tag =
+    let ({ call; devs; queue; _ } as e) = ctx.batch.(tag) in
+    let ts =
+      List.map
+        (fun i -> ins "timestamp" [ slot_at ctx (List.hd devs) i ])
+        (stamps ctx (List.hd devs) e)
+    in
+    let before, after_ =
+      match ts with [ a; b ] -> ([ a ], [ b ]) | _ -> ([], [])
+    in
+    wait_ins ctx tag @ before @ [ call ] @ after_
+    @
+    if List.mem tag ctx.signal_tags then
+      [
+        ins "store"
+          [
+            queue_signal ctx (List.hd devs) queue;
+            signal_value ~inside:(ranges_of e) e;
+          ];
+      ]
+    else []
+  in
+  (* A queue's commands in a range are one loop of the commands of each trip. *)
+  let rec of_queue k items =
+    List.concat_map
+      (function
+        | One tag -> if key tag = k then commands tag else []
+        | Loop (r, body) -> (
+            match of_queue k body with
+            | [] -> []
+            | cmds -> [ end_ (v Op.Linear ~src:cmds) [ r ] ]))
+      items
+  in
   let queues = Ordered.create () in
   let extend k cmds =
     Ordered.set queues k
       (Option.value (Ordered.find queues k) ~default:[] @ cmds)
   in
   Array.iteri
-    (fun tag { call; devs; queue } ->
+    (fun tag { devs; queue; _ } ->
       let k = (devs, queue) in
       if Ordered.find queues k = None then
-        extend k (start_ins ctx (List.hd devs) queue);
-      let ts =
-        List.map
-          (fun i -> ins "timestamp" [ slot ctx (List.hd devs) i ])
-          (stamps ctx (List.hd devs) tag)
-      in
-      let before, after_ =
-        match ts with [ a; b ] -> ([ a ], [ b ]) | _ -> ([], [])
-      in
-      extend k (call_waits.(tag) @ before @ [ call ] @ after_);
-      if List.mem tag ctx.signal_tags then
-        extend k
-          [
-            ins "store" [ queue_signal ctx (List.hd devs) queue; u64 (tag + 1) ];
-          ])
+        extend k (start_ins ctx (List.hd devs) queue @ of_queue k ctx.items))
     ctx.batch;
   (* One queue advances the device's timeline once its other queues are done,
      and those of the peers that touched the device. *)
@@ -801,7 +992,8 @@ let build_queues ctx =
             ins "wait"
               [
                 queue_signal ctx d q;
-                u64 (Option.get (Ordered.find ctx.last (d, q)) + 1);
+                signal_value ~inside:[]
+                  ctx.batch.(Option.get (Ordered.find ctx.last (d, q)));
               ])
           others
       in
@@ -845,7 +1037,10 @@ let finalize_batch ctx =
         (kernel_info ~name:"hcq_submit" ~estimates:Renderer.Estimates.zero ())
       submits
   in
-  let kernel tag { call; devs; _ } =
+  (* A kernel of each call for each of its runs, in the order they run: a
+     range's calls once per trip. *)
+  let kernel values tag =
+    let { call; devs; base; strides; _ } = ctx.batch.(tag) in
     let args = Realize.get_call_arg_uops call in
     let globals =
       match arg (body call) with
@@ -854,11 +1049,20 @@ let finalize_batch ctx =
     in
     let lanes = List.map (fun g -> lane_offset (List.nth args g)) globals in
     let outs, ins = Realize.get_call_outs_ins call in
+    let pos =
+      List.fold_left
+        (fun n (r, stride) -> n + (List.assq r values * stride))
+        base strides
+    in
     {
       devices = devs;
       name = Realize.get_call_name call args;
       estimates = Realize.estimate_uop call;
-      stamps = List.map (fun s -> (2 * s) + 1) (stamps ctx (List.hd devs) tag);
+      stamps =
+        (if ctx.profile then
+           let st = List.length (dev_queues ctx (List.hd devs)) + (2 * pos) in
+           [ (2 * st) + 1; (2 * (st + 1)) + 1 ]
+         else []);
       profile_key =
         (if op (body call) = Op.Program then Some (key (body call)) else None);
       input_slots =
@@ -876,7 +1080,17 @@ let finalize_batch ctx =
       ins;
     }
   in
-  let kernels = Array.to_list (Array.mapi kernel ctx.batch) in
+  let rec kernels values items =
+    List.concat_map
+      (function
+        | One tag -> [ kernel values tag ]
+        | Loop (r, body) ->
+            List.concat_map
+              (fun i -> kernels ((r, i) :: values) body)
+              (List.init (trips r) Fun.id))
+      items
+  in
+  let kernels = kernels [] ctx.items in
   let info =
     {
       device = Ordered.keys ctx.queues;
@@ -900,23 +1114,47 @@ let finalize_batch ctx =
   in
   call ~aux:info sink (if ctx.profile then List.map snd ctx.slots else [])
 
-let rec sched_batches ~devices ~profile l =
-  (* The calls in a range are batched on their own and run once per trip: their
-     batch reads the range as a variable. *)
-  let trip e =
-    if op e <> Op.End then e
+(* The devices a range's calls are enqueued on, all of one kind, or [None] when
+   none is. *)
+let rec range_devs devices e =
+  if op e <> Op.End then get_enqueue_devs devices e
+  else
+    let ds = List.map (range_devs devices) (range_body e) in
+    if List.for_all Option.is_none ds then None
+    else if List.exists Option.is_none ds then
+      invalid_arg
+        "a range runs its calls on devices with queues, or all on the host"
     else
-      let body = nth e 0 and rs = List.tl (src e) in
-      let vars = List.map (fun r -> (r, range_value r)) rs in
-      let calls = if op body = Op.Linear then src body else [ body ] in
-      let inner =
-        sched_batches ~devices ~profile
-          (v Op.Linear ~src:(List.map (fun c -> substitute c vars) calls))
+      let devs =
+        List.sort_uniq String.compare (List.concat_map Option.get ds)
       in
-      end_ (match src inner with [ c ] -> c | _ -> inner) rs
+      match List.sort_uniq String.compare (List.map (kind devices) devs) with
+      | [ _ ] -> Some devs
+      | _ -> invalid_arg "a range runs its calls on devices of one kind"
+
+let rec sched_batches ~devices ~profile l =
+  (* The calls in a range that no device with queues runs are the engine's, once
+     per trip: they read the range as a variable. *)
+  let on_host e =
+    let rs = List.tl (src e) in
+    let vars = List.map (fun r -> (r, range_value r)) rs in
+    let inner =
+      sched_batches ~devices ~profile
+        (v Op.Linear
+           ~src:(List.map (fun c -> substitute c vars) (range_body e)))
+    in
+    end_ (match src inner with [ c ] -> c | _ -> inner) rs
   in
-  let entries = List.map trip (src l) in
-  let devs = List.map (get_enqueue_devs devices) entries in
+  let entries = src l in
+  let devs = List.map (range_devs devices) entries in
+  let entries =
+    List.map2
+      (fun e d -> if op e = Op.End && d = None then on_host e else e)
+      entries devs
+  in
+  let rec calls_of e =
+    if op e = Op.End then List.concat_map calls_of (range_body e) else [ e ]
+  in
   let is_copy c = op c = Op.Call && op (body c) = Op.Store in
   let peers =
     List.concat_map
@@ -925,7 +1163,7 @@ let rec sched_batches ~devices ~profile l =
           List.concat_map devices_of (Realize.get_call_arg_uops c)
           |> List.filter (fun d -> kind devices d = "AMD")
         else [])
-      entries
+      (List.concat_map calls_of entries)
     |> List.sort_uniq String.compare
   in
   let npeers = List.length peers in
@@ -959,7 +1197,22 @@ let rec sched_batches ~devices ~profile l =
         (m (m (index (dev 1) - index (dev 2) - 1) npeers) num_queues)
     else "COPY:0"
   in
-  (* Runs of calls enqueued or not; the enqueued ones batch by kind of device,
+  (* A range is loops around its calls, its first range outermost. *)
+  let rec item e =
+    if op e <> Op.End then
+      One (e, Option.get (get_enqueue_devs devices e), queue e)
+    else
+      let body = List.map item (range_body e) in
+      match
+        List.fold_right
+          (fun r inner -> [ Loop (r, inner) ])
+          (List.tl (src e))
+          body
+      with
+      | [ loop ] -> loop
+      | _ -> invalid_arg "a range around calls has a range"
+  in
+  (* Runs of entries enqueued or not; the enqueued ones batch by kind of device,
      in the order the kinds first appear. *)
   let rec runs acc = function
     | [] -> List.rev acc
@@ -978,15 +1231,12 @@ let rec sched_batches ~devices ~profile l =
           let groups = Ordered.create () in
           List.iter
             (fun (c, d) ->
-              let d = Option.get d in
-              let k = kind devices (List.hd d) in
-              let e = { call = c; devs = d; queue = queue c } in
+              let k = kind devices (List.hd (Option.get d)) in
               Ordered.set groups k
-                (Option.value (Ordered.find groups k) ~default:[] @ [ e ]))
+                (Option.value (Ordered.find groups k) ~default:[] @ [ item c ]))
             grp;
           List.map
-            (fun (_, batch) ->
-              finalize_batch (make_ctx devices (Array.of_list batch) profile))
+            (fun (_, items) -> finalize_batch (make_ctx devices items profile))
             groups.items)
       (runs [] (List.combine entries devs))
   in
@@ -1064,6 +1314,11 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
   in
   let lname l = match arg l with String s -> s | _ -> "" in
   let names = List.sort_uniq String.compare (List.map lname nested) in
+  let align () =
+    Queue.q q [ binary (String.make ((128 - (q.size mod 128)) mod 128) '\000') ]
+  in
+  (* A nested linear whose words read ranges, such as the arguments of a kernel
+     in a loop, has a copy for each trip of those ranges, 128-byte aligned. *)
   let bufs =
     List.map
       (fun n ->
@@ -1071,14 +1326,26 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
         let offs =
           List.map
             (fun l ->
-              let o =
-                Queue.q q
-                  [
-                    binary
-                      (String.make ((128 - (q.size mod 128)) mod 128) '\000');
-                  ]
+              let o = align () and first = List.length q.patches in
+              let e = Queue.q q (src l) in
+              let rs =
+                List.filter
+                  (fun r -> List.memq r q.loops)
+                  (dedup
+                     (List.concat_map
+                        (fun w -> Nodes.to_list (ranges w))
+                        (src l)))
               in
-              (l, (o, Queue.q q (src l))))
+              if rs <> [] then ignore (align ());
+              let at =
+                List.fold_left
+                  (fun at r ->
+                    let len = q.size - o in
+                    Queue.repeat q o first r;
+                    add at (mul r (int len)))
+                  (int o) rs
+              in
+              (l, (at, e - o)))
             (List.filter (fun l -> lname l = n) nested)
         in
         (offs, bufferize_cmdbuf q n (Multi q.devices)))
@@ -1087,7 +1354,12 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
   let views =
     List.concat_map
       (fun (offs, buf) ->
-        List.map (fun (l, (o, e)) -> (l, part (without_after buf) o e)) offs)
+        List.map
+          (fun (l, (at, n)) ->
+            let buf = without_after buf in
+            if is_int at then (l, part buf (int_of at) (int_of at + n))
+            else (l, shrink buf [ Some (Sym at, Sym (add at (int n))) ]))
+          offs)
       bufs
   in
   let buf =

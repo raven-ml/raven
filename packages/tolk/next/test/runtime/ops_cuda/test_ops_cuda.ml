@@ -150,4 +150,39 @@ let function_words =
             (List.sort_uniq String.compare (List.map placement words)));
     ]
 
-let () = exit (run "Tolk_next.Ops_cuda" [ recorded; function_words ])
+(* A range of three trips around a launch on CUDA, each trip on its own window
+   of four floats. *)
+let ranged () =
+  let r = Ops.range (Int 3) [ 7 ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let buf () = Ops.new_buffer (Single "CUDA") 12 Float32 in
+  Ops.end_ (adds (window (buf ())) (window (buf ()))) [ r ]
+
+let loops =
+  group "loops (D30)"
+    [
+      test "a range is a loop of the host program around its launches"
+        (fun () ->
+          let src =
+            host_sources
+              (plain (fun () ->
+                   Hcq2.compile_linear ~devices:recorded_devices
+                     (Ops.v Linear ~src:[ ranged () ])))
+          in
+          (* The launch's extra words are five 64-bit words a trip. *)
+          let contains sub =
+            let n = String.length sub in
+            let rec go i =
+              i + n <= String.length src
+              && (String.sub src i n = sub || go (i + 1))
+            in
+            go 0
+          in
+          is_true ~msg:"a loop of three trips" (contains "< 3; Lidx");
+          is_true ~msg:"each trip's extra words" (contains "*40)))"));
+    ]
+
+let () = exit (run "Tolk_next.Ops_cuda" [ recorded; function_words; loops ])

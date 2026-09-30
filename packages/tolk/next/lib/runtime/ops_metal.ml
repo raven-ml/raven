@@ -162,6 +162,41 @@ let queue ~host ~arch ~residency_set q : Hcq2.commands =
       !cmds
       @ [ { lib = obj.lib; name = obj.name; global; local; offset = off } ]
   in
+  (* A loop's commands are in the indirect command buffer once per trip, each
+     trip's arguments after the trip before's, which the host program writes in
+     a loop over the range. *)
+  let loop r body =
+    let start = Helpers.round_up !nbytes 256 in
+    nbytes := start;
+    let first_row = List.length !rows
+    and first_cmd = List.length !cmds
+    and first_size = List.length !sizes in
+    body ();
+    let trip = Helpers.round_up !nbytes 256 - start
+    and n = Dtype.Value.to_int (vmax r) + 1 in
+    let split l k =
+      (List.filteri (fun i _ -> i < k) l, List.filteri (fun i _ -> i >= k) l)
+    in
+    let rows_before, trip_rows = split !rows first_row
+    and cmds_before, trip_cmds = split !cmds first_cmd
+    and sizes_before, trip_sizes = split !sizes first_size in
+    let k = List.length trip_cmds in
+    let trips f = List.concat (List.init n f) in
+    rows :=
+      rows_before
+      @ List.map (fun (o, w) -> (add o (mul r (int trip)), w)) trip_rows;
+    cmds :=
+      cmds_before
+      @ trips (fun t ->
+          List.map
+            (fun c -> { c with offset = c.offset + (t * trip) })
+            trip_cmds);
+    sizes :=
+      sizes_before
+      @ trips (fun t ->
+          List.map (fun (ci, at) -> (ci + (t * k), at + (t * trip))) trip_sizes);
+    nbytes := start + (n * trip)
+  in
   (* The commands are in the indirect command buffer: the command stream is
      empty. *)
   let submit _ =
@@ -250,7 +285,11 @@ let queue ~host ~arch ~residency_set q : Hcq2.commands =
         match !stamps with
         | [] -> h
         | s :: _ ->
-            let slots, off = Hcq2.unwrap_view s in
+            (* The first stamp, in a loop its first trip's. *)
+            let slots, _, off = Hcq2.lane_offset s in
+            let off =
+              match off with Int o -> o | Sym o -> Dtype.Value.to_int (vmin o)
+            in
             let word k =
               let k = (off / 8) + k in
               match first with
@@ -293,6 +332,7 @@ let queue ~host ~arch ~residency_set q : Hcq2.commands =
     signal = (fun _ v -> value := Some v);
     timestamp = (fun dst -> stamps := !stamps @ [ dst ]);
     memory_barrier = (fun () -> ());
+    loop;
     submit;
   }
 

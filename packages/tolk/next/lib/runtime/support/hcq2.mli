@@ -62,6 +62,12 @@ module Queue : sig
 
   val reset : t -> unit
   (** [reset q] empties [q], to encode another stream of commands. *)
+
+  val loop : t -> Ops.t -> (unit -> unit) -> unit
+  (** [loop q r body] appends the commands [body ()] appends, then their bytes
+      again for each other value of the range [r], each word [q] computes moved
+      by the trips before it and written as one per trip, which reads [r]: the
+      commands run once per trip. *)
 end
 
 type commands = {
@@ -83,6 +89,10 @@ type commands = {
   memory_barrier : unit -> unit;
       (** [memory_barrier ()] makes the memory the queue's earlier work wrote
           visible to its later work. *)
+  loop : Ops.t -> (unit -> unit) -> unit;
+      (** [loop r body] makes the commands [body ()] enqueues run once for each
+          value of the range [r], in order: {!Queue.loop} for a queue of words.
+      *)
   submit : Ops.t -> Ops.t;
       (** [submit cmdbuf] is the effect of the host program that submits the
           command buffer [cmdbuf], the queue's commands. *)
@@ -96,7 +106,10 @@ val bufferize_cmdbuf : Queue.t -> string -> string -> Ops.t
     host program runs. Each word used at several offsets is written by one loop
     over them. The {!Op.Linear}s that words address ({!Op.Getaddr}), such as a
     program's arguments, are buffers of their own, one per {!Op.Linear} name
-    (its argument), written before the command buffer. *)
+    (its argument), written before the command buffer. An {!Op.Linear} whose
+    words read ranges, such as the arguments of a program in a loop, has a copy
+    for each trip of them, 128-byte aligned, and a word addresses its trip's
+    copy. *)
 
 (** {1:devices Devices} *)
 
@@ -113,8 +126,8 @@ type queues = {
       (** [reaches d] is [true] iff the device's queues address the memory of
           the device [d], another than itself: its queues always address its
           own. A copy from or to memory the device cannot address goes through
-          staging memory of [host], copied in by the source's queues and out
-          by the destination's. *)
+          staging memory of [host], copied in by the source's queues and out by
+          the destination's. *)
 }
 (** The type for the command queues of a device, as a compiler sees them. *)
 
@@ -135,8 +148,8 @@ val unwrap_view : Ops.t -> Ops.t * int
 (** [unwrap_view v] is the storage [v] views and the byte offset of the view,
     through bitcasts, {!Op.After}s and one-dimensional shrinks.
 
-    Raises [Invalid_argument] if a shrink is not one-dimensional or its start
-    is not a constant. *)
+    Raises [Invalid_argument] if a shrink is not one-dimensional or its start is
+    not a constant. *)
 
 val unwrap_lane : Ops.t -> Ops.t * int option * int
 (** [unwrap_lane v] is {!unwrap_view}, through a shard selection too: the
@@ -171,10 +184,10 @@ val value : string -> Ops.t
     variable of the batch's host program, which the engine binds. *)
 
 val range_value : Ops.t -> Ops.t
-(** [range_value r] is the value of the range [r] in the calls it is around: a
-    variable named ["range_"] and [r]'s identity ({!Ops.range_str}), of [r]'s
-    type committed ({!Dtype.strong}), from [0] to the last value of [r], which
-    the engine binds on each trip. *)
+(** [range_value r] is the value of the range [r] in the calls it is around when
+    no device with queues runs them: a variable named ["range_"] and [r]'s
+    identity ({!Ops.range_str}), of [r]'s type committed ({!Dtype.strong}), from
+    [0] to the last value of [r], which the engine binds on each trip. *)
 
 val patch : ?blob:string -> Ops.t -> (Ops.t * Ops.t) list -> Ops.t
 (** [patch ~blob buf rows] is [buf] after [blob] (if any) is written at its
@@ -183,7 +196,8 @@ val patch : ?blob:string -> Ops.t -> (Ops.t * Ops.t) list -> Ops.t
     variable, no load and no register, and addresses no input and no view that
     moves with a range) is written when the batch is linked; the others when its
     host program runs. Rows of one type, one alignment within it, one time of
-    writing and one loop are written by one store of a stack. *)
+    writing and one loop are written by one store of a stack, which loops over
+    ranges of its own: a program ends each range once. *)
 
 (** {1:ffi Host functions and C structures} *)
 
@@ -234,15 +248,20 @@ module Deps : sig
   val make : unit -> 'a t
   (** [make ()] has no access recorded. *)
 
-  val access : 'a t -> Ops.t list -> writes:int list -> 'a -> 'a list
-  (** [access t bufs ~writes x] records that [x] accesses the storage views
-      [bufs], writing those at the positions [writes] and reading the others,
-      and is the accesses [x] must follow, each once, in the order found: the
-      last writes of the bytes [x] reads or writes, and, for the bytes it
-      writes, the reads since. Views are compared by storage, shard and byte
-      range ({!unwrap_lane}), so accesses to disjoint bytes do not depend on
-      each other, and a write keeps the accesses to the bytes it does not write.
-  *)
+  val access :
+    ?trim:bool -> 'a t -> Ops.t list -> writes:int list -> 'a -> 'a list
+  (** [access ~trim t bufs ~writes x] records that [x] accesses the storage
+      views [bufs], writing those at the positions [writes] and reading the
+      others, and is the accesses [x] must follow, each once, in the order
+      found: the last writes of the bytes [x] reads or writes, and, for the
+      bytes it writes, the reads since. Views are compared by storage, shard and
+      byte range ({!unwrap_lane}), so accesses to disjoint bytes do not depend
+      on each other, and a write keeps the accesses to the bytes it does not
+      write. With [trim] false (default [true]), a write also keeps the accesses
+      to the bytes it writes, as an access that may not happen does. *)
+
+  val forget : 'a t -> ('a -> bool) -> unit
+  (** [forget t f] removes the accesses of each [x] for which [f x] holds. *)
 end
 
 (** {1:batches Batches} *)
@@ -262,10 +281,18 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
     batch's, and no queue of the batch waits for their work, which the batch's
     runner waits for.
 
-    A range around calls ({!Op.End} of a call, or of an {!Op.Linear} of calls)
-    stays a range, around its calls batched on their own, with each of its
-    ranges [r] replaced in them by [range_value r]: the calls run once per trip,
-    each trip one submission.
+    A range around calls ({!Op.End} of a call, or of an {!Op.Linear} of calls,
+    its first range outermost) whose calls are all enqueued, on devices of one
+    kind, belongs to their batch: each queue its calls run on has a loop
+    ({!Op.End} of an {!Op.Linear}) around its commands of one trip, which it
+    repeats for each value of the range. A range whose calls none is enqueued
+    stays a range, with each of its ranges [r] replaced in its calls by
+    [range_value r], and the engine runs it once per trip.
+
+    A call's position counts each run of the calls before it in the batch, a
+    range's calls once per trip. A queue's commands and each command's arguments
+    hold a copy for each trip, made at link: [n] trips of a range of [k] calls
+    take [n·k] commands and [n·k] copies of their arguments.
 
     A batch is a call, with an {!Ops.hcq_info} argument and, with [profile], the
     slots of its devices as arguments, of a sink of one submission per queue. A
@@ -277,10 +304,12 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
       on its device and on the devices with queues whose memory its calls touch
       ([signal_word d] at least [submitted d]);
     - for each call: waits for the calls on other queues it depends on
-      ({!Deps}), each a wait for the queue's signal to reach the call's position
-      plus one; with [profile], a timestamp before and after it; the call; and,
-      when another queue waits for it, a store of its position plus one into its
-      queue's signal;
+      ({!Deps}), in a loop those of the current trip and those after it in the
+      trip before, each a wait for the queue's signal to reach the call's
+      position plus one ([0] in a loop's first trip for the trip before); with
+      [profile], a timestamp before and after it; the call; and, when another
+      queue waits for it, a store of its position plus one into its queue's
+      signal;
     - on one queue of each device, the compute queue when the device has
       several, waits for the device's other queues and for the queues of other
       devices that touched its memory, then a store of [value d] into
@@ -291,17 +320,25 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
 
     The slots of a device are a volatile placeholder tagged ["slots"] of 16-byte
     slots, each a signal then a timestamp: one per queue of the device, then,
-    with [profile], two per call of the batch, its start and end timestamps. *)
+    with [profile], two per run of a call of the batch, its start and end
+    timestamps.
+
+    Raises [Invalid_argument] if a range runs calls on devices with queues and
+    on others, or on devices of two kinds. *)
 
 val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
     program, a kernel of the host of its first device ({!queues.host}):
     - each submission is encoded by its device's {!commands}, and the fence
-      becomes the stores it makes;
+      becomes the stores it makes. A loop around commands ({!Op.End} of an
+      {!Op.Linear}) repeats their words for each trip of its range, each trip's
+      moved by the trip's size and written, when the host program runs, in a
+      loop over the range;
     - the address of each input (a storage view over an untagged {!Op.Param}) is
       loaded from the address table, a placeholder of the host tagged
       ["inputs"], where the engine writes it on each run. The addresses of other
-      storage are written into the table at link;
+      storage are written into the table at link. A view whose offset moves with
+      a range adds the move to its storage's address;
     - the placeholders of one tag, device, type and volatility become views of
       one, each 128-byte aligned;
     - the words known at link are hoisted out of the kernel into the stores the
@@ -360,9 +397,8 @@ val compile_linear :
     - {b a range around calls}, an {!Op.End} of ranges around one of the above,
       or around an {!Op.Linear} of them. The engine runs them once for each
       combination of the ranges' values, the last range varying fastest, with
-      [range_value r]'s variable bound to [r]'s value. A batch in a range is one
-      submission per trip; views of storage in it move with the ranges' values,
-      and the batch adds their moves to the addresses it reads from its table.
+      [range_value r]'s variable bound to [r]'s value. A range never holds a
+      batch: a batch holds the ranges of its calls as loops.
 
     {b Linking a batch}, once:
     + Each argument is a placeholder, which the engine allocates on its device:
