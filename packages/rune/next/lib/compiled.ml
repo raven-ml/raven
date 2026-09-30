@@ -132,13 +132,8 @@ let layout what (A a as x) =
   in
   { dtype; shape = View.shape v; strides = View.strides v; phase }
 
-(* A program's key. *)
-type key = {
-  op : op;
-  operands : layout list;
-  dsts : layout list;
-  target : Helpers.Target.t;
-}
+(* A program's key: the layouts are the operands', then the destinations'. *)
+type key = { op : op; layouts : layout list; target : Helpers.Target.t }
 
 (* Devices *)
 
@@ -164,40 +159,46 @@ let runs_on d =
            (engine_devices ~name:"DEVICE" ~host:"HOST" d "DEVICE").compiler
              .queues
 
-let targets = ref []
+(* Read without the lock, which only guards their additions. *)
+let targets = Atomic.make []
 
 (* [target what d] is [d]'s target, for the kernel [what], which refuses a
    device the backend does not run on. *)
 let target what d =
-  Mutex.protect lock @@ fun () ->
-  match List.assq_opt d !targets with
+  match List.assq_opt d (Atomic.get targets) with
   | Some t -> t
-  | None ->
-      if not (runs_on d) then
-        refuse what "%s runs no compiled program" (Nx_device.name d);
-      let target = Engine.target d in
-      let r =
-        match Device.renderer ~arch:target.arch target.device with
-        | Ok r -> r
-        | Error why -> failwith why
-      in
-      let t = { target; dtypes = Renderer.supported_dtypes r } in
-      targets := (d, t) :: !targets;
-      t
+  | None -> (
+      Mutex.protect lock @@ fun () ->
+      match List.assq_opt d (Atomic.get targets) with
+      | Some t -> t
+      | None ->
+          if not (runs_on d) then
+            refuse what "%s runs no compiled program" (Nx_device.name d);
+          let target = Engine.target d in
+          let r =
+            match Device.renderer ~arch:target.arch target.device with
+            | Ok r -> r
+            | Error why -> failwith why
+          in
+          let t = { target; dtypes = Renderer.supported_dtypes r } in
+          Atomic.set targets ((d, t) :: Atomic.get targets);
+          t)
 
 (* Programs *)
 
 (* A compiled program, in which its device and its host have the names [name]
-   and [host], its operands' and destinations' storage are the parameters of the
-   slots [slots] (none for an empty array), and its links on each device it ran
-   on, taken in turn. *)
+   and [host], the storage of the [i]th of its operands and destinations is the
+   parameter of slot [slots.(i)] ([-1] for an empty array), and its links on
+   each device it ran on, taken in turn. [links] is read without [latch], which
+   only guards its additions. *)
 type program = {
   linear : Ops.t;
   name : string;
   host : string;
-  slots : int option list;
+  slots : int array;
+  nslots : int;
   latch : Mutex.t;
-  mutable links : (Nx_device.t * Engine.t array * int Atomic.t) list;
+  links : (Nx_device.t * Engine.t array * int Atomic.t) list Atomic.t;
 }
 
 (* Runs of one link are serialized: a program keeps this many on each device, so
@@ -214,6 +215,13 @@ let zeros dt shape =
     (List.map (fun n -> Ops.Int n) shape)
 
 let compile key d arrays dsts =
+  let operands, outs =
+    List.partition_map Fun.id
+      (List.mapi
+         (fun i l ->
+           if i < List.length arrays then Either.Left l else Either.Right l)
+         key.layouts)
+  in
   let name = Nx_device.name d and host = Nx_device.name (Nx_device.host_of d) in
   let device = Ops.Single name in
   (* Each array's node, and its storage's buffer if it has elements. *)
@@ -224,12 +232,10 @@ let compile key d arrays dsts =
       let b = Ops.new_buffer device span l.dtype in
       (Lower.strided b a.view start, Some b)
   in
-  let operands = List.map2 node arrays key.operands in
-  let outs = List.map2 node dsts key.dsts in
-  let results =
-    lower key.op (List.map fst operands)
-      (List.map (fun (l : layout) -> l.dtype) key.dsts)
-  in
+  let operands = List.map2 node arrays operands
+  and results = List.map (fun (l : layout) -> l.dtype) outs
+  and outs = List.map2 node dsts outs in
+  let results = lower key.op (List.map fst operands) results in
   let stores =
     List.map2
       (fun (view, _) value -> Ops.after view [ Ops.store view value ])
@@ -244,65 +250,84 @@ let compile key d arrays dsts =
       ~held_bufs:[] ~inputs:buffers linear
   in
   let slot = function
-    | None -> None
-    | Some b -> List.find_index (fun b' -> b' == b) buffers
+    | None -> -1
+    | Some b -> Option.get (List.find_index (fun b' -> b' == b) buffers)
   in
   {
     linear;
     name;
     host;
-    slots = List.map (fun (_, b) -> slot b) (operands @ outs);
+    slots = Array.of_list (List.map (fun (_, b) -> slot b) (operands @ outs));
+    nslots = List.length buffers;
     latch = Mutex.create ();
-    links = [];
+    links = Atomic.make [];
   }
 
 (* [p]'s next link on [d], linked there the first time. *)
-let link p d =
-  let links, next =
-    Mutex.protect p.latch @@ fun () ->
-    match List.find_opt (fun (d', _, _) -> d' == d) p.links with
-    | Some (_, links, next) -> (links, next)
-    | None ->
-        let devices = engine_devices ~name:p.name ~host:p.host d in
-        let l = Array.init links (fun _ -> Engine.link ~devices p.linear) in
-        let next = Atomic.make 0 in
-        p.links <- (d, l, next) :: p.links;
-        (l, next)
-  in
-  links.(Atomic.fetch_and_add next 1 mod Array.length links)
+let rec link p d =
+  match List.find_opt (fun (d', _, _) -> d' == d) (Atomic.get p.links) with
+  | Some (_, links, next) ->
+      links.(Atomic.fetch_and_add next 1 mod Array.length links)
+  | None ->
+      Mutex.protect p.latch (fun () ->
+          if not (List.exists (fun (d', _, _) -> d' == d) (Atomic.get p.links))
+          then begin
+            let devices = engine_devices ~name:p.name ~host:p.host d in
+            let l = Array.init links (fun _ -> Engine.link ~devices p.linear) in
+            Atomic.set p.links ((d, l, Atomic.make 0) :: Atomic.get p.links)
+          end);
+      link p d
 
 (* The compiled programs, by key, each compiled once under its own latch, so
    that keys compile concurrently. *)
-type entry = { latch : Mutex.t; mutable compiled : program option }
+type entry = { latch : Mutex.t; compiled : program option Atomic.t }
 
 let programs : (key, entry) Hashtbl.t = Hashtbl.create 64
 
-let program what key d arrays dsts =
+(* [check what t d arrays layouts] refuses a dtype that [t], the target of [d],
+   does not compute. *)
+let check what t d arrays layouts =
+  List.iter2
+    (fun (A a) (l : layout) ->
+      if not (List.exists (Dtype.equal l.dtype) t.dtypes) then
+        refuse what "no %s on %s"
+          (Nx_dtype.to_string a.dtype)
+          (Nx_device.name d))
+    arrays layouts
+
+(* The program of [key], compiled the first time, once its dtypes are checked: a
+   program that exists passed the check. *)
+let program what key t d arrays dsts =
   let e =
     Mutex.protect lock @@ fun () ->
     match Hashtbl.find_opt programs key with
     | Some e -> e
     | None ->
-        let e = { latch = Mutex.create (); compiled = None } in
+        check what t d (arrays @ dsts) key.layouts;
+        let e = { latch = Mutex.create (); compiled = Atomic.make None } in
         Hashtbl.add programs key e;
         e
   in
-  Mutex.protect e.latch @@ fun () ->
-  match e.compiled with
+  match Atomic.get e.compiled with
   | Some p -> p
-  | None ->
-      let p =
-        Nx_device.Profile.span ("compile " ^ what) (fun () ->
-            compile key d arrays dsts)
-      in
-      e.compiled <- Some p;
-      p
+  | None -> (
+      Mutex.protect e.latch @@ fun () ->
+      match Atomic.get e.compiled with
+      | Some p -> p
+      | None ->
+          let p =
+            Nx_device.Profile.span ("compile " ^ what) (fun () ->
+                compile key d arrays dsts)
+          in
+          Atomic.set e.compiled (Some p);
+          p)
 
-(* [slice (A a) l] is the run of [a]'s storage its parameter binds. *)
-let slice (A a) (l : layout) =
-  let start, span = Lower.span l.dtype a.view in
+(* The buffer of the run of [a]'s storage its parameter binds. *)
+let slice (A a) =
+  let dt = Option.get (Lower.dtype a.dtype) in
+  let start, span = Lower.span dt a.view in
   B.view a.buffer
-    ~offset:(start * Dtype.itemsize l.dtype)
+    ~offset:(start * Dtype.itemsize dt)
     (Nx_dtype.Scalar.of_dtype a.dtype)
     span
 
@@ -312,34 +337,19 @@ let run what op arrays dsts =
   let d =
     match dsts with A a :: _ -> B.device a.buffer | [] -> assert false
   in
-  let t = target what d in
-  let operands = List.map (layout what) arrays
-  and outs = List.map (layout what) dsts in
-  List.iter2
-    (fun (A a) (l : layout) ->
-      if not (List.exists (Dtype.equal l.dtype) t.dtypes) then
-        refuse what "no %s on %s"
-          (Nx_dtype.to_string a.dtype)
-          (Nx_device.name d))
-    (arrays @ dsts) (operands @ outs);
-  let empty (A a) = View.numel a.view = 0 in
-  if not (List.for_all empty dsts) then begin
-    let key = { op; operands; dsts = outs; target = t.target } in
-    let p = program what key d arrays dsts in
-    let slots = Array.make (List.length p.slots) [] in
+  let t = target what d and all = arrays @ dsts in
+  let layouts = List.map (layout what) all in
+  if List.for_all (fun (A a) -> View.numel a.view = 0) dsts then
+    check what t d all layouts
+  else
+    let p = program what { op; layouts; target = t.target } t d arrays dsts in
+    let slots = Array.make p.nslots [] in
     List.iteri
-      (fun i -> function
-        | Some slot ->
-            slots.(slot) <-
-              [
-                slice
-                  (List.nth (arrays @ dsts) i)
-                  (List.nth (operands @ outs) i);
-              ]
-        | None -> ())
-      p.slots;
+      (fun i x ->
+        let slot = p.slots.(i) in
+        if slot >= 0 then slots.(slot) <- [ slice x ])
+      all;
     Engine.run (link p d) slots
-  end
 
 (* Kernels *)
 
