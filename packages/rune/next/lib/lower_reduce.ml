@@ -94,13 +94,13 @@ let values dt k = if Dtype.is_float dt then Ops.bitcast (flip k) dt else k
    extreme is a maximum of keys, through their order-reversing complement for a
    minimum. *)
 
+let accumulator dt =
+  let acc = Dtype.sum_acc dt in
+  if List.exists (Dtype.equal acc) Dtype.sints then unsigned acc else acc
+
 let accumulated f op x =
   let dt = dtype x in
-  let acc = Dtype.sum_acc dt in
-  let acc =
-    if List.exists (Dtype.equal acc) Dtype.sints then unsigned acc else acc
-  in
-  let r = f op (Ops.cast x acc) in
+  let r = f op (Ops.cast x (accumulator dt)) in
   let r =
     if Op.equal op Op.Add && Dtype.is_float dt then
       Ops.add r (Ops.const_like r (`Float 0.))

@@ -617,8 +617,23 @@ let op : type r. scope -> r Nx.Op.t -> r =
       ret (Nx.dtype x)
         (Lower_index.fold ~output_size ~kernel_size ~stride ~dilation ~padding
            (node s what p x))
-  | Matmul _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Solve_triangular _ ->
-      refuse ()
+  | Matmul (x, y) ->
+      ret (Nx.dtype x) (Lower_linalg.matmul (node s what p x) (node s what p y))
+  | Cholesky { upper; x } ->
+      ret (Nx.dtype x) (Lower_linalg.cholesky ~upper (node s what p x))
+  | Qr { reduced; x } ->
+      let q, r = Lower_linalg.qr ~reduced (node s what p x) in
+      (ret (Nx.dtype x) q, ret (Nx.dtype x) r)
+  | Lu x ->
+      let lu, pivots, perm = Lower_linalg.lu (node s what p x) in
+      (ret (Nx.dtype x) lu, ret Nx_dtype.int32 pivots, ret Nx_dtype.int32 perm)
+  | Svd { full_matrices; x } ->
+      let u, sv, vt = Lower_linalg.svd ~full_matrices (node s what p x) in
+      (ret (Nx.dtype x) u, ret Nx_dtype.float64 sv, ret (Nx.dtype x) vt)
+  | Solve_triangular { upper; transpose; unit_diag; a; b } ->
+      ret (Nx.dtype b)
+        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag
+           (node s what p a) (node s what p b))
   | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ -> refuse ()
   | Contiguous x -> ret (Nx.dtype x) (Ops.contiguous (node s what p x))
   | Move (x, m) ->

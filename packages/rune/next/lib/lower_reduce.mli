@@ -21,6 +21,10 @@
 
 open Tolk_next
 
+val accumulator : Dtype.t -> Dtype.t
+(** [accumulator dt] is the type in which sums and products of [dt] elements
+    accumulate: {!Dtype.sum_acc}'s, unsigned for the signed integers. *)
+
 val reduce : Nx_backend.reduce -> axes:int list -> Ops.t -> Ops.t
 (** [reduce k ~axes x] is [x] reduced by [k] over [axes], which the result
     drops. A sum over no element is [0], and a product over none is [1]. *)

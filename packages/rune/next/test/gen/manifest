@@ -41,6 +41,10 @@ lower_index/cat_equal.golden
 lower_index/pad_value.golden
 lower_index/pad_zero.golden
 lower_index/unfold.golden
+lower_linalg/matmul.golden
+lower_linalg/matmul_batched.golden
+lower_linalg/qr_q.golden
+lower_linalg/qr_r.golden
 lower_reduce/argmax_int.golden
 lower_reduce/argmin_int.golden
 lower_reduce/argsort_int.golden

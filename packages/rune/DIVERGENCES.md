@@ -543,3 +543,159 @@ target's run lands.
 - **Pinned by:** `windows › fold › *`,
   `windows › overlapping windows of -0. fold to +0.`,
   `› a single window of -0. folds to +0.`.
+
+### L1. Products widen before they multiply
+
+- **Reference:** `mixin/op.py:367` (`dot`: `(x * w).sum(-1)`, the products at
+  the operands' dtype, summed in `sum_acc_dtype`'s).
+- **Raven:** `lower_linalg.ml:85` (`matmul`), `:79` (`dot`);
+  `lower_reduce.ml:97` (`accumulator`).
+- **Differs:** the operands are converted to `Lower_reduce.accumulator`'s type
+  before they are multiplied, and the products summed by `Lower_reduce.reduce`
+  (R1, R2) and converted once to the operands' dtype. tinygrad rounds each
+  product of `float16`, `bfloat16` and the 8-bit floats to their dtype before
+  the `float32` sum, and multiplies and sums signed integers in a signed type.
+  The widened product is exact, and CUDA and HIP apply their narrow-in,
+  `float32`-out tensor cores to it through tolk's D29; Metal takes its
+  `float32` core, which comes first. A `float32` product agrees (`graph parity
+  › matmul`, `› matmul_batched`).
+- **nx:** `nx.mli`, Arithmetic: narrow floats compute at `float32` and round
+  once; nx.cpu's GEMM converts narrow floats to `float32` as it packs them,
+  accumulates integers in 64 bits, and wraps on the store.
+- **Class:** rounded sum on floats, exact on integers.
+- **Reason:** (b).
+- **Pinned by:** `products › *`, `products › narrow products are exact before
+  they are summed`, `products › a zero product is +0. › *`, `tensor cores ›
+  metal › *`, `tensor cores › cuda › *`, `compiled for the host › *` (slow).
+
+### L2. QR by Householder reflections, R triangular
+
+- **Reference:** `mixin/op.py:1799` (`qr`).
+- **Raven:** `lower_linalg.ml:109` (`householder`), `:136` (`triu`), `:140`
+  (`qr`).
+- **Differs:** tinygrad's reflections, with `r`'s elements below the diagonal
+  selected as `+0.`: tinygrad leaves there the rounding error of the zeros the
+  reflections make. `float16` computes at `float32`, and the reduced factors
+  are the leading columns of `q` and rows of `r`. The signs agree in meaning
+  only: a column with no element below the diagonal is still reflected, where
+  nx.cpu, as LAPACK, takes no reflection, so a diagonal element of `r` may
+  have eager's opposite sign. A norm is the square root of a sum of squares,
+  unscaled, so elements whose squares overflow or leave the normal range lose
+  accuracy. Compiled code never raises `No_convergence`.
+- **nx:** `nx_backend.mli`, `qr`: `q` orthonormal, `r` upper triangular; nx
+  pins no factor's signs.
+- **Class:** measured bound: within `32 max(m, n) u` of the largest element of
+  eager's factors, up to the signs of the diagonal of `r`, for well-conditioned
+  matrices of up to 5 x 5; measured maxima over 300 such matrices, in units of
+  `max(m, n) u`: 12.2 (`float32`), 12.9 (`float64`), 0.6 (`float16`, `u` its
+  own).
+- **Reason:** (b).
+- **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
+  reflection`, `› one element`, `› no column: q is the identity`, `› batch
+  axes`; the construction by `graph parity › qr_q`, `› qr_r`.
+
+### L3. SVD sweeps to the roundoff and completes its vectors
+
+- **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
+  rotations over a round-robin pairing, the singular values sorted by
+  `sort`, `U`'s columns divided by them).
+- **Raven:** `lower_linalg.ml:161` (`tournament`), `:181` (`rounds`), `:190`
+  (`rotate`), `:232` (`svd`).
+- **Differs:**
+  - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
+    for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
+    leave `float64` values of random 9 x 9 matrices `3.4e5 num u` from
+    eager's and of 16 x 16 ones `5.6e10 num u`; the sweeps needed grow with
+    `num` (8 at 48 in `float64`), and these reach `1.6 num u` to 48;
+  - `u`'s columns are the reflections that triangularize the sorted rotated
+    columns, each with the sign of its diagonal element. tinygrad divides each
+    column by its singular value, which leaves a column of zeros for a zero
+    singular value and an inaccurate one for a small one;
+  - the pairing of each round is computed from the shape, and the columns of
+    a pair are rotated directly, where tinygrad selects and rotates them by
+    matrix products. The order is `Lower_reduce.argsort`'s, stable;
+  - the values are `float64`, refused (`Jit_error`) on a target without it,
+    such as Metal. Compiled code never raises `No_convergence`: it runs its
+    fixed sweeps, and NaN in `a` gives NaN values, as eager does.
+- **nx:** `nx.mli`, `svd`: `a = U diag(S) Vh`, `S` descending, non-negative,
+  a zero one `+0`; `nx_backend.mli`: `u` and `vt` orthonormal.
+- **Class:** measured bound: within `32 max(m, n) u` of the largest singular
+  value for the values, and of one for the orthonormality of the vectors and
+  the reconstruction, for well-conditioned matrices of up to 4 x 4; measured
+  maxima, in units of `max(m, n) u`: 12.2 (`float32`), 12.9 (`float64`), 0.5
+  (`float16`, `u` its own).
+- **Reason:** (b).
+- **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 16 x 16
+  matrix reach its roundoff`, `› a rank-deficient matrix has orthonormal
+  vectors and +0. values`, `› NaN gives NaN values`, `› one element`, `› no
+  element: the full factors are
+  identities`, `› a target without float64 refuses it`, `› batch axes`.
+
+### L4. Cholesky
+
+- **Reference:** none.
+- **Raven:** `lower_linalg.ml:356` (`cholesky`).
+- **No source:** a right-looking composition, one column per step: the
+  column's diagonal element's square root heads it, the rest is divided by
+  that root, and the working matrix loses the column's product with itself.
+  Only the lower triangle is read, and `upper` is the transpose. A pivot that
+  is not positive is NaN, so the column it heads and every later one are NaN
+  on and below the diagonal, where eager raises `Linalg_error`
+  `Not_positive_definite`; a last pivot of zero, which would give finite
+  values, is NaN too.
+- **nx:** `nx.mli`, `cholesky`.
+- **Class:** measured bound: within `4 n u` of the largest element of eager's
+  factor for well-conditioned positive-definite matrices of up to 5 x 5;
+  measured maxima, in units of `n u`: 0.4 (`float32`), 0.6 (`float64`), 0
+  (`float16`). Pinned values where eager raises.
+- **Reason:** (b).
+- **Pinned by:** `cholesky › positive-definite matrices › *`, `cholesky › a
+  pivot that is not positive is NaN, and every column after it`, `› a zero
+  pivot is NaN`, `› one element`, `› no element`.
+
+### L5. Triangular solve
+
+- **Reference:** none.
+- **Raven:** `lower_linalg.ml:389` (`solve_triangular`).
+- **No source:** the system is made lower triangular, transposed under
+  `transpose` and reversed along both axes when the triangle read is the upper
+  one, and solved by substitution, one row a step, from the strictly lower
+  triangle and the diagonal; the other triangle, and the diagonal under
+  `unit_diag`, are never read. A zero on the diagonal, where eager raises
+  `Linalg_error` `Singular`, makes that row and every later one in the order
+  of substitution non-finite: the quotient by zero, then its products.
+- **nx:** `nx.mli`, `solve_triangular`.
+- **Class:** measured bound: within `4 n u` of the largest element of eager's
+  solution for diagonally dominant matrices of up to 5 x 5; measured maxima,
+  in units of `n u`: 0.9 (`float32`, `float64`), 0 (`float16`). Pinned values
+  where eager raises.
+- **Reason:** (b).
+- **Pinned by:** `triangular solves › dominant matrices › *`, `triangular
+  solves › a zero pivot makes its row and those after it non-finite`, `› no
+  element`.
+
+### L6. LU with partial pivoting
+
+- **Reference:** none.
+- **Raven:** `lower_linalg.ml:294` (`lu`).
+- **No source:** one column a step. The pivot is the first element of largest
+  magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
+  magnitudes in which a NaN on the diagonal is the greatest and one below it
+  the least; the rows are exchanged with `Lower_index.gather`, bit for bit.
+  The column below a nonzero pivot is divided by it, and the trailing rows take
+  the rank-one update. It raises in neither eager nor compiled code: a zero
+  pivot leaves its column unscaled, as eager does.
+- **nx:** `nx_backend.mli`, `lu`.
+- **Class:** measured bound, with eager's pivots and row order: within
+  `4 max(m, n) u` of the largest element of eager's factors for
+  well-conditioned matrices of up to 5 x 5 with shuffled rows; measured maxima,
+  in units of `max(m, n) u`: 0.7 (`float32`), 0.2 (`float64`), 0
+  (`float16`). The kernel rounds the update's product and difference apart
+  (tolk's D25), where nx.cpu's C, built with Clang's default contraction, may
+  fuse them.
+- **Reason:** (b).
+- **Pinned by:** `lu › matrices › *`, `lu › the first of equal magnitudes is
+  the pivot`, `› a zero column leaves its column unscaled`, `› a NaN below the
+  diagonal is never the pivot`, `› a NaN on the diagonal is the pivot`, `› one
+  element`, `› no element`.
+
