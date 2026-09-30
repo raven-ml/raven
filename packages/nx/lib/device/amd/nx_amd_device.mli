@@ -232,16 +232,10 @@ val kernel : Nx_device.Program.t -> kernel option
 (** [kernel p] is the dispatch parameters of [p], if [p] is loaded on an AMD
     device. Its {!Nx_device.Program.handle} is its [descriptor]. *)
 
-type scratch = {
-  address : nativeint;  (** The scratch memory's first byte. *)
-  bytes : int;  (** Its size, split evenly among the XCCs. *)
-  tmpring_size : int;  (** The [COMPUTE_TMPRING_SIZE] value for it. *)
-}
-(** The type for the scratch memory of a device's kernels. *)
-
-val scratch : t -> int -> scratch
+val scratch : t -> int -> Nx_device.Buffer.t
 (** [scratch a n] is the device's scratch memory for kernels of up to [n]
-    scratch bytes per lane, grown if smaller, and on an AQL queue written into
+    scratch bytes per lane, split evenly among the XCCs: the memory of the last
+    call, if large enough, or new memory, which on an AQL queue is written into
     the queue's descriptor. Memory it replaces returns to the device once
     unreachable. Call it before {!Nx_device.submit}, not inside.
 

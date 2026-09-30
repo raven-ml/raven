@@ -62,8 +62,6 @@ type kernel = {
   private_segment_buffer : bool;
 }
 
-type scratch = { address : nativeint; bytes : int; tmpring_size : int }
-
 (* The GPU behind a device, through its interface. *)
 type gpu =
   | Kfd_gpu of Kfd.t
@@ -458,23 +456,16 @@ let scratch a n =
   let d = Option.get a.dev in
   Mutex.protect a.scratch_lock (fun () ->
       let n = Int.max n 128 in
-      let b, n =
-        match a.scratch with
-        | Some (b, have) when have >= n -> (b, have)
-        | _ ->
-            let b =
-              Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
-                (Scratch.bytes (scratch_gpu a.props) n)
-            in
-            Option.iter (fun desc -> aql_scratch a desc b n) a.aql_desc;
-            a.scratch <- Some (b, n);
-            (b, n)
-      in
-      {
-        address = Nx_device.Buffer.address b;
-        bytes = Nx_device.Buffer.nbytes b;
-        tmpring_size = Scratch.tmpring_size (scratch_gpu a.props) n;
-      })
+      match a.scratch with
+      | Some (b, have) when have >= n -> b
+      | _ ->
+          let b =
+            Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
+              (Scratch.bytes (scratch_gpu a.props) n)
+          in
+          Option.iter (fun desc -> aql_scratch a desc b n) a.aql_desc;
+          a.scratch <- Some (b, n);
+          b)
 
 (* Opening *)
 

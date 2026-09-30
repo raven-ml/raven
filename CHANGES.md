@@ -2875,6 +2875,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_amd_device.scratch` returns the scratch memory as a buffer
+  of the device; the record of its address, size and `COMPUTE_TMPRING_SIZE`
+  is gone, since the ring size depends on each kernel.
 - **Breaking:** `Nx_amd_device.kernel`'s `code` is the uploaded code object as
   a buffer of the device, not its address, so a submitter names the program's
   memory as storage it touches.

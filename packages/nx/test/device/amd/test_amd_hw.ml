@@ -273,12 +273,12 @@ let test_programs () =
 let test_scratch () =
   let d = device () in
   let s = Nx_amd_device.scratch (low d) 256 in
-  is_true ~msg:"memory" (s.address <> 0n && s.bytes > 0);
-  is_true ~msg:"a ring size" (s.tmpring_size <> 0);
-  let again = Nx_amd_device.scratch (low d) 128 in
-  equal ~msg:"kept for smaller kernels" nativeint s.address again.address;
+  is_true ~msg:"memory of the device"
+    (B.nbytes s > 0 && Nx_device.equal (B.device s) d);
+  is_true ~msg:"kept for smaller kernels"
+    (Nx_amd_device.scratch (low d) 128 == s);
   let more = Nx_amd_device.scratch (low d) 4096 in
-  is_true ~msg:"grown for larger ones" (more.bytes > s.bytes)
+  is_true ~msg:"grown for larger ones" (B.nbytes more > B.nbytes s)
 
 (* Boundaries, wraps and coherence: copies whose bytes a wrong chunk, a ring
    overwritten or a wrong page-table bit would change without hanging. *)
