@@ -3568,6 +3568,7 @@ uop/movement/remove_the_identity_permute.golden
 uop/movement/stack_the_elements_of_a_node_in_order.golden
 uop/op/ops.golden
 uop/ops/aranges.golden
+uop/ops/axes.golden
 uop/ops/axis_types.golden
 uop/ops/binary_bounds.golden
 uop/ops/bitcasts.golden

@@ -1040,7 +1040,13 @@ let shapes =
           let p = Ops.param ~shape:(ints [ 2; 1 ]) 0 Float32 in
           rejects (fun () -> Ops.squeeze ~axis:2 p);
           rejects (fun () -> Ops.squeeze ~axis:(-3) p);
-          rejects (fun () -> Ops.flatten ~start:5 p));
+          rejects (fun () -> Ops.flatten ~start:5 p);
+          rejects (fun () -> Ops.unsqueeze p 3);
+          rejects (fun () -> Ops.transpose p 0 2));
+      test "a split whose sizes miss the axis's is rejected" (fun () ->
+          let p = Ops.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
+          rejects (fun () -> Ops.split ~axis:1 p [ 1; 1 ]);
+          rejects (fun () -> Ops.split p [ 1; 2 ]));
       test "a movement of a node without a shape is rejected" (fun () ->
           rejects (fun () ->
               Ops.shape (Ops.v ~src:[ Ops.sink []; Ops.int 1 ] Op.Expand)));

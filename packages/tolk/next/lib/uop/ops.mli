@@ -1069,6 +1069,24 @@ val squeeze : ?axis:int -> t -> t
 (** [squeeze ~axis u] removes [axis] if its size is [1], or every axis of size
     [1]. *)
 
+val unsqueeze : t -> int -> t
+(** [unsqueeze u axis] is [u] with an axis of size [1] inserted at [axis], which
+    counts from the end of the new shape when negative.
+
+    Raises [Invalid_argument] if [axis] is out of range. *)
+
+val transpose : t -> int -> int -> t
+(** [transpose u a b] exchanges the axes [a] and [b] of [u].
+
+    Raises [Invalid_argument] if an axis is out of range. *)
+
+val split : ?axis:int -> t -> int list -> t list
+(** [split ~axis u sizes] is the consecutive slices of [u] along [axis] (default
+    [0]) of [sizes] elements.
+
+    Raises [Invalid_argument] if [axis] is out of range or of symbolic size, or
+    if [sizes] does not sum to its size. *)
+
 val repeat : t -> int list -> t
 (** [repeat u repeats] tiles [u] [repeats] times along each axis, the axes
     aligned to the right: a [repeats] longer than [u]'s shape adds leading axes.

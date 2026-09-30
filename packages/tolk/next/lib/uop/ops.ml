@@ -2625,6 +2625,34 @@ let squeeze ?axis u =
       if ndim u = 0 || Sint.truth Sint.(List.nth (shape u) axis <> Int 1) then u
       else reshape u (List.filteri (fun i _ -> i <> axis) (shape u))
 
+let unsqueeze u axis =
+  let axis = resolve_dim ~extra:1 u axis in
+  reshape u (take axis (shape u) @ (Int 1 :: drop axis (shape u)))
+
+let transpose u a b =
+  let a = resolve_dim u a and b = resolve_dim u b in
+  permute u
+    (List.init (ndim u) (fun i -> if i = a then b else if i = b then a else i))
+
+let split ?(axis = 0) u sizes =
+  let axis = resolve_dim u axis in
+  let n =
+    match List.nth (shape u) axis with
+    | Int n -> n
+    | Sym _ -> invalid_arg "a split along an axis of symbolic size"
+  in
+  let total = List.fold_left ( + ) 0 sizes in
+  if total <> n then
+    invalid_argf "sizes that sum to %d split an axis of %d elements" total n;
+  let cut (lo, pieces) k =
+    let bounds =
+      List.init (ndim u) (fun i ->
+          if i = axis then Some (Int lo, Int (lo + k)) else None)
+    in
+    (lo + k, shrink u bounds :: pieces)
+  in
+  List.rev (snd (List.fold_left cut (0, []) sizes))
+
 let repeat u repeats =
   let base =
     List.hd (align_left [ shape u; List.map (fun _ -> Int 1) repeats ])
@@ -2859,10 +2887,6 @@ let split_cumalu = 256
 let at_axis u axis p =
   List.init (ndim u) (fun i -> if i = axis then Some p else None)
 
-let swap u a b =
-  permute u
-    (List.init (ndim u) (fun i -> if i = a then b else if i = b then a else i))
-
 let running_size u axis =
   match List.nth (shape u) axis with
   | Int n -> n
@@ -2881,9 +2905,9 @@ let pooled_cumalu u op =
 
 let cumalu u axis op =
   let axis = resolve_dim u axis and last = ndim u - 1 in
-  let s = running_size u axis and t = swap u axis last in
+  let s = running_size u axis and t = transpose u axis last in
   if List.exists (fun d -> equal_sint d (Int 0)) (shape u) then u
-  else if s <= 2 * split_cumalu then swap (pooled_cumalu t op) axis last
+  else if s <= 2 * split_cumalu then transpose (pooled_cumalu t op) axis last
   else
     let value = identity_element op u.dtype in
     let rounded = Helpers.round_up s split_cumalu in
@@ -2911,7 +2935,7 @@ let cumalu u axis op =
       flatten ~start:last
         (combine chunks (reshape base (shape base @ [ Int 1 ])))
     in
-    swap
+    transpose
       (shrink whole (at_axis whole last (Int (rounded - s), Int rounded)))
       axis last
 

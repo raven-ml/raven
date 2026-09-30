@@ -266,6 +266,21 @@ let squeezes () =
       squeeze ~axis:(-2) p;
     ]
 
+let axes () =
+  let p = param [ 2; 3; 4 ] 0 Float32 in
+  sink
+    ([
+       unsqueeze p 0;
+       unsqueeze p 2;
+       unsqueeze p (-1);
+       transpose p 1 0;
+       transpose p 0 2;
+       transpose p (-1) (-2);
+     ]
+    @ split ~axis:1 p [ 1; 2 ]
+    @ split ~axis:(-1) p [ 2; 2 ]
+    @ split p [ 2 ])
+
 let stacks () =
   let a = param [ 2; 3 ] 0 Float32 and b = param [ 2; 3 ] 1 Float32 in
   let h = param [ 2; 3 ] 2 Float16 in
@@ -716,6 +731,7 @@ let all =
     ("movement", movement, false);
     ("expansion", expansion, false);
     ("squeezes", squeezes, false);
+    ("axes", axes, false);
     ("stacks", stacks, false);
     ("concatenation", concatenation, false);
     ("pools", pools, false);

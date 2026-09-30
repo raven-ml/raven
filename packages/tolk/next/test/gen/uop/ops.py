@@ -491,6 +491,13 @@ def squeezes():
 
 
 @graph
+def axes():
+    p = UOp.param(0, dtypes.float, (2, 3, 4))
+    return UOp.sink(p.unsqueeze(0), p.unsqueeze(2), p.unsqueeze(-1), p.transpose(), p.transpose(0, 2), p.transpose(-1, -2),
+                    *p.split([1, 2], 1), *p.split([2, 2], dim=-1), *p.split([2]))
+
+
+@graph
 def stacks():
     a, b = UOp.param(0, dtypes.float, (2, 3)), UOp.param(1, dtypes.float, (2, 3))
     h = UOp.param(2, dtypes.half, (2, 3))
