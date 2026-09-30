@@ -112,7 +112,7 @@ goes. Keeping only part of a file is scope, recorded under Exclusions in
 
 - **tinygrad:** `helpers.py:398-447` (an SQLite database of pickled values,
   keyed by strings, integers or dictionaries of columns).
-- **tolk.next:** `lib/helpers.ml:588-699` (`Diskcache`).
+- **tolk.next:** `lib/helpers.ml:586-697` (`Diskcache`).
 - **Differs:** keys and values are strings, which callers encode. Each entry
   is a file under `CACHEDB`, a directory, written aside and renamed into
   place; tables are versioned by tolk.next's own version.

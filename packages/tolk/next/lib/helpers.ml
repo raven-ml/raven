@@ -26,7 +26,8 @@ let sign s i =
   if i < String.length s && (s.[i] = '+' || s.[i] = '-') then i + 1 else i
 
 (* The end of the digits starting at [i], an underscore being allowed between
-   two digits; [i] if no digit starts there. *)
+   two digits; [i] if no digit starts there. OCaml's parsers accept an
+   underscore anywhere after the first digit, Python only between two. *)
 let digits s i =
   let n = String.length s in
   let rec after_digit j =
@@ -37,28 +38,25 @@ let digits s i =
   in
   if i < n && is_digit s.[i] then after_digit (i + 1) else i
 
-let is_int t =
-  let i = sign t 0 in
-  let j = digits t i in
-  j > i && j = String.length t
+(* [is_int] and [is_float] refuse what OCaml's parsers accept and Python does
+   not: misplaced underscores, base prefixes, hexadecimal floats and [nan(...)].
+   A missing digit run is left to the parsers, which refuse it. *)
+
+let is_int t = digits t (sign t 0) = String.length t
 
 let is_float t =
   let n = String.length t in
   let i = sign t 0 in
   let j = digits t i in
   let k = if j < n && t.[j] = '.' then digits t (j + 1) else j in
-  let mantissa = j > i || k > j + 1 in
   let exponent_end =
-    if k < n && (t.[k] = 'e' || t.[k] = 'E') then
-      let m = sign t (k + 1) in
-      let e = digits t m in
-      if e > m then e else k
+    if k < n && (t.[k] = 'e' || t.[k] = 'E') then digits t (sign t (k + 1))
     else k
   in
   List.mem
     (String.lowercase_ascii (String.sub t i (n - i)))
     [ "inf"; "infinity"; "nan" ]
-  || (mantissa && exponent_end = n)
+  || exponent_end = n
 
 let parse_int s =
   let t = strip s in
