@@ -18,9 +18,6 @@ module View = View
 module Elements = Elements
 (** Elements of host buffers as values of a dtype. *)
 
-module Backend_intf = Backend_intf
-(** The operations a backend implements. *)
-
 type ('a, 'b) t = {
   dtype : ('a, 'b) Nx_dtype.t;  (** The type of the elements. *)
   view : View.t;

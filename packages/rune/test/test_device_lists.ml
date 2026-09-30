@@ -332,22 +332,22 @@ let test_feedback_moves_no_bytes () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
-(* A backend that includes the host's and counts its adds. A compiled call
+(* A backend that includes nx.cpu's kernels and counts its adds. A compiled call
    depends on where its arguments lie, not on the backend computing on them
    eagerly: arguments of this backend bind as they are, and the results are
    placed with it. *)
 module Counting = struct
-  include Nx.Backend.Host
+  include (Nx_cpu : Nx_backend.S)
 
   let name = "counting"
   let adds = ref 0
 
-  let add a b =
-    incr adds;
-    Nx.Backend.Host.add a b
+  let binary k a b ~dst =
+    if k = Nx_backend.Add then incr adds;
+    Nx_cpu.binary k a b ~dst
 end
 
-let counting : Nx.Backend.t = (module Counting)
+let counting = Nx_backend.make (module Counting)
 
 let test_another_backend_binds_and_keeps_its_backend () =
   let g = Rune.jit' (fun x -> Nx.add x x) in

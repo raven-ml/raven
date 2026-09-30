@@ -1,4 +1,4 @@
-; nx.cpu: nx's kernels over host memory, the kernels of Nx.Backend.host.
+; nx.cpu: nx's kernels over host memory, Nx_cpu.backend.
 ;
 ; The include paths for nx_device.h and nx_dtype.h come from the nx_device
 ; and nx_dtype dependencies (install_c_headers). No OpenMP and no -ffast-math: the engine owns its own
@@ -9,8 +9,8 @@
 ; no explicit link flag — the OCaml 5 runtime already links it for its domain
 ; support, which satisfies the engine pool's pthread_create/mutex/cond symbols.
 ;
-; Nx_cpu implements Nx_array.Backend_intf.S (t, View, Shape) over Nx_dtype,
-; so nx_array joins nx_device. The C needs just nx_c.h, nx_device.h and
+; Nx_cpu implements Nx_backend.S over Nx_array's arrays, so nx_array and
+; nx_backend join nx_device. The C needs just nx_c.h, nx_device.h and
 ; nx_dtype.h.
 ;
 ; -Werror is a development/CI gate, not a release constraint: "warnings are
@@ -24,7 +24,7 @@
 (library
  (name nx_cpu)
  (public_name nx.cpu)
- (libraries nx_dtype nx_device nx_array)
+ (libraries nx_dtype nx_device nx_array nx_backend)
  (foreign_stubs
   (language c)
   (names

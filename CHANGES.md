@@ -2871,6 +2871,16 @@ thread.
 
 ### Nx
 
+- **Breaking:** a backend is kernels over arrays: `Nx_backend.S` has one
+  function per operation, which writes a destination array that nx
+  allocated, and `Nx_backend.make` packs it. `Nx_cpu.backend` is nx.cpu's and
+  every placement's default; `Nx.Backend`, `Nx_array.Backend_intf` and a
+  backend's `place` and `to_host` are gone, and nx places values itself.
+  `Nx.Linalg_error` is `Nx_backend.Linalg_error`, `Nx.Backend.Refused` is
+  `Nx_backend.Refused`, which `Nx.place` no longer raises, and nx.cpu's
+  allocating functions (`Nx_cpu.add`, `full`, `from_host`, `to_host`, ...)
+  are kernels that write `~dst`. A placement's backend must run on the host,
+  where nx computes on every placement's values.
 - `Nx.zeros`, `Nx.ones`, `Nx.full` and `Nx.empty` on the host fill one
   buffer, and `Nx_array.Elements.fill` writes the element's bytes without a
   bigarray view: `Nx.zeros` of one element takes 250 ns instead of 335.

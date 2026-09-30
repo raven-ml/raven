@@ -2,7 +2,7 @@
  (name nx)
  (public_name nx)
  (modules :standard \ prelude)
- (libraries nx_dtype nx_array nx_cpu nx_device nx_effect)
+ (libraries nx_dtype nx_array nx_backend nx_cpu nx_device nx_effect)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

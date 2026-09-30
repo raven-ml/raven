@@ -3,17 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** nx.cpu's kernels over host memory.
+(** nx.cpu: nx's kernels over host memory.
 
-    A value of [Nx_cpu] is an array over a buffer on {!Nx_device.host}. Its
-    operations are nx's vocabulary, run by the C engine on the calling domain
-    and the engine's thread pool. [Nx_cpu] is the kernel layer of
-    [Nx.Backend.host]: programs use [Nx], whose values on the host are these. *)
+    The C engine, run on the calling domain and the engine's thread pool, over
+    arrays in memory the host addresses. {!backend} is the backend of
+    [Nx.Placement.host]: programs use [Nx], whose values on the host are these
+    kernels' arrays. *)
 
-type context = unit
-(** nx.cpu needs no context: the host is its only device. *)
+include Nx_backend.S
+(** @inline *)
 
-include
-  Nx_array.Backend_intf.S
-    with type ('a, 'b) t = ('a, 'b) Nx_array.t
-     and type context := context
+val backend : Nx_backend.t
+(** [backend] is nx.cpu's backend, named ["cpu"]. It runs on the devices whose
+    memory is the host's ({!Nx_device.shares_host_memory}). *)

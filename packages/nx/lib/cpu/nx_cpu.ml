@@ -3,71 +3,22 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The OCaml binding for the default CPU backend.
+(* nx.cpu's kernels: the C engine over arrays in host memory.
 
-   A thin veneer over the C engine: no per-op materialization, no re-validation
-   of frontend guarantees, no broadcast copies. Zero-stride (broadcast) views go
-   straight to C — the engine handles stride 0. The frontend
-   pre-broadcasts, promotes dtypes, and validates parameters, so a compute op
-   here only allocates its C-contiguous output and hands the operands to the
-   engine funnel; movement ops are pure View metadata manipulation.
-
-   Externals are grouped by family. Every op in Backend_intf.S is wired to its C
-   kernel; none remain stubbed. *)
+   Each kernel hands its operands and the destination nx allocated to the
+   engine's funnel, which reads the arrays at the slots nx_c.h names; zero
+   strides (broadcasts) go straight through. nx gives operands the shapes and
+   dtypes the operation takes, so a kernel checks only what the engine cannot
+   compute. *)
 
 open Nx_array
 
-type context = unit
+type ('a, 'b) t = ('a, 'b) Nx_array.t
 
-(* ── The tensor handle ─────────────────────────────────────────────────────
-
-   An operand is an [Nx_array.t], passed to C directly: the engine reads it at
-   the slots nx_c.h names. *)
-type ('a, 'b) t = ('a, 'b) Nx_array.t = {
-  dtype : ('a, 'b) Nx_dtype.t;
-  view : View.t;
-  buffer : Nx_device.Buffer.t;
-}
-
-(* ── Accessors ─────────────────────────────────────────────────────────────*)
-
-let to_host (t : ('a, 'b) t) = t.buffer
+let name = "cpu"
+let runs_on = Nx_device.shares_host_memory
 let shape (t : ('a, 'b) t) = View.shape t.view
-
-(* ── Creation ──────────────────────────────────────────────────────────────*)
-
-let create_tensor dtype shape =
-  let size = Array.fold_left ( * ) 1 shape in
-  { dtype; view = View.create shape; buffer = Elements.create dtype size }
-
-let buffer () dtype shape = create_tensor dtype shape
-
-let full () dtype shape value =
-  let t = create_tensor dtype shape in
-  Elements.fill dtype t.buffer value;
-  t
-
-let from_host () dtype buffer =
-  { dtype; view = View.create [| Nx_device.Buffer.length buffer |]; buffer }
-
-(* ── Movement (pure View metadata) ─────────────────────────────────────────
-
-   Each op runs the View transformation into a fresh handle sharing the
-   buffer. Broadcast (expand) yields zero strides that go straight to C.
-   pad/cat allocate and copy — they are C ops (move family). *)
-
 let of_view (t : ('a, 'b) t) view = { t with view }
-let expand t shape = of_view t (View.expand t.view shape)
-let reshape t shape = of_view t (View.reshape t.view shape)
-let permute t axes = of_view t (View.permute t.view axes)
-let shrink t bounds = of_view t (View.shrink t.view bounds)
-let flip t axes = of_view t (View.flip t.view axes)
-
-let sliding_window t ~axis ~window ~step =
-  of_view t (View.sliding_window t.view ~axis ~window ~step)
-
-let is_c_contiguous (t : ('a, 'b) t) =
-  View.is_c_contiguous t.view && View.offset t.view = 0
 
 (* [(before, after); ...] -> flat [before0; after0; before1; after1; ...], the
    window ops' padding ABI (nx_c_move.c reads pad_before/after at 2*d /
@@ -79,13 +30,9 @@ let flatten_pairs pairs =
       let before, after = pairs.(i / 2) in
       if i mod 2 = 0 then before else after)
 
-(* map family (nx_c_map.c): elementwise ops allocate a C-contiguous output the
-   same shape as the input (comparisons output bool; cast the target dtype) and
-   hand the strided operands to the map funnel — broadcast inputs (zero strides)
-   go straight through. fdiv/idiv are separate primitives — the frontend selects
-   by dtype, the backend never inspects it. The funnel keys binary/unary ops on
-   the output dtype, comparisons on the input (bool output), cast on (src,
-   dst). *)
+(* Map family (nx_c_map.c). The funnel keys binary and unary kernels on the
+   output dtype, comparisons on the input, casts on both. *)
+
 external caml_neg : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_neg"
 external caml_recip : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_recip"
 external caml_abs : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_abs"
@@ -169,88 +116,58 @@ external caml_where :
 
 external caml_cast : ('c, 'd) t -> ('a, 'b) t -> unit = "caml_nx_c_cast"
 
-let unary caml_op x =
-  let out = create_tensor x.dtype (shape x) in
-  caml_op out x;
-  out
+let unary (k : Nx_backend.unary) x ~dst =
+  match k with
+  | Neg -> caml_neg dst x
+  | Recip -> caml_recip dst x
+  | Abs -> caml_abs dst x
+  | Sqrt -> caml_sqrt dst x
+  | Sign -> caml_sign dst x
+  | Exp -> caml_exp dst x
+  | Log -> caml_log dst x
+  | Sin -> caml_sin dst x
+  | Cos -> caml_cos dst x
+  | Tan -> caml_tan dst x
+  | Asin -> caml_asin dst x
+  | Acos -> caml_acos dst x
+  | Atan -> caml_atan dst x
+  | Sinh -> caml_sinh dst x
+  | Cosh -> caml_cosh dst x
+  | Tanh -> caml_tanh dst x
+  | Trunc -> caml_trunc dst x
+  | Ceil -> caml_ceil dst x
+  | Floor -> caml_floor dst x
+  | Round -> caml_round dst x
+  | Erf -> caml_erf dst x
 
-let binary caml_op x y =
-  let out = create_tensor x.dtype (shape x) in
-  caml_op out x y;
-  out
+let binary (k : Nx_backend.binary) x y ~dst =
+  match k with
+  | Add -> caml_add dst x y
+  | Sub -> caml_sub dst x y
+  | Mul -> caml_mul dst x y
+  | Fdiv -> caml_fdiv dst x y
+  | Idiv -> caml_idiv dst x y
+  | Mod -> caml_mod dst x y
+  | Pow -> caml_pow dst x y
+  | Atan2 -> caml_atan2 dst x y
+  | Maximum -> caml_max dst x y
+  | Minimum -> caml_min dst x y
+  | And -> caml_and dst x y
+  | Or -> caml_or dst x y
+  | Xor -> caml_xor dst x y
 
-let comparison caml_op x y =
-  let out = create_tensor Nx_dtype.Bool (shape x) in
-  caml_op out x y;
-  out
+let compare (k : Nx_backend.compare) x y ~dst =
+  match k with
+  | Equal -> caml_cmpeq dst x y
+  | Not_equal -> caml_cmpne dst x y
+  | Less -> caml_cmplt dst x y
+  | Less_equal -> caml_cmple dst x y
 
-let neg x = unary caml_neg x
-let recip x = unary caml_recip x
-let abs x = unary caml_abs x
-let sign x = unary caml_sign x
-let sqrt x = unary caml_sqrt x
-let exp x = unary caml_exp x
-let log x = unary caml_log x
-let sin x = unary caml_sin x
-let cos x = unary caml_cos x
-let tan x = unary caml_tan x
-let asin x = unary caml_asin x
-let acos x = unary caml_acos x
-let atan x = unary caml_atan x
-let sinh x = unary caml_sinh x
-let cosh x = unary caml_cosh x
-let tanh x = unary caml_tanh x
-let trunc x = unary caml_trunc x
-let ceil x = unary caml_ceil x
-let floor x = unary caml_floor x
-let round x = unary caml_round x
-let erf x = unary caml_erf x
-let add x y = binary caml_add x y
-let sub x y = binary caml_sub x y
-let mul x y = binary caml_mul x y
-let mod_ x y = binary caml_mod x y
-let pow x y = binary caml_pow x y
-let atan2 x y = binary caml_atan2 x y
-let max x y = binary caml_max x y
-let min x y = binary caml_min x y
-let xor x y = binary caml_xor x y
-let or_ x y = binary caml_or x y
-let and_ x y = binary caml_and x y
-let fdiv x y = binary caml_fdiv x y
-let idiv x y = binary caml_idiv x y
-let cmpeq x y = comparison caml_cmpeq x y
-let cmpne x y = comparison caml_cmpne x y
-let cmplt x y = comparison caml_cmplt x y
-let cmple x y = comparison caml_cmple x y
+let where c x y ~dst = caml_where dst c x y
+let cast x ~dst = caml_cast dst x
 
-let where cond if_true if_false =
-  let out = create_tensor if_true.dtype (shape if_true) in
-  caml_where out cond if_true if_false;
-  out
+(* Fold family (nx_c_fold.c). The engine takes sorted axes. *)
 
-let cast ~dtype x =
-  let out = create_tensor dtype (shape x) in
-  caml_cast out x;
-  out
-
-(* Equal widths keep every element at its offset: the view is kept, over the
-   same memory read at the new kind. *)
-let bitcast ~dtype x =
-  {
-    dtype;
-    view = x.view;
-    buffer =
-      Nx_device.Buffer.view x.buffer ~offset:0
-        (Nx_dtype.Scalar.of_dtype dtype)
-        (Nx_device.Buffer.length x.buffer);
-  }
-
-(* fold family (nx_c_fold.c): [reduce] preserves the input dtype and drops the
-   reduced axes — keepdims is a frontend concern (it reinserts the size-1 axes),
-   so the interface's [reduce] never carries it. argreduce writes int32; scan
-   preserves shape. The binding allocates the squeezed output and passes sorted
-   axes. `Max/`Min have no identity over an empty axis — the binding rejects
-   that before C (the fold driver does not know the op's identity). *)
 external caml_reduce_sum : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
   = "caml_nx_c_reduce_sum"
 
@@ -283,62 +200,29 @@ external caml_cummax : ('a, 'b) t -> ('a, 'b) t -> int -> unit
 external caml_cummin : ('a, 'b) t -> ('a, 'b) t -> int -> unit
   = "caml_nx_c_cummin"
 
-let sorted_axes axes =
-  let a = Array.copy axes in
-  Array.sort Stdlib.compare a;
-  a
+let reduce (k : Nx_backend.reduce) ~axes x ~dst =
+  let axes = Array.copy axes in
+  Array.sort Stdlib.compare axes;
+  match k with
+  | Sum -> caml_reduce_sum dst x axes
+  | Prod -> caml_reduce_prod dst x axes
+  | Max -> caml_reduce_max dst x axes
+  | Min -> caml_reduce_min dst x axes
 
-let reduce ~op ~axes x =
-  let caml_op, extreme =
-    match op with
-    | `Sum -> (caml_reduce_sum, None)
-    | `Prod -> (caml_reduce_prod, None)
-    | `Max -> (caml_reduce_max, Some "reduce_max")
-    | `Min -> (caml_reduce_min, Some "reduce_min")
-  in
-  let axes = sorted_axes axes in
-  (match extreme with
-  | Some name ->
-      Array.iter
-        (fun ax ->
-          if (shape x).(ax) = 0 then
-            invalid_arg (name ^ ": reduction over an empty axis has no identity"))
-        axes
-  | None -> ());
-  let out =
-    create_tensor x.dtype
-      (Shape.reduce_output_shape (shape x) axes false)
-  in
-  caml_op out x axes;
-  out
+let arg_reduce (k : Nx_backend.arg_reduce) ~axis x ~dst =
+  match k with
+  | Argmax -> caml_argmax dst x axis
+  | Argmin -> caml_argmin dst x axis
 
-let argreduce op caml_op ~axis ~keepdims x =
-  if (shape x).(axis) = 0 then
-    invalid_arg (op ^ ": argument reduction over an empty axis");
-  let out =
-    create_tensor Nx_dtype.Int32
-      (Shape.reduce_output_shape (shape x) [| axis |] keepdims)
-  in
-  caml_op out x axis;
-  out
+let scan (k : Nx_backend.reduce) ~axis x ~dst =
+  match k with
+  | Sum -> caml_cumsum dst x axis
+  | Prod -> caml_cumprod dst x axis
+  | Max -> caml_cummax dst x axis
+  | Min -> caml_cummin dst x axis
 
-let argmax ~axis ~keepdims x = argreduce "argmax" caml_argmax ~axis ~keepdims x
-let argmin ~axis ~keepdims x = argreduce "argmin" caml_argmin ~axis ~keepdims x
+(* Sort family (nx_c_sort.c) *)
 
-let associative_scan ~axis ~op x =
-  let caml_op =
-    match op with
-    | `Sum -> caml_cumsum
-    | `Prod -> caml_cumprod
-    | `Max -> caml_cummax
-    | `Min -> caml_cummin
-  in
-  let out = create_tensor x.dtype (shape x) in
-  caml_op out x axis;
-  out
-
-(* sort family (nx_c_sort.c): both allocate a fresh contiguous output the same
-   shape as the input (argsort's is int32) and hand the strided input to C. *)
 external caml_sort : ('a, 'b) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_sort"
 
@@ -346,80 +230,24 @@ external caml_argsort :
   (int32, Nx_dtype.int32_elt) t -> ('a, 'b) t -> int -> bool -> unit
   = "caml_nx_c_argsort"
 
-let sort ~axis ~descending x =
-  let out = create_tensor x.dtype (shape x) in
-  caml_sort out x axis descending;
-  out
+let sort ~descending ~axis x ~dst = caml_sort dst x axis descending
+let argsort ~descending ~axis x ~dst = caml_argsort dst x axis descending
 
-let argsort ~axis ~descending x =
-  let out = create_tensor Nx_dtype.Int32 (shape x) in
-  caml_argsort out x axis descending;
-  out
+(* Move family (nx_c_move.c): the strided copy, and the kernels that write their
+   operands into the destination. The pad value crosses to C as a one-element
+   array. *)
 
-(* move family (nx_c_move.c): copy runs the strided copy kernel, so it serves
-   copy (always a fresh buffer), contiguous's materialize path, and assign
-   (writing the source through the destination's strides).
-   pad/cat/gather/scatter and the window ops allocate their C-contiguous output
-   and hand C the strided operands; scatter seeds the output from the template
-   before the scatter walk.
-
-   [contiguous] returns an already-contiguous, offset-0 tensor unchanged — the
-   interface fast path, and the read path the frontend hits for every
-   contiguous result — else it materializes through copy. *)
 external caml_copy : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_copy"
-
-let copy x =
-  let out = create_tensor x.dtype (shape x) in
-  caml_copy out x;
-  out
-
-let contiguous x = if is_c_contiguous x then x else copy x
 
 external caml_pad : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> int array -> unit
   = "caml_nx_c_pad"
 
-let pad x padding fill_value =
-  let out_shape =
-    Array.mapi
-      (fun i d ->
-        let before, after = padding.(i) in
-        d + before + after)
-      (shape x)
-  in
-  let out = create_tensor x.dtype out_shape in
-  let fill = full () x.dtype [||] fill_value in
-  caml_pad out x fill (Array.map fst padding);
-  out
-
-(* C reads the members as an array (Wosize_val/Field), so pass one, not a
-   list. *)
 external caml_cat : ('a, 'b) t -> ('a, 'b) t array -> int -> unit
   = "caml_nx_c_cat"
-
-let cat tensors ~axis =
-  match tensors with
-  | [] -> invalid_arg "cat: empty tensor list"
-  | first :: _ ->
-      let ndim = Array.length (shape first) in
-      let axis = if axis < 0 then axis + ndim else axis in
-      let total =
-        List.fold_left (fun acc t -> acc + (shape t).(axis)) 0 tensors
-      in
-      let out_shape =
-        Array.mapi (fun i d -> if i = axis then total else d) (shape first)
-      in
-      let out = create_tensor first.dtype out_shape in
-      caml_cat out (Array.of_list tensors) axis;
-      out
 
 external caml_gather :
   ('a, 'b) t -> ('a, 'b) t -> (int32, Nx_dtype.int32_elt) t -> int -> unit
   = "caml_nx_c_gather"
-
-let gather data indices ~axis =
-  let out = create_tensor data.dtype (shape indices) in
-  caml_gather out data indices axis;
-  out
 
 external caml_scatter :
   ('a, 'b) t ->
@@ -429,28 +257,44 @@ external caml_scatter :
   int ->
   unit = "caml_nx_c_scatter"
 
-let scatter ~mode ~unique_indices:_ template ~indices ~updates ~axis =
-  let out = copy template in
-  let mode_int = match mode with `Set -> 0 | `Add -> 1 in
-  caml_scatter out indices updates axis mode_int;
-  out
+let contiguous x ~dst = caml_copy dst x
 
-(* The window write is the strided copy the engine already runs for [copy]: a
-   fresh copy of [t], then [v] written through a shrunk view of it. This is the
-   one call that copies into a destination that is not a fresh tensor; the
-   packed copy writes a window nibble by nibble, keeping the elements around
-   it. *)
-let update (type a b) (t : (a, b) t) ~starts (v : (a, b) t) =
-  let out = copy t in
+let pad padding v (x : ('a, 'b) t) ~dst =
+  let fill =
+    {
+      dtype = x.dtype;
+      view = View.create [||];
+      buffer = Elements.create x.dtype 1;
+    }
+  in
+  Elements.fill x.dtype fill.buffer v;
+  caml_pad dst x fill (Array.map fst padding)
+
+(* C reads the members as an array (Wosize_val/Field). *)
+let cat ~axis xs ~dst = caml_cat dst (Array.of_list xs) axis
+let gather ~axis indices x ~dst = caml_gather dst x indices axis
+
+(* The scatter walk writes into a copy of [x]. *)
+let scatter ~mode ~unique:_ ~axis ~indices ~updates x ~dst =
+  caml_copy dst x;
+  caml_scatter dst indices updates axis
+    (match mode with `Set -> 0 | `Add -> 1)
+
+(* The window write is the strided copy: [x] copied, then [v] written through a
+   shrunk view of the copy. The packed copy writes a window nibble by nibble,
+   keeping the elements around it. *)
+let update (x : ('a, 'b) t) ~(starts : Nx_backend.int32_array) v ~dst =
+  caml_copy dst x;
   let start = Elements.get Nx_dtype.int32 starts.buffer in
   let offset = View.offset starts.view and stride = View.stride 0 starts.view in
-  let corner =
-    Array.init (Array.length (shape t)) (fun i ->
-        Int32.to_int (start (offset + (i * stride))))
+  let bounds =
+    Array.init
+      (Array.length (shape x))
+      (fun i ->
+        let c = Int32.to_int (start (offset + (i * stride))) in
+        (c, c + (shape v).(i)))
   in
-  let bounds = Array.mapi (fun i c -> (c, c + (shape v).(i))) corner in
-  caml_copy (of_view out (View.shrink out.view bounds)) v;
-  out
+  caml_copy (of_view dst (View.shrink dst.view bounds)) v
 
 external caml_unfold :
   ('a, 'b) t ->
@@ -460,26 +304,6 @@ external caml_unfold :
   int array ->
   int array ->
   unit = "caml_nx_c_unfold_bc" "caml_nx_c_unfold"
-
-let unfold x ~kernel_size ~stride ~dilation ~padding =
-  let k = Array.length kernel_size in
-  let leading_ndim = Array.length (shape x) - k in
-  let leading = Array.sub (shape x) 0 leading_ndim in
-  let spatial = Array.sub (shape x) leading_ndim k in
-  let out_spatial =
-    Array.init k (fun i ->
-        let before, after = padding.(i) in
-        let padded = spatial.(i) + before + after in
-        let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
-        ((padded - extent) / stride.(i)) + 1)
-  in
-  let kernel_prod = Array.fold_left ( * ) 1 kernel_size in
-  let l = Array.fold_left ( * ) 1 out_spatial in
-  let out_shape = Array.concat [ leading; [| kernel_prod; l |] ] in
-  let padding_flat = flatten_pairs padding in
-  let out = create_tensor x.dtype out_shape in
-  caml_unfold out x kernel_size stride dilation padding_flat;
-  out
 
 external caml_fold_window :
   ('a, 'b) t ->
@@ -491,59 +315,35 @@ external caml_fold_window :
   int array ->
   unit = "caml_nx_c_fold_bc" "caml_nx_c_fold"
 
-let fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
-  let leading_ndim = Array.length (shape x) - 2 in
-  let leading = Array.sub (shape x) 0 leading_ndim in
-  let out_shape = Array.concat [ leading; output_size ] in
-  let padding_flat = flatten_pairs padding in
-  let out = create_tensor x.dtype out_shape in
-  caml_fold_window out x output_size kernel_size stride dilation padding_flat;
-  out
+let unfold ~kernel_size ~stride ~dilation ~padding x ~dst =
+  caml_unfold dst x kernel_size stride dilation (flatten_pairs padding)
 
-(* random family (nx_c_random.c): threefry hashes the counter, keeping its shape
-   and int32 dtype. *)
+let fold ~output_size ~kernel_size ~stride ~dilation ~padding x ~dst =
+  caml_fold_window dst x output_size kernel_size stride dilation
+    (flatten_pairs padding)
+
+(* Random family (nx_c_random.c) *)
+
 external caml_threefry :
   (int32, Nx_dtype.int32_elt) t ->
   (int32, Nx_dtype.int32_elt) t ->
   (int32, Nx_dtype.int32_elt) t ->
   unit = "caml_nx_c_threefry"
 
-let threefry key counter =
-  let out = create_tensor Nx_dtype.Int32 (shape counter) in
-  caml_threefry out key counter;
-  out
+let threefry key counter ~dst = caml_threefry dst key counter
 
-(* matmul (nx_c_matmul.c): allocate the contiguous batched output; the GEMM
-   reads both operands at arbitrary strides (offset, batch, row, col), so no
-   materialization — a transposed input is just distinct row/col strides. *)
+(* Matmul (nx_c_matmul.c): the GEMM reads both operands at any strides. An empty
+   product has nothing to compute. *)
+
 external caml_matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_matmul"
 
-let matmul x y =
-  let xs = shape x and ys = shape y in
-  let xnd = Array.length xs and ynd = Array.length ys in
-  let m = xs.(xnd - 2) and n = ys.(ynd - 1) in
-  let max_nd = Int.max xnd ynd in
-  let batch_nd = max_nd - 2 in
-  let batch =
-    Array.init batch_nd (fun i ->
-        let ai = i - (max_nd - xnd) and bi = i - (max_nd - ynd) in
-        let sa = if ai >= 0 then xs.(ai) else 1 in
-        let sb = if bi >= 0 then ys.(bi) else 1 in
-        if sa = 1 then sb else sa)
-  in
-  let out = create_tensor x.dtype (Array.append batch [| m; n |]) in
-  (* An empty product has nothing to compute, and its strides are zero. *)
-  if Array.exists (( = ) 0) (shape out) then out
-  else (
-    caml_matmul out x y;
-    out)
+let matmul x y ~dst =
+  if not (Array.exists (( = ) 0) (shape dst)) then caml_matmul dst x y
 
-(* fft (nx_c_fft.c): the backend transforms are UNNORMALIZED (the frontend
-   applies 1/n). fft/ifft preserve the complex shape; rfft halves the last
-   transformed axis to n/2+1; irfft restores it to `s` (or the inferred
-   2*(half-1)). The binding owns the output shape/dtype; C reads only the last
-   `s` entry. Axes are frontend-guaranteed non-negative and in range. *)
+(* FFT (nx_c_fft.c): unnormalized transforms. C reads the output size of the
+   last transformed axis from [s] when there is one. *)
+
 external caml_fft : (Complex.t, 'b) t -> (Complex.t, 'b) t -> int array -> unit
   = "caml_nx_c_fft"
 
@@ -557,45 +357,19 @@ external caml_irfft :
   (float, 'b) t -> (Complex.t, 'a) t -> int array -> int array -> unit
   = "caml_nx_c_irfft"
 
-let fft x ~axes =
-  let out = create_tensor x.dtype (shape x) in
-  caml_fft out x axes;
-  out
+let fft ~inverse ~axes x ~dst =
+  if inverse then caml_ifft dst x axes else caml_fft dst x axes
 
-let ifft x ~axes =
-  let out = create_tensor x.dtype (shape x) in
-  caml_ifft out x axes;
-  out
+let rfft ~axes x ~dst = caml_rfft dst x axes
 
-let rfft x ~dtype ~axes =
-  let last = axes.(Array.length axes - 1) in
-  let out_shape = Array.copy (shape x) in
-  out_shape.(last) <- ((shape x).(last) / 2) + 1;
-  let out = create_tensor dtype out_shape in
-  caml_rfft out x axes;
-  out
+let irfft ~axes ~s x ~dst =
+  caml_irfft dst x axes (match s with Some sizes -> sizes | None -> [||])
 
-let irfft ?s x ~dtype ~axes =
-  let last_idx = Array.length axes - 1 in
-  let last = axes.(last_idx) in
-  let size =
-    match s with
-    | Some sizes -> sizes.(last_idx)
-    | None -> ((shape x).(last) - 1) * 2
-  in
-  let out_shape = Array.copy (shape x) in
-  out_shape.(last) <- size;
-  let out = create_tensor dtype out_shape in
-  caml_irfft out x axes (match s with Some sizes -> sizes | None -> [||]);
-  out
+(* Linear algebra (nx_c_linalg.c, nx_c_eig.c). solve_triangular packs its three
+   flags into one int (bit 0 upper, 1 transpose, 2 unit diagonal). The
+   eigensolvers extract the vectors slot only when asked, so the values-only
+   paths pass another array there. *)
 
-(* linalg tier 1 (nx_c_linalg.c): cholesky, solve_triangular, qr. Each allocates
-   its output(s) — cholesky/trsm mirror the input/rhs shape, qr the reduced or
-   full factor shapes — and hands C the operands. solve_triangular packs its
-   three booleans into one int (bit 0 upper, 1 transpose, 2 unit-diagonal) so
-   the stub stays at four args. eig is the later tier (nx_c_eig.c, wired below);
-   svd's own factorization (nx_c_linalg.c) is under rewrite but already wired
-   here. *)
 external caml_cholesky : ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_cholesky"
 
@@ -606,70 +380,10 @@ external caml_solve_triangular :
 external caml_qr : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_qr"
 
-(* eigh (tier 2): eigenvalues always float64, eigenvectors in the input dtype.
-   The stub extracts the eigenvector slot only when vectors=true, so
-   vectors=false passes the input there again — no dummy allocation. *)
 external caml_eigh :
   (float, Nx_dtype.float64_elt) t -> ('a, 'b) t -> ('a, 'b) t -> bool -> unit
   = "caml_nx_c_eigh"
 
-(* Numeric linalg failures cross the FFI as [Failure "<op>: <reason>"] from the
-   C funnel (nx_c_raise -> caml_failwith); shape/dtype preconditions cross as
-   [Invalid_argument] and are left to propagate (the interface keeps those
-   as-is). Lift the three recognized numeric reasons to [Linalg_error] so
-   callers can match on the failure kind. The matched suffixes are the exact
-   static status strings raised in nx_c_linalg.c / nx_c_eig.c (LA_ERR_NOT_PD,
-   LA_ERR_SINGULAR, LA_ERR_NO_CONVERGE / EIG_ERR_NO_CONVERGE); they must stay
-   in sync with them. *)
-let reraise_linalg ~op f =
-  try f ()
-  with Failure msg as e ->
-    let ends suffix = String.ends_with ~suffix msg in
-    if ends "matrix is not positive definite" then
-      raise (Backend_intf.Linalg_error { op; kind = `Not_positive_definite })
-    else if ends "triangular matrix is singular" then
-      raise (Backend_intf.Linalg_error { op; kind = `Singular })
-    else if ends "eigenvalue iteration did not converge" then
-      raise (Backend_intf.Linalg_error { op; kind = `No_convergence })
-    else raise e
-
-let cholesky ~upper x =
-  let out = create_tensor x.dtype (shape x) in
-  reraise_linalg ~op:"cholesky" (fun () -> caml_cholesky out x upper);
-  out
-
-let solve_triangular ~upper ~transpose ~unit_diag a b =
-  let vector_rhs = Array.length (shape b) = Array.length (shape a) - 1 in
-  let b_matrix =
-    if vector_rhs then reshape b (Array.append (shape b) [| 1 |]) else b
-  in
-  let out_matrix = create_tensor b.dtype (shape b_matrix) in
-  let flags =
-    (if upper then 1 else 0)
-    lor (if transpose then 2 else 0)
-    lor if unit_diag then 4 else 0
-  in
-  reraise_linalg ~op:"solve_triangular" (fun () ->
-      caml_solve_triangular out_matrix a b_matrix flags);
-  if vector_rhs then reshape out_matrix (shape b) else out_matrix
-
-let qr ~reduced x =
-  let s = shape x in
-  let nd = Array.length s in
-  let m = s.(nd - 2) and n = s.(nd - 1) in
-  let k = Int.min m n in
-  let q_shape = Array.copy s and r_shape = Array.copy s in
-  if reduced then (
-    q_shape.(nd - 1) <- k;
-    r_shape.(nd - 2) <- k)
-  else q_shape.(nd - 1) <- m;
-  let q = create_tensor x.dtype q_shape in
-  let r = create_tensor x.dtype r_shape in
-  reraise_linalg ~op:"qr" (fun () -> caml_qr q r x reduced);
-  (q, r)
-
-(* lu: the packed factors in the input dtype; the min(m, n) row interchanges and
-   the m-row permutation as int32. *)
 external caml_lu :
   ('a, 'b) t ->
   (int32, Nx_dtype.int32_elt) t ->
@@ -677,48 +391,6 @@ external caml_lu :
   ('a, 'b) t ->
   unit = "caml_nx_c_lu"
 
-let lu x =
-  let s = shape x in
-  let nd = Array.length s in
-  let m = s.(nd - 2) and n = s.(nd - 1) in
-  let batch = Array.sub s 0 (nd - 2) in
-  let lu = create_tensor x.dtype s in
-  let pivots =
-    create_tensor Nx_dtype.Int32
-      (Array.append batch [| Int.min m n |])
-  in
-  let perm =
-    create_tensor Nx_dtype.Int32 (Array.append batch [| m |])
-  in
-  reraise_linalg ~op:"lu" (fun () -> caml_lu lu pivots perm x);
-  (lu, pivots, perm)
-
-(* eigvalsh/eigh both drive caml_nx_c_eigh; eigenvalues always float64,
-   eigenvectors in the input dtype. eigvalsh takes the cheaper values-only path
-   (vectors=false); the stub then ignores the eigenvector slot, so it reuses x
-   there — no dummy allocation. *)
-let eigh_values x =
-  let s = shape x in
-  let nd = Array.length s in
-  let n = s.(nd - 1) in
-  (* eigenvalues drop the trailing matrix dim: batch... x n. *)
-  create_tensor Nx_dtype.Float64
-    (Array.append (Array.sub s 0 (nd - 2)) [| n |])
-
-let eigvalsh x =
-  let w = eigh_values x in
-  reraise_linalg ~op:"eigvalsh" (fun () -> caml_eigh w x x false);
-  w
-
-let eigh x =
-  let w = eigh_values x in
-  let v = create_tensor x.dtype (shape x) in
-  reraise_linalg ~op:"eigh" (fun () -> caml_eigh w v x true);
-  (w, v)
-
-(* svd (tier 3): S is always float64; U/Vᴴ are the input dtype. full_matrices is
-   encoded in the U/Vᴴ shapes the binding allocates (no separate C argument):
-   thin gives U m×k, Vᴴ k×n; full gives U m×m, Vᴴ n×n; k = min(m, n). *)
 external caml_svd :
   ('a, 'b) t ->
   (float, Nx_dtype.float64_elt) t ->
@@ -726,31 +398,6 @@ external caml_svd :
   ('a, 'b) t ->
   unit = "caml_nx_c_svd"
 
-let svd ~full_matrices x =
-  let sh = shape x in
-  let nd = Array.length sh in
-  let m = sh.(nd - 2) and n = sh.(nd - 1) in
-  let k = Int.min m n in
-  let batch = Array.sub sh 0 (nd - 2) in
-  let u_shape =
-    Array.append batch (if full_matrices then [| m; m |] else [| m; k |])
-  in
-  let vt_shape =
-    Array.append batch (if full_matrices then [| n; n |] else [| k; n |])
-  in
-  let u = create_tensor x.dtype u_shape in
-  let s =
-    create_tensor Nx_dtype.Float64 (Array.append batch [| k |])
-  in
-  let vt = create_tensor x.dtype vt_shape in
-  reraise_linalg ~op:"svd" (fun () -> caml_svd u s vt x);
-  (u, s, vt)
-
-(* eigvals/eig (tier 3, nx_c_eig.c): the general nonsymmetric eigensolver.
-   Eigenvalues and eigenvectors are always complex128 regardless of input dtype;
-   the eigenvector slot is extracted only when vectors=true, so the values-only
-   eigvals passes vectors=false and reuses w in that slot — the stub never
-   touches it. *)
 external caml_eig :
   (Complex.t, Nx_dtype.complex64_elt) t ->
   (Complex.t, Nx_dtype.complex64_elt) t ->
@@ -758,20 +405,92 @@ external caml_eig :
   bool ->
   unit = "caml_nx_c_eig"
 
-let eig_values x =
-  let sh = shape x in
-  let nd = Array.length sh in
-  let n = sh.(nd - 1) in
-  create_tensor Nx_dtype.Complex128
-    (Array.append (Array.sub sh 0 (nd - 2)) [| n |])
+(* Numeric failures cross the FFI as [Failure "<op>: <reason>"] from the C
+   funnel; the three reasons below are the exact static strings of nx_c_linalg.c
+   and nx_c_eig.c (LA_ERR_NOT_PD, LA_ERR_SINGULAR, LA_ERR_NO_CONVERGE /
+   EIG_ERR_NO_CONVERGE), lifted to [Linalg_error]. *)
+let reraise_linalg ~op f =
+  try f ()
+  with Failure msg as e ->
+    let ends suffix = String.ends_with ~suffix msg in
+    if ends "matrix is not positive definite" then
+      raise (Nx_backend.Linalg_error { op; kind = `Not_positive_definite })
+    else if ends "triangular matrix is singular" then
+      raise (Nx_backend.Linalg_error { op; kind = `Singular })
+    else if ends "eigenvalue iteration did not converge" then
+      raise (Nx_backend.Linalg_error { op; kind = `No_convergence })
+    else raise e
 
-let eigvals x =
-  let w = eig_values x in
-  reraise_linalg ~op:"eigvals" (fun () -> caml_eig w w x false);
-  w
+let cholesky ~upper x ~dst =
+  reraise_linalg ~op:"cholesky" (fun () -> caml_cholesky dst x upper)
 
-let eig x =
-  let w = eig_values x in
-  let v = create_tensor Nx_dtype.Complex128 (shape x) in
-  reraise_linalg ~op:"eig" (fun () -> caml_eig w v x true);
-  (w, v)
+(* A vector right-hand side is solved as a one-column matrix. *)
+let solve_triangular ~upper ~transpose ~unit_diag a b ~dst =
+  let column (t : ('a, 'b) t) =
+    if Array.length (shape t) = Array.length (shape a) - 1 then
+      of_view t (View.reshape t.view (Array.append (shape t) [| 1 |]))
+    else t
+  in
+  let flags =
+    (if upper then 1 else 0)
+    lor (if transpose then 2 else 0)
+    lor if unit_diag then 4 else 0
+  in
+  reraise_linalg ~op:"solve_triangular" (fun () ->
+      caml_solve_triangular (column dst) a (column b) flags)
+
+let qr ~reduced x ~q ~r =
+  reraise_linalg ~op:"qr" (fun () -> caml_qr q r x reduced)
+
+let lu x ~lu ~pivots ~perm =
+  reraise_linalg ~op:"lu" (fun () -> caml_lu lu pivots perm x)
+
+let svd x ~u ~s ~vt = reraise_linalg ~op:"svd" (fun () -> caml_svd u s vt x)
+
+let eig x ~values ~vectors =
+  match vectors with
+  | None ->
+      reraise_linalg ~op:"eigvals" (fun () -> caml_eig values values x false)
+  | Some v -> reraise_linalg ~op:"eig" (fun () -> caml_eig values v x true)
+
+let eigh x ~values ~vectors =
+  match vectors with
+  | None -> reraise_linalg ~op:"eigvalsh" (fun () -> caml_eigh values x x false)
+  | Some v -> reraise_linalg ~op:"eigh" (fun () -> caml_eigh values v x true)
+
+let backend =
+  Nx_backend.make
+    (module struct
+      let name = name
+      let runs_on = runs_on
+      let unary = unary
+      let binary = binary
+      let compare = compare
+      let where = where
+      let reduce = reduce
+      let scan = scan
+      let arg_reduce = arg_reduce
+      let sort = sort
+      let argsort = argsort
+      let pad = pad
+      let cat = cat
+      let cast = cast
+      let threefry = threefry
+      let gather = gather
+      let scatter = scatter
+      let update = update
+      let unfold = unfold
+      let fold = fold
+      let matmul = matmul
+      let fft = fft
+      let rfft = rfft
+      let irfft = irfft
+      let contiguous = contiguous
+      let cholesky = cholesky
+      let qr = qr
+      let lu = lu
+      let svd = svd
+      let eig = eig
+      let eigh = eigh
+      let solve_triangular = solve_triangular
+    end)

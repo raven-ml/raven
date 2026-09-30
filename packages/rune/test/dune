@@ -49,6 +49,8 @@
   nx.array
   nx.device
   nx.effect
+  nx.backend
+  nx.cpu
   tolk
   zarith
   unix

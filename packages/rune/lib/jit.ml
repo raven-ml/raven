@@ -213,7 +213,7 @@ let pp_devices ppf = function
 (* A program depends on where its values lie, not on the backend that computes
    on them eagerly: inside it every placement is a layout, at the host backend,
    and a call gives its results its arguments' backend. *)
-let layout p = Nx_effect.Placement.v Nx.Backend.host (Nx_effect.Placement.grid p)
+let layout p = Nx_effect.Placement.v Nx_cpu.backend (Nx_effect.Placement.grid p)
 
 (* A value on the disk takes part in a program as a host value does: the program
    reads it. *)
@@ -240,17 +240,17 @@ let call_backend leaves =
     | _ -> None
   in
   match Array.find_map backend_of leaves with
-  | None -> Nx.Backend.host
+  | None -> Nx_cpu.backend
   | Some b ->
       Array.iter
         (fun l ->
           match backend_of l with
-          | Some b' when not (Nx.Backend.equal b b') ->
+          | Some b' when not (Nx_backend.equal b b') ->
               invalid_arg
                 (Printf.sprintf
                    "Rune.jit: arguments with the backends %s and %s; place \
                     them with one backend"
-                   (Nx.Backend.name b) (Nx.Backend.name b'))
+                   (Nx_backend.name b) (Nx_backend.name b'))
           | _ -> ())
         leaves;
       b
@@ -3131,15 +3131,16 @@ let permuted_copy src ~base v =
   let shifted = from_base v ~base in
   let words (type c d) (word : (c, d) ND.t) (shape, axes) =
     let n = HB.length src in
-    let t =
-      Nx_cpu.from_host () word
-        (HB.view src ~offset:0 (ND.Scalar.of_dtype word) n)
+    let words =
+      {
+        Nx_array.dtype = word;
+        view = NV.permute (NV.create shape) axes;
+        buffer = HB.view src ~offset:0 (ND.Scalar.of_dtype word) n;
+      }
     in
-    let t = Nx_cpu.permute (Nx_cpu.reshape t shape) axes in
-    Some
-      (HB.view
-         (Nx_cpu.to_host (Nx_cpu.contiguous t))
-         ~offset:0 (HB.dtype src) n)
+    let dst = Nx_effect.alloc word (NV.shape words.view) in
+    Nx_cpu.contiguous words ~dst;
+    Some (HB.view dst.buffer ~offset:0 (HB.dtype src) n)
   in
   match base_layout shifted with
   | Some ((shape, _) as layout)
@@ -5068,7 +5069,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   (* A result on the host device, of arguments of another backend, is placed
      with it. *)
   let with_backend (Nx.P v) =
-    if Nx.Backend.equal backend Nx.Backend.host then Nx.P v
+    if Nx_backend.equal backend Nx_cpu.backend then Nx.P v
     else Nx.P (Nx.place (Nx.Placement.device ~backend Nx.Device.host) v)
   in
   let placed_on ?tag place dt shape bufs =

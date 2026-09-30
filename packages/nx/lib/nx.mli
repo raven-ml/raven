@@ -228,16 +228,16 @@ val to_array : ('a, 'b) t -> 'a array
 
     Where a value lives is a value too. A device holds memory; the library that
     owns a device's runtime opens it (for example [Rune.device "METAL"]), and
-    {!Device.host} is the host. A backend computes nx's operations. A placement
-    is one device, a list of devices each holding a full copy, or a list of
-    devices each holding an equal slice along one axis, together with the one
-    backend that computes on values there: {!Backend.host} unless the placement
-    names another.
+    {!Device.host} is the host. A backend ({!Nx_backend.t}) is kernels that
+    compute nx's operations on arrays. A placement is one device, a list of
+    devices each holding a full copy, or a list of devices each holding an
+    equal slice along one axis, together with the one backend that computes on
+    values there: [Nx_cpu.backend] unless the placement names another.
 
     The host device holds values in two ways. A value at {!Placement.host}, the
-    host device with {!Backend.host}, is nx.cpu's own array: operations on it
-    call nx.cpu directly, which keeps the default path as cheap as the kernels
-    allow.
+    host device with [Nx_cpu.backend], is an array in host memory: operations
+    on it call nx.cpu's kernels directly, which keeps the default path as cheap
+    as the kernels allow.
     A value at any other placement that includes the host device, with another
     backend or beside other devices, is a placed value like one on a GPU: its
     storage carries what compiled calls need to bind and consume it. Creating
@@ -247,7 +247,9 @@ val to_array : ('a, 'b) t -> 'a array
 
     The result of an operation lives where its placed operands live, computed
     by their placement's backend: operands on the host join them, and operands
-    on two different device sets, or with two different backends, raise. Over
+    on two different device sets, or with two different backends, raise. The
+    backend computes on the host, over copies of the operands' elements, and
+    the result is placed on its devices. Over
     split operands, an elementwise result keeps their split, which must be the
     same for all of them (copies take it); a reduction over the split axis, and
     a {!take} along it, give a full copy on each device; and an operation along
@@ -319,77 +321,6 @@ module Device : sig
       allocate the given number of bytes. *)
 end
 
-(** Backends.
-
-    A backend computes nx's operations on the values of its placements.
-    {!host} is nx's own kernels and every placement's default; a library that
-    brings other kernels exports its backend, and a program uses it by naming
-    it in a placement. *)
-module Backend : sig
-  module type S = Nx_effect.Backend.S
-  (** The type for backend implementations. A backend has a [name], says with
-      [runs_on] whether it runs on a device, makes a value at one of its
-      placements with [place], and implements every operation of
-      {!Nx_array.Backend_intf.S} over nx's values, with a placement as the
-      context in which a creation makes its value. Its [to_host] reads the
-      elements of the values whose storage it made.
-
-      A backend over its devices' memory, such as {!Host}, shares storage with
-      every other such backend: its [place] makes a view of a value at a
-      placement that differs only in backend. A backend that holds values in
-      storage of its own copies them in its [place] and out in its [to_host],
-      and raises the error of mixed operands for a host operand rather than
-      copy it silently.
-
-      Operands are values of one placement of the backend, or values on the
-      host joining it; never traced values. A function returns its result at
-      the placement the rules of {{!placement}this section} give, or refuses
-      its arguments by raising {!Refused} before any work.
-
-      Programs call [Nx]'s functions, which transformations such as
-      [Rune.grad] see; a backend's functions are called by nx, or by another
-      backend that delegates to them. *)
-
-  type t = (module S)
-  (** The type for backends. A library packs its module once and shares the
-      value: two backends are equal iff they are the same value. *)
-
-  exception Refused of string
-  (** [Refused reason] is raised by a backend's function that does not run its
-      arguments, before it computes or allocates. [reason] names the backend,
-      the operation and what it refuses, as in
-      ["counting: matmul: no float64"]. *)
-
-  val name : t -> string
-  (** [name b] is [b]'s name. *)
-
-  val equal : t -> t -> bool
-  (** [equal b b'] is [true] iff [b] and [b'] are the same value. *)
-
-  module Host : S
-  (** [Host] is nx's kernels. At {!Placement.host} they run in place on nx.cpu's
-      arrays; on any other placement, of the host device or another, an
-      operation reads its operands' elements to the host through their
-      devices, computes there and places its result on the result's devices.
-      [Host] runs on every device. A backend that changes some operations
-      includes [Host] and redefines them:
-      {[
-        module Counting = struct
-          include Nx.Backend.Host
-
-          let name = "counting"
-          let adds = ref 0
-          let add a b = incr adds; Nx.Backend.Host.add a b
-        end
-
-        let counting : Nx.Backend.t = (module Counting)
-      ]} *)
-
-  val host : t
-  (** [host] is [Host], the backend of {!Placement.host} and the default of the
-      placement constructors. *)
-end
-
 (** Placements. *)
 module Placement : sig
   type t = Nx_effect.placement
@@ -399,27 +330,27 @@ module Placement : sig
       list never repeats a device. *)
 
   val host : t
-  (** [host] is [device Device.host]: the host device with {!Backend.host},
-      whose values are nx.cpu's arrays (see {{!placement}above}). *)
+  (** [host] is [device Device.host]: the host device with [Nx_cpu.backend],
+      whose values are arrays in host memory (see {{!placement}above}). *)
 
-  val device : ?backend:Backend.t -> Device.t -> t
+  val device : ?backend:Nx_backend.t -> Device.t -> t
   (** [device ~backend d] is placement on [d] alone, computed by [backend]
-      (defaults to {!Backend.host}).
+      (defaults to [Nx_cpu.backend]).
 
-      Raises [Invalid_argument] if [backend] does not run on [d]. *)
+      Raises [Invalid_argument] if [backend] does not run on the host, where
+      nx computes on every placement's values. *)
 
-  val replicated : ?backend:Backend.t -> Device.t list -> t
+  val replicated : ?backend:Nx_backend.t -> Device.t list -> t
   (** [replicated ~backend ds] is a full copy on each device of [ds], computed
-      by [backend] (defaults to {!Backend.host}).
+      by [backend] (defaults to [Nx_cpu.backend]).
 
       Raises [Invalid_argument] if [ds] is empty, repeats a device, mixes
       devices whose memories differ (those of {!Device.of_runtime}, the host
-      included, and those another library opens), or has a device [backend]
-      does not run on. *)
+      included, and those another library opens), or as {!device}. *)
 
-  val sharded : ?backend:Backend.t -> axis:int -> Device.t list -> t
+  val sharded : ?backend:Nx_backend.t -> axis:int -> Device.t list -> t
   (** [sharded ~backend ~axis ds] is equal slices of [axis] on the devices of
-      [ds], in order, computed by [backend] (defaults to {!Backend.host}).
+      [ds], in order, computed by [backend] (defaults to [Nx_cpu.backend]).
 
       Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
 
@@ -427,7 +358,7 @@ module Placement : sig
   (** [devices p] is the devices of [p], in the order that decides which window
       each holds. *)
 
-  val backend : t -> Backend.t
+  val backend : t -> Nx_backend.t
   (** [backend p] is the backend that computes on values at [p]. *)
 
   val window : t -> int array -> Device.t -> (int * int) array
@@ -445,21 +376,19 @@ module Placement : sig
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a placement: its devices and layout, followed by
-      [with <name>] when its backend is not {!Backend.host}, as in
+      [with <name>] when its backend is not [Nx_cpu.backend], as in
       ["CPU with counting"]. *)
 end
 
 val place : Placement.t -> ('a, 'b) t -> ('a, 'b) t
 (** [place p x] is [x] held at [p]. It equals [x] in shape, dtype and elements,
     and [x] is unchanged and stays where it was. It is [x] itself when [x] is
-    already at [p]. [p]'s backend makes the result: when [x] is placed and [p]
-    differs from [x]'s placement only in its backend, a backend over the
-    devices' memory, such as {!Backend.host}, makes a view of [x]'s storage
-    and copies nothing.
+    already at [p]. When [x] is placed and [p] differs from [x]'s placement
+    only in its backend, the result is a view of [x]'s storage and copies
+    nothing.
 
     Raises [Invalid_argument] if [p] splits an axis [x] does not have or does
-    not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. Raises
-    {!Backend.Refused} if [p]'s backend refuses [x]. *)
+    not divide evenly, or if [p]'s devices cannot hold [x]'s dtype. *)
 
 val placement : ('a, 'b) t -> Placement.t
 (** [placement x] is where [x] lives: {!Placement.host} for a value on the host.
@@ -2549,8 +2478,8 @@ exception
     carrying the operation name and a failure [kind]. Precondition violations
     (non-square input, wrong dtype) raise [Invalid_argument] instead.
 
-    This is {!Nx_array.Backend_intf.Linalg_error}; catching it here catches the
-    exception raised by the backend. *)
+    This is [Nx_backend.Linalg_error]; catching it here catches the exception
+    raised by the backend. *)
 
 (** {2:linalg_products Products} *)
 

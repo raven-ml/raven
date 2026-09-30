@@ -1,3 +1,4 @@
 (library
  (name nx_backend)
- (public_name nx.backend))
+ (public_name nx.backend)
+ (libraries nx_dtype nx_device nx_array))

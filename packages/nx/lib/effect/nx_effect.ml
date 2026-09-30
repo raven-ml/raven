@@ -9,7 +9,7 @@ open Nx_array
 
    GADT constructors (the operations of [Op.t] below) require that type
    variables in the payload be deducible from the return type. A transparent
-   alias of [Nx_cpu.t] would not be injective, so the tensor is a GADT of its
+   alias of [Nx_array.t] would not be injective, so the tensor is a GADT of its
    own, whose parameters the return type determines.
 
    A tensor is one of three things. [Host] is an nx.cpu tensor, the value of the
@@ -29,9 +29,8 @@ open Nx_array
    the storage rather than to a view: whether it is live or was consumed by a
    compiled call, and how many reachable programs bind it.
 
-   A placement holds its backend, and a backend's operations take tensors and
-   placements, so the types and the backend's signature are one recursive
-   definition. *)
+   A placement holds its backend, whose kernels compute on arrays and know
+   nothing of these types. *)
 
 (* Placements over a grid
 
@@ -263,7 +262,7 @@ end = struct
           cuts
 end
 
-module rec Types : sig
+module Types = struct
   type ('a, 'b) t =
     | Host : ('a, 'b) Nx_array.t -> ('a, 'b) t
     | Placed : ('a, 'b) resident -> ('a, 'b) t
@@ -317,30 +316,26 @@ module rec Types : sig
   (* Devices, a layout and the one backend that computes on the values there. *)
   and placement = { grid : device Grid.t; backend : backend }
 
-  and backend = (module Backend_sig.S)
+  and backend = Nx_backend.t
   and storage = ..
   and ('a, 'b) node = ..
-end =
-  Types
-
-and Backend_sig : sig
-  module type S = sig
-    val name : string
-    val runs_on : Types.device -> bool
-    val place : Types.placement -> ('a, 'b) Types.t -> ('a, 'b) Types.t
-
-    include
-      Backend_intf.S
-        with type ('a, 'b) t := ('a, 'b) Types.t
-         and type context := Types.placement
-  end
-end =
-  Backend_sig
+end
 
 include Types
 
 (* Where a creation makes its value. *)
 type context = placement
+
+(* A host array of [dtype] and [shape], C-contiguous from its first element. *)
+let alloc (type a b) (dtype : (a, b) Nx_dtype.t) shape : (a, b) Nx_array.t =
+  let n = Array.fold_left ( * ) 1 shape in
+  { dtype; view = View.create shape; buffer = Elements.create dtype n }
+
+(* A host array of [dtype] and [shape] whose elements are [v]. *)
+let filled dtype shape v =
+  let a = alloc dtype shape in
+  Elements.fill dtype a.buffer v;
+  a
 
 (* The memory of [Nx_device] devices, the host among them: one buffer per device
    of the cell's placement, in its order. *)
@@ -498,17 +493,14 @@ let file_run (type a b) (r : (a, b) resident) =
    which a view at a placement of another backend shares. It is read once and
    checked: a buffer of another device or format would otherwise reach nx.cpu's
    kernels. *)
-let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_cpu.t =
-  let (module B : Backend_sig.S) = r.r_cell.placement.backend in
-  let elements = B.to_host (Placed r) in
-  check_host "read" r.r_dtype elements;
-  Nx_cpu.reshape
-    (Nx_cpu.from_host () r.r_dtype elements)
-    (View.shape (whole_view r))
+let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
+  let buffer = read_elements r in
+  check_host "read" r.r_dtype buffer;
+  { dtype = r.r_dtype; view = View.create (View.shape (whole_view r)); buffer }
 
 (* A value on the disk is read where it lies, in its file's pages, and keeps its
    view; it is copied when the system does not map the file. *)
-let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_cpu.t =
+let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
   match file_run r with
   | Some b -> (
       match
@@ -521,7 +513,7 @@ let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_cpu.t =
 
 (* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
    of its view's elements when it is placed. *)
-let host_of : type a b. (a, b) t -> (a, b) Nx_cpu.t = function
+let host_of : type a b. (a, b) t -> (a, b) Nx_array.t = function
   | Host t -> t
   | Placed r -> read_host r
   | Traced _ -> outside_trace ()
@@ -530,10 +522,8 @@ let host_of : type a b. (a, b) t -> (a, b) Nx_cpu.t = function
 
    The host device is the one of id 0; ids from [fresh_id] start at 1. It is
    made with the runtime's memory, so the [Device] module is defined below that
-   memory. The host backend routes its operations through the code below, so it
-   and the [Placement] module come after the routing; the functions here are
-   what the code in between needs. The host backend is packed into
-   [host_backend] where it is defined: until then no placement exists. *)
+   memory, and the [Placement] module after the routing; the functions here are
+   what the code in between needs. *)
 
 exception Out_of_memory of device * int
 
@@ -544,8 +534,7 @@ let () =
     | _ -> None)
 
 let is_host_device d = d.d_id = 0
-let host_backend : backend option ref = ref None
-let is_host_backend b = match !host_backend with Some h -> b == h | None -> false
+let is_host_backend b = Nx_backend.equal b Nx_cpu.backend
 
 let is_host_placement p =
   is_host_backend p.backend
@@ -557,8 +546,7 @@ let pp_grid ppf g = Grid.pp pp_device ppf g
 let pp_placement ppf p =
   pp_grid ppf p.grid;
   if not (is_host_backend p.backend) then
-    let (module B : Backend_sig.S) = p.backend in
-    Format.fprintf ppf " with %s" B.name
+    Format.fprintf ppf " with %s" (Nx_backend.name p.backend)
 
 let devices_of p = Grid.devices p.grid
 let memory_of p = (List.hd (devices_of p)).d_memory
@@ -784,7 +772,10 @@ let read_view dtype b v =
         ~strides:(View.strides v) (View.shape v)
     in
     if View.is_c_contiguous view then Elements.contiguous span view
-    else Nx_cpu.to_host (Nx_cpu.copy { Nx_array.dtype; view; buffer = span })
+    else
+      let dst = alloc dtype (View.shape view) in
+      Nx_cpu.contiguous { dtype; view; buffer = span } ~dst;
+      dst.buffer
 
 (* [run_in b v] is the elements of the view [v] of [b], in C order, as a view of
    [b], when they are a contiguous run of it that starts on a byte. *)
@@ -891,7 +882,7 @@ let runtime_memory =
           | Some b -> b
           | None ->
               let h = Lazy.force host in
-              Elements.contiguous (Nx_cpu.to_host h) (View.shrink h.view w)
+              Elements.contiguous h.buffer (View.shrink h.view w)
         in
         let bufs =
           List.map2
@@ -1003,6 +994,10 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
    reading, which nx answers itself. A kind names the function among the
    operations of one constructor. *)
 
+(* The two dtype conversions: [Cast] converts values, [Bitcast] reads the bits
+   of each element as one of another dtype of its width. *)
+type conversion = Cast | Bitcast
+
 module Op = struct
   type move =
     | Reshape of int array
@@ -1047,7 +1042,7 @@ module Op = struct
     | Pad : (int * int) array * 'a * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Cat : int * ('a, 'b) Types.t list -> ('a, 'b) Types.t t
     | Convert :
-        Nx_backend.conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) Types.t
+        conversion * ('c, 'd) Nx_dtype.t * ('a, 'b) Types.t
         -> ('c, 'd) Types.t t
     | Threefry : int32_t * int32_t -> int32_t t
     | Gather : int * int32_t * ('a, 'b) Types.t -> ('a, 'b) Types.t t
@@ -1555,16 +1550,11 @@ let route_of : type r. r Op.t -> route =
   | Moves _ | Places _ | Reads _ ->
       invalid_arg "Nx_effect.route_of: the operation computes nothing"
 
-let settle : type a b. route -> (a, b) Nx_cpu.t -> (a, b) t =
+let settle : type a b. route -> (a, b) Nx_array.t -> (a, b) t =
  fun r h ->
   match r with
   | On_host -> Host h
   | At p -> (memory_of p).place p (Host h)
-
-(* [routed op x f] runs [f] over [x], no host tensor, where [op] runs. *)
-let routed op x f =
-  let r = route_of op in
-  settle r (f (host_of x))
 
 (* Movements
 
@@ -1714,25 +1704,6 @@ let split_view p v m =
       let fates = fates p shape m in
       (placement_after p fates, move_view v (localize shape m fates))
 
-(* The host backend
-
-   nx.cpu's kernels over nx's values. Host operands run in place. Otherwise the
-   operation reads its operands' elements to the host through their backends,
-   runs there, and [settle] places the result where [route] says, through the
-   memory of the result's devices: today's routing, whatever the operands'
-   backend, so a backend that includes this one keeps it. *)
-
-(* The route is decided before anything is read. *)
-let routed2 op a b f =
-  let r = route_of op in
-  settle r (f (host_of a) (host_of b))
-let unary op f x = match x with Host t -> Host (f t) | _ -> routed op x f
-
-let binary op f a b =
-  match (a, b) with
-  | Host a, Host b -> Host (f a b)
-  | _ -> routed2 op a b f
-
 (* [moved x m] is [x] moved by [m]: view arithmetic over the same storage. *)
 let moved (type a b) (x : (a, b) t) m : (a, b) t =
   match x with
@@ -1742,304 +1713,6 @@ let moved (type a b) (x : (a, b) t) m : (a, b) t =
       Placed { r with r_id = fresh_id (); r_placement; r_view }
   | Traced _ -> outside_trace ()
 
-let create p make =
-  if is_host_placement p then Host (make ()) else settle (At p) (make ())
-
-let reduce_kind : [ `Sum | `Prod | `Max | `Min ] -> Nx_backend.reduce = function
-  | `Sum -> Sum
-  | `Prod -> Prod
-  | `Max -> Max
-  | `Min -> Min
-
-module Host_backend = struct
-  let name = "host"
-  let runs_on _ = true
-
-  (* A placed value at a placement that differs from [p] only in backend is a
-     view of its storage, which that backend still reads. *)
-  let place (type a b) p (x : (a, b) t) : (a, b) t =
-    match x with
-    | Placed r when Grid.equal ( == ) r.r_placement.grid p.grid ->
-        Placed { r with r_id = fresh_id (); r_placement = p }
-    | _ -> (memory_of p).place p x
-
-  let to_host : type a b. (a, b) t -> Nx_device.Buffer.t = function
-    | Host t -> Nx_cpu.to_host t
-    | Placed r -> read_elements r
-    | Traced _ -> outside_trace ()
-
-  let buffer p dtype shape =
-    create p (fun () -> Nx_cpu.buffer () dtype shape)
-
-  let full p dtype shape value =
-    create p (fun () -> Nx_cpu.full () dtype shape value)
-
-  let from_host p dtype buffer =
-    create p (fun () -> Nx_cpu.from_host () dtype buffer)
-
-  let add a b = binary (Op.Binary (Add, a, b)) Nx_cpu.add a b
-  let sub a b = binary (Op.Binary (Sub, a, b)) Nx_cpu.sub a b
-  let mul a b = binary (Op.Binary (Mul, a, b)) Nx_cpu.mul a b
-  let fdiv a b = binary (Op.Binary (Fdiv, a, b)) Nx_cpu.fdiv a b
-  let idiv a b = binary (Op.Binary (Idiv, a, b)) Nx_cpu.idiv a b
-  let mod_ a b = binary (Op.Binary (Mod, a, b)) Nx_cpu.mod_ a b
-  let pow a b = binary (Op.Binary (Pow, a, b)) Nx_cpu.pow a b
-  let atan2 a b = binary (Op.Binary (Atan2, a, b)) Nx_cpu.atan2 a b
-  let cmpeq a b = binary (Op.Compare (Equal, a, b)) Nx_cpu.cmpeq a b
-  let cmpne a b = binary (Op.Compare (Not_equal, a, b)) Nx_cpu.cmpne a b
-  let cmplt a b = binary (Op.Compare (Less, a, b)) Nx_cpu.cmplt a b
-  let cmple a b = binary (Op.Compare (Less_equal, a, b)) Nx_cpu.cmple a b
-  let max a b = binary (Op.Binary (Maximum, a, b)) Nx_cpu.max a b
-  let min a b = binary (Op.Binary (Minimum, a, b)) Nx_cpu.min a b
-  let xor a b = binary (Op.Binary (Xor, a, b)) Nx_cpu.xor a b
-  let or_ a b = binary (Op.Binary (Or, a, b)) Nx_cpu.or_ a b
-  let and_ a b = binary (Op.Binary (And, a, b)) Nx_cpu.and_ a b
-  let neg t = unary (Op.Unary (Neg, t)) Nx_cpu.neg t
-  let recip t = unary (Op.Unary (Recip, t)) Nx_cpu.recip t
-  let abs t = unary (Op.Unary (Abs, t)) Nx_cpu.abs t
-  let sqrt t = unary (Op.Unary (Sqrt, t)) Nx_cpu.sqrt t
-  let sign t = unary (Op.Unary (Sign, t)) Nx_cpu.sign t
-  let exp t = unary (Op.Unary (Exp, t)) Nx_cpu.exp t
-  let log t = unary (Op.Unary (Log, t)) Nx_cpu.log t
-  let sin t = unary (Op.Unary (Sin, t)) Nx_cpu.sin t
-  let cos t = unary (Op.Unary (Cos, t)) Nx_cpu.cos t
-  let tan t = unary (Op.Unary (Tan, t)) Nx_cpu.tan t
-  let asin t = unary (Op.Unary (Asin, t)) Nx_cpu.asin t
-  let acos t = unary (Op.Unary (Acos, t)) Nx_cpu.acos t
-  let atan t = unary (Op.Unary (Atan, t)) Nx_cpu.atan t
-  let sinh t = unary (Op.Unary (Sinh, t)) Nx_cpu.sinh t
-  let cosh t = unary (Op.Unary (Cosh, t)) Nx_cpu.cosh t
-  let tanh t = unary (Op.Unary (Tanh, t)) Nx_cpu.tanh t
-  let trunc t = unary (Op.Unary (Trunc, t)) Nx_cpu.trunc t
-  let ceil t = unary (Op.Unary (Ceil, t)) Nx_cpu.ceil t
-  let floor t = unary (Op.Unary (Floor, t)) Nx_cpu.floor t
-  let round t = unary (Op.Unary (Round, t)) Nx_cpu.round t
-  let erf t = unary (Op.Unary (Erf, t)) Nx_cpu.erf t
-
-  let where condition if_true if_false =
-    match (condition, if_true, if_false) with
-    | Host c, Host a, Host b -> Host (Nx_cpu.where c a b)
-    | _ ->
-        let r = route_of (Op.Where (condition, if_true, if_false)) in
-        settle r
-          (Nx_cpu.where (host_of condition) (host_of if_true)
-             (host_of if_false))
-
-  let reduce ~op ~axes t_in =
-    unary
-      (Op.Reduce (reduce_kind op, axes, t_in))
-      (Nx_cpu.reduce ~op ~axes) t_in
-
-  let argmax ~axis ~keepdims t_in =
-    unary
-      (Op.Arg_reduce (Argmax, axis, t_in))
-      (Nx_cpu.argmax ~axis ~keepdims)
-      t_in
-
-  let argmin ~axis ~keepdims t_in =
-    unary
-      (Op.Arg_reduce (Argmin, axis, t_in))
-      (Nx_cpu.argmin ~axis ~keepdims)
-      t_in
-
-  let associative_scan ~axis ~op t_in =
-    unary
-      (Op.Scan (reduce_kind op, axis, t_in))
-      (Nx_cpu.associative_scan ~axis ~op)
-      t_in
-
-  let sort ~axis ~descending t_in =
-    unary
-      (Op.Sort { descending; axis; x = t_in })
-      (Nx_cpu.sort ~axis ~descending)
-      t_in
-
-  let argsort ~axis ~descending t_in =
-    unary
-      (Op.Argsort { descending; axis; x = t_in })
-      (Nx_cpu.argsort ~axis ~descending)
-      t_in
-
-  let expand t_in shape = moved t_in (Expand shape)
-  let reshape t_in shape = moved t_in (Reshape shape)
-  let permute t_in axes = moved t_in (Permute axes)
-  let shrink t_in limits = moved t_in (Shrink limits)
-  let flip t_in dims = moved t_in (Flip dims)
-
-  let sliding_window t_in ~axis ~window ~step =
-    moved t_in (Window { axis; size = window; step })
-
-  let pad t_in padding_config fill_value =
-    unary
-      (Op.Pad (padding_config, fill_value, t_in))
-      (fun t -> Nx_cpu.pad t padding_config fill_value)
-      t_in
-
-  let cat t_list ~axis =
-    if List.for_all (function Host _ -> true | _ -> false) t_list then
-      Host (Nx_cpu.cat (List.map host_of t_list) ~axis)
-    else
-      let r = route_of (Op.Cat (axis, t_list)) in
-      settle r (Nx_cpu.cat (List.map host_of t_list) ~axis)
-
-  let cast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
-      (c, d) t =
-    match t_in with
-    | Host t -> Host (Nx_cpu.cast ~dtype t)
-    | _ ->
-        routed (Op.Convert (Cast, dtype, t_in)) t_in (Nx_cpu.cast ~dtype)
-
-  let bitcast (type a b c d) ~(dtype : (c, d) Nx_dtype.t) (t_in : (a, b) t) :
-      (c, d) t =
-    match t_in with
-    | Host t -> Host (Nx_cpu.bitcast ~dtype t)
-    | _ ->
-        routed
-          (Op.Convert (Bitcast, dtype, t_in))
-          t_in (Nx_cpu.bitcast ~dtype)
-
-  let contiguous t_in = unary (Op.Contiguous t_in) Nx_cpu.copy t_in
-  let copy = contiguous
-  let threefry key ctr =
-    binary (Op.Threefry (key, ctr)) Nx_cpu.threefry key ctr
-
-  let gather data indices ~axis =
-    binary
-      (Op.Gather (axis, indices, data))
-      (fun d i -> Nx_cpu.gather d i ~axis)
-      data indices
-
-  let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
-    match (data_template, indices, updates) with
-    | Host d, Host i, Host u ->
-        Host
-          (Nx_cpu.scatter ~mode ~unique_indices d ~indices:i ~updates:u
-             ~axis)
-    | _ ->
-        let r =
-          route_of
-            (Op.Scatter
-               {
-                 mode;
-                 unique = unique_indices;
-                 axis;
-                 indices;
-                 updates;
-                 into = data_template;
-               })
-        in
-        settle r
-          (Nx_cpu.scatter ~mode ~unique_indices (host_of data_template)
-             ~indices:(host_of indices) ~updates:(host_of updates) ~axis)
-
-  let update t_in ~starts v =
-    match (t_in, starts, v) with
-    | Host t, Host s, Host v -> Host (Nx_cpu.update t ~starts:s v)
-    | _ ->
-        let r = route_of (Op.Update (t_in, starts, v)) in
-        settle r
-          (Nx_cpu.update (host_of t_in) ~starts:(host_of starts) (host_of v))
-
-  let unfold t_in ~kernel_size ~stride ~dilation ~padding =
-    unary
-      (Op.Unfold { kernel_size; stride; dilation; padding; x = t_in })
-      (fun t -> Nx_cpu.unfold t ~kernel_size ~stride ~dilation ~padding)
-      t_in
-
-  let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
-    unary
-      (Op.Fold
-         { output_size; kernel_size; stride; dilation; padding; x = t_in })
-      (fun t ->
-        Nx_cpu.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
-      t_in
-
-  let matmul a b = binary (Op.Matmul (a, b)) Nx_cpu.matmul a b
-  let fft t ~axes =
-    unary (Op.Fft { inverse = false; axes; x = t }) (Nx_cpu.fft ~axes) t
-
-  let ifft t ~axes =
-    unary (Op.Fft { inverse = true; axes; x = t }) (Nx_cpu.ifft ~axes) t
-
-  let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Nx_dtype.t)
-      ~axes : (Complex.t, c) t =
-    match t with
-    | Host h -> Host (Nx_cpu.rfft h ~dtype ~axes)
-    | _ -> routed (Op.Rfft { dtype; axes; x = t }) t (Nx_cpu.rfft ~dtype ~axes)
-
-  let irfft (type a c) ?s (t : (Complex.t, a) t)
-      ~(dtype : (float, c) Nx_dtype.t) ~axes : (float, c) t =
-    match t with
-    | Host h -> Host (Nx_cpu.irfft ?s h ~dtype ~axes)
-    | _ ->
-        routed
-          (Op.Irfft { dtype; axes; s; x = t })
-          t (Nx_cpu.irfft ?s ~dtype ~axes)
-
-  let cholesky ~upper t_in =
-    unary (Op.Cholesky { upper; x = t_in }) (Nx_cpu.cholesky ~upper) t_in
-
-  let qr ~reduced t_in =
-    let r = route_of (Op.Qr { reduced; x = t_in }) in
-    let q, rr = Nx_cpu.qr ~reduced (host_of t_in) in
-    (settle r q, settle r rr)
-
-  let lu t_in =
-    let r = route_of (Op.Lu t_in) in
-    let lu, pivots, perm = Nx_cpu.lu (host_of t_in) in
-    (settle r lu, settle r pivots, settle r perm)
-
-  let svd ~full_matrices t_in =
-    let r = route_of (Op.Svd { full_matrices; x = t_in }) in
-    let u, s, vt = Nx_cpu.svd ~full_matrices (host_of t_in) in
-    (settle r u, settle r s, settle r vt)
-
-  let eigvals t_in =
-    unary (Op.Eig { vectors = false; x = t_in }) Nx_cpu.eigvals t_in
-
-  let eig t_in =
-    let r = route_of (Op.Eig { vectors = true; x = t_in }) in
-    let vals, vecs = Nx_cpu.eig (host_of t_in) in
-    (settle r vals, settle r vecs)
-
-  let eigvalsh t_in =
-    unary (Op.Eigh { vectors = false; x = t_in }) Nx_cpu.eigvalsh t_in
-
-  let eigh t_in =
-    let r = route_of (Op.Eigh { vectors = true; x = t_in }) in
-    let vals, vecs = Nx_cpu.eigh (host_of t_in) in
-    (settle r vals, settle r vecs)
-
-  let solve_triangular ~upper ~transpose ~unit_diag a b =
-    binary
-      (Op.Solve_triangular { upper; transpose; unit_diag; a; b })
-      (Nx_cpu.solve_triangular ~upper ~transpose ~unit_diag)
-      a b
-end
-
-(* Backends *)
-
-module Backend = struct
-  module type S = Backend_sig.S
-
-  type t = backend
-
-  exception Refused of string
-
-  let () =
-    Printexc.register_printer (function
-      | Refused reason -> Some (Printf.sprintf "Nx.Backend.Refused(%S)" reason)
-      | _ -> None)
-
-  let name (module B : S) = B.name
-  let equal : t -> t -> bool = ( == )
-
-  module Host : S = Host_backend
-
-  let host : t = (module Host)
-  let () = host_backend := Some host
-end
-
 (* Placements *)
 
 module Placement = struct
@@ -2048,7 +1721,7 @@ module Placement = struct
   let v backend grid = { grid; backend }
   let grid p = p.grid
   let backend p = p.backend
-  let host = { grid = Grid.device Device.host; backend = Backend.host }
+  let host = { grid = Grid.device Device.host; backend = Nx_cpu.backend }
   let devices = devices_of
   let memory = memory_of
   let is_host = is_host_placement
@@ -2056,6 +1729,9 @@ module Placement = struct
   let uncut p ~axis = { p with grid = Grid.uncut p.grid ~axis }
   let map_axes f p = { p with grid = Grid.map_axes f p.grid }
 
+  (* nx computes on the values of every placement on the host until every
+     device's memory is runtime buffers (see Computing), so a placement's
+     backend runs on the host. *)
   let check what backend ds =
     let fail fmt =
       Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
@@ -2066,7 +1742,6 @@ module Placement = struct
           if List.memq d rest then fail "%s appears twice" d.d_name;
           distinct rest
     in
-    let (module B : Backend.S) = backend in
     match ds with
     | [] -> fail "no device"
     | d :: rest ->
@@ -2076,19 +1751,18 @@ module Placement = struct
             if d'.d_memory != d.d_memory then
               fail "%s and %s have different memories" d.d_name d'.d_name)
           rest;
-        List.iter
-          (fun d -> if not (B.runs_on d) then fail "%s does not run on %s" B.name d.d_name)
-          ds
+        if not (Nx_backend.runs_on backend Nx_device.host) then
+          fail "%s does not run on the host" (Nx_backend.name backend)
 
-  let device ?(backend = Backend.host) d =
+  let device ?(backend = Nx_cpu.backend) d =
     check "device" backend [ d ];
     { grid = Grid.device d; backend }
 
-  let replicated ?(backend = Backend.host) ds =
+  let replicated ?(backend = Nx_cpu.backend) ds =
     check "replicated" backend ds;
     { grid = Grid.v ds [ List.length ds ] []; backend }
 
-  let sharded ?(backend = Backend.host) ~axis ds =
+  let sharded ?(backend = Nx_cpu.backend) ~axis ds =
     if axis < 0 then
       invalid_arg (Printf.sprintf "Nx.Placement.sharded: axis %d < 0" axis);
     check "sharded" backend ds;
@@ -2100,10 +1774,13 @@ module Placement = struct
   (* The placement of a value with a new leading axis, and of one without its
      leading axis: a grid axis that cut it then holds copies. *)
   let with_leading_axis p = map_axes succ p
+
   let without_leading_axis p =
     match cuts p with [] -> p | _ -> map_axes pred (uncut p ~axis:0)
 
-  let equal p q = p.backend == q.backend && Grid.equal ( == ) p.grid q.grid
+  let equal p q =
+    Nx_backend.equal p.backend q.backend && Grid.equal ( == ) p.grid q.grid
+
   let pp = pp_placement
 end
 
@@ -2134,377 +1811,508 @@ let placement (type a b) (x : (a, b) t) : placement =
 (* Dispatch
 
    With no interpretation, operands all on the host run nx.cpu directly, and any
-   other operands run on the backend their placed ones share: operands with two
-   backends raise. nx answers movements, placing and reading itself. *)
-
-let backend_among op xs =
-  let p =
-    List.fold_left
-      (fun acc (P x) ->
-        match (x, acc) with
-        | Host _, _ -> acc
-        | Traced _, _ -> outside_trace ()
-        | Placed r, _ when on_disk r.r_placement -> acc
-        | Placed r, None -> Some r.r_placement
-        | Placed r, Some p ->
-            if r.r_placement.backend == p.backend then acc
-            else mixed op p r.r_placement)
-      None xs
-  in
-  match p with Some p -> p.backend | None -> Backend.host
-
-(* The backend that runs the computing operation [op]. *)
-let backend_of : type r. r Op.t -> backend =
- fun op ->
-  match routing op with
-  | Computes (_, xs) -> backend_among (Op.name op) xs
-  | Moves _ | Places _ | Reads _ ->
-      invalid_arg "Nx_effect.backend_of: the operation computes nothing"
+   other operands run on the backend of the placement their route gives: the
+   one their placed operands share. nx answers movements, placing and reading
+   itself. *)
 
 (* The elements of [x]'s view in C order, in a host buffer: nx.cpu's storage of
    a host value, whose readers make it contiguous first, and a copy of a placed
-   one's, read by the backend that made its storage. *)
+   one's, read by the memory that holds its storage. *)
 let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   match x with
-  | Host t -> Nx_cpu.to_host t
-  | Placed r ->
-      let (module B : Backend.S) = r.r_cell.placement.backend in
-      B.to_host x
+  | Host t -> t.buffer
+  | Placed r -> read_elements r
   | Traced _ -> outside_trace ()
 
-(* [x] at [p]. The target placement's backend makes the value there. *)
+(* [x] at [p]. A placed value at a placement that differs from [p] only in
+   backend is a view of its storage; otherwise the memory of [p]'s devices makes
+   the value there. *)
 let move_to (type a b) p (x : (a, b) t) : (a, b) t =
   let move () =
     match x with
     | Traced _ -> outside_trace ()
     | Placed r when is_host_placement p -> Host (read_host r)
+    | Placed r when Grid.equal ( == ) r.r_placement.grid p.grid ->
+        Placed { r with r_id = fresh_id (); r_placement = p }
     | Host _ | Placed _ ->
         check_shape "Nx.place" p (View.shape (view x));
-        let (module B : Backend.S) = p.backend in
-        B.place p x
+        (memory_of p).place p x
   in
   match x with
   | Placed r -> Cell.with_borrow r.r_cell move
   | Host _ | Traced _ -> move ()
 
-let reduce_op : Nx_backend.reduce -> [ `Sum | `Prod | `Max | `Min ] = function
-  | Sum -> `Sum
-  | Prod -> `Prod
-  | Max -> `Max
-  | Min -> `Min
+(* Computing
 
-(* nx.cpu's kernel and a backend's function for each kind. *)
+   nx allocates each result, C-contiguous from its first element, and a
+   backend's kernel writes it. Operands all on the host run nx.cpu's kernels on
+   their own arrays.
 
-let cpu_unary : type a b.
-    Nx_backend.unary -> (a, b) Nx_cpu.t -> (a, b) Nx_cpu.t = function
-  | Neg -> Nx_cpu.neg
-  | Recip -> Nx_cpu.recip
-  | Abs -> Nx_cpu.abs
-  | Sqrt -> Nx_cpu.sqrt
-  | Sign -> Nx_cpu.sign
-  | Exp -> Nx_cpu.exp
-  | Log -> Nx_cpu.log
-  | Sin -> Nx_cpu.sin
-  | Cos -> Nx_cpu.cos
-  | Tan -> Nx_cpu.tan
-  | Asin -> Nx_cpu.asin
-  | Acos -> Nx_cpu.acos
-  | Atan -> Nx_cpu.atan
-  | Sinh -> Nx_cpu.sinh
-  | Cosh -> Nx_cpu.cosh
-  | Tanh -> Nx_cpu.tanh
-  | Trunc -> Nx_cpu.trunc
-  | Ceil -> Nx_cpu.ceil
-  | Floor -> Nx_cpu.floor
-  | Round -> Nx_cpu.round
-  | Erf -> Nx_cpu.erf
+   Operands at any other placement follow this library's one transitional rule:
+   a device brings its own memory, the [storage] extension and the [memory]
+   record that reads and places values in it, and the placement's backend
+   computes on the host, over copies of the operands' elements, before [settle]
+   places the result where [route] says. The rule goes when every device's
+   memory is runtime buffers and nx calls a backend once per device. *)
 
-let backend_unary : type a b.
-    backend -> Nx_backend.unary -> (a, b) t -> (a, b) t =
- fun (module B : Backend.S) k ->
-  match k with
-  | Neg -> B.neg
-  | Recip -> B.recip
-  | Abs -> B.abs
-  | Sqrt -> B.sqrt
-  | Sign -> B.sign
-  | Exp -> B.exp
-  | Log -> B.log
-  | Sin -> B.sin
-  | Cos -> B.cos
-  | Tan -> B.tan
-  | Asin -> B.asin
-  | Acos -> B.acos
-  | Atan -> B.atan
-  | Sinh -> B.sinh
-  | Cosh -> B.cosh
-  | Tanh -> B.tanh
-  | Trunc -> B.trunc
-  | Ceil -> B.ceil
-  | Floor -> B.floor
-  | Round -> B.round
-  | Erf -> B.erf
+type kernels = (module Nx_backend.S)
 
-let cpu_binary : type a b.
-    Nx_backend.binary -> (a, b) Nx_cpu.t -> (a, b) Nx_cpu.t -> (a, b) Nx_cpu.t
-    = function
-  | Add -> Nx_cpu.add
-  | Sub -> Nx_cpu.sub
-  | Mul -> Nx_cpu.mul
-  | Fdiv -> Nx_cpu.fdiv
-  | Idiv -> Nx_cpu.idiv
-  | Mod -> Nx_cpu.mod_
-  | Pow -> Nx_cpu.pow
-  | Atan2 -> Nx_cpu.atan2
-  | Maximum -> Nx_cpu.max
-  | Minimum -> Nx_cpu.min
-  | And -> Nx_cpu.and_
-  | Or -> Nx_cpu.or_
-  | Xor -> Nx_cpu.xor
+let cpu : kernels = (module Nx_cpu)
+let shape_of (a : ('a, 'b) Nx_array.t) = View.shape a.view
 
-let backend_binary : type a b.
-    backend -> Nx_backend.binary -> (a, b) t -> (a, b) t -> (a, b) t =
- fun (module B : Backend.S) k ->
-  match k with
-  | Add -> B.add
-  | Sub -> B.sub
-  | Mul -> B.mul
-  | Fdiv -> B.fdiv
-  | Idiv -> B.idiv
-  | Mod -> B.mod_
-  | Pow -> B.pow
-  | Atan2 -> B.atan2
-  | Maximum -> B.max
-  | Minimum -> B.min
-  | And -> B.and_
-  | Or -> B.or_
-  | Xor -> B.xor
+(* The kernels of the backend that computes at route [r]. *)
+let kernels_at = function
+  | On_host -> cpu
+  | At p -> Nx_backend.kernels p.backend
 
-let cpu_compare : type a b.
-    Nx_backend.compare ->
-    (a, b) Nx_cpu.t ->
-    (a, b) Nx_cpu.t ->
-    (bool, Nx_dtype.bool_elt) Nx_cpu.t = function
-  | Equal -> Nx_cpu.cmpeq
-  | Not_equal -> Nx_cpu.cmpne
-  | Less -> Nx_cpu.cmplt
-  | Less_equal -> Nx_cpu.cmple
+(* [routed op f] is [f]'s host result, computed by the kernels of [op]'s backend
+   over its operands' elements, where [op] runs. The route is decided before
+   anything is read. *)
+let routed op f =
+  let r = route_of op in
+  settle r (f (kernels_at r))
 
-let backend_compare : type a b.
-    backend ->
-    Nx_backend.compare ->
-    (a, b) t ->
-    (a, b) t ->
-    (bool, Nx_dtype.bool_elt) t =
- fun (module B : Backend.S) k ->
-  match k with
-  | Equal -> B.cmpeq
-  | Not_equal -> B.cmpne
-  | Less -> B.cmplt
-  | Less_equal -> B.cmple
+(* Each operation's results, allocated, and written by kernels [k]. *)
+
+let k_unary ((module K) : kernels) k a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.unary k a ~dst;
+  dst
+
+let k_binary ((module K) : kernels) k a b =
+  let dst = alloc a.dtype (shape_of a) in
+  K.binary k a b ~dst;
+  dst
+
+let k_compare ((module K) : kernels) k a b =
+  let dst = alloc Nx_dtype.Bool (shape_of a) in
+  K.compare k a b ~dst;
+  dst
+
+let k_where ((module K) : kernels) c a b =
+  let dst = alloc a.dtype (shape_of a) in
+  K.where c a b ~dst;
+  dst
+
+let k_reduce ((module K) : kernels) k axes a =
+  let dst = alloc a.dtype (Shape.reduce_output_shape (shape_of a) axes false) in
+  K.reduce k ~axes a ~dst;
+  dst
+
+let k_scan ((module K) : kernels) k axis a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.scan k ~axis a ~dst;
+  dst
+
+let k_arg_reduce ((module K) : kernels) k axis a =
+  let dst =
+    alloc Nx_dtype.Int32
+      (Shape.reduce_output_shape (shape_of a) [| axis |] false)
+  in
+  K.arg_reduce k ~axis a ~dst;
+  dst
+
+let k_sort ((module K) : kernels) descending axis a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.sort ~descending ~axis a ~dst;
+  dst
+
+let k_argsort ((module K) : kernels) descending axis a =
+  let dst = alloc Nx_dtype.Int32 (shape_of a) in
+  K.argsort ~descending ~axis a ~dst;
+  dst
+
+let k_pad ((module K) : kernels) padding v a =
+  let shape =
+    Array.mapi
+      (fun i d ->
+        let before, after = padding.(i) in
+        d + before + after)
+      (shape_of a)
+  in
+  let dst = alloc a.dtype shape in
+  K.pad padding v a ~dst;
+  dst
+
+let k_cat ((module K) : kernels) axis xs =
+  match xs with
+  | [] -> invalid_arg "cat: empty tensor list"
+  | first :: _ ->
+      let s = shape_of first in
+      let axis = if axis < 0 then axis + Array.length s else axis in
+      let total = List.fold_left (fun n x -> n + (shape_of x).(axis)) 0 xs in
+      let dst =
+        alloc first.dtype
+          (Array.mapi (fun i d -> if i = axis then total else d) s)
+      in
+      K.cat ~axis xs ~dst;
+      dst
+
+let k_cast ((module K) : kernels) dtype a =
+  let dst = alloc dtype (shape_of a) in
+  K.cast a ~dst;
+  dst
+
+(* Equal widths keep every element at its offset: the view is kept, over the
+   same memory read at the new format. *)
+let bitcast_array (type a b c d) (dtype : (c, d) Nx_dtype.t)
+    (a : (a, b) Nx_array.t) : (c, d) Nx_array.t =
+  {
+    dtype;
+    view = a.view;
+    buffer =
+      Nx_device.Buffer.view a.buffer ~offset:0
+        (Nx_dtype.Scalar.of_dtype dtype)
+        (Nx_device.Buffer.length a.buffer);
+  }
+
+let k_threefry ((module K) : kernels) key ctr =
+  let dst = alloc Nx_dtype.Int32 (shape_of ctr) in
+  K.threefry key ctr ~dst;
+  dst
+
+let k_gather ((module K) : kernels) axis indices data =
+  let dst = alloc data.dtype (shape_of indices) in
+  K.gather ~axis indices data ~dst;
+  dst
+
+let k_scatter ((module K) : kernels) mode unique axis indices updates into =
+  let dst = alloc into.dtype (shape_of into) in
+  K.scatter ~mode ~unique ~axis ~indices ~updates into ~dst;
+  dst
+
+let k_update ((module K) : kernels) a starts v =
+  let dst = alloc a.dtype (shape_of a) in
+  K.update a ~starts v ~dst;
+  dst
+
+let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
+  let s = shape_of a in
+  let k = Array.length kernel_size in
+  let lead = Array.length s - k in
+  let windows =
+    Array.init k (fun i ->
+        let before, after = padding.(i) in
+        let extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+        ((s.(lead + i) + before + after - extent) / stride.(i)) + 1)
+  in
+  let shape =
+    Array.append (Array.sub s 0 lead)
+      [| Array.fold_left ( * ) 1 kernel_size; Array.fold_left ( * ) 1 windows |]
+  in
+  let dst = alloc a.dtype shape in
+  K.unfold ~kernel_size ~stride ~dilation ~padding a ~dst;
+  dst
+
+let k_fold ((module K) : kernels) output_size kernel_size stride dilation
+    padding a =
+  let s = shape_of a in
+  let dst =
+    alloc a.dtype
+      (Array.append (Array.sub s 0 (Array.length s - 2)) output_size)
+  in
+  K.fold ~output_size ~kernel_size ~stride ~dilation ~padding a ~dst;
+  dst
+
+(* Leading batch axes broadcast; the product of [m, k] and [k, n] is [m, n]. *)
+let k_matmul ((module K) : kernels) a b =
+  let sa = shape_of a and sb = shape_of b in
+  let na = Array.length sa and nb = Array.length sb in
+  let r = Int.max na nb - 2 in
+  let batch =
+    Array.init r (fun i ->
+        let da = if i - (r + 2 - na) >= 0 then sa.(i - (r + 2 - na)) else 1 in
+        let db = if i - (r + 2 - nb) >= 0 then sb.(i - (r + 2 - nb)) else 1 in
+        if da = 1 then db else da)
+  in
+  let dst = alloc a.dtype (Array.append batch [| sa.(na - 2); sb.(nb - 1) |]) in
+  K.matmul a b ~dst;
+  dst
+
+let k_fft ((module K) : kernels) inverse axes a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.fft ~inverse ~axes a ~dst;
+  dst
+
+(* The last transformed axis of a real transform holds [n / 2 + 1] complex
+   values, and its inverse [s]'s last size, or [2 (n - 1)]. *)
+let k_rfft ((module K) : kernels) dtype axes a =
+  let shape = Array.copy (shape_of a) in
+  let last = axes.(Array.length axes - 1) in
+  shape.(last) <- (shape.(last) / 2) + 1;
+  let dst = alloc dtype shape in
+  K.rfft ~axes a ~dst;
+  dst
+
+let k_irfft ((module K) : kernels) dtype axes s a =
+  let shape = Array.copy (shape_of a) in
+  let n = Array.length axes - 1 in
+  let last = axes.(n) in
+  shape.(last) <-
+    (match s with Some sizes -> sizes.(n) | None -> (shape.(last) - 1) * 2);
+  let dst = alloc dtype shape in
+  K.irfft ~axes ~s a ~dst;
+  dst
+
+let k_contiguous ((module K) : kernels) a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.contiguous a ~dst;
+  dst
+
+let k_cholesky ((module K) : kernels) upper a =
+  let dst = alloc a.dtype (shape_of a) in
+  K.cholesky ~upper a ~dst;
+  dst
+
+(* The batch axes of a matrix of shape [..., m, n], and [m] and [n]. *)
+let matrix a =
+  let s = shape_of a in
+  let r = Array.length s in
+  (Array.sub s 0 (r - 2), s.(r - 2), s.(r - 1))
+
+let k_qr ((module K) : kernels) reduced a =
+  let batch, m, n = matrix a in
+  let k = Int.min m n in
+  let dims r c = Array.append batch [| r; c |] in
+  let q = alloc a.dtype (if reduced then dims m k else dims m m) in
+  let r = alloc a.dtype (if reduced then dims k n else dims m n) in
+  K.qr ~reduced a ~q ~r;
+  (q, r)
+
+let k_lu ((module K) : kernels) a =
+  let batch, m, n = matrix a in
+  let lu = alloc a.dtype (shape_of a) in
+  let pivots = alloc Nx_dtype.Int32 (Array.append batch [| Int.min m n |]) in
+  let perm = alloc Nx_dtype.Int32 (Array.append batch [| m |]) in
+  K.lu a ~lu ~pivots ~perm;
+  (lu, pivots, perm)
+
+let k_svd ((module K) : kernels) full_matrices a =
+  let batch, m, n = matrix a in
+  let k = Int.min m n in
+  let dims r c = Array.append batch [| r; c |] in
+  let u = alloc a.dtype (if full_matrices then dims m m else dims m k) in
+  let s = alloc Nx_dtype.Float64 (Array.append batch [| k |]) in
+  let vt = alloc a.dtype (if full_matrices then dims n n else dims k n) in
+  K.svd a ~u ~s ~vt;
+  (u, s, vt)
+
+let k_eig ((module K) : kernels) vectors a =
+  let batch, _, n = matrix a in
+  let values = alloc Nx_dtype.Complex128 (Array.append batch [| n |]) in
+  let vectors =
+    if vectors then Some (alloc Nx_dtype.Complex128 (shape_of a)) else None
+  in
+  K.eig a ~values ~vectors;
+  (values, vectors)
+
+let k_eigh ((module K) : kernels) vectors a =
+  let batch, _, n = matrix a in
+  let values = alloc Nx_dtype.Float64 (Array.append batch [| n |]) in
+  let vectors = if vectors then Some (alloc a.dtype (shape_of a)) else None in
+  K.eigh a ~values ~vectors;
+  (values, vectors)
+
+let k_solve_triangular ((module K) : kernels) upper transpose unit_diag a b =
+  let dst = alloc b.dtype (shape_of b) in
+  K.solve_triangular ~upper ~transpose ~unit_diag a b ~dst;
+  dst
 
 let all_host xs = List.for_all (function Host _ -> true | _ -> false) xs
 
-(* The operations that host code calls most, on nx.cpu with no closure when
-   their operands are on the host. The operation is built only on a backend's
-   path. *)
+(* Each operation with no interpretation: nx.cpu on host operands, with no
+   closure and no operation built, and the operation's backend otherwise. *)
 
 let direct_unary k x =
   match x with
-  | Host t -> Host (cpu_unary k t)
-  | Placed _ | Traced _ -> backend_unary (backend_of (Unary (k, x))) k x
+  | Host a -> Host (k_unary cpu k a)
+  | Placed _ | Traced _ ->
+      routed (Unary (k, x)) (fun m -> k_unary m k (host_of x))
 
 let direct_binary k x y =
   match (x, y) with
-  | Host a, Host b -> Host (cpu_binary k a b)
-  | _ -> backend_binary (backend_of (Binary (k, x, y))) k x y
+  | Host a, Host b -> Host (k_binary cpu k a b)
+  | _ ->
+      routed (Binary (k, x, y)) (fun m -> k_binary m k (host_of x) (host_of y))
 
 let direct_compare k x y =
   match (x, y) with
-  | Host a, Host b -> Host (cpu_compare k a b)
-  | _ -> backend_compare (backend_of (Compare (k, x, y))) k x y
+  | Host a, Host b -> Host (k_compare cpu k a b)
+  | _ ->
+      routed
+        (Compare (k, x, y))
+        (fun m -> k_compare m k (host_of x) (host_of y))
 
 let direct_where c x y =
   match (c, x, y) with
-  | Host c', Host a, Host b -> Host (Nx_cpu.where c' a b)
+  | Host c', Host a, Host b -> Host (k_where cpu c' a b)
   | _ ->
-      let (module B : Backend.S) = backend_of (Where (c, x, y)) in
-      B.where c x y
+      routed
+        (Where (c, x, y))
+        (fun m -> k_where m (host_of c) (host_of x) (host_of y))
 
 let direct_reduce k axes x =
   match x with
-  | Host t -> Host (Nx_cpu.reduce ~op:(reduce_op k) ~axes t)
+  | Host a -> Host (k_reduce cpu k axes a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Reduce (k, axes, x)) in
-      B.reduce ~op:(reduce_op k) ~axes x
+      routed (Reduce (k, axes, x)) (fun m -> k_reduce m k axes (host_of x))
 
 let direct_matmul x y =
   match (x, y) with
-  | Host a, Host b -> Host (Nx_cpu.matmul a b)
-  | _ ->
-      let (module B : Backend.S) = backend_of (Matmul (x, y)) in
-      B.matmul x y
+  | Host a, Host b -> Host (k_matmul cpu a b)
+  | _ -> routed (Matmul (x, y)) (fun m -> k_matmul m (host_of x) (host_of y))
 
 let direct_copy x =
   match x with
-  | Host t -> Host (Nx_cpu.copy t)
+  | Host a -> Host (k_contiguous cpu a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Contiguous x) in
-      B.copy x
+      routed (Contiguous x) (fun m -> k_contiguous m (host_of x))
 
 let direct_scan k axis x =
-  let op = reduce_op k in
   match x with
-  | Host t -> Host (Nx_cpu.associative_scan ~axis ~op t)
+  | Host a -> Host (k_scan cpu k axis a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Scan (k, axis, x)) in
-      B.associative_scan ~axis ~op x
+      routed (Scan (k, axis, x)) (fun m -> k_scan m k axis (host_of x))
 
 let direct_arg_reduce k axis x =
   match x with
-  | Host t -> (
-      match k with
-      | Nx_backend.Argmax -> Host (Nx_cpu.argmax ~axis ~keepdims:false t)
-      | Argmin -> Host (Nx_cpu.argmin ~axis ~keepdims:false t))
-  | Placed _ | Traced _ -> (
-      let (module B : Backend.S) = backend_of (Arg_reduce (k, axis, x)) in
-      match k with
-      | Argmax -> B.argmax ~axis ~keepdims:false x
-      | Argmin -> B.argmin ~axis ~keepdims:false x)
+  | Host a -> Host (k_arg_reduce cpu k axis a)
+  | Placed _ | Traced _ ->
+      routed
+        (Arg_reduce (k, axis, x))
+        (fun m -> k_arg_reduce m k axis (host_of x))
 
 let direct_sort descending axis x =
   match x with
-  | Host t -> Host (Nx_cpu.sort ~axis ~descending t)
+  | Host a -> Host (k_sort cpu descending axis a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Sort { descending; axis; x }) in
-      B.sort ~axis ~descending x
+      routed
+        (Sort { descending; axis; x })
+        (fun m -> k_sort m descending axis (host_of x))
 
 let direct_argsort descending axis x =
   match x with
-  | Host t -> Host (Nx_cpu.argsort ~axis ~descending t)
+  | Host a -> Host (k_argsort cpu descending axis a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) =
-        backend_of (Argsort { descending; axis; x })
-      in
-      B.argsort ~axis ~descending x
+      routed
+        (Argsort { descending; axis; x })
+        (fun m -> k_argsort m descending axis (host_of x))
 
 let direct_pad padding v x =
   match x with
-  | Host t -> Host (Nx_cpu.pad t padding v)
+  | Host a -> Host (k_pad cpu padding v a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Pad (padding, v, x)) in
-      B.pad x padding v
+      routed (Pad (padding, v, x)) (fun m -> k_pad m padding v (host_of x))
 
 let direct_cat axis xs =
-  if all_host xs then Host (Nx_cpu.cat (List.map host_of xs) ~axis)
-  else
-    let (module B : Backend.S) = backend_of (Cat (axis, xs)) in
-    B.cat xs ~axis
+  if all_host xs then Host (k_cat cpu axis (List.map host_of xs))
+  else routed (Cat (axis, xs)) (fun m -> k_cat m axis (List.map host_of xs))
 
-let direct_convert c dtype x =
-  match x with
-  | Host t -> (
-      match c with
-      | Nx_backend.Cast -> Host (Nx_cpu.cast ~dtype t)
-      | Bitcast -> Host (Nx_cpu.bitcast ~dtype t))
-  | Placed _ | Traced _ -> (
-      let (module B : Backend.S) = backend_of (Convert (c, dtype, x)) in
-      match c with Cast -> B.cast ~dtype x | Bitcast -> B.bitcast ~dtype x)
+let direct_convert (type a b c d) (c : conversion)
+    (dtype : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t =
+  match (c, x) with
+  | Cast, Host a -> Host (k_cast cpu dtype a)
+  | Bitcast, Host a -> Host (bitcast_array dtype a)
+  | Cast, (Placed _ | Traced _) ->
+      routed (Convert (c, dtype, x)) (fun m -> k_cast m dtype (host_of x))
+  | Bitcast, (Placed _ | Traced _) ->
+      let r = route_of (Convert (c, dtype, x)) in
+      settle r (bitcast_array dtype (host_of x))
 
 let direct_threefry key ctr =
   match (key, ctr) with
-  | Host k, Host c -> Host (Nx_cpu.threefry k c)
+  | Host k, Host c -> Host (k_threefry cpu k c)
   | _ ->
-      let (module B : Backend.S) = backend_of (Threefry (key, ctr)) in
-      B.threefry key ctr
+      routed
+        (Threefry (key, ctr))
+        (fun m -> k_threefry m (host_of key) (host_of ctr))
 
 let direct_gather axis indices data =
   match (data, indices) with
-  | Host d, Host i -> Host (Nx_cpu.gather d i ~axis)
+  | Host d, Host i -> Host (k_gather cpu axis i d)
   | _ ->
-      let (module B : Backend.S) = backend_of (Gather (axis, indices, data)) in
-      B.gather data indices ~axis
+      routed
+        (Gather (axis, indices, data))
+        (fun m -> k_gather m axis (host_of indices) (host_of data))
 
 let direct_scatter mode unique axis indices updates into =
   match (into, indices, updates) with
-  | Host d, Host i, Host u ->
-      Host
-        (Nx_cpu.scatter ~mode ~unique_indices:unique d ~indices:i ~updates:u
-           ~axis)
+  | Host d, Host i, Host u -> Host (k_scatter cpu mode unique axis i u d)
   | _ ->
-      let (module B : Backend.S) =
-        backend_of (Scatter { mode; unique; axis; indices; updates; into })
-      in
-      B.scatter ~mode ~unique_indices:unique into ~indices ~updates ~axis
+      routed
+        (Scatter { mode; unique; axis; indices; updates; into })
+        (fun m ->
+          k_scatter m mode unique axis (host_of indices) (host_of updates)
+            (host_of into))
 
 let direct_update x starts v =
   match (x, starts, v) with
-  | Host t, Host s, Host w -> Host (Nx_cpu.update t ~starts:s w)
+  | Host a, Host s, Host w -> Host (k_update cpu a s w)
   | _ ->
-      let (module B : Backend.S) = backend_of (Update (x, starts, v)) in
-      B.update x ~starts v
+      routed
+        (Update (x, starts, v))
+        (fun m -> k_update m (host_of x) (host_of starts) (host_of v))
 
 let direct_unfold kernel_size stride dilation padding x =
   match x with
-  | Host t -> Host (Nx_cpu.unfold t ~kernel_size ~stride ~dilation ~padding)
+  | Host a -> Host (k_unfold cpu kernel_size stride dilation padding a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) =
-        backend_of (Unfold { kernel_size; stride; dilation; padding; x })
-      in
-      B.unfold x ~kernel_size ~stride ~dilation ~padding
+      routed
+        (Unfold { kernel_size; stride; dilation; padding; x })
+        (fun m -> k_unfold m kernel_size stride dilation padding (host_of x))
 
 let direct_fold output_size kernel_size stride dilation padding x =
   match x with
-  | Host t ->
-      Host (Nx_cpu.fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+  | Host a ->
+      Host (k_fold cpu output_size kernel_size stride dilation padding a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) =
-        backend_of
-          (Fold { output_size; kernel_size; stride; dilation; padding; x })
-      in
-      B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding
+      routed
+        (Fold { output_size; kernel_size; stride; dilation; padding; x })
+        (fun m ->
+          k_fold m output_size kernel_size stride dilation padding (host_of x))
 
 let direct_fft inverse axes x =
   match x with
-  | Host t -> Host (if inverse then Nx_cpu.ifft t ~axes else Nx_cpu.fft t ~axes)
+  | Host a -> Host (k_fft cpu inverse axes a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Fft { inverse; axes; x }) in
-      if inverse then B.ifft x ~axes else B.fft x ~axes
+      routed
+        (Fft { inverse; axes; x })
+        (fun m -> k_fft m inverse axes (host_of x))
 
 let direct_rfft dtype axes x =
   match x with
-  | Host t -> Host (Nx_cpu.rfft t ~dtype ~axes)
+  | Host a -> Host (k_rfft cpu dtype axes a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Rfft { dtype; axes; x }) in
-      B.rfft x ~dtype ~axes
+      routed
+        (Rfft { dtype; axes; x })
+        (fun m -> k_rfft m dtype axes (host_of x))
 
 let direct_irfft dtype axes s x =
   match x with
-  | Host t -> Host (Nx_cpu.irfft ?s t ~dtype ~axes)
+  | Host a -> Host (k_irfft cpu dtype axes s a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Irfft { dtype; axes; s; x }) in
-      B.irfft ?s x ~dtype ~axes
+      routed
+        (Irfft { dtype; axes; s; x })
+        (fun m -> k_irfft m dtype axes s (host_of x))
 
 let direct_cholesky upper x =
   match x with
-  | Host t -> Host (Nx_cpu.cholesky ~upper t)
+  | Host a -> Host (k_cholesky cpu upper a)
   | Placed _ | Traced _ ->
-      let (module B : Backend.S) = backend_of (Cholesky { upper; x }) in
-      B.cholesky ~upper x
+      routed (Cholesky { upper; x }) (fun m -> k_cholesky m upper (host_of x))
 
 let direct_solve_triangular upper transpose unit_diag a b =
   match (a, b) with
   | Host x, Host y ->
-      Host (Nx_cpu.solve_triangular ~upper ~transpose ~unit_diag x y)
+      Host (k_solve_triangular cpu upper transpose unit_diag x y)
   | _ ->
-      let (module B : Backend.S) =
-        backend_of (Solve_triangular { upper; transpose; unit_diag; a; b })
-      in
-      B.solve_triangular ~upper ~transpose ~unit_diag a b
+      routed
+        (Solve_triangular { upper; transpose; unit_diag; a; b })
+        (fun m ->
+          k_solve_triangular m upper transpose unit_diag (host_of a) (host_of b))
 
-(* [direct op] answers [op] with no interpretation. The decompositions run on
-   the backend even on the host: their host case settles its results as a
-   placed call's does. *)
+(* [direct op] answers [op] with no interpretation. The decompositions run
+   through their route even on the host, which settles each result. *)
 let direct : type r. r Op.t -> r =
  fun op ->
   match[@warning "@4@8"] op with
@@ -2536,26 +2344,25 @@ let direct : type r. r Op.t -> r =
   | Contiguous x -> direct_copy x
   | Cholesky { upper; x } -> direct_cholesky upper x
   | Qr { reduced; x } ->
-      let (module B : Backend.S) = backend_of op in
-      B.qr ~reduced x
+      let r = route_of op in
+      let q, rr = k_qr (kernels_at r) reduced (host_of x) in
+      (settle r q, settle r rr)
   | Lu x ->
-      let (module B : Backend.S) = backend_of op in
-      B.lu x
+      let r = route_of op in
+      let lu, pivots, perm = k_lu (kernels_at r) (host_of x) in
+      (settle r lu, settle r pivots, settle r perm)
   | Svd { full_matrices; x } ->
-      let (module B : Backend.S) = backend_of op in
-      B.svd ~full_matrices x
+      let r = route_of op in
+      let u, s, vt = k_svd (kernels_at r) full_matrices (host_of x) in
+      (settle r u, settle r s, settle r vt)
   | Eig { vectors; x } ->
-      let (module B : Backend.S) = backend_of op in
-      if vectors then
-        let values, vectors = B.eig x in
-        (values, Some vectors)
-      else (B.eigvals x, None)
+      let r = route_of op in
+      let values, vectors = k_eig (kernels_at r) vectors (host_of x) in
+      (settle r values, Option.map (settle r) vectors)
   | Eigh { vectors; x } ->
-      let (module B : Backend.S) = backend_of op in
-      if vectors then
-        let values, vectors = B.eigh x in
-        (values, Some vectors)
-      else (B.eigvalsh x, None)
+      let r = route_of op in
+      let values, vectors = k_eigh (kernels_at r) vectors (host_of x) in
+      (settle r values, Option.map (settle r) vectors)
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       direct_solve_triangular upper transpose unit_diag a b
   | Move (x, m) -> moved x m
@@ -2778,9 +2585,9 @@ let broadcast scalar shape_arr =
 
 let full (ctx : context) dtype shape_arr value =
   if on_host ctx && not (intercepting ()) then
-    Host (Nx_cpu.full () dtype shape_arr value)
+    Host (filled dtype shape_arr value)
   else
-    let e = Host (Nx_cpu.full () dtype [||] value) in
+    let e = Host (filled dtype [||] value) in
     let n = Array.fold_left ( * ) 1 shape_arr in
     if on_host ctx then
       let x = broadcast e shape_arr in
@@ -2796,7 +2603,14 @@ let full (ctx : context) dtype shape_arr value =
 
 let from_host (ctx : context) dtype buffer =
   check_host "from_host" dtype buffer;
-  let x = Host (Nx_cpu.from_host () dtype buffer) in
+  let x =
+    Host
+      {
+        dtype;
+        view = View.create [| Nx_device.Buffer.length buffer |];
+        buffer;
+      }
+  in
   if on_host ctx then x else place ctx x
 
 (* The host buffer of exactly [x]'s elements in C order: its storage when it is

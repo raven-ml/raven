@@ -785,7 +785,16 @@ let reduce_op op ?axes ?(keepdims = false) x =
       if ax < 0 || ax >= rank then
         err "reduce" "axis %d out of bounds for %dD tensor" ax rank)
     axes_to_reduce;
-  let reduced = B.reduce (B.reduce_kind op) ~axes:axes_to_reduce x in
+  (* An extreme over no element has no value. *)
+  (match op with
+  | Nx_backend.Max | Min ->
+      Array.iter
+        (fun ax ->
+          if input_shape.(ax) = 0 then
+            err "reduce" "axis %d is empty: its extreme has no value" ax)
+        axes_to_reduce
+  | Sum | Prod -> ());
+  let reduced = B.reduce op ~axes:axes_to_reduce x in
   (* The backend drops the reduced axes; reinsert them as size 1 on
      request. *)
   if keepdims then
@@ -794,10 +803,11 @@ let reduce_op op ?axes ?(keepdims = false) x =
       reduced
   else reduced
 
-let sum ?axes ?(keepdims = false) x = reduce_op `Sum ?axes ~keepdims x
-let max ?axes ?(keepdims = false) x = reduce_op `Max ?axes ~keepdims x
-let min ?axes ?(keepdims = false) x = reduce_op `Min ?axes ~keepdims x
-let prod ?axes ?(keepdims = false) x = reduce_op `Prod ?axes ~keepdims x
+let sum ?axes ?(keepdims = false) x = reduce_op Nx_backend.Sum ?axes ~keepdims x
+let max ?axes ?(keepdims = false) x = reduce_op Nx_backend.Max ?axes ~keepdims x
+let min ?axes ?(keepdims = false) x = reduce_op Nx_backend.Min ?axes ~keepdims x
+let prod ?axes ?(keepdims = false) x =
+  reduce_op Nx_backend.Prod ?axes ~keepdims x
 
 let associative_scan ~axis op x =
   let x_shape = shape x in
@@ -812,7 +822,7 @@ let associative_scan ~axis op x =
     let a = if axis < 0 then axis + rank else axis in
     if a < 0 || a >= rank then
       err "associative_scan" "axis %d out of bounds for %dD tensor" axis rank
-    else B.scan (B.reduce_kind op) ~axis:a x
+    else B.scan op ~axis:a x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
   let sh = shape x in
@@ -852,10 +862,10 @@ let cumulative_scan ?axis op x =
       if Array.length orig_shape = 0 then reshape [||] scanned
       else reshape orig_shape scanned
 
-let cumsum ?axis x = cumulative_scan ?axis `Sum x
-let cumprod ?axis x = cumulative_scan ?axis `Prod x
-let cummax ?axis x = cumulative_scan ?axis `Max x
-let cummin ?axis x = cumulative_scan ?axis `Min x
+let cumsum ?axis x = cumulative_scan ?axis Nx_backend.Sum x
+let cumprod ?axis x = cumulative_scan ?axis Nx_backend.Prod x
+let cummax ?axis x = cumulative_scan ?axis Nx_backend.Max x
+let cummin ?axis x = cumulative_scan ?axis Nx_backend.Min x
 
 let mean ?axes ?(keepdims = false) x =
   let dt = B.dtype x in
@@ -903,7 +913,7 @@ let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
       (Shape.reduce_output_shape input_shape axes_to_reduce keepdims)
       identity
   else
-    let reduced = B.reduce (B.reduce_kind op) ~axes:axes_to_reduce bool_t in
+    let reduced = B.reduce op ~axes:axes_to_reduce bool_t in
     if keepdims then
       reshape
         (Shape.reduce_output_shape input_shape axes_to_reduce true)
@@ -911,10 +921,12 @@ let logical_reduce ~op_name ~op ~identity ?axes ?(keepdims = false) x =
     else reduced
 
 let all ?axes ?(keepdims = false) x =
-  logical_reduce ~op_name:"all" ~op:`Min ~identity:true ?axes ~keepdims x
+  logical_reduce ~op_name:"all" ~op:Nx_backend.Min ~identity:true ?axes
+    ~keepdims x
 
 let any ?axes ?(keepdims = false) x =
-  logical_reduce ~op_name:"any" ~op:`Max ~identity:false ?axes ~keepdims x
+  logical_reduce ~op_name:"any" ~op:Nx_backend.Max ~identity:false ?axes
+    ~keepdims x
 
 let array_equal x y =
   let can_broadcast =
@@ -2099,6 +2111,7 @@ let arg_axis op ?axis x =
       axis
   in
   let n = match a with None -> numel x | Some a -> (shape x).(a) in
+  if n = 0 then err op "an empty axis has no extreme";
   if n > Int32.to_int Int32.max_int then
     err op "axis of %d entries, more than an int32 index reaches" n;
   match a with None -> (flatten x, 0) | Some a -> (x, a)
@@ -4548,8 +4561,8 @@ let solve a b =
       B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false u
         (B.solve_triangular ~upper:false ~transpose:false ~unit_diag:true
            packed pb)
-    with Backend_intf.Linalg_error { kind; _ } ->
-      raise (Backend_intf.Linalg_error { op = "solve"; kind })
+    with Nx_backend.Linalg_error { kind; _ } ->
+      raise (Nx_backend.Linalg_error { op = "solve"; kind })
   in
   if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
@@ -4679,8 +4692,8 @@ let inv a =
   try solve a i with
   | Invalid_argument msg when String.sub msg 0 5 = "solve" ->
       invalid_arg ("inv" ^ String.sub msg 5 (String.length msg - 5))
-  | Backend_intf.Linalg_error { kind; _ } ->
-      raise (Backend_intf.Linalg_error { op = "inv"; kind })
+  | Nx_backend.Linalg_error { kind; _ } ->
+      raise (Nx_backend.Linalg_error { op = "inv"; kind })
 
 let matrix_power a n =
   let sh = shape a in
@@ -4702,8 +4715,8 @@ let matrix_power a n =
     try
       let ia = inv a in
       if -n = 1 then ia else power ia ia (-n - 1)
-    with Backend_intf.Linalg_error { kind; _ } ->
-      raise (Backend_intf.Linalg_error { op = "matrix_power"; kind })
+    with Nx_backend.Linalg_error { kind; _ } ->
+      raise (Nx_backend.Linalg_error { op = "matrix_power"; kind })
 
 let cond ?p x =
   check_square ~op:"cond" x;
@@ -4787,7 +4800,7 @@ let tensorsolve ?axes a b =
   let b_vec = reshape [| rows |] b in
   let solution =
     try solve a_mat b_vec
-    with Backend_intf.Linalg_error { kind = `Singular; _ } ->
+    with Nx_backend.Linalg_error { kind = `Singular; _ } ->
       let x_col = matmul (pinv a_mat) (reshape [| rows; 1 |] b_vec) in
       reshape [| cols |] x_col
   in
@@ -4813,7 +4826,7 @@ let tensorinv ?ind a =
        product";
   let inv_mat =
     try inv (reshape [| ls; rs |] a)
-    with Backend_intf.Linalg_error { kind = `Singular; _ } ->
+    with Nx_backend.Linalg_error { kind = `Singular; _ } ->
       pinv (reshape [| ls; rs |] a)
   in
   reshape (Array.append right left) inv_mat

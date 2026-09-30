@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Backends carried by placements: backends that include the host's and change
-   an operation, on the host device and on a runtime device; refusals, mixed
+(* Backends carried by placements: backends that include nx.cpu's kernels and
+   change one, on the host device and on a runtime device; refusals, mixed
    operands, the devices a backend runs on, moves between backends, and the two
    ways the host device holds values. *)
 
@@ -12,31 +12,33 @@ open Windtrap
 open Nx_test
 
 module Counting = struct
-  include Nx.Backend.Host
+  include (Nx_cpu : Nx_backend.S)
 
   let name = "counting"
   let adds = ref 0
-  let places = ref 0
 
-  let add a b =
-    incr adds;
-    Nx.Backend.Host.add a b
-
-  let place p x =
-    incr places;
-    Nx.Backend.Host.place p x
+  let binary k a b ~dst =
+    if k = Nx_backend.Add then incr adds;
+    Nx_cpu.binary k a b ~dst
 end
 
 module Refusing = struct
-  include Nx.Backend.Host
+  include (Nx_cpu : Nx_backend.S)
 
   let name = "refusing"
-  let matmul _ _ = raise (Nx.Backend.Refused "refusing: matmul: none")
-  let runs_on d = Nx.Device.equal d Nx.Device.host
+  let matmul _ _ ~dst:_ = raise (Nx_backend.Refused "refusing: matmul: none")
 end
 
-let counting : Nx.Backend.t = (module Counting)
-let refusing : Nx.Backend.t = (module Refusing)
+module Hostless = struct
+  include (Nx_cpu : Nx_backend.S)
+
+  let name = "hostless"
+  let runs_on _ = false
+end
+
+let counting = Nx_backend.make (module Counting)
+let refusing = Nx_backend.make (module Refusing)
+let hostless = Nx_backend.make (module Hostless)
 
 type bytes_ba =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -93,7 +95,7 @@ let backends =
           let p = Nx.Placement.device ~backend:refusing Nx.Device.host in
           let x = Nx.place p (Nx.ones Nx.float32 [| 2; 2 |]) in
           raises_match
-            (function Nx.Backend.Refused _ -> true | _ -> false)
+            (function Nx_backend.Refused _ -> true | _ -> false)
             (fun () -> ignore (Nx.matmul x x));
           equal floats (Nx.full Nx.float32 [| 2; 2 |] 2.) (Nx.add x x));
       test "operands with two backends raise, naming both placements" (fun () ->
@@ -119,20 +121,23 @@ let backends =
           let y = Nx.add (Nx.place p (vec [| 1. |])) (vec [| 2. |]) in
           is_true (Nx.Placement.equal (Nx.placement y) p);
           equal floats (vec [| 3. |]) y);
-      test "a placement refuses a device its backend does not run on" (fun () ->
+      test "a placement refuses a backend that does not run on the host"
+        (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Placement.device ~backend:refusing r1);
+              Nx.Placement.device ~backend:hostless Nx.Device.host);
           raises_invalid_arg (fun () ->
-              Nx.Placement.replicated ~backend:refusing [ Nx.Device.host; r1 ]));
+              Nx.Placement.device ~backend:hostless r1);
+          raises_invalid_arg (fun () ->
+              Nx.Placement.replicated ~backend:hostless [ Nx.Device.host; r1 ]));
       test "placements differ by backend, and print it" (fun () ->
           let p = Nx.Placement.device ~backend:counting Nx.Device.host in
           is_false (Nx.Placement.equal p Nx.Placement.host);
-          is_true (Nx.Backend.equal (Nx.Placement.backend p) counting);
+          is_true (Nx_backend.equal (Nx.Placement.backend p) counting);
           is_true
-            (Nx.Backend.equal
+            (Nx_backend.equal
                (Nx.Placement.backend Nx.Placement.host)
-               Nx.Backend.host);
-          equal string "counting" (Nx.Backend.name counting);
+               Nx_cpu.backend);
+          equal string "counting" (Nx_backend.name counting);
           equal string "CPU with counting"
             (Format.asprintf "%a" Nx.Placement.pp p);
           equal string "CPU"
@@ -152,13 +157,6 @@ let backends =
               is_true ~msg:"one storage" (a.r_cell == b.r_cell)
           | _ -> fail "expected placed values");
           equal floats (vec [| 1.; 2. |]) y);
-      test "a move asks the backend of the target placement" (fun () ->
-          let p = Nx.Placement.device ~backend:counting r1 in
-          let before = !Counting.places in
-          let x = Nx.place p (vec [| 1.; 2. |]) in
-          equal int (before + 1) !Counting.places;
-          ignore (Nx.place Nx.Placement.host x);
-          equal ~msg:"not the source's" int (before + 1) !Counting.places);
       test
         "the host device holds a value of the host placement as a host tensor, \
          and one of another placement as a placed value" (fun () ->

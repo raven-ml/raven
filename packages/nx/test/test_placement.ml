@@ -128,7 +128,7 @@ let placements =
       test "a grid is kept in normal form and compared by its windows"
         (fun () ->
           let grid extents cuts =
-            Nx_effect.Placement.v Nx.Backend.host
+            Nx_effect.Placement.v Nx_cpu.backend
               (Nx_effect.Grid.v four extents cuts)
           in
           List.iter
@@ -401,7 +401,7 @@ let movements =
         move_both;
       test "a value cut along two axes moves by the whole shapes" (fun () ->
           let p =
-            Nx_effect.Placement.v Nx.Backend.host
+            Nx_effect.Placement.v Nx_cpu.backend
               (Nx_effect.Grid.v four [ 2; 2 ] [ (0, [ 0 ]); (1, [ 1 ]) ])
           in
           let x = Nx.reshape [| 2; 4 |] (iota [| 8 |]) in

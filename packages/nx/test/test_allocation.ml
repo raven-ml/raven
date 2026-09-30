@@ -45,18 +45,22 @@ let dispatch =
           equal int 2 (words (fun () -> Nx.shape row)));
     ]
 
-(* With no interception anywhere, a host operation allocates what nx.cpu's
-   kernel allocates for its result, and the two words of the [Host] block
-   around it. *)
+(* With no interception anywhere, a host operation allocates its result's array,
+   which nx.cpu's kernel writes, and the two words of the [Host] block around
+   it. *)
 let host_path =
   group "host path"
     [
       test "add allocates its result" (fun () ->
-          let x = Nx_cpu.buffer () Nx.float32 [| 1 |] in
-          let y = Nx_cpu.buffer () Nx.float32 [| 1 |] in
-          equal int
-            (words (fun () -> Nx_cpu.add x y) + 2)
-            (words (fun () -> Nx.add a b)));
+          let shape = [| 1 |] in
+          let x = Nx_effect.alloc Nx.float32 shape in
+          let y = Nx_effect.alloc Nx.float32 shape in
+          let kernel () =
+            let dst = Nx_effect.alloc Nx.float32 shape in
+            Nx_cpu.binary Add x y ~dst;
+            dst
+          in
+          equal int (words kernel + 2) (words (fun () -> Nx.add a b)));
     ]
 
 let () = exit (run "nx allocation" [ dispatch; host_path ])

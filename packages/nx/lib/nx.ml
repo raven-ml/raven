@@ -8,12 +8,11 @@ include Frontend
 (* A caller owns the array it is given. *)
 let shape x = Array.copy (shape x)
 
-exception Linalg_error = Nx_array.Backend_intf.Linalg_error
+exception Linalg_error = Nx_backend.Linalg_error
 
 let context = Nx_effect.Placement.host
 
 module Device = Nx_effect.Device
-module Backend = Nx_effect.Backend
 
 module Placement = Nx_effect.Placement
 

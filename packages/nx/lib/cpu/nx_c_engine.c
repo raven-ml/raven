@@ -1270,9 +1270,8 @@ void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl, nx_c_cost_class 
    to the kept (non-reduced) input axes, aligned to them in order. Accepts an
    output already squeezed (keepdims=false) or full-rank with size-1 reduced dims
    (keepdims=true), inferred from its rank. The frontend passes valid,
-   deduplicated axes (Backend_intf) and the binding allocates out, which the
-   mask indexing and the stride copy rely on: asserted, the strict ordering
-   the fold driver checks. */
+   deduplicated axes and nx allocates out, which the mask indexing and the
+   stride copy rely on: asserted, the strict ordering the fold driver checks. */
 static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *out,
                                   const int *axes, int n_reduce,
                                   nx_c_ndarray *sq) {
