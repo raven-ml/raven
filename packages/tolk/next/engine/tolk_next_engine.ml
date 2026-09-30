@@ -48,15 +48,29 @@ type device = {
   submitting : unit -> unit;
 }
 
-(* The compiler has no queue encoder of CUDA, AMD or NV yet: those devices run
-   their calls one by one. *)
+(* The vendors whose encoders the compiler has, in the order they are tried: a
+   vendor that claims a device gives its queues, the storage of the placeholders
+   its commands name and its refresh inside each submission. AMD and NV run
+   their calls one by one until their encoders exist. *)
+let vendors = [ Metal.queues; Cuda.queues ]
+
 let device devices name =
   let d = find "device" devices name in
   (* The disk runs no program: its copies are the runtime's. *)
   let target =
     if d == Nx_device.disk then Helpers.target "DISK" else target d
   in
-  match Metal.queues devices name d with
+  (* Any name of the host names it: the first one serves. *)
+  let host =
+    lazy
+      (match List.find_opt (fun (_, h) -> h == Nx_device.host_of d) devices with
+      | Some (host, _) -> host
+      | None ->
+          invalid_arg
+            (Printf.sprintf "Tolk_next_engine.device: no device is %s's host"
+               name))
+  in
+  match List.find_map (fun queues -> queues ~host devices name d) vendors with
   | Some (queues, placeholder, submitting) ->
       {
         device = d;

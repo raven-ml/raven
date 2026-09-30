@@ -1100,7 +1100,9 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Ops_cuda suite (`test/runtime/ops_cuda`): `recorded
   cases`, whose host programs are tinygrad's with D36 applied by their
   generator (`gen/runtime/ops_cuda.py`), and `function words (D36) › a batch
-  over two devices reads a kernel's function from a word of each`.
+  over two devices reads a kernel's function from a word of each`; on an
+  NVIDIA GPU, `execution` (slow), whose every kernel reads its function from
+  such a word.
 
 ## D41. The memory plan sees a range's calls, and leaves buffers reached through views
 
@@ -1168,4 +1170,3 @@ the Exclusions of `README.md`.
 - **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
   of a staging buffer of the host where the queues cannot reach`, whose device
   description reaches every device but CPU:2.
-

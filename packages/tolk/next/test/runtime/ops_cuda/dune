@@ -14,3 +14,28 @@
    CACHEDB
    cache
    (run %{test} --exclude-tag slow))))
+
+; Running batches on an NVIDIA GPU is slow, and skips without one.
+
+(executable
+ (name test_ops_cuda_exec)
+ (modules test_ops_cuda_exec)
+ (libraries
+  windtrap
+  tolk.next
+  tolk.next.engine
+  tolk_next_test
+  nx.device
+  nx.cuda.device
+  zarith))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_ops_cuda_exec.exe} --tag slow))))

@@ -145,24 +145,14 @@ let placeholder name d u =
   | _, Some (cmds, header) -> Some (new_icb d cmds header)
   | _ -> None
 
-let queues devices name d =
+let queues ~host _ name d =
   match M.of_device d with
   | None -> None
   | Some m ->
-      (* Any name of the host names it: the first one serves. *)
-      let host =
-        match
-          List.find_opt (fun (_, h) -> h == Nx_device.host_of d) devices
-        with
-        | Some (host, _) -> host
-        | None ->
-            invalid_arg
-              (Printf.sprintf "Tolk_next_engine.device: no device is %s's host"
-                 name)
-      in
       let residency_set = Option.is_some (M.residency_set m) in
       let queues =
-        Ops_metal.queues ~host ~arch:(Nx_device.arch d) ~residency_set
+        Ops_metal.queues ~host:(Lazy.force host) ~arch:(Nx_device.arch d)
+          ~residency_set
       in
       let submitting = if residency_set then ignore else resident m (sels d) in
       Some (queues, placeholder name d, submitting)

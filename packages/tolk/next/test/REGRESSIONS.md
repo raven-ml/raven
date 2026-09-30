@@ -2824,7 +2824,7 @@ returns and its host programs' source. It needs no GPU and no driver.
 | tinygrad: `runtime/ops_cuda.py` `CUDAQueue.copy`, `.wait`, `.signal` (no test) | copies on the copy stream, waits and writes of 64-bit words between the streams | `C › recorded cases › copy_in`, `host_split` |
 | tinygrad: `runtime/ops_cuda.py` `CUDAQueue.timestamp` (no test) | a host function stamps a slot | `C › recorded cases › chain_profile`, `copy_in_profile` |
 | tinygrad: `runtime/ops_cuda.py` `CUDAQueue.submit` (no test) | the status of the last call is stored | `C › recorded cases › *_host.golden` |
-| tinygrad: `runtime/ops_cuda.py` `CUDADevice.pm_bufferize`, `handles`, `stamp`, `function` | the engine's words of a batch | the engine's CUDA module |
+| tinygrad: `runtime/ops_cuda.py` `CUDADevice.pm_bufferize`, `handles`, `stamp`, `function` | the engine's words of a batch | `CX` (below) |
 | tinygrad: `runtime/ops_cuda.py` `CUDAAllocator`, `CUDADevice._wait_signal`, `count` | memory, peer maps and waits | nx.cuda.device's suite |
 | tinygrad: `runtime/ops_cuda.py` the `MOCK` interface (`test/mockgpu/cuda`) | a CUDA driver in Python | dropped: no mock drivers (plan §10) |
 | old: `unit/test_cuda_queue.ml` "compiles mixed-width arguments and symbolic launch dimensions" | | `C › recorded cases › variable`; argument layout is `Hcq2.layout_args`'s |
@@ -2833,6 +2833,30 @@ returns and its host programs' source. It needs no GPU and no driver.
 | old: `unit/test_cuda_queue.ml` "host copies retain an ordinary execution fallback" | | `C › recorded cases › host_split`: a copy the queues reach runs on the copy stream; staging is `Hcq2`'s |
 | old: `unit/test_cuda_queue.ml` "compatible peers share a submission with cross-device dependencies", "independent groups regroup without crossing ordinary calls", "peer timelines use each device's own context" | batching across devices | the `Hcq2` suite's batching, which no vendor changes |
 | DIVERGENCES D30 | a range around launches, a loop of the host program | `C › loops (D30) › a range is a loop of the host program around its launches` |
+
+### Execution
+
+`CX` runs batches through `tolk.engine` on NVIDIA GPUs (`test_ops_cuda_exec`,
+the `slow` alias), and skips each test on a machine without the GPUs it needs.
+No CI machine has one: it runs on hardware by hand.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies out, in and out between the GPU and the host | `CX › copies out, in and out again leave the host the bytes copied in` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch serves new inputs on each run | `CX › a run waits for its batch's previous run before it rewrites the batch's arguments` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic | a symbolic size on each run | `CX › a launch size that reads a variable is set on each run` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `CX › a profile records a span of each kernel on the device, in order`, `› a profiled batch run twice keeps the second run's spans` |
+| tinygrad: `runtime/ops_cuda.py` `CUDAAllocator._map`, `hcq2.py` `stage_copy` | GPU memory is reached through the host | `CX › a copy between two GPUs goes through the host's staging memory` (two GPUs) |
+| DIVERGENCES D30 | a range around calls, one submission per trip | `CX › each trip of a range runs its kernel on its own window` |
+| old: `unit/test_runtime_cuda.ml` "compile and run one kernel", "exec is ordered", "replays a multi-kernel chain" | | `CX › a chain of kernels computes what the interpreter says` |
+| old: `unit/test_runtime_cuda.ml` "passes scalar variables", "patches scalar values between launches", "queue call replays with updated variables" | | `CX › a launch size that reads a variable is set on each run` |
+| old: `unit/test_runtime_cuda.ml` "rebinds buffers through repeated asynchronous launches", "queue call replays with rebound inputs", "... rebound input and output slots" | | `CX › a run waits for its batch's previous run ...` |
+| old: `unit/test_runtime_cuda.ml` "copies feed dependent kernels and later copies", "queues mapped host copies and falls back for unaligned imports" | | `CX › a copy to the host and back runs on the host, between batches`, `› copies out, in and out again ...` |
+| old: `unit/test_runtime_cuda.ml` "cross-device copy preserves views with peer or host fallback", "queued peer copies preserve views with mapping fallback" | | `CX › a copy between two GPUs goes through the host's staging memory` |
+| old: `unit/test_runtime_cuda.ml` "typed arguments preserve scalar widths in dispatch and replay" | | `CX › a kernel of 33 buffers runs from its arguments' buffer`; the layout is `Hcq2.layout_args`'s |
+| old: `unit/test_runtime_cuda.ml` "wait returns gpu time" | | `CX › a profile records a span ...` |
+| old: `unit/test_runtime_cuda.ml` buffer views, LRU reuse, pinned storage, "cached functions survive independent link collection", "concurrent first links share one timeline and context descriptor" | | dropped: buffers, programs and timelines are nx.device's |
+| old: `unit/test_runtime_cuda.ml` "f16 tensor-core matmul" | | dropped here: kernels are the codegen suites'; their execution is L9's graph parity |
 
 ## Jit
 

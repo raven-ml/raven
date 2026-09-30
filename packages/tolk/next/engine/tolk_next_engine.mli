@@ -66,17 +66,20 @@ type device = {
 val device : (string * Nx_device.t) list -> string -> device
 (** [device devices name] is the device [devices] maps [name] to, with its
     {!target}, or, for the disk, which runs no program, the target of the device
-    ["DISK"]. A Metal device has the command queues of {!Tolk_next.Ops_metal},
-    submitted by host programs of the host of its machine
-    ({!Nx_device.host_of}), which [devices] must name, and gives the objects,
-    selectors, indirect command buffers and stamps its commands name, and the
-    address of [objc_msgSend] they call. A CUDA, AMD or NV device runs its calls
-    one by one: no encoder of theirs exists yet. A caller that runs work from
-    queues of its own, such as a test of the compiler, makes a {!device} of its
-    own.
+    ["DISK"]. A Metal or a CUDA device has the command queues of its vendor
+    ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}), submitted by host programs
+    of the host of its machine ({!Nx_device.host_of}), which [devices] must
+    name, and gives the words its commands name: Metal's objects, selectors,
+    indirect command buffers and stamps and the address of [objc_msgSend];
+    CUDA's context, streams, functions, stamping function and the driver's entry
+    points. A CUDA device's queues reach the memory of the devices of [devices]
+    that the host addresses, and copy other memory through the host's. An AMD or
+    NV device runs its calls one by one: no encoder of theirs exists yet. A
+    caller that runs work from queues of its own, such as a test of the
+    compiler, makes a {!device} of its own.
 
     Raises [Invalid_argument] if [devices] does not map [name], or does not name
-    the host of a Metal device. *)
+    the host of a Metal or CUDA device. *)
 
 (** {1:programs Host programs} *)
 
