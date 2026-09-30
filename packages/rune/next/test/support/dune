@@ -1,0 +1,14 @@
+(library
+ (name rune_next_test)
+ (wrapped false)
+ (libraries
+  windtrap
+  rune.next
+  tolk.next
+  tolk_next_test
+  tolk_next_host
+  nx
+  nx.array
+  nx.device
+  nx.dtype
+  zarith))
