@@ -1,0 +1,25 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.RANGE dtypes.weakint [5] (1, AxisType.WEAK)
+7 Ops.MUL dtypes.weakint [6, 5]
+8 Ops.RANGE dtypes.weakint [5] (2, AxisType.WEAK)
+9 Ops.ADD dtypes.weakint [7, 8]
+10 Ops.INDEX dtypes.float [4, 9]
+11 Ops.CONST dtypes.weakfloat [] 2.0
+12 Ops.MUL dtypes.float [10, 11]
+13 Ops.STAGE dtypes.float [12, 6, 8] BufferizeOpts(device="CPU")
+14 Ops.FLOORDIV dtypes.weakint [2, 5]
+15 Ops.FLOORMOD dtypes.weakint [2, 5]
+16 Ops.INDEX dtypes.float [13, 14, 15]
+17 Ops.INDEX dtypes.float [13, 15, 14]
+18 Ops.ADD dtypes.float [16, 17]
+19 Ops.STORE dtypes.void [3, 18]
+20 Ops.END dtypes.void [19, 2]
+21 Ops.AFTER dtypes.float [0, 20]
+22 Ops.SINK dtypes.void [21]
+

@@ -1,0 +1,94 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128, device="CPU")
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.RANGE dtypes.weakint [1] (2, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (3, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 2
+8 Ops.RANGE dtypes.weakint [7] (1, AxisType.WEAK)
+9 Ops.CONST dtypes.weakint [] 32
+10 Ops.MUL dtypes.weakint [8, 9]
+11 Ops.ADD dtypes.weakint [6, 10]
+12 Ops.RANGE dtypes.weakint [7] (0, AxisType.WEAK)
+13 Ops.CONST dtypes.weakint [] 64
+14 Ops.MUL dtypes.weakint [12, 13]
+15 Ops.ADD dtypes.weakint [11, 14]
+16 Ops.INDEX dtypes.float [0, 15]
+17 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128, device="CPU")
+18 Ops.RANGE dtypes.weakint [1] (23, AxisType.WEAK)
+19 Ops.MUL dtypes.weakint [18, 3]
+20 Ops.RANGE dtypes.weakint [3] (25, AxisType.REDUCE)
+21 Ops.ADD dtypes.weakint [19, 20]
+22 Ops.RANGE dtypes.weakint [7] (22, AxisType.WEAK)
+23 Ops.MUL dtypes.weakint [22, 9]
+24 Ops.ADD dtypes.weakint [21, 23]
+25 Ops.RANGE dtypes.weakint [7] (21, AxisType.WEAK)
+26 Ops.MUL dtypes.weakint [25, 13]
+27 Ops.ADD dtypes.weakint [24, 26]
+28 Ops.INDEX dtypes.float [17, 27]
+29 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=128, device="CPU")
+30 Ops.RANGE dtypes.weakint [1] (24, AxisType.WEAK)
+31 Ops.MUL dtypes.weakint [30, 3]
+32 Ops.ADD dtypes.weakint [31, 20]
+33 Ops.ADD dtypes.weakint [32, 23]
+34 Ops.ADD dtypes.weakint [33, 26]
+35 Ops.INDEX dtypes.float [29, 34]
+36 Ops.MUL dtypes.float [28, 35]
+37 Ops.REDUCE dtypes.float [36, 20] (Ops.ADD, 0)
+38 Ops.CONST dtypes.weakfloat [] 2.0
+39 Ops.RECIPROCAL dtypes.weakfloat [38]
+40 Ops.MUL dtypes.float [37, 39]
+41 Ops.STAGE dtypes.float [40, 25, 22, 18, 30] BufferizeOpts(device="CPU")
+42 Ops.RANGE dtypes.weakint [7] (13, AxisType.WEAK)
+43 Ops.RANGE dtypes.weakint [7] (14, AxisType.WEAK)
+44 Ops.RANGE dtypes.weakint [1] (15, AxisType.WEAK)
+45 Ops.RANGE dtypes.weakint [1] (16, AxisType.WEAK)
+46 Ops.INDEX dtypes.float [41, 42, 43, 44, 45]
+47 Ops.RANGE dtypes.weakint [7] (17, AxisType.WEAK)
+48 Ops.RANGE dtypes.weakint [7] (18, AxisType.WEAK)
+49 Ops.RANGE dtypes.weakint [1] (19, AxisType.WEAK)
+50 Ops.RANGE dtypes.weakint [1] (20, AxisType.REDUCE)
+51 Ops.INDEX dtypes.float [41, 47, 48, 49, 50]
+52 Ops.REDUCE dtypes.float [51, 50] (Ops.MAX, 0)
+53 Ops.STAGE dtypes.float [52, 47, 48, 49] BufferizeOpts(device="CPU")
+54 Ops.INDEX dtypes.float [53, 42, 43, 44]
+55 Ops.CONST dtypes.weakfloat [] -1.0
+56 Ops.MUL dtypes.float [54, 55]
+57 Ops.ADD dtypes.float [46, 56]
+58 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+59 Ops.MUL dtypes.float [57, 58]
+60 Ops.EXP2 dtypes.float [59]
+61 Ops.STAGE dtypes.float [60, 42, 43, 44, 45] BufferizeOpts(device="CPU")
+62 Ops.RANGE dtypes.weakint [7] (5, AxisType.WEAK)
+63 Ops.RANGE dtypes.weakint [7] (6, AxisType.WEAK)
+64 Ops.RANGE dtypes.weakint [1] (7, AxisType.WEAK)
+65 Ops.RANGE dtypes.weakint [1] (8, AxisType.WEAK)
+66 Ops.INDEX dtypes.float [61, 62, 63, 64, 65]
+67 Ops.RANGE dtypes.weakint [7] (9, AxisType.WEAK)
+68 Ops.RANGE dtypes.weakint [7] (10, AxisType.WEAK)
+69 Ops.RANGE dtypes.weakint [1] (11, AxisType.WEAK)
+70 Ops.RANGE dtypes.weakint [1] (12, AxisType.REDUCE)
+71 Ops.INDEX dtypes.float [61, 67, 68, 69, 70]
+72 Ops.REDUCE dtypes.float [71, 70] (Ops.ADD, 0)
+73 Ops.STAGE dtypes.float [72, 67, 68, 69] BufferizeOpts(device="CPU")
+74 Ops.INDEX dtypes.float [73, 62, 63, 64]
+75 Ops.RECIPROCAL dtypes.float [74]
+76 Ops.MUL dtypes.float [66, 75]
+77 Ops.STAGE dtypes.float [76, 62, 63, 64, 65] BufferizeOpts(device="CPU")
+78 Ops.RANGE dtypes.weakint [1] (4, AxisType.REDUCE)
+79 Ops.INDEX dtypes.float [77, 12, 8, 2, 78]
+80 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=128, device="CPU")
+81 Ops.MUL dtypes.weakint [78, 3]
+82 Ops.ADD dtypes.weakint [81, 5]
+83 Ops.ADD dtypes.weakint [82, 10]
+84 Ops.ADD dtypes.weakint [83, 14]
+85 Ops.INDEX dtypes.float [80, 84]
+86 Ops.MUL dtypes.float [79, 85]
+87 Ops.REDUCE dtypes.float [86, 78] (Ops.ADD, 0)
+88 Ops.STORE dtypes.void [16, 87]
+89 Ops.END dtypes.void [88, 12, 8, 2, 5]
+90 Ops.AFTER dtypes.float [0, 89]
+91 Ops.SINK dtypes.void [90]
+

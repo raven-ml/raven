@@ -1,0 +1,46 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 8
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.float [0, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+9 Ops.RANGE dtypes.weakint [1] (8, AxisType.WEAK)
+10 Ops.MUL dtypes.weakint [9, 3]
+11 Ops.RANGE dtypes.weakint [3] (9, AxisType.WEAK)
+12 Ops.ADD dtypes.weakint [10, 11]
+13 Ops.INDEX dtypes.float [8, 12]
+14 Ops.STAGE dtypes.float [13, 9, 11] BufferizeOpts(device="CPU")
+15 Ops.RANGE dtypes.weakint [1] (4, AxisType.WEAK)
+16 Ops.RANGE dtypes.weakint [3] (5, AxisType.WEAK)
+17 Ops.INDEX dtypes.float [14, 15, 16]
+18 Ops.RANGE dtypes.weakint [1] (6, AxisType.WEAK)
+19 Ops.RANGE dtypes.weakint [3] (7, AxisType.REDUCE)
+20 Ops.INDEX dtypes.float [14, 18, 19]
+21 Ops.REDUCE dtypes.float [20, 19] (Ops.MAX, 0)
+22 Ops.STAGE dtypes.float [21, 18] BufferizeOpts(device="CPU")
+23 Ops.INDEX dtypes.float [22, 15]
+24 Ops.CONST dtypes.weakfloat [] -1.0
+25 Ops.MUL dtypes.float [23, 24]
+26 Ops.ADD dtypes.float [17, 25]
+27 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+28 Ops.MUL dtypes.float [26, 27]
+29 Ops.EXP2 dtypes.float [28]
+30 Ops.STAGE dtypes.float [29, 15, 16] BufferizeOpts(device="CPU")
+31 Ops.INDEX dtypes.float [30, 2, 5]
+32 Ops.RANGE dtypes.weakint [1] (2, AxisType.WEAK)
+33 Ops.RANGE dtypes.weakint [3] (3, AxisType.REDUCE)
+34 Ops.INDEX dtypes.float [30, 32, 33]
+35 Ops.REDUCE dtypes.float [34, 33] (Ops.ADD, 0)
+36 Ops.STAGE dtypes.float [35, 32] BufferizeOpts(device="CPU")
+37 Ops.INDEX dtypes.float [36, 2]
+38 Ops.RECIPROCAL dtypes.float [37]
+39 Ops.MUL dtypes.float [31, 38]
+40 Ops.STORE dtypes.void [7, 39]
+41 Ops.END dtypes.void [40, 2, 5]
+42 Ops.AFTER dtypes.float [0, 41]
+43 Ops.SINK dtypes.void [42]
+

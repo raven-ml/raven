@@ -1,0 +1,33 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+6 Ops.RESHAPE dtypes.float [5, 3]
+7 Ops.PERMUTE dtypes.float [6] (1, 0)
+8 Ops.REDUCE dtypes.float [7] (Ops.ADD, 1)
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.STACK dtypes.weakint [1, 9]
+11 Ops.RESHAPE dtypes.float [8, 10]
+12 Ops.CONST dtypes.weakfloat [] 8.0
+13 Ops.RECIPROCAL dtypes.weakfloat [12]
+14 Ops.MUL dtypes.float [11, 13]
+15 Ops.CONST dtypes.weakfloat [] -1.0
+16 Ops.MUL dtypes.float [14, 15]
+17 Ops.ADD dtypes.float [6, 16]
+18 Ops.MUL dtypes.float [17, 17]
+19 Ops.PERMUTE dtypes.float [18] (1, 0)
+20 Ops.REDUCE dtypes.float [19] (Ops.ADD, 1)
+21 Ops.RESHAPE dtypes.float [20, 10]
+22 Ops.CONST dtypes.weakfloat [] 7.0
+23 Ops.RECIPROCAL dtypes.weakfloat [22]
+24 Ops.MUL dtypes.float [21, 23]
+25 Ops.SQRT dtypes.float [24]
+26 Ops.RECIPROCAL dtypes.float [25]
+27 Ops.MUL dtypes.float [17, 26]
+28 Ops.STORE dtypes.void [4, 27]
+29 Ops.AFTER dtypes.float [0, 28]
+30 Ops.SINK dtypes.void [29]
+

@@ -1,0 +1,51 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.STACK dtypes.weakint [1, 1, 2, 3]
+5 Ops.RESHAPE dtypes.float [0, 4]
+6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128, device="CPU")
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.STACK dtypes.weakint [1, 1, 2, 7, 3]
+9 Ops.RESHAPE dtypes.float [6, 8]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=128, device="CPU")
+11 Ops.RESHAPE dtypes.float [10, 4]
+12 Ops.PERMUTE dtypes.float [11] (0, 1, 3, 2)
+13 Ops.STACK dtypes.weakint [1, 1, 7, 3, 2]
+14 Ops.RESHAPE dtypes.float [12, 13]
+15 Ops.PERMUTE dtypes.float [14] (0, 1, 2, 4, 3)
+16 Ops.MUL dtypes.float [9, 15]
+17 Ops.PERMUTE dtypes.float [16] (4, 0, 1, 2, 3)
+18 Ops.REDUCE dtypes.float [17] (Ops.ADD, 1)
+19 Ops.CONST dtypes.weakfloat [] 2.0
+20 Ops.RECIPROCAL dtypes.weakfloat [19]
+21 Ops.MUL dtypes.float [18, 20]
+22 Ops.PERMUTE dtypes.float [21] (3, 0, 1, 2)
+23 Ops.REDUCE dtypes.float [22] (Ops.MAX, 1)
+24 Ops.STACK dtypes.weakint [1, 1, 2, 7]
+25 Ops.RESHAPE dtypes.float [23, 24]
+26 Ops.CONST dtypes.weakfloat [] -1.0
+27 Ops.MUL dtypes.float [25, 26]
+28 Ops.ADD dtypes.float [21, 27]
+29 Ops.CONST dtypes.weakfloat [] 1.4426950408889634
+30 Ops.MUL dtypes.float [28, 29]
+31 Ops.EXP2 dtypes.float [30]
+32 Ops.PERMUTE dtypes.float [31] (3, 0, 1, 2)
+33 Ops.REDUCE dtypes.float [32] (Ops.ADD, 1)
+34 Ops.RESHAPE dtypes.float [33, 24]
+35 Ops.RECIPROCAL dtypes.float [34]
+36 Ops.MUL dtypes.float [31, 35]
+37 Ops.STACK dtypes.weakint [1, 1, 2, 7, 2]
+38 Ops.RESHAPE dtypes.float [36, 37]
+39 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=128, device="CPU")
+40 Ops.STACK dtypes.weakint [1, 1, 7, 2, 3]
+41 Ops.RESHAPE dtypes.float [39, 40]
+42 Ops.PERMUTE dtypes.float [41] (0, 1, 2, 4, 3)
+43 Ops.MUL dtypes.float [38, 42]
+44 Ops.PERMUTE dtypes.float [43] (4, 0, 1, 2, 3)
+45 Ops.REDUCE dtypes.float [44] (Ops.ADD, 1)
+46 Ops.STORE dtypes.void [5, 45]
+47 Ops.AFTER dtypes.float [0, 46]
+48 Ops.SINK dtypes.void [47]
+

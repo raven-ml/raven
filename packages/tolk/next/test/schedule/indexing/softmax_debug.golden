@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+**************************
+***  0 Ops.STORE            (4, 8)                               0 [r0][r1]
+     1 Ops.MUL              (4, 8)                               0 [r0][r1]
+     1 Ops.RECIPROCAL       (4, 1)                               1 [r0][0]
+     1 Ops.RESHAPE          (4, 1)                               1 [r0] -> [r0][0]
+***  1 Ops.REDUCE           (4,)                                 0 [r3][r2] -> [r2]
+     1 Ops.PERMUTE          (8, 4)                               0 [r2 -> r3][r3 -> r2]
+***  2 Ops.EXP2             (4, 8)                               0 [r4][r5]
+     1 Ops.MUL              (4, 8)                               0 [r4][r5]
+     1 Ops.CONST            ()                                   2 
+     1 Ops.ADD              (4, 8)                               0 [r4][r5]
+     1 Ops.MUL              (4, 1)                               1 [r4][0]
+     1 Ops.CONST            ()                                   2 
+     1 Ops.RESHAPE          (4, 1)                               1 [r4] -> [r4][0]
+***  1 Ops.REDUCE           (4,)                                 0 [r7][r6] -> [r6]
+     1 Ops.PERMUTE          (8, 4)                               0 [r6 -> r7][r7 -> r6]
+***  2 Ops.RESHAPE          (4, 8)                               0 [(r8*8+r9)] -> [r8][r9]
+     1 Ops.PARAM            (32,)                                0 [(r8*8+r9)]
+     1 Ops.RESHAPE          (4, 8)                               0 [(r0*8+r1)] -> [r0][r1]
+     2 Ops.PARAM            (32,)                                0 [(r0*8+r1)]

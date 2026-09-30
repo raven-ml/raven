@@ -1,0 +1,57 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=12, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.float [0, 6]
+8 Ops.ALLOC dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=3, device="CPU")
+9 Ops.RANGE dtypes.weakint [1] (6, AxisType.WEAK)
+10 Ops.INDEX dtypes.int [8, 9]
+11 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=3, device="PYTHON")
+12 Ops.INDEX dtypes.int [11, 9]
+13 Ops.STORE dtypes.void [10, 12]
+14 Ops.END dtypes.void [13, 9]
+15 Ops.AFTER dtypes.int [8, 14]
+16 Ops.RANGE dtypes.weakint [1] (5, AxisType.WEAK)
+17 Ops.INDEX dtypes.int [15, 16]
+18 Ops.CONST dtypes.weakint [] 0
+19 Ops.CMPLT dtypes.bool [17, 18]
+20 Ops.CONST dtypes.weakint [] 10
+21 Ops.ADD dtypes.int [17, 20]
+22 Ops.WHERE dtypes.int [19, 21, 17]
+23 Ops.STAGE dtypes.int [22, 16] BufferizeOpts(device="CPU")
+24 Ops.INDEX dtypes.int [23, 2]
+25 Ops.CONST dtypes.bool [] True
+26 Ops.RANGE dtypes.weakint [20] (3, AxisType.WEAK)
+27 Ops.RANGE dtypes.weakint [20] (4, AxisType.REDUCE)
+28 Ops.ADD dtypes.weakint [26, 27]
+29 Ops.CONST dtypes.weakint [] 9
+30 Ops.CMPLT dtypes.bool [28, 29]
+31 Ops.CMPNE dtypes.bool [30, 25]
+32 Ops.AND dtypes.bool [25, 31]
+33 Ops.CONST dtypes.weakint [] 1
+34 Ops.CAST dtypes.int [33] dtypes.int
+35 Ops.WHERE dtypes.int [32, 34, 18]
+36 Ops.REDUCE dtypes.int [35, 27] (Ops.ADD, 0)
+37 Ops.CONST dtypes.weakint [] -1
+38 Ops.ADD dtypes.int [36, 37]
+39 Ops.STAGE dtypes.int [38, 26] BufferizeOpts(device="CPU")
+40 Ops.RANGE dtypes.weakint [20] (2, AxisType.REDUCE)
+41 Ops.INDEX dtypes.int [39, 40]
+42 Ops.CMPNE dtypes.bool [24, 41]
+43 Ops.CMPNE dtypes.bool [42, 25]
+44 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=40, device="CPU")
+45 Ops.MUL dtypes.weakint [40, 3]
+46 Ops.ADD dtypes.weakint [45, 5]
+47 Ops.INDEX dtypes.float [44, 46]
+48 Ops.CONST dtypes.weakfloat [] 0.0
+49 Ops.WHERE dtypes.float [43, 47, 48]
+50 Ops.REDUCE dtypes.float [49, 40] (Ops.ADD, 0)
+51 Ops.STORE dtypes.void [7, 50]
+52 Ops.END dtypes.void [51, 2, 5]
+53 Ops.AFTER dtypes.float [0, 52]
+54 Ops.SINK dtypes.void [53]
+

@@ -1,0 +1,58 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CONST dtypes.weakint [] 16
+3 Ops.STACK dtypes.weakint [1, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.STACK dtypes.weakint [5, 5]
+7 Ops.SHRINK dtypes.float [4, 6, 3]
+8 Ops.ALLOC dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=64, device="CPU")
+9 Ops.RESHAPE dtypes.float [8, 3]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256, device="CPU")
+11 Ops.CONST dtypes.weakint [] 64
+12 Ops.STACK dtypes.weakint [1, 11]
+13 Ops.RESHAPE dtypes.float [10, 12]
+14 Ops.SHRINK dtypes.float [13, 6, 3]
+15 Ops.STORE dtypes.void [9, 14]
+16 Ops.AFTER dtypes.float [8, 15]
+17 Ops.RESHAPE dtypes.float [16, 3]
+18 Ops.ALLOC dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=64, device="CPU:1")
+19 Ops.ALLOC dtypes.float [] ParamArg(slot=5, dtype=dtypes.float, size=64, device="CPU")
+20 Ops.RESHAPE dtypes.float [19, 3]
+21 Ops.STACK dtypes.weakint [5, 2]
+22 Ops.SHRINK dtypes.float [13, 21, 3]
+23 Ops.STORE dtypes.void [20, 22]
+24 Ops.AFTER dtypes.float [19, 23]
+25 Ops.STORE dtypes.void [18, 24]
+26 Ops.AFTER dtypes.float [18, 25]
+27 Ops.RESHAPE dtypes.float [26, 3]
+28 Ops.ALLOC dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=64, device="CPU:2")
+29 Ops.ALLOC dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=64, device="CPU")
+30 Ops.RESHAPE dtypes.float [29, 3]
+31 Ops.CONST dtypes.weakint [] 32
+32 Ops.STACK dtypes.weakint [5, 31]
+33 Ops.SHRINK dtypes.float [13, 32, 3]
+34 Ops.STORE dtypes.void [30, 33]
+35 Ops.AFTER dtypes.float [29, 34]
+36 Ops.STORE dtypes.void [28, 35]
+37 Ops.AFTER dtypes.float [28, 36]
+38 Ops.RESHAPE dtypes.float [37, 3]
+39 Ops.ALLOC dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=64, device="CPU:3")
+40 Ops.ALLOC dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=64, device="CPU")
+41 Ops.RESHAPE dtypes.float [40, 3]
+42 Ops.CONST dtypes.weakint [] 48
+43 Ops.STACK dtypes.weakint [5, 42]
+44 Ops.SHRINK dtypes.float [13, 43, 3]
+45 Ops.STORE dtypes.void [41, 44]
+46 Ops.AFTER dtypes.float [40, 45]
+47 Ops.STORE dtypes.void [39, 46]
+48 Ops.AFTER dtypes.float [39, 47]
+49 Ops.RESHAPE dtypes.float [48, 3]
+50 Ops.MSTACK dtypes.float [17, 27, 38, 49]
+51 Ops.CONST dtypes.weakfloat [] 1.0
+52 Ops.ADD dtypes.float [50, 51]
+53 Ops.STORE dtypes.void [7, 52]
+54 Ops.AFTER dtypes.float [0, 53]
+55 Ops.SINK dtypes.void [54]
+

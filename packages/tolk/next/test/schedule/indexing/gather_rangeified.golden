@@ -1,0 +1,51 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=2, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.ALLOC dtypes.int [] ParamArg(slot=3, dtype=dtypes.int, size=2, device="CPU")
+5 Ops.RANGE dtypes.weakint [1] (5, AxisType.WEAK)
+6 Ops.INDEX dtypes.int [4, 5]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=2, device="PYTHON")
+8 Ops.INDEX dtypes.int [7, 5]
+9 Ops.STORE dtypes.void [6, 8]
+10 Ops.END dtypes.void [9, 5]
+11 Ops.AFTER dtypes.int [4, 10]
+12 Ops.INDEX dtypes.int [11, 2]
+13 Ops.CONST dtypes.bool [] True
+14 Ops.CONST dtypes.weakint [] 8
+15 Ops.RANGE dtypes.weakint [14] (3, AxisType.WEAK)
+16 Ops.RANGE dtypes.weakint [14] (4, AxisType.REDUCE)
+17 Ops.ADD dtypes.weakint [15, 16]
+18 Ops.CONST dtypes.weakint [] 7
+19 Ops.CMPLT dtypes.bool [17, 18]
+20 Ops.CMPNE dtypes.bool [19, 13]
+21 Ops.AND dtypes.bool [13, 20]
+22 Ops.CONST dtypes.weakint [] 1
+23 Ops.CAST dtypes.int [22] dtypes.int
+24 Ops.CONST dtypes.weakint [] 0
+25 Ops.WHERE dtypes.int [21, 23, 24]
+26 Ops.REDUCE dtypes.int [25, 16] (Ops.ADD, 0)
+27 Ops.STAGE dtypes.int [26, 15] BufferizeOpts(device="CPU")
+28 Ops.RANGE dtypes.weakint [14] (1, AxisType.REDUCE)
+29 Ops.INDEX dtypes.int [27, 28]
+30 Ops.CONST dtypes.weakint [] -1
+31 Ops.ADD dtypes.int [29, 30]
+32 Ops.CMPNE dtypes.bool [12, 31]
+33 Ops.CMPNE dtypes.bool [32, 13]
+34 Ops.ALLOC dtypes.int [] ParamArg(slot=4, dtype=dtypes.int, size=8, device="CPU")
+35 Ops.RANGE dtypes.weakint [14] (2, AxisType.WEAK)
+36 Ops.INDEX dtypes.int [34, 35]
+37 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=8, device="PYTHON")
+38 Ops.INDEX dtypes.int [37, 35]
+39 Ops.STORE dtypes.void [36, 38]
+40 Ops.END dtypes.void [39, 35]
+41 Ops.AFTER dtypes.int [34, 40]
+42 Ops.INDEX dtypes.int [41, 28]
+43 Ops.WHERE dtypes.int [33, 42, 24]
+44 Ops.REDUCE dtypes.int [43, 28] (Ops.ADD, 0)
+45 Ops.STORE dtypes.void [3, 44]
+46 Ops.END dtypes.void [45, 2]
+47 Ops.AFTER dtypes.int [0, 46]
+48 Ops.SINK dtypes.void [47]
+

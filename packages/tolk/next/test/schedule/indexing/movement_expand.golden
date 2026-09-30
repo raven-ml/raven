@@ -1,0 +1,5 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.RANGE dtypes.weakint [0] (2, AxisType.WEAK)
+2 Ops.SINK dtypes.void [1]
+

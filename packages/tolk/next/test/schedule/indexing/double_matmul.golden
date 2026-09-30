@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256, device="CPU")
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.STACK dtypes.weakint [1, 1]
+3 Ops.RESHAPE dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256, device="CPU")
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.STACK dtypes.weakint [1, 5, 1]
+7 Ops.RESHAPE dtypes.float [4, 6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=256, device="CPU")
+9 Ops.STACK dtypes.weakint [5, 1, 1]
+10 Ops.RESHAPE dtypes.float [8, 9]
+11 Ops.PERMUTE dtypes.float [10] (0, 2, 1)
+12 Ops.MUL dtypes.float [7, 11]
+13 Ops.PERMUTE dtypes.float [12] (2, 0, 1)
+14 Ops.REDUCE dtypes.float [13] (Ops.ADD, 1)
+15 Ops.RESHAPE dtypes.float [14, 6]
+16 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=256, device="CPU")
+17 Ops.RESHAPE dtypes.float [16, 9]
+18 Ops.PERMUTE dtypes.float [17] (0, 2, 1)
+19 Ops.MUL dtypes.float [15, 18]
+20 Ops.PERMUTE dtypes.float [19] (2, 0, 1)
+21 Ops.REDUCE dtypes.float [20] (Ops.ADD, 1)
+22 Ops.STORE dtypes.void [3, 21]
+23 Ops.AFTER dtypes.float [0, 22]
+24 Ops.SINK dtypes.void [23]
+

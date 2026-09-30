@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+**************************
+***  0 Ops.STORE            (6,)                                 0 [r0]
+     1 Ops.REDUCE           (6,)                                 0 [r1][r0] -> [r0]
+     1 Ops.PAD              (6, 6)                               0 [((r1+-1) if (((r1<1)!=True)&(r1<5)) else Invalid) -> r1][((r0+-1) if (((r0<1)!=True)&(r0<5)) else Invalid) -> r0]
+     1 Ops.RESHAPE          (4, 4)                               0 [((r1*4+r0+-5) if (((r0<1)!=True)&(r0<5)&(((r1<1)!=True)&(r1<5))) else Invalid)] -> [((r1+-1) if (((r1<1)!=True)&(r1<5)) else Invalid)][((r0+-1) if (((r0<1)!=True)&(r0<5)) else Invalid)]
+     1 Ops.PARAM            (16,)                                0 [((r1*4+r0+-5) if (((r0<1)!=True)&(r0<5)&(((r1<1)!=True)&(r1<5))) else Invalid)]
+     2 Ops.PARAM            (6,)                                 0 [r0]

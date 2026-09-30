@@ -1,0 +1,127 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU")
+1 Ops.CONST dtypes.weakint [] 1
+2 Ops.CONST dtypes.weakint [] 8
+3 Ops.STACK dtypes.weakint [1, 1, 2, 2]
+4 Ops.RESHAPE dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 48
+6 Ops.CAST dtypes.int [1] dtypes.int
+7 Ops.EXPAND dtypes.int [6, 2]
+8 Ops.CONST dtypes.weakint [] 7
+9 Ops.CONST dtypes.weakint [] 15
+10 Ops.PAD dtypes.int [7, 8, 9]
+11 Ops.CONST dtypes.weakint [] 9
+12 Ops.EXPAND dtypes.int [10, 11]
+13 Ops.CONST dtypes.weakint [] 135
+14 Ops.RESHAPE dtypes.int [12, 13]
+15 Ops.CONST dtypes.weakint [] 0
+16 Ops.CONST dtypes.weakint [] 128
+17 Ops.SHRINK dtypes.int [14, 15, 16]
+18 Ops.CONST dtypes.weakint [] 16
+19 Ops.STACK dtypes.weakint [2, 18]
+20 Ops.RESHAPE dtypes.int [17, 19]
+21 Ops.STACK dtypes.weakint [15, 15]
+22 Ops.STACK dtypes.weakint [2, 2]
+23 Ops.SHRINK dtypes.int [20, 21, 22]
+24 Ops.REDUCE dtypes.int [23] (Ops.ADD, 1)
+25 Ops.CONST dtypes.weakint [] -1
+26 Ops.ADD dtypes.int [24, 25]
+27 Ops.CONST dtypes.weakint [] 2
+28 Ops.MUL dtypes.int [26, 27]
+29 Ops.ADD dtypes.int [28, 1]
+30 Ops.CONST dtypes.weakint [] 4
+31 Ops.MUL dtypes.int [29, 30]
+32 Ops.MUL dtypes.weakint [2, 25]
+33 Ops.ADD dtypes.int [31, 32]
+34 Ops.CMPLT dtypes.bool [33, 15]
+35 Ops.WHERE dtypes.int [34, 15, 33]
+36 Ops.CMPLT dtypes.bool [5, 35]
+37 Ops.WHERE dtypes.int [36, 5, 35]
+38 Ops.FLOORDIV dtypes.int [37, 18]
+39 Ops.STACK dtypes.weakint [1, 1, 2]
+40 Ops.RESHAPE dtypes.int [38, 39]
+41 Ops.EXPAND dtypes.int [40, 2]
+42 Ops.PERMUTE dtypes.int [41] (1, 2, 3, 0)
+43 Ops.STACK dtypes.weakint [1, 1, 2, 2, 1]
+44 Ops.RESHAPE dtypes.int [42, 43]
+45 Ops.EXPAND dtypes.int [6, 30]
+46 Ops.CONST dtypes.weakint [] 3
+47 Ops.PAD dtypes.int [45, 46, 8]
+48 Ops.CONST dtypes.weakint [] 5
+49 Ops.EXPAND dtypes.int [47, 48]
+50 Ops.CONST dtypes.weakint [] 35
+51 Ops.RESHAPE dtypes.int [49, 50]
+52 Ops.CONST dtypes.weakint [] 32
+53 Ops.SHRINK dtypes.int [51, 15, 52]
+54 Ops.STACK dtypes.weakint [30, 2]
+55 Ops.RESHAPE dtypes.int [53, 54]
+56 Ops.STACK dtypes.weakint [30, 30]
+57 Ops.SHRINK dtypes.int [55, 21, 56]
+58 Ops.REDUCE dtypes.int [57] (Ops.ADD, 1)
+59 Ops.ADD dtypes.int [58, 25]
+60 Ops.CMPNE dtypes.bool [44, 59]
+61 Ops.CONST dtypes.bool [] True
+62 Ops.CMPNE dtypes.bool [60, 61]
+63 Ops.EXPAND dtypes.int [40, 30]
+64 Ops.PERMUTE dtypes.int [63] (1, 2, 0, 3)
+65 Ops.STACK dtypes.weakint [1, 1, 30, 2, 1]
+66 Ops.RESHAPE dtypes.int [64, 65]
+67 Ops.CMPNE dtypes.bool [66, 59]
+68 Ops.CMPNE dtypes.bool [67, 61]
+69 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+70 Ops.STACK dtypes.weakint [1, 1, 30, 30, 1]
+71 Ops.RESHAPE dtypes.float [69, 70]
+72 Ops.PERMUTE dtypes.float [71] (0, 1, 2, 4, 3)
+73 Ops.CONST dtypes.weakfloat [] 0.0
+74 Ops.WHERE dtypes.float [68, 72, 73]
+75 Ops.PERMUTE dtypes.float [74] (4, 0, 1, 2, 3)
+76 Ops.REDUCE dtypes.float [75] (Ops.ADD, 1)
+77 Ops.ADD dtypes.int [37, 18]
+78 Ops.MUL dtypes.weakint [1, 25]
+79 Ops.ADD dtypes.int [77, 78]
+80 Ops.FLOORDIV dtypes.int [79, 18]
+81 Ops.RESHAPE dtypes.int [80, 39]
+82 Ops.EXPAND dtypes.int [81, 30]
+83 Ops.PERMUTE dtypes.int [82] (1, 2, 0, 3)
+84 Ops.RESHAPE dtypes.int [83, 65]
+85 Ops.CMPNE dtypes.bool [84, 59]
+86 Ops.CMPNE dtypes.bool [85, 61]
+87 Ops.WHERE dtypes.float [86, 72, 73]
+88 Ops.PERMUTE dtypes.float [87] (4, 0, 1, 2, 3)
+89 Ops.REDUCE dtypes.float [88] (Ops.ADD, 1)
+90 Ops.CONST dtypes.weakfloat [] -1.0
+91 Ops.MUL dtypes.float [76, 90]
+92 Ops.ADD dtypes.float [89, 91]
+93 Ops.FLOORMOD dtypes.int [37, 18]
+94 Ops.CAST dtypes.float [93] dtypes.float
+95 Ops.CONST dtypes.weakfloat [] 16.0
+96 Ops.RECIPROCAL dtypes.weakfloat [95]
+97 Ops.MUL dtypes.float [94, 96]
+98 Ops.RESHAPE dtypes.float [97, 39]
+99 Ops.EXPAND dtypes.float [98, 30]
+100 Ops.PERMUTE dtypes.float [99] (1, 2, 0, 3)
+101 Ops.MUL dtypes.float [92, 100]
+102 Ops.ADD dtypes.float [76, 101]
+103 Ops.RESHAPE dtypes.float [102, 65]
+104 Ops.PERMUTE dtypes.float [103] (0, 1, 4, 3, 2)
+105 Ops.WHERE dtypes.float [62, 104, 73]
+106 Ops.PERMUTE dtypes.float [105] (4, 0, 1, 2, 3)
+107 Ops.REDUCE dtypes.float [106] (Ops.ADD, 1)
+108 Ops.EXPAND dtypes.int [81, 2]
+109 Ops.PERMUTE dtypes.int [108] (1, 2, 3, 0)
+110 Ops.RESHAPE dtypes.int [109, 43]
+111 Ops.CMPNE dtypes.bool [110, 59]
+112 Ops.CMPNE dtypes.bool [111, 61]
+113 Ops.WHERE dtypes.float [112, 104, 73]
+114 Ops.PERMUTE dtypes.float [113] (4, 0, 1, 2, 3)
+115 Ops.REDUCE dtypes.float [114] (Ops.ADD, 1)
+116 Ops.MUL dtypes.float [107, 90]
+117 Ops.ADD dtypes.float [115, 116]
+118 Ops.EXPAND dtypes.float [98, 2]
+119 Ops.PERMUTE dtypes.float [118] (1, 2, 3, 0)
+120 Ops.MUL dtypes.float [117, 119]
+121 Ops.ADD dtypes.float [107, 120]
+122 Ops.STORE dtypes.void [4, 121]
+123 Ops.AFTER dtypes.float [0, 122]
+124 Ops.SINK dtypes.void [123]
+

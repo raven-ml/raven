@@ -1688,3 +1688,79 @@ of MTLCompiler itself skip elsewhere than on macOS.
 | D15 | making the compiler loads nothing; the first compile raises | `M › without MTLCompiler on the machine › a compile raises Compile_error naming MTLCompiler and MTLCOMPILER_PATH`; `M › a library that does not load` (4 tests) |
 | tinygrad: `external/external_metal_compile_fail.py` | a kernel that crashed Metal's compiler | dropped: a crash reproducer of a driver bug, outside tinygrad's suite |
 | old: `unit/test_runtime_metal.ml` "compile and run one kernel" | | dropped: running is the device's; compiling is `M › MTLCompiler › compiles a kernel to a Metal library` |
+
+## Indexing
+
+The suite is `Tolk_next.Indexing` (`schedule/indexing/`), written `IX` below.
+`IX › apply_movement_op` holds tinygrad's index of each movement on hand-built
+cases (`movement_<case>.golden`), and `IX › apply_movement_op › laws` states,
+per kind of movement over generated shapes, that the index reads the element
+the movement places there (`Tensors`, the `Interpreter`) and that the indices
+of two movements compose. `IX › run_rangeify › recorded graphs` holds, for
+each `Tensor` program, the graph tinygrad hands `run_rangeify` when it
+schedules the program on the CPU and what `run_rangeify` returns
+(`<program>_rangeified.golden`), and a few hand-built graphs; `IX ›
+run_rangeify › writes` states that ranges keep what a program writes, where
+the result is one kernel; `IX › run_rangeify › debug` holds the printout; the
+other groups state the interface's rules one at a time. One mutant survives,
+equivalent: `i < data_src_count` as `<=` in `indexing.ml`'s indexing of
+sources, since only a movement has storage past its data sources, and
+movements are removed afterwards.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul | two matmuls in a row | `IX › run_rangeify › recorded graphs › double_matmul_rangeified.golden`; the numbers are the executor's (rune) |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyAssign::test_assign_permuted | an assign through a permute | `IX › run_rangeify › recorded graphs › assign_permuted_rangeified.golden`; `IX › run_rangeify › writes › assign_permuted writes what its tensors write` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_stack_data | a stack of variables used as data gets ranges | `IX › run_rangeify › recorded graphs › variable_stack_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_data_and_shape | a variable read as data and as a size | `IX › run_rangeify › recorded graphs › variable_data_and_shape_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_matmul_relu_cat | a matmul concatenated to a buffer | `IX › run_rangeify › recorded graphs › matmul_relu_cat_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_multi_gather | two gathers of one table, a stage placed on a device | `IX › run_rangeify › recorded graphs › two_gathers_rangeified.golden`; `IX › run_rangeify › rewrites › a stage of a value placed nowhere lives on the sink's device` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyPM (7 tests) | `pm_rangeify` | dropped: skipped upstream, the matcher no longer exists |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_double_diamond_reduce | a value stored into storage it reads is stored first | `IX › run_rangeify › recorded graphs › assign_double_diamond_rangeified.golden`; `IX › run_rangeify › stores › a value stored into storage it reads is stored whole first` |
+| tinygrad: runtime/test_custom_kernel.py (the kernels' sources) | a source of a kernel given as code is stored, and stays | `IX › run_rangeify › recorded graphs › custom_kernel_rangeified.golden` (its stage is not removable) |
+| tinygrad: null/test_schedule.py::TestSchedule::test_basic_binop_fusion, test_basic_binop_fusion_deep, test_mulacc_fusion, test_binop_reshape_fusion, test_binop_permute_fusion, test_reduce_reshape_binop_fusion, test_reduce_permute_binop_fusion, test_diamond_folded, test_fold_double_unary, test_push_permute_through_reshape, test_children_dont_push, test_shrink_fuse, test_reduce_permute_nofuse, test_multistage_reduce, test_two_sum, test_contiguous_add, test_reduce_shrink | what these programs store whole | `IX › run_rangeify › recorded graphs ›` `elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `reduce_reshape_binop`, `reduce_permute_binop`, `shared_sum`, `reduce_unary`, `permute_through_reshape`, `children_dont_push`, `shrink_fuse`, `reduce_permute_nofuse`, `multistage_reduce`, `two_consumers`, `contiguous_add`, `reduce_shrink` (`_rangeified.golden`) and the writes law on each that is one kernel; the kernel counts are Rangeify's section (L6), which splits kernels |
+| tinygrad: null/test_schedule.py::TestSchedule::test_pad_reduce_safe, test_layernorm_onelayer, test_argmax, test_argmax_one_kernel, test_conv2d, test_resnet_block | pads under reductions, norms, argmax, convolutions | `IX › run_rangeify › recorded graphs › pad_reduce`, `layernorm`, `standardize`, `rmsnorm`, `argmax`, `conv`, `conv_bn_relu` (`_rangeified.golden`); the kernel counts are Rangeify's section |
+| tinygrad: null/test_schedule.py (the other kernel-count tests of TestSchedule, TestContiguous, TestSimpleSchedule, TestFusionOp, TestBufferView, TestLimitBufs, TestCopyFolding) | kernel counts of the whole scheduler | dropped here: Rangeify's section (L6); every behaviour of `run_rangeify` they reach is one of the rules and recorded graphs above |
+| tinygrad: null/test_arange.py, runtime/test_arange.py | aranges, gathers and embeddings compile to few operations | `IX › run_rangeify › recorded graphs › arange`, `embedding`, `gather`, `two_gathers`, `cumsum`, `triu` (`_rangeified.golden`); the operation counts are Simplify's and Codegen's sections |
+| tinygrad: external/external_test_schedule_scaling.py | scheduling time grows linearly | dropped: a timing benchmark |
+| tinygrad: external/external_uop_gc.py (`apply_movement_op.cache_clear`) | the cache of indices releases its graphs | dropped: tinygrad's `functools.cache`; the port memoizes nothing |
+
+### old tolk: unit/test_schedule_rangeify.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/test_schedule_rangeify.ml group "is_always_contiguous" (13 tests) | which nodes are storage | the set is private; storage sources of a gather across devices are not stored (`IX › run_rangeify › recorded graphs › shard_sum_rangeified.golden`), computed ones are (`IX › run_rangeify › rewrites › a source of a gather across devices is stored on its device`), and so are a custom kernel's (`custom_kernel_rangeified.golden`). `CONTIGUOUS` and `COPY` are no storage in tinygrad (a copy is a store before rangeify) |
+| old: unit/test_schedule_rangeify.ml "size 1 gives const 0", "symbolic size resolving to 1 gives const 0" | a unit axis gets no range | `IX › run_rangeify › new ranges › a stored node gets a range per axis, and a unit axis none`; a size that folds to 1 is `Int 1` before rangeify |
+| old: unit/test_schedule_rangeify.ml "size 0 gives Range (resolve(s!=1) is true)" | | `IX › run_rangeify › new ranges › an empty axis gets a range` |
+| old: unit/test_schedule_rangeify.ml "size > 1 gives Range", "axis increments", "kind propagates" | | `IX › run_rangeify › new ranges › the axes a reduction reduces get reduce ranges, numbered after` |
+| old: unit/test_schedule_rangeify.ml "range size returns existing range" | an axis whose size is a range reuses it, and takes no number | `IX › run_rangeify › rewrites › a stored axis whose size is a range is indexed by that range`; `expand_by_range_stored_rangeified.golden` (new ranges 0 to 2 around range 7) |
+| old: unit/test_schedule_rangeify.ml group "range helpers" (2 tests) | `get_idx` and `get_valid` | dropped here: Ops' section |
+| old: unit/test_schedule_rangeify.ml groups "apply_movement_op › shrink", "› flip" (4 tests) | | `IX › apply_movement_op › movement_shrink.golden`, `movement_flip.golden`; the shrink and flip laws |
+| old: unit/test_schedule_rangeify.ml "swap [1;0]" | | `movement_permute.golden`; the permute laws |
+| old: unit/test_schedule_rangeify.ml "identity elides at construction" | | dropped here: `Ops.mop`'s, Ops' section |
+| old: unit/test_schedule_rangeify.ml group "apply_movement_op › expand" (3 tests) | | `movement_expand.golden`, `movement_expand_symbolic.golden`; the expand laws |
+| old: unit/test_schedule_rangeify.ml group "apply_movement_op › pad" (4 tests) | an unpadded axis passes, a padded one is valid within its source, at either end, of symbolic size | `movement_pad.golden`, `movement_pad_end.golden`, `movement_pad_symbolic.golden`; the pad laws |
+| old: unit/test_schedule_rangeify.ml group "apply_movement_op › reshape" (4 tests) | | `movement_reshape_flatten.golden`, `movement_reshape_unflatten.golden`, `movement_reshape_symbolic.golden`; the reshape laws (a reshape to the same shape among them) |
+| old: unit/test_schedule_rangeify.ml "realized node creates Realized", "realized node has range_map entry", "2D realized node has all axes" | | the map is private: `IX › run_rangeify › new ranges › a stored node gets a range per axis, and a unit axis none`; `IX › run_rangeify › stores › a stored store is closed by an end over its ranges` |
+| old: unit/test_schedule_rangeify.ml "the apply pass adds no map entries" | nodes that differ only in movements keep their own ranks | `IX › run_rangeify › recorded graphs › scalar_and_wide_uses_rangeified.golden` (the same graph) |
+| old: unit/test_schedule_rangeify.ml "elementwise inherits consumer ranges" | | `IX › run_rangeify › new ranges › consumers that index a node alike share its ranges` |
+| old: unit/test_schedule_rangeify.ml "reduce creates reduce-kind ranges" | | `IX › run_rangeify › new ranges › the axes a reduction reduces get reduce ranges, numbered after` |
+| old: unit/test_schedule_rangeify.ml "movement op has different in and out ranges" | | `IX › run_rangeify › debug › *_debug.golden` (a movement prints its source's ranges, then its own) |
+| old: unit/test_schedule_rangeify.ml "symbolic param shape creates symbolic range size" | | `IX › run_rangeify › recorded graphs › variable_shrink_rangeified.golden`, `variable_offset_rangeified.golden` |
+| old: unit/test_schedule_rangeify.ml "reduce indexes direct source before lowering" | | `IX › run_rangeify › rewrites › a reduction of leading axes becomes a reduction over ranges`; `sum_rangeified.golden` |
+| old: unit/test_schedule_rangeify.ml "pad where uses indexed child" | | `IX › run_rangeify › rewrites › a pad becomes a selection of its source and of zero`; `pad_rangeified.golden` |
+| old: unit/test_schedule_rangeify.ml "staged elementwise indexes raw params" | a stage's source reads storage through its ranges | `IX › run_rangeify › recorded graphs › two_consumers_permuted_rangeified.golden`, `shared_view_rangeified.golden` |
+| old: unit/test_schedule_rangeify.ml "partial reshape index maps to source prefix" | `apply_movement_op` on a prefix of a shape | the reshape laws (the prefix is a shape of its own); the call is Prepare's section |
+| old: unit/test_schedule_rangeify.ml group "get_kernel_graph" (13 pipeline tests), group "reshape merge" | kernel counts of fusions | the programs are recorded here (see the tinygrad row of test_schedule.py; "reshape chain" is `reshape_chain_rangeified.golden`); the counts and "rejects distinct written states" are Rangeify's section |
+| old: unit/test_schedule_rangeify.ml group "stack selection" (5 tests) | a selection of 1, 8, 9, 17 and 1024 sources picks each and nests in logarithmic depth | `IX › run_rangeify › stacks › a stack of <n> constants writes each` (1, 8, 9, 17, 100); `IX › run_rangeify › stacks › a stack of <n> constants selects the last at a negative index, in logarithmic depth` (2, 8, 9, 17, 1024); `stack_eight_rangeified.golden`, `stack_twelve_rangeified.golden`. An index past the last source is dropped: the interface states only a negative one, and ranges never leave the stack |
+| old: unit/test_schedule_rangeify.ml groups "split_reduce", "symbolic variables", "stage capacity", "symbolic empty shapes", "moved materializations", "symbolic storage views", "packed argument buffer limits", "kernel splitting preserves independent symbolic ranges", "Shape queries release graphs" | | dropped here: Rangeify's, Prepare's and Ops' sections |
+
+### old tolk: golden/rangeify
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: golden/rangeify `binop_permute`, `binop_reshape`, `contiguous_add`, `diamond`, `elementwise_3way`, `elementwise_add`, `expand_permute`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_sum` (each on 5 renderers) | the kernels of each program | the ranges: `IX › run_rangeify › recorded graphs ›` `binop_permute`, `binop_reshape`, `contiguous_add`, `shared_sum`, `elementwise_three`, `add`, `children_dont_push`, `mulacc`, `multistage_reduce`, `permute_through_reshape`, `reduce_permute_binop`, `reduce_reshape_binop`, `reduce_shrink`, `reduce_unary`, `reshape_chain`, `shrink_fuse`, `two_consumers`; the rendered sources are the renderers' and the end-to-end suites (L4, L5) |
+| old: golden/rangeify `llama_*` (5 cases), `test_llama.ml` | a small Llama's kernels | dropped here: the end-to-end suite; its operations are recorded here as `rmsnorm`, `attention`, `softmax`, `matmul`, `embedding` |
+
