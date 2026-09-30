@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+end_of_ranges	0
+end_of_an_expression	1
+end_of_an_expression_and_a_range	2
+end_of_a_repeated_range	3
+end_of_a_dependent_range_first	4
+end_of_nothing	5
+end_of_a_constant	6
+reduce_of_ranges	7
+reduce_of_an_expression	8
+reduce_of_a_repeated_range	9
+reduce_of_nothing	10
+reduce_of_an_expression_inside_a_range	11

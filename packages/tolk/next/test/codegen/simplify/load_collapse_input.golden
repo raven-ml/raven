@@ -1,0 +1,79 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 3
+1 Ops.CONST dtypes.weakint [] 10
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.REDUCE)
+3 Ops.CMPNE dtypes.bool [0, 2]
+4 Ops.CONST dtypes.weakfloat [] 0.0
+5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=10)
+6 Ops.INDEX dtypes.float [5, 2]
+7 Ops.WHERE dtypes.float [3, 4, 6]
+8 Ops.REDUCE dtypes.float [7, 2] (Ops.ADD, 0)
+9 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name="label", addrspace=AddrSpace.ALU)
+10 Ops.CMPNE dtypes.bool [9, 2]
+11 Ops.WHERE dtypes.float [10, 4, 6]
+12 Ops.REDUCE dtypes.float [11, 2] (Ops.ADD, 0)
+13 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4)
+14 Ops.CONST dtypes.weakint [] 0
+15 Ops.INDEX dtypes.int [13, 14]
+16 Ops.CAST dtypes.weakint [15] dtypes.weakint
+17 Ops.CMPNE dtypes.bool [16, 2]
+18 Ops.WHERE dtypes.float [17, 4, 6]
+19 Ops.REDUCE dtypes.float [18, 2] (Ops.ADD, 0)
+20 Ops.CAST dtypes.int [2] dtypes.int
+21 Ops.CMPNE dtypes.bool [15, 20]
+22 Ops.WHERE dtypes.float [21, 4, 6]
+23 Ops.REDUCE dtypes.float [22, 2] (Ops.ADD, 0)
+24 Ops.CONST dtypes.weakint [] 2
+25 Ops.CAST dtypes.int [24] dtypes.int
+26 Ops.ADD dtypes.int [15, 25]
+27 Ops.CMPNE dtypes.bool [26, 20]
+28 Ops.WHERE dtypes.float [27, 4, 6]
+29 Ops.REDUCE dtypes.float [28, 2] (Ops.ADD, 0)
+30 Ops.CMPNE dtypes.bool [2, 2]
+31 Ops.WHERE dtypes.float [30, 4, 6]
+32 Ops.REDUCE dtypes.float [31, 2] (Ops.ADD, 0)
+33 Ops.CONST dtypes.bool [] True
+34 Ops.CMPNE dtypes.bool [10, 33]
+35 Ops.CAST dtypes.float [34] dtypes.float
+36 Ops.MUL dtypes.float [6, 35]
+37 Ops.REDUCE dtypes.float [36, 2] (Ops.ADD, 0)
+38 Ops.RANGE dtypes.weakint [0] (1, AxisType.REDUCE)
+39 Ops.REDUCE dtypes.float [11, 2, 38] (Ops.ADD, 0)
+40 Ops.CAST dtypes.float [4] dtypes.float
+41 Ops.WHERE dtypes.float [10, 40, 6]
+42 Ops.REDUCE dtypes.float [41, 2] (Ops.ADD, 0)
+43 Ops.REDUCE dtypes.float [11, 2] (Ops.MAX, 0)
+44 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 20), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+45 Ops.ADD dtypes.int [44, 25]
+46 Ops.CAST dtypes.weakint [45] dtypes.weakint
+47 Ops.CMPNE dtypes.bool [46, 2]
+48 Ops.WHERE dtypes.float [47, 4, 6]
+49 Ops.REDUCE dtypes.float [48, 2] (Ops.ADD, 0)
+50 Ops.ADD dtypes.weakint [2, 24]
+51 Ops.CMPNE dtypes.bool [50, 9]
+52 Ops.WHERE dtypes.float [51, 4, 6]
+53 Ops.REDUCE dtypes.float [52, 2] (Ops.ADD, 0)
+54 Ops.ADD dtypes.int [20, 25]
+55 Ops.CAST dtypes.weakint [54] dtypes.weakint
+56 Ops.CMPNE dtypes.bool [55, 9]
+57 Ops.WHERE dtypes.float [56, 4, 6]
+58 Ops.REDUCE dtypes.float [57, 2] (Ops.ADD, 0)
+59 Ops.CONST dtypes.weakint [] 5
+60 Ops.ADD dtypes.weakint [16, 59]
+61 Ops.CONST dtypes.weakint [] 20
+62 Ops.CMPLT dtypes.bool [60, 61]
+63 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 5), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+64 Ops.ADD dtypes.weakint [16, 63]
+65 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 30), multiple_of=1, name="c", addrspace=AddrSpace.ALU)
+66 Ops.CMPLT dtypes.bool [64, 65]
+67 Ops.CAST dtypes.int [59] dtypes.int
+68 Ops.ADD dtypes.int [15, 67]
+69 Ops.CAST dtypes.int [61] dtypes.int
+70 Ops.CMPLT dtypes.bool [68, 69]
+71 Ops.ADD dtypes.weakint [16, 16]
+72 Ops.CMPLT dtypes.bool [71, 61]
+73 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name="v", addrspace=AddrSpace.ALU)
+74 Ops.ADD dtypes.weakint [73, 59]
+75 Ops.CMPLT dtypes.bool [74, 61]
+76 Ops.SINK dtypes.void [8, 12, 19, 23, 29, 32, 37, 39, 42, 43, 49, 53, 58, 47, 62, 66, 70, 72, 75]
+

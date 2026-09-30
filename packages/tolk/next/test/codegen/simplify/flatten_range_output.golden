@@ -1,0 +1,51 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.WEAK)
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.INDEX dtypes.float [0, 6]
+8 Ops.CONST dtypes.weakfloat [] 1.0
+9 Ops.CAST dtypes.float [8] dtypes.float
+10 Ops.STORE dtypes.void [7, 9]
+11 Ops.END dtypes.void [10, 2, 5]
+12 Ops.CONST dtypes.weakint [] 20
+13 Ops.MUL dtypes.weakint [2, 12]
+14 Ops.CONST dtypes.weakint [] 5
+15 Ops.MUL dtypes.weakint [5, 14]
+16 Ops.ADD dtypes.weakint [13, 15]
+17 Ops.RANGE dtypes.weakint [14] (2, AxisType.WEAK)
+18 Ops.ADD dtypes.weakint [16, 17]
+19 Ops.INDEX dtypes.float [0, 18]
+20 Ops.STORE dtypes.void [19, 9]
+21 Ops.END dtypes.void [20, 2, 5, 17]
+22 Ops.INDEX dtypes.float [0, 2]
+23 Ops.STORE dtypes.void [22, 9]
+24 Ops.END dtypes.void [23, 2]
+25 Ops.CONST dtypes.weakint [] 1
+26 Ops.ADD dtypes.weakint [2, 25]
+27 Ops.RANGE dtypes.weakint [26] (5, AxisType.WEAK)
+28 Ops.ADD dtypes.weakint [4, 27]
+29 Ops.INDEX dtypes.float [0, 28]
+30 Ops.STORE dtypes.void [29, 9]
+31 Ops.END dtypes.void [30, 27, 2]
+32 Ops.CONST dtypes.weakint [] 0
+33 Ops.INDEX dtypes.float [0, 32]
+34 Ops.STORE dtypes.void [33, 9]
+35 Ops.END dtypes.void [34]
+36 Ops.RANGE dtypes.weakint [1] (3, AxisType.REDUCE)
+37 Ops.MUL dtypes.weakint [36, 3]
+38 Ops.RANGE dtypes.weakint [3] (4, AxisType.REDUCE)
+39 Ops.ADD dtypes.weakint [37, 38]
+40 Ops.CAST dtypes.float [39] dtypes.float
+41 Ops.REDUCE dtypes.float [40, 36, 38] (Ops.ADD, 0)
+42 Ops.CAST dtypes.float [36] dtypes.float
+43 Ops.REDUCE dtypes.float [42, 36] (Ops.MAX, 0)
+44 Ops.REDUCE dtypes.float [9] (Ops.ADD, 0)
+45 Ops.ADD dtypes.weakint [36, 2]
+46 Ops.CAST dtypes.float [45] dtypes.float
+47 Ops.REDUCE dtypes.float [46, 36, 2] (Ops.ADD, 0)
+48 Ops.SINK dtypes.void [11, 11, 21, 24, 31, 35, 35, 41, 41, 43, 44, 47]
+

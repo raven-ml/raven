@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+sum_selected_by_a_constant	0
+sum_selected_by_a_variable	1
+sum_selected_by_a_load	2
+sum_selected_by_a_cast_range	3
+sum_selected_by_a_shifted_load	4
+sum_selected_by_the_range	5
+sum_of_a_one_hot_product	6
+sum_selected_over_two_ranges	7
+sum_selected_with_a_typed_zero	8
+maximum_selected	9
+sum_selected_by_a_shifted_cast	10
+sum_selected_by_a_shifted_range	11
+sum_selected_by_a_shifted_cast_range	12
+inequality_of_a_shifted_cast	13
+comparison_of_a_shifted_load	14
+comparison_of_a_shifted_load_by_variables	15
+comparison_of_a_shifted_int32_load	16
+comparison_of_a_load_plus_a_load	17
+comparison_of_a_shifted_variable	18

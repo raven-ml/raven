@@ -1,0 +1,31 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.CONST dtypes.weakint [] 4
+1 Ops.RANGE dtypes.weakint [0] (0, AxisType.REDUCE)
+2 Ops.CAST dtypes.float [1] dtypes.float
+3 Ops.REDUCE dtypes.float [2, 1] (Ops.ADD, 0)
+4 Ops.CONST dtypes.weakfloat [] 5.0
+5 Ops.MUL dtypes.float [3, 4]
+6 Ops.REDUCE dtypes.float [2, 1] (Ops.MUL, 0)
+7 Ops.POW dtypes.float [6, 4]
+8 Ops.REDUCE dtypes.float [2, 1] (Ops.MAX, 0)
+9 Ops.CONST dtypes.weakint [] 5
+10 Ops.RANGE dtypes.weakint [9] (1, AxisType.REDUCE)
+11 Ops.CAST dtypes.float [10] dtypes.float
+12 Ops.ADD dtypes.float [2, 11]
+13 Ops.REDUCE dtypes.float [12, 1, 10] (Ops.ADD, 0)
+14 Ops.CONST dtypes.weakfloat [] 3.0
+15 Ops.CAST dtypes.float [14] dtypes.float
+16 Ops.CONST dtypes.weakfloat [] 4.0
+17 Ops.MUL dtypes.float [15, 16]
+18 Ops.MUL dtypes.float [17, 4]
+19 Ops.POW dtypes.float [15, 16]
+20 Ops.CONST dtypes.weakint [] 3
+21 Ops.CAST dtypes.int [20] dtypes.int
+22 Ops.MUL dtypes.int [21, 0]
+23 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 16), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+24 Ops.CAST dtypes.float [23] dtypes.float
+25 Ops.MUL dtypes.float [3, 24]
+26 Ops.POW dtypes.float [6, 24]
+27 Ops.REDUCE dtypes.float [2] (Ops.ADD, 0)
+28 Ops.SINK dtypes.void [5, 7, 8, 13, 18, 19, 15, 22, 25, 26, 17, 27]
+

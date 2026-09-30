@@ -1,0 +1,14 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+sum_over_an_unused_range	0
+product_over_an_unused_range	1
+maximum_over_an_unused_range	2
+sum_over_used_ranges	3
+sum_of_a_constant	4
+product_of_a_constant	5
+maximum_of_a_constant	6
+integer_sum_of_a_constant	7
+sum_over_a_symbolic_range	8
+product_over_a_symbolic_range	9
+sum_over_an_unroll_range	10
+sum_of_nothing	11

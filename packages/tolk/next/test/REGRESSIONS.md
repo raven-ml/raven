@@ -1226,3 +1226,74 @@ lists them) and recorded at the pass each test applies: `<kernel>.golden` at
 | old: `test/unit/codegen/test_linearizer.ml` "three ranges with mixed kinds are sorted", "same-axis ranges are split by full range argument" | ranges nest by argument, identities of several parts included | `Tolk_next.Linearizer › pm_split_ends › splits.golden › case=axis_types`, `case=identities_of_parts` |
 | old: `test/unit/codegen/test_linearizer.ml` "end with zero ranges passes through" | an end of no range is its value | `Tolk_next.Linearizer › pm_split_ends › splits.golden › case=no_range`, `case=source_without_ranges` |
 | old: `test/unit/codegen/test_linearizer.ml` "barrier emission", "special emission", "cast and bitcast emission", "vectorize emission", "value index emission", "custom and custom_inline emission", "after on ptr stays in program", "group forwards first source" | each node kind becomes a `Program` instruction | dropped: the old linearizer built a `Program`; `linearize` returns the nodes themselves, and `laws › linearize is a topological order of the sink's nodes, the sink last` covers that every node is placed |
+
+## Simplify
+
+The suite is `Tolk_next.Simplify` (`codegen/simplify/`), written `SI` below.
+`SI › tinygrad's kernels` holds kernels tinygrad compiles, recorded where a
+pass running one of the matchers receives them, with what the matcher alone
+makes of each: `pm_load_collapse`, `pm_split_ranges` and `pm_simplify_ranges`
+at their codegen passes on the CPU renderer, and `pm_reduce_simplify` where
+the scheduler collapses reductions (`get_kernel_graph`). `SI › tinygrad's
+rewrites` holds hand-built cases of each matcher, each rewritten alone, from a
+fresh context for the two that read one. `SI › laws` checks that every
+reduction rewrite keeps the value of what it rewrites, at bindings of its
+variables, ranges, parameters and storage, on those cases and on generated
+sums; and that every range rewrite keeps what a kernel writes
+(`Interpreter.writes`), on the cases, the recorded kernels and generated
+kernels. `pm_simplify_ranges`' law starts from the symbolic pass the pipeline
+runs before it: a guard that holds everywhere would grow a range to it
+(`SI › tinygrad's rewrites › simplify_ranges.golden › case=guard_beyond_size`).
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_range_split_on_mod | a range taken modulo 2 splits, and the enclosing end closes the parts | `SI › tinygrad's rewrites › split_ranges.golden › case=nested_sink`; `SI › laws › split_ranges keeps the writes › split_ranges.golden › case=nested_sink` |
+| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_multi_range_reduce_add | a sum of a sum over two ranges is the sum of two sums | `SI › tinygrad's rewrites › reduce_collapse.golden › case=sum_of_a_sum_over_two_ranges`; `SI › pm_reduce_collapse › a sum of a sum is the sum of the sums` |
+| tinygrad: null/test_uop_graph.py::TestReduceCollapse::test_reduce_shapeless_const_unroll | a sum of a constant over an unroll range is the constant times its size | `SI › tinygrad's rewrites › reduce_unparented.golden › case=sum_over_an_unroll_range`; that no reduction survives `full_rewrite` is Codegen's section (L4) |
+| tinygrad: null/test_simplify_valid_idx.py::TestRangeShrink (8 tests) | guarded ranges shrink to their greatest guard, unless read unguarded or reduced | `SI › TestRangeShrink › shrink_<case>_simplified.golden` (each case recorded where it reaches `simplify ranges`); the ranges left after `full_rewrite` are Codegen's section (L4) |
+| tinygrad: null/test_arange.py::TestArange::test_cat_complexity, test_tri_complexity | an arange or a mask compiles to few operations | the collapse: `SI › tinygrad's kernels › arange_collapsed.golden`, `triu_collapsed.golden`; the estimates after `compile_linear` are Codegen's and Renderer's sections (L4) |
+| tinygrad: null/test_schedule.py::TestSchedule::test_arange_sum, test_arange_sum_alt, test_permute_arange, test_arange_transposed, test_arange_index | aranges fuse and collapse | the collapse: `SI › tinygrad's kernels › arange_sum_collapsed.golden`, `arange_transposed_collapsed.golden`, `arange_index_collapsed.golden`; the kernel counts are the scheduler's section (L6) |
+| tinygrad: null/test_linearizer_rewrite.py::TestLinearizerRewrite::test_arange | an arange kernel's code | dropped here: rendered code, Codegen's section (L4) |
+
+### old tolk: unit/codegen/test_simplify.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/codegen/test_simplify.ml "toposorts range children of End" | an end's ranges reordered so that a range comes after those its size reads | dropped: tinygrad's `flatten_range` keeps the order ranges are listed in; `SI › pm_flatten_range › ranges keep the order they are listed in`, `SI › tinygrad's rewrites › flatten_range.golden › case=end_of_a_dependent_range_first` |
+| old: unit/codegen/test_simplify.ml "noop when ranges already sorted" | an end of ranges is left | `SI › tinygrad's rewrites › flatten_range.golden › case=end_of_ranges` |
+| old: unit/codegen/test_simplify.ml "does not rewrite gated store gate as ranges" | a store's gate is left | `SI › pm_simplify_ranges › shrinking › a store's gate is no guard`; `SI › tinygrad's rewrites › simplify_ranges.golden › case=store_gate` |
+| old: unit/codegen/test_simplify.ml "split and simplify do not crash on Copy" | a graph without ranges is left | `SI › tinygrad's rewrites › split_ranges.golden › case=mod_3_of_7` and the other fixed points; a copy never reaches these passes in tinygrad (the copy kernels of `schedule/__init__.py` hold stores) |
+| old: unit/codegen/test_simplify.ml "nested sinks keep enclosing split binders consistent" | the end around a nested sink closes both parts | `SI › tinygrad's rewrites › split_ranges.golden › case=nested_sink` |
+| old: unit/codegen/test_simplify.ml "splits Range(8) used with mod 2", "split produces correct sizes", "splits Range(12) used with floormod 4" | a range splits into its quotient and remainder | `SI › pm_split_ranges › a range taken modulo a divisor of its size splits in two`; `… › the outer part is numbered 0 and the inner 1 under the range's identity`; `SI › tinygrad's rewrites › split_ranges.golden › case=mod_2_of_8`, `case=mod_4_of_12` |
+| old: unit/codegen/test_simplify.ml "no split when size does not divide constant" | | `SI › pm_split_ranges › a range taken modulo a number that does not divide its size stays`; `case=mod_3_of_7`, `case=mod_3_of_8`, `case=mod_16_of_8` |
+| old: unit/codegen/test_simplify.ml "does not split Range(12) used with cmod 4" | | `SI › pm_split_ranges › a truncating remainder is no modulo`; `case=cmod_4_of_12` |
+| old: unit/codegen/test_simplify.ml "merging three loops preserves their iteration count" | | `SI › pm_simplify_ranges › merging › ranges a kernel does not read merge`; `case=adjacent_three`, `case=adjacent_unused`; the writes law |
+| old: unit/codegen/test_simplify.ml "merges adjacent ranges in End with same kind" | | `SI › pm_simplify_ranges › merging › adjacent ranges indexed contiguously merge into their product`; `… › the merged range keeps the first range's identity` |
+| old: unit/codegen/test_simplify.ml "no merge when different kind" | | `SI › pm_simplify_ranges › merging › ranges of different axis types stay`; `case=adjacent_different_types`, `case=loop_and_reduce` |
+| old: unit/codegen/test_simplify.ml "does not merge when floor div would increase divmod count" | | `SI › pm_simplify_ranges › merging › ranges whose merge adds a division stay`; `case=adjacent_one_used`, `case=adjacent_transposed` |
+| old: unit/codegen/test_simplify.ml "nested sinks keep enclosing shrunk binders consistent" | | `SI › tinygrad's rewrites › simplify_ranges.golden › case=nested_sink`; the writes law |
+| old: unit/codegen/test_simplify.ml "shrinks range with single guard", "picks max guard across multiple loads", "no shrink when unguarded elsewhere", "no shrink for reduce ranges", "shrink to single iteration" | | `SI › pm_simplify_ranges › shrinking` (the matching tests); `SI › TestRangeShrink`; `case=single_guard`, `two_guards`, `guarded_and_unguarded`, `guard_of_a_reduce_range`, `guard_of_one` |
+| old: unit/codegen/test_simplify.ml "does not shrink stacked gated indexes", "does not shrink from later index coordinates" | | `SI › tinygrad's rewrites › simplify_ranges.golden › case=guards_in_a_stack`, `case=guard_on_a_later_index` |
+| old: unit/codegen/test_simplify.ml "no shrink when guard >= range size" | | `SI › TestRangeShrink › shrink_guard_ge_max_simplified.golden`; alone, the pass grows the range to the guard: `case=guard_beyond_size` |
+| old: unit/codegen/test_simplify.ml "shrink with store where invalid", "shrink with store where invalid flipped" | | `SI › TestRangeShrink › shrink_store_where_invalid_simplified.golden`, `shrink_store_where_invalid_flipped_simplified.golden`; alone, the pass leaves a selection of an invalid value (`case=store_where_invalid`), which the pipeline's symbolic pass moves onto the index first (`case=store_through_a_gated_index`) |
+| old: unit/codegen/test_simplify.ml "separate store gate is preserved" | | `SI › pm_simplify_ranges › shrinking › a store's gate is no guard` |
+| old: unit/codegen/test_simplify.ml "removes unparented range from ADD reduce", "removes unparented range from MUL reduce", "MAX reduce ignores unparented ranges", "noop when all ranges parented" | | `SI › pm_reduce_unparented` (the matching tests); `SI › tinygrad's rewrites › reduce_unparented.golden` |
+| old: unit/codegen/test_simplify.ml "distributes add over reduce" | | `SI › pm_reduce_collapse › a sum of a sum is the sum of the sums`; `reduce_collapse.golden › case=sum_of_a_sum` |
+| old: unit/codegen/test_simplify.ml "bound from above", "bound from below", "bound from two sides" | a masked sum is its count times its value | `SI › pm_reduce_collapse › a sum of a value below a bound is the bound times the value`, `… above a bound counts the rest`, `… between two bounds counts what lies between`; `reduce_simplify.golden › case=sum_below_a_bound`, `sum_above_a_bound`, `sum_between_bounds` |
+| old: unit/codegen/test_simplify.ml "unparented range removed from ADD reduce" | | `SI › pm_reduce_simplify › an unparented range is removed` |
+| old: unit/codegen/test_simplify.ml "mul casted bool becomes where" | | `SI › pm_reduce_collapse › a product by a comparison cast from a boolean is a selection`; `case=sum_of_a_product_by_a_cast_comparison` |
+| old: unit/codegen/test_simplify.ml "multi-range reduce collapse" | | `SI › pm_reduce_simplify › a sum over two ranges collapses each in turn` |
+| old: unit/codegen/test_simplify.ml "lift x*y out of reduce", "lift x+y out of reduce on lt" | | `SI › pm_reduce_collapse › a comparison of a product is solved by a rounded-up division`, `… of a sum is solved for its range`; `case=sum_below_a_scaled_range`, `sum_below_a_shifted_range` |
+| old: unit/codegen/test_simplify.ml "lt lift matches a bare sum, not a cast of one" | | `SI › tinygrad's rewrites › reduce_simplify.golden › case=sum_below_a_cast_shifted_range` |
+| old: unit/codegen/test_simplify.ml "reduce-fold counts clamp only at zero" | | `SI › pm_reduce_collapse › a count by variable bounds is clamped at zero`; `case=sum_below_a_variable`, `sum_above_a_variable`, `sum_between_variables` |
+| old: unit/codegen/test_simplify.ml "collapses a range-bounded conditional sum" | | `case=integer_sum_below_a_bound` |
+| old: unit/codegen/test_simplify.ml "AND on WHERE with define_var" | | `SI › pm_reduce_collapse › a parameter guarding a sum is lifted out of it`; `case=sum_gated_by_a_parameter` (a variable is a parameter) |
+| old: unit/codegen/test_simplify.ml "collapses an arange row gather with independent output ranges" | | `SI › tinygrad's kernels › gather_collapsed.golden`, `embedding_collapsed.golden`, `arange_index_collapsed.golden` |
+| old: unit/codegen/test_simplify.ml "collapses reduce over gated load", "reduce on gated load with casted range" | | `SI › pm_load_collapse › a sum of the value an index selects is the value at that index`, `… an index outside the range selects zero`; `load_collapse.golden › case=sum_selected_by_a_constant`, `sum_selected_by_a_cast_range` |
+| old: unit/codegen/test_simplify.ml "collapses one-hot equality multiply" | | `load_collapse.golden › case=sum_of_a_one_hot_product` |
+| old: unit/codegen/test_simplify.ml "lift x+y out of reduce on ne" | | `load_collapse.golden › case=sum_selected_by_a_shifted_range`, `sum_selected_by_a_shifted_cast_range`, `sum_selected_by_a_shifted_load` |
+| old: unit/codegen/test_simplify.ml "undo rule: no math on loaded index", "undo rule ignores concrete loaded index" | | `SI › pm_load_collapse › a comparison of a shifted index read from memory is solved for it`, `… of a committed type is left` |
+| old: unit/codegen/test_simplify.ml group "node_vmin / node_vmax" (17 tests) | bounds of nodes | dropped here: `vmin` and `vmax` are `uop/ops.py`'s, Ops' and Symbolic's sections |
+| old: unit/codegen/test_simplify.ml group "promoting rule bodies" (4 tests) | a weak operand meets a committed one only promoted | the dtype of every node of every output is the golden's, which reading a graph derives and checks: `reduce_collapse.golden › case=sum_between_variables`, `reduce_unparented.golden › case=sum_over_a_symbolic_range`, `product_over_a_symbolic_range`, `load_collapse.golden › case=comparison_of_a_shifted_load_by_variables` |

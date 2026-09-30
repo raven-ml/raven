@@ -1,0 +1,21 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+nested_sink	0
+mod_2_of_8	1
+mod_4_of_12	2
+mod_3_of_7	3
+mod_3_of_8	4
+mod_8_of_8	5
+mod_1_of_8	6
+mod_16_of_8	7
+cmod_4_of_12	8
+mod_of_a_symbolic_range	9
+mod_of_a_warp_range	10
+mod_of_a_device_range	11
+mod_of_a_local_range	12
+mod_by_a_variable	13
+two_mods_of_one_range	14
+mod_and_div	15
+mod_in_a_reduce	16
+mod_of_two_ranges	17
+sink_without_kernel	18
