@@ -214,7 +214,8 @@ def values():
     """Python's comparisons and arithmetic on every pair of operands."""
     ops = {"lt": lambda a, b: a < b, "le": lambda a, b: a <= b, "eq": lambda a, b: a == b,
            "ne": lambda a, b: a != b, "min": min, "max": max,
-           "add": lambda a, b: a + b, "sub": lambda a, b: a - b, "mul": lambda a, b: a * b}
+           "add": lambda a, b: a + b, "sub": lambda a, b: a - b, "mul": lambda a, b: a * b,
+           "floordiv": lambda a, b: a // b, "mod": lambda a, b: a % b}
     return ["a", "b", *ops], [(value(a), value(b), *(attempt(op, a, b) for op in ops.values()))
                               for a in OPERANDS for b in OPERANDS]
 

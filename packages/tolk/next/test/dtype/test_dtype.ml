@@ -751,8 +751,16 @@ let to_infinity = function
       `Float (if Z.sign n < 0 then Float.neg_infinity else Float.infinity)
   | v -> v
 
+(* [arithmetic cell op a b] is that [op a b] is what [cell] reads as. Where
+   Python divides by zero, it raises [Division_by_zero]; where Python refuses a
+   huge integer, it is [op] on the infinity of its sign. *)
 let arithmetic cell op a b =
-  if raised cell then equal value (op (to_infinity a) (to_infinity b)) (op a b)
+  if String.equal cell "raises ZeroDivisionError" then
+    raises Division_by_zero (fun () -> op a b)
+  else if raised cell then
+    match op (to_infinity a) (to_infinity b) with
+    | expected -> equal value expected (op a b)
+    | exception Division_by_zero -> raises Division_by_zero (fun () -> op a b)
   else equal value (value_of_cell cell) (op a b)
 
 let magnitude =
@@ -780,6 +788,12 @@ let number =
     operand
 
 let integers = Gen.map (fun n -> `Int n) integer
+
+let is_zero = function
+  | `Int n -> Z.equal n Z.zero
+  | `Bool b -> not b
+  | `Float f -> Stdlib.( = ) f 0.
+
 let is_nan = function `Float f -> Float.is_nan f | _ -> false
 
 let values =
@@ -796,7 +810,9 @@ let values =
           equal ~msg:"max" value (value_of_cell (cell "max")) (max a b);
           arithmetic (cell "add") ( + ) a b;
           arithmetic (cell "sub") ( - ) a b;
-          arithmetic (cell "mul") ( * ) a b);
+          arithmetic (cell "mul") ( * ) a b;
+          arithmetic (cell "floordiv") ( // ) a b;
+          arithmetic (cell "mod") ( % ) a b);
       Golden.cases "negated.golden" (fun cell ->
           equal value
             (value_of_cell (cell "negated"))
@@ -868,12 +884,50 @@ let values =
       prop "negation is an involution on integers and floats"
         (Gen.such_that (function `Bool _ -> false | _ -> true) operand)
         (Law.involutive value ( ~- ));
+      prop "integer division and modulo rebuild the dividend"
+        (Gen.pair integers
+           (Gen.such_that
+              (function `Int n -> not (Z.equal n Z.zero) | _ -> true)
+              integers))
+        (fun (a, b) -> equal value a ((a // b * b) + (a % b)));
+      prop "an integer remainder is less than the divisor and of its sign"
+        (Gen.pair integers
+           (Gen.such_that
+              (function `Int n -> not (Z.equal n Z.zero) | _ -> true)
+              integers))
+        (fun (a, b) ->
+          match (a % b, b) with
+          | `Int r, `Int n ->
+              is_true ~msg:"sign"
+                (Stdlib.( = ) (Z.sign r) 0 || Stdlib.( = ) (Z.sign r) (Z.sign n));
+              is_true ~msg:"size" (Z.lt (Z.abs r) (Z.abs n))
+          | _ -> fail "not integers");
+      (* Moving a remainder to the divisor's sign adds the divisor, which can
+         round up to it: 5e-324 % -4.450246113776542e-308 is the divisor. *)
+      prop "a float remainder is at most the divisor and of its sign"
+        ~examples:[ (5e-324, -4.450246113776542e-308) ]
+        (Gen.pair finite_float
+           (Gen.such_that (fun f -> Stdlib.( <> ) f 0.) finite_float))
+        (fun (x, y) ->
+          let r = as_float (`Float x % `Float y) in
+          equal ~msg:"sign" bool (Float.sign_bit y) (Float.sign_bit r);
+          is_true ~msg:"size" (Stdlib.( <= ) (Float.abs r) (Float.abs y)));
+      cases "a zero divisor raises Division_by_zero"
+        ~name:(Format.asprintf "%a" (Testable.pp value))
+        [ `Int Z.zero; `Bool false; `Float 0.; `Float (-0.) ]
+        (fun zero ->
+          raises Division_by_zero (fun () -> `Int (Z.of_int 7) // zero);
+          raises Division_by_zero (fun () -> `Float 1.5 % zero));
       prop "a bool counts as an integer" (Gen.pair Gen.bool operand)
         (fun (b, v) ->
           let n = `Int (if b then Z.one else Z.zero) in
           equal ~msg:"+" value (n + v) (`Bool b + v);
           equal ~msg:"*" value (n * v) (`Bool b * v);
-          equal ~msg:"-" value (-n) (-`Bool b));
+          equal ~msg:"-" value (-n) (-`Bool b);
+          if not (is_zero v) then begin
+            equal ~msg:"//" value (n // v) (`Bool b // v);
+            equal ~msg:"%" value (n % v) (`Bool b % v)
+          end);
     ]
 
 let () =
