@@ -29,14 +29,14 @@ type const = [ value | `Invalid ]
 val equal_const : [< const ] -> [< const ] -> bool
 (** [equal_const c0 c1] is [true] iff [c0] and [c1] are the same constant: the
     same constructor with the same payload. Floats are the same when their bits
-    are, except that every NaN is the same as every other, so [0.0] and [-0.0]
-    differ. *)
+    are, so [0.0] and [-0.0] differ, and every NaN is the same as every other.
+*)
 
 val hash_const : [< const ] -> int
 (** [hash_const c] is a hash of [c], compatible with {!equal_const}. *)
 
 val pp_const : Format.formatter -> [< const ] -> unit
-(** [pp_const] prints a constant as a literal: [True], [False], [Invalid], an
+(** [pp_const] formats a constant as a literal: [True], [False], [Invalid], an
     integer in decimal, and a float in the fewest significant digits that read
     back as the same float. A float has a [.0] if it has no fractional digit, is
     in exponent notation below [1e-4] and from [1e16] in magnitude ([1e-05],
@@ -52,8 +52,13 @@ type addr_space =
   | Alu  (** Values passed to a kernel by value. *)
 
 val pp_addr_space : Format.formatter -> addr_space -> unit
-(** [pp_addr_space] prints an address space as [AddrSpace.GLOBAL],
+(** [pp_addr_space] formats an address space as [AddrSpace.GLOBAL],
     [AddrSpace.LOCAL], [AddrSpace.REG] or [AddrSpace.ALU]. *)
+
+val addr_space_of_string : string -> (addr_space, string) result
+(** [addr_space_of_string s] is the address space named [s]: [GLOBAL], [LOCAL],
+    [REG] or [ALU], the name {!pp_addr_space} formats after [AddrSpace.]. The
+    error names [s]. *)
 
 (** {1:dtypes Data types} *)
 
@@ -125,16 +130,16 @@ val max : t -> value
 val const : t -> [< const ] -> const
 (** [const dt c] is [c] as a constant of [dt]. [`Invalid] is itself. For a float
     [dt] it is a [`Float], [c] truncated to [dt] ({!truncate}), with every NaN
-    the same NaN; an integer beyond the doubles converts as the infinity of its
-    sign. For {!Bool} it is [`Bool], [true] iff [c] is nonzero. Otherwise it is
-    an [`Int]: a float rounded towards zero, and an integer unchanged, even out
-    of [dt]'s bounds.
+    the same NaN; an integer that rounds past the greatest double converts as
+    the infinity of its sign. For {!Bool} it is [`Bool], [true] iff [c] is
+    nonzero. Otherwise it is an [`Int]: a float rounded towards zero, and an
+    integer unchanged, even out of [dt]'s bounds.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is neither
     a float nor {!Bool}. *)
 
 val equal : t -> t -> bool
-(** [equal dt0 dt1] is [true] iff [dt0] and [dt1] are the same data type. *)
+(** [equal d0 d1] is [true] iff [d0] and [d1] are the same data type. *)
 
 val compare : t -> t -> int
 (** [compare] is the promotion order: by {!priority}, then {!bitsize}, then
@@ -145,11 +150,11 @@ val hash : t -> int
 (** [hash dt] is a hash of [dt], compatible with {!equal}. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] prints a data type as [dtypes.] followed by its C-flavoured alias if it
-    has one ([dtypes.char], [dtypes.uint], [dtypes.half], [dtypes.float],
+(** [pp] formats a data type as [dtypes.] followed by its C-flavoured alias if
+    it has one ([dtypes.char], [dtypes.uint], [dtypes.half], [dtypes.float],
     [dtypes.double]), and by its constructor's name in lowercase, without
-    underscores, otherwise ([dtypes.bool], [dtypes.bfloat16], [dtypes.weakint]).
-    {!of_string} reads it back. *)
+    underscores, otherwise ([dtypes.bool], [dtypes.bfloat16], [dtypes.weakint]):
+    [dtypes.] followed by a name {!of_string} reads. *)
 
 (** {2:predicates Predicates and groups} *)
 
@@ -215,22 +220,21 @@ val finfo : t -> int * int
 (** {2:names Names and defaults} *)
 
 val of_string : string -> (t, string) result
-(** [of_string s] is the data type named [s], in any case and optionally after
-    [dtypes.]: its constructor's name without underscores ([float32],
-    [weakint]), a C-flavoured alias ([half], [float], [double], [char], [uchar],
-    [short], [ushort], [int], [uint], [long], [ulong]), or [default_float] and
-    [default_int] for {!default_float} and {!default_int}. It reads what {!pp}
-    prints. The error names [s]. *)
+(** [of_string s] is the data type named [s], in any case: its constructor's
+    name without underscores ([float32], [weakint]), a C-flavoured alias
+    ([half], [float], [double], [char], [uchar], [short], [ushort], [int],
+    [uint], [long], [ulong]), or [default_float] and [default_int] for
+    {!default_float} and {!default_int}. The error names [s]. *)
 
 val default_float : unit -> t
-(** [default_float ()] is the data type named by the current value of the
-    setting {!Helpers.default_float}, [DEFAULT_FLOAT].
+(** [default_float ()] is the data type named, in any case, by the current value
+    of the setting {!Helpers.default_float}, [DEFAULT_FLOAT].
 
     Raises [Invalid_argument] if that is not a float of known width. *)
 
 val default_int : unit -> t
-(** [default_int ()] is the data type named by the current value of the setting
-    {!Helpers.default_int}, [DEFAULT_INT].
+(** [default_int ()] is the data type named, in any case, by the current value
+    of the setting {!Helpers.default_int}, [DEFAULT_INT].
 
     Raises [Invalid_argument] if that is not an integer of known width. *)
 
@@ -243,7 +247,8 @@ val commit_int : ?default_int:t -> Z.t -> Z.t -> t
     {!Int64} and {!Uint64} that holds every integer from [lo] to [hi], and
     {!Int64} if none does. [default_int] defaults to [default_int ()].
 
-    Raises [Invalid_argument] if [lo = hi] and no 64-bit integer holds it. *)
+    Raises [Invalid_argument] if [default_int] is not in {!ints}, or if
+    [lo = hi] and no 64-bit integer holds it. *)
 
 val weak : t -> t
 (** [weak dt] is the weak data type of [dt]'s kind: {!Weak_float} for a float,
@@ -276,17 +281,16 @@ val least_upper_float : t -> t
     Raises [Invalid_argument] if [dt] is {!Void}. *)
 
 val can_lossless_cast : t -> t -> bool
-(** [can_lossless_cast dt0 dt1] is [true] iff a cast from [dt0] to [dt1] is
-    known to keep every value, that is iff [dt0] is [dt1] or {!Bool}, or [dt1]
-    is:
-    - {!Float64} and [dt0] is a float of known width other than {!Float64}, or
-      an integer of 32 bits or fewer;
-    - {!Float32} and [dt0] is {!Float16}, {!Bfloat16}, an 8-bit float, or an
+(** [can_lossless_cast d0 d1] is [true] iff a cast from [d0] to [d1] is known to
+    keep every value, that is iff [d0] is [d1] or {!Bool}, or [d1] is:
+    - {!Float64} and [d0] is a float of known width other than {!Float64}, or an
+      integer of 32 bits or fewer;
+    - {!Float32} and [d0] is {!Float16}, {!Bfloat16}, an 8-bit float, or an
       integer of 16 bits or fewer;
-    - {!Float16} and [dt0] is an 8-bit float, {!Int8} or {!Uint8};
-    - an unsigned integer and [dt0] a narrower unsigned integer;
-    - a signed integer and [dt0] a narrower integer;
-    - {!Weak_int} and [dt0] is in {!ints}.
+    - {!Float16} and [d0] is an 8-bit float, {!Int8} or {!Uint8};
+    - an unsigned integer and [d0] a narrower unsigned integer;
+    - a signed integer and [d0] a narrower integer;
+    - {!Weak_int} and [d0] is in {!ints}.
 
     It is [false] for some casts that keep every value, such as from an 8-bit
     float to {!Bfloat16}. *)
@@ -308,11 +312,12 @@ val truncate : t -> value -> value
     - for a float of known width, [v] as a float rounded once to [dt]'s
       precision, to nearest with ties to even. A finite value that overflows a
       16-bit or wider float is an infinity, and one that overflows an 8-bit
-      float is its greatest finite value of the same sign. An infinity is
-      itself, or a NaN of the same sign in the 8-bit floats without infinities.
-      A NaN is a NaN of the same sign, except in the [fnuz] formats, whose one
-      NaN has none. An integer beyond the doubles converts as the infinity of
-      its sign.
+      float is its greatest finite value of the same sign. An infinity is itself
+      where the format has infinities, and its NaN where it has none. A NaN, or
+      an infinity that became one, keeps its sign, except in the [fnuz] formats,
+      whose one NaN decodes as a positive NaN; a 16-bit NaN also keeps the top
+      of its payload. An integer that rounds past the greatest double converts
+      as the infinity of its sign.
     - for an integer of known width, [v] wrapped to [dt]'s width in two's
       complement;
     - for {!Bool}, [true] iff [v] is nonzero;
@@ -341,9 +346,9 @@ val from_storage_scalar : t -> value -> value
     is not an [`Int]. *)
 
 val bitcast : t -> t -> value -> value
-(** [bitcast dt0 dt1 v] is the [dt1] value stored by the bits that store [v] as
-    a [dt0] value.
+(** [bitcast d0 d1 v] is the [d1] value stored by the bits that store [v] as a
+    [d0] value.
 
-    Raises [Invalid_argument] if [dt0] and [dt1] have different {!itemsize}s, if
-    either has no {!storage_fmt}, if [v] is a float and [dt0] is not, or if [v]
-    is an integer out of the range of [dt0]'s storage. *)
+    Raises [Invalid_argument] if [d0] and [d1] have different {!itemsize}s, if
+    either has no {!storage_fmt}, if [v] is a float and [d0] an integer, or if
+    [v] is an integer out of the range of [d0]'s storage. *)

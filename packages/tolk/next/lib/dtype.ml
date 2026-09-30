@@ -90,13 +90,23 @@ let pp_const ppf (c : [< const ]) =
 
 type addr_space = Global | Local | Reg | Alu
 
+let addr_space_name = function
+  | Global -> "GLOBAL"
+  | Local -> "LOCAL"
+  | Reg -> "REG"
+  | Alu -> "ALU"
+
 let pp_addr_space ppf space =
-  Format.pp_print_string ppf
-    (match space with
-    | Global -> "AddrSpace.GLOBAL"
-    | Local -> "AddrSpace.LOCAL"
-    | Reg -> "AddrSpace.REG"
-    | Alu -> "AddrSpace.ALU")
+  Format.fprintf ppf "AddrSpace.%s" (addr_space_name space)
+
+let addr_space_of_string s =
+  match
+    List.find_opt
+      (fun space -> addr_space_name space = s)
+      [ Global; Local; Reg; Alu ]
+  with
+  | Some space -> Ok space
+  | None -> Error (strf "%S is not an address space" s)
 
 (* Data types *)
 
@@ -158,10 +168,10 @@ let bitsize dt = (info dt).bitsize
 let itemsize dt = (bitsize dt + 7) / 8
 let name dt = (info dt).name
 let fmt dt = (info dt).fmt
-let equal (dt0 : t) dt1 = dt0 = dt1
+let equal (d0 : t) d1 = d0 = d1
 
-let compare dt0 dt1 =
-  let i0 = info dt0 and i1 = info dt1 in
+let compare d0 d1 =
+  let i0 = info d0 and i1 = info d1 in
   match Int.compare i0.priority i1.priority with
   | 0 -> (
       match Int.compare i0.bitsize i1.bitsize with
@@ -209,9 +219,23 @@ let sints = [ Int8; Int16; Int32; Int64 ]
 let ints = uints @ sints
 let weaks = [ Weak_int; Weak_float ]
 let all = floats @ ints @ [ Bool ]
-let is_float dt = List.mem dt floats || dt = Weak_float
-let is_int dt = List.mem dt ints || dt = Weak_int
-let is_unsigned dt = List.mem dt uints
+
+let is_float = function
+  | Weak_float | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz | Float16
+  | Bfloat16 | Float32 | Float64 ->
+      true
+  | _ -> false
+
+let is_int = function
+  | Weak_int | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64 | Uint64
+    ->
+      true
+  | _ -> false
+
+let is_unsigned = function
+  | Uint8 | Uint16 | Uint32 | Uint64 -> true
+  | _ -> false
+
 let is_bool dt = dt = Bool
 
 let finfo dt =
@@ -222,9 +246,7 @@ let finfo dt =
   | Float64 -> (11, 52)
   | Fp8e4m3 | Fp8e4m3fnuz -> (4, 3)
   | Fp8e5m2 | Fp8e5m2fnuz -> (5, 2)
-  | _ ->
-      invalid_arg
-        (Format.asprintf "Dtype.finfo: %a is not a float of known width" pp dt)
+  | _ -> invalid_arg (Format.asprintf "%a is not a float of known width" pp dt)
 
 (* Conversions *)
 
@@ -240,7 +262,7 @@ let to_int : value -> Z.t = function
   | `Bool b -> Z.of_int (Bool.to_int b)
   | `Int n -> n
   | `Float x ->
-      invalid_arg (strf "Dtype: %s is a float, not an integer" (float_repr x))
+      invalid_arg (strf "%s is a float, not an integer" (float_repr x))
 
 let is_nonzero : value -> bool = function
   | `Bool b -> b
@@ -254,93 +276,44 @@ let int_max dt = Z.add (Z.pred (Z.shift_left Z.one (bitsize dt))) (int_min dt)
 
 (* Narrow floats *)
 
+(* What follows a format's greatest finite value: an infinity then NaNs, NaNs
+   only, or nothing, the one NaN taking negative zero's code. *)
+type specials = Ieee | Nan_only | Fnuz
+
 (* A float format narrower than float32: [bits] wide with [mant] explicit
    mantissa bits and exponent bias [bias]. [top] is the magnitude code of its
-   greatest finite value; the codes past it are its infinity, if it has
-   [infinities], and its NaNs. [nan] is its positive NaN. The [fnuz] formats
-   have no negative zero, and [nan] is their one NaN. *)
+   greatest finite value and [nan] the code of its positive NaN. *)
 type float_format = {
   bits : int;
   mant : int;
   bias : int;
   top : int;
   nan : int;
-  infinities : bool;
-  fnuz : bool;
+  specials : specials;
 }
 
 let float_format dt =
+  let f bits mant bias top nan specials =
+    { bits; mant; bias; top; nan; specials }
+  in
   match dt with
-  | Float16 ->
-      {
-        bits = 16;
-        mant = 10;
-        bias = 15;
-        top = 0x7BFF;
-        nan = 0x7E00;
-        infinities = true;
-        fnuz = false;
-      }
-  | Bfloat16 ->
-      {
-        bits = 16;
-        mant = 7;
-        bias = 127;
-        top = 0x7F7F;
-        nan = 0x7FC0;
-        infinities = true;
-        fnuz = false;
-      }
-  | Fp8e4m3 ->
-      {
-        bits = 8;
-        mant = 3;
-        bias = 7;
-        top = 0x7E;
-        nan = 0x7F;
-        infinities = false;
-        fnuz = false;
-      }
-  | Fp8e5m2 ->
-      {
-        bits = 8;
-        mant = 2;
-        bias = 15;
-        top = 0x7B;
-        nan = 0x7F;
-        infinities = true;
-        fnuz = false;
-      }
-  | Fp8e4m3fnuz ->
-      {
-        bits = 8;
-        mant = 3;
-        bias = 8;
-        top = 0x7F;
-        nan = 0x80;
-        infinities = false;
-        fnuz = true;
-      }
-  | Fp8e5m2fnuz ->
-      {
-        bits = 8;
-        mant = 2;
-        bias = 16;
-        top = 0x7F;
-        nan = 0x80;
-        infinities = false;
-        fnuz = true;
-      }
-  | dt -> invalid_arg (Format.asprintf "Dtype: %a is not a narrow float" pp dt)
+  | Float16 -> f 16 10 15 0x7BFF 0x7E00 Ieee
+  | Bfloat16 -> f 16 7 127 0x7F7F 0x7FC0 Ieee
+  | Fp8e4m3 -> f 8 3 7 0x7E 0x7F Nan_only
+  | Fp8e5m2 -> f 8 2 15 0x7B 0x7F Ieee
+  | Fp8e4m3fnuz -> f 8 3 8 0x7F 0x80 Fnuz
+  | Fp8e5m2fnuz -> f 8 2 16 0x7F 0x80 Fnuz
+  | dt -> invalid_arg (Format.asprintf "%a is not a narrow float" pp dt)
 
-let decode f code =
+let decode_format f code =
   let sign = if code lsr (f.bits - 1) = 1 then -1. else 1. in
   let q = code land ((1 lsl (f.bits - 1)) - 1) in
-  if f.fnuz && code = f.nan then nan
+  if f.specials = Fnuz && code = f.nan then nan
   else if q > f.top then
-    Float.copy_sign
-      (if f.infinities && q = f.top + 1 then Float.infinity else nan)
-      sign
+    let special =
+      if f.specials = Ieee && q = f.top + 1 then Float.infinity else nan
+    in
+    Float.copy_sign special sign
   else
     let exp = q lsr f.mant and m = q land ((1 lsl f.mant) - 1) in
     let v =
@@ -369,15 +342,15 @@ let nearest ~mant ~emin x =
 (* Past the greatest finite value, 16-bit formats give their infinity and 8-bit
    ones saturate to it. An infinity stays one where the format has infinities,
    and is its NaN where it has none. *)
-let encode f x =
+let encode_format f x =
   let sign = if Float.sign_bit x then 1 lsl (f.bits - 1) else 0 in
-  if Float.is_nan x || not (f.infinities || Float.is_finite x) then
-    if f.fnuz then f.nan else sign lor f.nan
+  if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
+    if f.specials = Fnuz then f.nan else sign lor f.nan
   else
     let emin = 1 - f.bias in
     let a = Float.abs (nearest ~mant:f.mant ~emin x) in
     let q =
-      if a > decode f f.top then
+      if a > decode_format f f.top then
         if f.bits = 8 && Float.is_finite x then f.top else f.top + 1
       else if a = 0. then 0
       else
@@ -388,11 +361,34 @@ let encode f x =
         ((exp + f.bias - 1) lsl f.mant)
         + Float.to_int (Float.ldexp a (f.mant - exp))
     in
-    if f.fnuz && q = 0 then 0 else sign lor q
+    if f.specials = Fnuz && q = 0 then 0 else sign lor q
 
-let round dt x =
+(* The 16-bit formats carry a NaN's payload as a float32 does, in the top of its
+   mantissa with the quiet bit set, as nx's codecs do. The 8-bit formats have
+   one NaN per sign. *)
+let decode dt code =
   let f = float_format dt in
-  decode f (encode f x)
+  if f.bits = 16 && code land 0x7FFF > f.top + 1 then
+    let payload = code land ((1 lsl f.mant) - 1) in
+    let sign = code lsr 15 in
+    Int32.float_of_bits
+      (Int32.of_int
+         ((sign lsl 31) lor 0x7FC0_0000 lor (payload lsl (23 - f.mant))))
+  else decode_format f code
+
+let encode dt x =
+  let f = float_format dt in
+  if f.bits = 16 && Float.is_nan x then
+    let bits = Int32.to_int (Int32.bits_of_float x) land 0xFFFF_FFFF in
+    let quiet = 1 lsl (f.mant - 1) in
+    ((bits lsr 31) lsl 15)
+    lor (f.top + 1) lor quiet
+    lor ((bits land 0x7F_FFFF) lsr (23 - f.mant))
+  else encode_format f x
+
+let round dt x = decode dt (encode dt x)
+
+(* Casts *)
 
 let storage_fmt dt =
   match dt with
@@ -404,19 +400,17 @@ let to_storage_scalar dt (v : value) : value =
   match dt with
   | Float16 -> `Float (round Float16 (to_float v))
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Int (Z.of_int (encode (float_format dt) (to_float v)))
+      `Int (Z.of_int (encode dt (to_float v)))
   | _ -> v
 
 let from_storage_scalar dt (s : value) : value =
   match dt with
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> (
-      let f = float_format dt in
       match s with
-      | `Int n -> `Float (decode f (Z.to_int (Z.extract n 0 f.bits)))
+      | `Int n -> `Float (decode dt (Z.to_int (Z.extract n 0 (bitsize dt))))
       | `Bool _ | `Float _ ->
           invalid_arg
-            (Format.asprintf "Dtype: %a is not a storage of %a" pp_const s pp dt)
-      )
+            (Format.asprintf "%a is not a storage of %a" pp_const s pp dt))
   | _ -> s
 
 (* A float of [dt]'s precision. The weak float and the doubles keep all. *)
@@ -429,7 +423,7 @@ let truncate_float dt x =
 
 let truncate dt (v : value) : value =
   match dt with
-  | Void -> invalid_arg "Dtype.truncate: void has no value"
+  | Void -> invalid_arg "void has no value"
   | Weak_int | Weak_float -> v
   | Bool -> `Bool (is_nonzero v)
   | dt when is_float dt -> `Float (truncate_float dt (to_float v))
@@ -447,24 +441,23 @@ let storage_int dt =
 let pack dt (s : value) =
   match dt with
   | Bool -> if is_nonzero s then Z.one else Z.zero
-  | Float16 -> Z.of_int (encode (float_format Float16) (to_float s))
+  | Float16 -> Z.of_int (encode Float16 (to_float s))
   | Float32 -> Z.extract (Z.of_int32 (Int32.bits_of_float (to_float s))) 0 32
   | Float64 -> Z.extract (Z.of_int64 (Int64.bits_of_float (to_float s))) 0 64
   | Void | Weak_int | Weak_float ->
-      invalid_arg (Format.asprintf "Dtype.bitcast: %a has no storage" pp dt)
+      invalid_arg (Format.asprintf "%a has no storage" pp dt)
   | dt ->
       let dt = storage_int dt and n = to_int s in
       if Z.lt n (int_min dt) || Z.gt n (int_max dt) then
         invalid_arg
-          (Format.asprintf "Dtype.bitcast: %a is out of the range of %a"
-             Z.pp_print n pp dt);
+          (Format.asprintf "%a is out of the range of %a" Z.pp_print n pp dt);
       Z.extract n 0 (bitsize dt)
 
 (* The value of [dt]'s storage format that [bits] store. *)
 let unpack dt bits : value =
   match dt with
   | Bool -> `Bool (not (Z.equal bits Z.zero))
-  | Float16 -> `Float (decode (float_format Float16) (Z.to_int bits))
+  | Float16 -> `Float (decode Float16 (Z.to_int bits))
   | Float32 ->
       `Float (Int32.float_of_bits (Z.to_int32 (Z.signed_extract bits 0 32)))
   | Float64 ->
@@ -474,19 +467,16 @@ let unpack dt bits : value =
       `Int
         (if is_unsigned dt then bits else Z.signed_extract bits 0 (bitsize dt))
 
-let bitcast dt0 dt1 v =
-  if itemsize dt0 <> itemsize dt1 then
-    invalid_arg
-      (Format.asprintf "Dtype.bitcast: %a and %a differ in size" pp dt0 pp dt1);
-  from_storage_scalar dt1 (unpack dt1 (pack dt0 (to_storage_scalar dt0 v)))
+let bitcast d0 d1 v =
+  if itemsize d0 <> itemsize d1 then
+    invalid_arg (Format.asprintf "%a and %a differ in size" pp d0 pp d1);
+  from_storage_scalar d1 (unpack d1 (pack d0 (to_storage_scalar d0 v)))
 
 (* Bounds and constants *)
 
 let float_max dt =
   match dt with
-  | Fp8e4m3 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      let f = float_format dt in
-      decode f f.top
+  | Fp8e4m3 | Fp8e4m3fnuz | Fp8e5m2fnuz -> decode dt (float_format dt).top
   | _ -> Float.infinity
 
 let min dt : value =
@@ -511,9 +501,7 @@ let const dt (c : [< const ]) : const =
       else
         match v with
         | `Float x when not (Float.is_finite x) ->
-            invalid_arg
-              (Format.asprintf "Dtype.const: %s is not a %a" (float_repr x) pp
-                 dt)
+            invalid_arg (Format.asprintf "%s is not a %a" (float_repr x) pp dt)
         | `Float x -> `Int (Z.of_float x)
         | v -> `Int (to_int v))
 
@@ -523,37 +511,24 @@ let of_name s =
   List.find_map (fun (dt, ns) -> if List.mem s ns then Some dt else None) names
 
 (* The data type a setting names, of the kind [is_kind] accepts. *)
-let setting_dtype key value ~is_kind ~kind =
+let setting_dtype setting ~kind is_kind =
+  let value = Helpers.Context_var.value setting in
   match of_name (String.lowercase_ascii value) with
   | Some dt when is_kind dt -> dt
-  | _ -> invalid_arg (strf "Dtype: %s=%s is not %s" key value kind)
+  | _ ->
+      invalid_arg
+        (strf "%s=%s is not %s" (Helpers.Context_var.key setting) value kind)
 
 let default_float () =
-  let setting = Helpers.default_float in
-  setting_dtype
-    (Helpers.Context_var.key setting)
-    (Helpers.Context_var.value setting)
-    ~is_kind:(fun dt -> List.mem dt floats)
-    ~kind:"a float of known width"
+  setting_dtype Helpers.default_float ~kind:"a float of known width" (fun dt ->
+      List.mem dt floats)
 
 let default_int () =
-  let setting = Helpers.default_int in
-  setting_dtype
-    (Helpers.Context_var.key setting)
-    (Helpers.Context_var.value setting)
-    ~is_kind:(fun dt -> List.mem dt ints)
-    ~kind:"an integer of known width"
+  setting_dtype Helpers.default_int ~kind:"an integer of known width" (fun dt ->
+      List.mem dt ints)
 
 let of_string s =
-  let name = String.lowercase_ascii s in
-  let prefix = "dtypes." in
-  let name =
-    if String.starts_with ~prefix name then
-      String.sub name (String.length prefix)
-        (String.length name - String.length prefix)
-    else name
-  in
-  match name with
+  match String.lowercase_ascii s with
   | "default_float" -> Ok (default_float ())
   | "default_int" -> Ok (default_int ())
   | name -> (
@@ -569,9 +544,10 @@ let strong dt =
 
 let commit_int ?default_int:first lo hi =
   if Z.equal lo hi && (Z.lt lo (int_min Int64) || Z.gt lo (int_max Uint64)) then
-    invalid_arg
-      (strf "Dtype.commit_int: %s does not fit any integer" (Z.to_string lo));
+    invalid_arg (strf "%s does not fit any integer" (Z.to_string lo));
   let first = match first with Some dt -> dt | None -> default_int () in
+  if not (List.mem first ints) then
+    invalid_arg (Format.asprintf "%a is not an integer of known width" pp first);
   let holds dt = Z.leq (int_min dt) lo && Z.leq hi (int_max dt) in
   Option.value
     (List.find_opt holds [ first; Int32; Int64; Uint64 ])
@@ -589,7 +565,7 @@ let of_const (c : [< const ]) =
   | `Float _ -> Weak_float
 
 let of_consts (cs : [< const ] list) =
-  let greatest dt0 dt1 = if compare dt1 dt0 > 0 then dt1 else dt0 in
+  let greatest d0 d1 = if compare d1 d0 > 0 then d1 else d0 in
   match List.map of_const cs with
   | [] -> strong Weak_float
   | dt :: dts -> (
@@ -624,8 +600,7 @@ let promo_lattice = function
   | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> [ Float16; Bfloat16 ]
   | Float16 | Bfloat16 -> [ Float32 ]
   | Float32 -> [ Float64 ]
-  | Float64 -> []
-  | Void -> invalid_arg "Dtype: void does not promote"
+  | Float64 | Void -> []
 
 (* Each data type with every data type it promotes to, itself included. *)
 let recursive_parents =
@@ -635,10 +610,10 @@ let recursive_parents =
 let parents dt =
   match List.assq_opt dt recursive_parents with
   | Some ps -> ps
-  | None -> invalid_arg "Dtype.least_upper: void does not promote"
+  | None -> invalid_arg "void does not promote"
 
 let least_upper = function
-  | [] -> invalid_arg "Dtype.least_upper: no data type"
+  | [] -> invalid_arg "no data type to promote"
   | dt :: dts ->
       let common p = List.for_all (fun dt -> List.memq p (parents dt)) dts in
       (* [parents dt] is sorted, and the top of the lattice is common. *)
@@ -649,26 +624,25 @@ let least_upper_float dt =
   else if is_float dt then dt
   else least_upper [ dt; default_float () ]
 
-let can_lossless_cast dt0 dt1 =
-  dt0 = dt1 || dt0 = Bool
+let can_lossless_cast d0 d1 =
+  d0 = d1 || d0 = Bool
   ||
-  match dt1 with
-  | Weak_int -> List.mem dt0 ints
+  match d1 with
+  | Weak_int -> List.mem d0 ints
   | Float64 ->
-      List.mem dt0
+      List.mem d0
         ([ Float32; Float16; Bfloat16 ]
         @ fp8s
         @ [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ])
   | Float32 ->
-      List.mem dt0
-        ([ Float16; Bfloat16 ] @ fp8s @ [ Uint16; Uint8; Int16; Int8 ])
-  | Float16 -> List.mem dt0 (fp8s @ [ Uint8; Int8 ])
-  | Uint64 -> List.mem dt0 [ Uint32; Uint16; Uint8 ]
-  | Uint32 -> List.mem dt0 [ Uint16; Uint8 ]
-  | Uint16 -> List.mem dt0 [ Uint8 ]
-  | Int64 -> List.mem dt0 [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
-  | Int32 -> List.mem dt0 [ Uint16; Uint8; Int16; Int8 ]
-  | Int16 -> List.mem dt0 [ Uint8; Int8 ]
+      List.mem d0 ([ Float16; Bfloat16 ] @ fp8s @ [ Uint16; Uint8; Int16; Int8 ])
+  | Float16 -> List.mem d0 (fp8s @ [ Uint8; Int8 ])
+  | Uint64 -> List.mem d0 [ Uint32; Uint16; Uint8 ]
+  | Uint32 -> List.mem d0 [ Uint16; Uint8 ]
+  | Uint16 -> List.mem d0 [ Uint8 ]
+  | Int64 -> List.mem d0 [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
+  | Int32 -> List.mem d0 [ Uint16; Uint8; Int16; Int8 ]
+  | Int16 -> List.mem d0 [ Uint8; Int8 ]
   | _ -> false
 
 let sum_acc dt =
@@ -678,5 +652,4 @@ let sum_acc dt =
     let value = Helpers.getenv_string "SUM_DTYPE" "float32" in
     match of_string value with
     | Ok acc -> least_upper [ dt; acc ]
-    | Error _ ->
-        invalid_arg (strf "Dtype: SUM_DTYPE=%s is not a data type" value)
+    | Error _ -> invalid_arg (strf "SUM_DTYPE=%s is not a data type" value)
