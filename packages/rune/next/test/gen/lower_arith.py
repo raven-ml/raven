@@ -119,6 +119,35 @@ def exp64():
 @table
 def log64():
     return function_table(mpmath.log, np.log, [abs(x) for x in EVERYWHERE])
+# Beyond the exact parts of pi/2 that rune subtracts (2^12 in float32, 2^22 in
+# float64), up to the greatest double: a sweep, the doubles nearest multiples
+# of pi/2, whose remainders are tiny, and the double of the smallest remainder
+# of all. The results take a precision above the argument's exponent.
+
+def near_quarter_turns():
+    with mpmath.workprec(1200):
+        return [float(mpmath.mpf(k) * mpmath.pi / 2) for j in range(13, 1020, 17) for k in (2 ** j + 1, 3 * 2 ** j - 1)]
+
+
+FAR = sweep(12, 1020, 400) + near_quarter_turns() + [6381956970095103 * 2.0 ** 797]
+
+
+def precise(f):
+    def g(x):
+        with mpmath.workprec(1200):
+            return f(x)
+    return g
+
+
+@table
+def sin_far64():
+    return function_table(precise(mpmath.sin), np.sin, FAR)
+@table
+def cos_far64():
+    return function_table(precise(mpmath.cos), np.cos, FAR)
+@table
+def tan_far64():
+    return function_table(precise(mpmath.tan), np.tan, FAR)
 @table
 def sin64():
     return function_table(mpmath.sin, np.sin, EVERYWHERE)

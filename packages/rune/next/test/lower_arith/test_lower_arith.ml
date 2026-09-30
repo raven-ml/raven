@@ -292,11 +292,11 @@ let transcendental ~by name ~budget ~libm op file =
          test dname (fun () -> measure ~by ~budget ~libm op file d))
        float_dtypes)
 
-let unary ~by name ~budget libm { f } =
+let unary ~by ?(file = "") name ~budget libm { f } =
   transcendental ~by name ~budget
     ~libm:(fun a -> libm a.(0))
     { n = (fun a -> f a.(0)) }
-    (name ^ "64.golden")
+    (if file = "" then name ^ "64.golden" else file)
 
 let binary ~by name ~budget libm { g } file =
   transcendental ~by name ~budget
@@ -312,6 +312,12 @@ let transcendentals ?tags name by =
       unary ~by "sin" ~budget:4 Float.sin { f = Nx.sin };
       unary ~by "cos" ~budget:4 Float.cos { f = Nx.cos };
       unary ~by "tan" ~budget:8 Float.tan { f = Nx.tan };
+      unary ~by ~file:"sin_far64.golden" "sin of large arguments" ~budget:4
+        Float.sin { f = Nx.sin };
+      unary ~by ~file:"cos_far64.golden" "cos of large arguments" ~budget:4
+        Float.cos { f = Nx.cos };
+      unary ~by ~file:"tan_far64.golden" "tan of large arguments" ~budget:8
+        Float.tan { f = Nx.tan };
       unary ~by "asin" ~budget:8 Float.asin { f = Nx.asin };
       unary ~by "acos" ~budget:8 Float.acos { f = Nx.acos };
       unary ~by "atan" ~budget:8 Float.atan { f = Nx.atan };

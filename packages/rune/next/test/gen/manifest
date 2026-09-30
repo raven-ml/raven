@@ -12,6 +12,7 @@ lower_arith/cast_to_double.golden
 lower_arith/cast_to_half.golden
 lower_arith/ceil.golden
 lower_arith/cos64.golden
+lower_arith/cos_far64.golden
 lower_arith/cosh64.golden
 lower_arith/equal.golden
 lower_arith/erf64.golden
@@ -27,10 +28,12 @@ lower_arith/pow64.golden
 lower_arith/pow_integral64.golden
 lower_arith/recip.golden
 lower_arith/sin64.golden
+lower_arith/sin_far64.golden
 lower_arith/sinh64.golden
 lower_arith/sqrt.golden
 lower_arith/sub.golden
 lower_arith/tan64.golden
+lower_arith/tan_far64.golden
 lower_arith/tanh64.golden
 lower_arith/trunc.golden
 lower_arith/where.golden

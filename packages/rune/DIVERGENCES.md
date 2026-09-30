@@ -131,11 +131,10 @@ target's run lands.
   and by the bits of `2/pi` beyond. The quadrant picks `sin r`, or
   `cos r = 1 - 2 sin^2 (r/2)`, and the target's sine sees only `r`.
 - **nx:** `sin`, `cos`, libm's.
-- **Class:** ulp, per target; budget 4. Beyond the exact parts' limit the
-  class waits for the bits of `2/pi` to be rounded on the right bit (tolk).
+- **Class:** ulp, per target; budget 4, up to the greatest double.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › {sin,cos} › *`,
-  `transcendental functions on the host › {sin,cos} › *` (slow).
+- **Pinned by:** `transcendental functions › {sin,cos} › *` and
+  `› {sin,cos} of large arguments › *`, and the same on the host (slow).
 
 ### A9. Tangent of the accurate sine and cosine
 
