@@ -93,4 +93,61 @@ let recorded =
            ])
        cases)
 
-let () = exit (run "Tolk_next.Ops_cuda" [ recorded ])
+(* DIVERGENCES D36: a function's address is a word *)
+
+(* A renderer whose binary is its source's bytes: batching compiles nothing. *)
+let uncompiled =
+  Renderer.with_compiler (Renderer.Compiler.v Fun.id) (Cstyle.clang host_target)
+
+(* The call of the kernel adding one to [inp] into [out], compiled. *)
+let adds out inp =
+  let device = Option.get (Ops.device out) in
+  let param slot = Ops.param ~shape:[ Int 4 ] ~device slot Float32 in
+  let i = Ops.range (Int 4) [ 0 ] in
+  let x = Ops.load (Ops.index (param 1) [ i ]) [] in
+  let st =
+    Ops.store
+      (Ops.index (param 0) [ i ])
+      (Ops.add x (Ops.float ~dtype:Float32 1.))
+  in
+  let kernel =
+    Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ i ] ]
+  in
+  Ops.call (Codegen.to_program kernel uncompiled) [ out; inp ]
+
+let storage d = Ops.new_buffer (Single d) 4 Float32
+
+let function_words =
+  group "function words (D36)"
+    [
+      test
+        "a batch over two devices reads a kernel's function from a word of each"
+        (fun () ->
+          let calls =
+            List.map
+              (fun d -> adds (storage d) (storage d))
+              [ "CUDA"; "CUDA:1" ]
+          in
+          let compiled =
+            plain (fun () ->
+                Hcq2.compile_linear ~devices:recorded_devices
+                  (Ops.v Linear ~src:calls))
+          in
+          let words =
+            List.filter
+              (fun u ->
+                match Ops.tag u with
+                | Some (Tuple (String "function" :: _)) -> true
+                | _ -> false)
+              (Ops.toposort compiled)
+          in
+          let placement u =
+            match Ops.device u with
+            | Some (Single d) | Some (Multi [ d ]) -> d
+            | _ -> fail "a function's word is on one device"
+          in
+          equal (list string) [ "CUDA"; "CUDA:1" ]
+            (List.sort_uniq String.compare (List.map placement words)));
+    ]
+
+let () = exit (run "Tolk_next.Ops_cuda" [ recorded; function_words ])

@@ -19,8 +19,8 @@
     ({!Op.Linear} ["kernargs"]), and the launch passes the driver their address
     and the address of their size in the words of the queue's command buffer. A
     kernel's function, and the host function that stamps a slot, are read from
-    words of the host tagged [("function", lib, name)] and ["stamp"], which the
-    engine fills when it links the batch. *)
+    words of the device tagged [("function", lib, name)] and ["stamp"], in
+    memory the host reads, which the engine fills when it links the batch. *)
 
 val queues : host:string -> reaches:(string -> bool) -> Hcq2.queues
 (** [queues ~host ~reaches] is the command queues of a CUDA device, whose

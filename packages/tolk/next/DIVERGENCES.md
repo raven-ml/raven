@@ -1060,14 +1060,16 @@ the Exclusions of `README.md`.
   stamps a slot).
 - **tolk.next:** `lib/runtime/ops_cuda.ml` (`extern`).
 - **Differs:** a kernel's `CUfunction` and the stamping host function reach
-  the host program as words it loads, from placeholders of the host tagged
+  the host program as words it loads, from placeholders of the device tagged
   `("function", lib, name)` and `"stamp"`, which the engine fills when it
-  links the batch. tinygrad takes them as the address of a buffer placed at
-  the function, which the batch loads from its address table.
+  links the batch, in memory the host reads: a function is loaded on each
+  device. tinygrad takes them as the address of a buffer placed at the
+  function, which the batch loads from its address table.
 - **Reason:** (c). nx.device's buffers are memory: none lies at a function's
   address, and a placeholder's storage is a buffer. A word holding the
   address is how a C function already reaches a host program
   (`Hcq2.ccall`).
 - **Pinned by:** the Ops_cuda suite (`test/runtime/ops_cuda`): `recorded
   cases`, whose host programs are tinygrad's with D36 applied by their
-  generator (`gen/runtime/ops_cuda.py`).
+  generator (`gen/runtime/ops_cuda.py`), and `function words (D36) › a batch
+  over two devices reads a kernel's function from a word of each`.

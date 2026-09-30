@@ -13,7 +13,7 @@ source's bytes. For each case:
 tinygrad is changed as tolk.next differs from it:
 - DIVERGENCES D1, as hcq2_d1.py applies it;
 - DIVERGENCES D36: a kernel's function and the stamping host function are
-  read from words of the host, where tinygrad takes the address of a buffer
+  read from words of the device, where tinygrad takes the address of a buffer
   placed at them;
 - an address is taken on one device, as tolk.next names one device.
 """
@@ -63,7 +63,7 @@ UOp.getaddr = lambda self, device=None: getaddr(self, device[0] if isinstance(de
 
 # DIVERGENCES D36
 
-ops_cuda.CUDAQueue.extern = lambda self, tag: UOp.placeholder((1,), dtypes.uint64, 0, device=self.dev.host, tag=tag).index(0).load()
+ops_cuda.CUDAQueue.extern = lambda self, tag: UOp.placeholder((1,), dtypes.uint64, 0, device=self.devs, tag=tag).index(0).load()
 
 
 # Cases

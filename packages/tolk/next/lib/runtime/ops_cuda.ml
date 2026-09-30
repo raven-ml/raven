@@ -31,11 +31,12 @@ let queue ~host q : Hcq2.commands =
     let copy = String.starts_with ~prefix:"COPY" (Hcq2.Queue.name q) in
     load (index (after rt_vars [ !h ]) [ int (if copy then 2 else 1) ]) []
   in
-  (* A function's address, from a word of the host (DIVERGENCES D36). *)
+  (* A function's address, from a word of the device's that the host reads
+     (DIVERGENCES D36): a function is loaded on each device. *)
   let extern tag =
     load
       (index
-         (placeholder ~slot:0 ~device:(Single host) ~tag [ 1 ] Dtype.Uint64)
+         (placeholder ~slot:0 ~device:dev ~tag [ 1 ] Dtype.Uint64)
          [ int 0 ])
       []
   in
