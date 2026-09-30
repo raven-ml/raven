@@ -212,6 +212,17 @@ let placements =
           let s, y = copied x in
           exact (grid 2 3) y;
           equal (list string) [ "CPU:1" ] (names s));
+      test "a traced value split over devices holds its slices" (fun () ->
+          let p = Nx.Placement.sharded ~axis:0 [ d1; d2 ] and x = grid 4 3 in
+          let s, y = trace (fun () -> Nx.place p (Nx.copy x)) in
+          exact x (value s y);
+          is_true (Nx.Placement.equal p (Nx.placement y)));
+      test "a split capture is its shards, reassembled" (fun () ->
+          let p = Nx.Placement.sharded ~axis:1 [ d1; d2 ] in
+          let x = Nx.place p (grid 3 4) in
+          let s, y = copied x in
+          exact (grid 3 4) y;
+          equal int 1 (bound s));
       test "two devices of one name cannot meet in one trace" (fun () ->
           let a = Nx.place (Nx.Placement.device d1) (grid 2 2) in
           let b = Nx.place (Nx.Placement.device twin) (grid 2 2) in

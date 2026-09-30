@@ -182,3 +182,60 @@ let exact ?__POS__ expected actual =
         | None -> false)
   in
   Windtrap.equal ?__POS__ bits expected actual
+
+(* Units in the last place *)
+
+(* The position of each element of the float [x] among the floats of its format,
+   in order: its bits, as an integer of its width, with a negative float's
+   magnitude negated. *)
+let ranks : type b. (float, b) Nx.t -> int64 array =
+ fun x ->
+  let order b m =
+    if Int64.compare b 0L < 0 then Int64.neg (Int64.logand b m) else b
+  in
+  match Nx_dtype.itemsize (Nx.dtype x) with
+  | 8 ->
+      Array.map
+        (fun b -> order b Int64.max_int)
+        (Nx.to_array (Nx.bitcast Nx.int64 x))
+  | 4 ->
+      Array.map
+        (fun b -> order (Int64.of_int32 b) 0x7fff_ffffL)
+        (Nx.to_array (Nx.bitcast Nx.int32 x))
+  | 2 ->
+      Array.map
+        (fun b -> order (Int64.of_int b) 0x7fffL)
+        (Nx.to_array (Nx.bitcast Nx.int16 x))
+  | _ -> invalid_arg "no units in the last place for this dtype"
+
+let ulps ?__POS__ ~budget ~expected inputs actual =
+  let actual_ranks = ranks actual and expected_ranks = ranks expected in
+  let outputs = Nx.to_array actual and expected = Nx.to_array expected in
+  let inputs = Array.map Nx.to_array inputs in
+  let distance i =
+    let r = expected.(i) and y = outputs.(i) in
+    if Float.is_nan r || Float.is_nan y then
+      if Float.is_nan r && Float.is_nan y then 0L else Int64.max_int
+    else if Float.abs r = Float.infinity || Float.abs y = Float.infinity then
+      if r = y then 0L else Int64.max_int
+    else Int64.abs (Int64.sub actual_ranks.(i) expected_ranks.(i))
+  in
+  let worst = ref (-1) and dmax = ref 0L in
+  Array.iteri
+    (fun i _ ->
+      let d = distance i in
+      if Int64.compare d !dmax > 0 then (
+        dmax := d;
+        worst := i))
+    outputs;
+  if Int64.compare !dmax (Int64.of_int budget) > 0 then
+    let i = !worst in
+    let pp_args ppf a =
+      Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
+        (fun ppf x -> Format.fprintf ppf "%h" x.(i))
+        ppf (Array.to_list a)
+    in
+    Windtrap.failf ?__POS__
+      "%Ld ulps (budget %d) at (%a): %h, correctly rounded %h" !dmax budget
+      pp_args inputs outputs.(i) expected.(i)

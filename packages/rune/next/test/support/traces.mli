@@ -48,3 +48,25 @@ val exact : ?__POS__:Windtrap.pos -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> unit
     the bits of each element of [expected]: [-0.] is not [0.], and every NaN
     equals every NaN, since arithmetic leaves a NaN's sign and payload
     unspecified. Compare bit patterns through a bitcast where they matter. *)
+
+val ulps :
+  ?__POS__:Windtrap.pos ->
+  budget:int ->
+  expected:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t array ->
+  (float, 'b) Nx.t ->
+  unit
+(** [ulps ~budget ~expected inputs actual] asserts that each element of
+    [actual], a float of 16, 32 or 64 bits, is within [budget] units in the last
+    place of the element of [expected] at the same position, the correctly
+    rounded result. NaNs and infinities must be equal. The failure names the
+    worst element and the elements of [inputs] it was computed from. *)
+
+val contents : Rune_next.Lower.scope -> (int * Tolk_next.Dtype.value array) list
+(** [contents s] is the elements of each storage and each argument [s] binds, by
+    slot. *)
+
+val of_const : ('a, 'b) Nx_dtype.t -> Tolk_next.Dtype.const -> 'a
+(** [of_const dt c] is the element [c] of [dt].
+
+    Raises [Invalid_argument] if [c] is not of [dt]'s kind. *)

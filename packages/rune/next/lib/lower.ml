@@ -556,8 +556,27 @@ let op : type r. scope -> r Nx.Op.t -> r =
   in
   let refuse () = jit_error "cannot compile %s" what in
   match[@warning "@4@8"] o with
-  | Unary _ | Binary _ | Compare _ | Where _ | Convert _ | Threefry _ ->
-      refuse ()
+  | Unary (k, x) -> ret (Nx.dtype x) (Lower_arith.unary k (node s what p x))
+  | Binary (k, x, y) ->
+      ret (Nx.dtype x)
+        (Lower_arith.binary k (node s what p x) (node s what p y))
+  | Compare (k, x, y) ->
+      ret Nx_dtype.bool
+        (Lower_arith.compare k (node s what p x) (node s what p y))
+  | Where (c, x, y) ->
+      ret (Nx.dtype x)
+        (Ops.where (node s what p c) (node s what p x) (node s what p y))
+  | Convert (Cast, dt, x) ->
+      ret dt (Lower_arith.cast (check s what p dt) (node s what p x))
+  | Convert (Bitcast, dt, x) ->
+      ret dt (Lower_arith.bitcast (check s what p dt) (node s what p x))
+  | Threefry (key, counter) ->
+      let k = node s what p key in
+      if not (Ops.op_in_backward_slice_with_self k [ Op.Param ]) then
+        jit_error
+          "a random draw from a key that does not depend on the function's \
+           arguments would repeat on every call; pass the key as an argument";
+      ret Nx_dtype.int32 (Lower_arith.threefry k (node s what p counter))
   | Reduce _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ -> refuse ()
   | Pad _ | Cat _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ ->
       refuse ()
