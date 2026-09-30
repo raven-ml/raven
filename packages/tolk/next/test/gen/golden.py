@@ -39,6 +39,16 @@ def text(fn):
     return fn
 
 
+def graph(fn):
+    """Declare a graph golden: `fn()` returns a sink UOp, written in the graph
+    format of graph.py."""
+    def body():
+        from graph import write
+        return write(fn())
+    GOLDENS.append((fn.__name__, body))
+    return fn
+
+
 def listing(uops):
     """The listing tinygrad prints for `uops`, a list of UOps in order."""
     from tinygrad.uop.render import print_uops

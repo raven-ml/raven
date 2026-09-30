@@ -32,13 +32,26 @@ TEST = HERE.parent
 MANIFEST = HERE / "manifest"
 HEADER = f"# tinygrad {TINYGRAD}\n"
 
-# The child runs the generator and writes the goldens it declared to a file,
-# out of reach of anything tinygrad prints.
+# The child runs the generator, then makes each golden in a process of its own,
+# forked from the generator's, so that no golden sees the state another left in
+# tinygrad (buffer numbering, caches). It writes the goldens to a file, out of
+# reach of anything tinygrad prints.
 CHILD = """
-import json, runpy, sys, golden
+import json, os, runpy, sys, golden
 runpy.run_path(sys.argv[1])
+goldens = []
+for name, body in golden.GOLDENS:
+    read, write = os.pipe()
+    if (pid := os.fork()) == 0:
+        os.close(read)
+        with os.fdopen(write, "w") as out: out.write(body())
+        os._exit(0)
+    os.close(write)
+    with os.fdopen(read) as out: text = out.read()
+    if os.waitpid(pid, 0)[1] != 0: sys.exit(f"golden {name} failed")
+    goldens.append((name, text))
 with open(sys.argv[2], "w") as out:
-    json.dump([(name, body()) for name, body in golden.GOLDENS], out)
+    json.dump(goldens, out)
 """
 
 
@@ -63,7 +76,7 @@ def check_checkout(tinygrad):
 def generators(modules):
     found = {path.relative_to(HERE).with_suffix("").as_posix(): path
              for path in sorted(HERE.rglob("*.py"))
-             if path.parent != HERE or path.name not in ("generate.py", "golden.py")}
+             if path.parent != HERE or path.name not in ("generate.py", "golden.py", "graph.py")}
     unknown = [module for module in modules if module not in found]
     if unknown:
         sys.exit(f"no generator for {', '.join(unknown)}; generators: {', '.join(found)}")
