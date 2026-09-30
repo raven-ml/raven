@@ -61,6 +61,9 @@ named:
   infinity and to e4m3 as a NaN of its sign (D16), and `__half` and
   `nv_bfloat16` operations compute in their own type, as `cuda_fp16.hpp` and
   `cuda_bf16.hpp` declare (D17).
+- **Contraction (D25):** a CUDA kernel compiled with `--fmad=false` and a HIP
+  kernel compiled with `-ffp-contract=off` compute `a*b + c` with two
+  roundings: `(1 + 2^-12)^2 - (1 + 2^-11)` is 0, not `2^-24`.
 - **AMD gfx950:** `f32_to_fp8`'s non-saturating `cvt_pk_{fp8,bf8}_f32` makes
   an infinity a NaN in fp8 and keeps it in bf8 (D16).
 - **CUDA (nx.cuda.device):** a device waits with the `Sleep` completion: the

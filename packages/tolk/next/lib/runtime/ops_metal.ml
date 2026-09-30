@@ -56,6 +56,9 @@ let compile src =
        -fmodules-cache-path=\"%s\" -fno-caret-diagnostics"
       metal_version Helpers.cache_dir
   in
+  (* Metal fuses a product and a sum into one multiply-add unless the source
+     asks it not to; its option -ffp-contract=off does not reach the code. *)
+  let src = "#pragma METAL fp contract(off)\n" ^ src in
   (* The source is padded to a multiple of 4 bytes with at least one NUL; the
      parameters just end with one. *)
   let n = String.length src in

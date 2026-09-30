@@ -586,7 +586,7 @@ let cachedb =
 module Diskcache = struct
   (* Bump whenever what an entry means changes without its key changing: the old
      entries would otherwise answer a different question. *)
-  let version = 1
+  let version = 2
   let digest s = Digest.to_hex (Digest.string s)
   let is_hex c = is_digit c || (c >= 'a' && c <= 'f')
 

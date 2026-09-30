@@ -8,7 +8,9 @@ linearizes them for Clang:
   compiles for x86_64 with and without AVX;
 - `sqrt`, the square roots of a buffer of 16 floats;
 - `half_add`, the sum of two buffers of one half, which
-  test/null/test_compile_failures.py compiles for Apple's processors.
+  test/null/test_compile_failures.py compiles for Apple's processors;
+- `muladd`, a product plus a buffer, 16 floats, whose rendered expression a
+  compiler that contracts would fuse into one multiply-add.
 """
 
 from golden import graph
@@ -35,6 +37,7 @@ KERNELS = [
     ("add", lambda: empty(16) + empty(16)),
     ("sqrt", lambda: empty(16).sqrt()),
     ("half_add", lambda: empty(1, dtype=dtypes.half) + empty(1, dtype=dtypes.half)),
+    ("muladd", lambda: empty(16) * empty(16) + empty(16)),
 ]
 
 

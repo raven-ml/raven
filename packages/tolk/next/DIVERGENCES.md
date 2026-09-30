@@ -644,3 +644,35 @@ the Exclusions of `README.md`.
   - transcendental polynomials: the `Transcendental` goldens, generated from
     the patched tinygrad, whose value tables are unchanged;
   - the goldens, generated from the patched tinygrad.
+
+## D25. Compilers keep each product and sum its own rounding
+
+- **tinygrad:** `runtime/support/compiler_cpu.py` (Clang's arguments),
+  `runtime/support/compiler_amd.py` (HIP's options), `runtime/support/
+  compiler_cuda.py` (NVRTC's options), `runtime/ops_metal.py:60` (Metal's
+  parameters): none turns floating-point contraction off.
+- **tolk.next:** `lib/runtime/support/compiler_cpu.ml` (`-ffp-contract=off`),
+  `lib/runtime/support/compiler_amd.ml` (`-ffp-contract=off`),
+  `lib/runtime/support/compiler_cuda.ml` (`--fmad=false`),
+  `lib/runtime/ops_metal.ml` (`#pragma METAL fp contract(off)` before the
+  source); `lib/helpers.ml` (`Diskcache.version` 2, since a cached binary
+  compiled with contraction answers the same key).
+- **Differs:** each compiler would fuse a product and a sum that a rendered
+  expression holds together, `a*b + c`, into one multiply-add with one
+  rounding: Clang at `-O2` (`-ffp-contract=on`), HIP (`fast`), NVRTC
+  (`--fmad=true`) and Metal, whose `-ffp-contract=off` does not reach the code
+  where its pragma does. The graph states two roundings, and they stay two.
+  The IR's own multiply-add (`Op.Mulacc`) comes only from `Decomp_op`'s
+  `a * b + c` rule, for a renderer that renders it; no renderer of tolk.next
+  does, so no kernel holds one.
+- **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result,
+  alone or fused, meets its class against eager nx, which rounds a product and
+  a sum apart; and rune's accurate compositions (two-part products and sums)
+  are exact only where each operation rounds as written.
+- **Pinned by:** the `Compiler_cpu` suite, `execution on the host › a product
+  and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
+  where a fused multiply-add gives `2^-24`); the `Ops_metal` suite,
+  `MTLCompiler › a product and a sum compile under the no-contraction pragma
+  (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
+  `2^-24` without the pragma and 0 with it, and still `2^-24` with
+  `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.

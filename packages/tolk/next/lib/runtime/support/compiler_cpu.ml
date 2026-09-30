@@ -61,7 +61,8 @@ let clang arch =
     | _ -> invalid_arg (Printf.sprintf "unsupported arch: '%s'" machine)
   in
   (* -fno-math-errno is required for __builtin_sqrt to become an instruction
-     instead of a function call. *)
+     instead of a function call. -ffp-contract=off keeps each product and sum
+     its own rounding, as the graph states them. *)
   let args =
     [
       "-c";
@@ -71,6 +72,7 @@ let clang arch =
       "-fPIC";
       "-ffreestanding";
       "-fno-math-errno";
+      "-ffp-contract=off";
       "-nostdlib";
       "-fno-ident";
       "--target=" ^ machine ^ "-none-unknown-elf";

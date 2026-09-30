@@ -146,6 +146,16 @@ let metal =
           in
           is_metal_library
             (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
+      test "a product and a sum compile under the no-contraction pragma (D25)"
+        (fun () ->
+          let src =
+            "#include <metal_stdlib>\n\
+             kernel void muladd(device float* d, const device float* a, const \
+             device float* b, const device float* c) { d[0] = a[0] * b[0] + \
+             c[0]; }"
+          in
+          is_metal_library
+            (with_metal (fun () -> Compiler.compile (Ops_metal.compiler ()) src)));
       test "fast math is off" (fun () ->
           let src =
             "#ifdef __FAST_MATH__\n#error fast math\n#endif\n" ^ kernel "exact"

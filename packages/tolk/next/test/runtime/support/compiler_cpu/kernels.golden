@@ -59,5 +59,26 @@
 57 Ops.STORE dtypes.void [55, 56]
 58 Ops.SINK dtypes.void [57] KernelInfo(name="E") tag=1
 59 Ops.LINEAR dtypes.void [48, 49, 50, 3, 4, 51, 52, 53, 54, 55, 56, 57, 58] "half_add"
-60 Ops.SINK dtypes.void [37, 47, 59]
+60 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16, device="NULL")
+61 Ops.SHRINK dtypes.float [60, 14, 12]
+62 Ops.LOAD dtypes.float [61]
+63 Ops.INDEX dtypes.float [62, 4]
+64 Ops.INDEX dtypes.float [62, 6]
+65 Ops.INDEX dtypes.float [62, 8]
+66 Ops.INDEX dtypes.float [62, 10]
+67 Ops.MUL dtypes.float [19, 23]
+68 Ops.ADD dtypes.float [67, 63]
+69 Ops.MUL dtypes.float [20, 24]
+70 Ops.ADD dtypes.float [69, 64]
+71 Ops.MUL dtypes.float [21, 25]
+72 Ops.ADD dtypes.float [71, 65]
+73 Ops.MUL dtypes.float [22, 26]
+74 Ops.ADD dtypes.float [73, 66]
+75 Ops.STACK dtypes.float [68, 70, 72, 74]
+76 Ops.STORE dtypes.void [32, 75]
+77 Ops.GROUP dtypes.void [76, 76, 76, 76]
+78 Ops.END dtypes.void [77, 13]
+79 Ops.SINK dtypes.void [78] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+80 Ops.LINEAR dtypes.void [0, 1, 2, 60, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 61, 62, 19, 20, 21, 22, 23, 24, 25, 26, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 32, 76, 77, 78, 79] "muladd"
+81 Ops.SINK dtypes.void [37, 47, 59, 80]
 

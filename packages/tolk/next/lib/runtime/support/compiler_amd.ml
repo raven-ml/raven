@@ -45,6 +45,7 @@ let compile_hip src ~arch ~asm =
     String.concat " "
       [
         "-O3";
+        "-ffp-contract=off";
         "-mcumode";
         "--hip-version=6.0.32830";
         "-DHIP_VERSION_MAJOR=6";

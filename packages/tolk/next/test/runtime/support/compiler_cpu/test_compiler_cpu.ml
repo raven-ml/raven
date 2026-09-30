@@ -199,6 +199,19 @@ let execution =
           let squares = Array.init 16 (fun i -> Float.of_int (i * i)) in
           let out = Host.run (loaded "sqrt") [ (1, floats squares) ] in
           equal values (floats (Array.init 16 Float.of_int)) (List.assoc 0 out));
+      test "a product and a sum round twice, never fused" (fun () ->
+          (* (1 + 2^-12)^2 rounds to 1 + 2^-11, a tie to even, so the sum with
+             -(1 + 2^-11) is 0; a fused multiply-add keeps the 2^-24. *)
+          let x = 1. +. 0x1p-12 in
+          let out =
+            Host.run (loaded "muladd")
+              [
+                (1, floats (Array.make 16 x));
+                (2, floats (Array.make 16 x));
+                (3, floats (Array.make 16 (-.(1. +. 0x1p-11))));
+              ]
+          in
+          equal values (floats (Array.make 16 0.)) (List.assoc 0 out));
     ]
 
 (* Features *)

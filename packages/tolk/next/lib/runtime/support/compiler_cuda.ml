@@ -79,7 +79,7 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
     | Error e -> raise (Renderer.Compiler.Compile_error e)
     | Ok version -> (
         let options =
-          (("--gpu-architecture=" ^ arch) :: includes)
+          (("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes)
           @ if version >= (12, 4) then [ "--minimal" ] else []
         in
         match nvrtc_compile src (Array.of_list options) ptx with
