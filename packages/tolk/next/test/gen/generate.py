@@ -6,7 +6,7 @@
 
     uv run packages/tolk/next/test/gen/generate.py [--check] [MODULE...]
 
-Each generator file `gen/<module path>.py` runs in a fresh interpreter against
+Each generator file `gen/<path>.py` runs in a fresh interpreter against
 the tinygrad checkout, which must be clean and at TINYGRAD. MODULE, such as
 `dtype` or `uop/op`, limits the run to those generators; by default all run.
 

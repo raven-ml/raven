@@ -1,5 +1,5 @@
 open Windtrap
-open Tolk_next.Uop
+open Tolk_next
 
 (* The operations, in the order the interface declares them. *)
 let declared =
@@ -369,7 +369,7 @@ let named_sets =
 
 let () =
   exit
-    (run "Tolk_next.Uop.Op"
+    (run "Tolk_next.Op"
        [
          operations;
          order;

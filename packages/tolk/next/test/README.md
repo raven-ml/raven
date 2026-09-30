@@ -2,8 +2,8 @@
 
 ## Layout
 
-- `<module path>/` holds the suite of `lib/<module path>.ml`, one executable
-  named after the module: `dtype/test_dtype.ml`, `uop/op/test_op.ml`. A suite
+- `<path>/` holds the suite of `lib/<path>.ml`, one executable named after
+  the file: `dtype/test_dtype.ml`, `uop/op/test_op.ml`. A suite
   tests its module through its interface, and its goldens sit beside it.
 - `support/` is the `tolk_next_test` library that every suite links: its
   `Golden` module turns goldens into tests. Generators, witnesses and law
@@ -55,7 +55,7 @@ reports as a failure.
 ## Coverage and mutation
 
 The library carries windtrap's coverage and mutation backends, which do
-nothing until a build asks for them. For one module, here `Uop.Op`:
+nothing until a build asks for them. For one module, here `Op`:
 
 ```sh
 # Coverage: run the suite instrumented, then report each file's uncovered code.
@@ -230,7 +230,7 @@ its goldens test `Render`.
 
 ## Generating goldens
 
-`gen/<module path>.py` generates the goldens of `<module path>/`. It declares
+`gen/<path>.py` generates the goldens of `<path>/`. It declares
 each golden as a function, named after the golden, with the decorators of
 `gen/golden.py`:
 

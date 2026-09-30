@@ -1,8 +1,8 @@
 """Declare the goldens of a generator file.
 
-A generator file `gen/<module path>.py` declares each golden with one of the
+A generator file `gen/<path>.py` declares each golden with one of the
 decorators below. The golden is named after its function, and generate.py
-writes it to `test/<module path>/<name>.golden`.
+writes it to `test/<path>/<name>.golden`.
 """
 
 import contextlib
