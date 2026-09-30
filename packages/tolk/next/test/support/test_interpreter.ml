@@ -49,6 +49,28 @@ let interpreter =
               (Ops.int ~dtype:Dtype.Int32 2)
           in
           equal const (int 2) (eval ~params:[ (0, `Bool false) ] u));
+      cases ~name:(Printf.sprintf "0x%08x")
+        "a selection keeps the bits of the NaN it selects"
+        [ 0xffc12345; 0x7f800001 ] (fun bits ->
+          let f = Ops.bitcast (x Dtype.Uint32) Dtype.Float32 in
+          let u =
+            Ops.where (Ops.ne f f) f (Ops.float ~dtype:Dtype.Float32 1.)
+          in
+          equal const (int bits)
+            (eval ~params:[ (0, int bits) ] (Ops.bitcast u Dtype.Uint32)));
+      test "a cast to its operand's type keeps a signalling NaN's bits"
+        (fun () ->
+          let f = Ops.bitcast (x Dtype.Uint32) Dtype.Float32 in
+          let u = Ops.v ~src:[ f ] ~arg:(Dtype Dtype.Float32) Cast in
+          equal const (int 0x7f800001)
+            (eval ~params:[ (0, int 0x7f800001) ] (Ops.bitcast u Dtype.Uint32)));
+      test "a cast of a NaN to a float keeps its sign" (fun () ->
+          let u = Ops.cast (x Dtype.Float32) Dtype.Float16 in
+          let nan = Float.neg Float.nan in
+          match eval ~params:[ (0, `Float nan) ] u with
+          | `Float y ->
+              is_true ~msg:"a negative NaN" (Float.is_nan y && Float.sign_bit y)
+          | v -> failf "%a is not a float" (Testable.pp const) v);
       test "a node that is not arithmetic is refused" (fun () ->
           rejects (fun () -> eval (Ops.sink [ Ops.int ~dtype:Dtype.Int32 1 ])));
     ]
@@ -191,6 +213,12 @@ let reductions =
 let vector storage offset n =
   Ops.v ~src:[ storage; offset; Ops.int n ] Op.Shrink
 
+(* [stack_lane k] reads lane [k] of the stack of 5, 6 and 7, by an index that is
+   no literal, as a kernel's are. *)
+let stack_lane k =
+  let lanes = List.map (Ops.int ~dtype:Dtype.Int32) [ 5; 6; 7 ] in
+  Ops.v ~src:[ Ops.stack lanes; Ops.int ~dtype:Dtype.Int32 k ] Index
+
 let storage =
   let table = Ops.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
   let elements = [ (0, Array.map int [| 10; 11; 12; 13 |]) ] in
@@ -218,6 +246,19 @@ let storage =
           let offset = Ops.valid i Ops.O.(i < int 2) in
           let vector = Ops.load (vector table offset 2) [] in
           equal const `Invalid (at 3 (Ops.index vector [ Ops.int 0 ])));
+      test "a lane of a stack is its source" (fun () ->
+          equal const (int 5) (eval (stack_lane 0));
+          equal const (int 7) (eval (stack_lane 2)));
+      test "a lane outside its stack is refused" (fun () ->
+          rejects (fun () -> eval (stack_lane 3)));
+      test "a lane of an operation of stacks is the operation of their lanes"
+        (fun () ->
+          let stack ns = Ops.stack (List.map (Ops.int ~dtype:Dtype.Int32) ns) in
+          let sum =
+            Ops.cast (Ops.add (stack [ 1; 2 ]) (stack [ 10; 20 ])) Dtype.Int64
+          in
+          equal const (int 22)
+            (eval (Ops.v ~src:[ sum; Ops.int ~dtype:Dtype.Int32 1 ] Index)));
       test "a lane outside its vector is refused" (fun () ->
           let vector = Ops.load (vector table (Ops.int 0) 2) [] in
           rejects (fun () -> at 0 (Ops.index vector [ Ops.int 2 ])));

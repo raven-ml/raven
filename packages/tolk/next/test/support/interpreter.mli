@@ -16,7 +16,9 @@
     ({!Tolk_next.Op.Load}) is the value of what it loads. A vector of storage is
     a {!Tolk_next.Op.Shrink} of the storage, an offset and a length: an index by
     [k] of a load of the vector reads the element [k] past the offset, which is
-    its lane [k].
+    its lane [k]. An index by [k] of a stack ({!Tolk_next.Op.Stack}) is its lane
+    [k], and of an elementwise operation, a cast or a bit reinterpretation of
+    stacks, that operation of their lanes [k].
 
     The value of an index where its gate fails ({!Tolk_next.Ops.valid}) is
     [`Invalid], which poisons what reads it: an operation of an [`Invalid]
@@ -51,16 +53,20 @@ val eval :
     whatever [vars] binds them to. A weak integer operand of an operation on a
     committed integer type takes that type and wraps, as compiled code commits
     it. A cast converts as {!Dtype.const} then wraps to the target type
-    ({!Dtype.truncate}); a bit reinterpretation is {!Dtype.bitcast}. Both
-    branches of a selection are evaluated.
+    ({!Dtype.truncate}), and a cast to its operand's own type is the operand; a
+    bit reinterpretation is {!Dtype.bitcast}. A selection of committed operands
+    is the operand it selects, bits included. A NaN that an operation or a cast
+    gives a float type keeps its sign, and its payload as far as
+    {!Dtype.truncate} keeps it, as compiled code keeps them. Both branches of a
+    selection are evaluated.
 
     Raises [Invalid_argument] if [u] reads an unbound variable, a range or a
     hardware index that [vars] does not bind, a parameter that [params] does not
     give, storage that [buffers] does not give or outside its array, a lane
-    outside its vector, or holds an operation other than a constant, a scalar
-    leaf, an arithmetic operation, a cast, a bit reinterpretation, a reduction
-    over ranges, an index of storage or of a vector load by one integer, or a
-    load. *)
+    outside its vector or stack, or holds an operation other than a constant, a
+    scalar leaf, an arithmetic operation, a cast, a bit reinterpretation, a
+    reduction over ranges, an index of storage, of a vector load, or of stacks
+    by one integer, or a load. *)
 
 val overflows :
   ?vars:(string * Dtype.value) list ->

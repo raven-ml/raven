@@ -21,13 +21,19 @@ let leaf vars u =
 let weak u = List.mem (Ops.dtype u) Dtype.weaks
 
 (* [held ~check dt v] is [v] as [dt] holds it: converted, then wrapped to [dt]'s
-   width, after [check dt] has seen the exact value. *)
+   width, after [check dt] has seen the exact value. A NaN converted to a float
+   keeps its sign and payload as far as [dt] does, as compiled code keeps them;
+   [Dtype.const] would make it the one canonical NaN. *)
 let held ~check dt (v : Dtype.value) : Dtype.const =
-  match Dtype.const dt v with
-  | #Dtype.value as v ->
-      check dt v;
+  match v with
+  | `Float x when Float.is_nan x && Dtype.is_float dt ->
       (Dtype.truncate dt v :> Dtype.const)
-  | `Invalid -> `Invalid
+  | _ -> (
+      match Dtype.const dt v with
+      | #Dtype.value as v ->
+          check dt v;
+          (Dtype.truncate dt v :> Dtype.const)
+      | `Invalid -> `Invalid)
 
 (* The values of [u]'s operands as compiled code reads them: a weak integer
    operand of an operation on a committed integer type is committed to that
@@ -65,7 +71,11 @@ let node ~check vars params values u =
       | None -> invalid_arg (Printf.sprintf "parameter %d has no value" slot))
   | Load, _, v :: _ -> v
   | Where, _, `Invalid :: _ -> `Invalid
+  | Where, _, [ `Bool c; x; y ]
+    when List.for_all (fun s -> not (weak s)) (List.tl (Ops.src u)) ->
+      if c then x else y
   | op, _, src when op <> Op.Where && List.exists is_invalid src -> `Invalid
+  | Cast, _, [ v ] when Dtype.equal (Ops.dtype (Ops.nth u 0)) (Ops.dtype u) -> v
   | Cast, _, [ (#Dtype.value as v) ] -> held ~check (Ops.dtype u) v
   | Bitcast, _, [ (#Dtype.value as v) ] ->
       (Dtype.bitcast (Ops.dtype (Ops.nth u 0)) (Ops.dtype u) v :> Dtype.const)
@@ -93,6 +103,30 @@ let rec over eval vars ranges f acc =
           done;
           !acc
       | _ -> invalid_arg "a range's end is not an integer")
+
+(* [of_stacks u] is [true] iff [u] is a stack, or an elementwise operation, a
+   cast or a bit reinterpretation of one; [lane k u] is the node that computes
+   its lane [k]. *)
+let rec of_stacks u =
+  match Ops.op u with
+  | Stack -> true
+  | op when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
+      List.exists of_stacks (Ops.src u)
+  | _ -> false
+
+and lane k u =
+  match Ops.op u with
+  | Stack -> (
+      match List.nth_opt (Ops.src u) k with
+      | Some x when k >= 0 -> x
+      | _ ->
+          invalid_arg
+            (Printf.sprintf "lane %d is outside a stack of %d" k
+               (List.length (Ops.src u))))
+  | _ ->
+      Ops.replace u
+        ~src:
+          (List.map (fun s -> if of_stacks s then lane k s else s) (Ops.src u))
 
 (* A reduction and an index evaluate their sources themselves: a reduction at
    each value of its ranges, an index without reading its storage. *)
@@ -141,6 +175,11 @@ and reduction ~check ~vars ~params ~buffers red =
 and read ~check ~vars ~params ~buffers index =
   let eval u = fold ~check ~vars ~params ~buffers u in
   match Ops.src index with
+  | [ vector; i ] when of_stacks vector -> (
+      match eval i with
+      | `Int k -> eval (lane (Z.to_int k) vector)
+      | `Invalid -> `Invalid
+      | _ -> invalid_arg "a lane is not an integer")
   | [ storage; i ] -> (
       (* A lane of a vector load reads its element past the vector's offset. *)
       let storage, offset, length =
