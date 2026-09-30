@@ -46,7 +46,7 @@ let commands events q : Hcq2.commands =
         ~src:
           (Hcq2.pack_args (Hcq2.layout_args args)
              (8 * max (List.length args) 1))
-        ~arg:(String "kernargs")
+        ~arg:(Region { name = "kernargs"; align = 128 })
     in
     let name =
       match arg (nth prg 0) with Kernel k -> function_name k | _ -> ""
@@ -74,7 +74,8 @@ let commands events q : Hcq2.commands =
     memory_barrier = (fun () -> ());
     loop = Hcq2.Queue.loop q;
     submit =
-      (fun cmdbuf ->
+      (fun () ->
+        let cmdbuf = Hcq2.bufferize_cmdbuf q "cmdbuf" in
         let doorbell =
           placeholder
             ~device:(Multi (Hcq2.Queue.devices q))

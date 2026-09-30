@@ -359,6 +359,7 @@ and Node : sig
     | String of string
     | Bytes of string
     | Queue of { devices : string list; queue : string }
+    | Region of { name : string; align : int }
     | Code of { code : string; dtype : Dtype.t }
     | Bufferize of bufferize_opts
     | Kernel of kernel_info
@@ -477,6 +478,7 @@ let equal_arg (a0 : arg) (a1 : arg) =
   | Queue q0, Queue q1 ->
       List.equal String.equal q0.devices q1.devices
       && String.equal q0.queue q1.queue
+  | Region r0, Region r1 -> String.equal r0.name r1.name && r0.align = r1.align
   | Code c0, Code c1 ->
       String.equal c0.code c1.code && Dtype.equal c0.dtype c1.dtype
   | Bufferize b0, Bufferize b1 -> equal_bufferize_opts b0 b1
@@ -507,6 +509,7 @@ let hash_arg (a : arg) =
   | String s -> h (11, s)
   | Bytes s -> h (12, s)
   | Queue q -> h (13, q.devices, q.queue)
+  | Region r -> h (20, r.name, r.align)
   | Code c -> h (14, c.code, Dtype.hash c.dtype)
   | Bufferize b -> h (15, b.device, b.removable)
   | Kernel k -> h (16, k.name, k.beam)
@@ -939,6 +942,8 @@ and repr_arg = function
   | Queue q ->
       repr_tuple
         [ repr_tuple (List.map repr_string q.devices); repr_string q.queue ]
+  | Region { name; align = 128 } -> repr_string name
+  | Region r -> repr_tuple [ repr_string r.name; string_of_int r.align ]
   | Code c -> repr_tuple [ repr_string c.code; repr_dtype c.dtype ]
   | Bufferize b -> repr_bufferize_opts b
   | Kernel k -> repr_kernel_info k

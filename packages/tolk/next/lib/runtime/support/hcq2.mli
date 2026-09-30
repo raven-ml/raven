@@ -108,26 +108,31 @@ type commands = {
       (** [loop r body] makes the commands [body ()] enqueues run once for each
           value of the range [r], in order: {!Queue.loop} for a queue of words.
       *)
-  submit : Ops.t -> Ops.t;
-      (** [submit cmdbuf] is the effect of the host program that submits the
-          command buffer [cmdbuf], the queue's commands.
+  submit : unit -> Ops.t;
+      (** [submit ()] is the effect of the host program that submits the queue's
+          commands, called once every command is encoded. It finishes the queue,
+          then takes its command buffer ({!bufferize_cmdbuf}).
 
           Raises {!Over_capacity} if one submission of the queue cannot hold
           them. *)
 }
 (** The type for the commands a vendor encodes on one queue. *)
 
-val bufferize_cmdbuf : Queue.t -> string -> string -> Ops.t
-(** [bufferize_cmdbuf q name device] is the command buffer of [q]'s commands: a
-    placeholder of [device] tagged [to_name [name; Queue.name q]] with the words
-    of [q] written into it, those known at link then and the others when the
-    host program runs. Each word used at several offsets is written by one loop
-    over them. The {!Op.Linear}s that words address ({!Op.Getaddr}), such as a
-    program's arguments, are buffers of their own, one per {!Op.Linear} name
-    (its argument), written before the command buffer. An {!Op.Linear} whose
+val bufferize_cmdbuf : ?device:Ops.device -> Queue.t -> string -> Ops.t
+(** [bufferize_cmdbuf ~device q name] is the command buffer of [q]'s commands: a
+    placeholder of [device] (defaults to [q]'s devices) tagged
+    [to_name [name; Queue.name q]] with the words of [q] written into it, those
+    known at link then and the others when the host program runs. Each word used
+    at several offsets is written by one loop over them. The {!Op.Linear}s that
+    words address ({!Op.Getaddr}), such as a program's arguments, are regions
+    ({!Ops.arg}'s [Region]): each is laid out at its alignment in a buffer of
+    its own for its name, written before the command buffer. A region whose
     words read ranges, such as the arguments of a program in a loop, has a copy
-    for each trip of them, 128-byte aligned, and a word addresses its trip's
-    copy. *)
+    for each trip of them, each at the region's alignment, and a word addresses
+    its trip's copy. It lays the regions out in [q]: reset [q] ({!Queue.reset})
+    before encoding on it again.
+
+    Raises [Invalid_argument] if an addressed {!Op.Linear} is no region. *)
 
 (** {1:devices Devices} *)
 

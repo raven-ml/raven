@@ -321,10 +321,14 @@ type arg =
   | Flips of bool list  (** {!Op.Flip}: which axes are reversed. *)
   | String of string
       (** {!Op.Special}, {!Op.Custom_function}: a name; {!Op.Source}: the source
-          text; {!Op.Linear}: what its sources lay out, such as ["kernargs"]. *)
+          text. *)
   | Bytes of string  (** {!Op.Binary}: the bytes. *)
   | Queue of { devices : string list; queue : string }
       (** {!Op.Linear}: the command queue of [devices] it is encoded for. *)
+  | Region of { name : string; align : int }
+      (** {!Op.Linear}: what its sources lay out, such as ["kernargs"], and the
+          alignment in bytes of its start in memory. It prints as its name alone
+          when [align] is [128]. *)
   | Code of { code : string; dtype : Dtype.t }
       (** {!Op.Custom}, {!Op.Customi}: source text; {!Op.Ins}: an instruction;
           with the type produced. *)

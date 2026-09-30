@@ -435,7 +435,7 @@ let submits gpu queue commands =
     (Ops_amd.queues ~host:"CPU" ~reaches:(fun _ -> false) gpu).commands q
   in
   commands cmds;
-  ignore (cmds.submit (Hcq2.bufferize_cmdbuf q "cmdbuf" "AMD"))
+  ignore (cmds.submit ())
 
 let buffer n =
   Ops.placeholder ~slot:0 ~device:(Multi [ "AMD" ]) [ n ] Dtype.Uint8

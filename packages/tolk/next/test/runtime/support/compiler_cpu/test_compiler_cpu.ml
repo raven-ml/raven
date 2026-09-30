@@ -38,7 +38,9 @@ let pressure =
 let kernels = lazy (Ops.src (Golden.sink "kernels.golden"))
 
 let kernel name =
-  let named l = match Ops.arg l with Ops.String n -> n = name | _ -> false in
+  let named l =
+    match Ops.arg l with Ops.Region r -> r.name = name | _ -> false
+  in
   Ops.src (List.find named (Lazy.force kernels))
 
 let target arch =

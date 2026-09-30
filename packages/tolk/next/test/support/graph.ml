@@ -717,6 +717,8 @@ let arg_value : Ops.arg -> value option = function
   | String s -> Some (str.write s)
   | Bytes s -> Some (bytes.write s)
   | Queue q -> Some ((pair (list str) str).write (q.devices, q.queue))
+  | Region { name; align = 128 } -> Some (str.write name)
+  | Region r -> Some ((pair str int).write (r.name, r.align))
   | Code c -> Some ((pair str dtype).write (c.code, c.dtype))
   | Bufferize b -> Some (bufferize_opts.write b)
   | Kernel k -> Some (kernel_info.write k)
@@ -754,7 +756,8 @@ let arg_of (o : Op.t) v : Ops.arg =
   | Special | Custom_function | Source | Load | Store -> String (str.read v)
   | Linear -> (
       match v with
-      | Str s -> String s
+      | Str name -> Region { name; align = 128 }
+      | Tuple [ Str name; align ] -> Region { name; align = int.read align }
       | v ->
           let devices, queue = (pair (list str) str).read v in
           Queue { devices; queue })

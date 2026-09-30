@@ -44,7 +44,7 @@ type commands = {
   timestamp : Ops.t -> unit;
   memory_barrier : unit -> unit;
   loop : Ops.t -> (unit -> unit) -> unit;
-  submit : Ops.t -> Ops.t;
+  submit : unit -> Ops.t;
 }
 
 module Queue = struct
@@ -1316,7 +1316,7 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
 
 (* Encoding *)
 
-let rec bufferize_cmdbuf q name (device : Ops.device) =
+let rec bufferize_cmdbuf ?device q name =
   let stream = Queue.contents q and patches = List.rev q.Queue.patches in
   (* One loop writes the words used at several offsets. *)
   let rt =
@@ -1384,13 +1384,19 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
              (toposort w))
          patches)
   in
-  let lname l = match arg l with String s -> s | _ -> "" in
-  let names = List.sort_uniq String.compare (List.map lname nested) in
-  let align () =
-    Queue.q q [ binary (String.make ((128 - (q.size mod 128)) mod 128) '\000') ]
+  let region l =
+    match arg l with
+    | Region r -> (r.name, r.align)
+    | _ -> invalid_arg "an addressed linear is no region"
   in
-  (* A nested linear whose words read ranges, such as the arguments of a kernel
-     in a loop, has a copy for each trip of those ranges, 128-byte aligned. *)
+  let names =
+    List.sort_uniq String.compare (List.map (fun l -> fst (region l)) nested)
+  in
+  let align a =
+    Queue.q q [ binary (String.make ((a - (q.size mod a)) mod a) '\000') ]
+  in
+  (* A region whose words read ranges, such as the arguments of a kernel in a
+     loop, has a copy for each trip of those ranges, each at its alignment. *)
   let bufs =
     List.map
       (fun n ->
@@ -1398,7 +1404,8 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
         let offs =
           List.map
             (fun l ->
-              let o = align () and first = List.length q.patches in
+              let a = snd (region l) in
+              let o = align a and first = List.length q.patches in
               let e = Queue.q q (src l) in
               let rs =
                 List.filter
@@ -1408,7 +1415,7 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
                         (fun w -> Nodes.to_list (ranges w))
                         (src l)))
               in
-              if rs <> [] then ignore (align ());
+              if rs <> [] then ignore (align a);
               let at =
                 List.fold_left
                   (fun at r ->
@@ -1418,9 +1425,9 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
                   (int o) rs
               in
               (l, (at, e - o)))
-            (List.filter (fun l -> lname l = n) nested)
+            (List.filter (fun l -> fst (region l) = n) nested)
         in
-        (offs, bufferize_cmdbuf q n (Multi q.devices)))
+        (offs, bufferize_cmdbuf q n))
       names
   in
   let views =
@@ -1435,7 +1442,8 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
       bufs
   in
   let buf =
-    placeholder ~device
+    placeholder
+      ~device:(Option.value device ~default:(Ops.Multi q.devices))
       ~tag:(Tag.String (to_name [ name; q.name ]))
       [ String.length stream ]
       Dtype.Uint8
@@ -1445,14 +1453,11 @@ let rec bufferize_cmdbuf q name (device : Ops.device) =
     (patch buf (List.combine (List.map fst patches) words) ~blob:stream)
     (List.map snd bufs)
 
-let bufferize_cmdbuf_on = bufferize_cmdbuf
-let bufferize_cmdbuf q name device = bufferize_cmdbuf_on q name (Single device)
-
 let encode_submit devices submit =
   let q = Queue.make (nth submit 0) in
   let cmds = (queues devices (List.hd q.devices)).commands q in
   List.iter (encode_command q cmds) (src q.lin);
-  cmds.submit (bufferize_cmdbuf_on q "cmdbuf" (Multi q.devices))
+  cmds.submit ()
 
 (* The fence re-arms the batch's queue signals. Waiting for the batch's previous
    run is the engine's, before it runs the host program (D1). *)

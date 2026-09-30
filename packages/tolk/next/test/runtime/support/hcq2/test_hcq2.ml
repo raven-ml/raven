@@ -1173,6 +1173,48 @@ let word_tests =
           let host = Ops.nth (Ops.without_after lowered) 0 in
           is_true ~msg:"the value row in the host program"
             (List.exists (fun n -> Ops.op n = Param && Ops.is_variable n && Ops.expr n = Ops.expr (Hcq2.value d)) (Ops.toposort host)));
+      test "each region starts at its own alignment in the buffer of its name" (fun () ->
+          let d = "CPU:1" in
+          let region align c =
+            Ops.v Linear
+              ~src:[ Ops.v Binary ~arg:(Bytes (String.make 8 c)) ]
+              ~arg:(Region { name = "r"; align })
+          in
+          let null = Null_device.devices () in
+          let devices name =
+            let dev = null name in
+            match dev.compiler.queues with
+            | None -> dev
+            | Some qs ->
+                let commands q =
+                  let c = qs.commands q in
+                  let exec call prg =
+                    c.exec call prg;
+                    ignore
+                      (Hcq2.Queue.q q
+                         (List.map
+                            (fun (a, c) -> Ops.getaddr ~device:d (region a c))
+                            [ (128, 'a'); (256, 'b'); (128, 'c') ]))
+                  in
+                  { c with exec }
+                in
+                { dev with compiler = { dev.compiler with queues = Some { qs with commands } } }
+          in
+          let compiled =
+            Hcq2.compile_linear ~devices:(fun n -> (devices n).compiler)
+              (linear [ kernel_adds (storage d) (storage d) ])
+          in
+          let starts =
+            List.filter_map
+              (fun u ->
+                match (Ops.op u, Ops.src u) with
+                | Shrink, b :: _
+                  when Ops.tag (Ops.without_after b) = Some (String "r_compute_0") -> (
+                    match Ops.marg u with Shrink [ (Int start, _) ] -> Some start | _ -> None)
+                | _ -> None)
+              (Ops.toposort ~enter_calls:true compiled)
+          in
+          equal (list int) [ 0; 256; 384 ] (List.sort_uniq Int.compare starts));
       test "a word written at several offsets is written by one loop" (fun () ->
           let d = "CPU:1" in
           let scratch = Ops.new_buffer (Single d) 1 Uint64 in

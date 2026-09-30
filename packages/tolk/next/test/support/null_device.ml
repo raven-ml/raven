@@ -75,7 +75,8 @@ let commands ?ring q =
            u64 n;
          ])
   in
-  let submit cmdbuf =
+  let submit () =
+    let cmdbuf = Hcq2.bufferize_cmdbuf q "cmdbuf" in
     let bytes = Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf) in
     (match ring with
     | Some n when bytes > n ->
@@ -85,11 +86,7 @@ let commands ?ring q =
     | _ -> ());
     let head = Ops.cast (Ops.load (Ops.index cmdbuf [ Ops.int 0 ]) []) Uint64 in
     Hcq2.ccall ~host:device ~lib:"null" "tolk_null_submit"
-      [
-        Ops.getaddr ~device cmdbuf;
-        u64 bytes;
-        head;
-      ]
+      [ Ops.getaddr ~device cmdbuf; u64 bytes; head ]
   in
   { c with exec; copy; submit }
 

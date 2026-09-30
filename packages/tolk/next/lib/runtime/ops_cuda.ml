@@ -64,7 +64,7 @@ let queue ~host q : Hcq2.commands =
       getaddr ~device:on
         (v Op.Linear
            ~src:(Hcq2.pack_args ((0, u64 size) :: rows) (8 + size))
-           ~arg:(String "kernargs"))
+           ~arg:(Region { name = "kernargs"; align = 128 }))
     in
     (* The launch's extra words, stacked on the queue. *)
     let extra =
@@ -151,7 +151,8 @@ let queue ~host q : Hcq2.commands =
     ranges := List.tl !ranges;
     launches := List.map snd moved @ outer
   in
-  let submit ka =
+  let submit () =
+    let ka = Hcq2.bufferize_cmdbuf q "cmdbuf" in
     substitute (if op !h = Op.End then !h else status ()) [ (kernargs, ka) ]
   in
   {

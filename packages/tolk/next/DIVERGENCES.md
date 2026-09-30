@@ -1246,6 +1246,32 @@ the Exclusions of `README.md`.
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half.
 
+## D43. A queue bufferizes its own commands, and a region keeps its alignment
+
+- **tinygrad:** `runtime/support/hcq2.py:471` (`bufferize_cmdbuf` lays each
+  nested `LINEAR` out on 128 bytes), `:479-481` (`encode_submit` bufferizes
+  the queue's commands, then hands the buffer to `HWQueue.submit`).
+- **tolk.next:** `lib/uop/ops.ml` (the `Region` argument of `Op.Linear`),
+  `lib/runtime/support/hcq2.ml:1319` (`bufferize_cmdbuf`), `:1456`
+  (`encode_submit`).
+- **Differs:** a nested `LINEAR`'s argument is a region, a name and an
+  alignment that the vendor creating it states, 128 by default, and printed
+  as the name alone then; `bufferize_cmdbuf` starts each region at its own
+  alignment. `commands.submit` takes no command buffer: `encode_submit` calls
+  it once every command is encoded, and the vendor finishes its queue, then
+  calls `bufferize_cmdbuf` itself, as AMD's AQL queue already bufferizes its
+  packets on the host.
+- **Reason:** (b). NV's launch descriptors and constant buffers are regions
+  (Ops_nv), so that a range's trips each get their own copy of them, as the
+  staged scan batches a scan body in one submission (RFC 0012). A launch
+  descriptor starts on 256 bytes, since the channel takes its address shifted
+  by 8, and it is final only once the commands after it are encoded: the next
+  launch chains onto it and the next signals are its releases. tinygrad
+  patches a descriptor buffer whose address is known at launch; a region's
+  address is known only once its bytes are.
+- **Pinned by:** `Tolk_next.Hcq2 › patch and bufferize_cmdbuf › each region
+  starts at its own alignment in the buffer of its name`; the Hcq2, NULL,
+  Metal, CUDA and AMD goldens, unchanged.
 ## D44. An integer cast of a weak expression computes in integers
 
 - **tinygrad:** `uop/weak.py:27-33` (`cast_weak_srcs`), `dtype.py:180-194`

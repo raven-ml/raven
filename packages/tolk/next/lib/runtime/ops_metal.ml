@@ -197,9 +197,9 @@ let queue ~host ~arch ~residency_set q : Hcq2.commands =
           List.map (fun (ci, at) -> (ci + (t * k), at + (t * trip))) trip_sizes);
     nbytes := start + (n * trip)
   in
-  (* The commands are in the indirect command buffer: the command stream is
-     empty. *)
-  let submit _ =
+  (* The commands are in the indirect command buffer: there is no command
+     stream. *)
+  let submit () =
     let cmds = !cmds in
     let n = List.length cmds and zero = Helpers.round_up !nbytes 8 in
     let pipes =

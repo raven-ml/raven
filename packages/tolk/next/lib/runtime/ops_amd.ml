@@ -374,7 +374,9 @@ let compute_queue ~host gpu q : Hcq2.commands =
     let packet =
       if data.enable_dispatch_ptr then dispatch_packet data info () else []
     in
-    (info, v Op.Linear ~src:(words @ packet) ~arg:(String "kernargs"))
+    ( info,
+      v Op.Linear ~src:(words @ packet)
+        ~arg:(Region { name = "kernargs"; align = 128 }) )
   in
   let wait signal value =
     let op =
@@ -516,7 +518,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
     in
     (* The ring gets an indirect buffer packet: 4 dwords, and put stays aligned
        so that it never wraps mid packet. *)
-    let submit cmdbuf =
+    let submit () =
+      let cmdbuf = Hcq2.bufferize_cmdbuf q "cmdbuf" in
       let base, off = Hcq2.unwrap_view cmdbuf in
       let ib =
         placeholder ~device:(Single host)
@@ -596,7 +599,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
       run_start := Hcq2.Queue.size q
     in
     (* The doorbell is the last packet's index. *)
-    let submit cmdbuf =
+    let submit () =
+      let cmdbuf = Hcq2.bufferize_cmdbuf q "cmdbuf" in
       close_run (max_numel cmdbuf);
       let base, off = Hcq2.unwrap_view cmdbuf in
       Hcq2.Queue.reset q;
@@ -620,7 +624,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
                 "AQL packets of %d bytes exceed half their ring of %d bytes"
                 size gpu.compute_ring));
       push cmdbuf
-        (Hcq2.bufferize_cmdbuf q "aql" host)
+        (Hcq2.bufferize_cmdbuf ~device:(Single host) q "aql")
         ~unit:64 ~doorbell_lag:1 ()
     in
     {
@@ -651,6 +655,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
     | _ -> invalid_arg (Printf.sprintf "%s is no AMD copy queue" queue)
   in
   let loop = Hcq2.Queue.loop q in
+  let cmdbuf () = Hcq2.bufferize_cmdbuf q "cmdbuf" in
   let q words = ignore (q_of q words) in
   let sdma_major, _, _ = gpu.sdma in
   let max_copy_size =
@@ -731,7 +736,8 @@ let copy_queue ~host gpu q : Hcq2.commands =
   in
   (* SDMA needs the command buffer whole in the ring: if it does not fit before
      the ring's end, it restarts at 0 and zeroes the tail. *)
-  let submit cmdbuf =
+  let submit () =
+    let cmdbuf = cmdbuf () in
     let ring_p, wptr, doorbell, put = queue_args devs queue ring in
     (* In host memory: streamed into the ring, the device never reads it. *)
     let base = fst (Hcq2.unwrap_view cmdbuf) in
