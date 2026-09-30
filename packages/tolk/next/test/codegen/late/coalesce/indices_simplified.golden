@@ -1,0 +1,107 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1024)
+1 Ops.CONST dtypes.weakint [] 5
+2 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+3 Ops.CONST dtypes.weakint [] 4
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.SPECIAL dtypes.weakint [3] "lidx0"
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 19
+8 Ops.CMPLT dtypes.bool [6, 7]
+9 Ops.CONST dtypes.bool [] True
+10 Ops.CMPNE dtypes.bool [8, 9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CONST dtypes.bool [] Invalid
+13 Ops.WHERE dtypes.weakint [10, 11, 12]
+14 Ops.INDEX dtypes.float [0, 13]
+15 Ops.LOAD dtypes.float [14]
+16 Ops.RANGE dtypes.weakint [3] (0, AxisType.WEAK)
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.MUL dtypes.weakint [16, 17]
+19 Ops.RANGE dtypes.weakint [3] (1, AxisType.WEAK)
+20 Ops.ADD dtypes.weakint [18, 19]
+21 Ops.CONST dtypes.weakint [] 8
+22 Ops.CMPLT dtypes.bool [20, 21]
+23 Ops.FLOORDIV dtypes.weakint [20, 21]
+24 Ops.RANGE dtypes.weakint [3] (2, AxisType.WEAK)
+25 Ops.MUL dtypes.weakint [24, 17]
+26 Ops.ADD dtypes.weakint [23, 25]
+27 Ops.RANGE dtypes.weakint [3] (3, AxisType.WEAK)
+28 Ops.ADD dtypes.weakint [26, 27]
+29 Ops.FLOORMOD dtypes.weakint [28, 3]
+30 Ops.CONST dtypes.weakint [] 2
+31 Ops.CMPLT dtypes.bool [29, 30]
+32 Ops.AND dtypes.bool [22, 31]
+33 Ops.ADD dtypes.weakint [16, 19]
+34 Ops.ADD dtypes.weakint [33, 24]
+35 Ops.ADD dtypes.weakint [34, 27]
+36 Ops.WHERE dtypes.weakint [32, 35, 12]
+37 Ops.INDEX dtypes.float [0, 36]
+38 Ops.LOAD dtypes.float [37]
+39 Ops.RANGE dtypes.weakint [30] (2, AxisType.WEAK)
+40 Ops.CONST dtypes.weakint [] 1
+41 Ops.CMPLT dtypes.bool [39, 40]
+42 Ops.CONST dtypes.weakint [] 7
+43 Ops.RANGE dtypes.weakint [42] (1, AxisType.WEAK)
+44 Ops.CONST dtypes.weakint [] 6
+45 Ops.CMPLT dtypes.bool [43, 44]
+46 Ops.AND dtypes.bool [41, 45]
+47 Ops.CONST dtypes.weakint [] 30
+48 Ops.RANGE dtypes.weakint [47] (0, AxisType.WEAK)
+49 Ops.CONST dtypes.weakint [] 1568
+50 Ops.MUL dtypes.weakint [48, 49]
+51 Ops.WHERE dtypes.weakint [46, 50, 12]
+52 Ops.INDEX dtypes.float [0, 51]
+53 Ops.LOAD dtypes.float [52]
+54 Ops.CMPLT dtypes.bool [33, 40]
+55 Ops.CMPNE dtypes.bool [54, 9]
+56 Ops.ADD dtypes.weakint [24, 27]
+57 Ops.CMPLT dtypes.bool [56, 40]
+58 Ops.CMPNE dtypes.bool [57, 9]
+59 Ops.AND dtypes.bool [55, 58]
+60 Ops.WHERE dtypes.weakint [59, 40, 12]
+61 Ops.INDEX dtypes.float [0, 60]
+62 Ops.LOAD dtypes.float [61]
+63 Ops.CONST dtypes.weakint [] 1024
+64 Ops.RANGE dtypes.weakint [63] (0, AxisType.WEAK)
+65 Ops.MUL dtypes.weakint [19, 3]
+66 Ops.ADD dtypes.weakint [65, 24]
+67 Ops.CMPLT dtypes.bool [64, 66]
+68 Ops.CONST dtypes.weakint [] -1
+69 Ops.CMPLT dtypes.bool [64, 68]
+70 Ops.CMPNE dtypes.bool [69, 9]
+71 Ops.AND dtypes.bool [67, 70]
+72 Ops.WHERE dtypes.weakint [71, 64, 12]
+73 Ops.INDEX dtypes.float [0, 72]
+74 Ops.LOAD dtypes.float [73]
+75 Ops.PARAM dtypes.bool [] ParamArg(slot=-1, dtype=dtypes.bool, vmin_vmax=(False, True), multiple_of=1, name="g", addrspace=AddrSpace.ALU)
+76 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 60), multiple_of=1, name="i", addrspace=AddrSpace.ALU)
+77 Ops.ADD dtypes.weakint [76, 40]
+78 Ops.WHERE dtypes.weakint [75, 77, 12]
+79 Ops.INDEX dtypes.float [0, 78]
+80 Ops.LOAD dtypes.float [79]
+81 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
+82 Ops.WHERE dtypes.weakint [9, 11, 12]
+83 Ops.INDEX dtypes.int [81, 82]
+84 Ops.MUL dtypes.weakint [76, 40]
+85 Ops.ADD dtypes.weakint [84, 11]
+86 Ops.WHERE dtypes.weakint [75, 85, 12]
+87 Ops.INDEX dtypes.float [0, 86]
+88 Ops.LOAD dtypes.float [87]
+89 Ops.CONST dtypes.weakint [] 100
+90 Ops.CMPLT dtypes.bool [76, 89]
+91 Ops.WHERE dtypes.weakint [90, 85, 12]
+92 Ops.INDEX dtypes.float [0, 91]
+93 Ops.LOAD dtypes.float [92]
+94 Ops.CMPLT dtypes.bool [76, 3]
+95 Ops.ADD dtypes.weakint [76, 3]
+96 Ops.WHERE dtypes.weakint [94, 95, 12]
+97 Ops.INDEX dtypes.float [0, 96]
+98 Ops.CONST dtypes.weakfloat [] 1.0
+99 Ops.CAST dtypes.float [98] dtypes.float
+100 Ops.STORE dtypes.void [97, 99]
+101 Ops.MUL dtypes.weakint [16, 3]
+102 Ops.INDEX dtypes.float [0, 101]
+103 Ops.LOAD dtypes.float [102]
+104 Ops.SINK dtypes.void [15, 38, 53, 62, 74, 80, 83, 88, 93, 100, 103]
+

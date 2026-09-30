@@ -1,0 +1,54 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half, size=32, device="CPU")
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 8
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.bool [] Invalid
+9 Ops.WHERE dtypes.weakint [1, 7, 8]
+10 Ops.SHRINK dtypes.half [0, 9, 4]
+11 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=32, device="CPU")
+12 Ops.SHRINK dtypes.half [11, 9, 4]
+13 Ops.LOAD dtypes.half [12]
+14 Ops.INDEX dtypes.half [13, 6]
+15 Ops.PARAM dtypes.half [] ParamArg(slot=2, dtype=dtypes.half, size=32, device="CPU")
+16 Ops.SHRINK dtypes.half [15, 9, 4]
+17 Ops.LOAD dtypes.half [16]
+18 Ops.INDEX dtypes.half [17, 6]
+19 Ops.ADD dtypes.half [14, 18]
+20 Ops.CONST dtypes.weakint [] 1
+21 Ops.INDEX dtypes.half [13, 20]
+22 Ops.INDEX dtypes.half [17, 20]
+23 Ops.ADD dtypes.half [21, 22]
+24 Ops.CONST dtypes.weakint [] 2
+25 Ops.INDEX dtypes.half [13, 24]
+26 Ops.INDEX dtypes.half [17, 24]
+27 Ops.ADD dtypes.half [25, 26]
+28 Ops.CONST dtypes.weakint [] 3
+29 Ops.INDEX dtypes.half [13, 28]
+30 Ops.INDEX dtypes.half [17, 28]
+31 Ops.ADD dtypes.half [29, 30]
+32 Ops.INDEX dtypes.half [13, 2]
+33 Ops.INDEX dtypes.half [17, 2]
+34 Ops.ADD dtypes.half [32, 33]
+35 Ops.CONST dtypes.weakint [] 5
+36 Ops.INDEX dtypes.half [13, 35]
+37 Ops.INDEX dtypes.half [17, 35]
+38 Ops.ADD dtypes.half [36, 37]
+39 Ops.CONST dtypes.weakint [] 6
+40 Ops.INDEX dtypes.half [13, 39]
+41 Ops.INDEX dtypes.half [17, 39]
+42 Ops.ADD dtypes.half [40, 41]
+43 Ops.CONST dtypes.weakint [] 7
+44 Ops.INDEX dtypes.half [13, 43]
+45 Ops.INDEX dtypes.half [17, 43]
+46 Ops.ADD dtypes.half [44, 45]
+47 Ops.STACK dtypes.half [19, 23, 27, 31, 34, 38, 42, 46]
+48 Ops.STORE dtypes.void [10, 47]
+49 Ops.GROUP dtypes.void [48, 48, 48, 48, 48, 48, 48, 48]
+50 Ops.END dtypes.void [49, 3]
+51 Ops.SINK dtypes.void [50] KernelInfo(name="E_4_8", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UPCAST)),)) tag=1
+

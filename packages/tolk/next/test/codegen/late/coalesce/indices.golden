@@ -1,0 +1,13 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src
+cumsum	0
+within_valid	1
+becomes_constant	2
+becomes_constant_nested	3
+non_constant_bound	4
+unrelated_gate	5
+true_gate	6
+index_simplifies_alone	7
+bound_already_known	8
+store	9
+ungated	10

@@ -1,0 +1,51 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=8, device="CPU")
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CONST dtypes.weakint [] 2
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 4
+5 Ops.MUL dtypes.weakint [3, 4]
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.ADD dtypes.weakint [5, 6]
+8 Ops.CONST dtypes.bool [] Invalid
+9 Ops.WHERE dtypes.weakint [1, 7, 8]
+10 Ops.INDEX dtypes.float [0, 9]
+11 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=9, device="CPU")
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.ADD dtypes.weakint [5, 12]
+14 Ops.WHERE dtypes.weakint [1, 13, 8]
+15 Ops.INDEX dtypes.float [11, 14]
+16 Ops.LOAD dtypes.float [15]
+17 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=2, device="CPU")
+18 Ops.ADD dtypes.weakint [3, 6]
+19 Ops.WHERE dtypes.weakint [1, 18, 8]
+20 Ops.INDEX dtypes.float [17, 19]
+21 Ops.LOAD dtypes.float [20]
+22 Ops.ADD dtypes.float [16, 21]
+23 Ops.STORE dtypes.void [10, 22]
+24 Ops.INDEX dtypes.float [0, 14]
+25 Ops.ADD dtypes.weakint [5, 2]
+26 Ops.WHERE dtypes.weakint [1, 25, 8]
+27 Ops.INDEX dtypes.float [11, 26]
+28 Ops.LOAD dtypes.float [27]
+29 Ops.ADD dtypes.float [28, 21]
+30 Ops.STORE dtypes.void [24, 29]
+31 Ops.INDEX dtypes.float [0, 26]
+32 Ops.CONST dtypes.weakint [] 3
+33 Ops.ADD dtypes.weakint [5, 32]
+34 Ops.WHERE dtypes.weakint [1, 33, 8]
+35 Ops.INDEX dtypes.float [11, 34]
+36 Ops.LOAD dtypes.float [35]
+37 Ops.ADD dtypes.float [36, 21]
+38 Ops.STORE dtypes.void [31, 37]
+39 Ops.INDEX dtypes.float [0, 34]
+40 Ops.ADD dtypes.weakint [5, 4]
+41 Ops.WHERE dtypes.weakint [1, 40, 8]
+42 Ops.INDEX dtypes.float [11, 41]
+43 Ops.LOAD dtypes.float [42]
+44 Ops.ADD dtypes.float [43, 21]
+45 Ops.STORE dtypes.void [39, 44]
+46 Ops.GROUP dtypes.void [23, 30, 38, 45]
+47 Ops.END dtypes.void [46, 3]
+48 Ops.SINK dtypes.void [47] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+

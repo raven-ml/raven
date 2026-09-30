@@ -1,0 +1,56 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.bool [] True
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.RANGE dtypes.weakint [2] (0, AxisType.WEAK)
+4 Ops.MUL dtypes.weakint [3, 2]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.bool [] Invalid
+8 Ops.WHERE dtypes.weakint [1, 6, 7]
+9 Ops.INDEX dtypes.float [0, 8]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=12, device="CPU")
+11 Ops.CONST dtypes.weakint [] 1
+12 Ops.CMPLT dtypes.bool [3, 11]
+13 Ops.CMPNE dtypes.bool [12, 1]
+14 Ops.CONST dtypes.weakint [] -2
+15 Ops.ADD dtypes.weakint [4, 14]
+16 Ops.WHERE dtypes.weakint [13, 15, 7]
+17 Ops.INDEX dtypes.float [10, 16]
+18 Ops.LOAD dtypes.float [17]
+19 Ops.CONST dtypes.weakfloat [] 1.0
+20 Ops.ADD dtypes.float [18, 19]
+21 Ops.STORE dtypes.void [9, 20]
+22 Ops.ADD dtypes.weakint [4, 11]
+23 Ops.WHERE dtypes.weakint [1, 22, 7]
+24 Ops.INDEX dtypes.float [0, 23]
+25 Ops.CONST dtypes.weakint [] -1
+26 Ops.ADD dtypes.weakint [4, 25]
+27 Ops.WHERE dtypes.weakint [13, 26, 7]
+28 Ops.INDEX dtypes.float [10, 27]
+29 Ops.LOAD dtypes.float [28]
+30 Ops.ADD dtypes.float [29, 19]
+31 Ops.STORE dtypes.void [24, 30]
+32 Ops.CONST dtypes.weakint [] 2
+33 Ops.ADD dtypes.weakint [4, 32]
+34 Ops.WHERE dtypes.weakint [1, 33, 7]
+35 Ops.INDEX dtypes.float [0, 34]
+36 Ops.CONST dtypes.weakint [] 3
+37 Ops.CMPLT dtypes.bool [3, 36]
+38 Ops.WHERE dtypes.weakint [37, 6, 7]
+39 Ops.INDEX dtypes.float [10, 38]
+40 Ops.LOAD dtypes.float [39]
+41 Ops.ADD dtypes.float [40, 19]
+42 Ops.STORE dtypes.void [35, 41]
+43 Ops.ADD dtypes.weakint [4, 36]
+44 Ops.WHERE dtypes.weakint [1, 43, 7]
+45 Ops.INDEX dtypes.float [0, 44]
+46 Ops.WHERE dtypes.weakint [37, 22, 7]
+47 Ops.INDEX dtypes.float [10, 46]
+48 Ops.LOAD dtypes.float [47]
+49 Ops.ADD dtypes.float [48, 19]
+50 Ops.STORE dtypes.void [45, 49]
+51 Ops.GROUP dtypes.void [21, 31, 42, 50]
+52 Ops.END dtypes.void [51, 3]
+53 Ops.SINK dtypes.void [52] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+
