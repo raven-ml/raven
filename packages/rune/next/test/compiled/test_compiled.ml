@@ -739,7 +739,7 @@ type along = {
   along : 'a 'b. axis:int -> descending:bool -> ('a, 'b) arr -> unit;
 }
 
-let reductions d ~count =
+let reductions d ~count ~heavy =
   let law = law ~count in
   let exactly =
     [
@@ -866,27 +866,32 @@ let reductions d ~count =
                      ~axis (env.on x) ~dst;
                    dst)));
       };
-    along "sort"
-      {
-        along =
-          (fun ~axis ~descending x ->
-            exact_of
-              (both d (fun (module K : Nx_backend.S) env ->
-                   let dst = env.dst x.Nx_array.dtype (shape_of x) in
-                   K.sort ~descending ~axis (env.on x) ~dst;
-                   dst)));
-      };
-    along "argsort"
-      {
-        along =
-          (fun ~axis ~descending x ->
-            exact_of
-              (both d (fun (module K : Nx_backend.S) env ->
-                   let dst = env.dst Nx.int32 (shape_of x) in
-                   K.argsort ~descending ~axis (env.on x) ~dst;
-                   dst)));
-      };
   ]
+  @
+  if heavy then
+    [
+      along "sort"
+        {
+          along =
+            (fun ~axis ~descending x ->
+              exact_of
+                (both d (fun (module K : Nx_backend.S) env ->
+                     let dst = env.dst x.Nx_array.dtype (shape_of x) in
+                     K.sort ~descending ~axis (env.on x) ~dst;
+                     dst)));
+        };
+      along "argsort"
+        {
+          along =
+            (fun ~axis ~descending x ->
+              exact_of
+                (both d (fun (module K : Nx_backend.S) env ->
+                     let dst = env.dst Nx.int32 (shape_of x) in
+                     K.argsort ~descending ~axis (env.on x) ~dst;
+                     dst)));
+        };
+    ]
+  else []
 
 (* Assembly and indexed access *)
 
@@ -1681,7 +1686,9 @@ let bytes_of (a : ('a, 'b) arr) =
   String.init (Bigarray.Array1.dim c) (Bigarray.Array1.get c)
 
 (* [refuses d op ~dst f] asserts that [f] raises Refused naming [op], having
-   allocated nothing on [d] or the host and left [dst] as it was. *)
+   allocated nothing on [d] or the host and left [dst] as it was. The memory of
+   buffers collected meanwhile counts as returned, so what [f] leaves allocated
+   is at most none. *)
 let refuses d op ~dst f =
   let before = bytes_of dst in
   let stats () = (Nx_device.stats d.device, Nx_device.stats host) in
@@ -1689,8 +1696,8 @@ let refuses d op ~dst f =
   raises_match (refused op) f;
   let d1, h1 = stats () in
   let allocated s s' = Nx_device.Stats.(allocated (diff s s')) in
-  equal ~msg:"bytes allocated on the device" int 0 (allocated d0 d1);
-  equal ~msg:"bytes allocated on the host" int 0 (allocated h0 h1);
+  at_most ~msg:"bytes allocated on the device" int ~than:0 (allocated d0 d1);
+  at_most ~msg:"bytes allocated on the host" int ~than:0 (allocated h0 h1);
   equal ~msg:"the destination" string before (bytes_of dst)
 
 (* An array of [shape] on [d] whose bytes are all [0x5a]. *)
@@ -1867,7 +1874,10 @@ let cache d =
         in
         exact_of r;
         equal int 1 again);
-    xfail ~reason:"the compiled program pads a fill of -0. with 0."
+    xfail
+      ~reason:
+        "the compiled program pads a fill of -0. with 0.: a symbolic fold \
+         (tn-symbolic)"
     @@ test "a pad with a fill of -0. after one of 0. keeps its fill's sign"
          (fun () ->
            let x = array_of (f32 [| 2 |] [| 1.; 2. |]) in
@@ -1947,11 +1957,7 @@ let domains d =
 
 let edges d =
   [
-    xfail
-      ~reason:
-        "a GEP of a vector constant reaches the renderer: 0u[0] in C, 0u.x in \
-         Metal"
-    @@ test "a fold whose windows read only padding computes zeros" (fun () ->
+    test "a fold whose windows read only padding computes zeros" (fun () ->
         let x = array_of (Nx.create Nx.int8 [| 2; 1 |] [| -128; 0 |]) in
         let w =
           {
@@ -1968,8 +1974,8 @@ let edges d =
     (if d.flushes then
        xfail
          ~reason:
-           "Metal binds a buffer at an offset of 2 bytes, which its loads \
-            cannot honour"
+           "Metal reads the wrong elements of a buffer that starts 2 bytes \
+            into its memory (tn-metal)"
      else Fun.id)
     @@ test
          "an operand whose buffer starts 2 bytes into its memory is read where \
@@ -2005,7 +2011,10 @@ let edges d =
   if d.flushes then []
   else
     [
-      xfail ~reason:"the host's log of a deep negative subnormal is -inf"
+      xfail
+        ~reason:
+          "the host's log of a negative subnormal below the least normal is \
+           -inf (rune-lower)"
       @@ test "the logarithm of a negative subnormal is NaN" (fun () ->
           let log x = exact_of (both d (unary Log (array_of x))) in
           log
@@ -2079,12 +2088,12 @@ let cost d =
 (* Suite *)
 
 (* The kernels on [d], [count] cases a law; [heavy] adds the families whose
-   programs take up to a second each to compile: the transcendental functions
-   and linear algebra. *)
+   programs take up to a second each to compile: the transcendental functions,
+   linear algebra, and the sorting networks of sort and argsort. *)
 let kernels d ~count ~heavy =
   [
     group "elementwise" (elementwise d ~count ~heavy);
-    group "reductions" (reductions d ~count);
+    group "reductions" (reductions d ~count ~heavy);
     group "indexed" (indexed d ~count);
     group "windows and products" (windows_and_products d ~count);
   ]
