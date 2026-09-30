@@ -942,7 +942,7 @@ laws check every quotient against `Z.div` in the interpreter.
 | tinygrad: `null/test_uops.py::TestUOpGraph::test_mulacc_shl` | `a*4096 + b` becomes MULACC after SHL | `DO › late_patterns › late_mulacc_mulacc_shl.golden` |
 | tinygrad: `null/test_uops.py::TestUOpGraph::test_use_cmpeq` | `(x != 7) != True` becomes CMPEQ | `DO › late_patterns › late_comparison_cmpeq.golden` |
 | tinygrad: `external/fuzz_fast_idiv.py` | z3 proves the rewrite equals truncating division for random types, bounds and divisors | `DO › fast_idiv › fast_idiv x d is x / d wherever it applies` (500 cases); `DO › fast_idiv › fast_idiv is division on the grid's dividends` |
-| tinygrad: `null/test_const_folding.py::TestThreefryConstFolding::test_threefry` | THREEFRY of constants, decomposed, folds to a constant | `S › tinygrad › tests.golden › TestThreefryConstFolding.test_threefry` (the fold of the decomposed hash to the hash's value, D13) |
+| tinygrad: `null/test_const_folding.py::TestThreefryConstFolding::test_threefry` | THREEFRY of constants, decomposed, folds to a constant | `S › tinygrad › tests.golden › TestThreefryConstFolding.test_threefry` (the fold of the decomposed hash to the hash's value, D13); `DO › threefry2x32 › the hash of constants simplifies to a constant`; `DO › threefry2x32 › the hash of constants folds to its value` |
 | tinygrad: `runtime/test_randomness.py::TestRandomness::test_threefry_against_reference` | JAX's `threefry_2x32` under the key (0, 1337) | `DO › threefry2x32 › JAX's values under the key (0, 1337)` (ten counter pairs) |
 | tinygrad: `runtime/test_randomness.py::TestRandomness::test_threefry_against_reference_full`, `test_threefry_tensors_cnt`, `test_threefry_same_kernels` and the other `Tensor.rand` tests | seeds, counters and floats of `Tensor.rand` | dropped: the frontend's random numbers are nx's `Rng`; the hash itself is `DO › threefry2x32` |
 | tinygrad: `null/test_randomness.py::TestRandomness::test_threefry_doesnt_use_long` | a program with THREEFRY has no 64-bit values on a target without them | dropped here: 64-bit emulation is `Decomp_dtype`'s, and the whole program is `Codegen`'s (L4) |
@@ -1115,3 +1115,44 @@ it check that each result is the machine's value instead, and name D13.
 | old: unit/uop/test_weak.ml late_simplification_preserves_committed_literals, consecutive_weak_casts_preserve_integer_conversion (the folded value) | casts of committed constants fold | `S › symbolic_simple › constants › a cast of a constant is the constant of the cast's type`; `S › tinygrad › tests.golden › TestWeakPromotion.test_committed_const_conversion_folds` |
 | old: unit/codegen/test_decompositions.ml "POW promotes weak exponents before parity arithmetic" | a power is computed by `xpow` | `S › sym › a power is computed from exp2 and log2` |
 | old: unit/codegen/test_divandmod.ml simplify_preserves_index_values, adjacent_bit_extracts_recombine, quotient_partner_recombines_through_a_merged_divisor, shifted_quotient_partner_recombines | the whole rule set keeps values and recombines | `S › laws › sym keeps the value of an integer expression where nothing wraps`; `S › symbolic_simple › recombination` (every test); `S › tinygrad › tests.golden › TestSymbolic.test_div_mod_recombine_merged_quotient`, `TestSymbolic.test_div_mod_recombine_shifted_quotient` |
+
+## Gpudims
+
+The suite is `Tolk_next.Gpudims` (`codegen/gpudims/`), written `GD` below.
+`grouped_dims.golden` holds every case of tinygrad's test, the old tolk's
+three, and 392 sizes drawn from a fixed seed against the bounds of real
+targets: each row gives the hardware indices and their sizes, and each loop's
+index as an expression, or the exception tinygrad raises. tinygrad proves each
+case one-to-one with z3; here `GD › grouped_dims › grouped_dims numbers each
+iteration of the golden's cases once` enumerates every launch of each case up to
+2^12 iterations and checks that each iteration is numbered exactly once,
+and that each hardware index is within its bound, the first axis excepted
+when the last one's divisors move onto it.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_grouped_dims` | sizes of 20 cases, reversal, splits, merges, and three `RuntimeError`s | `GD › grouped_dims › grouped_dims.golden` (the first rows); the z3 proof is `GD › grouped_dims › grouped_dims numbers each iteration of the golden's cases once` |
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_grouped_direct_dims_are_special` | loops 2 and 3 of (2,3,4,5) are hardware indices | `GD › grouped_dims › a loop that keeps its own axis is that hardware index` |
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_grouped_dims_high_rank` | 4 to 6 loops onto 2 or 3 axes; no bounds leaves every loop its own index | `GD › grouped_dims › grouped_dims.golden` (the four rows); `GD › grouped_dims › without bounds, every loop is its own hardware index` |
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_symbolic_dims_cross_launch_limit` | `(1, n)` with `n` in [1, 4] under (4, 3) | `GD › grouped_dims › symbolic sizes › grouped_symbolic_crosses_a_limit_by_merging.golden` |
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_global_prod_max` | `global_prod_max` bounds workgroups by threads | `GD › add_gpudims › add_gpudims_bounds_globals_by_threads.golden`, `add_gpudims_bounds_globals_by_merged_threads.golden`, `add_gpudims_bounds_globals_by_threads_alone.golden` |
+| tinygrad: `null/test_gpudims.py::TestGroupedDims::test_max_sizes_none` | no bounds | `GD › grouped_dims › grouped_dims.golden` (`None` rows) |
+| tinygrad: `codegen/gpudims.py` `add_gpudims`, `pm_device_to_var` (no test) | globals, locals, warps, masks, device ranges | `GD › add_gpudims › add_gpudims_*.golden` (17 kernels); `GD › add_gpudims › add_gpudims_declines.golden`, `add_gpudims_failures.golden` |
+| old: `unit/codegen/test_gpudims.ml` "single dim fits", "two dims fit", "reverse two dims", "three dims not reversed", the six "splitting same-length" cases, "(512,4,2) / (8192,2,2)", the five "expansion" cases, the four "contraction" cases | sizes and one-to-one numbering | `GD › grouped_dims › grouped_dims.golden` (the same rows as tinygrad's); `GD › grouped_dims › grouped_dims numbers each iteration of the golden's cases once` |
+| old: `unit/codegen/test_gpudims.ml` "reverse maps returned expressions to original axes" | reversed indices map back to their loops | `GD › grouped_dims › grouped_dims.golden` (`(2, 3)` reversed: `[gidx1, gidx0]`) |
+| old: `unit/codegen/test_gpudims.ml` "split redistribution retains exact intermediate products" | sizes near 2^61 do not overflow | `GD › grouped_dims › grouped_dims.golden` (the `2305843009213693952` row) |
+| old: `unit/codegen/test_gpudims.ml` "split decomposition uses integer floor division", "unmerged dims decompose through integer arithmetic" | `//` and `%`, never FDIV | `GD › grouped_dims › grouped_dims.golden` (`(7, 7)` under `(49, 1, 1)`, and every expression) |
+| old: `unit/codegen/test_gpudims.ml` "symbolic dimensions can cross a limit by grouping", "symbolic contraction keeps grouped SPECIAL size symbolic", "symbolic fitting dimensions keep their physical extent", "symbolic passthrough keeps SPECIAL size symbolic" | symbolic sizes merge into symbolic hardware sizes | `GD › grouped_dims › symbolic sizes › grouped_symbolic_*.golden` |
+| old: `unit/codegen/test_gpudims.ml` "symbolic dimensions cannot be split at their maximum" | a symbolic size cannot be split | `GD › grouped_dims › symbolic sizes › grouped_symbolic_failures.golden` |
+| old: `unit/codegen/test_gpudims.ml` "grouping feasibility does not overflow host integers" | 2^32 × 2^32 under one bound fails cleanly | `GD › grouped_dims › grouped_dims.golden` (the `4294967296` row) |
+| old: `unit/codegen/test_gpudims.ml` "prime dim 23 unfactorable", "unfactorable (128,3,4) / (16,2,2)", "too many dims (2,3,4,5,6)" | `cannot limit dim` | `GD › grouped_dims › grouped_dims.golden` (the `RuntimeError` rows) |
+| old: `unit/codegen/test_gpudims.ml` "coordinate promotion: grouping widens dimensions before multiplying" | int16 by int32 sizes merge in int32 | `GD › grouped_dims › symbolic sizes › grouped_symbolic_merges_committed_sizes.golden` |
+| old: `unit/codegen/test_gpudims.ml` "device axes become scalar parameters and leave END ranges" | DEVICE ranges become `_device_num` | `GD › add_gpudims › add_gpudims_device_range.golden`, `add_gpudims_device_range_without_kernel.golden`; `add_gpudims_keeps_an_end_of_a_variable.golden` |
+| old: `unit/codegen/test_gpudims.ml` "keeps the warp dimension separate while folding local axes" | a warp keeps its own thread axis | `GD › add_gpudims › add_gpudims_keeps_the_warp_apart.golden` |
+| old: `unit/codegen/test_gpudims.ml` "replaces global ranges with SPECIAL", "replaces global+local ranges" | ranges become hardware indices | `GD › add_gpudims › add_gpudims_globals.golden`, `add_gpudims_globals_by_axis_order.golden`, `add_gpudims_globals_and_locals.golden`, `add_gpudims_merges_four_globals.golden`, `add_gpudims_splits_a_global.golden`, `add_gpudims_keeps_a_reduce_range.golden` |
+| old: `unit/codegen/test_gpudims.ml` "no-op when no GPU ranges", "no-op when SPECIAL already present" | `None` | `GD › add_gpudims › add_gpudims_declines.golden` (and without kernel information) |
+| old: `unit/codegen/test_gpudims.ml` "global_prod_max caps global size by local hardware size" | workgroups bounded by threads | `GD › add_gpudims › add_gpudims_bounds_globals_by_threads.golden` |
+| old: `unit/codegen/test_gpudims.ml` "missing local range gets gated with Invalid", "two missing local ranges gate on a bool AND of equalities" | the store's index is valid only on thread 0 of each missing index | `GD › add_gpudims › add_gpudims_masks_a_store_by_its_missing_local.golden`, `..._missing_locals.golden`; a local store is not masked: `add_gpudims_leaves_a_local_store_unmasked.golden` |
+| old: `unit/codegen/test_gpudims.ml` "missing local range rejects multi-index global store" | a two-index store fails | `GD › add_gpudims › add_gpudims_failures.golden` |
+| tinygrad: `codegen/gpudims.py` `_split_dims` on a symbolic size or fewer than three bounds (`ValueError`, `AssertionError`, `IndexError`) | README, CPython rows: "cannot limit dim" | `GD › grouped_dims › grouped_dims.golden` (the `IndexError` rows); `GD › grouped_dims › symbolic sizes › grouped_symbolic_failures.golden` |
+| tinygrad: `codegen/gpudims.py` `add_gpudims` with a symbolic warp (`ValueError`) | README, CPython rows: the warp's bound is its size's upper bound | `GD › add_gpudims › add_gpudims_symbolic_warp.golden` |

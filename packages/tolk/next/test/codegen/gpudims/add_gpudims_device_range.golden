@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.RANGE dtypes.weakint [1] (1, AxisType.GLOBAL)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.RANGE dtypes.weakint [4] (0, AxisType.DEVICE)
+6 Ops.CAST dtypes.float [5] dtypes.float
+7 Ops.STORE dtypes.void [3, 6]
+8 Ops.END dtypes.void [7, 2, 5]
+9 Ops.SINK dtypes.void [8] KernelInfo()
+10 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+11 Ops.INDEX dtypes.float [0, 10]
+12 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 1), multiple_of=1, name="_device_num", addrspace=AddrSpace.ALU)
+13 Ops.CAST dtypes.float [12] dtypes.float
+14 Ops.STORE dtypes.void [11, 13]
+15 Ops.END dtypes.void [14, 10]
+16 Ops.SINK dtypes.void [15] KernelInfo()
+17 Ops.SINK dtypes.void [9, 16]
+

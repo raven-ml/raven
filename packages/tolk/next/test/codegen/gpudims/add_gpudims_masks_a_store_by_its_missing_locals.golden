@@ -1,0 +1,39 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64)
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.GLOBAL)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64)
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.RANGE dtypes.weakint [5] (1, AxisType.LOCAL)
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.RANGE dtypes.weakint [7] (2, AxisType.LOCAL)
+9 Ops.ADD dtypes.weakint [6, 8]
+10 Ops.ADD dtypes.weakint [2, 9]
+11 Ops.INDEX dtypes.float [4, 10]
+12 Ops.LOAD dtypes.float [11]
+13 Ops.STORE dtypes.void [3, 12]
+14 Ops.END dtypes.void [13, 2, 6, 8]
+15 Ops.SINK dtypes.void [14] KernelInfo()
+16 Ops.SPECIAL dtypes.weakint [5] "lidx0"
+17 Ops.CONST dtypes.weakint [] 0
+18 Ops.CMPNE dtypes.bool [16, 17]
+19 Ops.CONST dtypes.bool [] True
+20 Ops.CMPNE dtypes.bool [18, 19]
+21 Ops.SPECIAL dtypes.weakint [7] "lidx1"
+22 Ops.CMPNE dtypes.bool [21, 17]
+23 Ops.CMPNE dtypes.bool [22, 19]
+24 Ops.AND dtypes.bool [20, 23]
+25 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+26 Ops.CONST dtypes.bool [] Invalid
+27 Ops.WHERE dtypes.weakint [24, 25, 26]
+28 Ops.INDEX dtypes.float [0, 27]
+29 Ops.ADD dtypes.weakint [16, 21]
+30 Ops.ADD dtypes.weakint [25, 29]
+31 Ops.INDEX dtypes.float [4, 30]
+32 Ops.LOAD dtypes.float [31]
+33 Ops.STORE dtypes.void [28, 32]
+34 Ops.END dtypes.void [33, 25, 16, 21]
+35 Ops.SINK dtypes.void [34] KernelInfo()
+36 Ops.SINK dtypes.void [15, 35]
+

@@ -1,0 +1,40 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=120)
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.GLOBAL)
+3 Ops.CONST dtypes.weakint [] 3
+4 Ops.MUL dtypes.weakint [2, 3]
+5 Ops.RANGE dtypes.weakint [3] (1, AxisType.GLOBAL)
+6 Ops.ADD dtypes.weakint [4, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.MUL dtypes.weakint [6, 7]
+9 Ops.RANGE dtypes.weakint [7] (2, AxisType.GLOBAL)
+10 Ops.ADD dtypes.weakint [8, 9]
+11 Ops.CONST dtypes.weakint [] 5
+12 Ops.MUL dtypes.weakint [10, 11]
+13 Ops.RANGE dtypes.weakint [11] (3, AxisType.GLOBAL)
+14 Ops.ADD dtypes.weakint [12, 13]
+15 Ops.INDEX dtypes.float [0, 14]
+16 Ops.CONST dtypes.weakfloat [] 1.0
+17 Ops.CAST dtypes.float [16] dtypes.float
+18 Ops.STORE dtypes.void [15, 17]
+19 Ops.END dtypes.void [18, 2, 5, 9, 13]
+20 Ops.SINK dtypes.void [19] KernelInfo()
+21 Ops.SPECIAL dtypes.weakint [1] "gidx2"
+22 Ops.MUL dtypes.weakint [21, 3]
+23 Ops.SPECIAL dtypes.weakint [3] "gidx1"
+24 Ops.ADD dtypes.weakint [22, 23]
+25 Ops.MUL dtypes.weakint [24, 7]
+26 Ops.CONST dtypes.weakint [] 20
+27 Ops.SPECIAL dtypes.weakint [26] "gidx0"
+28 Ops.FLOORMOD dtypes.weakint [27, 7]
+29 Ops.ADD dtypes.weakint [25, 28]
+30 Ops.MUL dtypes.weakint [29, 11]
+31 Ops.FLOORDIV dtypes.weakint [27, 7]
+32 Ops.ADD dtypes.weakint [30, 31]
+33 Ops.INDEX dtypes.float [0, 32]
+34 Ops.STORE dtypes.void [33, 17]
+35 Ops.END dtypes.void [34, 21, 23, 28, 31]
+36 Ops.SINK dtypes.void [35] KernelInfo()
+37 Ops.SINK dtypes.void [20, 36]
+

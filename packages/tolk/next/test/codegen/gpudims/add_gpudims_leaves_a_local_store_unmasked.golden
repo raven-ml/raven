@@ -1,0 +1,27 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, addrspace=AddrSpace.LOCAL)
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.RANGE dtypes.weakint [1] (0, AxisType.GLOBAL)
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+5 Ops.CONST dtypes.weakint [] 8
+6 Ops.MUL dtypes.weakint [2, 5]
+7 Ops.RANGE dtypes.weakint [5] (1, AxisType.LOCAL)
+8 Ops.ADD dtypes.weakint [6, 7]
+9 Ops.INDEX dtypes.float [4, 8]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.STORE dtypes.void [3, 10]
+12 Ops.END dtypes.void [11, 2, 7]
+13 Ops.SINK dtypes.void [12] KernelInfo()
+14 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+15 Ops.INDEX dtypes.float [0, 14]
+16 Ops.MUL dtypes.weakint [14, 5]
+17 Ops.SPECIAL dtypes.weakint [5] "lidx0"
+18 Ops.ADD dtypes.weakint [16, 17]
+19 Ops.INDEX dtypes.float [4, 18]
+20 Ops.LOAD dtypes.float [19]
+21 Ops.STORE dtypes.void [15, 20]
+22 Ops.END dtypes.void [21, 14, 17]
+23 Ops.SINK dtypes.void [22] KernelInfo()
+24 Ops.SINK dtypes.void [13, 23]
+

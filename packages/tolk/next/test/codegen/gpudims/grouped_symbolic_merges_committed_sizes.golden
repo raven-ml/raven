@@ -1,0 +1,12 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.short [] ParamArg(slot=-1, dtype=dtypes.short, vmin_vmax=(2, 4), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+1 Ops.CAST dtypes.int [0] dtypes.int
+2 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(2, 4), multiple_of=1, name="b", addrspace=AddrSpace.ALU)
+3 Ops.MUL dtypes.int [1, 2]
+4 Ops.CAST dtypes.weakint [3] dtypes.weakint
+5 Ops.SPECIAL dtypes.weakint [4] "gidx0"
+6 Ops.CAST dtypes.int [5] dtypes.int
+7 Ops.FLOORDIV dtypes.int [6, 2]
+8 Ops.FLOORMOD dtypes.int [6, 2]
+9 Ops.SINK dtypes.void [7, 8]
+

@@ -1,0 +1,426 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+dims	max_sizes	reverse	specials	idxs
+(2,)	(16, 16, 16)	False	gidx0=2	[gidx0]
+(2, 3)	(16, 16, 16)	False	gidx0=2 gidx1=3	[gidx0, gidx1]
+(2, 3)	(16, 16, 16)	True	gidx0=3 gidx1=2	[gidx1, gidx0]
+(2, 3, 4)	(16, 16, 16)	False	gidx0=2 gidx1=3 gidx2=4	[gidx0, gidx1, gidx2]
+(64, 3, 4)	(16, 16, 16)	False	gidx0=16 gidx1=12 gidx2=4	[(gidx0*4+gidx1//3), (gidx1%3), gidx2]
+(64, 3, 4)	(16, 4, 16)	False	gidx0=16 gidx1=3 gidx2=16	[(gidx1+gidx0*4+(gidx1+gidx2//4)//3), ((gidx1+gidx2//4)%3), (gidx2%4)]
+(64, 3, 4)	(16, 16, 16)	True	gidx0=16 gidx1=3 gidx2=16	[(gidx2+(gidx1+gidx0*3)%4*16), ((gidx1+gidx0*3)//4%3), (gidx0//4)]
+(128, 3, 4)	(16, 4, 256)	False	gidx0=16 gidx1=3 gidx2=32	[(gidx0*8+gidx1*2+(gidx2+gidx1*8)//12), ((gidx1*2+gidx2//4)%3), (gidx2%4)]
+(4, 4, 512)	(16, 4, 256)	False	gidx0=8 gidx1=4 gidx2=256	[(gidx0//2), (gidx0%2*2+gidx1//2), (gidx2+gidx1%2*256)]
+(5, 12, 7)	(8, 4, 16)	False	gidx0=10 gidx1=3 gidx2=14	[(gidx0//2), ((gidx1+gidx0%2*3)*2+gidx2//7), (gidx2%7)]
+(512, 4, 2)	(8192, 2, 2)	False	gidx0=2048 gidx1=2	[(gidx0//4), (gidx0%4), gidx1]
+(128,)	(16, 16, 256)	False	gidx0=16 gidx1=8	[(gidx1+gidx0*8)]
+(65536,)	(16, 16, 256)	False	gidx0=16 gidx1=16 gidx2=256	[(gidx2+(gidx0*4096+gidx1*256))]
+(65536, 2)	(65535, 65535, 65535)	False	gidx0=32768 gidx1=4	[(gidx0*2+gidx1//2), (gidx1%2)]
+(121,)	(12, 12, 12)	False	gidx0=11 gidx1=11	[(gidx1+gidx0*11)]
+(128, 128)	(16, 16, 256)	False	gidx0=16 gidx1=16 gidx2=64	[(gidx0*8+gidx1//2), (gidx2+gidx1%2*64)]
+(2, 3, 4, 5)	(16, 16, 16)	False	gidx0=6 gidx1=4 gidx2=5	[(gidx0//3), (gidx0%3), gidx1, gidx2]
+(2, 3, 4, 5)	(32, 16, 16)	True	gidx0=20 gidx1=3 gidx2=2	[gidx2, gidx1, (gidx0%4), (gidx0//4)]
+(2, 3, 4, 5)	(4, 16, 16)	False	gidx0=2 gidx1=12 gidx2=5	[gidx0, (gidx1//4), (gidx1%4), gidx2]
+(2, 3, 4, 5)	(16, 16, 16)	True	gidx0=5 gidx1=12 gidx2=2	[gidx2, (gidx1%3), (gidx1//3), gidx0]
+(23,)	(16, 16, 16)	False	RuntimeError	
+(128, 3, 4)	(16, 2, 2)	False	RuntimeError	
+(2, 3, 4, 5, 6)	(16, 16, 16)	False	RuntimeError	
+(4, 4, 4, 4)	(16, 16)	False	gidx0=16 gidx1=16	[(gidx0//4), (gidx0%4), (gidx1//4), (gidx1%4)]
+(2, 3, 4, 5)	None	False	gidx0=2 gidx1=3 gidx2=4 gidx3=5	[gidx0, gidx1, gidx2, gidx3]
+(2, 2, 2, 2, 2)	(4, 4, 4)	False	gidx0=4 gidx1=4 gidx2=2	[(gidx0//2), (gidx0%2), (gidx1//2), (gidx1%2), gidx2]
+(2, 2, 2, 2, 2, 2)	(8, 8, 8)	False	gidx0=8 gidx1=4 gidx2=2	[(gidx0//4), (gidx0//2%2), (gidx0%2), (gidx1//2), (gidx1%2), gidx2]
+(2, 3, 4)	None	False	gidx0=2 gidx1=3 gidx2=4	[gidx0, gidx1, gidx2]
+(100,)	None	False	gidx0=100	[gidx0]
+(7, 7)	(49, 1, 1)	False	gidx0=49	[(gidx0//7), (gidx0%7)]
+(2305843009213693952, 2305843009213693952, 2)	(1152921504606846976, 2305843009213693952, 1152921504606846976)	False	gidx0=1152921504606846976 gidx1=2305843009213693952 gidx2=4	[(gidx0*2+gidx1//1152921504606846976), (gidx1%1152921504606846976*2+gidx2//2), (gidx2%2)]
+(4294967296, 4294967296)	(2147483647,)	False	RuntimeError	
+(64, 2, 11, 128)	(1024, 1024, 64)	True	gidx0=128 gidx1=22 gidx2=64	[gidx2, (gidx1%2), (gidx1//2), gidx0]
+(121, 23, 512)	(16, 4, 256)	False	RuntimeError	
+(5, 4, 1024)	(4, 16, 16)	False	RuntimeError	
+(1024, 5, 12, 4, 3)	(64,)	True	RuntimeError	
+(4, 23, 64, 16, 1024)	(64,)	False	RuntimeError	
+(121, 100, 128, 11, 2)	(256, 256, 256)	False	RuntimeError	
+(32,)	(64,)	False	gidx0=32	[gidx0]
+(121, 16, 8, 16, 3)	(16, 4, 256)	False	RuntimeError	
+(8, 5)	(256, 256, 256)	True	gidx0=5 gidx1=8	[gidx1, gidx0]
+(16,)	(256, 256, 256)	False	gidx0=16	[gidx0]
+(4, 12, 256, 12)	(16, 16, 16)	False	RuntimeError	
+(7, 1024, 256, 512, 12)	(1024, 1024, 64)	True	RuntimeError	
+(16, 512, 8, 12)	(8, 4, 16)	True	RuntimeError	
+(2, 1024)	(64,)	True	RuntimeError	
+(3,)	(64,)	False	gidx0=3	[gidx0]
+(2, 3)	(256, 256, 256)	False	gidx0=2 gidx1=3	[gidx0, gidx1]
+(11, 128, 8, 7, 65536)	(16, 16)	False	RuntimeError	
+(512, 11, 100, 121)	(64,)	False	RuntimeError	
+(3, 16, 1024)	(16, 16, 16)	True	gidx0=256 gidx1=16 gidx2=12	[(gidx2%3), (gidx1%4*4+gidx2//3), (gidx0*4+gidx1//4)]
+(7, 8, 1)	(4, 16, 16)	True	gidx1=8 gidx2=7	[gidx2, gidx1, 0]
+(23, 6)	(12, 12, 12)	True	RuntimeError	
+(4,)	(8, 4, 16)	False	gidx0=4	[gidx0]
+(2, 512)	(64,)	False	RuntimeError	
+(1024, 65536, 3, 1, 4)	(64,)	True	RuntimeError	
+(4, 32, 3, 23, 4)	None	False	gidx0=4 gidx1=32 gidx2=3 gidx3=23 gidx4=4	[gidx0, gidx1, gidx2, gidx3, gidx4]
+(6, 4)	(1024, 1024, 64)	True	gidx0=4 gidx1=6	[gidx1, gidx0]
+(65536,)	None	False	gidx0=65536	[gidx0]
+(4, 11, 3, 8, 3)	(64,)	True	RuntimeError	
+(6, 2, 128, 100)	None	False	gidx0=6 gidx1=2 gidx2=128 gidx3=100	[gidx0, gidx1, gidx2, gidx3]
+(7, 11, 23, 121)	(16, 16)	True	RuntimeError	
+(2, 65536)	(8, 4, 16)	False	gidx0=2048 gidx1=4 gidx2=16	[(gidx0//1024), (gidx2+(gidx1+gidx0%1024*4)*16)]
+(128, 11, 4)	(16, 16)	False	RuntimeError	
+(1, 121)	(64,)	True	RuntimeError	
+(128, 12, 4096, 23, 32)	(64,)	True	RuntimeError	
+(1, 100, 3, 16, 2)	(256, 256, 256)	True	gidx0=96 gidx1=100	[0, gidx1, (gidx0%3), (gidx0//3%16), (gidx0//48)]
+(121, 23)	(16, 16)	True	RuntimeError	
+(512, 4096, 1024)	(8, 4, 16)	False	gidx0=33554432 gidx1=4 gidx2=16	[(gidx0//65536), (gidx0//16%4096), (gidx2+(gidx1+gidx0%16*4)*16)]
+(64, 4096, 3, 1)	(16, 16)	True	RuntimeError	
+(6, 8, 8)	(64,)	True	RuntimeError	
+(64, 2, 32, 512, 64)	(64,)	False	RuntimeError	
+(100, 3)	(4, 16, 16)	False	RuntimeError	
+(128, 121, 256, 1024)	None	False	gidx0=128 gidx1=121 gidx2=256 gidx3=1024	[gidx0, gidx1, gidx2, gidx3]
+(16, 12, 100, 2)	(65535, 65535, 65535)	True	gidx0=200 gidx1=12 gidx2=16	[gidx2, gidx1, (gidx0%100), (gidx0//100)]
+(5,)	None	True	gidx0=5	[gidx0]
+(16, 1, 7, 1)	None	False	gidx0=16 gidx2=7	[gidx0, 0, gidx2, 0]
+(1024, 4, 7, 4, 1024)	(64,)	True	RuntimeError	
+(11, 6, 4)	(1024, 1024, 64)	False	gidx0=11 gidx1=6 gidx2=4	[gidx0, gidx1, gidx2]
+(4096, 3, 1, 11)	(1024, 1024, 64)	False	RuntimeError	
+(11,)	(8, 4, 16)	False	RuntimeError	
+(4, 5, 11)	None	True	gidx0=11 gidx1=5 gidx2=4	[gidx2, gidx1, gidx0]
+(65536, 11)	(256, 256, 256)	True	gidx0=11 gidx1=256 gidx2=256	[(gidx2+gidx1*256), gidx0]
+(512, 2, 1024)	(64,)	True	RuntimeError	
+(4096, 64, 23, 256)	(8, 4, 16)	True	RuntimeError	
+(12, 1, 5, 5, 11)	(12, 12, 12)	True	RuntimeError	
+(3, 16, 1024)	None	True	gidx0=1024 gidx1=16 gidx2=3	[gidx2, gidx1, gidx0]
+(5, 512)	(4, 16, 16)	True	gidx0=16 gidx1=10 gidx2=16	[((gidx1+gidx2)%5), (gidx0*32+gidx1*3+(gidx1+gidx2)//5)]
+(5, 12, 4, 121, 8)	None	True	gidx0=8 gidx1=121 gidx2=4 gidx3=12 gidx4=5	[gidx4, gidx3, gidx2, gidx1, gidx0]
+(3, 12, 32, 16, 12)	(65535, 65535, 65535)	True	gidx0=6144 gidx1=12 gidx2=3	[gidx2, gidx1, (gidx0%32), (gidx0//32%16), (gidx0//512)]
+(121, 121, 16, 16, 4)	(1024, 1024, 64)	True	RuntimeError	
+(64, 2, 12, 16)	(64,)	False	RuntimeError	
+(4096, 512)	(65535, 65535, 65535)	False	gidx0=4096 gidx1=512	[gidx0, gidx1]
+(3,)	(16, 16, 16)	True	gidx0=3	[gidx0]
+(2, 32)	None	True	gidx0=32 gidx1=2	[gidx1, gidx0]
+(128, 12, 100, 121, 512)	(64,)	True	RuntimeError	
+(23,)	(16, 4, 256)	False	RuntimeError	
+(512, 6, 64)	(16, 4, 256)	True	gidx0=256 gidx1=3 gidx2=256	[(gidx2+(gidx0+gidx1)%2*256), ((gidx0+(gidx0+gidx1)//2)%6), (gidx0//4)]
+(1,)	(256, 256, 256)	True		[0]
+(4, 121)	(65535, 65535, 65535)	True	gidx0=121 gidx1=4	[gidx1, gidx0]
+(7,)	(16, 16)	True	gidx0=7	[gidx0]
+(100, 32)	(12, 12, 12)	False	gidx0=40 gidx1=10 gidx2=8	[(gidx0*2+(gidx0+gidx1//2)//2), (gidx2+(gidx1+gidx0*2)%4*8)]
+(4, 1024)	(1024, 1024, 64)	True	gidx0=1024 gidx1=4	[gidx1, gidx0]
+(4096, 65536, 64, 128)	(1024, 1024, 64)	False	RuntimeError	
+(121, 121, 4096)	(64,)	False	RuntimeError	
+(1024, 8, 1, 16, 16)	(12, 12, 12)	True	RuntimeError	
+(11, 1024)	(8, 4, 16)	False	RuntimeError	
+(12, 121, 3, 3, 128)	None	True	gidx0=128 gidx1=3 gidx2=3 gidx3=121 gidx4=12	[gidx4, gidx3, gidx2, gidx1, gidx0]
+(2, 12)	None	False	gidx0=2 gidx1=12	[gidx0, gidx1]
+(16, 6, 5, 4096)	(1024, 1024, 64)	False	RuntimeError	
+(32, 128, 128, 2, 512)	(16, 16, 16)	False	RuntimeError	
+(1024, 3, 64, 7, 12)	(256, 256, 256)	False	RuntimeError	
+(121, 32, 1024, 512)	(16, 4, 256)	False	RuntimeError	
+(128, 512, 11)	(12, 12, 12)	True	gidx0=11264 gidx1=8 gidx2=8	[(gidx2+(gidx1+gidx0%2*8)*8), (gidx0//2%512), (gidx0//1024)]
+(12, 64, 32)	(65535, 65535, 65535)	True	gidx0=32 gidx1=64 gidx2=12	[gidx2, gidx1, gidx0]
+(8, 12)	(12, 12, 12)	True	gidx0=12 gidx1=8	[gidx1, gidx0]
+(121,)	(65535, 65535, 65535)	True	gidx0=121	[gidx0]
+(3, 65536, 5, 23, 64)	None	False	gidx0=3 gidx1=65536 gidx2=5 gidx3=23 gidx4=64	[gidx0, gidx1, gidx2, gidx3, gidx4]
+(100, 2, 4, 121)	(8, 4, 16)	True	RuntimeError	
+(1024, 5, 4096, 16, 4)	(256, 256, 256)	False	RuntimeError	
+(32, 121)	(16, 16, 16)	False	gidx0=32 gidx1=11 gidx2=11	[gidx0, (gidx2+gidx1*11)]
+(100, 1024, 4096, 16, 4096)	(16, 16, 16)	False	RuntimeError	
+(12, 5, 32, 12, 65536)	(16, 16, 16)	False	RuntimeError	
+(2, 32)	(1024, 1024, 64)	True	gidx0=32 gidx1=2	[gidx1, gidx0]
+(100, 23)	(64,)	True	RuntimeError	
+(2,)	(1024, 1024, 64)	True	gidx0=2	[gidx0]
+(128,)	(64,)	False	IndexError	
+(8, 3)	(64,)	False	gidx0=24	[(gidx0//3), (gidx0%3)]
+(64, 128, 12, 4, 5)	(65535, 65535, 65535)	False	gidx0=8192 gidx1=48 gidx2=5	[(gidx0//128), (gidx0%128), (gidx1//4), (gidx1%4), gidx2]
+(3, 4, 64, 3)	(16, 16, 16)	True	RuntimeError	
+(1, 100)	(65535, 65535, 65535)	False	gidx1=100	[0, gidx1]
+(23,)	(16, 16, 16)	True	RuntimeError	
+(23,)	(12, 12, 12)	True	RuntimeError	
+(23, 3)	(16, 16)	False	RuntimeError	
+(1, 7)	(64,)	False	gidx0=7	[0, gidx0]
+(1,)	(4, 16, 16)	True		[0]
+(1024,)	(16, 4, 256)	False	gidx0=16 gidx1=4 gidx2=16	[(gidx2+(gidx0*64+gidx1*16))]
+(100, 4)	(1024, 1024, 64)	True	gidx0=4 gidx1=100	[gidx1, gidx0]
+(5, 1, 7)	(12, 12, 12)	True	gidx0=7 gidx2=5	[gidx2, 0, gidx0]
+(12, 256, 4096)	(12, 12, 12)	True	gidx0=131072 gidx1=8 gidx2=12	[gidx2, (gidx1+gidx0%32*8), (gidx0//32)]
+(4,)	(256, 256, 256)	False	gidx0=4	[gidx0]
+(32, 5)	(8, 4, 16)	False	RuntimeError	
+(128, 8, 8)	(8, 4, 16)	True	gidx0=128 gidx1=4 gidx2=16	[(gidx2+(gidx1+gidx0%2*4)*16), (gidx0//2%8), (gidx0//16)]
+(65536, 2, 5, 1024)	None	True	gidx0=1024 gidx1=5 gidx2=2 gidx3=65536	[gidx3, gidx2, gidx1, gidx0]
+(5,)	(65535, 65535, 65535)	True	gidx0=5	[gidx0]
+(5, 512, 64, 12)	(64,)	True	RuntimeError	
+(100, 4096)	(12, 12, 12)	False	gidx0=5120 gidx1=10 gidx2=8	[((gidx1+gidx0*10)//512), (gidx2+(gidx1+gidx0*10)%512*8)]
+(2, 32, 64, 1, 64)	(12, 12, 12)	True	RuntimeError	
+(12, 121, 3)	(8, 4, 16)	False	RuntimeError	
+(4, 256, 1024)	(8, 4, 16)	False	gidx0=16384 gidx1=4 gidx2=16	[(gidx0//4096), (gidx0//16%256), (gidx2+(gidx1+gidx0%16*4)*16)]
+(32, 6, 64, 64)	(8, 4, 16)	True	RuntimeError	
+(16, 128, 5, 23)	(1024, 1024, 64)	False	gidx0=16 gidx1=640 gidx2=23	[gidx0, (gidx1//5), (gidx1%5), gidx2]
+(121,)	(16, 4, 256)	True	RuntimeError	
+(1024, 100, 1, 7)	(4, 16, 16)	True	RuntimeError	
+(256, 1024, 5)	(65535, 65535, 65535)	False	gidx0=256 gidx1=1024 gidx2=5	[gidx0, gidx1, gidx2]
+(3, 65536, 121, 8)	(256, 256, 256)	False	RuntimeError	
+(4096, 1, 4)	(4, 16, 16)	False	gidx0=64 gidx1=16 gidx2=16	[(gidx0*64+gidx1*4+gidx2//4), 0, (gidx2%4)]
+(32, 100, 4, 11, 23)	(4, 16, 16)	False	RuntimeError	
+(1024, 3)	None	True	gidx0=3 gidx1=1024	[gidx1, gidx0]
+(12, 256, 16)	(16, 16, 16)	False	gidx0=192 gidx1=16 gidx2=16	[(gidx0//16), (gidx1+gidx0%16*16), gidx2]
+(6, 3)	(65535, 65535, 65535)	False	gidx0=6 gidx1=3	[gidx0, gidx1]
+(128, 5, 512)	(256, 256, 256)	False	gidx0=256 gidx1=5 gidx2=256	[(gidx0//2), ((gidx0*2+(gidx0+gidx1)//2)%5), (gidx2+(gidx0+gidx1)%2*256)]
+(4, 64, 4096, 256, 32)	(4, 16, 16)	True	RuntimeError	
+(512, 4096, 5)	(8, 4, 16)	True	gidx0=163840 gidx1=4 gidx2=16	[(gidx2+(gidx1+gidx0%8*4)*16), (gidx0//8%4096), (gidx0//32768)]
+(32,)	(65535, 65535, 65535)	False	gidx0=32	[gidx0]
+(256, 65536)	(4, 16, 16)	True	gidx0=65536 gidx1=16 gidx2=16	[(gidx2+gidx1*16), gidx0]
+(64, 7, 121, 121)	(256, 256, 256)	True	RuntimeError	
+(100,)	(4, 16, 16)	True	RuntimeError	
+(2, 1024, 7, 1)	(12, 12, 12)	True	RuntimeError	
+(128,)	(16, 16, 16)	False	gidx0=16 gidx1=8	[(gidx1+gidx0*8)]
+(65536,)	(64,)	True	IndexError	
+(2, 4, 1024)	None	False	gidx0=2 gidx1=4 gidx2=1024	[gidx0, gidx1, gidx2]
+(8, 5, 512)	(4, 16, 16)	True	gidx0=128 gidx1=10 gidx2=16	[(gidx2%8), ((gidx1*2+gidx2//8)%5), (gidx0*4+(gidx2+gidx1*16)//40)]
+(100, 16, 32, 6)	(12, 12, 12)	True	RuntimeError	
+(5, 100, 5, 128)	(12, 12, 12)	True	RuntimeError	
+(100, 23)	(65535, 65535, 65535)	True	gidx0=23 gidx1=100	[gidx1, gidx0]
+(32, 8, 7, 100)	(16, 4, 256)	False	RuntimeError	
+(32,)	None	True	gidx0=32	[gidx0]
+(6,)	(12, 12, 12)	True	gidx0=6	[gidx0]
+(8, 1024)	(4, 16, 16)	False	gidx0=32 gidx1=16 gidx2=16	[(gidx0//4), (gidx2+(gidx1+gidx0%4*16)*16)]
+(12, 23, 64, 100, 2)	(64,)	False	RuntimeError	
+(64, 512, 100, 121, 11)	(1024, 1024, 64)	True	RuntimeError	
+(2, 2, 2)	(8, 4, 16)	True	gidx0=2 gidx1=2 gidx2=2	[gidx2, gidx1, gidx0]
+(4096, 1, 5)	(16, 16, 16)	False	gidx0=128 gidx1=16 gidx2=10	[(gidx0*32+gidx1*2+gidx2//5), 0, (gidx2%5)]
+(1024, 32)	(256, 256, 256)	False	gidx0=256 gidx1=128	[(gidx0*4+gidx1//32), (gidx1%32)]
+(7, 16, 1024, 4)	(16, 16)	False	RuntimeError	
+(16, 256, 100)	(12, 12, 12)	True	gidx0=5120 gidx1=10 gidx2=8	[(gidx2+gidx1%2*8), ((gidx0*5+gidx1//2)%256), ((gidx1+gidx0*10)//512)]
+(2, 7, 23, 3, 7)	(256, 256, 256)	True	gidx0=21 gidx1=161 gidx2=2	[gidx2, (gidx1%7), (gidx1//7), (gidx0%3), (gidx0//3)]
+(11, 65536)	(4, 16, 16)	True	gidx0=4096 gidx1=11 gidx2=16	[((gidx2+gidx1*5)%11), (gidx1+gidx0*16+(gidx2+gidx1*5)//11)]
+(11, 121, 23, 8)	None	True	gidx0=8 gidx1=23 gidx2=121 gidx3=11	[gidx3, gidx2, gidx1, gidx0]
+(3, 1, 100, 121, 100)	None	False	gidx0=3 gidx2=100 gidx3=121 gidx4=100	[gidx0, 0, gidx2, gidx3, gidx4]
+(121, 100, 100, 4)	(16, 16, 16)	True	RuntimeError	
+(5,)	(65535, 65535, 65535)	False	gidx0=5	[gidx0]
+(100, 1024)	(16, 16, 16)	False	gidx0=640 gidx1=10 gidx2=16	[((gidx1+gidx0*10)//64), (gidx2+(gidx1+gidx0*10)%64*16)]
+(32, 2, 6, 8, 121)	(16, 4, 256)	True	RuntimeError	
+(23, 16, 64)	(16, 16, 16)	False	RuntimeError	
+(1024, 256, 7)	(4, 16, 16)	False	gidx0=8192 gidx1=16 gidx2=14	[(gidx0//8), ((gidx1+gidx0%8*16)*2+gidx2//7), (gidx2%7)]
+(1024, 100, 256, 4096, 11)	(4, 16, 16)	True	RuntimeError	
+(1024,)	(16, 16, 16)	True	gidx0=16 gidx1=16 gidx2=4	[(gidx2+(gidx0*64+gidx1*4))]
+(8, 7, 12, 65536)	None	False	gidx0=8 gidx1=7 gidx2=12 gidx3=65536	[gidx0, gidx1, gidx2, gidx3]
+(64, 2, 4, 32, 4096)	(4, 16, 16)	True	RuntimeError	
+(23, 8, 65536, 256, 65536)	(4, 16, 16)	True	RuntimeError	
+(3, 128)	(4, 16, 16)	False	gidx0=3 gidx1=16 gidx2=8	[gidx0, (gidx2+gidx1*8)]
+(23, 4096)	(1024, 1024, 64)	True	gidx0=1024 gidx1=92	[(gidx1%23), (gidx0*4+gidx1//23)]
+(5, 1)	(256, 256, 256)	False	gidx0=5	[gidx0, 0]
+(512, 4096, 1)	(8, 4, 16)	False	gidx0=32768 gidx1=4 gidx2=16	[(gidx0//64), (gidx2+(gidx1+gidx0%64*4)*16), 0]
+(6, 128)	(16, 16, 16)	True	gidx0=16 gidx1=12 gidx2=4	[((gidx2+gidx1*4)%6), (gidx0*8+(gidx2+gidx1*4)//6)]
+(121, 512)	(16, 4, 256)	True	RuntimeError	
+(8, 32)	(12, 12, 12)	False	gidx0=8 gidx1=8 gidx2=4	[gidx0, (gidx2+gidx1*4)]
+(4096, 121)	(16, 16, 16)	False	gidx0=4096 gidx1=11 gidx2=11	[gidx0, (gidx2+gidx1*11)]
+(128,)	(16, 16)	True	IndexError	
+(12, 1, 8, 256)	(64,)	True	RuntimeError	
+(121, 256, 16, 3)	(4, 16, 16)	True	RuntimeError	
+(7, 16, 12, 32)	None	True	gidx0=32 gidx1=12 gidx2=16 gidx3=7	[gidx3, gidx2, gidx1, gidx0]
+(8, 16, 100)	(64,)	False	RuntimeError	
+(11, 23)	(64,)	True	RuntimeError	
+(23,)	(16, 16)	False	RuntimeError	
+(23, 1)	(1024, 1024, 64)	False	gidx0=23	[gidx0, 0]
+(8,)	None	True	gidx0=8	[gidx0]
+(3, 2, 23)	(64,)	True	RuntimeError	
+(100, 64)	(8, 4, 16)	True	RuntimeError	
+(4096, 16)	(65535, 65535, 65535)	True	gidx0=16 gidx1=4096	[gidx1, gidx0]
+(11, 256, 256, 65536)	(1024, 1024, 64)	False	RuntimeError	
+(4, 64, 32, 6, 1)	(256, 256, 256)	True	gidx0=192 gidx1=64 gidx2=4	[gidx2, gidx1, (gidx0%32), (gidx0//32), 0]
+(5, 3, 16, 8, 6)	(16, 4, 256)	False	RuntimeError	
+(65536, 256)	(8, 4, 16)	False	gidx0=262144 gidx1=4 gidx2=16	[(gidx0//4), (gidx2+(gidx1+gidx0%4*4)*16)]
+(1024, 4, 1024, 4096)	(1024, 1024, 64)	False	RuntimeError	
+(1024, 2, 11, 16, 32)	None	False	gidx0=1024 gidx1=2 gidx2=11 gidx3=16 gidx4=32	[gidx0, gidx1, gidx2, gidx3, gidx4]
+(121,)	(16, 16, 16)	True	gidx0=11 gidx1=11	[(gidx1+gidx0*11)]
+(100, 8)	(256, 256, 256)	True	gidx0=8 gidx1=100	[gidx1, gidx0]
+(16, 11, 121, 32)	None	True	gidx0=32 gidx1=121 gidx2=11 gidx3=16	[gidx3, gidx2, gidx1, gidx0]
+(256, 121, 2)	(256, 256, 256)	False	gidx0=256 gidx1=121 gidx2=2	[gidx0, gidx1, gidx2]
+(65536, 2, 100)	(65535, 65535, 65535)	False	gidx0=32768 gidx1=4 gidx2=100	[(gidx0*2+gidx1//2), (gidx1%2), gidx2]
+(23, 121, 2, 1)	(4, 16, 16)	False	RuntimeError	
+(11,)	(64,)	False	gidx0=11	[gidx0]
+(65536, 7, 128)	(256, 256, 256)	True	gidx0=32768 gidx1=7 gidx2=256	[(gidx2+(gidx1+gidx0*7)%256*256), ((gidx1+gidx0*7)//256%7), (gidx0//256)]
+(7, 4, 512)	(12, 12, 12)	False	gidx0=448 gidx1=4 gidx2=8	[(gidx0//64), (gidx0//16%4), (gidx2+(gidx1+gidx0%16*4)*8)]
+(512, 65536)	(256, 256, 256)	False	gidx0=512 gidx1=256 gidx2=256	[gidx0, (gidx2+gidx1*256)]
+(6, 5, 16)	None	False	gidx0=6 gidx1=5 gidx2=16	[gidx0, gidx1, gidx2]
+(512,)	(8, 4, 16)	False	gidx0=8 gidx1=4 gidx2=16	[(gidx2+(gidx0*64+gidx1*16))]
+(12, 4096, 12)	(12, 12, 12)	True	gidx0=6144 gidx1=8 gidx2=12	[gidx2, (gidx1+gidx0%512*8), (gidx0//512)]
+(1024, 64, 6, 1)	(8, 4, 16)	False	RuntimeError	
+(5, 16, 1, 121)	(64,)	False	RuntimeError	
+(1024, 7, 3)	(256, 256, 256)	False	gidx0=256 gidx1=28 gidx2=3	[(gidx0*4+gidx1//7), (gidx1%7), gidx2]
+(6, 128, 6)	(16, 16, 16)	False	gidx0=24 gidx1=16 gidx2=12	[(gidx0//4), ((gidx1+gidx0%4*16)*2+gidx2//6), (gidx2%6)]
+(512, 4)	(256, 256, 256)	False	gidx0=256 gidx1=8	[(gidx0*2+gidx1//4), (gidx1%4)]
+(1024, 32, 64, 11, 12)	(4, 16, 16)	True	RuntimeError	
+(11, 256, 128)	(256, 256, 256)	True	gidx0=128 gidx1=256 gidx2=11	[gidx2, gidx1, gidx0]
+(7, 64, 5)	None	False	gidx0=7 gidx1=64 gidx2=5	[gidx0, gidx1, gidx2]
+(65536, 512)	(65535, 65535, 65535)	True	gidx0=512 gidx1=32768 gidx2=2	[(gidx2+gidx1*2), gidx0]
+(256,)	(65535, 65535, 65535)	False	gidx0=256	[gidx0]
+(1, 23)	(256, 256, 256)	False	gidx1=23	[0, gidx1]
+(65536, 7)	(64,)	True	RuntimeError	
+(1, 8, 512, 8)	(4, 16, 16)	True	RuntimeError	
+(3, 512, 100, 8)	(1024, 1024, 64)	False	RuntimeError	
+(7,)	(8, 4, 16)	True	gidx0=7	[gidx0]
+(64,)	(64,)	True	gidx0=64	[gidx0]
+(11, 64, 23)	(16, 16)	True	RuntimeError	
+(1, 121, 1)	(4, 16, 16)	True	gidx1=11 gidx2=11	[0, (gidx2+gidx1*11), 0]
+(32, 64, 4096, 4096)	(64,)	True	RuntimeError	
+(512,)	(1024, 1024, 64)	True	gidx0=512	[gidx0]
+(5, 512, 11, 16, 1)	(65535, 65535, 65535)	True	gidx0=176 gidx1=512 gidx2=5	[gidx2, gidx1, (gidx0%11), (gidx0//11), 0]
+(5, 2, 3, 512, 23)	(12, 12, 12)	True	RuntimeError	
+(4, 65536)	(256, 256, 256)	True	gidx0=256 gidx1=256 gidx2=4	[gidx2, (gidx1+gidx0*256)]
+(1, 16, 32)	(8, 4, 16)	False	gidx0=8 gidx1=4 gidx2=16	[0, (gidx0*2+gidx1//2), (gidx2+gidx1%2*16)]
+(64, 65536, 5)	(16, 16)	True	RuntimeError	
+(128, 2, 6)	(8, 4, 16)	False	gidx0=32 gidx1=4 gidx2=12	[(gidx1+gidx0*4), (gidx2//6), (gidx2%6)]
+(4096, 2, 128, 2)	(256, 256, 256)	False	RuntimeError	
+(6, 23, 512, 3)	(16, 16, 16)	False	RuntimeError	
+(7, 11, 16)	(4, 16, 16)	False	RuntimeError	
+(100, 5, 100, 256, 5)	None	False	gidx0=100 gidx1=5 gidx2=100 gidx3=256 gidx4=5	[gidx0, gidx1, gidx2, gidx3, gidx4]
+(4096, 128)	None	False	gidx0=4096 gidx1=128	[gidx0, gidx1]
+(3, 7, 4096)	(1024, 1024, 64)	False	gidx0=192 gidx1=7 gidx2=64	[(gidx0//64), ((gidx1+gidx0*7)//64%7), (gidx2+(gidx1+gidx0*7)%64*64)]
+(128, 6, 16, 4096)	(8, 4, 16)	True	RuntimeError	
+(2, 256, 3, 128, 16)	None	False	gidx0=2 gidx1=256 gidx2=3 gidx3=128 gidx4=16	[gidx0, gidx1, gidx2, gidx3, gidx4]
+(4,)	(65535, 65535, 65535)	False	gidx0=4	[gidx0]
+(100, 16, 32, 128, 23)	(64,)	True	RuntimeError	
+(1, 6, 5)	None	True	gidx0=5 gidx1=6	[0, gidx1, gidx0]
+(7, 2, 64, 4096, 2)	(4, 16, 16)	False	RuntimeError	
+(1024,)	(8, 4, 16)	True	gidx0=16 gidx1=4 gidx2=16	[(gidx2+(gidx0*64+gidx1*16))]
+(64,)	None	True	gidx0=64	[gidx0]
+(1024, 11, 65536, 12, 512)	(1024, 1024, 64)	True	RuntimeError	
+(3, 23, 4, 4)	None	True	gidx0=4 gidx1=4 gidx2=23 gidx3=3	[gidx3, gidx2, gidx1, gidx0]
+(32, 1024)	(64,)	False	RuntimeError	
+(100, 256, 121)	(1024, 1024, 64)	True	gidx0=242 gidx1=256 gidx2=50	[(gidx2+gidx1%2*50), (gidx0%2*128+gidx1//2), (gidx0//2)]
+(1, 4096, 128)	(16, 16, 16)	False	gidx0=2048 gidx1=16 gidx2=16	[0, (gidx0*2+gidx1//8), (gidx2+gidx1%8*16)]
+(16,)	(12, 12, 12)	False	gidx0=8 gidx1=2	[(gidx1+gidx0*2)]
+(2, 5, 128, 4096)	(4, 16, 16)	False	RuntimeError	
+(32,)	(12, 12, 12)	True	gidx0=8 gidx1=4	[(gidx1+gidx0*4)]
+(5, 6, 6, 6, 4096)	(64,)	True	RuntimeError	
+(16, 1, 121, 4096, 65536)	(65535, 65535, 65535)	True	RuntimeError	
+(4096, 12)	(12, 12, 12)	True	gidx0=768 gidx1=8 gidx2=8	[(gidx2+(gidx1+gidx0%64*8)*8), (gidx0//64)]
+(23, 8)	(8, 4, 16)	False	RuntimeError	
+(23, 512, 5, 32)	(16, 16)	False	RuntimeError	
+(512, 1)	(64,)	True	RuntimeError	
+(5, 1)	None	False	gidx0=5	[gidx0, 0]
+(1, 2, 2, 4, 512)	(16, 16)	True	RuntimeError	
+(65536, 32)	None	True	gidx0=32 gidx1=65536	[gidx1, gidx0]
+(65536, 16, 8, 5, 23)	(256, 256, 256)	True	RuntimeError	
+(3, 5, 64, 512)	(64,)	True	RuntimeError	
+(64,)	(65535, 65535, 65535)	True	gidx0=64	[gidx0]
+(8, 32, 8, 4096)	(1024, 1024, 64)	True	RuntimeError	
+(3, 11, 11, 128, 23)	(256, 256, 256)	True	RuntimeError	
+(121, 8, 11, 2, 1024)	(12, 12, 12)	False	RuntimeError	
+(4096, 4, 256, 2)	(8, 4, 16)	False	RuntimeError	
+(100,)	(16, 16)	True	IndexError	
+(16, 121)	(65535, 65535, 65535)	True	gidx0=121 gidx1=16	[gidx1, gidx0]
+(128, 4, 23)	(12, 12, 12)	True	RuntimeError	
+(121, 4096, 128)	None	True	gidx0=128 gidx1=4096 gidx2=121	[gidx2, gidx1, gidx0]
+(6, 512, 16)	(4, 16, 16)	True	gidx0=256 gidx1=16 gidx2=12	[(gidx2%6), ((gidx1+gidx0%16*16)*2+gidx2//6), (gidx0//16)]
+(12,)	(256, 256, 256)	True	gidx0=12	[gidx0]
+(11, 32, 7, 23)	(8, 4, 16)	True	RuntimeError	
+(23, 6, 1, 64, 512)	(65535, 65535, 65535)	True	gidx0=32768 gidx1=6 gidx2=23	[gidx2, gidx1, 0, (gidx0%64), (gidx0//64)]
+(64,)	(256, 256, 256)	False	gidx0=64	[gidx0]
+(6, 5)	(16, 4, 256)	True	gidx0=5 gidx1=3 gidx2=2	[(gidx2+gidx1*2), gidx0]
+(128,)	(8, 4, 16)	False	gidx0=8 gidx1=4 gidx2=4	[(gidx2+(gidx0*16+gidx1*4))]
+(1024, 12, 16)	(64,)	True	RuntimeError	
+(11, 6, 16, 4096)	(256, 256, 256)	False	RuntimeError	
+(5, 32, 256, 12, 8)	(65535, 65535, 65535)	True	gidx0=24576 gidx1=32 gidx2=5	[gidx2, gidx1, (gidx0%256), (gidx0//256%12), (gidx0//3072)]
+(128, 12, 64, 64)	(16, 16, 16)	False	RuntimeError	
+(5, 1)	(16, 16)	False	gidx0=5	[gidx0, 0]
+(4, 4096, 7, 1024, 4096)	(16, 16)	False	RuntimeError	
+(11,)	(16, 16)	True	gidx0=11	[gidx0]
+(2,)	None	True	gidx0=2	[gidx0]
+(121, 16, 4)	(64,)	True	RuntimeError	
+(11, 65536, 121, 8, 6)	(256, 256, 256)	False	RuntimeError	
+(128,)	(8, 4, 16)	True	gidx0=8 gidx1=4 gidx2=4	[(gidx2+(gidx0*16+gidx1*4))]
+(128, 64)	(16, 16)	False	IndexError	
+(65536, 32, 11, 1)	(16, 16)	True	RuntimeError	
+(6, 100, 512, 2)	(65535, 65535, 65535)	False	gidx0=600 gidx1=512 gidx2=2	[(gidx0//100), (gidx0%100), gidx1, gidx2]
+(4096,)	(16, 16)	True	IndexError	
+(128, 100)	None	True	gidx0=100 gidx1=128	[gidx1, gidx0]
+(11,)	(256, 256, 256)	True	gidx0=11	[gidx0]
+(121, 11, 6, 8)	(256, 256, 256)	True	gidx0=48 gidx1=11 gidx2=121	[gidx2, gidx1, (gidx0%6), (gidx0//6)]
+(1024, 5, 100)	(16, 16, 16)	False	gidx0=10240 gidx1=10 gidx2=5	[(gidx0//10), (gidx0//2%5), (gidx2+(gidx1+gidx0%2*10)*5)]
+(32, 512, 64, 256)	(16, 16, 16)	True	RuntimeError	
+(4, 12)	(8, 4, 16)	True	gidx0=6 gidx1=4 gidx2=2	[(gidx2+gidx1%2*2), (gidx0*2+gidx1//2)]
+(5,)	(64,)	False	gidx0=5	[gidx0]
+(512, 256)	(16, 4, 256)	True	gidx0=128 gidx1=4 gidx2=256	[(gidx2+gidx1%2*256), (gidx0*2+gidx1//2)]
+(256, 1024, 121, 4)	(1024, 1024, 64)	False	RuntimeError	
+(4, 65536, 1)	(16, 4, 256)	True	gidx0=256 gidx1=4 gidx2=256	[(gidx2%4), (gidx0*256+gidx1*64+gidx2//4), 0]
+(11, 8, 1)	(1024, 1024, 64)	True	gidx1=8 gidx2=11	[gidx2, gidx1, 0]
+(16, 3, 3, 12, 512)	(65535, 65535, 65535)	True	gidx0=18432 gidx1=3 gidx2=16	[gidx2, gidx1, (gidx0%3), (gidx0//3%12), (gidx0//36)]
+(32, 5, 8)	(4, 16, 16)	False	gidx0=8 gidx1=10 gidx2=16	[(gidx0*4+(gidx2+gidx1*16)//40), ((gidx1*2+gidx2//8)%5), (gidx2%8)]
+(65536, 23, 12, 32)	(16, 16)	True	RuntimeError	
+(32,)	(12, 12, 12)	False	gidx0=8 gidx1=4	[(gidx1+gidx0*4)]
+(8, 4096, 23, 4096)	(12, 12, 12)	True	RuntimeError	
+(32, 12, 4)	(1024, 1024, 64)	False	gidx0=32 gidx1=12 gidx2=4	[gidx0, gidx1, gidx2]
+(100,)	(8, 4, 16)	True	RuntimeError	
+(6, 16)	(1024, 1024, 64)	True	gidx0=16 gidx1=6	[gidx1, gidx0]
+(32, 100, 128, 100)	(16, 16)	False	RuntimeError	
+(65536, 32)	(256, 256, 256)	True	gidx0=32 gidx1=256 gidx2=256	[(gidx2+gidx1*256), gidx0]
+(16, 128)	(64,)	True	RuntimeError	
+(16, 32, 8, 64)	None	False	gidx0=16 gidx1=32 gidx2=8 gidx3=64	[gidx0, gidx1, gidx2, gidx3]
+(64,)	(16, 16, 16)	True	gidx0=16 gidx1=4	[(gidx1+gidx0*4)]
+(6, 4, 6)	(12, 12, 12)	True	gidx0=6 gidx1=4 gidx2=6	[gidx2, gidx1, gidx0]
+(1,)	(65535, 65535, 65535)	False		[0]
+(4, 1024)	(16, 16)	False	IndexError	
+(3, 100)	(16, 4, 256)	False	RuntimeError	
+(1024, 64, 3, 256, 6)	(16, 4, 256)	True	RuntimeError	
+(32, 121, 1, 64)	(16, 4, 256)	True	RuntimeError	
+(1024,)	(4, 16, 16)	True	gidx0=4 gidx1=16 gidx2=16	[(gidx2+(gidx0*256+gidx1*16))]
+(23, 16, 65536)	(1024, 1024, 64)	False	gidx0=23552 gidx1=16 gidx2=64	[(gidx0//1024), (gidx0//64%16), (gidx2+(gidx1+gidx0%64*16)*64)]
+(128, 3, 11, 4, 4)	(4, 16, 16)	True	RuntimeError	
+(1024, 65536)	(8, 4, 16)	True	gidx0=1048576 gidx1=4 gidx2=16	[(gidx2+(gidx1+gidx0%16*4)*16), (gidx0//16)]
+(65536, 16, 7, 64, 128)	(256, 256, 256)	True	RuntimeError	
+(121,)	(16, 16, 16)	False	gidx0=11 gidx1=11	[(gidx1+gidx0*11)]
+(121, 6, 100, 256)	(12, 12, 12)	True	RuntimeError	
+(32, 3, 512)	(256, 256, 256)	True	gidx0=256 gidx1=6 gidx2=32	[gidx2, (gidx1%3), (gidx0*2+gidx1//3)]
+(100, 8)	(12, 12, 12)	True	gidx0=16 gidx1=5 gidx2=10	[(gidx2+(gidx1+gidx0%2*5)*10), (gidx0//2)]
+(1, 100, 1, 256)	(65535, 65535, 65535)	False	gidx0=100 gidx2=256	[0, gidx0, 0, gidx2]
+(8, 64, 8, 11)	(1024, 1024, 64)	True	gidx0=88 gidx1=64 gidx2=8	[gidx2, gidx1, (gidx0%8), (gidx0//8)]
+(100, 12)	(12, 12, 12)	False	gidx0=20 gidx1=5 gidx2=12	[(gidx1+gidx0*5), gidx2]
+(5, 128, 65536, 3, 7)	(4, 16, 16)	False	RuntimeError	
+(2,)	(8, 4, 16)	True	gidx0=2	[gidx0]
+(1024, 6, 100)	(65535, 65535, 65535)	False	gidx0=1024 gidx1=6 gidx2=100	[gidx0, gidx1, gidx2]
+(121, 7, 6, 32)	None	False	gidx0=121 gidx1=7 gidx2=6 gidx3=32	[gidx0, gidx1, gidx2, gidx3]
+(65536, 128, 7)	(12, 12, 12)	True	gidx0=917504 gidx1=8 gidx2=8	[(gidx2+(gidx1+gidx0%1024*8)*8), (gidx0//1024%128), (gidx0//131072)]
+(1024, 512, 64, 5, 4096)	(16, 16)	True	RuntimeError	
+(7, 1024, 100, 2, 8)	(1024, 1024, 64)	False	RuntimeError	
+(256, 7, 1)	None	True	gidx1=7 gidx2=256	[gidx2, gidx1, 0]
+(100, 65536)	(16, 16)	True	IndexError	
+(128,)	(65535, 65535, 65535)	False	gidx0=128	[gidx0]
+(65536, 16, 121)	(64,)	True	RuntimeError	
+(256, 23, 100)	(65535, 65535, 65535)	True	gidx0=100 gidx1=23 gidx2=256	[gidx2, gidx1, gidx0]
+(100, 3, 5)	(16, 4, 256)	False	RuntimeError	
+(32, 100)	(256, 256, 256)	True	gidx0=100 gidx1=32	[gidx1, gidx0]
+(2, 1, 32)	(16, 4, 256)	True	gidx0=16 gidx1=2 gidx2=2	[gidx2, 0, (gidx1+gidx0*2)]
+(512, 512, 64, 256)	(16, 4, 256)	False	RuntimeError	
+(128, 4096)	(1024, 1024, 64)	True	gidx0=1024 gidx1=512	[(gidx1%128), (gidx0*4+gidx1//128)]
+(256, 3, 3, 1024, 121)	None	True	gidx0=121 gidx1=1024 gidx2=3 gidx3=3 gidx4=256	[gidx4, gidx3, gidx2, gidx1, gidx0]
+(23, 12, 3, 1, 8)	(16, 16)	False	RuntimeError	
+(512,)	(256, 256, 256)	True	gidx0=256 gidx1=2	[(gidx1+gidx0*2)]
+(11, 4, 512, 100)	(4, 16, 16)	False	RuntimeError	
+(32, 32)	(256, 256, 256)	False	gidx0=32 gidx1=32	[gidx0, gidx1]
+(512, 11)	(16, 16, 16)	True	gidx0=22 gidx1=16 gidx2=16	[(gidx2+(gidx1+gidx0%2*16)*16), (gidx0//2)]
+(4096, 512, 512)	(1024, 1024, 64)	True	gidx0=32768 gidx1=512 gidx2=64	[(gidx2+gidx1%64*64), (gidx0%64*8+gidx1//64), (gidx0//64)]
+(121, 64, 16, 32, 1)	(16, 16, 16)	True	RuntimeError	
+(5, 1)	(16, 16, 16)	False	gidx0=5	[gidx0, 0]
+(2, 4096)	(4, 16, 16)	True	gidx0=32 gidx1=16 gidx2=16	[(gidx2%2), (gidx0*128+gidx1*8+gidx2//2)]
+(23,)	(4, 16, 16)	True	RuntimeError	
+(256, 256)	None	True	gidx0=256 gidx1=256	[gidx1, gidx0]
+(1, 6, 121, 1, 4096)	(4, 16, 16)	True	RuntimeError	
+(4, 1024, 256)	(65535, 65535, 65535)	False	gidx0=4 gidx1=1024 gidx2=256	[gidx0, gidx1, gidx2]
+(512,)	(8, 4, 16)	True	gidx0=8 gidx1=4 gidx2=16	[(gidx2+(gidx0*64+gidx1*16))]
+(8, 23, 4, 256, 7)	(8, 4, 16)	False	RuntimeError	
+(32, 7)	(16, 16)	False	IndexError	
+(23, 6, 11, 23)	(256, 256, 256)	False	gidx0=138 gidx1=11 gidx2=23	[(gidx0//6), (gidx0%6), gidx1, gidx2]
+(100, 16)	(8, 4, 16)	True	RuntimeError	
+(16, 2, 3)	(16, 16)	True	gidx0=6 gidx1=16	[gidx1, (gidx0%2), (gidx0//2)]
+(6,)	(4, 16, 16)	False	gidx0=3 gidx1=2	[(gidx1+gidx0*2)]
+(256, 23, 100, 3, 64)	(256, 256, 256)	False	RuntimeError	
+(4, 3, 512, 100)	(12, 12, 12)	True	RuntimeError	
+(4096, 64)	(64,)	False	RuntimeError	
+(1,)	None	False		[0]
+(3, 65536, 16)	(12, 12, 12)	False	gidx0=49152 gidx1=8 gidx2=8	[(gidx0//16384), (gidx0%16384*4+gidx1//2), (gidx2+gidx1%2*8)]
+(2, 8, 128)	(8, 4, 16)	True	gidx0=32 gidx1=4 gidx2=16	[(gidx2%2), (gidx2//2), (gidx1+gidx0*4)]
+(32,)	(65535, 65535, 65535)	True	gidx0=32	[gidx0]
+(11, 16)	(256, 256, 256)	True	gidx0=16 gidx1=11	[gidx1, gidx0]
+(4, 64, 23, 6)	(256, 256, 256)	True	gidx0=138 gidx1=64 gidx2=4	[gidx2, gidx1, (gidx0%23), (gidx0//23)]
+(32, 1, 8, 3)	(4, 16, 16)	True	RuntimeError	
+(5, 100)	None	False	gidx0=5 gidx1=100	[gidx0, gidx1]
+(128, 64, 4)	(256, 256, 256)	True	gidx0=4 gidx1=64 gidx2=128	[gidx2, gidx1, gidx0]
+(11, 32, 64)	(1024, 1024, 64)	False	gidx0=11 gidx1=32 gidx2=64	[gidx0, gidx1, gidx2]

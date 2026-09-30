@@ -257,6 +257,16 @@ let threefry =
           equal words expected (hash ~counter:(n, n + 10) ~key:(0, 1337)));
       test "the hash of constants is a Uint64" (fun () ->
           equal dtype Dtype.Uint64 (Ops.dtype hash_of_constants));
+      test "the hash of constants simplifies to a constant" (fun () ->
+          let alu u = Op.Set.mem (Ops.op u) Op.Set.alu in
+          equal (list Uops.uop) []
+            (List.filter alu (Ops.toposort (Ops.simplify hash_of_constants))));
+      (* D13: folding reads committed constants at their width, so the fold
+         wraps each 32-bit word as the hash does. *)
+      test "the hash of constants folds to its value" (fun () ->
+          equal const
+            (`Int (Z.of_string "6264663365535751564"))
+            (Interpreter.eval (Ops.simplify hash_of_constants)));
     ]
 
 (* Simplifying patterns *)
