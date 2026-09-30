@@ -23,12 +23,33 @@ under Exclusions in `README.md`, not a divergence.
 
 ## D1. Timeline values are parameters
 
-- **tinygrad:** `runtime/support/hcq2.py:276,432`.
-- **tolk.next:** waiting for L7.
-- **Differs:** timeline values are parameters of the host program, and only
-  the runtime writes the submitted word.
-- **Reason:** (c).
-- **Pinned by:** waiting for L7.
+- **tinygrad:** `runtime/support/hcq2.py:65-66` (`timeline`, `timeline_value`),
+  `:231-239` (the batch slots, with the slot of the timeline), `:256`, `:276-278`
+  and `:415-434` (`hcq_fence`).
+- **tolk.next:** `lib/runtime/support/hcq2.ml:212` (`signal_word`), `:224`
+  (`submitted`), `:225` (`value`), `:638` (`make_ctx`), `:748` (`start_ins`),
+  `:808` (the bump) and `:1115` (`hcq_fence`).
+- **Differs:** a device's timeline is its signal word alone, one word. The value
+  of the work submitted before a batch and the value the batch signals are
+  variables of its host program, `submitted d` and `value d`, which the engine
+  binds on each run (`Nx_device.submitted`, `Submission.value`), where tinygrad
+  loads the submitted value from the timeline's second word and writes it back
+  bumped. The host program neither reads nor writes a submitted value: its queues
+  wait for `submitted d` and signal `value d`. The fence keeps only its re-arming
+  of the queue signals, ordered after the run's `submitted d`, as tinygrad's is
+  after the timeline's loads, so that it runs on every run; its wait for the
+  batch's previous run, and its record of the value that run signals, are the
+  engine's (`Submission.wait`), before it writes the address table and calls
+  the host program, so the slots lose the timeline's slot. Runs of one linked
+  batch stay serialized, as RFC 0012 requires.
+- **Reason:** (c). nx.device's runtime writes the submitted value and never
+  publishes it (RFC 0011, Amendment 2), and `Submission.wait` has the timeout,
+  `Lost` and Metal's completion that a spin in the host program lacks.
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `timeline
+  values (D1)`, whose recorded batches and host programs are tinygrad's with
+  D1 applied by their generator (`gen/runtime/support/hcq2.py`), and `linking
+  and running › a run waits for its batch's previous run before it rewrites
+  the batch's memory`.
 
 ## D2. Withdrawn
 
@@ -118,9 +139,14 @@ the Exclusions of `README.md`.
     the engine; `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
-  - the engine has one order (schedule, hcq2 helpers, realize, tensor, jit),
-    and each late binding is passed as a function argument, never a global
-    reference;
+  - the engine has one order (schedule, realize, hcq2, jit), and each late
+    binding is passed as a function argument, never a global reference;
+    `Realize` precedes `Hcq2`, as `hcq2.py` imports `realize.py` at its top;
+    `realize.py`'s `compile_linear` (`:271`), which reaches `hcq2.py` through
+    the import at its bottom, is `Hcq2.compile_linear`, with `pm_beam`, its
+    one reader; the device's queue encoders, which `hcq2.py` finds in the
+    device registry (`Device[d].pm_encode`, `has_copy_queue`, `host`), are
+    given by the caller in its description of each device (`Hcq2.device`);
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
@@ -191,11 +217,18 @@ the Exclusions of `README.md`.
 
 ## D7. Stamp slots follow `Submission.record`
 
-- **tinygrad:** `runtime/support/hcq2.py:231,240`.
-- **tolk.next:** waiting for L7.
-- **Differs:** profiling stamp slots follow the amended `Submission.record`.
-- **Reason:** (c).
-- **Pinned by:** waiting for L7.
+- **tinygrad:** `runtime/support/hcq2.py:231,240,301`.
+- **tolk.next:** `lib/runtime/support/hcq2.ml:713` (`stamps`), `:638` (the
+  slots).
+- **Differs:** a device's slots are its queue signals, then two slots per call
+  when profiling, with no slot of the timeline between them (D1). A call's two
+  slots are adjacent, so its start and end stamps are words 1 and 3 of one
+  32-byte record, which the engine hands to `Submission.record`.
+- **Reason:** (c). `Submission.record` takes that layout (RFC 0011,
+  Amendment 2, GAP-3).
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `stamp slots
+  (D7)` and `linking and running › a profile records a span of each kernel on
+  its device, in order`.
 
 ## D8. The disk cache maps strings to strings
 
@@ -306,7 +339,9 @@ the Exclusions of `README.md`.
   is free to differ, and tolk.next takes the one OCaml's standard library
   has, which has MD5 and BLAKE2 but not SHA-256.
 - **Pinned by:** `Tolk_next.Ops › key › ignores tags` and `Tolk_next.Ops ›
-  key › tells arguments apart`.
+  key › tells arguments apart`; for the profile keys of batched kernels, the
+  Hcq2 suite (`test/runtime/support/hcq2`): `profile keys (D12)`, whose
+  recorded graphs are compared without them.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -898,6 +933,27 @@ the Exclusions of `README.md`.
   the core, the kernel keeps its values); rune's
   `Rune_next.Lower_linalg › tensor cores › cuda › *`. The core's exact product
   is README's hardware check.
+
+## D30. A range around calls is batched per trip
+
+- **tinygrad:** `schedule/__init__.py:72` (linearization drops a call's
+  `END`); `runtime/support/hcq2.py:40-48` (`get_enqueue_devs` enqueues calls
+  only), `:50-54` (`unwrap_view` reads constant offsets), `:395-400`
+  (`_is_link_patch`) and `:515` (`lower_call`'s `normalize`).
+- **tolk.next:** `lib/runtime/support/hcq2.ml:906` (`trip` in
+  `sched_batches`), `:227` (`range_value`), `:171` (`view_offset`), `:543`
+  (`Deps.access`), `:298` (`is_link_patch`) and `:1278` (`normalize`).
+- **Differs:** an `END` of ranges around calls in a schedule stays around its
+  calls, batched on their own, with each range replaced in their arguments by
+  a variable of its value, which the engine binds on each trip. A view whose
+  offset moves with the range depends on every place it moves to, its address
+  is not a word known at link, and the batch adds the move to the address it
+  loads from its table. The range is one submission per trip, not one per
+  range.
+- **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules a call
+  inside a range; tinygrad's scheduler never hands one to `hcq2.py`.
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
+  (D30)`.
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 
