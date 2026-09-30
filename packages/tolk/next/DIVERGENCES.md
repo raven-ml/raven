@@ -77,8 +77,9 @@ the Exclusions of `README.md`.
   `uop/ops.py`, `lib/uop/ops.ml:572` (`construction_check`), `:1651`
   (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
   `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`);
-  `lib/uop/render.ml:202` (`render`), `:212` (`srender`); and
-  `lib/renderer/renderer.ml` (`Compiler`).
+  `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
+  `lib/renderer/renderer.ml` (`Compiler`); and `lib/schedule/prepare.ml`
+  (`contiguous_view`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
