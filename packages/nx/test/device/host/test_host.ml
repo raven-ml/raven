@@ -81,6 +81,43 @@ let test_arguments () =
   equal ~msg:"a view is passed at its first byte" (list int32)
     [ -2l; 1l; 102l; 103l ] (int32s_of out)
 
+(* Test devices of the host's memory, whose buffers the host's programs take,
+   and the host's programs by address. *)
+let test_devices () =
+  let module Driver = Nx_device.Driver in
+  let identity =
+    {
+      Driver.map = (fun a n -> Ok (Driver.Region.v ~host:a a n));
+      unmap = ignore;
+    }
+  in
+  let cpu i =
+    Driver.device
+      ~name:(Printf.sprintf "CPU:%d" i)
+      ~arch ~budget:max_int
+      (Host_visible { memory = Driver.host_memory; mapping = Some identity })
+  in
+  let d = cpu 1 in
+  is_true ~msg:"it shares the host's memory" (Nx_device.shares_host_memory d);
+  let p = load ~binary:(Lazy.force affine) ~name:"affine" in
+  let out = B.create d S.Int32 4 in
+  let input = B.create d S.Int32 4 in
+  B.copy ~src:(int32s [| 1l; 2l; 3l; 4l |]) ~dst:input;
+  P.call p [| out; input |] [| 4; 3; -5 |];
+  let back = B.create host S.Int32 4 in
+  B.copy ~src:out ~dst:back;
+  equal ~msg:"a host program on a test device's buffers" (list int32)
+    [ -2l; 1l; 4l; 7l ] (int32s_of back);
+  let programs = Driver.host_programs in
+  match programs.load ~binary:(Lazy.force affine) ~entry:"affine" with
+  | Error why -> fail why
+  | Ok (entry, unload) ->
+      let at b = (B.address b, B.nbytes b) in
+      programs.call entry [| at back; at back |] [| 4; 2; 0 |];
+      equal ~msg:"a program by address" (list int32) [ -4l; 2l; 8l; 14l ]
+        (int32s_of back);
+      unload ()
+
 (* Linking *)
 
 let linked =
@@ -281,19 +318,19 @@ ABI void f(void **b, const long long *v) { nx_no_such_symbol(); }|});
        {|static int calls;
 ABI void f(void **b, const long long *v) { *(int *)b[0] = ++calls; }|});
   let fake =
-    Nx_device.make ~name:"FAKE" ~arch:"fake" ~budget:0
-      ~memory:{ alloc = (fun _ -> None); free = ignore }
-      ~load:(fun ~binary:_ ~name:_ -> Ok 1n)
-      ()
+    Nx_device.Driver.device ~name:"FAKE" ~arch:"fake" ~budget:0
+      ~load:(fun ~binary:_ ~entry:_ -> Ok 1n)
+      (Host_visible
+         { memory = { alloc = (fun _ -> None); free = ignore }; mapping = None })
   in
   let on_fake = Result.get_ok (P.load fake ~binary:"" ~name:"f") in
   raises_match ~msg:"a program of another device"
     (Exn.invalid_arg ~substring:"FAKE") (fun () -> P.call on_fake [||] [||]);
   let p = load ~binary:(Lazy.force affine) ~name:"affine" in
-  let far = { Nx_device.host = None; device = 0n; handle = 0n } in
+  let far = Nx_device.Driver.Region.v 0n 4 in
   raises_match ~msg:"memory the host does not address"
     (Exn.invalid_arg ~substring:"does not address") (fun () ->
-      P.call p [| Nx_device.external_buffer fake far S.UInt8 4 |] [| 0; 0; 0 |])
+      P.call p [| Nx_device.Driver.buffer fake far S.UInt8 4 |] [| 0; 0; 0 |])
 
 let test_profile () =
   let p = load ~binary:(Lazy.force affine) ~name:"affine" in
@@ -318,6 +355,10 @@ let () =
        [
          test "a program reads its arguments and writes its buffers"
            test_arguments;
+         test
+           "a program runs on the buffers of test devices of the host's \
+            memory, and by address"
+           test_devices;
          test
            "a program links its constants, its own functions and the math \
             library"

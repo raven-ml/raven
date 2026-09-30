@@ -12,6 +12,8 @@
 open Windtrap
 module B = Nx_device.Buffer
 module S = Nx_dtype.Scalar
+module Driver = Nx_device.Driver
+module Region = Driver.Region
 
 type chars =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -36,7 +38,7 @@ let of_string s =
 (* The [n] bytes at the host address [a]. *)
 let peek a n =
   let ba = chars n in
-  memmove (B.host_address (B.of_bigarray ba)) a n;
+  memmove (B.address (B.of_bigarray ba)) a n;
   ba
 
 let read b =
@@ -93,14 +95,14 @@ let dropped f =
 
 (* Fake drivers *)
 
-(* A driver whose memory is host memory aligned to 16 bytes. It counts its
-   bytes, its calls and its live mappings but those of the host's staging
-   memory. A far driver's own memory is not addressed by the host, and its copy
-   queue runs copies and timestamps when the host waits for them, as a GPU runs
-   behind the host: [stalled] stops it, [broken] makes it refuse to enqueue, and
-   a device named PEER... copies into the memory of the others. Its timestamps
-   are the host clock, or, with a clock of its own, ticks of it two hours
-   ahead. *)
+(* A driver whose memory is host memory aligned to 16 bytes and never to a page.
+   It counts its bytes, its calls and its live mappings but those of the host's
+   staging memory. A far driver's own memory is not addressed by the host, and
+   its copy queue runs copies and timestamps when the host waits for them, as a
+   GPU runs behind the host: [stalled] stops it, [broken] makes it refuse to
+   enqueue, and a device named PEER... copies into the memory of the others. Its
+   timestamps are the host clock, or, with a clock of its own, ticks of it two
+   hours ahead. *)
 type driver = {
   blocks : (nativeint, chars * int) Hashtbl.t;
   mutable held : int;
@@ -117,12 +119,12 @@ type driver = {
 type fake = { dev : Nx_device.t; drv : driver }
 
 let staging_bytes = 128 lsl 20
-let peer name = String.starts_with ~prefix:"PEER" name
+let transfers name = String.starts_with ~prefix:"PEER" name
 let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
-    ?signal ?load ?timeout_ms ?synchronized ?sleep ?finalize ?clock ?resolve ()
-    =
+    ?signal ?load ?peer ?timeout_ms ?synchronized ?sleep ?finalize ?clock
+    ?resolve () =
   let drv =
     {
       blocks = Hashtbl.create 8;
@@ -140,30 +142,33 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
   let alloc ~addressed n =
     if drv.refuse then None
     else
-      let ba = chars (n + 15) in
-      let a = B.host_address (B.of_bigarray ba) in
+      let ba = chars (n + 31) in
+      let a = B.address (B.of_bigarray ba) in
       let a = Nativeint.(logand (add a 15n) (lognot 15n)) in
+      (* Never on a page, so that no other device maps it by chance. *)
+      let a = if Nativeint.rem a 4096n = 0n then Nativeint.add a 16n else a in
       Hashtbl.replace drv.blocks a (ba, n);
       drv.held <- drv.held + n;
       let host = if addressed then Some a else None in
-      Some { Nx_device.host; device = a; handle = a }
+      Some (Region.v ?host ~handle:a a n)
   in
-  let free (m : Nx_device.memory) =
-    drv.held <- drv.held - snd (Hashtbl.find drv.blocks m.device);
+  let free r =
+    let a = Region.address r in
+    drv.held <- drv.held - snd (Hashtbl.find drv.blocks a);
     drv.frees <- drv.frees + 1;
-    Hashtbl.remove drv.blocks m.device
+    Hashtbl.remove drv.blocks a
   in
   let map a n =
     if n = staging_bytes then drv.staging <- a :: drv.staging
     else drv.mapped <- drv.mapped + 1;
-    Ok { Nx_device.host = Some a; device = a; handle = 1n }
+    Ok (Region.v ~host:a ~handle:1n a n)
   in
   let staged a =
     let n = Nativeint.of_int staging_bytes in
     List.exists (fun s -> a >= s && a < Nativeint.add s n) drv.staging
   in
   let queue = Queue.create () and signaled = ref 0 in
-  let copy ~dst ~src n v =
+  let copy ~dst ~src n ~signal:v =
     if drv.broken then failwith "enqueue refused";
     Queue.push
       ( v,
@@ -175,11 +180,11 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
   in
   let ticks () =
     match clock with
-    | Some (Nx_device.Device_clock { hz }) ->
+    | Some (Driver.Device_clock { hz }) ->
         (Nx_device.Profile.now () + ahead) / (1_000_000_000 / hz)
-    | Some Nx_device.Host_clock | None -> Nx_device.Profile.now ()
+    | Some Driver.Host_clock | None -> Nx_device.Profile.now ()
   in
-  let stamp ~slot v =
+  let stamp ~slot ~signal:v =
     if drv.broken then failwith "enqueue refused";
     Queue.push
       (v, fun () -> store_signal (Nativeint.add slot 8n) (ticks ()))
@@ -193,42 +198,65 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
       run_to v
     end
   in
-  let queue_signal _ =
+  let queue_signal ~timeline:_ =
     {
-      Nx_device.signaled = (fun () -> !signaled);
+      Driver.signaled = (fun () -> !signaled);
       wait =
         (fun v ~timeout_ms:_ ->
           run_to v;
           !signaled >= v);
     }
   in
-  let copy_queue _ =
+  let queue ~timeline:_ =
     let transfer d =
-      if peer name && peer (Nx_device.name d) then Some copy else None
+      if transfers name && transfers (Nx_device.name d) then Some copy else None
     in
-    { Nx_device.copy; transfer; stamp }
+    {
+      Driver.copy;
+      transfer;
+      stamp;
+      clock = Option.value clock ~default:Driver.Host_clock;
+    }
   in
   let unmap _ = drv.mapped <- drv.mapped - 1 in
-  let dev =
-    Nx_device.make ~name ~arch:"test" ~budget
-      ~memory:{ alloc = alloc ~addressed:(not far); free }
-      ?host_memory:
-        (if far then Some { alloc = alloc ~addressed:true; free } else None)
-      ?mapping:(if maps then Some { Nx_device.map; unmap } else None)
-      ?copy_queue:(if far then Some copy_queue else None)
-      ?signal:
-        (if far then Some queue_signal else Option.map (fun s _ -> s) signal)
-      ?load ?timeout_ms ?synchronized ?sleep ?finalize ?clock ?resolve ()
+  let mapping = { Driver.map; unmap } in
+  let memory : Driver.memory =
+    if far then
+      Device_local
+        {
+          memory = { alloc = alloc ~addressed:false; free };
+          host_memory = { alloc = alloc ~addressed:true; free };
+          mapping;
+          queue;
+        }
+    else
+      Host_visible
+        {
+          memory = { alloc = alloc ~addressed:true; free };
+          mapping = (if maps then Some mapping else None);
+        }
   in
+  let completion : Driver.completion =
+    match (far, signal, sleep) with
+    | true, _, _ -> Signal queue_signal
+    | false, Some s, _ -> Signal (fun ~timeline:_ -> s)
+    | false, None, Some sleep -> Sleep sleep
+    | false, None, None -> Poll
+  in
+  let dev =
+    Driver.device ~name ~arch:"test" ~budget ~completion ?load ?peer
+      ?synchronized ?finalize ?resolve memory
+  in
+  Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
 
-let far ?(name = "FAR") ?budget ?clock () =
-  fake ~name ?budget ~far:true ?clock ()
+let far ?(name = "FAR") ?budget ?clock ?peer () =
+  fake ~name ?budget ~far:true ?clock ?peer ()
 
 (* A signal whose waits answer [wait timeout_ms]. *)
 let signal ?(signaled = 0) wait =
   {
-    Nx_device.signaled = (fun () -> signaled);
+    Driver.signaled = (fun () -> signaled);
     wait = (fun _ ~timeout_ms -> wait timeout_ms);
   }
 
@@ -242,7 +270,7 @@ let never waits =
    would, and records that it did. *)
 let signal_later d v =
   let signaled = Atomic.make false in
-  let word = B.host_address (Nx_device.timeline d) in
+  let word = B.address (Nx_device.timeline d) in
   let domain =
     Domain.spawn (fun () ->
         Unix.sleepf 0.05;
@@ -354,11 +382,22 @@ module Model = struct
 
   (* A host buffer that create made of fewer than 64 KiB is refused, wherever it
      starts. *)
-  let borrow d r =
+  (* A buffer on [d] borrows as itself, a buffer of no bytes always borrows, a
+     borrow on another device borrows the host memory under it, and another
+     device's own memory is refused: the fake drivers map no peer. *)
+  let rec borrow d r =
     alive r;
-    if r.device <> None then invalid_arg "borrow";
-    if d.name = "NEAR" || (size r > 0 && not r.memory.on_page) then
-      raise Refused;
+    match r.device with
+    | Some d' when d' == d ->
+        r.holding.holders <- r.holding.holders + 1;
+        { r with dropped = false }
+    | _ when size r = 0 -> map d { r with off = 0 } (* over no memory *)
+    | Some _ when not r.borrowed -> raise Refused
+    | Some _ | None ->
+        if d.name = "NEAR" || not r.memory.on_page then raise Refused;
+        map d r
+
+  and map d r =
     let maps = if size r > 0 then Some r.memory else None in
     let mapped = mappings d in
     let holding = { owned = 0; holders = 1; maps } in
@@ -395,7 +434,7 @@ module Model = struct
     let n = size src in
     if n <> size dst then invalid_arg "copy";
     let overlap = src.off < dst.off + n && dst.off < src.off + n in
-    if n > 0 && src.holding == dst.holding && overlap then invalid_arg "copy";
+    if n > 0 && src.memory == dst.memory && overlap then invalid_arg "copy";
     let cells = Array.sub src.memory.cells src.off n in
     Array.blit cells 0 dst.memory.cells dst.off n;
     let between =
@@ -495,11 +534,13 @@ let buffer_invariant (r : Model.buffer) s =
       if not (Model.holds r held) then
         equal ~msg:"what the device holds" string (Model.contents r)
           (Model.masked r (string_of held));
-      if not r.addressed then
-        raises_match Exn.invalid_arg (fun () -> B.host_address b)
-      else
-        equal ~msg:"the host address, read in C" nativeint (B.host_address b)
-          (c_host b);
+      (match Region.host_address (Region.of_buffer b) with
+      | None -> is_false ~msg:"addressed by the host" r.addressed
+      | Some a ->
+          is_true ~msg:"addressed by the host" r.addressed;
+          equal ~msg:"the host address, read in C" nativeint
+            (Nativeint.add a (Nativeint.of_int (B.offset b)))
+            (c_host b));
       let bigarray () = B.bigarray Bigarray.char b in
       if r.device = None && bigarray () <> held then
         equal ~msg:"its bigarray" string (string_of held)
@@ -616,7 +657,7 @@ let commands =
       (dev ^-> seldom @-> formats @-> counts @-> makes buf)
       Model.create
       (fun d pinned s n ->
-        created d.fake.dev s n (fun () -> B.create ~host:pinned d.fake.dev s n));
+        created d.fake.dev s n (fun () -> B.create ~pinned d.fake.dev s n));
     command "view"
       (buf ^-> windows ^-> makes buf)
       Model.view
@@ -763,9 +804,7 @@ let placed =
 
 let inside ((d, pinned), s, n, k) =
   let o = k * Model.element s in
-  B.view
-    (B.create ~host:pinned d S.UInt8 (o + Model.nbytes s n + 5))
-    ~offset:o s n
+  B.view (B.create ~pinned d S.UInt8 (o + Model.nbytes s n + 5)) ~offset:o s n
 
 type kind = Kind : ('a, 'b) Bigarray.kind * S.t -> kind
 
@@ -841,8 +880,26 @@ let laws =
             (read (B.of_bigarray back));
           is_true ~msg:"over the same memory"
             (n = 0
-            || Nativeint.equal (B.host_address b)
-                 (B.host_address (B.of_bigarray back))));
+            || Nativeint.equal (B.address b) (B.address (B.of_bigarray back))));
+      prop
+        "a buffer lies in its region: its views share the region, at their \
+         offsets, and its address is the region's plus its offset"
+        (Gen.pair placed (ints [ 0; 1; 3 ]))
+        (fun (spec, k) ->
+          let b = inside spec in
+          let r = Region.of_buffer b and k = Int.min k (B.nbytes b) in
+          let v = B.view b ~offset:k S.UInt8 (B.nbytes b - k) in
+          is_true ~msg:"one region" (Region.of_buffer v == r);
+          equal ~msg:"the view's offset" int (B.offset b + k) (B.offset v);
+          equal ~msg:"the address" nativeint
+            (Nativeint.add (Region.address r) (Nativeint.of_int (B.offset b)))
+            (B.address b);
+          equal ~msg:"spans" bool
+            (B.offset b = 0 && B.nbytes b = Region.nbytes r)
+            (B.spans b);
+          equal ~msg:"a buffer overlaps itself and its views" (pair bool bool)
+            (B.nbytes b > 0, B.nbytes v > 0)
+            (B.overlaps b b, B.overlaps b v));
     ]
 
 (* Two domains take bigarrays of the same fresh buffer at once, and one keeps
@@ -928,7 +985,7 @@ let routes =
   let borrow = borrow a.dev mapped in
   let small () = B.create host S.UInt8 8 in
   let on f () = B.create f.dev S.UInt8 8 in
-  let pinned f () = B.create ~host:true f.dev S.UInt8 8 in
+  let pinned f () = B.create ~pinned:true f.dev S.UInt8 8 in
   let of_mapped () = B.view mapped ~offset:8 S.UInt8 8 in
   let queued () = List.map (fun f -> f.drv.queued) fakes in
   let staged () = List.fold_left (fun n f -> n + f.drv.staged) 0 fakes in
@@ -1093,7 +1150,10 @@ let test_file_borrows () =
   let pages = B.bigarray Bigarray.char on_host in
   pages.{0} <- 'z';
   equal ~msg:"a write, through the device's" char 'z' (read on_device).[0];
-  equal ~msg:"and not in the file" string bytes (contents path)
+  equal ~msg:"and not in the file" string bytes (contents path);
+  equal ~msg:"the borrows of the pages overlap, the file does not"
+    (pair bool bool) (true, false)
+    (B.overlaps on_host on_device, B.overlaps (of_file path) on_host)
 
 let disks =
   group "disk"
@@ -1156,6 +1216,103 @@ let disks =
               read (B.view b ~offset:2 S.UInt8 5)));
     ]
 
+(* Another device's memory, which [peer] maps where it lies: the fake drivers'
+   memory is host memory. *)
+let test_peer_borrows () =
+  let calls = ref 0 in
+  let peer _ r =
+    incr calls;
+    Ok r
+  in
+  let a = far ~name:"MAPPER" ~peer () and o = far ~name:"OWNER" () in
+  let b = B.create o.dev S.UInt8 64 in
+  write b (pattern 3 64);
+  let v = B.view b ~offset:16 S.UInt8 8 in
+  let on_a = borrow a.dev v and again = borrow a.dev b in
+  equal ~msg:"read through the borrow" string
+    (String.sub (pattern 3 64) 16 8)
+    (read on_a);
+  equal ~msg:"one mapping of the region" int 1 !calls;
+  is_true ~msg:"borrowed on the mapper"
+    (B.is_borrowed on_a && Nx_device.equal (B.device on_a) a.dev);
+  is_true ~msg:"over the owner's memory"
+    (B.overlaps on_a b && B.overlaps on_a again
+    && not (B.overlaps on_a (B.view b ~offset:0 S.UInt8 16)));
+  is_true ~msg:"a buffer on its own device borrows as itself"
+    (borrow o.dev b == b);
+  (match B.borrow (far ()).dev b with
+  | Ok _ -> fail "borrowed without a peer"
+  | Error why -> contains ~msg:"no peer" ~sub:"cannot address OWNER memory" why);
+  let refusing = far ~peer:(fun _ _ -> Error "no route") () in
+  (match B.borrow refusing.dev b with
+  | Ok _ -> fail "borrowed a refused region"
+  | Error why -> contains ~msg:"the driver's reason" ~sub:"no route" why);
+  ignore (Sys.opaque_identity (on_a, again))
+
+(* A borrow of a borrow maps the memory under the first. *)
+let test_borrow_of_borrow () =
+  let a = fake ~name:"FIRST" ~maps:true () and c = far () in
+  let hb = B.create host S.UInt8 page in
+  write hb (pattern 5 page);
+  let on_a = borrow a.dev hb in
+  let on_c = borrow c.dev on_a in
+  equal ~msg:"the host's bytes" string (pattern 5 page) (read on_c);
+  is_true ~msg:"one memory" (B.overlaps on_c hb && B.overlaps on_c on_a);
+  is_false ~msg:"a buffer of no bytes overlaps nothing"
+    (B.overlaps (B.view hb ~offset:0 S.UInt8 0) hb)
+
+let test_bigarray_overlaps () =
+  let ba = chars 64 in
+  let b = B.of_bigarray ba
+  and b' = B.of_bigarray (Bigarray.Array1.sub ba 32 32) in
+  equal (pair bool bool) (true, false)
+    ( B.overlaps b b',
+      B.overlaps (B.of_bigarray (Bigarray.Array1.sub ba 0 32)) b' )
+
+(* Devices over the host's memory, as test devices are: system memory, which one
+   maps for the other through its mapping of host memory. *)
+let test_system_borrows () =
+  let identity =
+    { Driver.map = (fun a n -> Ok (Region.v ~host:a a n)); unmap = ignore }
+  in
+  let cpu name =
+    Driver.device ~name ~arch:"test" ~budget:max_int
+      (Host_visible { memory = Driver.host_memory; mapping = Some identity })
+  in
+  let c1 = cpu "CPU:1" and c2 = cpu "CPU:2" in
+  let b = B.create c2 S.UInt8 page in
+  write b (pattern 9 page);
+  let on_c1 = borrow c1 b in
+  equal ~msg:"read through the borrow" string (pattern 9 page) (read on_c1);
+  is_true ~msg:"over the same memory" (B.overlaps on_c1 b);
+  (match B.borrow host b with
+  | Ok _ -> fail "the host borrowed a device's memory"
+  | Error why -> contains ~msg:"refused" ~sub:"no memory of another device" why);
+  let unaddressed =
+    Driver.device ~name:"UNADDRESSED" ~arch:"test" ~budget:max_int
+      (Host_visible
+         {
+           memory = { alloc = (fun n -> Some (Region.v 16n n)); free = ignore };
+           mapping = None;
+         })
+  in
+  raises_match ~msg:"a Host_visible region without a host address"
+    (Exn.invalid_arg ~substring:"does not address") (fun () ->
+      B.create unaddressed S.UInt8 8)
+
+let borrows =
+  group "borrows and overlaps"
+    [
+      test
+        "system memory of another device borrows through the mapping of host \
+         memory"
+        test_system_borrows;
+      test "another device's memory borrows through its driver's peer mapping"
+        test_peer_borrows;
+      test "a borrow of a borrow maps the memory under it" test_borrow_of_borrow;
+      test "two bigarrays over the same bytes overlap" test_bigarray_overlaps;
+    ]
+
 let buffers =
   group "buffers"
     [
@@ -1168,7 +1325,7 @@ let buffers =
           let dead f =
             raises (Invalid_argument "taken") (fun () -> ignore (f ()))
           in
-          dead (fun () -> B.host_address b);
+          dead (fun () -> B.address b);
           dead (fun () -> B.address before);
           dead (fun () -> B.bigarray Bigarray.char b);
           dead (fun () -> B.view b ~offset:0 S.UInt8 1);
@@ -1185,7 +1342,7 @@ let buffers =
           let c = B.consume ~why:"first" b in
           let d = B.consume ~why:"second" c in
           let dead why b =
-            raises (Invalid_argument why) (fun () -> ignore (B.host_address b))
+            raises (Invalid_argument why) (fun () -> ignore (B.address b))
           in
           dead "first" b;
           dead "second" c;
@@ -1216,11 +1373,11 @@ let buffers =
           raises_match Exn.invalid_arg (fun () -> at 2L Bigarray.float32);
           raises_match Exn.invalid_arg (fun () -> at 4L Bigarray.complex64));
       test
-        "external memory is a borrowed buffer of up to max_int bytes that no \
+        "a vendor's region is a borrowed buffer of up to max_int bytes that no \
          budget counts" (fun () ->
           let f = fake () and n = (1 lsl 58) + 1 in
-          let m = { Nx_device.host = None; device = 16n; handle = 16n } in
-          let b = Nx_device.external_buffer f.dev m S.Float64 n in
+          let r = Region.v ~handle:16n 16n (8 * n) in
+          let b = Driver.buffer f.dev r S.Float64 n in
           equal
             (quad bool nativeint int int)
             (true, 16n, 8 * n, 0)
@@ -1280,20 +1437,28 @@ let buffers =
     ]
 
 let refusals =
-  let memory = { Nx_device.alloc = (fun _ -> None); free = ignore } in
-  let make ?host_memory ?mapping ?copy_queue ?(budget = 0) ?timeout_ms ?clock ()
-      =
-    Nx_device.make ~name:"X" ~arch:"x" ~budget ~memory ?host_memory ?mapping
-      ?copy_queue ?timeout_ms ?clock ()
+  let memory = { Driver.alloc = (fun _ -> None); free = ignore } in
+  let make ?(budget = 0) memory =
+    Driver.device ~name:"X" ~arch:"x" ~budget memory
   in
-  let unaddressed = { Nx_device.host = None; device = 16n; handle = 16n } in
-  let external_ s n = Nx_device.external_buffer near.dev unaddressed s n in
-  let queue _ =
+  let unaddressed = Region.v ~handle:16n 16n 16 in
+  let external_ s n = Driver.buffer near.dev unaddressed s n in
+  let queue ?(clock = Driver.Host_clock) ~timeline:_ () =
     {
-      Nx_device.copy = (fun ~dst:_ ~src:_ _ _ -> ());
+      Driver.copy = (fun ~dst:_ ~src:_ _ ~signal:_ -> ());
       transfer = (fun _ -> None);
-      stamp = (fun ~slot:_ _ -> ());
+      stamp = (fun ~slot:_ ~signal:_ -> ());
+      clock;
     }
+  in
+  let local ?clock host_memory : Driver.memory =
+    Device_local
+      {
+        memory;
+        host_memory;
+        mapping = { map = (fun _ _ -> Error ""); unmap = ignore };
+        queue = (fun ~timeline -> queue ?clock ~timeline ());
+      }
   in
   let off_page () =
     let ba = B.bigarray Bigarray.char (B.create host S.UInt8 page) in
@@ -1301,12 +1466,12 @@ let refusals =
   in
   let refusing () =
     let mapping =
-      { Nx_device.map = (fun _ _ -> Error "locked"); unmap = ignore }
+      { Driver.map = (fun _ _ -> Error "locked"); unmap = ignore }
     in
-    make ~mapping ()
+    make (Host_visible { memory; mapping = Some mapping })
   in
   let rejecting () =
-    (fake ~load:(fun ~binary:_ ~name:_ -> Error "rejected") ()).dev
+    (fake ~load:(fun ~binary:_ ~entry:_ -> Error "rejected") ()).dev
   in
   let raise_ ?(exn = Exn.invalid_arg ?substring:None) name f =
     (name, fun () -> raises_match exn (fun () -> ignore (f ())))
@@ -1320,36 +1485,26 @@ let refusals =
   in
   cases ~name:fst "refuse"
     [
-      raise_ "a device with a negative budget" (fun () -> make ~budget:(-1) ());
-      raise_ "a device with a timeout of 0 ms" (fun () -> make ~timeout_ms:0 ());
-      raise_ "a device with a copy queue and no mapping" (fun () ->
-          make ~copy_queue:queue ());
+      raise_ "a device with a negative budget" (fun () ->
+          make ~budget:(-1) (Host_visible { memory; mapping = None }));
       raise_ "a device with a clock of 0 Hz" (fun () ->
-          let mapping =
-            { Nx_device.map = (fun _ _ -> Error ""); unmap = ignore }
-          in
-          make ~mapping ~copy_queue:queue
-            ~clock:(Nx_device.Device_clock { hz = 0 })
-            ());
-      raise_ "a device with a clock of its own and no copy queue" (fun () ->
-          make ~clock:(Nx_device.Device_clock { hz = 1_000 }) ());
+          make (local ~clock:(Device_clock { hz = 0 }) Driver.host_memory));
       raise_ "host memory that the host does not address" (fun () ->
-          make
-            ~host_memory:{ memory with alloc = (fun _ -> Some unaddressed) }
-            ());
+          make (local { memory with alloc = (fun _ -> Some unaddressed) }));
       raise_ ~exn:(Exn.failure ~substring:"timeline")
-        "host memory with none for the timeline" (fun () ->
-          make ~host_memory:memory ());
+        "host memory with none for the timeline" (fun () -> make (local memory));
       raise_ "a timeout of 0 ms" (fun () -> Nx_device.set_timeout near.dev 0);
       raise_ "a buffer of more than max_int bytes" (fun () ->
           B.create host S.Float64 ((max_int / 8) + 1));
-      raise_ "external memory on the host" (fun () ->
-          Nx_device.external_buffer host
-            { unaddressed with host = Some 0n }
-            S.UInt8 0);
-      raise_ "external memory of -1 elements" (fun () -> external_ S.UInt8 (-1));
-      raise_ "external memory of more than max_int bytes" (fun () ->
+      raise_ "a vendor's region on the host" (fun () ->
+          Driver.buffer host (Region.v ~host:0n 0n 0) S.UInt8 0);
+      raise_ "a vendor's region of -1 elements" (fun () ->
+          external_ S.UInt8 (-1));
+      raise_ "a vendor's region of more than max_int bytes" (fun () ->
           external_ S.Float64 ((max_int / 8) + 1));
+      raise_ "a vendor's region too small for its elements" (fun () ->
+          external_ S.Float64 3);
+      raise_ "a region of -1 bytes" (fun () -> Region.v 0n (-1));
       raise_ "a bigarray of Int" (fun () ->
           B.of_bigarray
             (Bigarray.Array1.create Bigarray.int Bigarray.c_layout 1));
@@ -1387,8 +1542,8 @@ let refusals =
           Nx_device.Program.load (rejecting ()) ~binary:"lib" ~name:"f");
       raise_ "a buffer of DISK made by create" (fun () ->
           B.create Nx_device.disk S.UInt8 1);
-      raise_ "external memory on DISK" (fun () ->
-          Nx_device.external_buffer Nx_device.disk unaddressed S.UInt8 1);
+      raise_ "a vendor's region on DISK" (fun () ->
+          Driver.buffer Nx_device.disk unaddressed S.UInt8 1);
       raise_ "a new file of -1 bytes" (fun () ->
           B.create_file (temp_file ()) (-1));
       error ~sub:"missing" "a file that does not exist, naming it" (fun () ->
@@ -1399,8 +1554,6 @@ let refusals =
           B.copy ~src:(of_string "a") ~dst:(of_file (file_of "b")));
       raise_ "a bigarray over a file's bytes" (fun () ->
           B.bigarray Bigarray.char (of_file (file_of "a")));
-      raise_ "the host address of a file's bytes" (fun () ->
-          B.host_address (of_file (file_of "a")));
       error ~sub:"does not share the host's memory"
         "a borrow of a file's bytes by a device apart from the host" (fun () ->
           B.borrow far_one.dev (of_file (file_of "a")));
@@ -1416,8 +1569,8 @@ let programs =
     [
       test "a function of a binary loads once, on its device" (fun () ->
           let loads = ref [] in
-          let load ~binary ~name =
-            loads := (binary, name) :: !loads;
+          let load ~binary ~entry =
+            loads := (binary, entry) :: !loads;
             Ok (Nativeint.of_int (List.length !loads))
           in
           let d = (fake ~load ()).dev in
@@ -1433,7 +1586,7 @@ let programs =
             ("f", true, 1n)
             Nx_device.Program.(name p, Nx_device.equal d (device p), handle p));
       test "a loader that faults loses its device" (fun () ->
-          let load ~binary:_ ~name:_ = failwith "context lost" in
+          let load ~binary:_ ~entry:_ = failwith "context lost" in
           let d = (fake ~name:"LOADER" ~load ()).dev in
           let faulted = lost d "context lost" in
           raises_match faulted (fun () ->
@@ -1465,7 +1618,7 @@ let timeline =
             (Nx_device.name (B.device t), S.to_string (B.dtype t), B.length t);
           equal ~msg:"the signal word, then the submitted value" (pair int int)
             (0, 1) (words t);
-          store_signal (B.host_address t) 1;
+          store_signal (B.address t) 1;
           equal ~msg:"signaled" int 1 (Nx_device.signaled d));
       test "is the host memory of a device that allocates some" (fun () ->
           let f = far () in
@@ -1510,16 +1663,16 @@ let timeline =
           write (B.create d S.UInt8 1) "x";
           equal int 2 !calls);
       test
-        "the timeout is 30 s unless the vendor sets another, and set_timeout \
-         sets it for the waits after it" (fun () ->
+        "the timeout starts at the default of 30 s, and set_timeout sets it \
+         for the waits after it" (fun () ->
           let seen = ref 0 in
           let wait timeout_ms =
             seen := timeout_ms;
             true
           in
           let d = (fake ~signal:(signal wait) ()).dev in
-          equal (pair int int) (30_000, 5)
-            (Nx_device.timeout d, Nx_device.timeout (fake ~timeout_ms:5 ()).dev);
+          equal (pair int int) (30_000, 30_000)
+            (Nx_device.timeout d, Driver.default_timeout);
           Nx_device.set_timeout d 7;
           Nx_device.submit d ~touches:[] ignore;
           Nx_device.synchronize d;
@@ -1528,7 +1681,7 @@ let timeline =
         "a wait without a signal restarts its timeout whenever the signal word \
          moves" (fun () ->
           let d = (fake ~name:"SLOW" ~timeout_ms:200 ()).dev in
-          let word = B.host_address (Nx_device.timeline d) in
+          let word = B.address (Nx_device.timeline d) in
           List.iter
             (fun _ -> ignore (Nx_device.submit d ~touches:[] Fun.id))
             [ 1; 2; 3 ];
@@ -1566,6 +1719,7 @@ let test_hang () =
     [
       (fun () -> Nx_device.synchronize d);
       (fun () -> ignore (B.create d S.UInt8 1));
+      (fun () -> ignore (B.borrow d b));
       (fun () -> ignore (Nx_device.submit d ~touches:[] Fun.id));
       (fun () -> ignore (read b));
       (fun () -> Nx_device.set_budget d 0);
@@ -1664,6 +1818,94 @@ let test_retained () =
   equal ~msg:"retained, cached and freed" (triple int int int) (600, 0, 0)
     (Nx_device.Stats.retained (stats f.dev), cached f.dev, f.drv.frees)
 
+(* Memory of [n] bytes on 16 bytes, kept in [keep] until freed. *)
+let block keep ~addressed n =
+  let ba = chars (n + 15) in
+  let a = B.address (B.of_bigarray ba) in
+  let a = Nativeint.(logand (add a 15n) (lognot 15n)) in
+  Hashtbl.replace keep a ba;
+  let host = if addressed then Some a else None in
+  Some (Region.v ?host ~handle:a a n)
+
+(* A device of host memory whose driver callback [what] raises [Failure]: a
+   fault, which loses the device. *)
+let faulty what =
+  let fault name = if name = what then failwith (name ^ " fault") in
+  let keep = Hashtbl.create 4 in
+  let memory =
+    {
+      Driver.alloc =
+        (fun n ->
+          fault "alloc";
+          block keep ~addressed:true n);
+      free =
+        (fun r ->
+          fault "free";
+          Hashtbl.remove keep (Region.address r));
+    }
+  in
+  let mapping =
+    {
+      Driver.map =
+        (fun a n ->
+          fault "map";
+          Ok (Region.v ~host:a a n));
+      unmap = (fun _ -> fault "unmap");
+    }
+  in
+  Driver.device ~name:"FAULTY" ~arch:"test" ~budget:max_int
+    ~peer:(fun _ r ->
+      fault "peer";
+      Ok r)
+    ~dma:(fun _ ->
+      fault "dma";
+      Error "undescribed")
+    ~resolve:(fun _ -> fault "resolve")
+    (Host_visible { memory; mapping = Some mapping })
+
+let test_faulting_callbacks () =
+  let lost_to what run =
+    let d = faulty what in
+    let fault = lost d (what ^ " fault") in
+    raises_match ~msg:what fault (fun () -> run d);
+    raises_match ~msg:(what ^ ", then") fault (fun () ->
+        Nx_device.synchronize d);
+    d
+  in
+  ignore (lost_to "alloc" (fun d -> B.create d S.UInt8 8));
+  let d =
+    lost_to "free" (fun d ->
+        dropped (fun () -> B.create d S.UInt8 8);
+        Nx_device.free_cache d)
+  in
+  equal ~msg:"the memory a faulting free did not free is retained" int 8
+    (Nx_device.Stats.retained (stats d));
+  (* The host memory a lost device was unmapping stays allocated. *)
+  let kept = Weak.create 1 in
+  ignore
+    (lost_to "unmap" (fun d ->
+         (fun () ->
+           let hb = B.create host S.UInt8 page in
+           Weak.set kept 0 (Some hb);
+           ignore (Sys.opaque_identity (borrow d hb)))
+           ();
+         Gc.full_major ();
+         B.create d S.UInt8 8));
+  Gc.full_major ();
+  is_true ~msg:"the borrowed host memory is kept" (Weak.check kept 0);
+  ignore (lost_to "map" (fun d -> B.borrow d (B.create host S.UInt8 page)));
+  ignore (lost_to "peer" (fun d -> B.borrow d (B.create far_one.dev S.UInt8 8)));
+  ignore (lost_to "dma" (fun d -> Driver.dma (B.create d S.UInt8 8)));
+  ignore
+  @@ lost_to "resolve" (fun d ->
+      let p = Nx_device.Profile.start () in
+      Fun.protect
+        ~finally:(fun () -> ignore (Nx_device.Profile.stop p))
+        (fun () ->
+          Nx_device.Profile.record d ~lane:"l" ~name:"n"
+            (B.create host S.UInt64 2);
+          Nx_device.synchronize d))
+
 let failures =
   group "failures"
     [
@@ -1696,6 +1938,8 @@ let failures =
          source's reach, retained"
         test_hung_transfer;
       test "memory that a hung wait could not free is retained" test_retained;
+      test "a driver callback that raises Failure loses its device"
+        test_faulting_callbacks;
     ]
 
 (* Sleep and finalize *)
@@ -1708,7 +1952,7 @@ let test_sleep () =
   let sleep ms = sleeps := ms :: !sleeps in
   let d = (fake ~name:"SLEEPY" ~sleep ()).dev in
   let v = Nx_device.submit d ~touches:[] Fun.id in
-  let word = B.host_address (Nx_device.timeline d) in
+  let word = B.address (Nx_device.timeline d) in
   let late =
     Domain.spawn (fun () ->
         Unix.sleepf 0.7;
@@ -1720,7 +1964,7 @@ let test_sleep () =
   is_true ~msg:"for 200 ms each" (List.for_all (fun ms -> ms = 200) !sleeps);
   sleeps := [];
   let busy = (fake ~name:"BUSY" ~sleep ()).dev in
-  let word = B.host_address (Nx_device.timeline busy) in
+  let word = B.address (Nx_device.timeline busy) in
   let v =
     List.fold_left
       (fun _ _ -> Nx_device.submit busy ~touches:[] Fun.id)
@@ -1751,7 +1995,7 @@ let finalize_child () =
   in
   let healthy = (fake ~name:"HEALTHY" ~finalize:(say "HEALTHY") ()).dev in
   ignore (Nx_device.submit healthy ~touches:[] Fun.id);
-  store_signal (B.host_address (Nx_device.timeline healthy)) 1;
+  store_signal (B.address (Nx_device.timeline healthy)) 1;
   let broken =
     (fake ~name:"BROKEN" ~timeout_ms:50 ~finalize:(say "BROKEN") ()).dev
   in
@@ -1801,12 +2045,6 @@ let hooks =
           let fault = lost d "page fault at 0x1000" in
           raises_match fault (fun () -> Nx_device.synchronize d);
           raises_match fault (fun () -> B.create d S.UInt8 1));
-      test "a device that signals in its own way cannot sleep" (fun () ->
-          raises
-            (Invalid_argument
-               "Nx_device.make: NEAR sleeps on the signal word but signals in \
-                its own way") (fun () ->
-              fake ~signal:(signal (fun _ -> true)) ~sleep:ignore ()));
       test "finalize runs at exit on every device, told whether it failed"
         test_finalize;
     ]
@@ -1881,7 +2119,7 @@ let main_lane = Printf.sprintf "domain %d" (Domain.self () :> int)
    order. *)
 let stamped d stamps (t0, t1) =
   let timeline = Nx_device.timeline d in
-  let word = B.host_address timeline
+  let word = B.address timeline
   and signal = B.bigarray Bigarray.int64 timeline in
   let ba = B.bigarray Bigarray.int64 stamps in
   Nx_device.submit d ~touches:[] (fun v ->
@@ -1953,7 +2191,7 @@ let test_off () =
          P.record d ~lane:"compute" ~name:"x" stamps;
          ignore (Sys.opaque_identity (P.enabled ()))));
   let v = Nx_device.submit d ~touches:[] Fun.id in
-  store_signal (B.host_address (Nx_device.timeline d)) v;
+  store_signal (B.address (Nx_device.timeline d)) v;
   let events = profiled (fun () -> Nx_device.synchronize d) in
   equal ~msg:"spans recorded before" (list span_) [] (spans events)
 
@@ -1993,7 +2231,7 @@ let test_resolve () =
     profiled (fun () ->
         ignore (Nx_device.submit d ~touches:[] Fun.id);
         P.record d ~lane:"compute" ~name:"k" stamps;
-        store_signal (B.host_address (Nx_device.timeline d)) 1;
+        store_signal (B.address (Nx_device.timeline d)) 1;
         Nx_device.synchronize d)
   in
   equal
@@ -2078,7 +2316,7 @@ let test_memory_events () =
   equal (list int) [ 100; 0 ] (samples events)
 
 let test_program_events () =
-  let d = (fake ~load:(fun ~binary:_ ~name:_ -> Ok 42n) ()).dev in
+  let d = (fake ~load:(fun ~binary:_ ~entry:_ -> Ok 42n) ()).dev in
   let events =
     profiled (fun () ->
         ignore (program d ~binary:"lib" ~name:"k");
@@ -2266,7 +2504,9 @@ let written events =
 let test_output () =
   let odd = "a \"quote\", a \\, a\nnewline, \001, \xff and \xc3\xa9" in
   let f = far () in
-  let d = (fake ~name:"P" ~load:(fun ~binary:_ ~name:_ -> Ok 0x1234n) ()).dev in
+  let d =
+    (fake ~name:"P" ~load:(fun ~binary:_ ~entry:_ -> Ok 0x1234n) ()).dev
+  in
   let events =
     profiled (fun () ->
         P.span "outer" (fun () ->
@@ -2382,7 +2622,7 @@ let profiles =
         (test_copies ?clock:None ~slack:0);
       test "calibrate the spans of a device's own clock onto the host's"
         (test_copies
-           ~clock:(Nx_device.Device_clock { hz = 1_000_000 })
+           ~clock:(Driver.Device_clock { hz = 1_000_000 })
            ~slack:1_000_000);
       test "time both devices of a bounce" test_bounce;
       test "sample a device's allocated memory at each change"
@@ -2408,16 +2648,7 @@ type machine = {
   copies : int ref;
 }
 
-(* Memory of [n] bytes on 16 bytes, kept in [keep] until freed. *)
-let block keep ~addressed n =
-  let ba = chars (n + 15) in
-  let a = B.host_address (B.of_bigarray ba) in
-  let a = Nativeint.(logand (add a 15n) (lognot 15n)) in
-  Hashtbl.replace keep a ba;
-  let host = if addressed then Some a else None in
-  Some { Nx_device.host; device = a; handle = a }
-
-let machine ?(name = "far:1") ?(most = max_int) ?load ?call () =
+let machine ?(name = "far:1") ?(most = max_int) ?programs () =
   let down = ref false
   and reads = ref 0
   and writes = ref 0
@@ -2430,7 +2661,7 @@ let machine ?(name = "far:1") ?(most = max_int) ?load ?call () =
   in
   let io =
     {
-      Nx_device.read =
+      Driver.read =
         (fun ~src ~dst n -> reach reads (fun () -> memmove dst src n));
       write = (fun ~dst ~src n -> reach writes (fun () -> memmove dst src n));
       copy = (fun ~dst ~src n -> reach copies (fun () -> memmove dst src n));
@@ -2438,42 +2669,41 @@ let machine ?(name = "far:1") ?(most = max_int) ?load ?call () =
   in
   let memory =
     {
-      Nx_device.alloc =
+      Driver.alloc =
         (fun n -> if n > most then None else block keep ~addressed:true n);
-      free = (fun m -> Hashtbl.remove keep m.device);
+      free = (fun m -> Hashtbl.remove keep (Region.address m));
     }
   in
-  let mhost =
-    Nx_device.make_host ~name:("CPU@" ^ name) ~arch:"test" ~budget:max_int
-      ~memory ~io ?load ?call ()
-  in
+  let mhost = Driver.host ~address:name ~arch:"test" ?programs ~memory io in
   { mhost; down; reads; writes; copies }
 
 (* A GPU of [m] whose memory its host does not address. Its copies run at once
    and signal its timeline, which only its machine's host addresses. *)
 let remote_gpu ?(name = "GPU") m =
   let keep = Hashtbl.create 8 in
-  let free (mem : Nx_device.memory) = Hashtbl.remove keep mem.device in
-  let copy_queue (tl : Nx_device.memory) =
-    let word = Option.get tl.host in
-    let copy ~dst ~src n v =
+  let free r = Hashtbl.remove keep (Region.address r) in
+  let queue ~timeline =
+    let word = Option.get (Region.host_address timeline) in
+    let copy ~dst ~src n ~signal:v =
       if !(m.down) then failwith "the machine is down";
       memmove dst src n;
       store_signal word v
     in
-    let stamp ~slot v =
+    let stamp ~slot ~signal:v =
       store_signal (Nativeint.add slot 8n) v;
       store_signal word v
     in
-    { Nx_device.copy; transfer = (fun _ -> None); stamp }
+    { Driver.copy; transfer = (fun _ -> None); stamp; clock = Host_clock }
   in
-  let map a _ = Ok { Nx_device.host = Some a; device = a; handle = a } in
-  Nx_device.make ~host:m.mhost
-    ~name:(name ^ "@" ^ Nx_device.name m.mhost)
-    ~arch:"test" ~budget:max_int
-    ~memory:{ alloc = block keep ~addressed:false; free }
-    ~host_memory:{ alloc = block keep ~addressed:true; free }
-    ~mapping:{ map; unmap = ignore } ~copy_queue ()
+  let map a n = Ok (Region.v ~host:a ~handle:a a n) in
+  Driver.device ~host:m.mhost ~name ~arch:"test" ~budget:max_int
+    (Device_local
+       {
+         memory = { alloc = block keep ~addressed:false; free };
+         host_memory = { alloc = block keep ~addressed:true; free };
+         mapping = { map; unmap = ignore };
+         queue;
+       })
 
 let calls (m : machine) = !(m.reads) + !(m.writes) + !(m.copies)
 
@@ -2487,17 +2717,28 @@ let test_machines () =
     (Nx_device.host_of m.mhost);
   equal ~msg:"this machine's" (arg pp_device) host (Nx_device.host_of near.dev);
   equal ~msg:"the host" (arg pp_device) host (Nx_device.host_of host);
+  equal ~msg:"names composed by the runtime" (list string)
+    [ "CPU@far:1"; "GPU@far:1"; "GPU:2@far:1" ]
+    [
+      Nx_device.name m.mhost;
+      Nx_device.name gpu;
+      Driver.name ~host:m.mhost "GPU:2";
+    ];
   raises_match (Exn.invalid_arg ~substring:"not a host") (fun () ->
-      Nx_device.make ~host:gpu ~name:"X" ~arch:"test" ~budget:1
-        ~memory:{ alloc = (fun _ -> None); free = ignore }
-        ());
+      Driver.device ~host:gpu ~name:"X" ~arch:"test" ~budget:1
+        (Host_visible
+           {
+             memory = { alloc = (fun _ -> None); free = ignore };
+             mapping = None;
+           }));
   let b = B.create m.mhost S.UInt8 16 in
-  raises_match (Exn.invalid_arg ~substring:"another machine's") (fun () ->
-      B.host_address b);
+  equal ~msg:"its address is its host's" (option nativeint)
+    (Some (B.address b))
+    (Region.host_address (Region.of_buffer b));
   raises_match (Exn.invalid_arg ~substring:"not CPU") (fun () ->
       B.bigarray Bigarray.char b);
-  raises_match (Exn.invalid_arg ~substring:"not CPU@far:1") (fun () ->
-      B.borrow gpu (B.create host S.UInt8 page))
+  raises_match (Exn.invalid_arg ~substring:"not on GPU@far:1's machine")
+    (fun () -> B.borrow gpu (B.create host S.UInt8 page))
 
 let test_host_copies () =
   let m = machine () in
@@ -2523,7 +2764,7 @@ let test_remote_gpu () =
   let hb = B.create m.mhost S.UInt8 5000 in
   B.copy ~src:back ~dst:hb;
   equal ~msg:"into its host's memory" string (pattern 2 5000) (read hb);
-  let pinned = B.create ~host:true gpu S.UInt8 5000 in
+  let pinned = B.create ~pinned:true gpu S.UInt8 5000 in
   write pinned (pattern 3 5000);
   B.copy ~src:pinned ~dst:on;
   equal ~msg:"from its host memory" string (pattern 3 5000) (read on);
@@ -2588,8 +2829,7 @@ let test_links () =
   let moved = ref 0 and broken = ref false in
   let rec nic =
     lazy
-      (Nx_device.make ~name:"NIC" ~arch:"test" ~budget:0
-         ~memory:{ alloc = (fun _ -> None); free = ignore }
+      (Driver.device ~name:"NIC" ~arch:"test" ~budget:0
          ~link:(fun ~src ~dst ->
            if
              Nx_device.host_of (B.device src)
@@ -2597,7 +2837,7 @@ let test_links () =
            then
              Some
                {
-                 Nx_device.through = [ Lazy.force nic ];
+                 Driver.through = [ Lazy.force nic ];
                  move =
                    (fun ~src ~dst ->
                      if !broken then failwith "NIC: retries exhausted";
@@ -2605,7 +2845,11 @@ let test_links () =
                      ignore (src, dst));
                }
            else None)
-         ())
+         (Host_visible
+            {
+              memory = { alloc = (fun _ -> None); free = ignore };
+              mapping = None;
+            }))
   in
   let nic = Lazy.force nic in
   let local = (far ()).dev in
@@ -2630,44 +2874,51 @@ let test_dma () =
   let keep = Hashtbl.create 4 in
   let freed = ref 0 in
   let d =
-    Nx_device.make ~name:"DMA" ~arch:"test" ~budget:max_int
-      ~memory:
-        {
-          alloc = block keep ~addressed:true;
-          free =
-            (fun m ->
-              incr freed;
-              Hashtbl.remove keep m.device);
-        }
-      ~dma:(fun m ->
+    Driver.device ~name:"DMA" ~arch:"test" ~budget:max_int
+      ~dma:(fun r ->
         if Hashtbl.length keep > 2 then Error "no window left"
         else
           Ok
             {
-              Nx_device.bus = "0000:03:00.0";
-              pages = [ (0x1000, Nativeint.to_int m.device) ];
+              Driver.bus = "0000:03:00.0";
+              pages = [ (0x1000, Nativeint.to_int (Region.address r)) ];
             })
-      ()
+      (Host_visible
+         {
+           memory =
+             {
+               alloc = block keep ~addressed:true;
+               free =
+                 (fun r ->
+                   incr freed;
+                   Hashtbl.remove keep (Region.address r));
+             };
+           mapping = None;
+         })
   in
   let b = B.create d S.UInt8 4096 in
-  let dma = B.dma (B.view b ~offset:64 S.UInt8 8) in
+  let dma =
+    require_ok ~pp:Format.pp_print_string
+      (Driver.dma (B.view b ~offset:64 S.UInt8 8))
+  in
   equal ~msg:"the memory the buffer lies in"
     (pair string (list (pair int int)))
     ("0000:03:00.0", [ (0x1000, Nativeint.to_int (B.address b)) ])
     (dma.bus, dma.pages);
-  raises_match (Exn.invalid_arg ~substring:"does not describe") (fun () ->
-      B.dma (B.create (fake ()).dev S.UInt8 8));
+  (match Driver.dma (B.create (fake ()).dev S.UInt8 8) with
+  | Ok _ -> fail "described"
+  | Error why -> contains ~msg:"undescribed" ~sub:"does not describe" why);
   let runs = ref 0 in
-  B.on_free b (fun () -> incr runs);
+  Driver.on_free b (fun () -> incr runs);
   raises_match (Exn.invalid_arg ~substring:"allocated") (fun () ->
-      B.on_free (B.create host S.UInt8 8) ignore);
+      Driver.on_free (B.create host S.UInt8 8) ignore);
   dropped (fun () -> b);
   ignore (stats d);
   equal ~msg:"cached memory stays mapped" int 0 !runs;
   Nx_device.free_cache d;
   equal ~msg:"unmapped before it is freed" (pair int int) (1, 1) (!runs, !freed);
   let b = B.create d S.UInt8 4096 in
-  B.on_free b (fun () -> failwith "the mapper is gone");
+  Driver.on_free b (fun () -> failwith "the mapper is gone");
   dropped (fun () -> b);
   Nx_device.free_cache d;
   equal ~msg:"memory a mapper could not unmap is retained" (pair int int)
@@ -2676,12 +2927,12 @@ let test_dma () =
 
 let test_remote_programs () =
   let calls = ref [] and unloaded = ref 0 in
-  let load ~binary ~name =
+  let load ~binary ~entry =
     ignore binary;
-    Ok (Nativeint.of_int (String.length name), fun () -> incr unloaded)
+    Ok (Nativeint.of_int (String.length entry), fun () -> incr unloaded)
   in
   let call h bufs vals = calls := (h, bufs, vals) :: !calls in
-  let m = machine ~load ~call () in
+  let m = machine ~programs:{ load; call } () in
   let p = program m.mhost ~binary:"elf" ~name:"submit" in
   let b = B.create m.mhost S.UInt8 24 in
   Nx_device.Program.call p [| B.view b ~offset:8 S.UInt8 16 |] [| 7 |];
@@ -2693,16 +2944,6 @@ let test_remote_programs () =
   | _ -> fail "one call");
   raises_match (Exn.invalid_arg ~substring:"does not address") (fun () ->
       Nx_device.Program.call p [| B.create host S.UInt8 8 |] [||]);
-  raises_match (Exn.invalid_arg ~substring:"cannot call") (fun () ->
-      Nx_device.make_host ~name:"X" ~arch:"test" ~budget:1
-        ~memory:{ alloc = (fun _ -> None); free = ignore }
-        ~io:
-          {
-            read = (fun ~src:_ ~dst:_ _ -> ());
-            write = (fun ~dst:_ ~src:_ _ -> ());
-            copy = (fun ~dst:_ ~src:_ _ -> ());
-          }
-        ~load ());
   dropped (fun () -> p);
   ignore (stats m.mhost);
   equal ~msg:"an unreachable program is unloaded there" int 1 !unloaded
@@ -2730,6 +2971,7 @@ let () =
          devices;
          memory;
          laws;
+         borrows;
          buffers;
          disks;
          refusals;

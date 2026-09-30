@@ -61,9 +61,12 @@ let () =
              raises_match (Exn.invalid_arg ~substring:"-1 < 0") (fun () ->
                  Nx_rdma_device.get (-1));
              let gpu =
-               Nx_device.make ~name:"GPU" ~arch:"x" ~budget:0
-                 ~memory:{ alloc = (fun _ -> None); free = ignore }
-                 ()
+               Nx_device.Driver.device ~name:"GPU" ~arch:"x" ~budget:0
+                 (Host_visible
+                    {
+                      memory = { alloc = (fun _ -> None); free = ignore };
+                      mapping = None;
+                    })
              in
              raises_match (Exn.invalid_arg ~substring:"no host") (fun () ->
                  Nx_rdma_device.get ~host:gpu 0));

@@ -144,16 +144,16 @@ let link (o : Elf.t) ~machine ~base ~size ~slots_at externals =
 
 let round_up n a = (n + a - 1) / a * a
 
-let load_exn machine ~binary ~name =
+let load_exn machine ~binary ~entry =
   let o = Elf.load binary in
   if o.kind <> et_rel then fail "the object is not relocatable";
   if o.machine <> machine then
     fail "the object is for %s, not %s" (machine_name o.machine)
       (machine_name machine);
-  let entry =
-    match Elf.symbol o name with
+  let start =
+    match Elf.symbol o entry with
     | Some e -> e
-    | None -> fail "the object has no function %s" name
+    | None -> fail "the object has no function %s" entry
   in
   List.iter
     (fun (s : Elf.section) ->
@@ -188,13 +188,13 @@ let load_exn machine ~binary ~name =
     code_install base
       (link o ~machine ~base:(Nativeint.to_int base) ~size ~slots_at externals)
   with
-  | () -> (Nativeint.add base (Nativeint.of_int entry), free)
+  | () -> (Nativeint.add base (Nativeint.of_int start), free)
   | exception e ->
       free ();
       raise e
 
-let load_for machine ~binary ~name =
-  match load_exn machine ~binary ~name with
+let load_for machine ~binary ~entry =
+  match load_exn machine ~binary ~entry with
   | loaded -> Ok loaded
   | exception Failure why -> Error why
 

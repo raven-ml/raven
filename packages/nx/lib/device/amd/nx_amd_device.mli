@@ -29,8 +29,9 @@
     directly from and to host memory the GPU addresses, and through the host's
     staging memory from and to other host memory. Host memory the GPU addresses
     is registered with it and coherent for it:
-    - {!Nx_device.Buffer.create}[ ~host:true] allocates it, and it counts in the
-      device's budget, which defaults to the GPU's memory size;
+    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, uncached system
+      memory, and it counts in the device's budget, which defaults to the GPU's
+      memory size;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it. It counts
       in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
@@ -40,8 +41,8 @@
       through the staging memory.
 
     {b Timestamps} count the GPU's global clock, 100 MHz
-    ({!Nx_device.Device_clock}); the copy engine stamps it for the runtime's
-    profiles.
+    ({!Nx_device.Driver.Device_clock}); the copy engine stamps it for the
+    runtime's profiles.
 
     {b Programs} are functions of AMD GPU code objects, ELF objects compiled for
     the device's {!Nx_device.arch}: the function [name] is the kernel whose

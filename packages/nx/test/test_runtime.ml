@@ -9,22 +9,10 @@
 open Windtrap
 open Nx_test
 
-type bytes_ba =
-  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
 (* A runtime over host memory. *)
 let runtime name =
-  let memory : (nativeint, bytes_ba) Hashtbl.t = Hashtbl.create 16 in
-  let alloc n =
-    let ba =
-      Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n
-    in
-    let a = Nx_device.Buffer.host_address (Nx_device.Buffer.of_bigarray ba) in
-    Hashtbl.add memory a ba;
-    Some { Nx_device.host = Some a; device = a; handle = a }
-  in
-  let free (m : Nx_device.memory) = Hashtbl.remove memory m.device in
-  Nx_device.make ~name ~arch:"test" ~budget:max_int ~memory:{ alloc; free } ()
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
 let r1 = runtime "R1"
 let r2 = runtime "R2"

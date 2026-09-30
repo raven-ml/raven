@@ -18,12 +18,14 @@ external stream : nativeint -> nativeint = "caml_nx_cuda_stream"
 external stream_destroy : nativeint -> nativeint -> unit
   = "caml_nx_cuda_stream_destroy"
 
-external alloc : nativeint -> int -> Nx_device.memory option
-  = "caml_nx_cuda_alloc"
+module Driver = Nx_device.Driver
+module Region = Driver.Region
 
+external alloc : nativeint -> int -> nativeint option = "caml_nx_cuda_alloc"
 external free : nativeint -> nativeint -> unit = "caml_nx_cuda_free"
 
-external host_alloc : nativeint -> int -> Nx_device.memory option
+(* Page-locked host memory's host and device addresses. *)
+external host_alloc : nativeint -> int -> (nativeint * nativeint) option
   = "caml_nx_cuda_host_alloc"
 
 external host_free : nativeint -> nativeint -> unit = "caml_nx_cuda_host_free"
@@ -110,9 +112,7 @@ let refusal status =
 
 let map ctx a n =
   Mutex.protect locked_lock @@ fun () ->
-  let mapped () =
-    Ok { Nx_device.host = Some a; device = device_pointer ctx a; handle = a }
-  in
+  let mapped () = Ok (Region.v ~host:a ~handle:a (device_pointer ctx a) n) in
   match Hashtbl.find_opt locked a with
   | Some Allocated -> mapped ()
   | Some (Registered r) when r.bytes = n ->
@@ -131,32 +131,35 @@ let map ctx a n =
               raise e)
       | status -> Error (refusal status))
 
-let unmap ctx (m : Nx_device.memory) =
+let unmap ctx r =
+  let a = Region.handle r in
   Mutex.protect locked_lock @@ fun () ->
-  match Hashtbl.find_opt locked m.handle with
+  match Hashtbl.find_opt locked a with
   | Some (Registered r) ->
       r.maps <- r.maps - 1;
       if r.maps = 0 then begin
-        unregister ctx m.handle;
-        Hashtbl.remove locked m.handle
+        unregister ctx a;
+        Hashtbl.remove locked a
       end
   | Some Allocated | None -> ()
 
+(* Page-locked memory that is not write-combined: coherent for the host and the
+   GPU. *)
 let host_memory ctx =
   {
-    Nx_device.alloc =
+    Driver.alloc =
       (fun n ->
-        let m = host_alloc ctx n in
-        Option.iter
-          (fun (m : Nx_device.memory) ->
+        Option.map
+          (fun (host, device) ->
             Mutex.protect locked_lock (fun () ->
-                Hashtbl.replace locked m.handle Allocated))
-          m;
-        m);
+                Hashtbl.replace locked host Allocated);
+            Region.v ~host ~handle:host device n)
+          (host_alloc ctx n));
     free =
-      (fun m ->
-        Mutex.protect locked_lock (fun () -> Hashtbl.remove locked m.handle);
-        host_free ctx m.handle);
+      (fun r ->
+        let a = Region.handle r in
+        Mutex.protect locked_lock (fun () -> Hashtbl.remove locked a);
+        host_free ctx a);
   }
 
 (* Opening *)
@@ -193,7 +196,7 @@ let name i = if i = 0 then "CUDA" else Printf.sprintf "CUDA:%d" i
    refusal of an image or a name leaves the context usable. *)
 let loader ctx =
   let modules = Hashtbl.create 8 in
-  fun ~binary ~name ->
+  fun ~binary ~entry ->
     match
       let m =
         match Hashtbl.find_opt modules binary with
@@ -203,7 +206,7 @@ let loader ctx =
             Hashtbl.add modules binary m;
             m
       in
-      get_function ctx m name
+      get_function ctx m entry
     with
     | f -> Ok f
     | exception Failure why -> Error why
@@ -219,41 +222,53 @@ let open_cuda i ~arch ~budget ctx =
   (* Work signals the timeline's first word through its device address. A
      timestamp is the host clock, which a host function stores through the host
      address of the slot's second word. *)
-  let copy_queue (timeline : Nx_device.memory) =
-    let signal = timeline.device in
+  let queue ~timeline =
+    let signal = Region.address timeline in
     let host_word slot =
-      Nativeint.(add (Option.get timeline.host) (add (sub slot signal) 8n))
+      Nativeint.(
+        add
+          (Option.get (Region.host_address timeline))
+          (add (sub slot signal) 8n))
     in
     {
-      Nx_device.copy =
-        (fun ~dst ~src n v -> copy ctx copy_stream signal dst src n v);
+      Driver.copy =
+        (fun ~dst ~src n ~signal:v -> copy ctx copy_stream signal dst src n v);
       transfer =
         (fun d ->
           Option.map
-            (fun c ~dst ~src n v ->
+            (fun c ~dst ~src n ~signal:v ->
               peer ctx copy_stream signal dst c.handles.context src n v)
             (find d));
-      stamp = (fun ~slot v -> stamp ctx copy_stream signal (host_word slot) v);
+      stamp =
+        (fun ~slot ~signal:v -> stamp ctx copy_stream signal (host_word slot) v);
+      clock = Host_clock;
     }
   in
-  let signal (timeline : Nx_device.memory) =
-    let word = Option.get timeline.host in
+  let signal ~timeline =
+    let word = Option.get (Region.host_address timeline) in
     {
-      Nx_device.signaled = (fun () -> signaled word);
+      Driver.signaled = (fun () -> signaled word);
       wait =
         (fun v ~timeout_ms -> wait ctx compute copy_stream word v timeout_ms);
     }
   in
+  let memory =
+    {
+      Driver.alloc =
+        (fun n -> Option.map (fun d -> Region.v ~handle:d d n) (alloc ctx n));
+      free = (fun r -> free ctx (Region.address r));
+    }
+  in
   match
-    Nx_device.make ~name:(name i) ~arch ~budget
-      ~memory:
-        {
-          alloc = alloc ctx;
-          free = (fun (m : Nx_device.memory) -> free ctx m.device);
-        }
-      ~host_memory:(host_memory ctx)
-      ~mapping:{ map = map ctx; unmap = unmap ctx }
-      ~copy_queue ~load:(loader ctx) ~signal ()
+    Driver.device ~name:(name i) ~arch ~budget ~completion:(Signal signal)
+      ~load:(loader ctx)
+      (Device_local
+         {
+           memory;
+           host_memory = host_memory ctx;
+           mapping = { map = map ctx; unmap = unmap ctx };
+           queue;
+         })
   with
   | dev ->
       let signal = Nx_device.Buffer.address (Nx_device.timeline dev) in
@@ -335,17 +350,13 @@ let of_address d a s n =
   | Some (owner, _, _) when owner <> c.handles.context ->
       fail "0x%nx is not memory of %s's context" a (Nx_device.name d)
   | Some (_, start, size) ->
-      let host = host_pointer c.handles.context start in
-      let memory =
-        {
-          Nx_device.host = (if host = 0n then None else Some host);
-          device = start;
-          handle = start;
-        }
+      let host =
+        match host_pointer c.handles.context start with
+        | 0n -> None
+        | host -> Some host
       in
-      let whole =
-        Nx_device.external_buffer d memory Nx_dtype.Scalar.UInt8 size
-      in
+      let region = Region.v ?host ~handle:start start size in
+      let whole = Driver.buffer d region Nx_dtype.Scalar.UInt8 size in
       Nx_device.Buffer.view whole
         ~offset:(Nativeint.to_int (Nativeint.sub a start))
         s n

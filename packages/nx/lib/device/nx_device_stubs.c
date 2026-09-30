@@ -372,10 +372,12 @@ value caml_nx_device_symbol(value v_name) {
 }
 
 /* Runs [f(buffers, values)] with the runtime released. The buffers' addresses
-   and the values are read first, into memory the collector does not move. */
+   and the values are read first, into memory the collector does not move: from
+   Nx_device.Buffer.t values, or from (address, size) pairs when [addresses]. */
 #define NX_DEVICE_CALL_WORDS 32
 
-value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
+static value call(value v_entry, value v_buffers, value v_values,
+                  int addresses) {
   CAMLparam3(v_entry, v_buffers, v_values);
   mlsize_t nb = Wosize_val(v_buffers), nv = Wosize_val(v_values);
   void *small_b[NX_DEVICE_CALL_WORDS];
@@ -390,7 +392,9 @@ value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
     caml_raise_out_of_memory();
   }
   for (mlsize_t i = 0; i < nb; i++)
-    b[i] = nx_device_buffer_host(Field(v_buffers, i));
+    b[i] = addresses
+               ? (void *)Nativeint_val(Field(Field(v_buffers, i), 0))
+               : nx_device_buffer_host(Field(v_buffers, i));
   for (mlsize_t i = 0; i < nv; i++) v[i] = (int64_t)Long_val(Field(v_values, i));
   void (*f)(void **, const int64_t *) =
       (void (*)(void **, const int64_t *))Nativeint_val(v_entry);
@@ -400,4 +404,14 @@ value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
   if (b != small_b) free(b);
   if (v != small_v) free(v);
   CAMLreturn(Val_unit);
+}
+
+value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
+  return call(v_entry, v_buffers, v_values, 0);
+}
+
+/* As [caml_nx_device_call], given each buffer as an (address, size) pair. */
+value caml_nx_device_call_addresses(value v_entry, value v_buffers,
+                                    value v_values) {
+  return call(v_entry, v_buffers, v_values, 1);
 }

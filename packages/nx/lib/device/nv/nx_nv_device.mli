@@ -40,8 +40,9 @@
     directly from and to host memory the GPU addresses, and through the host's
     staging memory from and to other host memory. Host memory the GPU addresses
     is coherent for it:
-    - {!Nx_device.Buffer.create}[ ~host:true] allocates it, and it counts in the
-      device's budget, which defaults to the size of the GPU's memory heap;
+    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, system memory the
+      GPU snoops, and it counts in the device's budget, which defaults to the
+      size of the GPU's memory heap;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it, and
       page-locks it while mapped. It counts in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
@@ -51,8 +52,8 @@
       the destination; otherwise the bytes go through the staging memory.
 
     {b Timestamps} count the GPU's timer in nanoseconds
-    ({!Nx_device.Device_clock}); the copy engine stamps it for the runtime's
-    profiles.
+    ({!Nx_device.Driver.Device_clock}); the copy engine stamps it for the
+    runtime's profiles.
 
     {b Programs} are functions of cubins, the ELF objects NVIDIA's compilers
     make for the device's {!Nx_device.arch}: the function [name] is the code of

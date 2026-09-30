@@ -9,6 +9,8 @@ module Pci = Nx_device_support.Pci
 module Pci_memory = Nx_device_support.Pci_memory
 module Page_table = Nx_device_support.Page_table
 module Remote = Nx_device_support.Remote
+module Driver = Nx_device.Driver
+module Region = Driver.Region
 
 external linux : unit -> bool = "caml_nx_amd_linux"
 
@@ -88,8 +90,9 @@ type amd = {
   mutable dev : Nx_device.t option;
 }
 
-(* Memory of a device and the peers it is mapped on. *)
-and alloc = { mem : mem; mutable peers : amd list }
+(* Memory of a device and the peers it is mapped on, which their borrows and
+   transfers add to while the owner is not taken. *)
+and alloc = { mem : mem; peers : amd list Atomic.t }
 
 let va = function Kfd_mem m -> m.va | Am_mem m -> m.mapping.va
 let size = function Kfd_mem m -> m.size | Am_mem m -> m.mapping.size
@@ -138,13 +141,14 @@ let free_mem a mem =
       | _ -> invalid_arg "memory of another interface")
 
 let register a mem =
-  a.allocs <- Int_map.add (va mem) { mem; peers = [] } a.allocs
+  a.allocs <- Int_map.add (va mem) { mem; peers = Atomic.make [] } a.allocs
 
 (* Frees [mem] after unmapping it from the peers that transfers mapped it on:
    their copies were waited for, so none still uses it. *)
 let release a mem =
   Option.iter
-    (fun r -> List.iter (fun peer -> unmap_from peer mem) r.peers)
+    (fun r ->
+      List.iter (fun peer -> unmap_from peer mem) (Atomic.exchange r.peers []))
     (Int_map.find_opt (va mem) a.allocs);
   a.allocs <- Int_map.remove (va mem) a.allocs;
   free_mem a mem
@@ -155,24 +159,26 @@ let find a x =
   | Some (s, r) when x < s + size r.mem -> Some r
   | _ -> None
 
-let memory_of mem : Nx_device.memory =
+(* The [n] bytes of [mem] from its start, at the same address for the host and
+   the GPU when the host addresses them. *)
+let region_of mem n =
   let va = Nativeint.of_int (va mem) in
-  { host = Option.map Mmio.address (host_view mem); device = va; handle = va }
+  Region.v ?host:(Option.map Mmio.address (host_view mem)) ~handle:va va n
 
 let allocator a kind =
   let alloc n =
     Option.map
       (fun mem ->
         register a mem;
-        memory_of mem)
+        region_of mem n)
       (alloc_mem a kind n)
   in
-  let free (m : Nx_device.memory) =
+  let free r =
     Option.iter
       (fun r -> release a r.mem)
-      (Int_map.find_opt (Nativeint.to_int m.handle) a.allocs)
+      (Int_map.find_opt (Nativeint.to_int (Region.handle r)) a.allocs)
   in
-  { Nx_device.alloc; free }
+  { Driver.alloc; free }
 
 (* Borrows: host memory the GPU addresses at its own address. *)
 let mapping a =
@@ -187,13 +193,14 @@ let mapping a =
         Result.map
           (fun mem ->
             Hashtbl.replace a.borrows (va mem) mem;
-            { Nx_device.host = Some x; device = x; handle = x })
+            Region.v ~host:x ~handle:x x n)
           r)
   in
-  let unmap (m : Nx_device.memory) =
-    match Hashtbl.find_opt a.borrows (Nativeint.to_int m.handle) with
+  let unmap r =
+    let x = Nativeint.to_int (Region.handle r) in
+    match Hashtbl.find_opt a.borrows x with
     | Some mem ->
-        Hashtbl.remove a.borrows (Nativeint.to_int m.handle);
+        Hashtbl.remove a.borrows x;
         with_hw a (fun () ->
             match (a.gpu, mem) with
             | Kfd_gpu k, Kfd_mem m -> Kfd.unmap_host k m
@@ -201,7 +208,7 @@ let mapping a =
             | _ -> ())
     | None -> ()
   in
-  { Nx_device.map; unmap }
+  { Driver.map; unmap }
 
 (* Queues *)
 
@@ -264,8 +271,40 @@ let reaches a peer =
           Hashtbl.replace a.reach peer.index r;
           r)
 
-let copy_queue a (timeline : Nx_device.memory) =
-  let signal = Nativeint.to_int timeline.device in
+(* Maps [peer]'s allocation that holds [x] on [a], at its first use, at the same
+   address; freeing it unmaps it. *)
+let map_peer a peer x =
+  match find peer (Nativeint.to_int x) with
+  | None -> Error "no memory of the other GPU"
+  | Some r when List.memq a (Atomic.get r.peers) -> Ok ()
+  | Some r ->
+      Result.map
+        (fun () ->
+          let rec push () =
+            let l = Atomic.get r.peers in
+            if not (Atomic.compare_and_set r.peers l (a :: l)) then push ()
+          in
+          push ())
+        (with_hw a (fun () ->
+             match (a.gpu, peer.gpu, r.mem) with
+             | Kfd_gpu k, _, Kfd_mem m -> (
+                 match Kfd.map_peer k m with
+                 | () -> Ok ()
+                 | exception Failure why -> Error why)
+             | Am_gpu g, Am_gpu g', Am_mem m ->
+                 Result.map ignore (Pci_memory.map_peer g.memory g'.memory m)
+             | _ -> Error "a peer of another interface"))
+
+(* Borrows of another AMD GPU's memory that [a] reaches. *)
+let peer a d' r =
+  match amd_of d' with
+  | Some peer when reaches a peer ->
+      Result.map (fun () -> r) (map_peer a peer (Region.address r))
+  | Some _ -> Error "the GPUs do not reach each other's memory"
+  | None -> Error "memory of another vendor"
+
+let queue a ~timeline =
+  let signal = Nativeint.to_int (Region.address timeline) in
   let props = a.props in
   let family = sdma_family props and max = max_copy props in
   let enqueue words =
@@ -274,64 +313,56 @@ let copy_queue a (timeline : Nx_device.memory) =
       | Some h -> sdma_queue a (List.hd h.sdma)
       | None -> failwith "the SDMA queue is not set up"
     in
-    let timeout_ms = Option.fold ~none:30_000 ~some:Nx_device.timeout a.dev in
+    let timeout_ms =
+      Option.fold ~none:Driver.default_timeout ~some:Nx_device.timeout a.dev
+    in
     Sdma.submit q ~timeout_ms words
   in
-  let submit ~dst ~src n v =
+  let submit ~dst ~src n ~signal:v =
     enqueue
       (Sdma.packets ~family ~max ~signal ~dst:(Nativeint.to_int dst)
          ~src:(Nativeint.to_int src) n v)
   in
-  let stamp ~slot v =
+  let stamp ~slot ~signal:v =
     enqueue (Sdma.stamp ~family ~signal ~slot:(Nativeint.to_int slot) v)
   in
-  (* A transfer maps the destination's allocation on this GPU at its first use;
-     freeing it unmaps it. *)
-  let map_on_self peer x =
-    match find peer (Nativeint.to_int x) with
-    | None -> failwith "the destination is no memory of the other GPU"
-    | Some r ->
-        if not (List.memq a r.peers) then begin
-          with_hw a (fun () ->
-              match (a.gpu, peer.gpu, r.mem) with
-              | Kfd_gpu k, _, Kfd_mem m -> Kfd.map_peer k m
-              | Am_gpu g, Am_gpu g', Am_mem m -> (
-                  match Pci_memory.map_peer g.memory g'.memory m with
-                  | Ok _ -> ()
-                  | Error why -> failwith why)
-              | _ -> failwith "a peer of another interface");
-          r.peers <- a :: r.peers
-        end
-  in
+  (* A transfer maps the destination's allocation on this GPU. *)
   let transfer d' =
     match amd_of d' with
     | Some peer when reaches a peer ->
         Some
-          (fun ~dst ~src n v ->
-            map_on_self peer dst;
-            submit ~dst ~src n v)
+          (fun ~dst ~src n ~signal ->
+            (match map_peer a peer dst with
+            | Ok () -> ()
+            | Error why -> failwith why);
+            submit ~dst ~src n ~signal)
     | _ -> None
   in
-  { Nx_device.copy = submit; transfer; stamp }
+  {
+    Driver.copy = submit;
+    transfer;
+    stamp;
+    clock = Device_clock { hz = 100_000_000 };
+  }
 
 (* How the other functions of the GPU's machine reach its memory: its own
    through the memory BAR, even in a hive whose GPUs reach each other over XGMI,
    and system memory at its pages. *)
-let dma a (m : Nx_device.memory) =
-  match (a.gpu, find a (Nativeint.to_int m.device)) with
+let dma a r =
+  match (a.gpu, find a (Nativeint.to_int (Region.address r))) with
   | Kfd_gpu _, _ -> Error "the kernel driver's memory is not described"
   | Am_gpu _, None -> Error "no allocation of this GPU"
   | Am_gpu { memory; pci; _ }, Some { mem = Am_mem pm; _ } -> (
       let map = pm.mapping in
       match map.space with
-      | Page_table.Sys -> Ok { Nx_device.bus = Pci.bus pci; pages = map.pages }
+      | Page_table.Sys -> Ok { Driver.bus = Pci.bus pci; pages = map.pages }
       | Phys when Pci_memory.small_bar memory ->
           Error "the memory BAR is too small for other functions to reach it"
       | Phys ->
           let start = fst (Pci.bar pci 0) in
           Ok
             {
-              Nx_device.bus = Pci.bus pci;
+              Driver.bus = Pci.bus pci;
               pages = List.map (fun (p, n) -> (p + start, n)) map.pages;
             }
       | Peer -> Error "memory of another GPU")
@@ -355,7 +386,7 @@ let upload a binary img =
 
 (* A code object the device cannot run, or has no memory for, is refused, and
    the device stays usable. *)
-let load a ~binary ~name =
+let load a ~binary ~entry:name =
   let major, _, _ = a.props.target in
   match
     let obj, img = Code_object.image binary in
@@ -445,11 +476,7 @@ let scratch d n =
 (* Opening *)
 
 (* A GPU of another machine is named for it: ["AMD:1@HOST:PORT"]. *)
-let name ~machine i =
-  let local = if i = 0 then "AMD" else Printf.sprintf "AMD:%d" i in
-  match Nx_remote_device.remote machine with
-  | None -> local
-  | Some r -> local ^ "@" ^ Remote.name r
+let name i = if i = 0 then "AMD" else Printf.sprintf "AMD:%d" i
 
 let target_of v =
   let v = if v = 90403 then 90402 else v in
@@ -624,14 +651,16 @@ let create_queue a ~kind spec ~idx =
 
 let make_device a ~budget ~sleep ?finalize () =
   let dev =
-    Nx_device.make
-      ~name:(name ~machine:a.machine a.index)
-      ~arch:(arch a.props.target) ~host:a.machine ~budget
-      ~memory:(allocator a Vram) ~host_memory:(allocator a Host)
-      ~mapping:(mapping a) ~copy_queue:(copy_queue a) ~load:(load a)
-      ~dma:(dma a) ~sleep
-      ~clock:(Nx_device.Device_clock { hz = 100_000_000 })
-      ?finalize ()
+    Driver.device ~name:(name a.index) ~arch:(arch a.props.target)
+      ~host:a.machine ~budget ~completion:(Sleep sleep) ~load:(load a)
+      ~peer:(peer a) ~dma:(dma a) ?finalize
+      (Device_local
+         {
+           memory = allocator a Vram;
+           host_memory = allocator a Host;
+           mapping = mapping a;
+           queue = queue a;
+         })
   in
   a.dev <- Some dev;
   dev
@@ -810,7 +839,7 @@ let interface_name = function Kernel -> "the kernel driver" | Pci -> "PCI"
 (* Why GPU [i] of the machine of [machine] cannot be opened. *)
 let refuse ~machine i why =
   check_reach machine;
-  Error (name ~machine i ^ ": " ^ why)
+  Error (Driver.name ~host:machine (name i) ^ ": " ^ why)
 
 (* Opens [i] through [iface] on the machine of [machine], once. *)
 let open_gpu ~machine ~iface ?firmware i =

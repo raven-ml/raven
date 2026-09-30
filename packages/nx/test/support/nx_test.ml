@@ -135,15 +135,8 @@ let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 (* The storage of [t]: views share it, copies do not. *)
 let storage t = Nx_effect.read t
 
-(* Whether host buffers [a] and [b] have a byte of memory in common. *)
-let share_memory a b =
-  let module B = Nx_device.Buffer in
-  let first b = B.host_address b in
-  let last b = Nativeint.add (first b) (Nativeint.of_int (B.nbytes b - 1)) in
-  B.nbytes a > 0
-  && B.nbytes b > 0
-  && Nativeint.compare (first a) (last b) <= 0
-  && Nativeint.compare (first b) (last a) <= 0
+(* Whether buffers [a] and [b] have a byte of memory in common. *)
+let share_memory = Nx_device.Buffer.overlaps
 
 (* Where each element of [t] is in its storage, in row-major order: element
    [idx] is at [offset + sum idx.(d) * strides.(d)] of its view. *)
@@ -1256,9 +1249,8 @@ module Profiles = struct
                 let names = [ "CPU -> " ^ name; name ^ " -> CPU" ] in
                 let names = names @ names in
                 let addressed =
-                  match B.host_address small_d with
-                  | _ -> true
-                  | exception Invalid_argument _ -> false
+                  Nx_device.Driver.Region.(host_address (of_buffer small_d))
+                  <> None
                 in
                 let name (n, _, _) = n in
                 equal ~msg:"host spans" (list string) names

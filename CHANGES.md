@@ -2871,6 +2871,28 @@ thread.
 
 ### Nx
 
+- **Breaking:** vendor libraries describe their devices with
+  `Nx_device.Driver.device` and `Driver.host`, whose memory is `Host_visible` or
+  `Device_local` and whose work completes by `Poll`, `Sleep` or `Signal`; they
+  replace `Nx_device.make`, `make_host` and their refusals of inconsistent knobs.
+  The runtime names another machine's devices, `Driver.name` names one a
+  vendor could not open, and every device starts at `Driver.default_timeout`.
+- **Breaking:** `Nx_device.Buffer.host_address`, `Buffer.handle` and
+  `Nx_device.external_buffer` are gone: `Buffer.address` is the host address on
+  a host, `Driver.Region.of_buffer` is the memory a buffer lies in, and
+  `Driver.buffer` wraps a vendor's region. `Buffer.dma` and `Buffer.on_free` are
+  `Driver.dma`, which returns a `result`, and `Driver.on_free`.
+- **Breaking:** `Nx_device.Buffer.create`'s `?host` is `?pinned`, and pinned
+  memory is coherent on every vendor: the host and the device see each other's
+  writes without a flush.
+- `Nx_device.Buffer.borrow` borrows any buffer of the device's machine by where
+  its memory lives: system memory (another device's pinned or host-visible
+  memory) through the device's mapping, and an AMD or NV GPU's own memory
+  through its driver's peer mapping. A buffer of the device borrows as itself.
+- New `Nx_device.Buffer.overlaps`, which `Buffer.copy` and rune's check of
+  consumed arguments use: a copy between a buffer and its borrow is refused.
+- New `Nx_device.Driver.host_memory` and `Driver.host_programs`, what the host
+  is built from: a few lines describe test devices over the host's memory.
 - **Breaking:** a backend is kernels over arrays: `Nx_backend.S` has one
   function per operation, which writes a destination array that nx
   allocated, and `Nx_backend.make` packs it. `Nx_cpu.backend` is nx.cpu's and

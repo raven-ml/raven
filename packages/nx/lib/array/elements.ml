@@ -229,7 +229,7 @@ let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
   | UInt4 -> fill_nibbles b (v land 0xf)
   | _ ->
       let e = element dt (S.bitsize (B.dtype b) / 8) v in
-      fill_bytes (B.host_address b) (B.nbytes b) e
+      fill_bytes (B.address b) (B.nbytes b) e
 
 (* Gathering *)
 

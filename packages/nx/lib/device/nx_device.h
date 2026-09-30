@@ -21,7 +21,7 @@
    the host addresses, as every host buffer's memory is: its base's memory,
    plus its offset. It reads fields and allocates nothing, so it needs the
    runtime but no rooting, and the address stays valid while [b] is reachable.
-   The fields are those of nx_device.ml's [Buffer.t], [base] and [memory],
+   The fields are those of nx_device.ml's [Buffer.t], [base] and [region],
    whose [host] is [Some] address. */
 static inline void *nx_device_buffer_host(value b) {
   value base = Field(b, 0);
@@ -30,17 +30,17 @@ static inline void *nx_device_buffer_host(value b) {
 }
 
 /* Whether the Nx_device.Buffer.t [b] is live: its memory was not consumed
-   (Nx_device.Buffer.consume) since [b] was made. [base]'s [life] (slot 10) is
+   (Nx_device.Buffer.consume) since [b] was made. [base]'s [life] (slot 9) is
    [Live], an immediate, [Heir] (tag 0) or [Dead] (tag 1). */
 static inline int nx_device_buffer_live(value b) {
-  value life = Field(Field(b, 0), 10);
+  value life = Field(Field(b, 0), 9);
   return Is_long(life) || Tag_val(life) != 1;
 }
 
 /* Why the dead Nx_device.Buffer.t [b] was consumed: [Dead]'s string, valid
    until the next allocation. */
 static inline const char *nx_device_buffer_why(value b) {
-  return String_val(Field(Field(Field(b, 0), 10), 0));
+  return String_val(Field(Field(Field(b, 0), 9), 0));
 }
 
 /* The host clock: nanoseconds of the monotonic clock that

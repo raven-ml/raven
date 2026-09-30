@@ -2848,7 +2848,7 @@ let wrap_tensor : type a b. (a, b) Nx_effect.t -> Tolk.Device.Buffer.t option =
     let dt = Nx_effect.dtype x in
     let host = Nx_effect.read x in
     let ptr =
-      Nativeint.add (HB.host_address host)
+      Nativeint.add (HB.address host)
         (Nativeint.of_int (NV.offset v * ND.itemsize dt))
     in
     Some
@@ -2904,7 +2904,7 @@ let with_host_window host ~off ~len f =
   let w =
     Tolk.Device.Buffer.borrow ~size:len ~dtype:Tolk_uop.Dtype.uint8
       ~source:host
-      (Nativeint.add (HB.host_address host) (Nativeint.of_int off))
+      (Nativeint.add (HB.address host) (Nativeint.of_int off))
   in
   Fun.protect
     ~finally:(fun () -> Tolk.Device.Buffer.deallocate w)
@@ -3371,7 +3371,7 @@ let borrow : type a b.
   let dt = r.r_dtype in
   let item = ND.itemsize dt in
   Option.bind (Result.to_option (HB.borrow Nx_device.host b)) @@ fun host ->
-  let ptr = HB.host_address host in
+  let ptr = HB.address host in
   (* Each window's elements [lo] to [hi] of [host], its buffer's first byte, and
      its view of that buffer. *)
   let span w =
@@ -3652,9 +3652,9 @@ type 'q compiled = {
   cp_captures : Nx_effect.cell array;
       (* the cells of the placed values the program captures, bound or copied: a
          consumed leaf may reach none of them (rule 4) *)
-  cp_host_captures : (nativeint * int) array;
-      (* the host memory of the host values the program captures, as address
-         and bytes: a consumed host leaf may reach none of it *)
+  cp_host_captures : HB.t array;
+      (* the buffers of the host values the program captures: a consumed host
+         leaf may overlap none of them *)
   cp_bound : (Nx_effect.cell * packed) array;
       (* resident captures whose device buffers are this program's constants:
          the values stay reachable while the trace can run, and their cells
@@ -4671,8 +4671,7 @@ let trace_compile (type p q) ~devices:(ds, devs) ~zero_copy ~info ~const_cache
       (List.filter_map
          (fun (_, _, Packed (_, x)) ->
            match x with
-           | Nx_effect.Host a when HB.nbytes a.buffer > 0 ->
-               Some (HB.host_address a.buffer, HB.nbytes a.buffer)
+           | Nx_effect.Host a when HB.nbytes a.buffer > 0 -> Some a.buffer
            | _ -> None)
          st.consts)
   in
@@ -4805,23 +4804,15 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
           it"
          c.cp_names.(i))
   in
-  (* Host memory: whether the [n] bytes at [a] and at [a'] meet. *)
-  let meet (a, n) (a', n') =
-    n > 0 && n' > 0
-    && Nativeint.compare a (Nativeint.add a' (Nativeint.of_int n')) < 0
-    && Nativeint.compare a' (Nativeint.add a (Nativeint.of_int n)) < 0
-  in
-  let memory b = (HB.host_address b, HB.nbytes b) in
   List.iter
     (fun (i, b) ->
-      let m = memory b in
       Array.iteri
         (fun j (Nx.P leaf) ->
           match leaf with
-          | Host a when j <> i && meet m (memory a.buffer) -> share_storage i j
+          | Host a when j <> i && HB.overlaps b a.buffer -> share_storage i j
           | _ -> ())
         leaves;
-      if Array.exists (meet m) c.cp_host_captures then share_capture i)
+      if Array.exists (HB.overlaps b) c.cp_host_captures then share_capture i)
     hosts;
   List.iter
     (fun (i, (cell : Nx_effect.cell)) ->
@@ -4948,7 +4939,7 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
                   let host = Nx_array.Elements.create odt n in
                   let buf =
                     Tolk.Device.Buffer.borrow ~size:n ~dtype:(tolk_dtype odt)
-                      ~source:host (HB.host_address host)
+                      ~source:host (HB.address host)
                   in
                   supply node [ buf ];
                   Hashtbl.add out_hosts tag (Host (odt, host))

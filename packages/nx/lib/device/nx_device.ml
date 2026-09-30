@@ -3,23 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The field order of [memory], [base], [life] and [Buffer.t] up to the fields
+(* The field order of [region], [base], [life] and [Buffer.t] up to the fields
    nx_device.h reads is its C ABI. *)
-type memory = {
+type region = {
   host : nativeint option;
-  device : nativeint;
+  address : nativeint;
   handle : nativeint;
+  nbytes : int;
 }
 
 type signal = { signaled : unit -> int; wait : int -> timeout_ms:int -> bool }
-type allocator = { alloc : int -> memory option; free : memory -> unit }
+type allocator = { alloc : int -> region option; free : region -> unit }
 
 type mapping = {
-  map : nativeint -> int -> (memory, string) result;
-  unmap : memory -> unit;
+  map : nativeint -> int -> (region, string) result;
+  unmap : region -> unit;
 }
 
-type copy = dst:nativeint -> src:nativeint -> int -> int -> unit
+type copy = dst:nativeint -> src:nativeint -> int -> signal:int -> unit
 
 type io = {
   read : src:nativeint -> dst:nativeint -> int -> unit;
@@ -29,6 +30,17 @@ type io = {
 
 type dma = { bus : string; pages : (int * int) list }
 type clock = Host_clock | Device_clock of { hz : int }
+
+type completion =
+  | Poll
+  | Sleep of (int -> unit)
+  | Signal of (timeline:region -> signal)
+
+type host_programs = {
+  load :
+    binary:string -> entry:string -> (nativeint * (unit -> unit), string) result;
+  call : nativeint -> (nativeint * int) array -> int array -> unit;
+}
 
 (* What must stay reachable for as long as a base does. Host memory is the
    bigarray that holds it from its first byte: views of it join that bigarray's
@@ -42,23 +54,25 @@ type t = {
   name : string;
   arch : string;
   machine : t option; (* the host of the device's machine, [None] for a host *)
+  remote : string option; (* for the host of another machine, its address *)
   io : io option; (* for the host of another machine, how it is reached *)
   lock : Mutex.t;
-  alloc : int -> (memory * keep) option;
-  free : memory -> unit;
+  alloc : int -> (region * keep) option;
+  free : region -> unit;
   host_memory : allocator option;
   mapping : mapping option;
-  copy_queue : copy_queue option;
+  copy_queue : queue option;
+  peer : (t -> region -> (region, string) result) option;
   load :
     (binary:string ->
-    name:string ->
+    entry:string ->
     (nativeint * (unit -> unit) option, string) result)
     option;
       (* a program's handle, and how it is released if it can be *)
   call : (nativeint -> (nativeint * int) array -> int array -> unit) option;
-      (* how another machine's host calls its programs *)
+      (* how a host calls its programs *)
   link : (src:buffer -> dst:buffer -> link option) option;
-  dma : (memory -> (dma, string) result) option;
+  dma : (region -> (dma, string) result) option;
   signal : signal option;
   sleep : (int -> unit) option;
   timeout_ms : int Atomic.t;
@@ -66,22 +80,22 @@ type t = {
   finalize : failed:bool -> unit;
   clock : clock;
   resolve : nativeint -> unit;
-  timeline : memory;
+  timeline : region;
       (* [signaled; submitted], then two 16-byte slots of timestamps *)
   timeline_keep : keep;
   last : int Atomic.t; (* the submitted value, which only this module writes *)
   settled : int Atomic.t; (* the latest value a wait saw signaled *)
-  mutable slots : memory option; (* a host's staging memory, once made *)
+  mutable slots : region option; (* a host's staging memory, once made *)
   mutable staging : nativeint option;
       (* the device's address of its host's staging memory, once mapped *)
   peers : (nativeint, (unit -> unit) list) Hashtbl.t;
-      (* by the device address of owned memory, what runs before it is freed *)
+      (* by the address of owned memory, what runs before it is freed *)
   peers_lock : Mutex.t;
   released : base list Atomic.t;
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
-  cache : (int * bool, memory list) Hashtbl.t;
-      (* by size, and whether it is host memory *)
+  cache : (int * bool, region list) Hashtbl.t;
+      (* by size, and whether it is pinned memory *)
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
          work signals *)
@@ -99,10 +113,11 @@ type t = {
   mutable bytes_out : int;
 }
 
-and copy_queue = {
+and queue = {
   copy : copy;
   transfer : t -> copy option;
-  stamp : slot:nativeint -> int -> unit;
+  stamp : slot:nativeint -> signal:int -> unit;
+  clock : clock;
 }
 
 and link = { through : t list; move : src:buffer -> dst:buffer -> unit }
@@ -116,14 +131,13 @@ and buffer = {
 
 and base = {
   owner : t;
-  memory : memory;
-  extent : int; (* bytes of [memory] from its first byte *)
+  memory : region;
   bytes : int; (* of owned memory, 0 when borrowed *)
   pinned : bool; (* allocated by the owner's [host_memory] *)
   borrowed : bool;
   keep : keep;
   source : (base * mapped) option;
-      (* for a borrow, the host memory it maps, and the mapping *)
+      (* for a borrow, the memory it maps, and the mapping *)
   links : links Atomic.t;
   file : file option; (* on the disk, the file *)
   mutable life : life;
@@ -143,9 +157,17 @@ and links = {
          transfer into it that could not be waited for *)
 }
 
-(* A mapping of a host base on a device, shared by the device's borrows of it.
-   [borrows] changes only with the device taken. *)
-and mapped = { on : t; mapped : memory; mutable borrows : int }
+(* A mapping of a base's memory on a device, shared by the device's borrows of
+   it, and how the device releases it once they are unreachable. [borrows]
+   changes only with the device taken. *)
+and mapped = {
+  on : t;
+  mapped : region;
+  skip : int; (* bytes of [mapped] before the memory's first byte *)
+  unmap : region -> unit;
+  mutable borrows : int;
+}
+
 and program = { p_device : t; p_name : string; p_handle : nativeint }
 
 (* A file a disk buffer is over: its memory's handle is the descriptor. Its
@@ -284,7 +306,12 @@ let shared ba = Bigarray.Array1.sub ba 0 (Bigarray.Array1.dim ba)
 
 let heap_memory ba =
   let a = bigarray_address ba in
-  { host = Some a; device = a; handle = 0n }
+  {
+    host = Some a;
+    address = a;
+    handle = 0n;
+    nbytes = Bigarray.Array1.size_in_bytes ba;
+  }
 
 (* Host buffers of at least this many bytes start on a page, so that devices can
    map them: a mapping locks whole pages, which memory of another buffer must
@@ -364,8 +391,9 @@ let timeline_of ~host_alloc (host_memory : allocator option) =
   let check = function
     | Some ({ host = Some _; _ } as m) -> m
     | Some { host = None; _ } ->
-        invalid_arg "Nx_device.make: host memory the host does not address"
-    | None -> failwith "Nx_device.make: no memory for the timeline"
+        invalid_arg
+          "Nx_device.Driver.device: host memory the host does not address"
+    | None -> failwith "Nx_device.Driver.device: no memory for the timeline"
   in
   match (host_memory, host_alloc) with
   | Some (a : allocator), _ -> (check (a.alloc timeline_bytes), Keep ())
@@ -378,9 +406,11 @@ let timeline_of ~host_alloc (host_memory : allocator option) =
       in
       (heap_memory ba, Host ba)
 
-let create ~name ~arch ~machine ~io ~budget ~alloc ~free ~host_memory ~mapping
-    ~copy_queue ~load ~call ~link ~dma ~signal ~sleep ~timeout_ms ~synchronized
-    ~finalize ~clock ~resolve =
+let default_timeout = 30_000
+
+let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
+    ~mapping ~queue ~peer ~load ~call ~link ~dma ~completion ~synchronized
+    ~finalize ~resolve =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
     match (machine, io) with
@@ -393,29 +423,38 @@ let create ~name ~arch ~machine ~io ~budget ~alloc ~free ~host_memory ~mapping
   let words = Option.get timeline.host in
   write_word machine_io words 0L;
   write_word machine_io (Nativeint.add words 8n) 0L;
+  let copy_queue = Option.map (fun queue -> queue ~timeline) queue in
+  let signal, sleep =
+    match completion with
+    | Poll -> (None, None)
+    | Sleep sleep -> (None, Some sleep)
+    | Signal signal -> (Some (signal ~timeline), None)
+  in
   let d =
     {
       id = Atomic.fetch_and_add ids 1;
       name;
       arch;
       machine;
+      remote;
       io;
       lock = Mutex.create ();
       alloc;
       free;
       host_memory;
       mapping;
+      copy_queue;
+      peer;
       load;
       call;
       link;
       dma;
-      copy_queue = Option.map (fun copy_queue -> copy_queue timeline) copy_queue;
-      signal = Option.map (fun signal -> signal timeline) signal;
+      signal;
       sleep;
-      timeout_ms = Atomic.make timeout_ms;
+      timeout_ms = Atomic.make default_timeout;
       synchronized;
       finalize;
-      clock;
+      clock = (match copy_queue with Some q -> q.clock | None -> Host_clock);
       resolve;
       timeline;
       timeline_keep;
@@ -445,36 +484,46 @@ let create ~name ~arch ~machine ~io ~budget ~alloc ~free ~host_memory ~mapping
   d
 
 let host_arch = match Host_arch.architecture with "amd64" -> "x86_64" | a -> a
-let default_timeout_ms = 30_000
+
+(* How the host loads and calls programs: ELF objects linked into its memory. *)
+external call_addresses :
+  nativeint -> (nativeint * int) array -> int array -> unit
+  = "caml_nx_device_call_addresses"
+
+let host_programs =
+  let load =
+    match Host_program.load with
+    | Some load -> load
+    | None -> fun ~binary:_ ~entry:_ -> Error "the host loads no programs"
+  in
+  { load; call = call_addresses }
 
 let host =
   (* Buffer.create takes host memory from the heap, never from [alloc]. *)
   let alloc _ = assert false in
   let load =
     Option.map
-      (fun load ~binary ~name ->
-        Result.map
-          (fun (entry, free) -> (entry, Some free))
-          (load ~binary ~name))
+      (fun load ~binary ~entry ->
+        Result.map (fun (h, free) -> (h, Some free)) (load ~binary ~entry))
       Host_program.load
   in
-  create ~name:"CPU" ~arch:host_arch ~machine:None ~io:None ~budget:max_int
-    ~alloc ~free:ignore ~host_memory:None ~mapping:None ~copy_queue:None ~load
-    ~call:None ~link:None ~dma:None ~signal:None ~sleep:None
-    ~timeout_ms:default_timeout_ms ~synchronized:ignore
+  create ~name:"CPU" ~arch:host_arch ~machine:None ~remote:None ~io:None
+    ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapping:None
+    ~queue:None ~peer:None ~load ~call:None ~link:None ~dma:None
+    ~completion:Poll ~synchronized:ignore
     ~finalize:(fun ~failed:_ -> ())
-    ~clock:Host_clock ~resolve:ignore
+    ~resolve:ignore
 
 (* The disk's buffers are files, which it opens and never allocates. It has no
    processor. *)
 let disk =
   let alloc _ = assert false in
-  create ~name:"DISK" ~arch:"" ~machine:(Some host) ~io:None ~budget:max_int
-    ~alloc ~free:ignore ~host_memory:None ~mapping:None ~copy_queue:None
-    ~load:None ~call:None ~link:None ~dma:None ~signal:None ~sleep:None
-    ~timeout_ms:default_timeout_ms ~synchronized:ignore
+  create ~name:"DISK" ~arch:"" ~machine:(Some host) ~remote:None ~io:None
+    ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapping:None
+    ~queue:None ~peer:None ~load:None ~call:None ~link:None ~dma:None
+    ~completion:Poll ~synchronized:ignore
     ~finalize:(fun ~failed:_ -> ())
-    ~clock:Host_clock ~resolve:ignore
+    ~resolve:ignore
 
 let name d = d.name
 let arch d = d.arch
@@ -518,6 +567,10 @@ let check d =
 let fail d why =
   lose d why;
   raise (Lost (d, Option.get (Atomic.get d.failed)))
+
+(* Runs [f], a callback of [d]'s driver: a [Failure] is a fault, which loses
+   [d]. *)
+let driver d f = try f () with Failure why -> fail d why
 
 (* How long a wait sees the signal word still before it lets the device sleep on
    its interrupts. *)
@@ -581,10 +634,10 @@ let failed d = Atomic.get d.failed
 
 (* A driver error while enqueueing leaves [d]'s queue in an unknown state: like
    a fault, it fails [d]. *)
-let enqueue d f =
+let enqueue d (f : signal:int -> unit) =
   let v = submitted d + 1 in
   (try
-     f v;
+     f ~signal:v;
      commit d v
    with Failure why -> fail d why);
   v
@@ -592,7 +645,7 @@ let enqueue d f =
 (* Timestamp slot [i] of [d]'s timeline memory, as [d]'s work addresses it, and
    the timestamp it holds. *)
 let stamp_slot d i =
-  Nativeint.add d.timeline.device (Nativeint.of_int (16 + (16 * i)))
+  Nativeint.add d.timeline.address (Nativeint.of_int (16 + (16 * i)))
 
 let stamp d i =
   Int64.to_int
@@ -610,7 +663,7 @@ let read_spans d =
         (fun p ->
           if not (Hashtbl.mem seen p.address) then begin
             Hashtbl.add seen p.address ();
-            d.resolve p.address;
+            driver d (fun () -> d.resolve p.address);
             let io = io_of d in
             let start = Int64.to_int (read_word io p.address)
             and stop =
@@ -655,24 +708,39 @@ let mapping_on d base =
   List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
 
 (* The device's address of the host address [a] in the mapping [m]. *)
-let mapped_address (m : memory) a =
-  Nativeint.add m.device (Nativeint.sub a (Option.get m.host))
+let mapped_address (m : region) a =
+  Nativeint.add m.address (Nativeint.sub a (Option.get m.host))
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
 let release d b = push d.released b
 
 (* Frees [memories], each with its function, once no work of [d] can use them.
-   If that work cannot be waited for, the memory is retained: kept with [keep],
-   and never freed or reused, since its state is unknown. [owned] of its bytes
-   came from [d]'s allocators. *)
+   If that work cannot be waited for, or a free faults, which loses [d], the
+   memory not yet freed is retained: kept with [keep], and never freed or
+   reused, since its state is unknown. [owned] memory came from [d]'s
+   allocators, and its bytes count as retained. *)
 let free_all d ~owned ~keep memories =
+  let retain rest =
+    if owned then
+      d.retained <-
+        List.fold_left (fun n (_, (m : region)) -> n + m.nbytes) d.retained rest;
+    d.held <- Keep (rest, keep) :: d.held
+  in
+  let rec go = function
+    | [] -> ()
+    | (free, m) :: tail as rest -> (
+        match free m with
+        | () -> go tail
+        | exception Failure why ->
+            retain rest;
+            fail d why)
+  in
   if memories <> [] then
     match sync d with
-    | () -> List.iter (fun (free, m) -> free m) memories
+    | () -> go memories
     | exception (Lost _ as e) ->
-        d.retained <- d.retained + owned;
-        d.held <- Keep (memories, keep) :: d.held;
+        retain memories;
         raise e
 
 let free_of d ~pinned =
@@ -685,11 +753,11 @@ let fits d n = n <= d.budget - Atomic.get d.allocated - d.cached - d.retained
 (* Runs what other devices that map [m] registered, before [d] frees it: they
    unmap it. Memory one of them could not unmap is retained. [d] is
    synchronized. *)
-let free_mapped d free size (m : memory) =
+let free_mapped d free size (m : region) =
   let peers =
     Mutex.protect d.peers_lock (fun () ->
-        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers m.device) in
-        Hashtbl.remove d.peers m.device;
+        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers m.address) in
+        Hashtbl.remove d.peers m.address;
         l)
   in
   match List.iter (fun f -> f ()) peers with
@@ -702,7 +770,7 @@ let free_mapped d free size (m : memory) =
    is empty. *)
 let release_cache d n =
   if d.cached > 0 && not (fits d n) then begin
-    let freed = ref [] and bytes = ref 0 in
+    let freed = ref [] in
     let keys = Hashtbl.fold (fun key _ acc -> key :: acc) d.cache [] in
     List.iter
       (fun ((size, pinned) as key) ->
@@ -710,7 +778,6 @@ let release_cache d n =
         let rec drop = function
           | m :: ms when not (fits d n) ->
               d.cached <- d.cached - size;
-              bytes := !bytes + size;
               freed := (free, m) :: !freed;
               drop ms
           | ms -> ms
@@ -719,7 +786,7 @@ let release_cache d n =
         | [] -> Hashtbl.remove d.cache key
         | ms -> Hashtbl.replace d.cache key ms)
       keys;
-    free_all d ~owned:!bytes ~keep:() !freed
+    free_all d ~owned:true ~keep:() !freed
   end
 
 (* An unreachable program leaves the cache, unless a load replaced it there, and
@@ -735,10 +802,11 @@ let unload d =
     (Atomic.exchange d.dropped [])
 
 (* Unreachable owned memory returns to the cache without a wait: work is ordered
-   after earlier work on the queue. A mapping is unmapped once the last borrow
-   of it is unreachable and the borrowing device's work is done. Host memory
-   never comes here: it is the heap's, returned when the collector finds its
-   base unreachable. *)
+   after earlier work on the queue. A mapping is released once the last borrow
+   of it is unreachable and the borrowing device's work is done: a mapping of
+   host memory is unmapped, and one of another device's memory stays its
+   driver's until that memory is freed. Host memory never comes here: it is the
+   heap's, returned when the collector finds its base unreachable. *)
 let reclaim d =
   unload d;
   match Atomic.exchange d.released [] with
@@ -772,16 +840,15 @@ let reclaim d =
       (match !emptied with
       | [] -> ()
       | emptied ->
-          let unmap = (Option.get d.mapping).unmap in
-          free_all d ~owned:0 ~keep:bases
-            (List.map (fun (_, m) -> (unmap, m.mapped)) emptied);
-          (* Only once the device's work is done does the host memory leave its
+          free_all d ~owned:false ~keep:bases
+            (List.map (fun (_, m) -> (m.unmap, m.mapped)) emptied);
+          (* Only once the device's work is done does the memory leave its
              reach: a failed wait above keeps the mappings in [maps]. *)
           List.iter
             (fun (src, m) -> update_maps src (List.filter (fun m' -> m' != m)))
             emptied);
-      (* The host memory under the borrows must outlive the wait in [free_all],
-         which releases the runtime. *)
+      (* The memory under the borrows must outlive the wait in [free_all], which
+         releases the runtime. *)
       ignore (Sys.opaque_identity bases);
       release_cache d 0
 
@@ -809,7 +876,17 @@ let rec allocate d n ~pinned ~collected =
             Option.map (fun m -> (m, Keep ())) (a.alloc n)
         | _ -> d.alloc n
       in
-      match if fits d n then alloc n else None with
+      match if fits d n then driver d (fun () -> alloc n) else None with
+      | Some (({ host = None; _ } as m), _)
+        when pinned || Option.is_none d.copy_queue ->
+          (* The host addresses a [Host_visible] device's memory and pinned
+             memory: a region without a host address is a driver's bug. *)
+          (free_of d ~pinned) m;
+          invalid_arg
+            (Printf.sprintf
+               "Nx_device.Driver.device: %s's allocator gave memory the host \
+                does not address"
+               d.name)
       | Some m -> m
       | None when d.cached > 0 ->
           release_cache d max_int;
@@ -885,12 +962,11 @@ module Buffer = struct
 
   (* The bytes of [n] elements of [s], for a new buffer or view. *)
   let checked_nbytes fn s n =
-    if n < 0 then
-      invalid_arg (Printf.sprintf "Nx_device.Buffer.%s: %d elements" fn n);
+    if n < 0 then invalid_arg (Printf.sprintf "Nx_device.%s: %d elements" fn n);
     let size = Nx_dtype.Scalar.bitsize s / 8 in
     if size > 0 && n > max_int / size then
       invalid_arg
-        (Printf.sprintf "Nx_device.Buffer.%s: %d elements of %s overflow" fn n
+        (Printf.sprintf "Nx_device.%s: %d elements of %s overflow" fn n
            (Nx_dtype.Scalar.to_string s));
     nbytes_of s n
 
@@ -907,47 +983,26 @@ module Buffer = struct
 
   let address b =
     live b;
-    b.base.memory.device +! b.offset
+    b.base.memory.address +! b.offset
 
   (* [b]'s address in the address space of its machine's host, if that host
      addresses it. *)
   let hosted b = Option.map (fun a -> a +! b.offset) b.base.memory.host
   let local b = host_of b.base.owner == host
 
-  let host_address b =
-    live b;
-    match hosted b with
-    | Some a when local b -> a
-    | Some _ ->
-        invalid_arg
-          (Printf.sprintf
-             "Nx_device.Buffer.host_address: %s memory is another machine's"
-             b.base.owner.name)
-    | None ->
-        invalid_arg
-          (Printf.sprintf
-             "Nx_device.Buffer.host_address: the host does not address %s \
-              memory"
-             b.base.owner.name)
-
-  let handle b = b.base.memory.handle
-
   (* Raises [Lost] for a lost device that can reach [b]'s memory. *)
   let reachable b =
     live b;
     check_reach b.base
 
-  let offset b = b.offset
-
   (* No byte of it is ever read or written, so the host addresses it. *)
-  let no_memory = { host = Some 0n; device = 0n; handle = 0n }
+  let no_memory = { host = Some 0n; address = 0n; handle = 0n; nbytes = 0 }
 
-  let base ?(bytes = 0) ?(pinned = false) ?source ?file ~borrowed ~keep ~extent
-      d memory =
+  let base ?(bytes = 0) ?(pinned = false) ?source ?file ~borrowed ~keep d memory
+      =
     {
       owner = d;
       memory;
-      extent;
       bytes;
       pinned;
       borrowed;
@@ -959,7 +1014,7 @@ module Buffer = struct
     }
 
   let empty ~borrowed d s n =
-    let base = base ~borrowed ~keep:(Keep ()) ~extent:0 d no_memory in
+    let base = base ~borrowed ~keep:(Keep ()) d no_memory in
     { base; offset = 0; dtype = s; length = n }
 
   (* Host memory takes neither the host nor its release list: its bytes are
@@ -995,9 +1050,9 @@ module Buffer = struct
           or Buffer.create_file"
          fn)
 
-  let create ?host:(pinned = false) d s n =
+  let create ?(pinned = false) d s n =
     if d == disk then not_files "Buffer.create";
-    match checked_nbytes "create" s n with
+    match checked_nbytes "Buffer.create" s n with
     | 0 -> empty ~borrowed:false d s n
     | bytes when d == host ->
         check host;
@@ -1005,8 +1060,7 @@ module Buffer = struct
         let ba = host_heap bytes ~collected:false in
         memory_changed host;
         let base =
-          base ~bytes ~borrowed:false ~keep:(Host ba) ~extent:bytes d
-            (heap_memory ba)
+          base ~bytes ~borrowed:false ~keep:(Host ba) d (heap_memory ba)
         in
         Gc.finalise_last
           (fun () ->
@@ -1023,9 +1077,7 @@ module Buffer = struct
               memory_changed d;
               m)
         in
-        let base =
-          base ~bytes ~pinned ~borrowed:false ~keep ~extent:bytes d memory
-        in
+        let base = base ~bytes ~pinned ~borrowed:false ~keep d memory in
         Gc.finalise (release d) base;
         { base; offset = 0; dtype = s; length = n }
 
@@ -1045,21 +1097,21 @@ module Buffer = struct
           invalid_arg
             "Nx_device.Buffer.of_bigarray: the kind is no storage format"
     in
-    let extent = Bigarray.Array1.size_in_bytes ba in
     (* A host buffer's elements lie at multiples of their size, as every typed
        read of it expects. *)
     let align = component_size (Bigarray.Array1.kind ba) in
     let address = bigarray_address ba in
-    if extent > 0 && Nativeint.rem address (Nativeint.of_int align) <> 0n then
+    if
+      Bigarray.Array1.size_in_bytes ba > 0
+      && Nativeint.rem address (Nativeint.of_int align) <> 0n
+    then
       invalid_arg
         (Printf.sprintf
            "Nx_device.Buffer.of_bigarray: the elements at 0x%nx are not \
             aligned to %d bytes"
            address align);
     let ba = shared ba in
-    let base =
-      base ~borrowed:true ~keep:(Host ba) ~extent host (heap_memory ba)
-    in
+    let base = base ~borrowed:true ~keep:(Host ba) host (heap_memory ba) in
     { base; offset = 0; dtype; length = Bigarray.Array1.dim ba }
 
   let refuse fmt = Printf.ksprintf (fun why -> Error why) fmt
@@ -1083,11 +1135,13 @@ module Buffer = struct
     in
     Result.map
       (fun (fd, size) ->
-        let memory = { host = None; device = 0n; handle = fd } in
+        let memory =
+          { host = None; address = 0n; handle = fd; nbytes = size }
+        in
         let base =
           base ~borrowed:true ~keep:(Keep ())
             ~file:{ path; writable = create; pages = None }
-            ~extent:size disk memory
+            disk memory
         in
         Gc.finalise (release disk) base;
         { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length = size })
@@ -1110,19 +1164,18 @@ module Buffer = struct
         match f.pages with
         | Some base -> Ok base
         | None -> (
-            match file_map b.base.memory.handle b.base.extent with
+            match file_map b.base.memory.handle b.base.memory.nbytes with
             | 0, ba ->
                 let base =
-                  base ~borrowed:true ~keep:(Host ba) ~extent:b.base.extent host
-                    (heap_memory ba)
+                  base ~borrowed:true ~keep:(Host ba) host (heap_memory ba)
                 in
                 f.pages <- Some base;
                 Ok base
             | code, _ -> refuse "%s: %s" f.path (error_message code)))
 
-  (* [d]'s mapping of the host memory [src] from its first byte [first], made by
-     its first borrow and shared by the later ones. *)
-  let share d (mapping : mapping) src first =
+  (* [d]'s mapping of the memory of [src], made by its first borrow with [map]
+     and shared by the later ones, and [skip] bytes into it. *)
+  let share d src ~map ~unmap =
     with_devices [ d ] (fun () ->
         match mapping_on d src with
         | Some m ->
@@ -1130,35 +1183,39 @@ module Buffer = struct
             Ok m
         | None ->
             Result.map
-              (fun mapped ->
-                let m = { on = d; mapped; borrows = 1 } in
+              (fun (mapped, skip) ->
+                let m = { on = d; mapped; skip; unmap; borrows = 1 } in
                 update_maps src (List.cons m);
                 m)
-              (mapping.map first src.extent))
+              (driver d map))
+
+  (* A buffer over the memory of [b] that [m] maps on [d]. *)
+  let borrowed d b m =
+    let base =
+      base ~source:(b.base, m) ~borrowed:true ~keep:(Keep b) d m.mapped
+    in
+    Gc.finalise (release d) base;
+    { base; offset = m.skip + b.offset; dtype = b.dtype; length = b.length }
 
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory
      of another buffer then never shares its pages. *)
   let borrow_host d b =
     let h = host_of d and src = b.base in
-    if not (src.owner == h) then
-      invalid_arg
-        (Printf.sprintf "Nx_device.Buffer.borrow: the buffer is on %s, not %s"
-           src.owner.name h.name);
     let first = Option.get src.memory.host in
     match d.mapping with
     | _ when d == h -> Ok b
     | None -> refuse "%s cannot address host memory" d.name
-    | Some _ when nbytes b = 0 -> Ok (empty ~borrowed:true d b.dtype b.length)
     (* A host buffer nx made starts on a page from [aligned_from] bytes; a
        smaller one is refused wherever it happens to start, so that whether it
        borrows does not depend on the allocator. *)
-    | Some _ when h == host && (not src.borrowed) && src.extent < aligned_from
-      ->
+    | Some _
+      when src.owner == host && (not src.borrowed)
+           && src.memory.nbytes < aligned_from ->
         refuse
           "a host buffer of %d bytes does not start on a page, and %s maps \
            whole pages; host buffers start on one from %d bytes"
-          src.extent d.name aligned_from
+          src.memory.nbytes d.name aligned_from
     (* Another machine's pages are its own; its devices check them. *)
     | Some _ when h == host && Nativeint.rem first (Nativeint.of_int page) <> 0n
       ->
@@ -1167,25 +1224,33 @@ module Buffer = struct
            whole pages; host buffers start on one from %d bytes"
           first d.name aligned_from
     | Some mapping -> (
-        match share d mapping src first with
+        let map () =
+          Result.map
+            (fun (mapped : region) ->
+              ( mapped,
+                Nativeint.to_int (Nativeint.sub first (Option.get mapped.host))
+              ))
+            (mapping.map first src.memory.nbytes)
+        in
+        match share d src ~map ~unmap:mapping.unmap with
         | Error why ->
             refuse "%s cannot map the host memory at 0x%nx: %s" d.name first why
-        | Ok m ->
-            let skip =
-              Nativeint.to_int (Nativeint.sub first (Option.get m.mapped.host))
-            in
-            let base =
-              base ~source:(src, m) ~borrowed:true ~keep:(Keep b)
-                ~extent:(skip + src.extent) d m.mapped
-            in
-            Gc.finalise (release d) base;
-            Ok
-              {
-                base;
-                offset = skip + b.offset;
-                dtype = b.dtype;
-                length = b.length;
-              })
+        | Ok m -> Ok (borrowed d b m))
+
+  (* Another device's memory is mapped by [d]'s driver, which keeps the mapping
+     until that memory is freed. *)
+  let borrow_peer d b =
+    let src = b.base in
+    match d.peer with
+    | None -> refuse "%s cannot address %s memory" d.name src.owner.name
+    | Some peer -> (
+        let map () =
+          Result.map (fun mapped -> (mapped, 0)) (peer src.owner src.memory)
+        in
+        match share d src ~map ~unmap:ignore with
+        | Error why ->
+            refuse "%s cannot map %s memory: %s" d.name src.owner.name why
+        | Ok m -> Ok (borrowed d b m))
 
   (* A file's bytes are borrowed from its pages, by devices that share the
      host's memory. *)
@@ -1199,7 +1264,6 @@ module Buffer = struct
       refuse "byte %d of %s is not aligned to %s's %d bytes" b.offset f.path
         (Nx_dtype.Scalar.to_string b.dtype)
         size
-    else if nbytes b = 0 then Ok (empty ~borrowed:true d b.dtype b.length)
     else
       Result.bind (pages b) (fun pages ->
           (* A device faulting a file's pages in reads a few times slower than
@@ -1207,16 +1271,45 @@ module Buffer = struct
           if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
           borrow_host d { b with base = pages })
 
+  (* [b] over the memory its borrows map, down to memory no borrow holds. *)
+  let rec root b =
+    match b.base.source with
+    | Some (src, m) -> root { b with base = src; offset = b.offset - m.skip }
+    | None -> b
+
+  (* Memory is borrowed by where it lives: the disk's through the file's pages,
+     system memory (the host's, a [Host_visible] device's, and any device's
+     pinned memory) through [d]'s mapping of host memory, and the memory of a
+     [Device_local] device through [d]'s peer mapping, even where a BAR gives it
+     a host address. *)
   let borrow d b =
     live b;
-    if b.base.owner == disk then borrow_file d b else borrow_host d b
+    check d;
+    if b.base.owner == d then Ok b
+    else
+      let r = root b in
+      let o = r.base.owner in
+      if o != disk && host_of o != host_of d then
+        invalid_arg
+          (Printf.sprintf
+             "Nx_device.Buffer.borrow: the buffer is on %s, not on %s's machine"
+             o.name d.name)
+      else if o == d then Ok r
+      else if nbytes b = 0 then Ok (empty ~borrowed:true d b.dtype b.length)
+      else if o == disk then borrow_file d r
+      else if o == host_of d then borrow_host d r
+      else if r.base.pinned || Option.is_none o.copy_queue then
+        if Option.is_none d.machine then
+          refuse "%s borrows no memory of another device" d.name
+        else borrow_host d r
+      else borrow_peer d r
 
   let view b ~offset s n =
     let fail fmt =
       Printf.ksprintf (fun m -> invalid_arg ("Nx_device.Buffer.view: " ^ m)) fmt
     in
     if offset < 0 then fail "negative offset %d" offset;
-    let bytes = checked_nbytes "view" s n in
+    let bytes = checked_nbytes "Buffer.view" s n in
     if offset > nbytes b - bytes then
       fail "%d bytes at offset %d do not fit in %d bytes" bytes offset
         (nbytes b);
@@ -1231,7 +1324,30 @@ module Buffer = struct
         size;
     { b with offset = b.offset + offset; dtype = s; length = n }
 
-  let spans b = b.offset = 0 && nbytes b = b.base.extent
+  let spans b = b.offset = 0 && nbytes b = b.base.memory.nbytes
+
+  (* The address space memory is addressed in: its machine's host's when the
+     host addresses it, its device's otherwise, and its file's on the disk. *)
+  type space = In_host of int | In_device of int | In_file of nativeint
+
+  (* Where [b]'s bytes lie, below its borrows: a space and the first byte. *)
+  let place b =
+    let r = root b in
+    let m = r.base.memory and o = r.base.owner in
+    if o == disk then (In_file m.handle, Nativeint.of_int r.offset)
+    else
+      match m.host with
+      | Some a -> (In_host (host_of o).id, a +! r.offset)
+      | None -> (In_device o.id, m.address +! r.offset)
+
+  let overlaps b b' =
+    let n = nbytes b and n' = nbytes b' in
+    n > 0 && n' > 0
+    &&
+    let s, a = place b and s', a' = place b' in
+    s = s'
+    && Nativeint.compare a (a' +! n') < 0
+    && Nativeint.compare a' (a +! n) < 0
 
   let consume ~why b =
     live b;
@@ -1259,7 +1375,7 @@ module Buffer = struct
     let align = component_size k in
     if bytes mod size <> 0 then
       fail "%d bytes are not a whole number of %d-byte elements" bytes size;
-    if Nativeint.rem (host_address buf) (Nativeint.of_int align) <> 0n then
+    if Nativeint.rem (address buf) (Nativeint.of_int align) <> 0n then
       fail "the buffer is not aligned to %d bytes" align;
     if bytes = 0 then Bigarray.Array1.create k Bigarray.c_layout 0
     else
@@ -1297,7 +1413,7 @@ module Buffer = struct
       match h.slots with
       | Some m -> Option.get m.host
       | None -> (
-          match h.alloc (2 * chunk) with
+          match driver h (fun () -> h.alloc (2 * chunk)) with
           | Some (m, _) ->
               h.slots <- Some m;
               Option.get m.host
@@ -1434,24 +1550,27 @@ module Buffer = struct
     update_links base (fun l -> { l with reached = e :: l.reached })
 
   (* Runs [f] with [b]'s address for [e]'s work, if [e] addresses [b]'s memory:
-     its own, host memory it maps, or host memory of another device, which [e]
-     maps for the copy alone. If [f] raises, [e] may still use that memory: it
-     stays mapped and in [e]'s reach. *)
+     its own, memory it maps, or pinned memory of another device, which [e] maps
+     for the copy alone. If [f] raises, [e] may still use that memory: it stays
+     mapped and in [e]'s reach. *)
   let with_address e b f =
     if b.base.owner == e then f (Some (address b))
     else
       match mapping_on e b.base with
-      | Some m -> f (Some (mapped_address m.mapped (Option.get (hosted b))))
+      | Some m -> f (Some (m.mapped.address +! (m.skip + b.offset)))
       | None when b.base.pinned -> (
           let mapping = Option.get e.mapping in
           let first = Option.get b.base.memory.host in
-          match mapping.map first b.base.extent with
+          match driver e (fun () -> mapping.map first b.base.memory.nbytes) with
           | Error _ -> f None
           | Ok m -> (
               match f (Some (mapped_address m (Option.get (hosted b)))) with
-              | r ->
-                  mapping.unmap m;
-                  r
+              | r -> (
+                  match mapping.unmap m with
+                  | () -> r
+                  | exception Failure why ->
+                      add_reached b.base e;
+                      fail e why)
               | exception e' ->
                   add_reached b.base e;
                   raise e'))
@@ -1703,11 +1822,7 @@ module Buffer = struct
     in
     let n = nbytes src in
     if n <> nbytes dst then fail "%d bytes into %d bytes" n (nbytes dst);
-    if
-      n > 0 && src.base == dst.base
-      && src.offset < dst.offset + n
-      && dst.offset < src.offset + n
-    then fail "the source and destination overlap";
+    if overlaps src dst then fail "the source and destination overlap";
     let s = device src and d = device dst in
     if (s == disk || d == disk) && not (local src && local dst) then
       fail "DISK copies to and from the devices of this machine";
@@ -1737,27 +1852,7 @@ module Buffer = struct
     ignore (Sys.opaque_identity src);
     ignore (Sys.opaque_identity dst)
 
-  (* Low-level *)
-
-  let dma b =
-    let fail why =
-      invalid_arg (Printf.sprintf "Nx_device.Buffer.dma: %s" why)
-    in
-    let d = device b in
-    match d.dma with
-    | None ->
-        fail (Printf.sprintf "%s does not describe its memory to others" d.name)
-    | Some f -> (
-        match f b.base.memory with Ok dma -> dma | Error why -> fail why)
-
-  let on_free b f =
-    if b.base.borrowed || b.base.owner == host || b.base.bytes = 0 then
-      invalid_arg
-        "Nx_device.Buffer.on_free: the memory is not one a device allocated";
-    let d = device b and key = b.base.memory.device in
-    Mutex.protect d.peers_lock (fun () ->
-        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers key) in
-        Hashtbl.replace d.peers key (f :: l))
+  let offset b = b.offset
 end
 
 (* Programs *)
@@ -1797,7 +1892,7 @@ module Program = struct
             match cached d (binary, name) with
             | Some p -> Ok p
             | None -> (
-                match load ~binary ~name with
+                match load ~binary ~entry:name with
                 | Ok loaded -> Ok (add d ~binary ~name loaded)
                 | Error why -> Error (d.name ^ ": " ^ why)
                 | exception Failure why -> fail d why))
@@ -1909,7 +2004,7 @@ let submit d ~touches f =
 let timeline d =
   let owner = if Option.is_some d.host_memory then d else host_of d in
   let base =
-    Buffer.base ~borrowed:true ~keep:d.timeline_keep ~extent:16 owner d.timeline
+    Buffer.base ~borrowed:true ~keep:d.timeline_keep owner d.timeline
   in
   { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 2 }
 
@@ -2142,69 +2237,190 @@ module Profile = struct
     output_string oc "\n]}\n"
 end
 
-(* Vendor runtimes *)
+(* Drivers *)
 
-let refuse fmt =
-  Printf.ksprintf (fun m -> invalid_arg ("Nx_device.make: " ^ m)) fmt
+module Driver = struct
+  module Region = struct
+    type t = region
 
-let check_make ~budget ~timeout_ms =
-  if budget < 0 then refuse "budget %d < 0" budget;
-  if timeout_ms <= 0 then refuse "timeout %d ms" timeout_ms
+    let v ?host ?(handle = 0n) address nbytes =
+      if nbytes < 0 then
+        invalid_arg
+          (Printf.sprintf "Nx_device.Driver.Region.v: %d bytes" nbytes);
+      { host; address; handle; nbytes }
 
-let make ~name ~arch ~budget ~(memory : allocator) ?(host = host) ?host_memory
-    ?mapping ?copy_queue ?load ?link ?dma ?signal ?sleep
-    ?(timeout_ms = default_timeout_ms) ?(synchronized = ignore)
-    ?(finalize = fun ~failed:_ -> ()) ?(clock = Host_clock) ?(resolve = ignore)
-    () =
-  check_make ~budget ~timeout_ms;
-  if host.machine <> None then refuse "%s is not a host" host.name;
-  if Option.is_some copy_queue && Option.is_none mapping then
-    refuse "%s has a copy queue but maps no host memory" name;
-  if Option.is_some sleep && Option.is_some signal then
-    refuse "%s sleeps on the signal word but signals in its own way" name;
-  (match clock with
-  | Device_clock { hz } when hz <= 0 -> refuse "a clock of %d Hz" hz
-  | Device_clock _ when Option.is_none copy_queue ->
-      refuse "%s has a clock of its own but no copy queue to stamp it" name
-  | Host_clock | Device_clock _ -> ());
-  let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
-  let load =
-    Option.map
-      (fun load ~binary ~name ->
-        Result.map (fun handle -> (handle, None)) (load ~binary ~name))
-      load
-  in
-  create ~name ~arch ~machine:(Some host) ~io:None ~budget ~alloc
-    ~free:memory.free ~host_memory ~mapping ~copy_queue ~load ~call:None ~link
-    ~dma ~signal ~sleep ~timeout_ms ~synchronized ~finalize ~clock ~resolve
+    let address (r : t) = r.address
+    let host_address (r : t) = r.host
+    let handle (r : t) = r.handle
+    let nbytes (r : t) = r.nbytes
+    let of_buffer (b : Buffer.t) = b.base.memory
+  end
 
-let make_host ~name ~arch ~budget ~(memory : allocator) ~io ?load ?call
-    ?(timeout_ms = default_timeout_ms) ?(synchronized = ignore)
-    ?(finalize = fun ~failed:_ -> ()) () =
-  check_make ~budget ~timeout_ms;
-  if Option.is_some load <> Option.is_some call then
-    refuse "%s loads programs it cannot call, or calls programs it cannot load"
-      name;
-  let alloc n = Option.map (fun m -> (m, Keep ())) (memory.alloc n) in
-  let load =
-    Option.map
-      (fun load ~binary ~name ->
-        Result.map
-          (fun (handle, unload) -> (handle, Some unload))
-          (load ~binary ~name))
-      load
-  in
-  create ~name ~arch ~machine:None ~io:(Some io) ~budget ~alloc
-    ~free:memory.free ~host_memory:None ~mapping:None ~copy_queue:None ~load
-    ~call ~link:None ~dma:None ~signal:None ~sleep:None ~timeout_ms
-    ~synchronized ~finalize ~clock:Host_clock ~resolve:ignore
+  type nonrec allocator = allocator = {
+    alloc : int -> region option;
+    free : region -> unit;
+  }
 
-let external_buffer d m s n =
-  if d == disk then Buffer.not_files "external_buffer";
-  if d == host then
-    invalid_arg
-      "Nx_device.external_buffer: CPU memory is borrowed with \
-       Buffer.of_bigarray";
-  let bytes = Buffer.checked_nbytes "external_buffer" s n in
-  let base = Buffer.base ~borrowed:true ~keep:(Keep ()) ~extent:bytes d m in
-  { Buffer.base; offset = 0; dtype = s; length = n }
+  type nonrec mapping = mapping = {
+    map : nativeint -> int -> (region, string) result;
+    unmap : region -> unit;
+  }
+
+  type nonrec copy = copy
+  type nonrec clock = clock = Host_clock | Device_clock of { hz : int }
+
+  type nonrec queue = queue = {
+    copy : copy;
+    transfer : t -> copy option;
+    stamp : slot:nativeint -> signal:int -> unit;
+    clock : clock;
+  }
+
+  type memory =
+    | Host_visible of { memory : allocator; mapping : mapping option }
+    | Device_local of {
+        memory : allocator;
+        host_memory : allocator;
+        mapping : mapping;
+        queue : timeline:region -> queue;
+      }
+
+  type nonrec signal = signal = {
+    signaled : unit -> int;
+    wait : int -> timeout_ms:int -> bool;
+  }
+
+  type nonrec completion = completion =
+    | Poll
+    | Sleep of (int -> unit)
+    | Signal of (timeline:region -> signal)
+
+  type nonrec dma = dma = { bus : string; pages : (int * int) list }
+
+  type nonrec link = link = {
+    through : t list;
+    move : src:buffer -> dst:buffer -> unit;
+  }
+
+  type nonrec io = io = {
+    read : src:nativeint -> dst:nativeint -> int -> unit;
+    write : dst:nativeint -> src:nativeint -> int -> unit;
+    copy : dst:nativeint -> src:nativeint -> int -> unit;
+  }
+
+  type nonrec host_programs = host_programs = {
+    load :
+      binary:string ->
+      entry:string ->
+      (nativeint * (unit -> unit), string) result;
+    call : nativeint -> (nativeint * int) array -> int array -> unit;
+  }
+
+  let default_timeout = default_timeout
+
+  (* The host's heap: its regions keep their bigarrays until they are freed. *)
+  let host_memory =
+    let held = Hashtbl.create 16 and lock = Mutex.create () in
+    let alloc n =
+      match heap n with
+      | ba ->
+          let r = heap_memory ba in
+          Mutex.protect lock (fun () -> Hashtbl.replace held r.address ba);
+          Some r
+      | exception Stdlib.Out_of_memory -> None
+    in
+    let free (r : region) =
+      Mutex.protect lock (fun () -> Hashtbl.remove held r.address)
+    in
+    { alloc; free }
+
+  let host_programs = host_programs
+
+  let refuse fn fmt =
+    Printf.ksprintf
+      (fun m -> invalid_arg (Printf.sprintf "Nx_device.Driver.%s: %s" fn m))
+      fmt
+
+  let owned (a : allocator) n = Option.map (fun m -> (m, Keep ())) (a.alloc n)
+
+  let compose ?(host = host) local =
+    match host.remote with Some a -> local ^ "@" ^ a | None -> local
+
+  let name = compose
+
+  let device ~name ~arch ~budget ?(host = host) ?(completion = Poll) ?load ?peer
+      ?link ?dma ?(resolve = ignore) ?(synchronized = ignore)
+      ?(finalize = fun ~failed:_ -> ()) memory =
+    if budget < 0 then refuse "device" "budget %d < 0" budget;
+    if Option.is_some host.machine then
+      refuse "device" "%s is not a host" host.name;
+    let memory, host_memory, mapping, queue =
+      match memory with
+      | Host_visible { memory; mapping } -> (memory, None, mapping, None)
+      | Device_local { memory; host_memory; mapping; queue } ->
+          (memory, Some host_memory, Some mapping, Some queue)
+    in
+    let queue =
+      Option.map
+        (fun queue ~timeline ->
+          let q = queue ~timeline in
+          (match q.clock with
+          | Device_clock { hz } when hz <= 0 ->
+              refuse "device" "a clock of %d Hz" hz
+          | Host_clock | Device_clock _ -> ());
+          q)
+        queue
+    in
+    let load =
+      Option.map
+        (fun load ~binary ~entry ->
+          Result.map (fun handle -> (handle, None)) (load ~binary ~entry))
+        load
+    in
+    create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
+      ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
+      ~mapping ~queue ~peer ~load ~call:None ~link ~dma ~completion
+      ~synchronized ~finalize ~resolve
+
+  let buffer d (r : region) s n =
+    if d == disk then Buffer.not_files "Driver.buffer";
+    if d == host then
+      refuse "buffer" "CPU memory is borrowed with Buffer.of_bigarray";
+    let bytes = Buffer.checked_nbytes "Driver.buffer" s n in
+    if bytes > r.nbytes then
+      refuse "buffer" "%d bytes do not fit in a region of %d" bytes r.nbytes;
+    let base = Buffer.base ~borrowed:true ~keep:(Keep ()) d r in
+    { Buffer.base; offset = 0; dtype = s; length = n }
+
+  let dma (b : Buffer.t) =
+    let d = b.base.owner in
+    match d.dma with
+    | None -> Error (d.name ^ " does not describe its memory to others")
+    | Some f -> driver d (fun () -> f b.base.memory)
+
+  let on_free (b : Buffer.t) f =
+    if b.base.borrowed || b.base.owner == host || b.base.bytes = 0 then
+      refuse "on_free" "the memory is not one a device allocated";
+    let d = b.base.owner and key = b.base.memory.address in
+    Mutex.protect d.peers_lock (fun () ->
+        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers key) in
+        Hashtbl.replace d.peers key (f :: l))
+
+  (* Last: it shadows the host. *)
+  let host ~address ~arch ?programs ?(synchronized = ignore)
+      ?(finalize = fun ~failed:_ -> ()) ~memory io =
+    let load =
+      Option.map
+        (fun p ~binary ~entry ->
+          Result.map
+            (fun (handle, unload) -> (handle, Some unload))
+            (p.load ~binary ~entry))
+        programs
+    in
+    create ~name:("CPU@" ^ address) ~arch ~machine:None ~remote:(Some address)
+      ~io:(Some io) ~budget:max_int ~alloc:(owned memory) ~free:memory.free
+      ~host_memory:None ~mapping:None ~queue:None ~peer:None ~load
+      ~call:(Option.map (fun p -> p.call) programs)
+      ~link:None ~dma:None ~completion:Poll ~synchronized ~finalize
+      ~resolve:ignore
+end

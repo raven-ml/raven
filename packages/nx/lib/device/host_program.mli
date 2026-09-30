@@ -6,13 +6,13 @@
 (** Host programs: ELF relocatable objects linked into executable memory. *)
 
 val load :
-  (binary:string -> name:string -> (nativeint * (unit -> unit), string) result)
+  (binary:string -> entry:string -> (nativeint * (unit -> unit), string) result)
   option
 (** [load] is [None] on a machine other than x86_64 and arm64. Otherwise
-    [load ~binary ~name] links the ELF relocatable object [binary] into new
-    executable memory and is the address of its symbol [name], with the function
-    that frees that memory.
+    [load ~binary ~entry] links the ELF relocatable object [binary] into new
+    executable memory and is the address of its symbol [entry], with the
+    function that frees that memory.
 
     [Error why] if [binary] is not an object for the host's machine, has no
-    symbol [name], has writable data, refers to a symbol that no library of the
+    symbol [entry], has writable data, refers to a symbol that no library of the
     process defines, or has a relocation that cannot be applied. *)

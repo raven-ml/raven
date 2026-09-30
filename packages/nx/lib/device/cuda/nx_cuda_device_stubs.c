@@ -191,21 +191,24 @@ static CUresult pop(CUresult status) {
 #define Ptr_val(v) ((void *)Nativeint_val(v))
 #define Dptr_val(v) ((CUdeviceptr)(uintptr_t)Nativeint_val(v))
 
-/* [Some { host; device; handle }]. */
-static value memory(intnat host, int has_host, intnat device, intnat handle) {
+/* [Some address]. */
+static value some_address(intnat a) {
   CAMLparam0();
-  CAMLlocal3(m, v, h);
-  m = caml_alloc_tuple(3);
-  if (has_host) {
-    v = caml_copy_nativeint(host);
-    h = caml_alloc_some(v);
-  } else h = Val_none;
-  Store_field(m, 0, h);
-  v = caml_copy_nativeint(device);
-  Store_field(m, 1, v);
-  v = caml_copy_nativeint(handle);
-  Store_field(m, 2, v);
-  CAMLreturn(caml_alloc_some(m));
+  CAMLlocal1(v);
+  v = caml_copy_nativeint(a);
+  CAMLreturn(caml_alloc_some(v));
+}
+
+/* [Some (host, device)]. */
+static value some_addresses(intnat host, intnat device) {
+  CAMLparam0();
+  CAMLlocal3(pair, h, d);
+  h = caml_copy_nativeint(host);
+  d = caml_copy_nativeint(device);
+  pair = caml_alloc_tuple(2);
+  Store_field(pair, 0, h);
+  Store_field(pair, 1, d);
+  CAMLreturn(caml_alloc_some(pair));
 }
 
 /* Devices */
@@ -299,7 +302,7 @@ value caml_nx_cuda_alloc(value v_ctx, value v_size) {
   caml_acquire_runtime_system();
   if (status == CUDA_ERROR_OUT_OF_MEMORY) CAMLreturn(Val_none);
   check(status);
-  CAMLreturn(memory(0, 0, (intnat)d, (intnat)d));
+  CAMLreturn(some_address((intnat)d));
 }
 
 value caml_nx_cuda_free(value v_ctx, value v_ptr) {
@@ -333,7 +336,7 @@ value caml_nx_cuda_host_alloc(value v_ctx, value v_size) {
   caml_acquire_runtime_system();
   if (status == CUDA_ERROR_OUT_OF_MEMORY) CAMLreturn(Val_none);
   check(status);
-  CAMLreturn(memory((intnat)p, 1, (intnat)d, (intnat)p));
+  CAMLreturn(some_addresses((intnat)p, (intnat)d));
 }
 
 value caml_nx_cuda_host_free(value v_ctx, value v_ptr) {

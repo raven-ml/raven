@@ -6,6 +6,7 @@
 module Remote = Nx_device_support.Remote
 module Remote_server = Nx_device_support.Remote_server
 module Mmio = Nx_device_support.Mmio
+module Driver = Nx_device.Driver
 
 let default_port = 6667
 
@@ -13,28 +14,28 @@ let default_port = 6667
 let lock = Mutex.create ()
 let hosts : (string * int, Nx_device.t * Remote.t) Hashtbl.t = Hashtbl.create 4
 
-let make r ~timeout_ms =
+let make r =
   let memory =
     {
-      Nx_device.alloc =
+      Driver.alloc =
         (fun n ->
           Option.map
-            (fun a -> { Nx_device.host = Some a; device = a; handle = a })
+            (fun a -> Driver.Region.v ~host:a ~handle:a a n)
             (Remote.alloc r n));
-      free = (fun m -> Remote.free r m.device);
+      free = (fun m -> Remote.free r (Driver.Region.address m));
     }
   in
   let io =
     {
-      Nx_device.read = Remote.read r;
+      Driver.read = Remote.read r;
       write = Remote.write r;
       copy = Remote.copy r;
     }
   in
   (* A program is gone with a failed connection: the server dropped it. A
      program the server refuses leaves the connection usable. *)
-  let load ~binary ~name =
-    match Remote.load r ~binary ~name with
+  let load ~binary ~entry =
+    match Remote.load r ~binary ~name:entry with
     | id ->
         Ok
           ( Nativeint.of_int id,
@@ -44,14 +45,17 @@ let make r ~timeout_ms =
   let call h buffers values =
     Remote.call r (Nativeint.to_int h) buffers values
   in
-  Nx_device.make_host
-    ~name:("CPU@" ^ Remote.name r)
-    ~arch:(Remote.arch r) ~budget:max_int ~memory ~io ~load ~call ~timeout_ms
+  Driver.host ~address:(Remote.name r) ~arch:(Remote.arch r)
+    ~programs:{ load; call }
     ~synchronized:(fun () -> Remote.ping r)
     ~finalize:(fun ~failed:_ -> Remote.close r)
-    ()
+    ~memory io
 
-let connect ?(port = default_port) ?(timeout_ms = 30_000) ~key host =
+let connect ?(port = default_port) ?(timeout_ms = Driver.default_timeout) ~key
+    host =
+  if timeout_ms <= 0 then
+    invalid_arg
+      (Printf.sprintf "Nx_remote_device.connect: timeout %d ms" timeout_ms);
   Mutex.protect lock (fun () ->
       match Hashtbl.find_opt hosts (host, port) with
       | Some (d, _) -> Ok d
@@ -59,7 +63,8 @@ let connect ?(port = default_port) ?(timeout_ms = 30_000) ~key host =
           match Remote.connect ~timeout_ms ~key host port with
           | exception Failure why -> Error why
           | r ->
-              let d = make r ~timeout_ms in
+              let d = make r in
+              Nx_device.set_timeout d timeout_ms;
               Hashtbl.replace hosts (host, port) (d, r);
               Ok d))
 
@@ -68,26 +73,31 @@ let connect ?(port = default_port) ?(timeout_ms = 30_000) ~key host =
 let programs () =
   let table = Hashtbl.create 16 and next = Atomic.make 0 in
   let lock = Mutex.create () in
+  let host = Driver.host_programs in
   let load ~binary ~name =
-    match Nx_device.Program.load Nx_device.host ~binary ~name with
+    match host.load ~binary ~entry:name with
     | Error why -> failwith why
-    | Ok p ->
+    | Ok loaded ->
         let id = Atomic.fetch_and_add next 1 in
-        Mutex.protect lock (fun () -> Hashtbl.replace table id p);
+        Mutex.protect lock (fun () -> Hashtbl.replace table id loaded);
         id
   in
   let call id buffers values =
     match Mutex.protect lock (fun () -> Hashtbl.find_opt table id) with
     | None -> failwith (Printf.sprintf "no program %d" id)
-    | Some p ->
-        let buffers =
-          Array.map
-            (fun m -> Nx_device.Buffer.of_bigarray (Mmio.bigarray m))
-            buffers
-        in
-        Nx_device.Program.call p buffers values
+    | Some (handle, _) ->
+        host.call handle
+          (Array.map (fun m -> (Mmio.address m, Mmio.length m)) buffers)
+          values
   in
-  let unload id = Mutex.protect lock (fun () -> Hashtbl.remove table id) in
+  let unload id =
+    Option.iter
+      (fun (_, free) -> free ())
+      (Mutex.protect lock (fun () ->
+           let loaded = Hashtbl.find_opt table id in
+           Hashtbl.remove table id;
+           loaded))
+  in
   { Remote_server.load; call; unload }
 
 let listen ~key addr = Remote_server.listen ~key ~programs:(programs ()) addr

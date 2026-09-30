@@ -13,8 +13,9 @@
     directly from and to host memory that the GPU addresses, and through the
     host's staging memory from and to other host memory. Host memory that the
     GPU addresses is page-locked:
-    - {!Nx_device.Buffer.create}[ ~host:true] allocates it, and it counts in the
-      device's budget, which defaults to the GPU's memory size;
+    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, not
+      write-combined, so that it is coherent for the host and the GPU, and it
+      counts in the device's budget, which defaults to the GPU's memory size;
     - {!Nx_device.Buffer.borrow} registers host memory, whole pages of it, for
       every CUDA device at once, and unregisters it when the last device's
       borrows of it are unreachable. It counts in no budget. The memory must be
@@ -27,8 +28,9 @@
     memory operations and unified addressing, on every platform, Windows
     included. There is no fallback.
 
-    {b Timestamps} are readings of the host clock ({!Nx_device.Host_clock}): for
-    the runtime's profiles, the copy stream runs a host function that reads it.
+    {b Timestamps} are readings of the host clock
+    ({!Nx_device.Driver.Host_clock}): for the runtime's profiles, the copy
+    stream runs a host function that reads it.
 
     {b Programs} are functions of CUDA modules: cubins, fatbins, or PTX, which
     the driver compiles when it loads it.
@@ -77,10 +79,10 @@ val of_address :
 (** [of_address d a s n] is a borrowed buffer of [n] elements of format [s] at
     device address [a] of [d], without a copy: memory that another library
     allocated on [d]'s primary context. It is a view, at [a], of the whole
-    allocation under [a], whose start is its {!Nx_device.Buffer.handle}. Nothing
-    frees it: its owner keeps it allocated for as long as the buffer and its
-    views are reachable. The host addresses it when the allocation is
-    page-locked host memory.
+    allocation under [a], whose start is its region's handle
+    ({!Nx_device.Driver.Region.handle}). Nothing frees it: its owner keeps it
+    allocated for as long as the buffer and its views are reachable. The host
+    addresses it when the allocation is page-locked host memory.
 
     Raises [Invalid_argument] if [d] is not a CUDA device, if the driver knows
     no memory at [a] or it is memory of another context, or as

@@ -20,6 +20,13 @@ module S = Nx_dtype.Scalar
 
 let mib = 1 lsl 20
 
+(* The host address of [b]'s first byte, if the host addresses [b]'s memory. *)
+let hosted b =
+  let r = Nx_device.Driver.Region.of_buffer b in
+  Option.map
+    (fun a -> Nativeint.add a (Nativeint.of_int (B.offset b)))
+    (Nx_device.Driver.Region.host_address r)
+
 (* [d]'s borrow of [b], which it maps. *)
 let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
 
@@ -116,15 +123,14 @@ let test_memory () =
   let n = (3 * mib) + 17 in
   let src = fill_host n (fun i -> i * 7) in
   let v = B.create d S.UInt8 n in
-  raises_match (Exn.invalid_arg ~substring:"host does not address") (fun () ->
-      B.host_address v);
+  equal ~msg:"VRAM the host does not address" (option nativeint) None (hosted v);
   equal ~msg:"into VRAM directly from aligned host memory" int 1
     (steps d (fun () -> B.copy ~src ~dst:v));
   let back = B.create Nx_device.host S.UInt8 n in
   equal ~msg:"out" int 1 (steps d (fun () -> B.copy ~src:v ~dst:back));
   is_true ~msg:"round trip" (same_bytes src back);
-  let pinned = B.create ~host:true d S.UInt8 n in
-  is_true ~msg:"host memory the host addresses" (B.host_address pinned <> 0n);
+  let pinned = B.create ~pinned:true d S.UInt8 n in
+  is_true ~msg:"pinned memory the host addresses" (hosted pinned <> None);
   equal ~msg:"VRAM to host memory of the GPU" int 1
     (steps d (fun () -> B.copy ~src:v ~dst:pinned));
   is_true ~msg:"its bytes" (same_bytes src (to_host pinned));
@@ -213,7 +219,7 @@ let test_peer () =
     (steps d1 (fun () -> B.copy ~src:b ~dst:a));
   is_true ~msg:"the second GPU into the first" (same_bytes src' (to_host a));
   B.copy ~src ~dst:a;
-  let h1 = B.create ~host:true d1 S.UInt8 n in
+  let h1 = B.create ~pinned:true d1 S.UInt8 n in
   let locked = locked_kib () in
   B.copy ~src:a ~dst:h1;
   equal ~msg:"the other GPU's host memory stays locked" int locked
@@ -221,7 +227,7 @@ let test_peer () =
   let back = B.create Nx_device.host S.UInt8 n in
   B.copy ~src:h1 ~dst:back;
   is_true ~msg:"into the other GPU's host memory" (same_bytes src back);
-  let h0 = B.create ~host:true d0 S.UInt8 n in
+  let h0 = B.create ~pinned:true d0 S.UInt8 n in
   B.copy ~src:src' ~dst:h0;
   B.copy ~src:h0 ~dst:b;
   is_true ~msg:"out of the other GPU's host memory"
@@ -494,8 +500,8 @@ let test_coherence () =
   let d = device () in
   let n = (2 * mib) + 4099 in
   let written = B.create Nx_device.host S.UInt8 n in
-  let h1 = B.create ~host:true d S.UInt8 n
-  and h2 = B.create ~host:true d S.UInt8 n in
+  let h1 = B.create ~pinned:true d S.UInt8 n
+  and h2 = B.create ~pinned:true d S.UInt8 n in
   let lent1 = B.create Nx_device.host S.UInt8 n
   and lent2 = B.create Nx_device.host S.UInt8 n in
   let b1 = borrow d lent1 and b2 = borrow d lent2 in

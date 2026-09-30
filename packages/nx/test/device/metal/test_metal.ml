@@ -147,7 +147,7 @@ let memory =
           and s0 = Nx_device.stats metal in
           write b bytes;
           equal string bytes (read b);
-          if B.nbytes b > 0 then not_equal nativeint 0n (B.host_address b);
+          if B.nbytes b > 0 then not_equal nativeint 0n (B.address b);
           let d = Nx_device.Stats.diff s0 (Nx_device.stats metal) in
           equal (pair int int)
             (B.nbytes b, B.nbytes b)
@@ -220,9 +220,10 @@ let memory =
          residency set where Metal has one" (fun () ->
           let set = (Nx_metal_device.handles metal).residency_set in
           let resident b =
+            let buffer = Nx_device.Driver.Region.(handle (of_buffer b)) in
             match set with
-            | Some set -> contains set (B.handle b)
-            | None -> Array.mem (B.handle b) (Nx_metal_device.resources metal)
+            | Some set -> contains set buffer
+            | None -> Array.mem buffer (Nx_metal_device.resources metal)
           in
           let held () =
             Gc.full_major ();
@@ -349,7 +350,7 @@ let dispatch_profile =
                 dispatch h.queue h.event h.fence
                   (Nx_metal_device.resources metal)
                   (Nx_device.Program.handle p)
-                  (B.address out) 64 v (B.host_address stamps));
+                  (B.address out) 64 v (B.address stamps));
             P.record metal ~lane:"compute" ~name:"twice" stamps;
             Nx_device.synchronize metal;
             after := P.now ())

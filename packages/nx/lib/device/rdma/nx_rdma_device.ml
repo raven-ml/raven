@@ -4,6 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 module B = Nx_device.Buffer
+module Driver = Nx_device.Driver
+module Region = Driver.Region
 module Mmio = Nx_device_support.Mmio
 module Pci = Nx_device_support.Pci
 module Remote = Nx_device_support.Remote
@@ -61,8 +63,8 @@ let closest host bus =
 (* The region of [n] over the allocation [b] lies in, registered at its first
    use at the allocation's device address, and deregistered when its device
    frees it. [n] is locked. *)
-let key n (b : B.t) (dma : Nx_device.dma) =
-  let alloc = Nativeint.to_int (B.address b) - B.offset b in
+let key n (b : B.t) (dma : Driver.dma) =
+  let alloc = Nativeint.to_int (Region.address (Region.of_buffer b)) in
   let owner = Nx_device.name (B.device b) in
   match Hashtbl.find_opt n.keys (owner, alloc) with
   | Some k -> k
@@ -75,7 +77,7 @@ let key n (b : B.t) (dma : Nx_device.dma) =
           ~size ~log_page:log ~va:alloc
       in
       Hashtbl.replace n.keys (owner, alloc) k;
-      B.on_free b (fun () ->
+      Driver.on_free b (fun () ->
           Mutex.protect n.lock (fun () ->
               Hashtbl.remove n.keys (owner, alloc);
               Bnxt.unregister_mem n.bnxt k));
@@ -114,7 +116,7 @@ let queue_pair a na b nb =
 
 (* The link: per chunk, the destination's adapter posts the receive and the
    source's the send, and both completions are waited for. *)
-let move ns nd ~src ~dst =
+let move ns nd (ds, dd) ~src ~dst =
   let s = B.device src and d = B.device dst in
   let qs, qd = queue_pair s ns d nd in
   let timeout_ms =
@@ -125,7 +127,7 @@ let move ns nd ~src ~dst =
   let first, second = if ns.id < nd.id then (ns, nd) else (nd, ns) in
   Mutex.protect first.lock @@ fun () ->
   Mutex.protect second.lock @@ fun () ->
-  let ks = key ns src (B.dma src) and kd = key nd dst (B.dma dst) in
+  let ks = key ns src ds and kd = key nd dst dd in
   let n = B.nbytes src in
   let at b off = Nativeint.to_int (B.address b) + off in
   let rec go off =
@@ -147,27 +149,23 @@ let link nic ~src ~dst =
   let hs = Nx_device.host_of s and hd = Nx_device.host_of d in
   if hs == hd then None
   else
-    match (B.dma src, B.dma dst) with
-    | exception Invalid_argument _ -> None
-    | ds, dd -> (
+    match (Driver.dma src, Driver.dma dst) with
+    | Ok ds, Ok dd -> (
         match
           (closest hs (bus_number ds.bus), closest hd (bus_number dd.bus))
         with
         | Some ns, Some nd when ns == nic ->
             Some
               {
-                Nx_device.through = [ Option.get ns.dev; Option.get nd.dev ];
-                move = move ns nd;
+                Driver.through = [ Option.get ns.dev; Option.get nd.dev ];
+                move = move ns nd (ds, dd);
               }
         | _ -> None)
+    | Error _, _ | _, Error _ -> None
 
 (* Opening *)
 
-let name ~machine i =
-  let local = if i = 0 then "RDMA" else Printf.sprintf "RDMA:%d" i in
-  match Nx_remote_device.remote machine with
-  | None -> local
-  | Some r -> local ^ "@" ^ Remote.name r
+let name i = if i = 0 then "RDMA" else Printf.sprintf "RDMA:%d" i
 
 (* Locked system memory of the adapter's machine, at the same address there for
    the host and the adapter. *)
@@ -178,28 +176,28 @@ let allocator n pci =
     | m, pages ->
         let a = Mmio.address m in
         Mutex.protect n.lock (fun () -> Hashtbl.replace n.memory a (m, pages));
-        Some { Nx_device.host = Some a; device = a; handle = a }
+        Some (Region.v ~host:a ~handle:a a bytes)
   in
-  let free (m : Nx_device.memory) =
-    match
-      Mutex.protect n.lock (fun () -> Hashtbl.find_opt n.memory m.device)
-    with
+  let free r =
+    let a = Region.address r in
+    match Mutex.protect n.lock (fun () -> Hashtbl.find_opt n.memory a) with
     | Some (mmio, _) ->
-        Mutex.protect n.lock (fun () -> Hashtbl.remove n.memory m.device);
+        Mutex.protect n.lock (fun () -> Hashtbl.remove n.memory a);
         Pci.free_sysmem pci mmio
     | None -> ()
   in
-  { Nx_device.alloc; free }
+  { Driver.alloc; free }
 
 (* The pages of a buffer of the adapter, as other functions reach them. *)
-let dma n pci (m : Nx_device.memory) =
-  match Mutex.protect n.lock (fun () -> Hashtbl.find_opt n.memory m.device) with
+let dma n pci r =
+  let a = Region.address r in
+  match Mutex.protect n.lock (fun () -> Hashtbl.find_opt n.memory a) with
   | None -> Error "no buffer of this adapter"
   | Some (_, pages) ->
       let page = Pci.page pci in
       Ok
         {
-          Nx_device.bus = Pci.bus pci;
+          Driver.bus = Pci.bus pci;
           pages = List.map (fun p -> (p, page)) pages;
         }
 
@@ -244,9 +242,9 @@ let open_nic ~machine ~remote index =
     in
     n.dev <-
       Some
-        (Nx_device.make ~name:(name ~machine index) ~arch:"" ~host:machine
-           ~budget:max_int ~memory:(allocator n pci) ~link:(link n)
-           ~dma:(dma n pci) ~finalize:(finalize n pci) ());
+        (Driver.device ~name:(name index) ~arch:"" ~host:machine ~budget:max_int
+           ~link:(link n) ~dma:(dma n pci) ~finalize:(finalize n pci)
+           (Host_visible { memory = allocator n pci; mapping = None }));
     n
   with
   | n -> n
@@ -275,7 +273,7 @@ let get ?(host = Nx_device.host) i =
   let remote = Nx_remote_device.remote host in
   let refuse why =
     check_reach host;
-    Error (name ~machine:host i ^ ": " ^ why)
+    Error (Driver.name ~host (name i) ^ ": " ^ why)
   in
   Mutex.protect lock (fun () ->
       match List.assoc_opt (host, i) (Atomic.get opened) with

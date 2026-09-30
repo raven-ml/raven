@@ -83,9 +83,12 @@ let test_connect () =
       | Ok _ -> fail "a wrong key was accepted");
   raises_match (Exn.invalid_arg ~substring:"no host") (fun () ->
       Nx_remote_device.remote
-        (Nx_device.make ~name:"X" ~arch:"x" ~budget:0
-           ~memory:{ alloc = (fun _ -> None); free = ignore }
-           ()))
+        (Nx_device.Driver.device ~name:"X" ~arch:"x" ~budget:0
+           (Host_visible
+              {
+                memory = { alloc = (fun _ -> None); free = ignore };
+                mapping = None;
+              })))
 
 let test_copies () =
   let d = Lazy.force far in

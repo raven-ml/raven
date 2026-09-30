@@ -37,19 +37,21 @@ val connect :
 (** [connect ~key host] is the host of the machine whose server listens at
     [host] and [port] (defaults to {!default_port}), proving [key] to it. The
     same host and port give the same device, lost or not: a machine is connected
-    to once in the life of the process. [timeout_ms] (defaults to [30_000])
-    bounds the connection and every answer of the server, and is the device's
-    {!Nx_device.timeout}.
+    to once in the life of the process. [timeout_ms] (defaults to
+    {!Nx_device.Driver.default_timeout}) bounds the connection and every answer
+    of the server, and is the device's {!Nx_device.timeout}, which
+    {!Nx_device.set_timeout} changes later.
 
     [Error why] if the server cannot be reached, is busy with another client,
     speaks another version of the protocol, or either end does not know the key.
 
-    Raises [Invalid_argument] if [key] is shorter than 16 bytes. *)
+    Raises [Invalid_argument] if [key] is shorter than 16 bytes or if
+    [timeout_ms <= 0]. *)
 
 val listen : key:string -> Unix.sockaddr -> Nx_device_support.Remote_server.t
 (** [listen ~key addr] serves this machine at [addr], as [nx-remote] does:
     {!Nx_device_support.Remote_server.listen} running the host programs of
-    clients with {!Nx_device.Program}.
+    clients with {!Nx_device.Driver.host_programs}.
 
     Raises as {!Nx_device_support.Remote_server.listen} does. *)
 

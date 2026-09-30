@@ -229,20 +229,14 @@ let contiguous =
       equal ~msg:"over the buffer's memory" bool
         (n > 0 && V.is_c_contiguous v && first mod 8 = 0)
         (n > 0
-        && Nativeint.equal (B.host_address c)
-             (Nativeint.add (B.host_address src) (Nativeint.of_int (first / 8)))
-        ))
+        && Nativeint.equal (B.address c)
+             (Nativeint.add (B.address src) (Nativeint.of_int (first / 8)))))
 
 (* A device over host memory, whose buffers are not the host's. *)
 let other =
   lazy
-    (let alloc n =
-       let ba = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
-       let a = B.host_address (B.of_bigarray ba) in
-       Some { Nx_device.host = Some a; device = a; handle = a }
-     in
-     Nx_device.make ~name:"OTHER" ~arch:"test" ~budget:max_int
-       ~memory:{ alloc; free = ignore } ())
+    (Nx_device.Driver.device ~name:"OTHER" ~arch:"test" ~budget:max_int
+       (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None }))
 
 let refusals =
   let f32 = E.create Nx_dtype.float32 2 in

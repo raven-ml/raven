@@ -17,12 +17,14 @@ external new_residency_set : nativeint -> nativeint -> nativeint
 external residency : nativeint -> nativeint -> bool -> unit
   = "caml_nx_metal_residency"
 
-external alloc : nativeint -> int -> Nx_device.memory option
-  = "caml_nx_metal_alloc"
+module Driver = Nx_device.Driver
+module Region = Driver.Region
 
-external wrap : nativeint -> nativeint -> int -> Nx_device.memory option
-  = "caml_nx_metal_wrap"
+(* A buffer's host address, GPU address, [MTLBuffer] and size. *)
+type buffer = (nativeint * nativeint * nativeint * int) option
 
+external alloc : nativeint -> int -> buffer = "caml_nx_metal_alloc"
+external wrap : nativeint -> nativeint -> int -> buffer = "caml_nx_metal_wrap"
 external release : nativeint -> unit = "caml_nx_metal_release"
 
 external pipeline : nativeint -> string -> string -> nativeint
@@ -79,30 +81,30 @@ let open_metal mtl =
     }
   in
   let resources = Hashtbl.create 64 in
-  let resident (m : Nx_device.memory) add =
+  let resident buffer add =
     match residency_set with
-    | Some set -> residency set m.handle add
+    | Some set -> residency set buffer add
     | None ->
-        if add then Hashtbl.replace resources m.handle ()
-        else Hashtbl.remove resources m.handle
+        if add then Hashtbl.replace resources buffer ()
+        else Hashtbl.remove resources buffer
   in
-  let resident_memory =
-    Option.map (fun m ->
-        resident m true;
-        m)
+  let region =
+    Option.map (fun (host, address, buffer, n) ->
+        resident buffer true;
+        Region.v ~host ~handle:buffer address n)
   in
-  let free (m : Nx_device.memory) =
-    resident m false;
-    release m.handle
+  let free r =
+    resident (Region.handle r) false;
+    release (Region.handle r)
   in
-  let map =
+  let mapping =
     if unified mtl then
       Some
         {
-          Nx_device.map =
+          Driver.map =
             (fun a n ->
-              match resident_memory (wrap mtl a n) with
-              | Some m -> Ok m
+              match region (wrap mtl a n) with
+              | Some r -> Ok r
               | None -> Error "Metal cannot wrap it in a buffer");
           unmap = free;
         }
@@ -110,20 +112,20 @@ let open_metal mtl =
   in
   let signal =
     {
-      Nx_device.signaled = (fun () -> signaled handles.event);
+      Driver.signaled = (fun () -> signaled handles.event);
       wait = (fun v ~timeout_ms -> wait handles.event v timeout_ms);
     }
   in
   let dev =
-    Nx_device.make ~name:(name 0) ~arch:(arch mtl) ~budget:(working_set mtl)
-      ~memory:{ alloc = (fun n -> resident_memory (alloc mtl n)); free }
-      ?mapping:map
-      ~load:(fun ~binary ~name ->
-        match pipeline mtl binary name with
+    Driver.device ~name:(name 0) ~arch:(arch mtl) ~budget:(working_set mtl)
+      ~completion:(Signal (fun ~timeline:_ -> signal))
+      ~load:(fun ~binary ~entry ->
+        match pipeline mtl binary entry with
         | p -> Ok p
         | exception Failure why -> Error why)
-      ~signal:(fun _ -> signal)
-      ~synchronized:cycle_pool ~resolve ()
+      ~synchronized:cycle_pool ~resolve
+      (Host_visible
+         { memory = { alloc = (fun n -> region (alloc mtl n)); free }; mapping })
   in
   { dev; handles; resources }
 

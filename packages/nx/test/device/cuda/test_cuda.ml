@@ -26,6 +26,13 @@ external other_context_alloc : int -> int -> nativeint
 
 let gpus = List.init (Nx_cuda_device.count ()) Nx_cuda_device.v
 
+(* The host address of [b]'s first byte, if the host addresses [b]'s memory. *)
+let hosted b =
+  let r = Nx_device.Driver.Region.of_buffer b in
+  Option.map
+    (fun a -> Nativeint.add a (Nativeint.of_int (B.offset b)))
+    (Nx_device.Driver.Region.host_address r)
+
 (* [d]'s borrow of [b], which it maps. *)
 let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
 
@@ -119,11 +126,10 @@ let memory =
           let d = cuda () in
           let s0 = Nx_device.stats d in
           let b = B.create d S.Float32 250 in
-          raises_match
-            (Exn.invalid_arg ~substring:"does not address CUDA memory")
-            (fun () -> B.host_address b);
-          let p = B.create ~host:true d S.UInt8 100 in
-          not_equal nativeint 0n (B.host_address p);
+          equal ~msg:"GPU memory the host does not address" (option nativeint)
+            None (hosted b);
+          let p = B.create ~pinned:true d S.UInt8 100 in
+          is_true ~msg:"pinned memory the host addresses" (hosted p <> None);
           equal int 1100
             Nx_device.Stats.(allocated (diff s0 (Nx_device.stats d)));
           ignore (Sys.opaque_identity (b, p)));
@@ -186,7 +192,7 @@ let copies =
          host memory takes one timeline value" (fun () ->
           let d = cuda () in
           let n = 100 * mib in
-          let pinned = B.create ~host:true d S.UInt8 n in
+          let pinned = B.create ~pinned:true d S.UInt8 n in
           B.copy ~src:(host_of n (fun i -> i * 3)) ~dst:pinned;
           let b = B.create d S.UInt8 n and b' = B.create d S.UInt8 n in
           let mapped = B.create Nx_device.host S.UInt8 n in
@@ -209,7 +215,7 @@ let copies =
           B.copy ~src:(host_of 1000 Fun.id) ~dst:src;
           equal ~msg:"transfer" int 1 (values d (fun () -> B.copy ~src ~dst));
           holds dst Fun.id;
-          let pinned = B.create ~host:true d1 S.UInt8 1000 in
+          let pinned = B.create ~pinned:true d1 S.UInt8 1000 in
           B.copy ~src:dst ~dst:pinned;
           let on_d = B.create d S.UInt8 1000 in
           equal ~msg:"from page-locked memory" int 1
@@ -254,8 +260,9 @@ let borrowing =
           (fun () ->
             let whole = borrow d hb in
             let tail = borrow d (B.view hb ~offset:pages S.UInt8 16) in
-            equal ~msg:"the host's bytes" nativeint (B.host_address hb)
-              (B.host_address whole);
+            equal ~msg:"the host's bytes" (option nativeint)
+              (Some (B.address hb))
+              (hosted whole);
             let b = B.create d S.UInt8 16 in
             B.copy ~src:tail ~dst:b;
             holds ~msg:"read through the mapping" b (fun i -> pages + i);
@@ -299,11 +306,11 @@ let borrowing =
             Nx_cuda_device.of_address d (Nativeint.add a 16n) S.Int32 4
           in
           equal ~msg:"the allocation and the offset" (pair nativeint int) (a, 16)
-            (B.handle inner, B.offset inner);
+            (Nx_device.Driver.Region.(handle (of_buffer inner)), B.offset inner);
           holds ~msg:"inner bytes" inner (fun i -> 16 + i);
           let host, device = foreign_host_alloc h.context 64 in
-          equal ~msg:"page-locked memory" nativeint host
-            (B.host_address (Nx_cuda_device.of_address d device S.UInt8 64)));
+          equal ~msg:"page-locked memory" (option nativeint) (Some host)
+            (hosted (Nx_cuda_device.of_address d device S.UInt8 64)));
       cases
         ~name:(fun (name, _, _) -> name)
         "of_address refuses, with the reason"

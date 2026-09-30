@@ -123,20 +123,21 @@ value caml_nx_metal_residency(value v_set, value v_buffer, value v_add) {
   return Val_unit;
 }
 
-/* [Some { host = Some host; device; handle }] for a buffer, [None] for nil. */
-static value memory_of_buffer(id<MTLBuffer> buffer, intnat host) {
+/* [Some (host, device address, buffer, bytes)] for a buffer, [None] for nil.
+ */
+static value region_of_buffer(id<MTLBuffer> buffer, intnat host) {
   CAMLparam0();
-  CAMLlocal2(memory, v);
+  CAMLlocal2(region, v);
   if (buffer == nil) CAMLreturn(Val_none);
-  memory = caml_alloc_tuple(3);
+  region = caml_alloc_tuple(4);
   v = caml_copy_nativeint(host);
-  v = caml_alloc_some(v);
-  Store_field(memory, 0, v);
+  Store_field(region, 0, v);
   v = caml_copy_nativeint((intnat)buffer.gpuAddress);
-  Store_field(memory, 1, v);
+  Store_field(region, 1, v);
   v = caml_copy_nativeint((intnat)buffer);
-  Store_field(memory, 2, v);
-  CAMLreturn(caml_alloc_some(memory));
+  Store_field(region, 2, v);
+  Store_field(region, 3, Val_long(buffer.length));
+  CAMLreturn(caml_alloc_some(region));
 }
 
 value caml_nx_metal_alloc(value v_device, value v_size) {
@@ -145,7 +146,7 @@ value caml_nx_metal_alloc(value v_device, value v_size) {
   id<MTLBuffer> buffer =
       [device newBufferWithLength:(NSUInteger)Long_val(v_size)
                           options:MTLResourceStorageModeShared];
-  CAMLreturn(memory_of_buffer(buffer, (intnat)buffer.contents));
+  CAMLreturn(region_of_buffer(buffer, (intnat)buffer.contents));
 }
 
 /* A buffer over the pages that hold the [v_size] bytes at [v_ptr], without a
@@ -162,7 +163,7 @@ value caml_nx_metal_wrap(value v_device, value v_ptr, value v_size) {
                                 length:last - first
                                options:MTLResourceStorageModeShared
                            deallocator:nil];
-  CAMLreturn(memory_of_buffer(buffer, (intnat)first));
+  CAMLreturn(region_of_buffer(buffer, (intnat)first));
 }
 
 value caml_nx_metal_release(value v_object) {

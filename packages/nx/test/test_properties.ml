@@ -134,8 +134,8 @@ let conversions =
           in
           let t = Nx.of_bigarray (Bigarray.genarray_of_array1 ba) in
           equal nativeint
-            (Nx_device.Buffer.host_address (Nx_device.Buffer.of_bigarray ba))
-            (Nx_device.Buffer.host_address (storage t)));
+            (Nx_device.Buffer.address (Nx_device.Buffer.of_bigarray ba))
+            (Nx_device.Buffer.address (storage t)));
       test "of_bigarray refuses the kinds that are no dtype" (fun () ->
           let refuses (type a b) (k : (a, b) Bigarray.kind) =
             raises_invalid_arg (fun () ->
