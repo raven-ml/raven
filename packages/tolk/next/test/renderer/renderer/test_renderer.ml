@@ -809,11 +809,26 @@ let given () =
   equal string "2" (r.render [ f32 1.; f32 2. ]);
   equal string "SRC" (Renderer.Compiler.compile r.compiler "src")
 
+let with_compiler () =
+  let r = Renderer.v ~name:"CUDA" ~suffix:"cu" ~has_local:false cpu in
+  let r' =
+    Renderer.with_compiler (Renderer.Compiler.v String.uppercase_ascii) r
+  in
+  equal string "SRC" (Renderer.Compiler.compile r'.compiler "src");
+  equal string "src" (Renderer.Compiler.compile r.compiler "src");
+  equal string "CUDA" r'.name;
+  equal string "cu" r'.suffix;
+  equal bool false r'.has_local;
+  is_true
+    (r'.target == r.target && r'.render == r.render && r'.native == r.native)
+
 let renderers =
   group "v"
     [
       test "defaults describe a target that renders nothing" defaults;
       test "keeps the fields it is given" given;
+      test "with_compiler replaces the compiler and keeps every other field"
+        with_compiler;
       test "native holds for every data type by default" (fun () ->
           let r = Renderer.v cpu in
           List.iter

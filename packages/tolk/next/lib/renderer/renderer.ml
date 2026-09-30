@@ -200,6 +200,8 @@ let v ?(name = "Renderer") ?(suffix = "") ?(supports_float4 = true)
     compiler;
   }
 
+let with_compiler compiler r = { r with compiler }
+
 let emulated () =
   let dtype n =
     match Dtype.of_string n with Ok dt -> dt | Error e -> invalid_arg e

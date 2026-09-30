@@ -79,7 +79,8 @@ the Exclusions of `README.md`.
   `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`);
   `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml` (`Compiler`); `lib/schedule/prepare.ml`
-  (`contiguous_view`); and `lib/schedule/schedule.ml` (`pm_flatten_linear`).
+  (`contiguous_view`); `lib/schedule/schedule.ml` (`pm_flatten_linear`); and
+  `lib/codegen/codegen.ml:621` (`apply_opts`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
@@ -112,14 +113,18 @@ the Exclusions of `README.md`.
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` lands with
-    the engine;
+    the engine; `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
+    the beam search as their `beam` argument, a function of the width the
+    kernel asks for, and raise when a kernel asks for one and none is given;
   - the engine has one order (schedule, hcq2 helpers, realize, tensor, jit),
     and each late binding is passed as a function argument, never a global
     reference;
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** waiting for L4 through L8; for `Ops`, its suite
+- **Pinned by:** waiting for L4 through L8; for `Codegen`, waiting for its
+  suite: a kernel that asks for a beam search of width `w` is optimised by
+  `beam w`, and raises without `beam`; for `Ops`, its suite
   (`test/uop/ops`): `resolve › simplify leaves a constant, and a sink of
   constants and stacks of constants, alone`, and the `resolve` tests that
   simplify with `Symbolic`'s rules;
@@ -130,9 +135,12 @@ the Exclusions of `README.md`.
 ## D5. Compilation workers are domains
 
 - **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers);
-  `helpers.py:169-186` (`Context` and `ContextVar`, one value per process).
+  `helpers.py:169-186` (`Context` and `ContextVar`, one value per process);
+  `codegen/__init__.py:495-505` (`to_program_context`, the settings a worker
+  process is started with, and `to_program_cache`, which the parent fills).
 - **tolk.next:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
-  `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`).
+  `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`);
+  `lib/codegen/codegen.ml:976` (`to_program`'s cache).
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
   tinygrad keeps a pool: an idle domain still takes part in every minor
@@ -146,11 +154,17 @@ the Exclusions of `README.md`.
   its own domain only. A tinygrad worker process has its own settings, so a
   `Context` entered while it compiles (the construction check's `CHECK_OOB=0`)
   leaves the others alone; process-wide settings shared by compiling domains
-  would let one domain's override and restore clobber another's.
+  would let one domain's override and restore clobber another's. A spawned
+  domain starts with its spawner's settings, so `to_program_context` goes
+  too. `to_program` keeps its programs in one table that every domain reads
+  and fills under a lock, and a domain that asks for a program another is
+  making waits for it, so each program is compiled once, as tinygrad's
+  parent compiles each key once.
 - **Reason:** (a).
 - **Pinned by:** the `Helpers` suite: `context › is not seen by the other
   domains` and `context › binds for the domains spawned while it runs`; the
-  `Worker` suite.
+  `Worker` suite; the `Codegen` suite: `programs are kept › calls from
+  several domains at once make one program, compiled once (D5)`.
 
 ## D6. Devices are named, never parsed
 
@@ -683,8 +697,8 @@ the Exclusions of `README.md`.
     folds of `0. * x` and `x + 0` to be what tinygrad renders.
   - **Tensor-core accumulators.** tinygrad: `codegen/__init__.py:102-104`
     (`pm_wmma_add`, which adds the running sum to a WMMA's accumulator
-    operand). tolk.next: waiting for Codegen (L4), whose `pm_wmma_add` does
-    the same. A WMMA built for a sum starts from a zero accumulator, and the
+    operand). tolk.next: `lib/codegen/codegen.ml:167`
+    (`wmma_accumulate`). A WMMA built for a sum starts from a zero accumulator, and the
     running sum used to be added to it, `+0. + acc`, which only the float
     `x + 0` fold removed: with that fold kept to `-0.`, every tensor-core
     loop added `+0.` to each accumulator element on every iteration. The
