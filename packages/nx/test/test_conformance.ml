@@ -100,6 +100,9 @@ let cases : (string * (at -> Nx.packed list)) list =
       fun { at } -> [ Nx.P (Nx.concatenate ~axis:0 [ at signed; at wide ]) ] );
     ("cast", fun { at } -> [ Nx.P (Nx.cast Nx.float32 (at signed)) ]);
     ("bitcast", fun { at } -> [ Nx.P (Nx.bitcast Nx.int64 (at signed)) ]);
+    ("bitcast int32", fun { at } -> [ Nx.P (Nx.bitcast Nx.float32 (at ints)) ]);
+    ( "a host scalar joining a placed operand",
+      fun { at } -> [ Nx.P (Nx.add (at signed) (Nx.scalar Nx.float64 2.)) ] );
     ( "threefry",
       fun { at } ->
         let key = Nx.Rng.of_tensor (at (Nx.Rng.key 7 :> Nx.int32_t)) in
@@ -160,6 +163,8 @@ let cases : (string * (at -> Nx.packed list)) list =
         [ Nx.P (Nx.irfftn Nx.float64 ~axes:[ 1 ] ~s:[ 6 ] (at complex)) ] );
     ("copy", fun { at } -> [ Nx.P (Nx.copy (at (Nx.transpose signed))) ]);
     ("cholesky", fun { at } -> [ Nx.P (Nx.cholesky (at square)) ]);
+    ( "cholesky upper",
+      fun { at } -> [ Nx.P (Nx.cholesky ~upper:true (at square)) ] );
     ( "qr",
       fun { at } ->
         let q, r = Nx.qr (at wide) in
@@ -180,6 +185,7 @@ let cases : (string * (at -> Nx.packed list)) list =
       fun { at } ->
         let u, s, vt = Nx.svd ~full_matrices:true (at wide) in
         [ Nx.P u; Nx.P s; Nx.P vt ] );
+    ("svdvals", fun { at } -> [ Nx.P (Nx.svdvals (at wide)) ]);
     ("eigvals", fun { at } -> [ Nx.P (Nx.eigvals (at square)) ]);
     ( "eig",
       fun { at } ->
@@ -195,6 +201,14 @@ let cases : (string * (at -> Nx.packed list)) list =
         [
           Nx.P
             (Nx.solve_triangular (at (Nx.triu square)) (at (Nx.transpose wide)));
+        ] );
+    ( "solve_triangular of a vector, transposed",
+      fun { at } ->
+        [
+          Nx.P
+            (Nx.solve_triangular ~upper:true ~transpose:true
+               (at (Nx.triu square))
+               (at (Nx.slice [ I 0 ] wide)));
         ] );
   ]
 
