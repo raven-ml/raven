@@ -1,0 +1,11 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(volatile unsigned long* restrict slots_0_10, unsigned char* restrict doorbell_1_1, unsigned char* restrict cmdbuf_compute_0_2_256, const unsigned long submitted_cpu_1_, const unsigned long value_cpu_1_) {
+  *(slots_0_10+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  *(((unsigned long*)(cmdbuf_compute_0_2_256))+2) = submitted_cpu_1_;
+  *(((unsigned long*)(cmdbuf_compute_0_2_256))+30) = value_cpu_1_;
+  unsigned char val0 = (*(cmdbuf_compute_0_2_256+0));
+  *(doorbell_1_1+0) = val0;
+}
+

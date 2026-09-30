@@ -33,3 +33,8 @@ val events : unit -> events
 val commands : events -> Hcq2.Queue.t -> Hcq2.commands
 (** [commands events q] encodes the queue [q] with the [NULL] commands,
     numbering their events in [events]. *)
+
+val program : events -> int -> Ops.t
+(** [program events e] is the compiled program of the kernel event [e].
+
+    Raises [Not_found] if [e] is no kernel's event. *)

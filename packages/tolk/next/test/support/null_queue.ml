@@ -7,17 +7,22 @@ let wait = 2
 let store = 3
 let timestamp = 4
 
-type events = (string * string * string, int) Hashtbl.t
+type events = {
+  ids : (string * string * string, int) Hashtbl.t;
+  programs : (int, Ops.t) Hashtbl.t;
+}
 
-let events () = Hashtbl.create 16
+let events () = { ids = Hashtbl.create 16; programs = Hashtbl.create 16 }
 
 let event events k =
-  match Hashtbl.find_opt events k with
+  match Hashtbl.find_opt events.ids k with
   | Some i -> i
   | None ->
-      let i = Hashtbl.length events in
-      Hashtbl.add events k i;
+      let i = Hashtbl.length events.ids in
+      Hashtbl.add events.ids k i;
       i
+
+let program events e = Hashtbl.find events.programs e
 
 let u64 n = int ~dtype:Dtype.Uint64 n
 let device_name u = match device u with Some (Single d) -> d | _ -> ""
@@ -47,12 +52,9 @@ let commands events q : Hcq2.commands =
     let name =
       match arg (nth prg 0) with Kernel k -> function_name k | _ -> ""
     in
-    cmd exec
-      [
-        kernargs;
-        u64 (List.length args);
-        u64 (event events (dev, name, key prg));
-      ]
+    let e = event events (dev, name, key prg) in
+    Hashtbl.replace events.programs e prg;
+    cmd exec [ kernargs; u64 (List.length args); u64 e ]
   in
   let copy_ dst src _ =
     let s = device_name src in

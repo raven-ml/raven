@@ -25,3 +25,11 @@ val binaries_as_sources : Ops.t -> Ops.t
     included. The generators record programs compiled that way, so that a
     golden holds no machine code; this compares a compiled graph with such a
     golden. *)
+
+val placeholders_like : Ops.t -> Ops.t -> Ops.t
+(** [placeholders_like like u] is [u] with its placeholders (tagged
+    {!Tolk_next.Op.Param}s) in the slots of [like]'s, paired
+    in the order {!Tolk_next.Ops.toposort} visits them, call bodies included.
+    As storage, placeholders are numbered from the counter the process shares,
+    so this compares a graph with a golden up to their numbers. It is [u] if the
+    two graphs hold different numbers of them. *)

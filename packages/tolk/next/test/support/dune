@@ -1,18 +1,21 @@
 (library
  (name tolk_next_test)
- (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts null_queue
+ (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts null_queue batches
   cuda_fp8)
  (wrapped false)
  (libraries windtrap tolk.next zarith))
 
-; Running kernels on the host through the engine, apart so that only the tests
-; that run kernels link nx.device.
+; Running kernels on the host, and batches on the NULL device, through the
+; engine, apart so that only the tests that run them link nx.device.
 
 (library
  (name tolk_next_run)
- (modules run)
+ (modules run null_device)
  (wrapped false)
- (libraries tolk.next tolk.next.engine nx.device zarith))
+ (foreign_stubs
+  (language c)
+  (names null_device_stubs))
+ (libraries tolk.next tolk.next.engine tolk_next_test nx.device unix zarith))
 
 (tests
  (names test_golden test_graph test_interpreter test_kernel_graphs test_tensors)

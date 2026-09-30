@@ -2534,3 +2534,71 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 | old: unit/engine/test_realize.ml "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary" | | `R › lower_and_compile › makes each call of a kernel a call of its program`, `R › lower_and_compile of recorded schedules` |
 | old: unit/engine/test_realize.ml group "Buffer copy" (5 tests) | copies between devices and staging | `Hcq2 › linking and running ›` "a copy between devices and the kernel it feeds agree…", "copies across three devices agree…", `Hcq2 › compile_linear › copies through the halves of a staging buffer…`; size checks are nx.device's `Buffer.copy` |
 | old: unit/engine/test_realize.ml group "Owned buffer resolution" (5 tests), group "Linear execution" (6 tests) | resolving arguments and running kernels | `Hcq2 › linking and running` (the engine's link and run); the owners are old tolk's, dropped |
+
+## Hcq2
+
+`H` is the `Hcq2` suite (`test/runtime/support/hcq2`). Its goldens come from
+tinygrad's NULL queue on the CPU devices CPU:1 to CPU:3, with D1 applied in the
+generator: for each of ten cases, the batches `sched_batches` makes, the
+schedule `compile_linear` returns and its host programs' source. It runs batches
+through `tolk.engine` on the NULL device of test support, which runs the queues
+the host programs submit on a domain of its own. `test_hcq2_sdma` runs apart,
+with `HCQ_NUM_SDMA` set.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_hcq2.py::TestHCQ2Deps (6 tests) | byte-range dependencies | `H › Deps` (6 tests, one each) and `H › Deps law › Deps agrees with a byte-by-byte model` |
+| tinygrad: null/test_hcq2.py `run`, `check`, `orders` | the symbolic executor of a batch's queues | `Batches` (test support) and `H › sched_batches`'s `well_formed` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_kernels_run_in_order | | `H › sched_batches › kernels on one queue run in order`; `chain_batched.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_peer_kernel_runs_after_the_copy_that_feeds_it | | `H › sched_batches › a kernel runs after the copy that feeds it`; `peer_copy_batched.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_lanes_of_a_sharded_kernel_do_not_wait_for_each_other | | `H › sched_batches › kernels of different devices do not wait for each other`; `sharded_batched.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_device_without_a_copy_queue_copies_with_a_kernel | | `H › compile_linear › a copy on a device without copy queues is a kernel`, `H › linking and running › a copy without copy queues runs as a kernel, and copies`; `peer_copy_kernel_*.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_a_host_kernel_splits_the_batch | | `H › sched_batches › a call on a device without queues splits the batch`; `host_split_*.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Schedule::test_batches_of_real_workloads_are_well_formed | | `H › sched_batches › copies between devices of three kinds are well formed`; `sharded_sum_*.golden`, `copies_*.golden` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Profile::test_profiling_reports_a_range_per_kernel | | `H › linking and running › a profile records a span of each kernel on its device, in order`; `H › stamp slots (D7)` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Profile::test_slots_addressed_by_the_device | slots read through the device's own addresses (`pm_lower`) | dropped: `pm_lower` is excluded (ruling) |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | | `H › linking and running › a link serves any buffers bound to its inputs` |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | | dropped: the eager-template caches are excluded (ruling) |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_repeated_word_loops | | `H › patch and bufferize_cmdbuf › a word written at several offsets is written by one loop` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_compile_and_link_are_idempotent | | `H › compile_linear › returns a linear holding a lowered batch as it is`; `H › lower_call › raises Invalid_argument for a batch lowered already`; linking twice is the engine's |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call, test_jit_symbolic | | `H › linking and running ›` "a link serves any buffers bound to its inputs", "a schedule's variables reach its kernels"; the jit is L8 |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | | `H › linking and running › a batch split by a host kernel agrees with running them one by one` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents, test_caches_hold_no_buffers, test_jit_has_no_rt_buffers | | dropped: nx.device's borrows, the excluded template caches and ring buffers |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Fence::test_a_schedule_waits_for_its_previous_run | | D1: the wait is the engine's `Submission.wait`; `H › linking and running › a run waits for its batch's previous run before it rewrites the batch's memory`; the re-arm is `H › timeline values (D1) ›` "the fence is of every queue's signal", "the fence lowers to stores of zero into the slots, and nothing else" |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2FFI::test_ffi_ccall, test_ffi_cstruct, test_nested_cstruct_patches | | `H › ccall, cstruct and cfield` (4 tests) |
+| tinygrad: runtime/support/hcq2.py `layout_args`, `pack_args` | | `H › layout_args and pack_args` (4 tests) |
+| tinygrad: runtime/support/hcq2.py `patch`, `HWQueue.q` | | `H › patch and bufferize_cmdbuf ›` "patch writes its blob, then its rows…", "a row known at link is written at link…"; `H › Queue` (4 tests) |
+| tinygrad: runtime/support/hcq2.py `sched_batches`'s queue choice, `HCQ_NUM_SDMA`, `ALL2ALL` | | `H › sched_batches ›` "a program runs on its compute queue, a copy on its source's copy queue", "AMD copies between peers take one queue, and one per peer with ALL2ALL"; `test_hcq2_sdma` |
+| tinygrad: runtime/support/hcq2.py `_wait_ins`'s NV chain | | `H › sched_batches › on NV a compute queue that waits for another queue waits for its previous call too` |
+| tinygrad: runtime/support/hcq2.py `get_enqueue_devs`'s Metal copies | | `H › sched_batches › Metal's copies stay outside batches, since the host copies its memory` |
+| tinygrad: runtime/support/hcq2.py `stage_copy` | | `H › compile_linear › copies through the halves of a staging buffer of the host where the queues cannot reach` |
+| tinygrad: runtime/support/hcq2.py `pm_unwrap_multi` | | `H › compile_linear › runs a call on sharded buffers once per device, each on its shard`, `H › linking and running › a sharded kernel computes each shard on its device` |
+| tinygrad: runtime/support/hcq2.py `lower_call` | | `H › lower_call` (6 tests), `*_compiled.golden` |
+| tinygrad: runtime/support/hcq2.py `hcq_link`, `pm_link`, `LinkCtx` | | dropped here: the engine's link; run through `H › linking and running` |
+| tinygrad: runtime/support/hcq2.py `split_rdma`, `pm_rdma_encode` | | dropped: RDMA is excluded |
+| — | D1 | `H › timeline values (D1)` (9 tests); the goldens |
+| — | D7 | `H › stamp slots (D7)` (4 tests) |
+| — | D12 | `H › profile keys (D12)` (2 tests) |
+| — | D30 | `H › ranges (D30)` (3 tests) |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_hcq2.ml all_to_all_copy_queues | SDMA queue counts | `H › sched_batches › AMD copies between peers…`, `test_hcq2_sdma` |
+| old: unit/engine/test_hcq2.ml staged_peer_dependencies | staging alternates two slots, each reused after its reads | `H › compile_linear › copies through the halves of a staging buffer…` (the copies' count); the dependencies are `H › Deps` |
+| old: unit/engine/test_hcq2.ml peer_group_batches | one batch per kind, in order | `H › sched_batches › consecutive calls of two kinds make a batch of each, in the order they appear` |
+| old: unit/engine/test_hcq2.ml sharded_batches | a sharded kernel and the next copies in one batch | `sharded_batched.golden`, `sharded_sum_batched.golden` |
+| old: unit/engine/test_hcq2.ml byte_dependencies | | `H › Deps law › Deps agrees with a byte-by-byte model` |
+| old: unit/engine/test_hcq2.ml region_identity | views of one storage and lanes | `H › unwrap_view and unwrap_lane` (7 tests) |
+| old: unit/engine/test_hcq2.ml overlap_waits, parameter_views | only overlapping accesses wait | `H › Deps ›` "a write of other bytes keeps the dependencies", "views of one storage depend on the bytes they share" |
+| old: unit/engine/test_hcq2.ml nv_chain | | `H › sched_batches › on NV a compute queue…` |
+| old: unit/engine/test_hcq2.ml alias_ordering | | `H › Deps › an access never waits for itself through an alias`, `H › Deps › a write waits for every read since the last write` |
+| old: unit/engine/test_hcq2.ml peers_and_timestamps | epilogues of peers, profile slots | `H › timeline values (D1) › a queue touching a peer's memory waits for the peer's submitted work too`, `H › stamp slots (D7)` |
+| old: unit/engine/test_hcq2.ml compiled_host_submission | the host program patches and replays | `H › linking and running` |
+| old: unit/engine/test_link.ml replacement_ownership, obsolete_link_collection, concurrent_link_publication | | dropped: old tolk's owners and link caches (the templates are excluded) |
+| old: unit/engine/test_link.ml allocation_specs | command buffers uncached, volatile placeholders on the host | dropped here: the engine's allocation (`tolk.engine`'s link) |
+| old: unit/engine/test_link.ml initialization, cast_patches, addresses | blobs, words and addresses written at link | `H › patch and bufferize_cmdbuf`, `H › ccall, cstruct and cfield › a C structure holds each field…` |
+| old: unit/engine/test_link.ml input_links, preserve_runtime, host_call_replay | | `H › linking and running › a link serves any buffers bound to its inputs`, `H › patch and bufferize_cmdbuf › a word written at several offsets…` (two runs) |

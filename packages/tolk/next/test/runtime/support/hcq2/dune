@@ -1,0 +1,49 @@
+; CACHEDB is a directory of the sandbox, as Clang's compiler is made with its
+; cache.
+
+(test
+ (name test_hcq2)
+ (modules test_hcq2)
+ (package tolk)
+ (libraries
+  windtrap
+  tolk.next
+  tolk.next.engine
+  tolk_next_test
+  tolk_next_run
+  nx.device
+  unix
+  zarith)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))
+
+; HCQ_NUM_SDMA is read once per process, so its test runs in one of its own.
+
+(test
+ (name test_hcq2_sdma)
+ (modules test_hcq2_sdma)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test)
+ (action
+  (setenv
+   HCQ_NUM_SDMA
+   1
+   (run %{test} --exclude-tag slow))))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_hcq2.exe} --tag slow))))
