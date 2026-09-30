@@ -183,30 +183,53 @@ let fill_nibbles b v =
   A.fill (A.sub ba 0 (n / 2)) (v lor (v lsl 4));
   if n land 1 = 1 then set_nibble ba (n - 1) v
 
+external fill_bytes :
+  (nativeint[@unboxed]) -> (int[@untagged]) -> Bytes.t -> unit
+  = "caml_nx_array_fill_byte" "caml_nx_array_fill"
+[@@noalloc]
+
+(* The bytes of [v] as one element of [dt], [width] bytes. *)
+let element (type a b) (dt : (a, b) Nx_dtype.t) width (v : a) =
+  let e = Bytes.create width in
+  (match dt with
+  | Float16 -> Bytes.set_uint16_ne e 0 (S.encode Float16 v)
+  | BFloat16 -> Bytes.set_uint16_ne e 0 (S.encode BFloat16 v)
+  | Float8_e4m3 -> Bytes.set_uint8 e 0 (S.encode Float8_e4m3 v)
+  | Float8_e5m2 -> Bytes.set_uint8 e 0 (S.encode Float8_e5m2 v)
+  | Float32 -> Bytes.set_int32_ne e 0 (Int32.bits_of_float v)
+  | Float64 -> Bytes.set_int64_ne e 0 (Int64.bits_of_float v)
+  | Int4 -> Bytes.set_uint8 e 0 (v land 0xf)
+  | UInt4 -> Bytes.set_uint8 e 0 (v land 0xf)
+  | Int8 -> Bytes.set_int8 e 0 v
+  | UInt8 -> Bytes.set_uint8 e 0 (v land 0xff)
+  | Int16 -> Bytes.set_int16_ne e 0 v
+  | UInt16 -> Bytes.set_uint16_ne e 0 (v land 0xffff)
+  | Int32 -> Bytes.set_int32_ne e 0 v
+  | UInt32 -> Bytes.set_int32_ne e 0 v
+  | Int64 -> Bytes.set_int64_ne e 0 v
+  | UInt64 -> Bytes.set_int64_ne e 0 v
+  | Complex64 ->
+      Bytes.set_int32_ne e 0 (Int32.bits_of_float v.re);
+      Bytes.set_int32_ne e 4 (Int32.bits_of_float v.im)
+  | Complex128 ->
+      Bytes.set_int64_ne e 0 (Int64.bits_of_float v.re);
+      Bytes.set_int64_ne e 8 (Int64.bits_of_float v.im)
+  | Bool -> Bytes.set_uint8 e 0 (Bool.to_int v));
+  e
+
+external fill_bytes :
+  (nativeint[@unboxed]) -> (int[@untagged]) -> Bytes.t -> unit
+  = "caml_nx_array_fill_byte" "caml_nx_array_fill"
+[@@noalloc]
+
 let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
   check "fill" dt b;
   match dt with
-  | Float16 ->
-      A.fill (B.bigarray Bigarray.int16_unsigned b) (S.encode Float16 v)
-  | Float32 -> A.fill (B.bigarray Bigarray.float32 b) v
-  | Float64 -> A.fill (B.bigarray Bigarray.float64 b) v
-  | BFloat16 ->
-      A.fill (B.bigarray Bigarray.int16_unsigned b) (S.encode BFloat16 v)
-  | Float8_e4m3 -> A.fill (bytes b) (S.encode Float8_e4m3 v)
-  | Float8_e5m2 -> A.fill (bytes b) (S.encode Float8_e5m2 v)
   | Int4 -> fill_nibbles b (v land 0xf)
   | UInt4 -> fill_nibbles b (v land 0xf)
-  | Int8 -> A.fill (B.bigarray Bigarray.int8_signed b) v
-  | UInt8 -> A.fill (bytes b) v
-  | Int16 -> A.fill (B.bigarray Bigarray.int16_signed b) v
-  | UInt16 -> A.fill (B.bigarray Bigarray.int16_unsigned b) v
-  | Int32 -> A.fill (B.bigarray Bigarray.int32 b) v
-  | UInt32 -> A.fill (B.bigarray Bigarray.int32 b) v
-  | Int64 -> A.fill (B.bigarray Bigarray.int64 b) v
-  | UInt64 -> A.fill (B.bigarray Bigarray.int64 b) v
-  | Complex64 -> A.fill (B.bigarray Bigarray.complex32 b) v
-  | Complex128 -> A.fill (B.bigarray Bigarray.complex64 b) v
-  | Bool -> A.fill (bytes b) (Bool.to_int v)
+  | _ ->
+      let e = element dt (S.bitsize (B.dtype b) / 8) v in
+      fill_bytes (B.host_address b) (B.nbytes b) e
 
 (* Gathering *)
 

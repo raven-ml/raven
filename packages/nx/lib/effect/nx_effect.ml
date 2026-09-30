@@ -2762,10 +2762,12 @@ let contiguous x =
       let v = view x in
       if View.is_c_contiguous v && View.offset v = 0 then x else copy x
 
-(* Creation. A constant is not an operation: a filled value is one element on
-   the host, placed where it is made and expanded. One of more than one element
-   is then copied into storage of its own, so that its view covers its storage
-   and a compiled call can consume it. *)
+(* Creation. A constant is not an operation. Uninterpreted on the host, a
+   filled value is nx.cpu's fill of storage of its own. Otherwise it is one
+   element on the host, placed where it is made and expanded, so that an
+   interpretation sees a constant (a compiled call folds it into its kernels);
+   one of more than one element is then copied into storage of its own, so
+   that its view covers its storage and a compiled call can consume it. *)
 
 let broadcast scalar shape_arr =
   if Array.length shape_arr = 0 then scalar
@@ -2775,20 +2777,22 @@ let broadcast scalar shape_arr =
     if Shape.equal ones shape_arr then x else expand x shape_arr
 
 let full (ctx : context) dtype shape_arr value =
-  let e = Host (Nx_cpu.full () dtype [||] value) in
-  if on_host ctx then
-    let x = broadcast e shape_arr in
-    if Array.fold_left ( * ) 1 shape_arr <= 1 then x else copy x
+  if on_host ctx && not (intercepting ()) then
+    Host (Nx_cpu.full () dtype shape_arr value)
   else
-    let copies =
-      List.fold_left
-        (fun p (axis, _) -> Placement.uncut p ~axis)
-        ctx (Placement.cuts ctx)
-    in
-    let x = broadcast (place copies e) shape_arr in
-    if Array.fold_left ( * ) 1 shape_arr <= 1 then x
-    else if copies == ctx then copy x
-    else place ctx x
+    let e = Host (Nx_cpu.full () dtype [||] value) in
+    let n = Array.fold_left ( * ) 1 shape_arr in
+    if on_host ctx then
+      let x = broadcast e shape_arr in
+      if n <= 1 then x else copy x
+    else
+      let copies =
+        List.fold_left
+          (fun p (axis, _) -> Placement.uncut p ~axis)
+          ctx (Placement.cuts ctx)
+      in
+      let x = broadcast (place copies e) shape_arr in
+      if n <= 1 then x else if copies == ctx then copy x else place ctx x
 
 let from_host (ctx : context) dtype buffer =
   check_host "from_host" dtype buffer;

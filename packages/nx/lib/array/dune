@@ -2,6 +2,10 @@
  (name nx_array)
  (public_name nx.array)
  (libraries nx_dtype nx_device)
+ (foreign_stubs
+  (language c)
+  (names nx_array_stubs)
+  (flags :standard -std=c11 -O2 -Wall -Wextra))
  (instrumentation
   (backend landmarks))
  (instrumentation

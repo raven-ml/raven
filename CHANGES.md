@@ -2871,6 +2871,9 @@ thread.
 
 ### Nx
 
+- `Nx.zeros`, `Nx.ones`, `Nx.full` and `Nx.empty` on the host fill one
+  buffer, and `Nx_array.Elements.fill` writes the element's bytes without a
+  bigarray view: `Nx.zeros` of one element takes 250 ns instead of 335.
 - **Breaking (effect handlers):** `E_view` and `E_placement` are gone: a
   value's shape and placement are its own, read with no interpreter involved,
   and `Nx_effect.traced` takes the placement of the value it makes.
