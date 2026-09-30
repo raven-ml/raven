@@ -1,0 +1,196 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+a	b	order
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	=
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	=
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	=
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	=
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	=
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	=
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	=
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	=
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	=
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	=
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.PADTO, axis=0, arg=32)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.PADTO, axis=0, arg=32)	=
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.PADTO, axis=2, arg=2)	<
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.PADTO, axis=0, arg=32)	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.PADTO, axis=0, arg=32)	>
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.PADTO, axis=2, arg=2)	=
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SWAP, axis=0, arg=1)	<
+Opt(op=OptOps.PADTO, axis=2, arg=2)	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.PADTO, axis=0, arg=32)	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.PADTO, axis=2, arg=2)	>
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SWAP, axis=0, arg=1)	=
+Opt(op=OptOps.SWAP, axis=0, arg=1)	Opt(op=OptOps.SWAP, axis=1, arg=0)	<
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.PADTO, axis=0, arg=32)	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.PADTO, axis=2, arg=2)	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SWAP, axis=0, arg=1)	>
+Opt(op=OptOps.SWAP, axis=1, arg=0)	Opt(op=OptOps.SWAP, axis=1, arg=0)	=

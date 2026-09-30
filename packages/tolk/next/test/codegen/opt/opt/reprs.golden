@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+opt	axis
+Opt(op=OptOps.TC, axis=0, arg=(-1, 0, 1))	0
+Opt(op=OptOps.TC, axis=0, arg=(0, 2, 2))	0
+Opt(op=OptOps.TC, axis=2, arg=(1, 1, 1))	2
+Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST))	0
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))	0
+Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL))	0
+Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.UNROLL))	0
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL))	1
+Opt(op=OptOps.SPLIT, axis=1, arg=(16, AxisType.LOCAL, True))	1
+Opt(op=OptOps.SPLIT, axis=1, arg=(2, AxisType.LOCAL, True))	1
+Opt(op=OptOps.PADTO, axis=0, arg=32)	0
+Opt(op=OptOps.PADTO, axis=2, arg=2)	2
+Opt(op=OptOps.SWAP, axis=0, arg=1)	0
+Opt(op=OptOps.SWAP, axis=1, arg=0)	1

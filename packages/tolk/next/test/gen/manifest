@@ -46,6 +46,8 @@ codegen/decomp/transcendental/xsin_half.golden
 codegen/decomp/transcendental/xsin_switch_over_double.golden
 codegen/decomp/transcendental/xsin_switch_over_float.golden
 codegen/decomp/transcendental/xsin_switch_over_half.golden
+codegen/opt/opt/comparisons.golden
+codegen/opt/opt/reprs.golden
 dtype/bitcasts.golden
 dtype/commit.golden
 dtype/const.golden

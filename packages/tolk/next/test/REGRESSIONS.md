@@ -470,7 +470,7 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | old: unit/uop/test_uop.ml program_info_from_sink_parity, program_launch_dims_floor_divmod | `ProgramInfo.from_sink`, launch sizes | `O › programs` (every test) |
 | old: unit/uop/test_uop.ml sym_infer_host_scalars | `sym_infer` on casts, bound variables, huge values | `O › sym_infer` (every test); values past the largest int are dropped: `sym_infer` returns an OCaml int |
 | old: unit/uop/test_uop.ml debug_prints_toposort_like_tinygrad, debug_prints_ranges_and_supplied_list_sources, debug_prints_tinygrad_dtype_reprs, debug_prints_float_and_special_args_like_tinygrad, debug_prints_direct_string_args_like_tinygrad, debug_prints_ranges_in_tinygrad_arg_order, debug_prints_reduce_arg_tuple, debug_listing_omits_tags | the listing `print_uops` writes | Render's section; the argument texts are `O › arguments › reprs.golden` |
-| old: unit/uop/test_uop.ml debug_prints_rich_args_dataclass_style | argument reprs | `O › arguments › reprs.golden`; `O › arguments › each payload formats as its argument does` |
+| old: unit/uop/test_uop.ml debug_prints_rich_args_dataclass_style | argument reprs | `O › arguments › reprs.golden`; `O › arguments › each payload formats as its argument does`; the `Opt` repr is in the Opt section |
 | old: unit/uop/test_uop.ml debug_print_ignores_side_metadata | metadata is not printed | dropped: metadata is not ported |
 | old: unit/uop/test_uop.ml upat_matches_add, upat_captures_operands | a pattern matches and names | `O › Upat › matches an operation, and no other`; `O › Upat › match_ names the nodes of each way a pattern matches` |
 | old: unit/uop/test_uop.ml pattern_matcher_rewrites | identity rules | `O › fixed points` (the rule `x + 0`) |
@@ -606,3 +606,24 @@ they read are these goldens.
 | old: `unit/test_cstyle.ml` "metal tensor cores follow Apple GPU family" | Metal's cores by GPU family; sm90 takes sm89's | targets › `cuda.golden` › arch="sm_90"; the Metal family is the renderer's choice (`renderer/cstyle.py:349`), Renderer.Cstyle's suite (L5) |
 | old: `unit/test_runtime_metal.ml` "tensor cores retain warp lanes across four local dimensions" and the six tensor-core tests after it | Metal runs tensor-core kernels | dropped: the executor (L7), on Metal hardware |
 | old: `parity/tc_matmul_*` (9 cases), `parity/tc_symbolic_extent` | tensor-core kernels through the pipeline, per renderer | dropped: pipeline parity cases, retired into the end-to-end suite (plan §4, kind 4) |
+
+## Opt
+
+The suite is `Tolk_next.Opt` (`codegen/opt/opt/`), written `P` below.
+
+tinygrad orders two optimisations as the tuples `(op, axis, arg)`, and cannot
+compare two splits of one axis and amount into different targets, since
+`AxisType` has no order: `comparisons.golden` leaves those pairs out, and
+`P › order › compare is a total order` covers them. A split that is not from
+the top is `(amount, target)` in tinygrad whether or not it spells the
+`False`; the heuristic never spells it, and tolk.next prints it the same way.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `Opt.__repr__` | `P › printing › pp is tinygrad's repr` (every row); `P › printing › a split that is not from the top prints without its flag` |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | the axis an optimisation acts on | `P › printing › axis is the axis tinygrad prints` (every row) |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `dataclass(order=True)` and `OptOps.__lt__` | `P › order › compare agrees with tinygrad where tinygrad orders` (every row); `P › order › compare is a total order`; `P › order › compare is 0 exactly on equal optimisations`; `P › order › splits into different targets are different` |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `check` and `KernelOptError` | `P › check › is unit when its condition holds`; `P › check › raises its message when its condition fails` |
+| tinygrad: `runtime/test_kernel_opts.py`, `runtime/test_linearizer.py`, `null/test_linearizer.py`, `runtime/test_opt_gemm.py`, `runtime/test_tensor_cores.py`, `null/test_uops.py`, `null/test_uops_stats.py`, `null/test_gen_float4.py`, `null/test_linearizer_rewrite.py`, `runtime/test_custom_kernel.py`, `null/test_custom_kernel.py` | optimisations applied to kernels, and the `KernelOptError` of those that do not apply | Postrange's section: `apply_opt` makes the checks, `Opt` only names them |
+| old: `unit/uop/test_uop.ml` debug_prints_rich_args_dataclass_style | "Opt repr" of a split into an upcast | `P › printing › pp is tinygrad's repr › reprs.golden › opt=Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST))` |
+| old: `unit/codegen/test_postrange.ml`, `unit/opt_fuzz/tolk_opt_fuzz.ml` | applying optimisations | Postrange's section |
