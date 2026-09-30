@@ -115,8 +115,8 @@ let set (type a b) (dt : (a, b) Nx_dtype.t) b : int -> a -> unit =
   check "set" dt b;
   match dt with
   | Float16 ->
-      let ba = B.bigarray Bigarray.float16 b in
-      fun i v -> A.set ba i v
+      let ba = B.bigarray Bigarray.int16_unsigned b in
+      fun i v -> A.set ba i (S.encode Float16 v)
   | Float32 ->
       let ba = B.bigarray Bigarray.float32 b in
       fun i v -> A.set ba i v
@@ -186,7 +186,8 @@ let fill_nibbles b v =
 let fill (type a b) (dt : (a, b) Nx_dtype.t) b (v : a) =
   check "fill" dt b;
   match dt with
-  | Float16 -> A.fill (B.bigarray Bigarray.float16 b) v
+  | Float16 ->
+      A.fill (B.bigarray Bigarray.int16_unsigned b) (S.encode Float16 v)
   | Float32 -> A.fill (B.bigarray Bigarray.float32 b) v
   | Float64 -> A.fill (B.bigarray Bigarray.float64 b) v
   | BFloat16 ->

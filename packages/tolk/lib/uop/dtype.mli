@@ -297,8 +297,7 @@ val of_scalar : Nx_dtype.Scalar.t -> t option
 
     Bit-exact narrowing for constant folding with {!Nx_dtype.Scalar.encode},
     which rounds once from the [float]. A folded constant is the value nx
-    stores for the same [float], except in {!Float16}, where nx's store rounds
-    to binary32 first. *)
+    stores for the same [float]. *)
 
 val truncate_float : t -> float -> float
 (** [truncate_float dt x] rounds [x] to the precision of floating-point dtype

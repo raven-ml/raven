@@ -304,8 +304,7 @@ module Scalar : sig
       four float8 formats, have no OCaml type. Their values are read as [float]s
       and stored as the bits these functions give. The C header [nx_dtype.h],
       which nx.dtype installs, holds the same encoders, and [Nx]'s element
-      stores and casts use them, except a store of a [float] into float16, which
-      rounds to binary32 first. *)
+      stores and casts use them. *)
 
   val encode : t -> float -> int
   (** [encode s x] is the bits of [x] in format [s], rounded once to nearest,

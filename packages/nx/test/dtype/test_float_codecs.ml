@@ -13,9 +13,7 @@
    source's width. Past the largest finite value, float16 and bfloat16 give
    their infinity, and the float8 formats saturate to the largest finite value
    of the sign. An infinity stays one where the format has infinities and is NaN
-   where it has none. The fnuz formats have no negative zero. The one exception
-   is a store of a float64 into float16, which rounds to float32 first, as
-   OCaml's float16 bigarrays do.
+   where it has none. The fnuz formats have no negative zero.
 
    The inputs are every float32 bit pattern whose low half is one of a few
    values around each format's rounding bit, the float64 neighbours of some of
@@ -86,8 +84,6 @@ let reference f x =
     Float.copy_sign (if f.saturates then f.max else Float.infinity) x
   else if f.fnuz && r = 0. then 0.
   else r
-
-let to_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* Codecs *)
 
@@ -192,9 +188,8 @@ let agree ~msg inputs want got =
 let check_codec f inputs () =
   agree ~msg:(name f ^ " encode") inputs (reference f) (codec f)
 
-let check_store f dtype inputs ~wide () =
-  let want = if wide then fun x -> reference f (to_f32 x) else reference f in
-  agree ~msg:(name f ^ " store") inputs want (nx_value dtype)
+let check_store f dtype inputs () =
+  agree ~msg:(name f ^ " store") inputs (reference f) (nx_value dtype)
 
 (* nx's casts encode through its kernels, not through element stores. *)
 let check_casts inputs ~src () =
@@ -211,6 +206,7 @@ let check_casts inputs ~src () =
       values;
     equal ~msg:(name f ^ " cast") (list string) [] (List.rev !bad)
   in
+  cast f16 Nx.float16;
   cast bf16 Nx.bfloat16;
   cast e4m3 Nx.float8_e4m3;
   cast e5m2 Nx.float8_e5m2
@@ -262,16 +258,13 @@ let () =
   and e5m2_nan c = c land 0x7F > 0x7C
   and fnuz_nan c = c = 0x80 in
   let formats = [ f16; bf16; e4m3; e5m2; e4m3fnuz; e5m2fnuz ] in
-  let sweep inputs ~wide =
+  let sweep inputs =
     List.map (fun f -> test (name f) (check_codec f inputs)) formats
     @ [
-        test "float16 store" (check_store f16 Nx_dtype.float16 inputs ~wide);
-        test "bfloat16 store"
-          (check_store bf16 Nx_dtype.bfloat16 inputs ~wide:false);
-        test "e4m3 store"
-          (check_store e4m3 Nx_dtype.float8_e4m3 inputs ~wide:false);
-        test "e5m2 store"
-          (check_store e5m2 Nx_dtype.float8_e5m2 inputs ~wide:false);
+        test "float16 store" (check_store f16 Nx_dtype.float16 inputs);
+        test "bfloat16 store" (check_store bf16 Nx_dtype.bfloat16 inputs);
+        test "e4m3 store" (check_store e4m3 Nx_dtype.float8_e4m3 inputs);
+        test "e5m2 store" (check_store e5m2 Nx_dtype.float8_e5m2 inputs);
       ]
   in
   exit
@@ -288,9 +281,9 @@ let () =
              test "e5m2 buffers" (check_buffer_codes Nx_dtype.float8_e5m2 e5m2);
            ];
          group "from float32"
-           (sweep f32_sweep ~wide:false
+           (sweep f32_sweep
            @ [ test "nx casts" (check_casts f32_sweep ~src:Nx.float32) ]);
          group "from float64"
-           (sweep f64_sweep ~wide:true
+           (sweep f64_sweep
            @ [ test "nx casts" (check_casts f64_sweep ~src:Nx.float64) ]);
        ])

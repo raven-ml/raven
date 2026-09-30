@@ -2863,6 +2863,11 @@ thread.
 
 ### Nx
 
+- Writing a `float` into a `float16` tensor and `Nx.cast` to `float16` from
+  `float64` or a 64-bit integer round once to the nearest `float16`. They
+  rounded to `float32` first, which moved a value next to a `float16` tie onto
+  it and rounded it the wrong way; `bfloat16` and the float8 formats already
+  rounded once.
 - Reading a NaN of `float8_e4m3` or `float8_e5m2`, and
   `Nx_dtype.Scalar.decode`, keep its sign, as writing one already did: a
   negative NaN read as positive, so it did not survive a round trip.
