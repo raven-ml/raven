@@ -232,27 +232,30 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `uop/symbolic.py:29` (`fold_const_alu`) and `:154-155` (the
   collapse of committed const conversions), which read a constant with
-  `UOp.val` (`uop/ops.py:259-263`), unwrapped. tinygrad's own
+  `UOp.val` (`uop/ops.py:259-263`), unwrapped; `uop/weak.py:82-87`
+  (`uncast_const`), which leaves the unwrapped literal bare. tinygrad's own
   `TestModularWraparound` expects the wrapped results and is marked
   `xfail_broken_const_wraparound`.
-- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and
-  `:438`.
+- **tolk.next:** `lib/uop/symbolic.ml:94` (`fold_const_alu`) and `:438`;
+  `lib/uop/uop_weak.ml:203` (`uncast_const`).
 - **Differs:** a committed constant, a cast of a literal to a type of known
-  width, is read wrapped to that width: by an operation that folds, and by a
-  cast of it that collapses. The folded result is still kept mathematical,
+  width, is read wrapped to that width: by an operation that folds, by a cast
+  of it that collapses, and where its cast is dropped for a bare literal. The folded result is still kept mathematical,
   for emission to wrap. tinygrad reads the unwrapped value, so a fold that
   reads high bits gives what no machine computes: `(uint32 0xFFFFFFFF + 1) >> 1`
   folds to `2147483648` where the machine gives `0`, `threefry2x32(5, 10)`
   folds to another key than the unfolded graph computes, and the int64 cast
   of the int32 constant `2^31` folds to `2^31` where the machine gives
-  `-2^31`.
+  `-2^31`, and `x < uint8 300` compares against a bare `300`, which folds to
+  `true`, where the machine compares against `44`.
 - **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
   must draw the numbers eager nx draws.
 - **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › an
   operation reads committed constants at their width` (a fold, a cast of a
-  committed constant, a uint8 remainder), and `tinygrad › tests.golden ›
-  TestModularWraparound.<test>` and `TestThreefryConstFolding.test_threefry`,
-  which check the machine value.
+  committed constant, a uint8 remainder), `symbolic_simple › constants › a
+  comparison reads a committed constant at its width` (the uncast), and
+  `tinygrad › tests.golden › TestModularWraparound.<test>` and
+  `TestThreefryConstFolding.test_threefry`, which check the machine value.
 
 ## D14. Folded comparisons treat NaN as IEEE does
 

@@ -468,7 +468,6 @@ uop/uop_weak/store_commits_its_value_at_the_destination.golden
 uop/uop_weak/uncast_a_committed_literal.golden
 uop/uop_weak/uncast_drops_a_cast_that_fits.golden
 uop/uop_weak/uncast_keeps_a_cast_of_an_expression.golden
-uop/uop_weak/uncast_keeps_a_cast_that_wraps.golden
 uop/uop_weak/uncast_keeps_a_literal_that_widens_a_comparison.golden
 uop/uop_weak/uncast_keeps_a_shifted_literal.golden
 uop/uop_weak/uncast_keeps_a_shifted_literal_of_its_peer_s_type.golden

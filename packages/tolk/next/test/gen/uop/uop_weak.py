@@ -304,11 +304,6 @@ def uncast_keeps_a_literal_that_widens_a_comparison():
 
 
 @graph
-def uncast_keeps_a_cast_that_wraps():
-    return rewritten(small("u", dtypes.uint8) < UOp.cconst(300, dtypes.uint8), pm_uncast_const)
-
-
-@graph
 def uncast_drops_a_cast_that_fits():
     return rewritten(small("u", dtypes.uint8) < UOp.cconst(44, dtypes.uint8), pm_uncast_const)
 

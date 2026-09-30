@@ -201,10 +201,22 @@ let pm_lower_weak =
    so rules keyed on bare constants keep matching. The drop must change nothing
    the consumer derives: neither the operands' meet nor the node's own type. *)
 let uncast_const u =
-  (* A weak cast over a constant is not a commit: it is still resolving. *)
+  (* A weak cast over a constant is not a commit: it is still resolving. The
+     literal left is the constant at the width it was committed to, as a machine
+     holds it. A NaN or an infinity has no integer value: its literal is left as
+     it is written, and the consumer's derived type keeps the cast. *)
   let uncast s =
     if op s = Op.Cast && (not (weak s)) && is_const (nth s 0) && weak (nth s 0)
-    then nth s 0
+    then
+      let dt = dtype s in
+      match value s with
+      | `Float f
+        when not (Float.is_finite f || Dtype.is_float dt || Dtype.is_bool dt) ->
+          nth s 0
+      | c -> (
+          match Dtype.const dt c with
+          | #Dtype.value as v -> const (Dtype.truncate dt v :> Dtype.const)
+          | `Invalid -> s)
     else s
   in
   let src = List.map uncast (Ops.src u) in

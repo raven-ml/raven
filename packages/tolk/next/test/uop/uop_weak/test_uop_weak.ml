@@ -178,8 +178,6 @@ let pm_uncast_const =
         (Ops.v Op.Shl ~src:[ i32 1; var ~dtype:Int32 "s" 0 31 ]);
       uncast "uncast_keeps_a_literal_that_widens_a_comparison"
         (Ops.v Op.Cmplt ~src:[ small Int16; i32 1 ]);
-      uncast "uncast_keeps_a_cast_that_wraps"
-        Ops.O.(u8 < Ops.cconst Uint8 (i 300));
       uncast "uncast_drops_a_cast_that_fits"
         Ops.O.(u8 < Ops.cconst Uint8 (i 44));
     ]
