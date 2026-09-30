@@ -10,7 +10,7 @@ let strf = Printf.sprintf
 let npy_to_nx (Npy.P (kind, buffer, shape)) =
   Nx.P (Storage.tensor kind buffer shape)
 
-let nx_to_npy t = Npy.P (Nx.dtype t, Nx_effect.elements t, Nx.shape t)
+let nx_to_npy t = Npy.P (Nx.dtype t, Storage.elements t, Nx.shape t)
 
 (* Uniform exception-to-result conversion *)
 let wrap_exn f =

@@ -405,7 +405,7 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
           let oc = open_out_gen flags perm out in
           Fun.protect ~finally:(fun () -> close_out oc) @@ fun () ->
           write_comment_lines oc comments newline header;
-          let get = Nx_array.Elements.get S.kind (Nx_effect.elements arr) in
+          let get = Nx_array.Elements.get S.kind (Storage.elements arr) in
           (match ndim with
           | 0 ->
               S.print oc (get 0);

@@ -34,7 +34,7 @@ let uint8_pixels img =
         failwith (err_bad_dims (Array.length s) dims)
   in
   match Nx.dtype img with
-  | UInt8 -> (h, w, c, Storage.bytes (Nx_effect.elements img))
+  | UInt8 -> (h, w, c, Storage.bytes (Storage.elements img))
   | _ -> failwith "expected uint8 tensor"
 
 let png_channels c =

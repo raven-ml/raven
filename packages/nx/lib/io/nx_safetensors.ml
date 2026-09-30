@@ -55,7 +55,7 @@ let entry (type a b) file (kind : (a, b) Nx_dtype.t) shape ~off ~len =
     Nx_io_codec.byteswap (Storage.bytes buffer) ~element_size:size ~elements:n;
     Nx.P (Storage.tensor kind buffer shape)
   end
-  else Nx.P (Nx_effect.of_buffer kind shape bytes)
+  else Nx.P (Storage.on_device kind shape bytes)
 
 (* The header of [file] and the offset of its data, once the file's length is
    the one the header describes. *)
@@ -140,7 +140,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
   in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
-    let elements = Nx_effect.elements t in
+    let elements = Storage.elements t in
     let swapped =
       B.create Nx_device.host (B.dtype elements) (B.length elements)
     in
@@ -150,9 +150,9 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
     (dtype, swapped)
   end
   else
-    match Nx_effect.run t with
+    match Storage.run t with
     | Some run -> (dtype, run)
-    | None -> (dtype, Nx_effect.elements t)
+    | None -> (dtype, Storage.elements t)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;

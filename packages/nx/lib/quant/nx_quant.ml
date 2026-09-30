@@ -127,7 +127,17 @@ let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
 let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
 let of_host dt buf shape =
-  Nx.reshape shape (Nx_effect.from_host Nx_effect.Placement.host dt buf)
+  let view = Nx_array.View.create [| Nx_device.Buffer.length buf |] in
+  Nx.reshape shape (Nx.Repr.host { Nx_array.dtype = dt; view; buffer = buf })
+
+(* The elements of [x] in C order, in a host buffer: its storage when it is
+   contiguous on the host. *)
+let elements x =
+  let x =
+    match Nx.Repr.v x with Placed _ -> x | Host _ | Traced _ -> Nx.contiguous x
+  in
+  let b = Nx.Op.eval (Read x) in
+  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel x)
 
 (* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
    whose leading axes are [lead], a view. [chunks n k f] calls [f r0 r] on the
@@ -174,7 +184,7 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
       let codes = matrix lead codes j and scales = matrix lead scales j in
       chunks n k (fun r0 r ->
           let values = decode (range r0 r codes) (range r0 r scales) in
-          let src = bytes (Nx_effect.elements (Nx.cast dt values)) in
+          let src = bytes (elements (Nx.cast dt values)) in
           Bigarray.Array1.blit src
             (Bigarray.Array1.sub dst
                (((j * n) + r0) * k * item)
@@ -363,14 +373,14 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
                     (decoded r0 r)
                 in
                 sum := Some (match !sum with None -> p | Some s -> Nx.add s p));
-            let src = floats (Nx_effect.elements (Option.get !sum)) in
+            let src = floats (elements (Option.get !sum)) in
             Bigarray.Array1.blit src
               (Bigarray.Array1.sub dst (!base * m * k) (g * m * k))
           end
           else
             chunks n k (fun r0 r ->
                 let p = Nx.matmul rows (Nx.matrix_transpose (decoded r0 r)) in
-                let src = floats (Nx_effect.elements p) in
+                let src = floats (elements p) in
                 for q = 0 to (g * m) - 1 do
                   Bigarray.Array1.blit
                     (Bigarray.Array1.sub src (q * r) r)

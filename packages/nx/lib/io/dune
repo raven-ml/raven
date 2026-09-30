@@ -3,7 +3,7 @@
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries nx_dtype nx_device nx nx_array nx_effect unix)
+ (libraries nx_dtype nx_device nx nx_array unix)
  (foreign_stubs
   (language c)
   (names

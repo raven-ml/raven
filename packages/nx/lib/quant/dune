@@ -1,7 +1,7 @@
 (library
  (name nx_quant)
  (public_name nx.quant)
- (libraries nx nx.array nx.dtype nx.device nx.effect)
+ (libraries nx nx.array nx.dtype nx.device)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
