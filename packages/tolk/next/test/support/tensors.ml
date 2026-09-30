@@ -1,8 +1,9 @@
 open Tolk_next
 
 (* An element carries the memory it views, if any, so that a store through a
-   movement of storage knows where it writes. *)
-type cell = { value : Dtype.const; at : (int * int) option }
+   movement of storage knows where it writes, and on which device. *)
+type place = { slot : int; index : int; device : int }
+type cell = { value : Dtype.const; at : place option }
 type tensor = { shape : int list; cells : cell array }
 
 let fail fmt = Format.kasprintf invalid_arg fmt
@@ -14,8 +15,41 @@ let concrete u =
       | Sym _ -> fail "cannot evaluate a %a of symbolic shape" Op.pp (Ops.op u))
     (Ops.shape u)
 
-let int = function Ops.Int n -> n | Sym _ -> fail "a movement is symbolic"
 let size shape = List.fold_left ( * ) 1 shape
+
+(* Device ranges
+
+   A value on several devices may depend on a device range: on device [k], the
+   range stands for [k]. *)
+
+let device_ranges u =
+  Ops.Nodes.fold
+    (fun r acc -> if Ops.axis_type r = Device then r :: acc else acc)
+    (Ops.ranges u) []
+
+let count r = Z.to_int (Ops.to_int (Ops.nth r 0))
+
+let on_device k u =
+  Ops.ssimplify
+    (Ops.substitute u (List.map (fun r -> (r, Ops.int k)) (device_ranges u)))
+
+let int ~device = function
+  | Ops.Int n -> n
+  | Sym u -> (
+      match on_device device u with
+      | Int n -> n
+      | Sym _ -> fail "a movement is symbolic")
+
+(* The device ranges an argument of a movement holds. *)
+let marg_ranges u =
+  let sints : Ops.movement -> Ops.sint list = function
+    | Reshape s | Expand s -> s
+    | Pad p | Shrink p -> List.concat_map (fun (a, b) -> [ a; b ]) p
+    | Permute _ | Flip _ -> []
+  in
+  List.concat_map
+    (function Ops.Int _ -> [] | Sym s -> device_ranges s)
+    (sints (Ops.marg u))
 
 (* Row-major coordinates *)
 
@@ -46,7 +80,8 @@ let broadcast shape t =
            t.shape
            (List.filteri (fun a _ -> a >= lead) idx)))
 
-let movement u t =
+let movement ~device u t =
+  let int = int ~device in
   let shape = concrete u in
   let zero = Dtype.const (Ops.dtype u) (`Int Z.zero) in
   match Ops.marg u with
@@ -132,6 +167,55 @@ let stack u ts =
   let cells = List.map (fun t -> (broadcast tail t).cells) ts in
   { shape; cells = Array.concat cells }
 
+(* Bit reinterpretation between types of different sizes: the bytes of each row
+   of the last axis, little-endian, read as the other type. *)
+
+let unsigned dt =
+  match Dtype.itemsize dt with
+  | 1 -> Dtype.Uint8
+  | 2 -> Uint16
+  | 4 -> Uint32
+  | 8 -> Uint64
+  | n -> fail "no unsigned type of %d bytes" n
+
+let bits dt : Dtype.const -> Z.t option = function
+  | `Invalid -> None
+  | #Dtype.value as v -> (
+      match Dtype.bitcast dt (unsigned dt) v with
+      | `Int z -> Some z
+      | _ -> fail "the bits of a %a" Dtype.pp dt)
+
+let rebytes u t =
+  let from = Ops.dtype (Ops.nth u 0) and dt = Ops.dtype u in
+  let os = Dtype.itemsize from and ns = Dtype.itemsize dt in
+  let shape = concrete u in
+  let last s = List.nth s (List.length s - 1) in
+  let row_in = last t.shape and row_out = last shape in
+  let cell k =
+    let row = k / row_out and at = k mod row_out in
+    let byte b =
+      let e = t.cells.((row * row_in) + (b / os)) in
+      let shift = 8 * (b mod os) in
+      Option.map
+        (fun z -> Z.logand (Z.shift_right z shift) (Z.of_int 0xff))
+        (bits from e.value)
+    in
+    let rec gather i acc =
+      if i = ns then Some acc
+      else
+        match byte ((at * ns) + i) with
+        | Some v -> gather (i + 1) (Z.logor acc (Z.shift_left v (8 * i)))
+        | None -> None
+    in
+    let value : Dtype.const =
+      match gather 0 Z.zero with
+      | Some z -> (Dtype.bitcast (unsigned dt) dt (`Int z) :> Dtype.const)
+      | None -> `Invalid
+    in
+    { value; at = None }
+  in
+  { shape; cells = Array.init (size shape) cell }
+
 let fresh t =
   { t with cells = Array.map (fun c -> { c with at = None }) t.cells }
 
@@ -153,6 +237,43 @@ let across f vs =
   in
   List.init n (fun k -> f (List.map (on k) vs))
 
+(* [unshard u axes shards] is the whole value of [u], whose device [k] holds
+   [shards]'s [k]th part: along each axis of [axes], the part at the position
+   that axis's range takes on [k]. *)
+let unshard u axes shards =
+  let rngs = List.tl (Ops.src u) in
+  let n =
+    match List.concat_map device_ranges rngs with
+    | r :: _ -> count r
+    | [] -> fail "cannot evaluate a value sharded within a kernel"
+  in
+  let shards = match shards with [ t ] -> List.init n (fun _ -> t) | s -> s in
+  let parts =
+    List.mapi
+      (fun k t -> (List.map (fun r -> int ~device:k (Sym r)) rngs, t))
+      shards
+  in
+  let holds idx (positions, t) =
+    List.for_all2
+      (fun axis p -> List.nth idx axis / List.nth t.shape axis = p)
+      axes positions
+  in
+  let shape = concrete u in
+  let cell k =
+    let idx = coords shape k in
+    match List.find_opt (holds idx) parts with
+    | Some (_, t) ->
+        let local =
+          List.mapi
+            (fun axis i ->
+              if List.mem axis axes then i mod List.nth t.shape axis else i)
+            idx
+        in
+        t.cells.(offset t.shape local)
+    | None -> fail "an element of a sharded value is on no device"
+  in
+  { shape; cells = Array.init (size shape) cell }
+
 (* Memory *)
 
 type memory = {
@@ -171,29 +292,35 @@ let current m at =
 
 let storage m u =
   match Ops.arg u with
-  | Param { slot; size = Some n; device; _ } ->
+  | Param { slot; size; device; addrspace; _ } when addrspace <> Some Alu ->
+      let n = Option.value size ~default:1 in
       let shape = concrete u in
       List.init (devices device) (fun k ->
           let cell i =
-            let at = (slot, (k * n) + i) in
-            { value = initial m at; at = Some at }
+            let at = { slot; index = (k * n) + i; device = k } in
+            { value = initial m (slot, at.index); at = Some at }
           in
           { shape; cells = Array.init n cell })
-  | _ -> fail "cannot evaluate a scalar parameter"
+  | _ -> fail "cannot evaluate a variable"
 
+(* Each element of the destination takes the value of the device whose memory it
+   views, a value on one device standing for every device. *)
 let store m dst value =
-  List.iter2
-    (fun d v ->
-      let v = broadcast d.shape v in
+  List.iter
+    (fun d ->
+      let value = List.map (broadcast d.shape) value in
+      let source at =
+        match value with [ v ] -> v | value -> List.nth value at.device
+      in
       Array.iteri
         (fun k c ->
           match c.at with
-          | Some at -> Hashtbl.replace m.written at v.cells.(k).value
+          | Some at ->
+              Hashtbl.replace m.written (at.slot, at.index)
+                (source at).cells.(k).value
           | None -> fail "a store's destination is not storage")
         d.cells)
     dst
-    (if List.length value = 1 then List.map (fun _ -> List.hd value) dst
-     else value)
 
 let reread m v =
   List.map
@@ -204,7 +331,7 @@ let reread m v =
           Array.map
             (fun c ->
               match c.at with
-              | Some at -> { c with value = current m at }
+              | Some at -> { c with value = current m (at.slot, at.index) }
               | None -> c)
             t.cells;
       })
@@ -231,7 +358,13 @@ let rec run m params u =
         List.map (fun t -> { t with shape }) (List.assoc slot params)
     | (Param | Buffer | Alloc), _ -> storage m u
     | (Reshape | Expand | Pad | Shrink | Permute | Flip), _ ->
-        List.map (movement u) (value (List.hd src))
+        let v = value (List.hd src) in
+        let v =
+          match (marg_ranges u, v) with
+          | r :: _, [ t ] -> List.init (count r) (fun _ -> t)
+          | _ -> v
+        in
+        List.mapi (fun device t -> movement ~device u t) v
     | (Detach | Contiguous_backward), _ -> value (List.hd src)
     | Stage, _ -> List.map fresh (value (List.hd src))
     | Reduce, Reduce { op; num_axes } ->
@@ -239,10 +372,10 @@ let rec run m params u =
     | Stack, _ -> across (stack u) (List.map value src)
     | Mselect, Shard i -> [ List.nth (value (List.hd src)) i ]
     | Mstack, _ -> List.concat_map value src
-    | Copy, Device d -> (
-        match value (List.hd src) with
-        | [ t ] -> List.init (devices (Some d)) (fun _ -> fresh t)
-        | _ -> fail "a copy's source is on several devices")
+    | Copy, Device d ->
+        let t = List.hd (value (List.hd src)) in
+        List.init (devices (Some d)) (fun _ -> fresh t)
+    | Unshard, Axes axes -> [ unshard u axes (value (List.hd src)) ]
     | Allreduce, Allreduce { op; device } ->
         let shards = value (List.hd src) in
         let t = List.hd shards in
@@ -265,9 +398,15 @@ let rec run m params u =
         List.iter (fun s -> ignore (value s)) src;
         []
     | Call, _ ->
-        let args = List.mapi (fun k a -> (k, value a)) (List.tl src) in
+        (* The body's parameter of a sharded argument holds its parts. *)
+        let part a = if Ops.op a = Unshard then Ops.nth a 0 else a in
+        let args = List.mapi (fun k a -> (k, value (part a))) (List.tl src) in
         ignore (run m args (List.hd src));
         []
+    | Bitcast, _
+      when Dtype.itemsize (Ops.dtype u)
+           <> Dtype.itemsize (Ops.dtype (List.hd src)) ->
+        List.map (rebytes u) (value (List.hd src))
     | op, _ when Op.Set.mem op Op.Set.alu || op = Cast || op = Bitcast ->
         across (elementwise u) (List.map value src)
     | op, _ -> fail "cannot evaluate a %a" Op.pp op

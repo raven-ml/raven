@@ -28,6 +28,12 @@ let storage =
           equal consts [ `Invalid; `Invalid ] (eval ~buffers:[] (p 1 2)));
       test "memory read past its array is refused" (fun () ->
           rejects (fun () -> eval ~buffers:[ (1, iota 2) ] (p 1 3)));
+      test "scalar storage holds one element" (fun () ->
+          equal consts
+            [ z 0 ]
+            (eval (Ops.v Param ~arg:(Param (Ops.param_arg ~slot:1 Int32)))));
+      test "a variable is refused" (fun () ->
+          rejects (fun () -> eval (Ops.variable "n" (z 1) (z 3))));
       test "device k of storage holds the k-th run of its memory" (fun () ->
           equal values
             [ [| z 0; z 1; z 2 |]; [| z 3; z 4; z 5 |] ]
@@ -86,6 +92,19 @@ let arithmetic =
             (ints [ 7; 7 ])
             (eval ~buffers:[]
                (Ops.where (Ops.bool true) (Ops.int ~dtype:Int32 7) x)));
+      test "a bitcast to a narrower type splits each element, low bytes first"
+        (fun () ->
+          equal consts
+            (ints [ 0x02; 0x01; 0x04; 0x03 ])
+            (eval
+               ~buffers:[ (1, [| z 0x0102; z 0x0304 |]) ]
+               (Ops.bitcast (p ~dt:Uint16 1 2) Uint8)));
+      test "a bitcast to a wider type joins each row's elements" (fun () ->
+          equal consts
+            (ints [ 0x0102; 0x0304 ])
+            (eval
+               ~buffers:[ (1, [| z 2; z 1; z 4; z 3 |]) ]
+               (Ops.bitcast (p ~dt:Uint8 ~dims:[ 2; 2 ] 1 4) Uint16)));
       test "a reduction folds its leading axes, the last fastest" (fun () ->
           equal consts
             (ints [ 3; 5; 7 ])
@@ -181,5 +200,99 @@ let effects =
           rejects (fun () -> eval (Ops.shrink (p 1 6) [ Some (Int 0, Sym n) ])));
     ]
 
+(* Sharded values *)
+
+let four = Ops.Multi [ "CPU:0"; "CPU:1"; "CPU:2"; "CPU:3" ]
+let device_range n = Ops.range ~axis_type:Device (Int n) [ -1 ]
+
+let shards =
+  let x = p ~device:two 1 3 in
+  group "sharded values"
+    [
+      test "a movement moves device k's value with its device range at k"
+        (fun () ->
+          let d = device_range 2 in
+          let start = Ops.O.(d * Ops.int 2) in
+          equal values
+            [ [| z 0; z 1 |]; [| z 2; z 3 |] ]
+            (Tensors.eval
+               ~buffers:[ (1, iota 6) ]
+               (Ops.mop
+                  (Ops.copy_to_device (p 1 4) two)
+                  (Shrink [ (Sym start, Int 2) ]))));
+      test "an unshard reassembles its devices' parts" (fun () ->
+          equal consts (ints [ 0; 1; 2; 3; 4; 5 ]) (eval (Ops.unshard x [ 0 ])));
+      test "an unshard of two axes places each part at its ranges' values"
+        (fun () ->
+          let d = device_range 4 in
+          let rows = Ops.O.(d // int 2) and cols = Ops.O.(d % int 2) in
+          let x = p ~device:four ~dims:[ 1; 1 ] 1 1 in
+          equal consts
+            (ints [ 0; 1; 2; 3 ])
+            (eval
+               ~buffers:[ (1, iota 4) ]
+               (Ops.unshard ~ranges:[ rows; cols ] x [ 0; 1 ])));
+      test "a value sharded across a kernel's threads is refused" (fun () ->
+          let threads = Ops.range ~axis_type:Local (Int 2) [ 0 ] in
+          rejects (fun () -> eval (Ops.unshard ~ranges:[ threads ] x [ 0 ])));
+      test "a copy of a value on several devices is its first device's"
+        (fun () ->
+          equal consts (ints [ 0; 1; 2 ]) (eval (Ops.copy_to_device x cpu)));
+    ]
+
+let sharded_effects =
+  let out = Ops.unshard (p ~device:two 0 2) [ 0 ] in
+  let write = list (triple int int Dtypes.value) in
+  let writes value =
+    Tensors.writes
+      ~buffers:[ (1, iota 4); (2, iota 8) ]
+      (Ops.sink [ Ops.store out value ])
+  in
+  group "stores of sharded values"
+    [
+      test "a store into a sharded destination writes each device's part"
+        (fun () ->
+          equal write
+            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2); (0, 3, z 3) ]
+            (writes (p 1 4)));
+      test "an element takes the value of the device whose memory it views"
+        (fun () ->
+          equal write
+            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 6); (0, 3, z 7) ]
+            (writes (p ~device:two 2 4)));
+    ]
+
+let sharded_calls =
+  let out = Ops.unshard (p ~device:two 0 2) [ 0 ] in
+  let param slot = Ops.param ~device:two ~shape:[ Int 2 ] slot Int32 in
+  let body =
+    Ops.sink
+      [ Ops.store (Ops.unshard (param 0) [ 0 ]) (Ops.unshard (param 1) [ 0 ]) ]
+  in
+  group "calls on sharded values"
+    [
+      test "a parameter of a sharded argument holds its parts" (fun () ->
+          equal
+            (list (triple int int Dtypes.value))
+            [ (0, 0, z 0); (0, 1, z 1); (0, 2, z 2); (0, 3, z 3) ]
+            (Tensors.writes
+               ~buffers:[ (1, iota 4) ]
+               (Ops.sink
+                  [
+                    Ops.call body [ out; Ops.unshard (p ~device:two 1 2) [ 0 ] ];
+                  ])));
+    ]
+
 let () =
-  exit (run "Tensors" [ storage; movements; arithmetic; devices; effects ])
+  exit
+    (run "Tensors"
+       [
+         storage;
+         movements;
+         arithmetic;
+         devices;
+         shards;
+         effects;
+         sharded_effects;
+         sharded_calls;
+       ])
