@@ -282,6 +282,107 @@ let memory_coalescing =
       errors;
     ]
 
+(* The law *)
+
+(* Generated kernels copy runs of consecutive elements of [input] into [output]
+   inside a loop of four, adding up one or two runs of [input] per run of
+   [output]. A run's elements are at constant offsets or at offsets from the
+   loop's index, gated by a condition on it or not; its start is any offset, so
+   that runs start aligned or not, and overlap. *)
+type place = { scale : int; gated : bool; start : int }
+type run = { dst : place; count : int; srcs : place list }
+
+let r = Ops.range (Int 4) [ 0 ]
+
+let index { scale; gated; start } j =
+  let i =
+    match (scale, start + j) with
+    | 0, k -> Ops.int k
+    | s, 0 -> Ops.O.(r * int s)
+    | s, k -> Ops.O.((r * int s) + int k)
+  in
+  if gated then Ops.valid i Ops.O.(r < int 2) else i
+
+let size = 40
+
+let generated (dtype, runs) =
+  let input = Ops.param ~shape:[ Int size ] 0 dtype
+  and output = Ops.param ~shape:[ Int size ] 1 dtype in
+  (* A second store of one element under the same key is refused; the first
+     store of each element is kept. *)
+  let stores, _ =
+    List.fold_left
+      (fun (stores, seen) { dst; count; srcs } ->
+        List.fold_left
+          (fun (stores, seen) j ->
+            let key = (dst.scale, dst.gated, dst.start + j) in
+            if List.mem key seen then (stores, seen)
+            else
+              let read p = Ops.load (Ops.index input [ index p j ]) [] in
+              let value =
+                List.fold_left Ops.add
+                  (read (List.hd srcs))
+                  (List.map read (List.tl srcs))
+              in
+              ( Ops.store (Ops.index output [ index dst j ]) value :: stores,
+                key :: seen ))
+          (stores, seen) (List.init count Fun.id))
+      ([], []) runs
+  in
+  Ops.sink [ Ops.end_ (Ops.group (List.rev stores)) [ r ] ]
+
+let kernels_of_runs =
+  let open Gen in
+  let place =
+    let+ scale = of_list [ 0; 4; 8 ]
+    and+ gated = bool
+    and+ start = int_range 0 7 in
+    { scale; gated; start }
+  in
+  let run =
+    let+ dst = place
+    and+ count = int_range 1 8
+    and+ srcs = list ~size:(int_range 1 2) place in
+    { dst; count; srcs }
+  in
+  let dtype = of_list [ Dtype.Float32; Float16; Int32; Int8 ] in
+  with_pp
+    (fun ppf k -> Format.pp_print_string ppf (Graph.to_string (generated k)))
+    (pair dtype (list ~size:(int_range 1 3) run))
+
+let elements dtype =
+  Array.init size (fun i ->
+      if Dtype.is_float dtype then `Float (Float.of_int i +. 0.5)
+      else `Int (Z.of_int ((3 * i) + 1)))
+
+let write = triple int int Dtypes.value
+
+let preserves_writes renderer (dtype, runs) =
+  let k = generated (dtype, runs) in
+  let coalesced = coalesce ~renderer k in
+  let merged op =
+    List.exists
+      (fun u -> Ops.op u = op && Ops.op (Ops.nth u 0) = Op.Shrink)
+      (Ops.toposort coalesced)
+  in
+  if renderer.supports_float4 then begin
+    cover "loads were merged" (merged Op.Load);
+    cover "stores were merged" (merged Op.Store)
+  end;
+  let writes u =
+    Interpreter.writes ~buffers:[ (0, elements dtype); (1, [||]) ] u
+  in
+  equal (list write) (writes k) (writes coalesced)
+
+let laws =
+  group "laws"
+    [
+      prop "coalescing preserves the kernel's writes" kernels_of_runs
+        (preserves_writes vector);
+      prop "without vector accesses, coalescing preserves the kernel's writes"
+        kernels_of_runs (preserves_writes scalar);
+    ]
+
 (* indexing_simplify *)
 
 let indexing_simplify =
@@ -338,6 +439,8 @@ let allow_half8 =
       half8 "half";
       half8 "half8";
       hand_built "accesses_allow_half8.golden" vector;
+      prop "coalescing preserves the kernel's writes" kernels_of_runs
+        (preserves_writes vector);
       test "eight halves are one load of eight" (fun () ->
           let half = Ops.param ~shape:[ Int 64 ] 2 Float16 in
           equal runs
@@ -374,4 +477,4 @@ let dmc =
 let () =
   exit
     (run "Tolk_next.Coalesce"
-       [ memory_coalescing; indexing_simplify; readme; allow_half8; dmc ])
+       [ memory_coalescing; laws; indexing_simplify; readme; allow_half8; dmc ])
