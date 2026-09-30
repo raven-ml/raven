@@ -2875,6 +2875,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.submit` allocates about half as much per call: it gathers the
+  devices a submission takes, and the latest work pending on their memory, in
+  short lists instead of sorted copies and a hash table. A submission to one
+  device touching six buffers allocates 250 minor words, from 478.
 - `Nx_device.submit` waits, for at most each device's timeout, until the
   device's queues have room for a submission, as `Driver.device`'s new `room`
   says, and loses a device whose queues stay full. An AMD device has room once

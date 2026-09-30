@@ -975,12 +975,23 @@ let rec allocate d n ~pinned ~collected =
 let with_devices ds f =
   let ds = List.sort_uniq (fun a b -> Int.compare a.id b.id) ds in
   List.iter (fun d -> Mutex.lock d.lock) ds;
-  Fun.protect
-    ~finally:(fun () -> List.iter (fun d -> Mutex.unlock d.lock) (List.rev ds))
-    (fun () ->
-      List.iter check ds;
-      List.iter reclaim ds;
-      f ())
+  let rec unlock = function
+    | [] -> ()
+    | d :: ds ->
+        unlock ds;
+        Mutex.unlock d.lock
+  in
+  match
+    List.iter check ds;
+    List.iter reclaim ds;
+    f ()
+  with
+  | r ->
+      unlock ds;
+      r
+  | exception e ->
+      unlock ds;
+      raise e
 
 let synchronize d = with_devices [ d ] (fun () -> sync d)
 
@@ -2169,6 +2180,13 @@ let encodable ds d' =
          d == d' || (host_of d == host_of d' && Option.is_some d.mapping))
        ds
 
+(* [d] added to the devices [l], once. *)
+let add d l = if List.memq d l then l else d :: l
+
+let rec reach_into l b =
+  let l = add b.owner l in
+  match b.source with Some (src, _) -> reach_into l src | None -> l
+
 let submit ds ~touches f =
   let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.submit: " ^^ fmt) in
   let ds = List.sort_uniq by_id ds in
@@ -2181,42 +2199,42 @@ let submit ds ~touches f =
       if b.base.owner == disk then invalid "a buffer on the disk")
     touches;
   let reached =
-    List.sort_uniq by_id (List.concat_map (fun b -> reach b.base) touches)
+    List.fold_left (fun l (b : buffer) -> reach_into l b.base) [] touches
   in
   let on =
-    List.sort_uniq by_id
-      (ds @ List.map (fun (b : buffer) -> b.base.owner) touches)
+    List.fold_left (fun l (b : buffer) -> add b.base.owner l) ds touches
   in
-  let taken = List.sort_uniq by_id (on @ reached) in
+  let taken = List.fold_left (fun l d -> add d l) on reached in
   with_devices taken @@ fun () ->
   List.iter Buffer.reachable touches;
   (* The latest value each device's work touched the reached memory with. *)
-  let latest = Hashtbl.create 8 in
-  let note (d', v) =
+  let latest = ref [] in
+  let note d' v =
     (* A lost device's work never completes; the memory it can reach raises its
        loss instead. *)
     if failed d' = None then
-      match Hashtbl.find_opt latest d'.id with
-      | Some (_, v') when v' >= v -> ()
-      | _ -> Hashtbl.replace latest d'.id (d', v)
+      match List.assq_opt d' !latest with
+      | Some v' when !v' >= v -> ()
+      | Some v' -> v' := v
+      | None -> latest := (d', ref v) :: !latest
   in
   List.iter
     (fun t ->
-      if runs_work t then note (t, submitted t);
-      Hashtbl.iter (fun _ p -> note p) t.pending)
+      if runs_work t then note t (submitted t);
+      Hashtbl.iter (fun _ (d', v) -> note d' v) t.pending)
     reached;
-  let d_set = List.filter (encodable ds) on in
+  let d_set = List.sort by_id (List.filter (encodable ds) on) in
   (* A device's own earlier work is ordered by its vendor's rule. *)
   let alone d' = match ds with [ d ] -> d == d' | _ -> false in
-  Hashtbl.iter
-    (fun _ (d', v) ->
-      if not (List.memq d' d_set || alone d') then wait_signal d' v)
-    latest;
+  List.iter
+    (fun (d', v) ->
+      if not (List.memq d' d_set || alone d') then wait_signal d' !v)
+    !latest;
   let waits =
     List.map
       (fun d' ->
-        match Hashtbl.find_opt latest d'.id with
-        | Some (_, v) -> (d', v)
+        match List.assq_opt d' !latest with
+        | Some v -> (d', !v)
         | None -> (d', Atomic.get d'.settled))
       d_set
   in

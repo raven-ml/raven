@@ -1498,8 +1498,8 @@ let batches =
         staged_runs_take_turns;
       test "staged runs of two programs from two domains each copy their own"
         staged_runs_from_two_domains;
-      test "a run of a batch of one kernel allocates at most 800 minor words"
-        (fun () -> at_most int ~than:800 (batch_run_words ()));
+      test "a run of a batch of one kernel allocates at most 400 minor words"
+        (fun () -> at_most int ~than:400 (batch_run_words ()));
       test "link refuses a C function of a library it does not know"
         refuses_an_unknown_library;
       run_refuses ~devices:on_null "a batch's parameter it binds no buffers"
@@ -1586,8 +1586,8 @@ let metal =
         (serialized ~devices:on_metal "copy");
       slow "a run of a batch allocates and loads nothing"
         (allocates_nothing ~devices:on_metal ~names:metal_names "copy");
-      slow "a run of a batch of one kernel allocates at most 650 minor words"
-        (fun () -> at_most int ~than:650 (batch_run_words ~devices:on_metal ()));
+      slow "a run of a batch of one kernel allocates at most 400 minor words"
+        (fun () -> at_most int ~than:400 (batch_run_words ~devices:on_metal ()));
       slow "a program's run on Metal takes a positive time, under a second"
         (fun () ->
           let t =

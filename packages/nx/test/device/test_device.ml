@@ -1873,9 +1873,29 @@ let test_submit_refusals () =
   refused ~msg:"a dead buffer" [ a ] [ b ];
   equal ~msg:"nothing submitted" int 0 (Nx_device.submitted a)
 
+(* The minor words a submission to one device allocates on the calling domain,
+   touching three buffers of the host and three of the device, the one before it
+   having left its work pending on their memory. *)
+let submission_words () =
+  let d = (fake ~maps:true ()).dev in
+  let touches =
+    List.init 3 (fun _ -> B.create host S.UInt8 8)
+    @ List.init 3 (fun _ -> B.create d S.UInt8 8)
+  in
+  let run () = ignore (submit d ~touches Fun.id) in
+  run ();
+  settle [ d ];
+  let before = Gc.minor_words () in
+  run ();
+  let words = Gc.minor_words () -. before in
+  settle [ d ];
+  Float.to_int words
+
 let submissions =
   group "submissions"
     [
+      test "a submission touching six buffers allocates at most 300 minor words"
+        (fun () -> at_most int ~than:300 (submission_words ()));
       test
         "wait for one pair per device of the submission and of its buffers, \
          whatever is pending, and for the rest on the host"
