@@ -200,6 +200,36 @@ the Exclusions of `README.md`.
 - **Pinned by:** `Dtype › storage › a NaN decodes with the sign of its bits`;
   and a rune test at L9.
 
+## D16. CUDA keeps a float8 infinity special
+
+- **tinygrad:** `renderer/cstyle.py:33,42` (a cast to `__nv_fp8_e4m3` or
+  `__nv_fp8_e5m2` is the constructor, which converts with
+  `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
+- **tolk.next:** `lib/renderer/cstyle.ml:926-940` (`fp8_infinity`,
+  `cuda_fp8_guard`, `is_fp8_guarded`), `:984-1002` (the two rules of
+  `cuda_lang`) and `:1110` (the helper in the prefix).
+- **Differs:** the saturating conversion turns ±inf into ±max. tolk.next
+  keeps an infinity special, as `Dtype.truncate` does: it stays an infinity
+  in e5m2 and becomes a NaN of its sign in e4m3, which has no infinity. A
+  cast of a float value calls `tg_fp8`, a helper the kernel declares only
+  when it has such a cast, which converts with the constructor and then
+  writes the bits of the special value if the input was infinite. An
+  infinite constant is its bits, through `tg_bitcast`. Finite values,
+  including those that overflow the format, still saturate. HIP needs no
+  guard: on gfx950, `f32_to_fp8` clamps only finite values, and the
+  non-saturating `cvt_pk_{fp8,bf8}_f32` it then calls keeps an infinity in
+  bf8 and makes it NaN in fp8, which is unverified on hardware.
+- **Reason:** (b). nx's float8 encoder keeps infinities special, and a
+  jitted kernel must store what eager nx stores for the same cast.
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`):
+  `float8 infinities on CUDA (D16)`, which checks where the guard is declared,
+  the byte each infinity writes and the bits of infinite e5m2 constants;
+  `sources › by default › cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`,
+  `cuda_inf_nan_float8_e4m3` and `cuda_inf_nan_float8_e5m2`, which compare
+  with tinygrad's source once the guard is written back as tinygrad writes
+  it; and `every GPU kernel compiles with its target's toolchain › cuda_*`
+  (slow, skipped without NVRTC). A rune test at L9 checks the stored values.
+
 ## D11. Kernel optimisations are typed
 
 - **tinygrad:** `codegen/opt/__init__.py:9-15` (`Opt(op, axis, arg)`, with an
