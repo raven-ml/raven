@@ -1,7 +1,7 @@
 """The kernels tinygrad schedules for the elementwise operations whose
 lowering agrees with it: float arithmetic, comparisons, selections, bitwise
-operations on integers, conversions between floats, bit reinterpretations and the
-logarithm. Each operand is a 4x4 buffer on the CPU."""
+operations on integers, conversions between floats and bit reinterpretations.
+Each operand is a 4x4 buffer on the CPU."""
 
 from tinygrad import Tensor, dtypes
 from tinygrad.uop.ops import UOp
@@ -31,8 +31,6 @@ def trunc(): return kernels(operand().trunc())
 def ceil(): return kernels(operand().ceil())
 @graph
 def floor(): return kernels(operand().floor())
-@graph
-def log(): return kernels(operand().log())
 @graph
 def add(): return kernels(operand() + operand())
 @graph

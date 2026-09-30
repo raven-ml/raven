@@ -213,9 +213,20 @@ let exp ?times x =
   let t, e = two_prod x hi in
   exp_parts ?times x t (e +: (x *: lo))
 
-(* Logarithm *)
+(* Logarithm
 
-let log x = Ops.log2 x *: Ops.float (fst ln2)
+   A number below zero, a negative subnormal included, has no logarithm. The
+   sign and the magnitude are read from the bits: a target's [log2] can take a
+   negative subnormal for [-0.], as tolk's polynomial does when the subnormal's
+   reciprocal overflows, or as a target that flushes subnormals does. *)
+
+let log x =
+  let magnitude = Ops.const_like (bits x) (`Int (Z.pred (sign_mask x))) in
+  let below_zero =
+    Ops.bitwise_and (sign_bit x)
+      (Ops.ne (Ops.bitwise_and (bits x) magnitude) (int (bits x) 0))
+  in
+  where below_zero (float x Float.nan) (Ops.log2 x *: Ops.float (fst ln2))
 
 (* Trigonometry
 

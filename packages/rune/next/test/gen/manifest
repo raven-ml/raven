@@ -19,7 +19,6 @@ lower_arith/erf64.golden
 lower_arith/exp64.golden
 lower_arith/floor.golden
 lower_arith/less.golden
-lower_arith/log.golden
 lower_arith/log64.golden
 lower_arith/mul.golden
 lower_arith/neg.golden

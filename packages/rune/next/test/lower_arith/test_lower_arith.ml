@@ -332,6 +332,107 @@ let transcendentals ?tags name by =
         Float.pow { g = Nx.pow } "pow_integral64.golden";
     ]
 
+(* Logarithms
+
+   The logarithm of a number below zero is NaN, the subnormals included, and
+   that of either zero is [-inf]; the functions nx composes of it follow. *)
+
+type logarithm = {
+  name : string;
+  libm : float -> float;
+  log : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t;
+}
+
+let logarithms =
+  [
+    { name = "log"; libm = Float.log; log = Nx.log };
+    { name = "log2"; libm = Float.log2; log = Nx.log2 };
+    (* nx's [log1p], through the functions that use it. *)
+    { name = "asinh"; libm = Float.asinh; log = Nx.asinh };
+    { name = "atanh"; libm = Float.atanh; log = Nx.atanh };
+  ]
+
+(* The negative subnormals, from the least to the greatest in magnitude, the
+   smallest negative normal, [-0.] and NaN, in [dt]. *)
+let below_zero (F (_, dt)) =
+  let tiny, top, normal =
+    if Nx_dtype.equal dt Nx.float64 then
+      (-0x1p-1074, -0x0.fffffffffffffp-1022, -0x1p-1022)
+    else (-0x1p-149, -0x1.fffffcp-127, -0x1p-126)
+  in
+  [| tiny; top; normal; -0.; Float.nan |]
+
+let wide = [ F ("float32", Nx.float32); F ("float64", Nx.float64) ]
+
+(* The classes of results: NaN, [inf], [-inf] or finite. *)
+let classes xs =
+  Array.map
+    (fun x ->
+      if Float.is_nan x then "nan"
+      else if x = Float.infinity then "inf"
+      else if x = Float.neg_infinity then "-inf"
+      else "finite")
+    xs
+
+let edge_float =
+  Gen.frequency
+    [
+      (3, Gen.any_float);
+      ( 2,
+        Gen.of_list ~pp:pp_float
+          [ -0x1p-1074; -0x1p-1030; -0x1p-149; -0x1p-130; -0x1p-126; -0. ] );
+    ]
+
+let logarithm_tests { eval } =
+  List.map
+    (fun { name; libm; log } ->
+      group name
+        (List.concat_map
+           (fun (F (dname, dt) as d) ->
+             [
+               test (dname ^ " below zero") (fun () ->
+                   let x = Nx.create dt [| 5 |] (below_zero d) in
+                   let s, y = trace (fun () -> log x) in
+                   exact (log x) (eval s y));
+               prop ~count:40
+                 (dname ^ " has libm's classes")
+                 (Gen.with_pp
+                    (Format.pp_print_list pp_float)
+                    (Gen.list ~size:(Gen.constant 16) edge_float))
+                 (fun xs ->
+                   let x = Nx.create dt [| 16 |] (Array.of_list xs) in
+                   let s, y = trace (fun () -> log x) in
+                   equal (array string)
+                     (classes (Array.map libm (Nx.to_array x)))
+                     (classes (Nx.to_array (eval s y))));
+             ])
+           wide))
+    logarithms
+
+let logarithms_group ?tags name ({ eval } as by) =
+  group ?tags name
+    (test "log and log2 are NaN below zero and -inf at -0." (fun () ->
+         List.iter
+           (fun (F (_, dt) as d) ->
+             let x = Nx.create dt [| 5 |] (below_zero d) in
+             let expected =
+               Nx.create dt [| 5 |]
+                 [|
+                   Float.nan;
+                   Float.nan;
+                   Float.nan;
+                   Float.neg_infinity;
+                   Float.nan;
+                 |]
+             in
+             List.iter
+               (fun log ->
+                 let s, y = trace (fun () -> log x) in
+                 exact expected (eval s y))
+               [ Nx.log; Nx.log2 ])
+           wide)
+    :: logarithm_tests by)
+
 (* Random bits *)
 
 let random_bits =
@@ -554,9 +655,6 @@ let parity =
       case "floor" (fun () ->
           let a = x () in
           fun () -> Nx.floor a);
-      case "log" (fun () ->
-          let a = x () in
-          fun () -> Nx.log a);
       case "add" (fun () ->
           let a = x () and b = x () in
           fun () -> Nx.add a b);
@@ -613,6 +711,9 @@ let () =
          conversions;
          transcendentals "transcendental functions" { eval = value };
          transcendentals ~tags:[ "slow" ] "transcendental functions on the host"
+           { eval = Programs.compiled };
+         logarithms_group "logarithms" { eval = value };
+         logarithms_group ~tags:[ "slow" ] "logarithms on the host"
            { eval = Programs.compiled };
          random_bits;
          on_the_host;
