@@ -1,0 +1,80 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
+  Copyright (c) 2026 The Raven authors. ISC License.
+
+  SPDX-License-Identifier: MIT AND ISC
+  ---------------------------------------------------------------------------*)
+
+external comgr_load : string -> (unit, string) result = "caml_tolk_comgr_load"
+
+external comgr_compile :
+  string ->
+  string ->
+  bool ->
+  string array ->
+  string array ->
+  (string, string) result = "caml_tolk_comgr_compile"
+
+(* The library is loaded once, by whichever domain first compiles. *)
+let comgr =
+  let lock = Mutex.create () and loaded = ref None in
+  fun () ->
+    Mutex.protect lock @@ fun () ->
+    match !loaded with
+    | Some l -> l
+    | None ->
+        let rocm = Helpers.getenv_string "ROCM_PATH" "/opt/rocm" in
+        let l =
+          match
+            C.findlib "comgr" [ rocm ^ "/lib/libamd_comgr.so"; "amd_comgr" ]
+          with
+          | None -> Error "comgr not available: try setting COMGR_PATH?"
+          | Some path ->
+              Result.map_error
+                (fun e -> "comgr not available: " ^ e)
+                (comgr_load path)
+        in
+        loaded := Some l;
+        l
+
+(* comgr takes options as a list, split at spaces. *)
+let options s = Array.of_list (String.split_on_char ' ' s)
+
+let compile_hip src ~arch ~asm =
+  let compile =
+    String.concat " "
+      [
+        "-O3";
+        "-mcumode";
+        "--hip-version=6.0.32830";
+        "-DHIP_VERSION_MAJOR=6";
+        "-DHIP_VERSION_MINOR=0";
+        "-DHIP_VERSION_PATCH=32830";
+        "-D__HIPCC_RTC__";
+        "-std=c++14";
+        "-nogpuinc";
+        "-Wno-gnu-line-marker";
+        "-Wno-missing-prototypes";
+        "--offload-arch=" ^ arch;
+        "-I/opt/rocm/include";
+        "-Xclang -disable-llvm-passes";
+        "-Xclang -aux-triple";
+        "-Xclang x86_64-unknown-linux-gnu";
+      ]
+  in
+  comgr_compile src
+    ("amdgcn-amd-amdhsa--" ^ arch)
+    asm (options compile)
+    (options "-O3 -mllvm -amdgpu-internalize-symbols")
+
+(* HIP *)
+
+let hip arch =
+  let compile src =
+    let asm = String.trim (List.hd (String.split_on_char '\n' src)) = ".text" in
+    match Result.bind (comgr ()) (fun () -> compile_hip src ~arch ~asm) with
+    | Ok lib -> lib
+    | Error e -> raise (Renderer.Compiler.Compile_error e)
+  in
+  Renderer.Compiler.v ~cachekey:("compile_hip_" ^ arch)
+    ~disassemble:Helpers.amdgpu_disassemble compile

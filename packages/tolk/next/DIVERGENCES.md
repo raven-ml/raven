@@ -273,3 +273,22 @@ the Exclusions of `README.md`.
   rune's jitted graph, whose constants fold here, must agree.
 - **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › NaN is
   unequal to itself when constants fold, as IEEE says`.
+
+## D15. Compilers load their library at the first compile
+
+- **tinygrad:** `runtime/support/compiler_cuda.py:62` (`NVRTCCompiler`
+  calls `nvrtcVersion`), `runtime/support/compiler_amd.py:80` (`HIPCompiler`
+  asserts comgr is loaded) and `runtime/ops_metal.py:39` (`MetalCompiler`
+  creates its code generation service), each when the compiler is made, so
+  making the renderer that holds it fails without the library.
+- **tolk.next:** `lib/runtime/support/compiler_cuda.ml` (`nvrtc`),
+  `lib/runtime/support/compiler_amd.ml` (`hip`), `lib/runtime/ops_metal.ml`
+  (`compiler`).
+- **Differs:** making a compiler loads nothing. The library is loaded at the
+  first compile, once per process, and a compile without it raises
+  `Compile_error` with the reason.
+- **Reason:** (b): `Cstyle`'s CUDA, HIP and Metal renderers are made, and
+  render, on machines without NVRTC, comgr or MTLCompiler: the source goldens
+  of the `Cstyle` suite and rune's rendering of a kernel for inspection.
+- **Pinned by:** waiting for the compilers' suites: making each compiler
+  without its library succeeds, and compiling with it raises `Compile_error`.
