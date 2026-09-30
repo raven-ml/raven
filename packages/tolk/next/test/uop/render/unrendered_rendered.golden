@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+UOp(Ops.SQRT, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.float, vmin_vmax=(-1.0, 1.0), multiple_of=1, name='x', addrspace=AddrSpace.ALU), src=()),))
+UOp(Ops.CMPEQ, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name='a', addrspace=AddrSpace.ALU), src=()),
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name='b', addrspace=AddrSpace.ALU), src=()),))
+(a+(weakint)(UOp(Ops.EXP2, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.float, vmin_vmax=(-1.0, 1.0), multiple_of=1, name='x', addrspace=AddrSpace.ALU), src=()),))))
+UOp(Ops.LOAD, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(1, dtypes.float, 32), src=()),))
+UOp(Ops.LOAD, arg=None, src=(
+  UOp(Ops.INDEX, arg=None, src=(
+    UOp(Ops.PARAM, arg=ParamArg(1, dtypes.float, 32), src=()),
+    UOp(Ops.RANGE, arg=(0, AxisType.WEAK), src=(
+      UOp(Ops.CONST, arg=4, src=()),)),)),
+  UOp(Ops.CAST, arg=dtypes.float, src=(
+    UOp(Ops.CONST, arg=ConstFloat(0.0), src=()),)),))
+UOp(Ops.SINK, arg=None, src=(
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name='a', addrspace=AddrSpace.ALU), src=()),
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.weakint, vmin_vmax=(0, 9), multiple_of=1, name='b', addrspace=AddrSpace.ALU), src=()),))
+UOp(Ops.SQRT, arg=None, tag=t, src=(
+  UOp(Ops.PARAM, arg=ParamArg(-1, dtypes.float, vmin_vmax=(-1.0, 1.0), multiple_of=1, name='x', addrspace=AddrSpace.ALU), src=()),))

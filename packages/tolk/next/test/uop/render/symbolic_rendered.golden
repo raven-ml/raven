@@ -1,0 +1,10 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src	render	simplified
+param_of_variable_size	0	p0.shrink(((0, a),))	p0.shrink(((0, a),))
+reshape_of_variable_size	1	p1.reshape((4,5)).shrink(((0, 4),(0, a)))	p1.reshape((4,5)).shrink(((0, 4),(0, a)))
+shrink_of_simplified_offset	2	p0.shrink((((r2*4), 2),))	p0.shrink((((r2*4), 2),))
+range_after_shrink	3	r0	r0
+pad_of_variable	4	p1.pad(((0, (a+32)),))	p1.pad(((0, (a+32)),))
+expand_of_variable	5	p2.reshape(()).expand((b,))	p2.reshape(()).expand((b,))
+product_of_variable	6	(a*3*4)	(a*12)
+product_of_variable_last	7	(3*4*a)	(a*12)

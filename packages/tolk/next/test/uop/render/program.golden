@@ -1,0 +1,26 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.SPECIAL dtypes.weakint [1] "gidx0"
+3 Ops.MUL dtypes.weakint [2, 1]
+4 Ops.RANGE dtypes.weakint [1] (0, AxisType.LOOP)
+5 Ops.ADD dtypes.weakint [3, 4]
+6 Ops.INDEX dtypes.float [0, 5]
+7 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(1, 4), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+8 Ops.CMPLT dtypes.bool [4, 7]
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
+10 Ops.INDEX dtypes.float [9, 5]
+11 Ops.LOAD dtypes.float [10]
+12 Ops.CONST dtypes.weakfloat [] 1.5
+13 Ops.CAST dtypes.float [12] dtypes.float
+14 Ops.MUL dtypes.float [11, 13]
+15 Ops.CONST dtypes.weakfloat [] 0.5
+16 Ops.ADD dtypes.float [14, 15]
+17 Ops.CONST dtypes.weakfloat [] 0.0
+18 Ops.CAST dtypes.float [17] dtypes.float
+19 Ops.WHERE dtypes.float [8, 16, 18]
+20 Ops.STORE dtypes.void [6, 19]
+21 Ops.END dtypes.void [20, 4]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="k")
+23 Ops.SINK dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+

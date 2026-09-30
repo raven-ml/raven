@@ -1,0 +1,32 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+   0 Ops.RANGE           : 12         dtypes.weakint                           ['--']                           (12, AxisType.REDUCE)
+   1 Ops.RANGE           : 10         dtypes.weakint                           ['--']                           (10, AxisType.GLOBAL)
+   2 Ops.RANGE           : 11         dtypes.weakint                           ['--']                           (11, AxisType.LOCAL)
+   3 Ops.RANGE           : 13         dtypes.weakint                           ['--']                           (13, AxisType.UPCAST)
+   4 Ops.RANGE           : 0_1        dtypes.weakint                           ['--']                           (0, 1, AxisType.UNROLL)
+   5 Ops.RANGE           : m1         dtypes.weakint                           ['--']                           (-1, AxisType.LOOP)
+   6 Ops.ADD             : m1,0_1,10,11,12,13 dtypes.weakint                           ['--', 5]                        None
+   7 Ops.CONST           :            dtypes.weakfloat                         []                               1e+16
+   8 Ops.CONST           :            dtypes.weakfloat                         []                               -0.0
+   9 Ops.CONST           :            dtypes.weakfloat                         []                               nan
+  10 Ops.CONST           :            dtypes.weakfloat                         []                               inf
+  11 Ops.CONST           :            dtypes.weakfloat                         []                               0.1
+  12 Ops.CONST           :            dtypes.bool                              []                               True
+  13 Ops.CONST           :            dtypes.bool                              []                               Invalid
+  14 Ops.CONST           :            dtypes.weakint                           []                               1180591620717411303424
+  15 Ops.CONTIGUOUS_BACKWARD: m1,0_1,10,11,12,13 dtypes.weakint                           [6]                              None
+  16 Ops.COPY            :            dtypes.int                               ['--']                           CPU
+  17 Ops.COPY            : m1         dtypes.int                               ['--', '--']                     ('CPU:0', 'CPU:1')
+  18 Ops.SOURCE          :            dtypes.void                              []                               int main() { return 0; }
+  19 Ops.CUSTOM          :            dtypes.int                               [22]                             ('abs({0})', dtypes.int)
+  20 Ops.REDUCE          :            dtypes.float                             ['--', 0]                        (Ops.ADD, 0)
+  21 Ops.PARAM           :            dtypes.half                              []                               ParamArg(7, dtypes.half, 8, name='named')
+  22 Ops.PARAM           :            dtypes.weakint                           []                               ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name='a', addrspace=AddrSpace.ALU)
+  23 Ops.PARAM           :            dtypes.weakint                           []                               ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 5), multiple_of=1, name='a', addrspace=AddrSpace.ALU, val=2)
+  24 Ops.CONST           :            dtypes.weakint                           []                               2
+  25 Ops.STACK           :            dtypes.weakfloat                         ['1e+16', '-0.0', 'nan', 'inf', '0.1'] None
+  26 Ops.AND             :            dtypes.bool                              ['True', '--']                   None
+  27 Ops.WHERE           :            dtypes.weakint                           ['--', 22, 'Invalid']            None
+  28 Ops.ADD             :            dtypes.weakint                           [22, '1180591620717411303424']   None
+  29 Ops.SINK            :            dtypes.void                              ['--', '--', '--', '--', '--', '--', '--', '--', '--', '--', '--', '--'] None
+

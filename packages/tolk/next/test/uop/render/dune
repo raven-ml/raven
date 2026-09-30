@@ -1,0 +1,11 @@
+; Tests tagged L3 need the symbolic rules, which Symbolic installs at L3; those
+; tagged pre-L3 pin the time before. At L3 the default run swaps the two tags.
+
+(test
+ (name test_render)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (glob_files *.golden))
+ (action
+  (run %{test} --exclude-tag slow --exclude-tag L3)))

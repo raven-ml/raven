@@ -750,3 +750,40 @@ each division and remainder they build is rewritten by this matcher alone.
 | old: unit/uop/test_symbolic.ml divandmod_tests (2 tests) | `Cdiv` and `Cmod` of a range by its size | dropped: truncating division is Symbolic's (L3) |
 | old: unit/uop/test_symbolic.ml "nested division commits newly built weak arithmetic" | merging nested divisions of committed integers casts the new constants | `DM › nested divisions › merge_nested_divisions_of_committed_integers.golden` |
 | old: unit/codegen/test_decompositions.ml early_floordiv_by_zero_raises, early_floormod_by_zero_raises | a division or remainder by 0 raises in the early rewrites | `DM › zero divisors › a division by the constant 0 raises Division_by_zero`; `DM › zero divisors › a remainder by the constant 0 raises Division_by_zero`; the early rewrites are Codegen's (L4) |
+
+## Render
+
+Tests tagged L3 wait for the symbolic rules; the default run excludes them
+until then.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `null/test_uops.py::TestUOpRender::test_render_ssimplified_marg_outside_toposort` | a movement's size, simplified to a node the graph never held, is still written, and a range after it is its name | `Tolk_next.Render › render after simplifying › symbolic_rendered.golden › case=shrink_of_simplified_offset`, `case=range_after_shrink` (L3) |
+| tinygrad: `null/test_uops.py::TestUOpRender::test_render_vectorize_empty`, `test_render_vectorize_same`, `test_render_vectorize_different` | a stack is its sources between braces, `{}` when empty | `Tolk_next.Render › render › expressions_rendered.golden › case=stack_empty`, `case=stack_same`, `case=stack_different` |
+| tinygrad: `null/test_uops.py::TestUOpRender::test_render_vectorize_empty_simplified`, `test_render_vectorize_same_simplified`, `test_render_vectorize_different_simplified` | the same after simplifying | `Tolk_next.Render › render after simplifying › expressions_rendered.golden` (the `simplified` column, L3) |
+| tinygrad: `null/test_helpers.py::TestProd::test_variable`, `test_variable_order` | the product of a variable and integers writes as `(a*12)`, whatever the order | `Tolk_next.Render › srender › writes a node as render does` (L3); the product itself belongs to `Ops` |
+| tinygrad: `null/test_helpers.py::TestCeilDiv::test_symbolic`, `test_symbolic_negative_offset` | `ceildiv` of a node writes as `((v+5)//6)` | dropped here: the claim is `ceildiv`'s simplification, which `Ops`' suite owns |
+| tinygrad: `null/test_uop_symbolic.py` (`helper_test_variable` and the eight `.render()` asserts), `null/test_simplify_valid_idx.py` (the `.render()` asserts) | a rewrite gives the expected expression | dropped here: they test the symbolic rules, with `render` as the printer; `Symbolic`'s suite owns them |
+| tinygrad: `null/test_uop_graph.py` (`print(sink.render())`) | none, a debug print | dropped: no claim |
+| tinygrad: `null/test_viz.py` (`ret.render()` in `rewrite_group` names) | none about `render` | dropped: viz is excluded |
+| tinygrad: `null/test_uops.py`, `null/test_encodings.py`, `null/test_renderer_failures.py` (`renderer.render(uops)`) | a device renderer's source | dropped here: those are `Renderer.render`, not `uop/render.py`; each belongs to its renderer's section |
+| tinygrad: `uop/render.py` `renderer` (no test file covers every rule) | every rule: storage, ranges, loops, constants, casts of constants, casts, the unary and ternary forms, movements, the twelve infix operations and their precedence, indices, stages, loads, stacks, and the repr of any other node | `Tolk_next.Render › render › expressions_rendered.golden` (145 cases), `unrendered_rendered.golden`; `an expression reads back as the tree it writes` (the parenthesis law); `tags are not written` |
+| tinygrad: `uop/render.py` `print_uops` (no test file) | the listing's columns, the sources as positions, quoted constants or `--`, the argument as `str` prints it, colour, and columns that overflow | `Tolk_next.Render › pp_uops › program_listing.golden`, `program_listing_colored.golden`, `partial_listing.golden`, `wide_listing.golden`, `wide_listing_colored.golden`, `an empty list prints nothing`, `prints a line per node, numbered from 0, the last not ended` |
+| tinygrad: `uop/render.py` `pretty_print` | a node's repr | dropped here: `Ops.pp`, in `Ops`' suite |
+| tinygrad: `uop/render.py` `renderer_infer`, `pyrender` | Python source | dropped: excluded (README Exclusions) |
+| old: `test/unit/uop/test_uop.ml` "committed constants render their value" | a cast of a constant is its value | `Tolk_next.Render › render › expressions_rendered.golden › case=typed_int` and the other `typed_*` and `forced_cast_*` cases |
+| old: `test/unit/uop/test_uop.ml` "nonconstant casts retain their width" | `(int)(x)` | `Tolk_next.Render › render › expressions_rendered.golden › case=cast_to_int` and the other `cast_to_*` cases |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_toposort_like_tinygrad` | the listing of a toposort, with constants as quoted sources | `Tolk_next.Render › pp_uops › program_listing.golden` |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_ranges_and_supplied_list_sources` | a list that leaves sources out prints `--` | `Tolk_next.Render › pp_uops › partial_listing.golden` |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_tinygrad_dtype_reprs` | the type column prints `dtypes.weakint`, `dtypes.float`, `dtypes.long` | `Tolk_next.Render › pp_uops › program_listing.golden`, `partial_listing.golden` |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_float_and_special_args_like_tinygrad` | a float constant's argument keeps `.0`; a special's name is not quoted | `Tolk_next.Render › pp_uops › program_listing.golden` (`1.5`, `0.0`, `gidx0`), `wide_listing.golden` (`1e+16`, `-0.0`, `nan`) |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_direct_string_args_like_tinygrad` | source text and a copy's device print without quotes | `Tolk_next.Render › pp_uops › wide_listing.golden` |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_ranges_in_tinygrad_arg_order` | the ranges column sorts by argument | `Tolk_next.Render › pp_uops › wide_listing.golden` (`m1,0_1,10,11,12,13`) |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_rich_args_dataclass_style` | `ParamArg`, `KernelInfo`, `Opt`, `Estimates`, `ProgramInfo`, `BufferizeOpts`, `CallInfo` reprs in a listing | `Tolk_next.Render › pp_uops › program_listing.golden`, `wide_listing.golden` (`ParamArg`, `KernelInfo`); the reprs themselves are `Ops.pp_arg`'s, in `Ops`' suite |
+| old: `test/unit/uop/test_uop.ml` `debug_prints_reduce_arg_tuple` | a reduction's argument prints `(Ops.ADD, 0)` | `Tolk_next.Render › pp_uops › wide_listing.golden`; `(Ops.ADD, 1)` is `Ops.pp_arg`'s, in `Ops`' suite |
+| old: `test/unit/uop/test_uop.ml` `debug_print_ignores_side_metadata` | metadata is not printed | dropped: `Ops` has no metadata table |
+| old: `test/unit/uop/test_uop.ml` `debug_listing_omits_tags` | tags are not printed | `Tolk_next.Render › pp_uops › wide_listing.golden` (the constant tagged `hidden`); `Tolk_next.Render › render › tags are not written` |
+| old: `lib/uop/render.mli` `uops_to_string ?label` | a `=== label ===` header | dropped: not in tinygrad, and no reader |
+| old: `lib/uop/render.mli` `python_float_string`, `compare_uops` | CPython's float repr; the structural order | dropped here: `Dtype.pp_const` and `Ops.compare_structure`, in their modules' suites |
+| old: `test/parity/helpers.ml` (`uops_to_string` listings) | parity cases compared as listings | dropped: graph goldens use the graph format, which keeps what a listing drops (test/README.md) |
+| old: `test/unit/codegen/test_linearizer.ml` (`Render.pp_uops` as a failure printer) | none | dropped: no claim |

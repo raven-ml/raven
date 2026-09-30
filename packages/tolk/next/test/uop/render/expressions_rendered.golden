@@ -1,0 +1,147 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+case	src	render	simplified
+variable	0	a	a
+bound_variable	1	a	a
+param	2	p0	p0
+named_param	3	w	w
+buffer	4	b3	b3
+local_buffer	5	b5	b5
+named_buffer	6	smem	smem
+alloc	7	a2	a2
+named_alloc	8	scratch	scratch
+after	9	b0	b0
+special	10	gidx0	gidx0
+range	11	r0	r0
+range_of_parts	12	r1_2	r1_2
+range_negative	13	rm1	rm1
+range_typed	14	r3	r3
+loop	15	loop3	loop3
+loop_of_parts	16	loop5	loop5
+int	17	3	3
+negative_int	18	-3	-3
+big_int	19	1180591620717411303424	1180591620717411303424
+float	20	1.5	1.5
+whole_float	21	3.0	3.0
+negative_zero	22	-0.0	-0.0
+tenth	23	0.1	0.1
+large_float	24	1e+16	1e+16
+small_float	25	1e-05	1e-05
+inf	26	inf	inf
+negative_inf	27	-inf	-inf
+nan	28	nan	nan
+true	29	True	True
+false	30	False	False
+invalid	31	Invalid	Invalid
+typed_int	32	3	3
+typed_half	33	1.5	1.5
+typed_bool_to_int	34	1	1
+forced_cast_of_float	35	3.7	3
+forced_cast_of_bool	36	True	1
+forced_cast_to_bool	37	0	False
+cast_of_typed_constant	38	(long)(3)	3
+cast_to_int	39	(int)(a)	(int)(a)
+cast_to_long	40	(long)(a)	(long)(a)
+cast_to_uchar	41	(uchar)(a)	(uchar)(a)
+cast_to_bool	42	(bool)(a)	True
+cast_to_half	43	(half)(x)	(half)(x)
+cast_to_bfloat16	44	(bfloat16)(x)	(bfloat16)(x)
+cast_to_fp8	45	(fp8e4m3)(x)	(fp8e4m3)(x)
+cast_to_weakint	46	(weakint)(x)	(weakint)(x)
+cast_of_sum	47	(int)((a+b))	(int)((b+a))
+neg	48	(-a)	(-a)
+neg_of_negative	49	(--3)	3
+neg_of_sum	50	(-(a+b))	(-(b+a))
+reciprocal	51	(1/x)	(1/x)
+max	52	max(a, b)	max(b, a)
+max_of_sums	53	max((a+b), (b+c))	max((b+c), (b+a))
+mulacc	54	(a*b+c)	(a*b+c)
+mulacc_of_sums	55	((a+b)*b+(b+c))	((b+a)*b+(b+c))
+where	56	(a if g else b)	(a if g else b)
+where_of_comparison	57	((a+c) if (a<b) else b)	((c+a) if (a<b) else b)
+cdiv	58	cdiv(a, b)	cdiv(a, b)
+cmod	59	cmod(a, b)	cmod(a, b)
+add	60	(a+b)	(b+a)
+sub	61	(a-b)	(a-b)
+mul	62	(a*b)	(b*a)
+floordiv	63	(a//b)	(a//b)
+floormod	64	(a%b)	(a%b)
+shl	65	(a<<b)	(a<<b)
+shr	66	(a>>b)	(a>>b)
+and	67	(a&b)	(b&a)
+or	68	(a|b)	(b|a)
+xor	69	(a^b)	(b^a)
+cmplt	70	(a<b)	(a<b)
+cmpne	71	(a!=b)	(a!=b)
+add_of_negative	72	(a+-3)	(a+-3)
+sub_of_negative	73	(a--3)	(a--3)
+add_left	74	(a+b+c)	(c+(b+a))
+add_right	75	(a+(b+c))	(a+(b+c))
+sub_left	76	(a-b-c)	(a-b-c)
+sub_right	77	(a-(b-c))	(a-(b-c))
+sub_of_add	78	(a-(b+c))	(a-(b+c))
+add_of_sub	79	(a-b+c)	(c+(a-b))
+mul_of_floordiv	80	(a//b*c)	(c*(a//b))
+floordiv_of_mul	81	(a//(b*c))	(a//(b*c))
+floormod_left	82	(a%b%c)	(a%b%c)
+shl_of_shr	83	(a>>b<<c)	(a>>b<<c)
+shr_right	84	(a>>(b<<c))	(a>>(b<<c))
+add_of_mul_left	85	(a*b+c)	(c+b*a)
+add_of_mul_right	86	(a+b*c)	(a+b*c)
+mul_of_add_left	87	((a+b)*c)	(c*(b+a))
+mul_of_add_right	88	(a*(b+c))	(a*(b+c))
+shl_of_add	89	(a+b<<b-c)	(b+a<<b-c)
+add_of_shl	90	((a<<b)+c)	(c+(a<<b))
+and_of_shift	91	(a>>b&b<<c)	(b<<c&a>>b)
+shift_of_and	92	((a&b)>>c)	((b&a)>>c)
+xor_of_and	93	(a&b^b&c)	(b&c^b&a)
+and_of_xor	94	((a^b)&c)	(c&(b^a))
+or_of_xor	95	(a^b|b^c)	(b^c|b^a)
+xor_of_or	96	(a^(b|c))	(a^(b|c))
+or_of_everything	97	(a*b+c<<a&b^c|a)	(a|c^b&c+b*a<<a)
+cmplt_of_add	98	((a+b)<c)	((b+a)<c)
+cmpne_of_mul	99	(a!=(b*c))	(a!=(b*c))
+and_of_comparisons	100	((a<b)&(b!=c))	((a<b)&(b!=c))
+add_of_comparison	101	((a<b)+c)	(c+(a<b))
+comparison_of_comparison	102	((a<b)!=g)	((a<b)!=g)
+mul_of_max	103	(max(a, b)*c)	(c*max(b, a))
+mul_of_where	104	((a if g else b)*c)	(c*(a if g else b))
+add_of_cast	105	((int)(a)+(int)(b))	((int)(a)+(int)(b))
+float_arithmetic	106	(x*2.5+(1/y))	(x*2.5+(1/y))
+reshape	107	p0.reshape((4,8))	p0.reshape((4,8))
+reshape_flat	108	p0.reshape((4,8)).reshape((32,))	p0
+reshape_to_scalar	109	p3.reshape(())	p3.reshape(())
+expand	110	p4.reshape((4,1)).reshape((4,)).expand((8,)).permute((1, 0))	p4.expand((8,)).permute((1, 0))
+permute	111	p0.reshape((4,8)).permute((1, 0))	p0.reshape((4,8)).permute((1, 0))
+permute_three	112	p5.reshape((2,3,4)).permute((2, 0, 1))	p5.reshape((2,3,4)).permute((2, 0, 1))
+permute_one	113	p1.permute((0,))	p1
+flip	114	p0.reshape((4,8)).flip((1,))	p0.reshape((4,8)).flip((1,))
+flip_all	115	p0.reshape((4,8)).flip((0, 1))	p0.reshape((4,8)).flip((0, 1))
+flip_none	116	p0.reshape((4,8)).flip(())	p0.reshape((4,8)).flip(())
+pad	117	p0.reshape((4,8)).pad(((0, 6),(1, 12)))	p0.reshape((4,8)).pad(((0, 6),(1, 12)))
+pad_one	118	p1.pad(((1, 34),))	p1.pad(((1, 34),))
+shrink	119	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))	p0.reshape((4,8)).shrink(((0, 2),(1, 2)))
+shrink_one	120	p1.shrink(((2, 28),))	p1.shrink(((2, 28),))
+movements_chained	121	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))	p0.reshape((4,8)).permute((1, 0)).reshape((32,)).shrink(((0, 16),))
+index	122	[r0]	[r0]
+index_of_sum	123	[r0*8+r1]	[r0*8+r1]
+index_twice	124	[r0][r1]	[r0][r1]
+index_of_where	125	[a if g else b]	[a if g else b]
+index_of_cast	126	[(int)(a)]	[(int)(a)]
+index_of_neg	127	[-a]	[-a]
+index_of_max	128	[max(a, b)]	[max(b, a)]
+index_of_comparison	129	[a<b]	[a<b]
+index_of_stack	130	[{a,b}]	[{a,b}]
+stage	131	[r0][r1+1]	[r0][r1+1]
+load	132	p1[r0]	p1[r0]
+load_of_sum	133	p1[r0+r1]	p1[r0+r1]
+load_of_movement	134	p0.reshape((4,8))[r0][r1]	p0.reshape((4,8))[r0][r1]
+load_after	135	b0[r1]	b0[r1]
+gated_load	136	(p1[r0] if (r0<a) else 0.0)	(p1[r0] if (r0<a) else 0.0)
+add_of_loads	137	(p1[r0]+p0.reshape((4,8))[r0][r1])	(p1[r0]+p0.reshape((4,8))[r0][r1])
+stack	138	{a,b}	{a,b}
+stack_empty	139	{}	{}
+stack_same	140	{0,0,0}	{0,0,0}
+stack_different	141	{0,1,2}	{0,1,2}
+stack_of_sums	142	{(a+b),(b*c)}	{(b+a),(b*c)}
+shared	143	((a+b)*(a+b))	((b+a)*(b+a))
+tagged	144	(a+2)	(a+2)
