@@ -199,9 +199,8 @@ let positions ~descending axis high =
   let packed = Ops.bitwise_or (Ops.shl high (Ops.int low)) (tie ranks) in
   tie (Ops.bitwise_and (bitonic ~descending (Ops.contiguous packed) axis) mask)
 
-(* [take x axis p] is the elements of [x] along [axis] at the positions [p], of
-   [p]'s shape: a one-hot selection of [x]'s bits summed over [axis], a sum of
-   one term, so that each element keeps its bits. *)
+(* A one-hot selection of [x]'s bits summed over [axis], a sum of one term, so
+   that each element keeps its bits. *)
 let take x axis p =
   let dt = dtype x in
   let bits =

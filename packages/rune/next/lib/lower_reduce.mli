@@ -38,6 +38,11 @@ val arg_reduce : Nx_backend.arg_reduce -> axis:int -> Ops.t -> Ops.t
     of the first element of [x] that is the extreme {!reduce} gives: of the
     first NaN if there is one. [axis] must not be empty. *)
 
+val take : Ops.t -> int -> Ops.t -> Ops.t
+(** [take x axis p] is the elements of [x] along [axis] at the positions [p],
+    each with its bits, of [p]'s shape: [x] and [p] agree on every other axis. A
+    position out of range takes [0]. *)
+
 val argsort : descending:bool -> axis:int -> Ops.t -> Ops.t
 (** [argsort ~descending ~axis x] is the positions that sort [x] along [axis],
     ascending unless [descending]. The sort is stable, [-0.] sorts before [+0.]

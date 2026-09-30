@@ -90,16 +90,12 @@ let cat axis xs =
    new last axis, as the reference builds them. *)
 
 let gather axis indices x =
-  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
-  let x =
-    Ops.shrink_to x
-      (List.mapi
-         (fun d i -> if d = axis then None else Some i)
-         (Ops.shape indices))
-  in
-  of_bits (dtype x)
-    (pick (one_hot indices n)
-       (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis r))
+  Lower_reduce.take
+    (Ops.shrink_to x
+       (List.mapi
+          (fun d i -> if d = axis then None else Some i)
+          (Ops.shape indices)))
+    axis indices
 
 let scatter ~mode ~unique ~axis ~indices ~updates x =
   let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
