@@ -17,3 +17,11 @@ val numbered_like : Ops.t -> Ops.t -> Ops.t
     are no property of the pass; this compares a graph with a golden up to them.
     It is [u] if the two graphs make different numbers of storage, which a
     comparison then shows. *)
+
+val binaries_as_sources : Ops.t -> Ops.t
+(** [binaries_as_sources u] is [u] with the binary of each compiled program
+    ({!Tolk_next.Op.Program} ending in an {!Tolk_next.Op.Binary}) replaced by
+    the bytes of the program's source ({!Tolk_next.Op.Source}), call bodies
+    included. The generators record programs compiled that way, so that a
+    golden holds no machine code; this compares a compiled graph with such a
+    golden. *)

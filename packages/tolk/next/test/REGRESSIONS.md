@@ -2485,3 +2485,52 @@ survive:
 | old: unit/test_engine_schedule.ml "schedule cache keys on the settings scheduling reads" | | dropped: tinygrad keys a body on its structure alone (`function.key`) |
 | old: unit/test_engine_schedule.ml "create_linear_with_vars keeps only used binds", "transform_to_call keeps variable identity on bound PARAM", "create_linear_with_vars extracts the binding from CALL args" | | `SC › var_vals.golden`, `SC › create_linear_with_vars › recorded` (`variable_*`) |
 | old: unit/test_engine_schedule.ml "fresh internal buffer slots keep buffers distinct", "concurrent internal slots keep imported buffers distinct", "concurrent memory plans keep arenas distinct" | | `SC › … › cache ›` "domains scheduling one body at once schedule it alike" (each domain makes buffers of its own), "domains scheduling bodies at once schedule each as alone" |
+
+## Realize
+
+`R` is the `Realize` suite (`test/engine/realize`). Its goldens are schedules of
+`Tensor` programs realized on the CPU, the schedules `lower_and_compile`
+returns, and `calls.golden`, each call's reading by `get_call_*`,
+`get_call_name` and `estimate_uop`.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_var_uops`, `get_call_outs_ins`, `get_call_written_bufs`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (21 calls of 14 programs), and `R › get_call_arg_uops`, `› get_call_var_uops`, `› get_call_outs_ins`, `› get_call_written_bufs`, `› get_call_name`, `› estimate_uop` (25 tests) |
+| tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile of recorded schedules` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
+| tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `Hcq2 › compile_linear › makes each kernel ask for a beam of the width BEAM sets` |
+| tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s (plan §1a); its execution is `Hcq2 › linking and running` |
+| tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: excluded (ruling) |
+| tinygrad: engine/realize.py `get_call_name`'s `encdec` and `get_call_outs_ins`'s | | dropped: the video decoder queue is excluded |
+| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots | a compiled program keeps its own variable slots | `R › get_call_var_uops › is the constant a call binds each variable to, in the program's order` (a program's variables are read by name, whatever the call's slots) |
+| tinygrad: null/test_call.py::TestCallCodegen::test_call_stack_pointer | a custom-function call's arguments in C | dropped here: Cstyle's rendering of `CALL` |
+| tinygrad: null/test_call.py (TestCall, TestCallShape, TestCallSchedule, TestArgOrder) | call construction and scheduling | dropped here: `Ops`' `call`/`call_with_outputs` and Schedule's sections |
+| tinygrad: null/test_method_cache.py (3 tests) | a program compiled once is not compiled again | `R › lower_and_compile › compiles each kernel once`; the cache is `Codegen.to_program`'s (Codegen's section, D5) |
+| tinygrad: runtime/test_realize_is_realize.py (13 tests) | `Tensor.realize` marks buffers realized | dropped: the `Tensor` surface; nx is the frontend |
+| tinygrad: null/test_custom_kernel.py, runtime/test_custom_kernel.py | custom kernels scheduled and run | `custom_kernel.golden` and its compiled schedule; the kernels' codegen and values are Codegen's, Rangeify's and Cstyle's sections; the realized values are the `Tensor` surface |
+| tinygrad: runtime/test_call.py (TestCall, TestCallSchedule, TestArgOrder, TestCallMultiSharded) | precompiled calls realized | `precompiled_scalar.golden`; scheduling is Schedule's section, the values the `Tensor` surface |
+| tinygrad: runtime/test_after.py (12 tests) | ordering of assigns and their gradients | dropped here: Schedule's ordering (its section) and gradients (L8) |
+| tinygrad: runtime/test_wait_loop.py::TestWaitLoop (7 tests) | loops without bounds, rendered and run | dropped here: Codegen's and Cstyle's (`Ops.loop`, `backedge`) |
+| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spinning on a word another thread writes | dropped: the device runtime's; D1 removed the host program's spin |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_realize.ml group "Renderer selection" (4 tests) | renderer selection and compile caches | dropped here: `Device.renderer` (Device's section) and `Codegen.to_program`'s cache; `R › lower_and_compile › raises Invalid_argument when no renderer serves a call's target` |
+| old: unit/engine/test_realize.ml group "Owner cache lifetime" (5 tests) | program owners, runtime graphs, cache retry | dropped: old tolk's owner caches, which tinygrad has no counterpart of (plan, the 100 divergences) |
+| old: unit/engine/test_realize.ml "positive scopes reuse shared admission and zero compiles inline" | | dropped: old tolk's worker admission; Worker's section (D5) |
+| old: unit/engine/test_realize.ml "parallel lowering retains call order, deduplicates, and permits nested batches" | | `R › lower_and_compile in parallel › compiles each kernel into the program it compiles into alone`, `R › lower_and_compile › compiles each kernel once` |
+| old: unit/engine/test_realize.ml "beam lowering stays in the caller" | | `R › lower_and_compile with a beam search › searches each kernel with the width it asks for, in order, one at a time` |
+| old: unit/engine/test_realize.ml group "PROGRAM completion" (6 tests) | a program partly compiled is completed, a complete one kept | `R › lower_and_compile ›` "compiles a program not yet compiled", "leaves a compiled program alone"; the rest is `Codegen.to_program`'s (its section) |
+| old: unit/engine/test_realize.ml group "Scoped capture" (5 tests) | | dropped: the captured jit (L8) |
+| old: unit/engine/test_realize.ml "multi-owner templates retire…", "concurrent submissions retain their own address tables", "independent links serialize reservations…", "submission addresses are resolved after preparation", "submission scope permits reentry…", "failed preparation leaves the address table unchanged…", "retained queue replay rejects replaced device owners…" | submissions of a linked batch | `Hcq2 › linking and running ›` "a run waits for its batch's previous run before it rewrites the batch's memory", "a link serves any buffers bound to its inputs"; the owners and their failures are old tolk's contracts, dropped |
+| old: unit/engine/test_realize.ml "concurrent execution records every cost and timing", "execution counters retain exact large costs" | | dropped: `GlobalCounters` belong to the run half (`tolk.engine`) |
+| old: unit/engine/test_realize.ml "compilation resolves beam context once and respects explicit zero" | | `Hcq2 › compile_linear › makes each kernel ask for a beam of the width BEAM sets` |
+| old: unit/engine/test_realize.ml "timing samples…", "failed timing dispatch…", "failed timing drain…" | | dropped: `time_call` is the engine's `measure` |
+| old: unit/engine/test_realize.ml "compiled launch uses fixed workgroups", "passes every scalar from program metadata", "requires scalar variables" | | `Hcq2 › linking and running › a schedule's variables reach its kernels`; launch sizes are `Ops.launch_dims` (Ops' section) |
+| old: unit/engine/test_realize.ml group "Program cache" (5 tests) | cache keys of programs | dropped here: `Codegen.to_program`'s cache (its section, D5) |
+| old: unit/engine/test_realize.ml "rewrites CALL(SINK) to CALL(PROGRAM) with source and binary" | | `R › lower_and_compile › makes each call of a kernel a call of its program`, `R › lower_and_compile of recorded schedules` |
+| old: unit/engine/test_realize.ml group "Buffer copy" (5 tests) | copies between devices and staging | `Hcq2 › linking and running ›` "a copy between devices and the kernel it feeds agree…", "copies across three devices agree…", `Hcq2 › compile_linear › copies through the halves of a staging buffer…`; size checks are nx.device's `Buffer.copy` |
+| old: unit/engine/test_realize.ml group "Owned buffer resolution" (5 tests), group "Linear execution" (6 tests) | resolving arguments and running kernels | `Hcq2 › linking and running` (the engine's link and run); the owners are old tolk's, dropped |

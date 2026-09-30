@@ -25,3 +25,15 @@ let numbered_like like u =
   with
   | subs -> Ops.substitute ~enter_calls:true u subs
   | exception Invalid_argument _ -> u
+
+let binaries_as_sources u =
+  let recorded prg =
+    match List.rev (Ops.src prg) with
+    | binary :: source :: _ when Ops.op binary = Binary -> (
+        match Ops.arg source with
+        | String text -> Some (binary, Ops.v Binary ~arg:(Bytes text))
+        | _ -> None)
+    | _ -> None
+  in
+  let programs = List.filter (fun n -> Ops.op n = Program) (Ops.toposort u) in
+  Ops.substitute ~enter_calls:true u (List.filter_map recorded programs)
