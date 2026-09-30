@@ -3025,7 +3025,20 @@ in the `SET_UCONFIG_REG` branch.
 | tinygrad: `runtime/ops_amd.py` `AMDSDMAQueue.write` | | dropped: its producer is RDMA (README Exclusions) |
 | tinygrad: external/external_test_amd.py::TestAMD::test_amd_ring_64bit_doorbell | a write pointer near 2^33, the ring wrapping | the host program's push splits at the ring's end in every `A › recorded cases` host program; on hardware, a ring's wrap is nx.amd.device's `copies that wrap the SDMA ring` |
 | tinygrad: runtime/test_hcq2.py | batches and the fence | the `Hcq2` and `Engine` suites' |
-| DIVERGENCES D30 | a range around calls, one submission per run | `A › loops (D30)` (PM4, and profiled AQL) |
+| DIVERGENCES D30 | a range around calls, one submission per run | `A › loops (D30)` (PM4, and profiled AQL); `AX › each trip of a range runs its kernel on its own window` |
+
+### Execution
+
+`AX` runs batches through `tolk.engine` on the first AMD GPU
+(`test_ops_amd_exec`, the `slow` alias); every test skips without one.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_amd.py` `AMDDevice.queue_buffer`, `scratch_buffer`, `program_buffer` (no test) | the engine binds the rings and their words, loads the programs and grows the scratch memory | `AX › execution` (5 tests) |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies between the GPU and the host | `AX › copies from the host and back run on the copy engine, in the batch` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | a linked batch runs again without synchronizing | `AX › eight runs of one batch without synchronizing each add one` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `AX › a profile records a span of each kernel on the device, in order` |
+| old: `unit/test_runtime_amd.ml` "Device" › "compiles and runs one kernel" | | `AX › a chain of kernels adds one per kernel` |
 
 ### old tolk
 

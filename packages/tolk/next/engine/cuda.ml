@@ -85,17 +85,17 @@ let placeholder name d c u =
       Some (function_word d (words d c) binary f)
   | _ -> None
 
-(* The queues address the memory the host addresses: another GPU's is copied
-   through the host's. *)
-let reaches devices n =
+(* The queues address the memory nx.device says the device reaches: other memory
+   is copied through the host's (DIVERGENCES D46). *)
+let reaches d devices n =
   match List.assoc_opt n devices with
-  | Some d -> Nx_device.host_of d == d || Nx_device.shares_host_memory d
+  | Some d' -> Nx_device.reaches d d'
   | None -> false
 
 let queues ~host devices name d =
   Option.map
     (fun c ->
-      ( Ops_cuda.queues ~host:(Lazy.force host) ~reaches:(reaches devices),
+      ( Ops_cuda.queues ~host:(Lazy.force host) ~reaches:(reaches d devices),
         placeholder name d c,
         ignore ))
     (C.of_device d)

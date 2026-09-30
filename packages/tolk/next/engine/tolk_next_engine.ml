@@ -50,9 +50,9 @@ type device = {
 
 (* The vendors whose encoders the compiler has, in the order they are tried: a
    vendor that claims a device gives its queues, the storage of the placeholders
-   its commands name and its refresh inside each submission. AMD and NV run
-   their calls one by one until their encoders exist. *)
-let vendors = [ Metal.queues; Cuda.queues ]
+   its commands name and its refresh inside each submission. NV runs its calls
+   one by one until its encoder exists. *)
+let vendors = [ Metal.queues; Cuda.queues; Amd.queues ]
 
 let device devices name =
   let d = find "device" devices name in

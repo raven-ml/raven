@@ -1291,7 +1291,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `runtime/support/hcq2.py:151-155` (`stage_copy` maps each
   buffer on the device with `get_buf` and stages the copy when that raises).
 - **tolk.next:** `lib/runtime/support/hcq2.ml:467` (`reached`, from
-  `queues.reaches`).
+  `queues.reaches`); `engine/cuda.ml` and `engine/amd.ml` (`reaches`).
 - **Differs:** the caller's description of a device says which other devices'
   memory its queues address (`Hcq2.queues.reaches`), and a copy is staged when
   either side's memory is not reached. tinygrad tries to map the buffers and
@@ -1299,8 +1299,9 @@ the Exclusions of `README.md`.
   cannot map fails when the engine links the batch (its borrow is refused)
   instead of being staged.
 - **Reason:** (c). The compiler opens no device, so it cannot try a mapping;
-  the engine, which does, describes each device's reach from nx.device (the
-  memory its host addresses).
+  the engine describes each device's reach from nx.device's
+  (`Nx_device.reaches`), which the devices' drivers describe from their
+  machine's topology.
 - **Pinned by:** the Hcq2 suite: `compile_linear › copies through the halves
   of a staging buffer of the host where the queues cannot reach`, whose device
   description reaches every device but CPU:2.

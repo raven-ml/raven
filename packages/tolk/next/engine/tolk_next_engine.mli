@@ -66,20 +66,24 @@ type device = {
 val device : (string * Nx_device.t) list -> string -> device
 (** [device devices name] is the device [devices] maps [name] to, with its
     {!target}, or, for the disk, which runs no program, the target of the device
-    ["DISK"]. A Metal or a CUDA device has the command queues of its vendor
-    ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}), submitted by host programs
-    of the host of its machine ({!Nx_device.host_of}), which [devices] must
-    name, and gives the words its commands name: Metal's objects, selectors,
-    indirect command buffers and stamps and the address of [objc_msgSend];
-    CUDA's context, streams, functions, stamping function and the driver's entry
-    points. A CUDA device's queues reach the memory of the devices of [devices]
-    that the host addresses, and copy other memory through the host's. An AMD or
-    NV device runs its calls one by one: no encoder of theirs exists yet. A
-    caller that runs work from queues of its own, such as a test of the
+    ["DISK"]. A Metal, CUDA or AMD device has the command queues of its vendor
+    ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}, {!Tolk_next.Ops_amd}),
+    submitted by host programs of the host of its machine
+    ({!Nx_device.host_of}), which [devices] must name, and gives the storage its
+    commands name: Metal's objects, selectors, indirect command buffers and
+    stamps and the address of [objc_msgSend]; CUDA's context, streams,
+    functions, stamping function and the driver's entry points; AMD's rings and
+    their words, its programs' code objects, which it loads, growing the
+    device's scratch memory for their kernels, and its scratch memory. A CUDA or
+    AMD device's queues reach the memory of the devices of [devices] that the
+    device reaches ({!Nx_device.reaches}), and copy other memory through the
+    host's. An NV device runs its calls one by one: no encoder of its exists
+    yet. A caller that runs work from queues of its own, such as a test of the
     compiler, makes a {!device} of its own.
 
     Raises [Invalid_argument] if [devices] does not map [name], or does not name
-    the host of a Metal or CUDA device. *)
+    the host of a Metal, CUDA or AMD device, and [Failure] with nx.device's
+    reason when an AMD device refuses a program's code object at link. *)
 
 (** {1:programs Host programs} *)
 
