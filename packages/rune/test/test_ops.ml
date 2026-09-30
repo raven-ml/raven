@@ -206,12 +206,87 @@ let selection_tests =
 
 (* Scans *)
 
+(* The gradient of the sum of a running extremum: each position counts the
+   running extrema it is, the first of equal elements. *)
+let running_extremum_grad better xs =
+  let n = Array.length xs and g = Array.make (Array.length xs) 0. in
+  let arg = ref 0 in
+  for k = 0 to n - 1 do
+    if better xs.(k) xs.(!arg) then arg := k;
+    g.(!arg) <- g.(!arg) +. 1.
+  done;
+  g
+
+(* The gradient of the sum of a running product: position [i] gets, from each
+   running product that includes it, the product of its other elements. *)
+let cumprod_grad xs =
+  let n = Array.length xs in
+  Array.init n (fun i ->
+      let total = ref 0. in
+      for k = i to n - 1 do
+        let p = ref 1. in
+        for j = 0 to k do
+          if j <> i then p := !p *. xs.(j)
+        done;
+        total := !total +. !p
+      done;
+      !total)
+
+let edgy_vector =
+  Gen.with_pp pp_floats
+    (Gen.array ~size:(Gen.int_range 1 7) edgy)
+
+let summed f x = Nx.sum (f x)
+
+let agrees_with name reference f =
+  prop (name ^ " has the gradient of its definition") edgy_vector (fun xs ->
+      equal
+        (array (float_rel ~rel:1e-9 ~abs:1e-9))
+        (reference xs)
+        (to_arr (Rune.grad' (summed f) (vec64 xs))))
+
+let grad_is ~msg expected f xs =
+  check_arr ~msg expected (Rune.grad' (summed f) (vec64 xs))
+
 let scan_tests =
   [
     test "cumsum" (fun () ->
         check_grad ~msg:"cumsum" (Nx.cumsum ~axis:1) (m23 ()));
     test "cumprod" (fun () ->
         check_grad ~msg:"cumprod" (Nx.cumprod ~axis:1) (m23_pos ()));
+    test "cummax" (fun () ->
+        check_grad ~msg:"cummax" (Nx.cummax ~axis:1) (m23 ()));
+    test "cummin" (fun () ->
+        check_grad ~msg:"cummin" (Nx.cummin ~axis:0) (m23 ()));
+    test "cummax gives each running maximum's cotangent to its element"
+      (fun () ->
+        grad_is ~msg:"[3; 1; 2]" [| 3.; 0.; 0. |] Nx.cummax [| 3.; 1.; 2. |];
+        grad_is ~msg:"ties keep the first" [| 1.; 3.; 0.; 0. |] Nx.cummax
+          [| 1.; 3.; 3.; 2. |]);
+    test "cummin gives each running minimum's cotangent to its element"
+      (fun () ->
+        grad_is ~msg:"ties keep the first" [| 1.; 3.; 0.; 0. |] Nx.cummin
+          [| 3.; 1.; 2.; 1. |]);
+    test "cumprod is exact at zeros" (fun () ->
+        grad_is ~msg:"[2; 3; 0]" [| 4.; 2.; 6. |] Nx.cumprod [| 2.; 3.; 0. |];
+        grad_is ~msg:"a leading zero" [| 9.; 0.; 0. |] Nx.cumprod
+          [| 0.; 2.; 3. |];
+        grad_is ~msg:"two zeros" [| 1.; 8.; 0.; 0.; 0. |] Nx.cumprod
+          [| 2.; 0.; 3.; 0.; 5. |]);
+    test "cumprod's gradient differentiates exactly at zeros" (fun () ->
+        (* The Hessian of the sum of [x0; x0 x1; x0 x1 x2], summed over its
+           rows: [1 + x2 + x1; 1 + x2 + x0; x1 + x0]. *)
+        check_arr ~msg:"hessian rows" [| 4.; 3.; 5. |]
+          (Rune.grad'
+             (fun x -> Nx.sum (Rune.grad' (summed Nx.cumprod) x))
+             (vec64 [| 2.; 3.; 0. |])));
+    agrees_with "cummax"
+      (running_extremum_grad (fun x best -> x > best))
+      Nx.cummax;
+    agrees_with "cummin"
+      (running_extremum_grad (fun x best -> x < best))
+      Nx.cummin;
+    agrees_with "cumprod" cumprod_grad Nx.cumprod;
   ]
 
 (* Matrix multiplication: the four batching branches of the rule. *)

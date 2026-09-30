@@ -1153,3 +1153,20 @@ let check_out_of_range_beside_unit_axes ?devices () =
   check "the gradient of take over an axis of size 1" [| 0.; 0.; 0. |]
     (Rune.grad' (fun t -> Nx.sum (Nx.take ~axis:0 ~indices:far t)))
     row
+
+(* Values where rules have their edges: quarters in [-3, 3], which repeat,
+   tie and are zero often, and [-0.]. Products of a few are exact, and none is
+   so small that a product or a quotient leaves the float range. *)
+let edgy =
+  Gen.frequency
+    [
+      (8, Gen.map (fun k -> Float.of_int k /. 4.) (Gen.int_range (-12) 12));
+      (1, Gen.of_list [ -0. ]);
+    ]
+
+let pp_floats ppf xs =
+  Format.fprintf ppf "[%a]"
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+       (fun ppf x -> Format.fprintf ppf "%g" x))
+    (Array.to_list xs)

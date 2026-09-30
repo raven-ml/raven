@@ -220,44 +220,19 @@ let rec install : type a. Tensor_map.t -> (unit -> a) -> a =
     (* Scans *)
     | Scan (k, axis, x) ->
         let out = eval op in
+        let axis = if axis < 0 then axis + T.ndim x else axis in
         lift1 out x (fun dx ->
             match k with
             | Sum -> scan Sum ~axis dx
             | Prod ->
-                (* d cumprod_k = cumprod_k * sum_{i<=k} dx_i / x_i; requires
-                   nonzero inputs, like the reverse rule. *)
-                let ratio = T.div dx x in
-                T.mul out (scan Sum ~axis ratio)
+                (* [dy_k = x_k dy_(k-1) + y_(k-1) dx_k]. *)
+                let before =
+                  Derivs.shifted ~axis 1 (Nx_dtype.one (T.dtype x)) out
+                in
+                Derivs.linear_scan ~axis x (T.mul before dx)
             | Max | Min ->
-                (* The tangent flows from positions where the running extremum
-                   strictly improves. *)
-                let shape = T.shape out in
-                let ndim = Array.length shape in
-                let axis_norm = if axis < 0 then axis + ndim else axis in
-                let dt = T.dtype x in
-                let boundary =
-                  match k with
-                  | Max -> Nx_dtype.min_value dt
-                  | Sum | Prod | Min -> Nx_dtype.max_value dt
-                in
-                let pad_left =
-                  Array.mapi
-                    (fun i _ -> if i = axis_norm then (1, 0) else (0, 0))
-                    shape
-                in
-                let padded = T.pad pad_left boundary out in
-                let slice_specs = Array.map (fun dim -> T.R (0, dim)) shape in
-                let shifted = T.slice (Array.to_list slice_specs) padded in
-                let active_mask =
-                  match k with
-                  | Max -> T.greater out shifted
-                  | Sum | Prod | Min -> T.less out shifted
-                in
-                (* Positions where the extremum does not improve keep a zero
-                   tangent rather than carrying the previous extremum's
-                   tangent; this matches the reverse rule (they are transposes
-                   of each other). *)
-                T.mul dx (T.cast dt active_mask))
+                (* The tangent of the element each running extremum takes. *)
+                gather ~axis (Derivs.running_arg ~axis out) dx)
     (* Gather / scatter *)
     | Gather (axis, indices, data) ->
         lift1 (eval op) data (fun dx -> gather ~axis indices dx)

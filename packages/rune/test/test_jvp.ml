@@ -238,33 +238,14 @@ let selection_tests =
         check_jvp ~msg:"sort" (fun x -> fst (Nx.sort ~axis:1 x)) (m23 ()));
   ]
 
-let scan_tests =
-  [
-    test "cumsum" (fun () ->
-        check_jvp ~msg:"cumsum" (Nx.cumsum ~axis:1) (m23 ()));
-    test "cumprod" (fun () ->
-        check_jvp ~msg:"cumprod" (Nx.cumprod ~axis:1) (m23_pos ()));
-  ]
-
 (* Transposes
 
    A tangent map and its pullback are transposes of each other: [<J v, w>] is
    [<v, Jᵀ w>] for every direction [v] and cotangent [w]. The points are drawn
    with zeros, repeated values and ties, where the rules have their edges. *)
 
-let pp_floats ppf xs =
-  Format.fprintf ppf "[%a]"
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-       (fun ppf x -> Format.fprintf ppf "%g" x))
-    (Array.to_list xs)
-
 let point =
   let open Gen in
-  let edgy =
-    frequency
-      [ (3, float_range (-3.) 3.); (2, of_list [ 0.; 1.; -1.; 2.; -0. ]) ]
-  in
   let* n = int_range 1 6 in
   let+ x = array ~size:(constant n) edgy
   and+ v = array ~size:(constant n) (float_range (-2.) 2.)
@@ -284,6 +265,42 @@ let transposes name f =
         (float_rel ~rel:1e-9 ~abs:1e-9)
         (Nx.item [] (Nx.sum (Nx.mul jv w)))
         (Nx.item [] (Nx.sum (Nx.mul v jtw))))
+
+(* [down f x] is [f] of the vector [x] as a column. *)
+let down f x =
+  let n = Nx.numel x in
+  Nx.reshape [| n |] (f (Nx.reshape [| n; 1 |] x))
+
+let scan_tests =
+  [
+    test "cumsum" (fun () ->
+        check_jvp ~msg:"cumsum" (Nx.cumsum ~axis:1) (m23 ()));
+    test "cumprod" (fun () ->
+        check_jvp ~msg:"cumprod" (Nx.cumprod ~axis:1) (m23_pos ()));
+    test "cummax" (fun () ->
+        check_jvp ~msg:"cummax" (Nx.cummax ~axis:1) (m23 ()));
+    test "cummin" (fun () ->
+        check_jvp ~msg:"cummin" (Nx.cummin ~axis:0) (m23 ()));
+    test "cummax carries the tangent of each running maximum's element"
+      (fun () ->
+        check_arr ~msg:"tangent" [| 1.; 1.; 1.; 10. |]
+          (snd
+             (Rune.jvp' Nx.cummax
+                (vec64 [| 3.; 1.; 3.; 4. |])
+                (vec64 [| 1.; 10.; 100.; 10. |]))));
+    test "cumprod is exact at zeros" (fun () ->
+        check_arr ~msg:"tangent" [| 1.; 5.; 6. |]
+          (snd
+             (Rune.jvp' Nx.cumprod
+                (vec64 [| 2.; 3.; 0. |])
+                (vec64 [| 1.; 1.; 1. |]))));
+    transposes "cumsum" Nx.cumsum;
+    transposes "cumprod" Nx.cumprod;
+    transposes "cummax" Nx.cummax;
+    transposes "cummin" Nx.cummin;
+    transposes "cumprod along a first axis" (down (Nx.cumprod ~axis:0));
+    transposes "cummax along a first axis" (down (Nx.cummax ~axis:0));
+  ]
 
 let one = vec64 [| 1.0 |]
 

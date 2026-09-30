@@ -114,3 +114,37 @@ let prod' ~axes x out =
   let at_zero = T.where (T.equal count (T.ones_like count))
       (T.prod ~axes ~keepdims:true safe) (T.zeros_like out) in
   T.where zero at_zero (T.div out safe)
+
+(* [shifted ~axis d fill x] is [x] moved [d] places along [axis]: [d] elements
+   of [fill] first, and its last [d] elements dropped. *)
+let shifted ~axis d fill x =
+  let shape = T.shape x in
+  let pads = Array.mapi (fun a _ -> if a = axis then (d, 0) else (0, 0)) shape in
+  T.shrink (Array.map (fun n -> (0, n)) shape) (T.pad pads fill x)
+
+(* [running_arg ~axis out] is the position along [axis] of the element that each
+   running extremum [out] takes: the last position up to it where the extremum
+   changed, so that of equal elements the first is taken. *)
+let running_arg ~axis out =
+  let shape = T.shape out in
+  let n = shape.(axis) in
+  let along = Array.mapi (fun a _ -> if a = axis then n else 1) shape in
+  let iota = T.broadcast_to shape (T.reshape along (T.arange T.int32 0 n 1)) in
+  let before = shifted ~axis 1 (Nx_dtype.zero (T.dtype out)) out in
+  T.cummax ~axis (T.where (T.not_equal out before) iota (T.zeros_like iota))
+
+(* [linear_scan ~axis a b] is [r] with [r_k = a_k r_(k-1) + b_k] along [axis]
+   and [r_(-1) = 0]. The steps compose by doubling, in about [log2 n] rounds of
+   products and sums: no division, so it is exact where [a] has zeros, and it
+   differentiates as its terms do. *)
+let linear_scan ~axis a b =
+  let n = (T.shape a).(axis) in
+  let one = Nx_dtype.one (T.dtype a) and zero = Nx_dtype.zero (T.dtype b) in
+  let rec go d a b =
+    if d >= n then b
+    else
+      go (2 * d)
+        (T.mul a (shifted ~axis d one a))
+        (T.add (T.mul a (shifted ~axis d zero b)) b)
+  in
+  go 1 a b

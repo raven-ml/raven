@@ -172,6 +172,14 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- The derivatives of `Nx.cummax`, `Nx.cummin` and `Nx.cumprod` are right.
+  `cummax` and `cummin` gave a running extremum's derivative only where it
+  changed, so `grad (sum ∘ cummax)` at `[3; 1; 2]` was `[1; 0; 0]`; each
+  running extremum now takes the derivative of its element, the first of
+  equal ones, giving `[3; 0; 0]`. `cumprod`'s gradient divided by the input
+  and lost every term past a zero (`[1; 2; 6]` at `[2; 3; 0]` instead of
+  `[4; 2; 6]`), and its tangent was NaN at a zero. Both now solve the product
+  rule's recurrence without division, exactly at zeros and at every order.
 - `Rune.jvp` of `x ** 2.` at `x = 0` is `0` instead of NaN, as `Rune.grad`
   gives. Forward mode filled an operand without a tangent with zeros and
   multiplied them by its coefficient, which is infinite or NaN where the

@@ -368,69 +368,27 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
                 let scanned = T.cumsum ~axis:axis_norm flipped in
                 T.flip scanned ~axes:[ axis_norm ]
             | Prod ->
-                let prefix_exclusive axis x =
-                  let shape = T.shape x in
-                  let one = Nx_dtype.one (T.dtype x) in
-                  let padded = pad_axis axis (1, 0) one x in
-                  let slice_specs = Array.map (fun dim -> T.R (0, dim)) shape in
-                  T.slice (Array.to_list slice_specs) (T.cumprod ~axis padded)
+                (* The transpose of the forward rule: [dx_i = y_(i-1) r_i] with
+                   [r_i = g_i + x_(i+1) r_(i+1)], a linear scan from the
+                   end. *)
+                let dt = T.dtype x and axes = [ axis_norm ] in
+                let before =
+                  Derivs.shifted ~axis:axis_norm 1 (Nx_dtype.one dt) out
                 in
-                let suffix_exclusive axis x =
-                  let shape = T.shape x in
-                  let one = Nx_dtype.one (T.dtype x) in
-                  let flipped = T.flip x ~axes:[ axis ] in
-                  let suffix_inclusive =
-                    T.flip (T.cumprod ~axis flipped) ~axes:[ axis ]
-                  in
-                  let padded = pad_axis axis (0, 1) one suffix_inclusive in
-                  let slice_specs =
-                    Array.mapi
-                      (fun i dim ->
-                        if i = axis then T.R (1, dim + 1) else T.R (0, dim))
-                      shape
-                  in
-                  T.slice (Array.to_list slice_specs) padded
+                let after =
+                  Derivs.shifted ~axis:axis_norm 1 (Nx_dtype.zero dt)
+                    (T.flip x ~axes)
                 in
-                let divide_no_nan num denom =
-                  let dt = T.dtype denom in
-                  let zero_mask = T.equal_s denom (Nx_dtype.zero dt) in
-                  let safe_denom =
-                    T.where zero_mask
-                      (T.scalar_like denom (Nx_dtype.one dt))
-                      denom
-                  in
-                  let base = T.div num safe_denom in
-                  T.where zero_mask (T.scalar_like base (Nx_dtype.zero dt)) base
+                let r =
+                  Derivs.linear_scan ~axis:axis_norm after (T.flip g ~axes)
                 in
-                let reverse_cumsum x axis =
-                  let flipped = T.flip x ~axes:[ axis ] in
-                  T.flip (T.cumsum ~axis flipped) ~axes:[ axis ]
-                in
-                let prefix = prefix_exclusive axis_norm x in
-                let suffix = suffix_exclusive axis_norm x in
-                let h = divide_no_nan g suffix in
-                let tail_sum = T.sub (reverse_cumsum h axis_norm) h in
-                let inner = T.add g (T.mul suffix tail_sum) in
-                T.mul prefix inner
+                T.mul before (T.flip r ~axes)
             | Max | Min ->
-                (* The cotangent flows to positions where the running extremum
-                   strictly improves. *)
-                let shape = T.shape out in
-                let dt = T.dtype x in
-                let boundary =
-                  match k with
-                  | Max -> Nx_dtype.min_value dt
-                  | Sum | Prod | Min -> Nx_dtype.max_value dt
-                in
-                let padded = pad_axis axis_norm (1, 0) boundary out in
-                let slice_specs = Array.map (fun dim -> T.R (0, dim)) shape in
-                let shifted = T.slice (Array.to_list slice_specs) padded in
-                let active =
-                  match k with
-                  | Max -> T.greater out shifted
-                  | Sum | Prod | Min -> T.less out shifted
-                in
-                T.mul g (T.cast dt active))
+                (* The cotangent goes to the element each running extremum
+                   takes. *)
+                scatter ~mode:`Add ~unique:false ~axis:axis_norm
+                  ~indices:(Derivs.running_arg ~axis:axis_norm out)
+                  ~updates:g (T.zeros_like x))
     (* Gather / scatter *)
     | Gather (axis, indices, data) ->
         pull1 (eval op) data (fun g ->
