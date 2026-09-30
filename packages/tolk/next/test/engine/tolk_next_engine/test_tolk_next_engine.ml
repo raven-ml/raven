@@ -1034,6 +1034,27 @@ let waits_for_a_device_its_queues_do_not_name ~as_input () =
     [| `Int (Z.of_nativeint (Buffer.address filler)) |]
     (Run.values Uint64 address)
 
+(* A slow copy from CPU:1 into storage of the host that the link allocates,
+   enqueued on CPU:1's queue with the storage's address folded in at link, then
+   a host kernel that adds one to it. The run records the copy as pending on the
+   host, so the host kernel runs once it landed. *)
+let leaves_its_work_pending_on_the_host () =
+  let x = Ops.new_buffer (Single "CPU:1") 4 Float32
+  and t = Ops.new_buffer (Single "CPU") 4 Float32
+  and out = Ops.new_buffer (Single "CPU") 4 Float32 in
+  let result = Run.buffer host Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+  let s =
+    link_calls
+      ~bound:
+        [
+          (x, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]);
+          (out, [ result ]);
+        ]
+      [ Ops.store_call t x; Ops.call add_one [ out; t ] ]
+  in
+  Null_device.with_latency 0.05 (fun () -> Engine.run s [||]);
+  equal values (floats [| 2.; 3.; 4.; 5. |]) (Run.values Float32 result)
+
 (* A kernel on CPU:1 and CPU:2 reads the last four of the eight floats each
    device holds of a sharded parameter: its address, entered in the address
    table on each run, is the shard's plus the view's offset. *)
@@ -1131,6 +1152,8 @@ let batches =
         (waits_for_a_device_its_queues_do_not_name ~as_input:true);
       slow "a run waits for a device of storage its queues do not name"
         (waits_for_a_device_its_queues_do_not_name ~as_input:false);
+      test "a host kernel runs once the copy that feeds it landed"
+        leaves_its_work_pending_on_the_host;
       test "a batch reads a view of each shard of a parameter"
         reads_a_view_of_each_shard;
       test "a kernel is a span of its compute lane and a copy of its copy lane"

@@ -2631,10 +2631,12 @@ the two-domain test fails on each of three runs. The survivors:
   parameter or any tagged node counting as a placeholder in a batch's
   patches, which hold only placeholders and storage;
 - the dismissed `||` as `&&` in the storage a batch's patches reach, which
-  drops that storage from the buffers a run touches: here the run still waits
-  for the storage's device, since the batch's other touches share host memory
-  with it (`EN › batches › a run waits for a device of storage its queues do
-  not name`, slow);
+  drops that storage from the buffers a run touches: every batch of the NULL
+  devices touches the host's memory through their signal words, so the host
+  counts the batch's work as pending whether or not the storage is touched
+  (`EN › batches › a host kernel runs once the copy that feeds it landed`
+  passes either way); a device whose signal word is its own memory would tell
+  the two apart;
 - `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
   one call holds one span;
 - `cold` as `not cold`: only NV invalidates its caches;
