@@ -259,6 +259,38 @@ static inline float double_to_float_odd(double x) {
   return u.f;
 }
 
+/* Encoders from 64-bit integers. Past 2^53 an integer narrows to binary64 by
+   rounding to odd from its exact value, as a double narrows to binary32 above:
+   rounding to odd twice is rounding to odd once at the coarser precision, so
+   the binary32 encoder then rounds the integer once. Converting to double
+   rounds to nearest, which can land on a tie of the narrow format. A value that
+   rounds to 2^63 or 2^64 cannot be converted back, and rounded up. */
+static inline double u64_to_double_odd(uint64_t a) {
+  union {
+    double d;
+    uint64_t i;
+  } u = {.d = (double)a};
+  uint64_t top = u.d >= 18446744073709551616.0;
+  uint64_t back = (uint64_t)(top ? 0.0 : u.d);
+  uint64_t away = top | (back > a);
+  uint64_t inexact = top | (back != a);
+  u.i = (u.i - away) | inexact;
+  return u.d;
+}
+
+static inline double i64_to_double_odd(int64_t v) {
+  union {
+    double d;
+    uint64_t i;
+  } u = {.d = (double)v};
+  uint64_t top = u.d >= 9223372036854775808.0;
+  int64_t back = (int64_t)(top ? 0.0 : u.d);
+  uint64_t away = top | (v > 0 ? back > v : back < v);
+  uint64_t inexact = top | (back != v);
+  u.i = (u.i - away) | inexact;
+  return u.d;
+}
+
 static inline uint16_t double_to_half(double x) {
   return float_to_half(double_to_float_odd(x));
 }

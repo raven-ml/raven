@@ -2871,6 +2871,11 @@ thread.
 
 ### Nx
 
+- `Nx.cast` from `int64` or `uint64` to `bfloat16`, `float16` or a float8 type
+  rounds once, from the integer's exact value. Past 2^53 it went through a
+  double, which can round the integer onto a tie of the narrow type and then
+  round again: bfloat16 of 9042383626829825 was 0x5a00 where one rounding gives
+  0x5a01.
 - `Nx_device.Buffer.borrow Nx_device.host b` maps system memory in place: a
   Metal buffer, a test device's buffer or any device's pinned buffer is
   readable through `Buffer.bigarray` once its device is synchronized. Only a

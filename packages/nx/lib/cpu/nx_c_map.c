@@ -248,10 +248,14 @@ static inline int nx_c_f2i4_u(double v) {
 #define NX_C_TOINT_NX_C_CAT_COMPLEX(dsfx, v) nx_c_f2i_##dsfx((double)creal(v))
 
 /* An f16, bf16 or float8 dst computes in float. A wider src reaches its
-   encoder through double_to_float_odd, so the value rounds once; an integer
-   above 2^53 also rounds on its way to double. */
+   encoder through double_to_float_odd, so the value rounds once; a 64-bit
+   integer reaches it as a double rounded to odd from its exact value. */
 #define NX_C_NARROW_ODD(v)                                                      \
-  _Generic((v), float: (v), default: double_to_float_odd((double)(v)))
+  _Generic((v),                                                                 \
+      float: (v),                                                               \
+      int64_t: double_to_float_odd(i64_to_double_odd((int64_t)(v))),            \
+      uint64_t: double_to_float_odd(u64_to_double_odd((uint64_t)(v))),          \
+      default: double_to_float_odd((double)(v)))
 #define NX_C_FNARROW_f16(dcompute, v) NX_C_NARROW_ODD(v)
 #define NX_C_FNARROW_f32(dcompute, v) ((dcompute)(v))
 #define NX_C_FNARROW_f64(dcompute, v) ((dcompute)(v))

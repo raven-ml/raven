@@ -211,6 +211,41 @@ let check_casts inputs ~src () =
   cast e4m3 Nx.float8_e4m3;
   cast e5m2 Nx.float8_e5m2
 
+(* A 64-bit integer next to a bfloat16 midpoint past 2^53: [m * 2^s] and [(m +
+   1) * 2^s] are consecutive bfloat16 values, and converting the integer to a
+   double first rounds it onto their midpoint. Each input comes with the
+   bfloat16 value it rounds to once. *)
+let int_ties exponents =
+  List.concat_map
+    (fun e ->
+      List.concat_map
+        (fun m ->
+          let s = e - 7 in
+          let mid =
+            Int64.add
+              (Int64.shift_left (Int64.of_int m) s)
+              (Int64.shift_left 1L (s - 1))
+          in
+          let value m = Float.ldexp (Float.of_int m) s in
+          let even = if m land 1 = 0 then m else m + 1 in
+          [
+            (Int64.pred mid, value m);
+            (mid, value even);
+            (Int64.succ mid, value (m + 1));
+          ])
+        [ 128; 129; 200; 254 ])
+    exponents
+
+let check_int_casts src ties () =
+  let inputs = Array.of_list (List.map fst ties) in
+  let t = Nx.create src [| Array.length inputs |] inputs in
+  let got = Nx.to_array (Nx.cast Nx.float64 (Nx.cast Nx.bfloat16 t)) in
+  let bad =
+    List.filteri (fun i (_, w) -> not (same w got.(i))) ties
+    |> List.map (fun (x, w) -> Printf.sprintf "%Lu: want %h" x w)
+  in
+  equal ~msg:"bfloat16 cast" (list string) [] bad
+
 (* Every code decodes to its value, and every code but NaN encodes back to
    itself. A NaN encodes back to a NaN of its sign, in the formats whose NaNs
    have one. *)
@@ -286,4 +321,11 @@ let () =
          group "from float64"
            (sweep f64_sweep
            @ [ test "nx casts" (check_casts f64_sweep ~src:Nx.float64) ]);
+         group "from 64-bit integers"
+           [
+             test "int64 casts round once past 2^53"
+               (check_int_casts Nx.int64 (int_ties [ 54; 55; 60; 62 ]));
+             test "uint64 casts round once past 2^53"
+               (check_int_casts Nx.uint64 (int_ties [ 54; 62; 63 ]));
+           ];
        ])
