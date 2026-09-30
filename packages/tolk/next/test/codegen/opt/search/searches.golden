@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+kernel	target	amt	failing	allow_test_size	opts	measurements
+add_small	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),)	9
+add_small	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	12
+add_small	clang	2	True	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	6
+sum_rows	clang	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	39
+variable	clang	1	False	True	()	0
+variable_rows	clang	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)))	11
+variable_rows	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	59
+add	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	83
+add_large	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
+add_large	metal	1	False	False	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)))	82
+sum_rows	metal	2	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)))	136
+matmul_half	metal	1	False	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	194
+matmul_half	cuda	1	True	True	(Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)), Opt(op=OptOps.SPLIT, axis=2, arg=(4, AxisType.UNROLL)))	129
+pad_7x7	hip	1	False	True	(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)), Opt(op=OptOps.SWAP, axis=1, arg=2))	102

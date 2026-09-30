@@ -1,0 +1,62 @@
+; The search's environment variables are read once per process, so what they
+; change is checked in a process of its own, with the variables set. CACHEDB is
+; a directory of the sandbox, which the cache's tests fill.
+
+(test
+ (name test_search)
+ (modules test_search)
+ (package tolk)
+ (libraries windtrap tolk.next tolk_next_test zarith)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run %{test} --exclude-tag slow --exclude-tag environment)
+    (setenv
+     BEAM_PADTO
+     1
+     (setenv
+      TC
+      2
+      (setenv
+       TC_OPT
+       0
+       (setenv
+        BEAM_STRICT_MODE
+        1
+        (setenv
+         BEAM_UOPS_MAX
+         43
+         (setenv
+          BEAM_LOG_SURPASS_MAX
+          1
+          (setenv
+           BEAM_DEBUG
+           2
+           (run %{test} --tag environment))))))))))))
+
+; The searches of kernels on the host compile each candidate with its C
+; compiler and time it through the engine, so only the slow alias runs them.
+
+(executable
+ (name test_search_exec)
+ (modules test_search_exec)
+ (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device zarith))
+
+(rule
+ (alias slow)
+ (package tolk)
+ (deps
+  (sandbox always)
+  (glob_files *.golden))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (progn
+    (run %{exe:test_search.exe} --tag slow --exclude-tag environment)
+    (run %{exe:test_search_exec.exe} --tag slow)))))

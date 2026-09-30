@@ -1539,6 +1539,47 @@ Postrange's.
 | old: `unit/codegen/test_heuristic.ml` "tensor-core upcasts preserve requested global occupancy" | | `matmul_half_*_tc_min_globals` |
 | old: `unit/codegen/test_heuristic.ml` the `IMAGE` group, "IMAGE default occupancy floor skips small global grid", "IMAGE occupancy accounts for cumulative global upcasts", "QCOM uses a smaller grouping threshold" | | dropped: images and QCOM are excluded (README) |
 
+## Search
+
+The suite is `Tolk_next.Search` (`codegen/opt/search/`), written `S` below,
+with `Tolk_next.Search on the host` (`test_search_exec.ml`, slow), written
+`SH`. `actions.golden` is the table of actions and `actions_padto.golden` the
+table under `BEAM_PADTO=1 TC=2 TC_OPT=0`. `candidates.golden` holds the
+positions `get_kernel_actions` returns for 13 kernels on the Clang, Metal,
+CUDA sm_89 and HIP gfx1100 renderers (`S › candidates.golden`, 48 rows).
+`searches.golden` holds what `beam_search` chooses, and how many times it
+measures, for 14 searches under a measurement that computes each program's time
+from its optimisations and its launch, compiled with no compiler (`S › a search
+chooses what tinygrad's chooses`; the GPU rows are slow). The environment
+variables the search reads once run in a process of their own (`S ›
+BEAM_PADTO=1 TC=2 ...`, the suite's dune).
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/test_search.py::TestSearch::test_beam_symbolic_kernel` | a beam search of a symbolic kernel on the CPU applies optimisations | `SH › a searched kernel computes what its unoptimised kernel computes › symbolic` (through `Codegen.to_program ~beam`, timed by `Tolk_next_engine.measure`); the same kernel's candidates, `candidates.golden` `symbolic` |
+| tinygrad: `codegen/opt/search.py` `actions` | the table, in order; `BEAM_PADTO`, `TC`, `TC_OPT` | `S › the actions are tinygrad's, in order`; `S › BEAM_PADTO=1 ... › the actions are tinygrad's, pads included` |
+| tinygrad: `codegen/opt/search.py` `get_kernel_actions` | actions out of range, a whole-axis split by its size, `BEAM_UPCAST_MAX`, `BEAM_LOCAL_MAX`, a tensor core's lanes, `max_up`, `include_0` | `candidates.golden` (every row, `max_up` rows `add clang 4`, `matmul_half metal 16`); `S › get_kernel_actions` (4 laws) |
+| tinygrad: `codegen/opt/search.py` `beam_search` | rounds, the beam of width `amt`, `BEAM_MIN_PROGRESS`, the fastest kept at the end, binaries timed once, measurements that fail | `searches.golden` (every row); `S › a search chooses the fastest program it measured` (law); `S › rounds` (3 tests); `S › a failing measurement` |
+| tinygrad: `codegen/opt/search.py` `_time_program`, `get_test_global_size` | three measurements, stopping early above three times the best; launches of more than 65536 workgroups halved from the last size above 16, times scaled | `S › rounds › a candidate is measured three times ...`; `S › measuring on fewer workgroups` (5 tests; `add_3d` pins the last size above 16, `add_large` a launch of exactly 65536); the `measurements` column of `searches.golden` |
+| tinygrad: `codegen/opt/search.py` `_try_compile` | the kernel named `test`, storage on the renderer's device, `BEAM_UOPS_MAX`, failures dropped, `BEAM_STRICT_MODE`, `DEBUG>=4` | `S › a candidate's storage is placed on its renderer's device`; `S › a candidate that does not compile is dropped` (2 tests); `S › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX instructions or more is dropped`, `› a compilation that raises is raised under BEAM_STRICT_MODE`; `S › a compilation's failure is printed under DEBUG=4` |
+| tinygrad: `codegen/opt/search.py` `BEAM_TIMEOUT_SEC`, `BEAM_DEV_TIMEOUT` | a compilation interrupted by an alarm, a run's time limit | dropped: excluded (README): a domain cannot be interrupted, and a run's limit is the measurement's |
+| tinygrad: `codegen/opt/search.py` `diskcache_get`, `diskcache_put`, `IGNORE_BEAM_CACHE`, `CACHELEVEL` | a kept search measures nothing and reapplies what it kept | `S › a search kept in the cache measures nothing, unless it is ignored`; `S › the cache keeps tensor cores and swaps` (slow) |
+| tinygrad: `codegen/opt/search.py` `DEBUG>=2`, `BEAM_DEBUG`, `BEAM_LOG_SURPASS_MAX` | progress, the kernel, failures and the choice; kernels dropped for their lanes and instructions | `S › a search prints its progress under DEBUG=2`; `S › a search prints nothing by default`; `S › BEAM_PADTO=1 ... › a search prints the kernel, failures and its choice under BEAM_DEBUG`, `› kernels of too many lanes are reported ...`, the uops test (its output); the kernel prints as a graph, since `pyrender` is excluded (README) |
+| tinygrad: `codegen/opt/search.py` `get_worker_pool`, `imap_unordered` | candidates compiled in parallel | `S › a search measures and chooses alike on one domain and on several`: the order is the candidates', tinygrad's order without a pool (D5) |
+| tinygrad: `codegen/opt/search.py` the compute filter (1000 times the fewest operations) | | not pinned: no recorded kernel has candidates whose estimated operations differ a thousandfold; the port is line for line |
+| old: `unit/test_opt_correctness.ml` "beam actions preserve semantics (CPU)", `unit/test_opt_correctness_metal.ml` "... (Metal)", `unit/opt_fuzz/tolk_opt_fuzz.ml` (every sequence of two actions against the unoptimised kernel) | every kernel the search can choose computes what the kernel computes | `S › every kernel a search can choose writes what its kernel writes` (law over the four renderers, up to three actions, interpreted); `S › every kernel two actions make writes what its kernel writes` (slow, exhaustive, Clang and Metal); `SH` (compiled and run on the host). The interpreter evaluates no tensor core product: tensor cores' values are Postrange's and Codegen's (`tc_*` goldens) |
+| old: `unit/test_runtime_search.ml` "selected kernel compilation produces correct output", "completes on 1D elementwise kernel", "completes on 2D elementwise kernel", "optimized kernel produces correct output", "completes on variable-sized kernel" | | `SH` (`add_small`, `sum_rows`, `variable_rows`, `pad_7x7`, `symbolic`) |
+| old: `unit/test_runtime_search.ml` "accepts compact raw buffers for sparse parameter slots", "uses explicit max shape for beam buffers", "beam_search does not corrupt input buffers", "search timing on CPU" | buffers and timings on a device | dropped: the search takes no buffers; allocating and timing are `Tolk_next_engine.measure`'s (README, `args_from_ast`) |
+| old: `unit/test_runtime_search.ml` "uses the supplied symbolic value during timing", "codegen rounds negative timing midpoints down without cache eviction" | each variable at the middle of its bounds, rounded down | `S › a search asks for cold runs with each variable at its bounds' middle` (`n` from 1 to 16 is 8) |
+| old: `unit/test_runtime_search.ml` "disable_cache bypasses cache" | | `S › a search kept in the cache measures nothing, unless it is ignored` |
+| old: `unit/test_runtime_search.ml` "transient program lifetimes" (3 tests), "codegen retires retained timing buffers ..." (2 tests), "beam invokes the available cache hook for each timing sample" | programs and buffers released, caches cleared | dropped: loading and releasing are the engine's; every measurement is asked cold (`S › a search asks for cold runs ...`) |
+| old: `unit/test_runtime_search.ml` "beam codegen requires an explicit runtime" | | `CG › beam search (D4)`: a kernel that asks for a search without one is refused |
+| old: `unit/test_runtime_search.ml` completed_compile_budget (2 tests) | | dropped: the compile timeout is excluded (README) |
+| old: `unit/test_runtime_search.ml` "parallel compilation joins workers before propagating failure", "... interruption", "sequential compilation propagates interruption" | | `Worker`'s section: `Worker.map` joins its domains and raises the first element's exception |
+| old: `unit/test_runtime_search.ml` "beam reconsiders compute-filtered candidates in later rounds" | | not pinned, as the compute filter above; a filtered binary is not marked timed, as in tinygrad |
+| old: `unit/test_runtime_search.ml` "beam rejects overflowing resource products" | lanes and threads multiplied past 64 bits | `candidates.golden` `huge_upcasts`, `huge_locals` (products in integers of any size) |
+| old: `unit/test_runtime_search.ml` "beam retains candidate PROGRAM metadata and scales only its launch", "beam scales symbolic launch products beyond host integer bounds" | | `S › measuring on fewer workgroups`; launch products are taken in integers of any size |
+
 ## Codegen
 
 The suite (`test/codegen/codegen`, `CG` below) compiles the kernels of
