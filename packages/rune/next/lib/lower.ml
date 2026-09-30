@@ -522,7 +522,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Cat (axis, xs) -> (
       match xs with
       | [] -> invalid_arg "a concatenation of no values"
-      | x :: _ -> like x (Lower_index.cat axis (List.map n xs)))
+      | x :: rest -> like x (Lower_index.cat axis (n x) (List.map n rest)))
   | Gather (axis, indices, x) ->
       like x (Lower_index.gather axis (n indices) (n x))
   | Scatter { mode; unique; axis; indices; updates; into } ->

@@ -548,8 +548,8 @@ target's run lands.
 
 - **Reference:** `mixin/op.py:367` (`dot`: `(x * w).sum(-1)`, the products at
   the operands' dtype, summed in `sum_acc_dtype`'s).
-- **Raven:** `lower_linalg.ml:85` (`matmul`), `:79` (`dot`);
-  `lower_reduce.ml:97` (`accumulator`).
+- **Raven:** `lower_linalg.ml:59` (`matmul`), `:55` (`dot`);
+  `lower_reduce.ml:59` (`accumulator`).
 - **Differs:** the operands are converted to `Lower_reduce.accumulator`'s type
   before they are multiplied, and the products summed by `Lower_reduce.reduce`
   (R1, R2) and converted once to the operands' dtype. tinygrad rounds each
@@ -571,7 +571,7 @@ target's run lands.
 ### L2. QR by Householder reflections, R triangular
 
 - **Reference:** `mixin/op.py:1799` (`qr`).
-- **Raven:** `lower_linalg.ml:109` (`householder`), `:136` (`triu`), `:140`
+- **Raven:** `lower_linalg.ml:75` (`householder`), `:102` (`triu`), `:106`
   (`qr`).
 - **Differs:** tinygrad's reflections, with `r`'s elements below the diagonal
   selected as `+0.`: tinygrad leaves there the rounding error of the zeros the
@@ -587,7 +587,7 @@ target's run lands.
 - **Class:** measured bound: within `32 max(m, n) u` of the largest element of
   eager's factors, up to the signs of the diagonal of `r`, for well-conditioned
   matrices of up to 5 x 5; measured maxima over 300 such matrices, in units of
-  `max(m, n) u`: 12.2 (`float32`), 12.9 (`float64`), 0.6 (`float16`, `u` its
+  `max(m, n) u`: 6.9 (`float32`), 13.5 (`float64`), 0.5 (`float16`, `u` its
   own).
 - **Reason:** (b).
 - **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
@@ -599,8 +599,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml:161` (`tournament`), `:181` (`rounds`), `:190`
-  (`rotate`), `:232` (`svd`).
+- **Raven:** `lower_linalg.ml:127` (`pairs`), `:134` (`next_pairs`), `:146`
+  (`rounds`), `:150` (`rotate`), `:198` (`svd`).
 - **Differs:**
   - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
     for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
@@ -610,10 +610,8 @@ target's run lands.
   - `u`'s columns are the reflections that triangularize the sorted rotated
     columns, each with the sign of its diagonal element. tinygrad divides each
     column by its singular value, which leaves a column of zeros for a zero
-    singular value and an inaccurate one for a small one;
-  - the pairing of each round is computed from the shape, and the columns of
-    a pair are rotated directly, where tinygrad selects and rotates them by
-    matrix products. The order is `Lower_reduce.argsort`'s, stable;
+    singular value and an inaccurate one for a small one. The columns are
+    sorted by `Lower_reduce.argsort`, which is stable;
   - the values are `float64`, refused (`Jit_error`) on a target without it,
     such as Metal. Compiled code never raises `No_convergence`: it runs its
     fixed sweeps, and NaN in `a` gives NaN values, as eager does.
@@ -622,19 +620,19 @@ target's run lands.
 - **Class:** measured bound: within `32 max(m, n) u` of the largest singular
   value for the values, and of one for the orthonormality of the vectors and
   the reconstruction, for well-conditioned matrices of up to 4 x 4; measured
-  maxima, in units of `max(m, n) u`: 12.2 (`float32`), 12.9 (`float64`), 0.5
+  maxima, in units of `max(m, n) u`: 8.1 (`float32`), 13.5 (`float64`), 0.5
   (`float16`, `u` its own).
 - **Reason:** (b).
-- **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 16 x 16
-  matrix reach its roundoff`, `› a rank-deficient matrix has orthonormal
-  vectors and +0. values`, `› NaN gives NaN values`, `› one element`, `› no
-  element: the full factors are
+- **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 12 x 12
+  matrix reach its roundoff` (which fails under `4 num` rounds), `› a
+  rank-deficient matrix has orthonormal vectors and +0. values`, `› NaN gives
+  NaN values`, `› one element`, `› no element: the full factors are
   identities`, `› a target without float64 refuses it`, `› batch axes`.
 
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:356` (`cholesky`).
+- **Raven:** `lower_linalg.ml:324` (`cholesky`).
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
@@ -656,7 +654,7 @@ target's run lands.
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:389` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:359` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower
@@ -677,7 +675,7 @@ target's run lands.
 ### L6. LU with partial pivoting
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:294` (`lu`).
+- **Raven:** `lower_linalg.ml:261` (`lu`).
 - **No source:** one column a step. The pivot is the first element of largest
   magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
   magnitudes in which a NaN on the diagonal is the greatest and one below it

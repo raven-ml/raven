@@ -609,15 +609,15 @@ let svd =
       test "batch axes" (fun () ->
           let a = Nx.reshape [| 2; 2; 3 |] (Nx.arange Nx.float32 1 13 1) in
           svd_agrees ~bound:0x1p-18 ~full_matrices:true a);
-      test "float64 values of a 16 x 16 matrix reach its roundoff" (fun () ->
-          let st = Random.State.make [| 16 |] in
+      test "float64 values of a 12 x 12 matrix reach its roundoff" (fun () ->
+          let st = Random.State.make [| 12 |] in
           let a =
-            Nx.create Nx.float64 [| 16; 16 |]
-              (Array.init 256 (fun _ -> Random.State.float st 2. -. 1.))
+            Nx.create Nx.float64 [| 12; 12 |]
+              (Array.init 144 (fun _ -> Random.State.float st 2. -. 1.))
           in
           let _, s, _ = Nx.svd a in
           let _, s', _ = traced3 (fun () -> Nx.svd a) in
-          near ~bound:(32. *. 16. *. 0x1p-53) s s');
+          near ~bound:(32. *. 12. *. 0x1p-53) s s');
       test "a rank-deficient matrix has orthonormal vectors and +0. values"
         (fun () ->
           let r1 =

@@ -19,11 +19,9 @@ val pad : (int * int) array -> Dtype.const -> Ops.t -> Ops.t
 (** [pad padding fill x] is [x] with [fst padding.(i)] elements [fill] before it
     and [snd padding.(i)] after it along each axis [i]. *)
 
-val cat : int -> Ops.t list -> Ops.t
-(** [cat axis xs] is the nodes [xs] one after the other along [axis]. They have
-    one shape but along [axis].
-
-    Raises [Invalid_argument] if [xs] is empty. *)
+val cat : int -> Ops.t -> Ops.t list -> Ops.t
+(** [cat axis x xs] is the nodes [x :: xs] one after the other along [axis].
+    They have one shape but along [axis]. *)
 
 val gather : int -> Ops.t -> Ops.t -> Ops.t
 (** [gather axis indices x] is, at each position of the [int32] node [indices],

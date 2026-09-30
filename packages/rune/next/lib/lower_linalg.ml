@@ -9,30 +9,15 @@ let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l
 let zero u = Ops.const_like u (`Float 0.)
 let float u x = Ops.const_like u (`Float x)
-
-let dims u =
-  List.map
-    (function Ops.Int n -> n | Ops.Sym _ -> invalid_arg "a symbolic size")
-    (Ops.shape u)
+let transpose u = Ops.transpose u (-2) (-1)
 
 (* The batch axes of the matrices of [u], their rows and their columns. *)
 let matrix u =
-  match List.rev (dims u) with
-  | n :: m :: batch -> (List.rev batch, m, n)
-  | _ -> invalid_arg "a matrix of fewer than two axes"
-
-let unsqueeze u axis =
-  let s = Ops.shape u in
-  Ops.reshape u
-    (List.filteri (fun i _ -> i < axis) s
-    @ (Ops.Int 1 :: List.filteri (fun i _ -> i >= axis) s))
-
-(* [transpose u] swaps the last two axes of [u]. *)
-let transpose u =
-  let r = Ops.ndim u in
-  Ops.permute u
-    (List.init r (fun i ->
-         if i = r - 2 then r - 1 else if i = r - 1 then r - 2 else i))
+  let dims = Ops.max_shape u in
+  let r = List.length dims in
+  ( List.filteri (fun i _ -> i < r - 2) dims,
+    List.nth dims (r - 2),
+    List.nth dims (r - 1) )
 
 (* [block u rows cols] is the rows and columns of the matrices of [u] in the
    bounds [rows] and [cols], each all of them if [None]. *)
@@ -56,18 +41,9 @@ let column_index n = Ops.reshape (Ops.arange ~dtype:Int32 n) (ints [ 1; n ])
 let is u i = Ops.eq u (Ops.int i)
 let eye dt n m = Ops.cast (Ops.eq (row_index n) (Ops.arange ~dtype:Int32 m)) dt
 
-(* The constant [c] of type [dt] broadcast to [shape]. *)
-let filled dt c shape =
-  Ops.expand
-    (Ops.reshape (Ops.const ~dtype:dt c) (List.map (fun _ -> Ops.Int 1) shape))
-    (ints shape)
-
-(* Narrow floats compute at [float32] and round each result once. *)
-let widen u =
-  if Dtype.is_float (dtype u) && Dtype.itemsize (dtype u) < 4 then
-    Ops.cast u Float32
-  else u
-
+(* -1 below zero and 1 elsewhere: the sign of a nonzero element, and 1 for a
+   zero one. *)
+let direction x = Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.)
 let fdiv x y = Lower_arith.binary Fdiv x (Ops.expand y (Ops.shape x))
 
 (* Products
@@ -77,9 +53,7 @@ let fdiv x y = Lower_arith.binary Fdiv x (Ops.expand y (Ops.shape x))
    broadcast over the batch axes, multiplied and summed by [sum]. *)
 
 let dot ?(sum = fun u axis -> Ops.rop u Op.Add [ axis ]) a b =
-  let a = unsqueeze a (Ops.ndim a - 1) in
-  let b = unsqueeze (transpose b) (Ops.ndim b - 2) in
-  let p = Ops.mul a b in
+  let p = Ops.mul (Ops.unsqueeze a (-2)) (Ops.unsqueeze (transpose b) (-3)) in
   sum p (Ops.ndim p - 1)
 
 let matmul a b =
@@ -96,15 +70,7 @@ let matmul a b =
    diagonal takes the sign opposite to [x]'s first element, so that no
    cancellation occurs, and a zero column takes no reflection. *)
 
-let sum_last u =
-  let axis = Ops.ndim u - 1 in
-  unsqueeze (Ops.rop u Op.Add [ axis ]) axis
-
-let sign x =
-  Ops.where
-    (Ops.ne x (zero x))
-    (Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.))
-    (zero x)
+let sum_last u = Ops.unsqueeze (Ops.rop u Op.Add [ Ops.ndim u - 1 ]) (-1)
 
 let householder a =
   let batch, m, n = matrix a in
@@ -115,17 +81,17 @@ let householder a =
     let x = Ops.where (Ops.ge idx (Ops.int i)) c (zero c) in
     let norm = Ops.sqrt (sum_last (Ops.mul x x)) in
     let x0 = sum_last (Ops.where at_i x (zero x)) in
-    let sgn = Ops.where (Ops.ne x0 (zero x0)) (sign x0) (float x0 1.) in
+    let sgn = direction x0 in
     let active = Ops.ne norm (zero norm) in
     let u0 = Ops.O.(x0 + (sgn * norm)) in
     let v = Ops.div (Ops.where at_i u0 x) (Ops.where active u0 (float u0 1.)) in
-    let v = unsqueeze v (Ops.ndim v) in
+    let v = Ops.unsqueeze v (-1) in
     let tau =
       Ops.where active
         (Ops.div (Ops.mul sgn u0) (Ops.where active norm (float norm 1.)))
         (zero norm)
     in
-    let w = Ops.mul (unsqueeze tau (Ops.ndim tau)) v in
+    let w = Ops.mul (Ops.unsqueeze tau (-1)) v in
     ( Ops.sub q (dot (dot q v) (transpose w)),
       Ops.sub r (dot w (dot (transpose v) r)) )
   in
@@ -141,7 +107,7 @@ let qr ~reduced a =
   let dt = dtype a in
   let _, m, n = matrix a in
   let k = Int.min m n in
-  let q, r = householder (widen a) in
+  let q, r = householder (Lower_arith.widen a) in
   let r = triu r in
   let q, r =
     if reduced then (block q None (Some (0, k)), block r (Some (0, k)) None)
@@ -152,27 +118,26 @@ let qr ~reduced a =
 (* Singular values by one-sided Jacobi rotations
 
    The columns of [u], [r]'s leading square, are made orthogonal by rotating
-   pairs of them, each by the angle that zeroes their inner product; [v]
-   accumulates the rotations. A round rotates [num / 2] disjoint pairs, drawn as
-   in a round-robin tournament, so that each pair meets once every [num - 1]
-   rounds: the shape fixes them all. *)
+   pairs of them, [num / 2] disjoint pairs a round, each by the angle that
+   zeroes their inner product; [v] accumulates the rotations. The pairing [p]
+   moves as in a round-robin tournament, so that each pair meets once every [num
+   - 1] rounds, and a round rotates the pairs [p] selects by one matrix
+   product. *)
 
-(* The pairs of each of [rounds] rounds of a tournament of [num] columns. *)
-let tournament num rounds =
+let pairs num =
   let h = num / 2 in
-  let next p =
-    if num mod 2 = 1 then Array.map (fun i -> (i + num - 1) mod num) p
-    else
-      Array.mapi
-        (fun k i -> if k = 0 then i else ((i + num - 3) mod (num - 1)) + 1)
-        p
-  in
-  let first = Array.init num (fun i -> if i < h then i else num - 1 - i + h) in
-  let rec go p k =
-    if k = 0 then []
-    else List.init h (fun i -> (p.(i), p.(h + i))) :: go (next p) (k - 1)
-  in
-  go first rounds
+  Ops.cat
+    (Ops.arange ~dtype:Int32 h)
+    [ Ops.flip (Ops.arange ~start:h ~dtype:Int32 num) [ 0 ] ]
+
+(* The next round's pairing: every column but the first moves one place. *)
+let next_pairs num p =
+  if num mod 2 = 1 then Ops.O.((p - int 1) % int num)
+  else
+    let others = num - 1 in
+    let parts = Ops.split p [ 1; others ] in
+    Ops.cat (List.nth parts 0)
+      [ Ops.O.(((List.nth parts 1 - int 2) % int others) + int 1) ]
 
 (* The rounds that bring [num] columns to orthogonality. A sweep meets every
    pair once, in [num - 1] rounds, or [num] for an odd [num]. The rotations
@@ -182,71 +147,77 @@ let rounds num =
   let rec log2 k = if 1 lsl k >= num then k else log2 (k + 1) in
   if num < 2 then 0 else (log2 0 + 3) * (num - 1 + (num mod 2))
 
-let columns u ks =
-  match List.map (column u) ks with
-  | c :: cs -> Ops.cat ~axis:(Ops.ndim u - 1) c cs
-  | [] -> invalid_arg "no column"
-
-let rotate (u, v) pairs =
-  let first, second = List.split pairs in
-  let sums x =
-    let axis = Ops.ndim x - 2 in
-    unsqueeze (Ops.rop x Op.Add [ axis ]) axis
+let rotate (u, v, p) =
+  let batch, num, _ = matrix u in
+  let h = num / 2 and dt = dtype u in
+  let halves x axis =
+    let parts = Ops.split ~axis x [ h; h ] in
+    (List.nth parts 0, List.nth parts 1)
   in
-  let ui = columns u first and uj = columns u second in
-  let gamma = sums (Ops.mul ui uj) in
-  let alpha = sums (Ops.mul ui ui) and beta = sums (Ops.mul uj uj) in
+  (* The first [h] columns select each pair's first column, the next [h] its
+     second. *)
+  let selected =
+    block
+      (Ops.cast (Ops.eq (row_index num) (Ops.unsqueeze p 0)) dt)
+      None
+      (Some (0, 2 * h))
+  in
+  let paired = dot u selected in
+  let left, right = halves paired (-1) in
+  let column_sums x = Ops.rop x Op.Add [ Ops.ndim x - 2 ] in
+  let gamma =
+    Ops.reshape (column_sums Ops.O.(left * right)) (ints (batch @ [ 1; h ]))
+  in
+  let alpha, beta =
+    halves (Ops.unsqueeze (column_sums Ops.O.(paired * paired)) (-2)) (-1)
+  in
   let rot = Ops.ne gamma (zero gamma) in
-  let tau =
-    Ops.div (Ops.sub beta alpha)
-      (Ops.mul (float gamma 2.) (Ops.where rot gamma (float gamma 1.)))
-  in
+  let one = float gamma 1. and two = float gamma 2. in
+  let tau = Ops.O.((beta - alpha) / (two * Ops.where rot gamma one)) in
   let t =
-    Ops.div
-      (Ops.where (Ops.ne tau (zero tau)) (sign tau) (float tau 1.))
-      (Ops.add
-         (Lower_arith.unary Abs tau)
-         (Ops.sqrt (Ops.add (float tau 1.) (Ops.mul tau tau))))
+    Ops.O.(
+      direction tau / (Lower_arith.unary Abs tau + Ops.sqrt (one + (tau * tau))))
   in
   let t = Ops.where rot t (zero t) in
-  let c = Ops.reciprocal (Ops.sqrt (Ops.add (float t 1.) (Ops.mul t t))) in
-  let s = Ops.mul c t in
-  (* Column [k] of the rotated [x] is among [x]'s columns, then the rotated
-     firsts, then the rotated seconds. *)
-  let _, _, num = matrix u and h = List.length pairs in
-  let order k =
-    match
-      (List.find_index (( = ) k) first, List.find_index (( = ) k) second)
-    with
-    | Some i, _ -> num + i
-    | None, Some i -> num + h + i
-    | None, None -> k
+  let c = Ops.reciprocal (Ops.sqrt Ops.O.(one + (t * t))) in
+  let s = Ops.O.(c * t) in
+  let mi, mj = halves (transpose selected) (-2) in
+  let col x = Ops.unsqueeze x (-1) and row x = Ops.unsqueeze x (-2) in
+  let per_pair x = Ops.reshape x (ints (batch @ [ h; 1; 1 ])) in
+  let cc = per_pair (Ops.sub c (float c 1.)) and ss = per_pair s in
+  let delta =
+    Ops.O.(
+      (cc * ((col mi * row mi) + (col mj * row mj)))
+      + (ss * ((col mi * row mj) - (col mj * row mi))))
   in
-  let turn x =
-    let xi = columns x first and xj = columns x second in
-    let xi = Ops.O.((c * xi) - (s * xj)) and xj = Ops.O.((s * xi) + (c * xj)) in
-    columns (Ops.cat ~axis:(Ops.ndim x - 1) x [ xi; xj ]) (List.init num order)
+  let r =
+    Ops.add (eye dt num num) (Ops.rop delta Op.Add [ Ops.ndim delta - 3 ])
   in
-  (turn u, turn v)
+  (dot u r, dot v r, next_pairs num p)
 
 let svd ~full_matrices a =
   let dt = dtype a in
   let batch, m, n = matrix a in
   let num = Int.min m n and q_num = Int.max m n in
-  let x = widen a in
+  let x = Lower_arith.widen a in
   let wdt = dtype x in
   let q, r = householder (if m >= n then x else transpose x) in
   let square k = Ops.expand (eye wdt k k) (ints (batch @ [ k; k ])) in
   let u = Ops.contiguous (block (triu r) (Some (0, num)) (Some (0, num))) in
   let v = Ops.contiguous (square num) in
-  let u, v = List.fold_left rotate (u, v) (tournament num (rounds num)) in
+  let u, v, _ =
+    List.fold_left
+      (fun uvp _ -> rotate uvp)
+      (u, v, pairs num)
+      (List.init (rounds num) Fun.id)
+  in
   let r = Ops.ndim u in
   let norms = Ops.sqrt (Ops.rop (Ops.mul u u) Op.Add [ r - 2 ]) in
   let order = Lower_reduce.argsort ~descending:true ~axis:(r - 2) norms in
   let s = Lower_index.gather (r - 2) order norms in
   let by_order x =
     Lower_index.gather (r - 1)
-      (Ops.expand (unsqueeze order (r - 2)) (ints (batch @ [ num; num ])))
+      (Ops.expand (Ops.unsqueeze order (-2)) (ints (batch @ [ num; num ])))
       x
   in
   (* The sorted columns are orthogonal: the reflections that triangularize them
@@ -260,12 +231,8 @@ let svd ~full_matrices a =
       Op.Add
       [ r - 2 ]
   in
-  let signs =
-    Ops.where
-      (Ops.lt diagonal (zero diagonal))
-      (float diagonal (-1.)) (float diagonal 1.)
-  in
-  let u = Ops.mul q_u (unsqueeze signs (r - 2)) and v = by_order v in
+  let u = Ops.mul q_u (Ops.unsqueeze (direction diagonal) (-2)) in
+  let v = by_order v in
   let inside =
     Ops.bitwise_and
       (Ops.lt (row_index q_num) (Ops.int num))
@@ -293,7 +260,7 @@ let svd ~full_matrices a =
 
 let lu a =
   let dt = dtype a in
-  let x = widen a in
+  let x = Lower_arith.widen a in
   let batch, m, n = matrix x in
   let rank = Ops.ndim x in
   let rows = row_index m and cols = column_index n in
@@ -317,7 +284,7 @@ let lu a =
            (Lower_arith.unary Abs col))
     in
     let p = Lower_reduce.arg_reduce Argmax ~axis:(rank - 2) magnitude in
-    let pp = unsqueeze p (rank - 2) in
+    let pp = Ops.unsqueeze p (-2) in
     let x = swap x j pp and perm = swap perm j pp in
     let pivot = entry x j j and col = column x j in
     let l = Ops.where (Ops.ne pivot (zero pivot)) (fdiv col pivot) col in
@@ -333,18 +300,19 @@ let lu a =
     in
     (x, perm, p :: pivots)
   in
-  let perm = Ops.expand (Ops.arange ~dtype:Int32 m) (ints (batch @ [ m ])) in
+  let perm = Ops.expand rows (ints (batch @ [ m; 1 ])) in
   let x, perm, pivots =
-    List.fold_left step
-      (x, unsqueeze perm (rank - 1), [])
-      (List.init (Int.min m n) Fun.id)
+    List.fold_left step (x, perm, []) (List.init (Int.min m n) Fun.id)
   in
+  let perm = Ops.squeeze ~axis:(-1) perm in
+  (* The pivots follow no pivot at all, none of [perm]'s elements, which a
+     concatenation drops. *)
   let pivots =
-    match List.rev pivots with
-    | [] -> filled Int32 (`Int Z.zero) (batch @ [ 0 ])
-    | ps -> Lower_index.cat (rank - 2) ps
+    Lower_index.cat (rank - 2)
+      (Ops.shrink_to perm (List.map Option.some (ints (batch @ [ 0 ]))))
+      (List.rev pivots)
   in
-  (Ops.cast x dt, pivots, Ops.squeeze ~axis:(rank - 1) perm)
+  (Ops.cast x dt, pivots, perm)
 
 (* Cholesky
 
@@ -355,9 +323,8 @@ let lu a =
 
 let cholesky ~upper a =
   let dt = dtype a in
-  let x = widen a in
+  let x = Lower_arith.widen a in
   let _, n, _ = matrix x in
-  let rank = Ops.ndim x in
   let rows = row_index n in
   let step (s, columns) j =
     let d = entry s j j in
@@ -372,11 +339,14 @@ let cholesky ~upper a =
     in
     (Ops.sub s (Ops.mul l (transpose l)), l :: columns)
   in
-  if n = 0 then a
-  else
-    let _, columns = List.fold_left step (x, []) (List.init n Fun.id) in
-    let l = Lower_index.cat (rank - 1) (List.rev columns) in
-    Ops.cast (if upper then transpose l else l) dt
+  let _, columns = List.fold_left step (x, []) (List.init n Fun.id) in
+  let l =
+    Lower_index.cat
+      (Ops.ndim x - 1)
+      (block x None (Some (0, 0)))
+      (List.rev columns)
+  in
+  Ops.cast (if upper then transpose l else l) dt
 
 (* Triangular solve
 
@@ -389,8 +359,8 @@ let cholesky ~upper a =
 let solve_triangular ~upper ~transpose:t ~unit_diag a b =
   let dt = dtype b in
   let vector = Ops.ndim b = Ops.ndim a - 1 in
-  let b = widen (if vector then unsqueeze b (Ops.ndim b) else b) in
-  let m = widen (if t then transpose a else a) in
+  let b = Lower_arith.widen (if vector then Ops.unsqueeze b (-1) else b) in
+  let m = Lower_arith.widen (if t then transpose a else a) in
   let rank = Ops.ndim m in
   let reversed = upper <> t in
   let m = if reversed then Ops.flip m [ rank - 2; rank - 1 ] else m in
@@ -405,4 +375,4 @@ let solve_triangular ~upper ~transpose:t ~unit_diag a b =
   in
   let x = List.fold_left solve (zero b) (List.init n Fun.id) in
   let x = if reversed then Ops.flip x [ rank - 2 ] else x in
-  Ops.cast (if vector then Ops.squeeze ~axis:(rank - 1) x else x) dt
+  Ops.cast (if vector then Ops.squeeze ~axis:(-1) x else x) dt

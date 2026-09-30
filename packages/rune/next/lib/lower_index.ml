@@ -60,14 +60,13 @@ let pad padding fill x =
 
 (* Pieces of one length are stacked. Pieces of different lengths are each
    selected on the stretch they fill. *)
-let cat axis xs =
+let cat axis x xs =
   let length u = List.nth (Ops.max_shape u) axis in
-  match (List.filter (fun u -> length u > 0) xs, xs) with
-  | _, [] -> invalid_arg "a concatenation of no nodes"
-  | [], x :: _ -> x
-  | x :: rest, _ when List.for_all (fun u -> length u = length x) rest ->
-      Ops.cat ~axis x rest
-  | pieces, _ ->
+  match List.filter (fun u -> length u > 0) (x :: xs) with
+  | [] -> x
+  | y :: rest when List.for_all (fun u -> length u = length y) rest ->
+      Ops.cat ~axis y rest
+  | pieces ->
       let total = List.fold_left (fun n u -> n + length u) 0 pieces in
       let place (start, placed) u =
         let spread =

@@ -23,6 +23,10 @@
 
 open Tolk_next
 
+val widen : Ops.t -> Ops.t
+(** [widen x] is [x] converted to [float32] if it is a narrow float, and [x]
+    otherwise. *)
+
 val unary : Nx_backend.unary -> Ops.t -> Ops.t
 (** [unary k x] is [k] of each element of [x]. *)
 
