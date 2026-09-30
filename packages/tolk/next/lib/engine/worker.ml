@@ -27,7 +27,8 @@ let map f l =
   let failure = Atomic.make None in
   let rec fail i e bt =
     match Atomic.get failure with
-    | Some (j, _, _) when j < i -> ()
+    | Some (j, _, _) when (j < i) [@mutate off "an index fails at most once"] ->
+        ()
     | seen ->
         if not (Atomic.compare_and_set failure seen (Some (i, e, bt))) then
           fail i e bt
