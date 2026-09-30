@@ -900,9 +900,41 @@ let do_render (ren : Renderer.t) prg lin =
   let source = ren.render (src lin) in
   Some (replace prg ~src:(src prg @ [ v Op.Source ~arg:(String source) ]))
 
+(* nx.device calls a host program as [void f(void **b, const int64_t *v)], its
+   buffers in the order of its globals and its variables in order. The kernel is
+   renamed [NAME_], and [NAME] becomes an entry of that form that passes each of
+   the kernel's parameters on, which C converts to the parameter's type. The
+   source the program keeps is the renderer's. *)
+let host_entry prg lin source =
+  let info = match arg prg with Program info -> info | _ -> assert false in
+  let name = function_name (kernel_info (nth prg 0)) in
+  let pass u =
+    let index x xs = Option.get (List.find_index x xs) in
+    match arg u with
+    | Param _ when addrspace u = Some Dtype.Alu ->
+        Printf.sprintf "v[%d]" (index (equal u) info.vars)
+    | Param p -> Printf.sprintf "b[%d]" (index (Int.equal p.slot) info.globals)
+    | _ -> assert false
+  in
+  let params = List.filter (fun u -> op u = Op.Param) (src lin) in
+  let abi = if Sys.win32 then "__attribute__((ms_abi)) " else "" in
+  String.concat "\n"
+    [
+      Printf.sprintf "#define %s %s_" name name;
+      source;
+      Printf.sprintf "#undef %s" name;
+      Printf.sprintf "%svoid %s(void **b, const long long *v) { %s_(%s); }" abi
+        name name
+        (String.concat ", " (List.map pass params));
+    ]
+
 let do_compile (ren : Renderer.t) prg source =
   let source = match arg source with String s -> s | _ -> assert false in
   if setting Helpers.debug >= 4 then print_endline source;
+  let source =
+    if ren.target.device = "CPU" then host_entry prg (nth prg 1) source
+    else source
+  in
   let lib = Renderer.Compiler.compile_cached ren.compiler source in
   if setting Helpers.debug >= 7 then
     Renderer.Compiler.disassemble ren.compiler lib;

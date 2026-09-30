@@ -709,6 +709,39 @@ let binary_of p =
   | Bytes b -> b
   | _ -> invalid_arg "a program's fourth source is its binary"
 
+(* A kernel that stores the sum of ten int variables: on arm64, the ones past
+   the eighth argument register go on the stack at 4 bytes each. *)
+let ten_scalars () =
+  let vars =
+    List.init 10 (fun i ->
+        Ops.variable ~dtype:Int32 (Printf.sprintf "v%d" i) (`Int Z.zero)
+          (`Int (Z.of_int 100)))
+  in
+  let out = Ops.param ~shape:[ Int 1 ] 0 Int32 in
+  let sum = List.fold_left Ops.add (List.hd vars) (List.tl vars) in
+  let k =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"ten" ())
+      [ Ops.store (Ops.index out [ Ops.int ~dtype:Int32 0 ]) sum ]
+  in
+  let p = Codegen.to_program k (Lazy.force host) in
+  let elf = Device.Tiny_elf.of_program p in
+  equal ~msg:"the entry" string "ten" elf.name;
+  let value v =
+    List.assoc (Ops.expr v) (List.mapi (fun i v -> (Ops.expr v, i + 1)) vars)
+  in
+  let info = match Ops.arg p with Program info -> info | _ -> assert false in
+  let result = Bigarray.(Array1.create int32 c_layout 1) in
+  (match
+     Nx_device.Program.load Nx_device.host ~binary:elf.lib ~name:elf.name
+   with
+  | Ok prg ->
+      Nx_device.Program.call prg
+        [| Nx_device.Buffer.of_bigarray result |]
+        (Array.of_list (List.map value info.vars))
+  | Error why -> fail why);
+  equal ~msg:"1 + 2 + ... + 10" int32 55l result.{0}
+
 let programs =
   group "programs"
     [
@@ -718,10 +751,28 @@ let programs =
         (per_row ~only:compiles counts_its_instructions);
       group "full_rewrite_to_sink lowers a kernel the same each time"
         (per_row ~only:on_clang ~default:sample lowers_the_same_twice);
-      test "the binary is the source compiled by the renderer's compiler"
+      test
+        "a device program's binary is its source compiled by the renderer's \
+         compiler" (fun () ->
+          let p = Codegen.to_program (Lazy.force add_kernel) metal in
+          equal string (source p) (binary_of p));
+      test "a host program's binary holds nx.device's entry after the kernel"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in
-          equal string (source p) (binary_of p));
+          equal string
+            (String.concat "\n"
+               [
+                 "#define E_64_4 E_64_4_";
+                 source p;
+                 "#undef E_64_4";
+                 "void E_64_4(void **b, const long long *v) { E_64_4_(b[0], \
+                  b[1], b[2]); }";
+               ])
+            (binary_of p));
+      test
+        "a host program runs through Program.call, with ten scalars past the \
+         argument registers"
+        ten_scalars;
       test "the argument of a program is its program information for the target"
         (fun () ->
           let p = Codegen.to_program (Lazy.force add_kernel) clang in

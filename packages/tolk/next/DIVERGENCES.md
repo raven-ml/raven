@@ -835,3 +835,24 @@ the Exclusions of `README.md`.
   `Tolk_next.Dtype › const › const keeps the bits of every 8- and 16-bit float
   word`; and, at L9, a rune test: a jitted `Nx.bitcast` of a NaN constant
   keeps its bits.
+
+## D28. A host program has nx.device's entry
+
+- **tinygrad:** `codegen/__init__.py:449-451` (`do_compile`: the binary is the
+  source compiled), `runtime/ops_cpu.py:58-70` (`CPUProgram.__call__` calls
+  the kernel's own signature through ctypes, every argument a `c_uint64`).
+- **tolk.next:** `lib/codegen/codegen.ml` (`host_entry`, `do_compile`).
+- **Differs:** a program for a CPU target is compiled from its source with
+  the kernel renamed `NAME_` and an entry `NAME` appended:
+  `void NAME(void **b, const long long *v)`, which passes the buffers, in the
+  order of the program's globals, and the variables, in order, on to the
+  kernel, as C converts them to its parameters' types. The program's source is
+  the renderer's; only its binary differs.
+- **Reason:** (c). nx.device calls a host program with one ABI,
+  `Nx_device.Program.call`'s, and names its profile span after the entry.
+  The entry keeps the kernel's name in profiles, and passes each scalar at its
+  own type: an Apple arm64 stack argument of 32 bits takes 4 bytes, where
+  ctypes' `c_uint64` would take 8.
+- **Pinned by:** the `Codegen` suite, `programs › a host program's binary
+  holds nx.device's entry after the kernel` and `› a host program runs
+  through Program.call, with ten scalars past the argument registers`.
