@@ -58,8 +58,8 @@ def sharded(*shape, axis, devices=D2):
     return Tensor(empty(*shard, device=devices).uop.unshard(axis), device=devices)
 
 
-def setitem(index, value):
-    t = empty(8, 8).contiguous()
+def setitem(index, value, shape=(8, 8)):
+    t = empty(*shape).contiguous()
     t[index] = value
     return t
 
@@ -238,6 +238,10 @@ PROGRAMS = {
     "assign_double_diamond": assign_double_diamond,
     "setitem": lambda: setitem(slice(2, 4), 1.0),
     "setitem_tensor": lambda: setitem((slice(None), slice(2, 4)), empty(8, 2)),
+    # the setitem's mask is a constant staged over the ranges of the storage's
+    # axes, which pm_const_buffer_folding folds to the constant
+    "setitem_column": lambda: setitem(slice(2, 5), 1.0, shape=(8, 1)),
+    "setitem_cube": lambda: setitem(slice(1, 3), 42.0, shape=(4, 4, 4)),
     "custom_kernel": custom_kernel,
     "inline_function": inline_function,
     # symbolic shapes

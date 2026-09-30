@@ -256,7 +256,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uop_graph.py::TestUOpGraph::test_backedge_preserves_outer_range | a backedge closes its loop only | `O › ranges › a backedge closes its loop and keeps the condition's other ranges` |
 | tinygrad: null/test_uop_graph.py::TestReduceCollapse (2 tests) | `pm_reduce_collapse`, `full_rewrite` | Codegen's section |
 | tinygrad: null/test_uop_graph.py::TestMovementOps (2 tests) | `pm_mops` folds reshapes into indices | `Tolk_next.Prepare › pm_mops › rules ›` "an index of a reshape's added leading axis is its source" (`test_pm_mops_partial_reshape_index_removes_reshape`), "an index of a reshape whose trailing axes change is left as it is" (`…_suffix_mismatch_does_nothing`) |
-| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | Rangeify's section (its rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
+| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | `Tolk_next.Rangeify › get_kernel_graph › recorded ›` `setitem_column_kernels.golden` and `setitem_cube_kernels.golden` (Rangeify's rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
 | tinygrad: null/test_uop_graph.py::TestUOpTags::test_inc_by_one | a tag makes a rewrite apply once, and removing tags reopens it | `O › graph_rewrite › tags let a rewrite apply once` (it checks the graphs, since folding the sums is `simplify`'s) |
 | tinygrad: null/test_uop_graph.py::TestUOpGetItem (18 tests) | `UOp.__getitem__` | dropped: `__getitem__` is not ported (README exclusions); its shrink, permute and index are `O › graphs › movement.golden` and `O › graphs › kernel_nodes.golden` |
 | tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_row, test_broadcast_col, test_broadcast_lower_dim, test_broadcast_scalar, test_broadcast_symbolic_same_shape | elementwise operations broadcast shapes | `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › shapes › an elementwise operation keeps a symbolic shape` |
@@ -2389,7 +2389,7 @@ observable in a kernel graph of any program or hand-built graph tried:
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| Ops: tinygrad `null/test_uop_graph.py::TestConstBufferize` (2 tests) | `pm_const_buffer_folding`: a constant staged over one range or several folds to the constant | not mapped yet: `pm_const_buffer_folding` is private to `Rangeify`, so its test goes through `get_kernel_graph` |
+| Ops: tinygrad `null/test_uop_graph.py::TestConstBufferize` (2 tests) | `pm_const_buffer_folding`: a constant staged over one range or several folds to the constant | `RA › get_kernel_graph › recorded ›` `setitem_column_kernels.golden` (the mask of a setitem into a column, staged over one range) and `setitem_cube_kernels.golden` (into a cube, staged over a range and two constant indices); a constant staged over several live ranges, which tinygrad's test builds by hand, never comes out of scheduling a program, so the rule is pinned where tinygrad's own flow reaches it; the dead-axis cleanup runs first there, as in tinygrad's matcher |
 
 ## Schedule
 

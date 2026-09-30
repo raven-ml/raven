@@ -70,6 +70,8 @@ assign_permuted	1
 assign_double_diamond	4
 setitem	1
 setitem_tensor	1
+setitem_column	1
+setitem_cube	1
 custom_kernel	3
 inline_function	1
 variable_shrink	2

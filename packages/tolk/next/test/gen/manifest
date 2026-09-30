@@ -2945,6 +2945,10 @@ schedule/rangeify/replicated_reshape_kernels.golden
 schedule/rangeify/reshape_chain.golden
 schedule/rangeify/reshape_chain_kernels.golden
 schedule/rangeify/setitem.golden
+schedule/rangeify/setitem_column.golden
+schedule/rangeify/setitem_column_kernels.golden
+schedule/rangeify/setitem_cube.golden
+schedule/rangeify/setitem_cube_kernels.golden
 schedule/rangeify/setitem_kernels.golden
 schedule/rangeify/setitem_tensor.golden
 schedule/rangeify/setitem_tensor_kernels.golden

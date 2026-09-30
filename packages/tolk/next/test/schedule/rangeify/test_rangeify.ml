@@ -117,6 +117,8 @@ let programs =
     "replicated_reshape";
     "reshape_chain";
     "setitem";
+    "setitem_column";
+    "setitem_cube";
     "setitem_tensor";
     "shard_add";
     "shard_gather";
