@@ -604,7 +604,7 @@ let iter_sig =
 
 let () =
   exit
-    (run "Device"
+    (run "Tolk_next.Device"
        [
          selection;
          named_never_parsed;

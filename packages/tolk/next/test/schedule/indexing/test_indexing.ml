@@ -833,7 +833,7 @@ let rewrites =
 
 let () =
   exit
-    (run "Indexing"
+    (run "Tolk_next.Indexing"
        [
          movements;
          movement_laws;

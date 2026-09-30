@@ -319,4 +319,5 @@ let laws =
   group "memory_plan_rewrite › laws"
     [ prop "a plan places live buffers apart, each at its bytes" drawn plans ]
 
-let () = exit (run "Memory" [ recorded; printouts; collected; rules; laws ])
+let () =
+  exit (run "Tolk_next.Memory" [ recorded; printouts; collected; rules; laws ])

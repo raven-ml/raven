@@ -13,6 +13,9 @@ starts when its test pass does.
 
 ## Helpers
 
+The suite is `Tolk_next.Helpers` (`helpers/test_helpers.ml`), written `Helpers`
+below.
+
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_helpers.py::TestContextVars::test_initial_value_is_set | a setting starts from its default | Helpers › Context_var › an int setting starts from its default when its variable is unset |
@@ -106,7 +109,7 @@ starts when its test pass does.
 
 ## Dtype
 
-The suite is `tolk.next.dtype` (`dtype/test_dtype.ml`), written `D` below. A
+The suite is `Tolk_next.Dtype` (`dtype/test_dtype.ml`), written `D` below. A
 golden check is named after its golden, and each of its rows is a test keyed by
 its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.half value=65520.0`.
 
@@ -520,12 +523,12 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | old: unit/uop/test_spec.ml "bind rejects a nonconstant value", "bind rejects a call parameter" | `bind` refuses a node or a parameter | dropped for the node: `bind` takes a value; `O › variables › bind rejects a bound variable, a value out of range, and a value off its multiple` rejects a parameter |
 | old: unit/uop/test_spec.ml "Movement validates shape contracts" | movements check their shapes | `O › shapes › a movement checks its argument against its source's shape` |
 | old: unit/uop/test_spec.ml (every other test) | the specification's verdicts | Spec's section |
-| old: unit/uop/test_serialize.ml "node tags round-trip" | a tag reads back | `graph › a graph reads back as itself ›` "a tuple tag", "a bytes tag", "a string tag" |
-| old: unit/uop/test_serialize.ml "split range identities and WMMA axes round-trip" | tensor core axes and split ranges read back | `graph › a graph reads back as itself ›` "a tensor core product", "a range" |
-| old: unit/uop/test_serialize.ml "compiled target survives serialization and separates program keys", "compiled program round-trips physically", "semantic_key is preserved" | a program and its target read back as the same node, so with the same key | `graph › a graph reads back as itself › a program` |
+| old: unit/uop/test_serialize.ml "node tags round-trip" | a tag reads back | `Graph › a graph reads back as itself ›` "a tuple tag", "a bytes tag", "a string tag" |
+| old: unit/uop/test_serialize.ml "split range identities and WMMA axes round-trip" | tensor core axes and split ranges read back | `Graph › a graph reads back as itself ›` "a tensor core product", "a range" |
+| old: unit/uop/test_serialize.ml "compiled target survives serialization and separates program keys", "compiled program round-trips physically", "semantic_key is preserved" | a program and its target read back as the same node, so with the same key | `Graph › a graph reads back as itself › a program` |
 | old: unit/uop/test_serialize.ml "import reuses live structurally-equal nodes" | reading gives the live node | `O › identity › building a graph twice gives the same node` (hash-consing) |
-| old: unit/uop/test_serialize.ml "import rejects malformed input" | malformed text is refused | `graph › reading ›` (every test) |
-| old: unit/uop/test_serialize.ml "deep chains round-trip without stack overflow" | a deep graph reads back | `graph › a graph reads back as itself › a chain of 100000 nodes` |
+| old: unit/uop/test_serialize.ml "import rejects malformed input" | malformed text is refused | `Graph › reading ›` (every test) |
+| old: unit/uop/test_serialize.ml "deep chains round-trip without stack overflow" | a deep graph reads back | `Graph › a graph reads back as itself › a chain of 100000 nodes` |
 | old: unit/uop/test_serialize.ml "export rejects gradient functions" | a gradient function is not written | dropped: rune owns differentiation, and the format writes no function (test/README.md) |
 | old: unit/uop/test_serialize.ml "imported internal buffer slots can collide" | slots of read buffers | dropped: slots are the caller's (D3) |
 | old: unit/uop/test_serialize.ml "cross-process export/import lands on this universe" | reading in another process | dropped: the graph format has no process universe |

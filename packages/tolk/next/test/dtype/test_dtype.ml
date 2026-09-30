@@ -1075,7 +1075,7 @@ let conversions =
 
 let () =
   exit
-    (run "tolk.next.dtype"
+    (run "Tolk_next.Dtype"
        [
          constants;
          address_spaces;

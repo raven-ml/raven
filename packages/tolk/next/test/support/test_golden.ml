@@ -64,4 +64,4 @@ let cases =
         ];
     ]
 
-let () = exit (run "golden" [ texts; tables; cases ])
+let () = exit (run "Golden" [ texts; tables; cases ])

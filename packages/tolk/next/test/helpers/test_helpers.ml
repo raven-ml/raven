@@ -1390,7 +1390,7 @@ let () =
   | Some r -> play r
   | None ->
       exit
-        (run "Helpers"
+        (run "Tolk_next.Helpers"
            [
              environment;
              declaration;

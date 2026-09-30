@@ -39,4 +39,4 @@ let expanded =
             (Tensors.eval ~buffers:memory (multi red)));
     ]
 
-let () = exit (run "Multi, LATE_ALLREDUCE=0" [ recorded; expanded ])
+let () = exit (run "Tolk_next.Multi, LATE_ALLREDUCE=0" [ recorded; expanded ])

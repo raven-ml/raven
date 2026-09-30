@@ -57,9 +57,9 @@ the Exclusions of `README.md`.
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
   `ParamArg.buffer` (`uop/spec.py:149,153,266,268`) hold by construction.
 - **Reason:** (c).
-- **Pinned by:** waiting for L6 and L7; for `Ops`, its suite
-  (`test/uop/ops`): `storage › new_buffer takes the next slot without one`
-  and `reprs.golden`, where a `BUFFER` prints and interns by its slot alone.
+- **Pinned by:** waiting for L6 and L7; for `Ops`: `Tolk_next.Ops › storage ›
+  new_buffer takes the next slot without one` and `Tolk_next.Ops › arguments ›
+  reprs.golden`, where a `BUFFER` prints and interns by its slot alone.
 
 ## D4. Import cycles are broken
 
@@ -124,16 +124,16 @@ the Exclusions of `README.md`.
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** waiting for L5 through L8; for `Codegen`, its suite
-  (`test/codegen/codegen`): `beam search (D4) › a kernel that asks for a beam
-  of width w is optimised by beam w` and `raises Invalid_argument when a
-  kernel asks for a beam and none is given`; for `Ops`, its suite
-  (`test/uop/ops`): `resolve › simplify leaves a constant, and a sink of
-  constants and stacks of constants, alone`, and the `resolve` tests that
-  simplify with `Symbolic`'s rules;
-  `printing › pretty.golden`; `elementwise patterns › the pattern operators
-  are the named pattern operations`; `queue calls › pp_hcq_info formats every
-  field, as the record's repr`.
+- **Pinned by:** waiting for L5 through L8; for `Codegen`:
+  `Tolk_next.Codegen › beam search (D4) › a kernel that asks for a beam of
+  width w is optimised by beam w` and `› raises Invalid_argument when a kernel
+  asks for a beam and none is given`; for `Ops`: `Tolk_next.Ops › resolve ›
+  simplify leaves a constant, and a sink of constants and stacks of
+  constants, alone`, and the `Tolk_next.Ops › resolve` tests that simplify with
+  `Symbolic`'s rules; `Tolk_next.Ops › printing › pretty.golden`;
+  `Tolk_next.Ops › elementwise patterns › the pattern operators are the named
+  pattern operations`; `Tolk_next.Ops › queue calls › pp_hcq_info formats
+  every field, as the record's repr`.
 
 ## D5. Compilation workers are domains
 
@@ -164,10 +164,11 @@ the Exclusions of `README.md`.
   making waits for it, so each program is compiled once, as tinygrad's
   parent compiles each key once.
 - **Reason:** (a).
-- **Pinned by:** the `Helpers` suite: `context › is not seen by the other
-  domains` and `context › binds for the domains spawned while it runs`; the
-  `Worker` suite; the `Codegen` suite: `programs are kept › calls from
-  several domains at once make one program, compiled once (D5)`.
+- **Pinned by:** `Tolk_next.Helpers › context › is not seen by the other
+  domains` and `Tolk_next.Helpers › context › binds for the domains spawned
+  while it runs`; `Tolk_next.Worker` (every test); `Tolk_next.Codegen ›
+  programs are kept › calls from several domains at once make one program,
+  compiled once (D5)`.
 
 ## D6. Devices are named, never parsed
 
@@ -179,14 +180,14 @@ the Exclusions of `README.md`.
   tinygrad reserves it and nx.device names its disk devices
   (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
-- **Pinned by:** for targets, the `Device` suite: `renderer takes a
-  device's name as it is (D6)` (a name with an index, in lower case, or a
-  disk's, is no device, and a name gives no renderer or architecture) and
-  `renderer › picks a device's renderer as tinygrad does` (the architecture
-  comes from DEV or the caller); for the disk, the `Ops`
-  suite: `several devices › on_disk holds for one disk device`, `several
-  devices › copy_to_device rejects a disk and a weak type` and `storage ›
-  clone rejects a disk`.
+- **Pinned by:** for targets, `Tolk_next.Device › renderer takes a device's
+  name as it is (D6)` (a name with an index, in lower case, or a disk's, is no
+  device, and a name gives no renderer or architecture) and `Tolk_next.Device ›
+  renderer › picks a device's renderer as tinygrad does` (the architecture
+  comes from DEV or the caller); for the disk, `Tolk_next.Ops › several
+  devices › on_disk holds for one disk device`, `Tolk_next.Ops › several
+  devices › copy_to_device rejects a disk and a weak type` and `Tolk_next.Ops ›
+  storage › clone rejects a disk`.
 
 ## D7. Stamp slots follow `Submission.record`
 
@@ -209,9 +210,9 @@ the Exclusions of `README.md`.
   crashes when a rebuilt program reads a value of a changed type. Without an
   SQLite transaction, writing aside and renaming is what keeps an entry whole
   when a writer crashes or races another.
-- **Pinned by:** `test/helpers`: `Helpers › Diskcache › get reads back any
-  key and value put` and `Helpers › Diskcache › behaves as a table of entries
-  per table`.
+- **Pinned by:** `Tolk_next.Helpers › Diskcache › get reads back any key and
+  value put` and `Tolk_next.Helpers › Diskcache › behaves as a table of
+  entries per table`, which run with `CACHEDB` set, as dune runs them.
 
 ## D9. Narrow float conversions are IEEE conversions
 
@@ -250,21 +251,20 @@ the Exclusions of `README.md`.
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
   the type, so it must give the bits a native one gives.
-- **Pinned by:** `Dtype › truncate › truncation.golden` (the near-tie rows,
-  stated in code), `Dtype › truncate › bfloat16 rounds once, to the nearest,
-  ties to even` and `Dtype › truncate › an integer rounds to a narrower float
-  once, from its value`; for emulation, one test per facet in
-  `Decomp_dtype › D9` (`test/codegen/decomp/decomp_dtype`): `an emulated
-  narrow float keeps its subnormals, both ways`, `a 16-bit float overflows
-  from its greatest value plus half an ulp, the tie to infinity`, `an
-  infinity stays one in e5m2 and is the NaN of e4m3 and the fnuz formats,
-  and a finite overflow saturates`, `a double, or an integer more precise
-  than a float32, rounds once`, `an emulated 64-bit integer converts to a
-  float32 once`, `an fnuz format stores an underflow to negative zero as
-  positive zero`, and `an emulated narrow-float copy quiets a signalling NaN;
-  a native copy keeps its bits`; the `Decomp_dtype › goldens`, which are
-  tinygrad's graphs with `f2f` and `f2f_clamp` replaced by these conversions;
-  and a rune test at L9.
+- **Pinned by:** `Tolk_next.Dtype › truncate › truncation.golden` (the
+  near-tie rows, stated in code), `Tolk_next.Dtype › truncate › bfloat16 rounds
+  once, to the nearest, ties to even` and `Tolk_next.Dtype › truncate › an
+  integer rounds to a narrower float once, from its value`; for emulation, one
+  test per facet in `Tolk_next.Decomp_dtype › D9`: `an emulated narrow float
+  keeps its subnormals, both ways`, `a 16-bit float overflows from its greatest
+  value plus half an ulp, the tie to infinity`, `an infinity stays one in e5m2
+  and is the NaN of e4m3 and the fnuz formats, and a finite overflow
+  saturates`, `a double, or an integer more precise than a float32, rounds
+  once`, `an emulated 64-bit integer converts to a float32 once`, `an fnuz
+  format stores an underflow to negative zero as positive zero`, and `an
+  emulated narrow-float copy quiets a signalling NaN; a native copy keeps its
+  bits`; `Tolk_next.Decomp_dtype › goldens`, which are tinygrad's graphs with
+  `f2f` and `f2f_clamp` replaced by these conversions; and a rune test at L9.
 
 ## D10. A float8 NaN keeps its sign when decoded
 
@@ -276,8 +276,8 @@ the Exclusions of `README.md`.
 - **Reason:** (b). nx's decoder keeps the sign, so a value read eagerly and a
   folded constant agree, and every NaN code keeps its sign through a round
   trip.
-- **Pinned by:** `Dtype › storage › a NaN decodes with the sign of its bits`;
-  and a rune test at L9.
+- **Pinned by:** `Tolk_next.Dtype › storage › a NaN decodes with the sign of
+  its bits`; and a rune test at L9.
 
 ## D11. Kernel optimisations are typed
 
@@ -290,9 +290,9 @@ the Exclusions of `README.md`.
   malformed arguments that `postrange.py` refuses at run time cannot be
   built.
 - **Reason:** (a): static types.
-- **Pinned by:** the type itself, whose printing the `Ops` suite checks
-  against tinygrad's `Opt` repr (`reprs.golden`, the row "kernel with opts");
-  `Postrange`'s suite (L4) drops tinygrad's malformed-argument cases with
+- **Pinned by:** the type itself, whose printing `Tolk_next.Ops › arguments ›
+  reprs.golden` checks against tinygrad's `Opt` repr (the row "kernel with
+  opts"); `Tolk_next.Postrange` drops tinygrad's malformed-argument cases with
   this entry as the reason.
 
 ## D12. A node's key is a BLAKE2 digest
@@ -305,8 +305,8 @@ the Exclusions of `README.md`.
   name compiled programs in caches that tolk.next alone writes, so the digest
   is free to differ, and tolk.next takes the one OCaml's standard library
   has, which has MD5 and BLAKE2 but not SHA-256.
-- **Pinned by:** the `Ops` suite: `key › ignores tags` and `key › tells
-  arguments apart`.
+- **Pinned by:** `Tolk_next.Ops › key › ignores tags` and `Tolk_next.Ops ›
+  key › tells arguments apart`.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -349,20 +349,22 @@ the Exclusions of `README.md`.
 - **Reason:** (b): rune's `Nx.Rng` (Threefry), jitted with constant keys,
   must draw the numbers eager nx draws, and RFC 0012's Law 1: every integer
   expression's compiled value is eager nx's modular one.
-- **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › an
+- **Pinned by:** `Tolk_next.Symbolic › symbolic_simple › constants › an
   operation reads committed constants at their width` (a fold, a cast of a
-  committed constant, a uint8 remainder), `symbolic_simple › constants › a
-  comparison reads a committed constant at its width` (the uncast),
-  `committed constants hold their type's value (D13)` (each case above,
-  evaluated before and after), the law `laws › sym keeps the value of an
-  integer expression at a committed width, wrapping included`, and
-  `tinygrad › tests.golden › TestModularWraparound.<test>` and
-  `TestThreefryConstFolding.test_threefry`, whose goldens, generated with the
-  same change in `test/gen/tinygrad.patch`, hold the machine values; the
-  `Ops` suite: `bounds › a typed integer constant outside its type is bounded
-  by its wrapped value, a non-finite one by the type (D13)`; the offset's
-  interaction with D24: `integers wrap (D24) › an offset crosses a comparison
-  only where neither side wraps` (the committed case).
+  committed constant, a uint8 remainder), `Tolk_next.Symbolic ›
+  symbolic_simple › constants › a comparison reads a committed constant at its
+  width` (the uncast), `Tolk_next.Symbolic › committed constants hold their
+  type's value (D13)` (each case above, evaluated before and after), the law
+  `Tolk_next.Symbolic › laws › sym keeps the value of an integer expression at
+  a committed width, wrapping included`, and `Tolk_next.Symbolic › tinygrad ›
+  tests.golden › TestModularWraparound.<test>` and
+  `› TestThreefryConstFolding.test_threefry`, whose goldens, generated with
+  the same change in `test/gen/tinygrad.patch`, hold the machine values;
+  `Tolk_next.Ops › bounds › a typed integer constant outside its type is
+  bounded by its wrapped value, a non-finite one by the type (D13)`; the
+  offset's interaction with D24: `Tolk_next.Symbolic › integers wrap (D24) ›
+  an offset crosses a comparison only where neither side wraps` (the
+  committed case).
 
 ## D14. Folded comparisons treat NaN as IEEE does
 
@@ -378,7 +380,7 @@ the Exclusions of `README.md`.
   is `true`.
 - **Reason:** (b): `Nx.not_equal x x` on a NaN is `true` in eager nx, and
   rune's jitted graph, whose constants fold here, must agree.
-- **Pinned by:** the `Symbolic` suite: `symbolic_simple › constants › NaN is
+- **Pinned by:** `Tolk_next.Symbolic › symbolic_simple › constants › NaN is
   unequal to itself when constants fold, as IEEE says`.
 
 ## D15. Compilers load their library at the first compile
@@ -427,14 +429,14 @@ the Exclusions of `README.md`.
   bf8 and makes it NaN in fp8, which is unverified on hardware.
 - **Reason:** (b). nx's float8 encoder keeps infinities special, and a
   jitted kernel must store what eager nx stores for the same cast.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`):
-  `float8 infinities on CUDA (D16)`, which checks where the guard is declared,
-  the byte each infinity writes and the bits of infinite e5m2 constants;
-  `sources › by default › cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`,
-  `cuda_inf_nan_float8_e4m3` and `cuda_inf_nan_float8_e5m2`, which compare
-  with tinygrad's source once the guard is written back as tinygrad writes
-  it; and `every GPU kernel compiles with its target's toolchain › cuda_*`
-  (slow, skipped without NVRTC). A rune test at L9 checks the stored values.
+- **Pinned by:** `Tolk_next.Cstyle › float8 infinities on CUDA (D16)`, which
+  checks where the guard is declared, the byte each infinity writes and the
+  bits of infinite e5m2 constants; `Tolk_next.Cstyle › sources › by default ›`
+  `cuda_dtype_float8_e4m3`, `cuda_dtype_float8_e5m2`, `cuda_inf_nan_float8_e4m3`
+  and `cuda_inf_nan_float8_e5m2`, which compare with tinygrad's source once the
+  guard is written back as tinygrad writes it; and `Tolk_next.Cstyle › every
+  GPU kernel compiles with its target's toolchain › cuda_*` (slow, skipped
+  without NVRTC). A rune test at L9 checks the stored values.
 
 ## D17. Each operation on a narrow scalar is narrowed in the source
 
@@ -459,14 +461,14 @@ the Exclusions of `README.md`.
 - **Reason:** (b). Eager nx and compiled code agree: nx computes each
   operation in its own type, as the folder (`Ops.exec_alu`) and tinygrad's
   interpreter do.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `narrowing
-  (D17)`, which checks for every kernel that the kernel whose tinygrad source
-  is its source is the kernel with those casts, and `sources`, which compares
-  the 21 sources it changes with tinygrad's for that kernel; `execution on
-  the host › wraps each operation on unsigned chars (D17)` and `rounds each
-  operation on halves to a half (D17)`; and the slow `a kernel over a narrow
-  type wraps and rounds as the interpreter (D17)`, over each type's whole
-  range.
+- **Pinned by:** `Tolk_next.Cstyle › narrowing (D17)`, which checks for every
+  kernel that the kernel whose tinygrad source is its source is the kernel
+  with those casts, and `Tolk_next.Cstyle › sources`, which compares the 21
+  sources it changes with tinygrad's for that kernel; `Tolk_next.Cstyle ›
+  execution on the host › wraps each operation on unsigned chars (D17)` and
+  `› rounds each operation on halves to a half (D17)`; and the slow
+  `Tolk_next.Cstyle › execution on the host › a kernel over a narrow type wraps
+  and rounds as the interpreter (D17)`, over each type's whole range.
 
 ## D18. Metal computes a bfloat trunc in float
 
@@ -481,12 +483,12 @@ the Exclusions of `README.md`.
   `TRUNC`.
 - **Reason:** (b). rune runs bfloat16 models on Metal (gpt-oss), where
   `Nx.trunc`, `floor`, `ceil` and `round` of a bfloat16 lower to `TRUNC`.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `bfloat16
-  truncation on Metal (D18) › truncates a bfloat16 in float32` and `leaves it
-  to CUDA, which truncates a bfloat16 with htrunc`, and the slow `compiles a
-  kernel that truncates a bfloat16`; `every GPU kernel compiles with its
-  target's toolchain › metal_transcendental_bf16`, tinygrad's graph, is an
-  expected failure.
+- **Pinned by:** `Tolk_next.Cstyle › bfloat16 truncation on Metal (D18) ›
+  truncates a bfloat16 in float32` and `› leaves it to CUDA, which truncates a
+  bfloat16 with htrunc`, and the slow `› compiles a kernel that truncates a
+  bfloat16`; `Tolk_next.Cstyle › every GPU kernel compiles with its target's
+  toolchain › metal_transcendental_bf16`, tinygrad's graph, is an expected
+  failure.
 
 ## D19. A hierarchical allreduce to one device lands there
 
@@ -507,12 +509,12 @@ the Exclusions of `README.md`.
   one device under `ALLREDUCE_NODE_NDEVS`, the multi-node setting, would
   otherwise compute a value on every device and store it into storage on
   one.
-- **Pinned by:** the `Allreduce` suite: `handle_allreduce › recorded ›
+- **Pinned by:** `Tolk_next.Allreduce › handle_allreduce › recorded ›
   nodes_to_one_device_handled.golden, landed on its device (D19)`, which
-  states tinygrad's golden in code with each gather of a chunk replaced by
-  its copy to the target, and `rules › a hierarchical allreduce to one device
-  lands there (D19)`, which evaluates the value and the function on two
-  devices and finds the reduction on the target alone.
+  states tinygrad's golden in code with each gather of a chunk replaced by its
+  copy to the target, and `Tolk_next.Allreduce › rules › a hierarchical
+  allreduce to one device lands there (D19)`, which evaluates the value and
+  the function on two devices and finds the reduction on the target alone.
 
 ## D20. Storage keeps an e5m2 NaN's payload
 
@@ -528,10 +530,11 @@ the Exclusions of `README.md`.
   gives `0x7f` of its sign, as nx's encoder does.
 - **Reason:** (b). A kernel's bitcast and nx's are byte reinterpretations, so
   a bitcast that rune folds must keep the bits as they do.
-- **Pinned by:** the `Dtype` suite (`test/dtype`): the bitcast round trip on
-  every e5m2 code, and the `reencode.golden` and `truncation.golden` NaN rows,
-  stated in code; and a rune test at L9: a jitted `Nx.bitcast` of every e5m2
-  code keeps it.
+- **Pinned by:** `Tolk_next.Dtype › storage › a bitcast through a float
+  gives back every 8- and 16-bit word`, on every e5m2 code, and the NaN rows
+  of `Tolk_next.Dtype › storage › reencode.golden` and `Tolk_next.Dtype ›
+  truncate › truncation.golden`, stated in code; and a rune test at L9: a
+  jitted `Nx.bitcast` of every e5m2 code keeps it.
 
 ## D21. A reshape of a value sharded on two axes divides each by its own count
 
@@ -550,10 +553,11 @@ the Exclusions of `README.md`.
   When the sharded axes share one count, the two agree.
 - **Reason:** (b): rune's multi-axis placement (RFC 0005's meshes, data by
   tensor parallelism), where a mesh's two axes have different shard counts.
-- **Pinned by:** the `Multi` suite: `two sharded axes › a reshape divides
-  each sharded axis by its own count (D21)` and `a reshape of a mesh of 2 by
-  4 devices keeps each tile (D21)`, and the law `laws › a rewritten value
-  holds the value computed whole` on grids of 2 by 2 and 2 by 4 devices.
+- **Pinned by:** `Tolk_next.Multi › multi_pm › two sharded axes › a reshape
+  divides each sharded axis by its own count (D21)` and `› a reshape of a mesh
+  of 2 by 4 devices keeps each tile (D21)`, and the law `Tolk_next.Multi ›
+  multi_pm › laws › a rewritten value holds the value computed whole` on grids
+  of 2 by 2 and 2 by 4 devices.
 
 ## D22. An emulated long converts no float past its words' range
 
@@ -569,7 +573,7 @@ the Exclusions of `README.md`.
   `0x80000000`, so the low word of `2^32 + 5` is `0x7fffffff` on ARM.
 - **Reason:** (b): rune's kernels on a target without 64-bit integers cast
   floats to longs through this emulation, and must give the long nx gives.
-- **Pinned by:** the `Decomp_dtype` suite: `emulated 64-bit integers › an
+- **Pinned by:** `Tolk_next.Decomp_dtype › emulated 64-bit integers › an
   emulated cast of a float32 to a 64-bit integer converts no float to a word
   that cannot hold it`.
 
@@ -589,8 +593,9 @@ the Exclusions of `README.md`.
   (`_apply_shrink`), and are simplified.
 - **Reason:** (b): rune's sharded programs, where a shard is selected from a
   value computed from a sharded and a replicated one.
-- **Pinned by:** the `Multi` suite: `a selection of a movement by the device
-  range takes the selected device's position (D23)`, and the law `laws › a
+- **Pinned by:** `Tolk_next.Multi › multi_pm › shard selections › a
+  selection of a movement by the device range takes the selected device's
+  position (D23)`, and the law `Tolk_next.Multi › multi_pm › laws › a
   rewritten value holds the value computed whole`.
 
 ## D24. Rewrites keep IEEE and modular values
@@ -723,32 +728,32 @@ the Exclusions of `README.md`.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
   reference interpreter before and after the rewrite at bindings where the
   restricted rewrite changes the value:
-  - integer bounds: the `Ops` suite, `bounds › a committed integer that can
+  - integer bounds: `Tolk_next.Ops › bounds › a committed integer that can
     leave its type has its bounds (D24)`, `› an integer cast to a signed type
     it leaves wraps (D24)`, `› a constant table holding a NaN has its type's
     bounds (D24)` and the law `› bounds hold the value a committed integer
     wraps to (D24)`;
-  - wrapping rules: the `Symbolic` suite, `integers wrap (D24)` (every test);
-    the `Divandmod` suite, `nested divisions › a committed division stays
-    where x + a * c wraps (D24)`; the `Simplify` suite, `keeping values
-    (D24)`, its comparison tests;
+  - wrapping rules: `Tolk_next.Symbolic › integers wrap (D24)` (every test);
+    `Tolk_next.Divandmod › nested divisions › a committed division stays
+    where x + a * c wraps (D24)`; `Tolk_next.Simplify › keeping values (D24)`,
+    its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
-    forms, pow: the `Symbolic` suite, `floats keep IEEE values (D24)`, one test
+    forms, pow: `Tolk_next.Symbolic › floats keep IEEE values (D24)`, one test
     per facet, the structural tests marked D24 in `symbolic_simple`,
-    `symbolic` and `sym`, and the law `laws › sym keeps a float expression's
-    value bit for bit at special values`;
-  - Simplify's reductions: the `Simplify` suite, `keeping values (D24) › a
+    `symbolic` and `sym`, and the law `Tolk_next.Symbolic › laws › sym keeps a
+    float expression's value bit for bit at special values`;
+  - Simplify's reductions: `Tolk_next.Simplify › keeping values (D24) › a
     float sum over an empty part of a range is +0., whatever the value` and
     `› a float product by a boolean mask keeps its value`, and
-    `pm_reduce_collapse › a float product by a comparison cast from a boolean
-    stays (D24)`;
-  - transcendental polynomials: the `Transcendental` goldens, generated from
-    the patched tinygrad, whose value tables are unchanged;
-  - tensor-core accumulators: the `Cstyle` sources of every tensor core
-    (`sources › by default › metal_tc_*`, `hip_tc_*`, `metal_matmul`), whose
-    loops add nothing to the accumulator, as tinygrad's; the `Codegen` suite,
-    `tensor-core accumulators (D24) › the running sum replaces a zero
-    accumulator` and `› the lowering keeps a tensor core's value, apart from a
+    `Tolk_next.Simplify › pm_reduce_collapse › a float product by a comparison
+    cast from a boolean stays (D24)`;
+  - transcendental polynomials: the `Tolk_next.Transcendental` goldens,
+    generated from the patched tinygrad, whose value tables are unchanged;
+  - tensor-core accumulators: the sources of every tensor core,
+    `Tolk_next.Cstyle › sources › by default › metal_tc_*`, `hip_tc_*` and
+    `metal_matmul`, whose loops add nothing to the accumulator, as tinygrad's;
+    `Tolk_next.Codegen › tensor-core accumulators (D24) › the running sum
+    replaces a zero accumulator` and `› the lowering keeps a tensor core's value, apart from a
     zero's sign`, which draws accumulators at `-0.`;
   - the goldens, generated from the patched tinygrad.
 
@@ -776,10 +781,10 @@ the Exclusions of `README.md`.
   alone or fused, meets its class against eager nx, which rounds a product and
   a sum apart; and rune's accurate compositions (two-part products and sums)
   are exact only where each operation rounds as written.
-- **Pinned by:** the `Compiler_cpu` suite, `execution on the host › a product
+- **Pinned by:** `Tolk_next.Compiler_cpu › execution on the host › a product
   and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
-  where a fused multiply-add gives `2^-24`); the `Ops_metal` suite,
-  `MTLCompiler › a product and a sum compile under the no-contraction pragma
+  where a fused multiply-add gives `2^-24`); `Tolk_next.Ops_metal ›
+  MTLCompiler › a product and a sum compile under the no-contraction pragma
   (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
   `2^-24` without the pragma and 0 with it, and still `2^-24` with
   `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.
@@ -797,7 +802,7 @@ the Exclusions of `README.md`.
 - **Reason:** (b). rune's lowering subtracts negated values (`acos`'s
   `1 - (-x)` before it was written `1 + x`), and the graph may reach the
   renderer so; a source the compiler rejects is a failed program.
-- **Pinned by:** the `Cstyle` suite, `negation › a minus before a minus is
+- **Pinned by:** `Tolk_next.Cstyle › negation › a minus before a minus is
   apart › *` (every renderer), `› Clang compiles and runs a difference with a
   negated operand` and `› … with a negative constant`.
 
@@ -823,10 +828,10 @@ the Exclusions of `README.md`.
 - **Reason:** (b), as D20's: a kernel's bitcast and nx's are byte
   reinterpretations, so a bitcast that rune folds must keep the bits as they
   do, and a rewrite must keep a graph's value.
-- **Pinned by:** the `Ops` suite, `identity › NaN constants of different bits
-  are different nodes`; the `Symbolic` suite, `casts › a bitcast round trip of
-  every 8- and 16-bit word folds to its value`, which evaluates each graph
-  with the reference interpreter before and after `simplify`; the `Dtype`
-  suite, `const › const keeps the bits of every 8- and 16-bit float word`;
-  and, at L9, a rune test: a jitted `Nx.bitcast` of a NaN constant keeps its
-  bits.
+- **Pinned by:** `Tolk_next.Ops › identity › NaN constants of different bits
+  are different nodes`; `Tolk_next.Symbolic › symbolic_simple › casts › a
+  bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
+  with the reference interpreter before and after `simplify`;
+  `Tolk_next.Dtype › const › const keeps the bits of every 8- and 16-bit float
+  word`; and, at L9, a rune test: a jitted `Nx.bitcast` of a NaN constant
+  keeps its bits.

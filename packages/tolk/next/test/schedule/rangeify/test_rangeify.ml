@@ -687,5 +687,5 @@ let laws =
 
 let () =
   exit
-    (run "Rangeify"
+    (run "Tolk_next.Rangeify"
        [ recorded; counts; values; structure; laws; debug; spec; rules ])

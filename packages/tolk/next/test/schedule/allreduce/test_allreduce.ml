@@ -424,7 +424,7 @@ let rules =
 
 let () =
   exit
-    (run "Allreduce"
+    (run "Tolk_next.Allreduce"
        [
          expansions;
          functions;

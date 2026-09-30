@@ -974,7 +974,7 @@ let variables =
 
 let () =
   exit
-    (run "Schedule"
+    (run "Tolk_next.Schedule"
        [
          linears;
          var_vals;

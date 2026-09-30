@@ -268,4 +268,4 @@ let errors =
             "0 Ops.CONST dtypes.weakint [] 1 tag=1 2\n");
     ]
 
-let () = exit (run "graph" [ goldens; round_trip; text; errors ])
+let () = exit (run "Graph" [ goldens; round_trip; text; errors ])

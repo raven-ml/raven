@@ -500,4 +500,6 @@ let compiling =
     ]
 
 let () =
-  exit (run "Worker" [ law; domains; nesting; failure; settings; compiling ])
+  exit
+    (run "Tolk_next.Worker"
+       [ law; domains; nesting; failure; settings; compiling ])

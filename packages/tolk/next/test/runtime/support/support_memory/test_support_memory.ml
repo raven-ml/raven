@@ -267,4 +267,5 @@ let laws =
         restores;
     ]
 
-let () = exit (run "Support_memory" [ traces; examples; errors; laws ])
+let () =
+  exit (run "Tolk_next.Support_memory" [ traces; examples; errors; laws ])

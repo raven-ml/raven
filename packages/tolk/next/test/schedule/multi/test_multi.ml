@@ -987,7 +987,7 @@ let passthrough =
 
 let () =
   exit
-    (run "Multi"
+    (run "Tolk_next.Multi"
        [
          recorded;
          values;
