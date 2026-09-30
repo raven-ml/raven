@@ -1805,3 +1805,40 @@ only at step 0.
 | old: unit/engine/test_multi.ml "hierarchical maximum handles negative values" | | `AR › handle_allreduce › recorded › nodes_of_three_handled.golden` (a maximum); the laws draw negative elements and maxima |
 | old: unit/engine/test_multi.ml "symbolic allreduce retains logical sizes under forced ring" | | `AR › handle_allreduce › algorithms › a symbolic shape is kept, and a function stores its greatest` |
 | old: unit/engine/test_multi.ml groups "Ownership", "Resolution", "Execution", "Kernels over split storage", "Cuda", "partial multi-axis allreduce is rejected" | | dropped here: Multi's section, and the executor's |
+
+## Support_memory
+
+The suite is `Tolk_next.Support_memory` (`runtime/support/support_memory/`),
+written `SM` below. `SM › traces.golden` replays 40 random traces recorded from
+tinygrad's `TLSFAllocator`, one allocator each, and checks every address an
+allocation returns. `SM › Tlsf_allocator › laws` holds a stateful test against
+a model of the live blocks: each block lies in the range, aligned from the
+base, and overlaps no live block, and an allocation is `None` exactly when no
+free stretch holds the smallest subdivision that fits it. A property states
+that freeing every block restores a fresh allocator. Four mutants survive, all
+equivalent: the two updates of the per-level counts, which only let a search
+skip empty levels; `block_size <= 0` as `< 0`, since a zero block size has
+fewer bits than any level count and is refused by the next check; and
+`size > 0` as `>= 0`, which inserts a block of no address that no allocation
+can take.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_basic_alloc_free | blocks in address order, a freed one handed out again | `SM › Tlsf_allocator › blocks are handed out in address order, and a freed one again` |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_merge_blocks | freed neighbours merge | `SM › Tlsf_allocator › freed neighbours merge` |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_split_blocks | a freed block splits | `SM › Tlsf_allocator › a freed block splits` |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_out_of_memory | `MemoryError` past the range | `SM › Tlsf_allocator › a block larger than the range is None` (`None` for tinygrad's `MemoryError`) |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_fragmentation_handling | freeing alternate blocks | the stateful law and `traces.golden` |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_block_size_alignment | blocks of 20 and 35 addresses start at multiples of 16 | `SM › Tlsf_allocator › a block is at least the block size`. The upstream test fails at HEAD: a block is `max block_size n` addresses, so the second starts at 20 |
+| tinygrad: external/external_test_tlsf.py::TestTLSFAllocator::test_custom_start_address, test_block_tracking | a base address, the block table | `SM › Tlsf_allocator › addresses start at the base`, `a block past the base is freed by its address`. Both upstream tests error at HEAD: they use `start_addr`, which `TLSFAllocator` no longer has, and the block table is private |
+| tinygrad: external/external_fuzz_tlsf.py | random allocations and frees never corrupt each other's bytes | `SM › Tlsf_allocator › laws › blocks fit, align and never overlap, and None means no room` (blocks that never overlap cannot corrupt each other); `traces.golden` |
+
+### old tolk: unit/runtime/support/test_memory.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/runtime/support/test_memory.ml group "shared virtual addresses" (2 tests) | domains allocate from one allocator under a lock | dropped: tinygrad's allocator has no concurrency contract, and tolk.next carries none it lacks |
+| old: unit/runtime/support/test_memory.ml groups "Map_range", "Unmap_range", "Page_tables", "Alloc_vaddr", "Palloc", "Valloc", "Vfree", "Identity_map", "Six_level_dual" | the memory manager and its page tables | dropped here: `Support_memory` ports the TLSF allocator; the memory manager of the same tinygrad file is the runtime's |
+| old: unit/test_amd_amdev.ml (TLSF as a virtual address allocator) | | dropped here: the AMD device's section |

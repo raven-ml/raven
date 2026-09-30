@@ -1,0 +1,2442 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+trial	step	call	result
+0	0	create 140955 0 64 8	
+0	1	alloc 257 4096	0
+0	2	free 0	
+0	3	alloc 15 8	0
+0	4	free 0	
+0	5	alloc 4096 4096	0
+0	6	alloc 100 256	4096
+0	7	alloc 255 1	4196
+0	8	free 4196	
+0	9	alloc 12492 1	4196
+0	10	alloc 1000 1	16688
+0	11	alloc 1000 1	17688
+0	12	free 4096	
+0	13	alloc 1 8	4096
+0	14	alloc 16 256	18688
+0	15	alloc 15 256	18944
+0	16	free 18688	
+0	17	alloc 256 64	19008
+0	18	alloc 100 1	18688
+0	19	alloc 1000 8	19264
+0	20	alloc 257 1	20264
+0	21	alloc 256 256	20736
+0	22	free 19264	
+0	23	alloc 15 8	18792
+0	24	alloc 16 64	20544
+0	25	alloc 257 256	19456
+0	26	free 0	
+0	27	free 18792	
+0	28	alloc 12898 1	20992
+0	29	free 4096	
+0	30	alloc 1000 4096	36864
+0	31	alloc 1000 1	33890
+0	32	alloc 257 1	19713
+0	33	alloc 256 4096	40960
+0	34	alloc 16 64	20608
+0	35	alloc 256 1	19970
+0	36	alloc 4096 64	41216
+0	37	free 19970	
+0	38	free 36864	
+0	39	free 4196	
+0	40	alloc 257 64	34944
+0	41	free 20544	
+0	42	alloc 15 4096	36864
+0	43	alloc 1 4096	0
+0	44	alloc 15 4096	4096
+0	45	free 16688	
+0	46	alloc 17 1	20672
+0	47	free 20736	
+0	48	free 19008	
+0	49	free 40960	
+0	50	alloc 5510 1	4160
+0	51	alloc 257 256	35328
+0	52	free 4160	
+0	53	free 41216	
+0	54	free 33890	
+0	55	alloc 15 1	20521
+0	56	alloc 17 64	18816
+0	57	free 17688	
+0	58	free 20608	
+0	59	free 35328	
+0	60	alloc 1000 256	35328
+1	0	create 447454 0 16 1	
+1	1	alloc 1000 8	0
+1	2	free 0	
+1	3	alloc 25881 64	0
+1	4	alloc 43243 8	25888
+1	5	free 25888	
+1	6	free 0	
+1	7	alloc 100 1	0
+1	8	alloc 100 256	256
+1	9	free 256	
+1	10	free 0	
+1	11	alloc 17 64	0
+1	12	alloc 4096 64	64
+1	13	free 0	
+1	14	free 64	
+1	15	alloc 37578 8	0
+1	16	alloc 15 256	37632
+1	17	free 37632	
+1	18	free 0	
+1	19	alloc 1 1	0
+1	20	free 0	
+1	21	alloc 4096 4096	0
+1	22	free 0	
+1	23	alloc 100 256	0
+1	24	free 0	
+1	25	alloc 255 4096	0
+1	26	alloc 1000 1	255
+1	27	free 0	
+1	28	free 255	
+1	29	alloc 1000 1	0
+1	30	free 0	
+1	31	alloc 1000 4096	0
+1	32	free 0	
+1	33	alloc 15 1	0
+1	34	free 0	
+1	35	alloc 4096 64	0
+1	36	alloc 1 8	4096
+1	37	free 0	
+1	38	alloc 15 64	0
+1	39	alloc 15 64	64
+1	40	alloc 15 1	16
+1	41	free 64	
+1	42	alloc 257 1	32
+1	43	free 4096	
+1	44	alloc 4096 256	512
+1	45	free 512	
+1	46	free 0	
+1	47	free 32	
+1	48	free 16	
+1	49	alloc 10970 1	0
+1	50	free 0	
+1	51	alloc 256 4096	0
+1	52	alloc 100 64	256
+1	53	free 256	
+1	54	free 0	
+1	55	alloc 255 1	0
+1	56	free 0	
+1	57	alloc 4096 1	0
+1	58	free 0	
+1	59	alloc 15 1	0
+1	60	alloc 257 1	16
+2	0	create 1024 2097152 16 1	
+2	1	alloc 100 1	2097152
+2	2	alloc 17 1	2097252
+2	3	free 2097252	
+2	4	free 2097152	
+2	5	alloc 24 64	2097152
+2	6	alloc 256 1	2097176
+2	7	free 2097152	
+2	8	free 2097176	
+2	9	alloc 255 1	2097152
+2	10	alloc 17 1	2097407
+2	11	free 2097152	
+2	12	free 2097407	
+2	13	alloc 15 1	2097152
+2	14	alloc 255 8	2097168
+2	15	alloc 15 64	2097472
+2	16	alloc 15 64	2097536
+2	17	alloc 16 4096	None
+2	18	free 2097168	
+2	19	alloc 100 1	2097168
+2	20	alloc 16 1	2097488
+2	21	free 2097152	
+2	22	alloc 16 1	2097152
+2	23	free 2097536	
+2	24	free 2097168	
+2	25	free 2097472	
+2	26	alloc 256 64	2097536
+2	27	free 2097152	
+2	28	alloc 1 8	2097504
+2	29	alloc 100 8	2097792
+2	30	free 2097792	
+2	31	alloc 1 256	None
+2	32	free 2097488	
+2	33	alloc 100 4096	None
+2	34	free 2097504	
+2	35	free 2097536	
+2	36	alloc 257 1	2097152
+2	37	free 2097152	
+2	38	alloc 129 8	2097152
+2	39	alloc 17 1	2097281
+2	40	alloc 17 256	2097408
+2	41	free 2097408	
+2	42	alloc 71 1	2097298
+2	43	free 2097152	
+2	44	alloc 16 64	2097152
+2	45	alloc 100 1	2097369
+2	46	alloc 16 256	2097664
+2	47	alloc 4096 1	None
+2	48	alloc 16 1	2097168
+2	49	free 2097298	
+2	50	alloc 257 256	None
+2	51	free 2097369	
+2	52	free 2097152	
+2	53	alloc 1000 1	None
+2	54	alloc 100 256	None
+2	55	alloc 4096 4096	None
+2	56	alloc 257 4096	None
+2	57	alloc 256 8	None
+2	58	free 2097664	
+2	59	free 2097168	
+2	60	alloc 256 64	2097344
+3	0	create 65536 0 16 1	
+3	1	alloc 100 1	0
+3	2	free 0	
+3	3	alloc 1000 8	0
+3	4	alloc 505 64	1024
+3	5	free 1024	
+3	6	free 0	
+3	7	alloc 1000 1	0
+3	8	free 0	
+3	9	alloc 16 64	0
+3	10	free 0	
+3	11	alloc 17 64	0
+3	12	alloc 100 4096	4096
+3	13	free 0	
+3	14	free 4096	
+3	15	alloc 4857 4096	0
+3	16	alloc 15 64	4864
+3	17	free 4864	
+3	18	free 0	
+3	19	alloc 1 1	0
+3	20	free 0	
+3	21	alloc 100 64	0
+3	22	free 0	
+3	23	alloc 1853 8	0
+3	24	free 0	
+3	25	alloc 4549 64	0
+3	26	alloc 257 64	4608
+3	27	alloc 100 256	5120
+3	28	free 5120	
+3	29	alloc 255 64	4928
+3	30	free 4608	
+3	31	alloc 255 4096	8192
+3	32	alloc 257 256	5376
+3	33	free 8192	
+3	34	alloc 6669 1	5633
+3	35	alloc 100 4096	16384
+3	36	free 0	
+3	37	alloc 255 1	12302
+3	38	alloc 6737 64	16512
+3	39	free 16384	
+3	40	alloc 16 8	5184
+3	41	alloc 1000 1	12557
+3	42	alloc 15 1	5200
+3	43	free 5200	
+3	44	free 16512	
+3	45	alloc 15 8	5200
+3	46	alloc 4096 1	0
+3	47	free 12302	
+3	48	free 5633	
+3	49	free 4928	
+3	50	alloc 257 64	4096
+3	51	alloc 16 1	5216
+3	52	alloc 255 64	4416
+3	53	alloc 1000 8	5640
+3	54	free 0	
+3	55	alloc 17 1	4353
+3	56	alloc 4002 1	6640
+3	57	alloc 255 8	4672
+3	58	alloc 100 1	5232
+3	59	free 5232	
+3	60	free 6640	
+4	0	create 465187 0 32 32	
+4	1	alloc 257 64	0
+4	2	free 0	
+4	3	alloc 257 1	0
+4	4	free 0	
+4	5	alloc 15 256	0
+4	6	free 0	
+4	7	alloc 15 1	0
+4	8	free 0	
+4	9	alloc 16 1	0
+4	10	free 0	
+4	11	alloc 17 256	0
+4	12	free 0	
+4	13	alloc 22443 4096	0
+4	14	free 0	
+4	15	alloc 17 8	0
+4	16	free 0	
+4	17	alloc 16 1	0
+4	18	free 0	
+4	19	alloc 1000 64	0
+4	20	free 0	
+4	21	alloc 100 1	0
+4	22	alloc 17 1	100
+4	23	free 0	
+4	24	alloc 256 4096	4096
+4	25	alloc 256 1	132
+4	26	alloc 49714 1	4352
+4	27	alloc 1 8	0
+4	28	free 0	
+4	29	free 4352	
+4	30	free 100	
+4	31	alloc 100 1	0
+4	32	free 4096	
+4	33	alloc 1 1	100
+4	34	alloc 15 1	388
+4	35	free 0	
+4	36	alloc 17 256	512
+4	37	free 388	
+4	38	alloc 17030 256	768
+4	39	free 132	
+4	40	alloc 4096 1	17798
+4	41	free 100	
+4	42	alloc 256 64	0
+4	43	free 0	
+4	44	alloc 100 256	0
+4	45	alloc 15 1	544
+4	46	free 512	
+4	47	free 17798	
+4	48	alloc 1 1	576
+4	49	alloc 1000 8	17800
+4	50	alloc 255 1	100
+4	51	free 768	
+4	52	free 544	
+4	53	alloc 257 1	608
+4	54	alloc 15 1	355
+4	55	alloc 100 1	387
+4	56	alloc 100 1	865
+4	57	alloc 256 4096	4096
+4	58	free 608	
+4	59	free 100	
+4	60	alloc 255 1	608
+5	0	create 65536 2097152 16 16	
+5	1	alloc 2126 4096	2097152
+5	2	free 2097152	
+5	3	alloc 16 1	2097152
+5	4	free 2097152	
+5	5	alloc 256 1	2097152
+5	6	free 2097152	
+5	7	alloc 100 4096	2097152
+5	8	alloc 256 1	2097252
+5	9	free 2097252	
+5	10	free 2097152	
+5	11	alloc 16 1	2097152
+5	12	alloc 255 64	2097216
+5	13	free 2097216	
+5	14	alloc 256 4096	2101248
+5	15	alloc 4096 4096	2105344
+5	16	free 2097152	
+5	17	alloc 17 256	2101504
+5	18	alloc 255 4096	2109440
+5	19	alloc 100 8	2101528
+5	20	alloc 1000 64	2101632
+5	21	free 2105344	
+5	22	free 2101504	
+5	23	alloc 16 4096	2105344
+5	24	free 2105344	
+5	25	free 2101248	
+5	26	alloc 15 1	2097152
+5	27	free 2109440	
+5	28	alloc 3562 4096	2105344
+5	29	free 2105344	
+5	30	free 2101632	
+5	31	alloc 100 1	2097168
+5	32	alloc 17 8	2097272
+5	33	alloc 1000 1	2097289
+5	34	alloc 100 8	2098296
+5	35	free 2098296	
+5	36	alloc 1000 8	2098296
+5	37	free 2097289	
+5	38	alloc 1 1	2097289
+5	39	alloc 1 1	2097305
+5	40	alloc 1000 1	2099296
+5	41	alloc 1000 256	2101760
+5	42	alloc 1000 8	2100296
+5	43	alloc 4096 256	2102784
+5	44	alloc 100 1	2101628
+5	45	alloc 1000 4096	2109440
+5	46	alloc 100 256	2097408
+5	47	free 2097305	
+5	48	alloc 255 8	2097512
+5	49	free 2101628	
+5	50	alloc 15 1	2102760
+5	51	alloc 100 8	2101632
+5	52	free 2097512	
+5	53	free 2097408	
+5	54	alloc 256 8	2097312
+5	55	alloc 255 1	2097568
+5	56	free 2101528	
+5	57	alloc 255 4096	2113536
+5	58	free 2097312	
+5	59	free 2101760	
+5	60	free 2109440	
+6	0	create 65536 1000 16 4	
+6	1	alloc 257 1	1000
+6	2	alloc 256 256	1512
+6	3	free 1000	
+6	4	free 1512	
+6	5	alloc 1 1	1000
+6	6	free 1000	
+6	7	alloc 256 256	1000
+6	8	alloc 15 8	1256
+6	9	alloc 1000 1	1272
+6	10	alloc 1 256	2280
+6	11	alloc 1000 256	2536
+6	12	free 1000	
+6	13	alloc 16 8	2296
+6	14	alloc 17 256	3560
+6	15	alloc 15 256	3816
+6	16	free 3560	
+6	17	alloc 15 64	2344
+6	18	alloc 16 8	2312
+6	19	alloc 16 64	2408
+6	20	free 2408	
+6	21	free 2312	
+6	22	alloc 4096 1	3832
+6	23	alloc 1 4096	9192
+6	24	alloc 100 1	2360
+6	25	alloc 100 4096	13288
+6	26	alloc 17 64	1000
+6	27	free 1000	
+6	28	free 2280	
+6	29	free 2296	
+6	30	free 1256	
+6	31	alloc 256 1	3536
+6	32	free 3832	
+6	33	free 2344	
+6	34	alloc 17 1	3792
+6	35	free 3816	
+6	36	alloc 1000 1	9208
+6	37	free 3536	
+6	38	alloc 2213 4096	17384
+6	39	alloc 255 64	10216
+6	40	alloc 15 1	2460
+6	41	alloc 17 1	2476
+6	42	alloc 4096 1	3809
+6	43	alloc 4096 1	19597
+6	44	alloc 256 1	1000
+6	45	free 1272	
+6	46	alloc 15 256	1256
+6	47	free 3809	
+6	48	alloc 100 64	3560
+6	49	alloc 1 1	3536
+6	50	free 2360	
+6	51	free 3560	
+6	52	free 19597	
+6	53	free 9192	
+6	54	free 13288	
+6	55	free 17384	
+6	56	free 2536	
+6	57	free 9208	
+6	58	free 2476	
+6	59	free 3536	
+6	60	alloc 15 256	1512
+7	0	create 4096 0 32 32	
+7	1	alloc 15 1	0
+7	2	alloc 4096 4096	None
+7	3	free 0	
+7	4	alloc 4096 8	None
+7	5	alloc 100 1	0
+7	6	alloc 1 64	128
+7	7	alloc 17 1	160
+7	8	alloc 1000 1	192
+7	9	free 160	
+7	10	alloc 257 1	1192
+7	11	free 0	
+7	12	alloc 71 64	1472
+7	13	free 128	
+7	14	alloc 457 1	1543
+7	15	free 1192	
+7	16	alloc 257 4096	None
+7	17	alloc 255 1	1192
+7	18	free 1192	
+7	19	alloc 15 64	0
+7	20	free 1543	
+7	21	alloc 1000 1	1543
+7	22	alloc 256 256	2560
+7	23	alloc 257 1	1192
+7	24	alloc 100 1	32
+7	25	free 2560	
+7	26	alloc 257 4096	None
+7	27	free 32	
+7	28	alloc 15 64	64
+7	29	free 1192	
+7	30	alloc 4096 256	None
+7	31	free 1543	
+7	32	alloc 4096 1	None
+7	33	free 0	
+7	34	alloc 1 256	1792
+7	35	free 64	
+7	36	free 1792	
+7	37	alloc 4096 8	None
+7	38	free 1472	
+7	39	free 192	
+7	40	alloc 17 256	0
+7	41	alloc 1 1	32
+7	42	alloc 1000 256	256
+7	43	alloc 15 64	64
+7	44	free 32	
+7	45	free 0	
+7	46	free 256	
+7	47	free 64	
+7	48	alloc 337 1	0
+7	49	alloc 257 1	337
+7	50	alloc 256 8	600
+7	51	free 0	
+7	52	alloc 16 1	0
+7	53	free 600	
+7	54	free 337	
+7	55	alloc 257 4096	None
+7	56	free 0	
+7	57	alloc 16 64	0
+7	58	alloc 1 8	32
+7	59	free 0	
+7	60	alloc 1 64	64
+8	0	create 1024 2097152 256 32	
+8	1	alloc 255 256	2097152
+8	2	free 2097152	
+8	3	alloc 256 64	2097152
+8	4	free 2097152	
+8	5	alloc 17 4096	None
+8	6	alloc 1000 256	None
+8	7	alloc 1000 256	None
+8	8	alloc 17 8	2097152
+8	9	alloc 4096 256	None
+8	10	free 2097152	
+8	11	alloc 25 4096	None
+8	12	alloc 1 64	2097152
+8	13	free 2097152	
+8	14	alloc 100 8	2097152
+8	15	free 2097152	
+8	16	alloc 4096 1	None
+8	17	alloc 1000 256	None
+8	18	alloc 1000 4096	None
+8	19	alloc 1000 1	2097152
+8	20	alloc 17 8	None
+8	21	alloc 16 1	None
+8	22	alloc 4096 1	None
+8	23	alloc 16 1	None
+8	24	free 2097152	
+8	25	alloc 100 64	2097152
+8	26	alloc 16 1	2097408
+8	27	free 2097152	
+8	28	alloc 1000 8	None
+8	29	alloc 4096 1	None
+8	30	alloc 17 1	2097152
+8	31	alloc 16 4096	None
+8	32	alloc 256 8	2097664
+8	33	free 2097408	
+8	34	alloc 34 64	None
+8	35	alloc 256 1	2097920
+8	36	free 2097920	
+8	37	alloc 255 256	None
+8	38	alloc 100 256	None
+8	39	free 2097664	
+8	40	alloc 1000 4096	None
+8	41	free 2097152	
+8	42	alloc 100 4096	None
+8	43	alloc 4096 1	None
+8	44	alloc 100 64	2097152
+8	45	free 2097152	
+8	46	alloc 16 256	2097152
+8	47	alloc 256 256	2097408
+8	48	alloc 1000 64	None
+8	49	free 2097152	
+8	50	alloc 99 64	2097664
+8	51	free 2097664	
+8	52	alloc 17 4096	None
+8	53	alloc 1000 64	None
+8	54	free 2097408	
+8	55	alloc 43 256	2097152
+8	56	alloc 17 4096	None
+8	57	free 2097152	
+8	58	alloc 256 1	2097152
+8	59	alloc 16 64	2097408
+8	60	free 2097152	
+9	0	create 1024 2097152 16 1	
+9	1	alloc 17 1	2097152
+9	2	free 2097152	
+9	3	alloc 257 1	2097152
+9	4	alloc 17 4096	None
+9	5	alloc 17 1	2097409
+9	6	free 2097152	
+9	7	free 2097409	
+9	8	alloc 1 4096	None
+9	9	alloc 16 4096	None
+9	10	alloc 257 1	2097152
+9	11	alloc 4096 8	None
+9	12	free 2097152	
+9	13	alloc 256 1	2097152
+9	14	alloc 1 64	2097408
+9	15	alloc 1 8	2097424
+9	16	free 2097424	
+9	17	free 2097152	
+9	18	alloc 15 4096	None
+9	19	alloc 256 8	2097424
+9	20	alloc 4096 64	None
+9	21	free 2097408	
+9	22	free 2097424	
+9	23	alloc 255 4096	None
+9	24	alloc 9 1	2097152
+9	25	alloc 125 1	2097168
+9	26	alloc 255 64	2097344
+9	27	alloc 16 1	2097293
+9	28	free 2097168	
+9	29	alloc 4096 1	None
+9	30	free 2097293	
+9	31	free 2097344	
+9	32	alloc 4096 1	None
+9	33	free 2097152	
+9	34	alloc 100 4096	None
+9	35	alloc 1000 1	2097152
+9	36	alloc 15 256	None
+9	37	free 2097152	
+9	38	alloc 15 1	2097152
+9	39	free 2097152	
+9	40	alloc 17 1	2097152
+9	41	free 2097152	
+9	42	alloc 1000 1	2097152
+9	43	alloc 1000 1	None
+9	44	alloc 100 4096	None
+9	45	alloc 257 4096	None
+9	46	free 2097152	
+9	47	alloc 255 8	2097152
+9	48	alloc 4096 256	None
+9	49	alloc 16 1	2097407
+9	50	free 2097152	
+9	51	alloc 100 8	2097152
+9	52	free 2097407	
+9	53	free 2097152	
+9	54	alloc 4096 256	None
+9	55	alloc 17 256	2097152
+9	56	free 2097152	
+9	57	alloc 16 1	2097152
+9	58	alloc 1 1	2097168
+9	59	alloc 1000 4096	None
+9	60	free 2097152	
+10	0	create 65536 1000 256 32	
+10	1	alloc 1000 1	1000
+10	2	free 1000	
+10	3	alloc 4096 1	1000
+10	4	free 1000	
+10	5	alloc 4096 8	1000
+10	6	free 1000	
+10	7	alloc 15 256	1000
+10	8	alloc 4096 1	1256
+10	9	free 1256	
+10	10	free 1000	
+10	11	alloc 4096 256	1000
+10	12	alloc 4096 8	5096
+10	13	free 5096	
+10	14	alloc 4096 4096	5096
+10	15	alloc 100 1	9192
+10	16	free 1000	
+10	17	alloc 255 1	1000
+10	18	alloc 257 1	1256
+10	19	alloc 256 4096	13288
+10	20	free 5096	
+10	21	free 9192	
+10	22	free 13288	
+10	23	alloc 256 1	1513
+10	24	free 1256	
+10	25	alloc 17 256	2024
+10	26	free 1000	
+10	27	alloc 16 4096	5096
+10	28	alloc 4096 1	5352
+10	29	free 2024	
+10	30	alloc 100 1	1000
+10	31	free 1000	
+10	32	alloc 17 8	1000
+10	33	alloc 4096 1	9448
+10	34	alloc 256 8	1776
+10	35	free 5096	
+10	36	alloc 255 1	1256
+10	37	alloc 257 8	2032
+10	38	free 5352	
+10	39	free 9448	
+10	40	free 1776	
+10	41	alloc 255 64	2344
+10	42	free 1256	
+10	43	alloc 256 1	1769
+10	44	alloc 1417 8	2600
+10	45	free 1000	
+10	46	alloc 256 1	1000
+10	47	alloc 15 64	4072
+10	48	alloc 16 1	1256
+10	49	alloc 17 1	4328
+10	50	alloc 1 1	4584
+10	51	free 1513	
+10	52	alloc 1 64	4840
+10	53	free 2600	
+10	54	alloc 100 64	2600
+10	55	alloc 17 1	1512
+10	56	free 2032	
+10	57	free 2600	
+10	58	alloc 255 1	2025
+10	59	free 2344	
+10	60	alloc 16 1	2281
+11	0	create 1024 1000 16 16	
+11	1	alloc 255 256	1000
+11	2	free 1000	
+11	3	alloc 17 1	1000
+11	4	alloc 1 64	1064
+11	5	free 1000	
+11	6	alloc 15 1	1000
+11	7	free 1064	
+11	8	free 1000	
+11	9	alloc 100 64	1000
+11	10	free 1000	
+11	11	alloc 100 4096	None
+11	12	alloc 255 1	1000
+11	13	free 1000	
+11	14	alloc 15 8	1000
+11	15	alloc 255 1	1016
+11	16	alloc 17 1	1271
+11	17	alloc 100 64	1320
+11	18	free 1271	
+11	19	alloc 256 8	1424
+11	20	free 1320	
+11	21	free 1016	
+11	22	alloc 16 1	1680
+11	23	free 1680	
+11	24	free 1000	
+11	25	free 1424	
+11	26	alloc 16 1	1000
+11	27	alloc 17 1	1016
+11	28	alloc 100 4096	None
+11	29	alloc 256 1	1033
+11	30	alloc 15 4096	None
+11	31	free 1016	
+11	32	free 1000	
+11	33	alloc 1 256	1512
+11	34	alloc 255 64	1576
+11	35	alloc 1000 256	None
+11	36	alloc 255 256	None
+11	37	free 1512	
+11	38	free 1576	
+11	39	alloc 1 1	1000
+11	40	alloc 255 64	1320
+11	41	free 1000	
+11	42	alloc 100 256	1768
+11	43	alloc 15 1	1289
+11	44	free 1768	
+11	45	free 1033	
+11	46	free 1289	
+11	47	alloc 4096 64	None
+11	48	alloc 17 8	1000
+11	49	alloc 17 1	1017
+11	50	alloc 17 1	1034
+11	51	free 1017	
+11	52	free 1000	
+11	53	free 1320	
+11	54	alloc 15 8	1000
+11	55	alloc 4096 1	None
+11	56	free 1034	
+11	57	free 1000	
+11	58	alloc 1 4096	None
+11	59	alloc 257 64	1000
+11	60	free 1000	
+12	0	create 71687 1000 16 1	
+12	1	alloc 4096 1	1000
+12	2	alloc 257 1	5096
+12	3	free 1000	
+12	4	free 5096	
+12	5	alloc 16 1	1000
+12	6	free 1000	
+12	7	alloc 100 8	1000
+12	8	free 1000	
+12	9	alloc 16 256	1000
+12	10	free 1000	
+12	11	alloc 256 64	1000
+12	12	free 1000	
+12	13	alloc 4096 1	1000
+12	14	alloc 255 1	5096
+12	15	free 5096	
+12	16	free 1000	
+12	17	alloc 257 1	1000
+12	18	alloc 1 256	1512
+12	19	alloc 15 1	1257
+12	20	alloc 4096 8	1528
+12	21	alloc 16 64	1320
+12	22	alloc 1 8	1280
+12	23	alloc 16 64	1384
+12	24	alloc 255 4096	9192
+12	25	free 1528	
+12	26	alloc 100 4096	13288
+12	27	free 1384	
+12	28	free 1512	
+12	29	free 1000	
+12	30	alloc 16 64	1000
+12	31	alloc 4096 1	1336
+12	32	alloc 257 256	9448
+12	33	free 9192	
+12	34	alloc 15 1	1296
+12	35	free 1280	
+12	36	free 1320	
+12	37	alloc 100 1	1016
+12	38	alloc 257 8	9712
+12	39	alloc 16 64	1128
+12	40	alloc 4096 4096	17384
+12	41	alloc 4630 1	21480
+12	42	alloc 15 8	1144
+12	43	free 21480	
+12	44	alloc 4096 8	21480
+12	45	free 1128	
+12	46	free 1336	
+12	47	free 13288	
+12	48	free 17384	
+12	49	free 1144	
+12	50	free 1296	
+12	51	alloc 4096 1	1273
+12	52	alloc 257 8	5376
+12	53	free 21480	
+12	54	alloc 4096 1	9969
+12	55	free 1257	
+12	56	alloc 1000 1	5633
+12	57	free 5376	
+12	58	free 9969	
+12	59	free 1000	
+12	60	alloc 256 8	6640
+13	0	create 347431 0 256 32	
+13	1	alloc 1000 4096	0
+13	2	free 0	
+13	3	alloc 16 1	0
+13	4	free 0	
+13	5	alloc 17 1	0
+13	6	alloc 257 256	256
+13	7	alloc 15 8	520
+13	8	free 0	
+13	9	alloc 255 1	0
+13	10	free 520	
+13	11	alloc 100 256	768
+13	12	alloc 4096 8	1024
+13	13	free 768	
+13	14	free 0	
+13	15	free 256	
+13	16	alloc 15 64	0
+13	17	free 0	
+13	18	alloc 36636 1	5120
+13	19	alloc 1000 64	41792
+13	20	alloc 257 256	0
+13	21	free 5120	
+13	22	free 0	
+13	23	free 1024	
+13	24	free 41792	
+13	25	alloc 1 1	0
+13	26	free 0	
+13	27	alloc 255 1	0
+13	28	alloc 256 1	256
+13	29	alloc 17 1	512
+13	30	free 512	
+13	31	free 0	
+13	32	free 256	
+13	33	alloc 4096 4096	0
+13	34	alloc 15 4096	4096
+13	35	alloc 17 256	4352
+13	36	alloc 256 1	4608
+13	37	alloc 256 1	4864
+13	38	free 4096	
+13	39	alloc 256 8	5120
+13	40	free 5120	
+13	41	alloc 17 1	4096
+13	42	free 4096	
+13	43	free 4352	
+13	44	free 4864	
+13	45	alloc 16 4096	8192
+13	46	free 8192	
+13	47	alloc 4096 1	4864
+13	48	free 0	
+13	49	free 4864	
+13	50	alloc 2246 1	0
+13	51	free 0	
+13	52	alloc 17 1	0
+13	53	alloc 255 1	256
+13	54	free 4608	
+13	55	alloc 17 1	512
+13	56	alloc 100 1	768
+13	57	free 256	
+13	58	free 0	
+13	59	alloc 256 1	0
+13	60	free 0	
+14	0	create 975686 2097152 16 1	
+14	1	alloc 16 8	2097152
+14	2	free 2097152	
+14	3	alloc 256 8	2097152
+14	4	free 2097152	
+14	5	alloc 15 1	2097152
+14	6	free 2097152	
+14	7	alloc 31593 8	2097152
+14	8	alloc 257 64	2128768
+14	9	free 2097152	
+14	10	alloc 1000 1	2097152
+14	11	free 2097152	
+14	12	free 2128768	
+14	13	alloc 91122 1	2097152
+14	14	alloc 255 64	2188288
+14	15	alloc 257 1	2188543
+14	16	alloc 255 64	2188800
+14	17	free 2097152	
+14	18	alloc 32171 256	2097152
+14	19	free 2188543	
+14	20	alloc 16 1	2188543
+14	21	free 2188543	
+14	22	alloc 15 4096	2129920
+14	23	alloc 256 1	2188543
+14	24	alloc 1000 1	2129936
+14	25	free 2129936	
+14	26	alloc 51587 64	2189056
+14	27	alloc 17 64	2129344
+14	28	free 2129344	
+14	29	alloc 15 1	2129323
+14	30	free 2188543	
+14	31	alloc 15 1	2188543
+14	32	free 2188800	
+14	33	free 2188543	
+14	34	alloc 1000 8	2129936
+14	35	alloc 15 1	2129339
+14	36	alloc 4096 8	2130936
+14	37	alloc 51385 1	2240643
+14	38	alloc 100 64	2188544
+14	39	alloc 100 4096	2138112
+14	40	free 2130936	
+14	41	free 2188288	
+14	42	free 2189056	
+14	43	alloc 257 1	2129355
+14	44	alloc 255 64	2130944
+14	45	alloc 52141 256	2292224
+14	46	free 2292224	
+14	47	alloc 257 4096	2142208
+14	48	alloc 1 1	2129612
+14	49	alloc 15 4096	2191360
+14	50	free 2129339	
+14	51	alloc 100 1	2129628
+14	52	free 2129323	
+14	53	alloc 1 8	2129328
+14	54	alloc 255 64	2138240
+14	55	free 2129628	
+14	56	alloc 17 4096	2146304
+14	57	free 2138240	
+14	58	free 2130944	
+14	59	free 2129328	
+14	60	free 2129612	
+15	0	create 0 2097152 16 16	
+15	1	alloc 1 1	None
+15	2	alloc 15 64	None
+15	3	alloc 1000 1	None
+15	4	alloc 17 1	None
+15	5	alloc 4096 1	None
+15	6	alloc 15 64	None
+15	7	alloc 17 1	None
+15	8	alloc 17 4096	None
+15	9	alloc 15 64	None
+15	10	alloc 4096 8	None
+15	11	alloc 4096 1	None
+15	12	alloc 4096 4096	None
+15	13	alloc 15 4096	None
+15	14	alloc 1 1	None
+15	15	alloc 4096 1	None
+15	16	alloc 256 8	None
+15	17	alloc 16 1	None
+15	18	alloc 1 4096	None
+15	19	alloc 256 1	None
+15	20	alloc 1000 1	None
+15	21	alloc 17 1	None
+15	22	alloc 255 1	None
+15	23	alloc 255 4096	None
+15	24	alloc 17 1	None
+15	25	alloc 1000 8	None
+15	26	alloc 257 256	None
+15	27	alloc 257 1	None
+15	28	alloc 100 1	None
+15	29	alloc 1 8	None
+15	30	alloc 256 8	None
+15	31	alloc 16 1	None
+15	32	alloc 1 1	None
+15	33	alloc 4096 8	None
+15	34	alloc 1000 1	None
+15	35	alloc 17 1	None
+15	36	alloc 4096 1	None
+15	37	alloc 257 1	None
+15	38	alloc 256 64	None
+15	39	alloc 1 256	None
+15	40	alloc 16 8	None
+15	41	alloc 1 1	None
+15	42	alloc 4096 8	None
+15	43	alloc 17 64	None
+15	44	alloc 257 64	None
+15	45	alloc 100 64	None
+15	46	alloc 255 4096	None
+15	47	alloc 1000 256	None
+15	48	alloc 1 256	None
+15	49	alloc 1000 256	None
+15	50	alloc 255 8	None
+15	51	alloc 15 1	None
+15	52	alloc 15 8	None
+15	53	alloc 1 8	None
+15	54	alloc 1000 8	None
+15	55	alloc 17 64	None
+15	56	alloc 256 4096	None
+15	57	alloc 256 64	None
+15	58	alloc 17 256	None
+15	59	alloc 257 1	None
+15	60	alloc 4096 1	None
+16	0	create 0 0 16 16	
+16	1	alloc 4096 1	None
+16	2	alloc 100 1	None
+16	3	alloc 4096 1	None
+16	4	alloc 16 256	None
+16	5	alloc 1000 1	None
+16	6	alloc 4096 1	None
+16	7	alloc 1 4096	None
+16	8	alloc 100 1	None
+16	9	alloc 100 64	None
+16	10	alloc 1 8	None
+16	11	alloc 1 4096	None
+16	12	alloc 16 1	None
+16	13	alloc 15 1	None
+16	14	alloc 17 1	None
+16	15	alloc 1000 4096	None
+16	16	alloc 255 8	None
+16	17	alloc 16 1	None
+16	18	alloc 17 8	None
+16	19	alloc 100 4096	None
+16	20	alloc 1 1	None
+16	21	alloc 255 1	None
+16	22	alloc 15 4096	None
+16	23	alloc 15 64	None
+16	24	alloc 1000 8	None
+16	25	alloc 4096 1	None
+16	26	alloc 256 64	None
+16	27	alloc 17 1	None
+16	28	alloc 100 1	None
+16	29	alloc 100 1	None
+16	30	alloc 100 1	None
+16	31	alloc 1 4096	None
+16	32	alloc 1 4096	None
+16	33	alloc 1 1	None
+16	34	alloc 255 8	None
+16	35	alloc 15 1	None
+16	36	alloc 17 1	None
+16	37	alloc 1 1	None
+16	38	alloc 257 256	None
+16	39	alloc 1000 1	None
+16	40	alloc 16 4096	None
+16	41	alloc 17 1	None
+16	42	alloc 1 4096	None
+16	43	alloc 255 64	None
+16	44	alloc 1000 64	None
+16	45	alloc 17 8	None
+16	46	alloc 1000 1	None
+16	47	alloc 100 64	None
+16	48	alloc 256 64	None
+16	49	alloc 100 1	None
+16	50	alloc 257 64	None
+16	51	alloc 16 64	None
+16	52	alloc 1000 1	None
+16	53	alloc 255 1	None
+16	54	alloc 255 8	None
+16	55	alloc 256 256	None
+16	56	alloc 1000 4096	None
+16	57	alloc 1 1	None
+16	58	alloc 1000 8	None
+16	59	alloc 4096 1	None
+16	60	alloc 17 1	None
+17	0	create 65536 1000 32 32	
+17	1	alloc 4096 1	1000
+17	2	free 1000	
+17	3	alloc 15 1	1000
+17	4	alloc 863 4096	5096
+17	5	free 5096	
+17	6	free 1000	
+17	7	alloc 4096 8	1000
+17	8	alloc 17 64	5096
+17	9	alloc 1767 8	5128
+17	10	alloc 16 1	6895
+17	11	alloc 1000 256	7144
+17	12	free 7144	
+17	13	free 6895	
+17	14	free 5096	
+17	15	free 1000	
+17	16	free 5128	
+17	17	alloc 2964 4096	1000
+17	18	alloc 15 1	3964
+17	19	free 3964	
+17	20	free 1000	
+17	21	alloc 1805 256	1000
+17	22	alloc 257 1	2805
+17	23	alloc 5492 1	3062
+17	24	free 3062	
+17	25	alloc 16 64	3112
+17	26	free 3112	
+17	27	free 2805	
+17	28	alloc 256 1	2805
+17	29	alloc 15 1	3061
+17	30	free 3061	
+17	31	free 1000	
+17	32	free 2805	
+17	33	alloc 257 1	1000
+17	34	free 1000	
+17	35	alloc 7735 256	1000
+17	36	alloc 4096 8	8736
+17	37	alloc 1 1	12832
+17	38	free 8736	
+17	39	free 12832	
+17	40	alloc 1 8	8736
+17	41	alloc 17 1	8768
+17	42	alloc 1 8	8800
+17	43	alloc 16 1	8832
+17	44	free 8800	
+17	45	free 8768	
+17	46	free 8832	
+17	47	alloc 1 4096	9192
+17	48	free 8736	
+17	49	alloc 17 4096	13288
+17	50	free 13288	
+17	51	free 9192	
+17	52	alloc 257 1	8735
+17	53	alloc 15 8	8992
+17	54	alloc 16 8	9024
+17	55	free 8735	
+17	56	free 8992	
+17	57	alloc 255 256	9192
+17	58	alloc 1000 8	9448
+17	59	free 9192	
+17	60	alloc 100 1	8735
+18	0	create 0 1000 16 1	
+18	1	alloc 16 1	None
+18	2	alloc 257 1	None
+18	3	alloc 257 1	None
+18	4	alloc 16 1	None
+18	5	alloc 1 1	None
+18	6	alloc 15 8	None
+18	7	alloc 1 1	None
+18	8	alloc 1 64	None
+18	9	alloc 1 1	None
+18	10	alloc 4096 8	None
+18	11	alloc 255 1	None
+18	12	alloc 1 8	None
+18	13	alloc 15 1	None
+18	14	alloc 1000 1	None
+18	15	alloc 256 256	None
+18	16	alloc 4096 1	None
+18	17	alloc 16 4096	None
+18	18	alloc 255 1	None
+18	19	alloc 15 256	None
+18	20	alloc 4096 1	None
+18	21	alloc 1 1	None
+18	22	alloc 257 256	None
+18	23	alloc 255 64	None
+18	24	alloc 17 1	None
+18	25	alloc 16 256	None
+18	26	alloc 256 8	None
+18	27	alloc 1 64	None
+18	28	alloc 1 1	None
+18	29	alloc 16 1	None
+18	30	alloc 257 64	None
+18	31	alloc 256 64	None
+18	32	alloc 257 1	None
+18	33	alloc 4096 64	None
+18	34	alloc 16 4096	None
+18	35	alloc 16 1	None
+18	36	alloc 15 1	None
+18	37	alloc 100 1	None
+18	38	alloc 256 256	None
+18	39	alloc 1 1	None
+18	40	alloc 15 256	None
+18	41	alloc 257 1	None
+18	42	alloc 255 1	None
+18	43	alloc 1 256	None
+18	44	alloc 1 1	None
+18	45	alloc 255 4096	None
+18	46	alloc 4096 8	None
+18	47	alloc 4096 1	None
+18	48	alloc 256 256	None
+18	49	alloc 4096 4096	None
+18	50	alloc 1 256	None
+18	51	alloc 256 8	None
+18	52	alloc 4096 1	None
+18	53	alloc 1000 64	None
+18	54	alloc 255 1	None
+18	55	alloc 1 1	None
+18	56	alloc 1000 256	None
+18	57	alloc 1 1	None
+18	58	alloc 100 64	None
+18	59	alloc 1 1	None
+18	60	alloc 1000 64	None
+19	0	create 1024 1000 256 32	
+19	1	alloc 256 64	1000
+19	2	alloc 1000 256	None
+19	3	free 1000	
+19	4	alloc 256 8	1000
+19	5	alloc 16 4096	None
+19	6	alloc 256 1	1256
+19	7	free 1000	
+19	8	alloc 257 1	1512
+19	9	alloc 1 1	1000
+19	10	free 1256	
+19	11	alloc 1 1	1256
+19	12	free 1000	
+19	13	free 1256	
+19	14	alloc 16 64	1000
+19	15	alloc 255 4096	None
+19	16	alloc 255 64	None
+19	17	alloc 1 4096	None
+19	18	alloc 257 1	None
+19	19	free 1512	
+19	20	alloc 4096 64	None
+19	21	alloc 257 8	1256
+19	22	free 1000	
+19	23	free 1256	
+19	24	alloc 1 1	1000
+19	25	alloc 15 8	1256
+19	26	alloc 100 1	1512
+19	27	free 1000	
+19	28	free 1256	
+19	29	alloc 17 256	1000
+19	30	alloc 92 1	1768
+19	31	free 1000	
+19	32	free 1768	
+19	33	free 1512	
+19	34	alloc 1000 1	1000
+19	35	free 1000	
+19	36	alloc 17 8	1000
+19	37	free 1000	
+19	38	alloc 1000 1	1000
+19	39	free 1000	
+19	40	alloc 1000 4096	None
+19	41	alloc 15 1	1000
+19	42	free 1000	
+19	43	alloc 15 256	1000
+19	44	free 1000	
+19	45	alloc 17 1	1000
+19	46	free 1000	
+19	47	alloc 100 64	1000
+19	48	alloc 17 1	1256
+19	49	alloc 255 1	1512
+19	50	alloc 17 1	1768
+19	51	alloc 15 8	None
+19	52	alloc 17 1	None
+19	53	alloc 255 64	None
+19	54	free 1768	
+19	55	free 1512	
+19	56	alloc 256 4096	None
+19	57	alloc 4096 1	None
+19	58	alloc 17 64	1512
+19	59	alloc 100 256	None
+19	60	free 1512	
+20	0	create 0 0 32 32	
+20	1	alloc 1000 8	None
+20	2	alloc 256 8	None
+20	3	alloc 15 8	None
+20	4	alloc 4096 1	None
+20	5	alloc 1 8	None
+20	6	alloc 15 8	None
+20	7	alloc 1 8	None
+20	8	alloc 1 1	None
+20	9	alloc 100 1	None
+20	10	alloc 100 4096	None
+20	11	alloc 257 1	None
+20	12	alloc 255 64	None
+20	13	alloc 17 1	None
+20	14	alloc 100 64	None
+20	15	alloc 257 1	None
+20	16	alloc 16 1	None
+20	17	alloc 255 1	None
+20	18	alloc 256 256	None
+20	19	alloc 1 4096	None
+20	20	alloc 16 8	None
+20	21	alloc 15 64	None
+20	22	alloc 255 1	None
+20	23	alloc 1 8	None
+20	24	alloc 4096 256	None
+20	25	alloc 16 1	None
+20	26	alloc 17 64	None
+20	27	alloc 1000 8	None
+20	28	alloc 1000 1	None
+20	29	alloc 255 1	None
+20	30	alloc 1 1	None
+20	31	alloc 1 64	None
+20	32	alloc 256 1	None
+20	33	alloc 1 1	None
+20	34	alloc 256 4096	None
+20	35	alloc 256 1	None
+20	36	alloc 1 1	None
+20	37	alloc 256 64	None
+20	38	alloc 4096 1	None
+20	39	alloc 255 4096	None
+20	40	alloc 1 1	None
+20	41	alloc 1000 4096	None
+20	42	alloc 15 4096	None
+20	43	alloc 1 8	None
+20	44	alloc 100 4096	None
+20	45	alloc 100 1	None
+20	46	alloc 15 1	None
+20	47	alloc 257 256	None
+20	48	alloc 100 1	None
+20	49	alloc 1 8	None
+20	50	alloc 100 64	None
+20	51	alloc 16 1	None
+20	52	alloc 1000 1	None
+20	53	alloc 1 256	None
+20	54	alloc 255 1	None
+20	55	alloc 16 64	None
+20	56	alloc 15 1	None
+20	57	alloc 1000 64	None
+20	58	alloc 17 8	None
+20	59	alloc 1 1	None
+20	60	alloc 4096 4096	None
+21	0	create 1024 0 16 1	
+21	1	alloc 102 8	0
+21	2	free 0	
+21	3	alloc 4096 8	None
+21	4	alloc 86 256	0
+21	5	free 0	
+21	6	alloc 17 256	0
+21	7	free 0	
+21	8	alloc 38 1	0
+21	9	free 0	
+21	10	alloc 129 1	0
+21	11	alloc 1000 256	None
+21	12	free 0	
+21	13	alloc 16 256	0
+21	14	free 0	
+21	15	alloc 4096 1	None
+21	16	alloc 100 1	0
+21	17	free 0	
+21	18	alloc 1 4096	None
+21	19	alloc 16 256	0
+21	20	alloc 100 4096	None
+21	21	free 0	
+21	22	alloc 100 1	0
+21	23	alloc 257 64	128
+21	24	free 128	
+21	25	free 0	
+21	26	alloc 100 1	0
+21	27	alloc 257 4096	None
+21	28	free 0	
+21	29	alloc 1 4096	None
+21	30	alloc 256 4096	None
+21	31	alloc 256 4096	None
+21	32	alloc 4096 256	None
+21	33	alloc 17 256	0
+21	34	free 0	
+21	35	alloc 15 1	0
+21	36	alloc 255 1	16
+21	37	alloc 15 4096	None
+21	38	alloc 256 64	320
+21	39	free 0	
+21	40	alloc 256 1	576
+21	41	alloc 4096 1	None
+21	42	alloc 1000 8	None
+21	43	alloc 256 256	None
+21	44	alloc 1 64	832
+21	45	free 320	
+21	46	alloc 100 64	320
+21	47	free 832	
+21	48	free 16	
+21	49	free 320	
+21	50	alloc 16 1	832
+21	51	alloc 100 4096	None
+21	52	alloc 17 4096	None
+21	53	free 832	
+21	54	free 576	
+21	55	alloc 16 64	0
+21	56	free 0	
+21	57	alloc 17 1	0
+21	58	alloc 17 64	64
+21	59	alloc 1000 1	None
+21	60	alloc 15 1	17
+22	0	create 4096 0 16 1	
+22	1	alloc 256 4096	None
+22	2	alloc 16 64	0
+22	3	alloc 256 1	16
+22	4	free 16	
+22	5	free 0	
+22	6	alloc 1 1	0
+22	7	alloc 16 256	256
+22	8	alloc 255 1	272
+22	9	alloc 1000 1	527
+22	10	alloc 4096 1	None
+22	11	free 0	
+22	12	alloc 1000 1	1527
+22	13	alloc 257 256	2560
+22	14	free 272	
+22	15	alloc 100 256	3072
+22	16	free 527	
+22	17	free 3072	
+22	18	free 256	
+22	19	alloc 1000 1	2817
+22	20	alloc 1 64	3840
+22	21	alloc 255 64	0
+22	22	alloc 30 64	3904
+22	23	alloc 17 64	3968
+22	24	alloc 45 1	3985
+22	25	alloc 1 4096	None
+22	26	alloc 16 8	2528
+22	27	free 0	
+22	28	alloc 15 64	0
+22	29	free 3985	
+22	30	alloc 17 1	3856
+22	31	alloc 257 1	16
+22	32	free 3840	
+22	33	alloc 347 256	512
+22	34	free 3856	
+22	35	alloc 17 1	3934
+22	36	free 3934	
+22	37	alloc 4096 1	None
+22	38	free 512	
+22	39	alloc 1000 1	273
+22	40	free 2817	
+22	41	alloc 16 1	2544
+22	42	alloc 257 256	3072
+22	43	free 16	
+22	44	alloc 256 1	16
+22	45	free 3968	
+22	46	alloc 384 1	3329
+22	47	free 2544	
+22	48	free 3904	
+22	49	free 0	
+22	50	alloc 17 1	1273
+22	51	free 1527	
+22	52	alloc 255 256	1536
+22	53	free 16	
+22	54	alloc 1 1	2544
+22	55	alloc 255 1	3713
+22	56	alloc 1 8	2824
+22	57	free 1536	
+22	58	alloc 1000 64	None
+22	59	free 3329	
+22	60	free 273	
+23	0	create 65536 0 64 8	
+23	1	alloc 4096 4096	0
+23	2	free 0	
+23	3	alloc 256 1	0
+23	4	alloc 17 1	256
+23	5	free 0	
+23	6	free 256	
+23	7	alloc 100 1	0
+23	8	free 0	
+23	9	alloc 15 4096	0
+23	10	alloc 256 1	64
+23	11	alloc 256 4096	4096
+23	12	free 64	
+23	13	free 4096	
+23	14	free 0	
+23	15	alloc 100 1	0
+23	16	alloc 257 1	100
+23	17	alloc 4096 8	360
+23	18	free 360	
+23	19	free 100	
+23	20	alloc 17 64	128
+23	21	alloc 16 256	256
+23	22	free 0	
+23	23	alloc 255 1	320
+23	24	free 320	
+23	25	free 256	
+23	26	alloc 15 8	0
+23	27	alloc 16 64	192
+23	28	free 128	
+23	29	alloc 4096 1	256
+23	30	alloc 17 1	64
+23	31	free 256	
+23	32	free 192	
+23	33	alloc 1000 64	128
+23	34	alloc 17 8	1128
+23	35	free 1128	
+23	36	free 0	
+23	37	free 64	
+23	38	free 128	
+23	39	alloc 6732 256	0
+23	40	free 0	
+23	41	alloc 16 4096	0
+23	42	alloc 934 1	64
+23	43	free 0	
+23	44	alloc 4096 1	998
+23	45	alloc 1 1	0
+23	46	alloc 1000 1	5094
+23	47	alloc 4096 8	6096
+23	48	free 6096	
+23	49	free 5094	
+23	50	free 0	
+23	51	alloc 1000 64	5120
+23	52	free 5120	
+23	53	free 64	
+23	54	free 998	
+23	55	alloc 1000 8	0
+23	56	free 0	
+23	57	alloc 17 64	0
+23	58	alloc 930 1	64
+23	59	alloc 1 1	994
+23	60	alloc 255 1	1058
+24	0	create 1024 0 64 8	
+24	1	alloc 255 64	0
+24	2	alloc 16 8	256
+24	3	free 256	
+24	4	free 0	
+24	5	alloc 100 4096	None
+24	6	alloc 257 1	0
+24	7	alloc 15 8	264
+24	8	free 0	
+24	9	alloc 257 1	328
+24	10	alloc 17 1	0
+24	11	free 328	
+24	12	alloc 257 8	328
+24	13	free 264	
+24	14	free 328	
+24	15	alloc 17 256	256
+24	16	free 256	
+24	17	alloc 256 4096	None
+24	18	alloc 17 1	64
+24	19	alloc 100 1	128
+24	20	alloc 15 64	256
+24	21	alloc 17 256	512
+24	22	free 64	
+24	23	free 128	
+24	24	alloc 256 1	576
+24	25	alloc 1000 256	None
+24	26	free 256	
+24	27	alloc 120 1	832
+24	28	free 512	
+24	29	free 576	
+24	30	free 832	
+24	31	free 0	
+24	32	alloc 100 1	0
+24	33	alloc 100 256	256
+24	34	alloc 100 4096	None
+24	35	free 0	
+24	36	alloc 115 256	512
+24	37	alloc 1000 1	None
+24	38	free 256	
+24	39	free 512	
+24	40	alloc 1 256	0
+24	41	free 0	
+24	42	alloc 15 1	0
+24	43	free 0	
+24	44	alloc 100 64	0
+24	45	free 0	
+24	46	alloc 16 1	0
+24	47	alloc 73 1	64
+24	48	alloc 16 256	256
+24	49	alloc 16 64	320
+24	50	alloc 15 1	137
+24	51	free 256	
+24	52	free 320	
+24	53	alloc 255 1	201
+24	54	alloc 100 256	512
+24	55	free 137	
+24	56	alloc 1000 4096	None
+24	57	free 0	
+24	58	free 64	
+24	59	free 512	
+24	60	alloc 16 1	0
+25	0	create 4096 0 32 32	
+25	1	alloc 256 64	0
+25	2	alloc 4096 64	None
+25	3	alloc 15 1	256
+25	4	alloc 256 1	288
+25	5	alloc 255 64	576
+25	6	free 576	
+25	7	alloc 17 1	544
+25	8	free 544	
+25	9	free 288	
+25	10	alloc 257 64	320
+25	11	alloc 1 8	584
+25	12	free 320	
+25	13	alloc 15 8	288
+25	14	free 584	
+25	15	alloc 17 64	320
+25	16	free 256	
+25	17	free 0	
+25	18	free 320	
+25	19	alloc 257 64	320
+25	20	alloc 257 8	0
+25	21	free 0	
+25	22	alloc 16 4096	None
+25	23	alloc 1 1	0
+25	24	free 0	
+25	25	alloc 16 256	0
+25	26	free 320	
+25	27	alloc 257 64	320
+25	28	alloc 4096 256	None
+25	29	alloc 257 1	577
+25	30	alloc 256 1	32
+25	31	alloc 4096 4096	None
+25	32	free 0	
+25	33	free 32	
+25	34	free 577	
+25	35	free 288	
+25	36	alloc 4096 4096	None
+25	37	alloc 255 1	0
+25	38	alloc 67 4096	None
+25	39	alloc 15 1	255
+25	40	alloc 15 4096	None
+25	41	free 0	
+25	42	free 255	
+25	43	free 320	
+25	44	alloc 17 4096	None
+25	45	alloc 256 1	0
+25	46	free 0	
+25	47	alloc 255 64	0
+25	48	alloc 11 1	255
+25	49	free 0	
+25	50	free 255	
+25	51	alloc 1000 1	0
+25	52	free 0	
+25	53	alloc 16 8	0
+25	54	free 0	
+25	55	alloc 1 64	0
+25	56	free 0	
+25	57	alloc 15 1	0
+25	58	free 0	
+25	59	alloc 17 1	0
+25	60	free 0	
+26	0	create 1024 0 16 1	
+26	1	alloc 17 64	0
+26	2	alloc 1 4096	None
+26	3	free 0	
+26	4	alloc 100 4096	None
+26	5	alloc 15 1	0
+26	6	free 0	
+26	7	alloc 100 1	0
+26	8	free 0	
+26	9	alloc 1000 1	0
+26	10	alloc 257 8	None
+26	11	alloc 1 4096	None
+26	12	free 0	
+26	13	alloc 257 8	0
+26	14	free 0	
+26	15	alloc 1000 4096	None
+26	16	alloc 1000 256	None
+26	17	alloc 16 8	0
+26	18	alloc 255 8	16
+26	19	free 0	
+26	20	alloc 15 256	512
+26	21	free 512	
+26	22	free 16	
+26	23	alloc 257 4096	None
+26	24	alloc 118 64	0
+26	25	alloc 255 1	118
+26	26	free 118	
+26	27	free 0	
+26	28	alloc 17 1	0
+26	29	free 0	
+26	30	alloc 17 256	0
+26	31	alloc 17 1	17
+26	32	alloc 80 4096	None
+26	33	free 0	
+26	34	alloc 4096 1	None
+26	35	free 17	
+26	36	alloc 255 256	0
+26	37	alloc 257 8	256
+26	38	alloc 17 64	576
+26	39	free 0	
+26	40	free 256	
+26	41	free 576	
+26	42	alloc 4096 1	None
+26	43	alloc 1 4096	None
+26	44	alloc 4096 1	None
+26	45	alloc 255 256	0
+26	46	alloc 1 4096	None
+26	47	free 0	
+26	48	alloc 1 256	0
+26	49	alloc 100 1	16
+26	50	alloc 257 64	128
+26	51	alloc 16 64	448
+26	52	free 128	
+26	53	free 0	
+26	54	alloc 256 8	464
+26	55	alloc 15 1	0
+26	56	free 464	
+26	57	alloc 257 4096	None
+26	58	free 16	
+26	59	free 448	
+26	60	free 0	
+27	0	create 489880 2097152 32 32	
+27	1	alloc 1 8	2097152
+27	2	free 2097152	
+27	3	alloc 257 1	2097152
+27	4	alloc 256 1	2097409
+27	5	alloc 1 1	2097665
+27	6	free 2097665	
+27	7	free 2097152	
+27	8	free 2097409	
+27	9	alloc 100 256	2097152
+27	10	free 2097152	
+27	11	alloc 1000 8	2097152
+27	12	alloc 15 8	2098152
+27	13	free 2097152	
+27	14	alloc 4096 1	2098184
+27	15	alloc 1000 1	2102280
+27	16	alloc 1181 1	2103280
+27	17	alloc 4096 64	2104512
+27	18	alloc 257 64	2097152
+27	19	free 2098184	
+27	20	alloc 256 4096	2109440
+27	21	free 2103280	
+27	22	alloc 100 256	2097664
+27	23	free 2104512	
+27	24	free 2097152	
+27	25	free 2097664	
+27	26	free 2102280	
+27	27	alloc 256 1	2097152
+27	28	alloc 257 1	2097408
+27	29	alloc 100 8	2097672
+27	30	alloc 4096 1	2098184
+27	31	free 2097408	
+27	32	free 2109440	
+27	33	free 2098184	
+27	34	alloc 17 1	2097408
+27	35	alloc 1000 64	2098240
+27	36	alloc 16 4096	2101248
+27	37	free 2097408	
+27	38	free 2097152	
+27	39	alloc 56076 8	2101280
+27	40	free 2098240	
+27	41	alloc 257 4096	2158592
+27	42	free 2101248	
+27	43	alloc 255 1	2097772
+27	44	free 2158592	
+27	45	free 2101280	
+27	46	free 2097772	
+27	47	alloc 1000 1	2098184
+27	48	alloc 16 4096	2101248
+27	49	free 2101248	
+27	50	free 2098184	
+27	51	free 2097672	
+27	52	free 2098152	
+27	53	alloc 1 64	2097152
+27	54	free 2097152	
+27	55	alloc 100 4096	2097152
+27	56	free 2097152	
+27	57	alloc 255 4096	2097152
+27	58	alloc 15 256	2097408
+27	59	free 2097408	
+27	60	free 2097152	
+28	0	create 4096 0 64 8	
+28	1	alloc 15 8	0
+28	2	alloc 1000 1	64
+28	3	free 64	
+28	4	free 0	
+28	5	alloc 255 1	0
+28	6	alloc 478 1	255
+28	7	free 0	
+28	8	free 255	
+28	9	alloc 255 1	0
+28	10	alloc 4096 1	None
+28	11	alloc 283 256	256
+28	12	alloc 255 8	544
+28	13	free 0	
+28	14	free 256	
+28	15	free 544	
+28	16	alloc 255 1	0
+28	17	alloc 100 8	256
+28	18	alloc 255 8	360
+28	19	alloc 4096 1	None
+28	20	alloc 4096 4096	None
+28	21	alloc 15 256	768
+28	22	free 768	
+28	23	free 360	
+28	24	alloc 1 64	384
+28	25	alloc 15 1	448
+28	26	alloc 128 64	512
+28	27	alloc 256 256	768
+28	28	free 448	
+28	29	alloc 100 256	1024
+28	30	alloc 256 64	1152
+28	31	alloc 257 64	1408
+28	32	alloc 255 1	1665
+28	33	alloc 100 256	2048
+28	34	free 384	
+28	35	alloc 1 1	640
+28	36	free 512	
+28	37	free 0	
+28	38	free 2048	
+28	39	free 1665	
+28	40	free 256	
+28	41	free 640	
+28	42	alloc 255 1	0
+28	43	free 1024	
+28	44	alloc 1000 1	1665
+28	45	alloc 17 1	1024
+28	46	alloc 257 64	256
+28	47	alloc 257 256	2816
+28	48	free 768	
+28	49	alloc 256 4096	None
+28	50	alloc 1000 4096	None
+28	51	free 2816	
+28	52	alloc 256 1	513
+28	53	free 1024	
+28	54	alloc 100 1	769
+28	55	alloc 255 8	2672
+28	56	free 769	
+28	57	alloc 257 8	776
+28	58	alloc 257 4096	None
+28	59	free 1665	
+28	60	free 0	
+29	0	create 1024 2097152 16 16	
+29	1	alloc 16 8	2097152
+29	2	alloc 16 256	2097408
+29	3	free 2097408	
+29	4	alloc 16 1	2097168
+29	5	free 2097168	
+29	6	alloc 4096 1	None
+29	7	alloc 100 8	2097168
+29	8	free 2097152	
+29	9	free 2097168	
+29	10	alloc 16 8	2097152
+29	11	alloc 16 8	2097168
+29	12	alloc 102 1	2097184
+29	13	alloc 4096 1	None
+29	14	free 2097184	
+29	15	alloc 257 64	2097216
+29	16	free 2097168	
+29	17	alloc 255 1	2097473
+29	18	free 2097152	
+29	19	alloc 100 1	2097728
+29	20	alloc 1 256	2097920
+29	21	free 2097920	
+29	22	free 2097728	
+29	23	alloc 15 64	2097728
+29	24	free 2097216	
+29	25	alloc 256 1	2097152
+29	26	free 2097728	
+29	27	free 2097152	
+29	28	alloc 1000 64	None
+29	29	alloc 15 8	2097152
+29	30	alloc 1000 1	None
+29	31	alloc 16 1	2097168
+29	32	alloc 15 1	2097184
+29	33	alloc 1000 1	None
+29	34	free 2097152	
+29	35	free 2097473	
+29	36	free 2097168	
+29	37	alloc 4096 256	None
+29	38	alloc 17 1	2097152
+29	39	free 2097184	
+29	40	alloc 255 1	2097169
+29	41	alloc 257 1	2097424
+29	42	alloc 17 1	2097681
+29	43	free 2097152	
+29	44	alloc 15 1	2097152
+29	45	alloc 17 64	2097728
+29	46	free 2097681	
+29	47	alloc 16 256	2097920
+29	48	free 2097728	
+29	49	alloc 15 8	2097688
+29	50	free 2097424	
+29	51	alloc 100 64	2097728
+29	52	alloc 256 1	2097424
+29	53	free 2097424	
+29	54	free 2097688	
+29	55	alloc 17 64	2097856
+29	56	free 2097152	
+29	57	alloc 84 1	2097936
+29	58	alloc 12 8	2097832
+29	59	free 2097169	
+29	60	alloc 255 8	2097152
+30	0	create 4096 0 16 16	
+30	1	alloc 16 8	0
+30	2	alloc 100 1	16
+30	3	alloc 15 1	116
+30	4	free 16	
+30	5	free 0	
+30	6	alloc 256 4096	None
+30	7	free 116	
+30	8	alloc 1 8	0
+30	9	free 0	
+30	10	alloc 4096 1	0
+30	11	alloc 96 64	None
+30	12	free 0	
+30	13	alloc 257 8	0
+30	14	alloc 100 64	320
+30	15	alloc 1000 4096	None
+30	16	alloc 1 8	264
+30	17	alloc 16 1	280
+30	18	alloc 256 1	420
+30	19	alloc 1 8	296
+30	20	free 420	
+30	21	free 264	
+30	22	alloc 255 256	512
+30	23	alloc 17 8	424
+30	24	free 320	
+30	25	alloc 4096 256	None
+30	26	free 280	
+30	27	alloc 16 1	257
+30	28	alloc 256 1	767
+30	29	alloc 1000 4096	None
+30	30	alloc 358 256	1024
+30	31	free 296	
+30	32	free 257	
+30	33	free 767	
+30	34	free 424	
+30	35	free 1024	
+30	36	alloc 256 4096	None
+30	37	free 512	
+30	38	alloc 100 256	512
+30	39	alloc 1000 1	612
+30	40	free 0	
+30	41	alloc 255 8	0
+30	42	alloc 16 4096	None
+30	43	alloc 15 1	255
+30	44	free 612	
+30	45	alloc 257 1	612
+30	46	free 512	
+30	47	alloc 256 64	320
+30	48	free 320	
+30	49	free 255	
+30	50	alloc 15 64	256
+30	51	free 612	
+30	52	alloc 256 64	320
+30	53	alloc 17 1	272
+30	54	free 272	
+30	55	alloc 100 64	576
+30	56	alloc 256 1	676
+30	57	alloc 15 64	960
+30	58	alloc 1 1	932
+30	59	free 932	
+30	60	free 256	
+31	0	create 0 2097152 256 32	
+31	1	alloc 1 8	None
+31	2	alloc 1 1	None
+31	3	alloc 16 256	None
+31	4	alloc 256 8	None
+31	5	alloc 1 64	None
+31	6	alloc 1000 256	None
+31	7	alloc 4096 1	None
+31	8	alloc 1 1	None
+31	9	alloc 1 4096	None
+31	10	alloc 1 1	None
+31	11	alloc 1 8	None
+31	12	alloc 4096 4096	None
+31	13	alloc 100 1	None
+31	14	alloc 256 8	None
+31	15	alloc 256 4096	None
+31	16	alloc 1 256	None
+31	17	alloc 100 256	None
+31	18	alloc 4096 64	None
+31	19	alloc 1 8	None
+31	20	alloc 1 64	None
+31	21	alloc 17 1	None
+31	22	alloc 1000 8	None
+31	23	alloc 1000 4096	None
+31	24	alloc 16 8	None
+31	25	alloc 4096 1	None
+31	26	alloc 1000 1	None
+31	27	alloc 100 64	None
+31	28	alloc 257 256	None
+31	29	alloc 16 1	None
+31	30	alloc 256 8	None
+31	31	alloc 4096 8	None
+31	32	alloc 256 4096	None
+31	33	alloc 1 1	None
+31	34	alloc 17 64	None
+31	35	alloc 256 64	None
+31	36	alloc 15 1	None
+31	37	alloc 1 1	None
+31	38	alloc 17 64	None
+31	39	alloc 1000 1	None
+31	40	alloc 1 1	None
+31	41	alloc 4096 256	None
+31	42	alloc 255 8	None
+31	43	alloc 17 1	None
+31	44	alloc 16 1	None
+31	45	alloc 1 1	None
+31	46	alloc 100 1	None
+31	47	alloc 256 256	None
+31	48	alloc 17 8	None
+31	49	alloc 256 64	None
+31	50	alloc 1 1	None
+31	51	alloc 1 1	None
+31	52	alloc 1 1	None
+31	53	alloc 1000 8	None
+31	54	alloc 16 64	None
+31	55	alloc 16 64	None
+31	56	alloc 257 4096	None
+31	57	alloc 257 1	None
+31	58	alloc 100 1	None
+31	59	alloc 17 64	None
+31	60	alloc 17 256	None
+32	0	create 4096 0 16 1	
+32	1	alloc 100 256	0
+32	2	alloc 257 8	104
+32	3	alloc 1000 256	512
+32	4	alloc 1 1	361
+32	5	free 104	
+32	6	free 361	
+32	7	free 512	
+32	8	alloc 4096 8	None
+32	9	free 0	
+32	10	alloc 256 1	0
+32	11	alloc 256 64	256
+32	12	alloc 255 256	512
+32	13	alloc 386 256	768
+32	14	alloc 255 4096	None
+32	15	free 768	
+32	16	alloc 17 1	767
+32	17	alloc 100 256	1024
+32	18	free 256	
+32	19	alloc 1 8	784
+32	20	free 1024	
+32	21	free 0	
+32	22	free 512	
+32	23	free 784	
+32	24	alloc 4096 64	None
+32	25	alloc 436 1	0
+32	26	free 0	
+32	27	free 767	
+32	28	alloc 255 1	0
+32	29	alloc 216 1	255
+32	30	alloc 17 1	471
+32	31	alloc 257 4096	None
+32	32	free 0	
+32	33	free 255	
+32	34	free 471	
+32	35	alloc 17 8	0
+32	36	alloc 93 256	256
+32	37	alloc 15 1	17
+32	38	alloc 15 8	40
+32	39	alloc 257 4096	None
+32	40	alloc 16 4096	None
+32	41	free 17	
+32	42	alloc 16 4096	None
+32	43	alloc 17 64	64
+32	44	free 256	
+32	45	alloc 1000 8	88
+32	46	alloc 1 1	17
+32	47	free 64	
+32	48	free 0	
+32	49	free 40	
+32	50	free 88	
+32	51	free 17	
+32	52	alloc 1000 1	0
+32	53	alloc 257 64	1024
+32	54	free 0	
+32	55	alloc 4096 8	None
+32	56	free 1024	
+32	57	alloc 1 256	0
+32	58	free 0	
+32	59	alloc 16 1	0
+32	60	alloc 1 256	256
+33	0	create 65536 1000 64 8	
+33	1	alloc 4096 64	1000
+33	2	alloc 1000 1	5096
+33	3	free 1000	
+33	4	alloc 100 64	1000
+33	5	alloc 5480 8	6096
+33	6	alloc 257 1	1100
+33	7	free 1100	
+33	8	free 6096	
+33	9	alloc 4096 256	6120
+33	10	free 6120	
+33	11	alloc 3988 8	6096
+33	12	alloc 257 1	1100
+33	13	free 5096	
+33	14	alloc 16 1	1357
+33	15	free 1357	
+33	16	free 1100	
+33	17	alloc 1 1	1100
+33	18	alloc 257 4096	5096
+33	19	alloc 17 8	5360
+33	20	free 6096	
+33	21	free 1100	
+33	22	free 1000	
+33	23	free 5360	
+33	24	alloc 100 1	1000
+33	25	alloc 100 1	1100
+33	26	alloc 1 1	1200
+33	27	free 1200	
+33	28	alloc 1 1	1200
+33	29	alloc 15 8	1264
+33	30	free 5096	
+33	31	free 1200	
+33	32	free 1100	
+33	33	free 1000	
+33	34	alloc 257 4096	5096
+33	35	free 1264	
+33	36	alloc 4096 8	5360
+33	37	alloc 100 4096	13288
+33	38	free 5360	
+33	39	alloc 4096 8	5360
+33	40	alloc 15 1	9456
+33	41	alloc 4096 64	13416
+33	42	alloc 1 64	9576
+33	43	alloc 6784 64	17512
+33	44	alloc 100 64	9640
+33	45	free 9576	
+33	46	alloc 16 8	9520
+33	47	free 17512	
+33	48	alloc 15 64	9768
+33	49	free 13416	
+33	50	alloc 100 8	9832
+33	51	alloc 15 256	9960
+33	52	alloc 1 64	10024
+33	53	alloc 100 1	10088
+33	54	alloc 4096 256	13544
+33	55	free 10088	
+33	56	alloc 5144 256	17640
+33	57	free 9832	
+33	58	alloc 1 4096	25576
+33	59	free 5096	
+33	60	free 9768	
+34	0	create 65536 0 256 32	
+34	1	alloc 256 1	0
+34	2	free 0	
+34	3	alloc 255 1	0
+34	4	alloc 256 64	256
+34	5	alloc 257 256	512
+34	6	free 0	
+34	7	alloc 256 4096	4096
+34	8	alloc 1 1	0
+34	9	alloc 256 8	776
+34	10	alloc 1 4096	8192
+34	11	free 776	
+34	12	free 512	
+34	13	alloc 17 1	512
+34	14	alloc 255 4096	12288
+34	15	alloc 255 1	768
+34	16	alloc 16 256	1024
+34	17	alloc 16 1	1280
+34	18	alloc 255 1	1536
+34	19	free 0	
+34	20	free 512	
+34	21	alloc 17 8	1792
+34	22	free 768	
+34	23	alloc 257 1	512
+34	24	alloc 1 256	2048
+34	25	free 1024	
+34	26	alloc 1 1	0
+34	27	alloc 100 256	2304
+34	28	alloc 257 256	2560
+34	29	alloc 4096 1	12544
+34	30	free 1280	
+34	31	free 256	
+34	32	free 1536	
+34	33	alloc 256 256	1024
+34	34	free 12544	
+34	35	free 1792	
+34	36	alloc 2513 256	4352
+34	37	alloc 256 8	1280
+34	38	free 4096	
+34	39	alloc 7888 8	12544
+34	40	alloc 4096 1	20432
+34	41	free 1280	
+34	42	alloc 15 4096	24576
+34	43	free 4352	
+34	44	alloc 1000 256	8448
+34	45	free 12288	
+34	46	free 20432	
+34	47	alloc 16 256	1280
+34	48	alloc 1 1	256
+34	49	alloc 257 1	1536
+34	50	alloc 257 8	9448
+34	51	alloc 100 1	9705
+34	52	free 2560	
+34	53	free 2048	
+34	54	alloc 4096 8	2560
+34	55	free 1536	
+34	56	free 0	
+34	57	alloc 1000 4096	28672
+34	58	alloc 4096 1	20432
+34	59	alloc 1000 1	6656
+34	60	free 12544	
+35	0	create 92699 0 32 32	
+35	1	alloc 1000 8	0
+35	2	alloc 100 8	1000
+35	3	free 1000	
+35	4	alloc 257 64	1024
+35	5	free 1024	
+35	6	alloc 1270 1	1000
+35	7	free 1000	
+35	8	alloc 4096 256	1024
+35	9	alloc 5300 1	5120
+35	10	alloc 100 8	10424
+35	11	free 10424	
+35	12	alloc 256 256	10496
+35	13	free 0	
+35	14	alloc 255 1	0
+35	15	alloc 15 1	10420
+35	16	free 0	
+35	17	free 10420	
+35	18	alloc 4096 8	10752
+35	19	alloc 17 8	10424
+35	20	alloc 100 64	0
+35	21	alloc 16 4096	16384
+35	22	alloc 1 256	256
+35	23	alloc 1 1	10456
+35	24	alloc 255 4096	20480
+35	25	free 10752	
+35	26	alloc 17 256	512
+35	27	free 256	
+35	28	free 20480	
+35	29	free 10496	
+35	30	free 1024	
+35	31	alloc 1000 1	544
+35	32	alloc 4096 64	10496
+35	33	alloc 15 8	104
+35	34	free 104	
+35	35	alloc 1849 1	1544
+35	36	alloc 4096 1	16416
+35	37	alloc 17 1	100
+35	38	alloc 257 1	132
+35	39	alloc 1 1	389
+35	40	alloc 256 1	3393
+35	41	free 1544	
+35	42	alloc 257 1	3649
+35	43	free 3649	
+35	44	alloc 1000 1	3649
+35	45	alloc 15 4096	24576
+35	46	free 3649	
+35	47	free 16416	
+35	48	free 544	
+35	49	alloc 257 256	3840
+35	50	alloc 16 8	424
+35	51	free 10496	
+35	52	alloc 257 1	4097
+35	53	alloc 1000 1	544
+35	54	free 100	
+35	55	free 544	
+35	56	alloc 17 8	456
+35	57	alloc 1 4096	12288
+35	58	free 4097	
+35	59	free 424	
+35	60	free 12288	
+36	0	create 1024 0 32 32	
+36	1	alloc 100 1	0
+36	2	alloc 16 8	104
+36	3	alloc 1 256	256
+36	4	free 104	
+36	5	free 256	
+36	6	free 0	
+36	7	alloc 16 256	0
+36	8	alloc 99 8	32
+36	9	free 32	
+36	10	alloc 1 1	32
+36	11	alloc 255 1	64
+36	12	free 0	
+36	13	free 32	
+36	14	alloc 16 1	0
+36	15	free 0	
+36	16	free 64	
+36	17	alloc 1000 1	0
+36	18	alloc 256 64	None
+36	19	free 0	
+36	20	alloc 256 4096	None
+36	21	alloc 1000 4096	None
+36	22	alloc 16 8	0
+36	23	alloc 4096 1	None
+36	24	alloc 16 1	32
+36	25	alloc 4096 4096	None
+36	26	free 0	
+36	27	free 32	
+36	28	alloc 63 4096	None
+36	29	alloc 100 4096	None
+36	30	alloc 42 4096	None
+36	31	alloc 1 8	0
+36	32	free 0	
+36	33	alloc 1 8	0
+36	34	free 0	
+36	35	alloc 1000 8	0
+36	36	alloc 128 256	None
+36	37	free 0	
+36	38	alloc 255 256	0
+36	39	alloc 15 4096	None
+36	40	alloc 255 1	255
+36	41	alloc 17 256	512
+36	42	free 512	
+36	43	alloc 1 64	512
+36	44	free 512	
+36	45	free 0	
+36	46	alloc 4096 1	None
+36	47	alloc 255 1	510
+36	48	alloc 16 8	0
+36	49	alloc 1000 1	None
+36	50	alloc 255 256	None
+36	51	free 255	
+36	52	alloc 20 8	768
+36	53	free 510	
+36	54	alloc 1 64	832
+36	55	free 832	
+36	56	alloc 4 8	800
+36	57	alloc 100 1	832
+36	58	alloc 4096 8	None
+36	59	free 768	
+36	60	free 800	
+37	0	create 1024 0 16 16	
+37	1	alloc 100 8	0
+37	2	free 0	
+37	3	alloc 17 64	0
+37	4	alloc 17 256	256
+37	5	alloc 1000 64	None
+37	6	free 0	
+37	7	free 256	
+37	8	alloc 256 1	0
+37	9	alloc 1000 1	None
+37	10	free 0	
+37	11	alloc 1000 256	None
+37	12	alloc 256 4096	None
+37	13	alloc 100 1	0
+37	14	alloc 100 64	128
+37	15	free 0	
+37	16	free 128	
+37	17	alloc 256 1	0
+37	18	alloc 6 64	256
+37	19	free 256	
+37	20	alloc 256 1	256
+37	21	alloc 257 64	512
+37	22	alloc 15 256	None
+37	23	alloc 45 1	769
+37	24	alloc 1 1	814
+37	25	alloc 1 4096	None
+37	26	free 512	
+37	27	free 256	
+37	28	alloc 257 1	256
+37	29	free 256	
+37	30	free 814	
+37	31	free 769	
+37	32	free 0	
+37	33	alloc 1000 8	0
+37	34	alloc 15 1	1000
+37	35	alloc 256 256	None
+37	36	alloc 100 64	None
+37	37	free 1000	
+37	38	alloc 256 64	None
+37	39	free 0	
+37	40	alloc 15 1	0
+37	41	alloc 4096 8	None
+37	42	free 0	
+37	43	alloc 256 4096	None
+37	44	alloc 17 256	0
+37	45	alloc 4096 8	None
+37	46	alloc 4096 1	None
+37	47	free 0	
+37	48	alloc 4096 4096	None
+37	49	alloc 15 1	0
+37	50	free 0	
+37	51	alloc 17 4096	None
+37	52	alloc 16 1	0
+37	53	alloc 4096 1	None
+37	54	free 0	
+37	55	alloc 100 1	0
+37	56	free 0	
+37	57	alloc 1000 1	0
+37	58	free 0	
+37	59	alloc 100 64	0
+37	60	alloc 4096 1	None
+38	0	create 4096 0 256 32	
+38	1	alloc 15 1	0
+38	2	alloc 16 1	256
+38	3	alloc 256 64	512
+38	4	free 0	
+38	5	free 256	
+38	6	free 512	
+38	7	alloc 16 8	0
+38	8	free 0	
+38	9	alloc 257 256	0
+38	10	free 0	
+38	11	alloc 100 4096	None
+38	12	alloc 100 256	0
+38	13	alloc 255 256	256
+38	14	alloc 1000 4096	None
+38	15	alloc 17 1	512
+38	16	alloc 16 256	768
+38	17	alloc 255 1	1024
+38	18	alloc 100 4096	None
+38	19	alloc 60 1	1280
+38	20	alloc 1 256	1536
+38	21	free 1536	
+38	22	free 1280	
+38	23	free 256	
+38	24	alloc 1000 64	1280
+38	25	alloc 12 8	2280
+38	26	alloc 1000 1	2536
+38	27	alloc 247 1	256
+38	28	alloc 16 1	3536
+38	29	alloc 100 1	3792
+38	30	free 256	
+38	31	free 3536	
+38	32	alloc 364 1	None
+38	33	free 2280	
+38	34	free 0	
+38	35	free 768	
+38	36	alloc 1000 64	None
+38	37	alloc 17 64	0
+38	38	free 3792	
+38	39	alloc 257 256	3584
+38	40	alloc 17 1	2280
+38	41	alloc 15 256	None
+38	42	alloc 16 4096	None
+38	43	free 2280	
+38	44	alloc 17 1	768
+38	45	alloc 1 64	None
+38	46	free 1280	
+38	47	alloc 1 256	1280
+38	48	free 2536	
+38	49	free 1280	
+38	50	alloc 16 4096	None
+38	51	alloc 138 4096	None
+38	52	alloc 256 1	256
+38	53	alloc 15 1	1280
+38	54	free 768	
+38	55	free 1280	
+38	56	alloc 4096 64	None
+38	57	free 0	
+38	58	free 512	
+38	59	alloc 1 4096	None
+38	60	alloc 1000 1	1280
+39	0	create 65536 1000 16 16	
+39	1	alloc 257 1	1000
+39	2	alloc 1 1	1257
+39	3	free 1000	
+39	4	alloc 2004 1	1273
+39	5	alloc 1000 1	3277
+39	6	free 3277	
+39	7	alloc 4096 8	3280
+39	8	alloc 100 4096	9192
+39	9	alloc 17 64	1000
+39	10	alloc 16 1	1017
+39	11	alloc 257 8	7376
+39	12	alloc 17 1	1033
+39	13	alloc 16 1	1050
+39	14	alloc 1000 1	7633
+39	15	alloc 256 1	8633
+39	16	alloc 100 1	1066
+39	17	alloc 1000 1	9292
+39	18	alloc 1 4096	13288
+39	19	alloc 16 256	8936
+39	20	free 1273	
+39	21	free 1066	
+39	22	free 8633	
+39	23	free 1257	
+39	24	free 13288	
+39	25	free 9292	
+39	26	free 1050	
+39	27	alloc 255 8	8640
+39	28	alloc 1000 256	1256
+39	29	free 8640	
+39	30	alloc 100 256	2280
+39	31	alloc 100 1	1050
+39	32	free 1033	
+39	33	free 2280	
+39	34	alloc 1 64	1192
+39	35	alloc 255 1	8633
+39	36	alloc 100 4096	13288
+39	37	alloc 256 8	2256
+39	38	alloc 257 8	2512
+39	39	free 2256	
+39	40	alloc 1000 8	9296
+39	41	free 1017	
+39	42	alloc 1 256	2792
+39	43	free 8936	
+39	44	free 2792	
+39	45	alloc 100 4096	17384
+39	46	alloc 100 1	2256
+39	47	alloc 256 8	8888
+39	48	free 1256	
+39	49	alloc 1 1	1017
+39	50	alloc 17 4096	21480
+39	51	alloc 4096 8	21504
+39	52	alloc 1000 256	10472
+39	53	alloc 3638 1	13388
+39	54	alloc 15 1	1033
+39	55	alloc 1 8	1152
+39	56	alloc 16 256	17128
+39	57	alloc 7640 4096	29672
+39	58	alloc 1 64	17064
+39	59	alloc 1 1	1168
+39	60	free 2256	
