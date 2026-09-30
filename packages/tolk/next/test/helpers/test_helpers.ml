@@ -275,7 +275,7 @@ let rec enter outer s =
 
 let seen_on_another_domain v = Domain.join (Domain.spawn (fun () -> value v))
 
-let seen_while_another_domain_binds () =
+let unseen_while_another_domain_binds () =
   let bound = Atomic.make false and released = Atomic.make false in
   let binder =
     Domain.spawn (fun () ->
@@ -293,8 +293,7 @@ let seen_while_another_domain_binds () =
   let seen = value level in
   Atomic.set released true;
   Domain.join binder;
-  equal int 7 seen;
-  equal int 0 (value level)
+  equal int 0 seen
 
 let exited_contexts_release_values () =
   let weak = Weak.create 1 in
@@ -358,13 +357,12 @@ let contexts =
       prop "binds within its extent and restores after it, returned or raised"
         (Gen.list ~size:(Gen.int_range 1 3) (gen_scope 3))
         (List.iter (enter 0));
-      test "binds for every domain while it runs" (fun () ->
+      test "binds for the domains spawned while it runs" (fun () ->
           context
             [ B (level, 7) ]
             (fun () -> equal int 7 (seen_on_another_domain level)));
-      test "binds for the calling domain when run on another"
-        seen_while_another_domain_binds;
-      test "restores for every domain when run on another" (fun () ->
+      test "is not seen by the other domains" unseen_while_another_domain_binds;
+      test "binds and restores on the domain that runs it" (fun () ->
           equal int 7
             (Domain.join
                (Domain.spawn (fun () ->

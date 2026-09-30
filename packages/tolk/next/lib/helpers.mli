@@ -48,8 +48,9 @@ val getenv_string : string -> string -> string
 (** Settings.
 
     A setting has an initial value, read from its environment variable when it
-    is declared, and a current value shared by the whole program: the innermost
-    {!context} override, or the initial value. *)
+    is declared, and a current value on each domain: the innermost {!context}
+    override made on the domain, or else the value it had on the domain that
+    spawned it, when it spawned it, or else the initial value. *)
 module Context_var : sig
   type 'a t
   (** The type for settings of type ['a]. *)
@@ -78,7 +79,7 @@ module Context_var : sig
   (** [key v] is the name of [v]'s environment variable. *)
 
   val value : 'a t -> 'a
-  (** [value v] is [v]'s current value. *)
+  (** [value v] is [v]'s current value on the calling domain. *)
 end
 
 (** The type for settings bound to values. *)
@@ -91,9 +92,9 @@ val context : binding list -> (unit -> 'a) -> 'a
     its bound value; when a setting is bound twice, the later binding wins. Each
     setting gets its previous value back when [f] returns or raises.
 
-    The overrides are seen by everything that runs meanwhile, on every domain.
-    Overriding a setting from two domains at once is a programming error: the
-    domains see each other's values, and restoring them loses one. *)
+    The overrides are seen by what runs meanwhile on the calling domain, and by
+    the domains it spawns meanwhile, which start with its values. Other domains
+    do not see them, so domains override settings independently. *)
 
 (** {2:targets Compilation targets} *)
 

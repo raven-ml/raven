@@ -125,11 +125,21 @@ the Exclusions of `README.md`.
 
 ## D5. Compilation workers are domains
 
-- **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers).
-- **tolk.next:** waiting for L7.
-- **Differs:** compilation runs on domains, not processes.
+- **tinygrad:** `engine/worker.py:1-2` (`multiprocessing` spawn workers);
+  `helpers.py:169-186` (`Context` and `ContextVar`, one value per process).
+- **tolk.next:** waiting for L7; `lib/helpers.ml:106` (`Context_var`) and
+  `:133` (`context`).
+- **Differs:** compilation runs on domains, not processes. A setting holds one
+  value per domain, where tinygrad holds one per process: a domain starts with
+  the values of the domain that spawns it, and a `context` override is seen by
+  its own domain only. A tinygrad worker process has its own settings, so a
+  `Context` entered while it compiles (the construction check's `CHECK_OOB=0`)
+  leaves the others alone; process-wide settings shared by compiling domains
+  would let one domain's override and restore clobber another's.
 - **Reason:** (a).
-- **Pinned by:** waiting for L7.
+- **Pinned by:** the `Helpers` suite: `context › is not seen by the other
+  domains` and `context › binds for the domains spawned while it runs`; the
+  rest waits for L7.
 
 ## D6. Devices are named, never parsed
 

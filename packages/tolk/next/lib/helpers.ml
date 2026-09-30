@@ -102,7 +102,8 @@ let getenv_string = memoize Result.ok
 (* Settings *)
 
 module Context_var = struct
-  type 'a t = { key : string; mutable value : 'a }
+  (* A domain starts with the values of the domain that spawns it. *)
+  type 'a t = { key : string; value : 'a Domain.DLS.key }
 
   module Keys = Set.Make (String)
 
@@ -115,15 +116,16 @@ module Context_var = struct
     if not (Atomic.compare_and_set declared keys (Keys.add key keys)) then
       declare key
 
-  let v key value =
+  let v key x =
     declare key;
-    { key; value }
+    { key; value = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> x) }
 
   let int key default = v key (getenv key default)
   let bool key default = v key (getenv key (Bool.to_int default) <> 0)
   let string key default = v key (getenv_string key default)
   let key v = v.key
-  let value v = v.value
+  let value v = Domain.DLS.get v.value
+  let set v x = Domain.DLS.set v.value x
 end
 
 type binding = B : 'a Context_var.t * 'a -> binding
@@ -131,13 +133,11 @@ type binding = B : 'a Context_var.t * 'a -> binding
 let context bindings f =
   let swap saved (B (v, x)) =
     let previous = Context_var.value v in
-    v.Context_var.value <- x;
+    Context_var.set v x;
     B (v, previous) :: saved
   in
   let saved = List.fold_left swap [] bindings in
-  let restore () =
-    List.iter (fun (B (v, x)) -> v.Context_var.value <- x) saved
-  in
+  let restore () = List.iter (fun (B (v, x)) -> Context_var.set v x) saved in
   Fun.protect ~finally:restore f
 
 module Target = struct
