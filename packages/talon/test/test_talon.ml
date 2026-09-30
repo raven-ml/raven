@@ -472,9 +472,9 @@ let test_placed_values () =
   let tensor =
     Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
   in
-  let reads = !Placed.reads in
+  let read = Placed.bytes_read () in
   let df = of_nx (Placed.place tensor) in
-  check_int "one read" (reads + 1) !Placed.reads;
+  check_int "one read" (read + Nx.nbytes tensor) (Placed.bytes_read ());
   let col = get_column_exn df "col1" in
   match Col.to_tensor Nx.float32 col with
   | None -> fail "a float32 column"
@@ -482,11 +482,12 @@ let test_placed_values () =
       check_bool "on the host" true
         (Nx.Placement.equal Nx.Placement.host (Nx.placement t));
       check_bool "its elements" true (Nx.to_array t = [| 2.0; 5.0 |]);
-      let reads = !Placed.reads in
-      let col =
-        Col.of_tensor (Placed.place (Nx.create Nx.int32 [| 2 |] [| 7l; 8l |]))
-      in
-      check_int "a column: one read" (reads + 1) !Placed.reads;
+      let read = Placed.bytes_read () in
+      let ints = Nx.create Nx.int32 [| 2 |] [| 7l; 8l |] in
+      let col = Col.of_tensor (Placed.place ints) in
+      check_int "a column: one read"
+        (read + Nx.nbytes ints)
+        (Placed.bytes_read ());
       check_bool "a column on the host" true
         (match Col.to_tensor Nx.int32 col with
         | Some t -> Nx.Placement.equal Nx.Placement.host (Nx.placement t)
