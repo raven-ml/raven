@@ -64,4 +64,36 @@ let cases =
         ];
     ]
 
-let () = exit (run "Golden" [ texts; tables; cases ])
+(* Graphs: a golden's storage has tinygrad's slots. chained_functions calls one
+   body three times, each with call-local storage, which its schedule makes into
+   buffers of fresh slots. *)
+
+let slots u =
+  let open Tolk_next in
+  List.filter_map
+    (fun n -> match Ops.arg n with Ops.Param p -> Some p.slot | _ -> None)
+    (Ops.toposort u)
+
+let schedules_apart () =
+  let open Tolk_next in
+  let big = Golden.sink "../schedule/schedule/chained_functions.golden" in
+  let linear, _ = Schedule.create_linear_with_vars big in
+  let held = Ops.backward_slice_with_self big in
+  let made =
+    List.concat_map slots
+      (List.filter
+         (fun n -> Ops.op n = Buffer && not (Ops.Nodes.mem n held))
+         (Ops.toposort linear))
+  in
+  not_equal (list int) [] made;
+  equal (list int) [] (List.filter (fun k -> List.mem k (slots big)) made)
+
+let graphs =
+  group "sink"
+    [
+      test
+        "a schedule of a golden makes storage in slots the golden does not name"
+        schedules_apart;
+    ]
+
+let () = exit (run "Golden" [ texts; tables; cases; graphs ])

@@ -28,6 +28,7 @@
  (package tolk)
  (libraries windtrap tolk.next zarith tolk_next_test)
  (deps
-  (glob_files *.golden))
+  (glob_files *.golden)
+  ../schedule/schedule/chained_functions.golden)
  (action
   (run %{test} --exclude-tag slow)))
