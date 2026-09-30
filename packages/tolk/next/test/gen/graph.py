@@ -77,7 +77,7 @@ def uops(x):
 # Graphs
 
 def toposort(sink):
-    """The nodes under `sink`, each after its sources and the UOps of its arg and tag.
+    """The nodes under `sink`, each after its sources and the UOps of its arg.
 
     Sources come first, in order, so that a graph whose args hold no UOp is in
     `sink.toposort()` order."""
@@ -89,7 +89,7 @@ def toposort(sink):
             order[node] = len(order)
             continue
         stack.append((node, True))
-        stack.extend((s, False) for s in reversed([*node.src, *uops(node.arg), *uops(node.tag)]))
+        stack.extend((s, False) for s in reversed([*node.src, *uops(node.arg)]))
     return order
 
 

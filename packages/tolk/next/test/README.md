@@ -131,8 +131,8 @@ topological order:
 ```
 
 - **index** is the line's position, from 0. A node comes after its sources
-  and after the nodes that its arg and tag hold. Sources are visited first, in
-  order, so a graph whose args hold no node is in `UOp.toposort` order.
+  and after the nodes that its arg holds. Sources are visited first, in order,
+  so a graph whose args hold no node is in `UOp.toposort` order.
 - **op** prints as `Op.pp` does, and **dtype** as `Dtype.pp` does. A node's
   dtype follows from its op, sources and arg; it is written so that a reader
   can check that it derives the same one.
@@ -169,7 +169,10 @@ differs.
 These are the args tinygrad's operations take. The list is the union of a
 reading of `uop/ops.py`, `schedule/*`, `codegen/*` and
 `runtime/support/hcq2.py` with a count of every arg built while tinygrad's
-`test/null` suite runs.
+tests run: all of `test/null` but `test_disk_cache`, and `test_ops`,
+`test_tensor`, `test_getitem_ops` and `test_symbolic_ops` of `test/runtime` on
+the CPU. The writer wrote every sink, linear and program those runs built,
+about 330,000 graphs, and refused none.
 
 | Op | Arg |
 |---|---|
@@ -201,7 +204,7 @@ The records, with their fields in order:
 
 | Record | Fields |
 |---|---|
-| `ParamArg` | `slot` integer, `dtype`, `size` integer or none, `vmin_vmax` a pair of constants or of nodes, `multiple_of` integer, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `image` (always none: images are excluded), `bind_on_realize` boolean, `val` integer; `buffer` is runtime state and never written |
+| `ParamArg` | `slot` integer, `dtype`, `size` integer or none, `vmin_vmax` a pair of constants, `multiple_of` integer, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `image` (always none: images are excluded), `bind_on_realize` boolean, `val` integer; `buffer` is runtime state and never written |
 | `KernelInfo` | `name` string, `applied_opts` and `opts_to_apply` tuples of `Opt` (the second may be none), `estimates` `Estimates` or none, `beam` integer |
 | `Opt` | `op` `OptOps`, `axis` integer or none, `arg` an integer, a tuple, or none |
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
@@ -212,8 +215,9 @@ The records, with their fields in order:
 | `HCQInfo` | `device` a tuple of strings, `kernels` a tuple of `(<devices>, <name>, <estimates>, <stamp slots>, <profile key>, <input slots>, (<outs>, <ins>))`, `estimates` `Estimates`, `nargs` and `table` integers, `inputs` a tuple of `(<node>, <integer>, <string>)`, `slots` a tuple of `(<string>, <integer>)`, `host_deps` a tuple of string pairs, `written_bufs` a tuple of nodes, `skip_wait` boolean |
 
 A device is a string, or a tuple of strings for a sharded value. The
-enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. Tags are
-booleans, integers, strings or tuples. `PYLITERAL` and `REWRITE_ERROR` are
+enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
+boolean, an integer, a string, a data type, or a tuple of these, such as
+`(0, dtypes.int)`; it never holds a node. `PYLITERAL` and `REWRITE_ERROR` are
 excluded operations, and the arg kinds of the excluded ISA path (register
 records, integer instructions) are not part of the format.
 
