@@ -146,7 +146,9 @@ let bounds =
 
 (* A graph is built by steps, each an operation on nodes built before it,
    numbered from the leaves. Operations mix types freely, so that some nodes are
-   ill-typed; a step whose type cannot be derived is left out. *)
+   ill-typed; a step whose type cannot be derived is left out. Half the graphs
+   are built from casts and stacks alone, the forms of a kernel graph's
+   arguments, which the other operations never are. *)
 
 let leaves () =
   Dtype.
@@ -163,16 +165,19 @@ let leaves () =
 
 let unary = Op.[ Neg; Sin; Sqrt; Trunc ]
 let binary = Op.[ Add; Mul; Max; Cmplt; Cmpne; And; Xor; Shl; Cdiv; Floormod ]
+let where_step = List.length unary + List.length binary
+let cast_step = where_step + 1
+let stack_step = where_step + 2
 
 let step pool (k, a, b, c) =
   let nth j = List.nth pool (j mod List.length pool) in
-  let n_unary = List.length unary and n_binary = List.length binary in
   let src, op, arg =
-    if k < n_unary then ([ nth a ], List.nth unary k, None)
-    else if k < n_unary + n_binary then
-      ([ nth a; nth b ], List.nth binary (k - n_unary), None)
-    else if k = n_unary + n_binary then ([ nth a; nth b; nth c ], Op.Where, None)
-    else ([ nth a ], Op.Cast, Some (Ops.Dtype Int32))
+    if k < List.length unary then ([ nth a ], List.nth unary k, None)
+    else if k < where_step then
+      ([ nth a; nth b ], List.nth binary (k - List.length unary), None)
+    else if k = where_step then ([ nth a; nth b; nth c ], Op.Where, None)
+    else if k = cast_step then ([ nth a ], Op.Cast, Some (Ops.Dtype Int32))
+    else ([ nth a; nth b ], Op.Stack, None)
   in
   match Ops.v ~src ?arg op with
   | u -> pool @ [ u ]
@@ -183,11 +188,20 @@ let build steps =
   Ops.sink (List.filteri (fun j _ -> j >= List.length (leaves ())) pool)
 
 let graphs =
-  let op = Gen.int_range 0 (List.length unary + List.length binary + 1) in
+  let steps first =
+    Gen.(
+      list ~size:(int_range 1 6) (quad (int_range first stack_step) nat nat nat))
+  in
   Gen.(
     with_pp
       (fun ppf steps -> Ops.pp ppf (build steps))
-      (list ~size:(int_range 1 6) (quad op nat nat nat)))
+      (frequency [ (1, steps 0); (1, steps cast_step) ]))
+
+(* Graphs that every seed checks first: the cast of the constant 3, which each
+   specification accepts, and the sum of an int32 and a float32, which each
+   rejects. *)
+let decided_by_every_spec =
+  [ [ (cast_step, 4, 0, 0) ]; [ (List.length unary, 0, 1, 0) ] ]
 
 (* type_verify *)
 
@@ -210,7 +224,7 @@ let type_verify =
       prop
         "fails at the first node, sources first, that the specification does \
          not accept"
-        graphs (fun steps ->
+        ~examples:decided_by_every_spec graphs (fun steps ->
           let u = build steps in
           List.iter
             (fun (name, spec) ->
