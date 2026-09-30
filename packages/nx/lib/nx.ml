@@ -175,6 +175,18 @@ module Repr = struct
       | Consumed k -> invalid_arg (Nx_effect.why_consumed k)
 
     let placement (s : t) = s.placement
+    let borrow = Nx_effect.Cell.borrow
+    let release = Nx_effect.Cell.release
+    let upgrade = Nx_effect.Cell.upgrade
+    let consume s ~path = Nx_effect.Cell.consume s { path }
+    let finish = Nx_effect.Cell.finish
+    let pin = Nx_effect.Cell.pin
+    let unpin = Nx_effect.Cell.unpin
+
+    let live s =
+      match Nx_effect.Cell.state s with Live _ -> true | Consumed _ -> false
+
+    let pins (s : t) = Atomic.get s.bound
   end
 
   module Placed = struct

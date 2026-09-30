@@ -3847,6 +3847,56 @@ module Repr : sig
 
     val placement : t -> Placement.t
     (** [placement s] is where [s] lives. *)
+
+    (** {2:claims Claims}
+
+        A compiled call claims the storage its arguments reach. It borrows each
+        storage for reading, upgrades the borrow of each storage it consumes to
+        an exclusive claim, consumes it, and finishes. A program that binds a
+        storage pins it for as long as the program lives. Consumed storage is
+        retired once no call holds it and no program pins it. *)
+
+    val borrow : t -> unit
+    (** [borrow s] claims [s] for reading, beside other readers.
+
+        Raises [Invalid_argument] if a call holds [s] exclusively. *)
+
+    val release : t -> unit
+    (** [release s] ends a {!borrow} of [s].
+
+        Raises [Invalid_argument] if [s] has no borrow to end. *)
+
+    val upgrade : t -> unit
+    (** [upgrade s] turns the caller's borrow of [s] into an exclusive claim.
+
+        Raises [Invalid_argument] if another reader or call holds [s]. *)
+
+    val consume : t -> path:string -> unit
+    (** [consume s ~path] consumes [s] at [path], the consumed leaf's path in a
+        compiled call's arguments: every later read or use of a value over [s]
+        raises [Invalid_argument] naming [path], while shapes and dtypes stay
+        readable. Nothing unconsumes [s].
+
+        Raises [Invalid_argument] unless the caller holds [s] exclusively. *)
+
+    val finish : t -> bool
+    (** [finish s] turns the exclusive claim on [s] back into the caller's
+        borrow, which it then {!release}s. It is [true] iff [s] is consumed and
+        no program pins it: its buffers can be retired. *)
+
+    val pin : t -> unit
+    (** [pin s] records one more program that binds [s]. *)
+
+    val unpin : t -> bool
+    (** [unpin s] records one program fewer that binds [s]. It is [true] iff
+        that was the last, [s] is consumed and no call holds it exclusively: its
+        buffers can be retired. *)
+
+    val live : t -> bool
+    (** [live s] is [true] iff [s] was not consumed. *)
+
+    val pins : t -> int
+    (** [pins s] is the number of programs that bind [s]. *)
   end
 
   (** Placed values. *)

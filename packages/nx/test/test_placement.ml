@@ -814,6 +814,54 @@ let reads =
           equal values [| 1.; 2.; 3. |] (Nx.to_array c));
     ]
 
+(* Claims *)
+
+let claims =
+  let open Nx.Repr.Storage in
+  let fresh () =
+    match Nx.Repr.v (Nx.place on1 (iota [| 2; 3 |])) with
+    | Placed p -> Nx.Repr.Placed.storage p
+    | Host _ | Traced _ -> fail "expected a placed value"
+  in
+  group "claims"
+    [
+      test "readers share a storage, and a sole reader upgrades to consume it"
+        (fun () ->
+          let s = fresh () in
+          borrow s;
+          borrow s;
+          raises_invalid_arg (fun () -> upgrade s);
+          release s;
+          upgrade s;
+          raises_invalid_arg (fun () -> borrow s);
+          consume s ~path:"1.w";
+          is_false (live s);
+          is_true ~msg:"retired as the call finishes" (finish s);
+          release s;
+          raises_invalid_arg (fun () -> release s));
+      test "consuming needs the exclusive claim" (fun () ->
+          let s = fresh () in
+          raises_invalid_arg (fun () -> consume s ~path:"0");
+          borrow s;
+          raises_invalid_arg (fun () -> consume s ~path:"0");
+          release s;
+          is_true (live s));
+      test "a consumed storage that programs pin is retired by the last unpin"
+        (fun () ->
+          let s = fresh () in
+          pin s;
+          pin s;
+          equal int 2 (pins s);
+          borrow s;
+          upgrade s;
+          consume s ~path:"0";
+          is_false ~msg:"pinned as the call finishes" (finish s);
+          release s;
+          is_false ~msg:"one program left" (unpin s);
+          is_true ~msg:"the last program" (unpin s);
+          equal int 0 (pins s));
+    ]
+
 (* Identities *)
 
 type (_, _) Nx_effect.node += Identity_probe : ('a, 'b) Nx_effect.node
@@ -867,4 +915,12 @@ let identities =
 let () =
   exit
     (run "nx placement"
-       [ placements; place_tests; movements; results; reads; identities ])
+       [
+         placements;
+         place_tests;
+         movements;
+         results;
+         reads;
+         claims;
+         identities;
+       ])
