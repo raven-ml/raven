@@ -13,19 +13,18 @@ external call : nativeint -> int array -> int array -> unit = "tolk_null_call"
 
 (* Devices *)
 
-let names = [ "CPU:1"; "CPU:2"; "CPU:3" ]
-
+(* Run's test devices, whose queues this module runs. A queue that hangs fails
+   in ten seconds. *)
 let nx_devices =
   lazy
-    (List.map
-       (fun name ->
-         let d =
-           Nx_device.Driver.device ~name ~arch:"null" ~budget:max_int
-             (Host_visible { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
-         in
-         Nx_device.set_timeout d 10_000;
-         (name, d))
-       names)
+    (List.filter_map
+       (fun (name, d) ->
+         if name = "CPU" then None
+         else begin
+           Nx_device.set_timeout d 10_000;
+           Some (name, d)
+         end)
+       (Run.devices ()))
 
 let device name =
   match List.assoc_opt name (Lazy.force nx_devices) with

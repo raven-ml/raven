@@ -1,7 +1,8 @@
 (** The NULL device: test devices whose command queues run on the host.
 
-    The devices ["CPU:1"], ["CPU:2"] and ["CPU:3"] are devices of the host's
-    memory whose work signals by storing its value into its signal word. They
+    The devices ["CPU:1"], ["CPU:2"] and ["CPU:3"] are {!Run.devices}' test
+    devices of the host's memory, whose work signals by storing its value into
+    its signal word. They
     compile for the host's processor, and their queues are encoded with
     {!Null_queue}'s commands, with two changes that make them runnable: a copy
     carries its size in place of its event, and a queue is submitted by a call

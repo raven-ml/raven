@@ -15,7 +15,7 @@
  (foreign_stubs
   (language c)
   (names null_device_stubs))
- (libraries tolk.next tolk.next.engine tolk_next_test nx.device unix zarith))
+ (libraries tolk.next tolk.next.engine tolk_next_test nx.device nx.dtype unix zarith))
 
 (tests
  (names test_golden test_graph test_interpreter test_kernel_graphs test_tensors)

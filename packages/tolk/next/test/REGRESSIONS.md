@@ -2602,3 +2602,82 @@ with `HCQ_NUM_SDMA` set.
 | old: unit/engine/test_link.ml allocation_specs | command buffers uncached, volatile placeholders on the host | dropped here: the engine's allocation (`tolk.engine`'s link) |
 | old: unit/engine/test_link.ml initialization, cast_patches, addresses | blobs, words and addresses written at link | `H › patch and bufferize_cmdbuf`, `H › ccall, cstruct and cfield › a C structure holds each field…` |
 | old: unit/engine/test_link.ml input_links, preserve_runtime, host_call_replay | | `H › linking and running › a link serves any buffers bound to its inputs`, `H › patch and bufferize_cmdbuf › a word written at several offsets…` (two runs) |
+
+## Engine
+
+The suite is `Tolk_next_engine` (`engine/tolk_next_engine/`), written `EN`
+below. `EN › link and run › recorded` runs the Schedule suite's recorded
+programs end to end: each is scheduled, compiled for the devices it names
+(the host and test devices of the host's memory, `Run.devices`), linked with
+its storage bound to buffers of small integers, and run, and its storage then
+holds what its tensors compute (Tensors), with each variable at the value it
+runs with. One program of each kind of call runs by default, the rest are slow.
+`EN › link and run › a schedule runs on the buffers each run binds to its
+parameters` makes a program's buffers parameters of the compiled schedule and
+runs it on two sets of buffers.
+
+Kernels compile on the Worker's domains, and OCaml refuses `Unix.fork` in a
+process that has spawned one, so mutation testing runs with `PARALLEL=0` and
+leaves out `EN › runs › runs of one schedule from two domains each compute
+their own`. With the run lock removed, that test fails on each of three runs.
+Survivors, classified:
+- `sp.device == d && sp.name = name` as `||` in `measure`: a host profile of
+  one call holds one span;
+- `cold` as `not cold`: only NV invalidates its caches;
+- `Ops.op e = Op.After` as `<>` in the nodes `link` allocates: only a batch is
+  ordered after link patches.
+
+### tinygrad
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_links_serve_any_input | a linked schedule serves any input, whose address it does not keep | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` (contiguous, copy_view, shard_add) |
+| tinygrad: null/test_hcq2.py::TestHCQ2Link::test_eager_templates_compile_once | compiling a schedule again returns the compiled one | dropped here: compile_linear's result is Hcq2's; the engine keeps no cache of links, and rune keeps its programs by key |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | a copy out, a copy in and a copy out run in order | `EN › link and run › copies run in the order of their schedule` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_caches_hold_no_buffers | freeing the values frees the device memory | `EN › runs › a linked schedule holds its storage while it is reachable` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_has_no_rt_buffers | a jit's link owns its buffers, none from the one-shot ring | dropped: the engine has no ring; link allocates everything a schedule names (`EN › runs › a run of kernels allocates and loads nothing`) |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call, test_jit_symbolic | a captured jit's new inputs and bindings | the engine's half: `EN › link and run › a schedule runs on the buffers each run binds to its parameters`, `a schedule runs with each binding of its variables`; the jit is L8's |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_map_cpu_buffer_preserves_contents | mapping host memory for a device keeps its bytes | dropped: mapping is nx.device's (`Buffer.borrow`) |
+| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop, test_nested_loop_in_range, test_two_sequential_loops, test_loop_in_loop | do-while loops count to 10, 12, 25 and 12 | `EN › Program › loops ›` "wait_loop runs its loops to 10", "nested_loop …", "two_loops …", "loop_in_loop …", from the Linearizer's goldens |
+| tinygrad: runtime/test_wait_loop.py::TestWaitLoop::test_wait_loop_spec | the loop under `SPEC=2` | dropped: the specification is Spec's; the loop runs in `EN › Program › loops` |
+| tinygrad: runtime/test_wait_loop.py::TestVolatileLoops::test_async_wait_ext | a kernel spins on a host word another thread sets | dropped: every wait of a run is `Submission.wait` (D1), so no program the engine runs spins on the host |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_kernel_run_wait | a kernel run is one profile range named after the kernel | `EN › runs › each kernel of a run is a span of the host under a profile` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_copyin, test_profile_multiops, test_profile_multidev, TestSimpleProfiler::test_profiler, TestProfiler::test_cpu_profile | copies and host ranges are profile events | dropped: nx.device records its copies and host spans (`Nx_device.Profile`) |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_multidev_transfer, test_profile_graph, test_dev_jitter_matrix | device-to-device transfers, graph events and clock jitter | dropped: hardware with two devices, and nx.device's calibration |
+| tinygrad: runtime/test_search.py::TestSearch::test_beam_symbolic_kernel | beam search applies optimisations to a symbolic kernel | dropped here: the search is `Codegen.Opt.Search`'s; the measurement it takes is `EN › measure` |
+| tinygrad: runtime/test_realize_is_realize.py (13 tests) | `Tensor.realize` of lists, ones, disk, multi-device and variables | dropped: the `Tensor` surface; the frontend is nx, and realization rune's (L9) |
+| tinygrad: runtime/test_after.py (12 tests) | ordered and disjoint stores, and the gradients through `after` | dropped: the `Tensor` surface and autodiff (rune, L9); the order of stores is Schedule's |
+
+### old tolk
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CPU" | one compiled shrink and sum, run for several values of its variable | `EN › link and run › a schedule runs with each binding of its variables` (variable_reduce at 1, 10 and 5) |
+| old: unit/engine/test_symbolic.ml "symbolic launch dims run on CPU" | a variable sizes a kernel's loop | `EN › link and run › recorded › variable_offset writes what its tensors compute` and the slow `variable_*` programs |
+| old: unit/engine/test_symbolic.ml "symbolic shrink+sum runs for several bind values on CUDA", "symbolic launch dims run on CUDA" | | dropped: CUDA runs batches, whose encoder the engine does not have yet |
+| old: unit/engine/test_link.ml "executes linked host calls with rebound buffers and scalars" | a linked schedule runs on buffers and variables bound at each run | `EN › link and run › a schedule runs on the buffers each run binds to its parameters`, `a schedule runs with each binding of its variables` |
+| old: unit/engine/test_link.ml "does not cache link-time inputs" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
+| old: unit/engine/test_link.ml "concurrent first links publish one retained graph", "secondary owner replacement invalidates cached links without invalidating retained links", "obsolete owner storage retires even while the original graph remains live" | | dropped: the engine keeps no cache of links and no owners; a linked schedule holds its storage while reachable (`EN › runs › a linked schedule holds its storage while it is reachable`) |
+| old: unit/engine/test_realize.ml "passes every scalar from program metadata" | each variable of a program reaches its call, by name | `EN › Program › a kernel runs on its buffers, in the order of its globals`, `a variable left out of vars takes its bound value` |
+| old: unit/engine/test_realize.ml "requires scalar variables" | | `EN › Program › run refuses an unbound variable`; `EN › refusals › run refuses a variable it binds no value`; `EN › measure › an unbound variable is refused` |
+| old: unit/engine/test_realize.ml "copies bytes between host-backed devices", "copies bytes across backend prefixes" | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule` |
+| old: unit/engine/test_realize.ml "preserves overlapping views across staging chunks in both directions", "preserves overlapping external allocations while streaming", "rejects size or dtype mismatches before copy" | | dropped: copies are nx.device's (`Buffer.copy`) |
+| old: unit/engine/test_realize.ml "resolves the owner retained by each BUFFER node", "unplaced buffers require owned storage" | storage bound at link, allocated otherwise | `EN › link and run › recorded` (bound), `EN › runs › a linked schedule holds its storage while it is reachable` (allocated); `EN › refusals › link refuses a bound node that is no storage` |
+| old: unit/engine/test_realize.ml "resolves PARAM through input_uops", "resolves PARAM kernel args from input_uops", "runs a kernel call with resolved buffers" | | `EN › link and run › a schedule runs on the buffers each run binds to its parameters` |
+| old: unit/engine/test_realize.ml "resolves byte view as an offset view", "resolves an offset byte view structurally" | an argument that is a view at an offset | `EN › link and run › a schedule runs on the buffers each run binds to its parameters › copy_view`, `recorded › copy_view writes what its tensors compute` (slow) |
+| old: unit/engine/test_realize.ml "rejects an unbound PARAM" | | `EN › refusals › run refuses a parameter it binds no buffers`, `run refuses slots that stop before the last parameter` |
+| old: unit/engine/test_realize.ml "replays keep one runtime under changed compile settings" | a replay loads nothing | `EN › runs › a run of kernels allocates and loads nothing` |
+| old: unit/engine/test_realize.ml "replays resolve storage views without building nodes" | | dropped: the nodes a run builds are not observable; that it allocates no device memory is `EN › runs › a run of kernels allocates and loads nothing` |
+| old: unit/engine/test_realize.ml "execution counters retain exact large costs" | | dropped: the engine keeps no counters; a call's cost is `Realize.estimate_uop` |
+| old: unit/engine/test_realize.ml "keys cached programs by exact device name", "same-named devices use their own runtime loader" | a program is loaded per device | `EN › Program › a binary loaded twice is loaded once`; loading per device of a call is `EN › link and run › recorded › shard_add writes what its tensors compute` |
+
+### Deferred to the engine by other sections
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: unit/engine/test_symbolic.ml (every test), in Symbolic's section | | rows above |
+| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul, in Indexing's section | the numbers of two matmuls | `EN › link and run › recorded › double_matmul writes what its tensors compute` (slow) |
+| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots, in Cstyle's section | a compiled program's variables are not its call's slots | `EN › link and run › recorded › precompiled_scalar writes what its tensors compute` |
+| tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › recorded` (assign, setitem, read_then_overwrite; slow) |
+| old: unit/test_device.ml "Buffer.copy_from delegation" (3 tests), unit/test_device_no_engine.ml (2 tests), in Device's section | | `EN › link and run › recorded ›` "copy …", `copies run in the order of their schedule`; the copy itself is nx.device's |
+| tinygrad: null/test_tensor_uop_representation.py (5 tests), old: unit/uop/test_uop.ml runtime_realization_state_parity, in Ops' section | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |

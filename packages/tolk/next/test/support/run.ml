@@ -34,18 +34,15 @@ let of_bits dt z : Dtype.value =
   | Dtype.Bool -> `Bool (not (Z.equal z Z.zero))
   | _ -> Dtype.bitcast (unsigned dt) dt (`Int z)
 
-let storage (p : Ops.param_arg) values =
-  let n = Option.get p.size and size = Dtype.itemsize p.dtype in
-  if Array.length values <> n then
-    invalid_arg
-      (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
-         (Array.length values));
+let encode dt values =
+  let size = Dtype.itemsize dt in
   let bytes =
-    Bigarray.Array1.create Bigarray.char Bigarray.c_layout (max 1 (n * size))
+    Bigarray.Array1.create Bigarray.char Bigarray.c_layout
+      (max 1 (Array.length values * size))
   in
   Array.iteri
     (fun i v ->
-      let z = bits p.dtype v in
+      let z = bits dt v in
       for k = 0 to size - 1 do
         let byte =
           Z.to_int (Z.logand (Z.shift_right z (8 * k)) (Z.of_int 0xff))
@@ -55,16 +52,27 @@ let storage (p : Ops.param_arg) values =
     values;
   bytes
 
-let contents (p : Ops.param_arg) bytes =
-  let size = Dtype.itemsize p.dtype in
-  Array.init (Option.get p.size) (fun i ->
+let decode dt n bytes =
+  let size = Dtype.itemsize dt in
+  Array.init n (fun i ->
       let z = ref Z.zero in
       for k = size - 1 downto 0 do
         z :=
           Z.logor (Z.shift_left !z 8)
             (Z.of_int (Char.code bytes.{(i * size) + k}))
       done;
-      of_bits p.dtype !z)
+      of_bits dt !z)
+
+let storage (p : Ops.param_arg) values =
+  let n = Option.get p.size in
+  if Array.length values <> n then
+    invalid_arg
+      (Printf.sprintf "slot %d holds %d elements, not %d" p.slot n
+         (Array.length values));
+  encode p.dtype values
+
+let contents (p : Ops.param_arg) bytes =
+  decode p.dtype (Option.get p.size) bytes
 
 (* The buffer parameters of [prg], in the order its linear order declares
    them. *)
@@ -103,3 +111,34 @@ let on_host ?vars prg buffers =
   List.map
     (fun ((p : Ops.param_arg), bytes) -> (p.slot, contents p bytes))
     memory
+
+(* Buffers of values *)
+
+let buffer d dt values =
+  let src = Nx_device.Buffer.of_bigarray (encode dt values) in
+  let dst =
+    Nx_device.Buffer.create d Nx_dtype.Scalar.UInt8
+      (Nx_device.Buffer.nbytes src)
+  in
+  Nx_device.Buffer.copy ~src ~dst;
+  dst
+
+let values dt b =
+  let n = Nx_device.Buffer.nbytes b in
+  let bytes = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n in
+  Nx_device.Buffer.copy ~src:b ~dst:(Nx_device.Buffer.of_bigarray bytes);
+  decode dt (n / Dtype.itemsize dt) bytes
+
+(* Test devices *)
+
+let test_device name =
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
+
+let opened =
+  lazy
+    (("CPU", Nx_device.host)
+    :: List.map (fun n -> (n, test_device n)) [ "CPU:1"; "CPU:2"; "CPU:3" ])
+
+let devices () = Lazy.force opened

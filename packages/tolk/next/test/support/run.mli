@@ -27,3 +27,23 @@ val on_host :
     Raises [Invalid_argument] if an array's length is not its buffer's size, and
     as {!Tolk_next_engine.Program.load} and {!Tolk_next_engine.Program.run} do.
 *)
+
+(** {1:buffers Buffers of values} *)
+
+val buffer : Nx_device.t -> Dtype.t -> Dtype.value array -> Nx_device.Buffer.t
+(** [buffer d dt values] is a new buffer of [d] holding [values], elements of
+    type [dt]; one byte if [values] is empty. *)
+
+val values : Dtype.t -> Nx_device.Buffer.t -> Dtype.value array
+(** [values dt b] is the elements of type [dt] that [b] holds, as many as fit,
+    once the work that writes them is done ({!Nx_device.Buffer.copy}). *)
+
+(** {1:devices Test devices} *)
+
+val devices : unit -> (string * Nx_device.t) list
+(** [devices ()] maps ["CPU"] to {!Nx_device.host}, and ["CPU:1"], ["CPU:2"] and
+    ["CPU:3"] to test devices of the host's memory
+    ({!Nx_device.Driver.host_memory}) that address it as it is
+    ({!Nx_device.Driver.mapping}[ Identity]). Their calls run one by one here,
+    and from command queues through {!Null_device}. The test devices are opened
+    by the first call. *)
