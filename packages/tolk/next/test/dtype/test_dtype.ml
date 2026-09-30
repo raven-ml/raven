@@ -447,8 +447,8 @@ let word_of dt =
 (* Where tolk.next departs from tinygrad, a value converts as tinygrad converts
    another, whose own golden row checks it.
 
-   D9. Narrow floats round once: a float that tinygrad's float32 step rounds
-   onto a bfloat16 tie converts as the bfloat16 above it.
+   D9. Narrow float conversions are IEEE conversions: a float that tinygrad's
+   float32 step rounds onto a bfloat16 tie converts as the bfloat16 above it.
 
    Excluded (README): CPython's refusal to convert an integer whose magnitude
    rounds to 2^1024 or more (at least 2^1024 - 2^970) to a float. Where tinygrad

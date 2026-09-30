@@ -175,26 +175,45 @@ the Exclusions of `README.md`.
   key and value put` and `Helpers › Diskcache › behaves as a table of entries
   per table`.
 
-## D9. Narrow floats round once
+## D9. Narrow float conversions are IEEE conversions
 
-- **tinygrad:** `dtype.py:230-234` (`float_to_bf16` rounds to float32 with
-  `truncate[dtypes.float]`, then to bfloat16); `dtype.py:84` (`const`
-  converts an integer to a float through a double, `float(val)`).
+- **tinygrad:**
+  - `dtype.py:230-234` (`float_to_bf16` rounds to float32 with
+    `truncate[dtypes.float]`, then to bfloat16), and `dtype.py:84` (`const`
+    converts an integer to a float through a double, `float(val)`);
+  - `codegen/decomp/dtype.py:36-38,101-134,198-199`: `l2i` converts a long
+    to a float32 word by word; an emulated cast narrows its source to float32
+    first; `f2f` flushes subnormals to zero both ways; `f2f_clamp` sends a
+    finite value above the greatest one to infinity in the 16-bit floats, and
+    saturates infinities in the 8-bit floats.
 - **tolk.next:** `lib/dtype.ml:469-490` (`encode_format`, one rounding for
-  every narrow float; `float_of_integer`).
-- **Differs:** a double rounds to bfloat16 once, to nearest even. The two
-  differ when the float32 lands on a bfloat16 tie: `1 + 2^-8 + 2^-40` is
-  `1.0078125` here and `1.0` in tinygrad. An integer converts to a float
-  narrower than a double once, from its exact value: `9042383626829825` is
-  bfloat16 `0x5a01` here and `0x5a00` in tinygrad, whose double rounds it onto
-  a tie.
-- **Reason:** (b). rune folds constants from OCaml floats and integers, and a
-  folded constant must be the value nx's eager cast gives, which rounds once.
-  The codegen layer's casts must compute the same, or get a row of their own.
+  every narrow float; `float_of_integer`); `lib/codegen/decomp/decomp_dtype.ml`
+  (`long_to_float`, `f2f_clamp`, `narrow`, `f2f`).
+- **Differs:** converting to a narrow float rounds once, to nearest with ties
+  to even, from any source, and treats every value as IEEE does, folded or
+  emulated:
+  - a double rounds to bfloat16 once: `1 + 2^-8 + 2^-40` is `1.0078125` here
+    and `1.0` in tinygrad. An integer converts once, from its exact value:
+    `9042383626829825` is bfloat16 `0x5a01` here and `0x5a00` in tinygrad,
+    whose double rounds it onto a tie. An emulated cast narrows a double, or
+    an integer more precise than a float32, to float32 by rounding to odd, so
+    that the store's rounding is the one rounding; an emulated 64-bit integer
+    converts to a float32 once, where tinygrad's word arithmetic rounds each
+    word and their sum;
+  - emulation keeps subnormals, both ways;
+  - a finite value becomes an infinity in a 16-bit float from the greatest
+    finite value plus half an ulp, the tie rounding to even; an 8-bit float
+    saturates to its greatest finite value;
+  - an infinity stays one in e5m2 and becomes the NaN of e4m3 and the `fnuz`
+    formats, of its sign where the format has one (D10).
+- **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
+  with one rounding. An emulated kernel exists only because its target lacks
+  the type, so it must give the bits a native one gives.
 - **Pinned by:** `Dtype › truncate › truncation.golden` (the near-tie rows,
   stated in code), `Dtype › truncate › bfloat16 rounds once, to the nearest,
   ties to even` and `Dtype › truncate › an integer rounds to a narrower float
-  once, from its value`; and a rune test at L9.
+  once, from its value`; for emulation, the `Decomp_dtype` suite
+  (`test/codegen/decomp_dtype`), one test per facet; and a rune test at L9.
 
 ## D10. A float8 NaN keeps its sign when decoded
 
@@ -434,3 +453,20 @@ the Exclusions of `README.md`.
   every e5m2 code, and the `reencode.golden` and `truncation.golden` NaN rows,
   stated in code.
 
+## D22. An emulated long converts no float past its words' range
+
+- **tinygrad:** `codegen/decomp/dtype.py:33-34` (`l2i` makes a long's low
+  word by casting the float to an int32, and its high word by casting the
+  float over 2^32).
+- **tolk.next:** `lib/codegen/decomp/decomp_dtype.ml` (`l2i`, the cast of a
+  float to a long).
+- **Differs:** the words are the quotient and remainder of the truncated
+  float's magnitude by 2^32, each converted from a float the word holds, and
+  negated as a long for a negative float. tinygrad converts a float past
+  2^31 to an int32 word, which C leaves undefined: ARM saturates and x86 gives
+  `0x80000000`, so the low word of `2^32 + 5` is `0x7fffffff` on ARM.
+- **Reason:** (b): rune's kernels on a target without 64-bit integers cast
+  floats to longs through this emulation, and must give the long nx gives.
+- **Pinned by:** the `Decomp_dtype` suite: `emulated 64-bit integers › an
+  emulated cast of a float32 to a 64-bit integer converts no float to a word
+  that cannot hold it`.
