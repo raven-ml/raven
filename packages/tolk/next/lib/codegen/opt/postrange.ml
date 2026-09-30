@@ -218,8 +218,10 @@ module Scheduler = struct
     (replaced_rng, new_rng)
 
   let shift_to ?top ?new_rng k rng amount target =
-    if amount <= 1 then
-      invalid_arg (strf "a split takes more than 1, not %d" amount);
+    if
+      (amount <= 1)
+      [@mutate off "a split by 1 also fails, when its rewrite cycles"]
+    then invalid_arg (strf "a split takes more than 1, not %d" amount);
     shift_by ?top ?new_rng k rng (Z.of_int amount) target
 
   let rec apply_opt ?(append_opt = true) k (opt : Opt.t) =
