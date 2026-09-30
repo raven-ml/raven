@@ -14,6 +14,7 @@ dtype/of_const.golden
 dtype/of_consts.golden
 dtype/projections.golden
 dtype/properties.golden
+dtype/reencode.golden
 dtype/truncation.golden
 helpers/colors.golden
 helpers/device_targets.golden

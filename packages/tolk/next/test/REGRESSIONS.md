@@ -6,7 +6,7 @@ that keeps it, or to the reason it is dropped. The sources are:
 - every behaviour an old tolk test pins (`packages/tolk/test`);
 - every relevant case of tinygrad's tests for the module's file.
 
-A row names its source as `old: <file>:<line> <test name>` or
+A row names its source as `old: <file>:<line> <test name>`, `old: <file> <function>` (anchored by name, which survives edits to the file) or
 `tinygrad: <file>::<class>::<test>`, and its outcome as the new test's path
 (`<suite> › <group> › <test>`) or as `dropped: <reason>`. A module's section
 starts when its test pass does.
@@ -159,34 +159,34 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 | tinygrad: runtime/test_dtype_alu.py (every test) | device ALU results against numpy, rounded with `truncate` | dropped: execution on a device (L5-L7). The rounding reference it uses is `D › truncate › truncation.golden` |
 | tinygrad: runtime/test_dtype_spec.py::TestTypeSpec::test_dtype_str_arg | "nonexistdtype" and "" name no data type | `D › names › the error names what is not a data type`; `D › names › the empty string is not a data type` |
 | tinygrad: runtime/test_dtype_spec.py (every other test) | dtypes of Tensor creation and reductions | dropped: Tensor surface, rune's lowering |
-| old: unit/uop/test_dtype.ml:126 predicates | priority, bitsize and predicates of the weak types | `D › data types › properties.golden` |
-| old: unit/uop/test_dtype.ml:141 repr | `dtypes.<alias>` printing | `D › data types › properties.golden` (column `dtype`) |
-| old: unit/uop/test_dtype.ml:155 address space | address spaces print as `global`, … | `D › address spaces print as their enum member`: they now print as tinygrad's repr, `AddrSpace.GLOBAL` |
-| old: unit/uop/test_dtype.ml:174 full lattice matrix, :182 representative edges | the promotion table | `D › promotion › least_upper.golden` |
-| old: unit/uop/test_dtype.ml:195 errors and singletons | empty list and void raise; a singleton bounds itself | `D › promotion › least_upper rejects the empty list`; `D › promotion › least_upper rejects void`; `D › promotion › a data type is its own least upper bound` |
-| old: unit/uop/test_dtype.ml:202 least_upper_float, :209 strong and weak projections | `least_upper_float`, `strong`, `weak` | `D › defaults › projections.golden` |
-| old: unit/uop/test_dtype.ml:221 full matrix, :230 to weak | the lossless table, casts into weakint | `D › lossless casts › lossless_cast.golden` |
-| old: unit/uop/test_dtype.ml:237 all categories | `sum_acc` per data type | `D › defaults › projections.golden` (column `sum_acc`) |
-| old: unit/uop/test_dtype.ml:250 fp16 | half rounding, the 2^-25 tie, overflow | `D › truncate › truncation.golden` (dtype=dtypes.half) |
-| old: unit/uop/test_dtype.ml:270 bf16 | 1234 to 1232, rounding above a tie, 1e39 to inf | `D › truncate › truncation.golden` (dtype=dtypes.bfloat16); `D › truncate › bfloat16 rounds once, to the nearest, ties to even` |
-| old: unit/uop/test_dtype.ml:284 fp8 | 8-bit encodes; old tolk pinned 500 to NaN in e4m3 and 61440 to inf in e5m2 | `D › storage › truncation.golden`. Both now saturate, to 448 and 57344, as tinygrad HEAD does |
-| old: unit/uop/test_dtype.ml:313 storage formats (Nx_dtype mapping) | each data type maps to an Nx_dtype scalar | dropped: tolk.next is a compiler with no nx dependency, so its data types map to no storage format of nx's |
-| old: unit/uop/test_dtype.ml:351 boundaries | integer wrapping; floats rejected | `D › truncate › truncation.golden` (rows `raises TypeError`); `D › truncate › an integer wraps modulo two to its width` |
-| old: unit/uop/test_dtype.ml:368 formats | `storage_fmt` | `D › defaults › projections.golden` (column `storage_fmt`) |
-| old: unit/uop/test_dtype.ml:377 truncation | bool of NaN is true, wrapping, saturation, bf16 | `D › truncate › truncation.golden` |
-| old: unit/uop/test_dtype.ml:388 round-trips | storage words of bf16 and fp8, negative zero | `D › storage › truncation.golden`; `D › storage › decode.golden`; `D › storage › storage round-trips every value` |
-| old: unit/uop/test_dtype.ml:408 spot checks | bounds of every data type; void has none | `D › data types › properties.golden`. Void's bounds are now tinygrad's, `False` and `True` |
-| old: unit/uop/test_dtype.ml:433 float info | `finfo`, weakfloat and ints rejected | `D › data types › finfo.golden`; `D › data types › finfo rejects every data type but the floats of known width` |
-| old: unit/uop/test_dtype.ml:447 policy | defaults under an unset environment | `D › defaults › projections.golden` |
-| old: unit/uop/test_dtype.ml:515 env dtype parsing | DEFAULT_FLOAT and SUM_DTYPE names, aliases rejected | `D › defaults` (DEFAULT_FLOAT through `Helpers.context`, not a child process); the cram test `dtype/sum_dtype.t`, in a fresh process per SUM_DTYPE, which is read once |
-| old: unit/uop/test_dtype.ml:538 NaN and signed-zero identity | one NaN, two zeros | `D › constants › every NaN is the same constant`; `D › constants › zero and negative zero are different constants`; `D › constants › every NaN hashes alike` |
-| old: unit/uop/test_dtype.ml:555 NaN and signed-zero UOp identity | hash-consing of constant UOps | dropped: UOps, in the Uop.Ops suite (L1) |
-| old: unit/uop/test_dtype.ml:568 promotion commutative, :571 promotion idempotent | lattice laws | `D › promotion › least_upper is commutative`; `D › promotion › a data type is its own least upper bound` |
-| old: unit/uop/test_dtype.ml:573 lossless reflexive | a cast to itself is lossless | `D › lossless casts › lossless_cast.golden` (its diagonal) |
-| old: unit/uop/test_dtype.ml:575 sum_acc idempotent | the accumulator accumulates in itself | `D › defaults › projections.golden` covers every data type, so the law follows from the table |
-| old: unit/uop/test_dtype.ml:581 fp16 idempotent, :584 bf16 idempotent, :587 fp8 idempotent, :593 truncate_int idempotent | truncation is idempotent | `D › truncate › truncation is idempotent` |
-| old: unit/uop/test_uop.ml:825 const_of_dtype coercion | int payload coerced to float, NaN canonical, zeros distinct, Invalid kept | `D › const › const.golden`; `D › constants` |
-| old: unit/uop/test_uop.ml:1355 wide weakint constant printing | a weakint beyond 64 bits prints in full | `D › constants › const_repr.golden` (const=18446744073709551616, -2^799) |
+| old: unit/uop/test_dtype.ml predicates | priority, bitsize and predicates of the weak types | `D › data types › properties.golden` |
+| old: unit/uop/test_dtype.ml repr_surface | `dtypes.<alias>` printing | `D › data types › properties.golden` (column `dtype`) |
+| old: unit/uop/test_dtype.ml address_space | address spaces print as `global`, … | `D › address spaces › an address space prints as its enum member`: they now print as tinygrad's repr, `AddrSpace.GLOBAL`; `D › address spaces › addr_space_of_string reads the name pp prints after AddrSpace.` |
+| old: unit/uop/test_dtype.ml promotion_matrix, promotion_edges | the promotion table | `D › promotion › least_upper.golden` |
+| old: unit/uop/test_dtype.ml promotion_errors | empty list and void raise; a singleton bounds itself | `D › promotion › least_upper rejects the empty list`; `D › promotion › least_upper rejects void`; `D › promotion › a data type is its own least upper bound` |
+| old: unit/uop/test_dtype.ml least_upper_float_cases, strong_and_weak | `least_upper_float`, `strong`, `weak` | `D › defaults › projections.golden` |
+| old: unit/uop/test_dtype.ml lossless_matrix, lossless_to_weak | the lossless table, casts into weakint | `D › lossless casts › lossless_cast.golden` |
+| old: unit/uop/test_dtype.ml sum_acc | `sum_acc` per data type | `D › defaults › projections.golden` (column `sum_acc`) |
+| old: unit/uop/test_dtype.ml fp16_conversion | half rounding, the 2^-25 tie, overflow | `D › truncate › truncation.golden` (dtype=dtypes.half) |
+| old: unit/uop/test_dtype.ml bf16_conversion | 1234 to 1232, rounding above a tie, 1e39 to inf | `D › truncate › truncation.golden` (dtype=dtypes.bfloat16); `D › truncate › bfloat16 rounds once, to the nearest, ties to even` |
+| old: unit/uop/test_dtype.ml fp8_conversion | 8-bit encodes, saturation, NaN for infinities without one | `D › storage › truncation.golden`; `D › truncate › an infinity is NaN in an 8-bit float without infinities` |
+| old: unit/uop/test_dtype.ml storage_format_mapping | each data type maps to an Nx_dtype scalar | dropped: tolk.next is a compiler with no nx dependency, so its data types map to no storage format of nx's |
+| old: unit/uop/test_dtype.ml integer_truncation | integer wrapping; floats rejected | `D › truncate › truncation.golden` (rows `raises TypeError`); `D › truncate › an integer wraps modulo two to its width` |
+| old: unit/uop/test_dtype.ml storage_formats | `storage_fmt` | `D › defaults › projections.golden` (column `storage_fmt`) |
+| old: unit/uop/test_dtype.ml truncation_surface | bool of NaN is true, wrapping, saturation, bf16 | `D › truncate › truncation.golden` |
+| old: unit/uop/test_dtype.ml storage_roundtrips | storage words of bf16 and fp8, negative zero | `D › storage › truncation.golden`; `D › storage › decode.golden`; `D › storage › storage round-trips every value` |
+| old: unit/uop/test_dtype.ml bounds | bounds of every data type; void has none | `D › data types › properties.golden`. Void's bounds are now tinygrad's, `False` and `True` |
+| old: unit/uop/test_dtype.ml float_info | `finfo`, weakfloat and ints rejected | `D › data types › finfo.golden`; `D › data types › finfo rejects every data type but the floats of known width` |
+| old: unit/uop/test_dtype.ml defaults | defaults under an unset environment | `D › defaults › projections.golden` |
+| old: unit/uop/test_dtype.ml env_dtype_parsing | DEFAULT_FLOAT and SUM_DTYPE names, aliases rejected | `D › defaults` (DEFAULT_FLOAT through `Helpers.context`, not a child process); the cram test `dtype/sum_dtype.t`, in a fresh process per SUM_DTYPE, which is read once |
+| old: unit/uop/test_dtype.ml const_float_identity | one NaN, two zeros | `D › constants › every NaN is the same constant`; `D › constants › zero and negative zero are different constants`; `D › constants › every NaN hashes alike` |
+| old: unit/uop/test_dtype.ml const_uop_float_identity | hash-consing of constant UOps | dropped: UOps, in the Uop.Ops suite (L1) |
+| old: unit/uop/test_dtype.ml properties › "promotion commutative", properties › "promotion idempotent" | lattice laws | `D › promotion › least_upper is commutative`; `D › promotion › a data type is its own least upper bound` |
+| old: unit/uop/test_dtype.ml properties › "lossless reflexive" | a cast to itself is lossless | `D › lossless casts › lossless_cast.golden` (its diagonal) |
+| old: unit/uop/test_dtype.ml properties › "sum_acc idempotent" | the accumulator accumulates in itself | `D › defaults › projections.golden` covers every data type, so the law follows from the table |
+| old: unit/uop/test_dtype.ml properties › "fp16 idempotent", properties › "bf16 idempotent", properties › "fp8 idempotent", properties › "truncate_int idempotent" | truncation is idempotent | `D › truncate › truncation is idempotent` |
+| old: unit/uop/test_uop.ml const_scalar_payload_constructors | int payload coerced to float, NaN canonical, zeros distinct, Invalid kept | `D › const › const.golden`; `D › constants` |
+| old: unit/uop/test_uop.ml scalar_float_to_weak_integer | a weakint beyond 64 bits prints in full | `D › constants › const_repr.golden` (const=18446744073709551616, -2^799) |
 | old: unit/uop/test_weak.ml (every test) | weak commits in graphs | dropped: UOp graphs, in the Uop.Weak suite (L3) |
 
 ## Uop.Op

@@ -52,3 +52,6 @@ A SUM_DTYPE that names no data type is rejected:
   $ SUM_DTYPE=uint128 ./sum_acc.exe half
   rejected
   [1]
+  $ SUM_DTYPE=dtypes.half ./sum_acc.exe half
+  rejected
+  [1]

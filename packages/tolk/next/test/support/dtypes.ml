@@ -158,7 +158,7 @@ let value_of dt =
 
 (* Golden cells *)
 
-let of_cell s =
+let dtype_of_cell s =
   match List.find_opt (fun (_, repr) -> String.equal repr s) reprs with
   | Some (dt, _) -> dt
   | None -> invalid_arg (Printf.sprintf "%S is not a data type" s)

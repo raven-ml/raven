@@ -1,8 +1,9 @@
 (** Witnesses, generators and golden cells of {!Tolk_next.Dtype}.
 
-    Everything here is written from the specification, independently of the code
-    under test: the witnesses print data types and values from tables of their
-    own, and the generators draw integers from bounds of their own. *)
+    Witnesses print and compare data types and values from tables of their own,
+    and the generators draw integers from bounds of their own. Float values of a
+    data type are drawn through {!Tolk_next.Dtype.truncate}, which the Dtype
+    suite checks on its own. *)
 
 open Tolk_next
 
@@ -70,8 +71,8 @@ val int_bounds : Dtype.t -> Z.t * Z.t
     Cells as tinygrad prints them. Each raises [Invalid_argument] on a cell it
     cannot read. *)
 
-val of_cell : string -> Dtype.t
-(** [of_cell s] is the data type printed [s], such as [dtypes.half]. *)
+val dtype_of_cell : string -> Dtype.t
+(** [dtype_of_cell s] is the data type printed [s], such as [dtypes.half]. *)
 
 val value_of_cell : string -> Dtype.value
 (** [value_of_cell s] is the value printed [s]: [True], [False], an integer in

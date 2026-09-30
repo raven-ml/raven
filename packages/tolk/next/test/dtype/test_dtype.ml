@@ -47,6 +47,15 @@ let any_const =
          (1, Gen.map (fun f -> `Float f) (Gen.of_list (0. :: -0. :: nans)));
        ])
 
+(* The same constant built anew: an integer from its digits, and a NaN with
+   other bits. *)
+let respell = function
+  | `Int n -> `Int (Z.of_string (Z.to_string n))
+  | `Float f when Float.is_nan f ->
+      let bits = Int64.bits_of_float f in
+      `Float (List.find (fun g -> Int64.bits_of_float g <> bits) nans)
+  | c -> c
+
 let const_equality =
   Testable.make ~pp:(Testable.pp const) ~equal:Dtype.equal_const
 
@@ -76,28 +85,56 @@ let constants =
                 (Dtype.hash_const (`Float Float.nan))
                 (Dtype.hash_const (`Float f)))
             nans);
+      prop "equal constants hash alike" any_const (fun c ->
+          cover "a NaN with other bits"
+            (match c with `Float f -> Float.is_nan f | _ -> false);
+          cover "an integer built anew"
+            (match c with `Int _ -> true | _ -> false);
+          equal int (Dtype.hash_const c) (Dtype.hash_const (respell c)));
       Golden.cases "const_repr.golden" (fun cell ->
           equal string (cell "printed")
             (Format.asprintf "%a" Dtype.pp_const (const_of_cell (cell "const"))));
     ]
 
+let after prefix s =
+  if not (String.starts_with ~prefix s) then
+    failf "%S has no %s prefix" s prefix;
+  String.sub s (String.length prefix) (String.length s - String.length prefix)
+
+let space = Testable.make ~pp:Dtype.pp_addr_space ~equal:( = )
+
 let address_spaces =
-  cases "address spaces print as their enum member" ~name:snd
-    Dtype.
-      [
-        (Global, "AddrSpace.GLOBAL");
-        (Local, "AddrSpace.LOCAL");
-        (Reg, "AddrSpace.REG");
-        (Alu, "AddrSpace.ALU");
-      ]
-    (fun (space, printed) ->
-      equal string printed (Format.asprintf "%a" Dtype.pp_addr_space space))
+  group "address spaces"
+    [
+      cases "an address space prints as its enum member" ~name:snd
+        Dtype.
+          [
+            (Global, "AddrSpace.GLOBAL");
+            (Local, "AddrSpace.LOCAL");
+            (Reg, "AddrSpace.REG");
+            (Alu, "AddrSpace.ALU");
+          ]
+        (fun (space, printed) ->
+          equal string printed (Format.asprintf "%a" Dtype.pp_addr_space space));
+      prop "addr_space_of_string reads the name pp prints after AddrSpace."
+        (Gen.of_list ~pp:Dtype.pp_addr_space Dtype.[ Global; Local; Reg; Alu ])
+        (Law.round_trip space string (Format.asprintf "%a" Dtype.pp_addr_space)
+           (fun s ->
+             require_ok (Dtype.addr_space_of_string (after "AddrSpace." s))));
+      cases "the error names what is not an address space"
+        ~name:(Printf.sprintf "%S")
+        [ "global"; "Global"; "AddrSpace.GLOBAL"; " GLOBAL"; "SHARED" ]
+        (fun s ->
+          contains ~sub:s (require_error (Dtype.addr_space_of_string s)));
+      test "the empty string is not an address space" (fun () ->
+          is_error (Dtype.addr_space_of_string ""));
+    ]
 
 (* Data types *)
 
 let properties =
   Golden.cases "properties.golden" (fun cell ->
-      let dt = of_cell (cell "dtype") in
+      let dt = dtype_of_cell (cell "dtype") in
       equal string (cell "dtype") (Format.asprintf "%a" Dtype.pp dt);
       equal int (int_of_string (cell "priority")) (Dtype.priority dt);
       equal int (int_of_string (cell "bitsize")) (Dtype.bitsize dt);
@@ -127,13 +164,13 @@ let groups =
         | name -> invalid_arg name
       in
       equal (list dtype)
-        (List.map of_cell (String.split_on_char ' ' (cell "members")))
+        (List.map dtype_of_cell (String.split_on_char ' ' (cell "members")))
         group)
 
 (* The rows of properties.golden are tinygrad's sorted data types. *)
 let sorted =
   List.map
-    (fun cell -> of_cell (cell "dtype"))
+    (fun cell -> dtype_of_cell (cell "dtype"))
     (Golden.rows "properties.golden")
 
 let data_types =
@@ -154,7 +191,7 @@ let data_types =
       Golden.cases "finfo.golden" (fun cell ->
           equal (pair int int)
             (int_of_string (cell "exponent"), int_of_string (cell "mantissa"))
-            (Dtype.finfo (of_cell (cell "dtype"))));
+            (Dtype.finfo (dtype_of_cell (cell "dtype"))));
       cases "finfo rejects every data type but the floats of known width"
         ~name:alias
         (List.filter (fun dt -> not (List.mem dt Dtype.floats)) declared)
@@ -168,7 +205,7 @@ let names =
     [
       Golden.cases "names.golden" (fun cell ->
           equal (result dtype string)
-            (Ok (of_cell (cell "dtype")))
+            (Ok (dtype_of_cell (cell "dtype")))
             (Dtype.of_string (cell "name")));
       test "a name is read in any case" (fun () ->
           equal (result dtype string) (Ok Dtype.Float16)
@@ -188,13 +225,14 @@ let names =
           "floats";
           "is_float";
           "dtypes";
+          "dtypes.half";
           "dtypes.floats";
         ] (fun s -> contains ~sub:s (require_error (Dtype.of_string s)));
       test "the empty string is not a data type" (fun () ->
           is_error (Dtype.of_string ""));
-      prop "of_string reads what pp prints" every
+      prop "of_string reads the name pp prints after dtypes." every
         (Law.round_trip dtype string (Format.asprintf "%a" Dtype.pp) (fun s ->
-             require_ok (Dtype.of_string s)));
+             require_ok (Dtype.of_string (after "dtypes." s))));
     ]
 
 let defaults =
@@ -228,12 +266,13 @@ let defaults =
           with_setting Helpers.default_float "float16" (fun () ->
               equal dtype Dtype.Float16 (Dtype.strong Dtype.Weak_float)));
       Golden.cases "projections.golden" (fun cell ->
-          let dt = of_cell (cell "dtype") in
-          equal dtype (of_cell (cell "weak")) (Dtype.weak dt);
-          equal dtype (of_cell (cell "strong")) (Dtype.strong dt);
-          expect dtype of_cell (cell "least_upper_float") (fun () ->
+          let dt = dtype_of_cell (cell "dtype") in
+          equal dtype (dtype_of_cell (cell "weak")) (Dtype.weak dt);
+          equal dtype (dtype_of_cell (cell "strong")) (Dtype.strong dt);
+          expect dtype dtype_of_cell (cell "least_upper_float") (fun () ->
               Dtype.least_upper_float dt);
-          expect dtype of_cell (cell "sum_acc") (fun () -> Dtype.sum_acc dt);
+          expect dtype dtype_of_cell (cell "sum_acc") (fun () ->
+              Dtype.sum_acc dt);
           equal (option char)
             (fmt_cell (cell "storage_fmt"))
             (Dtype.storage_fmt dt));
@@ -261,10 +300,10 @@ let literals =
     [
       Golden.cases "of_const.golden" (fun cell ->
           equal dtype
-            (of_cell (cell "dtype"))
+            (dtype_of_cell (cell "dtype"))
             (Dtype.of_const (const_of_cell (cell "value"))));
       Golden.cases "of_consts.golden" (fun cell ->
-          expect dtype of_cell (cell "dtype") (fun () ->
+          expect dtype dtype_of_cell (cell "dtype") (fun () ->
               Dtype.of_consts (consts_of_cell (cell "consts"))));
       prop "of_consts commits: its data type is never weak"
         (Gen.list small_const) (fun cs ->
@@ -278,10 +317,15 @@ let literals =
           let default_int =
             match cell "default_int" with
             | "None" -> None
-            | s -> Some (of_cell s)
+            | s -> Some (dtype_of_cell s)
           in
-          expect dtype of_cell (cell "dtype") (fun () ->
+          expect dtype dtype_of_cell (cell "dtype") (fun () ->
               Dtype.commit_int ?default_int lo hi));
+      cases "commit_int takes only an integer of known width as default"
+        ~name:alias
+        Dtype.[ Weak_int; Bool; Float32; Weak_float; Void ]
+        (fun default_int ->
+          rejects (fun () -> Dtype.commit_int ~default_int Z.zero Z.one));
       prop "commit_int holds its bounds, or falls back to int64" commit_bounds
         (fun (lo, hi) ->
           let dt = Dtype.commit_int lo hi in
@@ -309,14 +353,14 @@ let promotion =
     [
       Golden.cases "least_upper.golden" ~key:[ "a"; "b" ] (fun cell ->
           equal dtype
-            (of_cell (cell "least_upper"))
-            (lub2 (of_cell (cell "a")) (of_cell (cell "b"))));
+            (dtype_of_cell (cell "least_upper"))
+            (lub2 (dtype_of_cell (cell "a")) (dtype_of_cell (cell "b"))));
       Golden.cases "least_upper_triples.golden" ~key:[ "a"; "b"; "c" ]
         (fun cell ->
           equal dtype
-            (of_cell (cell "least_upper"))
+            (dtype_of_cell (cell "least_upper"))
             (Dtype.least_upper
-               (List.map (fun c -> of_cell (cell c)) [ "a"; "b"; "c" ])));
+               (List.map (fun c -> dtype_of_cell (cell c)) [ "a"; "b"; "c" ])));
       test "least_upper is not a fold of pairwise bounds" (fun () ->
           equal dtype Dtype.Bfloat16 (Dtype.least_upper fp8_triple);
           equal dtype Dtype.Float32 (fold_bound fp8_triple));
@@ -382,8 +426,8 @@ let lossless =
           equal bool
             (bool_cell (cell "lossless"))
             (Dtype.can_lossless_cast
-               (of_cell (cell "from"))
-               (of_cell (cell "to"))));
+               (dtype_of_cell (cell "from"))
+               (dtype_of_cell (cell "to"))));
       prop "a lossless cast round-trips every value" lossless_cast
         (fun (a, b, v) ->
           Law.round_trip const const (Dtype.const b) (Dtype.const a)
@@ -398,18 +442,38 @@ let lossless =
    D9. bfloat16 rounds once from the double: a float that tinygrad's float32
    step rounds onto a bfloat16 tie converts as the bfloat16 above it.
 
-   Excluded (README): CPython's refusal to convert an integer of 2^1024 or more
-   to a float. Where tinygrad raises, such an integer converts as the infinity
-   of its sign. *)
+   Excluded (README): CPython's refusal to convert an integer whose magnitude
+   rounds to 2^1024 or more (at least 2^1024 - 2^970) to a float. Where tinygrad
+   raises, such an integer converts as the infinity of its sign. *)
+let beyond_doubles = Z.sub (Z.shift_left Z.one 1024) (Z.shift_left Z.one 970)
 let bfloat16_ties = [ 1.0039062500000002; 1. +. 0x1p-8 +. 0x1p-40 ]
 
 let as_tinygrad dt cell = function
   | `Float f when Dtype.equal dt Dtype.Bfloat16 && List.mem f bfloat16_ties ->
       Some (`Float 1.0078125)
-  | `Int n when Dtype.is_float dt && Z.numbits n > 1024 && raised cell ->
+  | `Int n
+    when Dtype.is_float dt && Z.geq (Z.abs n) beyond_doubles && raised cell ->
       Some
         (`Float (if Z.sign n < 0 then Float.neg_infinity else Float.infinity))
   | _ -> None
+
+(* [reencoded dt word tinygrad] is what [word] encodes back to through [dt],
+   where tinygrad gives [tinygrad].
+
+   D10. A float8 NaN keeps its sign when decoded: e4m3's 0xFF encodes back to
+   itself, where tinygrad decodes a positive NaN and encodes 0x7F.
+
+   Excluded (README): CPython's struct packing every float16 NaN as the
+   canonical 0x7e00, of its sign. A float16 NaN keeps its sign and payload
+   through a double, and encodes back with its quiet bit set. *)
+let reencoded dt word tinygrad =
+  let bits mask = Z.logand word (Z.of_int mask) in
+  match dt with
+  | Dtype.Fp8e4m3 when Z.equal word (Z.of_int 0xFF) -> `Int word
+  | Dtype.Float16
+    when Z.equal (bits 0x7C00) (Z.of_int 0x7C00) && Z.sign (bits 0x3FF) <> 0 ->
+      `Int (Z.logor word (Z.of_int 0x200))
+  | _ -> tinygrad
 
 (* [row w read cell dt v f] checks [f v] against the golden row of [dt] and [v],
    or, where D9 departs from tinygrad, against [f] of the value that [v]
@@ -471,7 +535,7 @@ let truncation =
   group "truncate"
     [
       Golden.cases "truncation.golden" ~key:[ "dtype"; "value" ] (fun cell ->
-          let dt = of_cell (cell "dtype")
+          let dt = dtype_of_cell (cell "dtype")
           and v = value_of_cell (cell "value") in
           row value value_of_cell (cell "truncated") dt v (Dtype.truncate dt));
       prop "truncation is idempotent" truncatable (fun (dt, v) ->
@@ -479,7 +543,7 @@ let truncation =
       prop "a weak data type truncates nothing"
         (Gen.pair (dtype_list Dtype.weaks) any_value)
         (fun (dt, v) -> equal value v (Dtype.truncate dt v));
-      test "void truncates nothing" (fun () ->
+      test "truncate rejects void" (fun () ->
           rejects (fun () -> Dtype.truncate Dtype.Void (`Int Z.zero)));
       prop "an integer wraps modulo two to its width"
         (Gen.pair (dtype_list Dtype.ints) integer)
@@ -505,8 +569,13 @@ let truncation =
         ~name:alias
         Dtype.[ Fp8e4m3; Fp8e4m3fnuz; Fp8e5m2fnuz ]
         (fun dt ->
-          is_true (Float.is_nan (truncated dt Float.infinity));
-          is_true (Float.is_nan (truncated dt Float.neg_infinity)));
+          let signed = Dtype.equal dt Dtype.Fp8e4m3 in
+          List.iter
+            (fun inf ->
+              let f = truncated dt inf in
+              is_true (Float.is_nan f);
+              equal ~msg:"sign" bool (signed && inf < 0.) (Float.sign_bit f))
+            [ Float.infinity; Float.neg_infinity ]);
       prop "a finite float stays finite in an 8-bit float"
         (Gen.pair (dtype_list Dtype.fp8s) finite_float)
         (fun (dt, f) -> is_true (Float.is_finite (truncated dt f)));
@@ -520,16 +589,47 @@ let storage =
   group "storage"
     [
       Golden.cases "truncation.golden" ~key:[ "dtype"; "value" ] (fun cell ->
-          let dt = of_cell (cell "dtype")
+          let dt = dtype_of_cell (cell "dtype")
           and v = value_of_cell (cell "value") in
           row value value_of_cell (cell "storage") dt v
             (Dtype.to_storage_scalar dt));
+      cases "a signalling NaN stores as a quiet NaN of its sign" ~name:alias
+        Dtype.[ Float16; Bfloat16 ]
+        (fun dt ->
+          let unsigned = Dtype.Uint16 in
+          let quiet = if Dtype.equal dt Dtype.Float16 then 0x200 else 0x40 in
+          List.iter
+            (fun bits ->
+              let msg = Printf.sprintf "0x%LX" bits in
+              let v = Dtype.truncate dt (`Float (Int64.float_of_bits bits)) in
+              match Dtype.bitcast dt unsigned v with
+              | `Int w ->
+                  let w = Z.to_int w in
+                  is_true ~msg (w land quiet <> 0);
+                  equal ~msg bool
+                    (Int64.compare bits 0L < 0)
+                    (w land 0x8000 <> 0)
+              | _ -> failf "%s: not a word" msg)
+            [
+              0x7FF0_0000_0000_0001L;
+              0x7FF4_0000_0000_0000L;
+              0xFFF0_0000_0000_0001L;
+            ]);
       Golden.cases "decode.golden" ~key:[ "dtype"; "storage" ] (fun cell ->
           equal value
             (value_of_cell (cell "value"))
             (Dtype.from_storage_scalar
-               (of_cell (cell "dtype"))
+               (dtype_of_cell (cell "dtype"))
                (value_of_cell (cell "storage"))));
+      Golden.cases "reencode.golden" ~key:[ "dtype"; "word" ] (fun cell ->
+          let dt = dtype_of_cell (cell "dtype")
+          and word = Z.of_string (cell "word") in
+          let unsigned =
+            if Dtype.itemsize dt = 1 then Dtype.Uint8 else Dtype.Uint16
+          in
+          equal value
+            (reencoded dt word (value_of_cell (cell "reencoded")))
+            (Dtype.bitcast dt unsigned (Dtype.bitcast unsigned dt (`Int word))));
       prop "storage round-trips every value"
         (Gen.bind stored (fun dt -> Gen.map (fun v -> (dt, v)) (value_of dt)))
         (fun (dt, v) ->
@@ -598,7 +698,8 @@ let bitcasts =
   group "bitcast"
     [
       Golden.cases "bitcasts.golden" ~key:[ "from"; "to"; "value" ] (fun cell ->
-          let a = of_cell (cell "from") and b = of_cell (cell "to") in
+          let a = dtype_of_cell (cell "from")
+          and b = dtype_of_cell (cell "to") in
           row value value_of_cell (cell "bitcast") a
             (value_of_cell (cell "value"))
             (Dtype.bitcast a b));
@@ -629,7 +730,7 @@ let consts =
   group "const"
     [
       Golden.cases "const.golden" ~key:[ "dtype"; "value" ] (fun cell ->
-          let dt = of_cell (cell "dtype")
+          let dt = dtype_of_cell (cell "dtype")
           and c = const_of_cell (cell "value") in
           match c with
           | #Dtype.value as v ->
