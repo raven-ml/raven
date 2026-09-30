@@ -507,11 +507,14 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
 #define NX_C_MOVE_ADD_NX_C_CAT_COMPLEX(a, b) ((a) + (b))
 #define NX_C_MOVE_ADD_NX_C_CAT_BOOL(a, b) ((a) + (b))
 
+/* Each update adds to +0 plus the position's current value, so a position
+   holds +0 plus its template value and its updates, and a float sum that is
+   exactly zero is +0, as every sum in nx is. */
 typedef void nx_c_scatter_add_fn(char *out, const char *upd);
 #define NX_C_SCATTER_ADD(sfx, storage, compute, ld, st, cat)                   \
   static void nx_c_scatter_add_##sfx(char *out, const char *upd) {             \
-    nx_c_st_##sfx(out,                                                         \
-                 NX_C_MOVE_ADD_##cat(nx_c_ld_##sfx(out), nx_c_ld_##sfx(upd)));   \
+    compute acc = NX_C_MOVE_ADD_##cat((compute)0, nx_c_ld_##sfx(out));         \
+    nx_c_st_##sfx(out, NX_C_MOVE_ADD_##cat(acc, nx_c_ld_##sfx(upd)));          \
   }
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SCATTER_ADD)
 #undef NX_C_SCATTER_ADD

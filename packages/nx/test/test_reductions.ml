@@ -328,14 +328,14 @@ let mixed_zeros = [| -0.; 0.; -0.; 0.; -0.; 0. |]
 (* A check of a matrix at any float dtype, named after its dtype and layout. *)
 type check = { run : 'b. string -> (float, 'b) Nx.t -> unit }
 
-(* [on_every_path c] runs [c] on [mixed_zeros] at every float dtype and in
-   every layout. *)
-let on_every_path c =
+(* [on_every_path xs c] runs [c] on the matrix of [xs] at every float dtype
+   and in every layout. *)
+let on_every_path xs c =
   List.iter
     (fun (F (name, dt)) ->
       List.iter
         (fun (layout, t) -> c.run (name ^ ", " ^ layout) t)
-        (layouts dt mixed_zeros))
+        (layouts dt xs))
     float_dtypes
 
 let signed_zeros =
@@ -343,7 +343,7 @@ let signed_zeros =
     [
       test "max is +0 and min -0 where both zeros meet, on every path"
         (fun () ->
-          on_every_path
+          on_every_path mixed_zeros
             {
               run =
                 (fun msg t ->
@@ -362,7 +362,7 @@ let signed_zeros =
             });
       test "argmax and argmin point at the zero max and min return" (fun () ->
           let ints xs = Nx.create Nx.int32 [| Array.length xs |] xs in
-          on_every_path
+          on_every_path mixed_zeros
             {
               run =
                 (fun msg t ->
@@ -389,6 +389,42 @@ let signed_zeros =
                 (v [| 0.; -0.; -0. |])
                 (Nx.cummin (v [| 0.; -0.; 0. |])))
             float_dtypes);
+      test "a sum of zeros is +0 on every path, whatever their signs"
+        (fun () ->
+          List.iter
+            (fun xs ->
+              on_every_path xs
+                {
+                  run =
+                    (fun msg t ->
+                      List.iter
+                        (fun (axes, shape) ->
+                          let zeros = Nx.zeros (Nx.dtype t) shape in
+                          equal ~msg:(msg ^ ", sum") (tensor float_exact) zeros
+                            (Nx.sum ?axes t);
+                          equal ~msg:(msg ^ ", mean") (tensor float_exact)
+                            zeros (Nx.mean ?axes t))
+                        [
+                          (None, [||]);
+                          (Some [ 0 ], [| 3 |]);
+                          (Some [ 1 ], [| 2 |]);
+                        ]);
+                })
+            [ Array.make 6 (-0.); mixed_zeros ]);
+      test "a sum of nothing is +0" (fun () ->
+          let nothing = Nx.zeros Nx.float32 [| 0; 1 |] in
+          equal float_exact 0. (Nx.item [ 0 ] (Nx.sum ~axes:[ 0 ] nothing)));
+      test "cumsum runs from +0, its first element included" (fun () ->
+          on_every_path (Array.make 6 (-0.))
+            {
+              run =
+                (fun msg t ->
+                  let zeros = Nx.zeros (Nx.dtype t) (Nx.shape t) in
+                  equal ~msg:(msg ^ ", along columns") (tensor float_exact)
+                    zeros (Nx.cumsum ~axis:0 t);
+                  equal ~msg:(msg ^ ", along rows") (tensor float_exact) zeros
+                    (Nx.cumsum ~axis:1 t));
+            });
       test "NaN wins over both zeros" (fun () ->
           let v xs = Nx.create Nx.float32 [| Array.length xs |] xs in
           let t = v [| -0.; Float.nan; 0. |] in

@@ -206,6 +206,41 @@ let products =
           let v = lay_out steps a in
           let c = Nx.contiguous v in
           equal near (c *@ t c) (v *@ t v));
+      test
+        "matmul gives +0 where every product is -0, at every size and dtype"
+        (fun () ->
+          (* 64 x 64 x 64 and up takes Accelerate on macOS for float32,
+             float64 and the complex dtypes; float16 is multiplied at
+             float32. *)
+          let check (type b) name (dt : (float, b) Nx.dtype) =
+            List.iter
+              (fun n ->
+                let a = Nx.full dt [| n; n |] (-0.) in
+                let msg = Printf.sprintf "%s, %d x %d" name n n in
+                let zeros = Nx.zeros dt [| n; n |] in
+                equal ~msg (tensor float_exact) zeros
+                  (Nx.matmul a (Nx.ones dt [| n; n |]));
+                equal ~msg:(msg ^ ", transposed") (tensor float_exact) zeros
+                  (Nx.matmul (Nx.ones dt [| n; n |]) (Nx.transpose a)))
+              [ 1; 4; 64; 256 ]
+          in
+          check "float32" Nx.float32;
+          check "float64" Nx.float64;
+          check "float16" Nx.float16;
+          let n = 64 in
+          let z =
+            Nx.full Nx.complex64 [| n; n |] Complex.{ re = -0.; im = -0. }
+          in
+          let c = Nx.matmul z (Nx.ones Nx.complex64 [| n; n |]) in
+          Array.iter
+            (fun (x : Complex.t) ->
+              equal ~msg:"complex64" (pair float_exact float_exact) (0., 0.)
+                (x.re, x.im))
+            (Nx.to_array c);
+          equal ~msg:"an empty contraction" (tensor float_exact)
+            (Nx.zeros Nx.float32 [| 2; 2 |])
+            (Nx.matmul (Nx.zeros Nx.float32 [| 2; 0 |])
+               (Nx.zeros Nx.float32 [| 0; 2 |])));
       test "matmul refuses scalars and mismatched inner axes" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.matmul (Nx.scalar Nx.float64 1.) (Nx.ones Nx.float64 [| 2 |]));

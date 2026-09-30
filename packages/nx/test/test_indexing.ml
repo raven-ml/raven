@@ -126,6 +126,23 @@ let scatters =
                     (if scalar then Nx.scalar Nx.int32 100l
                      else Nx.create Nx.int32 s values.data)
                   t)));
+      test "scatter's additions run from +0, and it keeps an unreached -0"
+        (fun () ->
+          let v xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+          let add ~unique_indices indices values =
+            Nx.scatter ~mode:`Add ~unique_indices ~axis:0
+              ~indices:(Nx.create Nx.int32 [| Array.length indices |] indices)
+              ~values:(v values)
+              (v [| -0.; -0.; -0. |])
+          in
+          List.iter
+            (fun unique_indices ->
+              let msg = Printf.sprintf "unique_indices = %b" unique_indices in
+              equal ~msg (tensor float_exact) (v [| 0.; -0.; 0. |])
+                (add ~unique_indices [| 0l; 2l |] [| -0.; -0. |]))
+            [ false; true ];
+          equal ~msg:"duplicates" (tensor float_exact) (v [| 0.; -0.; -0. |])
+            (add ~unique_indices:false [| 0l; 0l |] [| -0.; -0. |]));
       test "scatter refuses indices of another rank" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.scatter ~axis:0 ~indices:(indices_tensor [| 0 |])

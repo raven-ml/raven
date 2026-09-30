@@ -390,7 +390,10 @@ static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
      are the kernel's concern (rejected loudly, never identity), not the ABI's.
    - Float max/min, elementwise, reduced or scanned, are IEEE 754-2019 maximum
      and minimum: NaN propagates and -0 orders below +0. argmax/argmin and sort
-     order the zeros the same way. */
+     order the zeros the same way.
+   - A float sum (a reduction, a scan, scatter's additions, fold's overlaps, a
+     matmul's contraction) is +0 plus its terms, so one that is exactly zero is
+     +0 whatever the association and the layout. */
 
 /* ── Float extremes ───────────────────────────────────────────────────────
 

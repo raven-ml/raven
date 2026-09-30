@@ -1586,11 +1586,13 @@ val scatter :
 
     [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
     the last update winning at duplicate positions; [`Add] accumulates every
-    update into [t]'s value. [unique_indices = true] promises that no position
-    is selected twice, letting backends write the updates in any order. Where
-    the promise is broken, a position selected more than once holds an
-    unspecified one of its updates under [`Set] and an unspecified value under
-    [`Add]; every other position is exact.
+    update into [t]'s value, a float sum as {!sum} describes, so a position
+    whose value and updates sum to exactly zero holds [0.].
+    [unique_indices = true] promises that no position is selected twice,
+    letting backends write the updates in any order. Where the promise is
+    broken, a position selected more than once holds an unspecified one of its
+    updates under [`Set] and an unspecified value under [`Add]; every other
+    position is exact.
 
     [scatter] differentiates with respect to both [t] and [values]; a dropped
     update's gradient is zero.
@@ -2252,8 +2254,9 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     are kept with size 1. [keepdims] defaults to [false]. Negative axes count
     from the end.
 
-    A float sum is the sum of its terms in an unspecified association. It is
-    deterministic for a given input layout on a given machine and does not
+    A float sum is [0.] plus its terms in an unspecified association, so a sum
+    that is exactly zero is [0.], never [-0.], and a sum of nothing is [0.]. It
+    is deterministic for a given input layout on a given machine and does not
     depend on the thread count; the same values in another layout can differ in
     rounding, and at overflow in whether a term overflows. {!mean} and the
     contraction of {!matmul} and the products built on it sum the same way.
@@ -2303,8 +2306,10 @@ val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cumsum ?axis t] is the inclusive cumulative sum along [axis]. When [axis]
-    is omitted, it accumulates the flattened tensor and keeps [t]'s shape.
+(** [cumsum ?axis t] is the inclusive cumulative sum along [axis]. Each running
+    sum is a float sum as {!sum} describes, [0.] plus the terms so far: the
+    first element of [cumsum] of [[-0.]] is [0.]. When [axis] is omitted, it
+    accumulates the flattened tensor and keeps [t]'s shape.
 
     See also {!cumprod}. *)
 
@@ -2545,7 +2550,8 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     At [float16], [bfloat16] and the float8 dtypes, the operands are widened to
     [float32], multiplied and summed at [float32], and each element of the
     result is rounded once to the operands' dtype. The contraction sums as
-    {!sum} describes.
+    {!sum} describes: an output whose products sum to exactly zero is [0.], and
+    an empty contraction gives [0.].
 
     Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 

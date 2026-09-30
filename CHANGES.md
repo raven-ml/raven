@@ -2875,6 +2875,13 @@ thread.
 
 ### Nx
 
+- A float `Nx.sum` that is exactly zero is `0.`: a sum is `0.` plus its terms,
+  on every path. The sum over axis 0 of a C-contiguous matrix started from its
+  first row, so the column sums of a 2 x 3 matrix of `-0.` were `-0.` where
+  every other layout gave `0.`; `Nx.scatter`'s `Add` mode added into a copy of
+  the template, so `-0.` plus a `-0.` update stayed `-0.`; and `Nx.matmul` on
+  macOS returned `-0.` from Accelerate where every product was `-0.`. `Nx.mean`
+  and the products built on `matmul` follow.
 - `Nx.maximum`, `Nx.minimum`, `Nx.max`, `Nx.min`, `Nx.cummax` and `Nx.cummin`
   are IEEE 754 maximum and minimum: NaN propagates and `-0.` is less than
   `0.`. A tie of zeros returned an operand by position, so `max` of

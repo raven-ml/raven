@@ -59,9 +59,10 @@
    (f32/f64/c32/c64) to cblas, keeping the owned GEMM as the fallback and the ONLY
    path off macOS, where this whole section compiles out. Low-precision and
    integer dtypes NEVER route here — Accelerate lacks them and the owned pack
-   funnel keeps its large win. The store-once-per-C-element invariant is intact:
-   cblas writes C directly, once, in the native storage precision (each of
-   f32/f64/c32/c64 is its own compute type). */
+   funnel keeps its large win. cblas writes C directly in the native storage
+   precision (each of f32/f64/c32/c64 is its own compute type), and one pass
+   over C then adds +0, which changes nothing but a -0 sum (see
+   MM_ACCEL_FROM_ZERO). */
 #if defined(__APPLE__)
 #define ACCELERATE_NEW_LAPACK 1
 #include <Accelerate/Accelerate.h>
@@ -1072,6 +1073,19 @@ static int mm_accel_eligible(nx_c_dtype dt, int64_t m, int64_t n, int64_t k,
   return 1;
 }
 
+/* Adds +0 to each of C's m x n outputs. Accelerate's GEMM returns -0 for an
+   output whose products are all -0, where nx's sums start from +0; the
+   addition turns that -0 into +0 and leaves every other value as it is. The
+   extents live in locals: the stores could otherwise alias them, under
+   -fno-strict-aliasing, and keep the loop from vectorizing. */
+#define MM_ACCEL_FROM_ZERO(T, c, m, n, ldc)                                    \
+  do {                                                                         \
+    T *c_ = (T *)(c);                                                          \
+    int64_t m_ = (m), n_ = (n), ldc_ = (ldc);                                  \
+    for (int64_t i = 0; i < m_; i++)                                           \
+      for (int64_t j = 0; j < n_; j++) c_[i * ldc_ + j] += (T)0;               \
+  } while (0)
+
 /* One cblas GEMM per batch matrix, on the calling thread with the runtime lock
    released by nx_c_parallel_for (nthreads == 1, so this runs inline and NEVER on a
    pool worker — Accelerate owns its own internal threads, and calling it from N
@@ -1090,11 +1104,13 @@ static void mm_accel_body(int64_t lo, int64_t hi, int worker, void *vctx) {
         cblas_sgemm(CblasRowMajor, ac->ta, ac->tb, ac->m, ac->n, ac->k, 1.0f,
                     (const float *)ab, ac->lda, (const float *)bb, ac->ldb, 0.0f,
                     (float *)cb, ac->ldc);
+        MM_ACCEL_FROM_ZERO(float, cb, ac->m, ac->n, ac->ldc);
         break;
       case NX_C_DTYPE_f64:
         cblas_dgemm(CblasRowMajor, ac->ta, ac->tb, ac->m, ac->n, ac->k, 1.0,
                     (const double *)ab, ac->lda, (const double *)bb, ac->ldb, 0.0,
                     (double *)cb, ac->ldc);
+        MM_ACCEL_FROM_ZERO(double, cb, ac->m, ac->n, ac->ldc);
         break;
       case NX_C_DTYPE_c32: {
         const nx_c_complex32 alpha = 1, beta = 0;
@@ -1102,6 +1118,7 @@ static void mm_accel_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                     (const nx_c_complex32 *)ab, ac->lda,
                     (const nx_c_complex32 *)bb, ac->ldb, &beta,
                     (nx_c_complex32 *)cb, ac->ldc);
+        MM_ACCEL_FROM_ZERO(nx_c_complex32, cb, ac->m, ac->n, ac->ldc);
         break;
       }
       case NX_C_DTYPE_c64: {
@@ -1110,6 +1127,7 @@ static void mm_accel_body(int64_t lo, int64_t hi, int worker, void *vctx) {
                     (const nx_c_complex64 *)ab, ac->lda,
                     (const nx_c_complex64 *)bb, ac->ldb, &beta,
                     (nx_c_complex64 *)cb, ac->ldc);
+        MM_ACCEL_FROM_ZERO(nx_c_complex64, cb, ac->m, ac->n, ac->ldc);
         break;
       }
       default:

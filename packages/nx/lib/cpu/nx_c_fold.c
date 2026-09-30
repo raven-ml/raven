@@ -213,12 +213,14 @@
 
 /* Streaming reduction step (nx_c_engine.h streaming path): fold one reduced row
    of n lane elements into a per-lane accumulator array. `first` seeds the array
-   from this row; otherwise it combines with CMB. The lane loop has independent
-   accumulators so it vectorizes; the contiguous branch (unit lane step) lets the
-   compiler pack the loads. Accumulators are the compute type — wide accumulation
-   matches the per-output step, but per lane there is a single accumulator, since
-   the vectorization comes from the lanes, not from unrolling the reduced axis. */
-#define NX_C_STREAM_STEP(opname, sfx, storage, compute, CMB)                    \
+   with SEED of this row, the op's identity combined with it as the per-output
+   step's init does; otherwise it combines with CMB. The lane loop has
+   independent accumulators so it vectorizes; the contiguous branch (unit lane
+   step) lets the compiler pack the loads. Accumulators are the compute type —
+   wide accumulation matches the per-output step, but per lane there is a single
+   accumulator, since the vectorization comes from the lanes, not from unrolling
+   the reduced axis. */
+#define NX_C_STREAM_STEP(opname, sfx, storage, compute, CMB, SEED)              \
   static void nx_c_##opname##_stream_##sfx(void *accs, const char *in,          \
                                           int64_t in_step, int64_t n,          \
                                           int first, void *ctx) {              \
@@ -227,7 +229,8 @@
     if (in_step == (int64_t)sizeof(storage)) {                                 \
       const storage *p = (const storage *)in;                                  \
       if (first) {                                                             \
-        for (int64_t j = 0; j < n; j++) a[j] = nx_c_ld_##sfx(&p[j]);           \
+        for (int64_t j = 0; j < n; j++)                                        \
+          a[j] = SEED(compute, nx_c_ld_##sfx(&p[j]));                          \
       } else {                                                                 \
         for (int64_t j = 0; j < n; j++) {                                      \
           compute v = nx_c_ld_##sfx(&p[j]);                                     \
@@ -236,7 +239,8 @@
       }                                                                        \
     } else {                                                                   \
       if (first) {                                                             \
-        for (int64_t j = 0; j < n; j++) a[j] = nx_c_ld_##sfx(in + j * in_step); \
+        for (int64_t j = 0; j < n; j++)                                        \
+          a[j] = SEED(compute, nx_c_ld_##sfx(in + j * in_step));               \
       } else {                                                                 \
         for (int64_t j = 0; j < n; j++) {                                      \
           compute v = nx_c_ld_##sfx(in + j * in_step);                         \
@@ -415,16 +419,23 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
    per-lane accumulator (not the per-output float multi-accumulator: the lanes
    provide the vectorization here); float max/min use the lane forms of their
    combines; the rest reuse the same combine macros as their per-output steps.
-   The scalar semantics — including NaN propagation and the order of zeros for
-   float max/min — are identical. */
+   Each seeds as its per-output step's init would: sum from +0, so a float sum
+   that is exactly zero is +0 on both paths, prod from 1, which only a complex
+   zero's sign notices, and max/min with the row itself. The scalar semantics —
+   including NaN propagation and the order of zeros for float max/min — are
+   identical. */
+#define NX_C_SEED_ZERO(compute, V) ((compute)0 + (V))
+#define NX_C_SEED_ONE(compute, V) ((compute)1 * (V))
+#define NX_C_SEED_ROW(compute, V) (V)
 #define NX_C_SUM_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
+  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM, NX_C_SEED_ZERO)
 #define NX_C_SUM_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM_WRAP)
+  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM_WRAP,               \
+                  NX_C_SEED_ZERO)
 #define NX_C_SUM_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
+  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM, NX_C_SEED_ZERO)
 #define NX_C_SUM_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)                  \
-  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM)
+  NX_C_STREAM_STEP(sum, sfx, storage, compute, NX_C_CMB_SUM, NX_C_SEED_ZERO)
 #define NX_C_SUM_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)
 #define NX_C_SUM_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_SUM_STREAM_##cat(sfx, storage, compute)
@@ -437,13 +448,14 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_SUM_STREAM_ROW)
 #undef NX_C_SUM_STREAM_NX_C_CAT_BOOL
 
 #define NX_C_PROD_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                   \
-  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD)
+  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD, NX_C_SEED_ONE)
 #define NX_C_PROD_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD_WRAP)
+  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD_WRAP,             \
+                  NX_C_SEED_ONE)
 #define NX_C_PROD_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD)
+  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD, NX_C_SEED_ONE)
 #define NX_C_PROD_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)                 \
-  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD)
+  NX_C_STREAM_STEP(prod, sfx, storage, compute, NX_C_CMB_PROD, NX_C_SEED_ONE)
 #define NX_C_PROD_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)
 #define NX_C_PROD_STREAM_ROW(sfx, storage, compute, ld, st, cat)                \
   NX_C_PROD_STREAM_##cat(sfx, storage, compute)
@@ -456,13 +468,14 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_PROD_STREAM_ROW)
 #undef NX_C_PROD_STREAM_NX_C_CAT_BOOL
 
 #define NX_C_MAX_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXF_LANE)
+  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXF_LANE,              \
+                  NX_C_SEED_ROW)
 #define NX_C_MAX_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXI)
+  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXI, NX_C_SEED_ROW)
 #define NX_C_MAX_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXI)
+  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXI, NX_C_SEED_ROW)
 #define NX_C_MAX_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXB)
+  NX_C_STREAM_STEP(max, sfx, storage, compute, NX_C_CMB_MAXB, NX_C_SEED_ROW)
 #define NX_C_MAX_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)
 #define NX_C_MAX_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_MAX_STREAM_##cat(sfx, storage, compute)
@@ -475,13 +488,14 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MAX_STREAM_ROW)
 #undef NX_C_MAX_STREAM_NX_C_CAT_COMPLEX
 
 #define NX_C_MIN_STREAM_NX_C_CAT_FLOAT(sfx, storage, compute)                    \
-  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINF_LANE)
+  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINF_LANE,              \
+                  NX_C_SEED_ROW)
 #define NX_C_MIN_STREAM_NX_C_CAT_SINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINI)
+  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINI, NX_C_SEED_ROW)
 #define NX_C_MIN_STREAM_NX_C_CAT_UINT(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINI)
+  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINI, NX_C_SEED_ROW)
 #define NX_C_MIN_STREAM_NX_C_CAT_BOOL(sfx, storage, compute)                     \
-  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINB)
+  NX_C_STREAM_STEP(min, sfx, storage, compute, NX_C_CMB_MINB, NX_C_SEED_ROW)
 #define NX_C_MIN_STREAM_NX_C_CAT_COMPLEX(sfx, storage, compute)
 #define NX_C_MIN_STREAM_ROW(sfx, storage, compute, ld, st, cat)                 \
   NX_C_MIN_STREAM_##cat(sfx, storage, compute)
