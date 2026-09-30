@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float)
+1 Ops.RECIPROCAL dtypes.float [0]
+2 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
+3 Ops.CONST dtypes.weakfloat [] 1.0
+4 Ops.CAST dtypes.float [3] dtypes.float
+5 Ops.FDIV dtypes.float [4, 0]
+6 Ops.MUL dtypes.float [2, 5]
+7 Ops.MUL dtypes.float [5, 2]
+8 Ops.MUL dtypes.float [2, 1]
+9 Ops.SINK dtypes.void [1, 6, 7, 8]
+10 Ops.FDIV dtypes.float [3, 0]
+11 Ops.FDIV dtypes.float [2, 0]
+12 Ops.SINK dtypes.void [10, 6, 7, 11]
+13 Ops.SINK dtypes.void [9, 12]
+

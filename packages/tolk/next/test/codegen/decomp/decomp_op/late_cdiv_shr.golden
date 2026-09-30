@@ -1,0 +1,53 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.uint [] ParamArg(slot=-1, dtype=dtypes.uint, vmin_vmax=(0, 1000), multiple_of=1, name="u", addrspace=AddrSpace.ALU)
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.CDIV dtypes.uint [0, 1]
+3 Ops.CONST dtypes.weakint [] 1
+4 Ops.CDIV dtypes.uint [0, 3]
+5 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(0, 1000), multiple_of=1, name="p", addrspace=AddrSpace.ALU)
+6 Ops.CDIV dtypes.int [5, 1]
+7 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(-1000, 1000), multiple_of=1, name="m", addrspace=AddrSpace.ALU)
+8 Ops.CDIV dtypes.int [7, 1]
+9 Ops.CDIV dtypes.int [7, 3]
+10 Ops.CONST dtypes.weakint [] 7
+11 Ops.CDIV dtypes.int [5, 10]
+12 Ops.CMOD dtypes.int [5, 10]
+13 Ops.CDIV dtypes.int [7, 10]
+14 Ops.CMOD dtypes.int [7, 10]
+15 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(1, 9), multiple_of=1, name="d", addrspace=AddrSpace.ALU)
+16 Ops.CMOD dtypes.int [5, 15]
+17 Ops.CONST dtypes.weakint [] -3
+18 Ops.CDIV dtypes.int [5, 17]
+19 Ops.CONST dtypes.weakint [] 0
+20 Ops.CMOD dtypes.int [5, 19]
+21 Ops.PARAM dtypes.ulong [] ParamArg(slot=-1, dtype=dtypes.ulong, vmin_vmax=(0, 18446744073709551615), multiple_of=1, name="w", addrspace=AddrSpace.ALU)
+22 Ops.CONST dtypes.weakint [] 3
+23 Ops.CMOD dtypes.ulong [21, 22]
+24 Ops.PARAM dtypes.uint [] ParamArg(slot=-1, dtype=dtypes.uint, vmin_vmax=(0, 4294967295), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+25 Ops.CDIV dtypes.uint [24, 10]
+26 Ops.CMOD dtypes.uint [24, 10]
+27 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 100), multiple_of=1, name="k", addrspace=AddrSpace.ALU)
+28 Ops.CDIV dtypes.weakint [27, 1]
+29 Ops.CONST dtypes.weakint [] 4
+30 Ops.CMOD dtypes.int [7, 29]
+31 Ops.PARAM dtypes.long [] ParamArg(slot=-1, dtype=dtypes.long, vmin_vmax=(0, 100), multiple_of=1, name="l", addrspace=AddrSpace.ALU)
+32 Ops.CONST dtypes.weakint [] 9223372036854775807
+33 Ops.CDIV dtypes.long [31, 32]
+34 Ops.SINK dtypes.void [2, 4, 6, 8, 9, 11, 12, 13, 14, 16, 18, 20, 23, 25, 26, 28, 30, 33]
+35 Ops.SHR dtypes.uint [0, 22]
+36 Ops.CONST dtypes.bool [] False
+37 Ops.CONST dtypes.weakint [] -1
+38 Ops.MUL dtypes.weakint [3, 37]
+39 Ops.ADD dtypes.weakint [1, 38]
+40 Ops.WHERE dtypes.weakint [36, 39, 19]
+41 Ops.CAST dtypes.int [40] dtypes.int
+42 Ops.ADD dtypes.int [5, 41]
+43 Ops.SHR dtypes.int [42, 22]
+44 Ops.CMPLT dtypes.bool [7, 19]
+45 Ops.WHERE dtypes.weakint [44, 39, 19]
+46 Ops.CAST dtypes.int [45] dtypes.int
+47 Ops.ADD dtypes.int [7, 46]
+48 Ops.SHR dtypes.int [47, 22]
+49 Ops.SINK dtypes.void [35, 4, 43, 48, 9, 11, 12, 13, 14, 16, 18, 20, 23, 25, 26, 28, 30, 33]
+50 Ops.SINK dtypes.void [34, 49]
+

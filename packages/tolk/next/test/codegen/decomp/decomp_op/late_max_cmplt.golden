@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(-5, 5), multiple_of=1, name="x", addrspace=AddrSpace.ALU)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=-1, dtype=dtypes.int, vmin_vmax=(-5, 5), multiple_of=1, name="y", addrspace=AddrSpace.ALU)
+2 Ops.MAX dtypes.int [0, 1]
+3 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float)
+5 Ops.MAX dtypes.float [3, 4]
+6 Ops.PARAM dtypes.short [] ParamArg(slot=-1, dtype=dtypes.short, vmin_vmax=(-5, 5), multiple_of=1, name="s", addrspace=AddrSpace.ALU)
+7 Ops.CAST dtypes.int [6] dtypes.int
+8 Ops.MAX dtypes.int [7, 1]
+9 Ops.SINK dtypes.void [2, 5, 8]
+10 Ops.CMPLT dtypes.bool [0, 1]
+11 Ops.WHERE dtypes.int [10, 1, 0]
+12 Ops.CMPLT dtypes.bool [3, 4]
+13 Ops.WHERE dtypes.float [12, 4, 3]
+14 Ops.CMPLT dtypes.bool [7, 1]
+15 Ops.WHERE dtypes.int [14, 1, 7]
+16 Ops.SINK dtypes.void [11, 13, 15]
+17 Ops.SINK dtypes.void [9, 16]
+
