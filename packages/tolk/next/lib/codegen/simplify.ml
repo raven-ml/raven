@@ -358,8 +358,14 @@ let reduce_collapse ?(pm = pm_reduce_collapse) red u =
                 (fun s ->
                   if
                     not
-                      (Tbl.mem inside s || Tbl.mem replaces s
-                      || List.mem (op s) Op.[ Const; Param; Buffer; Alloc ])
+                      (Tbl.mem inside s
+                      || (Tbl.mem replaces s
+                         || List.mem (op s) Op.[ Const; Param; Buffer; Alloc ]
+                         )
+                         [@mutate
+                           off
+                             "a constant, parameter or replaced node folds \
+                              back unchanged"])
                   then begin
                     let name = Printf.sprintf "in%d" (Tbl.length replaces) in
                     let v = variable ~dtype:(dtype s) name (vmin s) (vmax s) in

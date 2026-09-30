@@ -14,7 +14,8 @@
 val indexing_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [indexing_simplify] rewrites an index [where cond x invalid] into a buffer
     to [where cond x' invalid], with [x'] the simplification of [x] given that
-    [cond] holds ({!Symbolic.uop_given_valid}), when that changes [x]. *)
+    [cond] holds ({!Symbolic.uop_given_valid}), when the condition simplifies
+    [x] further than {!Ops.simplify} does alone. *)
 
 val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
 (** [memory_coalescing sink r] merges the loads, and the stores, of [sink] that
@@ -30,4 +31,4 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     are, and so is everything when the variable [DMC] is nonzero.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
-    {!Op.Index}, or two stores write one element. *)
+    {!Op.Index} of one index, or two stores write one element. *)
