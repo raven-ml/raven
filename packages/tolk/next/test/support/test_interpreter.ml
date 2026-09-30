@@ -187,6 +187,10 @@ let reductions =
           is_false (Interpreter.overflows (over [ r ] Add (int32 r))));
     ]
 
+(* The [n] elements of [storage] from [offset], as a vector access. *)
+let vector storage offset n =
+  Ops.v ~src:[ storage; offset; Ops.int n ] Op.Shrink
+
 let storage =
   let table = Ops.param ~shape:[ Int 4 ] 0 Dtype.Int32 in
   let elements = [ (0, Array.map int [| 10; 11; 12; 13 |]) ] in
@@ -206,6 +210,17 @@ let storage =
       test "storage without elements is refused" (fun () ->
           rejects (fun () ->
               eval ~vars:[ ("i", int 0) ] (Ops.index table [ i ])));
+      test "a lane of a vector load reads its element past the offset"
+        (fun () ->
+          let vector = Ops.load (vector table (Ops.int 1) 2) [] in
+          equal const (int 12) (at 0 (Ops.index vector [ Ops.int 1 ])));
+      test "a lane of a vector load at an invalid offset is invalid" (fun () ->
+          let offset = Ops.valid i Ops.O.(i < int 2) in
+          let vector = Ops.load (vector table offset 2) [] in
+          equal const `Invalid (at 3 (Ops.index vector [ Ops.int 0 ])));
+      test "a lane outside its vector is refused" (fun () ->
+          let vector = Ops.load (vector table (Ops.int 0) 2) [] in
+          rejects (fun () -> at 0 (Ops.index vector [ Ops.int 2 ])));
     ]
 
 let kernels =
@@ -255,6 +270,24 @@ let kernels =
             (Interpreter.writes
                ~buffers:[ (1, Array.map int [| 2; 3; 9; 9 |]) ]
                (store (Ops.int 0) total)));
+      test "a store through a vector writes each lane past the offset"
+        (fun () ->
+          let lanes = Ops.stack [ int32 (Ops.int 7); int32 (Ops.int 8) ] in
+          equal (list write)
+            [ (0, 4, int 7); (0, 5, int 8) ]
+            (writes (Ops.store (vector out (Ops.int 4) 2) lanes)));
+      test "a store through a vector of a stack of another length is refused"
+        (fun () ->
+          let lanes = Ops.stack [ int32 (Ops.int 7) ] in
+          rejects (fun () ->
+              writes (Ops.store (vector out (Ops.int 4) 2) lanes)));
+      test "a store through a vector at an invalid offset writes nothing"
+        (fun () ->
+          let offset = Ops.valid Ops.O.(r * int 2) Ops.O.(r < int 1) in
+          let lanes = Ops.stack [ int32 r; int32 r ] in
+          equal (list write)
+            [ (0, 0, int 0); (0, 1, int 0) ]
+            (writes (Ops.end_ (Ops.store (vector out offset 2) lanes) [ r ])));
     ]
 
 let () =

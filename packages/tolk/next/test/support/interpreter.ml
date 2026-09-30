@@ -139,28 +139,49 @@ and reduction ~check ~vars ~params ~buffers red =
   over eval vars ranges combine (Ops.identity_element op dt)
 
 and read ~check ~vars ~params ~buffers index =
+  let eval u = fold ~check ~vars ~params ~buffers u in
   match Ops.src index with
   | [ storage; i ] -> (
+      (* A lane of a vector load reads its element past the vector's offset. *)
+      let storage, offset, length =
+        match (Ops.op storage, Ops.src storage) with
+        | Load, [ vector ] when Ops.op vector = Op.Shrink -> (
+            match Ops.src vector with
+            | [ storage; offset; length ] -> (storage, eval offset, Some length)
+            | _ ->
+                invalid_arg
+                  "a vector load has a storage, an offset and a length")
+        | _ -> (storage, `Int Z.zero, None)
+      in
       let slot = storage_slot storage in
       let elements =
         match List.assoc_opt slot buffers with
         | Some elements -> elements
         | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
       in
-      match fold ~check ~vars ~params ~buffers i with
-      | `Invalid -> `Invalid
-      | `Int i when Z.(geq i zero && lt i (of_int (Array.length elements))) ->
-          (elements.(Z.to_int i) :> Dtype.const)
-      | c ->
-          invalid_arg
-            (Format.asprintf "index %a is outside buffer %d" Dtype.pp_const c
-               slot))
+      match (offset, eval i) with
+      | `Invalid, _ | _, `Invalid -> `Invalid
+      | `Int o, `Int k -> (
+          (match length with
+          | Some n when not Z.(geq k zero && lt k (Ops.to_int n)) ->
+              invalid_arg
+                (Format.asprintf "lane %a is outside a vector of %a" Z.pp_print
+                   k Z.pp_print (Ops.to_int n))
+          | _ -> ());
+          match Z.add o k with
+          | e when Z.(geq e zero && lt e (of_int (Array.length elements))) ->
+              (elements.(Z.to_int e) :> Dtype.const)
+          | e ->
+              invalid_arg
+                (Format.asprintf "index %a is outside buffer %d" Z.pp_print e
+                   slot))
+      | _ -> invalid_arg "an index is not an integer")
   | _ -> invalid_arg "cannot evaluate an index by more than one index"
 
 and storage_slot u =
   match Ops.arg u with
   | Param { slot; size = Some _; _ } -> slot
-  | _ -> invalid_arg "cannot evaluate an index of a node that is not storage"
+  | _ -> invalid_arg "cannot access a node that is not storage"
 
 let eval ?(vars = []) ?(params = []) ?(buffers = []) u =
   fold ~check:(fun _ _ -> ()) ~vars ~params ~buffers u
@@ -197,9 +218,17 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
       | [ dst; value; gate ] -> (dst, value, Some gate)
       | _ -> invalid_arg "a store has a destination, a value and a gate"
     in
-    let slot, index =
+    (* A store through a vector writes each lane of a stack past the offset. *)
+    let slot, index, lanes =
       match (Ops.op dst, Ops.src dst) with
-      | Index, [ storage; index ] -> (storage_slot storage, index)
+      | Index, [ storage; index ] -> (storage_slot storage, index, [ value ])
+      | Shrink, [ storage; offset; length ]
+        when Ops.op value = Op.Stack
+             && Z.equal (Ops.to_int length)
+                  (Z.of_int (List.length (Ops.src value))) ->
+          (storage_slot storage, offset, Ops.src value)
+      | Shrink, _ ->
+          invalid_arg "a store through a vector stores a stack of its length"
       | _ -> invalid_arg "cannot evaluate a store through more than one index"
     in
     let inside = Ops.ranges s in
@@ -214,8 +243,14 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
         | None -> true
         | Some g -> Dtype.equal_const (eval vars g) (`Bool true)
       in
-      match (eval vars index, eval vars value) with
-      | `Int i, (#Dtype.value as v) when opened -> (slot, Z.to_int i, v) :: acc
+      match eval vars index with
+      | `Int i when opened ->
+          let write (k, acc) lane =
+            match eval vars lane with
+            | #Dtype.value as v -> (k + 1, (slot, Z.to_int i + k, v) :: acc)
+            | `Invalid -> (k + 1, acc)
+          in
+          snd (List.fold_left write (0, acc) lanes)
       | _ -> acc
     in
     over eval vars ranges write []

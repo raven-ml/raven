@@ -13,7 +13,10 @@
     from [0] below its end, evaluated where the ranges before it are bound, and
     the last range varies fastest. An index ({!Tolk_next.Op.Index}) of storage
     by one integer reads that element of the storage, and a load
-    ({!Tolk_next.Op.Load}) is the value of what it loads.
+    ({!Tolk_next.Op.Load}) is the value of what it loads. A vector of storage is
+    a {!Tolk_next.Op.Shrink} of the storage, an offset and a length: an index by
+    [k] of a load of the vector reads the element [k] past the offset, which is
+    its lane [k].
 
     The value of an index where its gate fails ({!Tolk_next.Ops.valid}) is
     [`Invalid], which poisons what reads it: an operation of an [`Invalid]
@@ -53,10 +56,11 @@ val eval :
 
     Raises [Invalid_argument] if [u] reads an unbound variable, a range or a
     hardware index that [vars] does not bind, a parameter that [params] does not
-    give, storage that [buffers] does not give or outside its array, or holds an
-    operation other than a constant, a scalar leaf, an arithmetic operation, a
-    cast, a bit reinterpretation, a reduction over ranges, an index of storage
-    by one integer or a load. *)
+    give, storage that [buffers] does not give or outside its array, a lane
+    outside its vector, or holds an operation other than a constant, a scalar
+    leaf, an arithmetic operation, a cast, a bit reinterpretation, a reduction
+    over ranges, an index of storage or of a vector load by one integer, or a
+    load. *)
 
 val overflows :
   ?vars:(string * Dtype.value) list ->
@@ -97,5 +101,11 @@ val writes :
     that fails, writes nothing. Ranges a store does not run inside, such as
     those only an {!Tolk_next.Op.End} lists, add no binding.
 
+    A store through a vector of [n] elements stores a {!Tolk_next.Op.Stack} of
+    [n] lanes, and writes its lane [k] at the element [k] past the offset, each
+    lane where it is not [`Invalid]; an [`Invalid] offset writes nothing.
+
     Raises [Invalid_argument] as {!eval} does, or if a store's destination is
-    not an index of storage by one integer. *)
+    neither an index of storage by one integer nor a vector of storage, or it
+    stores through a vector a value that is not a stack of the vector's length.
+*)
