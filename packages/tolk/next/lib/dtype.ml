@@ -269,6 +269,73 @@ let is_nonzero : value -> bool = function
   | `Int n -> not (Z.equal n Z.zero)
   | `Float x -> x <> 0.
 
+(* Arithmetic on values *)
+
+module Value = struct
+  type t = value
+
+  let of_int n = `Int (Z.of_int n)
+
+  (* A value as a number: a [`Bool] counts as [0] or [1]. *)
+  let number : t -> [ `Int of Z.t | `Float of float ] = function
+    | `Bool b -> `Int (Z.of_int (Bool.to_int b))
+    | (`Int _ | `Float _) as v -> v
+
+  let float_of = function `Int n -> Z.to_float n | `Float x -> x
+
+  (* The order of the integer [n] and the float [x], exactly, or [None] if [x]
+     is NaN. *)
+  let compare_int_float n x =
+    if Float.is_nan x then None
+    else if not (Float.is_finite x) then Some (if x > 0. then -1 else 1)
+    else
+      let floor = Float.floor x in
+      match Z.compare n (Z.of_float floor) with
+      | 0 -> Some (if x > floor then -1 else 0)
+      | c -> Some c
+
+  (* The order of two values, or [None] if either is NaN. *)
+  let order v0 v1 =
+    match (number v0, number v1) with
+    | `Int n0, `Int n1 -> Some (Z.compare n0 n1)
+    | `Int n, `Float x -> compare_int_float n x
+    | `Float x, `Int n -> Option.map Int.neg (compare_int_float n x)
+    | `Float x0, `Float x1 ->
+        if Float.is_nan x0 || Float.is_nan x1 then None
+        else Some (Float.compare x0 x1)
+
+  let compare v0 v1 =
+    match order v0 v1 with
+    | Some c -> c
+    | None -> (
+        let is_nan = function `Float x -> Float.is_nan x | _ -> false in
+        match (is_nan v0, is_nan v1) with
+        | true, true -> 0
+        | true, false -> -1
+        | false, _ -> 1)
+
+  let arith int_op float_op v0 v1 =
+    match (number v0, number v1) with
+    | `Int n0, `Int n1 -> `Int (int_op n0 n1)
+    | v0, v1 -> `Float (float_op (float_of v0) (float_of v1))
+
+  let ( = ) v0 v1 = order v0 v1 = Some 0
+  let ( <> ) v0 v1 = not (v0 = v1)
+  let ( < ) v0 v1 = match order v0 v1 with Some c -> c < 0 | None -> false
+  let ( <= ) v0 v1 = match order v0 v1 with Some c -> c <= 0 | None -> false
+  let ( > ) v0 v1 = v1 < v0
+  let ( >= ) v0 v1 = v1 <= v0
+  let min v0 v1 = if v1 < v0 then v1 else v0
+  let max v0 v1 = if v1 > v0 then v1 else v0
+
+  let ( ~- ) v =
+    match number v with `Int n -> `Int (Z.neg n) | `Float x -> `Float (-.x)
+
+  let ( + ) = arith Z.add ( +. )
+  let ( - ) = arith Z.sub ( -. )
+  let ( * ) = arith Z.mul ( *. )
+end
+
 let int_min dt =
   if is_unsigned dt then Z.zero else Z.neg (Z.shift_left Z.one (bitsize dt - 1))
 

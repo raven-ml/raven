@@ -42,6 +42,64 @@ val pp_const : Format.formatter -> [< const ] -> unit
     in exponent notation below [1e-4] and from [1e16] in magnitude ([1e-05],
     [1.5e+16]), and is [inf], [-inf] or [nan] if it is not finite. *)
 
+(** {2:arith Arithmetic on values} *)
+
+(** Arithmetic and comparison on values, as on numbers: a [`Bool] counts as [0]
+    or [1], an operation on two integers gives an exact integer, and one that
+    involves a float gives a float, in which an integer that rounds past the
+    greatest double is the infinity of its sign. The operators compare an
+    integer and a float exactly, without rounding the integer, and a comparison
+    with NaN is [false], except [<>], which is [true]. *)
+module Value : sig
+  type t = value
+  (** The type for values. *)
+
+  val of_int : int -> t
+  (** [of_int n] is [`Int n]. *)
+
+  val compare : t -> t -> int
+  (** [compare v0 v1] is a total order on values by magnitude, where NaN is less
+      than every other value and equal to itself. Values of equal magnitude
+      compare equal whatever their kind, so [`Bool true], [`Int 1] and
+      [`Float 1.] are equal. *)
+
+  val ( = ) : t -> t -> bool
+  (** [v0 = v1] is [true] iff [v0] and [v1] have the same magnitude. *)
+
+  val ( <> ) : t -> t -> bool
+  (** [v0 <> v1] is [not (v0 = v1)]. *)
+
+  val ( < ) : t -> t -> bool
+  (** [v0 < v1] is [true] iff [v0]'s magnitude is less than [v1]'s. *)
+
+  val ( <= ) : t -> t -> bool
+  (** [v0 <= v1] is [v0 < v1 || v0 = v1]. *)
+
+  val ( > ) : t -> t -> bool
+  (** [v0 > v1] is [v1 < v0]. *)
+
+  val ( >= ) : t -> t -> bool
+  (** [v0 >= v1] is [v1 <= v0]. *)
+
+  val min : t -> t -> t
+  (** [min v0 v1] is [v1] if [v1 < v0], and [v0] otherwise. *)
+
+  val max : t -> t -> t
+  (** [max v0 v1] is [v1] if [v1 > v0], and [v0] otherwise. *)
+
+  val ( ~- ) : t -> t
+  (** [-v] is the negation of [v]. *)
+
+  val ( + ) : t -> t -> t
+  (** [v0 + v1] is the sum of [v0] and [v1]. *)
+
+  val ( - ) : t -> t -> t
+  (** [v0 - v1] is the difference of [v0] and [v1]. *)
+
+  val ( * ) : t -> t -> t
+  (** [v0 * v1] is the product of [v0] and [v1]. *)
+end
+
 (** {1:addr Address spaces} *)
 
 (** The type for address spaces: the memory a pointer addresses. *)
