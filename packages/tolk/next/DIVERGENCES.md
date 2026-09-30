@@ -958,9 +958,9 @@ the Exclusions of `README.md`.
   `stages` reads, and `item` in `sched_batches`, the positions and the two
   visits of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
-  of `lower_call`, and the kernels not compiled yet of
-  `get_enqueue_devs`; `lib/runtime/ops_metal.ml`, `lib/runtime/ops_cuda.ml`
-  and `lib/runtime/ops_amd.ml` (`loop`).
+  of `lower_call`, the halves of `sched_batches`, and the kernels not
+  compiled yet of `get_enqueue_devs`; `lib/runtime/ops_metal.ml`,
+  `lib/runtime/ops_cuda.ml` and `lib/runtime/ops_amd.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
@@ -984,6 +984,12 @@ the Exclusions of `README.md`.
     mixes the two, or two kinds of device, is refused. `get_enqueue_devs`
     takes a kernel not compiled yet as its program, so that `stages` answers
     on a schedule before it compiles.
+  - A batch whose submission a queue cannot hold, such as AMD's AQL ring's
+    share, whose vendor raises `Over_capacity`, runs as two batches, one after
+    the other: its calls halved, or a range's first trips and the rest, each a
+    range of its own, until each part fits. A staged scan then takes one
+    submission for each share of the queue that holds it; `stages` does not
+    decline for size.
   - `n` trips of `k` calls take `n·k` commands and `n·k` copies of their
     arguments, made at link: a command and its arguments take 160 bytes on
     the NULL queues and 264 on Metal, so 1,000 trips of 30 kernels take about
@@ -993,7 +999,8 @@ the Exclusions of `README.md`.
   inside a range and runs them as one submission, whatever the trip count
   (Law 6); tinygrad's scheduler never hands `hcq2.py` a range.
 - **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
-  (D30)`, among them `› a range with a host program, a host copy or two kinds
+  (D30)`, among them `› a range its queue cannot hold in one submission runs as
+  several`, `› a call its queue cannot hold in one submission is refused`, `› a range with a host program, a host copy or two kinds
   of device does not stage`, `› a run of a batched range is one submission,
   whatever its trips`, `› a trip's copy waits for the kernel of the trip
   before, on another queue`, `› a ranged batch's addresses are integers,

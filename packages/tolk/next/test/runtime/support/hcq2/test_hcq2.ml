@@ -1297,9 +1297,46 @@ let reads_its_window_past_a_float () =
     (List.init 4 (fun i -> Float.of_int (((stride + i) mod 1000) + 1)))
     (List.init 4 (fun i -> a.{stride + i}))
 
+(* Twelve trips of a kernel on its own window, on NULL queues that hold 256
+   bytes of commands a submission: the range runs as batches of runs of its
+   trips, one after the other. *)
+let splits_a_range_its_queue_cannot_hold () =
+  let n = 12 in
+  let r = Ops.range (Int n) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
+  let devices = Null_device.devices ~ring:256 () in
+  let compiled =
+    Hcq2.compile_linear ~devices:(fun d -> (devices d).compiler)
+      (linear [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ])
+  in
+  let trips b =
+    match Ops.arg (Ops.without_after b) with
+    | Call { aux = Some info; _ } -> List.length info.kernels
+    | _ -> 0
+  in
+  let pieces = List.map trips (List.filter is_batch (Ops.src compiled)) in
+  is_true ~msg:"several batches" (List.length pieces > 1);
+  equal int ~msg:"every trip once" n (List.fold_left ( + ) 0 pieces);
+  let bound =
+    [ (src, [ new_floats "CPU:1" (Array.init (4 * n) float_of_int) ]); (dst, [ new_floats "CPU:1" (Array.make (4 * n) 0.) ]) ]
+  in
+  Tolk_next_engine.run (Tolk_next_engine.link ~devices ~bound compiled) [||];
+  Null_device.synchronize ();
+  equal floats (Array.init (4 * n) (fun i -> float_of_int (i + 1))) (floats_of (List.hd (List.assq dst bound)))
+
 let ranges =
   group "ranges (D30)"
     [
+      test "a range its queue cannot hold in one submission runs as several" splits_a_range_its_queue_cannot_hold;
+      test "a call its queue cannot hold in one submission is refused" (fun () ->
+          let devices = Null_device.devices ~ring:64 () in
+          raises_match Exn.invalid_arg (fun () ->
+              Hcq2.compile_linear ~devices:(fun d -> (devices d).compiler)
+                (linear [ kernel_adds (storage "CPU:1") (storage "CPU:1") ])));
       test "a ranged batch's addresses are integers, profiled or not" (fun () ->
           let _, _, e = ranged "CPU:1" in
           let e = Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e in

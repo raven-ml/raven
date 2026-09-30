@@ -19,16 +19,19 @@ open Tolk_next
 val devices :
   ?copy_queue:bool ->
   ?reaches:(string -> bool) ->
+  ?ring:int ->
   unit ->
   string ->
   Tolk_next_engine.device
-(** [devices ~copy_queue ~reaches ()] maps ["CPU"] to the host
+(** [devices ~copy_queue ~reaches ~ring ()] maps ["CPU"] to the host
     ({!Tolk_next_engine.device}) and each NULL device's name to it, with copy
     queues iff [copy_queue] (default [true]). Its compiler's view is that of
     {!Tolk_next_engine.target}, with queues whose host is ["CPU"] and which
     address the memory of the devices [reaches] holds for (default all): a copy
     between memory they do not address stages through the host's
-    ({!Tolk_next.Hcq2.queues.reaches}).
+    ({!Tolk_next.Hcq2.queues.reaches}). With [ring], a queue holds at most
+    [ring] bytes of commands in one submission, as a queue that runs them from
+    its ring does, and refuses more ({!Tolk_next.Hcq2.Over_capacity}).
 
     A C function a batch calls from a NULL device's memory
     ({!Tolk_next.Hcq2.ccall}[ ~host]) is any the process's libraries define.

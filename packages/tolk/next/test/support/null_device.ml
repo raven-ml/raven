@@ -58,7 +58,7 @@ let load prg =
 
 let u64 n = Ops.int ~dtype:Uint64 n
 
-let commands q =
+let commands ?ring q =
   let c = Null_queue.commands events q in
   let device = List.hd (Hcq2.Queue.devices q) in
   let exec call prg =
@@ -76,11 +76,18 @@ let commands q =
          ])
   in
   let submit cmdbuf =
+    let bytes = Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf) in
+    (match ring with
+    | Some n when bytes > n ->
+        raise
+          (Hcq2.Over_capacity
+             (Printf.sprintf "%d bytes of commands exceed a ring's %d" bytes n))
+    | _ -> ());
     let head = Ops.cast (Ops.load (Ops.index cmdbuf [ Ops.int 0 ]) []) Uint64 in
     Hcq2.ccall ~host:device ~lib:"null" "tolk_null_submit"
       [
         Ops.getaddr ~device cmdbuf;
-        u64 (Ops.max_numel cmdbuf * Dtype.itemsize (Ops.dtype cmdbuf));
+        u64 bytes;
         head;
       ]
   in
@@ -219,13 +226,15 @@ let synchronize () =
 
 (* Devices, as the engine runs work on them *)
 
-let devices ?(copy_queue = true) ?(reaches = fun _ -> true) () =
+let devices ?(copy_queue = true) ?(reaches = fun _ -> true) ?ring () =
   Lazy.force server;
   function
   | "CPU" -> Tolk_next_engine.device [ ("CPU", Nx_device.host) ] "CPU"
   | name ->
       let d = device name in
-      let queues = { Hcq2.commands; copy_queue; host = "CPU"; reaches } in
+      let queues =
+        { Hcq2.commands = commands ?ring; copy_queue; host = "CPU"; reaches }
+      in
       {
         Tolk_next_engine.device = d;
         compiler = { target = Tolk_next_engine.target d; queues = Some queues };

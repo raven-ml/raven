@@ -34,6 +34,8 @@ let devices_of u =
 
 (* Command queues *)
 
+exception Over_capacity of string
+
 type commands = {
   exec : Ops.t -> Ops.t -> unit;
   copy : Ops.t -> Ops.t -> int -> unit;
@@ -1155,14 +1157,56 @@ let stages ~devices e =
   op e = Op.End
   && match range_placement devices e with Enqueued _ -> true | _ -> false
 
-let rec sched_batches ~devices ~profile l =
+(* [items] as two parts that run one after the other: their halves, or the first
+   and the last trips of a range. *)
+let rec halves why items =
+  let rec shift r v = function
+    | One (c, devs, q) -> One (substitute c [ (r, v) ], devs, q)
+    | Loop (r', body) -> Loop (r', List.map (shift r v) body)
+  in
+  match items with
+  | [] | [ One _ ] -> invalid_arg why
+  | [ Loop (r, body) ] when trips r = 1 ->
+      halves why (List.map (shift r (int ~dtype:(dtype r) 0)) body)
+  | [ Loop (r, body) ] ->
+      let n = trips r in
+      let rec calls = function
+        | One (c, _, _) -> [ c ]
+        | Loop (_, b) -> List.concat_map calls b
+      in
+      let taken =
+        List.concat_map
+          (fun c -> Nodes.to_list (ranges c))
+          (List.concat_map calls body)
+      in
+      (* A new number can be one a range of the calls already has. *)
+      let rec range_of k =
+        let r' = range ~dtype:(dtype r) (Int k) [ unique_num () ] in
+        if r' == r || List.memq r' taken then range_of k else r'
+      in
+      let r0 = range_of (n / 2) and r1 = range_of (n - (n / 2)) in
+      [
+        [ Loop (r0, List.map (shift r r0) body) ];
+        [
+          Loop
+            (r1, List.map (shift r (add r1 (int ~dtype:(dtype r) (n / 2)))) body);
+        ];
+      ]
+  | items ->
+      let k = List.length items / 2 in
+      [
+        List.filteri (fun i _ -> i < k) items;
+        List.filteri (fun i _ -> i >= k) items;
+      ]
+
+let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   (* The calls in a range that no device with queues runs are the engine's, once
      per trip: they read the range as a variable. *)
   let on_host e =
     let rs = List.tl (src e) in
     let vars = List.map (fun r -> (r, range_value r)) rs in
     let inner =
-      sched_batches ~devices ~profile
+      sched_batches ~lower ~devices ~profile
         (v Op.Linear
            ~src:(List.map (fun c -> substitute c vars) (range_body e)))
     in
@@ -1258,9 +1302,14 @@ let rec sched_batches ~devices ~profile l =
               Ordered.set groups k
                 (Option.value (Ordered.find groups k) ~default:[] @ [ item c ]))
             grp;
-          List.map
-            (fun (_, items) -> finalize_batch (make_ctx devices items profile))
-            groups.items)
+          (* A batch whose submission a queue cannot hold runs as two. *)
+          let rec lowered items =
+            match lower (finalize_batch (make_ctx devices items profile)) with
+            | batch -> [ batch ]
+            | exception Over_capacity why ->
+                List.concat_map lowered (halves why items)
+          in
+          List.concat_map (fun (_, items) -> lowered items) groups.items)
       (runs [] (List.combine entries devs))
   in
   replace l ~src:batched
@@ -1791,7 +1840,7 @@ let hcq_compile ~devices ~lower_and_compile ~profile linear =
     in
     let lin =
       graph_rewrite ~ctx:() ~walk:true
-        (sched_batches ~devices ~profile linear)
+        (sched_batches ~lower:(lower_call ~devices) ~devices ~profile linear)
         (pm_encode devices)
     in
     Helpers.context

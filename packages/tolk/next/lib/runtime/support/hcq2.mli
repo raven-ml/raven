@@ -79,6 +79,12 @@ module Queue : sig
       commands run once per trip. *)
 end
 
+exception Over_capacity of string
+(** [Over_capacity why] is raised by a vendor's {!commands.submit} when one
+    submission of its queue cannot hold the commands encoded for it, such as a
+    queue that runs them from its ring rather than from a buffer the ring points
+    to. {!compile_linear} then splits the batch ({!sched_batches}). *)
+
 type commands = {
   exec : Ops.t -> Ops.t -> unit;
       (** [exec call prg] enqueues the compiled program [prg] ({!Op.Program}) on
@@ -104,7 +110,10 @@ type commands = {
       *)
   submit : Ops.t -> Ops.t;
       (** [submit cmdbuf] is the effect of the host program that submits the
-          command buffer [cmdbuf], the queue's commands. *)
+          command buffer [cmdbuf], the queue's commands.
+
+          Raises {!Over_capacity} if one submission of the queue cannot hold
+          them. *)
 }
 (** The type for the commands a vendor encodes on one queue. *)
 
@@ -275,8 +284,13 @@ end
 
 (** {1:batches Batches} *)
 
-val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
-(** [sched_batches ~devices ~profile linear] is [linear] with each run of
+val sched_batches :
+  ?lower:(Ops.t -> Ops.t) ->
+  devices:(string -> device) ->
+  profile:bool ->
+  Ops.t ->
+  Ops.t
+(** [sched_batches ~lower ~devices ~profile linear] is [linear] with each run of
     consecutive calls enqueued on devices with queues replaced by one batch per
     kind of device ({!Helpers.Target.t.device}), in the order the kinds first
     appear. A call is enqueued on the devices of its first buffer whose devices
@@ -332,8 +346,15 @@ val sched_batches : devices:(string -> device) -> profile:bool -> Ops.t -> Ops.t
     with [profile], two per run of a call of the batch, its start and end
     timestamps.
 
+    Each batch is [lower batch] (default the batch). Where [lower] raises
+    {!Over_capacity}, the batch runs as two, one after the other: its calls
+    halved, or, for a range alone, the first half of its trips and the rest,
+    each a range of its own, and a range of one trip as its calls. A range's
+    trips then take one submission for each share of the queue that holds them.
+
     Raises [Invalid_argument] if a range runs calls on devices with queues and
-    on others, or on devices of two kinds. *)
+    on others, or on devices of two kinds, or with {!Over_capacity}'s reason if
+    one call's submission is more than its queue holds. *)
 
 val stages : devices:(string -> device) -> Ops.t -> bool
 (** [stages ~devices e] is [true] iff the range around calls [e] ({!Op.End})
@@ -400,7 +421,8 @@ val compile_linear :
       the host, tagged ["staging"], in turn; one on a device without copy queues
       becomes a kernel that copies bytes;
     + its enqueued calls are batched ({!sched_batches}), each batch is lowered
-      ({!lower_call}) and its host program compiled, with no dtype emulated.
+      ({!lower_call}), a batch a queue cannot hold in one submission split until
+      each part fits, and its host program compiled, with no dtype emulated.
 
     [profile] defaults to {!Helpers.debug} at [2] or more. A linear that holds a
     lowered batch is returned as it is.
