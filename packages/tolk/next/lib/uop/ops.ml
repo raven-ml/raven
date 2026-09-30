@@ -2620,6 +2620,100 @@ let squeeze ?axis u =
       if ndim u = 0 || Sint.truth Sint.(List.nth (shape u) axis <> Int 1) then u
       else reshape u (List.filteri (fun i _ -> i <> axis) (shape u))
 
+let repeat u repeats =
+  let base =
+    List.hd (align_left [ shape u; List.map (fun _ -> Int 1) repeats ])
+  in
+  let pairs = List.combine repeats base in
+  let unsqueezed =
+    List.concat_map (fun (r, s) -> if r = 1 then [ s ] else [ Int 1; s ]) pairs
+  in
+  let expanded =
+    List.concat_map (fun (r, s) -> if r = 1 then [ s ] else [ Int r; s ]) pairs
+  in
+  reshape
+    (expand (reshape u unsqueezed) expanded)
+    (List.map (fun (r, s) -> Sint.(Int r * s)) pairs)
+
+let pool ?stride ?dilation u kernel =
+  let n = List.length kernel in
+  let given = function Some l -> l | None -> List.init n (fun _ -> 1) in
+  let stride = given stride and dilation = given dilation in
+  if ndim u < n then
+    invalid_argf "cannot pool %s with %d kernel axes" (repr_shape (shape u)) n;
+  if List.length stride <> n || List.length dilation <> n then
+    invalid_arg "one stride and one dilation per kernel axis";
+  let lead = ndim u - n in
+  let noop = take lead (shape u) and keep = List.init lead (fun _ -> None) in
+  let axes =
+    List.map2
+      (fun (k, s) (d, i) -> (k, s, d, i))
+      (List.combine kernel stride)
+      (List.combine dilation (drop lead (shape u)))
+  in
+  let reach (k, _, d, _) = d * (k - 1) in
+  List.iter
+    (fun ((_, _, _, i) as a) ->
+      let need = reach a + 1 in
+      if not (Sint.resolve Sint.(Int need <= i)) then
+        invalid_arg "kernel size cannot be greater than actual input size")
+    axes;
+  let ceildiv a b = Sint.((a + b - Int 1) // b) in
+  let o =
+    List.map
+      (fun ((_, s, _, i) as a) -> ceildiv Sint.(i - Int (reach a)) (Int s))
+      axes
+  in
+  (* Scales the input so that a stride can be cut from it. *)
+  let f =
+    List.map2
+      (fun (_, s, d, i) o ->
+        smax [ Int 1; ceildiv Sint.((o * Int s) - Int d) i ])
+      axes o
+  in
+  let each g = List.map2 (fun a (o, f) -> g a o f) axes (List.combine o f) in
+  let span (k, _, d, i) f = Sint.(Int k * ((i * f) + Int d)) in
+  let x =
+    repeat u
+      (List.map (fun _ -> 1) noop
+      @ each (fun ((_, _, _, i) as a) _ f ->
+          match ceildiv (span a f) i with
+          | Int r -> r
+          | Sym _ -> invalid_arg "a symbolic pool needs a concrete repeat"))
+  in
+  let x = shrink_to x (keep @ each (fun a _ f -> Some (span a f))) in
+  let x =
+    reshape x
+      (noop
+      @ List.concat
+          (each (fun (k, _, d, i) _ f -> [ Int k; Sint.((i * f) + Int d) ])))
+  in
+  let x =
+    shrink_to x
+      (keep
+      @ List.concat
+          (each (fun (k, s, _, _) o _ ->
+               [ Some (Int k); Some Sint.(o * Int s) ])))
+  in
+  let x =
+    reshape x
+      (noop @ List.concat (each (fun (k, s, _, _) o _ -> [ Int k; o; Int s ])))
+  in
+  let x =
+    shrink_to x
+      (keep
+      @ List.concat
+          (each (fun (k, _, _, _) o _ -> [ Some (Int k); Some o; Some (Int 1) ]))
+      )
+  in
+  let x =
+    reshape x (noop @ List.concat (each (fun (k, _, _, _) o _ -> [ Int k; o ])))
+  in
+  permute x
+    (List.init lead Fun.id
+    @ List.init n (fun a -> lead + (2 * a) + 1)
+    @ List.init n (fun a -> lead + (2 * a)))
+
 let stack ?(axis = 0) us =
   match us with
   | [] -> invalid_arg "stack needs a node"

@@ -2001,6 +2001,7 @@ uop/ops/movement.golden
 uop/ops/negation.golden
 uop/ops/outputs.golden
 uop/ops/padding.golden
+uop/ops/pools.golden
 uop/ops/powers.golden
 uop/ops/pretty.golden
 uop/ops/reductions.golden

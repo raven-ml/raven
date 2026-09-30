@@ -1059,6 +1059,24 @@ val squeeze : ?axis:int -> t -> t
 (** [squeeze ~axis u] removes [axis] if its size is [1], or every axis of size
     [1]. *)
 
+val repeat : t -> int list -> t
+(** [repeat u repeats] tiles [u] [repeats] times along each axis, the axes
+    aligned to the right: a [repeats] longer than [u]'s shape adds leading axes.
+
+    Raises [Invalid_argument] if a movement does. *)
+
+val pool : ?stride:int list -> ?dilation:int list -> t -> int list -> t
+(** [pool ~stride ~dilation u kernel] is the windows of [kernel] over the last
+    axes of [u], each [stride] apart (default [1]) and [dilation] between its
+    elements (default [1]): [u]'s leading axes, then the number of windows along
+    each pooled axis, then the kernel's axes. Only movements build it: [u] is
+    repeated and read back in rows one element longer, so that windows overlap
+    without padding.
+
+    Raises [Invalid_argument] if [u] has fewer axes than [kernel], if [stride]
+    or [dilation] do not have one entry per kernel axis, or if a dilated kernel
+    is longer than its axis. *)
+
 val cat : ?axis:int -> t -> t list -> t
 (** [cat ~axis u rest] concatenates [u :: rest] along [axis] (default [0]). *)
 

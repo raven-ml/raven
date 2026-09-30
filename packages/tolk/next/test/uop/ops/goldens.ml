@@ -293,6 +293,19 @@ let concatenation () =
       cat ~axis:(-1) a [ b ];
     ]
 
+let pools () =
+  let p = param [ 2; 5; 6 ] 0 Float32 in
+  sink
+    [
+      pool p [ 3 ];
+      pool ~stride:[ 2 ] p [ 3 ];
+      pool ~stride:[ 1; 2 ] ~dilation:[ 2; 1 ] p [ 2; 2 ];
+      pool p [ 5; 6 ];
+      pool ~stride:[ 3 ] p [ 2 ];
+      repeat p [ 2; 1; 1 ];
+      repeat p [ 3; 1; 1; 2 ];
+    ]
+
 let padding () =
   let p = param [ 4; 4 ] 0 Float32 in
   sink
@@ -694,6 +707,7 @@ let all =
     ("squeezes", squeezes, false);
     ("stacks", stacks, false);
     ("concatenation", concatenation, false);
+    ("pools", pools, false);
     ("padding", padding, false);
     ("reductions", reductions, false);
     ("constants_like", constants_like, false);

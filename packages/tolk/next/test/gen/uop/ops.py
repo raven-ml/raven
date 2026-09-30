@@ -506,6 +506,13 @@ def concatenation():
 
 
 @graph
+def pools():
+    p = UOp.param(0, dtypes.float, (2, 5, 6))
+    return UOp.sink(p._pool((3,)), p._pool((3,), 2), p._pool((2, 2), (1, 2), (2, 1)), p._pool((5, 6)), p._pool((2,), 3),
+                    p.repeat((2, 1, 1)), p.repeat((3, 1, 1, 2)))
+
+
+@graph
 def padding():
     p = UOp.param(0, dtypes.float, (4, 4))
     return UOp.sink(p.pad(((1, 1), (2, 0)), value=0.0), p.pad(((1, 1), None), value=1.5), p.pad(((-1, 2), (0, -2))),
