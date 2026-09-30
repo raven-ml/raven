@@ -72,9 +72,9 @@ is scope, not a divergence: the part left out is listed here, and
 | `renderer/{ptx,llvmir,nir,wgsl}.py` | no raven target renders with them by default. |
 | `pm_validate_wmma_rdna3`, `pm_validate_wmma_rdna4` and `pm_validate_wmma_cdna` in `renderer/tc.py` | only `renderer/llvmir.py`, excluded above, applies them. |
 | A node as the shift count of `shl` and `shr` in `codegen/decomp/transcendental.py` | every caller shifts by a number. |
-| `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, and the ISA branches of `codegen/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
+| `renderer/isa/*`, `renderer/amd/*`, `codegen/late/regalloc.py`, the ISA branches of `codegen/__init__.py`, and `Renderer.asm` in `renderer/__init__.py` | they serve hand-written instruction kernels and x86 host code; host programs are compiled with Clang. |
 | The OpenCL, Intel, QCOM and WGSL languages of `renderer/cstyle.py`; the NVCC, HIPCC, PTX and X86 compilers; `compiler_{llvm,mesa,qcom}.py` | not raven targets, or they need a full toolchain. |
-| `runtime/support/compileserver.py` | compilation workers are domains (see D5). |
+| `runtime/support/compileserver.py`, with `Compiler.server` and `Compiler.compile_server` in `device.py`, which start it and talk to it | compilation workers are domains (see D5). |
 | `ImageDType` and image paths | only OpenCL and QCOM use them. |
 | The numpy and torch interop of `dtype.py` (`_to_np_dtype`, `_from_np_dtype`, `_to_torch_dtype`, `_from_torch_dtype`) | raven's arrays are nx's, and rune maps nx's types onto `Dtype`. |
 | `dtypes.int8s`, `int16s`, `int32s` and `int64s` in `dtype.py` | only the x86 ISA renderer, excluded above, reads them. |
@@ -82,7 +82,7 @@ is scope, not a divergence: the part left out is listed here, and
 | `pyrender`, `pm_pyrender`, `pm_pyrender_extra`, `sugar`, `srcs`, `_render_with_splits` and `renderer_infer` in `uop/render.py`, with `UOp.pyrender` and the `pm` argument of `UOp.render`; `test_pyrender`, `eval_pyrender` and `pyrender_globals` in `uop/spec.py`, `uop/upat.py` and the setting `UPAT_COMPILE` | they generate Python source: `renderer_infer` writes the expressions that `UOp._sym_fxn` executes, and is the only other matcher `UOp.render` takes. Their other readers are diagnostics: the `DEBUG>=5` prints of `codegen/__init__.py:277` and `codegen/opt/search.py:121`, the `SPEC>1` round trip of `uop/spec.py:37,299` and `uop/ops.py:209`, and the leaking-ranges message of `uop/ops.py:1265`. tolk.next matches patterns as tinygrad does when `UPAT_COMPILE` is 0. |
 | The code generation of `UOp._sym_fxn` in `uop/ops.py` | it generates Python source; `sym_infer` evaluates the expression directly, with the same arithmetic. |
 | Match tracking in `uop/ops.py`: `TRACK_MATCH_STATS`, `PRINT_MATCH_STATS`, `match_stats`, `TrackedPatternMatcher`, `rewrite_group`, `TrackedGraphRewrite`, `RewriteTrace`, `UOp.trace_num`, `uop_fields`, `launch_viz`, process-replay capture, `get_location`, `UPat.location`, and the `name` of `graph_rewrite` and `substitute` | they serve viz and profiling; without them `rewrite_group` only calls its function, so passes are called directly. |
-| Pickling in `uop/ops.py`: `UOp.__reduce__`, `CallInfo.__reduce__`, `UPat.__reduce__`, `PatternMatcher.__reduce__`, `deconstruct_function`, `TEST_PICKLE` | raven has no persistent jit cache. |
+| Pickling in `uop/ops.py` and `renderer/__init__.py`: `Renderer.__reduce__`, `UOp.__reduce__`, `CallInfo.__reduce__`, `UPat.__reduce__`, `PatternMatcher.__reduce__`, `deconstruct_function`, `TEST_PICKLE` | raven has no persistent jit cache. |
 | `CallInfo.grad_fxn`, `CallInfo.precompile_backward`, and the `grad_fxn` of `UOp.call` and `call_with_outputs` | rune owns differentiation. |
 | `UOp.metadata` and `all_metadata` | they carry `Metadata`, excluded above. |
 | `UOp.__getitem__` | Python's subscript syntax; its buffer path is `shrink`, `permute` and `index`, which callers compose. |

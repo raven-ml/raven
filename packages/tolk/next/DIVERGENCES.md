@@ -75,8 +75,9 @@ the Exclusions of `README.md`.
 - **tolk.next:** waiting for L2 through L8, each break with its layer; for
   `uop/ops.py`, `lib/uop/ops.ml:572` (`construction_check`), `:1651`
   (`simplify_hook`), `:4317` (`Private`), `:1188` (`Make_elementwise`),
-  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`); and
-  `lib/uop/render.ml:202` (`render`), `:212` (`srender`).
+  `:815` (`repr`), `:241` (`bufferize_opts`), `:259` (`Calls`);
+  `lib/uop/render.ml:202` (`render`), `:212` (`srender`); and
+  `lib/renderer/renderer.ml` (`Compiler`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Schedule.Prepare`,
@@ -103,8 +104,8 @@ the Exclusions of `README.md`.
   - `spec.py`'s imports of `codegen.opt`, `schedule.rangeify` and
     `renderer` serve only `pyrender_globals`, which is not ported (see the
     README), so they need no break;
-  - `Compiler` is defined ahead of the renderers, and `Device` follows
-    `Renderer`;
+  - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
+    since a renderer holds its compiler and `Device` follows `Renderer`;
   - `apply_opts` takes the optimiser as an argument, and `Search` lands with
     the engine;
   - the engine has one order (schedule, hcq2 helpers, realize, tensor, jit),
