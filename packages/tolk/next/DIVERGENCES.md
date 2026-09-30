@@ -722,3 +722,20 @@ the Exclusions of `README.md`.
   (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
   `2^-24` without the pragma and 0 with it, and still `2^-24` with
   `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.
+
+## D26. A minus never meets a minus in C-style source
+
+- **tinygrad:** `renderer/cstyle.py:140` (`Ops.NEG` is `-{x}`), `:144`
+  (`Ops.SUB` is `({a}-{b})`).
+- **tolk.next:** `lib/renderer/cstyle.ml` (`joined`, `infix`, `Neg`).
+- **Differs:** a negation or a subtraction whose operand starts with a minus
+  sign, itself a negation or a negative constant, is written with a space
+  between the two signs: `(a- -b)`, `- -b`. tinygrad writes `(a--b)`, which C,
+  Metal, CUDA and HIP read as the decrement operator and reject. Every other
+  source is written as tinygrad writes it.
+- **Reason:** (b). rune's lowering subtracts negated values (`acos`'s
+  `1 - (-x)` before it was written `1 + x`), and the graph may reach the
+  renderer so; a source the compiler rejects is a failed program.
+- **Pinned by:** the `Cstyle` suite, `negation › a minus before a minus is
+  apart › *` (every renderer), `› Clang compiles and runs a difference with a
+  negated operand` and `› … with a negative constant`.

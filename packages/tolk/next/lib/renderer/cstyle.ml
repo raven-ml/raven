@@ -499,9 +499,16 @@ let unary f args dt =
 
 let call name = unary (fun x _ -> strf "%s(%s)" name x)
 
+(* [o ^ x], with a space where a minus sign would meet the minus that starts
+   [x], a negation or a negative constant: [--] is the decrement operator. *)
+let joined o x =
+  if String.ends_with ~suffix:"-" o && String.starts_with ~prefix:"-" x then
+    o ^ " " ^ x
+  else o ^ x
+
 let infix o args _ =
   match args with
-  | [ a; b ] -> strf "(%s%s%s)" a o b
+  | [ a; b ] -> strf "(%s%s)" a (joined o b)
   | _ -> invalid_arg "a binary operation takes two operands"
 
 (* [override table l] is [table] with the operations of [l] replaced, and those
@@ -517,7 +524,7 @@ let code_for_op =
     [
       (Sqrt, call "sqrt");
       (Reciprocal, unary (fun x _ -> strf "(1/%s)" x));
-      (Neg, unary (fun x _ -> "-" ^ x));
+      (Neg, unary (fun x _ -> joined "-" x));
       (Exp2, call "exp2");
       (Log2, call "log2");
       (Sin, call "sin");

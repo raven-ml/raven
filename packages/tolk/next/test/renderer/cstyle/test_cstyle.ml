@@ -1049,6 +1049,53 @@ let execution =
         (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
     ]
 
+(* Negation *)
+
+(* A kernel of one float lane: [data0[0] = f (data1[0], data2[0])]. *)
+let lane f =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot = Ops.index (Ops.param ~shape:[ Int 1 ] slot Float32) [ zero ] in
+  Linearizer.linearize
+    (Ops.sink
+       ~kernel:(Ops.kernel_info ~name:"lane" ())
+       [ Ops.store (at 0) (f (Ops.load (at 1) []) (Ops.load (at 2) [])) ])
+
+let minus x y = Ops.alu x Sub [ y ]
+let negated x = Ops.alu x Neg []
+
+(* A minus sign before an operand that starts with one would be the decrement
+   operator [--]. *)
+let negation =
+  group "negation"
+    [
+      cases
+        ~name:(fun (r : Renderer.t) -> r.name)
+        "a minus before a minus is apart"
+        [ clang; metal; cuda; hip ]
+        (fun r ->
+          let neg = List.assoc Op.Neg r.code_for_op
+          and sub = List.assoc Op.Sub r.code_for_op in
+          equal string "(a- -b)" (sub [ "a"; "-b" ] Float32);
+          equal string "- -b" (neg [ "-b" ] Float32);
+          equal string "(a-b)" (sub [ "a"; "b" ] Float32);
+          equal string "-b" (neg [ "b" ] Float32));
+      test "Clang compiles and runs a difference with a negated operand"
+        (fun () ->
+          let k =
+            Host.load (Lazy.force host) (lane (fun x y -> minus x (negated y)))
+          in
+          let out = Host.run k [ (1, [| `Float 1. |]); (2, [| `Float 2. |]) ] in
+          equal values [| `Float 3. |] (List.assoc 0 out));
+      test "Clang compiles and runs a difference with a negative constant"
+        (fun () ->
+          let k =
+            Host.load (Lazy.force host)
+              (lane (fun x _ -> minus x (Ops.float ~dtype:Float32 (-1.5))))
+          in
+          let out = Host.run k [ (1, [| `Float 1. |]) ] in
+          equal values [| `Float 2.5 |] (List.assoc 0 out));
+    ]
+
 let () =
   exit
     (run "Tolk_next.Cstyle"
@@ -1060,6 +1107,7 @@ let () =
          written;
          errors;
          parentheses;
+         negation;
          fp8_infinities;
          rendering;
          compilation;
