@@ -29,7 +29,14 @@ val apply_movement_op :
       ({!Ops.valid}) only where it falls within the source;
     - [Reshape] flattens the index in row-major order and splits it along
       [in_shape], simplified with the symbolic rules and the validity rules
-      ({!Symbolic.symbolic}, {!Symbolic.pm_simplify_valid}). *)
+      ({!Symbolic.symbolic}, {!Symbolic.pm_simplify_valid}).
+
+    The validity a [Pad] gives an index lasts only as long as the index
+    expression carries it. A later movement whose simplification makes the index
+    constant on an axis drops it: a [Reshape] to an axis of one element, an
+    [Expand] that drops the leading index, a [Shrink] onto an axis of one
+    element. A caller that reads through the index masks the padded values
+    itself, as {!run_rangeify} turns each [Pad] into a selection. *)
 
 val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 (** [run_rangeify ~debug sink] is the tensor graph [sink] with its elements
