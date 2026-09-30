@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256)
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.LOAD dtypes.float [6]
+8 Ops.SQRT dtypes.float [7]
+9 Ops.STORE dtypes.void [4, 8]
+10 Ops.END dtypes.void [9, 3]
+11 Ops.SINK dtypes.void [10] KernelInfo(name="elementwise_sqrt") tag=1
+12 Ops.SINK dtypes.void [10] KernelInfo(name="elementwise_sqrt", estimates=Estimates(ops=256, lds=2048, mem=2048)) tag=1
+13 Ops.LINEAR dtypes.void [5, 0, 1, 2, 3, 6, 7, 4, 8, 9, 10, 11]
+14 Ops.SOURCE dtypes.void [] "extern \"C\" __attribute__((device, const)) float __ocml_sqrt_f32(float);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) elementwise_sqrt(float* data0_256, float* data1_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    *(data1_256+Lidx0) = __ocml_sqrt_f32(val0);\n  }\n}"
+15 Ops.PROGRAM dtypes.void [12, 13, 14] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+16 Ops.SINK dtypes.void [11, 15]
+

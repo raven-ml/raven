@@ -1,0 +1,16 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="m", addrspace=AddrSpace.ALU)
+5 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(0, 8), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+6 Ops.ADD dtypes.int [4, 5]
+7 Ops.STORE dtypes.void [3, 6]
+8 Ops.SINK dtypes.void [7] KernelInfo() tag=1
+9 Ops.SINK dtypes.void [7] KernelInfo(estimates=Estimates(ops=1, lds=4, mem=4)) tag=1
+10 Ops.LINEAR dtypes.void [0, 4, 5, 1, 2, 3, 6, 7, 8]
+11 Ops.SOURCE dtypes.void [] "\nvoid test(int* restrict data0_1, const int m_, const int n_) {\n  *(data0_1+0) = (m_+n_);\n}\n"
+12 Ops.PROGRAM dtypes.void [9, 10, 11] ProgramInfo(vars=(%4, %5), globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+13 Ops.SINK dtypes.void [8, 12]
+

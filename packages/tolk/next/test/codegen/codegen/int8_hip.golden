@@ -1,0 +1,58 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=64, device="CPU")
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.INDEX dtypes.char [0, 6]
+8 Ops.PARAM dtypes.char [] ParamArg(slot=1, dtype=dtypes.char, size=64, device="CPU")
+9 Ops.INDEX dtypes.char [8, 6]
+10 Ops.LOAD dtypes.char [9]
+11 Ops.PARAM dtypes.char [] ParamArg(slot=2, dtype=dtypes.char, size=64, device="CPU")
+12 Ops.INDEX dtypes.char [11, 6]
+13 Ops.LOAD dtypes.char [12]
+14 Ops.ADD dtypes.char [10, 13]
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.char [15] dtypes.char
+17 Ops.MUL dtypes.char [14, 16]
+18 Ops.STORE dtypes.void [7, 17]
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CAST dtypes.int [19] dtypes.int
+21 Ops.ADD dtypes.int [6, 20]
+22 Ops.INDEX dtypes.char [0, 21]
+23 Ops.INDEX dtypes.char [8, 21]
+24 Ops.LOAD dtypes.char [23]
+25 Ops.INDEX dtypes.char [11, 21]
+26 Ops.LOAD dtypes.char [25]
+27 Ops.ADD dtypes.char [24, 26]
+28 Ops.MUL dtypes.char [27, 16]
+29 Ops.STORE dtypes.void [22, 28]
+30 Ops.ADD dtypes.int [6, 5]
+31 Ops.INDEX dtypes.char [0, 30]
+32 Ops.INDEX dtypes.char [8, 30]
+33 Ops.LOAD dtypes.char [32]
+34 Ops.INDEX dtypes.char [11, 30]
+35 Ops.LOAD dtypes.char [34]
+36 Ops.ADD dtypes.char [33, 35]
+37 Ops.MUL dtypes.char [36, 16]
+38 Ops.STORE dtypes.void [31, 37]
+39 Ops.CAST dtypes.int [15] dtypes.int
+40 Ops.ADD dtypes.int [6, 39]
+41 Ops.INDEX dtypes.char [0, 40]
+42 Ops.INDEX dtypes.char [8, 40]
+43 Ops.LOAD dtypes.char [42]
+44 Ops.INDEX dtypes.char [11, 40]
+45 Ops.LOAD dtypes.char [44]
+46 Ops.ADD dtypes.char [43, 45]
+47 Ops.MUL dtypes.char [46, 16]
+48 Ops.STORE dtypes.void [41, 47]
+49 Ops.GROUP dtypes.void [18, 29, 38, 48]
+50 Ops.SINK dtypes.void [49] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL)))) tag=1
+51 Ops.SINK dtypes.void [49] KernelInfo(name="E_16_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL))), estimates=Estimates(ops=128, lds=192, mem=192)) tag=1
+52 Ops.LINEAR dtypes.void [0, 8, 11, 1, 2, 3, 19, 20, 4, 5, 6, 21, 23, 24, 30, 32, 33, 15, 39, 40, 42, 43, 9, 10, 25, 26, 34, 35, 44, 45, 12, 13, 22, 31, 41, 7, 16, 27, 36, 46, 14, 28, 37, 47, 17, 29, 38, 48, 18, 49, 50]
+53 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 16))) E_16_4(signed char* data0_64, signed char* data1_64, signed char* data2_64) {\n  int lidx0 = __ockl_get_local_id(0); /* 16 */\n  int alu0 = (lidx0<<2);\n  int alu1 = (alu0+1);\n  signed char val0 = (*(data1_64+alu1));\n  int alu2 = (alu0+2);\n  signed char val1 = (*(data1_64+alu2));\n  int alu3 = (alu0+3);\n  signed char val2 = (*(data1_64+alu3));\n  signed char val3 = (*(data1_64+alu0));\n  signed char val4 = (*(data2_64+alu1));\n  signed char val5 = (*(data2_64+alu2));\n  signed char val6 = (*(data2_64+alu3));\n  signed char val7 = (*(data2_64+alu0));\n  *(data0_64+alu1) = ((val0+val4)*((signed char)(3)));\n  *(data0_64+alu2) = ((val1+val5)*((signed char)(3)));\n  *(data0_64+alu3) = ((val2+val6)*((signed char)(3)));\n  *(data0_64+alu0) = ((val3+val7)*((signed char)(3)));\n}"
+54 Ops.PROGRAM dtypes.void [51, 52, 53] ProgramInfo(local_size=(16, 1, 1), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+55 Ops.SINK dtypes.void [50, 54]
+

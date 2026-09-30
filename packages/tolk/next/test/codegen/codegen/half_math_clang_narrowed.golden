@@ -1,0 +1,56 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+typedef __fp16 __fp164 __attribute__((aligned(8),ext_vector_type(4)));
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_4_4(float* restrict data0_16, __fp16* restrict data1_16, __fp16* restrict data2_16) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    int alu0 = (Lidx0<<2);
+    __fp164 val0 = (*((__fp164*)((data1_16+alu0))));
+    __fp164 val1 = (*((__fp164*)((data2_16+alu0))));
+    _Bool alu1 = (val0[0]!=val0[0]);
+    __fp16 alu2 = ((val0[0]!=((__fp16)(-__builtin_inff())))?val0[0]:((__fp16)(0.0f)));
+    __fp16 alu3 = (alu1?((__fp16)(0.0f)):alu2);
+    __fp16 alu4 = ((val0[0]!=((__fp16)(__builtin_inff())))?alu3:((__fp16)(0.0f)));
+    __fp16 alu5 = ((alu4<((__fp16)(0.0f)))?((__fp16)(-0.5f)):((__fp16)(0.5f)));
+    short cast0 = ((short)(((__fp16)((alu4+alu5)))));
+    short alu6 = (cast0>>((short)(1)));
+    __fp16 alu7 = (alu4-((__fp16)(cast0)));
+    __fp16 alu8 = (((val0[0]<((__fp16)(23.0f)))!=1)?((__fp16)(__builtin_inff())):((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)(0.00015354156494140625f))*alu7)))+((__fp16)(0.001338958740234375f)))))*alu7)))+((__fp16)(0.00962066650390625f)))))*alu7)))+((__fp16)(0.055511474609375f)))))*alu7)))+((__fp16)(0.240234375f)))))*alu7)))+((__fp16)(0.693359375f)))))*alu7)))+((__fp16)(1.0f)))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((alu6+((short)(15)))))<<((short)(10))))))))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((((short)((cast0-alu6)))+((short)(15)))))<<((short)(10)))))))))));
+    __fp16 alu9 = ((val0[0]<((__fp16)(-22.0f)))?((__fp16)(0.0f)):alu8);
+    __fp16 alu10 = (alu1?((__fp16)(__builtin_nanf(""))):alu9);
+    _Bool alu11 = (val0[1]!=val0[1]);
+    __fp16 alu12 = ((val0[1]!=((__fp16)(-__builtin_inff())))?val0[1]:((__fp16)(0.0f)));
+    __fp16 alu13 = (alu11?((__fp16)(0.0f)):alu12);
+    __fp16 alu14 = ((val0[1]!=((__fp16)(__builtin_inff())))?alu13:((__fp16)(0.0f)));
+    __fp16 alu15 = ((alu14<((__fp16)(0.0f)))?((__fp16)(-0.5f)):((__fp16)(0.5f)));
+    short cast1 = ((short)(((__fp16)((alu14+alu15)))));
+    short alu16 = (cast1>>((short)(1)));
+    __fp16 alu17 = (alu14-((__fp16)(cast1)));
+    __fp16 alu18 = (((val0[1]<((__fp16)(23.0f)))!=1)?((__fp16)(__builtin_inff())):((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)(0.00015354156494140625f))*alu17)))+((__fp16)(0.001338958740234375f)))))*alu17)))+((__fp16)(0.00962066650390625f)))))*alu17)))+((__fp16)(0.055511474609375f)))))*alu17)))+((__fp16)(0.240234375f)))))*alu17)))+((__fp16)(0.693359375f)))))*alu17)))+((__fp16)(1.0f)))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((alu16+((short)(15)))))<<((short)(10))))))))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((((short)((cast1-alu16)))+((short)(15)))))<<((short)(10)))))))))));
+    __fp16 alu19 = ((val0[1]<((__fp16)(-22.0f)))?((__fp16)(0.0f)):alu18);
+    __fp16 alu20 = (alu11?((__fp16)(__builtin_nanf(""))):alu19);
+    _Bool alu21 = (val0[2]!=val0[2]);
+    __fp16 alu22 = ((val0[2]!=((__fp16)(-__builtin_inff())))?val0[2]:((__fp16)(0.0f)));
+    __fp16 alu23 = (alu21?((__fp16)(0.0f)):alu22);
+    __fp16 alu24 = ((val0[2]!=((__fp16)(__builtin_inff())))?alu23:((__fp16)(0.0f)));
+    __fp16 alu25 = ((alu24<((__fp16)(0.0f)))?((__fp16)(-0.5f)):((__fp16)(0.5f)));
+    short cast2 = ((short)(((__fp16)((alu24+alu25)))));
+    short alu26 = (cast2>>((short)(1)));
+    __fp16 alu27 = (alu24-((__fp16)(cast2)));
+    __fp16 alu28 = (((val0[2]<((__fp16)(23.0f)))!=1)?((__fp16)(__builtin_inff())):((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)(0.00015354156494140625f))*alu27)))+((__fp16)(0.001338958740234375f)))))*alu27)))+((__fp16)(0.00962066650390625f)))))*alu27)))+((__fp16)(0.055511474609375f)))))*alu27)))+((__fp16)(0.240234375f)))))*alu27)))+((__fp16)(0.693359375f)))))*alu27)))+((__fp16)(1.0f)))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((alu26+((short)(15)))))<<((short)(10))))))))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((((short)((cast2-alu26)))+((short)(15)))))<<((short)(10)))))))))));
+    __fp16 alu29 = ((val0[2]<((__fp16)(-22.0f)))?((__fp16)(0.0f)):alu28);
+    __fp16 alu30 = (alu21?((__fp16)(__builtin_nanf(""))):alu29);
+    _Bool alu31 = (val0[3]!=val0[3]);
+    __fp16 alu32 = ((val0[3]!=((__fp16)(-__builtin_inff())))?val0[3]:((__fp16)(0.0f)));
+    __fp16 alu33 = (alu31?((__fp16)(0.0f)):alu32);
+    __fp16 alu34 = ((val0[3]!=((__fp16)(__builtin_inff())))?alu33:((__fp16)(0.0f)));
+    __fp16 alu35 = ((alu34<((__fp16)(0.0f)))?((__fp16)(-0.5f)):((__fp16)(0.5f)));
+    short cast3 = ((short)(((__fp16)((alu34+alu35)))));
+    short alu36 = (cast3>>((short)(1)));
+    __fp16 alu37 = (alu34-((__fp16)(cast3)));
+    __fp16 alu38 = (((val0[3]<((__fp16)(23.0f)))!=1)?((__fp16)(__builtin_inff())):((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)((((__fp16)(0.00015354156494140625f))*alu37)))+((__fp16)(0.001338958740234375f)))))*alu37)))+((__fp16)(0.00962066650390625f)))))*alu37)))+((__fp16)(0.055511474609375f)))))*alu37)))+((__fp16)(0.240234375f)))))*alu37)))+((__fp16)(0.693359375f)))))*alu37)))+((__fp16)(1.0f)))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((alu36+((short)(15)))))<<((short)(10))))))))))*__builtin_bit_cast(__fp16, (short)(((short)((((short)((((short)((cast3-alu36)))+((short)(15)))))<<((short)(10)))))))))));
+    __fp16 alu39 = ((val0[3]<((__fp16)(-22.0f)))?((__fp16)(0.0f)):alu38);
+    __fp16 alu40 = (alu31?((__fp16)(__builtin_nanf(""))):alu39);
+    *((float4*)((data0_16+alu0))) = (float4){((float)(((__fp16)((alu10+((__fp16)(__builtin_sqrtf(val1[0])))))))),((float)(((__fp16)((alu20+((__fp16)(__builtin_sqrtf(val1[1])))))))),((float)(((__fp16)((alu30+((__fp16)(__builtin_sqrtf(val1[2])))))))),((float)(((__fp16)((alu40+((__fp16)(__builtin_sqrtf(val1[3]))))))))};
+  }
+}
+

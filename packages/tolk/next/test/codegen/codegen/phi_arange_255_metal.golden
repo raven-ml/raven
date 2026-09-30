@@ -1,0 +1,19 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=255, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 85
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SPECIAL dtypes.int [5] "gidx0"
+7 Ops.MUL dtypes.int [6, 2]
+8 Ops.ADD dtypes.int [3, 7]
+9 Ops.INDEX dtypes.int [0, 8]
+10 Ops.STORE dtypes.void [9, 8]
+11 Ops.SINK dtypes.void [10] KernelInfo(name="E_85_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)) tag=1
+12 Ops.SINK dtypes.void [10] KernelInfo(name="E_85_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(lds=1020, mem=1020)) tag=1
+13 Ops.LINEAR dtypes.void [0, 4, 5, 6, 1, 2, 3, 7, 8, 9, 10, 11]
+14 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_255; };\nkernel void E_85_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_255 = args.data0_255;\n  int gidx0 = gid.x; /* 85 */\n  int lidx0 = lid.x; /* 3 */\n  int alu0 = (lidx0+(gidx0*3));\n  *(data0_255+alu0) = alu0;\n}"
+15 Ops.PROGRAM dtypes.void [12, 13, 14] ProgramInfo(global_size=(85, 1, 1), local_size=(3, 1, 1), globals=(0,), outs=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+16 Ops.SINK dtypes.void [11, 15]
+

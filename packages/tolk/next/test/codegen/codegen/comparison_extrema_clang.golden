@@ -1,0 +1,29 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool, size=4)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.bool [0, 2]
+4 Ops.CONST dtypes.bool [] False
+5 Ops.CAST dtypes.bool [4] dtypes.bool
+6 Ops.STORE dtypes.void [3, 5]
+7 Ops.CONST dtypes.weakint [] 1
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.INDEX dtypes.bool [0, 8]
+10 Ops.CONST dtypes.bool [] True
+11 Ops.CAST dtypes.bool [10] dtypes.bool
+12 Ops.STORE dtypes.void [9, 11]
+13 Ops.CONST dtypes.weakint [] 2
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.INDEX dtypes.bool [0, 14]
+16 Ops.STORE dtypes.void [15, 11]
+17 Ops.CONST dtypes.weakint [] 3
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.INDEX dtypes.bool [0, 18]
+20 Ops.STORE dtypes.void [19, 5]
+21 Ops.SINK dtypes.void [6, 12, 16, 20] KernelInfo(name="E") tag=1
+22 Ops.SINK dtypes.void [6, 12, 16, 20] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4)) tag=1
+23 Ops.LINEAR dtypes.void [0, 1, 2, 3, 7, 8, 9, 13, 14, 15, 17, 18, 19, 4, 5, 10, 11, 6, 12, 16, 20, 21]
+24 Ops.SOURCE dtypes.void [] "\nvoid E(_Bool* restrict data0_4) {\n  *(data0_4+0) = 0;\n  *(data0_4+1) = 1;\n  *(data0_4+2) = 1;\n  *(data0_4+3) = 0;\n}\n"
+25 Ops.PROGRAM dtypes.void [22, 23, 24] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+26 Ops.SINK dtypes.void [21, 25]
+

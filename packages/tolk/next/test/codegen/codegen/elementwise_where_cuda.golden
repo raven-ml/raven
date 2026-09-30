@@ -1,0 +1,22 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakfloat [] 0.0
+6 Ops.CAST dtypes.float [5] dtypes.float
+7 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256)
+8 Ops.INDEX dtypes.float [7, 3]
+9 Ops.LOAD dtypes.float [8]
+10 Ops.CMPLT dtypes.bool [6, 9]
+11 Ops.WHERE dtypes.float [10, 9, 6]
+12 Ops.STORE dtypes.void [4, 11]
+13 Ops.END dtypes.void [12, 3]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="relu") tag=1
+15 Ops.SINK dtypes.void [13] KernelInfo(name="relu", estimates=Estimates(ops=512, lds=2048, mem=2048)) tag=1
+16 Ops.LINEAR dtypes.void [7, 0, 5, 6, 1, 2, 3, 8, 9, 4, 10, 11, 12, 13, 14]
+17 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) relu(float* data0_256, float* data1_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    float alu0 = ((0.0f<val0)?val0:0.0f);\n    *(data1_256+Lidx0) = alu0;\n  }\n}"
+18 Ops.PROGRAM dtypes.void [15, 16, 17] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+19 Ops.SINK dtypes.void [14, 18]
+

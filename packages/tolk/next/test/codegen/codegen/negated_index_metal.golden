@@ -1,0 +1,17 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1)
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.LOAD dtypes.float [5]
+7 Ops.NEG dtypes.float [6]
+8 Ops.STORE dtypes.void [3, 7]
+9 Ops.SINK dtypes.void [8] KernelInfo() tag=1
+10 Ops.SINK dtypes.void [8] KernelInfo(estimates=Estimates(ops=1, lds=8, mem=8)) tag=1
+11 Ops.LINEAR dtypes.void [4, 0, 1, 2, 5, 6, 3, 7, 8, 9]
+12 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_1; device float* data1_1; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args.data0_1; device float* data1_1 = args.data1_1;\n  float val0 = (*(data0_1+0));\n  *(data1_1+0) = -val0;\n}"
+13 Ops.PROGRAM dtypes.void [10, 11, 12] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+14 Ops.SINK dtypes.void [9, 13]
+

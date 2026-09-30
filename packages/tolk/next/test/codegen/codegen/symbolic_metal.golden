@@ -1,0 +1,34 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=64, device="CPU")
+1 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, vmin_vmax=(1, 64), multiple_of=1, name="n", addrspace=AddrSpace.ALU)
+2 Ops.SPECIAL dtypes.int [1] "gidx0"
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=64, device="CPU")
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.LOAD dtypes.float [5]
+7 Ops.CONST dtypes.weakfloat [] 2.0
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.MUL dtypes.float [6, 8]
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.CAST dtypes.float [10] dtypes.float
+12 Ops.ADD dtypes.float [9, 11]
+13 Ops.STORE dtypes.void [3, 12]
+14 Ops.SINK dtypes.void [13] KernelInfo(name="E_n") tag=1
+15 Ops.CONST dtypes.weakint [] 2
+16 Ops.MUL dtypes.int [1, 15]
+17 Ops.CONST dtypes.weakint [] 0
+18 Ops.CONST dtypes.weakint [] 4
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.MUL dtypes.int [19, 1]
+21 Ops.MUL dtypes.int [18, 20]
+22 Ops.ADD dtypes.int [17, 21]
+23 Ops.ADD dtypes.int [22, 21]
+24 Ops.MUL dtypes.int [18, 1]
+25 Ops.ADD dtypes.int [17, 24]
+26 Ops.ADD dtypes.int [25, 24]
+27 Ops.SINK dtypes.void [13] KernelInfo(name="E_n", estimates=Estimates(ops=%16, lds=%23, mem=%26)) tag=1
+28 Ops.LINEAR dtypes.void [0, 4, 1, 2, 5, 6, 3, 10, 11, 7, 8, 9, 12, 13, 14]
+29 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_64; device float* data1_64; int n_; };\nkernel void E_n(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_64 = args.data0_64; device float* data1_64 = args.data1_64; int n_ = args.n_;\n  int gidx0 = gid.x; /* n */\n  float val0 = (*(data1_64+gidx0));\n  *(data0_64+gidx0) = ((val0*2.0f)+1.0f);\n}"
+30 Ops.PROGRAM dtypes.void [27, 28, 29] ProgramInfo(global_size=(%1, 1, 1), vars=(%1,), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+31 Ops.SINK dtypes.void [14, 30]
+

@@ -1,0 +1,76 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=3, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 16
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.LOAD dtypes.float [6]
+8 Ops.CONST dtypes.weakfloat [] 0.0625
+9 Ops.CAST dtypes.float [8] dtypes.float
+10 Ops.CONST dtypes.weakfloat [] 10.0
+11 Ops.CAST dtypes.float [10] dtypes.float
+12 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
+13 Ops.INDEX dtypes.float [12, 3]
+14 Ops.LOAD dtypes.float [13]
+15 Ops.SUB dtypes.float [14, 7]
+16 Ops.MUL dtypes.float [11, 15]
+17 Ops.MUL dtypes.float [9, 16]
+18 Ops.ADD dtypes.float [7, 17]
+19 Ops.CONST dtypes.weakfloat [] 28.0
+20 Ops.CAST dtypes.float [19] dtypes.float
+21 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16)
+22 Ops.INDEX dtypes.float [21, 3]
+23 Ops.LOAD dtypes.float [22]
+24 Ops.SUB dtypes.float [20, 23]
+25 Ops.MUL dtypes.float [7, 24]
+26 Ops.SUB dtypes.float [25, 14]
+27 Ops.MUL dtypes.float [9, 26]
+28 Ops.ADD dtypes.float [14, 27]
+29 Ops.SUB dtypes.float [28, 18]
+30 Ops.MUL dtypes.float [11, 29]
+31 Ops.MUL dtypes.float [9, 30]
+32 Ops.ADD dtypes.float [18, 31]
+33 Ops.MUL dtypes.float [7, 14]
+34 Ops.CONST dtypes.weakfloat [] 2.5
+35 Ops.CAST dtypes.float [34] dtypes.float
+36 Ops.MUL dtypes.float [35, 23]
+37 Ops.SUB dtypes.float [33, 36]
+38 Ops.MUL dtypes.float [9, 37]
+39 Ops.ADD dtypes.float [23, 38]
+40 Ops.SUB dtypes.float [20, 39]
+41 Ops.MUL dtypes.float [18, 40]
+42 Ops.SUB dtypes.float [41, 28]
+43 Ops.MUL dtypes.float [9, 42]
+44 Ops.ADD dtypes.float [28, 43]
+45 Ops.SUB dtypes.float [44, 32]
+46 Ops.MUL dtypes.float [11, 45]
+47 Ops.MUL dtypes.float [9, 46]
+48 Ops.ADD dtypes.float [32, 47]
+49 Ops.MUL dtypes.float [18, 28]
+50 Ops.MUL dtypes.float [35, 39]
+51 Ops.SUB dtypes.float [49, 50]
+52 Ops.MUL dtypes.float [9, 51]
+53 Ops.ADD dtypes.float [39, 52]
+54 Ops.SUB dtypes.float [20, 53]
+55 Ops.MUL dtypes.float [32, 54]
+56 Ops.SUB dtypes.float [55, 44]
+57 Ops.MUL dtypes.float [9, 56]
+58 Ops.ADD dtypes.float [44, 57]
+59 Ops.ADD dtypes.float [48, 58]
+60 Ops.MUL dtypes.float [32, 44]
+61 Ops.MUL dtypes.float [35, 53]
+62 Ops.SUB dtypes.float [60, 61]
+63 Ops.MUL dtypes.float [9, 62]
+64 Ops.ADD dtypes.float [53, 63]
+65 Ops.ADD dtypes.float [59, 64]
+66 Ops.STORE dtypes.void [4, 65]
+67 Ops.END dtypes.void [66, 3]
+68 Ops.SINK dtypes.void [67] KernelInfo(name="lorenz_fold") tag=1
+69 Ops.SINK dtypes.void [67] KernelInfo(name="lorenz_fold", estimates=Estimates(ops=704, lds=256, mem=256)) tag=1
+70 Ops.LINEAR dtypes.void [5, 12, 21, 0, 8, 9, 10, 11, 34, 35, 19, 20, 1, 2, 3, 6, 7, 13, 14, 22, 23, 4, 15, 16, 17, 18, 24, 25, 26, 27, 28, 33, 36, 37, 38, 39, 29, 30, 31, 32, 40, 41, 42, 43, 44, 50, 49, 51, 52, 53, 45, 46, 47, 48, 54, 55, 56, 57, 58, 61, 60, 62, 63, 64, 59, 65, 66, 67, 68]
+71 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) lorenz_fold(float* data0_16, float* data1_16, float* data2_16, float* data3_16) {\n  for (int Lidx0 = 0; Lidx0 < 16; Lidx0++) {\n    float val0 = (*(data0_16+Lidx0));\n    float val1 = (*(data1_16+Lidx0));\n    float val2 = (*(data2_16+Lidx0));\n    float alu0 = (val0+(0.0625f*10.0f*(val1-val0)));\n    float alu1 = (val1+(0.0625f*((val0*(28.0f-val2))-val1)));\n    float alu2 = (val2+(0.0625f*((val0*val1)-(2.5f*val2))));\n    float alu3 = (alu0+(0.0625f*10.0f*(alu1-alu0)));\n    float alu4 = (alu1+(0.0625f*((alu0*(28.0f-alu2))-alu1)));\n    float alu5 = (alu2+(0.0625f*((alu0*alu1)-(2.5f*alu2))));\n    *(data3_16+Lidx0) = (alu3+(0.0625f*10.0f*(alu4-alu3))+alu4+(0.0625f*((alu3*(28.0f-alu5))-alu4))+alu5+(0.0625f*((alu3*alu4)-(2.5f*alu5))));\n  }\n}"
+72 Ops.PROGRAM dtypes.void [69, 70, 71] ProgramInfo(globals=(0, 1, 2, 3), outs=(3,), ins=(0, 1, 2), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+73 Ops.SINK dtypes.void [68, 72]
+

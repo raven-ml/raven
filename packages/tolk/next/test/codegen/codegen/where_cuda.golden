@@ -1,0 +1,53 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device="CPU")
+1 Ops.CONST dtypes.weakint [] 8
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.SHRINK dtypes.float [0, 6, 8]
+10 Ops.CONST dtypes.weakfloat [] 0.0
+11 Ops.CAST dtypes.float [10] dtypes.float
+12 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device="CPU")
+13 Ops.SHRINK dtypes.float [12, 6, 8]
+14 Ops.LOAD dtypes.float [13]
+15 Ops.CONST dtypes.weakint [] 0
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.INDEX dtypes.float [14, 16]
+18 Ops.CMPLT dtypes.bool [11, 17]
+19 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=32, device="CPU")
+20 Ops.SHRINK dtypes.float [19, 6, 8]
+21 Ops.LOAD dtypes.float [20]
+22 Ops.INDEX dtypes.float [21, 16]
+23 Ops.CONST dtypes.weakfloat [] 1.0
+24 Ops.CAST dtypes.float [23] dtypes.float
+25 Ops.WHERE dtypes.float [18, 22, 24]
+26 Ops.CONST dtypes.weakint [] 1
+27 Ops.CAST dtypes.int [26] dtypes.int
+28 Ops.INDEX dtypes.float [14, 27]
+29 Ops.CMPLT dtypes.bool [11, 28]
+30 Ops.INDEX dtypes.float [21, 27]
+31 Ops.WHERE dtypes.float [29, 30, 24]
+32 Ops.INDEX dtypes.float [14, 5]
+33 Ops.CMPLT dtypes.bool [11, 32]
+34 Ops.INDEX dtypes.float [21, 5]
+35 Ops.WHERE dtypes.float [33, 34, 24]
+36 Ops.CONST dtypes.weakint [] 3
+37 Ops.CAST dtypes.int [36] dtypes.int
+38 Ops.INDEX dtypes.float [14, 37]
+39 Ops.CMPLT dtypes.bool [11, 38]
+40 Ops.INDEX dtypes.float [21, 37]
+41 Ops.WHERE dtypes.float [39, 40, 24]
+42 Ops.STACK dtypes.float [25, 31, 35, 41]
+43 Ops.STORE dtypes.void [9, 42]
+44 Ops.GROUP dtypes.void [43, 43, 43, 43]
+45 Ops.SINK dtypes.void [44] KernelInfo(name="E_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL)))) tag=1
+46 Ops.SINK dtypes.void [44] KernelInfo(name="E_8_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(8, AxisType.LOCAL))), estimates=Estimates(ops=64, lds=384, mem=384)) tag=1
+47 Ops.LINEAR dtypes.void [0, 12, 19, 1, 2, 3, 4, 5, 7, 8, 6, 13, 14, 20, 21, 15, 16, 17, 26, 27, 28, 32, 36, 37, 38, 22, 30, 34, 40, 10, 11, 23, 24, 18, 29, 33, 39, 25, 31, 35, 41, 42, 9, 43, 44, 45]
+48 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(8) E_8_4(float* data0_32, float* data1_32, float* data2_32) {\n  int lidx0 = threadIdx.x; /* 8 */\n  int alu0 = (lidx0<<2);\n  float4 val0 = (*((float4*)((data1_32+alu0))));\n  float4 val1 = (*((float4*)((data2_32+alu0))));\n  float alu1 = ((0.0f<val0.x)?val1.x:1.0f);\n  float alu2 = ((0.0f<val0.y)?val1.y:1.0f);\n  float alu3 = ((0.0f<val0.z)?val1.z:1.0f);\n  float alu4 = ((0.0f<val0.w)?val1.w:1.0f);\n  *((float4*)((data0_32+alu0))) = make_float4(alu1,alu2,alu3,alu4);\n}"
+49 Ops.PROGRAM dtypes.void [46, 47, 48] ProgramInfo(local_size=(8, 1, 1), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+50 Ops.SINK dtypes.void [45, 49]
+

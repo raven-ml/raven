@@ -1,0 +1,72 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "gidx0"
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+6 Ops.CONST dtypes.weakint [] 0
+7 Ops.CAST dtypes.int [6] dtypes.int
+8 Ops.INDEX dtypes.float [5, 7]
+9 Ops.CONST dtypes.weakfloat [] 0.0
+10 Ops.CAST dtypes.float [9] dtypes.float
+11 Ops.STORE dtypes.void [8, 10]
+12 Ops.CONST dtypes.weakint [] 8
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.RANGE dtypes.int [13] (101, AxisType.REDUCE)
+15 Ops.AFTER dtypes.float [5, 11, 14]
+16 Ops.INDEX dtypes.float [15, 7]
+17 Ops.LOAD dtypes.float [16]
+18 Ops.ALLOC dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, addrspace=AddrSpace.LOCAL)
+19 Ops.SPECIAL dtypes.int [13] "lidx0"
+20 Ops.INDEX dtypes.float [18, 19]
+21 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32)
+22 Ops.CONST dtypes.weakint [] 3
+23 Ops.CAST dtypes.int [22] dtypes.int
+24 Ops.SHL dtypes.int [3, 23]
+25 Ops.ADD dtypes.int [19, 24]
+26 Ops.INDEX dtypes.float [21, 25]
+27 Ops.LOAD dtypes.float [26]
+28 Ops.STORE dtypes.void [20, 27]
+29 Ops.BARRIER dtypes.void [28]
+30 Ops.AFTER dtypes.float [18, 29]
+31 Ops.INDEX dtypes.float [30, 14]
+32 Ops.LOAD dtypes.float [31]
+33 Ops.ADD dtypes.float [17, 32]
+34 Ops.STORE dtypes.void [16, 33]
+35 Ops.END dtypes.void [34, 14]
+36 Ops.AFTER dtypes.float [5, 35]
+37 Ops.INDEX dtypes.float [36, 7]
+38 Ops.LOAD dtypes.float [37]
+39 Ops.CMPEQ dtypes.bool [19, 7]
+40 Ops.STORE dtypes.void [4, 38, 39]
+41 Ops.SINK dtypes.void [40] KernelInfo(name="r_4_8") tag=1
+42 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+43 Ops.INDEX dtypes.float [42, 7]
+44 Ops.STORE dtypes.void [43, 10]
+45 Ops.AFTER dtypes.float [42, 44, 14]
+46 Ops.INDEX dtypes.float [45, 7]
+47 Ops.LOAD dtypes.float [46]
+48 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=8, addrspace=AddrSpace.LOCAL)
+49 Ops.INDEX dtypes.float [48, 19]
+50 Ops.STORE dtypes.void [49, 27]
+51 Ops.BARRIER dtypes.void [50]
+52 Ops.AFTER dtypes.float [48, 51]
+53 Ops.INDEX dtypes.float [52, 14]
+54 Ops.LOAD dtypes.float [53]
+55 Ops.ADD dtypes.float [47, 54]
+56 Ops.STORE dtypes.void [46, 55]
+57 Ops.END dtypes.void [56, 14]
+58 Ops.AFTER dtypes.float [42, 57]
+59 Ops.INDEX dtypes.float [58, 7]
+60 Ops.LOAD dtypes.float [59]
+61 Ops.STORE dtypes.void [4, 60]
+62 Ops.SINK dtypes.void [61] KernelInfo(name="r_4_8", estimates=Estimates(ops=288, lds=1408, mem=144)) tag=1
+63 Ops.IF dtypes.void [39, 4]
+64 Ops.ENDIF dtypes.void [63]
+65 Ops.SINK dtypes.void [61] KernelInfo(name="r_4_8") tag=1
+66 Ops.LINEAR dtypes.void [0, 21, 42, 48, 1, 2, 3, 12, 13, 19, 22, 23, 24, 25, 26, 27, 49, 50, 51, 52, 6, 7, 43, 9, 10, 44, 14, 45, 46, 47, 53, 54, 55, 56, 57, 58, 59, 60, 4, 39, 63, 61, 64, 65]
+67 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_4; device float* data1_32; };\nkernel void r_4_8(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_4 = args.data0_4; device float* data1_32 = args.data1_32;\n  float buf0[1];\n  threadgroup __attribute__((aligned(16))) float buf1[8];\n  int gidx0 = gid.x; /* 4 */\n  int lidx0 = lid.x; /* 8 */\n  float val0 = (*(data1_32+(lidx0+(gidx0<<3))));\n  *(buf1+lidx0) = val0;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf0+0) = 0.0f;\n  for (int Ridx101 = 0; Ridx101 < 8; Ridx101++) {\n    float val1 = (*(buf1+Ridx101));\n    *(buf0+0) = ((*(buf0+0))+val1);\n  }\n  if ((lidx0==0)) {\n    *(data0_4+gidx0) = (*(buf0+0));\n  }\n}"
+68 Ops.PROGRAM dtypes.void [62, 66, 67] ProgramInfo(global_size=(4, 1, 1), local_size=(8, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+69 Ops.SINK dtypes.void [41, 68]
+

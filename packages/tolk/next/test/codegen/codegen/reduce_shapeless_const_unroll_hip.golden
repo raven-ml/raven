@@ -1,0 +1,15 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.CONST dtypes.weakfloat [] 12.0
+5 Ops.CAST dtypes.float [4] dtypes.float
+6 Ops.STORE dtypes.void [3, 5]
+7 Ops.SINK dtypes.void [6] KernelInfo(name="E") tag=1
+8 Ops.SINK dtypes.void [6] KernelInfo(name="E", estimates=Estimates(lds=4, mem=4)) tag=1
+9 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7]
+10 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E(float* data0_1) {\n  *(data0_1+0) = 12.0f;\n}"
+11 Ops.PROGRAM dtypes.void [8, 9, 10] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+12 Ops.SINK dtypes.void [7, 11]
+

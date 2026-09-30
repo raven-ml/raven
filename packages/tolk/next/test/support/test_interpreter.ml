@@ -230,6 +230,15 @@ let storage =
           equal const (int 12) (at 2 (Ops.index table [ i ])));
       test "a load is the value it loads" (fun () ->
           equal const (int 13) (at 3 (Ops.load (Ops.index table [ i ]) [])));
+      test
+        "a gated load reads where its gate holds, and is its alternative \
+         elsewhere" (fun () ->
+          let gated =
+            Ops.load (Ops.index table [ i ])
+              [ Ops.int ~dtype:Dtype.Int32 (-1); Ops.O.(i < int 4) ]
+          in
+          equal const ~msg:"at 3" (int 13) (at 3 gated);
+          equal const ~msg:"at 7, outside the storage" (int (-1)) (at 7 gated));
       test "an index at an invalid index is invalid" (fun () ->
           equal const `Invalid
             (at 7 (Ops.index table [ Ops.valid i Ops.O.(i < int 4) ])));

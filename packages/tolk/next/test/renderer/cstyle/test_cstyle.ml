@@ -46,82 +46,6 @@ let find_case name = List.find (fun row -> row "case" = name) case_rows
 let source_of_case name =
   render (renderer_of_row (find_case name)) (kernel (find_case name))
 
-(* D16: CUDA keeps a float8 infinity special where tinygrad saturates it. The
-   kernel declares the helper tg_fp8, and each conversion of a value to a float8
-   type T is tg_fp8<T>(value, byte), which converts as tinygrad's (T)(value) and
-   then writes the bits of the infinity's image, byte and its sign, if the value
-   was infinite. An infinite constant is tg_bitcast<T>((unsigned char)byte), the
-   bits of its image. [tinygrad_of_d16 src] is [src] with each of these written
-   back as tinygrad writes it. *)
-
-let fp8_helper =
-  "template <class T, class F> __device__ __forceinline__ T tg_fp8("
-
-let fp8_byte t infinity =
-  match Dtype.bitcast t Uint8 (`Float infinity) with
-  | `Int z -> Printf.sprintf "0x%02x" (Z.to_int z)
-  | _ -> invalid_arg "a byte is an integer"
-
-let fp8_of_name = function
-  | "__nv_fp8_e4m3" -> Dtype.Fp8e4m3
-  | "__nv_fp8_e5m2" -> Fp8e5m2
-  | t -> invalid_arg ("no CUDA float8 type " ^ t)
-
-(* [closing s i] is the index of the parenthesis that closes the one opened just
-   before [i], and the index of the last ", " at depth zero on the way. *)
-let closing s i =
-  let rec go i depth comma =
-    match s.[i] with
-    | '(' -> go (i + 1) (depth + 1) comma
-    | ')' when depth = 0 -> (i, comma)
-    | ')' -> go (i + 1) (depth - 1) comma
-    | ',' when depth = 0 -> go (i + 1) depth i
-    | _ -> go (i + 1) depth comma
-  in
-  go i 0 (-1)
-
-let starts_at s i prefix =
-  i + String.length prefix <= String.length s
-  && String.sub s i (String.length prefix) = prefix
-
-let starts_with prefix s = String.starts_with ~prefix s
-
-let rec tinygrad_of_d16 src =
-  let b = Buffer.create (String.length src) in
-  let rec scan i =
-    if i >= String.length src then ()
-    else if starts_at src i "tg_fp8<" then begin
-      let t_end = String.index_from src i '>' in
-      let t = String.sub src (i + 7) (t_end - i - 7) in
-      let close, comma = closing src (t_end + 2) in
-      let value = String.sub src (t_end + 2) (comma - t_end - 2) in
-      Printf.bprintf b "((%s)(%s))" t (tinygrad_of_d16 value);
-      scan (close + 1)
-    end
-    else if starts_at src i "(tg_bitcast<__nv_fp8_" then begin
-      let t_end = String.index_from src i '>' in
-      let t = String.sub src (i + 12) (t_end - i - 12) in
-      let close, _ = closing src (t_end + 2) in
-      let byte = String.sub src (close - 4) 4 in
-      let dt = fp8_of_name t in
-      let value =
-        if byte = fp8_byte dt infinity then "INFINITY"
-        else if byte = fp8_byte dt neg_infinity then "-INFINITY"
-        else invalid_arg ("no infinity of " ^ t ^ " is " ^ byte)
-      in
-      Printf.bprintf b "((%s)(%s))" t value;
-      scan (close + 2)
-    end
-    else begin
-      Buffer.add_char b src.[i];
-      scan (i + 1)
-    end
-  in
-  scan 0;
-  String.split_on_char '\n' (Buffer.contents b)
-  |> List.filter (fun line -> not (starts_with fp8_helper line))
-  |> String.concat "\n"
-
 let sources_under setting =
   List.filter_map
     (fun row ->
@@ -129,7 +53,7 @@ let sources_under setting =
       else
         let source () =
           let src = render (renderer_of_row row) (kernel row) in
-          if row "renderer" = "CUDA" then tinygrad_of_d16 src else src
+          if row "renderer" = "CUDA" then Cuda_fp8.tinygrad_of_d16 src else src
         in
         Some (Golden.text (row "case" ^ ".golden") source))
     case_rows
@@ -381,11 +305,14 @@ let guard_only_where_converted () =
     (fun row ->
       equal bool ~msg:(row "case")
         (List.mem (row "case") guarded)
-        (contains (render cuda (kernel row)) fp8_helper))
+        (contains (render cuda (kernel row)) Cuda_fp8.helper))
     cuda_rows
 
 let converts_with_the_infinity_byte (case, t, dt) =
-  let call = Printf.sprintf "tg_fp8<%s>(val1.x, %s)" t (fp8_byte dt infinity) in
+  let call =
+    Printf.sprintf "tg_fp8<%s>(val1.x, %s)" t
+      (Cuda_fp8.infinity_byte dt infinity)
+  in
   satisfies
     ~claim:("a source that converts by " ^ call)
     string
@@ -416,10 +343,10 @@ let fp8_infinities =
       test
         "the image of an infinity is a NaN of its sign in e4m3 and itself in \
          e5m2" (fun () ->
-          equal string "0x7f" (fp8_byte Fp8e4m3 infinity);
-          equal string "0xff" (fp8_byte Fp8e4m3 neg_infinity);
-          equal string "0x7c" (fp8_byte Fp8e5m2 infinity);
-          equal string "0xfc" (fp8_byte Fp8e5m2 neg_infinity));
+          equal string "0x7f" (Cuda_fp8.infinity_byte Fp8e4m3 infinity);
+          equal string "0xff" (Cuda_fp8.infinity_byte Fp8e4m3 neg_infinity);
+          equal string "0x7c" (Cuda_fp8.infinity_byte Fp8e5m2 infinity);
+          equal string "0xfc" (Cuda_fp8.infinity_byte Fp8e5m2 neg_infinity));
     ]
 
 (* Rendering *)
@@ -578,8 +505,8 @@ let rendering =
 (* A machine without a target's toolchain refuses every source with the reason
    it cannot load the library. *)
 let lacks_toolchain why =
-  starts_with "failed to load library" why
-  || starts_with "comgr not available" why
+  String.starts_with ~prefix:"failed to load library" why
+  || String.starts_with ~prefix:"comgr not available" why
 
 (* The sources the toolchain rejects as tinygrad writes them. *)
 let rejected =

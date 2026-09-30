@@ -1,0 +1,23 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.LOAD dtypes.float [6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CAST dtypes.int [8] dtypes.int
+10 Ops.ADD dtypes.int [3, 9]
+11 Ops.INDEX dtypes.float [5, 10]
+12 Ops.LOAD dtypes.float [11]
+13 Ops.ADD dtypes.float [7, 12]
+14 Ops.STORE dtypes.void [4, 13]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)) tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(ops=3, lds=36, mem=28)) tag=1
+17 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 4, 13, 14, 15]
+18 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(3) E_3(float* data0_3, float* data1_4) {\n  int lidx0 = threadIdx.x; /* 3 */\n  float val0 = (*(data1_4+lidx0));\n  float val1 = (*(data1_4+(lidx0+1)));\n  *(data0_3+lidx0) = (val0+val1);\n}"
+19 Ops.PROGRAM dtypes.void [16, 17, 18] ProgramInfo(local_size=(3, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+20 Ops.SINK dtypes.void [15, 19]
+

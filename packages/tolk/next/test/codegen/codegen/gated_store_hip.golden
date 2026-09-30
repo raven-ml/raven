@@ -1,0 +1,30 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=256)
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=256)
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.LOAD dtypes.float [6]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+9 Ops.INDEX dtypes.float [8, 3]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.ADD dtypes.float [7, 10]
+12 Ops.CONST dtypes.weakint [] 200
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.CMPLT dtypes.bool [3, 13]
+15 Ops.STORE dtypes.void [4, 11, 14]
+16 Ops.END dtypes.void [15, 3]
+17 Ops.SINK dtypes.void [16] KernelInfo(name="gated_store") tag=1
+18 Ops.STORE dtypes.void [4, 11]
+19 Ops.END dtypes.void [18, 3]
+20 Ops.SINK dtypes.void [19] KernelInfo(name="gated_store", estimates=Estimates(ops=512, lds=3072, mem=3072)) tag=1
+21 Ops.IF dtypes.void [14, 4]
+22 Ops.ENDIF dtypes.void [21]
+23 Ops.SINK dtypes.void [19] KernelInfo(name="gated_store") tag=1
+24 Ops.LINEAR dtypes.void [5, 8, 0, 12, 13, 1, 2, 3, 6, 7, 9, 10, 4, 11, 14, 21, 18, 22, 19, 23]
+25 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) gated_store(float* data0_256, float* data1_256, float* data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    float val0 = (*(data0_256+Lidx0));\n    float val1 = (*(data1_256+Lidx0));\n    if ((Lidx0<200)) {\n      *(data2_256+Lidx0) = (val0+val1);\n    }\n  }\n}"
+26 Ops.PROGRAM dtypes.void [20, 24, 25] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+27 Ops.SINK dtypes.void [17, 26]
+

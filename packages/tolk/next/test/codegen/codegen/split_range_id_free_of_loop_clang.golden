@@ -1,0 +1,51 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4)
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.CONST dtypes.weakint [] 1
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.SHRINK dtypes.float [0, 6, 2]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4)
+9 Ops.SHRINK dtypes.float [8, 6, 2]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.INDEX dtypes.float [10, 12]
+14 Ops.BUFFER dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1, addrspace=AddrSpace.REG)
+15 Ops.AFTER dtypes.int [14, 3]
+16 Ops.INDEX dtypes.int [15, 12]
+17 Ops.STORE dtypes.void [16, 12]
+18 Ops.AFTER dtypes.int [15, 17]
+19 Ops.INDEX dtypes.int [18, 12]
+20 Ops.NOOP dtypes.void []
+21 Ops.RANGE dtypes.void [20, 3] (1, AxisType.WEAK)
+22 Ops.AFTER dtypes.int [18, 21]
+23 Ops.INDEX dtypes.int [22, 12]
+24 Ops.LOAD dtypes.int [23]
+25 Ops.ADD dtypes.int [24, 5]
+26 Ops.STORE dtypes.void [19, 25]
+27 Ops.CONST dtypes.weakint [] 3
+28 Ops.CAST dtypes.int [27] dtypes.int
+29 Ops.CMPLT dtypes.bool [25, 28]
+30 Ops.BACKEDGE dtypes.void [26, 21, 29]
+31 Ops.AFTER dtypes.int [18, 30]
+32 Ops.INDEX dtypes.int [31, 12]
+33 Ops.LOAD dtypes.int [32]
+34 Ops.CAST dtypes.float [33] dtypes.float
+35 Ops.ADD dtypes.float [13, 34]
+36 Ops.INDEX dtypes.float [10, 5]
+37 Ops.ADD dtypes.float [36, 34]
+38 Ops.STACK dtypes.float [35, 37]
+39 Ops.STORE dtypes.void [7, 38]
+40 Ops.GROUP dtypes.void [39, 39]
+41 Ops.END dtypes.void [40, 3]
+42 Ops.AFTER dtypes.float [0, 41]
+43 Ops.SINK dtypes.void [42] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),)) tag=1
+44 Ops.SINK dtypes.void [42] KernelInfo(name="E_2_2", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(2, AxisType.UPCAST)),), estimates=Estimates(ops=8, lds=32, mem=32)) tag=1
+45 Ops.LINEAR dtypes.void [0, 8, 14, 20, 11, 12, 4, 5, 1, 2, 27, 28, 3, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 29, 26, 30, 31, 32, 33, 6, 9, 10, 13, 36, 34, 35, 37, 38, 7, 39, 40, 41, 42, 43]
+46 Ops.SOURCE dtypes.void [] "typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid E_2_2(float* restrict data0_4, float* restrict data1_4) {\n  int buf0[1];\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    *(buf0+0) = 0;\n    for (;;) {\n      int alu1 = ((*(buf0+0))+1);\n      *(buf0+0) = alu1;\n      if (!((alu1<3))) { break; }\n    }\n    int alu4 = (Lidx0<<1);\n    float2 val0 = (*((float2*)((data1_4+alu4))));\n    float cast0 = ((float)((*(buf0+0))));\n    *((float2*)((data0_4+alu4))) = (float2){(val0[0]+cast0),(val0[1]+cast0)};\n  }\n}\n"
+47 Ops.PROGRAM dtypes.void [44, 45, 46] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+48 Ops.SINK dtypes.void [43, 47]
+

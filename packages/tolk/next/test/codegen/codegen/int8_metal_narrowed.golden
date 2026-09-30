@@ -1,0 +1,24 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+#include <metal_stdlib>
+using namespace metal;
+struct args_t { device signed char* data0_64; device signed char* data1_64; device signed char* data2_64; };
+kernel void E_16_4(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  device signed char* data0_64 = args.data0_64; device signed char* data1_64 = args.data1_64; device signed char* data2_64 = args.data2_64;
+  int lidx0 = lid.x; /* 16 */
+  int alu0 = (lidx0<<2);
+  int alu1 = (alu0+1);
+  signed char val0 = (*(data1_64+alu1));
+  int alu2 = (alu0+2);
+  signed char val1 = (*(data1_64+alu2));
+  int alu3 = (alu0+3);
+  signed char val2 = (*(data1_64+alu3));
+  signed char val3 = (*(data1_64+alu0));
+  signed char val4 = (*(data2_64+alu1));
+  signed char val5 = (*(data2_64+alu2));
+  signed char val6 = (*(data2_64+alu3));
+  signed char val7 = (*(data2_64+alu0));
+  *(data0_64+alu1) = (((signed char)((val0+val4)))*((signed char)(3)));
+  *(data0_64+alu2) = (((signed char)((val1+val5)))*((signed char)(3)));
+  *(data0_64+alu3) = (((signed char)((val2+val6)))*((signed char)(3)));
+  *(data0_64+alu0) = (((signed char)((val3+val7)))*((signed char)(3)));
+}

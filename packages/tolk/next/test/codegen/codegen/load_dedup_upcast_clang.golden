@@ -1,0 +1,34 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.CONST dtypes.weakint [] 2
+4 Ops.CAST dtypes.int [3] dtypes.int
+5 Ops.SHRINK dtypes.float [0, 2, 4]
+6 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.SHRINK dtypes.float [6, 2, 8]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.INDEX dtypes.float [10, 2]
+12 Ops.CONST dtypes.weakint [] 1
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.INDEX dtypes.float [10, 13]
+15 Ops.ADD dtypes.float [11, 14]
+16 Ops.INDEX dtypes.float [10, 4]
+17 Ops.ADD dtypes.float [14, 16]
+18 Ops.STACK dtypes.float [15, 17]
+19 Ops.STORE dtypes.void [5, 18]
+20 Ops.INDEX dtypes.float [0, 4]
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.INDEX dtypes.float [10, 22]
+24 Ops.ADD dtypes.float [16, 23]
+25 Ops.STORE dtypes.void [20, 24]
+26 Ops.SINK dtypes.void [19, 19, 25] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),))
+27 Ops.SINK dtypes.void [19, 19, 25] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(0, AxisType.UPCAST)),), estimates=Estimates(ops=3, lds=28, mem=28))
+28 Ops.LINEAR dtypes.void [0, 6, 1, 2, 7, 8, 9, 10, 11, 12, 13, 14, 3, 4, 16, 15, 17, 18, 20, 21, 22, 23, 5, 24, 25, 19, 26]
+29 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\ntypedef float float2 __attribute__((aligned(8),ext_vector_type(2)));\nvoid E_3(float* restrict data0_3, float* restrict data1_4) {\n  float4 val0 = (*((float4*)((data1_4+0))));\n  *(data0_3+2) = (val0[2]+val0[3]);\n  *((float2*)((data0_3+0))) = (float2){(val0[0]+val0[1]),(val0[1]+val0[2])};\n}\n"
+30 Ops.PROGRAM dtypes.void [27, 28, 29] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+31 Ops.SINK dtypes.void [26, 30]
+

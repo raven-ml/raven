@@ -1,0 +1,38 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.ALLOC dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
+5 Ops.INDEX dtypes.int [4, 2]
+6 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
+7 Ops.INDEX dtypes.int [6, 2]
+8 Ops.LOAD dtypes.int [7]
+9 Ops.STORE dtypes.void [5, 8]
+10 Ops.BARRIER dtypes.void [9]
+11 Ops.AFTER dtypes.int [4, 10]
+12 Ops.INDEX dtypes.int [11, 2]
+13 Ops.LOAD dtypes.int [12]
+14 Ops.CONST dtypes.weakint [] 2
+15 Ops.CAST dtypes.int [14] dtypes.int
+16 Ops.SPECIAL dtypes.int [15] "lidx0"
+17 Ops.CMPEQ dtypes.bool [16, 2]
+18 Ops.STORE dtypes.void [3, 13, 17]
+19 Ops.SINK dtypes.void [18] KernelInfo() tag=1
+20 Ops.BUFFER dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
+21 Ops.INDEX dtypes.int [20, 2]
+22 Ops.STORE dtypes.void [21, 8]
+23 Ops.BARRIER dtypes.void [22]
+24 Ops.AFTER dtypes.int [20, 23]
+25 Ops.INDEX dtypes.int [24, 2]
+26 Ops.LOAD dtypes.int [25]
+27 Ops.STORE dtypes.void [3, 26]
+28 Ops.SINK dtypes.void [27] KernelInfo(estimates=Estimates(ops=2, lds=20, mem=8)) tag=1
+29 Ops.IF dtypes.void [17, 3]
+30 Ops.ENDIF dtypes.void [29]
+31 Ops.SINK dtypes.void [27] KernelInfo() tag=1
+32 Ops.LINEAR dtypes.void [6, 0, 20, 1, 2, 7, 8, 21, 22, 23, 24, 25, 26, 14, 15, 16, 3, 17, 29, 27, 30, 31]
+33 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_1; device int* data1_1; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args.data0_1; device int* data1_1 = args.data1_1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  *(buf0+0) = val0;\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  int val1 = (*(buf0+0));\n  int lidx0 = lid.x; /* 2 */\n  if ((lidx0==0)) {\n    *(data1_1+0) = val1;\n  }\n}"
+34 Ops.PROGRAM dtypes.void [28, 32, 33] ProgramInfo(local_size=(2, 1, 1), globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+35 Ops.SINK dtypes.void [19, 34]
+

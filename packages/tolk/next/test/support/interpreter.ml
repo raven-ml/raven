@@ -140,12 +140,23 @@ let rec fold ~check ~vars ~params ~buffers u =
           match Ops.op n with
           | Reduce -> reduction ~check ~vars ~params ~buffers n
           | Index -> read ~check ~vars ~params ~buffers n
+          | Load when List.length (Ops.src n) = 3 -> gated_load n
           | _ ->
               List.iter (fun s -> ignore (value s)) (Ops.src n);
               node ~check vars params values n
         in
         Ops.Tbl.replace values n v;
         v
+  (* The index of a gated load is read only where its gate holds. *)
+  and gated_load n =
+    match Ops.src n with
+    | [ index; alternative; gate ] -> (
+        match value gate with
+        | `Bool true -> value index
+        | `Bool false -> value alternative
+        | `Invalid -> `Invalid
+        | _ -> invalid_arg "a load's gate is not a boolean")
+    | _ -> invalid_arg "a gated load has an index, an alternative and a gate"
   in
   value u
 

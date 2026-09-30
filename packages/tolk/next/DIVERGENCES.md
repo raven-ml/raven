@@ -122,9 +122,10 @@ the Exclusions of `README.md`.
   - the compiler modules precede `Cstyle`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** waiting for L4 through L8; for `Codegen`, waiting for its
-  suite: a kernel that asks for a beam search of width `w` is optimised by
-  `beam w`, and raises without `beam`; for `Ops`, its suite
+- **Pinned by:** waiting for L5 through L8; for `Codegen`, its suite
+  (`test/codegen/codegen`): `beam search (D4) › a kernel that asks for a beam
+  of width w is optimised by beam w` and `raises Invalid_argument when a
+  kernel asks for a beam and none is given`; for `Ops`, its suite
   (`test/uop/ops`): `resolve › simplify leaves a constant, and a sink of
   constants and stacks of constants, alone`, and the `resolve` tests that
   simplify with `Symbolic`'s rules;
@@ -737,8 +738,10 @@ the Exclusions of `README.md`.
     the patched tinygrad, whose value tables are unchanged;
   - tensor-core accumulators: the `Cstyle` sources of every tensor core
     (`sources › by default › metal_tc_*`, `hip_tc_*`, `metal_matmul`), whose
-    loops add nothing to the accumulator, as tinygrad's; Codegen's suite (L4)
-    brings the value test of an accumulator at `-0.`;
+    loops add nothing to the accumulator, as tinygrad's; the `Codegen` suite,
+    `tensor-core accumulators (D24) › the running sum replaces a zero
+    accumulator` and `› the lowering keeps a tensor core's value, apart from a
+    zero's sign`, which draws accumulators at `-0.`;
   - the goldens, generated from the patched tinygrad.
 
 ## D25. Compilers keep each product and sum its own rounding

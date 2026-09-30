@@ -29,8 +29,9 @@ val settings_of_cell : string -> Helpers.binding list
 (** [settings_of_cell s] binds the settings of [s], space-separated [NAME=value]
     pairs such as [TC=2 ALLOW_TF32=1], which name the environment variables of
     {!Helpers.use_tc}, {!Helpers.tc_opt}, {!Helpers.tc_select},
-    {!Helpers.tc_min_globals}, {!Helpers.allow_tf32} and {!Helpers.noopt}. The
-    empty cell binds nothing.
+    {!Helpers.tc_min_globals}, {!Helpers.allow_tf32}, {!Helpers.noopt},
+    {!Helpers.emulated_dtypes}, {!Helpers.disable_fast_idiv} and
+    {!Helpers.transcendental}. The empty cell binds nothing.
 
     Raises [Failure] naming a pair that is none of these. *)
 
@@ -46,11 +47,17 @@ val renderer_of_row : (string -> string) -> Renderer.t
 
 (** {1:writes Writes} *)
 
+val inputs : Ops.t -> (int * Dtype.value array) list
+(** [inputs k] is the storage of [k]'s parameters, by slot: small integers,
+    exact in every data type, so that a sum of products of them is computed
+    exactly whatever its order. *)
+
+val variables : Ops.t -> (string * int) list
+(** [variables k] binds each of [k]'s variables to its greatest value. *)
+
 val writes : Ops.t -> (int * int * Dtype.value) list
-(** [writes k] is what the kernel [k] writes ({!Interpreter.writes}), each of
-    its variables bound to its greatest value and each of its storage parameters
-    holding small integers, exact in every data type, so that a sum of products
-    of them is computed exactly whatever its order. *)
+(** [writes k] is what the kernel [k] writes ({!Interpreter.writes}) from its
+    {!inputs}, its {!variables} bound. *)
 
 val write : (int * int * Dtype.value) Windtrap.testable
 (** [write] compares writes ({!Interpreter.writes}) by slot, index and value,

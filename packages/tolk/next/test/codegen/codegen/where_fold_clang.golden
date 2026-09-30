@@ -1,0 +1,38 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.RANGE dtypes.int [2, 3] (1, AxisType.WEAK)
+5 Ops.ADD dtypes.int [4, 2]
+6 Ops.INDEX dtypes.float [0, 5]
+7 Ops.CONST dtypes.weakfloat [] 2.0
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.CONST dtypes.weakint [] 0
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.CMPLT dtypes.bool [10, 3]
+12 Ops.CONST dtypes.weakint [] 2
+13 Ops.CAST dtypes.int [12] dtypes.int
+14 Ops.CMPLT dtypes.bool [3, 13]
+15 Ops.AND dtypes.bool [11, 14]
+16 Ops.CONST dtypes.weakfloat [] 0.0
+17 Ops.CAST dtypes.float [16] dtypes.float
+18 Ops.LOAD dtypes.float [6, 17, 15]
+19 Ops.CMPNE dtypes.bool [18, 17]
+20 Ops.AND dtypes.bool [15, 19]
+21 Ops.STORE dtypes.void [6, 8, 20]
+22 Ops.END dtypes.void [21, 4]
+23 Ops.END dtypes.void [22, 3]
+24 Ops.SINK dtypes.void [23] KernelInfo(name="E_4_4") tag=1
+25 Ops.STORE dtypes.void [6, 8]
+26 Ops.END dtypes.void [25, 4]
+27 Ops.END dtypes.void [26, 3]
+28 Ops.SINK dtypes.void [27] KernelInfo(name="E_4_4", estimates=Estimates(ops=44, lds=128, mem=128)) tag=1
+29 Ops.IF dtypes.void [20, 6]
+30 Ops.ENDIF dtypes.void [29]
+31 Ops.SINK dtypes.void [27] KernelInfo(name="E_4_4") tag=1
+32 Ops.LINEAR dtypes.void [0, 16, 17, 7, 8, 9, 10, 12, 13, 1, 2, 3, 11, 14, 15, 4, 5, 6, 18, 19, 20, 29, 25, 30, 26, 27, 31]
+33 Ops.SOURCE dtypes.void [] "\nvoid E_4_4(float* restrict data0_16) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    _Bool alu0 = ((0<Lidx0)&(Lidx0<2));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      float val0 = (alu0?*(data0_16+(Lidx1+4)):0.0f);\n      if ((alu0&(val0!=0.0f))) {\n        *(data0_16+(Lidx1+4)) = 2.0f;\n      }\n    }\n  }\n}\n"
+34 Ops.PROGRAM dtypes.void [28, 32, 33] ProgramInfo(globals=(0,), outs=(0,), ins=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+35 Ops.SINK dtypes.void [24, 34]
+

@@ -1,0 +1,24 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=299, device="CPU")
+1 Ops.CONST dtypes.weakint [] 299
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "gidx0"
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.CONST dtypes.weakint [] 1
+6 Ops.CAST dtypes.int [5] dtypes.int
+7 Ops.ADD dtypes.int [3, 6]
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.CONST dtypes.weakfloat [] 3.5
+10 Ops.CAST dtypes.float [9] dtypes.float
+11 Ops.MUL dtypes.float [8, 10]
+12 Ops.CONST dtypes.weakfloat [] 2.0
+13 Ops.CAST dtypes.float [12] dtypes.float
+14 Ops.ADD dtypes.float [11, 13]
+15 Ops.STORE dtypes.void [4, 14]
+16 Ops.SINK dtypes.void [15] KernelInfo(name="E_299") tag=1
+17 Ops.SINK dtypes.void [15] KernelInfo(name="E_299", estimates=Estimates(ops=897, lds=1196, mem=1196)) tag=1
+18 Ops.LINEAR dtypes.void [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 9, 10, 11, 14, 15, 16]
+19 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) E_299(float* data0_299) {\n  int gidx0 = blockIdx.x; /* 299 */\n  *(data0_299+gidx0) = ((((float)((gidx0+1)))*3.5f)+2.0f);\n}"
+20 Ops.PROGRAM dtypes.void [17, 18, 19] ProgramInfo(global_size=(299, 1, 1), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+21 Ops.SINK dtypes.void [16, 20]
+

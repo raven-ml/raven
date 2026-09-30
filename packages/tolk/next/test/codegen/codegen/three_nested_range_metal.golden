@@ -1,0 +1,55 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, device="CPU")
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.float [0, 2]
+4 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+5 Ops.INDEX dtypes.float [4, 2]
+6 Ops.CONST dtypes.weakfloat [] 0.0
+7 Ops.CAST dtypes.float [6] dtypes.float
+8 Ops.STORE dtypes.void [5, 7]
+9 Ops.CONST dtypes.weakint [] 2
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.RANGE dtypes.int [10] (0, AxisType.REDUCE)
+12 Ops.AFTER dtypes.float [4, 8, 11]
+13 Ops.INDEX dtypes.float [12, 2]
+14 Ops.LOAD dtypes.float [13]
+15 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=2, device="CPU")
+16 Ops.INDEX dtypes.float [15, 11]
+17 Ops.LOAD dtypes.float [16]
+18 Ops.ADD dtypes.float [14, 17]
+19 Ops.STORE dtypes.void [13, 18]
+20 Ops.END dtypes.void [19, 11]
+21 Ops.AFTER dtypes.float [4, 20]
+22 Ops.INDEX dtypes.float [21, 2]
+23 Ops.LOAD dtypes.float [22]
+24 Ops.CONST dtypes.weakfloat [] 2.0
+25 Ops.CAST dtypes.float [24] dtypes.float
+26 Ops.MUL dtypes.float [23, 25]
+27 Ops.CONST dtypes.weakfloat [] 3.0
+28 Ops.CAST dtypes.float [27] dtypes.float
+29 Ops.MUL dtypes.float [26, 28]
+30 Ops.STORE dtypes.void [3, 29]
+31 Ops.SINK dtypes.void [30] KernelInfo(name="r_2") tag=1
+32 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+33 Ops.INDEX dtypes.float [32, 2]
+34 Ops.STORE dtypes.void [33, 7]
+35 Ops.AFTER dtypes.float [32, 34, 11]
+36 Ops.INDEX dtypes.float [35, 2]
+37 Ops.LOAD dtypes.float [36]
+38 Ops.ADD dtypes.float [37, 17]
+39 Ops.STORE dtypes.void [36, 38]
+40 Ops.END dtypes.void [39, 11]
+41 Ops.AFTER dtypes.float [32, 40]
+42 Ops.INDEX dtypes.float [41, 2]
+43 Ops.LOAD dtypes.float [42]
+44 Ops.MUL dtypes.float [43, 25]
+45 Ops.MUL dtypes.float [44, 28]
+46 Ops.STORE dtypes.void [3, 45]
+47 Ops.SINK dtypes.void [46] KernelInfo(name="r_2", estimates=Estimates(ops=4, lds=12, mem=12)) tag=1
+48 Ops.SINK dtypes.void [46] KernelInfo(name="r_2") tag=1
+49 Ops.LINEAR dtypes.void [0, 15, 32, 1, 2, 33, 6, 7, 9, 10, 34, 11, 16, 17, 35, 36, 37, 38, 39, 40, 41, 42, 43, 3, 24, 25, 27, 28, 44, 45, 46, 48]
+50 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_1; device float* data1_2; };\nkernel void r_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_1 = args.data0_1; device float* data1_2 = args.data1_2;\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {\n    float val0 = (*(data1_2+Ridx0));\n    *(buf0+0) = ((*(buf0+0))+val0);\n  }\n  *(data0_1+0) = ((*(buf0+0))*2.0f*3.0f);\n}"
+51 Ops.PROGRAM dtypes.void [47, 49, 50] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+52 Ops.SINK dtypes.void [31, 51]
+

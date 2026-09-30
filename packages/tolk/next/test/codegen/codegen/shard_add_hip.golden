@@ -1,0 +1,40 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128, device=("CPU", "CPU:1"))
+1 Ops.CONST dtypes.weakint [] 32
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.CONST dtypes.weakint [] 4
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.SHRINK dtypes.float [0, 6, 8]
+10 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128, device=("CPU", "CPU:1"))
+11 Ops.SHRINK dtypes.float [10, 6, 8]
+12 Ops.LOAD dtypes.float [11]
+13 Ops.CONST dtypes.weakint [] 0
+14 Ops.CAST dtypes.int [13] dtypes.int
+15 Ops.INDEX dtypes.float [12, 14]
+16 Ops.CONST dtypes.weakfloat [] 1.0
+17 Ops.CAST dtypes.float [16] dtypes.float
+18 Ops.ADD dtypes.float [15, 17]
+19 Ops.CONST dtypes.weakint [] 1
+20 Ops.CAST dtypes.int [19] dtypes.int
+21 Ops.INDEX dtypes.float [12, 20]
+22 Ops.ADD dtypes.float [21, 17]
+23 Ops.INDEX dtypes.float [12, 5]
+24 Ops.ADD dtypes.float [23, 17]
+25 Ops.CONST dtypes.weakint [] 3
+26 Ops.CAST dtypes.int [25] dtypes.int
+27 Ops.INDEX dtypes.float [12, 26]
+28 Ops.ADD dtypes.float [27, 17]
+29 Ops.STACK dtypes.float [18, 22, 24, 28]
+30 Ops.STORE dtypes.void [9, 29]
+31 Ops.GROUP dtypes.void [30, 30, 30, 30]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL)))) tag=1
+33 Ops.SINK dtypes.void [31] KernelInfo(name="E_32_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(32, AxisType.LOCAL))), estimates=Estimates(ops=128, lds=1024, mem=1024)) tag=1
+34 Ops.LINEAR dtypes.void [0, 10, 1, 2, 3, 4, 5, 7, 8, 6, 11, 12, 13, 14, 15, 19, 20, 21, 23, 25, 26, 27, 16, 17, 18, 22, 24, 28, 29, 9, 30, 31, 32]
+35 Ops.SOURCE dtypes.void [] "typedef long unsigned int size_t;\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_group_id(unsigned int);\nextern \"C\" __attribute__((device, const)) size_t __ockl_get_local_size(unsigned int);\ntypedef float float4 __attribute__((ext_vector_type(4)));\nstatic inline __attribute__((device)) float4 make_float4(float x, float y, float z, float w) { return { x, y, z, w }; }\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 32))) E_32_4(float* data0_128, float* data1_128) {\n  int lidx0 = __ockl_get_local_id(0); /* 32 */\n  int alu0 = (lidx0<<2);\n  float4 val0 = (*((float4*)((data1_128+alu0))));\n  *((float4*)((data0_128+alu0))) = make_float4((val0.x+1.0f),(val0.y+1.0f),(val0.z+1.0f),(val0.w+1.0f));\n}"
+36 Ops.PROGRAM dtypes.void [33, 34, 35] ProgramInfo(local_size=(32, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+37 Ops.SINK dtypes.void [32, 36]
+

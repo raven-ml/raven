@@ -1,0 +1,38 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16, device="CPU")
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.SHRINK dtypes.float [0, 6, 2]
+8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16, device="CPU")
+9 Ops.SHRINK dtypes.float [8, 6, 2]
+10 Ops.LOAD dtypes.float [9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.INDEX dtypes.float [10, 12]
+14 Ops.CONST dtypes.weakfloat [] 0.015625
+15 Ops.CAST dtypes.float [14] dtypes.float
+16 Ops.MUL dtypes.float [13, 15]
+17 Ops.CONST dtypes.weakint [] 1
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.INDEX dtypes.float [10, 18]
+20 Ops.MUL dtypes.float [19, 15]
+21 Ops.INDEX dtypes.float [10, 5]
+22 Ops.MUL dtypes.float [21, 15]
+23 Ops.CONST dtypes.weakint [] 3
+24 Ops.CAST dtypes.int [23] dtypes.int
+25 Ops.INDEX dtypes.float [10, 24]
+26 Ops.MUL dtypes.float [25, 15]
+27 Ops.STACK dtypes.float [16, 20, 22, 26]
+28 Ops.STORE dtypes.void [7, 27]
+29 Ops.GROUP dtypes.void [28, 28, 28, 28]
+30 Ops.SINK dtypes.void [29] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
+31 Ops.SINK dtypes.void [29] KernelInfo(name="E_4_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=16, lds=128, mem=128)) tag=1
+32 Ops.LINEAR dtypes.void [0, 8, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 17, 18, 19, 21, 23, 24, 25, 14, 15, 16, 20, 22, 26, 27, 7, 28, 29, 30]
+33 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(4) E_4_4(float* data0_16, float* data1_16) {\n  int lidx0 = threadIdx.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  float4 val0 = (*((float4*)((data1_16+alu0))));\n  *((float4*)((data0_16+alu0))) = make_float4((val0.x*0.015625f),(val0.y*0.015625f),(val0.z*0.015625f),(val0.w*0.015625f));\n}"
+34 Ops.PROGRAM dtypes.void [31, 32, 33] ProgramInfo(local_size=(4, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+35 Ops.SINK dtypes.void [30, 34]
+

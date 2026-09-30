@@ -1,0 +1,41 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=1)
+1 Ops.CONST dtypes.weakint [] 0
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.INDEX dtypes.int [0, 2]
+4 Ops.ALLOC dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CAST dtypes.int [5] dtypes.int
+7 Ops.RANGE dtypes.int [6] (19, AxisType.LOOP)
+8 Ops.AFTER dtypes.int [4, 7]
+9 Ops.INDEX dtypes.int [8, 2]
+10 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=1)
+11 Ops.INDEX dtypes.int [10, 2]
+12 Ops.LOAD dtypes.int [11]
+13 Ops.STORE dtypes.void [9, 12]
+14 Ops.BARRIER dtypes.void [13]
+15 Ops.AFTER dtypes.int [4, 14]
+16 Ops.INDEX dtypes.int [15, 2]
+17 Ops.LOAD dtypes.int [16]
+18 Ops.STORE dtypes.void [3, 17]
+19 Ops.BARRIER dtypes.void [18]
+20 Ops.END dtypes.void [19, 7]
+21 Ops.SINK dtypes.void [20] KernelInfo() tag=1
+22 Ops.BUFFER dtypes.int [] ParamArg(slot=10, dtype=dtypes.int, size=1, addrspace=AddrSpace.LOCAL)
+23 Ops.AFTER dtypes.int [22, 7]
+24 Ops.INDEX dtypes.int [23, 2]
+25 Ops.STORE dtypes.void [24, 12]
+26 Ops.BARRIER dtypes.void [25]
+27 Ops.AFTER dtypes.int [22, 26]
+28 Ops.INDEX dtypes.int [27, 2]
+29 Ops.LOAD dtypes.int [28]
+30 Ops.STORE dtypes.void [3, 29]
+31 Ops.BARRIER dtypes.void [30]
+32 Ops.END dtypes.void [31, 7]
+33 Ops.SINK dtypes.void [32] KernelInfo(estimates=Estimates(lds=28, mem=8)) tag=1
+34 Ops.SINK dtypes.void [32] KernelInfo() tag=1
+35 Ops.LINEAR dtypes.void [10, 0, 22, 1, 2, 11, 12, 3, 5, 6, 7, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34]
+36 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device int* data0_1; device int* data1_1; };\nkernel void test(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device int* data0_1 = args.data0_1; device int* data1_1 = args.data1_1;\n  threadgroup __attribute__((aligned(16))) int buf0[1];\n  int val0 = (*(data0_1+0));\n  for (int Lidx19 = 0; Lidx19 < 2; Lidx19++) {\n    *(buf0+0) = val0;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n    int val1 = (*(buf0+0));\n    *(data1_1+0) = val1;\n    threadgroup_barrier(mem_flags::mem_threadgroup);\n  }\n}"
+37 Ops.PROGRAM dtypes.void [33, 35, 36] ProgramInfo(globals=(0, 1), outs=(1,), ins=(0,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+38 Ops.SINK dtypes.void [21, 37]
+

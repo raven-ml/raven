@@ -13,12 +13,14 @@
     from [0] below its end, evaluated where the ranges before it are bound, and
     the last range varies fastest. An index ({!Tolk_next.Op.Index}) of storage
     by one integer reads that element of the storage, and a load
-    ({!Tolk_next.Op.Load}) is the value of what it loads. A vector of storage is
-    a {!Tolk_next.Op.Shrink} of the storage, an offset and a length: an index by
-    [k] of a load of the vector reads the element [k] past the offset, which is
-    its lane [k]. An index by [k] of a stack ({!Tolk_next.Op.Stack}) is its lane
-    [k], and of an elementwise operation, a cast or a bit reinterpretation of
-    stacks, that operation of their lanes [k].
+    ({!Tolk_next.Op.Load}) is the value of what it loads. A gated load
+    [Load (index, alternative, gate)] is the value of what it loads where [gate]
+    holds, and [alternative] elsewhere, where [index] is not read. A vector of
+    storage is a {!Tolk_next.Op.Shrink} of the storage, an offset and a length:
+    an index by [k] of a load of the vector reads the element [k] past the
+    offset, which is its lane [k]. An index by [k] of a stack
+    ({!Tolk_next.Op.Stack}) is its lane [k], and of an elementwise operation, a
+    cast or a bit reinterpretation of stacks, that operation of their lanes [k].
 
     The value of an index where its gate fails ({!Tolk_next.Ops.valid}) is
     [`Invalid], which poisons what reads it: an operation of an [`Invalid]

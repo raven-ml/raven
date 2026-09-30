@@ -84,6 +84,11 @@ let settings_of_cell s =
     | [ "TC_MIN_GLOBALS"; v ] -> B (Helpers.tc_min_globals, int_of_string v)
     | [ "ALLOW_TF32"; v ] -> B (Helpers.allow_tf32, int_of_string v <> 0)
     | [ "NOOPT"; v ] -> B (Helpers.noopt, int_of_string v <> 0)
+    | [ "EMULATED_DTYPES"; v ] ->
+        B (Helpers.emulated_dtypes, String.split_on_char ',' v)
+    | [ "DISABLE_FAST_IDIV"; v ] ->
+        B (Helpers.disable_fast_idiv, int_of_string v <> 0)
+    | [ "TRANSCENDENTAL"; v ] -> B (Helpers.transcendental, int_of_string v)
     | _ -> failwith ("no setting " ^ pair)
   in
   String.split_on_char ' ' s |> List.filter (( <> ) "") |> List.map setting
@@ -110,7 +115,7 @@ let renderer_of_row cell =
 
 (* Writes *)
 
-let writes k =
+let inputs k =
   let contents (p : Ops.param_arg) size =
     Array.init size (fun i ->
         if Dtype.is_bool p.dtype then `Bool (i mod 2 = 0)
@@ -124,9 +129,18 @@ let writes k =
           Some (slot, contents p size)
       | _ -> None)
   |> List.sort_uniq (fun (s0, _) (s1, _) -> Int.compare s0 s1)
-  |> fun buffers ->
+
+let variables k =
+  List.map
+    (fun v ->
+      match Ops.vmax v with
+      | `Int z -> (Ops.expr v, Z.to_int z)
+      | _ -> invalid_arg ("variable " ^ Ops.expr v ^ " is no integer"))
+    (Ops.variables k)
+
+let writes k =
   let vars = List.map (fun v -> (Ops.expr v, Ops.vmax v)) (Ops.variables k) in
-  Interpreter.writes ~vars ~buffers k
+  Interpreter.writes ~vars ~buffers:(inputs k) k
 
 let close_values v0 v1 =
   match (v0, v1) with

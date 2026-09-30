@@ -1,0 +1,23 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=256)
+1 Ops.CONST dtypes.weakint [] 256
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.LOOP)
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half, size=256)
+6 Ops.INDEX dtypes.half [5, 3]
+7 Ops.LOAD dtypes.half [6]
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=256)
+10 Ops.INDEX dtypes.float [9, 3]
+11 Ops.LOAD dtypes.float [10]
+12 Ops.ADD dtypes.float [8, 11]
+13 Ops.STORE dtypes.void [4, 12]
+14 Ops.END dtypes.void [13, 3]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="elementwise_cast_f16") tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="elementwise_cast_f16", estimates=Estimates(ops=256, lds=2560, mem=2560)) tag=1
+17 Ops.LINEAR dtypes.void [5, 9, 0, 1, 2, 3, 6, 7, 10, 11, 4, 8, 12, 13, 14, 15]
+18 Ops.SOURCE dtypes.void [] "\nvoid elementwise_cast_f16(__fp16* restrict data0_256, float* restrict data1_256, float* restrict data2_256) {\n  for (int Lidx0 = 0; Lidx0 < 256; Lidx0++) {\n    __fp16 val0 = (*(data0_256+Lidx0));\n    float val1 = (*(data1_256+Lidx0));\n    *(data2_256+Lidx0) = (((float)(val0))+val1);\n  }\n}\n"
+19 Ops.PROGRAM dtypes.void [16, 17, 18] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+20 Ops.SINK dtypes.void [15, 19]
+

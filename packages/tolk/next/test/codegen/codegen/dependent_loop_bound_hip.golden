@@ -1,0 +1,54 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=4)
+1 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=16)
+2 Ops.CONST dtypes.weakint [] 4
+3 Ops.CAST dtypes.int [2] dtypes.int
+4 Ops.RANGE dtypes.int [3] (0, AxisType.LOOP)
+5 Ops.CONST dtypes.weakint [] 2
+6 Ops.CAST dtypes.int [5] dtypes.int
+7 Ops.SHL dtypes.int [4, 6]
+8 Ops.PARAM dtypes.int [] ParamArg(slot=2, dtype=dtypes.int, size=4)
+9 Ops.INDEX dtypes.int [8, 4]
+10 Ops.LOAD dtypes.int [9]
+11 Ops.CONST dtypes.weakint [] 0
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.CMPLT dtypes.bool [10, 12]
+14 Ops.WHERE dtypes.int [13, 12, 10]
+15 Ops.CONST dtypes.weakint [] -1
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.XOR dtypes.int [14, 16]
+18 Ops.CONST dtypes.weakint [] -5
+19 Ops.CAST dtypes.int [18] dtypes.int
+20 Ops.CMPLT dtypes.bool [17, 19]
+21 Ops.WHERE dtypes.int [20, 19, 17]
+22 Ops.XOR dtypes.int [21, 16]
+23 Ops.RANGE dtypes.int [22, 4] (1, AxisType.WEAK)
+24 Ops.ADD dtypes.int [7, 23]
+25 Ops.INDEX dtypes.int [1, 24]
+26 Ops.CONST dtypes.weakint [] 1
+27 Ops.CAST dtypes.int [26] dtypes.int
+28 Ops.STORE dtypes.void [25, 27]
+29 Ops.END dtypes.void [28, 23]
+30 Ops.AFTER dtypes.int [0, 29]
+31 Ops.INDEX dtypes.int [30, 4]
+32 Ops.STORE dtypes.void [31, 6]
+33 Ops.END dtypes.void [32, 4]
+34 Ops.SINK dtypes.void [33] KernelInfo(name="E_4_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))") tag=1
+35 Ops.CONST dtypes.weakint [] 16
+36 Ops.MAX dtypes.int [10, 11]
+37 Ops.XOR dtypes.int [36, 15]
+38 Ops.MAX dtypes.int [37, 18]
+39 Ops.XOR dtypes.int [38, 15]
+40 Ops.MUL dtypes.int [2, 39]
+41 Ops.MUL dtypes.int [2, 40]
+42 Ops.ADD dtypes.int [35, 41]
+43 Ops.ADD dtypes.int [42, 35]
+44 Ops.MUL dtypes.int [39, 35]
+45 Ops.ADD dtypes.int [35, 44]
+46 Ops.ADD dtypes.int [45, 35]
+47 Ops.SINK dtypes.void [33] KernelInfo(name="E_4_(weakint)((max((max(p2[r0], 0)^-1), -5)^-1))", estimates=Estimates(lds=%43, mem=%46)) tag=1
+48 Ops.LINEAR dtypes.void [1, 0, 8, 15, 16, 18, 19, 11, 12, 26, 27, 5, 6, 2, 3, 4, 9, 10, 7, 13, 14, 17, 20, 21, 22, 23, 24, 25, 28, 29, 30, 31, 32, 33, 34]
+49 Ops.SOURCE dtypes.void [] "\nextern \"C\" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, 1))) E_4_28weakint292828max2828max28p25Br05D2C200295E2D1292C202D5295E2D12929(int* data0_16, int* data1_4, int* data2_4) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int val0 = (*(data2_4+Lidx0));\n    int alu0 = ((val0<0)?0:val0);\n    int alu1 = (alu0^-1);\n    int alu2 = ((alu1<-5)?-5:alu1);\n    for (int Lidx1 = 0; Lidx1 < (alu2^-1); Lidx1++) {\n      *(data0_16+((Lidx0<<2)+Lidx1)) = 1;\n    }\n    *(data1_4+Lidx0) = 2;\n  }\n}"
+50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(globals=(0, 1, 2), outs=(0, 1), ins=(2,), target=Target(device="AMD", renderer="HIP", arch="gfx1100"))
+51 Ops.SINK dtypes.void [34, 50]
+

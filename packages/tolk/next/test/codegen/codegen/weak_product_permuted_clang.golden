@@ -1,0 +1,40 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.int [] ParamArg(slot=0, dtype=dtypes.int, size=8, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (0, AxisType.WEAK)
+4 Ops.SHL dtypes.int [3, 2]
+5 Ops.CONST dtypes.weakint [] 4
+6 Ops.CAST dtypes.int [5] dtypes.int
+7 Ops.SHRINK dtypes.int [0, 4, 6]
+8 Ops.PARAM dtypes.int [] ParamArg(slot=1, dtype=dtypes.int, size=8, device="CPU")
+9 Ops.INDEX dtypes.int [8, 3]
+10 Ops.LOAD dtypes.int [9]
+11 Ops.CONST dtypes.weakint [] 31
+12 Ops.CAST dtypes.int [11] dtypes.int
+13 Ops.SHL dtypes.int [10, 12]
+14 Ops.ADD dtypes.int [3, 2]
+15 Ops.INDEX dtypes.int [8, 14]
+16 Ops.LOAD dtypes.int [15]
+17 Ops.SHL dtypes.int [16, 12]
+18 Ops.ADD dtypes.int [3, 6]
+19 Ops.INDEX dtypes.int [8, 18]
+20 Ops.LOAD dtypes.int [19]
+21 Ops.SHL dtypes.int [20, 12]
+22 Ops.CONST dtypes.weakint [] 6
+23 Ops.CAST dtypes.int [22] dtypes.int
+24 Ops.ADD dtypes.int [3, 23]
+25 Ops.INDEX dtypes.int [8, 24]
+26 Ops.LOAD dtypes.int [25]
+27 Ops.SHL dtypes.int [26, 12]
+28 Ops.STACK dtypes.int [13, 17, 21, 27]
+29 Ops.STORE dtypes.void [7, 28]
+30 Ops.GROUP dtypes.void [29, 29, 29, 29]
+31 Ops.END dtypes.void [30, 3]
+32 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),)) tag=1
+33 Ops.SINK dtypes.void [31] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UPCAST)),), estimates=Estimates(ops=8, lds=64, mem=64)) tag=1
+34 Ops.LINEAR dtypes.void [0, 8, 1, 2, 11, 12, 5, 6, 22, 23, 3, 14, 15, 16, 18, 19, 20, 24, 25, 26, 9, 10, 17, 21, 27, 13, 28, 4, 7, 29, 30, 31, 32]
+35 Ops.SOURCE dtypes.void [] "typedef int int4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid E_2_4(int* restrict data0_8, int* restrict data1_8) {\n  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {\n    int val0 = (*(data1_8+(Lidx0+2)));\n    int val1 = (*(data1_8+(Lidx0+4)));\n    int val2 = (*(data1_8+(Lidx0+6)));\n    int val3 = (*(data1_8+Lidx0));\n    *((int4*)((data0_8+(Lidx0<<2)))) = (int4){(val3<<31),(val0<<31),(val1<<31),(val2<<31)};\n  }\n}\n"
+36 Ops.PROGRAM dtypes.void [33, 34, 35] ProgramInfo(globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+37 Ops.SINK dtypes.void [32, 36]
+

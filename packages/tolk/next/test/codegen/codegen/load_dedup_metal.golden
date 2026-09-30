@@ -1,0 +1,23 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=3, device="CPU")
+1 Ops.CONST dtypes.weakint [] 3
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.INDEX dtypes.float [0, 3]
+5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
+6 Ops.INDEX dtypes.float [5, 3]
+7 Ops.LOAD dtypes.float [6]
+8 Ops.CONST dtypes.weakint [] 1
+9 Ops.CAST dtypes.int [8] dtypes.int
+10 Ops.ADD dtypes.int [3, 9]
+11 Ops.INDEX dtypes.float [5, 10]
+12 Ops.LOAD dtypes.float [11]
+13 Ops.ADD dtypes.float [7, 12]
+14 Ops.STORE dtypes.void [4, 13]
+15 Ops.SINK dtypes.void [14] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),)) tag=1
+16 Ops.SINK dtypes.void [14] KernelInfo(name="E_3", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(3, AxisType.LOCAL)),), estimates=Estimates(ops=3, lds=36, mem=28)) tag=1
+17 Ops.LINEAR dtypes.void [0, 5, 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 4, 13, 14, 15]
+18 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_3; device float* data1_4; };\nkernel void E_3(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_3 = args.data0_3; device float* data1_4 = args.data1_4;\n  int lidx0 = lid.x; /* 3 */\n  float val0 = (*(data1_4+lidx0));\n  float val1 = (*(data1_4+(lidx0+1)));\n  *(data0_3+lidx0) = (val0+val1);\n}"
+19 Ops.PROGRAM dtypes.void [16, 17, 18] ProgramInfo(local_size=(3, 1, 1), globals=(0, 1), outs=(0,), ins=(1,), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+20 Ops.SINK dtypes.void [15, 19]
+

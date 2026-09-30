@@ -1,0 +1,30 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
+1 Ops.CONST dtypes.weakint [] 4
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.SPECIAL dtypes.int [2] "lidx0"
+4 Ops.CONST dtypes.weakint [] 2
+5 Ops.CAST dtypes.int [4] dtypes.int
+6 Ops.SHL dtypes.int [3, 5]
+7 Ops.SHRINK dtypes.float [0, 6, 2]
+8 Ops.CAST dtypes.float [6] dtypes.float
+9 Ops.CONST dtypes.weakint [] 1
+10 Ops.CAST dtypes.int [9] dtypes.int
+11 Ops.ADD dtypes.int [6, 10]
+12 Ops.CAST dtypes.float [11] dtypes.float
+13 Ops.ADD dtypes.int [6, 5]
+14 Ops.CAST dtypes.float [13] dtypes.float
+15 Ops.CONST dtypes.weakint [] 3
+16 Ops.CAST dtypes.int [15] dtypes.int
+17 Ops.ADD dtypes.int [6, 16]
+18 Ops.CAST dtypes.float [17] dtypes.float
+19 Ops.STACK dtypes.float [8, 12, 14, 18]
+20 Ops.STORE dtypes.void [7, 19]
+21 Ops.GROUP dtypes.void [20, 20, 20, 20]
+22 Ops.SINK dtypes.void [21] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL)))) tag=1
+23 Ops.SINK dtypes.void [21] KernelInfo(name="custom_arange_16", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)), Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.LOCAL))), estimates=Estimates(ops=12, lds=64, mem=64)) tag=1
+24 Ops.LINEAR dtypes.void [0, 1, 2, 3, 9, 10, 4, 5, 6, 11, 12, 13, 14, 15, 16, 17, 18, 8, 19, 7, 20, 21, 22]
+25 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(4) custom_arange_16(float* data0_16) {\n  int lidx0 = threadIdx.x; /* 4 */\n  int alu0 = (lidx0<<2);\n  *((float4*)((data0_16+alu0))) = make_float4(((float)(alu0)),((float)((alu0+1))),((float)((alu0+2))),((float)((alu0+3))));\n}"
+26 Ops.PROGRAM dtypes.void [23, 24, 25] ProgramInfo(local_size=(4, 1, 1), globals=(0,), outs=(0,), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+27 Ops.SINK dtypes.void [22, 26]
+
