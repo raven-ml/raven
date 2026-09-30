@@ -1,0 +1,20 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
+1 Ops.BITCAST dtypes.uint [0] dtypes.uint
+2 Ops.CONST dtypes.weakint [] 2155872255
+3 Ops.AND dtypes.uint [1, 2]
+4 Ops.CONST dtypes.weakint [] 1056964608
+5 Ops.OR dtypes.uint [3, 4]
+6 Ops.BITCAST dtypes.float [5] dtypes.float
+7 Ops.CONST dtypes.weakint [] 8388608
+8 Ops.FLOORDIV dtypes.uint [1, 7]
+9 Ops.CONST dtypes.weakint [] 255
+10 Ops.AND dtypes.uint [8, 9]
+11 Ops.CONST dtypes.weakint [] 127
+12 Ops.CONST dtypes.weakint [] -1
+13 Ops.MUL dtypes.weakint [11, 12]
+14 Ops.ADD dtypes.uint [10, 13]
+15 Ops.CONST dtypes.weakint [] 1
+16 Ops.ADD dtypes.uint [14, 15]
+17 Ops.SINK dtypes.void [6, 16]
+

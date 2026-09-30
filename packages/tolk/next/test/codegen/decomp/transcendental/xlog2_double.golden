@@ -1,0 +1,86 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.double [] ParamArg(slot=0, dtype=dtypes.double)
+1 Ops.RECIPROCAL dtypes.double [0]
+2 Ops.CONST dtypes.weakfloat [] -inf
+3 Ops.CMPNE dtypes.bool [1, 2]
+4 Ops.CMPNE dtypes.bool [0, 0]
+5 Ops.CONST dtypes.weakfloat [] nan
+6 Ops.CAST dtypes.double [5] dtypes.double
+7 Ops.CONST dtypes.weakfloat [] -0.0
+8 Ops.CMPLT dtypes.bool [0, 7]
+9 Ops.CONST dtypes.weakfloat [] 0.0
+10 Ops.CMPNE dtypes.bool [0, 9]
+11 Ops.CONST dtypes.weakfloat [] inf
+12 Ops.CMPNE dtypes.bool [0, 11]
+13 Ops.CONST dtypes.weakfloat [] 0.0001
+14 Ops.CAST dtypes.double [13] dtypes.double
+15 Ops.CMPLT dtypes.bool [0, 14]
+16 Ops.CONST dtypes.weakfloat [] 1.8446744073709552e+19
+17 Ops.MUL dtypes.double [0, 16]
+18 Ops.WHERE dtypes.double [15, 17, 0]
+19 Ops.BITCAST dtypes.long [18] dtypes.long
+20 Ops.CONST dtypes.weakfloat [] 1.3333333333333333
+21 Ops.MUL dtypes.double [18, 20]
+22 Ops.BITCAST dtypes.long [21] dtypes.long
+23 Ops.CONST dtypes.weakint [] 4503599627370496
+24 Ops.FLOORDIV dtypes.long [22, 23]
+25 Ops.CONST dtypes.weakint [] 2047
+26 Ops.AND dtypes.long [24, 25]
+27 Ops.CONST dtypes.weakint [] 1023
+28 Ops.CONST dtypes.weakint [] -1
+29 Ops.MUL dtypes.weakint [27, 28]
+30 Ops.ADD dtypes.long [26, 29]
+31 Ops.CAST dtypes.double [30] dtypes.double
+32 Ops.CONST dtypes.weakfloat [] -1.0
+33 Ops.MUL dtypes.double [31, 32]
+34 Ops.CAST dtypes.long [33] dtypes.long
+35 Ops.MUL dtypes.long [34, 23]
+36 Ops.ADD dtypes.long [19, 35]
+37 Ops.BITCAST dtypes.double [36] dtypes.double
+38 Ops.CONST dtypes.weakfloat [] 1.0
+39 Ops.MUL dtypes.weakfloat [38, 32]
+40 Ops.ADD dtypes.double [37, 39]
+41 Ops.ADD dtypes.double [37, 38]
+42 Ops.RECIPROCAL dtypes.double [41]
+43 Ops.MUL dtypes.double [40, 42]
+44 Ops.MUL dtypes.double [43, 43]
+45 Ops.MUL dtypes.double [9, 44]
+46 Ops.CONST dtypes.weakfloat [] 0.22119417504560815
+47 Ops.ADD dtypes.double [45, 46]
+48 Ops.MUL dtypes.double [47, 44]
+49 Ops.CONST dtypes.weakfloat [] 0.22007686931522777
+50 Ops.ADD dtypes.double [48, 49]
+51 Ops.MUL dtypes.double [50, 44]
+52 Ops.CONST dtypes.weakfloat [] 0.26237080574885147
+53 Ops.ADD dtypes.double [51, 52]
+54 Ops.MUL dtypes.double [53, 44]
+55 Ops.CONST dtypes.weakfloat [] 0.32059774779444955
+56 Ops.ADD dtypes.double [54, 55]
+57 Ops.MUL dtypes.double [56, 44]
+58 Ops.CONST dtypes.weakfloat [] 0.41219859454853247
+59 Ops.ADD dtypes.double [57, 58]
+60 Ops.MUL dtypes.double [59, 44]
+61 Ops.CONST dtypes.weakfloat [] 0.5770780162997059
+62 Ops.ADD dtypes.double [60, 61]
+63 Ops.MUL dtypes.double [62, 44]
+64 Ops.CONST dtypes.weakfloat [] 0.9617966939260809
+65 Ops.ADD dtypes.double [63, 64]
+66 Ops.MUL dtypes.double [43, 44]
+67 Ops.MUL dtypes.double [65, 66]
+68 Ops.CONST dtypes.weakfloat [] 64.0
+69 Ops.MUL dtypes.weakfloat [68, 32]
+70 Ops.ADD dtypes.double [31, 69]
+71 Ops.WHERE dtypes.double [15, 70, 31]
+72 Ops.ADD dtypes.double [67, 71]
+73 Ops.CONST dtypes.weakfloat [] 2.8853900817779268
+74 Ops.MUL dtypes.double [43, 73]
+75 Ops.ADD dtypes.double [72, 74]
+76 Ops.CAST dtypes.double [11] dtypes.double
+77 Ops.WHERE dtypes.double [12, 75, 76]
+78 Ops.CAST dtypes.double [2] dtypes.double
+79 Ops.WHERE dtypes.double [10, 77, 78]
+80 Ops.WHERE dtypes.double [8, 6, 79]
+81 Ops.WHERE dtypes.double [4, 6, 80]
+82 Ops.WHERE dtypes.double [3, 81, 78]
+83 Ops.SINK dtypes.void [82]
+

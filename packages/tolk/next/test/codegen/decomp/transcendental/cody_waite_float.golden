@@ -1,0 +1,28 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
+1 Ops.CONST dtypes.weakfloat [] 0.3183098861837907
+2 Ops.MUL dtypes.float [0, 1]
+3 Ops.CONST dtypes.weakfloat [] 0.0
+4 Ops.CMPLT dtypes.bool [2, 3]
+5 Ops.CONST dtypes.weakfloat [] -0.5
+6 Ops.CAST dtypes.float [5] dtypes.float
+7 Ops.CONST dtypes.weakfloat [] 0.5
+8 Ops.CAST dtypes.float [7] dtypes.float
+9 Ops.WHERE dtypes.float [4, 6, 8]
+10 Ops.ADD dtypes.float [2, 9]
+11 Ops.CAST dtypes.int [10] dtypes.int
+12 Ops.CAST dtypes.float [11] dtypes.float
+13 Ops.CONST dtypes.weakfloat [] -1.215420125655342e-10
+14 Ops.MUL dtypes.float [12, 13]
+15 Ops.CONST dtypes.weakfloat [] -1.984187258941006e-09
+16 Ops.MUL dtypes.float [12, 15]
+17 Ops.CONST dtypes.weakfloat [] -0.0001131594181060791
+18 Ops.MUL dtypes.float [12, 17]
+19 Ops.CONST dtypes.weakfloat [] -3.1414794921875
+20 Ops.MUL dtypes.float [12, 19]
+21 Ops.ADD dtypes.float [20, 0]
+22 Ops.ADD dtypes.float [18, 21]
+23 Ops.ADD dtypes.float [16, 22]
+24 Ops.ADD dtypes.float [14, 23]
+25 Ops.SINK dtypes.void [24, 11]
+

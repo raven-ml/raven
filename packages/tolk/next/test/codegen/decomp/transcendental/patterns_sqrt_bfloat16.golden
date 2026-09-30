@@ -1,0 +1,42 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.bfloat16 [] ParamArg(slot=0, dtype=dtypes.bfloat16)
+1 Ops.EXP2 dtypes.bfloat16 [0]
+2 Ops.LOG2 dtypes.bfloat16 [0]
+3 Ops.SIN dtypes.bfloat16 [0]
+4 Ops.CONST dtypes.weakfloat [] 0.5
+5 Ops.CAST dtypes.bfloat16 [4] dtypes.bfloat16
+6 Ops.CONST dtypes.weakfloat [] 0.0
+7 Ops.CMPNE dtypes.bool [5, 6]
+8 Ops.CONST dtypes.bool [] True
+9 Ops.CMPNE dtypes.bool [7, 8]
+10 Ops.CONST dtypes.weakfloat [] 1.0
+11 Ops.CAST dtypes.bfloat16 [10] dtypes.bfloat16
+12 Ops.CMPLT dtypes.bool [0, 6]
+13 Ops.CAST dtypes.int [5] dtypes.int
+14 Ops.CAST dtypes.bfloat16 [13] dtypes.bfloat16
+15 Ops.CMPNE dtypes.bool [5, 14]
+16 Ops.CONST dtypes.weakfloat [] -inf
+17 Ops.CMPNE dtypes.bool [0, 16]
+18 Ops.CONST dtypes.weakfloat [] nan
+19 Ops.CAST dtypes.bfloat16 [18] dtypes.bfloat16
+20 Ops.CONST dtypes.weakfloat [] -1.0
+21 Ops.MUL dtypes.bfloat16 [0, 20]
+22 Ops.WHERE dtypes.bfloat16 [12, 21, 0]
+23 Ops.LOG2 dtypes.bfloat16 [22]
+24 Ops.MUL dtypes.bfloat16 [23, 5]
+25 Ops.EXP2 dtypes.bfloat16 [24]
+26 Ops.WHERE dtypes.bfloat16 [17, 19, 25]
+27 Ops.CMPLT dtypes.bool [5, 6]
+28 Ops.MUL dtypes.bfloat16 [5, 20]
+29 Ops.WHERE dtypes.bfloat16 [27, 28, 5]
+30 Ops.CAST dtypes.int [29] dtypes.int
+31 Ops.CONST dtypes.weakint [] 2
+32 Ops.FLOORMOD dtypes.int [30, 31]
+33 Ops.CAST dtypes.bool [32] dtypes.bool
+34 Ops.MUL dtypes.bfloat16 [25, 20]
+35 Ops.WHERE dtypes.bfloat16 [33, 34, 25]
+36 Ops.WHERE dtypes.bfloat16 [15, 26, 35]
+37 Ops.WHERE dtypes.bfloat16 [12, 36, 25]
+38 Ops.WHERE dtypes.bfloat16 [9, 11, 37]
+39 Ops.SINK dtypes.void [1, 2, 3, 38]
+

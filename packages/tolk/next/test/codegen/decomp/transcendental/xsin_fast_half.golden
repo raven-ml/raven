@@ -1,0 +1,78 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.half [] ParamArg(slot=0, dtype=dtypes.half)
+1 Ops.CONST dtypes.weakfloat [] inf
+2 Ops.CMPNE dtypes.bool [0, 1]
+3 Ops.CMPNE dtypes.bool [0, 0]
+4 Ops.CONST dtypes.weakfloat [] nan
+5 Ops.CAST dtypes.half [4] dtypes.half
+6 Ops.CONST dtypes.weakfloat [] -inf
+7 Ops.CMPNE dtypes.bool [0, 6]
+8 Ops.CONST dtypes.weakfloat [] 0.0
+9 Ops.CAST dtypes.half [8] dtypes.half
+10 Ops.WHERE dtypes.half [7, 0, 9]
+11 Ops.WHERE dtypes.half [3, 9, 10]
+12 Ops.WHERE dtypes.half [2, 11, 9]
+13 Ops.CMPNE dtypes.bool [12, 8]
+14 Ops.CMPLT dtypes.bool [12, 8]
+15 Ops.CONST dtypes.weakfloat [] -1.0
+16 Ops.CAST dtypes.half [15] dtypes.half
+17 Ops.CONST dtypes.weakfloat [] 1.0
+18 Ops.CAST dtypes.half [17] dtypes.half
+19 Ops.WHERE dtypes.half [14, 16, 18]
+20 Ops.WHERE dtypes.half [13, 19, 9]
+21 Ops.MUL dtypes.half [12, 20]
+22 Ops.CONST dtypes.weakfloat [] 0.3183098861837907
+23 Ops.MUL dtypes.half [21, 22]
+24 Ops.CMPLT dtypes.bool [23, 8]
+25 Ops.CONST dtypes.weakfloat [] -0.5
+26 Ops.CAST dtypes.half [25] dtypes.half
+27 Ops.CONST dtypes.weakfloat [] 0.5
+28 Ops.CAST dtypes.half [27] dtypes.half
+29 Ops.WHERE dtypes.half [24, 26, 28]
+30 Ops.ADD dtypes.half [23, 29]
+31 Ops.CAST dtypes.short [30] dtypes.short
+32 Ops.CAST dtypes.half [31] dtypes.half
+33 Ops.CAST dtypes.float [32] dtypes.float
+34 Ops.CONST dtypes.weakfloat [] -1.215420125655342e-10
+35 Ops.MUL dtypes.float [33, 34]
+36 Ops.CONST dtypes.weakfloat [] -1.984187258941006e-09
+37 Ops.MUL dtypes.float [33, 36]
+38 Ops.CONST dtypes.weakfloat [] -0.0001131594181060791
+39 Ops.MUL dtypes.float [33, 38]
+40 Ops.CONST dtypes.weakfloat [] -3.1414794921875
+41 Ops.MUL dtypes.float [33, 40]
+42 Ops.CAST dtypes.float [21] dtypes.float
+43 Ops.ADD dtypes.float [41, 42]
+44 Ops.ADD dtypes.float [39, 43]
+45 Ops.ADD dtypes.float [37, 44]
+46 Ops.ADD dtypes.float [35, 45]
+47 Ops.CAST dtypes.half [46] dtypes.half
+48 Ops.MUL dtypes.half [47, 47]
+49 Ops.MUL dtypes.half [8, 48]
+50 Ops.CONST dtypes.weakfloat [] 2.6083159809786594e-06
+51 Ops.ADD dtypes.half [49, 50]
+52 Ops.MUL dtypes.half [51, 48]
+53 Ops.CONST dtypes.weakfloat [] -0.00019810690719168633
+54 Ops.ADD dtypes.half [52, 53]
+55 Ops.MUL dtypes.half [54, 48]
+56 Ops.CONST dtypes.weakfloat [] 0.00833307858556509
+57 Ops.ADD dtypes.half [55, 56]
+58 Ops.MUL dtypes.half [57, 48]
+59 Ops.CONST dtypes.weakfloat [] -0.16666659712791443
+60 Ops.ADD dtypes.half [58, 59]
+61 Ops.MUL dtypes.half [60, 48]
+62 Ops.ADD dtypes.half [61, 17]
+63 Ops.MUL dtypes.half [47, 62]
+64 Ops.CAST dtypes.int [31] dtypes.int
+65 Ops.CONST dtypes.weakint [] 1
+66 Ops.AND dtypes.int [64, 65]
+67 Ops.CONST dtypes.weakint [] 0
+68 Ops.CMPNE dtypes.bool [66, 67]
+69 Ops.WHERE dtypes.half [68, 16, 18]
+70 Ops.MUL dtypes.half [63, 69]
+71 Ops.MUL dtypes.half [70, 20]
+72 Ops.WHERE dtypes.half [7, 71, 5]
+73 Ops.WHERE dtypes.half [3, 5, 72]
+74 Ops.WHERE dtypes.half [2, 73, 5]
+75 Ops.SINK dtypes.void [74]
+

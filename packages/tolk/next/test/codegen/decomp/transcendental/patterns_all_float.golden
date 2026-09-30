@@ -1,0 +1,8 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float)
+1 Ops.EXP2 dtypes.float [0]
+2 Ops.LOG2 dtypes.float [0]
+3 Ops.SIN dtypes.float [0]
+4 Ops.SQRT dtypes.float [0]
+5 Ops.SINK dtypes.void [1, 2, 3, 4]
+
