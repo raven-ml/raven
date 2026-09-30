@@ -94,9 +94,8 @@ val of_address :
 (** {1:low Low-level}
 
     For the libraries that submit work to a CUDA device, inside
-    {!Nx_device.submit}. They reach the driver by loading it by its standard
-    name, which gives them the library this one loaded, and make {!context}
-    current on the submitting thread.
+    {!Nx_device.submit}. They reach the driver this library loaded through
+    {!driver_function}, and make {!context} current on the submitting thread.
 
     Work for the value [v] first waits on its stream for the signal word
     ({!Nx_device.signal_word}) to reach [v - 1] ([cuStreamWaitValue64_v2] with
@@ -122,3 +121,16 @@ val compute : t -> nativeint
 val copy : t -> nativeint
 (** [copy c] is the non-blocking [CUstream] for copies, which
     {!Nx_device.Buffer.copy} uses. *)
+
+val driver_function : string -> nativeint option
+(** [driver_function name] is the address of the entry point [name] of the
+    driver this library loaded, such as ["cuLaunchKernel"] or
+    ["cuStreamWriteValue64_v2"], which a compiled host program calls to enqueue
+    its work. It is [None] if the driver is not loaded, before the first
+    {!count} or {!get} or where it cannot be, or has no such entry point. *)
+
+val stamp : nativeint
+(** [stamp] is the address of a host function ([CUhostFn]) that stores the host
+    clock ({!Nx_device.Profile.now}) into the 64-bit word its argument points
+    at. A stream that runs it with [cuLaunchHostFunc] stamps a slot on the clock
+    of the device's timestamps. *)

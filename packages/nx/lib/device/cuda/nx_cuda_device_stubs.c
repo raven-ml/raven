@@ -115,6 +115,9 @@ DRIVER(DECLARE)
 
 static char load_error[256];
 
+/* The driver, once loaded and initialized. */
+static void *driver_library = NULL;
+
 /* Loads the driver and initializes it. The caller calls it once, holding the
    library's lock. [None] on success, [Some msg] otherwise. */
 value caml_nx_cuda_load(value unit) {
@@ -146,6 +149,7 @@ value caml_nx_cuda_load(value unit) {
     }
   }
   caml_acquire_runtime_system();
+  if (load_error[0] == '\0') driver_library = lib;
   if (load_error[0] == '\0') CAMLreturn(Val_none);
   msg = caml_copy_string(load_error);
   CAMLreturn(caml_alloc_some(msg));
@@ -489,6 +493,24 @@ value caml_nx_cuda_peer_byte(value *argv, int argn) {
 static void CUDAAPI host_stamp(void *word) {
   atomic_store_explicit((_Atomic uint64_t *)word, nx_device_now_ns(),
                         memory_order_release);
+}
+
+value caml_nx_cuda_host_stamp(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)(void *)host_stamp);
+}
+
+/* The address of the driver's entry point [v_name], if the driver is loaded
+   and has one. */
+value caml_nx_cuda_driver_function(value v_name) {
+  CAMLparam1(v_name);
+  CAMLlocal1(address);
+  void *f = driver_library == NULL
+                ? NULL
+                : library_symbol(driver_library, String_val(v_name));
+  if (f == NULL) CAMLreturn(Val_none);
+  address = caml_copy_nativeint((intnat)f);
+  CAMLreturn(caml_alloc_some(address));
 }
 
 /* A timestamp as work on the device's timeline: on the copy stream, a wait

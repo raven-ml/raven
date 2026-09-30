@@ -2875,6 +2875,9 @@ thread.
 
 ### Nx
 
+- `Nx_cuda_device` gives compiled code what it needs to enqueue work itself:
+  `driver_function`, the address of an entry point of the driver it loaded,
+  and `stamp`, a host function that stamps a word with the host clock.
 - `Nx_metal_device` gives compiled code what it needs to submit work itself:
   `msg_send`, the address of `objc_msgSend`, `selector`, which registers an
   Objective-C selector, and `indirect_commands`, which records dispatches of

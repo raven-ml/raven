@@ -4,6 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 external load : unit -> string option = "caml_nx_cuda_load"
+
+external driver_function : string -> nativeint option
+  = "caml_nx_cuda_driver_function"
+
+external host_stamp : unit -> nativeint = "caml_nx_cuda_host_stamp"
 external device_count : unit -> int = "caml_nx_cuda_count"
 external driver_version : unit -> int = "caml_nx_cuda_driver_version"
 external describe : int -> string = "caml_nx_cuda_describe"
@@ -355,3 +360,6 @@ let of_address d a s n =
       Nx_device.Buffer.view whole
         ~offset:(Nativeint.to_int (Nativeint.sub a start))
         s n
+
+(* Last: it shadows the runtime's own stamp. *)
+let stamp = host_stamp ()

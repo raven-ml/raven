@@ -420,11 +420,39 @@ let fault =
       raises_match illegal (fun () -> B.create d S.UInt8 1);
       raises_match illegal (fun () -> differs b (fun _ -> 0)))
 
+(* The entry points a batch's host program calls. *)
+let entry_points =
+  [
+    "cuCtxSetCurrent";
+    "cuLaunchKernel";
+    "cuMemcpyAsync";
+    "cuStreamWaitValue64_v2";
+    "cuStreamWriteValue64_v2";
+    "cuLaunchHostFunc";
+  ]
+
+let submitters =
+  group "submitters"
+    [
+      test
+        "driver_function finds every entry point of a loaded driver, and none \
+         without one" (fun () ->
+          let found = List.map Nx_cuda_device.driver_function entry_points in
+          if List.for_all Option.is_none found then
+            equal int ~msg:"no driver, no device" 0 (List.length gpus)
+          else List.iter (is_some ~msg:"an entry point") found;
+          is_none ~msg:"no such entry point"
+            (Nx_cuda_device.driver_function "cuNoSuchEntryPoint"));
+      test "stamp is a host function's address" (fun () ->
+          not_equal nativeint 0n Nx_cuda_device.stamp);
+    ]
+
 let () =
   exit
     (run "nx.cuda.device"
        [
          opening;
+         submitters;
          memory;
          copies;
          borrowing;
