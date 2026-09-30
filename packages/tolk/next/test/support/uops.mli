@@ -10,7 +10,8 @@ val uop : Ops.t Windtrap.testable
 
 val numbered_like : Ops.t -> Ops.t -> Ops.t
 (** [numbered_like like u] is [u] with its call-local storage
-    ({!Tolk_next.Op.Alloc}) in the slots of [like]'s, paired in the order
+    ({!Tolk_next.Op.Alloc}) and its buffers ({!Tolk_next.Op.Buffer}) in the
+    slots of [like]'s of the same kind, paired in the order
     {!Tolk_next.Ops.toposort} visits them, call bodies included. A pass numbers
     the storage it makes from a counter that the process shares, so the numbers
     are no property of the pass; this compares a graph with a golden up to them.

@@ -25,16 +25,40 @@ type state = { values : Dtype.value array; written : int list }
 
 let is_kernel_call u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
 
-let writes ?(buffers = []) sink =
-  let initial (scratch, (p : Ops.param_arg)) =
-    let given = if scratch then None else List.assoc_opt p.slot buffers in
-    let values =
-      match given with
-      | Some a -> Array.copy a
-      | None -> Array.make (Option.value p.size ~default:1) (untouched p.dtype)
-    in
-    { values; written = [] }
+let initial buffers (scratch, (p : Ops.param_arg)) =
+  let given = if scratch then None else List.assoc_opt p.slot buffers in
+  match given with
+  | Some a -> Array.copy a
+  | None -> Array.make (Option.value p.size ~default:1) (untouched p.dtype)
+
+(* [kernel_writes ~vars ~params values_of call] is what the kernel [call] calls
+   writes, each storage argument [a] holding [values_of a], each variable its
+   value, bound or in [vars], and each scalar parameter no argument binds the
+   value [params] gives its slot. *)
+let kernel_writes ~vars ~params:enclosing values_of call =
+  let bind (buffers, params) (k, a) =
+    match (storage_of a, Ops.arg a) with
+    | Some _, _ -> ((k, values_of a) :: buffers, params)
+    | None, Param { bound = Some v; _ } -> (buffers, (k, v) :: params)
+    | None, Param { name = Some n; _ } when List.mem_assoc n vars ->
+        (buffers, (k, List.assoc n vars) :: params)
+    | None, _ ->
+        fail "a call's argument is a %a, not storage on one device" Op.pp
+          (Ops.op a)
   in
+  let buffers, params =
+    List.fold_left bind ([], [])
+      (List.mapi (fun k a -> (k, a)) (List.tl (Ops.src call)))
+  in
+  Interpreter.writes ~vars ~params:(params @ enclosing) ~buffers
+    (Ops.nth call 0)
+
+let sorted_writes written =
+  Hashtbl.fold (fun (s, i) v acc -> (s, i, v) :: acc) written []
+  |> List.sort (fun (s0, i0, _) (s1, i1, _) -> compare (s0, i0) (s1, i1))
+
+let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
+  let initial st = { values = initial buffers st; written = [] } in
   let states = Ops.Tbl.create 16 and results = Ops.Tbl.create 16 in
   let rec state u =
     match Ops.Tbl.find_opt states u with
@@ -74,19 +98,7 @@ let writes ?(buffers = []) sink =
     match Ops.Tbl.find_opt results call with
     | Some w -> w
     | None ->
-        let bind (buffers, params) (k, a) =
-          match (storage_of a, Ops.arg a) with
-          | Some _, _ -> ((k, (state a).values) :: buffers, params)
-          | None, Param { bound = Some v; _ } -> (buffers, (k, v) :: params)
-          | None, _ ->
-              fail "a call's argument is a %a, not storage on one device" Op.pp
-                (Ops.op a)
-        in
-        let buffers, params =
-          List.fold_left bind ([], [])
-            (List.mapi (fun k a -> (k, a)) (List.tl (Ops.src call)))
-        in
-        let w = Interpreter.writes ~params ~buffers (Ops.nth call 0) in
+        let w = kernel_writes ~vars ~params (fun a -> (state a).values) call in
         Ops.Tbl.replace results call w;
         w
   in
@@ -101,5 +113,33 @@ let writes ?(buffers = []) sink =
             s.written
       | Some (true, _) | None -> ())
     (Ops.src sink);
-  Hashtbl.fold (fun (s, i) v acc -> (s, i, v) :: acc) final []
-  |> List.sort (fun (s0, i0, _) (s1, i1, _) -> compare (s0, i0) (s1, i1))
+  sorted_writes final
+
+let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =
+  let memory = Hashtbl.create 16 and written = Hashtbl.create 64 in
+  let storage a = Option.get (storage_of a) in
+  let values_of a =
+    let ((scratch, p) as st) = storage a in
+    match Hashtbl.find_opt memory (scratch, p.slot) with
+    | Some v -> v
+    | None ->
+        let v = initial buffers st in
+        Hashtbl.replace memory (scratch, p.slot) v;
+        v
+  in
+  let run call =
+    if not (is_kernel_call call) then
+      fail "a schedule's call is a call of a %a, not a kernel" Op.pp
+        (Ops.op (Ops.nth call 0));
+    let args = List.tl (Ops.src call) in
+    List.iter
+      (fun (k, i, v) ->
+        let a = List.nth args k in
+        (values_of a).(i) <- v;
+        match storage a with
+        | false, p -> Hashtbl.replace written (p.slot, i) v
+        | true, _ -> ())
+      (kernel_writes ~vars ~params values_of call)
+  in
+  List.iter run (Ops.src linear);
+  sorted_writes written

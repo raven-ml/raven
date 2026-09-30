@@ -64,4 +64,53 @@ let writes =
                    ])));
     ]
 
-let () = exit (run "Kernel_graphs" [ writes ])
+let linear calls = Ops.v ~src:calls Linear
+let nines = Array.make 4 (z 9)
+
+let linear_writes =
+  group "linear_writes"
+    [
+      test "a call reads what the calls before it wrote" (fun () ->
+          equal write
+            (List.init 4 (fun i -> (0, i, z 11))
+            @ List.init 4 (fun i -> (1, i, z 10)))
+            (Kernel_graphs.linear_writes
+               ~buffers:[ (2, nines) ]
+               (linear
+                  [
+                    Ops.call incr [ param 1; param 2 ];
+                    Ops.call incr [ param 0; param 1 ];
+                  ])));
+      test "a call reads nothing the calls after it write" (fun () ->
+          equal write
+            (List.init 4 (fun i -> (0, i, z (i + 1)))
+            @ List.init 4 (fun i -> (1, i, z 10)))
+            (Kernel_graphs.linear_writes
+               ~buffers:[ (1, iota); (2, nines) ]
+               (linear
+                  [
+                    Ops.call incr [ param 0; param 1 ];
+                    Ops.call incr [ param 1; param 2 ];
+                  ])));
+      test "a scalar parameter no call passes has the value of its slot"
+        (fun () ->
+          let n = Ops.param ~addrspace:(Some Alu) 2 Int32 in
+          let shifted = kernel (fun x -> Ops.O.(x + n)) in
+          equal write
+            (List.init 4 (fun i -> (0, i, z (i + 5))))
+            (Kernel_graphs.linear_writes
+               ~params:[ (2, z 5) ]
+               ~buffers:[ (1, iota) ]
+               (linear [ Ops.call shifted [ param 0; param 1 ] ])));
+      test "a call of something other than a kernel is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"not a kernel") (fun () ->
+              Kernel_graphs.linear_writes
+                (linear
+                   [
+                     Ops.v
+                       ~src:[ Ops.store (param 0) (param 1); param 0; param 1 ]
+                       Call;
+                   ])));
+    ]
+
+let () = exit (run "Kernel_graphs" [ writes; linear_writes ])
