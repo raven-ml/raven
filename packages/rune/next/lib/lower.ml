@@ -577,7 +577,18 @@ let op : type r. scope -> r Nx.Op.t -> r =
           "a random draw from a key that does not depend on the function's \
            arguments would repeat on every call; pass the key as an argument";
       ret Nx_dtype.int32 (Lower_arith.threefry k (node s what p counter))
-  | Reduce _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ -> refuse ()
+  | Reduce (k, axes, x) ->
+      ret (Nx.dtype x)
+        (Lower_reduce.reduce k ~axes:(Array.to_list axes) (node s what p x))
+  | Scan (k, axis, x) ->
+      ret (Nx.dtype x) (Lower_reduce.scan k ~axis (node s what p x))
+  | Arg_reduce (k, axis, x) ->
+      ret Nx_dtype.int32 (Lower_reduce.arg_reduce k ~axis (node s what p x))
+  | Sort { descending; axis; x } ->
+      ret (Nx.dtype x) (Lower_reduce.sort ~descending ~axis (node s what p x))
+  | Argsort { descending; axis; x } ->
+      ret Nx_dtype.int32
+        (Lower_reduce.argsort ~descending ~axis (node s what p x))
   | Pad _ | Cat _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ ->
       refuse ()
   | Matmul _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Solve_triangular _ ->

@@ -338,3 +338,99 @@ target's run lands.
 - **Pinned by:** `conversions › a double rounds to bfloat16 once`,
   `exact operations on the host › conversions › a double near a bfloat16 tie
   rounds once` (slow).
+
+### R1. A float sum adds +0.
+
+- **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:758`
+  (`_split_cumalu`).
+- **Raven:** `lower_reduce.ml:97` (`accumulated`).
+- **Differs:** the lowering adds `+0.` to each float sum it computes, once per
+  output, for `Reduce` and `Scan` with `Sum`. A kernel starts a loop's
+  accumulator from `+0.`, but sums the terms alone when no loop is left (an
+  axis of one element, or one it unrolls whole), so tinygrad's sum of `[-0.]`
+  is `-0.`.
+- **nx:** `nx.mli`, `sum` and `cumsum`: a float sum is `0.` plus its terms, so
+  a sum that is exactly zero is `0.`.
+- **Class:** rounded sum.
+- **Reason:** (b).
+- **Pinned by:** `sums and products › a zero sum is +0. › *`,
+  `scans › a running sum starts from +0.`, and through tolk's rewrites
+  `compiled for the host › a zero sum is +0. › *` (slow).
+
+### R2. Sums and products accumulate wide and unsigned, and name their dtype
+
+- **Reference:** `mixin/reduce.py:20` (`sum`: the `sum_acc_dtype`
+  accumulator, converted back for the narrow floats only), `:47` (`prod`: at
+  the operand's dtype).
+- **Raven:** `lower_reduce.ml:97` (`accumulated`).
+- **Differs:** a sum and a product both accumulate in `Dtype.sum_acc`'s type,
+  unsigned for the signed integers, and convert once to the operand's dtype.
+  tinygrad accumulates signed integers in a signed type, whose overflow C,
+  Metal and CUDA leave undefined; returns an integer sum in its accumulator's
+  dtype; and multiplies narrow floats and narrow integers at their own width.
+- **nx:** `nx_backend.mli`, `reduce` and `scan`: the result has the operand's
+  dtype; integers wrap; `nx.mli`, Arithmetic: narrow floats compute at
+  `float32` and round once.
+- **Class:** exact on integers, rounded sum on floats.
+- **Reason:** (b).
+- **Pinned by:** `sums and products › integer sums wrap › *`,
+  `› integer products wrap › *`, `› narrow floats round once`,
+  `scans › integer scans are exact › *`,
+  `compiled for the host › integer sums and products wrap` (slow).
+
+### R3. Extremes of reductions and scans order keys
+
+- **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
+  (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
+- **Raven:** `lower_reduce.ml:73` (`keys`, `values`), `:111` (`extreme`).
+- **Differs:** a float maximum is `Ops.MAX` over integer keys, the bits with a
+  negative float's magnitude flipped and every NaN at the greatest key, mapped
+  back to floats; a minimum takes the maximum of the keys' complements, every
+  NaN at the least key. tinygrad's `MAX` keeps the larger operand by
+  comparison, which a NaN never is, and leaves the order of `-0.` and `+0.` to
+  the association; its minimum negates. Integers agree (`graph parity ›
+  max_int`, `min_int`, `cummax_int`, `cummin_int`).
+- **nx:** `nx.mli`, `max`, `min`, `cummax`, `cummin`: IEEE 754-2019 maximum and
+  minimum, NaN propagating and `-0.` below `0.`.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `extremes › *`, `scans › float running extremes are exact ›
+  *`, `scans › a running extreme is NaN from the first NaN on`,
+  `compiled for the host › extremes of NaN and both zeros` (slow).
+
+### R4. Arg-reductions order keys
+
+- **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
+- **Raven:** `lower_reduce.ml:133` (`argmax`), `:145` (`arg_reduce`).
+- **Differs:** tinygrad's decomposition runs over R3's keys: the first element
+  equal to the maximum of the keys, the first NaN if there is one, and `-0.`
+  below `0.`. Over floats, tinygrad's equality with the maximum never holds for
+  a NaN. Integers agree (`graph parity › argmax_int`, `argmin_int`).
+- **nx:** `nx.mli`, `argmax`, `argmin`: the first index holding the element
+  `max` and `min` return, the first NaN if there is one.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `arg-reductions › *`.
+
+### R5. Stable sorts of packed keys
+
+- **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
+  each position recovered by matching equal values and their counts), `:965`
+  (`argsort`).
+- **Raven:** `lower_reduce.ml:166` (`bitonic`), `:224` (`positions`), `:236`
+  (`take`), `:259` (`argsort`), `:281` (`sort`).
+- **Differs:** tinygrad's network sorts R3's keys, NaN at the greatest key
+  ascending and the least descending, each read as the unsigned integer of its
+  width and packed in an `int64` above its position, complemented for a
+  descending sort. Packed integers are distinct, so the network gives the
+  stable order, and the positions are their low bits. A 64-bit key sorts in two
+  such passes, its low half first. The sorted values are the operand's
+  elements at those positions, a one-hot sum over their bits. tinygrad's
+  recovery never matches a NaN, and its network compares floats.
+- **nx:** `nx_backend.mli`, `sort`, `argsort`: stable, NaN last in either
+  direction, `-0.` before `0.` ascending, and `sort` is the operand taken
+  along `argsort`, bit for bit.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `sorts › *`; the network's kernels by `graph parity ›
+  argsort_int`, `argsort_int_descending`.
