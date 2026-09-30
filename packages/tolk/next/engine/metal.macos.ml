@@ -59,17 +59,13 @@ let sels d =
 
 (* Without a residency set, the table holds the device's buffers as they are
    when a batch runs. *)
-let submitting d () =
-  let m = metal d in
-  if Option.is_none (M.residency_set m) then begin
-    let s = sels d in
-    let resources = M.resources m in
-    let n = Array.length resources in
-    if n > Bigarray.Array1.dim s.table then s.table <- int64_words n;
-    Array.iteri (fun i r -> s.table.{i} <- Int64.of_nativeint r) resources;
-    s.words.{3} <- address s.table;
-    s.words.{4} <- Int64.of_int n
-  end
+let resident m s () =
+  let resources = M.resources m in
+  let n = Array.length resources in
+  if n > Bigarray.Array1.dim s.table then s.table <- int64_words n;
+  Array.iteri (fun i r -> s.table.{i} <- Int64.of_nativeint r) resources;
+  s.words.{3} <- address s.table;
+  s.words.{4} <- Int64.of_int n
 
 let host_words b =
   match B.borrow Nx_device.host b with
@@ -153,6 +149,7 @@ let queues devices name d =
   match M.of_device d with
   | None -> None
   | Some m ->
+      (* Any name of the host names it: the first one serves. *)
       let host =
         match
           List.find_opt (fun (_, h) -> h == Nx_device.host_of d) devices
@@ -163,8 +160,9 @@ let queues devices name d =
               (Printf.sprintf "Tolk_next_engine.device: no device is %s's host"
                  name)
       in
+      let residency_set = Option.is_some (M.residency_set m) in
       let queues =
-        Ops_metal.queues ~host ~arch:(Nx_device.arch d)
-          ~residency_set:(Option.is_some (M.residency_set m))
+        Ops_metal.queues ~host ~arch:(Nx_device.arch d) ~residency_set
       in
-      Some (queues, placeholder name d, submitting d)
+      let submitting = if residency_set then ignore else resident m (sels d) in
+      Some (queues, placeholder name d, submitting)
