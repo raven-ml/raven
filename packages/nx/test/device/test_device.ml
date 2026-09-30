@@ -1285,9 +1285,16 @@ let test_system_borrows () =
   let on_c1 = borrow c1 b in
   equal ~msg:"read through the borrow" string (pattern 9 page) (read on_c1);
   is_true ~msg:"over the same memory" (B.overlaps on_c1 b);
-  (match B.borrow host b with
-  | Ok _ -> fail "the host borrowed a device's memory"
-  | Error why -> contains ~msg:"refused" ~sub:"no memory of another device" why);
+  let on_host = borrow host b in
+  is_true ~msg:"the host's borrow, over the device's memory"
+    (Nx_device.equal (B.device on_host) host && B.overlaps on_host b);
+  equal ~msg:"read in place" string (pattern 9 page)
+    (string_of (B.bigarray Bigarray.char on_host));
+  (B.bigarray Bigarray.char on_host).{0} <- 'z';
+  equal ~msg:"a write through it" char 'z' (read b).[0];
+  (match B.borrow host (B.create far_one.dev S.UInt8 page) with
+  | Ok _ -> fail "the host borrowed a Device_local device's memory"
+  | Error why -> contains ~msg:"refused" ~sub:"cannot address" why);
   let unaddressed =
     Driver.device ~name:"UNADDRESSED" ~arch:"test" ~budget:max_int
       (Host_visible

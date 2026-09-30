@@ -49,6 +49,9 @@ type keep =
   | Keep : 'a -> keep
   | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
   | Heap : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * heap_token -> keep
+  | Device : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * 'c -> keep
+(* another device's memory the host addresses, as a bigarray that owns nothing,
+   and what keeps the memory *)
 
 (* The host memory of [create] is kept with its token: a custom block whose
    finaliser returns the reserved bytes to the host's count. *)
@@ -246,6 +249,12 @@ external load_u64 : (nativeint[@unboxed]) -> (int64[@unboxed])
 external store_u64 : (nativeint[@unboxed]) -> (int64[@unboxed]) -> unit
   = "caml_nx_device_store_u64_byte" "caml_nx_device_store_u64"
 [@@noalloc]
+
+external external_bytes :
+  nativeint ->
+  int ->
+  (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  = "caml_nx_device_external_bytes"
 
 external bigarray_view :
   ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t ->
@@ -1324,6 +1333,25 @@ module Buffer = struct
           if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
           borrow_host d { b with base = pages })
 
+  (* The host maps system memory of another device as the identity: the host's
+     buffer is over the memory's host addresses, through a bigarray that owns
+     nothing and a base that keeps [b], whose source it is so that the device
+     can reach it. *)
+  let borrow_system b =
+    let src = b.base in
+    let a = Option.get src.memory.host in
+    let region = { src.memory with address = a } in
+    let ba = external_bytes a region.nbytes in
+    let mapped =
+      { on = host; mapped = region; skip = 0; unmap = ignore; borrows = 1 }
+    in
+    let base =
+      base ~source:(src, mapped) ~borrowed:true
+        ~keep:(Device (ba, b))
+        host region
+    in
+    { b with base }
+
   (* [b] over the memory its borrows map, down to memory no borrow holds. *)
   let rec root b =
     match b.base.source with
@@ -1352,8 +1380,9 @@ module Buffer = struct
       else if o == disk then borrow_file d r
       else if o == host_of d then borrow_host d r
       else if r.base.pinned || Option.is_none o.copy_queue then
-        if Option.is_none d.machine then
-          refuse "%s borrows no memory of another device" d.name
+        if d == host then Ok (borrow_system r)
+        else if Option.is_none d.machine then
+          refuse "%s is reached over the network, and maps no memory" d.name
         else borrow_host d r
       else borrow_peer d r
 
@@ -1435,6 +1464,7 @@ module Buffer = struct
       match buf.base.keep with
       | Host ba -> bigarray_view ba k buf.offset (bytes / size)
       | Heap (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
+      | Device (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
       | Keep _ -> assert false (* host memory is always a bigarray's *)
 
   (* Copies. The devices involved are taken and synchronized. A device's copy is
@@ -1883,9 +1913,11 @@ module Buffer = struct
     if d == disk && not (file_of dst).writable then
       fail "%s is open for reading only" (file_of dst).path;
     let route, also = route ~src ~dst in
-    with_devices (s :: d :: also) (fun () ->
-        sync s;
-        if d != s then sync d;
+    (* The devices whose memory a borrow maps are waited for too. *)
+    let rs = (root src).base.owner and rd = (root dst).base.owner in
+    with_devices (s :: d :: rs :: rd :: also) (fun () ->
+        List.iter sync
+          (List.sort_uniq (fun a b -> Int.compare a.id b.id) [ s; d; rs; rd ]);
         reachable src;
         reachable dst;
         (if n > 0 then

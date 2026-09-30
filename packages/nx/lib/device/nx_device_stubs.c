@@ -113,6 +113,14 @@ value caml_nx_device_heap_aligned(value v_page, value v_n) {
 #endif
 }
 
+/* The [v_n] bytes at [v_addr] as a [char] bigarray that owns nothing: memory a
+   device holds, which the host addresses. */
+value caml_nx_device_external_bytes(value v_addr, value v_n) {
+  intnat dim = Long_val(v_n);
+  return caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL, 1,
+                       (void *)Nativeint_val(v_addr), &dim);
+}
+
 value caml_nx_device_page_size(value unit) {
   (void)unit;
 #ifdef _WIN32

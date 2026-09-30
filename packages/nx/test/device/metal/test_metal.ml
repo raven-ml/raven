@@ -292,6 +292,31 @@ let work =
           equal string bytes (read out);
           at_least int ~than:v (Nx_device.signaled metal));
       test
+        "the host borrows a Metal buffer where it lies, and reads what a \
+         kernel wrote there once Metal is synchronized" (fun () ->
+          let p = program ~binary:(Lazy.force library) ~name:"fill" in
+          let out = B.create metal S.UInt32 8 in
+          let h = Nx_metal_device.handles metal in
+          ignore
+            (Nx_device.submit metal ~touches:[] (fun v ->
+                 dispatch h.queue h.event h.fence
+                   (Nx_metal_device.resources metal)
+                   (Nx_device.Program.handle p)
+                   (B.address out) 8 v 0n));
+          Nx_device.synchronize metal;
+          let on_host =
+            match B.borrow Nx_device.host out with
+            | Ok b -> b
+            | Error why -> fail why
+          in
+          is_true ~msg:"on the host, over the Metal buffer"
+            (Nx_device.equal (B.device on_host) Nx_device.host
+            && B.overlaps on_host out);
+          let v = B.bigarray Bigarray.int32 on_host in
+          equal ~msg:"what the kernel wrote" (list int32)
+            (List.init 8 (fun i -> Int32.of_int ((i * 3) + 1)))
+            (List.init 8 (Bigarray.Array1.get v)));
+      test
         "the host waits for work that touched it, which signals on the shared \
          event and leaves the timeline's signal word at 0" (fun () ->
           let h = Nx_metal_device.handles metal in

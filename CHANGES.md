@@ -2871,6 +2871,11 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.borrow Nx_device.host b` maps system memory in place: a
+  Metal buffer, a test device's buffer or any device's pinned buffer is
+  readable through `Buffer.bigarray` once its device is synchronized. Only a
+  GPU's own (`Device_local`) memory is refused. `Buffer.copy` through such a
+  borrow waits for the device whose memory it maps.
 - A host buffer is about twice as cheap to make: `Nx_device.Buffer.create` of a
   few bytes takes 75 ns where it took 158, so a one-element `Nx.add` takes
   161 ns where it took 237, and one of 64 KiB takes 0.85 µs where it took 3 µs.

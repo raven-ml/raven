@@ -286,7 +286,9 @@ module Buffer : sig
       - system memory, which [d]'s mapping of host memory maps: memory of [d]'s
         host ({!host_of}), of a device described as [Host_visible]
         ({!Driver.memory}), such as Metal and test devices over the host's
-        memory, and the pinned memory of any device ({!create});
+        memory, and the pinned memory of any device ({!create}). The {!host}'s
+        mapping is the identity: its borrow of such memory is over the memory's
+        host addresses, without a copy;
       - the own memory of a [Device_local] device, such as a CUDA, AMD or NV
         GPU's, which [d]'s driver maps ({!Driver.device}'s [peer]) once per
         region, even where a memory BAR gives it a host address. The mapping
@@ -318,13 +320,13 @@ module Buffer : sig
       host's memory ({!shares_host_memory}) borrows a file's bytes; the others
       {!copy} them into their memory.
 
-      [Error why] if [d] cannot map that kind of memory (a host maps no other
-      device's), if [b] is a host buffer {!create} made of fewer than 64 KiB, if
-      the memory [b] is a view of does not start on a page, or if [d]'s driver
-      refuses to map it, with the driver's reason; for [b] on the disk, if [d]
-      does not share the host's memory, if [b]'s first byte is not aligned to
-      the size of one of its elements, or if the system cannot map the file,
-      naming it.
+      [Error why] if [d] cannot map that kind of memory (a host maps no
+      [Device_local] memory, and another machine's host none of its devices'),
+      if [b] is a host buffer {!create} made of fewer than 64 KiB, if the memory
+      [b] is a view of does not start on a page, or if [d]'s driver refuses to
+      map it, with the driver's reason; for [b] on the disk, if [d] does not
+      share the host's memory, if [b]'s first byte is not aligned to the size of
+      one of its elements, or if the system cannot map the file, naming it.
 
       Raises [Invalid_argument] if [b] is on another machine or is dead
       ({!consume}), and {!Lost} if [d] is lost. *)
@@ -386,10 +388,10 @@ module Buffer : sig
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
-      there. It first synchronizes the devices of [src] and [dst]. A copy
-      between the memory of two devices counts in the [bytes_out] of the device
-      whose memory [src] is and in the [bytes_in] of [dst]'s; a borrow's memory
-      is its host's.
+      there. It first synchronizes the devices of [src] and [dst], and the
+      devices whose memory their borrows map. A copy between the memory of two
+      devices counts in the [bytes_out] of the device whose memory [src] is and
+      in the [bytes_in] of [dst]'s; a borrow's memory is its host's.
 
       Between memory that the host addresses, the host copies the bytes.
       Otherwise a device copies them on its copy queue, as work on its timeline:
@@ -436,10 +438,13 @@ module Buffer : sig
       kind [k], without a copy: [nbytes b / Bigarray.kind_size_in_bytes k] of
       them, in the machine's byte order. Writing through it mutates [b]. It
       keeps [b]'s memory alive for as long as it is reachable, except memory
-      that OCaml does not manage, which {!of_bigarray}'s caller keeps alive.
+      that OCaml does not manage: the memory {!of_bigarray}'s caller keeps
+      alive, and another device's memory that a borrow on the host maps
+      ({!borrow}), which that borrow keeps alive.
 
       Access through the view is outside the devices' ordering: {!synchronize}
-      {!host} first to see the work that touched it.
+      {!host} first, and the device whose memory a borrow maps, to see the work
+      that touched it.
 
       Formats with no kind of their own are read as their storage kind and
       decoded with {!Nx_dtype.Scalar.decode}: [BFloat16] as [Int16_unsigned],
