@@ -3,13 +3,6 @@ open Tolk_next
 
 let uop = Testable.make ~pp:Ops.pp ~equal:Ops.equal
 
-(* The tag of the tests that need the symbolic rules, which land with L3. *)
-let l3 = "L3"
-
-(* The tag of the tests of the time before L3, when the symbolic rules are not
-   installed. *)
-let pre_l3 = "pre-L3"
-
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let var name lo hi = Ops.variable name (`Int (Z.of_int lo)) (`Int (Z.of_int hi))
 let a = var "a" 1 5
@@ -161,15 +154,6 @@ let render =
         (Law.round_trip uop string (Render.render ~simplify:false) parse);
       prop "tags are not written" expression
         (Law.ignores uop string (Render.render ~simplify:false) tag_everywhere);
-      test ~tags:[ pre_l3 ]
-        "simplifying first, the default, needs the symbolic rules" (fun () ->
-          rejects (fun () -> Render.render a));
-      test ~tags:[ pre_l3 ]
-        "a movement whose sizes are nodes needs the symbolic rules" (fun () ->
-          let storage = Ops.param ~shape:[ Int 32 ] 1 Dtype.Float32 in
-          rejects (fun () ->
-              Render.render ~simplify:false
-                (Ops.v Shrink ~src:[ storage; a; Ops.int 2 ])));
     ]
 
 (* The [simplified] column follows the README's negative-shift row: where
@@ -186,7 +170,7 @@ let simplified_tree cell =
   | rendered -> equal string rendered (Render.render u)
 
 let simplified =
-  group ~tags:[ l3 ] "render after simplifying"
+  group "render after simplifying"
     [
       Golden.cases "expressions_rendered.golden" (fun cell ->
           equal string (cell "simplified")
@@ -196,10 +180,15 @@ let simplified =
           equal string (cell "render") (Render.render ~simplify:false u);
           equal string (cell "simplified") (Render.render u));
       Golden.cases "trees_rendered.golden" simplified_tree;
-      prop "writes the simplified node" expression (fun u ->
-          equal string
-            (Render.render ~simplify:false (Ops.simplify u))
-            (Render.render u));
+      prop "writes the simplified node, or raises as simplifying does"
+        expression (fun u ->
+          match Ops.simplify u with
+          | s ->
+              cover "renders" true;
+              equal string (Render.render ~simplify:false s) (Render.render u)
+          | exception e ->
+              cover "raises" true;
+              raises e (fun () -> Render.render u));
     ]
 
 (* srender *)
@@ -219,14 +208,12 @@ let srender =
     [
       prop "writes an integer in decimal" ints (fun n ->
           equal string (Int.to_string n) (Render.srender (Int n)));
-      test ~tags:[ l3 ] "writes a node as render does" (fun () ->
+      test "writes a node as render does" (fun () ->
           equal string "a" (Render.srender (Sym a));
           equal string "(a*12)"
             (Render.srender Ops.Sint.(prod [ Sym a; Int 3; Int 4 ]));
           equal string "(a*12)"
             (Render.srender Ops.Sint.(prod [ Int 3; Int 4; Sym a ])));
-      test ~tags:[ pre_l3 ] "a node needs the symbolic rules" (fun () ->
-          rejects (fun () -> Render.srender (Sym a)));
     ]
 
 (* pp_uops *)

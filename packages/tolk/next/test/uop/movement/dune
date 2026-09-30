@@ -1,6 +1,3 @@
-; Offsets that are nodes need the symbolic rules, which a later layer installs:
-; the tests tagged L3 run once it does.
-
 (test
  (name test_movement)
  (package tolk)
@@ -8,4 +5,4 @@
  (deps
   (glob_files *.golden))
  (action
-  (run %{test} --exclude-tag slow --exclude-tag L3)))
+  (run %{test} --exclude-tag slow)))

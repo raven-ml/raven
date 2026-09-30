@@ -21,5 +21,19 @@
 19 Ops.MUL dtypes.weakint [9, 18]
 20 Ops.ADD dtypes.weakint [7, 19]
 21 Ops.ADD dtypes.weakint [17, 20]
-22 Ops.SINK dtypes.void [6, 15, 16, 21]
+22 Ops.CONST dtypes.weakint [] 25
+23 Ops.PARAM dtypes.weakint [] ParamArg(slot=-1, dtype=dtypes.weakint, vmin_vmax=(0, 10), multiple_of=1, name="a", addrspace=AddrSpace.ALU)
+24 Ops.MUL dtypes.weakint [22, 23]
+25 Ops.ADD dtypes.weakint [24, 3]
+26 Ops.CONST dtypes.weakint [] 10
+27 Ops.FLOORMOD dtypes.weakint [25, 26]
+28 Ops.MUL dtypes.weakint [23, 10]
+29 Ops.ADD dtypes.weakint [28, 7]
+30 Ops.FLOORMOD dtypes.weakint [29, 18]
+31 Ops.MUL dtypes.weakint [30, 10]
+32 Ops.ADD dtypes.weakint [31, 3]
+33 Ops.FLOORDIV dtypes.weakint [25, 26]
+34 Ops.FLOORDIV dtypes.weakint [29, 18]
+35 Ops.ADD dtypes.weakint [34, 7]
+36 Ops.SINK dtypes.void [6, 15, 16, 21, 27, 32, 33, 35]
 

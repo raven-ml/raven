@@ -1,13 +1,6 @@
 open Windtrap
 open Tolk_next
 
-(* The tag of the tests that need the symbolic rules, which land with L3. *)
-let l3 = "L3"
-
-(* The tag of the tests of the time before L3, when the symbolic rules are not
-   installed. *)
-let pre_l3 = "pre-L3"
-
 (* The tag of the tests that run with ASSERT_COMPILE set, in a run of their own,
    since a process reads the variable once. *)
 let assert_compile = "assert-compile"
@@ -243,10 +236,6 @@ let estimates_of_uops =
       test "multiplies everything after a hardware index by its size"
         a_hardware_index_multiplies_what_follows;
       test "rejects an end that closes no range" an_end_without_a_range;
-      test ~tags:[ pre_l3 ] "a typed trip count needs the symbolic rules"
-        (fun () ->
-          let r = Ops.range (Sym (Ops.int ~dtype:Dtype.Int32 10)) [ 0 ] in
-          rejects (fun () -> Renderer.Estimates.of_uops [ r ]));
       test "rejects a backedge that closes no loop" a_backedge_without_a_loop;
       test "rejects a tensor core product without its argument"
         a_tensor_core_without_its_argument;
@@ -266,7 +255,7 @@ let estimates_of_uops =
         an_index_shared_with_a_value;
       test "ignore_indexing counts a loop whose result an index reads"
         an_index_after_a_loop;
-      test ~tags:[ l3 ] "ignore_indexing leaves out the operations of shrinks"
+      test "ignore_indexing leaves out the operations of shrinks"
         shrink_indexing;
     ]
 
@@ -286,7 +275,7 @@ let recorded_estimates cell : Ops.estimates =
   { ops = count "ops"; lds = count "lds"; mem = count "mem" }
 
 let recorded_kernels =
-  group ~tags:[ l3 ] "estimates of recorded kernels"
+  group "estimates of recorded kernels"
     [
       Golden.cases "estimates.golden" (fun cell ->
           let uops = kernel recorded cell in
@@ -351,7 +340,7 @@ let trip_count_of_a_hardware_index () =
     (Renderer.Estimates.of_uops [ gidx; r; a; body; Ops.end_ body [ r ] ]).ops
 
 let symbolic_kernels =
-  group ~tags:[ l3 ] "estimates of symbolic kernels"
+  group "estimates of symbolic kernels"
     [
       test "a symbolic trip count counts at the value of its variable"
         symbolic_trip_count;
@@ -396,7 +385,7 @@ let arithmetic_estimates =
         (Law.commutative estimates add);
       prop "zero is the neutral element of add" integer_estimates
         (Law.neutral estimates add Renderer.Estimates.zero);
-      test ~tags:[ l3 ] "add sums symbolic counts" symbolic_sum;
+      test "add sums symbolic counts" symbolic_sum;
       test "add past max_int raises rather than wrapping" (fun () ->
           rejects (fun () -> add (counts max_int 0 0) (counts 1 0 0)));
     ]
@@ -425,22 +414,16 @@ let simplification =
       test "leaves integer counts as they are" (fun () ->
           equal estimates (counts 1 2 3)
             (Renderer.Estimates.simplify (counts 1 2 3)));
-      test ~tags:[ pre_l3 ] "a symbolic count needs the symbolic rules"
-        (fun () ->
-          rejects (fun () ->
-              Renderer.Estimates.simplify
-                { ops = Sym Ops.O.(n + int 0); lds = Int 0; mem = Int 0 }));
-      test ~tags:[ l3 ] "a count of constants becomes an integer" (fun () ->
+      test "a count of constants becomes an integer" (fun () ->
           let five = Ops.Sym Ops.O.(Ops.int 2 + Ops.int 3) in
           equal estimates (counts 5 5 5)
             (Renderer.Estimates.simplify { ops = five; lds = five; mem = five }));
-      prop ~tags:[ l3 ] "keeps the value of each count" symbolic_estimates
-        (fun e ->
+      prop "keeps the value of each count" symbolic_estimates (fun e ->
           equal
             (list (triple int int int))
             (at_every_n e)
             (at_every_n (Renderer.Estimates.simplify e)));
-      prop ~tags:[ l3 ] "is idempotent" symbolic_estimates
+      prop "is idempotent" symbolic_estimates
         (Law.idempotent estimates Renderer.Estimates.simplify);
     ]
 

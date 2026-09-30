@@ -28,10 +28,6 @@ let recorded file = every_other (Ops.src (Golden.sink file))
 let rewrites name d =
   Golden.graph (name ^ ".golden") (fun () -> rewritten [ d ])
 
-(* Rules that simplify what they build need the symbolic rules, which a later
-   layer installs. *)
-let needs_symbolic tests = group ~tags:[ "L3" ] "with the symbolic rules" tests
-
 (* (x // c + a) // d *)
 
 let nested_divisions =
@@ -120,17 +116,14 @@ let constant_divisors =
         Ops.O.(((var "a" 0 5 * int 4) + var "t" 0 4) % int 12);
       rewrites "keep_a_plain_division" Ops.O.(x // int 5);
       rewrites "keep_a_plain_remainder" Ops.O.(x % int 5);
-      needs_symbolic
-        [
-          rewrites "divide_a_common_factor_out_of_a_division"
-            Ops.O.(((a * int 2) + int 3) // int 4);
-          rewrites "divide_a_common_factor_out_of_a_remainder"
-            Ops.O.(((a * int 2) + int 3) % int 4);
-          rewrites "nest_a_division_by_a_factor_of_a_term"
-            Ops.O.(((a * int 6) + (b * int 2) + int 1) // int 12);
-          rewrites "nest_a_remainder_by_a_factor_of_a_term"
-            Ops.O.(((a * int 6) + (b * int 2) + int 1) % int 12);
-        ];
+      rewrites "divide_a_common_factor_out_of_a_division"
+        Ops.O.(((a * int 2) + int 3) // int 4);
+      rewrites "divide_a_common_factor_out_of_a_remainder"
+        Ops.O.(((a * int 2) + int 3) % int 4);
+      rewrites "nest_a_division_by_a_factor_of_a_term"
+        Ops.O.(((a * int 6) + (b * int 2) + int 1) // int 12);
+      rewrites "nest_a_remainder_by_a_factor_of_a_term"
+        Ops.O.(((a * int 6) + (b * int 2) + int 1) % int 12);
     ]
 
 (* Divisors that are not constants *)
@@ -194,25 +187,14 @@ let goldens =
 
 (* The goldens recorded from tinygrad's tests are named after them. *)
 let tinygrad_goldens = List.filter (String.starts_with ~prefix:"test_") goldens
-let symbolic_golden f = Filename.check_suffix f "_needs_symbolic.golden"
 let as_tinygrad file = Golden.graph file (fun () -> rewritten (recorded file))
 
 let tinygrad_tests =
-  let with_symbolic, alone = List.partition symbolic_golden tinygrad_goldens in
-  group "tinygrad's tests"
-    (List.map as_tinygrad alone
-    @ [ needs_symbolic (List.map as_tinygrad with_symbolic) ])
+  group "tinygrad's tests" (List.map as_tinygrad tinygrad_goldens)
 
 (* Values *)
 
-(* A law discards a case whose rewrite needs the symbolic rules while they are
-   not installed. *)
-let rewritten_alone d =
-  match rewrite d with
-  | r -> Option.value r ~default:d
-  | exception (Invalid_argument _ as e)
-    when Exn.invalid_arg ~substring:"symbolic rules are not installed" e ->
-      reject ()
+let rewritten_alone d = Option.value (rewrite d) ~default:d
 
 (* [keeps_value d env] is that the rewrite of [d] has [d]'s value where each
    variable is bound as [env] says, unless a division of [d] divides by 0
@@ -267,13 +249,12 @@ let gen_case gen_division =
          Gen.map (fun env -> (d, env)) (gen_point d)))
 
 (* The divisions of the goldens that the interpreter evaluates: over integer
-   variables, without [`Invalid]. *)
+   variables. *)
 let golden_divisions =
   let evaluable u =
     match Ops.op u with
     | Op.Param -> Ops.is_variable u && Dtype.is_int (Ops.dtype u)
-    | Op.Const -> not (Ops.is_invalid u)
-    | o -> o = Op.Cast || Op.Set.mem o Op.Set.alu
+    | o -> o = Op.Const || o = Op.Cast || Op.Set.mem o Op.Set.alu
   in
   List.concat_map recorded goldens
   |> List.filter (fun d -> List.for_all evaluable (Ops.toposort d))

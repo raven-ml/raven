@@ -1,5 +1,3 @@
-; Tests tagged L3 need the symbolic rules, which Symbolic installs at L3; those
-; tagged pre-L3 pin the time before. At L3 the default run swaps the two tags.
 ; Settings are read when the program starts, so CACHEDB is set here, to a
 ; directory of the sandbox, and the tests tagged assert-compile run in a second
 ; process with ASSERT_COMPILE set.
@@ -23,8 +21,6 @@
       %{test}
       --exclude-tag
       slow
-      --exclude-tag
-      L3
       --exclude-tag
       assert-compile))
     (setenv

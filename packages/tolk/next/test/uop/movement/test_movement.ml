@@ -22,10 +22,6 @@ let permute u order = Ops.mop u (Permute order)
 let cleans name u =
   Golden.graph (name ^ ".golden") (fun () -> Ops.sink [ u; cleanup u ])
 
-(* Offsets that are nodes need the symbolic rules to be simplified, which a
-   later layer installs. *)
-let needs_symbolic tests = group ~tags:[ "L3" ] "with the symbolic rules" tests
-
 let shrinks =
   group "shrinks"
     [
@@ -37,17 +33,11 @@ let shrinks =
         (shrink
            (shrink (shrink (storage [ 16 ]) [ (1, 12) ]) [ (2, 8) ])
            [ (3, 4) ]);
-      needs_symbolic
-        [
-          Golden.graph "merge_shrinks_of_symbolic_starts.golden" (fun () ->
-              let start = Ops.Sym (var "o" 0 4)
-              and size = Ops.Sym (var "n" 1 3) in
-              let inner =
-                Ops.mop (storage [ 16 ]) (Shrink [ (start, Int 8) ])
-              in
-              let u = Ops.mop inner (Shrink [ (Int 2, size) ]) in
-              Ops.sink [ u; cleanup u ]);
-        ];
+      Golden.graph "merge_shrinks_of_symbolic_starts.golden" (fun () ->
+          let start = Ops.Sym (var "o" 0 4) and size = Ops.Sym (var "n" 1 3) in
+          let inner = Ops.mop (storage [ 16 ]) (Shrink [ (start, Int 8) ]) in
+          let u = Ops.mop inner (Shrink [ (Int 2, size) ]) in
+          Ops.sink [ u; cleanup u ]);
     ]
 
 let reshapes =

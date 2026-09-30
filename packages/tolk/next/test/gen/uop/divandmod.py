@@ -7,8 +7,7 @@ tolk.next's constructors. The other goldens come from tinygrad's own tests,
 which test div_and_mod_symbolic through the whole symbolic rule set: the
 generator runs them, records every expression they simplify, and rewrites each
 division and remainder in it. `<test>.golden` holds those of the test of that
-name. A rewrite that simplifies anything but constants on its way depends on
-the symbolic rules, and goes to `<test>_needs_symbolic.golden` instead.
+name.
 """
 
 import sys
@@ -27,7 +26,7 @@ from golden import graph
 from graph import write
 from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import UOp, Ops
-from tinygrad.uop.divandmod import div_and_mod_symbolic, fold_divmod_general
+from tinygrad.uop.divandmod import div_and_mod_symbolic
 import test.null.test_uop_symbolic as symbolic_tests
 import test.null.test_symbolic_failures as failure_tests
 
@@ -70,30 +69,6 @@ def captured_divmods():
     finally:
         UOp.simplify, symbolic_tests.graph_rewrite = simplify, rewrite
     return by_test
-
-
-def constant(u):
-    """Whether simplifying u needs no rule: u is a constant, or a sink of
-    constants and of stacks of constants."""
-    def constants(s): return s.op is Ops.CONST or (s.op is Ops.STACK and all(c.op is Ops.CONST for c in s.src))
-    return u.op is Ops.CONST or (u.op is Ops.SINK and all(constants(s) for s in u.src))
-
-
-def rewrite_once(d):
-    """d's rewrite, or d, and whether the rewrite simplified anything but
-    constants."""
-    simplified, simplify = [], UOp.simplify
-
-    def watched(self, tracked=False):
-        if not constant(self): simplified.append(self)
-        return simplify(self, tracked)
-
-    # the tests filled fold_divmod_general's cache: a cached result would hide its simplifications
-    fold_divmod_general.cache_clear()
-    UOp.simplify = watched
-    try: r = div_and_mod_symbolic.rewrite(d)
-    finally: UOp.simplify = simplify
-    return (d if r is None else r), bool(simplified)
 
 
 def once(d):
@@ -336,11 +311,10 @@ def declare(name, pairs):
 
 
 for test, divmods in captured_divmods().items():
-    alone, symbolic = [], []
+    pairs = []
     for d in divmods:
-        try: r, needs_symbolic = rewrite_once(d)
+        try: r = div_and_mod_symbolic.rewrite(d)
         except ZeroDivisionError: continue  # a divisor that is always 0: the suite states it
         except AssertionError: continue  # a variable bounded by a node, which a variable of tolk.next cannot be
-        (symbolic if needs_symbolic else alone).append((d, r))
-    if alone: declare(test, alone)
-    if symbolic: declare(f"{test}_needs_symbolic", symbolic)
+        pairs.append((d, d if r is None else r))
+    if pairs: declare(test, pairs)

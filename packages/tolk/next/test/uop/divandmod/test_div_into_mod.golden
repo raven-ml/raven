@@ -4,10 +4,15 @@
 2 Ops.MUL dtypes.weakint [0, 1]
 3 Ops.CONST dtypes.weakint [] 8
 4 Ops.FLOORMOD dtypes.weakint [2, 3]
-5 Ops.FLOORDIV dtypes.weakint [4, 1]
-6 Ops.FLOORDIV dtypes.weakint [2, 1]
+5 Ops.CONST dtypes.weakint [] 0
+6 Ops.ADD dtypes.weakint [0, 5]
 7 Ops.CONST dtypes.weakint [] 2
 8 Ops.FLOORMOD dtypes.weakint [6, 7]
-9 Ops.FLOORMOD dtypes.weakint [0, 7]
-10 Ops.SINK dtypes.void [5, 8, 9, 9]
+9 Ops.MUL dtypes.weakint [8, 1]
+10 Ops.ADD dtypes.weakint [9, 5]
+11 Ops.FLOORDIV dtypes.weakint [4, 1]
+12 Ops.FLOORDIV dtypes.weakint [2, 1]
+13 Ops.FLOORMOD dtypes.weakint [12, 7]
+14 Ops.FLOORMOD dtypes.weakint [0, 7]
+15 Ops.SINK dtypes.void [4, 10, 11, 13, 14, 14]
 
