@@ -72,6 +72,13 @@ named:
   are buffers at the address the host and the GPU share, and the device's
   own submissions (NV's engine binding and local memory) run through
   `Nx_device.submit` (`test_amd_hw.ml`, `test_nv_hw.ml`).
+- **The 32-bit carry on AMD and NV:** a device's timeline crossing 2^32 and
+  2^33. AMD's SDMA work waits for the low half of the signal word to equal
+  v - 1 and writes the low half, then the high half when the low one is 0;
+  NV's copy channel releases the low word, then the high word, while its
+  compute channel releases all 64 bits. No waiter may pass early mid-write,
+  and a late high word may never take the word back below another
+  channel's value.
 
 ## Coverage and mutation
 
