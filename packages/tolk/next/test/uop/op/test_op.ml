@@ -159,6 +159,12 @@ let operations =
       test "names words in upper case separated by underscores" (fun () ->
           equal string "ADD" (Op.name Op.Add);
           equal string "CONTIGUOUS_BACKWARD" (Op.name Op.Contiguous_backward));
+      prop "of_string reads back name" gen_op (fun o ->
+          equal (result op string) (Ok o) (Op.of_string (Op.name o)));
+      cases "of_string reads only an operation's bare name"
+        ~name:(Printf.sprintf "%S")
+        [ "Ops.ADD"; "add"; "Add"; " ADD"; ""; "PYLITERAL"; "REWRITE_ERROR" ]
+        (fun s -> contains ~sub:s (require_error (Op.of_string s)));
     ]
 
 (* Equality and order *)

@@ -137,10 +137,10 @@ type t =
   | Allreduce  (** Reduces a value across devices. *)
 
 val equal : t -> t -> bool
-(** [equal o o'] is [true] iff [o] and [o'] are the same operation. *)
+(** [equal o0 o1] is [true] iff [o0] and [o1] are the same operation. *)
 
 val compare : t -> t -> int
-(** [compare o o'] orders [o] and [o'] by their declaration order in {!t}. *)
+(** [compare o0 o1] orders [o0] and [o1] by their declaration order in {!t}. *)
 
 val to_int : t -> int
 (** [to_int o] is the position of [o] in the declaration order of {!t}, counting
@@ -149,6 +149,11 @@ val to_int : t -> int
 val name : t -> string
 (** [name o] is the name of [o] in upper case, words separated by underscores:
     ["ADD"], ["CONTIGUOUS_BACKWARD"]. *)
+
+val of_string : string -> (t, string) result
+(** [of_string s] is the operation whose {!name} is [s], case included:
+    [of_string "ADD"] is [Ok Add], and [of_string "add"] and
+    [of_string "Ops.ADD"] are errors. The error names [s]. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats an operation as ["Ops."] followed by its {!name}: [Ops.ADD]. *)
@@ -173,16 +178,16 @@ module Set : sig
   (** [mem o s] is [true] iff [o] is in [s]. *)
 
   val union : t -> t -> t
-  (** [union s s'] is the set of the operations in [s] or in [s']. *)
+  (** [union s0 s1] is the set of the operations in [s0] or in [s1]. *)
 
   val diff : t -> t -> t
-  (** [diff s s'] is the set of the operations in [s] and not in [s']. *)
+  (** [diff s0 s1] is the set of the operations in [s0] and not in [s1]. *)
 
   val to_list : t -> op list
   (** [to_list s] is the operations of [s] in declaration order. *)
 
   val equal : t -> t -> bool
-  (** [equal s s'] is [true] iff [s] and [s'] have the same operations. *)
+  (** [equal s0 s1] is [true] iff [s0] and [s1] have the same operations. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a set as its operations in declaration order, between braces

@@ -251,6 +251,12 @@ let to_int o = fst (info o)
 let name o = snd (info o)
 let equal (o : t) o' = o = o'
 let compare o o' = Int.compare (to_int o) (to_int o')
+
+let of_string s =
+  match List.find_opt (fun o -> String.equal (name o) s) ops with
+  | Some o -> Ok o
+  | None -> Error (Printf.sprintf "%S is not an operation" s)
+
 let pp ppf o = Format.fprintf ppf "Ops.%s" (name o)
 
 (* Sets *)
