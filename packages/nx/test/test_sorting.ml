@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Sorting and selection, against a stable sort of each lane. *)
+(* Sorting and selection, against a stable sort of each lane in the sort order:
+   NaN above every number, and -0 below +0; descending is its exact reverse. *)
 
 open Windtrap
 open Nx_test
@@ -95,7 +96,7 @@ let sortables =
         pp = (fun ppf v -> Format.fprintf ppf "%lu" v);
       };
     (* Complex numbers order by real part, then imaginary part, each with -0
-       before +0; NaN in either part sorts last. *)
+       before +0; one with a NaN part ranks as a NaN. *)
     S
       {
         name = "complex128";
@@ -138,16 +139,18 @@ let sortables =
       };
   ]
 
-(* The positions of a stable sort of [lane]: NaN last in either direction. *)
+(* The positions of a stable sort of [lane] in the sort order, every NaN equal
+   to every other and above every number, or in its reverse. *)
 let stable_order ~descending compare is_nan lane =
-  let key i j =
-    match (is_nan lane.(i), is_nan lane.(j)) with
+  let order a b =
+    match (is_nan a, is_nan b) with
     | true, true -> 0
     | true, false -> 1
     | false, true -> -1
-    | false, false ->
-        if descending then compare lane.(j) lane.(i)
-        else compare lane.(i) lane.(j)
+    | false, false -> compare a b
+  in
+  let key i j =
+    if descending then order lane.(j) lane.(i) else order lane.(i) lane.(j)
   in
   Array.of_list (List.stable_sort key (List.init (Array.length lane) Fun.id))
 
@@ -192,6 +195,34 @@ let sorts_as_a_stable_sort (S s) ~shape =
         equal (Ref.witness int64) (Ref.map Int64.of_int order) (Ref.of_nx i);
         equal (tensor int64) i (Nx.argsort ~descending ~axis t))
 
+(* A tensor of [dtype] and one of its axes. *)
+let with_axis ~pp dtype value =
+  let open Gen in
+  let* t = viewed ~shape ~pp dtype value in
+  let+ axis = int_range 0 (Nx.ndim t - 1) in
+  (t, axis)
+
+(* A descending sort is the exact reverse of the ascending one: the values
+   reversed, NaN payloads aside (two NaNs tie, and each direction keeps them in
+   input order). Complex numbers are left out: two with NaN in different parts
+   tie but differ as values. *)
+let reverses (S s) =
+  prop (s.name ^ " a descending sort is the ascending sort reversed")
+    (with_axis ~pp:s.pp s.dtype s.value) (fun (t, axis) ->
+      equal (tensor s.exact)
+        (Nx.flip ~axes:[ axis ] (fst (Nx.sort ~axis t)))
+        (fst (Nx.sort ~descending:true ~axis t)))
+
+(* A descending integer argsort is the ascending argsort of the complement,
+   which reverses the order of an integer of either signedness. *)
+let complements (S s) =
+  prop
+    (s.name ^ " a descending argsort is the ascending argsort of the complement")
+    (with_axis ~pp:s.pp s.dtype s.value) (fun (t, axis) ->
+      equal (tensor int64)
+        (Nx.argsort ~axis (Nx.bitwise_not t))
+        (Nx.argsort ~descending:true ~axis t))
+
 let sorts =
   group "sort"
     (List.concat_map
@@ -199,11 +230,22 @@ let sorts =
          [
            sorts_as_a_stable_sort sortable ~shape
              (s.name
-            ^ " sorts each lane stably, NaN last, and returns the positions");
+            ^ " sorts each lane stably in the sort order or its reverse, and \
+               returns the positions");
            sorts_as_a_stable_sort sortable ~shape:long_lanes
              (s.name ^ " sorts long lanes as a stable sort does");
          ])
        sortables
+    @ List.filter_map
+        (fun (S s as sortable) ->
+          if s.name = "complex128" then None else Some (reverses sortable))
+        sortables
+    @ List.filter_map
+        (fun (S s as sortable) ->
+          if List.mem s.name [ "int8"; "uint16"; "int32"; "uint32"; "uint64" ]
+          then Some (complements sortable)
+          else None)
+        sortables
     @ [
         test "-0 sorts before +0, and after it descending" (fun () ->
             let t = Nx.create Nx.float32 [| 4 |] [| 0.; -0.; 0.; -0. |] in
@@ -214,6 +256,33 @@ let sorts =
             in
             check ~descending:false [| -0.; -0.; 0.; 0. |] [| 1L; 3L; 0L; 2L |];
             check ~descending:true [| 0.; 0.; -0.; -0. |] [| 0L; 2L; 1L; 3L |]);
+        test
+          "NaN sorts last ascending and first descending, keeping its input \
+           order and bits" (fun () ->
+            let t =
+              Nx.bitcast Nx.float32
+                (Nx.create Nx.int32 [| 5 |]
+                   [|
+                     Int32.bits_of_float 1.;
+                     0x7fc00001l;
+                     Int32.bits_of_float (-0.);
+                     0xffc00002l;
+                     0l;
+                   |])
+            in
+            let check ~descending values indices =
+              let v, i = Nx.sort ~descending t in
+              equal ~msg:"bits" (array int32) values
+                (Nx.to_array (Nx.bitcast Nx.int32 v));
+              equal ~msg:"indices" (array int64) indices (Nx.to_array i)
+            in
+            let one = Int32.bits_of_float 1. and neg_zero = Int32.min_int in
+            check ~descending:false
+              [| neg_zero; 0l; one; 0x7fc00001l; 0xffc00002l |]
+              [| 2L; 4L; 0L; 1L; 3L |];
+            check ~descending:true
+              [| 0x7fc00001l; 0xffc00002l; one; 0l; neg_zero |]
+              [| 1L; 3L; 0L; 4L; 2L |]);
         test "sort refuses an axis out of bounds" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.sort ~axis:1 (Nx.zeros Nx.float32 [| 3 |])));
@@ -290,10 +359,26 @@ let top_ks =
                   (Array.sub (Nx.to_array v) 0 2);
                 equal ~msg (array int64) [| 3L; 1L |]
                   (Array.sub (Nx.to_array i) 0 2);
-                equal ~msg int64
-                  (Nx.item [] (Nx.argmax t))
-                  (Nx.item [ 0 ] (snd (Nx.top_k ~k:1 t))))
+                equal ~msg int64 (Nx.item [] (Nx.argmax t)) (Nx.item [ 0 ] i))
               [ (2, 5); (9, 100); (9, 3000) ]);
+        test "top_k puts NaN first and agrees with argmax, on each path"
+          (fun () ->
+            List.iter
+              (fun (k, n) ->
+                let xs = Array.make n (-1.) in
+                xs.(1) <- Float.nan;
+                xs.(2) <- 0.;
+                xs.(3) <- Float.nan;
+                let t = Nx.create Nx.float32 [| n |] xs in
+                let msg = Printf.sprintf "k = %d of %d" k n in
+                let v, i = Nx.top_k ~k t in
+                equal ~msg (array float_exact)
+                  [| Float.nan; Float.nan; 0. |]
+                  (Array.sub (Nx.to_array v) 0 3);
+                equal ~msg (array int64) [| 1L; 3L; 2L |]
+                  (Array.sub (Nx.to_array i) 0 3);
+                equal ~msg int64 (Nx.item [] (Nx.argmax t)) (Nx.item [ 0 ] i))
+              [ (3, 5); (9, 100); (9, 3000) ]);
         test
           "top_k refuses a scalar, an axis out of bounds and a k past the axis"
           (fun () ->

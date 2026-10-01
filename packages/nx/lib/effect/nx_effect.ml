@@ -995,8 +995,10 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
    reading, which nx answers itself. A kind names the function among the
    operations of one constructor. *)
 
-(* The two dtype conversions: [Cast] converts values, [Bitcast] reads the bits
-   of each element as one of another dtype of its width. *)
+(* The two dtype conversions: [Cast] converts values, and [Bitcast] reads the
+   elements' bytes in row-major order as elements of another dtype, consuming a
+   last axis of [k] when it is [k] times wider and adding one when it is [k]
+   times narrower. *)
 type conversion = Cast | Bitcast
 
 module Op = struct
@@ -1133,7 +1135,7 @@ module Op = struct
         -> ('a, 'b) Types.t t
     | Move : ('a, 'b) Types.t * move -> ('a, 'b) Types.t t
     | Place : placement * ('a, 'b) Types.t -> ('a, 'b) Types.t t
-    | Read : ('a, 'b) Types.t -> Nx_device.Buffer.t t
+    | Read : { by : string; x : ('a, 'b) Types.t } -> Nx_device.Buffer.t t
 
   let name : type r. r t -> string =
    fun op ->
@@ -1265,7 +1267,7 @@ module Op = struct
     | Solve_triangular { a; b; _ } -> [ P a; P b ]
     | Move (x, _) -> [ P x ]
     | Place (_, x) -> [ P x ]
-    | Read x -> [ P x ]
+    | Read { x; _ } -> [ P x ]
 
   let pp ppf op =
     let operand ppf (P x) =
@@ -1512,9 +1514,16 @@ let routing : type r. r Op.t -> routing =
   let computes rule = Computes (rule, Op.operands op) in
   let along_axes axes = computes (Along axes) in
   match[@warning "@4@8"] op with
-  | Unary _ | Binary _ | Compare _ | Where _ | Convert _ | Threefry _
-  | Contiguous _ ->
+  | Unary _ | Binary _ | Compare _ | Where _
+  | Convert (Cast, _, _)
+  | Threefry _ | Contiguous _ ->
       computes Elementwise
+  | Convert (Bitcast, dt, x) ->
+      (* A widening reads each run of the last axis as one element, so the axis
+         must be whole on each device. *)
+      if Nx_dtype.itemsize dt > Nx_dtype.itemsize (dtype x) then
+        along_axes [ rank (P x) - 1 ]
+      else computes Elementwise
   | Reduce (_, axes, _) -> computes (Reduce { axes; keepdims = false })
   | Arg_reduce (_, axis, _) ->
       computes (Reduce { axes = [| axis |]; keepdims = false })
@@ -1540,7 +1549,7 @@ let routing : type r. r Op.t -> routing =
   | Solve_triangular { a; _ } -> along_axes (matrix_axes a)
   | Move (x, m) -> Moves (P x, m)
   | Place (p, _) -> Places p
-  | Read x -> Reads (P x)
+  | Read { x; _ } -> Reads (P x)
 
 (* Where a computing operation runs. *)
 let route_of : type r. r Op.t -> route =
@@ -1842,6 +1851,15 @@ let pad_shape padding s =
       d + before + after)
     s
 
+(* The shape of [shape]'s elements of [src] read as [dst]: a [k] times wider
+   [dst] consumes the last axis, of [k], and a [k] times narrower one adds a
+   last axis of [k]. *)
+let bitcast_shape src dst shape =
+  let w = Nx_dtype.itemsize src and w' = Nx_dtype.itemsize dst in
+  if w' > w then Array.sub shape 0 (Array.length shape - 1)
+  else if w' < w then Array.append shape [| w / w' |]
+  else shape
+
 let cat_shape axis = function
   | [] -> invalid_arg "Nx.concatenate: no value to concatenate"
   | s :: _ as shapes ->
@@ -1914,7 +1932,8 @@ let result_shape : type a b. (a, b) t Op.t -> int array =
   | Argsort { x; _ } -> s x
   | Pad (padding, _, x) -> pad_shape padding (s x)
   | Cat (axis, xs) -> cat_shape axis (List.map s xs)
-  | Convert (_, _, x) -> s x
+  | Convert (Cast, _, x) -> s x
+  | Convert (Bitcast, dt, x) -> bitcast_shape (dtype x) dt (s x)
   | Threefry (_, ctr) -> s ctr
   | Gather (_, indices, _) -> s indices
   | Scatter { into; _ } -> s into
@@ -2098,19 +2117,6 @@ let k_cast ((module K) : kernels) dtype a =
   K.cast a ~dst;
   dst
 
-(* Equal widths keep every element at its offset: the view is kept, over the
-   same memory read at the new format. *)
-let bitcast_array (type a b c d) (dtype : (c, d) Nx_dtype.t)
-    (a : (a, b) Nx_array.t) : (c, d) Nx_array.t =
-  {
-    dtype;
-    view = a.view;
-    buffer =
-      Nx_device.Buffer.view a.buffer ~offset:0
-        (Nx_dtype.Scalar.of_dtype dtype)
-        (Nx_device.Buffer.length a.buffer);
-  }
-
 let k_threefry ((module K) : kernels) key ctr =
   let dst = alloc Nx_dtype.Int32 (shape_of ctr) in
   K.threefry key ctr ~dst;
@@ -2169,6 +2175,51 @@ let k_contiguous ((module K) : kernels) a =
   let dst = alloc a.dtype (shape_of a) in
   K.contiguous a ~dst;
   dst
+
+(* [bitcast_array dtype a] is [a]'s bytes read as elements of [dtype]: at [a]'s
+   width, the same view; [k] times narrower, each element as [k] along a new
+   last axis; [k] times wider, each run of [k] along the last axis, of [k], as
+   one element: a view of [a]'s memory when [a] is C-contiguous from a first
+   element aligned to [dtype]'s width, and of a C-contiguous copy of [a]
+   otherwise. *)
+let bitcast_array (type a b c d) (dtype : (c, d) Nx_dtype.t)
+    (a : (a, b) Nx_array.t) : (c, d) Nx_array.t =
+  let w = Nx_dtype.itemsize a.dtype and w' = Nx_dtype.itemsize dtype in
+  let over (a : (a, b) Nx_array.t) view : (c, d) Nx_array.t =
+    let n = Nx_device.Buffer.nbytes a.buffer / w' in
+    let scalar = Nx_dtype.Scalar.of_dtype dtype in
+    { dtype; view; buffer = Nx_device.Buffer.view a.buffer ~offset:0 scalar n }
+  in
+  let v = a.view in
+  if w' = w then over a v
+  else if w' < w then
+    let k = w / w' in
+    over a
+      (View.create
+         ~offset:(View.offset v * k)
+         ~strides:(Array.append (Array.map (( * ) k) (View.strides v)) [| 1 |])
+         (Array.append (View.shape v) [| k |]))
+  else
+    let k = w' / w in
+    let first = View.offset v * w in
+    let aligned =
+      Nativeint.(
+        rem (add (Nx_device.Buffer.address a.buffer) (of_int first)) (of_int w'))
+      = 0n
+    in
+    let a, first =
+      if View.is_c_contiguous v && aligned then (a, first)
+      else (k_contiguous cpu a, 0)
+    in
+    let s = View.shape a.view in
+    {
+      dtype;
+      view = View.create (Array.sub s 0 (Array.length s - 1));
+      buffer =
+        Nx_device.Buffer.view a.buffer ~offset:first
+          (Nx_dtype.Scalar.of_dtype dtype)
+          (View.numel a.view / k);
+    }
 
 let k_cholesky ((module K) : kernels) upper a =
   let dst = alloc a.dtype (shape_of a) in
@@ -2478,7 +2529,7 @@ let direct : type r. r Op.t -> r =
       direct_solve_triangular upper transpose unit_diag a b
   | Move (x, m) -> moved x m
   | Place (p, x) -> move_to p x
-  | Read x -> read_elements_of x
+  | Read { x; _ } -> read_elements_of x
 
 (* Interception
 
@@ -2661,9 +2712,11 @@ let flip x dims = move x (Flip dims)
 let sliding_window x ~axis ~window ~step =
   move x (Window { axis; size = window; step })
 
-(* The elements of [x]'s view in C order, in a host buffer. The storage of a
-   host value that is contiguous from its first element is that buffer. *)
-let read x = if intercepting () then perform (Read x) else read_elements_of x
+(* The elements of [x]'s view in C order, in a host buffer, read by the surface
+   function [by]. The storage of a host value that is contiguous from its first
+   element is that buffer. *)
+let read ~by x =
+  if intercepting () then perform (Read { by; x }) else read_elements_of x
 
 (* A value already at [p] is returned as it is. *)
 let place (type a b) p (x : (a, b) t) : (a, b) t =
@@ -2733,9 +2786,9 @@ let from_host (ctx : context) dtype buffer =
 
 (* The host buffer of exactly [x]'s elements in C order: its storage when it is
    contiguous on the host. A placed value's read is its view's elements. *)
-let elements x =
+let elements ~by x =
   let x = match x with Placed _ -> x | Host _ | Traced _ -> contiguous x in
-  let b = read x in
+  let b = read ~by x in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b)
     (View.numel (view x))
 

@@ -61,8 +61,9 @@ val take : Ops.t -> int -> Ops.t -> Ops.t
 
 val argsort : descending:bool -> axis:int -> Ops.t -> Ops.t
 (** [argsort ~descending ~axis x] is the positions that sort [x] along [axis],
-    ascending unless [descending]. The sort is stable, [-0.] sorts before [+0.]
-    ascending, and NaN sorts last in either direction. *)
+    in nx's sort order, or its exact reverse when [descending]. The sort is
+    stable in both directions, [-0.] sorts before [+0.] ascending, and every NaN
+    sorts above every number: last ascending, first descending. *)
 
 val sort : descending:bool -> axis:int -> Ops.t -> Ops.t
 (** [sort ~descending ~axis x] is the elements of [x] along [axis] in the order

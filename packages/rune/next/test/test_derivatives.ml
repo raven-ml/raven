@@ -953,8 +953,8 @@ let error_cases =
       fun () ->
         snd (Rune.jvp' (sin_with_pullback 1.) (vec [| 1. |]) (vec [| 1. |])) );
     ( "a lane read inside vmap",
-      "Rune: cannot read the value of a batched tensor inside vmap; return it \
-       from the mapped function instead",
+      "Nx.item: cannot read the value of a batched tensor inside vmap; return \
+       it from the mapped function instead",
       fun () ->
         Rune.vmap'
           (fun x ->

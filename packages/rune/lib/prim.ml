@@ -58,4 +58,3 @@ let sliding_window x ~axis ~window ~step =
   move x (Window { axis; size = window; step })
 
 let place p x = eval (Place (p, x))
-let read x = eval (Read x)

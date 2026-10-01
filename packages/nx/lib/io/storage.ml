@@ -11,13 +11,13 @@ let tensor dtype buffer shape =
   let view = Nx_array.View.create [| B.length buffer |] in
   Nx.reshape shape (Nx.Repr.host { Nx_array.dtype; view; buffer })
 
-(* The elements of [x] in C order, in a host buffer: its storage when it is
-   contiguous on the host. *)
-let elements x =
+(* The elements of [x] in C order, in a host buffer, read by the function [by]:
+   its storage when it is contiguous on the host. *)
+let elements ~by x =
   let x =
     match Nx.Repr.v x with Placed _ -> x | Host _ | Traced _ -> Nx.contiguous x
   in
-  let b = Nx.Op.eval (Read x) in
+  let b = Nx.Op.eval (Read { by; x }) in
   B.view b ~offset:0 (B.dtype b) (Nx.numel x)
 
 (* The buffer of exactly [x]'s elements in C order, without a copy, when there

@@ -138,13 +138,13 @@ let of_host dt buf shape =
   let view = Nx_array.View.create [| Nx_device.Buffer.length buf |] in
   Nx.reshape shape (Nx.Repr.host { Nx_array.dtype = dt; view; buffer = buf })
 
-(* The elements of [x] in C order, in a host buffer: its storage when it is
-   contiguous on the host. *)
-let elements x =
+(* The elements of [x] in C order, in a host buffer, read by the function [by]:
+   its storage when it is contiguous on the host. *)
+let elements ~by x =
   let x =
     match Nx.Repr.v x with Placed _ -> x | Host _ | Traced _ -> Nx.contiguous x
   in
-  let b = Nx.Op.eval (Read x) in
+  let b = Nx.Op.eval (Read { by; x }) in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel x)
 
 (* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
@@ -192,7 +192,9 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
       let codes = matrix lead codes j and scales = matrix lead scales j in
       chunks n k (fun r0 r ->
           let values = decode (range r0 r codes) (range r0 r scales) in
-          let src = bytes (elements (Nx.cast dt values)) in
+          let src =
+            bytes (elements ~by:"Nx_quant.dequant" (Nx.cast dt values))
+          in
           Bigarray.Array1.blit src
             (Bigarray.Array1.sub dst
                (((j * n) + r0) * k * item)
@@ -316,9 +318,13 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
     | Some ids ->
         let p = wr - 3 and is = Nx.shape ids in
         let lanes = Array.sub ws 0 p and e = ws.(p) in
-        let values = lazy (Nx.to_array ids) in
+        let values =
+          lazy
+            (Nx_array.Elements.get Nx_dtype.int64
+               (elements ~by:"Nx_quant.apply" ids))
+        in
         let matrix_at idx =
-          let id = (Lazy.force values).(locate is idx) in
+          let id = (Lazy.force values) (locate is idx) in
           if Int64.compare id 0L < 0 || Int64.compare id (Int64.of_int e) >= 0
           then -1
           else (locate lanes (Array.sub idx 0 p) * e) + Int64.to_int id
@@ -382,14 +388,16 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
                     (decoded r0 r)
                 in
                 sum := Some (match !sum with None -> p | Some s -> Nx.add s p));
-            let src = floats (elements (Option.get !sum)) in
+            let src =
+              floats (elements ~by:"Nx_quant.apply" (Option.get !sum))
+            in
             Bigarray.Array1.blit src
               (Bigarray.Array1.sub dst (!base * m * k) (g * m * k))
           end
           else
             chunks n k (fun r0 r ->
                 let p = Nx.matmul rows (Nx.matrix_transpose (decoded r0 r)) in
-                let src = floats (elements p) in
+                let src = floats (elements ~by:"Nx_quant.apply" p) in
                 for q = 0 to (g * m) - 1 do
                   Bigarray.Array1.blit
                     (Bigarray.Array1.sub src (q * r) r)

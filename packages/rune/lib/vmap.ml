@@ -300,11 +300,12 @@ let rec install : type a. state -> (unit -> a) -> a =
                (to_batched st y target))
         else eval op
     (* A lane has no bytes of its own: its batched tensor holds every lane's. *)
-    | Read x ->
+    | Read { by; x } ->
         if b x then
           invalid_arg
-            "Rune: cannot read the value of a batched tensor inside vmap; \
-             return it from the mapped function instead"
+            (by
+           ^ ": cannot read the value of a batched tensor inside vmap; return \
+              it from the mapped function instead")
         else eval op
     (* Placement: the batch axis sits in front of a split axis. *)
     | Place (q, x) ->

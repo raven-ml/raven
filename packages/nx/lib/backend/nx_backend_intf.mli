@@ -193,8 +193,11 @@ module type S = sig
     dst:index_array ->
     unit
   (** [argsort ~descending ~axis x ~dst] writes the positions that sort [x]
-      along [axis] into [dst]. The sort is stable, [-0] orders below [+0], and
-      NaNs come last in either direction. *)
+      along [axis] into [dst], stably, in nx's sort order or, when [descending],
+      its exact reverse. The sort order puts [-0] below [+0] and every NaN,
+      equal to every other, above every number, and orders a complex number by
+      its real part, then its imaginary part; a complex number with a NaN part
+      ranks as a NaN. So NaN comes last ascending and first descending. *)
 
   (** {1:assembly Assembly} *)
 

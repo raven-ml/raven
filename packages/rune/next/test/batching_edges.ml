@@ -102,7 +102,7 @@ let reads =
     test "reading a lane raises" (fun () ->
         raises
           (Invalid_argument
-             "Rune: cannot read the value of a batched tensor inside vmap; \
+             "Nx.item: cannot read the value of a batched tensor inside vmap; \
               return it from the mapped function instead") (fun () ->
             Rune.vmap' (fun x -> Nx.mul_s x (Nx.item [] x)) data));
     test "reading a constant inside a map computes" (fun () ->

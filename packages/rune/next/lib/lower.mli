@@ -113,10 +113,12 @@ val op : scope -> 'r Nx.Op.t -> 'r
     [Read] of a value that is not traced is answered in the enclosing
     interpretation.
 
-    Raises [Jit_error] for [Read] of a traced value, for an operation or a dtype
-    that a device of the result cannot compute, and for a placement over a grid
-    that is not one axis of devices. Raises [Invalid_argument] where nx does for
-    operands that cannot meet, and for two devices of one name. *)
+    Raises [Jit_error] for [Read] of a traced value, with a message that starts
+    with the name of the function that reads ([Nx.Op.Read]'s [by]), for an
+    operation or a dtype that a device of the result cannot compute, and for a
+    placement over a grid that is not one axis of devices. Raises
+    [Invalid_argument] where nx does for operands that cannot meet, and for two
+    devices of one name. *)
 
 val param : scope -> slot:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [param s ~slot x] is the traced value that stands for [x] in [s]: at [x]'s

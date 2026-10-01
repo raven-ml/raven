@@ -1022,11 +1022,6 @@ let extreme ~op ~axes t =
     let keys, values = order_keys ~nan t in
     values (reduce ~axis:axes ~keepdim:false keys)
 
-(* The keys a sort orders: NaN after every number in either direction, and -0
-   before +0 ascending. *)
-let sort_keys ~descending x =
-  order_keys ~nan:(if descending then `Least else `Greatest) x
-
 (* Whether [st]'s device computes int64 natively, which the packed sort
    needs. *)
 let packs st =
@@ -1049,9 +1044,10 @@ let bit_length n =
    pass's order, and being stable it keeps that order among equal high halves.
    The packed integers get a kernel of their own: fused into the padding of an
    axis that is not a power of two, the positions' arange no longer folds to an
-   index and costs n^2 work. *)
+   index and costs n^2 work. The keys put NaN above every number and -0 below
+   +0; a descending sort reverses them. *)
 let argsort_graph ~packs ~dim ~descending x =
-  let keys, _ = sort_keys ~descending x in
+  let keys, _ = order_keys ~nan:`Greatest x in
   let key_dtype = F.Tensor.dtype keys in
   let shape = F.Tensor.shape x in
   let dim = if dim < 0 then dim + List.length shape else dim in
@@ -1102,7 +1098,7 @@ let sort_graph ~packs ~dim ~descending x =
     F.Op.gather x ~dim
       (F.Dtype_ops.cast (argsort_graph ~packs ~dim ~descending x) TD.int32)
   else
-    let keys, values = sort_keys ~descending x in
+    let keys, values = order_keys ~nan:`Greatest x in
     values (fst (F.Op.sort ~dim ~descending keys))
 
 (* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
@@ -1997,7 +1993,9 @@ let update_graph : type a b.
   let along ax = List.init rank (fun d -> if d = ax then -1 else 1) in
   if rank = 0 then tv
   else if not (is_traced starts) then begin
-    let start = Nx_array.Elements.get ND.int64 (Nx_effect.read starts) in
+    let start =
+      Nx_array.Elements.get ND.int64 (Nx_effect.read ~by:"Rune.jit" starts)
+    in
     let sv = Nx_effect.view starts in
     let s k = Int64.to_int (start (NV.offset sv + (k * (NV.strides sv).(0)))) in
     let pads =
@@ -2184,13 +2182,13 @@ let rec install : type a. state -> (unit -> a) -> a =
     (* Reading data is allowed only for tensors whose bytes are real (constants
        created during the trace); reading a traced value would burn data into
        the compiled program. *)
-    | Read x ->
+    | Read { by; x } ->
         if is_traced x then
           raise
             (Jit_error
-               "Rune.jit: the value of a traced tensor was read during jit \
-                tracing (item, to_host, or a data-dependent branch); jitted \
-                code cannot branch on tensor values")
+               (by
+              ^ ": cannot read the value of a traced tensor inside jit; return \
+                 it from the compiled function instead"))
         else eval op
     (* Reductions. The accumulator dtype is pinned to the input's so results
        match eager execution. *)
@@ -2276,6 +2274,8 @@ let rec install : type a. state -> (unit -> a) -> a =
     | Convert (Cast, dtype, x) ->
         ret dtype (F.Dtype_ops.cast (go x) (tolk_dtype dtype))
     | Convert (Bitcast, dtype, x) ->
+        if ND.itemsize dtype <> ND.itemsize (dt x) then
+          refuse "a bitcast between widths";
         ret dtype (F.Dtype_ops.bitcast (go x) (tolk_dtype dtype))
     (* A written buffer is contiguous storage already, and a copy of it would
        copy it out; a broadcast constant needs no storage in a program. Either
@@ -2809,7 +2809,7 @@ let wrap_tensor : type a b. (a, b) Nx_effect.t -> Tolk.Device.Buffer.t option =
   if not (NV.is_c_contiguous v) then None
   else
     let dt = Nx_effect.dtype x in
-    let host = Nx_effect.read x in
+    let host = Nx_effect.read ~by:"Rune.jit" x in
     let ptr =
       Nativeint.add (HB.address host)
         (Nativeint.of_int (NV.offset v * ND.itemsize dt))
@@ -2946,7 +2946,7 @@ let rec copyin_at : type a b.
     match if on_disk x then Nx_effect.run x else None with
     | Some run -> read_disk sc buf ~off run
     | None when NV.is_c_contiguous v && not (on_disk x) ->
-        let host = Nx_effect.read x in
+        let host = Nx_effect.read ~by:"Rune.jit" x in
         let chunk = chunk_bytes / item in
         let n = numel shape in
         let pos = ref 0 in

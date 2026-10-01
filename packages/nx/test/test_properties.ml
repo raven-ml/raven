@@ -167,8 +167,6 @@ let iteration =
           equal (list int32) (Array.to_list (Nx.to_array t)) (List.rev !seen));
     ]
 
-let bits = Gen.map Int32.float_of_bits Gen.int32
-
 let casts =
   group "casts"
     [
@@ -186,31 +184,6 @@ let casts =
       test "cast to the tensor's own dtype is the tensor" (fun () ->
           let t = Nx.zeros Nx.float32 [| 3 |] in
           is_true (Nx.cast Nx.float32 t == t));
-      prop
-        "bitcast from float32 to int32 reads each element's bits, in its place"
-        (Gen.array ~size:(Gen.constant 6) bits)
-        (fun xs ->
-          assume (Array.for_all (fun x -> not (Float.is_nan x)) xs);
-          let t = Nx.transpose (Nx.create Nx.float32 [| 2; 3 |] xs) in
-          equal (tensor int32)
-            (Nx.transpose
-               (Nx.create Nx.int32 [| 2; 3 |]
-                  (Array.map Int32.bits_of_float xs)))
-            (Nx.bitcast Nx.int32 t));
-      prop "bitcast to int32 and back keeps every float32, NaN included"
-        (Gen.array ~size:(Gen.int_range 0 6) bits)
-        (fun xs ->
-          Law.round_trip (tensor float_exact) (tensor int32)
-            (Nx.bitcast Nx.int32) (Nx.bitcast Nx.float32)
-            (Nx.create Nx.float32 [| Array.length xs |] xs));
-      test "bitcast refuses dtypes of other widths, bool, and packed int4"
-        (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.bitcast Nx.int16 (Nx.zeros Nx.float32 [| 2 |]));
-          raises_invalid_arg (fun () ->
-              Nx.bitcast Nx.bool (Nx.zeros Nx.uint8 [| 2 |]));
-          raises_invalid_arg (fun () ->
-              Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 2 |])));
     ]
 
 (* A float truncated toward zero, held at the ends of the range, NaN at 0. *)
@@ -282,44 +255,130 @@ let integer_casts =
             equal (array float_exact) [| 3. |] (Nx.to_array r));
       ])
 
-(* A bitcast to a dtype of the same width and back keeps every bit. *)
-type same_width = W : string * ('a, 'b) Nx.dtype -> same_width
+(* Bitcasts. Their law is on bytes: the result's elements in row-major order
+   hold the operand's bytes in row-major order, so a round trip in either
+   direction gives the operand back. *)
+
+type target = T : ('a, 'b) Nx.dtype -> target
+
+let targets =
+  [
+    T Nx.uint8;
+    T Nx.uint16;
+    T Nx.float16;
+    T Nx.uint32;
+    T Nx.float32;
+    T Nx.uint64;
+    T Nx.float64;
+    T Nx.complex128;
+  ]
+
+(* Rows of [k] elements from the elements of [k] of [tensors]'s draws, about as
+   many rows as a draw has elements, under a layout that keeps each row
+   whole. *)
+let rows_of k tensors =
+  let drawn =
+    let open Gen in
+    let* ts = list ~size:(constant k) tensors in
+    let+ steps = row_layout in
+    let t = Nx.concatenate ~axis:0 (List.map Nx.flatten ts) in
+    let n = Nx.numel t / k in
+    lay_out steps (Nx.reshape [| n; k |] (Nx.slice [ R (0, n * k) ] t))
+  in
+  Gen.with_pp (fun ppf t -> Stored.pp_packed ppf (Nx.P t)) drawn
+
+let reads_the_bytes (Stored.Case c) (T dt) =
+  let w = Nx_dtype.itemsize c.dtype and w' = Nx_dtype.itemsize dt in
+  let tensors = if w' > w then rows_of (w' / w) c.tensors else c.tensors in
+  prop
+    (Printf.sprintf "bitcast from %s to %s keeps the bytes in row-major order"
+       c.name (Nx_dtype.to_string dt))
+    tensors
+    (fun t ->
+      let _, shape, bytes = Stored.storage (Nx.P t) in
+      let r = Array.length shape in
+      let expected =
+        if w' > w then Array.sub shape 0 (r - 1)
+        else if w' < w then Array.append shape [| w / w' |]
+        else shape
+      in
+      if w' > w then
+        cover "a widening of two rows or more" (Nx.numel t >= 2 * (w' / w));
+      let _, shape', bytes' = Stored.storage (Nx.P (Nx.bitcast dt t)) in
+      equal ~msg:"shape" (array int) expected shape';
+      equal ~msg:"bytes" string bytes bytes')
+
+let shares t u = Nx_test.share_memory (storage t) (storage u)
 
 let bitcasts =
-  let round_trip (type a b) name (source : (a, b) Nx.dtype) (w : a testable)
-      (value : a Gen.t) widths =
-    List.map
-      (fun (W (dname, dt)) ->
-        prop
-          (Printf.sprintf "bitcast from %s to %s and back keeps every bit" name
-             dname)
-          (Gen.array ~size:(Gen.int_range 0 8) value)
-          (fun xs ->
-            let t = Nx.create source [| Array.length xs |] xs in
-            equal (tensor w) t (Nx.bitcast source (Nx.bitcast dt t))))
-      widths
-  in
   group "bitcasts"
-    (round_trip "uint8" Nx.uint8 int (Gen.int_range 0 255)
-       [
-         W ("int8", Nx.int8);
-         W ("float8_e4m3", Nx.float8_e4m3);
-         W ("float8_e5m2", Nx.float8_e5m2);
-       ]
-    @ round_trip "uint16" Nx.uint16 int (Gen.int_range 0 65535)
-        [
-          W ("int16", Nx.int16);
-          W ("float16", Nx.float16);
-          W ("bfloat16", Nx.bfloat16);
-        ]
-    @ round_trip "uint32" Nx.uint32 int32 Gen.int32
-        [ W ("int32", Nx.int32); W ("float32", Nx.float32) ]
-    @ round_trip "uint64" Nx.uint64 int64 Gen.int64
-        [
-          W ("int64", Nx.int64);
-          W ("float64", Nx.float64);
-          W ("complex64", Nx.complex64);
-        ])
+    (List.concat_map
+       (fun (Stored.Case c as case) ->
+         if c.name = "bool" then [] else List.map (reads_the_bytes case) targets)
+       Stored.every
+    @ [
+        test "a bitcast reads a C-contiguous value in place" (fun () ->
+            let t = Nx.create Nx.uint8 [| 3; 8 |] (Array.init 24 Fun.id) in
+            is_true ~msg:"the whole matrix" (shares (Nx.bitcast Nx.uint64 t) t);
+            let rows = Nx.slice [ R (1, 3) ] t in
+            let words = Nx.bitcast Nx.uint64 rows in
+            is_true ~msg:"its last two rows" (shares words rows);
+            equal ~msg:"their words" (array int64)
+              [| 0x0f0e0d0c0b0a0908L; 0x1716151413121110L |]
+              (Nx.to_array words);
+            let f = Nx.transpose (Nx.ones Nx.float32 [| 2; 3 |]) in
+            is_true ~msg:"a narrowing of a transposed value"
+              (shares (Nx.bitcast Nx.uint8 f) f));
+        test
+          "a bitcast copies a widening that is not C-contiguous from an \
+           aligned address" (fun () ->
+            let t = Nx.create Nx.uint8 [| 3; 16 |] (Array.init 48 Fun.id) in
+            let cols =
+              Nx.squeeze ~axes:[ -1 ]
+                (Nx.sliding_window ~axis:1 ~window:1 ~step:2 t)
+            in
+            is_false ~msg:"every other column"
+              (shares (Nx.bitcast Nx.uint64 cols) cols);
+            let bytes = Nx.create Nx.uint8 [| 16 |] (Array.init 16 Fun.id) in
+            let unaligned = Nx.slice [ R (3, 11) ] bytes in
+            let word = Nx.bitcast Nx.uint64 unaligned in
+            is_false ~msg:"eight bytes from the third" (shares word unaligned);
+            equal ~msg:"their word" int64 0x0a09080706050403L (Nx.item [] word));
+        test "a widening is in place exactly from an aligned first element"
+          (fun () ->
+            let ba =
+              Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout 19
+            in
+            for i = 0 to 18 do
+              ba.{i} <- i
+            done;
+            let t =
+              Nx.of_bigarray
+                (Bigarray.genarray_of_array1 (Bigarray.Array1.sub ba 3 16))
+            in
+            let odd = Nx.reshape [| 2; 8 |] t in
+            let words = Nx.bitcast Nx.uint64 odd in
+            is_false ~msg:"from an odd address" (shares words odd);
+            equal ~msg:"their words" (array int64)
+              [| 0x0a09080706050403L; 0x1211100f0e0d0c0bL |]
+              (Nx.to_array words);
+            let even = Nx.slice [ R (5, 13) ] t in
+            is_true ~msg:"from an aligned element at an odd offset"
+              (shares (Nx.bitcast Nx.uint64 even) even));
+        test
+          "bitcast refuses bool, packed int4, and a widening without a last \
+           axis of the ratio" (fun () ->
+            raises_invalid_arg (fun () ->
+                Nx.bitcast Nx.int64 (Nx.zeros Nx.float32 [| 3 |]));
+            raises_invalid_arg (fun () ->
+                Nx.bitcast Nx.int64 (Nx.scalar Nx.float32 0.));
+            raises_invalid_arg (fun () ->
+                Nx.bitcast Nx.uint64 (Nx.zeros Nx.uint8 [| 2; 4 |]));
+            raises_invalid_arg (fun () ->
+                Nx.bitcast Nx.bool (Nx.zeros Nx.uint8 [| 2 |]));
+            raises_invalid_arg (fun () ->
+                Nx.bitcast Nx.int8 (Nx.zeros Nx.int4 [| 2 |])));
+      ])
 
 let () =
   exit

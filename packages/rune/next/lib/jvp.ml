@@ -664,7 +664,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       let x, dx = unwrap i x in
       dual i (eval (Move (x, m))) (eval (Move (viewable m dx, m)))
   | Place (p, x) -> linear x (fun x -> eval (Place (p, x)))
-  | Read x -> eval (Read (primal i x))
+  | Read { by; x } -> eval (Read { by; x = primal i x })
 
 (* Leaves *)
 

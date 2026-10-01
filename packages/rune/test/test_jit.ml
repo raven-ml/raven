@@ -2514,8 +2514,8 @@ let test_take_large_table_matches_eager () =
   let f table = Nx.take ~axis:0 ~indices table in
   check_arr ~msg:"take" (to_arr (f table)) (Rune.jit' f table)
 
-(* NaN sorts after every number in either direction and equal values keep their
-   order, infinities included. The long axis runs through ten network stages.
+(* NaN sorts after every number ascending and before every number descending,
+   and equal values keep their order, infinities included. The long axis runs through ten network stages.
    Each result stacks the sorted values over the indices. *)
 let test_sort_matches_eager () =
   let nan = Float.nan and inf = Float.infinity in
@@ -2638,6 +2638,27 @@ let test_top_k_matches_eager () =
   check_arr ~msg:"top 2 along axis 0"
     (to_arr (along_rows scores))
     (Rune.jit' along_rows scores)
+
+(* A descending selection puts NaN first, compiled as eagerly, through the
+   passes of a small k and the sort of a larger one. *)
+let test_top_k_puts_nan_first () =
+  let scores =
+    Nx.create f32 [| 2; 24 |]
+      (Array.init 48 (fun i ->
+           if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11)))
+  in
+  List.iter
+    (fun k ->
+      let indices x = Nx.cast f32 (snd (Nx.top_k ~k x)) in
+      let eager = indices scores in
+      equal
+        ~msg:(Printf.sprintf "top %d starts at the first NaN" k)
+        float_exact 3.
+        (Nx.item [ 0; 0 ] eager);
+      check_arr ~eps:0.
+        ~msg:(Printf.sprintf "top %d indices" k)
+        (to_arr eager) (Rune.jit' indices scores))
+    [ 2; 17 ]
 
 (* Selection compiles to the positions eager computes: rows of repeated values,
    NaN, both zeros and both infinities, in every dtype family, cut at [k]
@@ -3162,6 +3183,23 @@ let test_captured_views_bind () =
   equal ~msg:"only the input is uploaded" int (Nx.nbytes x) up;
   let (_ : Nx.float32_t), up, _ = delta (fun () -> g x) in
   equal ~msg:"again" int (Nx.nbytes x) up
+
+let test_read_of_traced_value_names_its_function () =
+  raises
+    (Rune.Jit_error
+       "Nx.item: cannot read the value of a traced tensor inside jit; return \
+        it from the compiled function instead") (fun () ->
+      Rune.jit' (fun x -> Nx.scalar f32 (Nx.item [ 0 ] x)) (vec32 [| 1.0 |]))
+
+let test_bitcast_between_widths_is_refused () =
+  let refused f x =
+    raises
+      (Rune.Jit_error
+         "Rune.jit: a bitcast between widths is not supported inside jit; move \
+          it outside the jitted function") (fun () -> Rune.jit' f x)
+  in
+  refused (fun x -> Nx.bitcast Nx.uint64 x) (Nx.zeros Nx.uint8 [| 2; 8 |]);
+  refused (fun x -> Nx.bitcast Nx.uint8 x) (Nx.zeros Nx.uint64 [| 2 |])
 
 (* Reads and moves keep a placed value where it is (RFC 0005, Laws 3 and 4). *)
 let test_item_reads_one_element () =
@@ -5282,6 +5320,8 @@ let tests =
         test "zeros keep their sign" (check_signed_zeros ?devices:None);
         test "element-wise chain matches eager" test_elementwise_matches_eager;
         test "bitcast matches eager" test_bitcast_matches_eager;
+        test "a bitcast between widths is refused"
+          test_bitcast_between_widths_is_refused;
         test "bitcast outputs retain their own dtype"
           (check_bitcast_output_ownership ~devices:[ Nx.Device.host ]);
         test "float8 bitcasts preserve raw bytes through movements"
@@ -5448,6 +5488,7 @@ let tests =
           (check_sort_values_are_elements ?devices:None);
         slow "sort matches eager" test_sort_matches_eager;
         slow "top_k matches eager" test_top_k_matches_eager;
+        slow "top_k puts NaN first, as eager does" test_top_k_puts_nan_first;
         slow "top_k radix select matches eager" test_top_k_radix_matches_eager;
         slow "top_k over a row of 2^20 entries"
           (check_top_k_long_row ?devices:None);
@@ -5483,6 +5524,8 @@ let tests =
           test_place_is_the_identity_under_transformations;
         test "an unbound placed value is consumed" test_place_then_consume;
         test "item reads one element" test_item_reads_one_element;
+        test "a read of a traced value names its function"
+          test_read_of_traced_value_names_its_function;
         test "a move to the host keeps its source"
           test_move_to_host_keeps_its_source;
         test "mixed placements raise" test_mixed_placements_raise;

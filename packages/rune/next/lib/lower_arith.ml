@@ -868,7 +868,11 @@ let cast dt x =
   then Ops.cast (to_float32_odd x) dt
   else Ops.cast x dt
 
-let bitcast dt x = Ops.bitcast x dt
+let bitcast dt x =
+  let w = Dtype.itemsize (dtype x) and w' = Dtype.itemsize dt in
+  if w' > w then Ops.squeeze ~axis:(-1) (Ops.bitcast x dt)
+  else if w' < w then Ops.bitcast (Ops.unsqueeze x (-1)) dt
+  else Ops.bitcast x dt
 
 (* Random bits
 

@@ -748,11 +748,11 @@ let op : type r. scope -> r Nx.Op.t -> r =
       match Repr.v x with
       | Repr.Traced _ -> like x (place s what (Nx.placement x) q x)
       | Repr.Host _ | Repr.Placed _ -> like x (placed s what q x))
-  | Read x -> (
+  | Read { by; x } -> (
       match Repr.v x with
       | Repr.Traced _ ->
           jit_error
-            "a compiled function read the value of a traced tensor (item, \
-             to_host, or a branch on its elements): a compiled program cannot \
-             depend on the values it computes"
+            "%s: cannot read the value of a traced tensor inside jit; return \
+             it from the compiled function instead"
+            by
       | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)

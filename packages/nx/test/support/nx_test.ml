@@ -171,6 +171,23 @@ let layout =
   Gen.with_pp pp_layout
     (Gen.list ~size:(Gen.int_range 0 3) (Gen.of_list layout_steps))
 
+(* Layouts that keep the last axis of a tensor of two axes or more whole:
+   reversed, or rows dropped, skipped or repeated. *)
+let row_layout =
+  let keeps l =
+    List.mem l.name
+      [
+        "flipped";
+        "every other row";
+        "without its first row";
+        "without its last row";
+        "broadcast over a new axis";
+      ]
+  in
+  Gen.with_pp pp_layout
+    (Gen.list ~size:(Gen.int_range 0 2)
+       (Gen.of_list (List.filter keeps layout_steps)))
+
 let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
 (* The view of [t]'s storage: a host value's, or each device's of a placed
@@ -196,7 +213,7 @@ let elements t =
     | Placed _ -> t
     | Host _ | Traced _ -> Nx.contiguous t
   in
-  let b = Nx.Op.eval (Read t) in
+  let b = Nx.Op.eval (Read { by = "Nx_test.elements"; x = t }) in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t)
 
 (* Whether buffers [a] and [b] have a byte of memory in common. *)

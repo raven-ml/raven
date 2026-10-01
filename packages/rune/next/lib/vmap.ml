@@ -224,10 +224,11 @@ let run : type r. t -> r Nx.Op.t -> r =
       lane (eval (Solve_triangular { s with a = b s.a; b = b s.b }))
   | Move (x, mv) -> lane (move m x mv)
   | Place (q, x) -> lane (eval (Place (Nx.Placement.with_leading_axis q, p x)))
-  | Read _ ->
+  | Read { by; _ } ->
       invalid_arg
-        "Rune: cannot read the value of a batched tensor inside vmap; return \
-         it from the mapped function instead"
+        (by
+       ^ ": cannot read the value of a batched tensor inside vmap; return it \
+          from the mapped function instead")
 
 (* Constructs *)
 

@@ -240,6 +240,8 @@ let cases () =
     C (Cat (2, [ x; x; x ]));
     C (Convert (Cast, Nx.int32, x));
     C (Convert (Bitcast, Nx.int32, x));
+    C (Convert (Bitcast, Nx.uint16, x));
+    C (Convert (Bitcast, Nx.float64, Nx.reshape [| 2; 3; 2; 2 |] x));
     C (Threefry (i32 [| 2 |] [| 1l; 2l |], i32 [| 2 |] [| 3l; 4l |]));
     C (Gather (1, i64 [| 2; 2; 4 |] (Array.make 16 1L), x));
     C
@@ -511,7 +513,65 @@ let describing =
               E.dtype (Cat (0, ([] : (float, Nx.float32_elt) Nx.t list)))));
     ]
 
+(* Reads *)
+
+(* An interpreter that claims only reads and records the name each carries. *)
+let naming () =
+  let seen = ref [] in
+  let run : type r. r E.t -> r =
+   fun op ->
+    (match op with Read { by; _ } -> seen := by :: !seen | _ -> ());
+    E.eval op
+  in
+  let claims : type r. r E.t -> bool = function Read _ -> true | _ -> false in
+  ({ E.run; claims }, seen)
+
+let mask = Nx.create Nx.bool [| 3 |] [| true; false; true |]
+let square = Nx.create Nx.float64 [| 2; 2 |] [| 2.; 1.; 1.; 3. |]
+let wide = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 7. |]
+
+let reads =
+  let discard f () = ignore (f ()) in
+  group "reads"
+    [
+      Windtrap.cases ~name:fst "a read names the function the program called"
+        [
+          ("Nx.item", discard (fun () -> Nx.item [ 1 ] x));
+          ("Nx.to_array", discard (fun () -> Nx.to_array x));
+          ("Nx.to_bigarray", discard (fun () -> Nx.to_bigarray x));
+          ("Nx.to_string", discard (fun () -> Nx.to_string x));
+          ("Nx.pp", fun () -> Nx.pp Format.str_formatter x);
+          ("Nx.fold_item", discard (fun () -> Nx.fold_item ( +. ) 0. x));
+          ("Nx.map_item", discard (fun () -> Nx.map_item Fun.id x));
+          ("Nx.iter_item", fun () -> Nx.iter_item ignore x);
+          ("Nx.compress", discard (fun () -> Nx.compress ~condition:mask x));
+          ("Nx.extract", discard (fun () -> Nx.extract ~condition:mask x));
+          ("Nx.nonzero", discard (fun () -> Nx.nonzero x));
+          ("Nx.argwhere", discard (fun () -> Nx.argwhere x));
+          ("Nx.slice", discard (fun () -> Nx.slice [ M mask ] x));
+          ( "Nx.set",
+            discard (fun () ->
+                Nx.set [ M mask ] (Nx.zeros Nx.float32 [| 2 |]) x) );
+          ("Nx.matrix_rank", discard (fun () -> Nx.matrix_rank square));
+          ("Nx.cond", discard (fun () -> Nx.cond square));
+          ("Nx.pinv", discard (fun () -> Nx.pinv square));
+          ( "Nx.lstsq",
+            discard (fun () -> Nx.lstsq wide (Nx.ones Nx.float64 [| 2 |])) );
+          ( "Nx.tensorsolve",
+            discard (fun () ->
+                Nx.tensorsolve
+                  (Nx.zeros Nx.float64 [| 2; 2 |])
+                  (Nx.ones Nx.float64 [| 2 |])) );
+          ( "Nx.tensorinv",
+            discard (fun () -> Nx.tensorinv (Nx.zeros Nx.float64 [| 2; 2 |])) );
+        ]
+        (fun (expected, f) ->
+          let i, seen = naming () in
+          E.intercept i f;
+          equal names [ expected ] (List.sort_uniq String.compare !seen));
+    ]
+
 let () =
   exit
     (run "nx interception"
-       [ extent; asking; failing; unobservable; claiming; describing ])
+       [ extent; asking; failing; unobservable; claiming; describing; reads ])

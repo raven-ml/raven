@@ -121,6 +121,16 @@ let npy =
           let s = read (saved "" save_npy (Nx.P (Nx.zeros Nx.int8 [| 3 |]))) in
           fails (fun () -> Nx_io.load_npy (file "" (s ^ "\000")));
           fails (fun () -> Nx_io.load_npy (fixture "unicode.npy")));
+      test "a save that cannot read its tensor names itself" (fun () ->
+          let run : type r. r Nx.Op.t -> r = function
+            | Read { by; _ } -> invalid_arg by
+            | op -> Nx.Op.eval op
+          in
+          let refusing = { Nx.Op.run; claims = (fun _ -> true) } in
+          let path = temp_file ~suffix:".npy" () in
+          fails ~naming:"Nx_io.save_npy" (fun () ->
+              Nx.Op.intercept refusing (fun () ->
+                  Nx_io.save_npy path (Nx.zeros Nx.int8 [| 3 |]))));
     ]
 
 let npz =

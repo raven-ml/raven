@@ -18,7 +18,8 @@
    writes the positions; sort copies the input's elements at those positions,
    bit for bit. Stability comes from the algorithm, so equal elements keep their
    input order in either direction, NaNs included, and sort's values are
-   exactly the input's elements at argsort's indices. -0 sorts before +0.
+   exactly the input's elements at argsort's indices. -0 sorts before +0 and NaN
+   after every number; a descending sort is the exact reverse, NaN first.
 
    Each slice is read once through its stride into contiguous per-thread
    scratch, sorted there, and written to the (C-contiguous) output.
@@ -49,11 +50,12 @@
      just below +0's;
    - a complex value is two words, its real part's float key above its
      imaginary part's, which orders lexicographically.
-   A descending sort complements the key. Every NaN, and every complex value
-   with a NaN part, takes the greatest key in either direction, so NaNs tie at
-   the end; no number takes that key (its complement would be all ones, a NaN's
-   bits). The NaN test reads the element through the dtype's load, so every
-   float format, fp8 included, is recognised by its own rules. */
+   Every NaN, and every complex value with a NaN part, takes the greatest key,
+   which no number takes (its complement would be all ones, a NaN's bits), so
+   NaNs tie above every number. A descending sort complements every key, a
+   NaN's included, so it orders by the exact reverse of the sort order: NaN
+   first, and +0 before -0. The NaN test reads the element through the dtype's
+   load, so every float format, fp8 included, is recognised by its own rules. */
 
 #define NX_C_DEFINE_FKEY(W)                                                     \
   static inline uint##W##_t nx_c_fkey##W(uint##W##_t b) {                       \
@@ -86,8 +88,9 @@ NX_C_DEFINE_FKEY(64)
   do {                                                                         \
     uint##W##_t b;                                                             \
     memcpy(&b, p, sizeof b);                                                   \
-    key[0] = isnan(nx_c_ld_##sfx(p)) ? (uint##W##_t)~(uint##W##_t)0             \
-                                    : (uint##W##_t)(nx_c_fkey##W(b) ^ flip);   \
+    uint##W##_t up = isnan(nx_c_ld_##sfx(p)) ? (uint##W##_t)~(uint##W##_t)0    \
+                                            : nx_c_fkey##W(b);                 \
+    key[0] = (uint##W##_t)(up ^ flip);                                         \
   } while (0)
 #define NX_C_KEY_NX_C_CAT_COMPLEX(sfx, W, p, flip, key)                         \
   do {                                                                         \
@@ -95,7 +98,7 @@ NX_C_DEFINE_FKEY(64)
     memcpy(&re, p, sizeof re);                                                 \
     memcpy(&im, (const char *)(p) + sizeof re, sizeof im);                     \
     if (isnan(__real__ nx_c_ld_##sfx(p)) || isnan(__imag__ nx_c_ld_##sfx(p))) \
-      key[1] = key[0] = (uint##W##_t)~(uint##W##_t)0;                          \
+      key[1] = key[0] = (uint##W##_t)(~(uint##W##_t)0 ^ flip);                 \
     else {                                                                     \
       key[1] = (uint##W##_t)(nx_c_fkey##W(re) ^ flip);                         \
       key[0] = (uint##W##_t)(nx_c_fkey##W(im) ^ flip);                         \

@@ -101,6 +101,12 @@ let cases : (string * (at -> Nx.packed list)) list =
     ("cast", fun { at } -> [ Nx.P (Nx.cast Nx.float32 (at signed)) ]);
     ("bitcast", fun { at } -> [ Nx.P (Nx.bitcast Nx.int64 (at signed)) ]);
     ("bitcast int32", fun { at } -> [ Nx.P (Nx.bitcast Nx.float32 (at ints)) ]);
+    ( "bitcast narrower",
+      fun { at } -> [ Nx.P (Nx.bitcast Nx.uint16 (at signed)) ] );
+    ( "bitcast wider",
+      fun { at } ->
+        [ Nx.P (Nx.bitcast Nx.complex128 (at (Nx.reshape [| 3; 2 |] signed))) ]
+    );
     ( "a host scalar joining a placed operand",
       fun { at } -> [ Nx.P (Nx.add (at signed) (Nx.scalar Nx.float64 2.)) ] );
     ( "threefry",

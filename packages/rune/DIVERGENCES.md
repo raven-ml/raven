@@ -313,7 +313,7 @@ target's run lands.
 
 - **Reference:** `mixin/rand.py:14` (the key packed as `uint64`),
   `mixin/elementwise.py:457` (`Ops.THREEFRY`).
-- **Raven:** `lower_arith.ml:878` (`threefry`).
+- **Raven:** `lower_arith.ml:882` (`threefry`).
 - **Differs:** nx's words are `int32` pairs along the last axis, the low word
   first; the lowering packs each pair into a `uint64`, hashes, and unpacks.
 - **nx:** `nx_backend_intf.mli`, `threefry`: Threefry-2x32-20, bit-identical under
@@ -361,7 +361,7 @@ target's run lands.
 
 - **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:758`
   (`_split_cumalu`).
-- **Raven:** `lower_reduce.ml:63` (`accumulated`).
+- **Raven:** `lower_reduce.ml:64` (`accumulated`).
 - **Differs:** the lowering adds `+0.` to each float sum it computes, once per
   output, for `Reduce` and `Scan` with `Sum`. A kernel starts a loop's
   accumulator from `+0.`, but sums the terms alone when no loop is left (an
@@ -380,7 +380,7 @@ target's run lands.
 - **Reference:** `mixin/reduce.py:20` (`sum`: the `sum_acc_dtype`
   accumulator, converted back for the narrow floats only), `:47` (`prod`: at
   the operand's dtype).
-- **Raven:** `lower_reduce.ml:63` (`accumulated`).
+- **Raven:** `lower_reduce.ml:64` (`accumulated`).
 - **Differs:** a sum and a product both accumulate in `Dtype.sum_acc`'s type,
   unsigned for the signed integers, and convert once to the operand's dtype.
   tinygrad accumulates signed integers in a signed type, whose overflow C,
@@ -400,7 +400,7 @@ target's run lands.
 
 - **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
   (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
-- **Raven:** `lower_reduce.ml:37` (`keys`, `values`), `:73` (`extreme`).
+- **Raven:** `lower_reduce.ml:38` (`keys`, `values`), `:74` (`extreme`).
 - **Differs:** a float maximum is `Ops.MAX` over integer keys, the bits with a
   negative float's magnitude flipped and every NaN at the greatest key, mapped
   back to floats; a minimum takes the maximum of the keys' complements, every
@@ -419,7 +419,7 @@ target's run lands.
 ### R4. Arg-reductions order keys
 
 - **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
-- **Raven:** `lower_reduce.ml:95` (`argmax`), `:107` (`arg_reduce`).
+- **Raven:** `lower_reduce.ml:96` (`argmax`), `:108` (`arg_reduce`).
 - **Differs:** tinygrad's decomposition runs over R3's keys: the first element
   equal to the maximum of the keys, the first NaN if there is one, and `-0.`
   below `0.`. Over floats, tinygrad's equality with the maximum never holds for
@@ -435,19 +435,20 @@ target's run lands.
 - **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:965`
   (`argsort`).
-- **Raven:** `lower_reduce.ml:129` (`bitonic`), `:191` (`positions`), `:217`
-  (`take`), `:224` (`argsort`), `:246` (`sort`).
-- **Differs:** tinygrad's network sorts R3's keys, NaN at the greatest key
-  ascending and the least descending, each read as the unsigned integer of its
-  width and packed in an `int64` above its position, complemented for a
-  descending sort. Packed integers are distinct, so the network gives the
-  stable order, and the positions are their low bits. A 64-bit key sorts in two
-  such passes, its low half first. The sorted values are the operand's
-  elements at those positions, a one-hot sum over their bits. tinygrad's
-  recovery never matches a NaN, and its network compares floats.
-- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, NaN last in either
-  direction, `-0.` before `0.` ascending, and `sort` is the operand taken
-  along `argsort`, bit for bit.
+- **Raven:** `lower_reduce.ml:130` (`bitonic`), `:192` (`positions`), `:222`
+  (`take`), `:229` (`argsort`), `:248` (`sort`).
+- **Differs:** tinygrad's network sorts R3's keys, NaN at the greatest key in
+  both directions, each read as the unsigned integer of its width and packed in
+  an `int64` above its position, complemented for a descending sort. Packed
+  integers are distinct, so the network gives the stable order, and the
+  positions are their low bits. A 64-bit key sorts in two such passes, its low
+  half first. The sorted values are the operand's elements at those positions,
+  a one-hot sum over their bits. tinygrad's recovery never matches a NaN, and
+  its network compares floats.
+- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, in nx's sort order or
+  its exact reverse when descending (NaN last ascending and first descending,
+  `-0.` before `0.` ascending), and `sort` is the operand taken along
+  `argsort`, bit for bit.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `sorts › *`; the network's kernels by `graph parity ›
@@ -457,7 +458,7 @@ target's run lands.
 
 - **Reference:** `mixin/op.py:289` (`_pad_constant`: a fill equal to 0 is the
   movement's zeros).
-- **Raven:** `lower_index.ml:20` (`pad`).
+- **Raven:** `lower_index.ml:37` (`pad`).
 - **Differs:** a fill of `-0.` is selected on the padding with `where`, as the
   reference fills any other value; the reference takes `-0.` for 0 and pads
   `+0.`.
@@ -470,7 +471,7 @@ target's run lands.
 
 - **Reference:** `mixin/op.py:750` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
-- **Raven:** `lower_index.ml:34` (`cat`).
+- **Raven:** `lower_index.ml:51` (`cat`).
 - **Differs:** each piece is selected with `where` on the stretch it fills; the
   reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
   pieces are dropped first, and pieces of one length are stacked as the
@@ -484,8 +485,8 @@ target's run lands.
 ### I3. Gather over bit patterns
 
 - **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
-- **Raven:** `lower_index.ml:62` (`gather`); `lower_reduce.ml:206` (`bits`),
-  `:213` (`pick`).
+- **Raven:** `lower_index.ml:79` (`gather`); `lower_reduce.ml:207` (`bits`),
+  `:214` (`pick`).
 - **Differs:** the one-hot selection is summed over the elements' bit patterns
   as unsigned integers of their width (booleans as `uint8`) and read back; the
   reference sums the values, which turns a gathered `-0.` into `+0.`. An index
@@ -502,8 +503,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:1077` (`_pre_scatter`), `:1127`
   (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1168`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
-- **Raven:** `lower_index.ml:70` (`scatter`);
-  `lower_reduce.ml:87` (`reduce`).
+- **Raven:** `lower_index.ml:87` (`scatter`);
+  `lower_reduce.ml:88` (`reduce`).
 - **Differs:**
   - `Add`: a position no update reaches is `x`'s element, selected on the
     mask of reached positions; the reference adds `x` to a sum of zeros there,
@@ -533,7 +534,7 @@ target's run lands.
   a corner computed by the program is only reachable as advanced indexing, a
   mask of every window position against every position of `x`, merged by one
   `where` per window position.
-- **Raven:** `lower_index.ml:114` (`update`).
+- **Raven:** `lower_index.ml:131` (`update`).
 - **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
   one-hot selection over bit patterns (I3), and the moved `v` is selected on
   the window's mask; along an axis `v` fills, the start is 0.
@@ -548,9 +549,9 @@ target's run lands.
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:232` (`fold`), `:218` (`cut`), `:156`
+- **Raven:** `lower_index.ml:255` (`fold`), `:241` (`cut`), `:179`
   (`reads_image`);
-  `lower_reduce.ml:87` (`reduce`).
+  `lower_reduce.ml:88` (`reduce`).
 - **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
   in reverse order, a shrink by a pad of zeros, and the copies of the input
   summed, which sums the windows where they overlap, from `+0.`, at `float32`
@@ -573,7 +574,7 @@ target's run lands.
 ### I7. An unfold whose windows along an axis read only padding
 
 - **Reference:** `mixin/op.py:1323` (`pool` of the padded operand).
-- **Raven:** `lower_index.ml:166` (`unfold`), `:156` (`reads_image`).
+- **Raven:** `lower_index.ml:189` (`unfold`), `:179` (`reads_image`).
 - **Differs:** where every window along some axis reads only padding, or the
   axis has no window, every patch is the pad's zeros, and the lowering gives
   zeros of the patches' shape without a kernel. tinygrad pools the padded
@@ -595,7 +596,7 @@ target's run lands.
 - **Reference:** `mixin/op.py:367` (`dot`: `(x * w).sum(-1)`, the products at
   the operands' dtype, summed in `sum_acc_dtype`'s).
 - **Raven:** `lower_linalg.ml:59` (`matmul`), `:55` (`dot`);
-  `lower_reduce.ml:59` (`accumulator`).
+  `lower_reduce.ml:60` (`accumulator`).
 - **Differs:** the operands are converted to `Lower_reduce.accumulator`'s type
   before they are multiplied, and the products summed by `Lower_reduce.reduce`
   (R1, R2) and converted once to the operands' dtype. tinygrad rounds each
@@ -691,7 +692,7 @@ target's run lands.
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:340` (`cholesky`).
+- **Raven:** `lower_linalg.ml:341` (`cholesky`).
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
@@ -713,7 +714,7 @@ target's run lands.
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:375` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:376` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower

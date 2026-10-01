@@ -552,14 +552,18 @@ val default_device : unit -> Nx.Device.t
 (** {1:jit Just-in-time compilation} *)
 
 exception Jit_error of string
-(** Raised when a function cannot be compiled: it read the value of a traced
-    tensor (for example [Nx.item] on a value that depends on the inputs, or a
-    data-dependent branch), it drew random values from a key that does not
-    depend on the inputs (a captured {!Nx.Rng.t}, or a scope opened with
-    [Nx.Rng.with_key] on a constant key — the draw would be a compile-time
-    constant replayed on every call; pass the key as an input instead), or it
-    used an operation the compiler does not support (FFT, the SVD and
-    eigensolvers, complex, int4 and uint4 tensors, a bitcast to or from float8).
+(** Raised when a function cannot be compiled, because:
+    - it read the value of a traced tensor, as [Nx.item] on a value that depends
+      on the inputs, or a branch on such a value, does; the message starts with
+      the name of the function that read, such as ["Nx.item: ..."];
+    - it drew random values from a key that does not depend on the inputs (a
+      captured {!Nx.Rng.t}, or a scope opened with [Nx.Rng.with_key] on a
+      constant key — the draw would be a compile-time constant replayed on every
+      call; pass the key as an input instead);
+    - it used an operation the compiler does not support (FFT, the SVD and
+      eigensolvers, complex, int4 and uint4 tensors, a bitcast between widths or
+      to or from float8).
+
     QR, triangular solves, Cholesky, [solve], and [inv] do compile: they unroll
     at trace time into the fixed number of steps their shapes imply. *)
 

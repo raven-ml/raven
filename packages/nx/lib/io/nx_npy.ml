@@ -10,7 +10,7 @@ let strf = Printf.sprintf
 let npy_to_nx (Npy.P (kind, buffer, shape)) =
   Nx.P (Storage.tensor kind buffer shape)
 
-let nx_to_npy t = Npy.P (Nx.dtype t, Storage.elements t, Nx.shape t)
+let nx_to_npy ~by t = Npy.P (Nx.dtype t, Storage.elements ~by t, Nx.shape t)
 
 (* Uniform exception-to-result conversion *)
 let wrap_exn f =
@@ -27,7 +27,7 @@ let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
 
 let save_npy ?(overwrite = true) path arr =
   wrap_exn @@ fun () ->
-  let packed = nx_to_npy arr in
+  let packed = nx_to_npy ~by:"Nx_io.save_npy" arr in
   (if not overwrite then Npy.write ~exclusive:true packed path
    else
      let temp = Temp_file.sibling path in
@@ -66,7 +66,8 @@ let save_npz ?(overwrite = true) path items =
     let zo = Zip_archive.open_out ~exclusive output in
     try
       List.iter
-        (fun (name, Nx.P nx) -> Zip_archive.add_npy zo name (nx_to_npy nx))
+        (fun (name, Nx.P nx) ->
+          Zip_archive.add_npy zo name (nx_to_npy ~by:"Nx_io.save_npz" nx))
         items;
       Zip_archive.close_out zo
     with exn ->

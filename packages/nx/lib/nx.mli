@@ -1393,18 +1393,34 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     See also {!contiguous}, {!copy}. *)
 
 val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
-(** [bitcast dtype t] reads the bits of each element of [t] as an element of
-    [dtype], without conversion: [t]'s shape, each element keeping its place. It
-    reinterprets, where {!cast} converts values. The bits are read in the
-    machine's byte order, NaN payloads and subnormals included, and the result
-    may share [t]'s storage.
+(** [bitcast dtype t] is [t]'s bytes read as elements of [dtype], without
+    conversion: the result's elements in row-major order hold the bytes of [t]'s
+    elements in row-major order, NaN payloads and subnormals included. It
+    reinterprets, where {!cast} converts values.
 
-    Raises [Invalid_argument] if the two dtypes differ in width, or if either is
-    [bool], whose only bytes are 0 and 1, or [int4] or [uint4], whose elements
-    are packed in pairs. A compiled function (under [Rune.jit]) refuses a
-    bitcast to or from [float8_e4m3] or [float8_e5m2]: the compiler emulates
-    those formats through a wider float, which would change subnormal and
-    infinite bits.
+    The shape follows the two widths. With [k] their ratio:
+    - at equal widths it is [t]'s shape, each element read in its place;
+    - a [dtype] [k] times wider consumes [t]'s last axis, which must have [k]
+      elements: each group of [k] consecutive elements along it is one element
+      of the result;
+    - a [dtype] [k] times narrower adds a last axis of [k]: each element of [t]
+      is [k] elements of the result.
+
+    So a widening and the narrowing back, in either order, give [t] back bit for
+    bit. The bytes are in the machine's byte order: on a little-endian machine,
+    as arm64 and x86_64 are, the first element of a group holds the lowest-order
+    bits of the wider element.
+
+    A host value's result shares its storage, except where [dtype] is wider and
+    [t] is not C-contiguous from an address aligned to [dtype]'s width: it is
+    then read from a C-contiguous copy of [t].
+
+    Raises [Invalid_argument] if either dtype is [bool], whose only bytes are 0
+    and 1, or [int4] or [uint4], whose elements are packed in pairs, or if
+    [dtype] is wider and [t] has no last axis of [k] elements. A compiled
+    function (under [Rune.jit]) refuses a bitcast between widths, and one to or
+    from [float8_e4m3] or [float8_e5m2]: the compiler emulates those formats
+    through a wider float, which would change subnormal and infinite bits.
 
     Reading a float's bits as an integer of its width gives a key that sorts as
     the float does once negative keys have their other bits flipped:
@@ -1414,6 +1430,14 @@ val bitcast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
         let flipped = bitwise_xor bits (scalar int32 Int32.max_int) in
         to_array (where (less_s bits 0l) flipped bits)
       - : int32 array = [|-1069547521l; 0l; 1073741824l|]
+    ]}
+
+    Four bytes read as one [int32], the first byte lowest:
+
+    {@ocaml[
+      # create uint8 [| 2; 4 |] [| 1; 0; 0; 0; 0; 1; 0; 0 |]
+        |> bitcast int32 |> to_array
+      - : int32 array = [|1l; 256l|]
     ]}
 
     See also {!cast}. *)
@@ -2441,16 +2465,33 @@ val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 
     See also {!argmax}. *)
 
-(** {1:sorting Sorting and searching} *)
+(** {1:sorting Sorting and searching}
+
+    Sorting and selection order elements by one order, the {e sort order}:
+    - floats as [neg_infinity < ... < -0. < 0. < ... < infinity < nan], every
+      NaN equal to every other whatever its sign and payload;
+    - [false < true], and integers by value, unsigned ones as unsigned;
+    - complex numbers by real part, then imaginary part, each as a float; one
+      with a NaN part equals every other such and is above every other complex
+      number.
+
+    A descending sort orders by its exact reverse: NaN first, and [0.] before
+    [-0.].
+
+    {!max}, {!maximum} and {!argmax} agree with it: NaN is the greatest element.
+    {!min}, {!minimum} and {!argmin} keep IEEE 754's semantics instead, where a
+    NaN propagates: the minimum of an axis that holds a NaN is NaN, and [argmin]
+    is the position of its first NaN. *)
 
 val sort : ?descending:bool -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
-(** [sort ?descending ?axis t] sorts elements along [axis] and returns
-    [(sorted, indices)] where [indices] maps sorted positions back to originals.
-    [descending] defaults to [false]. [axis] defaults to [-1] (last).
+(** [sort ?descending ?axis t] is [(sorted, indices)]: the elements of [t] along
+    [axis] in the {{!section:sorting}sort order}, or its exact reverse when
+    [descending], and the positions they come from. [descending] defaults to
+    [false]. [axis] defaults to [-1] (last).
 
     [sorted] is [take_along_axis ~axis ~indices t], bit for bit. The sort is
-    stable: equal elements keep their input order, NaNs included. [-0.] sorts
-    before [0.], and NaN sorts to the end in either direction.
+    stable in both directions: equal elements keep their input order, NaNs
+    included.
 
     Raises [Invalid_argument] if [axis] is out of bounds.
 
@@ -2459,6 +2500,9 @@ val sort : ?descending:bool -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
         |> sort
       - : (int32, int32_elt) t * int64_t =
       (int32 [5] [1, 1, ..., 4, 5], int64 [5] [1, 3, ..., 2, 4])
+      # create float32 [| 4 |] [| 1.; nan; -0.; 0. |]
+        |> sort ~descending:true |> fst |> to_array
+      - : float array = [|nan; 1.; 0.; -0.|]
     ]}
 
     See also {!argsort}. *)
@@ -2474,9 +2518,10 @@ val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
     [axis] of extent [k]. [axis] defaults to [-1] (last).
 
     It is the first [k] entries of [sort ~descending:true ?axis t]: equal
-    entries come lowest position first, and NaN comes after every number.
-    [values] is [take_along_axis ~axis ~indices t], so it differentiates with
-    respect to [t].
+    entries come lowest position first, a NaN before every number, and [0.]
+    before [-0.]. Its first index along [axis] is {!argmax}'s. [values] is
+    [take_along_axis ~axis ~indices t], so it differentiates with respect to
+    [t].
 
     Up to [k = 8] the cost is [k] passes over [axis], each after the one before
     it, which suits a router choosing a few of many. A greater [k] sorts [axis]
@@ -3685,9 +3730,10 @@ module Op : sig
   type conversion = Nx_effect.conversion =
     | Cast
     | Bitcast
-        (** The type for dtype conversions: [Cast] converts values, [Bitcast]
-            reads the bits of each element as one of another dtype of its width.
-        *)
+        (** The type for dtype conversions: [Cast] converts each element's
+            value, and [Bitcast] reads the elements' bytes in row-major order as
+            elements of the other dtype, consuming or adding a last axis when
+            the widths differ, as {!bitcast} does. *)
 
   type 'r t = 'r Nx_effect.Op.t =
     | Unary : Nx_backend.unary * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
@@ -3839,7 +3885,12 @@ module Op : sig
         -> ('a, 'b) Nx_effect.t t
     | Move : ('a, 'b) Nx_effect.t * move -> ('a, 'b) Nx_effect.t t
     | Place : Placement.t * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
-    | Read : ('a, 'b) Nx_effect.t -> Nx_device.Buffer.t t
+    | Read : { by : string; x : ('a, 'b) Nx_effect.t } -> Nx_device.Buffer.t t
+        (** [Read { by; x }] is [x]'s elements in C order, in a host buffer.
+            [by] is the qualified name of the function that reads, such as
+            ["Nx.item"] or ["Nx.compress"]: the function a program called, also
+            when it reads through another. An interpreter that cannot read [x]
+            raises a message that starts with [by]. *)
 
   (** The type for operations whose result is ['r]. *)
 

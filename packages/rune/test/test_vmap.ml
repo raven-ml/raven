@@ -36,6 +36,20 @@ let oracle_tests =
         check_vmap ~msg:"the bits of each row"
           (fun r -> Nx.cast f64 (Nx.bitcast Nx.int64 r))
           (xs ()));
+    test "bitcast between widths reads each lane" (fun () ->
+        let x =
+          Nx.create Nx.uint8 [| 3; 2; 8 |]
+            (Array.init 48 (fun i -> ((i * 29) + 3) land 255))
+        in
+        let widen r = Nx.bitcast Nx.uint64 r in
+        equal ~msg:"widening" (array int64)
+          (Nx.to_array (loop_map widen x))
+          (Nx.to_array (Rune.vmap' widen x));
+        let w = Nx.bitcast Nx.uint64 x in
+        let narrow r = Nx.bitcast Nx.uint8 r in
+        equal ~msg:"narrowing" (array int)
+          (Nx.to_array (loop_map narrow w))
+          (Nx.to_array (Rune.vmap' narrow w)));
     test "scalar closure constant" (fun () ->
         check_vmap ~msg:"x + 3" (fun r -> Nx.add_s r 3.0) (xs ()));
     test "full reduction" (fun () ->
@@ -278,7 +292,10 @@ let test_scalar_leaf_rejected () =
            (xs (), Nx.scalar f64 1.0)))
 
 let test_reading_batched_value_raises () =
-  raises_match Exn.invalid_arg (fun () ->
+  raises
+    (Invalid_argument
+       "Nx.item: cannot read the value of a batched tensor inside vmap; return \
+        it from the mapped function instead") (fun () ->
       ignore
         (Rune.vmap'
            (fun r ->

@@ -213,6 +213,36 @@ let selections =
 
 (* Conversions *)
 
+(* A bitcast between widths: operands, under a layout that keeps a widening's
+   last axis whole, and the dtype they are read as. *)
+type between =
+  | Between : string * ('a, 'b) Nx.t Gen.t * ('c, 'd) Nx.dtype -> between
+
+let betweens =
+  let rows ~pp dtype k value =
+    let shape =
+      Gen.map
+        (fun s -> Array.append s [| k |])
+        (Gen.array ~size:(Gen.int_range 1 2) (Gen.int_range 0 3))
+    in
+    viewed ~shape ~layout:row_layout ~pp dtype value
+  in
+  let ints dtype k lo hi =
+    rows ~pp:Format.pp_print_int dtype k (Gen.int_range lo hi)
+  in
+  let pp_i32 ppf v = Format.fprintf ppf "%ld" v in
+  let pp_i64 ppf v = Format.fprintf ppf "%Ld" v in
+  [
+    Between ("uint8 to uint64", ints Nx.uint8 8 0 255, Nx.uint64);
+    Between ("uint8 to float32", ints Nx.uint8 4 0 255, Nx.float32);
+    Between ("int16 to int64", ints Nx.int16 4 (-32768) 32767, Nx.int64);
+    Between
+      ("uint32 to float64", rows ~pp:pp_i32 Nx.uint32 2 Gen.int32, Nx.float64);
+    Between ("float32 to uint16", floats Nx.float32, Nx.uint16);
+    Between ("float64 to uint8", floats Nx.float64, Nx.uint8);
+    Between ("uint64 to int32", viewed ~pp:pp_i64 Nx.uint64 Gen.int64, Nx.int32);
+  ]
+
 let conversions =
   group "conversions"
     [
@@ -237,6 +267,11 @@ let conversions =
           agrees (fun () -> Nx.cast Nx.bfloat16 x));
       prop "a float's bits read as an integer" (floats Nx.float32) (fun x ->
           agrees (fun () -> Nx.bitcast Nx.int32 x));
+      group "a bitcast between widths reads the bytes eager reads"
+        (List.map
+           (fun (Between (name, operands, dt)) ->
+             prop name operands (fun x -> agrees (fun () -> Nx.bitcast dt x)))
+           betweens);
     ]
 
 (* Transcendental functions
@@ -622,6 +657,21 @@ let on_the_host =
                 in
                 let s, y = trace (fun () -> Nx.cast Nx.float16 x) in
                 exact (Nx.cast Nx.float16 x) (Programs.compiled s y));
+            test "eight bytes read as one word, little-endian" (fun () ->
+                let x =
+                  Nx.create Nx.uint8 [| 2; 8 |]
+                    (Array.init 16 (fun i -> ((i * 37) + 1) land 255))
+                in
+                let s, y = trace (fun () -> Nx.bitcast Nx.uint64 x) in
+                exact (Nx.bitcast Nx.uint64 x) (Programs.compiled s y));
+            test "a float read as its two halves" (fun () ->
+                let x =
+                  Nx.create Nx.float32
+                    [| List.length float_edges |]
+                    (Array.of_list float_edges)
+                in
+                let s, y = trace (fun () -> Nx.bitcast Nx.uint16 x) in
+                exact (Nx.bitcast Nx.uint16 x) (Programs.compiled s y));
           ]);
     ]
 

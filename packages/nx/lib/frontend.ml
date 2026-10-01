@@ -338,18 +338,33 @@ let bitcast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
   (match (unfit src, unfit dt) with
   | Some reason, _ | None, Some reason -> refuse reason
   | None, None -> ());
-  if Nx_dtype.itemsize src <> Nx_dtype.itemsize dt then
-    refuse
-      (Printf.sprintf "their widths differ (%d and %d bits)"
-         (8 * Nx_dtype.itemsize src)
-         (8 * Nx_dtype.itemsize dt));
+  let w = Nx_dtype.itemsize src and w' = Nx_dtype.itemsize dt in
+  (if w' > w then
+     let k = w' / w and s = shape x in
+     let r = Array.length s in
+     if r = 0 then
+       refuse
+         (Printf.sprintf "a %s reads a last axis of %d and a scalar has none"
+            (Nx_dtype.to_string dt) k)
+     else if s.(r - 1) <> k then
+       refuse
+         (Printf.sprintf "a %s reads a last axis of %d, not %d"
+            (Nx_dtype.to_string dt) k
+            s.(r - 1)));
   B.bitcast dt x
 
 let contiguous x = B.contiguous x
 let copy x = B.copy x
 
-(* The reader of [x]'s elements in C order, from index 0. *)
-let elements x = Elements.get (B.dtype x) (B.elements x)
+(* The reader of [x]'s elements in C order, from index 0, read by the surface
+   function [by]. *)
+let elements ~by x = Elements.get (B.dtype x) (B.elements ~by x)
+
+(* [x]'s elements in C order, read by [by]. *)
+let read_array ~by x = Array.init (numel x) (elements ~by x)
+
+(* The one element of [t], read by [by]. *)
+let read_item ~by t = elements ~by t 0
 
 let check_shape op shape =
   if Array.exists (fun d -> d < 0) shape then
@@ -405,7 +420,9 @@ let to_bigarray x =
       err "to_bigarray" "Bigarray has no %s kind"
         (Nx_dtype.to_string (B.dtype x))
   | Some k ->
-      let ba = Nx_device.Buffer.bigarray k (B.read (copy x)) in
+      let ba =
+        Nx_device.Buffer.bigarray k (B.read ~by:"Nx.to_bigarray" (copy x))
+      in
       Bigarray.reshape (Bigarray.genarray_of_array1 ba) (shape x)
 
 let of_bigarray (type a b) ctx
@@ -422,7 +439,7 @@ let of_bigarray (type a b) ctx
   let flat = Bigarray.reshape_1 ba (Array.fold_left ( * ) 1 shape) in
   reshape shape (B.from_host ctx dtype (Nx_device.Buffer.of_bigarray flat))
 
-let to_array x = Array.init (numel x) (elements x)
+let to_array x = read_array ~by:"Nx.to_array" x
 
 (* ───── Element-wise Binary Operations ───── *)
 
@@ -1573,7 +1590,7 @@ type dim_op =
   | New_axis
   | Window of { start : (int64, Nx_dtype.int64_elt) t; len : int }
 
-let normalize_slice_spec ~axis dim_size = function
+let normalize_slice_spec ~by ~axis dim_size = function
   | I idx ->
       Squeeze { idx = normalize_and_check_index ~op:"slice" dim_size idx }
   | A -> View { start = 0; stop = dim_size; step = 1; dim_len = dim_size }
@@ -1610,7 +1627,7 @@ let normalize_slice_spec ~axis dim_size = function
       if mask_len <> dim_size then
         err "slice" "axis %d, boolean mask length %d, expected %d" axis
           mask_len dim_size;
-      let bits = to_array mask in
+      let bits = read_array ~by mask in
       let positions = ref [] in
       for i = mask_len - 1 downto 0 do
         if bits.(i) then positions := i :: !positions
@@ -1635,7 +1652,7 @@ let normalize_slice_spec ~axis dim_size = function
 
 (* Parse specs into one op per input axis, [New_axis] entries interleaved,
    padding unspecified trailing axes with [A]. *)
-let parse_specs specs input_shape =
+let parse_specs ~by specs input_shape =
   let ndim_in = Array.length input_shape in
   let ops, consumed =
     List.fold_left
@@ -1644,7 +1661,7 @@ let parse_specs specs input_shape =
         | N -> (New_axis :: acc, dim)
         | _ ->
             if dim >= ndim_in then invalid_arg "slice: too many indices";
-            ( normalize_slice_spec ~axis:dim input_shape.(dim) spec :: acc,
+            ( normalize_slice_spec ~by ~axis:dim input_shape.(dim) spec :: acc,
               dim + 1 ))
       ([], 0) specs
   in
@@ -1652,13 +1669,13 @@ let parse_specs specs input_shape =
     if dim >= ndim_in then List.rev acc
     else
       pad_trailing
-        (normalize_slice_spec ~axis:dim input_shape.(dim) A :: acc)
+        (normalize_slice_spec ~by ~axis:dim input_shape.(dim) A :: acc)
         (dim + 1)
   in
   pad_trailing ops consumed
 
-let slice_internal specs x =
-  let ops = parse_specs specs (shape x) in
+let slice specs x =
+  let ops = parse_specs ~by:"Nx.slice" specs (shape x) in
   let gather_axis axis indices t =
     let idx_t =
       create (B.context t) Nx_dtype.int64
@@ -1734,15 +1751,7 @@ let get indices x =
         idx')
       indices
   in
-  slice_internal (List.map (fun i -> I i) checked) x
-
-let unsafe_get indices x =
-  let t = get indices x in
-  if numel t <> 1 then
-    err "unsafe_get" "expected scalar result, got %d elements" (numel t);
-  elements t 0
-
-let slice specs t = slice_internal specs t
+  slice (List.map (fun i -> I i) checked) x
 
 let item indices t =
   let s = shape t in
@@ -1750,7 +1759,7 @@ let item indices t =
     invalid_arg
       (Printf.sprintf "item: need %d indices for %d-d tensor, got %d"
          (Array.length s) (Array.length s) (List.length indices));
-  unsafe_get [] (get indices t)
+  read_item ~by:"Nx.item" (get indices t)
 
 let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
     =
@@ -1821,7 +1830,7 @@ let set specs v x =
         (broadcast_to x_shape (reshape mshape mask))
         (broadcast_to x_shape v) x
   | None ->
-      let ops = parse_specs specs_full x_shape in
+      let ops = parse_specs ~by:"Nx.set" specs_full x_shape in
       let sel_shape =
         Array.of_list
           (List.filter_map
@@ -1961,8 +1970,8 @@ let set specs v x =
 
 (* Data-dependent output shapes — not differentiable *)
 
-let nonzero_indices_only (condition : (bool, bool_elt) t) =
-  let bits = to_array (flatten condition) in
+let nonzero_indices_only ~by (condition : (bool, bool_elt) t) =
+  let bits = read_array ~by (flatten condition) in
   let positions = ref [] in
   for i = Array.length bits - 1 downto 0 do
     if bits.(i) then positions := Int64.of_int i :: !positions
@@ -1970,7 +1979,7 @@ let nonzero_indices_only (condition : (bool, bool_elt) t) =
   let arr = Array.of_list !positions in
   [| create (B.context condition) Int64 [| Array.length arr |] arr |]
 
-let compress ?axis ~(condition : (bool, bool_elt) t) t =
+let compress' ~by ?axis ~(condition : (bool, bool_elt) t) t =
   match axis with
   | None ->
       if numel condition > numel t then
@@ -1980,10 +1989,10 @@ let compress ?axis ~(condition : (bool, bool_elt) t) t =
       let cond_flat = flatten condition in
       let n =
         sum ~axes:[ 0 ] (astype Int64 cond_flat)
-        |> squeeze |> unsafe_get [] |> Int64.to_int
+        |> squeeze |> read_item ~by |> Int64.to_int
       in
       if n = 0 then empty (B.context t) (dtype t) [| 0 |]
-      else take ~indices:(nonzero_indices_only cond_flat).(0) t_flat
+      else take ~indices:(nonzero_indices_only ~by cond_flat).(0) t_flat
   | Some axis ->
       let axis = resolve_single_axis t axis in
       let axis_size = dim axis t in
@@ -1992,7 +2001,7 @@ let compress ?axis ~(condition : (bool, bool_elt) t) t =
           (Printf.sprintf "compress: length %d doesn't match axis %d size %d"
              (numel condition) axis axis_size);
       let cond_1d = reshape [| axis_size |] condition in
-      let true_idx = nonzero_indices_only cond_1d in
+      let true_idx = nonzero_indices_only ~by cond_1d in
       if numel true_idx.(0) = 0 then begin
         let s = Array.copy (shape t) in
         s.(axis) <- 0;
@@ -2000,17 +2009,19 @@ let compress ?axis ~(condition : (bool, bool_elt) t) t =
       end
       else take ~axis ~indices:true_idx.(0) t
 
+let compress ?axis ~condition t = compress' ~by:"Nx.compress" ?axis ~condition t
+
 let extract ~condition t =
   if numel condition <> numel t then
     err "extract" "condition of %d elements, tensor of %d" (numel condition)
       (numel t);
-  compress ~condition (flatten t)
+  compress' ~by:"Nx.extract" ~condition (flatten t)
 
-let nonzero (type a b) (t : (a, b) t) =
+let nonzero' (type a b) ~by (t : (a, b) t) =
   let t_shape = shape t in
   let nd = Array.length t_shape in
   let mask = not_equal t (zeros_like t) in
-  let bits = to_array (flatten mask) in
+  let bits = read_array ~by (flatten mask) in
   let n = Array.fold_left (fun acc b -> if b then acc + 1 else acc) 0 bits in
   let coords = Array.init nd (fun _ -> Array.make n 0L) in
   let k = ref 0 in
@@ -2026,15 +2037,18 @@ let nonzero (type a b) (t : (a, b) t) =
     bits;
   Array.map (fun c -> create (B.context t) Int64 [| n |] c) coords
 
+let nonzero t = nonzero' ~by:"Nx.nonzero" t
+
 let argwhere t =
-  let coords = nonzero t in
+  let by = "Nx.argwhere" in
+  let coords = nonzero' ~by t in
   let nd = Array.length coords in
   if nd = 0 then
-    let k = if item [] t = Nx_dtype.zero (dtype t) then 0 else 1 in
+    let k = if read_item ~by t = Nx_dtype.zero (dtype t) then 0 else 1 in
     empty (B.context t) Int64 [| k; 0 |]
   else
     let n = dim 0 coords.(0) in
-    let cols = Array.map to_array coords in
+    let cols = Array.map (read_array ~by) coords in
     init (B.context t) Int64 [| n; nd |] (fun i -> cols.(i.(1)).(i.(0)))
 
 (* ───── Splitting ───── *)
@@ -2045,9 +2059,7 @@ let array_split ~axis sections x =
   let axis_size = dim axis x in
   let make_slice start stop =
     if start < stop then
-      slice_internal
-        (List.init nd (fun j -> if j = axis then R (start, stop) else A))
-        x
+      slice (List.init nd (fun j -> if j = axis then R (start, stop) else A)) x
     else
       let s = Array.copy (shape x) in
       s.(axis) <- 0;
@@ -2320,10 +2332,10 @@ let select (type c d) ~k (keys : (c, d) t) =
       (argsort ~descending:true ~axis:1 keys)
   else radix_select ~k keys
 
-(* The key of a float, a signed integer of its width that orders as a
-   descending sort does: the bits, with the other bits of a negative float
-   flipped, and NaN below every number. -0, a negative float, keys just below
-   +0. *)
+(* The key of a float, a signed integer of its width that orders as the sort
+   order does: the bits, with the other bits of a negative float flipped, and
+   NaN above every number. No number keys to the greatest integer, whose bits
+   are a NaN's. -0, a negative float, keys just below +0. *)
 let float_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) =
   let bits = bitcast kd x in
   let flipped =
@@ -2332,7 +2344,7 @@ let float_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) =
       (bitwise_xor bits (full_like bits (Nx_dtype.max_value kd)))
       bits
   in
-  where (isnan x) (full_like bits (Nx_dtype.min_value kd)) flipped
+  where (isnan x) (full_like bits (Nx_dtype.max_value kd)) flipped
 
 (* The key of an unsigned integer: its bits with the top one flipped, read
    signed. *)
@@ -2376,7 +2388,8 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
   let n = dim axis x in
   if k < 1 || k > n then err "top_k" "k = %d is outside [1, %d]" k n;
   let dt = dtype x in
-  if Nx_dtype.is_complex dt then err "top_k" "complex numbers are not ordered";
+  if Nx_dtype.is_complex dt then
+    err "top_k" "complex numbers have no selection key";
   let positions (type c d) (keys : (c, d) t) =
     if k <= top_k_rounds then select_by_passes ~k ~axis keys
     else
@@ -4275,7 +4288,7 @@ let cross ?axis a b =
   if (shape b).(axis) <> 3 then invalid_arg "cross: axis dim not 3";
   let at i t =
     squeeze ~axes:[ axis ]
-      (slice_internal
+      (slice
          (Array.to_list
             (Array.init (ndim t) (fun j ->
                  if j = axis then R (i, i + 1) else A)))
@@ -4324,10 +4337,10 @@ let lu a =
   let batch = List.init (nd - 2) (fun _ -> A) in
   let l =
     add
-      (tril ~k:(-1) (slice_internal (batch @ [ A; R (0, k) ]) packed))
+      (tril ~k:(-1) (slice (batch @ [ A; R (0, k) ]) packed))
       (eye ctx ~m:k dt m)
   in
-  let u = triu (slice_internal (batch @ [ R (0, k); A ]) packed) in
+  let u = triu (slice (batch @ [ R (0, k); A ]) packed) in
   (perm, l, u)
 
 let svd ?full_matrices a =
@@ -4444,7 +4457,7 @@ let slogdet (type a b) (a : (a, b) t) : (a, b) t * (float, float64_elt) t =
       (cast (dtype a) sign, logabs)
   | _ -> factored a
 
-let matrix_rank ?tol ?rtol ?hermitian a =
+let matrix_rank' ~by ?tol ?rtol ?hermitian a =
   check_float_or_complex ~op:"matrix_rank" a;
   (match hermitian with
   | Some true -> check_square ~op:"matrix_rank" a
@@ -4452,7 +4465,7 @@ let matrix_rank ?tol ?rtol ?hermitian a =
   let s =
     match hermitian with Some true -> abs (B.eigvalsh a) | _ -> svdvals a
   in
-  let max_s = max s |> unsafe_get [] in
+  let max_s = max s |> read_item ~by in
   let sh = shape a in
   let m = sh.(Array.length sh - 2) in
   let n = sh.(Array.length sh - 1) in
@@ -4475,7 +4488,10 @@ let matrix_rank ?tol ?rtol ?hermitian a =
     | None, None -> float_of_int (Stdlib.max m n) *. eps *. max_s
   in
   let mask = greater s (scalar (B.context a) (dtype s) tol) in
-  int_of_float (Float.round (sum (cast (dtype s) mask) |> unsafe_get []))
+  int_of_float (Float.round (sum (cast (dtype s) mask) |> read_item ~by))
+
+let matrix_rank ?tol ?rtol ?hermitian a =
+  matrix_rank' ~by:"Nx.matrix_rank" ?tol ?rtol ?hermitian a
 
 let trace ?offset a =
   if ndim a < 2 then invalid_arg "trace: input requires at least 2D array";
@@ -4582,7 +4598,7 @@ let solve a b =
   in
   if b_expanded != b then squeeze ~axes:[ ndim result - 1 ] result else result
 
-let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
+let pinv' (type a b) ~by ?rtol ?hermitian (a : (a, b) t) =
   check_float_or_complex ~op:"pinv" a;
   (match hermitian with
   | Some true -> check_square ~op:"pinv" a
@@ -4609,7 +4625,7 @@ let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
     | None -> max_dim *. eps *. max_s
   in
   let pinv_from_factors u s vh =
-    let max_s = max s |> unsafe_get [] in
+    let max_s = max s |> read_item ~by in
     let cutoff = cutoff ~max_s in
     let ones_s = ones (B.context s) (dtype s) (shape s) in
     let threshold = scalar (B.context s) (dtype s) cutoff in
@@ -4650,7 +4666,10 @@ let pinv (type a b) ?rtol ?hermitian (a : (a, b) t) =
       pinv_from_factors vecs abs_vals vh
   | _ -> pinv_via_svd ()
 
+let pinv ?rtol ?hermitian a = pinv' ~by:"Nx.pinv" ?rtol ?hermitian a
+
 let lstsq ?rcond a b =
+  let by = "Nx.lstsq" in
   check_float_or_complex ~op:"lstsq" a;
   check_float_or_complex ~op:"lstsq" b;
   let sh = shape a in
@@ -4667,24 +4686,24 @@ let lstsq ?rcond a b =
         in
         float_of_int (Stdlib.max m n)
         *. eps
-        *. (max (svdvals a) |> unsafe_get [])
+        *. (max (svdvals a) |> read_item ~by)
   in
   let x =
     if m >= n then
       let q, r = B.qr ~reduced:true a in
       let y = matmul (matrix_transpose q) b in
       let r_sq =
-        if ndim r = 2 then slice_internal [ R (0, n); R (0, n) ] r
-        else slice_internal [ A; R (0, n); R (0, n) ] r
+        if ndim r = 2 then slice [ R (0, n); R (0, n) ] r
+        else slice [ A; R (0, n); R (0, n) ] r
       in
       let y_top =
-        if ndim y = 2 then slice_internal [ R (0, n); A ] y
-        else if ndim y = 1 then slice_internal [ R (0, n) ] y
-        else slice_internal [ A; R (0, n); A ] y
+        if ndim y = 2 then slice [ R (0, n); A ] y
+        else if ndim y = 1 then slice [ R (0, n) ] y
+        else slice [ A; R (0, n); A ] y
       in
       B.solve_triangular ~upper:true ~transpose:false ~unit_diag:false r_sq
         y_top
-    else matmul (pinv a ~rtol:rcond_value) b
+    else matmul (pinv' ~by a ~rtol:rcond_value) b
   in
   let residuals =
     if m > n then
@@ -4692,7 +4711,7 @@ let lstsq ?rcond a b =
       sum (square res) ~axes:[ ndim res - 2 ] ~keepdims:false
     else zeros (B.context a) (dtype b) [||]
   in
-  (x, residuals, matrix_rank a, svdvals a)
+  (x, residuals, matrix_rank' ~by a, svdvals a)
 
 let inv a =
   check_square ~op:"inv" a;
@@ -4742,7 +4761,7 @@ let cond ?p x =
       let s = svdvals x in
       let ds = dtype s in
       let mx = max s in
-      let max_v = mx |> unsafe_get [] in
+      let max_v = mx |> read_item ~by:"Nx.cond" in
       let eps =
         if Nx_dtype.equal ds Nx_dtype.float32 then 1.2e-7
         else if Nx_dtype.equal ds Nx_dtype.float64 then 2.2e-16
@@ -4817,7 +4836,9 @@ let tensorsolve ?axes a b =
   let solution =
     try solve a_mat b_vec
     with Nx_backend.Linalg_error { kind = `Singular; _ } ->
-      let x_col = matmul (pinv a_mat) (reshape [| rows; 1 |] b_vec) in
+      let x_col =
+        matmul (pinv' ~by:"Nx.tensorsolve" a_mat) (reshape [| rows; 1 |] b_vec)
+      in
       reshape [| cols |] x_col
   in
   reshape free_shape solution
@@ -4843,7 +4864,7 @@ let tensorinv ?ind a =
   let inv_mat =
     try inv (reshape [| ls; rs |] a)
     with Nx_backend.Linalg_error { kind = `Singular; _ } ->
-      pinv (reshape [| ls; rs |] a)
+      pinv' ~by:"Nx.tensorinv" (reshape [| ls; rs |] a)
   in
   reshape (Array.append right left) inv_mat
 
@@ -5297,7 +5318,7 @@ let istft (dt : (float, 'a) Nx_dtype.t) ~window ?step ?win ?length z :
    implementation without extending the backend interface. *)
 
 let real_transform_slice_last spec x =
-  slice_internal (List.init (ndim x - 1) (fun _ -> A) @ [ spec ]) x
+  slice (List.init (ndim x - 1) (fun _ -> A) @ [ spec ]) x
 
 let real_transform_scale_first factor x =
   concatenate ~axis:(-1)
@@ -5834,9 +5855,9 @@ let one_hot ~num_classes index_tensor =
 let pp_shape = Shape.pp
 let pp_dtype ppf dtype = Format.pp_print_string ppf (Nx_dtype.to_string dtype)
 
-let pp (type a b) fmt (x : (a, b) t) =
+let pp' (type a b) ~by fmt (x : (a, b) t) =
   let open Format in
-  let element = elements x in
+  let element = elements ~by x in
   let dtype = dtype x in
   let shape = shape x in
   let ndim = Array.length shape in
@@ -5913,13 +5934,14 @@ let pp (type a b) fmt (x : (a, b) t) =
       pp_print_cut fmt ());
     if sz = 0 then fprintf fmt "[]" else pp_slice fmt []
 
-let to_string x = Format.asprintf "%a" pp x
-let print x = Format.printf "%a@." pp x
+let pp fmt x = pp' ~by:"Nx.pp" fmt x
+let to_string x = Format.asprintf "%a" (pp' ~by:"Nx.to_string") x
+let print x = Format.printf "%a@." (pp' ~by:"Nx.print") x
 
 (* ───── Higher-order Functions ───── *)
 
 let map_item f x =
-  let src = elements x and sz = size x in
+  let src = elements ~by:"Nx.map_item" x and sz = size x in
   let dst = Elements.create (dtype x) sz in
   let set = Elements.set (dtype x) dst in
   for i = 0 to sz - 1 do
@@ -5928,13 +5950,13 @@ let map_item f x =
   reshape (shape x) (B.from_host (B.context x) (dtype x) dst)
 
 let iter_item f x =
-  let src = elements x in
+  let src = elements ~by:"Nx.iter_item" x in
   for i = 0 to size x - 1 do
     f (src i)
   done
 
 let fold_item f init x =
-  let src = elements x in
+  let src = elements ~by:"Nx.fold_item" x in
   let acc = ref init in
   for i = 0 to size x - 1 do
     acc := f !acc (src i)

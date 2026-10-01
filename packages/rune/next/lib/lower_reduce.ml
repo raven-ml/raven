@@ -25,8 +25,9 @@ let along rank axis u =
    magnitude bits flipped: the greater float is the greater integer, [-0.] is
    just below [+0.], and subnormals keep the order that a float comparison may
    flush. Every NaN takes the greatest integer or the least, which no number
-   takes, and each key maps back to its float, those two to NaNs. An integer or
-   a boolean is its own key. *)
+   takes, and each key maps back to its float, those two to NaNs: a sort, in
+   either direction, and the maximum key a NaN greatest; only the minimum and
+   [argmin] key it least. An integer or a boolean is its own key. *)
 
 let flip k =
   Ops.where
@@ -228,7 +229,7 @@ let take x axis p =
 let argsort ~descending ~axis x =
   if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Z.zero)
   else
-    let k = ordered (keys ~nan:(if descending then `Least else `Greatest) x) in
+    let k = ordered (keys ~nan:`Greatest x) in
     let positions = positions ~descending axis in
     if Dtype.itemsize (dtype k) <= 4 then positions (Ops.cast k Int64)
     else

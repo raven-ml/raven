@@ -140,7 +140,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
   in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
-    let elements = Storage.elements t in
+    let elements = Storage.elements ~by:"Nx_io.save_safetensors" t in
     let swapped =
       B.create Nx_device.host (B.dtype elements) (B.length elements)
     in
@@ -152,7 +152,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
   else
     match Storage.run t with
     | Some run -> (dtype, run)
-    | None -> (dtype, Storage.elements t)
+    | None -> (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;

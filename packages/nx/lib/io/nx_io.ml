@@ -20,9 +20,9 @@ let unwrap = function Ok v -> v | Error err -> failwith (Error.to_string err)
 
 let load_image ?(grayscale = false) path = Image_io.load_image ~grayscale path
 
-(* [uint8_pixels img] is the height, width, channel count and bytes of the image
-   tensor [img]. *)
-let uint8_pixels img =
+(* [uint8_pixels ~by img] is the height, width, channel count and bytes of the
+   image tensor [img], read by [by]. *)
+let uint8_pixels ~by img =
   let h, w, c =
     match Nx.shape img with
     | [| h; w |] -> (h, w, 1)
@@ -34,7 +34,7 @@ let uint8_pixels img =
         failwith (err_bad_dims (Array.length s) dims)
   in
   match Nx.dtype img with
-  | UInt8 -> (h, w, c, Storage.bytes (Storage.elements img))
+  | UInt8 -> (h, w, c, Storage.bytes (Storage.elements ~by img))
   | _ -> failwith "expected uint8 tensor"
 
 let png_channels c =
@@ -42,7 +42,7 @@ let png_channels c =
     failwith "PNG requires one, three, or four channels"
 
 let save_image ?(overwrite = true) path img =
-  let h, w, c, data = uint8_pixels img in
+  let h, w, c, data = uint8_pixels ~by:"Nx_io.save_image" img in
   let ext = String.lowercase_ascii (Filename.extension path) in
   match ext with
   | ".png" ->
@@ -55,7 +55,7 @@ let save_image ?(overwrite = true) path img =
   | _ -> failwith (err_unsupported_ext ext)
 
 let encode_png img =
-  let h, w, c, data = uint8_pixels img in
+  let h, w, c, data = uint8_pixels ~by:"Nx_io.encode_png" img in
   png_channels c;
   Image_io.encode_png data ~width:w ~height:h ~channels:c
 

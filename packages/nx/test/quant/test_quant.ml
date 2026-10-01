@@ -559,6 +559,30 @@ let others =
             (0, Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
             (bytes_out () - sent, y);
           equal (array int) [| 4; 6; 64 |] (Nx_quant.shape w));
+      test "dequant and apply name themselves when they read" (fun () ->
+          let w = random_weight [| 3; 4; 64 |] in
+          let reads f =
+            let seen = ref [] in
+            let run : type r. r Nx.Op.t -> r =
+             fun op ->
+              (match op with Read { by; _ } -> seen := by :: !seen | _ -> ());
+              Nx.Op.eval op
+            in
+            let claims : type r. r Nx.Op.t -> bool = function
+              | Read _ -> true
+              | _ -> false
+            in
+            Nx.Op.intercept { run; claims } (fun () -> ignore (f ()));
+            List.sort_uniq String.compare !seen
+          in
+          equal (list string) [ "Nx_quant.dequant" ]
+            (reads (fun () -> Nx_quant.dequant Nx.float32 w));
+          equal (list string) [ "Nx_quant.apply" ]
+            (reads (fun () ->
+                 Nx_quant.apply
+                   ~ids:(Nx.create Nx.int64 [| 2 |] [| 0L; 2L |])
+                   w
+                   (random_floats [| 2; 1; 64 |]))));
       test
         "visits the case, then codes before scales; rebuild and place keep the \
          parts" (fun () ->

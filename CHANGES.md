@@ -172,6 +172,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `Rune.jit` and `Rune.vmap` refusals of a read name the function that read,
+  such as `Jit_error "Nx.item: …"`, instead of a fixed "item, to_host, or a
+  data-dependent branch". `Rune.jit` refuses a `bitcast` between widths.
 - A `Rune.scan` compiled by `Rune.jit` reads rows computed from constants
   alone, such as `Nx.arange`'s running sum, as eager computes them. Such rows,
   when their size was not a multiple of 16 bytes, were padded through a store
@@ -2906,6 +2909,15 @@ thread.
 
 ### Nx
 
+- **Breaking:** a descending `sort`, `argsort` and `top_k` order by the exact
+  reverse of the ascending order, so NaN comes first instead of last and the
+  first index of `top_k` is `argmax`'s.
+- `bitcast` reads between dtypes of different widths: a dtype `k` times wider
+  consumes a last axis of `k`, and one `k` times narrower adds it, so a
+  `[n; 8]` `uint8` value reads as `n` `uint64` words without a copy.
+- **Breaking:** `Nx.Op.Read` is `Read { by; x }`, where `by` names the function
+  that reads, such as `"Nx.item"`; an interpreter's refusal of a read starts
+  with it.
 - **Breaking:** indices are `int64`. `take`, `take_along_axis`, `scatter`, `D`
   and `Nx_quant.apply ~ids` take `int64_t`; `argmax`, `argmin`, `sort`,
   `argsort`, `top_k`, `nonzero`, `argwhere`, `lu`, `permutation` and

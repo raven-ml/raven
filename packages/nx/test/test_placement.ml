@@ -549,6 +549,10 @@ let results =
               ignore
                 (Nx.cholesky (Nx.place (Nx.Placement.sharded ~axis:2 ds) spd))
           );
+          ( "a widening bitcast of the split last axis",
+            fun () ->
+              ignore (Nx.bitcast Nx.float64 (Nx.place cols (iota [| 4; 2 |])))
+          );
         ]
         (fun (_, f) ->
           raises_match
@@ -566,11 +570,17 @@ let results =
           ("concatenate", fun v -> Nx.concatenate ~axis:1 [ v; v ]);
           ("copy", Nx.copy);
           ("repeat along the split axis", Nx.repeat ~axis:0 2);
+          ( "a narrowing bitcast and the widening back",
+            fun v -> Nx.bitcast Nx.float32 (Nx.bitcast Nx.uint16 v) );
         ]
         (fun (_, f) ->
           let y = f (s ()) in
           equal placement rows (Nx.placement y);
           equal (tensor float_exact) (f x) y);
+      test "a narrowing bitcast of split columns keeps them split" (fun () ->
+          let y = Nx.bitcast Nx.uint16 (t ()) in
+          equal placement cols (Nx.placement y);
+          equal (tensor int) (Nx.bitcast Nx.uint16 x) y);
       cases "of products, gathers and whole shards live where nx.mli says"
         ~name:(fun (n, _, _) -> n)
         [
@@ -750,7 +760,12 @@ let reads =
               counted (fun () -> Nx.to_array p);
               counted (fun () -> Nx.item [ 5; 2 ] s);
               counted (fun () ->
-                  Nx.Op.eval (Read (Nx.slice [ R (4, 6); R (1, 4) ] s)));
+                  Nx.Op.eval
+                    (Read
+                       {
+                         by = "test_placement";
+                         x = Nx.slice [ R (4, 6); R (1, 4) ] s;
+                       }));
             ];
           equal placement on1 (Nx.placement p);
           equal string

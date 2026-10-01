@@ -42,8 +42,12 @@ val cast : Dtype.t -> Ops.t -> Ops.t
 (** [cast dt x] is each element of [x] converted to [dt]. *)
 
 val bitcast : Dtype.t -> Ops.t -> Ops.t
-(** [bitcast dt x] is the bits of each element of [x] read as [dt], of the same
-    width. *)
+(** [bitcast dt x] is [x]'s bytes read as elements of [dt], in row-major order.
+    At [x]'s width each element is read in its place. A [dt] [k] times wider
+    consumes [x]'s last axis, which has [k] elements, reading each group of [k]
+    as one element; a [dt] [k] times narrower reads each element as [k] along a
+    new last axis of [k]. The bytes are little-endian: the first of a group's
+    [k] elements holds the lowest-order bits. *)
 
 val threefry : Ops.t -> Ops.t -> Ops.t
 (** [threefry key counter] is the Threefry-2x32 hash of each word pair of the

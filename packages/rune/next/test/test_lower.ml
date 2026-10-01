@@ -19,7 +19,6 @@ let pp_float ppf x = Format.fprintf ppf "%.17g" x
 let floats = viewed ~pp:pp_float Nx.float32 Gen.any_float
 let arange n = Nx.create Nx.float32 [| n |] (Array.init n float_of_int)
 let grid r c = Nx.reshape [| r; c |] (arange (r * c))
-let jit_error = function Lower.Jit_error _ -> true | _ -> false
 
 (* A traced copy of [x], and its value. *)
 let copied x =
@@ -329,8 +328,28 @@ let reads =
           let _, v = trace (fun () -> Nx.to_array x) in
           equal (array float_exact) [| 0.; 1.; 2.; 3. |] v);
       test "a traced value's elements cannot be read" (fun () ->
-          raises_match jit_error (fun () ->
+          raises
+            (Lower.Jit_error
+               "Nx.to_array: cannot read the value of a traced tensor inside \
+                jit; return it from the compiled function instead") (fun () ->
               trace (fun () -> Nx.to_array (Nx.copy (grid 2 2)))));
+      cases ~name:fst "a refused read names the function the program called"
+        [
+          ("Nx.item", fun x -> ignore (Nx.item [ 0; 0 ] x));
+          ( "Nx.compress",
+            fun x ->
+              ignore
+                (Nx.compress
+                   ~condition:(Nx.create Nx.bool [| 2 |] [| true; false |])
+                   x) );
+          ("Nx.print", Nx.print);
+        ]
+        (fun (name, f) ->
+          raises_match
+            (function
+              | Lower.Jit_error m -> String.starts_with ~prefix:(name ^ ": ") m
+              | _ -> false)
+            (fun () -> trace (fun () -> f (Nx.copy (grid 2 2)))));
     ]
 
 (* Refusals *)
