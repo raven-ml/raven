@@ -2939,6 +2939,10 @@ thread.
 
 ### Nx
 
+- Reading a host value whose elements are not one run of its memory
+  (`Nx.to_array`, `Nx.item` of a transposed value) holds a read claim while it
+  gathers them, so a compiled call on another domain can no longer lend that
+  memory and give a mix of old and new elements.
 - **Breaking:** A device unloads a binary once no program of it and no buffer
   of its code (`Nx_device.Program.code`) is reachable, after the work it
   submitted until then. Devices kept every program they loaded for their life,

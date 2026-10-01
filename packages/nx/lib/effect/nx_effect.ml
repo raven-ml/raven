@@ -1889,21 +1889,6 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
    one their placed operands share. nx answers movements, placing and reading
    itself. *)
 
-(* Exactly the elements of [x]'s view in C order, in a host buffer: a host
-   value's storage when they are one run of it, gathered by nx.cpu otherwise,
-   and a copy of a placed one's, read from its runtime buffers. *)
-let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
-  match x with
-  | Host t -> (
-      match run_in t.buffer t.view with
-      | Some b -> b
-      | None ->
-          let dst = alloc t.dtype (View.shape t.view) in
-          Nx_cpu.contiguous t ~dst;
-          dst.buffer)
-  | Placed r -> read_elements r
-  | Traced _ -> outside_trace ()
-
 (* [x] at [p]. A placed value at a placement that differs from [p] only in
    backend is a view of its storage; otherwise it is placed there anew. *)
 let move_to (type a b) p (x : (a, b) t) : (a, b) t =
@@ -2824,6 +2809,19 @@ let direct_solve_triangular upper transpose unit_diag a b =
       Host (k_solve_triangular host_env upper transpose unit_diag x y)
   | _ -> on_devices (Solve_triangular { upper; transpose; unit_diag; a; b })
 
+(* Exactly the elements of [x]'s view in C order, in a host buffer: a host
+   value's storage when they are one run of it, gathered by nx.cpu under a read
+   claim otherwise, and a copy of a placed one's, read from its runtime
+   buffers. *)
+let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
+  match x with
+  | Host t -> (
+      match run_in t.buffer t.view with
+      | Some b -> b
+      | None -> (k_contiguous host_env t).buffer)
+  | Placed r -> read_elements r
+  | Traced _ -> outside_trace ()
+
 (* [direct op] answers [op] with no interpretation. The decompositions run
    through [on_devices] even on the host, which settles each result. *)
 let direct : type r. r Op.t -> r =
@@ -3046,8 +3044,8 @@ let sliding_window x ~axis ~window ~step =
   move x (Window { axis; size = window; step })
 
 (* The elements of [x]'s view in C order, in a host buffer, read by the surface
-   function [by]. The storage of a host value that is contiguous from its first
-   element is that buffer. *)
+   function [by]: a host value's storage when they are one C-order run of it,
+   starting on a byte. *)
 let read ~by x =
   if intercepting () then perform (Read { by; x }) else read_elements_of x
 

@@ -167,7 +167,31 @@ let reads_exactly (Stored.Case c) =
         equal ~msg:"shares the storage" bool (one_run x)
           (share_memory b (storage x)))
 
-let reads = group "Read" (List.map reads_exactly Stored.every)
+(* [f ()] while a consuming call holds [b]'s memory exclusively. *)
+let while_consumed b f =
+  B.Claim.read b;
+  is_true ~msg:"exclusive" (B.Claim.try_exclusive b);
+  Fun.protect
+    ~finally:(fun () ->
+      B.Claim.finish b;
+      B.Claim.release b)
+    f
+
+let in_use = Exn.invalid_arg ~substring:"in use by a consuming call"
+
+let reads =
+  group "Read"
+    (List.map reads_exactly Stored.every
+    @ [
+        test "a read that gathers a value refuses memory a consuming call holds"
+          (fun () ->
+            let x =
+              Nx.transpose (Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1))
+            in
+            while_consumed (storage x) (fun () ->
+                raises_match in_use (fun () ->
+                    Nx.Op.eval (Read { by = "test"; x }))));
+      ])
 
 (* of_buffer *)
 
