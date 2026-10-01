@@ -35,7 +35,9 @@ let fold r =
       List.map (fun (Nx.P x) -> Nx.P (Nx.slice [ Nx.I i ] x)) r.req_xs
     in
     let c, y = r.req_step !carry row in
-    carry := c;
+    (* A carry of its own per step: a compiled call that writes the loop out
+       computes each step from the last one's storage, whatever the length. *)
+    carry := List.map (fun (Nx.P c) -> Nx.P (Nx.contiguous c)) c;
     ys.(i) <- y
   done;
   { r_carry = !carry; r_ys = stack (Array.to_list ys) }

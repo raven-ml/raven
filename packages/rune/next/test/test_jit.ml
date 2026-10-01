@@ -1894,6 +1894,32 @@ let staged_scans d =
           less ~msg:"bytes held for rows 1,024 values wide against 4" int
             ~than:(64 * 1020 * 4)
             (held 1024 - held 4));
+      (* Written out, each step's carry is stored before the next reads it: a
+         thousand steps compile as kernels of one step each. *)
+      test "write out a thousand steps, each carry stored" (fun () ->
+          let ran = ref 0 in
+          let f (k, xs) =
+            Nx.Rng.with_key k (fun () ->
+                Rune.scan'
+                  ~f:(fun c x ->
+                    incr ran;
+                    let c = Nx.add (Nx.mul_s c 0.5) x in
+                    (c, Nx.add c (Nx.rand Nx.float32 [| 4 |])))
+                  ~init:(zeros 4) xs)
+          in
+          let k = Nx.Rng.key 7 in
+          let c, ys = f (k, rows 1000 4) in
+          ran := 0;
+          let c', ys' =
+            Rune.jit
+              Nx.Ptree.(
+                pair Nx.Rng.ptree tensor @-> returns (pair tensor tensor))
+              f
+              (k, Nx.place at (rows 1000 4))
+          in
+          equal near c (host c');
+          equal near ys (host ys');
+          equal ~msg:"a probe, then a step per row" int 1001 !ran);
       test
         "write out a step that draws under a key scope, drawing as eager does \
          before, inside and after the scan" (fun () ->
