@@ -944,14 +944,6 @@ module Device = struct
   let pp = pp_device
 end
 
-(* A hash for identity tables. A placed or traced value hashes by its id, which
-   never changes; a host tensor by its structure, which no table sees change,
-   since tensors are values. *)
-let identity_hash : type a b. (a, b) t -> int = function
-  | Host _ as x -> Hashtbl.hash x
-  | Placed r -> r.r_id
-  | Traced t -> t.t_id
-
 (* Traced constructor *)
 
 let traced (type a b) ?view (ctx : context) (p : placement)
