@@ -329,6 +329,8 @@ static void run(int nthreads, int64_t total, int64_t nchunks,
 
 static const nx_device_pool the_pool = {workers, compute_workers, run};
 
+/* The pool, for nx.device's own C: nx_device_stubs.c runs split calls on
+   it. */
 const nx_device_pool *nx_device_pool_get(void);
 
 const nx_device_pool *nx_device_pool_get(void) { return &the_pool; }

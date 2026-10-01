@@ -2745,16 +2745,38 @@ module Program = struct
   let name p = p.p_name
   let handle p = p.p_handle
 
+  type split = { extent : int; blocks : int; lo : int; hi : int }
+
+  external workers : unit -> int = "caml_nx_device_workers"
+
   external call_host : nativeint -> Buffer.t array -> int array -> unit
     = "caml_nx_device_call"
 
-  let call p buffers values =
+  external call_split :
+    nativeint -> Buffer.t array -> int array -> split -> unit
+    = "caml_nx_device_call_split"
+
+  let call ?split p buffers values =
     let refuse fmt =
       Printf.ksprintf
         (fun m -> invalid_arg ("Nx_device.Program.call: " ^ m))
         fmt
     in
     let d = p.p_device in
+    let slot s = s >= 0 && s < Array.length values in
+    Option.iter
+      (fun s ->
+        if s.extent < 0 then refuse "a split of %d iterations" s.extent;
+        if s.blocks < 1 then refuse "a split into %d blocks" s.blocks;
+        if not (slot s.lo && slot s.hi) then
+          refuse "a split's slots %d and %d among %d values" s.lo s.hi
+            (Array.length values))
+      split;
+    let run () =
+      match split with
+      | None -> call_host p.p_handle buffers values
+      | Some s -> call_split p.p_handle buffers values s
+    in
     if d != host && Option.is_none d.call then
       refuse "the program is on %s, which runs no programs" d.name;
     Array.iter
@@ -2765,10 +2787,10 @@ module Program = struct
       buffers;
     if d == host then begin
       (match Atomic.get profile with
-      | None -> call_host p.p_handle buffers values
+      | None -> run ()
       | Some c ->
           let start = now_ns () in
-          call_host p.p_handle buffers values;
+          run ();
           let stop = now_ns () in
           push c.events
             (Span
@@ -2784,6 +2806,15 @@ module Program = struct
       ignore (Sys.opaque_identity p)
     end
     else
+      let values =
+        match split with
+        | None -> values
+        | Some s ->
+            let v = Array.copy values in
+            v.(s.lo) <- 0;
+            v.(s.hi) <- s.extent;
+            v
+      in
       let at b = (Option.get (Buffer.hosted b), Buffer.nbytes b) in
       try Option.get d.call p.p_handle (Array.map at buffers) values
       with Failure msg -> fail d msg

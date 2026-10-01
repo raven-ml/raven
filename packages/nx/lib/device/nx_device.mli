@@ -712,9 +712,24 @@ module Program : sig
       it is reachable, such as a word holding [p]'s {!handle} that a host
       program reads to launch it. *)
 
-  val call : t -> Buffer.t array -> int array -> unit
-  (** [call p buffers values] runs the host program [p] in the calling domain
-      and returns once it returns. [p] is called as the C function
+  type split = {
+    extent : int;  (** The iterations, [0] to [extent - 1]. *)
+    blocks : int;  (** The contiguous blocks they are cut into. *)
+    lo : int;  (** The slot of [values] that takes a block's first. *)
+    hi : int;  (** The slot of [values] that takes the one after its last. *)
+  }
+  (** The type for splits of a host program's work into blocks that the host's
+      cores run at once. Block [i] runs the iterations [i * extent / blocks] to
+      [(i + 1) * extent / blocks - 1]. *)
+
+  val workers : unit -> int
+  (** [workers ()] is the number of threads a split {!call} runs on: the host's
+      cores that pay for compute-bound work, its performance cores where it also
+      has slower ones. *)
+
+  val call : ?split:split -> t -> Buffer.t array -> int array -> unit
+  (** [call ~split p buffers values] runs the host program [p] in the calling
+      domain and returns once it returns. [p] is called as the C function
 
       {v void f(void **buffers, const int64_t *values); v}
 
@@ -742,6 +757,14 @@ module Program : sig
       from the machine, such as {!synchronize} of its host, returns. A program
       that fails there loses the host.
 
+      With [split], [p] runs once per block, with [values.(split.lo)] and
+      [values.(split.hi)] set to the block's iterations, on {!workers} threads
+      of the host's pool, which nx.cpu's kernels share; the call returns once
+      every block has. Blocks run in any order and at once, so a block must not
+      read what another writes. A split call waits for the pool while another
+      domain's work holds it. A program of another machine's host runs as one
+      block.
+
       Only hosts run programs; a program of another device is launched by the
       libraries that submit work to it. [buffers] may be any buffers whose
       memory [p]'s host addresses: its own, and that of the devices of its
@@ -749,8 +772,9 @@ module Program : sig
       and the test devices of {!Driver.host_memory}.
 
       Raises [Invalid_argument] if [p]'s device runs no programs or does not
-      address the memory of a buffer of [buffers], and {!Lost} if a lost device
-      can reach a buffer of [buffers]. *)
+      address the memory of a buffer of [buffers], if [split.extent < 0],
+      [split.blocks < 1], or [split.lo] or [split.hi] is no slot of [values],
+      and {!Lost} if a lost device can reach a buffer of [buffers]. *)
 end
 
 (** {1:stats Statistics} *)

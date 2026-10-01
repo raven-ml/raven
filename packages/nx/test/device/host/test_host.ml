@@ -350,6 +350,66 @@ let test_profile () =
       is_true (before <= s.start && s.start <= s.stop && s.stop <= after)
   | events -> failf "%d events" (List.length events)
 
+(* Splits *)
+
+(* [block] marks each iteration of its block with the block's first and counts
+   how often each iteration runs. *)
+let block =
+  lazy
+    (compile
+       {|ABI void block(void **b, const long long *v) {
+  long long *first = b[0], *runs = b[1];
+  for (long long i = v[1]; i < v[2]; i++) { first[i] = v[1]; runs[i] += 1; }
+}|})
+
+let int64s_of b =
+  Array.to_list
+    (Array.init (B.length b)
+       (Bigarray.Array1.get (B.bigarray Bigarray.int64 b)))
+
+let split_run ~extent ~blocks =
+  let p = load ~binary:(Lazy.force block) ~name:"block" in
+  let first = B.create host S.Int64 (max 1 extent)
+  and runs = B.create host S.Int64 (max 1 extent) in
+  Bigarray.Array1.fill (B.bigarray Bigarray.int64 runs) 0L;
+  P.call
+    ~split:{ extent; blocks; lo = 1; hi = 2 }
+    p [| first; runs |] [| 99; -1; -1 |];
+  ( List.filteri (fun i _ -> i < extent) (int64s_of first),
+    List.filteri (fun i _ -> i < extent) (int64s_of runs) )
+
+let test_split (extent, blocks) =
+  let first, runs = split_run ~extent ~blocks in
+  equal ~msg:"every iteration runs once" (list int64)
+    (List.init extent (fun _ -> 1L))
+    runs;
+  let start = Array.make extent 0L in
+  for b = 0 to blocks - 1 do
+    for i = b * extent / blocks to ((b + 1) * extent / blocks) - 1 do
+      start.(i) <- Int64.of_int (b * extent / blocks)
+    done
+  done;
+  equal ~msg:"in the block of its iterations" (list int64) (Array.to_list start)
+    first
+
+let test_split_refusals () =
+  let p = load ~binary:(Lazy.force block) ~name:"block" in
+  let b = B.create host S.Int64 1 in
+  let call split values = P.call ~split p [| b; b |] values in
+  List.iter
+    (fun (why, split, values) ->
+      raises_match ~msg:why (Exn.invalid_arg ?substring:None) (fun () ->
+          call split values))
+    [
+      ("no block", { extent = 1; blocks = 0; lo = 1; hi = 2 }, [| 0; 0; 0 |]);
+      ( "fewer than no iteration",
+        { extent = -1; blocks = 1; lo = 1; hi = 2 },
+        [| 0; 0; 0 |] );
+      ( "a slot past the values",
+        { extent = 1; blocks = 1; lo = 1; hi = 3 },
+        [| 0; 0; 0 |] );
+    ]
+
 let () =
   exit
     (run "nx.device host programs"
@@ -375,4 +435,10 @@ let () =
          test "a call is a span of its program while a profile is taken"
            test_profile;
          test "the host refuses what it cannot load or call" test_refusals;
+         cases
+           ~name:(fun (n, b) -> Printf.sprintf "%d iterations, %d blocks" n b)
+           "a split call runs each iteration once, in its block,"
+           [ (1000, 7); (5, 8); (64, 1); (0, 3); (3, 3) ]
+           test_split;
+         test "a split call refuses a split it cannot run" test_split_refusals;
        ])

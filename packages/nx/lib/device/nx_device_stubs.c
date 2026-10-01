@@ -917,14 +917,46 @@ value caml_nx_device_symbol(value v_name) {
   return caml_copy_nativeint((intnat)a);
 }
 
-/* Runs [f(buffers, values)] with the runtime released. The buffers' addresses
-   and the values are read first, into memory the collector does not move: from
-   Nx_device.Buffer.t values, or from (address, size) pairs when [addresses]. */
+/* A split call: [blocks] blocks of [extent] iterations, each a call of [f]
+   with its own copy of the values, whose [lo] and [hi] slots hold the
+   block's iterations. A worker's copy is reused across the blocks it claims. */
+typedef void (*program)(void **, const int64_t *);
+
+typedef struct {
+  program f;
+  void **buffers;
+  int64_t *values; /* one array of [n] per worker */
+  mlsize_t n;
+  int64_t extent, blocks, lo, hi;
+} split_job;
+
+static void run_blocks(int64_t first, int64_t last, int worker, void *ctx) {
+  split_job *j = ctx;
+  int64_t *v = j->values + (size_t)worker * j->n;
+  for (int64_t i = first; i < last; i++) {
+    v[j->lo] = i * j->extent / j->blocks;
+    v[j->hi] = (i + 1) * j->extent / j->blocks;
+    j->f(j->buffers, v);
+  }
+}
+
+const nx_device_pool *nx_device_pool_get(void);
+
+value caml_nx_device_workers(value unit) {
+  (void)unit;
+  return Val_int(nx_device_pool_get()->compute_workers());
+}
+
+/* Runs [f(buffers, values)] with the runtime released, once, or once per
+   block of [v_split] (an Nx_device.Program.split, or 0) on the host's pool.
+   The buffers' addresses and the values are read first, into memory the
+   collector does not move: from Nx_device.Buffer.t values, or from (address,
+   size) pairs when [addresses]. */
 #define NX_DEVICE_CALL_WORDS 32
 
 static value call(value v_entry, value v_buffers, value v_values,
-                  int addresses) {
-  CAMLparam3(v_entry, v_buffers, v_values);
+                  int addresses, value v_split) {
+  CAMLparam4(v_entry, v_buffers, v_values, v_split);
   mlsize_t nb = Wosize_val(v_buffers), nv = Wosize_val(v_values);
   void *small_b[NX_DEVICE_CALL_WORDS];
   int64_t small_v[NX_DEVICE_CALL_WORDS];
@@ -942,22 +974,47 @@ static value call(value v_entry, value v_buffers, value v_values,
                ? (void *)Nativeint_val(Field(Field(v_buffers, i), 0))
                : nx_device_buffer_host(Field(v_buffers, i));
   for (mlsize_t i = 0; i < nv; i++) v[i] = (int64_t)Long_val(Field(v_values, i));
-  void (*f)(void **, const int64_t *) =
-      (void (*)(void **, const int64_t *))Nativeint_val(v_entry);
-  caml_release_runtime_system();
-  f(b, v);
-  caml_acquire_runtime_system();
+  program f = (program)Nativeint_val(v_entry);
+  if (v_split == Val_int(0)) {
+    caml_release_runtime_system();
+    f(b, v);
+    caml_acquire_runtime_system();
+  } else {
+    const nx_device_pool *pool = nx_device_pool_get();
+    int nthreads = pool->compute_workers();
+    split_job j = {f, b, NULL, nv,
+                   Long_val(Field(v_split, 0)), Long_val(Field(v_split, 1)),
+                   Long_val(Field(v_split, 2)), Long_val(Field(v_split, 3))};
+    if (nthreads > j.blocks) nthreads = (int)j.blocks;
+    j.values = malloc((size_t)nthreads * (nv ? nv : 1) * sizeof *j.values);
+    if (j.values == NULL) {
+      if (b != small_b) free(b);
+      if (v != small_v) free(v);
+      caml_raise_out_of_memory();
+    }
+    for (int w = 0; w < nthreads; w++)
+      memcpy(j.values + (size_t)w * nv, v, nv * sizeof *v);
+    caml_release_runtime_system();
+    pool->run(nthreads, j.blocks, j.blocks, run_blocks, &j);
+    caml_acquire_runtime_system();
+    free(j.values);
+  }
   if (b != small_b) free(b);
   if (v != small_v) free(v);
   CAMLreturn(Val_unit);
 }
 
 value caml_nx_device_call(value v_entry, value v_buffers, value v_values) {
-  return call(v_entry, v_buffers, v_values, 0);
+  return call(v_entry, v_buffers, v_values, 0, Val_int(0));
+}
+
+value caml_nx_device_call_split(value v_entry, value v_buffers,
+                                value v_values, value v_split) {
+  return call(v_entry, v_buffers, v_values, 0, v_split);
 }
 
 /* As [caml_nx_device_call], given each buffer as an (address, size) pair. */
 value caml_nx_device_call_addresses(value v_entry, value v_buffers,
                                     value v_values) {
-  return call(v_entry, v_buffers, v_values, 1);
+  return call(v_entry, v_buffers, v_values, 1, Val_int(0));
 }
