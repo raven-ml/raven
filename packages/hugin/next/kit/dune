@@ -2,7 +2,7 @@
  (name hugin_next_kit)
  (public_name hugin.next.kit)
  (libraries hugin.next.gg nx)
- (modules_without_implementation time scale ticks)
+ (modules_without_implementation scale ticks)
  (private_modules decimal)
  (instrumentation
   (backend ppx_windtrap.coverage))
