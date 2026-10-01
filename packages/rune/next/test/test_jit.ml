@@ -149,6 +149,40 @@ let laid =
     (fun ppf (a, b) -> Format.fprintf ppf "%a@ %a" Nx.pp a Nx.pp b)
     operands
 
+(* A triangular solve of 80 right-hand sides, wide enough to be solved in
+   blocks, with each flag: the residual of the system each flag states. *)
+let wide_solve =
+  cases ~name:fst "a triangular solve of 80 right-hand sides solves its system"
+    [
+      ("lower", (false, false, false));
+      ("upper, transposed, unit diagonal", (true, true, true));
+    ]
+    (fun (_, (upper, transpose, unit_diag)) ->
+      let n = 80 in
+      let a =
+        Nx.init Nx.float64 [| n; n |] (fun i ->
+            if i.(0) = i.(1) then 2.
+            else
+              float_of_int ((((i.(0) * 37) + (i.(1) * 11)) mod 13) - 6) /. 64.)
+      in
+      let b =
+        Nx.init Nx.float64 [| n; n |] (fun i ->
+            float_of_int ((((i.(0) * 5) + i.(1)) mod 7) - 3))
+      in
+      let system m =
+        let t = if upper then Nx.triu ~k:1 m else Nx.tril ~k:(-1) m in
+        let d =
+          if unit_diag then Nx.eye Nx.float64 n else Nx.diag (Nx.diagonal m)
+        in
+        let m = Nx.add t d in
+        if transpose then Nx.matrix_transpose m else m
+      in
+      let residual m =
+        let x = Nx.solve_triangular ~upper ~transpose ~unit_diag m b in
+        Nx.max (Nx.abs (Nx.sub (Nx.matmul (system m) x) b))
+      in
+      at_most float_exact ~than:1e-9 (Nx.item [] (Rune.jit' residual a)))
+
 (* The laws of values, [count] cases each; [heavy] adds the families the default
    run leaves out, and the tests whose programs take longest to compile. *)
 let values ~count ~heavy =
@@ -165,51 +199,52 @@ let values ~count ~heavy =
                 Rune.jit two apply a b))
   in
   group "values"
-    [
-      group "one operation per family equals eager"
-        (List.map law (List.filter (fun f -> heavy || f.light) families));
-      test "a replay reads its new arguments, and an earlier call's again"
-        (fun () ->
-          let g = Rune.jit' poly in
-          equal floats (poly (x ())) (g (x ()));
-          equal floats (poly (y ())) (g (y ()));
-          equal floats (poly (x ())) (g (x ())));
-      test "a structured result equals eager's leaf by leaf" (fun () ->
-          let s = Nx.Ptree.(pair tensor (list (option tensor))) in
-          let f a = (Nx.neg a, [ Some (poly a); None; Some a ]) in
-          equal (Oracle.structure s)
-            (f (x ()))
-            (Rune.jit Nx.Ptree.(tensor @-> returns s) f (x ())));
-      test "64-bit integer constants keep every bit" (fun () ->
-          let a = Nx.create Nx.int64 [| 2 |] [| 1L; -1L |] in
-          let f a =
-            Nx.add a
-              (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; Int64.min_int |])
-          in
-          equal (tensor int64) (f a) (Rune.jit' f a));
-      test "integer constants wrap at the operand's width" (fun () ->
-          let a = Nx.create Nx.int8 [| 3 |] [| 127; -128; 100 |] in
-          let f a = Nx.add (Nx.mul_s a 3) (Nx.full Nx.int8 [| 3 |] 100) in
-          equal (tensor int) (f a) (Rune.jit' f a));
-      test "float identities hold only where IEEE keeps them" (fun () ->
-          let a =
-            Nx.create Nx.float32 [| 4 |]
-              [| -0.; 0.; Float.infinity; Float.nan |]
-          in
-          let f a =
-            Nx.stack ~axis:0
-              [
-                Nx.add a (Nx.zeros_like a);
-                Nx.div a a;
-                Nx.mul a (Nx.zeros_like a);
-              ]
-          in
-          equal floats (f a) (Rune.jit' f a));
-      test "a zero-size result is an empty tensor" (fun () ->
-          let a = Nx.zeros Nx.float32 [| 0; 3 |] in
-          let r = Rune.jit' poly a in
-          equal (array int) [| 0; 3 |] (Nx.shape r));
-    ]
+    ([
+       group "one operation per family equals eager"
+         (List.map law (List.filter (fun f -> heavy || f.light) families));
+       test "a replay reads its new arguments, and an earlier call's again"
+         (fun () ->
+           let g = Rune.jit' poly in
+           equal floats (poly (x ())) (g (x ()));
+           equal floats (poly (y ())) (g (y ()));
+           equal floats (poly (x ())) (g (x ())));
+       test "a structured result equals eager's leaf by leaf" (fun () ->
+           let s = Nx.Ptree.(pair tensor (list (option tensor))) in
+           let f a = (Nx.neg a, [ Some (poly a); None; Some a ]) in
+           equal (Oracle.structure s)
+             (f (x ()))
+             (Rune.jit Nx.Ptree.(tensor @-> returns s) f (x ())));
+       test "64-bit integer constants keep every bit" (fun () ->
+           let a = Nx.create Nx.int64 [| 2 |] [| 1L; -1L |] in
+           let f a =
+             Nx.add a
+               (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; Int64.min_int |])
+           in
+           equal (tensor int64) (f a) (Rune.jit' f a));
+       test "integer constants wrap at the operand's width" (fun () ->
+           let a = Nx.create Nx.int8 [| 3 |] [| 127; -128; 100 |] in
+           let f a = Nx.add (Nx.mul_s a 3) (Nx.full Nx.int8 [| 3 |] 100) in
+           equal (tensor int) (f a) (Rune.jit' f a));
+       test "float identities hold only where IEEE keeps them" (fun () ->
+           let a =
+             Nx.create Nx.float32 [| 4 |]
+               [| -0.; 0.; Float.infinity; Float.nan |]
+           in
+           let f a =
+             Nx.stack ~axis:0
+               [
+                 Nx.add a (Nx.zeros_like a);
+                 Nx.div a a;
+                 Nx.mul a (Nx.zeros_like a);
+               ]
+           in
+           equal floats (f a) (Rune.jit' f a));
+       test "a zero-size result is an empty tensor" (fun () ->
+           let a = Nx.zeros Nx.float32 [| 0; 3 |] in
+           let r = Rune.jit' poly a in
+           equal (array int) [| 0; 3 |] (Nx.shape r));
+     ]
+    @ if heavy then [ wide_solve ] else [])
 
 (* Keys *)
 
@@ -1374,6 +1409,76 @@ let device_lists =
           let f a = Nx.set [ A; I 1 ] (Nx.zeros Nx.float32 [| 4 |]) a in
           let a = grid 4 3 in
           equal floats (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
+      cases ~name:fst "a window written across the split axis equals eager"
+        [
+          ("at a start the program holds", fun (_ : Nx.int32_t) -> Nx.R (1, 3));
+          ("at a start read when the call runs", fun pos -> Nx.D (pos, 2));
+        ]
+        (fun (_, at) ->
+          let f x pos =
+            Nx.set [ at pos; A ] (Nx.full Nx.float32 [| 2; 3 |] 9.) x
+          in
+          let pos = Nx.scalar Nx.int32 1l in
+          let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f in
+          equal floats
+            (f (grid 4 3) pos)
+            (host (g (Nx.place (split pair) (grid 4 3)) pos)));
+      slow "a map over a split axis computes each lane" (fun () ->
+          let f = Rune.vmap' (fun a -> Nx.add_s (Nx.mul a a) 1.) in
+          let a = grid 4 3 in
+          let expected = Nx.add_s (Nx.mul a a) 1. in
+          equal floats expected (host (f (Nx.place (split pair) a)));
+          equal floats expected (host (Rune.jit' f (Nx.place (split pair) a))));
+      slow
+        "a mask drawn from a key folded with each lane's index is that lane's, \
+         over split lanes" (fun () ->
+          let key = Nx.Rng.key 7 in
+          let draw k =
+            Nx.cast Nx.float32
+              (Nx.Rng.bernoulli k
+                 (Nx.broadcast_to [| 16 |] (Nx.scalar Nx.float32 0.5)))
+          in
+          let masks a key =
+            Rune.vmap'
+              (fun a ->
+                Rune.grad'
+                  (fun a ->
+                    let m =
+                      draw (Nx.Rng.fold_in_tensor key (Rune.lane_index ()))
+                    in
+                    Nx.mul_s (Nx.sum (Nx.mul (Nx.mul a a) m)) 0.5)
+                  a)
+              a
+          in
+          let masks =
+            Rune.jit
+              Nx.Ptree.(tensor @-> Nx.Rng.ptree @-> returns tensor)
+              masks
+              (Nx.place (split pair) (Nx.ones Nx.float32 [| 2; 16 |]))
+              key
+          in
+          let lane i = draw (Nx.Rng.fold_in key i) in
+          equal floats (Nx.stack [ lane 0; lane 1 ]) (host masks);
+          is_false (Nx.array_equal (lane 0) (lane 1) |> Nx.item []));
+      slow
+        "a sum over an axis split over four devices replays each call's values"
+        (fun () ->
+          let reduce = Rune.jit' (Nx.sum ~axes:[ 0 ]) in
+          List.iter
+            (fun call ->
+              let a =
+                Nx.init Nx.float32 [| 4; 16 |] (fun i ->
+                    float_of_int ((1000 * call) + (100 * i.(0)) + i.(1)))
+              in
+              let expected =
+                Nx.init Nx.float32 [| 16 |] (fun i ->
+                    float_of_int ((4000 * call) + 600 + (4 * i.(0))))
+              in
+              equal
+                ~msg:(Printf.sprintf "call %d" call)
+                floats expected
+                (host (reduce (Nx.place (split [ d1; d2; d3; d4 ]) a))))
+            [ 0; 1; 2 ]);
       slow "data-parallel training follows one device" (fun () ->
           let loss w a = Nx.mean (Nx.square (Nx.matmul a w)) in
           let step =
@@ -1428,9 +1533,42 @@ let on_disk_at path x =
            ~offset:0 (B.dtype src) (B.length src);
        ])
 
+(* The int32 values [v] in a file, two bytes after its start, as a value on the
+   disk whose elements are not aligned to their width. *)
+let unaligned_on_disk v =
+  let module B = Nx_device.Buffer in
+  let n = Array.length v in
+  let path = temp_file () in
+  let bytes =
+    Nx.init Nx.uint8
+      [| 2 + (4 * n) |]
+      (fun i ->
+        let i = i.(0) - 2 in
+        if i < 0 then 0
+        else
+          Int32.to_int (Int32.shift_right_logical v.(i / 4) (8 * (i mod 4)))
+          land 255)
+  in
+  ignore (on_disk_at path bytes);
+  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  Nx.Repr.Placed.v p Nx.int32
+    (Nx_array.View.create [| n |])
+    (Nx.Repr.Storage.v p
+       [
+         B.view
+           (require_ok ~pp:Format.pp_print_string (B.of_file path))
+           ~offset:2 Nx_dtype.Scalar.Int32 n;
+       ])
+
 let disk =
   group "values on the disk"
     [
+      test "a value on the disk not aligned to its elements is read" (fun () ->
+          let v = [| 1l; -2l; 70000l; Int32.min_int; Int32.max_int; 0l |] in
+          let a = unaligned_on_disk v in
+          equal (tensor int32)
+            (Nx.mul_s (Nx.create Nx.int32 [| 6 |] v) 3l)
+            (Rune.jit' (fun a -> Nx.mul_s a 3l) a));
       test "a leaf and a capture on the disk are read as host values" (fun () ->
           let a = on_disk_at (temp_file ()) (x ()) in
           let w = on_disk_at (temp_file ()) (y ()) in
@@ -1526,6 +1664,32 @@ let on_one_device ~name d =
           at_most ~msg:"bytes allocated across 20 steps" int ~than:(4 * n)
             (allocated d - base);
           equal floats (Nx.full Nx.float32 [| n |] 21.) (host !s));
+      test "a view of a weight on the disk placed on the device is captured"
+        (fun () ->
+          let w = on_disk_at (temp_file ()) (grid 4 4) in
+          let p = Nx.place (on d) (Nx.matrix_transpose w) in
+          let g = Rune.jit' (fun a -> Nx.matmul a p) in
+          equal close
+            (Nx.matmul (grid 2 4) (Nx.matrix_transpose (grid 4 4)))
+            (host (g (placed d (grid 2 4)))));
+      test
+        "a consumed value placed from a file lends nothing, and the file keeps \
+         its elements" (fun () ->
+          let path = temp_file () in
+          let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
+          let pool = Nx.place (on d) (on_disk_at path elements) in
+          let before = Witness.addresses pool in
+          let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+          let values = Nx.create Nx.float32 [| 2 |] [| 10.; 30. |] in
+          let r =
+            Rune.jit consumes (Nx.scatter ~axis:0 ~indices ~values) pool
+          in
+          equal floats
+            (Nx.create Nx.float32 [| 4 |] [| 10.; 6.; 30.; 2. |])
+            (host r);
+          is_false (List.equal Nativeint.equal before (Witness.addresses r));
+          raises_invalid_arg (fun () -> Nx.to_array pool);
+          equal floats elements (host (on_disk_at_read path)));
       slow "a compiled gradient through remats keeps under half the activations"
         (fun () ->
           let layers = 8 and batch = 256 and dim = 32 in

@@ -677,6 +677,9 @@ them.
 | old: test_device_lists.ml residency › a placed capture is bound on the devices | a capture on every device | J › device lists › a capture copied to every device is bound on each |
 | old: test_device_lists.ml residency › one slice of a split storage | one shard of a split value | J › device lists › one shard's slice of a split value computes on its device alone |
 | old: test_device_lists.ml placement › an indexed write into a split value | an indexed write into a split value | J › device lists › an indexed write into a split value equals eager |
+| old: test_device_lists.ml placement › a window write on the split axis; placement › a traced window write on the split axis | a window written across a split axis | J › device lists › a window written across the split axis equals eager › at a start the program holds; at a start read when the call runs |
+| old: test_device_lists.ml composition › a lane of a split axis has a placement | a map over split lanes | J › device lists › a map over a split axis computes each lane |
+| old: test_device_lists.ml composition › dropout per device decorrelates masks | randomness per lane over split lanes | J › device lists › a mask drawn from a key folded with each lane's index is that lane's, over split lanes |
 | old: test_device_lists.ml consumption › a split state loop is bounded at two generations; consumption › consuming copies releases every copy | a split state loop | J › device lists › a loop consuming a split state holds two generations on each device |
 | old: test_device_lists.ml consumption › programs over devices own arenas | arenas | dropped: tolk.engine's linked storage (its suite) |
 | old: test_device_lists.ml consumption › a capture of consumed storage raises | a consumed capture | J › captures › a host capture another call consumes makes the program raise, naming its path |
@@ -691,6 +694,7 @@ them.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | old: test_tensor_parallel.ml tensor parallelism › a column-then-row MLP | a column-then-row split MLP | J › device lists › a column-then-row split MLP equals one device |
+| old: test_tensor_parallel.ml Rune shared copy replay reduces every shard | a sum over a split axis, replayed | J › device lists › a sum over an axis split over four devices replays each call's values |
 
 ### test_jit.ml, values on the disk
 
@@ -710,6 +714,8 @@ them.
 | old: test_jit.ml values on the disk › a leaf and a capture are read as host values | disk leaves and captures | J › values on the disk › a leaf and a capture on the disk are read as host values |
 | old: test_jit.ml values on the disk › borrowed storage is never lent or written | a consumed disk value | J › values on the disk › a consumed value on the disk is copied, and its file unchanged |
 | old: test_jit.ml values on the disk › the file opened is read, not the one at its path now | the file opened | J › values on the disk › the file opened is read, not the one at its path now |
+| old: test_jit.ml values on the disk › a value not aligned to its elements is read into the device | a disk value not aligned to its elements | J › values on the disk › a value on the disk not aligned to its elements is read |
+| old: test_jit.ml linear algebra › a wide triangular solve takes the blocked path | a triangular solve of many right-hand sides | J › swept › values › a triangular solve of 80 right-hand sides solves its system › lower; upper, transposed, unit diagonal |
 | old: test_jit.ml values on the disk › a value larger than a chunk is borrowed | a large mapped value | dropped: `Nx_device.Buffer` borrowing (`nx runtime devices`) |
 
 ### test_jit_metal.ml
@@ -719,7 +725,7 @@ The kernel rows of this file are the Compiled section's.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | old: test_jit_metal.ml metal device › grad inside jit matches eager | a gradient inside a compiled call | J › transformations › under a transformation a compiled function runs its function (the Metal cells are the composition suite's) |
-| old: test_jit_metal.ml metal device › rematerialized second derivatives replay correctly; metal device › custom backward replays indexed scatter | rules under a compiled call | dropped: the compiled-rules suite's (`next/test/rules/jit`) |
+| old: test_jit_metal.ml metal device › rematerialized second derivatives replay correctly; metal device › custom backward replays indexed scatter | remat and custom rules under a compiled call | Rune compositions › triples › jit ∘ grad ∘ jvp › remat; custom_vjp |
 | old: test_jit_metal.ml metal device › multi-kernel traces replay as compiled queues; metal device › a read after a call waits for it | a call queued on Metal, and its results read | J › metal › metal › a call runs where its arguments lie, and leaves its results there |
 | old: test_jit_metal.ml metal device › command storage is released with its function; metal device › programs own their arenas | a program's storage | dropped: tolk.engine's linked storage (its suite) |
 | old: test_jit_metal.ml metal device › two programs alternate on one consumed state | alternating programs | J › lending › two programs alternating on one consumed state keep its storage |
@@ -729,6 +735,9 @@ The kernel rows of this file are the Compiled section's.
 | old: test_jit_metal.ml placed weights › a step reads its weights and consumes its state | a step on Metal | J › metal › metal › a consumed placed argument lends its storage |
 | old: test_jit_metal.ml placed weights › a capture resident on another device raises | a capture on another device | J › errors › operands on two devices raise nx's message |
 | old: test_jit_metal.ml placed weights › placed views bind at any offset | views at any offset on Metal | J › metal › metal › a float16 argument starting 2 bytes further retraces once, and is read where it lies |
+| old: test_jit_metal.ml placed weights › a capture moves a program past a dtype | a capture deciding a call's device | J › captures › a capture decides the device of a call of host arguments |
+| old: test_jit_metal.ml placed weights › a weight on the disk is borrowed | a weight from the disk on a device | J › one device › a view of a weight on the disk placed on the device is captured; metal › metal › a view of a weight on the disk placed on the device is captured |
+| old: test_jit_metal.ml placed weights › borrowed storage is never lent or written | a consumed value borrowed from a file | J › one device › a consumed value placed from a file lends nothing, and the file keeps its elements; metal › metal › a consumed value placed from a file lends nothing, and the file keeps its elements |
 | old: test_jit_metal.ml reads, moves and loops › item on resident logits reads one element; reads, moves and loops › a move to the host keeps its source; reads, moves and loops › mixed placements raise; reads, moves and loops › a value moves between backends | reads and moves of placed values | dropped: nx's placement suite (`nx placement`) |
 | old: test_jit_metal.ml reads, moves and loops › a loop whose state starts on the host compiles once | a state that moves to the device | J › placement › a state starting on the host retraces once on a device, then replays |
 
@@ -747,7 +756,7 @@ The eager-against-compiled rows of this file are the Compiled section's.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_half.ml astype sandwich › * | gradients through casts to and from narrow floats | dropped: the cast rows of the rule suites, and their compiled forms in the compiled-rules suite (`next/test/rules/jit`) |
+| old: test_half.ml astype sandwich › * | gradients through casts to and from narrow floats | dropped: the cast rows of the rule suites, and their compiled forms, Jc › host, metal › cast |
 | old: test_half.ml two devices › * | narrow floats over two devices | J › placement › a split argument computes on each device, and stays split |
 | old: test_half.ml vmap › * | narrow floats under a map | dropped: the batching suite's rows at every dtype |
 
