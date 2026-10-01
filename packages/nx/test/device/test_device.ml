@@ -1152,6 +1152,573 @@ let memory =
           equal int 600 (B.nbytes (B.create f.dev S.UInt8 600)));
     ]
 
+(* Pools *)
+
+(* A far device's memories as pools: its own memory under its budget, the window
+   that holds its mapped memory and loaded code within its own, and pinned
+   memory, the host's, under no ceiling. Live buffers count in the pools of the
+   memory they got, a loaded binary's code in the window, or in pinned memory on
+   a device without one, and the cache holds released regions by size and
+   memory. Which cached regions a refused allocation or a budget releases is
+   open: after every call the cache is read from what the driver holds, and the
+   change is judged. *)
+module Pools = struct
+  exception No_memory
+
+  type image = { binary : string; code : int; mutable holders : int }
+
+  type device = {
+    window : int option;
+    mutable budget : int;
+    mutable buffers : buffer list;
+    mutable images : image list;
+    mutable cache : (int * B.memory) list;
+    mutable releases : bool; (* the call may release cached memory *)
+    mutable empties : bool; (* the call releases all of it *)
+  }
+
+  and buffer = {
+    owner : device;
+    bytes : int;
+    memory : B.memory;
+    mutable live : bool;
+  }
+
+  type program = { image : image; mutable held : bool }
+
+  let device budget window =
+    {
+      window;
+      budget;
+      buffers = [];
+      images = [];
+      cache = [];
+      releases = false;
+      empties = false;
+    }
+
+  (* Whether memory [m] counts in the device's own memory, and in its window. *)
+  let own d (m : B.memory) = m = Device || (m = Mapped && d.window <> None)
+  let windowed d (m : B.memory) = m = Mapped && d.window <> None
+  let pinned d m = not (own d m)
+  let code_memory d : B.memory = if d.window = None then Pinned else Mapped
+
+  let used d counts =
+    let buffers n b = if b.live && counts b.memory then n + b.bytes else n in
+    let code n i =
+      if i.holders > 0 && counts (code_memory d) then n + i.code else n
+    in
+    List.fold_left code (List.fold_left buffers 0 d.buffers) d.images
+
+  let cached counts cache =
+    List.fold_left (fun n (b, m) -> if counts m then n + b else n) 0 cache
+
+  let own_room d cache = d.budget - used d (own d) - cached (own d) cache
+
+  let in_window d cache n =
+    match d.window with
+    | None -> false
+    | Some w -> n <= w - used d (windowed d) - cached (windowed d) cache
+
+  (* The memory a request of [kind] gets beside [cache]: mapped memory the
+     window refuses is pinned memory while the device's own memory has room, and
+     refused when it has none. *)
+  let placed d (kind : B.memory) n cache : B.memory option =
+    match kind with
+    | Pinned -> Some Pinned
+    | Device -> if n <= own_room d cache then Some Device else None
+    | Mapped ->
+        if n > own_room d cache then None
+        else if in_window d cache n then Some Mapped
+        else Some Pinned
+
+  (* The memory a request of [kind] asks for: on a device with no window, mapped
+     memory is pinned memory. *)
+  let asked d (kind : B.memory) : B.memory =
+    if kind = Mapped && d.window = None then Pinned else kind
+
+  let rec remove x = function
+    | [] -> []
+    | y :: l -> if x = y then l else y :: remove x l
+
+  let made d bytes memory =
+    let b = { owner = d; bytes; memory; live = true } in
+    d.buffers <- b :: d.buffers;
+    b
+
+  (* A request over the budget is refused at once, keeping the cache; a cached
+     region of its size and memory serves it; and one the pools refuse as asked
+     releases cached memory, then is served as releasing all of it allows. *)
+  let create d kind n =
+    let kind = asked d kind in
+    if kind <> B.Pinned && n > d.budget then raise No_memory;
+    let key = (n, kind) in
+    if List.mem key d.cache then begin
+      cover "cached memory serves a request" true;
+      d.cache <- remove key d.cache;
+      made d n (snd key)
+    end
+    else
+      match placed d kind n d.cache with
+      | Some m when m = kind -> made d n m
+      | Some _ | None -> (
+          d.releases <- true;
+          match placed d kind n [] with
+          | Some m ->
+              cover "mapped memory the window refuses is pinned memory"
+                (kind = Mapped && m = Pinned);
+              cover "a request the cache crowds out is served" (m = kind);
+              made d n m
+          | None ->
+              d.empties <- true;
+              raise No_memory)
+
+  let drop b =
+    if b.live then begin
+      b.live <- false;
+      b.owner.cache <- (b.bytes, b.memory) :: b.owner.cache
+    end
+
+  let code_of binary =
+    int_of_string (String.sub binary 1 (String.length binary - 1))
+
+  (* A binary loads once while a program of it is held, and its code counts
+     whatever room is left. *)
+  let load d binary =
+    let image =
+      match List.find_opt (fun i -> i.binary = binary) d.images with
+      | Some i -> i
+      | None ->
+          let i = { binary; code = code_of binary; holders = 0 } in
+          d.images <- i :: d.images;
+          i
+    in
+    image.holders <- image.holders + 1;
+    cover "loaded code leaves no room" (own_room d d.cache < 0);
+    { image; held = true }
+
+  let unload p =
+    if p.held then begin
+      p.held <- false;
+      p.image.holders <- p.image.holders - 1
+    end
+
+  let set_budget d n =
+    if n < 0 then invalid_arg "set_budget";
+    d.budget <- n
+
+  let free_cache d =
+    d.releases <- true;
+    d.empties <- true
+
+  (* [l] less the elements of [l'], if it holds them all. *)
+  let rec without l l' =
+    match l' with
+    | [] -> Some l
+    | x :: l' -> if List.mem x l then without (remove x l) l' else None
+
+  let pp_region ppf (n, m) = Format.fprintf ppf "%d %a" n pp_memory m
+  let regions = slist (Testable.make ~pp:pp_region ~equal:( = )) compare
+
+  (* The cache that [held], what the driver holds for buffers, leaves beside the
+     live buffers, judged against the cache before the call, then kept. *)
+  let observe d held =
+    let live =
+      List.filter_map
+        (fun b -> if b.live then Some (b.bytes, b.memory) else None)
+        d.buffers
+    in
+    let cache =
+      match without held live with
+      | Some cache -> cache
+      | None -> failf "the driver holds every live buffer"
+    in
+    if without d.cache cache = None then
+      equal ~msg:"only released buffers enter the cache" regions d.cache cache;
+    if cache <> [] && own_room d cache < 0 then
+      equal ~msg:"the cache keeps within the budget, or is empty" regions []
+        cache;
+    cover "the cache is released to keep within the budget"
+      (own_room d d.cache < 0 && cache <> d.cache);
+    if (not d.releases) && own_room d d.cache >= 0 then
+      equal ~msg:"cached memory stays until a release" regions d.cache cache;
+    if d.empties then equal ~msg:"all cached memory released" regions [] cache;
+    d.cache <- cache;
+    d.releases <- false;
+    d.empties <- false
+end
+
+(* A far device that loads binaries whose code is as many bytes as the number
+   their name ends with, and the regions its driver held once made: its
+   timeline's. *)
+type pool_device = { pools : fake; timeline : (int * B.memory) list }
+type pool_buffer = { on : fake; mutable pb : B.t option }
+type loaded = { by : fake; mutable p : Nx_device.Program.t option }
+
+(* The regions [f]'s driver holds, by size and memory. *)
+let held f =
+  Hashtbl.fold
+    (fun a (_, n) l -> (n, Hashtbl.find f.drv.memories a) :: l)
+    f.drv.blocks []
+
+let code_loads = ref 0
+
+let load_code ~binary =
+  incr code_loads;
+  let at = Nativeint.of_int (0x10000 * !code_loads) in
+  let code = Region.v at (Pools.code_of binary) in
+  Ok { Driver.code = Some code; entry = (fun _ -> Ok 1n); unload = ignore }
+
+let pools_invariant (r : Pools.device) { pools; timeline } =
+  let st = stats pools.dev in
+  (match Pools.without (held pools) timeline with
+  | Some held -> Pools.observe r held
+  | None -> fail "the driver holds the timeline");
+  equal ~msg:"allocated: live buffers and loaded code" int
+    (Pools.used r (Pools.own r) + Pools.used r (Pools.pinned r))
+    (Nx_device.Stats.allocated st);
+  equal ~msg:"cached" int
+    (Pools.cached (Fun.const true) r.cache)
+    (Nx_device.Stats.cached st);
+  equal ~msg:"retained" int 0 (Nx_device.Stats.retained st);
+  equal ~msg:"budget" int r.budget (Nx_device.budget pools.dev)
+
+let pool_buffer_invariant (r : Pools.buffer) s =
+  match s.pb with
+  | None -> ()
+  | Some b ->
+      equal ~msg:"bytes" int r.bytes (B.nbytes b);
+      equal ~msg:"its memory" memory_kind r.memory (memory_of s.on b)
+
+let pdev = abstract "d" ~invariant:pools_invariant
+let pbuf = abstract "b" ~invariant:pool_buffer_invariant
+
+let prog =
+  abstract "p" ~invariant:(fun (r : Pools.program) s ->
+      match s.p with
+      | None -> ()
+      | Some p ->
+          equal ~msg:"its code" (option int) (Some r.image.code)
+            (Option.map B.nbytes (Nx_device.Program.code p)))
+
+(* [d]'s unreachable buffers and programs, collected and released. *)
+let collected d =
+  Gc.full_major ();
+  ignore (stats d)
+
+let pool_commands =
+  let windows =
+    let pp ppf = function
+      | None -> Format.pp_print_string ppf "no window"
+      | Some w -> Format.fprintf ppf "window %d" w
+    in
+    Gen.of_list ~pp [ None; Some 32; Some 96 ]
+  in
+  let requests =
+    Gen.frequency
+      [
+        (2, Gen.constant ~pp:pp_memory B.Device);
+        (2, Gen.constant ~pp:pp_memory B.Mapped);
+        (1, Gen.constant ~pp:pp_memory B.Pinned);
+      ]
+  in
+  let edges =
+    among (arg pp_budget) pdev (fun r ->
+        let own = Pools.used r (Pools.own r) in
+        [ own; own + 16; own + 64; r.budget / 2; 0; max_int; -1 ])
+  in
+  let drop =
+    command "drop"
+      (pbuf ^-> returns unit)
+      Pools.drop
+      (fun s ->
+        s.pb <- None;
+        collected s.on.dev)
+  in
+  [
+    command "device"
+      (ints [ 64; 128; 256 ] @-> windows @-> makes pdev)
+      Pools.device
+      (fun budget window ->
+        let pools =
+          fake ~name:"POOLS" ~far:true ~budget ?window ~load:load_code ()
+        in
+        { pools; timeline = held pools });
+    command "create"
+      (pdev ^-> requests @-> ints [ 16; 32; 64; 96 ] @-> makes pbuf)
+      Pools.create
+      (fun d memory n ->
+        match B.create ~memory d.pools.dev S.UInt8 n with
+        | b -> { on = d.pools; pb = Some b }
+        | exception (Nx_device.Out_of_memory _ as e) ->
+            is_true (out_of_memory d.pools.dev n e);
+            raise Pools.No_memory);
+    drop;
+    drop;
+    command "load"
+      (pdev
+      ^-> Gen.of_list ~pp:Format.pp_print_string [ "a16"; "b48"; "c160" ]
+      @-> makes prog)
+      Pools.load
+      (fun d binary ->
+        { by = d.pools; p = Some (program d.pools.dev ~binary ~name:"f") });
+    command "unload"
+      (prog ^-> returns unit)
+      Pools.unload
+      (fun s ->
+        s.p <- None;
+        collected s.by.dev);
+    command "set_budget"
+      (pdev ^-> edges ^-> returns unit)
+      Pools.set_budget
+      (fun d n -> Nx_device.set_budget d.pools.dev n);
+    command "free_cache"
+      (pdev ^-> returns unit)
+      Pools.free_cache
+      (fun d -> Nx_device.free_cache d.pools.dev);
+  ]
+
+(* Last uses *)
+
+(* A device's buffers, its work on them, and a reader's, another device's work
+   that touches them. Released memory enters the cache once the reader's work on
+   it is done, and a create of its size reuses it at once, the device's own work
+   being ordered by its queue. A buffer that the reader's work touches waits, on
+   the host, for the device's work that may use its memory: at least the latest
+   that touched it, under any buffer, and at most all the device submitted
+   (nx_device.mli says the latest that touched it; the runtime waits for all).
+   The cache holds one memory per size, so that which one a create reuses is
+   known. *)
+module Uses = struct
+  type memory = {
+    size : int;
+    mutable touched : int; (* the device's latest work on it *)
+    mutable read : int; (* the reader's latest work on it *)
+  }
+
+  type device = {
+    mutable submitted : int;
+    mutable signaled : int;
+    mutable reads : int; (* the reader's submitted work *)
+    mutable reads_done : int;
+    mutable live : memory list;
+    mutable retiring : memory list;
+    mutable cache : memory list;
+  }
+
+  type buffer = { device : device; memory : memory; mutable dropped : bool }
+
+  let device () =
+    {
+      submitted = 0;
+      signaled = 0;
+      reads = 0;
+      reads_done = 0;
+      live = [];
+      retiring = [];
+      cache = [];
+    }
+
+  let sizes l = List.fold_left (fun n m -> n + m.size) 0 l
+  let sized n = List.find_opt (fun m -> m.size = n)
+
+  let create d n =
+    let memory =
+      match sized n d.cache with
+      | Some m ->
+          d.cache <- List.filter (( != ) m) d.cache;
+          cover "a create reuses memory whose work is not done"
+            (m.touched > d.signaled);
+          m
+      | None -> { size = n; touched = 0; read = 0 }
+    in
+    d.live <- memory :: d.live;
+    { device = d; memory; dropped = false }
+
+  let work b =
+    let d = b.device in
+    d.submitted <- d.submitted + 1;
+    b.memory.touched <- d.submitted
+
+  (* The device's work that the host waited for, judged against the work that
+     may use [ms]. *)
+  let waited d ms outcome =
+    let touched = List.fold_left (fun v m -> Int.max v m.touched) 0 ms in
+    match outcome with
+    | Error e -> raise e
+    | Ok None ->
+        at_most ~msg:"no wait: its latest work was done" int ~than:d.signaled
+          touched
+    | Ok (Some v) ->
+        at_least ~msg:"a wait for its latest work" int ~than:touched v;
+        at_most ~msg:"a wait for submitted work" int ~than:d.submitted v;
+        d.signaled <- Int.max d.signaled v
+
+  let read b outcome =
+    let d = b.device in
+    waited d [ b.memory ] outcome;
+    d.reads <- d.reads + 1;
+    b.memory.read <- d.reads
+
+  (* Memory the reader's work touched waits for it before entering the cache. *)
+  let retire d =
+    let fresh, still =
+      List.partition (fun m -> m.read <= d.reads_done) d.retiring
+    in
+    d.retiring <- still;
+    d.cache <- fresh @ d.cache
+
+  let complete d owner =
+    if owner then d.signaled <- d.submitted
+    else begin
+      d.reads_done <- d.reads;
+      retire d
+    end
+
+  let drop b =
+    let d = b.device in
+    if not b.dropped then begin
+      b.dropped <- true;
+      d.live <- List.filter (( != ) b.memory) d.live;
+      d.retiring <- b.memory :: d.retiring;
+      retire d
+    end
+
+  let free_cache d outcome =
+    waited d d.cache outcome;
+    d.cache <- []
+
+  (* Whether dropping [b] keeps one released memory per size. *)
+  let alone b =
+    let d = b.device and n = b.memory.size in
+    sized n d.cache = None && sized n d.retiring = None
+end
+
+(* A device whose waits are recorded, and a reader that addresses its signal
+   word. *)
+type uses = {
+  owner : fake;
+  reader : fake;
+  signaled : int ref;
+  waits : int list ref;
+  baseline : int;
+}
+
+let uses () =
+  let signaled = ref 0 and waits = ref [] in
+  let signal =
+    {
+      Driver.signaled = (fun () -> !signaled);
+      wait =
+        (fun v ~timeout_ms:_ ->
+          waits := v :: !waits;
+          signaled := Int.max !signaled v;
+          true);
+    }
+  in
+  let owner = fake ~name:"OWNER" ~maps:true ~signal () in
+  let reader = fake ~name:"READER" ~maps:true () in
+  { owner; reader; signaled; waits; baseline = owner.drv.held }
+
+(* The latest of the device's work that [f] waited for on the host. *)
+let waits_in u f =
+  let before = !(u.waits) in
+  f ();
+  let rec since = function
+    | l when l == before -> []
+    | v :: l -> v :: since l
+    | [] -> []
+  in
+  match since !(u.waits) with
+  | [] -> None
+  | vs -> Some (List.fold_left Int.max 0 vs)
+
+let uses_invariant (r : Uses.device) u =
+  let st = stats u.owner.dev in
+  let live = Uses.sizes r.live and retiring = Uses.sizes r.retiring in
+  let cached = Uses.sizes r.cache in
+  equal ~msg:"allocated: live buffers and memory not yet returned" int
+    (live + retiring)
+    (Nx_device.Stats.allocated st);
+  equal ~msg:"cached" int cached (Nx_device.Stats.cached st);
+  equal ~msg:"the driver holds the buffers, released or not" int
+    (live + retiring + cached)
+    (u.owner.drv.held - u.baseline);
+  equal ~msg:"signaled" int r.signaled (Nx_device.signaled u.owner.dev)
+
+type use_buffer = { uses : uses; mutable ub : B.t option }
+
+(* The reader's work completes as the program ends, or the device would wait for
+   it at exit. *)
+let udev =
+  abstract "d" ~invariant:uses_invariant ~release:(fun u ->
+      store_signal
+        (B.address (Nx_device.signal_word u.reader.dev))
+        (Nx_device.submitted u.reader.dev))
+
+let ubuf = abstract "b"
+let use_get s = match s.ub with Some b -> b | None -> raise Model.Dropped
+
+let uses_commands =
+  let waited = judges (option int) in
+  [
+    command "devices" (Gen.unit @-> makes udev) Uses.device uses;
+    command "create"
+      (udev ^-> ints [ 16; 32; 48 ] @-> makes ubuf)
+      Uses.create
+      (fun u n -> { uses = u; ub = Some (B.create u.owner.dev S.UInt8 n) });
+    (* The device's work waits on the host for the reader's unfinished work on
+       any of its memory, which completes only by a call. *)
+    command "work"
+      ~pre:(fun (b : Uses.buffer) ->
+        (not b.dropped) && b.device.reads_done = b.device.reads)
+      (ubuf ^-> returns unit)
+      Uses.work
+      (fun s -> ignore (submit s.uses.owner.dev ~touches:[ use_get s ] Fun.id));
+    command "read"
+      ~pre:(fun (b : Uses.buffer) -> not b.dropped)
+      (ubuf ^-> waited) Uses.read
+      (fun s ->
+        let b = use_get s in
+        waits_in s.uses (fun () ->
+            ignore (submit s.uses.reader.dev ~touches:[ b ] Fun.id)));
+    command "complete"
+      (udev ^-> Gen.bool @-> returns unit)
+      Uses.complete
+      (fun u owner ->
+        if owner then u.signaled := Nx_device.submitted u.owner.dev
+        else
+          store_signal
+            (B.address (Nx_device.signal_word u.reader.dev))
+            (Nx_device.submitted u.reader.dev));
+    command "drop"
+      ~pre:(fun (b : Uses.buffer) -> (not b.dropped) && Uses.alone b)
+      (ubuf ^-> returns unit)
+      Uses.drop
+      (fun s ->
+        s.ub <- None;
+        collected s.uses.owner.dev);
+    command "free_cache" (udev ^-> waited) Uses.free_cache (fun u ->
+        waits_in u (fun () -> Nx_device.free_cache u.owner.dev));
+  ]
+
+let pools =
+  group "pools"
+    [
+      stateful ~count:100 ~steps:40
+        "buffers and loaded code count in the pools of their memory, mapped \
+         memory the window refuses is pinned memory while the device's own has \
+         room, and the cache keeps within the budget (nx_device.mli is silent \
+         on a load beyond the budget: the code counts, and the room left goes \
+         negative; and on a request over the budget, which keeps the cache)"
+        pool_commands;
+      stateful ~count:200 ~steps:40
+        "released memory is cached once other devices' work on it is done and \
+         reused at once, and a reused buffer waits for the work that may still \
+         use its memory"
+        uses_commands;
+    ]
+
 (* Buffers *)
 
 let near = fake ()
@@ -2461,11 +3028,6 @@ let loader ?(code = 0) ?(room = fun () -> true) () =
       }
   in
   (l, load)
-
-(* [d]'s unreachable programs, collected and released. *)
-let collected d =
-  Gc.full_major ();
-  ignore (stats d)
 
 let test_loaded_once () =
   let l, load = loader () in
@@ -4640,9 +5202,274 @@ let work_later d v f =
       f ();
       store_signal word v)
 
+(* Host buffers that devices reach for their work, borrowed when they map the
+   memory and staged otherwise, and far devices' buffers that copies fill and
+   drain through the host's staging memory, while an adversary loses devices
+   between calls. A lost device's loss reaches the host memory it borrowed, and
+   no other host memory; the host's staging memory that a lost device mapped is
+   replaced at its next use, which the devices then map anew. *)
+module Stage = struct
+  exception Lost
+  exception Refused
+
+  type device = {
+    far : bool;
+    mutable lost : bool;
+    mutable mappings : int; (* of the host's staging memory *)
+  }
+
+  (* The host's staging memory, and the far devices that mapped it. It is the
+     process's, so its model is too. *)
+  type staging = { mutable mappers : device list }
+
+  let current = ref { mappers = [] }
+
+  type host = {
+    size : int;
+    mutable bytes : string;
+    mutable borrowers : device list;
+  }
+
+  type reached = {
+    original : host;
+    device : device;
+    access : B.access;
+    staged : bool;
+  }
+
+  type on_device = { owner : device; mutable contents : string }
+
+  let device far = { far; lost = false; mappings = 0 }
+  let big h = h.size >= page
+  let alive d = if d.lost then raise Lost
+
+  (* Raises [Lost] if a lost device borrowed [h]'s memory. *)
+  let reachable h =
+    cover "a lost device borrowed a host buffer"
+      (List.exists (fun d -> d.lost) h.borrowers);
+    List.iter alive h.borrowers
+
+  let host n seed = { size = n; bytes = pattern seed n; borrowers = [] }
+
+  let write h seed =
+    reachable h;
+    h.bytes <- pattern seed h.size
+
+  let read h =
+    reachable h;
+    Digest.to_hex (Digest.string h.bytes)
+
+  (* Memory a device maps is borrowed, and fewer than 64 KiB of host memory,
+     which starts on no page, is staged. *)
+  let reach d h access =
+    alive d;
+    let staged = not (big h) in
+    if not staged then h.borrowers <- d :: h.borrowers;
+    { original = h; device = d; access; staged }
+
+  (* The work reads the bytes the original held at the submission, and writes
+     [seed]'s pattern when it may, which the original holds once it returns. *)
+  let run r seed =
+    alive r.device;
+    reachable r.original;
+    let seen = Digest.to_hex (Digest.string r.original.bytes) in
+    cover "a staged buffer is copied back" (r.staged && r.access = Read_write);
+    cover "the work writes a borrow" ((not r.staged) && r.access = Read_write);
+    if r.access = B.Read_write then
+      r.original.bytes <- pattern seed r.original.size;
+    seen
+
+  (* A copy of [d] through the host's staging memory, which [d] maps at its
+     first such copy, and again once a lost device's mapping made it
+     replaced. *)
+  let staged_copy d =
+    let replaced = List.exists (fun m -> m.lost) !current.mappers in
+    cover "the host's staging memory is replaced" replaced;
+    if replaced then current := { mappers = [] };
+    if not (List.memq d !current.mappers) then begin
+      !current.mappers <- d :: !current.mappers;
+      d.mappings <- d.mappings + 1
+    end
+
+  let blit src dst =
+    let n = Int.min (String.length src) (String.length dst) in
+    String.sub src 0 n ^ String.sub dst n (String.length dst - n)
+
+  let create d h =
+    alive d;
+    reachable h;
+    staged_copy d;
+    { owner = d; contents = h.bytes }
+
+  let copy_in h b =
+    alive b.owner;
+    reachable h;
+    staged_copy b.owner;
+    b.contents <- blit h.bytes b.contents
+
+  let copy_out b h =
+    alive b.owner;
+    reachable h;
+    staged_copy b.owner;
+    h.bytes <- blit b.contents h.bytes
+
+  let lose d =
+    cover "a device that mapped the staging memory is lost" (d.mappings > 0);
+    d.lost <- true;
+    raise Lost
+end
+
+(* A device whose driver faults at its next synchronization once [faulted]. *)
+type stage_device = { stage : fake; faulted : bool ref }
+
+let stage_device far =
+  let faulted = ref false in
+  let synchronized () = if !faulted then failwith "faulted" in
+  let stage =
+    if far then fake ~name:"FAR" ~far:true ~synchronized ()
+    else
+      (* Its work completes once the host waits for it. *)
+      let signaled = ref 0 in
+      let signal =
+        {
+          Driver.signaled = (fun () -> !signaled);
+          wait =
+            (fun v ~timeout_ms:_ ->
+              signaled := Int.max !signaled v;
+              true);
+        }
+      in
+      fake ~name:"NEAR" ~maps:true ~signal ~synchronized ()
+  in
+  { stage; faulted }
+
+type staged_buffer = { sb : B.t }
+type reach = { rb : B.t; writes : bool }
+
+let digest_at b n =
+  Digest.to_hex (Digest.string (string_of (peek (B.address b) n)))
+
+let stage_dev =
+  abstract "d" ~invariant:(fun (r : Stage.device) s ->
+      if r.far then
+        equal ~msg:"the host's staging memories it mapped" int r.mappings
+          (List.length s.stage.drv.staging))
+
+let host_buf =
+  abstract "h" ~invariant:(fun (r : Stage.host) s ->
+      equal ~msg:"its bytes" string r.bytes
+        (string_of (peek (B.address s.sb) r.size)))
+
+let reached_buf =
+  abstract "r" ~invariant:(fun (r : Stage.reached) s ->
+      equal ~msg:"staged" bool r.staged (B.is_staged s.rb);
+      equal ~msg:"bytes" int r.original.size (B.nbytes s.rb))
+
+let device_buf =
+  abstract "b" ~invariant:(fun (r : Stage.on_device) s ->
+      equal ~msg:"its bytes" string r.contents
+        (string_of (peek (B.address s.sb) (String.length r.contents))))
+
+(* The first [n] bytes of [b], or all of it. *)
+let prefix b n = B.view b ~offset:0 S.UInt8 (Int.min n (B.nbytes b))
+
+let stage_commands =
+  let accesses =
+    let pp ppf (a : B.access) =
+      Format.pp_print_string ppf
+        (match a with Read -> "Read" | Read_write -> "Read_write")
+    in
+    Gen.of_list ~pp B.[ Read; Read_write ]
+  in
+  let sizes =
+    Gen.frequency
+      [
+        (2, ints [ 1; 3; 16; 64 ]);
+        (1, Gen.constant ~pp:Format.pp_print_int page);
+      ]
+  in
+  let small (h : Stage.host) = not (Stage.big h) in
+  let copied ~src ~dst =
+    let n = Int.min (B.nbytes src) (B.nbytes dst) in
+    B.copy ~src:(prefix src n) ~dst:(prefix dst n)
+  in
+  [
+    command "near"
+      (Gen.unit @-> makes stage_dev)
+      (fun () -> Stage.device false)
+      (fun () -> stage_device false);
+    command "far"
+      (Gen.unit @-> makes stage_dev)
+      (fun () -> Stage.device true)
+      (fun () -> stage_device true);
+    command "host"
+      (sizes @-> seeds @-> makes host_buf)
+      Stage.host
+      (fun n seed ->
+        let sb = B.create host S.UInt8 n in
+        write sb (pattern seed n);
+        { sb });
+    command "write"
+      (host_buf ^-> seeds @-> returns unit)
+      Stage.write
+      (fun s seed -> write s.sb (pattern seed (B.nbytes s.sb)));
+    command "read"
+      (host_buf ^-> returns string)
+      Stage.read
+      (fun s -> Digest.to_hex (Digest.string (read s.sb)));
+    command "reach"
+      (stage_dev ^-> host_buf ^-> accesses @-> makes reached_buf)
+      Stage.reach
+      (fun d s access ->
+        match B.reach d.stage.dev s.sb access with
+        | Ok rb -> { rb; writes = access = B.Read_write }
+        | Error _ -> raise Stage.Refused);
+    command "run"
+      ~pre:(fun (r : Stage.reached) _ -> not r.device.far)
+      (reached_buf ^-> seeds @-> returns string)
+      Stage.run
+      (fun { rb; writes } seed ->
+        let n = B.nbytes rb in
+        let written = of_string (pattern seed n) in
+        submit (B.device rb) ~touches:[ rb ] (fun _ ->
+            let seen = digest_at rb n in
+            if writes then memmove (B.address rb) (B.address written) n;
+            seen));
+    command "copy to a device"
+      ~pre:(fun (d : Stage.device) h -> d.far && small h)
+      (stage_dev ^-> host_buf ^-> makes device_buf)
+      Stage.create
+      (fun d s ->
+        let sb = B.create d.stage.dev S.UInt8 (B.nbytes s.sb) in
+        B.copy ~src:s.sb ~dst:sb;
+        { sb });
+    command "copy in"
+      ~pre:(fun h _ -> small h)
+      (host_buf ^-> device_buf ^-> returns unit)
+      Stage.copy_in
+      (fun h b -> copied ~src:h.sb ~dst:b.sb);
+    command "copy out"
+      ~pre:(fun _ h -> small h)
+      (device_buf ^-> host_buf ^-> returns unit)
+      Stage.copy_out
+      (fun b h -> copied ~src:b.sb ~dst:h.sb);
+    command "lose"
+      (stage_dev ^-> returns unit)
+      Stage.lose
+      (fun d ->
+        d.faulted := true;
+        Nx_device.synchronize d.stage.dev);
+  ]
+
 let staging =
   group "reach"
     [
+      stateful ~count:200 ~steps:30
+        "devices reach host buffers by borrowing or staging them, the work \
+         reads and writes them through either, and a lost device reaches the \
+         host memory it borrowed alone, its mapping of the host's staging \
+         memory replaced"
+        stage_commands;
       test "memory the device maps is borrowed, and its own is itself"
         (fun () ->
           let d = (fake ~maps:true ()).dev in
@@ -4784,6 +5611,7 @@ let () =
          devices;
          memory;
          memories;
+         pools;
          laws;
          borrows;
          buffers;
