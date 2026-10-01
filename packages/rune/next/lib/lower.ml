@@ -201,12 +201,14 @@ type capture = {
   buffers : Nx_device.Buffer.t list;
 }
 
+type write = { result : Ops.t; into : Ops.t; regions : Lower_index.region list }
+
 type scope = {
   renderer : Device.t -> Renderer.t;
   mutable dtypes : (Device.t * Dtype.t list) list;
   mutable names : (string * Device.t) list;
   mutable captures : capture list;
-  mutable writes : Ops.t list;
+  mutable writes : write list;
   mutable arguments : Ops.t list;
   stuck : unit Ops.Tbl.t;
       (* Nodes that read an argument, a write, a copy or storage that is no
@@ -695,9 +697,9 @@ let op : type r. scope -> r Nx.Op.t -> r =
     traced p dt u
   in
   let like x u = ret (Nx.dtype x) u in
-  let write u =
-    s.writes <- u :: s.writes;
-    u
+  let write ~into regions result =
+    s.writes <- { result; into; regions } :: s.writes;
+    result
   in
   let n x = node s what p x in
   (* A factorization of integers raises, as nx.cpu's does. *)
@@ -747,13 +749,24 @@ let op : type r. scope -> r Nx.Op.t -> r =
       | x :: rest -> like x (Lower_index.cat axis (n x) (List.map n rest)))
   | Gather (axis, indices, x) ->
       like x (Lower_index.gather axis (n indices) (n x))
-  | Scatter { mode; unique; axis; indices; updates; into } ->
-      like into
-        (write
-           (Lower_index.scatter ~mode ~unique ~axis ~indices:(n indices)
-              ~updates:(n updates) (n into)))
+  | Scatter { mode; unique; axis; indices; updates; into = x } ->
+      let indices = n indices and updates = n updates and into = n x in
+      let regions =
+        match mode with
+        | `Set when unique ->
+            Lower_index.scatter_rows ~axis ~indices ~updates into
+        | `Set | `Add -> None
+      in
+      like x
+        (write ~into
+           (Option.value regions ~default:[])
+           (Lower_index.scatter ~mode ~unique ~axis ~indices ~updates into))
   | Update (x, starts, v) ->
-      like x (write (Lower_index.update (n x) ~starts:(n starts) (n v)))
+      let into = n x and starts = n starts and v = n v in
+      like x
+        (write ~into
+           (Option.to_list (Lower_index.update_region into ~starts v))
+           (Lower_index.update into ~starts v))
   | Unfold { kernel_size; stride; dilation; padding; x } ->
       like x (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding (n x))
   | Fold { output_size; kernel_size; stride; dilation; padding; x } ->

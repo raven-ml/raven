@@ -222,7 +222,10 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
   in
   let all = List.init (Array.length nodes) Fun.id in
   let own j i = reads i nodes.(j) = Staged.Own in
-  pass all (fun j i -> List.memq nodes.(j) writes && own j i);
+  let written j =
+    List.exists (fun (w : Lower.write) -> w.result == nodes.(j)) writes
+  in
+  pass all (fun j i -> written j && own j i);
   pass all own;
   pass
     (List.stable_sort (fun j k -> Int.compare (id ys.(j)) (id ys.(k))) all)
@@ -386,8 +389,22 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
       ~reads:(fun i -> Lazy.force reads.(i))
       ~writes:(Lower.writes s) nodes ys
   in
-  let lent, order =
-    ordered ~leaves:(Array.map (fun (Nx.P t) -> Lower.uop t) params) nodes lent
+  let leaf_nodes = Array.map (fun (Nx.P t) -> Lower.uop t) params in
+  let lent, order = ordered ~leaves:leaf_nodes nodes lent in
+  (* A result lent to the leaf its write writes into stores only the regions the
+     write writes. *)
+  let regions j =
+    if lent.(j) < 0 then None
+    else
+      List.find_map
+        (fun (w : Lower.write) ->
+          if
+            w.result == nodes.(j)
+            && w.into == leaf_nodes.(lent.(j))
+            && w.regions <> []
+          then Some w.regions
+          else None)
+        (Lower.writes s)
   in
   (* The results are stored in that order: a result that reads a lent one reads
      its store. *)
@@ -402,9 +419,28 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
           Lower.output s ~slot (Nx.placement y) (Nx.dtype y) (Nx.shape y)
         in
         if target != nodes.(j) then begin
-          let stored =
-            Ops.after target [ Ops.store target (replaced !assigned nodes.(j)) ]
+          let value = replaced !assigned in
+          let sint = function Ops.Sym u -> Ops.Sym (value u) | d -> d in
+          let bounds =
+            List.map (Option.map (fun (lo, hi) -> (sint lo, sint hi)))
           in
+          let written =
+            match regions j with
+            | None -> [ Ops.store target (value nodes.(j)) ]
+            | Some regions ->
+                List.map
+                  (fun (r : Lower_index.region) ->
+                    let padded =
+                      match r.padding with
+                      | None -> target
+                      | Some padding -> Ops.pad target (bounds padding)
+                    in
+                    Ops.store
+                      (Ops.shrink padded (bounds r.bounds))
+                      (value r.value))
+                  regions
+          in
+          let stored = Ops.after target written in
           stores := stored :: !stores;
           if lent.(j) >= 0 then assigned := (nodes.(j), stored) :: !assigned
         end

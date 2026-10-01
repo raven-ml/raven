@@ -164,6 +164,113 @@ let update x ~starts v =
            (List.fold_left shift (Lower_reduce.bits v) moved))
         x
 
+(* Regions
+
+   A write into a value that the program consumes can be stored in place, over
+   only the elements it writes: each region is a window of [x], of [x] padded
+   first when some of its stores are dropped, and its value there. *)
+
+type region = {
+  padding : (Ops.sint * Ops.sint) option list option;
+  bounds : (Ops.sint * Ops.sint) option list;
+  value : Ops.t;
+}
+
+let static u =
+  List.map (function Ops.Int d -> Some d | Ops.Sym _ -> None) (Ops.shape u)
+
+(* Past this many rows, a scatter is not stored row by row: each row is its own
+   store, unrolled at trace time. *)
+let max_rows = 16
+
+(* [rows_only ~axis u] is whether the elements of [u] depend on their position
+   along [axis] alone: through its movements, the index into the node they move
+   reads no other axis' position. *)
+let rows_only ~axis u =
+  let positions = List.mapi (fun d n -> Ops.range n [ -1 - d ]) (Ops.shape u) in
+  let rec read u index =
+    if Op.Set.mem (Ops.op u) Op.Set.movement then
+      let src = Ops.nth u 0 in
+      read src (Indexing.apply_movement_op (Ops.shape src) (Ops.marg u) index)
+    else index
+  in
+  let others = List.filteri (fun d _ -> d <> axis) positions in
+  not
+    (List.exists
+       (fun i -> List.exists (fun p -> List.memq p others) (Ops.toposort i))
+       (read u positions))
+
+(* Each row's offset: its index where it lies within [x], and otherwise the row
+   [n] of the padding, where its store is dropped. The offsets are stored as
+   their own vector, so that a window's offset reads a buffer: one read through
+   a broadcast fails to compile, in tinygrad as in tolk. *)
+let offsets ~axis ~indices ~k n =
+  let r = Ops.ndim indices in
+  let p =
+    narrow n
+      (Ops.reshape
+         (Ops.shrink indices
+            (List.init r (fun d ->
+                 if d = axis then None else Some (Ops.Int 0, Ops.Int 1))))
+         [ Ops.Int k ])
+  in
+  Ops.contiguous (Ops.where (Ops.ge p (Ops.int 0)) p (Ops.int n))
+
+let scatter_rows ~axis ~indices ~updates x =
+  let r = Ops.ndim x in
+  let rows = static updates and dims = static x in
+  let along f = List.init r (fun d -> if d = axis then f () else None) in
+  let spans d =
+    d = axis || (List.nth rows d = List.nth dims d && List.nth dims d <> None)
+  in
+  match (List.nth rows axis, List.nth dims axis) with
+  | Some k, Some n
+    when k <= max_rows
+         && Ops.axis x <> Some axis
+         && List.for_all spans (List.init r Fun.id)
+         && rows_only ~axis indices ->
+      let offsets = offsets ~axis ~indices ~k n in
+      let padding = Some (along (fun () -> Some (Ops.Int 0, Ops.Int 1))) in
+      Some
+        (List.init k (fun t ->
+             let at =
+               Ops.reshape
+                 (Ops.shrink offsets [ Some (Ops.Int t, Ops.Int (t + 1)) ])
+                 []
+             in
+             {
+               padding;
+               bounds =
+                 along (fun () ->
+                     Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))));
+               value =
+                 Ops.shrink updates
+                   (along (fun () -> Some (Ops.Int t, Ops.Int (t + 1))));
+             }))
+  | _ -> None
+
+let update_region x ~starts v =
+  let moved = static v and dims = static x in
+  let bound d =
+    match (List.nth moved d, List.nth dims d) with
+    | Some k, Some n when k = n -> None
+    | Some k, _ ->
+        let start =
+          Ops.reshape
+            (Ops.shrink (Ops.contiguous starts)
+               [ Some (Ops.Int d, Ops.Int (d + 1)) ])
+            []
+        in
+        Some (Ops.Sym start, Ops.Sym (Ops.add start (Ops.int k)))
+    | None, _ -> raise Exit
+  in
+  match List.init (Ops.ndim x) bound with
+  | bounds -> (
+      match Ops.axis x with
+      | Some a when List.nth bounds a <> None -> None
+      | _ -> Some { padding = None; bounds; value = v })
+  | exception Exit -> None
+
 (* Windows *)
 
 let product = List.fold_left ( * ) 1

@@ -550,7 +550,7 @@ target's run lands.
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:255` (`fold`), `:241` (`cut`), `:179`
+- **Raven:** `lower_index.ml:358` (`fold`), `:344` (`cut`), `:282`
   (`reads_image`);
   `lower_reduce.ml:88` (`reduce`).
 - **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
@@ -575,7 +575,7 @@ target's run lands.
 ### I7. An unfold whose windows along an axis read only padding
 
 - **Reference:** `mixin/op.py:1323` (`pool` of the padded operand).
-- **Raven:** `lower_index.ml:189` (`unfold`), `:179` (`reads_image`).
+- **Raven:** `lower_index.ml:292` (`unfold`), `:282` (`reads_image`).
 - **Differs:** where every window along some axis reads only padding, or the
   axis has no window, every patch is the pad's zeros, and the lowering gives
   zeros of the patches' shape without a kernel. tinygrad pools the padded

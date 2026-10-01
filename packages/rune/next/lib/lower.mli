@@ -197,6 +197,14 @@ val held : scope -> Nx.Repr.Storage.t list
 (** [held s] is the placed storage that [s]'s captures bind: what a program of
     [s] pins ({!Nx.Repr.Storage.pin}). Host storage records no binding. *)
 
-val writes : scope -> Ops.t list
-(** [writes s] is the node of each result of an indexed write ([Nx.Op.Update],
-    [Nx.Op.Scatter]) that [s] lowered, the last first. *)
+type write = {
+  result : Ops.t;  (** The node of the write's result. *)
+  into : Ops.t;  (** The node of the value it writes into. *)
+  regions : Lower_index.region list;
+      (** The regions it writes, when it has a region form: storing them into
+          the storage of [into] makes it hold [result]. Empty otherwise. *)
+}
+(** The type for indexed writes ([Nx.Op.Update], [Nx.Op.Scatter]). *)
+
+val writes : scope -> write list
+(** [writes s] is each indexed write that [s] lowered, the last first. *)

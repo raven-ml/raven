@@ -742,6 +742,143 @@ let consumption =
 let state =
   Nx.Ptree.(consumes (pair tensor tensor) @@ returns (pair tensor tensor))
 
+(* A write of rows into a pool of [n] rows of [2; 3] (64 by default), at one
+   index per row: a projection of [x], one row of [x] per index, of integers, so
+   that every sum is exact. *)
+let pool ?(n = 64) () =
+  Nx.reshape [| n; 2; 3 |] (Nx.arange_f Nx.float32 0. (Float.of_int (6 * n)) 1.)
+
+let write_rows pool x indices =
+  let k = Nx.dim 0 indices in
+  let rows =
+    Nx.reshape [| k; 2; 3 |]
+      (Nx.matmul x (Nx.reshape [| 6; 6 |] (Nx.arange_f Nx.float32 0. 36. 1.)))
+  in
+  Nx.scatter ~unique_indices:true ~axis:0
+    ~indices:(Nx.broadcast_to [| k; 2; 3 |] (Nx.reshape [| k; 1; 1 |] indices))
+    ~values:rows pool
+
+let projections k =
+  Nx.reshape [| k; 6 |]
+    (Nx.arange_f Nx.float32 1. (Float.of_int ((6 * k) + 1)) 1.)
+
+let indices l = Nx.create Nx.int64 [| List.length l |] (Array.of_list l)
+
+(* [kernels f] is [f ()] and the names of the kernels it ran, in order. *)
+let kernels f =
+  let p = Nx_device.Profile.start () in
+  let y = f () in
+  let kernel name =
+    String.length name >= 1
+    && (name.[0] = 'E' || name.[0] = 'r')
+    && (String.length name = 1 || name.[1] = '_')
+  in
+  ( y,
+    List.filter_map
+      (function
+        | Nx_device.Profile.Span { name; _ } when kernel name -> Some name
+        | _ -> None)
+      (Nx_device.Profile.stop p) )
+
+(* The elements a kernel ranges over, read from its name: [E_2_4], 8. *)
+let ranged name =
+  List.fold_left
+    (fun n part ->
+      match int_of_string_opt part with Some d -> n * d | None -> n)
+    1
+    (List.tl (String.split_on_char '_' name))
+
+(* [rows_written ?at name] is the tests of a lent write of rows whose values are
+   placed at [at], on the host by default. *)
+let rows_written ?at name =
+  let write =
+    Nx.Ptree.(consumes tensor @@ tensor @-> tensor @-> returns tensor)
+  in
+  let on t = match at with None -> t | Some p -> Nx.place p t in
+  let agrees ?n x i =
+    equal floats
+      (write_rows (pool ?n ()) x i)
+      (host (Rune.jit write write_rows (on (pool ?n ())) (on x) (on i)))
+  in
+  let everywhere =
+    [
+      cases
+        ~name:(fun (n, l) ->
+          Printf.sprintf "%d rows: %s" n
+            (String.concat ", " (List.map Int64.to_string l)))
+        "a dropped row changes no other row"
+        [
+          (8, [ 2L; -1L ]);
+          (8, [ -1L; 2L; 3L ]);
+          (8, [ 5L; -1L; 6L ]);
+          (8, [ 6L; 0L; -1L; 8L ]);
+          (64, [ -1L; 0L ]);
+          (64, [ 0L; -1L ]);
+          (64, [ -1L; -5L ]);
+        ]
+        (fun (n, l) -> agrees ~n (projections (List.length l)) (indices l));
+      test "an unlent write of rows leaves the pool it writes into" (fun () ->
+          let a = on (pool ())
+          and x = projections 2
+          and i = indices [ 3L; 5L ] in
+          let r =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+              write_rows a (on x) (on i)
+          in
+          equal floats (write_rows (pool ()) x i) (host r);
+          equal floats (pool ()) (host a));
+    ]
+  in
+  let on_the_host =
+    [
+      cases ~name:Int64.to_string
+        "a row is stored by the kernel that computes it, beside its offset"
+        [ 0L; 63L; -1L; 64L ] (fun at ->
+          let x = projections 1 and i = indices [ at ] in
+          let r, names =
+            kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
+          in
+          equal floats (write_rows (pool ()) x i) r;
+          equal ~msg:"kernels" int 2 (List.length names);
+          equal ~msg:"reductions" int 1
+            (List.length (List.filter (fun n -> n.[0] = 'r') names)));
+      test
+        "stores only its rows, at the pool's first and last rows, and drops \
+         the rows outside it" (fun () ->
+          let x = projections 4 and i = indices [ 0L; 63L; -1L; 64L ] in
+          let r, names =
+            kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
+          in
+          equal floats (write_rows (pool ()) x i) r;
+          greater ~msg:"kernels recorded" int ~than:0 (List.length names);
+          List.iter
+            (fun name ->
+              less ~msg:"elements a kernel ranges over" int ~than:384
+                (ranged name))
+            names);
+      cases
+        ~name:(fun l -> String.concat ", " (List.map Int64.to_string l))
+        "a pool split along the written axis is written whole"
+        [ [ 0L; 63L ]; [ 31L; 32L ]; [ 63L; 0L; -1L; 64L ]; [ -1L; -2L ] ]
+        (fun l ->
+          let both =
+            Nx.Placement.replicated ~backend:Rune.compiled [ d1; d2 ]
+          in
+          let x = projections (List.length l) and i = indices l in
+          equal floats
+            (write_rows (pool ()) x i)
+            (host
+               (Rune.jit write write_rows
+                  (Nx.place
+                     (Nx.Placement.sharded ~backend:Rune.compiled ~axis:0
+                        [ d1; d2 ])
+                     (pool ()))
+                  (Nx.place both x) (Nx.place both i))));
+    ]
+  in
+  group name (everywhere @ if at = None then on_the_host else [])
+
 let lending =
   group "lending"
     [
@@ -2690,7 +2827,13 @@ let metal =
   match Metal.device with
   | Some m ->
       let d = Nx.Device.of_runtime m in
-      [ on_one_device ~name:"one device" d; staged_scans d ]
+      [
+        on_one_device ~name:"one device" d;
+        staged_scans d;
+        rows_written
+          ~at:(Nx.Placement.device ~backend:Rune.compiled d)
+          "a lent write of rows";
+      ]
   | None ->
       [ slow "no Metal device" (fun () -> skip ~reason:"no Metal device" ()) ]
 
@@ -2703,6 +2846,7 @@ let () =
          results;
          consumption;
          lending;
+         rows_written "a lent write of rows";
          captures;
          errors;
          reports;
