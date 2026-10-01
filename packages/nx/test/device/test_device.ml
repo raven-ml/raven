@@ -1169,8 +1169,8 @@ let memory =
    memory they got, a loaded binary's code in the window, or in pinned memory on
    a device without one, and the cache holds released regions by size and
    memory. Which cached regions a refused allocation or a budget releases is
-   open: after every call the cache is read from what the driver holds, and the
-   change is judged. *)
+   unspecified: after every call the cache is read from what the driver holds,
+   and the change is judged. *)
 module Pools = struct
   exception No_memory
 
@@ -1723,12 +1723,10 @@ let pools =
   group "pools"
     [
       stateful ~count:100 ~steps:40
-        "buffers and loaded code count in the pools of their memory, mapped \
-         memory that the window or the device's own memory cannot hold is \
-         pinned memory, and the cache keeps within the budget (nx_device.mli \
-         is silent on a load beyond the budget: the code counts, and the room \
-         left goes negative; and on a request over the budget, which keeps the \
-         cache)"
+        "buffers and loaded code count in the pools of their memory, loaded \
+         code even beyond the budget, mapped memory that the window or the \
+         device's own memory cannot hold is pinned memory, a request over the \
+         budget keeps the cache, and the cache keeps within the budget"
         pool_commands;
       stateful ~count:200 ~steps:40
         "released memory is cached once other devices' work on it is done and \

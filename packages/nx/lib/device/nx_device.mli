@@ -43,17 +43,19 @@
     after its earlier work; the host returns it to the heap; and a borrowing
     device unmaps a borrow once its work on it is done. Memory goes back to the
     system only once no work can still use it. If that work is a lost device's
-    ({!Lost}), the memory is {e retained}: kept, and never freed or reused. An
-    allocation that the device's {!budget} or its driver refuses first releases
-    the cache to the system, then waits for the work of the memory its device
-    released, then collects garbage with the device free for other domains,
-    releases the borrows of its memory that idle devices still hold, and tries
-    again, up to four times, and raises {!Out_of_memory} only after that. Memory
-    returns one major cycle after the last value holding its buffers dies, in
-    whichever domain runs the collection, even while the domain that made them
-    is blocked. A value that a finaliser closure keeps dies only once that
-    closure has run, a cycle after its own holder died, so a chain of such
-    holders takes a cycle per link.
+    ({!Lost}), the memory is {e retained}: kept, and never freed or reused. A
+    cached region of a request's size and memory serves it; which one, when
+    several do, is unspecified. An allocation that the device's {!budget} or its
+    driver refuses first releases the cache to the system, in an unspecified
+    order, then waits for the work of the memory its device released, then
+    collects garbage with the device free for other domains, releases the
+    borrows of its memory that idle devices still hold, and tries again, up to
+    four times, and raises {!Out_of_memory} only after that. Memory returns one
+    major cycle after the last value holding its buffers dies, in whichever
+    domain runs the collection, even while the domain that made them is blocked.
+    A value that a finaliser closure keeps dies only once that closure has run,
+    a cycle after its own holder died, so a chain of such holders takes a cycle
+    per link.
 
     {b Collection pace.} The host memory of buffers of 64 KiB or more (four
     pages, where pages are larger) paces the collector's major cycles by the
@@ -204,10 +206,10 @@ exception Lost of t * string
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes:
-    - by {!Buffer.create}, at once if [n] exceeds [d]'s {!budget} for memory
-      [Device] ({!Buffer.memory}), and otherwise if the budget or the driver
-      refuses them after [d]'s cache was released and unreachable buffers
-      collected;
+    - by {!Buffer.create}, at once and keeping [d]'s cache if [n] exceeds [d]'s
+      {!budget} for memory [Device] ({!Buffer.memory}), and otherwise if the
+      budget or the driver refuses them after [d]'s cache was released and
+      unreachable buffers collected;
     - by {!Buffer.copy}, when the host [d] of a machine cannot allocate the
       staging memory the copy goes through;
     - by {!Program.load}, when [d]'s driver cannot allocate the memory of a
@@ -220,14 +222,16 @@ val budget : t -> int
     ({!Buffer.memory}), that [d] holds at once in live buffers, loaded programs'
     code and its cache together. Pinned memory, which is the host's, borrowed
     memory and the host's staging memory ({!Buffer.copy}) do not count. Mapped
-    memory is also held within the window the host addresses it through. It is
-    [max_int] for the host, and defaults to a device's recommended working set
-    or memory size otherwise. *)
+    memory is also held within the window the host addresses it through. A
+    program's code counts once its driver allocated it, so loading one can take
+    [d] past its budget. It is [max_int] for the host, and defaults to a
+    device's recommended working set or memory size otherwise. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], releasing cached memory to the
-    system until [d] holds at most [n] bytes or its cache is empty. Live buffers
-    are never released: an allocation fails until enough of them are collected.
+    system, in an unspecified order, until [d] holds at most [n] bytes or its
+    cache is empty. Live buffers are never released: an allocation fails until
+    enough of them are collected.
 
     Raises [Invalid_argument] if [n < 0]. *)
 
