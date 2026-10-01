@@ -246,6 +246,16 @@
  (action
   (run %{exe:test_jit.exe} --tag slow)))
 
+; Generated programs, compiled on the host against eager nx.
+
+(test
+ (name test_jit_programs)
+ (modules test_jit_programs)
+ (package rune)
+ (libraries windtrap rune nx nx.dtype nx.device)
+ (action
+  (run %{test} --exclude-tag slow)))
+
 ; Quantised products under the compiled call and the transformations, on the
 ; host and test devices by default and on Metal in the slow alias.
 
