@@ -18,84 +18,83 @@
 16 Ops.RANGE dtypes.int [15] (0, AxisType.REDUCE)
 17 Ops.AFTER dtypes.float [11, 13, 16]
 18 Ops.INDEX dtypes.float [17, 2]
-19 Ops.LOAD dtypes.float [18]
-20 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128)
-21 Ops.SPECIAL dtypes.int [10] "lidx0"
-22 Ops.CONST dtypes.weakint [] 3
-23 Ops.CAST dtypes.int [22] dtypes.int
-24 Ops.SHL dtypes.int [21, 23]
-25 Ops.ADD dtypes.int [24, 16]
-26 Ops.INDEX dtypes.float [20, 25]
-27 Ops.LOAD dtypes.float [26]
-28 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128)
-29 Ops.INDEX dtypes.float [28, 25]
-30 Ops.LOAD dtypes.float [29]
-31 Ops.MUL dtypes.float [27, 30]
-32 Ops.ADD dtypes.float [19, 31]
-33 Ops.STORE dtypes.void [18, 32]
-34 Ops.END dtypes.void [33, 16]
-35 Ops.RANGE dtypes.int [10, 34] (101, AxisType.REDUCE)
-36 Ops.AFTER dtypes.float [4, 8, 35]
-37 Ops.INDEX dtypes.float [36, 2]
-38 Ops.LOAD dtypes.float [37]
-39 Ops.ALLOC dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL)
-40 Ops.INDEX dtypes.float [39, 21]
-41 Ops.AFTER dtypes.float [11, 34]
-42 Ops.INDEX dtypes.float [41, 2]
-43 Ops.LOAD dtypes.float [42]
-44 Ops.STORE dtypes.void [40, 43]
-45 Ops.BARRIER dtypes.void [44]
-46 Ops.AFTER dtypes.float [39, 45]
-47 Ops.INDEX dtypes.float [46, 35]
-48 Ops.LOAD dtypes.float [47]
-49 Ops.ADD dtypes.float [38, 48]
-50 Ops.STORE dtypes.void [37, 49]
-51 Ops.END dtypes.void [50, 35]
-52 Ops.AFTER dtypes.float [4, 51]
-53 Ops.INDEX dtypes.float [52, 2]
-54 Ops.LOAD dtypes.float [53]
-55 Ops.CMPEQ dtypes.bool [21, 2]
-56 Ops.STORE dtypes.void [3, 54, 55]
-57 Ops.SINK dtypes.void [56] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
-58 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
-59 Ops.INDEX dtypes.float [58, 2]
-60 Ops.STORE dtypes.void [59, 7]
-61 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
-62 Ops.INDEX dtypes.float [61, 2]
-63 Ops.STORE dtypes.void [62, 7]
-64 Ops.AFTER dtypes.float [61, 63, 16]
-65 Ops.INDEX dtypes.float [64, 2]
-66 Ops.LOAD dtypes.float [65]
-67 Ops.ADD dtypes.float [66, 31]
-68 Ops.STORE dtypes.void [65, 67]
-69 Ops.END dtypes.void [68, 16]
-70 Ops.RANGE dtypes.int [10, 69] (101, AxisType.REDUCE)
-71 Ops.AFTER dtypes.float [58, 60, 70]
-72 Ops.INDEX dtypes.float [71, 2]
-73 Ops.LOAD dtypes.float [72]
-74 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL)
-75 Ops.INDEX dtypes.float [74, 21]
-76 Ops.AFTER dtypes.float [61, 69]
-77 Ops.INDEX dtypes.float [76, 2]
-78 Ops.LOAD dtypes.float [77]
-79 Ops.STORE dtypes.void [75, 78]
-80 Ops.BARRIER dtypes.void [79]
-81 Ops.AFTER dtypes.float [74, 80]
-82 Ops.INDEX dtypes.float [81, 70]
-83 Ops.LOAD dtypes.float [82]
-84 Ops.ADD dtypes.float [73, 83]
-85 Ops.STORE dtypes.void [72, 84]
-86 Ops.END dtypes.void [85, 70]
-87 Ops.AFTER dtypes.float [58, 86]
-88 Ops.INDEX dtypes.float [87, 2]
-89 Ops.LOAD dtypes.float [88]
-90 Ops.STORE dtypes.void [3, 89]
-91 Ops.SINK dtypes.void [90] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=528, lds=2176, mem=1028)) tag=1
-92 Ops.IF dtypes.void [55, 3]
-93 Ops.ENDIF dtypes.void [92]
-94 Ops.SINK dtypes.void [90] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
-95 Ops.LINEAR dtypes.void [20, 28, 0, 61, 58, 74, 9, 10, 21, 1, 2, 62, 6, 7, 22, 23, 14, 15, 24, 63, 16, 25, 26, 27, 29, 30, 64, 65, 66, 31, 67, 68, 69, 76, 77, 78, 75, 79, 80, 81, 59, 60, 70, 71, 72, 73, 82, 83, 84, 85, 86, 87, 88, 89, 3, 55, 92, 90, 93, 94]
-96 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_128; device float* data1_128; device float* data2_1; };\nkernel void dot_product(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_128 = args.data0_128; device float* data1_128 = args.data1_128; device float* data2_1 = args.data2_1;\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 8; Ridx0++) {\n    int alu1 = ((lidx0<<3)+Ridx0);\n    float val0 = (*(data0_128+alu1));\n    float val1 = (*(data1_128+alu1));\n    *(buf0+0) = ((*(buf0+0))+(val0*val1));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {\n    float val2 = (*(buf2+Ridx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  if ((lidx0==0)) {\n    *(data2_1+0) = (*(buf1+0));\n  }\n}"
-97 Ops.PROGRAM dtypes.void [91, 95, 96] ProgramInfo(local_size=(16, 1, 1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
-98 Ops.SINK dtypes.void [57, 97]
+19 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=128)
+20 Ops.SPECIAL dtypes.int [10] "lidx0"
+21 Ops.CONST dtypes.weakint [] 3
+22 Ops.CAST dtypes.int [21] dtypes.int
+23 Ops.SHL dtypes.int [20, 22]
+24 Ops.ADD dtypes.int [23, 16]
+25 Ops.INDEX dtypes.float [19, 24]
+26 Ops.LOAD dtypes.float [25]
+27 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128)
+28 Ops.INDEX dtypes.float [27, 24]
+29 Ops.LOAD dtypes.float [28]
+30 Ops.LOAD dtypes.float [18]
+31 Ops.MULACC dtypes.float [26, 29, 30]
+32 Ops.STORE dtypes.void [18, 31]
+33 Ops.END dtypes.void [32, 16]
+34 Ops.RANGE dtypes.int [10, 33] (101, AxisType.REDUCE)
+35 Ops.AFTER dtypes.float [4, 8, 34]
+36 Ops.INDEX dtypes.float [35, 2]
+37 Ops.LOAD dtypes.float [36]
+38 Ops.ALLOC dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL)
+39 Ops.INDEX dtypes.float [38, 20]
+40 Ops.AFTER dtypes.float [11, 33]
+41 Ops.INDEX dtypes.float [40, 2]
+42 Ops.LOAD dtypes.float [41]
+43 Ops.STORE dtypes.void [39, 42]
+44 Ops.BARRIER dtypes.void [43]
+45 Ops.AFTER dtypes.float [38, 44]
+46 Ops.INDEX dtypes.float [45, 34]
+47 Ops.LOAD dtypes.float [46]
+48 Ops.ADD dtypes.float [37, 47]
+49 Ops.STORE dtypes.void [36, 48]
+50 Ops.END dtypes.void [49, 34]
+51 Ops.AFTER dtypes.float [4, 50]
+52 Ops.INDEX dtypes.float [51, 2]
+53 Ops.LOAD dtypes.float [52]
+54 Ops.CMPEQ dtypes.bool [20, 2]
+55 Ops.STORE dtypes.void [3, 53, 54]
+56 Ops.SINK dtypes.void [55] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
+57 Ops.BUFFER dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+58 Ops.INDEX dtypes.float [57, 2]
+59 Ops.STORE dtypes.void [58, 7]
+60 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+61 Ops.INDEX dtypes.float [60, 2]
+62 Ops.STORE dtypes.void [61, 7]
+63 Ops.AFTER dtypes.float [60, 62, 16]
+64 Ops.INDEX dtypes.float [63, 2]
+65 Ops.LOAD dtypes.float [64]
+66 Ops.MULACC dtypes.float [26, 29, 65]
+67 Ops.STORE dtypes.void [64, 66]
+68 Ops.END dtypes.void [67, 16]
+69 Ops.RANGE dtypes.int [10, 68] (101, AxisType.REDUCE)
+70 Ops.AFTER dtypes.float [57, 59, 69]
+71 Ops.INDEX dtypes.float [70, 2]
+72 Ops.LOAD dtypes.float [71]
+73 Ops.BUFFER dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, addrspace=AddrSpace.LOCAL)
+74 Ops.INDEX dtypes.float [73, 20]
+75 Ops.AFTER dtypes.float [60, 68]
+76 Ops.INDEX dtypes.float [75, 2]
+77 Ops.LOAD dtypes.float [76]
+78 Ops.STORE dtypes.void [74, 77]
+79 Ops.BARRIER dtypes.void [78]
+80 Ops.AFTER dtypes.float [73, 79]
+81 Ops.INDEX dtypes.float [80, 69]
+82 Ops.LOAD dtypes.float [81]
+83 Ops.ADD dtypes.float [72, 82]
+84 Ops.STORE dtypes.void [71, 83]
+85 Ops.END dtypes.void [84, 69]
+86 Ops.AFTER dtypes.float [57, 85]
+87 Ops.INDEX dtypes.float [86, 2]
+88 Ops.LOAD dtypes.float [87]
+89 Ops.STORE dtypes.void [3, 88]
+90 Ops.SINK dtypes.void [89] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),), estimates=Estimates(ops=528, lds=2176, mem=1028)) tag=1
+91 Ops.IF dtypes.void [54, 3]
+92 Ops.ENDIF dtypes.void [91]
+93 Ops.SINK dtypes.void [89] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(16, AxisType.LOCAL, True)),)) tag=1
+94 Ops.LINEAR dtypes.void [19, 27, 0, 60, 57, 73, 9, 10, 20, 1, 2, 61, 6, 7, 21, 22, 14, 15, 23, 62, 16, 24, 25, 26, 28, 29, 63, 64, 65, 66, 67, 68, 75, 76, 77, 74, 78, 79, 80, 58, 59, 69, 70, 71, 72, 81, 82, 83, 84, 85, 86, 87, 88, 3, 54, 91, 89, 92, 93]
+95 Ops.SOURCE dtypes.void [] "#include <metal_stdlib>\nusing namespace metal;\nstruct args_t { device float* data0_128; device float* data1_128; device float* data2_1; };\nkernel void dot_product(constant args_t& args [[buffer(0)]], uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {\n  device float* data0_128 = args.data0_128; device float* data1_128 = args.data1_128; device float* data2_1 = args.data2_1;\n  float buf0[1];\n  float buf1[1];\n  threadgroup __attribute__((aligned(16))) float buf2[16];\n  int lidx0 = lid.x; /* 16 */\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 8; Ridx0++) {\n    int alu1 = ((lidx0<<3)+Ridx0);\n    float val0 = (*(data0_128+alu1));\n    float val1 = (*(data1_128+alu1));\n    *(buf0+0) = fma(val0,val1,(*(buf0+0)));\n  }\n  *(buf2+lidx0) = (*(buf0+0));\n  threadgroup_barrier(mem_flags::mem_threadgroup);\n  *(buf1+0) = 0.0f;\n  for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {\n    float val2 = (*(buf2+Ridx101));\n    *(buf1+0) = ((*(buf1+0))+val2);\n  }\n  if ((lidx0==0)) {\n    *(data2_1+0) = (*(buf1+0));\n  }\n}"
+96 Ops.PROGRAM dtypes.void [90, 94, 95] ProgramInfo(local_size=(16, 1, 1), globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="METAL", renderer="METAL", arch="Apple9"))
+97 Ops.SINK dtypes.void [56, 96]
 

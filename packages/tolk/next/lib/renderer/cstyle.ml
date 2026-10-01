@@ -525,6 +525,17 @@ let infix o args _ =
   | [ a; b ] -> strf "(%s%s)" a (joined o b)
   | _ -> invalid_arg "a binary operation takes two operands"
 
+(* A multiply-add, rounded once: the function [name dt] of the three
+   operands. *)
+let fma name args dt =
+  match args with
+  | [ a; b; c ] -> strf "%s(%s,%s,%s)" (name dt) a b c
+  | _ -> invalid_arg "a multiply-add takes three operands"
+
+(* [double] for a double, [single] for a float. *)
+let by_width ~double ~single dt =
+  if Dtype.equal dt Dtype.Float64 then double else single
+
 (* [override table l] is [table] with the operations of [l] replaced, and those
    it lacks appended, as a Python dict is updated *)
 let override table l =
@@ -561,6 +572,7 @@ let code_for_op =
           | [ a; b; c ] -> strf "(%s?%s:%s)" a b c
           | _ -> invalid_arg "a selection takes three operands" );
       (Cmpeq, infix "==");
+      (Mulacc, fma (fun _ -> "fma"));
     ]
 
 let cstyle =
@@ -799,6 +811,8 @@ let clang_lang =
             (Sqrt, unary (builtin "sqrt"));
             (Trunc, unary (builtin "trunc"));
             (Fdiv, infix "/");
+            ( Mulacc,
+              fma (by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf") );
           ];
     abi;
     kernel_typedef = (fun _ -> abi ^ "void");
@@ -1031,6 +1045,7 @@ let cuda_lang =
             ( Reciprocal,
               unary (fun x dt ->
                   if half dt then strf "hrcp(%s)" x else strf "(1/%s)" x) );
+            (Mulacc, fma (by_width ~double:"__fma_rn" ~single:"__fmaf_rn"));
           ];
     type_map =
       [
@@ -1318,6 +1333,8 @@ let hip_lang arch =
             (Log2, ocml "log2");
             (Exp2, ocml "exp2");
             (Sqrt, ocml "sqrt");
+            ( Mulacc,
+              fma (by_width ~double:"__builtin_fma" ~single:"__builtin_fmaf") );
           ];
     smem_prefix = "__attribute__((shared, aligned(16)))";
     smem_prefix_for_cast = false;

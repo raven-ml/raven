@@ -1595,6 +1595,64 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
+(* Multiply-adds (D25)
+
+   A sum adds each product of its source into its running sum as one
+   multiply-add, rounded once, in the order it adds them unfused; every other
+   product and sum rounds as written. The two products below are -(1 + 2^-11)
+   and (1 + 2^-12)^2 = 1 + 2^-11 + 2^-24, added in that order: the second,
+   fused, keeps the 2^-24 that rounding the product alone would lose. *)
+
+let dot n =
+  let out = Ops.param ~shape:[ Int 1 ] 0 Float32 in
+  let a = Ops.param ~shape:[ Int n ] 1 Float32 in
+  let b = Ops.param ~shape:[ Int n ] 2 Float32 in
+  let r = Ops.range ~axis_type:Reduce (Int n) [ 0 ] in
+  let sum =
+    Ops.reduce (Ops.mul (Ops.index a [ r ]) (Ops.index b [ r ])) Op.Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) sum ]
+
+let muladd n =
+  let out = Ops.param ~shape:[ Int n ] 0 Float32 in
+  let x k = Ops.index (Ops.param ~shape:[ Int n ] k Float32) in
+  let i = Ops.range (Int n) [ 0 ] in
+  let value = Ops.add (Ops.mul (x 1 [ i ]) (x 2 [ i ])) (x 3 [ i ]) in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) value) [ i ] ]
+
+let mentions sub s =
+  let n = String.length sub in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
+  go 0
+
+let multiply_adds =
+  group "multiply-adds (D25)"
+    [
+      cases ~name:string_of_int
+        "a sum of products adds each into its running sum rounded once, of"
+        [ 2; 64 ] (fun n ->
+          let prg = Codegen.to_program (dot n) (Lazy.force host) in
+          is_true ~msg:"__builtin_fmaf"
+            (mentions "__builtin_fmaf(" (source prg));
+          let x = 1. +. 0x1p-12 in
+          let terms first second =
+            Array.init n (fun i ->
+                `Float (match i with 0 -> first | 1 -> second | _ -> 0.))
+          in
+          let out =
+            Run.on_host prg
+              [ (1, terms (-.(1. +. 0x1p-11)) x); (2, terms 1. x) ]
+          in
+          equal (array Dtypes.value) [| `Float 0x1p-24 |] (List.assoc 0 out));
+      test "a product and a sum outside a reduction are not fused" (fun () ->
+          let prg = Codegen.to_program (muladd 4) (Lazy.force host) in
+          is_false ~msg:"fma" (mentions "fma" (source prg)));
+    ]
+
 (* Lanes of a scalar
 
    When every lane of an unrolled reduce reads an Invalid index, the stack of
@@ -2139,6 +2197,7 @@ let () =
          lowering_claims;
          whole_graphs;
          accumulators;
+         multiply_adds;
          lanes;
          bfloat16_casts;
          vectors;

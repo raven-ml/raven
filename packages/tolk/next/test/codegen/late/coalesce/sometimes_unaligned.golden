@@ -18,7 +18,7 @@
 16 Ops.INDEX dtypes.float [7, 15]
 17 Ops.LOAD dtypes.float [16]
 18 Ops.MUL dtypes.float [14, 17]
-19 Ops.ADD dtypes.float [11, 18]
+19 Ops.ADD dtypes.float [11, 18] tag="fusable"
 20 Ops.ADD dtypes.weakint [2, 15]
 21 Ops.INDEX dtypes.float [4, 20]
 22 Ops.LOAD dtypes.float [21]
@@ -26,7 +26,7 @@
 24 Ops.INDEX dtypes.float [7, 23]
 25 Ops.LOAD dtypes.float [24]
 26 Ops.MUL dtypes.float [22, 25]
-27 Ops.ADD dtypes.float [19, 26]
+27 Ops.ADD dtypes.float [19, 26] tag="fusable"
 28 Ops.ADD dtypes.weakint [2, 23]
 29 Ops.INDEX dtypes.float [4, 28]
 30 Ops.LOAD dtypes.float [29]
@@ -34,7 +34,7 @@
 32 Ops.INDEX dtypes.float [7, 31]
 33 Ops.LOAD dtypes.float [32]
 34 Ops.MUL dtypes.float [30, 33]
-35 Ops.ADD dtypes.float [27, 34]
+35 Ops.ADD dtypes.float [27, 34] tag="fusable"
 36 Ops.STORE dtypes.void [3, 35]
 37 Ops.END dtypes.void [36, 2]
 38 Ops.SINK dtypes.void [37] KernelInfo(name="r_5_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=1, arg=(4, AxisType.UNROLL)),)) tag=1

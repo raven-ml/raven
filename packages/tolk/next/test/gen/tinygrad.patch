@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..8c64ddb 100644
+index efb2e82..e125354 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
@@ -35,6 +35,72 @@ index efb2e82..8c64ddb 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
+@@ -194,19 +200,35 @@ def merge_reduce_ends(sink:UOp):
+       for e in group: subs[e] = merged
+   return sink.substitute(subs) if subs else None
+ 
+-def reduce_ranges_to_acc(ctx:itertools.count, r:UOp):
+-  acc = UOp.alloc_like(r, next(ctx), AddrSpace.REG)
++# DIVERGENCES D25: a sum adds each product of its source into its running sum as one multiply-add, where the renderer writes one for its
++# type, in the order it adds them unfused: its additions are tagged "fusable" while the products are indexed down to their operands
++def fuses(ren:Renderer, r:UOp, x:UOp) -> bool:
++  return r.arg[0] is Ops.ADD and x.op is Ops.MUL and Ops.MULACC in ren.code_for_op and r.dtype in (dtypes.float32, dtypes.float64) \
++    and r.dtype in ren.supported_dtypes()
++
++def fuse_product(s:UOp) -> UOp|None:
++  if s.tag != "fusable": return None
++  if s.src[1].op is Ops.MUL: return s.src[1].src[0].alu(Ops.MULACC, s.src[1].src[1], s.src[0])
++  return s.replace(tag=None)
++pm_fuse_products = PatternMatcher([(UPat(Ops.ADD, name="s"), fuse_product)])
++
++def reduce_ranges_to_acc(ctx:tuple[itertools.count, Renderer], r:UOp):
++  slots, ren = ctx
++  acc = UOp.alloc_like(r, next(slots), AddrSpace.REG)
+   input_ranges = tuple(x for x in r.src[0].ranges if x not in r.src[1:])
+   acc_init = acc.after(*input_ranges).store(UOp.const(identity_element(r.arg[0], r.dtype)))
+   acc_initted = acc.after(acc_init, *r.src[1:])
+-  inp = r.src[0].reduce(arg=r.arg) if r.arg[1] else r.src[0]
+-  acc_out = acc_initted.store(acc_initted.alu(r.arg[0], inp)).end(*r.src[1:]).rtag("mergeable")
++  x = r.src[0]
++  update = acc_initted.alu(r.arg[0], x.reduce(arg=r.arg) if r.arg[1] else x)
++  if r.arg[1] == 0 and fuses(ren, r, x): update = update.rtag("fusable")
++  acc_out = acc_initted.store(update).end(*r.src[1:]).rtag("mergeable")
+   return acc.after(acc_out)
+ 
+-def expand_horizontal_reduce(r:UOp):
++def expand_horizontal_reduce(ctx:tuple[itertools.count, Renderer], r:UOp):
+   inp = r.src[0]
+   vals = [inp.index(*idx) for idx in itertools.product(*[range(inp.max_shape[a]) for a in range(r.arg[1])])]
+-  return functools.reduce(lambda x,y: x.alu(r.arg[0], y), vals)
++  fused = fuses(ctx[1], r, inp)
++  return functools.reduce(lambda x,y: x.alu(r.arg[0], y).rtag("fusable") if fused else x.alu(r.arg[0], y), vals)
+ 
+ # an Invalid in a REDUCE source is that reduce's identity
+ pm_reduce_identity = PatternMatcher([
+@@ -310,7 +332,7 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   slots = itertools.count(max([u.arg.slot+1 for u in sink.toposort() if u.op in {Ops.BUFFER, Ops.ALLOC}], default=0))
+ 
+   # remove reduce
+-  sink = graph_rewrite(sink, mop_cleanup+pm_reduce_local, ctx=slots, name="remove reduces")
++  sink = graph_rewrite(sink, mop_cleanup+pm_reduce_local, ctx=(slots, ren), name="remove reduces")
+ 
+   # add locals
+   sink = graph_rewrite(sink, pm_add_local_buffers, ctx=slots, name="add local buffers")
+@@ -346,11 +368,13 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
+   sink = graph_rewrite(sink, symbolic, name="final symbolic")
+ 
+   sink = graph_rewrite(sink, pm_cast_float_alu, name="cast float alu operands")
++  sink = graph_rewrite(sink, pm_fuse_products, name="fuse a sum's products")
+ 
+   # **** decomps ****
+ 
+   # floordiv+mod / dtype decomp (early)
+-  supported_ops = tuple(ren.code_for_op.keys())
++  # DIVERGENCES D25: a multiply-add is a sum's alone
++  supported_ops = tuple(k for k in ren.code_for_op.keys() if k is not Ops.MULACC)
+   pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
+   sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
+ 
 diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
 index e1d9579..1e6a05d 100644
 --- a/tinygrad/codegen/decomp/dtype.py
@@ -461,6 +527,50 @@ index deb9684..8bc2d81 100644
  
  @functools.cache
  def to_function_name(s:str): return ''.join([c if c in (string.ascii_letters+string.digits+'_') else f'{ord(c):02X}' for c in ansistrip(s)])
+diff --git a/tinygrad/renderer/cstyle.py b/tinygrad/renderer/cstyle.py
+index 0dd26d2..dd2aded 100644
+--- a/tinygrad/renderer/cstyle.py
++++ b/tinygrad/renderer/cstyle.py
+@@ -144,7 +144,8 @@ class CStyleLanguage(Renderer):
+     Ops.ADD: lambda a,b,dtype: f"({a}+{b})", Ops.SUB: lambda a,b,dtype: f"({a}-{b})", Ops.MUL: lambda a,b,dtype: f"({a}*{b})",
+     Ops.CMOD: lambda a,b,dtype: f"({a}%{b})", Ops.CDIV: lambda a,b,dtype: f"({a}/{b})", Ops.CMPNE: lambda a,b,dtype: f"({a}!={b})",
+     Ops.SHR: lambda a,b,dtype: f"({a}>>{b})", Ops.SHL: lambda a,b,dtype: f"({a}<<{b})", Ops.CMPLT: lambda a,b,dtype: f"({a}<{b})",
+-    Ops.WHERE: lambda a,b,c,dtype: f"({a}?{b}:{c})", Ops.CMPEQ: lambda a,b,dtype: f"({a}=={b})"}
++    Ops.WHERE: lambda a,b,c,dtype: f"({a}?{b}:{c})", Ops.CMPEQ: lambda a,b,dtype: f"({a}=={b})",
++    Ops.MULACC: lambda a,b,c,dtype: f"fma({a},{b},{c})"}  # DIVERGENCES D25
+ 
+   string_rewrite = base_rewrite
+ 
+@@ -277,7 +278,8 @@ class ClangRenderer(CStyleLanguage):
+   code_for_op = {**({k:v for k,v in CStyleLanguage.code_for_op.items() if k not in [Ops.EXP2, Ops.SIN, Ops.LOG2, Ops.TRUNC, Ops.RECIPROCAL]}),
+                  Ops.SQRT: lambda x,dtype: f"__builtin_sqrt({x})" if dtype == dtypes.float64 else f"__builtin_sqrtf({x})",
+                  Ops.TRUNC: lambda x,dtype: f"__builtin_trunc({x})" if dtype == dtypes.float64 else f"__builtin_truncf({x})",
+-                 Ops.FDIV: lambda a,b,dtype: f"({a}/{b})"}
++                 Ops.FDIV: lambda a,b,dtype: f"({a}/{b})",
++                 Ops.MULACC: lambda a,b,c,dtype: f"__builtin_fma({a},{b},{c})" if dtype == dtypes.float64 else f"__builtin_fmaf({a},{b},{c})"}
+ 
+   # LLVM legalizes double => half cast on systems that don't support it natively (like x86 cpus without AVX512-FP16) into a compiler-rt libcall.
+   extra_matcher = PatternMatcher([(UPat.var("x", dtypes.float64).cast(dtypes.float16), lambda x: x.cast(dtypes.float32).cast(dtypes.float16))]) \
+@@ -424,7 +426,8 @@ class CUDARenderer(CStyleLanguage):
+     Ops.LOG2: lambda x,dtype: f"hlog2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"log2({x})",
+     Ops.EXP2: lambda x,dtype: f"hexp2({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"exp2({x})",
+     Ops.SQRT: lambda x,dtype: f"hsqrt({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"sqrt({x})",
+-    Ops.RECIPROCAL: lambda x,dtype: f"hrcp({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"(1/{x})" }
++    Ops.RECIPROCAL: lambda x,dtype: f"hrcp({x})" if dtype in (dtypes.half, dtypes.bfloat16) else f"(1/{x})",
++    Ops.MULACC: lambda a,b,c,dtype: f"__fma_rn({a},{b},{c})" if dtype == dtypes.float64 else f"__fmaf_rn({a},{b},{c})" }
+   type_map = {dtypes.uint32: "uint", dtypes.bfloat16: "nv_bfloat16", dtypes.fp8e4m3: "__nv_fp8_e4m3", dtypes.fp8e5m2: "__nv_fp8_e5m2"}
+   extra_matcher = create_non_native_float_pats(dtypes.fp8s, casting=False) + PatternMatcher([
+     (UPat(Ops.CAST, dtypes.fp8s, UPat.var("x", dtypes.fp8s), name='y'), lambda x,y: x.cast(dtypes.float).cast(y.dtype) if x.dtype!=y.dtype else None),
+@@ -519,7 +522,8 @@ class HIPRenderer(CStyleLanguage):
+   kernel_typedef = 'extern "C" __attribute__((global)) void __attribute__((amdgpu_flat_work_group_size(1, {launch_bounds})))'
+   code_for_workitem = {"g": lambda x: f"__ockl_get_group_id({x})", "l": lambda x: f"__ockl_get_local_id({x})"}
+   code_for_op = {**CStyleLanguage.code_for_op, Ops.TRUNC: _ocml("trunc"), Ops.SIN: _ocml("sin"),
+-                 Ops.LOG2: _ocml("log2"), Ops.EXP2: _ocml("exp2"), Ops.SQRT: _ocml("sqrt")}
++                 Ops.LOG2: _ocml("log2"), Ops.EXP2: _ocml("exp2"), Ops.SQRT: _ocml("sqrt"),
++                 Ops.MULACC: lambda a,b,c,dtype: f"__builtin_fma({a},{b},{c})" if dtype == dtypes.float64 else f"__builtin_fmaf({a},{b},{c})"}
+   smem_prefix = "__attribute__((shared, aligned(16)))"
+   smem_prefix_for_cast: bool = False
+   barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
 diff --git a/tinygrad/runtime/support/hcq2.py b/tinygrad/runtime/support/hcq2.py
 index 1f6134e..24949cf 100644
 --- a/tinygrad/runtime/support/hcq2.py

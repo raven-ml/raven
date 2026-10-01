@@ -3401,6 +3401,21 @@ let constants_where_used d =
       equal ~msg:"programs" int 1 loaded;
       equal (tensor int64) (f p) (host r))
 
+(* A compiled sum adds each product into its running sum rounded once: the
+   products -(1 + 2^-11) and (1 + 2^-12)^2 = 1 + 2^-11 + 2^-24 sum to 2^-24,
+   where rounding the second product first gives 0. Both are in the class of a
+   rounded sum. *)
+let sums_fuse_products d =
+  test "a compiled sum adds each product into its running sum rounded once"
+    (fun () ->
+      let x = 1. +. 0x1p-12 in
+      let a = Nx.create Nx.float32 [| 1; 2 |] [| -.(1. +. 0x1p-11); x |] in
+      let b = placed d (Nx.create Nx.float32 [| 2; 1 |] [| 1.; x |]) in
+      let f a = Nx.matmul a b in
+      equal floats
+        (Nx.create Nx.float32 [| 1; 1 |] [| 0x1p-24 |])
+        (host (Rune.jit' f (placed d a))))
+
 (* The calls on a GPU of [kind], if this machine has one. *)
 let on_gpu kind = function
   | Some m ->
@@ -3408,6 +3423,7 @@ let on_gpu kind = function
       [
         on_one_device ~name:"one device" d;
         constants_where_used d;
+        sums_fuse_products d;
         staged_scans d;
         rows_written
           ~at:(Nx.Placement.device ~backend:Rune.compiled d)
@@ -3439,6 +3455,7 @@ let () =
          device_lists;
          disk;
          on_one_device ~name:"one device" d4;
+         sums_fuse_products (Nx.Device.of_runtime Nx_device.host);
          group ~tags:[ "slow" ] "metal" (on_gpu "Metal" Metal.device);
          group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" Nvidia.cuda);
          group ~tags:[ "slow" ] "nv" (on_gpu "NV" Nvidia.nv);

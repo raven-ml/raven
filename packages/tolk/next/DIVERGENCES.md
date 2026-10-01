@@ -838,30 +838,53 @@ the Exclusions of `README.md`.
     zero's sign`, which draws accumulators at `-0.`;
   - the goldens, generated from the patched tinygrad.
 
-## D25. Compilers keep each product and sum its own rounding
+## D25. A product and a sum round apart, except into a sum
 
 - **tinygrad:** `runtime/support/compiler_cpu.py` (Clang's arguments),
   `runtime/support/compiler_amd.py` (HIP's options), `runtime/support/
   compiler_cuda.py` (NVRTC's options), `runtime/ops_metal.py:60` (Metal's
   parameters): none turns floating-point contraction off.
+  `codegen/__init__.py:197-209` (`reduce_ranges_to_acc`,
+  `expand_horizontal_reduce`: a sum adds its products unfused),
+  `codegen/decomp/op.py:118-121` (`a*b + c` becomes `MULACC` for a renderer
+  that writes it), `renderer/cstyle.py:139-150` (no C-style language writes
+  `MULACC`).
 - **tolk.next:** `lib/runtime/support/compiler_cpu.ml` (`-ffp-contract=off`),
   `lib/runtime/support/compiler_amd.ml` (`-ffp-contract=off`),
   `lib/runtime/support/compiler_cuda.ml` (`--fmad=false`),
   `lib/runtime/support/compiler_metal.ml` (`#pragma METAL fp contract(off)`
   before the source); `lib/helpers.ml` (`Diskcache.version` 2, since a cached binary
-  compiled with contraction answers the same key).
-- **Differs:** each compiler would fuse a product and a sum that a rendered
-  expression holds together, `a*b + c`, into one multiply-add with one
-  rounding: Clang at `-O2` (`-ffp-contract=on`), HIP (`fast`), NVRTC
-  (`--fmad=true`) and Metal, whose `-ffp-contract=off` does not reach the code
-  where its pragma does. The graph states two roundings, and they stay two.
-  The IR's own multiply-add (`Op.Mulacc`) comes only from `Decomp_op`'s
-  `a * b + c` rule, for a renderer that renders it; no renderer of tolk.next
-  does, so no kernel holds one.
-- **Reason:** (b). RFC 0012's Law 1: every constructor's compiled result,
-  alone or fused, meets its class against eager nx, which rounds a product and
-  a sum apart; and rune's accurate compositions (two-part products and sums)
-  are exact only where each operation rounds as written.
+  compiled with contraction answers the same key). `lib/codegen/codegen.ml`
+  (`fuses`, `reduce_ranges_to_acc`, `expand_horizontal_reduce`, and the
+  operations `full_rewrite_to_sink` decomposes with, without `Mulacc`);
+  `lib/renderer/cstyle.ml` (`fma`: `fma` in C-style and Metal,
+  `__builtin_fmaf` and `__builtin_fma` in Clang and HIP, `__fmaf_rn` and
+  `__fma_rn` in CUDA).
+- **Differs:**
+  - Each compiler would fuse a product and a sum that a rendered expression
+    holds together, `a*b + c`, into one multiply-add with one rounding: Clang
+    at `-O2` (`-ffp-contract=on`), HIP (`fast`), NVRTC (`--fmad=true`) and
+    Metal, whose `-ffp-contract=off` does not reach the code where its pragma
+    does. No compiler contracts.
+  - A sum of products of float32 or float64, on a renderer that writes a
+    multiply-add and has the type natively, adds each product into its running
+    sum as one multiply-add (`Op.Mulacc`), rounded once, in the order it adds
+    them unfused: an accumulator's `acc + a*b` is `fma(a, b, acc)`, and a
+    horizontal reduce's `a0*b0 + a1*b1 + ...` is `fma(a1, b1, a0*b0)` and so
+    on, which the accumulator then adds.
+  - `Decomp_op`'s `a * b + c` rule never applies: decomposition takes the
+    renderer's operations without `Mulacc`. Every other product and sum keeps
+    the two roundings the graph states.
+- **Reason:** (b). RFC 0012's Law 1, as the maintainer amended it: a
+  reduction's result is in the rounded-sum class, whose error bound a fused
+  multiply-add stays within; every other compiled result meets eager nx, which
+  rounds a product and a sum apart, and rune's accurate compositions
+  (two-part products and sums) are exact only where each operation rounds as
+  written. The fusion is the IR's, so that only a sum's products fuse, where a
+  compiler's contraction fuses any `a*b + c` of an expression. The sofo
+  sketch's kernel `r_128_128_3_4_25_4` runs 1.74 ms with its sums fused,
+  against 3.19 ms unfused and 1.79 ms under Clang's contraction (one E-core of
+  an Intel Core Ultra 5 235, the same harness).
 - **Pinned by:** `Tolk_next.Compiler_cpu › execution on the host › a product
   and a sum round twice, never fused` (`(1 + 2^-12)^2 - (1 + 2^-11)` is 0,
   where a fused multiply-add gives `2^-24`); `Tolk_next.Compiler_metal ›
@@ -869,6 +892,11 @@ the Exclusions of `README.md`.
   (D25)`. On an Apple GPU, the same kernel compiled by MTLCompiler gives
   `2^-24` without the pragma and 0 with it, and still `2^-24` with
   `-ffp-contract=off` alone. NVRTC and HIP are README's hardware checks.
+  `Tolk_next.Codegen › multiply-adds (D25) › a sum of products adds each into
+  its running sum rounded once, of 2` and `› of 64` (the sum of `-(1 +
+  2^-11)` and `(1 + 2^-12)^2` is `2^-24`, with a multiply-add in the source)
+  and `› a product and a sum outside a reduction are not fused`; the Codegen
+  and C-style goldens, from tinygrad with D25 applied by its generator.
 
 ## D26. A minus never meets a minus in C-style source
 

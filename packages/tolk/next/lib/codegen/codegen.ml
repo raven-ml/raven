@@ -423,7 +423,22 @@ let merge_reduce_ends sink =
     range_to_ends;
   match !subs with [] -> None | subs -> Some (substitute sink (List.rev subs))
 
-let reduce_ranges_to_acc slots r =
+(* A sum adds each product of its source into its running sum as one
+   multiply-add, rounded once, where the renderer [ren] writes one for its type,
+   in the order it adds them unfused (D25). [fuses ren r x] is [true] iff the
+   reduce [r] of [x] adds products that way. Its additions are tagged [fusable]
+   while the products are indexed down to their operands, and [pm_fuse_products]
+   fuses them. *)
+let fuses (ren : Renderer.t) r x =
+  let op, _ = reduce_arg r and dt = dtype r in
+  Op.equal op Op.Add && is Op.Mul x
+  && List.mem_assoc Op.Mulacc ren.code_for_op
+  && List.exists (Dtype.equal dt) Dtype.[ Float32; Float64 ]
+  && ren.native dt
+
+let fusable = Tag.String "fusable"
+
+let reduce_ranges_to_acc (slots, ren) r =
   let op, num_axes = reduce_arg r and x = nth r 0 and rngs = srcs r in
   let acc = alloc_like ~slot:(slots ()) ~addrspace:Dtype.Reg r in
   let input_ranges =
@@ -434,14 +449,22 @@ let reduce_ranges_to_acc slots r =
   in
   let acc_initted = after acc (acc_init :: rngs) in
   let inp = if num_axes > 0 then v Op.Reduce ~src:[ x ] ~arg:(arg r) else x in
-  let acc_out = store acc_initted (alu acc_initted op [ inp ]) in
+  let update = alu acc_initted op [ inp ] in
+  let update =
+    if num_axes = 0 && fuses ren r x then rtag ~tag:fusable update else update
+  in
+  let acc_out = store acc_initted update in
   Some (after acc [ rtag ~tag:mergeable (end_ acc_out rngs) ])
 
-let expand_horizontal_reduce r =
+let expand_horizontal_reduce ren r =
   let op, num_axes = reduce_arg r and inp = nth r 0 in
   let sizes = List.filteri (fun a _ -> a < num_axes) (max_shape inp) in
+  let add =
+    if fuses ren r inp then fun x y -> rtag ~tag:fusable (alu x op [ y ])
+    else fun x y -> alu x op [ y ]
+  in
   match List.map (index_ints inp) (product sizes) with
-  | v0 :: vals -> Some (List.fold_left (fun x y -> alu x op [ y ]) v0 vals)
+  | v0 :: vals -> Some (List.fold_left add v0 vals)
   | [] -> assert false
 
 (* an Invalid in a REDUCE source is that reduce's identity *)
@@ -469,9 +492,9 @@ let pm_reduce_local =
          rule_ctx
            (Upat.op Op.Reduce ~src:[ Upat.wild; Upat.wild ] ~allow_any_len:true
               ~name:"r")
-           (fun slots m -> reduce_ranges_to_acc slots (m "r"));
-         rule (Upat.op Op.Reduce ~src:[ Upat.wild ] ~name:"r") (fun m ->
-             expand_horizontal_reduce (m "r"));
+           (fun ctx m -> reduce_ranges_to_acc ctx (m "r"));
+         rule_ctx (Upat.op Op.Reduce ~src:[ Upat.wild ] ~name:"r")
+           (fun (_, ren) m -> expand_horizontal_reduce ren (m "r"));
          rule (Upat.op Op.Sink ~name:"sink") (fun m ->
              merge_reduce_ends (m "sink"));
        ])
@@ -542,6 +565,22 @@ let pm_cast_float_alu =
           if Dtype.equal (dtype x) (dtype u) then None
           else Some (replace u ~src:[ cast x (dtype u) ]));
     ])
+
+(* A sum's addition of a product is one multiply-add (D25): the product is the
+   second operand, the running sum the first. An addition that adds no product
+   keeps its two roundings. *)
+let pm_fuse_products =
+  pm (fun () ->
+      [
+        rule (Upat.op ~name:"s" Op.Add) (fun m ->
+            let s = m "s" in
+            if not (Option.equal Tag.equal (tag s) (Some fusable)) then None
+            else
+              match src s with
+              | [ sum; p ] when is Op.Mul p ->
+                  Some (alu (nth p 0) Op.Mulacc [ nth p 1; sum ])
+              | _ -> Some (replace s ~tag:None));
+      ])
 
 (* Barriers *)
 
@@ -695,7 +734,8 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
       slot
   in
   let sink =
-    graph_rewrite ~ctx:slots sink (lift Movement.mop_cleanup ++ pm_reduce_local)
+    graph_rewrite ~ctx:(slots, ren) sink
+      (lift Movement.mop_cleanup ++ pm_reduce_local)
   in
   let sink = graph_rewrite ~ctx:slots sink pm_add_local_buffers in
   (* add gpu dims (late). this works after devectorize, but it's faster here *)
@@ -744,8 +784,16 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   (* final symbolic before decomp *)
   let sink = rewrite Symbolic.symbolic sink in
   let sink = rewrite pm_cast_float_alu sink in
+  let sink = rewrite pm_fuse_products sink in
   (* floordiv+mod / dtype decomp (early) *)
-  let supported_ops = ops (List.map fst ren.Renderer.code_for_op) in
+  (* a multiply-add is a sum's alone, which pm_reduce_local makes: a product
+     and a sum elsewhere round apart (D25) *)
+  let supported_ops =
+    ops
+      (List.filter
+         (fun o -> not (Op.equal o Op.Mulacc))
+         (List.map fst ren.Renderer.code_for_op))
+  in
   let pm_decomp =
     Symbolic.symbolic_simple ++ Decomp_op.simplifying_patterns supported_ops
   in

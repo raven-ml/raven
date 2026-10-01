@@ -12,46 +12,43 @@
 10 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=16)
 11 Ops.SHRINK dtypes.float [10, 6, 2]
 12 Ops.LOAD dtypes.float [11]
-13 Ops.CONST dtypes.weakint [] 0
+13 Ops.CONST dtypes.weakint [] 3
 14 Ops.CAST dtypes.int [13] dtypes.int
 15 Ops.INDEX dtypes.float [12, 14]
 16 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=16)
-17 Ops.INDEX dtypes.float [16, 7]
-18 Ops.LOAD dtypes.float [17]
-19 Ops.MUL dtypes.float [15, 18]
-20 Ops.CONST dtypes.weakint [] 1
-21 Ops.CAST dtypes.int [20] dtypes.int
-22 Ops.INDEX dtypes.float [12, 21]
-23 Ops.ADD dtypes.int [7, 2]
-24 Ops.INDEX dtypes.float [16, 23]
-25 Ops.LOAD dtypes.float [24]
-26 Ops.MUL dtypes.float [22, 25]
-27 Ops.ADD dtypes.float [19, 26]
-28 Ops.INDEX dtypes.float [12, 5]
-29 Ops.CONST dtypes.weakint [] 8
-30 Ops.CAST dtypes.int [29] dtypes.int
-31 Ops.ADD dtypes.int [7, 30]
+17 Ops.CONST dtypes.weakint [] 12
+18 Ops.CAST dtypes.int [17] dtypes.int
+19 Ops.ADD dtypes.int [7, 18]
+20 Ops.INDEX dtypes.float [16, 19]
+21 Ops.LOAD dtypes.float [20]
+22 Ops.INDEX dtypes.float [12, 5]
+23 Ops.CONST dtypes.weakint [] 8
+24 Ops.CAST dtypes.int [23] dtypes.int
+25 Ops.ADD dtypes.int [7, 24]
+26 Ops.INDEX dtypes.float [16, 25]
+27 Ops.LOAD dtypes.float [26]
+28 Ops.CONST dtypes.weakint [] 1
+29 Ops.CAST dtypes.int [28] dtypes.int
+30 Ops.INDEX dtypes.float [12, 29]
+31 Ops.ADD dtypes.int [7, 2]
 32 Ops.INDEX dtypes.float [16, 31]
 33 Ops.LOAD dtypes.float [32]
-34 Ops.MUL dtypes.float [28, 33]
-35 Ops.ADD dtypes.float [27, 34]
-36 Ops.CONST dtypes.weakint [] 3
-37 Ops.CAST dtypes.int [36] dtypes.int
-38 Ops.INDEX dtypes.float [12, 37]
-39 Ops.CONST dtypes.weakint [] 12
-40 Ops.CAST dtypes.int [39] dtypes.int
-41 Ops.ADD dtypes.int [7, 40]
-42 Ops.INDEX dtypes.float [16, 41]
-43 Ops.LOAD dtypes.float [42]
-44 Ops.MUL dtypes.float [38, 43]
-45 Ops.ADD dtypes.float [35, 44]
-46 Ops.STORE dtypes.void [9, 45]
-47 Ops.END dtypes.void [46, 7]
-48 Ops.END dtypes.void [47, 3]
-49 Ops.SINK dtypes.void [48] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),)) tag=1
-50 Ops.SINK dtypes.void [48] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=112, lds=384, mem=192)) tag=1
-51 Ops.LINEAR dtypes.void [10, 16, 0, 13, 14, 20, 21, 39, 40, 4, 5, 36, 37, 1, 2, 29, 30, 3, 6, 11, 12, 15, 22, 28, 38, 7, 41, 42, 43, 23, 24, 25, 31, 32, 33, 17, 18, 8, 9, 19, 26, 27, 34, 35, 44, 45, 46, 47, 48, 49]
-52 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) matmul_small(float* data0_16, float* data1_16, float* data2_16) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    float4 val0 = (*((float4*)((data0_16+alu0))));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      float val1 = (*(data1_16+(Lidx1+12)));\n      float val2 = (*(data1_16+(Lidx1+4)));\n      float val3 = (*(data1_16+(Lidx1+8)));\n      float val4 = (*(data1_16+Lidx1));\n      *(data2_16+(alu0+Lidx1)) = ((val0.x*val4)+(val0.y*val2)+(val0.z*val3)+(val0.w*val1));\n    }\n  }\n}"
-53 Ops.PROGRAM dtypes.void [50, 51, 52] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
-54 Ops.SINK dtypes.void [49, 53]
+34 Ops.CONST dtypes.weakint [] 0
+35 Ops.CAST dtypes.int [34] dtypes.int
+36 Ops.INDEX dtypes.float [12, 35]
+37 Ops.INDEX dtypes.float [16, 7]
+38 Ops.LOAD dtypes.float [37]
+39 Ops.MUL dtypes.float [36, 38]
+40 Ops.MULACC dtypes.float [30, 33, 39]
+41 Ops.MULACC dtypes.float [22, 27, 40]
+42 Ops.MULACC dtypes.float [15, 21, 41]
+43 Ops.STORE dtypes.void [9, 42]
+44 Ops.END dtypes.void [43, 7]
+45 Ops.END dtypes.void [44, 3]
+46 Ops.SINK dtypes.void [45] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),)) tag=1
+47 Ops.SINK dtypes.void [45] KernelInfo(name="matmul_small", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=112, lds=384, mem=192)) tag=1
+48 Ops.LINEAR dtypes.void [10, 16, 0, 34, 35, 28, 29, 17, 18, 4, 5, 13, 14, 1, 2, 23, 24, 3, 6, 11, 12, 36, 30, 22, 15, 7, 19, 20, 21, 31, 32, 33, 25, 26, 27, 37, 38, 8, 9, 39, 40, 41, 42, 43, 44, 45, 46]
+49 Ops.SOURCE dtypes.void [] "typedef unsigned int uint;\n#define INFINITY (__int_as_float(0x7f800000))\n#define NAN (__int_as_float(0x7fffffff))\ntemplate <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }\nextern \"C\" __global__ void __launch_bounds__(1) matmul_small(float* data0_16, float* data1_16, float* data2_16) {\n  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {\n    int alu0 = (Lidx0<<2);\n    float4 val0 = (*((float4*)((data0_16+alu0))));\n    for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {\n      float val1 = (*(data1_16+(Lidx1+12)));\n      float val2 = (*(data1_16+(Lidx1+4)));\n      float val3 = (*(data1_16+(Lidx1+8)));\n      float val4 = (*(data1_16+Lidx1));\n      *(data2_16+(alu0+Lidx1)) = __fmaf_rn(val0.w,val1,__fmaf_rn(val0.z,val3,__fmaf_rn(val0.y,val2,(val0.x*val4))));\n    }\n  }\n}"
+50 Ops.PROGRAM dtypes.void [47, 48, 49] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CUDA", renderer="CUDA", arch="sm_89"))
+51 Ops.SINK dtypes.void [46, 50]
 

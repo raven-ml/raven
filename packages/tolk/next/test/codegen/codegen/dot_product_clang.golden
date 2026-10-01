@@ -22,53 +22,50 @@
 20 Ops.CAST dtypes.int [19] dtypes.int
 21 Ops.SHRINK dtypes.float [15, 18, 20]
 22 Ops.LOAD dtypes.float [21]
-23 Ops.INDEX dtypes.float [22, 2]
-24 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128)
-25 Ops.SHRINK dtypes.float [24, 18, 20]
-26 Ops.LOAD dtypes.float [25]
-27 Ops.INDEX dtypes.float [26, 2]
-28 Ops.MUL dtypes.float [23, 27]
-29 Ops.CONST dtypes.weakint [] 1
-30 Ops.CAST dtypes.int [29] dtypes.int
-31 Ops.INDEX dtypes.float [22, 30]
-32 Ops.INDEX dtypes.float [26, 30]
-33 Ops.MUL dtypes.float [31, 32]
-34 Ops.ADD dtypes.float [28, 33]
-35 Ops.INDEX dtypes.float [22, 17]
-36 Ops.INDEX dtypes.float [26, 17]
-37 Ops.MUL dtypes.float [35, 36]
-38 Ops.ADD dtypes.float [34, 37]
-39 Ops.CONST dtypes.weakint [] 3
-40 Ops.CAST dtypes.int [39] dtypes.int
-41 Ops.INDEX dtypes.float [22, 40]
-42 Ops.INDEX dtypes.float [26, 40]
-43 Ops.MUL dtypes.float [41, 42]
-44 Ops.ADD dtypes.float [38, 43]
-45 Ops.ADD dtypes.float [14, 44]
-46 Ops.STORE dtypes.void [13, 45]
-47 Ops.END dtypes.void [46, 11]
-48 Ops.AFTER dtypes.float [4, 47]
-49 Ops.INDEX dtypes.float [48, 2]
-50 Ops.LOAD dtypes.float [49]
-51 Ops.STORE dtypes.void [3, 50]
-52 Ops.SINK dtypes.void [51] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),)) tag=1
-53 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+23 Ops.CONST dtypes.weakint [] 3
+24 Ops.CAST dtypes.int [23] dtypes.int
+25 Ops.INDEX dtypes.float [22, 24]
+26 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=128)
+27 Ops.SHRINK dtypes.float [26, 18, 20]
+28 Ops.LOAD dtypes.float [27]
+29 Ops.INDEX dtypes.float [28, 24]
+30 Ops.INDEX dtypes.float [22, 17]
+31 Ops.INDEX dtypes.float [28, 17]
+32 Ops.CONST dtypes.weakint [] 1
+33 Ops.CAST dtypes.int [32] dtypes.int
+34 Ops.INDEX dtypes.float [22, 33]
+35 Ops.INDEX dtypes.float [28, 33]
+36 Ops.INDEX dtypes.float [22, 2]
+37 Ops.INDEX dtypes.float [28, 2]
+38 Ops.MUL dtypes.float [36, 37]
+39 Ops.MULACC dtypes.float [34, 35, 38]
+40 Ops.MULACC dtypes.float [30, 31, 39]
+41 Ops.MULACC dtypes.float [25, 29, 40]
+42 Ops.ADD dtypes.float [14, 41]
+43 Ops.STORE dtypes.void [13, 42]
+44 Ops.END dtypes.void [43, 11]
+45 Ops.AFTER dtypes.float [4, 44]
+46 Ops.INDEX dtypes.float [45, 2]
+47 Ops.LOAD dtypes.float [46]
+48 Ops.STORE dtypes.void [3, 47]
+49 Ops.SINK dtypes.void [48] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),)) tag=1
+50 Ops.BUFFER dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=1, addrspace=AddrSpace.REG)
+51 Ops.INDEX dtypes.float [50, 2]
+52 Ops.STORE dtypes.void [51, 7]
+53 Ops.AFTER dtypes.float [50, 52, 11]
 54 Ops.INDEX dtypes.float [53, 2]
-55 Ops.STORE dtypes.void [54, 7]
-56 Ops.AFTER dtypes.float [53, 55, 11]
-57 Ops.INDEX dtypes.float [56, 2]
-58 Ops.LOAD dtypes.float [57]
-59 Ops.ADD dtypes.float [58, 44]
-60 Ops.STORE dtypes.void [57, 59]
-61 Ops.END dtypes.void [60, 11]
-62 Ops.AFTER dtypes.float [53, 61]
-63 Ops.INDEX dtypes.float [62, 2]
-64 Ops.LOAD dtypes.float [63]
-65 Ops.STORE dtypes.void [3, 64]
-66 Ops.SINK dtypes.void [65] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),), estimates=Estimates(ops=256, lds=1028, mem=1028)) tag=1
-67 Ops.SINK dtypes.void [65] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),)) tag=1
-68 Ops.LINEAR dtypes.void [15, 24, 0, 53, 1, 2, 54, 6, 7, 29, 30, 16, 17, 39, 40, 9, 10, 19, 20, 55, 11, 56, 57, 58, 18, 21, 22, 25, 26, 23, 31, 35, 41, 27, 32, 36, 42, 28, 33, 34, 37, 38, 43, 44, 59, 60, 61, 62, 63, 64, 3, 65, 67]
-69 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid dot_product(float* restrict data0_128, float* restrict data1_128, float* restrict data2_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 32; Ridx0++) {\n    int alu1 = (Ridx0<<2);\n    float4 val0 = (*((float4*)((data0_128+alu1))));\n    float4 val1 = (*((float4*)((data1_128+alu1))));\n    *(buf0+0) = ((*(buf0+0))+(val0[0]*val1[0])+(val0[1]*val1[1])+(val0[2]*val1[2])+(val0[3]*val1[3]));\n  }\n  *(data2_1+0) = (*(buf0+0));\n}\n"
-70 Ops.PROGRAM dtypes.void [66, 68, 69] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
-71 Ops.SINK dtypes.void [52, 70]
+55 Ops.LOAD dtypes.float [54]
+56 Ops.ADD dtypes.float [55, 41]
+57 Ops.STORE dtypes.void [54, 56]
+58 Ops.END dtypes.void [57, 11]
+59 Ops.AFTER dtypes.float [50, 58]
+60 Ops.INDEX dtypes.float [59, 2]
+61 Ops.LOAD dtypes.float [60]
+62 Ops.STORE dtypes.void [3, 61]
+63 Ops.SINK dtypes.void [62] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),), estimates=Estimates(ops=256, lds=1028, mem=1028)) tag=1
+64 Ops.SINK dtypes.void [62] KernelInfo(name="dot_product", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UNROLL)),)) tag=1
+65 Ops.LINEAR dtypes.void [15, 26, 0, 50, 1, 2, 51, 6, 7, 32, 33, 16, 17, 23, 24, 9, 10, 19, 20, 52, 11, 53, 54, 55, 18, 21, 22, 27, 28, 36, 34, 30, 25, 37, 35, 31, 29, 38, 39, 40, 41, 56, 57, 58, 59, 60, 61, 3, 62, 64]
+66 Ops.SOURCE dtypes.void [] "typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));\nvoid dot_product(float* restrict data0_128, float* restrict data1_128, float* restrict data2_1) {\n  float buf0[1];\n  *(buf0+0) = 0.0f;\n  for (int Ridx0 = 0; Ridx0 < 32; Ridx0++) {\n    int alu1 = (Ridx0<<2);\n    float4 val0 = (*((float4*)((data0_128+alu1))));\n    float4 val1 = (*((float4*)((data1_128+alu1))));\n    *(buf0+0) = ((*(buf0+0))+__builtin_fmaf(val0[3],val1[3],__builtin_fmaf(val0[2],val1[2],__builtin_fmaf(val0[1],val1[1],(val0[0]*val1[0])))));\n  }\n  *(data2_1+0) = (*(buf0+0));\n}\n"
+67 Ops.PROGRAM dtypes.void [63, 65, 66] ProgramInfo(globals=(0, 1, 2), outs=(2,), ins=(0, 1), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+68 Ops.SINK dtypes.void [49, 67]
 

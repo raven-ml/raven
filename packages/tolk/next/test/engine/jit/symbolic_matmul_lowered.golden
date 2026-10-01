@@ -21,60 +21,59 @@
 19 Ops.RANGE dtypes.int [18, 7] (0, AxisType.REDUCE)
 20 Ops.AFTER dtypes.float [10, 17, 19]
 21 Ops.INDEX dtypes.float [20, 13]
-22 Ops.LOAD dtypes.float [21]
-23 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=30, device="CPU")
-24 Ops.CONST dtypes.weakint [] 10
-25 Ops.CAST dtypes.int [24] dtypes.int
-26 Ops.MUL dtypes.int [3, 25]
-27 Ops.ADD dtypes.int [26, 19]
-28 Ops.INDEX dtypes.float [23, 27]
-29 Ops.LOAD dtypes.float [28]
-30 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=50, device="CPU")
-31 Ops.MUL dtypes.int [19, 5]
-32 Ops.ADD dtypes.int [31, 7]
-33 Ops.INDEX dtypes.float [30, 32]
-34 Ops.LOAD dtypes.float [33]
-35 Ops.MUL dtypes.float [29, 34]
-36 Ops.ADD dtypes.float [22, 35]
-37 Ops.STORE dtypes.void [21, 36]
-38 Ops.END dtypes.void [37, 19]
-39 Ops.AFTER dtypes.float [10, 38]
-40 Ops.INDEX dtypes.float [39, 13]
-41 Ops.LOAD dtypes.float [40]
-42 Ops.STORE dtypes.void [9, 41]
-43 Ops.END dtypes.void [42, 7]
-44 Ops.END dtypes.void [43, 3]
-45 Ops.CONST dtypes.weakint [] 30
-46 Ops.MUL dtypes.int [18, 45]
-47 Ops.CONST dtypes.weakint [] 4
-48 Ops.CONST dtypes.weakint [] 15
-49 Ops.MUL dtypes.int [48, 18]
-50 Ops.MUL dtypes.int [47, 49]
-51 Ops.ADD dtypes.int [12, 50]
-52 Ops.ADD dtypes.int [51, 50]
-53 Ops.CONST dtypes.weakint [] 60
-54 Ops.ADD dtypes.int [52, 53]
-55 Ops.MUL dtypes.int [18, 53]
-56 Ops.CONST dtypes.weakint [] -1
-57 Ops.XOR dtypes.int [55, 56]
-58 Ops.CONST dtypes.weakint [] -121
-59 Ops.MAX dtypes.int [57, 58]
-60 Ops.XOR dtypes.int [59, 56]
-61 Ops.ADD dtypes.int [12, 60]
-62 Ops.CONST dtypes.weakint [] -201
-63 Ops.MAX dtypes.int [57, 62]
-64 Ops.XOR dtypes.int [63, 56]
-65 Ops.ADD dtypes.int [61, 64]
-66 Ops.ADD dtypes.int [65, 53]
-67 Ops.SINK dtypes.void [44] KernelInfo(name="r_3_5_i", estimates=Estimates(ops=%46, lds=%54, mem=%66)) tag=1
-68 Ops.SINK dtypes.void [44] KernelInfo(name="r_3_5_i") tag=1
-69 Ops.LINEAR dtypes.void [0, 23, 30, 18, 10, 15, 16, 12, 13, 24, 25, 1, 2, 4, 5, 3, 26, 6, 7, 11, 14, 17, 19, 27, 28, 29, 31, 32, 33, 34, 20, 21, 22, 35, 36, 37, 38, 39, 40, 41, 8, 9, 42, 43, 44, 68]
-70 Ops.SOURCE dtypes.void [] "\nvoid r_3_5_i(float* restrict data0_15, float* restrict data1_30, float* restrict data2_50, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n    for (int Lidx2 = 0; Lidx2 < 5; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n        float val0 = (*(data1_30+((Lidx1*10)+Ridx0)));\n        float val1 = (*(data2_50+((Ridx0*5)+Lidx2)));\n        *(buf0+0) = ((*(buf0+0))+(val0*val1));\n      }\n      *(data0_15+((Lidx1*5)+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
-71 Ops.BINARY dtypes.uchar [] b"\nvoid r_3_5_i(float* restrict data0_15, float* restrict data1_30, float* restrict data2_50, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n    for (int Lidx2 = 0; Lidx2 < 5; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n        float val0 = (*(data1_30+((Lidx1*10)+Ridx0)));\n        float val1 = (*(data2_50+((Ridx0*5)+Lidx2)));\n        *(buf0+0) = ((*(buf0+0))+(val0*val1));\n      }\n      *(data0_15+((Lidx1*5)+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
-72 Ops.PROGRAM dtypes.void [67, 69, 70, 71] ProgramInfo(vars=(%18,), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
-73 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=15, device="CPU")
-74 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=30, device="CPU")
-75 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=50, device="CPU")
-76 Ops.CALL dtypes.void [72, 73, 74, 75] CallInfo()
-77 Ops.LINEAR dtypes.void [76]
+22 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=30, device="CPU")
+23 Ops.CONST dtypes.weakint [] 10
+24 Ops.CAST dtypes.int [23] dtypes.int
+25 Ops.MUL dtypes.int [3, 24]
+26 Ops.ADD dtypes.int [25, 19]
+27 Ops.INDEX dtypes.float [22, 26]
+28 Ops.LOAD dtypes.float [27]
+29 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=50, device="CPU")
+30 Ops.MUL dtypes.int [19, 5]
+31 Ops.ADD dtypes.int [30, 7]
+32 Ops.INDEX dtypes.float [29, 31]
+33 Ops.LOAD dtypes.float [32]
+34 Ops.LOAD dtypes.float [21]
+35 Ops.MULACC dtypes.float [28, 33, 34]
+36 Ops.STORE dtypes.void [21, 35]
+37 Ops.END dtypes.void [36, 19]
+38 Ops.AFTER dtypes.float [10, 37]
+39 Ops.INDEX dtypes.float [38, 13]
+40 Ops.LOAD dtypes.float [39]
+41 Ops.STORE dtypes.void [9, 40]
+42 Ops.END dtypes.void [41, 7]
+43 Ops.END dtypes.void [42, 3]
+44 Ops.CONST dtypes.weakint [] 30
+45 Ops.MUL dtypes.int [18, 44]
+46 Ops.CONST dtypes.weakint [] 4
+47 Ops.CONST dtypes.weakint [] 15
+48 Ops.MUL dtypes.int [47, 18]
+49 Ops.MUL dtypes.int [46, 48]
+50 Ops.ADD dtypes.int [12, 49]
+51 Ops.ADD dtypes.int [50, 49]
+52 Ops.CONST dtypes.weakint [] 60
+53 Ops.ADD dtypes.int [51, 52]
+54 Ops.MUL dtypes.int [18, 52]
+55 Ops.CONST dtypes.weakint [] -1
+56 Ops.XOR dtypes.int [54, 55]
+57 Ops.CONST dtypes.weakint [] -121
+58 Ops.MAX dtypes.int [56, 57]
+59 Ops.XOR dtypes.int [58, 55]
+60 Ops.ADD dtypes.int [12, 59]
+61 Ops.CONST dtypes.weakint [] -201
+62 Ops.MAX dtypes.int [56, 61]
+63 Ops.XOR dtypes.int [62, 55]
+64 Ops.ADD dtypes.int [60, 63]
+65 Ops.ADD dtypes.int [64, 52]
+66 Ops.SINK dtypes.void [43] KernelInfo(name="r_3_5_i", estimates=Estimates(ops=%45, lds=%53, mem=%65)) tag=1
+67 Ops.SINK dtypes.void [43] KernelInfo(name="r_3_5_i") tag=1
+68 Ops.LINEAR dtypes.void [0, 22, 29, 18, 10, 15, 16, 12, 13, 23, 24, 1, 2, 4, 5, 3, 25, 6, 7, 11, 14, 17, 19, 26, 27, 28, 30, 31, 32, 33, 20, 21, 34, 35, 36, 37, 38, 39, 40, 8, 9, 41, 42, 43, 67]
+69 Ops.SOURCE dtypes.void [] "\nvoid r_3_5_i(float* restrict data0_15, float* restrict data1_30, float* restrict data2_50, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n    for (int Lidx2 = 0; Lidx2 < 5; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n        float val0 = (*(data1_30+((Lidx1*10)+Ridx0)));\n        float val1 = (*(data2_50+((Ridx0*5)+Lidx2)));\n        *(buf0+0) = __builtin_fmaf(val0,val1,(*(buf0+0)));\n      }\n      *(data0_15+((Lidx1*5)+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
+70 Ops.BINARY dtypes.uchar [] b"\nvoid r_3_5_i(float* restrict data0_15, float* restrict data1_30, float* restrict data2_50, const int i_) {\n  float buf0[1];\n  for (int Lidx1 = 0; Lidx1 < 3; Lidx1++) {\n    for (int Lidx2 = 0; Lidx2 < 5; Lidx2++) {\n      *(buf0+0) = 0.0f;\n      for (int Ridx0 = 0; Ridx0 < i_; Ridx0++) {\n        float val0 = (*(data1_30+((Lidx1*10)+Ridx0)));\n        float val1 = (*(data2_50+((Ridx0*5)+Lidx2)));\n        *(buf0+0) = __builtin_fmaf(val0,val1,(*(buf0+0)));\n      }\n      *(data0_15+((Lidx1*5)+Lidx2)) = (*(buf0+0));\n    }\n  }\n}\n"
+71 Ops.PROGRAM dtypes.void [66, 68, 69, 70] ProgramInfo(vars=(%18,), globals=(0, 1, 2), outs=(0,), ins=(1, 2), target=Target(device="CPU", arch="x86_64,x86-64"))
+72 Ops.BUFFER dtypes.float [] ParamArg(slot=4, dtype=dtypes.float, size=15, device="CPU")
+73 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=30, device="CPU")
+74 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=50, device="CPU")
+75 Ops.CALL dtypes.void [71, 72, 73, 74] CallInfo()
+76 Ops.LINEAR dtypes.void [75]
 
