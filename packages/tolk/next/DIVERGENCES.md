@@ -1284,27 +1284,36 @@ the Exclusions of `README.md`.
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half.
 
-## D42. A batch's placeholders are pinned memory
+## D42. A batch's command buffers, and its placeholders where a device has no window, are pinned memory
 
-- **tinygrad:** `runtime/support/hcq2.py:589` (`pm_bufferize` allocates a
-  placeholder that is not volatile and not a command buffer in device memory
-  the host maps, `BufferSpec(cpu_access=True)`); `runtime/ops_nv.py:447-485`
-  (NV maps such memory through BAR1).
-- **tolk.next:** `engine/tolk_next_engine.ml` (`placeholder`, which allocates
-  every placeholder no vendor names with `Nx_device.Buffer.create
-  ~memory:Pinned`).
-- **Differs:** a batch's launch descriptors, constant buffers and kernel
-  arguments live in the device's pinned memory, system memory the device and
-  the host both address, where tinygrad places them in the device's own
-  memory behind a window the host writes through. The device reads them across
-  the bus at each launch. Programs are nx.device's, in its own memory (D38).
-- **Reason:** (c). nx.device offers no memory of a device that the host
-  addresses: `create` gives the device's own memory, which the host does not
-  address, or pinned memory. nx.device's accepted `Mapped` memory adds it,
-  after which this divergence narrows to devices without such a window.
-- **Pinned by:** the engine's link tests (`test/engine/tolk_next_engine`); the
-  Ops_nv execution suite (`test/runtime/ops_nv/test_ops_nv_exec.ml`) on an
-  NVIDIA GPU.
+- **tinygrad:** `runtime/support/hcq2.py:588` (`bufferize_buf` allocates a
+  volatile placeholder in uncached host memory, a command buffer in device
+  memory the host maps and the GPU reads uncached, `BufferSpec(uncached=True,
+  cpu_access=True)`, and the others in device memory the host maps,
+  `BufferSpec(cpu_access=True)`); `runtime/ops_nv.py:447-485` (NV maps such
+  memory through BAR1); `runtime/ops_amd.py:633` (AMD raises without a large
+  BAR).
+- **tolk.next:** `engine/tolk_next_engine.ml` (`placeholder`: a volatile
+  placeholder and a command buffer, `Hcq2.is_cmdbuf`, with
+  `Nx_device.Buffer.create ~memory:Pinned`, the others with `~memory:Mapped`).
+- **Differs:**
+  - A command buffer is pinned memory, system memory the command processor
+    fetches across the bus, where tinygrad uses device memory the GPU reads
+    uncached.
+  - Where a device has no window onto its memory that the host writes through,
+    or the window is full, its mapped memory is its pinned memory, where
+    tinygrad's AMD device raises and its NV device needs the window. A device
+    whose vendor library describes no window (CUDA) has its launch descriptors,
+    constant buffers and kernel arguments in pinned memory.
+- **Reason:** (c). nx.device has no device memory that the device reads
+  uncached. Pinned memory is the kind that keeps the command processor's fetch
+  coherent with the host's writes with no invalidation. nx.device's mapped
+  memory falls back to pinned memory rather than failing, so that a batch runs
+  on every machine.
+- **Pinned by:** the Engine suite (`test/engine/tolk_next_engine`): `batches ›
+  a batch's kernel arguments are mapped memory, and its command buffers and
+  volatile words pinned memory`; the Ops_amd and Ops_nv execution suites on a
+  GPU.
 
 ## D43. A queue bufferizes its own commands, and a region keeps its alignment
 

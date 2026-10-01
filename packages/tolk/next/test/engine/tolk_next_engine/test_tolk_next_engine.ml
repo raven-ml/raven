@@ -1482,6 +1482,94 @@ let refuses_an_unknown_library () =
   let bound = [ (y, [ Run.buffer (Null_device.device "CPU:1") Float32 a ]) ] in
   raises_match Exn.invalid_arg (fun () -> Engine.link ~devices ~bound compiled)
 
+(* A device of the host's memory whose mapped and pinned memories are told
+   apart: each records the sizes it allocates. *)
+let mapped_allocs = ref []
+and pinned_allocs = ref []
+
+let mapped_device =
+  lazy
+    (let recording log (a : Nx_device.Driver.allocator) =
+       {
+         a with
+         alloc =
+           (fun n ->
+             log := n :: !log;
+             a.alloc n);
+       }
+     in
+     let memory = Nx_device.Driver.host_memory in
+     let queue ~timeline:_ =
+       {
+         Nx_device.Driver.copy = (fun ~dst:_ ~src:_ _ ~signal:_ -> never ());
+         transfer = (fun _ -> None);
+         stamp = (fun ~slot:_ ~signal:_ -> never ());
+         clock = Host_clock;
+       }
+     in
+     Nx_device.Driver.device ~name:"MAPPED" ~arch:"test" ~budget:max_int
+       (Device_local
+          {
+            memory;
+            host_memory = recording pinned_allocs memory;
+            mapped = Some (recording mapped_allocs memory);
+            mapping = Identity;
+            queue;
+          }))
+
+(* A batch's kernel arguments are mapped memory, and its command buffer and
+   volatile words pinned memory. *)
+let places_in_mapped_memory () =
+  let d = Lazy.force mapped_device in
+  let devices n =
+    if n = "CPU:1" then { (on_null n) with device = d } else on_null n
+  in
+  let y, filled = fill "CPU:1" 7. in
+  let compiled =
+    Hcq2.compile_linear
+      ~devices:(fun n -> (devices n).compiler)
+      (Ops.v Op.Linear ~src:[ filled ])
+  in
+  let placeholders =
+    List.filter
+      (fun u ->
+        Ops.op u = Op.Param
+        && Option.is_some (Ops.tag u)
+        && (match Ops.device u with
+          | Some (Single "CPU:1" | Multi [ "CPU:1" ]) -> true
+          | _ -> false)
+        (* The engine allocates those the device does not give. *)
+        && Option.is_none ((devices "CPU:1").placeholder u))
+      (Ops.toposort ~enter_calls:true compiled)
+  in
+  let bytes u = Ops.max_numel u * Dtype.itemsize (Ops.dtype u) in
+  let is_mapped u =
+    match (Ops.arg u, Ops.tag u) with
+    | Param p, Some (String t) ->
+        (not p.volatile)
+        && (not (String.starts_with ~prefix:"cmdbuf" t))
+        && t <> "timeline"
+    | _ -> false
+  in
+  mapped_allocs := [];
+  pinned_allocs := [];
+  ignore
+    (Engine.link ~devices
+       ~bound:[ (y, [ Nx_device.Buffer.create d Float32 4 ]) ]
+       compiled);
+  let sorted l = List.sort compare l in
+  let expected = sorted (List.map bytes (List.filter is_mapped placeholders)) in
+  is_true ~msg:"a placeholder is mapped" (expected <> []);
+  equal ~msg:"mapped memory" (list int) expected (sorted !mapped_allocs);
+  equal ~msg:"pinned memory" (list int)
+    (sorted
+       (List.map bytes
+          (List.filter
+             (fun u ->
+               (not (is_mapped u)) && Ops.tag u <> Some (String "timeline"))
+             placeholders)))
+    (sorted !pinned_allocs)
+
 let on_cpu1 storage = List.find (fun s -> placement s.arg = [ "CPU:1" ]) storage
 
 let batches =
@@ -1491,6 +1579,10 @@ let batches =
         (List.map computes_on_null [ "copy"; "shard_add"; "variable_offset" ]);
       test "each run of a batch signals its device's next value once"
         (signals_once_per_run ~devices:on_null);
+      test
+        "a batch's kernel arguments are mapped memory, and its command buffers \
+         and volatile words pinned memory"
+        places_in_mapped_memory;
       test
         "runs of one batched schedule from two domains each compute their own"
         (serialized ~devices:on_null "copy");

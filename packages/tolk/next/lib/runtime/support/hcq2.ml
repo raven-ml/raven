@@ -1467,6 +1467,11 @@ let bufferize_cmdbuf ?device q name =
     (write (placeholder ?device name stream, stream, patches))
     (List.map (fun (_, b) -> write b) bufs)
 
+let is_cmdbuf u =
+  match tag u with
+  | Some (Tag.String t) -> String.starts_with ~prefix:"cmdbuf" t
+  | _ -> false
+
 let encode_submit devices submit =
   let q = Queue.make (nth submit 0) in
   let cmds = (queues devices (List.hd q.devices)).commands q in

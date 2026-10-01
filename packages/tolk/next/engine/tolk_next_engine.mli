@@ -141,10 +141,14 @@ val link :
       Otherwise the signal word placeholder of a device is that device's
       {!Nx_device.signal_word}; the staging placeholder of a host (tagged
       ["staging"]) is that host's staging memory, pinned, which every linked
-      schedule shares and which is kept for the life of the process; and any
-      other is allocated in pinned memory of its device
-      ({!Nx_device.Buffer.create}[ ~memory:Pinned]), which the host and the
-      device see coherently, since the batch's host program writes it.
+      schedule shares and which is kept for the life of the process. Any other,
+      which the host writes, is allocated on its device: a volatile placeholder,
+      which the device writes too, and a command buffer (tagged ["cmdbuf_…"]),
+      which the device fetches, in pinned memory
+      ({!Nx_device.Buffer.create}[ ~memory:Pinned]), which both see coherently;
+      the others, such as kernel arguments, in mapped memory ([~memory:Mapped]),
+      which the device reads as its own, and which is pinned memory on a device
+      that has none.
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.

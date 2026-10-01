@@ -133,6 +133,28 @@ let execution =
           ignore (run_calls ~bound calls);
           equal floats [| 2.; 3.; 4.; 5. |]
             (floats_of (List.hd (List.assq h' bound))));
+      slow "a batch's copy engine reads what the host wrote to mapped memory"
+        (fun () ->
+          let a = storage "AMD" and h = storage "CPU" in
+          let m = B.create ~memory:Mapped (amd ()) Float32 4 in
+          let written =
+            match B.borrow Nx_device.host m with
+            | Ok v -> B.bigarray Bigarray.float32 v
+            | Error why -> failwith why
+          in
+          let read = new_floats "CPU" (Array.make 4 0.) in
+          let s =
+            link ~bound:[ (a, [ m ]); (h, [ read ]) ] [ Ops.store_call h a ]
+          in
+          for round = 1 to 8 do
+            let xs = Array.init 4 (fun i -> float_of_int ((10 * round) + i)) in
+            Array.iteri (fun i x -> written.{i} <- x) xs;
+            Tolk_next_engine.run s [||];
+            Nx_device.synchronize (amd ());
+            equal floats
+              ~msg:(Printf.sprintf "round %d" round)
+              xs (floats_of read)
+          done);
       slow "eight runs of one batch without synchronizing each add one"
         (fun () ->
           let b = chain 1 in

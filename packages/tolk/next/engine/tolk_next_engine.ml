@@ -410,8 +410,10 @@ let staging d n =
 
 (* The storage of a batch's placeholder [u]: the signal word of its device for
    ["timeline"], the host's staging memory for ["staging"], the address of a C
-   function for a [("cfunc", lib, f)] tuple, and pinned memory, which the host
-   program writes, for any other. *)
+   function for a [("cfunc", lib, f)] tuple, and for any other, which the host
+   writes: pinned memory for a volatile placeholder, which the device writes
+   too, and for a command buffer, which the device fetches; mapped memory, which
+   the device reads as its own, for the rest, such as kernel arguments. *)
 (* The vendor whose commands name a placeholder gives its storage: its own
    device's, or a device of the batch's, such as the vendor that owns a C
    function its host program calls. *)
@@ -436,7 +438,14 @@ let placeholder device queues u =
       | Some t when Ops.Tag.equal t staging_tag -> staging d (bytes u)
       | Some (Ops.Tag.Tuple [ String "cfunc"; String lib; String _ ]) ->
           invalid_arg (strf "Tolk_next_engine.link: no C library %s" lib)
-      | _ -> B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))
+      | _ ->
+          let volatile =
+            match Ops.arg u with Ops.Param p -> p.volatile | _ -> false
+          in
+          let memory : B.memory =
+            if volatile || Hcq2.is_cmdbuf u then Pinned else Mapped
+          in
+          B.create ~memory d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))
 
 let hcq_info call =
   match Ops.arg call with Ops.Call { aux; _ } -> aux | _ -> None

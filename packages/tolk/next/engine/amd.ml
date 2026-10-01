@@ -69,11 +69,14 @@ let reaches d devices n =
   | Some d' -> Nx_device.reaches d d'
   | None -> false
 
+(* Each submission flushes the host data path before its host program rings a
+   doorbell, so that its copy queues, which have no flush of their own, read
+   what the host wrote to mapped memory. *)
 let queues ~host devices name d =
   Option.map
     (fun a ->
       ( Ops_amd.queues ~host:(Lazy.force host) ~reaches:(reaches d devices)
           (gpu a),
         placeholder name d a,
-        ignore ))
+        fun () -> A.flush_hdp a ))
     (A.of_device d)

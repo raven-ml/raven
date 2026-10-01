@@ -188,6 +188,11 @@ val lane_offset : Ops.t -> Ops.t * int option * Ops.sint
     Raises [Invalid_argument] if a shrink of the view has more than one
     dimension. *)
 
+val is_cmdbuf : Ops.t -> bool
+(** [is_cmdbuf u] is [true] iff [u] is a command buffer that a device's command
+    processor fetches: a placeholder whose tag starts with ["cmdbuf"], such as
+    [bufferize_cmdbuf q "cmdbuf"]. *)
+
 val to_name : string list -> string
 (** [to_name parts] is [parts] joined by ['_'], lowercased, with each [':']
     replaced by ['_']: [to_name ["cmdbuf"; "COMPUTE:0"]] is
@@ -453,11 +458,13 @@ val compile_linear :
 
     {b Linking a batch}, once:
     + Each argument is a placeholder, which the engine allocates on its device:
-      a volatile one in memory the host and the device both see coherently; a
-      ["cmdbuf"] one uncached. The engine binds [signal_word d]'s placeholder to
-      [d]'s signal word, fills a [("cfunc", lib, f)] one with [f]'s address, and
-      allocates each tag its vendor names ({!commands}) as the vendor says. Each
-      {!Op.Buffer} the patches address is allocated, unless bound.
+      a volatile one ({!Ops.arg}'s [volatile]) and a command buffer
+      ({!is_cmdbuf}) in memory the host and the device both see coherently, and
+      the others in memory of the device that the host writes. The engine binds
+      [signal_word d]'s placeholder to [d]'s signal word, fills a
+      [("cfunc", lib, f)] one with [f]'s address, and allocates each tag its
+      vendor names ({!commands}) as the vendor says. Each {!Op.Buffer} the
+      patches address is allocated, unless bound.
     + Each link patch is then written, in order: a store of bytes ({!Op.Binary},
       possibly bitcast) into a view of an argument, or of a stack of words into
       a view at a stack of constant element indices. The address of a view

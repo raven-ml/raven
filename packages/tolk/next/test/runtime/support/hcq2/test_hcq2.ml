@@ -1278,6 +1278,18 @@ let word_tests =
           Tolk_next_engine.run s [||];
           Null_device.synchronize ();
           equal int before (u64_of (List.hd (List.assq scratch bound)) 0));
+      test "a command buffer is a placeholder whose tag starts with cmdbuf" (fun () ->
+          let tagged t = Ops.placeholder ~device:(Single "CPU:1") ~tag:(String t) [ 8 ] Uint8 in
+          equal (list bool)
+            [ true; true; false; false; false ]
+            (List.map Hcq2.is_cmdbuf
+               [
+                 tagged (Hcq2.to_name [ "cmdbuf"; "COMPUTE:0" ]);
+                 tagged "cmdbuf";
+                 tagged (Hcq2.to_name [ "aql"; "COMPUTE:0" ]);
+                 tagged "kernargs_cmdbuf";
+                 Hcq2.signal_word "CPU:1";
+               ]));
     ]
 
 (* Commands a queue repeats: an end of a linear of commands over a range. *)
