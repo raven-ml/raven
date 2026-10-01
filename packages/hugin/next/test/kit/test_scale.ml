@@ -207,6 +207,31 @@ let constructors =
           equal (option string) (Some "y")
             (Scale.name (Scale.linear ~name:"y" ()));
           equal (option string) None (Scale.name (Scale.band ())));
+      test "scheme is the scheme set" (fun () ->
+          let scheme = Testable.make ~pp:Scheme.pp ~equal:Scheme.equal in
+          equal (option scheme) (Some Scheme.viridis)
+            (Scale.scheme (Scale.linear ~scheme:Scheme.viridis ()));
+          equal (option scheme) (Some Scheme.okabe_ito)
+            (Scale.scheme (Scale.band ~scheme:Scheme.okabe_ito ()));
+          is_none (Scale.scheme (Scale.time ())));
+      test "symbols are not empty and are copied in and out" (fun () ->
+          let symbols =
+            option (array (Testable.make ~pp:Symbol.pp ~equal:Symbol.equal))
+          in
+          invalid (fun () -> Scale.band ~symbols:[||] ());
+          let a = [| Symbol.circle; Symbol.square |] in
+          let s = Scale.band ~symbols:a () in
+          a.(0) <- Symbol.star;
+          equal symbols
+            (Some [| Symbol.circle; Symbol.square |])
+            (Scale.symbols s);
+          (match Scale.symbols s with
+          | Some a -> a.(0) <- Symbol.star
+          | None -> ());
+          equal symbols
+            (Some [| Symbol.circle; Symbol.square |])
+            (Scale.symbols s);
+          is_none (Scale.symbols (Scale.band ())));
       test "unknown is the colour set" (fun () ->
           equal
             (option
@@ -1200,10 +1225,11 @@ and blue = Hugin_next_gg.Color.blue
 let gen_spec =
   let some l = Gen.option (Gen.of_list l) in
   Gen.map
-    (fun ((log, name, domain, nice), (zero, clamp, reverse), (areas, unknown))
-       ->
+    (fun ( (log, name, domain, nice),
+           (zero, clamp, reverse),
+           (scheme, areas, unknown) ) ->
       let make = if log then Scale.symlog ?constant:None else Scale.linear in
-      make ?name ?domain ?nice ?zero ?clamp ?reverse ?areas ?unknown ())
+      make ?name ?domain ?nice ?zero ?clamp ?reverse ?scheme ?areas ?unknown ())
     (Gen.triple
        (Gen.quad
           (Gen.frequency [ (5, Gen.constant false); (1, Gen.constant true) ])
@@ -1214,7 +1240,10 @@ let gen_spec =
           (some [ true; false ])
           (some [ true; false ])
           (some [ true; false ]))
-       (Gen.pair (some [ (0., 4.); (1., 4.) ]) (some [ red; blue ])))
+       (Gen.triple
+          (some [ Scheme.viridis; Scheme.reverse Scheme.viridis ])
+          (some [ (0., 4.); (1., 4.) ])
+          (some [ red; blue ])))
   |> Gen.with_pp Scale.pp
 
 let merged = result fscale property
@@ -1241,7 +1270,15 @@ let conflicts =
     Conflict (Wrap, band ~wrap:1 (), band ~wrap:2 ());
     Conflict (Tz_offset_s, time ~tz_offset_s:0 (), time ~tz_offset_s:60 ());
     Conflict
+      ( Scheme,
+        Scale.linear ~scheme:Scheme.viridis (),
+        Scale.linear ~scheme:Scheme.magma () );
+    Conflict
       (Areas, Scale.linear ~areas:(0., 4.) (), Scale.linear ~areas:(1., 4.) ());
+    Conflict
+      ( Symbols,
+        band ~symbols:[| Symbol.circle |] (),
+        band ~symbols:[| Symbol.circle; Symbol.square |] () );
     Conflict
       (Unknown, Scale.linear ~unknown:red (), Scale.linear ~unknown:blue ());
   ]
@@ -1409,7 +1446,9 @@ let comparing =
                 Padding;
                 Wrap;
                 Tz_offset_s;
+                Scheme;
                 Areas;
+                Symbols;
                 Unknown;
               ]
           in
@@ -1425,7 +1464,9 @@ let comparing =
               "padding";
               "wrap";
               "tz_offset_s";
+              "scheme";
               "areas";
+              "symbols";
               "unknown";
             ]
             names);
@@ -1446,6 +1487,11 @@ let comparing =
                    (Scale.band
                       ~domain:(Indices [| (3, "the") |])
                       ~padding:0.1 ~wrap:2 ());
+                 pp (Scale.linear ~scheme:(Scheme.reverse Scheme.rdbu) ());
+                 pp
+                   (Scale.band ~scheme:Scheme.okabe_ito
+                      ~symbols:[| Symbol.circle; Symbol.triangle |]
+                      ());
                ])
           @@ __POS_OF__
                {|
@@ -1455,6 +1501,8 @@ let comparing =
             (custom asinh (areas 1 9))
             (time (domain 1970-01-01T00:00:00Z 1970-01-01T00:01:00Z) (tz_offset_s 3600))
             (band (domain (indices (3 "the"))) (padding 0.1) (wrap 2))
+            (linear (scheme reverse(rdbu)))
+            (band (scheme okabe_ito) (symbols circle triangle))
             |});
     ]
 

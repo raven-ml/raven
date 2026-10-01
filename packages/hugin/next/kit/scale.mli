@@ -137,9 +137,20 @@ type _ domain =
       counts as [false].
     - [reverse], whether normalised values run from [1] to [0]. Unset counts as
       [false].
+    - [scheme], the colours that colour roles paint with. A continuous scale
+      colours a value with {!Scheme.color} of its normalised value, and a band
+      scale over [n] categories colours category [i] with colour [i] of
+      [Scheme.colors n], whether or not it is reversed: reversing a band scale
+      moves its categories and keeps their colours. Unset, a role takes its
+      theme's scheme on a continuous scale and its theme's palette on a band
+      scale.
     - [areas], the symbol areas in square points that the size role draws at the
       normalised values [0] and [1]. Both must be finite and not negative.
       Unset, the role takes its theme's areas.
+    - [symbols], the symbols that the symbol role draws the categories of a band
+      scale with: category [i] with [symbols.(i mod k)] for [k] symbols. The
+      array must not be empty, and is copied in and out. Unset, the role takes
+      its theme's set for the way the mark paints its symbols.
     - [unknown], the colour that colour roles paint missing values with. Unset,
       missing values draw no paint.
 
@@ -153,6 +164,7 @@ val linear :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
   unit ->
@@ -166,6 +178,7 @@ val log :
   ?nice:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
   unit ->
@@ -188,6 +201,7 @@ val symlog :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
   unit ->
@@ -204,6 +218,7 @@ val pow :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
   unit ->
@@ -222,6 +237,7 @@ val custom :
   ?zero:bool ->
   ?clamp:bool ->
   ?reverse:bool ->
+  ?scheme:Scheme.t ->
   ?areas:float * float ->
   ?unknown:Color.t ->
   unit ->
@@ -243,6 +259,7 @@ val time :
   ?clamp:bool ->
   ?reverse:bool ->
   ?tz_offset_s:Time.tz_offset_s ->
+  ?scheme:Scheme.t ->
   ?unknown:Color.t ->
   unit ->
   Time.t t
@@ -257,6 +274,8 @@ val band :
   ?padding:float ->
   ?reverse:bool ->
   ?wrap:int ->
+  ?scheme:Scheme.t ->
+  ?symbols:Symbol.t array ->
   ?unknown:Color.t ->
   unit ->
   string t
@@ -292,8 +311,14 @@ val bandwidth : string t -> float
 val wrap : string t -> int option
 (** [wrap s] is the number of facet panels per row of [s], if set. *)
 
+val scheme : 'd t -> Scheme.t option
+(** [scheme s] is the colour scheme of [s], if set. *)
+
 val areas : float t -> (float * float) option
 (** [areas s] is the symbol areas of [s], if set. *)
+
+val symbols : string t -> Symbol.t array option
+(** [symbols s] is the symbols of [s], if set, as a fresh array. *)
 
 val unknown : 'd t -> Color.t option
 (** [unknown s] is the colour of the missing values of [s], if set. *)
@@ -421,7 +446,9 @@ type property =
   | Padding
   | Wrap
   | Tz_offset_s
+  | Scheme
   | Areas
+  | Symbols
   | Unknown
 
 val merge : 'd t -> 'd t -> ('d t, property) result
@@ -489,7 +516,8 @@ val pp_property : Format.formatter -> property -> unit
 
 val equal : 'd t -> 'd t -> bool
 (** [equal s s'] is [true] iff [s] and [s'] set the same properties to equal
-    values: floats by [Float.equal], colours by {!Color.equal}, and the
+    values: floats by [Float.equal], colours by {!Color.equal}, schemes by
+    {!Scheme.equal}, symbols element by element by {!Symbol.equal}, and the
     functions of custom transforms physically. A property unset and the same
     property set to its default differ, since they merge differently. *)
 

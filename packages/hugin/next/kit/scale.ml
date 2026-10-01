@@ -42,7 +42,9 @@ type 'd t = {
   padding : float option;
   wrap : int option;
   tz_offset_s : int option;
+  scheme : Scheme.t option;
   areas : (float * float) option;
+  symbols : Symbol.t array option;
   unknown : Color.t option;
 }
 
@@ -57,7 +59,9 @@ type property =
   | Padding
   | Wrap
   | Tz_offset_s
+  | Scheme
   | Areas
+  | Symbols
   | Unknown
 
 let err fn fmt =
@@ -167,8 +171,11 @@ let check_areas fn (a0, a1) =
 (* Constructors *)
 
 let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?padding
-    ?wrap ?tz_offset_s ?areas ?unknown () =
+    ?wrap ?tz_offset_s ?scheme ?areas ?symbols ?unknown () =
   Option.iter (check_areas fn) areas;
+  Option.iter
+    (fun ss -> if Array.length ss = 0 then err fn "no symbols")
+    symbols;
   Option.iter (check_tz fn) tz_offset_s;
   Option.iter
     (fun p ->
@@ -188,50 +195,56 @@ let make fn kind transform ?name ?domain ?nice ?zero ?clamp ?reverse ?padding
     padding;
     wrap;
     tz_offset_s;
+    scheme;
     areas;
+    symbols = Option.map Array.copy symbols;
     unknown;
   }
 
 let floats = Option.map (fun (a, b) -> Floats (a, b))
 
-let linear ?name ?domain ?nice ?zero ?clamp ?reverse ?areas ?unknown () =
+let linear ?name ?domain ?nice ?zero ?clamp ?reverse ?scheme ?areas ?unknown ()
+    =
   make "linear" Quantitative Linear ?name ?domain:(floats domain) ?nice ?zero
-    ?clamp ?reverse ?areas ?unknown ()
+    ?clamp ?reverse ?scheme ?areas ?unknown ()
 
-let log ?(base = 10.) ?name ?domain ?nice ?clamp ?reverse ?areas ?unknown () =
+let log ?(base = 10.) ?name ?domain ?nice ?clamp ?reverse ?scheme ?areas
+    ?unknown () =
   if not (Float.is_finite base && base > 1.) then
     err "log" "base %g is not finite above 1" base;
   make "log" Quantitative (Log base) ?name ?domain:(floats domain) ?nice ?clamp
-    ?reverse ?areas ?unknown ()
+    ?reverse ?scheme ?areas ?unknown ()
 
-let symlog ?(constant = 1.) ?name ?domain ?nice ?zero ?clamp ?reverse ?areas
-    ?unknown () =
+let symlog ?(constant = 1.) ?name ?domain ?nice ?zero ?clamp ?reverse ?scheme
+    ?areas ?unknown () =
   if not (Float.is_finite constant && constant > 0.) then
     err "symlog" "constant %g is not finite and positive" constant;
   make "symlog" Quantitative (Symlog constant) ?name ?domain:(floats domain)
-    ?nice ?zero ?clamp ?reverse ?areas ?unknown ()
+    ?nice ?zero ?clamp ?reverse ?scheme ?areas ?unknown ()
 
-let pow ~exponent ?name ?domain ?nice ?zero ?clamp ?reverse ?areas ?unknown () =
+let pow ~exponent ?name ?domain ?nice ?zero ?clamp ?reverse ?scheme ?areas
+    ?unknown () =
   if not (Float.is_finite exponent && exponent > 0.) then
     err "pow" "exponent %g is not finite and positive" exponent;
   make "pow" Quantitative (Pow exponent) ?name ?domain:(floats domain) ?nice
-    ?zero ?clamp ?reverse ?areas ?unknown ()
+    ?zero ?clamp ?reverse ?scheme ?areas ?unknown ()
 
 let custom ~transform ~forward ~inverse ?name ?domain ?nice ?zero ?clamp
-    ?reverse ?areas ?unknown () =
+    ?reverse ?scheme ?areas ?unknown () =
   make "custom" Quantitative
     (Custom { name = transform; forward; inverse })
-    ?name ?domain:(floats domain) ?nice ?zero ?clamp ?reverse ?areas ?unknown ()
+    ?name ?domain:(floats domain) ?nice ?zero ?clamp ?reverse ?scheme ?areas
+    ?unknown ()
 
-let time ?name ?domain ?nice ?clamp ?reverse ?tz_offset_s ?unknown () =
+let time ?name ?domain ?nice ?clamp ?reverse ?tz_offset_s ?scheme ?unknown () =
   make "time" Temporal Linear ?name
     ?domain:(Option.map (fun (a, b) -> Instants (a, b)) domain)
-    ?nice ?clamp ?reverse ?tz_offset_s ?unknown ()
+    ?nice ?clamp ?reverse ?tz_offset_s ?scheme ?unknown ()
 
-let band ?name ?domain ?padding ?reverse ?wrap ?unknown () =
+let band ?name ?domain ?padding ?reverse ?wrap ?scheme ?symbols ?unknown () =
   make "band" Categorical Linear ?name
     ?domain:(Option.map (fun c -> Categories c) domain)
-    ?padding ?reverse ?wrap ?unknown ()
+    ?padding ?reverse ?wrap ?scheme ?symbols ?unknown ()
 
 (* Properties *)
 
@@ -278,7 +291,9 @@ let bandwidth s =
   if n = 0. then 0. else (1. -. p) /. (n +. p)
 
 let wrap s = s.wrap
+let scheme s = s.scheme
 let areas s = s.areas
+let symbols s = Option.map Array.copy s.symbols
 let unknown s = s.unknown
 let tz_offset_s s = Option.value ~default:0 s.tz_offset_s
 
@@ -659,6 +674,9 @@ let equal_domain : type d. d domain -> d domain -> bool =
   | Instants (a, b), Instants (a', b') -> Time.equal a a' && Time.equal b b'
   | Categories c, Categories c' -> equal_categories c c'
 
+let equal_symbols ss ss' =
+  Array.length ss = Array.length ss' && Array.for_all2 Symbol.equal ss ss'
+
 (* A relation between the values of a property set or unset in two scales. *)
 type relation = {
   holds : 'a. ('a -> 'a -> bool) -> 'a option -> 'a option -> bool;
@@ -678,7 +696,9 @@ let agreements r s s' =
     (Padding, r.holds Float.equal s.padding s'.padding);
     (Wrap, r.holds Int.equal s.wrap s'.wrap);
     (Tz_offset_s, r.holds Int.equal s.tz_offset_s s'.tz_offset_s);
+    (Scheme, r.holds Scheme.equal s.scheme s'.scheme);
     (Areas, r.holds equal_pair s.areas s'.areas);
+    (Symbols, r.holds equal_symbols s.symbols s'.symbols);
     (Unknown, r.holds Color.equal s.unknown s'.unknown);
   ]
 
@@ -696,7 +716,9 @@ let union s s' =
     padding = first s.padding s'.padding;
     wrap = first s.wrap s'.wrap;
     tz_offset_s = first s.tz_offset_s s'.tz_offset_s;
+    scheme = first s.scheme s'.scheme;
     areas = first s.areas s'.areas;
+    symbols = first s.symbols s'.symbols;
     unknown = first s.unknown s'.unknown;
   }
 
@@ -801,7 +823,9 @@ let property_name = function
   | Padding -> "padding"
   | Wrap -> "wrap"
   | Tz_offset_s -> "tz_offset_s"
+  | Scheme -> "scheme"
   | Areas -> "areas"
+  | Symbols -> "symbols"
   | Unknown -> "unknown"
 
 let pp_property ppf p = Format.pp_print_string ppf (property_name p)
@@ -848,7 +872,7 @@ let pp (type d) ppf (s : d t) =
     | Some v -> Format.fprintf ppf "@ @[<1>(%s %a)@]" name pp_v v
   in
   let bool ppf b = Format.pp_print_bool ppf b in
-  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
+  Format.fprintf ppf "@[<1>(%a%a%a%a%a%a%a%a%a%a%a%a%a%a)@]" head s
     (field "name" (fun ppf -> Format.fprintf ppf "%S"))
     s.name (field "domain" pp_domain) s.domain (field "nice" bool) s.nice
     (field "zero" bool) s.zero (field "clamp" bool) s.clamp
@@ -856,10 +880,13 @@ let pp (type d) ppf (s : d t) =
     (field "wrap" Format.pp_print_int)
     s.wrap
     (field "tz_offset_s" Format.pp_print_int)
-    s.tz_offset_s
+    s.tz_offset_s (field "scheme" Scheme.pp) s.scheme
     (field "areas" (fun ppf (a, b) ->
          Format.fprintf ppf "%a %a" pp_float a pp_float b))
-    s.areas (field "unknown" Color.pp) s.unknown
+    s.areas
+    (field "symbols"
+       (Format.pp_print_array ~pp_sep:Format.pp_print_space Symbol.pp))
+    s.symbols (field "unknown" Color.pp) s.unknown
 
 module Private = struct
   type nonrec transform = transform =
