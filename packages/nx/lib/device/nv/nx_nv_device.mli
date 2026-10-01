@@ -38,11 +38,21 @@
     {b Memory.} Buffers are GPU memory, which the host does not address.
     {!Nx_device.Buffer.copy} moves their bytes on the GPU's copy engine:
     directly from and to host memory the GPU addresses, and through the host's
-    staging memory from and to other host memory. Host memory the GPU addresses
-    is coherent for it:
+    staging memory from and to other host memory.
+
+    {!Nx_device.Buffer.create}[ ~memory:Mapped] allocates GPU memory that the
+    host also addresses, through the GPU's window onto it (BAR1). The host's
+    writes through BAR1 are write-combined; the full fence before a doorbell
+    drains them, so the work the doorbell submits sees them. NV needs no flush
+    besides; work that reads memory the host rewrote since the device's previous
+    work starts by invalidating the compute engine's instruction, data and
+    constant caches. Without a BAR that covers the GPU's memory, under {!Pci},
+    or once BAR1 is full, under {!Kernel}, mapped memory is pinned memory.
+
+    Host memory the GPU addresses is coherent for it:
     - {!Nx_device.Buffer.create}[ ~memory:Pinned] allocates it, system memory
       the GPU snoops, and it counts in the device's budget, which defaults to
-      the size of the GPU's memory heap. Mapped memory is this memory too;
+      the size of the GPU's memory heap;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it, and
       page-locks it while mapped. It counts in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs

@@ -2889,6 +2889,11 @@ thread.
 
 ### Nx
 
+- An NV device gives mapped memory (`Nx_device.Buffer.create
+  ~memory:Mapped`): GPU memory the host writes through BAR1. Under the
+  driver-less interface with a 256 MiB BAR, or once the kernel driver's BAR1
+  window is full, it is pinned memory; a full window no longer loses the
+  device when it maps a program or other memory the host addresses.
 - **Breaking:** `Nx_device.Buffer.create` takes `?memory:(Device | Pinned |
   Mapped)` in place of `?pinned`: `~pinned:true` is `~memory:Pinned`. `Mapped`
   is device memory that the host also writes through a window onto it (a

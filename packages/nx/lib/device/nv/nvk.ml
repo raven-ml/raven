@@ -237,8 +237,9 @@ let open_gpu index =
   }
 
 (* Maps the memory object [handle] of [size] bytes into the process at [va]:
-   through the control device for system memory, and the GPU's file
-   otherwise. *)
+   through the control device for system memory, and the GPU's file otherwise,
+   whose window onto the GPU's memory (BAR1) may have no room left, in which
+   case it maps nothing and is [false]. *)
 let map_to_cpu g handle size va ~flags ~system =
   let c = g.c in
   let fd = if system then open_file ctl_path else gpu_file c g.minor in
@@ -257,9 +258,13 @@ let map_to_cpu g handle size va ~flags ~system =
       P.set w (at M.flags) flags;
       escape c.ctl D.nv_esc_rm_map_memory w
         "mapping GPU memory into the process";
-      Rm.check c.release "mapping GPU memory into the process"
-        (P.get w (at M.status));
-      map_at fd (Nativeint.of_int va) size)
+      let status = P.get w (at M.status) in
+      if status = D.nv_err_no_memory then false
+      else begin
+        Rm.check c.release "mapping GPU memory into the process" status;
+        map_at fd (Nativeint.of_int va) size;
+        true
+      end)
 
 let set_uuid p field uuid = P.blit_string uuid p (fst field)
 
@@ -459,12 +464,18 @@ let alloc g ?(host = false) ?(uncached = false) ?(cpu_access = false)
           if s = D.nv_err_no_memory then None
           else begin
             Rm.check c.release (Printf.sprintf "allocating class 0x%x" cls) s;
-            if cpu_access then
-              or_undo
-                (fun () -> (rm c).free ~parent:g.device h)
-                (fun () ->
-                  map_to_cpu g h size va ~flags:map_flags ~system:uncached);
-            Some h
+            let mapped =
+              (not cpu_access)
+              || or_undo
+                   (fun () -> (rm c).free ~parent:g.device h)
+                   (fun () ->
+                     map_to_cpu g h size va ~flags:map_flags ~system:uncached)
+            in
+            if mapped then Some h
+            else begin
+              (rm c).free ~parent:g.device h;
+              None
+            end
           end
       in
       match h with
@@ -572,7 +583,9 @@ let usermode g ~subdevice cls =
   in
   or_undo
     (fun () -> Space.free g.c.low va)
-    (fun () -> map_to_cpu g h 0x10000 va ~flags:0 ~system:false);
+    (fun () ->
+      if not (map_to_cpu g h 0x10000 va ~flags:0 ~system:false) then
+        failwith "no room to map the GPU's doorbell");
   Nativeint.of_int va
 
 (* Unmaps the usermode page [usermode] mapped at [va]; freeing the RM device

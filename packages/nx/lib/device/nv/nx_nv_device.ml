@@ -911,6 +911,15 @@ let bind_engines n =
         (Pushbuf.methods Pushbuf.copy_engine D.nvc6c0_set_object
            [ n.props.dma_class ]))
 
+(* The GPU's memory the host writes through BAR1, for mapped buffers. Under the
+   driver-less interface a BAR of 256 MiB gives system memory for memory the
+   host addresses: the GPU has no window, and mapped buffers are pinned
+   memory. *)
+let mapped_allocator n =
+  match n.gpu with
+  | Pci_gpu p when Pci_memory.small_bar p.memory -> None
+  | _ -> Some (allocator n Visible)
+
 let make_device n ?finalize () =
   let dev =
     Driver.device ~name:(name n.index) ~arch:(arch n.props.sm_version)
@@ -921,7 +930,7 @@ let make_device n ?finalize () =
          {
            memory = allocator n Vram;
            host_memory = allocator n Host;
-           mapped = None;
+           mapped = mapped_allocator n;
            mapping = mapping n;
            queue = queue n;
          })

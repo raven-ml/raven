@@ -149,6 +149,24 @@ let test_memory () =
     (function Nx_device.Out_of_memory _ -> true | _ -> false)
     (fun () -> B.create d S.UInt8 (Nx_device.budget d + 1))
 
+(* Mapped memory is the GPU's own, which the host addresses through BAR1, or
+   pinned memory where there is no window: either way the host and the copy
+   engine both reach it, without staging. *)
+let test_mapped () =
+  let d = device () in
+  let n = mib + 17 in
+  let src = fill_host n (fun i -> i * 11) in
+  let m = B.create ~memory:Mapped d S.UInt8 n in
+  is_true ~msg:"the host addresses it" (hosted m <> None);
+  let v = B.create d S.UInt8 n in
+  B.copy ~src ~dst:m;
+  equal ~msg:"into VRAM in one step" int 1
+    (steps d (fun () -> B.copy ~src:m ~dst:v));
+  is_true ~msg:"its bytes, through VRAM" (same_bytes src (to_host v));
+  let on_host = borrow Nx_device.host m in
+  is_true ~msg:"the host borrows it over its address"
+    (hosted on_host = hosted m && same_bytes src on_host)
+
 let test_staged () =
   let d = device () in
   let n = (130 * mib) + 5 in
@@ -541,6 +559,7 @@ let () =
          group "memory"
            [
              test "memory and copies" test_memory;
+             test "mapped memory" test_mapped;
              test "staged copies" test_staged;
              test "borrows" test_borrow;
              test "one buffer borrowed by two GPUs" test_two_borrows;
