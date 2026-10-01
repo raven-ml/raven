@@ -1,6 +1,15 @@
 # thumper baseline v1
 # suite: kaun_decode
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+Gpt2/decode-step-cache-1024	alloc_words	exact	810437
+Gpt2/decode-step-cache-1024	wall_time	batch=1	n=20	1.591e-01	1.527e-01 1.552e-01 1.577e-01 1.578e-01 1.579e-01 1.583e-01 1.584e-01 1.588e-01 1.588e-01 1.590e-01 1.592e-01 1.597e-01 1.598e-01 1.602e-01 1.605e-01 1.608e-01 1.615e-01 1.641e-01 1.676e-01 1.684e-01
+Gpt2/decode-step-cache-256	alloc_words	batch=1	n=20	8.098e+05	8.097e+05 8.097e+05 8.098e+05 8.098e+05 8.098e+05 8.098e+05 8.098e+05 8.098e+05 8.098e+05 8.098e+05 8.099e+05 8.099e+05 8.099e+05 8.099e+05 8.099e+05 8.099e+05 8.099e+05 8.099e+05 8.100e+05 1.470e+06
+Gpt2/decode-step-cache-256	wall_time	batch=1	n=20	1.357e-01	1.265e-01 1.297e-01 1.298e-01 1.299e-01 1.309e-01 1.345e-01 1.348e-01 1.351e-01 1.351e-01 1.356e-01 1.358e-01 1.360e-01 1.362e-01 1.369e-01 1.369e-01 1.378e-01 1.395e-01 1.544e-01 1.641e-01 1.870e-01
+
 # machine: 73bfb753d0739958
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

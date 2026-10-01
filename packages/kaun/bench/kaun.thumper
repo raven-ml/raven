@@ -1,6 +1,23 @@
 # thumper baseline v1
 # suite: kaun
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+Conv/conv-train-step	alloc_words	exact	27623
+Conv/conv-train-step	wall_time	batch=1	n=20	7.702e-03	6.812e-03 6.819e-03 6.824e-03 7.037e-03 7.255e-03 7.271e-03 7.465e-03 7.497e-03 7.598e-03 7.603e-03 7.800e-03 7.822e-03 7.828e-03 8.101e-03 8.108e-03 8.234e-03 8.566e-03 8.732e-03 8.979e-03 9.758e-03
+Forward/apply	alloc_words	exact	906
+Forward/apply	wall_time	batch=1	n=20	3.304e-03	3.281e-03 3.282e-03 3.284e-03 3.285e-03 3.286e-03 3.287e-03 3.291e-03 3.292e-03 3.292e-03 3.301e-03 3.307e-03 3.307e-03 3.315e-03 3.332e-03 3.353e-03 3.359e-03 3.533e-03 3.556e-03 3.564e-03 3.776e-03
+Linear/linear-fwd	alloc_words	batch=2	n=20	2.145e+02	2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.145e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02 2.160e+02
+Linear/linear-fwd	wall_time	batch=2	n=20	2.857e-03	2.681e-03 2.709e-03 2.740e-03 2.742e-03 2.745e-03 2.749e-03 2.752e-03 2.753e-03 2.805e-03 2.853e-03 2.861e-03 2.883e-03 2.885e-03 2.885e-03 2.893e-03 2.926e-03 2.929e-03 2.932e-03 2.945e-03 3.108e-03
+Linear/linear-fwd-bwd	alloc_words	exact	1826
+Linear/linear-fwd-bwd	wall_time	batch=1	n=20	5.267e-03	4.788e-03 4.794e-03 4.862e-03 4.864e-03 4.891e-03 4.906e-03 4.908e-03 5.201e-03 5.231e-03 5.266e-03 5.269e-03 5.271e-03 5.276e-03 5.276e-03 5.280e-03 5.292e-03 5.309e-03 5.332e-03 5.383e-03 5.865e-03
+TrainStep/sgd-train-step	alloc_words	exact	11313
+TrainStep/sgd-train-step	wall_time	batch=1	n=20	8.462e-03	8.023e-03 8.061e-03 8.127e-03 8.130e-03 8.190e-03 8.224e-03 8.387e-03 8.387e-03 8.436e-03 8.449e-03 8.475e-03 8.476e-03 8.526e-03 8.573e-03 8.612e-03 8.771e-03 8.793e-03 9.022e-03 9.052e-03 9.081e-03
+TrainStep/train-step	alloc_words	exact	22263
+TrainStep/train-step	wall_time	batch=1	n=20	1.231e-02	1.115e-02 1.132e-02 1.134e-02 1.177e-02 1.193e-02 1.197e-02 1.204e-02 1.214e-02 1.216e-02 1.229e-02 1.234e-02 1.253e-02 1.258e-02 1.266e-02 1.277e-02 1.301e-02 1.361e-02 1.410e-02 1.415e-02 1.416e-02
+
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.0 · 64-bit · release
