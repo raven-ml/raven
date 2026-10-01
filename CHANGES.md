@@ -2922,6 +2922,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.runs_on_host` says whether a device's work is the host's: the
+  host, or a device over host memory that loads no programs, such as a test
+  device. `Nx_cpu.backend` runs on exactly those, so no longer on Metal.
 - `Nx_io.encode_png` takes `?dpi`, written as a `pHYs` chunk so that viewers
   and printers show the image at its physical size, and `?srgb`, an `sRGB`
   chunk stating that the samples are sRGB. Without them the file is the same

@@ -101,6 +101,15 @@ val shares_host_memory : t -> bool
     {!disk} and for GPUs whose own memory the host does not address, such as
     CUDA, AMD and NV GPUs. *)
 
+val runs_on_host : t -> bool
+(** [runs_on_host d] is [true] iff [d]'s work is this process's host's: [d] is
+    the {!host}, or a device of this machine described as [Host_visible] that
+    loads no programs ({!Driver.device}), such as the test devices over the
+    host's memory. Such a device has no processor of its own: its memory is the
+    host's, and the host computes on it as on its own. It is [false] for Metal,
+    which runs programs, for CUDA, AMD and NV GPUs, for the {!disk} and for
+    other machines' devices. *)
+
 val reaches : t -> t -> bool
 (** [reaches d d'] is [true] iff [d]'s work addresses the memory of [d'] once
     [d] borrows it ({!Buffer.borrow}), as a compiler that places copies must

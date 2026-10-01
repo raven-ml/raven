@@ -16,7 +16,7 @@ open Nx_array
 type ('a, 'b) t = ('a, 'b) Nx_array.t
 
 let name = "cpu"
-let runs_on = Nx_device.shares_host_memory
+let runs_on = Nx_device.runs_on_host
 let shape (t : ('a, 'b) t) = View.shape t.view
 let of_view (t : ('a, 'b) t) view = { t with view }
 

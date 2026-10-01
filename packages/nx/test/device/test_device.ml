@@ -1840,6 +1840,16 @@ let refusals =
 let programs =
   group "programs"
     [
+      test
+        "a device runs on the host when the host addresses its memory and it \
+         loads no programs" (fun () ->
+          let load ~binary:_ ~entry:_ = Ok 1n in
+          is_true ~msg:"host" (Nx_device.runs_on_host host);
+          is_true ~msg:"near" (Nx_device.runs_on_host (fake ()).dev);
+          is_false ~msg:"near, loading"
+            (Nx_device.runs_on_host (fake ~load ()).dev);
+          is_false ~msg:"far" (Nx_device.runs_on_host (fake ~far:true ()).dev);
+          is_false ~msg:"disk" (Nx_device.runs_on_host Nx_device.disk));
       test "a function of a binary loads once, on its device" (fun () ->
           let loads = ref [] in
           let load ~binary ~entry =

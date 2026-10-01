@@ -117,6 +117,16 @@ let backends =
               Nx.Placement.device ~backend:hostless r1);
           raises_invalid_arg (fun () ->
               Nx.Placement.replicated ~backend:hostless [ Nx.Device.host; r1 ]));
+      test "nx.cpu subtracts values placed on CPU:1, keeping their placement"
+        (fun () ->
+          let p =
+            Nx.Placement.device (Nx.Device.of_runtime (runtime "CPU:1"))
+          in
+          let a = Nx.place p (vec [| 5.; 7. |])
+          and b = Nx.place p (vec [| 2.; 3. |]) in
+          let d = Nx.sub a b in
+          is_true (Nx.Placement.equal (Nx.placement d) p);
+          equal floats (vec [| 3.; 4. |]) d);
       test "placements differ by backend, and print it" (fun () ->
           let p = Nx.Placement.device ~backend:counting Nx.Device.host in
           is_false (Nx.Placement.equal p Nx.Placement.host);

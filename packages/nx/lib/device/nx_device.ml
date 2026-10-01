@@ -641,6 +641,13 @@ let shares_host_memory d =
      && Option.is_none d.copy_queue
      && Option.is_some d.mapping
 
+let runs_on_host d =
+  d == host
+  || d != disk
+     && host_of d == host
+     && Option.is_none d.host_memory
+     && Option.is_none d.load
+
 (* Memory the host addresses, as the host's own and a device's over it are. *)
 let host_addressed d = Option.is_none d.copy_queue && Option.is_some d.mapping
 
