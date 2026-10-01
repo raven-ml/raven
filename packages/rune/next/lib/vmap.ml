@@ -113,7 +113,10 @@ let update m x starts v =
           (Nx.greater_equal_s rel 0l)
           (Nx.less_s rel (Int32.of_int len))
       in
-      let index = Nx.clamp ~min:0l ~max:(Int32.of_int (len - 1)) rel in
+      let last =
+        (len - 1) [@mutate off "an index past the window is masked by within"]
+      in
+      let index = Nx.clamp ~min:0l ~max:(Int32.of_int last) rel in
       let along =
         Array.init (rank + 1) (fun d ->
             if d = 0 then m.size else if d = axis + 1 then n else 1)
@@ -140,7 +143,10 @@ let update m x starts v =
    with leading axes of its own lifts both to one leading rank, the map's axis
    first. *)
 let matmul m a b =
-  let lead x = Nx.ndim x - 2 in
+  let lead x =
+    (Nx.ndim x - 2)
+    [@mutate off "a lead shifted alike for both operands lifts them alike"]
+  in
   let l = Int.max (lead a) (lead b) in
   if l = 0 then eval (Matmul (physical m a, physical m b))
   else

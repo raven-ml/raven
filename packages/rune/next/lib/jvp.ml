@@ -589,7 +589,7 @@ let run : type r. t -> r Nx.Op.t -> r =
         dual i y (eval (Convert (Cast, dtype, dx)))
       else y
   | Convert (Bitcast, dtype, x) -> eval (Convert (Bitcast, dtype, primal i x))
-  | Threefry (key, ctr) -> eval (Threefry (primal i key, primal i ctr))
+  | Threefry _ -> assert false (* Its int32 operands are never duals. *)
   | Gather (axis, indices, x) ->
       linear x (fun x -> eval (Gather (axis, indices, x)))
   | Scatter s ->

@@ -86,7 +86,9 @@ let record t op x =
   slot t ~context:(Repr.context x) (placement op) (Nx.Op.dtype op)
     (Nx.Op.shape op) (Recorded op)
 
-(* [record_any t op] is [record t op x] for the first slot operand [x]. *)
+(* [record_any t op] is [record t op x] for the first slot operand [x]. A slot's
+   context reaches only the constants the frontend makes beside it, which a
+   trace inlines, so which slot operand gives it does not show. *)
 let record_any t op =
   let (Nx.P x) = List.find (fun (Nx.P x) -> owns t x) (operands op) in
   record t op x
@@ -117,7 +119,7 @@ let run : type r. tape -> r Nx.Op.t -> r =
         | Fdiv -> not sb
         | Idiv | Mod | Pow | Atan2 | Maximum | Minimum | And | Or | Xor -> false
       in
-      if linear then record t op (if sa then a else b) else nonlinear t op
+      if linear then record_any t op else nonlinear t op
   | Where _ -> record_any t op
   | Reduce (k, _, x) -> sum t op k x
   | Scan (k, _, x) -> sum t op k x
@@ -130,9 +132,7 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Solve_triangular { a; b; _ } ->
       if owns t a then nonlinear t op else record t op b
   | Matmul (a, b) ->
-      let sa = owns t a in
-      if sa && owns t b then nonlinear t op
-      else record t op (if sa then a else b)
+      if owns t a && owns t b then nonlinear t op else record_any t op
   | Cat _ -> record_any t op
   | Gather _ -> record_any t op
   | Scatter _ -> record_any t op
