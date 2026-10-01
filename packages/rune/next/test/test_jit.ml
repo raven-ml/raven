@@ -1562,6 +1562,47 @@ let nested c x =
   let c, _ = Rune.scan' ~f:sum ~init:c (Nx.reshape [| 4; 4 |] x) in
   (c, Nx.reshape [| 1 |] (Nx.sum c))
 
+(* A scan of rows [m * 4] wide whose step scans its row as [m] rows of four,
+   from its carry [c], the inner step reading [c] beside its own carry and row:
+   its final carry and the sums of its inner outputs. *)
+let reading_outer m xs =
+  let c, ys =
+    Rune.scan'
+      ~f:(fun c x ->
+        let ic, iys =
+          Rune.scan'
+            ~f:(fun d y ->
+              let d = Nx.add (Nx.mul_s d 0.9) (Nx.mul y c) in
+              (d, Nx.sin d))
+            ~init:c
+            (Nx.reshape [| m; 4 |] x)
+        in
+        (Nx.add ic (Nx.sum ~axes:[ 0 ] iys), Nx.reshape [| 1 |] (Nx.sum iys)))
+      ~init:(Nx.ones Nx.float32 [| 4 |])
+      xs
+  in
+  Nx.concatenate ~axis:0 [ c; Nx.flatten ys ]
+
+(* [reads_outer at] checks a scan staged in a staged scan's step that reads the
+   enclosing step's carry, placed at [at], against eager: its values, its
+   gradient and its batch. *)
+let reads_outer at =
+  let xs = Nx.mul_s (Nx.sin (Nx.reshape [| 5; 12 |] (arange 60))) 0.5 in
+  let loss xs = Nx.sum (Nx.mul (reading_outer 3 xs) (reading_outer 3 xs)) in
+  let batch = Nx.stack ~axis:0 [ xs; Nx.mul_s xs 2. ] in
+  group "a scan in a staged scan's step that reads the step's carry"
+    [
+      test "computes eager's values" (fun () ->
+          equal near (reading_outer 3 xs)
+            (host (Rune.jit' (reading_outer 3) (Nx.place at xs))));
+      test "differentiates as eager" (fun () ->
+          equal near (Rune.grad' loss xs)
+            (host (Rune.jit' (Rune.grad' loss) (Nx.place at xs))));
+      test "batches as eager" (fun () ->
+          let f = Rune.vmap' (reading_outer 3) in
+          equal near (f batch) (host (Rune.jit' f (Nx.place at batch))));
+    ]
+
 let product c x =
   let w = Nx.mul_s (grid 3 3) 0.1 in
   let c =
@@ -1794,8 +1835,9 @@ let staged_scans d =
         (rows 5 4);
       staged at "update a carry its next value reads through a product"
         ~steps:once ~init:(ones 3) product (rows 6 3);
-      staged at "stage around a scan their step writes out" ~steps:once
+      staged at "stage a scan whose step stages a scan of its own" ~steps:once
         ~init:(zeros 4) nested (rows 6 16);
+      reads_outer at;
       staged at "update a carry its next value reads rotated" ~steps:once
         ~init:(ones 3) rotated (rows 5 3);
       staged at "update a carry its next value reads reversed" ~steps:once
@@ -2257,6 +2299,36 @@ let scans =
                  xs)
           in
           equal close (f (grid 2 3)) (Rune.jit' f (grid 2 3)));
+      test
+        "a scan in a staged scan's step is a loop of its own, its step traced \
+         as often whatever its rows" (fun () ->
+          let ran = ref 0 in
+          let f m xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   let c, _ =
+                     Rune.scan'
+                       ~f:(fun c x ->
+                         incr ran;
+                         (Nx.add c x, x))
+                       ~init:c
+                       (Nx.reshape [| m; 1 |] x)
+                   in
+                   (c, c))
+                 ~init:(Nx.zeros Nx.float32 [| 1 |])
+                 xs)
+          in
+          let traced m =
+            let xs = grid 2 m in
+            let expected = f m xs in
+            ran := 0;
+            let r = Rune.jit' (f m) xs in
+            equal close expected r;
+            !ran
+          in
+          equal int (traced 3) (traced 7));
+      reads_outer Nx.Placement.host;
       test "a carry that changes its shape across steps is written out"
         (fun () ->
           let f xs =
