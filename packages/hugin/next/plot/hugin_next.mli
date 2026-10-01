@@ -866,10 +866,11 @@ val share : (string * sharing) list -> t -> t
     grid of one cell is that grid.
 
     Raises [Invalid_argument] if [pairs] names a scale twice. {!resolve} raises
-    [Invalid_argument] for a pair whose name no channel in [f] reads, and for
+    [Invalid_argument] for a pair whose name no channel in [f] reads; for
     [`Independent] at a layer on a name that a position or facet role in it
     reads, since the children of a layer draw in the same panels and a panel has
-    one scale per position and facet. *)
+    one scale per position and facet; and for [`Independent] at a mark on a name
+    that its [fx] or [fy] reads, since that scale makes the panels. *)
 
 val title : ?align:Text.Layout.halign -> Text.t -> t -> t
 (** [title ~align s f] is [f] with the title [s] above it, set in the theme's

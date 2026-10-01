@@ -1727,7 +1727,7 @@ let readings_of pid occ =
              let kind = lift_kind d.lift in
              let key =
                if not (List.mem name occ.per_panel) then key_of env name
-               else if name = "fx" || name = "fy" then
+               else if b.role.name = "fx" || b.role.name = "fy" then
                  err "resolve"
                    "%a makes its facet scale %S independent per panel" pp_id
                    occ.mid name

@@ -324,6 +324,16 @@ let errors =
                [ ("fx", `Independent) ]
                (dot ~x:(num x) ~y:(num x) ~fx:(strings [| "a"; "b" |]) ()))),
         [ "root"; "fx" ] );
+      ( "a user-named facet scale independent per panel",
+        (fun () ->
+          let g = Scale.band ~name:"g" () in
+          resolve
+            (share
+               [ ("g", `Independent) ]
+               (dot ~x:(num x) ~y:(num x)
+                  ~fx:(strings ~scale:g [| "a"; "b" |])
+                  ()))),
+        [ "root"; "g" ] );
       ( "two keys of one name and two sorts",
         (fun () ->
           let n = View.number "k" ~init:1. and c = View.choice "k" ~init:"a" in
