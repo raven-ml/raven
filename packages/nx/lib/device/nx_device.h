@@ -47,6 +47,30 @@ static inline const char *nx_device_buffer_why(value b) {
   return String_val(Field(Field(Field(Field(b, 0), 9), 1), 0));
 }
 
+/* The host's thread pool, which nx.cpu's kernels and the blocks of
+   Nx_device.Program.call share, so that they never oversubscribe the cores.
+   Nx_device hands it out as a nativeint (the primitive caml_nx_device_pool),
+   so that a library reaches it without linking against nx.device's C.
+
+   [workers ()] is the pool's threads, the caller included: the CPUs the
+   process may use. [compute_workers ()] is those that pay for compute-bound
+   work: the performance cores where the host has slower ones. [run nthreads
+   total nchunks body ctx] cuts [0, total) into [nchunks] contiguous chunks
+   and has at most [nthreads] threads, the caller as worker 0, claim them
+   until none remain, calling [body lo hi worker ctx] for each. [worker] is in
+   [0, nthreads) and stable across the chunks a thread claims. One region runs
+   at a time: a second caller waits for the first to finish. With nthreads >
+   1 the caller has released the OCaml runtime, and [body] never touches it. */
+typedef void (*nx_device_range_body)(int64_t lo, int64_t hi, int worker,
+                                     void *ctx);
+
+typedef struct {
+  int (*workers)(void);
+  int (*compute_workers)(void);
+  void (*run)(int nthreads, int64_t total, int64_t nchunks,
+              nx_device_range_body body, void *ctx);
+} nx_device_pool;
+
 /* The host clock: nanoseconds of the monotonic clock that
    Nx_device.Profile.now reads, and that the timestamps of a device of
    Nx_device.Host_clock are readings of. On macOS it is mach time, Metal's

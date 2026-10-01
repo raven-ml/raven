@@ -15,6 +15,11 @@ open Nx_array
 
 type ('a, 'b) t = ('a, 'b) Nx_array.t
 
+external device_pool : unit -> nativeint = "caml_nx_device_pool"
+external set_pool : nativeint -> unit = "caml_nx_c_set_pool"
+
+(* The kernels run on the host's one thread pool, nx.device's. *)
+let () = set_pool (device_pool ())
 let name = "cpu"
 let runs_on = Nx_device.runs_on_host
 let shape (t : ('a, 'b) t) = View.shape t.view

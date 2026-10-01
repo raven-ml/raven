@@ -11,31 +11,18 @@
    hand off the runtime lock. Kernels (which include only nx_c.h) therefore
    cannot do either — the rule is enforced by what each file can reach.
 
-   Contents, top to bottom: the funnel raisers; the persistent thread pool and
+   Contents, top to bottom: the funnel raisers; the thread pool's policy and
    its parallel-for; the one parallel-policy table (nx_c_threads_for) and the
    plan's thread count (nx_c_plan_threads); dimension coalescing; the four
    generated-family drivers (map, fold, argreduce, scan); and the funnels.
    Every driver returns a status; the funnels raise on non-NULL. */
 
-#if defined(__linux__)
-#define _GNU_SOURCE /* sched_getaffinity, CPU_COUNT */
-#include <sched.h>
-#endif
-
 #include <caml/fail.h>
 #include <caml/threads.h>
 
-#include <pthread.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if defined(__APPLE__)
-#include <sys/sysctl.h>
-#elif defined(__linux__) || defined(_SC_NPROCESSORS_ONLN)
-#include <unistd.h>
-#endif
 
 #include "nx_c_engine.h"
 
@@ -69,171 +56,20 @@ void nx_c_raise_invalid(const char *op, nx_c_status status) {
 
 /* ── Thread pool ───────────────────────────────────────────────────────────
 
-   A fixed set of persistent workers created lazily on first parallel use and
-   sized to the physical core count. Work is a single integer range [0, total)
-   cut into `nchunks` contiguous chunks (nx_c_chunks_for below); the `active`
-   participating threads — the calling (main) thread as worker 0 plus spawned
-   workers 1..active-1 — loop claiming the next unclaimed chunk index from a
-   shared atomic counter until the chunks run out. Dynamic claiming, not a
-   deque: a chunk's [lo, hi) is a pure function of its index, so one relaxed
-   fetch-add is the entire scheduler. Faster threads absorb the tail a slower
-   one (an OS-preempted core, a costlier unit) would otherwise drag through the
-   join barrier; the P-core cap in nx_c_threads_for removes only the class-level
-   half of that heterogeneity, this removes the per-job half. A thread's worker
-   index is its pool identity, stable across every chunk it claims, so
-   per-worker scratch and error slots stay exclusive. There is no per-job
-   allocation: a job is published under the pool mutex behind a monotonically
-   increasing generation counter, workers wake on a condition variable, and
-   completion is a countdown signalled back to main.
+   The host's one pool is nx.device's (nx_device.h): Nx_cpu hands it to the
+   engine as the module initialises (caml_nx_c_set_pool). This file keeps the
+   policy: how many threads a job takes (nx_c_threads_for) and how finely it is
+   cut (nx_c_chunks_for). */
 
-   Workers run pure C kernels and never touch the OCaml runtime, so they are not
-   registered with it. Teardown policy: the pool lives until process exit. The
-   workers block forever on the wake condition between jobs; the OS reclaims them
-   at exit. There is no join and no destroy — a shared numeric pool has no
-   well-defined shutdown point, and leaking a handful of parked threads to
-   process teardown is the correct trade. */
+static const nx_device_pool *g_pool;
 
-#define NX_C_MAX_THREADS 64
-
-/* nx_c_range_body is declared in nx_c_engine.h (custom families use it). */
-
-typedef struct nx_c_pool nx_c_pool;
-
-typedef struct {
-  nx_c_pool *pool;
-  int id;
-} nx_c_worker_arg;
-
-struct nx_c_pool {
-  pthread_t threads[NX_C_MAX_THREADS]; /* [1, nworkers); slot 0 is the caller */
-  nx_c_worker_arg worker_args[NX_C_MAX_THREADS];
-  int nworkers;                       /* physical cores, clamped [1, MAX] */
-  pthread_mutex_t drive; /* one published parallel region at a time */
-  pthread_mutex_t mtx;
-  pthread_cond_t wake; /* workers wait here for a new generation */
-  pthread_cond_t done; /* main waits here for the job to finish */
-  uint64_t generation; /* bumped once per published job */
-  int active;          /* workers participating in the current job */
-  int pending;         /* participating workers not yet finished */
-  nx_c_range_body body;
-  void *body_ctx;
-  int64_t total;
-  int64_t nchunks;      /* chunks in the current job, in [1, total] */
-  _Atomic int64_t next; /* next unclaimed chunk index; reset per job */
-};
-
-/* The pool is heap-owned so a fork child can abandon the inherited object and
-   lazily build a fresh one. Only the thread that called fork survives in the
-   child; the copied worker thread ids, mutex state, and condition waiters are
-   therefore unusable. Reinitializing those live pthread objects in place would
-   be undefined; the child instead leaves only the pool object inherited at that
-   fork unreachable, matching the process-lifetime teardown policy above.
-
-   g_pool_init_mtx serializes lazy creation. The atfork prepare handler holds it
-   and the current pool's drive/job locks, so fork observes no active region and
-   cannot race creation. The parent releases those locks. The child clears the
-   pointer and releases only the still-valid init mutex; the abandoned pool stays
-   unreachable and its locked pthread objects are never touched again. */
-static _Atomic(nx_c_pool *) g_pool;
-static pthread_mutex_t g_pool_init_mtx = PTHREAD_MUTEX_INITIALIZER;
-static pthread_once_t g_pool_atfork_once = PTHREAD_ONCE_INIT;
-static int g_pool_atfork_ok;
-
-/* CPU count, computed once. Apple: physical cores (hw.physicalcpu) — Apple
-   Silicon has no SMT, so this equals the online count. Linux: the CPUs the
-   process may run on (its affinity mask, which taskset, a cgroup's cpuset or a
-   container's set), bounded by its cgroup's CPU quota (cpu.max), so that the
-   pool has no more workers than CPUs it can occupy: 14 workers taking turns on
-   6 CPUs ran a batched product 1.6 times slower. Elsewhere: online logical
-   CPUs (_SC_NPROCESSORS_ONLN). Counts are logical CPUs, which on SMT x86
-   exceed physical cores; the bandwidth policy caps effective threads
-   regardless.
-*/
-static int g_ncores;
-static pthread_once_t g_ncores_once = PTHREAD_ONCE_INIT;
-
-static int nx_c_cpu_count(void) {
-#if defined(__APPLE__)
-  int n = 0;
-  size_t sz = sizeof n;
-  if (sysctlbyname("hw.physicalcpu", &n, &sz, NULL, 0) == 0 && n > 0) return n;
-  return 1;
-#elif defined(__linux__)
-  cpu_set_t set;
-  long n = sched_getaffinity(0, sizeof set, &set) == 0
-               ? CPU_COUNT(&set)
-               : sysconf(_SC_NPROCESSORS_ONLN);
-  /* cpu.max is "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
-  FILE *f = fopen("/sys/fs/cgroup/cpu.max", "r");
-  if (f) {
-    long quota, period;
-    if (fscanf(f, "%ld %ld", &quota, &period) == 2 && quota > 0 && period > 0 &&
-        quota / period < n)
-      n = quota / period > 0 ? quota / period : 1;
-    fclose(f);
-  }
-  return (n > 0) ? (int)n : 1;
-#elif defined(_SC_NPROCESSORS_ONLN)
-  long n = sysconf(_SC_NPROCESSORS_ONLN);
-  return (n > 0) ? (int)n : 1;
-#else
-  return 1;
-#endif
+value caml_nx_c_set_pool(value v_pool) {
+  g_pool = (const nx_device_pool *)Nativeint_val(v_pool);
+  return Val_unit;
 }
 
-static void nx_c_ncores_init(void) {
-  int n = nx_c_cpu_count();
-  if (n < 1) n = 1;
-  if (n > NX_C_MAX_THREADS) n = NX_C_MAX_THREADS;
-  g_ncores = n;
-}
-
-static int nx_c_ncores(void) {
-  pthread_once(&g_ncores_once, nx_c_ncores_init);
-  return g_ncores;
-}
-
-/* Performance-core count, for the compute/heavy split. Apple Silicon is
-   heterogeneous (P + E cores), and an E-core is a net loss for compute-bound
-   work even under the claim dispatch: any chunk it claims runs ~2-3x slower,
-   and a coarse chunk (a whole GEMM panel of a unit-granular HEAVY job) still
-   drags the join once claimed, while the E-cores add little compute in return.
-   gemm-accel measured it directly under the static split: f32 GEMM at nth=8
-   (P-cores) hit 418 GFLOP/s vs 390 at nth=10 (all cores) — the two E-core
-   shares cost more than they added. So COMPUTE/HEAVY are capped at the P-core
-   count and the claim loop then balances within that homogeneous set; BANDWIDTH
-   keeps the full pool (memory-bound work tolerates E-cores — nx_c_threads_for).
-   macOS reports the top performance level as hw.perflevel0.physicalcpu; a
-   homogeneous machine (or any platform without the query) has no slow tier, so
-   P-cores degrades to the full count and the cap is a no-op. */
-static int g_pcores;
-static pthread_once_t g_pcores_once = PTHREAD_ONCE_INIT;
-
-static void nx_c_pcores_init(void) {
-  int p = 0;
-#if defined(__APPLE__)
-  size_t sz = sizeof p;
-  if (sysctlbyname("hw.perflevel0.physicalcpu", &p, &sz, NULL, 0) != 0 || p <= 0)
-    p = 0;
-#endif
-  if (p < 1) p = nx_c_ncores(); /* homogeneous / unknown: no cap below the pool */
-  if (p > nx_c_ncores()) p = nx_c_ncores(); /* never exceed the pool we built */
-  g_pcores = p;
-}
-
-static int nx_c_pcores(void) {
-  pthread_once(&g_pcores_once, nx_c_pcores_init);
-  return g_pcores;
-}
-
-/* Proportional cut: chunk idx of `parts` over [0, total). Balanced to one unit
-   and never empty when parts <= total — which nx_c_chunks_for guarantees, so the
-   claim loops skip no index. */
-static void nx_c_chunk(int64_t total, int64_t parts, int64_t idx, int64_t *lo,
-                      int64_t *hi) {
-  *lo = idx * total / parts;
-  *hi = (idx + 1) * total / parts;
-}
+static int nx_c_ncores(void) { return g_pool->workers(); }
+static int nx_c_pcores(void) { return g_pool->compute_workers(); }
 
 /* Chunk count for a published job — the dispatch-granularity half of the
    parallel policy (nx_c_threads_for below is the thread-count half). The cut
@@ -265,203 +101,6 @@ static int64_t nx_c_chunks_for(int nthreads, int64_t total, int64_t bytes) {
   int64_t fat = bytes / NX_C_CLAIM_CHUNK_BYTES;
   if (fat < nthreads) fat = nthreads;
   return n < fat ? n : fat;
-}
-
-static void *nx_c_worker(void *arg) {
-  const nx_c_worker_arg *worker_arg = arg;
-  nx_c_pool *pool = worker_arg->pool;
-  int id = worker_arg->id; /* 1 .. nworkers-1 */
-  /* Workers are created before the first job, when generation is 0. Seeding
-     `seen` to 0 (not a read of the live generation) closes the startup race: a
-     worker that first runs *after* main has already published job 1 sees
-     generation != seen and processes it, rather than waiting for a job 2 that
-     main is blocked awaiting the completion of job 1 to send. */
-  uint64_t seen = 0;
-  pthread_mutex_lock(&pool->mtx);
-  for (;;) {
-    while (pool->generation == seen)
-      pthread_cond_wait(&pool->wake, &pool->mtx);
-    seen = pool->generation;
-    int active = pool->active;
-    nx_c_range_body body = pool->body;
-    void *ctx = pool->body_ctx;
-    int64_t total = pool->total;
-    int64_t nchunks = pool->nchunks;
-    int participates = (id < active);
-    pthread_mutex_unlock(&pool->mtx);
-
-    if (participates) {
-      /* Claim loop. Relaxed fetch-add suffices: the RMW's atomicity alone
-         makes every claimed index unique, and all the ordering this job needs
-         — fields and input data visible before work, body writes visible to
-         the joiner — rides the mutex handshake at publish and at the pending
-         countdown below. The final (losing) fetch-add merely overshoots. */
-      for (;;) {
-        int64_t c =
-            atomic_fetch_add_explicit(&pool->next, 1, memory_order_relaxed);
-        if (c >= nchunks) break;
-        int64_t lo, hi;
-        nx_c_chunk(total, nchunks, c, &lo, &hi);
-        body(lo, hi, id, ctx); /* worker index: thread id, not chunk */
-      }
-    }
-
-    pthread_mutex_lock(&pool->mtx);
-    if (participates && --pool->pending == 0) pthread_cond_signal(&pool->done);
-    /* hold the lock across the loop edge so the generation re-check is atomic
-       with respect to the next published job */
-  }
-  return NULL;
-}
-
-static nx_c_pool *nx_c_pool_create(void) {
-  nx_c_pool *pool = calloc(1, sizeof(*pool));
-  if (!pool) return NULL;
-  int n = nx_c_ncores();
-  pool->nworkers = n;
-  atomic_init(&pool->next, 0);
-  if (pthread_mutex_init(&pool->drive, NULL) != 0) goto fail_pool;
-  if (pthread_mutex_init(&pool->mtx, NULL) != 0) goto fail_drive;
-  if (pthread_cond_init(&pool->wake, NULL) != 0) goto fail_mtx;
-  if (pthread_cond_init(&pool->done, NULL) != 0) goto fail_wake;
-  for (intptr_t i = 1; i < n; i++) {
-    pool->worker_args[i].pool = pool;
-    pool->worker_args[i].id = (int)i;
-    if (pthread_create(&pool->threads[i], NULL, nx_c_worker,
-                       &pool->worker_args[i]) != 0) {
-      /* Spawn failure is not fatal: run with the workers we have (main alone,
-         if none), which is correct, only slower. */
-      pool->nworkers = (int)i;
-      break;
-    }
-  }
-  return pool;
-
-fail_wake:
-  pthread_cond_destroy(&pool->wake);
-fail_mtx:
-  pthread_mutex_destroy(&pool->mtx);
-fail_drive:
-  pthread_mutex_destroy(&pool->drive);
-fail_pool:
-  free(pool);
-  return NULL;
-}
-
-#if defined(_WIN32)
-/* No fork on Windows: persistent workers need no protection. */
-static void nx_c_pool_register_atfork(void) { g_pool_atfork_ok = 1; }
-#else
-static void nx_c_pool_atfork_prepare(void) {
-  pthread_mutex_lock(&g_pool_init_mtx);
-  nx_c_pool *pool = atomic_load_explicit(&g_pool, memory_order_acquire);
-  if (pool) {
-    pthread_mutex_lock(&pool->drive);
-    pthread_mutex_lock(&pool->mtx);
-  }
-}
-
-static void nx_c_pool_atfork_parent(void) {
-  nx_c_pool *pool = atomic_load_explicit(&g_pool, memory_order_acquire);
-  if (pool) {
-    pthread_mutex_unlock(&pool->mtx);
-    pthread_mutex_unlock(&pool->drive);
-  }
-  pthread_mutex_unlock(&g_pool_init_mtx);
-}
-
-static void nx_c_pool_atfork_child(void) {
-  /* The inherited pool has no worker threads in this process. Abandon it; the
-     first child dispatch builds a fresh pool with fresh pthread objects. */
-  atomic_store_explicit(&g_pool, NULL, memory_order_release);
-  pthread_mutex_unlock(&g_pool_init_mtx);
-}
-
-static void nx_c_pool_register_atfork(void) {
-  g_pool_atfork_ok =
-      pthread_atfork(nx_c_pool_atfork_prepare, nx_c_pool_atfork_parent,
-                     nx_c_pool_atfork_child) == 0;
-}
-#endif
-
-static nx_c_pool *nx_c_pool_get(void) {
-  pthread_once(&g_pool_atfork_once, nx_c_pool_register_atfork);
-  /* If atfork registration fails, persistent workers cannot be made safe for a
-     later fork. Correctly degrade to caller-only execution. */
-  if (!g_pool_atfork_ok) return NULL;
-  nx_c_pool *pool = atomic_load_explicit(&g_pool, memory_order_acquire);
-  if (pool) return pool;
-  pthread_mutex_lock(&g_pool_init_mtx);
-  pool = atomic_load_explicit(&g_pool, memory_order_relaxed);
-  if (!pool) {
-    pool = nx_c_pool_create();
-    atomic_store_explicit(&g_pool, pool, memory_order_release);
-  }
-  pthread_mutex_unlock(&g_pool_init_mtx);
-  return pool;
-}
-
-/* Raw pool dispatch, runtime-lock agnostic: cut [0, total) into policy-sized
-   chunks (nx_c_chunks_for) and let `nthreads` threads claim them until none
-   remain, the calling thread as worker 0. Internal — nx_c_parallel_for wraps it
-   with the lock handshake so no caller (and no family TU) needs the runtime
-   headers. For nthreads>1 the lock must already be released; nthreads<=1 runs
-   body inline on the caller as one whole-range call.
-
-   Counter lifetime: `next` is reset under both mutexes below and claimed only
-   by threads participating in the current generation. A participant's last
-   fetch-add (the losing one) happens before its pending decrement, and main
-   returns only after pending reaches 0 — so once the join completes no thread
-   can touch the counter again until the next publish resets it. */
-static void nx_c_pool_dispatch(int nthreads, int64_t total, int64_t bytes,
-                              nx_c_range_body body, void *ctx) {
-  if (total <= 0) return;
-  if (nthreads <= 1) {
-    body(0, total, 0, ctx);
-    return;
-  }
-  nx_c_pool *pool = nx_c_pool_get();
-  if (!pool) {
-    body(0, total, 0, ctx);
-    return;
-  }
-  if (nthreads > pool->nworkers) nthreads = pool->nworkers;
-  if (nthreads <= 1) {
-    body(0, total, 0, ctx);
-    return;
-  }
-
-  int64_t nchunks = nx_c_chunks_for(nthreads, total, bytes);
-
-  pthread_mutex_lock(&pool->drive); /* one parallel region at a time */
-  pthread_mutex_lock(&pool->mtx);
-  pool->body = body;
-  pool->body_ctx = ctx;
-  pool->total = total;
-  pool->nchunks = nchunks;
-  /* Relaxed store: the mutex hand-off publishes it with the other job fields
-     (workers touch the counter only after acquiring mtx and reading the new
-     generation). */
-  atomic_store_explicit(&pool->next, 0, memory_order_relaxed);
-  pool->active = nthreads;
-  pool->pending = nthreads - 1;
-  pool->generation++;
-  pthread_cond_broadcast(&pool->wake);
-  pthread_mutex_unlock(&pool->mtx);
-
-  for (;;) { /* main claims as worker 0 (same loop as nx_c_worker) */
-    int64_t c =
-        atomic_fetch_add_explicit(&pool->next, 1, memory_order_relaxed);
-    if (c >= nchunks) break;
-    int64_t lo, hi;
-    nx_c_chunk(total, nchunks, c, &lo, &hi);
-    body(lo, hi, 0, ctx);
-  }
-
-  pthread_mutex_lock(&pool->mtx);
-  while (pool->pending != 0) pthread_cond_wait(&pool->done, &pool->mtx);
-  pthread_mutex_unlock(&pool->mtx);
-  pthread_mutex_unlock(&pool->drive);
 }
 
 /* Below this much traffic a SERIAL op keeps the runtime lock and runs inline
@@ -500,7 +139,9 @@ void nx_c_parallel_for(int nthreads, int64_t total, int64_t bytes,
                       nx_c_range_body body, void *ctx, void *free_on_exit) {
   int release = (nthreads > 1) || (bytes >= NX_C_LOCK_RELEASE_BYTES);
   if (release) caml_enter_blocking_section();
-  nx_c_pool_dispatch(nthreads, total, bytes, body, ctx);
+  if (total > 0)
+    g_pool->run(nthreads, total, nx_c_chunks_for(nthreads, total, bytes), body,
+                ctx);
   nx_c_aligned_free(free_on_exit);
   if (release) caml_leave_blocking_section();
 }
