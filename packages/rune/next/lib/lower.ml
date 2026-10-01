@@ -594,7 +594,6 @@ let follow s q u =
   in
   match visit u with
   | exception (Exit | Uncomputed) -> None
-  | () when !read = [] -> None
   | () ->
       let moved c =
         let same c' =

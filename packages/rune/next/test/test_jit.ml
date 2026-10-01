@@ -52,6 +52,25 @@ let traces f =
   let (), spans = profiled f in
   List.length (List.filter (String.equal "rune.jit: trace") spans)
 
+(* [loaded_on d f] is [f ()] and the number of programs loaded on [d]
+   meanwhile. *)
+let loaded_on d f =
+  let p = Nx_device.Profile.start () in
+  match f () with
+  | y ->
+      let loads =
+        List.filter
+          (function
+            | Nx_device.Profile.Load l ->
+                Nx_device.equal d (Nx_device.Program.device l.program)
+            | _ -> false)
+          (Nx_device.Profile.stop p)
+      in
+      (y, List.length loads)
+  | exception e ->
+      ignore (Nx_device.Profile.stop p);
+      raise e
+
 (* [counted f] is [f] and the number of times it ran. *)
 let counted f =
   let n = ref 0 in
@@ -2834,12 +2853,26 @@ let on_one_device ~name d =
             int ~than:(plain / 2) recomputed);
     ]
 
+(* A value computed from constants alone, used on [d], whose programs load
+   there, is computed in the kernel that reads it. *)
+let constants_where_used d =
+  test "a value computed from no capture is computed where it is used"
+    (fun () ->
+      let f p = Nx.add (Nx.arange Nx.int64 0 8 1) p in
+      let p = Nx.scalar Nx.int64 4L in
+      let r, loaded =
+        loaded_on (Nx.Device.runtime d) (fun () -> Rune.jit' f (placed d p))
+      in
+      equal ~msg:"programs" int 1 loaded;
+      equal (tensor int64) (f p) (host r))
+
 let metal =
   match Metal.device with
   | Some m ->
       let d = Nx.Device.of_runtime m in
       [
         on_one_device ~name:"one device" d;
+        constants_where_used d;
         staged_scans d;
         rows_written
           ~at:(Nx.Placement.device ~backend:Rune.compiled d)
