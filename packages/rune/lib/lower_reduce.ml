@@ -251,12 +251,13 @@ let take x axis p =
     let rows = List.filter (fun d -> List.mem d varying) others in
     let whole = List.filter (fun d -> not (List.mem d varying)) others in
     (* A sharded axis leads, so that each shard's rows stay one block. *)
-    let rows =
+    let lead =
       match Ops.axis x with
-      | Some a when List.mem a rows -> a :: List.filter (( <> ) a) rows
-      | _ -> rows
+      | Some a when a = axis || List.mem a rows ->
+          a :: List.filter (( <> ) a) (rows @ [ axis ])
+      | _ -> rows @ [ axis ]
     in
-    let lead = rows @ [ axis ] and order = rows @ (axis :: whole) in
+    let order = lead @ whole in
     let shape u = List.map (List.nth (Ops.shape u)) in
     let x' =
       Ops.reshape (Ops.permute x order)
@@ -280,16 +281,26 @@ let take x axis p =
         Weak_int
     in
     let index d l = Option.get (List.find_index (Int.equal d) l) in
-    let at, _ =
-      List.fold_right
-        (fun d (at, stride) ->
-          let position =
-            Ops.expand
-              (along k (index d rows) (Ops.arange ~dtype:Weak_int (static x d)))
-              (Ops.shape row)
-          in
-          (Ops.add at (Ops.mul position (Ops.int stride)), stride * static x d))
-        rows (clamped, n)
+    (* Each leading axis's position, at its stride among the leading axes: the
+       clamped index along [axis], the element's own position along a row. *)
+    let position d =
+      if d = axis then clamped
+      else
+        Ops.expand
+          (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
+          (Ops.shape row)
+    in
+    let at =
+      match List.rev lead with
+      | [] -> assert false
+      | last :: rest ->
+          fst
+            (List.fold_left
+               (fun (at, stride) d ->
+                 ( Ops.add at (Ops.mul (position d) (Ops.int stride)),
+                   stride * static x d ))
+               (position last, static x last)
+               rest)
     in
     let read =
       Ops.permute (Ops.index x' [ at ]) (List.init r (fun d -> index d order))

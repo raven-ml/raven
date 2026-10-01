@@ -2962,6 +2962,19 @@ let split_gathers =
           in
           equal floats (take indices rows)
             (host (taken (Nx.place split indices) (Nx.place split rows))));
+      test
+        "elements taken along the axis rows are split along, at indices that \
+         vary by column, keep their bits" (fun () ->
+          let indices =
+            Nx.create Nx.int64 [| 4; 3 |]
+              [| 5L; 0L; 2L; -1L; 3L; 4L; 1L; 6L; 5L; 0L; 0L; 3L |]
+          in
+          let along indices t = Nx.take_along_axis ~axis:0 ~indices t in
+          equal floats (along indices rows)
+            (host
+               (Rune.jit
+                  Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                  along indices (Nx.place split rows))));
     ]
 
 let device_lists =
