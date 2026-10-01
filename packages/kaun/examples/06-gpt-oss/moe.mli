@@ -70,7 +70,7 @@ val apply :
     [x]'s leading axes followed by the number of experts per token. The result
     has [x]'s shape.
 
-    Packed weights are multiplied with {!Nx_quant.apply}, which decodes a
-    bounded chunk at a time eagerly and chooses its form under [Rune.jit]. Float
-    weights are gathered for each token's experts, a copy of every selected
-    expert: they suit small checkpoints. *)
+    Packed weights are multiplied with {!Nx_quant.apply}, which decodes each
+    token's experts inside the product under [Rune.jit] and holds them decoded
+    eagerly. Float weights are gathered for each token's experts, a copy of
+    every selected expert: they suit small checkpoints. *)

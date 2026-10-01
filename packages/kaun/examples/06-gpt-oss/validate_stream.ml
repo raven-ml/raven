@@ -29,9 +29,11 @@
    difference over the projections divided by the square root of the width, and
    the differences of the three statistics.
 
-   The experts' products run eagerly through [Nx_quant.apply], which decodes a
-   bounded chunk of an expert at a time, so the peak does not grow with the
-   weights: 3.0 GB for a whole run on an M1 Max, the float32 head included.
+   Each block runs compiled, once per attention kind: the experts' products then
+   decode their packed weights inside the products, where an eager
+   [Nx_quant.apply] would hold every token's experts decoded at float32. A whole
+   run on the host of an M1 Max peaks at 16.6 GB resident, the 13.8 GB of
+   mapped weights included, and takes 9 minutes.
 
    Usage: validate_stream.exe FIXTURE [--blocks N] [--prompt NAME] [--dtype DT]
    [--tol X]. With [--blocks] only the first [N] blocks run and the head is
@@ -207,6 +209,16 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
     in
     { m with tok = { Embedding.table = x } }
   in
+  let hidden =
+    let compiled layer =
+      Rune.jit
+        Nx.Ptree.(
+          instantiate (module Gpt_oss.Params) @-> tensor @-> returns tensor)
+        (Gpt_oss.hidden { cfg with Gpt_oss.layers = [ layer ] })
+    in
+    let sliding = compiled Gpt_oss.Sliding and full = compiled Gpt_oss.Full in
+    function Gpt_oss.Sliding -> sliding | Full -> full
+  in
   let prompt (name, recorded) =
     let ids = ints (mem "ids" recorded) in
     let tokens = Array.length ids in
@@ -247,7 +259,7 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only fx
                  (Nx.reshape [| tokens; dim |]
                     (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle)))
           in
-          let y = Nx.reshape [| tokens; dim |] (Gpt_oss.hidden one m rows) in
+          let y = Nx.reshape [| tokens; dim |] (hidden layer m rows) in
           let block = Printf.sprintf "block %d" i in
           let e =
             summaries_error ~signs ~dim ~positions (mem "after_attention" rb)

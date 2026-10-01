@@ -11,21 +11,17 @@
     files store linear layers, with blocks of values running along [k] inside
     each row. {!dequant} is its meaning and {!apply} its one product.
 
-    {!apply} and {!dequant} perform {!Effect.E_quant}. Run eagerly, where no
-    handler takes the effect, they decode one bounded chunk at a time, whatever
-    the weight's size. Inside {!Nx.Op.intercept}, where a transformation or a
-    compiled call interprets operations and no handler takes the effect, they
-    are compositions of nx's operations: the values assembled from the code
-    bytes with integer operations, a gather of the experts [ids] selects and
-    one product, which the interpreter sees whole.
+    {!dequant} and {!apply} are compositions of nx's operations, so every
+    transformation and compiled call sees them as it sees any other program: the
+    values assembled from the code bytes with integer operations, a gather of
+    the experts [ids] selects and one product. Their results live where their
+    operands join ({!Nx.place}).
 
-    A transformation that runs those operations eagerly, such as a gradient
-    outside a compiled call, holds every matrix the product gathers, decoded at
-    float32: {!apply} with [ids] naming [s] experts at each of [t] positions
-    holds [t * s] decoded matrices. Differentiating a large mixture of experts
-    is therefore for compiled calls; eagerly it needs the memory of all those
-    matrices at once. An accumulation over each expert in turn would bound it to
-    one decoded matrix, at [e / s] times the arithmetic for [e] experts.
+    Run eagerly, the composition holds the matrices it multiplies, decoded at
+    float32: {!dequant} holds the whole weight, and {!apply} with [ids] naming
+    [s] experts at each of [t] positions holds [t * s] decoded matrices. A
+    compiled call decodes them inside the product. Large weights are therefore
+    for compiled calls.
 
     A quantised weight has no gradient: build it once and capture it.
 
@@ -82,11 +78,7 @@ val dequant : (float, 'b) Nx.dtype -> t -> (float, 'b) Nx.t
     Values are computed at float32, where each is exact barring overflow: MXFP4
     codes of magnitude 4 or more at scale byte 253, and of 2 or more at 254, are
     infinite at every dtype. Float32, bfloat16 and float64 hold every other
-    value exactly; float16 rounds each value once.
-
-    Eagerly the values are decoded a chunk of 2{^ 22} values at a time into the
-    result: beside it, only a few chunk-sized temporaries exist at once, so the
-    peak does not grow with the weight. *)
+    value exactly; float16 rounds each value once. *)
 
 val apply : ?ids:Nx.int64_t -> t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [apply ?ids w x] is
@@ -104,50 +96,12 @@ val apply : ?ids:Nx.int64_t -> t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
     [[| t; 4 |]] and [x] of shape [[| t; 1; 1; k |]] is [[| t; 4; 1; n |]].
 
     An id outside \[[0], [e]), [-1] included, selects no expert: its position of
-    the result is exactly zero, whatever [x] holds there, and no weight is read
-    for it. Ids may repeat. An empty [ids] or [x] gives an empty result.
-
-    Eagerly each expert that [ids] selects, or each matrix of [w] without [ids],
-    is decoded a chunk of 2{^ 22} values at a time: beside the result and [x],
-    only a few chunk-sized temporaries exist at once, so the peak does not grow
-    with the weight.
+    the result is exactly zero, whatever [x] holds there. Ids may repeat. An
+    empty [ids] or [x] gives an empty result.
 
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis is not [k],
     if the batch axes do not broadcast, or, with [ids], if [w] has no expert
     axis or [ids] lacks [w]'s leading axes. *)
-
-(** {1:effect The effect} *)
-
-(** The effect that {!apply} and {!dequant} perform. A handler that transforms
-    or compiles programs matches on it; where none does, the functions run
-    eagerly. *)
-module Effect : sig
-  (** The type for an operation on a weight, whose result has type
-      [(float, 'b) Nx.t]. *)
-  type (_, _) op =
-    | Apply : {
-        ids : Nx.int64_t option;
-        x : (float, 'b) Nx.t;
-        transpose : bool;
-            (** [true] multiplies by the weight rather than by its transpose,
-                [[| ...; m; n |]] to [[| ...; m; k |]]. {!apply} performs
-                [false]. *)
-      }
-        -> (float, 'b) op  (** {!apply}. *)
-    | Dequant : (float, 'b) Nx.dtype -> (float, 'b) op  (** {!dequant}. *)
-
-  type _ Stdlib.Effect.t +=
-    | E_quant : { w : t; op : ('a, 'b) op } -> ('a, 'b) Nx.t Stdlib.Effect.t
-          (** The operation [op] on the weight [w]. *)
-
-  val perform : t -> ('a, 'b) op -> ('a, 'b) Nx.t
-  (** [perform w op] performs [E_quant { w; op }] and, where no handler takes
-      it, runs [op] eagerly. {!apply} and {!dequant} are [perform]; a handler
-      re-performs an operation with it in its enclosing context.
-
-      Raises [Invalid_argument] as {!apply} does, before performing, if the
-      shapes of an [Apply] do not agree. *)
-end
 
 (** {1:structure Structure}
 

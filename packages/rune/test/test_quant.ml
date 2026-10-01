@@ -71,15 +71,12 @@ type case = {
   w : Nx_quant.t;
   ids : Nx.int64_t option;
   x : Nx.float32_t;
-  transpose : bool;
 }
 
-let case ?ids ?(transpose = false) name w x = { name; w; ids; x; transpose }
+let case ?ids name w x = { name; w; ids; x }
 
 (* [product c w x] is [c]'s product of [w] and [x]. *)
-let product c w x =
-  Nx_quant.Effect.perform w
-    (Nx_quant.Effect.Apply { ids = c.ids; x; transpose = c.transpose })
+let product c w x = Nx_quant.apply ?ids:c.ids w x
 
 (* [agrees c expected actual] checks [actual] against eager's [expected] within
    the error of a float32 sum of [c]'s terms, each rounded once to [x]'s dtype:
@@ -158,10 +155,6 @@ let products ~scale =
         (ints [| 8; 2 |] [| 0; 3; -1; 2; 4; 3; 1; 1; 3; -5; 0; 2; 2; 2; 1; 0 |])
       w48
       (floats [| 8; 1; 1; 64 |]);
-    case "transposed" ~transpose:true
-      ~ids:(ints [| 3; 2 |] [| 0; 2; -1; 1; 3; 2 |])
-      w38
-      (poison ~at:[ [ 1; 0 ] ] (floats [| 3; 2; 2; 8 |]));
   ]
 
 (* The largest scales: codes of magnitude 4 or more at scale byte 253, and of 2
@@ -365,11 +358,11 @@ let memory =
           at_most ~than:(Nx.nbytes y + Nx.nbytes ids) int held);
     ]
 
-(* Rules *)
+(* Transformations *)
 
 (* [dense ?ids w x] is the product as an ordinary matmul by the dequantised
    weight, its experts taken by [ids] and zero where an id names none: the
-   function whose derivatives the rules must give. [w] has no lane axes. *)
+   function whose derivatives apply's must be. [w] has no lane axes. *)
 let dense ?ids w x =
   let dq = Nx_quant.dequant Nx.float32 w in
   let w' =
@@ -422,8 +415,8 @@ let rule_cases () =
       floats [| 3; 2; 1; 64 |] );
   ]
 
-let rules =
-  group "rules"
+let transformations =
+  group "transformations"
     [
       cases ~tags:[ "slow" ]
         ~name:(fun (n, _, _, _) -> n)
@@ -550,7 +543,7 @@ let () =
          values;
          placements;
          memory;
-         rules;
+         transformations;
          empty;
          undifferentiated;
          group ~tags:[ "slow" ] "metal" [ metal ];

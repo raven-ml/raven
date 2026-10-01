@@ -2500,8 +2500,8 @@ stores through a pad.
   be a term of the vector's index alone or times a constant. A product of two
   loads is chosen as before.
 - **Reason:** (b): rune's quantised products (`Nx_quant.apply`), whose matrix
-  is MXFP4 codes decoded, by a table or by bit operations, and scaled by
-  their group, and whose vector is a bfloat16 activation widened to float32.
+  is MXFP4 codes decoded by bit operations and scaled by their group, and
+  whose vector is a bfloat16 activation widened to float32.
   A decoded byte splits the reduce into a range over bytes and one over a
   byte's two values, so the vector reads the byte range times 2. tinygrad
   declines the case, as it does a vector read through a cast alone, and the

@@ -173,12 +173,12 @@ let agrees ?(at = List.hd fdts) ~k expected bound actual =
     (Nx.to_array expected);
   at_most ~msg:"worst error over its bound" float_exact ~than:1. !worst
 
-(* The product of [x] with each matrix of [w'] (transposed unless [transpose])
-   at float32, and the same product of magnitudes. *)
-let product ~transpose x w' =
+(* The product of [x] with each matrix of [w'], transposed, at float32, and the
+   same product of magnitudes. *)
+let product x w' =
   let x = Nx.cast Nx.float32 x in
-  let side w = if transpose then w else Nx.matrix_transpose w in
-  (Nx.matmul x (side w'), Nx.matmul (Nx.abs x) (side (Nx.abs w')))
+  let t = Nx.matrix_transpose in
+  (Nx.matmul x (t w'), Nx.matmul (Nx.abs x) (t (Nx.abs w')))
 
 let broadcast a b =
   let n = Int.max (Array.length a) (Array.length b) in
@@ -289,7 +289,7 @@ let products =
       weight ~lead:(map (fun e -> lanes @ [ e ]) (int_range 1 3)) ()
     else weight ()
   in
-  let lead, n, k = dims w in
+  let lead, _, k = dims w in
   let p = Array.length lead - 1 in
   let* ids, batch =
     if not experts then constant (None, lead)
@@ -311,25 +311,24 @@ let products =
           (broadcast (Array.sub lead 0 p) (Array.sub is 0 p))
           (Array.of_list tokens) )
   in
-  let* transpose = flag in
-  let+ x = input ~batch ~inputs:(if transpose then n else k) in
-  (view, w, ids, transpose, x)
+  let+ x = input ~batch ~inputs:k in
+  (view, w, ids, x)
 
-let pp_product ppf (view, w, ids, transpose, X { x; _ }) =
-  Format.fprintf ppf "@[<v>%a@,ids %a@,transpose %b@,x %a@]" pp_weight (view, w)
+let pp_product ppf (view, w, ids, X { x; _ }) =
+  Format.fprintf ppf "@[<v>%a@,ids %a@,x %a@]" pp_weight (view, w)
     (Format.pp_print_option Nx.pp)
-    ids transpose Nx.pp x
+    ids Nx.pp x
 
 (* [label] is [cover] in a property. *)
-let product_law ?(label = cover) (_, w, ids, transpose, X { at; x }) =
-  let lead, n, k = dims w in
+let product_law (_, w, ids, X { at; x }) =
+  let lead, _, k = dims w in
   let dq = Nx_quant.dequant Nx.float32 w in
   let w' =
     match ids with
     | None -> dq
     | Some ids -> gathered dq ~lanes:(Array.length lead - 1) ids
   in
-  let expected, bound = product ~transpose x w' in
+  let expected, bound = product x w' in
   let valid =
     match ids with
     | None -> Nx.full Nx.bool (Nx.shape expected) true
@@ -340,17 +339,13 @@ let product_law ?(label = cover) (_, w, ids, transpose, X { at; x }) =
         Nx.broadcast_to (Nx.shape expected)
           (Nx.reshape (Array.append (Nx.shape v) units) v)
   in
-  label "an id that selects no expert" (Array.mem false (Nx.to_array valid));
-  label "an empty result" (Nx.numel expected = 0);
-  label "a transposed product" transpose;
-  let y = Nx_quant.Effect.perform w (Apply { ids; x; transpose }) in
+  cover "an id that selects no expert" (Array.mem false (Nx.to_array valid));
+  cover "an empty result" (Nx.numel expected = 0);
+  let y = Nx_quant.apply ?ids w x in
   equal ~msg:"dtype" string
     (Nx_dtype.to_string (Nx.dtype x))
     (Nx_dtype.to_string (Nx.dtype y));
-  agrees ~at
-    ~k:(if transpose then n else k)
-    (Nx.where valid expected (Nx.zeros_like expected))
-    bound y;
+  agrees ~at ~k (Nx.where valid expected (Nx.zeros_like expected)) bound y;
   let y = Nx.to_array (Nx.cast Nx.float64 y) in
   Array.iteri
     (fun i v -> if not v then equal ~msg:"no expert" float_exact 0. y.(i))
@@ -378,49 +373,9 @@ let values_and_products =
          expert and exactly zero where an id selects none"
         (Gen.with_pp pp_product products)
         product_law;
-      prop
-        "under a transformation, apply and dequant are compositions of nx's \
-         operations that give the eager values"
-        (Gen.with_pp pp_product products)
-        (fun (_, w, ids, transpose, X { x; _ }) ->
-          let composed f =
-            Nx.Op.intercept
-              { run = (fun o -> Nx.Op.eval o); claims = (fun _ -> true) }
-              f
-          in
-          let floats t = Nx.to_array (Nx.cast Nx.float64 t) in
-          let apply () =
-            Nx_quant.Effect.perform w (Apply { ids; x; transpose })
-          in
-          equal (array float_exact)
-            (floats (apply ()))
-            (floats (composed apply));
-          let dequant () = Nx_quant.dequant Nx.float32 w in
-          equal (array float_exact)
-            (floats (dequant ()))
-            (floats (composed dequant)));
-      test "a weight of several chunks, split inside a matrix" (fun () ->
-          let w = random_weight [| 2; 1100; 4096 |] in
-          let dq = Nx_quant.dequant Nx.float32 w in
-          equal (array float_exact) (values w)
-            (Nx.to_array (Nx.cast Nx.float64 dq));
-          let x = random_floats [| 2; 1; 1; 4096 |]
-          and ids = Nx.create Nx.int64 [| 2; 2 |] [| 1L; 0L; 1L; -1L |] in
-          let expected, bound = product ~transpose:false x dq in
-          agrees ~k:4096 expected bound (Nx_quant.apply w x);
-          product_law
-            ~label:(fun _ _ -> ())
-            ("", w, Some ids, false, X { at = List.hd fdts; x });
-          product_law
-            ~label:(fun _ _ -> ())
-            ( "",
-              w,
-              None,
-              true,
-              X { at = List.hd fdts; x = random_floats [| 3; 1100 |] } ));
     ]
 
-(* Construction, placement and the effect *)
+(* Construction and placement *)
 
 open Devices
 
@@ -435,9 +390,7 @@ let errors =
   let halve (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t =
     if Nx.dim (-1) t = 2 then Nx.slice [ A; A; R (0, 1) ] t else t
   in
-  let apply ?ids ?(transpose = false) w x () =
-    ignore (Nx_quant.Effect.perform w (Apply { ids; x; transpose }))
-  in
+  let apply ?ids w x () = ignore (Nx_quant.apply ?ids w x) in
   cases "refuse, naming what is wrong"
     ~name:(fun (n, _, _) -> n)
     [
@@ -459,9 +412,6 @@ let errors =
       ( "apply over batch axes that do not broadcast",
         "broadcast",
         apply w (x [| 3; 1; 64 |]) );
-      ( "a transposed apply to a last axis of another size",
-        "outputs",
-        apply ~transpose:true w (x [| 3; 64 |]) );
       ( "ids without an expert axis",
         "expert axis",
         apply
@@ -530,9 +480,7 @@ let placements =
 let others =
   group "weights"
     [
-      test
-        "construction, maps, visits and ids that select no expert read no byte"
-        (fun () ->
+      test "construction, maps and visits read no byte" (fun () ->
           let place s = Nx.place (Nx.Placement.on d1) (Nx.zeros Nx.uint8 s) in
           let codes = place [| 4; 6; 32 |]
           and scales = place [| 4; 6; 2 |]
@@ -545,19 +493,18 @@ let others =
           in
           ignore (Nx.Ptree.map2 Nx_quant.ptree (fun _ a _ -> a) w w);
           raises_invalid_arg (fun () -> Nx_quant.mxfp4 ~scales:bad codes);
+          equal (array int) [| 4; 6; 64 |] (Nx_quant.shape w);
+          equal int 0 (bytes_out () - sent));
+      test "ids that select no expert give zeros over NaN rows" (fun () ->
+          let w = random_weight [| 4; 6; 64 |] in
           let ids =
             Nx.create Nx.int64 [| 3; 2 |] [| -1L; 4L; 9L; -1L; -3L; 4L |]
           in
-          let y =
-            Nx_quant.apply ~ids w
-              (Nx.full Nx.float32 [| 3; 1; 1; 64 |] Float.nan)
-          in
-          equal
-            (pair int (tensor float_exact))
-            (0, Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
-            (bytes_out () - sent, y);
-          equal (array int) [| 4; 6; 64 |] (Nx_quant.shape w));
-      test "under an interpreter, dequant and apply read nothing" (fun () ->
+          equal (tensor float_exact)
+            (Nx.zeros Nx.float32 [| 3; 2; 1; 6 |])
+            (Nx_quant.apply ~ids w
+               (Nx.full Nx.float32 [| 3; 1; 1; 64 |] Float.nan)));
+      test "dequant and apply read no value's elements" (fun () ->
           let w = random_weight [| 3; 4; 64 |] in
           let reads f =
             let seen = ref [] in
@@ -581,6 +528,14 @@ let others =
                    ~ids:(Nx.create Nx.int64 [| 2 |] [| 0L; 2L |])
                    w
                    (random_floats [| 2; 1; 64 |]))));
+      test "products live where their operands are" (fun () ->
+          let p = Nx.Placement.on d1 in
+          let w = Nx_quant.place p (random_weight [| 3; 4; 64 |]) in
+          let x = Nx.place p (random_floats [| 2; 1; 64 |])
+          and ids = Nx.place p (Nx.create Nx.int64 [| 2 |] [| 0L; 2L |]) in
+          equal (pair placement placement) (p, p)
+            ( Nx.placement (Nx_quant.dequant Nx.float32 w),
+              Nx.placement (Nx_quant.apply ~ids w x) ));
       test
         "visits the case, then codes before scales; rebuild and place keep the \
          parts" (fun () ->
@@ -600,44 +555,6 @@ let others =
           let (Nx_quant.Mxfp4 p) = Nx_quant.place Nx.Placement.host w in
           is_true ~msg:"place keeps parts already placed"
             (p.codes == codes && p.scales == scales));
-      test
-        "apply and dequant perform E_quant after checking shapes, and a \
-         handler re-performs them in its enclosing context" (fun () ->
-          let w = random_weight [| 3; 4; 64 |]
-          and x = random_floats [| 2; 64 |] in
-          let seen = ref [] in
-          let handle f =
-            Effect.Deep.try_with f ()
-              {
-                effc =
-                  (fun (type c) (e : c Effect.t) ->
-                    match e with
-                    | Nx_quant.Effect.E_quant { w = w'; op } ->
-                        Some
-                          (fun (k : (c, _) Effect.Deep.continuation) ->
-                            seen :=
-                              ( w' == w,
-                                match op with
-                                | Apply a ->
-                                    Printf.sprintf "apply %b" a.transpose
-                                | Dequant dt -> Nx_dtype.to_string dt )
-                              :: !seen;
-                            Effect.Deep.continue k
-                              (Nx_quant.Effect.perform w' op))
-                    | _ -> None);
-              }
-          in
-          equal (tensor float_exact) (Nx_quant.apply w x)
-            (handle (fun () -> Nx_quant.apply w x));
-          equal (tensor float_exact)
-            (Nx_quant.dequant Nx.bfloat16 w)
-            (handle (fun () -> Nx_quant.dequant Nx.bfloat16 w));
-          raises_invalid_arg (fun () ->
-              handle (fun () -> Nx_quant.apply w (random_floats [| 32 |])));
-          equal
-            (list (pair bool string))
-            [ (true, "bfloat16"); (true, "apply false") ]
-            !seen);
     ]
 
 let () =

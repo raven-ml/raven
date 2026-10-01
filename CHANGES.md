@@ -3038,6 +3038,12 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_quant.apply` and `Nx_quant.dequant` are compositions of
+  `Nx` operations everywhere, and `Nx_quant.Effect` is removed. Their results
+  live where their operands join, no longer on the host. Run eagerly,
+  `apply ~ids` holds one float32 matrix per position, where it decoded a chunk
+  at a time: run large weights under `Rune.jit`, which decodes inside the
+  product.
 - Add `Nx.Op.map_operands`, which rebuilds an operation over other operands,
   so an interpreter that substitutes values need not match every operation.
 - `Nx_device.Driver.device` raises `Invalid_argument` on a name already made

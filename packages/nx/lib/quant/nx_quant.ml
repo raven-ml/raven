@@ -87,24 +87,9 @@ let ptree = Nx.Ptree.instantiate (module Structure)
    value, scaled, is exact at float32 barring overflow, and the product is
    rounded once.
 
-   Eagerly, two table lookups decode a chunk in two passes of the C backend. In
-   a composition, the values are assembled as float32 bits with integer
-   operations: a compiled product then reads the code bytes themselves, where a
-   lookup's int64 index would be stored between gathering the experts and
-   multiplying. *)
-
-let byte_values =
-  let e2m1 = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |] in
-  let value c = if c land 8 = 0 then e2m1.(c land 7) else -.e2m1.(c land 7) in
-  Nx.create Nx.float32 [| 256; 2 |]
-    (Array.init 512 (fun i ->
-         let byte = i lsr 1 in
-         value (if i land 1 = 0 then byte land 15 else byte lsr 4)))
-
-let e8m0 =
-  Nx.create Nx.float32 [| 256 |]
-    (Array.init 256 (fun s ->
-         if s = 255 then Float.nan else Float.ldexp 1.0 (s - 127)))
+   The values are assembled as float32 bits with integer operations, so a
+   compiled product reads the code bytes themselves: a table lookup's int64
+   index would be stored between gathering the experts and multiplying. *)
 
 (* [scaled codes v scale] is the weight of [codes] [[| ...; n; k / 2 |]] from
    their values [v], two per byte, and their groups' scales: each value times
@@ -119,14 +104,6 @@ let scaled codes v scale =
     (Nx.mul
        (Nx.reshape (Array.append groups [| 32 |]) v)
        (Nx.reshape (Array.append groups [| 1 |]) scale))
-
-(* [looked_up codes scales] is the weight of contiguous [codes] and [scales] [[|
-   ...; n; k / 32 |]] at float32, by table. *)
-let looked_up codes scales =
-  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] t) in
-  scaled codes
-    (Nx.take ~axis:0 ~indices:(indices codes) byte_values)
-    (Nx.take ~indices:(indices scales) e8m0)
 
 (* [code_bits q] is the float32 bits of the e2m1 codes [q], at most 15. An
    exponent of 0 is 0 or 0.5; another, [e], is 2^(e - 1) (1 + m / 2). *)
@@ -161,91 +138,6 @@ let values codes scales =
     (Nx.bitcast Nx.float32 (code_bits nibbles))
     (Nx.bitcast Nx.float32 (scale_bits (Nx.cast Nx.uint32 scales)))
 
-(* [decode codes scales] is rows of a weight decoded on the host: rows of a
-   placed weight are read there first, so those of a split one meet no value on
-   other devices. *)
-let decode codes scales =
-  looked_up
-    (Nx.contiguous (Nx.place Nx.Placement.host codes))
-    (Nx.contiguous (Nx.place Nx.Placement.host scales))
-
-(* The eager loop decodes at most [chunk] values at a time, and at least one
-   row. A chunk's dispatch costs well under one percent of its decode on the C
-   backend: about 10 us against 8 ms on an M1 Max. *)
-let chunk = 1 lsl 22
-let rows_per_chunk k = max 1 (chunk / k)
-
-(* Host buffers *)
-
-let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
-let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
-
-(* [reading ~by x f] is [f b] for [b] the elements of [x] in C order in a host
-   buffer, read by the function [by]: its storage when they are one run of it on
-   the host, under a read claim while [f] runs, so that no compiled call lends
-   its memory meanwhile. *)
-let reading ~by x f =
-  let b = Nx.Op.eval (Read { by; x }) in
-  Nx_device.Buffer.Claim.read b;
-  Fun.protect
-    ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
-    (fun () -> f b)
-
-(* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
-   whose leading axes are [lead], a view. [chunks n k f] calls [f r0 r] on the
-   chunks of rows of an [n]-row matrix. *)
-
-let unravel dims p =
-  let idx = Array.make (Array.length dims) 0 in
-  let p = ref p in
-  for a = Array.length dims - 1 downto 0 do
-    idx.(a) <- !p mod dims.(a);
-    p := !p / dims.(a)
-  done;
-  idx
-
-let matrix lead t j =
-  Nx.slice (Array.to_list (Array.map (fun i -> Nx.I i) (unravel lead j))) t
-
-let chunks n k f =
-  let per = rows_per_chunk k in
-  let r0 = ref 0 in
-  while !r0 < n do
-    let r = min per (n - !r0) in
-    f !r0 r;
-    r0 := !r0 + r
-  done
-
-let range r0 r t = Nx.slice [ R (r0, r0 + r) ] t
-
-(* Eager [dequant]: each matrix is decoded a chunk of rows at a time into one
-   host buffer, wrapped once full. *)
-let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
-    (float, b) Nx.t =
-  let s = Array.copy (Nx.shape codes) in
-  let r = Array.length s in
-  let lead = Array.sub s 0 (r - 2) and n = s.(r - 2) and k = 2 * s.(r - 1) in
-  s.(r - 1) <- k;
-  let count = Array.fold_left ( * ) 1 lead in
-  if count * n * k = 0 then Nx.zeros dt s
-  else begin
-    let out = Nx_array.Elements.create dt (count * n * k) in
-    let dst = bytes out in
-    let item = Nx_dtype.itemsize dt in
-    for j = 0 to count - 1 do
-      let codes = matrix lead codes j and scales = matrix lead scales j in
-      chunks n k (fun r0 r ->
-          let values = decode (range r0 r codes) (range r0 r scales) in
-          reading ~by:"Nx_quant.dequant" (Nx.cast dt values) (fun b ->
-              let src = bytes b in
-              Bigarray.Array1.blit src
-                (Bigarray.Array1.sub dst
-                   (((j * n) + r0) * k * item)
-                   (Bigarray.Array1.dim src))))
-    done;
-    Nx.of_buffer dt s out
-  end
-
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
 
 let broadcast fn a b =
@@ -261,60 +153,20 @@ let broadcast fn a b =
           (strf "%s: batch axes %s and %s do not broadcast" fn (pp_shape a)
              (pp_shape b)))
 
-(* [locate dims idx] is the row-major position, in batch axes [dims], of the
-   multi-index [idx] of a broadcast of [dims] on the right: an index along a
-   unit axis of [dims] is 0. *)
-let locate dims idx =
-  let l = Array.length idx and ld = Array.length dims in
-  let p = ref 0 in
-  for a = 0 to ld - 1 do
-    let d = dims.(a) in
-    p := (!p * d) + if d = 1 then 0 else idx.(l - ld + a)
-  done;
-  !p
-
-let next dims idx =
-  let a = ref (Array.length dims - 1) in
-  while
-    !a >= 0
-    &&
-    (idx.(!a) <- idx.(!a) + 1;
-     idx.(!a) = dims.(!a))
-  do
-    idx.(!a) <- 0;
-    decr a
-  done
-
-let is_range a =
-  let ok = ref true in
-  Array.iteri (fun i v -> if v <> i then ok := false) a;
-  !ok
-
-let rows_at indices t =
-  if is_range indices && Array.length indices = Nx.dim 0 t then t
-  else
-    Nx.take ~axis:0
-      ~indices:
-        (Nx.create Nx.int64
-           [| Array.length indices |]
-           (Array.map Int64.of_int indices))
-      t
-
-(* The shapes of a product: [w']'s batch axes and the result's shape. A
-   transposed product multiplies by the weight rather than by its transpose. *)
-let product_shape ~transpose ?ids ws xs =
+(* [batch ?ids ws xs] is the batch axes of [w'], the matrices a product meets,
+   after checking the shapes of the weight [ws], the ids [ids] and the input
+   [xs]. *)
+let batch ?ids ws xs =
   let fn = "Nx_quant.apply" in
   let wr = Array.length ws in
-  let n = ws.(wr - 2) and k = 2 * ws.(wr - 1) in
-  let inputs, outputs = if transpose then (n, k) else (k, n) in
+  let k = 2 * ws.(wr - 1) in
   let xr = Array.length xs in
   if xr = 0 then invalid_arg (strf "%s: x must have at least one axis" fn);
-  if xs.(xr - 1) <> inputs then
+  if xs.(xr - 1) <> k then
     invalid_arg
-      (strf "%s: x's last axis is %d, the weight's %s are %d" fn
+      (strf "%s: x's last axis is %d, the weight's inputs are %d" fn
          xs.(xr - 1)
-         (if transpose then "outputs" else "inputs")
-         inputs);
+         k);
   let xb = if xr = 1 then [||] else Array.sub xs 0 (xr - 2) in
   let wb =
     match ids with
@@ -333,239 +185,75 @@ let product_shape ~transpose ?ids ws xs =
           (broadcast fn (Array.sub ws 0 p) (Array.sub is 0 p))
           (Array.sub is p (Array.length is - p))
   in
-  let rb = broadcast fn xb wb in
-  ( wb,
-    Array.concat
-      [ rb; (if xr = 1 then [||] else [| xs.(xr - 2) |]); [| outputs |] ] )
+  ignore (broadcast fn xb wb);
+  wb
 
-(* Eager [apply]. A result's matrix instances are grouped by the matrix of the
-   weight they meet. Each group is one product, computed a chunk of the matrix's
-   rows at a time into its slots of one float32 buffer, and one gather puts the
-   slots in instance order, reading a zero slot for an instance that meets no
-   matrix. A transposed product sums its chunks' products. *)
-let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
-    (float, b) Nx.t =
-  let dt = Nx.dtype x in
-  let ws = Nx.shape codes and xs = Nx.shape x in
-  let wb, out = product_shape ~transpose ?ids:(Option.map Nx.shape ids) ws xs in
-  let wr = Array.length ws and xr = Array.length xs in
-  let n = ws.(wr - 2) and k = 2 * ws.(wr - 1) in
-  let inputs, outputs = if transpose then (n, k) else (k, n) in
-  let xb = if xr = 1 then [||] else Array.sub xs 0 (xr - 2) in
-  let m = if xr = 1 then 1 else xs.(xr - 2) in
-  (* The weight's matrices as seen from [wb]: [matrix_at] is the index of the
-     one at [idx] in [wb], -1 for none, among [count]. *)
-  let count, matrix_at =
-    match ids with
-    | None -> (Array.fold_left ( * ) 1 wb, fun idx -> locate wb idx)
-    | Some ids ->
-        let p = wr - 3 and is = Nx.shape ids in
-        let lanes = Array.sub ws 0 p and e = ws.(p) in
-        let values =
-          lazy
-            (reading ~by:"Nx_quant.apply" ids (fun b ->
-                 Array.init (Nx.numel ids)
-                   (Nx_array.Elements.get Nx_dtype.int64 b)))
-        in
-        let matrix_at idx =
-          let id = (Lazy.force values).(locate is idx) in
-          if Int64.compare id 0L < 0 || Int64.compare id (Int64.of_int e) >= 0
-          then -1
-          else (locate lanes (Array.sub idx 0 p) * e) + Int64.to_int id
-        in
-        (Array.fold_left ( * ) 1 lanes * e, matrix_at)
-  in
-  let rb = Array.sub out 0 (Array.length out - if xr = 1 then 1 else 2) in
-  let instances = Array.fold_left ( * ) 1 rb in
-  if Array.exists (( = ) 0) out || inputs = 0 then Nx.zeros dt out
-  else begin
-    (* Each instance's matrix and row of [x]'s batch. *)
-    let members = Array.make count [] in
-    let x_row = Array.make instances 0 in
-    let idx = Array.make (Array.length rb) 0 in
-    let lw = Array.length wb and lr = Array.length rb in
-    let widx = Array.make lw 0 in
-    for i = 0 to instances - 1 do
-      x_row.(i) <- locate xb idx;
-      for a = 0 to lw - 1 do
-        widx.(a) <- (if wb.(a) = 1 then 0 else idx.(lr - lw + a))
-      done;
-      let j = matrix_at widx in
-      if j >= 0 then members.(j) <- i :: members.(j);
-      next rb idx
+(* [gather ~wb ~lanes ~e ids codes scales] is the parts of the matrices of [w'],
+   of batch axes [wb]: at each position, the expert its id names in its lane, an
+   id outside the [e] experts clamped among them, and whether it names one. *)
+let gather ~wb ~lanes ~e ids codes scales =
+  let p = Array.length lanes in
+  let ids = Nx.broadcast_to wb ids in
+  (* A position's matrix among all lanes' experts: its lane's row of experts,
+     then its id among them. *)
+  let lane =
+    let at = ref (Nx.zeros Nx.int64 wb) and stride = ref 1 in
+    for a = p - 1 downto 0 do
+      if lanes.(a) > 1 then begin
+        let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
+        let iota = Nx.reshape shape (Nx.arange Nx.int64 0 lanes.(a) 1) in
+        at := Nx.add !at (Nx.mul_s iota (Int64.of_int !stride))
+      end;
+      stride := !stride * lanes.(a)
     done;
-    (* Slots: each instance's group position, [filled] for none. *)
-    let slot = Array.make instances (-1) and filled = ref 0 in
-    Array.iter
-      (fun group ->
-        List.iteri (fun g i -> slot.(i) <- !filled + g) (List.rev group);
-        filled := !filled + List.length group)
-      members;
-    let slots = !filled + if Array.mem (-1) slot then 1 else 0 in
-    let y = Nx_array.Elements.create Nx_dtype.float32 (slots * m * outputs) in
-    let dst = floats y in
-    if slots > !filled then
-      Bigarray.Array1.fill
-        (Bigarray.Array1.sub dst (!filled * m * outputs) (m * outputs))
-        0.0;
-    let x =
-      Nx.reshape
-        [| Array.fold_left ( * ) 1 xb; m; inputs |]
-        (Nx.contiguous (Nx.cast Nx.float32 (Nx.place Nx.Placement.host x)))
-    in
-    let lead = Array.sub ws 0 (wr - 2) in
-    let base = ref 0 in
-    Array.iteri
-      (fun j group ->
-        if group <> [] then begin
-          let group = Array.of_list (List.rev group) in
-          let g = Array.length group in
-          let rows = rows_at (Array.map (fun i -> x_row.(i)) group) x in
-          let codes = matrix lead codes j and scales = matrix lead scales j in
-          let decoded r0 r = decode (range r0 r codes) (range r0 r scales) in
-          if transpose then begin
-            let sum = ref None in
-            chunks n k (fun r0 r ->
-                let p =
-                  Nx.matmul
-                    (Nx.slice [ A; A; R (r0, r0 + r) ] rows)
-                    (decoded r0 r)
-                in
-                sum := Some (match !sum with None -> p | Some s -> Nx.add s p));
-            reading ~by:"Nx_quant.apply" (Option.get !sum) (fun b ->
-                Bigarray.Array1.blit (floats b)
-                  (Bigarray.Array1.sub dst (!base * m * k) (g * m * k)))
-          end
-          else
-            chunks n k (fun r0 r ->
-                let p = Nx.matmul rows (Nx.matrix_transpose (decoded r0 r)) in
-                reading ~by:"Nx_quant.apply" p (fun b ->
-                    let src = floats b in
-                    for q = 0 to (g * m) - 1 do
-                      Bigarray.Array1.blit
-                        (Bigarray.Array1.sub src (q * r) r)
-                        (Bigarray.Array1.sub dst
-                           ((((!base * m) + q) * n) + r0)
-                           r)
-                    done));
-          base := !base + g
-        end)
-      members;
-    let slot = Array.map (fun s -> if s < 0 then !filled else s) slot in
-    let y = Nx.of_buffer Nx_dtype.float32 [| slots; m; outputs |] y in
-    Nx.cast dt (Nx.reshape out (rows_at slot y))
-  end
-
-(* Compositions. Under a transformation, an operation on a weight is nx's
-   operations, which the transformation sees: the experts [ids] selects gathered
-   from the packed parts, their values assembled from the bytes, and one
-   product. *)
-
-let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
-    (float, b) Nx.t =
-  let ws = Nx.shape codes in
-  let wr = Array.length ws in
-  let wb, _ =
-    product_shape ~transpose ?ids:(Option.map Nx.shape ids) ws (Nx.shape x)
+    !at
   in
-  let codes, scales, valid =
-    match ids with
-    | None -> (Nx.contiguous codes, Nx.contiguous scales, None)
-    | Some ids ->
-        (* The matrix at each position of [wb]: its lane's row of experts, then
-           its id among them. *)
-        let p = wr - 3 in
-        let lanes = Array.sub ws 0 p and e = ws.(p) in
-        let ids = Nx.broadcast_to wb ids in
-        let lane =
-          let at = ref (Nx.zeros Nx.int64 wb) and stride = ref 1 in
-          for a = p - 1 downto 0 do
-            if lanes.(a) > 1 then begin
-              let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
-              let iota = Nx.reshape shape (Nx.arange Nx.int64 0 lanes.(a) 1) in
-              at := Nx.add !at (Nx.mul_s iota (Int64.of_int !stride))
-            end;
-            stride := !stride * lanes.(a)
-          done;
-          !at
-        in
-        let valid =
-          Nx.logical_and
-            (Nx.greater_equal_s ids 0L)
-            (Nx.less_s ids (Int64.of_int e))
-        in
-        let at =
-          Nx.reshape [| -1 |]
-            (Nx.add
-               (Nx.mul_s lane (Int64.of_int e))
-               (Nx.clamp ~min:0L ~max:(Int64.of_int (e - 1)) ids))
-        in
-        let gather t =
-          let s = Nx.shape t in
-          let matrix = Array.sub s (wr - 2) 2 in
-          Nx.reshape (Array.append wb matrix)
-            (Nx.take ~axis:0 ~indices:at
-               (Nx.reshape
-                  (Array.append
-                     [| Array.fold_left ( * ) 1 (Array.sub s 0 (wr - 2)) |]
-                     matrix)
-                  (Nx.contiguous t)))
-        in
-        (gather codes, gather scales, Some valid)
+  let named =
+    Nx.logical_and (Nx.greater_equal_s ids 0L) (Nx.less_s ids (Int64.of_int e))
   in
-  let w = values codes scales and x32 = Nx.cast Nx.float32 x in
-  let y =
-    if transpose then Nx.matmul x32 w else Nx.matmul x32 (Nx.matrix_transpose w)
+  let at =
+    Nx.reshape [| -1 |]
+      (Nx.add
+         (Nx.mul_s lane (Int64.of_int e))
+         (Nx.clamp ~min:0L ~max:(Int64.of_int (e - 1)) ids))
   in
-  let y =
-    match valid with
-    | None -> y
-    | Some valid ->
-        let trailing = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
-        Nx.where
-          (Nx.reshape (Array.append wb trailing) valid)
-          y (Nx.zeros_like y)
+  let take t =
+    let s = Nx.shape t in
+    let matrix = Array.sub s (p + 1) 2 in
+    Nx.reshape (Array.append wb matrix)
+      (Nx.take ~axis:0 ~indices:at
+         (Nx.reshape
+            (Array.append
+               [| Array.fold_left ( * ) 1 (Array.sub s 0 (p + 1)) |]
+               matrix)
+            (Nx.contiguous t)))
   in
-  Nx.cast (Nx.dtype x) y
-
-(* The effect *)
-
-module Effect = struct
-  type (_, _) op =
-    | Apply : {
-        ids : Nx.int64_t option;
-        x : (float, 'b) Nx.t;
-        transpose : bool;
-      }
-        -> (float, 'b) op
-    | Dequant : (float, 'b) Nx.dtype -> (float, 'b) op
-
-  type _ Stdlib.Effect.t +=
-    | E_quant : { w : t; op : ('a, 'b) op } -> ('a, 'b) Nx.t Stdlib.Effect.t
-
-  let perform : type a b. t -> (a, b) op -> (a, b) Nx.t =
-   fun (Mxfp4 { codes; scales } as w) op ->
-    match op with
-    | Apply { ids; x; transpose } -> (
-        ignore
-          (product_shape ~transpose ?ids:(Option.map Nx.shape ids)
-             (Nx.shape codes) (Nx.shape x));
-        try Stdlib.Effect.perform (E_quant { w; op })
-        with Stdlib.Effect.Unhandled _ ->
-          if Nx.Op.intercepted () then
-            composed_apply ~transpose ?ids codes scales x
-          else product_all ~transpose ?ids codes scales x)
-    | Dequant dt -> (
-        try Stdlib.Effect.perform (E_quant { w; op })
-        with Stdlib.Effect.Unhandled _ ->
-          if Nx.Op.intercepted () then
-            Nx.cast dt (values (Nx.contiguous codes) (Nx.contiguous scales))
-          else decode_all dt codes scales)
-end
+  (take codes, take scales, named)
 
 (* Products *)
 
-let dequant dt w = Effect.perform w (Effect.Dequant dt)
+let dequant dt (Mxfp4 { codes; scales }) =
+  Nx.cast dt (values (Nx.contiguous codes) (Nx.contiguous scales))
 
-let apply ?ids w x =
-  Effect.perform w (Effect.Apply { ids; x; transpose = false })
+let apply (type b) ?ids (Mxfp4 { codes; scales }) (x : (float, b) Nx.t) :
+    (float, b) Nx.t =
+  let ws = Nx.shape codes in
+  let wb = batch ?ids:(Option.map Nx.shape ids) ws (Nx.shape x) in
+  let x32 = Nx.cast Nx.float32 x in
+  let product codes scales =
+    Nx.matmul x32 (Nx.matrix_transpose (values codes scales))
+  in
+  match ids with
+  | None ->
+      Nx.cast (Nx.dtype x)
+        (product (Nx.contiguous codes) (Nx.contiguous scales))
+  | Some ids ->
+      let wr = Array.length ws in
+      let lanes = Array.sub ws 0 (wr - 3) and e = ws.(wr - 3) in
+      let codes, scales, named = gather ~wb ~lanes ~e ids codes scales in
+      let y = product codes scales in
+      let units = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
+      Nx.cast (Nx.dtype x)
+        (Nx.where
+           (Nx.reshape (Array.append wb units) named)
+           y (Nx.zeros_like y))
