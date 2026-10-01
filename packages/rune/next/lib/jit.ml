@@ -32,8 +32,7 @@ type layout = {
   dtype : string;
   shape : int array;
   at : Placement.t;
-  strides : int array;
-  lead : int; (* Elements from its run's start to its view's first. *)
+  view : View.t option; (* Its view over its run, if it reads one. *)
   phases : int list; (* Where its run starts within 16 bytes, per device. *)
 }
 
@@ -66,39 +65,23 @@ let leaf (Nx.P t) =
     | _ -> t
   in
   let x = Nx.P t in
-  let view =
-    match Repr.v t with
-    | Host a -> a.view
-    | Placed r -> Repr.Placed.view r
-    | Traced _ ->
-        invalid_arg
-          "a traced tensor has no bytes; it was used outside the trace that \
-           made it"
-  in
-  let buffers = Lower.buffers t and shape = View.shape view in
+  let buffers, view = Lower.storage t in
   let layout =
     {
       dtype = Nx_dtype.to_string (Nx.dtype t);
       shape = Nx.shape t;
       at = Nx.placement t;
-      strides = [||];
-      lead = 0;
+      view = None;
       phases = [];
     }
   in
   match Lower.dtype (Nx.dtype t) with
   | Some tdt when View.numel view > 0 ->
       let start, _ = Lower.span tdt view in
-      let strides =
-        Array.mapi
-          (fun d s -> if shape.(d) = 1 then 0 else s)
-          (View.strides view)
-      in
       let layout =
         {
           layout with
-          strides;
-          lead = fst (View.extent view) - start;
+          view = Some (Lower.within tdt view);
           phases = List.map (fun b -> Lower.phase tdt b start) buffers;
         }
       in
@@ -128,8 +111,8 @@ type key = {
 
 let same_layout a b =
   String.equal a.dtype b.dtype
-  && a.shape = b.shape && Placement.equal a.at b.at && a.strides = b.strides
-  && a.lead = b.lead && a.phases = b.phases
+  && a.shape = b.shape && Placement.equal a.at b.at && a.view = b.view
+  && a.phases = b.phases
 
 let same_key k k' =
   Ptree.Skeleton.equal k.skeleton k'.skeleton
@@ -146,8 +129,8 @@ let parts l =
     l.dtype;
     "shape [" ^ ints l.shape ^ "]";
     Format.asprintf "at %a" Placement.pp l.at;
-    "strides [" ^ ints l.strides ^ "]";
-    (match l.lead with
+    "strides [" ^ ints (Option.fold ~none:[||] ~some:View.strides l.view) ^ "]";
+    (match Option.fold ~none:0 ~some:View.offset l.view with
     | 1 -> "1 element into its run"
     | n -> Printf.sprintf "%d elements into its run" n);
     "a run at [" ^ ints (Array.of_list l.phases) ^ "] bytes past 16";
