@@ -58,6 +58,15 @@ let dtypes =
           is_none (Lower.dtype Nx.uint4);
           is_none (Lower.dtype Nx.complex64);
           is_none (Lower.dtype Nx.complex128));
+      test "a trace reads a device's dtypes from its renderer once" (fun () ->
+          let calls = ref 0 in
+          let renderer d =
+            incr calls;
+            host d
+          in
+          let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          ignore (trace ~renderer (fun () -> Nx.mul (Nx.add x x) (Nx.neg x)));
+          equal int 1 !calls);
     ]
 
 (* Captures *)

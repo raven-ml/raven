@@ -203,6 +203,7 @@ type capture = {
 
 type scope = {
   renderer : Device.t -> Renderer.t;
+  mutable dtypes : (Device.t * Dtype.t list) list;
   mutable names : (string * Device.t) list;
   mutable captures : capture list;
   mutable writes : Ops.t list;
@@ -210,7 +211,14 @@ type scope = {
 }
 
 let scope ~renderer =
-  { renderer; names = []; captures = []; writes = []; arguments = [] }
+  {
+    renderer;
+    dtypes = [];
+    names = [];
+    captures = [];
+    writes = [];
+    arguments = [];
+  }
 
 let devices s = List.rev s.names
 let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
@@ -234,8 +242,18 @@ let name s d =
   | None -> s.names <- (n, d) :: s.names);
   n
 
+(* Whether [d] computes [dt], by the dtypes of [d]'s renderer, read the first
+   time [s] meets [d]. *)
 let supports s d dt =
-  List.exists (Dtype.equal dt) (Renderer.supported_dtypes (s.renderer d))
+  let dtypes =
+    match List.assq_opt d s.dtypes with
+    | Some l -> l
+    | None ->
+        let l = Renderer.supported_dtypes (s.renderer d) in
+        s.dtypes <- (d, l) :: s.dtypes;
+        l
+  in
+  List.exists (Dtype.equal dt) dtypes
 
 (* [check s what p dt] is the counterpart of [dt] if every device of [p]
    computes it. *)
