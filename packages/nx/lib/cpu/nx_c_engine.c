@@ -12,9 +12,10 @@
    cannot do either — the rule is enforced by what each file can reach.
 
    Contents, top to bottom: the funnel raisers; the persistent thread pool and
-   its parallel-for; the one parallel-policy table (nx_c_threads_for); dimension
-   coalescing; and the four generated-family drivers (map, fold, argreduce,
-   scan). Every driver returns a status; the binding raises on non-NULL. */
+   its parallel-for; the one parallel-policy table (nx_c_threads_for) and the
+   plan's thread count (nx_c_plan_threads); dimension coalescing; the four
+   generated-family drivers (map, fold, argreduce, scan); and the funnels.
+   Every driver returns a status; the funnels raise on non-NULL. */
 
 #if defined(__linux__)
 #define _GNU_SOURCE /* sched_getaffinity, CPU_COUNT */
@@ -559,6 +560,16 @@ int nx_c_threads_for(nx_c_cost_class cls, int64_t runs, int64_t run_len,
   return (int)want;
 }
 
+int nx_c_plan_threads(int threads, nx_c_cost_class cls, int64_t runs,
+                      int64_t run_len, int64_t bytes) {
+  int64_t n =
+      threads > 0 ? threads : nx_c_threads_for(cls, runs, run_len, bytes);
+  if (n > nx_c_ncores()) n = nx_c_ncores();
+  if (n > runs) n = runs;
+  if (n < 1) n = 1;
+  return (int)n;
+}
+
 /* ── Dimension coalescing ──────────────────────────────────────────────────
 
    The map-family iteration plan: K operands sharing one shape, dropped of their
@@ -783,14 +794,50 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
 }
 
 /* ── Fold driver ───────────────────────────────────────────────────────────
-   Parallelize over output elements (the kept-axis nest); each output seeds an
-   accumulator once, streams every contributing input run through step (the
-   innermost reduced axis is the run so it streams over the most contiguous
-   input dim), then converts through fini. */
+   Both paths fold an output's terms in blocks and combine the blocks by
+   nx_c.h's tree (Associations); nx_c_tree_push and nx_c_tree_close compute it,
+   on one accumulator per slot on the per-output path and on a row of them on
+   the streaming path. */
+
+/* The left-complete tree of nx_c.h's Associations: push the result of block
+   `done` (counted from 1) at slot `top`, then combine newest into older once
+   per trailing zero of `done`; return the slots in use. A slot is one value
+   (per-output) or a row of n (streaming). */
+static int nx_c_tree_push(nx_c_fold_combine *combine, char *slot, int64_t pitch,
+                          int64_t n, int top, int64_t done, void *ctx) {
+  top++;
+  for (int64_t c = done; (c & 1) == 0; c >>= 1, top--)
+    combine(slot + (top - 2) * pitch, slot + (top - 1) * pitch, n, ctx);
+  return top;
+}
+
+static void nx_c_tree_close(nx_c_fold_combine *combine, char *slot,
+                            int64_t pitch, int64_t n, int top, void *ctx) {
+  for (; top > 1; top--)
+    combine(slot + (top - 2) * pitch, slot + (top - 1) * pitch, n, ctx);
+}
+
+/* The tree holds at most one result per bit of the blocks done, plus the open
+   block: 64 covers any int64 count. */
+#define NX_C_FOLD_STACK 64
+
+/* Advance a reduced-axis odometer by one point (one term per output). */
+static void nx_c_next1(int n, const int64_t *shape, const int64_t *stride,
+                       int64_t *coord, char **p) {
+  for (int d = n - 1; d >= 0; d--) {
+    if (++coord[d] < shape[d]) {
+      *p += stride[d];
+      return;
+    }
+    coord[d] = 0;
+    *p -= (shape[d] - 1) * stride[d];
+  }
+}
 
 typedef struct {
   nx_c_fold_init *init;
   nx_c_fold_step *step;
+  nx_c_fold_combine *combine;
   nx_c_fold_fini *fini;
   void *ctx;
   char *in_base;
@@ -799,38 +846,77 @@ typedef struct {
   int64_t kshape[NX_C_MAX_NDIM];
   int64_t k_in_stride[NX_C_MAX_NDIM];  /* byte */
   int64_t k_out_stride[NX_C_MAX_NDIM]; /* byte */
-  int nr;                             /* reduced dims; last is the run axis */
+  int nr; /* ordered reduced dims; the last is the run */
   int64_t rshape[NX_C_MAX_NDIM];
   int64_t r_in_stride[NX_C_MAX_NDIM]; /* byte */
+  int64_t reduced_len;                /* terms per output */
 } nx_c_fold_exec;
 
+/* One output: its terms, run by run, cut into blocks of NX_C_FOLD_BLOCK; a
+   block spanning runs folds each piece with its own step call. The kernels
+   and the context are read into locals once: an indirect call could change
+   memory `e` points into, so the compiler would reload them after each. */
 static void nx_c_fold_reduce_one(const nx_c_fold_exec *e, char *ip, char *op) {
+  nx_c_fold_init *init = e->init;
+  nx_c_fold_step *step = e->step;
+  nx_c_fold_combine *combine = e->combine;
+  nx_c_fold_fini *fini = e->fini;
+  void *ctx = e->ctx;
+  /* st[0, top) are the tree's results; the open block folds in `acc`, which
+     an output with no term leaves at the identity. */
+  nx_c_acc st[NX_C_FOLD_STACK];
+  char *slot = (char *)st;
+  int64_t pitch = (int64_t)sizeof(nx_c_acc);
+  int top = 0;
+  int64_t done = 0;
+  int64_t room = NX_C_FOLD_BLOCK; /* terms the open block takes */
   nx_c_acc acc;
-  e->init(&acc, e->ctx);
-  if (e->nr == 0) {
-    e->step(&acc, ip, 0, 1, e->ctx);
-  } else {
+  init(&acc, ctx);
+  if (e->nr == 0) { /* every reduced axis had extent 1: one term */
+    step(&acc, ip, 0, 1, ctx);
+  } else if (e->reduced_len > 0) {
     int rod = e->nr - 1; /* reduced odometer dims; dim rod is the run */
     int64_t run_len = e->rshape[rod];
     int64_t run_stride = e->r_in_stride[rod];
-    int64_t outer = 1;
-    for (int d = 0; d < rod; d++) outer *= e->rshape[d];
+    int64_t outer = e->reduced_len / run_len;
     int64_t rcoord[NX_C_MAX_NDIM];
-    char *rp = ip;
     for (int d = 0; d < rod; d++) rcoord[d] = 0;
+    char *rp = ip;
     for (int64_t o = 0; o < outer; o++) {
-      e->step(&acc, rp, run_stride, run_len, e->ctx);
-      for (int d = rod - 1; d >= 0; d--) {
-        if (++rcoord[d] < e->rshape[d]) {
-          rp += e->r_in_stride[d];
-          break;
+      /* The general branch also handles a run that fits; this one measured
+         up to 12% faster on short runs ([65536; 16; 2] over axes 0 and 2,
+         [512; 512] over axis 1). */
+      if (run_len < room) { /* the run fits in the open block */
+        step(&acc, rp, run_stride, run_len, ctx);
+        room -= run_len;
+      } else {
+        char *p = rp;
+        int64_t left = run_len;
+        while (left >= room) { /* the run fills the open block */
+          step(&acc, p, run_stride, room, ctx);
+          p += room * run_stride;
+          left -= room;
+          st[top] = acc;
+          top = nx_c_tree_push(combine, slot, pitch, 1, top, ++done, ctx);
+          init(&acc, ctx);
+          room = NX_C_FOLD_BLOCK;
         }
-        rcoord[d] = 0;
-        rp -= (e->rshape[d] - 1) * e->r_in_stride[d];
+        if (left > 0) {
+          step(&acc, p, run_stride, left, ctx);
+          room -= left;
+        }
       }
+      nx_c_next1(rod, e->rshape, e->r_in_stride, rcoord, &rp);
     }
   }
-  e->fini(op, &acc, e->ctx);
+  if (top == 0) { /* one block: no tree */
+    fini(op, 0, &acc, 1, ctx);
+    return;
+  }
+  /* Closing over the open block combines it as pushing it would. */
+  if (room < NX_C_FOLD_BLOCK) st[top++] = acc;
+  nx_c_tree_close(combine, slot, pitch, 1, top, ctx);
+  fini(op, 0, &st[0], 1, ctx);
 }
 
 static void nx_c_fold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
@@ -849,96 +935,98 @@ static void nx_c_fold_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 }
 
 /* ── Streaming fold path ────────────────────────────────────────────────────
-   Chosen when a kept axis out-contiguities every reduced axis: reduce over an
-   outer (large-stride) axis while a kept axis is inner. The per-output path
-   would gather each output's reduced run one cache line per element; streaming
-   instead walks the input contiguously and folds each reduced row of `lane_len`
-   elements into a per-lane accumulator array (in the compute type, so wide
-   accumulation is preserved), vectorizing across lanes. Parallelizes over the
-   panels — the odometer over the kept dims OTHER than the lane, which index
-   independent output slices. Each thread reuses one accumulator slot of
-   lane_len accumulators (nx_c_engine.h streaming contract). */
+   A unit is one tile of at most NX_C_FOLD_TILE lanes of one panel. It folds
+   the rows in blocks of NX_C_FOLD_BLOCK into a row of accumulators per block,
+   combines the block rows by the tree and stores the result by fini. A worker's
+   scratch is the tree's rows for one tile, so it is bounded whatever the lane
+   length and the thread count.
+
+   NX_C_FOLD_TILE keeps a tile's top row cache-resident (64 KiB at float32,
+   256 KiB at complex128) while a row's read stays long enough to stream:
+   measured against whole-lane rows it is level on [512; 512] to
+   [20000; 2000] and faster on [2; 10^6], where a tile of 1024 is 2.7x slower
+   on [20000; 2000]. No bit depends on it: lanes are independent outputs. */
+#define NX_C_FOLD_TILE 16384
+
 typedef struct {
   nx_c_fold_stream *stream;
-  nx_c_fold_scatter *scatter;
+  nx_c_fold_combine *combine;
+  nx_c_fold_fini *fini;
   void *ctx;
   char *in_base;
   char *out_base;
   int64_t lane_len;        /* the vectorized inner (most contiguous kept) axis */
   int64_t lane_in_stride;  /* byte */
   int64_t lane_out_stride; /* byte */
+  int64_t tile;            /* lanes per unit, the last tile of a lane shorter */
+  int64_t ntiles;          /* tiles per lane */
   int np;                  /* panel dims (kept dims other than the lane) */
   int64_t pshape[NX_C_MAX_NDIM];
   int64_t p_in_stride[NX_C_MAX_NDIM];  /* byte */
   int64_t p_out_stride[NX_C_MAX_NDIM]; /* byte */
-  int nr;                             /* reduced dims (all in the odometer) */
+  int nr;                             /* ordered reduced dims */
   int64_t rshape[NX_C_MAX_NDIM];
   int64_t r_in_stride[NX_C_MAX_NDIM]; /* byte */
-  char *scratch;                     /* nthreads slots of slot_bytes each */
-  int64_t slot_bytes;                /* lane_len * sizeof(nx_c_acc) */
+  int64_t rows;                       /* points of the reduced dims */
+  char *scratch;                      /* nthreads slots of slot_bytes each */
+  int64_t pitch;                      /* bytes of one row of accumulators */
+  int64_t slot_bytes;                 /* the tree's rows for one tile */
 } nx_c_fold_stream_exec;
 
 static void nx_c_fold_stream_body(int64_t lo, int64_t hi, int worker,
                                  void *vctx) {
   const nx_c_fold_stream_exec *e = vctx;
-  void *accs = e->scratch + (int64_t)worker * e->slot_bytes;
+  char *slot = e->scratch + (int64_t)worker * e->slot_bytes;
   int64_t coord[NX_C_MAX_NDIM];
-  char *ip;
-  char *op;
-  nx_c_seek2(e->np, e->pshape, e->p_in_stride, e->p_out_stride, lo, coord,
-            e->in_base, e->out_base, &ip, &op);
-  int64_t rtotal = 1;
-  for (int d = 0; d < e->nr; d++) rtotal *= e->rshape[d];
-  for (int64_t it = lo; it < hi; it++) {
-    int64_t rcoord[NX_C_MAX_NDIM];
+  int64_t rcoord[NX_C_MAX_NDIM];
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t tile = u % e->ntiles;
+    char *ip;
+    char *op;
+    nx_c_seek2(e->np, e->pshape, e->p_in_stride, e->p_out_stride,
+               u / e->ntiles, coord, e->in_base, e->out_base, &ip, &op);
+    ip += tile * e->tile * e->lane_in_stride;
+    op += tile * e->tile * e->lane_out_stride;
+    int64_t tn = e->lane_len - tile * e->tile;
+    if (tn > e->tile) tn = e->tile;
+    int top = 0;
+    int64_t done = 0;
     for (int d = 0; d < e->nr; d++) rcoord[d] = 0;
     char *rp = ip;
-    for (int64_t r = 0; r < rtotal; r++) {
-      e->stream(accs, rp, e->lane_in_stride, e->lane_len, r == 0, e->ctx);
-      for (int d = e->nr - 1; d >= 0; d--) {
-        if (++rcoord[d] < e->rshape[d]) {
-          rp += e->r_in_stride[d];
-          break;
-        }
-        rcoord[d] = 0;
-        rp -= (e->rshape[d] - 1) * e->r_in_stride[d];
+    for (int64_t r = 0; r < e->rows;) {
+      char *accs = slot + top * e->pitch;
+      int64_t end = r + NX_C_FOLD_BLOCK;
+      if (end > e->rows) end = e->rows;
+      for (int64_t k = r; k < end; k++) {
+        e->stream(accs, rp, e->lane_in_stride, tn, k == r, e->ctx);
+        nx_c_next1(e->nr, e->rshape, e->r_in_stride, rcoord, &rp);
       }
+      r = end;
+      top = nx_c_tree_push(e->combine, slot, e->pitch, tn, top, ++done, e->ctx);
     }
-    e->scatter(op, e->lane_out_stride, accs, e->lane_len, e->ctx);
-    nx_c_next2(e->np, e->pshape, e->p_in_stride, e->p_out_stride, coord, &ip,
-              &op);
+    nx_c_tree_close(e->combine, slot, e->pitch, tn, top, e->ctx);
+    e->fini(op, e->lane_out_stride, slot, tn, e->ctx);
   }
 }
 
-/* Upper bound on the streaming accumulator scratch (nth * lane_len *
-   sizeof(nx_c_acc)). The per-output path allocates nothing, so a shape with a
-   short reduced axis and a huge lane (e.g. reducing axis 0 of [2, 1e8] wants
-   ~1.6 GB of accumulators) must NOT turn a working reduction into an allocation
-   failure — over this cap the driver falls back to the per-output path. That is
-   the right call on the merits, not just a safety valve: streaming only wins by
-   turning a strided reduced-axis gather into contiguous reads, and a lane that
-   wide means the kept axis is already contiguous and dominates the bandwidth, so
-   the per-output path is close anyway. 64 MiB covers every realistic reduction
-   (a 4M-element single-thread lane) while bounding the transient allocation. */
-#define NX_C_FOLD_STREAM_SCRATCH_CAP (64 * 1024 * 1024)
-
-/* Build the streaming exec from the shared classification, allocate the
-   per-thread accumulator scratch, and drive the panels. `lane` is the index of
-   the chosen lane within the kept-axis arrays; `nth`/`panels` are the caller's
-   already-clamped split (the caller sized the scratch against the cap from
-   them). */
-static nx_c_status nx_c_fold_stream_run(const nx_c_stream_table *stbl, nx_c_dtype dt,
-                                      const nx_c_fold_exec *fe, int lane, int nth,
-                                      int64_t panels, int64_t bytes) {
+/* Build the streaming exec from the plan, allocate the per-thread tree
+   scratch and drive the units. `lane` indexes the kept-axis arrays. */
+static nx_c_status nx_c_fold_stream_run(const nx_c_fold_table *tbl,
+                                        nx_c_dtype dt, const nx_c_fold_exec *fe,
+                                        int lane, nx_c_cost_class cls,
+                                        int threads, int64_t bytes) {
   nx_c_fold_stream_exec e;
-  e.stream = stbl->stream[dt];
-  e.scatter = stbl->scatter[dt];
+  e.stream = tbl->stream[dt];
+  e.combine = tbl->combine[dt];
+  e.fini = tbl->fini[dt];
   e.ctx = fe->ctx;
   e.in_base = fe->in_base;
   e.out_base = fe->out_base;
   e.lane_len = fe->kshape[lane];
   e.lane_in_stride = fe->k_in_stride[lane];
   e.lane_out_stride = fe->k_out_stride[lane];
+  e.tile = e.lane_len < NX_C_FOLD_TILE ? e.lane_len : NX_C_FOLD_TILE;
+  e.ntiles = (e.lane_len + e.tile - 1) / e.tile;
   e.np = 0;
   for (int j = 0; j < fe->nk; j++) {
     if (j == lane) continue;
@@ -952,28 +1040,43 @@ static nx_c_status nx_c_fold_stream_run(const nx_c_stream_table *stbl, nx_c_dtyp
     e.rshape[d] = fe->rshape[d];
     e.r_in_stride[d] = fe->r_in_stride[d];
   }
+  e.rows = fe->reduced_len;
 
-  e.slot_bytes = e.lane_len * (int64_t)sizeof(nx_c_acc);
+  /* While a block folds, the tree holds at most floor(log2(blocks)) results
+     below it. */
+  int64_t blocks = (e.rows + NX_C_FOLD_BLOCK - 1) / NX_C_FOLD_BLOCK;
+  int64_t rows_held = 1;
+  for (int64_t b = blocks; b > 1; b >>= 1) rows_held++;
+  e.pitch = e.tile * (int64_t)sizeof(nx_c_acc);
+  e.slot_bytes = rows_held * e.pitch;
+
+  int64_t panels = 1;
+  for (int j = 0; j < e.np; j++) panels *= e.pshape[j];
+  int64_t nunits = panels * e.ntiles;
+  int nth = nx_c_plan_threads(threads, cls, nunits, e.tile * e.rows, bytes);
   void *scratch = nx_c_aligned_alloc((size_t)nth * (size_t)e.slot_bytes);
   if (scratch == NULL) return NX_C_ERR_ALLOC;
   e.scratch = scratch;
   /* scratch is freed by nx_c_parallel_for after the join, leak-safe across the
      re-acquire's possible raise (nx_c_engine.h free_on_exit contract). */
-  nx_c_parallel_for(nth, panels, bytes, nx_c_fold_stream_body, &e, scratch);
+  nx_c_parallel_for(nth, nunits, bytes, nx_c_fold_stream_body, &e, scratch);
   return NX_C_OK;
 }
 
-nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *stbl,
-                        nx_c_dtype dt, const nx_c_ndarray *in, int64_t in_elem,
+nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, nx_c_dtype dt,
+                        const nx_c_ndarray *in, int64_t in_elem,
                         const nx_c_ndarray *out, int64_t out_elem,
                         const int *reduce_axes, int n_reduce, bool no_identity,
-                        nx_c_cost_class cls, void *ctx) {
-  if (tbl->init[dt] == NULL || tbl->step[dt] == NULL || tbl->fini[dt] == NULL)
+                        nx_c_cost_class cls, int threads, void *ctx) {
+  if (tbl->init[dt] == NULL || tbl->step[dt] == NULL ||
+      tbl->combine[dt] == NULL || tbl->fini[dt] == NULL ||
+      tbl->stream[dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
   nx_c_fold_exec e;
   e.init = tbl->init[dt];
   e.step = tbl->step[dt];
+  e.combine = tbl->combine[dt];
   e.fini = tbl->fini[dt];
   e.ctx = ctx;
   e.in_base = (char *)in->data + in->offset * in_elem;
@@ -981,19 +1084,19 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
 
   /* Split input axes into kept (output-indexing) and reduced. reduce_axes is
      strictly increasing, so a single merge pass classifies each axis. */
-  e.nk = 0;
-  e.nr = 0;
+  int nk = 0;
+  int nr = 0;
   int ra = 0;
   for (int a = 0; a < in->ndim; a++) {
     if (ra < n_reduce && reduce_axes[ra] == a) {
-      e.rshape[e.nr] = in->shape[a];
-      e.r_in_stride[e.nr] = in->strides[a] * in_elem;
-      e.nr++;
+      e.rshape[nr] = in->shape[a];
+      e.r_in_stride[nr] = in->strides[a] * in_elem;
+      nr++;
       ra++;
     } else {
-      e.kshape[e.nk] = in->shape[a];
-      e.k_in_stride[e.nk] = in->strides[a] * in_elem;
-      e.nk++;
+      e.kshape[nk] = in->shape[a];
+      e.k_in_stride[nk] = in->strides[a] * in_elem;
+      nk++;
     }
   }
   /* The forward scan consumes reduce_axes iff they are strictly increasing and
@@ -1004,14 +1107,33 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
   /* out is aligned, one axis per kept input axis, as the binding allocates it;
      a short/long descriptor would read unspecified stride slots, so the rank is
      asserted before the out strides are paired. */
-  if (out->ndim != e.nk) return NX_C_ERR_OUT_RANK;
-  for (int j = 0; j < e.nk; j++) e.k_out_stride[j] = out->strides[j] * out_elem;
+  if (out->ndim != nk) return NX_C_ERR_OUT_RANK;
+  for (int j = 0; j < nk; j++) e.k_out_stride[j] = out->strides[j] * out_elem;
+
+  /* Axes of extent 1 carry no iteration: drop them, a kept one with its out
+     stride, so that no arbitrary stride of theirs steers the plan. */
+  e.nk = 0;
+  for (int j = 0; j < nk; j++) {
+    if (e.kshape[j] == 1) continue;
+    e.kshape[e.nk] = e.kshape[j];
+    e.k_in_stride[e.nk] = e.k_in_stride[j];
+    e.k_out_stride[e.nk] = e.k_out_stride[j];
+    e.nk++;
+  }
+  e.nr = 0;
+  for (int d = 0; d < nr; d++) {
+    if (e.rshape[d] == 1) continue;
+    e.rshape[e.nr] = e.rshape[d];
+    e.r_in_stride[e.nr] = e.r_in_stride[d];
+    e.nr++;
+  }
 
   int64_t out_total = 1;
   for (int d = 0; d < e.nk; d++) out_total *= e.kshape[d];
   if (out_total == 0) return NX_C_OK; /* no output elements */
   int64_t reduced_len = 1;
   for (int d = 0; d < e.nr; d++) reduced_len *= e.rshape[d];
+  e.reduced_len = reduced_len;
   /* max/min have no identity for an empty reduced extent: with outputs to fill
      (out_total > 0 here) an empty extent would store the init sentinel
      (-inf / INT64_MIN). Reject before any kernel runs — the check lives here, in
@@ -1019,66 +1141,49 @@ nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *s
   if (no_identity && reduced_len == 0) return NX_C_ERR_EMPTY_REDUCE;
   int64_t bytes = out_total * reduced_len * in_elem;
 
-  /* Streaming decision: take it when a kept axis that carries iteration is
-     strictly more contiguous than every reduced axis (its stride magnitude is
-     the smallest overall), so the reduced run of the per-output path would
-     gather with a large stride. The lane must have extent > 1: a size-1 lane
-     gives the stream loop nothing to vectorize and more calls than the
-     per-output path, and a size-1 axis carries no iteration anyway. The empty
-     reduced extent (reduced_len == 0, a sum/prod identity fill) has no first row
-     to seed the accumulators, so it stays on the per-output path. */
-  if (stbl != NULL && stbl->stream[dt] != NULL && stbl->scatter[dt] != NULL &&
-      e.nk >= 1 && e.nr >= 1 && reduced_len >= 1) {
-    /* A broadcast (0-stride) kept axis can win the lane: every lane then folds
-       the same reduced extent, and the equal outputs are the correct broadcast
-       result. The per-lane sum reassociates differently from the per-output
-       8-accumulator step, but that stays within the sum tolerance the
-       conformance suite already grants (accepted review corner). */
-    int lane = -1;
-    for (int j = 0; j < e.nk; j++) {
-      if (e.kshape[j] <= 1) continue;
-      if (lane < 0 || llabs(e.k_in_stride[j]) < llabs(e.k_in_stride[lane]))
-        lane = j;
+  /* Order the reduced axes from the largest |stride| to the smallest, ties in
+     axis order (a stable insertion sort), then merge each into its outer
+     neighbour where the two are contiguous with each other. */
+  for (int d = 1; d < e.nr; d++) {
+    int64_t sh = e.rshape[d], st = e.r_in_stride[d];
+    int i = d;
+    for (; i > 0 && llabs(e.r_in_stride[i - 1]) < llabs(st); i--) {
+      e.rshape[i] = e.rshape[i - 1];
+      e.r_in_stride[i] = e.r_in_stride[i - 1];
     }
-    if (lane >= 0) {
-      int64_t run_stride = llabs(e.r_in_stride[0]);
-      for (int d = 1; d < e.nr; d++) {
-        int64_t s = llabs(e.r_in_stride[d]);
-        if (s < run_stride) run_stride = s;
-      }
-      if (llabs(e.k_in_stride[lane]) < run_stride) {
-        int64_t lane_len = e.kshape[lane];
-        int64_t panels = out_total / lane_len; /* product of the panel shapes */
-        int nth = nx_c_threads_for(cls, panels, lane_len * reduced_len, bytes);
-        if (nth > panels) nth = (int)panels;
-        if (nth < 1) nth = 1;
-        /* Only stream when the accumulator scratch stays bounded; otherwise the
-           per-output path (which allocates nothing) is both safe and, for a lane
-           this wide, competitive. */
-        int64_t scratch = (int64_t)nth * lane_len * (int64_t)sizeof(nx_c_acc);
-        if (scratch <= NX_C_FOLD_STREAM_SCRATCH_CAP)
-          return nx_c_fold_stream_run(stbl, dt, &e, lane, nth, panels, bytes);
-      }
-    }
+    e.rshape[i] = sh;
+    e.r_in_stride[i] = st;
   }
-
-  /* Per-output path: stream the most contiguous reduced axis by moving the
-     smallest-|stride| reduced axis to the run position (last). */
   if (e.nr > 1) {
-    int best = 0;
-    for (int r = 1; r < e.nr; r++)
-      if (llabs(e.r_in_stride[r]) < llabs(e.r_in_stride[best])) best = r;
-    int last = e.nr - 1;
-    int64_t ts = e.rshape[best];
-    e.rshape[best] = e.rshape[last];
-    e.rshape[last] = ts;
-    int64_t tt = e.r_in_stride[best];
-    e.r_in_stride[best] = e.r_in_stride[last];
-    e.r_in_stride[last] = tt;
+    int m = 1;
+    for (int d = 1; d < e.nr; d++) {
+      if (e.r_in_stride[m - 1] == e.r_in_stride[d] * e.rshape[d]) {
+        e.rshape[m - 1] *= e.rshape[d];
+        e.r_in_stride[m - 1] = e.r_in_stride[d];
+      } else {
+        e.rshape[m] = e.rshape[d];
+        e.r_in_stride[m] = e.r_in_stride[d];
+        m++;
+      }
+    }
+    e.nr = m;
   }
 
-  int nth = nx_c_threads_for(cls, out_total, reduced_len, bytes);
-  if (nth > out_total) nth = (int)out_total;
+  /* Streaming when a kept axis is strictly more contiguous than every reduced
+     axis, the run's being the smallest. An empty reduced extent has no first
+     row to seed the accumulators and stays on the per-output path, whose
+     identity fill needs none. A broadcast (0-stride) kept axis can win the
+     lane: every lane then folds the same terms, and the equal outputs are the
+     broadcast result. */
+  if (e.nk >= 1 && e.nr >= 1 && reduced_len >= 1) {
+    int lane = 0;
+    for (int j = 1; j < e.nk; j++)
+      if (llabs(e.k_in_stride[j]) < llabs(e.k_in_stride[lane])) lane = j;
+    if (llabs(e.k_in_stride[lane]) < llabs(e.r_in_stride[e.nr - 1]))
+      return nx_c_fold_stream_run(tbl, dt, &e, lane, cls, threads, bytes);
+  }
+
+  int nth = nx_c_plan_threads(threads, cls, out_total, reduced_len, bytes);
   nx_c_parallel_for(nth, out_total, bytes, nx_c_fold_body, &e, NULL);
   return NX_C_OK;
 }
@@ -1122,7 +1227,7 @@ static void nx_c_arg_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
                              const nx_c_ndarray *in, int64_t in_elem,
                              const nx_c_ndarray *out, int axis,
-                             nx_c_cost_class cls, void *ctx) {
+                             nx_c_cost_class cls, int threads, void *ctx) {
   if (tbl->step[dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
@@ -1156,18 +1261,18 @@ nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
   if (out_total == 0) return NX_C_OK;
   int64_t bytes = out_total * axis_len * in_elem;
 
-  int nth = nx_c_threads_for(cls, out_total, axis_len, bytes);
-  if (nth > out_total) nth = (int)out_total;
+  int nth = nx_c_plan_threads(threads, cls, out_total, axis_len, bytes);
   nx_c_parallel_for(nth, out_total, bytes, nx_c_arg_body, &e, NULL);
   return NX_C_OK;
 }
 
 /* ── Scan driver ───────────────────────────────────────────────────────────
    Inclusive scan over one axis. The non-axis nest indexes independent slices
-   (parallelized); within a slice the kernel walks the axis sequentially. */
+   (parallelized); a slice runs in nx_c.h's chunks, each from its carry. */
 
 typedef struct {
-  nx_c_scan_init *init;
+  nx_c_fold_init *init;
+  nx_c_fold_combine *combine;
   nx_c_scan_step *step;
   void *ctx;
   char *in_base;
@@ -1179,7 +1284,32 @@ typedef struct {
   int64_t axis_in_stride;             /* byte */
   int64_t axis_out_stride;            /* byte */
   int64_t axis_len;
+  int64_t chunk; /* NX_C_SCAN_CHUNK, or the axis length for an exact scan */
 } nx_c_scan_exec;
+
+static void nx_c_scan_slice(const nx_c_scan_exec *e, char *ip, char *op) {
+  int64_t len = e->axis_len;
+  int64_t is = e->axis_in_stride;
+  int64_t os = e->axis_out_stride;
+  int64_t chunk = e->chunk;
+  nx_c_acc id, state, total, carry;
+  e->init(&id, e->ctx);
+  state = id;
+  int64_t first = len < chunk ? len : chunk;
+  e->step(op, os, ip, is, first, &state, NULL, e->ctx);
+  carry = state;
+  for (int64_t lo = chunk; lo < len; lo += chunk) {
+    int64_t m = len - lo < chunk ? len - lo : chunk;
+    state = carry;
+    if (lo + m < len) {
+      total = id;
+      e->step(op + lo * os, os, ip + lo * is, is, m, &state, &total, e->ctx);
+      e->combine(&carry, &total, 1, e->ctx);
+    } else {
+      e->step(op + lo * os, os, ip + lo * is, is, m, &state, NULL, e->ctx);
+    }
+  }
+}
 
 static void nx_c_scan_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
@@ -1190,10 +1320,7 @@ static void nx_c_scan_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   nx_c_seek2(e->nk, e->kshape, e->k_in_stride, e->k_out_stride, lo, coord,
             e->in_base, e->out_base, &ip, &op);
   for (int64_t it = lo; it < hi; it++) {
-    nx_c_acc state;
-    e->init(&state, e->ctx);
-    e->step(op, e->axis_out_stride, ip, e->axis_in_stride, e->axis_len, &state,
-            e->ctx);
+    nx_c_scan_slice(e, ip, op);
     nx_c_next2(e->nk, e->kshape, e->k_in_stride, e->k_out_stride, coord, &ip,
               &op);
   }
@@ -1202,8 +1329,9 @@ static void nx_c_scan_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
                         const nx_c_ndarray *in, int64_t in_elem,
                         const nx_c_ndarray *out, int64_t out_elem, int axis,
-                        nx_c_cost_class cls, void *ctx) {
-  if (tbl->init[dt] == NULL || tbl->step[dt] == NULL)
+                        nx_c_cost_class cls, int threads, void *ctx) {
+  if (tbl->op->init[dt] == NULL || tbl->op->combine[dt] == NULL ||
+      tbl->step[dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
 
   /* The frontend passes a valid axis and the binding allocates out: shape and
@@ -1212,7 +1340,8 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
   if (out->ndim != in->ndim) return NX_C_ERR_OUT_RANK;
 
   nx_c_scan_exec e;
-  e.init = tbl->init[dt];
+  e.init = tbl->op->init[dt];
+  e.combine = tbl->op->combine[dt];
   e.step = tbl->step[dt];
   e.ctx = ctx;
   e.in_base = (char *)in->data + in->offset * in_elem;
@@ -1220,6 +1349,11 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
   e.axis_in_stride = in->strides[axis] * in_elem;
   e.axis_out_stride = out->strides[axis] * out_elem;
   e.axis_len = in->shape[axis];
+  /* An integer or bool scan gives the same bits under every grouping (nx_c.h,
+     Associations), so one walk over the slice computes its chunks: a second
+     chain for the totals costs an integer scan a tenth of its time. */
+  e.chunk = nx_c_dtype_is_int(dt) || nx_c_dtype_is_bool(dt) ? e.axis_len
+                                                            : NX_C_SCAN_CHUNK;
 
   e.nk = 0;
   for (int a = 0; a < in->ndim; a++) {
@@ -1235,8 +1369,7 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
   if (slices == 0 || e.axis_len == 0) return NX_C_OK;
   int64_t bytes = slices * e.axis_len * (in_elem + out_elem);
 
-  int nth = nx_c_threads_for(cls, slices, e.axis_len, bytes);
-  if (nth > slices) nth = (int)slices;
+  int nth = nx_c_plan_threads(threads, cls, slices, e.axis_len, bytes);
   nx_c_parallel_for(nth, slices, bytes, nx_c_scan_body, &e, NULL);
   return NX_C_OK;
 }
@@ -1321,9 +1454,8 @@ static nx_c_status nx_c_squeeze_out(const nx_c_ndarray *in, const nx_c_ndarray *
 }
 
 void nx_c_fold_funnel(const char *op, const nx_c_fold_table *tbl,
-                     const nx_c_stream_table *stbl, nx_c_cost_class cls,
-                     value vout, value vin, value vaxes, bool no_identity,
-                     void *ctx) {
+                     nx_c_cost_class cls, value vout, value vin, value vaxes,
+                     bool no_identity, int threads, void *ctx) {
   nx_c_ndarray in, out;
   nx_c_status s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise(op, s);
@@ -1343,14 +1475,14 @@ void nx_c_fold_funnel(const char *op, const nx_c_fold_table *tbl,
   nx_c_ndarray sq;
   s = nx_c_squeeze_out(&in, &out, axes, n_reduce, &sq);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
-  s = nx_c_fold_run(tbl, stbl, dt, &in, in_elem, &sq, out_elem, axes, n_reduce,
-                   no_identity, cls, ctx);
+  s = nx_c_fold_run(tbl, dt, &in, in_elem, &sq, out_elem, axes, n_reduce,
+                   no_identity, cls, threads, ctx);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
 }
 
 void nx_c_argreduce_funnel(const char *op, const nx_c_arg_table *tbl,
                           nx_c_cost_class cls, value vout, value vin, int axis,
-                          void *ctx) {
+                          int threads, void *ctx) {
   nx_c_ndarray in, out;
   nx_c_status s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise(op, s);
@@ -1363,13 +1495,13 @@ void nx_c_argreduce_funnel(const char *op, const nx_c_arg_table *tbl,
   nx_c_ndarray sq;
   s = nx_c_squeeze_out(&in, &out, &axis, 1, &sq);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
-  s = nx_c_argreduce_run(tbl, dt, &in, in_elem, &sq, axis, cls, ctx);
+  s = nx_c_argreduce_run(tbl, dt, &in, in_elem, &sq, axis, cls, threads, ctx);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
 }
 
 void nx_c_scan_funnel(const char *op, const nx_c_scan_table *tbl,
                      nx_c_cost_class cls, value vout, value vin, int axis,
-                     void *ctx) {
+                     int threads, void *ctx) {
   nx_c_ndarray in, out;
   nx_c_status s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise(op, s);
@@ -1381,6 +1513,7 @@ void nx_c_scan_funnel(const char *op, const nx_c_scan_table *tbl,
   nx_c_dtype odt = nx_c_dtype_of_value(vout);
   int64_t out_elem = nx_c_elem_size(odt);
 
-  s = nx_c_scan_run(tbl, dt, &in, in_elem, &out, out_elem, axis, cls, ctx);
+  s = nx_c_scan_run(tbl, dt, &in, in_elem, &out, out_elem, axis, cls, threads,
+                   ctx);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
 }

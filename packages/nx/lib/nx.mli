@@ -2299,14 +2299,12 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     from the end.
 
     A float sum is [0.] plus its terms in an unspecified association, so a sum
-    that is exactly zero is [0.], never [-0.], and a sum of nothing is [0.]. It
-    is deterministic for a given input layout on a given machine and does not
-    depend on the thread count; the same values in another layout can differ in
-    rounding, and at overflow in whether a term overflows. {!mean} and the
-    contraction of {!matmul} and the products built on it sum the same way.
-    Today each output of a product of vectors, or of a single row or column,
-    also has the bits of {!inner} of its row and column, which this contract
-    does not promise.
+    that is exactly zero is [0.], never [-0.], and a sum of nothing is [0.]. On
+    the host, the bits of a sum depend on its terms, the shape and layout of [t]
+    and the machine, never on the number of threads: the same values in another
+    layout can differ in rounding, and at overflow in whether a term overflows.
+    {!mean} sums the same way, as do the contraction of {!matmul} and the
+    products built on it, except where {!matmul} hands a product to Accelerate.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -2323,9 +2321,10 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [max ?axes ?keepdims t] is the maximum along [axes], as {!maximum} orders
     elements: NaN propagates and [-0.] is less than [0.], except that under a
-    compiled function the sign of a zero result is the target's. The result
-    does not depend on the order the elements are combined in. [keepdims]
-    defaults to [false].
+    compiled function the sign of a zero result is the target's. On the host,
+    the result is one of the elements along [axes], and along one axis a NaN
+    result is the first NaN, the one {!argmax} finds. [keepdims] defaults to
+    [false].
 
     {@ocaml[
       # create float32 [| 2; 3 |]
@@ -2337,9 +2336,10 @@ val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [min ?axes ?keepdims t] is the minimum along [axes], as {!minimum} orders
     elements: NaN propagates and [-0.] is less than [0.], except that under a
-    compiled function the sign of a zero result is the target's. The result
-    does not depend on the order the elements are combined in. [keepdims]
-    defaults to [false]. *)
+    compiled function the sign of a zero result is the target's. On the host,
+    the result is one of the elements along [axes], and along one axis a NaN
+    result is the first NaN, the one {!argmin} finds. [keepdims] defaults to
+    [false]. *)
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
@@ -2354,15 +2354,20 @@ val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cumsum ?axis t] is the inclusive cumulative sum along [axis]. Each running
     sum is a float sum as {!sum} describes, [0.] plus the terms so far: the
-    first element of [cumsum] of [[-0.]] is [0.]. When [axis] is omitted, it
-    accumulates the flattened tensor and keeps [t]'s shape.
+    first element of [cumsum] of [[-0.]] is [0.]. On the host, the running sums
+    of a prefix of [t] along [axis] are the first running sums of [t], bit for
+    bit. Two running sums are rounded in different associations, so the running
+    sums of non-negative terms can decrease by a rounding: a search over them
+    must not assume them sorted. When [axis] is omitted, it accumulates the
+    flattened tensor and keeps [t]'s shape.
 
     See also {!cumprod}. *)
 
 val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cumprod ?axis t] is the inclusive cumulative product along [axis]. When
-    [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
-    shape.
+(** [cumprod ?axis t] is the inclusive cumulative product along [axis]. On the
+    host, the running products of a prefix of [t] along [axis] are the first
+    running products of [t], bit for bit. When [axis] is omitted, it accumulates
+    the flattened tensor and keeps [t]'s shape.
 
     See also {!cumsum}. *)
 
@@ -2370,7 +2375,8 @@ val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummax ?axis t] is the inclusive cumulative maximum along [axis], as
     {!maximum} orders elements: NaN propagates and [-0.] is less than [0.],
     except that under a compiled function the sign of a zero result is the
-    target's. When
+    target's. On the host, from the first NaN on every running maximum is that
+    NaN. When
     [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
     shape.
 
@@ -2380,7 +2386,8 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummin ?axis t] is the inclusive cumulative minimum along [axis], as
     {!minimum} orders elements: NaN propagates and [-0.] is less than [0.],
     except that under a compiled function the sign of a zero result is the
-    target's. When
+    target's. On the host, from the first NaN on every running minimum is that
+    NaN. When
     [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
     shape.
 
@@ -2619,7 +2626,9 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     [float32], multiplied and summed at [float32], and each element of the
     result is rounded once to the operands' dtype. The contraction sums as
     {!sum} describes: an output whose products sum to exactly zero is [0.], and
-    an empty contraction gives [0.].
+    an empty contraction gives [0.]. On macOS, a [float32], [float64],
+    [complex64] or [complex128] product may be computed by Accelerate, whose
+    bits may depend on the number of threads.
 
     Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 

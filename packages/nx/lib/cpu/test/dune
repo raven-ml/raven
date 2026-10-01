@@ -1,0 +1,10 @@
+; The planner test: the one test below nx's public API. Law 3 makes the thread
+; count invisible from Nx, so the test calls the C entry points with an explicit
+; plan thread count. test_planner.ml redeclares those externals; the type
+; checker cannot compare them with the C stubs, so a drift between the two is
+; undefined behaviour, not a compile error. Keep them in step with nx_cpu.ml.
+
+(test
+ (name test_planner)
+ (package nx)
+ (libraries nx.cpu nx.array nx.backend nx.dtype nx.device windtrap))

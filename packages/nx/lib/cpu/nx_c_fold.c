@@ -6,7 +6,7 @@
 /* nx_c_fold.c — the fold kernel family: axis reductions (sum/prod/max/min),
    argmax/argmin, and inclusive associative scan (cumsum/cumprod/cummax/cummin).
 
-   Every per-dtype init/step is generated from the one dtype table in nx_c.h
+   Every per-dtype kernel is generated from the one dtype table in nx_c.h
    via NX_C_FOR_EACH_COMPUTE_DTYPE; the vtables (nx_c_fold_table / nx_c_arg_table /
    nx_c_scan_table) are designated initializers whose unsupported slots stay NULL
    and are turned into an NX_C_ERR_UNSUPPORTED_DTYPE / NX_C_ERR_PACKED status by
@@ -14,14 +14,14 @@
    drivers only through the engine funnels (nx_c_engine.h).
 
    Accumulator widths follow nx_c.h's dtype table and "Dtype semantics": small
-   ints and bool accumulate in int64, u32/u64
-   in uint64, f16/bf16/fp8/f32 in float, f64 in double, complex in native
-   complex. The f32 (and every float) sum step carries ≥2 partial accumulators
-   so the contiguous run autovectorizes and a 2^25-ones reduction does not stall
-   a single float at 2^24; f16/bf16 sums accumulate in float so a 4096-/512-ones
+   ints accumulate in int64, bool in its byte, u32/u64 in uint64,
+   f16/bf16/fp8/f32 in float, f64 in double, complex in native complex. The
+   f32 (and every float) sum step carries ≥2 partial accumulators so the
+   contiguous run autovectorizes and a 2^25-ones reduction does not stall a
+   single float at 2^24; f16/bf16 sums accumulate in float so a 4096-/512-ones
    run does not stall at the half/bfloat integer ceiling. Float max/min are IEEE
-   754-2019 maximum and minimum: any NaN in the extent wins, and -0 orders below
-   +0, so the result depends on neither association nor traversal order.
+   754-2019 maximum and minimum: the first NaN in the extent wins, and -0
+   orders below +0, so the result depends on no grouping of the extent.
    argmax/argmin agree: the first NaN, else the first element with the extreme's
    bits. Complex has no ordered comparison, so max/min/argmax/argmin/cummax/
    cummin leave complex NULL; bool has no arithmetic, so sum/prod/cumsum/cumprod
@@ -39,13 +39,13 @@
 
 /* ── Accumulator field for a compute type ─────────────────────────────────────
    nx_c_acc is a union keyed by C type; a kernel carries its reduced value in the
-   slot matching its compute type. bool (compute uint8_t) folds through the int64
-   slot: its 0/1 values fit and its max/min reuse the integer machinery. */
+   slot matching its compute type. bool folds through its byte slot; its
+   max/min are or/and on 0/1. */
 #define NX_C_ACCF_float f
 #define NX_C_ACCF_double d
 #define NX_C_ACCF_int64_t i
 #define NX_C_ACCF_uint64_t u
-#define NX_C_ACCF_uint8_t i
+#define NX_C_ACCF_uint8_t b
 #define NX_C_ACCF_nx_c_complex32 c32
 #define NX_C_ACCF_nx_c_complex64 c64
 
@@ -64,15 +64,16 @@
 
 /* ── Per-element combine, folding value V into accumulator lvalue M ───────────
    The float max/min forms are IEEE 754-2019 maximum and minimum. Once M is
-   NaN, the comparisons are all false and only a NaN V takes its place, so
-   later numbers cannot displace a NaN — matching reduce_max/min. Neither
-   greater nor less, V is equal to M or one is NaN: that rare branch takes a
-   NaN V, and between equal values lets the sign bit decide, which only
-   matters for zeros: max takes +0 over -0, min -0 over +0. The common branch
-   thus costs the two comparisons it always did. The lane forms, for the
-   streaming path whose accumulators are independent, are nx_c_fmax and
-   nx_c_fmin, whose selects vectorize where a branch would not. bool max/min
-   are or/and on 0/1. V must be a plain variable (evaluated more than once). */
+   NaN, the comparisons are all false and nothing takes its place, so the first
+   NaN stays. Neither greater nor less, V is equal to M or one is NaN: that rare
+   branch takes a NaN V only while M is a number, and between equal values
+   lets the sign bit decide, which only matters for zeros: max takes +0 over
+   -0, min -0 over +0. The common branch thus costs the two comparisons it
+   always did. The lane forms, for the streaming path and combine, whose
+   accumulators are independent, are nx_c_fmax and nx_c_fmin, which keep their
+   left operand's NaN and whose selects vectorize where a branch would not.
+   bool max/min are or/and on 0/1. V must be a plain variable (evaluated more
+   than once). */
 #define NX_C_CMB_SUM(M, V) (M) += (V)
 #define NX_C_CMB_PROD(M, V) (M) *= (V)
 /* Signed sum/prod combine in the unsigned width: the contract is modular wrap
@@ -89,13 +90,15 @@
   if ((V) > (M))                                             \
     (M) = (V);                                               \
   else if (!((V) < (M)) &&                                   \
-           ((V) != (V) || ((V) == (M) && signbit(M))))       \
+           (((V) != (V) && (M) == (M)) ||                    \
+            ((V) == (M) && signbit(M))))                     \
   (M) = (V)
 #define NX_C_CMB_MINF(M, V)                                   \
   if ((V) < (M))                                             \
     (M) = (V);                                               \
   else if (!((V) > (M)) &&                                   \
-           ((V) != (V) || ((V) == (M) && signbit(V))))       \
+           (((V) != (V) && (M) == (M)) ||                    \
+            ((V) == (M) && signbit(V))))                     \
   (M) = (V)
 #define NX_C_CMB_MAXF_LANE(M, V) (M) = nx_c_fmax(M, V)
 #define NX_C_CMB_MINF_LANE(M, V) (M) = nx_c_fmin(M, V)
@@ -172,21 +175,49 @@
     acc->NX_C_ACCF_##compute += NX_C_LANE_TREE(NX_C_SUM_LANE, NX_C_SUM_ADD);    \
   }
 
-/* Inclusive scan: sequential within a slice; the running value is stored back
+/* Inclusive scan: sequential within a chunk; the running value is stored back
    per element (so a float scan stores rounded copies while carrying full
-   precision). state carries across calls in case a slice is handed over split. */
+   precision). With `total`, the same walk also folds the chunk's own total in
+   order: the scan is latency-bound, so the second chain runs beside it for
+   free, where a separate fold of the chunk costs a pass. */
 #define NX_C_SCAN_STEP(opname, sfx, storage, compute, CMB)                      \
   static void nx_c_##opname##_step_##sfx(                                       \
       char *out, int64_t out_step, const char *in, int64_t in_step, int64_t n, \
-      nx_c_acc *state, void *ctx) {                                             \
+      nx_c_acc *state, nx_c_acc *total, void *ctx) {                            \
     (void)ctx;                                                                 \
     compute s = state->NX_C_ACCF_##compute;                                     \
-    for (int64_t k = 0; k < n; k++) {                                          \
-      compute v = nx_c_ld_##sfx(in + k * in_step);                             \
-      CMB(s, v);                                                               \
-      nx_c_st_##sfx(out + k * out_step, s);                                     \
+    if (total == NULL) {                                                       \
+      for (int64_t k = 0; k < n; k++) {                                        \
+        compute v = nx_c_ld_##sfx(in + k * in_step);                           \
+        CMB(s, v);                                                             \
+        nx_c_st_##sfx(out + k * out_step, s);                                   \
+      }                                                                        \
+    } else {                                                                   \
+      compute t = total->NX_C_ACCF_##compute;                                   \
+      for (int64_t k = 0; k < n; k++) {                                        \
+        compute v = nx_c_ld_##sfx(in + k * in_step);                           \
+        CMB(s, v);                                                             \
+        CMB(t, v);                                                             \
+        nx_c_st_##sfx(out + k * out_step, s);                                   \
+      }                                                                        \
+      total->NX_C_ACCF_##compute = t;                                           \
     }                                                                          \
     state->NX_C_ACCF_##compute = s;                                             \
+  }
+
+/* Combine: fold n compute values of `other` into n of `acc`, acc's terms
+   first (nx_c.h fold ABI). The float max/min forms are the lane forms, which
+   keep acc's NaN and vectorize over a row. */
+#define NX_C_COMBINE(opname, sfx, compute, CMB)                                 \
+  static void nx_c_##opname##_combine_##sfx(void *acc, const void *other,       \
+                                           int64_t n, void *ctx) {             \
+    (void)ctx;                                                                 \
+    compute *a = (compute *)acc;                                               \
+    const compute *b = (const compute *)other;                                 \
+    for (int64_t j = 0; j < n; j++) {                                          \
+      compute v = b[j];                                                        \
+      CMB(a[j], v);                                                            \
+    }                                                                          \
   }
 
 /* Argreduce over exactly one axis: k is the axis index directly (one run per
@@ -211,7 +242,7 @@
     }                                                                          \
   }
 
-/* Streaming reduction step (nx_c_engine.h streaming path): fold one reduced row
+/* Streaming reduction step (nx_c.h fold ABI, the streaming path): fold one row
    of n lane elements into a per-lane accumulator array. `first` seeds the array
    with SEED of this row, the op's identity combined with it as the per-output
    step's init does; otherwise it combines with CMB. The lane loop has
@@ -251,30 +282,19 @@
   }
 
 /* ── Shared init and fini ─────────────────────────────────────────────────────
-   init seeds the op identity; fini narrows the accumulator to the output dtype
-   (modular for ints, converting for f16/bf16/fp8, normalizing for bool). fini
-   depends only on the dtype, so one instance per compute dtype serves every
-   reduction that supports it. */
+   init seeds the op identity; fini narrows n compute-type accumulators to the
+   output dtype (modular for ints, converting for f16/bf16/fp8, normalizing for
+   bool) and writes them strided. fini depends only on the dtype, so one
+   instance per compute dtype serves every reduction that supports it. */
 #define NX_C_DEF_FINI(sfx, storage, compute, ld, st, cat)                       \
-  static void nx_c_fini_##sfx(char *out, const nx_c_acc *acc, void *ctx) {       \
-    (void)ctx;                                                                 \
-    nx_c_st_##sfx(out, acc->NX_C_ACCF_##compute);                                \
-  }
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_DEF_FINI)
-#undef NX_C_DEF_FINI
-
-/* Streaming scatter: convert the n compute-type accumulators to storage and
-   write the strided output slice. Depends only on the dtype (not the op), so one
-   instance per compute dtype is shared by every reduction's stream table. */
-#define NX_C_DEF_SCATTER(sfx, storage, compute, ld, st, cat)                    \
-  static void nx_c_scatter_##sfx(char *out, int64_t out_step, const void *accs, \
-                                int64_t n, void *ctx) {                        \
+  static void nx_c_fini_##sfx(char *out, int64_t out_step, const void *accs,    \
+                             int64_t n, void *ctx) {                           \
     (void)ctx;                                                                 \
     const compute *a = (const compute *)accs;                                  \
     for (int64_t j = 0; j < n; j++) nx_c_st_##sfx(out + j * out_step, a[j]);   \
   }
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_DEF_SCATTER)
-#undef NX_C_DEF_SCATTER
+NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_DEF_FINI)
+#undef NX_C_DEF_FINI
 
 /* zero/one init for sum/prod (and cumsum/cumprod); arith dtypes only. */
 #define NX_C_INIT_ZO(sfx, compute)                                              \
@@ -415,6 +435,73 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
 #undef NX_C_MIN_STEP_NX_C_CAT_BOOL
 #undef NX_C_MIN_STEP_NX_C_CAT_COMPLEX
 
+/* Combines, one per op over its supported categories: the per-output step's
+   combine for the integer, bool and complex categories, and the lane forms for
+   float max/min. */
+#define NX_C_SUM_COMBINE_NX_C_CAT_FLOAT(sfx, compute)                            \
+  NX_C_COMBINE(sum, sfx, compute, NX_C_CMB_SUM)
+#define NX_C_SUM_COMBINE_NX_C_CAT_SINT(sfx, compute)                             \
+  NX_C_COMBINE(sum, sfx, compute, NX_C_CMB_SUM_WRAP)
+#define NX_C_SUM_COMBINE_NX_C_CAT_UINT(sfx, compute)                             \
+  NX_C_COMBINE(sum, sfx, compute, NX_C_CMB_SUM)
+#define NX_C_SUM_COMBINE_NX_C_CAT_COMPLEX(sfx, compute)                          \
+  NX_C_COMBINE(sum, sfx, compute, NX_C_CMB_SUM)
+#define NX_C_SUM_COMBINE_NX_C_CAT_BOOL(sfx, compute)
+#define NX_C_PROD_COMBINE_NX_C_CAT_FLOAT(sfx, compute)                           \
+  NX_C_COMBINE(prod, sfx, compute, NX_C_CMB_PROD)
+#define NX_C_PROD_COMBINE_NX_C_CAT_SINT(sfx, compute)                            \
+  NX_C_COMBINE(prod, sfx, compute, NX_C_CMB_PROD_WRAP)
+#define NX_C_PROD_COMBINE_NX_C_CAT_UINT(sfx, compute)                            \
+  NX_C_COMBINE(prod, sfx, compute, NX_C_CMB_PROD)
+#define NX_C_PROD_COMBINE_NX_C_CAT_COMPLEX(sfx, compute)                         \
+  NX_C_COMBINE(prod, sfx, compute, NX_C_CMB_PROD)
+#define NX_C_PROD_COMBINE_NX_C_CAT_BOOL(sfx, compute)
+#define NX_C_MAX_COMBINE_NX_C_CAT_FLOAT(sfx, compute)                            \
+  NX_C_COMBINE(max, sfx, compute, NX_C_CMB_MAXF_LANE)
+#define NX_C_MAX_COMBINE_NX_C_CAT_SINT(sfx, compute)                             \
+  NX_C_COMBINE(max, sfx, compute, NX_C_CMB_MAXI)
+#define NX_C_MAX_COMBINE_NX_C_CAT_UINT(sfx, compute)                             \
+  NX_C_COMBINE(max, sfx, compute, NX_C_CMB_MAXI)
+#define NX_C_MAX_COMBINE_NX_C_CAT_BOOL(sfx, compute)                             \
+  NX_C_COMBINE(max, sfx, compute, NX_C_CMB_MAXB)
+#define NX_C_MAX_COMBINE_NX_C_CAT_COMPLEX(sfx, compute)
+#define NX_C_MIN_COMBINE_NX_C_CAT_FLOAT(sfx, compute)                            \
+  NX_C_COMBINE(min, sfx, compute, NX_C_CMB_MINF_LANE)
+#define NX_C_MIN_COMBINE_NX_C_CAT_SINT(sfx, compute)                             \
+  NX_C_COMBINE(min, sfx, compute, NX_C_CMB_MINI)
+#define NX_C_MIN_COMBINE_NX_C_CAT_UINT(sfx, compute)                             \
+  NX_C_COMBINE(min, sfx, compute, NX_C_CMB_MINI)
+#define NX_C_MIN_COMBINE_NX_C_CAT_BOOL(sfx, compute)                             \
+  NX_C_COMBINE(min, sfx, compute, NX_C_CMB_MINB)
+#define NX_C_MIN_COMBINE_NX_C_CAT_COMPLEX(sfx, compute)
+#define NX_C_COMBINE_ROW(sfx, storage, compute, ld, st, cat)                    \
+  NX_C_SUM_COMBINE_##cat(sfx, compute)                                         \
+  NX_C_PROD_COMBINE_##cat(sfx, compute)                                        \
+  NX_C_MAX_COMBINE_##cat(sfx, compute)                                         \
+  NX_C_MIN_COMBINE_##cat(sfx, compute)
+NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_COMBINE_ROW)
+#undef NX_C_COMBINE_ROW
+#undef NX_C_SUM_COMBINE_NX_C_CAT_FLOAT
+#undef NX_C_SUM_COMBINE_NX_C_CAT_SINT
+#undef NX_C_SUM_COMBINE_NX_C_CAT_UINT
+#undef NX_C_SUM_COMBINE_NX_C_CAT_COMPLEX
+#undef NX_C_SUM_COMBINE_NX_C_CAT_BOOL
+#undef NX_C_PROD_COMBINE_NX_C_CAT_FLOAT
+#undef NX_C_PROD_COMBINE_NX_C_CAT_SINT
+#undef NX_C_PROD_COMBINE_NX_C_CAT_UINT
+#undef NX_C_PROD_COMBINE_NX_C_CAT_COMPLEX
+#undef NX_C_PROD_COMBINE_NX_C_CAT_BOOL
+#undef NX_C_MAX_COMBINE_NX_C_CAT_FLOAT
+#undef NX_C_MAX_COMBINE_NX_C_CAT_SINT
+#undef NX_C_MAX_COMBINE_NX_C_CAT_UINT
+#undef NX_C_MAX_COMBINE_NX_C_CAT_BOOL
+#undef NX_C_MAX_COMBINE_NX_C_CAT_COMPLEX
+#undef NX_C_MIN_COMBINE_NX_C_CAT_FLOAT
+#undef NX_C_MIN_COMBINE_NX_C_CAT_SINT
+#undef NX_C_MIN_COMBINE_NX_C_CAT_UINT
+#undef NX_C_MIN_COMBINE_NX_C_CAT_BOOL
+#undef NX_C_MIN_COMBINE_NX_C_CAT_COMPLEX
+
 /* Streaming steps, one per op over its supported categories. sum uses a single
    per-lane accumulator (not the per-output float multi-accumulator: the lanes
    provide the vectorization here); float max/min use the lane forms of their
@@ -422,7 +509,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_MIN_STEP_ROW)
    Each seeds as its per-output step's init would: sum from +0, so a float sum
    that is exactly zero is +0 on both paths, prod from 1, which only a complex
    zero's sign notices, and max/min with the row itself. The scalar semantics —
-   including NaN propagation and the order of zeros for float max/min — are
+   including the first NaN and the order of zeros for float max/min — are
    identical. */
 #define NX_C_SEED_ZERO(compute, V) ((compute)0 + (V))
 #define NX_C_SEED_ONE(compute, V) ((compute)1 * (V))
@@ -627,7 +714,8 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CUMMIN_STEP_ROW)
    A slot is filled only for the categories an op supports (arith = numeric
    except bool; ord = float/int/bool, i.e. no complex); the rest stay NULL and
    the engine reports them. NX_C_SLOT emits `[dt] = prefix_sfx,` when the support
-   flag is 1 and nothing when 0. */
+   flag is 1 and nothing when 0. A scan names its op's fold table, for its
+   identity and combine, and shares its support. */
 #define NX_C_PASTE(a, b) NX_C_PASTE_(a, b)
 #define NX_C_PASTE_(a, b) a##b
 #define NX_C_SLOT_0(sfx, prefix)
@@ -655,8 +743,16 @@ static const nx_c_fold_table nx_c_sum_table = {
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_combine)
+    .combine = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_stream)
+    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
@@ -670,8 +766,16 @@ static const nx_c_fold_table nx_c_prod_table = {
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_combine)
+    .combine = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_stream)
+    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
@@ -685,8 +789,16 @@ static const nx_c_fold_table nx_c_max_table = {
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_max_combine)
+    .combine = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_max_stream)
+    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
@@ -700,56 +812,16 @@ static const nx_c_fold_table nx_c_min_table = {
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
+  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_min_combine)
+    .combine = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
+#undef NX_C_G
+#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_fini)
     .fini = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
-};
-
-/* Streaming tables mirror the fold tables' support masks: `stream` per op,
-   `scatter` per dtype (the shared instances). A slot is filled only where the
-   op streams that dtype; NULL elsewhere makes the driver fall back to the
-   per-output path. */
-static const nx_c_stream_table nx_c_sum_stream_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_sum_stream)
-    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_scatter)
-    .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-};
-
-static const nx_c_stream_table nx_c_prod_stream_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_prod_stream)
-    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_scatter)
-    .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-};
-
-static const nx_c_stream_table nx_c_max_stream_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_max_stream)
-    .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_scatter)
-    .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-};
-
-static const nx_c_stream_table nx_c_min_stream_table = {
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_min_stream)
     .stream = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_scatter)
-    .scatter = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
 #undef NX_C_G
 };
 
@@ -768,10 +840,7 @@ static const nx_c_arg_table nx_c_argmin_table = {
 };
 
 static const nx_c_scan_table nx_c_cumsum_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_zero)
-    .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
+    .op = &nx_c_sum_table,
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_cumsum_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
@@ -779,10 +848,7 @@ static const nx_c_scan_table nx_c_cumsum_table = {
 };
 
 static const nx_c_scan_table nx_c_cumprod_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_init_one)
-    .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
+    .op = &nx_c_prod_table,
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ARITH_##cat, sfx, nx_c_cumprod_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
@@ -790,10 +856,7 @@ static const nx_c_scan_table nx_c_cumprod_table = {
 };
 
 static const nx_c_scan_table nx_c_cummax_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_max)
-    .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
+    .op = &nx_c_max_table,
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_cummax_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
@@ -801,10 +864,7 @@ static const nx_c_scan_table nx_c_cummax_table = {
 };
 
 static const nx_c_scan_table nx_c_cummin_table = {
-#define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
-  NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_init_min)
-    .init = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
-#undef NX_C_G
+    .op = &nx_c_min_table,
 #define NX_C_G(sfx, storage, compute, ld, st, cat)                              \
   NX_C_SLOT(NX_C_SUP_ORD_##cat, sfx, nx_c_cummin_step)
     .step = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_G)},
@@ -824,40 +884,39 @@ static const nx_c_scan_table nx_c_cummin_table = {
    sentinel) — but only when there are outputs to fill; an empty result reduces
    nothing and is a no-op. sum/prod have identities 0/1, so they pass false and
    an empty extent stores the identity. The argreduce funnel rejects an empty
-   axis itself. */
+   axis itself. `vthreads` is the plan's thread count (nx_c_plan_threads). */
 
-#define NX_C_FOLD_STUB(cname, opname, table, stream_table, no_identity)         \
-  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxes) {        \
-    CAMLparam3(vout, vin, vaxes);                                              \
-    nx_c_fold_funnel((opname), &(table), &(stream_table), NX_C_COST_BANDWIDTH,   \
-                    vout, vin, vaxes, (no_identity), NULL);                    \
+#define NX_C_FOLD_STUB(cname, opname, table, no_identity)                      \
+  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxes,          \
+                                  value vthreads) {                            \
+    CAMLparam4(vout, vin, vaxes, vthreads);                                    \
+    nx_c_fold_funnel((opname), &(table), NX_C_COST_BANDWIDTH, vout, vin, vaxes,  \
+                    (no_identity), Int_val(vthreads), NULL);                   \
     CAMLreturn(Val_unit);                                                      \
   }
 
 #define NX_C_ARG_STUB(cname, opname, table)                                     \
-  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxis) {        \
-    CAMLparam3(vout, vin, vaxis);                                              \
+  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxis,          \
+                                  value vthreads) {                            \
+    CAMLparam4(vout, vin, vaxis, vthreads);                                    \
     nx_c_argreduce_funnel((opname), &(table), NX_C_COST_BANDWIDTH, vout, vin,    \
-                         Int_val(vaxis), NULL);                                \
+                         Int_val(vaxis), Int_val(vthreads), NULL);             \
     CAMLreturn(Val_unit);                                                      \
   }
 
 #define NX_C_SCAN_STUB(cname, opname, table)                                    \
-  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxis) {        \
-    CAMLparam3(vout, vin, vaxis);                                              \
+  CAMLprim value caml_nx_c_##cname(value vout, value vin, value vaxis,          \
+                                  value vthreads) {                            \
+    CAMLparam4(vout, vin, vaxis, vthreads);                                    \
     nx_c_scan_funnel((opname), &(table), NX_C_COST_BANDWIDTH, vout, vin,         \
-                    Int_val(vaxis), NULL);                                     \
+                    Int_val(vaxis), Int_val(vthreads), NULL);                  \
     CAMLreturn(Val_unit);                                                      \
   }
 
-NX_C_FOLD_STUB(reduce_sum, "reduce_sum", nx_c_sum_table, nx_c_sum_stream_table,
-              false)
-NX_C_FOLD_STUB(reduce_prod, "reduce_prod", nx_c_prod_table, nx_c_prod_stream_table,
-              false)
-NX_C_FOLD_STUB(reduce_max, "reduce_max", nx_c_max_table, nx_c_max_stream_table,
-              true)
-NX_C_FOLD_STUB(reduce_min, "reduce_min", nx_c_min_table, nx_c_min_stream_table,
-              true)
+NX_C_FOLD_STUB(reduce_sum, "reduce_sum", nx_c_sum_table, false)
+NX_C_FOLD_STUB(reduce_prod, "reduce_prod", nx_c_prod_table, false)
+NX_C_FOLD_STUB(reduce_max, "reduce_max", nx_c_max_table, true)
+NX_C_FOLD_STUB(reduce_min, "reduce_min", nx_c_min_table, true)
 NX_C_ARG_STUB(argmax, "argmax", nx_c_argmax_table)
 NX_C_ARG_STUB(argmin, "argmin", nx_c_argmin_table)
 NX_C_SCAN_STUB(cumsum, "cumsum", nx_c_cumsum_table)

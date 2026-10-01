@@ -584,6 +584,245 @@ let at_scale =
             (Nx.to_array (Nx.sum ~axes:[ 0 ] t)));
     ]
 
+(* Associations: what nx.mli promises of long reductions and scans, at the
+   lengths where the host cuts them into blocks and chunks. *)
+
+type wide = W : string * (float, 'b) Nx.dtype -> wide
+
+let wide = [ W ("float32", Nx.float32); W ("float64", Nx.float64) ]
+
+(* Integers in [-8, 8]: every partial sum of a few thousand of them is exact at
+   float32 and float64, so every association gives the integer sum. *)
+let small_integers n = Array.init n (fun _ -> float_of_int (Random.int 17 - 8))
+
+(* The [r] x [c] matrix of [m] in three layouts: contiguous, held transposed,
+   and flipped along its rows. *)
+let matrix_layouts dt r c m =
+  let at i j = m.((i * c) + j) in
+  [
+    ("contiguous", Nx.create dt [| r; c |] m);
+    ( "held transposed",
+      Nx.transpose
+        (Nx.create dt [| c; r |]
+           (Array.init (r * c) (fun k -> at (k mod r) (k / r)))) );
+    ( "flipped",
+      Nx.flip ~axes:[ 0 ]
+        (Nx.create dt [| r; c |]
+           (Array.init (r * c) (fun k -> at (r - 1 - (k / c)) (k mod c)))) );
+  ]
+
+let exact_sums =
+  cases
+    ~name:(fun (r, c) -> Printf.sprintf "%dx%d" r c)
+    "sums of small integers are exact on every path"
+    [ (1, 3077); (70, 70); (7, 3077); (3077, 7) ]
+    (fun (r, c) ->
+      let m = small_integers (r * c) in
+      let reference = Ref.create [| r; c |] m in
+      List.iter
+        (fun (W (name, dt)) ->
+          List.iter
+            (fun (layout, t) ->
+              List.iter
+                (fun axes ->
+                  let msg = Printf.sprintf "%s, %s" name layout in
+                  equal ~msg (Ref.witness float_exact)
+                    (Ref.reduce ?axes ~keepdims:false ( +. ) 0. reference)
+                    (Ref.of_nx (Nx.sum ?axes t)))
+                [ None; Some [ 0 ]; Some [ 1 ] ])
+            (matrix_layouts dt r c m))
+        wide)
+
+let negative_zeros () =
+  List.iter
+    (fun (W (name, dt)) ->
+      let z = Nx.full dt [| 2049; 3 |] (-0.) in
+      equal ~msg:name (array float_exact) [| 0. |]
+        (Nx.to_array (Nx.reshape [| 1 |] (Nx.sum z)));
+      equal ~msg:name (array float_exact) [| 0.; 0.; 0. |]
+        (Nx.to_array (Nx.sum ~axes:[ 0 ] z)))
+    wide
+
+(* The bits of [rows] lanes of [len] float32 values, row-major, every other lane
+   holding NaNs of distinct payloads at the positions [at], the payloads rotated
+   from lane to lane. *)
+let nan_payloads = [| 0x7fc0_0001l; 0xffc0_0002l; 0x7fc0_0003l |]
+
+let lanes_with_nans rows len ~at =
+  let bits =
+    Array.init (rows * len) (fun _ ->
+        Int32.bits_of_float (Random.float 2. -. 1.))
+  in
+  for r = 0 to rows - 1 do
+    if r mod 2 = 0 then
+      Array.iteri
+        (fun i p -> bits.((r * len) + p) <- nan_payloads.((i + r) mod 3))
+        at
+  done;
+  bits
+
+(* The float32 lanes of [bits] along [axis] of the result: the rows of a [rows]
+   x [len] matrix along axis 1, its columns along axis 0. *)
+let float32_lanes ~axis rows len bits =
+  let t = Nx.create Nx.int32 [| rows; len |] bits in
+  let t = if axis = 1 then t else Nx.contiguous (Nx.transpose t) in
+  Nx.bitcast Nx.float32 t
+
+let extreme_is_arg_element () =
+  let rows = 4 and len = 2051 in
+  (* one NaN in each of three blocks *)
+  let bits = lanes_with_nans rows len ~at:[| 17; 1500; 2049 |] in
+  List.iter
+    (fun axis ->
+      let x = float32_lanes ~axis rows len bits in
+      List.iter
+        (fun (name, extreme, arg) ->
+          let at_arg =
+            Nx.squeeze ~axes:[ axis ]
+              (Nx.take_along_axis ~axis ~indices:(arg ~axis ~keepdims:true x) x)
+          in
+          equal
+            ~msg:(Printf.sprintf "%s along axis %d" name axis)
+            (array int32)
+            (Nx.to_array (Nx.bitcast Nx.int32 at_arg))
+            (Nx.to_array (Nx.bitcast Nx.int32 (extreme ~axes:[ axis ] x))))
+        [
+          ( "max",
+            (fun ~axes x -> Nx.max ~axes x),
+            fun ~axis ~keepdims x -> Nx.argmax ~axis ~keepdims x );
+          ( "min",
+            (fun ~axes x -> Nx.min ~axes x),
+            fun ~axis ~keepdims x -> Nx.argmin ~axis ~keepdims x );
+        ])
+    [ 1; 0 ]
+
+let running_extremes_keep_the_first_nan () =
+  let rows = 3 and len = 9000 in
+  (* one NaN in each of three chunks *)
+  let bits = lanes_with_nans rows len ~at:[| 17; 5000; 8500 |] in
+  let x = float32_lanes ~axis:1 rows len bits in
+  List.iter
+    (fun (name, scan) ->
+      let out = Nx.to_array (Nx.bitcast Nx.int32 (scan x)) in
+      for r = 0 to rows - 1 do
+        let lane = Array.sub bits (r * len) len in
+        match
+          Array.find_index (fun b -> Float.is_nan (Int32.float_of_bits b)) lane
+        with
+        | None -> ()
+        | Some first ->
+            for i = first to len - 1 do
+              equal
+                ~msg:(Printf.sprintf "%s, lane %d, element %d" name r i)
+                int32 lane.(first)
+                out.((r * len) + i)
+            done
+      done)
+    [
+      ("cummax", fun x -> Nx.cummax ~axis:1 x);
+      ("cummin", fun x -> Nx.cummin ~axis:1 x);
+    ]
+
+(* The bits of a float tensor's elements, through float64, which holds every
+   float32 exactly. *)
+let float_bits t =
+  Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 t))
+
+let prefix_law =
+  cases ~name:(Printf.sprintf "%d elements")
+    "the running values of a prefix are the first running values"
+    [ 1; 8193; 12299 ] (fun n ->
+      let signed_zero () = if Random.bool () then 0. else -0. in
+      let sums =
+        Array.init n (fun _ ->
+            if Random.int 50 = 0 then signed_zero () else Random.float 2. -. 1.)
+      in
+      let products =
+        Array.init n (fun _ ->
+            if Random.int 5000 = 0 then signed_zero ()
+            else 1. +. Random.float 0.002 -. 0.001)
+      in
+      (* each side of the second and third chunks' starts *)
+      let prefixes =
+        List.filter
+          (fun k -> k <= n)
+          [ 1; 4096; 4097; 8192; 8193; 12288; 12289; n ]
+      in
+      List.iter
+        (fun (W (name, dt)) ->
+          List.iter
+            (fun (op, scan, values) ->
+              let x = Nx.create dt [| n |] values in
+              let whole = float_bits (scan x) in
+              List.iter
+                (fun k ->
+                  equal
+                    ~msg:(Printf.sprintf "%s of %s, prefix %d" op name k)
+                    (array int64) (Array.sub whole 0 k)
+                    (float_bits (scan (Nx.shrink [| (0, k) |] x))))
+                prefixes)
+            [
+              ("cumsum", (fun x -> Nx.cumsum x), sums);
+              ("cumprod", (fun x -> Nx.cumprod x), products);
+            ])
+        wide)
+
+let exact_running_sums () =
+  let n = 12299 in
+  let xs = small_integers n in
+  let running = Array.copy xs in
+  for i = 1 to n - 1 do
+    running.(i) <- running.(i - 1) +. xs.(i)
+  done;
+  List.iter
+    (fun (W (name, dt)) ->
+      equal ~msg:name (array float_exact) running
+        (Nx.to_array (Nx.cast Nx.float64 (Nx.cumsum (Nx.create dt [| n |] xs)))))
+    wide
+
+(* A running sum is a float sum as sum describes, so each is within rounding of
+   the exact running sum. Nothing here assumes the running sums of non-negative
+   terms never decrease: rounding can break that. *)
+let running_sums_round () =
+  let n = 12299 in
+  let xs = Array.init n (fun _ -> Random.float 1.) in
+  let actual =
+    Nx.to_array
+      (Nx.cast Nx.float64 (Nx.cumsum (Nx.create Nx.float32 [| n |] xs)))
+  in
+  let eps =
+    epsilon_float *. 0x1p29
+    (* float32's *)
+  in
+  let exact = ref 0. in
+  Array.iteri
+    (fun i x ->
+      (* the float32 terms, summed in float64: exact well within the bound *)
+      exact := !exact +. Int32.float_of_bits (Int32.bits_of_float x);
+      let bound = 2. *. Float.of_int (i + 2) *. eps *. !exact in
+      equal
+        ~msg:(Printf.sprintf "element %d" i)
+        (close ~abs:bound ~rel:0. ())
+        !exact actual.(i))
+    xs
+
+let associations =
+  group "associations"
+    [
+      exact_sums;
+      test "a long sum of -0s is +0, across rows and along them" negative_zeros;
+      test
+        "max and min along an axis are the elements argmax and argmin find, \
+         NaN payloads included"
+        extreme_is_arg_element;
+      test "cummax and cummin carry the first NaN past every chunk"
+        running_extremes_keep_the_first_nan;
+      prefix_law;
+      test "cumsum of small integers is exact across chunks" exact_running_sums;
+      test "cumsum of non-negative float32 is within rounding of the exact one"
+        running_sums_round;
+    ]
+
 let () =
   exit
     (run "nx reductions"
@@ -595,5 +834,6 @@ let () =
          scans;
          signed_zeros;
          normalisations;
+         associations;
          at_scale;
        ])

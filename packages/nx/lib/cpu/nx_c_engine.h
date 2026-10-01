@@ -97,7 +97,8 @@ NX_C_NORETURN void nx_c_raise_status(const char *op, nx_c_status status);
 
    Standard driver pattern for a custom family (this IS the contract):
      1. validate operands.
-     2. nthreads = nx_c_threads_for(cls, ...)   — policy stays an explicit step,
+     2. nthreads = nx_c_threads_for(cls, ...), or nx_c_plan_threads for a
+        family whose kernels combine elements — policy stays an explicit step,
         and it must come first: scratch is sized by nthreads.
      3. Allocate nthreads * per_slot_bytes of scratch with nx_c_aligned_alloc. A
         failed allocation is the only place the driver reports a failure STATUS (NX_C_ERR_ALLOC; the funnel
@@ -130,45 +131,6 @@ nx_c_status nx_c_map_run(const nx_c_map_table *tbl, nx_c_dtype dt, int nin,
                        const nx_c_ndarray *ops, const int64_t *elem_size,
                        nx_c_cost_class cls, void *ctx);
 
-/* ── Streaming reduction kernels (the fold driver's contiguous-input path) ───
-
-   When a KEPT (output) axis is more contiguous than every reduced axis, the
-   per-output path gathers each output's reduced run with a large stride — a
-   fresh cache line per element for an axis-0 sum of a C-contiguous matrix. The
-   driver's streaming path instead walks the input
-   contiguously, folding each reduced "row" of `n` lane elements into an array of
-   `n` accumulators, then converting the accumulators to the output slice. The
-   lane is the most-contiguous kept axis, so the per-row fold vectorizes across
-   lanes; reads are sequential over the whole input.
-
-   `accs` is a driver-owned scratch of `n` accumulators in the op's COMPUTE type
-   (so f16/bf16/fp8 keep their float accumulation and small ints their 64-bit
-   accumulation, exactly as the per-output path). One accumulator per lane runs
-   over the reduced extent sequentially — the multi-accumulator unrolling of the
-   contiguous per-output step (nx_c_fold.c) is a property of THAT traversal;
-   streaming's vectorization comes from the lanes instead. Each lane folds the
-   reduced extent in a fixed order (input order over the reduced axes); for a
-   single reduced axis that is exactly the per-output order, and sums stay within
-   the conformance suite's reassociation tolerance in every case.
-
-   stream: fold one reduced row into the `n` accumulators. `first != 0` seeds
-     them from this row (accs[j] = load(in_row + j*lane_step)); `first == 0`
-     folds it in (accs[j] <combine>= load(in_row + j*lane_step)). Op-specific.
-   scatter: convert the `n` accumulators to storage and write the output slice
-     (out[j*out_step] = accs[j]). Depends only on the dtype, so all four
-     reduction tables share one instance per dtype.
-
-   A NULL stream/scatter slot (packed dtype, or an op with no streaming form)
-   makes the driver fall back to the per-output path — always correct. */
-typedef void nx_c_fold_stream(void *accs, const char *in_row, int64_t lane_step,
-                             int64_t n, int first, void *ctx);
-typedef void nx_c_fold_scatter(char *out, int64_t out_step, const void *accs,
-                              int64_t n, void *ctx);
-typedef struct {
-  nx_c_fold_stream *stream[NX_C_DTYPE_COUNT];
-  nx_c_fold_scatter *scatter[NX_C_DTYPE_COUNT];
-} nx_c_stream_table;
-
 /* ── Fold driver ───────────────────────────────────────────────────────────
    Reduce `in` over `reduce_axes` (n_reduce input-axis indices, strictly
    increasing, each in [0, in->ndim)) into `out`. `out` has rank
@@ -184,34 +146,50 @@ typedef struct {
    INT64_MIN sentinel a max kernel would otherwise store can never escape, no
    matter which caller (funnel or raw) drives the fold.
 
-   `stbl` (nullable) supplies the streaming kernels above; when it is non-NULL
-   and a kept axis out-contiguities every reduced axis, the driver takes the
-   streaming path. NULL forces the per-output path (a caller with no streaming
-   form, e.g. an experimental op). */
-nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, const nx_c_stream_table *stbl,
-                        nx_c_dtype dt, const nx_c_ndarray *in, int64_t in_elem,
+   The plan is a function of the operands' shapes and layouts, and nx_c.h's
+   Associations section gives what each path computes:
+   - Axes of extent 1 are dropped, kept and reduced alike: they carry no
+     iteration, and their strides are arbitrary.
+   - The reduced axes are ordered from the largest |stride| to the smallest,
+     ties by axis index, and neighbours that are contiguous with each other
+     (the outer's stride is the inner's times the inner's extent) merge. The
+     last is the run, and the rows are the points of all of them, in order.
+   - The streaming path is taken when a kept axis has a smaller |stride| than
+     every reduced axis. Its lane is the kept axis of smallest |stride|, the
+     first of equal ones, and its panels are the points of the other kept
+     axes. Otherwise the per-output path folds each output's runs with the
+     table's step.
+   A unit of parallel work is one output on the per-output path, and one
+   panel's tile of at most a fixed number of lanes on the streaming path, so
+   each worker's scratch is bounded however long the lane. A unit's bits
+   depend on neither which worker runs it nor how many do. `threads` is the
+   plan's thread count (nx_c_plan_threads). */
+nx_c_status nx_c_fold_run(const nx_c_fold_table *tbl, nx_c_dtype dt,
+                        const nx_c_ndarray *in, int64_t in_elem,
                         const nx_c_ndarray *out, int64_t out_elem,
                         const int *reduce_axes, int n_reduce, bool no_identity,
-                        nx_c_cost_class cls, void *ctx);
+                        nx_c_cost_class cls, int threads, void *ctx);
 
 /* ── Argreduce driver ──────────────────────────────────────────────────────
    Argmax/argmin over exactly one axis. `out` is int64, rank in->ndim - 1, its
    axes aligned in order to the non-`axis` input axes. Rejects an empty axis
-   (NX_C_ERR_EMPTY_REDUCE) before any work. */
+   (NX_C_ERR_EMPTY_REDUCE) before any work. A unit of parallel work is one
+   output. `threads` is the plan's thread count (nx_c_plan_threads). */
 nx_c_status nx_c_argreduce_run(const nx_c_arg_table *tbl, nx_c_dtype dt,
                              const nx_c_ndarray *in, int64_t in_elem,
                              const nx_c_ndarray *out, int axis,
-                             nx_c_cost_class cls, void *ctx);
+                             nx_c_cost_class cls, int threads, void *ctx);
 
 /* ── Scan driver ───────────────────────────────────────────────────────────
-   Inclusive prefix scan over one axis; `out` has the same shape as `in`. The
-   slices (the odometer over every non-`axis` dim) are independent and run in
-   parallel; within a slice the walk is sequential. in_elem / out_elem are the
-   operands' element byte sizes. */
+   Inclusive prefix scan over one axis; `out` has the same shape as `in`. A
+   slice, one point of the non-`axis` dims, is scanned in chunks of
+   NX_C_SCAN_CHUNK (nx_c.h, Associations), and a unit of parallel work is one
+   slice. in_elem / out_elem are the operands' element byte sizes. `threads` is
+   the plan's thread count (nx_c_plan_threads). */
 nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
                         const nx_c_ndarray *in, int64_t in_elem,
                         const nx_c_ndarray *out, int64_t out_elem, int axis,
-                        nx_c_cost_class cls, void *ctx);
+                        nx_c_cost_class cls, int threads, void *ctx);
 
 /* ── The funnel: the ONE way a family stub reaches a driver ─────────────────
 
@@ -230,19 +208,20 @@ nx_c_status nx_c_scan_run(const nx_c_scan_table *tbl, nx_c_dtype dt,
    ascending — the binding's responsibility, verified here) / `axis` and infer
    keepdims from the output rank. `no_identity` is the fold op's empty-axis
    policy (true for max/min, false for sum/prod), forwarded to nx_c_fold_run.
-   `ctx` is the op's parameter block or NULL. */
+   `threads` is the CAMLprim's last argument, the plan's thread count
+   (nx_c_plan_threads): nx.cpu passes 0. `ctx` is the op's parameter block or
+   NULL. */
 void nx_c_map_funnel(const char *op, const nx_c_map_table *tbl,
                     nx_c_cost_class cls, int nin, const value *vals, void *ctx);
 void nx_c_fold_funnel(const char *op, const nx_c_fold_table *tbl,
-                     const nx_c_stream_table *stbl, nx_c_cost_class cls,
-                     value vout, value vin, value vaxes, bool no_identity,
-                     void *ctx);
+                     nx_c_cost_class cls, value vout, value vin, value vaxes,
+                     bool no_identity, int threads, void *ctx);
 void nx_c_argreduce_funnel(const char *op, const nx_c_arg_table *tbl,
                           nx_c_cost_class cls, value vout, value vin, int axis,
-                          void *ctx);
+                          int threads, void *ctx);
 void nx_c_scan_funnel(const char *op, const nx_c_scan_table *tbl,
                      nx_c_cost_class cls, value vout, value vin, int axis,
-                     void *ctx);
+                     int threads, void *ctx);
 
 /* Map-family CAMLprim generators, for ops whose kernel is keyed by the OUTPUT
    dtype — the elementwise ops where output, inputs, and kernel share one dtype

@@ -484,17 +484,19 @@ CAMLprim value caml_nx_c_gather(value vout, value vdata, value vindices,
    out[c with axis -> indices[c]] for each index-space point c. `Set overwrites
    (last write in row-major scan order wins); `Add accumulates. An update whose
    index lies outside [0, axis_len), negative included, is dropped, as compiled
-   code drops it. Scatter runs SERIALLY: `Set's last-wins is only well defined
-   under a fixed order, and a parallel `Add over duplicate targets is an
-   unsynchronized read-modify-write race. A serial row-major walk makes both
-   modes deterministic and race-free with no partitioning or atomics; unique_indices
-   could unlock a parallel path but is not needed for correctness and buys
-   nothing on the ops that use scatter, so it is accepted and ignored. Add uses
-   a per-dtype accumulate (compute-typed load/add/store), which packed dtypes
-   have none of; Set is a bit-exact element move. Serial does NOT mean under the runtime lock: the walk is a
-   one-worker body driven through nx_c_parallel_for, which runs it in order on
-   the calling thread and releases/re-acquires the lock around it per the
-   engine's size cutoff, like every other kernel. */
+   code drops it. The order of the updates is nx_c.h's (Associations), and a
+   parallel plan must keep it. Scatter runs SERIALLY: `Set's last-wins is only
+   well defined under a fixed order, and a parallel `Add over duplicate targets
+   is an unsynchronized read-modify-write race. A serial row-major walk makes
+   both modes deterministic and race-free with no partitioning or atomics;
+   unique_indices could unlock a parallel path but is not needed for
+   correctness and buys nothing on the ops that use scatter, so it is accepted
+   and ignored. Add uses a per-dtype accumulate (compute-typed load/add/store),
+   which packed dtypes have none of; Set is a bit-exact element move. Serial
+   does NOT mean under the runtime lock: the walk is a one-worker body driven
+   through nx_c_parallel_for, which runs it in order on the calling thread and
+   releases/re-acquires the lock around it per the engine's size cutoff, like
+   every other kernel. */
 
 /* Compute-typed add for scatter-add and fold's accumulate. The signed form
    runs in the unsigned width: the contract is modular wrap (SINT compute is

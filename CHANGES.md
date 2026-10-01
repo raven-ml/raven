@@ -2931,6 +2931,19 @@ thread.
 
 ### Nx
 
+- Reductions and scans on the host give the same bits on every thread count,
+  where a reduction keeping a long contiguous axis could change its association
+  with the number of cores. Float sums over more than 1024 terms or over several
+  axes, and float scans over more than 8192 elements, change their last bits and
+  gain accuracy.
+- `cumsum` and `cumprod` keep the bits of their earlier outputs when the input
+  grows: the running sums of a prefix are the first running sums of the whole.
+  Past 8192 elements, the running sums of non-negative terms can decrease by a
+  rounding.
+- `max`, `min`, `cummax` and `cummin` return the first NaN along an axis, the one
+  `argmax` and `argmin` find, where a later NaN could replace it.
+- Reductions across a contiguous axis longer than 4M elements (512K on eight
+  threads) no longer fall back to a strided walk.
 - `Nx_device.Buffer.Claim.with_` checks a call's donated buffers against its
   other buffers in `n log n` time, where a call donating a model's parameters
   and optimizer state made a quadratic number of overlap checks.

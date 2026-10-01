@@ -166,72 +166,76 @@ let compare (k : Nx_backend.compare) x y ~dst =
 let where c x y ~dst = caml_where dst c x y
 let cast x ~dst = caml_cast dst x
 
-(* Fold family (nx_c_fold.c). The engine takes sorted axes. *)
+(* Fold family (nx_c_fold.c). The engine takes sorted axes. The kernels of the
+   families that combine elements take the plan's thread count last; 0 leaves it
+   to the engine's policy. *)
 
-external caml_reduce_sum : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
+let policy = 0
+
+external caml_reduce_sum : ('a, 'b) t -> ('a, 'b) t -> int array -> int -> unit
   = "caml_nx_c_reduce_sum"
 
-external caml_reduce_prod : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
+external caml_reduce_prod : ('a, 'b) t -> ('a, 'b) t -> int array -> int -> unit
   = "caml_nx_c_reduce_prod"
 
-external caml_reduce_max : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
+external caml_reduce_max : ('a, 'b) t -> ('a, 'b) t -> int array -> int -> unit
   = "caml_nx_c_reduce_max"
 
-external caml_reduce_min : ('a, 'b) t -> ('a, 'b) t -> int array -> unit
+external caml_reduce_min : ('a, 'b) t -> ('a, 'b) t -> int array -> int -> unit
   = "caml_nx_c_reduce_min"
 
 external caml_argmax :
-  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_argmax"
 
 external caml_argmin :
-  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_argmin"
 
-external caml_cumsum : ('a, 'b) t -> ('a, 'b) t -> int -> unit
+external caml_cumsum : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_cumsum"
 
-external caml_cumprod : ('a, 'b) t -> ('a, 'b) t -> int -> unit
+external caml_cumprod : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_cumprod"
 
-external caml_cummax : ('a, 'b) t -> ('a, 'b) t -> int -> unit
+external caml_cummax : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_cummax"
 
-external caml_cummin : ('a, 'b) t -> ('a, 'b) t -> int -> unit
+external caml_cummin : ('a, 'b) t -> ('a, 'b) t -> int -> int -> unit
   = "caml_nx_c_cummin"
 
 let reduce (k : Nx_backend.reduce) ~axes x ~dst =
   let axes = Array.copy axes in
   Array.sort Stdlib.compare axes;
   match k with
-  | Sum -> caml_reduce_sum dst x axes
-  | Prod -> caml_reduce_prod dst x axes
-  | Max -> caml_reduce_max dst x axes
-  | Min -> caml_reduce_min dst x axes
+  | Sum -> caml_reduce_sum dst x axes policy
+  | Prod -> caml_reduce_prod dst x axes policy
+  | Max -> caml_reduce_max dst x axes policy
+  | Min -> caml_reduce_min dst x axes policy
 
 let arg_reduce (k : Nx_backend.arg_reduce) ~axis x ~dst =
   match k with
-  | Argmax -> caml_argmax dst x axis
-  | Argmin -> caml_argmin dst x axis
+  | Argmax -> caml_argmax dst x axis policy
+  | Argmin -> caml_argmin dst x axis policy
 
 let scan (k : Nx_backend.reduce) ~axis x ~dst =
   match k with
-  | Sum -> caml_cumsum dst x axis
-  | Prod -> caml_cumprod dst x axis
-  | Max -> caml_cummax dst x axis
-  | Min -> caml_cummin dst x axis
+  | Sum -> caml_cumsum dst x axis policy
+  | Prod -> caml_cumprod dst x axis policy
+  | Max -> caml_cummax dst x axis policy
+  | Min -> caml_cummin dst x axis policy
 
 (* Sort family (nx_c_sort.c) *)
 
-external caml_sort : ('a, 'b) t -> ('a, 'b) t -> int -> bool -> unit
+external caml_sort : ('a, 'b) t -> ('a, 'b) t -> int -> bool -> int -> unit
   = "caml_nx_c_sort"
 
 external caml_argsort :
-  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> bool -> unit
+  (int64, Nx_dtype.int64_elt) t -> ('a, 'b) t -> int -> bool -> int -> unit
   = "caml_nx_c_argsort"
 
-let sort ~descending ~axis x ~dst = caml_sort dst x axis descending
-let argsort ~descending ~axis x ~dst = caml_argsort dst x axis descending
+let sort ~descending ~axis x ~dst = caml_sort dst x axis descending policy
+let argsort ~descending ~axis x ~dst = caml_argsort dst x axis descending policy
 
 (* Move family (nx_c_move.c): the strided copy, and the kernels that write their
    operands into the destination. The pad value crosses to C as a one-element

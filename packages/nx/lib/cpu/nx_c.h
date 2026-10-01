@@ -384,13 +384,16 @@ static inline int64_t nx_c_dtype_bytes(nx_c_dtype dt, int64_t count) {
      0/1-preserving. Arithmetic that could break the invariant is promoted away
      by the frontend and never reaches a bool kernel.
    - Integer div/mod/recip by zero return 0 (total, never trap).
-   - Small-int and bool reductions accumulate in 64-bit (the compute widths
-     above); f16/bf16/fp8 accumulate in float.
+   - Small-int reductions accumulate in 64-bit (the compute widths above);
+     bool folds as 0/1 bytes; f16/bf16/fp8 accumulate in float.
    - Complex has no mod and no ordered comparison; rounding/abs/sign on complex
      are the kernel's concern (rejected loudly, never identity), not the ABI's.
    - Float max/min, elementwise, reduced or scanned, are IEEE 754-2019 maximum
-     and minimum: NaN propagates and -0 orders below +0. argmax/argmin and sort
-     order the zeros the same way.
+     and minimum: NaN propagates and -0 orders below +0. A NaN result is the
+     first NaN met, the left operand's elementwise and the earliest in a
+     reduction's or a scan's order, so every grouping of a reduction gives the
+     same bits. argmax/argmin and sort order the zeros the same way, and
+     argmax/argmin find the first NaN.
    - A float sum (a reduction, a scan, scatter's additions, fold's overlaps, a
      matmul's contraction) is +0 plus its terms, so one that is exactly zero is
      +0 whatever the association and the layout. */
@@ -430,21 +433,65 @@ NX_C_DEFINE_FEXTREMES(double, uint64_t)
 #define nx_c_fmin(a, b)                                                        \
   _Generic((a), float: nx_c_fmin_float, double: nx_c_fmin_double)(a, b)
 
-/* ── Float summation order ────────────────────────────────────────────────
+/* ── Associations ─────────────────────────────────────────────────────────
 
-   A sum over a run (a reduction's run, a dot's chunk) keeps NX_C_LANES partial
-   sums: element p of the run goes to lane p mod NX_C_LANES whatever the stride,
-   and NX_C_LANE_TREE combines the lanes by one fixed balanced tree. A
-   contiguous run vectorizes over independent accumulators, and the rounding
-   depends on neither the layout nor the machine. LANE(i) names lane i and ADD
-   is the compute type's addition.
+   Lanes. A float sum over a stretch of terms (a piece of a reduction's run, a
+   dot's chunk) keeps NX_C_LANES partial sums: term p of the stretch goes to
+   lane p mod NX_C_LANES whatever the stride, and NX_C_LANE_TREE combines the
+   lanes by one fixed balanced tree. A contiguous stretch vectorizes over
+   independent accumulators. LANE(i) names lane i and ADD is the compute type's
+   addition.
 
    The matmul's dot-shaped paths (the split path, a 1x1 output among them; the
    row path; the direct loop) share one order for an output: its contraction
    in fixed chunks of MM_DOT_CHUNK (65536) elements, each chunk in these lanes
    and this tree, the chunks added in order. Each such output has the bits of
    the dot of its row and column. The blocked kernel, which sums along k in
-   order, and Accelerate on macOS do not. */
+   order, and Accelerate on macOS do not.
+
+   Every other kernel that combines elements fixes its order from its
+   operands' shapes and layouts, never from the number of threads that run it;
+   only Accelerate makes no such promise. Integer sums and products are
+   modular and float max/min keep the first NaN, so those give the same bits
+   under every grouping, and the orders below decide the bits of float and
+   complex sums and products.
+
+   Reductions (nx_c_fold_run). The fold driver orders the reduced axes by the
+   layout and chooses one of two paths by the layout (nx_c_engine.h). On both,
+   an output's terms, in the order of the ordered reduced axes, are cut into
+   blocks of NX_C_FOLD_BLOCK consecutive terms, the last shorter, and the
+   blocks' results combine in order by the left-complete binary tree: a power
+   of two of them pairs neighbours level by level, and any other count splits
+   after the largest power of two below it, the left part complete. A binary
+   counter computes it in one pass, combining the two newest results once for
+   each trailing zero of the number of blocks done.
+   - On the per-output path, a block is folded from the identity by one step
+     per piece of a run it holds. A float sum folds a piece in lanes; complex
+     sums and the other ops fold it in order.
+   - On the streaming path, a block is NX_C_FOLD_BLOCK consecutive rows, and it
+     folds each output's terms in row order.
+   A block's sum starts from +0 and is never -0, so a float sum that is exactly
+   zero is +0 on both paths.
+
+   Scans (nx_c_scan_run). A slice is cut into chunks of NX_C_SCAN_CHUNK
+   elements counted from its start. Its first chunk is scanned in order from
+   the identity. Every later chunk is rescanned in order from its carry, the
+   in-order combination of the totals of the chunks before it, each total
+   folded in order from the identity. So an output's association depends only
+   on its position, and the scan of a prefix of a slice is the prefix of the
+   slice's scan. An integer or bool scan, exact under every grouping, is
+   walked in one chunk.
+
+   Scatter (nx_c_move.c). Updates apply one at a time in the row-major order
+   of their index space: under Set the last update to a position wins, and
+   under Add a position that an update reaches holds +0 plus its value, then
+   each of its updates added in that order; one that none reaches keeps its
+   value. float16, bfloat16 and the float8 dtypes round to
+   storage after every update.
+
+   NX_C_FOLD_BLOCK and NX_C_SCAN_CHUNK fix bits outside nx's contract, which
+   leaves sum's association unspecified: changing either changes bits and
+   nothing a caller may rely on. */
 #define NX_C_LANES 16
 #define NX_C_LANE_TREE(LANE, ADD)                                             \
   ADD(ADD(ADD(ADD(LANE(0), LANE(1)), ADD(LANE(2), LANE(3))),                  \
@@ -452,6 +499,8 @@ NX_C_DEFINE_FEXTREMES(double, uint64_t)
       ADD(ADD(ADD(LANE(8), LANE(9)), ADD(LANE(10), LANE(11))),                \
           ADD(ADD(LANE(12), LANE(13)), ADD(LANE(14), LANE(15)))))
 _Static_assert(NX_C_LANES == 16, "NX_C_LANE_TREE combines sixteen lanes");
+#define NX_C_FOLD_BLOCK 1024
+#define NX_C_SCAN_CHUNK 4096
 
 /* ── Status protocol ──────────────────────────────────────────────────────
 
@@ -558,7 +607,7 @@ static inline nx_c_dtype nx_c_dtype_of_value(value v) {
    block (a fill value, a comparison mode, …) or NULL; its layout belongs to the
    kernel's own file, not this header.
 
-   These four ABIs cover the *generated* families (map, fold, argreduce, scan).
+   These ABIs cover the *generated* families (map, fold, argreduce, scan).
    The custom families — sort/argsort, gather/scatter, pad/cat, unfold, matmul,
    linalg, fft — own their own driver signatures in their own files: their
    access is data- or structure-dependent and does not ride a 1-D
@@ -574,35 +623,73 @@ typedef void nx_c_map_loop(char *const *ptrs, const int64_t *steps, int64_t n,
 
 /* An accumulator wide enough for any fold or scan of any compute dtype: a
    single reduced value in the op's accumulate type. Small-int sums use `i`
-   (int64), unsigned wide sums `u`, floats `f`/`d`, complex `c32`/`c64`.
-   Within-run multi-accumulator unrolling is a kernel-local concern; only this
-   one reduced value is carried between step() calls. */
+   (int64), unsigned wide sums `u`, bool `b`, floats `f`/`d`, complex
+   `c32`/`c64`: every accumulator holds its compute type at offset 0, which
+   combine relies on. Within-run multi-accumulator unrolling is a kernel-local
+   concern; only this one reduced value is carried between step() calls. */
 typedef union {
   int64_t i;
   uint64_t u;
+  uint8_t b;
   float f;
   double d;
   nx_c_complex32 c32;
   nx_c_complex64 c64;
 } nx_c_acc;
 
-/* fold — axis reduction (sum, prod, max, min). The engine drives one output
-   element as:
-       init(acc, ctx);                 // op+dtype seed
-       for each strided run feeding this output:
-         step(acc, in, in_step, n, ctx);   // fold n elements into acc
-       fini(out, acc, ctx);            // convert acc to out dtype and store
-   Multiple step() calls cover non-innermost and multi-axis reductions; a single
-   call covers the contiguous fast path. sum/prod seed the neutral identity
-   (0/1), so an empty reduced extent stores it; max/min have no neutral identity
-   for an empty axis (the fold driver rejects that case before any kernel runs,
-   gated by its no_identity flag which max/min stubs set true), and
-   init seeds a sentinel extreme (±inf / INT64_MIN / INT64_MAX) so the first
-   real element always wins. */
+/* fold — axis reduction (sum, prod, max, min), in blocks combined by a tree
+   (Associations). The per-output path drives one output as:
+       for each block of the output's terms, in order:
+         init(acc, ctx);                    // op+dtype identity
+         for each piece of a run in the block:
+           step(acc, in, in_step, n, ctx);  // fold the piece's n terms
+         push acc; for each trailing zero of the blocks done:
+           combine(older, newer, 1, ctx);   // older = older ⊕ newer
+       combine what remains, newest first; fini(out, 0, acc, 1, ctx);
+   An output with no term stores init's identity through fini. step folds n
+   terms of one strided run into whatever acc holds, a float sum in NX_C_LANES
+   lanes and every other op in order. sum/prod seed the neutral identity
+   (0/1); max/min have no neutral identity for an empty axis (the fold driver
+   rejects that case before any kernel runs, gated by its no_identity flag
+   which max/min stubs set true), and init seeds a sentinel extreme (±inf /
+   INT64_MIN / INT64_MAX) so the first real element always wins.
+
+   combine folds n compute values of `other` into n of `acc`, element by
+   element: acc[j] = acc[j] ⊕ other[j], acc's terms preceding other's. It
+   combines the block tree's results, one value on the per-output path and a
+   row of accumulators on the streaming path, and a scan's carry with a
+   chunk's total. acc and other point at n consecutive values of the op's
+   compute type, which an nx_c_acc holds one of.
+
+   The streaming path (nx_c_engine.h) serves a reduction across a kept axis
+   more contiguous than every reduced axis, such as an axis-0 sum of a
+   C-contiguous matrix, where the per-output path would gather each output's
+   terms a fresh cache line apart. It walks the input a row at a time: a row
+   is one point of the reduced axes, and its elements along the lane, the most
+   contiguous kept axis, are one term of each of `n` outputs. Folding a row
+   into `n` accumulators vectorizes across the lane, and every row is read
+   whole. `accs` is `n` accumulators of the op's compute type, so f16/bf16/fp8
+   keep their float accumulation and small ints their 64-bit accumulation, as
+   on the per-output path.
+     stream folds one row into the `n` accumulators. `first != 0` seeds them
+       from this row as init then step would (accs[j] = the identity combined
+       with load(in_row + j*lane_step)); the driver passes it at the first row
+       of each block. `first == 0` folds the row in (accs[j] <combine>=
+       load(in_row + j*lane_step)).
+
+   fini converts `n` accumulators of the compute type to storage and writes
+   them (out[j*out_step] = accs[j]): one output on the per-output path, a
+   tile's row on the streaming path. It depends only on the dtype, so all four
+   reduction tables share one instance per dtype. */
 typedef void nx_c_fold_init(nx_c_acc *acc, void *ctx);
 typedef void nx_c_fold_step(nx_c_acc *acc, const char *in, int64_t in_step,
                            int64_t n, void *ctx);
-typedef void nx_c_fold_fini(char *out, const nx_c_acc *acc, void *ctx);
+typedef void nx_c_fold_combine(void *acc, const void *other, int64_t n,
+                              void *ctx);
+typedef void nx_c_fold_fini(char *out, int64_t out_step, const void *accs,
+                           int64_t n, void *ctx);
+typedef void nx_c_fold_stream(void *accs, const char *in_row, int64_t lane_step,
+                             int64_t n, int first, void *ctx);
 
 /* argreduce — argmax/argmin over exactly one axis (backend_intf: single axis,
    int64 result). The accumulator carries the running extreme value and its
@@ -625,17 +712,20 @@ typedef void nx_c_arg_step(nx_c_arg_acc *acc, const char *in, int64_t in_step,
                           int64_t n, void *ctx);
 
 /* scan — inclusive cumulative op (cumsum, cumprod, cummax, cummin) along one
-   axis. Slices are independent (the engine parallelizes across them); within a
-   slice the walk is sequential. Per slice:
-       init(state, ctx);              // op+dtype identity
-       step(out, out_step, in, in_step, n, state, ctx);
-   step reads in[k], folds it into *state, and writes the running result to
-   out[k]. state carries across calls so a slice may be handed to step in
-   pieces. */
-typedef void nx_c_scan_init(nx_c_acc *state, void *ctx);
+   axis, in chunks (Associations). A scan is its op's fold table, for the
+   identity and combine, and a step that stores running values:
+       step(out, out_step, in, in_step, n, state, total, ctx);
+   step reads in[k], folds it into *state and writes the running result to
+   out[k]; when `total` is not NULL it also folds in[k] into *total. state and
+   total carry across calls. Per slice, with id the op's identity from init,
+   the driver runs:
+       first chunk:           state = id; step(.., &state, NULL); carry = state
+       later chunk, not last: state = carry; total = id;
+                              step(.., &state, &total); combine(&carry, &total)
+       last chunk, not first: state = carry; step(.., &state, NULL) */
 typedef void nx_c_scan_step(char *out, int64_t out_step, const char *in,
                            int64_t in_step, int64_t n, nx_c_acc *state,
-                           void *ctx);
+                           nx_c_acc *total, void *ctx);
 
 /* ── Dispatch tables ──────────────────────────────────────────────────────
 
@@ -652,13 +742,15 @@ typedef struct {
 typedef struct {
   nx_c_fold_init *init[NX_C_DTYPE_COUNT];
   nx_c_fold_step *step[NX_C_DTYPE_COUNT];
+  nx_c_fold_combine *combine[NX_C_DTYPE_COUNT];
   nx_c_fold_fini *fini[NX_C_DTYPE_COUNT];
+  nx_c_fold_stream *stream[NX_C_DTYPE_COUNT];
 } nx_c_fold_table;
 typedef struct {
   nx_c_arg_step *step[NX_C_DTYPE_COUNT];
 } nx_c_arg_table;
 typedef struct {
-  nx_c_scan_init *init[NX_C_DTYPE_COUNT];
+  const nx_c_fold_table *op; /* the identity and combine of the same op */
   nx_c_scan_step *step[NX_C_DTYPE_COUNT];
 } nx_c_scan_table;
 
@@ -679,5 +771,16 @@ typedef enum {
    Reads only its arguments and the engine's constant table. */
 int nx_c_threads_for(nx_c_cost_class cls, int64_t runs, int64_t run_len,
                     int64_t bytes);
+
+/* The thread count of a plan of `runs` independent units, for the families
+   whose kernels combine elements (fold, argreduce, scan, sort): `threads`
+   when it is positive, capped by the pool's size, and otherwise
+   nx_c_threads_for's choice; in both cases between 1 and `runs`. A positive
+   count skips the policy's serial floors, so a small operand runs on that many
+   threads. The CAMLprims of those families take `threads` from OCaml as their
+   last argument, and nx.cpu passes 0. No setting changes the pool.
+   Implemented in nx_c_engine.c. */
+int nx_c_plan_threads(int threads, nx_c_cost_class cls, int64_t runs,
+                      int64_t run_len, int64_t bytes);
 
 #endif /* NX_C_C_H */

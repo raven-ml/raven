@@ -313,7 +313,7 @@ static void nx_c_sort_body(int64_t lo, int64_t hi, int worker, void *vctx) {
 static nx_c_status nx_c_sort_drive(nx_c_dtype dt, const nx_c_ndarray *in,
                                  int64_t in_elem, const nx_c_ndarray *out,
                                  int64_t out_elem, int axis, int desc,
-                                 int is_arg) {
+                                 int is_arg, int threads) {
   if (nx_c_sort_fn[0][dt] == NULL)
     return nx_c_dtype_is_packed(dt) ? NX_C_ERR_PACKED : NX_C_ERR_UNSUPPORTED_DTYPE;
   if (axis < 0 || axis >= in->ndim) return NX_C_ERR_AXIS;
@@ -361,8 +361,7 @@ static nx_c_status nx_c_sort_drive(nx_c_dtype dt, const nx_c_ndarray *in,
   /* Policy first: it sizes the scratch. HEAVY parallelizes once there is more
      than one slice; a lone slice returns one thread (serial in v1). */
   int64_t bytes = nslices * n * (in_elem + out_elem);
-  int nth = nx_c_threads_for(NX_C_COST_HEAVY, nslices, n, bytes);
-  if (nth > nslices) nth = (int)nslices;
+  int nth = nx_c_plan_threads(threads, NX_C_COST_HEAVY, nslices, n, bytes);
 
   e.scratch = nx_c_aligned_alloc((size_t)slot_bytes * (size_t)nth);
   if (e.scratch == NULL) return NX_C_ERR_ALLOC;
@@ -382,7 +381,7 @@ static nx_c_status nx_c_sort_drive(nx_c_dtype dt, const nx_c_ndarray *in,
    (nx_c.h) which the engine implements. */
 
 static void nx_c_sort_stub(const char *op, value vout, value vin, int axis,
-                          int desc, int is_arg) {
+                          int desc, int is_arg, int threads) {
   nx_c_ndarray in, out;
   nx_c_status s = nx_c_ndarray_of_value(vin, &in);
   if (s != NX_C_OK) nx_c_raise(op, s);
@@ -394,19 +393,23 @@ static void nx_c_sort_stub(const char *op, value vout, value vin, int axis,
   if (in_elem == 0) nx_c_raise(op, NX_C_ERR_PACKED);
   int64_t out_elem = is_arg ? (int64_t)sizeof(int64_t) : in_elem;
 
-  s = nx_c_sort_drive(dt, &in, in_elem, &out, out_elem, axis, desc, is_arg);
+  s = nx_c_sort_drive(dt, &in, in_elem, &out, out_elem, axis, desc, is_arg,
+                      threads);
   if (s != NX_C_OK) nx_c_raise_status(op, s);
 }
 
-CAMLprim value caml_nx_c_sort(value vout, value vin, value vaxis, value vdesc) {
-  CAMLparam4(vout, vin, vaxis, vdesc);
-  nx_c_sort_stub("sort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 0);
+CAMLprim value caml_nx_c_sort(value vout, value vin, value vaxis, value vdesc,
+                              value vthreads) {
+  CAMLparam5(vout, vin, vaxis, vdesc, vthreads);
+  nx_c_sort_stub("sort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 0,
+                Int_val(vthreads));
   CAMLreturn(Val_unit);
 }
 
 CAMLprim value caml_nx_c_argsort(value vout, value vin, value vaxis,
-                                value vdesc) {
-  CAMLparam4(vout, vin, vaxis, vdesc);
-  nx_c_sort_stub("argsort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 1);
+                                value vdesc, value vthreads) {
+  CAMLparam5(vout, vin, vaxis, vdesc, vthreads);
+  nx_c_sort_stub("argsort", vout, vin, Int_val(vaxis), Bool_val(vdesc), 1,
+                Int_val(vthreads));
   CAMLreturn(Val_unit);
 }

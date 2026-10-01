@@ -38,11 +38,13 @@ call the runtime.
 
 Long operations release the OCaml runtime lock in the engine funnel. The
 calling thread participates in work, and pool workers operate on disjoint output
-regions or explicitly partitioned scratch. New parallel paths must retain that
-ownership proof and surface failures through `nx_c_status` rather than raising
-from worker code. Fork handlers quiesce the pool before `fork`; the parent keeps
-its workers, while the child abandons the inherited pthread state and lazily
-builds a fresh pool on its first parallel operation.
+regions or explicitly partitioned scratch. A parallel plan may change which
+worker runs a unit, never a unit's terms or their association (`nx_c.h`,
+Associations). New parallel paths must retain that ownership proof and
+surface failures through `nx_c_status` rather than raising from worker code.
+Fork handlers quiesce the pool before `fork`; the parent keeps its workers,
+while the child abandons the inherited pthread state and lazily builds a fresh
+pool on its first parallel operation.
 
 ## Matrix multiplication
 

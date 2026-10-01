@@ -64,8 +64,15 @@ let reduce_benchmarks () =
   let small = Nx.rand Nx.Float32 [| 128; 128 |] in
   let flat = Nx.rand Nx.Float32 [| 1_000_000 |] in
   let mat = Nx.rand Nx.Float32 [| 512; 512 |] in
+  let transposed = Nx.transpose (Nx.rand Nx.Float32 [| 2048; 2048 |]) in
+  let wide = Nx.rand Nx.Float32 [| 32; 262144 |] in
+  let short_runs = Nx.rand Nx.Float32 [| 65536; 16; 2 |] in
   [
     Thumper.bench ~tags:lab "sum 128x128" (fun () -> Nx.sum small);
+    Thumper.bench "sum transposed 2048x2048" (fun () -> Nx.sum transposed);
+    Thumper.bench "sum axis0 32x262144" (fun () -> Nx.sum ~axes:[ 0 ] wide);
+    Thumper.bench "sum axes02 65536x16x2" (fun () ->
+        Nx.sum ~axes:[ 0; 2 ] short_runs);
     Thumper.bench ~tags:lab "sum full 1M" (fun () -> Nx.sum flat);
     Thumper.bench ~tags:lab "sum axis0 512x512" (fun () ->
         Nx.sum ~axes:[ 0 ] mat);
