@@ -665,6 +665,13 @@ let link_batch ~device ~storage call patches =
     last = Array.make (List.length queues) 0;
   }
 
+(* A loop: a closure over the submission would allocate on every run. *)
+let rec report_copies s = function
+  | [] -> ()
+  | (src, dst, n) :: rest ->
+      Nx_device.Submission.copied s ~src ~dst n;
+      report_copies s rest
+
 let run_batch ~vars slots b =
   let touches = ref b.touched and stages = ref b.stages in
   let written = ref b.written in
@@ -729,8 +736,7 @@ let run_batch ~vars slots b =
       done;
       List.iter (fun f -> f ()) b.submitting;
       Nx_device.Program.call b.host_program.program b.buffers b.values;
-      List.iter (fun (src, dst, n) -> Nx_device.Submission.copied s ~src ~dst n)
-        b.copies;
+      report_copies s b.copies;
       if Nx_device.Profile.enabled () then
         List.iter
           (fun (k : Ops.hcq_kernel) ->

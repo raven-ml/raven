@@ -2925,7 +2925,6 @@ module Submission = struct
     taken : device list;
     waits : (device * int) list;
     mutable spans : (device * pending) list;
-    mutable copies : (device * device * int) list;
   }
 
   let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.Submission." ^^ fmt)
@@ -2968,7 +2967,10 @@ module Submission = struct
     if not (List.memq src s.taken && List.memq dst s.taken) then
       invalid "copied: the submission does not take %s and %s" src.name dst.name;
     if n < 0 then invalid "copied: %d bytes" n;
-    if src != dst then s.copies <- (src, dst, n) :: s.copies
+    if src != dst then begin
+      src.bytes_out <- src.bytes_out + n;
+      dst.bytes_in <- dst.bytes_in + n
+    end
 end
 
 let by_id a b = Int.compare a.id b.id
@@ -3073,15 +3075,9 @@ let submit ds ~touches f =
       taken;
       waits;
       spans = [];
-      copies = [];
     }
   in
   let r = f s in
-  List.iter
-    (fun (src, dst, n) ->
-      src.bytes_out <- src.bytes_out + n;
-      dst.bytes_in <- dst.bytes_in + n)
-    s.copies;
   List.iteri (fun i d -> commit d s.values.(i)) ds;
   stamp_touches ds s.values touches;
   List.iter

@@ -1014,9 +1014,8 @@ module Submission : sig
 
   val copied : t -> src:device -> dst:device -> int -> unit
   (** [copied s ~src ~dst n] counts [n] bytes that [s]'s work copies from
-      [src]'s memory into [dst]'s: in [src]'s {!Stats.bytes_out} and [dst]'s
-      {!Stats.bytes_in}, once [f] returns. A copy within one device's memory
-      counts nothing.
+      [src]'s memory into [dst]'s in [src]'s {!Stats.bytes_out} and [dst]'s
+      {!Stats.bytes_in}. A copy within one device's memory counts nothing.
 
       Raises [Invalid_argument] if [s] did not take [src] or [dst], or if [n] is
       negative. *)
