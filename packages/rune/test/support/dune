@@ -1,7 +1,7 @@
 (library
  (name rune_test)
  (wrapped false)
- (modules expr oracle witness)
+ (modules expr formula oracle witness)
  (libraries windtrap nx nx.dtype nx.device))
 
 ; The lowering suites' support: traced functions and the values their graphs

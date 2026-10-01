@@ -3,6 +3,7 @@
 (tests
  (names
   test_derivatives
+  test_laws
   test_structure
   test_nesting
   test_composition
@@ -11,6 +12,7 @@
   test_total)
  (modules
   test_derivatives
+  test_laws
   test_structure
   test_nesting
   test_composition
@@ -36,6 +38,7 @@
  (action
   (progn
    (run %{exe:test_composition.exe} --tag slow)
+   (run %{exe:test_laws.exe} --tag slow)
    (run %{exe:test_total.exe} --tag slow))))
 
 (test
