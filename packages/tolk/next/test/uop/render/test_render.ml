@@ -2,7 +2,6 @@ open Windtrap
 open Tolk_next
 
 let uop = Testable.make ~pp:Ops.pp ~equal:Ops.equal
-let rejects f = raises_match (Exn.invalid_arg ?substring:None) f
 let var name lo hi = Ops.variable name (`Int (Z.of_int lo)) (`Int (Z.of_int hi))
 let a = var "a" 1 5
 

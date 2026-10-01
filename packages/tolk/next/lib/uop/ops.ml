@@ -2384,7 +2384,7 @@ let rec has_buffer_identity ?(after_ok = false) u =
 
 (* Movement *)
 
-let rec unsharded_base u =
+let unsharded_base u =
   if Op.Set.mem u.op Op.Set.movement || u.op = Op.Detach || u.op = Op.Unshard
   then base (first u.op u.src)
   else u

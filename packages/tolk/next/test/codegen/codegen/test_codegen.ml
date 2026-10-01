@@ -678,6 +678,8 @@ let caching =
         separates_settings;
       test "a program for one target is not returned for another"
         separates_targets;
+      test "a failed compilation is not kept: the next call compiles anew"
+        makes_anew_after_a_failure;
     ]
 
 (* Programs *)

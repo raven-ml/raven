@@ -351,7 +351,7 @@ let pm_reduce_load_collapse =
               if
                 no_range y && no_range c && solves_sum x y c
                 && Dtype.can_lossless_cast dt (dtype (m "s"))
-                && exact dt V.[ vmin c; vmax c ]
+                && exact dt [ vmin c; vmax c ]
               then Some O.(x <> cast c dt - y)
               else None);
           (* A sum of a load gated on its index equal to the range is the load

@@ -849,7 +849,7 @@ let wrap dt z = Dtype.truncate dt (`Int z)
 let nonzero dt =
   Gen.such_that (fun v -> not (Z.equal (z_of v) Z.zero)) (value_of dt)
 
-let shift_count dt = Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range 0 63)
+let shift_count = Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range 0 63)
 
 (* [law name ins out f args oracle] is the property that the emulated [f]
    computes [oracle] on the arguments that [args] draws. *)
@@ -955,10 +955,10 @@ let long_laws dt =
       "truncating division, over 2000 cases" Cdiv Z.div;
     binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
       "truncating remainder, over 2000 cases" Cmod Z.rem;
-    binary dt ~b:(shift_count dt) ~examples:(shl_examples dt) "shl" Shl
-      (fun a n -> Z.shift_left a (Z.to_int n));
-    binary dt ~b:(shift_count dt) ~examples:(shr_examples dt) "shr" Shr
-      (fun a n -> Z.shift_right a (Z.to_int n));
+    binary dt ~b:shift_count ~examples:(shl_examples dt) "shl" Shl (fun a n ->
+        Z.shift_left a (Z.to_int n));
+    binary dt ~b:shift_count ~examples:(shr_examples dt) "shr" Shr (fun a n ->
+        Z.shift_right a (Z.to_int n));
     compares dt "cmplt" Cmplt (fun c -> c < 0);
     compares dt "cmpeq" Cmpeq (fun c -> c = 0);
     compares dt "cmpne" Cmpne (fun c -> c <> 0);

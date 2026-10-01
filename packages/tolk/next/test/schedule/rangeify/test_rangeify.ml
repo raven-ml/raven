@@ -5,7 +5,6 @@
 open Windtrap
 open Tolk_next
 
-let uop = Uops.uop
 let program name = Golden.sink (name ^ ".golden")
 
 (* The settings a program was recorded under. *)

@@ -361,11 +361,6 @@ let build_program props devs prg =
 
 (* Queues *)
 
-type launch = {
-  qmd : Qmd.t;
-  mutable next : launch option; (* the launch chained after it *)
-}
-
 let queue props q : Hcq2.commands =
   let devs = Hcq2.Queue.devices q and name = Hcq2.Queue.name q in
   let dev = Multi devs and on = List.hd devs in
@@ -454,13 +449,13 @@ let queue props q : Hcq2.commands =
   let end_chain () =
     let rec build = function
       | [] -> None
-      | l :: rest ->
+      | qmd :: rest ->
           let region_of_next = build rest in
           Option.iter
             (fun r ->
-              Qmd.patch l.qmd "dependent_qmd0_pointer" (shr (addr r) (int 8)))
+              Qmd.patch qmd "dependent_qmd0_pointer" (shr (addr r) (int 8)))
             region_of_next;
-          Some (region "qmd" (Qmd.blob l.qmd) l.qmd.patches)
+          Some (region "qmd" (Qmd.blob qmd) qmd.patches)
     in
     Option.iter
       (fun head ->
@@ -526,24 +521,21 @@ let queue props q : Hcq2.commands =
         Qmd.set_constant_buf_addr qmd j
           (if j = 0 then addr cbuf else add (addr lib) (int off)))
       data.constbufs;
-    let l = { qmd; next = None } in
     match List.rev !chain with
     | prev :: _ ->
-        prev.next <- Some l;
         List.iter
-          (fun k -> Qmd.write prev.qmd k 1)
+          (fun k -> Qmd.write prev k 1)
           [
             "dependent_qmd0_action";
             "dependent_qmd0_prefetch";
             "dependent_qmd0_enable";
           ];
-        chain := !chain @ [ l ]
-    | [] -> chain := [ l ]
+        chain := !chain @ [ qmd ]
+    | [] -> chain := [ qmd ]
   in
   let compute_release signal value ~timestamp =
     match List.rev !chain with
-    | prev :: _ when Qmd.set_release prev.qmd (addr signal) value ~timestamp ->
-        ()
+    | prev :: _ when Qmd.set_release prev (addr signal) value ~timestamp -> ()
     | _ ->
         end_chain ();
         release signal value ~timestamp

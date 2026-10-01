@@ -254,7 +254,6 @@ type write = Low of int | High of int | Whole of int
 type test = { eq : bool; value : int; mask : int }
 
 let lo32 v = v land 0xffff_ffff
-let hi32 v = v lsr 32
 
 (* The writes to the signal word and the waits on it of a queue's words. *)
 let rec decode ~sdma words =

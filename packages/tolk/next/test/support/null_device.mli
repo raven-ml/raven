@@ -14,8 +14,6 @@
     calls the program's host entry on the addresses and values of its arguments;
     a [timestamp] writes {!Nx_device.Profile.now}. *)
 
-open Tolk_next
-
 val devices :
   ?copy_queue:bool ->
   ?reaches:(string -> bool) ->

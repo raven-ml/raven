@@ -973,8 +973,8 @@ let build_queues ctx =
     Ordered.set queues k
       (Option.value (Ordered.find queues k) ~default:[] @ cmds)
   in
-  Array.iteri
-    (fun tag { devs; queue; _ } ->
+  Array.iter
+    (fun { devs; queue; _ } ->
       let k = (devs, queue) in
       if Ordered.find queues k = None then
         extend k (start_ins ctx (List.hd devs) queue @ of_queue k ctx.items))
