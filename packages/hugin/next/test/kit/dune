@@ -13,3 +13,13 @@
   (progn
    (run %{test} --corrected)
    (diff? test_scale.ml test_scale.ml.corrected))))
+
+(test
+ (name test_ticks)
+ (modules test_ticks)
+ (package hugin)
+ (libraries hugin.next.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_ticks.ml test_ticks.ml.corrected))))

@@ -32,6 +32,7 @@ let make neg digits exp =
     }
 
 let abs d = { d with neg = false }
+let neg d = if is_zero d then d else { d with neg = not d.neg }
 let shift k d = if is_zero d then d else { d with exp = d.exp + k }
 let pow10 neg k = { neg; digits = "1"; exp = k }
 
@@ -125,8 +126,61 @@ let compare_mag a b =
         in
         loop 0
 
+let compare a b =
+  match (a.neg, b.neg) with
+  | false, false -> compare_mag a b
+  | true, true -> compare_mag b a
+  | true, false -> -1
+  | false, true -> 1
+
 (* [padded d e] is the digits of [|d|] written down to position [e <= d.exp]. *)
 let padded d e = d.digits ^ String.make (d.exp - e) '0'
+
+(* Arithmetic *)
+
+(* [add_digits a b] and [sub_digits a b], [a >= b], are the sum and the
+   difference of two natural numbers written in decimal. *)
+let add_digits a b =
+  let la = String.length a and lb = String.length b in
+  let n = Int.max la lb + 1 in
+  let r = Bytes.make n '0' in
+  let carry = ref 0 in
+  for i = 0 to n - 1 do
+    let da = if i < la then Char.code a.[la - 1 - i] - 48 else 0 in
+    let db = if i < lb then Char.code b.[lb - 1 - i] - 48 else 0 in
+    let s = da + db + !carry in
+    Bytes.set r (n - 1 - i) (Char.unsafe_chr (48 + (s mod 10)));
+    carry := s / 10
+  done;
+  Bytes.unsafe_to_string r
+
+let sub_digits a b =
+  let la = String.length a and lb = String.length b in
+  let r = Bytes.make la '0' in
+  let borrow = ref 0 in
+  for i = 0 to la - 1 do
+    let da = Char.code a.[la - 1 - i] - 48 in
+    let db = if i < lb then Char.code b.[lb - 1 - i] - 48 else 0 in
+    let s = da - db - !borrow in
+    Bytes.set r (la - 1 - i) (Char.unsafe_chr (48 + ((s + 10) mod 10)));
+    borrow := if s < 0 then 1 else 0
+  done;
+  Bytes.unsafe_to_string r
+
+let add a b =
+  if is_zero a then b
+  else if is_zero b then a
+  else
+    let e = Int.min a.exp b.exp in
+    let da = padded a e and db = padded b e in
+    if a.neg = b.neg then make a.neg (add_digits da db) e
+    else
+      match compare_mag a b with
+      | 0 -> zero
+      | c when c > 0 -> make a.neg (sub_digits da db) e
+      | _ -> make b.neg (sub_digits db da) e
+
+let sub a b = add a (neg b)
 
 (* Rounding *)
 
@@ -341,6 +395,27 @@ let nearest n k near =
     let near = Float.abs near in
     let y = fix (if Float.is_finite near then near else Float.max_float) in
     if n < 0 then -.y else y
+
+(* [shortest x] is the decimal with the fewest significant digits that rounds to
+   the finite [x], the nearer to [x] of two. *)
+let shortest x =
+  let d = of_float x in
+  if is_zero d then d
+  else
+    let rec loop n =
+      let pos = mag d - n + 1 in
+      if pos <= d.exp then d
+      else
+        let down = round Toward_zero pos d
+        and up = round Away_from_zero pos d in
+        match (rounds_to binary64 down x, rounds_to binary64 up x) with
+        | true, true ->
+            if compare_mag (sub d down) (sub up d) <= 0 then down else up
+        | true, false -> down
+        | false, true -> up
+        | false, false -> loop (n + 1)
+    in
+    loop 1
 
 (* Writing *)
 

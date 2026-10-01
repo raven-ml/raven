@@ -41,6 +41,7 @@ let nearest n k =
 
 (* Adding [0.] turns a negative multiple that underflows to [-0.] into [0.]. *)
 let value s i = nearest (i * s.m) s.k +. 0.
+let width s = value s 1
 
 (* [decompose t] is [(f, k)] with [t = f × 10^k] and [1 <= f < 10] for a
    positive finite [t]. *)
@@ -118,22 +119,26 @@ let every_float a b =
   in
   Array.of_list (loop [] a)
 
-(* [multiples s a b] is the distinct floats of the multiples of [s] in
-   \[[a];[b]\], increasing, or every float of the domain if [s] is fine
-   there. *)
-let multiples s a b =
+(* [multiples ~value ~skip ~offset s a b] is the distinct floats of the
+   multiples of [s] in \[[a];[b]\] whose index is [offset] modulo [skip],
+   [offset] in \[[0];[skip - 1]\], increasing, or every float of the domain if
+   [s] is fine there. [value] computes multiples as {!value} does. *)
+let multiples ?(value = value) ?(skip = 1) ?(offset = 0) s a b =
   if is_fine s a b then every_float a b
   else
     let i0 = Float.to_int (Float.floor (index s a)) - 1
     and i1 = Float.to_int (Float.ceil (index s b)) + 1 in
+    let first = i0 + ((((offset - i0) mod skip) + skip) mod skip) in
     let acc = ref [] and last = ref Float.nan in
-    for i = i0 to i1 do
-      let v = value s i in
+    let i = ref first in
+    while !i <= i1 do
+      let v = value s !i in
       (* Values grow with their index, so equal ones are consecutive. *)
       if a <= v && v <= b && not (Float.equal v !last) then begin
         acc := v :: !acc;
         last := v
-      end
+      end;
+      i := !i + skip
     done;
     Array.of_list (List.rev !acc)
 
@@ -184,24 +189,39 @@ let stride r = [| 1; 2; 5 |].(r mod 3) * int_of_float (pow10 (r / 3))
 
 (* Steps of time *)
 
-(* A step of time: an interval of the table and its duration in nanoseconds,
-   with months of 30 days and years of 365 days. *)
-type time_step = { interval : Time.interval; duration : float }
+(* How an interval of the table cuts the time line: a period in nanoseconds from
+   local midnight, weeks from Monday, months or years by their indices. *)
+type calendar = Fixed of int | Weeks of int | Months of int | Years of int
+
+(* A step of time: an interval of the table, its duration in nanoseconds with
+   months of 30 days and years of 365 days, the longest span between two of its
+   boundaries, and its rank [i], from 1, among the [n] strides of its unit. *)
+type time_step = {
+  interval : Time.interval;
+  calendar : calendar;
+  duration : float;
+  longest : float;
+  i : int;
+  n : int;
+}
+
+let ns_per_s = 1_000_000_000
+let ns_per_day = 86_400 * ns_per_s
 
 (* The table, finest first. *)
 let time_steps =
-  let ns_per_s = 1_000_000_000 in
-  let day = 86_400e9 in
+  let day = Float.of_int ns_per_day in
   let unit strides make =
-    List.map
-      (fun k ->
-        let interval, duration = make k in
-        { interval; duration })
+    let n = List.length strides in
+    List.mapi
+      (fun i k ->
+        let interval, calendar, duration, longest = make k in
+        { interval; calendar; duration; longest; i = i + 1; n })
       strides
   in
   let fixed ns k =
     let p = ns * k in
-    (Time.nanoseconds p, Float.of_int p)
+    (Time.nanoseconds p, Fixed p, Float.of_int p, Float.of_int p)
   in
   let decades make first last =
     List.concat_map
@@ -210,7 +230,6 @@ let time_steps =
         unit [ 1; 2; 5 ] (fun k -> make (k * p)))
       (List.init (last - first + 1) (fun e -> first + e))
   in
-  let by days make k = (make k, days *. day *. Float.of_int k) in
   Array.of_list
     (List.concat
        [
@@ -218,10 +237,18 @@ let time_steps =
          unit [ 1; 5; 15; 30 ] (fixed ns_per_s);
          unit [ 1; 5; 15; 30 ] (fixed (60 * ns_per_s));
          unit [ 1; 3; 6; 12 ] (fixed (3600 * ns_per_s));
-         unit [ 1; 2 ] (fixed (86_400 * ns_per_s));
-         unit [ 1; 2 ] (by 7. Time.weeks);
-         unit [ 1; 3; 6 ] (by 30. Time.months);
-         decades (by 365. Time.years) 0 11;
+         unit [ 1; 2 ] (fixed ns_per_day);
+         unit [ 1; 2 ] (fun k ->
+             let d = 7. *. day *. Float.of_int k in
+             (Time.weeks k, Weeks k, d, d));
+         unit [ 1; 3; 6 ] (fun k ->
+             let k' = Float.of_int k in
+             (Time.months k, Months k, 30. *. day *. k', 31. *. day *. k'));
+         decades
+           (fun k ->
+             let k' = Float.of_int k in
+             (Time.years k, Years k, 365. *. day *. k', 366. *. day *. k'))
+           0 11;
        ])
 
 (* [round_ns h l] is [h × 2^32 + l], [l] in \[[0];[2^32 - 1]\], rounded once to
@@ -266,3 +293,49 @@ let nearest_time_step t =
     if dist i <= dist !best then best := i
   done;
   !best
+
+(* [includes c c'] is [true] iff every boundary of [c] is one of [c'], at every
+   offset. Week boundaries are Monday midnights, three days before a Thursday
+   midnight, of which the epoch is one; months and years start at midnight. *)
+let includes c c' =
+  match (c, c') with
+  | Fixed p, Fixed p' -> p mod p' = 0
+  | Weeks k, Fixed p' ->
+      7 * k * ns_per_day mod p' = 0 && 3 * ns_per_day mod p' = 0
+  | (Months _ | Years _), Fixed p' -> ns_per_day mod p' = 0
+  | Weeks k, Weeks k' | Months k, Months k' | Years k, Years k' -> k mod k' = 0
+  | Years k, Months k' -> 12 * k mod k' = 0
+  | Fixed _, (Weeks _ | Months _ | Years _)
+  | Weeks _, (Months _ | Years _)
+  | Months _, (Weeks _ | Years _)
+  | Years _, Weeks _ ->
+      false
+
+(* [parts c c'] is the greatest number of spans of [c'] between two consecutive
+   boundaries of [c], when [includes c c']. *)
+let parts c c' =
+  match (c, c') with
+  | Fixed p, Fixed p' -> p / p'
+  | Weeks k, Fixed p' -> 7 * k * ns_per_day / p'
+  | Months k, Fixed p' -> 31 * k * ns_per_day / p'
+  | Years k, Fixed p' -> 366 * k * ns_per_day / p'
+  | Weeks k, Weeks k' | Months k, Months k' | Years k, Years k' -> k / k'
+  | Years k, Months k' -> 12 * k / k'
+  | Fixed _, (Weeks _ | Months _ | Years _)
+  | Weeks _, (Months _ | Years _)
+  | Months _, (Weeks _ | Years _)
+  | Years _, Weeks _ ->
+      0
+
+(* [minor_step st] is the finest step whose boundaries include those of [st] and
+   that cuts the span between two of them into two to seven parts, if any. *)
+let minor_step st =
+  let rec find i =
+    if i >= Array.length time_steps then None
+    else
+      let st' = time_steps.(i) in
+      let n = parts st.calendar st'.calendar in
+      if includes st.calendar st'.calendar && n >= 2 && n <= 7 then Some st'
+      else find (i + 1)
+  in
+  find 0
