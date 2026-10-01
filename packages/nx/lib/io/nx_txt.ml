@@ -504,7 +504,7 @@ let load ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows (type a b)
                 | Error err -> raise_notrace (Parse_error err)
               done
             done;
-            let t = Storage.tensor S.kind buf [| row_count; cols |] in
+            let t = Nx.of_buffer S.kind [| row_count; cols |] buf in
             let result =
               if row_count = 1 then Nx.reshape [| cols |] t
               else if cols = 1 then Nx.reshape [| row_count |] t

@@ -56,7 +56,7 @@ let leaf (Nx.P t) =
     | _ -> t
   in
   let x = Nx.P t in
-  let buffers, view = Lower.storage t in
+  let buffers, view = Nx.shards t in
   let layout =
     {
       dtype = Nx_dtype.to_string (Nx.dtype t);
@@ -683,15 +683,7 @@ let fresh at dt shape =
 
 let value r bufs =
   let (Nx.P t) = r.like in
-  let dtype = Nx.dtype t in
-  if Placement.equal r.at Placement.host then
-    Nx.P
-      (Repr.host { dtype; view = View.create r.shape; buffer = List.hd bufs })
-  else
-    Nx.P
-      (Repr.Placed.v r.at dtype
-         (View.create (local r.at r.shape))
-         (Repr.Storage.v r.at bufs))
+  Nx.P (Nx.of_shards r.at (Nx.dtype t) (View.create (local r.at r.shape)) bufs)
 
 (* The buffers a call claims for a leaf: the runs it binds, or its storage's
    buffers when it binds none. *)

@@ -60,13 +60,6 @@ val run : Dtype.t -> Nx_array.View.t -> Nx_device.Buffer.t -> Nx_device.Buffer.t
 (** [run dt v b] is the run of [b]'s elements of [dt] that {!span} gives for the
     view [v]: the buffer a parameter of a value of view [v] over [b] binds. *)
 
-val storage : ('a, 'b) Nx.t -> Nx_device.Buffer.t list * Nx_array.View.t
-(** [storage x] is the buffer of [x]'s storage on each device of [x]'s
-    placement, in order, and [x]'s view of it.
-
-    Raises [Invalid_argument] if [x] is traced, a value used outside the trace
-    that made it, and as {!Nx.Repr.Storage.buffers} does. *)
-
 val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
 (** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
     past a 16-byte boundary of [b]'s memory: the phase of storage that starts

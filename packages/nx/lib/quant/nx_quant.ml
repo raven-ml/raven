@@ -136,16 +136,10 @@ let rows_per_chunk k = max 1 (chunk / k)
 let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
 let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
-let of_host dt buf shape =
-  let view = Nx_array.View.create [| Nx_device.Buffer.length buf |] in
-  Nx.reshape shape (Nx.Repr.host { Nx_array.dtype = dt; view; buffer = buf })
-
 (* The elements of [x] in C order, in a host buffer, read by the function [by]:
    its storage when it is contiguous on the host. *)
 let elements ~by x =
-  let x =
-    match Nx.Repr.v x with Placed _ -> x | Host _ | Traced _ -> Nx.contiguous x
-  in
+  let x = Nx.contiguous x in
   let b = Nx.Op.eval (Read { by; x }) in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel x)
 
@@ -202,7 +196,7 @@ let decode_all (type b) (dt : (float, b) Nx.dtype) codes scales :
                (((j * n) + r0) * k * item)
                (Bigarray.Array1.dim src)))
     done;
-    of_host dt out s
+    Nx.of_buffer dt s out
   end
 
 (* Batch axes, aligned on the right and broadcast as Nx.matmul's. *)
@@ -409,7 +403,7 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
         end)
       members;
     let slot = Array.map (fun s -> if s < 0 then !filled else s) slot in
-    let y = of_host Nx_dtype.float32 y [| slots; m; outputs |] in
+    let y = Nx.of_buffer Nx_dtype.float32 [| slots; m; outputs |] y in
     Nx.cast dt (Nx.reshape out (rows_at slot y))
   end
 

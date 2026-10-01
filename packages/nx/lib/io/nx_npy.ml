@@ -8,7 +8,7 @@ open Error
 let strf = Printf.sprintf
 
 let npy_to_nx (Npy.P (kind, buffer, shape)) =
-  Nx.P (Storage.tensor kind buffer shape)
+  Nx.P (Nx.of_buffer kind shape buffer)
 
 let nx_to_npy ~by t = Npy.P (Nx.dtype t, Storage.elements ~by t, Nx.shape t)
 

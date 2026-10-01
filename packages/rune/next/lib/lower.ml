@@ -374,21 +374,6 @@ let key : type a b. (a, b) Nx.t -> storage =
   | Repr.Placed r -> Placed (Repr.Placed.storage r)
   | Repr.Traced _ -> outside ()
 
-let storage : type a b. (a, b) Nx.t -> Nx_device.Buffer.t list * View.t =
- fun x ->
-  match Repr.v x with
-  | Repr.Host a -> ([ a.buffer ], a.view)
-  | Repr.Placed r ->
-      let st = Repr.Placed.storage r in
-      let holders = Placement.devices (Repr.Storage.placement st) in
-      let buffers = Repr.Storage.buffers st in
-      let buffer_on d =
-        List.nth buffers (Option.get (List.find_index (Device.equal d) holders))
-      in
-      ( List.map buffer_on (Placement.devices (Nx.placement x)),
-        Repr.Placed.view r )
-  | Repr.Traced _ -> outside ()
-
 (* [viewed u p shape v start] is the view [v] of a value of [shape] at [p], over
    the flat node [u] of its storage from element [start]: each device's view,
    reassembled when [p] splits the value. *)
@@ -447,7 +432,7 @@ let param s ~slot x =
   let what = "an argument" in
   let p = Nx.placement x in
   let tdt = check s what p (Nx.dtype x) in
-  let bufs, v = storage x in
+  let bufs, v = Nx.shards x in
   let shape = Nx.shape x in
   let u =
     if View.numel v = 0 then
@@ -501,7 +486,7 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
  fun s what p x ->
   let dt = Nx.dtype x and shape = Nx.shape x in
   let tdt = check s what p dt in
-  let key = key x and bufs, v = storage x in
+  let key = key x and bufs, v = Nx.shards x in
   let one =
     View.numel v > 0
     &&

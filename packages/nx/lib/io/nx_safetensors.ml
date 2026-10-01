@@ -53,9 +53,9 @@ let entry (type a b) file (kind : (a, b) Nx_dtype.t) shape ~off ~len =
     let buffer = Nx_array.Elements.create kind n in
     B.copy ~src:bytes ~dst:buffer;
     Nx_io_codec.byteswap (Storage.bytes buffer) ~element_size:size ~elements:n;
-    Nx.P (Storage.tensor kind buffer shape)
+    Nx.P (Nx.of_buffer kind shape buffer)
   end
-  else Nx.P (Storage.on_device kind shape bytes)
+  else Nx.P (Nx.of_buffer kind shape bytes)
 
 (* The header of [file] and the offset of its data, once the file's length is
    the one the header describes. *)
@@ -114,8 +114,9 @@ let load_safetensors path =
 
 (* [tensor_data t] is the SafeTensors dtype of [t] and a buffer of its elements'
    bytes, in row-major order and little-endian, as stored: on a little-endian
-   host, [t]'s own storage when its elements are a contiguous run of it,
-   wherever it is. A float's bits are copied, never read as a float. *)
+   host, [t]'s own storage when its elements are a contiguous run of it on one
+   device, wherever it is. A value on several devices is read to the host. A
+   float's bits are copied, never read as a float. *)
 let tensor_data (type a b) (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
@@ -150,9 +151,9 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
     (dtype, swapped)
   end
   else
-    match Storage.run t with
-    | Some run -> (dtype, run)
-    | None -> (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
+    match Nx.Placement.devices (Nx.placement t) with
+    | [ _ ] -> (dtype, Nx.to_buffer t)
+    | _ -> (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;

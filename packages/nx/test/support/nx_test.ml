@@ -192,19 +192,11 @@ let lay_out steps t = List.fold_left (fun t l -> l.apply t) t steps
 
 (* The view of [t]'s storage: a host value's, or each device's of a placed
    one. *)
-let view t =
-  match Nx.Repr.v t with
-  | Host a -> a.view
-  | Placed p -> Nx.Repr.Placed.view p
-  | Traced _ -> fail "a traced value has no view"
+let view t = snd (Nx.shards t)
 
 (* The storage of [t], the first device's for a placed one: views share it,
    copies do not. *)
-let storage t =
-  match Nx.Repr.v t with
-  | Host a -> a.buffer
-  | Placed p -> List.hd (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
-  | Traced _ -> fail "a traced value has no storage"
+let storage t = List.hd (fst (Nx.shards t))
 
 (* The elements of [t] in C order, in a host buffer. *)
 let elements t =
@@ -1153,15 +1145,10 @@ module Runtimes = struct
     let src = elements x and path = temp_file () in
     let pp = Format.pp_print_string in
     B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-    let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
-    Nx.Repr.Placed.v p (Nx.dtype x)
-      (Nx_array.View.create (Nx.shape x))
-      (Nx.Repr.Storage.v p
-         [
-           B.view
-             (require_ok ~pp (B.of_file path))
-             ~offset:0 (B.dtype src) (B.length src);
-         ])
+    Nx.of_buffer (Nx.dtype x) (Nx.shape x)
+      (B.view
+         (require_ok ~pp (B.of_file path))
+         ~offset:0 (B.dtype src) (B.length src))
 
   (* A budget of 16 bytes past what [r] holds, while [f] runs. *)
   let tight r f =
