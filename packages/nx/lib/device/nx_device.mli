@@ -395,12 +395,12 @@ module Buffer : sig
       mapping, which [d] releases once they are all unreachable. A mapping
       covers whole pages, so that memory must start on a page. Host buffers that
       {!create} makes start on one from 64 KiB (four pages where pages are
-      larger), and smaller ones cannot be borrowed, wherever they start; {!copy}
-      moves them through staging memory. Memory-mapped files start on a page.
-      Memory that {!of_bigarray} wraps borrows if it starts on one. On CUDA,
-      mapping page-locks the memory, which must be writable: memory mapped
-      read-only cannot be borrowed there. A buffer of no bytes always borrows,
-      mapping nothing.
+      larger), and smaller ones cannot be borrowed, wherever they start: {!copy}
+      moves them through staging memory, and {!reach} stages them for a device's
+      work. Memory-mapped files start on a page. Memory that {!of_bigarray}
+      wraps borrows if it starts on one. On CUDA, mapping page-locks the memory,
+      which must be writable: memory mapped read-only cannot be borrowed there.
+      A buffer of no bytes always borrows, mapping nothing.
 
       A buffer [b] of a file on the {!disk} ({!of_file}) is borrowed from the
       file's pages: the disk maps the whole file into host memory at the first
