@@ -898,6 +898,11 @@ thread.
 
 ### Tolk (new)
 
+- Tolk no longer depends on Zarith, and so needs no GMP on the system. Its
+  exact integers, the values of integer constants, dtype limits and bounds,
+  are `Bigint.t`, an arbitrary-precision integer in pure OCaml with the names
+  and semantics of the Zarith functions tolk used.
+
 - The NV device refuses a release of NVIDIA's kernel driver it does not
   describe (any but 570, 580 and 610), so the default device moves on to CUDA.
   Under 615 it used 610's layouts, and the driver wrote a channel group's

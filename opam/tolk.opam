@@ -15,7 +15,6 @@ depends: [
   "ocaml" {>= "5.2"}
   "dune" {>= "3.21"}
   "nx" {= version}
-  "zarith"
   "windtrap" {with-test & >= "0.2.0"}
   "thumper" {with-test}
   "odoc" {with-doc}

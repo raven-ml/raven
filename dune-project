@@ -211,7 +211,6 @@
   dune
   (nx
    (= :version))
-  zarith
   (windtrap
    (and
     :with-test
