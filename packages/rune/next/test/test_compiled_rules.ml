@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Every row's tangent and pullback under the compiled call: compiled, each is
-   eager's, on the host and on Metal; a row the compiled call cannot compute
-   raises Jit_error at the trace. Named cases keep the old compiled assertions
+   eager's, on the host and on Metal, and so are the maps of every row and of
+   its tangent and pullback; a row the compiled call cannot compute raises
+   Jit_error at the trace. Named cases keep the old compiled assertions
    of the reductions' rules, and place a captured coefficient beside a traced
    argument, whose recorded tangent takes the argument's context. *)
 
@@ -97,6 +98,107 @@ let rows ~count ~rel ~points ~target =
             (prop ~count (Row.name c.row) (at points)
                (compiled_is_eager ~rel ~target c))
       | (Case.Plain | Case.Integer), _, _ -> None)
+    Case.all
+
+(* Under a map *)
+
+(* How a batch is drawn: which operands carry it, how many rows, and the seed of
+   the rows and of the directions. *)
+type batch = { which : bool list; length : int; seed : int }
+
+let mapped gen =
+  let open Gen in
+  with_pp
+    (fun ppf (i, b) ->
+      Format.fprintf ppf "%a@ batched %s, %d rows, seed %d" Case.pp_instance i
+        (String.concat ""
+           (List.map (fun t -> if t then "x" else "-") b.which))
+        b.length b.seed)
+    (let* (Case.Instance i as inst) = gen in
+     let* which =
+       map
+         (fun bits ->
+           if List.exists Fun.id bits then bits else true :: List.tl bits)
+         (list ~size:(constant (List.length i.x)) bool)
+     in
+     let+ length = int_range 1 3 and+ seed = int_range 0 1_000_000 in
+     (inst, { which; length; seed }))
+
+let rec merge which all xs =
+  match (which, all, xs) with
+  | true :: which, _ :: all, x :: xs -> x :: merge which all xs
+  | false :: which, a :: all, xs -> a :: merge which all xs
+  | [], [], [] -> []
+  | _ -> invalid_arg "merge"
+
+(* [stack ~seed ~length x] is [length] rows around [x] stacked on a new axis 0,
+   each moved a little along a direction, so that it stays in the row's domain.
+*)
+let stack ~seed ~length x =
+  let v = Reference.direction (Random.State.make [| seed |]) Nx.Ptree.tensor x in
+  Nx.stack
+    (List.init length (fun k ->
+         Nx.add x
+           (Nx.mul v
+              (Nx.full (Nx.dtype v) [||]
+                 (Nx_dtype.of_float (Nx.dtype v) (1e-3 *. float_of_int k))))))
+
+let map_of_lists () = Nx.Ptree.(list tensor @-> returns (list tensor))
+
+(* [mapped_is_eager ~rel ~target c] compares [jit] of the map of the row with
+   eager's and, for a row with a tangent, [jit] of the maps of its tangent and
+   of its pullback; the batched operands are moved by [target.place] first. *)
+let mapped_is_eager ~rel ~target (c : Case.t) (Case.Instance i, b) =
+  let place = target.place in
+  let f xs = i.f (merge b.which i.x xs) in
+  let batched seed xs =
+    List.mapi
+      (fun j x -> stack ~seed:(seed + j) ~length:b.length x)
+      (List.filteri (fun j _ -> List.nth b.which j) xs)
+  in
+  let x = batched b.seed i.x in
+  let y = Rune.vmap (map_of_lists ()) f x in
+  let refuses = refused target c (scalars i.x @ scalars (i.f i.x)) in
+  let compare msg eager compiled =
+    if refuses then raises_match ~msg is_jit_error compiled
+    else
+      match c.kind with
+      | Case.Tangent ->
+          equal ~msg (Reference.close ~rel ~floor:rel ())
+            (leaves eager) (leaves (compiled ()))
+      | Case.Plain | Case.Integer ->
+          equal ~msg (list (Reference.exact ())) eager (compiled ())
+  in
+  compare "the map" y (fun () ->
+      Rune.jit (map_of_lists ()) (Rune.vmap (map_of_lists ()) f)
+        (List.map place x));
+  match c.kind with
+  | Case.Plain | Case.Integer -> ()
+  | Case.Tangent ->
+      let along x v = snd (Rune.jvp (operands ()) (operands ()) f x v) in
+      let pull x w = snd (Rune.vjp (operands ()) (operands ()) f x) w in
+      let v = direction (b.seed + 100) x in
+      let w = direction (b.seed + 200) y in
+      let both g p q =
+        ( Rune.vmap (pair_of_lists ()) g p q,
+          fun () ->
+            Rune.jit (pair_of_lists ())
+              (Rune.vmap (pair_of_lists ()) g)
+              (List.map place p) (List.map place q) )
+      in
+      let eager, jitted = both along x v in
+      compare "the tangent" eager jitted;
+      let eager, jitted = both pull x w in
+      compare "the pullback" eager jitted
+
+let mapped_rows ~count ~rel ~points ~target =
+  List.filter_map
+    (fun (c : Case.t) ->
+      Option.map
+        (fun points ->
+          prop ~count (Row.name c.row) (mapped points)
+            (mapped_is_eager ~rel ~target c))
+        (points c))
     Case.all
 
 (* Named cases *)
@@ -302,18 +404,19 @@ let metal =
       let points (c : Case.t) =
         if List.mem float32 c.dtypes then Some (c.smooth float32) else None
       in
+      let target =
+        {
+          place = (fun x -> Nx.place (Nx.Placement.device d) x);
+          refuses =
+            (fun s ->
+              host.refuses s
+              || Nx_dtype.Scalar.equal s (Nx_dtype.Scalar.of_dtype Nx.float64));
+        }
+      in
       [
-        group ~tags:[ "slow" ] "metal"
-          (rows ~count:2 ~rel:1e-3 ~points
-             ~target:
-               {
-                 place = (fun x -> Nx.place (Nx.Placement.device d) x);
-                 refuses =
-                   (fun s ->
-                     host.refuses s
-                     || Nx_dtype.Scalar.equal s
-                          (Nx_dtype.Scalar.of_dtype Nx.float64));
-               });
+        group ~tags:[ "slow" ] "metal" (rows ~count:2 ~rel:1e-3 ~points ~target);
+        group ~tags:[ "slow" ] "metal under a map"
+          (mapped_rows ~count:1 ~rel:1e-3 ~points ~target);
       ]
 
 let () =
@@ -325,6 +428,10 @@ let () =
           group "compositions" compositions;
           group ~tags:[ "slow" ] "host"
             (rows ~count:4 ~rel:1e-9
+               ~points:(fun (c : Case.t) -> Some c.finite)
+               ~target:host);
+          group ~tags:[ "slow" ] "host under a map"
+            (mapped_rows ~count:2 ~rel:1e-9
                ~points:(fun (c : Case.t) -> Some c.finite)
                ~target:host);
         ]
