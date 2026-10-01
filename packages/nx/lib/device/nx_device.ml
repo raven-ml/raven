@@ -80,15 +80,8 @@ type t = {
   name : string;
   arch : string;
   machine : t option; (* the host of the device's machine, [None] for a host *)
-  remote : string option; (* for the host of another machine, its address *)
-  io : io option; (* for the host of another machine, how it is reached *)
+  kind : kind;
   lock : Mutex.t;
-  alloc : int -> (region * keep) option;
-  free : region -> unit;
-  host_memory : allocator option;
-  mapped : allocator option;
-  mapping : mapping option;
-  copy_queue : queue option;
   peer : (t -> region -> (region * (unit -> unit), string) result) option;
   reaches_peer : t -> bool; (* whether its driver maps a device's memory *)
   load : (binary:string -> (image, string) result) option;
@@ -139,6 +132,22 @@ type t = {
   mutable bytes_in : int;
   mutable bytes_out : int;
 }
+
+(* What a device is, with the memories it allocates. *)
+and kind =
+  | Machine of { remote : (string * io) option; memory : allocator option }
+    (* a machine's host: this machine's, whose memory is the heap, or another
+       machine's, at an address, reached through [io] and allocating with
+       [memory] *)
+  | Disk
+  | Shared of { memory : allocator; mapping : mapping option }
+  | Local of {
+      memory : allocator;
+      pinned : allocator;
+      mapped : allocator option;
+      mapping : mapping;
+      queue : queue;
+    }
 
 and queue = {
   copy : copy;
@@ -570,8 +579,8 @@ let timeline_of ~pages ~host_alloc (host_memory : allocator option) =
     | None -> failwith "Nx_device.Driver.device: no memory for the timeline"
   in
   match (host_memory, host_alloc) with
-  | Some (a : allocator), _ -> (check (a.alloc timeline_bytes), Keep ())
-  | None, Some alloc -> (check (Option.map fst (alloc timeline_bytes)), Keep ())
+  | Some (a : allocator), _ | None, Some a ->
+      (check (a.alloc timeline_bytes), Keep ())
   | None, None when pages ->
       let ba = Bigarray.Array1.sub (heap aligned_from) 0 timeline_bytes in
       (heap_memory ba, Host ba)
@@ -585,24 +594,117 @@ let timeline_of ~pages ~host_alloc (host_memory : allocator option) =
 
 let default_timeout = 30_000
 
-let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
-    ~mapped ~mapping ~queue ~peer ~reaches_peer ~load ~call ~link ~dma
-    ~completion ~synchronized ~report ~room ~finalize ~resolve =
+(* A device as [create] takes it, but for its memory. *)
+module Description = struct
+  type nonrec t = {
+    name : string;
+    arch : string;
+    machine : t option;
+    budget : int;
+    peer : (t -> region -> (region * (unit -> unit), string) result) option;
+    reaches_peer : t -> bool;
+    load : (binary:string -> (image, string) result) option;
+    call : (nativeint -> (nativeint * int) array -> int array -> unit) option;
+    link : (src:buffer -> dst:buffer -> link option) option;
+    dma : (region -> (dma, string) result) option;
+    completion : completion;
+    synchronized : unit -> unit;
+    report : (unit -> event list) option;
+    room : unit -> bool;
+    finalize : failed:bool -> unit;
+    resolve : nativeint -> unit;
+  }
+
+  let default =
+    {
+      name = "";
+      arch = "";
+      machine = None;
+      budget = max_int;
+      peer = None;
+      reaches_peer = (fun _ -> false);
+      load = None;
+      call = None;
+      link = None;
+      dma = None;
+      completion = Poll;
+      synchronized = ignore;
+      report = None;
+      room = (fun () -> true);
+      finalize = (fun ~failed:_ -> ());
+      resolve = ignore;
+    }
+end
+
+(* The memory a device is made of: a driver's description, or the host's and the
+   disk's. *)
+type made_of =
+  | Process_heap (* this machine's host *)
+  | Remote of { address : string; io : io; memory : allocator }
+  | Files (* the disk *)
+  | Driver_memory of driver_memory
+
+(* How a driver describes a device's memory (see [Driver.memory]). *)
+and driver_memory =
+  | Host_visible of { memory : allocator; mapping : mapping option }
+  | Device_local of {
+      memory : allocator;
+      host_memory : allocator;
+      mapped : allocator option;
+      mapping : mapping;
+      queue : timeline:region -> queue;
+    }
+
+let create (desc : Description.t) made_of =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
-    match (machine, io) with
-    | Some h, _ when Option.is_some h.io -> Some h.alloc
-    | None, Some _ -> Some alloc
+    match (desc.machine, made_of) with
+    | Some { kind = Machine { memory = Some a; _ }; _ }, _
+    | None, Remote { memory = a; _ } ->
+        Some a
     | _ -> None
   in
-  let pages = match mapping with Some (Pages _) -> true | _ -> false in
+  let pages, host_memory =
+    match made_of with
+    | Driver_memory (Host_visible { mapping = Some (Pages _); _ }) ->
+        (true, None)
+    | Driver_memory (Device_local { host_memory; mapping; _ }) ->
+        ( (match mapping with Pages _ -> true | Identity -> false),
+          Some host_memory )
+    | Process_heap | Remote _ | Files | Driver_memory (Host_visible _) ->
+        (false, None)
+  in
   let timeline, timeline_keep = timeline_of ~pages ~host_alloc host_memory in
-  let machine_io = match machine with Some h -> h.io | None -> io in
+  let machine_io =
+    match (desc.machine, made_of) with
+    | Some { kind = Machine { remote = Some (_, io); _ }; _ }, _
+    | None, Remote { io; _ } ->
+        Some io
+    | _ -> None
+  in
   let words = Option.get timeline.host in
   write_word machine_io words 0L;
-  let copy_queue = Option.map (fun queue -> queue ~timeline) queue in
+  let kind =
+    match made_of with
+    | Process_heap -> Machine { remote = None; memory = None }
+    | Remote { address; io; memory } ->
+        Machine { remote = Some (address, io); memory = Some memory }
+    | Files -> Disk
+    | Driver_memory (Host_visible { memory; mapping }) ->
+        Shared { memory; mapping }
+    | Driver_memory
+        (Device_local { memory; host_memory; mapped; mapping; queue }) ->
+        Local
+          {
+            memory;
+            pinned = host_memory;
+            mapped;
+            mapping;
+            queue = queue ~timeline;
+          }
+  in
   let signal, sleep =
-    match completion with
+    match desc.completion with
     | Poll -> (None, None)
     | Sleep sleep -> (None, Some (sleep ~timeline))
     | Signal signal -> (Some (signal ~timeline), None)
@@ -610,33 +712,26 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
   let d =
     {
       id = Atomic.fetch_and_add ids 1;
-      name;
-      arch;
-      machine;
-      remote;
-      io;
+      name = desc.name;
+      arch = desc.arch;
+      machine = desc.machine;
+      kind;
       lock = Mutex.create ();
-      alloc;
-      free;
-      host_memory;
-      mapped;
-      mapping;
-      copy_queue;
-      peer;
-      reaches_peer;
-      load;
-      call;
-      link;
-      dma;
+      peer = desc.peer;
+      reaches_peer = desc.reaches_peer;
+      load = desc.load;
+      call = desc.call;
+      link = desc.link;
+      dma = desc.dma;
       signal;
       sleep;
       timeout_ms = Atomic.make default_timeout;
-      synchronized;
-      report;
-      room;
-      finalize;
-      clock = (match copy_queue with Some q -> q.clock | None -> Host_clock);
-      resolve;
+      synchronized = desc.synchronized;
+      report = desc.report;
+      room = desc.room;
+      finalize = desc.finalize;
+      clock = (match kind with Local l -> l.queue.clock | _ -> Host_clock);
+      resolve = desc.resolve;
       timeline;
       timeline_keep;
       last = Atomic.make 0;
@@ -652,11 +747,11 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       indexed = 8;
       spans = Atomic.make [];
       held = [];
-      budget;
+      budget = desc.budget;
       allocated =
-        (match (machine, io) with
-        | None, None -> Heap_bytes
-        | Some _, _ | _, Some _ -> Count (Atomic.make 0));
+        (match made_of with
+        | Process_heap -> Heap_bytes
+        | _ -> Count (Atomic.make 0));
       cached = 0;
       retained = 0;
       bytes_in = 0;
@@ -700,32 +795,15 @@ let host_image load ~binary =
     }
 
 let host =
-  (* Buffer.create takes host memory from the heap, never from [alloc]. *)
-  let alloc _ = assert false in
   let load = Option.map host_image Host_program.load in
-  create ~name:"CPU" ~arch:host_arch ~machine:None ~remote:None ~io:None
-    ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapped:None
-    ~mapping:(Some Identity) ~queue:None ~peer:None
-    ~reaches_peer:(fun _ -> false)
-    ~load ~call:None ~link:None ~dma:None ~completion:Poll ~synchronized:ignore
-    ~report:None
-    ~room:(fun () -> true)
-    ~finalize:(fun ~failed:_ -> ())
-    ~resolve:ignore
+  create
+    { Description.default with name = "CPU"; arch = host_arch; load }
+    Process_heap
 
 (* The disk's buffers are files, which it opens and never allocates. It has no
    processor. *)
 let disk =
-  let alloc _ = assert false in
-  create ~name:"DISK" ~arch:"" ~machine:(Some host) ~remote:None ~io:None
-    ~budget:max_int ~alloc ~free:ignore ~host_memory:None ~mapped:None
-    ~mapping:None ~queue:None ~peer:None
-    ~reaches_peer:(fun _ -> false)
-    ~load:None ~call:None ~link:None ~dma:None ~completion:Poll
-    ~synchronized:ignore ~report:None
-    ~room:(fun () -> true)
-    ~finalize:(fun ~failed:_ -> ())
-    ~resolve:ignore
+  create { Description.default with name = "DISK"; machine = Some host } Files
 
 let name d = d.name
 let arch d = d.arch
@@ -735,27 +813,55 @@ let pp ppf d = Format.pp_print_string ppf d.name
 let budget d = d.budget
 let host_of d = match d.machine with Some h -> h | None -> d
 
+(* How [d] addresses host memory, if it does. *)
+let mapping_of d =
+  match d.kind with
+  | Machine { remote = None; _ } -> Some Identity
+  | Shared { mapping; _ } -> mapping
+  | Local { mapping; _ } -> Some mapping
+  | Machine { remote = Some _; _ } | Disk -> None
+
+let queue_of d =
+  match d.kind with Local { queue; _ } -> Some queue | _ -> None
+
+(* The allocator of [d]'s memory [kind], if [d] allocates it. *)
+let allocator_of d kind =
+  match (d.kind, kind) with
+  | Machine { memory; _ }, _ -> memory
+  | Shared { memory; _ }, _ | Local { memory; _ }, Device -> Some memory
+  | Local { pinned; _ }, Pinned -> Some pinned
+  | Local { mapped; _ }, Mapped -> mapped
+  | Disk, _ -> None
+
 (* Memory the host addresses, as the host's own and a device's over it are. *)
-let host_addressed d = Option.is_none d.copy_queue && Option.is_some d.mapping
+let host_addressed d =
+  match d.kind with
+  | Machine { remote = None; _ } | Shared { mapping = Some _; _ } -> true
+  | Machine _ | Shared _ | Local _ | Disk -> false
+
 let shares_host_memory d = host_of d == host && host_addressed d
 
 let runs_on_host d =
   d == host
-  || d != disk
-     && host_of d == host
-     && Option.is_none d.host_memory
-     && Option.is_none d.load
+  ||
+  match d.kind with
+  | Shared _ -> host_of d == host && Option.is_none d.load
+  | Machine _ | Local _ | Disk -> false
 
 let reaches d d' =
   d == d'
   || (d != disk && d' != disk && host_of d == host_of d')
      &&
-     if d' == host_of d then Option.is_some d.mapping
+     let maps = Option.is_some (mapping_of d) in
+     if d' == host_of d then maps
      else if d == host_of d then host_addressed d'
-     else (host_addressed d' && Option.is_some d.mapping) || d.reaches_peer d'
+     else (host_addressed d' && maps) || d.reaches_peer d'
 
 (* How the process reaches the memory of [d]'s machine: [None] on this one. *)
-let io_of d = (host_of d).io
+let io_of d =
+  match (host_of d).kind with
+  | Machine { remote = Some (_, io); _ } -> Some io
+  | _ -> None
 
 (* Timeline *)
 
@@ -1140,14 +1246,7 @@ let free_all d ~owned ~keep ~wait v memories =
         retain memories;
         raise e
 
-(* The allocator of [d]'s memory [kind], [None] for its own memory. *)
-let allocator_of d = function
-  | Device -> None
-  | Pinned -> d.host_memory
-  | Mapped -> d.mapped
-
-let free_of d kind =
-  match allocator_of d kind with Some a -> a.free | None -> d.free
+let free_of d kind = (Option.get (allocator_of d kind)).free
 
 (* The bytes [d] keeps for reuse: the host's are the collected buffers its
    allocator keeps (see the stubs). *)
@@ -1414,13 +1513,13 @@ let rec allocate d n ~kind ~last =
   | None -> (
       release_cache ~wait:true d n;
       let alloc n =
-        match allocator_of d kind with
-        | Some a -> Option.map (fun m -> (m, Keep ())) (a.alloc n)
-        | None -> d.alloc n
+        Option.map
+          (fun m -> (m, Keep ()))
+          ((Option.get (allocator_of d kind)).alloc n)
       in
       match if fits d n then driver d (fun () -> alloc n) else None with
       | Some (({ host = None; _ } as m), _)
-        when kind <> Device || Option.is_none d.copy_queue ->
+        when kind <> Device || Option.is_none (queue_of d) ->
           (* The host addresses a [Host_visible] device's memory and pinned and
              mapped memory: a region without a host address is a driver's
              bug. *)
@@ -1671,10 +1770,10 @@ module Buffer = struct
         first base s n
     | bytes ->
         let kind =
-          match (memory, d.host_memory, d.mapped) with
-          | _, None, _ -> Device
-          | Mapped, Some _, None -> Pinned
-          | kind, Some _, _ -> kind
+          match (d.kind, memory) with
+          | Local { mapped = None; _ }, Mapped -> Pinned
+          | Local _, kind -> kind
+          | (Machine _ | Shared _ | Disk), _ -> Device
         in
         let rec take round =
           match
@@ -1858,7 +1957,7 @@ module Buffer = struct
   let borrow_host d b =
     let h = host_of d and src = b.base in
     let first = Option.get src.memory.host in
-    match d.mapping with
+    match mapping_of d with
     | _ when d == h && src.owner == h -> Ok b
     | None -> refuse "%s cannot address host memory" d.name
     | Some Identity -> Ok (identity d b)
@@ -1964,7 +2063,7 @@ module Buffer = struct
       else if
         r.base.kind = Pinned
         || (r.base.kind = Mapped && d == host_of o)
-        || Option.is_none o.copy_queue
+        || Option.is_none (queue_of o)
       then
         if Option.is_none d.machine && d != host then
           refuse "%s is reached over the network, and maps no memory" d.name
@@ -2221,8 +2320,11 @@ module Buffer = struct
       match h.slots with
       | Some m -> Option.get m.host
       | None -> (
-          match driver h (fun () -> h.alloc (2 * chunk)) with
-          | Some (m, _) ->
+          match
+            driver h (fun () ->
+                (Option.get (allocator_of h Device)).alloc (2 * chunk))
+          with
+          | Some m ->
               h.slots <- Some m;
               Option.get m.host
           | None -> raise (Out_of_memory (h, 2 * chunk)))
@@ -2236,7 +2338,7 @@ module Buffer = struct
         let h = host_of e in
         let first = slots h in
         match
-          match Option.get e.mapping with
+          match Option.get (mapping_of e) with
           | Identity -> Ok first
           | Pages { map; _ } ->
               Result.map
@@ -2252,7 +2354,7 @@ module Buffer = struct
                  h.name why))
 
   let queue e =
-    match e.copy_queue with
+    match queue_of e with
     | Some q -> q
     | None ->
         invalid_arg
@@ -2264,7 +2366,7 @@ module Buffer = struct
 
   (* [n] bytes within the memory the host [h] addresses. *)
   let host_move h ~dst ~src n =
-    match h.io with
+    match io_of h with
     | None -> memmove dst src n
     | Some io -> io_call h (fun () -> io.copy ~dst ~src n)
 
@@ -2364,7 +2466,7 @@ module Buffer = struct
       | Some m -> f (Some (m.mapped.address +! (m.skip + b.offset)))
       | None when b.base.kind = Pinned -> (
           let first = Option.get b.base.memory.host in
-          match Option.get e.mapping with
+          match Option.get (mapping_of e) with
           | Identity -> f (hosted b)
           | Pages { map; unmap } -> (
               match driver e (fun () -> map first b.base.memory.nbytes) with
@@ -2439,7 +2541,7 @@ module Buffer = struct
     for i = 0 to chunks n - 1 do
       let len = length_of n i in
       let a = on_host ~timed src n i and b = landing dst i in
-      (match (hs.io, hd.io) with
+      (match (io_of hs, io_of hd) with
       | None, None -> memmove b a len
       | None, Some io -> io_call hd (fun () -> io.write ~dst:b ~src:a len)
       | Some io, None -> io_call hs (fun () -> io.read ~src:a ~dst:b len)
@@ -2550,7 +2652,7 @@ module Buffer = struct
   let route ~src ~dst =
     let s = device src and d = device dst in
     let h = host_of s in
-    let remote = if Option.is_some h.io then [ h ] else [] in
+    let remote = if Option.is_some (io_of h) then [ h ] else [] in
     if s == disk || d == disk then
       let other = if s == disk then dst else src in
       let e = device other in
@@ -2987,7 +3089,7 @@ let encodable ds d' =
   runs_work d' && Option.is_none d'.signal
   && List.for_all
        (fun d ->
-         d == d' || (host_of d == host_of d' && Option.is_some d.mapping))
+         d == d' || (host_of d == host_of d' && Option.is_some (mapping_of d)))
        ds
 
 (* [d] added to the devices [l], once. *)
@@ -3095,7 +3197,7 @@ let submit ds ~touches f =
   r
 
 let signal_word d =
-  let owner = if Option.is_some d.host_memory then d else host_of d in
+  let owner = match d.kind with Local _ -> d | _ -> host_of d in
   let base =
     Buffer.base ~borrowed:true ~keep:d.timeline_keep owner d.timeline
   in
@@ -3169,7 +3271,7 @@ module Profile = struct
      whose wait brackets its stamp most narrowly bounds the error best. *)
   let calibrate d hz =
     with_devices [ d ] (fun () ->
-        let q = Option.get d.copy_queue in
+        let q = Option.get (queue_of d) in
         let rec sample k (width, mid, tick) =
           if k = 0 then (mid, tick)
           else
@@ -3417,7 +3519,7 @@ module Driver = struct
     clock : clock;
   }
 
-  type memory =
+  type memory = driver_memory =
     | Host_visible of { memory : allocator; mapping : mapping option }
     | Device_local of {
         memory : allocator;
@@ -3489,10 +3591,10 @@ module Driver = struct
       (fun m -> invalid_arg (Printf.sprintf "Nx_device.Driver.%s: %s" fn m))
       fmt
 
-  let owned (a : allocator) n = Option.map (fun m -> (m, Keep ())) (a.alloc n)
-
   let compose ?(host = host) local =
-    match host.remote with Some a -> local ^ "@" ^ a | None -> local
+    match host.kind with
+    | Machine { remote = Some (a, _); _ } -> local ^ "@" ^ a
+    | _ -> local
 
   let name = compose
 
@@ -3503,27 +3605,40 @@ module Driver = struct
     if budget < 0 then refuse "device" "budget %d < 0" budget;
     if Option.is_some host.machine then
       refuse "device" "%s is not a host" host.name;
-    let memory, host_memory, mapped, mapping, queue =
+    let memory =
       match memory with
-      | Host_visible { memory; mapping } -> (memory, None, None, mapping, None)
-      | Device_local { memory; host_memory; mapped; mapping; queue } ->
-          (memory, Some host_memory, mapped, Some mapping, Some queue)
+      | Host_visible _ -> memory
+      | Device_local l ->
+          let queue ~timeline =
+            let q = l.queue ~timeline in
+            (match q.clock with
+            | Device_clock { hz } when hz <= 0 ->
+                refuse "device" "a clock of %d Hz" hz
+            | Host_clock | Device_clock _ -> ());
+            q
+          in
+          Device_local { l with queue }
     in
-    let queue =
-      Option.map
-        (fun queue ~timeline ->
-          let q = queue ~timeline in
-          (match q.clock with
-          | Device_clock { hz } when hz <= 0 ->
-              refuse "device" "a clock of %d Hz" hz
-          | Host_clock | Device_clock _ -> ());
-          q)
-        queue
-    in
-    create ~name:(compose ~host name) ~arch ~machine:(Some host) ~remote:None
-      ~io:None ~budget ~alloc:(owned memory) ~free:memory.free ~host_memory
-      ~mapped ~mapping ~queue ~peer ~reaches_peer:reaches ~load ~call:None ~link
-      ~dma ~completion ~synchronized ~report ~room ~finalize ~resolve
+    create
+      {
+        Description.default with
+        name = compose ~host name;
+        arch;
+        machine = Some host;
+        budget;
+        peer;
+        reaches_peer = reaches;
+        load;
+        link;
+        dma;
+        completion;
+        synchronized;
+        report;
+        room;
+        finalize;
+        resolve;
+      }
+      (Driver_memory memory)
 
   let buffer d (r : region) s n =
     if d == disk then Buffer.not_files "Driver.buffer";
@@ -3549,13 +3664,15 @@ module Driver = struct
   let host ~address ~arch ?programs ?(synchronized = ignore)
       ?(finalize = fun ~failed:_ -> ()) ~memory io =
     let load = Option.map (fun p -> host_image p.load) programs in
-    create ~name:("CPU@" ^ address) ~arch ~machine:None ~remote:(Some address)
-      ~io:(Some io) ~budget:max_int ~alloc:(owned memory) ~free:memory.free
-      ~host_memory:None ~mapped:None ~mapping:None ~queue:None ~peer:None
-      ~reaches_peer:(fun _ -> false)
-      ~load
-      ~call:(Option.map (fun p -> p.call) programs)
-      ~link:None ~dma:None ~completion:Poll ~synchronized ~report:None
-      ~room:(fun () -> true)
-      ~finalize ~resolve:ignore
+    create
+      {
+        Description.default with
+        name = "CPU@" ^ address;
+        arch;
+        load;
+        call = Option.map (fun p -> p.call) programs;
+        synchronized;
+        finalize;
+      }
+      (Remote { address; io; memory })
 end
