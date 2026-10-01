@@ -139,6 +139,11 @@ let describing =
           is_true (Option.is_none d.compiler.queues));
       test "a name the map does not hold is refused" (fun () ->
           raises_match Exn.invalid_arg (fun () -> devices "CPU:9"));
+      test "a map that gives one name twice is refused" (fun () ->
+          raises
+            (Invalid_argument "Tolk_next_engine.device: CPU names two devices")
+            (fun () ->
+              Engine.device [ ("CPU", device "CPU:1"); ("CPU", host) ] "CPU"));
       test
         "a device's host that the map does not name is named after itself, and \
          a named one is not" (fun () ->

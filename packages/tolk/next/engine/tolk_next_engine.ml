@@ -72,7 +72,17 @@ let with_hosts devices =
       else devices @ [ (n, h) ])
     devices devices
 
+(* Refuses [devices] if it gives one name twice. *)
+let rec distinct = function
+  | [] -> ()
+  | (n, _) :: devices ->
+      if List.mem_assoc n devices then
+        invalid_arg
+          (Printf.sprintf "Tolk_next_engine.device: %s names two devices" n);
+      distinct devices
+
 let device devices name =
+  distinct devices;
   let devices = with_hosts devices in
   let d = find "device" devices name in
   (* The disk runs no program: its copies are the runtime's. *)

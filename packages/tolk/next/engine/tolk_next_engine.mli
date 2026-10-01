@@ -93,11 +93,12 @@ val device : (string * Nx_device.t) list -> string -> device
     that runs work from queues of its own, such as a test of the compiler, makes
     a {!device} of its own.
 
-    Raises [Invalid_argument] if [devices] does not map [name], or gives the
-    name of an unnamed host of a Metal, CUDA, AMD or NV device to another
-    device, [Failure] with nx.device's reason when an AMD or NV device refuses a
-    program's code object at link, and {!Nx_device.Out_of_memory} when an NV
-    device cannot grow its local memory for a batch it links. *)
+    Raises [Invalid_argument] if [devices] does not map [name], gives one name
+    to two devices, or gives the name of an unnamed host of a Metal, CUDA, AMD
+    or NV device to another device, [Failure] with nx.device's reason when an
+    AMD or NV device refuses a program's code object at link, and
+    {!Nx_device.Out_of_memory} when an NV device cannot grow its local memory
+    for a batch it links. *)
 
 (** {1:programs Host programs} *)
 
