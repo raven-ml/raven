@@ -139,7 +139,7 @@ void E(__fp16* restrict data0_1, __fp16* restrict data1_1) {
   _Bool alu129 = (val0<((__fp16)(6.097555160522461e-05f)));
   __fp16 alu130 = (alu129?((__fp16)((val0*((__fp16)(1024.0f))))):val0);
   __fp16 cast5 = ((__fp16)(((short)((((short)((((short)((__builtin_bit_cast(short, (__fp16)(((__fp16)((alu130*((__fp16)(1.3330078125f)))))))>>((short)(10)))))&((short)(31)))))+((short)(-15)))))));
-  __fp16 cast6 = ((__fp16)(((cast1*-1.215420125655342e-10f)+(cast1*-1.984187258941006e-09f)+(cast1*-0.0001131594181060791f)+(cast1*-3.1414794921875f)+((float)(alu9)))));
+  __fp16 cast6 = ((__fp16)(((cast1*-1.215420125655342e-10f)+((cast1*-1.984187258941006e-09f)+((cast1*-0.0001131594181060791f)+((cast1*-3.1414794921875f)+((float)(alu9))))))));
   __fp16 cast7 = ((__fp16)(((((float)((((long)((alu126&4611686018427387903ul)))-(((long)(alu127))<<62l))))*3.4061216748705226e-19f)+(((float)((((alu98&4294967295ul)<<32ul)|(alu83&4294967295ul))))*1.8464622598222928e-38f))));
   int cast8 = ((int)(((alu126>>62ul)+alu127)));
   __fp16 cast9 = __builtin_bit_cast(__fp16, (short)(((short)((__builtin_bit_cast(short, (__fp16)(alu130))+((short)((((short)(((__fp16)(-cast5))))<<((short)(10))))))))));

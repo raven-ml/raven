@@ -346,16 +346,20 @@ let base_rewrite =
       r (Upat.v ~op:Op.Set.alu ~name:"x" ()) (fun ctx m ->
           let x = m "x" in
           let assoc = Op.Set.of_list Op.[ Add; Mul; Xor; Or; And ] in
-          let operand v =
+          (* C groups a chain from the left, so only the first operand drops
+             its parentheses: [(a*b)*c] is [a*b*c], and [a*(b*c)], which a
+             float rounds and overflows differently, keeps them. *)
+          let operand i v =
             if
-              is (op x) v
+              i = 0
+              && is (op x) v
               && Op.Set.mem (op x) assoc
               && not (Tbl.mem ctx.narrowed v)
             then Helpers.strip_parens ctx.%{v}
             else ctx.%{v}
           in
           Option.map
-            (fun f -> f (List.map operand (src x)) (dtype x))
+            (fun f -> f (List.mapi operand (src x)) (dtype x))
             (List.assoc_opt (op x) ctx.lang.code_for_op));
       (* a division is written whether or not the target lists it, which decides
          only whether code generation makes reciprocals divisions *)

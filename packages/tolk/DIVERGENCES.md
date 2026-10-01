@@ -491,7 +491,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `renderer/cstyle.py:33,42` (a cast to `__nv_fp8_e4m3` or
   `__nv_fp8_e5m2` is the constructor, which converts with
   `__NV_SATFINITE`), `:25-26` (an infinite constant is cast the same way).
-- **tolk:** `lib/renderer/cstyle.ml:961-974` (`fp8_infinity`,
+- **tolk:** `lib/renderer/cstyle.ml:965-978` (`fp8_infinity`,
   `cuda_fp8_guard`, `is_fp8_guarded`), `:1018-1036` (the two rules of
   `cuda_lang`) and `:1144` (the helper in the prefix).
 - **Differs:** the saturating conversion turns ±inf into ±max. tolk
@@ -552,7 +552,7 @@ the Exclusions of `README.md`.
 
 - **tinygrad:** `renderer/cstyle.py:368-372` (`MetalRenderer.extra_matcher`
   computes `SQRT`, `EXP2`, `LOG2` and `SIN` of a bfloat16 in float32).
-- **tolk:** `lib/renderer/cstyle.ml:883` (`metal_extra_matcher`).
+- **tolk:** `lib/renderer/cstyle.ml:887` (`metal_extra_matcher`).
 - **Differs:** `TRUNC` of a bfloat16 is computed in float32 as well. Metal
   has no `trunc` of a `bfloat`: `trunc(x)` converts `x` to `float` and
   returns a `float`, which does not convert to a `bfloat` implicitly, so a
@@ -1530,7 +1530,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `renderer/cstyle.py:139-147` (`CStyleLanguage.code_for_op`
   has no `FDIV`) and `:277-280` (Clang's adds it); `codegen/decomp/op.py:122-125`
   (a target that lists `FDIV` gets its reciprocals as divisions).
-- **tolk:** `lib/renderer/cstyle.ml:355-359` (the `FDIV` rule of
+- **tolk:** `lib/renderer/cstyle.ml:366-368` (the `FDIV` rule of
   `base_rewrite`).
 - **Differs:** Metal, CUDA and HIP write an `FDIV` as `(a/b)`, as Clang does,
   where tinygrad's renderers fail on it. Their tables still leave `FDIV` out,
@@ -1895,7 +1895,7 @@ the Exclusions of `README.md`.
 - **tinygrad:** `renderer/cstyle.py:89-90` (`create_non_native_float_pats`,
   which casts a source of any type but float32 to a float32, then to the
   narrow float).
-- **tolk:** `lib/renderer/cstyle.ml:430` (the rule's cast), with
+- **tolk:** `lib/renderer/cstyle.ml:434` (the rule's cast), with
   `lib/codegen/decomp/decomp_dtype.ml:531` (`narrow`, D9's).
 - **Differs:** a renderer without arithmetic on a narrow float, Clang's on
   bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
@@ -2286,8 +2286,8 @@ tolk lowers as one, replaces it.
   cosine (`by_quadrant`) to broadcast constants in the tensor graph. Two
   symbolic passes over such graphs did not terminate:
   `Prepare.contiguous_view`'s, on rune's staged scan reading a draw on Metal
-  (`Rune_next.Jit › metal › staged scans › stage a scan whose step reads a
-  draw and another scan's result made before it`), and
+  (`Rune_internals.Jit › metal › staged scans › stage a scan whose step reads
+  a draw and another scan's result made before it`), and
   `Multi.lower_broadcast_copy`'s, on a sharded model's rope (kaun's
   `test_decode_devices`). Folding the selection at its constant also drops
   the branch never taken, such as the long reduction of a bounded angle.
@@ -2359,6 +2359,28 @@ tolk lowers as one, replaces it.
 - **Pinned by:** the Rangeify suite's `swiglu_down` and `attention` rows of
   `kernel_counts.golden` and their kernel goldens, from the equally patched
   tinygrad.
+
+## D79. A chain of one operation keeps its right operand's grouping
+
+- **tinygrad:** `renderer/cstyle.py:67` (`base_rewrite`'s ALU rule), which
+  drops the parentheses of any operand that is the same associative operation
+  (`ADD`, `MUL`, `XOR`, `OR`, `AND`), on either side.
+- **tolk:** `lib/renderer/cstyle.ml:346` (`base_rewrite`'s ALU rule);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same.
+- **Differs:** only the first operand drops them. C groups `a*b*c` as
+  `(a*b)*c`, so writing `a*(b*c)` without parentheses regroups it, and a float
+  sum or product rounds and overflows by its grouping. An upcast reduction
+  `acc + (v0+v1+v2+v3)` was written `acc+v0+v1+v2+v3` and added in another
+  order than the kernel's; `4 * (2^126 * 0.25)` was written `4*2^126*0.25`,
+  which overflows.
+- **Reason:** (b): nx.quant's product, `Nx_quant.apply`, decodes each weight
+  in the kernel that multiplies it, `x * (value * scale)`, and gave infinity
+  where the eager product's infinities of both signs give NaN (rune's quant
+  suite, `values › compiled, a product is eager's › the largest scales`).
+- **Pinned by:** the Cstyle suite: `grouping › Clang computes a product of a
+  product as it is grouped`; and the rendered sources of the `codegen`,
+  `renderer/cstyle`, `runtime/support/hcq2` and `engine/jit` goldens, from the
+  equally patched tinygrad.
 
 ## D80. A host program runs its output loop in blocks on the host's cores
 

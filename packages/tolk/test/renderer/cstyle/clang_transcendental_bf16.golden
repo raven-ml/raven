@@ -152,7 +152,7 @@ void E(__bf16* restrict data0_1, __bf16* restrict data1_1) {
   float alu136 = (alu135*alu135);
   float alu137 = (alu13?(cast4+-64.0f):cast4);
   float alu138 = (1.0f/cast0);
-  float alu139 = (alu1?((((((0.43745502829551697f*alu136)+0.5764790177345276f)*alu136)+0.961801290512085f)*alu135*alu136)+alu137+(alu135*2.885390043258667f)+(alu135*3.2734472910078694e-08f)):((float)(__builtin_inff())));
+  float alu139 = (alu1?((((((0.43745502829551697f*alu136)+0.5764790177345276f)*alu136)+0.961801290512085f)*(alu135*alu136))+alu137+(alu135*2.885390043258667f)+(alu135*3.2734472910078694e-08f)):((float)(__builtin_inff())));
   float alu140 = ((cast0!=0.0f)?alu139:((float)(-__builtin_inff())));
   float alu141 = ((alu138!=((float)(-__builtin_inff())))?alu140:((float)(-__builtin_inff())));
   float alu142 = ((cast0<-0.0f)?((float)(__builtin_nanf(""))):alu141);
@@ -172,7 +172,7 @@ void E(__bf16* restrict data0_1, __bf16* restrict data1_1) {
   unsigned int alu153 = (((cast13&65535u)!=0u)?(cast13|65536u):cast13);
   unsigned int alu154 = (((-cast13&2139095040u)!=0u)?(cast13+((cast13>>16u)&1u)+32767u):alu153);
   float alu155 = ((((float)((((long)((alu129&4611686018427387903ul)))-(((long)(alu130))<<62l))))*3.4061216748705226e-19f)+(((float)((((alu101&4294967295ul)<<32ul)|(alu86&4294967295ul))))*1.8464622598222928e-38f));
-  float alu156 = ((cast2*-1.215420125655342e-10f)+(cast2*-1.984187258941006e-09f)+(cast2*-0.0001131594181060791f)+(cast2*-3.1414794921875f)+alu9);
+  float alu156 = ((cast2*-1.215420125655342e-10f)+((cast2*-1.984187258941006e-09f)+((cast2*-0.0001131594181060791f)+((cast2*-3.1414794921875f)+alu9))));
   float alu157 = (alu156*alu156);
   float alu158 = ((alu155<0.0f)?-alu155:alu155);
   float alu159 = (((cast7&1)!=0)?(1.5707963705062866f-alu158):alu155);

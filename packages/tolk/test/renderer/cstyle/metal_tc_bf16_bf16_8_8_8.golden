@@ -22,7 +22,7 @@ kernel void r_32_2_2(constant args_t& args [[buffer(0)]], uint3 gid [[threadgrou
   *(buf0+0) = ((bfloat)(0.0f));
   *(buf0+1) = ((bfloat)(0.0f));
   for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
-    int alu8 = (alu4+(Ridx0<<3)+alu3+(alu0<<6)+(alu1<<4));
+    int alu8 = (alu4+(Ridx0<<3)+alu3+((alu0<<6)+(alu1<<4)));
     bfloat val0 = (*(data1_128+(alu8+1)));
     bfloat val1 = (*(data1_128+alu8));
     int alu9 = (alu2+(Ridx0<<6)+alu5);

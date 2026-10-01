@@ -24,5 +24,5 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(int* data0_16, int* data1_
   int alu14 = (alu6?7:0);
   int alu15 = (alu9?7:0);
   int alu16 = (alu12?7:0);
-  *((int4*)((data0_16+alu0))) = make_int4((((val0.x/7)-((int)(alu3)))+alu2+alu13+((val0.x/val1.x)-((int)((((val0.x%val1.x)!=0)&(alu1!=(val1.x<0))))))),(((val0.y/7)-((int)(alu6)))+alu5+alu14+((val0.y/val1.y)-((int)((((val0.y%val1.y)!=0)&(alu4!=(val1.y<0))))))),(((val0.z/7)-((int)(alu9)))+alu8+alu15+((val0.z/val1.z)-((int)((((val0.z%val1.z)!=0)&(alu7!=(val1.z<0))))))),(((val0.w/7)-((int)(alu12)))+alu11+alu16+((val0.w/val1.w)-((int)((((val0.w%val1.w)!=0)&(alu10!=(val1.w<0))))))));
+  *((int4*)((data0_16+alu0))) = make_int4((((val0.x/7)-((int)(alu3)))+(alu2+alu13)+((val0.x/val1.x)-((int)((((val0.x%val1.x)!=0)&(alu1!=(val1.x<0))))))),(((val0.y/7)-((int)(alu6)))+(alu5+alu14)+((val0.y/val1.y)-((int)((((val0.y%val1.y)!=0)&(alu4!=(val1.y<0))))))),(((val0.z/7)-((int)(alu9)))+(alu8+alu15)+((val0.z/val1.z)-((int)((((val0.z%val1.z)!=0)&(alu7!=(val1.z<0))))))),(((val0.w/7)-((int)(alu12)))+(alu11+alu16)+((val0.w/val1.w)-((int)((((val0.w%val1.w)!=0)&(alu10!=(val1.w<0))))))));
 }

@@ -21,7 +21,7 @@ void E_4_4(int* restrict data0_16, int* restrict data1_16, int* restrict data2_1
     int alu14 = (alu6?7:0);
     int alu15 = (alu9?7:0);
     int alu16 = (alu12?7:0);
-    *((int4*)((data0_16+alu0))) = (int4){(((val0[0]/7)-((int)(alu3)))+alu2+alu13+((val0[0]/val1[0])-((int)((((val0[0]%val1[0])!=0)&(alu1!=(val1[0]<0))))))),(((val0[1]/7)-((int)(alu6)))+alu5+alu14+((val0[1]/val1[1])-((int)((((val0[1]%val1[1])!=0)&(alu4!=(val1[1]<0))))))),(((val0[2]/7)-((int)(alu9)))+alu8+alu15+((val0[2]/val1[2])-((int)((((val0[2]%val1[2])!=0)&(alu7!=(val1[2]<0))))))),(((val0[3]/7)-((int)(alu12)))+alu11+alu16+((val0[3]/val1[3])-((int)((((val0[3]%val1[3])!=0)&(alu10!=(val1[3]<0)))))))};
+    *((int4*)((data0_16+alu0))) = (int4){(((val0[0]/7)-((int)(alu3)))+(alu2+alu13)+((val0[0]/val1[0])-((int)((((val0[0]%val1[0])!=0)&(alu1!=(val1[0]<0))))))),(((val0[1]/7)-((int)(alu6)))+(alu5+alu14)+((val0[1]/val1[1])-((int)((((val0[1]%val1[1])!=0)&(alu4!=(val1[1]<0))))))),(((val0[2]/7)-((int)(alu9)))+(alu8+alu15)+((val0[2]/val1[2])-((int)((((val0[2]%val1[2])!=0)&(alu7!=(val1[2]<0))))))),(((val0[3]/7)-((int)(alu12)))+(alu11+alu16)+((val0[3]/val1[3])-((int)((((val0[3]%val1[3])!=0)&(alu10!=(val1[3]<0)))))))};
   }
 }
 

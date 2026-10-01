@@ -146,14 +146,14 @@ void E(float* restrict data0_1, float* restrict data1_1) {
   float alu133 = ((cast7+-1.0f)/(cast7+1.0f));
   float alu134 = (alu133*alu133);
   float alu135 = (alu13?(cast3+-64.0f):cast3);
-  float alu136 = ((cast1*-1.215420125655342e-10f)+(cast1*-1.984187258941006e-09f)+(cast1*-0.0001131594181060791f)+(cast1*-3.1414794921875f)+alu9);
+  float alu136 = ((cast1*-1.215420125655342e-10f)+((cast1*-1.984187258941006e-09f)+((cast1*-0.0001131594181060791f)+((cast1*-3.1414794921875f)+alu9))));
   float alu137 = (alu5-((float)(cast2)));
   float alu138 = (alu136*alu136);
   float alu139 = ((alu132<0.0f)?-alu132:alu132);
   float alu140 = (((cast6&1)!=0)?(1.5707963705062866f-alu139):alu132);
   float alu141 = (alu140*alu140);
   float alu142 = (1.0f/val0);
-  float alu143 = (alu2?((((((0.43745502829551697f*alu134)+0.5764790177345276f)*alu134)+0.961801290512085f)*alu133*alu134)+alu135+(alu133*2.885390043258667f)+(alu133*3.2734472910078694e-08f)):((float)(__builtin_inff())));
+  float alu143 = (alu2?((((((0.43745502829551697f*alu134)+0.5764790177345276f)*alu134)+0.961801290512085f)*(alu133*alu134))+alu135+(alu133*2.885390043258667f)+(alu133*3.2734472910078694e-08f)):((float)(__builtin_inff())));
   float alu144 = ((val0!=0.0f)?alu143:((float)(-__builtin_inff())));
   float alu145 = ((alu142!=((float)(-__builtin_inff())))?alu144:((float)(-__builtin_inff())));
   float alu146 = ((val0<-0.0f)?((float)(__builtin_nanf(""))):alu145);

@@ -1099,6 +1099,35 @@ let negation =
           equal values [| `Float 2.5 |] (List.assoc 0 out));
     ]
 
+(* Grouping *)
+
+(* A product of a product keeps its grouping: at 4 * (2^126 * 0.25) the inner
+   product is finite and so is the whole, where (4 * 2^126) * 0.25 overflows. *)
+let grouping =
+  group "grouping"
+    [
+      test "Clang computes a product of a product as it is grouped" (fun () ->
+          let zero = Ops.int ~dtype:Int32 0 in
+          let at slot =
+            Ops.index (Ops.param ~shape:[ Int 1 ] slot Float32) [ zero ]
+          in
+          let load slot = Ops.load (at slot) [] in
+          let mul x y = Ops.alu x Mul [ y ] in
+          let k =
+            Run.program (Lazy.force host)
+              (Linearizer.linearize
+                 (Ops.sink
+                    ~kernel:(Ops.kernel_info ~name:"grouping" ())
+                    [ Ops.store (at 0) (mul (load 1) (mul (load 2) (load 3))) ]))
+          in
+          let big = Float.ldexp 1. 126 in
+          let out =
+            Run.on_host k
+              [ (1, [| `Float 4. |]); (2, [| `Float big |]); (3, [| `Float 0.25 |]) ]
+          in
+          equal values [| `Float big |] (List.assoc 0 out));
+    ]
+
 let () =
   exit
     (run "Tolk.Cstyle"
@@ -1111,6 +1140,7 @@ let () =
          errors;
          parentheses;
          negation;
+         grouping;
          fp8_infinities;
          rendering;
          compilation;
