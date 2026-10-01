@@ -9,8 +9,6 @@ let fail fmt = Printf.ksprintf (fun msg -> raise (Rejected msg)) fmt
 
 (* Sets of code points, as sorted disjoint inclusive ranges. *)
 
-type set = (int * int) list
-
 let max_scalar = 0x10FFFF
 
 let normalize ranges =

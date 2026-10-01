@@ -132,41 +132,6 @@ let[@inline] trie_step trie node byte =
     done;
     !result
 
-let trie_longest_match trie sequence ~start ~prefix ~prefix_len =
-  if Array.length trie.trie_ids = 0 then None
-  else
-    let seq_len = String.length sequence in
-    let last_id = ref (-1) in
-    let last_end = ref start in
-    let current = ref 0 in
-    let stopped = ref false in
-    let i = ref 0 in
-    while !i < prefix_len && not !stopped do
-      let child =
-        trie_step trie !current (Char.code (String.unsafe_get prefix !i))
-      in
-      if child < 0 then stopped := true
-      else (
-        current := child;
-        incr i)
-    done;
-    (if not !stopped then
-       let j = ref start in
-       while !j < seq_len && not !stopped do
-         let child =
-           trie_step trie !current (Char.code (String.unsafe_get sequence !j))
-         in
-         if child < 0 then stopped := true
-         else (
-           current := child;
-           incr j;
-           let tid = Array.unsafe_get trie.trie_ids child in
-           if tid >= 0 then (
-             last_id := tid;
-             last_end := !j))
-       done);
-    if !last_id >= 0 then Some (!last_id, !last_end) else None
-
 (* Model type *)
 
 type t = {
@@ -238,14 +203,6 @@ let read_file ~vocab_file =
 let from_file ~vocab_file =
   let vocab = read_file ~vocab_file in
   create ~vocab ()
-
-let count_chars s =
-  let len = String.length s in
-  let n = ref 0 in
-  for i = 0 to len - 1 do
-    if Char.code (String.unsafe_get s i) land 0xC0 <> 0x80 then incr n
-  done;
-  !n
 
 (* The unknown token, standing for the whole word. *)
 let add_unknown model ids ~opaque ~len =

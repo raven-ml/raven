@@ -386,12 +386,11 @@ type t = {
      encoding, decided once at creation, and the punctuation tables the walker
      splits with: see [encode_into]. *)
   sp_cut : sp_cut option;
-  (* Byte-level models match raw bytes: [source] holds every entry decoded
-     through the byte-to-unicode table, [source_vocab] inverts it and [byte_ids]
-     gives the id of each single byte. The vocabulary itself keeps the encoded
-     form, which is what serialization and decoding speak. *)
+  (* Byte-level models match raw bytes: [source_vocab] maps every entry decoded
+     through the byte-to-unicode table to its id and [byte_ids] gives the id of
+     each single byte. The vocabulary itself keeps the encoded form, which is
+     what serialization and decoding speak. *)
   byte_level : bool;
-  source : string array;
   source_vocab : vocab;
   byte_ids : int array;
   (* How many bytes of a pretoken each id accounts for. *)
@@ -1782,7 +1781,6 @@ let create ~vocab ~merges ?(byte_level = false) ?(cache_capacity = 262144)
       ignore_merges;
       sp_cut;
       byte_level;
-      source;
       source_vocab;
       byte_ids;
       len_table =

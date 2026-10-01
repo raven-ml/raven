@@ -37,10 +37,6 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
     unk_id;
   }
 
-let add_token vocab vocab_r token id =
-  Hashtbl.replace vocab token id;
-  Hashtbl.replace vocab_r id token
-
 (* A word absent from the vocabulary is the unknown token, recorded as standing
    for the whole word, and nothing at all when the vocabulary does not hold that
    either. *)

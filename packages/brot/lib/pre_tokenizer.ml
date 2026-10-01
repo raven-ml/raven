@@ -131,11 +131,6 @@ let byte_level_blit buf s ~start ~stop =
   done;
   !j
 
-let byte_level_encode text =
-  let stop = String.length text in
-  let buf = Bytes.create (stop * 2) in
-  Bytes.sub_string buf 0 (byte_level_blit buf text ~start:0 ~stop)
-
 (* One character outside the alphabet costs the whole token its mapping, as it
    does in HuggingFace. Every character of the alphabet is one or two UTF-8
    bytes, so a longer one is outside it, and so is a byte sequence that is not
