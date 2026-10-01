@@ -2943,8 +2943,8 @@ let constants_where_used d =
       equal ~msg:"programs" int 1 loaded;
       equal (tensor int64) (f p) (host r))
 
-let metal =
-  match Metal.device with
+(* The calls on a GPU of [kind], if this machine has one. *)
+let on_gpu kind = function
   | Some m ->
       let d = Nx.Device.of_runtime m in
       [
@@ -2957,7 +2957,8 @@ let metal =
         gathers ~at:(on d) m;
       ]
   | None ->
-      [ slow "no Metal device" (fun () -> skip ~reason:"no Metal device" ()) ]
+      let why = "no " ^ kind ^ " device" in
+      [ slow why (fun () -> skip ~reason:why ()) ]
 
 let () =
   exit
@@ -2980,6 +2981,8 @@ let () =
          device_lists;
          disk;
          on_one_device ~name:"one device" d4;
-         group ~tags:[ "slow" ] "metal" metal;
+         group ~tags:[ "slow" ] "metal" (on_gpu "Metal" Metal.device);
+         group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" Nvidia.cuda);
+         group ~tags:[ "slow" ] "nv" (on_gpu "NV" Nvidia.nv);
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])

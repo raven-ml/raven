@@ -1,7 +1,7 @@
 (library
  (name rune_next_test)
  (wrapped false)
- (modules expr metal oracle programs traces witness)
+ (modules expr metal nvidia oracle programs traces witness)
  (libraries
   windtrap
   rune.next
@@ -12,6 +12,8 @@
   nx
   nx.array
   nx.device
+  nx.cuda.device
+  nx.nv.device
   nx.dtype
   zarith
   (select

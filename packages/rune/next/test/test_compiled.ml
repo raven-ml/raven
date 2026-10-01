@@ -56,6 +56,13 @@ let on_metal =
       { device; name = "metal"; float64 = false; flushes = true; budgets = [] })
     Metal.device
 
+let on_nvidia name =
+  Option.map (fun device ->
+      { device; name; float64 = true; flushes = false; budgets = [] })
+
+let on_cuda = on_nvidia "cuda" Nvidia.cuda
+let on_nv = on_nvidia "nv" Nvidia.nv
+
 (* Arrays *)
 
 let pp_ints ppf a =
@@ -2406,6 +2413,12 @@ let () =
             group "cost" (cost m);
           ]
   in
+  let nvidia kind = function
+    | None ->
+        let why = "no " ^ kind ^ " device" in
+        [ slow why (fun () -> skip ~reason:why ()) ]
+    | Some g -> kernels g ~count:25 ~heavy:true @ contracts g
+  in
   exit
     (run "Rune_next.Compiled"
        [
@@ -2419,4 +2432,6 @@ let () =
          group ~tags:[ "slow" ] "host, swept"
            (kernels on_host ~count:25 ~heavy:true);
          group ~tags:[ "slow" ] "metal" metal;
+         group ~tags:[ "slow" ] "cuda" (nvidia "CUDA" on_cuda);
+         group ~tags:[ "slow" ] "nv" (nvidia "NV" on_nv);
        ])
