@@ -76,13 +76,18 @@ value caml_nx_device_heap_return_byte(value n) {
   return caml_nx_device_heap_return(Long_val(n));
 }
 
-/* The bytes the collector has returned, ever. */
+/* The bytes the collector has returned, ever, of buffers made before the last
+   major cycle ended, and the number of major cycles ended. A token holds its
+   bytes and the cycles ended when it was made. */
 static _Atomic intnat heap_collected;
+static _Atomic intnat heap_epoch;
 
 static void heap_token_finalize(value v) {
-  intnat n = *(intnat *)Data_custom_val(v);
+  intnat n = ((intnat *)Data_custom_val(v))[0];
+  intnat e = ((intnat *)Data_custom_val(v))[1];
   caml_nx_device_heap_return(n);
-  atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
+  if (e < atomic_load_explicit(&heap_epoch, memory_order_relaxed))
+    atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
 }
 
 static struct custom_operations heap_token_ops = {
@@ -93,8 +98,10 @@ static struct custom_operations heap_token_ops = {
 
 /* A token that returns [v_n] reserved bytes once it is collected. */
 value caml_nx_device_heap_token(value v_n) {
-  value v = caml_alloc_custom(&heap_token_ops, sizeof(intnat), 0, 1);
-  *(intnat *)Data_custom_val(v) = Long_val(v_n);
+  value v = caml_alloc_custom(&heap_token_ops, 2 * sizeof(intnat), 0, 1);
+  ((intnat *)Data_custom_val(v))[0] = Long_val(v_n);
+  ((intnat *)Data_custom_val(v))[1] =
+      atomic_load_explicit(&heap_epoch, memory_order_relaxed);
   return v;
 }
 
@@ -114,8 +121,9 @@ value caml_nx_device_heap_token(value v_n) {
 
    The bytes held live are those held at the end of a major cycle that the next
    cycle did not collect. A cycle frees the garbage the previous cycle found, as
-   it sweeps it, and the blocks it allocates survive it, so what it collects was
-   held at the end of the previous cycle. */
+   it sweeps it, and the blocks it allocates survive it. Minor collections also
+   free buffers that died young, made after the previous cycle ended, which it
+   never held: only the buffers made before it ended count as collected. */
 
 static _Atomic intnat heap_live;
 static _Atomic intnat held_at_cycle;
@@ -132,6 +140,7 @@ value caml_nx_device_heap_cycle(value unit) {
       (collected - atomic_exchange_explicit(&collected_at_cycle, collected,
                                             memory_order_relaxed));
   atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
+  atomic_fetch_add_explicit(&heap_epoch, 1, memory_order_relaxed);
   return Val_unit;
 }
 
