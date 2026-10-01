@@ -2072,7 +2072,9 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [maximum a b] is the element-wise maximum of [a] and [b]. On floats it is
     the IEEE 754 maximum: NaN propagates, and [-0.] is less than [0.], so the
-    maximum of [-0.] and [0.] is [0.] in either order. *)
+    maximum of [-0.] and [0.] is [0.] in either order. Under a compiled
+    function NaN propagates as here, and the sign of a zero result is the
+    target's. *)
 
 val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [maximum_s t s] is the element-wise maximum of [t] and scalar [s]. *)
@@ -2080,7 +2082,8 @@ val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 val minimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [minimum a b] is the element-wise minimum of [a] and [b]. On floats it is
     the IEEE 754 minimum: NaN propagates, and [-0.] is less than [0.], so the
-    minimum of [-0.] and [0.] is [-0.] in either order. *)
+    minimum of [-0.] and [0.] is [-0.] in either order. Under a compiled
+    function, as for {!maximum}, the sign of a zero result is the target's. *)
 
 val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [minimum_s t s] is the element-wise minimum of [t] and scalar [s]. *)
@@ -2319,9 +2322,10 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 
 val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [max ?axes ?keepdims t] is the maximum along [axes], as {!maximum} orders
-    elements: NaN propagates and [-0.] is less than [0.]. The result does not
-    depend on the order the elements are combined in. [keepdims] defaults to
-    [false].
+    elements: NaN propagates and [-0.] is less than [0.], except that under a
+    compiled function the sign of a zero result is the target's. The result
+    does not depend on the order the elements are combined in. [keepdims]
+    defaults to [false].
 
     {@ocaml[
       # create float32 [| 2; 3 |]
@@ -2332,9 +2336,10 @@ val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 
 val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [min ?axes ?keepdims t] is the minimum along [axes], as {!minimum} orders
-    elements: NaN propagates and [-0.] is less than [0.]. The result does not
-    depend on the order the elements are combined in. [keepdims] defaults to
-    [false]. *)
+    elements: NaN propagates and [-0.] is less than [0.], except that under a
+    compiled function the sign of a zero result is the target's. The result
+    does not depend on the order the elements are combined in. [keepdims]
+    defaults to [false]. *)
 
 val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
@@ -2363,7 +2368,9 @@ val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 
 val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummax ?axis t] is the inclusive cumulative maximum along [axis], as
-    {!maximum} orders elements: NaN propagates and [-0.] is less than [0.]. When
+    {!maximum} orders elements: NaN propagates and [-0.] is less than [0.],
+    except that under a compiled function the sign of a zero result is the
+    target's. When
     [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
     shape.
 
@@ -2371,7 +2378,9 @@ val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 
 val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummin ?axis t] is the inclusive cumulative minimum along [axis], as
-    {!minimum} orders elements: NaN propagates and [-0.] is less than [0.]. When
+    {!minimum} orders elements: NaN propagates and [-0.] is less than [0.],
+    except that under a compiled function the sign of a zero result is the
+    target's. When
     [axis] is omitted, it accumulates the flattened tensor and keeps [t]'s
     shape.
 
@@ -2438,10 +2447,10 @@ val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]: the
-    first index holding the element {!max} returns, so [-0.] and [0.] do not
-    tie and the argmax of [[-0.; 0.]] is [1]. A NaN counts as the maximum: the
-    result is the index of the first NaN. When [axis] is omitted, operates on
-    the flattened tensor. [keepdims] defaults to [false].
+    first NaN, else the first element greatest in {!maximum}'s order, where
+    [-0.] is less than [0.], so the argmax of [[-0.; 0.]] is [1], compiled or
+    not. When [axis] is omitted, operates on the flattened tensor. [keepdims]
+    defaults to [false].
 
     Raises [Invalid_argument] if [axis] is out of bounds, or if the reduced
     axis, all of [t] when [axis] is omitted, has no element.
@@ -2456,10 +2465,9 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> int64_t
 (** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]: the
-    first index holding the element {!min} returns, so the argmin of
-    [[0.; -0.]] is [1]. A NaN counts as the minimum: the result is the index of
-    the first NaN. When [axis] is omitted, operates on the flattened tensor.
-    [keepdims] defaults to [false].
+    first NaN, else the first element least in {!minimum}'s order, so the
+    argmin of [[0.; -0.]] is [1], compiled or not. When [axis] is omitted,
+    operates on the flattened tensor. [keepdims] defaults to [false].
 
     Raises [Invalid_argument] as {!argmax} does.
 

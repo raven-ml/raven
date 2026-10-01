@@ -171,8 +171,15 @@ let element_bits : type a b. (a, b) Nx_dtype.t -> a -> Dtype.value =
   | `Float f -> `Int (Bigint.of_int64 (Int64.bits_of_float f))
   | v -> v
 
-let exact ?__POS__ expected actual =
-  let bits =
+(* [same ~zero_sign] asserts that two arrays have one dtype, one shape and the
+   bits of each element, a zero's sign read only when [zero_sign]. *)
+let same ~zero_sign ?__POS__ expected actual =
+  let bits dt v =
+    match to_value dt v with
+    | `Float f when f = 0. && not zero_sign -> `Int Bigint.zero
+    | _ -> element_bits dt v
+  in
+  let equal =
     Windtrap.Testable.make ~pp:Nx.pp ~equal:(fun x y ->
         let dt = Nx.dtype x in
         Nx_dtype.equal dt (Nx.dtype y)
@@ -181,12 +188,17 @@ let exact ?__POS__ expected actual =
         match Nx_dtype.equal_witness dt (Nx.dtype y) with
         | Some Type.Equal ->
             Array.for_all2
-              (fun a b ->
-                Dtype.equal_const (element_bits dt a) (element_bits dt b))
+              (fun a b -> Dtype.equal_const (bits dt a) (bits dt b))
               (Nx.to_array x) (Nx.to_array y)
         | None -> false)
   in
-  Windtrap.equal ?__POS__ bits expected actual
+  Windtrap.equal ?__POS__ equal expected actual
+
+let exact ?__POS__ expected actual =
+  same ~zero_sign:true ?__POS__ expected actual
+
+let exact_up_to_zero ?__POS__ expected actual =
+  same ~zero_sign:false ?__POS__ expected actual
 
 (* Units in the last place *)
 

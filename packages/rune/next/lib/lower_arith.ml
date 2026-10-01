@@ -752,23 +752,17 @@ let rem x y =
 
 (* Extremes
 
-   IEEE 754-2019's maximum and minimum: NaN when either operand is, and [-0.]
-   below [0.], read on the sign bit. *)
+   NaN when either operand is; otherwise the target's maximum or minimum, whose
+   zero result may have either sign. *)
 
 let extreme ~greater x y =
   if is_float x then
     float2
       (fun x y ->
-        let tie = Ops.eq x y in
-        let pick =
-          if greater then
-            Ops.bitwise_or (Ops.lt y x)
-              (Ops.bitwise_and tie (Ops.logical_not (sign_bit x)))
-          else Ops.bitwise_or (Ops.lt x y) (Ops.bitwise_and tie (sign_bit x))
-        in
         where
           (Ops.bitwise_or (isnan x) (isnan y))
-          (float x Float.nan) (where pick x y))
+          (float x Float.nan)
+          ((if greater then Ops.maximum else Ops.minimum) x y))
       x y
   else if Dtype.equal (dtype x) Bool then
     (if greater then Ops.bitwise_or else Ops.bitwise_and) x y

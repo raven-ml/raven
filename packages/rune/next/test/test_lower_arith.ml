@@ -101,14 +101,23 @@ let exact_float_binary =
 let extremes =
   group "extremes"
     [
-      test "maximum of zeros is 0. whatever their order" (fun () ->
+      test "the maximum and the minimum of zeros are a zero" (fun () ->
           let a = Nx.create Nx.float32 [| 2 |] [| -0.; 0. |] in
           let b = Nx.create Nx.float32 [| 2 |] [| 0.; -0. |] in
-          agrees (fun () -> Nx.maximum a b));
-      test "minimum of zeros is -0. whatever their order" (fun () ->
-          let a = Nx.create Nx.float32 [| 2 |] [| -0.; 0. |] in
-          let b = Nx.create Nx.float32 [| 2 |] [| 0.; -0. |] in
+          let agrees f = exact_up_to_zero (f ()) (traced f) in
+          agrees (fun () -> Nx.maximum a b);
           agrees (fun () -> Nx.minimum a b));
+      test "relu, the maximum and the minimum read no sign bit" (fun () ->
+          let x = Nx.zeros Nx.float32 [| 4 |]
+          and y = Nx.ones Nx.float32 [| 4 |] in
+          let reads_sign f =
+            List.exists
+              (fun u -> Tolk_next.Ops.op u = Tolk_next.Op.Bitcast)
+              (Tolk_next.Ops.toposort (Programs.kernels (snd (trace f))))
+          in
+          is_false ~msg:"relu" (reads_sign (fun () -> Nx.relu x));
+          is_false ~msg:"maximum" (reads_sign (fun () -> Nx.maximum x y));
+          is_false ~msg:"minimum" (reads_sign (fun () -> Nx.minimum x y)));
     ]
 
 let nan_extremes =

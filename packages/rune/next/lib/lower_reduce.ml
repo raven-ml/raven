@@ -25,9 +25,8 @@ let along rank axis u =
    magnitude bits flipped: the greater float is the greater integer, [-0.] is
    just below [+0.], and subnormals keep the order that a float comparison may
    flush. Every NaN takes the greatest integer or the least, which no number
-   takes, and each key maps back to its float, those two to NaNs: a sort, in
-   either direction, and the maximum key a NaN greatest; only the minimum and
-   [argmin] key it least. An integer or a boolean is its own key. *)
+   takes: a sort, in either direction, and [argmax] key a NaN greatest; only
+   [argmin] keys it least. An integer or a boolean is its own key. *)
 
 let flip k =
   Ops.where
@@ -47,15 +46,16 @@ let keys ~nan x =
       (Ops.const_like bits (extreme :> Dtype.const))
       (flip bits)
 
-let values dt k = if Dtype.is_float dt then Ops.bitcast (flip k) dt else k
-
 (* Reductions and scans
 
    Signed integers accumulate unsigned, since C, Metal and CUDA leave their
    overflow undefined. A float sum adds [+0.] to its result: a kernel starts a
    loop's accumulator from [+0.], but sums the terms alone when no loop is left,
-   over an axis of one element or one it unrolls whole. An extreme is a maximum
-   of keys, through their order-reversing complement for a minimum. *)
+   over an axis of one element or one it unrolls whole. A float extreme is NaN
+   where a NaN is among its elements, and otherwise the target's maximum, of the
+   negated elements for a minimum, whose zero result may have either sign. An
+   integer extreme is a maximum of the integers, or of their complements for a
+   minimum. *)
 
 let accumulator dt =
   let acc = Dtype.sum_acc dt in
@@ -72,11 +72,11 @@ let accumulated f op x =
   Ops.cast r dt
 
 let extreme f ~greatest x =
-  let k =
-    if greatest then f Op.Max (keys ~nan:`Greatest x)
-    else Ops.bitwise_not (f Op.Max (Ops.bitwise_not (keys ~nan:`Least x)))
-  in
-  values (dtype x) k
+  if is_float x then
+    let m = if greatest then f Op.Max x else Ops.neg (f Op.Max (Ops.neg x)) in
+    Ops.where (f Op.Max (Ops.ne x x)) (Ops.const_like m (`Float Float.nan)) m
+  else if greatest then f Op.Max x
+  else Ops.bitwise_not (f Op.Max (Ops.bitwise_not x))
 
 let combine f (k : Nx_backend.reduce) x =
   match k with

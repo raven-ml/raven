@@ -49,6 +49,12 @@ val exact : ?__POS__:Windtrap.pos -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> unit
     equals every NaN, since arithmetic leaves a NaN's sign and payload
     unspecified. Compare bit patterns through a bitcast where they matter. *)
 
+val exact_up_to_zero :
+  ?__POS__:Windtrap.pos -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> unit
+(** [exact_up_to_zero expected actual] is {!exact}, except that [-0.] and [0.]
+    are equal: a compiled maximum or minimum leaves a zero result's sign to its
+    target. *)
+
 val ulps :
   ?__POS__:Windtrap.pos ->
   budget:int ->

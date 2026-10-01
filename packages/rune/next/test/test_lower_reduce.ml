@@ -23,6 +23,9 @@ let traced f =
 
 let agrees f = exact (f ()) (traced f)
 
+(* A compiled maximum or minimum leaves a zero result's sign to its target. *)
+let agrees_up_to_zero f = exact_up_to_zero (f ()) (traced f)
+
 (* Operands *)
 
 type float_dtype = F : string * (float, 'b) Nx.dtype -> float_dtype
@@ -109,9 +112,9 @@ let prod = { r = (fun ?axes x -> Nx.prod ?axes x) }
 let max = { r = (fun ?axes x -> Nx.max ?axes x) }
 let min = { r = (fun ?axes x -> Nx.min ?axes x) }
 
-let reduced name ?filled ~pp dtype value { r } =
+let reduced name ?filled ?(check = agrees) ~pp dtype value { r } =
   prop name (with_axes ?filled ~pp dtype value) (fun (x, axes) ->
-      agrees (fun () -> r ~axes x))
+      check (fun () -> r ~axes x))
 
 (* [|a - e| <= 2 (n - 1) u sum |x|], [n] the terms of each output: [a] and [e]
    are each within half of it of the exact sum. *)
@@ -195,13 +198,15 @@ let sums =
 let extremes =
   group "extremes"
     [
-      per_float "float extremes are exact"
+      per_float "float extremes are exact up to a zero's sign"
         {
           on_float =
             (fun dt ->
               [
-                reduced "max" ~filled:true ~pp:pp_float dt Gen.any_float max;
-                reduced "min" ~filled:true ~pp:pp_float dt Gen.any_float min;
+                reduced "max" ~filled:true ~check:agrees_up_to_zero ~pp:pp_float
+                  dt Gen.any_float max;
+                reduced "min" ~filled:true ~check:agrees_up_to_zero ~pp:pp_float
+                  dt Gen.any_float min;
               ]);
         };
       per_int "integer extremes are exact"
@@ -213,12 +218,12 @@ let extremes =
                 reduced "min" ~filled:true ~pp:pp_int dt v min;
               ]);
         };
-      test "the maximum of both zeros is +0. and the minimum -0." (fun () ->
+      test "the maximum and the minimum of both zeros are a zero" (fun () ->
           List.iter
             (fun zeros ->
               let x = Nx.create Nx.float32 [| 2 |] zeros in
-              agrees (fun () -> Nx.max x);
-              agrees (fun () -> Nx.min x))
+              agrees_up_to_zero (fun () -> Nx.max x);
+              agrees_up_to_zero (fun () -> Nx.min x))
             [ [| -0.; 0. |]; [| 0.; -0. |] ]);
       test "NaN propagates wherever it lies" (fun () ->
           let x =
@@ -257,17 +262,18 @@ type scanning = { c : 'a 'b. axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
 let cummax = { c = (fun ~axis x -> Nx.cummax ~axis x) }
 let cummin = { c = (fun ~axis x -> Nx.cummin ~axis x) }
 
+(* Each scan, and how exactly it agrees with eager. *)
 let scans_of =
   [
-    ("cumsum", { c = (fun ~axis x -> Nx.cumsum ~axis x) });
-    ("cumprod", { c = (fun ~axis x -> Nx.cumprod ~axis x) });
-    ("cummax", cummax);
-    ("cummin", cummin);
+    ("cumsum", agrees, { c = (fun ~axis x -> Nx.cumsum ~axis x) });
+    ("cumprod", agrees, { c = (fun ~axis x -> Nx.cumprod ~axis x) });
+    ("cummax", agrees_up_to_zero, cummax);
+    ("cummin", agrees_up_to_zero, cummin);
   ]
 
-let scanned name ~pp dtype value { c } =
+let scanned name ?(check = agrees) ~pp dtype value { c } =
   prop name (with_axis ~pp dtype value) (fun (x, axis) ->
-      agrees (fun () -> c ~axis x))
+      check (fun () -> c ~axis x))
 
 let scans =
   group "scans"
@@ -276,23 +282,27 @@ let scans =
         {
           on_int =
             (fun dt v ->
-              List.map (fun (op, c) -> scanned op ~pp:pp_int dt v c) scans_of);
+              List.map (fun (op, _, c) -> scanned op ~pp:pp_int dt v c) scans_of);
         };
-      per_float "float scans of special values are exact"
+      per_float
+        "float scans of special values are exact, extremes up to a zero's sign"
         {
           on_float =
             (fun dt ->
               List.map
-                (fun (op, c) -> scanned op ~pp:pp_float dt exact_float c)
+                (fun (op, check, c) ->
+                  scanned op ~check ~pp:pp_float dt exact_float c)
                 scans_of);
         };
-      per_float "float running extremes are exact"
+      per_float "float running extremes are exact up to a zero's sign"
         {
           on_float =
             (fun dt ->
               [
-                scanned "cummax" ~pp:pp_float dt Gen.any_float cummax;
-                scanned "cummin" ~pp:pp_float dt Gen.any_float cummin;
+                scanned "cummax" ~check:agrees_up_to_zero ~pp:pp_float dt
+                  Gen.any_float cummax;
+                scanned "cummin" ~check:agrees_up_to_zero ~pp:pp_float dt
+                  Gen.any_float cummin;
               ]);
         };
       test "a running sum starts from +0." (fun () ->
@@ -302,8 +312,8 @@ let scans =
           let x =
             Nx.create Nx.float32 [| 5 |] [| 1.; -0.; Float.nan; 3.; 0. |]
           in
-          agrees (fun () -> Nx.cummax x);
-          agrees (fun () -> Nx.cummin x));
+          agrees_up_to_zero (fun () -> Nx.cummax x);
+          agrees_up_to_zero (fun () -> Nx.cummin x));
       test "an empty axis" (fun () ->
           agrees (fun () -> Nx.cumsum ~axis:1 (Nx.zeros Nx.float32 [| 2; 0 |])));
       test "a long axis runs in two stages" (fun () ->
@@ -492,9 +502,9 @@ let sorts =
    sum over a loop the compiler removes, and integer accumulators that overflow,
    which C leaves undefined for signed ones. *)
 
-let compiled f =
+let compiled ?(check = exact) f =
   let s, y = trace f in
-  exact (f ()) (Programs.compiled s y)
+  check (f ()) (Programs.compiled s y)
 
 let on_the_host =
   group ~tags:[ "slow" ] "compiled for the host"
@@ -536,8 +546,8 @@ let on_the_host =
                 -0x1p-149;
               |]
           in
-          compiled (fun () -> Nx.max ~axes:[ 1 ] x);
-          compiled (fun () -> Nx.min ~axes:[ 1 ] x));
+          compiled ~check:exact_up_to_zero (fun () -> Nx.max ~axes:[ 1 ] x);
+          compiled ~check:exact_up_to_zero (fun () -> Nx.min ~axes:[ 1 ] x));
     ]
 
 (* Graph parity: the kernels tinygrad schedules for the same program. *)

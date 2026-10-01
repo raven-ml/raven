@@ -15,9 +15,9 @@ An entry is admitted for one of three reasons only:
 - **(c) the engine's contract:** nx.device's submission protocol.
 
 Each entry gives the reference (tinygrad `79af1ca70`, or none), the raven
-lines, what differs, nx's meaning, the agreement class (RFC 0012: exact,
-rounded sum, ulp per target, measured bound), the reason, and the test that
-pins it. An entry without its test is rejected at review. An entry goes when
+lines, what differs, nx's meaning, the agreement class (RFC 0012: exact, exact
+up to the sign of a zero result, rounded sum, ulp per target, measured bound),
+the reason, and the test that pins it. An entry without its test is rejected at review. An entry goes when
 its reason goes.
 
 A test is named by its module's suite (`packages/rune/next/test/test_<module>.ml`)
@@ -276,14 +276,18 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:378,393` (`Ops.MAX`; `minimum` as
   `-max(-x, -y)`).
-- **Raven:** `lower_arith.ml:756` (`extreme`).
-- **Differs:** IEEE 754-2019's maximum and minimum: NaN when an operand is NaN,
-  and `-0.` below `0.`, read on the sign bit. tinygrad's `MAX` keeps the larger
-  operand by comparison, which a NaN never is.
-- **nx:** `nx.mli`, `maximum`, `minimum` (RFC 0012, Extremes).
-- **Class:** exact.
+- **Raven:** `lower_arith.ml:758` (`extreme`).
+- **Differs:** NaN when an operand is NaN, and otherwise the target's `MAX`, or
+  its `MAX` of the negated operands for a minimum. tinygrad's `MAX` keeps the
+  larger operand by comparison, which a NaN never is. A zero result's sign is
+  the target's.
+- **nx:** `nx.mli`, `maximum`, `minimum`: NaN propagates; compiled, a zero
+  result's sign is the target's.
+- **Class:** exact up to the sign of a zero result.
 - **Reason:** (b).
-- **Pinned by:** `extremes of NaN`, `extremes`.
+- **Pinned by:** `extremes of NaN`, `extremes › the maximum and the minimum of
+  zeros are a zero`, `extremes › relu, the maximum and the minimum read no sign
+  bit`.
 
 ### A20. Less than or equal
 
@@ -396,36 +400,37 @@ target's run lands.
   `scans › integer scans are exact › *`,
   `compiled for the host › integer sums and products wrap` (slow).
 
-### R3. Extremes of reductions and scans order keys
+### R3. Extremes of reductions and scans propagate NaN
 
 - **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
   (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
-- **Raven:** `lower_reduce.ml:38` (`keys`, `values`), `:74` (`extreme`).
-- **Differs:** a float maximum is `Ops.MAX` over integer keys, the bits with a
-  negative float's magnitude flipped and every NaN at the greatest key, mapped
-  back to floats; a minimum takes the maximum of the keys' complements, every
-  NaN at the least key. tinygrad's `MAX` keeps the larger operand by
-  comparison, which a NaN never is, and leaves the order of `-0.` and `+0.` to
-  the association; its minimum negates. Integers agree (`graph parity ›
-  max_int`, `min_int`, `cummax_int`, `cummin_int`).
-- **nx:** `nx.mli`, `max`, `min`, `cummax`, `cummin`: IEEE 754-2019 maximum and
-  minimum, NaN propagating and `-0.` below `0.`.
-- **Class:** exact.
+- **Raven:** `lower_reduce.ml:74` (`extreme`).
+- **Differs:** a float extreme is NaN where the same reduction or scan of
+  `x <> x` is true, and otherwise tinygrad's: `Ops.MAX`, of the negated
+  elements for a minimum. tinygrad's `MAX` keeps the larger operand by
+  comparison, which a NaN never is. A zero result's sign is the target's.
+  Integers agree (`graph parity › max_int`, `min_int`, `cummax_int`,
+  `cummin_int`).
+- **nx:** `nx.mli`, `max`, `min`, `cummax`, `cummin`: NaN propagates;
+  compiled, a zero result's sign is the target's.
+- **Class:** exact up to the sign of a zero result.
 - **Reason:** (b).
-- **Pinned by:** `extremes › *`, `scans › float running extremes are exact ›
-  *`, `scans › a running extreme is NaN from the first NaN on`,
-  `compiled for the host › extremes of NaN and both zeros` (slow).
+- **Pinned by:** `extremes › *`, `scans › float running extremes are exact up
+  to a zero's sign › *`, `scans › a running extreme is NaN from the first NaN
+  on`, `compiled for the host › extremes of NaN and both zeros` (slow).
 
 ### R4. Arg-reductions order keys
 
 - **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
-- **Raven:** `lower_reduce.ml:96` (`argmax`), `:108` (`arg_reduce`).
-- **Differs:** tinygrad's decomposition runs over R3's keys: the first element
-  equal to the maximum of the keys, the first NaN if there is one, and `-0.`
-  below `0.`. Over floats, tinygrad's equality with the maximum never holds for
+- **Raven:** `lower_reduce.ml:37` (`keys`), `:96` (`argmax`), `:108`
+  (`arg_reduce`).
+- **Differs:** tinygrad's decomposition runs over order keys, the bits with a
+  negative float's magnitude flipped and every NaN at the greatest key, or the
+  least for `argmin`: the first element equal to the maximum of the keys, the
+  first NaN if there is one, and `-0.` below `0.`. Over floats, tinygrad's equality with the maximum never holds for
   a NaN. Integers agree (`graph parity › argmax_int`, `argmin_int`).
-- **nx:** `nx.mli`, `argmax`, `argmin`: the first index holding the element
-  `max` and `min` return, the first NaN if there is one.
+- **nx:** `nx.mli`, `argmax`, `argmin`: the first NaN, else the first element
+  extreme in `maximum`'s order, where `-0.` is below `0.`.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `arg-reductions › *`.
@@ -437,7 +442,7 @@ target's run lands.
   (`argsort`).
 - **Raven:** `lower_reduce.ml:130` (`bitonic`), `:192` (`positions`), `:222`
   (`take`), `:229` (`argsort`), `:248` (`sort`).
-- **Differs:** tinygrad's network sorts R3's keys, NaN at the greatest key in
+- **Differs:** tinygrad's network sorts R4's keys, NaN at the greatest key in
   both directions, each read as the unsigned integer of its width and packed in
   an `int64` above its position, complemented for a descending sort. Packed
   integers are distinct, so the network gives the stable order, and the
@@ -787,7 +792,11 @@ differs, nx's meaning, and the test that pins it.
   writes a subnormal result as a zero of its sign: `recip (-0x1.fffffep127)`
   is `-0.`, where nx.cpu gives `-0x1p-128`, and `atan2 (-4) 0x1.fffffep127`
   is `-0.`. A kernel that moves or orders values without computing on them,
-  a copy, a gather or a sort, keeps every bit. QR takes no reflection of a
+  a copy, a gather or a sort, keeps every bit. `maximum` and `minimum`, and
+  their reductions and scans, compare a subnormal as a zero of its sign and
+  return the operand they pick with its bits, so `relu` of a negative
+  subnormal is that subnormal and `cummax` may keep the smaller of two
+  positive subnormals (A19, R3). QR takes no reflection of a
   column whose only nonzero elements below the diagonal are subnormal, as
   `[[1, 0]; [1e-40, 1]]`'s, where nx.cpu reflects it (L2).
 - **nx:** `nx_backend_intf.mli`: IEEE 754 binary arithmetic, with gradual
@@ -796,4 +805,5 @@ differs, nx's meaning, and the test that pins it.
   binary`, `› transcendental unary`, `› transcendental binary` and `› cast`
   (slow), which draw operands without subnormals on a flushing target and
   compare with eager's result flushed the same way; `› reductions › sort`
-  keeps subnormals.
+  keeps subnormals; `› edges › extremes of subnormals are their zeros'
+  extremes` flushes both sides.

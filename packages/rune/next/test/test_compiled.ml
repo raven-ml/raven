@@ -6,11 +6,12 @@
 (* The compiled backend against nx.cpu. Each kernel runs on the same operands in
    both backends: strided, broadcast, reversed, offset, in a buffer that starts
    inside another, empty or scalar. Its results agree to the class the lowering
-   states for it: bit for bit, within the error of a rounded sum, within a
-   budget of units in the last place, or within a measured bound. A refusal
-   raises before any work; a program is compiled once per key, from any domain;
-   and linear algebra gives non-finite values where nx.cpu raises. The host runs
-   the programs; Metal, the full sweeps and the cost figures are slow. *)
+   states for it: bit for bit, bit for bit but for the sign of a zero extreme,
+   within the error of a rounded sum, within a budget of units in the last
+   place, or within a measured bound. A refusal raises before any work; a
+   program is compiled once per key, from any domain; and linear algebra gives
+   non-finite values where nx.cpu raises. The host runs the programs; Metal, the
+   full sweeps and the cost figures are slow. *)
 
 open Windtrap
 open Nx_test
@@ -410,6 +411,10 @@ let law ~count name g = prop ~count name g (fun (Check (_, f)) -> f ())
 let exact e a = Traces.exact (value e) (back a)
 let exact_of (e, a) = exact e a
 
+(* Exact up to the sign of a zero result: a maximum's or a minimum's zero takes
+   the target's sign. *)
+let exact_up_to_zero_of (e, a) = Traces.exact_up_to_zero (value e) (back a)
+
 (* [x] with its float32 and bfloat16 subnormals as signed zeros. *)
 let flush_subnormals (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
   let flush ~exponent ~sign v =
@@ -442,6 +447,11 @@ let flush_subnormals (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
 let exact_on d (e, a) =
   let e = value e in
   Traces.exact (if d.flushes then flush_subnormals e else e) (back a)
+
+(* Exact on [d] up to the sign of a zero result. *)
+let exact_up_to_zero_on d (e, a) =
+  let e = value e in
+  Traces.exact_up_to_zero (if d.flushes then flush_subnormals e else e) (back a)
 
 let f64 x = Nx.to_array (Nx.cast Nx.float64 x)
 
@@ -653,7 +663,11 @@ let elementwise d ~count ~heavy =
                       and+ y = operand ~flush:true d dt s in
                       check
                         [ said "%s" name; shown x; shown y ]
-                        (fun () -> exact_on d (both d (binary k x y))));
+                        (fun () ->
+                          let r = both d (binary k x y) in
+                          if k = Maximum || k = Minimum then
+                            exact_up_to_zero_on d r
+                          else exact_on d r));
                 })))
   and transcendental_binary =
     law "transcendental binary"
@@ -817,7 +831,10 @@ let reductions d ~count ~heavy =
                       let+ axes = axes_of s and+ x = operand d dt s in
                       check
                         [ said "%s" name; pp_axes axes; shown x ]
-                        (fun () -> exact_of (both d (reduce k axes x))));
+                        (fun () ->
+                          let r = both d (reduce k axes x) in
+                          if k = Max || k = Min then exact_up_to_zero_of r
+                          else exact_of r));
                 })))
   and reduce_floats =
     law "reduce floats"
@@ -856,7 +873,10 @@ let reductions d ~count ~heavy =
                       let+ axis = axis_of s and+ x = operand d dt s in
                       check
                         [ said "%s" name; pp_axes [| axis |]; shown x ]
-                        (fun () -> exact_of (both d (scan k axis x))));
+                        (fun () ->
+                          let r = both d (scan k axis x) in
+                          if k = Max || k = Min then exact_up_to_zero_of r
+                          else exact_of r));
                 })))
   and scan_floats =
     law "scan floats"
@@ -2264,6 +2284,24 @@ let edges d =
             log
               (Nx.create Nx.float64 [| 3 |]
                  [| -0x1p-1074; -0x1p-1030; -0x1p-1023 |]));
+      (* A flushing device compares a subnormal as a zero of its sign and
+         returns the operand it picks with its bits. *)
+      test "extremes of subnormals are their zeros' extremes" (fun () ->
+          let flush x = if d.flushes then flush_subnormals x else x in
+          let agree (e, a) =
+            Traces.exact_up_to_zero (flush (value e)) (flush (back a))
+          in
+          let x =
+            array_of
+              (Nx.create Nx.float32 [| 6 |]
+                 [| -0x1p-149; -0x1p-130; 0x1p-140; 0x1p-149; -0.; 1. |])
+          in
+          let zeros = array_of (Nx.zeros Nx.float32 [| 6 |]) in
+          agree (both d (binary Maximum x zeros));
+          agree (both d (binary Minimum zeros x));
+          agree (both d (reduce Min [| 0 |] x));
+          agree (both d (scan Max 0 x));
+          agree (both d (scan Min 0 x)));
     ]
 
 (* A compiled placement *)
