@@ -685,6 +685,8 @@ let run : type r. t -> r Nx.Op.t -> r =
       | true -> (dual i w dw, Some (dual i q dq))
       | false -> (dual i (fst (eval (Eigh { vectors; x }))) dw, None))
   | Eig { vectors; x } -> (
+      (* The tangent pairs the values with vectors by position with those
+         without: nx's eig gives them in the same order either way. *)
       let x, dx = unwrap i x in
       let values, v = eval (Eig { vectors = true; x }) in
       let v = Option.get v in
