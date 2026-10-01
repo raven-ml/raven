@@ -512,6 +512,83 @@ index 099ac10..52620b8 100644
      new_sharding = tuple((ax+1, rng) for ax, rng in sharding)
      return UOp(Ops.STACK, src=tuple(srcs)).unshard(tuple(a for a,_ in new_sharding), tuple(r for _,r in new_sharding))
    # resharding: single-axis fallback
+diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
+index 0239aa4..36569a5 100644
+--- a/tinygrad/schedule/rangeify.py
++++ b/tinygrad/schedule/rangeify.py
+@@ -7,7 +7,7 @@ from tinygrad.uop.ops import graph_rewrite, sint, AxisType, BottomUpGate, rewrit
+ from tinygrad.uop.symbolic import symbolic
+ from tinygrad.helpers import prod, dedup, DEBUG_RANGEIFY, VIZ, MAX_KERNEL_BUFFERS, SPEC
+ from tinygrad.helpers import get_single_element
+-from tinygrad.codegen.simplify import pm_flatten_range, pm_reduce_simplify
++from tinygrad.codegen.simplify import pm_flatten_range, pm_reduce_simplify, pm_load_collapse
+ from tinygrad.schedule.indexing import run_rangeify, BufferizeOpts, apply_movement_op
+ from tinygrad.schedule.prepare import pm_mops
+ 
+@@ -47,19 +47,8 @@ def gate_substitute(ctx, b:UOp) -> None:
+ pm_gate_substitute = PatternMatcher([(UPat(GroupOp.All, name="b"), gate_substitute)], compiled=False)
+ # if a buffer is being stored just for permutes or something, remove it
+ # we want to reexpress the indexes of idx2 in terms of the implied b1
+-def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+-  # see if we can't do it, should this ever hit?
+-  assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
+-  assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
+-
+-  # if it's user contiguous, we never remove it
+-  if src.op in ALWAYS_RUN_OPS or not buf.arg.removable: return None
+-
+-  # *** here is where we compute the cost ***
+-  # if we return None, the bufferize is kept
+-
++def cheap_to_recompute(src:UOp) -> bool:
+   accessed_buffers: list[UOp] = []
+-  indexes: list[UOp] = []
+   reduces: list[UOp] = []
+   def red_gate(x:UOp):
+     if x.op is Ops.AFTER:
+@@ -73,16 +62,13 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+       return False
+     if x.op is Ops.PARAM:
+       accessed_buffers.append(x)
+-    if x.op is Ops.INDEX:
+-      indexes.append(x)
+     if x.op is Ops.REDUCE: reduces.append(x)
+     return True
+   src.toposort(gate=red_gate)
+   del red_gate
+-  accessed_buffers = dedup(accessed_buffers)
+ 
+   # if this is generated from multiple buffers, don't remove this buffer
+-  if len(accessed_buffers) > 3: return None
++  if len(dedup(accessed_buffers)) > 3: return False
+ 
+   # if any reduces access a buffer, don't remove this buffer
+   buffer_in_reduce = False
+@@ -92,8 +78,22 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+     return not buffer_in_reduce
+   UOp.sink(*[x.src[0] for x in reduces]).toposort(gate=buf_gate)
+   del buf_gate
+-  if buffer_in_reduce:
+-    return None
++  return not buffer_in_reduce
++
++def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
++  # see if we can't do it, should this ever hit?
++  assert len(buf.src) == len(idx.src), f"index on wrong bufferize, {len(buf.src)} != {len(idx.src)}"
++  assert all(x.op in {Ops.RANGE, Ops.CONST} for x in buf.src[1:])
++
++  # if it's user contiguous, we never remove it
++  if src.op in ALWAYS_RUN_OPS or not buf.arg.removable: return None
++
++  # *** here is where we compute the cost ***
++  # if we return None, the bufferize is kept
++  # a sum selecting one element at an index read from memory is that element's load, as codegen folds it
++  if not cheap_to_recompute(src):
++    if (folded:=graph_rewrite(src, pm_load_collapse, name="load collapse")) is src or not cheap_to_recompute(folded): return None
++    src = folded
+ 
+   # if it makes it here, the bufferize is removed
+   # this is the ranges replaced
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

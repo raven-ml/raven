@@ -418,7 +418,7 @@ def cases_of(name):
             ("call_out", ast(call_out)), ("call_ret", ast(call_ret)), ("call_stack", ast(call_stack)),
             ("register_cast", raw(register_cast)),
             # The kernels of null/test_compile_failures.py
-            *[(f"interpolate_atari_{i}", tensors(lambda: [atari().interpolate((64, 64))], index=i)) for i in range(2)],
+            ("interpolate_atari", tensors(lambda: [atari().interpolate((64, 64))])),
             ("add_max_uchar", tensors(lambda: [(empty(1024, dtype=dtypes.uint8) + empty(1024, dtype=dtypes.uint8)).max()])),
             ("table", ast(binary))]
     if name in ("metal", "cuda", "hip"):

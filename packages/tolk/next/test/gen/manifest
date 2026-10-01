@@ -2128,8 +2128,7 @@ renderer/cstyle/clang_inf_nan_double.golden
 renderer/cstyle/clang_inf_nan_float.golden
 renderer/cstyle/clang_inf_nan_half.golden
 renderer/cstyle/clang_inline_const_alu.golden
-renderer/cstyle/clang_interpolate_atari_0.golden
-renderer/cstyle/clang_interpolate_atari_1.golden
+renderer/cstyle/clang_interpolate_atari.golden
 renderer/cstyle/clang_matmul.golden
 renderer/cstyle/clang_matmul_upcasted.golden
 renderer/cstyle/clang_matmul_upcasted_expand_ssa.golden
@@ -3439,6 +3438,12 @@ schedule/rangeify/expand_staged.golden
 schedule/rangeify/expand_staged_kernels.golden
 schedule/rangeify/full_invalid.golden
 schedule/rangeify/full_invalid_kernels.golden
+schedule/rangeify/gather_broadcast.golden
+schedule/rangeify/gather_broadcast_kernels.golden
+schedule/rangeify/gather_read_twice.golden
+schedule/rangeify/gather_read_twice_kernels.golden
+schedule/rangeify/gather_rotary.golden
+schedule/rangeify/gather_rotary_kernels.golden
 schedule/rangeify/inline_function.golden
 schedule/rangeify/inline_function_kernels.golden
 schedule/rangeify/invalids_read.golden
@@ -3514,6 +3519,8 @@ schedule/rangeify/precompiled_function.golden
 schedule/rangeify/precompiled_function_1.golden
 schedule/rangeify/precompiled_function_1_kernels.golden
 schedule/rangeify/precompiled_function_kernels.golden
+schedule/rangeify/prefix_sum_broadcast.golden
+schedule/rangeify/prefix_sum_broadcast_kernels.golden
 schedule/rangeify/preserve_multistage_reduce.golden
 schedule/rangeify/preserve_multistage_reduce_kernels.golden
 schedule/rangeify/push_pads_elementwise.golden

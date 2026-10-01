@@ -58,6 +58,9 @@ let programs =
     "double_matmul";
     "elementwise_three";
     "embedding";
+    "gather_broadcast";
+    "gather_read_twice";
+    "gather_rotary";
     "empty_sum";
     "expand_before_cast";
     "expand_kept";
@@ -137,6 +140,7 @@ let programs =
     "sum_all";
     "sum_kept_broadcast";
     "symbolic_contiguous";
+    "prefix_sum_broadcast";
     "symbolic_kept";
     "two_outputs";
     "ugly_reduceop_pairing";
