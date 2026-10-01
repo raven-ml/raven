@@ -134,11 +134,15 @@ type param_arg = {
       (** The storage is bound by whoever realizes the graph, not by a call. *)
   bound : Dtype.value option;  (** The value a variable is bound to. *)
   phase : int;
-      (** The bytes by which the storage's first element lies past a 16-byte
-          boundary, the width of the widest vector access: from [0] to [15], a
-          multiple of the element's size, which a copy that changes the element
-          type must keep. Vector accesses start only where they are aligned to
-          their width. *)
+      (** The bytes by which the storage's first element lies past a multiple
+          of [align]: from [0] to [align - 1], a multiple of the element's size
+          or of [align], whichever is less, which a copy that changes the
+          element type must keep. Vector accesses start only where they are
+          aligned to their width. *)
+  align : int;
+      (** The power of two, from [1] to [16], the width of the widest vector
+          access, modulo which the start of the storage is known ([phase]). No
+          vector access is wider. *)
 }
 (** The type for the arguments of {!Op.Param}, {!Op.Buffer} and {!Op.Alloc}:
     storage, or a scalar variable. *)
@@ -154,15 +158,17 @@ val param_arg :
   ?bind_on_realize:bool ->
   ?bound:Dtype.value ->
   ?phase:int ->
+  ?align:int ->
   slot:int ->
   Dtype.t ->
   param_arg
 (** [param_arg ~slot dtype] is the argument with these fields. [addrspace]
-    defaults to [Some Global]; the flags default to [false], [phase] to [0] and
-    the other fields to [None].
+    defaults to [Some Global]; the flags default to [false], [phase] to [0],
+    [align] to [16] and the other fields to [None].
 
-    Raises [Invalid_argument] if [phase] is not a multiple of [dtype]'s size
-    from [0] to [15]. *)
+    Raises [Invalid_argument] if [align] is not a power of two from [1] to
+    [16], or [phase] is not below [align] and a multiple of [dtype]'s size or
+    of [align], whichever is less. *)
 
 val pp_param_arg : Format.formatter -> param_arg -> unit
 (** [pp_param_arg] formats the slot, the type and the size, then the fields that
@@ -1242,31 +1248,36 @@ val param :
   ?addrspace:Dtype.addr_space option ->
   ?volatile:bool ->
   ?phase:int ->
+  ?align:int ->
   int ->
   Dtype.t ->
   t
 (** [param ~shape slot dt] is the parameter [slot] of type [dt]: a scalar
     without [shape], flat storage of its greatest size viewed as [shape]
-    otherwise, whose first element lies [phase] bytes past a 16-byte boundary
-    (default [0]; see {!param_arg}).
+    otherwise, whose first element lies [phase] bytes past a multiple of
+    [align] (defaults [0] and [16]; see {!param_arg}).
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
 val param_like : t -> int -> t
 (** [param_like u slot] is a parameter in [slot] that [u] can be passed to: a
     scalar variable without its name and value, one shard of a sharded value, or
-    storage of [u]'s shape. Storage has the phase of the storage [u] views
-    ({!storage_phase}).
+    storage of [u]'s shape. Storage has the phase and alignment of the storage
+    [u] views ({!storage_phase}).
 
     Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
 
-val storage_phase : t -> int
-(** [storage_phase u] is the phase ({!param_arg}) of the storage [u] views: its
-    storage's, moved by the bytes a shrink by constants skips when it shrinks
-    the storage seen whole, in row-major order. Any other view keeps its
-    storage's phase: a shrink by a symbolic start, a reordering, a bitcast, an
-    ordering or a shard selection. Storage on a disk, which is read at any byte,
-    and anything that is not storage or a view of it have phase [0]. *)
+val storage_phase : t -> int * int
+(** [storage_phase u] is the alignment and phase [(align, phase)]
+    ({!param_arg}) of the storage [u] views: its storage's, moved by the bytes a
+    shrink skips when it shrinks the storage seen whole, in row-major order. A
+    shrink by a symbolic start known only to multiples of fewer bytes than the
+    storage's alignment, such as a window that moves with a range, lowers the
+    alignment to the largest power of two those bytes are a multiple of, and a
+    symbolic start into a view that reorders or pads the storage keeps only
+    the element's size. Any other view keeps its storage's: a reordering, a
+    bitcast, an ordering or a shard selection. Storage on a disk, which no vector access reads, and
+    anything that is not storage or a view of it have [(16, 0)]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t
 (** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on

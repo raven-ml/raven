@@ -500,13 +500,14 @@ let add_arg ctx buf value =
   end
 
 let debuf ctx buf =
+  let align, phase = storage_phase buf in
   let param =
     v Op.Param
       ~arg:
         (Param
            (param_arg ~slot:ctx.dg ~size:(max_numel buf)
-              ~addrspace:(addrspace buf) ?device:(device buf)
-              ~phase:(storage_phase buf) (dtype buf)))
+              ~addrspace:(addrspace buf) ?device:(device buf) ~phase ~align
+              (dtype buf)))
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
   (* A buffer of symbolic shape is its greatest view, shrunk. *)

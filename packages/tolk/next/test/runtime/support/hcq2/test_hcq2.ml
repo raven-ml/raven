@@ -1363,22 +1363,38 @@ let big_floats d n f =
   done;
   b
 
+(* A call of the kernel adding one on the windows [out] and [inp] of four
+   floats, its parameters those of the windows, as a schedule makes them. *)
+let windowed_adds out inp =
+  let o = Ops.param_like out 0 and i = Ops.param_like inp 1 in
+  let k = Ops.range (Int 4) [ 0 ] in
+  let st = Ops.store (Ops.index o [ k ]) (plus 1. (Ops.index i [ k ])) in
+  Ops.call (Ops.sink ~kernel:(Ops.kernel_info ~name:"k" ()) [ Ops.end_ st [ k ] ]) [ out; inp ]
+
+(* The source of the kernel of [call]. *)
+let kernel_source call =
+  match Ops.arg (Ops.nth (Codegen.to_program (Ops.nth call 0) uncompiled) 2) with
+  | String src -> src
+  | _ -> fail "a program holds its source"
+
+(* The windows of four floats of [u], [stride] floats apart, one a trip of [r]. *)
+let strided r stride u =
+  let start = Ops.mul r (Ops.int stride) in
+  Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+
 (* Two trips of a kernel adding one to windows of four floats [2^24 + 1] floats
    apart: the second trip's window is [2^26 + 4] bytes in, which a float does
-   not hold. *)
+   not hold, and 4 bytes past a 16-byte boundary. *)
 let reads_its_window_past_a_float () =
   let stride = (1 lsl 24) + 1 in
   let n = stride + 4 in
   let r = Ops.range (Int 2) [ Ops.unique_num () ] in
-  let window u =
-    let start = Ops.mul r (Ops.int stride) in
-    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
-  in
+  let window = strided r stride in
   let src = storage ~n "CPU:1" and dst = storage ~n "CPU:1" in
   let bound =
     [ (src, [ big_floats "CPU:1" n (fun i -> Float.of_int (i mod 1000)) ]); (dst, [ big_floats "CPU:1" n (fun _ -> 0.) ]) ]
   in
-  ignore (run_calls ~bound [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ]);
+  ignore (run_calls ~bound [ Ops.end_ (windowed_adds (window dst) (window src)) [ r ] ]);
   let a = Nx_device.Buffer.bigarray Bigarray.float32 (host_view (List.hd (List.assq dst bound))) in
   equal (list float_exact) ~msg:"the second trip's window"
     (List.init 4 (fun i -> Float.of_int (((stride + i) mod 1000) + 1)))
@@ -1471,6 +1487,14 @@ let ranges =
               is_false ~msg:"float" (contains src "float"))
             [ false; true ]);
       test "a trip reads its window past what a float offset holds" reads_its_window_past_a_float;
+      test
+        "a kernel reads windows an odd number of floats apart a float at a time, \
+         and windows four floats apart four at a time" (fun () ->
+          let r = Ops.range (Int 2) [ Ops.unique_num () ] in
+          let src = storage ~n:64 "CPU:1" and dst = storage ~n:64 "CPU:1" in
+          let source stride = kernel_source (windowed_adds (strided r stride dst) (strided r stride src)) in
+          is_false ~msg:"5 floats apart" (contains (source 5) "float4");
+          is_true ~msg:"4 floats apart" (contains (source 4) "float4"));
       test "a range of enqueued calls is a loop in the queue of their batch" (fun () ->
           let _, _, e = ranged "CPU:1" in
           let compiled = sched [ Ops.replace ~src:(adds (Ops.nth (Ops.nth e 0) 1) (Ops.nth (Ops.nth e 0) 2) :: List.tl (Ops.src e)) e ] in

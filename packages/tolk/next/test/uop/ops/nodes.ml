@@ -138,7 +138,8 @@ let arguments =
           is_false p.bind_on_realize;
           is_true (p.size = None && p.vmin_vmax = None && p.multiple_of = None);
           is_true (p.name = None && p.device = None && p.bound = None);
-          equal int 0 p.phase);
+          equal int 0 p.phase;
+          equal int 16 p.align);
       test
         "param_arg takes a phase that is a multiple of the element size below \
          16 (D54)" (fun () ->
@@ -149,10 +150,30 @@ let arguments =
               raises_match (Exn.invalid_arg ?substring:None) (fun () ->
                   ignore (Ops.param_arg ~slot:0 ~phase dt)))
             [ (2, Dtype.Float32); (16, Dtype.Uint8); (-4, Dtype.Float32) ]);
-      test "pp_param_arg writes a phase that is not 0 (D54)" (fun () ->
+      test
+        "param_arg takes an alignment that is a power of two up to 16, and a \
+         phase below it (D54)" (fun () ->
+          equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32).align;
+          equal int 2
+            (Ops.param_arg ~slot:0 ~phase:2 ~align:4 Dtype.Float16).phase;
+          equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float64).align;
+          List.iter
+            (fun (phase, align, dt) ->
+              raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+                  ignore (Ops.param_arg ~slot:0 ~phase ~align dt)))
+            [
+              (0, 3, Dtype.Float32);
+              (0, 32, Dtype.Float32);
+              (4, 4, Dtype.Float32);
+              (1, 4, Dtype.Float16);
+            ]);
+      test "pp_param_arg writes a phase that is not 0 and an alignment that is not 16 (D54)" (fun () ->
           equal string "ParamArg(0, dtypes.float, 16, phase=4)"
             (str Ops.pp_param_arg
                (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
+          equal string "ParamArg(0, dtypes.float, 16, align=4)"
+            (str Ops.pp_param_arg
+               (Ops.param_arg ~slot:0 ~size:16 ~align:4 Dtype.Float32));
           equal string "ParamArg(0, dtypes.float, 16)"
             (str Ops.pp_param_arg
                (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
@@ -163,8 +184,8 @@ let arguments =
                (Param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32))
                (Param (Ops.param_arg ~slot:0 Dtype.Float32))));
       test
-        "param_like keeps its storage's phase, moved by a shrink by a constant \
-         (D54)" (fun () ->
+        "param_like keeps its storage's phase, moved by a shrink, and knows it \
+         modulo what a symbolic start moves by (D54)" (fun () ->
           let b = Ops.new_buffer ~phase:4 (Single "CPU") 16 Dtype.Float32 in
           let phase u =
             match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
@@ -186,14 +207,36 @@ let arguments =
                (Ops.shrink
                   (Ops.permute square [ 1; 0 ])
                   [ Some (Int 1, Int 3); None ]));
-          equal int 4
-            (phase
-               (Ops.shrink b
-                  [
-                    Some
-                      ( Sym (Ops.variable "k" (`Int Z.zero) (`Int (Z.of_int 8))),
-                        Int 4 );
-                  ])));
+          let at ?multiple_of () =
+            let k = Ops.variable ?multiple_of "k" (`Int Z.zero) (`Int (Z.of_int 8)) in
+            Ops.shrink b [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]
+          in
+          let known u =
+            match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
+            | Param p -> (p.align, p.phase)
+            | _ -> fail "a parameter"
+          in
+          equal (pair int int) ~msg:"a start of any element" (4, 0) (known (at ()));
+          equal (pair int int) ~msg:"a start of every other element" (8, 4)
+            (known (at ~multiple_of:2 ()));
+          equal (pair int int) ~msg:"a start of every fourth element" (16, 4)
+            (known (at ~multiple_of:4 ()));
+          equal (pair int int) ~msg:"a start into a reordered view" (4, 0)
+            (known
+               (let k =
+                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 2))
+                in
+                Ops.shrink
+                  (Ops.permute square [ 1; 0 ])
+                  [ Some (Sym k, Sym (Ops.add k (Ops.int 2))); None ]));
+          equal (pair int int) ~msg:"a start one past every fourth element"
+            (16, 8)
+            (known
+               (let k =
+                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 8))
+                in
+                Ops.shrink b
+                  [ Some (Sym (Ops.add k (Ops.int 1)), Sym (Ops.add k (Ops.int 5))) ])));
       test "kernel_info defaults to the kernel named test" (fun () ->
           let k = Ops.kernel_info () in
           equal string "test" k.name;

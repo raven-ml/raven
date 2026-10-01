@@ -416,7 +416,7 @@ let finish r =
 
 let param_arg : Ops.param_arg codec =
   let make slot dtype size vmin_vmax multiple_of name addrspace device volatile
-      bind_on_realize bound phase : Ops.param_arg =
+      bind_on_realize bound phase align : Ops.param_arg =
     {
       slot;
       dtype;
@@ -430,6 +430,7 @@ let param_arg : Ops.param_arg codec =
       bind_on_realize;
       bound;
       phase;
+      align;
     }
   in
   let get (f : Ops.param_arg -> _) = f in
@@ -451,6 +452,7 @@ let param_arg : Ops.param_arg codec =
        (get (fun p -> p.bind_on_realize))
   |> field "val" ~default:None (option dvalue) (get (fun p -> p.bound))
   |> field "phase" ~default:0 int (get (fun p -> p.phase))
+  |> field "align" ~default:16 int (get (fun p -> p.align))
   |> finish
 
 (* An optimisation is written with its operation, its axis and an argument whose

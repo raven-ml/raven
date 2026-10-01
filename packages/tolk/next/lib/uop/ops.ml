@@ -239,6 +239,7 @@ type param_arg = {
   bind_on_realize : bool;
   bound : Dtype.value option;
   phase : int;
+  align : int;
 }
 
 type bufferize_opts = {
@@ -409,6 +410,7 @@ let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   && Bool.equal p0.bind_on_realize p1.bind_on_realize
   && Option.equal Dtype.equal_const p0.bound p1.bound
   && Int.equal p0.phase p1.phase
+  && Int.equal p0.align p1.align
 
 let equal_estimates (e0 : estimates) (e1 : estimates) =
   equal_sint e0.ops e1.ops && equal_sint e0.lds e1.lds
@@ -767,6 +769,7 @@ let repr_param_arg (p : param_arg) =
       ("bind_on_realize", if p.bind_on_realize then Some "True" else None);
       ("val", Option.map repr_const p.bound);
       ("phase", if p.phase = 0 then None else Some (string_of_int p.phase));
+      ("align", if p.align = 16 then None else Some (string_of_int p.align));
     ]
   in
   let args =
@@ -3240,13 +3243,15 @@ let getaddr ?device:dev u =
 
 let param_arg ?size ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?device ?(volatile = false)
-    ?(bind_on_realize = false) ?bound ?(phase = 0) ~slot dtype =
+    ?(bind_on_realize = false) ?bound ?(phase = 0) ?(align = 16) ~slot dtype =
+  if not (List.mem align [ 1; 2; 4; 8; 16 ]) then
+    invalid_argf "alignment %d is not a power of two up to 16" align;
   if
-    phase < 0 || phase >= 16
-    || (phase > 0 && phase mod Dtype.itemsize dtype <> 0)
+    phase < 0 || phase >= align
+    || phase mod min (Dtype.itemsize dtype) align <> 0
   then
-    invalid_argf "phase %d is not a multiple of a %s's size below 16" phase
-      (repr_dtype dtype);
+    invalid_argf "phase %d is not a multiple of a %s's size below %d" phase
+      (repr_dtype dtype) align;
   {
     slot;
     dtype;
@@ -3260,6 +3265,7 @@ let param_arg ?size ?vmin_vmax ?multiple_of ?name
     bind_on_realize;
     bound;
     phase;
+    align;
   }
 
 let weak_storage dt =
@@ -3369,73 +3375,19 @@ let placeholder_like ?addrspace u slot =
   placeholder ~slot ?addrspace (max_shard_shape u) u.dtype
 
 let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase slot dt =
+    ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase ?align slot dt
+    =
   weak_storage dt;
   let make size =
     v Op.Param
       ~arg:
         (Param
            (param_arg ?size ?vmin_vmax ?multiple_of ?name ~addrspace ?device
-              ~volatile ?phase ~slot dt))
+              ~volatile ?phase ?align ~slot dt))
   in
   match new_shape with
   | None | Some [] -> make None
   | Some s -> view_as (make (Some (size_of (to_max_shape s)))) s
-
-(* The phase of the storage [u] views: its storage's, moved by the bytes a
-   shrink by constants of storage seen whole skips. Any other view keeps its
-   storage's phase, as views are taken to start aligned; storage the graph
-   allocates starts on a boundary. *)
-let rec storage_phase u =
-  let rec whole v =
-    match (v.op, v.src) with
-    | (Op.Buffer | Op.Param | Op.Alloc), _ -> true
-    | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
-    | _ -> false
-  in
-  let ints l = List.for_all (function Int _ -> true | Sym _ -> false) l in
-  let int = function Int n -> n | Sym _ -> 0 in
-  match (u.op, u.src) with
-  | _ when on_disk u -> 0
-  | (Op.Buffer | Op.Param | Op.Alloc), _ -> (param_arg_of u).phase
-  | Op.Shrink, x :: _ -> (
-      match marg u with
-      | Shrink bounds
-        when whole x && ints (List.map fst bounds) && ints (shape x) ->
-          (* The element the shrink starts at, by the row-major strides of [x]'s
-             shape. *)
-          let offset =
-            List.fold_left2
-              (fun acc (start, _) size -> (acc * int size) + int start)
-              0 bounds (shape x)
-          in
-          (storage_phase x + (offset * element_size x)) mod 16
-      | _ -> storage_phase x)
-  | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
-  | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
-  | _ -> 0
-
-let param_like u slot =
-  match u.op with
-  | Op.Param when addrspace u = Some Dtype.Alu ->
-      let p = param_arg_of u in
-      v Op.Param ~arg:(Param { p with slot; name = None; bound = None })
-  | _ -> (
-      let a = axis u in
-      match (a, device u) with
-      | Some a, Some (Multi _ as d) ->
-          let ss = shard_shape u in
-          view_as ~axis:a
-            (v Op.Param
-               ~arg:
-                 (Param
-                    (param_arg ~slot
-                       ~size:(size_of (to_max_shape ss))
-                       ~device:d ~phase:(storage_phase u) u.dtype)))
-            ss
-      | _ ->
-          param ?shape:(shape_opt u) ?device:(device u) ~phase:(storage_phase u)
-            slot u.dtype)
 
 let set ?(ends = []) p x = after (first p.op p.src) [ end_ (store p x) ends ]
 
@@ -3528,6 +3480,84 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
   match u.src with
   | [ x; c ] when Op.equal u.op op && c.op = Op.Const -> (x, value c)
   | _ -> (u, identity_element op u.dtype)
+
+(* The alignment and phase of the storage [u] views: its storage's, moved by
+   the bytes a shrink of storage seen whole skips, known modulo fewer bytes when
+   the shrink's start is symbolic. Any other view keeps its storage's, as views
+   are taken to start aligned, unless a symbolic start moves it; storage the
+   graph allocates starts on a boundary. *)
+let rec storage_phase u =
+  let rec whole v =
+    match (v.op, v.src) with
+    | (Op.Buffer | Op.Param | Op.Alloc), _ -> true
+    | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
+    | _ -> false
+  in
+  let ints l = List.for_all (function Int _ -> true | Sym _ -> false) l in
+  match (u.op, u.src) with
+  | _ when on_disk u -> (16, 0)
+  | (Op.Buffer | Op.Param | Op.Alloc), _ ->
+      let p = param_arg_of u in
+      (p.align, p.phase)
+  | Op.Shrink, x :: _ -> (
+      let align, phase = storage_phase x in
+      let bytes = element_size x in
+      (* The start moved by [first] bytes and by multiples of [by] bytes: known
+         modulo the largest power of two up to [align] that divides [by]. *)
+      let moved by first =
+        let rec known a =
+          if a < align && Z.divisible by (Z.of_int (2 * a)) then known (2 * a)
+          else a
+        in
+        let a = known 1 in
+        (a, (((phase + first) mod a) + a) mod a)
+      in
+      match marg u with
+      | Shrink bounds when whole x && ints (shape x) -> (
+          (* The element the shrink starts at, by the row-major strides of [x]'s
+             shape: a constant, and multiples of a constant that move. *)
+          let offset =
+            List.fold_left2
+              (fun acc (start, _) size -> Sint.((acc * size) + start))
+              (Int 0) bounds (shape x)
+          in
+          match offset with
+          | Int n -> moved Z.zero (n * bytes)
+          | Sym e ->
+              let rest, c = pop_const (simplify e) in
+              moved
+                (Z.mul (const_factor rest) (Z.of_int bytes))
+                (Z.to_int (integer c) * bytes))
+      | Shrink bounds when not (ints (List.map fst bounds)) ->
+          (* A symbolic start into a view that reorders or pads its storage
+             moves by bytes unknown here: only the element's size holds. *)
+          moved (Z.of_int bytes) 0
+      | _ -> (align, phase))
+  | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
+  | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
+  | _ -> (16, 0)
+
+let param_like u slot =
+  match u.op with
+  | Op.Param when addrspace u = Some Dtype.Alu ->
+      let p = param_arg_of u in
+      v Op.Param ~arg:(Param { p with slot; name = None; bound = None })
+  | _ -> (
+      let a = axis u and align, phase = storage_phase u in
+      match (a, device u) with
+      | Some a, Some (Multi _ as d) ->
+          let ss = shard_shape u in
+          view_as ~axis:a
+            (v Op.Param
+               ~arg:
+                 (Param
+                    (param_arg ~slot
+                       ~size:(size_of (to_max_shape ss))
+                       ~device:d ~phase ~align u.dtype)))
+            ss
+      | _ ->
+          param ?shape:(shape_opt u) ?device:(device u) ~phase ~align slot
+            u.dtype)
 
 (* Multisets of nodes, in order of first insertion. *)
 let add_count k counts t =

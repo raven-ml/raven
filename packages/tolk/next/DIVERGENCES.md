@@ -1534,7 +1534,7 @@ the Exclusions of `README.md`.
   (D52) › a pad with -0. fill renders and computes -0.` and `› a pad and a
   selection of signed zeros keep the interpreter's bits`.
 
-## D54. Storage says where it starts within 16 bytes
+## D54. Storage says what it knows of where it starts within 16 bytes
 
 - **tinygrad:** `uop/ops.py:23-37` (`ParamArg`, which has no such field) and
   `codegen/late/coalesce.py:152` (`memory_coalescing` merges a run of `l`
@@ -1545,22 +1545,30 @@ the Exclusions of `README.md`.
   reads that view with vector loads that take it to start aligned, as
   `x[1:].contiguous() + 1` loads `float4`s from 4 bytes past a boundary on
   Metal.
-- **tolk.next:** `lib/uop/ops.ml:241` (`phase`), `:3220` (`param_arg`, which
-  checks it) and `:3368` (`storage_phase`, which `param_like` gives a
-  parameter); `lib/schedule/rangeify.ml:480` (`debuf`, which gives it a
-  kernel's parameter); `lib/codegen/late/coalesce.ml:129` (the merge).
-- **Differs:** a parameter or buffer carries `phase`, the bytes by which its
-  first element lies past a 16-byte boundary, a multiple of its element's
-  size; it defaults to `0`, tinygrad's assumption, so no graph of tinygrad's
-  changes. A run of `l` elements merges where `l` divides the element's count
-  from that boundary, so every vector access is aligned to its width; an
-  access through a bitcast to elements of a size the phase is not a multiple
-  of merges nothing. A parameter made from storage keeps the storage's phase,
-  moved by the bytes a shrink by constants of the storage seen whole skips; a
-  shrink by a symbolic start, or of a view that reorders the storage, keeps
-  its storage's, as tinygrad takes every view to start aligned, and storage
-  on a disk, read at any byte, has none. The phase is part of the graph, so of a
-  program's cache key.
+- **tolk.next:** `lib/uop/ops.ml:241` (`phase` and `align`), `:3244`
+  (`param_arg`, which checks them) and `:3489` (`storage_phase`, which
+  `param_like` gives a parameter); `lib/schedule/rangeify.ml:502` (`debuf`,
+  which gives them a kernel's parameter); `lib/codegen/late/coalesce.ml:130`
+  (the merge).
+- **Differs:** a parameter or buffer carries a congruence for its start: its
+  first element lies `phase` bytes past a multiple of `align`, a power of two
+  up to 16, the width of the widest vector access, and `phase` is a multiple
+  of its element's size or of `align`, whichever is less. They default to `0`
+  and `16`, tinygrad's assumption, so no graph of tinygrad's changes. A run of
+  `l` elements merges where `l` divides the element's count from that
+  boundary and the run is no wider than `align`, so every vector access is
+  aligned to its width; an access through a bitcast to elements of a size the
+  phase is not a multiple of merges nothing. A parameter made from storage
+  keeps the storage's congruence, moved by the bytes a shrink of the storage
+  seen whole skips. A shrink by a symbolic start is known only modulo the
+  largest power of two its moving bytes are a multiple of: a range's window
+  `r · (2^24 + 1)` floats in is known modulo 4 bytes, and is read a float at a
+  time, where one `r · 4` floats in stays known modulo 16. A symbolic start
+  into a view that reorders or pads the storage is known only to its
+  element's size. Any other view of a view that reorders the storage keeps
+  its storage's, as tinygrad takes every view to start aligned, and storage on
+  a disk, which no vector access reads, keeps the default. The congruence is part of the graph, so of a program's cache
+  key.
 - **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
   given, and mapped weights put a tensor at any byte offset of its file: a
   vector access from an address that is not a multiple of its width is
@@ -1569,18 +1577,28 @@ the Exclusions of `README.md`.
   there it reads the wrong elements once Metal merges adjacent vector loads
   at constant offsets into one wider load, which drops the low bits of the
   address. Single loads at computed indices are not merged, and read
-  correctly.
+  correctly. A batched range (D30) binds each trip's window at its own
+  address, so a kernel vectorised for a window that starts aligned faulted on
+  x86, where Clang emits `movaps`, on the trips that moved it by 4 bytes.
 - **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
   (D54) › one float past a boundary, eight loads are of one, two, four and
   one`, `› three floats past a boundary, a load of four starts at element 1`,
   `› stores start where loads would`, `› two halves past a boundary, a load of
-  four starts at element 2`, and the laws `every vector access is aligned to
-  its width, for every phase (D54)` and `coalescing preserves the kernel's
-  writes, for every phase (D54)`; the `Ops` suite: `param_arg takes a phase
-  that is a multiple of the element size below 16 (D54)`, `pp_param_arg
-  writes a phase that is not 0 (D54)`, `equal_arg tells apart parameters that
-  differ in phase (D54)` and `param_like keeps its storage's phase, moved by a
-  shrink by a constant (D54)`; the graph format's round trip of `a buffer past
+  four starts at element 2`, `› floats known to start on 4 bytes alone are
+  not merged`, `› floats known to start on 8 bytes merge in twos` and `›
+  halves three past 8 bytes merge no wider than 8 bytes, from element 1`, and
+  the laws `every vector access is aligned to its width and within the
+  alignment, for every phase and alignment (D54)` and `coalescing preserves
+  the kernel's writes, for every phase and alignment (D54)`; the `Ops` suite: `param_arg takes a
+  phase that is a multiple of the element size below 16 (D54)`, `param_arg
+  takes an alignment that is a power of two up to 16, and a phase below it
+  (D54)`, `pp_param_arg writes a phase that is not 0 and an alignment that is
+  not 16 (D54)`, `equal_arg tells apart parameters that differ in phase
+  (D54)` and `param_like keeps its storage's phase, moved by a shrink, and
+  knows it modulo what a symbolic start moves by (D54)`; the `Hcq2` suite's
+  `ranges (D30) › a kernel reads windows an odd number of floats apart a
+  float at a time, and windows four floats apart four at a time` and `› a
+  trip reads its window past what a float offset holds`, on x86; the graph format's round trip of `a buffer past
   a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
   a view 8 bytes into a disk file whose parameter has no phase. In rune.next,
   the `Lower` suite's `a parameter of storage 4 bytes past a 16-byte boundary

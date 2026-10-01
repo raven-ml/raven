@@ -123,17 +123,24 @@ let memory_coalescing sink (r : Renderer.t) =
            else [])
           @ [ 1 ]
         in
-        (* Elements before the buffer's first from the 16-byte boundary behind
-           it (D54): an access of [l] elements is aligned where the element
-           count from that boundary is a multiple of [l]. *)
+        (* Elements before the buffer's first from the boundary behind it, a
+           multiple of its alignment: an access of [l] elements is aligned
+           where the element count from that boundary is a multiple of [l], and
+           is no wider than the alignment. *)
         let size = Dtype.itemsize (dtype key.buf) in
-        let phase =
-          match arg (buf_uop key.buf) with Param p -> p.phase | _ -> 0
+        let phase, align =
+          match arg (buf_uop key.buf) with
+          | Param p -> (p.phase, p.align)
+          | _ -> (0, 16)
         in
         let lead = Z.of_int (phase / size) in
         (* An access of another width than the storage's elements, through a
            bitcast, may start between its own elements: it merges nothing. *)
-        let lengths = if phase mod size = 0 then lengths else [ 1 ] in
+        let lengths =
+          if phase mod size = 0 then
+            List.filter (fun l -> l = 1 || l * size <= align) lengths
+          else [ 1 ]
+        in
         let at first =
           match key.base with
           | Some b -> O.(b + const (`Int first))
