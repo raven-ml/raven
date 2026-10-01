@@ -662,20 +662,25 @@ let pm_contiguous_view_offset =
           if Sint.equal (numel ctx) (Int 1) then first (m "b") (m "c") else None);
     ])
 
+(* Only a view of storage can be one. The offset rules mark the node an index
+   reaches, and the symbolic rules rebuild a constant without its mark, so on a
+   constant the two would take turns without end. *)
 let contiguous_view u =
-  let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
-  let out =
-    graph_rewrite ~ctx:u idx
-      (Pattern_matcher.concat
-         [
-           Pattern_matcher.with_ctx pm_mops;
-           Pattern_matcher.with_ctx Symbolic.symbolic;
-           pm_contiguous_view_offset;
-         ])
-  in
-  match (op out, src out) with
-  | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (
-      match arg c with
-      | Const (`Int n) -> Some (replace ~tag:None b, Bigint.to_int n)
-      | _ -> None)
-  | _ -> None
+  if not (List.mem (op (storage_base u)) Op.[ Buffer; Alloc; Param ]) then None
+  else
+    let idx = index (flatten u) [ range (numel u) [ 0 ] ] in
+    let out =
+      graph_rewrite ~ctx:u idx
+        (Pattern_matcher.concat
+           [
+             Pattern_matcher.with_ctx pm_mops;
+             Pattern_matcher.with_ctx Symbolic.symbolic;
+             pm_contiguous_view_offset;
+           ])
+    in
+    match (op out, src out) with
+    | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (
+        match arg c with
+        | Const (`Int n) -> Some (replace ~tag:None b, Bigint.to_int n)
+        | _ -> None)
+    | _ -> None

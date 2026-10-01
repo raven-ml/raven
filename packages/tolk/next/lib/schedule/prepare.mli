@@ -94,4 +94,5 @@ val contiguous_view : Ops.t -> (Ops.t * int) option
     skip elements. [b] is storage, storage ordered after effects, or a bitcast
     whose view does not start and end on whole elements of its source, which [u]
     views through. [offset] counts elements of [b]'s type. It is [None]
-    otherwise, and when [u] is empty or its size is symbolic. *)
+    otherwise: when [u] is no view of storage, as a constant or a computed value
+    is not, when it is empty, and when its size is symbolic. *)

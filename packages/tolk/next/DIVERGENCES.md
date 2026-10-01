@@ -2016,3 +2016,28 @@ the Exclusions of `README.md`.
   tinygrad with D71 applied by its generator; rune.next's Jit suite on an
   NVIDIA GPU: `nv › staged scans › write out four hundred steps, each carry
   stored`.
+
+## D72. Only a view of storage has a contiguous view
+
+- **tinygrad:** `uop/ops.py:935-948` (`UOp.contiguous_view`), which rewrites
+  the index of any value with `pm_mops`, `symbolic` and
+  `pm_contiguous_view_offset` (`:1905-1911`). On a constant the rewrite does
+  not terminate: the offset rules mark the constant the index reaches, and
+  `symbolic` rebuilds the constant without its mark, so each undoes the
+  other. `UOp.const(1, dtypes.long).contiguous_view()` raises "infinite loop
+  in graph_rewrite", in tinygrad and in the patched tinygrad of
+  `test/gen/tinygrad.patch`. tinygrad's own caller asks only about views of
+  buffers (`schedule/__init__.py:210`).
+- **tolk.next:** `lib/schedule/prepare.ml:668` (`contiguous_view`).
+- **Differs:** a value whose storage base (`Ops.storage_base`) is not storage
+  (`Op.Buffer`, `Op.Alloc` or `Op.Param`) has no contiguous view, without a
+  rewrite: a constant, and a computed value, which tinygrad would mark and
+  return.
+- **Reason:** (b): rune's jit asks whether each result of a compiled call is a
+  view of a buffer it makes (`packages/rune/lib/jit.ml`, `take` and
+  `whole`), and a result can be a constant or any computed value. kaun's
+  decoder test `gradients › a fully padded row, compiled` has a constant
+  result, and did not compile.
+- **Pinned by:** the `Prepare` suite: `contiguous_view › a constant is no view
+  (D72)`, `› a constant of one element is no view (D72)` and `› a computed
+  value is no view (D72)`.
