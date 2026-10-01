@@ -449,15 +449,18 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
     | Some (a, 0), Some (t, 0) when Ops.op a = Op.After && Ops.op t = Op.Buffer
       -> (
         let b = List.hd (Ops.src a) in
-        (* The result's own node over the buffer: the view's is rebuilt, and the
-           program would run what it waits on twice. *)
-        match
-          List.find_opt
-            (fun u -> Ops.op u = Op.After && List.hd (Ops.src u) == b)
-            (Ops.toposort nodes.(j))
-        with
+        (* The result's own node over the buffer, under its views: the view's is
+           rebuilt, and the program would run what it waits on twice. *)
+        let rec own u =
+          if Ops.op u = Op.After then Some u
+          else if Op.Set.mem (Ops.op u) Op.Set.movement || Ops.op u = Op.Bitcast
+          then own (List.hd (Ops.src u))
+          else None
+        in
+        match own nodes.(j) with
         | Some a
-          when made b
+          when List.hd (Ops.src a) == b
+               && made b
                && (not (List.memq b (Lazy.force whole)))
                && Ops.max_numel b = n
                && Ops.max_numel t = n
