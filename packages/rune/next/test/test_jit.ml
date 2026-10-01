@@ -1195,6 +1195,155 @@ let placement =
           equal close eager (host (Rune.jit' f (Nx.place p a))));
     ]
 
+(* Staged scans *)
+
+(* [scanned ~init f] is the scan of [f] from [init], and how many times its step
+   ran. *)
+let scanned ~init f =
+  let steps = ref 0 in
+  let step c x =
+    incr steps;
+    f c x
+  in
+  ((fun xs -> Rune.scan' ~f:step ~init xs), steps)
+
+let rows n k = Nx.mul_s (grid n k) 0.01
+let zeros k = Nx.zeros Nx.float32 [| k |]
+let ones k = Nx.ones Nx.float32 [| k |]
+let near = Oracle.tensor ~rel:1e-4 ~abs:1e-5 ()
+
+let decay c x =
+  let c = Nx.add (Nx.mul_s c 0.5) x in
+  (c, Nx.sin c)
+
+let sum c x =
+  let c = Nx.add c x in
+  (c, c)
+
+(* A step that scans the four rows of four its row holds. *)
+let nested c x =
+  let c, _ = Rune.scan' ~f:sum ~init:c (Nx.reshape [| 4; 4 |] x) in
+  (c, Nx.reshape [| 1 |] (Nx.sum c))
+
+let product c x =
+  let w = Nx.mul_s (grid 3 3) 0.1 in
+  let c =
+    Nx.add (Nx.reshape [| 3 |] (Nx.matmul w (Nx.reshape [| 3; 1 |] c))) x
+  in
+  (c, c)
+
+let rotated c x =
+  let c =
+    Nx.add
+      (Nx.concatenate ~axis:0
+         [ Nx.slice [ R (1, 3) ] c; Nx.slice [ R (0, 1) ] c ])
+      x
+  in
+  (c, c)
+
+let flipped c x =
+  let c = Nx.add (Nx.flip c) x in
+  (c, Nx.mul_s c 2.)
+
+(* [staged at name ~steps ~init f xs] checks that the scan of [f] over [xs],
+   compiled with [xs] at [at], computes the eager scan's values, its step
+   running [steps n] times for [n] rows. *)
+let staged at name ~steps ~init f xs =
+  test name (fun () ->
+      let scan, ran = scanned ~init f in
+      let c, ys = scan xs in
+      ran := 0;
+      let g =
+        Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) scan
+      in
+      let c', ys' = g (Nx.place at xs) in
+      equal near c (host c');
+      equal near ys (host ys');
+      equal int (steps (Nx.shape xs).(0)) !ran)
+
+(* [paired at name ~steps ~init f xs] is [staged] for two carries. *)
+let paired at name ~steps ~init f xs =
+  test name (fun () ->
+      let ran = ref 0 in
+      let scan xs =
+        let (a, b), ys =
+          Rune.scan
+            Nx.Ptree.(pair tensor tensor)
+            Nx.Ptree.tensor Nx.Ptree.tensor
+            ~f:(fun c x ->
+              incr ran;
+              f c x)
+            ~init xs
+        in
+        [ a; b; ys ]
+      in
+      let eager = scan xs in
+      ran := 0;
+      let g = Rune.jit Nx.Ptree.(tensor @-> returns (list tensor)) scan in
+      List.iter2 (fun e c -> equal near e (host c)) eager (g (Nx.place at xs));
+      equal int steps !ran)
+
+(* Scans on a device whose work runs from command queues. *)
+let staged_scans d =
+  let at = on d and once _ = 1 in
+  group "staged scans"
+    [
+      staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
+        ~init:(zeros 4) decay (rows 7 4);
+      staged at "stage over rows that are not, through a padded copy"
+        ~steps:once ~init:(zeros 3) decay (rows 5 3);
+      staged at "stage a thousand steps" ~steps:once ~init:(zeros 4) decay
+        (rows 1000 4);
+      staged at "update a carry its next value reads through a product"
+        ~steps:once ~init:(ones 3) product (rows 6 3);
+      staged at "stage around a scan their step writes out" ~steps:once
+        ~init:(zeros 4) nested (rows 6 16);
+      staged at "update a carry its next value reads rotated" ~steps:once
+        ~init:(ones 3) rotated (rows 5 3);
+      staged at "update a carry its next value reads reversed" ~steps:once
+        ~init:(ones 3) flipped (rows 5 3);
+      paired at "swap two carries" ~steps:1
+        ~init:(ones 4, Nx.full Nx.float32 [| 4 |] 3.)
+        (fun (a, b) x -> ((b, a), Nx.add (Nx.mul_s a 2.) x))
+        (rows 5 4);
+      paired at "update two carries that read each other" ~steps:1
+        ~init:(ones 4, Nx.full Nx.float32 [| 4 |] 3.)
+        (fun (a, b) x -> ((Nx.add b x, a), Nx.add a b))
+        (rows 6 4);
+      paired at "update carries as a Fibonacci sequence" ~steps:1
+        ~init:(ones 4, ones 4)
+        (fun (a, b) x -> ((b, Nx.add (Nx.add a b) x), a))
+        (rows 6 4);
+      test
+        "write out a step that draws under a key scope, drawing as eager does"
+        (fun () ->
+          let ran = ref 0 in
+          let f (k, xs) =
+            Nx.Rng.with_key k (fun () ->
+                let c, ys =
+                  Rune.scan'
+                    ~f:(fun c x ->
+                      incr ran;
+                      (Nx.add c x, Nx.add x (Nx.rand Nx.float32 [| 4 |])))
+                    ~init:(zeros 4) xs
+                in
+                [ c; ys; Nx.rand Nx.float32 [| 3 |] ])
+          in
+          let k = Nx.Rng.key 42 in
+          let eager = f (k, rows 5 4) in
+          ran := 0;
+          let g =
+            Rune.jit
+              Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns (list tensor))
+              f
+          in
+          List.iter2
+            (fun e c -> equal near e (host c))
+            eager
+            (g (k, Nx.place at (rows 5 4)));
+          equal ~msg:"a probe, then a step per row" int 6 !ran);
+    ]
+
 (* Scans and remats *)
 
 let scans =
@@ -1209,6 +1358,8 @@ let scans =
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
+      staged Nx.Placement.host "a scan on the host runs its step once per row"
+        ~steps:Fun.id ~init:(zeros 3) sum (rows 5 3);
       test "a gradient through a scan equals eager's" (fun () ->
           let f xs = Nx.sum (snd (cumulative xs)) in
           equal close
@@ -1761,8 +1912,11 @@ let on_one_device ~name d =
 
 let metal =
   match Metal.device with
-  | Some m -> on_one_device ~name:"metal" (Nx.Device.of_runtime m)
-  | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
+  | Some m ->
+      let d = Nx.Device.of_runtime m in
+      [ on_one_device ~name:"one device" d; staged_scans d ]
+  | None ->
+      [ slow "no Metal device" (fun () -> skip ~reason:"no Metal device" ()) ]
 
 let () =
   exit
@@ -1783,6 +1937,6 @@ let () =
          device_lists;
          disk;
          on_one_device ~name:"one device" d4;
-         group ~tags:[ "slow" ] "metal" [ metal ];
+         group ~tags:[ "slow" ] "metal" metal;
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])

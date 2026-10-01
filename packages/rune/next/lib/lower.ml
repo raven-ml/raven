@@ -438,8 +438,10 @@ let param s ~slot x =
   in
   traced p (Nx.dtype x) u
 
-let output s ~slot p dt shape =
-  let what = "a result" in
+(* [laid s what storage p dt shape] is a value of [dt] and [shape] at [p] in C
+   order over the node [storage d n tdt] makes of [n] elements on [d]: each
+   device's window, starting on 16 bytes. *)
+let laid s what storage p dt shape =
   let tdt = check s what p dt in
   (* Every device holds a window of one shape. *)
   let d = List.hd (Placement.devices p) in
@@ -447,9 +449,31 @@ let output s ~slot p dt shape =
     View.create
       (Array.map (fun (lo, hi) -> hi - lo) (Placement.window p shape d))
   in
-  viewed what
-    (Ops.new_buffer ~slot (device_of s p) (View.numel local) tdt)
-    p shape local 0
+  viewed what (storage (device_of s p) (View.numel local) tdt) p shape local 0
+
+let output s ~slot p dt shape =
+  laid s "a result" (fun d n tdt -> Ops.new_buffer ~slot d n tdt) p dt shape
+
+let parameter s ~slot p dt shape =
+  traced p dt
+    (laid s "a loop's value"
+       (fun d n tdt -> Ops.param ~shape:[ Ops.Int n ] ~device:d slot tdt)
+       p dt shape)
+
+(* The engine's devices *)
+
+let engine s =
+  let named = List.map (fun (n, d) -> (n, Device.runtime d)) (devices s) in
+  let hosts =
+    List.fold_left
+      (fun hosts (_, d) ->
+        let h = Nx_device.host_of d in
+        let n = Nx_device.name h in
+        if List.mem_assoc n named || List.mem_assoc n hosts then hosts
+        else (n, h) :: hosts)
+      [] named
+  in
+  Tolk_next_engine.device (named @ hosts)
 
 (* Captures *)
 

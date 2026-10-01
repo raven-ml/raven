@@ -145,6 +145,23 @@ val output :
 
     Raises as {!param} does. *)
 
+val parameter :
+  scope ->
+  slot:int ->
+  Nx.Placement.t ->
+  ('a, 'b) Nx_dtype.t ->
+  int array ->
+  ('a, 'b) Nx.t
+(** [parameter s ~slot p dt shape] is the traced value of [dt] and [shape] at
+    [p] that the parameter [slot] of a called body ({!Tolk_next.Ops.call}) holds
+    in C order: each device's window, starting on 16 bytes.
+
+    Raises as {!param} does. *)
+
+val engine : scope -> string -> Tolk_next_engine.device
+(** [engine s] is the engine's device of each name [s]'s nodes carry, and of the
+    host of each, which submits its work ({!Tolk_next_engine.device}). *)
+
 val value : scope -> ('a, 'b) Nx.t -> Ops.t
 (** [value s x] is the node of [x] in [s] at [x]'s placement: its own if [x] is
     traced, and its capture ({!op}) otherwise. *)

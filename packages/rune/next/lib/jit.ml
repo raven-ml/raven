@@ -222,59 +222,12 @@ let renderers () =
         made := (d, r) :: !made;
         r
 
-(* The engine's devices for the names of a trace, and the hosts that submit
-   their work. *)
-let engine_devices names =
-  let named = List.map (fun (n, d) -> (n, Nx.Device.runtime d)) names in
-  let hosts =
-    List.fold_left
-      (fun hosts (_, d) ->
-        let h = Nx_device.host_of d
-        and n = Nx_device.name (Nx_device.host_of d) in
-        if List.mem_assoc n named || List.mem_assoc n hosts then hosts
-        else (n, h) :: hosts)
-      [] named
-  in
-  Engine.device (named @ hosts)
-
 let numel shape = Array.fold_left ( * ) 1 shape
 
 let id (Nx.P y) =
   match Repr.v y with
   | Traced t -> Repr.Traced.id t
   | Host _ | Placed _ -> max_int
-
-(* How a node reads a value: not at all, at each element's own index only
-   (through elementwise operations, width-preserving casts, reshapes and
-   contiguous markers), or otherwise. *)
-type reach = Apart | Own | Other
-
-let keeps_index u =
-  match Ops.op u with
-  | Op.Cast | Op.Bitcast -> Ops.element_size u = Ops.element_size (Ops.nth u 0)
-  | Op.Reshape | Op.Stage -> true
-  | o -> Op.Set.mem o Op.Set.elementwise
-
-(* [reach ~from u] is how [u] reads [from]. The partial application [reach
-   ~from] walks each node once. *)
-let reach ~from =
-  let memo = Ops.Tbl.create 64 in
-  let rec go u =
-    if u == from then Own
-    else
-      match Ops.Tbl.find_opt memo u with
-      | Some r -> r
-      | None ->
-          let srcs = List.map go (Ops.src u) in
-          let r =
-            if List.for_all (( = ) Apart) srcs then Apart
-            else if keeps_index u && not (List.mem Other srcs) then Own
-            else Other
-          in
-          Ops.Tbl.add memo u r;
-          r
-  in
-  go
 
 (* [lend ~leaves ~fits ~reads ~writes nodes ys] pairs results with the consumed
    leaves [fits] allows, where writing the result over the leaf cannot change
@@ -300,12 +253,12 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
       order
   in
   let all = List.init (Array.length nodes) Fun.id in
-  let own j i = reads i nodes.(j) = Own in
+  let own j i = reads i nodes.(j) = Staged.Own in
   pass all (fun j i -> List.memq nodes.(j) writes && own j i);
   pass all own;
   pass
     (List.stable_sort (fun j k -> Int.compare (id ys.(j)) (id ys.(k))) all)
-    (fun j i -> reads i nodes.(j) = Apart);
+    (fun j i -> reads i nodes.(j) = Staged.Apart);
   lent
 
 (* [local at shape] is the shape of each device's window of a value of [shape]
@@ -359,7 +312,7 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
     && List.for_all (( = ) 0) l.phases
   in
   let reads =
-    Array.map (fun (Nx.P t) -> lazy (reach ~from:(Lower.uop t))) params
+    Array.map (fun (Nx.P t) -> lazy (Staged.reach ~from:(Lower.uop t))) params
   in
   let lent =
     lend ~leaves:(Array.length leaves) ~fits
@@ -419,7 +372,7 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
   let linked =
     if !stores = [] then None
     else
-      let devices = engine_devices (Lower.devices s) in
+      let devices = Lower.engine s in
       let linear =
         span "schedule" (fun () ->
             fst
