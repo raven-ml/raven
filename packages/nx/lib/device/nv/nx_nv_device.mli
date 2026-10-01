@@ -232,7 +232,12 @@ val props : t -> props
 (** [props n] is the GPU's properties. *)
 
 type kernel = {
-  image : nativeint;  (** The address of the uploaded cubin. *)
+  image : Nx_device.Buffer.t;
+      (** The uploaded cubin: its image, as the ELF object lays it out with
+          sections aligned to 128 bytes ({!Nx_device_elf.load}), relocated, then
+          zeros up to the next multiple of 4 KiB and 4 KiB more, which the GPU's
+          instruction prefetch may read past the code. It is in memory of the
+          device that the device keeps for as long as it lives. *)
   entry : nativeint;  (** The address of the function's first instruction. *)
   code_bytes : int;  (** The size of the function's code. *)
   registers : int;  (** The registers a thread uses. *)

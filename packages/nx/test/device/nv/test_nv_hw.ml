@@ -310,7 +310,14 @@ let test_programs () =
       let k = Option.get (Nx_nv_device.kernel p) in
       equal ~msg:"the handle is the entry" nativeint k.entry
         (Nx_device.Program.handle p);
-      is_true ~msg:"inside the image" (k.entry >= k.image);
+      let image = B.address k.image in
+      is_true ~msg:"inside the image"
+        (k.entry >= image
+        && Nativeint.sub k.entry image < Nativeint.of_int (B.nbytes k.image));
+      is_true ~msg:"the image is the device's"
+        (Nx_device.equal d (B.device k.image));
+      is_true ~msg:"a page past the image's last 4 KiB"
+        (B.nbytes k.image mod 0x1000 = 0 && B.nbytes k.image >= 0x2000);
       is_true ~msg:"registers" (k.registers > 0);
       is_true ~msg:"threads" (k.max_threads >= 32);
       (match Nx_device.Program.load d ~binary ~name:"absent" with

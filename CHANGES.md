@@ -2889,6 +2889,9 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_nv_device.kernel`'s `image` is the uploaded cubin as a
+  buffer of the device rather than its address, so a compiled batch binds its
+  program to the image nx.nv.device loaded and relocated.
 - An NV device has room for a submission once each of its channels' rings is at
   most half full, as an AMD device's rings are, so `Nx_device.submit` waits for
   it and compiled code that writes the rings never overruns the entries the

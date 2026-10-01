@@ -40,7 +40,7 @@ type props = {
 }
 
 type kernel = {
-  image : nativeint;
+  image : Nx_device.Buffer.t;
   entry : nativeint;
   code_bytes : int;
   registers : int;
@@ -88,7 +88,7 @@ type t = {
       (* by address, host memory mapped for a copy or a borrow: under [Pci] the
          mapping, under [Kernel] another device's memory (the driver keeps
          borrows) *)
-  images : (string, mem) Hashtbl.t; (* uploaded cubins *)
+  images : (string, Nx_device.Buffer.t) Hashtbl.t; (* uploaded cubins *)
   kernels : (nativeint, kernel) Hashtbl.t; (* by entry, under [hw] *)
   unreachable : int list; (* the GPUs peer access was refused with at open *)
   obj : objects;
@@ -442,10 +442,11 @@ let dma n r =
 
 (* Programs *)
 
-(* The cubin [binary], relocated and uploaded once. *)
+(* The cubin [binary], relocated and uploaded once, as a buffer of the
+   device. *)
 let upload n binary (c : Cubin.t) =
   match Hashtbl.find_opt n.images binary with
-  | Some mem -> Some mem
+  | Some image -> Some image
   | None ->
       Option.map
         (fun mem ->
@@ -455,8 +456,13 @@ let upload n binary (c : Cubin.t) =
             0
             (Cubin.relocate c ~base:(va mem));
           Mmio.barrier ();
-          Hashtbl.replace n.images binary mem;
-          mem)
+          let bytes = String.length c.image in
+          let image =
+            Driver.buffer (Option.get n.dev) (region_of mem bytes)
+              Nx_dtype.Scalar.UInt8 bytes
+          in
+          Hashtbl.replace n.images binary image;
+          image)
         (alloc_mem n Visible (String.length c.image))
 
 (* A cubin the device cannot run, or has no memory for, is refused, and the
@@ -467,12 +473,15 @@ let load n ~binary ~entry:name =
   | c -> (
       match upload n binary c with
       | None -> Error "no GPU memory for the program"
-      | Some mem ->
-          let base = va mem in
-          let at off = Nativeint.of_int (base + off) in
+      | Some image ->
+          let at off =
+            Nativeint.add
+              (Nx_device.Buffer.address image)
+              (Nativeint.of_int off)
+          in
           let k =
             {
-              image = at 0;
+              image;
               entry = at c.entry;
               code_bytes = c.code_bytes;
               registers = c.registers;
