@@ -1150,6 +1150,9 @@ module Runtimes = struct
   (* [x] written to a fresh file, as a value on the disk over it. *)
   let on_disk x =
     let module B = Nx_device.Buffer in
+    (* A file stays open until its buffers are collected: collect the earlier
+       cases' so that their files do not use up the process's descriptors. *)
+    Gc.full_major ();
     let src = elements x and path = temp_file () in
     let pp = Format.pp_print_string in
     B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
