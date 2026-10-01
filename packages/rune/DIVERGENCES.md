@@ -20,7 +20,7 @@ rounded sum, ulp per target, measured bound), the reason, and the test that
 pins it. An entry without its test is rejected at review. An entry goes when
 its reason goes.
 
-A test is named by its module's suite (`packages/rune/next/test/<module>/`)
+A test is named by its module's suite (`packages/rune/next/test/test_<module>.ml`)
 and its path in it. An ulp row is measured against correctly rounded results
 over its sweep, and the measured maxima per target are recorded as each
 target's run lands.

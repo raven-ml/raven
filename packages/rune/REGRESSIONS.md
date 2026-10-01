@@ -28,7 +28,7 @@ module's section starts when its test pass does.
 
 ## Compiled
 
-The suite is `Rune_next.Compiled` (`next/test/compiled/test_compiled.ml`),
+The suite is `Rune_next.Compiled` (`next/test/test_compiled.ml`),
 written `Compiled` below. Its laws run each kernel of `Nx_backend.S` on the
 same operands in nx.cpu and in the compiled backend, over every layout (axes
 permuted, reversed, broadcast, gapped, offset, in a buffer that starts inside
@@ -118,14 +118,14 @@ these files belong to the compiled call, in its own section.
 
 ## Transformations core
 
-The suites are in `next/test/`, one per directory, each through the public
-`Rune` alone: `Rune derivatives` (`derivatives/`), `Rune.scan` (`scan/`),
-`Rune structures` (`structure/`), `Rune nesting` (`nesting/`),
-`Rune compositions` (`composition/`), `Rune constructs` (`constructs/`),
-`Rune totals` (`total/`) and `Rune custom rules` (`custom/`). Tests of an
-operation's rule in these files (ties and zeros of reductions, `set`, bitcast,
-pad, sort, an operation with no rule, a power at a zero base, the per-operation
-transposes) are mapped in Rule tables.
+The suites are in `next/test/`, each through the public `Rune` alone: `Rune
+derivatives` (`test_derivatives.ml`), `Rune.scan` (`test_scan.ml`), `Rune
+structures` (`test_structure.ml`), `Rune nesting` (`test_nesting.ml`), `Rune
+compositions` (`test_composition.ml`), `Rune constructs` (`test_constructs.ml`),
+`Rune totals` (`test_total.ml`) and `Rune custom rules` (`test_custom.ml`).
+Tests of an operation's rule in these files (ties and zeros of reductions,
+`set`, bitcast, pad, sort, an operation with no rule, a power at a zero base,
+the per-operation transposes) are mapped in Rule tables.
 
 
 ### test_grad.ml
@@ -352,11 +352,11 @@ transposes) are mapped in Rule tables.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: exhaustive.t * | an interpreter that forgets a construct does not compile | next/test/constructs/exhaustive.t |
+| old: exhaustive.t * | an interpreter that forgets a construct does not compile | next/test/exhaustive.t |
 
 ## Rule tables
 
-The forward-mode suite is `next/test/rules/jvp/test_jvp_rules.ml`, written
+The forward-mode suite is `next/test/test_jvp_rules.ml`, written
 `J` below. Its rows are the rows of nx's operations, one per constructor of
 `Nx.Op.t` and kind, each applied through `Nx.Op.eval` to operands drawn inside
 its domain, with its static arguments drawn over their range (axes, shapes,
@@ -371,7 +371,7 @@ the tangent; an integer or boolean row has no tangent. A path
 test of a fixed shape or fixture maps to the row whose generator draws it. The
 suite checks forward mode only; the pullbacks are the reverse-mode suite's.
 
-The reverse-mode suite is `next/test/rules/linear/test_transposes.ml`,
+The reverse-mode suite is `next/test/test_transposes.ml`,
 written `T` below. Over the same rows and draws, ties and zeros included, it
 checks each row's pullback against its tangent by the adjoint identity
 `Re ⟨w, J v⟩ = Re ⟨J* w, v⟩` to rounding (with no finite difference), a
@@ -382,7 +382,7 @@ naming the row, when it is not. `T › compositions › …` holds nx's function
 made of several rows (their old fixtures, both laws, and closed forms), and
 `T › edges › …` the named cases.
 
-The batching suite is `next/test/rules/vmap/test_batching.ml`, written `B`
+The batching suite is `next/test/test_batching.ml`, written `B`
 below. Over the same rows and draws it checks that a map of the row is its
 loop over the rows of its batched operands, whichever of them are batched,
 bit for bit for the rows whose elements come from their own inputs and to
@@ -392,7 +392,7 @@ are the loops of its tangent and its pullback. `B › edges › …` holds the
 operands a row's draws never batch (conditions, indices, starts, keys),
 reads inside a map, and nx's functions made of several rows.
 
-`Rune.vmap` as a whole is `next/test/vmap/test_vmap.ml`, written `V`
+`Rune.vmap` as a whole is `next/test/test_vmap.ml`, written `V`
 below: the structures it maps, its captures, its refusals that name a
 leaf's path, the randomness of its lanes, and `lanes`.
 

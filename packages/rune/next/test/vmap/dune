@@ -1,6 +1,0 @@
-(test
- (name test_vmap)
- (package rune)
- (libraries windtrap rune.next nx nx.dtype)
- (action
-  (run %{test} --exclude-tag slow)))

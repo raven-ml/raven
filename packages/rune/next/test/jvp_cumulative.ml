@@ -30,8 +30,8 @@ let vector g =
 
 (* Running extrema *)
 
-let max_better a b = if Edges.running_takes_first then a > b else a >= b
-let min_better a b = if Edges.running_takes_first then a < b else a <= b
+let max_better a b = if Jvp_edges.running_takes_first then a > b else a >= b
+let min_better a b = if Jvp_edges.running_takes_first then a < b else a <= b
 
 (* The gradient of the sum of a running extremum: each position counts the
    running extrema it is. *)
@@ -93,7 +93,7 @@ let extremum_cases =
             (Nx_backend.Max, max_better, [| 1.; 3.; 3.; 2. |]);
             (Min, min_better, [| 3.; 1.; 2.; 1. |]);
           ];
-        if Edges.running_takes_first then
+        if Jvp_edges.running_takes_first then
           equal ~msg:"jvp" floats [| 1.; 1.; 1.; 10. |]
             (Nx.to_array
                (snd

@@ -251,11 +251,11 @@ type nary = { n : 'b. (float, 'b) Nx.t array -> (float, 'b) Nx.t }
 
 (* The columns of a golden table, as floats. *)
 let columns file =
-  let rows = Golden.rows file in
+  let rows = Golden.rows ("golden/lower_arith/" ^ file) in
   List.map
     (fun name ->
       Array.of_list (List.map (fun cell -> float_of_string (cell name)) rows))
-    (Golden.columns file)
+    (Golden.columns ("golden/lower_arith/" ^ file))
 
 (* How a traced value is computed: by the reference interpreter, or compiled for
    the host. *)
@@ -631,7 +631,7 @@ let parity =
   let x () = Nx.zeros Nx.float32 [| 4; 4 |] in
   let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
   let case file f =
-    Golden.graph (file ^ ".golden") (fun () ->
+    Golden.graph ("golden/lower_arith/" ^ file ^ ".golden") (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

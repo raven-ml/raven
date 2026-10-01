@@ -526,7 +526,7 @@ let parity =
   let i () = Nx.zeros Nx.int32 [| 4; 4 |] in
   let u ?(shape = [| 4; 4 |]) () = Nx.zeros Nx.uint32 shape in
   let case file f =
-    Golden.graph (file ^ ".golden") (fun () ->
+    Golden.graph ("golden/lower_reduce/" ^ file ^ ".golden") (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

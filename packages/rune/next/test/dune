@@ -1,0 +1,187 @@
+; Each suite's default run excludes its slow tests; the slow alias runs them.
+
+(tests
+ (names
+  test_derivatives
+  test_scan
+  test_structure
+  test_nesting
+  test_composition
+  test_constructs
+  test_custom
+  test_total)
+ (modules
+  test_derivatives
+  test_scan
+  test_structure
+  test_nesting
+  test_composition
+  test_constructs
+  test_custom
+  test_total)
+ (package rune)
+ (libraries windtrap rune.next rune_next_test nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_composition.exe} --tag slow)))
+
+(test
+ (name test_vmap)
+ (modules test_vmap)
+ (package rune)
+ (libraries windtrap rune.next nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+; The rule suites: each constructor's tangent, transpose and batching. The
+; swept laws run in the slow alias.
+
+(tests
+ (names test_jvp_rules test_transposes test_batching)
+ (modules
+  test_jvp_rules
+  jvp_cumulative
+  jvp_edges
+  jvp_factorisations
+  test_transposes
+  transpose_compositions
+  transpose_edges
+  test_batching
+  batching_edges)
+ (package rune)
+ (libraries windtrap rune.next rune_next_rules nx nx.backend nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_jvp_rules.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_transposes.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_batching.exe} --tag slow)))
+
+; The lowering's suites compare its graphs with tinygrad's goldens
+; (golden/<suite>/, written by gen/generate.py).
+
+(tests
+ (names
+  test_lower
+  test_lower_arith
+  test_lower_index
+  test_lower_linalg
+  test_lower_reduce)
+ (modules
+  test_lower
+  test_lower_arith
+  test_lower_index
+  test_lower_linalg
+  test_lower_reduce)
+ (package rune)
+ (libraries
+  windtrap
+  rune.next
+  rune_next_test
+  tolk_next_test
+  nx_test
+  nx
+  nx.dtype
+  nx.device
+  tolk.next)
+ (deps
+  (glob_files golden/lower_arith/*.golden)
+  (glob_files golden/lower_index/*.golden)
+  (glob_files golden/lower_linalg/*.golden)
+  (glob_files golden/lower_reduce/*.golden))
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_arith/*.golden))
+ (action
+  (run %{exe:test_lower_arith.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_linalg/*.golden))
+ (action
+  (run %{exe:test_lower_linalg.exe} --tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (glob_files golden/lower_reduce/*.golden))
+ (action
+  (run %{exe:test_lower_reduce.exe} --tag slow)))
+
+; The compiled backend runs on the host by default; its Metal tests and its
+; cost figures are slow. CACHEDB is a directory of the sandbox, so that every
+; run compiles its programs.
+
+(test
+ (name test_compiled)
+ (modules test_compiled metal)
+ (package rune)
+ (libraries
+  windtrap
+  rune.next
+  rune_next_test
+  nx_test
+  nx
+  nx.array
+  nx.backend
+  nx.cpu
+  nx.device
+  nx.dtype
+  tolk.next
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml)))
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))
+
+(rule
+ (alias slow)
+ (package rune)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{exe:test_compiled.exe} --tag slow))))
+
+(cram
+ (applies_to exhaustive)
+ (package rune)
+ (deps
+  (package nx)
+  (package rune)))

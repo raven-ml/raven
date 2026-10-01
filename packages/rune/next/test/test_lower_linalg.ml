@@ -683,7 +683,7 @@ let on_the_host =
 let parity =
   let x shape = Nx.zeros Nx.float32 shape in
   let case file f =
-    Golden.graph (file ^ ".golden") (fun () ->
+    Golden.graph ("golden/lower_linalg/" ^ file ^ ".golden") (fun () ->
         let args = f () in
         Programs.kernels (snd (trace (fun () -> args ()))))
   in

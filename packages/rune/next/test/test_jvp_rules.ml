@@ -195,7 +195,7 @@ let rows ~count =
 let edges =
   List.filter_map
     (fun r ->
-      match Edges.of_row r with
+      match Jvp_edges.of_row r with
       | [] -> None
       | ts -> Some (group (Row.name r) ts))
     Row.all
@@ -206,7 +206,7 @@ let () =
        (rows ~count:10
        @ [
            group "edges" edges;
-           group "cumulative" Cumulative.tests;
-           group "factorisations" Factorisations.tests;
+           group "cumulative" Jvp_cumulative.tests;
+           group "factorisations" Jvp_factorisations.tests;
            group ~tags:[ "slow" ] "swept" (rows ~count:500);
          ]))

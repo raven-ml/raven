@@ -195,7 +195,7 @@ let () =
     (run "rune.next transposes"
        (rows ~count:10
        @ [
-           group "edges" Edges.tests;
-           group "compositions" Compositions.tests;
+           group "edges" Transpose_edges.tests;
+           group "compositions" Transpose_compositions.tests;
            group ~tags:[ "slow" ] "swept" (rows ~count:300);
          ]))

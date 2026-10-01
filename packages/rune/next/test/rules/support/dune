@@ -1,4 +1,0 @@
-(library
- (name rune_next_rules)
- (wrapped false)
- (libraries windtrap rune.next nx nx.backend nx.device nx.dtype))

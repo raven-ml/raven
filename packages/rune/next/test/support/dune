@@ -1,6 +1,7 @@
 (library
  (name rune_next_test)
  (wrapped false)
+ (modules expr oracle programs traces)
  (libraries
   windtrap
   rune.next
@@ -13,3 +14,11 @@
   nx.device
   nx.dtype
   zarith))
+
+; The rule suites' cases, rows and references.
+
+(library
+ (name rune_next_rules)
+ (wrapped false)
+ (modules case reference row)
+ (libraries windtrap rune.next nx nx.backend nx.device nx.dtype))

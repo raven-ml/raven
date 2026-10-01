@@ -8,8 +8,8 @@
 
 Each generator `gen/<module>.py` declares its goldens with the decorators of
 tolk.next's `gen/golden.py`, and each golden is written to
-`test/<module>/<name>.golden` in tolk.next's graph format (`gen/graph.py`), so
-that both trees read and write graphs one way. The goldens are made as
+`test/golden/<module>/<name>.golden` in tolk.next's graph format
+(`gen/graph.py`), so that both trees read and write graphs one way. The goldens are made as
 tolk.next's are: in a copy of the checkout at TINYGRAD with tolk.next's patch
 applied, each in a process of its own.
 Without --check they are written, with the manifest; with it, nothing is
@@ -53,7 +53,7 @@ def run(module, generator, tinygrad):
                                 env=env, capture_output=True, text=True)
         if result.returncode:
             sys.exit(f"gen/{module}.py failed:\n{result.stdout}{result.stderr}")
-        return {f"{module}/{name}.golden": HEADER + body + "\n" for name, body in json.loads(out.read_text())}
+        return {f"golden/{module}/{name}.golden": HEADER + body + "\n" for name, body in json.loads(out.read_text())}
 
 
 def main():

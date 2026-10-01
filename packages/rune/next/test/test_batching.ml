@@ -244,6 +244,6 @@ let () =
     (run "rune.next batching"
        (rows ~count:10
        @ [
-           group "edges" Edges.tests;
+           group "edges" Batching_edges.tests;
            group ~tags:[ "slow" ] "swept" (rows ~count:300);
          ]))
