@@ -68,6 +68,10 @@ let programs =
     "disk_staged_view";
     "embedding";
     "flip_of_other";
+    "gpt_oss_decode";
+    "gpt_oss_decode_1";
+    "gpt_oss_prefill";
+    "gpt_oss_prefill_1";
     "hazard_behind_other_after";
     "inline_function";
     "inline_sharded";
@@ -198,8 +202,11 @@ let unevaluated =
     "custom_kernel";
     "precompiled_function";
     "precompiled_function_1";
+    "gpt_oss_prefill_1";
+    "gpt_oss_decode_1";
     "variable_shrink";
     "inline_symbolic";
+    "gpt_oss_decode";
   ]
 
 let values =

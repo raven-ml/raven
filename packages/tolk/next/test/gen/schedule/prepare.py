@@ -9,8 +9,9 @@ later ones as `<program>_<n>.golden` and `<program>_<n>_prepared.golden`.
 """
 
 from golden import graph
-from tinygrad import Tensor, Variable, dtypes, function
+from tinygrad import Tensor, Variable, dtypes, function, nn
 from tinygrad.helpers import DEV, SPLIT_REDUCEOP
+from tinygrad.llm.model import ExpertGating, TransformerBlock, TransformerConfig
 from tinygrad.uop.ops import KernelInfo, Ops, ParamArg, UOp
 import os
 import tinygrad.schedule
@@ -125,6 +126,23 @@ def no_split():
     return empty(65536).sum()
 
 
+def gpt_oss_block(tokens, start_pos):
+    """One transformer block of gpt-oss, at a small width: attention with sinks
+    over a sliding window and a cache, rotary embeddings, and a mixture of four
+    experts, two per token, as tinygrad's model runs it. Its weights, rotary
+    table and cache are buffers, as a loaded model's are."""
+    config = TransformerConfig(
+        num_blocks=1, dim=64, hidden_dim=32, n_heads=4, n_kv_heads=2, norm_eps=1e-5, vocab_size=1, head_dim=16,
+        rope_theta=150000.0, rope_dim=16, v_head_dim=16, max_context=16, num_experts=4, num_experts_per_tok=2,
+        expert_gating_func=ExpertGating.SOFTMAX_WEIGHT, qkv_bias=True, expert_proj_bias=True, attn_output_bias=True,
+        attn_sinks=True, swiglu_alpha=1.702, swiglu_clamp_exp=7.0, swiglu_up_bias=1.0, sliding_window=8)
+    block = TransformerBlock(config)
+    for t in nn.state.get_state_dict(block).values(): t.replace(empty(*t.shape, dtype=t.dtype))
+    block.cache_kv = empty(2, 1, config.n_kv_heads, config.max_context, config.head_dim, dtype=dtypes.half)
+    block.freqs_cis = empty(config.max_context, config.rope_dim)
+    return block(empty(1, tokens, config.dim), start_pos)
+
+
 PROGRAMS = {
     # elementwise, reductions and matmuls
     "add": lambda: empty(4, 4) + empty(4, 4),
@@ -204,6 +222,9 @@ PROGRAMS = {
     "assign_to_function_output": assign_to_function_output,
     "setitem": lambda: setitem(slice(2, 4), 1.0),
     "setitem_tensor": lambda: setitem((slice(None), slice(2, 4)), empty(8, 2)),
+    # models
+    "gpt_oss_prefill": lambda: gpt_oss_block(8, 0),
+    "gpt_oss_decode": lambda: gpt_oss_block(1, Variable("start_pos", 0, 15).bind(7)),
     # calls
     "custom_kernel": custom_kernel,
     "inline_function": inline_function,

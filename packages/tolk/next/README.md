@@ -168,3 +168,13 @@ is scope, not a divergence: the part left out is listed here, and
 recorded from tinygrad. `DIVERGENCES.md` lists every place where tolk.next
 differs from tinygrad and why, and `test/REGRESSIONS.md` maps each test of
 the old tolk and of tinygrad to the test that replaces it.
+
+## Benchmarks
+
+`bench/bench_tolk.exe` times the compiler one stage at a time: preparing,
+the kernel graph, the schedule, codegen, linearizing and rendering, for the
+CPU's C renderer. Its programs are graphs recorded from tinygrad for the
+`Prepare` suite (`test/schedule/prepare`), among them a block of gpt-oss
+prefilling and decoding. `bench/tolk.thumper` is its baseline. Run it with
+`dune build @packages/tolk/next/bench/bench`, or directly from `_build`, never
+through `dune exec`.

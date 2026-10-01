@@ -12,6 +12,9 @@
     that cannot be read raises [Sys_error], and one that is not a golden raises
     [Failure]. *)
 
+val body : string -> string
+(** [body file] is the body of the golden [file]. *)
+
 val text : string -> (unit -> string) -> Windtrap.test
 (** [text file actual] is the test, named [file], that [actual ()] is the body
     of the golden [file]. Its failure prints their diff. *)

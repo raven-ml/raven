@@ -1,0 +1,47 @@
+; The stage benchmarks of tolk's compiler, over programs recorded from
+; tinygrad. They are not attached to runtest: run them with `dune build @bench`,
+; or run the executable directly, never through `dune exec`, which sets
+; INSIDE_DUNE and redirects `--bless`.
+
+(executable
+ (name bench_tolk)
+ (modules bench_tolk programs)
+ (libraries tolk.next tolk_next_test thumper))
+
+(executable
+ (name embed)
+ (modules embed)
+ (libraries tolk_next_test))
+
+; The programs are the graphs prepare_rangeify receives, recorded for its
+; suite, built into the executable so that it runs from anywhere.
+
+(rule
+ (target programs.ml)
+ (deps
+  (:goldens
+   ../test/schedule/prepare/attention.golden
+   ../test/schedule/prepare/conv.golden
+   ../test/schedule/prepare/cumsum.golden
+   ../test/schedule/prepare/embedding.golden
+   ../test/schedule/prepare/gpt_oss_decode.golden
+   ../test/schedule/prepare/gpt_oss_prefill.golden
+   ../test/schedule/prepare/matmul.golden
+   ../test/schedule/prepare/softmax.golden
+   ../test/schedule/prepare/sort.golden
+   ../test/schedule/prepare/split_sum.golden))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:embed.exe} %{goldens}))))
+
+; Benchmarks serialize across the workspace, since concurrent suites contend for
+; cores and distort what they measure.
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_tolk.exe})
+   (diff? tolk.thumper tolk.thumper.corrected))))

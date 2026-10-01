@@ -3285,6 +3285,14 @@ schedule/prepare/embedding.golden
 schedule/prepare/embedding_prepared.golden
 schedule/prepare/flip_of_other.golden
 schedule/prepare/flip_of_other_prepared.golden
+schedule/prepare/gpt_oss_decode.golden
+schedule/prepare/gpt_oss_decode_1.golden
+schedule/prepare/gpt_oss_decode_1_prepared.golden
+schedule/prepare/gpt_oss_decode_prepared.golden
+schedule/prepare/gpt_oss_prefill.golden
+schedule/prepare/gpt_oss_prefill_1.golden
+schedule/prepare/gpt_oss_prefill_1_prepared.golden
+schedule/prepare/gpt_oss_prefill_prepared.golden
 schedule/prepare/hazard_behind_other_after.golden
 schedule/prepare/hazard_behind_other_after_prepared.golden
 schedule/prepare/inline_function.golden
