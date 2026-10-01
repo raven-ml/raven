@@ -70,7 +70,6 @@ let sq_tt_token_mask_shdec_bit = 2
 let sq_tt_token_mask_gfxudec_bit = 4
 let sq_tt_token_mask_comp_bit = 8
 let sq_tt_token_mask_context_bit = 0x10
-let sq_tt_token_exclude_perf_shift = 11
 let sq_tt_token_exclude_vmemexec_shift = 0
 let sq_tt_token_exclude_aluexec_shift = 1
 let sq_tt_token_exclude_valuinst_shift = 2

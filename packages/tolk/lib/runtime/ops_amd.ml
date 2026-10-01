@@ -675,8 +675,6 @@ let compute_queue ~host gpu q : Hcq2.commands =
             lor sq_tt_token_mask_context_bit)
         in
         let excluded =
-          (if gfx12 then 0 else 1 lsl G.sq_tt_token_exclude_perf_shift)
-          lor
           if itraced se then 0
           else if gfx12 then 0x927
           else
@@ -687,13 +685,17 @@ let compute_queue ~host gpu q : Hcq2.commands =
               lor (1 lsl sq_tt_token_exclude_immediate_shift)
               lor (1 lsl sq_tt_token_exclude_inst_shift))
         in
+        (* A GFX11 trace includes its exec tokens (TTRACE_EXEC), the bit just
+           past its 11 token exclusions. *)
         set "SQ_THREAD_TRACE_TOKEN_MASK"
           ([
              ("reg_include", registers);
              ("token_exclude", excluded);
              ("bop_events_token_include", 1);
            ]
-          @ if gfx12 then [ ("exclude_barrier_wait", 1) ] else []);
+          @
+          if gfx12 then [ ("exclude_barrier_wait", 1) ]
+          else [ ("ttrace_exec", 1) ]);
         trace_config ~tracing:true
       done
     end;

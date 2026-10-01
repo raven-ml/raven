@@ -2588,22 +2588,22 @@ tolk lowers as one, replaces it.
   `traces_gfx1201`, `traces_gfx942` and `counters_traces`, from the generator
   patched as `test/gen/runtime/ops_amd.py` says.
 
-## D85. A register field's value is cut to the field's width
+## D85. A GFX11 trace sets TTRACE_EXEC by name
 
 - **tinygrad:** `runtime/support/amd.py:10` (`AMDReg.encode` shifts each value
   to its field's lowest bit without cutting it), `runtime/ops_amd.py:310`
   (`sqtt_start` gives `token_exclude` the bit 11 of
-  `SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT`, past the field's 11 bits, which so sets
-  `TTRACE_EXEC`).
+  `SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT`, past the field's 11 bits on GFX11, which
+  so sets `TTRACE_EXEC`).
 - **tolk:** `lib/runtime/ops_amd.ml:412` (`encode` cuts each value to its
-  field, as `bits` does).
-- **Differs:** a value wider than its field loses its high bits: the
-  exclusion of performance tokens on GFX11 sets no bit of
-  `SQ_THREAD_TRACE_TOKEN_MASK`, where tinygrad sets `TTRACE_EXEC`.
+  field, as `bits` does), `:698` (a GFX11 trace sets `ttrace_exec`).
+- **Differs:** a value wider than its field loses its high bits, and a GFX11
+  trace sets `TTRACE_EXEC` by name where tinygrad sets it through the spilled
+  bit. `SQ_THREAD_TRACE_TOKEN_MASK` takes the same value; no other value of
+  the recorded cases spills.
 - **Reason:** (c). A value spilling into the next field changes what the
-  hardware does without anyone asking for it; the trace's packets are what
-  nx.amd.device reads back. Mesa's register macros cut each value to its
-  field.
+  hardware does without anyone asking for it; Mesa's register macros cut each
+  value to its field. Setting the bit by name keeps the traces configured as
+  those nx.amd.device's decoder is tested on.
 - **Pinned by:** the Ops_amd suite: `recorded cases › traces` and
-  `counters_traces`, from tinygrad with `gen/tinygrad.patch`, which cuts the
-  values as tolk does.
+  `counters_traces`, from tinygrad's own encoding, which spills.
