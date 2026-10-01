@@ -1958,6 +1958,11 @@ let staged_scans d =
         ~init:(zeros 4)
         (fun c x -> (Nx.add (Nx.mul_s c 0.5) x, Nx.zeros Nx.float32 [||]))
         (rows 300 4);
+      staged at "stage a step whose output is empty" ~steps:once ~init:(zeros 4)
+        (fun c x ->
+          let c = Nx.add (Nx.mul_s c 0.5) x in
+          (c, Nx.slice [ R (0, 0) ] c))
+        (rows 300 4);
       (* Written out, each step's carry is stored before the next reads it: four
          hundred steps, past the 256 levels Metal nests, compile as kernels of
          one step each. *)

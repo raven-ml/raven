@@ -299,17 +299,22 @@ let stage trace s (r : Scan.request) =
     List.map
       (fun (Nx.P y as packed) ->
         let u = node packed and m = numel (Nx.shape y) in
-        let k = stride u m in
-        let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
-        let slot, w = parameter p (Nx.dtype y) (Nx.shape y) in
-        pass slot (window b Ops.O.(trip * int k) m);
-        stores := Ops.store (Lower.uop w) u :: !stores;
-        fun e ->
-          Ops.reshape
-            (Ops.shrink
-               (Ops.reshape (Ops.after b [ e ]) (ints [ n; k ]))
-               [ None; Some (Ops.Int 0, Ops.Int m) ])
-            (ints (n :: Array.to_list (Nx.shape y))))
+        let stacked = Array.append [| n |] (Nx.shape y) in
+        (* An empty output has nothing to write. *)
+        if m = 0 then fun _ ->
+          Lower.broadcast (Ops.const ~dtype:(Ops.dtype u) (`Int Z.zero)) stacked
+        else
+          let k = stride u m in
+          let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
+          let slot, w = parameter p (Nx.dtype y) (Nx.shape y) in
+          pass slot (window b Ops.O.(trip * int k) m);
+          stores := Ops.store (Lower.uop w) u :: !stores;
+          fun e ->
+            Ops.reshape
+              (Ops.shrink
+                 (Ops.reshape (Ops.after b [ e ]) (ints [ n; k ]))
+                 [ None; Some (Ops.Int 0, Ops.Int m) ])
+              (ints (Array.to_list stacked)))
       ys
   in
   let body = cut next args (Ops.sink (List.rev !stores)) in
