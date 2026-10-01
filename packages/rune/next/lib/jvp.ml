@@ -114,6 +114,12 @@ let adjoint x = Nx.conjugate (Nx.matrix_transpose x)
 let diag_matrix d =
   Nx.mul (Nx.eye (Nx.dtype d) (Nx.dim (-1) d)) (Nx.unsqueeze ~axes:[ -2 ] d)
 
+(* The Hermitian matrix that the strict lower triangle of [x] and the real part
+   of its diagonal name. *)
+let hermitian x =
+  let low = Nx.tril ~k:(-1) x in
+  Nx.add (Nx.add low (adjoint low)) (diag_matrix (real_part (Nx.diagonal x)))
+
 (* [x] with the reduced axes kept as ones, of a reduction of [x] to [y]. *)
 let kept ~axes x y =
   let shape = Array.copy (Nx.shape x) in
@@ -306,16 +312,12 @@ let viewable m dx =
    coefficients come from the primals, the tangent meets only products, triangle
    masks and solves in which it is the right-hand side. *)
 
-(* The factor reads the Hermitian matrix that the strict lower triangle of [x]
-   and the real part of its diagonal name, H = L Lᴴ, so dL = L Φ(L^-1 dH L^-H),
-   with Φ the lower triangle less half the diagonal. Under [upper] the factor is
-   U = Lᴴ. *)
+(* The factor reads H = [hermitian x] = L Lᴴ, so dL = L Φ(L^-1 dH L^-H), with Φ
+   the lower triangle less half the diagonal. Under [upper] the factor is U =
+   Lᴴ. *)
 let cholesky' ~upper y dx =
   let l = if upper then adjoint y else y in
-  let dh =
-    let low = Nx.tril ~k:(-1) dx in
-    Nx.add (Nx.add low (adjoint low)) (diag_matrix (real_part (Nx.diagonal dx)))
-  in
+  let dh = hermitian dx in
   let left b =
     Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false l b
   in
@@ -451,16 +453,11 @@ let svd' i ~full_matrices x u s vt dx =
   in
   (du, ds, adjoint dv)
 
-(* A Hermitian matrix that the lower triangle of [x] and the real part of its
-   diagonal name, Q Λ Qᴴ. With P = Qᴴ dA Q, dΛ = Re diag P and, the tangent of
+(* [hermitian x] = Q Λ Qᴴ. With P = Qᴴ dA Q, dΛ = Re diag P and, the tangent of
    each eigenvector orthogonal to it (Qᴴ dQ has a zero diagonal), dQ = Q (F ∘
    P), F_ij = 1 / (λ_j - λ_i). *)
 let eigh' w q dx =
-  let dh =
-    let low = Nx.tril ~k:(-1) dx in
-    Nx.add (Nx.add low (adjoint low)) (diag_matrix (real_part (Nx.diagonal dx)))
-  in
-  let p = Nx.matmul (adjoint q) (Nx.matmul dh q) in
+  let p = Nx.matmul (adjoint q) (Nx.matmul (hermitian dx) q) in
   ( Nx.cast Nx.float64 (Nx.diagonal p),
     Nx.matmul q (Nx.mul (gaps (Nx.cast (Nx.dtype q) w)) p) )
 
@@ -510,13 +507,7 @@ let qr' i ~reduced x q r dx =
     qr_square q r dx
   end
   else
-    let cols lo hi a =
-      let shape = Nx.shape a in
-      let k = Array.length shape - 1 in
-      Nx.shrink
-        (Array.mapi (fun i d -> if i = k then (lo, hi) else (0, d)) shape)
-        a
-    in
+    let cols lo hi a = block a (0, m) (lo, hi) in
     let r1 = cols 0 m r and r2 = cols m n r in
     let dq, dr1 = qr_square q r1 (cols 0 m dx) in
     let dr2 = Nx.matmul (adjoint q) (Nx.sub (cols m n dx) (Nx.matmul dq r2)) in
@@ -580,8 +571,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       dual i
         (eval (Sort { descending; axis; x }))
         (eval (Gather (axis, indices, dx)))
-  | Argsort { descending; axis; x } ->
-      eval (Argsort { descending; axis; x = primal i x })
+  | Argsort s -> eval (Argsort { s with x = primal i s.x })
   | Pad (padding, v, x) ->
       let x, dx = unwrap i x in
       dual i
@@ -602,31 +592,20 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Threefry (key, ctr) -> eval (Threefry (primal i key, primal i ctr))
   | Gather (axis, indices, x) ->
       linear x (fun x -> eval (Gather (axis, indices, x)))
-  | Scatter { mode; unique; axis; indices; updates; into } ->
-      let updates, du = split i updates and into, di = split i into in
+  | Scatter s ->
+      let updates, du = split i s.updates and into, di = split i s.into in
       dual i
-        (eval (Scatter { mode; unique; axis; indices; updates; into }))
+        (eval (Scatter { s with updates; into }))
         (eval
            (Scatter
-              {
-                mode;
-                unique;
-                axis;
-                indices;
-                updates = zeros_or du updates;
-                into = zeros_or di into;
-              }))
+              { s with updates = zeros_or du updates; into = zeros_or di into }))
   | Update (x, starts, v) ->
       let x, dx = split i x and v, dv = split i v in
       dual i
         (eval (Update (x, starts, v)))
         (eval (Update (zeros_or dx x, starts, zeros_or dv v)))
-  | Unfold { kernel_size; stride; dilation; padding; x } ->
-      linear x (fun x ->
-          eval (Unfold { kernel_size; stride; dilation; padding; x }))
-  | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
-      linear x (fun x ->
-          eval (Fold { output_size; kernel_size; stride; dilation; padding; x }))
+  | Unfold u -> linear u.x (fun x -> eval (Unfold { u with x }))
+  | Fold f -> linear f.x (fun x -> eval (Fold { f with x }))
   | Matmul (a, b) ->
       let a, da = split i a and b, db = split i b in
       dual i
@@ -634,18 +613,9 @@ let run : type r. t -> r Nx.Op.t -> r =
         (terms
            (Option.map (fun da -> eval (Matmul (da, b))) da)
            (Option.map (fun db -> eval (Matmul (a, db))) db))
-  | Fft { inverse; axes; x } ->
-      linear x (fun x -> eval (Fft { inverse; axes; x }))
-  | Rfft { dtype; axes; x } ->
-      let x, dx = unwrap i x in
-      dual i
-        (eval (Rfft { dtype; axes; x }))
-        (eval (Rfft { dtype; axes; x = dx }))
-  | Irfft { dtype; axes; s; x } ->
-      let x, dx = unwrap i x in
-      dual i
-        (eval (Irfft { dtype; axes; s; x }))
-        (eval (Irfft { dtype; axes; s; x = dx }))
+  | Fft f -> linear f.x (fun x -> eval (Fft { f with x }))
+  | Rfft f -> linear f.x (fun x -> eval (Rfft { f with x }))
+  | Irfft f -> linear f.x (fun x -> eval (Irfft { f with x }))
   | Contiguous x -> linear x (fun x -> eval (Contiguous x))
   | Cholesky { upper; x } ->
       let x, dx = unwrap i x in

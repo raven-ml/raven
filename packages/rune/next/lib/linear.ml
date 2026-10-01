@@ -495,32 +495,20 @@ let transpose_op : type a b.
       | Window { axis; size; step } ->
           (* Overlap-add: input position [w * step + j] receives the cotangent
              of window [w] at offset [j], which is what fold sums. *)
-          let shape = Nx.shape x in
-          let r = Array.length shape in
-          let to_fold =
-            List.init (r + 1) (fun i ->
-                if i < axis then i
-                else if i <= r - 2 then i + 1
-                else if i = r - 1 then r
-                else axis)
-          in
+          let r = Nx.ndim x in
           let folded =
             eval
               (Fold
                  {
-                   output_size = [| shape.(axis) |];
+                   output_size = [| (Nx.shape x).(axis) |];
                    kernel_size = [| size |];
                    stride = [| step |];
                    dilation = [| 1 |];
                    padding = [| (0, 0) |];
-                   x = Nx.transpose ~axes:to_fold ct;
+                   x = Nx.moveaxis axis r ct;
                  })
           in
-          let from_fold =
-            List.init r (fun j ->
-                if j < axis then j else if j = axis then r - 1 else j - 1)
-          in
-          add x (Nx.transpose ~axes:from_fold folded))
+          add x (Nx.moveaxis (r - 1) axis folded))
   | Matmul (a, b) ->
       if owns a then
         add a (unbroadcast (Nx.matmul ct (Nx.matrix_transpose b)) (Nx.shape a))
