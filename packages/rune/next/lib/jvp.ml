@@ -842,15 +842,61 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
       Option.map (fun (v, _) () -> Construct.perform (Add (t, v))) (own i v)
   | Remat { p; q; f; args; recomputed } -> (
       match i.slots with
-      | None ->
-          let f args = install i (fun () -> f args) in
-          Some
-            (fun () -> Construct.perform (Remat { p; q; f; args; recomputed }))
+      | None -> Some (fun () -> remat_values i p q f args recomputed)
       | Some tape -> Some (fun () -> remat i tape p q f args))
   | Lanes (axis, x) ->
       let lanes x = Construct.perform (Lanes (axis, x)) in
       Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
   | Scan _ | Barrier _ | Lane_index _ | Lane_count _ -> None
+
+(* With value tangents a remat passes on as the remat of its function's jvp,
+   over the arguments' primals and tangents, so that no dual of [i] crosses into
+   the transformation that runs it: the function runs under [i] reinstalled, at
+   duals of the arguments [i] tracks. Zeros fill the tangents of the others and
+   of the results that come out with none, and stay plain: a value with no
+   tangent remains no dual. *)
+and remat_values : type p q.
+    t -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> bool -> q =
+ fun i p q f args recomputed ->
+  let tangent _ x =
+    match split i x with _, Some dx -> dx | x, None -> Nx.zeros_like x
+  in
+  let leaves, _ = Nx.Ptree.flatten p args in
+  let tracked = List.map (fun (Nx.P x) -> owns i x) leaves in
+  let dependent = ref [] in
+  let f (a, da) =
+    install i (fun () ->
+        let pair t (Nx.P x) dx =
+          if t then Nx.P (dual i x (Nx.unpack (Nx.dtype x) dx)) else Nx.P x
+        in
+        let duals =
+          List.map2
+            (fun (t, x) dx -> pair t x dx)
+            (List.combine tracked (fst (Nx.Ptree.flatten p a)))
+            (fst (Nx.Ptree.flatten p da))
+        in
+        let y = f (Nx.Ptree.rebuild p ~like:a duals) in
+        let ys, _ = Nx.Ptree.flatten q y in
+        dependent := List.map (fun (Nx.P y) -> owns i y) ys;
+        (Nx.Ptree.map q (fun _ y -> primal i y) y, Nx.Ptree.map q tangent y))
+  in
+  let args =
+    (Nx.Ptree.map p (fun _ x -> primal i x) args, Nx.Ptree.map p tangent args)
+  in
+  let y, dy =
+    Construct.perform
+      (Remat
+         { p = Nx.Ptree.pair p p; q = Nx.Ptree.pair q q; f; args; recomputed })
+  in
+  let ys, _ = Nx.Ptree.flatten q y and dys, _ = Nx.Ptree.flatten q dy in
+  let attach d (Nx.P y) dy =
+    if d then Nx.P (dual i y (Nx.unpack (Nx.dtype y) dy)) else Nx.P y
+  in
+  Nx.Ptree.rebuild q ~like:y
+    (List.map2
+       (fun (d, y) dy -> attach d y dy)
+       (List.combine !dependent ys)
+       dys)
 
 (* [region i tape captures p f a tracked] is [f a] run under a child of [i]
    recording on [tape], each leaf of [a] that [tracked] marks a dual of the
