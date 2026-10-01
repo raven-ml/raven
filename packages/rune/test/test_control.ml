@@ -187,53 +187,31 @@ let test_grad_of_grad_through_scan () =
 let test_hvp_through_scan () =
   (* Forward-over-reverse. *)
   let v = vec64 [| 1.0; 0.0; -1.0; 0.5 |] in
-  check_arr ~msg:"hvp"
-    (to_arr (Rune.hvp' quad_prim (v4 ()) v))
-    (Rune.hvp' quad_scan (v4 ()) v)
+  let hvp f = snd (Rune.jvp' (Rune.grad' f) (v4 ()) v) in
+  check_arr ~msg:"hvp" (to_arr (hvp quad_prim)) (hvp quad_scan)
 
-let test_cond_branches () =
-  let branch x =
-    Rune.cond
-      (Nx.greater (Nx.sum x) (Nx.scalar f64 0.0))
-      ~then_:(fun () -> Nx.sum (Nx.mul x x))
-      ~else_:(fun () -> Nx.sum x)
-  in
-  check_arr ~msg:"then" [| 0.25 +. 4.0 |] (branch (vec64 [| 0.5; 2.0 |]));
-  check_arr ~msg:"else" [| -2.5 |] (branch (vec64 [| -0.5; -2.0 |]))
-
-let test_grad_through_cond () =
+let test_grad_through_a_branch () =
   (* The taken branch is what gets differentiated. *)
   let f x =
-    Rune.cond
-      (Nx.greater (Nx.sum x) (Nx.scalar f64 0.0))
-      ~then_:(fun () -> Nx.sum (Nx.mul x x))
-      ~else_:(fun () -> Nx.sum x)
+    if Nx.item [] (Nx.greater (Nx.sum x) (Nx.scalar f64 0.0)) then
+      Nx.sum (Nx.mul x x)
+    else Nx.sum x
   in
   check_arr ~msg:"then grad" [| 1.0; 4.0 |]
     (Rune.grad' f (vec64 [| 0.5; 2.0 |]));
   check_arr ~msg:"else grad" [| 1.0; 1.0 |]
     (Rune.grad' f (vec64 [| -0.5; -2.0 |]))
 
-let test_while_loop () =
-  (* Double until the sum exceeds 10: 1.5 -> 3 -> 6 -> 12. *)
-  let y =
-    Rune.while_loop
-      ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar f64 10.0))
-      ~body:(fun c -> Nx.mul_s c 2.0)
-      (vec64 [| 1.0; 0.5 |])
+let test_grad_through_a_recursion () =
+  (* Each x doubles k times before the recursion stops; d/dx sum = 2^k. *)
+  let rec double c =
+    if Nx.item [] (Nx.less (Nx.sum c) (Nx.scalar f64 10.0)) then
+      double (Nx.mul_s c 2.0)
+    else c
   in
-  check_arr ~msg:"final" [| 8.0; 4.0 |] y
-
-let test_grad_through_while_loop () =
-  (* Each x doubles k times before the loop exits; d/dx sum = 2^k. *)
-  let f x =
-    Nx.sum
-      (Rune.while_loop
-         ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar f64 10.0))
-         ~body:(fun c -> Nx.mul_s c 2.0)
-         x)
-  in
-  check_arr ~msg:"d while" [| 8.0; 8.0 |] (Rune.grad' f (vec64 [| 1.0; 0.5 |]))
+  let f x = Nx.sum (double x) in
+  check_arr ~msg:"d recursion" [| 8.0; 8.0 |]
+    (Rune.grad' f (vec64 [| 1.0; 0.5 |]))
 
 (* Exceptions. A handler answers the operation that asked: an exception raised
    while a transformation handles a call reaches the call, where a [try] around
@@ -324,7 +302,7 @@ let addition_shape =
 
 (* Each transformation of a function [g] of an input, the input, the
    transformation of [guarded]'s [3 x], and the calls to try. Rerun code is the
-   recomputation of a remat, under [no_grad] there. *)
+   recomputation of a remat, detached there. *)
 let transformations =
   [
     ("eager", (fun g x -> g x), x0, Nx.mul_s x0 3.0, calls);
@@ -341,7 +319,7 @@ let transformations =
             Nx.sum
               (Rune.remat
                  Nx.Ptree.(tensor @-> returns tensor)
-                 (fun x -> Nx.mul x (Rune.no_grad (fun () -> g x)))
+                 (fun x -> Nx.mul x (Rune.detach (g x)))
                  x))
           x),
       x0,
@@ -456,15 +434,11 @@ let tests =
           test_grad_of_grad_through_scan;
         test "hessian-vector product (jvp of grad)" test_hvp_through_scan;
       ];
-    group "cond"
+    group "branches"
       [
-        test "selects the branch by predicate" test_cond_branches;
-        test "differentiates the taken branch" test_grad_through_cond;
-      ];
-    group "while_loop"
-      [
-        test "iterates until the predicate fails" test_while_loop;
-        test "differentiates the taken iterations" test_grad_through_while_loop;
+        test "differentiates the taken branch" test_grad_through_a_branch;
+        test "differentiates the taken iterations"
+          test_grad_through_a_recursion;
       ];
     group "exceptions"
       (exception_tests

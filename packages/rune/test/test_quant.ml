@@ -1062,34 +1062,6 @@ let test_forms () =
     ]
     (Hashtbl.find_all forms "a hundred rows")
 
-(* debug *)
-
-let test_debug () =
-  let w = weight ~scale:moderate [| 4; 8; 64 |] in
-  let ids = ints [| 3; 2 |] [| 0; 3; -1; 2; 1; 1 |] in
-  let x = floats [| 3; 1; 1; 64 |] in
-  let first = Nx.Ptree.map Nx_quant.ptree (fun _ t -> row 0 t) w in
-  let g = floats [| 3; 2; 1; 8 |] in
-  let f () =
-    ( Nx_quant.apply ~ids w x,
-      Nx_quant.dequant Nx.float32 first,
-      Nx_quant.Effect.perform w
-        (Apply { ids = Some ids; x = g; transpose = true }) )
-  in
-  let buf = Buffer.create 64 in
-  let ppf = Format.formatter_of_buffer buf in
-  let y, d, t = Rune.with_debug ~ppf f in
-  Format.pp_print_flush ppf ();
-  let log = String.split_on_char '\n' (Buffer.contents buf) in
-  is_true ~msg:"apply is logged" (List.mem "quant_apply -> [3,2,1,8]" log);
-  is_true ~msg:"dequant is logged" (List.mem "quant_dequant -> [8,64]" log);
-  is_true ~msg:"the transposed product is logged"
-    (List.mem "quant_apply_transposed -> [3,2,1,64]" log);
-  let y', d', t' = f () in
-  close ~msg:"apply's result" y' y;
-  close ~msg:"dequant's result" d' d;
-  close ~msg:"the transposed product's result" t' t
-
 let () =
   if Sys.getenv_opt form_role <> None then run_form_role ();
   exit (run "rune quant"
@@ -1122,6 +1094,5 @@ let () =
             test_weight_not_differentiated;
           test "vmap" test_vmap;
           test "over two devices" test_over_devices;
-          test "debug" test_debug;
         ];
     ])

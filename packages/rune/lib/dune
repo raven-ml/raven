@@ -10,7 +10,6 @@
   reverse
   forward
   vmap
-  debug
   tensor_map
   answer
   prim

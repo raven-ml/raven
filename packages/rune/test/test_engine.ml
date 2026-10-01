@@ -33,15 +33,6 @@ let test_detach_stops_gradient () =
   (* d/dx (x * detach x) = detach x, not 2x. *)
   check_arr ~msg:"dx" [| 3.0 |] (Rune.grad' f x)
 
-let test_no_grad_region_is_constant () =
-  let x = vec32 [| 3.0 |] in
-  let f x =
-    let c = Rune.no_grad (fun () -> Nx.mul x x) in
-    Nx.sum (Nx.mul x c)
-  in
-  (* c = x² is a constant 9, so d/dx (x * c) = 9. *)
-  check_arr ~msg:"dx" [| 9.0 |] (Rune.grad' f x)
-
 let test_constants_are_not_differentiated () =
   (* A computation on tensors unrelated to the parameters contributes nothing,
      even through operations without gradient rules. *)
@@ -116,29 +107,6 @@ let test_engine_fixes =
         check_arr ~msg:"dsort" [| 30.0; 10.0; 20.0 |] (Rune.grad' f x));
   ]
 
-let test_with_debug_logs_and_preserves () =
-  let buf = Buffer.create 256 in
-  let ppf = Format.formatter_of_buffer buf in
-  let x = vec32 [| 1.0; -2.0; 3.0 |] in
-  let g =
-    Rune.with_debug ~ppf (fun () -> Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x)
-  in
-  Format.pp_print_flush ppf ();
-  check_arr ~msg:"gradient unchanged" [| 2.0; -4.0; 6.0 |] g;
-  let log = Buffer.contents buf in
-  let contains sub =
-    let n = String.length sub and m = String.length log in
-    let rec go i = i + n <= m && (String.sub log i n = sub || go (i + 1)) in
-    go 0
-  in
-  is_true ~msg:"logs mul" (contains "mul float32[3] float32[3]");
-  is_true ~msg:"logs sum" (contains "sum float32[3]")
-
-(* The backward pass holds cotangents as the lazy views its pulls produce and
-   materializes where a reshape needs it and where a gradient leaves the tape. A
-   pair of transposes that cancel must then cost the gradient four permutes and
-   nothing else: no copy, so nothing a compiler has to run. The graph is the one
-   a grouped attention layer differentiates. *)
 let test_lazy_cotangents () =
   let q = Nx.ones Nx.float32 [| 2; 2; 2; 3; 4 |] in
   let attention_like k =
@@ -152,19 +120,17 @@ let test_lazy_cotangents () =
       (Array.init 48 (fun i -> float_of_int (i mod 7)))
   in
   let ops f =
-    let buf = Buffer.create 256 in
-    let ppf = Format.formatter_of_buffer buf in
-    let g = Rune.with_debug ~ppf (fun () -> Rune.grad' f x) in
-    Format.pp_print_flush ppf ();
-    let names =
-      List.filter_map
-        (fun line ->
-          match String.index_opt line ' ' with
-          | Some i -> Some (String.sub line 0 i)
-          | None -> None)
-        (String.split_on_char '\n' (Buffer.contents buf))
+    let names = ref [] in
+    let run op =
+      names := Nx.Op.name op :: !names;
+      Nx.Op.eval op
     in
-    (g, List.sort compare names)
+    let g =
+      Nx.Op.intercept
+        { run; claims = (fun _ -> true) }
+        (fun () -> Rune.grad' f x)
+    in
+    (g, List.sort compare !names)
   in
   let g, plain = ops (fun x -> attention_like (heads x)) in
   let g', paired = ops (fun x -> attention_like (pair (heads x))) in
@@ -191,7 +157,6 @@ let tests =
     group "gradient flow"
       [
         test "detach stops the gradient" test_detach_stops_gradient;
-        test "no_grad region is constant" test_no_grad_region_is_constant;
         test "constants pass through unsupported ops"
           test_constants_are_not_differentiated;
       ];
@@ -211,11 +176,6 @@ let tests =
       [
         test "cotangents stay lazy views until a reshape or the result"
           test_lazy_cotangents;
-      ];
-    group "debugging"
-      [
-        test "with_debug logs ops and preserves results"
-          test_with_debug_logs_and_preserves;
       ];
   ]
 

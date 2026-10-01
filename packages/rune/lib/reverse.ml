@@ -970,7 +970,7 @@ let rec install : type a. Tape.t -> (unit -> a) -> a =
     | _ -> None
   in
   (* A rerun tape differentiates code the forward pass already ran, so it drops
-     the code's additions, which are never taped. Under [no_grad] it keeps its
+     the code's additions, which are never taped. While paused it keeps its
      claim on the code another handler would run past it: scans, remats and
      custom calls run untaped, with their additions dropped. *)
   let rule : type c. c Effect.t -> (unit -> c) option =

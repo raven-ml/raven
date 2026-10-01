@@ -118,17 +118,6 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     (["Rune.jvp: b: None in the parameters, Some in the tangents"]), or if a
     tangent differs from its parameter in dtype or shape. *)
 
-val jvp_aux :
-  'p Nx.Ptree.t ->
-  'q Nx.Ptree.t ->
-  ('p -> 'q * 'aux) ->
-  'p ->
-  'p ->
-  'q * 'q * 'aux
-(** [jvp_aux p q f params tangents] is like {!jvp} for a function that returns
-    auxiliary data beside its result. The auxiliary value is returned as it is
-    and has no tangent. *)
-
 (** {1:complex Complex tensors}
 
     A complex tensor is two real components per element, so a function of one is
@@ -345,8 +334,8 @@ val custom_jvp :
       counts an addition once per column, and {!jacrev'} once.
     - {!grad} and the other reverse-mode transformations pass it on when they
       first run the code that makes it, and drop it when they run that code
-      again, under {!no_grad} too: the backward pass of a compiled {!scan} and
-      a {!remat} recomputation.
+      again: the backward pass of a compiled {!scan} and a {!remat}
+      recomputation.
     - A {!scan} a compiled function stages, and a {!remat}, carry the sum of
       their additions out as a value, so a staged loop stays one loop, a
       replay computes the total again, and a trace that is restarted discards
@@ -458,7 +447,10 @@ val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
 (** [jacfwd' f x] is the Jacobian of [f] at [x], with shape
     [shape (f x) @ shape x], computed column by column in forward mode (one
     vectorized pass). Its dtype is the dtype of [f x]. Prefer it when the input
-    is smaller than the output. *)
+    is smaller than the output.
+
+    A Hessian is [jacfwd' (grad' f) x], and a Hessian-vector product
+    [snd (jvp p p (grad p f) params v)]. *)
 
 val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [jacrev' f x] is the Jacobian of [f] at [x], with shape
@@ -467,26 +459,6 @@ val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     it when the output is smaller than the input. For a complex-differentiable
     [f] it is the complex derivative, as {!jacfwd'} computes it: row [k] is the
     conjugate of the gradient of [Re y_k]. *)
-
-val hessian' :
-  (('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [hessian' f x] is the Hessian of the scalar objective [f] at [x], with shape
-    [shape x @ shape x] (forward over reverse). *)
-
-val hvp : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p -> 'p
-(** [hvp p f params v] is the Hessian-vector product of the scalar objective [f]
-    at [params] against [v], a value of structure [p], computed without
-    materializing the Hessian (forward over reverse).
-
-    Raises [Invalid_argument] as {!jvp} does for its tangents, naming
-    [Rune.hvp]. *)
-
-val hvp' :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
-(** [hvp' f x v] is [hvp Nx.Ptree.tensor f x v]. *)
 
 (** {1:checks Gradient checking} *)
 
@@ -789,7 +761,7 @@ val jit :
     entries are invalidated.
 
     {b Transformations.} Under an enclosing transformation ({!grad},
-    {!val-vmap}, {!with_debug}, an outer [jit]), the wrapped function runs
+    {!val-vmap}, an outer [jit]), the wrapped function runs
     directly so the transformation observes its operations, and it checks and
     consumes nothing: [jit] never changes results, only speed. Compose the other
     way, differentiating {e inside} the compiled function, to compile the
@@ -813,8 +785,8 @@ val jit :
     Tensors are values, so state threads through the arguments: the function
     returns its updated parameters, optimizer state or cache, and the caller
     feeds them to the next call. Structured values read during tracing must not
-    depend on traced tensors: a data-dependent {!cond} or {!while_loop}
-    predicate raises {!Jit_error}. Overlapping or reentrant calls to one
+    depend on traced tensors: a branch on a traced value ({!Nx.item}) raises
+    {!Jit_error}. Overlapping or reentrant calls to one
     compiled function raise [Invalid_argument] before accessing its compiled
     state. Sequential calls may run on different domains. Calls under an
     enclosing transformation execute [f] directly and do not claim that state.
@@ -871,13 +843,13 @@ val reset_jit_stats : unit -> unit
 (** [reset_jit_stats ()] zeroes the cumulative transfer counters.
     [resident_bytes] tracks live state and is not reset. *)
 
-(** {1:flow Control flow}
+(** {1:flow Loops and branches}
 
-    Eager combinators with staging-ready signatures: code written with them
-    differentiates and vectorizes today, and a staging [jit] traces them as
-    structured control flow instead of unrolled traces. Today, {!val-jit}
-    compiles {!scan} as a loop, forward and reverse, and rejects data-dependent
-    {!cond} and {!while_loop} predicates. *)
+    A branch on a value is OCaml's [if] on {!Nx.item}, and a loop whose length
+    depends on a value is recursion: both run under {!grad} and {!jvp}, which
+    differentiate the path taken. A predicate that depends on a map's lanes
+    raises, one that depends on a compiled function's arguments raises
+    {!Jit_error}, and {!Nx.where} selects everywhere. *)
 
 val scan :
   'c Nx.Ptree.t ->
@@ -937,35 +909,9 @@ val scan' :
     tensors: it folds [f] over the slices of [xs] along axis 0 and returns the
     final carry and the outputs stacked along a new axis 0. *)
 
-val cond :
-  (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r
-(** [cond pred ~then_ ~else_] runs one branch according to the scalar [pred].
-    Reading [pred] concretizes it: inside {!val-vmap}, a predicate that depends
-    on the mapped inputs raises, since the lanes could diverge. *)
-
-val while_loop :
-  cond:('p -> (bool, Nx.bool_elt) Nx.t) -> body:('p -> 'p) -> 'p -> 'p
-(** [while_loop ~cond ~body init] iterates [body] on the carry while [cond]
-    holds. Reading the predicate concretizes it, with the same {!val-vmap}
-    caveat as {!cond}. Differentiating traces every iteration actually taken. *)
-
-(** {1:debug Debugging} *)
-
-val with_debug : ?ppf:Format.formatter -> (unit -> 'a) -> 'a
-(** [with_debug f] runs [f] and logs each tensor operation it performs — the
-    operation name and output shape — to [ppf] (defaults to
-    [Format.err_formatter]). Composes with the other transformations: run it
-    outermost to also observe the operations they emit. Uncommon operations may
-    execute unlogged. *)
-
 (** {1:control Autodiff control} *)
 
 val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [detach t] is a copy of [t] through which gradients do not flow. Use it to
     hold a value constant inside a differentiated function, including as input
     to an operation whose gradient is not implemented. *)
-
-val no_grad : (unit -> 'a) -> 'a
-(** [no_grad f] runs [f] with the differentiations around it paused: tensors
-    it produces are constants of them. A differentiation [f] starts runs as
-    usual, and so does code on other domains and threads. *)

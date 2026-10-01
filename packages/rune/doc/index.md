@@ -7,8 +7,8 @@ Rune provides functional transformations — automatic differentiation, vectoriz
 - **Reverse mode** — `grad`, `value_and_grad`, `vjp` for backpropagation; `vjp_fun` returns a reusable pullback; `_aux` variants thread auxiliary data out of the objective
 - **Forward mode** — `jvp` for Jacobian-vector products in a single forward pass
 - **Vectorizing map** — `vmap` lifts a per-example function to batched inputs, mapping axis 0 of every argument
-- **Composable** — transformations nest freely: `vmap` of `grad` is per-sample gradients, `jvp` of `grad` powers `hvp`, `grad` of `grad` is second order
-- **Jacobians and Hessians** — `jacfwd'`, `jacrev'`, `hessian'`, and matrix-free `hvp`
+- **Composable** — transformations nest freely: `vmap` of `grad` is per-sample gradients, `jvp` of `grad` is a Hessian-vector product, `grad` of `grad` is second order
+- **Jacobians and Hessians** — `jacfwd'` and `jacrev'`; a Hessian is `jacfwd' (grad' f)`
 - **Gradient checkpointing** — `remat` trades compute for memory in the backward pass
 - **Custom rules** — `custom_vjp` and `custom_jvp` override differentiation where you know a better rule
 - **Effect-based** — OCaml 5 effect handlers intercept Nx operations; no tracing, no graph

@@ -49,10 +49,10 @@ nest into records, so models compose structurally — see
 - **Vectorizing map** — `vmap` lifts a per-example function to batched
   inputs, mapping axis 0 of every argument its signature lists
 - **Composition** — transformations nest freely: `vmap` of `grad` is
-  per-sample gradients, `jvp` of `grad` powers `hvp`, `grad` of `grad`
-  is second order
-- **Jacobians and Hessians** — `jacfwd'`, `jacrev'`, `hessian'`, and
-  matrix-free `hvp`
+  per-sample gradients, `jvp` of `grad` is a Hessian-vector product,
+  `grad` of `grad` is second order
+- **Jacobians and Hessians** — `jacfwd'` and `jacrev'`; a Hessian is
+  `jacfwd' (grad' f)`
 - **Gradient checkpointing** — `remat` recomputes a sub-computation in
   the backward pass, trading compute for memory
 - **Custom rules** — `custom_vjp` and `custom_jvp` override
@@ -63,14 +63,13 @@ nest into records, so models compose structurally — see
   `lanes` reads its lanes as data
 - **Gradient checking** — `check_grads` compares reverse mode against
   finite differences
-- **Control flow** — `scan`, `cond`, `while_loop` combinators with
-  staging-ready signatures
+- **Loops** — `scan` folds over rows and compiles as a loop under `jit`;
+  a branch on a value is OCaml's `if` on `Nx.item`
 - **Compilation** — `jit` traces a function once per key and replays it
   as fused kernels, on the host, CUDA, or Metal via `~devices`; an argument
   marked `consumes` in its signature is given up by each call, and its
   storage is reused for the results
-- **Debugging** — `with_debug` logs every tensor operation; `detach`
-  and `no_grad` stop gradient flow
+- **Stopping gradients** — `detach` holds a value constant
 - **Structures** — every transformation takes the structures it walks,
   so results may be structures too; primed variants (`grad'`, `vmap'`,
   ...) serve single-tensor functions
@@ -105,8 +104,9 @@ See the [API reference](lib/rune.mli) for the full contracts.
   model by differentiating a function of a typed record
 - [`02-per-sample-grads`](examples/02-per-sample-grads) — per-example
   gradients via `vmap` of `grad`, checked against the loop
-- [`03-hessian`](examples/03-hessian) — Newton's method with
-  `hessian'`, matrix-free `hvp'`, and `check_grads`
+- [`03-hessian`](examples/03-hessian) — Newton's method with the
+  Hessian `jacfwd' (grad' f)`, a matrix-free Hessian-vector product, and
+  `check_grads`
 
 Run any of them with `dune exec`, e.g.
 

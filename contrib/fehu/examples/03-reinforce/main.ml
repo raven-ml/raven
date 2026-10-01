@@ -99,7 +99,7 @@ let () =
 
   let policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let logits = Rune.no_grad (fun () -> Policy.apply !params obs_batch) in
+    let logits = Policy.apply !params obs_batch in
     let action_idx = Nx.categorical logits in
     let action = Nx.reshape [||] action_idx in
     let log_probs = Nx.log_softmax logits in
@@ -112,7 +112,7 @@ let () =
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let logits = Rune.no_grad (fun () -> Policy.apply !params obs_batch) in
+    let logits = Policy.apply !params obs_batch in
     let action_idx =
       Nx.argmax logits ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in

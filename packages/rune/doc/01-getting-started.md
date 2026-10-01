@@ -169,24 +169,26 @@ let () =
 
 ## Stopping Gradients
 
-Two mechanisms hold part of a computation constant during differentiation:
+`detach` holds part of a computation constant during differentiation:
 
 ```ocaml
 let () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
 
-  (* detach: gradients do not flow through the copy. *)
+  (* Gradients do not flow through the detached value. *)
   let f v = Nx.mean (Nx.mul v (Rune.detach v)) in
   Printf.printf "with detach:  %s\n"
     (Nx.to_string (Rune.grad' f x));
 
-  (* no_grad: nothing inside is recorded. *)
+  (* A baseline computed from the input, held constant. *)
   let g v =
-    let baseline = Rune.no_grad (fun () -> Nx.mean v) in
+    let baseline = Rune.detach (Nx.mean v) in
     Nx.mean (Nx.mul v (Nx.sub v baseline))
   in
   ignore (Rune.grad' g x)
 ```
+
+Code outside the function `grad` receives is never differentiated, so evaluating a function needs no mechanism at all.
 
 `detach` also serves as the escape hatch for operations whose gradient is not implemented (see [Transformations](02-transformations.md)): detach their inputs if differentiation should not flow through them.
 

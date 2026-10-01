@@ -63,22 +63,6 @@ let test_jvp_constant_function () =
   let _, dy = Rune.jvp' f (v3 ()) (tangent_like (v3 ())) in
   check_arr ~msg:"df" [| 0.0 |] dy
 
-let test_jvp_aux () =
-  let p = params () in
-  let t =
-    {
-      w = vec32 [| 1.0; 1.0; 1.0 |];
-      b = vec32 [| 0.0 |];
-      scale = vec64 [| 0.0 |];
-    }
-  in
-  let f p = (Nx.sum (Nx.mul p.w p.w), "aux") in
-  let y, dy, aux = Rune.jvp_aux params_ptree Nx.Ptree.tensor f p t in
-  (* value = 1 + 4 + 9 = 14; df = 2 * (1 - 2 + 3) = 4 *)
-  check_arr ~msg:"value" [| 14.0 |] y;
-  check_arr ~msg:"df" [| 4.0 |] dy;
-  equal ~msg:"aux" string "aux" aux
-
 let test_jvp_tangent_shape_mismatch () =
   raises_match Exn.invalid_arg (fun () ->
       ignore
@@ -451,16 +435,6 @@ let test_nested_jvp () =
 
 (* Gates and error contracts *)
 
-let test_no_grad_stops_tangents () =
-  let x = vec64 [| 3.0 |] in
-  let f x =
-    let c = Rune.no_grad (fun () -> Nx.mul x x) in
-    Nx.mul x c
-  in
-  (* c is constant 9, so df = 9 * v. *)
-  let _, dy = Rune.jvp' f x (vec64 [| 1.0 |]) in
-  check_arr ~msg:"df" [| 9.0 |] dy
-
 let test_detach_stops_tangents () =
   let x = vec64 [| 3.0 |] in
   let f x = Nx.mul x (Rune.detach x) in
@@ -512,7 +486,6 @@ let tests =
         test "matches the analytic tangent" test_jvp_record_analytic;
         test "mixed dtypes propagate in one pass" test_jvp_mixed_dtype;
         test "constant function has zero tangent" test_jvp_constant_function;
-        test "jvp_aux returns auxiliary data" test_jvp_aux;
         test "rejects tangent shape mismatch" test_jvp_tangent_shape_mismatch;
         test "agrees with grad on scalar objectives" test_jvp_matches_grad;
         test "gives per-leaf output tangents" test_jvp_structured_output;
@@ -537,7 +510,6 @@ let tests =
       ];
     group "gates and errors"
       [
-        test "no_grad stops tangents" test_no_grad_stops_tangents;
         test "detach stops tangents" test_detach_stops_tangents;
         test "rejects a leaf tangent shape mismatch"
           test_jvp_structural_shape_mismatch;

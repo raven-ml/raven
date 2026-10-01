@@ -21,13 +21,13 @@ If you already use JAX, this should be enough to become productive in rune quick
 | Parameter containers | Pytrees (registered runtime trees) | `Nx.Ptree.S` — your own typed records |
 | Reverse mode | `jax.grad`, `jax.value_and_grad` | `grad`, `value_and_grad`, `_aux` variants |
 | VJP | `jax.vjp` | `vjp`, `vjp_fun` (reusable pullback) |
-| Forward mode | `jax.jvp` | `jvp`, `jvp_aux` |
+| Forward mode | `jax.jvp` | `jvp` |
 | Vectorizing map | `jax.vmap` | `vmap`, `vmap'` |
 | Custom rules | `jax.custom_vjp`, `jax.custom_jvp` | `custom_vjp`, `custom_jvp` |
 | Checkpointing | `jax.checkpoint` / `jax.remat` | `remat` |
-| Jacobians / Hessians | `jacfwd`, `jacrev`, `hessian` | `jacfwd'`, `jacrev'`, `hessian'`, `hvp` |
-| Control flow | `lax.scan`, `lax.cond`, `lax.while_loop` (required under `jit`) | `scan`, `cond`, `while_loop` (optional, staging-ready) plus ordinary OCaml control flow |
-| Gradient stopping | `jax.lax.stop_gradient` | `detach`, `no_grad` |
+| Jacobians / Hessians | `jacfwd`, `jacrev`, `hessian` | `jacfwd'`, `jacrev'`; a Hessian is `jacfwd' (grad' f)` |
+| Control flow | `lax.scan`, `lax.cond`, `lax.while_loop` (required under `jit`) | `scan` (optional, compiled as a loop) plus ordinary OCaml control flow |
+| Gradient stopping | `jax.lax.stop_gradient` | `detach` |
 | Gradient checking | `jax.test_util.check_grads` | `check_grads` |
 | Randomness | Typed splittable keys (`jax.random.key`) | Keys of a private type (`Nx.Rng.t`), or a scope (`Nx.Rng.with_key`) |
 | JIT compilation | `jax.jit` | `jit` — traces once per key (every tensor's path, dtype and shape, and what its structure reports); CPU, CUDA, or Metal |
@@ -261,7 +261,7 @@ let () =
   ignore (Rune.grad' f (Nx.scalar Nx.float32 2.0))
 ```
 
-Rune still provides `scan`, `cond`, and `while_loop` because they give a loop a structure the compiler can see: `jit` compiles `scan` as a loop, forward and reverse, and rejects data-dependent `cond`/`while_loop` predicates. `lax.scan`'s carry-and-stacked-outputs contract translates directly, with one structure each for the carry, the rows and the outputs, where JAX infers pytrees:
+Rune still provides `scan` because it gives a loop a structure the compiler can see: `jit` compiles `scan` as a loop, forward and reverse, and rejects a branch on a traced value. `lax.scan`'s carry-and-stacked-outputs contract translates directly, with one structure each for the carry, the rows and the outputs, where JAX infers pytrees:
 
 ```python
 final, ys = jax.lax.scan(f, init, xs)
@@ -281,10 +281,10 @@ let final, ys = Rune.scan carry rows outputs ~f ~init xs
 | --- | --- |
 | `jax.jacfwd(f)(x)` | `jacfwd' f x` |
 | `jax.jacrev(f)(x)` | `jacrev' f x` |
-| `jax.hessian(f)(x)` | `hessian' f x` |
-| `jvp`-of-`grad` HVP recipe | `hvp p f params v` / `hvp' f x v` |
+| `jax.hessian(f)(x)` | `jacfwd' (grad' f) x` |
+| `jvp`-of-`grad` HVP recipe | `snd (jvp p p (grad p f) params v)` / `snd (jvp' (grad' f) x v)` |
 
-JAX's docs derive the Hessian-vector product as `jvp` of `grad`; rune ships that composition as `hvp`, matrix-free, for any parameter structure.
+Both are compositions: the Hessian is forward mode over the gradient, and the Hessian-vector product is matrix-free.
 
 ---
 
@@ -340,7 +340,7 @@ let () =
 
 | JAX feature | Status in rune |
 | --- | --- |
-| `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects data-dependent `cond`/`while_loop` predicates. |
+| `jax.jit` | `jit s f` compiles to fused kernels for the signature `s`, cached per key: each tensor's path, dtype and shape, and the data the structures report (a window, a list's length). It compiles `scan` as a loop and rejects a branch on a traced value. |
 | GPU/TPU, `jax.device_put` | Eager execution is CPU-only; `jit ~devices:[ Rune.device "CUDA" ]` (or `"METAL"`) runs compiled steps on GPU. `Nx.place (Nx.Placement.device (Rune.device "METAL"))` holds a tensor's bytes on a device, and a compiled function that captures it uses that buffer with no upload. |
 | `jax.pmap` / distributed | `jit` over values placed on several devices, as `jax.jit` over sharded inputs: the function sees whole values and a reduction over a split axis is an allreduce. A per-device computation is `vmap` over an axis split one slice per device; there is no `shard_map`. |
 | Full op coverage under AD | Reverse mode raises on `svd`, `eig`, `eigh`, `Rune.lanes`, `mod`; forward mode additionally on `qr`. `detach` inputs where gradients should not flow. |
@@ -370,11 +370,10 @@ Rune's failure model is deliberate: operations without a rule raise `Invalid_arg
 | Custom forward rule | `@jax.custom_jvp` | `custom_jvp p ~f ~jvp` |
 | Rematerialization | `jax.checkpoint(f)` | `remat s f`, `s` the signature of `f` |
 | Jacobian | `jacfwd` / `jacrev` | `jacfwd'` / `jacrev'` |
-| Hessian | `jax.hessian(f)(x)` | `hessian' f x` |
-| HVP | `jvp`-of-`grad` recipe | `hvp` / `hvp'` |
+| Hessian | `jax.hessian(f)(x)` | `jacfwd' (grad' f) x` |
+| HVP | `jvp`-of-`grad` recipe | `snd (jvp' (grad' f) x v)` |
 | Scan | `jax.lax.scan(f, init, xs)` | `scan' ~f ~init xs`, or `scan c x y ~f ~init xs` over structures |
 | Stop gradient | `jax.lax.stop_gradient(x)` | `detach x` |
-| Block region from AD | — | `no_grad (fun () -> ...)` |
 | Gradient check | `check_grads(f, (x,), 1)` | `check_grads p f params` |
-| Debug tracing | `jax.debug.print` | `with_debug (fun () -> ...)` |
+| Debug tracing | `jax.debug.print` | an `Nx.Op.intercept` interpreter that prints each operation |
 | JIT | `jax.jit(f)` | `jit Nx.Ptree.(p @-> returns q) f` |

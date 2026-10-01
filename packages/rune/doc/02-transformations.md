@@ -6,7 +6,7 @@ Rune provides functional transformations over ordinary OCaml functions of Nx ten
 
 A transformation takes the structure of each value whose tensors it enumerates, an `'s Nx.Ptree.t`, and captures everything else. `grad`, `vjp`, `jvp` and their kin take the structure of the value they differentiate and, where they rebuild one, of the result; `vmap` and `remat` take the signature of the function they transform. `Nx.Ptree.tensor` is the structure of one tensor, and `Nx.Ptree.instantiate` makes one from a record's `walk` (see [Getting Started](01-getting-started.md)).
 
-For functions of a single tensor, the primed variants (`grad'`, `vjp'`, `jvp'`, `vmap'`, `hvp'`) take no structure; they are used below wherever the structure does not matter.
+For functions of a single tensor, the primed variants (`grad'`, `vjp'`, `jvp'`, `vmap'`) take no structure; they are used below wherever the structure does not matter.
 
 Every transformation replaces each tensor of its arguments by a fresh alias, a new value over the same storage, before it differentiates or maps it. A tensor the function captures is then a constant even when it is also the argument: `Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) w` is `w`.
 
@@ -120,12 +120,12 @@ let () =
   (* [2. 4. 6.] — directional derivative *)
 ```
 
-`jvp p q f params tangents` takes the structures of the parameters and of the result, and returns one tangent per tensor of the result; `jvp_aux` carries auxiliary outputs.
+`jvp p q f params tangents` takes the structures of the parameters and of the result, and returns one tangent per tensor of the result. A value returned beside the result is part of it: give `q` a structure that holds it, and its tangent comes back with the rest.
 
 ### Choosing Between Forward and Reverse Mode
 
 - **Reverse mode** (`grad`, `vjp`): one backward pass gives gradients for all inputs. Best when outputs ≪ inputs — the typical ML case of a scalar loss over many parameters.
-- **Forward mode** (`jvp`): one forward pass gives one directional derivative. Best when inputs ≪ outputs, and as the outer layer of forward-over-reverse compositions (see `hvp` below).
+- **Forward mode** (`jvp`): one forward pass gives one directional derivative. Best when inputs ≪ outputs, and as the outer layer of forward-over-reverse compositions (see Hessian-vector products below).
 
 ## Vectorizing Maps
 
@@ -213,7 +213,7 @@ The parameters are closed over, so they are constants of the map and gradients a
 
 For whole derivative matrices, `jacfwd'` computes the Jacobian column by column in forward mode (prefer it when the input is smaller than the output) and `jacrev'` row by row in reverse mode (prefer it when the output is smaller). Both have shape `shape (f x) @ shape x`.
 
-`hessian'` is forward-over-reverse; `hvp` computes Hessian-vector products without materializing the Hessian. Newton's method on the Rosenbrock function:
+A Hessian is the Jacobian of the gradient, `jacfwd' (grad' f) x`: forward mode over reverse mode. Newton's method on the Rosenbrock function:
 
 ```ocaml
 let rosenbrock x =
@@ -226,26 +226,26 @@ let () =
   let x = ref (Nx.create Nx.float64 [| 2 |] [| -1.2; 1.0 |]) in
   for _ = 1 to 8 do
     let g = Rune.grad' rosenbrock !x in
-    let h = Rune.hessian' rosenbrock !x in
+    let h = Rune.jacfwd' (Rune.grad' rosenbrock) !x in
     x := Nx.sub !x (Nx.solve h g)
   done;
   Printf.printf "minimum at %s\n" (Nx.to_string !x)
   (* converges to (1, 1) *)
 ```
 
-`hvp' f x v` equals `(hessian' f x) @ v` but never forms the matrix:
+A Hessian-vector product is the tangent of the gradient along `v`, `snd (jvp' (grad' f) x v)`, which never forms the matrix:
 
 ```ocaml
 let () =
   let x = Nx.create Nx.float64 [| 2 |] [| -1.2; 1.0 |] in
   let v = Nx.create Nx.float64 [| 2 |] [| 0.5; -1.0 |] in
-  let hv = Rune.hvp' rosenbrock x v in
-  let hv' = Nx.matmul (Rune.hessian' rosenbrock x) v in
+  let hv = snd (Rune.jvp' (Rune.grad' rosenbrock) x v) in
+  let hv' = Nx.matmul (Rune.jacfwd' (Rune.grad' rosenbrock) x) v in
   Printf.printf "hvp:         %s\n" (Nx.to_string hv);
   Printf.printf "hessian @ v: %s\n" (Nx.to_string hv')
 ```
 
-`hvp` (unprimed) does the same for any parameter structure. Under the hood it is `jvp` of `grad` — forward-over-reverse — one more instance of transformations composing.
+For any parameter structure `p` it is `snd (Rune.jvp p p (Rune.grad p f) params v)`.
 
 ## Gradient Checkpointing
 
@@ -370,7 +370,7 @@ The check is directional, not per-element: it validates gradients cheaply rather
 
 ## Control Flow
 
-Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan`, `cond`, and `while_loop` combinators exist for a different reason: they give the loop structure a name the compiler can see. Under `Rune.jit` a `scan` compiles its fold step once and runs it as a loop in the compiled program, so a recurrence's compile time is independent of its sequence length; `cond` and `while_loop` still require data-independent predicates under `jit`.
+Ordinary OCaml control flow — `if`, `match`, loops, recursion — works inside every transformation, because rune runs eagerly and intercepts operations as they execute. The `scan` combinator exists for a different reason: it gives a loop a structure the compiler can see. Under `Rune.jit` a `scan` compiles its fold step once and runs it as a loop in the compiled program, so a recurrence's compile time is independent of its sequence length.
 
 ### scan
 
@@ -415,48 +415,57 @@ Under `jit` the fold step compiles once and runs as a loop, and `grad` through a
 
 Staging needs the carry to keep its shapes across steps; a fold that changes them, one reached through `vmap`, or one in a program over several devices unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
 
-### cond and while_loop
+### Branches and loops on values
 
-`cond pred ~then_ ~else_` runs one branch according to the scalar boolean `pred`; `while_loop ~cond ~body init` iterates `body` on the carry while `cond` holds:
+A branch on a value is OCaml's `if` on `Nx.item`, and a loop whose length depends on a value is recursion. Differentiation follows the path taken:
 
 ```ocaml
 let () =
   let branch x =
-    Rune.cond
-      (Nx.greater (Nx.sum x) (Nx.scalar Nx.float32 0.0))
-      ~then_:(fun () -> Nx.sum (Nx.mul x x))
-      ~else_:(fun () -> Nx.sum x)
+    if Nx.item [] (Nx.greater (Nx.sum x) (Nx.scalar Nx.float32 0.0)) then
+      Nx.sum (Nx.mul x x)
+    else Nx.sum x
   in
-  Printf.printf "then: %.2f\n"
-    (Nx.item [] (branch (Nx.create Nx.float32 [| 2 |] [| 0.5; 2.0 |])));
+  let x = Nx.create Nx.float32 [| 2 |] [| 0.5; 2.0 |] in
+  Printf.printf "%s\n" (Nx.to_string (Rune.grad' branch x)) (* [1. 4.] *);
 
   (* Double the carry until its sum exceeds 10. *)
-  let y =
-    Rune.while_loop
-      ~cond:(fun c -> Nx.less (Nx.sum c) (Nx.scalar Nx.float32 10.0))
-      ~body:(fun c -> Nx.mul_s c 2.0)
-      (Nx.create Nx.float32 [| 2 |] [| 1.0; 0.5 |])
+  let rec double c =
+    if Nx.item [] (Nx.less (Nx.sum c) (Nx.scalar Nx.float32 10.0)) then
+      double (Nx.mul_s c 2.0)
+    else c
   in
-  Printf.printf "%s\n" (Nx.to_string y) (* [8. 4.] *)
+  Printf.printf "%s\n"
+    (Nx.to_string (double (Nx.create Nx.float32 [| 2 |] [| 1.0; 0.5 |])))
+  (* [8. 4.] *)
 ```
 
-Differentiation traces the branch or iterations actually taken. Reading the predicate concretizes it: inside `vmap`, a predicate that depends on the mapped inputs raises, since the lanes could diverge.
+Reading a predicate concretizes it: inside `vmap`, a predicate that depends on the mapped inputs raises, since the lanes could diverge, and inside `jit` one that depends on the arguments raises `Rune.Jit_error`. `Nx.where` selects element by element everywhere.
 
 ## Debugging
 
-`with_debug` runs a thunk and logs each tensor operation it performs — the operation name and output shape — to a formatter (`Format.err_formatter` by default). Run it outermost to also observe the operations other transformations emit:
+An interpreter installed with `Nx.Op.intercept` sees every operation a thunk performs. One that prints each operation and evaluates it unchanged is an operation log; installed outermost, it also sees the operations other transformations emit:
 
 ```ocaml
 let () =
   let f x = Nx.add (Nx.mul x x) (Nx.sin x) in
   let x = Nx.scalar Nx.float32 2.0 in
-  Rune.with_debug (fun () -> ignore (Rune.grad' f x))
+  let log =
+    {
+      Nx.Op.run =
+        (fun op ->
+          Format.eprintf "%a@." Nx.Op.pp op;
+          Nx.Op.eval op);
+      claims = (fun _ -> true);
+    }
+  in
+  ignore (Nx.Op.intercept log (fun () -> Rune.grad' f x))
   (* logs the forward operations, then the backward-pass operations *)
 ```
 
 ## Autodiff Control
 
-`detach t` is a copy of `t` through which gradients do not flow; `no_grad f` runs `f` with gradient tracking disabled entirely. Use them for baselines, targets, constants — and as the escape hatch for operations without gradient rules (see below).
+`detach t` is a copy of `t` through which gradients do not flow. Use it for baselines, targets, constants, and as the escape hatch for operations without gradient rules (see below). Code outside the function a transformation receives is never differentiated, so evaluating a model needs nothing.
 
 ## Limitations
 
@@ -464,7 +473,7 @@ Rune fails loudly rather than returning wrong gradients:
 
 - **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `Rune.lanes`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
 - **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
-- **`Rune.jit` rejects data-dependent `cond`/`while_loop` predicates**; a scalar the compiled program would need to branch on cannot be read at trace time.
+- **`Rune.jit` rejects branches on traced values**; a scalar the compiled program would need to branch on cannot be read at trace time.
 
 ## Summary
 
@@ -476,11 +485,9 @@ Rune fails loudly rather than returning wrong gradients:
 | `vjp` / `vjp_fun` | Vector-Jacobian product | Non-scalar outputs, reusable pullbacks |
 | `jvp` | Jacobian-vector product | Few inputs, many outputs |
 | `vmap` / `vmap'` | Vectorize over axis 0 | Per-example computation |
-| `jacfwd'` / `jacrev'` / `hessian'` | Whole derivative matrices | Small problems, second-order methods |
-| `hvp` | Matrix-free Hessian-vector product | Large second-order computations |
+| `jacfwd'` / `jacrev'` | Whole derivative matrices | Small problems, Hessians as `jacfwd' (grad' f)` |
 | `remat` | Recompute in the backward pass | Memory-bound backward passes |
 | `custom_vjp` / `custom_jvp` | User-defined rules | Stability, speed, opaque interiors |
-| `scan` / `cond` / `while_loop` | Structured control flow | Recurrences that compile as loops under `jit` |
+| `scan` | Structured loops | Recurrences that compile as loops under `jit` |
 | `check_grads` | Verify gradients | Testing custom rules and models |
-| `detach` / `no_grad` | Stop gradient flow | Baselines, targets, unruled ops |
-| `with_debug` | Log every operation | Understanding and debugging |
+| `detach` | Stop gradient flow | Baselines, targets, unruled ops |

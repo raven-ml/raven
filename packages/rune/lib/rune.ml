@@ -142,18 +142,6 @@ let jvp p q f params tangents =
   let store, y = run_forward "Rune.jvp" p f params tangents in
   (y, Nx.Ptree.map q (fun _ yl -> output_tangent store yl) y)
 
-let jvp_aux p q f params tangents =
-  let aux = ref None in
-  let f' ps =
-    let y, a = f ps in
-    aux := Some a;
-    y
-  in
-  let store, y = run_forward "Rune.jvp_aux" p f' params tangents in
-  match !aux with
-  | Some a -> (y, Nx.Ptree.map q (fun _ yl -> output_tangent store yl) y, a)
-  | None -> assert false (* [f'] completed, so [aux] was set. *)
-
 (* Custom differentiation rules *)
 
 let custom_vjp = Custom.custom_vjp
@@ -308,16 +296,6 @@ let jacfwd' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
   let y_shape = Array.sub cols_shape 1 (rank - 1) in
   Nx.reshape (Array.append y_shape (Nx.shape x)) (Nx.contiguous cols)
 
-let hessian' (type a b) (f : (a, b) Nx.t -> (a, b) Nx.t) (x : (a, b) Nx.t) :
-    (a, b) Nx.t =
-  jacfwd' (grad' f) x
-
-let hvp p f params v =
-  let store, g = run_forward "Rune.hvp" p (grad p f) params v in
-  Nx.Ptree.map p (fun _ gl -> output_tangent store gl) g
-
-let hvp' f x v = snd (jvp' (grad' f) x v)
-
 (* Gradient checking *)
 
 let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
@@ -371,21 +349,12 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
 
 (* Control flow. [scan] attempts the staged [Scan.E_scan] effect, which jit
    compiles as a loop; when no handler claims it, the eager fold runs, observed
-   by whatever transformation handlers are installed. [cond] and [while_loop]
-   run eagerly. *)
+   by whatever transformation handlers are installed. *)
 
 let scan = Scan.scan
 
 let scan' ~f ~init xs =
   Scan.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f ~init xs
-
-let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
-    ~(else_ : unit -> 'r) : 'r =
-  if Nx.item [] pred then then_ () else else_ ()
-
-let while_loop ~cond ~body init =
-  let rec go c = if Nx.item [] (cond c) then go (body c) else c in
-  go init
 
 (* Just-in-time compilation *)
 
@@ -407,11 +376,6 @@ type jit_stats = Jit.stats = {
 let jit_stats = Jit.stats
 let reset_jit_stats = Jit.reset_stats
 
-(* Debugging *)
-
-let with_debug = Debug.with_debug
-
 (* Autodiff control *)
 
-let no_grad f = Pause.during f
 let detach t = Pause.during (fun () -> Nx.copy t)

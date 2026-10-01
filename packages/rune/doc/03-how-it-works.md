@@ -11,7 +11,6 @@ Each interpreter matches every kind of operation, and the compiler checks that n
 - **Reverse mode** records pull thunks on a tape during the forward pass, then runs them backward.
 - **Forward mode** propagates tangents alongside primal values in a single pass, with no tape.
 - **vmap** presents batched tensors to the function as if they were unbatched, translating each primitive to its batched form.
-- **with_debug** logs each operation and its operands' dtypes and shapes.
 
 ```
 User code: Nx.add x y
@@ -42,13 +41,13 @@ Tensors are keyed by physical identity: every Nx operation allocates a fresh ten
 
 ### Higher-order derivatives
 
-Pull thunks execute ordinary Nx operations, so an enclosing transformation intercepts *them* too: an outer `grad` differentiates the backward pass of an inner `grad`, an outer `vmap` batches a pullback. Higher-order derivatives and compositions like `hvp` (forward over reverse) fall out of this with no dedicated machinery.
+Pull thunks execute ordinary Nx operations, so an enclosing transformation intercepts *them* too: an outer `grad` differentiates the backward pass of an inner `grad`, an outer `vmap` batches a pullback. Higher-order derivatives and compositions like a Hessian-vector product (forward over reverse) fall out of this with no dedicated machinery.
 
 ## Forward Mode: No Tape
 
 `jvp` is simpler. Tangents propagate eagerly: the handler keeps a store mapping tensors to their tangents, seeds the parameter leaves with your tangents, and at each intercepted operation computes the output tangent immediately from the input tangents — `d(a * b) = da * b + a * db` — alongside the primal. There is no second pass. A tensor absent from the store is a constant with zero tangent.
 
-Tangent arithmetic runs in the enclosing context too, so forward-over-reverse (`hvp`), reverse-over-forward, and nested `jvp` all compose.
+Tangent arithmetic runs in the enclosing context too, so forward-over-reverse, reverse-over-forward, and nested `jvp` all compose.
 
 ## Complex Tensors
 
@@ -97,7 +96,7 @@ The mapped function is written for unbatched values. Under `vmap`, every tensor 
 
 Operations whose operands are all constants are evaluated as they are, and a result that does not depend on the mapped inputs is broadcast along the batch axis. Nested `vmap`s stack: each map owns its lanes and batch size, and the translations one level emits, over the enclosing map's lanes, are translated again by the level above. A lane of a map over an axis split across devices is a copy on each of them.
 
-Two consequences documented in [Transformations](02-transformations.md) follow directly from this design. Reading a lane's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a `cond` predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
+Two consequences documented in [Transformations](02-transformations.md) follow directly from this design. Reading a lane's *value* inside the mapped function raises — there is one physical tensor for all lanes, not one value per lane — which is why a branch's predicate cannot depend on mapped inputs. And implicit RNG draws identical values in every lane, because the RNG key is a constant of the map.
 
 ## Custom Rules and remat
 
@@ -107,9 +106,9 @@ Two consequences documented in [Transformations](02-transformations.md) follow d
 
 Under `jit`, a recomputation traced from the same arguments would be the same graph nodes as the forward pass, so the compiled program would keep the forward's intermediates until the backward pass read them. The recomputation therefore reads its arguments through a barrier: the arguments are materialised in the forward pass, and the backward pass reads their storage after the cotangents of the function's result, materialised too. The recomputation is then a computation of its own that runs only once those cotangents exist.
 
-## detach and no_grad
+## detach
 
-`no_grad f` pauses the reverse- and forward-mode interpreters around `f` for its extent: they pass every operation it performs on as it is. `detach t` copies `t` with them paused, so the copy enters subsequent computations as an untracked constant. Neither erases anything from an existing tape — they prevent recording in the first place. A derivative that `f` takes itself is unaffected, and so is code that `f` runs on another domain or thread.
+`detach t` copies `t` with the reverse- and forward-mode interpreters around it paused: they pass the copy on as it is, so it enters subsequent computations as an untracked constant. It erases nothing from an existing tape; it prevents recording in the first place.
 
 ## The Failure Model
 
@@ -122,7 +121,7 @@ The intent is that rune never returns a wrong gradient quietly.
 
 ## Implications for Users
 
-**No graph construction step.** Everything runs eagerly. Every operation happens immediately, and transformations intercept operations as they execute. `if`, `match`, `for`, recursion, and higher-order functions all work inside differentiated code — there is no "graph-compatible" subset of the language. (The `scan`/`cond`/`while_loop` combinators give a loop a structure `jit` can see: it compiles `scan` as a loop instead of unrolling it. They are never required.)
+**No graph construction step.** Everything runs eagerly. Every operation happens immediately, and transformations intercept operations as they execute. `if`, `match`, `for`, recursion, and higher-order functions all work inside differentiated code — there is no "graph-compatible" subset of the language. (The `scan` combinator gives a loop a structure `jit` can see: it compiles `scan` as a loop instead of unrolling it. It is never required.)
 
 **Side effects run in the forward pass.** Printing or logging inside a differentiated function executes during the forward pass. The backward pass runs the recorded pull thunks; it does not re-execute your function — unless you asked for that with `remat`.
 

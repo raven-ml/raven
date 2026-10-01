@@ -106,7 +106,10 @@ let convention_tests =
     test "hvp is the derivative of the gradient" (fun () ->
         let v = ctangent_like (z3 ()) in
         let hv =
-          Rune.hvp' (fun z -> Nx.sum (Nx.square (Nx.magnitude f64 z))) (z3 ()) v
+          snd
+            (Rune.jvp'
+               (Rune.grad' (fun z -> Nx.sum (Nx.square (Nx.magnitude f64 z))))
+               (z3 ()) v)
         in
         check_carr ~msg:"hvp of |z|^2" (to_carr (Nx.mul_s v (cx 2.0 0.0))) hv);
     test "check_grads accepts a complex parameter" (fun () ->

@@ -335,9 +335,6 @@ let test_grad_outside_scope () =
   let g', total = compiled loss w0 in
   check_arr ~eps:1e-9 ~msg:"staged gradient" (to_arr g) g';
   check_arr ~eps:1e-9 ~msg:"staged" expected total;
-  let no_grad t v = Rune.no_grad (fun () -> Rune.Total.add t v) in
-  let _, total = compiled (loss ~add:no_grad) w0 in
-  check_arr ~eps:1e-9 ~msg:"staged, under no_grad" expected total;
   let x = series 3 [| 4 |] in
   let expected = to_arr (Nx.sum (Nx.mul x x)) in
   let remat_loss x = Nx.sum (remat_adding t x) in
@@ -378,61 +375,6 @@ let test_rerun_inside_rerun_code () =
     (fun x -> Nx.sum (remat (fun x -> Nx.sin (adding_scan t x)) x))
     x
 
-(* Under no_grad, rerun code still runs a scan, a remat or a custom call where
-   the rerun drops its additions. *)
-let test_no_grad_in_rerun_code () =
-  let t = Rune.Total.make () and x = series 3 [| 4 |] in
-  let expected = to_arr (Nx.sum (Nx.mul x x)) in
-  let untaped f x =
-    ignore (Rune.no_grad (fun () -> f x));
-    Nx.sin x
-  in
-  counts_once ~msg:"a scan in a remat" t expected
-    (fun x -> Nx.sum (remat (untaped (adding_scan t)) x))
-    x;
-  counts_once ~msg:"a remat in a remat" t expected
-    (fun x -> Nx.sum (remat (untaped (remat_adding t)) x))
-    x;
-  counts_once ~msg:"a remat in a scan" t expected
-    (fun x ->
-      Nx.sum
-        (snd
-           (Rune.scan'
-              ~f:(fun c r -> (c, untaped (remat_adding t) r))
-              ~init:(zero ()) (rows x))))
-    x;
-  let xs = series 5 [| 3; 4 |] in
-  let tap_vjp x =
-    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
-      ~fwd:(fun x ->
-        Rune.Total.add t (Nx.sum (Nx.mul x x));
-        (x, ()))
-      ~bwd:(fun () g -> g)
-      x
-  in
-  let tap_jvp x =
-    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
-      ~f:(fun x ->
-        Rune.Total.add t (Nx.sum (Nx.mul x x));
-        x)
-      ~jvp:(fun x dx -> (x, dx))
-      x
-  in
-  List.iter
-    (fun (msg, tap) ->
-      let loss x = Nx.sum (remat (untaped tap) x) in
-      let _, total =
-        Rune.Total.collect t ~zero:(zero ()) (fun () ->
-            Rune.vmap' (Rune.grad' loss) xs)
-      in
-      check_arr ~eps:1e-9 ~msg (to_arr (Nx.sum (Nx.mul xs xs))) total)
-    [
-      ("a custom vjp in a remat under a map", tap_vjp);
-      ("a custom jvp in a remat under a map", tap_jvp);
-    ]
-
-(* A function reverse mode runs in its own context, a custom call's, runs under
-   the rerun's drop. *)
 let test_custom_call_in_rerun_code () =
   let t = Rune.Total.make () and x = series 3 [| 4 |] in
   let tap x =
@@ -789,7 +731,6 @@ let tests =
       [
         test "a scope outside grad counts once" test_grad_outside_scope;
         test "rerun code inside rerun code" test_rerun_inside_rerun_code;
-        test "no_grad in rerun code" test_no_grad_in_rerun_code;
         test "a custom call in rerun code" test_custom_call_in_rerun_code;
         test "higher order" test_higher_order;
       ];

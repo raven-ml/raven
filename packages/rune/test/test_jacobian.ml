@@ -103,7 +103,7 @@ let test_jacobians_evaluate_function_once () =
 let test_hessian_analytic () =
   (* Hessian of sum(x³) is diag(6x). *)
   let cube x = Nx.sum (Nx.mul x (Nx.mul x x)) in
-  let h = Rune.hessian' cube (v3 ()) in
+  let h = Rune.jacfwd' (Rune.grad' cube) (v3 ()) in
   equal ~msg:"shape" (array int) [| 3; 3 |] (Nx.shape h);
   check_arr ~msg:"hessian" [| 4.2; 0.0; 0.0; 0.0; -7.8; 0.0; 0.0; 0.0; 12.6 |] h
 
@@ -111,8 +111,8 @@ let test_hvp_matches_hessian () =
   let cube x = Nx.sum (Nx.mul x (Nx.mul x x)) in
   let x = v3 () in
   let v = vec64 [| 1.0; 0.5; -1.0 |] in
-  let hv = Rune.hvp' cube x v in
-  let expected = Nx.matmul (Rune.hessian' cube x) v in
+  let hv = snd (Rune.jvp' (Rune.grad' cube) x v) in
+  let expected = Nx.matmul (Rune.jacfwd' (Rune.grad' cube) x) v in
   check_arr ~msg:"hvp" (to_arr expected) hv
 
 let test_hvp_structured () =
@@ -125,7 +125,9 @@ let test_hvp_structured () =
   let v =
     { fst = vec64 [| 1.0; 0.0; 2.0 |]; snd = vec64 [| 0.5; -1.0; 0.0 |] }
   in
-  let hv = Rune.hvp pair_ptree f params v in
+  let hv =
+    snd (Rune.jvp pair_ptree pair_ptree (Rune.grad pair_ptree f) params v)
+  in
   check_arr ~msg:"d fst" [| 2.5; -1.0; 4.0 |] hv.fst;
   check_arr ~msg:"d snd" [| 1.0; 0.0; 2.0 |] hv.snd
 

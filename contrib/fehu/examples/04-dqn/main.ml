@@ -136,7 +136,7 @@ let () =
     if sample_uniform () < eps then Space.sample (Env.action_space env)
     else begin
       let obs_batch = Nx.reshape [| 1; 4 |] obs in
-      let q_values = Rune.no_grad (fun () -> Q.apply !params obs_batch) in
+      let q_values = Q.apply !params obs_batch in
       let action_idx =
         Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
       in
@@ -147,7 +147,7 @@ let () =
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let q_values = Rune.no_grad (fun () -> Q.apply !params obs_batch) in
+    let q_values = Q.apply !params obs_batch in
     let action_idx =
       Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in
@@ -176,15 +176,14 @@ let () =
     in
     let done_mask_t = Nx.create Nx.float32 [| n |] done_mask in
 
-    (* Compute TD target with target network (no gradient) *)
+    (* TD target from the target network. [loss_fn] captures it, so the
+       gradient treats it as a constant. *)
     let td_target =
-      Rune.no_grad (fun () ->
-          let target_q = Q.apply !target_params next_obs_batch in
-          let max_q = Nx.max target_q ~axes:[ 1 ] ~keepdims:false in
-          Nx.add rewards_t
-            (Nx.mul (Nx.scalar Nx.float32 gamma) (Nx.mul max_q done_mask_t)))
+      let target_q = Q.apply !target_params next_obs_batch in
+      let max_q = Nx.max target_q ~axes:[ 1 ] ~keepdims:false in
+      Nx.add rewards_t
+        (Nx.mul (Nx.scalar Nx.float32 gamma) (Nx.mul max_q done_mask_t))
     in
-    let td_target = Rune.detach td_target in
 
     (* Loss: MSE between predicted Q and TD target *)
     let loss_fn p =

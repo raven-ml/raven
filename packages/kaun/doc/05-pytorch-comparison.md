@@ -149,7 +149,7 @@ let pred, stats' = Net.forward params stats ~training:true x in
 let pred, _ = Net.forward params stats ~training:false x in
 ```
 
-`Dropout.apply ~rate ~training` and `Batch_norm.apply p stats ~training` take the flag explicitly. What PyTorch calls a *buffer* (batch-norm running mean/var) is an explicit `Batch_norm.Stats.t` record: training forwards return the updated statistics, and `Rune.value_and_grad_aux` threads them out of the differentiated objective — see [Layers and Models](02-layers-and-models.md). There is no `torch.no_grad()` context needed for evaluation: nothing is recorded unless you call a differentiation transformation (though `Rune.no_grad` exists to hold sub-computations constant *inside* one).
+`Dropout.apply ~rate ~training` and `Batch_norm.apply p stats ~training` take the flag explicitly. What PyTorch calls a *buffer* (batch-norm running mean/var) is an explicit `Batch_norm.Stats.t` record: training forwards return the updated statistics, and `Rune.value_and_grad_aux` threads them out of the differentiated objective — see [Layers and Models](02-layers-and-models.md). There is no `torch.no_grad()` context needed for evaluation: nothing is recorded unless you call a differentiation transformation, and `Rune.detach` holds a value constant *inside* one.
 
 ---
 

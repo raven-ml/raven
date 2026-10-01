@@ -172,6 +172,18 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- **Breaking:** `Rune.cond`, `Rune.while_loop`, `Rune.no_grad`,
+  `Rune.hessian'`, `Rune.hvp`, `Rune.hvp'`, `Rune.jvp_aux` and
+  `Rune.with_debug` are removed. Each is a line of ordinary code:
+  - `cond` and `while_loop` staged nothing: write `if Nx.item [] p` and a
+    recursion. Both differentiate the path taken.
+  - `no_grad f` around code no differentiation sees is `f ()`. Inside a
+    differentiated function, `Rune.detach` holds a value constant.
+  - `hessian' f` is `Rune.jacfwd' (Rune.grad' f)`, and `hvp p f params v` is
+    `snd (Rune.jvp p p (Rune.grad p f) params v)`.
+  - `jvp_aux`'s auxiliary value is part of `jvp`'s result structure.
+  - `with_debug` is an interpreter installed with `Nx.Op.intercept` that
+    prints each operation and evaluates it.
 - The derivatives of `Nx.cummax`, `Nx.cummin` and `Nx.cumprod` are right.
   `cummax` and `cummin` gave a running extremum's derivative only where it
   changed, so `grad (sum ∘ cummax)` at `[3; 1; 2]` was `[1; 0; 0]`; each
