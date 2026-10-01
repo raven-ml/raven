@@ -2507,13 +2507,15 @@ module Buffer = struct
     b
 
   (* Waits for the work of every device that used the host [h]'s staging memory,
-     such as a compiled batch's staged copies, before a copy uses its slots. *)
+     such as a compiled batch's staged copies, before a copy uses its slots. A
+     device lost meanwhile is not the copy's to raise: the copy's next use of
+     the memory retains it and stages through new memory (see [staging]). *)
   let staging_done h =
     match h.slots with
     | None -> ()
     | Some _ ->
         List.iter
-          (fun s -> wait_signal s.by s.upto)
+          (fun s -> try wait_signal s.by s.upto with Lost _ -> ())
           (Atomic.get (staging h).base.links).stamps
 
   (* The address of the host [h]'s staging memory, in [h]'s address space. *)
