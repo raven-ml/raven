@@ -1667,6 +1667,101 @@ let vectors =
         (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
     ]
 
+(* Signed zeros (D52) *)
+
+(* [padded ~flip fill before after xs] stores into a new buffer the float32
+   values [xs] padded with [before] and [after] elements of [fill], as a pad by
+   a value other than +0. is lowered: [fill] is selected off a mask of [xs]'
+   elements, the pad's own zeros only where the mask holds. With [flip], the
+   selection is by the mask's negation, [fill] first. *)
+let padded ?(flip = false) fill before after xs =
+  let n = Array.length xs in
+  let x = Ops.new_buffer ~slot:1 (Single "CPU") n Float32 in
+  let padding = [ Some (Ops.Int before, Ops.Int after) ] in
+  let mask = Ops.pad (Ops.const_like ~dtype:Bool x (`Bool true)) padding in
+  let fill = Ops.float ~dtype:Float32 fill in
+  let value =
+    if flip then Ops.where (Ops.logical_not mask) fill (Ops.pad x padding)
+    else Ops.where mask (Ops.pad x padding) fill
+  in
+  let out =
+    Ops.new_buffer ~slot:0 (Single "CPU") (n + before + after) Float32
+  in
+  (Ops.sink [ Ops.after out [ Ops.store out value ] ], value)
+
+let floats xs = Array.map (fun x -> `Float x) xs
+
+(* [scheduled sink] is the one kernel of [sink]'s schedule, with the slot of the
+   buffer each of its parameters stands for. *)
+let scheduled sink =
+  let slot a =
+    match Ops.arg a with
+    | Param { slot; _ } -> slot
+    | _ -> invalid_arg "an argument that is not storage"
+  in
+  match Ops.src (fst (Schedule.create_linear_with_vars sink)) with
+  | [ call ] -> (Ops.body call, List.map slot (Ops.src_without_body call))
+  | calls -> Format.kasprintf invalid_arg "%d kernels" (List.length calls)
+
+(* [output slots values] is the contents of buffer 0 among the contents [values]
+   of a kernel's parameters, and [input slots xs] binds buffer 1's parameter to
+   [xs]. *)
+let parameter slots b = Option.get (List.find_index (Int.equal b) slots)
+let input slots xs = [ (parameter slots 1, floats xs) ]
+
+let padding_computed ?flip fill before after xs =
+  let sink, value = padded ?flip fill before after xs in
+  let kernel, slots = scheduled sink in
+  let lowered =
+    Codegen.full_rewrite_to_sink ~optimize:false kernel
+      (Lazy.force host_uncompiled)
+  in
+  let out = parameter slots 0 in
+  let written =
+    List.filter_map
+      (fun (s, _, v) -> if s = out then Some v else None)
+      (Interpreter.writes ~buffers:(input slots xs) lowered)
+  in
+  let expected =
+    match Tensors.eval ~buffers:[ (1, floats xs) ] value with
+    | [ values ] ->
+        Array.to_list
+          (Array.map
+             (function
+               | #Dtype.value as v -> v | `Invalid -> invalid_arg "Invalid")
+             values)
+    | _ -> invalid_arg "a value on one device"
+  in
+  equal (list Dtypes.value) expected written
+
+let signed_zero_pads =
+  Gen.map
+    (fun ((flip, fill), (before, (after, xs))) ->
+      (flip, fill, before, after, Array.of_list xs))
+    (Gen.pair (Gen.pair Gen.bool zeros)
+       (Gen.pair (Gen.int_range 0 3)
+          (Gen.pair (Gen.int_range 0 3)
+             (Gen.list ~size:(Gen.int_range 1 4)
+                (Gen.of_list ~pp:Format.pp_print_float
+                   [ 0.; -0.; 1.; -2.5; Float.nan ])))))
+
+let signed_zeros =
+  group "signed zeros (D52)"
+    [
+      test "a pad with -0. fill renders and computes -0." (fun () ->
+          let sink, _ = padded (-0.) 1 1 [| 1.; 2. |] in
+          let kernel, slots = scheduled sink in
+          let prg = Codegen.to_program kernel (Lazy.force host) in
+          contains ~sub:"-0.0f" (source prg);
+          let results = Run.on_host prg (input slots [| 1.; 2. |]) in
+          equal (array Dtypes.value)
+            (floats [| -0.; 1.; 2.; -0. |])
+            (List.assoc (parameter slots 0) results));
+      prop "a pad and a selection of signed zeros keep the interpreter's bits"
+        signed_zero_pads (fun (flip, fill, before, after, xs) ->
+          padding_computed ~flip fill before after xs);
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -1934,6 +2029,7 @@ let () =
          accumulators;
          lanes;
          vectors;
+         signed_zeros;
          gated_stores;
          divisions;
          range_shrinking;

@@ -1481,6 +1481,22 @@ the Exclusions of `README.md`.
   names its program's cubin, its channel's words, and the local memory its
   launches need`; the Ops_nv execution suite on an NVIDIA GPU.
 
+## D52. A selection of -0. stays off a gated load
+
+- **tinygrad:** `uop/symbolic.py:421-425` (`pm_move_where_on_load`), whose
+  pattern constant `0` matches `-0.` since `-0. == 0`.
+- **tolk.next:** `lib/uop/symbolic.ml:1222` (`pm_move_where_on_load`).
+- **Differs:** a selection between a load and `-0.` stays a selection.
+  tinygrad moves its condition into the load's gate, and a gated load reads
+  `+0.` where its gate fails, so a pad of `-0.`, lowered as a selection of
+  `-0.` off the padded load, computes `+0.` on the padding.
+- **Reason:** (b). nx's `pad` fills with the value given, `-0.` included
+  (rune's lowering ledger, I1), and rune's compiled pad must compute eager
+  nx's bits.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros
+  (D52) › a pad with -0. fill renders and computes -0.` and `› a pad and a
+  selection of signed zeros keep the interpreter's bits`.
+
 ## D53. A lane of a scalar value is that value
 
 - **tinygrad:** `codegen/__init__.py:137-158` (`devectorizer2`, whose rules

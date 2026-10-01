@@ -1217,22 +1217,24 @@ let where_on_load cond buf idx or_cast =
     let ret = if op or_cast = Op.Cast then cast idx (dtype or_cast) else idx in
     Some (where (uprod (bool true) keep) ret (const_v ret zero))
 
-(* where after gated load becomes alt value *)
+(* where after gated load becomes alt value. A gated load reads +0. where its
+   gate fails, so a selection of -0. stays. *)
 let pm_move_where_on_load =
   let loaded =
     Upat.(or_casted ~name:"or_cast" (index (var "buf") [ var "idx" ]))
   in
+  let zero = Upat.named "zero" (Upat.int 0) in
+  let on_load m cond =
+    match value (m "zero") with
+    | `Float z when Float.sign_bit z -> None
+    | _ -> where_on_load cond (m "buf") (m "idx") (m "or_cast")
+  in
   pm
     [
+      rule Upat.(where (var "cond") loaded zero) (fun m -> on_load m (m "cond"));
       rule
-        Upat.(where (var "cond") loaded (int 0))
-        (fun m -> where_on_load (m "cond") (m "buf") (m "idx") (m "or_cast"));
-      rule
-        Upat.(where (var "cond") (int 0) loaded)
-        (fun m ->
-          where_on_load
-            (logical_not (m "cond"))
-            (m "buf") (m "idx") (m "or_cast"));
+        Upat.(where (var "cond") zero loaded)
+        (fun m -> on_load m (logical_not (m "cond")));
     ]
 
 (* pure index math only: a LOAD in x executes even where cond is false, so its

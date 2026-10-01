@@ -585,7 +585,7 @@ index 2842d7e..c6bdbf0 100644
    return alu
  
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..36f0b24 100644
+index 2eb2e96..5cd0671 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -777,7 +777,23 @@ index 2eb2e96..36f0b24 100644
    inside, outside = [], []
    for m in r.src[0].split_uop(Ops.MUL):
      m_parents = m.backward_slice
-@@ -460,16 +484,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -418,10 +442,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+   return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
+ 
+ # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
++# a gated load reads +0.0 where its gate fails, so a selection of -0.0 stays
+ pm_move_where_on_load = PatternMatcher([
+-  (UPat.var("cond").where(UPat.var("buf").index(UPat.var("idx")).or_casted("or_cast"), 0), where_on_load),
+-  (UPat.var("cond").where(0, UPat.var("buf").index(UPat.var("idx")).or_casted("or_cast")),
+-   lambda cond,buf,idx,or_cast: where_on_load(cond.logical_not(),buf,idx,or_cast)),
++  (UPat.var("cond").where(UPat.var("buf").index(UPat.var("idx")).or_casted("or_cast"), UPat.cvar("z", arg=0)),
++   lambda cond,buf,idx,or_cast,z: None if math.copysign(1, z.val) < 0 else where_on_load(cond,buf,idx,or_cast)),
++  (UPat.var("cond").where(UPat.cvar("z", arg=0), UPat.var("buf").index(UPat.var("idx")).or_casted("or_cast")),
++   lambda cond,buf,idx,or_cast,z: None if math.copysign(1, z.val) < 0 else where_on_load(cond.logical_not(),buf,idx,or_cast)),
+ ])
+ 
+ def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
+@@ -460,16 +486,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),

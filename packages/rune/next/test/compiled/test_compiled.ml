@@ -1876,21 +1876,17 @@ let cache d =
         in
         exact_of r;
         equal int 1 again);
-    xfail
-      ~reason:
-        "the compiled program pads a fill of -0. with 0.: a symbolic fold \
-         (tn-symbolic)"
-    @@ test "a pad with a fill of -0. after one of 0. keeps its fill's sign"
-         (fun () ->
-           let x = array_of (f32 [| 2 |] [| 1.; 2. |]) in
-           List.iter
-             (fun fill ->
-               exact_of
-                 (both d (fun (module K : Nx_backend.S) env ->
-                      let dst = env.dst Nx.float32 [| 4 |] in
-                      K.pad [| (1, 1) |] fill (env.on x) ~dst;
-                      dst)))
-             [ 0.; -0. ]);
+    test "a pad with a fill of -0. after one of 0. keeps its fill's sign"
+      (fun () ->
+        let x = array_of (f32 [| 2 |] [| 1.; 2. |]) in
+        List.iter
+          (fun fill ->
+            exact_of
+              (both d (fun (module K : Nx_backend.S) env ->
+                   let dst = env.dst Nx.float32 [| 4 |] in
+                   K.pad [| (1, 1) |] fill (env.on x) ~dst;
+                   dst)))
+          [ 0.; -0. ]);
   ]
 
 (* Domains *)
