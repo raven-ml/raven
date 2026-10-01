@@ -191,12 +191,13 @@ target's run lands.
 
 - **Reference:** `mixin/elementwise.py:1034,1046` (`(e^x -+ e^-x) / 2`), `:757`
   (`2 sigmoid (2x) - 1`).
-- **Raven:** `lower_arith.ml:383` (`sinh`), `:392` (`cosh`), `:396` (`tanh`).
+- **Raven:** `lower_arith.ml:406` (`sinh`), `:415` (`cosh`), `:426` (`tanh`).
 - **Differs:** `sinh` and `tanh` cancel near 0 (`tanh` is 0 below about
   `6e-8`), and `sinh` and `cosh` overflow for `x` in `(88.72, 89.42]` in
   `float32`. The lowering computes `e^|x| / 2 +- e^-|x| / 2` with the halving in
   the exponential's last scaling (A7), `sinh` below 1 as its Taylor series, and
-  `tanh` as `sinh / cosh`, `+-1` past 22.
+  `tanh` as fdlibm's `-t / (t + 2)` with `t = e^(-2|x|) - 1`, its Taylor series
+  below `|x| = 1/4`, which does not cancel.
 - **nx:** `sinh`, `cosh`, `tanh`, libm's.
 - **Class:** ulp, per target; budget 8.
 - **Reason:** (b).
@@ -205,7 +206,7 @@ target's run lands.
 ### A14. Error function
 
 - **Reference:** `mixin/elementwise.py:1058` (Abramowitz-Stegun 7.1.26).
-- **Raven:** `lower_arith.ml:517` (`erf`).
+- **Raven:** `lower_arith.ml:552` (`erf`).
 - **Differs:** tinygrad's approximation has an absolute error of `1.5e-7` and
   no relative accuracy near 0. The lowering builds fdlibm's rational
   approximations on four intervals, the coefficients of its double precision
