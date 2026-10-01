@@ -251,19 +251,22 @@ let fingerprint t =
 (* The six designated tensors, in the reference's in-memory layout (tinygrad
    Linear [out; in]): c_attn is the q/k/v weights re-fused into the HF [768;
    2304] matrix, then — like c_fc and c_proj — transposed from kaun's [inputs;
-   outputs] to [outputs; inputs]. *)
+   outputs] to [outputs; inputs]. The parameters live where the step left them,
+   so each tensor is read back to the host before it is combined. *)
 let fingerprint_tensors (p : Gpt2.t) =
+  let host = Nx.place Nx.Placement.host in
   let b0 = List.nth p.blocks 0 and b11 = List.nth p.blocks 11 in
   let c_attn =
-    Nx.concatenate ~axis:1 [ b0.attn.q.w; b0.attn.k.w; b0.attn.v.w ]
+    Nx.concatenate ~axis:1
+      [ host b0.attn.q.w; host b0.attn.k.w; host b0.attn.v.w ]
   in
   [
-    ("wte.weight", p.wte.table);
+    ("wte.weight", host p.wte.table);
     ("h.0.attn.c_attn.weight", Nx.transpose c_attn);
-    ("h.0.mlp.c_fc.weight", Nx.transpose b0.fc.w);
-    ("h.11.attn.c_proj.weight", Nx.transpose b11.attn.out.w);
-    ("ln_f.weight", p.ln_f.gamma);
-    ("wpe.weight", p.wpe.table);
+    ("h.0.mlp.c_fc.weight", Nx.transpose (host b0.fc.w));
+    ("h.11.attn.c_proj.weight", Nx.transpose (host b11.attn.out.w));
+    ("ln_f.weight", host p.ln_f.gamma);
+    ("wpe.weight", host p.wpe.table);
   ]
 
 (* Saving: the input file's key set and layout — fused c_attn, Conv1D weights
@@ -514,6 +517,9 @@ let () =
   end;
 
   if !save_weights <> "" then begin
-    Checkpoint.save !save_weights (checkpoint_of_params original !params);
+    let params =
+      Nx.Ptree.map gpt2_tree (fun _ t -> Nx.place Nx.Placement.host t) !params
+    in
+    Checkpoint.save !save_weights (checkpoint_of_params original params);
     Printf.printf "wrote %s\n%!" !save_weights
   end
