@@ -82,6 +82,29 @@ value test_metal_allocation_count(value v_set) {
   return Val_long((intnat)count);
 }
 
+/* The runtime's weak references, which compilers call for [__weak]. */
+extern id objc_initWeak(id *location, id object);
+extern id objc_loadWeakRetained(id *location);
+extern void objc_release(id object);
+
+/* A weak reference to the object [v_object], which reads nil once it is
+   deallocated. */
+value test_metal_weak(value v_object) {
+  CAMLparam1(v_object);
+  id *slot = malloc(sizeof(id));
+  if (slot == NULL) caml_raise_out_of_memory();
+  objc_initWeak(slot, Object_val(v_object));
+  CAMLreturn(caml_copy_nativeint((intnat)slot));
+}
+
+value test_metal_weak_live(value v_slot) {
+  id *slot = (id *)(intptr_t)Nativeint_val(v_slot);
+  id object = objc_loadWeakRetained(slot);
+  BOOL live = object != nil;
+  if (live) objc_release(object);
+  return Val_bool(live);
+}
+
 value test_metal_set_signaled(value v_event, value v_value) {
   id<MTLSharedEvent> event = Object_val(v_event);
   event.signaledValue = (uint64_t)Long_val(v_value);

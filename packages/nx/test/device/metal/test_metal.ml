@@ -15,6 +15,8 @@ external compile : string -> string = "test_metal_compile"
 external set_signaled : nativeint -> int -> unit = "test_metal_set_signaled"
 external contains : nativeint -> nativeint -> bool = "test_metal_contains"
 external allocation_count : nativeint -> int = "test_metal_allocation_count"
+external weak : nativeint -> nativeint = "test_metal_weak"
+external weak_live : nativeint -> bool = "test_metal_weak_live"
 
 external dispatch :
   nativeint ->
@@ -271,9 +273,59 @@ let memory =
           ignore (Sys.opaque_identity b));
     ]
 
+(* A metallib whose [fill] writes [i * 3 + c] at each index [i]. *)
+let filling c =
+  compile
+    (Printf.sprintf
+       {|#include <metal_stdlib>
+using namespace metal;
+struct args { device uint *out; };
+kernel void fill(constant args &a [[buffer(0)]],
+                 uint i [[threadgroup_position_in_grid]]) {
+  a.out[i] = i * 3u + %du;
+}|}
+       c)
+
+(* Loads and drops 600 distinct binaries, copies of one metallib padded with [k]
+   zeros, which Metal reads as the same library, while another stays held: the
+   pipelines of the dropped ones are released once collected, and the held one
+   still runs. *)
+let test_churn () =
+  let held = program ~binary:(filling 1) ~name:"fill" in
+  let base = filling 2 in
+  let padded k = program ~binary:(base ^ String.make k '\000') ~name:"fill" in
+  let one = padded 0 and other = padded 1 in
+  not_equal ~msg:"a pipeline per binary" nativeint
+    (Nx_device.Program.handle one)
+    (Nx_device.Program.handle other);
+  ignore (Sys.opaque_identity (one, other));
+  let dropped =
+    Array.init 600 (fun k -> weak (Nx_device.Program.handle (padded (k + 2))))
+  in
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize metal
+  done;
+  let live =
+    Array.fold_left (fun n w -> if weak_live w then n + 1 else n) 0 dropped
+  in
+  equal ~msg:"pipelines of dropped programs alive" int 0 live;
+  let out = B.create metal S.UInt32 8 in
+  ignore (launch held out 8);
+  Nx_device.synchronize metal;
+  let words = Array.init 8 (fun i -> (i * 3) + 1) in
+  equal ~msg:"the held program runs" string
+    (String.init 32 (fun k ->
+         Char.chr ((words.(k / 4) lsr (8 * (k mod 4))) land 0xff)))
+    (read out)
+
 let work =
   group "work"
     [
+      test
+        "600 programs loaded and dropped release their pipelines, and a held \
+         one runs"
+        test_churn;
       test "a metallib's function loads once" (fun () ->
           let binary = Lazy.force library in
           let p = program ~binary ~name:"fill" in
