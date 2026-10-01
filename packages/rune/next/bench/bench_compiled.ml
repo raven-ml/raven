@@ -8,6 +8,11 @@
    into a load at the computed index. Without the fold, the 1Mi row is a sum of
    2^40 terms, so its baseline guards the fold.
 
+   A top_k over a short axis, eagerly and compiled for the host. An axis of at
+   most 32 entries is ranked by counting, n * n comparisons a row: compiled,
+   that is 3 kernels whatever k; eagerly, it costs more than passes over the
+   axis would.
+
    On Metal and on CUDA, chains of one operation a call on 1024 float32
    elements, each reading the result of the one before: one kernel, and five in
    turn. The device is opened in the measuring worker, which is forked without
@@ -40,6 +45,36 @@ let gather id n =
     (fun (i, x, dst) ->
       K.gather ~axis:0 i x ~dst;
       Nx_device.synchronize Nx_device.host)
+
+(* [k] of [n] float32 entries in each of [rows] rows. The compiled function is
+   traced and compiled in the setup's first call. *)
+let topk ~k ~n ~rows =
+  let x () =
+    let st = Random.State.make [| 15 |] in
+    Nx.init Nx.float32 [| rows; n |] (fun _ -> Random.State.float st 1.)
+  in
+  let top x = Nx.top_k ~k ~axis:1 x in
+  let id = Printf.sprintf "%d-of-%d-%d-rows" k n rows in
+  Thumper.group ~id:"topk" "topk"
+    [
+      Thumper.bench_with_setup ~setup:x (id ^ "-eager") (fun x ->
+          ignore (top x);
+          Nx_device.synchronize Nx_device.host);
+      Thumper.bench_with_setup
+        ~setup:(fun () ->
+          let f =
+            Rune_next.Rune.jit
+              Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+              top
+          in
+          let x = x () in
+          ignore (f x);
+          (f, x))
+        (id ^ "-compiled")
+        (fun (f, x) ->
+          ignore (f x);
+          Nx_device.synchronize Nx_device.host);
+    ]
 
 (* Chains on a GPU *)
 
@@ -141,4 +176,5 @@ let () =
           ]
         (Thumper.group ~id:"gather" "gather"
            [ gather "float32-1Mi-from-1Mi-host" (1 lsl 20) ]
+        :: topk ~k:4 ~n:32 ~rows:512
         :: (metal args @ cuda ()))
