@@ -38,6 +38,22 @@ val arg_reduce : Nx_backend.arg_reduce -> axis:int -> Ops.t -> Ops.t
     of the first element of [x] that is the extreme {!reduce} gives: of the
     first NaN if there is one. [axis] must not be empty. *)
 
+val along : int -> int -> Ops.t -> Ops.t
+(** [along rank axis v] is the vector [v] as the axis [axis] of a node of [rank]
+    axes, the others of one element. *)
+
+val bits : Ops.t -> Ops.t
+(** [bits u] is [u]'s bit patterns as the unsigned integers of its width, a
+    boolean's as [uint8]. *)
+
+val of_bits : Dtype.t -> Ops.t -> Ops.t
+(** [of_bits dt b] is the bit patterns [b] read back as [dt], {!bits}'s inverse.
+*)
+
+val pick : Ops.t -> Ops.t -> Ops.t
+(** [pick mask b] is the bits [b] where [mask] holds, summed over the last axis:
+    the element [mask] selects, or zero where it selects none. *)
+
 val take : Ops.t -> int -> Ops.t -> Ops.t
 (** [take x axis p] is the elements of [x] along [axis] at the positions [p],
     each with its bits, of [p]'s shape: [x] and [p] agree on every other axis. A

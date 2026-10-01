@@ -197,30 +197,29 @@ let positions ~descending axis high =
   let packed = Ops.bitwise_or (Ops.shl high (Ops.int low)) (tie ranks) in
   tie (Ops.bitwise_and (bitonic ~descending (Ops.contiguous packed) axis) mask)
 
-(* A one-hot selection of [x]'s bits summed over [axis], a sum of one term, so
-   that each element keeps its bits. *)
+(* Bits
+
+   An element selected among zeros is summed over the elements' bit patterns as
+   unsigned integers: a float sum would turn [-0.] into [+0.], and quiet a
+   signalling NaN. *)
+
+let bits u =
+  if Dtype.equal (dtype u) Bool then Ops.cast u Uint8
+  else Ops.bitcast u (unsigned (dtype u))
+
+let of_bits dt b =
+  if Dtype.equal dt Bool then Ops.cast b Bool else Ops.bitcast b dt
+
+let pick mask b =
+  let selected = Ops.where mask b (Ops.int 0) in
+  Ops.rop selected Op.Add [ Ops.ndim selected - 1 ]
+
 let take x axis p =
-  let dt = dtype x in
-  let bits =
-    if Dtype.is_float dt then Ops.bitcast x (unsigned dt)
-    else if Dtype.is_bool dt then Ops.cast x Uint8
-    else x
-  in
   let hot =
-    Ops.eq
-      (Ops.unsqueeze p (axis + 1))
-      (along
-         (Ops.ndim p + 1)
-         (axis + 1)
-         (Ops.arange ~dtype:(dtype p) (size x axis)))
+    Ops.eq (Ops.unsqueeze p (-1)) (Ops.arange ~dtype:(dtype p) (size x axis))
   in
-  let picked =
-    Ops.where hot
-      (Ops.expand (Ops.unsqueeze bits axis) (Ops.shape hot))
-      (Ops.const_like ~dtype:(dtype bits) hot (`Int Z.zero))
-  in
-  let r = Ops.rop picked Op.Add [ axis + 1 ] in
-  if Dtype.is_float dt then Ops.bitcast r dt else Ops.cast r dt
+  of_bits (dtype x)
+    (pick hot (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis (Ops.ndim x)))
 
 let argsort ~descending ~axis x =
   if size x axis <= 1 then Ops.const_like ~dtype:Int32 x (`Int Z.zero)

@@ -9,38 +9,9 @@ let dtype = Ops.dtype
 let ints l = List.map (fun n -> Ops.Int n) l
 let pads padding = List.map (fun (b, a) -> Some (Ops.Int b, Ops.Int a)) padding
 
-(* [along rank axis v] is the vector [v] as the axis [axis] of a node of [rank]
-   axes. *)
-let along rank axis v =
-  Ops.reshape v
-    (List.init rank (fun d ->
-         if d = axis then List.hd (Ops.shape v) else Ops.Int 1))
-
 (* [one_hot idx n] is whether each index of [idx] is each position of a new last
    axis of [n] elements. *)
 let one_hot idx n = Ops.eq (Ops.unsqueeze idx (-1)) (Ops.arange n)
-
-(* Bits
-
-   An element selected among zeros is summed over the elements' bit patterns as
-   unsigned integers: a float sum would turn [-0.] into [+0.], and quiet a
-   signalling NaN. *)
-
-let unsigned dt =
-  List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
-
-let bits u =
-  if Dtype.equal (dtype u) Bool then Ops.cast u Uint8
-  else Ops.bitcast u (unsigned (dtype u))
-
-let of_bits dt b =
-  if Dtype.equal dt Bool then Ops.cast b Bool else Ops.bitcast b dt
-
-(* [pick mask b] is the bits [b] where [mask] holds, summed over the last axis:
-   the element [mask] selects, or zero where it selects none. *)
-let pick mask b =
-  let selected = Ops.where mask b (Ops.int 0) in
-  Ops.rop selected Op.Add [ Ops.ndim selected - 1 ]
 
 (* Assembly *)
 
@@ -124,14 +95,18 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
         if unique then mask
         else
           let order =
-            along (r + 1) r (Ops.arange (List.nth (Ops.max_shape mask) r))
+            Lower_reduce.along (r + 1) r
+              (Ops.arange (List.nth (Ops.max_shape mask) r))
           in
           let latest =
             Ops.rop (Ops.where mask order (Ops.int (-1))) Op.Max [ r ]
           in
           Ops.eq order (Ops.unsqueeze latest (-1))
       in
-      Ops.where reached (of_bits (dtype x) (pick last (bits src))) x
+      Ops.where reached
+        (Lower_reduce.of_bits (dtype x)
+           (Lower_reduce.pick last (Lower_reduce.bits src)))
+        x
 
 (* The window is [v] moved along each axis it does not fill to its start there:
    the positions of [x] along that axis against those of [v] as a one-hot mask,
@@ -145,14 +120,14 @@ let update x ~starts v =
     Ops.reshape (Ops.shrink starts [ Some (Ops.Int d, Ops.Int (d + 1)) ]) []
   in
   let shift b d =
-    let at = along (r + 1) d (Ops.arange (List.nth n d)) in
-    let offset = along (r + 1) r (Ops.arange (List.nth k d)) in
-    pick
+    let at = Lower_reduce.along (r + 1) d (Ops.arange (List.nth n d)) in
+    let offset = Lower_reduce.along (r + 1) r (Ops.arange (List.nth k d)) in
+    Lower_reduce.pick
       (Ops.eq at (Ops.add offset (start d)))
       (Ops.transpose (Ops.unsqueeze b (-1)) d r)
   in
   let inside d =
-    let at = along r d (Ops.arange (List.nth n d)) in
+    let at = Lower_reduce.along r d (Ops.arange (List.nth n d)) in
     let first = start d in
     Ops.bitwise_and (Ops.le first at)
       (Ops.lt at (Ops.add first (Ops.int (List.nth k d))))
@@ -162,12 +137,18 @@ let update x ~starts v =
   | window :: rest ->
       Ops.where
         (List.fold_left Ops.bitwise_and window rest)
-        (of_bits (dtype x) (List.fold_left shift (bits v) moved))
+        (Lower_reduce.of_bits (dtype x)
+           (List.fold_left shift (Lower_reduce.bits v) moved))
         x
 
 (* Windows *)
 
 let product = List.fold_left ( * ) 1
+
+(* The windows along an axis of [size] elements, padding included. *)
+let windows ~kernel ~stride ~dilation ~size =
+  let reach = (dilation * (kernel - 1)) + 1 in
+  if size < reach then 0 else ((size - reach) / stride) + 1
 
 (* Whether one of [windows] windows, [stride] apart from the start of a padded
    axis, each of [kernel] elements [dilation] apart, reads one of the [size]
@@ -189,9 +170,8 @@ let unfold ~kernel_size ~stride ~dilation ~padding x =
   let spatial = List.filteri (fun d _ -> d >= lead) (Ops.max_shape x) in
   let count a size =
     let before, after = padding.(a) in
-    let reach = (dilation.(a) * (kernel_size.(a) - 1)) + 1 in
-    let padded = size + before + after in
-    if padded < reach then 0 else ((padded - reach) / stride.(a)) + 1
+    windows ~kernel:kernel_size.(a) ~stride:stride.(a) ~dilation:dilation.(a)
+      ~size:(size + before + after)
   in
   let counts = List.mapi count spatial in
   let reads a size =
@@ -237,10 +217,7 @@ type cut = {
 
 let cut ~kernel ~stride ~dilation ~size =
   let ceil_div a b = (a + b - 1) / b in
-  (* A kernel that spans more than the padded axis has no window. *)
-  let windows =
-    Int.max 0 (ceil_div (size - (dilation * (kernel - 1))) stride)
-  in
+  let windows = windows ~kernel ~stride ~dilation ~size in
   let scale =
     (ceil_div
        ((windows * stride) - dilation)

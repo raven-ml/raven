@@ -42,6 +42,10 @@ let sign_bit x =
     (Ops.bitwise_and (bits x) (Ops.const_like (bits x) (`Int (sign_mask x))))
     (int (bits x) 0)
 
+let magnitude x =
+  Ops.bitwise_and (bits x)
+    (Ops.const_like (bits x) (`Int (Z.pred (sign_mask x))))
+
 (* Modular integers
 
    nx's integers wrap. C, Metal and CUDA leave signed overflow undefined, and
@@ -73,12 +77,7 @@ let recip x =
     where unit x (int x 0)
 
 let abs x =
-  if is_float x then
-    float1
-      (fun x ->
-        let magnitude = Ops.const_like (bits x) (`Int (Z.pred (sign_mask x))) in
-        Ops.bitcast (Ops.bitwise_and (bits x) magnitude) (dtype x))
-      x
+  if is_float x then float1 (fun x -> Ops.bitcast (magnitude x) (dtype x)) x
   else if is_signed x then where (Ops.lt x (int x 0)) (wrapping1 Ops.neg x) x
   else x
 
@@ -221,10 +220,8 @@ let exp ?times x =
    reciprocal overflows, or as a target that flushes subnormals does. *)
 
 let log x =
-  let magnitude = Ops.const_like (bits x) (`Int (Z.pred (sign_mask x))) in
   let below_zero =
-    Ops.bitwise_and (sign_bit x)
-      (Ops.ne (Ops.bitwise_and (bits x) magnitude) (int (bits x) 0))
+    Ops.bitwise_and (sign_bit x) (Ops.ne (magnitude x) (int (bits x) 0))
   in
   where below_zero (float x Float.nan) (Ops.log2 x *: Ops.float (fst ln2))
 
