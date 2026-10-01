@@ -43,18 +43,34 @@ val getenv_string : string -> string -> string
     or [default] if [key] is unset. A variable set to the empty string is [""].
 *)
 
+(** {1:declarations Declarations} *)
+
+(** What a setting or a variable changes. *)
+type reach =
+  | Results
+      (** What compilation makes: programs and schedules, whose caches key on
+          its value ({!shaping}). *)
+  | Process
+      (** Only how the process runs: what it prints, keeps or checks, or how
+          many domains compile. *)
+
 val variable : string -> int -> int
-(** [variable key default] is [getenv key default], for a variable that changes
-    what compilation makes outside the settings: it is recorded among
-    {!variables}, on which schedules and programs kept on disk are keyed.
-    Declare it at a module's top level, so that it is recorded before anything
-    is compiled.
+(** [variable key default] is [getenv key default], for an environment variable
+    that changes what compilation makes and is not a setting: it is recorded in
+    {!shaping}. Declare it at a module's top level, so that it is recorded
+    before anything is compiled.
 
-    Raises [Invalid_argument] if [key] is already declared. *)
+    Raises [Invalid_argument] if a setting or variable named [key] is already
+    declared. *)
 
-val variables : unit -> (string * int) list
-(** [variables ()] is each variable declared with {!variable}, with its default,
-    sorted by name. *)
+val variable_string : string -> string -> string
+(** [variable_string key default] is {!variable} for
+    [getenv_string key default]. *)
+
+val shaping : unit -> (string * string) list
+(** [shaping ()] is the name and the current value, as text, of each setting and
+    variable whose reach is [Results], sorted by name: what the caches of
+    programs and schedules key on. A setting's value is the calling domain's. *)
 
 (** {1:settings Settings} *)
 
@@ -68,25 +84,27 @@ module Context_var : sig
   type 'a t
   (** The type for settings of type ['a]. *)
 
-  val int : string -> int -> int t
-  (** [int key default] is a setting whose initial value is
-      [getenv key default].
+  val int : ?reach:reach -> string -> int -> int t
+  (** [int ~reach key default] is a setting whose initial value is
+      [getenv key default]. [reach] defaults to [Results].
 
-      Raises [Invalid_argument] if a setting named [key] exists already, or if
-      the variable [key] does not hold an integer. *)
+      Raises [Invalid_argument] if a setting or variable named [key] exists
+      already, or if the variable [key] does not hold an integer. *)
 
-  val bool : string -> bool -> bool t
-  (** [bool key default] is a setting whose initial value is [true] iff the
-      variable [key] holds a nonzero integer, and [default] if [key] is unset.
+  val bool : ?reach:reach -> string -> bool -> bool t
+  (** [bool ~reach key default] is a setting whose initial value is [true] iff
+      the variable [key] holds a nonzero integer, and [default] if [key] is
+      unset. [reach] defaults to [Results].
 
-      Raises [Invalid_argument] if a setting named [key] exists already, or if
-      the variable [key] does not hold an integer. *)
+      Raises [Invalid_argument] if a setting or variable named [key] exists
+      already, or if the variable [key] does not hold an integer. *)
 
-  val string : string -> string -> string t
-  (** [string key default] is a setting whose initial value is
-      [getenv_string key default].
+  val string : ?reach:reach -> string -> string -> string t
+  (** [string ~reach key default] is a setting whose initial value is
+      [getenv_string key default]. [reach] defaults to [Results].
 
-      Raises [Invalid_argument] if a setting named [key] exists already. *)
+      Raises [Invalid_argument] if a setting or variable named [key] exists
+      already. *)
 
   val key : 'a t -> string
   (** [key v] is the name of [v]'s environment variable. *)

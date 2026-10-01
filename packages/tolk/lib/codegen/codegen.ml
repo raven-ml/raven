@@ -1150,32 +1150,19 @@ let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
 
 (* The key of a program, in memory and on disk: the kernel, the renderer and its
-   target, every setting the passes read, the environment variables declared
-   with [Helpers.variable], and the digest of this library's sources, of which
-   a program is a function. A kernel that asks for a beam search is not kept on
+   target, every setting and variable that shapes what compilation makes
+   ([Helpers.shaping]), and the digest of this library's sources, of which a
+   program is a function. A kernel that asks for a beam search is not kept on
    disk, since its program is what the search found. *)
 let program_key ast (ren : Renderer.t) =
-  let open Helpers in
   String.concat "\n"
     ([
        Source_digest.digest;
        key ast;
        ren.name;
-       Format.asprintf "%a" Target.pp ren.target;
-       Bool.to_string (setting noopt);
-       String.concat "," (setting emulated_dtypes);
-       Int.to_string (setting use_tc);
-       Bool.to_string (setting disable_fast_idiv);
-       Int.to_string (setting transcendental);
-       Bool.to_string (setting allow_tf32);
-       setting default_float;
-       setting default_int;
-       Int.to_string (setting tc_select);
-       Int.to_string (setting tc_opt);
-       Int.to_string (setting tc_min_globals);
-       Bool.to_string (setting tuple_order);
+       Format.asprintf "%a" Helpers.Target.pp ren.target;
      ]
-    @ List.map (fun (v, _) -> v ^ "=" ^ getenv_string v "") (variables ()))
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
 
 let kept ast =
   match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true

@@ -93,23 +93,19 @@ val to_program :
     argument if it is not a {!Ops.program_info}.
 
     Programs are kept: a second call with an equal [ast], a renderer of the same
-    name and target, and the same values of the settings that shape the program
-    ({!Helpers.noopt}, {!Helpers.emulated_dtypes}, {!Helpers.use_tc},
-    {!Helpers.disable_fast_idiv}, {!Helpers.transcendental},
-    {!Helpers.allow_tf32}, {!Helpers.default_float}, {!Helpers.default_int},
-    {!Helpers.tc_select}, {!Helpers.tc_opt} and {!Helpers.tc_min_globals})
-    returns the program the first made. [to_program] may be called from several
-    domains at once, and makes each program once: a call that asks for a program
-    another domain is making waits for it. A call that raises keeps nothing, and
-    the next call makes the program anew.
+    name and target, and the same values of the settings and variables that
+    shape what compilation makes ({!Helpers.shaping}) returns the program the
+    first made. [to_program] may be called from several domains at once, and
+    makes each program once: a call that asks for a program another domain is
+    making waits for it. A call that raises keeps nothing, and the next call
+    makes the program anew.
 
     Programs are also kept on disk ({!Helpers.Diskcache}, table ["to_program"]),
-    for later processes: a program is read back for the same [ast], renderer and
-    settings, the values of the setting {!Helpers.tuple_order} and of the
-    environment variables in {!Helpers.variables}, and the same sources of this
-    library. A program read back is not checked against {!Spec.program} again.
-    An entry that does not read as a program is made anew and replaced. The
-    program of a kernel that asks for a beam search is not kept on disk.
+    for later processes: a program is read back under the same key and the same
+    sources of this library. A program read back is not checked against
+    {!Spec.program} again. An entry that does not read as a program is made anew
+    and replaced. The program of a kernel that asks for a beam search is not
+    kept on disk.
 
     When the setting {!Helpers.debug} is [3] or more, the optimisations applied
     are printed on standard output, from [4] the source too, and from [7] the

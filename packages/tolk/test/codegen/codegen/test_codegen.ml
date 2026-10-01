@@ -791,6 +791,27 @@ let races () =
     children;
   equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
 
+(* Another value of each setting and variable that shapes what compilation
+   makes, as the environment holds it: a flag flipped, an integer plus one, and
+   a string from this table, which a string declared later must join.
+   DEFAULT_FLOAT retypes the recorded kernel the child reads, so its key is
+   tested in memory, where the key is the same. *)
+let other_values () =
+  let strings =
+    [ ("CC", "cc"); ("DEFAULT_INT", "long"); ("EMULATED_DTYPES", "long") ]
+  in
+  List.map
+    (fun (name, value) ->
+      match (value, int_of_string_opt value) with
+      | "true", _ -> (name, "0")
+      | "false", _ -> (name, "1")
+      | _, Some n -> (name, string_of_int (n + 1))
+      | _, None -> (
+          match List.assoc_opt name strings with
+          | Some other -> (name, other)
+          | None -> failf "%s holds a string: give it another value" name))
+    (List.remove_assoc "DEFAULT_FLOAT" (Helpers.shaping ()))
+
 let on_disk =
   group "programs are kept on disk"
     [
@@ -798,22 +819,7 @@ let on_disk =
       group "a program made under one setting is not read back under another"
         (List.map
            (fun (name, value) -> test name (misses_on [ (name, value) ]))
-           ([
-              ("NOOPT", "1");
-              ("TC", "0");
-              ("TC_SELECT", "0");
-              ("TC_OPT", "1");
-              ("TC_MIN_GLOBALS", "1");
-              ("TRANSCENDENTAL", "2");
-              ("DISABLE_FAST_IDIV", "0");
-              ("ALLOW_TF32", "1");
-              ("TUPLE_ORDER", "0");
-              ("DEFAULT_INT", "long");
-              ("EMULATED_DTYPES", "long");
-            ]
-           @ List.map
-               (fun (name, default) -> (name, string_of_int (default + 1)))
-               (Helpers.variables ())));
+           (other_values ()));
       test "a program read back shows its source at DEBUG 4" shows_its_source;
       group "a damaged entry is made anew, and replaced"
         [
@@ -1434,8 +1440,7 @@ let divisions =
           in
           lacks Max uops;
           lacks Cmod uops);
-      test
-        "a dividend that can wrap keeps the correction of a floor division"
+      test "a dividend that can wrap keeps the correction of a floor division"
         (fun () ->
           (* tinygrad's test divides max x 0 + 1, which is negative at the
              greatest int, where tolk's int32 wraps. *)

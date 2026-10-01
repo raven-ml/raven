@@ -470,6 +470,41 @@ let holds_tinygrad_default s =
   in
   equal string default (shown s)
 
+(* What the caches key on *)
+
+let keyed key = List.assoc_opt key (shaping ())
+
+let cache_keys =
+  group "shaping"
+    [
+      test "holds a setting's current value on the calling domain" (fun () ->
+          let key = fresh () in
+          let v = Context_var.int key 1 in
+          equal (option string) ~msg:"declared" (Some "1") (keyed key);
+          equal (option string) ~msg:"in a context" (Some "4")
+            (context [ B (v, 4) ] (fun () -> keyed key)));
+      test "holds a variable's value as read" (fun () ->
+          let key = variable (Some " 6 ") in
+          equal int 6 (Tolk.Helpers.variable key 2);
+          equal (option string) (Some "6") (keyed key));
+      test "leaves out a setting that reaches only the process" (fun () ->
+          let key = fresh () in
+          ignore (Context_var.bool ~reach:Process key false);
+          equal (option string) None (keyed key));
+      test "leaves out the library's settings of the process" (fun () ->
+          List.iter
+            (fun key -> equal (option string) ~msg:key None (keyed key))
+            [ "DEBUG"; "BEAM"; "CACHELEVEL"; "SCACHE"; "CCACHE"; "PARALLEL" ]);
+      test "a variable's name is declared once, as a setting's" (fun () ->
+          let key = fresh () in
+          ignore (Tolk.Helpers.variable key 0);
+          refuses (fun () -> Tolk.Helpers.variable key 0);
+          refuses (fun () -> Context_var.int key 0));
+      test "is sorted by name" (fun () ->
+          let names = List.map fst (shaping ()) in
+          equal (list string) (List.sort compare names) names);
+    ]
+
 let library_settings =
   group "settings"
     [
@@ -1404,6 +1439,7 @@ let () =
              environment;
              declaration;
              contexts;
+             cache_keys;
              library_settings;
              startup;
              targets;

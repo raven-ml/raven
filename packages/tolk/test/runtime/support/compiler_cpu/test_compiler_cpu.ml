@@ -309,6 +309,18 @@ let without_clang =
           let table = Option.get (Compiler.cachekey clang) in
           Helpers.Diskcache.put ~table increment "cached object";
           equal string "cached object" (Compiler.compile_cached clang increment));
+      test "an object cached by the default compiler is not served under CC"
+        (fun () ->
+          let arch = host_machine ^ ",native" in
+          let table =
+            "compile_clang_obj_"
+            ^ String.map (function ',' -> '_' | c -> c) arch
+          in
+          let src = increment ^ "\n/* compiled by clang */\n" in
+          Helpers.Diskcache.put ~table src "clang's object";
+          raises_match
+            (function Compiler.Compile_error _ -> true | _ -> false)
+            (fun () -> Compiler.compile_cached (Compiler_cpu.clang arch) src));
     ]
 
 (* Disassembly *)

@@ -4310,7 +4310,8 @@ end
 
 exception Bottom_up_gate
 
-let rewrite_stack_limit = Helpers.Context_var.int "REWRITE_STACK_LIMIT" 250000
+let rewrite_stack_limit =
+  Helpers.Context_var.int ~reach:Process "REWRITE_STACK_LIMIT" 250000
 let src_without_body u = if u.op = Op.Call then drop 1 u.src else u.src
 
 let graph_rewrite ?(bottom_up = false) ?bpm ?(walk = false)

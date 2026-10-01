@@ -927,6 +927,9 @@ thread.
 
 ### Tolk (new)
 
+- A program cached under one host compiler (`CC`) is compiled again under
+  another, in the compile cache and the program cache: the object the first
+  compiler made was served.
 - `Tolk_engine.link` and `Tolk_engine.run` raise `Invalid_argument` naming
   both requests when an AMD batch encoded for one profile request (counters,
   traces) links or runs under another, whose shared trace buffers it would

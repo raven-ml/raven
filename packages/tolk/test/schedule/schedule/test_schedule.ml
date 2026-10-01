@@ -774,8 +774,7 @@ let ordering =
   group "create_schedule › rules"
     [
       test "a kernel's argument that is no storage is refused" not_storage;
-      test "an end of a call over a loop schedules the call in its loop"
-        ended;
+      test "an end of a call over a loop schedules the call in its loop" ended;
       test "an end of a call over device ranges schedules the call"
         ended_on_devices;
       test "a loop runs after the call that writes what it reads"
@@ -1234,6 +1233,30 @@ let memory_only () =
   | Ok (hit, _) -> equal bool ~msg:"made again" false hit
   | Error err -> failf "the child failed: %s" err
 
+(* Another value of each setting and variable that shapes what compilation
+   makes, as the environment holds it: a flag flipped, an integer plus one, and
+   a string from this table, which a string declared later must join. *)
+let other_values () =
+  let strings =
+    [
+      ("CC", "cc");
+      ("DEFAULT_FLOAT", "half");
+      ("DEFAULT_INT", "long");
+      ("EMULATED_DTYPES", "long");
+    ]
+  in
+  List.map
+    (fun (name, value) ->
+      match (value, int_of_string_opt value) with
+      | "true", _ -> (name, "0")
+      | "false", _ -> (name, "1")
+      | _, Some n -> (name, string_of_int (n + 1))
+      | _, None -> (
+          match List.assoc_opt name strings with
+          | Some other -> (name, other)
+          | None -> failf "%s holds a string: give it another value" name))
+    (Helpers.shaping ())
+
 let on_disk =
   group "create_linear_with_vars › schedules are kept on disk"
     [
@@ -1241,19 +1264,7 @@ let on_disk =
       group "a schedule made under one setting is not read back under another"
         (List.map
            (fun (name, value) -> test name (misses_on [ (name, value) ]))
-           ([
-              ("SPLIT_REDUCEOP", "0");
-              ("MAX_KERNEL_BUFFERS", "8");
-              ("RING", "0");
-              ("ALL2ALL", "1");
-              ("ALLREDUCE_CAST", "0");
-              ("ALLREDUCE_NODE_NDEVS", "2");
-              ("DEFAULT_FLOAT", "half");
-              ("DEFAULT_INT", "long");
-            ]
-           @ List.map
-               (fun (name, default) -> (name, string_of_int (default + 1)))
-               (Helpers.variables ())));
+           (other_values ()));
       group "a damaged entry is made anew, and replaced"
         [
           test "truncated" (recovers Disk_cache.truncated);

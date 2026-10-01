@@ -287,26 +287,13 @@ let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_lock = Mutex.create ()
 
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
-   on disk: the function's, the settings that splitting reductions, bounding
-   kernels' buffers and allreduces read, the default types, the environment
-   variables declared with [Helpers.variable], and the digest of this library's
+   on disk: the function's, every setting and variable that shapes what
+   compilation makes ([Helpers.shaping]), and the digest of this library's
    sources, of which a schedule is a function. *)
 let schedule_key fn =
-  let open Helpers in
   String.concat "\n"
-    ([
-       Source_digest.digest;
-       key fn;
-       Bool.to_string (setting split_reduceop);
-       Int.to_string (setting max_kernel_buffers);
-       Int.to_string (setting ring);
-       Int.to_string (setting all2all);
-       Bool.to_string (setting allreduce_cast);
-       Int.to_string (setting allreduce_node_ndevs);
-       setting default_float;
-       setting default_int;
-     ]
-    @ List.map (fun (v, _) -> v ^ "=" ^ getenv_string v "") (variables ()))
+    ([ Source_digest.digest; key fn ]
+    @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
 
 let lower_sink_to_linear call =
   let fn = body call in

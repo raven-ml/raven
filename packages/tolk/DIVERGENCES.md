@@ -1851,11 +1851,12 @@ the Exclusions of `README.md`.
   `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
-- **tolk:** `lib/codegen/codegen.ml:1158` (`program_key`), `:1193`
-  (`kept`) and `:1198` (`made_program`); `lib/schedule/schedule.ml:294`
-  (`schedule_key`) and `:318` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
+- **tolk:** `lib/codegen/codegen.ml:1157` (`program_key`), `:1167`
+  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:293`
+  (`schedule_key`) and `:298` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:631` (`get_optimized_ast`'s
-  name); `lib/helpers.ml:269` (`scache`, `2` by default); and
+  name); `lib/helpers.ml:325` (`scache`, `2` by default) and `:132`
+  (`shaping`); `lib/runtime/support/compiler_cpu.ml:30` (`cc`); and
   `lib/dune`'s rule for `source_digest.ml`, written by
   `tools/source_digest.ml`.
 - **Differs:** the program `to_program` makes of a kernel, and by default
@@ -1863,19 +1864,21 @@ the Exclusions of `README.md`.
   the disk cache (tables `to_program` and `schedule_cache`) as their graphs'
   text (`Graph`), and a later process reads them back instead of making
   them. tinygrad keeps programs for its process only, and schedules on disk
-  only when asked. Each key is tinygrad's in-memory key, what else shapes
-  the result (for programs `TUPLE_ORDER`, for schedules the settings of
-  splitting reductions, kernels' buffers and allreduces and the default
-  types, and for both the environment variables that tinygrad reads with
-  `getenv` where it compiles, which tolk declares with `Helpers.variable`
-  so that each is keyed: `ALIGNED`, `ALLOW_HALF8`, `DMC`, `EXPAND_SSA`,
-  `LATE_ALLREDUCE`, the `MV` variables, the `REDUCEOP_SPLIT` variables and
-  `RING_ALLREDUCE_THRESHOLD`), and the digest of the library's sources,
-  which dune computes when it builds the library: an entry is a function
-  of the code that made it. One key serves memory and disk, so a setting
-  changed within the process by `context` makes the result again, where
-  tinygrad's in-memory keys leave out `TUPLE_ORDER` and, for schedules,
-  every setting. An entry that does not read
+  only when asked. Each key is the kernel or function, for programs the
+  renderer and its target, the value of every setting and environment
+  variable that shapes what compilation makes, and the digest of the
+  library's sources, which dune computes when it builds the library: an
+  entry is a function of the code that made it. Settings and the variables
+  tinygrad reads with `getenv` where it compiles (`ALIGNED`, `ALLOW_HALF8`,
+  `CC`, `DMC`, `EXPAND_SSA`, `LATE_ALLREDUCE`, the `MV` and `REDUCEOP_SPLIT`
+  variables and `RING_ALLREDUCE_THRESHOLD`) are declared with their reach, and
+  the keys take every one that reaches results (`Helpers.shaping`), so one
+  declared later is keyed without being listed; a setting of the process
+  alone, such as `DEBUG`, `BEAM` or `PARALLEL`, is not. One key serves memory
+  and disk, so a setting changed within the process by `context` makes the
+  result again, where tinygrad's in-memory keys leave out `TUPLE_ORDER` and,
+  for schedules, every setting. The compile cache's table names the compiler
+  `CC` runs, where tinygrad's names Clang alone. An entry that does not read
   as a program or a schedule is a miss, and is replaced. The program of a
   kernel that asks for a beam search is not kept, since it is what the
   search found. `SCACHE=1` keeps schedules in memory only, as tinygrad's
@@ -1899,7 +1902,9 @@ the Exclusions of `README.md`.
   `create_linear_with_vars › cache › a body scheduled under one setting
   misses under another ›` each setting, `create_linear_with_vars ›
   schedules are kept on disk ›` the same as programs' for schedules, and `›
-  with SCACHE at 1, nothing is kept on disk`.
+  with SCACHE at 1, nothing is kept on disk`; the `Helpers` suite's
+  `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
+  object cached by the default compiler is not served under CC`.
 
 ## D64. A cast to a narrow float through a float32 rounds once
 

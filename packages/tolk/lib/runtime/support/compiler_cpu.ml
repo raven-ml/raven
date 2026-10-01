@@ -26,6 +26,9 @@ let run prog args src =
 
 (* Clang *)
 
+(* The compiler run, which picks the binary of every CPU program. *)
+let cc = Helpers.variable_string "CC" "clang"
+
 let clang arch =
   let machine, cpu, feats =
     match String.split_on_char ',' arch with
@@ -81,6 +84,7 @@ let clang arch =
   in
   Renderer.Compiler.v
     ~cachekey:
-      ("compile_clang_obj_" ^ String.map (function ',' -> '_' | c -> c) arch)
+      (Printf.sprintf "compile_%s_obj_%s" cc
+         (String.map (function ',' -> '_' | c -> c) arch))
     ~disassemble:Helpers.cpu_objdump
-    (fun src -> run (Helpers.getenv_string "CC" "clang") args src)
+    (fun src -> run cc args src)

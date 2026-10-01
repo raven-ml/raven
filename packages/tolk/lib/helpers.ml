@@ -99,23 +99,49 @@ let getenv = memoize parse_int
 let getenv_float = memoize parse_float
 let getenv_string = memoize Result.ok
 
-(* The variables declared, with their defaults, by name. *)
-let declared_variables = Atomic.make []
+(* Declarations
 
-let rec record key default =
-  let vars = Atomic.get declared_variables in
-  if List.mem_assoc key vars then
-    invalid_arg (Printf.sprintf "variable %s is already declared" key);
-  if
-    not
-      (Atomic.compare_and_set declared_variables vars ((key, default) :: vars))
-  then record key default
+   Each setting and each variable declared with [variable] has a name no other
+   one has. Those whose reach is [Results] change what compilation makes, and
+   are recorded with the text of their current value, on which the caches of
+   programs and schedules are keyed. *)
+
+type reach = Results | Process
+
+module Names = Set.Make (String)
+
+let declared = Atomic.make Names.empty
+let shaping = Atomic.make []
+
+let rec declare_name key =
+  let names = Atomic.get declared in
+  if Names.mem key names then
+    invalid_arg (Printf.sprintf "%s is already declared" key);
+  if not (Atomic.compare_and_set declared names (Names.add key names)) then
+    declare_name key
+
+let rec record key show =
+  let l = Atomic.get shaping in
+  if not (Atomic.compare_and_set shaping l ((key, show) :: l)) then
+    record key show
+
+let declare ~reach key show =
+  declare_name key;
+  match reach with Results -> record key show | Process -> ()
+
+let shaping () =
+  List.sort compare
+    (List.map (fun (k, show) -> (k, show ())) (Atomic.get shaping))
 
 let variable key default =
-  record key default;
-  getenv key default
+  let x = getenv key default in
+  declare ~reach:Results key (fun () -> string_of_int x);
+  x
 
-let variables () = List.sort compare (Atomic.get declared_variables)
+let variable_string key default =
+  let x = getenv_string key default in
+  declare ~reach:Results key (fun () -> x);
+  x
 
 (* Settings *)
 
@@ -123,24 +149,25 @@ module Context_var = struct
   (* A domain starts with the values of the domain that spawns it. *)
   type 'a t = { key : string; value : 'a Domain.DLS.key }
 
-  module Keys = Set.Make (String)
+  let v ?(reach = Results) ~show key x =
+    let t =
+      {
+        key;
+        value = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> x);
+      }
+    in
+    declare ~reach key (fun () -> show (Domain.DLS.get t.value));
+    t
 
-  let declared = Atomic.make Keys.empty
+  let int ?reach key default =
+    v ?reach ~show:string_of_int key (getenv key default)
 
-  let rec declare key =
-    let keys = Atomic.get declared in
-    if Keys.mem key keys then
-      invalid_arg (Printf.sprintf "setting %s is already declared" key);
-    if not (Atomic.compare_and_set declared keys (Keys.add key keys)) then
-      declare key
+  let bool ?reach key default =
+    v ?reach ~show:string_of_bool key (getenv key (Bool.to_int default) <> 0)
 
-  let v key x =
-    declare key;
-    { key; value = Domain.DLS.new_key ~split_from_parent:Fun.id (fun () -> x) }
+  let string ?reach key default =
+    v ?reach ~show:Fun.id key (getenv_string key default)
 
-  let int key default = v key (getenv key default)
-  let bool key default = v key (getenv key (Bool.to_int default) <> 0)
-  let string key default = v key (getenv_string key default)
   let key v = v.key
   let value v = Domain.DLS.get v.value
   let set v x = Domain.DLS.set v.value x
@@ -221,7 +248,11 @@ let parse_targets s =
 
 let dev =
   match getenv_string "DEV" "" |> parse_targets with
-  | Ok targets -> Context_var.v "DEV" targets
+  | Ok targets ->
+      let show ts =
+        String.concat ";" (List.map (Format.asprintf "%a" Target.pp) ts)
+      in
+      Context_var.v ~reach:Process ~show "DEV" targets
   | Error e -> invalid_arg ("DEV: " ^ e)
 
 let target ?(arch = "") device =
@@ -233,29 +264,36 @@ let target ?(arch = "") device =
   in
   { t with device; arch = (if t.arch = "" then arch else t.arch) }
 
-let debug = Context_var.int "DEBUG" 0
-let beam = Context_var.int "BEAM" 0
+let debug = Context_var.int ~reach:Process "DEBUG" 0
+let beam = Context_var.int ~reach:Process "BEAM" 0
 let noopt = Context_var.bool "NOOPT" false
-let no_color = Context_var.bool "NO_COLOR" false
+let no_color = Context_var.bool ~reach:Process "NO_COLOR" false
 let use_tc = Context_var.int "TC" 1
 let tc_select = Context_var.int "TC_SELECT" (-1)
 let tc_opt = Context_var.int "TC_OPT" 0
 let tc_min_globals = Context_var.int "TC_MIN_GLOBALS" 0
 let transcendental = Context_var.int "TRANSCENDENTAL" 1
 let split_reduceop = Context_var.bool "SPLIT_REDUCEOP" true
-let no_memory_planner = Context_var.bool "NO_MEMORY_PLANNER" false
+
+let no_memory_planner =
+  Context_var.bool ~reach:Process "NO_MEMORY_PLANNER" false
+
 let ring = Context_var.int "RING" 1
 let all2all = Context_var.int "ALL2ALL" 0
 let allreduce_cast = Context_var.bool "ALLREDUCE_CAST" true
 let allreduce_node_ndevs = Context_var.int "ALLREDUCE_NODE_NDEVS" 0
-let cachelevel = Context_var.int "CACHELEVEL" 2
-let ignore_beam_cache = Context_var.bool "IGNORE_BEAM_CACHE" false
+let cachelevel = Context_var.int ~reach:Process "CACHELEVEL" 2
+
+let ignore_beam_cache =
+  Context_var.bool ~reach:Process "IGNORE_BEAM_CACHE" false
+
 let disable_fast_idiv = Context_var.bool "DISABLE_FAST_IDIV" true
 let max_kernel_buffers = Context_var.int "MAX_KERNEL_BUFFERS" 0
 
 let emulated_dtypes =
   let names = String.split_on_char ',' (getenv_string "EMULATED_DTYPES" "") in
-  Context_var.v "EMULATED_DTYPES" (List.filter (fun x -> x <> "") names)
+  Context_var.v ~show:(String.concat ",") "EMULATED_DTYPES"
+    (List.filter (fun x -> x <> "") names)
 
 let default_float = Context_var.string "DEFAULT_FLOAT" "float32"
 let default_int = Context_var.string "DEFAULT_INT" "int32"
@@ -277,15 +315,17 @@ let cpu_count =
           | _ -> count)
       | _ -> count)
 
-let parallel = Context_var.int "PARALLEL" cpu_count
-let spec = Context_var.int "SPEC" 1
-let check_oob = Context_var.bool "CHECK_OOB" false
-let debug_rangeify = Context_var.bool "DEBUG_RANGEIFY" false
+let parallel = Context_var.int ~reach:Process "PARALLEL" cpu_count
+let spec = Context_var.int ~reach:Process "SPEC" 1
+let check_oob = Context_var.bool ~reach:Process "CHECK_OOB" false
+let debug_rangeify = Context_var.bool ~reach:Process "DEBUG_RANGEIFY" false
 let tuple_order = Context_var.bool "TUPLE_ORDER" true
-let ccache = Context_var.bool "CCACHE" true
+let ccache = Context_var.bool ~reach:Process "CCACHE" true
 let allow_tf32 = Context_var.bool "ALLOW_TF32" false
-let scache = Context_var.int "SCACHE" 2
-let disallow_broadcast = Context_var.bool "DISALLOW_BROADCAST" false
+let scache = Context_var.int ~reach:Process "SCACHE" 2
+
+let disallow_broadcast =
+  Context_var.bool ~reach:Process "DISALLOW_BROADCAST" false
 
 (* Integers and lists *)
 
