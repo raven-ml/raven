@@ -96,9 +96,9 @@ let unwrap i x =
 
 (* Coefficients *)
 
-let no_rule op =
+let no_rule i op =
   invalid_arg
-    (Printf.sprintf "Rune: the tangent of %s is not implemented" (name op))
+    (Printf.sprintf "%s: the tangent of %s is not implemented" i.entry (name op))
 
 let unary k x = eval (Unary (k, x))
 let binary k a b = eval (Binary (k, a, b))
@@ -159,7 +159,8 @@ let shifted ~axis d fill x =
   Nx.shrink (Array.map (fun n -> (0, n)) shape) (Nx.pad pads fill x)
 
 (* The position along [axis] of the element each running extremum [y] takes: the
-   last position where the extremum changed, so ties keep the first. *)
+   last position where the extremum changed or became NaN, so ties keep the
+   first and a NaN extremum the NaN element. *)
 let running_arg ~axis y =
   let shape = Nx.shape y in
   let n = shape.(axis) in
@@ -168,7 +169,11 @@ let running_arg ~axis y =
     Nx.broadcast_to shape (Nx.reshape along (Nx.arange Nx.int32 0 n 1))
   in
   let before = shifted ~axis 1 (Nx_dtype.zero (Nx.dtype y)) y in
-  Nx.cummax ~axis (Nx.where (Nx.not_equal y before) iota (Nx.zeros_like iota))
+  let changed =
+    Nx.logical_and (Nx.not_equal y before)
+      (Nx.logical_not (Nx.logical_and (Nx.isnan y) (Nx.isnan before)))
+  in
+  Nx.cummax ~axis (Nx.where changed iota (Nx.zeros_like iota))
 
 (* [linear_scan ~axis a b] is [r] with [r_k = a_k r_(k-1) + b_k] along [axis]
    and [r_(-1) = 0], composed by doubling in about [log2 n] rounds of products
@@ -242,7 +247,10 @@ let selected y first da db =
     (Option.map (fun da -> mul da mask) da)
     (Option.map (fun db -> mul db (Nx.rsub_s (one y) mask)) db)
 
-let binary_tangent op k a b y da db =
+(* [zero_where c x] is [x] with zeros where [c] holds. *)
+let zero_where c x = Nx.where c (Nx.zeros_like x) x
+
+let binary_tangent i op k a b y da db =
   let term f = Option.map f in
   match[@warning "@4@8"] (k : Nx_backend.binary) with
   | Add -> terms da db
@@ -253,17 +261,24 @@ let binary_tangent op k a b y da db =
         (term (fun da -> binary Fdiv da b) da)
         (term (fun db -> mul db (unary Neg (binary Fdiv y b))) db)
   | Pow ->
+      (* a ** 0 is constant, and 0 ** b is constant along b wherever it is
+         defined. *)
+      let zero x = Nx.equal x (Nx.zeros_like x) in
       terms
-        (term (fun da -> mul da (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))) da)
-        (term (fun db -> mul db (Nx.mul y (Nx.log a))) db)
-  | Maximum -> selected y (Nx.less b a) da db
-  | Minimum -> selected y (Nx.less a b) da db
+        (term
+           (fun da ->
+             mul da
+               (zero_where (zero b) (Nx.mul b (Nx.pow a (Nx.sub_s b (one b))))))
+           da)
+        (term (fun db -> mul db (zero_where (zero a) (Nx.mul y (Nx.log a)))) db)
+  | Maximum -> selected y (Nx.logical_or (Nx.less b a) (Nx.isnan a)) da db
+  | Minimum -> selected y (Nx.logical_or (Nx.less a b) (Nx.isnan a)) da db
   | Atan2 ->
       let denom = Nx.add (Nx.mul a a) (Nx.mul b b) in
       terms
         (term (fun da -> mul da (Nx.div b denom)) da)
         (term (fun db -> mul db (Nx.neg (Nx.div a denom))) db)
-  | Mod -> no_rule op
+  | Mod -> no_rule i op
   | Idiv | And | Or | Xor -> assert false (* A plain result. *)
 
 (* [zeros_or dx x] is [x]'s tangent, or zeros like it if it has none. *)
@@ -369,13 +384,14 @@ let qr_square q r da =
 
 (* A tall or square A has R square. A wide A = [A₁ A₂] has R = [R₁ R₂], with A₁
    = Q R₁ square, so dR₂ = Qᴴ (dA₂ - dQ R₂). *)
-let qr' ~reduced x q r dx =
+let qr' i ~reduced x q r dx =
   let m = Nx.dim (-2) x and n = Nx.dim (-1) x in
   if m >= n then begin
     if (not reduced) && m > n then
       invalid_arg
-        "Rune: the tangent of a complete QR factorisation of a tall matrix has \
-         no definition";
+        (i.entry
+       ^ ": the tangent of a complete QR factorisation of a tall matrix has no \
+          definition");
     qr_square q r dx
   end
   else
@@ -431,7 +447,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       match[@warning "@4@8"] (k : Nx_backend.binary) with
       | Idiv | And | Or | Xor -> y
       | Add | Sub | Mul | Fdiv | Mod | Pow | Atan2 | Maximum | Minimum ->
-          dual i y (binary_tangent op k a b y da db))
+          dual i y (binary_tangent i op k a b y da db))
   | Compare (k, a, b) -> eval (Compare (k, primal i a, primal i b))
   | Where (c, a, b) ->
       let a, da = split i a and b, db = split i b in
@@ -538,14 +554,14 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Qr { reduced; x } ->
       let x, dx = unwrap i x in
       let q, r = eval (Qr { reduced; x }) in
-      let dq, dr = qr' ~reduced x q r dx in
+      let dq, dr = qr' i ~reduced x q r dx in
       (dual i q dq, dual i r dr)
   | Lu x ->
       let x, dx = unwrap i x in
-      if Nx.dim (-1) x <> Nx.dim (-2) x then no_rule op;
+      if Nx.dim (-1) x <> Nx.dim (-2) x then no_rule i op;
       let packed, pivots, perm = eval (Lu x) in
       (dual i packed (lu' packed perm dx), pivots, perm)
-  | Svd _ | Eig _ | Eigh _ -> no_rule op
+  | Svd _ | Eig _ | Eigh _ -> no_rule i op
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       let a, da = split i a and b, db = split i b in
       let x = eval (Solve_triangular { upper; transpose; unit_diag; a; b }) in
