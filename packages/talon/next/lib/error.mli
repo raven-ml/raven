@@ -62,7 +62,12 @@ val pp : Format.formatter -> t -> unit
 
     As in [flights.csv:48213:12: "NA": cannot read as float64.] and
     [zoneinfo/Europe/Paris: bytes 106-113: transition 1 is not after the
-     previous one]. *)
+     previous one].
+
+    A failure that a run finds in the data has none of these places: its message
+    starts with the plan step that found it, as [Query.pp] prints it, and the
+    row of the step's input it was found at, counted from [0]:
+    [filter (cast int32 x > 0): row 48212: cannot cast 3.5 to int32.] *)
 
 val get_ok : ('a, t) result -> 'a
 (** [get_ok r] is [v] if [r] is [Ok v].

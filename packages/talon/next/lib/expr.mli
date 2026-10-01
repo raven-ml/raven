@@ -397,6 +397,12 @@ val bind_out :
     not bind, and an output without a column type. Collisions between the
     outputs of one verb are the verb's to report. *)
 
+val bind_value : Schema.t -> ('a, row) t -> (('a, row) t, Problem.t list) result
+(** [bind_value s e] is like {!bind_predicate} at any typing: a {!const}, a
+    {!( $ )}, an {!option} or an {!of_option} result keeps the [Value] typing, a
+    literal its kind's default type, and an extension handle its extension
+    typing. [Query.values] binds with it. *)
+
 val out_name : 's out -> string option
 (** [out_name o] is [Some n] if [o] is [n := e], and [None] otherwise: the name
     an output has as written, before binding. *)

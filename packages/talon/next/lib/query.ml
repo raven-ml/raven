@@ -514,6 +514,12 @@ let unnest columns q =
     @ List.map (arg "%a is named twice." pp_name) (Problem.repeated columns));
   make (Unnest { columns; input = q })
 
+let check_values e q =
+  match Expr.bind_value q.schema e with
+  | Ok b -> b
+  | Error ps ->
+      fail "values" (input q) [ Written ((fun ppf -> Expr.pp ppf e), ps) ]
+
 (* Comparing *)
 
 let outputs_equal o0 o1 =

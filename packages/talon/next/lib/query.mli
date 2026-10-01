@@ -107,6 +107,16 @@ val make : node -> t
     holds conjuncts bound to its source's schema. The optimizer and the engine
     build steps with it. *)
 
+val pp_step : Format.formatter -> t -> unit
+(** [pp_step ppf q] formats [q]'s last step as {!pp} formats it in a plan,
+    without its inputs: what an error names. *)
+
+val check_values : ('a, Expr.row) Expr.t -> t -> ('a, Expr.row) Expr.t
+(** [check_values e q] is [e] bound to [q]'s schema ({!Expr.bind_value}).
+
+    Raises [Invalid_argument] with a report as a verb's, named [values], if [e]
+    has problems. *)
+
 val same : t -> t -> bool
 (** [same q0 q1] is {!equal} with tables compared physically, so it reads no
     data. The optimizer makes such plans one value. *)

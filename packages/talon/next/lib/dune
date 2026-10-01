@@ -21,7 +21,9 @@
   source
   join
   query
-  optimize)
+  optimize
+  eval
+  run)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

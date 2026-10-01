@@ -2153,6 +2153,45 @@ module Query : sig
       Its problems are an empty [cs], a name that names no column or is named
       twice, and a column that is not a list. *)
 
+  (** {1:running Running} *)
+
+  val fold : t -> init:'a -> ('a -> table -> 'a) -> ('a, Error.t) result
+  (** [fold q ~init f] runs [q]: it reads [q]'s sources, computes [q]'s rows in
+      batches and folds [f] over them, in order, from [init]. Each batch has at
+      least one row. The batches [f] sees depend on the batches of [q]'s inputs;
+      their rows in order do not. It optimizes [q] first ({!optimize}).
+
+      [Error e] where the run fails: a source's error, or one found in the data,
+      such as a cast that loses a value, [only] with two values or a join
+      assertion. A run fails as evaluating its optimized plan one row at a time
+      would, at the first row, in that order, where a step fails, whether an
+      error or an exception. Which failure is reported depends on the plan and
+      its inputs' values in order, never on batches or cores. [e] names the
+      step, as {!pp} prints it, and the row of the step's input.
+
+      A function of [q]'s expressions may be called on rows past a limit. Every
+      reader [fold] opens is closed when it returns, also when [f], a function
+      of [q]'s expressions or a source raises; the exception then propagates. *)
+
+  val run : t -> (table, Error.t) result
+  (** [run q] is [q]'s rows as one batch: [fold] into a table, then one copy
+      into a single batch. Its columns are canonical: offsets from [0], values
+      that are exactly the rows', validities at bit offset [0], so their
+      {!Column.layout}s do not depend on batches either. *)
+
+  val values : ('a, Expr.row) Expr.t -> t -> ('a array, Error.t) result
+  (** [values e q] is [e] on each row of [q], decoded to OCaml:
+      [values Expr.(const mk $ carrier $ option origin) q]. An extension value
+      is decoded with its declaration's [dec]. [q] reads only the columns [e]
+      reads.
+
+      [Error e] as for {!run}, and where [e] is null on a row, or a value is
+      outside what OCaml reads ({!Column.values}): read nullable values through
+      {!Expr.option}. [e] then names the step [values] followed by [e].
+
+      Raises [Invalid_argument] with a report like a verb's, named [values], if
+      [e] does not bind against [q]'s schema. *)
+
   (** {1:optimizing Optimizing} *)
 
   val optimize : t -> t

@@ -78,6 +78,9 @@ module Query = struct
   include Query
 
   let optimize = Optimize.query
+  let fold = Run.fold
+  let run = Run.run
+  let values = Run.values
 end
 
 module Kit = struct

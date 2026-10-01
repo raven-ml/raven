@@ -1,0 +1,283 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Talon_next
+
+type iop = Add | Sub | Mul | Div | Mod
+type fop = Fadd | Fsub | Fmul | Fdiv
+type cmp = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
+
+type 'a expr =
+  | Col : 'a Type.t * string -> 'a expr
+  | Lit : 'a Type.t * 'a -> 'a expr
+  | Null : 'a Type.t -> 'a expr
+  | Int : iop * int expr * int expr -> int expr
+  | Float : fop * float expr * float expr -> float expr
+  | Cmp : cmp * 'a expr * 'a expr -> bool expr
+  | And : bool expr * bool expr -> bool expr
+  | Or : bool expr * bool expr -> bool expr
+  | Not : bool expr -> bool expr
+  | If : bool expr * 'a expr * 'a expr -> 'a expr
+  | Is_null : 'a expr -> bool expr
+  | Coalesce : 'a expr list -> 'a expr
+  | Is_in : 'a list * 'a expr -> bool expr
+
+type out = Out : string * 'a expr -> out | Keep of string list
+
+type plan =
+  | Table of Talon_next.t
+  | Select of out list * plan
+  | Derive of out list * plan
+  | Filter of bool expr * plan
+  | Slice of { offset : int; length : int; plan : plan }
+  | Append of plan * plan
+
+let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
+ fun ty ->
+  let k = Type.kind ty in
+  let is k' = Kind.provably_equal k k' in
+  match (is Kind.int, is Kind.float, is Kind.bool, is Kind.string) with
+  | Some Equal, _, _, _ -> Some Expr.int
+  | _, Some Equal, _, _ -> Some Expr.float
+  | _, _, Some Equal, _ -> Some Expr.bool
+  | _, _, _, Some Equal -> Some Expr.string
+  | None, None, None, None -> (
+      match (is Kind.date, is Kind.instant, is Kind.span) with
+      | Some Equal, _, _ -> Some Expr.date
+      | _, Some Equal, _ -> Some Expr.instant
+      | _, _, Some Equal -> Some Expr.span
+      | None, None, None -> None)
+
+let rec type_of : type a. a expr -> a Type.t = function
+  | Col (ty, _) | Lit (ty, _) | Null ty -> ty
+  | Int (_, a, _) -> type_of a
+  | Float (_, a, _) -> type_of a
+  | If (_, a, _) -> type_of a
+  | Coalesce es -> type_of (List.hd es)
+  | Cmp _ -> Type.bool
+  | And _ -> Type.bool
+  | Or _ -> Type.bool
+  | Not _ -> Type.bool
+  | Is_null _ -> Type.bool
+  | Is_in _ -> Type.bool
+
+(* Translation *)
+
+let rec expr : type a. a expr -> (a, Expr.row) Expr.t = function
+  | Col (ty, n) -> Col.v (Type.kind ty) n
+  | Lit (ty, v) -> (Option.get (literal ty)) v
+  | Null _ -> Expr.null
+  | Int (op, a, b) ->
+      let op =
+        match op with
+        | Add -> Expr.( + )
+        | Sub -> Expr.( - )
+        | Mul -> Expr.( * )
+        | Div -> Expr.( / )
+        | Mod -> Expr.( mod )
+      in
+      op (expr a) (expr b)
+  | Float (op, a, b) ->
+      let op =
+        match op with
+        | Fadd -> Expr.( +. )
+        | Fsub -> Expr.( -. )
+        | Fmul -> Expr.( *. )
+        | Fdiv -> Expr.( /. )
+      in
+      op (expr a) (expr b)
+  | Cmp (op, a, b) ->
+      let op =
+        match op with
+        | `Eq -> Expr.( = )
+        | `Ne -> Expr.( <> )
+        | `Lt -> Expr.( < )
+        | `Le -> Expr.( <= )
+        | `Gt -> Expr.( > )
+        | `Ge -> Expr.( >= )
+      in
+      op (expr a) (expr b)
+  | And (a, b) -> Expr.(expr a && expr b)
+  | Or (a, b) -> Expr.(expr a || expr b)
+  | Not a -> Expr.not (expr a)
+  | If (c, a, b) -> Expr.if_ (expr c) (expr a) (expr b)
+  | Is_null a -> Expr.is_null (expr a)
+  | Coalesce es -> Expr.coalesce (List.map expr es)
+  | Is_in (vs, a) -> Expr.is_in vs (expr a)
+
+let out = function
+  | Out (n, e) -> Expr.(n := expr e)
+  | Keep ns -> Expr.keep (Sel.names ns)
+
+let rec query = function
+  | Table t -> Query.of_table t
+  | Select (os, p) -> Query.select (List.map out os) (query p)
+  | Derive (os, p) -> Query.derive (List.map out os) (query p)
+  | Filter (e, p) -> Query.filter (expr e) (query p)
+  | Slice { offset; length; plan } -> Query.slice ~offset ~length (query plan)
+  | Append (p, rest) -> Query.append (query rest) (query p)
+
+(* [derived cs outs] is the columns [cs] with [outs] in place of those of their
+   names, then the others. *)
+let derived cs outs =
+  List.map
+    (fun (n, c) -> (n, Option.value ~default:c (List.assoc_opt n outs)))
+    cs
+  @ List.filter (fun (n, _) -> not (List.mem_assoc n cs)) outs
+
+let rec schema = function
+  | Table t -> Schema.columns (Talon_next.schema t)
+  | Select (os, p) -> List.concat_map (out_schema (schema p)) os
+  | Derive (os, p) ->
+      let s = schema p in
+      derived s (List.concat_map (out_schema s) os)
+  | Filter (_, p) | Slice { plan = p; _ } | Append (p, _) -> schema p
+
+and out_schema s = function
+  | Out (n, e) -> [ (n, Type.Any (type_of e)) ]
+  | Keep ns -> List.map (fun n -> (n, List.assoc n s)) ns
+
+(* Evaluation *)
+
+type cell = Cell : 'a Type.t * 'a option -> cell
+type row = (string * cell) list
+
+let read : type a. a Type.t -> cell -> a option =
+ fun ty (Cell (ty', v)) ->
+  match Kind.provably_equal (Type.kind ty') (Type.kind ty) with
+  | Some Equal -> v
+  | None -> invalid_arg "Reference: a cell of another kind"
+
+(* [stored ty v] is the value [v] has once stored as [ty]. *)
+let stored : type a. a Type.t -> a -> a =
+ fun ty v ->
+  match ty with
+  | Float32 -> Int32.float_of_bits (Int32.bits_of_float v)
+  | _ -> v
+
+let signed bits v =
+  let m = 1 lsl bits in
+  let w = v land (m - 1) in
+  if w >= m / 2 then w - m else w
+
+(* OCaml's integers wrap modulo 2{^ 63}, which keeps the low 32 bits exact. *)
+let wrap : int Type.t -> int -> int =
+ fun ty v ->
+  match ty with
+  | Int8 -> signed 8 v
+  | Int16 -> signed 16 v
+  | Int32 -> signed 32 v
+  | Uint8 -> v land 0xff
+  | Uint16 -> v land 0xffff
+  | Uint32 -> v land 0xffff_ffff
+  | _ -> invalid_arg "Reference: arithmetic wider than 32 bits"
+
+let int ty op x y =
+  match op with
+  | Add -> Some (wrap ty (x + y))
+  | Sub -> Some (wrap ty (x - y))
+  | Mul -> Some (wrap ty (x * y))
+  | (Div | Mod) when y = 0 -> None
+  | Div -> Some (wrap ty (x / y))
+  | Mod -> Some (wrap ty (x mod y))
+
+let float ty op x y =
+  let r =
+    match op with
+    | Fadd -> x +. y
+    | Fsub -> x -. y
+    | Fmul -> x *. y
+    | Fdiv -> x /. y
+  in
+  stored ty r
+
+let compare (op : cmp) c =
+  match op with
+  | `Eq -> c = 0
+  | `Ne -> c <> 0
+  | `Lt -> c < 0
+  | `Le -> c <= 0
+  | `Gt -> c > 0
+  | `Ge -> c >= 0
+
+let rec eval : type a. row -> a expr -> a option =
+ fun row e ->
+  let both f a b =
+    match (eval row a, eval row b) with Some x, Some y -> f x y | _ -> None
+  in
+  match e with
+  | Col (ty, n) -> read ty (List.assoc n row)
+  | Lit (ty, v) -> Some (stored ty v)
+  | Null _ -> None
+  | Int (op, a, b) -> both (int (type_of a) op) a b
+  | Float (op, a, b) -> both (fun x y -> Some (float (type_of a) op x y)) a b
+  | Cmp (op, a, b) ->
+      both
+        (fun x y -> Some (compare op (Type.compare_value (type_of a) x y)))
+        a b
+  | And (a, b) -> (
+      match (eval row a, eval row b) with
+      | Some false, _ | _, Some false -> Some false
+      | Some true, Some true -> Some true
+      | _ -> None)
+  | Or (a, b) -> (
+      match (eval row a, eval row b) with
+      | Some true, _ | _, Some true -> Some true
+      | Some false, Some false -> Some false
+      | _ -> None)
+  | Not a -> Option.map not (eval row a)
+  | If (c, a, b) -> if eval row c = Some true then eval row a else eval row b
+  | Is_null a -> Some (Option.is_none (eval row a))
+  | Coalesce es -> List.find_map (eval row) es
+  | Is_in (vs, a) ->
+      let ty = type_of a in
+      let same x v = Type.compare_value ty x (stored ty v) = 0 in
+      Some
+        (Option.fold ~none:false
+           ~some:(fun x -> List.exists (same x) vs)
+           (eval row a))
+
+let out_cells row = function
+  | Out (n, e) -> [ (n, Cell (type_of e, eval row e)) ]
+  | Keep ns -> List.map (fun n -> (n, List.assoc n row)) ns
+
+let table_rows t =
+  let column (n, Type.Any ty) =
+    Array.map
+      (fun v -> (n, Cell (ty, v)))
+      (Column.options (Type.kind ty) (column t n))
+  in
+  let columns = List.map column (Schema.columns (Talon_next.schema t)) in
+  List.init (rows t) (fun i -> List.map (fun c -> c.(i)) columns)
+
+let rec rows : plan -> row list = function
+  | Table t -> table_rows t
+  | Select (os, p) ->
+      List.map (fun r -> List.concat_map (out_cells r) os) (rows p)
+  | Derive (os, p) ->
+      List.map (fun r -> derived r (List.concat_map (out_cells r) os)) (rows p)
+  | Filter (e, p) -> List.filter (fun r -> eval r e = Some true) (rows p)
+  | Slice { offset; length; plan } ->
+      let rs = rows plan in
+      let start = if offset < 0 then List.length rs + offset else offset in
+      List.filteri (fun i _ -> i >= start && i - start < length) rs
+  | Append (p, rest) -> rows p @ rows rest
+
+type column = Column : 'a Type.t * 'a option array -> column
+
+let run p =
+  let rs = rows p in
+  let column (n, Type.Any ty) =
+    ( n,
+      Column
+        (ty, Array.of_list (List.map (fun r -> read ty (List.assoc n r)) rs)) )
+  in
+  List.map column (schema p)
+
+let values e p =
+  let vs = List.map (fun r -> eval r e) (rows p) in
+  match List.find_index Option.is_none vs with
+  | Some i -> Error i
+  | None -> Ok (Array.of_list (List.map Option.get vs))

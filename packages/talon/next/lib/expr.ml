@@ -2064,6 +2064,12 @@ let typing e =
   | Some t -> t
   | None -> invalid_arg "Expr.typing: the expression is not bound"
 
+let bind_value schema e =
+  let env = env schema in
+  match resolve_value env e (elab env e) with
+  | Some (_, b) -> finish env (b :> (_, _) t)
+  | None -> Error (List.rev !(env.problems))
+
 let bind_out schema o =
   let env = env schema in
   finish env (outs env o)
