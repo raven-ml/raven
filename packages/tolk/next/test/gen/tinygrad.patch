@@ -14,7 +14,7 @@ index 2dd371d..fe528fb 100644
      t({dtypes.int8: 0, dtypes.uint8: 0, dtypes.bool: False})
      t({dtypes.int8: 1, dtypes.uint8: 1, dtypes.bool: True})
 diff --git a/tinygrad/codegen/__init__.py b/tinygrad/codegen/__init__.py
-index efb2e82..b4d1678 100644
+index efb2e82..aaf6999 100644
 --- a/tinygrad/codegen/__init__.py
 +++ b/tinygrad/codegen/__init__.py
 @@ -99,9 +99,15 @@ def broadcast_and_devec_wmma(b:UOp):
@@ -35,23 +35,7 @@ index efb2e82..b4d1678 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
-@@ -116,11 +122,13 @@ pm_expand_broadcast = pm_wmma_add+PatternMatcher([
- 
- def do_devectorize(b:UOp):
-   if b.shape == (): return None
-+  # a scalar value stands for every lane: a fold may drop a source's width after broadcasting was unpacked
-+  def scalar(x:UOp) -> bool: return x.shape == () and x.addrspace is AddrSpace.ALU
-   # broadcasting needs to be already unpacked, Invalid matches any dtype and shape
--  if not all(x.shape == b.shape or x.base.is_invalid for x in b.src): return None
-+  if not all(x.shape == b.shape or x.base.is_invalid or scalar(x) for x in b.src): return None
-   src = []
-   for idx_c in itertools.product(*[[UOp.const(i) for i in range(x)] for x in b.shape]):
--    src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x.index(*idx_c) for x in b.src)))
-+    src.append(b.replace(src=tuple(x.base if x.base.is_invalid else x if scalar(x) else x.index(*idx_c) for x in b.src)))
-   return UOp.stack(*src).reshape(b.shape) if b.op is not Ops.STORE else UOp.group(*src)
- 
- def do_stack_wmma(u:UOp):
-@@ -139,6 +147,8 @@ devectorizer2 = pm_mops+PatternMatcher([
+@@ -139,6 +145,8 @@ devectorizer2 = pm_mops+PatternMatcher([
    (UPat(GroupOp.Elementwise|{Ops.LOAD,Ops.STORE}, name="b"), do_devectorize),
    # INDEX without src is nothing (TODO: this should be in mop_cleanup)
    (UPat(Ops.INDEX, src=(UPat.var('x'),)), lambda x: x),

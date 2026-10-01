@@ -1633,7 +1633,7 @@ let lanes =
         (per_row ~only:compiles reads_no_lane_of_a_scalar);
     ]
 
-(* Vectors left after devectorize (D59) *)
+(* Vectors in programs (D58) *)
 
 let on_a_vector u =
   Op.Set.mem (Ops.op u) Op.Set.elementwise
@@ -1642,29 +1642,39 @@ let on_a_vector u =
 let applies_no_elementwise_operation_to_a_vector row =
   equal (list Uops.uop) [] (List.filter on_a_vector (instructions row))
 
-(* A machine without NVRTC refuses every source, saying it cannot load it. *)
-let compiles_for_cuda row =
-  let t = target (row "device") (row "renderer") (row "arch") in
-  match
-    Renderer.Compiler.compile (Cstyle.cuda t).compiler (source (program row))
-  with
-  | _ -> ()
-  | exception Renderer.Compiler.Compile_error why
-    when String.starts_with ~prefix:"failed to load library" why ->
-      skip ~reason:why ()
+(* A fold of an int8 [2; 2] to [2; 1], kernel [1; 2], dilation [1; 2] and
+   padding [(0, 0); (1, 1)], every window in the padding. In devectorize, the
+   gated load of each upcast lane folds to a scalar 0, and the select around it
+   stays a select of two lanes, as tinygrad's does, which the weak lowering
+   makes a cast of a stack of constants. *)
+let vector_select_kernel () =
+  let open Ops.O in
+  let out = Ops.param ~shape:[ Int 2 ] 0 Int8 in
+  let x = Ops.param ~shape:[ Int 4 ] 1 Int8 in
+  let l = Ops.range ~axis_type:Weak (Int 2) [ 2 ] in
+  let r0 = Ops.range ~axis_type:Reduce (Int 2) [ 0 ] in
+  let r1 = Ops.range ~axis_type:Reduce (Int 4) [ 1 ] in
+  let j = (r1 * int 3) + int 1 in
+  let gate =
+    (((r0 * int 2) + l < int 3) land (r1 < int 3))
+    land ((r0 < int 1) land (j % int 5 < int 1))
+  in
+  let read = Ops.index x [ Ops.valid ((j // int 5 * int 2) + l) (r1 < int 3) ] in
+  let value = Ops.where gate read (Ops.int ~dtype:Int8 0) in
+  let sum = Ops.reduce (Ops.cast value Uint32) Op.Add [ r0; r1 ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ l ]) (Ops.cast sum Int8)) [ l ] ]
 
 let vectors =
-  group "vectors left after devectorize (D59)"
+  group "vectors in programs (D58)"
     [
-      test
-        "a select whose lanes fold to a scalar is rendered as scalars for CUDA"
-        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_fold_cuda"));
-      test
-        "on the host, the program of a select whose lanes fold to a scalar \
-         writes what its kernel writes"
-        (runs_as_interpreted "invalid_lanes_fold");
-      slow "its CUDA source compiles with NVRTC" (fun () ->
-          compiles_for_cuda (row_named "invalid_lanes_fold_cuda"));
+      test "a cast left on two lanes after devectorize is refused" (fun () ->
+          Helpers.context
+            [ B (Helpers.spec, 1) ]
+            (fun () ->
+              raises_match
+                (Exn.invalid_arg ~substring:"on Ops.CAST")
+                (fun () -> Codegen.to_program (vector_select_kernel ()) clang)));
       group "no program applies an elementwise operation to a vector"
         (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
     ]

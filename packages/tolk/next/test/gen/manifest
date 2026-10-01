@@ -207,10 +207,6 @@ codegen/codegen/int8_metal.golden
 codegen/codegen/int8_metal_narrowed.golden
 codegen/codegen/invalid_lanes_clang.golden
 codegen/codegen/invalid_lanes_cuda.golden
-codegen/codegen/invalid_lanes_fold_clang.golden
-codegen/codegen/invalid_lanes_fold_cuda.golden
-codegen/codegen/invalid_lanes_fold_hip.golden
-codegen/codegen/invalid_lanes_fold_metal.golden
 codegen/codegen/invalid_lanes_hip.golden
 codegen/codegen/invalid_lanes_int8_clang.golden
 codegen/codegen/invalid_lanes_int8_cuda.golden

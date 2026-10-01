@@ -118,7 +118,7 @@ the Exclusions of `README.md`.
   `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
   `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:665`
   (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
-  `lib/codegen/codegen.ml:638` (`apply_opts`); `lib/engine/realize.ml:117`
+  `lib/codegen/codegen.ml:631` (`apply_opts`); `lib/engine/realize.ml:117`
   (`lower_and_compile`); `lib/runtime/support/hcq2.ml:416` (`device`),
   `:1875` (`pm_beam`), `:1892` (`compile_linear`); and
   `lib/runtime/support/compiler_metal.ml` (`Compiler_metal`).
@@ -204,7 +204,7 @@ the Exclusions of `README.md`.
   process is started with, and `to_program_cache`, which the parent fills).
 - **tolk.next:** `lib/engine/worker.ml:10` (`spawned`) and `:21` (`map`);
   `lib/helpers.ml:106` (`Context_var`) and `:133` (`context`);
-  `lib/codegen/codegen.ml:1025` (`to_program`'s cache);
+  `lib/codegen/codegen.ml:1018` (`to_program`'s cache);
   `lib/runtime/support/compiler_metal.ml:38` (`build`).
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
@@ -1681,46 +1681,23 @@ the Exclusions of `README.md`.
   of memory, which views it, stays allowed. `SPEC` defaults to 1
   and code generation checks every lowered kernel against `Spec.program`, so
   a kernel that still holds vector arithmetic fails at lowering, naming the
-  operation, on every target. Devectorize leaves none (D59), so the rule
-  rejects no kernel tinygrad or tolk.next lowers today.
+  operation, on every target. Devectorize leaves none while every source
+  keeps its width. A fold there can drop one: when every lane of a gated
+  load's index is `Invalid`, the load folds to a scalar `0`, and the select
+  around it stays a vector select, as in tinygrad, which the weak lowering
+  makes a vector cast of a stack of constants, and the rule refuses.
+  rune builds no such kernel, since it lowers a fold or an unfold whose
+  windows along an axis read only padding to zeros.
 - **Reason:** (b). CUDA's vectors are structs without arithmetic, casts or
   selects, so a vector operation left after devectorize is a kernel that does
   not compile there, and one Metal renders without complaint; rune compiles
   its kernels for both.
 - **Pinned by:** the `Spec` suite (`test/uop/spec`): `vectors in programs
   (D58) › a program has no elementwise operation on a vector` (add, cast and
-  where on two lanes, and the same on one); the `Codegen` suite's `vectors
-  left after devectorize (D59) › no program applies an elementwise operation
-  to a vector`, on every case.
-
-## D59. Devectorize reads a scalar source as every lane
-
-- **tinygrad:** `codegen/__init__.py:117-124` (`do_devectorize`, which
-  splits an elementwise operation, load or store into lanes only when every
-  source has its shape: broadcasting is unpacked a stage before).
-- **tolk.next:** `lib/codegen/codegen.ml:224` (`do_devectorize`), and
-  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
-- **Differs:** a source of shape `()` that is a value, not memory, is that
-  value in every lane. A fold in devectorize can drop a source's width after
-  broadcasting was unpacked: a load whose index is `Invalid` in every lane
-  folds to a scalar `0`. tinygrad then leaves the select around it a vector
-  select, and a vector cast of a stack of constants after the weak lowering,
-  which CUDA's vectors, structs without arithmetic, cannot render; tolk.next
-  splits it into scalar selects as any other.
-- **Reason:** (b). rune lowers `Nx.combine_patches` of int8 to such a
-  kernel when every window lies in the padding (output `[2; 1]`, kernel
-  `[1; 2]`, dilation `[1; 2]`, padding `[(0, 0); (1, 1)]`), and compiles
-  it for CUDA.
-- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `vectors
-  left after devectorize (D59) › a select whose lanes fold to a scalar is
-  rendered as scalars for CUDA`, `› on the host, the program of a select
-  whose lanes fold to a scalar writes what its kernel writes`, the slow `›
-  its CUDA source compiles with NVRTC` (skipped without NVRTC) and, on every
-  case, `› no program applies an elementwise operation to a vector`; and the
-  case `invalid_lanes_fold` of every target in `stages`, from the patched
-  tinygrad. In rune.next, the `Compiled` suite's `edges › a fold of int8
-  overlapping windows compiles` and its integer fold law, int8
-  included, on the host.
+  where on two lanes, and the same on one); the `Codegen` suite's `vectors in
+  programs (D58) › a cast left on two lanes after devectorize is refused`
+  and, on every case, `› no program applies an elementwise operation to a
+  vector`.
 
 ## D60. A loop of a call stays in the schedule
 
