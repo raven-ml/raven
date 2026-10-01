@@ -137,14 +137,15 @@
  (action
   (run %{exe:test_lower_reduce.exe} --tag slow)))
 
-; The compiled backend, and the rules under the compiled call, run on the host
-; by default; their Metal tests, the rules' rows and the backend's cost figures
-; are slow. CACHEDB is a directory of the sandbox, so that every
-; run compiles its programs.
+; The compiled backend, the rules under the compiled call and the compiled
+; call run on the host by default; their Metal tests, the rules' rows and the
+; backend's cost figures are slow. CACHEDB is a directory of the sandbox, so
+; that every run compiles its programs. reports.t pins the lines RUNE_JIT_DEBUG
+; prints, which the compiled call reads once.
 
 (tests
- (names test_compiled test_compiled_rules)
- (modules test_compiled test_compiled_rules metal)
+ (names test_compiled test_compiled_rules test_jit)
+ (modules test_compiled test_compiled_rules test_jit metal)
  (package rune)
  (libraries
   windtrap
@@ -194,29 +195,16 @@
    cache
    (run %{exe:test_compiled_rules.exe} --tag slow))))
 
-; The compiled call's suite runs on the host. reports.t pins the lines
-; RUNE_JIT_DEBUG prints, which the module reads once.
-
-(test
- (name test_jit)
- (modules test_jit)
+(rule
+ (alias slow)
  (package rune)
- (libraries
-  windtrap
-  rune.next
-  rune_next_test
-  nx_test
-  nx
-  nx.device
-  nx.dtype
-  tolk.next)
  (deps
   (sandbox always))
  (action
   (setenv
    CACHEDB
    cache
-   (run %{test} --exclude-tag slow))))
+   (run %{exe:test_jit.exe} --tag slow))))
 
 (executable
  (name reports)

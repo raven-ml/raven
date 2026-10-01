@@ -1077,6 +1077,119 @@ let scans =
           equal close (Rune.grad' f a) (Rune.jit' (Rune.grad' f) a));
     ]
 
+(* One device *)
+
+(* The calls whose bytes and memory a device counts, on [d]: the test devices by
+   default, Metal in the slow run. *)
+let on_one_device ~name d =
+  let block (w1, w2) a = Nx.add a (Nx.matmul (Nx.relu (Nx.matmul a w1)) w2) in
+  group name
+    [
+      test "a call runs where its arguments lie, and leaves its results there"
+        (fun () ->
+          let r = Rune.jit' poly (placed d (x ())) in
+          is_true (Nx.Placement.equal (on d) (Nx.placement r));
+          equal close (poly (x ())) (host r));
+      test "a placed argument feeds a call with no transfer" (fun () ->
+          let g = Rune.jit' poly in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          ignore (g a);
+          equal int before (bytes_in d));
+      test "a placed view is read where it lies" (fun () ->
+          let a = Nx.transpose (placed d (grid 2 3)) in
+          let r = Rune.jit' poly a in
+          equal close (poly (Nx.transpose (grid 2 3))) (host r));
+      test
+        "a float16 argument starting 2 bytes further retraces once, and is \
+         read where it lies" (fun () ->
+          let g = Rune.jit' poly in
+          let a = placed d (Nx.cast Nx.float16 (arange 12)) in
+          let read lo () =
+            let v = Nx.slice [ R (lo, lo + 4) ] a in
+            equal close
+              (Nx.cast Nx.float32
+                 (poly
+                    (Nx.slice
+                       [ R (lo, lo + 4) ]
+                       (Nx.cast Nx.float16 (arange 12)))))
+              (Nx.cast Nx.float32 (host (g v)))
+          in
+          retraces (read 0) (read 1));
+      test "a consumed placed argument lends its storage" (fun () ->
+          let a = placed d (x ()) in
+          let before = Witness.addresses a in
+          let r = Rune.jit consumes (fun a -> Nx.add_s a 1.) a in
+          equal (list nativeint) before (Witness.addresses r);
+          equal close (Nx.add_s (x ()) 1.) (host r));
+      test "a capture placed where the call computes is bound, not uploaded"
+        (fun () ->
+          let w = placed d (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          equal close (Nx.mul (x ()) (y ())) (host (g a));
+          equal int before (bytes_in d));
+      test "a loop consuming its state holds two generations of it" (fun () ->
+          let n = 1 lsl 16 in
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s = ref (placed d (Nx.zeros Nx.float32 [| n |])) in
+          s := step !s;
+          let base = allocated d in
+          for _ = 1 to 20 do
+            s := step !s
+          done;
+          at_most ~msg:"bytes allocated across 20 steps" int ~than:(4 * n)
+            (allocated d - base);
+          equal floats (Nx.full Nx.float32 [| n |] 21.) (host !s));
+      slow "a compiled gradient through remats keeps under half the activations"
+        (fun () ->
+          let layers = 8 and batch = 256 and dim = 32 in
+          let hidden = 8 * dim in
+          let weights =
+            List.init layers (fun i ->
+                let w r c =
+                  placed d
+                    (Nx.mul_s
+                       (Nx.Rng.with_key (Nx.Rng.key i) (fun () ->
+                            Nx.randn Nx.float32 [| r; c |]))
+                       0.05)
+                in
+                (w dim hidden, w hidden dim))
+          in
+          let a = placed d (Nx.ones Nx.float32 [| batch; dim |]) in
+          let loss remat a =
+            Nx.sum
+              (List.fold_left
+                 (fun a w ->
+                   if remat then
+                     Rune.remat Nx.Ptree.(tensor @-> returns tensor) (block w) a
+                   else block w a)
+                 a weights)
+          in
+          let peak remat =
+            let g = Rune.jit' (Rune.grad' (loss remat)) in
+            Gc.full_major ();
+            let base = allocated d in
+            let r = g a in
+            let used = allocated d - base in
+            ignore (host r);
+            used
+          in
+          let plain = peak false and recomputed = peak true in
+          less
+            ~msg:
+              (Printf.sprintf "%d bytes with remat, %d without" recomputed plain)
+            int ~than:(plain / 2) recomputed);
+    ]
+
+let metal =
+  match Metal.device with
+  | Some m -> on_one_device ~name:"metal" (Nx.Device.of_runtime m)
+  | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
+
 let () =
   exit
     (run "Rune_next.Jit"
@@ -1092,5 +1205,7 @@ let () =
          transformations;
          placement;
          scans;
+         on_one_device ~name:"one device" d4;
+         group ~tags:[ "slow" ] "metal" [ metal ];
          group ~tags:[ "slow" ] "swept" [ values ~count:25 ~heavy:true ];
        ])
