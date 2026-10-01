@@ -235,9 +235,12 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
 (* [rebuilder ()] is [(value, assign)]: [value u] is [u] with each node [assign]
    paired with an image replaced by it, through one memo, so that a node several
    values reach is rebuilt once. Every node is assigned before [value] reaches a
-   node above it. *)
+   node above it: [assign] raises [Invalid_argument] for a node a rebuild read
+   below another, whose rebuild would keep the node unreplaced. *)
 let rebuilder () =
-  let images = Ops.Tbl.create 16 and memo = Ops.Tbl.create 64 in
+  let images = Ops.Tbl.create 16
+  and memo = Ops.Tbl.create 64
+  and below = Ops.Tbl.create 64 in
   let rec value u =
     match Ops.Tbl.find_opt images u with
     | Some v -> v
@@ -247,6 +250,7 @@ let rebuilder () =
         | None ->
             let src = Ops.src u in
             let src' = List.map value src in
+            List.iter (fun s -> Ops.Tbl.replace below s ()) src;
             let v =
               if List.for_all2 ( == ) src src' then u
               else Ops.replace u ~src:src'
@@ -254,7 +258,12 @@ let rebuilder () =
             Ops.Tbl.add memo u v;
             v)
   in
-  (value, fun u v -> Ops.Tbl.replace images u v)
+  let assign u v =
+    if Ops.Tbl.mem below u then
+      invalid_arg "Jit: a result is assigned after a rebuild read it";
+    Ops.Tbl.replace images u v
+  in
+  (value, assign)
 
 (* [ordered ~leaves nodes lent] is [lent] with pairs given up until the stores
    have an order, and that order of the results. A lent result is written over
