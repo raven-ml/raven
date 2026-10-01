@@ -217,6 +217,23 @@
  (action
   (run %{exe:test_jit.exe} --tag slow)))
 
+; Quantised products under the compiled call and the transformations, on the
+; host and test devices by default and on Metal in the slow alias.
+
+(test
+ (name test_quant)
+ (modules test_quant)
+ (package rune)
+ (libraries windtrap rune.next rune_next_test nx_test nx nx.quant nx.device)
+ (action
+  (run %{test} --exclude-tag slow)))
+
+(rule
+ (alias slow)
+ (package rune)
+ (action
+  (run %{exe:test_quant.exe} --tag slow)))
+
 (executable
  (name reports)
  (modules reports)

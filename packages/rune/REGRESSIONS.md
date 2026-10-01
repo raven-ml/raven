@@ -760,6 +760,32 @@ The eager-against-compiled rows of this file are the Compiled section's.
 | old: test_half.ml two devices › * | narrow floats over two devices | J › placement › a split argument computes on each device, and stays split |
 | old: test_half.ml vmap › * | narrow floats under a map | dropped: the batching suite's rows at every dtype |
 
+### test_quant.ml, compiled
+
+The suite is `Rune_next.Quant` (`next/test/test_quant.ml`), written `Q` below: the compiled product against eager's, on the host, on test devices with placements, and on Metal (`Q › metal › …`, slow), and its derivatives and maps against the product with the dequantised weight. Its tests are expected failures until rune.next answers nx.quant's effect.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_quant.ml Law 2 › without ids | products without ids | Q › values › compiled, a product is eager's › without ids, matrices; without ids, batch axes broadcast; without ids, a vector |
+| old: test_quant.ml Law 2 › fewer positions than experts | gathered experts, and positions that select none | Q › values › compiled, a product is eager's › fewer positions than experts; ids outside the experts, over a vector; a lane of experts per batch row |
+| old: test_quant.ml Law 2 › as many positions as experts or more | every expert selected | Q › values › compiled, a product is eager's › as many positions as experts or more |
+| old: test_quant.ml Law 2 › grouped | many routes of one row | Q › values › compiled, a product is eager's › many routes of one row |
+| old: test_quant.ml Law 2 › transposed | the transposed product | Q › values › compiled, a product is eager's › transposed |
+| old: test_quant.ml Law 2 › the largest scales | infinite values | Q › values › compiled, a product is eager's › the largest scales |
+| old: test_quant.ml Law 2 › empty | no positions | Q › compiled, a product over no positions is empty |
+| old: test_quant.ml Law 2 › float16 x | a float16 x | Q › values › compiled, a product of a float16 x is eager's |
+| old: test_quant.ml Law 2 › compiled dequant | dequant compiled | Q › values › compiled, dequant is eager's bit for bit › float32; bfloat16 |
+| old: test_quant.ml Law 2 › one token's experts are gathered | one token among many experts | Q › values › compiled, one token's four experts among 32 are its product (the count of operations is a form: a form the compiled product takes, which only a fused kernel has; nx.quant's effect is answered by a composition of nx's operations, fused only if decoding needs it) |
+| old: test_quant.ml Law 2 › the kernel; Law 2 › past the row bound; Law 2 › the row bound chooses the kernel; Law 2 › each product takes its form | the fused kernel and its forms | dropped: a form the compiled product takes, which only a fused kernel has; nx.quant's effect is answered by a composition of nx's operations, fused only if decoding needs it |
+| old: test_quant.ml placement › place splits at the format's blocks | a weight placed at its blocks | dropped: `Nx_quant.place` is eager, nx's suite (`nx quant › placements › *`); a placed weight compiled: Q › placements › dequant of a weight placed on a device is eager's bit for bit |
+| old: test_quant.ml rules › grad with respect to x | the gradient in x | Q › rules › the gradient in x is the dense product's, eager and compiled › without ids; with ids |
+| old: test_quant.ml rules › grad through a sum over the positions | a cotangent broadcast over positions | Q › rules › the gradient through a sum over the positions is the dense product's |
+| old: test_quant.ml rules › jvp | the tangent in x | Q › rules › the tangent in x is the dense product's, eager and compiled › without ids; with ids |
+| old: test_quant.ml rules › the weight is never differentiated | a differentiated weight | Q › a weight built from a differentiated value contributes no derivative |
+| old: test_quant.ml rules › vmap | maps of the product | Q › rules › a map over x is each row's product, eager and compiled; a map over routes and rows is each one's product, compiled; a map over weights is each weight's product, compiled |
+| old: test_quant.ml rules › over two devices | placed routes, rows and experts | Q › placements › routes and rows split over two devices give eager's product › *; Q › placements › experts split over two devices give eager's product; experts split under routes split over two devices give eager's product |
+| old: test_tensor_parallel.ml expert parallelism › each device multiplies its experts' routes | experts split over four devices | Q › placements › sixteen experts over four devices, four each, give eager's product |
+
 ### test_remat_memory.ml
 
 | Source | Behaviour | Outcome |
