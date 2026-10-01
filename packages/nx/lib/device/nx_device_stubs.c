@@ -138,6 +138,8 @@ static _Atomic intnat heap_live;
 static _Atomic intnat held_at_cycle;
 static _Atomic intnat collected_at_cycle;
 
+static void heap_trim(void);
+
 /* Called at the end of each major cycle. */
 value caml_nx_device_heap_cycle(value unit) {
   (void)unit;
@@ -150,6 +152,7 @@ value caml_nx_device_heap_cycle(value unit) {
                                             memory_order_relaxed));
   atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
   atomic_fetch_add_explicit(&heap_epoch, 1, memory_order_relaxed);
+  heap_trim();
   return Val_unit;
 }
 
@@ -214,11 +217,37 @@ static void heap_unlink(struct heap_entry *e) {
 
 static mlsize_t heap_cycle_bytes(void);
 
+/* The most the cache holds now. */
+static size_t heap_cache_cap(void) {
+  size_t cap = heap_cycle_bytes();
+  return cap < HEAP_CACHE_FLOOR ? HEAP_CACHE_FLOOR : cap;
+}
+
+/* Unlinks the least recently kept buffers until the cache holds at most [cap]
+   bytes, and is them, linked by [older]. The lock is held. */
+static struct heap_entry *heap_over(size_t cap) {
+  struct heap_entry *dropped = NULL;
+  while (heap_cached > cap) {
+    struct heap_entry *old = heap_oldest;
+    heap_unlink(old);
+    old->older = dropped;
+    dropped = old;
+  }
+  return dropped;
+}
+
+static void heap_free_list(struct heap_entry *e) {
+  while (e) {
+    struct heap_entry *next = e->older;
+    free(e);
+    e = next;
+  }
+}
+
 /* Keeps the [n] bytes at [data], or gives back the least recently kept. */
 static void heap_keep(void *data, size_t n) {
-  size_t cap = heap_cycle_bytes();
-  if (cap < HEAP_CACHE_FLOOR) cap = HEAP_CACHE_FLOOR;
-  struct heap_entry *e = data, *dropped = NULL;
+  size_t cap = heap_cache_cap();
+  struct heap_entry *e = data;
   heap_cache_acquire();
   e->n = n;
   e->older = heap_newest;
@@ -227,18 +256,20 @@ static void heap_keep(void *data, size_t n) {
   else heap_oldest = e;
   heap_newest = e;
   heap_cached += n;
-  while (heap_cached > cap) {
-    struct heap_entry *old = heap_oldest;
-    heap_unlink(old);
-    old->older = dropped;
-    dropped = old;
-  }
+  struct heap_entry *dropped = heap_over(cap);
   heap_cache_release();
-  while (dropped) {
-    struct heap_entry *next = dropped->older;
-    free(dropped);
-    dropped = next;
-  }
+  heap_free_list(dropped);
+}
+
+/* Gives back the least recently kept buffers until the cache holds at most
+   what it may now: run as a major cycle ends, so that a program that stops
+   freeing buffers does not keep the share of a working set it dropped. */
+static void heap_trim(void) {
+  size_t cap = heap_cache_cap();
+  heap_cache_acquire();
+  struct heap_entry *dropped = heap_over(cap);
+  heap_cache_release();
+  heap_free_list(dropped);
 }
 
 /* The most recently kept buffer of exactly [n] bytes, or NULL. */
@@ -272,11 +303,7 @@ static void heap_drop_all(void) {
   heap_newest = heap_oldest = NULL;
   heap_cached = 0;
   heap_cache_release();
-  while (e) {
-    struct heap_entry *next = e->older;
-    free(e);
-    e = next;
-  }
+  heap_free_list(e);
 }
 
 /* The runtime's operations of bigarrays. The runtime exports them but declares
@@ -301,22 +328,19 @@ static void heap_finalize(value v) {
 }
 
 static struct custom_operations heap_ops;
-static atomic_int heap_ops_ready;
 
-static const struct custom_operations *heap_bigarray_ops(void) {
-  if (!atomic_load_explicit(&heap_ops_ready, memory_order_acquire)) {
-    struct custom_operations ops = caml_ba_ops;
-    ops.finalize = heap_finalize;
-    heap_ops = ops;
-    atomic_store_explicit(&heap_ops_ready, 1, memory_order_release);
-  }
-  return &heap_ops;
+/* Builds the operations, once, as the module initializes. */
+value caml_nx_device_heap_init(value unit) {
+  (void)unit;
+  heap_ops = caml_ba_ops;
+  heap_ops.finalize = heap_finalize;
+  return Val_unit;
 }
 
 /* The [n] bytes at [data], from [malloc], as a [char] bigarray that keeps
    them once collected. */
 static value heap_bigarray(void *data, size_t n) {
-  value ba = caml_alloc_custom(heap_bigarray_ops(),
+  value ba = caml_alloc_custom(&heap_ops,
                                SIZEOF_BA_ARRAY + sizeof(intnat), n,
                                heap_cycle_bytes());
   struct caml_ba_array *b = Caml_ba_array_val(ba);

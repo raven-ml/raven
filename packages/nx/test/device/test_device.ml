@@ -966,6 +966,24 @@ let memory =
           equal ~msg:"the view keeps its bytes" string (pattern 7 n)
             (string_of view));
       test
+        "the host's cache gives back a dropped working set within a cycle, \
+         with no buffer freed after it" (fun () ->
+          let mib = 1 lsl 20 in
+          (* 160 buffers of about 1 MiB, of distinct sizes, held live through a
+             cycle and then dropped: the cache may keep a cycle's share of them,
+             more than 32 MiB, until the next cycle ends. *)
+          dropped (fun () ->
+              let held =
+                List.init 160 (fun i ->
+                    B.create host S.UInt8 (mib + (i * page)))
+              in
+              Gc.full_major ();
+              held);
+          Gc.full_major ();
+          Gc.full_major ();
+          is_true ~msg:"at most the floor" (cached host <= 32 * mib);
+          Nx_device.free_cache host);
+      test
         "a buffer of up to max_int bytes that its device cannot allocate \
          raises Out_of_memory" (fun () ->
           let small = (fake ~budget:1000 ()).dev and n = (1 lsl 58) + 1 in

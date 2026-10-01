@@ -311,6 +311,9 @@ external heap_cached : unit -> (int[@untagged])
 [@@noalloc]
 
 external heap_drop : unit -> unit = "caml_nx_device_heap_drop" [@@noalloc]
+external heap_init : unit -> unit = "caml_nx_device_heap_init" [@@noalloc]
+
+let () = heap_init ()
 
 (* The collector is paced by the bytes host buffers hold live, which the end of
    each major cycle measures: the cycle finalises a block that measures them
