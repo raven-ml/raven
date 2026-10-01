@@ -1,0 +1,8 @@
+(test
+ (name test_types)
+ (package talon)
+ (libraries windtrap talon.next nx unix)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_types.ml test_types.ml.corrected))))
