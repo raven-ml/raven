@@ -153,7 +153,9 @@ let types =
   group "Types"
     [
       test "numbers align right, stored values outside int in full" (fun () ->
-          expect (show numbers) @@ __POS_OF__ {|
+          expect (show numbers)
+          @@ __POS_OF__
+               {|
             table 3 rows × 6 columns
              bool   int8  int64                 wide                  uint64                decimal
              bool   int8  int64                 int64                 uint64                decimal[5, 2]
@@ -162,7 +164,10 @@ let types =
              ∅         ∅                     ∅                     0                     1              ∅
             |});
       test "text shows as it reads, controls and non-UTF-8 bytes escaped"
-        (fun () -> expect (show texts) @@ __POS_OF__ {|
+        (fun () ->
+          expect (show texts)
+          @@ __POS_OF__
+               {|
           table 6 rows × 3 columns
            string      binary      category
            string      binary      categorical["low", "high"]
@@ -174,7 +179,9 @@ let types =
            ∅           \x7f        high
           |});
       test "temporal values show in their text form" (fun () ->
-          expect (show temporal) @@ __POS_OF__ {|
+          expect (show temporal)
+          @@ __POS_OF__
+               {|
             table 4 rows × 5 columns
              date          clock      duration      datetime                       zoned
              date          clock[ms]  duration[ns]  datetime[ns]                   datetime[ms, UTC]
@@ -184,7 +191,9 @@ let types =
              ∅             ∅          ∅             ∅                              1969-12-31T00:00:00Z
             |});
       test "lists, records, tensors and extensions" (fun () ->
-          expect (show compound) @@ __POS_OF__ {|
+          expect (show compound)
+          @@ __POS_OF__
+               {|
             table 2 rows × 4 columns
              list          record                    tensor              uuid
              list[string]  record[x int8, s string]  tensor[float32, 3]  ext[uuid, string]
@@ -192,7 +201,9 @@ let types =
              []            <record>                  <tensor>            1e
             |});
       test "the floats of a column share their decimals" (fun () ->
-          expect (show floats) @@ __POS_OF__ {|
+          expect (show floats)
+          @@ __POS_OF__
+               {|
             table 5 rows × 7 columns
              mean     fraction       tiny         huge          special  float32     float16
              float64  float64        float64      float64       float64  float32     float16
@@ -204,6 +215,34 @@ let types =
             |});
     ]
 
+(* [float_cell x] is the cell display shows for [x] alone in a column. *)
+let float_cell x =
+  let t = v [ ("x", Column.v Type.float64 [| x |]) ] in
+  String.trim (List.nth (String.split_on_char '\n' (show t)) 3)
+
+(* A value below 0.1 in magnitude, once rounded to six significant digits, needs
+   more than six decimals, and one of 10^16 or more has integer digits that are
+   not all its own: either shows its column in scientific notation. *)
+let float_cuts =
+  cases
+    ~name:(fun (x, _) -> Printf.sprintf "%.17g" x)
+    "Scientific cut"
+    [
+      (0.1, "0.100000");
+      (0.099, "9.90000e-02");
+      (-0.099, "-9.90000e-02");
+      (0.09999996, "0.100000");
+      (99.99996, "100.000");
+      (123456., "123456");
+      (1234567., "1234567");
+      (9999999999999998., "9999999999999998");
+      (1e16, "1.00000e+16");
+      (-1e16, "-1.00000e+16");
+      (1e-300, "1.00000e-300");
+      (Float.min_float /. 2., "1.11254e-308");
+    ]
+    (fun (x, expected) -> equal string expected (float_cell x))
+
 (* Elision *)
 
 let rows_limits = { Talon_next.limits with head = 2; tail = 1 }
@@ -212,7 +251,9 @@ let elision =
   group "Elision"
     [
       test "past head + tail rows, the first and the last" (fun () ->
-          expect (show (v [ ("i", int8s 12) ])) @@ __POS_OF__ {|
+          expect (show (v [ ("i", int8s 12) ]))
+          @@ __POS_OF__
+               {|
             table 12 rows × 1 column
              i
              int8
@@ -231,7 +272,8 @@ let elision =
             |});
       test "head + tail rows show in full" (fun () ->
           expect (show ~limits:rows_limits (v [ ("i", int8s 3) ]))
-          @@ __POS_OF__ {|
+          @@ __POS_OF__
+               {|
             table 3 rows × 1 column
              i
              int8
@@ -241,7 +283,8 @@ let elision =
             |});
       test "one row past head + tail" (fun () ->
           expect (show ~limits:rows_limits (v [ ("i", int8s 4) ]))
-          @@ __POS_OF__ {|
+          @@ __POS_OF__
+               {|
             table 4 rows × 1 column
              i
              int8
@@ -253,7 +296,9 @@ let elision =
             |});
       test "no head and no tail" (fun () ->
           let limits = { rows_limits with head = 0; tail = 0 } in
-          expect (show ~limits (v [ ("i", int8s 2) ])) @@ __POS_OF__ {|
+          expect (show ~limits (v [ ("i", int8s 2) ]))
+          @@ __POS_OF__
+               {|
             table 2 rows × 1 column
              i
              int8
@@ -263,7 +308,9 @@ let elision =
       test "past columns columns, a line naming the others" (fun () ->
           let name i = String.make 1 (Char.chr (Char.code 'a' + i)) in
           let t = v (List.init 14 (fun i -> (name i, int8s 1))) in
-          expect (show t) @@ __POS_OF__ {|
+          expect (show t)
+          @@ __POS_OF__
+               {|
             table 1 row × 14 columns
              a     b     c     d     e     f     g     h     i     j     k     l
              int8  int8  int8  int8  int8  int8  int8  int8  int8  int8  int8  int8
@@ -273,7 +320,8 @@ let elision =
       test "no column shown" (fun () ->
           let limits = { Talon_next.limits with columns = 0 } in
           expect (show ~limits (v [ ("a", int8s 2); ("b c", int8s 2) ]))
-          @@ __POS_OF__ {|
+          @@ __POS_OF__
+               {|
             table 2 rows × 2 columns
              2 columns not shown: a, "b c"
             |});
@@ -289,7 +337,9 @@ let elision =
                 );
               ]
           in
-          expect (show ~limits t) @@ __POS_OF__ {|
+          expect (show ~limits t)
+          @@ __POS_OF__
+               {|
             table 3 rows × 2 columns
              a_l…  n
              str…  lis…
@@ -300,13 +350,17 @@ let elision =
       test "a table without columns or rows" (fun () ->
           expect (show (v [])) @@ __POS_OF__ {| table 0 rows × 0 columns |});
       test "a column without rows" (fun () ->
-          expect (show (v [ ("", int8s 0) ])) @@ __POS_OF__ {|
+          expect (show (v [ ("", int8s 0) ]))
+          @@ __POS_OF__
+               {|
             table 0 rows × 1 column
              ""
              int8
             |});
       test "one row and one column" (fun () ->
-          expect (show (v [ ("x", int8s 1) ])) @@ __POS_OF__ {|
+          expect (show (v [ ("x", int8s 1) ]))
+          @@ __POS_OF__
+               {|
             table 1 row × 1 column
              x
              int8
@@ -330,10 +384,14 @@ let limits_cases =
       test "pp is pp_with limits" (fun () ->
           let t = v [ ("i", int8s 40) ] in
           equal text (show t) (Format.asprintf "%a" pp t));
-      refuse "a negative head" { l with head = -1 } @@ __POS_OF__ {| Talon.pp_with: head is -1, negative |};
-      refuse "a negative tail" { l with tail = -1 } @@ __POS_OF__ {| Talon.pp_with: tail is -1, negative |};
-      refuse "negative columns" { l with columns = -2 } @@ __POS_OF__ {| Talon.pp_with: columns is -2, negative |};
-      refuse "a width of zero" { l with width = 0 } @@ __POS_OF__ {| Talon.pp_with: width is 0, not positive |};
+      refuse "a negative head" { l with head = -1 }
+      @@ __POS_OF__ {| Talon.pp_with: head is -1, negative |};
+      refuse "a negative tail" { l with tail = -1 }
+      @@ __POS_OF__ {| Talon.pp_with: tail is -1, negative |};
+      refuse "negative columns" { l with columns = -2 }
+      @@ __POS_OF__ {| Talon.pp_with: columns is -2, negative |};
+      refuse "a width of zero" { l with width = 0 }
+      @@ __POS_OF__ {| Talon.pp_with: width is 0, not positive |};
     ]
 
 (* Laws *)
@@ -429,6 +487,7 @@ let () =
        [
          types;
          elision;
+         float_cuts;
          limits_cases;
          group "Laws" [ blind_to_batching; reads_back ];
        ])

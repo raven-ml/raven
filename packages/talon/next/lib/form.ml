@@ -166,21 +166,15 @@ type width = { p : int; emin : int; max : float }
 let half = { p = 11; emin = -14; max = 65504. }
 let single = { p = 24; emin = -126; max = 0x1.fffffep127 }
 
-(* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
+(* [nearest w v] is the value of width [w] nearest to [v], for a [v] that is not
+   halfway between two of them. *)
 let nearest w v =
   let biased =
     Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float v) 52)
   in
   let e = Int.max ((biased land 0x7FF) - 1023) w.emin in
   let ulp = Float.ldexp 1. (e - w.p + 1) in
-  let q = v /. ulp in
-  let r = Float.round q in
-  let r =
-    if Float.abs (r -. q) = 0.5 && Float.rem r 2. <> 0. then
-      r -. Float.copy_sign 1. q
-    else r
-  in
-  let r = r *. ulp in
+  let r = Float.round (v /. ulp) *. ulp in
   if Float.abs r > w.max then Float.copy_sign Float.infinity v else r
 
 (* [magnitude s] is the significant digits of the decimal number [s], without
@@ -522,69 +516,6 @@ let parse (Type.Any ty as any) c =
 (* Printing *)
 
 let pp_text ppf s = Format.pp_print_string ppf s
-
-(* Floats write without an exponent from 10^-7 up to 10^21. *)
-let min_positional = -7
-let max_positional = 21
-
-(* [exponent_of s] is the exponent of the [%e] text [s]. *)
-let exponent_of s =
-  let e = String.index s 'e' in
-  int_of_string (String.sub s (e + 1) (String.length s - e - 1))
-
-(* [positional s] is the [%e] text [s] without its exponent when the exponent is
-   in [min_positional, max_positional): [1.5e+02] is [150], [1.5e-03] is
-   [0.0015]. *)
-let positional s =
-  let e = String.index s 'e' and exp = exponent_of s in
-  if exp < min_positional || exp >= max_positional then s
-  else
-    let negative = s.[0] = '-' in
-    let mantissa =
-      String.sub s (Bool.to_int negative) (e - Bool.to_int negative)
-    in
-    let digits = String.concat "" (String.split_on_char '.' mantissa) in
-    let n = String.length digits in
-    let text =
-      if exp >= n - 1 then digits ^ String.make (exp - n + 1) '0'
-      else if exp >= 0 then
-        String.sub digits 0 (exp + 1)
-        ^ "."
-        ^ String.sub digits (exp + 1) (n - exp - 1)
-      else "0." ^ String.make (-exp - 1) '0' ^ digits
-    in
-    if negative then "-" ^ text else text
-
-(* [shortest reads x] is the text of [x] in the fewest significant digits that
-   [reads] reads back as [x]. *)
-let shortest reads x =
-  let rec loop p =
-    let s = Printf.sprintf "%.*e" (p - 1) x in
-    if p = 17 || Float.equal (reads s) x then positional s else loop (p + 1)
-  in
-  loop 1
-
-let read_narrow w s =
-  let n = String.length s in
-  let b = A1.create Bigarray.int8_unsigned Bigarray.c_layout n in
-  String.iteri (fun i c -> A1.unsafe_set b i (Char.code c)) s;
-  let a = A1.create Bigarray.float64 Bigarray.c_layout 1 in
-  narrow w b 0 n a 0;
-  nearest w (A1.unsafe_get a 0)
-
-let pp_float : type a. a Type.t -> Format.formatter -> float -> unit =
- fun ty ppf x ->
-  if Float.is_nan x then pp_text ppf "nan"
-  else if Float.is_finite x then
-    let text =
-      match ty with
-      | Float16 -> shortest (read_narrow half) (nearest half x)
-      | Float32 -> shortest (read_narrow single) (nearest single x)
-      | _ -> shortest float_of_string x
-    in
-    pp_text ppf text
-  else pp_text ppf (if x > 0. then "inf" else "-inf")
-
 let rec pow10_64 k = if k = 0 then 1L else Int64.mul 10L (pow10_64 (k - 1))
 
 (* [at_scale scale d] is [d], which is exact at [scale], written with [scale]
@@ -633,7 +564,6 @@ let pp : type a. a Type.t -> Format.formatter -> a -> unit =
       Type.pp_lit k ppf v
   | _, Bool -> Format.pp_print_bool ppf v
   | _, Int -> Format.pp_print_int ppf v
-  | _, Float -> pp_float ty ppf v
   | _, String -> pp_text ppf v
   | _, Date -> Time.Date.pp ppf v
   | _, k -> Type.pp_lit k ppf v
@@ -722,6 +652,11 @@ let max_decimals = 6
 
 (* Past 10^16 a float64's integer digits are no longer all its own. *)
 let max_fixed = 1e16
+
+(* [exponent_of s] is the exponent of the [%e] text [s]. *)
+let exponent_of s =
+  let e = String.index s 'e' in
+  int_of_string (String.sub s (e + 1) (String.length s - e - 1))
 
 (* [exponent x] is the decimal exponent of [x] rounded to six significant
    digits: [2] for [99.99996], which rounds to [100.000]. *)
