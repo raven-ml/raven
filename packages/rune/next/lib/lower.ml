@@ -208,6 +208,10 @@ type scope = {
   mutable captures : capture list;
   mutable writes : Ops.t list;
   mutable arguments : Ops.t list;
+  stuck : unit Ops.Tbl.t;
+      (* Nodes that read an argument, a write, a copy or storage that is no
+         capture: they cannot follow their use. *)
+  followed : (Placement.t * Ops.t option) list Ops.Tbl.t;
 }
 
 let scope ~renderer =
@@ -218,6 +222,8 @@ let scope ~renderer =
     captures = [];
     writes = [];
     arguments = [];
+    stuck = Ops.Tbl.create 64;
+    followed = Ops.Tbl.create 16;
   }
 
 let devices s = List.rev s.names
@@ -544,6 +550,8 @@ let capture s what p x =
     bind s what (Nx.placement x) x
   else placed s what (context p) x
 
+exception Uncomputed
+
 (* [follow s q u] is [u] computed on each device of [q] when it reads only
    captures, which are then copied there once, rather than computed where it
    lies and copied on every call. [None] when [u] reads anything else, or when a
@@ -557,23 +565,27 @@ let follow s q u =
   in
   let seen = Ops.Tbl.create 16 and read = ref [] in
   let rec visit v =
+    if Ops.Tbl.mem s.stuck v then raise Exit;
     if not (Ops.Tbl.mem seen v) then begin
       Ops.Tbl.add seen v ();
-      if not (computes v) then raise Exit;
+      if not (computes v) then raise Uncomputed;
       (match Ops.op v with
       | Op.Buffer -> (
           match capture_of v with
           | Some c when List.length c.buffers = 1 -> read := c :: !read
-          | Some _ | None -> raise Exit)
+          | Some _ | None -> stuck v)
       | Op.Param | Op.Alloc | Op.Call | Op.After | Op.Store | Op.Copy
       | Op.Mselect | Op.Mstack | Op.Unshard | Op.Allreduce ->
-          raise Exit
+          stuck v
       | _ -> ());
-      List.iter visit (Ops.src v)
+      try List.iter visit (Ops.src v) with Exit -> stuck v
     end
+  and stuck v =
+    Ops.Tbl.replace s.stuck v ();
+    raise Exit
   in
   match visit u with
-  | exception Exit -> None
+  | exception (Exit | Uncomputed) -> None
   | () when !read = [] -> None
   | () ->
       let moved c =
@@ -607,6 +619,16 @@ let follow s q u =
       in
       Some (Ops.substitute u (List.map moved !read))
 
+(* [followed s q u] is [follow s q u], once per trace. *)
+let followed s q u =
+  let known = Option.value ~default:[] (Ops.Tbl.find_opt s.followed u) in
+  match List.find_opt (fun (q', _) -> Placement.equal q q') known with
+  | Some (_, v) -> v
+  | None ->
+      let v = follow s q u in
+      Ops.Tbl.replace s.followed u ((q, v) :: known);
+      v
+
 (* [node s what p x] is the node of the operand [x] of an operation at [p]. A
    traced value on other devices is computed there when it reads only captures,
    and copied there otherwise, as nx places a host operand of an operation on a
@@ -617,7 +639,7 @@ let node s what p x =
       let u = uop x in
       if same_devices (Nx.placement x) p then u
       else
-        match follow s (context p) u with
+        match followed s (context p) u with
         | Some u -> u
         | None -> Ops.copy_to_device u (device_of s p))
   | Repr.Host _ | Repr.Placed _ -> capture s what p x
@@ -651,7 +673,7 @@ let place s what p q x =
         | Ops.Multi names -> Ops.shard ~axis u names
         | Ops.Single _ as d -> Ops.copy_to_device u d)
     | One | Copies -> (
-        match follow s q u with
+        match followed s q u with
         | Some u -> u
         | None -> Ops.copy_to_device u (device_of s q))
 

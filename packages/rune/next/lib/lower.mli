@@ -101,7 +101,8 @@ val op : scope -> 'r Nx.Op.t -> 'r
     another placement is copied to the result's devices, as nx places a host
     operand of an operation on a device, on every call; a traced operand that
     reads only captures is instead computed on those devices, its captures
-    copied there once.
+    copied there once, so its values carry their arithmetic and may differ from
+    eager's in the last bits.
 
     An operand that is not traced is a capture, bound the first time [s] meets
     its storage and view at a placement:
