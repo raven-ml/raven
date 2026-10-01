@@ -2677,8 +2677,9 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     upper-triangular factor [U] such that [a = Uᴴ U]; otherwise (default)
     returns the lower-triangular factor [L] such that [a = L Lᴴ], where [ᴴ] is
     the conjugate transpose, the transpose on real matrices. Whichever factor
-    is returned, only the lower triangle of [a] is read, its diagonal included;
-    the strictly upper triangle may hold anything.
+    is returned, only the lower triangle of [a] and the real part of its
+    diagonal are read; the strictly upper triangle and the diagonal's imaginary
+    parts may hold anything.
 
     Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
     positive-definite. Raises [Invalid_argument] if [a] is not square or the
@@ -2750,9 +2751,10 @@ val eigh :
 (** [eigh ?uplo a] is [(w, v)], the eigenvalues and eigenvectors of the real
     symmetric or complex Hermitian matrix [a]: [w] holds the eigenvalues, real,
     in ascending order, and the columns of [v], of [a]'s dtype, are orthonormal
-    eigenvectors, [a v = v diag(w)]. Only the triangle [uplo] names is read, the
-    lower one by default ([`L]) or the upper one ([`U]), with the diagonal; the
-    other may hold anything. More efficient than {!eig} for symmetric matrices.
+    eigenvectors, [a v = v diag(w)]. Only the triangle [uplo] names, the lower
+    one by default ([`L]) or the upper one ([`U]), and the real part of the
+    diagonal are read; the other triangle and the diagonal's imaginary parts may
+    hold anything. More efficient than {!eig} for symmetric matrices.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.
@@ -2771,7 +2773,7 @@ val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
 val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
 (** [eigvalsh ?uplo a] is the eigenvalues of the real symmetric or complex
     Hermitian matrix [a], real, in ascending order. Only the triangle [uplo]
-    names is read, as in {!eigh}.
+    names and the real part of the diagonal are read, as in {!eigh}.
 
     Raises [Invalid_argument] if [a] is not square or the dtype is not
     floating-point or complex.

@@ -57,6 +57,13 @@ let symmetric n =
 
 let sized f = Gen.bind dim f
 
+(* [z] with [3i] added to each element of its diagonal. *)
+let imaginary_diagonal z =
+  Nx.add z
+    (Nx.mul_s
+       (Nx.cast (Nx.dtype z) (identity_like z))
+       Complex.{ re = 0.; im = 3. })
+
 (* Reference products *)
 
 let matmul_ref (a : float Ref.t) (b : float Ref.t) =
@@ -526,13 +533,15 @@ let factorizations =
           in
           let l = Nx.cholesky z in
           let c = close ~rel:1e-9 ~abs:1e-9 () in
-          equal
-            (tensor
-               (Testable.contramap
-                  (fun (w : Complex.t) -> (w.re, w.im))
-                  (pair c c)))
-            z
-            (l *@ Nx.conjugate (t l)));
+          let complex =
+            tensor
+              (Testable.contramap
+                 (fun (w : Complex.t) -> (w.re, w.im))
+                 (pair c c))
+          in
+          equal complex z (l *@ Nx.conjugate (t l));
+          equal ~msg:"L ignores the diagonal's imaginary parts" complex l
+            (Nx.cholesky (imaginary_diagonal z)));
       test "cholesky refuses a matrix that is not positive definite" (fun () ->
           raises_match
             (function
@@ -651,6 +660,40 @@ let factorizations =
             (Nx.cast Nx.complex128 (identity_like v))
             (Nx.conjugate (t v) *@ v);
           equal near w (Nx.eigvalsh h));
+      prop
+        "eigh and eigvalsh read the real part of a complex diagonal, and no \
+         element of the other triangle"
+        (Gen.pair (sized (fun n -> complex_matrix ~batch n n)) Gen.bool)
+        (fun (z, upper) ->
+          let h =
+            Nx.mul_s
+              (Nx.add z (Nx.conjugate (t z)))
+              Complex.{ re = 0.5; im = 0. }
+          in
+          let junk = Nx.full_like h Complex.{ re = 1e300; im = -1e300 } in
+          let kept, uplo =
+            if upper then (Nx.add (Nx.triu h) (Nx.tril ~k:(-1) junk), `U)
+            else (Nx.add (Nx.tril h) (Nx.triu ~k:1 junk), `L)
+          in
+          let noisy = imaginary_diagonal kept in
+          let w, v = Nx.eigh ~uplo noisy in
+          equal near_complex (h *@ v)
+            (Nx.mul v (Nx.unsqueeze ~axes:[ -2 ] (Nx.cast Nx.complex128 w)));
+          equal near w (Nx.eigvalsh h);
+          equal near w (Nx.eigvalsh ~uplo noisy));
+      test
+        "eigh scales a tiny float32 matrix by its read triangle alone, however \
+         large the other" (fun () ->
+          let a =
+            Nx.mul_s
+              (Nx.create Nx.float32 [| 3; 3 |]
+                 [| 2.; 1.; 0.5; 1.; 3.; 0.25; 0.5; 0.25; 4. |])
+              1e-15
+          in
+          let noisy = Nx.add (Nx.tril a) (Nx.triu ~k:1 (Nx.full_like a 3e38)) in
+          equal
+            (tensor (close ~rel:1e-5 ()))
+            (Nx.eigvalsh a) (Nx.eigvalsh noisy));
       test "qr without a mode is the reduced factorization" (fun () ->
           let q, r = Nx.qr (Nx.ones Nx.float64 [| 5; 3 |]) in
           equal (array int) [| 5; 3 |] (Nx.shape q);

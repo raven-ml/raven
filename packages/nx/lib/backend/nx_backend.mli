@@ -379,7 +379,9 @@ module type S = sig
   val cholesky :
     upper:bool -> ('a, 'b) Nx_array.t -> dst:('a, 'b) Nx_array.t -> unit
   (** [cholesky ~upper x ~dst] writes the factor of the positive-definite [x]
-      into [dst]: [L] with [x = L Lᴴ], or [U] with [x = Uᴴ U] under [upper].
+      into [dst]: [L] with [x = L Lᴴ], or [U] with [x = Uᴴ U] under [upper]. [x]
+      is the Hermitian matrix that its lower triangle and the real part of its
+      diagonal name: no other element is read.
 
       Raises {!Linalg_error} [`Not_positive_definite] if [x] is not
       positive-definite. *)
@@ -454,7 +456,8 @@ module type S = sig
   (** [eigh x ~values ~vectors] writes the eigenvalues of the symmetric or
       Hermitian [x] into [values] and, when [vectors] is given, its
       eigenvectors, of [x]'s dtype, into them. Without [vectors] the kernel does
-      not accumulate them.
+      not accumulate them. [x] is the Hermitian matrix that its lower triangle
+      and the real part of its diagonal name: no other element is read.
 
       Raises {!Linalg_error} [`No_convergence] if the iteration does not
       converge. *)

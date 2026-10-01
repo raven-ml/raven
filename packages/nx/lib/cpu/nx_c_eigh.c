@@ -1695,6 +1695,36 @@ typedef struct {
   nx_c_status *werr;
 } la_eigh_ctx;
 
+/* The Hermitian matrix eigh decomposes is the one the lower triangle of the
+   n×n matrix a (row stride ld) names, with the real part of its diagonal:
+   la_hermitian zeroes the diagonal's imaginary parts, and la_amax_lower is the
+   largest magnitude of that triangle, NaN if it holds one. The strict upper
+   triangle is never read. */
+static void la_hermitian(la_compute lc, void *a, int64_t n, int64_t ld) {
+  if (lc == LA_C32)
+    for (int64_t i = 0; i < n; i++) {
+      nx_c_complex32 *z = (nx_c_complex32 *)a + i * ld + i;
+      *z = crealf(*z);
+    }
+  else if (lc == LA_C64)
+    for (int64_t i = 0; i < n; i++) {
+      nx_c_complex64 *z = (nx_c_complex64 *)a + i * ld + i;
+      *z = creal(*z);
+    }
+}
+
+static double la_amax_lower(la_compute lc, const void *a, int64_t n,
+                            int64_t ld) {
+  int64_t csize = la_desc[lc].csize;
+  double amax = 0.0;
+  for (int64_t i = 0; i < n; i++) {
+    double v = la_amax(lc, (const char *)a + i * ld * csize, 1, i + 1, ld);
+    if (isnan(v)) return v;
+    if (v > amax) amax = v;
+  }
+  return amax;
+}
+
 static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   la_eigh_ctx *x = (la_eigh_ctx *)vctx;
   const la_compute_desc *cd = &la_desc[x->lc];
@@ -1722,7 +1752,10 @@ static void la_eigh_body(int64_t lo, int64_t hi, int worker, void *vctx) {
     la_batch_base(bt, x->batch_nd, x->bshape, x->w_bs, x->w->offset,
                   (int64_t)sizeof(double), (const char *)x->w->data, &wb);
     mv->unpack(inb, x->in_rs, x->in_cs, n, n, work, n);
-    double cs = la_range_scale(x->lc, la_amax(x->lc, work, n, n, n));
+    la_hermitian(x->lc, work, n, n);
+    /* The scale comes from the read triangle, and scaling the whole matrix may
+       turn the unread one into infinities: harmless, since nothing reads it. */
+    double cs = la_range_scale(x->lc, la_amax_lower(x->lc, work, n, n));
     if (cs != 1.0) la_scale(x->lc, work, n, n, n, cs);
     cd->tridiag(work, n, n, d, e, tau, wv, tW, tWc, tP, tg);
     if (!x->vectors || x->use_dc) {

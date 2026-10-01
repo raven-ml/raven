@@ -2889,6 +2889,13 @@ thread.
 
 ### Nx
 
+- `Nx.eigh` and `Nx.eigvalsh` read only the real part of a complex matrix's
+  diagonal, as their documentation now says and as `Nx.cholesky` already did.
+  They used its imaginary parts too, so a complex matrix that was not exactly
+  Hermitian gave a different decomposition from the Hermitian matrix its
+  triangle names. Their range scaling also no longer reads the triangle they
+  ignore, which made a tiny float32 matrix lose precision when that triangle
+  held large values.
 - An NV device gives mapped memory (`Nx_device.Buffer.create
   ~memory:Mapped`): GPU memory the host writes through BAR1. Under the
   driver-less interface with a 256 MiB BAR, or once the kernel driver's BAR1
