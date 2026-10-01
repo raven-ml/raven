@@ -2922,6 +2922,11 @@ thread.
 
 ### Nx
 
+- Complex `div` and `recip` compute by Smith's algorithm, as OCaml's
+  `Complex.div` does, on every platform. They used C's division, whose
+  runtime gives a NaN part where the quotient's is zero when the other part
+  overflows: on Linux, `(0 + 2^-50 i) / (0 - 2^-1074 i)` was `-inf + nan i`
+  where it is `-inf + 0 i`.
 - A host program on x86_64 that calls a function more than 2 GiB from its code,
   such as the host's own 16-bit float conversions, no longer crashes: the jump
   the loader writes for such a call read its target 2 bytes before the address

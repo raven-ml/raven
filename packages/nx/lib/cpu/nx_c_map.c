@@ -370,6 +370,35 @@ static inline int nx_c_f2i4_u(double v) {
   NX_C_NEG_##cat(sfx, storage, compute, ld, st)
 NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_NEG_KROW)
 
+/* Complex division by Smith's algorithm, as OCaml's Complex.div computes it:
+   the divisor's larger part divides its smaller, so that no intermediate
+   overflows or underflows where the quotient's parts do not. C's operator calls
+   the platform's runtime (__divdc3), whose scaling gives a NaN part where the
+   quotient's is 0: (0 + 2^-50 i) / (0 - 2^-1074 i) is -inf + NaN i with
+   glibc's libgcc. */
+static inline nx_c_complex32 nx_c_cdiv32(nx_c_complex32 a, nx_c_complex32 b) {
+  float ar = crealf(a), ai = cimagf(a), br = crealf(b), bi = cimagf(b);
+  if (fabsf(br) >= fabsf(bi)) {
+    float r = bi / br, d = br + r * bi;
+    return CMPLXF((ar + r * ai) / d, (ai - r * ar) / d);
+  }
+  float r = br / bi, d = bi + r * br;
+  return CMPLXF((r * ar + ai) / d, (r * ai - ar) / d);
+}
+
+static inline nx_c_complex64 nx_c_cdiv64(nx_c_complex64 a, nx_c_complex64 b) {
+  double ar = creal(a), ai = cimag(a), br = creal(b), bi = cimag(b);
+  if (fabs(br) >= fabs(bi)) {
+    double r = bi / br, d = br + r * bi;
+    return CMPLX((ar + r * ai) / d, (ai - r * ar) / d);
+  }
+  double r = br / bi, d = bi + r * br;
+  return CMPLX((r * ar + ai) / d, (r * ai - ar) / d);
+}
+
+#define NX_C_CDIV(a, b)                                                        \
+  _Generic((a), nx_c_complex32: nx_c_cdiv32, nx_c_complex64: nx_c_cdiv64)(a, b)
+
 #define NX_C_RECIP_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                  \
   NX_C_UK(recip, sfx, storage, compute, ld, st, ((vx) == 0 ? 0 : 1 / (vx)))
 #define NX_C_RECIP_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                  \
@@ -377,7 +406,7 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_NEG_KROW)
 #define NX_C_RECIP_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                 \
   NX_C_UK(recip, sfx, storage, compute, ld, st, ((compute)1 / (vx)))
 #define NX_C_RECIP_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)               \
-  NX_C_UK(recip, sfx, storage, compute, ld, st, ((compute)1 / (vx)))
+  NX_C_UK(recip, sfx, storage, compute, ld, st, NX_C_CDIV((compute)1, (vx)))
 #define NX_C_RECIP_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_RECIP_KROW(sfx, storage, compute, ld, st, cat)                     \
   NX_C_RECIP_##cat(sfx, storage, compute, ld, st)
@@ -611,7 +640,7 @@ static const nx_c_map_table nx_c_idiv_table = {
 #define NX_C_FDIV_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                  \
   NX_C_BK(fdiv, sfx, storage, compute, ld, st, ((va) / (vb)))
 #define NX_C_FDIV_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)                \
-  NX_C_BK(fdiv, sfx, storage, compute, ld, st, ((va) / (vb)))
+  NX_C_BK(fdiv, sfx, storage, compute, ld, st, NX_C_CDIV((va), (vb)))
 #define NX_C_FDIV_NX_C_CAT_SINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_UINT(sfx, storage, compute, ld, st)
 #define NX_C_FDIV_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)

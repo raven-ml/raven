@@ -581,6 +581,12 @@ let complex_numbers =
             (Ref.witness (complex_close ~rel:1e-14))
             (Ref.map2 Complex.div (Ref.of_nx a) rb)
             (Ref.of_nx (Nx.div a b)));
+      test "div keeps a zero part where the other part overflows" (fun () ->
+          let c re im = Nx.create Nx.complex128 [||] [| { Complex.re; im } |] in
+          let q = Nx.item [] (Nx.div (c 0. 0x1p-50) (c 0. (-0x1p-1074))) in
+          equal
+            (pair float_exact float_exact)
+            (Float.neg_infinity, 0.) (q.re, q.im));
       prop
         "real, imag, magnitude, angle and conjugate agree with Stdlib.Complex"
         complexes (fun z ->
