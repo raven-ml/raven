@@ -2901,6 +2901,9 @@ thread.
 
 ### Nx
 
+- `Nx.Device.runtime` is the runtime device whose buffers hold a device's
+  placed values, the inverse of `Nx.Device.of_runtime`, for compiled calls
+  that allocate on the devices their trace names.
 - **Breaking:** `Nx.correlate` and `Nx.convolve` change which values of the
   full correlation `` `Same `` and `` `Valid `` keep, as their documentation now
   states. With an even kernel of size `k`, `` `Same `` correlates each element

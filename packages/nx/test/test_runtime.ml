@@ -28,6 +28,10 @@ let devices =
           is_true (Nx.Device.of_runtime r1 == d1);
           equal string "R1" (Nx.Device.name d1);
           is_false (Nx.Device.equal d1 d2));
+      test "a device's runtime is the runtime it was opened from" (fun () ->
+          is_true (Nx.Device.runtime Nx.Device.host == Nx_device.host);
+          is_true (Nx.Device.runtime d1 == r1);
+          is_true (Nx.Device.runtime d2 == r2));
       test
         "the host shares the runtimes' memory: a copy on it and on a runtime \
          computes and reads back" (fun () ->

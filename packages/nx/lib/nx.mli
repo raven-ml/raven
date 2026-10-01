@@ -316,6 +316,14 @@ module Device : sig
       window at a time, when the window is a contiguous run of the value's
       storage, and through the host otherwise. *)
 
+  val runtime : t -> Nx_device.t
+  (** [runtime d] is the runtime device whose buffers hold [d]'s placed values:
+      [runtime (of_runtime rd)] is [rd], and [runtime host] is
+      [Nx_device.host].
+
+      Raises [Invalid_argument] if [d] holds its values in memory of its own,
+      as a device another library opens does. *)
+
   exception Out_of_memory of t * int
   (** Raised by an operation, a {!place} or a compiled call when a device cannot
       allocate the given number of bytes. *)

@@ -935,6 +935,7 @@ module Device = struct
               opened := (rd, d) :: !opened;
               d)
 
+  let runtime = runtime_of
   let is_host = is_host_device
   let name d = d.d_name
   let memory d = d.d_memory
