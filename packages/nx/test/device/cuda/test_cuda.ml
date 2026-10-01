@@ -112,8 +112,10 @@ let opening =
       starts_with ~affix:"sm_" (Nx_device.arch d);
       greater int ~than:0 (Nx_device.budget d);
       is_true (Nx_cuda_device.v 0 == d);
-      starts_with ~affix:"CUDA: no device"
-        (require_error (Nx_cuda_device.get (Nx_cuda_device.count ())));
+      let n = Nx_cuda_device.count () in
+      starts_with
+        ~affix:(Printf.sprintf "CUDA:%d: no such device" n)
+        (require_error (Nx_cuda_device.get n));
       is_true ~msg:"no driver objects for the host"
         (Option.is_none (Nx_cuda_device.of_device Nx_device.host)))
 
