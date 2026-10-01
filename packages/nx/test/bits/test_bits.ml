@@ -47,16 +47,16 @@ let model d =
       (d.bytes.(k / 8) lsr (k mod 8)) land 1 = 1)
 
 let bitmap d =
-  Nx.Bits.v ~offset:d.offset ~length:d.length
+  Nx_bits.v ~offset:d.offset ~length:d.length
     (Nx.create Nx.uint8 [| Array.length d.bytes |] d.bytes)
 
-let bits b = Nx.to_array (Nx.Bits.to_bool b)
+let bits b = Nx.to_array (Nx_bits.to_bool b)
 let mask m = Nx.create Nx.bool [| Array.length m |] m
 let bools = Gen.array ~size:(Gen.int_range 0 40) Gen.bool
 
 let bytes_of b =
-  let bytes, offset = Nx.Bits.bytes b in
-  { bytes = Nx.to_array bytes; offset; length = Nx.Bits.length b }
+  let bytes, offset = Nx_bits.bytes b in
+  { bytes = Nx.to_array bytes; offset; length = Nx_bits.length b }
 
 (* Bitmaps *)
 
@@ -68,11 +68,11 @@ let packing =
       prop "to_bool reads back what of_bool packs" bools
         (Law.round_trip (array bool)
            (Testable.contramap bits (array bool))
-           (fun m -> Nx.Bits.of_bool (mask m))
+           (fun m -> Nx_bits.of_bool (mask m))
            bits);
       prop "of_bool packs eight bits a byte from bit 0 of the first byte" bools
         (fun m ->
-          let d = bytes_of (Nx.Bits.of_bool (mask m)) in
+          let d = bytes_of (Nx_bits.of_bool (mask m)) in
           equal int 0 d.offset;
           equal int ((Array.length m + 7) / 8) (Array.length d.bytes);
           equal (array bool) m (model d));
@@ -86,43 +86,43 @@ let packing =
           equal int ((back.offset + d.length + 7) / 8) (Array.length back.bytes);
           equal (array bool) (model d) (model back));
       prop "length is the number of bits" drawn (fun d ->
-          equal int d.length (Nx.Bits.length (bitmap d)));
+          equal int d.length (Nx_bits.length (bitmap d)));
       prop "count is the number of bits set in the range" drawn (fun d ->
           let set = Array.fold_left (fun n b -> if b then n + 1 else n) 0 in
           equal int64
             (Int64.of_int (set (model d)))
-            (Nx.item [] (Nx.Bits.count (bitmap d))));
+            (Nx.item [] (Nx_bits.count (bitmap d))));
       test "count ignores every bit of a byte outside a range within it"
         (fun () ->
           let b =
-            Nx.Bits.v ~offset:3 ~length:2
+            Nx_bits.v ~offset:3 ~length:2
               (Nx.create Nx.uint8 [| 1 |] [| 0xFF |])
           in
-          equal int64 2L (Nx.item [] (Nx.Bits.count b)));
+          equal int64 2L (Nx.item [] (Nx_bits.count b)));
       test "a bitmap of no bit counts none" (fun () ->
           equal int64 0L
-            (Nx.item [] (Nx.Bits.count (Nx.Bits.of_bool (mask [||])))));
+            (Nx.item [] (Nx_bits.count (Nx_bits.of_bool (mask [||])))));
       cases "v refuses bytes that do not hold the bits" ~name:fst
         [
           ( "bytes of two axes",
-            fun () -> Nx.Bits.v ~length:1 (Nx.zeros Nx.uint8 [| 1; 1 |]) );
+            fun () -> Nx_bits.v ~length:1 (Nx.zeros Nx.uint8 [| 1; 1 |]) );
           ( "a negative offset",
             fun () ->
-              Nx.Bits.v ~offset:(-1) ~length:1 (Nx.zeros Nx.uint8 [| 1 |]) );
+              Nx_bits.v ~offset:(-1) ~length:1 (Nx.zeros Nx.uint8 [| 1 |]) );
           ( "a negative length",
-            fun () -> Nx.Bits.v ~length:(-1) (Nx.zeros Nx.uint8 [| 1 |]) );
+            fun () -> Nx_bits.v ~length:(-1) (Nx.zeros Nx.uint8 [| 1 |]) );
           ( "one bit past the bytes",
-            fun () -> Nx.Bits.v ~offset:3 ~length:6 (Nx.zeros Nx.uint8 [| 1 |])
+            fun () -> Nx_bits.v ~offset:3 ~length:6 (Nx.zeros Nx.uint8 [| 1 |])
           );
         ]
         (fun (_, f) -> raises_invalid_arg f);
       test "v takes bits that end at the last bit of the bytes" (fun () ->
           equal int 13
-            (Nx.Bits.length
-               (Nx.Bits.v ~offset:3 ~length:13 (Nx.zeros Nx.uint8 [| 2 |]))));
+            (Nx_bits.length
+               (Nx_bits.v ~offset:3 ~length:13 (Nx.zeros Nx.uint8 [| 2 |]))));
       test "of_bool refuses a mask of two axes" (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Bits.of_bool (Nx.zeros Nx.bool [| 2; 2 |])));
+              Nx_bits.of_bool (Nx.zeros Nx.bool [| 2; 2 |])));
     ]
 
 (* Logic *)
@@ -135,19 +135,19 @@ let logic =
           cover "one offset" (a.offset mod 8 = b.offset mod 8);
           cover "two offsets" (a.offset mod 8 <> b.offset mod 8);
           equal (array bool) (pointwise ( && ) a b)
-            (bits (Nx.Bits.logand (bitmap a) (bitmap b))));
+            (bits (Nx_bits.logand (bitmap a) (bitmap b))));
       prop "logor is the disjunction of the bits" two (fun (a, b) ->
           equal (array bool) (pointwise ( || ) a b)
-            (bits (Nx.Bits.logor (bitmap a) (bitmap b))));
+            (bits (Nx_bits.logor (bitmap a) (bitmap b))));
       prop "lognot flips every bit" drawn (fun d ->
           equal (array bool)
             (Array.map not (model d))
-            (bits (Nx.Bits.lognot (bitmap d))));
+            (bits (Nx_bits.lognot (bitmap d))));
       test "logand and logor refuse bitmaps of different lengths" (fun () ->
-          let a = Nx.Bits.of_bool (mask [| true; false |])
-          and b = Nx.Bits.of_bool (mask [| true |]) in
-          raises_invalid_arg (fun () -> Nx.Bits.logand a b);
-          raises_invalid_arg (fun () -> Nx.Bits.logor a b));
+          let a = Nx_bits.of_bool (mask [| true; false |])
+          and b = Nx_bits.of_bool (mask [| true |]) in
+          raises_invalid_arg (fun () -> Nx_bits.logand a b);
+          raises_invalid_arg (fun () -> Nx_bits.logor a b));
     ]
 
 (* Selecting *)
@@ -198,15 +198,15 @@ let selecting =
       prop "sub is the bits of the range" range (fun (d, o, n) ->
           equal (array bool)
             (Array.sub (model d) o n)
-            (bits (Nx.Bits.sub (bitmap d) ~offset:o ~length:n)));
+            (bits (Nx_bits.sub (bitmap d) ~offset:o ~length:n)));
       prop "sub shares the bytes" range (fun (d, o, n) ->
           let b = bitmap d in
           assume (n > 0);
           is_true
             (share_memory
                (storage
-                  (fst (Nx.Bits.bytes (Nx.Bits.sub b ~offset:o ~length:n))))
-               (storage (fst (Nx.Bits.bytes b)))));
+                  (fst (Nx_bits.bytes (Nx_bits.sub b ~offset:o ~length:n))))
+               (storage (fst (Nx_bits.bytes b)))));
       cases "sub refuses a range outside the bits" ~name:fst
         [
           ("a negative offset", (-1, 1));
@@ -215,8 +215,8 @@ let selecting =
         ]
         (fun (_, (offset, length)) ->
           raises_invalid_arg (fun () ->
-              Nx.Bits.sub
-                (Nx.Bits.of_bool (mask [| true; true; true; true; true |]))
+              Nx_bits.sub
+                (Nx_bits.of_bool (mask [| true; true; true; true; true |]))
                 ~offset ~length));
       prop
         "take reads the bit at each index, and an unset bit outside the range"
@@ -230,14 +230,14 @@ let selecting =
           in
           equal (array bool) expected
             (bits
-               (Nx.Bits.take
+               (Nx_bits.take
                   ~indices:(Nx.create Nx.int64 [| Array.length i |] i)
                   (bitmap d))));
       test "take refuses indices of two axes" (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Bits.take
+              Nx_bits.take
                 ~indices:(Nx.zeros Nx.int64 [| 1; 1 |])
-                (Nx.Bits.of_bool (mask [| true |]))));
+                (Nx_bits.of_bool (mask [| true |]))));
       prop "concat is the bits one after the other"
         (Gen.with_pp
            (Format.pp_print_list pp_drawn)
@@ -245,9 +245,9 @@ let selecting =
         (fun ds ->
           equal (array bool)
             (Array.concat (List.map model ds))
-            (bits (Nx.Bits.concat (List.map bitmap ds))));
+            (bits (Nx_bits.concat (List.map bitmap ds))));
       test "concat refuses no bitmap" (fun () ->
-          raises_invalid_arg (fun () -> Nx.Bits.concat []));
+          raises_invalid_arg (fun () -> Nx_bits.concat []));
     ]
 
 let () = exit (run "nx bits" [ packing; logic; selecting ])

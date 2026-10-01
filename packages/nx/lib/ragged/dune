@@ -1,0 +1,8 @@
+(library
+ (name nx_ragged)
+ (public_name nx.ragged)
+ (libraries nx nx.array nx.dtype nx.device)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

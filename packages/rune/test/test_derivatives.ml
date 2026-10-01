@@ -1190,8 +1190,8 @@ let operation_tests =
         let indices = Nx.create Nx.int64 [| 3 |] [| 2L; 0L; 2L |] in
         let f x =
           Nx.sum
-            (Nx.Ragged.values
-               (Nx.Ragged.take ~indices (Nx.Ragged.v ~offsets x)))
+            (Nx_ragged.values
+               (Nx_ragged.take ~indices (Nx_ragged.v ~offsets x)))
         in
         equal (exact ())
           (vec [| 1.; 1.; 0.; 2.; 2.; 2. |])
@@ -1202,7 +1202,7 @@ let operation_tests =
           Nx.sum
             (Nx.mul
                (vec [| 1.; 2.; 3.; 4. |])
-               (Nx.Ragged.values (Nx.Ragged.of_ids ~segments:2 ids x)))
+               (Nx_ragged.values (Nx_ragged.of_ids ~segments:2 ids x)))
         in
         equal (exact ())
           (vec [| 2.; 1.; 3.; 4. |])

@@ -18,7 +18,7 @@
   test_custom
   test_total)
  (package rune)
- (libraries windtrap rune rune_test nx nx.dtype)
+ (libraries windtrap rune rune_test nx nx.dtype nx.ragged)
  (action
   (run %{test} --exclude-tag slow)))
 
@@ -228,8 +228,10 @@
   nx_test
   nx
   nx.array
+  nx.bits
   nx.device
   nx.dtype
+  nx.ragged
   tolk)
  (action
   (run %{test} --exclude-tag slow)))

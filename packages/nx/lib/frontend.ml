@@ -2620,30 +2620,50 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
 
 (* Keys *)
 
-(* Keys at a width: unsigned integers [u] of that width whose order is the sort
-   order. A signed integer flips its sign bit, [sign] in its own dtype. A float
-   takes its bits as the signed integers [s] of its width, all flipped when the
-   sign is set and only the sign bit otherwise, and every NaN keys to all
-   ones. *)
-let signed_key u ~sign x = bitcast u (bitwise_xor x (scalar_like x sign))
-
-let float_key s u ~sign x =
-  let b = bitcast s x in
-  let ones = scalar_like b (Nx_dtype.minus_one s) in
-  let flip = where (less_s b (Nx_dtype.zero s)) ones (scalar_like b sign) in
-  bitcast u (where (isnan x) ones (bitwise_xor b flip))
-
-let order_key (type a b) (x : (a, b) t) : uint64_t =
-  let float x = float_key Int64 UInt64 ~sign:Int64.min_int (cast Float64 x) in
-  match dtype x with
-  | Float64 | Float32 | Float16 | BFloat16 -> float x
-  | Float8_e4m3 | Float8_e5m2 -> float (cast Float16 x)
-  | Int4 | Int8 | Int16 | Int32 | Int64 ->
-      signed_key UInt64 ~sign:Int64.min_int (cast Int64 x)
-  | UInt4 | UInt8 | UInt16 | UInt32 | Bool -> cast UInt64 x
-  | UInt64 -> x
-  | Complex64 | Complex128 ->
+(* The key of a signed integer is its value in the signed integers [s] of the
+   key's width with the sign bit flipped. A float takes the bits of its value in
+   the float [f] of the key's width, read as [s], all flipped when the sign is
+   set and only the sign bit otherwise, and every NaN keys to all ones. *)
+let order_key (type a b c d) (kd : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
+    =
+  let signed s =
+    let v = cast s x in
+    bitcast kd (bitwise_xor v (scalar_like v (Nx_dtype.min_value s)))
+  in
+  let float f s =
+    let x = cast f x in
+    let b = bitcast s x in
+    let ones = scalar_like b (Nx_dtype.minus_one s) in
+    let sign = scalar_like b (Nx_dtype.min_value s) in
+    let flip = where (less_s b (Nx_dtype.zero s)) ones sign in
+    bitcast kd (where (isnan x) ones (bitwise_xor b flip))
+  in
+  match (dtype x, kd) with
+  | (Bool | UInt4 | UInt8), (UInt8 | UInt16 | UInt32 | UInt64)
+  | UInt16, (UInt16 | UInt32 | UInt64)
+  | UInt32, (UInt32 | UInt64)
+  | UInt64, UInt64 ->
+      cast kd x
+  | (Int4 | Int8), UInt8 -> signed Int8
+  | (Int4 | Int8 | Int16), UInt16 -> signed Int16
+  | (Int4 | Int8 | Int16 | Int32), UInt32 -> signed Int32
+  | (Int4 | Int8 | Int16 | Int32 | Int64), UInt64 -> signed Int64
+  | Float8_e4m3, UInt8 -> float Float8_e4m3 Int8
+  | Float8_e5m2, UInt8 -> float Float8_e5m2 Int8
+  | BFloat16, UInt16 -> float BFloat16 Int16
+  | (Float8_e4m3 | Float8_e5m2 | Float16), UInt16 -> float Float16 Int16
+  | (Float8_e4m3 | Float8_e5m2 | Float16 | BFloat16 | Float32), UInt32 ->
+      float Float32 Int32
+  | (Float8_e4m3 | Float8_e5m2 | Float16 | BFloat16 | Float32 | Float64), UInt64
+    ->
+      float Float64 Int64
+  | (Complex64 | Complex128), _ ->
       err "order_key" "complex numbers have no order key"
+  | dt, _ ->
+      err "order_key"
+        "no %s key for %s: keys are uint8, uint16, uint32 or uint64, at least \
+         as wide as the elements"
+        (Nx_dtype.to_string kd) (Nx_dtype.to_string dt)
 
 (* [check_keys ~op keys] refuses what [op] does not read as keys. *)
 let check_keys ~op keys =
@@ -2670,10 +2690,10 @@ let lexsort keys =
     if w = 0 then arange (B.context keys) Int64 0 n 1
     else sorted (w - 2) (argsort (column (w - 1)))
 
-(* [numeric_key x] is [order_key x] with [-0.]'s key moved to [0.]'s, so that
-   numbers compare as [less] compares them. *)
+(* [numeric_key x] is [order_key UInt64 x] with [-0.]'s key moved to [0.]'s, so
+   that numbers compare as [less] compares them. *)
 let numeric_key (type a b) (x : (a, b) t) =
-  let k = order_key x in
+  let k = order_key UInt64 x in
   if Nx_dtype.is_float (dtype x) then
     where (equal_s k Int64.max_int) (scalar_like k Int64.min_int) k
   else k
@@ -2747,7 +2767,7 @@ let unique keys =
     let none = empty ctx Int64 [| 0 |] in
     { ids = none; first = none; counts = none }
   else
-    let k = order_key keys in
+    let k = order_key UInt64 keys in
     let perm = lexsort k in
     let sorted = take ~axis:0 ~indices:perm k in
     (* Whether each sorted row starts a run of equal rows. *)

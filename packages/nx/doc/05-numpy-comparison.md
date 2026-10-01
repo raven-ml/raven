@@ -317,12 +317,14 @@ first. `Nx.unique` numbers groups in order of first appearance, where
 let hits = Nx.positions mask
 let kept = Nx.compress ~condition:mask x
 
-(* A mask packed eight to a byte, least significant bit first *)
-let packed, _offset = Nx.Bits.bytes (Nx.Bits.of_bool mask)
+(* A mask packed eight to a byte, least significant bit first (nx.bits) *)
+let packed, _offset = Nx_bits.bytes (Nx_bits.of_bool mask)
 
 (* Sort by a, then by b descending *)
 let perm =
-  Nx.lexsort (Nx.stack ~axis:1 [ Nx.order_key a; Nx.bitwise_not (Nx.order_key b) ])
+  Nx.lexsort
+    (Nx.stack ~axis:1
+       [ Nx.order_key Nx.uint64 a; Nx.bitwise_not (Nx.order_key Nx.uint64 b) ])
 
 (* Where queries fall among sorted knots *)
 let bins = Nx.searchsorted ~side:`Right knots q

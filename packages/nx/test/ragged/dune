@@ -1,0 +1,4 @@
+(test
+ (name test_ragged)
+ (package nx)
+ (libraries nx nx.ragged nx_test windtrap))

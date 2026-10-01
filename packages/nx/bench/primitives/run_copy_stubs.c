@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The run-copy twin of Nx.Ragged.take: a gather of variable-length runs of
+/* The run-copy twin of Nx_ragged.take: a gather of variable-length runs of
    bytes, one loop for the lengths and one memcpy per run. */
 
 #include <stdint.h>

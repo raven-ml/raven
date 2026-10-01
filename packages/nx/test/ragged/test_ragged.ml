@@ -52,7 +52,7 @@ let offsets d =
   o
 
 let int64s a = Nx.create Nx.int64 [| Array.length a |] a
-let ragged d = Nx.Ragged.v ~offsets:(int64s (offsets d)) (values d)
+let ragged d = Nx_ragged.v ~offsets:(int64s (offsets d)) (values d)
 
 (* The rows of the model: row [r] is elements [offsets.{r} * cell] to
    [offsets.{r + 1} * cell] of the values. *)
@@ -64,10 +64,10 @@ let model d =
 
 (* The rows of [r], read through its offsets and values. *)
 let rows r =
-  let o = Nx.to_array (Nx.Ragged.offsets r) and v = Nx.Ragged.values r in
+  let o = Nx.to_array (Nx_ragged.offsets r) and v = Nx_ragged.values r in
   let w = if Nx.ndim v = 1 then 1 else Nx.numel v / Int.max 1 (Nx.dim 0 v) in
   let flat = Nx.to_array (Nx.flatten v) in
-  Array.init (Nx.Ragged.length r) (fun i ->
+  Array.init (Nx_ragged.length r) (fun i ->
       let lo = Int64.to_int o.(i) and hi = Int64.to_int o.(i + 1) in
       Array.sub flat (lo * w) ((hi - lo) * w))
 
@@ -75,10 +75,10 @@ let same_rows = array (array int32)
 
 (* The values hold exactly the rows, from offset 0. *)
 let exactly_rows r =
-  let o = Nx.to_array (Nx.Ragged.offsets r) in
+  let o = Nx.to_array (Nx_ragged.offsets r) in
   equal ~msg:"first offset" int64 0L o.(0);
   equal ~msg:"last offset" int64
-    (Int64.of_int (Nx.dim 0 (Nx.Ragged.values r)))
+    (Int64.of_int (Nx.dim 0 (Nx_ragged.values r)))
     o.(Array.length o - 1)
 
 (* Making *)
@@ -89,16 +89,16 @@ let making =
       prop "v cuts the values at the offsets" drawn (fun d ->
           let r = ragged d in
           equal same_rows (model d) (rows r);
-          equal int (Array.length d.lengths) (Nx.Ragged.length r);
+          equal int (Array.length d.lengths) (Nx_ragged.length r);
           equal (array int64)
             (Array.map Int64.of_int d.lengths)
-            (Nx.to_array (Nx.Ragged.lengths r));
-          equal (array int64) (offsets d) (Nx.to_array (Nx.Ragged.offsets r));
-          equal (tensor int32) (values d) (Nx.Ragged.values r));
+            (Nx.to_array (Nx_ragged.lengths r));
+          equal (array int64) (offsets d) (Nx.to_array (Nx_ragged.offsets r));
+          equal (tensor int32) (values d) (Nx_ragged.values r));
       test "v takes offsets from 0 to the last row of the values" (fun () ->
           equal int 2
-            (Nx.Ragged.length
-               (Nx.Ragged.v
+            (Nx_ragged.length
+               (Nx_ragged.v
                   ~offsets:(int64s [| 0L; 0L; 3L |])
                   (Nx.zeros Nx.int32 [| 3 |]))));
       cases "v refuses offsets that do not cut the values" ~name:fst
@@ -112,12 +112,12 @@ let making =
         ]
         (fun (_, (offsets, shape)) ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.v ~offsets (Nx.zeros Nx.int32 shape)));
+              Nx_ragged.v ~offsets (Nx.zeros Nx.int32 shape)));
       prop "of_lengths cuts rows of the lengths from the first value" drawn
         (fun d ->
           let d = { d with pre = 0 } in
           let r =
-            Nx.Ragged.of_lengths
+            Nx_ragged.of_lengths
               (int64s (Array.map Int64.of_int d.lengths))
               (values d)
           in
@@ -133,7 +133,7 @@ let making =
         ]
         (fun (_, (lengths, shape)) ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.of_lengths lengths (Nx.zeros Nx.int32 shape)));
+              Nx_ragged.of_lengths lengths (Nx.zeros Nx.int32 shape)));
     ]
 
 (* Grouping by ids *)
@@ -180,16 +180,16 @@ let by_ids =
                        if id = Int64.of_int s then Some (row i) else None)
                      (List.mapi (fun i id -> (i, id)) (Array.to_list ids))))
           in
-          let r = Nx.Ragged.of_ids ~segments (int64s ids) (x ids width) in
-          equal int segments (Nx.Ragged.length r);
+          let r = Nx_ragged.of_ids ~segments (int64s ids) (x ids width) in
+          equal int segments (Nx_ragged.length r);
           equal same_rows expected (rows r));
       prop "of_ids keeps the dropped rows after the last offset" grouped
         (fun (segments, ids, width) ->
           let w = Int.max 1 width in
-          let r = Nx.Ragged.of_ids ~segments (int64s ids) (x ids width) in
-          let v = Nx.Ragged.values r in
+          let r = Nx_ragged.of_ids ~segments (int64s ids) (x ids width) in
+          let v = Nx_ragged.values r in
           equal int (Array.length ids) (Nx.dim 0 v);
-          let kept = Nx.to_array (Nx.Ragged.offsets r) in
+          let kept = Nx.to_array (Nx_ragged.offsets r) in
           let kept = Int64.to_int kept.(Array.length kept - 1) in
           let dropped =
             List.filter_map
@@ -212,21 +212,21 @@ let by_ids =
         [
           ( "negative segments",
             fun () ->
-              Nx.Ragged.of_ids ~segments:(-1) (int64s [| 0L |])
+              Nx_ragged.of_ids ~segments:(-1) (int64s [| 0L |])
                 (Nx.zeros Nx.int32 [| 1 |]) );
           ( "ids of two axes",
             fun () ->
-              Nx.Ragged.of_ids ~segments:1
+              Nx_ragged.of_ids ~segments:1
                 (Nx.zeros Nx.int64 [| 1; 1 |])
                 (Nx.zeros Nx.int32 [| 1 |]) );
           ( "an id per row and one more",
             fun () ->
-              Nx.Ragged.of_ids ~segments:1
+              Nx_ragged.of_ids ~segments:1
                 (int64s [| 0L; 0L |])
                 (Nx.zeros Nx.int32 [| 1 |]) );
           ( "scalar values",
             fun () ->
-              Nx.Ragged.of_ids ~segments:1 (int64s [||])
+              Nx_ragged.of_ids ~segments:1 (int64s [||])
                 (Nx.zeros Nx.int32 [||]) );
         ]
         (fun (_, f) -> raises_invalid_arg f);
@@ -275,13 +275,13 @@ let transforming =
       prop "sub is the rows of the range" range (fun (d, o, n) ->
           equal same_rows
             (Array.sub (model d) o n)
-            (rows (Nx.Ragged.sub (ragged d) ~offset:o ~length:n)));
+            (rows (Nx_ragged.sub (ragged d) ~offset:o ~length:n)));
       prop "sub shares the offsets and the values" range (fun (d, o, n) ->
           let r = ragged d in
-          let s = Nx.Ragged.sub r ~offset:o ~length:n in
-          is_true ~msg:"values" (Nx.Ragged.values s == Nx.Ragged.values r);
+          let s = Nx_ragged.sub r ~offset:o ~length:n in
+          is_true ~msg:"values" (Nx_ragged.values s == Nx_ragged.values r);
           is_true ~msg:"offsets"
-            (storage (Nx.Ragged.offsets s) == storage (Nx.Ragged.offsets r)));
+            (storage (Nx_ragged.offsets s) == storage (Nx_ragged.offsets r)));
       cases "sub refuses a range outside the rows" ~name:fst
         [
           ("a negative offset", (-1, 1));
@@ -290,8 +290,8 @@ let transforming =
         ]
         (fun (_, (offset, length)) ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.sub
-                (Nx.Ragged.of_lengths
+              Nx_ragged.sub
+                (Nx_ragged.of_lengths
                    (int64s [| 1L; 1L |])
                    (Nx.zeros Nx.int32 [| 2 |]))
                 ~offset ~length));
@@ -306,14 +306,14 @@ let transforming =
                 else [||])
               i
           in
-          let r = Nx.Ragged.take ~indices:(int64s i) (ragged d) in
+          let r = Nx_ragged.take ~indices:(int64s i) (ragged d) in
           equal same_rows expected (rows r);
           exactly_rows r);
       test "take refuses indices of two axes" (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.take
+              Nx_ragged.take
                 ~indices:(Nx.zeros Nx.int64 [| 1; 1 |])
-                (Nx.Ragged.of_lengths (int64s [| 1L |])
+                (Nx_ragged.of_lengths (int64s [| 1L |])
                    (Nx.zeros Nx.int32 [| 1 |]))));
       prop "concat is the rows one after the other"
         (Gen.with_pp
@@ -322,35 +322,35 @@ let transforming =
              let* width = int_range 0 2 in
              list ~size:(int_range 2 4) (map (fun d -> { d with width }) drawn)))
         (fun ds ->
-          let r = Nx.Ragged.concat (List.map ragged ds) in
+          let r = Nx_ragged.concat (List.map ragged ds) in
           equal same_rows (Array.concat (List.map model ds)) (rows r);
           exactly_rows r);
       test "concat returns a single ragged array as it is" (fun () ->
           let r =
-            Nx.Ragged.of_lengths (int64s [| 1L |]) (Nx.zeros Nx.int32 [| 2 |])
+            Nx_ragged.of_lengths (int64s [| 1L |]) (Nx.zeros Nx.int32 [| 2 |])
           in
-          is_true (Nx.Ragged.concat [ r ] == r));
+          is_true (Nx_ragged.concat [ r ] == r));
       cases "concat refuses what has no rows in common" ~name:fst
         [
-          ("no ragged array", fun () -> Nx.Ragged.concat []);
+          ("no ragged array", fun () -> Nx_ragged.concat []);
           ( "cells of different shapes",
             fun () ->
-              Nx.Ragged.concat
+              Nx_ragged.concat
                 [
-                  Nx.Ragged.of_lengths (int64s [| 1L |])
+                  Nx_ragged.of_lengths (int64s [| 1L |])
                     (Nx.zeros Nx.int32 [| 1 |]);
-                  Nx.Ragged.of_lengths (int64s [| 1L |])
+                  Nx_ragged.of_lengths (int64s [| 1L |])
                     (Nx.zeros Nx.int32 [| 1; 2 |]);
                 ] );
         ]
         (fun (_, f) -> raises_invalid_arg f);
       prop "map keeps the offsets and maps the values" drawn (fun d ->
           let r = ragged d in
-          let m = Nx.Ragged.map (fun v -> Nx.cast Nx.float64 (Nx.neg v)) r in
-          is_true ~msg:"offsets" (Nx.Ragged.offsets m == Nx.Ragged.offsets r);
+          let m = Nx_ragged.map (fun v -> Nx.cast Nx.float64 (Nx.neg v)) r in
+          is_true ~msg:"offsets" (Nx_ragged.offsets m == Nx_ragged.offsets r);
           equal (tensor float_exact)
             (Nx.cast Nx.float64 (Nx.neg (values d)))
-            (Nx.Ragged.values m));
+            (Nx_ragged.values m));
       cases "map refuses a function that changes the rows of the values"
         ~name:fst
         [
@@ -359,8 +359,8 @@ let transforming =
         ]
         (fun (_, f) ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.map f
-                (Nx.Ragged.of_lengths (int64s [| 1L |])
+              Nx_ragged.map f
+                (Nx_ragged.of_lengths (int64s [| 1L |])
                    (Nx.zeros Nx.int32 [| 2 |]))));
     ]
 
@@ -420,7 +420,7 @@ let row_quantiles =
               if d.width = 0 then values
               else Nx.reshape [| rows_of_values d; d.width |] values
             in
-            let r = Nx.Ragged.v ~offsets:(int64s (offsets d)) values in
+            let r = Nx_ragged.v ~offsets:(int64s (offsets d)) values in
             let o = offsets d in
             let k = Array.length qs and n = Array.length d.lengths in
             let expected =
@@ -432,7 +432,7 @@ let row_quantiles =
                          [ R (Int64.to_int o.(i), Int64.to_int o.(i + 1)) ]
                          values))
             in
-            let got = Nx.Ragged.quantile qs r in
+            let got = Nx_ragged.quantile qs r in
             equal (array int) [| k; n |] (Nx.shape got);
             Array.iteri
               (fun i e ->
@@ -445,10 +445,10 @@ let row_quantiles =
           check Nx.float64;
           check Nx.float32;
           check Nx.float16);
-      test "Ragged.quantile refuses a probability outside [0, 1]" (fun () ->
+      test "Nx_ragged.quantile refuses a probability outside [0, 1]" (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Ragged.quantile [| 1.5 |]
-                (Nx.Ragged.of_lengths (int64s [| 1L |])
+              Nx_ragged.quantile [| 1.5 |]
+                (Nx_ragged.of_lengths (int64s [| 1L |])
                    (Nx.zeros Nx.float64 [| 1 |]))));
     ]
 
@@ -521,7 +521,7 @@ let ragged_of dtype (pre, rows, post) =
   Array.iteri (fun i r -> offsets.(i + 1) <- offsets.(i) + Array.length r) rows;
   let offsets = Array.map Int64.of_int offsets in
   let values = Array.concat ((pre :: Array.to_list rows) @ [ post ]) in
-  Nx.Ragged.v ~offsets:(int64s offsets)
+  Nx_ragged.v ~offsets:(int64s offsets)
     (Nx.create dtype [| Array.length values |] values)
 
 (* The sort order of floats: -0 before +0, every NaN equal and last. *)
@@ -611,17 +611,17 @@ let identifying (E e) =
     if n > 0 then
       equal ~msg:"all but the first row" (array int64)
         (model e.compare (Array.sub rows 1 (n - 1)))
-        (Nx.to_array (f (Nx.Ragged.sub r ~offset:1 ~length:(n - 1))))
+        (Nx.to_array (f (Nx_ragged.sub r ~offset:1 ~length:(n - 1))))
   in
   [
     prop
       (e.name ^ " rows' ids number them in order of first appearance")
       drawn
-      (both Nx.Ragged.ids model_ids);
+      (both Nx_ragged.ids model_ids);
     prop
       (e.name ^ " rows' ranks are dense in the sort order, a prefix first")
       drawn
-      (both Nx.Ragged.rank model_ranks);
+      (both Nx_ragged.rank model_ranks);
   ]
 
 let identities =
@@ -630,25 +630,81 @@ let identities =
     @ [
         test "cells of several elements compare element by element" (fun () ->
             let r =
-              Nx.Ragged.of_lengths
+              Nx_ragged.of_lengths
                 (int64s [| 1L; 1L; 2L; 1L |])
                 (Nx.create Nx.int32 [| 5; 2 |]
                    [| 1l; 2l; 1l; 3l; 1l; 2l; 0l; 0l; 1l; 2l |])
             in
             equal (array int64) [| 0L; 1L; 2L; 0L |]
-              (Nx.to_array (Nx.Ragged.ids r));
+              (Nx.to_array (Nx_ragged.ids r));
             equal (array int64) [| 0L; 2L; 1L; 0L |]
-              (Nx.to_array (Nx.Ragged.rank r)));
+              (Nx.to_array (Nx_ragged.rank r)));
         test "ids and rank refuse complex values" (fun () ->
             let r =
-              Nx.Ragged.of_lengths (int64s [| 1L |])
+              Nx_ragged.of_lengths (int64s [| 1L |])
                 (Nx.zeros Nx.complex64 [| 1 |])
             in
-            raises_invalid_arg (fun () -> Nx.Ragged.ids r);
-            raises_invalid_arg (fun () -> Nx.Ragged.rank r));
+            raises_invalid_arg (fun () -> Nx_ragged.ids r);
+            raises_invalid_arg (fun () -> Nx_ragged.rank r));
       ])
+
+(* Reads *)
+
+(* An interpreter that claims only reads and records the name each carries. *)
+let naming () =
+  let seen = ref [] in
+  let run : type r. r Nx.Op.t -> r =
+   fun op ->
+    (match op with Read { by; _ } -> seen := by :: !seen | _ -> ());
+    Nx.Op.eval op
+  in
+  let claims : type r. r Nx.Op.t -> bool = function
+    | Read _ -> true
+    | _ -> false
+  in
+  ({ Nx.Op.run; claims }, seen)
+
+let reads =
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |] in
+  let ids = Nx.create Nx.int64 [| 3 |] [| 1L; 0L; 1L |] in
+  let lengths = Nx.create Nx.int64 [| 2 |] [| 1L; 2L |] in
+  let grouped () = Nx_ragged.of_ids ~segments:2 ids x in
+  let discard f () = ignore (f ()) in
+  let names = list string in
+  group "reads"
+    [
+      cases ~name:fst "a read names its function and reads once"
+        [
+          ( "Nx_ragged.v",
+            discard (fun () ->
+                Nx_ragged.v
+                  ~offsets:(Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 3L |])
+                  x) );
+          ( "Nx_ragged.of_lengths",
+            discard (fun () -> Nx_ragged.of_lengths lengths x) );
+          ( "Nx_ragged.take",
+            discard (fun () -> Nx_ragged.take ~indices:lengths (grouped ())) );
+          ( "Nx_ragged.concat",
+            discard (fun () ->
+                let r = grouped () in
+                Nx_ragged.concat [ r; r; r ]) );
+        ]
+        (fun (expected, f) ->
+          let i, seen = naming () in
+          Nx.Op.intercept i f;
+          equal names [ expected ] !seen);
+      cases ~name:fst "ids and rank name every round's read"
+        [
+          ("Nx_ragged.ids", discard (fun () -> Nx_ragged.ids (grouped ())));
+          ("Nx_ragged.rank", discard (fun () -> Nx_ragged.rank (grouped ())));
+        ]
+        (fun (expected, f) ->
+          let i, seen = naming () in
+          Nx.Op.intercept i f;
+          equal names [ expected ] (List.sort_uniq String.compare !seen));
+    ]
 
 let () =
   exit
     (run "nx ragged"
-       [ making; by_ids; transforming; row_quantiles; identities ])
+       [ making; by_ids; transforming; row_quantiles; identities; reads ])

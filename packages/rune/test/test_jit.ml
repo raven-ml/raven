@@ -449,22 +449,22 @@ let values ~count ~heavy =
            let m =
              Nx.init Nx.bool [| 21 |] (fun i -> i.(0) mod 3 = 0 || i.(0) = 7)
            in
-           let packed m = fst (Nx.Bits.bytes (Nx.Bits.of_bool m)) in
+           let packed m = fst (Nx_bits.bytes (Nx_bits.of_bool m)) in
            equal (tensor int) (packed m) (Rune.jit' packed m);
-           let b = Nx.Bits.sub (Nx.Bits.of_bool m) ~offset:3 ~length:15 in
-           let bytes, offset = Nx.Bits.bytes b in
-           let read f bytes = f (Nx.Bits.v ~offset ~length:15 bytes) in
-           equal (tensor bool) (Nx.Bits.to_bool b)
-             (Rune.jit' (read Nx.Bits.to_bool) bytes);
-           equal (tensor int64) (Nx.Bits.count b)
-             (Rune.jit' (read Nx.Bits.count) bytes));
+           let b = Nx_bits.sub (Nx_bits.of_bool m) ~offset:3 ~length:15 in
+           let bytes, offset = Nx_bits.bytes b in
+           let read f bytes = f (Nx_bits.v ~offset ~length:15 bytes) in
+           equal (tensor bool) (Nx_bits.to_bool b)
+             (Rune.jit' (read Nx_bits.to_bool) bytes);
+           equal (tensor int64) (Nx_bits.count b)
+             (Rune.jit' (read Nx_bits.count) bytes));
        test "a ragged array grouped by ids inside a compiled call is eager's"
          (fun () ->
            let ids = Nx.create Nx.int64 [| 6 |] [| 2L; 0L; -1L; 2L; 3L; 0L |] in
            let x = Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 0. 12. 1.) in
            let grouped ids x =
-             let r = Nx.Ragged.of_ids ~segments:3 ids x in
-             (Nx.Ragged.offsets r, Nx.Ragged.values (Nx.Ragged.map Nx.neg r))
+             let r = Nx_ragged.of_ids ~segments:3 ids x in
+             (Nx_ragged.offsets r, Nx_ragged.values (Nx_ragged.map Nx.neg r))
            in
            let offsets, values = grouped ids x in
            let offsets', values' =
@@ -475,8 +475,8 @@ let values ~count ~heavy =
            equal (tensor int64) offsets offsets';
            equal floats values values';
            let medians ids x =
-             Nx.Ragged.quantile [| 0.; 0.5; 1. |]
-               (Nx.Ragged.of_ids ~segments:3 ids (Nx.flatten x))
+             Nx_ragged.quantile [| 0.; 0.5; 1. |]
+               (Nx_ragged.of_ids ~segments:3 ids (Nx.flatten x))
            in
            let ids = Nx.concatenate ~axis:0 [ ids; ids ] in
            equal floats (medians ids x)
@@ -1595,18 +1595,18 @@ let errors =
               Rune.jit'
                 (fun a -> if Nx.item [ 0 ] a > 0. then a else Nx.neg a)
                 (x ())));
-      test "a ragged take inside a compiled call names Nx.Ragged.take"
+      test "a ragged take inside a compiled call names Nx_ragged.take"
         (fun () ->
           let r =
-            Nx.Ragged.of_lengths
+            Nx_ragged.of_lengths
               (Nx.create Nx.int64 [| 2 |] [| 1L; 3L |])
               (x ())
           in
-          let take indices = Nx.Ragged.values (Nx.Ragged.take ~indices r) in
+          let take indices = Nx_ragged.values (Nx_ragged.take ~indices r) in
           raises_match
             (function
               | Rune.Jit_error m ->
-                  String.starts_with ~prefix:"Nx.Ragged.take: " m
+                  String.starts_with ~prefix:"Nx_ragged.take: " m
               | _ -> false)
             (fun () ->
               ignore (Rune.jit' take (Nx.create Nx.int64 [| 2 |] [| 1L; 0L |]))));

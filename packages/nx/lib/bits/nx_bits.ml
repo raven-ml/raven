@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Frontend
+open Nx
 
-type ('a, 'b) tensor = ('a, 'b) Nx_effect.t
+let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
 (* [bytes] is 1-D and holds exactly the bytes bit [offset] to bit [offset +
    length - 1] reach, and [0 <= offset < 8]. *)
@@ -19,13 +19,13 @@ let make bytes ~offset ~length =
 
 let v ?(offset = 0) ~length bytes =
   if ndim bytes <> 1 then
-    err "Bits.v" "bytes of shape %s, not 1-D"
+    err "Nx_bits.v" "bytes of shape %s, not 1-D"
       (Nx_array.Shape.to_string (shape bytes));
   if offset < 0 || length < 0 then
-    err "Bits.v" "offset %d and length %d, not both >= 0" offset length;
+    err "Nx_bits.v" "offset %d and length %d, not both >= 0" offset length;
   let n = dim 0 bytes in
   if offset + length > 8 * n then
-    err "Bits.v" "%d bits from bit %d need %d bytes, got %d" length offset
+    err "Nx_bits.v" "%d bits from bit %d need %d bytes, got %d" length offset
       ((offset + length + 7) / 8)
       n;
   make bytes ~offset ~length
@@ -34,8 +34,7 @@ let bytes b = (b.bytes, b.offset)
 let length b = b.length
 
 (* Bit [i] of a byte has weight [2^i]. *)
-let weights x =
-  create (Nx_effect.context x) UInt8 [| 8 |] [| 1; 2; 4; 8; 16; 32; 64; 128 |]
+let weights () = create UInt8 [| 8 |] [| 1; 2; 4; 8; 16; 32; 64; 128 |]
 
 (* Eight bytes as one uint64 word, the first byte lowest, and back. *)
 let words bytes =
@@ -47,7 +46,7 @@ let of_words words =
 
 let of_bool m =
   if ndim m <> 1 then
-    err "Bits.of_bool" "mask of shape %s, not 1-D"
+    err "Nx_bits.of_bool" "mask of shape %s, not 1-D"
       (Nx_array.Shape.to_string (shape m));
   let n = dim 0 m in
   let m = pad [| (0, -n land 7) |] false m in
@@ -68,17 +67,17 @@ let to_bool b =
   shrink [| (b.offset, b.offset + b.length) |] (reshape [| 8 * n |] set)
 
 (* [popcount.{k}] is the number of bits set in the byte [k]. *)
-let popcount x =
+let popcount () =
   let set k =
     let rec go k c = if k = 0 then c else go (k land (k - 1)) (c + 1) in
     Int64.of_int (go k 0)
   in
-  create (Nx_effect.context x) Int64 [| 256 |] (Array.init 256 set)
+  create Int64 [| 256 |] (Array.init 256 set)
 
 let count b =
-  if b.length = 0 then zeros (Nx_effect.context b.bytes) Int64 [||]
+  if b.length = 0 then zeros Int64 [||]
   else
-    let table = popcount b.bytes and n = dim 0 b.bytes in
+    let table = popcount () and n = dim 0 b.bytes in
     let ones bytes = sum (take ~indices:(cast Int64 bytes) table) in
     (* The bits outside the range in the first and last bytes. *)
     let outside i mask =
@@ -104,28 +103,29 @@ let bytewise op logical a b =
   else of_bool (logical (to_bool a) (to_bool b))
 
 let logand a b =
-  check_lengths "Bits.logand" a b;
+  check_lengths "Nx_bits.logand" a b;
   bytewise bitwise_and logical_and a b
 
 let logor a b =
-  check_lengths "Bits.logor" a b;
+  check_lengths "Nx_bits.logor" a b;
   bytewise bitwise_or logical_or a b
 
 let lognot b = { b with bytes = bitwise_not b.bytes }
 
 let sub b ~offset ~length =
   if offset < 0 || length < 0 || offset + length > b.length then
-    err "Bits.sub" "bits %d to %d of %d bits" offset (offset + length) b.length;
+    err "Nx_bits.sub" "bits %d to %d of %d bits" offset (offset + length)
+      b.length;
   make b.bytes ~offset:(b.offset + offset) ~length
 
 let take ~indices b =
   if ndim indices <> 1 then
-    err "Bits.take" "indices of shape %s, not 1-D"
+    err "Nx_bits.take" "indices of shape %s, not 1-D"
       (Nx_array.Shape.to_string (shape indices));
   let at = add_s indices (Int64.of_int b.offset) in
   let byte = take ~indices:(div_s at 8L) b.bytes in
   let weight =
-    take ~indices:(bitwise_and at (scalar_like at 7L)) (weights byte)
+    take ~indices:(bitwise_and at (scalar_like at 7L)) (weights ())
   in
   let inside =
     logical_and
@@ -135,6 +135,6 @@ let take ~indices b =
   of_bool (logical_and inside (not_equal_s (bitwise_and byte weight) 0))
 
 let concat = function
-  | [] -> invalid_arg "Bits.concat: no bitmap"
+  | [] -> invalid_arg "Nx_bits.concat: no bitmap"
   | [ b ] -> b
   | bs -> of_bool (concatenate ~axis:0 (List.map to_bool bs))

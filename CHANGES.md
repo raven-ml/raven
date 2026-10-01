@@ -2961,15 +2961,15 @@ thread.
   without a copy when its data is aligned; loading a PNG is about 2x faster.
   `Nx_io.gunzip` decompresses as it reads, in constant memory, where it
   mapped its whole input.
-- Add `Nx.Bits`, packed bitmaps in Arrow's validity layout over a `uint8`
-  tensor at a bit offset, with `of_bool`, `to_bool`, `count`, `logand`, `logor`,
-  `lognot`, an O(1) `sub`, `take` and `concat`.
-- Add `Nx.Ragged`, ragged arrays as int64 offsets over a tensor of values
-  (Arrow's large lists and strings): `v` and `of_lengths` check their offsets,
-  `of_ids` groups rows by id and compiles, `sub`, `take`, `concat` and `map`
-  transform them, `quantile` takes each row's quantiles, and `ids` and `rank`
-  number rows by first appearance and by their order, byte strings as `memcmp`
-  orders them.
+- Add the `nx.bits` library: `Nx_bits`, packed bitmaps in Arrow's validity
+  layout over a `uint8` tensor at a bit offset, with `of_bool`, `to_bool`,
+  `count`, `logand`, `logor`, `lognot`, an O(1) `sub`, `take` and `concat`.
+- Add the `nx.ragged` library: `Nx_ragged`, ragged arrays as int64 offsets over
+  a tensor of values (Arrow's large lists and strings): `v` and `of_lengths`
+  check their offsets, `of_ids` groups rows by id and compiles, `sub`, `take`,
+  `concat` and `map` transform them, `quantile` takes each row's quantiles, and
+  `ids` and `rank` number rows by first appearance and by their order, byte
+  strings as `memcmp` orders them.
 - Add `Nx.quantile`, linear quantiles along an axis or over a whole tensor, one
   sort for every probability, with NaN sorting last.
 - CUDA modules and Metal pipelines are unloaded with their binary once no
@@ -3081,8 +3081,9 @@ thread.
   the axis, or as the tensor without `~axis`. Without `~axis` a shorter
   condition was read as false past its end, and both forms accepted a condition
   of another shape with the right number of elements.
-- `Nx.order_key` gives each element a `uint64` whose unsigned order is the sort
-  order. `Nx.lexsort` sorts rows of keys stably, column 0 first;
+- `Nx.order_key dtype` gives each element an unsigned integer of `dtype`,
+  `uint8` to `uint64` and at least as wide as the element, whose order is the
+  sort order. `Nx.lexsort` sorts rows of keys stably, column 0 first;
   `Nx.searchsorted ~side` finds where keys or rows fall among sorted ones,
   comparing `-0.` equal to `0.`; `Nx.unique` numbers the groups of equal keys in
   order of first appearance, with each group's first position and size.

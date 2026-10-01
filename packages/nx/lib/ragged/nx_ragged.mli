@@ -16,7 +16,7 @@
     layout, slices included, so {!sub} is O(1) and Arrow's buffers map without a
     copy (Arrow's int32 offsets widen once, in O(rows)).
 
-    Every operation is a composition of tensor operations. Offsets and values
+    The library [nx.ragged] is built from nx's operations. Offsets and values
     are placed as any operands are, and values differentiate through {!take} and
     {!of_ids}.
 
@@ -28,9 +28,6 @@
     one, a read raises naming the function. Every other operation reads nothing.
 *)
 
-type ('a, 'b) tensor = ('a, 'b) Nx_effect.t
-(** The type for tensors. *)
-
 type ('a, 'b) t
 (** The type for ragged arrays of values of type ['a] stored as ['b]. Its
     offsets are 1-D with at least one entry, never decrease, start at [0] or
@@ -38,16 +35,14 @@ type ('a, 'b) t
 
 (** {1:make Ragged arrays} *)
 
-val v :
-  offsets:(int64, Nx_dtype.int64_elt) tensor -> ('a, 'b) tensor -> ('a, 'b) t
+val v : offsets:Nx.int64_t -> ('a, 'b) Nx.t -> ('a, 'b) t
 (** [v ~offsets values] is the ragged array of [values] cut at [offsets].
 
     Raises [Invalid_argument] if [values] is a scalar, or if [offsets] is not
     1-D with an entry, starts below [0], decreases, or ends past [dim 0 values].
 *)
 
-val of_lengths :
-  (int64, Nx_dtype.int64_elt) tensor -> ('a, 'b) tensor -> ('a, 'b) t
+val of_lengths : Nx.int64_t -> ('a, 'b) Nx.t -> ('a, 'b) t
 (** [of_lengths lengths values] is the ragged array whose rows have [lengths],
     one after the other from the first row of [values]: its offsets are [0]
     followed by the running sum of [lengths].
@@ -55,11 +50,7 @@ val of_lengths :
     Raises [Invalid_argument] if [values] is a scalar, or if [lengths] is not
     1-D, holds a negative length, or sums past [dim 0 values]. *)
 
-val of_ids :
-  segments:int ->
-  (int64, Nx_dtype.int64_elt) tensor ->
-  ('a, 'b) tensor ->
-  ('a, 'b) t
+val of_ids : segments:int -> Nx.int64_t -> ('a, 'b) Nx.t -> ('a, 'b) t
 (** [of_ids ~segments ids x] groups the rows of [x] by [ids]: row [s] of the
     result holds the rows [i] of [x] with [ids.{i} = s], in their order in [x],
     for each [s] in \[[0], [segments]). A row whose id is outside that range is
@@ -73,16 +64,16 @@ val of_ids :
 
 (** {1:observe Observing} *)
 
-val offsets : ('a, 'b) t -> (int64, Nx_dtype.int64_elt) tensor
+val offsets : ('a, 'b) t -> Nx.int64_t
 (** [offsets r] is [r]'s offsets, [length r + 1] of them. *)
 
-val values : ('a, 'b) t -> ('a, 'b) tensor
+val values : ('a, 'b) t -> ('a, 'b) Nx.t
 (** [values r] is [r]'s values, including any rows outside its offsets. *)
 
 val length : ('a, 'b) t -> int
 (** [length r] is the number of rows of [r]. *)
 
-val lengths : ('a, 'b) t -> (int64, Nx_dtype.int64_elt) tensor
+val lengths : ('a, 'b) t -> Nx.int64_t
 (** [lengths r] is the length of each row of [r]. *)
 
 (** {1:transform Transforming} *)
@@ -94,8 +85,7 @@ val sub : ('a, 'b) t -> offset:int -> length:int -> ('a, 'b) t
     Raises [Invalid_argument] if [offset] or [length] is negative, or if
     [offset + length > length r]. *)
 
-val take :
-  indices:(int64, Nx_dtype.int64_elt) tensor -> ('a, 'b) t -> ('a, 'b) t
+val take : indices:Nx.int64_t -> ('a, 'b) t -> ('a, 'b) t
 (** [take ~indices r] is the ragged array whose row [j] is row [indices.{j}] of
     [r]. An index outside \[[0], [length r]) reads an empty row. The result's
     values are exactly its rows', from offset [0].
@@ -115,7 +105,7 @@ val concat : ('a, 'b) t list -> ('a, 'b) t
     Raises [Invalid_argument] if [rs] is empty, or if the cells of [rs] differ
     in dtype or shape. *)
 
-val map : (('a, 'b) tensor -> ('c, 'd) tensor) -> ('a, 'b) t -> ('c, 'd) t
+val map : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) t -> ('c, 'd) t
 (** [map f r] is [r] with values [f (values r)] and [r]'s offsets.
 
     Raises [Invalid_argument] if [f]'s result is a scalar or does not keep the
@@ -123,7 +113,7 @@ val map : (('a, 'b) tensor -> ('c, 'd) tensor) -> ('a, 'b) t -> ('c, 'd) t
 
 (** {1:summarize Summarizing rows} *)
 
-val quantile : float array -> (float, 'b) t -> (float, 'b) tensor
+val quantile : float array -> (float, 'b) t -> (float, 'b) Nx.t
 (** [quantile qs r] is [Nx.quantile qs] of each row of [r], over the row's
     elements: entry [(i, j)] is quantile [qs.(i)] of row [j], of shape
     [[|Array.length qs; length r|]]. An empty row's quantiles are NaN.
@@ -134,7 +124,7 @@ val quantile : float array -> (float, 'b) t -> (float, 'b) tensor
     Raises [Invalid_argument] if a probability is outside \[[0], [1]\] or NaN.
 *)
 
-val ids : ('a, 'b) t -> (int64, Nx_dtype.int64_elt) tensor
+val ids : ('a, 'b) t -> Nx.int64_t
 (** [ids r] numbers the rows of [r] in order of first appearance: equal rows
     have one id, and the first row of each new value takes the next. Rows are
     equal when their elements are, in the sort order of [Nx.sort]: every NaN
@@ -145,7 +135,7 @@ val ids : ('a, 'b) t -> (int64, Nx_dtype.int64_elt) tensor
 
     Raises [Invalid_argument] if [r]'s values are complex. *)
 
-val rank : ('a, 'b) t -> (int64, Nx_dtype.int64_elt) tensor
+val rank : ('a, 'b) t -> Nx.int64_t
 (** [rank r] is the dense rank of each row of [r]: the number of distinct rows
     that order before it. Rows order element by element in the sort order of
     [Nx.sort], a row before every row it is a prefix of, so byte strings order

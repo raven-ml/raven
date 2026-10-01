@@ -424,7 +424,7 @@ let compositions =
           vec [| neg_infinity; -1.5; -0.; 0.; 0.25; infinity; Float.nan |]
         in
         let keys (type b) (dt : (float, b) Nx.dtype) =
-          let f x = Nx.order_key (Nx.cast dt x) in
+          let f x = Nx.order_key Nx.uint64 (Nx.cast dt x) in
           equal ~msg:(Nx_dtype.to_string dt) (array int64)
             (Nx.to_array (f x))
             (Nx.to_array (Rune.jit' f x))
@@ -454,7 +454,8 @@ let compositions =
     test "a compiled lexsort of order keys is its eager value" (fun () ->
         let x = vec [| 2.; -0.; Float.nan; 0.; 2.; -1.; 0. |] in
         let f x =
-          let a = Nx.order_key (Nx.cast Nx.int64 x) and b = Nx.order_key x in
+          let a = Nx.order_key Nx.uint64 (Nx.cast Nx.int64 x)
+          and b = Nx.order_key Nx.uint64 x in
           Nx.lexsort (Nx.stack ~axis:1 [ a; Nx.bitwise_not b ])
         in
         equal (array int64) (Nx.to_array (f x)) (Nx.to_array (Rune.jit' f x)));

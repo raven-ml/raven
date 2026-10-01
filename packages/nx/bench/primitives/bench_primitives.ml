@@ -143,7 +143,8 @@ let compress =
 let lexsort =
   let two_keys n () = (int64s n 1000, uniform_float64 n) in
   let sort (a, b) =
-    Nx.lexsort (Nx.stack ~axis:1 [ Nx.order_key a; Nx.order_key b ])
+    Nx.lexsort
+      (Nx.stack ~axis:1 [ Nx.order_key Nx.uint64 a; Nx.order_key Nx.uint64 b ])
   in
   [
     row "int64-float64-4e4" s (two_keys s) sort;
@@ -189,11 +190,11 @@ let bits =
     Nx.cast Nx.bool
       (tensor Bigarray.int8_unsigned l (fun _ -> Random.State.int st 2))
   in
-  let bitmap () = Nx.Bits.of_bool (mask ()) in
+  let bitmap () = Nx_bits.of_bool (mask ()) in
   [
-    row "of_bool-1e7" l mask (fun m -> fst (Nx.Bits.bytes (Nx.Bits.of_bool m)));
-    row "to_bool-1e7" l bitmap Nx.Bits.to_bool;
-    row "count-1e7" l bitmap Nx.Bits.count;
+    row "of_bool-1e7" l mask (fun m -> fst (Nx_bits.bytes (Nx_bits.of_bool m)));
+    row "to_bool-1e7" l bitmap Nx_bits.to_bool;
+    row "count-1e7" l bitmap Nx_bits.count;
   ]
 
 (* [n] strings of [w] random lowercase letters, as offsets and bytes, and a
@@ -253,9 +254,9 @@ let copy_runs (offsets, bytes, perm) =
 let ragged_take =
   let ragged n w () =
     let offsets, bytes, perm = strings n w in
-    (Nx.Ragged.v ~offsets:(nx_of offsets) (nx_of bytes), nx_of perm)
+    (Nx_ragged.v ~offsets:(nx_of offsets) (nx_of bytes), nx_of perm)
   in
-  let take (r, indices) = Nx.Ragged.values (Nx.Ragged.take ~indices r) in
+  let take (r, indices) = Nx_ragged.values (Nx_ragged.take ~indices r) in
   [
     row "strings6-4e4-permuted" s (ragged s 6) take;
     row "strings12-1e7-permuted" l (ragged l 12) take;
@@ -266,7 +267,7 @@ let ragged_take =
 let ragged_rows =
   let ragged n w () =
     let offsets, bytes, _ = strings n w in
-    Nx.Ragged.v ~offsets:(nx_of offsets) (nx_of bytes)
+    Nx_ragged.v ~offsets:(nx_of offsets) (nx_of bytes)
   in
   let parts n w () =
     let offsets, bytes, _ = strings n w in
@@ -284,21 +285,21 @@ let ragged_rows =
         id = "v-strings12-1e7";
         rows = l;
         setup = parts l 12;
-        run = (fun (offsets, bytes) -> Nx.Ragged.v ~offsets bytes);
+        run = (fun (offsets, bytes) -> Nx_ragged.v ~offsets bytes);
         results = (fun _ -> []);
       };
     row "of_lengths-strings12-1e7" l (lengths l 12) (fun (lengths, bytes) ->
-        Nx.Ragged.offsets (Nx.Ragged.of_lengths lengths bytes));
+        Nx_ragged.offsets (Nx_ragged.of_lengths lengths bytes));
     row "concat-strings12-2x5e6" l
       (fun () -> (ragged (l / 2) 12 (), ragged (l / 2) 12 ()))
-      (fun (a, b) -> Nx.Ragged.values (Nx.Ragged.concat [ a; b ]));
-    row "ids-strings6-4e4" s (ragged s 6) Nx.Ragged.ids;
-    row "ids-strings12-1e7" l (ragged l 12) Nx.Ragged.ids;
-    row "rank-strings12-1e7" l (ragged l 12) Nx.Ragged.rank;
+      (fun (a, b) -> Nx_ragged.values (Nx_ragged.concat [ a; b ]));
+    row "ids-strings6-4e4" s (ragged s 6) Nx_ragged.ids;
+    row "ids-strings12-1e7" l (ragged l 12) Nx_ragged.ids;
+    row "rank-strings12-1e7" l (ragged l 12) Nx_ragged.rank;
     row "quantile-float64-1e7-into-1e3" l
       (fun () ->
-        Nx.Ragged.of_ids ~segments:1000 (int64s l 1000) (uniform_float64 l))
-      (Nx.Ragged.quantile [| 0.5 |]);
+        Nx_ragged.of_ids ~segments:1000 (int64s l 1000) (uniform_float64 l))
+      (Nx_ragged.quantile [| 0.5 |]);
   ]
 
 let groups =

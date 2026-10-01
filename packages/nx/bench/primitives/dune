@@ -1,6 +1,6 @@
 (executable
  (name bench_primitives)
- (libraries nx nx.dtype nx.device thumper)
+ (libraries nx nx.bits nx.ragged nx.dtype nx.device thumper)
  (foreign_stubs
   (language c)
   (names run_copy_stubs)))

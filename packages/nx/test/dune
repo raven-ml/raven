@@ -19,9 +19,7 @@
   test_conformance
   test_buffers
   test_intercept
-  test_allocation
-  test_bits
-  test_ragged)
+  test_allocation)
  (package nx)
  (modules :standard \ test_format)
  (libraries

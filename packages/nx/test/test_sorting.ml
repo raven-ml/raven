@@ -502,14 +502,21 @@ let lexicographic cmp a b =
   in
   go 0
 
+(* The unsigned dtypes keys take. *)
+type width = W : ('a, 'b) Nx.dtype -> width
+
+let widths = [ W Nx.uint8; W Nx.uint16; W Nx.uint32; W Nx.uint64 ]
+
 let order_keys =
-  let sorts_as_elements (S s) =
+  let sorts_as_elements (S s) (W kd) =
     prop
-      (s.name ^ " order keys compare as their elements do")
+      (Printf.sprintf "%s order keys of %s compare as their elements do"
+         (Nx_dtype.to_string kd) s.name)
       (Gen.bind (Gen.int_range 0 8) (fun n ->
            keys_of ~pp:s.pp s.dtype s.value n None))
       (fun t ->
-        let x = Nx.to_array t and k = Nx.to_array (Nx.order_key t) in
+        let x = Nx.to_array t in
+        let k = Nx.to_array (Nx.cast Nx.uint64 (Nx.order_key kd t)) in
         let n = Array.length x in
         for i = 0 to n - 1 do
           for j = 0 to n - 1 do
@@ -521,16 +528,25 @@ let order_keys =
           done
         done)
   in
-  (* A family's narrow dtypes cast exactly to its widest one. *)
-  let keeps (type a b c d) name (narrow : (a, b) Nx.dtype)
-      (wide : (c, d) Nx.dtype) values =
+  let at_every_width (S s) =
+    List.filter_map
+      (fun (W kd) ->
+        if Nx_dtype.itemsize kd >= Nx_dtype.itemsize s.dtype then
+          Some (sorts_as_elements (S s) (W kd))
+        else None)
+      widths
+  in
+  (* An exact cast within a family, to a dtype no wider than the key. *)
+  let keeps (type a b c d e f) name (narrow : (a, b) Nx.dtype)
+      (wide : (c, d) Nx.dtype) (kd : (e, f) Nx.dtype) values =
     prop
-      (Printf.sprintf "an exact cast from %s to %s keeps the key" name
-         (Nx_dtype.to_string wide))
+      (Printf.sprintf "an exact cast from %s to %s keeps the %s key" name
+         (Nx_dtype.to_string wide) (Nx_dtype.to_string kd))
       (Gen.array ~size:(Gen.int_range 0 8) (Gen.of_list ~pp:pp_float values))
       (fun v ->
         let t = Nx.cast narrow (Nx.create Nx.float64 [| Array.length v |] v) in
-        equal (tensor int64) (Nx.order_key t) (Nx.order_key (Nx.cast wide t)))
+        let key t = Nx.cast Nx.uint64 (Nx.order_key kd t) in
+        equal (tensor int64) (key t) (key (Nx.cast wide t)))
   in
   let signed = [ -128.; -8.; -1.; 0.; 1.; 7.; 127. ]
   and unsigned = [ 0.; 1.; 15.; 255. ]
@@ -538,24 +554,37 @@ let order_keys =
     [ neg_infinity; -448.; -1.5; -0.; 0.; 0.25; 448.; infinity; Float.nan ]
   in
   let keys_of dtype bits =
-    Nx.to_array (Nx.order_key (Nx.create dtype [| Array.length bits |] bits))
+    Nx.to_array
+      (Nx.order_key Nx.uint64 (Nx.create dtype [| Array.length bits |] bits))
+  in
+  let narrow_keys kd dtype bits =
+    Nx.to_array (Nx.order_key kd (Nx.create dtype [| Array.length bits |] bits))
   in
   group "order keys"
-    (List.map sorts_as_elements ordered
+    (List.concat_map at_every_width ordered
     @ [
-        keeps "int4" Nx.int4 Nx.int64 [ -8.; -1.; 0.; 7. ];
-        keeps "int8" Nx.int8 Nx.int64 signed;
-        keeps "int16" Nx.int16 Nx.int64 (-32768. :: signed);
-        keeps "int32" Nx.int32 Nx.int64 (-2147483648. :: 2147483647. :: signed);
-        keeps "uint4" Nx.uint4 Nx.uint64 [ 0.; 1.; 15. ];
-        keeps "uint8" Nx.uint8 Nx.uint64 unsigned;
-        keeps "uint16" Nx.uint16 Nx.uint64 (65535. :: unsigned);
-        keeps "uint32" Nx.uint32 Nx.uint64 (4294967295. :: unsigned);
-        keeps "float8_e4m3" Nx.float8_e4m3 Nx.float64 floats;
-        keeps "float8_e5m2" Nx.float8_e5m2 Nx.float64 floats;
-        keeps "float16" Nx.float16 Nx.float64 floats;
-        keeps "bfloat16" Nx.bfloat16 Nx.float64 floats;
-        keeps "float32" Nx.float32 Nx.float64 floats;
+        keeps "int4" Nx.int4 Nx.int64 Nx.uint64 [ -8.; -1.; 0.; 7. ];
+        keeps "int8" Nx.int8 Nx.int64 Nx.uint64 signed;
+        keeps "int16" Nx.int16 Nx.int64 Nx.uint64 (-32768. :: signed);
+        keeps "int32" Nx.int32 Nx.int64 Nx.uint64
+          (-2147483648. :: 2147483647. :: signed);
+        keeps "uint4" Nx.uint4 Nx.uint64 Nx.uint64 [ 0.; 1.; 15. ];
+        keeps "uint8" Nx.uint8 Nx.uint64 Nx.uint64 unsigned;
+        keeps "uint16" Nx.uint16 Nx.uint64 Nx.uint64 (65535. :: unsigned);
+        keeps "uint32" Nx.uint32 Nx.uint64 Nx.uint64 (4294967295. :: unsigned);
+        keeps "float8_e4m3" Nx.float8_e4m3 Nx.float64 Nx.uint64 floats;
+        keeps "float8_e5m2" Nx.float8_e5m2 Nx.float64 Nx.uint64 floats;
+        keeps "float16" Nx.float16 Nx.float64 Nx.uint64 floats;
+        keeps "bfloat16" Nx.bfloat16 Nx.float64 Nx.uint64 floats;
+        keeps "float32" Nx.float32 Nx.float64 Nx.uint64 floats;
+        keeps "int4" Nx.int4 Nx.int8 Nx.uint8 [ -8.; -1.; 0.; 7. ];
+        keeps "int8" Nx.int8 Nx.int16 Nx.uint16 signed;
+        keeps "int16" Nx.int16 Nx.int32 Nx.uint32 (-32768. :: signed);
+        keeps "uint8" Nx.uint8 Nx.uint16 Nx.uint16 unsigned;
+        keeps "float8_e4m3" Nx.float8_e4m3 Nx.float16 Nx.uint16 floats;
+        keeps "float8_e5m2" Nx.float8_e5m2 Nx.float16 Nx.uint16 floats;
+        keeps "float16" Nx.float16 Nx.float32 Nx.uint32 floats;
+        keeps "bfloat16" Nx.bfloat16 Nx.float32 Nx.uint32 floats;
         test
           "the order key of a float flips its bits by its sign, and of a NaN \
            is all ones" (fun () ->
@@ -585,7 +614,7 @@ let order_keys =
                 "ffffffffffffffff";
               |]
               (Array.map (Printf.sprintf "%016Lx")
-                 (Nx.to_array (Nx.order_key x))));
+                 (Nx.to_array (Nx.order_key Nx.uint64 x))));
         test
           "the order key of an integer is its value, signed ones with the sign \
            bit flipped" (fun () ->
@@ -597,9 +626,32 @@ let order_keys =
             equal (array int64)
               [| 0x7ffffffffffffff8L; 0x8000000000000007L |]
               (keys_of Nx.int4 [| -8; 7 |]));
+        test "a key at an element's own width applies the rule at that width"
+          (fun () ->
+            equal (array int) [| 0; 0x7f; 0x80; 0xff |]
+              (narrow_keys Nx.uint8 Nx.int8 [| -128; -1; 0; 127 |]);
+            equal (array int) [| 0x78; 0x80; 0x87 |]
+              (narrow_keys Nx.uint8 Nx.int4 [| -8; 0; 7 |]);
+            equal (array int)
+              [| 0x03ff; 0x7fff; 0x8000; 0xfc00; 0xffff |]
+              (narrow_keys Nx.uint16 Nx.float16
+                 [| neg_infinity; -0.; 0.; infinity; nan |]);
+            equal (array int) [| 0x7f; 0x80; 0xff |]
+              (narrow_keys Nx.uint8 Nx.float8_e5m2 [| -0.; 0.; nan |]));
         test "order_key refuses complex numbers" (fun () ->
             raises_invalid_arg (fun () ->
-                Nx.order_key (Nx.zeros Nx.complex64 [| 1 |])));
+                Nx.order_key Nx.uint64 (Nx.zeros Nx.complex64 [| 1 |])));
+        test
+          "order_key refuses a key narrower than the elements, or not unsigned"
+          (fun () ->
+            raises_invalid_arg (fun () ->
+                Nx.order_key Nx.uint8 (Nx.zeros Nx.int16 [| 1 |]));
+            raises_invalid_arg (fun () ->
+                Nx.order_key Nx.uint32 (Nx.zeros Nx.float64 [| 1 |]));
+            raises_invalid_arg (fun () ->
+                Nx.order_key Nx.int64 (Nx.zeros Nx.int8 [| 1 |]));
+            raises_invalid_arg (fun () ->
+                Nx.order_key Nx.uint4 (Nx.zeros Nx.bool [| 1 |])));
       ])
 
 let lexsorts =
@@ -631,7 +683,7 @@ let lexsorts =
       (fun t ->
         equal (tensor int64)
           (Nx.argsort ~descending:true t)
-          (Nx.lexsort (Nx.bitwise_not (Nx.order_key t))))
+          (Nx.lexsort (Nx.bitwise_not (Nx.order_key Nx.uint64 t))))
   in
   let two_keys =
     let open Gen in
@@ -652,11 +704,11 @@ let lexsorts =
            descending"
           two_keys (fun (a, b, down) ->
             let n = Array.length a in
-            let kb = Nx.order_key (Nx.create Nx.float64 [| n |] b) in
+            let kb = Nx.order_key Nx.uint64 (Nx.create Nx.float64 [| n |] b) in
             let keys =
               Nx.stack ~axis:1
                 [
-                  Nx.order_key
+                  Nx.order_key Nx.uint64
                     (Nx.create Nx.int64 [| n |] (Array.map Int64.of_int a));
                   (if down then Nx.bitwise_not kb else kb);
                 ]
@@ -835,7 +887,7 @@ let searchsorts =
           (fun () ->
             let key x =
               Nx.reshape [| 1; 1 |]
-                (Nx.order_key (Nx.create Nx.float64 [| 1 |] [| x |]))
+                (Nx.order_key Nx.uint64 (Nx.create Nx.float64 [| 1 |] [| x |]))
             in
             equal (array int64) [| 0L |]
               (Nx.to_array (Nx.searchsorted ~side:`Left (key 0.) (key (-0.))));

@@ -3,25 +3,42 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Frontend
+open Nx
 
-type ('a, 'b) tensor = ('a, 'b) Nx_effect.t
+let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
 (* [offsets] is 1-D with at least one entry, never decreases, and lies in [0,
    dim 0 values]; row [r] is [values] from [offsets.{r}] to [offsets.{r + 1}]
    along axis 0. *)
-type ('a, 'b) t = { offsets : int64_t; values : ('a, 'b) tensor }
+type ('a, 'b) t = { offsets : int64_t; values : ('a, 'b) Nx.t }
 
 let shape_string x = Nx_array.Shape.to_string (shape x)
 
-(* [require op checks] reads the flags of [checks] through ["Nx." ^ op], once,
-   and raises the message of the first that is false. *)
+(* [read ~by x] is the elements of the int64 tensor [x] in C order, read by the
+   function [by]. *)
+let read ~by x =
+  let b = Op.eval (Read { by; x }) in
+  Nx_device.Buffer.Claim.read b;
+  Fun.protect
+    ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
+    (fun () ->
+      let a = Nx_device.Buffer.bigarray Bigarray.int64 b in
+      Array.init (numel x) (Bigarray.Array1.get a))
+
+(* [full_as x shape v] is a tensor of [shape] filled with [v], of [x]'s dtype
+   and placed as [x] is. *)
+let full_as x shape v = contiguous (broadcast_to shape (scalar_like x v))
+
+(* [require op checks] reads the flags of [checks] through [op], once, and
+   raises the message of the first that is false. *)
 let require op checks =
   let flags =
-    read_array ~by:("Nx." ^ op)
-      (concatenate ~axis:0 (List.map (fun (c, _) -> reshape [| 1 |] c) checks))
+    read ~by:op
+      (cast Int64
+         (concatenate ~axis:0
+            (List.map (fun (c, _) -> reshape [| 1 |] c) checks)))
   in
-  List.iteri (fun i (_, msg) -> if not flags.(i) then err op "%s" msg) checks
+  List.iteri (fun i (_, msg) -> if flags.(i) = 0L then err op "%s" msg) checks
 
 let check_values op values =
   if ndim values = 0 then err op "values of shape [], not at least 1-D"
@@ -33,9 +50,9 @@ let last offsets =
   shrink [| (n - 1, n) |] offsets
 
 let v ~offsets values =
-  check_values "Ragged.v" values;
+  check_values "Nx_ragged.v" values;
   if ndim offsets <> 1 || dim 0 offsets = 0 then
-    err "Ragged.v" "offsets of shape %s, not 1-D with an entry"
+    err "Nx_ragged.v" "offsets of shape %s, not 1-D with an entry"
       (shape_string offsets);
   let n = dim 0 offsets and rows = dim 0 values in
   let increase =
@@ -43,7 +60,7 @@ let v ~offsets values =
       (shrink [| (1, n) |] offsets)
       (shrink [| (0, n - 1) |] offsets)
   in
-  require "Ragged.v"
+  require "Nx_ragged.v"
     [
       (greater_equal_s (first offsets) 0L, "offsets start below 0");
       (all increase, "offsets decrease");
@@ -53,9 +70,9 @@ let v ~offsets values =
   { offsets; values }
 
 let of_lengths lengths values =
-  check_values "Ragged.of_lengths" values;
+  check_values "Nx_ragged.of_lengths" values;
   if ndim lengths <> 1 then
-    err "Ragged.of_lengths" "lengths of shape %s, not 1-D"
+    err "Nx_ragged.of_lengths" "lengths of shape %s, not 1-D"
       (shape_string lengths);
   let rows = dim 0 values in
   let ends = cumsum lengths in
@@ -63,7 +80,7 @@ let of_lengths lengths values =
   if dim 0 lengths > 0 then
     (* With every length in [0, 2^63), the first running total past int64's
        range is negative. *)
-    require "Ragged.of_lengths"
+    require "Nx_ragged.of_lengths"
       [
         (greater_equal_s (min lengths) 0L, "a length is negative");
         (greater_equal_s (min ends) 0L, "the lengths sum past int64's range");
@@ -74,13 +91,13 @@ let of_lengths lengths values =
   { offsets; values }
 
 let of_ids ~segments ids x =
-  check_values "Ragged.of_ids" x;
+  check_values "Nx_ragged.of_ids" x;
   if segments < 0 then
-    err "Ragged.of_ids" "%d segments, not at least 0" segments;
+    err "Nx_ragged.of_ids" "%d segments, not at least 0" segments;
   if ndim ids <> 1 || dim 0 ids <> dim 0 x then
-    err "Ragged.of_ids" "ids of shape %s for values of shape %s"
+    err "Nx_ragged.of_ids" "ids of shape %s for values of shape %s"
       (shape_string ids) (shape_string x);
-  let ctx = Nx_effect.context ids and n = dim 0 ids in
+  let n = dim 0 ids in
   let dropped = Int64.of_int segments in
   let ids =
     where
@@ -89,8 +106,8 @@ let of_ids ~segments ids x =
   in
   let counts =
     scatter ~mode:`Add ~axis:0 ~indices:ids
-      ~values:(broadcast_to [| n |] (scalar ctx Int64 1L))
-      (zeros ctx Int64 [| segments + 1 |])
+      ~values:(broadcast_to [| n |] (scalar_like ids 1L))
+      (full_as ids [| segments + 1 |] 0L)
   in
   let offsets =
     pad [| (1, 0) |] 0L (cumsum (shrink [| (0, segments) |] counts))
@@ -113,30 +130,51 @@ let elements r =
   let flat = reshape [| numel r.values |] r.values in
   if c = 1 then (flat, r.offsets) else (flat, mul_s r.offsets (Int64.of_int c))
 
-let quantile (type b) qs (r : (float, b) t) : (float, b) tensor =
-  check_probabilities "Ragged.quantile" qs;
+let check_probabilities op qs =
+  Array.iter
+    (fun q ->
+      if not (q >= 0. && q <= 1.) then
+        err op "probability %g is outside [0, 1]" q)
+    qs
+
+(* [interpolate a b f] is [a + f * (b - a)] between the order statistics [a] and
+   [b], and [a] itself where [f] is zero or [a] equals [b]: [Nx.quantile]'s
+   interpolation. Narrow floats interpolate in float32 and round once. *)
+let interpolate (type b) (a : (float, b) Nx.t) (b : (float, b) Nx.t)
+    (f : float64_t) : (float, b) Nx.t =
+  let exact = equal_s f 0. in
+  let lerp (type c) (a : (float, c) Nx.t) (b : (float, c) Nx.t) =
+    let f = cast (dtype a) f in
+    where (logical_or exact (equal a b)) a (add a (mul f (sub b a)))
+  in
+  match dtype a with
+  | Float32 | Float64 -> lerp a b
+  | Float16 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+      cast (dtype a) (lerp (cast Float32 a) (cast Float32 b))
+
+let quantile (type b) qs (r : (float, b) t) : (float, b) Nx.t =
+  check_probabilities "Nx_ragged.quantile" qs;
   let values, offsets = elements r in
   let n = length r and k = Array.length qs in
-  let ctx = Nx_effect.context values in
   (* Each value's row: -1 before the first offset, [n] from the last on. *)
   let row =
     sub_s
       (cumsum
          (scatter ~mode:`Add ~axis:0 ~indices:offsets
-            ~values:(broadcast_to [| n + 1 |] (scalar ctx Int64 1L))
-            (zeros ctx Int64 [| dim 0 values |])))
+            ~values:(broadcast_to [| n + 1 |] (scalar_like offsets 1L))
+            (full_as offsets [| dim 0 values |] 0L)))
       1L
   in
   (* Row [r]'s values are at [offsets.{r}] onwards, least first. *)
   let sorted =
     take
-      ~indices:(lexsort (stack ~axis:1 [ order_key row; order_key values ]))
+      ~indices:
+        (lexsort
+           (stack ~axis:1 [ order_key uint64 row; order_key uint64 values ]))
       values
   in
   let lens = reshape [| 1; n |] (lengths { offsets; values }) in
-  let at =
-    mul (create ctx Float64 [| k; 1 |] qs) (sub_s (cast Float64 lens) 1.)
-  in
+  let at = mul (create Float64 [| k; 1 |] qs) (sub_s (cast Float64 lens) 1.) in
   let lo = floor at in
   let statistic i =
     let i = add (reshape [| 1; n |] (shrink [| (0, n) |] offsets)) i in
@@ -145,33 +183,19 @@ let quantile (type b) qs (r : (float, b) t) : (float, b) tensor =
   let lo_i = cast Int64 lo in
   let hi_i = minimum (add_s lo_i 1L) (sub_s lens 1L) in
   where (equal_s lens 0L)
-    (full ctx (dtype values) [| k; n |] Float.nan)
+    (full_as values [| k; n |] Float.nan)
     (interpolate (statistic lo_i) (statistic hi_i) (sub at lo))
 
 (* Ids and ranks of rows *)
 
-(* The keys of elements: unsigned integers of the elements' width whose order is
-   the sort order. *)
-type keys = Keys : ('a, 'b) Nx_dtype.t * ('a, 'b) tensor -> keys
-
-let keys (type a b) op (x : (a, b) tensor) : keys =
+(* The order keys of elements at their own width. *)
+let keys (type a b) op (x : (a, b) Nx.t) =
   match dtype x with
-  | Bool -> Keys (UInt8, cast UInt8 x)
-  | UInt4 -> Keys (UInt8, cast UInt8 x)
-  | UInt8 -> Keys (UInt8, x)
-  | UInt16 -> Keys (UInt16, x)
-  | UInt32 -> Keys (UInt32, x)
-  | UInt64 -> Keys (UInt64, x)
-  | Int4 -> Keys (UInt8, signed_key UInt8 ~sign:(-0x80) (cast Int8 x))
-  | Int8 -> Keys (UInt8, signed_key UInt8 ~sign:(-0x80) x)
-  | Int16 -> Keys (UInt16, signed_key UInt16 ~sign:(-0x8000) x)
-  | Int32 -> Keys (UInt32, signed_key UInt32 ~sign:Int32.min_int x)
-  | Int64 -> Keys (UInt64, signed_key UInt64 ~sign:Int64.min_int x)
-  | Float8_e4m3 | Float8_e5m2 ->
-      Keys (UInt16, float_key Int16 UInt16 ~sign:(-0x8000) (cast Float16 x))
-  | Float16 | BFloat16 -> Keys (UInt16, float_key Int16 UInt16 ~sign:(-0x8000) x)
-  | Float32 -> Keys (UInt32, float_key Int32 UInt32 ~sign:Int32.min_int x)
-  | Float64 -> Keys (UInt64, float_key Int64 UInt64 ~sign:Int64.min_int x)
+  | Bool | UInt4 | UInt8 | Int4 | Int8 | Float8_e4m3 | Float8_e5m2 ->
+      P (order_key uint8 x)
+  | UInt16 | Int16 | Float16 | BFloat16 -> P (order_key uint16 x)
+  | UInt32 | Int32 | Float32 -> P (order_key uint32 x)
+  | UInt64 | Int64 | Float64 -> P (order_key uint64 x)
   | Complex64 | Complex128 -> err op "complex numbers have no order"
 
 (* [ranks op r] is the dense rank of each row of [r] in the sort order, a prefix
@@ -180,19 +204,17 @@ let keys (type a b) op (x : (a, b) tensor) : keys =
    words, most significant key first, and ranks them by their rank so far, their
    words and the number of keys of the round they hold, which separates a row
    from its prefixes. A row is done once it is alone in its class or has no keys
-   left. Each round reads once, through ["Nx." ^ op]. *)
+   left. Each round reads once, through [op]. *)
 let ranks op r =
-  let by = "Nx." ^ op in
   let n = length r in
-  let ctx = Nx_effect.context r.offsets in
-  if n = 0 then (empty ctx Int64 [| 0 |], 0)
+  if n = 0 then (zeros Int64 [| 0 |], 0)
   else
     let values, offsets = elements r in
-    let (Keys (kt, keys)) = keys op values in
-    let w = Nx_dtype.itemsize kt in
+    let (P keys) = keys op values in
+    let w = itemsize keys in
     (* Every window of up to 64 bytes from an element of a row lies in
        [keys]. *)
-    let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero kt) keys in
+    let keys = pad [| (0, 64 / w) |] (Nx_dtype.zero (dtype keys)) keys in
     let start = shrink [| (0, n) |] offsets in
     let len = sub (shrink [| (1, n + 1) |] offsets) start in
     let rec round ~seen ~classes ~active ~m ~longest ~shortest rank =
@@ -214,7 +236,7 @@ let ranks op r =
         (* Keys past a row's end are zero. A word's first key is its most
            significant, so a little-endian machine reverses each word's keys. *)
         let position =
-          create ctx Int64 [| words; q |] (Array.init e Int64.of_int)
+          create Int64 [| words; q |] (Array.init e Int64.of_int)
         in
         let chunk = reshape [| m; words; q |] chunk in
         let chunk, position =
@@ -293,7 +315,7 @@ let ranks op r =
         let keep = logical_and (greater_s left 0L) (logical_not alone) in
         let kept = cast Int64 keep in
         let read =
-          read_array ~by
+          read ~by:op
             (concatenate ~axis:0
                (List.map
                   (fun x -> reshape [| 1 |] x)
@@ -306,12 +328,12 @@ let ranks op r =
         in
         let m' = Int64.to_int read.(0) in
         let place =
-          where keep (sub (cumsum kept) kept) (scalar ctx Int64 read.(0))
+          where keep (sub (cumsum kept) kept) (scalar_like kept read.(0))
         in
         let active =
           scatter ~unique_indices:true ~axis:0 ~indices:place
             ~values:(take ~indices:perm active)
-            (zeros ctx Int64 [| m' |])
+            (full_as kept [| m' |] 0L)
         in
         round ~seen:(seen + e)
           ~classes:(classes + Int64.to_int read.(3))
@@ -321,21 +343,21 @@ let ranks op r =
           rank
     in
     let read =
-      read_array ~by
+      read ~by:op
         (concatenate ~axis:0
            [ reshape [| 1 |] (max len); reshape [| 1 |] (min len) ])
     in
-    round ~seen:0 ~classes:1 ~active:(arange ctx Int64 0 n 1) ~m:n
+    round ~seen:0 ~classes:1 ~active:(arange Int64 0 n 1) ~m:n
       ~longest:(Int64.to_int read.(0))
       ~shortest:(Int64.to_int read.(1))
-      (zeros ctx Int64 [| n |])
+      (full_as r.offsets [| n |] 0L)
 
-let rank r = fst (ranks "Ragged.rank" r)
+let rank r = fst (ranks "Nx_ragged.rank" r)
 
 let ids r =
-  let rank, classes = ranks "Ragged.ids" r in
+  let rank, classes = ranks "Nx_ragged.ids" r in
   let n = length r in
-  let row = arange (Nx_effect.context rank) Int64 0 n 1 in
+  let row = arange Int64 0 n 1 in
   (* Each row's class's first row, and the number of classes that start before
      it. *)
   let first =
@@ -346,9 +368,8 @@ let ids r =
 
 let take ~indices r =
   if ndim indices <> 1 then
-    err "Ragged.take" "indices of shape %s, not 1-D" (shape_string indices);
+    err "Nx_ragged.take" "indices of shape %s, not 1-D" (shape_string indices);
   let k = dim 0 indices and l = length r in
-  let ctx = Nx_effect.context indices in
   let lens = take ~indices (lengths r) in
   let ends = cumsum lens in
   let offsets = pad [| (1, 0) |] 0L ends in
@@ -358,18 +379,15 @@ let take ~indices r =
       (* With every length in [0, 2^63), the first running total past int64's
          range is negative. *)
       let read =
-        read_array ~by:"Nx.Ragged.take"
+        read ~by:"Nx_ragged.take"
           (concatenate ~axis:0 [ last ends; reshape [| 1 |] (min ends) ])
       in
       if read.(1) < 0L then
-        err "Ragged.take" "the rows' lengths sum past int64's range";
+        err "Nx_ragged.take" "the rows' lengths sum past int64's range";
       read.(0)
   in
   if total = 0L then
-    {
-      offsets;
-      values = take ~axis:0 ~indices:(empty ctx Int64 [| 0 |]) r.values;
-    }
+    { offsets; values = take ~axis:0 ~indices:(zeros Int64 [| 0 |]) r.values }
   else
     (* Element [j] of new row [i] is value [j + shift.{i}], where [shift.{i}] is
        the row's old start less its new one. That is a running sum of ones with
@@ -383,30 +401,30 @@ let take ~indices r =
     let positions =
       cumsum
         (scatter ~mode:`Add ~axis:0 ~indices:firsts ~values:change
-           (full ctx Int64 [| Int64.to_int total |] 1L))
+           (full_as indices [| Int64.to_int total |] 1L))
     in
     { offsets; values = take ~axis:0 ~indices:positions r.values }
 
 let sub r ~offset ~length:k =
   let l = length r in
   if offset < 0 || k < 0 || offset + k > l then
-    err "Ragged.sub" "rows %d to %d of %d rows" offset (offset + k) l;
+    err "Nx_ragged.sub" "rows %d to %d of %d rows" offset (offset + k) l;
   { r with offsets = shrink [| (offset, offset + k + 1) |] r.offsets }
 
 let concat = function
-  | [] -> invalid_arg "Ragged.concat: no ragged array"
+  | [] -> invalid_arg "Nx_ragged.concat: no ragged array"
   | [ r ] -> r
   | r :: _ as rs ->
       let cell r = Array.sub (shape r.values) 1 (ndim r.values - 1) in
       List.iter
         (fun r' ->
           if cell r' <> cell r then
-            err "Ragged.concat" "cells of shape %s and %s"
+            err "Nx_ragged.concat" "cells of shape %s and %s"
               (Nx_array.Shape.to_string (cell r))
               (Nx_array.Shape.to_string (cell r')))
         rs;
       let bounds =
-        read_array ~by:"Nx.Ragged.concat"
+        read ~by:"Nx_ragged.concat"
           (concatenate ~axis:0
              (List.concat_map (fun r -> [ first r.offsets; last r.offsets ]) rs))
       in
@@ -435,6 +453,6 @@ let concat = function
 let map f r =
   let values = f r.values in
   if ndim values = 0 || dim 0 values <> dim 0 r.values then
-    err "Ragged.map" "f maps values of shape %s to shape %s"
+    err "Nx_ragged.map" "f maps values of shape %s to shape %s"
       (shape_string r.values) (shape_string values);
   { r with values }

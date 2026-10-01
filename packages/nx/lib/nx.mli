@@ -640,19 +640,6 @@ module Ptree = Ptree
 (** Structures of tensors: types with one [walk] that walks their parts, which
     Rune's transformations, Vega's optimisers and checkpoints take. *)
 
-(** {1:bitmaps Bitmaps and ragged arrays}
-
-    Two layouts over plain tensors, Arrow's: packed booleans, and rows of
-    varying lengths. Their operations are compositions of tensor operations. *)
-
-module Bits = Bits
-(** Packed bitmaps: booleans eight to a byte of a [uint8] tensor, from a bit
-    offset, as Arrow's validity buffers. *)
-
-module Ragged = Ragged
-(** Ragged arrays: a tensor of values cut along its first axis by int64 offsets,
-    as Arrow's large lists and strings. *)
-
 (** {1:rng Random number generation}
 
     One generator, reached two ways. {!module-Rng} holds it: keys, one sampler
@@ -2633,7 +2620,7 @@ val reduce_segments :
     A descending sort orders by its exact reverse: NaN first, and [0.] before
     [-0.].
 
-    {!order_key} gives each element a [uint64] whose unsigned order is the sort
+    {!order_key} gives each element an unsigned integer whose order is the sort
     order. Keys are elements or rows: {!lexsort} sorts them, {!searchsorted}
     searches them and {!unique} groups them, a row comparing lexicographically,
     column [0] first. {!searchsorted} departs from the sort order in one point:
@@ -2712,31 +2699,42 @@ val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
 
     See also {!sort}, {!argmax}. *)
 
-val order_key : ('a, 'b) t -> uint64_t
-(** [order_key t] is, for each element of [t], a [uint64] whose unsigned order
-    is the {{!section:sorting}sort order}: the key of [a] is below the key of
-    [b], read unsigned, iff [a] sorts before [b], and the two keys are equal iff
-    [a] and [b] are equal in the sort order. It is elementwise, of [t]'s shape.
+val order_key : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
+(** [order_key dtype t] is, for each element of [t], an unsigned integer of
+    [dtype] whose order is the {{!section:sorting}sort order}: the key of [a] is
+    below the key of [b], read unsigned, iff [a] sorts before [b], and the two
+    keys are equal iff [a] and [b] are equal in the sort order. It is
+    elementwise, of [t]'s shape. [dtype] is {!uint8}, {!uint16}, {!uint32} or
+    {!uint64}, at least as wide as [t]'s elements; [uint64] keys every dtype but
+    the complex ones.
 
     The key of an element is:
-    - for a signed integer, its [int64] value with the sign bit flipped;
+    - for a signed integer, its value in the signed integer of [dtype]'s width
+      with the sign bit flipped;
     - for an unsigned integer, its value, and for a boolean [0] or [1];
-    - for a float, the bits of its [float64] value, all of them flipped when the
-      sign bit is set and only the sign bit otherwise, so that [-0.] keys just
-      below [0.]; every NaN, whatever its sign and payload, keys to all ones.
+    - for a float, the bits of its value in the float of [dtype]'s width (its
+      own dtype when it is as wide, else [float16], [float32] or [float64]), all
+      of them flipped when the sign bit is set and only the sign bit otherwise,
+      so that [-0.] keys just below [0.]; every NaN, whatever its sign and
+      payload, keys to all ones.
 
-    The [float8] dtypes widen to [float16] first. An exact cast within a family
-    keeps the key: [order_key (cast int64 t)] is [order_key t] for every signed
-    integer [t], [order_key (cast uint64 t)] for every unsigned one, and
-    [order_key (cast float64 t)] for every float. On [uint64] it is the
-    identity.
+    An exact cast within a family, to a dtype no wider than [dtype], keeps the
+    key: [order_key uint64 (cast int64 t)] is [order_key uint64 t] for every
+    signed integer [t], and [order_key uint16 (cast float16 t)] is
+    [order_key uint16 t] for every [float8] [t]. [order_key uint64] is the
+    identity on [uint64].
 
-    A key of several columns is a row of order keys, made with {!stack}
-    [~axis:1]; a column that sorts descending is {!bitwise_not} of its order
-    key. {!lexsort}'s example builds one.
+    A key of several columns is a row of order keys of one [dtype], made with
+    {!stack} [~axis:1]; a column that sorts descending is {!bitwise_not} of its
+    order key. {!lexsort}'s example builds one.
 
-    Raises [Invalid_argument] if [t] is complex: a complex number has no key of
-    64 bits.
+    Raises [Invalid_argument] if [t] is complex, or if [dtype] is not one of the
+    four or is narrower than [t]'s elements.
+
+    {@ocaml[
+      # create int8 [| 3 |] [| -128; 0; 127 |] |> order_key uint8 |> to_array
+      - : int array = [|0; 128; 255|]
+    ]}
 
     See also {!lexsort}, {!searchsorted}, {!unique}. *)
 
@@ -2757,7 +2755,9 @@ val lexsort : ('a, 'b) t -> int64_t
     {@ocaml[
       # let a = create int32 [| 4 |] [| 2l; 1l; 2l; 1l |] in
         let b = create float64 [| 4 |] [| 0.5; nan; -1.; 3. |] in
-        lexsort (stack ~axis:1 [ order_key a; bitwise_not (order_key b) ])
+        lexsort
+          (stack ~axis:1
+             [ order_key uint64 a; bitwise_not (order_key uint64 b) ])
         |> to_array
       - : int64 array = [|1L; 3L; 0L; 2L|]
     ]}

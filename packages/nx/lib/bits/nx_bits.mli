@@ -9,31 +9,27 @@
     from a bit offset: bit [i] is bit [(offset + i) mod 8] of byte
     [(offset + i) / 8], the least significant bit first. This is Arrow's
     validity layout, so a bitmap reads and writes Arrow's validity buffers
-    without a copy.
+    without a copy. The bits of the bytes outside the range are unspecified:
+    operations may set them, and {!count} and {!to_bool} ignore them.
 
-    Every operation is a composition of tensor operations over the bytes, so a
-    bitmap is placed, traced and compiled as its bytes are. The bits of the
-    bytes outside the range are unspecified: operations may set them, and
-    {!count} and {!to_bool} ignore them.
+    The library [nx.bits] is built from nx's operations over the bytes, so a
+    bitmap is placed, traced and compiled as its bytes are.
 
-    Conditions take booleans: [Nx.where (Bits.to_bool b) x y]. *)
-
-type ('a, 'b) tensor = ('a, 'b) Nx_effect.t
-(** The type for tensors. *)
+    Conditions take booleans: [Nx.where (Nx_bits.to_bool b) x y]. *)
 
 type t
 (** The type for bitmaps. *)
 
 (** {1:make Bitmaps} *)
 
-val v : ?offset:int -> length:int -> (int, Nx_dtype.uint8_elt) tensor -> t
+val v : ?offset:int -> length:int -> Nx.uint8_t -> t
 (** [v ~offset ~length bytes] is the [length] bits of [bytes] from bit [offset]
     on. [offset] defaults to [0].
 
     Raises [Invalid_argument] if [bytes] is not 1-D, if [offset] or [length] is
     negative, or if the bits reach past the bytes. *)
 
-val of_bool : (bool, Nx_dtype.bool_elt) tensor -> t
+val of_bool : Nx.bool_t -> t
 (** [of_bool m] is the bitmap of the 1-D mask [m]: bit [i] is set iff [m.{i}].
     Its offset is [0].
 
@@ -44,17 +40,17 @@ val of_bool : (bool, Nx_dtype.bool_elt) tensor -> t
 val length : t -> int
 (** [length b] is the number of bits of [b]. *)
 
-val bytes : t -> (int, Nx_dtype.uint8_elt) tensor * int
+val bytes : t -> Nx.uint8_t * int
 (** [bytes b] is [(bytes, offset)]: the bytes that hold [b]'s bits and the
     position of its first bit, in \[[0], [7]\]. [bytes] has exactly the
     [(offset + length b + 7) / 8] bytes the bits reach, and
     [v ~offset ~length:(length b) bytes] is [b]. *)
 
-val to_bool : t -> (bool, Nx_dtype.bool_elt) tensor
+val to_bool : t -> Nx.bool_t
 (** [to_bool b] is the mask of [b]: [(to_bool b).{i}] is [true] iff bit [i] is
     set. Its shape is [[|length b|]]. *)
 
-val count : t -> (int64, Nx_dtype.int64_elt) tensor
+val count : t -> Nx.int64_t
 (** [count b] is the number of bits set in [b], a scalar. *)
 
 (** {1:logic Logic}
@@ -84,7 +80,7 @@ val sub : t -> offset:int -> length:int -> t
     Raises [Invalid_argument] if [offset] or [length] is negative, or if
     [offset + length > length b]. *)
 
-val take : indices:(int64, Nx_dtype.int64_elt) tensor -> t -> t
+val take : indices:Nx.int64_t -> t -> t
 (** [take ~indices b] is the bitmap whose bit [j] is bit [indices.{j}] of [b].
     An index outside \[[0], [length b]) reads an unset bit. Its offset is [0].
 

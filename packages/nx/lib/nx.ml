@@ -22,8 +22,6 @@ let shards = Nx_effect.shards
 let of_shards = Nx_effect.of_shards
 
 module Ptree = Ptree
-module Bits = Bits
-module Ragged = Ragged
 
 type packed = Nx_effect.packed = P : ('a, 'b) t -> packed
 
