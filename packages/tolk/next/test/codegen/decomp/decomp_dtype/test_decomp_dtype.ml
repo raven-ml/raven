@@ -552,14 +552,6 @@ let comparisons_read_values dt () =
   equal (list value) want
     (written ~on:on_narrows k [ List.map code a; List.map code b ])
 
-(* [quieted dt c] is the code [c] of [dt] through a conversion to float32 and
-   back: itself, but a signalling NaN, which a conversion quiets by setting the
-   top bit of its mantissa. The fnuz formats' one NaN and e4m3's are quiet. *)
-let quieted dt c =
-  let quiet = 1 lsl (snd (Dtype.finfo dt) - 1) in
-  if is_nan_code dt c && not (List.mem dt Dtype.fp8_fnuz) then c lor quiet
-  else c
-
 let selects_codes cs dt () =
   let others = List.rev cs in
   let conds = List.mapi (fun i _ -> i mod 2 = 0) cs in
@@ -569,7 +561,7 @@ let selects_codes cs dt () =
   in
   let want =
     List.map2
-      (fun c (x, y) -> quieted dt (if c then x else y))
+      (fun c (x, y) -> if c then x else y)
       conds (List.combine cs others)
   in
   equal (list hex) want
@@ -722,8 +714,7 @@ let is_nan_of dt ~negative c =
 
 let copies cs dt =
   let k = kernel [ dt ] dt (List.length cs) List.hd in
-  equal (list hex)
-    (List.map (quieted dt) cs)
+  equal (list hex) cs
     (List.map as_int (written ~on:on_narrows k [ List.map code cs ]))
 
 let nans =
@@ -771,10 +762,12 @@ let nans =
                 (both_signs signalling_nans))
             narrows);
       cases ~name:alias
-        "an emulated copy keeps every NaN code, quieting a signalling one"
+        "an emulated copy keeps every NaN code, a signalling one's included \
+         (D62)"
         narrows (fun dt -> copies (nan_codes dt) dt);
       cases ~name:alias
-        "an emulated selection keeps NaN codes, quieting a signalling one"
+        "an emulated selection keeps every NaN code, a signalling one's \
+         included (D62)"
         narrows (fun dt -> selects_codes (nan_codes dt) dt ());
       cases ~name:alias
         "an emulated cast of a float32 or a double NaN is the NaN code Dtype \
@@ -1159,25 +1152,6 @@ let d9 =
             (converts Int64 Float32 "-9007199791611905");
           equal (list hex) [ 0xdebb ]
             (List.map as_int (converts Int64 Bfloat16 "-6719370644036780033")));
-      cases
-        ~name:(fun (dt, _) -> alias dt)
-        "an emulated narrow-float copy quiets a signalling NaN; a native copy \
-         keeps its bits"
-        Dtype.
-          [
-            (Float16, [ (0x7c01, 0x7e01); (0xfd55, 0xff55) ]);
-            (Bfloat16, [ (0x7f81, 0x7fc1); (0xffbf, 0xffff) ]);
-            (Fp8e5m2, [ (0x7d, 0x7f); (0xfd, 0xff) ]);
-          ]
-        (fun (dt, table) ->
-          let k = kernel [ dt ] dt (List.length table) List.hd in
-          let codes = List.map fst table in
-          equal
-            (list (pair hex hex))
-            table
-            (List.combine codes
-               (List.map as_int
-                  (written ~on:on_narrows k [ List.map code codes ]))));
       test "an OCP 8-bit float keeps its negative zero" (fun () ->
           casts Fp8e4m3 [ (`Float (-0.), 0x80); (`Float (-1e-30), 0x80) ];
           casts Fp8e5m2 [ (`Float (-0.), 0x80); (`Float (-1e-30), 0x80) ]);

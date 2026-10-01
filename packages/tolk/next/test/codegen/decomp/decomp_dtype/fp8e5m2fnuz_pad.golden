@@ -42,66 +42,26 @@
 40 Ops.END dtypes.void [39, 3]
 41 Ops.SINK dtypes.void [40] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
 42 Ops.PARAM dtypes.uchar [] ParamArg(slot=0, dtype=dtypes.uchar, size=12, device="CPU") tag=dtypes.fp8e5m2fnuz
-43 Ops.ADD dtypes.int [5, 22]
-44 Ops.INDEX dtypes.uchar [42, 43] tag=dtypes.fp8e5m2fnuz
-45 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=8, device="CPU") tag=dtypes.fp8e5m2fnuz
-46 Ops.ADD dtypes.int [17, 22]
-47 Ops.INDEX dtypes.uchar [45, 46] tag=dtypes.fp8e5m2fnuz
+43 Ops.SHRINK dtypes.uchar [42, 5, 6] tag=dtypes.fp8e5m2fnuz
+44 Ops.CONST dtypes.weakint [] 66
+45 Ops.CAST dtypes.uchar [44] dtypes.uchar
+46 Ops.PARAM dtypes.uchar [] ParamArg(slot=1, dtype=dtypes.uchar, size=8, device="CPU") tag=dtypes.fp8e5m2fnuz
+47 Ops.SHRINK dtypes.uchar [46, 17, 19] tag=dtypes.fp8e5m2fnuz
 48 Ops.LOAD dtypes.uchar [47]
-49 Ops.CUSTOM dtypes.float [48] ("f2f fp8e5m2fnuz float True", dtypes.float)
-50 Ops.ADD dtypes.int [17, 8]
-51 Ops.INDEX dtypes.uchar [45, 50] tag=dtypes.fp8e5m2fnuz
-52 Ops.LOAD dtypes.uchar [51]
-53 Ops.CUSTOM dtypes.float [52] ("f2f fp8e5m2fnuz float True", dtypes.float)
-54 Ops.STACK dtypes.float [49, 53]
-55 Ops.CAST dtypes.float [54] dtypes.float
-56 Ops.INDEX dtypes.float [55, 23]
-57 Ops.CAST dtypes.float [56] dtypes.float
-58 Ops.WHERE dtypes.float [9, 10, 57]
-59 Ops.CAST dtypes.float [58] dtypes.float
-60 Ops.BITCAST dtypes.uint [59] dtypes.uint
-61 Ops.CUSTOM dtypes.uchar [60] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-62 Ops.STORE dtypes.void [44, 61]
-63 Ops.ADD dtypes.int [5, 8]
-64 Ops.INDEX dtypes.uchar [42, 63] tag=dtypes.fp8e5m2fnuz
-65 Ops.INDEX dtypes.float [55, 26]
-66 Ops.CAST dtypes.float [65] dtypes.float
-67 Ops.WHERE dtypes.float [9, 10, 66]
-68 Ops.CAST dtypes.float [67] dtypes.float
-69 Ops.BITCAST dtypes.uint [68] dtypes.uint
-70 Ops.CUSTOM dtypes.uchar [69] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-71 Ops.STORE dtypes.void [64, 70]
-72 Ops.ADD dtypes.int [5, 18]
-73 Ops.INDEX dtypes.uchar [42, 72] tag=dtypes.fp8e5m2fnuz
-74 Ops.ADD dtypes.int [30, 22]
-75 Ops.INDEX dtypes.uchar [45, 74] tag=dtypes.fp8e5m2fnuz
-76 Ops.LOAD dtypes.uchar [75]
-77 Ops.CUSTOM dtypes.float [76] ("f2f fp8e5m2fnuz float True", dtypes.float)
-78 Ops.ADD dtypes.int [30, 8]
-79 Ops.INDEX dtypes.uchar [45, 78] tag=dtypes.fp8e5m2fnuz
-80 Ops.LOAD dtypes.uchar [79]
-81 Ops.CUSTOM dtypes.float [80] ("f2f fp8e5m2fnuz float True", dtypes.float)
-82 Ops.STACK dtypes.float [77, 81]
-83 Ops.CAST dtypes.float [82] dtypes.float
-84 Ops.INDEX dtypes.float [83, 23]
-85 Ops.CAST dtypes.float [84] dtypes.float
-86 Ops.WHERE dtypes.float [29, 85, 10]
-87 Ops.CAST dtypes.float [86] dtypes.float
-88 Ops.BITCAST dtypes.uint [87] dtypes.uint
-89 Ops.CUSTOM dtypes.uchar [88] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-90 Ops.STORE dtypes.void [73, 89]
-91 Ops.ADD dtypes.int [5, 1]
-92 Ops.INDEX dtypes.uchar [42, 91] tag=dtypes.fp8e5m2fnuz
-93 Ops.INDEX dtypes.float [83, 26]
-94 Ops.CAST dtypes.float [93] dtypes.float
-95 Ops.WHERE dtypes.float [29, 94, 10]
-96 Ops.CAST dtypes.float [95] dtypes.float
-97 Ops.BITCAST dtypes.uint [96] dtypes.uint
-98 Ops.CUSTOM dtypes.uchar [97] ("f2f float fp8e5m2fnuz True", dtypes.uchar)
-99 Ops.STORE dtypes.void [92, 98]
-100 Ops.GROUP dtypes.void [62, 71, 90, 99]
-101 Ops.GROUP dtypes.void [100, 100, 100, 100]
-102 Ops.END dtypes.void [101, 3]
-103 Ops.SINK dtypes.void [102] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-104 Ops.SINK dtypes.void [41, 103]
+49 Ops.INDEX dtypes.uchar [48, 23]
+50 Ops.WHERE dtypes.uchar [9, 45, 49]
+51 Ops.INDEX dtypes.uchar [48, 26]
+52 Ops.WHERE dtypes.uchar [9, 45, 51]
+53 Ops.SHRINK dtypes.uchar [46, 30, 19] tag=dtypes.fp8e5m2fnuz
+54 Ops.LOAD dtypes.uchar [53]
+55 Ops.INDEX dtypes.uchar [54, 23]
+56 Ops.WHERE dtypes.uchar [29, 55, 45]
+57 Ops.INDEX dtypes.uchar [54, 26]
+58 Ops.WHERE dtypes.uchar [29, 57, 45]
+59 Ops.STACK dtypes.uchar [50, 52, 56, 58]
+60 Ops.STORE dtypes.void [43, 59]
+61 Ops.GROUP dtypes.void [60, 60, 60, 60]
+62 Ops.END dtypes.void [61, 3]
+63 Ops.SINK dtypes.void [62] KernelInfo(name="E_3_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+64 Ops.SINK dtypes.void [41, 63]
 

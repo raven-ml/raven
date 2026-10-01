@@ -57,58 +57,34 @@
 55 Ops.PARAM dtypes.ushort [] ParamArg(slot=2, dtype=dtypes.ushort, size=8, device="CPU") tag=dtypes.bfloat16
 56 Ops.INDEX dtypes.ushort [55, 5] tag=dtypes.bfloat16
 57 Ops.LOAD dtypes.ushort [56]
-58 Ops.CUSTOM dtypes.float [57] ("f2f bfloat16 float True", dtypes.float)
-59 Ops.CAST dtypes.float [58] dtypes.float
-60 Ops.PARAM dtypes.ushort [] ParamArg(slot=3, dtype=dtypes.ushort, size=8, device="CPU") tag=dtypes.bfloat16
-61 Ops.INDEX dtypes.ushort [60, 5] tag=dtypes.bfloat16
-62 Ops.LOAD dtypes.ushort [61]
-63 Ops.CUSTOM dtypes.float [62] ("f2f bfloat16 float True", dtypes.float)
-64 Ops.CAST dtypes.float [63] dtypes.float
-65 Ops.WHERE dtypes.float [9, 59, 64]
-66 Ops.BITCAST dtypes.uint [65] dtypes.uint
-67 Ops.CUSTOM dtypes.ushort [66] ("f2f float bfloat16 True", dtypes.ushort)
-68 Ops.STORE dtypes.void [54, 67]
-69 Ops.INDEX dtypes.ushort [53, 19] tag=dtypes.bfloat16
-70 Ops.INDEX dtypes.ushort [55, 19] tag=dtypes.bfloat16
-71 Ops.LOAD dtypes.ushort [70]
-72 Ops.CUSTOM dtypes.float [71] ("f2f bfloat16 float True", dtypes.float)
-73 Ops.CAST dtypes.float [72] dtypes.float
-74 Ops.INDEX dtypes.ushort [60, 19] tag=dtypes.bfloat16
-75 Ops.LOAD dtypes.ushort [74]
-76 Ops.CUSTOM dtypes.float [75] ("f2f bfloat16 float True", dtypes.float)
-77 Ops.CAST dtypes.float [76] dtypes.float
-78 Ops.WHERE dtypes.float [22, 73, 77]
-79 Ops.BITCAST dtypes.uint [78] dtypes.uint
-80 Ops.CUSTOM dtypes.ushort [79] ("f2f float bfloat16 True", dtypes.ushort)
-81 Ops.STORE dtypes.void [69, 80]
-82 Ops.INDEX dtypes.ushort [53, 29] tag=dtypes.bfloat16
-83 Ops.INDEX dtypes.ushort [55, 29] tag=dtypes.bfloat16
-84 Ops.LOAD dtypes.ushort [83]
-85 Ops.CUSTOM dtypes.float [84] ("f2f bfloat16 float True", dtypes.float)
-86 Ops.CAST dtypes.float [85] dtypes.float
-87 Ops.INDEX dtypes.ushort [60, 29] tag=dtypes.bfloat16
-88 Ops.LOAD dtypes.ushort [87]
-89 Ops.CUSTOM dtypes.float [88] ("f2f bfloat16 float True", dtypes.float)
-90 Ops.CAST dtypes.float [89] dtypes.float
-91 Ops.WHERE dtypes.float [32, 86, 90]
-92 Ops.BITCAST dtypes.uint [91] dtypes.uint
-93 Ops.CUSTOM dtypes.ushort [92] ("f2f float bfloat16 True", dtypes.ushort)
-94 Ops.STORE dtypes.void [82, 93]
-95 Ops.INDEX dtypes.ushort [53, 40] tag=dtypes.bfloat16
-96 Ops.INDEX dtypes.ushort [55, 40] tag=dtypes.bfloat16
-97 Ops.LOAD dtypes.ushort [96]
-98 Ops.CUSTOM dtypes.float [97] ("f2f bfloat16 float True", dtypes.float)
-99 Ops.CAST dtypes.float [98] dtypes.float
-100 Ops.INDEX dtypes.ushort [60, 40] tag=dtypes.bfloat16
-101 Ops.LOAD dtypes.ushort [100]
-102 Ops.CUSTOM dtypes.float [101] ("f2f bfloat16 float True", dtypes.float)
-103 Ops.CAST dtypes.float [102] dtypes.float
-104 Ops.WHERE dtypes.float [43, 99, 103]
-105 Ops.BITCAST dtypes.uint [104] dtypes.uint
-106 Ops.CUSTOM dtypes.ushort [105] ("f2f float bfloat16 True", dtypes.ushort)
-107 Ops.STORE dtypes.void [95, 106]
-108 Ops.GROUP dtypes.void [68, 81, 94, 107]
-109 Ops.END dtypes.void [108, 3]
-110 Ops.SINK dtypes.void [109] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
-111 Ops.SINK dtypes.void [52, 110]
+58 Ops.PARAM dtypes.ushort [] ParamArg(slot=3, dtype=dtypes.ushort, size=8, device="CPU") tag=dtypes.bfloat16
+59 Ops.INDEX dtypes.ushort [58, 5] tag=dtypes.bfloat16
+60 Ops.LOAD dtypes.ushort [59]
+61 Ops.WHERE dtypes.ushort [9, 57, 60]
+62 Ops.STORE dtypes.void [54, 61]
+63 Ops.INDEX dtypes.ushort [53, 19] tag=dtypes.bfloat16
+64 Ops.INDEX dtypes.ushort [55, 19] tag=dtypes.bfloat16
+65 Ops.LOAD dtypes.ushort [64]
+66 Ops.INDEX dtypes.ushort [58, 19] tag=dtypes.bfloat16
+67 Ops.LOAD dtypes.ushort [66]
+68 Ops.WHERE dtypes.ushort [22, 65, 67]
+69 Ops.STORE dtypes.void [63, 68]
+70 Ops.INDEX dtypes.ushort [53, 29] tag=dtypes.bfloat16
+71 Ops.INDEX dtypes.ushort [55, 29] tag=dtypes.bfloat16
+72 Ops.LOAD dtypes.ushort [71]
+73 Ops.INDEX dtypes.ushort [58, 29] tag=dtypes.bfloat16
+74 Ops.LOAD dtypes.ushort [73]
+75 Ops.WHERE dtypes.ushort [32, 72, 74]
+76 Ops.STORE dtypes.void [70, 75]
+77 Ops.INDEX dtypes.ushort [53, 40] tag=dtypes.bfloat16
+78 Ops.INDEX dtypes.ushort [55, 40] tag=dtypes.bfloat16
+79 Ops.LOAD dtypes.ushort [78]
+80 Ops.INDEX dtypes.ushort [58, 40] tag=dtypes.bfloat16
+81 Ops.LOAD dtypes.ushort [80]
+82 Ops.WHERE dtypes.ushort [43, 79, 81]
+83 Ops.STORE dtypes.void [77, 82]
+84 Ops.GROUP dtypes.void [62, 69, 76, 83]
+85 Ops.END dtypes.void [84, 3]
+86 Ops.SINK dtypes.void [85] KernelInfo(name="E_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=0, arg=(4, AxisType.UPCAST)),)) tag=1
+87 Ops.SINK dtypes.void [52, 86]
 

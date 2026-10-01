@@ -35,6 +35,55 @@ index efb2e82..8c64ddb 100644
    # push permute/reshape to the other side of the add
    (UPat(Ops.PERMUTE, src=(UPat(Ops.WMMA, name="wmma"),), name="permute") + UPat.var("add"),
      lambda wmma,permute,add: (wmma + add.permute(argsort(permute.arg))).permute(permute.arg)),
+diff --git a/tinygrad/codegen/decomp/dtype.py b/tinygrad/codegen/decomp/dtype.py
+index e1d9579..b531ff8 100644
+--- a/tinygrad/codegen/decomp/dtype.py
++++ b/tinygrad/codegen/decomp/dtype.py
+@@ -1,5 +1,6 @@
+ from dataclasses import replace
+-from tinygrad.dtype import dtypes, DType, AddrSpace, truncate
++import struct
++from tinygrad.dtype import dtypes, DType, AddrSpace, truncate, exact_bitcast
+ from tinygrad.helpers import flatten, DEBUG, EMULATED_DTYPES
+ from tinygrad.uop import GroupOp
+ from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher, graph_rewrite
+@@ -144,6 +145,26 @@ def f2f_store(st, idx, val, fr:DType, to:DType):
+ 
+ def f2f_rewrite(ctx:tuple, x:UOp) -> UOp: return graph_rewrite(x, pm_float_decomp, ctx=ctx, bottom_up=True)
+ 
++# the bits a value of the emulated float moves from storage without arithmetic: a load, a constant, a selection between
++# such values, and stacks and lanes of them. a move keeps every code, a signalling NaN's included
++def f2f_moved(ctx:tuple, x:UOp) -> UOp|None:
++  fr, tdt = ctx[0], f2f_dt[ctx[0]]
++  if x.op in (Ops.CONST, Ops.CAST) and x.dtype in (fr, dtypes.weakfloat):
++    c = x if x.op is Ops.CONST else x.src[0]
++    if c.op is not Ops.CONST or not isinstance(c.arg, float) or struct.pack('<d', fr.const(c.arg)) != struct.pack('<d', c.arg): return None
++    return UOp.const(exact_bitcast(fr.const(c.arg), fr, tdt), tdt)
++  if x.dtype != fr: return None
++  if x.op is Ops.LOAD and len(x.src) == 1: return f2f_rewrite(ctx, x.src[0]).load()
++  if x.op is Ops.WHERE:
++    a, b = f2f_moved(ctx, x.src[1]), f2f_moved(ctx, x.src[2])
++    return None if a is None or b is None else x.src[0].where(a, b)
++  if x.op is Ops.STACK:
++    srcs = [f2f_moved(ctx, s) for s in x.src]
++    return None if any(s is None for s in srcs) else UOp(Ops.STACK, src=tuple(srcs))
++  if x.op is Ops.INDEX and x.addrspace is AddrSpace.ALU:
++    return None if (v:=f2f_moved(ctx, x.src[0])) is None else v.index(*x.src[1:])
++  return None
++
+ # tag is the 32-bit word this node becomes - (0 for the low word, 1 for the high, the dtype the consumer wants)
+ pm_long_decomp: PatternMatcher = PatternMatcher([
+   # the decomp's own bottom-up rewrite can mint bare consts mid-flight: word splitting commits them at the long sibling's dtype
+@@ -199,6 +220,9 @@ pm_float_decomp: PatternMatcher = PatternMatcher([
+    f2f_clamp(val.cast(ctx[1]), ctx[0]) if x.dtype == ctx[0] else None),
+   (UPat(GroupOp.ALU|{Ops.STACK, Ops.INDEX}, dtypes.floats, name="x"), lambda ctx,x:
+    UOp(x.op, src=tuple(s.cast(ctx[1]) if s.dtype == ctx[0] else s for s in x.src), arg=x.arg, tag=x.tag) if x.dtype == ctx[0] else None),
++  # a store of a move stores the bits moved
++  (UPat(Ops.STORE, src=(UPat.var("idx"), UPat.var("val")), allow_any_len=True, name='st'), lambda ctx,st,idx,val:
++   st.replace(src=(f2f_rewrite(ctx, idx), bits, *st.src[2:])) if val.dtype == ctx[0] and (bits:=f2f_moved(ctx, val)) is not None else None),
+   (UPat(Ops.STORE, src=(UPat.var("idx"), UPat(Ops.BITCAST, dtypes.floats, name="val")), name='st'), lambda ctx,st,idx,val:
+    st.replace(src=(idx, val.src[0].bitcast(f2f_dt[ctx[0]]))) if val.dtype == ctx[0] and idx.tag == ctx[0] else None),
+   (UPat(Ops.STORE, src=(UPat.var("idx").or_casted(), UPat.var("val", dtypes.floats)), name='st'), lambda ctx,st,idx,val:
 diff --git a/tinygrad/codegen/decomp/transcendental.py b/tinygrad/codegen/decomp/transcendental.py
 index 62c3191..5925e6a 100644
 --- a/tinygrad/codegen/decomp/transcendental.py

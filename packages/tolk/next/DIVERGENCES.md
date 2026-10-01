@@ -322,9 +322,8 @@ the Exclusions of `README.md`.
     saturates to its greatest finite value;
   - an infinity stays one in e5m2 and becomes the NaN of e4m3 and the `fnuz`
     formats, of its sign where the format has one (D10);
-  - an emulated narrow-float copy quiets a signalling NaN, and a native copy
-    keeps its bits: an emulated target widens a load to float32 and narrows the
-    store back, and a conversion quiets a signalling NaN.
+  - a conversion quiets a signalling NaN; a copy or a selection, which
+    converts nothing, keeps it (D62).
 - **Reason:** (b). rune folds constants with `Dtype`, and nx converts eagerly
   with one rounding. An emulated kernel exists only because its target lacks
   the type, so it must give the bits a native one gives.
@@ -338,9 +337,8 @@ the Exclusions of `README.md`.
   and is the NaN of e4m3 and the fnuz formats, and a finite overflow
   saturates`, `a double, or an integer more precise than a float32, rounds
   once`, `an emulated 64-bit integer converts to a float32 once`, `an fnuz
-  format stores an underflow to negative zero as positive zero`, and `an
-  emulated narrow-float copy quiets a signalling NaN; a native copy keeps its
-  bits`; `Tolk_next.Decomp_dtype › goldens`, which are tinygrad's graphs with
+  format stores an underflow to negative zero as positive zero`;
+  `Tolk_next.Decomp_dtype › goldens`, which are tinygrad's graphs with
   `f2f` and `f2f_clamp` replaced by these conversions.
 
 ## D10. A float8 NaN keeps its sign when decoded
@@ -1740,6 +1738,36 @@ the Exclusions of `README.md`.
   `› stack_whole_first_multi.golden`, and `› values › stack_whole writes
   what it wrote before` and `› stack_whole_first …`, from the patched
   tinygrad, whose values for both stacks equal numpy's.
+
+## D62. A move of an emulated float keeps its bits
+
+- **tinygrad:** `codegen/decomp/dtype.py:181-206` (`pm_float_decomp`, which
+  widens every load of an emulated float to the emulating float and narrows
+  every store back).
+- **tolk.next:** `lib/codegen/decomp/decomp_dtype.ml:677` (`moved`) and
+  `:803` (the store rule of `pm_float_decomp` that stores it), and
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** a store of a value that moves stored bits without arithmetic
+  (a load, a constant the float holds exactly, a selection between such
+  values, and stacks and lanes of them) stores those bits, as the storage's
+  unsigned integers. tinygrad widens and narrows each such value, which keeps
+  its value but quiets a signalling NaN: a copy of e5m2's `0x7d`, half's
+  `0x7c01` or bfloat16's `0x7f81` stores `0x7f`, `0x7e01` or `0x7fc1`.
+  Arithmetic still converts, and quiets a signalling NaN (D9).
+- **Reason:** (b). nx's moves preserve bits: an eager copy, movement or
+  `where` keeps a signalling NaN, and rune.next compiles the 8-bit floats on
+  the host and on Metal, where tolk emulates them, so a compiled function
+  computes what it computes eagerly only if the emulated moves keep the bits
+  too.
+- **Pinned by:** rune.next's `Compiled` suite: `host › 8-bit floats › a copy
+  of every 8-bit float code keeps its bits (D62)` and `› a selection of
+  every 8-bit float code keeps its bits (D62)`, and the same under `metal ›`
+  (slow), against eager on all 256 codes of e4m3 and e5m2; the
+  `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`): `NaNs › an
+  emulated copy keeps every NaN code, a signalling one's included (D62)`
+  and `› an emulated selection keeps every NaN code, a signalling one's
+  included (D62)`, on every emulated float, and the goldens of the
+  `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
 
 ## D67. A long range runs as chunks of its trips
 

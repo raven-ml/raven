@@ -669,6 +669,40 @@ and f2f_store st idx value fr to_ =
                    f2f (bitcast (index value [ int i ]) tdt) to_ fr;
                  ]))
 
+(* The bits that [x], a value of the emulated float, moves from storage
+   without arithmetic: a load, a constant, a selection between such values,
+   and stacks and lanes of them. A move keeps every code, a signalling NaN's
+   included, where converting through the emulating float would quiet it
+   (D62). *)
+and moved ((fr, _) as ctx) x =
+  let all xs =
+    List.fold_right
+      (fun x acc ->
+        match (x, acc) with Some x, Some xs -> Some (x :: xs) | _ -> None)
+      xs (Some [])
+  in
+  let tdt = f2f_dt fr in
+  match (op x, src x) with
+  | (Op.Const | Op.Cast), _
+    when Dtype.equal (dtype x) fr || Dtype.equal (dtype x) Dtype.Weak_float -> (
+      (* A constant the float holds exactly, as its bits. *)
+      match value x with
+      | #Dtype.value as c when Dtype.equal_const (Dtype.const fr c) c ->
+          Some (const ~dtype:tdt (Dtype.bitcast fr tdt c :> Dtype.const))
+      | _ -> None
+      | exception Invalid_argument _ -> None)
+  | _ when not (Dtype.equal (dtype x) fr) -> None
+  | Op.Load, [ idx ] -> Some (load (f2f_rewrite ctx idx) [])
+  | Op.Where, [ c; a; b ] -> (
+      match (moved ctx a, moved ctx b) with
+      | Some a, Some b -> Some (where c a b)
+      | _ -> None)
+  | Op.Stack, xs ->
+      Option.map (fun xs -> v Op.Stack ~src:xs) (all (List.map (moved ctx) xs))
+  | Op.Index, lanes :: at when addrspace x = Some Dtype.Alu ->
+      Option.map (fun lanes -> index lanes at) (moved ctx lanes)
+  | _ -> None
+
 and f2f_rewrite ctx x =
   graph_rewrite ~bottom_up:true ~ctx x (Lazy.force pm_float_decomp)
 
@@ -766,6 +800,23 @@ and pm_float_decomp =
                            if Dtype.equal (dtype s) fr then cast s to_ else s)
                          (src x))
                     ~arg:(arg x) ?tag:(tag x)));
+         (* A store of a move stores the bits moved (D62). *)
+         rule_ctx
+           (Upat.v ~op:(ops [ Op.Store ]) ~allow_any_len:true
+              ~src:[ Upat.var "idx"; Upat.var "val" ]
+              ~name:"st" ())
+           (fun ((fr, _) as ctx) m ->
+             let st = m "st" and value = m "val" in
+             if not (Dtype.equal (dtype value) fr) then None
+             else
+               Option.map
+                 (fun bits ->
+                   replace st
+                     ~src:
+                       (f2f_rewrite ctx (m "idx")
+                       :: bits
+                       :: List.tl (List.tl (src st))))
+                 (moved ctx value));
          rule_ctx
            (Upat.op Op.Store ~name:"st"
               ~src:

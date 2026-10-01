@@ -1788,28 +1788,23 @@ let refusals d =
   ]
 
 (* The 8-bit floats, which neither the host's renderer nor Metal's has and
-   tolk emulates: arithmetic is eager's, and a copy or a selection keeps each
-   code's bits, subnormals and NaN payloads included, but for an e5m2
-   signalling NaN, which emulation reads as a float32 and stores quiet (D9). *)
+   tolk emulates: arithmetic is eager's, and a copy or a selection, which
+   moves data, keeps each code's bits, subnormals and signalling NaNs
+   included (D62). *)
 
-(* An array of [n] elements on [d] whose bytes are [byte i]. *)
-let bytes d dtype n byte =
-  let h = fresh host dtype [| n |] in
+(* The host array of every code of [dtype], in the order [code] gives. *)
+let codes dtype code =
+  let h = fresh host dtype [| 256 |] in
   let c = B.bigarray Bigarray.char h.buffer in
-  for i = 0 to n - 1 do
-    Bigarray.Array1.set c i (Char.chr (byte i))
+  for i = 0 to 255 do
+    Bigarray.Array1.set c i (Char.chr (code i))
   done;
-  moved d.device h
-
-(* The code [b] of [dt] as emulation stores it. *)
-let stored (type b) (dt : (float, b) Nx_dtype.t) b =
-  match dt with Float8_e5m2 when b land 0x7f = 0x7d -> b lor 0x02 | _ -> b
+  h
 
 let float8 d =
-  let module K = (val compiled) in
   let dts = [ F Nx.float8_e4m3; F Nx.float8_e5m2 ] in
   let name (F dt) = Nx_dtype.to_string dt in
-  let codes dt f = String.init 256 (fun i -> Char.chr (stored dt (f i))) in
+  let same_bytes (e, a) = equal string (bytes_of e) (bytes_of a) in
   [
     cases "an 8-bit float sums as eager does" ~name dts (fun (F dt) ->
         let x =
@@ -1837,20 +1832,25 @@ let float8 d =
             let x = operand 11 m k and y = operand 5 k n in
             exact_of (both d (matmul [| m; n |] x y)))
           [ (3, 12, 5); (1, 64, 40); (16, 32, 24) ]);
-    cases "a copy of every 8-bit float code keeps its bits (D9)" ~name dts
+    cases "a copy of every 8-bit float code keeps its bits (D62)" ~name dts
       (fun (F dt) ->
-        let x = bytes d dt 256 Fun.id and dst = fresh d.device dt [| 256 |] in
-        K.contiguous x ~dst;
-        equal string (codes dt Fun.id) (bytes_of dst));
-    cases "a selection of every 8-bit float code keeps its bits (D9)" ~name dts
-      (fun (F dt) ->
-        let x = bytes d dt 256 Fun.id and y = bytes d dt 256 (fun i -> 255 - i) in
-        let c = bytes d Nx.bool 256 (fun i -> i land 1) in
-        let dst = fresh d.device dt [| 256 |] in
-        K.where c x y ~dst;
-        equal string
-          (codes dt (fun i -> if i land 1 = 1 then i else 255 - i))
-          (bytes_of dst));
+        let x = codes dt Fun.id in
+        let copy (module K : Nx_backend.S) env =
+          let dst = env.dst dt [| 256 |] in
+          K.contiguous (env.on x) ~dst;
+          dst
+        in
+        same_bytes (both d copy));
+    cases "a selection of every 8-bit float code keeps its bits (D62)" ~name
+      dts (fun (F dt) ->
+        let x = codes dt Fun.id and y = codes dt (fun i -> 255 - i) in
+        let c = codes Nx.bool (fun i -> i land 1) in
+        let select (module K : Nx_backend.S) env =
+          let dst = env.dst dt [| 256 |] in
+          K.where (env.on c) (env.on x) (env.on y) ~dst;
+          dst
+        in
+        same_bytes (both d select));
   ]
 
 (* The refusals of what Metal's renderer lacks: float64, which svd's singular
