@@ -4,7 +4,6 @@
   through the pp data URI output.
   ---------------------------------------------------------------------------*)
 
-open Hugin
 open Windtrap
 
 let is_base64_char = function

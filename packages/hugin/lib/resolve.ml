@@ -242,8 +242,7 @@ let emit_point_mark sx sy plot_area theme ~x ~y ~color ~color_by ~size ~size_by
   let stroke = Some color in
   [ Scene.Markers { points; shape; size = ms; sizes; fill; fills; stroke } ]
 
-let emit_bar_mark sx sy plot_area theme ~x ~height ~width ~bottom ~color ~alpha
-    =
+let emit_bar_mark sx sy plot_area ~x ~height ~width ~bottom ~color ~alpha =
   let n = (Nx.shape x).(0) in
   let color = resolve_color color alpha in
   let w = Option.value ~default:0.8 width in
@@ -697,8 +696,7 @@ let emit_mark sx sy plot_area theme = function
       emit_point_mark sx sy plot_area theme ~x ~y ~color ~color_by ~size
         ~size_by ~marker ~alpha
   | Spec.Bar { x; height; width; bottom; color; label = _; alpha } ->
-      emit_bar_mark sx sy plot_area theme ~x ~height ~width ~bottom ~color
-        ~alpha
+      emit_bar_mark sx sy plot_area ~x ~height ~width ~bottom ~color ~alpha
   | Spec.Hist _ ->
       failwith
         "resolve: Spec.Hist reached emit_mark; should have been normalized to \

@@ -4,7 +4,6 @@
   output, which proves the scale math is correct.
   ---------------------------------------------------------------------------*)
 
-open Hugin
 open Windtrap
 
 (* Non-overlapping occurrence count, matching windtrap's [contains ~count]. *)

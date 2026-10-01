@@ -3,7 +3,6 @@
   label formatting, count, and presence in rendered SVGs.
   ---------------------------------------------------------------------------*)
 
-open Hugin
 open Windtrap
 
 (* Non-overlapping occurrence count, matching windtrap's [contains ~count]. *)
