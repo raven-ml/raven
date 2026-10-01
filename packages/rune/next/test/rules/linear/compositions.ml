@@ -132,6 +132,10 @@ let real_functions =
     two "solve" Nx.solve (pivoted ())
       (mat 3 2 [| 1.0; -2.0; 0.5; 3.0; -1.5; 0.7 |]);
     one "inv" Nx.inv (pivoted ());
+    one "a truncated normal draw through its lower bound"
+      (fun lower ->
+        Nx.Rng.truncated_normal (Nx.Rng.key 5) lower (Nx.full f64 [| 6 |] 1.5))
+      (Nx.full f64 [| 6 |] (-0.5));
     two "a batch of triangular solves against one right-hand side"
       (fun a b -> Nx.solve_triangular a b)
       (Nx.create f64 [| 2; 2; 2 |]

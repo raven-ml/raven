@@ -312,6 +312,26 @@ let recorder =
 
 (* [lanes a] inside the map named [a]: a linear call whose transpose sums the
    lanes' cotangents and gives each lane its row. *)
+(* A draw inside a differentiated function is a constant of it: the same
+   values flow forward and back, and nothing flows into the key. *)
+let draws =
+  [
+    test "a drawn mask is a constant of the differentiation" (fun () ->
+        let key = Nx.Rng.key 7 in
+        let mask = ref None in
+        let g =
+          Rune.grad'
+            (fun x ->
+              let m =
+                Nx.cast f64 (Nx.Rng.bernoulli key (Nx.full f64 [| 8 |] 0.5))
+              in
+              mask := Some m;
+              Nx.sum (Nx.mul x m))
+            (vec (Array.init 8 float_of_int))
+        in
+        equal (Reference.exact ()) (Option.get !mask) g);
+  ]
+
 let lanes =
   let n = 3 and k = 2 in
   let xs = Nx.create f64 [| n; k |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
@@ -332,6 +352,27 @@ let lanes =
         (* Lane j's objective reads lane i's x through w_j[i]. *)
         let expected = Nx.sum ~axes:[ 0 ] ws in
         equal floats (Nx.to_array expected) (Nx.to_array grads));
+    test
+      "a lane's gradient through shared weights is the lane count times its row"
+      (fun () ->
+        (* Four lanes of matrices, one captured weight: every lane's objective
+           reads lane i's x through w[i], so lane i receives 4 w[i]. *)
+        let a = Rune.axis () in
+        let xs =
+          Nx.create f64 [| 4; 2; 2 |]
+            (Array.init 16 (fun i -> Float.sin (float_of_int i)))
+        in
+        let w =
+          Nx.create f64 [| 4; 2; 2 |]
+            (Array.init 16 (fun i -> float_of_int ((i * 3 mod 5) - 2)))
+        in
+        let grads =
+          Rune.vmap' ~axis:a
+            (fun x ->
+              Rune.grad' (fun x -> Nx.sum (Nx.mul (Rune.lanes a x) w)) x)
+            xs
+        in
+        equal floats (Nx.to_array (Nx.mul_s w 4.)) (Nx.to_array grads));
     test "a map of lanes has its tangent's adjoint for a pullback" (fun () ->
         let a = Rune.axis () in
         let g xs =
@@ -358,5 +399,6 @@ let tests =
     solve_adjoint;
     where_at_an_infinite_coefficient;
     group "the recorder" recorder;
+    group "draws" draws;
     group "lanes" lanes;
   ]

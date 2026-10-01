@@ -150,6 +150,32 @@ let randomness =
              (stack 4 (fun i ->
                   Nx.Rng.uniform (Nx.Rng.fold_in key i) f64 [| 3 |])))
           (values y));
+    test "outside a map the lane index is 0" (fun () ->
+        equal (array int32) [| 0l |]
+          (Nx.to_array (Nx.reshape [| 1 |] (Rune.lane_index ()))));
+    test "a map over a batch of keys draws each key's values" (fun () ->
+        let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
+        let y =
+          Rune.vmap
+            Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+            (fun key -> Nx.Rng.uniform key f64 [| 8 |])
+            (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42))
+        in
+        equal floats
+          (values (stack 4 (fun i -> Nx.Rng.uniform keys.(i) f64 [| 8 |])))
+          (values y));
+    test "a scope rooted at a mapped key draws each key's values" (fun () ->
+        let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 42) in
+        let draw () = Nx.rand f64 [| 8 |] in
+        let y =
+          Rune.vmap
+            Nx.Ptree.(Nx.Rng.ptree @-> returns tensor)
+            (fun key -> Nx.Rng.with_key key draw)
+            (Nx.Rng.split_batch ~n:4 (Nx.Rng.key 42))
+        in
+        equal floats
+          (values (stack 4 (fun i -> Nx.Rng.with_key keys.(i) draw)))
+          (values y));
     test "a named map passes the lane index of the anonymous map around it on"
       (fun () ->
         let key = Nx.Rng.key 7 and a = Rune.axis () in
