@@ -7,7 +7,11 @@
 
     The evaluator computes bound expressions ({!Expr.bind_out},
     {!Expr.bind_predicate}, {!Expr.bind_value}) over a {e frame}: the rows of
-    one batch. A row expression gives one value per row of the frame.
+    one batch, cut into segments ({!Reduce}). A row expression gives one value
+    per row of the frame, and a reduction one per segment. [select], [derive]
+    and [filter] evaluate in one segment, and [aggregate] in its groups;
+    [Expr.over] refines the segments of the frame it is evaluated in, and orders
+    their rows.
 
     {b Compiled once per step.} [outputs s os], [predicate s p] and [values s e]
     analyse their expressions once, when applied to them: the kernel of each
@@ -16,7 +20,7 @@
     The resulting function is applied to each frame. Every operation is eager nx
     on the frame's columns, and OCaml values are arrays of the frame's rows. A
     literal is a column of one row that nx broadcasts; an output of literals
-    alone is broadcast to the frame's rows, last.
+    alone is broadcast to the frame's rows or segments, last.
 
     {b Failures.} A failure is found at a row: a value that [store] does not
     hold, a value that OCaml cannot read (an argument of [$], or what
@@ -35,7 +39,12 @@ type frame
 (** The type for frames. *)
 
 val frame : Table.t -> frame
-(** [frame b] is the rows of the one-batch table [b]. *)
+(** [frame b] is the rows of the one-batch table [b], in one segment. *)
+
+val groups : Table.t -> Reduce.segments -> frame
+(** [groups b s] is the rows of the one-batch table [b] in the segments [s],
+    over which outputs reduce: an output has one value per segment, and a
+    failure at a segment is at its first row. *)
 
 (** The type for what fails at a row. *)
 type cause =
@@ -44,7 +53,8 @@ type cause =
       (** An exception a user function raised. *)
 
 type failure = { row : int; cause : cause }
-(** The type for the earliest failure of a call, at the frame's row [row]. *)
+(** The type for the earliest failure of a call, at the frame's row [row]: for a
+    value of a segment, the segment's first row. *)
 
 val outputs :
   Schema.t ->
@@ -53,7 +63,8 @@ val outputs :
   Column.t list * failure option
 (** [outputs s os] compiles the outputs [os], bound to the columns [s], each of
     a column typing. The result maps a frame over [s] to each output's column,
-    of the frame's rows, and the failure, if any. *)
+    of the frame's rows or, for {!groups}, its segments, and the failure, if
+    any. *)
 
 val predicate :
   Schema.t -> (bool, Expr.row) Expr.t -> frame -> Nx.bool_t * failure option

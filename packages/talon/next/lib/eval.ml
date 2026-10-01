@@ -3,9 +3,24 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type frame = { columns : Column.t array; rows : int }
+(* [reduced] holds where the outputs reduce over the segments. *)
+type frame = {
+  columns : Column.t array;
+  rows : int;
+  segments : Reduce.segments;
+  reduced : bool;
+}
 
-let frame b = { columns = Table.columns b; rows = Table.rows b }
+let frame b =
+  let rows = Table.rows b in
+  {
+    columns = Table.columns b;
+    rows;
+    segments = Reduce.one rows;
+    reduced = false;
+  }
+
+let groups b segments = { (frame b) with segments; reduced = true }
 
 type cause = Data of string | Raised of exn * Printexc.raw_backtrace
 type failure = { row : int; cause : cause }
@@ -309,13 +324,30 @@ let wide cs dt c = Nx.broadcast_to [| width cs |] (tensor dt c)
    holds its value during the evaluation of a frame. A node of OCaml values
    computes at each place it is reached: its function is pure, so it computes
    the same values there. Operands evaluate from left to right, as the order of
-   failures at a row demands, so [binary] and [ternary] name each result. *)
+   failures at a row demands, so [binary] and [ternary] name each result.
+
+   A node evaluates to one value per row of the frame or, under a reduction, one
+   per segment: [extent] values, the [i]th of which fails at the frame's row
+   [origin i], a segment's first row. *)
 
 type env = {
   frame : frame;
+  extent : int;
+  origin : int -> int;
   slots : Column.t option array;
-  mutable failure : failure option;
+  failure : failure option ref;
 }
+
+let per_row env = { env with extent = env.frame.rows; origin = Fun.id }
+
+let per_segment env segments =
+  let first = lazy (Nx.to_array (Reduce.first segments)) in
+  {
+    env with
+    frame = { env.frame with segments };
+    extent = Reduce.count segments;
+    origin = (fun i -> Int64.to_int (Lazy.force first).(i));
+  }
 
 type node = { eval : env -> Column.t; mutable slot : int }
 
@@ -337,27 +369,26 @@ let get env n =
         env.slots.(n.slot) <- Some c;
         c
 
-let fail env row cause =
-  match env.failure with
+let fail env i cause =
+  let row = env.origin i in
+  match !(env.failure) with
   | Some f when f.row <= row -> ()
-  | _ -> env.failure <- Some { row; cause }
+  | _ -> env.failure := Some { row; cause }
 
-(* [fill env c] is [c], or the one row of literals [c] repeated on each of the
-   frame's rows. *)
+(* [fill env c] is [c], or the one row of literals [c] repeated [env.extent]
+   times. *)
 let fill env c =
-  let n = env.frame.rows in
+  let n = env.extent in
   if Column.length c = n then c else Column.take (Nx.zeros Nx.int64 [| n |]) c
 
-(* [each env f] is [f i] on each row [i] before the earliest failure, and [None]
-   from it on. An exception that [f] raises fails at its row, which ends the
-   calls. *)
+(* [each env f] is [f i] on each value [i] before the earliest failure, and
+   [None] from it on. An exception that [f] raises fails at its row, which ends
+   the calls. *)
 let each env f =
-  let vs = Array.make env.frame.rows None in
+  let vs = Array.make env.extent None in
   let rec go i =
-    let stop =
-      match env.failure with Some f -> f.row | None -> env.frame.rows
-    in
-    if i < stop then
+    let stop = match !(env.failure) with Some f -> f.row | None -> max_int in
+    if i < env.extent && env.origin i < stop then
       match f i with
       | v ->
           vs.(i) <- v;
@@ -513,6 +544,45 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
       let (Dtype from) = operand_dtype a in
       unary a (fun a ->
           lifted ty [ a ] (Nx.Op.eval (Convert (Cast, dt, tensor from a))))
+  | Rows, _ -> fun env -> Reduce.rows env.frame.segments
+  | Reduce ((Ewm _ | Collect), _), _ ->
+      not_lowered (Format.asprintf "%a" Expr.pp e)
+  | Reduce (Sum, _), Column (Decimal _) ->
+      not_lowered (Format.asprintf "%a" Expr.pp e)
+  | Reduce (r, a), _ ->
+      let a = compile st a and ty = type_of typing in
+      fun env ->
+        let rows = per_row env in
+        let c, f =
+          Reduce.reduce r ty env.frame.segments (fill rows (get rows a))
+        in
+        Option.iter (fun (i, why) -> fail env i (Data why)) f;
+        c
+  | Over { by; order; e = x }, _ ->
+      (* [x]'s nodes evaluate in the refined frame, so they share no slot with
+         the nodes outside. *)
+      let reduces = Expr.reduces x and scope = st.nodes in
+      st.nodes <- [];
+      let body = compile st x in
+      st.nodes <- scope;
+      let column n = Option.get (List.find_index (String.equal n) st.names) in
+      let by = List.map column by in
+      let order = List.map (fun (k : Order.t) -> (column k.name, k)) order in
+      fun env ->
+        let cs = env.frame.columns in
+        let s =
+          Reduce.refine env.frame.segments
+            ~by:(List.map (Array.get cs) by)
+            ~order:(List.map (fun (i, k) -> (cs.(i), k)) order)
+        in
+        if reduces then Reduce.broadcast s (get (per_segment env s) body)
+        else get { env with frame = { env.frame with segments = s } } body
+  | Shift (n, a), _ ->
+      let a = compile st a in
+      fun env -> Reduce.shift env.frame.segments n (fill env (get env a))
+  | Rank a, _ ->
+      let a = compile st a in
+      fun env -> Reduce.rank env.frame.segments (fill env (get env a))
   | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
 
 (* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is
@@ -520,7 +590,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
 and ocaml : type a s. state -> (a, s) Expr.t -> env -> a option array =
  fun st e ->
   match Expr.node e with
-  | Const v -> fun env -> Array.make env.frame.rows (Some v)
+  | Const v -> fun env -> Array.make env.extent (Some v)
   | App (f, a) ->
       let f = ocaml st f and a = ocaml st a in
       fun env ->
@@ -540,7 +610,17 @@ and ocaml : type a s. state -> (a, s) Expr.t -> env -> a option array =
 
 (* Calls *)
 
-let env st frame = { frame; slots = Array.make st.slots None; failure = None }
+let env st frame =
+  let env =
+    {
+      frame;
+      extent = frame.rows;
+      origin = Fun.id;
+      slots = Array.make st.slots None;
+      failure = ref None;
+    }
+  in
+  if frame.reduced then per_segment env frame.segments else env
 
 let outputs s os =
   let st = state s in
@@ -548,7 +628,7 @@ let outputs s os =
   fun frame ->
     let env = env st frame in
     let cs = List.map (fun n -> fill env (get env n)) nodes in
-    (cs, env.failure)
+    (cs, !(env.failure))
 
 let predicate s p =
   let st = state s in
@@ -556,7 +636,7 @@ let predicate s p =
   fun frame ->
     let env = env st frame in
     let m = truth (fill env (get env n)) in
-    (m, env.failure)
+    (m, !(env.failure))
 
 let values s e =
   let st = state s in
@@ -564,4 +644,4 @@ let values s e =
   fun frame ->
     let env = env st frame in
     let vs = vs env in
-    (vs, env.failure)
+    (vs, !(env.failure))

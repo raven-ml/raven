@@ -11,7 +11,9 @@
     A run optimizes its plan ({!Optimize.query}), then compiles each step to a
     stream of one-batch tables that pulls the streams of its inputs, and each
     step's expressions once ({!Eval}). A step that streams transforms one batch
-    at a time, in order. A step or an expression that no unit lowers yet is
+    at a time, in order. A step that blocks (an [aggregate], and a [select],
+    [derive] or [filter] whose expressions read other rows than their own) pulls
+    its input to its end, concatenates it and computes once. A step or an expression that no unit lowers yet is
     refused by {!Eval.not_lowered} before any data is read.
 
     {b Failures as one row at a time.} A run fails exactly where evaluating its
@@ -19,6 +21,8 @@
     where a step fails. A streaming step whose evaluation of a batch fails at
     input row [r] emits its output for the rows before [r], then raises the
     failure at the next pull, so a step that needs no more rows never meets it.
+    A step that blocks emits nothing when it fails: its first row may depend on
+    its last.
     The failure becomes an [Error.t] naming the step ({!Query.pp_step}) and the
     row of its input, counted over the batches before.
 

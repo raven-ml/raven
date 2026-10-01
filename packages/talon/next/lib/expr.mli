@@ -423,6 +423,10 @@ val row_local : ('a, 's) t -> bool
     reordering of the frame therefore does not change the values of a row-local
     expression on the rows it keeps. *)
 
+val reduces : ('a, 's) t -> bool
+(** [reduces b] is [true] iff [b] has one value per frame: it holds {!rows} or a
+    reduction outside every {!over} and {!rolling}. *)
+
 val can_fail : ('a, 's) t -> bool
 (** [can_fail b] is [true] iff evaluating the {{!row_local}row-local} [b] can
     fail a run or call a user function: [b] holds a {!cast} that does not widen

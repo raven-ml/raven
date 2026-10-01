@@ -76,16 +76,45 @@ let streaming q s step =
   in
   { next; close = s.close }
 
-let select q outputs input s =
+let empty s =
+  let column (_, Type.Any ty) =
+    Result.get_ok (Column.encode ty 0 (fun _ -> None))
+  in
+  Table.batch s ~rows:0 (Array.of_list (List.map column (Schema.columns s)))
+
+(* [blocking q input s step] is [step] applied once, to all of [s]'s rows, the
+   input of [q]'s step. It emits nothing when [step] fails. *)
+let blocking q input s step =
+  let rec pull bs =
+    match s.next () with Some b -> pull (b :: bs) | None -> List.rev bs
+  in
+  let ran = ref false in
+  let next () =
+    if !ran then None
+    else begin
+      ran := true;
+      let b =
+        match pull [] with
+        | [] -> empty (Query.schema input)
+        | bs -> Table.concat (Table.of_batches bs)
+      in
+      match step b with
+      | out, None -> Some out
+      | _, Some f -> failed (line Query.pp_step q) f
+    end
+  in
+  { next; close = s.close }
+
+let select q outputs input =
   let eval = Eval.outputs (Query.schema input) outputs in
-  streaming q s (fun b ->
-      let cs, f = eval (Eval.frame b) in
-      (cut q b f cs, f))
+  fun b ->
+    let cs, f = eval (Eval.frame b) in
+    (cut q b f cs, f)
 
 (* Where [derive] takes a column of its result from. *)
 type source = Output of int | Input of int
 
-let derive q outputs input s =
+let derive q outputs input =
   let eval = Eval.outputs (Query.schema input) outputs in
   let index n ns = List.find_index (String.equal n) ns in
   let outs = List.map fst outputs and ins = Schema.names (Query.schema input) in
@@ -95,29 +124,50 @@ let derive q outputs input s =
     | None -> Input (Option.get (index n ins))
   in
   let sources = List.map source (Schema.names (Query.schema q)) in
-  streaming q s (fun b ->
-      let cs, f = eval (Eval.frame b) in
-      let cs = Array.of_list cs and ins = Table.columns b in
-      let column = function Output i -> cs.(i) | Input j -> ins.(j) in
-      (cut q b f (List.map column sources), f))
+  fun b ->
+    let cs, f = eval (Eval.frame b) in
+    let cs = Array.of_list cs and ins = Table.columns b in
+    let column = function Output i -> cs.(i) | Input j -> ins.(j) in
+    (cut q b f (List.map column sources), f)
 
-let filter q predicate input s =
+let filter q predicate input =
   let eval = Eval.predicate (Query.schema input) predicate in
-  streaming q s (fun b ->
-      let n = Table.rows b in
-      let keep, f = eval (Eval.frame b) in
-      let keep =
-        match f with None -> keep | Some f -> Nx.shrink [| (0, f.row) |] keep
-      in
-      let idx = Nx.positions keep in
-      let rows = Nx.dim 0 idx in
-      let out =
-        if rows = n then b
-        else
-          Table.batch (Query.schema q) ~rows
-            (Array.map (Column.take idx) (Table.columns b))
-      in
-      (out, f))
+  fun b ->
+    let n = Table.rows b in
+    let keep, f = eval (Eval.frame b) in
+    let keep =
+      match f with None -> keep | Some f -> Nx.shrink [| (0, f.row) |] keep
+    in
+    let idx = Nx.positions keep in
+    let rows = Nx.dim 0 idx in
+    let out =
+      if rows = n then b
+      else
+        Table.batch (Query.schema q) ~rows
+          (Array.map (Column.take idx) (Table.columns b))
+    in
+    (out, f)
+
+(* [aggregate q by outputs input] computes [q]'s groups of the input's rows,
+   keyed by the columns [by]. *)
+let aggregate q by outputs input =
+  let names = Schema.names (Query.schema input) in
+  let eval = Eval.outputs (Query.schema input) outputs in
+  fun b ->
+    let cs = Table.columns b in
+    let keys =
+      List.map
+        (fun k -> cs.(Option.get (List.find_index (String.equal k) names)))
+        by
+    in
+    let s =
+      match keys with [] -> Reduce.one (Table.rows b) | ks -> Reduce.group ks
+    in
+    let outs, f = eval (Eval.groups b s) in
+    let keys = List.map (Column.take (Reduce.first s)) keys in
+    ( Table.batch (Query.schema q) ~rows:(Reduce.count s)
+        (Array.of_list (keys @ outs)),
+      f )
 
 (* [head ~offset ~length s] is [s]'s rows [offset] to [offset + length - 1]; it
    closes [s] past them. *)
@@ -218,18 +268,31 @@ let append q a r rest =
         r.close ());
   }
 
+(* A step whose expressions read other rows than their own blocks. *)
+let local outputs =
+  List.for_all (fun (_, Expr.Packed e) -> Expr.row_local e) outputs
+
 let rec stream q =
+  let step input local f =
+    if local then streaming q (stream input) f
+    else blocking q input (stream input) f
+  in
   match Query.node q with
   | Of_table t -> of_table t
-  | Select { outputs; input } -> select q outputs input (stream input)
-  | Derive { outputs; input } -> derive q outputs input (stream input)
-  | Filter { predicate; input } -> filter q predicate input (stream input)
+  | Select { outputs; input } ->
+      step input (local outputs) (select q outputs input)
+  | Derive { outputs; input } ->
+      step input (local outputs) (derive q outputs input)
+  | Filter { predicate; input } ->
+      step input (Expr.row_local predicate) (filter q predicate input)
+  | Aggregate { by; outputs; input } ->
+      step input false (aggregate q by outputs input)
   | Slice { offset; length; input } ->
       if offset >= 0 then head ~offset ~length (stream input)
       else tail ~offset ~length (stream input)
   | Append { input; rest } ->
       append q (stream input) (stream rest) (Query.schema rest)
-  | Of_source _ | Sort _ | Aggregate _ | Join _ | Unnest _ ->
+  | Of_source _ | Sort _ | Join _ | Unnest _ ->
       Eval.not_lowered (line Query.pp_step q)
 
 (* Running *)
@@ -244,12 +307,6 @@ let fold q ~init f =
   match Fun.protect ~finally:s.close (fun () -> loop init) with
   | acc -> Ok acc
   | exception Failed e -> Error e
-
-let empty s =
-  let column (_, Type.Any ty) =
-    Result.get_ok (Column.encode ty 0 (fun _ -> None))
-  in
-  Table.batch s ~rows:0 (Array.of_list (List.map column (Schema.columns s)))
 
 let run q =
   let batches = fold q ~init:[] (fun bs b -> b :: bs) in

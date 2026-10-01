@@ -243,6 +243,94 @@ and predicate s d : bool R.expr Gen.t =
         (1, Gen.map (fun a -> R.Not a) p);
       ]
 
+(* Reductions and frames
+
+   A reduction's operand may fail, and so may a frame's, but nothing that fails
+   reads their values: where a value fails, the rows the evaluator computes past
+   it are not the reference's, which only a failure would see. *)
+
+type agg = Agg : ('a, Expr.agg) R.term -> agg
+
+let reduction s =
+  Gen.bind
+    (Gen.of_list (expressible s))
+    (fun (n, Type.Any ty) ->
+      let a =
+        Gen.frequency
+          [
+            (4, anchored ty s 1);
+            (1, Gen.map (fun a -> R.Shift (1, a)) (anchored ty s 0));
+          ]
+      in
+      let red r = Gen.map (fun a -> Agg (R.Reduce (r, a))) a in
+      let quantiles =
+        [
+          red Median;
+          Gen.bind (Gen.of_list [ 0.; 0.25; 1. ]) (fun p -> red (Quantile p));
+        ]
+      in
+      let is k = Kind.provably_equal (Type.kind ty) k in
+      let numbers =
+        match (is Kind.int, is Kind.float, ty) with
+        | Some Equal, _, (Int8 | Int16 | Int32 | Uint8 | Uint16 | Uint32) ->
+            red Sum :: red Mean :: quantiles
+        | Some Equal, _, _ | _, Some Equal, _ -> quantiles
+        | None, None, _ -> []
+      in
+      Gen.one_of
+        ([
+           red Count;
+           red Min;
+           red Max;
+           red First;
+           red Last;
+           red N_unique;
+           red Arg_min;
+           red Arg_max;
+           Gen.constant (Agg (R.Reduce (Only, R.Col (ty, n))));
+           Gen.constant (Agg R.Rows);
+         ]
+        @ numbers))
+
+let keys s =
+  Gen.bind
+    (Gen.subsequence (List.map fst (expressible s)))
+    (fun names ->
+      all
+        (List.map
+           (fun name ->
+             map2
+               (fun desc nulls_first -> { R.name; desc; nulls_first })
+               Gen.bool Gen.bool)
+           names))
+
+(* [framed s name] outputs, as [name], an expression that reads other rows than
+   its own. *)
+let framed s name =
+  let over e =
+    map2
+      (fun by ks -> R.Out (name, R.Over (by, ks, e)))
+      (Gen.subsequence (List.map fst s))
+      (keys s)
+  in
+  Gen.bind
+    (Gen.of_list (expressible s))
+    (fun (_, Type.Any ty) ->
+      let a = anchored ty s 1 in
+      Gen.one_of
+        [
+          Gen.bind
+            (Gen.pair (Gen.int_range (-2) 2) a)
+            (fun (n, a) ->
+              Gen.one_of
+                [
+                  Gen.constant (R.Out (name, R.Shift (n, a)));
+                  over (R.Shift (n, a));
+                ]);
+          Gen.bind a (fun a -> over (R.Rank a));
+          Gen.bind (reduction s) (fun (Agg t) -> over t);
+        ])
+
 let output s name =
   Gen.bind
     (Gen.of_list (expressible s))
@@ -250,6 +338,7 @@ let output s name =
       let out e = R.Out (name, e) in
       Gen.frequency
         [
+          (2, framed s name);
           (3, Gen.map out (anchored ty s 2));
           (1, Gen.map out (predicate s 1));
           ( 1,
@@ -286,9 +375,23 @@ let step level p =
   in
   let filter =
     let constant = Gen.map (fun b -> R.Lit (Type.bool, b)) Gen.bool in
+    let ranked =
+      Gen.map
+        (fun (n, Type.Any ty) ->
+          R.(Cmp (`Le, Rank (Col (ty, n)), Lit (Type.int64, 2))))
+        (Gen.of_list (expressible s))
+    in
     Gen.map
       (fun e -> R.Filter (e, p))
-      (Gen.frequency [ (4, predicate s 2); (1, constant) ])
+      (Gen.frequency [ (4, predicate s 2); (1, constant); (1, ranked) ])
+  in
+  let aggregate =
+    let out i (Agg t) = R.Out (Printf.sprintf "a%d_%d" level i, t) in
+    map2
+      (fun by os -> R.Aggregate (by, List.mapi out os, p))
+      (Gen.subsequence (List.map fst s))
+      (Gen.bind (Gen.int_range 1 3) (fun k ->
+           all (List.init k (fun _ -> reduction s))))
   in
   let slice =
     map2
@@ -301,7 +404,7 @@ let step level p =
       (table s)
       (Gen.permutation (List.map fst s))
   in
-  Gen.one_of [ select; derive; filter; slice; append ]
+  Gen.one_of [ select; derive; filter; slice; append; aggregate ]
 
 let rec plan level =
   if level = 0 then Gen.map (fun t -> R.Table t) (Gen.bind schemas table)
@@ -315,6 +418,8 @@ let rec split : R.plan -> R.plan Gen.t = function
   | Filter (e, p) -> Gen.map (fun p -> R.Filter (e, p)) (split p)
   | Slice s -> Gen.map (fun plan -> R.Slice { s with plan }) (split s.plan)
   | Append (p, r) -> map2 (fun p r -> R.Append (p, r)) (split p) (split r)
+  | Aggregate (by, os, p) ->
+      Gen.map (fun p -> R.Aggregate (by, os, p)) (split p)
 
 let pp_plan ppf p = Query.pp ppf (R.query p)
 let plans = Gen.bind (Gen.int_range 0 3) plan
@@ -350,10 +455,23 @@ let holds t (n, R.Column (ty, vs)) =
   | Some Equal -> equal ~msg:n (array (option (G.witness ty))) vs vs'
   | None -> failf "%s holds %a, not %a" n Type.pp ty' Type.pp ty
 
+(* [mentions w p] is [true] iff [p] prints the word [w]. *)
+let mentions w p =
+  let s = Format.asprintf "%a" pp_plan p and n = String.length w in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = w || at (i + 1))
+  in
+  at 0
+
 let agrees p =
   let q = R.query p in
   let kept = Query.equal (Query.optimize q) q in
+  let framed =
+    List.exists (fun w -> mentions w p) [ "over"; "shift"; "rank" ]
+  in
   cover "the optimizer keeps the plan" kept;
+  cover "an aggregate" (mentions "aggregate" p);
+  cover "an expression reads other rows" framed;
   match (attempt (fun () -> R.run p), attempt (fun () -> Query.run q)) with
   | Ok (Ok cs), Ok (Ok t) ->
       cover "rows in the result" (rows t > 0);
@@ -364,6 +482,8 @@ let agrees p =
   | Ok (Ok _), Error (label, _) -> failf "the run raises Boom %d" label
   | expected, actual ->
       cover "a kept plan fails at a row" (kept && Result.is_ok expected);
+      cover "a kept plan that aggregates fails" (kept && mentions "aggregate" p);
+      cover "a kept plan that reads other rows fails" (kept && framed);
       cover "a kept plan raises" (kept && Result.is_error expected);
       if kept then same_failure expected actual
 
@@ -954,6 +1074,115 @@ let lifts =
             (ints Expr.(nx { f = Nx.abs } (int (-2))) t));
     ]
 
+(* Reductions and frames *)
+
+let aggregate by os t = Query.run (Query.aggregate ~by os (Query.of_table t))
+let floats t n = Column.options Kind.float (column t n)
+let counts t n = Column.options Kind.int (column t n)
+
+let durations ticks =
+  let values = Nx.create Nx.int64 [| Array.length ticks |] ticks in
+  Column.of_layout
+    (Any (Type.duration Ns))
+    (Fixed { validity = None; values = P values })
+  |> Result.get_ok
+
+let reductions =
+  let x = Col.float "x" and k = Col.int "k" in
+  let g = Column.v Type.int64 [| 0; 1; 1; 1; 1; 2 |] in
+  group "Reductions"
+    [
+      test "over no value count, sum and n_unique are 0, the others null"
+        (fun () ->
+          let none = v [ ("x", Column.v Type.float64 [||]) ] in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate []
+                 Expr.
+                   [
+                     "n" := count x;
+                     "u" := n_unique x;
+                     "s" := sum x;
+                     "m" := min x;
+                     "a" := mean x;
+                   ]
+                 none)
+          in
+          equal
+            (list (option int))
+            [ Some 0; Some 0 ]
+            (List.concat_map (fun n -> Array.to_list (counts t n)) [ "n"; "u" ]);
+          rows_are Type.float64 [| Some 0.; None; None |]
+            (Array.concat (List.map (floats t) [ "s"; "m"; "a" ])));
+      test "var and std divide by n - 1, and are null under two values"
+        (fun () ->
+          let x' =
+            Column.of_options Type.float64
+              [| Some 7.; Some 1.; None; Some 2.; Some 3.; Some 3. |]
+          in
+          let t =
+            require_ok ~pp:Error.pp
+              (aggregate [ "g" ]
+                 Expr.[ "v" := var x; "s" := std x ]
+                 (v [ ("g", g); ("x", x') ]))
+          in
+          equal
+            (array (option (float 1e-12)))
+            [| None; Some 1.; None |] (floats t "v");
+          equal
+            (array (option (float 1e-12)))
+            [| None; Some 1.; None |] (floats t "s"));
+      test "a duration sum that overflows fails at its group's first row"
+        (fun () ->
+          let t =
+            v
+              [
+                ("g", g);
+                ("d", durations [| 1L; Int64.max_int; 0L; 1L; 0L; 0L |]);
+              ]
+          in
+          let e =
+            require_error
+              (aggregate [ "g" ] Expr.[ "s" := sum (Col.span "d") ] t)
+          in
+          contains ~sub:": row 1: the sum overflows duration[ns]." (error e));
+      test "a value of a group fails at the group's first row" (fun () ->
+          let t =
+            v [ ("g", g); ("k", Column.v Type.int64 [| 1; 2; 3; 4; 5; 6 |]) ]
+          in
+          let ten s = Stdlib.(s * 10) in
+          let y = Expr.(store Type.int8 (const ten $ sum k)) in
+          let e = require_error (aggregate [ "g" ] Expr.[ "y" := y ] t) in
+          contains ~sub:": row 1: int8 does not hold 140." (error e));
+      test "arg_min is a position in the frame's order" (fun () ->
+          let t = v [ ("x", Column.v Type.float64 [| 3.; 1.; 2. |]) ] in
+          rows_are Type.int64
+            [| Some 2; Some 2; Some 2 |]
+            (Column.options Kind.int
+               (result Expr.(over ~order:[ Order.desc "x" ] (arg_min x)) t)));
+      test "a step that reads other rows emits nothing when it fails" (fun () ->
+          let t =
+            of_batches
+              [
+                v [ ("k", Column.v Type.int64 [| 1; 2 |]) ];
+                v [ ("k", Column.v Type.int64 [| 300 |]) ];
+              ]
+          in
+          let y = Expr.(store Type.int8 (const Fun.id $ k)) in
+          let seen = ref 0 in
+          let q =
+            Query.derive
+              Expr.[ "y" := y; "z" := over (sum k) ]
+              (Query.of_table t)
+          in
+          let e =
+            require_error
+              (Query.fold q ~init:() (fun () b -> seen := !seen + rows b))
+          in
+          contains ~sub:": row 2: int8 does not hold 300." (error e);
+          equal ~msg:"rows folded" int 0 !seen);
+    ]
+
 let refusals =
   let t = v [ ("a", Column.v Type.int64 [| 2; 1 |]) ] in
   group "Not yet lowered"
@@ -963,14 +1192,14 @@ let refusals =
             (message (fun () ->
                  Query.run (Query.sort [ Order.asc "a" ] (Query.of_table t))))
           @@ __POS_OF__ {| sort [asc "a"] is not implemented yet |});
-      test "a rank is refused, naming the expression" (fun () ->
+      test "an ewm is refused, naming the expression" (fun () ->
           expect
             (message (fun () ->
                  Query.run
-                   (Query.derive
-                      Expr.[ "r" := over (rank (Col.int "a")) ]
+                   (Query.aggregate ~by:[]
+                      Expr.[ "e" := ewm ~alpha:0.5 (Col.int "a") ]
                       (Query.of_table t))))
-          @@ __POS_OF__ {| over (rank a) is not implemented yet |});
+          @@ __POS_OF__ {| ewm ~alpha:0.5 a is not implemented yet |});
       cases
         ~name:(fun n ->
           Printf.sprintf "a widening not lowered is refused over %d rows" n)
@@ -1002,6 +1231,7 @@ let () =
          failures;
          ocaml;
          failure_order;
+         reductions;
          lifts;
          refusals;
        ])

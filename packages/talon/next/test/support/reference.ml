@@ -9,33 +9,62 @@ type iop = Add | Sub | Mul | Div | Mod
 type fop = Fadd | Fsub | Fmul | Fdiv
 type cmp = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
 
-type 'a expr =
-  | Col : 'a Type.t * string -> 'a expr
-  | Lit : 'a Type.t * 'a -> 'a expr
-  | Null : 'a Type.t -> 'a expr
-  | Int : iop * int expr * int expr -> int expr
-  | Float : fop * float expr * float expr -> float expr
-  | Cmp : cmp * 'a expr * 'a expr -> bool expr
-  | And : bool expr * bool expr -> bool expr
-  | Or : bool expr * bool expr -> bool expr
-  | Not : bool expr -> bool expr
-  | If : bool expr * 'a expr * 'a expr -> 'a expr
-  | Is_null : 'a expr -> bool expr
-  | Coalesce : 'a expr list -> 'a expr
-  | Is_in : 'a list * 'a expr -> bool expr
-  | Store : 'a Type.t * 'a expr -> 'a expr
-  | Map : int Type.t * ('a -> int) * 'a expr -> int expr
-  | Bind : int Type.t * ('a option -> int option) * 'a expr -> int expr
+type (_, _) reduction =
+  | Count : ('a, int) reduction
+  | Sum : (int, int) reduction
+  | Mean : (int, float) reduction
+  | Min : ('a, 'a) reduction
+  | Max : ('a, 'a) reduction
+  | First : ('a, 'a) reduction
+  | Last : ('a, 'a) reduction
+  | Only : ('a, 'a) reduction
+  | Median : ('a, float) reduction
+  | Quantile : float -> ('a, float) reduction
+  | N_unique : ('a, int) reduction
+  | Arg_min : ('a, int) reduction
+  | Arg_max : ('a, int) reduction
 
-type out = Out : string * 'a expr -> out | Keep of string list
+type key = { name : string; desc : bool; nulls_first : bool }
+
+type ('a, 's) term =
+  | Col : 'a Type.t * string -> ('a, Expr.row) term
+  | Lit : 'a Type.t * 'a -> ('a, 's) term
+  | Null : 'a Type.t -> ('a, 's) term
+  | Int : iop * (int, 's) term * (int, 's) term -> (int, 's) term
+  | Float : fop * (float, 's) term * (float, 's) term -> (float, 's) term
+  | Cmp : cmp * ('a, 's) term * ('a, 's) term -> (bool, 's) term
+  | And : (bool, 's) term * (bool, 's) term -> (bool, 's) term
+  | Or : (bool, 's) term * (bool, 's) term -> (bool, 's) term
+  | Not : (bool, 's) term -> (bool, 's) term
+  | If : (bool, 's) term * ('a, 's) term * ('a, 's) term -> ('a, 's) term
+  | Is_null : ('a, 's) term -> (bool, 's) term
+  | Coalesce : ('a, 's) term list -> ('a, 's) term
+  | Is_in : 'a list * ('a, 's) term -> (bool, 's) term
+  | Store : 'a Type.t * ('a, 's) term -> ('a, 's) term
+  | Map : int Type.t * ('a -> int) * ('a, 's) term -> (int, 's) term
+  | Bind :
+      int Type.t * ('a option -> int option) * ('a, 's) term
+      -> (int, 's) term
+  | Rows : (int, Expr.agg) term
+  | Reduce : ('a, 'b) reduction * ('a, Expr.row) term -> ('b, Expr.agg) term
+  | Over : string list * key list * ('a, 's) term -> ('a, Expr.row) term
+  | Shift : int * ('a, Expr.row) term -> ('a, Expr.row) term
+  | Rank : ('a, Expr.row) term -> (int, Expr.row) term
+
+type 'a expr = ('a, Expr.row) term
+
+type 's out =
+  | Out : string * ('a, 's) term -> 's out
+  | Keep : string list -> Expr.row out
 
 type plan =
   | Table of Talon_next.t
-  | Select of out list * plan
-  | Derive of out list * plan
+  | Select of Expr.row out list * plan
+  | Derive of Expr.row out list * plan
   | Filter of bool expr * plan
   | Slice of { offset : int; length : int; plan : plan }
   | Append of plan * plan
+  | Aggregate of string list * Expr.agg out list * plan
 
 let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
  fun ty ->
@@ -53,7 +82,7 @@ let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
       | _, _, Some Equal -> Some Expr.span
       | None, None, None -> None)
 
-let rec type_of : type a. a expr -> a Type.t = function
+let rec type_of : type a s. (a, s) term -> a Type.t = function
   | Col (ty, _) | Lit (ty, _) | Null ty | Store (ty, _) -> ty
   | Map (ty, _, _) -> ty
   | Bind (ty, _, _) -> ty
@@ -67,14 +96,40 @@ let rec type_of : type a. a expr -> a Type.t = function
   | Not _ -> Type.bool
   | Is_null _ -> Type.bool
   | Is_in _ -> Type.bool
+  | Rows -> Type.int64
+  | Rank _ -> Type.int64
+  | Over (_, _, a) -> type_of a
+  | Shift (_, a) -> type_of a
+  | Reduce (r, a) -> reduced r (type_of a)
+
+and reduced : type a b. (a, b) reduction -> a Type.t -> b Type.t =
+ fun r ty ->
+  match r with
+  | Count -> Type.int64
+  | Sum -> Type.int64
+  | N_unique -> Type.int64
+  | Arg_min -> Type.int64
+  | Arg_max -> Type.int64
+  | Mean -> Type.float64
+  | Median -> Type.float64
+  | Quantile _ -> Type.float64
+  | Min -> ty
+  | Max -> ty
+  | First -> ty
+  | Last -> ty
+  | Only -> ty
 
 (* [common a b] is the type at which [a] and [b] meet. *)
-and common : type a. a expr -> a expr -> a Type.t =
+and common : type a s. (a, s) term -> (a, s) term -> a Type.t =
  fun a b -> Option.get (Type.common [ type_of a; type_of b ])
 
 (* Translation *)
 
-let rec expr : type a. a expr -> (a, Expr.row) Expr.t = function
+let order { name; desc; nulls_first } =
+  let k = if desc then Order.desc name else Order.asc name in
+  if nulls_first then Order.nulls_first k else k
+
+let rec expr : type a s. (a, s) term -> (a, s) Expr.t = function
   | Col (ty, n) -> Col.v (Type.kind ty) n
   | Lit (ty, v) -> (Option.get (literal ty)) v
   | Null _ -> Expr.null
@@ -118,8 +173,31 @@ let rec expr : type a. a expr -> (a, Expr.row) Expr.t = function
   | Store (ty, a) -> Expr.store ty (expr a)
   | Map (ty, f, a) -> Expr.(store ty (const f $ expr a))
   | Bind (ty, f, a) -> Expr.(store ty (of_option (const f $ option (expr a))))
+  | Rows -> Expr.rows
+  | Over (by, keys, a) -> Expr.over ~by ~order:(List.map order keys) (expr a)
+  | Shift (n, a) -> Expr.shift n (expr a)
+  | Rank a -> Expr.rank (expr a)
+  | Reduce (r, a) -> reduction r (expr a)
 
-let out = function
+and reduction : type a b.
+    (a, b) reduction -> (a, Expr.row) Expr.t -> (b, Expr.agg) Expr.t =
+ fun r a ->
+  match r with
+  | Count -> Expr.count a
+  | Sum -> Expr.sum a
+  | Mean -> Expr.mean a
+  | Min -> Expr.min a
+  | Max -> Expr.max a
+  | First -> Expr.first a
+  | Last -> Expr.last a
+  | Only -> Expr.only a
+  | Median -> Expr.median a
+  | Quantile p -> Expr.quantile p a
+  | N_unique -> Expr.n_unique a
+  | Arg_min -> Expr.arg_min a
+  | Arg_max -> Expr.arg_max a
+
+let out : type s. s out -> s Expr.out = function
   | Out (n, e) -> Expr.(n := expr e)
   | Keep ns -> Expr.keep (Sel.names ns)
 
@@ -130,6 +208,7 @@ let rec query = function
   | Filter (e, p) -> Query.filter (expr e) (query p)
   | Slice { offset; length; plan } -> Query.slice ~offset ~length (query plan)
   | Append (p, rest) -> Query.append (query rest) (query p)
+  | Aggregate (by, os, p) -> Query.aggregate ~by (List.map out os) (query p)
 
 (* [derived cs outs] is the columns [cs] with [outs] in place of those of their
    names, then the others. *)
@@ -146,8 +225,13 @@ let rec schema = function
       let s = schema p in
       derived s (List.concat_map (out_schema s) os)
   | Filter (_, p) | Slice { plan = p; _ } | Append (p, _) -> schema p
+  | Aggregate (by, os, p) ->
+      let s = schema p in
+      List.map (fun n -> (n, List.assoc n s)) by
+      @ List.concat_map (out_schema s) os
 
-and out_schema s = function
+and out_schema : type s. _ -> s out -> _ =
+ fun s -> function
   | Out (n, e) -> [ (n, Type.Any (type_of e)) ]
   | Keep ns -> List.map (fun n -> (n, List.assoc n s)) ns
 
@@ -214,63 +298,305 @@ let compare (op : cmp) c =
   | `Gt -> c > 0
   | `Ge -> c >= 0
 
-(* [Data reason] is a failure of an expression, at the row being evaluated. *)
-exception Data of string
+(* Frames *)
 
-let held ty v =
-  if Type.holds ty v then v
-  else raise (Data (Format.asprintf "%a does not hold %d" Type.pp ty v))
+type failure = Data of string | Raised of exn
 
-let rec eval : type a. row -> a expr -> a option =
- fun row e ->
+(* The rows of a frame, in its order, and their rows [at] in the step's input. A
+   frame that is [one] has one value, a reduction's. [failed] is the earliest
+   failure, and at a row the first. *)
+type frame = {
+  rows : row array;
+  at : int array;
+  one : bool;
+  failed : (int * failure) option ref;
+}
+
+let frame rows at = { rows; at; one = false; failed = ref None }
+let size fr = if fr.one then 1 else Array.length fr.rows
+
+let start fr =
+  Array.fold_left Int.min (if fr.at = [||] then 0 else max_int) fr.at
+
+let record fr row why =
+  match !(fr.failed) with
+  | Some (r, _) when r <= row -> ()
+  | _ -> fr.failed := Some (row, why)
+
+let fail fr i why = record fr (if fr.one then start fr else fr.at.(i)) why
+
+(* [Failed (row, reason)] is a step's failure at its input's row [row]. *)
+exception Failed of int * string
+
+let check failed =
+  match !failed with
+  | None -> ()
+  | Some (row, Data why) -> raise (Failed (row, why))
+  | Some (_, Raised exn) -> raise exn
+
+(* [ocaml fr ty f vs] is [f] of each value of [vs] that [ty] holds. *)
+let ocaml fr ty f vs =
+  Array.mapi
+    (fun i v ->
+      match f v with
+      | None -> None
+      | Some w when Type.holds ty w -> Some w
+      | Some w ->
+          fail fr i (Data (Format.asprintf "%a does not hold %d" Type.pp ty w));
+          None
+      | exception exn ->
+          fail fr i (Raised exn);
+          None)
+    vs
+
+let compare_cells (Cell (ty, x)) c =
+  match (x, read ty c) with
+  | None, None -> 0
+  | None, Some _ -> 1
+  | Some _, None -> -1
+  | Some x, Some y -> Type.compare_value ty x y
+
+let compare_keys keys r r' =
+  List.fold_left
+    (fun c { name; desc; nulls_first } ->
+      if c <> 0 then c
+      else
+        let (Cell (ty, x) as a) = List.assoc name r in
+        let y = read ty (List.assoc name r') in
+        match (x, y) with
+        | None, None -> 0
+        | None, Some _ -> if nulls_first then -1 else 1
+        | Some _, None -> if nulls_first then 1 else -1
+        | Some _, Some _ ->
+            let c = compare_cells a (List.assoc name r') in
+            if desc then -c else c)
+    0 keys
+
+(* [partition same is] is [is] in groups of [same] elements, in order of first
+   appearance. *)
+let rec partition same = function
+  | [] -> []
+  | i :: is ->
+      let g, rest = List.partition (same i) is in
+      (i :: g) :: partition same rest
+
+(* Reductions *)
+
+(* nx's sort order of floats: [-0.] before [0.], NaN last. *)
+let float_order x y =
+  match (Float.is_nan x, Float.is_nan y) with
+  | true, true -> 0
+  | true, false -> 1
+  | false, true -> -1
+  | false, false -> (
+      match Float.compare x y with
+      | 0 -> Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+      | c -> c)
+
+let quantile p xs =
+  let s = List.sort float_order xs |> Array.of_list in
+  let n = Array.length s in
+  let h = p *. float_of_int (n - 1) in
+  let lo = int_of_float h in
+  let a = s.(lo) and b = s.(Int.min (lo + 1) (n - 1)) in
+  let f = h -. Float.of_int lo in
+  if f = 0. || a = b then a else a +. (f *. (b -. a))
+
+let to_float : type a. a Type.t -> a -> float =
+ fun ty v ->
+  match
+    ( Kind.provably_equal (Type.kind ty) Kind.int,
+      Kind.provably_equal (Type.kind ty) Kind.float )
+  with
+  | Some Equal, _ -> float_of_int v
+  | _, Some Equal -> v
+  | None, None -> invalid_arg "Reference: a quantile of no number"
+
+let reduce : type a b.
+    frame -> (a, b) reduction -> a Type.t -> a option array -> b option =
+ fun fr r ty vs ->
+  let values = List.filter_map Fun.id (Array.to_list vs) in
+  let n = List.length values in
+  let cmp = Type.compare_value ty in
+  (* The position of the first value that no other one is [better] than. *)
+  let extreme better =
+    let best = ref None in
+    Array.iteri
+      (fun i v ->
+        match (v, !best) with
+        | Some x, Some (_, y) when better (cmp x y) -> best := Some (i, x)
+        | Some x, None -> best := Some (i, x)
+        | _ -> ())
+      vs;
+    !best
+  in
+  let least = extreme (fun c -> c < 0)
+  and greatest = extreme (fun c -> c > 0) in
+  match r with
+  | Count -> Some n
+  | Sum -> Some (List.fold_left ( + ) 0 values)
+  | Mean when n = 0 -> None
+  | Mean -> Some (float_of_int (List.fold_left ( + ) 0 values) /. float_of_int n)
+  | Min -> Option.map snd least
+  | Max -> Option.map snd greatest
+  | Arg_min -> Option.map fst least
+  | Arg_max -> Option.map fst greatest
+  | First -> List.nth_opt values 0
+  | Last -> List.nth_opt (List.rev values) 0
+  | Only ->
+      if List.exists (fun y -> cmp (List.hd values) y <> 0) values then
+        record fr (start fr) (Data "only finds several values");
+      List.nth_opt values 0
+  | Median when n = 0 -> None
+  | Median -> Some (quantile 0.5 (List.map (to_float ty) values))
+  | Quantile _ when n = 0 -> None
+  | Quantile p -> Some (quantile p (List.map (to_float ty) values))
+  | N_unique ->
+      let distinct =
+        partition
+          (fun x y -> Option.equal (fun x y -> cmp x y = 0) x y)
+          (Array.to_list vs)
+      in
+      Some (List.length distinct)
+
+(* Expressions, node by node over a frame *)
+
+let rec eval : type a s. frame -> (a, s) term -> a option array =
+ fun fr e ->
   let both f a b =
-    let x = eval row a in
-    match (x, eval row b) with Some x, Some y -> f x y | _ -> None
+    let x = eval fr a in
+    Array.map2
+      (fun x y -> match (x, y) with Some x, Some y -> f x y | _ -> None)
+      x (eval fr b)
   in
   match e with
-  | Col (ty, n) -> read ty (List.assoc n row)
-  | Lit (ty, v) -> Some (stored ty v)
-  | Null _ -> None
+  | Col (ty, n) -> Array.map (fun r -> read ty (List.assoc n r)) fr.rows
+  | Lit (ty, v) -> Array.make (size fr) (Some (stored ty v))
+  | Null _ -> Array.make (size fr) None
   | Int (op, a, b) -> both (int (type_of e) op) a b
   | Float (op, a, b) -> both (fun x y -> Some (float (type_of e) op x y)) a b
   | Cmp (op, a, b) ->
       both
         (fun x y -> Some (compare op (Type.compare_value (common a b) x y)))
         a b
-  | And (a, b) -> (
-      let x = eval row a in
-      match (x, eval row b) with
-      | Some false, _ | _, Some false -> Some false
-      | Some true, Some true -> Some true
-      | _ -> None)
-  | Or (a, b) -> (
-      let x = eval row a in
-      match (x, eval row b) with
-      | Some true, _ | _, Some true -> Some true
-      | Some false, Some false -> Some false
-      | _ -> None)
-  | Not a -> Option.map not (eval row a)
+  | And (a, b) ->
+      let x = eval fr a in
+      Array.map2
+        (fun x y ->
+          match (x, y) with
+          | Some false, _ | _, Some false -> Some false
+          | Some true, Some true -> Some true
+          | _ -> None)
+        x (eval fr b)
+  | Or (a, b) ->
+      let x = eval fr a in
+      Array.map2
+        (fun x y ->
+          match (x, y) with
+          | Some true, _ | _, Some true -> Some true
+          | Some false, Some false -> Some false
+          | _ -> None)
+        x (eval fr b)
+  | Not a -> Array.map (Option.map not) (eval fr a)
   | If (c, a, b) ->
-      let c = eval row c in
-      let a = eval row a in
-      let b = eval row b in
-      if c = Some true then a else b
-  | Is_null a -> Some (Option.is_none (eval row a))
-  | Coalesce es -> List.find_map Fun.id (List.map (eval row) es)
-  | Store (_, a) -> eval row a
+      let c = eval fr c in
+      let a = eval fr a in
+      let b = eval fr b in
+      Array.mapi (fun i c -> if c = Some true then a.(i) else b.(i)) c
+  | Is_null a -> Array.map (fun v -> Some (Option.is_none v)) (eval fr a)
+  | Coalesce es ->
+      let vs = List.map (eval fr) es in
+      Array.init (size fr) (fun i -> List.find_map (fun v -> v.(i)) vs)
+  | Store (_, a) -> eval fr a
   | Is_in (vs, a) ->
       let ty = type_of a in
       let same x v = Type.compare_value ty x (stored ty v) = 0 in
-      Some
-        (Option.fold ~none:false
-           ~some:(fun x -> List.exists (same x) vs)
-           (eval row a))
-  | Map (ty, f, a) -> Option.map (fun x -> held ty (f x)) (eval row a)
-  | Bind (ty, f, a) -> Option.map (held ty) (f (eval row a))
+      Array.map
+        (fun x ->
+          Some
+            (Option.fold ~none:false ~some:(fun x -> List.exists (same x) vs) x))
+        (eval fr a)
+  | Map (ty, f, a) -> ocaml fr ty (Option.map f) (eval fr a)
+  | Bind (ty, f, a) -> ocaml fr ty f (eval fr a)
+  | Rows -> Array.make (size fr) (Some (Array.length fr.rows))
+  | Reduce (r, a) ->
+      let v = reduce fr r (type_of a) (eval { fr with one = false } a) in
+      Array.make (size fr) v
+  | Shift (n, a) ->
+      let vs = eval fr a in
+      Array.init (size fr) (fun i ->
+          if i - n >= 0 && i - n < Array.length vs then vs.(i - n) else None)
+  | Rank a ->
+      let ty = type_of a in
+      let vs = eval fr a in
+      let below x = function
+        | Some y -> Type.compare_value ty y x < 0
+        | None -> false
+      in
+      Array.map
+        (Option.map (fun x ->
+             1
+             + Array.fold_left (fun k y -> if below x y then k + 1 else k) 0 vs))
+        vs
+  | Over (by, keys, a) ->
+      let same i j =
+        List.for_all
+          (fun n ->
+            compare_cells (List.assoc n fr.rows.(i)) (List.assoc n fr.rows.(j))
+            = 0)
+          by
+      in
+      let out = Array.make (size fr) None in
+      let over g =
+        let g =
+          List.stable_sort
+            (fun i j -> compare_keys keys fr.rows.(i) fr.rows.(j))
+            g
+        in
+        let g = Array.of_list g in
+        let sub =
+          {
+            fr with
+            rows = Array.map (Array.get fr.rows) g;
+            at = Array.map (Array.get fr.at) g;
+          }
+        in
+        Array.iteri (fun j v -> out.(g.(j)) <- v) (eval sub a)
+      in
+      List.iter over (partition same (List.init (size fr) Fun.id));
+      out
 
-let out_cells row = function
-  | Out (n, e) -> [ (n, Cell (type_of e, eval row e)) ]
-  | Keep ns -> List.map (fun n -> (n, List.assoc n row)) ns
+(* [outs fr os] is the cells of the outputs [os] on each value of [fr]. *)
+let outs : type s. frame -> s out list -> row array =
+ fun fr os ->
+  let cells : s out -> (string * cell array) list = function
+    | Out (n, e) ->
+        let ty = type_of e in
+        [ (n, Array.map (fun v -> Cell (ty, v)) (eval fr e)) ]
+    | Keep ns -> List.map (fun n -> (n, Array.map (List.assoc n) fr.rows)) ns
+  in
+  let cs = List.concat_map cells os in
+  Array.init (size fr) (fun i -> List.map (fun (n, c) -> (n, c.(i))) cs)
+
+let rec local : type a s. (a, s) term -> bool = function
+  | Over _ | Shift _ | Rank _ -> false
+  | Col _ | Lit _ | Null _ | Rows -> true
+  | Int (_, a, b) -> local a && local b
+  | Float (_, a, b) -> local a && local b
+  | Cmp (_, a, b) -> local a && local b
+  | And (a, b) | Or (a, b) -> local a && local b
+  | If (c, a, b) -> local c && local a && local b
+  | Coalesce es -> List.for_all local es
+  | Not a -> local a
+  | Is_null a -> local a
+  | Is_in (_, a) -> local a
+  | Store (_, a) -> local a
+  | Map (_, _, a) -> local a
+  | Bind (_, _, a) -> local a
+  | Reduce (_, a) -> local a
+
+let local_outs os =
+  List.for_all (function Out (_, e) -> local e | Keep _ -> true) os
 
 type column = Column : 'a Type.t * 'a option array -> column
 
@@ -294,24 +620,57 @@ let table_rows t =
   in
   List.init (rows t) (fun i -> List.map (fun c -> c.(i)) columns)
 
-(* [Failed (row, reason)] is a step's failure at its input's row [row]. *)
-exception Failed of int * string
+(* [step local f rs] is [f] over the rows [rs] of a step's input, one row at a
+   time if [local], else all at once. *)
+let step local f rs =
+  let over fr =
+    let out = f fr in
+    check fr.failed;
+    Array.to_seq out
+  in
+  if local then
+    Seq.concat (Seq.mapi (fun i r -> over (frame [| r |] [| i |])) rs)
+  else fun () ->
+    let rs = Array.of_seq rs in
+    over (frame rs (Array.init (Array.length rs) Fun.id)) ()
 
-(* [step f rs] is [f] on each row of [rs], as one step. *)
-let step f rs =
-  Seq.mapi
-    (fun i r ->
-      match f r with v -> v | exception Data why -> raise (Failed (i, why)))
-    rs
+let aggregate by os rs () =
+  let rs = Array.of_seq rs in
+  let same i j =
+    List.for_all
+      (fun n -> compare_cells (List.assoc n rs.(i)) (List.assoc n rs.(j)) = 0)
+      by
+  in
+  let groups =
+    match partition same (List.init (Array.length rs) Fun.id) with
+    | [] when by = [] -> [ [] ]
+    | gs -> gs
+  in
+  let failed = ref None in
+  let group g =
+    let at = Array.of_list g in
+    let fr = { rows = Array.map (Array.get rs) at; at; one = true; failed } in
+    let keys = List.map (fun n -> (n, List.assoc n rs.(List.hd g))) by in
+    keys @ (outs fr os).(0)
+  in
+  let out = List.map group groups in
+  check failed;
+  List.to_seq out ()
 
 let rec rows : plan -> row Seq.t = function
   | Table t -> List.to_seq (table_rows t)
-  | Select (os, p) -> step (fun r -> List.concat_map (out_cells r) os) (rows p)
+  | Select (os, p) -> step (local_outs os) (fun fr -> outs fr os) (rows p)
   | Derive (os, p) ->
-      step (fun r -> derived r (List.concat_map (out_cells r) os)) (rows p)
+      step (local_outs os)
+        (fun fr -> Array.map2 derived fr.rows (outs fr os))
+        (rows p)
   | Filter (e, p) ->
-      Seq.filter_map Fun.id
-        (step (fun r -> if eval r e = Some true then Some r else None) (rows p))
+      let keep fr =
+        let k = eval fr e in
+        Array.of_list
+          (List.filteri (fun i _ -> k.(i) = Some true) (Array.to_list fr.rows))
+      in
+      step (local e) keep (rows p)
   | Slice { offset; length; plan } when offset >= 0 ->
       let stop =
         if length > max_int - offset then max_int else offset + length
@@ -323,6 +682,7 @@ let rec rows : plan -> row Seq.t = function
       List.to_seq
         (List.filteri (fun i _ -> i >= start && i - start < length) rs)
   | Append (p, rest) -> Seq.append (rows p) (rows rest)
+  | Aggregate (by, os, p) -> aggregate by os (rows p)
 
 let run p =
   match List.of_seq (rows p) with
@@ -337,7 +697,11 @@ let run p =
 
 let values e p =
   let null = "the value is null; read it through Expr.option" in
-  let value r = match eval r e with Some v -> v | None -> raise (Data null) in
-  match Array.of_seq (step value (rows p)) with
+  let value fr =
+    let v = (eval fr e).(0) in
+    check fr.failed;
+    match v with Some v -> [| v |] | None -> raise (Failed (fr.at.(0), null))
+  in
+  match Array.of_seq (step true value (rows p)) with
   | vs -> Ok vs
   | exception Failed (row, why) -> Error (row, why)

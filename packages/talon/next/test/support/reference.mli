@@ -6,20 +6,29 @@
 (** The reference interpreter: plans run one row at a time.
 
     A plan is written in the small language below, which {!query} translates to
-    the verbs and {!run} evaluates one row at a time over decoded [option]
-    values, comparing them with {!Talon_next.Type.compare_value}. The operands
-    of an operation meet at their common type ({!Talon_next.Type.common}), and a
-    literal or [Null] stands only beside an operand that reads a column, so that
-    it takes that operand's type. Extension columns are read as their storage.
+    the verbs and {!run} evaluates over decoded [option] values, comparing them
+    with {!Talon_next.Type.compare_value}. The operands of an operation meet at
+    their common type ({!Talon_next.Type.common}), and a literal or [Null]
+    stands only beside an operand that reads a column, so that it takes that
+    operand's type. Extension columns are read as their storage.
 
-    {b Failures.} Rows flow through the plan one at a time, each step pulling
-    the rows it needs from its input: a slice from the start pulls its input's
-    first [offset + length] rows, and a slice from the end all of them. At a
-    row, a step evaluates its outputs in order, and an expression every operand,
-    branches included, before its node, from left to right. The first failure
-    met ends the run: a value that a {!Map} or {!Bind} type does not hold, at
-    the row of the step's input, or an exception that a function raises, which
-    propagates. *)
+    {b Frames.} A step evaluates its expressions over a frame of rows, node by
+    node: its outputs in order, and an expression every operand, branches
+    included, before its node, from left to right, each over every row of the
+    frame. A reduction is one value for its frame, which a row expression above
+    it repeats on each of the frame's rows. A step whose expressions are local
+    to their row evaluates over one row at a time; any other step, and
+    [aggregate] over each group, over all its input's rows.
+
+    {b Failures.} Rows flow through the plan, each step pulling the rows it
+    needs from its input: a slice from the start pulls its input's first
+    [offset + length] rows, and a slice from the end and a step that is not
+    local all of them. A frame fails at the earliest row where a node fails, and
+    of two failures at a row, at the first evaluated: a value that a {!Map} or
+    {!Bind} type does not hold, or an exception that a function raises, at its
+    row of the step's input; [Only] over two values at the frame's first row. A
+    failed value is null. A step emits its rows before a frame that fails, and
+    the run ends with the failure: an error at the row, or the exception. *)
 
 open Talon_next
 
@@ -27,50 +36,84 @@ type iop = Add | Sub | Mul | Div | Mod
 type fop = Fadd | Fsub | Fmul | Fdiv
 type cmp = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
 
-(** The type for expressions of values ['a]. *)
-type 'a expr =
-  | Col : 'a Type.t * string -> 'a expr
-  | Lit : 'a Type.t * 'a -> 'a expr  (** A literal of the type it meets. *)
-  | Null : 'a Type.t -> 'a expr
-  | Int : iop * int expr * int expr -> int expr
+(** The type for reductions of values ['a] to a value ['b]. [Sum] and [Mean]
+    take integers of at most 32 bits, which they compute exactly. *)
+type (_, _) reduction =
+  | Count : ('a, int) reduction
+  | Sum : (int, int) reduction
+  | Mean : (int, float) reduction
+  | Min : ('a, 'a) reduction
+  | Max : ('a, 'a) reduction
+  | First : ('a, 'a) reduction
+  | Last : ('a, 'a) reduction
+  | Only : ('a, 'a) reduction
+  | Median : ('a, float) reduction  (** Of integers or floats. *)
+  | Quantile : float -> ('a, float) reduction  (** Of integers or floats. *)
+  | N_unique : ('a, int) reduction
+  | Arg_min : ('a, int) reduction
+  | Arg_max : ('a, int) reduction
+
+type key = { name : string; desc : bool; nulls_first : bool }
+(** The type for the keys of {!Over}'s order. *)
+
+(** The type for expressions of values ['a] and shape ['s]. *)
+type ('a, 's) term =
+  | Col : 'a Type.t * string -> ('a, Expr.row) term
+  | Lit : 'a Type.t * 'a -> ('a, 's) term
+      (** A literal of the type it meets. *)
+  | Null : 'a Type.t -> ('a, 's) term
+  | Int : iop * (int, 's) term * (int, 's) term -> (int, 's) term
       (** Meeting at [int8] to [int32], [uint8] to [uint32]. *)
-  | Float : fop * float expr * float expr -> float expr
+  | Float : fop * (float, 's) term * (float, 's) term -> (float, 's) term
       (** Meeting at [float32] and [float64]. *)
-  | Cmp : cmp * 'a expr * 'a expr -> bool expr
-  | And : bool expr * bool expr -> bool expr
-  | Or : bool expr * bool expr -> bool expr
-  | Not : bool expr -> bool expr
-  | If : bool expr * 'a expr * 'a expr -> 'a expr
-  | Is_null : 'a expr -> bool expr
-  | Coalesce : 'a expr list -> 'a expr
-  | Is_in : 'a list * 'a expr -> bool expr
-  | Store : 'a Type.t * 'a expr -> 'a expr
+  | Cmp : cmp * ('a, 's) term * ('a, 's) term -> (bool, 's) term
+  | And : (bool, 's) term * (bool, 's) term -> (bool, 's) term
+  | Or : (bool, 's) term * (bool, 's) term -> (bool, 's) term
+  | Not : (bool, 's) term -> (bool, 's) term
+  | If : (bool, 's) term * ('a, 's) term * ('a, 's) term -> ('a, 's) term
+  | Is_null : ('a, 's) term -> (bool, 's) term
+  | Coalesce : ('a, 's) term list -> ('a, 's) term
+  | Is_in : 'a list * ('a, 's) term -> (bool, 's) term
+  | Store : 'a Type.t * ('a, 's) term -> ('a, 's) term
       (** At a type that contains the operand's. *)
-  | Map : int Type.t * ('a -> int) * 'a expr -> int expr
+  | Map : int Type.t * ('a -> int) * ('a, 's) term -> (int, 's) term
       (** [Map (ty, f, a)] is [store ty (const f $ a)], at a type of OCaml
           [int]s. [a] reads a column. *)
-  | Bind : int Type.t * ('a option -> int option) * 'a expr -> int expr
+  | Bind :
+      int Type.t * ('a option -> int option) * ('a, 's) term
+      -> (int, 's) term
       (** [Bind (ty, f, a)] is [store ty (of_option (const f $ option a))]. *)
+  | Rows : (int, Expr.agg) term
+  | Reduce : ('a, 'b) reduction * ('a, Expr.row) term -> ('b, Expr.agg) term
+  | Over : string list * key list * ('a, 's) term -> ('a, Expr.row) term
+  | Shift : int * ('a, Expr.row) term -> ('a, Expr.row) term
+  | Rank : ('a, Expr.row) term -> (int, Expr.row) term
+
+type 'a expr = ('a, Expr.row) term
+(** The type for row expressions. *)
 
 (** The type for outputs. *)
-type out = Out : string * 'a expr -> out | Keep of string list
+type 's out =
+  | Out : string * ('a, 's) term -> 's out
+  | Keep : string list -> Expr.row out
 
 (** The type for plans. *)
 type plan =
   | Table of Talon_next.t
-  | Select of out list * plan
-  | Derive of out list * plan
+  | Select of Expr.row out list * plan
+  | Derive of Expr.row out list * plan
   | Filter of bool expr * plan
   | Slice of { offset : int; length : int; plan : plan }
   | Append of plan * plan  (** [Append (q, rest)] is [q |> append rest]. *)
+  | Aggregate of string list * Expr.agg out list * plan
 
 val literal : 'a Type.t -> ('a -> ('a, 's) Expr.t) option
 (** [literal ty] makes the literals of [ty], if [Expr] writes them. *)
 
-val type_of : 'a expr -> 'a Type.t
+val type_of : ('a, 's) term -> 'a Type.t
 (** [type_of e] is the type of [e]'s values. *)
 
-val expr : 'a expr -> ('a, Expr.row) Expr.t
+val expr : ('a, 's) term -> ('a, 's) Expr.t
 (** [expr e] is [e] in [Expr]. *)
 
 val query : plan -> Query.t

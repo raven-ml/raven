@@ -2106,6 +2106,17 @@ let row_local e =
   in
   local e
 
+let reduces e =
+  check_bound "reduces" e;
+  let rec per_frame : type a s. (a, s) t -> bool =
+   fun e ->
+    match e.node with
+    | Rows | Reduce _ -> true
+    | Over _ | Rolling _ -> false
+    | n -> List.exists (fun (Packed e) -> per_frame e) (operands n)
+  in
+  per_frame e
+
 (* [widens a ty] is [true] iff [ty] contains the column type of [a], so that a
    cast of [a] to [ty] keeps every value. *)
 let widens : type a b s. (a, s) t -> b Type.t -> bool =
