@@ -340,7 +340,7 @@ the per-operation transposes) are mapped in Rule tables.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| old: test_quant.ml debug › debug | with_debug of nx.quant's operations | dropped: `with_debug` is gone, and nx.quant's effect reaches no rune.next interpreter before quantised activations land in nx |
+| old: test_quant.ml debug › debug | with_debug of nx.quant's operations | dropped: `with_debug` is gone; an interpreter installed with `Nx.Op.intercept` logs any operation, nx's suite |
 
 ### test_read_lifetime.ml
 
