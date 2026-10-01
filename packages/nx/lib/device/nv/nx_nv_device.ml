@@ -248,8 +248,8 @@ let mapping n =
         match (n.gpu, foreign n key) with
         | Kernel_gpu g, Some (_, (Kernel_mem m as mem)) -> (
             match Nvk.map_peer g m with
-            | exception Failure why -> Error why
-            | () ->
+            | Error why -> Error why
+            | Ok () ->
                 Hashtbl.replace n.borrows key mem;
                 Ok memory)
         | Pci_gpu p, Some ({ gpu = Pci_gpu owner; _ }, Pci_mem m) ->
@@ -357,10 +357,7 @@ let map_peer n peer x =
           push ())
         (with_hw n (fun () ->
              match (n.gpu, peer.gpu, r.mem) with
-             | Kernel_gpu g, _, Kernel_mem m -> (
-                 match Nvk.map_peer g m with
-                 | () -> Ok ()
-                 | exception Failure why -> Error why)
+             | Kernel_gpu g, _, Kernel_mem m -> Nvk.map_peer g m
              | Pci_gpu p, Pci_gpu p', Pci_mem m ->
                  Result.map ignore (Pci_memory.map_peer p.memory p'.memory m)
              | _ -> Error "a peer of another interface"))

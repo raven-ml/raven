@@ -78,11 +78,21 @@ let or_undo undo f =
       undo ();
       raise e
 
-let uvm_call c cmd p field what =
+let uvm_status c cmd p field what =
   ioctl_raw c.uvm cmd p what;
-  let s = P.get p field in
-  if s <> D.nv_ok then
-    failwith (Printf.sprintf "%s: %s" what (Rm.status_name c.release s))
+  P.get p field
+
+let uvm_call c cmd p field what =
+  Rm.check c.release what (uvm_status c cmd p field what)
+
+(* Whether the status [s] of [what] is [NV_OK]: [false] for [NV_ERR_NO_MEMORY],
+   and [Failure] for any other. *)
+let fits release what s =
+  if s = D.nv_err_no_memory then false
+  else begin
+    Rm.check release what s;
+    true
+  end
 
 (* An allocation under [root] with the escape [NV_ESC_RM_ALLOC]. *)
 let rm_alloc_raw ctl ~root ~parent cls params =
@@ -288,7 +298,8 @@ let uvm_free c va size =
   uvm_call c D.uvm_free u U.rm_status "unmapping GPU memory"
 
 (* Maps the memory object [handle] of [size] bytes, at [va] in the process's
-   unified memory, into [g]'s address space. *)
+   unified memory, into [g]'s address space: [false] if [g] has no memory for
+   the mapping's page tables. *)
 let uvm_map_external g va size handle =
   let c = g.c in
   let module U = D.Uvm_map_external_allocation in
@@ -304,15 +315,40 @@ let uvm_map_external g va size handle =
   P.set u
     (P.elt_field U.per_gpu_attributes 0 G.gpu_mapping_type)
     D.uvm_gpu_mapping_type_read_write_atomic;
-  uvm_call c D.uvm_map_external_allocation u U.rm_status "mapping GPU memory"
+  uvm_status c D.uvm_map_external_allocation u U.rm_status "mapping GPU memory"
+  |> fits c.release "mapping GPU memory"
+
+(* Maps the memory object [handle] of [size] bytes at [va] in [g]'s virtual
+   memory: [false] if [g] has no memory for the mapping's page tables. *)
+let map_dma g va size handle =
+  let c = g.c in
+  let (module R : D.RELEASE) = c.release in
+  let module M = R.Nvos46 in
+  let m = P.create M.sizeof in
+  P.set m M.h_client c.root;
+  P.set m M.h_device g.device;
+  P.set m M.h_dma g.virtmem;
+  P.set m M.h_memory handle;
+  P.set m M.length size;
+  P.set m M.flags
+    (P.bits D.nvos46_flags_page_size D.nvos46_flags_page_size_4kb
+    lor P.bits D.nvos46_flags_cache_snoop D.nvos46_flags_cache_snoop_enable
+    lor P.bits D.nvos46_flags_dma_offset_fixed
+          D.nvos46_flags_dma_offset_fixed_true);
+  P.set m M.dma_offset va;
+  escape c.ctl D.nv_esc_rm_map_memory_dma m "mapping GPU memory";
+  if not (fits c.release "mapping GPU memory" (P.get m M.status)) then false
+  else if P.get m M.dma_offset <> va then
+    failwith "mapping GPU memory: the driver chose another address"
+  else true
 
 (* Maps [size] bytes of the memory object [handle] at [va] for [g]: first
    creating the unified memory range there and the object's mapping in [g]'s
-   virtual memory, if [create]. A range it created is freed if the mapping
-   fails, so that the addresses stay free. *)
+   virtual memory, if [create]. [false] if [g] has no memory for the mapping. A
+   range it created is freed if the mapping fails or does not fit, so that the
+   addresses stay free. *)
 let uvm_map g ~create va size handle =
   let c = g.c in
-  let (module R : D.RELEASE) = c.release in
   if not create then uvm_map_external g va size handle
   else begin
     let module E = D.Uvm_create_external_range in
@@ -321,25 +357,12 @@ let uvm_map g ~create va size handle =
     P.set e E.length size;
     uvm_call c D.uvm_create_external_range e E.rm_status
       "reserving GPU addresses";
-    or_undo (fun () -> uvm_free c va size) @@ fun () ->
-    let module M = R.Nvos46 in
-    let m = P.create M.sizeof in
-    P.set m M.h_client c.root;
-    P.set m M.h_device g.device;
-    P.set m M.h_dma g.virtmem;
-    P.set m M.h_memory handle;
-    P.set m M.length size;
-    P.set m M.flags
-      (P.bits D.nvos46_flags_page_size D.nvos46_flags_page_size_4kb
-      lor P.bits D.nvos46_flags_cache_snoop D.nvos46_flags_cache_snoop_enable
-      lor P.bits D.nvos46_flags_dma_offset_fixed
-            D.nvos46_flags_dma_offset_fixed_true);
-    P.set m M.dma_offset va;
-    escape c.ctl D.nv_esc_rm_map_memory_dma m "mapping GPU memory";
-    Rm.check c.release "mapping GPU memory" (P.get m M.status);
-    if P.get m M.dma_offset <> va then
-      failwith "mapping GPU memory: the driver chose another address";
-    uvm_map_external g va size handle
+    let mapped =
+      or_undo (fun () -> uvm_free c va size) @@ fun () ->
+      map_dma g va size handle && uvm_map_external g va size handle
+    in
+    if not mapped then uvm_free c va size;
+    mapped
   end
 
 (* Unmaps for [g] the [size] bytes at [va] of a range that stays. *)
@@ -493,12 +516,17 @@ let alloc g ?(host = false) ?(uncached = false) ?(cpu_access = false)
           Space.free space va;
           None
       | Some h ->
-          or_undo
-            (fun () ->
-              (rm c).free ~parent:g.device h;
-              if cpu then release_at at size)
-            (fun () -> uvm_map g ~create:true va size h);
-          Some { va; size; handle = h; cpu; space })
+          let drop () =
+            (rm c).free ~parent:g.device h;
+            if cpu then release_at at size
+          in
+          if or_undo drop (fun () -> uvm_map g ~create:true va size h) then
+            Some { va; size; handle = h; cpu; space }
+          else begin
+            drop ();
+            Space.free space va;
+            None
+          end)
 
 let free g m =
   let c = g.c in
@@ -507,8 +535,14 @@ let free g m =
   if m.cpu then release_at (Nativeint.of_int m.va) m.size;
   Space.free m.space m.va
 
+let no_memory = "the GPU has no memory left to map it"
+
 (* Another GPU's memory, mapped for [g] at its address. *)
-let map_peer g m = uvm_map g ~create:false m.va m.size m.handle
+let map_peer g m =
+  match uvm_map g ~create:false m.va m.size m.handle with
+  | exception Failure why -> Error why
+  | true -> Ok ()
+  | false -> Error no_memory
 
 (* Unmaps from [g] another GPU's memory [map_peer] mapped. *)
 let unmap_peer g m = uvm_unmap g m.va m.size
@@ -535,7 +569,8 @@ let map_host g a n =
       | Some r when r.bytes = n -> (
           match uvm_map g ~create:false a n r.descriptor with
           | exception Failure why -> Error why
-          | () ->
+          | false -> Error no_memory
+          | true ->
               r.users <- g :: r.users;
               Ok ())
       | Some _ -> Error "another borrow maps a different range at this address"
@@ -550,13 +585,16 @@ let map_host g a n =
           else
             match
               let h = describe g a n in
-              or_undo
-                (fun () -> (rm g.c).free ~parent:g.device h)
-                (fun () -> uvm_map g ~create:true a n h);
-              h
+              let drop () = (rm g.c).free ~parent:g.device h in
+              let mapped =
+                or_undo drop (fun () -> uvm_map g ~create:true a n h)
+              in
+              if not mapped then drop ();
+              (h, mapped)
             with
             | exception Failure why -> Error why
-            | h ->
+            | _, false -> Error no_memory
+            | h, true ->
                 Hashtbl.replace ranges a
                   {
                     addr = a;

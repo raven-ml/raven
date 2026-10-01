@@ -2948,6 +2948,9 @@ thread.
 
 ### Nx
 
+- An NV device whose memory runs out while mapping a new allocation raises
+  `Nx_device.Out_of_memory` and gives the memory back. It raised a driver
+  fault, which lost the device.
 - `nx.io` takes deflate from the `compress` package. Loading a deflated NPZ
   entry is about 3x faster, and the tensor uses the decompressed memory
   without a copy when its data is aligned; loading a PNG is about 2x faster.
