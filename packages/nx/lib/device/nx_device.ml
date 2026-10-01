@@ -473,10 +473,11 @@ let write_word io a v =
    machine, the host's memory on another. It lives as long as the device. Its
    first word is the signal word, and after a word that aligns them come two
    slots of 16 bytes, whose second words take the timestamps of the device's
-   copy queue. *)
+   copy queue. On the heap, it starts on a page for a device that maps [pages]
+   of host memory, which maps no other. *)
 let timeline_bytes = 48
 
-let timeline_of ~host_alloc (host_memory : allocator option) =
+let timeline_of ~pages ~host_alloc (host_memory : allocator option) =
   let check = function
     | Some ({ host = Some _; _ } as m) -> m
     | Some { host = None; _ } ->
@@ -487,6 +488,9 @@ let timeline_of ~host_alloc (host_memory : allocator option) =
   match (host_memory, host_alloc) with
   | Some (a : allocator), _ -> (check (a.alloc timeline_bytes), Keep ())
   | None, Some alloc -> (check (Option.map fst (alloc timeline_bytes)), Keep ())
+  | None, None when pages ->
+      let ba = Bigarray.Array1.sub (heap aligned_from) 0 timeline_bytes in
+      (heap_memory ba, Host ba)
   | None, None ->
       let ba =
         shared
@@ -507,7 +511,8 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
     | None, Some _ -> Some alloc
     | _ -> None
   in
-  let timeline, timeline_keep = timeline_of ~host_alloc host_memory in
+  let pages = match mapping with Some (Pages _) -> true | _ -> false in
+  let timeline, timeline_keep = timeline_of ~pages ~host_alloc host_memory in
   let machine_io = match machine with Some h -> h.io | None -> io in
   let words = Option.get timeline.host in
   write_word machine_io words 0L;
