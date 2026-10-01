@@ -356,15 +356,25 @@ let bitcast (type a b c d) (dt : (c, d) Nx_dtype.t) (x : (a, b) t) : (c, d) t
 let contiguous x = B.contiguous x
 let copy x = B.copy x
 
-(* The reader of [x]'s elements in C order, from index 0, read by the surface
-   function [by]. *)
-let elements ~by x = Elements.get (B.dtype x) (B.elements ~by x)
+(* [f] applied to the reader of [x]'s elements in C order, from index 0, read by
+   the surface function [by]. The memory is under a read claim until [f]
+   returns, so that no compiled call lends it meanwhile. *)
+let reading ~by x f =
+  let buf = B.elements ~by x in
+  Nx_device.Buffer.Claim.read buf;
+  match f (Elements.get (B.dtype x) buf) with
+  | v ->
+      Nx_device.Buffer.Claim.release buf;
+      v
+  | exception e ->
+      Nx_device.Buffer.Claim.release buf;
+      raise e
 
 (* [x]'s elements in C order, read by [by]. *)
-let read_array ~by x = Array.init (numel x) (elements ~by x)
+let read_array ~by x = reading ~by x (Array.init (numel x))
 
 (* The one element of [t], read by [by]. *)
-let read_item ~by t = elements ~by t 0
+let read_item ~by t = reading ~by t (fun element -> element 0)
 
 let check_shape op shape =
   if Array.exists (fun d -> d < 0) shape then
@@ -5898,7 +5908,7 @@ let pp_dtype ppf dtype = Format.pp_print_string ppf (Nx_dtype.to_string dtype)
 
 let pp' (type a b) ~by fmt (x : (a, b) t) =
   let open Format in
-  let element = elements ~by x in
+  reading ~by x @@ fun element ->
   let dtype = dtype x in
   let shape = shape x in
   let ndim = Array.length shape in
@@ -5982,7 +5992,8 @@ let print x = Format.printf "%a@." (pp' ~by:"Nx.print") x
 (* ───── Higher-order Functions ───── *)
 
 let map_item f x =
-  let src = elements ~by:"Nx.map_item" x and sz = size x in
+  let sz = size x in
+  reading ~by:"Nx.map_item" x @@ fun src ->
   let dst = Elements.create (dtype x) sz in
   let set = Elements.set (dtype x) dst in
   for i = 0 to sz - 1 do
@@ -5991,13 +6002,13 @@ let map_item f x =
   reshape (shape x) (B.from_host (B.context x) (dtype x) dst)
 
 let iter_item f x =
-  let src = elements ~by:"Nx.iter_item" x in
+  reading ~by:"Nx.iter_item" x @@ fun src ->
   for i = 0 to size x - 1 do
     f (src i)
   done
 
 let fold_item f init x =
-  let src = elements ~by:"Nx.fold_item" x in
+  reading ~by:"Nx.fold_item" x @@ fun src ->
   let acc = ref init in
   for i = 0 to size x - 1 do
     acc := f !acc (src i)

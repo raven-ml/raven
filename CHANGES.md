@@ -2922,6 +2922,11 @@ thread.
 
 ### Nx
 
+- An operation and a read (`to_array`, `item`, `pp`, `map_item`, `iter_item`,
+  `fold_item`) claim the memory of the host values they read while they read
+  it, so a compiled call on another domain that consumes one of them computes
+  from a copy instead of writing over it. An operation on a value whose memory
+  such a call holds raises at once.
 - **Breaking:** `Nx_device.Buffer.consume` is `Nx_device.Buffer.Claim.consume`,
   which needs a claim on the memory from `Claim.with_`. `Nx_device.Buffer.Claim`
   counts read claims on memory, shared by its views and borrows, and holds it

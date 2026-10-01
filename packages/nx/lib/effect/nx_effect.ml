@@ -2061,36 +2061,109 @@ let routed op f =
   let r = route_of op in
   settle r (f (kernels_at r))
 
+(* Kernels read their operands' memory under read claims, so that no compiled
+   call lends it to a result meanwhile. Claims are released however the kernel
+   ends, and none allocates. *)
+
+let claim (a : ('a, 'b) Nx_array.t) = Nx_device.Buffer.Claim.read a.buffer
+let release (a : ('a, 'b) Nx_array.t) = Nx_device.Buffer.Claim.release a.buffer
+
+let release2 a b =
+  release a;
+  release b
+
+let release3 a b c =
+  release2 a b;
+  release c
+
+let claim2 a b =
+  claim a;
+  match claim b with
+  | () -> ()
+  | exception e ->
+      release a;
+      raise e
+
+let claim3 a b c =
+  claim2 a b;
+  match claim c with
+  | () -> ()
+  | exception e ->
+      release2 a b;
+      raise e
+
+let rec claim_all = function
+  | [] -> ()
+  | a :: rest -> (
+      claim a;
+      match claim_all rest with
+      | () -> ()
+      | exception e ->
+          release a;
+          raise e)
+
+let release_all xs = List.iter release xs
+
 (* Each operation's results, allocated, and written by kernels [k]. *)
 
 let k_unary ((module K) : kernels) k a =
   let dst = alloc a.dtype (shape_of a) in
-  K.unary k a ~dst;
+  claim a;
+  (match K.unary k a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_binary ((module K) : kernels) k a b =
   let dst = alloc a.dtype (shape_of a) in
-  K.binary k a b ~dst;
+  claim2 a b;
+  (match K.binary k a b ~dst with
+  | () -> release2 a b
+  | exception e ->
+      release2 a b;
+      raise e);
   dst
 
 let k_compare ((module K) : kernels) k a b =
   let dst = alloc Nx_dtype.Bool (shape_of a) in
-  K.compare k a b ~dst;
+  claim2 a b;
+  (match K.compare k a b ~dst with
+  | () -> release2 a b
+  | exception e ->
+      release2 a b;
+      raise e);
   dst
 
 let k_where ((module K) : kernels) c a b =
   let dst = alloc a.dtype (shape_of a) in
-  K.where c a b ~dst;
+  claim3 c a b;
+  (match K.where c a b ~dst with
+  | () -> release3 c a b
+  | exception e ->
+      release3 c a b;
+      raise e);
   dst
 
 let k_reduce ((module K) : kernels) k axes a =
   let dst = alloc a.dtype (Shape.reduce_output_shape (shape_of a) axes false) in
-  K.reduce k ~axes a ~dst;
+  claim a;
+  (match K.reduce k ~axes a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_scan ((module K) : kernels) k axis a =
   let dst = alloc a.dtype (shape_of a) in
-  K.scan k ~axis a ~dst;
+  claim a;
+  (match K.scan k ~axis a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_arg_reduce ((module K) : kernels) k axis a =
@@ -2098,53 +2171,103 @@ let k_arg_reduce ((module K) : kernels) k axis a =
     alloc Nx_dtype.Int64
       (Shape.reduce_output_shape (shape_of a) [| axis |] false)
   in
-  K.arg_reduce k ~axis a ~dst;
+  claim a;
+  (match K.arg_reduce k ~axis a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_sort ((module K) : kernels) descending axis a =
   let dst = alloc a.dtype (shape_of a) in
-  K.sort ~descending ~axis a ~dst;
+  claim a;
+  (match K.sort ~descending ~axis a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_argsort ((module K) : kernels) descending axis a =
   let dst = alloc Nx_dtype.Int64 (shape_of a) in
-  K.argsort ~descending ~axis a ~dst;
+  claim a;
+  (match K.argsort ~descending ~axis a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_pad ((module K) : kernels) padding v a =
   let dst = alloc a.dtype (pad_shape padding (shape_of a)) in
-  K.pad padding v a ~dst;
+  claim a;
+  (match K.pad padding v a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_cat ((module K) : kernels) axis xs =
   let shape = cat_shape axis (List.map shape_of xs) in
   let dst = alloc (List.hd xs).dtype shape in
-  K.cat ~axis xs ~dst;
+  claim_all xs;
+  (match K.cat ~axis xs ~dst with
+  | () -> release_all xs
+  | exception e ->
+      release_all xs;
+      raise e);
   dst
 
 let k_cast ((module K) : kernels) dtype a =
   let dst = alloc dtype (shape_of a) in
-  K.cast a ~dst;
+  claim a;
+  (match K.cast a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_threefry ((module K) : kernels) key ctr =
   let dst = alloc Nx_dtype.Int32 (shape_of ctr) in
-  K.threefry key ctr ~dst;
+  claim2 key ctr;
+  (match K.threefry key ctr ~dst with
+  | () -> release2 key ctr
+  | exception e ->
+      release2 key ctr;
+      raise e);
   dst
 
 let k_gather ((module K) : kernels) axis indices data =
   let dst = alloc data.dtype (shape_of indices) in
-  K.gather ~axis indices data ~dst;
+  claim2 indices data;
+  (match K.gather ~axis indices data ~dst with
+  | () -> release2 indices data
+  | exception e ->
+      release2 indices data;
+      raise e);
   dst
 
 let k_scatter ((module K) : kernels) mode unique axis indices updates into =
   let dst = alloc into.dtype (shape_of into) in
-  K.scatter ~mode ~unique ~axis ~indices ~updates into ~dst;
+  claim3 indices updates into;
+  (match K.scatter ~mode ~unique ~axis ~indices ~updates into ~dst with
+  | () -> release3 indices updates into
+  | exception e ->
+      release3 indices updates into;
+      raise e);
   dst
 
 let k_update ((module K) : kernels) a starts v =
   let dst = alloc a.dtype (shape_of a) in
-  K.update a ~starts v ~dst;
+  claim3 a starts v;
+  (match K.update a ~starts v ~dst with
+  | () -> release3 a starts v
+  | exception e ->
+      release3 a starts v;
+      raise e);
   dst
 
 let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
@@ -2152,38 +2275,73 @@ let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
     alloc a.dtype
       (unfold_shape kernel_size stride dilation padding (shape_of a))
   in
-  K.unfold ~kernel_size ~stride ~dilation ~padding a ~dst;
+  claim a;
+  (match K.unfold ~kernel_size ~stride ~dilation ~padding a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_fold ((module K) : kernels) output_size kernel_size stride dilation
     padding a =
   let dst = alloc a.dtype (fold_shape output_size (shape_of a)) in
-  K.fold ~output_size ~kernel_size ~stride ~dilation ~padding a ~dst;
+  claim a;
+  (match K.fold ~output_size ~kernel_size ~stride ~dilation ~padding a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_matmul ((module K) : kernels) a b =
   let dst = alloc a.dtype (matmul_shape (shape_of a) (shape_of b)) in
-  K.matmul a b ~dst;
+  claim2 a b;
+  (match K.matmul a b ~dst with
+  | () -> release2 a b
+  | exception e ->
+      release2 a b;
+      raise e);
   dst
 
 let k_fft ((module K) : kernels) inverse axes a =
   let dst = alloc a.dtype (shape_of a) in
-  K.fft ~inverse ~axes a ~dst;
+  claim a;
+  (match K.fft ~inverse ~axes a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_rfft ((module K) : kernels) dtype axes a =
   let dst = alloc dtype (rfft_shape axes (shape_of a)) in
-  K.rfft ~axes a ~dst;
+  claim a;
+  (match K.rfft ~axes a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_irfft ((module K) : kernels) dtype axes s a =
   let dst = alloc dtype (irfft_shape axes s (shape_of a)) in
-  K.irfft ~axes ~s a ~dst;
+  claim a;
+  (match K.irfft ~axes ~s a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 let k_contiguous ((module K) : kernels) a =
   let dst = alloc a.dtype (shape_of a) in
-  K.contiguous a ~dst;
+  claim a;
+  (match K.contiguous a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 (* [bitcast_array dtype a] is [a]'s bytes read as elements of [dtype]: at [a]'s
@@ -2233,7 +2391,12 @@ let bitcast_array (type a b c d) (dtype : (c, d) Nx_dtype.t)
 
 let k_cholesky ((module K) : kernels) upper a =
   let dst = alloc a.dtype (shape_of a) in
-  K.cholesky ~upper a ~dst;
+  claim a;
+  (match K.cholesky ~upper a ~dst with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   dst
 
 (* The batch axes of a matrix of shape [..., m, n], and [m] and [n]. *)
@@ -2248,7 +2411,12 @@ let k_qr ((module K) : kernels) reduced a =
   let dims r c = Array.append batch [| r; c |] in
   let q = alloc a.dtype (if reduced then dims m k else dims m m) in
   let r = alloc a.dtype (if reduced then dims k n else dims m n) in
-  K.qr ~reduced a ~q ~r;
+  claim a;
+  (match K.qr ~reduced a ~q ~r with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   (q, r)
 
 let k_lu ((module K) : kernels) a =
@@ -2256,7 +2424,12 @@ let k_lu ((module K) : kernels) a =
   let lu = alloc a.dtype (shape_of a) in
   let pivots = alloc Nx_dtype.Int64 (Array.append batch [| Int.min m n |]) in
   let perm = alloc Nx_dtype.Int64 (Array.append batch [| m |]) in
-  K.lu a ~lu ~pivots ~perm;
+  claim a;
+  (match K.lu a ~lu ~pivots ~perm with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   (lu, pivots, perm)
 
 let k_svd ((module K) : kernels) full_matrices a =
@@ -2266,7 +2439,12 @@ let k_svd ((module K) : kernels) full_matrices a =
   let u = alloc a.dtype (if full_matrices then dims m m else dims m k) in
   let s = alloc Nx_dtype.Float64 (Array.append batch [| k |]) in
   let vt = alloc a.dtype (if full_matrices then dims n n else dims k n) in
-  K.svd a ~u ~s ~vt;
+  claim a;
+  (match K.svd a ~u ~s ~vt with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   (u, s, vt)
 
 let k_eig ((module K) : kernels) vectors a =
@@ -2275,19 +2453,34 @@ let k_eig ((module K) : kernels) vectors a =
   let vectors =
     if vectors then Some (alloc Nx_dtype.Complex128 (shape_of a)) else None
   in
-  K.eig a ~values ~vectors;
+  claim a;
+  (match K.eig a ~values ~vectors with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   (values, vectors)
 
 let k_eigh ((module K) : kernels) vectors a =
   let batch, _, n = matrix a in
   let values = alloc Nx_dtype.Float64 (Array.append batch [| n |]) in
   let vectors = if vectors then Some (alloc a.dtype (shape_of a)) else None in
-  K.eigh a ~values ~vectors;
+  claim a;
+  (match K.eigh a ~values ~vectors with
+  | () -> release a
+  | exception e ->
+      release a;
+      raise e);
   (values, vectors)
 
 let k_solve_triangular ((module K) : kernels) upper transpose unit_diag a b =
   let dst = alloc b.dtype (shape_of b) in
-  K.solve_triangular ~upper ~transpose ~unit_diag a b ~dst;
+  claim2 a b;
+  (match K.solve_triangular ~upper ~transpose ~unit_diag a b ~dst with
+  | () -> release2 a b
+  | exception e ->
+      release2 a b;
+      raise e);
   dst
 
 let all_host xs = List.for_all (function Host _ -> true | _ -> false) xs

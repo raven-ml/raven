@@ -123,7 +123,55 @@ let disk =
               Nx.place disk x));
     ]
 
+(* A host value's memory is claimed while an operation or a read uses it: a
+   compiled call that holds it exclusive, writing over it, is never read. *)
+
+module Claim = Nx_device.Buffer.Claim
+
+let memory x =
+  match Nx.Repr.v x with
+  | Host a -> a.buffer
+  | Placed _ | Traced _ -> fail "expected a host value"
+
+(* [f ()] with [x]'s memory held exclusive, as a consuming call holds it. *)
+let held_exclusive x f =
+  let m = memory x in
+  Claim.read m;
+  is_true ~msg:"exclusive" (Claim.try_exclusive m);
+  Fun.protect
+    ~finally:(fun () ->
+      Claim.finish m;
+      Claim.release m)
+    f
+
+let in_use = Exn.invalid_arg ~substring:"in use"
+
+let claims =
+  group "claims"
+    [
+      test "an operation and a read of memory held exclusive raise" (fun () ->
+          let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          held_exclusive x (fun () ->
+              raises_match ~msg:"an operation" in_use (fun () ->
+                  ignore (Nx.add x x));
+              raises_match ~msg:"to_array" in_use (fun () ->
+                  ignore (Nx.to_array x));
+              raises_match ~msg:"item" in_use (fun () ->
+                  ignore (Nx.item [ 0 ] x));
+              raises_match ~msg:"fold_item" in_use (fun () ->
+                  ignore (Nx.fold_item ( +. ) 0. x)));
+          equal (array (float 1e-6)) [| 1.; 2. |] (Nx.to_array x));
+      test "an operation and a read release their claims, also when they raise"
+        (fun () ->
+          let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          ignore (Nx.add x x);
+          ignore (Nx.to_array x);
+          raises (Failure "f") (fun () ->
+              Nx.iter_item (fun _ -> failwith "f") x);
+          held_exclusive x ignore);
+    ]
+
 let () =
   exit
     (run "nx runtime devices"
-       (devices :: host_buffers :: disk :: Runtimes.laws [ r1; r2 ]))
+       (devices :: host_buffers :: disk :: claims :: Runtimes.laws [ r1; r2 ]))
