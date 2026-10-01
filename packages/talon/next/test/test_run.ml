@@ -1297,6 +1297,16 @@ let reductions =
           let y = Expr.(store Type.int8 (const ten $ sum k)) in
           let e = require_error (aggregate [ "g" ] Expr.[ "y" := y ] t) in
           contains ~sub:": row 1: int8 does not hold 140." (error e));
+      test "a quantile rounds its product before its sum" (fun () ->
+          let lo = -0x1.984a95b4668d2p-136 and hi = 0x1.c3bc32236009dp-965 in
+          let t = v [ ("x", Column.v Type.float64 [| hi; lo |]) ] in
+          let q =
+            require_ok ~pp:Error.pp
+              (aggregate [] Expr.[ "q" := quantile 0.75 x ] t)
+          in
+          rows_are Type.float64
+            [| Some (-0x1.984a95b4668dp-138) |]
+            (floats q "q"));
       test "arg_min is a position in the frame's order" (fun () ->
           let t = v [ ("x", Column.v Type.float64 [| 3.; 1.; 2. |]) ] in
           rows_are Type.int64

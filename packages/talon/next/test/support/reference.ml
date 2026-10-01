@@ -500,14 +500,16 @@ let float_order x y =
       | 0 -> Bool.compare (Float.sign_bit y) (Float.sign_bit x)
       | c -> c)
 
+(* [quantile p xs] rounds each operation once. On arm64 the compiler fuses a
+   product and a sum into one rounding, so each product is made opaque. *)
 let quantile p xs =
   let s = List.sort float_order xs |> Array.of_list in
   let n = Array.length s in
-  let h = p *. float_of_int (n - 1) in
+  let h = Sys.opaque_identity (p *. float_of_int (n - 1)) in
   let lo = int_of_float h in
   let a = s.(lo) and b = s.(Int.min (lo + 1) (n - 1)) in
   let f = h -. Float.of_int lo in
-  if f = 0. || a = b then a else a +. (f *. (b -. a))
+  if f = 0. || a = b then a else a +. Sys.opaque_identity (f *. (b -. a))
 
 let to_float : type a. a Type.t -> a -> float =
  fun ty v ->
