@@ -90,6 +90,15 @@ named:
   compute channel releases all 64 bits. No waiter may pass early mid-write,
   and a late high word may never take the word back below another
   channel's value.
+- **NV batches (Ops_nv, D38, D40, D42, D51):** `test_ops_nv_exec` (the `slow` alias) on
+  an NVIDIA GPU: chained launches, copies on the copy engine inside a batch,
+  runs without synchronizing, profiled spans and each trip of a range on its
+  own descriptors. The copy channel's second release lands at the signal
+  word's high half or at the device's sink word, as its first release's low
+  word says (D40), launches read descriptors, constant buffers and
+  arguments from pinned memory (D42), the program the engine loads through
+  nx.nv.device (D38), and the local memory size from the device's word
+  (D51).
 
 ## Coverage and mutation
 

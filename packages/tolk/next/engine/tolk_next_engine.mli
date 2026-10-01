@@ -66,24 +66,28 @@ type device = {
 val device : (string * Nx_device.t) list -> string -> device
 (** [device devices name] is the device [devices] maps [name] to, with its
     {!target}, or, for the disk, which runs no program, the target of the device
-    ["DISK"]. A Metal, CUDA or AMD device has the command queues of its vendor
-    ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}, {!Tolk_next.Ops_amd}),
-    submitted by host programs of the host of its machine
+    ["DISK"]. A Metal, CUDA, AMD or NV device has the command queues of its
+    vendor ({!Tolk_next.Ops_metal}, {!Tolk_next.Ops_cuda}, {!Tolk_next.Ops_amd},
+    {!Tolk_next.Ops_nv}), submitted by host programs of the host of its machine
     ({!Nx_device.host_of}), which [devices] must name, and gives the storage its
     commands name: Metal's objects, selectors, indirect command buffers and
     stamps and the address of [objc_msgSend]; CUDA's context, streams,
     functions, stamping function and the driver's entry points; AMD's rings and
     their words, its programs' code objects, which it loads, growing the
-    device's scratch memory for their kernels, and its scratch memory. A CUDA or
-    AMD device's queues reach the memory of the devices of [devices] that the
-    device reaches ({!Nx_device.reaches}), and copy other memory through the
-    host's. An NV device runs its calls one by one: no encoder of its exists
-    yet. A caller that runs work from queues of its own, such as a test of the
-    compiler, makes a {!device} of its own.
+    device's scratch memory for their kernels, and its scratch memory; NV's
+    channel rings and their words, its programs' cubins, which it loads, and a
+    word of the bytes per thread of the device's local memory, which it grows
+    for the kernels of each batch it links. A CUDA, AMD or NV device's queues
+    reach the memory of the devices of [devices] that the device reaches
+    ({!Nx_device.reaches}), and copy other memory through the host's. A caller
+    that runs work from queues of its own, such as a test of the compiler, makes
+    a {!device} of its own.
 
     Raises [Invalid_argument] if [devices] does not map [name], or does not name
-    the host of a Metal, CUDA or AMD device, and [Failure] with nx.device's
-    reason when an AMD device refuses a program's code object at link. *)
+    the host of a Metal, CUDA, AMD or NV device, [Failure] with nx.device's
+    reason when an AMD or NV device refuses a program's code object at link, and
+    {!Nx_device.Out_of_memory} when an NV device cannot grow its local memory
+    for a batch it links. *)
 
 (** {1:programs Host programs} *)
 

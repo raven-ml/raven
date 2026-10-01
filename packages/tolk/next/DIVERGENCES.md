@@ -1284,6 +1284,28 @@ the Exclusions of `README.md`.
   `› a buffer a range writes through a view is not placed over another`, each
   of which fails without its half.
 
+## D42. A batch's placeholders are pinned memory
+
+- **tinygrad:** `runtime/support/hcq2.py:589` (`pm_bufferize` allocates a
+  placeholder that is not volatile and not a command buffer in device memory
+  the host maps, `BufferSpec(cpu_access=True)`); `runtime/ops_nv.py:447-485`
+  (NV maps such memory through BAR1).
+- **tolk.next:** `engine/tolk_next_engine.ml` (`placeholder`, which allocates
+  every placeholder no vendor names with `Nx_device.Buffer.create
+  ~pinned:true`).
+- **Differs:** a batch's launch descriptors, constant buffers and kernel
+  arguments live in the device's pinned memory, system memory the device and
+  the host both address, where tinygrad places them in the device's own
+  memory behind a window the host writes through. The device reads them across
+  the bus at each launch. Programs are nx.device's, in its own memory (D38).
+- **Reason:** (c). nx.device offers no memory of a device that the host
+  addresses: `create` gives the device's own memory, which the host does not
+  address, or pinned memory. nx.device's accepted `Mapped` memory adds it,
+  after which this divergence narrows to devices without such a window.
+- **Pinned by:** the engine's link tests (`test/engine/tolk_next_engine`); the
+  Ops_nv execution suite (`test/runtime/ops_nv/test_ops_nv_exec.ml`) on an
+  NVIDIA GPU.
+
 ## D43. A queue bufferizes its own commands, and a region keeps its alignment
 
 - **tinygrad:** `runtime/support/hcq2.py:471` (`bufferize_cmdbuf` lays each

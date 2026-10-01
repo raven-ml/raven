@@ -2940,6 +2940,22 @@ more than 100 KiB of shared memory is unread.
 | old: `unit/test_runtime_nv.ml` the other compiled queue tests, local memory, iface wire formats, driver version, va allocator, device info, device hang, Pci_iface and device groups | the old runtime's submissions, memory and driver | dropped here: nx.nv.device's suite |
 | old: `unit/test_nv_tables.ml`, `unit/test_nv_ip.ml`, `unit/test_nv_nvdev.ml` | the driver's tables, GSP boot and the driver-less device | dropped here: nx.nv.device's suite; the constants the encoder reads are `lib/runtime/autogen/nv_gpu.ml`'s |
 
+### Execution
+
+`NX` runs batches through `tolk.engine` on the first NVIDIA GPU
+(`test_ops_nv_exec`, the `slow` alias), and skips each test on a machine
+without one. No CI machine has one: it runs on hardware by hand, and has not
+run yet.
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| tinygrad: `runtime/ops_nv.py` the device's words of a batch (`fifos`, `slm_per_thread`) | the engine binds the channels' words and the local memory word | `NX › execution` (6 tests) |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_repeated_copy | copies between the GPU and the host on the copy engine | `NX › copies from the host and back run on the copy engine, in the batch` |
+| tinygrad: runtime/test_hcq2.py::TestHCQ2Schedule::test_jit_new_inputs_each_call | runs of one batch without synchronizing | `NX › eight runs of one batch without synchronizing each add one` |
+| tinygrad: runtime/test_profiler.py::TestProfiler::test_profile_kernel_run, test_profile_multiops | a kernel's span on its device | `NX › a profile records a span of each kernel on the device, in order` |
+| DIVERGENCES D30 | a range around calls, one submission | `NX › each trip of a range runs its kernel on its own window`, `› each trip of a range of two kernels runs them on the trip's own windows, chained` |
+| old: `unit/test_runtime_nv.ml` "compiles and runs one kernel", "Ada compute replay patches arguments and wraps the shared FIFO", "Blackwell compute and DMA share ordered retained submissions" | | `NX › a chain of kernels adds one per kernel`, `› copies from the host and back ...`, `› eight runs of one batch ...` |
+
 ## Jit
 
 `J` is the `Jit` suite (`test/engine/jit`), `JB` its JITBEAM suite
