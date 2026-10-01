@@ -107,6 +107,28 @@ let stats d = Nx_device.stats (Nx.Device.runtime d)
 let bytes_in d = Nx_device.Stats.bytes_in (stats d)
 let allocated d = Nx_device.Stats.allocated (stats d)
 
+(* [allocated d] once the memory of what was dropped has returned to [d]. A
+   device buffer returns one major cycle after the last value holding it
+   dies, and a value that a finaliser closure keeps, as a compiled call keeps
+   the storages it binds, dies only once that finaliser has run, a cycle after
+   the call: a chain of such holders takes a cycle per link. A fixed number of
+   rounds covers the chains these tests build; [allocated] alone cannot tell
+   when they are done, since a round may return nothing yet free a holder. *)
+let settled d =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    Nx_device.synchronize (Nx.Device.runtime d)
+  done;
+  allocated d
+
+(* [warmed measure] is [measure ()] after a first, uncounted run of it. A
+   device keeps some memory for its life from the first work that needs it,
+   such as an NV device's local memory, which a measure of what one call holds
+   leaves out. *)
+let warmed measure =
+  ignore (measure ());
+  measure ()
+
 (* Values *)
 
 (* How a compiled value agrees with eager's: bit for bit; bit for bit but for
@@ -2077,14 +2099,14 @@ let held_by_steps at ~than a b =
         let g =
           Rune.jit' (fun xs -> Rune.scan' ~f:sum ~init:(zeros 4) xs |> snd)
         in
-        Gc.full_major ();
-        let before = allocated d in
+        let before = settled d in
         let r = g xs in
-        let held = allocated d - before - Nx.nbytes r in
+        let held = settled d - before - Nx.nbytes r in
+        ignore (Sys.opaque_identity (g, xs));
         ignore (host r);
         held
       in
-      let ha = held a in
+      let ha = warmed (fun () -> held a) in
       let hb = held b in
       less
         ~msg:(Printf.sprintf "%d bytes, against %d for %d chunks" hb ha a)
@@ -2416,15 +2438,23 @@ let staged_scans d =
                          (c, Nx.sum c))
                        ~init:(zeros k) xs))
             in
-            Gc.full_major ();
-            let before = allocated d in
+            let before = settled d in
             let r = g xs in
-            let held = allocated d - before in
+            (* What the call holds once its temporaries are collected, with its
+               program and result alive: a temporary may or may not be
+               collected by the end of the call. *)
+            let held = settled d - before in
+            ignore (Sys.opaque_identity (g, xs));
             ignore (host r);
             held
           in
-          let larger n = held n 4096 - held n 4 in
-          equal ~msg:"for 64 and 512 steps" int (larger 64) (larger 512));
+          let larger n =
+            let wide = held n 4096 in
+            wide - held n 4
+          in
+          let few = warmed (fun () -> larger 64) in
+          let many = larger 512 in
+          equal ~msg:"for 64 and 512 steps" int few many);
       test "a staged scan reads its rows in place" (fun () ->
           let held w =
             let xs =
@@ -2438,16 +2468,16 @@ let staged_scans d =
                          (Nx.add (Nx.mul_s c 0.5) (Nx.sum x), Nx.sum c))
                        ~init:(zeros 4) xs))
             in
-            Gc.full_major ();
-            let before = allocated d in
+            let before = settled d in
             let r = g xs in
             let held = allocated d - before in
             ignore (host r);
             held
           in
+          let wide = warmed (fun () -> held 1024) in
+          let narrow = held 4 in
           less ~msg:"bytes held for rows 1,024 values wide against 4" int
-            ~than:(64 * 1020 * 4)
-            (held 1024 - held 4));
+            ~than:(64 * 1020 * 4) (wide - narrow));
       staged at "stage a step whose output is a constant" ~steps:once
         ~init:(zeros 4)
         (fun c x -> (Nx.add (Nx.mul_s c 0.5) x, Nx.zeros Nx.float32 [||]))
@@ -3344,14 +3374,14 @@ let on_one_device ~name d =
           in
           let peak remat =
             let g = Rune.jit' (Rune.grad' (loss remat)) in
-            Gc.full_major ();
-            let base = allocated d in
+            let base = settled d in
             let r = g a in
             let used = allocated d - base in
             ignore (host r);
             used
           in
-          let plain = peak false and recomputed = peak true in
+          let plain = warmed (fun () -> peak false) in
+          let recomputed = peak true in
           less
             ~msg:
               (Printf.sprintf "%d bytes with remat, %d without" recomputed plain)

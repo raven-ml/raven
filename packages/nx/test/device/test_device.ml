@@ -874,6 +874,28 @@ let memories =
           ignore (Sys.opaque_identity b));
     ]
 
+(* A domain blocked in a lock runs no OCaml code, its finalisers included. *)
+let test_dropped_by_blocked_domain () =
+  let d = (fake ()).dev in
+  let lock = Mutex.create () and dropped = Atomic.make false in
+  Mutex.lock lock;
+  let blocked =
+    Domain.spawn (fun () ->
+        ignore (Sys.opaque_identity (B.create d S.UInt8 4096));
+        Atomic.set dropped true;
+        Mutex.lock lock;
+        Mutex.unlock lock)
+  in
+  while not (Atomic.get dropped) do
+    Domain.cpu_relax ()
+  done;
+  Gc.full_major ();
+  Gc.full_major ();
+  let held = allocated d in
+  Mutex.unlock lock;
+  Domain.join blocked;
+  equal int 0 held
+
 let memory =
   group "memory"
     [
@@ -883,6 +905,9 @@ let memory =
          count what is copied (nx_device.mli is silent on the alignment of a \
          new buffer: 16 bytes assumed)"
         commands;
+      test
+        "a buffer dropped by a domain that then blocks returns to its device"
+        test_dropped_by_blocked_domain;
       test
         "four domains create, write and read buffers of one device at once, \
          and all their memory returns" (fun () ->

@@ -2934,6 +2934,11 @@ thread.
 
 ### Nx
 
+- The memory of a device buffer, a borrow's mapping or a disk file returns to
+  its device from whichever domain's collection finds it unreachable. It
+  returned only once the domain that made the buffer ran its finalisers again,
+  so a domain that dropped buffers and then blocked, as in `Domain.join`, kept
+  them.
 - Disk buffers (`Nx_device.Buffer.of_file`, `create_file`) no longer hold a
   descriptor until they are collected, which ran out of descriptors
   (`EMFILE`) in loops of small file round trips. The disk keeps the descriptors

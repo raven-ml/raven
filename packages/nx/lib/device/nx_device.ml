@@ -111,7 +111,7 @@ type t = {
   peers : (nativeint, (unit -> unit) list) Hashtbl.t;
       (* by the address of owned memory, what runs before it is freed *)
   peers_lock : Mutex.t;
-  released : base list Atomic.t;
+  released : nativeint; (* its release list (see the stubs) *)
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
   cache : (int * memory, region list) Hashtbl.t;
@@ -150,6 +150,8 @@ and buffer = {
   generation : generation; (* its memory's when the buffer was made *)
 }
 
+(* A base has no mutable field: the state that changes is in records it
+   shares with its copies, which release the memory (see [owned]). *)
 and base = {
   owner : t;
   memory : region;
@@ -181,6 +183,11 @@ and claim = {
    reason [why]. Generations compare physically, and only those of one memory
    are compared. *)
 and generation = { why : string }
+
+(* A resource's token: a custom block whose collection puts the resource's
+   record on its device's release list (see the stubs). The bases over the
+   resource keep it. *)
+and token
 
 (* The other devices that reach a base's memory, changed together. *)
 and links = {
@@ -305,6 +312,9 @@ external wait_u64 :
   (int[@untagged]) = "caml_nx_device_wait_u64_byte" "caml_nx_device_wait_u64"
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
+external release_list : unit -> nativeint = "caml_nx_device_release_list"
+external make_token : nativeint -> base -> token = "caml_nx_device_token"
+external released : nativeint -> base list = "caml_nx_device_released"
 
 external heap_bytes : unit -> (int[@untagged])
   = "caml_nx_device_heap_bytes_byte" "caml_nx_device_heap_bytes"
@@ -592,7 +602,7 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       staging = None;
       peers = Hashtbl.create 4;
       peers_lock = Mutex.create ();
-      released = Atomic.make [];
+      released = release_list ();
       failed = Atomic.make None;
       cache = Hashtbl.create 16;
       pending = Hashtbl.create 4;
@@ -954,7 +964,12 @@ let descriptor f =
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
-let release d b = push d.released b
+(* [base], whose memory [d] releases once the base returned and every base
+   made from it are unreachable: they keep a token that puts [base], which
+   keeps none, on [d]'s release list once it is collected. A base has no
+   mutable field, so [base] sees the links and claims that its copies change. *)
+let owned d base =
+  { base with keep = Keep (base.keep, make_token d.released base) }
 
 (* Frees [memories], each with its function, once no work of [d] can use them.
    If that work cannot be waited for, or a free faults, which loses [d], the
@@ -1068,7 +1083,7 @@ let unload d =
    heap's, returned when the collector finds its base unreachable. *)
 let reclaim d =
   unload d;
-  match Atomic.exchange d.released [] with
+  match released d.released with
   | [] -> ()
   | bases ->
       let emptied = ref [] and before = allocated d in
@@ -1380,7 +1395,7 @@ module Buffer = struct
               m)
         in
         let base = base ~bytes ~kind ~borrowed:false ~keep d memory in
-        Gc.finalise (release d) base;
+        let base = owned d base in
         first base s n
 
   (* The bytes an element of [k] is aligned to: one component's for the complex
@@ -1458,7 +1473,7 @@ module Buffer = struct
           base ~exported:true ~borrowed:true ~keep:(Keep ()) ~file:f disk
             memory
         in
-        Gc.finalise (release disk) base;
+        let base = owned disk base in
         first base Nx_dtype.Scalar.UInt8 f.size)
       (with_devices [ disk ] opened)
 
@@ -1511,7 +1526,7 @@ module Buffer = struct
     let base =
       base ~source:(b.base, m) ~borrowed:true ~keep:(Keep b) d m.mapped
     in
-    Gc.finalise (release d) base;
+    let base = owned d base in
     { b with base; offset = m.skip + b.offset }
 
   (* A device whose mapping is the identity addresses host memory at its host

@@ -44,9 +44,9 @@
     memory is {e retained}: kept, and never freed or reused. An allocation that
     the device's {!budget} or its driver refuses first releases the cache to the
     system, then collects garbage and tries again, and raises {!Out_of_memory}
-    only after that. The collector finalises a buffer in the domain that created
-    it, so memory dropped by a domain that is not allocating returns when that
-    domain next runs its finalisers.
+    only after that. Memory returns from the collection that finds its buffers
+    unreachable, in whichever domain runs it, even while the domain that made
+    them is blocked.
 
     {b Collection pace.} The host memory of buffers of 64 KiB or more (four
     pages, where pages are larger) paces the collector's major cycles by the

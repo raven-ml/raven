@@ -35,6 +35,95 @@
 #include <pthread.h>
 #endif
 
+/* Release lists
+
+   A resource a device must release once nothing reaches it has a token, a
+   custom block that the values using the resource hold. The token's node
+   keeps the resource's record, an OCaml value, as a generational global root.
+   When the collector frees the token, in whichever domain sweeps it, its
+   finaliser links the node onto its device's list, with no allocation and no
+   lock. The device takes the list at its next operation and releases the
+   records it holds. */
+
+struct nx_release_node {
+  struct nx_release_node *next;
+  value record;
+};
+
+struct nx_release_list {
+  _Atomic(struct nx_release_node *) head;
+};
+
+struct nx_token {
+  struct nx_release_list *list;
+  struct nx_release_node *node;
+};
+
+/* A new, empty release list, for a device: never freed. */
+value caml_nx_device_release_list(value unit) {
+  (void)unit;
+  struct nx_release_list *l = malloc(sizeof *l);
+  if (l == NULL) caml_raise_out_of_memory();
+  atomic_init(&l->head, NULL);
+  return caml_copy_nativeint((intnat)l);
+}
+
+static void token_finalize(value v) {
+  struct nx_token *t = Data_custom_val(v);
+  struct nx_release_node *n = t->node;
+  struct nx_release_node *head =
+      atomic_load_explicit(&t->list->head, memory_order_relaxed);
+  do
+    n->next = head;
+  while (!atomic_compare_exchange_weak_explicit(
+      &t->list->head, &head, n, memory_order_release, memory_order_relaxed));
+}
+
+static struct custom_operations token_ops = {
+    "nx.device.token",          token_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+/* A token that puts [v_record] on the list [v_list] once it is collected. The
+   node is made here, so that the finaliser allocates nothing. */
+value caml_nx_device_token(value v_list, value v_record) {
+  CAMLparam2(v_list, v_record);
+  CAMLlocal1(v);
+  struct nx_release_node *n = malloc(sizeof *n);
+  if (n == NULL) caml_raise_out_of_memory();
+  v = caml_alloc_custom(&token_ops, sizeof(struct nx_token), 0, 1);
+  n->next = NULL;
+  n->record = v_record;
+  caml_register_generational_global_root(&n->record);
+  struct nx_token *t = Data_custom_val(v);
+  t->list = (struct nx_release_list *)Nativeint_val(v_list);
+  t->node = n;
+  CAMLreturn(v);
+}
+
+/* The records the list [v_list] holds, which it no longer does. */
+value caml_nx_device_released(value v_list) {
+  CAMLparam1(v_list);
+  CAMLlocal2(l, cell);
+  struct nx_release_list *rl =
+      (struct nx_release_list *)Nativeint_val(v_list);
+  struct nx_release_node *n =
+      atomic_exchange_explicit(&rl->head, NULL, memory_order_acquire);
+  l = Val_emptylist;
+  while (n != NULL) {
+    cell = caml_alloc(2, 0);
+    Store_field(cell, 0, n->record);
+    Store_field(cell, 1, l);
+    l = cell;
+    caml_remove_generational_global_root(&n->record);
+    struct nx_release_node *next = n->next;
+    free(n);
+    n = next;
+  }
+  CAMLreturn(l);
+}
+
 /* Copies at least this large release the runtime while they run. */
 #define NX_DEVICE_BLOCKING_BYTES (1 << 16)
 
