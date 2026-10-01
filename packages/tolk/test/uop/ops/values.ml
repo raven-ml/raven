@@ -598,6 +598,22 @@ let bounds_group =
           check_bounds
             (Ops.cast (Ops.float ~dtype:Float32 4.5) Int32)
             (int_bounds 4 4));
+      test
+        "a value of a float type without infinities, which may be NaN, has no \
+         finite bounds" (fun () ->
+          let unknown = (f Float.neg_infinity, f Float.infinity) in
+          List.iter
+            (fun dt ->
+              check_bounds (Ops.param 0 dt) unknown;
+              check_bounds (Ops.cast (Ops.param 0 dt) Float32) unknown;
+              check_bounds (Ops.cast (Ops.param 0 Float32) dt) unknown;
+              let x = variable Float32 (f (-1.)) (f 2.) "x" in
+              check_bounds (Ops.cast x dt) (f (-1.), f 2.);
+              let greatest = Dtype.max dt in
+              let x = variable Float32 (f (-1e6)) (f 1e6) "x" in
+              check_bounds (Ops.cast x dt)
+                (Dtype.Value.( ~- ) greatest, greatest))
+            Dtype.[ Fp8e4m3; Fp8e4m3fnuz; Fp8e5m2fnuz ]);
       test "a committed integer that can leave its type has its bounds"
         (fun () ->
           let full dt = (Dtype.min dt, Dtype.max dt) in

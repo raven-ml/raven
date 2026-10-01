@@ -1477,7 +1477,14 @@ let extremes = function
   | [] -> invalid_arg "no values to bound"
 
 (* The types a cast's bounds are clamped to. *)
-let clamped_types = Dtype.floats @ Dtype.sints @ Dtype.weaks
+let clamped_types = Dtype.sints @ Dtype.weaks
+
+(* The bounds of a value of [dt] that nothing proves more of. Finite float
+   bounds state that the value is not NaN, and every float type holds NaN, so a
+   float's are infinite even where its type has no infinities. *)
+let unbounded dt : Dtype.value * Dtype.value =
+  if Dtype.is_float dt then (`Float Float.neg_infinity, `Float Float.infinity)
+  else (Dtype.min dt, Dtype.max dt)
 
 (* A committed integer wraps at its width: bounds that leave its type are one
    value wrapped, or the type's. *)
@@ -1543,7 +1550,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
           | Bytes b ->
               let values = table_values dt b in
               let is_nan = function `Float x -> Float.is_nan x | _ -> false in
-              if List.exists is_nan values then (Dtype.min dt, Dtype.max dt)
+              if List.exists is_nan values then unbounded dt
               else extremes values
           | _ -> invalid_arg "a constant table needs bytes")
       | Op.Const, Const ((`Bool _ | `Int _) as c) -> (c, c)
@@ -1569,8 +1576,8 @@ and compute_min_max u : Dtype.value * Dtype.value =
           let x = src0 () in
           match cast_bounds x.dtype dt (min_max x) with
           | Some b -> b
-          | None -> (Dtype.min dt, Dtype.max dt))
-      | _ -> (Dtype.min dt, Dtype.max dt))
+          | None -> unbounded dt)
+      | _ -> unbounded dt)
 
 (* Where a float comparison [a < b] holds, neither operand is NaN, [a] is below
    [b]'s greatest value and [b] above [a]'s least: [selected c (lo, hi) t] is
@@ -1629,9 +1636,11 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
 
 (* Rounding is monotone, so a cast maps bounds to bounds: toward zero into an
    integer, to nearest into a float. An integer keeps its value in an integer
-   type, where [min_max] wraps it. Otherwise a signed or float target holds the
-   part of the source range that overlaps it; a float overflowing an integer is
-   undefined, and a NaN bound overlaps nothing. *)
+   type, where [min_max] wraps it. A float target holds the rounded bounds only
+   where they are its values: a value past them is NaN in a type without
+   infinities, and a NaN bound is no value. A signed target holds the part of
+   the source range that overlaps it; a float overflowing an integer is
+   undefined. *)
 and cast_bounds src dt (lo, hi) =
   let round (x : Dtype.value) : Dtype.value =
     match x with
@@ -1649,6 +1658,9 @@ and cast_bounds src dt (lo, hi) =
     && Value.( <= ) (`Int Bigint.zero) lo
     && Value.( <= ) hi (Dtype.max dt)
   then Some (lo, hi)
+  else if Dtype.is_float dt then
+    if Value.(Dtype.min dt <= lo && hi <= Dtype.max dt) then Some (lo, hi)
+    else None
   else if
     List.mem dt clamped_types
     && Value.( <= ) lo (Dtype.max dt)

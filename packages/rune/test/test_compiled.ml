@@ -1887,6 +1887,13 @@ let float8 d =
             let x = operand 11 m k and y = operand 5 k n in
             exact_of (both d (matmul [| m; n |] x y)))
           [ (3, 12, 5); (1, 64, 40); (16, 32, 24) ]);
+    cases "the sine, cosine and tangent of an 8-bit float NaN are NaN" ~name dts
+      (fun (F dt) ->
+        let x =
+          array_of
+            (Nx.cast dt (Nx.create Nx.float32 [| 2 |] [| Float.nan; 1. |]))
+        in
+        List.iter (fun k -> exact_of (both d (unary k x))) [ Sin; Cos; Tan ]);
     cases "a copy of every 8-bit float code keeps its bits" ~name dts
       (fun (F dt) ->
         let x = codes dt Fun.id in

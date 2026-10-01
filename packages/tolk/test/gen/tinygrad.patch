@@ -1072,7 +1072,7 @@ diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
 index 2842d7e..d61c26e 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
-@@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
+@@ -92,6 +92,15 @@
    return tuple(range(nleft)) + tuple(nleft+i for i,s in enumerate(src_shape) if resolve(s == 1, default=False) and resolve(out_shape[nleft+i] != 1))
  
  def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
@@ -1083,10 +1083,12 @@ index 2842d7e..d61c26e 100644
 +  lo, hi = b
 +  if dt not in dtypes.ints or type(lo) is not int or type(hi) is not int or (dt.min <= lo and hi <= dt.max): return b
 +  return (v:=truncate[dt](lo), v) if lo == hi else (dt.min, dt.max)
++# the bounds of a value nothing proves more of: finite float bounds state that it is not nan, which every float type holds
++def unbounded(dt:DType) -> tuple[PyConst, PyConst]: return (-math.inf, math.inf) if dtypes.is_float(dt) else (dt.min, dt.max)
  def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
  
  def range_str(u:UOp, color=False) -> str:
-@@ -1102,8 +1109,29 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1102,8 +1111,29 @@
    def vmax(self) -> PyConst: return self._min_max[1]
    @functools.cached_property
    def _min_max(self) -> tuple[PyConst, PyConst]:
@@ -1117,7 +1119,7 @@ index 2842d7e..d61c26e 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,23 +1167,38 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,28 +1169,45 @@
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
@@ -1138,7 +1140,7 @@ index 2842d7e..d61c26e 100644
      if self.op is Ops.LOAD and (b:=self.src[0].buf_uop).op is Ops.BINARY:
 -      return min(e:=memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()), max(e)
 +      e = memoryview(b.arg).cast(unwrap(self.dtype.fmt)).tolist()
-+      return (self.dtype.min, self.dtype.max) if any(v != v for v in e) else (min(e), max(e))
++      return unbounded(self.dtype) if any(v != v for v in e) else (min(e), max(e))
      # a NAN is outside every interval
      if self.op is Ops.CONST and self.val is not Invalid and not (isinstance(self.val, float) and math.isnan(self.val)): return self.val, self.val
 -    if self.op is Ops.PAD: return min(self.src[0].vmin, 0), max(self.src[0].vmax, 0)  # PAD adds zeros
@@ -1159,9 +1161,19 @@ index 2842d7e..d61c26e 100644
 +      # an integer keeps its value in an integer type, where _min_max wraps it
 +      if dtypes.is_int(self.dtype) and not dtypes.is_float(self.src[0].dtype): return smin, smax
        if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
-       # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
-       if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
-@@ -1333,6 +1376,7 @@ class KernelInfo:
+-      # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
+-      if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
++      # a float destination holds the rounded bounds only where they are its values: past them is nan without infinities, a nan bound is none
++      if dtypes.is_float(self.dtype): return (smin, smax) if self.dtype.min <= smin and smax <= self.dtype.max else unbounded(self.dtype)
++      # a signed destination holds the part of the source that overlaps it: a float overflowing an integer is undefined
++      if self.dtype in dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
+         return max(self.dtype.min, smin), min(smax, self.dtype.max)
+-    return self.dtype.min, self.dtype.max
++    return unbounded(self.dtype)
+ 
+   @functools.cached_property
+   def _sym_fxn(self):
+@@ -1333,6 +1380,7 @@
    opts_to_apply: tuple|None = None
    estimates: Estimates|None = None
    beam: int = 0
@@ -1169,7 +1181,7 @@ index 2842d7e..d61c26e 100644
    @property
    def function_name(self): return to_function_name(self.name)
  
-@@ -1352,6 +1396,9 @@ class ProgramInfo:
+@@ -1352,6 +1400,9 @@
      return global_size, local_size
  
    def vals(self, var_vals:dict[str, int]) -> tuple[int, ...]:
@@ -1179,7 +1191,7 @@ index 2842d7e..d61c26e 100644
      try: return tuple(var_vals[k.expr] for k in self.vars)
      except KeyError as e: raise RuntimeError(f"unbound Variable {e}") from None
  
-@@ -1363,6 +1410,7 @@ class ProgramInfo:
+@@ -1363,6 +1414,7 @@
      ins: list[int] = []
      global_size: list[int] = [1, 1, 1]
      local_size: list[int] = [1, 1, 1]
@@ -1187,7 +1199,7 @@ index 2842d7e..d61c26e 100644
      for u in sink.toposort():
        if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
        if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
-@@ -1404,12 +1452,18 @@ def safe_pow(x, y):
+@@ -1404,12 +1456,18 @@
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -1208,7 +1220,7 @@ index 2842d7e..d61c26e 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1474,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1478,8 @@
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)

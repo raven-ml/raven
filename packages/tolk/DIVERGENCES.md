@@ -2216,14 +2216,17 @@ tolk lowers as one, replaces it.
 
 - **tinygrad:** `uop/ops.py:1104-1163` (`UOp._min_max`), which bounds binary
   operations on integers only (`:1105`), has no case for `TRUNC` or `NEG`, and
-  bounds a `WHERE` by both its branches whatever selects them (`:1142`);
+  bounds a `WHERE` by both its branches whatever selects them (`:1142`),
+  and gives a value it cannot bound, or a cast it cannot, its type's
+  `min` and `max` (`:1163`), finite in the 8-bit formats without infinities
+  (`dtype.py:74-78`);
   `codegen/decomp/transcendental.py:170-191` (`xsin`), which builds the
   Payne-Hanek reduction unless its caller passes `fast`, and chooses between
   the reductions with `x_abs < switch_over` (`:187`), a comparison that the
   decompositions' rewrite (`symbolic_simple`) does not fold.
-- **tolk:** `lib/uop/ops.ml:1507` (`compute_min_max`), `:1524` (`Where`),
-  `:1556` (`Trunc`), `:1560` (`Neg`), `:1573` (`selected`) and `:1586`
-  (`float_bounds`);
+- **tolk:** `lib/uop/ops.ml:1485` (`unbounded`), `:1519`
+  (`compute_min_max`), `:1536` (`Where`), `:1568` (`Trunc`), `:1572` (`Neg`),
+  `:1585` (`selected`), `:1600` (`float_bounds`) and `:1644` (`cast_bounds`);
   `lib/codegen/decomp/transcendental.ml:322` (`xsin`); `test/gen/tinygrad.patch`,
   which gives tinygrad the same bounds and the same `xsin` before the goldens
   are generated.
@@ -2238,7 +2241,14 @@ tolk lowers as one, replaces it.
   negation's are its operand's, negated and swapped. A float selection by a
   comparison `a < b` narrows the branch it selects where the comparison
   holds, so where neither operand is NaN: `a` to below `b`'s greatest value,
-  and `b` to above `a`'s least. `xsin` of an angle whose
+  and `b` to above `a`'s least. Finite float bounds state that a value is
+  not NaN, which every float type holds: a float that nothing bounds has
+  infinite bounds, in `float8_e4m3` and the `fnuz` formats too, and a cast
+  into a float keeps its source's rounded bounds only where they are values
+  of its type, so a value cast from an unbounded float stays unbounded. With
+  the type's finite greatest value instead, `a < inf` of an 8-bit NaN folded
+  true and a compiled sine, cosine or tangent of it gave -1, 0 and -452.
+  `xsin` of an angle whose
   bounds lie strictly within `switch_over` is its `fast` form, the Cody-Waite
   reduction alone.
 - **Reason:** (b): the sine or cosine of a bounded value on the CPU, such as
@@ -2266,11 +2276,15 @@ tolk lowers as one, replaces it.
   `› a float operation of an operand within the subnormals bounds a flushed
   operand too`, `› a float operation of an unbounded operand, or that can
   overflow, has its type's bounds (D74)`, `› a float selection by a
-  comparison narrows what it selects (D74)`, `› a float truncation and negation map their operand's
-  bounds (D74)` and the float rows of `binary_bounds.golden`, from the
+  comparison narrows what it selects (D74)`, `› a float truncation and
+  negation map their operand's bounds (D74)`, `› a value of a float type
+  without infinities, which may be NaN, has no finite bounds` and the float
+  rows of `binary_bounds.golden`, from the
   equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
   angle bounded below the switch-over is its fast form (D74)`; and
-  rune's `lower_arith` suite: `long reductions › a normal draw takes
+  rune's Compiled suite: `› 8-bit floats › the sine, cosine and tangent of
+  an 8-bit float NaN are NaN`, on the host and on Metal (slow); and rune's
+  `lower_arith` suite: `long reductions › a normal draw takes
   none`, `› the sine of an angle read from a buffer takes its own only` and
   `› the cosine of an angle read from a buffer takes its own only`.
 
