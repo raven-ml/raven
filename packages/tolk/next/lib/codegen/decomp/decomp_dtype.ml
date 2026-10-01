@@ -478,6 +478,10 @@ let pm_long_decomp = Lazy.force pm_long_decomp
 
 (* Floats *)
 
+(* The operations that move values of an emulated float without computing:
+   a lane, a stack and a selection. *)
+let moves = ops [ Op.Stack; Op.Index; Op.Where ]
+
 (* The unsigned integer of a float's width, which holds its bits. *)
 let f2f_dt dt =
   match Dtype.bitsize dt with
@@ -815,9 +819,7 @@ and pm_float_decomp =
                (* A lane, a stack or a selection moves values already of
                   [fr]; arithmetic rounds its result. *)
                Some
-                 (if Op.Set.mem (op x) (ops [ Op.Stack; Op.Index; Op.Where ])
-                  then y
-                  else rounded ctx y));
+                 (if Op.Set.mem (op x) moves then y else rounded ctx y));
          (* A store of a move stores the bits moved (D62). *)
          rule_ctx
            (Upat.v ~op:(ops [ Op.Store ]) ~allow_any_len:true
@@ -867,6 +869,11 @@ let pm_float_decomp = Lazy.force pm_float_decomp
 (* Passes *)
 
 let emulable = Dtype.(fp8s @ [ Bfloat16; Float16; Int64; Uint64 ])
+
+let computes r =
+  let among l dt = List.exists (Dtype.equal dt) l in
+  let supported = Renderer.supported_dtypes r in
+  List.filter (fun dt -> among supported dt || among emulable dt) Dtype.all
 
 type ctx = { mutable found : Dtype.t list; renderer : Renderer.t }
 

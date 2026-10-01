@@ -188,8 +188,7 @@ let target what d =
     refuse what "%s runs no compiled program" (Nx_device.name d);
   {
     target = Engine.target d;
-    dtypes =
-      Renderer.supported_dtypes (Engine.renderer d) @ Decomp_dtype.emulable;
+    dtypes = Decomp_dtype.computes (Engine.renderer d);
   }
 
 (* Programs *)

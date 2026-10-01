@@ -257,9 +257,7 @@ let supports s d dt =
     match List.assq_opt d s.dtypes with
     | Some l -> l
     | None ->
-        let l =
-          Renderer.supported_dtypes (s.renderer d) @ Decomp_dtype.emulable
-        in
+        let l = Decomp_dtype.computes (s.renderer d) in
         s.dtypes <- (d, l) :: s.dtypes;
         l
   in
