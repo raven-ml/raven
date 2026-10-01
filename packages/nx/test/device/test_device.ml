@@ -296,6 +296,14 @@ let never waits =
       incr waits;
       false)
 
+(* A signal that a gate opens: until then the device has signaled nothing, and
+   a wait for it fails. *)
+let gate opened =
+  {
+    Driver.signaled = (fun () -> if !opened then max_int else 0);
+    wait = (fun _ ~timeout_ms:_ -> !opened);
+  }
+
 (* Submits work of [d] alone that touches [touches], and is [f] of the value the
    work signals. *)
 let submit ?(touches = []) d f =
@@ -874,6 +882,20 @@ let memories =
           ignore (Sys.opaque_identity b));
     ]
 
+
+(* Memory that finaliser closures keep, two deep, returns to an allocation
+   that needs it: each closure releases its hold a cycle after its value
+   dies, which one collection does not cover. *)
+let test_finaliser_chain () =
+  let d = (fake ~name:"CHAIN" ~budget:4096 ()).dev in
+  (fun () ->
+    let b = B.create d S.UInt8 4096 in
+    let inner = ref 0 and outer = ref 0 in
+    Gc.finalise (fun _ -> ignore (Sys.opaque_identity b)) inner;
+    Gc.finalise (fun _ -> ignore (Sys.opaque_identity inner)) outer)
+    ();
+  equal int 4096 (B.nbytes (B.create d S.UInt8 4096))
+
 (* A domain blocked in a lock runs no OCaml code, its finalisers included. *)
 let test_dropped_by_blocked_domain () =
   let d = (fake ()).dev in
@@ -908,6 +930,10 @@ let memory =
       test
         "a buffer dropped by a domain that then blocks returns to its device"
         test_dropped_by_blocked_domain;
+      test
+        "memory that finaliser closures hold, two deep, returns to an \
+         allocation that needs it"
+        test_finaliser_chain;
       test
         "four domains create, write and read buffers of one device at once, \
          and all their memory returns" (fun () ->
@@ -1218,18 +1244,31 @@ let test_concurrent_views () =
     (List.length (List.filter (fun v -> v.{5} <> 7l) !kept));
   ignore (Sys.opaque_identity filler)
 
+(* A mapping whose last borrow was released waits for the work on it: a borrow
+   made meanwhile takes it again, and keeps it mapped. *)
+let test_borrow_again () =
+  let opened = ref false in
+  let g = fake ~maps:true ~signal:(gate opened) () in
+  let hb = B.create host S.UInt8 page in
+  dropped (fun () ->
+      let bm = borrow g.dev hb in
+      ignore (submit g.dev ~touches:[ bm ] Fun.id));
+  ignore (stats g.dev);
+  let again = borrow g.dev hb in
+  opened := true;
+  ignore (stats g.dev);
+  equal ~msg:"mapped while borrowed again" int 1 g.drv.mapped;
+  write (B.view again ~offset:0 S.UInt8 4) "abcd";
+  equal ~msg:"through it" string "abcd" (read (B.view hb ~offset:0 S.UInt8 4));
+  ignore (Sys.opaque_identity again);
+  dropped ignore;
+  ignore (stats g.dev);
+  ignore (stats g.dev);
+  equal ~msg:"unmapped once released" int 0 g.drv.mapped
+
 let test_borrow_lifetime () =
-  let collected = ref false and during = ref true and armed = ref false in
-  let wait _ =
-    if !armed then begin
-      armed := false;
-      Gc.full_major ();
-      Gc.full_major ();
-      during := !collected
-    end;
-    true
-  in
-  let g = fake ~maps:true ~signal:(signal ~signaled:max_int wait) () in
+  let collected = ref false and opened = ref false in
+  let g = fake ~maps:true ~signal:(gate opened) () in
   (fun () ->
     let hb = B.create host S.UInt8 (1 lsl 20) in
     Gc.finalise_last (fun () -> collected := true) hb;
@@ -1238,12 +1277,15 @@ let test_borrow_lifetime () =
     ignore (Sys.opaque_identity bm))
     ();
   Gc.full_major ();
-  armed := true;
   ignore (stats g.dev);
-  is_false ~msg:"collected during the wait" !during;
   Gc.full_major ();
   Gc.full_major ();
-  is_true ~msg:"collected after it" !collected
+  is_false ~msg:"kept while the work is unsignaled" !collected;
+  opened := true;
+  ignore (stats g.dev);
+  Gc.full_major ();
+  Gc.full_major ();
+  is_true ~msg:"collected once it is signaled" !collected
 
 (* Which devices' queues run a copy, and how many of their copies go through the
    host's staging memory. *)
@@ -1764,9 +1806,13 @@ let buffers =
       test "bigarrays taken on two domains at once share their buffer's memory"
         test_concurrent_views;
       test
-        "a borrow keeps its host memory until its device's work is done, \
-         although the collector runs during the wait"
+        "a borrow keeps its host memory until its device's work on it is \
+         signaled"
         test_borrow_lifetime;
+      test
+        "a borrow made while its released mapping waits for work takes the \
+         mapping again"
+        test_borrow_again;
       test "the host's staging memory is one, which each device maps once"
         (fun () ->
           let a = far () and b = far () in
@@ -2599,6 +2645,73 @@ let test_cut_short () =
   raises_match failed (fun () ->
       B.copy ~src:shared ~dst:(B.create host S.UInt8 page))
 
+
+(* The address of a buffer of [n] bytes of [d] that [f] makes and drops. *)
+let dropped_at d n f =
+  let a = ref 0n in
+  dropped (fun () ->
+      let b = B.create d S.UInt8 n in
+      a := B.address b;
+      f b);
+  !a
+
+let test_foreign_stamps () =
+  let owner = (fake ~name:"OWNER" ()).dev and opened = ref false in
+  let reader = (fake ~name:"READER" ~signal:(gate opened) ()).dev in
+  let first =
+    dropped_at owner 4096 (fun b -> ignore (submit reader ~touches:[ b ] Fun.id))
+  in
+  let held = B.create owner S.UInt8 4096 in
+  equal ~msg:"not reused while the reader's work is unsignaled" bool false
+    (B.address held = first);
+  opened := true;
+  equal ~msg:"reused once it is signaled" nativeint first
+    (B.address (B.create owner S.UInt8 4096));
+  ignore (Sys.opaque_identity held)
+
+let test_own_stamps () =
+  let opened = ref false and waits = ref 0 in
+  let signal =
+    {
+      Driver.signaled = (fun () -> if !opened then max_int else 0);
+      wait =
+        (fun _ ~timeout_ms:_ ->
+          incr waits;
+          opened := true;
+          true);
+    }
+  in
+  let f = fake ~name:"OWNER" ~signal () in
+  let touched b = ignore (submit f.dev ~touches:[ b ] Fun.id) in
+  let first = dropped_at f.dev 4096 touched in
+  let reused = B.create f.dev S.UInt8 4096 in
+  equal ~msg:"reused at once by the device whose work touched it" nativeint
+    first (B.address reused);
+  ignore (dropped_at f.dev 8192 touched);
+  ignore (stats f.dev);
+  equal ~msg:"cached, nothing waited for" (pair int int) (8192, 0)
+    (cached f.dev, !waits);
+  Nx_device.free_cache f.dev;
+  equal ~msg:"freed once the device's work is done" (pair int int) (1, 1)
+    (!waits, f.drv.frees);
+  ignore (Sys.opaque_identity reused)
+
+let test_lost_stamps () =
+  let owner = fake ~name:"OWNER" ~budget:8192 () and hung = ref false in
+  let reader = (fake ~name:"READER" ~signal:(until hung) ()).dev in
+  ignore
+    (dropped_at owner.dev 4096 (fun b ->
+         ignore (submit reader ~touches:[ b ] Fun.id)));
+  hung := true;
+  raises_match (lost reader "hang detected") (fun () ->
+      Nx_device.synchronize reader);
+  let b = B.create owner.dev S.UInt8 4096 in
+  equal ~msg:"retained, and the owner allocates" (pair int int) (4096, 4096)
+    (Nx_device.Stats.retained (stats owner.dev), allocated owner.dev);
+  raises_match (out_of_memory owner.dev 1) (fun () ->
+      B.create owner.dev S.UInt8 1);
+  ignore (Sys.opaque_identity b)
+
 let test_hung_transfer () =
   let a = far ~name:"PEER-HUNG" () and c = far ~name:"PEER-DEST" () in
   let src = B.create a.dev S.UInt8 4 in
@@ -2618,8 +2731,12 @@ let test_hung_transfer () =
 
 let test_retained () =
   let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
-  dropped (fun () -> B.create f.dev S.UInt8 600);
-  ignore (submit f.dev Fun.id);
+  (* The work does not list the buffer: a free to the driver still waits for
+     it, as for all of the device's work submitted before the release. *)
+  dropped (fun () ->
+      let b = B.create f.dev S.UInt8 600 in
+      ignore (submit f.dev Fun.id);
+      b);
   raises_match (lost f.dev "hang detected") (fun () ->
       Nx_device.free_cache f.dev);
   equal ~msg:"retained, cached and freed" (triple int int int) (600, 0, 0)
@@ -2774,6 +2891,18 @@ let failures =
          source's reach, retained"
         test_hung_transfer;
       test "memory that a hung wait could not free is retained" test_retained;
+      test
+        "memory another device's work touched returns to its owner once that \
+         work is signaled, and not before"
+        test_foreign_stamps;
+      test
+        "memory its own device's work touched is reused at once, and freed to \
+         the driver once that work is done"
+        test_own_stamps;
+      test
+        "memory a lost device's unfinished work touched is retained, and its \
+         owner allocates on"
+        test_lost_stamps;
       test "a driver callback that raises Failure loses its device"
         test_faulting_callbacks;
       test "a free that faults midway retains the memory from it on"

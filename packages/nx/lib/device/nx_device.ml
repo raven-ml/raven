@@ -114,8 +114,11 @@ type t = {
   released : nativeint; (* its release list (see the stubs) *)
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
-  cache : (int * memory, region list) Hashtbl.t;
-      (* by size, and the memory it is *)
+  cache : (int * memory, (region * int) list) Hashtbl.t;
+      (* by size, and the memory it is: each region with the latest value its
+         own work on it signals *)
+  mutable retiring : retiring list;
+      (* released memory that waits for other devices' work *)
   pending : (int, t * int) Hashtbl.t;
       (* the devices whose work touched this one's memory, and the value that
          work signals *)
@@ -192,9 +195,26 @@ and token
 (* The other devices that reach a base's memory, changed together. *)
 and links = {
   maps : mapped list; (* the mappings of this memory, one per device *)
-  reached : t list;
-      (* other devices whose work may still write this memory: the source of a
-         transfer into it that could not be waited for *)
+  stamps : stamp list;
+      (* each device whose work touched this memory, and the latest value that
+         work signals: [max_int] where a lost device's work may still write it *)
+}
+
+(* A device's latest work on a memory. It is raised in place, with the
+   devices of the memory taken, so that a submission allocates nothing for the
+   memory its devices' work touched before. *)
+and stamp = { by : t; mutable upto : int }
+
+(* Released memory that waits for the work that may still use it: [retire]
+   runs once each stamp [until] gives is signaled, and the memory is retained,
+   with [kept], once one of them is a lost device's unfinished work. [bytes]
+   are owned bytes, and [key] the cache the memory goes to. *)
+and retiring = {
+  until : unit -> (t * int) list;
+  bytes : int;
+  key : (int * memory) option;
+  kept : keep;
+  retire : unit -> unit;
 }
 
 (* A mapping of a base's memory on a device, shared by the device's borrows of
@@ -206,6 +226,9 @@ and mapped = {
   skip : int; (* bytes of [mapped] before the memory's first byte *)
   unmap : region -> unit;
   mutable borrows : int;
+  mutable work : (t * int) list; (* the stamps of its released borrows *)
+  mutable unmapping : bool;
+      (* its last borrow was released, and its unmap waits for [work] *)
 }
 
 and program = { p_device : t; p_name : string; p_handle : nativeint }
@@ -605,6 +628,7 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       released = release_list ();
       failed = Atomic.make None;
       cache = Hashtbl.create 16;
+      retiring = [];
       pending = Hashtbl.create 4;
       programs = Hashtbl.create 16;
       dropped = Atomic.make [];
@@ -868,15 +892,61 @@ let first_generation = { why = "" }
    device, a device it is mapped on or whose transfer into it could not be
    waited for, or those of the memory it maps. *)
 let rec check_reach base =
-  let { maps; reached } = Atomic.get base.links in
-  List.iter check (base.owner :: (List.map (fun m -> m.on) maps @ reached));
+  let { maps; stamps } = Atomic.get base.links in
+  List.iter check (base.owner :: List.map (fun m -> m.on) maps);
+  List.iter (fun s -> if s.upto > Atomic.get s.by.settled then check s.by) stamps;
   Option.iter (fun (src, _) -> check_reach src) base.source
 
 let rec update_links base f =
   let l = Atomic.get base.links in
   if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
 
-let no_links = { maps = []; reached = [] }
+let no_links = { maps = []; stamps = [] }
+
+(* [stamps] with [d]'s work signaling [v]. *)
+let rec stamped stamps d v =
+  match stamps with
+  | [] -> [ (d, v) ]
+  | (d', v') :: rest when d' == d -> (d, Int.max v v') :: rest
+  | s :: rest -> s :: stamped rest d v
+
+let rec raise_stamp d v = function
+  | [] -> false
+  | s :: rest ->
+      if s.by == d then begin
+        if v > s.upto then s.upto <- v;
+        true
+      end
+      else raise_stamp d v rest
+
+let stamp_use base d v =
+  if not (raise_stamp d v (Atomic.get base.links).stamps) then
+    update_links base (fun l ->
+        if raise_stamp d v l.stamps then l
+        else { l with stamps = { by = d; upto = v } :: l.stamps })
+
+(* [base]'s memory stamped by the work of [d] that may still use it, after an
+   error: [d]'s last value, or [max_int] once [d] is lost. *)
+let poison base d =
+  stamp_use base d (if failed d = None then submitted d else max_int)
+
+(* Whether the work of [stamps] is done, still to be waited for, or a lost
+   device's unfinished work. Nothing blocks. *)
+let progress stamps =
+  List.fold_left
+    (fun acc (d, v) ->
+      if acc = `Lost || v <= Atomic.get d.settled then acc
+      else if failed d <> None then `Lost
+      else
+        match signaled d with
+        | s when s >= v ->
+            settle d v;
+            acc
+        | _ -> `Waiting
+        | exception Failure why ->
+            lose d why;
+            `Lost)
+    `Done stamps
 let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
 let mapping_on d base =
   List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
@@ -971,12 +1041,14 @@ let descriptor f =
 let owned d base =
   { base with keep = Keep (base.keep, make_token d.released base) }
 
-(* Frees [memories], each with its function, once no work of [d] can use them.
-   If that work cannot be waited for, or a free faults, which loses [d], the
-   memory not yet freed is retained: kept with [keep], and never freed or
-   reused, since its state is unknown. [owned] memory came from [d]'s
-   allocators, and its bytes count as retained. *)
-let free_all d ~owned ~keep memories =
+(* Frees [memories], each with its function, once [d]'s work that touched them,
+   which signals [v] at the latest, is done: at once with [~wait:false], which
+   is given only memories whose work is done. If that work cannot be waited
+   for, or a free faults, which loses [d], the memory not yet freed is retained:
+   kept with [keep], and never freed or reused, since its state is unknown.
+   [owned] memory came from [d]'s allocators, and its bytes count as
+   retained. *)
+let free_all d ~owned ~keep ~wait v memories =
   let retain rest =
     if owned then
       d.retained <-
@@ -993,7 +1065,7 @@ let free_all d ~owned ~keep memories =
             fail d why)
   in
   if memories <> [] then
-    match sync d with
+    match if wait then wait_signal d v with
     | () -> go memories
     | exception (Lost _ as e) ->
         retain memories;
@@ -1032,13 +1104,14 @@ let free_mapped d free size (m : region) =
       d.held <- Keep m :: d.held
 
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
-   fits [n] more bytes, or its cache is empty. *)
-let release_cache ?only d n =
+   fits [n] more bytes, or its cache is empty. With [~wait:false], only memory
+   whose work is done is freed, and nothing blocks. *)
+let release_cache ?only ~wait d n =
   match d.allocated with
   | Heap_bytes -> if not (fits d n) then heap_drop ()
   | Count _ ->
       if d.cached > 0 && not (fits d n) then begin
-        let freed = ref [] in
+        let freed = ref [] and last = ref 0 in
         let keys =
           Hashtbl.fold
             (fun ((_, kind) as key) _ acc ->
@@ -1050,17 +1123,22 @@ let release_cache ?only d n =
           (fun ((size, kind) as key) ->
             let free = free_mapped d (free_of d kind) size in
             let rec drop = function
-              | m :: ms when not (fits d n) ->
-                  d.cached <- d.cached - size;
-                  freed := (free, m) :: !freed;
-                  drop ms
-              | ms -> ms
+              | e :: es when fits d n -> e :: es
+              | ((m, v) as e) :: es ->
+                  if wait || progress [ (d, v) ] = `Done then begin
+                    d.cached <- d.cached - size;
+                    freed := (free, m) :: !freed;
+                    last := Int.max !last v;
+                    drop es
+                  end
+                  else e :: drop es
+              | [] -> []
             in
             match drop (Hashtbl.find d.cache key) with
             | [] -> Hashtbl.remove d.cache key
             | ms -> Hashtbl.replace d.cache key ms)
           keys;
-        free_all d ~owned:true ~keep:() !freed
+        free_all d ~owned:true ~keep:() ~wait !last !freed
       end
 
 (* An unreachable program leaves the cache, unless a load replaced it there, and
@@ -1075,63 +1153,151 @@ let unload d =
       unload ())
     (Atomic.exchange d.dropped [])
 
-(* Unreachable owned memory returns to the cache without a wait: work is ordered
-   after earlier work on the queue. A mapping is released once the last borrow
-   of it is unreachable and the borrowing device's work is done: a mapping of
-   host memory is unmapped, and one of another device's memory stays its
-   driver's until that memory is freed. Host memory never comes here: it is the
-   heap's, returned when the collector finds its base unreachable. *)
+(* The latest value of [d]'s own work in [stamps], and the others. *)
+let own_stamp d stamps =
+  List.fold_left (fun v (d', v') -> if d' == d then v' else v) 0 stamps
+
+let foreign d stamps = List.filter (fun (d', _) -> d' != d) stamps
+
+(* Released owned memory of [b] enters [d]'s cache, with [d]'s own work on it:
+   [d]'s later work on it is ordered after that work by [d]'s queue. *)
+let cache_memory d b own =
+  allocate_bytes d (-b.bytes);
+  let key = (b.bytes, b.kind) in
+  let ms = Option.value ~default:[] (Hashtbl.find_opt d.cache key) in
+  Hashtbl.replace d.cache key ((b.memory, own) :: ms);
+  d.cached <- d.cached + b.bytes
+
+(* [m], [d]'s mapping of [src]'s memory, is unmapped: its borrows are
+   unreachable and their work is done. Only then does the memory leave [d]'s
+   reach. *)
+let unmap d src m =
+  driver d (fun () -> m.unmap m.mapped);
+  update_maps src (List.filter (fun m' -> m' != m))
+
+(* Retires each released memory of [d] whose work is done, retains those a
+   lost device's unfinished work touched, and keeps the others waiting. *)
+let retire d =
+  let before = allocated d in
+  let rec go = function
+    | [] -> ()
+    | r :: rest -> (
+        match progress (r.until ()) with
+        | `Waiting ->
+            d.retiring <- r :: d.retiring;
+            go rest
+        | `Lost ->
+            if r.bytes > 0 then begin
+              allocate_bytes d (-r.bytes);
+              d.retained <- d.retained + r.bytes
+            end;
+            d.held <- r.kept :: d.held;
+            go rest
+        | `Done -> (
+            match r.retire () with
+            | () -> go rest
+            | exception e ->
+                (* A release that faulted lost [d]: what it released stays. *)
+                d.held <- r.kept :: d.held;
+                d.retiring <- rest @ d.retiring;
+                raise e))
+  in
+  match d.retiring with
+  | [] -> ()
+  | pending -> (
+      d.retiring <- [];
+      match go pending with
+      | () -> if allocated d <> before then memory_changed d
+      | exception e ->
+          if allocated d <> before then memory_changed d;
+          raise e)
+
+(* Unreachable memory is released, and retires once the work that may still
+   use it is done (see [retire]). Owned memory waits for other devices' work
+   alone: [d]'s own work on it orders its reuse. A mapping waits for every
+   device's work on its borrows, [d]'s too, once the last of them is
+   unreachable: a mapping of host memory is unmapped, and one of another
+   device's memory stays its driver's until that memory is freed. Host memory
+   never comes here: it is the heap's, returned when the collector finds its
+   base unreachable. *)
+(* [d]'s record [b], released: it waits for the work that may still use it
+   (see [reclaim]). *)
+let release d b =
+  let stamps =
+    List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps
+  in
+  match b.source with
+  | Some (src, m) ->
+      m.work <- List.fold_left (fun l (e, v) -> stamped l e v) m.work stamps;
+      m.borrows <- m.borrows - 1;
+      (* The unmap also waits for every piece of [d]'s work submitted before
+         the last borrow went, which may reach the mapping without having
+         listed it. A borrow made before the unmap takes the mapping again:
+         the unmap then does nothing, and the next last release queues
+         another. *)
+      if m.borrows = 0 then m.work <- stamped m.work d (submitted d);
+      if m.borrows = 0 && not m.unmapping then begin
+        m.unmapping <- true;
+        d.retiring <-
+          {
+            until = (fun () -> m.work);
+            bytes = 0;
+            key = None;
+            kept = Keep b;
+            retire =
+              (fun () ->
+                m.unmapping <- false;
+                if m.borrows = 0 then unmap d src m);
+          }
+          :: d.retiring
+      end
+  | None when Option.is_some b.file ->
+      (* No read or write of a file outlives the copy that made it. *)
+      close_descriptor (Option.get b.file)
+  | None ->
+      (* A free to the driver waits for every piece of [d]'s work submitted
+         before the release, listed or not, as tinygrad's free synchronizes
+         the device; [d]'s own reuse waits for none of it. *)
+      let own = Int.max (own_stamp d stamps) (submitted d)
+      and until = foreign d stamps in
+      d.retiring <-
+        {
+          until = (fun () -> until);
+          bytes = b.bytes;
+          key = Some (b.bytes, b.kind);
+          kept = Keep b;
+          retire = (fun () -> cache_memory d b own);
+        }
+        :: d.retiring
+
 let reclaim d =
   unload d;
-  match released d.released with
+  (match released d.released with
   | [] -> ()
-  | bases ->
-      let emptied = ref [] and before = allocated d in
+  | bases -> List.iter (release d) bases);
+  retire d;
+  release_cache ~wait:false d 0
+
+(* Waits for the work of released memory of [key], or of all of it if none is
+   of [key], then retires what it can. A lost device's work is not waited for:
+   its memory is retained. *)
+let wait_retiring d key =
+  let some = List.filter (fun r -> r.key = Some key) d.retiring in
+  List.iter
+    (fun r ->
       List.iter
-        (fun b ->
-          match b.source with
-          | Some (src, m) ->
-              m.borrows <- m.borrows - 1;
-              if m.borrows = 0 then emptied := (src, m) :: !emptied
-          | None when Option.is_some b.file ->
-              (* No read or write of a file outlives the copy that made it. *)
-              close_descriptor (Option.get b.file)
-          | None when (Atomic.get b.links).reached <> [] ->
-              (* Another device's work may still write it. *)
-              allocate_bytes d (-b.bytes);
-              d.retained <- d.retained + b.bytes;
-              d.held <- Keep b :: d.held
-          | None ->
-              allocate_bytes d (-b.bytes);
-              let key = (b.bytes, b.kind) in
-              let ms =
-                Option.value ~default:[] (Hashtbl.find_opt d.cache key)
-              in
-              Hashtbl.replace d.cache key (b.memory :: ms);
-              d.cached <- d.cached + b.bytes)
-        bases;
-      if allocated d <> before then memory_changed d;
-      (match !emptied with
-      | [] -> ()
-      | emptied ->
-          free_all d ~owned:false ~keep:bases
-            (List.map (fun (_, m) -> (m.unmap, m.mapped)) emptied);
-          (* Only once the device's work is done does the memory leave its
-             reach: a failed wait above keeps the mappings in [maps]. *)
-          List.iter
-            (fun (src, m) -> update_maps src (List.filter (fun m' -> m' != m)))
-            emptied);
-      (* The memory under the borrows must outlive the wait in [free_all], which
-         releases the runtime. *)
-      ignore (Sys.opaque_identity bases);
-      release_cache d 0
+        (fun (e, v) ->
+          if failed e = None then try wait_signal e v with Lost _ -> ())
+        (r.until ()))
+    (if some = [] then d.retiring else some);
+  retire d
 
 let cached_of d kind =
   Hashtbl.fold (fun (_, k) _ c -> c || k = kind) d.cache false
 
 let take_cached d key =
   match Hashtbl.find_opt d.cache key with
-  | Some (m :: ms) ->
+  | Some ((m, _) :: ms) ->
       if ms = [] then Hashtbl.remove d.cache key
       else Hashtbl.replace d.cache key ms;
       d.cached <- d.cached - fst key;
@@ -1142,15 +1308,18 @@ let take_cached d key =
    driver refuses releases the cached mapped memory, which holds the window, and
    tries again; mapped memory still refused, or refused by the budget, is pinned
    memory instead. Any other allocation the budget or the driver refuses
-   releases the cache and tries again; one that is still refused collects the
-   unreachable buffers, whose memory the collector cannot see, and tries once
-   more. *)
-let rec allocate d n ~kind ~collected =
+   releases the cache and tries again, then waits for the work of released
+   memory and tries again. One still refused raises [Exhausted] until [last]:
+   the unreachable buffers, whose memory the collector cannot see, may hold
+   what it needs (see [last_resort_rounds]). *)
+exception Exhausted
+
+let rec allocate d n ~kind ~last =
   if n > d.budget then raise (Out_of_memory (d, n));
   match take_cached d (n, kind) with
   | Some (m, keep) -> (m, keep, kind)
   | None -> (
-      release_cache d n;
+      release_cache ~wait:true d n;
       let alloc n =
         match allocator_of d kind with
         | Some a -> Option.map (fun m -> (m, Keep ())) (a.alloc n)
@@ -1170,16 +1339,16 @@ let rec allocate d n ~kind ~collected =
                d.name)
       | Some (m, keep) -> (m, keep, kind)
       | None when kind = Mapped && fits d n && cached_of d Mapped ->
-          release_cache ~only:Mapped d max_int;
-          allocate d n ~kind ~collected
-      | None when kind = Mapped -> allocate d n ~kind:Pinned ~collected
+          release_cache ~only:Mapped ~wait:true d max_int;
+          allocate d n ~kind ~last
+      | None when kind = Mapped -> allocate d n ~kind:Pinned ~last
       | None when d.cached > 0 ->
-          release_cache d max_int;
-          allocate d n ~kind ~collected
-      | None when not collected ->
-          Gc.full_major ();
-          reclaim d;
-          allocate d n ~kind ~collected:true
+          release_cache ~wait:true d max_int;
+          allocate d n ~kind ~last
+      | None when d.retiring <> [] ->
+          wait_retiring d (n, kind);
+          allocate d n ~kind ~last
+      | None when not last -> raise Exhausted
       | None -> raise (Out_of_memory (d, n)))
 
 (* Taking devices *)
@@ -1202,16 +1371,25 @@ let with_devices ds f =
       unlock ds;
       r
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       unlock ds;
-      raise e
+      Printexc.raise_with_backtrace e bt
 
 let synchronize d = with_devices [ d ] (fun () -> sync d)
+
+(* How many collections the last resort of a refused allocation runs, with no
+   device taken, trying the allocation again after each. Unreachable buffers
+   may hold the memory, which only a complete collection finds, and a buffer
+   that a finaliser closure keeps returns only a cycle after that closure
+   runs: a chain of such holders takes a cycle per link, and nothing short of
+   the allocation succeeding tells that its memory came back. *)
+let last_resort_rounds = 4
 
 let set_budget d n =
   if n < 0 then invalid_arg (Printf.sprintf "Nx_device.set_budget: %d < 0" n);
   with_devices [ d ] (fun () ->
       d.budget <- n;
-      release_cache d 0)
+      release_cache ~wait:true d 0)
 
 let set_timeout d ms =
   if ms <= 0 then invalid_arg (Printf.sprintf "Nx_device.set_timeout: %d ms" ms);
@@ -1220,7 +1398,8 @@ let set_timeout d ms =
 let timeout d = Atomic.get d.timeout_ms
 
 (* [fits d max_int] fails whenever [d] caches anything. *)
-let free_cache d = with_devices [ d ] (fun () -> release_cache d max_int)
+let free_cache d =
+  with_devices [ d ] (fun () -> release_cache ~wait:true d max_int)
 
 (* At exit every device is finalized, a failed one too: its hardware may still
    reach the memory the process is about to release. *)
@@ -1340,19 +1519,19 @@ module Buffer = struct
 
   (* [n] reserved bytes of the heap. A refused reservation or allocation
      collects garbage once and tries again. *)
-  let rec host_heap n ~collected =
+  let rec host_heap n ~round =
     if heap_reserve n host.budget then (
       match heap n with
       | ba -> ba
       | exception Stdlib.Out_of_memory ->
           heap_return n;
-          host_refused n ~collected)
-    else host_refused n ~collected
+          host_refused n ~round)
+    else host_refused n ~round
 
-  and host_refused n ~collected =
-    if collected then raise (Out_of_memory (host, n));
+  and host_refused n ~round =
+    if round = last_resort_rounds then raise (Out_of_memory (host, n));
     Gc.full_major ();
-    host_heap n ~collected:true
+    host_heap n ~round:(round + 1)
 
   let not_files fn =
     invalid_arg
@@ -1368,7 +1547,7 @@ module Buffer = struct
     | bytes when d == host ->
         check host;
         if bytes > host.budget then raise (Out_of_memory (host, bytes));
-        let ba = host_heap bytes ~collected:false in
+        let ba = host_heap bytes ~round:0 in
         let base =
           base ~bytes ~borrowed:false
             ~keep:(Heap (ba, heap_token bytes))
@@ -1387,13 +1566,21 @@ module Buffer = struct
           | Mapped, Some _, None -> Pinned
           | kind, Some _, _ -> kind
         in
-        let memory, keep, kind =
-          with_devices [ d ] (fun () ->
-              let m = allocate d bytes ~kind ~collected:false in
-              allocate_bytes d bytes;
-              memory_changed d;
-              m)
+        let rec take round =
+          match
+            with_devices [ d ] (fun () ->
+                let last = round = last_resort_rounds in
+                let m = allocate d bytes ~kind ~last in
+                allocate_bytes d bytes;
+                memory_changed d;
+                m)
+          with
+          | m -> m
+          | exception Exhausted ->
+              Gc.full_major ();
+              take (round + 1)
         in
+        let memory, keep, kind = take 0 in
         let base = base ~bytes ~kind ~borrowed:false ~keep d memory in
         let base = owned d base in
         first base s n
@@ -1516,7 +1703,7 @@ module Buffer = struct
         | None ->
             Result.map
               (fun (mapped, skip) ->
-                let m = { on = d; mapped; skip; unmap; borrows = 1 } in
+                let m = { on = d; mapped; skip; unmap; borrows = 1; work = []; unmapping = false } in
                 update_maps src (List.cons m);
                 m)
               (driver d map))
@@ -1543,9 +1730,22 @@ module Buffer = struct
       else Keep b
     in
     let mapped =
-      { on = d; mapped = region; skip = 0; unmap = ignore; borrows = 1 }
+      {
+        on = d;
+        mapped = region;
+        skip = 0;
+        unmap = ignore;
+        borrows = 1;
+        work = [];
+        unmapping = false;
+      }
     in
     let base = base ~source:(src, mapped) ~borrowed:true ~keep d region in
+    (* A device other than a host may run work on the memory after [submit]
+       returns, as test devices whose queues run behind the host do: its
+       release waits for that work, and keeps [b] until then. A host's work
+       is the calls it makes, which return once done. *)
+    let base = if d == host then base else owned d base in
     { b with base }
 
   (* A device maps the whole host memory under [b], once, and its borrows share
@@ -2049,9 +2249,6 @@ module Buffer = struct
     done;
     wait_signal d (submitted d)
 
-  let add_reached base e =
-    update_links base (fun l -> { l with reached = e :: l.reached })
-
   (* Runs [f] with [b]'s address for [e]'s work, if [e] addresses [b]'s memory:
      its own, memory it maps, or pinned memory of another device, which [e] maps
      for the copy alone. If [f] raises, [e] may still use that memory: it stays
@@ -2074,10 +2271,11 @@ module Buffer = struct
                       match unmap m with
                       | () -> r
                       | exception Failure why ->
-                          add_reached b.base e;
+                          lose e why;
+                          poison b.base e;
                           fail e why)
                   | exception e' ->
-                      add_reached b.base e;
+                      poison b.base e;
                       raise e')))
       | None -> f None
 
@@ -2282,7 +2480,7 @@ module Buffer = struct
         | () -> ()
         | exception (Lost _ as e) ->
             (* [s]'s copy engine may still write [dst]. *)
-            add_reached dst.base s;
+            poison dst.base s;
             raise e)
     | Bounce -> bounce ~timed s ~src d ~dst n
     | Across -> across ~timed ~src ~dst n
@@ -2295,7 +2493,7 @@ module Buffer = struct
             List.iter
               (fun t ->
                 lose t why;
-                add_reached dst.base t)
+                poison dst.base t)
               l.through;
             List.iter check l.through;
             failwith why)
@@ -2568,6 +2766,27 @@ let rec reach_into l b =
   let l = add b.owner l in
   match b.source with Some (src, _) -> reach_into l src | None -> l
 
+(* Stamps each memory that [touches] reach with the values [values] of the
+   devices [ds], which signal once their work is done: the release of that
+   memory waits for them. *)
+let rec stamp_devices base values i = function
+  | [] -> ()
+  | d :: rest ->
+      stamp_use base d values.(i);
+      stamp_devices base values (i + 1) rest
+
+let rec stamp_reach ds values base =
+  stamp_devices base values 0 ds;
+  match base.source with
+  | Some (src, _) -> stamp_reach ds values src
+  | None -> ()
+
+let rec stamp_touches ds values = function
+  | [] -> ()
+  | (b : buffer) :: rest ->
+      stamp_reach ds values b.base;
+      stamp_touches ds values rest
+
 let submit ds ~touches f =
   let invalid fmt = Printf.ksprintf invalid_arg ("Nx_device.submit: " ^^ fmt) in
   let ds = List.sort_uniq by_id ds in
@@ -2631,6 +2850,7 @@ let submit ds ~touches f =
   in
   let r = f s in
   List.iteri (fun i d -> commit d s.values.(i)) ds;
+  stamp_touches ds s.values touches;
   List.iter
     (fun t ->
       List.iteri

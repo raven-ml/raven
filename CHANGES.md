@@ -2934,6 +2934,15 @@ thread.
 
 ### Nx
 
+- A device's released memory waits for the work that touched it, without
+  blocking: each buffer of `Nx_device.submit`'s `touches` is stamped with the
+  values its work signals. A GPU's buffer returns to its cache once other
+  devices' work on it is done, where it was cached at once and could be reused
+  while a peer still read it; a borrow is unmapped once its device's work on it
+  is done, where every release waited for all of the device's work. Memory a
+  lost device's unfinished work touched is retained, and the owner allocates
+  on. A refused allocation collects garbage with its device free for other
+  domains.
 - The memory of a device buffer, a borrow's mapping or a disk file returns to
   its device from whichever domain's collection finds it unreachable. It
   returned only once the domain that made the buffer ran its finalisers again,

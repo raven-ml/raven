@@ -37,16 +37,22 @@
 
     {b Reclamation.} Nothing frees a buffer by hand. Once a buffer and all its
     views are unreachable, the garbage collector hands its memory back to the
-    device, which reclaims it at the start of its next operation: a GPU keeps it
-    in a cache for reuse, the host returns it to the heap, and a borrowing
-    device unmaps a borrow once its work is done. Memory goes back to the system
-    only once no work can still use it. If that work cannot be waited for, the
-    memory is {e retained}: kept, and never freed or reused. An allocation that
-    the device's {!budget} or its driver refuses first releases the cache to the
-    system, then collects garbage and tries again, and raises {!Out_of_memory}
-    only after that. Memory returns from the collection that finds its buffers
-    unreachable, in whichever domain runs it, even while the domain that made
-    them is blocked.
+    device, which reclaims it at the start of its next operation, without
+    waiting: a GPU keeps it in a cache for reuse once the work of other devices
+    that touched it ({!submit}) is done, since its own later work is ordered
+    after its earlier work; the host returns it to the heap; and a borrowing
+    device unmaps a borrow once its work on it is done. Memory goes back to the
+    system only once no work can still use it. If that work is a lost device's
+    ({!Lost}), the memory is {e retained}: kept, and never freed or reused. An
+    allocation that the device's {!budget} or its driver refuses first releases
+    the cache to the system, then waits for the work of the memory its device
+    released, then collects garbage with the device free for other domains and
+    tries again, up to four times, and raises {!Out_of_memory} only after
+    that. Memory returns one major cycle after the last value holding its
+    buffers dies, in whichever domain runs the collection, even while the
+    domain that made them is blocked. A value that a finaliser closure keeps
+    dies only once that closure has run, a cycle after its own holder died, so
+    a chain of such holders takes a cycle per link.
 
     {b Collection pace.} The host memory of buffers of 64 KiB or more (four
     pages, where pages are larger) paces the collector's major cycles by the
@@ -165,7 +171,8 @@ exception Lost of t * string
 
     [d] is then lost for good, and its loss is scoped to the memory it can
     reach: its own buffers, the host memory it borrowed, and memory another
-    device owns that a copy of [d] was writing when [d] was lost.
+    device owns that a copy of [d] was writing, or that work of [d] touched
+    ({!submit}), and that [d] had not finished with when it was lost.
     - The operation that finds the loss raises [Lost (d, why)], and so does,
       with the same [why], every later operation that takes [d], and every
       {!Buffer.copy}, {!Buffer.bigarray} and {!Program.call} that reaches memory
@@ -932,7 +939,11 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
 
     When [f] returns, [s] commits: each value is its device's {!submitted}
     value, {!synchronize} on each device whose memory the buffers reach waits
-    for the work, and the spans of {!Submission.record} are kept. If [f] raises,
+    for the work, and the spans of {!Submission.record} are kept. The memory
+    of [touches] is stamped with the values: once unreachable, it returns to
+    its device, or to the system, only after the work is done. So [touches]
+    lists every buffer the work reaches, its code and arguments included: a
+    buffer it leaves out may be freed while the work still runs. If [f] raises,
     nothing is committed, so [f] may raise only before it enqueues any work. A
     {!Lost} that [f] raises loses its device, as a driver error after work was
     enqueued leaves the queue in an unknown state.
