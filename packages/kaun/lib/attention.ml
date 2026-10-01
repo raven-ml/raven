@@ -217,7 +217,8 @@ let attend ?mask ?scale ?sinks q k v =
         Nx.reshape [| kv_heads; groups; 1 |] sinks)
       sinks
   in
-  let q = Nx.reshape [| batch; kv_heads; groups; n; d |] (Nx.contiguous q) in
+  (* Splitting the heads axis is a view of [q], whatever its layout. *)
+  let q = Nx.reshape [| batch; kv_heads; groups; n; d |] q in
   let grouped t = Nx.unsqueeze ~axes:[ 2 ] t in
   let mask =
     Option.map
