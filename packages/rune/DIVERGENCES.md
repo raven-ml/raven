@@ -51,8 +51,8 @@ target's run lands.
   type of the width otherwise. tinygrad computes in the signed type, whose
   overflow C leaves undefined. Integer `Pow` squares over the exponent's bits;
   tinygrad refuses an exponent that is not a constant.
-- **nx:** modular arithmetic (`nx_backend_intf.mli`; nx.cpu computes in the unsigned
-  width); a negative integer exponent gives the integer quotient of 1.
+- **nx:** modular arithmetic (`nx_backend_intf.mli`; nx.cpu computes in the
+  unsigned width); a negative integer exponent gives the integer quotient of 1.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `exact binary integers › {add,sub,mul,pow} › *`,
@@ -316,8 +316,8 @@ target's run lands.
 - **Raven:** `lower_arith.ml:882` (`threefry`).
 - **Differs:** nx's words are `int32` pairs along the last axis, the low word
   first; the lowering packs each pair into a `uint64`, hashes, and unpacks.
-- **nx:** `nx_backend_intf.mli`, `threefry`: Threefry-2x32-20, bit-identical under
-  every lowering.
+- **nx:** `nx_backend_intf.mli`, `threefry`: Threefry-2x32-20, bit-identical
+  under every lowering.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `random bits › a traced key draws eager's words, compiled for
@@ -386,8 +386,8 @@ target's run lands.
   tinygrad accumulates signed integers in a signed type, whose overflow C,
   Metal and CUDA leave undefined; returns an integer sum in its accumulator's
   dtype; and multiplies narrow floats and narrow integers at their own width.
-- **nx:** `nx_backend_intf.mli`, `reduce` and `scan`: the result has the operand's
-  dtype; integers wrap; `nx.mli`, Arithmetic: narrow floats compute at
+- **nx:** `nx_backend_intf.mli`, `reduce` and `scan`: the result has the
+  operand's dtype; integers wrap; `nx.mli`, Arithmetic: narrow floats compute at
   `float32` and round once.
 - **Class:** exact on integers, rounded sum on floats.
 - **Reason:** (b).
@@ -445,10 +445,10 @@ target's run lands.
   half first. The sorted values are the operand's elements at those positions,
   a one-hot sum over their bits. tinygrad's recovery never matches a NaN, and
   its network compares floats.
-- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, in nx's sort order or
-  its exact reverse when descending (NaN last ascending and first descending,
-  `-0.` before `0.` ascending), and `sort` is the operand taken along
-  `argsort`, bit for bit.
+- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, in nx's sort order
+  or its exact reverse when descending (NaN last ascending and first descending,
+  `-0.` before `0.` ascending), and `sort` is the operand taken along `argsort`,
+  bit for bit.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `sorts › *`; the network's kernels by `graph parity ›
@@ -476,7 +476,8 @@ target's run lands.
   reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
   pieces are dropped first, and pieces of one length are stacked as the
   reference stacks them.
-- **nx:** `nx_backend_intf.mli`, `cat`: the arrays' elements, one after the other.
+- **nx:** `nx_backend_intf.mli`, `cat`: the arrays' elements, one after the
+  other.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `assembly › pieces of different lengths keep -0.`,
@@ -538,8 +539,8 @@ target's run lands.
 - **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
   one-hot selection over bit patterns (I3), and the moved `v` is selected on
   the window's mask; along an axis `v` fills, the start is 0.
-- **nx:** `nx_backend_intf.mli`, `update`: `starts` is read when the kernel runs,
-  already clamped so that the window fits.
+- **nx:** `nx_backend_intf.mli`, `update`: `starts` is read when the kernel
+  runs, already clamped so that the window fits.
 - **Class:** exact.
 - **Reason:** (b); the consumer is kaun's decode, whose `Cache_index` (RFC
   0002) writes a window at a position known only at run time, every step.
@@ -582,8 +583,8 @@ target's run lands.
   lowering of the kernel fails (a `float16` unfold of a gapped operand,
   kernel `[2; 1]`, stride `[1; 2]`, padding `[(0, 0); (1, 0)]`, raised a
   `CAST` of a vector `STACK` at verification).
-- **nx:** `nx_backend_intf.mli`, `unfold`: the windows of the operand padded with
-  zeros.
+- **nx:** `nx_backend_intf.mli`, `unfold`: the windows of the operand padded
+  with zeros.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `windows › an unfold whose windows along an axis read only
@@ -636,8 +637,8 @@ target's run lands.
   column is reflected when any element below its diagonal is nonzero: one
   more reduction per column than tinygrad's. Compiled code never raises
   `No_convergence`.
-- **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular, the
-  factors nx.cpu's LAPACK reflectors give.
+- **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular,
+  the factors nx.cpu's LAPACK reflectors give.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
   eager's factors, signs included, for well-conditioned matrices of up to
   5 x 5; measured maxima over 300 such matrices, in units of `max(m, n) u`:

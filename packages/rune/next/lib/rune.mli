@@ -398,10 +398,11 @@ val vmap : ?axis:axis -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     of keys from {!Nx.Rng.split_batch}, walked with {!Nx.Rng.ptree}: each lane
     sees one key.
 
-    Reading a lane's value inside [f] raises
-    [Invalid_argument "Rune: cannot read the value of a batched tensor inside
-     vmap; return it from the mapped function instead"]: an OCaml [if] on a
-    value that depends on the lanes raises, and {!Nx.where} selects per lane.
+    Reading a lane's value inside [f] raises [Invalid_argument] with a message
+    that starts with the name of the function that read, as in
+    ["Nx.item: cannot read the value of a batched tensor inside vmap; return it
+     from the mapped function instead"]: an OCaml [if] on a value that depends
+    on the lanes raises, and {!Nx.where} selects per lane.
 
     Raises [Invalid_argument] when applied to [s] if [s] consumes an argument;
     and when applied to its arguments if they have no tensor, if a tensor is a
