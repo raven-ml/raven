@@ -1524,7 +1524,6 @@ module Gsp = struct
     mutable compute_class : int;
     mutable dma_class : int;
     mutable priv_root : int;
-    mutable device : int;
     mutable subdevice : int;
     mutable grctx_bufs : (int * grbuf) list;
     mutable runlists : (int * int) list;
@@ -1547,7 +1546,6 @@ module Gsp = struct
       compute_class = 0;
       dma_class = 0;
       priv_root = 0;
-      device = 0;
       subdevice = 0;
       grctx_bufs = [];
       runlists = [];
@@ -1886,7 +1884,6 @@ module Gsp = struct
           (Nvdev.Nv_page_table.paddr
              (Tolk.Memory.root_page_table (Nvdev.mm t.nvdev)))
         ~client ();
-    if hclass = D.nv01_device_0 && client <> t.priv_root then t.device <- obj;
     if hclass = D.nv20_subdevice_0 then t.subdevice <- obj;
     if hclass = t.compute_class && client <> t.priv_root then begin
       let bufs012 =

@@ -18,7 +18,7 @@ module D = Dtype
 (* Helpers *)
 
 (* Emit a shape-encoding node from a concrete int list. *)
-let mk_shape b (dims : int list) : U.t =
+let mk_shape (dims : int list) : U.t =
   let ids = List.map U.const_int dims in
   match ids with
   | [ d ] -> d
@@ -26,13 +26,13 @@ let mk_shape b (dims : int list) : U.t =
       U.stack ds
 
 (* Emit a PARAM with a known shape and CPU device. *)
-let mk_param ?(dtype = D.float32) b ~slot (shape : int list) : U.t =
-  let shape_id = if shape = [] then None else Some (mk_shape b shape) in
+let mk_param ?(dtype = D.float32) ~slot (shape : int list) : U.t =
+  let shape_id = if shape = [] then None else Some (mk_shape shape) in
   let dev = U.Single "CPU" in
   U.param ~slot ~dtype ?shape:shape_id ~device:dev ()
 
 (* Wrap source(s) in CONTIGUOUS -> SINK. *)
-let wrap_sink b (srcs : U.t list) : U.t =
+let wrap_sink (srcs : U.t list) : U.t =
   let contigs =
     List.map (fun src -> U.contiguous ~src ()) srcs
   in
@@ -72,173 +72,173 @@ let tensor_to_source renderer (build_fn : unit -> U.t) : string =
 (* Each builder constructs a Tensor.t graph matching the corresponding
    builder in generate_expected.py. *)
 
-let build_elementwise_add b =
-  let a = mk_param b ~slot:0 [ 256 ] in
-  let bp = mk_param b ~slot:1 [ 256 ] in
+let build_elementwise_add () =
+  let a = mk_param ~slot:0 [ 256 ] in
+  let bp = mk_param ~slot:1 [ 256 ] in
   let add = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
-  wrap_sink b [ add ]
+  wrap_sink [ add ]
 
-let build_elementwise_3way b =
-  let a = mk_param b ~slot:0 [ 256 ] in
-  let bp = mk_param b ~slot:1 [ 256 ] in
-  let c = mk_param b ~slot:2 [ 256 ] in
+let build_elementwise_3way () =
+  let a = mk_param ~slot:0 [ 256 ] in
+  let bp = mk_param ~slot:1 [ 256 ] in
+  let c = mk_param ~slot:2 [ 256 ] in
   let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let abc = U.alu_binary ~op:Ops.Add ~lhs:ab ~rhs:c in
-  wrap_sink b [ abc ]
+  wrap_sink [ abc ]
 
-let build_mulacc b =
-  let a = mk_param b ~slot:0 [ 256 ] in
-  let bp = mk_param b ~slot:1 [ 256 ] in
+let build_mulacc () =
+  let a = mk_param ~slot:0 [ 256 ] in
+  let bp = mk_param ~slot:1 [ 256 ] in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:bp in
   let red =
     U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 0 ] in
-  wrap_sink b [ red ]
+  wrap_sink [ red ]
 
-let build_binop_reshape b =
-  let a = mk_param b ~slot:0 [ 10 ] in
-  let bp = mk_param b ~slot:1 [ 10 ] in
-  let c = mk_param b ~slot:2 [ 5; 2 ] in
+let build_binop_reshape () =
+  let a = mk_param ~slot:0 [ 10 ] in
+  let bp = mk_param ~slot:1 [ 10 ] in
+  let c = mk_param ~slot:2 [ 5; 2 ] in
   let add = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
-  let reshaped = U.reshape ~src:add ~shape:(mk_shape b [ 5; 2 ]) in
+  let reshaped = U.reshape ~src:add ~shape:(mk_shape [ 5; 2 ]) in
   let result = U.alu_binary ~op:Ops.Add ~lhs:reshaped ~rhs:c in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_binop_permute b =
-  let a = mk_param b ~slot:0 [ 2; 5 ] in
-  let bp = mk_param b ~slot:1 [ 2; 5 ] in
-  let c = mk_param b ~slot:2 [ 5; 2 ] in
+let build_binop_permute () =
+  let a = mk_param ~slot:0 [ 2; 5 ] in
+  let bp = mk_param ~slot:1 [ 2; 5 ] in
+  let c = mk_param ~slot:2 [ 5; 2 ] in
   let add = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let permed = U.permute ~src:add ~order:[ 1; 0 ] in
   let result = U.alu_binary ~op:Ops.Add ~lhs:permed ~rhs:c in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_diamond b =
-  let a = mk_param b ~slot:0 [ 10 ] in
-  let bp = mk_param b ~slot:1 [ 10 ] in
-  let c = mk_param b ~slot:2 [ 10 ] in
-  let d = mk_param b ~slot:3 [ 10 ] in
+let build_diamond () =
+  let a = mk_param ~slot:0 [ 10 ] in
+  let bp = mk_param ~slot:1 [ 10 ] in
+  let c = mk_param ~slot:2 [ 10 ] in
+  let d = mk_param ~slot:3 [ 10 ] in
   let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let abc = U.alu_binary ~op:Ops.Add ~lhs:ab ~rhs:c in
   let abcab = U.alu_binary ~op:Ops.Add ~lhs:abc ~rhs:ab in
   let result = U.alu_binary ~op:Ops.Add ~lhs:abcab ~rhs:d in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_reduce_unary b =
-  let a = mk_param b ~slot:0 [ 16 ] in
+let build_reduce_unary () =
+  let a = mk_param ~slot:0 [ 16 ] in
   let red =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ] in
   let sq = U.alu_unary ~op:Ops.Sqrt ~src:red in
   let neg = U.alu_unary ~op:Ops.Neg ~src:sq in
-  wrap_sink b [ neg ]
+  wrap_sink [ neg ]
 
-let build_reduce_reshape_binop b =
-  let a = mk_param b ~slot:0 [ 10; 10 ] in
-  let bp = mk_param b ~slot:1 [ 10 ] in
+let build_reduce_reshape_binop () =
+  let a = mk_param ~slot:0 [ 10; 10 ] in
+  let bp = mk_param ~slot:1 [ 10 ] in
   let red =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ] in
-  let reshaped = U.reshape ~src:red ~shape:(mk_shape b [ 10 ]) in
+  let reshaped = U.reshape ~src:red ~shape:(mk_shape [ 10 ]) in
   let result = U.alu_binary ~op:Ops.Add ~lhs:reshaped ~rhs:bp in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_reduce_permute_binop b =
-  let a = mk_param b ~slot:0 [ 10; 10; 10 ] in
-  let bp = mk_param b ~slot:1 [ 10; 10 ] in
+let build_reduce_permute_binop () =
+  let a = mk_param ~slot:0 [ 10; 10; 10 ] in
+  let bp = mk_param ~slot:1 [ 10; 10 ] in
   let red =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ] in
   let permed = U.permute ~src:red ~order:[ 1; 0 ] in
   let result = U.alu_binary ~op:Ops.Add ~lhs:permed ~rhs:bp in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_permute_through_reshape b =
-  let a = mk_param b ~slot:0 [ 16; 16 ] in
-  let bp = mk_param b ~slot:1 [ 16; 16 ] in
+let build_permute_through_reshape () =
+  let a = mk_param ~slot:0 [ 16; 16 ] in
+  let bp = mk_param ~slot:1 [ 16; 16 ] in
   let add = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let reshaped =
-    U.reshape ~src:add ~shape:(mk_shape b [ 4; 4; 4; 4 ])
+    U.reshape ~src:add ~shape:(mk_shape [ 4; 4; 4; 4 ])
   in
   let permed = U.permute ~src:reshaped ~order:[ 2; 3; 0; 1 ] in
-  wrap_sink b [ permed ]
+  wrap_sink [ permed ]
 
-let build_expand_permute b =
-  let a = mk_param b ~slot:0 [ 10; 10; 1 ] in
-  let bp = mk_param b ~slot:1 [ 10; 10; 1 ] in
+let build_expand_permute () =
+  let a = mk_param ~slot:0 [ 10; 10; 1 ] in
+  let bp = mk_param ~slot:1 [ 10; 10; 1 ] in
   let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
   let expanded =
-    U.broadcast_to ~src:ab ~shape:(mk_shape b [ 10; 10; 10 ])
+    U.broadcast_to ~src:ab ~shape:(mk_shape [ 10; 10; 10 ])
   in
   let permed = U.permute ~src:ab ~order:[ 2; 1; 0 ] in
   let permed_expanded =
-    U.broadcast_to ~src:permed ~shape:(mk_shape b [ 10; 10; 10 ])
+    U.broadcast_to ~src:permed ~shape:(mk_shape [ 10; 10; 10 ])
   in
   let result = U.alu_binary ~op:Ops.Add ~lhs:expanded ~rhs:permed_expanded in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_shrink_fuse b =
-  let a = mk_param b ~slot:0 [ 8192; 16 ] in
-  let bp = mk_param b ~slot:1 [ 8192; 16 ] in
-  let d = mk_param b ~slot:2 [ 1; 16 ] in
+let build_shrink_fuse () =
+  let a = mk_param ~slot:0 [ 8192; 16 ] in
+  let bp = mk_param ~slot:1 [ 8192; 16 ] in
+  let d = mk_param ~slot:2 [ 1; 16 ] in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:bp in
-  let before = mk_shape b [ 0; 0 ] in
-  let size = mk_shape b [ 1; 16 ] in
+  let before = mk_shape [ 0; 0 ] in
+  let size = mk_shape [ 1; 16 ] in
   let shrunk = U.shrink ~src:mul ~offset:before ~size in
   let result = U.alu_binary ~op:Ops.Mul ~lhs:shrunk ~rhs:d in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_multistage_reduce b =
-  let a = mk_param b ~slot:0 [ 32; 32; 32 ] in
+let build_multistage_reduce () =
+  let a = mk_param ~slot:0 [ 32; 32; 32 ] in
   let red1 =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 2 ] in
   let zero = U.const (C.float D.float32 0.0) in
   let relu = U.alu_binary ~op:Ops.Max ~lhs:red1 ~rhs:zero in
   let reshaped =
-    U.reshape ~src:relu ~shape:(mk_shape b [ 32; 32 ])
+    U.reshape ~src:relu ~shape:(mk_shape [ 32; 32 ])
   in
   let red2 =
     U.reduce_axis ~src:reshaped ~op:Ops.Add ~axes:[ 1 ] in
-  wrap_sink b [ red2 ]
+  wrap_sink [ red2 ]
 
-let build_two_sum b =
-  let a = mk_param b ~slot:0 [ 64; 64 ] in
+let build_two_sum () =
+  let a = mk_param ~slot:0 [ 64; 64 ] in
   let red0 =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 0 ] in
   let red1 =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 1 ] in
-  let reshaped0 = U.reshape ~src:red0 ~shape:(mk_shape b [ 64 ]) in
-  let reshaped1 = U.reshape ~src:red1 ~shape:(mk_shape b [ 64 ]) in
+  let reshaped0 = U.reshape ~src:red0 ~shape:(mk_shape [ 64 ]) in
+  let reshaped1 = U.reshape ~src:red1 ~shape:(mk_shape [ 64 ]) in
   let result = U.alu_binary ~op:Ops.Add ~lhs:reshaped0 ~rhs:reshaped1 in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_reduce_shrink b =
-  let a = mk_param b ~slot:0 [ 32; 32 ] in
-  let bp = mk_param b ~slot:1 [ 16 ] in
+let build_reduce_shrink () =
+  let a = mk_param ~slot:0 [ 32; 32 ] in
+  let bp = mk_param ~slot:1 [ 16 ] in
   let red =
     U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 1 ] in
-  let reshaped = U.reshape ~src:red ~shape:(mk_shape b [ 32 ]) in
-  let before = mk_shape b [ 0 ] in
-  let size = mk_shape b [ 16 ] in
+  let reshaped = U.reshape ~src:red ~shape:(mk_shape [ 32 ]) in
+  let before = mk_shape [ 0 ] in
+  let size = mk_shape [ 16 ] in
   let shrunk = U.shrink ~src:reshaped ~offset:before ~size in
   let result = U.alu_binary ~op:Ops.Add ~lhs:shrunk ~rhs:bp in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_contiguous_add b =
-  let x = mk_param b ~slot:0 [ 32 ] in
-  let y = mk_param b ~slot:1 [ 32 ] in
-  let z = mk_param b ~slot:2 [ 32 ] in
+let build_contiguous_add () =
+  let x = mk_param ~slot:0 [ 32 ] in
+  let y = mk_param ~slot:1 [ 32 ] in
+  let z = mk_param ~slot:2 [ 32 ] in
   let add = U.alu_binary ~op:Ops.Add ~lhs:x ~rhs:y in
   let contig = U.contiguous ~src:add () in
   let result = U.alu_binary ~op:Ops.Add ~lhs:contig ~rhs:z in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_reshape_chain b =
-  let a = mk_param b ~slot:0 [ 4; 4 ] in
-  let bp = mk_param b ~slot:1 [ 2; 8 ] in
-  let r1 = U.reshape ~src:a ~shape:(mk_shape b [ 16 ]) in
-  let r2 = U.reshape ~src:r1 ~shape:(mk_shape b [ 2; 8 ]) in
+let build_reshape_chain () =
+  let a = mk_param ~slot:0 [ 4; 4 ] in
+  let bp = mk_param ~slot:1 [ 2; 8 ] in
+  let r1 = U.reshape ~src:a ~shape:(mk_shape [ 16 ]) in
+  let r2 = U.reshape ~src:r1 ~shape:(mk_shape [ 2; 8 ]) in
   let result = U.alu_binary ~op:Ops.Add ~lhs:r2 ~rhs:bp in
-  wrap_sink b [ result ]
+  wrap_sink [ result ]
 
-let build_llama_rmsnorm b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
+let build_llama_rmsnorm () =
+  let x = mk_param ~slot:0 [ 2; 8 ] in
   let sq = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:x in
   let sum = U.reduce_axis ~src:sq ~op:Ops.Add ~axes:[ 1 ] in
   let mean =
@@ -252,54 +252,54 @@ let build_llama_rmsnorm b =
   (* The kernel boundary sits between the root and its reciprocal: the
      buffer holds [sqrt(mean + eps)] and each consumer divides by it. *)
   let sqrt = U.alu_unary ~op:Ops.Sqrt ~src:eps in
-  let result = U.reshape ~src:sqrt ~shape:(mk_shape b [ 2 ]) in
-  wrap_sink b [ result ]
+  let result = U.reshape ~src:sqrt ~shape:(mk_shape [ 2 ]) in
+  wrap_sink [ result ]
 
-let build_llama_ffn_gate b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let norm = mk_param b ~slot:1 [ 2 ] in
-  let weight = mk_param b ~slot:2 [ 8 ] in
-  let matrix = mk_param b ~slot:3 [ 8; 8 ] in
-  let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; 8 ]) in
-  let norm3 = U.reshape ~src:norm ~shape:(mk_shape b [ 2; 1; 1 ]) in
-  let weight3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 1; 8 ]) in
-  let matrix3 = U.reshape ~src:matrix ~shape:(mk_shape b [ 1; 8; 8 ]) in
-  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
-  let norm3 = U.broadcast_to ~src:norm3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+let build_llama_ffn_gate () =
+  let x = mk_param ~slot:0 [ 2; 8 ] in
+  let norm = mk_param ~slot:1 [ 2 ] in
+  let weight = mk_param ~slot:2 [ 8 ] in
+  let matrix = mk_param ~slot:3 [ 8; 8 ] in
+  let x3 = U.reshape ~src:x ~shape:(mk_shape [ 2; 1; 8 ]) in
+  let norm3 = U.reshape ~src:norm ~shape:(mk_shape [ 2; 1; 1 ]) in
+  let weight3 = U.reshape ~src:weight ~shape:(mk_shape [ 1; 1; 8 ]) in
+  let matrix3 = U.reshape ~src:matrix ~shape:(mk_shape [ 1; 8; 8 ]) in
+  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape [ 2; 8; 8 ]) in
+  let norm3 = U.broadcast_to ~src:norm3 ~shape:(mk_shape [ 2; 8; 8 ]) in
   let norm3 = U.alu_unary ~op:Ops.Reciprocal ~src:norm3 in
-  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
-  let matrix3 = U.broadcast_to ~src:matrix3 ~shape:(mk_shape b [ 2; 8; 8 ]) in
+  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape [ 2; 8; 8 ]) in
+  let matrix3 = U.broadcast_to ~src:matrix3 ~shape:(mk_shape [ 2; 8; 8 ]) in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:norm3 in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs ~rhs:weight3 in
   let lhs = U.alu_binary ~op:Ops.Mul ~lhs ~rhs:matrix3 in
   let red = U.reduce_axis ~src:lhs ~op:Ops.Add ~axes:[ 2 ] in
-  let result = U.reshape ~src:red ~shape:(mk_shape b [ 2; 8 ]) in
-  wrap_sink b [ result ]
+  let result = U.reshape ~src:red ~shape:(mk_shape [ 2; 8 ]) in
+  wrap_sink [ result ]
 
-let build_llama_vector_scale b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let scale = mk_param b ~slot:1 [ 2 ] in
-  let weight = mk_param b ~slot:2 [ 8 ] in
-  let scale2 = U.reshape ~src:scale ~shape:(mk_shape b [ 2; 1 ]) in
-  let weight2 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 8 ]) in
-  let scale2 = U.broadcast_to ~src:scale2 ~shape:(mk_shape b [ 2; 8 ]) in
+let build_llama_vector_scale () =
+  let x = mk_param ~slot:0 [ 2; 8 ] in
+  let scale = mk_param ~slot:1 [ 2 ] in
+  let weight = mk_param ~slot:2 [ 8 ] in
+  let scale2 = U.reshape ~src:scale ~shape:(mk_shape [ 2; 1 ]) in
+  let weight2 = U.reshape ~src:weight ~shape:(mk_shape [ 1; 8 ]) in
+  let scale2 = U.broadcast_to ~src:scale2 ~shape:(mk_shape [ 2; 8 ]) in
   let scale2 = U.alu_unary ~op:Ops.Reciprocal ~src:scale2 in
-  let weight2 = U.broadcast_to ~src:weight2 ~shape:(mk_shape b [ 2; 8 ]) in
+  let weight2 = U.broadcast_to ~src:weight2 ~shape:(mk_shape [ 2; 8 ]) in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:x ~rhs:scale2 in
   let value = U.alu_binary ~op:Ops.Mul ~lhs:value ~rhs:weight2 in
-  wrap_sink b [ value ]
+  wrap_sink [ value ]
 
-let build_llama_output_projection b =
-  let x = mk_param b ~slot:0 [ 2; 8 ] in
-  let weight = mk_param b ~slot:1 [ 32; 8 ] in
-  let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; 8 ]) in
-  let weight3 = U.reshape ~src:weight ~shape:(mk_shape b [ 1; 32; 8 ]) in
-  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
-  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape b [ 2; 32; 8 ]) in
+let build_llama_output_projection () =
+  let x = mk_param ~slot:0 [ 2; 8 ] in
+  let weight = mk_param ~slot:1 [ 32; 8 ] in
+  let x3 = U.reshape ~src:x ~shape:(mk_shape [ 2; 1; 8 ]) in
+  let weight3 = U.reshape ~src:weight ~shape:(mk_shape [ 1; 32; 8 ]) in
+  let x3 = U.broadcast_to ~src:x3 ~shape:(mk_shape [ 2; 32; 8 ]) in
+  let weight3 = U.broadcast_to ~src:weight3 ~shape:(mk_shape [ 2; 32; 8 ]) in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:x3 ~rhs:weight3 in
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
-  let result = U.reshape ~src:red ~shape:(mk_shape b [ 2; 32 ]) in
-  wrap_sink b [ result ]
+  let result = U.reshape ~src:red ~shape:(mk_shape [ 2; 32 ]) in
+  wrap_sink [ result ]
 
 let llama_forward_from_embedding_source renderer =
   let module T = Tolk_frontend.Tensor in

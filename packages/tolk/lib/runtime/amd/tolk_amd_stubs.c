@@ -31,6 +31,7 @@ static void raise_errno(const char *what) {
 
 /* The OCaml side hard-codes the driver ABI constants; pin them, and every
    argument struct layout, against the vendored header. */
+_Static_assert(EINVAL == 22, "errno ABI");
 _Static_assert(sizeof(struct kfd_ioctl_get_version_args) == 8, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_acquire_vm_args) == 8, "kfd ABI");
 _Static_assert(sizeof(struct kfd_ioctl_runtime_enable_args) == 16, "kfd ABI");
@@ -126,7 +127,7 @@ CAMLprim value caml_tolk_kfd_alloc_memory_of_gpu(value v_fd, value v_va,
     if (errno != EINVAL && errno != ENOMEM)
       raise_errno("AMDKFD_IOC_ALLOC_MEMORY_OF_GPU");
     res = caml_alloc(1, 1); /* Error */
-    Store_field(res, 0, Val_int(errno == EINVAL ? 0 : 1));
+    Store_field(res, 0, Val_int(errno));
     CAMLreturn(res);
   }
   payload = caml_alloc_tuple(2);

@@ -29,7 +29,7 @@ let hardware device =
 
 let arguments call =
   match U.as_call call with
-  | Some {body; args} ->
+  | Some {body; args; _} ->
       let args = List.filter (fun a -> not (U.is_bound_var a)) args in
       (match U.as_program_info body with
        | Some info ->
@@ -387,7 +387,7 @@ let compile_batch ~profile ~original_calls ~reordered_accesses calls =
   let module E = Program_spec.Estimates in
   let estimates = List.fold_left (fun total c ->
       let cost = match U.as_call c.call with
-        | Some {body; args} when U.op body = Ops.Store ->
+        | Some {body; args; _} when U.op body = Ops.Store ->
             let dst = List.hd args in
             let nbytes = Bound.(to_int (mul (int (U.max_numel dst)) (int (Dtype.itemsize (U.dtype dst))))) in
             E.{ops = Int 0; lds = Int nbytes; mem = Int nbytes}
@@ -405,7 +405,7 @@ let compile_batch ~profile ~original_calls ~reordered_accesses calls =
     (U.sink ~kernel_info submits)
 
 let enqueue call = match U.as_call call with
-  | Some {body; args} when (U.op body = Ops.Program || U.op body = Ops.Store)
+  | Some {body; args; _} when (U.op body = Ops.Program || U.op body = Ops.Store)
       && (U.op body <> Ops.Store || match args with dst :: _ -> U.max_numel dst <> 0 | [] -> false)
       && (match U.arg call with U.Arg.Call_info {aux = None; _} -> true | _ -> false)
       && not (List.exists (fun u -> match U.device_of u with Some (U.Multi _) -> true | _ -> false) args) ->
@@ -429,7 +429,7 @@ let enqueue call = match U.as_call call with
 (* Queue backends encode one device per CALL. Expand multi-device arguments
    before batching, sharing single-device arguments across lanes as upstream. *)
 let unwrap_call call = match U.as_call call with
-  | Some {body; args} when List.exists (fun arg ->
+  | Some {body; args; _} when List.exists (fun arg ->
       match U.device_of arg with Some (U.Multi _) -> true | _ -> false) args ->
       let count = List.fold_left (fun n arg -> match U.device_of arg with
           | Some (U.Multi devices) -> max n (List.length devices) | _ -> n) 1 args in
@@ -461,7 +461,7 @@ let stage_copies ~resolve linear =
         Hashtbl.add buffers host buf;
         buf in
   let expand call = match U.as_call call, enqueue call with
-    | Some {body; args = [dst; src]}, Some selected when U.op body = Ops.Store ->
+    | Some {body; args = [dst; src]; _}, Some selected when U.op body = Ops.Store ->
         let target = resolve dst and source = resolve src in
         let mapped = try
           ignore (B.addr ~target:(Device.allocator (Device.get selected.device)) target : nativeint);
@@ -496,7 +496,7 @@ let stage_copies ~resolve linear =
   with Storage.Mapping_unavailable _ -> None
 
 let compile_copy ~to_program c = match U.as_call c.call with
-  | Some {body; args = [dst; src]} when U.op body = Ops.Store
+  | Some {body; args = [dst; src]; _} when U.op body = Ops.Store
       && String.starts_with ~prefix:"COMPUTE:" c.queue ->
       let device = Device.get c.device in
       let bytes arg = U.bitcast ~src:arg ~dtype:Dtype.uint8 in
@@ -518,7 +518,7 @@ let compile_copy ~to_program c = match U.as_call c.call with
 let compile ~to_program ?(profile = false) linear =
   let linear = U.linear (List.concat_map unwrap_call (U.children linear)) in
   let peers = U.children linear |> List.concat_map (fun call -> match U.as_call call with
-      | Some {body; args} when U.op body = Ops.Store ->
+      | Some {body; args; _} when U.op body = Ops.Store ->
           List.filter_map (fun arg -> match U.device_of arg with
               | Some (U.Single name) ->
                   let name = Device.canonicalize name in
@@ -528,7 +528,7 @@ let compile ~to_program ?(profile = false) linear =
   let count = max 1 (Helpers.getenv "HCQ_NUM_SDMA"
       (if Helpers.Context_var.get Helpers.all2all >= 1 then min (List.length peers) 8 else 1)) in
   let assign_copy c = match U.as_call c.call with
-    | Some {body; args = [dst; src]} when U.op body = Ops.Store && c.queue = "COPY:0" ->
+    | Some {body; args = [dst; src]; _} when U.op body = Ops.Store && c.queue = "COPY:0" ->
         let position arg = match U.device_of arg with
           | Some (U.Single name) -> List.find_index (String.equal (Device.canonicalize name)) peers
           | _ -> None in

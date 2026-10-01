@@ -11,8 +11,6 @@ let cc =
   let var = Helpers.Context_var.string ~key:"CC" ~default:"clang" in
   fun () -> Helpers.Context_var.get var
 
-let is_windows = String.equal Sys.os_type "Win32"
-
 (* Host Target *)
 
 type arch = Gpu_target.cpu = X86_64 | Arm64 | Riscv64

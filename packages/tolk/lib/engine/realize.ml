@@ -281,7 +281,7 @@ let compile_linear_cached ~cache ~device ?beam ?(profile = profiling ()) ~to_pro
   let calls = U.toposort ~enter_calls:true linear
       |> List.filter_map (fun call ->
         match U.as_call call with
-        | Some { body; args }
+        | Some { body; args; _ }
           when (U.op body = Tolk_uop.Ops.Sink && Option.is_some (U.as_kernel_info body))
             || (U.op body = Tolk_uop.Ops.Program
                 && not (Option.is_some (U.as_program_info body)
@@ -551,7 +551,7 @@ let eager_template ~input_uops linear =
     if not (U.Tbl.mem required node) then begin
       U.Tbl.add required node ();
       let children = match U.as_call node with
-        | Some {body; args} -> (match U.as_program_info body with
+        | Some {body; args; _} -> (match U.as_program_info body with
             | Some info -> program_args info args
             | None -> args)
         | None -> U.children node in
@@ -1011,13 +1011,13 @@ let exec_hcq ctx call (submission : Tolk_uop.Uop.queue_info) ~fallback =
       if Device.id (Device.get name) <> id then
         invalid_arg "queue replay: device owner changed since linking") submission.linked_owners;
   match U.as_call call with
-  | Some {body; args} ->
+  | Some {body; args; _} ->
       let args = Array.of_list (call_arg_uops args) in
       let buffers = Array.map (resolve ctx) args in
       validate_queue_aliases buffers submission;
       let fallback_ctx = lazy {ctx with input_uops = Array.map U.from_buffer buffers} in
       let overlapping_copy = List.exists (fun call -> match U.as_call call with
-          | Some {body; args = [dst; src]} when U.op body = Tolk_uop.Ops.Store ->
+          | Some {body; args = [dst; src]; _} when U.op body = Tolk_uop.Ops.Store ->
               let fallback_ctx = Lazy.force fallback_ctx in
               buffers_overlap (resolve fallback_ctx dst) (resolve fallback_ctx src)
           | _ -> false) submission.fallback in
@@ -1190,7 +1190,7 @@ and exec_loop ctx ~device ~to_program call =
         invalid_arg "exec_loop: expected an integer constant in loop payload"
   in
   match U.as_call call with
-  | Some { body; args } ->
+  | Some { body; args; _ } ->
       let children = U.children body in
       let body_linear = List.nth children 0 in
       let trip = int_child children 1 in
@@ -1280,7 +1280,7 @@ and exec_loop ctx ~device ~to_program call =
       []
   | None -> invalid_arg "exec_loop: expected CALL"
 
-let rec run_linear ~device ~to_program ?(var_vals = [])
+let run_linear ~device ~to_program ?(var_vals = [])
     ?(input_uops = [||]) ?(update_stats = true) ?(jit = false) ?(wait = false)
     (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in

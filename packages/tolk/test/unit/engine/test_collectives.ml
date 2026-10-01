@@ -97,7 +97,7 @@ module Run = struct
     in
     List.iter (fun call ->
         match U.as_call call with
-        | Some {body; args = [dst; src]} when U.op body = Ops.Store ->
+        | Some {body; args = [dst; src]; _} when U.op body = Ops.Store ->
             let destinations = buffers dst and sources = buffers src in
             (match destinations, sources with
              | destinations, [src] -> List.iter (fun dst -> record dst src) destinations

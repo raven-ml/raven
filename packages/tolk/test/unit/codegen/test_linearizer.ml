@@ -162,7 +162,6 @@ module P = struct
     let tbl = index_map program in
     List.iteri (fun i u -> f i (view_with tbl u)) program
 
-  let length = List.length
   let validate = Spec.verify_list Spec.program_spec
 
   let pp_view fmt = function
@@ -217,10 +216,6 @@ let reduce_range ~axis size =
 
 let global_range ~axis size =
   U.range ~size ~axis ~kind:Axis_type.Global ~dtype:Dtype.int32 ()
-
-let load_one_elem () =
-  let p0 = U.param ~slot:0 ~dtype:ptr () in
-  U.load ~src:(U.index ~ptr:p0 ~idxs:[(i32 0)] ()) ()
 
 let contains haystack needle =
   let hl = String.length haystack and nl = String.length needle in
@@ -297,10 +292,6 @@ let find_store prog =
 
 let raises_linearize substring fn =
   raises_match (function Failure msg -> contains msg substring | _ -> false) fn
-
-let test_unlowered_rejected name build_node =
-  raises_linearize (name ^ " must be lowered before linearize") (fun () ->
-      ignore (linearize (U.sink [ build_node () ])))
 
 let conditional_loop_nesting () =
   let outer = U.range ~size:(i32 3) ~axis:0 ~kind:Axis_type.Loop
@@ -915,14 +906,14 @@ let () =
             let p2 = U.param ~slot:2 ~dtype:ptr () in
             let p0 = U.param ~slot:0 ~dtype:ptr () in
             let p1 = U.param ~slot:1 ~dtype:ptr () in
-            let ld n p =
+            let ld p =
               U.load ~src:(U.index ~ptr:p ~idxs:[(i32 0)] ()) ()
             in
             let sum =
-              U.alu_binary ~op:Ops.Add ~lhs:(ld 0 p0)
+              U.alu_binary ~op:Ops.Add ~lhs:(ld p0)
                 ~rhs:
-                  (U.alu_binary ~op:Ops.Add ~lhs:(ld 1 p1)
-                     ~rhs:(ld 2 p2))
+                  (U.alu_binary ~op:Ops.Add ~lhs:(ld p1)
+                     ~rhs:(ld p2))
             in
             let program = linearize (U.sink [ sum ]) in
             P.validate program;

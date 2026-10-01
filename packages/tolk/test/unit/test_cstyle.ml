@@ -86,11 +86,6 @@ let assert_not_contains msg haystack needle =
 let for_each_renderer renderers f =
   List.iter (fun (name, renderer) -> f name renderer) renderers
 
-let assert_equal_string msg expected actual =
-  if not (String.equal expected actual) then
-    failwith
-      (Printf.sprintf "%s: expected:\n%s\n\ngot:\n%s" msg expected actual)
-
 let apply_extra_matcher renderer node =
   match Renderer.extra_matcher renderer with
   | Some f -> f node
@@ -111,7 +106,6 @@ let load ?alt ?gate src = U.load ~src ?alt ?gate ()
 let store dst value = U.store ~dst ~value ()
 let unary op src _dtype = U.alu_unary ~op ~src
 let binary op lhs rhs _dtype = U.alu_binary ~op ~lhs ~rhs
-let ternary op a b c _dtype = U.alu_ternary ~op ~a ~b ~c
 let cast_to dtype src = U.cast ~src ~dtype
 let bitcast_to dtype src = U.bitcast ~src ~dtype
 
@@ -136,9 +130,6 @@ let make_binop dt mk_op =
   let ld1 = load idx1 in
   let op_result = mk_op ld0 ld1 dt in
   [ p0; p1; p2; c0; idx0; idx1; idx2; ld0; ld1; op_result; store idx2 op_result ]
-
-let make_simple_add_f32 () =
-  make_binop dt (binary Ops.Add)
 
 let make_unop dt mk_op =
   let ptr = global_ptr dt in

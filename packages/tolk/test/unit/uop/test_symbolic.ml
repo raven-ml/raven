@@ -1497,12 +1497,12 @@ let mop_tests =
 let remove_invalid_tests =
   let remove n = Upat.Pattern_matcher.rewrite Symbolic.pm_remove_invalid n in
   let cond = U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:D.bool () in
-  let gated dt x = U.O.where cond x (U.invalid ()) in
+  let gated x = U.O.where cond x (U.invalid ()) in
   group "remove_invalid"
     [
       test "gated int32 -> zero of the gate's dtype" (fun () ->
           let x = U.const (C.int D.int32 7) in
-          match remove (gated D.int32 x) with
+          match remove (gated x) with
           | Some r ->
               check_op r Ops.Where;
               check_const_int (src r 2) 0;
@@ -1510,7 +1510,7 @@ let remove_invalid_tests =
           | None -> fail "expected invalid to be zeroed");
       test "gated float32 -> zero of the gate's dtype" (fun () ->
           let x = f32 7.0 in
-          match remove (gated D.float32 x) with
+          match remove (gated x) with
           | Some r ->
               check_op r Ops.Where;
               check_const_float (src r 2) 0.0;

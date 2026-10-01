@@ -61,14 +61,6 @@ let is_elementwise_or_reduce u =
   let o = U.op u in
   Ops.Group.is_elementwise o || o = Ops.Reduce
 
-(* Does [n] or its backward slice contain a non-injective movement op? *)
-let has_non_injective_view n =
-  List.exists (fun x ->
-    match U.op x with
-    | Ops.Shrink | Ops.Permute | Ops.Flip | Ops.Pad -> true
-    | _ -> false)
-    (n :: U.backward_slice n)
-
 let prod_valid valids = U.uprod (btrue :: valids)
 let sum_valid valids = U.usum (bfalse :: valids)
 

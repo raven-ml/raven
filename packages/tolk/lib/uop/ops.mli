@@ -15,13 +15,13 @@
 (** {1:types Types} *)
 
 type t =
-  (** {2 Defines and special indices} *)
+  (* Defines and special indices *)
 
   | Special  (** Hardware index, such as group, local, or global ids. *)
   | Buffer  (** Bound storage, scalar variable, or kernel-local buffer. *)
   | Alloc  (** Unbound global storage owned by a call invocation. *)
 
-  (** {2 Non-op uops} *)
+  (* Non-op uops *)
 
   | Noop  (** Pass-through scheduling marker. *)
   | Rewrite_error  (** Rewrite failure marker. *)
@@ -37,14 +37,14 @@ type t =
   | Stack  (** Constructs value vectors and shape tuples. *)
   | Getaddr  (** HCQ address extraction op. *)
 
-  (** {2 Load and store} *)
+  (* Load and store *)
 
   | Index  (** Pointer arithmetic over a base pointer and offsets. *)
   | Shrink  (** Trims edges per axis; declared in tinygrad's load/store block. *)
   | Load  (** Loads from an indexed pointer. *)
   | Store  (** Stores through an indexed pointer. *)
 
-  (** {2 Math} *)
+  (* Math *)
 
   | Wmma  (** Tensor-core matrix multiply-accumulate. *)
   | Cast  (** Value-preserving type conversion. *)
@@ -78,7 +78,7 @@ type t =
   | Where  (** Ternary select. *)
   | Mulacc  (** Fused multiply-accumulate. *)
 
-  (** {2 Control flow, constants, backend escapes} *)
+  (* Control flow, constants, backend escapes *)
 
   | Barrier  (** Workgroup barrier. *)
   | Range  (** Loop variable. *)
@@ -92,7 +92,7 @@ type t =
   | Customi  (** Backend-specific inline expression. *)
   | Ins  (** Backend machine instruction. *)
 
-  (** {2 Tensor graph and expansion ops} *)
+  (* Tensor graph and expansion ops *)
 
   | Contiguous_backward  (** Backward-pass contiguous marker. *)
   | Detach  (** Detaches from gradient tracking. *)
@@ -112,7 +112,7 @@ type t =
   | Reduce  (** Reduction by [Add], [Mul], or [Max]. *)
   | Allreduce  (** Cross-device reduction. *)
 
-  (** {2 Pattern compiler IR} *)
+  (* Pattern compiler IR *)
 
   | Pyliteral  (** Carries a literal payload for custom pattern predicates. *)
 (** One flat tag per uop kind. *)

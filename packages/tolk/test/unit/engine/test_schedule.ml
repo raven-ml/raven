@@ -46,23 +46,6 @@ let linear_names linear =
   | Ops.Linear -> List.map call_name (U.children linear)
   | _ -> invalid_arg "expected LINEAR"
 
-let test_renderer =
-  Renderer.make ~name:"test" ~device:"TEST" ~has_local:false
-    ~has_shared:false ~shared_max:0 ~render:(fun ?name:_ _ -> "") ()
-
-let test_allocator =
-  Device.Allocator.Pack
-    (Storage.Host_allocator.make ~synchronize:(fun () -> ()))
-
-let test_device =
-  Device.make ~name:"TEST:0" ~allocator:test_allocator
-    ~renderer_set:(Device.Renderer_set.make ~device:"TEST" [ "TEST", Fun.const test_renderer ])
-    ~runtime:(fun _ ->
-      { Device.call = (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ -> None);
-        handle = 0n;
-        free = (fun () -> ()) })
-    ~synchronize:(fun timeout -> ignore timeout; ()) ()
-
 let after_partition_orders_nested_after_dependencies () =
   let buf = U.buffer ~slot:0 ~dtype:Dtype.int32 ~shape:(U.const_int 4) () in
   let producer = call "producer" [ buf ] in

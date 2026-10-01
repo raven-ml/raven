@@ -12,13 +12,6 @@ let storage_view ~src ~offset ~size ~dtype =
   U.bitcast ~dtype ~src:(U.shrink ~src:bytes ~offset
       ~size:(U.const_int (size * D.itemsize dtype)))
 
-let string_option =
-  let pp fmt = function
-    | None -> Format.pp_print_string fmt "None"
-    | Some s -> Format.fprintf fmt "Some %S" s
-  in
-  Testable.make ~pp ~equal:(Option.equal String.equal)
-
 let op_testable = Testable.make ~pp:Ops.pp ~equal:Ops.equal
 
 let launch_value_testable =
@@ -53,21 +46,6 @@ let shape_ints u =
 
 let equal_bounds ~msg u expected =
   equal (pair int int) ~msg expected (Bound.to_int (Uop.vmin u), Bound.to_int (Uop.vmax u))
-
-let with_env name value f =
-  let old = Sys.getenv_opt name in
-  Unix.putenv name value;
-  try
-    let result = f () in
-    (match old with
-     | Some old_value -> Unix.putenv name old_value
-     | None -> Unix.putenv name "");
-    result
-  with exn ->
-    (match old with
-     | Some old_value -> Unix.putenv name old_value
-     | None -> Unix.putenv name "");
-    raise exn
 
 let concurrent_buffer_slots () =
   let domains = 4 and per_domain = 4096 in

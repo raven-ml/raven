@@ -373,7 +373,6 @@ let queue_fixture ?host ?(device_name = "AMD:queue-compilation") ?(timeout_ms = 
 
 let compiled_sdma_write () =
   let open Tolk in
-  let open Tolk_uop in
   let _, device, _, buffers, submission = queue_fixture ~copies:false () in
   let name = Device.name device in
   let dst = i32_buf device [0; 0; 0] in
@@ -454,7 +453,7 @@ let compiled_profile_packets () =
 
 let execute_queue ~copies ~dispatch_ptr ~scratch =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~copies ~dispatch_ptr ~scratch () in
+  let compiled, device, _, buffers, submission = queue_fixture ~copies ~dispatch_ptr ~scratch () in
   let linked = Realize.link_linear compiled in
   let get tag = Hashtbl.find buffers tag in
   let set_word tag value =
@@ -641,7 +640,7 @@ let retained_pm4_scratch () =
 
 let execute_aql_queue ~multi =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~aql:true ~multi ~copies:false () in
+  let compiled, device, _, buffers, submission = queue_fixture ~aql:true ~multi ~copies:false () in
   let linked = Realize.link_linear compiled in
   let get tag = Hashtbl.find buffers tag in
   let put tag value =
@@ -689,7 +688,7 @@ let execute_aql_queue ~multi =
 
 let queue_timeout () =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
+  let compiled, device, _, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
   let linked = Realize.link_linear compiled in
   let input = i32_buf device (List.init 16 Fun.id) in
   let run () = Realize.run_linear ~device
@@ -710,7 +709,7 @@ let queue_timeout () =
 
 let queue_full () =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
+  let compiled, device, _, buffers, submission = queue_fixture ~timeout_ms:5 ~copies:false () in
   let linked = Realize.link_linear compiled in
   let ring = Hashtbl.find buffers "ring_compute" in
   let before = Device.Buffer.as_bytes ring in

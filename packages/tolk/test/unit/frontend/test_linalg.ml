@@ -36,9 +36,6 @@ let transpose2 t =
     (List.init rank (fun i ->
          if i = rank - 2 then rank - 1 else if i = rank - 1 then rank - 2 else i))
 
-let eye_batch ~dtype batch m =
-  Mv.expand (Op.eye ~m ~dtype m) (batch @ [ m; m ])
-
 let qr_tests =
   group "qr"
     [

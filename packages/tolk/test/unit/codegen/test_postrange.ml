@@ -222,9 +222,6 @@ let range_view r =
 let range_size_int r = const_to_int (range_view r).size
 let range_kind r = (range_view r).kind
 
-let count_kind kind rngs =
-  List.length (List.filter (fun r -> range_kind r = kind) rngs)
-
 let stores ast = List.filter_map U.as_store (U.toposort ast)
 let loads ast = List.filter_map U.as_load (U.toposort ast)
 
@@ -1026,8 +1023,6 @@ let dispatch_tests =
 
 (* Matmul-pattern AST:  output[i,j] = sum_k(a[i,k] * b[k,j])
    Two GLOBAL ranges + one REDUCE range, MUL inside REDUCE ADD. *)
-let global_f16ptr = D.float16
-
 let matmul_ast ~si ~sj ~sk =
   let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
   let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in

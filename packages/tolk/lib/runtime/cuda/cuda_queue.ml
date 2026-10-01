@@ -35,7 +35,7 @@ let encode name u = match U.op u, U.arg u, U.children u with
       let previous = ref (call name ~after:[dependency] "tolk_cuda_hcq_begin" Dtype.void [ctx]) in
       let emit fn args = previous := call name ~after:[!previous] fn Dtype.void (ctx :: args) in
       List.iter (fun node -> match U.as_call node, U.arg node with
-          | Some {body; args}, _ when U.op body = Ops.Program ->
+          | Some {body; args; _}, _ when U.op body = Ops.Program ->
               let info = Option.get (U.as_program_info body) in
               let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
               let bound = List.filter_map (fun a -> match U.as_bind a with
@@ -65,7 +65,7 @@ let encode name u = match U.op u, U.arg u, U.children u with
                   | U.Launch_sym v -> U.cast ~src:v ~dtype:Dtype.uint64) in
               emit "tolk_cuda_hcq_launch" ([load function_ 0] @ dims info.global_size @ dims info.local_size
                   @ [index patched 0; uint size])
-          | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store ->
+          | Some {body; args = [dst; src]; _}, _ when U.op body = Ops.Store ->
               let bytes = Bound.(to_int (mul (int (U.max_numel dst)) (int (Dtype.itemsize (U.dtype dst))))) in
               emit "tolk_cuda_hcq_copy" [U.getaddr ~device:name ~src:dst ();
                 U.getaddr ~device:name ~src (); uint bytes]

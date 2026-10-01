@@ -35,6 +35,11 @@ val uops_to_string : ?label:string -> Uop.t -> string
     ["=== label ==="] header before the rows. *)
 
 val expr_to_string : ?simplify:bool -> Uop.t -> string
+(** [expr_to_string ?simplify u] is a compact one-line rendering of the
+    scalar expression [u]: named parameters print as their name, constants
+    as their value, and arithmetic with the usual infix operators (redundant
+    parentheses stripped by precedence). Used for kernel names and debug
+    shape displays. [simplify] (default [true]) canonicalises [u] first. *)
 
 val python_float_string : float -> string
 (** [python_float_string f] is CPython's [repr f]: the shortest decimal that
@@ -43,8 +48,4 @@ val python_float_string : float -> string
     least two digits. It always carries a decimal point or an exponent, and it
     is the same on every platform: the digits come from the C runtime, which
     every platform rounds correctly at this length, and the layout does not. *)
-(** [expr_to_string ?simplify u] is a compact one-line rendering of the
-    scalar expression [u]: named parameters print as their name, constants
-    as their value, and arithmetic with the usual infix operators (redundant
-    parentheses stripped by precedence). Used for kernel names and debug
-    shape displays. [simplify] (default [true]) canonicalises [u] first. *)
+

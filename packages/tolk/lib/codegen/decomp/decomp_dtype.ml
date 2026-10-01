@@ -48,24 +48,6 @@ let shl_i x n =
   Uop.alu_binary ~op:Ops.Mul ~lhs:x
     ~rhs:(Uop.const (Const.int64 v (Int64.shift_left 1L n)))
 
-let const_of_node_int node =
-  match Uop.as_const node with
-  | Some c ->
-      (match Const.view c with
-       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
-       | _ -> None)
-  | _ -> None
-
-let expr_shr x y =
-  match const_of_node_int y with
-  | Some n -> shr_i x n
-  | None -> Uop.alu_binary ~op:Ops.Shr ~lhs:x ~rhs:y
-
-let expr_shl x y =
-  match const_of_node_int y with
-  | Some n -> shl_i x n
-  | None -> Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:y
-
 (* [reindex idx off mul]: rebuild an INDEX node so that the scalar offset
    is scaled by [mul] and shifted by [off]. Used to stride through the
    [lo; hi; lo; hi; ...] layout of the decomposed buffer. *)

@@ -316,11 +316,11 @@ let () =
             let cond =
               U.variable ~name:"c" ~min_val:0 ~max_val:1 ~dtype:Dtype.bool ()
             in
-            let gated dt x = U.O.where cond x (U.invalid ()) in
+            let gated x = U.O.where cond x (U.invalid ()) in
             let root =
               U.sink
-                [ gated Dtype.weakint (U.const_int 7);
-                  gated Dtype.float32 (U.const (Const.float Dtype.float32 7.0)) ]
+                [ gated (U.const_int 7);
+                  gated (U.const (Const.float Dtype.float32 7.0)) ]
             in
             let root =
               U.graph_rewrite ~name:"remove invalids"

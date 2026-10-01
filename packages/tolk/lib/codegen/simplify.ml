@@ -768,8 +768,6 @@ let pm_load_collapse =
 (* Whole-tree rewriter for a single pattern matcher. *)
 let apply pm root = U.graph_rewrite (Upat.Pattern_matcher.rewrite pm) root
 
-let flatten_range_all root = apply pm_flatten_range root
-
 let reduce_unparented_all root = apply pm_reduce_unparented root
 
 let reduce_simplify_all root = apply pm_reduce_simplify root

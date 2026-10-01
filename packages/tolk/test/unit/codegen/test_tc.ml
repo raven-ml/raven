@@ -43,9 +43,6 @@ let kernel_info ?(opts_to_apply = None) () =
 let wrap_sink ?opts_to_apply srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ()) srcs
 
-let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Weak ~dtype:D.weakint ()
-
 let reduce_range ~axis size =
   U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.weakint ()
 
@@ -54,39 +51,11 @@ let global_range ~axis size =
 
 (* Renderers *)
 
-let gpu_renderer () =
-  Renderer.make ~name:"test" ~device:"TEST" ~has_local:true ~has_shared:true
-    ~shared_max:32768 ~render:(fun ?name:_ _ -> "") ()
-
 let tc_renderer tcs =
   Renderer.make ~name:"test_tc" ~device:"GPU" ~has_local:true ~has_shared:true
     ~shared_max:32768 ~tensor_cores:tcs ~render:(fun ?name:_ _ -> "") ()
 
 (* AST Fixture Builders *)
-
-(* Matmul kernel: out[i,j] = sum_k(a[i,k] * b[k,j])
-   Ranges: r_m (loop, axis 0), r_n (loop, axis 1), r_k (reduce, axis 2).
-   Both loads are f32.  Suitable for metal (f32/f32) TCs. *)
-let matmul_f32_ast ~m ~n ~k =
-  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
-  let r_m = loop_range ~axis:0 m in
-  let r_n = loop_range ~axis:1 n in
-  let r_k = reduce_range ~axis:2 k in
-  let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] () in
-  let ld_a = U.load ~src:idx_a () in
-  let ld_b = U.load ~src:idx_b () in
-  let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] in
-  let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
-  in
-  let st = U.store ~dst:out_idx ~value:red () in
-  let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
-  wrap_sink [ e ]
 
 (* Matmul with global ranges (for TC which needs loop-to-global conversion) *)
 let matmul_f32_global_ast ~m ~n ~k =

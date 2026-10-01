@@ -121,6 +121,7 @@ module Queue_desc : sig
     descriptor : Hcq.Mmio.t;
   }
   (** Mapped HSA queue descriptor. *)
+
   type t = {
     ring : Hcq.Mmio.t;  (** The command ring. *)
     aql : aql option; (** HSA queue descriptor; absent on PM4 and DMA queues. *)

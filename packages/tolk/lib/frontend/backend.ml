@@ -5,8 +5,6 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_uop
-
 (* One process-wide default device backs every realization. This mirrors
    tinygrad, whose [Tensor.realize] resolves the device internally rather than
    taking it as an argument. Backend openers are installed in the shared

@@ -397,7 +397,7 @@ let same_memory_key a b =
   && valid_equal a.valid b.valid && U.Arg.equal (U.arg a.node) (U.arg b.node)
 
 let offset_groups offsets =
-  let rec finish current groups = match current with
+  let finish current groups = match current with
     | [] -> List.rev groups
     | _ -> List.rev (List.rev current :: groups)
   in

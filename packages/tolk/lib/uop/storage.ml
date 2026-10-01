@@ -310,6 +310,8 @@ let deallocate buf =
         in
         unmap ();
         alloc.free raw (nbytes buf) buf.spec;
+        (* A borrowed memory's owner outlives its mappings and its release. *)
+        ignore (Sys.opaque_identity buf.source);
         if counts_as_used buf then add_mem_used buf.device (-nbytes buf);
         Atomic.set buf.storage Unallocated
     | Some root, Allocated _ ->

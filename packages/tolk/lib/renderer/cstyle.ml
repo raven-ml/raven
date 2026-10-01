@@ -710,7 +710,7 @@ let base_rewrite : ctx rule list =
 
 (* Base code_for_op. Matches tinygrad's CStyleLanguage.code_for_op dict. *)
 let base_code_for_op : code_for_op =
- fun op args dt ->
+ fun op args _ ->
   let cdiv a b = strf "(%s/%s)" a b in
   let cmod a b = strf "(%s%%%s)" a b in
   match op, args with
@@ -2400,9 +2400,6 @@ let code_ops_clang =
       Sqrt; Neg; And; Xor; Or; Add; Sub; Mul; Cmod; Cdiv; Cmpne; Shr; Shl;
       Cmplt; Where; Cmpeq; Fdiv; Trunc;
     ]
-
-let supports_not scalars dt =
-  not (List.mem (dt) scalars)
 
 let supports_opencl_dtype (arch : Gpu_target.opencl) dt =
   match dt with

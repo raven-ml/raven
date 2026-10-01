@@ -74,15 +74,24 @@ module Kfd = struct
   external runtime_enable : int -> mode_mask:int -> unit
     = "caml_tolk_kfd_runtime_enable"
 
-  external alloc_memory_of_gpu :
+  (* The stub returns EINVAL and ENOMEM as their errno, and raises on any
+     other. *)
+  external alloc_memory_of_gpu_errno :
     int ->
     va:nativeint ->
     size:int ->
     gpu_id:int ->
     flags:int ->
     mmap_offset:int64 ->
-    (int64 * int64, alloc_error) result
+    (int64 * int64, int) result
     = "caml_tolk_kfd_alloc_memory_of_gpu_bc" "caml_tolk_kfd_alloc_memory_of_gpu"
+
+  let einval = 22
+
+  let alloc_memory_of_gpu fd ~va ~size ~gpu_id ~flags ~mmap_offset =
+    match alloc_memory_of_gpu_errno fd ~va ~size ~gpu_id ~flags ~mmap_offset with
+    | Ok _ as ok -> ok
+    | Error errno -> Error (if errno = einval then Einval else Enomem)
 
   external free_memory_of_gpu : int -> handle:int64 -> unit
     = "caml_tolk_kfd_free_memory_of_gpu"
@@ -691,7 +700,7 @@ module Encoded_queue = struct
           let arena = Tolk.Hcq2.patch ~after:[dependency] arena rows in
           data, program, arena, info in
         List.iter (fun node -> match U.as_call node, U.arg node with
-          | Some {body; args}, _ when U.op body = Ops.Program && compute ->
+          | Some {body; args; _}, _ when U.op body = Ops.Program && compute ->
               let data, program, arena, info = kernargs body args in
               if dev.is_aql then begin
                 close_run ();
@@ -731,7 +740,7 @@ module Encoded_queue = struct
               let module Soc = (val dev.soc) in
               pkt P.packet3_event_write [u32 (P.event_type Soc.cs_partial_flush lor P.event_index event_index_partial_flush)]
               end
-          | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store && not compute ->
+          | Some {body; args = [dst; src]; _}, _ when U.op body = Ops.Store && not compute ->
               let bytes = U.max_numel dst * D.itemsize (U.dtype dst) in
               let offset = ref 0 in
               while !offset < bytes do

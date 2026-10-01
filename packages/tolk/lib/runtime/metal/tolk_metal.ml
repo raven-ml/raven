@@ -385,7 +385,7 @@ module Queue = struct
         let signal = ref None and stamps = ref [] in
         let align n a = (n + a - 1) / a * a in
         List.iter (fun node -> match U.as_call node, U.arg node with
-            | Some {body; args}, _ when U.op body = Ops.Program ->
+            | Some {body; args; _}, _ when U.op body = Ops.Program ->
                 let info = Option.get (U.as_program_info body) in
                 let buffers = List.filter (fun a -> not (U.is_bound_var a)) args in
                 let bound = List.filter_map (fun a -> match U.as_bind a with

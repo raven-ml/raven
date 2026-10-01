@@ -27,7 +27,6 @@ let getv = Helpers.Context_var.get
 let int_ n = U.const_int n
 
 let src0 u = (U.src u).(0)
-let src_list u = Array.to_list (U.src u)
 let src_tail u =
   let s = U.src u in
   Array.to_list (Array.sub s 1 (Array.length s - 1))
@@ -40,8 +39,6 @@ let movement_src u =
   | Ops.Reshape | Ops.Expand | Ops.Pad | Ops.Shrink | Ops.Permute | Ops.Flip ->
       Some (src0 u)
   | _ -> None
-
-let is_movement u = Option.is_some (movement_src u)
 
 let device_max_bufs =
   function "WEBGPU" -> 8 | _ -> 0
@@ -523,13 +520,11 @@ type split_context = {
   mutable formals : (int * U.t) list;
   (* Scalar bindings unbound inside the kernel, most recent first. *)
   mutable vars : U.t list;
-  mutable range_ctr : int;
 }
 
 let create_split_context () =
   { slot = 0; buf_map = U.Ref_tbl.create 16; formals = [];
-    vars = [];
-    range_ctr = 0 }
+    vars = [] }
 
 let same_split_buffer a b =
   if a == b then true
@@ -615,16 +610,6 @@ let handle_after ctx n =
 let unbind_kernel ctx n =
   if not (List.exists (( == ) n) ctx.vars) then ctx.vars <- n :: ctx.vars;
   Option.map (fun (v : U.bind_view) -> v.var) (U.as_bind n)
-
-let renumber_range ctx n =
-  match U.as_range n, U.node_tag n with
-  | Some v, Some "" ->
-      let axis = ctx.range_ctr in
-      ctx.range_ctr <- ctx.range_ctr + 1;
-      Some
-        (U.range ~size:v.size ~axis ~sub:v.sub ~kind:v.kind
-           ~dtype:(U.dtype n) ~parents:v.parents ())
-  | _ -> None
 
 (* Ranges are numbered in the order a depth-first walk first pops them,
    where a node's sources are pushed in order and a node already waiting on

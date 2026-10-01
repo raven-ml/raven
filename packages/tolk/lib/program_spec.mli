@@ -107,11 +107,13 @@ val lib : t -> bytes option
 val applied_opts : t -> Tolk_uop.Uop.Opt.t list
 val vars : t -> var list
 (** [vars spec] lists scalar formals in their linear declaration order. *)
+
 val outs : t -> int list
 val ins : t -> int list
 val globals : t -> int list
 (** [globals spec] lists buffer slots in their linear declaration order.
     Dispatch buffers follow this order, including for sparse slots. *)
+
 val launch_kind : t -> launch_kind
 val estimates : t -> Estimates.t
 val global_size : t -> Tolk_uop.Uop.t array

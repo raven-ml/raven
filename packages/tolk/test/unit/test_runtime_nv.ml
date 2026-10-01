@@ -246,9 +246,6 @@ let qmd_template_dwords qmd =
   Array.init (Bytes.length b / 4) (fun i ->
       Int32.to_int (Bytes.get_int32_le b (4 * i)) land 0xffffffff)
 
-let staged_dwords m ~off n =
-  Array.init n (fun i -> Int32.to_int (Mmio.read32 m (off + (4 * i))) land 0xffffffff)
-
 (* The nonzero dwords of the qmd_init goldens
    (test/golden/nvqueue/qmd_init_{ada,blackwell}.expected), which pin the
    reference template for the same program descriptor. *)
@@ -274,20 +271,6 @@ let qmd_expected_blackwell =
       (42, 0x00004400); (43, 0x0b000000); (48, 0x00004600); (49, 0x10000000);
       (58, 0x00001009); (59, 0x00001000);
     ]
-
-(* A ready timeline over two mapped slots; the counter starts at 1 as on
-   a fresh device. *)
-let timeline m =
-  let sig_at off va =
-    Signal.make ~is_timeline:true
-      (Buffer.make ~va ~size:16 ~view:(Mmio.view m ~off ~size:16 ()) ~meta:() ())
-  in
-  {
-    Timeline.timeline = sig_at 0x3000 0x200000010n;
-
-    error_state = None;
-    on_hang = (fun () -> ());
-  }
 
 (* A driver interface whose every unscripted call fails the test; the
    topology tests script [rm_control] and read through the seam. *)
@@ -583,7 +566,7 @@ let slm_allocator ?(synchronize = fun () -> ()) () =
 
 let execute_queue ~compute_class ~copies m =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~compute_class ~copies m in
+  let compiled, device, _, buffers, submission = queue_fixture ~compute_class ~copies m in
   let linked = Realize.link_linear compiled in
   let get tag = Hashtbl.find buffers tag in
   let set32 tag value =
@@ -870,7 +853,7 @@ let queue_chain ?(extra_args = 0) ~compute_class m =
 
 let queue_timeout m =
   let open Tolk in
-  let compiled, device, host, buffers, submission = queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
+  let compiled, device, _, buffers, submission = queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
   let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in
   let run () = Realize.run_linear ~device
@@ -891,7 +874,7 @@ let queue_timeout m =
 
 let queue_capacity ~copies ~resume m =
   let open Tolk in
-  let compiled, device, host, buffers, submission =
+  let compiled, device, _, buffers, submission =
     queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies m in
   let inputs = Array.init (if copies then 3 else 1) (fun _ ->
       U.from_buffer (Device.create_buffer ~size:16 ~dtype:D.int32 device)) in
@@ -936,7 +919,7 @@ let queue_capacity ~copies ~resume m =
 
 let queue_counter_rollover m =
   let open Tolk in
-  let compiled, device, host, buffers, submission =
+  let compiled, device, _, buffers, submission =
     queue_fixture ~timeout_ms:100 ~compute_class:Defs.ada_compute_a ~copies:false m in
   let linked = Realize.link_linear compiled in
   let progress = Hashtbl.find buffers "progress_compute" in
@@ -965,7 +948,7 @@ let queue_counter_rollover m =
 
 let queue_retirement_timeout m =
   let open Tolk in
-  let compiled, device, host, buffers, submission =
+  let compiled, device, _, buffers, submission =
     queue_fixture ~timeout_ms:5 ~compute_class:Defs.ada_compute_a ~copies:false m in
   let linked = Realize.link_linear compiled in
   let input = Device.create_buffer ~size:16 ~dtype:D.int32 device in

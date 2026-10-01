@@ -267,8 +267,6 @@ module Nv_iface = struct
     nvdev : nvdev option;
   }
 
-  type packed = Pack : 'mem t -> packed
-
   let is_nvd t = t.nvdev <> None
 end
 
@@ -285,14 +283,12 @@ module Nvk_iface = struct
   type state = {
     fd_ctl : int;
     fd_uvm : int;
-    fd_uvm_2 : int;
     root : int;
     defs : Nv_defs_versions.t;
     gpus_info : gpu array;
   }
 
   type t = {
-    device_id : int;
     fd_dev : int;
     gpu_minor : int;
     gpu_instance : int;
@@ -553,7 +549,6 @@ module Nvk_iface = struct
           {
             fd_ctl;
             fd_uvm;
-            fd_uvm_2;
             root;
             defs;
             gpus_info =
@@ -608,7 +603,6 @@ module Nvk_iface = struct
         rm_control st ~obj:st.root ~cmd:Defs.nv0000_ctrl_cmd_gpu_get_id_info_v2
           ~params:b ();
         {
-          device_id;
           fd_dev;
           gpu_minor = gpu.minor_number;
           gpu_instance = Nv_tables.get_field b P.deviceinstance;
@@ -1581,7 +1575,7 @@ module Encoded_queue = struct
             | U.Launch_int n -> u32 n | U.Launch_float f -> u32 (int_of_float f)
             | U.Launch_sym v -> cast D.uint32 v) in
         List.iter (fun node -> match U.as_call node, U.arg node with
-          | Some {body; args}, _ when U.op body = Ops.Program && compute ->
+          | Some {body; args; _}, _ when U.op body = Ops.Program && compute ->
               let info = Option.get (U.as_program_info body) in
               let data, image, qmd, prefix, layout = List.hd !remaining in
               remaining := List.tl !remaining;
@@ -1640,7 +1634,7 @@ module Encoded_queue = struct
                      ["dependent_qmd0_action"; "dependent_qmd0_prefetch"; "dependent_qmd0_enable"]);
               previous := Some d;
               descriptors := (d, rows) :: !descriptors
-          | Some {body; args = [dst; src]}, _ when U.op body = Ops.Store && not compute ->
+          | Some {body; args = [dst; src]; _}, _ when U.op body = Ops.Store && not compute ->
               let bytes = U.max_numel dst * D.itemsize (U.dtype dst) in
               let offset = ref 0 in
               while !offset < bytes do

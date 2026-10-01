@@ -1068,10 +1068,10 @@ let quant_matmul ?ids x ~codes ~scales =
                (Uop.Opt.to_string opt)))
         (List.find_opt splits_axis0 opts);
     let fxn srcs =
-      let out, x, codes, scales, ids =
+      let out, x, scales, ids =
         match srcs with
-        | [ out; x; codes; scales ] -> (out, x, codes, scales, None)
-        | [ out; x; codes; scales; ids ] -> (out, x, codes, scales, Some ids)
+        | [ out; x; _; scales ] -> (out, x, scales, None)
+        | [ out; x; _; scales; ids ] -> (out, x, scales, Some ids)
         | _ -> assert false
       in
       let flat u size = Uop.reshape ~src:u ~shape:(Uop.const_int size) in
@@ -1348,10 +1348,10 @@ let block_matmul ?(transpose = false) x w ~ids =
     | [ nb; m; k ] -> (nb, m, k)
     | _ -> invalid_arg "Op.block_matmul: x must be [blocks; rows; inputs]"
   in
-  let e, n =
+  let n =
     match (T.shape w, transpose) with
-    | [ e; k'; n ], false when k' = k -> (e, n)
-    | [ e; n; k' ], true when k' = k -> (e, n)
+    | [ _; k'; n ], false when k' = k -> n
+    | [ _; n; k' ], true when k' = k -> n
     | _ -> invalid_arg "Op.block_matmul: w does not match x's inputs"
   in
   if T.shape ids <> [ nb ] then

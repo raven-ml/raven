@@ -73,7 +73,6 @@ let is_upcast = function U.Opt.Split { kind = Axis_type.Upcast; _ } -> true | _ 
 let is_unroll = function U.Opt.Split { kind = Axis_type.Unroll; _ } -> true | _ -> false
 let is_local = function U.Opt.Split { kind = Axis_type.Local; top = false; _ } -> true | _ -> false
 
-let local_axis = function U.Opt.Split { kind = Axis_type.Local; top = false; axis; _ } -> Some axis | _ -> None
 let upcast_axis_amount = function
   | U.Opt.Split { kind = Axis_type.Upcast; top = false; axis; amount } -> Some (axis, amount)
   | _ -> None

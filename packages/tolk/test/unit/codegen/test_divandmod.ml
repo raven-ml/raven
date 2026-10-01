@@ -1,7 +1,6 @@
 (* Tests for Divandmod rewrite rules. *)
 
 open Windtrap
-open Tolk
 open Tolk_uop
 
 let rewrite u = Upat.Pattern_matcher.rewrite Divandmod.div_and_mod_symbolic u

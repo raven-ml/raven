@@ -68,7 +68,7 @@ let fold_reduce op = function
    tinygrad counterpart sums the padded chunks, which turns -0 into +0 and
    quiets a signalling NaN. *)
 let assemble numel chunks =
-  let place (s, e) x = pad_to_shape x ~offset:[ s ] ~shape:[ numel ] in
+  let place (s, _) x = pad_to_shape x ~offset:[ s ] ~shape:[ numel ] in
   let footprint b =
     place b
       (U.broadcast_to ~src:(U.const_bool true) ~shape:(dim (snd b - fst b)))
