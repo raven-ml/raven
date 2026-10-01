@@ -1,89 +1,155 @@
-# agents.md
+# AGENTS.md
 
-raven is an ecosystem of packages that brings modern machine learning capabilities to ocaml. it provides familiar equivalent of python packages.
+raven brings modern numerical computing and machine learning to OCaml: arrays,
+autodiff and compilation, neural networks, dataframes, plotting, tokenizers
+and notebooks, each a small library that does one thing well.
 
-## philosophy
+## Hard rules
 
-raven is inspired by unix's philosophy of doing one thing well, and tinygrad's philosophy of minimalism and clarity. while our scope is larger than tinygrad's, we aim for the same beautiful and minimal code that covers python equivalent use cases.
+These protect the maintainer's work and other sessions on the same machine.
+Breaking one causes real damage.
 
-- strive for the "right", principled implementations and designs that stand the test of time.
-- every line must have purpose. choose clarity over cleverness.
-- public apis stay small and modern. no legacy layers, no extra knobs.
-- do not maintain compatibility for its own sake. breaking changes are fine when they move us toward the correct design.
-- focus on _modern_ numerical computing and machine learning. old or classic apis from numpy, pandas, jax, etc are out of scope.
-- minimize api surface as much as possible and offer the most elegant apis that cover user needs.
+- NEVER stage or commit unless asked. Never push.
+- NEVER pass `--force` to git or dune. Never run `dune clean`, never pass
+  `--build-dir` or `DUNE_CACHE=disabled`, never delete or relock `dune.lock`
+  without being asked.
+- NEVER kill a dune build, dune may be running in watch mode.
+- NEVER silence a warning or prefix a variable with `_` to hide it. A warning
+  is a bug in the change.
+- NEVER add an nx backend operation without being asked.
+- NEVER add a dependency to the project, raven is purposefully zero-dependency.
+- NEVER cite an RFC or a ledger from code or an `.mli`. The `.mli` and the code
+  are the source of truth.
 
-## projects
+## Packages
 
-- **nx**: n-dimensional arrays with pluggable backend architecture - equivalent to numpy.
+| Package | Role |
+|---|---|
+| `packages/nx` | n-dimensional arrays. Libraries: `nx.dtype`, `nx.device` (host, Metal, CUDA, AMD, NV, remote, disk runtimes), `nx.array`, `nx.cpu` (C kernels), `nx`, `nx.io`, `nx.quant` |
+| `packages/rune` | autodiff, vmap and compilation over nx. `rune/next` is the new implementation; `rune/lib` is frozen until it is deleted |
+| `packages/tolk` | the compiler, a port of tinygrad. `tolk/next` is current; `tolk/lib` is frozen. Departures from tinygrad are recorded in `packages/tolk/next/DIVERGENCES.md` |
+| `packages/kaun` | layers, optimizers and training on rune. Models live in `examples/`, never in the library |
+| `packages/vega` | optimizers as values |
+| `packages/talon`, `hugin`, `brot`, `quill`, `munin` | dataframes, plotting, tokenizers, notebooks, run monitoring |
+| `contrib/` | fehu, sowilo, norn: own `dune-project`, own `CHANGES.md`, public core libraries only |
 
-  the backend interface is defined at `packages/nx/lib/core/backend.mli`. NEVER add a backend operation without being asked to do so.
-  frontend apis are defined in a single file `packages/nx/lib/frontend.ml` using the backend operations.
-  nx comes with a default c backend in `packages/nx/lib/cpu/`.
+Accepted designs live in `doc/rfc/`.
 
-- **rune**: tensor computation with automatic differentiation and jit compilation - equivalent to jax.
+## Parallel agents
 
-  rune is architected as a backend for nx in `packages/rune/lib/nx_rune.ml`, where each backend operation raises an effect, or, if the effect is unhandled, falls back to the nx c backend.
+When several agents work several streams on one machine, each works in its
+own worktree and never changes the maintainer checkout's working tree (no
+`git stash`, `checkout`, `reset`, `restore` or `clean` there). Use
+`git -C <path>`, never `cd <path> && git …`.
 
-  this allows us to provide an nx-like api, while providing additional features such as automatic differentiation and jit compilation:
-  - for automatic differentiation in `packages/rune/lib/autodiff.ml`, effects are caught once re-executed, alongside their gradient calculations in the effect handler, the new calls are not caught by the effect handler (unless the user nests `grad` calls), so the operations are executed as normal on the c backend.
-  - for jit compilation, all effects are handled to build a computation graph, which is then jitted using `rune.jit`.
-  - and similar for other features such as debug, vmap.
+## Commands
 
-- **kaun**: neural networks and training utilities built on rune - equivalent to flax.
+- Build or test one package: `dune build @packages/<pkg>/runtest`. Don't
+  wait for the machine to be quiet; only timing needs that.
+- Rerun a cached test: run its executable from `_build/default/…`, from the
+  directory holding its goldens, with `CACHEDB=cache`. Never use `--force`.
+- tolk goldens: `uv run packages/tolk/next/test/gen/generate.py --check`.
+  Regenerate goldens with the generator; never edit them by hand.
+- Python: always through `uv run`.
 
-  kaun builds on rune to provide high-level neural network abstractions such as ptree, layers, optimizer, training loops, datasets, metrics, etc.
+## How we design
 
-  it also provides ready-to-use models in `packages/kaun/lib/kaun-models` and datasets in `packages/kaun/lib/kaun-datasets`.
+The bar is the design a careful library author would still defend in ten
+years: few concepts, each with something a caller can point at; total
+functions over plain data; illegal states unrepresentable; no knobs and no
+modes; call sites that read as prose. Judge a design by what a production 1.0
+needs, never by "nothing uses it yet". When a question has a principled
+answer, decide it and say why; ask only for the maintainer's own calls.
 
-- **fehu**: reinforcement learning environment and algorithms built on rune and kaun - equivalent to gym and stable baselines.
-- **talon**: dataframe library for data manipulation and analysis - equivalent to pandas and polars.
-- **brot**: tokenization and text processing - equivalent to huggingface tokenizers and parts of huggingface transformers.
-- **hugin**: visualization library for plotting and rendering - equivalent to matplotlib and plotly.
-- **quill**: interactive computing environment for ocaml - equivalent to jupyter notebooks and ipython.
-- **sowilo**: image processing and computer vision built on rune - equivalent to opencv with differentiable operations.
+- **Make the right change.** Every change moves the code toward the one true
+  design, however much it touches. Diff size is never the measure; elegant
+  designs usually take fewer lines, and that follows from the design.
+- **Change every consumer in the same sweep.** No compatibility shims, bridge
+  modules or dead fields, even if the build is broken in between.
+- **Ask whether the layer is right before the second fix.** A mechanism that
+  needs a second patch for the same class of bug is usually in the wrong
+  place.
+- **Lines are a signal.** A large diff or module usually means duplicated
+  machinery or broken design. Look for it before adding more.
+- **Dependencies.** No external OCaml packages and no system libraries;
+  implement the small subset you need. Copy a small helper rather than create a
+  shared library.
+- **Library boundaries.** Each library has one job and a minimal set of dependencies.
+  Always prefer to solve problems through composition rather than dependencies and
+  abstractions.
+- **Layers.** Each layer talks only to the one directly below it. Low-level
+  mechanics (drivers, raw I/O, byte layouts) stay behind their layer; callers
+  work with domain values.
+- **Visibility.** Everything stays out of the `.mli` unless the design needs it
+  exported. Adding to a public `.mli` is a design change that should be weighted
+  as such.
+- **Fix upstream.** A capability missing in nx, rune or tolk is built there,
+  never worked around downstream.
 
-## project structure
+## Code and docs
 
-- core packages live in `packages/` such as `packages/nx/`, `packages/rune/`, `packages/kaun/`, `packages/talon/`, `packages/hugin/`, and `packages/quill/`, each with `lib/` sources and `test/` suites.
-- contrib packages live in `contrib/` (`fehu`, `sowilo`, `norn`), each with its own `dune-project` and version. they may only depend on public libraries of the core. changelog entries for `fehu`, `sowilo`, and `norn` go in `contrib/<package>/CHANGES.md`.
-- documentation assets live under `www/` (static site).
+- Modules and variants are `Capitalized_snake_case`; values `snake_case`.
+- Doc comments live in `.mli` only and start `(** [f x] …`. Operations that
+  match on dtypes take explicit type annotations, as in
+  `let f (type a b) (t : (a, b) t) =`.
+- A block that isn't obvious gets a short comment: what it does and why, with
+  an example when it helps. ASCII diagrams for whole systems. Don't narrate
+  the code's arrangement. Section headers are plain `(* Name *)`.
+- Don't rename during a tidy unless the name gets clearly better.
+- Shallow code: early returns, no arrow-shaped nesting. Blank lines between
+  logical blocks.
+- Short function names, under 30 characters. A variant, not a `bool`, for an
+  argument that selects behaviour.
+- Name meaningful or recurring values as constants; keep a self-explanatory
+  one-off inline. A value from a spec is always named.
+- Hot paths: allocate outside loops, prefer loops to closures, use `unsafe_`
+  accessors where bounds are already checked.
+- User-facing docs explain behaviour from first principles, without comparing
+  to tinygrad, JAX or NumPy.
+- Prose, in docs, comments, commits and replies: as few words as possible,
+  each chosen. Short sentences, no "X, not Y" constructions, no rhetorical
+  triples, no punchy closing lines. No superlatives or praise; state facts,
+  including bad news.
 
-## guidelines
+## Tests
 
-- modules and variants are `Capitalized_snake_case`. values and functions use `snake_case`.
-- docstrings are only used in `mli` files. they start with `(** [function_name args...] ... *)`.
-- operations that match on dtypes need explicit type annocations, e.g. `let nonzero (type a b) (t : (a, b) t) =`.
+- Write a test where a user would get a wrong answer or a crash.
+- Fixing a bug: write the test first, watch it fail, then fix and watch it
+  pass.
+- Layout: `test/test_*.ml` in one `dune` file; only `support/`, `golden/` and
+  `gen/` subdirectories.
+- Laws and invariants get property tests. Concurrency tests are deterministic:
+  hold the interleaving, don't loop and hope.
+- No mutation runs, no after-the-fact fail-without proofs, no race loops.
+- Memory tests warm the device with one uncounted run, then collect and
+  synchronise a fixed number of rounds before reading the allocated count:
+  a chain of finalisers frees its memory one round late, so the count can
+  stop changing before it settles.
+- GPU tests run on real hardware and skip without it. No mock drivers.
 
-## performance
+## Performance
 
-- keep allocations to a minimum. allocate outside of loops and reuse buffers when possible.
-- prefer loop-based implementations over higher-order functions for performance-critical code.
-- use unsafe Bigarray and Bytes functions (e.g. `Bigarray.Array1.unsafe_get`) when safety checks are redundant.
+- Every package with a bench keeps per-machine baselines (`*.thumper`). A
+  commit that changes performance re-records its bench, in the same commit or
+  a `bench(…)` follow-up. A bench going the wrong way blocks landing until it
+  is explained.
+- Time only on a quiet machine. Correctness runs need no quiet.
 
-## changelog
+## Commits
 
-every user-facing commit MUST include a corresponding entry in `CHANGES.md`. if a commit adds a feature, fixes a bug, changes an API, or improves performance in a way that users would notice, update the changelog as part of that commit.
+- Subject: `type(scope): Imperative summary` (`feat`, `fix`, `perf`,
+  `refactor`, `test`, `docs`, `bench`, `chore`), capitalised, no period, about
+  50 characters (72 at most). It completes "If applied, this commit will …".
+- Blank line after the subject; body wrapped at 72.
+- The diff says what changed. The body says why: what was wrong, why it
+  matters to a user, why this approach and not another, what it costs.
+- Describe the change, never the process: no reviews, agents, phases or
+  attempts.
 
-entries go under the current unreleased version, grouped by package with `### Package` headers. add new entries at the top of the relevant package section.
+## Changelog
 
-writing style:
-- lead with what changed from the user's perspective, not what code was modified.
-- explain *why* when the reason isn't obvious (e.g. a bug fix should say what was wrong).
-- name the affected functions or types so users can find them.
-- keep each entry to 1-3 lines. use backticks for code identifiers.
-- do not include internal refactors, style changes, or test-only changes.
-
-## important rules
-
-- NEVER stage or commit changes unless explicitly requested
-- NEVER run `dune clean`
-- NEVER use the `--force` argument
-- NEVER run dune build with DUNE_CACHE=disabled
-- NEVER pass `--build-dir` to dune
-- NEVER try to remove the dune lock file
-- NEVER use git stash, git checkout, git reset, git restore, or ANY git command that modifies the working tree
-- NEVER use git commands to "test" or "isolate" changes — reason about the code instead
-- NEVER add new backend operations to nx unless explicitly requested
-- NEVER hide warnings and NEVER hide unused variables by adding an underscore. ALWAYS treat warnings as errors that need a proper fix.
-- ALWAYS add changelog entry(ies) in `CHANGES.md` when committing user-facing changes.
+Every user-visible change gets an entry in `CHANGES.md` (contrib packages: their
+own), under the unreleased version, at the top of its `### Package` section.
+Lead with what changed for the user, say why when a fix isn't obvious, name the
+functions or types, and keep it to 1–3 lines with backticks for identifiers.
+No entries for internal refactors, style or test-only changes.
