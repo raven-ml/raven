@@ -1,0 +1,6 @@
+(test
+ (name test_custom)
+ (package rune)
+ (libraries windtrap rune.next rune_next_test nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
