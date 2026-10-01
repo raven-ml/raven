@@ -981,12 +981,14 @@ the Exclusions of `README.md`.
   `END`); `runtime/support/hcq2.py:40-48` (`get_enqueue_devs` enqueues calls
   only), `:357,379-385` (`HWQueue.loop` repeats the command bytes and their
   words), `:467-476` (`bufferize_cmdbuf` merges each nested linear once) and
-  `:50-54` (`unwrap_view` reads constant offsets); `runtime/ops_metal.py:103`
+  `:50-54` (`unwrap_view` reads constant offsets), `:248-249` (`_wait_ins`:
+  an NV compute queue that waits also waits for its previous launch);
+  `runtime/ops_metal.py:103`
   (`MetalQueue` inherits `HWQueue.loop`, whose bytes it does not use);
   `uop/weak.py:27-33` (`cast_weak_srcs`).
 - **tolk.next:** `lib/runtime/support/hcq2.ml`: `range_placement`, which
   `stages` reads, and `item` in `sched_batches`, the positions and the two
-  visits of `make_ctx`, `Queue.loop`, the copies per trip in
+  visits and the loop edges of `make_ctx`, `Queue.loop`, the copies per trip in
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
   of `lower_call`, the halves of `sched_batches`, and the kernels not
   compiled yet of `get_enqueue_devs`; `lib/runtime/ops_metal.ml`,
@@ -1007,7 +1009,11 @@ the Exclusions of `README.md`.
   over its launches, each trip's reading its trip's extra words, and AMD's
   AQL queue repeats a loop's packets, each trip's running its trip's bytes of
   the command buffer (tinygrad's `AMDComputeAQLQueue` keeps its packets apart
-  from the bytes `HWQueue.loop` repeats).
+  from the bytes `HWQueue.loop` repeats). NV's compute queue ends its chain of
+  launches at a loop's edges, each trip's chaining onto its own descriptors,
+  and its channel runs the chains it schedules at once: so a call on it past
+  a loop's edge also waits for the queue's previous call, as tinygrad's
+  `_wait_ins` has a call do where a wait ends its chain.
   - An address that moves with a range (its storage's plus the view's offset)
     and a position a signal stores are 64-bit words cast from the range's weak
     integers, which D44 computes in integers. tinygrad's loop builds no such
@@ -1035,7 +1041,8 @@ the Exclusions of `README.md`.
   several`, `› a call its queue cannot hold in one submission is refused`, `› a range with a host program, a host copy or two kinds
   of device does not stage`, `› a run of a batched range is one submission,
   whatever its trips`, `› a trip's copy waits for the kernel of the trip
-  before, on another queue`, `› a ranged batch's addresses are integers,
+  before, on another queue`, `› on NV a compute queue's call past a loop's
+  edge waits for its previous call`, `› a ranged batch's addresses are integers,
   profiled or not` and `› a trip reads its window past what a float offset
   holds`, and `Deps › a write that does not trim keeps the accesses to the
   bytes it writes`, `› forgotten accesses are no longer followed`; the

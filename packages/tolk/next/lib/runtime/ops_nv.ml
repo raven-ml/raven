@@ -637,7 +637,9 @@ let queue props q : Hcq2.commands =
                       G.nvc6c0_invalidate_shader_caches_no_wfi_constant_true);
             ]));
     (* A chain ends at a loop's edges and at the end of each trip: a trip's
-       launches chain onto its own descriptors. *)
+       launches chain onto its own descriptors. The channel runs the chains it
+       schedules at once: the batch orders them, each waiting for the launch
+       before it (Hcq2's [make_ctx]). *)
     loop =
       (fun r body ->
         end_chain ();

@@ -1570,6 +1570,24 @@ let ranges =
           equal int 3 (List.length spans));
       agrees "a batched range agrees with running its trips one by one" (let _, _, e = ranged "CPU:2" in [ e ]);
       agrees "a trip's copy waits for the kernel of the trip before, on another queue" [ staged "CPU:1" ];
+      test "on NV a compute queue's call past a loop's edge waits for its previous call" (fun () ->
+          let waits_before_calls kind =
+            let d = kind ^ ":1" in
+            let a = storage ~n:12 d and b = storage ~n:12 d in
+            let batch = the_batch (sched [ adds a a; Ops.end_ (adds (window b) (window a)) [ r ]; adds b b ]) in
+            let rec flat cmds = List.concat_map (fun c -> if Ops.op c = End then flat (Ops.src (Ops.nth c 0)) else [ c ]) cmds in
+            let rec count acc = function
+              | [] -> []
+              | c :: rest when instruction c = "call" -> acc :: count 0 rest
+              | c :: rest -> count (if instruction c = "wait" then acc + 1 else acc) rest
+            in
+            count 0 (flat (List.assoc (d, "COMPUTE:0") (Batches.queues batch)))
+          in
+          (* The first call waits for the device's earlier work, a trip's
+             call for the call before the loop and the trip before's, and the
+             call after the loop for the last trip's. *)
+          equal (list int) ~msg:"NV" [ 1; 2; 1 ] (waits_before_calls "NV");
+          equal (list int) ~msg:"another kind" [ 1; 0; 0 ] (waits_before_calls "CPU"));
       agrees ~latency:0.01 "a staged range agrees under queue latency" [ staged "CPU:2" ];
       test "a range of kernels on devices with queues stages, compiled or not" (fun () ->
           let src = storage ~n:12 "CPU:1" and dst = storage ~n:12 "CPU:1" in

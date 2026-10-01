@@ -803,6 +803,8 @@ let make_ctx devices items profile =
      of the trip before, then as the current trip. *)
   let tracker = Deps.make () and waits = Array.make (Array.length batch) [] in
   let prev = Hashtbl.create 8 in
+  (* The loop edges passed, and their count at each queue's latest call. *)
+  let edges = ref 0 and edges_at = Hashtbl.create 8 in
   let rec visit ~behind ~recording items =
     List.iter
       (function
@@ -820,6 +822,10 @@ let make_ctx devices items profile =
               Option.value (Hashtbl.find_opt prev (device, queue)) ~default:[]
             in
             Hashtbl.replace prev (device, queue) [ dep ];
+            let crossed =
+              Hashtbl.find_opt edges_at (device, queue) <> Some !edges
+            in
+            Hashtbl.replace edges_at (device, queue) !edges;
             if not recording then begin
               (* The latest call to wait on of each producer's queue, in the
                  current trip and in the trip before: calls of one queue run in
@@ -834,10 +840,10 @@ let make_ctx devices items profile =
                     | Some (d' : dep) when d'.tag >= d.tag -> ()
                     | _ -> Ordered.set latest key d)
                 found;
-              (* On NV, a wait breaks the chaining of launches, so the queue
-                 also waits for its previous launch. *)
+              (* On NV, a wait or a loop's edge breaks the chaining of launches,
+                 so the queue also waits for its previous launch. *)
               if
-                latest.items <> []
+                (latest.items <> [] || crossed)
                 && kind devices device = "NV"
                 && String.starts_with ~prefix:"COMPUTE" queue
               then
@@ -849,6 +855,7 @@ let make_ctx devices items profile =
             end
         | Loop (r, body) ->
             let saved = Hashtbl.copy prev in
+            incr edges;
             visit ~behind:(r :: behind) ~recording:true body;
             Hashtbl.iter
               (fun k ds ->
@@ -857,7 +864,9 @@ let make_ctx devices items profile =
                 in
                 if ds != before then Hashtbl.replace prev k (before @ ds))
               (Hashtbl.copy prev);
+            incr edges;
             visit ~behind ~recording body;
+            incr edges;
             Deps.forget tracker (fun (_, d) -> List.memq r d.behind))
       items
   in
