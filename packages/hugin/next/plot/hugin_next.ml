@@ -1031,7 +1031,7 @@ let coord c f = Coord_sys (c, f)
 
 let name s f =
   match s with
-  | "axis" | "legend" | "panel" ->
+  | "axis" | "legend" | "panel" | "cell" ->
       err "name" "%S is the segment of generated nodes" s
   | _ -> Name (s, f)
 
@@ -1078,16 +1078,2082 @@ module Mark = struct
     Mark (make_mark "Mark.v" ~name ?reduce ?coord ?swatch bindings draw)
 end
 
-(* Stages *)
+(* Resolving
+
+   [resolve] expands the figure, evaluating binds and assigning ids; arranges
+   it, forming scopes and broadcasting layers over grids; reads the channels of
+   each occurrence and merges the specifications of each scale; summarises each
+   occurrence's data where it lives; and fits the scales, categorical ones first
+   since facets make panels. An occurrence is a mark in one cell: a mark that a
+   layer broadcasts over a grid occurs once per cell, and reads the scales of
+   each. *)
+
+let positional = function "x" | "y" | "fx" | "fy" -> true | _ -> false
+
+(* The default scales of roles other than positions and facets are told apart by
+   their kinds too. *)
+let kind_scoped = function
+  | "color" | "opacity" | "size" | "width" | "symbol" -> true
+  | _ -> false
+
+type key =
+  | Figure
+  | Node of id
+  | Cell of id
+  | Panels_of of id * id (* Per panel of the mark, in the cell. *)
+  | Panel of id * id (* The mark, the facet panel. *)
+
+let equal_key k k' =
+  match (k, k') with
+  | Figure, Figure -> true
+  | Node a, Node b | Cell a, Cell b -> Nx.Ptree.Path.equal a b
+  | Panels_of (a, b), Panels_of (a', b') | Panel (a, b), Panel (a', b') ->
+      Nx.Ptree.Path.equal a a' && Nx.Ptree.Path.equal b b'
+  | _ -> false
+
+type kind_tag = Q | T | C
+
+let tag : type d. d Scale.kind -> kind_tag = function
+  | Scale.Quantitative -> Q
+  | Scale.Temporal -> T
+  | Scale.Categorical -> C
+
+let pp_tag ppf t =
+  Format.pp_print_string ppf
+    (match t with Q -> "quantitative" | T -> "temporal" | C -> "categorical")
+
+(* A scale's identity within a scope: its name, and its kind for the default
+   scales [kind_scoped] names. *)
+type sid = { sname : string; skind : kind_tag option }
+
+let sid name t =
+  { sname = name; skind = (if kind_scoped name then Some t else None) }
+
+let equal_sid s s' =
+  String.equal s.sname s'.sname && Option.equal ( = ) s.skind s'.skind
+
+(* Expanding: binds evaluated, ids assigned. Wrappers have their child's id. *)
+
+type node = { id : id; n : enode }
+
+and enode =
+  | E_mark of { mark : mark; order : int }
+  | E_layer of node list
+  | E_grid of {
+      rows : node list list;
+      widths : float list option;
+      heights : float list option;
+    }
+  | E_span of { rows : int; cols : int; f : node }
+  | E_share of (string * sharing) list * node
+  | E_title of Text.Layout.halign * Text.t * node
+  | E_coord of Coord.t * node
+  | E_axis of { side : side option; grid : bool; show : bool; scale : string }
+  | E_legend of { side : side option; show : bool; scale : string }
+
+type read = Read : View.ident * 'a View.sort -> read
+
+type expansion = {
+  view : View.t;
+  mutable reads : read list;
+  mutable marks : int;
+}
+
+let read_key st (k : _ View.key) =
+  match
+    List.find_opt (fun (Read (i, _)) -> View.equal_ident i k.ident) st.reads
+  with
+  | None -> st.reads <- Read (k.ident, k.sort) :: st.reads
+  | Some (Read (_, s)) -> (
+      match View.equal_sort s k.sort with
+      | Some _ -> ()
+      | None ->
+          err "resolve" "the figure reads two keys %a of different sorts"
+            View.pp_ident k.ident)
+
+(* [force st f] evaluates the binds at the head of [f], through wrappers. *)
+let rec force st = function
+  | Bind (k, fn) ->
+      read_key st k;
+      force st (fn (View.get k st.view))
+  | Title t -> Title { t with f = force st t.f }
+  | Coord_sys (c, f) -> Coord_sys (c, force st f)
+  | Share (p, f) -> Share (p, force st f)
+  | Span s -> Span { s with f = force st s.f }
+  | Name (s, f) -> Name (s, force st f)
+  | (Mark _ | Layer _ | Grid _ | Axis _ | Legend _) as f -> f
+
+let rec names = function
+  | Name (s, f) -> s :: names f
+  | Title { f; _ } | Coord_sys (_, f) | Share (_, f) | Span { f; _ } -> names f
+  | Mark _ | Layer _ | Grid _ | Bind _ | Axis _ | Legend _ -> []
+
+let rec split n l =
+  match l with
+  | x :: l when n > 0 ->
+      let a, b = split (n - 1) l in
+      (x :: a, b)
+  | _ -> ([], l)
+
+let rec expand st id f =
+  let n =
+    match f with
+    | Mark mark ->
+        st.marks <- st.marks + 1;
+        E_mark { mark; order = st.marks }
+    | Layer fs -> E_layer (children st id fs)
+    | Grid g ->
+        let rec regroup rows cells =
+          match rows with
+          | [] -> []
+          | row :: rows ->
+              let row, cells = split (List.length row) cells in
+              row :: regroup rows cells
+        in
+        let cells = children st id (List.concat g.rows) in
+        E_grid
+          {
+            rows = regroup g.rows cells;
+            widths = g.widths;
+            heights = g.heights;
+          }
+    | Span s -> E_span { rows = s.rows; cols = s.cols; f = expand st id s.f }
+    | Share (p, f) -> E_share (p, expand st id f)
+    | Title t -> E_title (t.align, t.text, expand st id t.f)
+    | Coord_sys (c, f) -> E_coord (c, expand st id f)
+    | Name (_, f) -> (expand st id f).n
+    | Bind _ -> (expand st id (force st f)).n
+    | Axis { side; grid; show; scale } -> E_axis { side; grid; show; scale }
+    | Legend { side; show; scale } -> E_legend { side; show; scale }
+  in
+  { id; n }
+
+and children st parent fs =
+  let named =
+    List.mapi
+      (fun i f ->
+        let f = force st f in
+        match names f with
+        | [] -> (Nx.Ptree.Path.add (Index i) parent, f)
+        | [ s ] -> (Nx.Ptree.Path.add (Field s) parent, f)
+        | _ -> err "resolve" "the child %d of %a has two names" i pp_id parent)
+      fs
+  in
+  let rec distinct = function
+    | [] -> ()
+    | (id, _) :: rest ->
+        if List.exists (fun (id', _) -> Nx.Ptree.Path.equal id id') rest then
+          err "resolve" "two children of %a are named %a" pp_id parent pp_id id;
+        distinct rest
+  in
+  distinct named;
+  List.map (fun (id, f) -> expand st id f) named
+
+(* Arranging: shares give scopes, layers broadcast over grids, and every panel's
+   content becomes a list of occurrences. *)
+
+type env = {
+  shares : (string * key) list; (* Innermost first. *)
+  pending : string list; (* Independent names awaiting the node's children. *)
+  cell : id; (* The innermost grid cell, or the root. *)
+}
+
+type shares = (string * key) list
+
+let key_of (env : env) name =
+  match List.assoc_opt name env.shares with
+  | Some k -> k
+  | None -> if positional name then Cell env.cell else Figure
+
+type occ = {
+  mid : id;
+  mark : mark;
+  order : int;
+  shares : (string * key) list;
+  per_panel : string list;
+}
+
+type axis_item = {
+  gid : id;
+  side : side option;
+  grid : bool;
+  show : bool;
+  scale : string;
+}
+
+type legend_item = {
+  lid : id;
+  lside : side option;
+  lshow : bool;
+  lscale : string;
+  lkey : key; (* The scope of the scales it stands for. *)
+}
+
+type guide_item = G_axis of axis_item | G_legend of legend_item
+
+let equal_axis a a' =
+  Option.equal equal_side a.side a'.side
+  && Bool.equal a.grid a'.grid && Bool.equal a.show a'.show
+  && String.equal a.scale a'.scale
+
+let equal_legend l l' =
+  Option.equal equal_side l.lside l'.lside
+  && Bool.equal l.lshow l'.lshow
+  && String.equal l.lscale l'.lscale
+
+type content = {
+  occs : occ list;
+  guides : guide_item list;
+  coords : (id * Coord.t) list;
+  held : (id * shares) list;
+      (* The nodes that lie in the content, each with the scopes a channel there
+         reads. *)
+}
+
+type shaped = { titles : (Text.Layout.halign * Text.t) list; body : body }
+and body = Single of content | Arr of arr
+
+and arr = {
+  aid : id;
+  nrows : int;
+  ncols : int;
+  cells : cell list;
+  widths : float list option;
+  heights : float list option;
+}
+
+and cell = {
+  row : int;
+  col : int;
+  rows : int;
+  cols : int;
+  cid : id;
+  s : shaped;
+}
+
+let single content = { titles = []; body = Single content }
+let no_content = { occs = []; guides = []; coords = []; held = [] }
+
+let rec map_contents f s =
+  match s.body with
+  | Single c -> { s with body = Single (f c) }
+  | Arr a ->
+      let cells =
+        List.map (fun cell -> { cell with s = map_contents f cell.s }) a.cells
+      in
+      { s with body = Arr { a with cells } }
+
+let add_coord c = map_contents (fun ct -> { ct with coords = c :: ct.coords })
+
+(* [hold node s] places [node] in every content of [s]. *)
+let hold node = map_contents (fun c -> { c with held = node :: c.held })
+
+(* [rename old cid s] is [s] with the scopes of the cell [old] those of the cell
+   [cid], where a layer broadcasts [old] into [cid]. *)
+let rename old cid =
+  let key = function
+    | Cell c when Nx.Ptree.Path.equal c old -> Cell cid
+    | k -> k
+  in
+  let shares = List.map (fun (n, k) -> (n, key k)) in
+  let guide = function
+    | G_legend l -> G_legend { l with lkey = key l.lkey }
+    | G_axis _ as g -> g
+  in
+  map_contents (fun c ->
+      {
+        c with
+        occs =
+          List.map (fun (o : occ) -> { o with shares = shares o.shares }) c.occs;
+        guides = List.map guide c.guides;
+        held = List.map (fun (id, s) -> (id, shares s)) c.held;
+      })
+
+let rec core n =
+  match n.n with
+  | E_title (_, _, f) | E_coord (_, f) | E_share (_, f) | E_span { f; _ } ->
+      core f
+  | E_mark _ | E_layer _ | E_grid _ | E_axis _ | E_legend _ -> n
+
+let rec span_of n =
+  match n.n with
+  | E_span s -> (s.rows, s.cols)
+  | E_title (_, _, f) | E_coord (_, f) | E_share (_, f) -> span_of f
+  | E_mark _ | E_layer _ | E_grid _ | E_axis _ | E_legend _ -> (1, 1)
+
+(* [scale_name b] is the name of the scale the channel of [b] reads, if any. *)
+let scale_name (B b) =
+  match (data b.ch, b.role.scale) with
+  | Some d, Some default ->
+      Some (Option.value ~default (Option.bind d.spec Scale.name))
+  | _ -> None
+
+(* [reads n] is the scales the marks under [n] read, each with whether a
+   position or facet role reads it. *)
+let rec reads n =
+  match n.n with
+  | E_mark { mark; _ } ->
+      List.filter_map
+        (fun (B b as bd) ->
+          Option.map
+            (fun s -> (s, positional (Option.get b.role.scale)))
+            (scale_name bd))
+        mark.bindings
+  | E_layer cs -> List.concat_map reads cs
+  | E_grid g -> List.concat_map (List.concat_map reads) g.rows
+  | E_span { f; _ } | E_share (_, f) | E_title (_, _, f) | E_coord (_, f) ->
+      reads f
+  | E_axis _ | E_legend _ -> []
+
+let check_share node pairs f =
+  let reads = reads f in
+  List.iter
+    (fun (name, (s : sharing)) ->
+      if not (List.mem_assoc name reads) then
+        err "resolve" "%a shares the scale %S, which nothing under it reads"
+          pp_id node.id name;
+      match (s, (core f).n) with
+      | `Independent, E_layer _
+        when List.exists (fun (n, p) -> String.equal n name && p) reads ->
+          err "resolve"
+            "%a makes the scale %S independent per layer child, but a position \
+             or facet reads it"
+            pp_id node.id name
+      | _ -> ())
+    pairs
+
+let share_env (env : env) node pairs =
+  List.fold_left
+    (fun (env : env) (name, (s : sharing)) ->
+      match s with
+      | `Shared ->
+          {
+            env with
+            shares = (name, Node node.id) :: env.shares;
+            pending =
+              List.filter (fun n -> not (String.equal n name)) env.pending;
+          }
+      | `Independent -> { env with pending = name :: env.pending })
+    env pairs
+
+let child_env (env : env) ~cell id =
+  let key name = if cell && positional name then Cell id else Node id in
+  let shares = List.map (fun n -> (n, key n)) env.pending @ env.shares in
+  { shares; pending = []; cell = (if cell then id else env.cell) }
+
+let equal_titles =
+  List.equal (fun (a, t) (a', t') -> equal_halign a a' && Text.equal t t')
+
+let concat cs =
+  List.fold_right
+    (fun c acc ->
+      {
+        occs = c.occs @ acc.occs;
+        guides = c.guides @ acc.guides;
+        coords = c.coords @ acc.coords;
+        held = c.held @ acc.held;
+      })
+    cs no_content
+
+(* [layer_shaped lid shares children] is the layer [lid] of [children], [shares]
+   the scopes of the layer. *)
+let rec layer_shaped lid shares (children : shaped list) =
+  let titles =
+    List.fold_left
+      (fun acc s ->
+        match (s.titles, acc) with
+        | [], _ -> acc
+        | t, None -> Some t
+        | t, Some t' ->
+            if equal_titles t t' then acc
+            else
+              err "resolve" "the children of %a have different titles" pp_id lid)
+      None children
+  in
+  let titles = Option.value ~default:[] titles in
+  let children = List.map (fun s -> { s with titles = [] }) children in
+  let arrs =
+    List.filter_map
+      (fun s -> match s.body with Arr a -> Some a | Single _ -> None)
+      children
+  in
+  match arrs with
+  | [] ->
+      let contents =
+        List.filter_map
+          (fun s -> match s.body with Single c -> Some c | Arr _ -> None)
+          children
+      in
+      { titles; body = Single (concat contents) }
+  | first :: _ ->
+      { titles; body = Arr (broadcast lid shares children arrs first) }
+
+and broadcast lid shares children arrs first =
+  let dim d d' =
+    if d = d' || d' = 1 then d
+    else if d = 1 then d'
+    else
+      err "resolve" "the arrangements of the children of %a do not broadcast"
+        pp_id lid
+  in
+  let nrows = List.fold_left (fun d a -> dim d a.nrows) 1 arrs in
+  let ncols = List.fold_left (fun d a -> dim d a.ncols) 1 arrs in
+  let layout a = List.map (fun c -> (c.row, c.col, c.rows, c.cols)) a.cells in
+  let spanned a = List.exists (fun c -> c.rows > 1 || c.cols > 1) a.cells in
+  let template =
+    match List.find_opt spanned arrs with
+    | Some a ->
+        List.iter
+          (fun a' ->
+            if layout a' <> layout a then
+              err "resolve"
+                "a grid with spans under %a broadcasts with a grid of other \
+                 cells"
+                pp_id lid)
+          arrs;
+        a
+    | None -> (
+        match
+          List.find_opt (fun a -> a.nrows = nrows && a.ncols = ncols) arrs
+        with
+        | Some a -> a
+        | None -> first)
+  in
+  let cell_at a r c =
+    let r = if a.nrows = 1 then 0 else r and c = if a.ncols = 1 then 0 else c in
+    List.find (fun cell -> cell.row = r && cell.col = c) a.cells
+  in
+  let positions =
+    if spanned template then layout template
+    else
+      List.concat
+        (List.init nrows (fun r -> List.init ncols (fun c -> (r, c, 1, 1))))
+  in
+  let cells =
+    List.mapi
+      (fun k (row, col, rows, cols) ->
+        let cid = Nx.Ptree.Path.(add (Index k) (add (Field "cell") lid)) in
+        let parts =
+          List.map
+            (fun s ->
+              match s.body with
+              | Single _ -> s
+              | Arr a ->
+                  let cell = cell_at a row col in
+                  rename cell.cid cid cell.s)
+            children
+        in
+        let s = hold (cid, shares) (layer_shaped cid shares parts) in
+        { row; col; rows; cols; cid; s })
+      positions
+  in
+  let same = template.nrows = nrows && template.ncols = ncols in
+  {
+    aid = lid;
+    nrows;
+    ncols;
+    cells;
+    widths = (if same then template.widths else None);
+    heights = (if same then template.heights else None);
+  }
+
+(* [arrange nodes env ~in_cell n] is [n] arranged, with the id of each core node
+   added to [nodes]. *)
+let rec arrange nodes (env : env) ~in_cell n =
+  let record () = nodes := n.id :: !nodes in
+  let here = [ (n.id, env.shares) ] in
+  match n.n with
+  | E_mark { mark; order } ->
+      record ();
+      let occ =
+        {
+          mid = n.id;
+          mark;
+          order;
+          shares = env.shares;
+          per_panel = env.pending;
+        }
+      in
+      single { no_content with occs = [ occ ]; held = here }
+  | E_axis { side; grid; show; scale } ->
+      record ();
+      let a = { gid = n.id; side; grid; show; scale } in
+      single { no_content with guides = [ G_axis a ]; held = here }
+  | E_legend { side; show; scale } ->
+      record ();
+      let l =
+        {
+          lid = n.id;
+          lside = side;
+          lshow = show;
+          lscale = scale;
+          lkey = key_of env scale;
+        }
+      in
+      single { no_content with guides = [ G_legend l ]; held = here }
+  | E_title (align, t, f) ->
+      let s = arrange nodes env ~in_cell f in
+      { s with titles = (align, t) :: s.titles }
+  | E_coord (c, f) -> add_coord (n.id, c) (arrange nodes env ~in_cell f)
+  | E_share (pairs, f) ->
+      check_share n pairs f;
+      arrange nodes (share_env env n pairs) ~in_cell f
+  | E_span { f; _ } ->
+      if not in_cell then
+        err "resolve" "%a spans cells outside a grid" pp_id n.id;
+      arrange nodes env ~in_cell f
+  | E_layer cs ->
+      record ();
+      layer_shaped n.id env.shares
+        (List.map
+           (fun c ->
+             arrange nodes (child_env env ~cell:false c.id) ~in_cell:false c)
+           cs)
+      |> hold (n.id, env.shares)
+  | E_grid g ->
+      record ();
+      arrange_grid nodes env n g.rows g.widths g.heights
+      |> hold (n.id, env.shares)
+
+and arrange_grid nodes (env : env) n rows widths heights =
+  let nrows = List.length rows in
+  let covered = Hashtbl.create 16 in
+  let cells = ref [] in
+  List.iteri
+    (fun r row ->
+      let col = ref 0 in
+      List.iter
+        (fun c ->
+          while Hashtbl.mem covered (r, !col) do
+            incr col
+          done;
+          let rs, cs = span_of c in
+          if r + rs > nrows then
+            err "resolve" "the span %a reaches past the last row" pp_id c.id;
+          for i = r to r + rs - 1 do
+            for j = !col to !col + cs - 1 do
+              if Hashtbl.mem covered (i, j) then
+                err "resolve" "the span %a covers another cell" pp_id c.id;
+              Hashtbl.add covered (i, j) ()
+            done
+          done;
+          let s =
+            arrange nodes (child_env env ~cell:true c.id) ~in_cell:true c
+          in
+          cells :=
+            { row = r; col = !col; rows = rs; cols = cs; cid = c.id; s }
+            :: !cells;
+          col := !col + cs)
+        row)
+    rows;
+  let width r =
+    let rec count j = if Hashtbl.mem covered (r, j) then count (j + 1) else j in
+    count 0
+  in
+  let ncols = if nrows = 0 then 0 else width 0 in
+  for r = 0 to nrows - 1 do
+    if width r <> ncols then
+      err "resolve" "the rows of %a cover different numbers of columns" pp_id
+        n.id
+  done;
+  if Hashtbl.length covered <> nrows * ncols then
+    err "resolve" "the rows of %a cover different numbers of columns" pp_id n.id;
+  let check what ws k =
+    match ws with
+    | Some ws when List.length ws <> k ->
+        err "resolve" "%a has %d %s for %d tracks" pp_id n.id (List.length ws)
+          what k
+    | _ -> ()
+  in
+  check "widths" widths ncols;
+  check "heights" heights nrows;
+  {
+    titles = [];
+    body =
+      Arr { aid = n.id; nrows; ncols; cells = List.rev !cells; widths; heights };
+  }
+
+(* [panels s] is the cells of [s] that hold content, with their ids, in reading
+   order. *)
+let panels root s =
+  let rec go acc pid s =
+    match s.body with
+    | Single c -> (pid, c) :: acc
+    | Arr a ->
+        List.fold_left (fun acc cell -> go acc cell.cid cell.s) acc a.cells
+  in
+  List.rev (go [] root s)
+
+(* Readings: the channels that read scales, each with its scale's identity and
+   scope. *)
+
+type reading =
+  | R : {
+      occ : occ;
+      pid : id;
+      index : int;
+      role : string;
+      d : 'd data;
+      kind : 'd Scale.kind;
+      imply : float Scale.t option;
+      guide : bool option;
+      mapped : bool;
+      sid : sid;
+      key : key;
+    }
+      -> reading
+
+let is_map : type d r. (d, r) channel -> bool = function
+  | Map _ -> true
+  | Const _ | Data _ -> false
+
+let readings_of pid occ =
+  let env = { shares = occ.shares; pending = []; cell = pid } in
+  List.concat
+    (List.mapi
+       (fun index (B b) ->
+         match (data b.ch, b.role.scale) with
+         | Some d, Some default ->
+             let name = Option.value ~default (Option.bind d.spec Scale.name) in
+             let kind = lift_kind d.lift in
+             let key =
+               if not (List.mem name occ.per_panel) then key_of env name
+               else if name = "fx" || name = "fy" then
+                 err "resolve"
+                   "%a makes its facet scale %S independent per panel" pp_id
+                   occ.mid name
+               else Panels_of (occ.mid, pid)
+             in
+             [
+               R
+                 {
+                   occ;
+                   pid;
+                   index;
+                   role = b.role.name;
+                   d;
+                   kind;
+                   imply = b.imply;
+                   guide = b.guide;
+                   mapped = is_map b.ch;
+                   sid = sid name (tag kind);
+                   key;
+                 };
+             ]
+         | _ -> [])
+       occ.mark.bindings)
+
+type 'd member = {
+  m_occ : occ;
+  m_pid : id;
+  m_index : int;
+  m_role : string;
+  m_d : 'd data;
+  m_imply : float Scale.t option;
+  m_guide : bool option;
+}
+
+type group =
+  | G : {
+      sid : sid;
+      key : key;
+      kind : 'd Scale.kind;
+      members : 'd member list; (* In figure order. *)
+      legend : bool;
+          (* A role other than a position or facet reads it without
+             map_range. *)
+    }
+      -> group
+
+let axis_role = function "x" | "x2" -> "x" | "y" | "y2" -> "y" | r -> r
+
+let group readings =
+  let add groups (R r) =
+    let member =
+      {
+        m_occ = r.occ;
+        m_pid = r.pid;
+        m_index = r.index;
+        m_role = r.role;
+        m_d = r.d;
+        m_imply = r.imply;
+        m_guide = r.guide;
+      }
+    in
+    let legend = (not (positional (axis_role r.role))) && not r.mapped in
+    let rec go = function
+      | [] ->
+          [
+            G
+              {
+                sid = r.sid;
+                key = r.key;
+                kind = r.kind;
+                members = [ member ];
+                legend;
+              };
+          ]
+      | (G g as gr) :: rest -> (
+          if not (equal_sid g.sid r.sid && equal_key g.key r.key) then
+            gr :: go rest
+          else
+            match Scale.equal_kind g.kind r.kind with
+            | Some Type.Equal ->
+                G
+                  {
+                    g with
+                    members = member :: g.members;
+                    legend = g.legend || legend;
+                  }
+                :: rest
+            | None ->
+                let m = List.hd g.members in
+                err "resolve" "the scale %S is read as %a by %a and as %a by %a"
+                  r.sid.sname pp_tag (tag g.kind) pp_id m.m_occ.mid pp_tag
+                  (tag r.kind) pp_id r.occ.mid)
+    in
+    go groups
+  in
+  List.fold_left add [] readings
+  |> List.rev_map (fun (G g) -> G { g with members = List.rev g.members })
+  |> List.rev
+
+(* In a panel, the channels on x read one scale, and likewise y, fx and fy. *)
+let check_panel_scales readings =
+  let rec go seen = function
+    | [] -> ()
+    | (R r as rd) :: rest ->
+        let axis = axis_role r.role in
+        (if positional axis then
+           match
+             List.find_opt
+               (fun (R r') ->
+                 Nx.Ptree.Path.equal r'.pid r.pid
+                 && String.equal (axis_role r'.role) axis)
+               seen
+           with
+           | Some (R r')
+             when not (equal_sid r'.sid r.sid && equal_key r'.key r.key) ->
+               err "resolve" "%a and %a read two %s scales in the panel %a"
+                 pp_id r'.occ.mid pp_id r.occ.mid axis pp_id r.pid
+           | _ -> ());
+        go (rd :: seen) rest
+  in
+  go [] readings
+
+let check_coords cells =
+  List.iter
+    (fun (pid, c) ->
+      match c.coords with
+      | (id, k) :: rest -> (
+          match List.find_opt (fun (_, k') -> not (Coord.equal k k')) rest with
+          | Some (id', _) ->
+              err "resolve"
+                "the panel %a lies under two coordinate systems, at %a and %a"
+                pp_id pid pp_id id pp_id id'
+          | None -> ())
+      | [] -> (
+          let implied =
+            List.filter_map
+              (fun o -> Option.map (fun k -> (o.mid, k)) o.mark.coord)
+              c.occs
+          in
+          match implied with
+          | (id, k) :: rest -> (
+              match
+                List.find_opt (fun (_, k') -> not (Coord.equal k k')) rest
+              with
+              | Some (id', _) ->
+                  err "resolve"
+                    "%a and %a imply two coordinate systems in the panel %a"
+                    pp_id id pp_id id' pp_id pid
+              | None -> ())
+          | [] -> ()))
+    cells
+
+let check_axes cells readings =
+  List.iter
+    (fun (pid, c) ->
+      let axes =
+        List.filter_map
+          (function G_axis a -> Some a | G_legend _ -> None)
+          c.guides
+      in
+      List.iter
+        (fun a ->
+          List.iter
+            (fun a' ->
+              if String.equal a.scale a'.scale && not (equal_axis a a') then
+                err "resolve" "the panel %a holds two different axes for %S"
+                  pp_id pid a.scale)
+            axes;
+          let ok =
+            List.exists
+              (fun (R r) ->
+                Nx.Ptree.Path.equal r.pid pid
+                && positional (axis_role r.role)
+                && String.equal r.sid.sname a.scale)
+              readings
+          in
+          if not ok then
+            err "resolve"
+              "the axis %a names %S, no position or facet scale of its panel"
+              pp_id a.gid a.scale)
+        axes)
+    cells
+
+(* Merging specifications *)
+
+let explicit_domain : type d. d Scale.t -> d Scale.domain option =
+ fun s ->
+  (* A set property differs from the same property unset, so [s] sets its domain
+     iff setting it again changes nothing. *)
+  let d = Scale.domain s in
+  match Scale.with_domain d s with
+  | s' -> if Scale.equal s s' then Some d else None
+  | exception Invalid_argument _ -> None
+
+let labelled : type d. d lift -> bool = function
+  | Cat { labels = Some _; _ } | Strings _ -> true
+  | Cat { labels = None; _ } | Dim _ -> false
+  | Num _ | Index _ | Scalar _ -> false
+
+let merge_level sid level specs =
+  let rec go acc prior = function
+    | [] -> acc
+    | (m, s) :: rest ->
+        let acc =
+          match acc with
+          | None -> Some s
+          | Some a -> (
+              match Scale.merge a s with
+              | Ok a -> Some a
+              | Error p ->
+                  let m0 =
+                    match
+                      List.find_opt
+                        (fun (_, s0) -> Result.is_error (Scale.merge s0 s))
+                        prior
+                    with
+                    | Some (m0, _) -> m0
+                    | None -> m
+                  in
+                  err "resolve"
+                    "%a and %a give the scale %S two %s values of %a" pp_id
+                    m0.m_occ.mid pp_id m.m_occ.mid sid.sname level
+                    Scale.pp_property p)
+        in
+        go acc ((m, s) :: prior) rest
+  in
+  go None [] specs
+
+(* [merged kind sid ms] is the specification of the scale [ms] read: their
+   explicit specifications merged, then implied ones under them. *)
+let merged : type d. d Scale.kind -> sid -> d member list -> d Scale.t =
+ fun kind sid ms ->
+  let base : d Scale.t =
+    match kind with
+    | Scale.Quantitative -> Scale.linear ()
+    | Scale.Temporal -> Scale.time ()
+    | Scale.Categorical -> Scale.band ()
+  in
+  let explicit =
+    List.filter_map (fun m -> Option.map (fun s -> (m, s)) m.m_d.spec) ms
+  in
+  let implied : (d member * d Scale.t) list =
+    match kind with
+    | Scale.Quantitative ->
+        List.concat_map
+          (fun m ->
+            let own =
+              match m.m_imply with Some i -> [ (m, i) ] | None -> []
+            in
+            if String.equal m.m_role "size" then
+              own @ [ (m, Scale.linear ~zero:true ()) ]
+            else own)
+          ms
+    | Scale.Categorical ->
+        List.filter_map
+          (fun m ->
+            match m.m_role with
+            | "y" | "y2" -> Some (m, Scale.band ~reverse:true ())
+            | _ -> None)
+          ms
+    | Scale.Temporal -> []
+  in
+  (* [imply] keeps the name and transform of the explicit specification, so an
+     implied one gives only its other properties, and only those can
+     conflict. *)
+  let implied = List.map (fun (m, i) -> (m, Scale.imply i base)) implied in
+  let explicit =
+    Option.value ~default:base (merge_level sid "explicit" explicit)
+  in
+  let spec =
+    match merge_level sid "implied" implied with
+    | None -> explicit
+    | Some i -> Scale.imply i explicit
+  in
+  (* Labelled and indexed categories identify categories differently. *)
+  (match kind with
+  | Scale.Categorical -> (
+      let sort m = labelled m.m_d.lift in
+      (match ms with
+      | m :: rest -> (
+          match List.find_opt (fun m' -> sort m' <> sort m) rest with
+          | Some m' ->
+              err "resolve"
+                "%a and %a read labelled and indexed categories on the scale %S"
+                pp_id m.m_occ.mid pp_id m'.m_occ.mid sid.sname
+          | None -> ())
+      | [] -> ());
+      match (explicit_domain spec, ms) with
+      | Some (Scale.Categories c), m :: _ ->
+          let domain_labelled =
+            match c with Scale.Labels _ -> true | Scale.Indices _ -> false
+          in
+          if domain_labelled <> sort m then
+            err "resolve"
+              "the domain of the scale %S and %a identify categories \
+               differently"
+              sid.sname pp_id m.m_occ.mid
+      | _ -> ())
+  | Scale.Quantitative | Scale.Temporal -> ());
+  spec
+
+let merged_guide sid ms =
+  let rec go acc = function
+    | [] -> Option.map snd acc
+    | m :: rest -> (
+        match (m.m_guide, acc) with
+        | None, _ -> go acc rest
+        | Some g, None -> go (Some (m, g)) rest
+        | Some g, Some (m0, g0) ->
+            if Bool.equal g g0 then go acc rest
+            else
+              err "resolve" "%a and %a imply different guides for the scale %S"
+                pp_id m0.m_occ.mid pp_id m.m_occ.mid sid.sname)
+  in
+  go None ms
+
+(* Summaries: what fitting needs of an occurrence's data, computed where it
+   lives and read to the host at once. *)
+
+type input =
+  | In : {
+      index : int;
+      role : string;
+      colour : bool; (* A missing value keeps its row. *)
+      lift : 'd lift;
+      spec : 'd Scale.t; (* Finds the missing values. *)
+      fitted : bool; (* Its hull or kept codes are summarised. *)
+    }
+      -> input
+
+type summary = {
+  hulls : (int * (float * float)) list;
+      (* Per binding index, when some value is kept. *)
+  codes : (int * int list) list; (* Per binding index, increasing. *)
+  notes : string list; (* Problems with the data, for warnings. *)
+}
+
+type probe = {
+  miss : Nx.bool_t option; (* Broadcasts to the mark's shape. *)
+  values : Nx.float64_t option;
+  icodes : Nx.int64_t option;
+  counts : (Nx.float64_t * (int -> string)) list;
+}
+
+let count m = Nx.sum (Nx.cast Nx.float64 m)
+
+(* [counted noun ppf k] formats [k noun] with its verb, such as [1 code is]. *)
+let counted noun ppf k =
+  if k = 1 then Format.fprintf ppf "1 %s is" noun
+  else Format.fprintf ppf "%d %ss are" k noun
+
+let ( ||| ) m m' =
+  match (m, m') with
+  | None, m | m, None -> m
+  | Some a, Some b -> Some (Nx.logical_or a b)
+
+let invalid valid = Option.map Nx.logical_not valid
+
+(* [along shape a t] is the vector [t] of the length of axis [a], shaped to
+   broadcast along that axis of [shape]. *)
+let along shape a t =
+  Nx.reshape
+    (Array.init
+       (Array.length shape - a)
+       (fun i -> if i = 0 then shape.(a) else 1))
+    t
+
+let beyond_int : type a b. (a, b) Nx.dtype -> Nx.int64_t -> Nx.bool_t option =
+ fun dtype c ->
+  let max = Int64.of_int max_int and min = Int64.of_int min_int in
+  match dtype with
+  | Nx.Int64 -> Some (Nx.logical_or (Nx.greater_s c max) (Nx.less_s c min))
+  | Nx.UInt64 -> Some (Nx.logical_or (Nx.less_s c 0L) (Nx.greater_s c max))
+  | _ -> None
+
+(* [absent ints c] is [true] where the code [c] is none of the increasing
+   [ints]. *)
+let absent ints c =
+  let k = Array.length ints in
+  if k = 0 then Nx.full_like (Nx.cast Nx.bool c) true
+  else
+    let d = Nx.create Nx.int64 [| k |] (Array.map Int64.of_int ints) in
+    let pos =
+      Nx.clamp ~max:(Int64.of_int (k - 1)) (Nx.searchsorted ~side:`Left d c)
+    in
+    Nx.not_equal (Nx.take ~indices:pos d) c
+
+let quantities ?valid role spec v =
+  let m = Scale.missing spec v in
+  let undefined = Nx.logical_and m (Nx.isfinite v) in
+  let undefined =
+    match valid with
+    | None -> undefined
+    | Some ok -> Nx.logical_and undefined ok
+  in
+  let note k =
+    Format.asprintf "%s: %a missing for its scale" role (counted "finite value")
+      k
+  in
+  {
+    miss = Some m ||| invalid valid;
+    values = Some v;
+    icodes = None;
+    counts = [ (count undefined, note) ];
+  }
+
+let probe : type d. int array -> string -> d lift -> d Scale.t -> probe =
+ fun shape role lift spec ->
+  match lift with
+  | Num { x; valid } -> quantities ?valid role spec (Nx.cast Nx.float64 x)
+  | Index k ->
+      let a = Option.get (axis_of shape k) in
+      let n = shape.(a) in
+      quantities role spec
+        (along shape a (Nx.cast Nx.float64 (Nx.arange Nx.int32 0 n 1)))
+  | Scalar x -> quantities role spec (Nx.scalar Nx.float64 x)
+  | Cat { codes; valid; labels = Some labels } ->
+      let c = Nx.cast Nx.int64 codes in
+      let n = Array.length labels in
+      let out =
+        Nx.logical_or (Nx.less_s c 0L) (Nx.greater_equal_s c (Int64.of_int n))
+      in
+      let outside =
+        match valid with None -> out | Some ok -> Nx.logical_and out ok
+      in
+      let m =
+        match explicit_domain spec with
+        | Some (Scale.Categories (Scale.Labels domain)) ->
+            let kept l = Array.exists (String.equal l) domain in
+            let allowed = Nx.create Nx.bool [| n |] (Array.map kept labels) in
+            Nx.logical_or out (Nx.logical_not (Nx.take ~indices:c allowed))
+        | _ -> out
+      in
+      let note k =
+        Format.asprintf "%s: %a outside its %d labels" role (counted "code") k n
+      in
+      {
+        miss = Some m ||| invalid valid;
+        values = None;
+        icodes = None;
+        counts = [ (count outside, note) ];
+      }
+  | Cat { codes; valid; labels = None } ->
+      let c = Nx.cast Nx.int64 codes in
+      let beyond = beyond_int (Nx.dtype codes) c in
+      let m = beyond ||| invalid valid in
+      let m =
+        match explicit_domain spec with
+        | Some (Scale.Categories (Scale.Indices ix)) ->
+            m ||| Some (absent (Array.map fst ix) c)
+        | _ -> m
+      in
+      let counts =
+        match beyond with
+        | None -> []
+        | Some b ->
+            let b =
+              match valid with None -> b | Some ok -> Nx.logical_and b ok
+            in
+            let note k =
+              Format.asprintf "%s: %a beyond the range of int" role
+                (counted "code") k
+            in
+            [ (count b, note) ]
+      in
+      { miss = m; values = None; icodes = Some c; counts }
+  | Strings a ->
+      let m =
+        match explicit_domain spec with
+        | Some (Scale.Categories (Scale.Labels domain)) ->
+            let out s = not (Array.exists (String.equal s) domain) in
+            Some (Nx.create Nx.bool [| Array.length a |] (Array.map out a))
+        | _ -> None
+      in
+      { miss = m; values = None; icodes = None; counts = [] }
+  | Dim { axis; valid; _ } ->
+      let a = Option.get (axis_of shape axis) in
+      let m =
+        match explicit_domain spec with
+        | Some (Scale.Categories (Scale.Indices ix)) ->
+            let out i = not (Array.exists (fun (j, _) -> j = i) ix) in
+            let n = shape.(a) in
+            Some (along shape a (Nx.create Nx.bool [| n |] (Array.init n out)))
+        | _ -> None
+      in
+      { miss = m ||| invalid valid; values = None; icodes = None; counts = [] }
+
+(* [kept_codes keep c] is the distinct codes of [c] where [keep] holds, in
+   increasing order. *)
+let kept_codes keep c =
+  let keys =
+    Nx.stack ~axis:1 [ Nx.flatten (Nx.cast Nx.int64 keep); Nx.flatten c ]
+  in
+  let groups = Nx.unique keys in
+  let rows = Nx.to_array (Nx.take ~axis:0 ~indices:groups.first keys) in
+  let codes = ref [] in
+  for i = 0 to (Array.length rows / 2) - 1 do
+    if rows.(2 * i) = 1L then codes := Int64.to_int rows.((2 * i) + 1) :: !codes
+  done;
+  List.sort_uniq Int.compare !codes
+
+let summarise shape inputs filter =
+  let probes =
+    List.map
+      (fun (In i as input) -> (input, probe shape i.role i.lift i.spec))
+      inputs
+  in
+  let numel = Array.fold_left ( * ) 1 shape in
+  let full t = Nx.broadcast_to shape t in
+  let dropped =
+    List.fold_left
+      (fun acc (In i, p) -> if i.colour then acc else acc ||| p.miss)
+      None probes
+  in
+  let keep =
+    match dropped with
+    | None -> Nx.full Nx.bool shape true
+    | Some d -> Nx.logical_not (full d)
+  in
+  let keep =
+    match filter with None -> keep | Some f -> Nx.logical_and keep (full f)
+  in
+  let kept p =
+    match p.miss with
+    | None -> keep
+    | Some m -> Nx.logical_and keep (Nx.logical_not (full m))
+  in
+  let hulled =
+    if numel = 0 then []
+    else
+      List.filter_map
+        (fun (In i, p) ->
+          match p.values with
+          | Some v when i.fitted ->
+              let k = kept p and v = full v in
+              let lo = Nx.min (Nx.where k v (Nx.full_like v Float.infinity)) in
+              let hi =
+                Nx.max (Nx.where k v (Nx.full_like v Float.neg_infinity))
+              in
+              Some (i.index, lo, hi)
+          | _ -> None)
+        probes
+  in
+  let counts = List.concat_map (fun (_, p) -> p.counts) probes in
+  let scalars =
+    List.concat_map (fun (_, lo, hi) -> [ lo; hi ]) hulled @ List.map fst counts
+  in
+  let host = match scalars with [] -> [||] | l -> Nx.to_array (Nx.stack l) in
+  let hulls =
+    List.mapi
+      (fun k (index, _, _) -> (index, (host.(2 * k), host.((2 * k) + 1))))
+      hulled
+    |> List.filter (fun (_, (lo, hi)) -> lo <= hi)
+  in
+  let off = 2 * List.length hulled in
+  let notes =
+    List.concat
+      (List.mapi
+         (fun k (_, note) ->
+           let n = int_of_float host.(off + k) in
+           if n > 0 then [ note n ] else [])
+         counts)
+  in
+  let codes =
+    if numel = 0 then []
+    else
+      List.filter_map
+        (fun (In i, p) ->
+          match p.icodes with
+          | Some c when i.fitted -> Some (i.index, kept_codes (kept p) (full c))
+          | _ -> None)
+        probes
+  in
+  { hulls; codes; notes }
+
+(* Fitting *)
+
+let by_order ms =
+  List.stable_sort
+    (fun m m' ->
+      let c = Int.compare m.m_occ.order m'.m_occ.order in
+      if c <> 0 then c else Int.compare m.m_index m'.m_index)
+    ms
+
+let categories sid (ms : string member list) summary_of =
+  match ms with
+  | m :: _ when labelled m.m_d.lift ->
+      let seen = Hashtbl.create 16 and labels = ref [] in
+      let add l =
+        if not (Hashtbl.mem seen l) then (
+          Hashtbl.add seen l ();
+          labels := l :: !labels)
+      in
+      List.iter
+        (fun m ->
+          match m.m_d.lift with
+          | Cat { labels = Some l; _ } | Strings l -> Array.iter add l
+          | Cat { labels = None; _ } | Dim _ -> ())
+        (by_order ms);
+      Scale.Labels (Array.of_list (List.rev !labels))
+  | _ ->
+      let ints = Hashtbl.create 16 and texts = Hashtbl.create 16 in
+      let text m i s =
+        match Hashtbl.find_opt texts i with
+        | Some (s0, m0) when not (String.equal s s0) ->
+            err "resolve"
+              "%a and %a give the category %d of the scale %S two texts, %S \
+               and %S"
+              pp_id m0.m_occ.mid pp_id m.m_occ.mid i sid.sname s0 s
+        | Some _ -> ()
+        | None -> Hashtbl.add texts i (s, m)
+      in
+      List.iter
+        (fun m ->
+          match m.m_d.lift with
+          | Dim { axis; labels; _ } ->
+              let shape = m.m_occ.mark.shape in
+              let a = Option.get (axis_of shape axis) in
+              for i = 0 to shape.(a) - 1 do
+                Hashtbl.replace ints i ();
+                Option.iter (fun l -> text m i l.(i)) labels
+              done
+          | Cat { labels = None; _ } ->
+              Option.iter
+                (List.iter (fun i -> Hashtbl.replace ints i ()))
+                (List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).codes)
+          | Cat { labels = Some _; _ } | Strings _ -> ())
+        (by_order ms);
+      let ints =
+        List.sort Int.compare (Hashtbl.fold (fun i () acc -> i :: acc) ints [])
+      in
+      let shown i =
+        match Hashtbl.find_opt texts i with
+        | Some (s, _) -> s
+        | None -> string_of_int i
+      in
+      Scale.Indices (Array.of_list (List.map (fun i -> (i, shown i)) ints))
+
+let fit_scale : type d.
+    d Scale.kind ->
+    sid ->
+    d member list ->
+    d Scale.t ->
+    (occ -> id -> summary) ->
+    d Scale.t =
+ fun kind sid ms spec summary_of ->
+  match kind with
+  | Scale.Quantitative ->
+      let hull acc m =
+        match
+          (List.assoc_opt m.m_index (summary_of m.m_occ m.m_pid).hulls, acc)
+        with
+        | None, acc -> acc
+        | Some h, None -> Some h
+        | Some (lo, hi), Some (a, b) -> Some (Float.min a lo, Float.max b hi)
+      in
+      let observed = List.fold_left hull None ms in
+      Scale.fit
+        (Option.map (fun (lo, hi) -> Scale.Floats (lo, hi)) observed)
+        spec
+  | Scale.Categorical ->
+      Scale.fit (Some (Scale.Categories (categories sid ms summary_of))) spec
+  | Scale.Temporal -> Scale.fit None spec
+
+type fitted =
+  | F : {
+      sid : sid;
+      key : key;
+      kind : 'd Scale.kind;
+      members : 'd member list;
+      legend : bool;
+      guide : bool option;
+      spec : 'd Scale.t; (* Merged. *)
+      scale : 'd Scale.t; (* Fitted, then zoomed. *)
+    }
+      -> fitted
+
+let category_names (s : string Scale.t) =
+  match Scale.domain s with
+  | Scale.Categories (Scale.Labels l) -> Array.to_list l
+  | Scale.Categories (Scale.Indices ix) ->
+      List.map (fun (i, _) -> string_of_int i) (Array.to_list ix)
+
+(* Facets *)
+
+type facet_panel = { pnid : id; pfy : string option; pfx : string option }
+type presence = Everywhere | Nowhere | Rows of Nx.bool_t
+
+let rec const_value : type d r. (d, r) channel -> r option = function
+  | Const v -> Some v
+  | Map (f, c) -> Option.map f (const_value c)
+  | Data _ -> None
+
+(* [presence shape mark role cat] is where the rows of [mark] are in the panels
+   of the category [cat] of the facet [role]. *)
+let presence shape mark role cat =
+  match find_binding role mark.bindings with
+  | None -> Everywhere
+  | Some (B b) -> (
+      match equal_range b.role.range Panels with
+      | None -> Everywhere
+      | Some Type.Equal -> (
+          match (const_value b.ch, data b.ch) with
+          | Some v, _ -> if String.equal v cat then Everywhere else Nowhere
+          | None, None -> Everywhere
+          | None, Some d -> (
+              let index = int_of_string_opt cat in
+              let equal_code codes i =
+                Rows (Nx.equal_s (Nx.cast Nx.int64 codes) (Int64.of_int i))
+              in
+              match d.lift with
+              | Dim { axis; _ } ->
+                  let a = Option.get (axis_of shape axis) in
+                  let n = shape.(a) in
+                  let rows = Array.init n (fun i -> index = Some i) in
+                  Rows (along shape a (Nx.create Nx.bool [| n |] rows))
+              | Cat { codes; labels = Some l; _ } -> (
+                  let rec find i =
+                    if i >= Array.length l then None
+                    else if String.equal l.(i) cat then Some i
+                    else find (i + 1)
+                  in
+                  match find 0 with
+                  | Some i -> equal_code codes i
+                  | None -> Nowhere)
+              | Cat { codes; labels = None; _ } -> (
+                  match index with
+                  | Some i -> equal_code codes i
+                  | None -> Nowhere)
+              | Strings a ->
+                  Rows
+                    (Nx.create Nx.bool
+                       [| Array.length a |]
+                       (Array.map (String.equal cat) a))
+              | Num _ | Index _ | Scalar _ -> Everywhere)))
+
+let both p p' =
+  match (p, p') with
+  | Nowhere, _ | _, Nowhere -> Nowhere
+  | Everywhere, p | p, Everywhere -> p
+  | Rows r, Rows r' -> Rows (Nx.logical_and r r')
+
+(* The scale of the facet [role] read in the cell [pid]. *)
+let facet_scale fitted pid role : string Scale.t option =
+  List.find_map
+    (fun (F f) : string Scale.t option ->
+      match Scale.equal_kind f.kind Scale.Categorical with
+      | Some Type.Equal ->
+          if
+            List.exists
+              (fun m ->
+                Nx.Ptree.Path.equal m.m_pid pid && String.equal m.m_role role)
+              f.members
+          then Some f.scale
+          else None
+      | None -> None)
+    fitted
+
+let facet_panels fitted pid =
+  let fx = facet_scale fitted pid "fx" and fy = facet_scale fitted pid "fy" in
+  (match (fx, fy) with
+  | Some s, Some _ when Option.is_some (Scale.wrap s) ->
+      err "resolve" "the fx scale of %a wraps, but the cell has an fy scale"
+        pp_id pid
+  | _ -> ());
+  let cats = function
+    | None -> [ None ]
+    | Some s -> List.map Option.some (category_names s)
+  in
+  match (fx, fy) with
+  | None, None -> [ { pnid = pid; pfy = None; pfx = None } ]
+  | _ ->
+      List.concat_map
+        (fun pfy ->
+          List.map
+            (fun pfx ->
+              let add c id =
+                match c with
+                | None -> id
+                | Some c -> Nx.Ptree.Path.add (Field c) id
+              in
+              let pnid =
+                Nx.Ptree.Path.add (Field "panel") pid |> add pfy |> add pfx
+              in
+              { pnid; pfy; pfx })
+            (cats fx))
+        (cats fy)
+
+(* Resolved figures *)
+
+type spec = Sp : 'd Scale.t -> spec
+
+type entry = {
+  e_mark : mark;
+  e_inputs : input list;
+  e_filter : (string option * string option) option;
+  e_summary : summary;
+}
+
+type resolved = {
+  figure : t;
+  view : View.t;
+  shaped : shaped;
+  facets : (id * facet_panel list) list;
+  scales : fitted list; (* In the order of their first readers. *)
+  nodes : (id * (id * shares) list) list;
+      (* Each node with the cells it lies in and the scopes it reads there. *)
+  warnings : warning list;
+  cache : entry list;
+}
+
+let equal_input (In i) (In i') =
+  Int.equal i.index i'.index
+  && Bool.equal i.fitted i'.fitted
+  && Bool.equal i.colour i'.colour
+  &&
+  match Scale.equal_kind (Scale.kind i.spec) (Scale.kind i'.spec) with
+  | Some Type.Equal -> Scale.equal i.spec i'.spec
+  | None -> false
+
+let equal_filter =
+  Option.equal (fun (a, b) (a', b') ->
+      Option.equal String.equal a a' && Option.equal String.equal b b')
+
+let default_spec : type d. d Scale.kind -> d Scale.t = function
+  | Scale.Quantitative -> Scale.linear ()
+  | Scale.Temporal -> Scale.time ()
+  | Scale.Categorical -> Scale.band ()
+
+let inputs_of specs occ pid =
+  List.concat
+    (List.mapi
+       (fun index (B b) ->
+         match data b.ch with
+         | None -> []
+         | Some d ->
+             let colour =
+               match b.role.range with Colors -> true | _ -> false
+             in
+             let kind = lift_kind d.lift in
+             let found =
+               List.find_map
+                 (fun ((mid, pid', i), sp) ->
+                   if
+                     Int.equal i index
+                     && Nx.Ptree.Path.equal mid occ.mid
+                     && Nx.Ptree.Path.equal pid pid'
+                   then Some sp
+                   else None)
+                 specs
+             in
+             let spec, fitted =
+               match found with
+               | None -> (default_spec kind, false)
+               | Some (Sp s) -> (
+                   match Scale.equal_kind (Scale.kind s) kind with
+                   | Some Type.Equal -> (s, true)
+                   | None ->
+                       assert
+                         false (* A reading's scale has the reading's kind. *))
+             in
+             [
+               In
+                 {
+                   index;
+                   role = b.role.name;
+                   colour;
+                   lift = d.lift;
+                   spec;
+                   fitted;
+                 };
+             ])
+       occ.mark.bindings)
+
+let find_path id l =
+  List.find_map
+    (fun (id', v) -> if Nx.Ptree.Path.equal id id' then Some v else None)
+    l
+
+type lookup =
+  | No_node
+  | No_scope (* No one scope of the name holds the node. *)
+  | Found of fitted option
+
+(* [scope_of places name] is the scope of [name] that holds a node lying in
+   [places], if one scope holds it in every cell. *)
+let scope_of places name =
+  let key (pid, shares) = key_of { shares; pending = []; cell = pid } name in
+  match List.map key places with
+  | k :: ks when List.for_all (equal_key k) ks -> Some k
+  | _ -> None
+
+(* [find_scale scales nodes ~at name t] is the scale [name] of the kind [t] in
+   the scope holding [at]: a panel's own scale, else the scope's. *)
+let find_scale scales nodes ~at name t =
+  let sid = sid name t in
+  let own =
+    List.find_opt
+      (fun (F f) ->
+        equal_sid f.sid sid
+        &&
+        match f.key with
+        | Panel (_, p) -> Nx.Ptree.Path.equal p at
+        | _ -> false)
+      scales
+  in
+  match own with
+  | Some f -> Found (Some f)
+  | None -> (
+      match find_path at nodes with
+      | None -> No_node
+      | Some places -> (
+          match scope_of places name with
+          | None -> No_scope
+          | Some key ->
+              Found
+                (List.find_opt
+                   (fun (F f) -> equal_sid f.sid sid && equal_key f.key key)
+                   scales)))
+
+let zoom_domain : type d. d Scale.kind -> d * d -> d Scale.domain =
+ fun kind (a, b) ->
+  match kind with
+  | Scale.Quantitative -> Scale.Floats (a, b)
+  | Scale.Temporal -> Scale.Instants (a, b)
+  | Scale.Categorical ->
+      assert false (* View.zoom refuses categorical scales. *)
+
+type zoom =
+  | Z : {
+      at : id;
+      name : string;
+      sid : sid;
+      key : key;
+      kind : 'd Scale.kind;
+      domain : 'd Scale.domain;
+    }
+      -> zoom
+
+(* [zoom view nodes scales] is [scales] with the zooms of [view] applied, and
+   the warnings of the zooms it ignores. *)
+let zoom view nodes scales =
+  let warnings = ref [] in
+  let warn at fmt =
+    Format.kasprintf (fun s -> warnings := (at, s) :: !warnings) fmt
+  in
+  let target (ident, View.V (sort, v)) =
+    match (ident, sort) with
+    | View.Zoom_of { scale = name; at }, View.Zoom kind -> (
+        match v with
+        | None -> None
+        | Some ends -> (
+            match find_scale scales nodes ~at name (tag kind) with
+            | Found (Some (F f))
+              when Option.is_some (Scale.equal_kind f.kind kind) ->
+                let domain = zoom_domain kind ends in
+                Some (Z { at; name; sid = f.sid; key = f.key; kind; domain })
+            | No_scope ->
+                warn at "no scope of the scale %S holds the zoom's node" name;
+                None
+            | No_node | Found _ ->
+                warn at "the zoom of the scale %S applies to no scale" name;
+                None))
+    | _ -> None
+  in
+  let zooms = List.filter_map target view in
+  let apply (F f) =
+    match
+      List.filter
+        (fun (Z z) -> equal_sid z.sid f.sid && equal_key z.key f.key)
+        zooms
+    with
+    | [] -> F f
+    | [ Z z ] -> (
+        match Scale.equal_kind z.kind f.kind with
+        | None -> F f
+        | Some Type.Equal -> (
+            match Scale.with_domain z.domain f.scale with
+            | scale -> F { f with scale }
+            | exception Invalid_argument _ ->
+                warn z.at
+                  "the zoom of the scale %S sets a domain it cannot take" z.name;
+                F f))
+    | zs ->
+        List.iter
+          (fun (Z z) ->
+            warn z.at
+              "the scale %S is zoomed several times; its zooms are ignored"
+              z.name)
+          zs;
+        F f
+  in
+  let scales = List.map apply scales in
+  (scales, List.rev !warnings)
+
+let unread view reads =
+  List.filter_map
+    (fun (ident, View.V (sort, _)) ->
+      match ident with
+      | View.User name ->
+          let read (Read (i, s)) =
+            View.equal_ident i ident && Option.is_some (View.equal_sort s sort)
+          in
+          if List.exists read reads then None
+          else
+            Some
+              ( Nx.Ptree.Path.root,
+                Format.asprintf
+                  "the view sets %S, which no key of its sort reads" name )
+      | View.Zoom_of _ -> None)
+    view
+
+let check_legends cells scales =
+  let legends =
+    List.concat_map
+      (fun (_, c) ->
+        List.filter_map
+          (function G_legend l -> Some l | G_axis _ -> None)
+          c.guides)
+      cells
+  in
+  List.iter
+    (fun l ->
+      let stands (F f) =
+        String.equal f.sid.sname l.lscale && equal_key f.key l.lkey && f.legend
+      in
+      if not (List.exists stands scales) then
+        err "resolve"
+          "the legend %a names %S, no scale with a legend in its scope" pp_id
+          l.lid l.lscale;
+      List.iter
+        (fun l' ->
+          if
+            String.equal l.lscale l'.lscale
+            && equal_key l.lkey l'.lkey
+            && not (equal_legend l l')
+          then
+            err "resolve" "%a and %a are two different legends for %S" pp_id
+              l.lid pp_id l'.lid l.lscale)
+        legends)
+    legends
+
+let dedupe ws =
+  let seen (id, s) =
+    List.exists (fun (id', s') ->
+        Nx.Ptree.Path.equal id id' && String.equal s s')
+  in
+  List.rev
+    (List.fold_left (fun acc w -> if seen w acc then acc else w :: acc) [] ws)
+
+let resolve ?prev ?(view = View.empty) figure =
+  let st = { view; reads = []; marks = 0 } in
+  let f = force st figure in
+  (match names f with
+  | _ :: _ :: _ -> err "resolve" "the root has two names"
+  | _ -> ());
+  let root = Nx.Ptree.Path.root in
+  let tree = expand st root f in
+  let nodes = ref [] in
+  let shaped =
+    arrange nodes { shares = []; pending = []; cell = root } ~in_cell:false tree
+  in
+  let cells = panels root shaped in
+  check_coords cells;
+  let occs =
+    List.concat_map (fun (pid, c) -> List.map (fun o -> (pid, o)) c.occs) cells
+  in
+  let readings = List.concat_map (fun (pid, o) -> readings_of pid o) occs in
+  check_panel_scales readings;
+  check_axes cells readings;
+  let unfitted =
+    List.map
+      (fun (G g) ->
+        let spec = merged g.kind g.sid g.members in
+        let guide = merged_guide g.sid g.members in
+        F
+          {
+            sid = g.sid;
+            key = g.key;
+            kind = g.kind;
+            members = g.members;
+            legend = g.legend;
+            guide;
+            spec;
+            scale = spec;
+          })
+      (group readings)
+  in
+  let specs =
+    List.concat_map
+      (fun (F f) ->
+        List.map
+          (fun m -> ((m.m_occ.mid, m.m_pid, m.m_index), Sp f.spec))
+          f.members)
+      unfitted
+  in
+  (* Summaries, reused from [prev] where their inputs are the same. *)
+  let old = match prev with None -> [] | Some r -> r.cache in
+  let fresh = ref [] in
+  let summary occ pid filter =
+    let inputs = inputs_of specs occ pid in
+    let fkey = Option.map fst filter in
+    let hit e =
+      equal_mark e.e_mark occ.mark
+      && List.equal equal_input e.e_inputs inputs
+      && equal_filter e.e_filter fkey
+    in
+    match List.find_opt hit !fresh with
+    | Some e -> e.e_summary
+    | None ->
+        let e =
+          match List.find_opt hit old with
+          | Some e -> e
+          | None ->
+              let mask = Option.bind filter snd in
+              {
+                e_mark = occ.mark;
+                e_inputs = inputs;
+                e_filter = fkey;
+                e_summary = summarise occ.mark.shape inputs mask;
+              }
+        in
+        fresh := e :: !fresh;
+        e.e_summary
+  in
+  let base =
+    List.map (fun (pid, o) -> ((o.mid, pid), summary o pid None)) occs
+  in
+  let summary_of (occ : occ) pid =
+    snd
+      (List.find
+         (fun ((mid, pid'), _) ->
+           Nx.Ptree.Path.equal mid occ.mid && Nx.Ptree.Path.equal pid pid')
+         base)
+  in
+  let notes =
+    List.concat_map
+      (fun ((mid, _), s) -> List.map (fun n -> (mid, n)) s.notes)
+      base
+  in
+  let fit summary_of (F f) =
+    F { f with scale = fit_scale f.kind f.sid f.members f.spec summary_of }
+  in
+  let per_panel (F f) = match f.key with Panels_of _ -> true | _ -> false in
+  (* Categorical scales first, since facets make panels. *)
+  let fitted =
+    List.map
+      (fun (F f as s) ->
+        match f.kind with
+        | Scale.Categorical when not (per_panel s) -> fit summary_of s
+        | _ -> s)
+      unfitted
+  in
+  let facets =
+    List.map (fun (pid, _) -> (pid, facet_panels fitted pid)) cells
+  in
+  let constants =
+    List.concat_map
+      (fun (pid, c) ->
+        let check o role =
+          match find_binding role o.mark.bindings with
+          | None -> None
+          | Some (B b) -> (
+              match equal_range b.role.range Panels with
+              | None -> None
+              | Some Type.Equal -> (
+                  match const_value b.ch with
+                  | None -> None
+                  | Some v ->
+                      let cats =
+                        Option.fold ~none:[] ~some:category_names
+                          (facet_scale fitted pid role)
+                      in
+                      if List.mem v cats then None
+                      else
+                        Some
+                          ( o.mid,
+                            Format.asprintf
+                              "the facet constant %S of %s names no panel" v
+                              role )))
+        in
+        List.concat_map
+          (fun o -> List.filter_map (check o) [ "fx"; "fy" ])
+          c.occs)
+      cells
+  in
+  let panel_scales (F f as s) =
+    match f.key with
+    | Panels_of (mid, pid) ->
+        let occ = (List.hd f.members).m_occ in
+        let at c role =
+          match c with
+          | None -> Everywhere
+          | Some c -> presence occ.mark.shape occ.mark role c
+        in
+        List.filter_map
+          (fun p ->
+            match both (at p.pfy "fy") (at p.pfx "fx") with
+            | Nowhere -> None
+            | rows ->
+                let mask =
+                  match rows with
+                  | Rows r -> Some r
+                  | Everywhere | Nowhere -> None
+                in
+                let summary_of _ _ =
+                  summary occ pid (Some ((p.pfy, p.pfx), mask))
+                in
+                Some (fit summary_of (F { f with key = Panel (mid, p.pnid) })))
+          (Option.value ~default:[] (find_path pid facets))
+    | _ -> [ s ]
+  in
+  let fitted = List.concat_map panel_scales fitted in
+  let fitted =
+    List.map
+      (fun (F f as s) ->
+        match (f.kind, f.key) with
+        | Scale.Categorical, _ | _, Panel _ -> s
+        | _ -> fit summary_of s)
+      fitted
+  in
+  (* Each node with the cells it lies in; a facet panel lies in its cell and
+     reads the scopes of the cell. *)
+  let nodes =
+    let held =
+      List.concat_map
+        (fun (pid, c) -> List.map (fun (id, sh) -> (id, (pid, sh))) c.held)
+        cells
+    in
+    let panels =
+      List.concat_map
+        (fun (pid, ps) ->
+          let shares =
+            Option.value ~default:[]
+              (Option.bind (find_path pid cells) (fun c -> find_path pid c.held))
+          in
+          List.filter_map
+            (fun p ->
+              if Nx.Ptree.Path.equal p.pnid pid then None
+              else Some (p.pnid, (pid, shares)))
+            ps)
+        facets
+    in
+    let places = held @ panels in
+    let ids =
+      List.fold_left
+        (fun acc id ->
+          if List.exists (Nx.Ptree.Path.equal id) acc then acc else id :: acc)
+        []
+        (List.map fst places @ List.rev !nodes)
+    in
+    List.rev_map
+      (fun id ->
+        ( id,
+          List.filter_map
+            (fun (id', p) ->
+              if Nx.Ptree.Path.equal id id' then Some p else None)
+            places ))
+      ids
+  in
+  let scales, zooms = zoom view nodes fitted in
+  check_legends cells scales;
+  let warnings = dedupe (notes @ constants @ zooms @ unread view st.reads) in
+  {
+    figure;
+    view;
+    shaped;
+    facets;
+    scales;
+    nodes;
+    warnings;
+    cache = List.rev !fresh;
+  }
 
 module Resolved = struct
-  type t = |
+  type t = resolved
 
-  let scale ?at:_ (r : t) _ = match r with _ -> .
-  let warnings (r : t) = match r with _ -> .
-  let equal (r : t) _ = match r with _ -> .
-  let pp _ (r : t) = match r with _ -> .
+  let scale : type d. ?at:id -> t -> d Scale.t -> d Scale.t =
+   fun ?(at = Nx.Ptree.Path.root) r s ->
+    let name =
+      match Scale.name s with
+      | Some n -> n
+      | None -> err "Resolved.scale" "the scale is unnamed"
+    in
+    let kind = Scale.kind s in
+    let absent () =
+      err "Resolved.scale" "the scope of %a has no %a scale %S" pp_id at pp_tag
+        (tag kind) name
+    in
+    match find_scale r.scales r.nodes ~at name (tag kind) with
+    | No_node -> err "Resolved.scale" "no node has the id %a" pp_id at
+    | No_scope ->
+        err "Resolved.scale" "no scope of the scale %S holds %a" name pp_id at
+    | Found None -> absent ()
+    | Found (Some (F f)) -> (
+        match Scale.equal_kind f.kind kind with
+        | Some Type.Equal -> f.scale
+        | None -> absent ())
+
+  let warnings r = r.warnings
+  let panel_of = function Panel (_, p) -> Some p | _ -> None
+
+  let equal_member m m' =
+    Nx.Ptree.Path.equal m.m_occ.mid m'.m_occ.mid
+    && String.equal m.m_role m'.m_role
+    && Nx.Ptree.Path.equal m.m_pid m'.m_pid
+
+  let equal_scale (F f) (F f') =
+    equal_sid f.sid f'.sid
+    && Option.equal Nx.Ptree.Path.equal (panel_of f.key) (panel_of f'.key)
+    && Option.equal Bool.equal f.guide f'.guide
+    &&
+    match Scale.equal_kind f.kind f'.kind with
+    | Some Type.Equal ->
+        List.equal equal_member f.members f'.members
+        && Scale.equal f.scale f'.scale
+    | None -> false
+
+  let equal_warning (id, s) (id', s') =
+    Nx.Ptree.Path.equal id id' && String.equal s s'
+
+  let equal r r' =
+    equal r.figure r'.figure && View.equal r.view r'.view
+    && List.equal equal_scale r.scales r'.scales
+    && List.equal equal_warning r.warnings r'.warnings
+
+  (* Formatting *)
+
+  let pp_side ppf (side : side) =
+    Format.pp_print_string ppf
+      (match side with
+      | `Left -> "left"
+      | `Right -> "right"
+      | `Top -> "top"
+      | `Bottom -> "bottom")
+
+  let pp_guide ppf = function
+    | G_axis a ->
+        Format.fprintf ppf "axis %S%a%s%s" a.scale
+          (Format.pp_print_option (fun ppf s ->
+               Format.fprintf ppf " %a" pp_side s))
+          a.side
+          (if a.grid then " grid" else "")
+          (if a.show then "" else " hidden")
+    | G_legend l ->
+        Format.fprintf ppf "legend %S%a%s" l.lscale
+          (Format.pp_print_option (fun ppf s ->
+               Format.fprintf ppf " %a" pp_side s))
+          l.lside
+          (if l.lshow then "" else " hidden")
+
+  let pp_title ppf ((align : Text.Layout.halign), t) =
+    Format.fprintf ppf "title %a%s" Text.pp t
+      (match align with `Center -> "" | `Left -> " left" | `Right -> " right")
+
+  let pp_weights name ppf = function
+    | None -> ()
+    | Some ws ->
+        Format.fprintf ppf ", %s %a" name
+          (Format.pp_print_list
+             ~pp_sep:(fun ppf () -> Format.pp_print_string ppf " ")
+             (fun ppf w -> Format.fprintf ppf "%g" w))
+          ws
+
+  let pp_ids =
+    Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ") pp_id
+
+  let rec pp_shaped facets ppf (pid, s) =
+    match s.body with
+    | Single c ->
+        Format.fprintf ppf "@[<v 2>panel %a" pp_id pid;
+        List.iter (Format.fprintf ppf "@,%a" pp_title) s.titles;
+        (match c.coords with
+        | (_, k) :: _ -> Format.fprintf ppf "@,coord %a" Coord.pp k
+        | [] -> ());
+        List.iter
+          (fun o -> Format.fprintf ppf "@,%s %a" o.mark.kind pp_id o.mid)
+          c.occs;
+        List.iter (Format.fprintf ppf "@,%a" pp_guide) c.guides;
+        (match find_path pid facets with
+        | Some [ p ] when Nx.Ptree.Path.equal p.pnid pid -> ()
+        | Some ps ->
+            Format.fprintf ppf "@,@[<hov 2>facets %a@]" pp_ids
+              (List.map (fun p -> p.pnid) ps)
+        | None -> ());
+        Format.fprintf ppf "@]"
+    | Arr a ->
+        Format.fprintf ppf "@[<v 2>grid %a, %d × %d%a%a" pp_id a.aid a.nrows
+          a.ncols (pp_weights "widths") a.widths (pp_weights "heights")
+          a.heights;
+        List.iter (Format.fprintf ppf "@,%a" pp_title) s.titles;
+        List.iter
+          (fun cell ->
+            Format.fprintf ppf "@,@[<v 2>cell (%d, %d)%s@,%a@]" cell.row
+              cell.col
+              (if cell.rows = 1 && cell.cols = 1 then ""
+               else Format.asprintf ", spanning %d × %d" cell.rows cell.cols)
+              (pp_shaped facets) (cell.cid, cell.s))
+          a.cells;
+        Format.fprintf ppf "@]"
+
+  let pp_scale ppf (F f) =
+    let readers =
+      List.fold_left
+        (fun acc m ->
+          let r = Format.asprintf "%a:%s" pp_id m.m_occ.mid m.m_role in
+          if List.mem r acc then acc else r :: acc)
+        [] f.members
+      |> List.rev
+    in
+    Format.fprintf ppf "@[<v 2>%S %a%a, read by @[<hov>%a@]@,%a%a@]" f.sid.sname
+      pp_tag (tag f.kind)
+      (Format.pp_print_option (fun ppf p -> Format.fprintf ppf " in %a" pp_id p))
+      (panel_of f.key)
+      (Format.pp_print_list
+         ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ")
+         Format.pp_print_string)
+      readers Scale.pp f.scale
+      (Format.pp_print_option (fun ppf g -> Format.fprintf ppf "@,guide %b" g))
+      f.guide
+
+  let pp ppf r =
+    Format.fprintf ppf "@[<v>@[<v 2>figure@,%a@]" (pp_shaped r.facets)
+      (Nx.Ptree.Path.root, r.shaped);
+    Format.fprintf ppf "@,@[<v 2>scales";
+    List.iter (Format.fprintf ppf "@,%a" pp_scale) r.scales;
+    Format.fprintf ppf "@]";
+    if r.warnings <> [] then (
+      Format.fprintf ppf "@,@[<v 2>warnings";
+      List.iter (Format.fprintf ppf "@,%a" pp_warning) r.warnings;
+      Format.fprintf ppf "@]");
+    Format.fprintf ppf "@]"
 end
+
+(* Laying out and drawing *)
 
 module Layout = struct
   type t = |
@@ -1109,7 +3175,6 @@ module Drawing = struct
   let pp _ (d : t) = match d with _ -> .
 end
 
-let resolve ?prev:_ ?view:_ _ = unimplemented "resolve"
 let layout ?prev:_ ?theme:_ _ _ = unimplemented "layout"
 let draw ?prev:_ ~density:_ _ = unimplemented "draw"
 

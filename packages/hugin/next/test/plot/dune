@@ -16,3 +16,13 @@
  (modules test_figure)
  (package hugin)
  (libraries hugin.next hugin.next.kit nx windtrap))
+
+(test
+ (name test_resolve)
+ (modules test_resolve)
+ (package hugin)
+ (libraries hugin.next hugin.next.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_resolve.ml test_resolve.ml.corrected))))

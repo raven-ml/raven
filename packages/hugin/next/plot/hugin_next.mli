@@ -103,15 +103,18 @@
     Every node of a figure has an {e id}, a path that derives from the figure as
     written. The root's is [Nx.Ptree.Path.root]. A child of {!layer} and a cell
     of {!grid} add [Index i], [i] counting in reading order from [0]; {!name}
-    [s] replaces its node's index by [Field s]; a facet panel adds
+    [s] replaces its node's index by [Field s]; a {!layer} whose children
+    include a grid is a grid of the shape their arrangements broadcast to, and
+    its cell [k] in reading order adds [Field "cell"], then [Index k], so a 1 ×
+    3 grid layered with a 2 × 1 grid makes six cells; a facet panel adds
     [Field "panel"], then [Field c] for the name ({!Scale.type-categories}) of
     its [fy] category, then for that of its [fx] category, those it has; a
     generated guide adds [Field "axis"] or [Field "legend"], then [Field] of the
     name of its scale. Wrappers, {!span} and {!bind} add nothing. {!name} takes
-    none of ["axis"], ["legend"] and ["panel"], so a generated node never has
-    the id of a written one. Since ids depend only on the structure of the
-    figure, a figure rebuilt by the same code has the same ids, and {!name} pins
-    a subtree whose position varies. Errors, warnings, {!View.zoom},
+    none of ["axis"], ["legend"], ["panel"] and ["cell"], so a generated node
+    never has the id of a written one. Since ids depend only on the structure of
+    the figure, a figure rebuilt by the same code has the same ids, and {!name}
+    pins a subtree whose position varies. Errors, warnings, {!View.zoom},
     {!Resolved.scale} and the tags of drawn pictures ({!Picture.tag}) name nodes
     by id. *)
 
@@ -575,11 +578,20 @@ val contour :
 
     A scale is fitted once per name, kind and {e scope}. The names ["x"], ["y"],
     ["fx"] and ["fy"] are scoped by the innermost grid cell that holds the
-    channel, or by the whole figure outside any grid, and every other name by
-    the whole figure. So the children of a {!layer} and the panels of a facet
-    share every scale, and the cells of a grid keep their own positions and
-    facets and share the rest: a figure has one colour legend however it is
-    arranged. {!share} regroups one name at one node.
+    channel, a layer's broadcast cells included ({!section-ids}), or by the
+    whole figure outside any grid, and every other name by the whole figure. So
+    the children of a {!layer} and the panels of a facet share every scale, and
+    the cells of a grid keep their own positions and facets and share the rest:
+    a figure has one colour legend however it is arranged. {!share} regroups one
+    name at one node.
+
+    A node {e lies in} the cells it draws in: a grid in each of its cells, a
+    node that a layer repeats over a grid in each cell it is repeated in, and
+    any other node in one. The scope of a name that {e holds} a node is the one
+    that a channel of that name would read in every cell the node lies in, if
+    there is one. So a cell names its own scopes, and a grid, or a reference
+    line layered over it, names the scales its cells share, such as the colour,
+    and no position or facet scale unless a {!share} gives its cells one.
 
     {2:merging Merging}
 
@@ -738,16 +750,17 @@ module View : sig
 
   val zoom : ?at:id -> 'd Scale.t -> ('d * 'd) option key
   (** [zoom ~at s] is the key of the zoom of the continuous scale named like
-      [s], of the kind of [s], in the scope that holds the node [at], the root
-      by default. Its value [Some (a, b)] sets that scale's domain to
-      \[[a];[b]\] ({!Scale.with_domain}) in place of its fitted and explicit
-      domains, and its initial value [None] leaves it. Every continuous scale
-      has such a key without declaring one, and user keys cannot name it. In
-      {!resolve}, after the figure's structure changes, a zoom whose node lies
-      in another scope with a scale of its name and kind applies there; one
-      whose node, name or kind is gone, or whose domain the scale cannot take,
-      is ignored with a warning, and so are the zooms of a scale that several
-      set.
+      [s], of the kind of [s], in the scope that holds the node [at]
+      ({!Hugin_next.section-scopes}), the root by default. Its value
+      [Some (a, b)] sets that scale's domain to \[[a];[b]\]
+      ({!Scale.with_domain}) in place of its fitted and explicit domains, and
+      its initial value [None] leaves it. Every continuous scale has such a key
+      without declaring one, and user keys cannot name it. In {!resolve}, after
+      the figure's structure changes, a zoom whose node lies in another scope
+      with a scale of its name and kind applies there; one whose node, name or
+      kind is gone, whose node no scope of its name holds, or whose domain the
+      scale cannot take, is ignored with a warning, and so are the zooms of a
+      scale that several set.
 
       Raises [Invalid_argument] if [s] is unnamed or categorical. *)
 
@@ -878,9 +891,9 @@ val name : string -> t -> t
     ({!section-ids}), so that the ids in [f] stay the same when the siblings
     before it change.
 
-    Raises [Invalid_argument] if [s] is ["axis"], ["legend"] or ["panel"], the
-    segments of generated nodes. {!resolve} raises [Invalid_argument] if two
-    siblings have one name or a node has two. *)
+    Raises [Invalid_argument] if [s] is ["axis"], ["legend"], ["panel"] or
+    ["cell"], the segments of generated nodes. {!resolve} raises
+    [Invalid_argument] if two siblings have one name or a node has two. *)
 
 val bind : 'a View.key -> ('a -> t) -> t
 (** [bind k f] is the figure [f v], where [v] is the value of [k] in the view
@@ -1379,7 +1392,8 @@ module Mark : sig
       - a channel with a [scale] or a [title] is bound to a role that reads no
         scale, [text] or a {!Role.value};
       - the channels do not broadcast, or a {!Hugin_next.dim} or a
-        {!Hugin_next.index} does not fit their shape ({!Hugin_next.section-data}). *)
+        {!Hugin_next.index} does not fit their shape
+        ({!Hugin_next.section-data}). *)
 end
 
 (** {1:stages Stages} *)
@@ -1396,18 +1410,19 @@ module Resolved : sig
 
   val scale : ?at:id -> t -> 'd Scale.t -> 'd Scale.t
   (** [scale ~at r s] is the scale named like [s], of the kind of [s], in the
-      scope that holds the node [at], the root by default, fitted: its domain
-      set and its [nice] and [zero] unset ({!Scale.fit}), and its other
-      properties those its channels merged, implied ones included. Given to
-      another figure, it normalises as it does in [r] and carries the ranges it
-      states. So a zoomed scale has its zoomed domain ({!View.zoom}), and a band
-      scale read by [y] has the [reverse] that [y] implies, which reverses x
-      where the scale is given to [x]. Only the name and kind of [s] are read:
-      [scale r (Scale.linear ~name:"color" ())] is the fitted quantitative
-      ["color"].
+      scope that holds the node [at] ({!Hugin_next.section-scopes}), the root by
+      default, fitted: its domain set and its [nice] and [zero] unset
+      ({!Scale.fit}), and its other properties those its channels merged,
+      implied ones included. Given to another figure, it normalises as it does
+      in [r] and carries the ranges it states. So a zoomed scale has its zoomed
+      domain ({!View.zoom}), and a band scale read by [y] has the [reverse] that
+      [y] implies, which reverses x where the scale is given to [x]. Only the
+      name and kind of [s] are read: [scale r (Scale.linear ~name:"color" ())]
+      is the fitted quantitative ["color"].
 
       Raises [Invalid_argument] if [s] is unnamed, if no node of [r] has the id
-      [at], or if its scope has no scale of that name and kind. *)
+      [at], if no scope of the name of [s] holds [at], or if its scope has no
+      scale of that name and kind. *)
 
   val warnings : t -> warning list
   (** [warnings r] is the warnings of resolving, in the order of the figure. *)
@@ -1550,10 +1565,10 @@ val draw : ?prev:Drawing.t -> density:float -> Layout.t -> Drawing.t
 
     With [prev], the picture of each panel whose id, box, coordinate system,
     scales with their frozen ticks, marks with their ids, theme and density
-    equal those of a panel of [prev] is reused, with the warnings its draw functions gave: the result is
-    {!Drawing.equal} to [draw ~density l]. Draw functions read the theme and the
-    ticks ({!Mark.theme}, {!Mark.ticks}), so a change of either draws the panel
-    again.
+    equal those of a panel of [prev] is reused, with the warnings its draw
+    functions gave: the result is {!Drawing.equal} to [draw ~density l]. Draw
+    functions read the theme and the ticks ({!Mark.theme}, {!Mark.ticks}), so a
+    change of either draws the panel again.
 
     Raises [Invalid_argument] if [density] is not finite and positive, what draw
     functions raise, and as reading a tensor raises ({!section-conventions}). *)

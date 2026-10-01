@@ -254,6 +254,7 @@ let composing =
           ("name axis", fun () -> name "axis" a);
           ("name legend", fun () -> name "legend" a);
           ("name panel", fun () -> name "panel" a);
+          ("name cell", fun () -> name "cell" a);
           ("a zero width", fun () -> grid ~widths:[ 1.; 0. ] [ [ a; a ] ]);
           ("a negative height", fun () -> grid ~heights:[ -1. ] [ [ a ] ]);
           ("a nan width", fun () -> grid ~widths:[ Float.nan ] [ [ a ] ]);
