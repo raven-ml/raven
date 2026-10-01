@@ -4,3 +4,11 @@
  (deps
   (package nx)
   (package rune)))
+
+(test
+ (name test_constructs)
+ (modules test_constructs)
+ (package rune)
+ (libraries windtrap rune.next rune_next_test nx nx.dtype)
+ (action
+  (run %{test} --exclude-tag slow)))
