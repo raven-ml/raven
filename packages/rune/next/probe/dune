@@ -1,3 +1,0 @@
-(executable
- (name probe)
- (libraries unix rune.next rune_next_test nx nx.quant nx.device))
