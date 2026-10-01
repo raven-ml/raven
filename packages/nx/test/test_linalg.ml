@@ -213,12 +213,10 @@ let products =
           let v = lay_out steps a in
           let c = Nx.contiguous v in
           equal near (c *@ t c) (v *@ t v));
-      test
-        "matmul gives +0 where every product is -0, at every size and dtype"
+      test "matmul gives +0 where every product is -0, at every size and dtype"
         (fun () ->
-          (* 64 x 64 x 64 and up takes Accelerate on macOS for float32,
-             float64 and the complex dtypes; float16 is multiplied at
-             float32. *)
+          (* 64 x 64 x 64 and up takes Accelerate on macOS for float32, float64
+             and the complex dtypes; float16 is multiplied at float32. *)
           let check (type b) name (dt : (float, b) Nx.dtype) =
             List.iter
               (fun n ->
@@ -241,12 +239,14 @@ let products =
           let c = Nx.matmul z (Nx.ones Nx.complex64 [| n; n |]) in
           Array.iter
             (fun (x : Complex.t) ->
-              equal ~msg:"complex64" (pair float_exact float_exact) (0., 0.)
-                (x.re, x.im))
+              equal ~msg:"complex64"
+                (pair float_exact float_exact)
+                (0., 0.) (x.re, x.im))
             (Nx.to_array c);
           equal ~msg:"an empty contraction" (tensor float_exact)
             (Nx.zeros Nx.float32 [| 2; 2 |])
-            (Nx.matmul (Nx.zeros Nx.float32 [| 2; 0 |])
+            (Nx.matmul
+               (Nx.zeros Nx.float32 [| 2; 0 |])
                (Nx.zeros Nx.float32 [| 0; 2 |])));
       test "matmul refuses scalars and mismatched inner axes" (fun () ->
           raises_invalid_arg (fun () ->
@@ -512,7 +512,8 @@ let factorizations =
     [
       prop
         "cholesky gives L with L Lᵀ = a and U with Uᵀ U = a, both reading only \
-         the lower triangle" (sized spd) (fun a ->
+         the lower triangle"
+        (sized spd) (fun a ->
           let noisy = Nx.add (Nx.tril a) (Nx.triu ~k:1 (Nx.full_like a 7.)) in
           let l = Nx.cholesky a in
           equal near a (l *@ t l);
