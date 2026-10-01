@@ -31,15 +31,13 @@ let numel shape = Array.fold_left ( * ) 1 shape
 (* A device the compiled programs run on. [flushes] is whether it flushes
    float32 subnormals to zero, as Metal does, bfloat16 ones included since they
    compute at float32 (ledger, Targets); [budgets] are its measured maxima of
-   units in the last place, by row, where they differ from the ledger's, and
-   [narrow_folds] whether a fold of 8-bit integers compiles for it. *)
+   units in the last place, by row, where they differ from the ledger's. *)
 type device = {
   device : Nx_device.t;
   name : string;
   float64 : bool;
   flushes : bool;
   budgets : (string * int) list;
-  narrow_folds : bool;
 }
 
 let on_host =
@@ -49,22 +47,12 @@ let on_host =
     float64 = true;
     flushes = false;
     budgets = [];
-    (* Pending tn-cstyle: the fold casts between 8-bit vectors with a C cast,
-       which Clang refuses. *)
-    narrow_folds = false;
   }
 
 let on_metal =
   Option.map
     (fun device ->
-      {
-        device;
-        name = "metal";
-        float64 = false;
-        flushes = true;
-        budgets = [];
-        narrow_folds = true;
-      })
+      { device; name = "metal"; float64 = false; flushes = true; budgets = [] })
     Metal.device
 
 (* Arrays *)
@@ -363,11 +351,6 @@ let ints =
     D Nx.int64;
     D Nx.uint64;
   ]
-
-(* The integers of the fold law on [d]. *)
-let fold_ints d =
-  if d.narrow_folds then ints
-  else List.filter (fun (D dt) -> Nx_dtype.itemsize dt > 1) ints
 
 let as_dt (F dt) = D dt
 let numeric d = ints @ List.map as_dt (floats d)
@@ -1251,7 +1234,7 @@ let windows_and_products d ~count =
          })
   and integer_fold =
     law "fold of integers"
-      (over (fold_ints d)
+      (over ints
          {
            per =
              (fun dt ->
@@ -1990,13 +1973,7 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
-    (if d.narrow_folds then Fun.id
-     else
-       xfail
-         ~reason:
-           "a cast between int8 vectors renders as a C cast, which Clang \
-            refuses (tn-cstyle)")
-    @@ test "a fold of int8 overlapping windows compiles" (fun () ->
+    test "a fold of int8 overlapping windows compiles (D59)" (fun () ->
         let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
         let w =
           {
