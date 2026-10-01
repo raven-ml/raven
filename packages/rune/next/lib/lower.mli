@@ -58,6 +58,9 @@ val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
 
     Raises [Invalid_argument] if [b] is dead. *)
 
+val broadcast : Ops.t -> int array -> Ops.t
+(** [broadcast c shape] is the scalar node [c] at every position of [shape]. *)
+
 val strided : Ops.t -> Nx_array.View.t -> int -> Ops.t
 (** [strided flat v start] is the view [v] over the node [flat] of its storage's
     elements from element [start] on: movements that reach the elements [v]

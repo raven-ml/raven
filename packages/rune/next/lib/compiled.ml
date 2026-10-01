@@ -143,8 +143,12 @@ let layout what (A a as x) =
   in
   { dtype; shape = View.shape v; strides = View.strides v; first; phase }
 
-(* A program's key: the layouts are the operands', then the destinations'. *)
-type key = { op : op; layouts : layout list; target : Helpers.Target.t }
+type key = {
+  op : op;
+  inputs : layout list;
+  outputs : layout list;
+  target : Helpers.Target.t;
+}
 
 (* Devices *)
 
@@ -170,38 +174,43 @@ let runs_on d =
            (engine_devices ~name:"DEVICE" ~host:"HOST" d "DEVICE").compiler
              .queues
 
-(* Read without the lock, which only guards their additions. *)
+(* [memo cell latch k make] is [k]'s value in [cell], made by [make] the first
+   time, under [latch]. [cell] is read without [latch], which only guards its
+   additions. *)
+let memo cell latch k make =
+  match List.assq_opt k (Atomic.get cell) with
+  | Some v -> v
+  | None -> (
+      Mutex.protect latch @@ fun () ->
+      match List.assq_opt k (Atomic.get cell) with
+      | Some v -> v
+      | None ->
+          let v = make () in
+          Atomic.set cell ((k, v) :: Atomic.get cell);
+          v)
+
 let targets = Atomic.make []
 
 (* [target what d] is [d]'s target, for the kernel [what], which refuses a
    device the backend does not run on. *)
 let target what d =
-  match List.assq_opt d (Atomic.get targets) with
-  | Some t -> t
-  | None -> (
-      Mutex.protect lock @@ fun () ->
-      match List.assq_opt d (Atomic.get targets) with
-      | Some t -> t
-      | None ->
-          if not (runs_on d) then
-            refuse what "%s runs no compiled program" (Nx_device.name d);
-          let target = Engine.target d in
-          let r =
-            match Device.renderer ~arch:target.arch target.device with
-            | Ok r -> r
-            | Error why -> failwith why
-          in
-          let t = { target; dtypes = Renderer.supported_dtypes r } in
-          Atomic.set targets ((d, t) :: Atomic.get targets);
-          t)
+  memo targets lock d @@ fun () ->
+  if not (runs_on d) then
+    refuse what "%s runs no compiled program" (Nx_device.name d);
+  let target = Engine.target d in
+  let r =
+    match Device.renderer ~arch:target.arch target.device with
+    | Ok r -> r
+    | Error why -> failwith why
+  in
+  { target; dtypes = Renderer.supported_dtypes r }
 
 (* Programs *)
 
 (* A compiled program, in which its device and its host have the names [name]
    and [host], the storage of the [i]th of its operands and destinations is the
    parameter of slot [slots.(i)] ([-1] for an empty array), and its links on
-   each device it ran on, taken in turn. [links] is read without [latch], which
-   only guards its additions. *)
+   each device it ran on, taken in turn. *)
 type program = {
   linear : Ops.t;
   name : string;
@@ -209,7 +218,7 @@ type program = {
   slots : int array;
   nslots : int;
   latch : Mutex.t;
-  links : (Nx_device.t * Engine.t array * int Atomic.t) list Atomic.t;
+  links : (Nx_device.t * (Engine.t array * int Atomic.t)) list Atomic.t;
 }
 
 (* Runs of one link are serialized: a program keeps this many on each device, so
@@ -218,33 +227,20 @@ type program = {
    64: then Metal's submission of each command buffer bounds it. *)
 let links = 16
 
-let zeros dt shape =
-  let c = Ops.const ~dtype:dt (`Int Z.zero) in
-  let shape = Array.to_list shape in
-  Ops.expand
-    (Ops.reshape c (List.map (fun _ -> Ops.Int 1) shape))
-    (List.map (fun n -> Ops.Int n) shape)
-
 let compile key d arrays dsts =
-  let operands, outs =
-    List.partition_map Fun.id
-      (List.mapi
-         (fun i l ->
-           if i < List.length arrays then Either.Left l else Either.Right l)
-         key.layouts)
-  in
   let name = Nx_device.name d and host = Nx_device.name (Nx_device.host_of d) in
   let device = Ops.Single name in
   (* Each array's node, and its storage's buffer if it has elements. *)
   let node (A a) (l : layout) =
-    if View.numel a.view = 0 then (zeros l.dtype l.shape, None)
+    if View.numel a.view = 0 then
+      (Lower.broadcast (Ops.const ~dtype:l.dtype (`Int Z.zero)) l.shape, None)
     else
       let start, span = Lower.span l.dtype a.view in
       let b = Ops.new_buffer ~phase:l.phase device span l.dtype in
       (Lower.strided b a.view start, Some b)
   in
-  let operands = List.map2 node arrays operands
-  and outs = List.map2 node dsts outs in
+  let operands = List.map2 node arrays key.inputs
+  and outs = List.map2 node dsts key.outputs in
   let results = lower key.op (List.map fst operands) (List.map fst outs) in
   let stores =
     List.map2
@@ -277,19 +273,13 @@ let compile key d arrays dsts =
   }
 
 (* [p]'s next link on [d], linked there the first time. *)
-let rec link p d =
-  match List.find_opt (fun (d', _, _) -> d' == d) (Atomic.get p.links) with
-  | Some (_, links, next) ->
-      links.(Atomic.fetch_and_add next 1 mod Array.length links)
-  | None ->
-      Mutex.protect p.latch (fun () ->
-          if not (List.exists (fun (d', _, _) -> d' == d) (Atomic.get p.links))
-          then begin
-            let devices = engine_devices ~name:p.name ~host:p.host d in
-            let l = Array.init links (fun _ -> Engine.link ~devices p.linear) in
-            Atomic.set p.links ((d, l, Atomic.make 0) :: Atomic.get p.links)
-          end);
-      link p d
+let link p d =
+  let links, next =
+    memo p.links p.latch d @@ fun () ->
+    let devices = engine_devices ~name:p.name ~host:p.host d in
+    (Array.init links (fun _ -> Engine.link ~devices p.linear), Atomic.make 0)
+  in
+  links.(Atomic.fetch_and_add next 1 mod Array.length links)
 
 (* The compiled programs, by key, each compiled once under its own latch, so
    that keys compile concurrently. *)
@@ -325,7 +315,7 @@ let program what key t d arrays dsts =
     match Programs.find_opt programs key with
     | Some e -> e
     | None ->
-        check what t d (arrays @ dsts) key.layouts;
+        check what t d (arrays @ dsts) (key.inputs @ key.outputs);
         let e = { latch = Mutex.create (); compiled = Atomic.make None } in
         Programs.add programs key e;
         e
@@ -360,11 +350,13 @@ let run what op arrays dsts =
     match dsts with A a :: _ -> B.device a.buffer | [] -> assert false
   in
   let t = target what d and all = arrays @ dsts in
-  let layouts = List.map (layout what) all in
+  let inputs = List.map (layout what) arrays
+  and outputs = List.map (layout what) dsts in
   if List.for_all (fun (A a) -> View.numel a.view = 0) dsts then
-    check what t d all layouts
+    check what t d all (inputs @ outputs)
   else
-    let p = program what { op; layouts; target = t.target } t d arrays dsts in
+    let key = { op; inputs; outputs; target = t.target } in
+    let p = program what key t d arrays dsts in
     let slots = Array.make p.nslots [] in
     List.iteri
       (fun i x ->

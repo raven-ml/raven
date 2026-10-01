@@ -10,13 +10,14 @@
     of the operation ({!Lower}), over the operands as their views read their
     buffers, strided, broadcast or offset, stored into the destination. A
     program is compiled the first time the process meets its {e key}: the
-    operation and its static arguments (axes, padding, fill value, ...), each
-    operand's and the destination's dtype, shape, strides and offset modulo 16
-    bytes, where its buffer's run of elements starts within 16 bytes of memory,
-    which the program's vector accesses are aligned to, and the target of the
-    destination's device. It is kept for the life of the process, and linked a
-    few times on each device that runs it; each run takes the next link in turn,
-    since runs of one link are serialized.
+    operation and its static arguments (axes, padding, fill value, ...); each
+    operand's and the destination's dtype, shape and strides, where its first
+    element lies within 16 bytes of the run of its buffer the program reads, and
+    where that run starts within 16 bytes of memory, to which the program aligns
+    its vector accesses; and the target of the destination's device. It is kept
+    for the life of the process, and linked a few times on each device that runs
+    it; each run takes the next link in turn, since runs of one link are
+    serialized.
 
     A kernel queues its program on the device and returns: a read of the result
     waits for it, as for any work on the device. While a profile is taken
