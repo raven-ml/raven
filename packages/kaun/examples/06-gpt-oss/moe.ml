@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Kaun
-
 type 'a weight = Float of 'a | Quant of Nx_quant.t
 
 type 'a t = {

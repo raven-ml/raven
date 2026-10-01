@@ -78,7 +78,7 @@ let test_cast_round_trip () =
 
 (* ───── dtype-generic apply vs the float32 reference ───── *)
 
-let test_linear_apply (type b) name (dt : (float, b) Nx.dtype) ~tol () =
+let test_linear_apply (type b) (dt : (float, b) Nx.dtype) ~tol () =
   let p = linear_params () in
   let x = mat f32 4 3 (grid 12) in
   let expected = Linear.apply p x in
@@ -436,8 +436,8 @@ let tests =
       ];
     group "dtype-generic apply"
       [
-        test "linear float16" (test_linear_apply "float16" f16 ~tol:0.01);
-        test "linear bfloat16" (test_linear_apply "bfloat16" bf16 ~tol:0.08);
+        test "linear float16" (test_linear_apply f16 ~tol:0.01);
+        test "linear bfloat16" (test_linear_apply bf16 ~tol:0.08);
         test "embedding float16" test_embedding_apply;
         test "conv float16" test_conv_apply;
       ];

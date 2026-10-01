@@ -33,8 +33,6 @@ type 'a model = {
 }
 
 module Block = struct
-  type 'a t = 'a block
-
   let walk c b =
     let open Nx.Ptree.Walk in
     let attn_norm = field c "attn_norm" Rms_norm.walk b.attn_norm in

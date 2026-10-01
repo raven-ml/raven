@@ -5,8 +5,6 @@
 
 module Checkpoint = Kaun.Checkpoint
 
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
 (* Error messages *)
 
 let err_no_curl = "curl not found on PATH"

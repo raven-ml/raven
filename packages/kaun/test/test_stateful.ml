@@ -99,7 +99,7 @@ let test_bn_eval_uses_running_stats () =
   is_true ~msg:"eval returns the stats unchanged" (stats' == stats)
 
 let test_bn_grads_flow_to_params () =
-  let params, stats = Batch_norm.init ~features:2 in
+  let _, stats = Batch_norm.init ~features:2 in
   let params =
     { Batch_norm.gamma = vec [| 1.3; 0.7 |]; beta = vec [| 0.2; -0.4 |] }
   in
@@ -136,7 +136,7 @@ let test_bn_stat_update_is_detached () =
     (Array.make 8 0.0) (Nx.reshape [| 8 |] g)
 
 let test_bn_stats_checkpoint () =
-  let params, stats = Batch_norm.init ~features:2 in
+  let params, _ = Batch_norm.init ~features:2 in
   let stats =
     { Batch_norm.Stats.mean = vec [| 1.0; 2.0 |]; var = vec [| 3.0; 4.0 |] }
   in
