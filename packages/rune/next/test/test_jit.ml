@@ -881,6 +881,27 @@ let errors =
             messages);
     ]
 
+(* Reports *)
+
+let reports =
+  group "reports"
+    [
+      test "a first call records its phases in order, and a replay none"
+        (fun () ->
+          let g = Rune.jit' poly in
+          let _, first = profiled (fun () -> g (x ())) in
+          equal (list string)
+            [
+              "rune.jit: trace";
+              "rune.jit: schedule";
+              "rune.jit: compile";
+              "rune.jit: link";
+            ]
+            first;
+          let _, again = profiled (fun () -> g (y ())) in
+          equal (list string) [] again);
+    ]
+
 (* Domains *)
 
 (* [together fs] runs each of [fs] on a domain of its own, all released at once,
@@ -903,6 +924,33 @@ let together fs =
 let domains =
   group "domains"
     [
+      test
+        "a call that reads a storage and one that consumes it, from two \
+         domains, each read it whole or refuse" (fun () ->
+          let a = x () in
+          let reader = Rune.jit' poly in
+          let consumer = Rune.jit consumes (fun v -> Nx.add_s v 1.) in
+          let outcome f () =
+            match f () with
+            | r -> Some (Nx.to_array r)
+            | exception Invalid_argument _ -> None
+          in
+          match
+            together
+              [ outcome (fun () -> reader a); outcome (fun () -> consumer a) ]
+          with
+          | [ read; consumed ] ->
+              is_true ~msg:"one of them ran"
+                (Option.is_some read || Option.is_some consumed);
+              Option.iter
+                (equal ~msg:"the reader" (array float_exact)
+                   (Nx.to_array (poly (x ()))))
+                read;
+              Option.iter
+                (equal ~msg:"the consumer" (array float_exact)
+                   (Nx.to_array (Nx.add_s (x ()) 1.)))
+                consumed
+          | _ -> fail "two outcomes");
       test "two domains meeting one new key trace it once" (fun () ->
           let g = Rune.jit' poly in
           let rs, spans =
@@ -1420,6 +1468,7 @@ let () =
          lending;
          captures;
          errors;
+         reports;
          domains;
          transformations;
          placement;

@@ -20,3 +20,16 @@ let () =
     (step
        ( Nx.of_bigarray (Bigarray.genarray_of_array1 ba),
          Nx.ones Nx.float32 [| 8 |] ))
+
+(* Retraces for a view's strides and for where its run starts within 16 bytes of
+   memory. *)
+let () =
+  let neg = Rune_next.Rune.jit' Nx.neg in
+  let grid = Nx.reshape [| 2; 3 |] (Nx.arange_f Nx.float32 0. 6. 1.) in
+  ignore (neg grid);
+  ignore
+    (neg
+       (Nx.transpose (Nx.reshape [| 3; 2 |] (Nx.arange_f Nx.float32 0. 6. 1.))));
+  let a = Nx.arange_f Nx.float32 0. 12. 1. in
+  ignore (neg (Nx.slice [ R (0, 4) ] a));
+  ignore (neg (Nx.slice [ R (1, 5) ] a))
