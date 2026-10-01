@@ -413,6 +413,19 @@ let rule_cases () =
       Some (ints [| 3; 2 |] [| 0; 3; -1; 2; 1; 1 |]),
       w,
       floats [| 3; 2; 1; 64 |] );
+    ( "grouped",
+      Some (ints [| 6; 2 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 2; 0; 1 |]),
+      w,
+      floats [| 6; 2; 1; 64 |] );
+  ]
+
+(* Routes of a map's lane over 4 experts: fewer than the experts, and more,
+   which multiply each expert once by all of its rows. *)
+let map_routes =
+  [
+    ("fewer routes than experts", ints [| 2; 2 |] [| 0; 3; -1; 2 |]);
+    ( "more routes than experts",
+      ints [| 6; 2 |] [| 0; 3; -1; 2; 3; 3; 1; 0; 2; 5; 0; 1 |] );
   ]
 
 let transformations =
@@ -427,6 +440,27 @@ let transformations =
           let f x = weighted (Nx_quant.apply ?ids w x) in
           near ~msg:"eager" expected (Rune.grad' f x);
           near ~msg:"compiled" expected (Rune.jit' (Rune.grad' f) x));
+      test "an expert's infinities leave other experts' rows finite gradients"
+        (fun () ->
+          (* Expert 0's scale byte is 254, so its codes of magnitude 2 or more
+             are infinite. Its 3 rows pad its block of 2 with a slot. *)
+          let w =
+            weight
+              ~scale:(fun i -> if i.(0) = 0 then 254 else moderate i)
+              [| 4; 8; 64 |]
+          in
+          let ids = ints [| 6; 2 |] [| 0; 1; 0; 2; 0; 3; 1; 2; 3; 1; 2; 3 |] in
+          let x = floats [| 6; 2; 1; 64 |] in
+          let others g =
+            let rows = Nx.reshape [| 6; 2; 1; 1 |] (Nx.not_equal_s ids 0L) in
+            Nx.where (Nx.broadcast_to (Nx.shape g) rows) g (Nx.zeros_like g)
+          in
+          let f x = weighted (Nx_quant.apply ~ids w x) in
+          let expected =
+            others (Rune.grad' (fun x -> weighted (dense ~ids w x)) x)
+          in
+          near ~msg:"eager" expected (others (Rune.grad' f x));
+          near ~msg:"compiled" expected (others (Rune.jit' (Rune.grad' f) x)));
       test
         "the gradient through a sum over the positions is the dense product's"
         (fun () ->
@@ -451,23 +485,27 @@ let transformations =
           near ~msg:"tangent" dy' dy;
           near ~msg:"compiled tangent" dy'
             (Rune.jit' (fun x -> snd (Rune.jvp' (Nx_quant.apply ?ids w) x t)) x));
-      test "a map over x is each row's product, eager and compiled" (fun () ->
+      cases ~name:fst "a map over x is each row's product, eager and compiled"
+        map_routes (fun (_, ids) ->
           let w = weight ~scale:moderate [| 4; 8; 64 |] in
-          let ids = ints [| 2; 2 |] [| 0; 3; -1; 2 |] in
-          let xs = floats [| 3; 2; 1; 1; 64 |] in
+          let xs = floats [| 3; (Nx.shape ids).(0); 1; 1; 64 |] in
           let f = Nx_quant.apply ~ids w in
           let expected =
             Nx.stack (List.init 3 (fun i -> f (Nx.slice [ I i ] xs)))
           in
           near ~msg:"eager" expected (Rune.vmap' f xs);
           near ~msg:"compiled" expected (Rune.jit' (Rune.vmap' f) xs));
-      test "a map over routes and rows is each one's product, compiled"
-        (fun () ->
+      cases ~name:fst
+        "a map over routes and rows is each one's product, eager and compiled"
+        map_routes (fun (_, ids) ->
           let w = weight ~scale:moderate [| 4; 8; 64 |] in
+          let t = (Nx.shape ids).(0) in
           let ids =
-            ints [| 3; 2; 2 |] [| 0; 3; -1; 2; 1; 1; 3; 0; 2; 4; 0; 1 |]
+            Nx.stack
+              (List.init 3 (fun i ->
+                   Nx.sub ids (Nx.full Nx.int64 (Nx.shape ids) (Int64.of_int i))))
           in
-          let xs = floats [| 3; 2; 1; 1; 64 |] in
+          let xs = floats [| 3; t; 1; 1; 64 |] in
           let f (ids, x) = Nx_quant.apply ~ids w x in
           let s = Nx.Ptree.(pair tensor tensor @-> returns tensor) in
           let expected =
@@ -475,7 +513,8 @@ let transformations =
               (List.init 3 (fun i ->
                    f (Nx.slice [ I i ] ids, Nx.slice [ I i ] xs)))
           in
-          near expected (Rune.jit s (Rune.vmap s f) (ids, xs)));
+          near ~msg:"eager" expected (Rune.vmap s f (ids, xs));
+          near ~msg:"compiled" expected (Rune.jit s (Rune.vmap s f) (ids, xs)));
       test "a map over weights is each weight's product, compiled" (fun () ->
           let ws = weight ~scale:moderate [| 3; 4; 8; 64 |] in
           let ids = ints [| 2 |] [| 0; 3 |] and x = floats [| 2; 1; 64 |] in

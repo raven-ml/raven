@@ -17,11 +17,19 @@
     the experts [ids] selects and one product. Their results live where their
     operands join ({!Nx.place}).
 
+    With [ids], a product whose positions number fewer than twice the weight's
+    experts, those of all its lanes, multiplies each position by its expert.
+    With more, as when a prompt's tokens each choose a few of the experts, the
+    positions are sorted by expert, each expert's run is padded to whole blocks
+    of 2 positions, and each block is one product with its expert, whose matrix
+    is then read once per block. Positions split over devices are grouped on
+    each device.
+
     Run eagerly, the composition holds the matrices it multiplies, decoded at
-    float32: {!dequant} holds the whole weight, and {!apply} with [ids] naming
-    [s] experts at each of [t] positions holds [t * s] decoded matrices. A
-    compiled call decodes them inside the product. Large weights are therefore
-    for compiled calls.
+    float32: {!dequant} holds the whole weight, and {!apply} with [ids] holds
+    one matrix per position, or one per block when it groups them. A compiled
+    call decodes them inside the product. Large weights are therefore for
+    compiled calls.
 
     A quantised weight has no gradient: build it once and capture it.
 

@@ -3038,6 +3038,11 @@ thread.
 
 ### Nx
 
+- `Nx_quant.apply ~ids` with at least twice as many positions as experts sorts
+  them by expert and multiplies each expert once per pair of its positions,
+  where it read every expert's weights once per position. A prompt's compiled
+  expert products run about 3 times faster on CUDA, and slower on Metal and the
+  host.
 - **Breaking:** `Nx_quant.apply` and `Nx_quant.dequant` are compositions of
   `Nx` operations everywhere, and `Nx_quant.Effect` is removed. Their results
   live where their operands join, no longer on the host. Run eagerly,

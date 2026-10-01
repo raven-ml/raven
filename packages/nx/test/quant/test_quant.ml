@@ -341,6 +341,10 @@ let product_law (_, w, ids, X { at; x }) =
   in
   cover "an id that selects no expert" (Array.mem false (Nx.to_array valid));
   cover "an empty result" (Nx.numel expected = 0);
+  (let s = Nx.shape expected in
+   let batch = Array.sub s 0 (Array.length s - min (Nx.ndim x) 2) in
+   cover "twice as many instances as matrices or more"
+     (ids <> None && Ref.numel batch >= 2 * Ref.numel lead));
   let y = Nx_quant.apply ?ids w x in
   equal ~msg:"dtype" string
     (Nx_dtype.to_string (Nx.dtype x))
@@ -536,6 +540,16 @@ let others =
           equal (pair placement placement) (p, p)
             ( Nx.placement (Nx_quant.dequant Nx.float32 w),
               Nx.placement (Nx_quant.apply ~ids w x) ));
+      test "routes split over two devices give the host's product" (fun () ->
+          let w = random_weight [| 4; 8; 64 |] in
+          let ids =
+            Nx.create Nx.int64 [| 8; 2 |]
+              (Array.init 16 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
+          and x = random_floats [| 8; 2; 1; 64 |] in
+          let split t = Nx.place (Nx.Placement.sharded ~axis:0 [ d1; d2 ]) t in
+          equal (tensor float_exact) (Nx_quant.apply ~ids w x)
+            (Nx.place Nx.Placement.host
+               (Nx_quant.apply ~ids:(split ids) w (split x))));
       test
         "visits the case, then codes before scales; rebuild and place keep the \
          parts" (fun () ->

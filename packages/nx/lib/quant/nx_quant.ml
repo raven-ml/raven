@@ -154,8 +154,8 @@ let broadcast fn a b =
              (pp_shape b)))
 
 (* [batch ?ids ws xs] is the batch axes of [w'], the matrices a product meets,
-   after checking the shapes of the weight [ws], the ids [ids] and the input
-   [xs]. *)
+   and of its result, after checking the shapes of the weight [ws], the ids
+   [ids] and the input [xs]. *)
 let batch ?ids ws xs =
   let fn = "Nx_quant.apply" in
   let wr = Array.length ws in
@@ -185,50 +185,157 @@ let batch ?ids ws xs =
           (broadcast fn (Array.sub ws 0 p) (Array.sub is 0 p))
           (Array.sub is p (Array.length is - p))
   in
-  ignore (broadcast fn xb wb);
-  wb
+  (wb, broadcast fn xb wb)
 
-(* [gather ~wb ~lanes ~e ids codes scales] is the parts of the matrices of [w'],
-   of batch axes [wb]: at each position, the expert its id names in its lane, an
-   id outside the [e] experts clamped among them, and whether it names one. *)
-let gather ~wb ~lanes ~e ids codes scales =
-  let p = Array.length lanes in
+(* Routes. [routes ~wb ~lanes ~e ids] is, at each position of [w']'s batch axes
+   [wb], the index of the matrix its id names among all [lanes]' [e] experts, an
+   id outside them clamped among them, and whether it names one. *)
+let routes ~wb ~lanes ~e ids =
   let ids = Nx.broadcast_to wb ids in
-  (* A position's matrix among all lanes' experts: its lane's row of experts,
-     then its id among them. *)
-  let lane =
-    let at = ref (Nx.zeros Nx.int64 wb) and stride = ref 1 in
-    for a = p - 1 downto 0 do
-      if lanes.(a) > 1 then begin
-        let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
-        let iota = Nx.reshape shape (Nx.arange Nx.int64 0 lanes.(a) 1) in
-        at := Nx.add !at (Nx.mul_s iota (Int64.of_int !stride))
-      end;
-      stride := !stride * lanes.(a)
-    done;
-    !at
-  in
+  (* A position's lane's row of experts, row-major over the lanes. *)
+  let lane = ref (Nx.zeros Nx.int64 wb) and stride = ref 1 in
+  for a = Array.length lanes - 1 downto 0 do
+    if lanes.(a) > 1 then begin
+      let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
+      let iota = Nx.reshape shape (Nx.arange Nx.int64 0 lanes.(a) 1) in
+      lane := Nx.add !lane (Nx.mul_s iota (Int64.of_int !stride))
+    end;
+    stride := !stride * lanes.(a)
+  done;
   let named =
     Nx.logical_and (Nx.greater_equal_s ids 0L) (Nx.less_s ids (Int64.of_int e))
   in
   let at =
-    Nx.reshape [| -1 |]
-      (Nx.add
-         (Nx.mul_s lane (Int64.of_int e))
-         (Nx.clamp ~min:0L ~max:(Int64.of_int (e - 1)) ids))
+    Nx.add
+      (Nx.mul_s !lane (Int64.of_int e))
+      (Nx.clamp ~min:0L ~max:(Int64.of_int (e - 1)) ids)
   in
-  let take t =
-    let s = Nx.shape t in
-    let matrix = Array.sub s (p + 1) 2 in
-    Nx.reshape (Array.append wb matrix)
-      (Nx.take ~axis:0 ~indices:at
-         (Nx.reshape
-            (Array.append
-               [| Array.fold_left ( * ) 1 (Array.sub s 0 (p + 1)) |]
-               matrix)
-            (Nx.contiguous t)))
+  (at, named)
+
+(* [matrices t g] is the part [t] as its [g] matrices, [[| g; ...; ... |]]. *)
+let matrices t g =
+  let s = Nx.shape t in
+  let r = Array.length s in
+  Nx.reshape [| g; s.(r - 2); s.(r - 1) |] (Nx.contiguous t)
+
+(* [product x codes scales] is [x] times each matrix of the weight of [codes]
+   and [scales], transposed, at float32. *)
+let product x codes scales =
+  Nx.matmul x (Nx.matrix_transpose (values codes scales))
+
+(* Grouped products. When a product's instances outnumber the matrices they
+   meet, each matrix is multiplied once by the rows of many of its instances,
+   rather than once per instance: the instances are sorted by matrix, each
+   matrix's run is padded to whole blocks of [block] instances, and every block
+   is one product with its matrix. A block is the unit of a matrix's reuse; the
+   padding costs at most [block - 1] instances per matrix.
+
+   Instances split over devices are grouped on each device: a sort cannot run
+   along a split axis, and a device's instances are its own rows. *)
+
+(* A block holds 2 instances, the size measured fastest: on an RTX 5000 Ada,
+   gpt-oss-20b's routed gate and up product of 512 tokens takes 34.5 ms in
+   blocks of 2, 37.4 ms in blocks of 8, 49.9 ms in blocks of 32 and 108.5 ms
+   ungrouped, and blocks of 2 are the fastest from 64 tokens to 2048. *)
+let block = 2
+
+(* [shards t] is the number of devices' windows that split [t]'s first axis. *)
+let shards t =
+  let p = Nx.placement t and s = Nx.shape t in
+  List.length
+    (List.sort_uniq compare
+       (List.map
+          (fun d -> (Nx.Placement.window p s d).(0))
+          (Nx.Placement.devices p)))
+
+(* [grouped ~g ~r at named x codes scales] is the products of the [x] rows [[|
+   i; m; k |]] of [i] instances over [r] devices' shards, the instance [j] with
+   the matrix [at.(j)] among [g] if [named.(j)], [[| i; m; n |]]. The product of
+   an instance that names no matrix is left to the caller's mask. *)
+let grouped ~g ~r at named x codes scales =
+  let i = Nx.dim 0 x and m = Nx.dim 1 x and k = Nx.dim 2 x in
+  let j = i / r in
+  let int64 = Int64.of_int in
+  (* Instances naming no matrix sort last, as matrix [g], and take no slot. *)
+  let key =
+    Nx.reshape [| r; j |] (Nx.where named at (Nx.full_like at (int64 g)))
   in
-  (take codes, take scales, named)
+  let order = Nx.argsort ~axis:1 key in
+  (* Each matrix's run in sorted order, [[| r; g |]]: its length, first
+     position, and slots padded to whole blocks. *)
+  let count =
+    Nx.scatter ~mode:`Add ~axis:1 ~indices:key ~values:(Nx.ones_like key)
+      (Nx.zeros Nx.int64 [| r; g |])
+  in
+  let first = Nx.sub (Nx.cumsum ~axis:1 count) count in
+  let padded =
+    Nx.mul_s
+      (Nx.div_s (Nx.add_s count (int64 (block - 1))) (int64 block))
+      (int64 block)
+  in
+  let ends = Nx.cumsum ~axis:1 padded in
+  let starts = Nx.sub ends padded in
+  (* Slots, in blocks: a bound of the padded runs, whatever the ids. *)
+  let blocks = (j + (min g j * (block - 1)) + block - 1) / block in
+  let slots = blocks * block in
+  (* Each block's matrix: the runs that end at or before its first slot. *)
+  let owner =
+    Nx.clamp
+      ~max:(int64 (g - 1))
+      (Nx.cast Nx.int64
+         (Nx.sum ~axes:[ 2 ]
+            (Nx.cast Nx.int32
+               (Nx.less_equal
+                  (Nx.reshape [| r; 1; g |] ends)
+                  (Nx.reshape [| 1; blocks; 1 |]
+                     (Nx.arange Nx.int64 0 slots block))))))
+  in
+  (* Each slot's instance: its rank in its block's run, in sorted order. A slot
+     past its run reads index -1, a row of zeros whose gradient's scatter is
+     dropped. *)
+  let slot_owner =
+    Nx.reshape [| r; slots |]
+      (Nx.broadcast_to [| r; blocks; block |]
+         (Nx.reshape [| r; blocks; 1 |] owner))
+  in
+  let along t indices = Nx.take_along_axis ~axis:1 ~indices t in
+  let offset =
+    Nx.sub
+      (Nx.reshape [| 1; slots |] (Nx.arange Nx.int64 0 slots 1))
+      (along starts slot_owner)
+  in
+  let in_run = Nx.less offset (along count slot_owner) in
+  let instance = along order (Nx.add (along first slot_owner) offset) in
+  let instance = Nx.where in_run instance (Nx.scalar_like instance (-1L)) in
+  let rows =
+    Nx.reshape
+      [| r; blocks; block * m; k |]
+      (along
+         (Nx.reshape [| r; j; m; k |] x)
+         (Nx.broadcast_to [| r; slots; m; k |]
+            (Nx.reshape [| r; slots; 1; 1 |] instance)))
+  in
+  let weights t =
+    let w =
+      Nx.take ~axis:0
+        ~indices:(Nx.reshape [| r * blocks |] owner)
+        (matrices t g)
+    in
+    Nx.reshape (Array.append [| r; blocks |] (Array.sub (Nx.shape w) 1 2)) w
+  in
+  let y = product rows (weights codes) (weights scales) in
+  let n = Nx.dim (-1) y in
+  (* Each instance's slot: its run's first slot and its rank in the run. *)
+  let rank =
+    Nx.scatter ~unique_indices:true ~axis:1 ~indices:order
+      ~values:(Nx.broadcast_to [| r; j |] (Nx.arange Nx.int64 0 j 1))
+      (Nx.zeros Nx.int64 [| r; j |])
+  in
+  let slot = Nx.add (along starts key) (Nx.sub rank (along first key)) in
+  Nx.reshape [| i; m; n |]
+    (along
+       (Nx.reshape [| r; slots; m; n |] y)
+       (Nx.broadcast_to [| r; j; m; n |] (Nx.reshape [| r; j; 1; 1 |] slot)))
 
 (* Products *)
 
@@ -238,21 +345,46 @@ let dequant dt (Mxfp4 { codes; scales }) =
 let apply (type b) ?ids (Mxfp4 { codes; scales }) (x : (float, b) Nx.t) :
     (float, b) Nx.t =
   let ws = Nx.shape codes in
-  let wb = batch ?ids:(Option.map Nx.shape ids) ws (Nx.shape x) in
+  let wb, rb = batch ?ids:(Option.map Nx.shape ids) ws (Nx.shape x) in
   let x32 = Nx.cast Nx.float32 x in
-  let product codes scales =
-    Nx.matmul x32 (Nx.matrix_transpose (values codes scales))
-  in
   match ids with
   | None ->
       Nx.cast (Nx.dtype x)
-        (product (Nx.contiguous codes) (Nx.contiguous scales))
+        (product x32 (Nx.contiguous codes) (Nx.contiguous scales))
   | Some ids ->
       let wr = Array.length ws in
       let lanes = Array.sub ws 0 (wr - 3) and e = ws.(wr - 3) in
-      let codes, scales, named = gather ~wb ~lanes ~e ids codes scales in
-      let y = product codes scales in
-      let units = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
+      let g = Array.fold_left ( * ) 1 lanes * e in
+      let at, named = routes ~wb ~lanes ~e ids in
+      let n = ws.(wr - 2) and k = 2 * ws.(wr - 1) in
+      let vector = Nx.ndim x = 1 in
+      let m = if vector then 1 else Nx.dim (-2) x in
+      let i = Array.fold_left ( * ) 1 rb in
+      let units = if vector then [| 1 |] else [| 1; 1 |] in
+      let flat t = Nx.reshape [| i |] (Nx.broadcast_to rb t) in
+      let rows =
+        Nx.reshape [| i; m; k |]
+          (Nx.broadcast_to
+             (Array.append rb [| m; k |])
+             (if vector then Nx.reshape [| 1; k |] x32 else x32))
+      in
+      (* The routes and rows join where one of them is split. *)
+      let r = if i = 0 then 1 else max (shards (flat at)) (shards rows) in
+      (* Grouped, the padding, at most a slot per matrix, stays below half the
+         instances. *)
+      let y =
+        if i / r >= block * g && m * n * k > 0 then
+          Nx.reshape
+            (Array.append rb (if vector then [| n |] else [| m; n |]))
+            (grouped ~g ~r (flat at) (flat named) rows codes scales)
+        else
+          let take t =
+            let matrix = Array.sub (Nx.shape t) (wr - 2) 2 in
+            Nx.reshape (Array.append wb matrix)
+              (Nx.take ~axis:0 ~indices:(Nx.reshape [| -1 |] at) (matrices t g))
+          in
+          product x32 (take codes) (take scales)
+      in
       Nx.cast (Nx.dtype x)
         (Nx.where
            (Nx.reshape (Array.append wb units) named)
