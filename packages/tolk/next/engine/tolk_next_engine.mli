@@ -51,8 +51,9 @@ type device = {
       (** [placeholder u] is the storage of the placeholder [u] of a batch on
           this device if the vendor's commands name it, such as the objects of
           the vendor library's low-level section or a word holding the address
-          of a C function they call, and [None] for the others. It is asked for
-          the placeholders on the device and for those of the batches the device
+          of a C function they call, and [None] for the others. It holds at
+          least the placeholder's bytes, or {!link} raises. It is asked for the
+          placeholders on the device and for those of the batches the device
           runs, wherever they are, such as a C function's word on the host. *)
   submitting : unit -> unit;
       (** [submitting ()] runs inside each submission of a batch on the device,
@@ -156,7 +157,8 @@ val link :
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     [bound] gives a storage node buffers of other devices, sizes or number than
-    its placement, if a batch names a C function of a library the engine does
+    its placement, if a vendor gives a placeholder storage of fewer bytes than
+    the placeholder, if a batch names a C function of a library the engine does
     not know, or if [linear] is not a compiled schedule;
     {!Nx_device.Out_of_memory} if a device cannot allocate its storage; and
     [Failure] if a device refuses a program's binary. *)

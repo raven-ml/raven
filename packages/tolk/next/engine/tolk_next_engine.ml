@@ -424,6 +424,11 @@ let placeholder device queues u =
       (List.hd (names u) :: queues)
   in
   match named with
+  | Some b when B.nbytes b < bytes u ->
+      invalid_arg
+        (strf "Tolk_next_engine.link: %s's storage holds %d bytes, not %d"
+           (Format.asprintf "%a" Ops.pp u)
+           (B.nbytes b) (bytes u))
   | Some b -> b
   | None -> (
       match Ops.tag u with

@@ -1260,6 +1260,23 @@ let calls_a_function_of_the_host () =
   Null_device.synchronize ();
   equal values [| `Int (Z.of_int 5) |] (Run.values Int32 result)
 
+(* A vendor's storage of fewer bytes than its placeholder is refused at link,
+   before any run could write past it. *)
+let refuses_short_storage () =
+  let d = "CPU:1" in
+  let out =
+    Ops.placeholder ~device:(Single d) ~volatile:true ~tag:(String "result")
+      [ 2 ] Int32
+  in
+  let short = Nx_device.Buffer.create (Null_device.device d) Int32 1 in
+  let devices = with_tag "result" short in
+  let compiled =
+    host_program ~devices d
+      [ Ops.store (Ops.index out [ Ops.int 1 ]) (Ops.int ~dtype:Int32 7) ]
+  in
+  raises_match (Exn.invalid_arg ~substring:"holds 4 bytes, not 8") (fun () ->
+      ignore (Engine.link ~devices compiled))
+
 (* Each run of a batch on a device runs the device's submitting hook once. *)
 let runs_the_submitting_hook () =
   let hooked = ref 0 in
@@ -1486,6 +1503,8 @@ let batches =
         spans_on_lanes;
       test "a host program calls a C function through the batch's device"
         calls_a_function_of_the_host;
+      test "a vendor's storage shorter than its placeholder is refused at link"
+        refuses_short_storage;
       test "each run of a batch runs its device's submitting hook once"
         runs_the_submitting_hook;
       test "at DEBUG=2, a run prints one line per kernel, timed by its stamps"
