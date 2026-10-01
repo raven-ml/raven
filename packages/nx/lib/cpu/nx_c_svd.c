@@ -2737,7 +2737,13 @@ static nx_c_status nx_c_svd_run(const nx_c_ndarray *in, const nx_c_ndarray *u,
     vt_bs[i] = vt->strides[i];
     nbatch *= bshape[i];
   }
-  if (k == 0 || nbatch == 0) return NX_C_OK;
+  if (nbatch == 0) return NX_C_OK;
+  if (k == 0) {
+    /* No singular value: a full U and Vᵀ are identities, reduced ones empty. */
+    if (ncu > 0) la_eye_batch(u, dt, ncu);
+    if (nrv > 0) la_eye_batch(vt, dt, nrv);
+    return NX_C_OK;
+  }
 
   int trans = m < n;
   int64_t pr = m >= n ? m : n;

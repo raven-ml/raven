@@ -343,7 +343,13 @@ static nx_c_status nx_c_qr_run(const nx_c_ndarray *in, const nx_c_ndarray *q,
     r_bs[i] = r->strides[i];
     nbatch *= bshape[i];
   }
-  if (m == 0 || n == 0 || nbatch == 0) return NX_C_OK;
+  if (nbatch == 0) return NX_C_OK;
+  if (n == 0) {
+    /* No column to reflect: Q is the identity, R is empty. */
+    if (nq > 0) la_eye_batch(q, dt, nq);
+    return NX_C_OK;
+  }
+  if (m == 0) return NX_C_OK;
 
   int64_t bytes = nbatch * ((m * n) + (m * nq)) * esz;
   int nth = nx_c_threads_for(NX_C_COST_HEAVY, nbatch, m * n * k, bytes);

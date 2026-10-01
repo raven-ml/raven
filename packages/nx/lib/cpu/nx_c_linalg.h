@@ -384,6 +384,12 @@ static inline void la_scale(la_compute lc, void *a, int64_t m, int64_t n,
       for (int64_t k = 0; k < cols; k++)                                       \
         nx_c_st_##sfx(dst + (i * rs + k * cs) * esz, src[i * ld_ + k]);         \
   }                                                                            \
+  static void la_eye_##sfx(int64_t n, char *dst, int64_t rs, int64_t cs) {    \
+    int64_t esz = (int64_t)sizeof(storage);                                    \
+    for (int64_t i = 0; i < n; i++)                                            \
+      for (int64_t k = 0; k < n; k++)                                          \
+        nx_c_st_##sfx(dst + (i * rs + k * cs) * esz, (compute)(i == k));       \
+  }                                                                            \
   static void la_packR_##sfx(const void *vsrc, int64_t ld_, int64_t rows,      \
                              int64_t cols, char *dst, int64_t rs, int64_t cs) { \
     const compute *src = (const compute *)vsrc;                               \
@@ -404,17 +410,20 @@ typedef void (*la_packtri_fn)(const void *, int64_t, int64_t, char *, int64_t,
 typedef void (*la_packfull_fn)(const void *, int64_t, int64_t, int64_t, char *,
                                int64_t, int64_t);
 
+typedef void (*la_eye_fn)(int64_t, char *, int64_t, int64_t);
+
 typedef struct {
   la_unpack_fn unpack;
   la_packtri_fn packtri;
   la_packfull_fn packfull;
   la_packfull_fn packR; /* upper trapezoid; same signature as packfull */
+  la_eye_fn eye;        /* the n×n identity, written through nx_c_st */
 } la_move_desc;
 
 static const la_move_desc la_move[NX_C_DTYPE_COUNT] = {
 #define LA_MOVE_ROW(sfx, storage, compute, ld, st, cat)                        \
   [NX_C_DTYPE_##sfx] = {la_unpack_##sfx, la_packtri_##sfx, la_packfull_##sfx,   \
-                       la_packR_##sfx},
+                       la_packR_##sfx, la_eye_##sfx},
     NX_C_FOR_EACH_COMPUTE_DTYPE(LA_MOVE_ROW)
 #undef LA_MOVE_ROW
 };
@@ -430,6 +439,23 @@ static void la_batch_base(int64_t bt, int nd, const int64_t *bshape,
     o += q * stride[i];
   }
   *out = data + o * esz;
+}
+
+/* Writes the n×n identity into each matrix of the batched a: the orthogonal
+   factor of a matrix with no entries to rotate, which QR and SVD return for
+   an empty dimension. */
+static inline void la_eye_batch(const nx_c_ndarray *a, nx_c_dtype dt,
+                                int64_t n) {
+  int nd = a->ndim - 2;
+  int64_t esz = nx_c_elem_size(dt);
+  int64_t nbatch = 1;
+  for (int i = 0; i < nd; i++) nbatch *= a->shape[i];
+  for (int64_t bt = 0; bt < nbatch; bt++) {
+    const char *base;
+    la_batch_base(bt, nd, a->shape, a->strides, a->offset, esz,
+                  (const char *)a->data, &base);
+    la_move[dt].eye(n, (char *)base, a->strides[nd], a->strides[nd + 1]);
+  }
 }
 
 /* ── Cross-family QR entry points (defined in nx_c_qr.c) ────────────────────

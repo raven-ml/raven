@@ -1394,6 +1394,37 @@ let at_scale =
           equal (array int) sq (Nx.shape (Nx.cholesky a));
           equal (array int) vec
             (Nx.shape (Nx.solve_triangular a (Nx.zeros Nx.float64 vec))));
+      cases
+        ~name:(Format.asprintf "%a" pp_shape)
+        "the full orthogonal factors of an empty dimension are identities"
+        [ [| 3; 0 |]; [| 0; 3 |]; [| 0; 0 |]; [| 2; 3; 0 |]; [| 2; 0; 3 |] ]
+        (fun shape ->
+          let check (type b) name (dt : (float, b) Nx.dtype) =
+            let a = Nx.zeros dt shape in
+            let batch = Array.sub shape 0 (Array.length shape - 2) in
+            let m = Nx.dim (-2) a and n = Nx.dim (-1) a and k = 0 in
+            let dims r c = Array.append batch [| r; c |] in
+            let eye k = Nx.broadcast_to (dims k k) (Nx.eye dt k) in
+            let msg what = name ^ ", " ^ what in
+            let q, r = Nx.qr ~mode:`Complete a in
+            equal ~msg:(msg "complete Q") (tensor float_exact) (eye m) q;
+            equal ~msg:(msg "complete R") (array int) (dims m n) (Nx.shape r);
+            let u, s, vt = Nx.svd ~full_matrices:true a in
+            equal ~msg:(msg "full U") (tensor float_exact) (eye m) u;
+            equal ~msg:(msg "full Vt") (tensor float_exact) (eye n) vt;
+            equal ~msg:(msg "S") (array int)
+              (Array.append batch [| k |])
+              (Nx.shape s);
+            let q, r = Nx.qr a in
+            equal ~msg:(msg "reduced Q") (array int) (dims m k) (Nx.shape q);
+            equal ~msg:(msg "reduced R") (array int) (dims k n) (Nx.shape r);
+            let u, _, vt = Nx.svd a in
+            equal ~msg:(msg "reduced U") (array int) (dims m k) (Nx.shape u);
+            equal ~msg:(msg "reduced Vt") (array int) (dims k n) (Nx.shape vt)
+          in
+          check "float64" Nx.float64;
+          check "float32" Nx.float32;
+          check "float16" Nx.float16);
     ]
 
 (* The singular values np.linalg.svd gives the bidiagonal fixtures below. *)

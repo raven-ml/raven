@@ -2934,6 +2934,10 @@ thread.
 
 ### Nx
 
+- A complete `Nx.qr` of an m x 0 matrix and an `Nx.svd` with
+  `~full_matrices:true` of a matrix with an empty dimension return the identity
+  as their square orthogonal factors (Q, and U or Vt). They returned all zeros,
+  which are not orthogonal, where compiled code returned the identity.
 - `Nx_amd_device` counts a profile's counters on AMD GPUs: `Nx_amd_device.counters`
   lays out the GPU's counters by name, `Nx_amd_device.counting` gives the
   libraries that submit work the device's log and samples, and the device reads
