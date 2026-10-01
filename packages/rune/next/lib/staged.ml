@@ -316,6 +316,27 @@ let stage trace s (r : Scan.request) =
       (Ops.call ~precompile:true body (List.map snd (List.sort compare args)))
       [ range ]
   in
+  (* Before answering, the loop must run: as one batch, or trip by trip on the
+     host, which a probe of its schedule tells. *)
+  let probe =
+    List.map
+      (fun (slot, u) ->
+        ( slot,
+          Ops.new_buffer
+            (Option.get (Ops.device u))
+            (Ops.max_numel u) (Ops.dtype u) ))
+      !args
+  in
+  let linear, _ =
+    Tolk_next.Schedule.create_linear_with_vars ~capturing:true
+      (Ops.sink [ Ops.after (snd (List.hd probe)) [ call probe ] ])
+  in
+  if
+    not
+      (List.exists
+         (Hcq2.runs ~devices:(fun d -> (Lower.engine s d).compiler))
+         (Ops.src linear))
+  then raise Scan.Not_staged;
   let e = call !args in
   {
     Scan.r_carry =

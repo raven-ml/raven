@@ -1177,6 +1177,10 @@ let stages ~devices e =
   op e = Op.End
   && match range_placement devices e with Enqueued _ -> true | _ -> false
 
+let runs ~devices e =
+  op e = Op.End
+  && match range_placement devices e with Mixed _ -> false | _ -> true
+
 (* [body] with the range [r] read as [v]. *)
 let rec shift r v = function
   | One (c, devs, q) -> One (substitute c [ (r, v) ], devs, q)

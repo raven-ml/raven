@@ -390,6 +390,12 @@ val stages : devices:(string -> device) -> Ops.t -> bool
     kernels take about 5 MB and 8 MB. Unrolling instead holds a graph for each
     trip, which grows with [n] as well, and more. *)
 
+val runs : devices:(string -> device) -> Ops.t -> bool
+(** [runs ~devices e] is [true] iff a range around calls [e] ({!Op.End}) runs at
+    all: as one batch ({!stages}), or trip by trip with its calls all on the
+    host. A range whose calls run on devices with queues and on the host, or on
+    devices of two kinds, does not. *)
+
 val lower_call : devices:(string -> device) -> Ops.t -> Ops.t
 (** [lower_call ~devices batch] is the batch [batch] as a call of its host
     program, a kernel of the host of its first device ({!queues.host}):

@@ -1780,6 +1780,18 @@ let staged_scans d =
         ~steps:once ~init:(zeros 4) decay (rows 3001 4);
       held_by_steps at ~than:1 4 16;
       held_by_steps at ~than:2 4 64;
+      (* A loop's calls run on devices with queues or all on the host: a step
+         that computes on the host between steps on the device is written
+         out. *)
+      staged at
+        "write out a step that computes on the host between device steps"
+        ~steps:(fun n -> n + 1)
+        ~init:(ones 4)
+        (fun c x ->
+          let h = Nx.sqrt (Nx.place Nx.Placement.host c) in
+          let c = Nx.add (Nx.place at h) x in
+          (c, c))
+        (rows 5 4);
       staged at "update a carry its next value reads through a product"
         ~steps:once ~init:(ones 3) product (rows 6 3);
       staged at "stage around a scan their step writes out" ~steps:once

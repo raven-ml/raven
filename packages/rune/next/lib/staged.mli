@@ -25,18 +25,19 @@
     read each other in a cycle, such as two carries that swap. A scan inside the
     step is written out inside the body.
 
-    A scan stages when its leaves lie on one device, host leaves joining it. On
-    a device whose work runs from command queues (Metal, CUDA, AMD, NV) the loop
-    runs as one batch where its body allows; elsewhere, and where it does not,
-    the program runs the body's calls once per trip. It is declined
-    ({!Scan.Not_staged}), and folds where it is written:
+    A scan stages when its leaves lie on one device, host leaves joining it, and
+    its loop runs ({!Tolk_next.Hcq2.runs}): on a device whose work runs from
+    command queues (Metal, CUDA, AMD, NV), as one batch of the body's calls; on
+    the host, or a device without queues, its calls once per trip. It is
+    declined ({!Scan.Not_staged}), and folds where it is written:
     - before its step runs, when its leaves lie on several devices;
     - after its step ran once, in a trace whose values nothing keeps, when the
       step's next carry differs from its carry in a shape or a placement, when
-      an output lies elsewhere than the loop's device or the host, or when the
-      step draws from a key the body does not vary (a key scope's draw: the step
-      runs outside the scopes the function opened, and a traced draw would
-      repeat on every trip).
+      an output lies elsewhere than the loop's device or the host, when the step
+      draws from a key the body does not vary (a key scope's draw: the step runs
+      outside the scopes the function opened, and a traced draw would repeat on
+      every trip), or when the body's calls run on a device with queues and on
+      the host, or on devices of two kinds, which no loop runs.
 
     An output the step computes on the host, such as a constant, is written on
     the loop's device, and its rows are copied to the host once per call.
