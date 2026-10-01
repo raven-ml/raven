@@ -250,14 +250,16 @@ let name s d =
   | None -> s.names <- (n, d) :: s.names);
   n
 
-(* Whether [d] computes [dt], by the dtypes of [d]'s renderer, read the first
-   time [s] meets [d]. *)
+(* Whether [d] computes [dt]: a dtype [d]'s renderer supports, read the first
+   time [s] meets [d], or one tolk emulates where the renderer lacks it. *)
 let supports s d dt =
   let dtypes =
     match List.assq_opt d s.dtypes with
     | Some l -> l
     | None ->
-        let l = Renderer.supported_dtypes (s.renderer d) in
+        let l =
+          Renderer.supported_dtypes (s.renderer d) @ Decomp_dtype.emulable
+        in
         s.dtypes <- (d, l) :: s.dtypes;
         l
   in

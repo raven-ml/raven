@@ -91,9 +91,10 @@ type scope
 
 val scope : renderer:(Nx.Device.t -> Renderer.t) -> scope
 (** [scope ~renderer] is an empty trace in which the programs of a device [d]
-    are rendered by [renderer d], which decides the dtypes [d] computes
-    ({!Renderer.supported_dtypes}). [renderer] is called once per device of the
-    trace. *)
+    are rendered by [renderer d], which decides the dtypes [d] computes: those
+    it supports ({!Renderer.supported_dtypes}) and those tolk emulates where
+    it lacks them ({!Decomp_dtype.emulable}). [renderer] is called once per
+    device of the trace. *)
 
 val op : scope -> 'r Nx.Op.t -> 'r
 (** [op s o] is [o] in the trace [s]. Each result is a traced value at the

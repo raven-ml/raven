@@ -792,6 +792,8 @@ and pm_float_decomp =
 
 (* Passes *)
 
+let emulable = Dtype.(fp8s @ [ Bfloat16; Float16; Int64; Uint64 ])
+
 type ctx = { mutable found : Dtype.t list; renderer : Renderer.t }
 
 let ctx renderer = { found = []; renderer }
@@ -827,9 +829,7 @@ let pm_dtype_decomps =
     (fun () -> [
       (* Find the types to decompose. *)
       rule_ctx
-        (Upat.v ~op:Op.Set.all
-           ~dtype:Dtype.(fp8s @ [ Bfloat16; Float16; Int64; Uint64 ])
-           ~name:"x" ())
+        (Upat.v ~op:Op.Set.all ~dtype:emulable ~name:"x" ())
         (fun ctx m ->
           let dt =
             match dtype (m "x") with Uint64 -> Dtype.Int64 | dt -> dt

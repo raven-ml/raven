@@ -287,6 +287,7 @@ let bits_of_float (type b) (dt : (float, b) Nx_dtype.t) x =
     conv (E.get dt' (B.view one ~offset:0 (Scalar.of_dtype dt') 1) 0)
   in
   match Nx_dtype.itemsize dt with
+  | 1 -> get Nx.uint8 Int64.of_int
   | 2 -> get Nx.uint16 Int64.of_int
   | 4 -> get Nx.uint32 (fun w -> Int64.logand (Int64.of_int32 w) 0xffff_ffffL)
   | _ -> get Nx.uint64 Fun.id
@@ -335,10 +336,16 @@ type fdt = F : (float, 'b) Nx_dtype.t -> fdt
 let pp_dt ppf (D dt) = Format.pp_print_string ppf (Nx_dtype.to_string dt)
 let pp_fdt ppf (F dt) = Format.pp_print_string ppf (Nx_dtype.to_string dt)
 
-(* The floats the device's renderer computes: the host's has no 8-bit float,
-   Metal's no float64. *)
+(* The floats the device computes, natively or emulated: Metal has no
+   float64. *)
 let floats d =
-  [ F Nx.float32; F Nx.float16; F Nx.bfloat16 ]
+  [
+    F Nx.float32;
+    F Nx.float16;
+    F Nx.bfloat16;
+    F Nx.float8_e4m3;
+    F Nx.float8_e5m2;
+  ]
   @ if d.float64 then [ F Nx.float64 ] else []
 
 let ints =
@@ -486,8 +493,9 @@ let ranks (x : (float, 'b) Nx.t) =
             (fun w -> Int64.logand (Int64.of_int32 w) 0xffff_ffffL)
             (Nx.to_array (Nx.bitcast Nx.uint32 x)),
           0x8000_0000L )
-    | _ ->
+    | 2 ->
         (Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint16 x)), 0x8000L)
+    | _ -> (Array.map Int64.of_int (Nx.to_array (Nx.bitcast Nx.uint8 x)), 0x80L)
   in
   let magnitude = Int64.pred sign in
   Array.map
@@ -1779,16 +1787,70 @@ let refusals d =
         refuses d "cast" ~dst:y (fun () -> K.cast x ~dst:y));
   ]
 
-(* The refusals of what the host's renderer lacks: the 8-bit floats. *)
-let host_refusals =
+(* The 8-bit floats, which neither the host's renderer nor Metal's has and
+   tolk emulates: arithmetic is eager's, and a copy or a selection keeps each
+   code's bits, subnormals and NaN payloads included, but for an e5m2
+   signalling NaN, which emulation reads as a float32 and stores quiet (D9). *)
+
+(* An array of [n] elements on [d] whose bytes are [byte i]. *)
+let bytes d dtype n byte =
+  let h = fresh host dtype [| n |] in
+  let c = B.bigarray Bigarray.char h.buffer in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.set c i (Char.chr (byte i))
+  done;
+  moved d.device h
+
+(* The code [b] of [dt] as emulation stores it. *)
+let stored (type b) (dt : (float, b) Nx_dtype.t) b =
+  match dt with Float8_e5m2 when b land 0x7f = 0x7d -> b lor 0x02 | _ -> b
+
+let float8 d =
   let module K = (val compiled) in
+  let dts = [ F Nx.float8_e4m3; F Nx.float8_e5m2 ] in
+  let name (F dt) = Nx_dtype.to_string dt in
+  let codes dt f = String.init 256 (fun i -> Char.chr (stored dt (f i))) in
   [
-    cases "an 8-bit float is refused on the host"
-      ~name:(fun (D dt) -> Nx_dtype.to_string dt)
-      [ D Nx.float8_e4m3; D Nx.float8_e5m2 ]
-      (fun (D dt) ->
-        let x = filled on_host dt [| 3 |] and dst = filled on_host dt [| 3 |] in
-        refuses on_host "binary" ~dst (fun () -> K.binary Add x x ~dst));
+    cases "an 8-bit float sums as eager does" ~name dts (fun (F dt) ->
+        let x =
+          array_of
+            (Nx.cast dt (Nx.create Nx.float32 [| 4 |] [| 1.; -0.5; 3.; 0.25 |]))
+        in
+        let add (module K : Nx_backend.S) env =
+          let dst = env.dst dt [| 4 |] in
+          K.binary Add (env.on x) (env.on x) ~dst;
+          dst
+        in
+        exact_of (both d add));
+    cases "an 8-bit float matrix product sums exact products at float32"
+      ~name dts (fun (F dt) ->
+        (* Eighths of magnitude below 1: every partial sum is exact in
+           float32, so a product rounded once is the exact sum rounded. *)
+        let operand seed rows cols =
+          array_of
+            (Nx.create dt [| rows; cols |]
+               (Array.init (rows * cols) (fun i ->
+                    float_of_int ((((i * 37) + seed) mod 15) - 7) /. 8.)))
+        in
+        List.iter
+          (fun (m, k, n) ->
+            let x = operand 11 m k and y = operand 5 k n in
+            exact_of (both d (matmul [| m; n |] x y)))
+          [ (3, 12, 5); (1, 64, 40); (16, 32, 24) ]);
+    cases "a copy of every 8-bit float code keeps its bits (D9)" ~name dts
+      (fun (F dt) ->
+        let x = bytes d dt 256 Fun.id and dst = fresh d.device dt [| 256 |] in
+        K.contiguous x ~dst;
+        equal string (codes dt Fun.id) (bytes_of dst));
+    cases "a selection of every 8-bit float code keeps its bits (D9)" ~name dts
+      (fun (F dt) ->
+        let x = bytes d dt 256 Fun.id and y = bytes d dt 256 (fun i -> 255 - i) in
+        let c = bytes d Nx.bool 256 (fun i -> i land 1) in
+        let dst = fresh d.device dt [| 256 |] in
+        K.where c x y ~dst;
+        equal string
+          (codes dt (fun i -> if i land 1 = 1 then i else 255 - i))
+          (bytes_of dst));
   ]
 
 (* The refusals of what Metal's renderer lacks: float64, which svd's singular
@@ -2338,7 +2400,11 @@ let () =
     | Some m ->
         kernels m ~count:25 ~heavy:true
         @ contracts m
-        @ [ group "Metal" (metal_refusals m); group "cost" (cost m) ]
+        @ [
+            group "Metal" (metal_refusals m);
+            group "8-bit floats" (float8 m);
+            group "cost" (cost m);
+          ]
   in
   exit
     (run "Rune_next.Compiled"
@@ -2347,7 +2413,7 @@ let () =
            (kernels on_host ~count:1 ~heavy:false
            @ contracts on_host
            @ [
-               group "refusals of the host" host_refusals;
+               group "8-bit floats" (float8 on_host);
                group "devices" devices;
              ]);
          group ~tags:[ "slow" ] "host, swept"

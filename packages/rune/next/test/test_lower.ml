@@ -379,6 +379,13 @@ let refusals =
             (fun () ->
               trace ~renderer:metal (fun () ->
                   Nx.copy (Nx.create Nx.float64 [| 2 |] [| 1.; 2. |]))));
+      test "an 8-bit float the host's renderer lacks is traced, tolk emulating it"
+        (fun () ->
+          let x =
+            Nx.create Nx.float8_e4m3 [| 2; 2 |] [| 1.; 2.; 3.; -1. |]
+          in
+          let s, y = trace (fun () -> Nx.matmul x x) in
+          Traces.exact (Nx.matmul x x) (Traces.value s y));
       test "a dtype with no counterpart is refused" (fun () ->
           raises
             (Lower.Jit_error "cannot compile contiguous: int4 is not supported")

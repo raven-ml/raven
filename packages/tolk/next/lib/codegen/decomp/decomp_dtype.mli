@@ -58,6 +58,12 @@ val f2f_clamp : ?sat:bool -> Ops.t -> Dtype.t -> Ops.t
 
 (** {1:passes Passes} *)
 
+val emulable : Dtype.t list
+(** [emulable] is the data types {!pm_dtype_decomps} emulates on a target that
+    lacks them: the 8-bit floats, {!Dtype.Bfloat16}, {!Dtype.Float16},
+    {!Dtype.Int64} and {!Dtype.Uint64}. A target computes a type that it
+    supports ({!Renderer.supported_dtypes}) or that is emulable. *)
+
 type ctx
 (** The type for the context of {!pm_dtype_decomps}: the types a kernel uses
     that may need emulation, and the target's renderer. *)
