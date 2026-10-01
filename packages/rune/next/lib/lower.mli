@@ -50,6 +50,12 @@ val span : Dtype.t -> Nx_array.View.t -> int * int
     reaches, from the element at or below the first one it reaches whose offset
     is a multiple of 16 bytes, through the last one: [(start, length)]. *)
 
+val within : Dtype.t -> Nx_array.View.t -> Nx_array.View.t
+(** [within dt v] is the non-empty view [v] over the run {!span} gives: of [v]'s
+    shape and strides, offset from the run's start, with the stride of each axis
+    of one element [0], which no read steps along. Views that differ only in
+    those strides, or in where their runs start, give equal views. *)
+
 val run : Dtype.t -> Nx_array.View.t -> Nx_device.Buffer.t -> Nx_device.Buffer.t
 (** [run dt v b] is the run of [b]'s elements of [dt] that {!span} gives for the
     view [v]: the buffer a parameter of a value of view [v] over [b] binds. *)

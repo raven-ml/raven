@@ -377,6 +377,14 @@ let span tdt v =
   let start = lo - (lo mod per) in
   (start, hi - start)
 
+let within tdt v =
+  let start, _ = span tdt v and shape = View.shape v in
+  View.create
+    ~offset:(View.offset v - start)
+    ~strides:
+      (Array.mapi (fun d s -> if shape.(d) = 1 then 0 else s) (View.strides v))
+    shape
+
 let run tdt v b =
   let start, span = span tdt v in
   Nx_device.Buffer.view b

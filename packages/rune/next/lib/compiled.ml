@@ -116,18 +116,11 @@ let lower op xs dsts =
 
 type operand = A : ('a, 'b) Nx_array.t -> operand
 
-(* How a program reads an array's elements: their dtype, and the view over the
-   run of its storage the program binds ({!Lower.span}), of the array's shape
-   and strides and of its offset from the run's start; and where that run starts
+(* How a program reads an array's elements: their dtype, the view over the run
+   of its storage the program binds ({!Lower.within}), and where that run starts
    within 16 bytes of memory ({!Lower.phase}), which the program's vector
    accesses are aligned to. *)
-type layout = {
-  dtype : Dtype.t;
-  shape : int array;
-  strides : int array;
-  offset : int;
-  phase : int;
-}
+type layout = { dtype : Dtype.t; view : View.t; phase : int }
 
 let tolk_dtype what (A a) =
   match Lower.dtype a.dtype with
@@ -136,13 +129,15 @@ let tolk_dtype what (A a) =
 
 let layout what (A a as x) =
   let dtype = tolk_dtype what x and v = a.view in
-  let offset, phase =
-    if View.numel v = 0 then (0, 0)
-    else
-      let start, _ = Lower.span dtype v in
-      (View.offset v - start, Lower.phase dtype a.buffer start)
-  in
-  { dtype; shape = View.shape v; strides = View.strides v; offset; phase }
+  if View.numel v = 0 then
+    { dtype; view = View.create (View.shape v); phase = 0 }
+  else
+    let start, _ = Lower.span dtype v in
+    {
+      dtype;
+      view = Lower.within dtype v;
+      phase = Lower.phase dtype a.buffer start;
+    }
 
 type key = {
   op : op;
@@ -237,13 +232,15 @@ let compile (key : key) d =
   let device = Ops.Single name in
   (* Each layout's node, and its run's buffer if it has elements. *)
   let node (l : layout) =
-    let v = View.create ~offset:l.offset ~strides:l.strides l.shape in
-    if View.numel v = 0 then
-      (Lower.broadcast (Ops.const ~dtype:l.dtype (`Int Z.zero)) l.shape, None)
+    if View.numel l.view = 0 then
+      ( Lower.broadcast
+          (Ops.const ~dtype:l.dtype (`Int Z.zero))
+          (View.shape l.view),
+        None )
     else
-      let start, span = Lower.span l.dtype v in
+      let start, span = Lower.span l.dtype l.view in
       let b = Ops.new_buffer ~phase:l.phase device span l.dtype in
-      (Lower.strided b v start, Some b)
+      (Lower.strided b l.view start, Some b)
   in
   let operands = List.map node key.inputs
   and outs = List.map node key.outputs in

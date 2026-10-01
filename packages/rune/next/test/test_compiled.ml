@@ -1896,6 +1896,18 @@ let cache d =
         in
         exact_of r;
         equal int 0 again);
+    test
+      "operands that differ only in the stride of an axis of one element share \
+       the key" (fun () ->
+        let column stride =
+          let x = array_of (Nx.arange_f Nx.float32 0. 13. 1.) in
+          let view = V.create ~strides:[| 1; stride |] [| 13; 1 |] in
+          both d (binary Add { x with view } { x with view })
+        in
+        exact_of (column 1);
+        let again, r = compiles (fun () -> column 13) in
+        exact_of r;
+        equal int 0 again);
     test "operands at another offset modulo 16 bytes are another key" (fun () ->
         exact_of (addition d [| 5; 11 |] ~offset:0 ~base:0.);
         let again, r =
@@ -2010,7 +2022,8 @@ let edges d =
           }
         in
         let gapped =
-          Nx.slice [ A; A; R (0, 1) ]
+          Nx.slice
+            [ A; A; R (0, 1) ]
             (Nx.create Nx.float16 [| 1; 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
         in
         exact_of (both d (unfold w (host_array gapped)));
@@ -2050,8 +2063,7 @@ let edges d =
           }
         in
         exact_of (both d (fold w (array_of (Nx.zeros Nx.float32 [| 3; 0 |]))));
-        exact_of
-          (both d (unfold w (array_of (Nx.ones Nx.float32 [| 1 |])))));
+        exact_of (both d (unfold w (array_of (Nx.ones Nx.float32 [| 1 |])))));
     slow "a fold whose windows along an axis read only padding is zeros"
       (fun () ->
         let geometry ~kernel_size ~stride ~dilation ~padding ~spatial x =
