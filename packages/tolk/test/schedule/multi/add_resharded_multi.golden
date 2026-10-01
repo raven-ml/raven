@@ -16,15 +16,17 @@
 14 Ops.STACK dtypes.weakint [13, 4]
 15 Ops.STACK dtypes.weakint [1, 9]
 16 Ops.PAD dtypes.float [11, 14, 15]
-17 Ops.ALLREDUCE dtypes.float [16] (Ops.ADD, ("CPU", "CPU:1"))
-18 Ops.MUL dtypes.weakint [12, 1]
-19 Ops.STACK dtypes.weakint [4, 18]
-20 Ops.SHRINK dtypes.float [17, 19, 2]
-21 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device=("CPU", "CPU:1"))
-22 Ops.RESHAPE dtypes.float [21, 2]
-23 Ops.ADD dtypes.float [20, 22]
-24 Ops.STORE dtypes.void [6, 23]
-25 Ops.AFTER dtypes.float [3, 24]
-26 Ops.UNSHARD dtypes.float [25, 12] (1,)
-27 Ops.SINK dtypes.void [26]
+17 Ops.BITCAST dtypes.uint [16] dtypes.uint
+18 Ops.ALLREDUCE dtypes.uint [17] (Ops.OR, ("CPU", "CPU:1"))
+19 Ops.BITCAST dtypes.float [18] dtypes.float
+20 Ops.MUL dtypes.weakint [12, 1]
+21 Ops.STACK dtypes.weakint [4, 20]
+22 Ops.SHRINK dtypes.float [19, 21, 2]
+23 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device=("CPU", "CPU:1"))
+24 Ops.RESHAPE dtypes.float [23, 2]
+25 Ops.ADD dtypes.float [22, 24]
+26 Ops.STORE dtypes.void [6, 25]
+27 Ops.AFTER dtypes.float [3, 26]
+28 Ops.UNSHARD dtypes.float [27, 12] (1,)
+29 Ops.SINK dtypes.void [28]
 

@@ -173,6 +173,30 @@ let replace_allreduce =
 
 (* Sharded operations *)
 
+(* [joined u d] is [u], which holds each element on one device of [d] and zero
+   on the others, whole on each: the devices' element bits are joined by a
+   bitwise or, which keeps each element's exact bits, where a sum would turn
+   [-0.] into [+0.] and quiet a NaN. *)
+let joined u d =
+  let dt = dtype u in
+  if List.exists (Dtype.equal dt) Dtype.weaks then
+    invalid_arg "an index type has no width to cross devices in"
+  else if Dtype.equal dt Dtype.Bool then
+    cast (allreduce (cast u Dtype.Uint8) Op.Or d) Dtype.Bool
+  else
+    let bits =
+      match Dtype.itemsize dt with
+      | 1 -> Dtype.Uint8
+      | 2 -> Dtype.Uint16
+      | 4 -> Dtype.Uint32
+      | 8 -> Dtype.Uint64
+      | n ->
+          invalid_arg
+            (Printf.sprintf "%d-byte elements cannot be joined across devices"
+               n)
+    in
+    bitcast (allreduce (bitcast u bits) Op.Or d) dt
+
 let rec shard_srcs msrcs axis =
   let devices = List.filter_map device msrcs in
   if not (Helpers.all_same equal_device devices) then
@@ -273,7 +297,7 @@ and copy_multi multi device =
                if a <> ax then Some (Int 0, Int 0)
                else Some Sint.(bsz * r, (bsz * last) - (bsz * r))))
       in
-      allreduce (List.fold_left pad_axis (nth multi 0) sharding) Op.Add device
+      joined (List.fold_left pad_axis (nth multi 0) sharding) device
 
 let alu_multi root =
   match List.filter is_unshard (src root) with
@@ -539,9 +563,7 @@ let same_devices x l =
 
 (* A gather of a sharded value by a whole index. Sharded along trailing axes,
    each shard gathers its own part. Sharded along the gathered rows, each shard
-   reads the rows it holds, zero elsewhere, and the shards' element bits are
-   joined by a bitwise or: every element is read on one shard, so the or is its
-   exact bits, where a sum would turn [-0.] into [+0.] and quiet a NaN. *)
+   reads the rows it holds, zero elsewhere, and the shards are joined. *)
 let gather_shards multi l =
   let x = nth multi 0 and n = ndim l in
   match sharding multi with
@@ -558,25 +580,9 @@ let gather_shards multi l =
       in
       let trailing = List.map (fun _ -> Int 1) (List.drop 1 (shape x)) in
       let inside = reshape inside (shape l @ trailing) in
-      let value = where inside read (const_like read (`Int Bigint.zero)) in
-      let dt = dtype value in
-      let bits_dtype =
-        match Dtype.itemsize dt with
-        | 1 -> Dtype.Uint8
-        | 2 -> Dtype.Uint16
-        | 4 -> Dtype.Uint32
-        | 8 -> Dtype.Uint64
-        | n ->
-            invalid_arg
-              (Printf.sprintf "a gather of %d-byte elements across devices" n)
-      in
-      let bits =
-        if Dtype.equal dt Dtype.Bool then cast value Dtype.Uint8
-        else bitcast value bits_dtype
-      in
-      let joined = allreduce bits Op.Or (Multi (devices multi)) in
-      if Dtype.equal dt Dtype.Bool then cast joined Dtype.Bool
-      else bitcast joined dt
+      joined
+        (where inside read (const_like read (`Int Bigint.zero)))
+        (Multi (devices multi))
   | _ -> invalid_arg "a gather of a value sharded on its rows and another axis"
 
 (* A sharded index is joined whole on each device, in [int64] since an index

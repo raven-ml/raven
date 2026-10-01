@@ -33,11 +33,13 @@
 31 Ops.MUL dtypes.weakint [30, 8]
 32 Ops.STACK dtypes.weakint [6, 31]
 33 Ops.PAD dtypes.float [29, 32, 2]
-34 Ops.ALLREDUCE dtypes.float [33] (Ops.ADD, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
-35 Ops.MSELECT dtypes.float [34] 0
-36 Ops.CONST dtypes.weakfloat [] 1.0
-37 Ops.ADD dtypes.float [35, 36]
-38 Ops.STORE dtypes.void [3, 37]
-39 Ops.AFTER dtypes.float [3, 38]
-40 Ops.SINK dtypes.void [39]
+34 Ops.BITCAST dtypes.uint [33] dtypes.uint
+35 Ops.ALLREDUCE dtypes.uint [34] (Ops.OR, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
+36 Ops.BITCAST dtypes.float [35] dtypes.float
+37 Ops.MSELECT dtypes.float [36] 0
+38 Ops.CONST dtypes.weakfloat [] 1.0
+39 Ops.ADD dtypes.float [37, 38]
+40 Ops.STORE dtypes.void [3, 39]
+41 Ops.AFTER dtypes.float [3, 40]
+42 Ops.SINK dtypes.void [41]
 

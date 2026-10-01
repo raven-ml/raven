@@ -33,33 +33,37 @@
 31 Ops.MUL dtypes.weakint [30, 8]
 32 Ops.STACK dtypes.weakint [6, 31]
 33 Ops.PAD dtypes.float [29, 32, 2]
-34 Ops.ALLREDUCE dtypes.float [33] (Ops.ADD, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
-35 Ops.CONST dtypes.weakint [] 1
-36 Ops.STACK dtypes.weakint [1, 35, 1]
-37 Ops.RESHAPE dtypes.float [34, 36]
-38 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device="CPU")
-39 Ops.RESHAPE dtypes.float [38, 2]
-40 Ops.SHRINK dtypes.float [39, 7, 9]
-41 Ops.SHRINK dtypes.float [40, 7, 11]
-42 Ops.COPY dtypes.float [41] "CPU:0"
-43 Ops.SHRINK dtypes.float [40, 14, 11]
-44 Ops.COPY dtypes.float [43] "CPU:1"
-45 Ops.SHRINK dtypes.float [39, 17, 9]
-46 Ops.SHRINK dtypes.float [45, 7, 11]
-47 Ops.COPY dtypes.float [46] "CPU:2"
-48 Ops.SHRINK dtypes.float [45, 14, 11]
-49 Ops.COPY dtypes.float [48] "CPU:3"
-50 Ops.MSTACK dtypes.float [42, 44, 47, 49]
-51 Ops.PAD dtypes.float [50, 27, 28]
-52 Ops.PAD dtypes.float [51, 32, 2]
-53 Ops.ALLREDUCE dtypes.float [52] (Ops.ADD, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
-54 Ops.STACK dtypes.weakint [35, 1, 1]
-55 Ops.RESHAPE dtypes.float [53, 54]
-56 Ops.PERMUTE dtypes.float [55] (0, 2, 1)
-57 Ops.MUL dtypes.float [37, 56]
-58 Ops.PERMUTE dtypes.float [57] (2, 0, 1)
-59 Ops.REDUCE dtypes.float [58] (Ops.ADD, 1)
-60 Ops.STORE dtypes.void [3, 59]
-61 Ops.AFTER dtypes.float [3, 60]
-62 Ops.SINK dtypes.void [61]
+34 Ops.BITCAST dtypes.uint [33] dtypes.uint
+35 Ops.ALLREDUCE dtypes.uint [34] (Ops.OR, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
+36 Ops.BITCAST dtypes.float [35] dtypes.float
+37 Ops.CONST dtypes.weakint [] 1
+38 Ops.STACK dtypes.weakint [1, 37, 1]
+39 Ops.RESHAPE dtypes.float [36, 38]
+40 Ops.PARAM dtypes.float [] ParamArg(slot=2, dtype=dtypes.float, size=16, device="CPU")
+41 Ops.RESHAPE dtypes.float [40, 2]
+42 Ops.SHRINK dtypes.float [41, 7, 9]
+43 Ops.SHRINK dtypes.float [42, 7, 11]
+44 Ops.COPY dtypes.float [43] "CPU:0"
+45 Ops.SHRINK dtypes.float [42, 14, 11]
+46 Ops.COPY dtypes.float [45] "CPU:1"
+47 Ops.SHRINK dtypes.float [41, 17, 9]
+48 Ops.SHRINK dtypes.float [47, 7, 11]
+49 Ops.COPY dtypes.float [48] "CPU:2"
+50 Ops.SHRINK dtypes.float [47, 14, 11]
+51 Ops.COPY dtypes.float [50] "CPU:3"
+52 Ops.MSTACK dtypes.float [44, 46, 49, 51]
+53 Ops.PAD dtypes.float [52, 27, 28]
+54 Ops.PAD dtypes.float [53, 32, 2]
+55 Ops.BITCAST dtypes.uint [54] dtypes.uint
+56 Ops.ALLREDUCE dtypes.uint [55] (Ops.OR, ("CPU", "CPU:1", "CPU:2", "CPU:3"))
+57 Ops.BITCAST dtypes.float [56] dtypes.float
+58 Ops.STACK dtypes.weakint [37, 1, 1]
+59 Ops.RESHAPE dtypes.float [57, 58]
+60 Ops.PERMUTE dtypes.float [59] (0, 2, 1)
+61 Ops.MUL dtypes.float [39, 60]
+62 Ops.PERMUTE dtypes.float [61] (2, 0, 1)
+63 Ops.REDUCE dtypes.float [62] (Ops.ADD, 1)
+64 Ops.STORE dtypes.void [3, 63]
+65 Ops.AFTER dtypes.float [3, 64]
+66 Ops.SINK dtypes.void [65]
 

@@ -902,7 +902,26 @@ let copies =
           let u = multi (Ops.copy_to_device a (cpu 0)) in
           is_false (has Unshard u);
           equal (option device) (Some (cpu 0)) (Ops.device u));
-      test "a copy of a sharded value to several devices sums its placed shards"
+      test "a copy of a sharded value to several devices keeps its bits"
+        (fun () ->
+          let memory =
+            [
+              ( 1,
+                Array.init 32 (fun j ->
+                    `Float (if j mod 3 = 0 then -0. else 1.)) );
+            ]
+          in
+          let bits =
+            Array.map (function
+              | `Float f -> `Int (Bigint.of_int64 (Int64.bits_of_float f))
+              | v -> v)
+          in
+          let whole = bits (List.hd (Tensors.eval ~buffers:memory a)) in
+          List.iter
+            (fun copy -> equal (array Dtypes.const) whole (bits copy))
+            (Tensors.eval ~buffers:memory (multi (Ops.copy_to_device a two))));
+      test
+        "a copy of a sharded value to several devices joins its placed shards"
         (fun () ->
           let u = multi (Ops.copy_to_device a four) in
           equal (list device) [ four ]

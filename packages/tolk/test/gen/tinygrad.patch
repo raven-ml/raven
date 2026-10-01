@@ -861,7 +861,7 @@ index 228ec4e..b559010 100644
      ending_ranges[x] += broadcast_ending_ranges
  
 diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
-index 099ac10..89d5aa9 100644
+index 099ac10..894c9f7 100644
 --- a/tinygrad/schedule/multi.py
 +++ b/tinygrad/schedule/multi.py
 @@ -191,7 +191,8 @@ def stack_multi(root:UOp):
@@ -874,7 +874,7 @@ index 099ac10..89d5aa9 100644
      new_sharding = tuple((ax+1, rng) for ax, rng in sharding)
      return UOp(Ops.STACK, src=tuple(srcs)).unshard(tuple(a for a,_ in new_sharding), tuple(r for _,r in new_sharding))
    # resharding: single-axis fallback
-@@ -199,7 +200,42 @@ def stack_multi(root:UOp):
+@@ -199,7 +200,37 @@ def stack_multi(root:UOp):
    assert axis is not None
    return UOp(Ops.STACK, src=tuple(shard_srcs(root.src, axis-1))).unshard(axis, next(m.src[1] for m in root.src if m.op is Ops.UNSHARD))
  
@@ -895,12 +895,7 @@ index 099ac10..89d5aa9 100644
 +  local = l - multi.sharding[0][1]*rows
 +  inside = ((local >= 0) & (local < rows)).reshape(l.shape + (1,)*(len(x.shape)-1))
 +  read = x.index(local.minimum(rows-1).maximum(0))
-+  value = inside.where(read, read.const_like(0))
-+  if value.dtype.itemsize not in (1, 2, 4, 8): raise RuntimeError(f"a gather of {value.dtype.itemsize}-byte elements across devices")
-+  bits_dtype = {1:dtypes.uint8, 2:dtypes.uint16, 4:dtypes.uint32, 8:dtypes.uint64}[value.dtype.itemsize]
-+  bits = value.cast(dtypes.uint8) if value.dtype == dtypes.bool else value.bitcast(bits_dtype)
-+  joined = bits.allreduce(Ops.OR, multi.device)
-+  return joined.cast(dtypes.bool) if value.dtype == dtypes.bool else joined.bitcast(value.dtype)
++  return joined(inside.where(read, read.const_like(0)), multi.device)
 +
 +# a sharded index is joined whole on each device, in int64 since an index type has no width to cross devices in, and
 +# gathers as a whole index does
@@ -917,7 +912,29 @@ index 099ac10..89d5aa9 100644
    # INDEX on UNSHARD: resolve each sharded axis into this range's own shard.
    # Two ownership patterns are supported:
    #   contiguous: idx = rng*shard_sz + local   (thread rng owns [rng*shard_sz, ...))
-@@ -254,7 +290,10 @@ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
+@@ -225,6 +256,15 @@ def _shard_idx(rng:UOp, dev_idx:int) -> int:
+   drngs = [r for r in rng.ranges if r.axis_type is AxisType.DEVICE]
+   return 0 if not drngs else int(rng.substitute({drngs[0]: drngs[0].const_like(dev_idx)}).ssimplify())
+ 
++# u, which holds each element on one device of d and zero on the others, whole on each: the devices' element bits are
++# joined by a bitwise or, which keeps each element's exact bits, where a sum would turn -0. into +0. and quiet a NaN
++def joined(u:UOp, d) -> UOp:
++  if u.dtype in dtypes.weaks: raise RuntimeError("an index type has no width to cross devices in")
++  if u.dtype == dtypes.bool: return u.cast(dtypes.uint8).allreduce(Ops.OR, d).cast(dtypes.bool)
++  if u.dtype.itemsize not in (1, 2, 4, 8): raise RuntimeError(f"{u.dtype.itemsize}-byte elements cannot be joined across devices")
++  bits = {1:dtypes.uint8, 2:dtypes.uint16, 4:dtypes.uint32, 8:dtypes.uint64}[u.dtype.itemsize]
++  return u.bitcast(bits).allreduce(Ops.OR, d).bitcast(u.dtype)
++
+ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
+   sharding = multi.sharding
+   if isinstance(device, str):
+@@ -249,12 +289,15 @@ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
+   for ax, rng in sharding:
+     bsz = val.shape[ax]
+     val = val.pad(tuple((0,0) if a != ax else (bsz*rng, bsz*int(rng.vmax) - bsz*rng) for a in range(len(val.shape))))
+-  return val.allreduce(Ops.ADD, device)
++  return joined(val, device)
+ 
  def store_after_multi(dest:UOp, src:UOp): return dest.after(dest.store(src.src[0])).unshard(src.arg, src.src[1:])
  
  def store_value_multi(dest:UOp, multi:UOp):
@@ -929,7 +946,7 @@ index 099ac10..89d5aa9 100644
    return shard_subview(dest, multi).store(multi.src[0])
  
  def store_dest_multi(root:UOp, multi:UOp):
-@@ -289,6 +328,8 @@ multi_pm = PatternMatcher([
+@@ -289,6 +332,8 @@ multi_pm = PatternMatcher([
    (UPat(Ops.FLIP, src=(UPat(Ops.UNSHARD, name="multi"), ), name="root"), flip_multi),
    (UPat(Ops.STACK, name="root", custom_early_reject=set([Ops.UNSHARD])), stack_multi),
    (UPat(Ops.INDEX, src=(UPat(Ops.UNSHARD, name="multi"),), name="root", allow_any_len=True), index_multi),

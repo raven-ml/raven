@@ -1,42 +1,42 @@
 # tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
-0 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=32, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
+0 Ops.PARAM dtypes.uint [] ParamArg(slot=0, dtype=dtypes.uint, size=32, device=("CPU", "CPU:1", "CPU:2", "CPU:3"))
 1 Ops.CONST dtypes.weakint [] 4
 2 Ops.CONST dtypes.weakint [] 2
 3 Ops.STACK dtypes.weakint [1, 1, 2]
-4 Ops.RESHAPE dtypes.float [0, 3]
-5 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=32, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
-6 Ops.MSELECT dtypes.float [5] 0
-7 Ops.RESHAPE dtypes.float [6, 3]
-8 Ops.COPY dtypes.float [7] "CPU"
-9 Ops.COPY dtypes.float [7] "CPU:1"
-10 Ops.COPY dtypes.float [7] "CPU:2"
-11 Ops.COPY dtypes.float [7] "CPU:3"
-12 Ops.MSTACK dtypes.float [8, 9, 10, 11]
-13 Ops.MSELECT dtypes.float [5] 1
-14 Ops.RESHAPE dtypes.float [13, 3]
-15 Ops.COPY dtypes.float [14] "CPU"
-16 Ops.COPY dtypes.float [14] "CPU:1"
-17 Ops.COPY dtypes.float [14] "CPU:2"
-18 Ops.COPY dtypes.float [14] "CPU:3"
-19 Ops.MSTACK dtypes.float [15, 16, 17, 18]
-20 Ops.ADD dtypes.float [12, 19]
-21 Ops.MSELECT dtypes.float [5] 2
-22 Ops.RESHAPE dtypes.float [21, 3]
-23 Ops.COPY dtypes.float [22] "CPU"
-24 Ops.COPY dtypes.float [22] "CPU:1"
-25 Ops.COPY dtypes.float [22] "CPU:2"
-26 Ops.COPY dtypes.float [22] "CPU:3"
-27 Ops.MSTACK dtypes.float [23, 24, 25, 26]
-28 Ops.ADD dtypes.float [20, 27]
-29 Ops.MSELECT dtypes.float [5] 3
-30 Ops.RESHAPE dtypes.float [29, 3]
-31 Ops.COPY dtypes.float [30] "CPU"
-32 Ops.COPY dtypes.float [30] "CPU:1"
-33 Ops.COPY dtypes.float [30] "CPU:2"
-34 Ops.COPY dtypes.float [30] "CPU:3"
-35 Ops.MSTACK dtypes.float [31, 32, 33, 34]
-36 Ops.ADD dtypes.float [28, 35]
+4 Ops.RESHAPE dtypes.uint [0, 3]
+5 Ops.PARAM dtypes.uint [] ParamArg(slot=1, dtype=dtypes.uint, size=32, device=("CPU:0", "CPU:1", "CPU:2", "CPU:3"))
+6 Ops.MSELECT dtypes.uint [5] 0
+7 Ops.RESHAPE dtypes.uint [6, 3]
+8 Ops.COPY dtypes.uint [7] "CPU"
+9 Ops.COPY dtypes.uint [7] "CPU:1"
+10 Ops.COPY dtypes.uint [7] "CPU:2"
+11 Ops.COPY dtypes.uint [7] "CPU:3"
+12 Ops.MSTACK dtypes.uint [8, 9, 10, 11]
+13 Ops.MSELECT dtypes.uint [5] 1
+14 Ops.RESHAPE dtypes.uint [13, 3]
+15 Ops.COPY dtypes.uint [14] "CPU"
+16 Ops.COPY dtypes.uint [14] "CPU:1"
+17 Ops.COPY dtypes.uint [14] "CPU:2"
+18 Ops.COPY dtypes.uint [14] "CPU:3"
+19 Ops.MSTACK dtypes.uint [15, 16, 17, 18]
+20 Ops.OR dtypes.uint [12, 19]
+21 Ops.MSELECT dtypes.uint [5] 2
+22 Ops.RESHAPE dtypes.uint [21, 3]
+23 Ops.COPY dtypes.uint [22] "CPU"
+24 Ops.COPY dtypes.uint [22] "CPU:1"
+25 Ops.COPY dtypes.uint [22] "CPU:2"
+26 Ops.COPY dtypes.uint [22] "CPU:3"
+27 Ops.MSTACK dtypes.uint [23, 24, 25, 26]
+28 Ops.OR dtypes.uint [20, 27]
+29 Ops.MSELECT dtypes.uint [5] 3
+30 Ops.RESHAPE dtypes.uint [29, 3]
+31 Ops.COPY dtypes.uint [30] "CPU"
+32 Ops.COPY dtypes.uint [30] "CPU:1"
+33 Ops.COPY dtypes.uint [30] "CPU:2"
+34 Ops.COPY dtypes.uint [30] "CPU:3"
+35 Ops.MSTACK dtypes.uint [31, 32, 33, 34]
+36 Ops.OR dtypes.uint [28, 35]
 37 Ops.STORE dtypes.void [4, 36]
-38 Ops.AFTER dtypes.float [4, 37]
+38 Ops.AFTER dtypes.uint [4, 37]
 39 Ops.SINK dtypes.void [38]
 
