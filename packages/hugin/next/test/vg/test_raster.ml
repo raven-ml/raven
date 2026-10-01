@@ -595,6 +595,19 @@ let strokes =
           in
           equal (float 0.1) (8.004 *. 8.004) (coverage (render 20. 20. p)));
       cases ~name:fst
+        "a closed subpath smaller than a pixel ignores a repeated vertex, with"
+        [ ("miter joins", `Miter); ("round joins", `Round); ("bevels", `Bevel) ]
+        (fun (_, join) ->
+          let draw xs ys =
+            render 20. 20.
+              (Picture.stroke (Stroke.v ~join 4.) red (Path.polygon xs ys))
+          in
+          let triangle = draw [| 10.; 10.01; 10. |] [| 10.; 10.; 10.01 |] in
+          same_image triangle
+            (draw [| 10.; 10.; 10.01; 10. |] [| 10.; 10.; 10.; 10.01 |]);
+          same_image triangle
+            (draw [| 10.; 10.01; 10.01; 10. |] [| 10.; 10.; 10.; 10.01 |]));
+      cases ~name:fst
         "a circle smaller than a pixel draws more ink as it grows, with"
         [ ("miter joins", `Miter); ("round joins", `Round); ("bevels", `Bevel) ]
         (fun (_, join) ->
@@ -1003,6 +1016,26 @@ let stamps =
             (render 20. 20.
                (Picture.stamp ~scales:[| 0.1 |] [| 10. |] [| 10. |]
                   (Picture.opacity 0.5 ring))));
+      cases ~name:fst
+        "a shrunk instance of an opacity keeps the pens of a group"
+        [ ("outline last", false); ("outline first", true) ]
+        (fun (_, first) ->
+          let outlined w =
+            let dot = Picture.fill blue (Path.circle (P2.v 0. 0.) 3.) in
+            let ring =
+              Picture.stroke (Stroke.v w) red (Path.circle (P2.v 0. 0.) 5.)
+            in
+            Picture.group (if first then [ ring; dot ] else [ dot; ring ])
+          in
+          same_image ~within:1
+            (render 20. 20.
+               (Picture.opacity 0.5
+                  (Picture.transform
+                     Affine.(translate 10. 10. * scale 0.1 0.1)
+                     (outlined 40.))))
+            (render 20. 20.
+               (Picture.stamp ~scales:[| 0.1 |] [| 10. |] [| 10. |]
+                  (Picture.opacity 0.5 (outlined 4.)))));
       test "a stamp of stamps draws them all" (fun () ->
           let pair = Picture.stamp [| 0.; 8. |] [| 0.; 0. |] marker in
           same_image ~within:1
