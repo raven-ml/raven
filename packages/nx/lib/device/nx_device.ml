@@ -330,9 +330,21 @@ and event =
       stop : int;
       counters : (string * int array) list;
     }
+  | Trace of {
+      device : t;
+      name : string;
+      start : int;
+      stop : int;
+      part : int;
+      data : string;
+    }
   | Overwritten of { device : t; time : int; runs : int }
 
-and collector = { events : event list Atomic.t; counters : string list }
+and collector = {
+  events : event list Atomic.t;
+  counters : string list;
+  trace : bool;
+}
 
 (* A span whose stamps are in the two 16-byte slots at [address], which [stamps]
    keeps. *)
@@ -1087,13 +1099,13 @@ let read_spans d =
           end)
         (Atomic.exchange d.spans [])
 
-(* The counters of [d]'s work done since its last report, into the profile [c]
-   if it asks for counters. [d] is taken. *)
-let read_counters c d =
-  match (c, d.report) with
-  | { counters = _ :: _; _ }, Some report ->
+(* The counters and traces of [d]'s work done since its last report, into the
+   profile [c] if it asks for some. [d] is taken. *)
+let read_reports c d =
+  match d.report with
+  | Some report when c.counters <> [] || c.trace ->
       List.iter (push c.events) (driver d report)
-  | _ -> ()
+  | Some _ | None -> ()
 
 (* Waits for [d]'s work and for the work that touched [d]'s memory, then reads
    the stamps of the spans recorded on [d] and the counters of its work. [d] is
@@ -1106,7 +1118,7 @@ let sync d =
       if failed d' = None then try wait_signal d' v with Lost _ -> ())
     d.pending;
   read_spans d;
-  Option.iter (fun c -> read_counters c d) (Atomic.get profile);
+  Option.iter (fun c -> read_reports c d) (Atomic.get profile);
   try d.synchronized () with Failure why -> fail d why
 
 (* Every memory's generation until its first consumption: buffers made then
@@ -3488,6 +3500,14 @@ module Profile = struct
         stop : int;
         counters : (string * int array) list;
       }
+    | Trace of {
+        device : t;
+        name : string;
+        start : int;
+        stop : int;
+        part : int;
+        data : string;
+      }
     | Overwritten of { device : t; time : int; runs : int }
 
   type t = collector
@@ -3495,7 +3515,7 @@ module Profile = struct
   let now = now_ns
   let enabled () = Option.is_some (Atomic.get profile)
 
-  let start ?(counters = []) () =
+  let start ?(counters = []) ?(trace = false) () =
     let rec once = function
       | [] -> ()
       | n :: rest when List.mem n rest ->
@@ -3505,13 +3525,16 @@ module Profile = struct
       | _ :: rest -> once rest
     in
     once counters;
-    let c = { events = Atomic.make []; counters } in
+    let c = { events = Atomic.make []; counters; trace } in
     if not (Atomic.compare_and_set profile None (Some c)) then
       invalid_arg "Nx_device.Profile.start: already profiling";
     c
 
   let counters () =
     match Atomic.get profile with Some c -> c.counters | None -> []
+
+  let traced () =
+    match Atomic.get profile with Some c -> c.trace | None -> false
 
   let span name f =
     match Atomic.get profile with
@@ -3557,11 +3580,13 @@ module Profile = struct
     | Allocation m -> m.time
     | Load p -> p.time
     | Counters c -> c.start
+    | Trace t -> t.start
     | Overwritten o -> o.time
 
   let length = function
     | Span s -> s.stop - s.start
     | Counters c -> c.stop - c.start
+    | Trace t -> t.stop - t.start
     | Allocation _ | Load _ | Overwritten _ -> 0
 
   (* By time, and at equal times longest first, so that nested spans follow the
@@ -3577,12 +3602,14 @@ module Profile = struct
     | Some c when c == p && Atomic.compare_and_set profile taken None ->
         List.iter
           (fun d ->
-            let counted = c.counters <> [] && Option.is_some d.report in
+            let counted =
+              (c.counters <> [] || c.trace) && Option.is_some d.report
+            in
             if (Atomic.get d.spans <> [] || counted) && failed d = None then
               try
                 with_devices [ d ] (fun () ->
                     sync d;
-                    read_counters c d)
+                    read_reports c d)
               with Lost _ -> ())
           (Atomic.get opened);
         let clocks = Hashtbl.create 4 in
@@ -3607,6 +3634,11 @@ module Profile = struct
                 (fun f ->
                   Counters { c with start = f c.start; stop = f c.stop })
                 (calibrated d hz)
+          | Trace ({ device = { clock = Device_clock { hz }; _ } as d; _ } as t)
+            ->
+              Option.map
+                (fun f -> Trace { t with start = f t.start; stop = f t.stop })
+                (calibrated d hz)
           | e -> Some e)
         |> List.stable_sort order
     | _ -> invalid_arg "Nx_device.Profile.stop: the profile is not being taken"
@@ -3618,6 +3650,7 @@ module Profile = struct
     | Allocation m -> m.device
     | Load p -> p.program.p_device
     | Counters c -> c.device
+    | Trace t -> t.device
     | Overwritten o -> o.device
 
   (* [s] as a JSON string. Malformed UTF-8 becomes U+FFFD. *)
@@ -3702,14 +3735,14 @@ module Profile = struct
           match e with
           | Span s -> tid s.device pid s.lane
           | Counters c -> tid c.device pid counters_lane
-          | Allocation _ | Load _ | Overwritten _ -> 0
+          | Allocation _ | Load _ | Trace _ | Overwritten _ -> 0
         in
         next ();
         let ph =
           match e with
           | Span _ | Counters _ -> "X"
           | Allocation _ -> "C"
-          | Load _ | Overwritten _ -> "i"
+          | Load _ | Trace _ | Overwritten _ -> "i"
         in
         Printf.fprintf oc "{\"ph\":\"%s\",\"pid\":%d,\"tid\":%d,\"ts\":" ph pid
           tid;
@@ -3726,6 +3759,11 @@ module Profile = struct
             output_string oc ",\"name\":";
             string oc c.name;
             counter_args oc c.counters
+        | Trace t ->
+            output_string oc ",\"s\":\"p\",\"name\":";
+            string oc t.name;
+            Printf.fprintf oc ",\"args\":{\"part\":%d,\"bytes\":%d}" t.part
+              (String.length t.data)
         | Overwritten o ->
             Printf.fprintf oc
               ",\"s\":\"p\",\"name\":\"overwritten\",\"args\":{\"runs\":%d}"

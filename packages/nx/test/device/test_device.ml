@@ -3422,7 +3422,8 @@ let spans =
             t0 = s.start;
             t1 = s.stop;
           }
-    | P.Allocation _ | P.Load _ | P.Counters _ | P.Overwritten _ -> None)
+    | P.Allocation _ | P.Load _ | P.Counters _ | P.Trace _ | P.Overwritten _ ->
+        None)
 
 let span_ =
   Testable.make
@@ -3940,9 +3941,9 @@ let test_output () =
     | _ -> [ "?" ])
 
 (* A device whose runs of [k] count [i] and [i + 1] in two units of the [i]th
-   counter the profile asked for when they ran, reported at each synchronization
-   with the times each run was given, after the runs it lost, and logged in
-   [log]. *)
+   counter the profile asked for when they ran, and trace if it asked for
+   traces, reported at each synchronization with the times each run was given,
+   after the runs it lost, and logged in [log]. *)
 let counting log =
   let runs = ref [] and lost = ref 0 and d = ref None in
   let report () =
@@ -3953,17 +3954,30 @@ let counting log =
       else [ P.Overwritten { device; time = P.now (); runs = !lost } ]
     in
     let counted =
-      List.rev_map
-        (fun ((start, stop), counters) ->
-          P.Counters
-            {
-              device;
-              name = "k";
-              start;
-              stop;
-              counters = List.mapi (fun i c -> (c, [| i; i + 1 |])) counters;
-            })
-        !runs
+      List.concat
+        (List.rev_map
+           (fun ((start, stop), (counters, traced)) ->
+             (if counters = [] then []
+              else
+                [
+                  P.Counters
+                    {
+                      device;
+                      name = "k";
+                      start;
+                      stop;
+                      counters =
+                        List.mapi (fun i c -> (c, [| i; i + 1 |])) counters;
+                    };
+                ])
+             @
+             if traced then
+               [
+                 P.Trace
+                   { device; name = "k"; start; stop; part = 0; data = "trace" };
+               ]
+             else [])
+           !runs)
     in
     runs := [];
     lost := 0;
@@ -3972,7 +3986,8 @@ let counting log =
   let dev = (fake ~name:"COUNTING" ~report ()).dev in
   d := Some dev;
   let run times =
-    runs := List.rev_map (fun t -> (t, P.counters ())) times @ !runs
+    runs :=
+      List.rev_map (fun t -> (t, (P.counters (), P.traced ()))) times @ !runs
   in
   (dev, run, fun n -> lost := !lost + n)
 
@@ -3980,7 +3995,7 @@ let counted =
   List.filter_map (function
     | P.Counters c ->
         Some (Nx_device.name c.device, c.name, (c.start, c.stop), c.counters)
-    | P.Span _ | P.Allocation _ | P.Load _ | P.Overwritten _ -> None)
+    | P.Span _ | P.Allocation _ | P.Load _ | P.Trace _ | P.Overwritten _ -> None)
 
 let counts =
   list
@@ -4020,6 +4035,45 @@ let test_counters () =
   let events = profiled (fun () -> Nx_device.synchronize d) in
   equal ~msg:"none without counters asked" counts [] (counted events);
   equal ~msg:"not asked" (list string) [] !log
+
+let test_traces () =
+  let log = ref [] in
+  let d, run, _ = counting log in
+  is_false ~msg:"no profile" (P.traced ());
+  let p = P.start ~trace:true () in
+  is_true ~msg:"asked" (P.traced ());
+  run [ (1_000, 2_000) ];
+  Nx_device.synchronize d;
+  run [ (3_000, 3_500) ];
+  let events = P.stop p in
+  let traces =
+    List.filter_map
+      (function
+        | P.Trace t -> Some (t.name, t.start, t.stop, t.data) | _ -> None)
+      events
+  in
+  equal ~msg:"each run's trace, read at a synchronization and when it stops"
+    (list
+       (Testable.make
+          ~pp:(fun ppf (n, a, b, _) -> Format.fprintf ppf "%s %d-%d" n a b)
+          ~equal:( = )))
+    [ ("k", 1_000, 2_000, "trace"); ("k", 3_000, 3_500, "trace") ]
+    traces;
+  equal ~msg:"no counters asked" counts [] (counted events);
+  equal ~msg:"reported twice" (list string) [ "report"; "report" ] !log;
+  let trace =
+    match field "traceEvents" (written events) with
+    | Arr l -> l
+    | _ -> fail "no array"
+  in
+  equal ~msg:"an instant of each trace, with its part and bytes"
+    (list (pair float_exact float_exact))
+    [ (0., 5.); (0., 5.) ]
+    (List.map
+       (fun e ->
+         let args = field "args" e in
+         (num "part" args, num "bytes" args))
+       (List.filter (fun e -> str "ph" e = "i") trace))
 
 (* Counters are their run's, whatever runs are not counted between them, and
    runs lost before they were read are an event of their own. *)
@@ -4143,6 +4197,8 @@ let profiles =
         test_output;
       test "show each run's counters at the run's own times, and the runs lost"
         test_counted_runs;
+      test "read the traces a profile asks for, and show where they are"
+        test_traces;
     ]
 
 (* Machines *)

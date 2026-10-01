@@ -860,13 +860,14 @@ val stats : t -> Stats.t
     One profile of every device is taken at a time, between {!start} and
     {!stop}. While it is taken, the devices record {!event}s: {e spans} of work
     on a device, changes of its allocated memory, the programs it loads and, on
-    request, the {e counters} of its programs' runs. Spans come from the host
-    ({!span}), from the runtime's own copies and calls of host programs, and
-    from the libraries that submit work ({!Submission.record}). Every time is on
-    the host's clock, {!now}: the times a device stamps on its own clock are
-    calibrated against it when the profile is stopped. {!output_chrome_trace}
-    writes the events in Chrome's trace event format, which Perfetto
-    ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and [chrome://tracing] load.
+    request, the {e counters} and {e traces} of its programs' runs. Spans come
+    from the host ({!span}), from the runtime's own copies and calls of host
+    programs, and from the libraries that submit work ({!Submission.record}).
+    Every time is on the host's clock, {!now}: the times a device stamps on its
+    own clock are calibrated against it when the profile is stopped.
+    {!output_chrome_trace} writes the events in Chrome's trace event format,
+    which Perfetto ({{:https://ui.perfetto.dev}ui.perfetto.dev}) and
+    [chrome://tracing] load.
 
     When no profile is taken, recording costs a read of one atomic value and
     allocates nothing. *)
@@ -915,26 +916,43 @@ module Profile : sig
         (** The counters of a run of a program, read once the run completed. The
             run is timed by the device, within the span the libraries that
             submit work record for it, if they record one. *)
+    | Trace of {
+        device : device;  (** The device the program ran on. *)
+        name : string;  (** The name of the program's function. *)
+        start : int;  (** When the traced run started. *)
+        stop : int;  (** When it stopped. *)
+        part : int;
+            (** The part of the device that wrote it, such as an AMD GPU's
+                shader engine. *)
+        data : string;
+            (** The trace as the device wrote it, which the device's library
+                reads. *)
+      }
+        (** The thread trace of a part of a device during a run of a program,
+            read once the run completed and timed as {!Counters} are. A device
+            that decodes its traces also reports the spans of their waves. *)
     | Overwritten of {
         device : device;  (** The device that lost them. *)
         time : int;  (** When the device found them overwritten. *)
-        runs : int;  (** The runs whose counters are lost. *)
+        runs : int;  (** The runs whose counters and traces are lost. *)
       }
-        (** Runs whose counters the device overwrote before it could read them:
-            a device keeps a bounded number of runs between two of its
-            synchronizations. *)
+        (** Runs whose counters and traces the device overwrote before it could
+            read them: a device keeps a bounded number of runs between two of
+            its synchronizations. *)
 
   type t
   (** The type for profiles being taken. *)
 
-  val start : ?counters:string list -> unit -> t
+  val start : ?counters:string list -> ?trace:bool -> unit -> t
   (** [start ()] starts taking a profile of every device, which only its holder
       stops. Each run of a program on a device that counts [counters] (defaults
       to none) has a {!Counters} event: their names are the device's, as its
       library lists them, and work on a device that has no counter of such a
       name raises [Invalid_argument] naming it when its library encodes the
       work. A device that counts nothing, such as the {!host}, has no
-      [Counters].
+      [Counters]. With [trace] (defaults to [false]), each run of a program on a
+      device that traces has a {!Trace} event of each part of the device that
+      traced it.
 
       Raises [Invalid_argument] if a profile is being taken or if [counters]
       names a counter twice. *)
@@ -946,13 +964,19 @@ module Profile : sig
       not count those of another, so a library that keeps encoded work keeps it
       for each value of [counters ()]. *)
 
+  val traced : unit -> bool
+  (** [traced ()] is [true] iff the profile being taken asks for traces. The
+      libraries that encode work read it as they read {!counters}, and keep
+      encoded work for each value of it. *)
+
   val stop : t -> event list
   (** [stop p] stops taking [p], and is its events, in time order and, at equal
       times, longest first, then in the order they were recorded. It first
       synchronizes the devices whose recorded spans are still to be read and, if
-      [p] asks for counters, those that count, and calibrates the clocks of the
-      devices that stamp times on their own. The unread spans of a device lost
-      meanwhile are left out; its next operation raises {!Lost}.
+      [p] asks for counters or traces, those that report them, and calibrates
+      the clocks of the devices that stamp times on their own. The unread spans
+      of a device lost meanwhile are left out; its next operation raises
+      {!Lost}.
 
       Raises [Invalid_argument] if [p] is not being taken: it was stopped
       already. *)
@@ -979,9 +1003,11 @@ module Profile : sig
       [memory] for each change of memory; an instant event for each program
       load, with the program's handle; a complete event for each run's counters
       ({!Counters}), with the sum of each counter as arguments, on the device's
-      lane [counters]; and an instant event for overwritten runs. Times are
-      microseconds from the earliest event. Malformed UTF-8 in names becomes
-      U+FFFD. [oc] is neither flushed nor closed. *)
+      lane [counters]; an instant event for each trace ({!Trace}), with its part
+      and its bytes, whose waves are spans of their own; and an instant event
+      for overwritten runs. Times are microseconds from the earliest event.
+      Malformed UTF-8 in names becomes U+FFFD. [oc] is neither flushed nor
+      closed. *)
 end
 
 val staging : t -> Buffer.t
@@ -1476,13 +1502,15 @@ module Driver : sig
         [synchronized]. Defaults to doing nothing.
       - [synchronized ()] runs at the end of each synchronization of the device.
         Defaults to doing nothing.
-      - [report ()] is the {!Profile.Counters} of the runs of programs on the
-        device that completed since its last report, in the order they ran, each
-        with the counters {!Profile.counters} asks for and timed on the device's
-        clock, and the {!Profile.Overwritten} runs it lost. It runs at each
-        synchronization of the device while a profile that asks for counters is
-        taken, after [resolve] and before [synchronized], and when that profile
-        stops. Without it, the device counts nothing.
+      - [report ()] is the events of the runs of programs on the device that
+        completed since its last report, in the order they ran, timed on the
+        device's clock: the {!Profile.Counters} {!Profile.counters} asks for,
+        the {!Profile.Trace}s {!Profile.traced} asks for and the spans the
+        device decodes from them, and the {!Profile.Overwritten} runs it lost.
+        It runs at each synchronization of the device while a profile that asks
+        for counters or traces is taken, after [resolve] and before
+        [synchronized], and when that profile stops. Without it, the device
+        counts and traces nothing.
       - [room ()] is [true] iff each queue that submitted work writes has room
         for what one submission writes, as the device's library bounds it (its
         low-level section). {!submit} waits for it on each of its devices before

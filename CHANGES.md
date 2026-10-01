@@ -2974,6 +2974,10 @@ thread.
 
 ### Nx
 
+- `Nx_device.Profile.start ~trace` asks the devices that trace for a thread
+  trace of each run of a program: a `Profile.Trace` event holds the raw trace of
+  a part of the device, timed by its run, and `Profile.traced` tells the
+  libraries that encode work, which keep encoded work for each value of it.
 - Add `Nx.reduce_ranges`, the sum, maximum or minimum of each range of rows
   from `lo` to `hi`, for rolling and growing windows. Bounds clip to the rows,
   and a sum holds its range's terms alone. It costs `O((n + m) log n)` for `n`

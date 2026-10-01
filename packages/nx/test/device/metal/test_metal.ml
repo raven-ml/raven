@@ -460,7 +460,8 @@ let dispatch_profile =
       let ours =
         List.filter
           (function
-            | P.Allocation _ | P.Counters _ | P.Overwritten _ -> false
+            | P.Allocation _ | P.Counters _ | P.Trace _ | P.Overwritten _ ->
+                false
             | P.Span _ | P.Load _ -> true)
           events
       in
