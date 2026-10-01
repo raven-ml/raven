@@ -14,13 +14,14 @@
     The engine links the result once and runs it on each call. *)
 
 val jit_lower :
+  ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
   devices:(string -> Hcq2.device) ->
   held_bufs:Ops.t list ->
   inputs:Ops.t list ->
   Ops.t ->
   Ops.t
-(** [jit_lower ~search ~devices ~held_bufs ~inputs linear] is the captured
+(** [jit_lower ~beam ~search ~devices ~held_bufs ~inputs linear] is the captured
     schedule [linear], an {!Op.Linear} of calls, ready to link:
     + the [i]th buffer of [inputs] is replaced wherever [linear] reaches it by
       the parameter of slot [i] ({!Ops.param}), of its type, device and size;
@@ -28,7 +29,7 @@ val jit_lower :
       [held_bufs], whose contents outlive a run, such as the buffers a caller
       keeps or that hold constants;
     + it is compiled ({!Hcq2.compile_linear}, with [search] and [devices]), with
-      the beam width of the [JITBEAM] environment variable, {!Helpers.beam} by
-      default.
+      the beam width [beam], or else that of the [JITBEAM] environment variable,
+      or else {!Helpers.beam}.
 
     Raises as {!Hcq2.compile_linear} does. *)

@@ -22,3 +22,11 @@ whether it was reused or copied, and each kernel a search optimises.
 Without RUNE_JIT_DEBUG, a call reports nothing.
 
   $ CACHEDB=$PWD/cache ./reports.exe
+
+An explicit width overrides JITBEAM: under JITBEAM=0, the functions compiled
+with ~beam:1 and ~beam:2 still search their kernels, and the one without
+searches none.
+
+  $ RUNE_JIT_DEBUG=1 JITBEAM=0 CACHEDB=$PWD/cache ./reports.exe 2>&1 | grep searched
+  rune.jit: searched a kernel at width 1
+  rune.jit: searched a kernel at width 2

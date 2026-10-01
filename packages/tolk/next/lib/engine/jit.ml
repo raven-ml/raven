@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-let jit_lower ?search ~devices ~held_bufs ~inputs linear =
+let jit_lower ?beam ?search ~devices ~held_bufs ~inputs linear =
   let param i u =
     ( u,
       Ops.param
@@ -15,7 +15,9 @@ let jit_lower ?search ~devices ~held_bufs ~inputs linear =
   let linear = Ops.substitute ~walk:true linear (List.mapi param inputs) in
   let linear = Memory.memory_plan_rewrite ~held_bufs linear in
   let beam =
-    Helpers.getenv "JITBEAM" (Helpers.Context_var.value Helpers.beam)
+    match beam with
+    | Some beam -> beam
+    | None -> Helpers.getenv "JITBEAM" (Helpers.Context_var.value Helpers.beam)
   in
   Helpers.context
     [ B (Helpers.beam, beam) ]

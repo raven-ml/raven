@@ -95,10 +95,15 @@ let leaf (Nx.P t) =
    call: the search's width, unoptimised kernels, and profiled batches. *)
 type settings = { beam : int; noopt : bool; profiled : bool }
 
+(* [settings ~beam ()] are the settings a call compiles with: [beam], or else
+   the width tolk's lowering reads, [JITBEAM]'s or else [BEAM]'s. *)
 let settings ?beam () =
   let module H = Tolk_next.Helpers in
   {
-    beam = Option.value beam ~default:(H.Context_var.value H.beam);
+    beam =
+      (match beam with
+      | Some beam -> beam
+      | None -> H.getenv "JITBEAM" (H.Context_var.value H.beam));
     noopt = H.Context_var.value H.noopt;
     profiled = H.Context_var.value H.debug >= 2;
   }
@@ -360,7 +365,7 @@ let paths args_s roles args =
 
 (* [compile args_s result_s g args leaves ~paths ~consumed] traces [g] at
    [args], whose leaves are [leaves], and compiles and links its program. *)
-let compile ?beam ?parallel (type a r) (args_s : a Ptree.t)
+let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
   let s =
     Lower.scope ~renderer:(fun d -> Engine.renderer (Nx.Device.runtime d))
@@ -560,47 +565,32 @@ let compile ?beam ?parallel (type a r) (args_s : a Ptree.t)
             fst
               (Tolk_next.Schedule.create_linear_with_vars ~capturing:true sink))
       in
-      (* A kernel that asks for a search, at the width [beam] gives or the
-         [BEAM] setting, is searched, each candidate timed on the device its
-         renderer targets, on as many domains as [parallel] gives or the
-         [PARALLEL] setting. *)
+      (* Each kernel asks for a search of width [beam], and one of at least 1 is
+         searched, each candidate timed on the device its renderer targets, on
+         as many domains as [parallel] gives or the [PARALLEL] setting. *)
       let search width k =
-        let width = Option.value beam ~default:width in
-        if width < 1 then k
-        else begin
-          report "searched a kernel at width %d" width;
-          let name = (Tolk_next.Postrange.Scheduler.ren k).target.device in
-          let search () =
-            Tolk_next.Search.beam_search
-              ~measure:(fun ~cold ~vars prg ->
-                Engine.measure ~cold ~vars ~devices name prg)
-              width k
-          in
-          match parallel with
-          | None -> search ()
-          | Some p ->
-              Tolk_next.Helpers.context
-                [ B (Tolk_next.Helpers.parallel, p) ]
-                search
-        end
+        report "searched a kernel at width %d" width;
+        let name = (Tolk_next.Postrange.Scheduler.ren k).target.device in
+        let search () =
+          Tolk_next.Search.beam_search
+            ~measure:(fun ~cold ~vars prg ->
+              Engine.measure ~cold ~vars ~devices name prg)
+            width k
+        in
+        match parallel with
+        | None -> search ()
+        | Some p ->
+            Tolk_next.Helpers.context
+              [ B (Tolk_next.Helpers.parallel, p) ]
+              search
       in
-      let lower () =
-        Tolk_next.Jit.jit_lower ~search
-          ~devices:(fun n -> (devices n).compiler)
-          ~held_bufs:(List.map fst bound)
-          ~inputs:(List.map (Hashtbl.find buffers) order)
-          linear
-      in
-      (* Each kernel asks for the width [beam] gives, which tolk's lowering
-         reads from its setting. *)
       let linear =
         span "compile" (fun () ->
-            match beam with
-            | None -> lower ()
-            | Some b ->
-                Tolk_next.Helpers.context
-                  [ B (Tolk_next.Helpers.beam, b) ]
-                  lower)
+            Tolk_next.Jit.jit_lower ~beam ~search
+              ~devices:(fun n -> (devices n).compiler)
+              ~held_bufs:(List.map fst bound)
+              ~inputs:(List.map (Hashtbl.find buffers) order)
+              linear)
       in
       Some (span "link" (fun () -> Engine.link ~devices ~bound linear))
   in
@@ -840,8 +830,8 @@ let compiled ?beam ?parallel (type a r) entry (args_s : a Ptree.t)
       let p =
         Programs.find table key ~miss:retrace (fun () ->
             let paths, consumed = paths args_s roles args in
-            compile ?beam ?parallel args_s result_s g args leaves ~paths
-              ~consumed)
+            compile ~beam:key.settings.beam ?parallel args_s result_s g args
+              leaves ~paths ~consumed)
       in
       Atomic.set last (Some key);
       check entry p.consumed p.paths leaves;
