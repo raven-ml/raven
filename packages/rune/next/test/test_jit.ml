@@ -2866,8 +2866,8 @@ let on_one_device ~name d =
             (Nx.matmul (grid 2 4) (Nx.matrix_transpose (grid 4 4)))
             (host (g (placed d (grid 2 4)))));
       test
-        "a consumed value placed from a file lends nothing, and the file keeps \
-         its elements" (fun () ->
+        "a consumed value placed from a file lends its storage only where the \
+         file was copied, and the file keeps its elements" (fun () ->
           let path = temp_file () in
           let elements = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 1.; 2. |] in
           let pool = Nx.place (on d) (on_disk_at path elements) in
@@ -2880,7 +2880,13 @@ let on_one_device ~name d =
           equal floats
             (Nx.create Nx.float32 [| 4 |] [| 10.; 6.; 30.; 2. |])
             (host r);
-          is_false (List.equal Nativeint.equal before (Witness.addresses r));
+          (* A device that shares the host's memory borrows the file's pages,
+             which it must not lend; another copies them into its own. *)
+          let copied =
+            not (Nx_device.shares_host_memory (Nx.Device.runtime d))
+          in
+          equal bool ~msg:"lent" copied
+            (List.equal Nativeint.equal before (Witness.addresses r));
           raises_invalid_arg (fun () -> Nx.to_array pool);
           equal floats elements (host (on_disk_at_read path)));
       slow "a compiled gradient through remats keeps under half the activations"
