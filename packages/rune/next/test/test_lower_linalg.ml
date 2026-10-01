@@ -534,7 +534,12 @@ let qr =
                 [ `Reduced; `Complete ]);
         };
       test "batch axes" (fun () ->
-          let a = Nx.reshape [| 2; 3; 2 |] (Nx.arange Nx.float32 1 13 1) in
+          let a =
+            conditioned
+              (Nx.div_s
+                 (Nx.reshape [| 2; 3; 2 |] (Nx.arange Nx.float32 1 13 1))
+                 12.)
+          in
           qr_agrees ~bound:0x1p-18 ~mode:`Reduced a);
       test "the factors take eager's signs" (fun () ->
           let f32 r c xs = Nx.create Nx.float32 [| r; c |] xs in
@@ -561,6 +566,20 @@ let qr =
           agrees Nx.float32 [| 1e-30; 0.; 1e-25; 1. |];
           agrees Nx.float64 [| 1.; 0.; 1e-170; 1. |];
           agrees Nx.float64 [| 1e-200; 0.; 1e-170; 1. |]);
+      test "a column whose squares overflow reflects as eager's does" (fun () ->
+          let agrees dt xs =
+            let a = Nx.create dt [| 2; 2 |] xs in
+            List.iter
+              (fun mode ->
+                let q, r = Nx.qr ~mode a in
+                let q', r' = traced2 (fun () -> Nx.qr ~mode a) in
+                near ~bound:0x1p-18 q q';
+                near ~bound:0x1p-18 r r')
+              [ `Reduced; `Complete ]
+          in
+          agrees Nx.float32 [| 2e38; 1.; 1e30; 2. |];
+          agrees Nx.float32 [| 3e38; 1.; 3e38; 2. |];
+          agrees Nx.float64 [| 1e308; 1.; 1e308; 2. |]);
       test "a zero column takes no reflection" (fun () ->
           let a = Nx.zeros Nx.float32 [| 3; 2 |] in
           let q, r = traced2 (fun () -> Nx.qr ~mode:`Complete a) in

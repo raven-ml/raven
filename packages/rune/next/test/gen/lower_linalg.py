@@ -33,26 +33,33 @@ def qr(a):
     quotient rounded once (`fdiv`), the sign of the first element written -1
     below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at every
     value, NaN included, a column already zero below the diagonal not
-    reflected, as LAPACK's reflectors are not, and the norm of a column taken
-    of it divided by its largest magnitude, as LAPACK's is."""
+    reflected, as LAPACK's reflectors are not, and the reflector built from the
+    column divided by its largest magnitude, applied to the rows from the
+    diagonal on, with the column itself written as its diagonal element and
+    zeros below it, as LAPACK's are."""
     m, n = a.shape[-2:]
     R, Q = a, Tensor.eye(m, dtype=a.dtype)
     idx = Tensor.arange(m)
+    rows, columns = idx.reshape(m, 1), Tensor.arange(n).reshape(1, n)
     for i in range(min(m, n)):
         at_i, x = idx.eq(i), (idx >= i).where(R[..., :, i], 0)
         magnitude = (x < 0).where(-x, x)
         largest = magnitude.max(-1, keepdim=True)
         scale = largest.ne(0).where(largest, 1)
         scaled = fdiv(x, scale)
-        norm = scale * (scaled * scaled).sum(-1, keepdim=True).sqrt()
+        norm = (scaled * scaled).sum(-1, keepdim=True).sqrt()
         x0 = at_i.where(x, 0).sum(-1, keepdim=True)
+        s0 = at_i.where(scaled, 0).sum(-1, keepdim=True)
         below = (idx > i).where(magnitude, 0).sum(-1, keepdim=True)
         sgn, active = (x0 < 0).where(x0.const_like(-1), x0.const_like(1)), below.ne(0)
-        u0 = x0 + sgn * norm
-        v = fdiv(at_i.where(u0, x), active.where(u0, 1)).unsqueeze(-1)
+        u0 = s0 + sgn * norm
+        v = fdiv(at_i.where(u0, scaled), active.where(u0, 1)).unsqueeze(-1)
         w = active.where(fdiv(sgn * u0, active.where(norm, 1)), 0).unsqueeze(-1) * v
-        R = R - w @ (v.transpose(-2, -1) @ R)
+        diagonal = active.where((sgn * -1) * (scale * norm), x0)
+        reflected = rows.eq(i).where(diagonal.unsqueeze(-1), (rows < i).where(R, 0))
+        applied = R - w @ (v.transpose(-2, -1) @ R)
         Q = Q - (Q @ v) @ w.transpose(-2, -1)
+        R = columns.eq(i).where(reflected, (rows >= i).where(applied, R))
     return Q, R
 
 

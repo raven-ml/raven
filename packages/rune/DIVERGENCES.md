@@ -619,7 +619,7 @@ target's run lands.
 ### L2. QR by Householder reflections, R triangular
 
 - **Reference:** `mixin/op.py:1799` (`qr`).
-- **Raven:** `lower_linalg.ml:76` (`householder`), `:118` (`triu`), `:122`
+- **Raven:** `lower_linalg.ml:78` (`householder`), `:140` (`triu`), `:144`
   (`qr`).
 - **Differs:** tinygrad's reflections, with LAPACK's choice of which columns
   to reflect: a column already zero below the diagonal takes no reflection
@@ -632,24 +632,31 @@ target's run lands.
   multiplies by the reciprocal and rounds twice: IEEE division is the rule of
   every rune composition, as of tolk's arithmetic (D9, D24). `float16` computes
   at `float32`, and the reduced factors are the leading columns of `q` and
-  rows of `r`. A column's norm is taken of it divided by its largest
-  magnitude, as LAPACK's is, so that no square overflows or underflows, and a
-  column is reflected when any element below its diagonal is nonzero: one
-  more reduction per column than tinygrad's. Compiled code never raises
-  `No_convergence`.
+  rows of `r`. As LAPACK's, a column's reflector is built from the column
+  divided by its largest magnitude, so that no square, sum or quotient
+  overflows or underflows; the column is reflected when any element below its
+  diagonal is nonzero; its diagonal element, the opposite of its first
+  element's sign times its norm, is written with zeros below it; and the
+  reflection is applied to the rows from the diagonal on of the columns to
+  its right. A norm above the largest float gives an infinite diagonal element
+  and a finite `q`, as eager's does. This takes one more reduction per column
+  than tinygrad's. On a target that flushes subnormals, a column whose only
+  nonzero elements below the diagonal are subnormal takes no reflection (T1).
+  Compiled code never raises `No_convergence`.
 - **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular,
   the factors nx.cpu's LAPACK reflectors give.
 - **Class:** measured bound: within `16 max(m, n) u` of the largest element of
   eager's factors, signs included, for well-conditioned matrices of up to
   5 x 5; measured maxima over 300 such matrices, in units of `max(m, n) u`:
-  2.3 (`float32`), 2.1 (`float64`), 0.04 (`float16`, `u` its own).
+  2.1 (`float32`), 2.0 (`float64`), 0.04 (`float16`, `u` its own).
 - **Reason:** (b).
 - **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
   reflection`, `› one element`, `› no column: q is the identity`, `› batch
   axes`, `› the factors take eager's signs`, `› a column whose squares
-  underflow reflects as eager's does`; `Compiled › linear algebra › qr` and
-  `› edges › QR's factors take eager's signs and reflect columns whose
-  squares underflow`; the construction, its
+  underflow reflects as eager's does`, `› a column whose squares overflow
+  reflects as eager's does`; `Compiled › linear algebra › qr` and `› edges ›
+  QR's factors take eager's signs and reflect columns whose squares underflow
+  or overflow`; the construction, its
   single-rounding quotients included, by `graph parity › qr_q`, `› qr_r`,
   whose generator builds tinygrad's reflections with `Ops.FDIV` and LAPACK's
   choice of columns.
@@ -659,8 +666,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml:143` (`pairs`), `:150` (`next_pairs`), `:162`
-  (`rounds`), `:166` (`rotate`), `:214` (`svd`).
+- **Raven:** `lower_linalg.ml:165` (`pairs`), `:172` (`next_pairs`), `:184`
+  (`rounds`), `:188` (`rotate`), `:236` (`svd`).
 - **Differs:**
   - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
     for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
@@ -693,7 +700,7 @@ target's run lands.
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:341` (`cholesky`).
+- **Raven:** `lower_linalg.ml:363` (`cholesky`).
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
@@ -715,7 +722,7 @@ target's run lands.
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:376` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:398` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower
@@ -736,7 +743,7 @@ target's run lands.
 ### L6. LU with partial pivoting
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:277` (`lu`).
+- **Raven:** `lower_linalg.ml:299` (`lu`).
 - **No source:** one column a step. The pivot is the first element of largest
   magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
   magnitudes in which a NaN on the diagonal is the greatest and one below it
@@ -773,7 +780,9 @@ differs, nx's meaning, and the test that pins it.
   writes a subnormal result as a zero of its sign: `recip (-0x1.fffffep127)`
   is `-0.`, where nx.cpu gives `-0x1p-128`, and `atan2 (-4) 0x1.fffffep127`
   is `-0.`. A kernel that moves or orders values without computing on them,
-  a copy, a gather or a sort, keeps every bit.
+  a copy, a gather or a sort, keeps every bit. QR takes no reflection of a
+  column whose only nonzero elements below the diagonal are subnormal, as
+  `[[1, 0]; [1e-40, 1]]`'s, where nx.cpu reflects it (L2).
 - **nx:** `nx_backend_intf.mli`: IEEE 754 binary arithmetic, with gradual
   underflow.
 - **Pinned by:** `Compiled › metal › elementwise › exact unary`, `› exact

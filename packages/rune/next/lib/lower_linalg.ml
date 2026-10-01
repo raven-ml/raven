@@ -66,9 +66,11 @@ let matmul a b =
 
    Step [i] reflects the part of column [i] of [r] on and below the diagonal,
    [x], onto the diagonal: by [I - w vᵀ], [v] being 1 at row [i] and [x] scaled
-   below it, applied to [r] on the left and accumulated in [q] on the right. The
-   diagonal takes the sign opposite to [x]'s first element, so that no
-   cancellation occurs, and a zero column takes no reflection. *)
+   below it, applied to the rows of [r] from [i] on, to the right of column [i],
+   and accumulated in [q] on the right. Column [i] itself takes its reflected
+   value, the diagonal element and zeros below it. The diagonal takes the sign
+   opposite to [x]'s first element, so that no cancellation occurs, and a column
+   already zero below the diagonal takes no reflection. *)
 
 let sum_last u = Ops.unsqueeze (Ops.rop u Op.Add [ Ops.ndim u - 1 ]) (-1)
 let max_last u = Ops.unsqueeze (Ops.rop u Op.Max [ Ops.ndim u - 1 ]) (-1)
@@ -76,12 +78,14 @@ let max_last u = Ops.unsqueeze (Ops.rop u Op.Max [ Ops.ndim u - 1 ]) (-1)
 let householder a =
   let batch, m, n = matrix a in
   let idx = Ops.arange ~dtype:Int32 m in
+  let rows = row_index m and columns = column_index n in
   let reflect (q, r) i =
     let at_i = is idx i in
     let c = Ops.squeeze ~axis:(-1) (column r i) in
     let x = Ops.where (Ops.ge idx (Ops.int i)) c (zero c) in
-    (* The norm is taken of the column divided by its largest magnitude, so that
-       no square underflows or overflows. *)
+    (* The reflector is built from the column divided by its largest magnitude,
+       so that no square, sum or quotient overflows or underflows; only the
+       diagonal element takes the column's scale back. *)
     let magnitude =
       Ops.where (Ops.lt x (zero x)) (Ops.mul x (float x (-1.))) x
     in
@@ -90,8 +94,9 @@ let householder a =
       Ops.where (Ops.ne largest (zero largest)) largest (float largest 1.)
     in
     let scaled = fdiv x scale in
-    let norm = Ops.mul scale (Ops.sqrt (sum_last (Ops.mul scaled scaled))) in
+    let norm = Ops.sqrt (sum_last (Ops.mul scaled scaled)) in
     let x0 = sum_last (Ops.where at_i x (zero x)) in
+    let s0 = sum_last (Ops.where at_i scaled (zero scaled)) in
     let sgn = direction x0 in
     (* A column already zero below the diagonal takes no reflection, and keeps
        its diagonal element's sign. *)
@@ -99,8 +104,10 @@ let householder a =
       sum_last (Ops.where (Ops.gt idx (Ops.int i)) magnitude (zero x))
     in
     let active = Ops.ne below (zero below) in
-    let u0 = Ops.O.(x0 + (sgn * norm)) in
-    let v = fdiv (Ops.where at_i u0 x) (Ops.where active u0 (float u0 1.)) in
+    let u0 = Ops.O.(s0 + (sgn * norm)) in
+    let v =
+      fdiv (Ops.where at_i u0 scaled) (Ops.where active u0 (float u0 1.))
+    in
     let v = Ops.unsqueeze v (-1) in
     let tau =
       Ops.where active
@@ -108,8 +115,23 @@ let householder a =
         (zero norm)
     in
     let w = Ops.mul (Ops.unsqueeze tau (-1)) v in
+    let diagonal =
+      Ops.where active
+        (Ops.mul (Ops.mul sgn (float sgn (-1.))) (Ops.mul scale norm))
+        x0
+    in
+    let reflected =
+      Ops.where
+        (Ops.eq rows (Ops.int i))
+        (Ops.unsqueeze diagonal (-1))
+        (Ops.where (Ops.lt rows (Ops.int i)) r (zero r))
+    in
+    let applied = Ops.sub r (dot w (dot (transpose v) r)) in
     ( Ops.sub q (dot (dot q v) (transpose w)),
-      Ops.sub r (dot w (dot (transpose v) r)) )
+      Ops.where
+        (Ops.eq columns (Ops.int i))
+        reflected
+        (Ops.where (Ops.ge rows (Ops.int i)) applied r) )
   in
   let q = Ops.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
   List.fold_left reflect (q, a) (List.init (Int.min m n) Fun.id)

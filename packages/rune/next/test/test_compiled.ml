@@ -2036,7 +2036,7 @@ let edges d =
         exact_of (both d (unfold w (array_of gapped))));
     test
       "QR's factors take eager's signs and reflect columns whose squares \
-       underflow" (fun () ->
+       underflow or overflow" (fun () ->
         let factors a =
           let m = Nx.dim 0 a and n = Nx.dim 1 a in
           let (qe, re), (qa, ra) =
@@ -2046,8 +2046,8 @@ let edges d =
                 K.qr ~reduced:false (env.on (array_of a)) ~q ~r;
                 (q, r))
           in
-          near ~limit:0x1p-18 (value qe) (back qa);
-          near ~limit:0x1p-18 (value re) (back ra)
+          relative ~bound:0x1p-18 (value qe) (back qa);
+          relative ~bound:0x1p-18 (value re) (back ra)
         in
         let f32 r c xs = Nx.create Nx.float32 [| r; c |] xs in
         List.iter factors
@@ -2059,6 +2059,8 @@ let edges d =
             f32 3 1 [| -1.; 2.; 0.5 |];
             f32 2 2 [| 1.; 0.; 1e-25; 1. |];
             f32 2 2 [| 1e-30; 0.; 1e-25; 1. |];
+            f32 2 2 [| 2e38; 1.; 1e30; 2. |];
+            f32 2 2 [| 3e38; 1.; 3e38; 2. |];
           ]);
     test "a fold and an unfold with no window are zeros and empty" (fun () ->
         let w =
