@@ -567,7 +567,7 @@ target's run lands.
   `› a single window of -0. folds to +0.`, `› a fold whose windows along an
   axis read only padding is zeros`, `› a fold with no window is zeros`;
   `Compiled › edges › a fold whose windows along an axis read only padding is
-  zeros`, `› a fold with no window is zeros`.
+  zeros`, `› a fold and an unfold with no window are zeros and empty`.
 
 ### I7. An unfold whose windows along an axis read only padding
 
@@ -585,8 +585,9 @@ target's run lands.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `windows › an unfold whose windows along an axis read only
-  padding is zeros`; `Compiled › edges › an unfold whose windows along an axis
-  read only padding is zeros`.
+  padding is zeros`, `› an unfold with no window is empty`; `Compiled › edges
+  › an unfold whose windows along an axis read only padding is zeros`, `› a
+  fold and an unfold with no window are zeros and empty`.
 
 ### L1. Products widen before they multiply
 

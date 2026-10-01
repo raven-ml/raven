@@ -423,13 +423,17 @@ let windows =
                 ~padding:[| (0, 0); (1, 0) |]
                 (Nx.create Nx.float32 [| 1; 3; 1 |] [| 1.; Float.nan; -0. |])));
       test "a fold with no window is zeros" (fun () ->
-          exact
-            (Nx.zeros Nx.float32 [| 1 |])
-            (traced (fun () ->
-                 Nx.combine_patches ~output_size:[| 1 |] ~kernel_size:[| 3 |]
-                   ~stride:[| 1 |] ~dilation:[| 1 |]
-                   ~padding:[| (0, 0) |]
-                   (Nx.zeros Nx.float32 [| 3; 0 |]))));
+          agrees (fun () ->
+              Nx.combine_patches ~output_size:[| 1 |] ~kernel_size:[| 3 |]
+                ~stride:[| 1 |] ~dilation:[| 1 |]
+                ~padding:[| (0, 0) |]
+                (Nx.zeros Nx.float32 [| 3; 0 |])));
+      test "an unfold with no window is empty" (fun () ->
+          agrees (fun () ->
+              Nx.extract_patches ~kernel_size:[| 3 |] ~stride:[| 1 |]
+                ~dilation:[| 1 |]
+                ~padding:[| (0, 0) |]
+                (Nx.ones Nx.float32 [| 2; 1 |])));
       test "a single window of -0. folds to +0." (fun () ->
           agrees (fun () ->
               Nx.combine_patches ~output_size:[| 2 |] ~kernel_size:[| 1 |]
