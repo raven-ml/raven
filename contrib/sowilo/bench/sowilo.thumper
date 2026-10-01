@@ -5,14 +5,14 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
-Sowilo/Canny-1080p	alloc_words	exact	27699
-Sowilo/Canny-1080p	wall_time	batch=1	n=20	9.562e-02	9.169e-02 9.330e-02 9.416e-02 9.421e-02 9.455e-02 9.489e-02 9.495e-02 9.513e-02 9.514e-02 9.549e-02 9.575e-02 9.636e-02 9.765e-02 9.793e-02 9.798e-02 9.833e-02 9.851e-02 9.943e-02 9.966e-02 1.021e-01
-Sowilo/GaussianBlur-1080p	alloc_words	exact	3842
-Sowilo/GaussianBlur-1080p	wall_time	batch=1	n=20	6.829e-02	6.301e-02 6.404e-02 6.440e-02 6.441e-02 6.511e-02 6.556e-02 6.602e-02 6.645e-02 6.713e-02 6.810e-02 6.848e-02 6.888e-02 6.925e-02 6.987e-02 7.261e-02 7.261e-02 7.393e-02 7.475e-02 7.498e-02 7.624e-02
-Sowilo/Sobel-720p	alloc_words	exact	2802
-Sowilo/Sobel-720p	wall_time	batch=1	n=20	2.363e-02	2.334e-02 2.338e-02 2.346e-02 2.346e-02 2.347e-02 2.350e-02 2.351e-02 2.352e-02 2.353e-02 2.361e-02 2.365e-02 2.366e-02 2.369e-02 2.370e-02 2.370e-02 2.372e-02 2.372e-02 2.374e-02 2.461e-02 2.920e-02
-Sowilo/ToGrayscale-1080p	alloc_words	exact	258
-Sowilo/ToGrayscale-1080p	wall_time	batch=4	n=20	9.609e-04	9.528e-04 9.540e-04 9.564e-04 9.569e-04 9.574e-04 9.576e-04 9.580e-04 9.589e-04 9.600e-04 9.603e-04 9.615e-04 9.616e-04 9.624e-04 9.636e-04 9.666e-04 9.749e-04 9.911e-04 1.006e-03 1.076e-03 1.088e-03
+Sowilo/Canny-1080p	alloc_words	exact	27834
+Sowilo/Canny-1080p	wall_time	batch=1	n=20	9.758e-02	8.763e-02 8.844e-02 9.212e-02 9.500e-02 9.559e-02 9.677e-02 9.680e-02 9.693e-02 9.738e-02 9.745e-02 9.771e-02 9.823e-02 9.867e-02 9.912e-02 9.931e-02 9.952e-02 9.984e-02 1.000e-01 1.001e-01 1.022e-01
+Sowilo/GaussianBlur-1080p	alloc_words	exact	3859
+Sowilo/GaussianBlur-1080p	wall_time	batch=1	n=20	6.327e-02	5.929e-02 5.972e-02 5.977e-02 5.978e-02 5.978e-02 6.006e-02 6.031e-02 6.286e-02 6.313e-02 6.326e-02 6.327e-02 6.335e-02 6.423e-02 6.436e-02 6.468e-02 6.478e-02 6.520e-02 6.541e-02 6.568e-02 6.672e-02
+Sowilo/Sobel-720p	alloc_words	exact	2809
+Sowilo/Sobel-720p	wall_time	batch=1	n=20	2.407e-02	2.375e-02 2.393e-02 2.394e-02 2.395e-02 2.398e-02 2.400e-02 2.400e-02 2.401e-02 2.401e-02 2.404e-02 2.411e-02 2.414e-02 2.415e-02 2.417e-02 2.425e-02 2.426e-02 2.436e-02 2.440e-02 2.448e-02 2.463e-02
+Sowilo/ToGrayscale-1080p	alloc_words	exact	260
+Sowilo/ToGrayscale-1080p	wall_time	batch=4	n=20	1.528e-03	1.406e-03 1.422e-03 1.448e-03 1.458e-03 1.477e-03 1.479e-03 1.497e-03 1.498e-03 1.513e-03 1.527e-03 1.529e-03 1.541e-03 1.548e-03 1.549e-03 1.554e-03 1.572e-03 1.582e-03 1.594e-03 1.597e-03 1.631e-03
 
 # machine: 73bfb753d0739958
 # host: MacBookPro.Home · Apple M1 Max · arm64 · macos
