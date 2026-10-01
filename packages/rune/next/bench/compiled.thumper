@@ -5,8 +5,12 @@
 # host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
 # ocaml: 5.5.1 · 64-bit · release
 
+cuda/chain_distinct	alloc_words	exact	775
+cuda/chain_distinct	wall_time	batch=2048	n=20	4.757e-06	4.729e-06 4.732e-06 4.736e-06 4.739e-06 4.740e-06 4.745e-06 4.752e-06 4.752e-06 4.752e-06 4.755e-06 4.759e-06 4.761e-06 4.772e-06 4.775e-06 4.786e-06 4.788e-06 4.792e-06 4.798e-06 5.067e-06 5.219e-06
+cuda/chain_one_add	alloc_words	exact	775
+cuda/chain_one_add	wall_time	batch=2048	n=20	4.729e-06	4.714e-06 4.719e-06 4.722e-06 4.722e-06 4.723e-06 4.725e-06 4.725e-06 4.726e-06 4.728e-06 4.729e-06 4.730e-06 4.731e-06 4.733e-06 4.733e-06 4.736e-06 4.737e-06 4.738e-06 4.740e-06 4.742e-06 4.745e-06
 gather/float32-1Mi-from-1Mi-host	alloc_words	exact	627
-gather/float32-1Mi-from-1Mi-host	wall_time	batch=1	n=20	9.964e-04	9.930e-04 9.937e-04 9.941e-04 9.943e-04 9.945e-04 9.946e-04 9.948e-04 9.952e-04 9.953e-04 9.957e-04 9.971e-04 9.973e-04 9.977e-04 9.977e-04 9.987e-04 1.007e-03 1.009e-03 1.018e-03 1.024e-03 1.031e-03
+gather/float32-1Mi-from-1Mi-host	wall_time	batch=8	n=20	9.958e-04	9.889e-04 9.902e-04 9.905e-04 9.912e-04 9.912e-04 9.920e-04 9.927e-04 9.928e-04 9.951e-04 9.956e-04 9.959e-04 9.960e-04 9.967e-04 9.967e-04 9.968e-04 9.969e-04 9.991e-04 1.000e-03 1.001e-03 1.009e-03
 
 # machine: ca352e279bc47cb1
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos

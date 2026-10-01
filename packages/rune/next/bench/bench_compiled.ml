@@ -8,13 +8,14 @@
    into a load at the computed index. Without the fold, the 1Mi row is a sum of
    2^40 terms, so its baseline guards the fold.
 
-   On Metal, chains of one operation a call on 1024 float32 elements, each
-   reading the result of the one before: one kernel, and five in turn. Metal is
-   opened in the measuring worker, which is forked without an exec, and Metal's
-   compiler service cannot be reached from such a process: it answers only from
-   Metal's cache of pipelines. Before measuring, a fresh process of this
-   executable ([--warm]) runs every chain's setup, which makes each pipeline
-   into that cache. *)
+   On Metal and on CUDA, chains of one operation a call on 1024 float32
+   elements, each reading the result of the one before: one kernel, and five in
+   turn. The device is opened in the measuring worker, which is forked without
+   an exec. Metal's compiler service cannot be reached from such a process: it
+   answers only from Metal's cache of pipelines. Before measuring, a fresh
+   process of this executable ([--warm]) runs every chain's setup, which makes
+   each pipeline into that cache. CUDA's driver must not be initialized before
+   the fork, so a fresh process ([--cuda]) says whether a CUDA device opens. *)
 
 let kernels = Nx_backend.kernels Rune_next.Compiled.backend
 
@@ -40,7 +41,7 @@ let gather id n =
       K.gather ~axis:0 i x ~dst;
       Nx_device.synchronize Nx_device.host)
 
-(* Chains on Metal *)
+(* Chains on a GPU *)
 
 type chain = {
   device : Nx_device.t;
@@ -103,28 +104,34 @@ let chains open_device =
 
 let teardown c = Nx_device.synchronize c.device
 
+let group name open_device =
+  Thumper.group ~id:name name
+    (List.map
+       (fun c ->
+         Thumper.bench_with_setup c.name ~setup:c.setup ~teardown c.call)
+       (chains open_device))
+
+let run_self flag =
+  Sys.command (Filename.quote_command Sys.executable_name [ flag ])
+
 let metal args =
   match Metal.device with
   | None -> []
   | Some open_device ->
-      if not (List.mem "list" args) then begin
-        let warmed =
-          Sys.command (Filename.quote_command Sys.executable_name [ "--warm" ])
-        in
-        if warmed <> 0 then failwith "the pipelines could not be made"
-      end;
-      [
-        Thumper.group ~id:"metal" "metal"
-          (List.map
-             (fun c ->
-               Thumper.bench_with_setup c.name ~setup:c.setup ~teardown c.call)
-             (chains open_device));
-      ]
+      if (not (List.mem "list" args)) && run_self "--warm" <> 0 then
+        failwith "the pipelines could not be made";
+      [ group "metal" open_device ]
+
+let cuda () =
+  if run_self "--cuda" <> 0 then []
+  else [ group "cuda" (fun () -> Nx_cuda_device.v 0) ]
 
 let () =
   match (Array.to_list Sys.argv, Metal.device) with
   | [ _; "--warm" ], Some open_device ->
       List.iter (fun c -> teardown (c.setup ())) (chains open_device)
+  | [ _; "--cuda" ], _ ->
+      exit (if Result.is_ok (Nx_cuda_device.get 0) then 0 else 1)
   | args, _ ->
       Thumper.run "compiled"
         ~budgets:
@@ -134,4 +141,4 @@ let () =
           ]
         (Thumper.group ~id:"gather" "gather"
            [ gather "float32-1Mi-from-1Mi-host" (1 lsl 20) ]
-        :: metal args)
+        :: (metal args @ cuda ()))
