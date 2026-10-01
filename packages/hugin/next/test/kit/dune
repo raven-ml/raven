@@ -1,4 +1,15 @@
 (tests
  (names test_locale test_number test_time)
+ (modules test_locale test_number test_time)
  (package hugin)
  (libraries hugin.next.kit nx windtrap))
+
+(test
+ (name test_scale)
+ (modules test_scale)
+ (package hugin)
+ (libraries hugin.next.gg hugin.next.kit nx windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_scale.ml test_scale.ml.corrected))))
