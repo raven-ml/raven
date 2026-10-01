@@ -285,8 +285,10 @@ let wrapping_case (dt, (o0, o1), (a, b, k)) =
   (u, vars)
 
 (* D74: a float sum, difference or product of variables over intervals of a
-   float type's values, at a point of each. Magnitudes span the type's
-   exponents, so that sums overflow and products fall to the subnormals. *)
+   float type's values, at a point of each, or a selection of one by comparing
+   them ([Op.Where]: [x] where [x < y], else [x] where [y < x], else [y]).
+   Magnitudes span the type's exponents, so that sums overflow and products fall
+   to the subnormals. *)
 let gen_float_bounds =
   let open Gen in
   let* dt =
@@ -299,7 +301,7 @@ let gen_float_bounds =
     let+ x = float_range (-2.) 2. and+ k = int_range (-emax - m) emax in
     Float.ldexp x k
   in
-  let+ o = of_list ~pp:Op.pp Op.[ Add; Sub; Mul ]
+  let+ o = of_list ~pp:Op.pp Op.[ Add; Sub; Mul; Where ]
   and+ ends = quad magnitude magnitude magnitude magnitude
   and+ at = pair (float_range 0. 1.) (float_range 0. 1.) in
   (dt, o, ends, at)
@@ -315,7 +317,11 @@ let float_bounds_case (dt, o, (a0, a1, b0, b1), (s, t)) =
     value (Float.min hi (Float.max lo ((lo *. (1. -. s)) +. (hi *. s))))
   in
   let x = variable dt (f a0) (f a1) "x" and y = variable dt (f b0) (f b1) "y" in
-  let u = Ops.alu x o [ y ] in
+  let u =
+    if Op.equal o Where then
+      Ops.where (Ops.lt x y) x (Ops.where (Ops.lt y x) x y)
+    else Ops.alu x o [ y ]
+  in
   match
     Interpreter.eval
       ~vars:[ ("x", f (point a0 a1 s)); ("y", f (point b0 b1 t)) ]
@@ -394,6 +400,18 @@ let bounds_group =
           check_bounds (Ops.alu h Op.Add [ h ]) (full Float16);
           check_bounds (Ops.alu h Op.Mul [ h ]) (full Float16);
           check_bounds (Ops.alu w Op.Add [ one Weak_float ]) (full Weak_float));
+      test "a float selection by a comparison narrows what it selects (D74)"
+        (fun () ->
+          let x = variable Float32 (f (-10.)) (f 10.) "x" in
+          let p = Ops.param 0 Float32 in
+          let c = Ops.float ~dtype:Float32 2. in
+          let minus_c = Ops.float ~dtype:Float32 (-2.) in
+          check_bounds (Ops.where (Ops.lt x c) x minus_c) (f (-10.), f 2.);
+          check_bounds (Ops.where (Ops.lt minus_c x) x c) (f (-2.), f 10.);
+          check_bounds (Ops.where (Ops.lt x c) c x) (f (-10.), f 10.);
+          let above = Ops.where (Ops.lt minus_c p) p minus_c in
+          check_bounds above (f (-2.), f Float.infinity);
+          check_bounds (Ops.where (Ops.lt above c) above c) (f (-2.), f 2.));
       test "a float truncation and negation map their operand's bounds (D74)"
         (fun () ->
           let x = variable Float32 (f (-2.5)) (f 3.75) "x" in

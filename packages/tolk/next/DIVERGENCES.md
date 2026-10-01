@@ -2024,13 +2024,15 @@ tolk lowers as one, replaces it.
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
 - **tinygrad:** `uop/ops.py:1104-1163` (`UOp._min_max`), which bounds binary
-  operations on integers only (`:1105`) and has no case for `TRUNC` or `NEG`;
+  operations on integers only (`:1105`), has no case for `TRUNC` or `NEG`, and
+  bounds a `WHERE` by both its branches whatever selects them (`:1142`);
   `codegen/decomp/transcendental.py:170-191` (`xsin`), which builds the
   Payne-Hanek reduction unless its caller passes `fast`, and chooses between
   the reductions with `x_abs < switch_over` (`:187`), a comparison that the
   decompositions' rewrite (`symbolic_simple`) does not fold.
-- **tolk.next:** `lib/uop/ops.ml:1507` (`compute_min_max`), `:1556` (`Trunc`),
-  `:1560` (`Neg`) and `:1575` (`float_bounds`);
+- **tolk.next:** `lib/uop/ops.ml:1507` (`compute_min_max`), `:1524` (`Where`),
+  `:1556` (`Trunc`), `:1560` (`Neg`), `:1573` (`selected`) and `:1586`
+  (`float_bounds`);
   `lib/codegen/decomp/transcendental.ml:322` (`xsin`); `test/gen/tinygrad.patch`,
   which gives tinygrad the same bounds and the same `xsin` before the goldens
   are generated.
@@ -2040,28 +2042,40 @@ tolk lowers as one, replaces it.
   so that they hold the result rounded at its type, or flushed to zero. A
   result that may overflow its type, and one of a weak float, has the type's
   bounds. A truncation's bounds are its operand's, truncated, and a float
-  negation's are its operand's, negated and swapped. `xsin` of an angle whose
+  negation's are its operand's, negated and swapped. A float selection by a
+  comparison `a < b` narrows the branch it selects where the comparison
+  holds, so where neither operand is NaN: `a` to below `b`'s greatest value,
+  and `b` to above `a`'s least. `xsin` of an angle whose
   bounds lie strictly within `switch_over` is its `fast` form, the Cody-Waite
   reduction alone.
 - **Reason:** (b): the sine or cosine of a bounded value on the CPU, such as
   sofo's and symo's Gaussian draws (`Nx.Rng.normal`), whose angle is `2 pi u`
   for a uniform `u` in `[0, 1)` fused into the draw. rune's `sin` and `cos`
   (`packages/rune/next/lib/lower_arith.ml`, `by_quadrant`) skip their own long
-  reduction for an angle bounded below their limit, and the host's renderer
-  has no sine, so `xsin` reduces what remains. Without this entry every
+  reduction for an angle bounded below their limit, and clamp their remainder,
+  at most about a quarter turn, to `[-pi/2, pi/2]` by two such selections
+  (`within_quarter_turn`), since the cancellation in `a - q pi/2` hides that
+  bound from interval arithmetic. The host's renderer has no sine, so `xsin`
+  reduces what remains. Without this entry every
   compiled normal draw built the Payne-Hanek reduction for angles below
   `2 pi`. On kimchi's x86 E-cores (`taskset -c 6-13`), drawing `2^20` samples
   with `Rune.jit` (median of 31 calls, the key's uniforms included) took 29.8
   ms in float32 and 113.9 ms in float64, and takes 12.8 ms and 18.9 ms with
   this entry, rune's `by_quadrant` and the draw's fused uniforms; the first
   call of a draw of 1000, compiling included, took about 200 ms and 420 ms,
-  and takes 115 ms and 85 ms.
+  and takes 115 ms and 85 ms. The sine of `2^20` values read from a buffer
+  took 62 ms in float32 and 202 ms in float64, its first call about 370 ms
+  and 1200 ms, and takes 22.7 ms and 79 ms, its first call 180 ms and 510 ms,
+  with `within_quarter_turn`; the cosine likewise.
 - **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
-  value a float operation rounds to (D74)`, `› a float operation of bounded
-  operands is bounded (D74)`, `› a float operation of an unbounded operand,
-  or that can overflow, has its type's bounds (D74)`, `› a float truncation
-  and negation map their operand's bounds (D74)` and the float rows of
-  `binary_bounds.golden`, from the equally patched tinygrad; the
-  Transcendental suite: `graphs › a sine of an angle bounded below the
-  switch-over is its fast form (D74)`; and rune.next's `lower_arith` suite:
-  `long reductions › a normal draw takes none`.
+  value a float operation rounds to (D74)`, sums, differences, products and
+  selections, `› a float operation of bounded operands is bounded (D74)`,
+  `› a float operation of an unbounded operand, or that can overflow, has its
+  type's bounds (D74)`, `› a float selection by a comparison narrows what it
+  selects (D74)`, `› a float truncation and negation map their operand's
+  bounds (D74)` and the float rows of `binary_bounds.golden`, from the
+  equally patched tinygrad; the Transcendental suite: `graphs › a sine of an
+  angle bounded below the switch-over is its fast form (D74)`; and
+  rune.next's `lower_arith` suite: `long reductions › a normal draw takes
+  none`, `› the sine of an angle read from a buffer takes its own only` and
+  `› the cosine of an angle read from a buffer takes its own only`.

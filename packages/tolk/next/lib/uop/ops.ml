@@ -1523,8 +1523,8 @@ and compute_min_max u : Dtype.value * Dtype.value =
       match (u.op, u.arg) with
       | Op.Where, _ -> (
           match u.src with
-          | [ _; x; y ] ->
-              let (x0, x1), (y0, y1) = (bounds x, bounds y) in
+          | [ c; x; y ] ->
+              let (x0, x1), (y0, y1) = (selected c (bounds x) x, bounds y) in
               (Value.min x0 y0, Value.max x1 y1)
           | _ -> invalid_arg "where needs three sources")
       | (Op.Param | Op.Buffer | Op.Alloc), Param { vmin_vmax = Some b; _ } -> b
@@ -1566,6 +1566,17 @@ and compute_min_max u : Dtype.value * Dtype.value =
           | Some b -> b
           | None -> (Dtype.min dt, Dtype.max dt))
       | _ -> (Dtype.min dt, Dtype.max dt))
+
+(* Where a float comparison [a < b] holds, neither operand is NaN, [a] is below
+   [b]'s greatest value and [b] above [a]'s least: [selected c (lo, hi) t] is
+   [t]'s bounds [(lo, hi)] narrowed so, where [c] selects [t]. *)
+and selected c (lo, hi) t =
+  match (c.op, c.src) with
+  | Op.Cmplt, [ a; b ] when Dtype.is_float a.dtype ->
+      if t == a then (lo, Value.min hi (snd (min_max b)))
+      else if t == b then (Value.max lo (fst (min_max a)), hi)
+      else (lo, hi)
+  | _ -> (lo, hi)
 
 (* A float sum, difference or product of operands with finite bounds has bounds:
    the corners, widened by more than the result's rounding, a relative 2^-m and

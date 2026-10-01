@@ -543,7 +543,7 @@ index 5a9905e..7246f9b 100644
    (UPat((Ops.FLOORDIV, Ops.FLOORMOD), src=(UPat.var("x", dtypes.weakint)+UPat.cvar("c"), UPat.cvar("d")), name="n"),
      lambda n,x,c,d: None if d.val==0 or c.val%d.val==c.val else
 diff --git a/tinygrad/uop/ops.py b/tinygrad/uop/ops.py
-index 2842d7e..9a155ef 100644
+index 2842d7e..12abd7e 100644
 --- a/tinygrad/uop/ops.py
 +++ b/tinygrad/uop/ops.py
 @@ -92,6 +92,13 @@ def broadcast_axes(src_shape:tuple[sint, ...], out_shape:tuple[sint, ...]) -> tu
@@ -588,13 +588,17 @@ index 2842d7e..9a155ef 100644
        if self.op is Ops.ADD: return s0_vmin+s1_vmin, s0_vmax+s1_vmax
        if self.op is Ops.SUB: return s0_vmin-s1_vmax, s0_vmax-s1_vmin
        if self.op is Ops.AND and dtypes.is_int(self.dtype) and s1_vmin == s1_vmax >= 0:
-@@ -1139,23 +1164,34 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
+@@ -1139,23 +1164,38 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
        if self.op is Ops.CMPNE: return ((s0_vmax < s1_vmin) or (s1_vmax < s0_vmin), not (s0_vmin == s0_vmax == s1_vmin == s1_vmax))
        if self.op is Ops.OR and self.dtype == dtypes.bool: return s0_vmin or s1_vmin, s0_vmax or s1_vmax
        if self.op is Ops.AND and self.dtype == dtypes.bool: return s0_vmin and s1_vmin, s0_vmax and s1_vmax
 -    if self.op is Ops.WHERE: return min(self.src[1].vmin, self.src[2].vmin), max(self.src[1].vmax, self.src[2].vmax)
 +    if self.op is Ops.WHERE:
 +      (x0, x1), (y0, y1) = self._operand(self.src[1]), self._operand(self.src[2])
++      # where a float comparison a < b holds, neither is NaN, a is below b's greatest value and b above a's least (D74)
++      if (c:=self.src[0]).op is Ops.CMPLT and dtypes.is_float(c.src[0].dtype):
++        if self.src[1] is c.src[0]: x1 = min(x1, c.src[1].vmax)
++        elif self.src[1] is c.src[1]: x0 = max(x0, c.src[0].vmin)
 +      return min(x0, y0), max(x1, y1)
      # NOTE: returned UOp is assumed to be CONST
      if self.op in GroupOp.Defines and self.arg.vmin_vmax is not None: return self.arg.vmin_vmax
@@ -628,7 +632,7 @@ index 2842d7e..9a155ef 100644
        if dtypes.is_unsigned(self.dtype) and 0 <= smin and smax <= self.dtype.max: return smin, smax
        # a signed or float destination holds the part of the source that overlaps it: overflow is undefined, a nan bound overlaps nothing
        if self.dtype in dtypes.floats+dtypes.sints+dtypes.weaks and smin <= self.dtype.max and self.dtype.min <= smax:
-@@ -1404,12 +1440,18 @@ def safe_pow(x, y):
+@@ -1404,12 +1444,18 @@ def safe_pow(x, y):
    except ZeroDivisionError: return math.inf
    except ValueError: return math.inf if x > 0 else -math.inf
  
@@ -649,7 +653,7 @@ index 2842d7e..9a155ef 100644
    Ops.XOR: operator.xor, Ops.OR: operator.or_, Ops.AND: operator.and_, Ops.SHR: operator.rshift, Ops.SHL: operator.lshift, Ops.MAX: max,
    Ops.CMOD: cmod, Ops.CDIV: cdiv, Ops.FLOORDIV: floordiv, Ops.FLOORMOD: floormod,
    Ops.MULACC: lambda x,y,z: (x*y)+z, Ops.WHERE: lambda x,y,z: y if x else z, Ops.CMPEQ: operator.eq}
-@@ -1420,6 +1462,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
+@@ -1420,6 +1466,8 @@ def exec_alu(op:Ops, dtype:DType, operands, truncate_output=True):
      return tuple([exec_alu(op, dtype, [x[i] if isinstance(x, tuple) else x for x in operands]) for i in range(count)])
    if op in GroupOp.Binary and Invalid in operands: return Invalid
    alu = python_alu[op](*operands)
