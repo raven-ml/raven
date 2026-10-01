@@ -486,6 +486,27 @@ let hvp loss w =
 
 let capture_tests =
   [
+    test "a remat capturing two weights gives each its gradient" (fun () ->
+        let loss r (u, v) =
+          Nx.sum
+            (r (fun x -> Nx.mul (Nx.mul (Nx.sin x) u) (Nx.mul v u)) (at ()))
+        in
+        equal
+          (Oracle.structure ~rel:1e-12 Nx.Ptree.(pair tensor tensor))
+          (Rune.grad
+             Nx.Ptree.(pair tensor tensor)
+             (loss plainly)
+             (along (), at ()))
+          (Rune.grad
+             Nx.Ptree.(pair tensor tensor)
+             (loss rematted)
+             (along (), at ())));
+    test "a remat whose result depends on no argument passes no cotangent"
+      (fun () ->
+        let c = vec [| 1.; 2.; 3. |] in
+        let r = Rune.remat Nx.Ptree.(tensor @-> returns tensor) (fun _ -> c) in
+        equal (exact ()) (Nx.ones f64 [| 3 |])
+          (Rune.grad' (fun x -> Nx.add (Nx.sum x) (Nx.sum (r x))) (at ())));
     test "a captured weight's gradient" (fun () ->
         let loss r w = Nx.sum (Nx.sin (r (layer w) (at ()))) in
         equal (close ())

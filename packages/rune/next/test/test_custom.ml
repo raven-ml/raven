@@ -195,6 +195,42 @@ let jvp_tests =
         equal ~msg:"rule runs" int 1 !runs);
   ]
 
+(* Integer result leaves *)
+
+let int_leaf () = Nx.create Nx.int32 [| 2 |] [| 4l; 5l |]
+let with_int = Nx.Ptree.(pair tensor tensor)
+
+let int_tests =
+  [
+    test "a custom_jvp's integer result leaf has a zero tangent" (fun () ->
+        let f =
+          Rune.custom_jvp tensor with_int (fun x ->
+              ( (Nx.sin x, int_leaf ()),
+                fun dx -> (Nx.mul dx (Nx.cos x), Nx.zeros Nx.int32 [| 2 |]) ))
+        in
+        let x = v3 () in
+        let _, (ds, dk) = Rune.jvp tensor with_int f x (along ()) in
+        equal ~msg:"float" (close ()) (Nx.mul (along ()) (Nx.cos x)) ds;
+        equal ~msg:"integer" (exact ()) (Nx.zeros Nx.int32 [| 2 |]) dk;
+        equal ~msg:"under grad" (close ()) (Nx.cos x)
+          (Rune.grad' (fun x -> Nx.sum (fst (f x))) x));
+    test "a custom_vjp's integer result leaf gets a zero cotangent" (fun () ->
+        let seen = ref None in
+        let f =
+          Rune.custom_vjp tensor with_int (fun x ->
+              ( (Nx.sin x, int_leaf ()),
+                fun (g, gk) ->
+                  seen := Some gk;
+                  Nx.mul g (Nx.cos x) ))
+        in
+        let x = v3 () in
+        equal ~msg:"gradient" (close ()) (Nx.cos x)
+          (Rune.grad' (fun x -> Nx.sum (fst (f x))) x);
+        equal ~msg:"the integer cotangent" (exact ())
+          (Nx.zeros Nx.int32 [| 2 |])
+          (Option.get !seen));
+  ]
+
 (* Under a map *)
 
 (* [scaled c] multiplies by [c] with a true rule; [c] is a map's lane. *)
@@ -366,6 +402,7 @@ let () =
        [
          group "custom_vjp" vjp_tests;
          group "custom_jvp" jvp_tests;
+         group "integer result leaves" int_tests;
          group "under a map" map_tests;
          group "under a compiled function" compiled_tests;
        ])
