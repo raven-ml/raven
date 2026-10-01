@@ -16,6 +16,11 @@
    coalescing; and the four generated-family drivers (map, fold, argreduce,
    scan). Every driver returns a status; the binding raises on non-NULL. */
 
+#if defined(__linux__)
+#define _GNU_SOURCE /* sched_getaffinity, CPU_COUNT */
+#include <sched.h>
+#endif
+
 #include <caml/fail.h>
 #include <caml/threads.h>
 
@@ -133,10 +138,15 @@ static pthread_mutex_t g_pool_init_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t g_pool_atfork_once = PTHREAD_ONCE_INIT;
 static int g_pool_atfork_ok;
 
-/* Hardware CPU count, computed once. Apple: physical cores (hw.physicalcpu) —
-   Apple Silicon has no SMT, so this equals the online count. Elsewhere: online
-   logical CPUs (_SC_NPROCESSORS_ONLN), which on SMT x86 exceeds physical; the
-   bandwidth policy caps effective threads regardless.
+/* CPU count, computed once. Apple: physical cores (hw.physicalcpu) — Apple
+   Silicon has no SMT, so this equals the online count. Linux: the CPUs the
+   process may run on (its affinity mask, which taskset, a cgroup's cpuset or a
+   container's set), bounded by its cgroup's CPU quota (cpu.max), so that the
+   pool has no more workers than CPUs it can occupy: 14 workers taking turns on
+   6 CPUs ran a batched product 1.6 times slower. Elsewhere: online logical
+   CPUs (_SC_NPROCESSORS_ONLN). Counts are logical CPUs, which on SMT x86
+   exceed physical cores; the bandwidth policy caps effective threads
+   regardless.
 */
 static int g_ncores;
 static pthread_once_t g_ncores_once = PTHREAD_ONCE_INIT;
@@ -147,6 +157,21 @@ static int nx_c_cpu_count(void) {
   size_t sz = sizeof n;
   if (sysctlbyname("hw.physicalcpu", &n, &sz, NULL, 0) == 0 && n > 0) return n;
   return 1;
+#elif defined(__linux__)
+  cpu_set_t set;
+  long n = sched_getaffinity(0, sizeof set, &set) == 0
+               ? CPU_COUNT(&set)
+               : sysconf(_SC_NPROCESSORS_ONLN);
+  /* cpu.max is "max PERIOD" without a quota and "QUOTA PERIOD" with one. */
+  FILE *f = fopen("/sys/fs/cgroup/cpu.max", "r");
+  if (f) {
+    long quota, period;
+    if (fscanf(f, "%ld %ld", &quota, &period) == 2 && quota > 0 && period > 0 &&
+        quota / period < n)
+      n = quota / period > 0 ? quota / period : 1;
+    fclose(f);
+  }
+  return (n > 0) ? (int)n : 1;
 #elif defined(_SC_NPROCESSORS_ONLN)
   long n = sysconf(_SC_NPROCESSORS_ONLN);
   return (n > 0) ? (int)n : 1;

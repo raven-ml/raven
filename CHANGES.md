@@ -2909,6 +2909,11 @@ thread.
 
 ### Nx
 
+- On Linux, nx's thread pool has as many workers as CPUs the process may run
+  on, its affinity mask bounded by its cgroup's CPU quota, where it counted
+  every online CPU: under `taskset`, a cpuset or a container's CPU limit the
+  extra workers took turns on the same cores. Pinned to 6 of 14 cores, a
+  batch of 64 products of 32 x 32 takes 63 us instead of 73.
 - Host buffers of 64 KiB or more reuse the memory of collected buffers of
   the same size instead of returning it to the C library, which on Linux
   trims or unmaps it, so the next eager operation faulted its pages in again
