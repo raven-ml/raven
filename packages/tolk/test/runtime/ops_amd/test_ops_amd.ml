@@ -44,7 +44,7 @@ let rec gpu = function
           | "gfx1100" -> [ ring; ring ]
           | "gfx1100_sdma5" | "gfx1100_sdma52" -> [ ring ]
           | _ -> []);
-        counting = None;
+        profiling = None;
       }
   | "gfx1201" ->
       {
@@ -58,7 +58,7 @@ let rec gpu = function
         aql = false;
         compute_ring = ring;
         copy_rings = [ ring ];
-        counting = None;
+        profiling = None;
       }
   | ("gfx942" | "gfx942_cpx") as name ->
       let cpx = name = "gfx942_cpx" in
@@ -73,12 +73,35 @@ let rec gpu = function
         aql = not cpx;
         compute_ring = ring;
         copy_rings = [ ring ];
-        counting = None;
+        profiling = None;
       }
-  | name when String.ends_with ~suffix:"_counters" name ->
-      let g = gpu (String.sub name 0 (String.length name - 9)) in
-      { g with counting = Some (counting g) }
-  | name -> fail ("no GPU " ^ name)
+  | name -> (
+      (* A GPU that counts, traces, or both, as [gpu_counters], [gpu_traces] and
+         [gpu_counters_traces] name it, with tinygrad's 32 runs and 256 MiB of
+         each shader engine's traces. *)
+      match String.split_on_char '_' name with
+      | g :: (_ :: _ as what) ->
+          let g = gpu g in
+          let counts = List.mem "counters" what
+          and traces = List.mem "traces" what in
+          {
+            g with
+            profiling =
+              Some
+                {
+                  Ops_amd.slots = 32;
+                  counting = (if counts then Some (counting g) else None);
+                  tracing =
+                    (if traces then
+                       Some
+                         {
+                           Ops_amd.window = (256 lsl 20) / 32;
+                           engines = g.shader_engines * g.xccs;
+                         }
+                     else None);
+                };
+          }
+      | _ -> fail ("no GPU " ^ name))
 
 (* The counting of tinygrad's default counters on [g], laid out as tinygrad's
    pmc_start lays them out, with 4 compute units to a shader array and the
@@ -151,8 +174,7 @@ and counting (g : Ops_amd.gpu) =
   in
   let counters = List.map counter defaults in
   {
-    Ops_amd.slots = 32;
-    counters;
+    Ops_amd.counters;
     size = !offset;
     wgp_active = (fun ~engine ~array:_ ~wgp -> (engine, wgp) <> (1, 2));
   }
@@ -228,6 +250,10 @@ let cases =
     ("counters", "gfx1100_counters", false);
     ("counters_gfx1201", "gfx1201_counters", false);
     ("counters_gfx942", "gfx942_counters", false);
+    ("traces", "gfx1100_traces", false);
+    ("traces_gfx1201", "gfx1201_traces", false);
+    ("traces_gfx942", "gfx942_traces", false);
+    ("counters_traces", "gfx1100_counters_traces", false);
   ]
 
 let recorded =
@@ -575,6 +601,8 @@ let pp_storage ppf = function
   | Scratch n -> Format.fprintf ppf "Scratch %d" n
   | Log -> Format.pp_print_string ppf "Log"
   | Samples -> Format.pp_print_string ppf "Samples"
+  | Traces -> Format.pp_print_string ppf "Traces"
+  | Trace_ends -> Format.pp_print_string ppf "Trace_ends"
 
 let storage = Testable.make ~pp:pp_storage ~equal:( = )
 
@@ -614,6 +642,8 @@ let linking =
               ("doorbell_compute_0", Some (Doorbell "COMPUTE:0"));
               ("prof_log", Some Log);
               ("pmc_buf", Some Samples);
+              ("sqtt_buf", Some Traces);
+              ("sqtt_wptrs", Some Trace_ends);
               ("cmdbuf_compute_0", None);
               ("slots", None);
               ("timeline", None);

@@ -1,0 +1,95 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(volatile unsigned long* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned long* restrict put_value_compute_0_2_1, volatile unsigned long* restrict write_ptr_compute_0_3_1, volatile unsigned int* restrict ring_compute_0_4_4194304, unsigned char* restrict cmdbuf_compute_0_5_3728, unsigned long* restrict inputs_6_4, unsigned long* restrict prof_log_7_97, unsigned char* restrict ib_compute_0_9_16, const unsigned long submitted_amd_, const unsigned long value_amd_) {
+  unsigned long val0 = (*(inputs_6_4+0));
+  unsigned long val1 = (*(inputs_6_4+1));
+  unsigned long val2 = (*(inputs_6_4+2));
+  unsigned long val3 = (*(inputs_6_4+3));
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val4 = (*(put_value_compute_0_2_1+0));
+  unsigned long val5 = (*(prof_log_7_97+0));
+  unsigned long alu2 = (val5&31ul);
+  unsigned long alu3 = (val0+(alu2<<23ul));
+  unsigned long alu4 = ((val5+1ul)&31ul);
+  unsigned long alu5 = (val0+(alu4<<23ul));
+  unsigned long alu6 = (alu3+1073741824ul);
+  unsigned long alu7 = (alu3+1342177280ul);
+  unsigned long alu8 = (alu3+268435456ul);
+  unsigned long alu9 = (alu3+536870912ul);
+  unsigned long alu10 = (alu3+805306368ul);
+  unsigned long alu11 = (alu5+1073741824ul);
+  unsigned long alu12 = (alu5+1342177280ul);
+  unsigned long alu13 = (alu5+268435456ul);
+  unsigned long alu14 = (alu5+536870912ul);
+  unsigned long alu15 = (alu5+805306368ul);
+  unsigned long alu16 = (alu2*24ul);
+  unsigned long alu17 = (val2+alu16);
+  unsigned long alu18 = (alu4*24ul);
+  unsigned long alu19 = (val2+alu18);
+  unsigned long alu20 = (alu16+val1);
+  unsigned long alu21 = (alu18+val1);
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+100) = ((unsigned int)((alu9>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+115) = (524288u|((unsigned int)((alu10>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+118) = ((unsigned int)((alu10>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+133) = (524288u|((unsigned int)((alu6>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+136) = ((unsigned int)((alu6>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+151) = (524288u|((unsigned int)((alu7>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+154) = ((unsigned int)((alu7>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+19) = ((unsigned int)(submitted_amd_));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+512) = (524288u|((unsigned int)((alu5>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+515) = ((unsigned int)((alu5>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+530) = (524288u|((unsigned int)((alu13>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+533) = ((unsigned int)((alu13>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+548) = (524288u|((unsigned int)((alu14>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+551) = ((unsigned int)((alu14>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+566) = (524288u|((unsigned int)((alu15>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+569) = ((unsigned int)((alu15>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+584) = (524288u|((unsigned int)((alu11>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+587) = ((unsigned int)((alu11>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+602) = (524288u|((unsigned int)((alu12>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+605) = ((unsigned int)((alu12>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+61) = (524288u|((unsigned int)((alu3>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+64) = ((unsigned int)((alu3>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+79) = (524288u|((unsigned int)((alu8>>44ul))));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+82) = ((unsigned int)((alu8>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3728))+97) = (524288u|((unsigned int)((alu9>>44ul))));
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+128) = (alu20+24ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+155) = alu17;
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+169) = (alu17+4ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+183) = (alu17+8ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+197) = (alu17+12ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+211) = (alu17+16ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+225) = (alu17+20ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3728))+242) = (alu21+16ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+16) = (alu20+16ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+353) = (alu21+24ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+380) = alu19;
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+394) = (alu19+4ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+408) = (alu19+8ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+422) = (alu19+12ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+436) = (alu19+16ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+450) = (alu19+20ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3728+4)))+464) = value_amd_;
+  unsigned long alu64 = (val3+1472ul);
+  *(prof_log_7_97+((3*((int)(alu2)))+1)) = alu64;
+  *(prof_log_7_97+((3*((int)(alu4)))+1)) = alu64;
+  *(prof_log_7_97+0) = (val5+2ul);
+  int cast0 = ((int)((val4&4194303ul)));
+  int alu68 = ((4194304-cast0)^-1);
+  int alu69 = ((alu68<-5)?-5:alu68);
+  int alu70 = (alu69^-1);
+  for (int Lidx0 = 0; Lidx0 < alu70; Lidx0++) {
+    unsigned int val6 = (*(((unsigned int*)(ib_compute_0_9_16))+Lidx0));
+    *(ring_compute_0_4_4194304+(cast0+Lidx0)) = val6;
+  }
+  for (int Lidx1 = 0; Lidx1 < (4-alu70); Lidx1++) {
+    unsigned int val7 = (*(((unsigned int*)(ib_compute_0_9_16))+(alu70+Lidx1)));
+    *(ring_compute_0_4_4194304+Lidx1) = val7;
+  }
+  unsigned long alu75 = (val4+4ul);
+  *(write_ptr_compute_0_3_1+0) = alu75;
+  *(put_value_compute_0_2_1+0) = alu75;
+  *(doorbell_compute_0_0_1+0) = alu75;
+}
+

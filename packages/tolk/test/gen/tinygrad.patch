@@ -727,6 +727,20 @@ index 0dd26d2..90ef3ed 100644
    smem_prefix = "__attribute__((shared, aligned(16)))"
    smem_prefix_for_cast: bool = False
    barrier = '__builtin_amdgcn_fence(__ATOMIC_RELEASE, "workgroup");' + '__builtin_amdgcn_s_barrier();' + \
+diff --git a/tinygrad/runtime/support/amd.py b/tinygrad/runtime/support/amd.py
+--- a/tinygrad/runtime/support/amd.py
++++ b/tinygrad/runtime/support/amd.py
+@@ -7,7 +7,9 @@
+   name:str; offset:int; segment:int; fields:dict[str, tuple[int, int]]; bases:dict[int, tuple[int, ...]] # noqa: E702
+   def __post_init__(self): self.addr:dict[int, int] = { inst: bases[self.segment] + self.offset for inst, bases in self.bases.items() }
+ 
+-  def encode(self, **kwargs) -> int: return functools.reduce(int.__or__, (value << self.fields[name][0] for name,value in kwargs.items()), 0)
++  def encode(self, **kwargs) -> int:
++    return functools.reduce(int.__or__, ((value & ((1 << (self.fields[name][1] - self.fields[name][0] + 1)) - 1)) << self.fields[name][0]
++                                         for name,value in kwargs.items()), 0)
+   def decode(self, val: int) -> dict: return {name:getbits(val, start, end) for name,(start,end) in self.fields.items()}
+ 
+   def fields_mask(self, *names) -> int:
 diff --git a/tinygrad/runtime/support/hcq2.py b/tinygrad/runtime/support/hcq2.py
 index 1f6134e..24949cf 100644
 --- a/tinygrad/runtime/support/hcq2.py

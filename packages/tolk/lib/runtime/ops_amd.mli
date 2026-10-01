@@ -58,7 +58,6 @@ type counter = {
 *)
 
 type counting = {
-  slots : int;  (** The runs the log holds. *)
   counters : counter list;  (** The counters each run counts. *)
   size : int;  (** The bytes of a run's samples. *)
   wgp_active : engine:int -> array:int -> wgp:int -> bool;
@@ -67,11 +66,24 @@ type counting = {
 }
 (** The type for how the compute queue counts each kernel's run. *)
 
+type tracing = {
+  window : int;  (** The bytes of a run's trace of one shader engine. *)
+  engines : int;  (** The shader engines of all the dies. *)
+}
+(** The type for how the compute queue traces each kernel's run. *)
+
+type profiling = {
+  slots : int;  (** The runs the log holds. *)
+  counting : counting option;  (** How runs are counted, if they are. *)
+  tracing : tracing option;  (** How runs are traced, if they are. *)
+}
+(** The type for how the compute queue profiles each kernel's run. *)
+
 type gpu = {
   target : int * int * int;
       (** The graphics target, such as [(11, 0, 0)] for ["gfx1100"]. *)
   gc : int * int * int;
-      (** The version of the graphics block, whose registers the counting
+      (** The version of the graphics block, whose registers the profiling
           writes. *)
   sdma : int * int * int;  (** The version of the copy engine. *)
   xccs : int;  (** The number of compute dies. *)
@@ -84,7 +96,8 @@ type gpu = {
   compute_ring : int;  (** The size in bytes of the compute queue's ring. *)
   copy_rings : int list;
       (** The size in bytes of each copy queue's ring, ["COPY:0"] first. *)
-  counting : counting option;  (** How kernels' runs are counted, if they are. *)
+  profiling : profiling option;
+      (** How kernels' runs are profiled, if they are. *)
 }
 (** The type for the AMD GPUs a compiler encodes work for. *)
 
@@ -124,14 +137,25 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
       memory: if it does not fit before the end of the ring, the rest of the
       ring is zeroed and it starts at the ring's beginning.
 
-    With [gpu.counting], the compute queue's commands start by resetting the
-    GPU's performance counters and selecting the counted events, and each [exec]
-    counts its kernel's run: its host program takes the next of the log's slots
-    ({!Log}), the log's count plus the runs before it in the submission modulo
-    [slots], and writes the kernel's descriptor address there; after the kernel,
-    the queue copies the counters' values into the slot's samples ({!Samples})
-    and resets the counters. Once the command buffer is written, the host
-    program adds the submission's runs to the log's count.
+    With [gpu.profiling], each [exec] profiles its kernel's run: its host
+    program takes the next of the log's slots ({!Log}), the log's count plus the
+    runs before it in the submission modulo [slots], and writes the kernel's
+    descriptor address there, and the queue writes the GPU's clock into the
+    slot's next word before the kernel and into the one after it once the kernel
+    completed. Once the command buffer is written, the host program adds the
+    submission's runs to the log's count.
+    - With [counting], the compute queue's commands start by resetting the GPU's
+      performance counters and selecting the counted events; after each kernel,
+      the queue copies the counters' values into the slot's samples ({!Samples})
+      and resets the counters.
+    - With [tracing], before each kernel the queue points every shader engine's
+      thread trace at the engine's window of the slot ({!Traces}) and starts it,
+      tracing waves on every engine and instructions on engines 0 and 1, then
+      writes the markers of the program it binds and of the dispatch, the
+      dispatches of the queue numbered from 0; after the kernel, and a trace
+      marker on a PM4 queue, it stops the traces, waits for each engine to
+      finish writing, and copies where each engine's trace ends ({!Trace_ends}).
+      A value a register's field takes is cut to the field's width.
 
     [exec] and [copy] raise [Invalid_argument] on a queue that does not run
     them, and a command of a copy queue [gpu] lacks raises [Invalid_argument]. A
@@ -141,7 +165,7 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
     take, or if the AQL packets exceed half of theirs, and the batch is then
     split into several submissions.
 
-    The compute queue's commands raise [Invalid_argument] if [gpu.counting]
+    The compute queue's commands raise [Invalid_argument] if [gpu.profiling]
     counts more counters of a block than its graphics family has registers.
 
     Raises [Invalid_argument] if [gpu] has several dies and its compute queue
@@ -170,9 +194,16 @@ type storage =
       (** The device's scratch memory, for kernels of up to that many bytes of
           scratch per lane. *)
   | Log
-      (** [1 + slots] 64-bit words of the GPU's [counting]: the runs taken so
-          far, then the kernel descriptor address of each slot's run. *)
+      (** [1 + 3 * slots] 64-bit words of the GPU's [profiling]: the runs taken
+          so far, then for each slot the kernel descriptor address of its run
+          and the GPU's clock before and after it. *)
   | Samples  (** [slots] runs of [size] bytes: the counters' values. *)
+  | Traces
+      (** [slots] windows of [window] bytes for each shader engine, the engine's
+          windows first: the runs' traces. *)
+  | Trace_ends
+      (** [slots * engines] 32-bit words: where each run's trace of each engine
+          ends, the run's engines first. *)
 
 val storage : Ops.t -> storage option
 (** [storage u] is the storage of the placeholder [u] of a batch if AMD's

@@ -12,10 +12,9 @@ module A = Nx_amd_device
 (* The GPU as the compiler encodes its packets. *)
 let gpu a =
   let p = A.props a in
-  let counting slots (c : A.counting) =
+  let counting (c : A.counting) =
     {
-      Ops_amd.slots;
-      counters =
+      Ops_amd.counters =
         List.map
           (fun (ct : A.counter) ->
             {
@@ -33,6 +32,17 @@ let gpu a =
       wgp_active = c.wgp_active;
     }
   in
+  let profiling (pr : A.profiling) =
+    {
+      Ops_amd.slots = pr.slots;
+      counting = Option.map counting pr.counting;
+      tracing =
+        Option.map
+          (fun (t : A.tracing) ->
+            { Ops_amd.window = t.window; engines = t.engines })
+          pr.tracing;
+    }
+  in
   {
     Ops_amd.target = p.target;
     gc = p.gc;
@@ -44,9 +54,7 @@ let gpu a =
     aql = A.aql a;
     compute_ring = B.nbytes (A.compute a).ring;
     copy_rings = List.map (fun (q : A.queue) -> B.nbytes q.ring) (A.sdma a);
-    counting =
-      Option.bind (A.profiling a) (fun pr ->
-          Option.map (counting pr.slots) pr.counting);
+    profiling = Option.map profiling (A.profiling a);
   }
 
 let queue a = function
@@ -79,6 +87,9 @@ let profiled a = match A.profiling a with Some p -> p | None -> mismatch ()
 let samples a =
   match (profiled a).counting with Some c -> c.samples | None -> mismatch ()
 
+let traced a =
+  match (profiled a).tracing with Some t -> t | None -> mismatch ()
+
 (* The storage of the placeholders AMD's commands name: those of the device
    [name]. *)
 let placeholder name d a u =
@@ -98,7 +109,9 @@ let placeholder name d a u =
         | Program { binary; name } -> program d a ~binary ~name
         | Scratch n -> A.scratch a n
         | Log -> (profiled a).log
-        | Samples -> samples a)
+        | Samples -> samples a
+        | Traces -> (traced a).traces
+        | Trace_ends -> (traced a).ends)
       (Ops_amd.storage u)
 
 (* The queues address the memory nx.device says the device reaches: other memory

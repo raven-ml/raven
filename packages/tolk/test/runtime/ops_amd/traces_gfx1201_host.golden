@@ -1,0 +1,77 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+
+void hcq_submit(volatile unsigned long* restrict doorbell_compute_0_0_1, volatile unsigned long* restrict slots_1_2, volatile unsigned long* restrict put_value_compute_0_2_1, volatile unsigned long* restrict write_ptr_compute_0_3_1, volatile unsigned int* restrict ring_compute_0_4_4194304, unsigned char* restrict cmdbuf_compute_0_5_3088, unsigned long* restrict inputs_6_4, unsigned long* restrict prof_log_7_97, unsigned char* restrict ib_compute_0_9_16, const unsigned long submitted_amd_, const unsigned long value_amd_) {
+  unsigned long val0 = (*(inputs_6_4+0));
+  unsigned long val1 = (*(inputs_6_4+1));
+  unsigned long val2 = (*(inputs_6_4+2));
+  unsigned long val3 = (*(inputs_6_4+3));
+  *(slots_1_2+0) = 0ul;
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  unsigned long val4 = (*(put_value_compute_0_2_1+0));
+  unsigned long val5 = (*(prof_log_7_97+0));
+  unsigned long alu2 = (val5&31ul);
+  unsigned long alu3 = (val0+(alu2<<23ul));
+  unsigned long alu4 = ((val5+1ul)&31ul);
+  unsigned long alu5 = (val0+(alu4<<23ul));
+  unsigned long alu6 = (alu3+268435456ul);
+  unsigned long alu7 = (alu3+536870912ul);
+  unsigned long alu8 = (alu3+805306368ul);
+  unsigned long alu9 = (alu5+268435456ul);
+  unsigned long alu10 = (alu5+536870912ul);
+  unsigned long alu11 = (alu5+805306368ul);
+  unsigned long alu12 = (val2+(alu2<<4ul));
+  unsigned long alu13 = (val2+(alu4<<4ul));
+  unsigned long alu14 = ((alu2*24ul)+val1);
+  unsigned long alu15 = ((alu4*24ul)+val1);
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+106) = ((unsigned int)((alu7>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+109) = ((unsigned int)((alu7>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+127) = ((unsigned int)((alu8>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+130) = ((unsigned int)((alu8>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+19) = ((unsigned int)(submitted_amd_));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+435) = ((unsigned int)((alu5>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+438) = ((unsigned int)((alu5>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+456) = ((unsigned int)((alu9>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+459) = ((unsigned int)((alu9>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+477) = ((unsigned int)((alu10>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+480) = ((unsigned int)((alu10>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+498) = ((unsigned int)((alu11>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+501) = ((unsigned int)((alu11>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+64) = ((unsigned int)((alu3>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+67) = ((unsigned int)((alu3>>44ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+85) = ((unsigned int)((alu6>>12ul)));
+  *(((unsigned int*)(cmdbuf_compute_0_5_3088))+88) = ((unsigned int)((alu6>>44ul)));
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+116) = (alu14+24ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+143) = alu12;
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+157) = (alu12+4ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+171) = (alu12+8ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+185) = (alu12+12ul);
+  *(((unsigned long*)(cmdbuf_compute_0_5_3088))+202) = (alu15+16ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+16) = (alu14+16ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+301) = (alu15+24ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+328) = alu13;
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+342) = (alu13+4ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+356) = (alu13+8ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+370) = (alu13+12ul);
+  *(((unsigned long*)((cmdbuf_compute_0_5_3088+4)))+384) = value_amd_;
+  unsigned long alu46 = (val3+512ul);
+  *(prof_log_7_97+((3*((int)(alu2)))+1)) = alu46;
+  *(prof_log_7_97+((3*((int)(alu4)))+1)) = alu46;
+  *(prof_log_7_97+0) = (val5+2ul);
+  int cast0 = ((int)((val4&4194303ul)));
+  int alu50 = ((4194304-cast0)^-1);
+  int alu51 = ((alu50<-5)?-5:alu50);
+  int alu52 = (alu51^-1);
+  for (int Lidx0 = 0; Lidx0 < alu52; Lidx0++) {
+    unsigned int val6 = (*(((unsigned int*)(ib_compute_0_9_16))+Lidx0));
+    *(ring_compute_0_4_4194304+(cast0+Lidx0)) = val6;
+  }
+  for (int Lidx1 = 0; Lidx1 < (4-alu52); Lidx1++) {
+    unsigned int val7 = (*(((unsigned int*)(ib_compute_0_9_16))+(alu52+Lidx1)));
+    *(ring_compute_0_4_4194304+Lidx1) = val7;
+  }
+  unsigned long alu57 = (val4+4ul);
+  *(write_ptr_compute_0_3_1+0) = alu57;
+  *(put_value_compute_0_2_1+0) = alu57;
+  *(doorbell_compute_0_0_1+0) = alu57;
+}
+

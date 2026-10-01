@@ -2452,6 +2452,9 @@ runtime/ops_amd/counters_gfx942_host.golden
 runtime/ops_amd/counters_gfx942_prepared.golden
 runtime/ops_amd/counters_host.golden
 runtime/ops_amd/counters_prepared.golden
+runtime/ops_amd/counters_traces_compiled.golden
+runtime/ops_amd/counters_traces_host.golden
+runtime/ops_amd/counters_traces_prepared.golden
 runtime/ops_amd/large_copy_compiled.golden
 runtime/ops_amd/large_copy_gfx942_compiled.golden
 runtime/ops_amd/large_copy_gfx942_host.golden
@@ -2477,6 +2480,15 @@ runtime/ops_amd/scratch_gfx942_prepared.golden
 runtime/ops_amd/scratch_host.golden
 runtime/ops_amd/scratch_prepared.golden
 runtime/ops_amd/signal_words.golden
+runtime/ops_amd/traces_compiled.golden
+runtime/ops_amd/traces_gfx1201_compiled.golden
+runtime/ops_amd/traces_gfx1201_host.golden
+runtime/ops_amd/traces_gfx1201_prepared.golden
+runtime/ops_amd/traces_gfx942_compiled.golden
+runtime/ops_amd/traces_gfx942_host.golden
+runtime/ops_amd/traces_gfx942_prepared.golden
+runtime/ops_amd/traces_host.golden
+runtime/ops_amd/traces_prepared.golden
 runtime/ops_amd/variable_compiled.golden
 runtime/ops_amd/variable_gfx942_compiled.golden
 runtime/ops_amd/variable_gfx942_host.golden

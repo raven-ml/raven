@@ -106,6 +106,22 @@ let profiled f =
       f ();
       Nx_device.Profile.stop p)
 
+(* The events of a profile around a chain of three kernels; a GPU out of its
+   stable power state skips. *)
+let profile_chain ?counters ?trace () =
+  let b = chain 3 in
+  let bound = bound_to (Array.make 4 0.) b in
+  let p = Nx_device.Profile.start ?counters ?trace () in
+  Fun.protect
+    ~finally:(fun () ->
+      if Nx_device.Profile.enabled () then ignore (Nx_device.Profile.stop p))
+    (fun () ->
+      match run_calls ~bound (chained b) with
+      | exception Failure why
+        when String.ends_with ~suffix:"set -l stable_std`" why ->
+          skip ~reason:why ()
+      | _ -> Nx_device.Profile.stop p)
+
 let execution =
   group "execution"
     [
@@ -183,24 +199,8 @@ let execution =
           | _ -> ());
       slow "a profile that counts has each kernel's run count, in order"
         (fun () ->
-          let b = chain 3 in
-          let bound = bound_to (Array.make 4 0.) b in
-          let p =
-            Nx_device.Profile.start
-              ~counters:[ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ]
-              ()
-          in
           let events =
-            Fun.protect
-              ~finally:(fun () ->
-                if Nx_device.Profile.enabled () then
-                  ignore (Nx_device.Profile.stop p))
-              (fun () ->
-                match run_calls ~bound (chained b) with
-                | exception Failure why
-                  when String.ends_with ~suffix:"set -l stable_std`" why ->
-                    skip ~reason:why ()
-                | _ -> Nx_device.Profile.stop p)
+            profile_chain ~counters:[ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ] ()
           in
           let counted =
             List.filter_map
@@ -221,6 +221,53 @@ let execution =
                 (Array.fold_left ( + ) 0 (List.assoc "GRBM_GUI_ACTIVE" counters)
                 > 0))
             counted);
+      slow "a profile that traces has each kernel's run traced by every engine"
+        (fun () ->
+          let events = profile_chain ~trace:true () in
+          let a = Option.get (Nx_amd_device.of_device (amd ())) in
+          let props = Nx_amd_device.props a in
+          let engines = props.shader_engines * props.xccs in
+          let traces =
+            List.filter_map
+              (function
+                | Nx_device.Profile.Trace t
+                  when Nx_device.equal t.device (amd ()) ->
+                    Some (t.name, t.part, String.length t.data)
+                | _ -> None)
+              events
+          in
+          equal
+            (list (pair string int))
+            ~msg:"every engine of every run"
+            (List.concat_map
+               (fun _ -> List.init engines (fun se -> ("k", se)))
+               [ 1; 2; 3 ])
+            (List.map (fun (name, se, _) -> (name, se)) traces);
+          List.iter
+            (fun (_, se, n) ->
+              is_true ~msg:(Printf.sprintf "engine %d wrote" se) (n > 0))
+            traces;
+          let waves =
+            List.filter
+              (function
+                | Nx_device.Profile.Span s ->
+                    Nx_device.equal s.device (amd ())
+                    && String.starts_with ~prefix:"SE " s.lane
+                | _ -> false)
+              events
+          in
+          match props.target with
+          | 9, _, _ ->
+              equal int ~msg:"no realtime markers on GFX9" 0 (List.length waves)
+          | _ ->
+              is_true ~msg:"the waves are spans" (waves <> []);
+              List.iter
+                (function
+                  | Nx_device.Profile.Span s ->
+                      equal string ~msg:"named after the kernel" "k" s.name;
+                      is_true ~msg:"in order" (s.start <= s.stop)
+                  | _ -> ())
+                waves);
       slow "each trip of a range runs its kernel on its own window" (fun () ->
           let n = 5 in
           let src, dst, e = ranged n in

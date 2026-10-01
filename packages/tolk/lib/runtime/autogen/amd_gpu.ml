@@ -63,6 +63,22 @@ let packet3_acquire_mem_cp_coher_cntl_tc_wb_action_ena = 18
 let eop_tc_wb_action_en = 0x8000
 let eop_tc_nc_action_en = 0x80000
 let cs_partial_flush = 7
+let sq_tt_rt_freq_4096_clk = 2
+let sq_tt_wtype_include_cs_bit = 0x40
+let sq_tt_token_mask_sqdec_bit = 1
+let sq_tt_token_mask_shdec_bit = 2
+let sq_tt_token_mask_gfxudec_bit = 4
+let sq_tt_token_mask_comp_bit = 8
+let sq_tt_token_mask_context_bit = 0x10
+let sq_tt_token_exclude_perf_shift = 11
+let sq_tt_token_exclude_vmemexec_shift = 0
+let sq_tt_token_exclude_aluexec_shift = 1
+let sq_tt_token_exclude_valuinst_shift = 2
+let sq_tt_token_exclude_immediate_shift = 5
+let sq_tt_token_exclude_inst_shift = 8
+let thread_trace_marker = 0x35
+let thread_trace_finish = 0x37
+let rgp_sqtt_marker_identifier_bind_pipeline = 12
 
 (* SDMA *)
 
@@ -96,13 +112,14 @@ let compute_pgm_rsrc3 = 0x2e28
 let compute_pgm_rsrc3_gfx9 = 0x2e2d
 let compute_user_data_0 = 0x2e40
 
-(* The registers a run that counts writes and reads, in each graphics family:
-   (name, address, fields as (name, (hi, lo))). *)
+(* The registers a run that counts or traces writes and reads, in each
+   graphics family: (name, address, fields as (name, (hi, lo))). *)
 
-let counter_registers = function
+let profile_registers = function
   | (9, 4, 3) ->
       [
         ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("COMPUTE_THREAD_TRACE_ENABLE", 0x2e1e, [ ("thread_trace_enable", (0, 0)) ]);
         ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
         ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (7, 0)); ("se_broadcast_writes", (31, 31)); ("se_index", (23, 16)); ("sh_broadcast_writes", (29, 29)); ("sh_index", (15, 8)) ]);
         ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
@@ -111,6 +128,7 @@ let counter_registers = function
         ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("grbm_busy_user_defined_mask", (19, 19)); ("ia_busy_user_defined_mask", (23, 23)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tc_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)); ("vgt_busy_user_defined_mask", (12, 12)); ("wd_busy_user_defined_mask", (28, 28)) ]);
+        ("SPI_CONFIG_CNTL", 0xc440, [ ("alloc_arb_lru_ena", (28, 28)); ("enable_sqg_bop_events", (25, 25)); ("enable_sqg_top_events", (24, 24)); ("exp_arb_lru_ena", (29, 29)); ("exp_priority_order", (23, 21)); ("gpr_write_priority", (20, 0)); ("ps_pkr_priority_cntl", (31, 30)); ("rsrc_mgmt_reset", (26, 26)); ("ttrace_stall_all", (27, 27)) ]);
         ("SQ_PERFCOUNTER0_HI", 0xd1c1, [ ("perfcounter_hi", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
@@ -162,6 +180,42 @@ let counter_registers = function
         ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cntr_rate", (12, 8)); ("cs_en", (6, 6)); ("disable_flush", (13, 13)); ("es_en", (3, 3)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ls_en", (5, 5)); ("ps_en", (0, 0)); ("vmid_mask", (31, 16)); ("vs_en", (1, 1)) ]);
         ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)) ]);
         ("SQ_PERFCOUNTER_MASK", 0xd9e1, [ ("sh0_mask", (15, 0)); ("sh1_mask", (31, 16)) ]);
+        ("SQ_THREAD_TRACE_BASE", 0xc330, [ ("addr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BASE2", 0xc337, [ ("addr_hi", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_CNTR", 0xc33c, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_CTRL", 0xc335, [ ("reset_buffer", (31, 31)) ]);
+        ("SQ_THREAD_TRACE_HIWATER", 0xc33b, [ ("hiwater", (2, 0)) ]);
+        ("SQ_THREAD_TRACE_MASK", 0xc332, [ ("cu_sel", (4, 0)); ("reg_stall_en", (7, 7)); ("sh_sel", (5, 5)); ("simd_en", (11, 8)); ("spi_stall_en", (14, 14)); ("sq_stall_en", (15, 15)); ("vm_id_mask", (13, 12)) ]);
+        ("SQ_THREAD_TRACE_MODE", 0xc336, [ ("autoflush_en", (25, 25)); ("capture_mode", (24, 23)); ("interrupt_en", (30, 30)); ("issue_mask", (28, 27)); ("mask_cs", (20, 18)); ("mask_es", (11, 9)); ("mask_gs", (8, 6)); ("mask_hs", (14, 12)); ("mask_ls", (17, 15)); ("mask_ps", (2, 0)); ("mask_vs", (5, 3)); ("mode", (22, 21)); ("tc_perf_en", (26, 26)); ("test_mode", (29, 29)); ("wrap", (31, 31)) ]);
+        ("SQ_THREAD_TRACE_PERF_MASK", 0xc334, [ ("sh0_mask", (15, 0)); ("sh1_mask", (31, 16)) ]);
+        ("SQ_THREAD_TRACE_SIZE", 0xc331, [ ("size", (21, 0)) ]);
+        ("SQ_THREAD_TRACE_STATUS", 0xc33a, [ ("busy", (30, 30)); ("finish_done", (25, 16)); ("finish_pending", (9, 0)); ("full", (31, 31)); ("new_buf", (29, 29)); ("utc_error", (28, 28)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK", 0xc333, [ ("reg_drop_on_stall", (24, 24)); ("reg_mask", (23, 16)); ("token_mask", (15, 0)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK2", 0xc338, [ ("inst_mask", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_0", 0xc340, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_1", 0xc341, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_2", 0xc342, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_3", 0xc343, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_CMN", 0x23b0, [ ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_EVENT", 0x23b0, [ ("event_type", (15, 10)); ("sh_id", (5, 5)); ("stage", (8, 6)); ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_INST", 0x23b0, [ ("inst_type", (15, 11)); ("simd_id", (10, 9)); ("time_delta", (4, 4)); ("token_type", (3, 0)); ("wave_id", (8, 5)) ]);
+        ("SQ_THREAD_TRACE_WORD_INST_PC_1_OF_2", 0x23b0, [ ("pc_lo", (31, 16)); ("simd_id", (10, 9)); ("time_delta", (4, 4)); ("token_type", (3, 0)); ("trap_error", (15, 15)); ("wave_id", (8, 5)) ]);
+        ("SQ_THREAD_TRACE_WORD_INST_PC_2_OF_2", 0x23b1, [ ("pc_hi", (23, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_INST_USERDATA_1_OF_2", 0x23b0, [ ("cu_id", (9, 6)); ("data_lo", (31, 16)); ("priv", (5, 5)); ("simd_id", (15, 14)); ("time_delta", (4, 4)); ("token_type", (3, 0)); ("wave_id", (13, 10)) ]);
+        ("SQ_THREAD_TRACE_WORD_INST_USERDATA_2_OF_2", 0x23b1, [ ("data_hi", (15, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_ISSUE", 0x23b0, [ ("inst0", (9, 8)); ("inst1", (11, 10)); ("inst2", (13, 12)); ("inst3", (15, 14)); ("inst4", (17, 16)); ("inst5", (19, 18)); ("inst6", (21, 20)); ("inst7", (23, 22)); ("inst8", (25, 24)); ("inst9", (27, 26)); ("simd_id", (6, 5)); ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_MISC", 0x23b0, [ ("misc_token_type", (15, 13)); ("sh_id", (12, 12)); ("time_delta", (11, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_PERF_1_OF_2", 0x23b0, [ ("cntr0", (24, 12)); ("cntr1_lo", (31, 25)); ("cntr_bank", (11, 10)); ("cu_id", (9, 6)); ("sh_id", (5, 5)); ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_PERF_2_OF_2", 0x23b1, [ ("cntr1_hi", (5, 0)); ("cntr2", (18, 6)); ("cntr3", (31, 19)) ]);
+        ("SQ_THREAD_TRACE_WORD_REG_1_OF_2", 0x23b0, [ ("me_id", (8, 7)); ("pipe_id", (6, 5)); ("reg_addr", (31, 16)); ("reg_dropped_prev", (9, 9)); ("reg_op", (15, 15)); ("reg_priv", (14, 14)); ("reg_type", (12, 10)); ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_REG_2_OF_2", 0x23b0, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_REG_CS_1_OF_2", 0x23b0, [ ("data_lo", (31, 16)); ("me_id", (8, 7)); ("pipe_id", (6, 5)); ("reg_addr", (15, 9)); ("time_delta", (4, 4)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_REG_CS_2_OF_2", 0x23b0, [ ("data_hi", (15, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_TIMESTAMP_1_OF_2", 0x23b0, [ ("time_lo", (31, 16)); ("token_type", (3, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_TIMESTAMP_2_OF_2", 0x23b1, [ ("time_hi", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WORD_WAVE", 0x23b0, [ ("cu_id", (9, 6)); ("sh_id", (5, 5)); ("simd_id", (15, 14)); ("time_delta", (4, 4)); ("token_type", (3, 0)); ("wave_id", (13, 10)) ]);
+        ("SQ_THREAD_TRACE_WORD_WAVE_START", 0x23b0, [ ("count", (28, 22)); ("cu_id", (9, 6)); ("dispatcher", (20, 16)); ("sh_id", (5, 5)); ("simd_id", (15, 14)); ("tg_id", (31, 29)); ("time_delta", (4, 4)); ("token_type", (3, 0)); ("vs_no_alloc_or_grouped", (21, 21)); ("wave_id", (13, 10)) ]);
+        ("SQ_THREAD_TRACE_WPTR", 0xc339, [ ("read_offset", (31, 30)); ("wptr", (29, 0)) ]);
         ("TCC_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
         ("TCC_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
         ("TCC_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
@@ -178,6 +232,7 @@ let counter_registers = function
   | (11, 0, 0) ->
       [
         ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("COMPUTE_THREAD_TRACE_ENABLE", 0x2e1e, [ ("thread_trace_enable", (0, 0)) ]);
         ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
         ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
         ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
@@ -198,6 +253,7 @@ let counter_registers = function
         ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SPI_CONFIG_CNTL", 0xc440, [ ("alloc_arb_lru_ena", (28, 28)); ("enable_sqg_bop_events", (25, 25)); ("enable_sqg_top_events", (24, 24)); ("exp_arb_lru_ena", (29, 29)); ("exp_priority_order", (23, 21)); ("gpr_write_priority", (20, 0)); ("ps_pkr_priority_cntl", (31, 30)) ]);
         ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
@@ -224,10 +280,34 @@ let counter_registers = function
         ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
         ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+        ("SQ_THREAD_TRACE_BUF0_BASE", 0xd9e8, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF0_SIZE", 0xd9e9, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_BUF1_BASE", 0xd9ea, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_SIZE", 0xd9eb, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_CTRL", 0xd9ec, [ ("all_vmid", (2, 2)); ("auto_flush_mode", (29, 29)); ("auto_flush_padding_dis", (28, 28)); ("double_buffer", (5, 5)); ("draw_event_en", (31, 31)); ("gl1_perf_en", (3, 3)); ("hiwater", (8, 6)); ("interrupt_en", (4, 4)); ("lowater_offset", (22, 20)); ("mode", (1, 0)); ("reg_at_hwm", (10, 9)); ("rt_freq", (17, 16)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("sync_count_draws", (19, 19)); ("sync_count_markers", (18, 18)); ("util_timer", (13, 13)); ("wavestart_mode", (15, 14)) ]);
+        ("SQ_THREAD_TRACE_DROPPED_CNTR", 0xd9fa, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_DRAW_CNTR", 0xd9f6, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_MARKER_CNTR", 0xd9f7, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_DRAW_CNTR", 0xd9f8, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_MARKER_CNTR", 0xd9f9, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_MASK", 0xd9ed, [ ("exclude_nondetail_shaderdata", (17, 17)); ("sa_sel", (9, 9)); ("simd_sel", (1, 0)); ("wgp_sel", (7, 4)); ("wtype_include", (16, 10)) ]);
+        ("SQ_THREAD_TRACE_STATUS", 0xd9f4, [ ("busy", (25, 25)); ("finish_done", (23, 12)); ("finish_pending", (11, 0)); ("owner_vmid", (31, 28)); ("write_error", (24, 24)) ]);
+        ("SQ_THREAD_TRACE_STATUS2", 0xd9f5, [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("buf_issue", (13, 13)); ("buf_issue_status", (12, 8)); ("packet_lost_buf_no_lockdown", (4, 4)); ("write_buf_full", (14, 14)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK", 0xd9ee, [ ("bop_events_token_include", (12, 12)); ("inst_exclude", (25, 24)); ("reg_detail_all", (31, 31)); ("reg_exclude", (28, 26)); ("reg_include", (23, 16)); ("token_exclude", (10, 0)); ("ttrace_exec", (11, 11)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_0", 0xc340, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_1", 0xc341, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_2", 0xc342, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_3", 0xc343, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_4", 0xc344, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_5", 0xc345, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_6", 0xc346, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_7", 0xc347, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WPTR", 0xd9ef, [ ("buffer_id", (31, 31)); ("offset", (28, 0)) ]);
       ]
   | (11, 0, 3) ->
       [
         ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("COMPUTE_THREAD_TRACE_ENABLE", 0x2e1e, [ ("thread_trace_enable", (0, 0)) ]);
         ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
         ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
         ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
@@ -248,6 +328,7 @@ let counter_registers = function
         ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SPI_CONFIG_CNTL", 0xc440, [ ("alloc_arb_lru_ena", (28, 28)); ("enable_sqg_bop_events", (25, 25)); ("enable_sqg_top_events", (24, 24)); ("exp_arb_lru_ena", (29, 29)); ("exp_priority_order", (23, 21)); ("gpr_write_priority", (20, 0)); ("ps_pkr_priority_cntl", (31, 30)) ]);
         ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
@@ -274,10 +355,34 @@ let counter_registers = function
         ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
         ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+        ("SQ_THREAD_TRACE_BUF0_BASE", 0xd9e8, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF0_SIZE", 0xd9e9, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_BUF1_BASE", 0xd9ea, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_SIZE", 0xd9eb, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_CTRL", 0xd9ec, [ ("all_vmid", (2, 2)); ("auto_flush_mode", (29, 29)); ("auto_flush_padding_dis", (28, 28)); ("double_buffer", (5, 5)); ("draw_event_en", (31, 31)); ("gl1_perf_en", (3, 3)); ("hiwater", (8, 6)); ("interrupt_en", (4, 4)); ("lowater_offset", (22, 20)); ("mode", (1, 0)); ("reg_at_hwm", (10, 9)); ("rt_freq", (17, 16)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("sync_count_draws", (19, 19)); ("sync_count_markers", (18, 18)); ("util_timer", (13, 13)); ("wavestart_mode", (15, 14)) ]);
+        ("SQ_THREAD_TRACE_DROPPED_CNTR", 0xd9fa, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_DRAW_CNTR", 0xd9f6, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_MARKER_CNTR", 0xd9f7, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_DRAW_CNTR", 0xd9f8, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_MARKER_CNTR", 0xd9f9, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_MASK", 0xd9ed, [ ("exclude_nondetail_shaderdata", (17, 17)); ("sa_sel", (9, 9)); ("simd_sel", (1, 0)); ("wgp_sel", (7, 4)); ("wtype_include", (16, 10)) ]);
+        ("SQ_THREAD_TRACE_STATUS", 0xd9f4, [ ("busy", (25, 25)); ("finish_done", (23, 12)); ("finish_pending", (11, 0)); ("owner_vmid", (31, 28)); ("write_error", (24, 24)) ]);
+        ("SQ_THREAD_TRACE_STATUS2", 0xd9f5, [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("buf_issue", (13, 13)); ("buf_issue_status", (12, 8)); ("packet_lost_buf_no_lockdown", (4, 4)); ("write_buf_full", (14, 14)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK", 0xd9ee, [ ("bop_events_token_include", (12, 12)); ("inst_exclude", (25, 24)); ("reg_detail_all", (31, 31)); ("reg_exclude", (28, 26)); ("reg_include", (23, 16)); ("token_exclude", (10, 0)); ("ttrace_exec", (11, 11)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_0", 0xc340, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_1", 0xc341, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_2", 0xc342, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_3", 0xc343, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_4", 0xc344, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_5", 0xc345, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_6", 0xc346, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_7", 0xc347, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WPTR", 0xd9ef, [ ("buffer_id", (31, 31)); ("offset", (28, 0)) ]);
       ]
   | (11, 5, 0) ->
       [
         ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("COMPUTE_THREAD_TRACE_ENABLE", 0x2e1e, [ ("thread_trace_enable", (0, 0)) ]);
         ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
         ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
         ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
@@ -298,6 +403,7 @@ let counter_registers = function
         ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SPI_CONFIG_CNTL", 0xc440, [ ("alloc_arb_lru_ena", (28, 28)); ("enable_sqg_bop_events", (25, 25)); ("enable_sqg_top_events", (24, 24)); ("exp_arb_lru_ena", (29, 29)); ("exp_priority_order", (23, 21)); ("gpr_write_priority", (20, 0)); ("ps_pkr_priority_cntl", (31, 30)) ]);
         ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
@@ -324,10 +430,34 @@ let counter_registers = function
         ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
         ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+        ("SQ_THREAD_TRACE_BUF0_BASE", 0xd9e8, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF0_SIZE", 0xd9e9, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_BUF1_BASE", 0xd9ea, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_SIZE", 0xd9eb, [ ("base_hi", (3, 0)); ("size", (29, 8)) ]);
+        ("SQ_THREAD_TRACE_CTRL", 0xd9ec, [ ("all_vmid", (2, 2)); ("auto_flush_mode", (29, 29)); ("auto_flush_padding_dis", (28, 28)); ("double_buffer", (5, 5)); ("draw_event_en", (31, 31)); ("gl1_perf_en", (3, 3)); ("hiwater", (8, 6)); ("interrupt_en", (4, 4)); ("lowater_offset", (22, 20)); ("mode", (1, 0)); ("reg_at_hwm", (10, 9)); ("rt_freq", (17, 16)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("sync_count_draws", (19, 19)); ("sync_count_markers", (18, 18)); ("util_timer", (13, 13)); ("wavestart_mode", (15, 14)) ]);
+        ("SQ_THREAD_TRACE_DROPPED_CNTR", 0xd9fa, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_DRAW_CNTR", 0xd9f6, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_MARKER_CNTR", 0xd9f7, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_DRAW_CNTR", 0xd9f8, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_MARKER_CNTR", 0xd9f9, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_MASK", 0xd9ed, [ ("exclude_nondetail_shaderdata", (17, 17)); ("sa_sel", (9, 9)); ("simd_sel", (1, 0)); ("wgp_sel", (7, 4)); ("wtype_include", (16, 10)) ]);
+        ("SQ_THREAD_TRACE_STATUS", 0xd9f4, [ ("busy", (25, 25)); ("finish_done", (23, 12)); ("finish_pending", (11, 0)); ("owner_vmid", (31, 28)); ("write_error", (24, 24)) ]);
+        ("SQ_THREAD_TRACE_STATUS2", 0xd9f5, [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("buf_issue", (13, 13)); ("buf_issue_status", (12, 8)); ("packet_lost_buf_no_lockdown", (4, 4)); ("write_buf_full", (14, 14)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK", 0xd9ee, [ ("bop_events_token_include", (12, 12)); ("inst_exclude", (25, 24)); ("reg_detail_all", (31, 31)); ("reg_exclude", (28, 26)); ("reg_include", (23, 16)); ("token_exclude", (10, 0)); ("ttrace_exec", (11, 11)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_0", 0xc340, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_1", 0xc341, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_2", 0xc342, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_3", 0xc343, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_4", 0xc344, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_5", 0xc345, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_6", 0xc346, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_7", 0xc347, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WPTR", 0xd9ef, [ ("buffer_id", (31, 31)); ("offset", (28, 0)) ]);
       ]
   | (12, 0, 0) ->
       [
         ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("COMPUTE_THREAD_TRACE_ENABLE", 0x2e1e, [ ("thread_trace_enable", (0, 0)) ]);
         ("CP_PERFMON_CNTL_1", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
         ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
         ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
@@ -348,6 +478,7 @@ let counter_registers = function
         ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
         ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("sc_busy_user_defined_mask", (17, 17)); ("sc_clean_user_defined_mask", (9, 9)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SPI_CONFIG_CNTL", 0xc440, [ ("alloc_arb_lru_ena", (28, 28)); ("enable_sqg_bop_events", (25, 25)); ("enable_sqg_top_events", (24, 24)); ("exp_arb_lru_ena", (29, 29)); ("exp_priority_order", (23, 21)); ("gpr_write_priority", (20, 0)); ("ps_pkr_priority_cntl", (31, 30)) ]);
         ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
         ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
@@ -374,10 +505,38 @@ let counter_registers = function
         ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
         ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
         ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+        ("SQ_THREAD_TRACE_BUF0_BASE_HI", 0xd9e8, [ ("base_hi", (12, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF0_BASE_LO", 0xd9e7, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF0_SIZE", 0xd9e6, [ ("size", (21, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_BASE_HI", 0xd9eb, [ ("base_hi", (12, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_BASE_LO", 0xd9ea, [ ("base_lo", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_BUF1_SIZE", 0xd9e9, [ ("size", (21, 0)) ]);
+        ("SQ_THREAD_TRACE_CTRL", 0xd9ec, [ ("auto_flush_mode", (29, 29)); ("auto_flush_padding_dis", (28, 28)); ("double_buffer", (5, 5)); ("draw_event_en", (31, 31)); ("gl1_perf_en", (3, 3)); ("gl1x_prefetch_page", (26, 23)); ("hiwater", (8, 6)); ("interrupt_en", (4, 4)); ("lowater_offset", (22, 20)); ("mode", (1, 0)); ("ncp_reg_token_en", (30, 30)); ("reg_at_hwm", (10, 9)); ("spi_stall_en", (11, 11)); ("sq_stall_en", (12, 12)); ("stall_all_simds", (13, 13)); ("sync_count_draws", (19, 19)); ("sync_count_markers", (18, 18)); ("util_timer", (14, 14)); ("wavestart_mode", (16, 15)) ]);
+        ("SQ_THREAD_TRACE_DROPPED_CNTR", 0xd9fa, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_FINISH_DONE_DEBUG", 0xd9fb, [ ("exp", (15, 10)); ("gfx", (9, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_DRAW_CNTR", 0xd9f6, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_GFX_MARKER_CNTR", 0xd9f7, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HALT", 0xd9f0, [ ("cgcg_ready", (1, 1)); ("enter_cgcg", (0, 0)); ("enter_poweroff", (2, 2)); ("poweroff_ready", (3, 3)) ]);
+        ("SQ_THREAD_TRACE_HP3D_DRAW_CNTR", 0xd9f8, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_HP3D_MARKER_CNTR", 0xd9f9, [ ("cntr", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_MASK", 0xd9ed, [ ("exclude_nondetail_alloc", (19, 19)); ("exclude_nondetail_shaderdata", (17, 17)); ("exclude_nondetail_wavestart_ext", (18, 18)); ("sa_sel", (9, 9)); ("simd_sel", (1, 0)); ("wgp_sel", (7, 4)); ("wtype_include", (16, 10)) ]);
+        ("SQ_THREAD_TRACE_POWEROFF_RESTORE_1", 0xd9f1, [ ("states", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_STATUS", 0xd9f4, [ ("busy", (25, 25)); ("finish_done", (23, 12)); ("finish_pending", (11, 0)); ("owner_vmid", (31, 28)); ("write_error", (24, 24)) ]);
+        ("SQ_THREAD_TRACE_STATUS2", 0xd9f5, [ ("buf0_full", (0, 0)); ("buf1_full", (1, 1)); ("buf_issue", (13, 13)); ("buf_issue_status", (12, 8)); ("packet_lost_buf_no_lockdown", (4, 4)); ("write_buf_full", (14, 14)) ]);
+        ("SQ_THREAD_TRACE_TOKEN_MASK", 0xd9ee, [ ("bop_events_token_include", (13, 13)); ("exclude_barrier_wait", (14, 14)); ("inst_exclude", (25, 24)); ("reg_detail_all", (31, 31)); ("reg_exclude", (28, 26)); ("reg_include", (23, 16)); ("token_exclude", (11, 0)); ("ttrace_exec", (12, 12)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_0", 0xc340, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_1", 0xc341, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_2", 0xc342, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_3", 0xc343, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_4", 0xc344, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_5", 0xc345, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_6", 0xc346, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_USERDATA_7", 0xc347, [ ("data", (31, 0)) ]);
+        ("SQ_THREAD_TRACE_WPTR", 0xd9ef, [ ("buffer_id", (31, 31)); ("offset", (28, 0)) ]);
       ]
   | _ -> []
 
-(* The graphics families of [counter_registers]. *)
+(* The graphics families of [profile_registers]. *)
 let gc_families = [ (9, 4, 3); (11, 0, 0); (11, 0, 3); (11, 5, 0); (12, 0, 0) ]
 
 let compute_dispatch_initiator_compute_shader_en = (0, 0)

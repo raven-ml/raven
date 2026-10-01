@@ -19,10 +19,17 @@ type counter = {
 }
 
 type counting = {
-  slots : int;
   counters : counter list;
   size : int;
   wgp_active : engine:int -> array:int -> wgp:int -> bool;
+}
+
+type tracing = { window : int; engines : int }
+
+type profiling = {
+  slots : int;
+  counting : counting option;
+  tracing : tracing option;
 }
 
 type gpu = {
@@ -36,7 +43,7 @@ type gpu = {
   aql : bool;
   compute_ring : int;
   copy_rings : int list;
-  counting : counting option;
+  profiling : profiling option;
 }
 
 let major gpu =
@@ -111,6 +118,7 @@ type program = {
   enable_dispatch_ptr : bool;
   enable_private_segment_sgpr : bool;
   image_size : int;
+  libhash : int64; (* the first 8 bytes of the code object's MD5 *)
 }
 
 let r_amdgpu_rel64 = 5
@@ -166,6 +174,7 @@ let program_data gpu lib =
       props land G.amd_kernel_code_properties_enable_sgpr_private_segment_buffer
       <> 0;
     image_size = Helpers.round_up (Bytes.length image) 4;
+    libhash = String.get_int64_le (Digest.string lib) 0;
   }
 
 (* The program's code object, which the engine loads on the devices. *)
@@ -252,7 +261,7 @@ let tmpring_size gpu n =
 
 (* The counter registers of the GPU's graphics family: the latest family of its
    major at or before its version, as tinygrad picks a register module. *)
-let counter_registers gpu =
+let profile_registers gpu =
   let m, _, _ = gpu.gc in
   match
     List.rev
@@ -260,7 +269,7 @@ let counter_registers gpu =
          (fun ((m', _, _) as v) -> m' = m && v <= gpu.gc)
          G.gc_families)
   with
-  | v :: _ -> G.counter_registers v
+  | v :: _ -> G.profile_registers v
   | [] -> []
 
 (* An AQL queue's packets: dispatches and runs of PM4 packets, and loops around
@@ -385,26 +394,27 @@ let compute_queue ~host gpu q : Hcq2.commands =
       ~reg_done:G.bif_bx_pf_gpu_hdp_flush_done (u32 0xffff_ffff);
     acquire_mem ()
   in
-  (* Counting: a run's slot holds its counters until a synchronization reads
-     them back. *)
-  let registers = lazy (counter_registers gpu) in
+  (* Profiling: a run's slot holds its counters and its traces until a
+     synchronization reads them back. *)
+  let registers = lazy (profile_registers gpu) in
   let register name =
     match List.find_opt (fun (n, _, _) -> n = name) (Lazy.force registers) with
     | Some (_, addr, fields) -> Some (addr, fields)
     | None -> None
   in
-  let set name fields =
+  let fields name =
     match register name with
+    | Some r -> r
     | None -> invalid_arg (Printf.sprintf "the GPU has no register %s" name)
-    | Some (addr, fs) ->
-        wreg addr
-          [
-            u32
-              (List.fold_left
-                 (fun w (f, v) -> w lor bits (List.assoc f fs) v)
-                 0 fields);
-          ]
   in
+  let address name = fst (fields name) in
+  (* Each value is cut to its field's width, so that none sets the next. *)
+  let encode name values =
+    let fs = snd (fields name) in
+    List.fold_left (fun w (f, v) -> w lor bits (List.assoc f fs) v) 0 values
+  in
+  let mask name field = bits (List.assoc field (snd (fields name))) (-1) in
+  let set name values = wreg (address name) [ u32 (encode name values) ] in
   let set_grbm ?instance ?se ?sa ?wgp () =
     let instance =
       match wgp with
@@ -430,20 +440,16 @@ let compute_queue ~host gpu q : Hcq2.commands =
     set perfmon [ ("perfmon_state", 0) ];
     if enable then set perfmon [ ("perfmon_state", 1) ]
   in
-  let log_slots = Option.fold ~none:0 ~some:(fun c -> c.slots) gpu.counting in
+  let profiled name shape dtype =
+    placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String name) [ shape ]
+      dtype
+  in
+  let slots = Option.fold ~none:0 ~some:(fun p -> p.slots) gpu.profiling in
   (* After the count of runs, a slot of the log per run: its kernel's descriptor
      address, then when it started and when it stopped. *)
   let entry = 3 in
-  let log =
-    placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String "prof_log")
-      [ 1 + (entry * log_slots) ]
-      Dtype.Uint64
-  in
-  let samples c =
-    placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String "pmc_buf")
-      [ c.slots * c.size ]
-      Dtype.Uint8
-  in
+  let log = profiled "prof_log" (1 + (entry * slots)) Dtype.Uint64 in
+  let samples c = profiled "pmc_buf" (slots * c.size) Dtype.Uint8 in
   let sample_register c =
     Printf.sprintf "%s_PERFCOUNTER%d" c.block c.register
   in
@@ -528,7 +534,222 @@ let compute_queue ~host gpu q : Hcq2.commands =
       c.counters;
     reset_counters ~enable:true
   in
-  Option.iter start_counting gpu.counting;
+  (* Thread traces, as Mesa's ac_sqtt.c starts, stops and waits for them. Every
+     shader engine traces its waves, and engines 0 and 1 their instructions, on
+     the first SIMD of their first work-group processor. *)
+  let gfx12 = major gpu >= 12 in
+  let itraced se = se < 2 in
+  let event_write event index =
+    pkt3 G.packet3_event_write
+      [ u32 ((event lsl G.event_type) lor (index lsl G.event_index)) ]
+  in
+  let spi_config ~tracing =
+    let t = Bool.to_int tracing in
+    set "SPI_CONFIG_CNTL"
+      [
+        ("ps_pkr_priority_cntl", 3);
+        ("exp_priority_order", 3);
+        ("gpr_write_priority", 0x2c688);
+        ("enable_sqg_bop_events", t);
+        ("enable_sqg_top_events", t);
+      ]
+  in
+  let trace_config ~tracing =
+    set "SQ_THREAD_TRACE_CTRL"
+      ([
+         ("draw_event_en", 1);
+         ("spi_stall_en", 1);
+         ("sq_stall_en", 1);
+         ("reg_at_hwm", 2);
+         ("hiwater", 1);
+         ("util_timer", 1);
+         ("mode", Bool.to_int tracing);
+       ]
+      @ if gfx12 then [] else [ ("rt_freq", G.sq_tt_rt_freq_4096_clk) ])
+  in
+  (* Words for the trace, in pairs of user data registers. *)
+  let userdata words =
+    let rec go = function
+      | [] -> ()
+      | [ w ] -> wreg (address "SQ_THREAD_TRACE_USERDATA_2") [ w ]
+      | a :: b :: rest ->
+          wreg (address "SQ_THREAD_TRACE_USERDATA_2") [ a; b ];
+          go rest
+    in
+    go words
+  in
+  let commands = ref 0 in
+  (* The RGP markers of a dispatch: the pipeline its program binds, and the
+     dispatch with its grid. *)
+  let trace_markers (data : program) (info : program_info) =
+    let hash = data.libhash in
+    userdata
+      [
+        u32 (G.rgp_sqtt_marker_identifier_bind_pipeline lor (1 lsl 7));
+        u32 (Int64.to_int hash);
+        u32 (Int64.to_int (Int64.shift_right_logical hash 32));
+      ];
+    userdata
+      ([ u32 (1 lsl 31); u32 0; u32 !commands ]
+      @ List.map (function Int g -> u32 g | Sym g -> g) info.global_size);
+    incr commands
+  in
+  let traces t =
+    profiled "sqtt_buf" (t.window * slots * t.engines) Dtype.Uint8
+  in
+  let start_trace t slot =
+    memory_barrier ();
+    let base = O.(getaddr (traces t) + (slot * u64 t.window)) in
+    let buffer se shift =
+      let window = u64 (se * slots * t.window) in
+      cast O.((base + window) lsr u64 shift) Dtype.Uint32
+    in
+    let engines = gpu.shader_engines in
+    if gfx9 then begin
+      set_grbm ();
+      set "SQ_THREAD_TRACE_MASK"
+        [
+          ("simd_en", 0xf);
+          ("cu_sel", 0);
+          ("sq_stall_en", 1);
+          ("spi_stall_en", 1);
+          ("reg_stall_en", 1);
+          ("vm_id_mask", 0);
+        ];
+      for se = 0 to t.engines - 1 do
+        (* Misc, time, registers, wave starts and ends, user data and compute
+           registers; and the instructions of the engines that trace them. *)
+        let tokens =
+          List.fold_left
+            (fun m b -> m lor (1 lsl b))
+            0
+            [ 0; 1; 2; 3; 6; 12; 5; 15 ]
+          lor if itraced se then (1 lsl 10) lor (1 lsl 11) lor (1 lsl 13) else 0
+        in
+        pred_exec
+          (1 lsl (se / engines))
+          (fun () ->
+            set_grbm ~se:(se mod engines) ~sa:0 ();
+            set "SQ_THREAD_TRACE_TOKEN_MASK"
+              [ ("reg_mask", 0xf); ("token_mask", tokens) ];
+            set "SQ_THREAD_TRACE_TOKEN_MASK2" [ ("inst_mask", 0xffff_ffff) ];
+            wreg (address "SQ_THREAD_TRACE_BASE") [ buffer se 12 ];
+            wreg (address "SQ_THREAD_TRACE_BASE2") [ buffer se 44 ];
+            set "SQ_THREAD_TRACE_SIZE" [ ("size", t.window lsr 12) ];
+            set "SQ_THREAD_TRACE_CTRL" [ ("reset_buffer", 1) ];
+            set "SQ_THREAD_TRACE_MODE"
+              [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 1) ])
+      done
+    end
+    else begin
+      spi_config ~tracing:true;
+      for se = 0 to t.engines - 1 do
+        set_grbm ~se ~sa:0 ();
+        if gfx12 then begin
+          set "SQ_THREAD_TRACE_BUF0_SIZE" [ ("size", t.window lsr 12) ];
+          wreg (address "SQ_THREAD_TRACE_BUF0_BASE_LO") [ buffer se 12 ];
+          wreg (address "SQ_THREAD_TRACE_BUF0_BASE_HI") [ buffer se 44 ]
+        end
+        else begin
+          let size =
+            u32
+              (encode "SQ_THREAD_TRACE_BUF0_SIZE" [ ("size", t.window lsr 12) ])
+          in
+          wreg
+            (address "SQ_THREAD_TRACE_BUF0_SIZE")
+            [ O.(size lor buffer se 44) ];
+          wreg (address "SQ_THREAD_TRACE_BUF0_BASE") [ buffer se 12 ]
+        end;
+        set "SQ_THREAD_TRACE_MASK"
+          [
+            ( "wtype_include",
+              if gfx12 then 1 lsl 6 else G.sq_tt_wtype_include_cs_bit );
+            ("simd_sel", 0);
+            ("wgp_sel", 0);
+            ("sa_sel", 0);
+          ];
+        let registers =
+          G.(
+            sq_tt_token_mask_sqdec_bit lor sq_tt_token_mask_shdec_bit
+            lor sq_tt_token_mask_gfxudec_bit lor sq_tt_token_mask_comp_bit
+            lor sq_tt_token_mask_context_bit)
+        in
+        let excluded =
+          (if gfx12 then 0 else 1 lsl G.sq_tt_token_exclude_perf_shift)
+          lor
+          if itraced se then 0
+          else if gfx12 then 0x927
+          else
+            G.(
+              (1 lsl sq_tt_token_exclude_vmemexec_shift)
+              lor (1 lsl sq_tt_token_exclude_aluexec_shift)
+              lor (1 lsl sq_tt_token_exclude_valuinst_shift)
+              lor (1 lsl sq_tt_token_exclude_immediate_shift)
+              lor (1 lsl sq_tt_token_exclude_inst_shift))
+        in
+        set "SQ_THREAD_TRACE_TOKEN_MASK"
+          ([
+             ("reg_include", registers);
+             ("token_exclude", excluded);
+             ("bop_events_token_include", 1);
+           ]
+          @ if gfx12 then [ ("exclude_barrier_wait", 1) ] else []);
+        trace_config ~tracing:true
+      done
+    end;
+    set_grbm ();
+    if not gfx9 then wreg (address "COMPUTE_THREAD_TRACE_ENABLE") [ u32 1 ];
+    memory_barrier ()
+  in
+  let stop_trace t slot =
+    memory_barrier ();
+    set_grbm ();
+    let ends = profiled "sqtt_wptrs" (slots * t.engines) Dtype.Uint32 in
+    let run_bytes = u64 (t.engines * 4) in
+    let run_ends = O.(getaddr ends + (slot * run_bytes)) in
+    if gfx9 then
+      set "SQ_THREAD_TRACE_MODE"
+        [ ("mask_cs", 1); ("autoflush_en", 1); ("mode", 0) ]
+    else begin
+      wreg (address "COMPUTE_THREAD_TRACE_ENABLE") [ u32 0 ];
+      event_write G.thread_trace_finish 0
+    end;
+    let status =
+      address "SQ_THREAD_TRACE_STATUS"
+      - if gfx9 then G.packet3_set_uconfig_reg_start else 0
+    and engines = gpu.shader_engines in
+    for se = 0 to t.engines - 1 do
+      pred_exec
+        (1 lsl (se / engines))
+        (fun () ->
+          set_grbm ~se:(se mod engines) ~sa:0 ();
+          let idle field =
+            wait_reg_mem ~reg:status
+              ~mask:(mask "SQ_THREAD_TRACE_STATUS" field)
+              ~op:wait_reg_mem_function_eq (u32 0)
+          in
+          if not gfx9 then begin
+            idle "finish_pending";
+            trace_config ~tracing:false
+          end;
+          idle "busy";
+          event_write G.cs_partial_flush event_index_partial_flush;
+          let engine_end = u64 (se * 4) in
+          (* Where the engine's trace ends, to memory with its write
+             confirmed. *)
+          pkt3 G.packet3_copy_data
+            [
+              u32 ((1 lsl 20) lor (2 lsl 8) lor 4);
+              u32 (address "SQ_THREAD_TRACE_WPTR");
+              u32 0;
+              O.(run_ends + engine_end);
+            ])
+    done;
+    set_grbm ();
+    if not gfx9 then spi_config ~tracing:false;
+    memory_barrier ()
+  in
+  Option.iter (fun p -> Option.iter start_counting p.counting) gpu.profiling;
   let runs = ref [] in
   (* The [i]th word of [slot]'s entry, and the GPU's clock written there once
      the work before it completed, so that a run is timed by itself. *)
@@ -542,28 +763,37 @@ let compute_queue ~host gpu q : Hcq2.commands =
           ~data_sel:G.data_sel__mec_release_mem__send_gpu_clock_counter
           ~int_sel:G.int_sel__mec_release_mem__none ())
   in
-  (* A counted run takes the next slot of the log, which the host program
+  (* A profiled run takes the next slot of the log, which the host program
      writes. *)
-  let start_run lib (data : program) =
+  let start_run lib (data : program) info =
     Option.map
-      (fun c ->
+      (fun p ->
         let slot =
           O.(
             (load (index log [ int 0 ]) [] + u64 (List.length !runs))
-            % u64 c.slots)
+            % u64 p.slots)
         in
         let at = O.(int 1 + (int entry * cast slot Dtype.Int32)) in
         runs :=
           !runs
           @ [ store (index log [ at ]) O.(getaddr lib + u64 data.desc_offset) ];
         clock_into (word slot 1);
-        (c, slot))
-      gpu.counting
+        Option.iter
+          (fun t ->
+            start_trace t slot;
+            trace_markers data info)
+          p.tracing;
+        (p, slot))
+      gpu.profiling
+  in
+  let traced =
+    Option.is_some (Option.bind gpu.profiling (fun p -> p.tracing))
   in
   let stop_run =
-    Option.iter (fun (c, slot) ->
+    Option.iter (fun (p, slot) ->
         clock_into (word slot 2);
-        read_counters c slot)
+        Option.iter (fun c -> read_counters c slot) p.counting;
+        Option.iter (fun t -> stop_trace t slot) p.tracing)
   in
   (* Once its command buffer is written, the host program adds the submission's
      runs to the log's count. *)
@@ -712,7 +942,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
         lor bits G.compute_dispatch_initiator_compute_shader_en 1
       in
       acquire_mem ~gli:0 ~gl2:0 ();
-      let run = start_run lib data in
+      let run = start_run lib data info in
       wreg G.compute_pgm_lo [ O.(prog_addr lsr int 8) ];
       wreg G.compute_pgm_rsrc1 [ u32 data.rsrc1; u32 data.rsrc2 ];
       wreg
@@ -737,12 +967,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
       pkt3 G.packet3_dispatch_direct
         (List.map (function Int g -> u32 g | Sym g -> g) info.global_size
         @ [ u32 dispatch_init ]);
-      pkt3 G.packet3_event_write
-        [
-          u32
-            ((G.cs_partial_flush lsl G.event_type)
-            lor (event_index_partial_flush lsl G.event_index));
-        ];
+      if traced then event_write G.thread_trace_marker 0;
+      event_write G.cs_partial_flush event_index_partial_flush;
       stop_run run
     in
     (* The ring gets an indirect buffer packet: 4 dwords, and put stays aligned
@@ -807,7 +1033,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
     in
     let exec call prg =
       let data, lib, info, ka = program call prg in
-      let run = start_run lib data in
+      let run = start_run lib data info in
       close_run (Hcq2.Queue.size q);
       add
         (dispatch_packet data info
@@ -942,7 +1168,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
   in
   (* A device's value is written 32 bits at a time: its high half only when its
      low half is 0, the high half every later value shares; four NOPs otherwise
-    . *)
+     . *)
   let signal signal value =
     let fence =
       G.sdma_op_fence
@@ -1055,6 +1281,8 @@ type storage =
   | Scratch of int
   | Log
   | Samples
+  | Traces
+  | Trace_ends
 
 let storage u =
   match tag u with
@@ -1063,6 +1291,8 @@ let storage u =
   | Some (Tag.String "scratch") -> Some (Scratch (max_numel u))
   | Some (Tag.String "prof_log") -> Some Log
   | Some (Tag.String "pmc_buf") -> Some Samples
+  | Some (Tag.String "sqtt_buf") -> Some Traces
+  | Some (Tag.String "sqtt_wptrs") -> Some Trace_ends
   | Some (Tag.String t) -> (
       (* [name_queue_index], as queue_args tags them. *)
       match List.rev (String.split_on_char '_' t) with

@@ -19,6 +19,8 @@ x86_64; no host program compiles: its binary is its source's bytes. For each cas
 `signal_words.golden` is the words of waits and signals on a device's signal
 word at values that carry into its high half, and on a queue's signal.
 
+The cases that trace (`*traces*`) take tinygrad's default traces: 256 MiB of
+each shader engine's traces over the log's runs.
 The cases that count (`counters*`) take tinygrad's default counters of their
 GPU, with a profile log of PROF_SLOTS runs; the work-group processor 2 of the
 shader engine 1 is inactive.
@@ -37,6 +39,8 @@ tinygrad is changed as tolk differs from it:
   descriptor's address, which the device maps to the kernel's name, and the
   GPU's clock before and after the run, so that its counters are timed by the
   run itself;
+- a dispatch's thread-trace marker numbers the dispatches of its queue from 0,
+  so that a batch's packets depend on the batch alone;
 - an address is taken on the queue's first device, as tolk names one
   device.
 """
@@ -94,7 +98,7 @@ GPUS = {
     "gfx1100_no_sdma": ((11, 0, 0), (6, 0, 0), 1, 6, 48, False, 0),
 }
 RING, SCRATCH_SLOTS = 16 << 20, 32
-GPU, COUNTERS = SimpleNamespace(value="gfx1100"), SimpleNamespace(value=False)
+GPU, COUNTERS, TRACES = SimpleNamespace(value="gfx1100"), SimpleNamespace(value=False), SimpleNamespace(value=False)
 GC = {9: (9, 4, 3), 11: (11, 0, 0), 12: (12, 0, 0)}
 CU_PER_SIMD_ARRAY, PROF_SLOTS = 4, 32
 
@@ -115,9 +119,11 @@ def amd_init(self, device=""):
     self.nbio = ops_amd.AMDIP("nbio" if target[0] < 12 else "nbif", {9: (7, 9, 0), 11: (4, 3, 0), 12: (6, 3, 1)}[target[0]],
                               bases=base("NBIO", 9))
     self.max_copy_size = 0x40000000 if (4, 4, 2) <= sdma < (5, 0, 0) or sdma >= (5, 2, 0) else 0x400000
-    self.pmc_enabled, self.sqtt_enabled = COUNTERS.value, False
+    self.pmc_enabled, self.sqtt_enabled = COUNTERS.value, TRACES.value
+    self.prof_slots, self.sqtt_next_cmd_id = PROF_SLOTS, ops_amd.itertools.count(0)
+    self.sqtt_ses, self.sqtt_win = ses * xccs, (256 << 20) // PROF_SLOTS
     if self.pmc_enabled:
-        self.prof_slots, self.pmc_counters = PROF_SLOTS, ops_amd.import_pmc(target)
+        self.pmc_counters = ops_amd.import_pmc(target)
         l2, lds = ("TCC", "SQ") if target[0] == 9 else ("GL2C", "SQC")
         self.pmc_names = ["SQ_BUSY_CYCLES", "SQ_INSTS_VALU", "SQ_INSTS_SALU", f"{lds}_LDS_IDX_ACTIVE",
                           f"{lds}_LDS_BANK_CONFLICT", "GRBM_GUI_ACTIVE", f"{l2}_HIT", f"{l2}_MISS"]
@@ -198,6 +204,9 @@ ops_amd.amd_build_program = amd_build_program
 
 ops_amd.AMDDevice.prof_log = property(lambda self: SimpleNamespace(size=1 + 3 * self.prof_slots, dtype=dtypes.uint64))
 ops_amd.AMDDevice.pmc_buf = property(lambda self: SimpleNamespace(size=self.pmc_size * self.prof_slots, dtype=dtypes.uint8))
+ops_amd.AMDDevice.sqtt_buf = property(lambda self: SimpleNamespace(size=self.sqtt_win * self.prof_slots * self.sqtt_ses,
+                                                                     dtype=dtypes.uint8))
+ops_amd.AMDDevice.sqtt_wptrs = property(lambda self: SimpleNamespace(size=self.prof_slots * self.sqtt_ses, dtype=dtypes.uint32))
 
 
 # Counted runs in the profile log
@@ -215,6 +224,9 @@ def prof_start(self, data, info, lib):
     tag = lib.getaddr(self.devs) + data.desc_offset
     self.profiled.append(self.prof_buf("prof_log").index(1 + 3 * slot.cast(dtypes.int)).store(tag))
     clock_into(self, slot, 1)
+    if self.dev.sqtt_enabled:
+        self.sqtt_start(slot)
+        self.sqtt_setup_exec(data, info)
     return slot
 
 
@@ -227,6 +239,16 @@ def timed_prof_stop(self, slot):
 
 
 ops_amd.AMDComputeQueue.prof_start, ops_amd.AMDComputeQueue.prof_stop = prof_start, timed_prof_stop
+
+compute_init = ops_amd.AMDComputeQueue.__init__
+
+
+def numbered_init(self, submit):
+    compute_init(self, submit)
+    self.dev.sqtt_next_cmd_id = ops_amd.itertools.count(0)
+
+
+ops_amd.AMDComputeQueue.__init__ = numbered_init
 
 
 # Dispatch grids as words
@@ -271,6 +293,10 @@ CASES = {
     "counters": (lambda: chain(empty(), 2), {"counters": True}),
     "counters_gfx1201": (lambda: chain(empty(), 2), {"gpu": "gfx1201", "counters": True}),
     "counters_gfx942": (lambda: chain(empty(), 2), {"gpu": "gfx942", "counters": True}),
+    "traces": (lambda: chain(empty(), 2), {"traces": True}),
+    "traces_gfx1201": (lambda: chain(empty(), 2), {"gpu": "gfx1201", "traces": True}),
+    "traces_gfx942": (lambda: chain(empty(), 2), {"gpu": "gfx942", "traces": True}),
+    "counters_traces": (lambda: chain(empty(), 2), {"counters": True, "traces": True}),
 }
 
 
@@ -278,7 +304,7 @@ def compiled(case):
     """(prepared, compiled) of the case."""
     program, options = CASES[case]
     GPU.value = options.get("gpu", "gfx1100")
-    COUNTERS.value = options.get("counters", False)
+    COUNTERS.value, TRACES.value = options.get("counters", False), options.get("traces", False)
     KERNEL.value = options.get("kernel", "simple_add")
     captured, sched = [], hcq2.sched_batches
 

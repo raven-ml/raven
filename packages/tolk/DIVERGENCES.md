@@ -2539,3 +2539,41 @@ tolk lowers as one, replaces it.
 - **Pinned by:** the `Multi` suite: `multi_pm › copies › a copy of a sharded
   value to several devices keeps its bits`, and the recorded programs that
   copy a sharded value to several devices.
+
+## D84. A dispatch's thread-trace marker numbers its queue's dispatches
+
+- **tinygrad:** `runtime/ops_amd.py:248` (`sqtt_setup_exec` takes the
+  marker's command id from `self.dev.sqtt_next_cmd_id`, a counter of the
+  device for the life of the process), `:902` (the counter).
+- **tolk:** `lib/runtime/ops_amd.ml:581` (`commands`, a counter of the queue
+  being encoded) and `:584` (`trace_markers`).
+- **Differs:** the command id of a dispatch's RGP event marker counts the
+  dispatches of its queue from 0, where tinygrad counts every dispatch the
+  device's queues encoded in the process.
+- **Reason:** (c). A compiled batch is a value the engine links and caches:
+  with a device's counter, its packets would depend on what compiled before
+  it. The id only ties a trace's markers together, and each run's trace is
+  its own.
+- **Pinned by:** the Ops_amd suite: `recorded cases › traces`,
+  `traces_gfx1201`, `traces_gfx942` and `counters_traces`, from the generator
+  patched as `test/gen/runtime/ops_amd.py` says.
+
+## D85. A register field's value is cut to the field's width
+
+- **tinygrad:** `runtime/support/amd.py:10` (`AMDReg.encode` shifts each value
+  to its field's lowest bit without cutting it), `runtime/ops_amd.py:310`
+  (`sqtt_start` gives `token_exclude` the bit 11 of
+  `SQ_TT_TOKEN_EXCLUDE_PERF_SHIFT`, past the field's 11 bits, which so sets
+  `TTRACE_EXEC`).
+- **tolk:** `lib/runtime/ops_amd.ml:412` (`encode` cuts each value to its
+  field, as `bits` does).
+- **Differs:** a value wider than its field loses its high bits: the
+  exclusion of performance tokens on GFX11 sets no bit of
+  `SQ_THREAD_TRACE_TOKEN_MASK`, where tinygrad sets `TTRACE_EXEC`.
+- **Reason:** (c). A value spilling into the next field changes what the
+  hardware does without anyone asking for it; the trace's packets are what
+  nx.amd.device reads back. Mesa's register macros cut each value to its
+  field.
+- **Pinned by:** the Ops_amd suite: `recorded cases › traces` and
+  `counters_traces`, from tinygrad with `gen/tinygrad.patch`, which cuts the
+  values as tolk does.
