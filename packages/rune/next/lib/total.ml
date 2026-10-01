@@ -60,8 +60,17 @@ and collect : type a b r.
             let result, s = threaded t ~zero r in
             receive s;
             result)
-    | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _
-    | Detach _ ->
+    | Remat { p; q; f; args; recomputed } ->
+        let f args = collect t ~zero:(Nx.zeros_like zero) (fun () -> f args) in
+        let q = Nx.Ptree.pair q Nx.Ptree.tensor in
+        Some
+          (fun () ->
+            let y, s =
+              Construct.perform (Remat { p; q; f; args; recomputed })
+            in
+            receive s;
+            y)
+    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in
   let marker = { Nx.Op.run = Nx.Op.eval; claims = (fun _ -> false) } in
@@ -77,8 +86,10 @@ let rec discarding : type r. (unit -> r) -> r =
     | Scan r ->
         let req_step c x = discarding (fun () -> r.req_step c x) in
         Some (fun () -> Construct.perform (Scan { r with req_step }))
-    | Remat _ | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _
-    | Detach _ ->
+    | Remat ({ f; _ } as r) ->
+        let f args = discarding (fun () -> f args) in
+        Some (fun () -> Construct.perform (Remat { r with f }))
+    | Barrier _ | Custom _ | Lanes _ | Lane_index _ | Lane_count _ | Detach _ ->
         None
   in
   Construct.install { op = None; call = answer } f

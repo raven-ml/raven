@@ -193,7 +193,19 @@ let custom_vjp p q rule args =
 
 (* Gradient checkpointing *)
 
-let remat _ _ _ = not_yet "remat"
+let remat s =
+  let (Structure.Signature u) = Structure.uncurry "Rune.remat" s in
+  fun f ->
+    u.curry (fun args ->
+        Construct.perform
+          (Remat
+             {
+               p = u.args;
+               q = u.result;
+               f = u.apply f;
+               args;
+               recomputed = false;
+             }))
 
 (* Vectorizing maps *)
 

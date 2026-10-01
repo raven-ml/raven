@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The messages for two values that should share a structure.
+(** The messages for two values that should share a structure, and signatures
+    uncurried into one argument.
 
     Every message starts with the entry point that raises it, [fn], such as
     ["Rune.vjp"], and names a tensor by its path ({!Nx.Ptree.Path.to_string}),
@@ -39,3 +40,34 @@ val map2 :
     and [y] differ in their visits; and at [p], before applying [f] there, when
     [t] and [u] differ in dtype or shape, as in
     ["Rune.vjp: 0.w: shape [3] in the result, [2] in the cotangents"]. *)
+
+(** {1:signatures Signatures}
+
+    A transformation of a curried function of any number of arguments sees it as
+    a function of one value: the arguments nested in pairs, the last one alone.
+    That value walks as a sequence with argument [k] at [Index k], so a leaf's
+    path starts with its argument's position from 0: the window of the second
+    argument is at [1.window], and a first argument that is one tensor is at
+    [0]. *)
+
+(** The type for signatures as functions of one value. *)
+type 'f signature =
+  | Signature : {
+      args : 'a Nx.Ptree.t;  (** The arguments, as one value. *)
+      result : 'r Nx.Ptree.t;  (** The result. *)
+      apply : 'f -> 'a -> 'r;
+          (** [apply f a] is [f] applied to the arguments [a]. *)
+      curry : ('a -> 'r) -> 'f;
+          (** [curry g] is the curried function whose arguments [g] takes as one
+              value. *)
+    }
+      -> 'f signature
+
+val uncurry : string -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) signature
+(** [uncurry fn s] is [s] as a function of one value, for a transformation that
+    only reads its arguments.
+
+    Raises [Invalid_argument], naming [fn], if [s] has no argument, or if [s]
+    consumes an argument ({!Nx.Ptree.consumes}), as in
+    ["Rune.vmap: the argument at 1 is consumed; only a compiled call consumes
+     its arguments"]. *)

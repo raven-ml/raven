@@ -9,10 +9,19 @@ module Repr = Nx.Repr
 type t = {
   entry : string;
   slots : Linear.tape option;
+  rerun : rerun option;
   id : unit ref;  (** Each installation is a block of its own. *)
 }
 
-let create ?slots entry = { entry; slots; id = ref () }
+(* A rerun's installation adopts the duals of its parent, and of the parent's
+   ancestors, that its function uses: each becomes a dual of its own, whose
+   tangent is a slot nothing feeds, on first use. *)
+and rerun = { parent : t; mutable captures : capture list }
+
+(* A dual of an ancestor and the slot that stands for its tangent. *)
+and capture = Capture : ('a, 'b) Nx.t * ('a, 'b) Nx.t -> capture
+
+let create ?slots entry = { entry; slots; rerun = None; id = ref () }
 
 type (_, _) Repr.node +=
   | Dual : {
@@ -27,11 +36,41 @@ let dual owner primal tangent =
     (Nx.dtype primal) (Nx.shape primal)
     (Dual { owner; primal; tangent })
 
+let rec adopts i owner =
+  match i.rerun with
+  | Some r -> r.parent == owner || adopts r.parent owner
+  | None -> false
+
+let rec captured : type a b. capture list -> (a, b) Nx.t -> (a, b) Nx.t option =
+ fun captures x ->
+  match captures with
+  | Capture (d, s) :: rest -> (
+      match Nx_dtype.equal_witness (Nx.dtype d) (Nx.dtype x) with
+      | Some Type.Equal when d == x -> Some s
+      | _ -> captured rest x)
+  | [] -> None
+
+(* [capture i x primal] is the slot of [i] that stands for the tangent of [x], a
+   dual of an ancestor of [i]. *)
+let capture i x primal =
+  match (i.rerun, i.slots) with
+  | Some r, Some tape -> (
+      match captured r.captures x with
+      | Some s -> s
+      | None ->
+          let s = Linear.input tape primal in
+          r.captures <- r.captures @ [ Capture (x, s) ];
+          s)
+  | _ -> assert false (* Only a rerun's installation adopts. *)
+
 let own (type a b) i (x : (a, b) Nx.t) : ((a, b) Nx.t * (a, b) Nx.t) option =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Dual { owner; primal; tangent } when owner == i -> Some (primal, tangent)
+      | Dual { owner; primal; tangent } ->
+          if owner == i then Some (primal, tangent)
+          else if adopts i owner then Some (primal, capture i x primal)
+          else None
       | _ -> None)
   | Host _ | Placed _ -> None
 
@@ -39,7 +78,7 @@ let owns i x =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Dual { owner; _ } -> owner == i
+      | Dual { owner; _ } -> owner == i || adopts i owner
       | _ -> false)
   | Host _ | Placed _ -> false
 
@@ -647,7 +686,26 @@ let custom : type q. t -> q Construct.rule -> (unit -> q) option =
       if holds_own i p args then Some (fun () -> custom_vjp i p q rule args)
       else None
 
-let answer : type r. t -> r Construct.t -> (unit -> r) option =
+(* Remat *)
+
+(* The primal of a dual, read from its node. *)
+let node_primal (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
+  match Repr.v x with
+  | Traced tr -> (
+      match Repr.Traced.node tr with
+      | Dual { primal; _ } -> primal
+      | _ -> assert false (* A capture is a dual. *))
+  | Host _ | Placed _ -> assert false (* A capture is a dual. *)
+
+let child i tape captures =
+  {
+    entry = i.entry;
+    slots = Some tape;
+    rerun = Some { parent = i; captures };
+    id = ref ();
+  }
+
+let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun i c ->
   match[@warning "@4@8"] c with
   | Detach x ->
@@ -655,9 +713,129 @@ let answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Custom r -> custom i r
   | Add (t, v) ->
       Option.map (fun (v, _) () -> Construct.perform (Add (t, v))) (own i v)
-  | Scan _ | Remat _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ -> None
+  | Remat { p; q; f; args; recomputed } -> (
+      match i.slots with
+      | None ->
+          let f args = install i (fun () -> f args) in
+          Some
+            (fun () -> Construct.perform (Remat { p; q; f; args; recomputed }))
+      | Some tape -> Some (fun () -> remat i tape p q f args))
+  | Scan _ | Barrier _ | Lanes _ | Lane_index _ | Lane_count _ -> None
 
-let install i f =
+(* [region i tape captures p f a tracked] is [f a] run under a child of [i]
+   recording on [tape], each leaf of [a] that [tracked] marks a dual of the
+   child with an input slot: the child, those slots and the result. *)
+and region : type p q.
+    t ->
+    Linear.tape ->
+    capture list ->
+    p Nx.Ptree.t ->
+    (p -> q) ->
+    p ->
+    bool list ->
+    t * Nx.packed list * q =
+ fun i tape captures p f a tracked ->
+  let c = child i tape captures in
+  let leaves, _ = Nx.Ptree.flatten p a in
+  let inputs = ref [] in
+  let seed tracked (Nx.P x) =
+    if tracked then begin
+      let s = Linear.input tape x in
+      inputs := Nx.P s :: !inputs;
+      Nx.P (dual c x s)
+    end
+    else Nx.P x
+  in
+  let a = Nx.Ptree.rebuild p ~like:a (List.map2 seed tracked leaves) in
+  let y = Linear.install tape (fun () -> install c (fun () -> f a)) in
+  (c, List.rev !inputs, y)
+
+(* Under reverse mode a remat is a linear call from its arguments' and captures'
+   tangents to its dependent results', whose transpose runs [f] again. The
+   forward run records onto a scratch tape and drops it, so [f]'s intermediates
+   are not kept; each transpose reruns [f] at the arguments, read once the
+   cotangents exist, inside a scope that drops the additions the first run
+   counted. *)
+and remat : type p q.
+    t -> Linear.tape -> p Nx.Ptree.t -> q Nx.Ptree.t -> (p -> q) -> p -> q =
+ fun i tape p q f args ->
+  let leaves, _ = Nx.Ptree.flatten p args in
+  let tracked = List.map (fun (Nx.P x) -> owns i x) leaves in
+  let a = Nx.Ptree.map p (fun _ x -> primal i x) args in
+  let captures = ref [] and dependent = ref [] in
+  let forward a =
+    let c, _, y = region i (Linear.create i.entry) [] p f a tracked in
+    let ys, _ = Nx.Ptree.flatten q y in
+    dependent := List.map (fun (Nx.P y) -> owns c y) ys;
+    let y = Nx.Ptree.map q (fun _ y -> primal c y) y in
+    (captures := match c.rerun with Some r -> r.captures | None -> []);
+    y
+  in
+  let y =
+    Construct.perform (Remat { p; q; f = forward; args = a; recomputed = true })
+  in
+  if not (List.mem true !dependent) then y
+  else
+    let captures = !captures and dependent = !dependent in
+    let tangent (Nx.P x) = Option.map (fun (_, dx) -> Nx.P dx) (own i x) in
+    let inputs =
+      List.filter_map tangent leaves
+      @ List.map
+          (fun (Capture (d, _)) -> Option.get (tangent (Nx.P d)))
+          captures
+    in
+    let ys, _ = Nx.Ptree.flatten q y in
+    let outputs =
+      List.filter_map
+        (fun (d, y) -> if d then Some y else None)
+        (List.combine dependent ys)
+    in
+    let transpose cts =
+      Total.discarding @@ fun () ->
+      let kept, _ = Nx.Ptree.flatten p a in
+      let kept = Construct.perform (Barrier { values = kept; after = cts }) in
+      let a = Nx.Ptree.rebuild p ~like:a kept in
+      let rerun = Linear.create i.entry in
+      let fresh (Capture (d, _)) =
+        Capture (d, Linear.input rerun (node_primal d))
+      in
+      let captures = List.map fresh captures in
+      let c, args_in, y = region i rerun captures p f a tracked in
+      let received = Linear.cotangents rerun in
+      let ys, _ = Nx.Ptree.flatten q y in
+      let rec seed ys dependent cts =
+        match (ys, dependent, cts) with
+        | Nx.P y :: ys, true :: dependent, Nx.P ct :: cts ->
+            Option.iter
+              (fun (_, dy) ->
+                Linear.add received dy (Nx.unpack (Nx.dtype y) (Nx.P ct)))
+              (own c y);
+            seed ys dependent cts
+        | _ :: ys, false :: dependent, cts -> seed ys dependent cts
+        | _ -> ()
+      in
+      seed ys dependent cts;
+      Linear.transpose received;
+      let cotangent (Nx.P s) =
+        match Linear.cotangent received s with
+        | Some g -> Nx.P g
+        | None -> Nx.P (Nx.zeros_like s)
+      in
+      List.map cotangent args_in
+      @ List.map (fun (Capture (_, s)) -> cotangent (Nx.P s)) captures
+    in
+    let slots = ref (Linear.call tape inputs transpose outputs) in
+    let attach d (Nx.P y) =
+      match !slots with
+      | s :: rest when d ->
+          slots := rest;
+          Nx.P (dual i y (Nx.unpack (Nx.dtype y) s))
+      | _ -> Nx.P y
+    in
+    Nx.Ptree.rebuild q ~like:y (List.map2 attach dependent ys)
+
+and install : type a. t -> (unit -> a) -> a =
+ fun i f ->
   Construct.install
     {
       op = Some { run = (fun op -> run i op); claims = (fun op -> claims i op) };

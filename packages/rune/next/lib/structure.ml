@@ -59,3 +59,84 @@ let map2 fn s ~this ~that
              Nx.pp_shape (Nx.shape t) this Nx.pp_shape (Nx.shape u) that);
       f path t u)
     x
+
+(* Signatures *)
+
+type 'f signature =
+  | Signature : {
+      args : 'a Ptree.t;
+      result : 'r Ptree.t;
+      apply : 'f -> 'a -> 'r;
+      curry : ('a -> 'r) -> 'f;
+    }
+      -> 'f signature
+
+type 's walker = { walk : 'a 'b. ('a, 'b) Ptree.Walk.cursor -> 's -> 's }
+
+let of_walker (type s) (w : s walker) : s Ptree.t =
+  let module M = struct
+    type _ t = s
+
+    let walk c x = w.walk c x
+  end in
+  Ptree.instantiate (module M)
+
+(* A signature from argument [k] on: the walk of its arguments from [k] on,
+   nested in pairs, and their roles. *)
+type 'f spine =
+  | Spine : {
+      walk : 'a walker;
+      result : 'r Ptree.t;
+      roles : Ptree.role list;
+      apply : 'f -> 'a -> 'r;
+      curry : ('a -> 'r) -> 'f;
+    }
+      -> 'f spine
+
+let rec spine : type f. string -> int -> f Ptree.fn -> f spine =
+ fun fn k -> function
+  | Ptree.Arg (role, a, Returns result) ->
+      let walk c x = Ptree.Walk.index c k (Ptree.Walk.structure a) x in
+      Spine
+        {
+          walk = { walk };
+          result;
+          roles = [ role ];
+          apply = (fun f x -> f x);
+          curry = Fun.id;
+        }
+  | Arg (role, a, rest) ->
+      let (Spine u) = spine fn (k + 1) rest in
+      let walk c (x, xs) =
+        let x = Ptree.Walk.index c k (Ptree.Walk.structure a) x in
+        let xs = u.walk.walk c xs in
+        (x, xs)
+      in
+      Spine
+        {
+          walk = { walk };
+          result = u.result;
+          roles = role :: u.roles;
+          apply = (fun f (x, xs) -> u.apply (f x) xs);
+          curry = (fun g x -> u.curry (fun xs -> g (x, xs)));
+        }
+  | Returns _ -> invalid_arg (fn ^ ": the signature has no argument")
+
+let uncurry fn s =
+  let (Spine u) = spine fn 0 s in
+  List.iteri
+    (fun i -> function
+      | Ptree.Consumed ->
+          invalid_argf
+            "%s: the argument at %d is consumed; only a compiled call consumes \
+             its arguments"
+            fn i
+      | Read -> ())
+    u.roles;
+  Signature
+    {
+      args = of_walker u.walk;
+      result = u.result;
+      apply = u.apply;
+      curry = u.curry;
+    }
