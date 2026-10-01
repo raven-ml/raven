@@ -1172,7 +1172,9 @@ module Driver : sig
             maps. *)
     transfer : device -> copy option;
         (** [transfer d'] copies from the device's memory to the memory of the
-            device [d'], [None] if the device cannot. *)
+            device [d'], [None] if the device cannot. The destination address is
+            that of the device's mapping of it ([peer]), or its own address on a
+            device without [peer]. *)
     stamp : slot:nativeint -> signal:int -> unit;
         (** [stamp ~slot ~signal] enqueues, after the device's earlier work, the
             write of a timestamp of the device's clock into the second [UInt64]
@@ -1346,7 +1348,7 @@ module Driver : sig
     ?host:device ->
     ?completion:completion ->
     ?load:(binary:string -> (image, string) result) ->
-    ?peer:(device -> Region.t -> (Region.t, string) result) ->
+    ?peer:(device -> Region.t -> (Region.t * (unit -> unit), string) result) ->
     ?reaches:(device -> bool) ->
     ?link:(src:Buffer.t -> dst:Buffer.t -> link option) ->
     ?dma:(Region.t -> (dma, string) result) ->
@@ -1373,13 +1375,14 @@ module Driver : sig
         programs are collected; code that no collection could make room for is
         [Error why]. Without [load], the device loads no programs.
       - [peer d' r] maps the region [r] of the device [d'] of the same machine
-        for the device, for {!Buffer.borrow}: the region as the device's work
-        addresses it, with the host address [r] has, if any, or [Error why] if
-        the device cannot reach [d']'s memory. The driver keeps the mapping
-        until [d'] frees [r] to its driver; the runtime asks for a region again
-        once the borrows of it are unreachable, and [peer] gives the same
-        mapping. It runs with the device taken and [d'] free. Without it, the
-        device borrows no other device's memory.
+        for the device: the region as the device's work addresses it, with the
+        host address [r] has, if any, and how to unmap it, or [Error why] if the
+        device cannot reach [d']'s memory. The runtime maps [r] once, for the
+        device's borrows of it ({!Buffer.borrow}) and its copies into it, and
+        unmaps it when [r]'s memory is released, once the device's work
+        submitted until then is done. [peer] runs with the device taken, and the
+        unmap with [d'] taken, which must not take the device. Without [peer],
+        the device borrows no other device's memory.
       - [reaches d'] is [true] iff [peer] maps memory of the device [d'] of the
         same machine, as the machine's topology fixes, without trying
         ({!Nx_device.reaches}). Defaults to [false].

@@ -2948,6 +2948,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** a driver's `Driver.device ~peer` returns its mapping with how
+  to unmap it, and the runtime keeps one mapping per device and memory, for
+  borrows and copies alike, until the memory is released. AMD and NV kept peer
+  mappings until the memory went back to their drivers, so cached memory stayed
+  mapped on other GPUs.
 - An NV device whose memory runs out while mapping a new allocation raises
   `Nx_device.Out_of_memory` and gives the memory back. It raised a driver
   fault, which lost the device.

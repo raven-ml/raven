@@ -832,7 +832,7 @@ let memories =
           let peered = ref 0 in
           let peer _ r =
             incr peered;
-            Ok r
+            Ok (r, ignore)
           in
           let o = far ~name:"OWNER" ~window:1024 () in
           let a = far ~name:"MAPPER" ~peer () in
@@ -1645,7 +1645,7 @@ let test_peer_borrows () =
   let calls = ref 0 in
   let peer _ r =
     incr calls;
-    Ok r
+    Ok (r, ignore)
   in
   let a = far ~name:"MAPPER" ~peer () and o = far ~name:"OWNER" () in
   let b = B.create o.dev S.UInt8 64 in
@@ -1671,6 +1671,67 @@ let test_peer_borrows () =
   | Ok _ -> fail "borrowed a refused region"
   | Error why -> contains ~msg:"the driver's reason" ~sub:"no route" why);
   ignore (Sys.opaque_identity (on_a, again))
+
+(* Another device's mapping of a device's memory outlives its borrows, and is
+   unmapped when the memory is released, once the mapper's work submitted until
+   then is done, listed or not. *)
+let test_peer_mappings () =
+  let opened = ref false and maps = ref 0 and unmaps = ref 0 in
+  let peer _ r =
+    incr maps;
+    Ok (r, fun () -> incr unmaps)
+  in
+  let a = fake ~name:"MAPPER" ~peer ~signal:(gate opened) () in
+  let o = far ~name:"OWNER" () in
+  (* A borrow's record keeps its memory until the mapper releases it, and a
+     collected token's finaliser runs in the collection after. *)
+  let settle () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (stats a.dev);
+      ignore (stats o.dev)
+    done
+  in
+  dropped (fun () ->
+      let b = B.create o.dev S.UInt8 64 in
+      ignore (Sys.opaque_identity (borrow a.dev b));
+      settle ();
+      equal ~msg:"kept once its borrows are unreachable" (pair int int) (1, 0)
+        (!maps, !unmaps);
+      ignore (Sys.opaque_identity (borrow a.dev b));
+      equal ~msg:"shared by the next borrow" int 1 !maps;
+      b);
+  ignore (submit a.dev Fun.id);
+  settle ();
+  equal ~msg:"kept while the mapper's work runs" int 0 !unmaps;
+  opened := true;
+  ignore (stats o.dev);
+  equal ~msg:"unmapped once the memory is released and that work is done" int 1
+    !unmaps
+
+(* A copy from one device into another's memory writes through the source's
+   mapping of it, made once and unmapped when that memory is released. *)
+let test_transfer_mappings () =
+  let maps = ref 0 and unmaps = ref 0 in
+  let peer _ r =
+    incr maps;
+    Ok (r, fun () -> incr unmaps)
+  in
+  let p = far ~name:"PEER-A" ~peer () and q = far ~name:"PEER-B" () in
+  let src = B.create p.dev S.UInt8 64 in
+  write src (pattern 7 64);
+  dropped (fun () ->
+      let dst = B.create q.dev S.UInt8 64 in
+      B.copy ~src ~dst;
+      B.copy ~src ~dst;
+      equal ~msg:"copied" string (pattern 7 64) (read dst);
+      equal ~msg:"mapped once" (pair int int) (1, 0) (!maps, !unmaps);
+      dst);
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (stats q.dev)
+  done;
+  equal ~msg:"unmapped once the memory is released" int 1 !unmaps
 
 (* A borrow of a borrow maps the memory under the first. *)
 let test_borrow_of_borrow () =
@@ -1751,6 +1812,13 @@ let borrows =
         test_system_borrows;
       test "another device's memory borrows through its driver's peer mapping"
         test_peer_borrows;
+      test
+        "another device's mapping of memory outlives its borrows, until the \
+         memory is released and the mapper's work is done"
+        test_peer_mappings;
+      test
+        "a copy into another device's memory maps it once, until it is released"
+        test_transfer_mappings;
       test "a borrow of a borrow maps the memory under it" test_borrow_of_borrow;
       test "two bigarrays over the same bytes overlap" test_bigarray_overlaps;
     ]
@@ -2968,7 +3036,7 @@ let faulty what =
   Driver.device ~name:"FAULTY" ~arch:"test" ~budget:max_int
     ~peer:(fun _ r ->
       fault "peer";
-      Ok r)
+      Ok (r, ignore))
     ~dma:(fun _ ->
       fault "dma";
       Error "undescribed")

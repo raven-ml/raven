@@ -72,7 +72,7 @@ type t = {
   gpu : gpu;
   rm : Rm.t;
   hw : Mutex.t; (* the GPU's page tables and memory objects *)
-  mutable allocs : alloc Int_map.t; (* the device's own memory, by address *)
+  mutable allocs : mem Int_map.t; (* the device's own memory, by address *)
   borrows : (int, mem) Hashtbl.t;
       (* by address, host memory mapped for a copy or a borrow: under [Pci] the
          mapping, under [Kernel] another device's memory (the driver keeps
@@ -89,10 +89,6 @@ type t = {
   mutable dev : Nx_device.t option;
   mutable ready : bool; (* whether its open succeeded *)
 }
-
-(* Memory of a device and the peers it is mapped on, which their borrows and
-   transfers add to while the owner is not taken. *)
-and alloc = { mem : mem; peers : t list Atomic.t }
 
 let va = function Kernel_mem m -> m.va | Pci_mem m -> m.mapping.va
 let size = function Kernel_mem m -> m.size | Pci_mem m -> m.mapping.size
@@ -150,12 +146,13 @@ let alloc_mem n kind bytes =
           in
           Option.map (fun m -> Pci_mem m) m)
 
-let unmap_from peer mem =
-  with_hw peer (fun () ->
-      match (peer.gpu, mem) with
+(* Unmaps another GPU's memory [mem] from [n]. *)
+let unmap_from n mem =
+  with_hw n (fun () ->
+      match (n.gpu, mem) with
       | Pci_gpu p, Pci_mem m ->
           Pci_memory.unmap p.memory { m with source = Peer }
-      | Kernel_gpu _, Kernel_mem _ -> () (* freeing the range unmaps it *)
+      | Kernel_gpu g, Kernel_mem m -> Nvk.unmap_peer g m
       | _ -> invalid_arg "a peer of another interface")
 
 let free_mem n mem =
@@ -165,22 +162,16 @@ let free_mem n mem =
       | Pci_gpu p, Pci_mem m -> Pci_memory.free p.memory m
       | _ -> invalid_arg "memory of another interface")
 
-let register n mem =
-  n.allocs <- Int_map.add (va mem) { mem; peers = Atomic.make [] } n.allocs
+let register n mem = n.allocs <- Int_map.add (va mem) mem n.allocs
 
-(* Frees [mem] after unmapping it from the peers that transfers mapped it on:
-   their copies were waited for, so none still uses it. *)
+(* Frees [mem], which no peer maps any more: the runtime unmaps them first. *)
 let release n mem =
-  Option.iter
-    (fun r ->
-      List.iter (fun peer -> unmap_from peer mem) (Atomic.exchange r.peers []))
-    (Int_map.find_opt (va mem) n.allocs);
   n.allocs <- Int_map.remove (va mem) n.allocs;
   free_mem n mem
 
 let find n x =
   match Int_map.find_last_opt (fun s -> s <= x) n.allocs with
-  | Some (s, r) when x < s + size r.mem -> Some r
+  | Some (s, mem) when x < s + size mem -> Some mem
   | _ -> None
 
 (* The [bytes] bytes of [mem] from its start, at the same address for the host
@@ -198,8 +189,7 @@ let allocator n kind =
       (alloc_mem n kind bytes)
   in
   let free r =
-    Option.iter
-      (fun r -> release n r.mem)
+    Option.iter (release n)
       (Int_map.find_opt (Nativeint.to_int (Region.handle r)) n.allocs)
   in
   { Driver.alloc; free }
@@ -232,7 +222,7 @@ let foreign n x =
       | (Kernel_gpu _, Kernel_gpu _ | Pci_gpu _, Pci_gpu _)
         when n' != n && n'.machine == n.machine -> (
           match find n' x with
-          | Some r when Option.is_some (host_view r.mem) -> Some (n', r.mem)
+          | Some mem when Option.is_some (host_view mem) -> Some (n', mem)
           | _ -> None)
       | _ -> None)
     (Atomic.get opened)
@@ -343,32 +333,25 @@ let reaches n peer =
 
 (* Maps [peer]'s allocation that holds [x] on [n], at its first use, at the same
    address; freeing it unmaps it. *)
-let map_peer n peer x =
-  match find peer (Nativeint.to_int x) with
-  | None -> Error "no memory of the other GPU"
-  | Some r when List.memq n (Atomic.get r.peers) -> Ok ()
-  | Some r ->
-      Result.map
-        (fun () ->
-          let rec push () =
-            let l = Atomic.get r.peers in
-            if not (Atomic.compare_and_set r.peers l (n :: l)) then push ()
-          in
-          push ())
-        (with_hw n (fun () ->
-             match (n.gpu, peer.gpu, r.mem) with
-             | Kernel_gpu g, _, Kernel_mem m -> Nvk.map_peer g m
-             | Pci_gpu p, Pci_gpu p', Pci_mem m ->
-                 Result.map ignore (Pci_memory.map_peer p.memory p'.memory m)
-             | _ -> Error "a peer of another interface"))
-
-(* Borrows of another NV GPU's memory that [n] reaches. *)
+(* Borrows of and copies into another NV GPU's memory that [n] reaches. *)
 let peer n d' r =
   match nv_of d' with
-  | Some peer when reaches n peer ->
-      Result.map (fun () -> r) (map_peer n peer (Region.address r))
-  | Some _ -> Error "the GPUs do not reach each other's memory"
   | None -> Error "memory of another vendor"
+  | Some peer when not (reaches n peer) ->
+      Error "the GPUs do not reach each other's memory"
+  | Some peer -> (
+      match find peer (Nativeint.to_int (Region.address r)) with
+      | None -> Error "no memory of the other GPU"
+      | Some mem ->
+          let mapped =
+            with_hw n (fun () ->
+                match (n.gpu, peer.gpu, mem) with
+                | Kernel_gpu g, _, Kernel_mem m -> Nvk.map_peer g m
+                | Pci_gpu p, Pci_gpu p', Pci_mem m ->
+                    Result.map ignore (Pci_memory.map_peer p.memory p'.memory m)
+                | _ -> Error "a peer of another interface")
+          in
+          Result.map (fun () -> (r, fun () -> unmap_from n mem)) mapped)
 
 let queue n ~timeline =
   let submit ~dst ~src bytes ~signal:v =
@@ -377,16 +360,10 @@ let queue n ~timeline =
       (Pushbuf.copy ~dst:(Nativeint.to_int dst) ~src:(Nativeint.to_int src)
          bytes)
   in
-  (* A transfer maps the destination's allocation on this GPU. *)
+  (* A transfer writes the destination through this GPU's mapping of it. *)
   let transfer d' =
     match nv_of d' with
-    | Some peer when reaches n peer ->
-        Some
-          (fun ~dst ~src bytes ~signal ->
-            (match map_peer n peer dst with
-            | Ok () -> ()
-            | Error why -> failwith why);
-            submit ~dst ~src bytes ~signal)
+    | Some peer when reaches n peer -> Some submit
     | _ -> None
   in
   let stamp ~slot ~signal:v =
@@ -407,7 +384,7 @@ let dma n r =
   match (n.gpu, find n (Nativeint.to_int (Region.address r))) with
   | Kernel_gpu _, _ -> Error "the kernel driver's memory is not described"
   | Pci_gpu _, None -> Error "no allocation of this GPU"
-  | Pci_gpu { memory; pci; _ }, Some { mem = Pci_mem pm; _ } -> (
+  | Pci_gpu { memory; pci; _ }, Some (Pci_mem pm) -> (
       let map = pm.mapping in
       match map.space with
       | Page_table.Sys -> Ok { Driver.bus = Pci.bus pci; pages = map.pages }
@@ -421,8 +398,7 @@ let dma n r =
               pages = List.map (fun (p, k) -> (p + start, k)) map.pages;
             }
       | Peer -> Error "memory of another GPU")
-  | Pci_gpu _, Some { mem = Kernel_mem _; _ } ->
-      Error "memory of another interface"
+  | Pci_gpu _, Some (Kernel_mem _) -> Error "memory of another interface"
 
 (* Programs *)
 

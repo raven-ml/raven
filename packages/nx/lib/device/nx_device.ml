@@ -87,7 +87,7 @@ type t = {
   mapped : allocator option;
   mapping : mapping option;
   copy_queue : queue option;
-  peer : (t -> region -> (region, string) result) option;
+  peer : (t -> region -> (region * (unit -> unit), string) result) option;
   reaches_peer : t -> bool; (* whether its driver maps a device's memory *)
   load : (binary:string -> (image, string) result) option;
   call : (nativeint -> (nativeint * int) array -> int array -> unit) option;
@@ -222,19 +222,25 @@ and retiring = {
   retire : unit -> unit;
 }
 
-(* A mapping of a base's memory on a device, shared by the device's borrows of
-   it, and how the device releases it once they are unreachable. [borrows]
-   changes only with the device taken. *)
+(* A mapping of a base's memory on a device, shared by the device's borrows and
+   copies of it, and how the device releases it. [borrows] changes only with the
+   device taken. *)
 and mapped = {
   on : t;
   mapped : region;
   skip : int; (* bytes of [mapped] before the memory's first byte *)
   unmap : region -> unit;
+  ends : ends;
   mutable borrows : int;
   mutable work : (t * int) list; (* the stamps of its released borrows *)
   mutable unmapping : bool;
       (* its last borrow was released, and its unmap waits for [work] *)
 }
+
+(* When a mapping is released: once its borrows are unreachable, as a mapping of
+   host memory is, or with the memory, as another device's mapping of a device's
+   memory is, which its copies into that memory use too. *)
+and ends = With_borrows | With_memory
 
 and program = {
   p_device : t;
@@ -988,6 +994,37 @@ let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
 let mapping_on d base =
   List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
 
+(* [d]'s mapping of [src]'s memory, which [map] makes if there is none yet, with
+   no borrow of it. [d] is taken. *)
+let map_on d src ~ends ~map =
+  match mapping_on d src with
+  | Some m -> Ok m
+  | None ->
+      Result.map
+        (fun (mapped, skip, unmap) ->
+          let m =
+            {
+              on = d;
+              mapped;
+              skip;
+              unmap;
+              ends;
+              borrows = 0;
+              work = [];
+              unmapping = false;
+            }
+          in
+          update_maps src (List.cons m);
+          m)
+        (driver d map)
+
+(* How a driver's [peer] maps the whole memory of [src], and unmaps it. *)
+let peer_map peer src () =
+  Result.map
+    (fun ((mapped : region), unmap) ->
+      (mapped, 0, fun (_ : region) -> unmap ()))
+    (peer src.owner src.memory)
+
 (* The device's address of the host address [a] in the mapping [m]. *)
 let mapped_address (m : region) a =
   Nativeint.add m.address (Nativeint.sub a (Option.get m.host))
@@ -1241,6 +1278,7 @@ let retire d =
 let release d b =
   let stamps = List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps in
   match b.source with
+  | Some (_, m) when m.ends = With_memory -> m.borrows <- m.borrows - 1
   | Some (src, m) ->
       m.work <- List.fold_left (fun l (e, v) -> stamped l e v) m.work stamps;
       m.borrows <- m.borrows - 1;
@@ -1272,19 +1310,23 @@ let release d b =
          before the release, listed or not, as tinygrad's free synchronizes the
          device; [d]'s own reuse waits for none of it. *)
       let own = Int.max (own_stamp d stamps) (submitted d)
-      and until = foreign d stamps in
-      let until, retire =
-        match (Atomic.get b.links).depends with
-        | [] -> (until, fun () -> cache_memory d b own)
-        | fs ->
-            ( (d, own) :: until,
-              fun () ->
-                match List.iter (fun f -> f ()) (List.rev fs) with
-                | () -> cache_memory d b own
-                | exception Failure _ ->
-                    allocate_bytes d (-b.bytes);
-                    d.retained <- d.retained + b.bytes;
-                    d.held <- Keep b :: d.held )
+      and until = foreign d stamps
+      and { maps; depends; _ } = Atomic.get b.links in
+      (* Another device's mapping of the memory is unmapped first, once every
+         piece of that device's work submitted before the release is done. *)
+      let peers = List.filter (fun m -> m.ends = With_memory) maps in
+      let until =
+        List.fold_left (fun u m -> stamped u m.on (submitted m.on)) until peers
+      in
+      let until = if depends = [] then until else stamped until d own in
+      let retire () =
+        List.iter (fun m -> unmap m.on b m) peers;
+        match List.iter (fun f -> f ()) (List.rev depends) with
+        | () -> cache_memory d b own
+        | exception Failure _ ->
+            allocate_bytes d (-b.bytes);
+            d.retained <- d.retained + b.bytes;
+            d.held <- Keep b :: d.held
       in
       d.retiring <-
         {
@@ -1757,29 +1799,13 @@ module Buffer = struct
 
   (* [d]'s mapping of the memory of [src], made by its first borrow with [map]
      and shared by the later ones, and [skip] bytes into it. *)
-  let share d src ~map ~unmap =
+  let share d src ~ends ~map =
     with_devices [ d ] (fun () ->
-        match mapping_on d src with
-        | Some m ->
+        Result.map
+          (fun m ->
             m.borrows <- m.borrows + 1;
-            Ok m
-        | None ->
-            Result.map
-              (fun (mapped, skip) ->
-                let m =
-                  {
-                    on = d;
-                    mapped;
-                    skip;
-                    unmap;
-                    borrows = 1;
-                    work = [];
-                    unmapping = false;
-                  }
-                in
-                update_maps src (List.cons m);
-                m)
-              (driver d map))
+            m)
+          (map_on d src ~ends ~map))
 
   (* A buffer over the memory of [b] that [m] maps on [d]. *)
   let borrowed d b m =
@@ -1808,6 +1834,7 @@ module Buffer = struct
         mapped = region;
         skip = 0;
         unmap = ignore;
+        ends = With_borrows;
         borrows = 1;
         work = [];
         unmapping = false;
@@ -1853,26 +1880,23 @@ module Buffer = struct
           Result.map
             (fun (mapped : region) ->
               ( mapped,
-                Nativeint.to_int (Nativeint.sub first (Option.get mapped.host))
-              ))
+                Nativeint.to_int (Nativeint.sub first (Option.get mapped.host)),
+                unmap ))
             (map first src.memory.nbytes)
         in
-        match share d src ~map ~unmap with
+        match share d src ~ends:With_borrows ~map with
         | Error why ->
             refuse "%s cannot map the host memory at 0x%nx: %s" d.name first why
         | Ok m -> Ok (borrowed d b m))
 
-  (* Another device's memory is mapped by [d]'s driver, which keeps the mapping
-     until that memory is freed. *)
+  (* Another device's memory is mapped by [d]'s driver until the memory is
+     released (see [peer_map]). *)
   let borrow_peer d b =
     let src = b.base in
     match d.peer with
     | None -> refuse "%s cannot address %s memory" d.name src.owner.name
     | Some peer -> (
-        let map () =
-          Result.map (fun mapped -> (mapped, 0)) (peer src.owner src.memory)
-        in
-        match share d src ~map ~unmap:ignore with
+        match share d src ~ends:With_memory ~map:(peer_map peer src) with
         | Error why ->
             refuse "%s cannot map %s memory: %s" d.name src.owner.name why
         | Ok m -> Ok (borrowed d b m))
@@ -2535,6 +2559,19 @@ module Buffer = struct
           [ src; dst ]
     | File e -> Option.to_list e
 
+  (* Where [e]'s work addresses [b], another device's memory: through [e]'s
+     mapping of it, which lasts until the memory is released, or at [b]'s own
+     address on a device that maps no other device's memory. *)
+  let address_on e (b : buffer) =
+    match e.peer with
+    | None -> address b
+    | Some peer -> (
+        match map_on e b.base ~ends:With_memory ~map:(peer_map peer b.base) with
+        | Ok m ->
+            Nativeint.add m.mapped.address
+              (Nativeint.of_int (m.skip + b.offset))
+        | Error why -> fail e why)
+
   let move ~timed route ~src ~dst n =
     let s = device src and d = device dst in
     match route with
@@ -2548,7 +2585,7 @@ module Buffer = struct
     | Transfer transfer -> (
         match
           run ~timed s (queue s)
-            (transfer ~dst:(address dst) ~src:(address src) n)
+            (transfer ~dst:(address_on s dst) ~src:(address src) n)
         with
         | () -> ()
         | exception (Lost _ as e) ->
