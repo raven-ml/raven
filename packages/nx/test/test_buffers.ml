@@ -149,6 +149,26 @@ let to_buffer =
                 Nx.to_buffer x));
       ])
 
+(* Read *)
+
+let reads_exactly (Stored.Case c) =
+  prop
+    (c.name
+   ^ ": a read is a host buffer of exactly the value's elements, the value's \
+      storage when they are one run of it on the host")
+    (Gen.pair c.tensors wheres) (fun (t, where) ->
+      let x = where.at t in
+      let b = Nx.Op.eval (Read { by = "test"; x }) in
+      equal ~msg:"device" device Nx_device.host (B.device b);
+      equal ~msg:"elements" Stored.packed (Nx.P t)
+        (Nx.P (Nx.of_buffer (Nx.dtype x) (Nx.shape x) b));
+      let on_host = Nx.Placement.equal (Nx.placement x) Nx.Placement.host in
+      if on_host && Nx.numel x > 0 then
+        equal ~msg:"shares the storage" bool (one_run x)
+          (share_memory b (storage x)))
+
+let reads = group "Read" (List.map reads_exactly Stored.every)
+
 (* of_buffer *)
 
 let backend =
@@ -222,9 +242,7 @@ let one_per_device (Stored.Case c) =
     (c.name ^ ": shards is one buffer per device, each in its device's memory")
     (placed c.tensors) (fun (t, p) ->
       let buffers, _ = Nx.shards (Nx.place p t) in
-      equal (list device)
-        (Nx.Placement.devices p)
-        (List.map B.device buffers))
+      equal (list device) (Nx.Placement.devices p) (List.map B.device buffers))
 
 let same_handles x y =
   List.for_all2 ( == ) (fst (Nx.shards x)) (fst (Nx.shards y))
@@ -300,4 +318,5 @@ let of_shards =
           is_true (share_memory b (storage x)));
     ]
 
-let () = exit (run "nx buffers" [ to_buffer; of_buffer; shards; of_shards ])
+let () =
+  exit (run "nx buffers" [ reads; to_buffer; of_buffer; shards; of_shards ])

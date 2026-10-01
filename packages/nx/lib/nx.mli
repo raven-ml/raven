@@ -4162,9 +4162,9 @@ module Op : sig
     | Move : ('a, 'b) Nx_effect.t * move -> ('a, 'b) Nx_effect.t t
     | Place : Placement.t * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
     | Read : { by : string; x : ('a, 'b) Nx_effect.t } -> Nx_device.Buffer.t t
-        (** [Read { by; x }] is a host buffer of [x]'s elements: for a host
-            value, its storage, which [x]'s view reads (offset and strides);
-            for any other value, exactly its elements in C order. [by] is the qualified name of the function that reads, such as
+        (** [Read { by; x }] is a host buffer of exactly [x]'s elements in C
+            order: [x]'s own storage, read-only by contract, when they are one
+            run of it on the host, and a copy otherwise. [by] is the qualified name of the function that reads, such as
             ["Nx.item"] or ["Nx.compress"]: the function a program called, also
             when it reads through another. An interpreter that cannot read [x]
             raises a message that starts with [by]. *)

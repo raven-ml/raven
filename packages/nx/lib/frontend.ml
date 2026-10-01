@@ -360,7 +360,7 @@ let copy x = B.copy x
    the surface function [by]. The memory is under a read claim until [f]
    returns, so that no compiled call lends it meanwhile. *)
 let reading ~by x f =
-  let buf = B.elements ~by x in
+  let buf = B.read ~by x in
   Nx_device.Buffer.Claim.read buf;
   match f (Elements.get (B.dtype x) buf) with
   | v ->

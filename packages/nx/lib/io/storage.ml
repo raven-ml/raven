@@ -8,18 +8,8 @@
 module B = Nx_device.Buffer
 
 (* The elements of [x] in C order, in a host buffer, read by the function [by]:
-   its storage when it is contiguous on the host. A read of a value elsewhere
-   gives exactly its elements; one of a host value gives its storage, so it is
-   made contiguous first. *)
-let elements ~by x =
-  let x =
-    if Nx.Placement.equal (Nx.placement x) Nx.Placement.host then
-      Nx.contiguous x
-    else x
-  in
-  let b = Nx.Op.eval (Read { by; x }) in
-  B.view b ~offset:0 (B.dtype b) (Nx.numel x)
-
+   its storage when they are one run of it on the host. *)
+let elements ~by x = Nx.Op.eval (Read { by; x })
 let bytes b = B.bigarray Bigarray.int8_unsigned b
 
 (* The bytes of the file at [path], read where they lie: the disk's mapping of

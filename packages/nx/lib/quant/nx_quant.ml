@@ -137,17 +137,8 @@ let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
 let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
 (* The elements of [x] in C order, in a host buffer, read by the function [by]:
-   its storage when it is contiguous on the host. A read of a value elsewhere
-   gives exactly its elements; one of a host value gives its storage, so it is
-   made contiguous first. *)
-let elements ~by x =
-  let x =
-    if Nx.Placement.equal (Nx.placement x) Nx.Placement.host then
-      Nx.contiguous x
-    else x
-  in
-  let b = Nx.Op.eval (Read { by; x }) in
-  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel x)
+   its storage when they are one run of it on the host. *)
+let elements ~by x = Nx.Op.eval (Read { by; x })
 
 (* Matrices and chunks. [matrix lead t j] is the matrix [j] of the part [t]
    whose leading axes are [lead], a view. [chunks n k f] calls [f r0 r] on the

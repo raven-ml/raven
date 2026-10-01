@@ -199,14 +199,7 @@ let view t = snd (Nx.shards t)
 let storage t = List.hd (fst (Nx.shards t))
 
 (* The elements of [t] in C order, in a host buffer. *)
-let elements t =
-  let t =
-    match Nx.Repr.v t with
-    | Placed _ -> t
-    | Host _ | Traced _ -> Nx.contiguous t
-  in
-  let b = Nx.Op.eval (Read { by = "Nx_test.elements"; x = t }) in
-  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel t)
+let elements t = Nx.Op.eval (Read { by = "Nx_test.elements"; x = t })
 
 (* Whether buffers [a] and [b] have a byte of memory in common. *)
 let share_memory = Nx_device.Buffer.overlaps

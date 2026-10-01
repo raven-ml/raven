@@ -1889,12 +1889,18 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
    one their placed operands share. nx answers movements, placing and reading
    itself. *)
 
-(* The elements of [x]'s view in C order, in a host buffer: nx.cpu's storage of
-   a host value, whose readers make it contiguous first, and a copy of a placed
-   one's, read from its runtime buffers. *)
+(* Exactly the elements of [x]'s view in C order, in a host buffer: a host
+   value's storage when they are one run of it, gathered by nx.cpu otherwise,
+   and a copy of a placed one's, read from its runtime buffers. *)
 let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   match x with
-  | Host t -> t.buffer
+  | Host t -> (
+      match run_in t.buffer t.view with
+      | Some b -> b
+      | None ->
+          let dst = alloc t.dtype (View.shape t.view) in
+          Nx_cpu.contiguous t ~dst;
+          dst.buffer)
   | Placed r -> read_elements r
   | Traced _ -> outside_trace ()
 
@@ -3108,14 +3114,6 @@ let from_host (ctx : context) dtype buffer =
   in
   if on_host ctx then x else place ctx x
 
-(* The host buffer of exactly [x]'s elements in C order: its storage when it is
-   contiguous on the host. A placed value's read is its view's elements. *)
-let elements ~by x =
-  let x = match x with Placed _ -> x | Host _ | Traced _ -> contiguous x in
-  let b = read ~by x in
-  Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b)
-    (View.numel (view x))
-
 (* The buffer of exactly [x]'s elements in C order, without a copy, when there
    is one: [x] is on the host, or its storage is one runtime buffer, and its
    view is a contiguous run of its storage. *)
@@ -3244,4 +3242,4 @@ let to_buffer (type a b) (x : (a, b) t) =
       | None when View.numel (view x) = 0 -> empty x
       | None -> (
           let y = copy x in
-          match run y with Some b -> b | None -> elements ~by:"Nx.to_buffer" y))
+          match run y with Some b -> b | None -> read ~by:"Nx.to_buffer" y))
