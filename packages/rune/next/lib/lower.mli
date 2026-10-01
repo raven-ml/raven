@@ -98,7 +98,9 @@ val op : scope -> 'r Nx.Op.t -> 'r
 (** [op s o] is [o] in the trace [s]. Each result is a traced value at the
     placement nx gives [o]'s result, whose node computes it. An operand at
     another placement is copied to the result's devices, as nx places a host
-    operand of an operation on a device.
+    operand of an operation on a device, on every call; a traced operand that
+    reads only captures is instead computed on those devices, its captures
+    copied there once.
 
     An operand that is not traced is a capture, bound the first time [s] meets
     its storage and view at a placement:

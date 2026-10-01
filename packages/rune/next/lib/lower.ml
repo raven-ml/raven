@@ -535,15 +535,82 @@ let capture s what p x =
     bind s what (Nx.placement x) x
   else placed s what (context p) x
 
+(* [follow s q u] is [u] computed on each device of [q] when it reads only
+   captures, which are then copied there once, rather than computed where it
+   lies and copied on every call. [None] when [u] reads anything else, or when a
+   device of [q] does not compute one of its dtypes. *)
+let follow s q u =
+  let capture_of v = List.find_opt (fun c -> c.buffer == v) s.captures in
+  let computes v =
+    let dt = Ops.dtype v in
+    (not (List.exists (Dtype.equal dt) Dtype.all))
+    || List.for_all (fun d -> supports s d dt) (Placement.devices q)
+  in
+  let seen = Ops.Tbl.create 16 and read = ref [] in
+  let rec visit v =
+    if not (Ops.Tbl.mem seen v) then begin
+      Ops.Tbl.add seen v ();
+      if not (computes v) then raise Exit;
+      (match Ops.op v with
+      | Op.Buffer -> (
+          match capture_of v with
+          | Some c when List.length c.buffers = 1 -> read := c :: !read
+          | Some _ | None -> raise Exit)
+      | Op.Param | Op.Alloc | Op.Call | Op.After | Op.Store | Op.Copy
+      | Op.Mselect | Op.Mstack | Op.Unshard | Op.Allreduce ->
+          raise Exit
+      | _ -> ());
+      List.iter visit (Ops.src v)
+    end
+  in
+  match visit u with
+  | exception Exit -> None
+  | () when !read = [] -> None
+  | () ->
+      let moved c =
+        let same c' =
+          same_storage c'.storage c.storage
+          && same_view c'.view c.view && Placement.equal c'.at q
+        in
+        match List.find_opt same s.captures with
+        | Some c' -> (c.buffer, c'.buffer)
+        | None ->
+            let src = List.hd c.buffers in
+            let n = Nx_device.Buffer.length src in
+            let buffer =
+              Ops.new_buffer (device_of s q) n (Ops.dtype c.buffer)
+            in
+            let buffers =
+              List.map
+                (fun d ->
+                  let dst =
+                    Nx_device.Buffer.create (Device.runtime d)
+                      (Nx_device.Buffer.dtype src)
+                      n
+                  in
+                  Nx_device.Buffer.copy ~src ~dst;
+                  dst)
+                (Placement.devices q)
+            in
+            let node = Ops.substitute c.node [ (c.buffer, buffer) ] in
+            s.captures <- { c with at = q; node; buffer; buffers } :: s.captures;
+            (c.buffer, buffer)
+      in
+      Some (Ops.substitute u (List.map moved !read))
+
 (* [node s what p x] is the node of the operand [x] of an operation at [p]. A
-   traced value on other devices is copied there, as nx places a host operand of
-   an operation on a device. *)
+   traced value on other devices is computed there when it reads only captures,
+   and copied there otherwise, as nx places a host operand of an operation on a
+   device. *)
 let node s what p x =
   match Repr.v x with
-  | Repr.Traced _ ->
+  | Repr.Traced _ -> (
       let u = uop x in
       if same_devices (Nx.placement x) p then u
-      else Ops.copy_to_device u (device_of s p)
+      else
+        match follow s (context p) u with
+        | Some u -> u
+        | None -> Ops.copy_to_device u (device_of s p))
   | Repr.Host _ | Repr.Placed _ -> capture s what p x
 
 let value s x = node s "a value" (Nx.placement x) x
@@ -574,7 +641,10 @@ let place s what p q x =
         match device_of s q with
         | Ops.Multi names -> Ops.shard ~axis u names
         | Ops.Single _ as d -> Ops.copy_to_device u d)
-    | One | Copies -> Ops.copy_to_device u (device_of s q)
+    | One | Copies -> (
+        match follow s q u with
+        | Some u -> u
+        | None -> Ops.copy_to_device u (device_of s q))
 
 (* Operations *)
 

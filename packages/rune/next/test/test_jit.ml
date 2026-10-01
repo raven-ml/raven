@@ -1924,6 +1924,24 @@ let on_one_device ~name d =
           let r = g a in
           equal ~msg:"bytes received" int before (bytes_in d);
           equal close (Nx.mul (x ()) (y ())) (host r));
+      test "a value the call computes from host captures is uploaded once"
+        (fun () ->
+          let limit = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
+          let f a =
+            let mask = Nx.less_s limit 2l in
+            let scale = Nx.mul_s (Nx.cast Nx.float32 limit) 0.5 in
+            Nx.where
+              (Nx.place (on d) mask)
+              (Nx.mul a (Nx.place (on d) scale))
+              (Nx.zeros_like a)
+          in
+          let g = Rune.jit' f in
+          let a = placed d (x ()) in
+          ignore (g a);
+          let before = bytes_in d in
+          let r = g a in
+          equal ~msg:"bytes received" int before (bytes_in d);
+          equal close (host (f (x ()))) (host r));
       test "a loop consuming its state holds two generations of it" (fun () ->
           let n = 1 lsl 16 in
           let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
