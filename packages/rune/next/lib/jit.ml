@@ -95,12 +95,12 @@ let leaf (Nx.P t) =
    call: the search's width, unoptimised kernels, and profiled batches. *)
 type settings = { beam : int; noopt : bool; profiled : bool }
 
-let settings () =
-  let open Tolk_next.Helpers in
+let settings ?beam () =
+  let module H = Tolk_next.Helpers in
   {
-    beam = Context_var.value beam;
-    noopt = Context_var.value noopt;
-    profiled = Context_var.value debug >= 2;
+    beam = Option.value beam ~default:(H.Context_var.value H.beam);
+    noopt = H.Context_var.value H.noopt;
+    profiled = H.Context_var.value H.debug >= 2;
   }
 
 type key = {
@@ -360,8 +360,8 @@ let paths args_s roles args =
 
 (* [compile args_s result_s g args leaves ~paths ~consumed] traces [g] at
    [args], whose leaves are [leaves], and compiles and links its program. *)
-let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
-    (args : a) leaves ~paths ~consumed =
+let compile ?beam ?parallel (type a r) (args_s : a Ptree.t)
+    (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
   let s =
     Lower.scope ~renderer:(fun d -> Engine.renderer (Nx.Device.runtime d))
   in
@@ -560,13 +560,47 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
             fst
               (Tolk_next.Schedule.create_linear_with_vars ~capturing:true sink))
       in
+      (* A kernel that asks for a search, at the width [beam] gives or the
+         [BEAM] setting, is searched, each candidate timed on the device its
+         renderer targets, on as many domains as [parallel] gives or the
+         [PARALLEL] setting. *)
+      let search width k =
+        let width = Option.value beam ~default:width in
+        if width < 1 then k
+        else begin
+          report "searched a kernel at width %d" width;
+          let name = (Tolk_next.Postrange.Scheduler.ren k).target.device in
+          let search () =
+            Tolk_next.Search.beam_search
+              ~measure:(fun ~cold ~vars prg ->
+                Engine.measure ~cold ~vars ~devices name prg)
+              width k
+          in
+          match parallel with
+          | None -> search ()
+          | Some p ->
+              Tolk_next.Helpers.context
+                [ B (Tolk_next.Helpers.parallel, p) ]
+                search
+        end
+      in
+      let lower () =
+        Tolk_next.Jit.jit_lower ~search
+          ~devices:(fun n -> (devices n).compiler)
+          ~held_bufs:(List.map fst bound)
+          ~inputs:(List.map (Hashtbl.find buffers) order)
+          linear
+      in
+      (* Each kernel asks for the width [beam] gives, which tolk's lowering
+         reads from its setting. *)
       let linear =
         span "compile" (fun () ->
-            Tolk_next.Jit.jit_lower
-              ~devices:(fun n -> (devices n).compiler)
-              ~held_bufs:(List.map fst bound)
-              ~inputs:(List.map (Hashtbl.find buffers) order)
-              linear)
+            match beam with
+            | None -> lower ()
+            | Some b ->
+                Tolk_next.Helpers.context
+                  [ B (Tolk_next.Helpers.beam, b) ]
+                  lower)
       in
       Some (span "link" (fun () -> Engine.link ~devices ~bound linear))
   in
@@ -781,8 +815,8 @@ module Programs = Memo.Make (struct
   let hash = hash
 end)
 
-let compiled (type a r) entry (args_s : a Ptree.t) (result_s : r Ptree.t) roles
-    (g : a -> r) : a -> r =
+let compiled ?beam ?parallel (type a r) entry (args_s : a Ptree.t)
+    (result_s : r Ptree.t) roles (g : a -> r) : a -> r =
   let table = Programs.create () and last = Atomic.make None in
   fun args ->
     if Nx.Op.intercepted () then g args
@@ -792,7 +826,7 @@ let compiled (type a r) entry (args_s : a Ptree.t) (result_s : r Ptree.t) roles
       let key =
         {
           skeleton;
-          settings = settings ();
+          settings = settings ?beam ();
           layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
         }
       in
@@ -806,12 +840,13 @@ let compiled (type a r) entry (args_s : a Ptree.t) (result_s : r Ptree.t) roles
       let p =
         Programs.find table key ~miss:retrace (fun () ->
             let paths, consumed = paths args_s roles args in
-            compile args_s result_s g args leaves ~paths ~consumed)
+            compile ?beam ?parallel args_s result_s g args leaves ~paths
+              ~consumed)
       in
       Atomic.set last (Some key);
       check entry p.consumed p.paths leaves;
       run entry p leaves
 
-let jit entry s f =
+let jit ?beam ?parallel entry s f =
   let (Structure.Signature u) = Structure.signature entry s in
-  u.curry (compiled entry u.args u.result u.roles (u.apply f))
+  u.curry (compiled ?beam ?parallel entry u.args u.result u.roles (u.apply f))

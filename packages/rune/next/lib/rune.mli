@@ -596,9 +596,10 @@ exception Jit_error of string
     replayed on every call), or uses an operation or dtype the target of its
     devices cannot compute. Nothing is consumed. *)
 
-val jit : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit s f] is [f] compiled, a function of [f]'s type whose arguments and
-    result have the structures of the signature [s]:
+val jit :
+  ?beam:int -> ?parallel:int -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [jit ~beam ~parallel s f] is [f] compiled, a function of [f]'s type whose
+    arguments and result have the structures of the signature [s]:
 
     {[
     let step =
@@ -638,6 +639,15 @@ val jit : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     tensor. [RUNE_JIT_DEBUG=1] reports each retrace with the first difference
     from the previous call's key, such as
     ["rune.jit: retrace: 1.window: int 3 here, int 2 in the previous key"].
+
+    {b Search.} With [beam], each kernel of the compiled function is searched
+    for the optimisations that run it fastest, keeping the [beam] fastest
+    candidates of each round and timing them on its device, which makes the
+    first call of a key much longer; [parallel] compiles the candidates on that
+    many domains. An explicit [beam], [0] (no search) included, overrides the
+    [BEAM] and [JITBEAM] settings, and [parallel] the [PARALLEL] setting, which
+    decide otherwise. The width is part of a call's key, so functions searched
+    at different widths never share a program.
 
     {b Placement.} A call runs on the devices of its placed arguments and
     captures, and on the host when there are none, whatever the placements'
@@ -778,5 +788,11 @@ val scan' :
 (** [scan' ~f ~init xs] is
     [scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor ~f ~init xs]. *)
 
-val jit' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
-(** [jit' f] is [jit Nx.Ptree.(tensor @-> returns tensor) f]. *)
+val jit' :
+  ?beam:int ->
+  ?parallel:int ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [jit' ~beam ~parallel f] is
+    [jit ~beam ~parallel Nx.Ptree.(tensor @-> returns tensor) f]. *)

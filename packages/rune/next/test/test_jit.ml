@@ -555,6 +555,20 @@ let keys =
           retraces
             (checked g poly (x ()))
             (fun () -> noopt (checked g poly (x ()))));
+      (* A program of its own, whose kernel no earlier search chose: BEAM asks
+         for a search, which times candidates on the host. *)
+      test "a call under BEAM=1 searches its kernel and computes eager's values"
+        (fun () ->
+          let f a = Nx.add_s (poly a) 0.375 in
+          let r =
+            Tolk_next.Helpers.context
+              [ B (Tolk_next.Helpers.beam, 1) ]
+              (fun () -> Rune.jit' f (x ()))
+          in
+          equal close (f (x ())) r);
+      test "a call compiled with ~beam:1 computes eager's values" (fun () ->
+          let f a = Nx.add_s (poly a) 0.6875 in
+          equal close (f (x ())) (Rune.jit' ~beam:1 ~parallel:2 f (x ())));
       slow "a flipped view retraces once" (fun () ->
           let g = g () in
           retraces
@@ -2977,6 +2991,11 @@ let on_one_device ~name d =
           let r = Rune.jit' poly (placed d (x ())) in
           is_true (Nx.Placement.equal (on d) (Nx.placement r));
           equal close (poly (x ())) (host r));
+      test "a call searched on several domains computes eager's values"
+        (fun () ->
+          let f a = Nx.add_s (poly a) 0.8125 in
+          equal close (f (x ()))
+            (host (Rune.jit' ~beam:1 ~parallel:2 f (placed d (x ())))));
       test "a placed argument feeds a call with no transfer" (fun () ->
           let g = Rune.jit' poly in
           let a = placed d (x ()) in

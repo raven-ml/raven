@@ -50,3 +50,18 @@ let () =
   Tolk_next.Helpers.context
     [ B (Tolk_next.Helpers.noopt, true) ]
     (fun () -> ignore (neg a))
+
+(* A function compiled with a search reports each kernel it searches; another
+   compiled without one, in the same process, reports none. *)
+let () =
+  let f a = Nx.add_s (Nx.mul a a) 0.625 in
+  ignore (Rune_next.Rune.jit' ~beam:1 f (Nx.ones Nx.float32 [| 4 |]));
+  let g a = Nx.add_s (Nx.mul a a) 0.875 in
+  ignore (Rune_next.Rune.jit' g (Nx.ones Nx.float32 [| 4 |]));
+  (* An explicit width overrides BEAM, [0] searching nothing; another width
+     searches again. *)
+  Tolk_next.Helpers.context
+    [ B (Tolk_next.Helpers.beam, 1) ]
+    (fun () ->
+      ignore (Rune_next.Rune.jit' ~beam:0 g (Nx.ones Nx.float32 [| 4 |])));
+  ignore (Rune_next.Rune.jit' ~beam:2 f (Nx.ones Nx.float32 [| 4 |]))

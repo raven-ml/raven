@@ -1,7 +1,7 @@
 With RUNE_JIT_DEBUG=1, a call reports each retrace with the first difference
 from the previous key (a shape, a view's strides, where its run of storage
-starts), and each consumed leaf: the result it lent its storage to, and
-whether it was reused or copied.
+starts), each consumed leaf: the result it lent its storage to, and
+whether it was reused or copied, and each kernel a search optimises.
 
   $ RUNE_JIT_DEBUG=1 CACHEDB=$PWD/cache ./reports.exe
   rune.jit: 0.0 -> result 0 reused
@@ -16,6 +16,8 @@ whether it was reused or copied.
   rune.jit: retrace: 0: 1 element into its run here, 0 elements into its run in the previous key
   rune.jit: 0 consumed, lent to no result
   rune.jit: retrace: BEAM=0 NOOPT=true profiled=false here, BEAM=0 NOOPT=false profiled=false in the previous key
+  rune.jit: searched a kernel at width 1
+  rune.jit: searched a kernel at width 2
 
 Without RUNE_JIT_DEBUG, a call reports nothing.
 

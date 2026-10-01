@@ -68,11 +68,19 @@
     host spans: ["rune.jit: trace"], ["rune.jit: schedule"],
     ["rune.jit: compile"] and ["rune.jit: link"]. *)
 
-val jit : string -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit entry s f] is [f] compiled, as {!Rune.jit} documents it, for the entry
-    point named [entry], which its messages start with. Under an enclosing
-    transformation ({!Nx.Op.intercepted}), it is [f], which checks and consumes
-    nothing: {!Total.collect} is one until totals are a program's outputs.
+val jit :
+  ?beam:int ->
+  ?parallel:int ->
+  string ->
+  ('a -> 'b) Nx.Ptree.fn ->
+  ('a -> 'b) ->
+  'a ->
+  'b
+(** [jit ~beam ~parallel entry s f] is [f] compiled, as {!Rune.jit} documents
+    it, for the entry point named [entry], which its messages start with. Under
+    an enclosing transformation ({!Nx.Op.intercepted}), it is [f], which checks
+    and consumes nothing: {!Total.collect} is one until totals are a program's
+    outputs.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument; and at
     a call, before any work, for a consumed leaf that does not cover its whole
