@@ -117,13 +117,17 @@ let settled d =
   done;
   allocated d
 
-(* [warmed measure] is [measure ()] after a first, uncounted run of it. A device
-   keeps some memory for its life from the first work that needs it, such as an
-   NV device's local memory, which a measure of what one call holds leaves
-   out. *)
+(* [warmed measure] is the count of [measure ()] after a first, uncounted run of
+   it, whose program stays reachable meanwhile. [measure ()] is a count and the
+   program it ran. A device keeps some memory for its life from the first work
+   that needs it, such as an NV device's local memory, and a binary's code
+   counts in its device's memory while a program of it is reachable: the counted
+   run finds the code the uncounted one loaded. *)
 let warmed measure =
-  ignore (measure ());
-  measure ()
+  let _, program = measure () in
+  let count, _ = measure () in
+  ignore (Sys.opaque_identity program);
+  count
 
 (* Values *)
 
@@ -2324,12 +2328,12 @@ let held_by_steps at ~than a b =
         let before = settled d in
         let r = g xs in
         let held = settled d - before - Nx.nbytes r in
-        ignore (Sys.opaque_identity (g, xs));
+        ignore (Sys.opaque_identity xs);
         ignore (host r);
-        held
+        (held, g)
       in
       let ha = warmed (fun () -> held a) in
-      let hb = held b in
+      let hb = warmed (fun () -> held b) in
       less
         ~msg:(Printf.sprintf "%d bytes, against %d for %d chunks" hb ha a)
         int ~than:(than * ha) (hb - ha))
@@ -2666,16 +2670,17 @@ let staged_scans d =
                program and result alive: a temporary may or may not be collected
                by the end of the call. *)
             let held = settled d - before in
-            ignore (Sys.opaque_identity (g, xs));
+            ignore (Sys.opaque_identity xs);
             ignore (host r);
-            held
+            (held, g)
           in
           let larger n =
-            let wide = held n 4096 in
-            wide - held n 4
+            let wide, gw = held n 4096 in
+            let narrow, gn = held n 4 in
+            (wide - narrow, (gw, gn))
           in
           let few = warmed (fun () -> larger 64) in
-          let many = larger 512 in
+          let many = warmed (fun () -> larger 512) in
           equal ~msg:"for 64 and 512 steps" int few many);
       test "a staged scan reads its rows in place" (fun () ->
           let held w =
@@ -2694,10 +2699,10 @@ let staged_scans d =
             let r = g xs in
             let held = allocated d - before in
             ignore (host r);
-            held
+            (held, g)
           in
           let wide = warmed (fun () -> held 1024) in
-          let narrow = held 4 in
+          let narrow = warmed (fun () -> held 4) in
           less ~msg:"bytes held for rows 1,024 values wide against 4" int
             ~than:(64 * 1020 * 4)
             (wide - narrow));
@@ -3619,10 +3624,10 @@ let on_one_device ~name d =
             let r = g a in
             let used = allocated d - base in
             ignore (host r);
-            used
+            (used, g)
           in
           let plain = warmed (fun () -> peak false) in
-          let recomputed = peak true in
+          let recomputed = warmed (fun () -> peak true) in
           less
             ~msg:
               (Printf.sprintf "%d bytes with remat, %d without" recomputed plain)

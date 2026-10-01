@@ -861,7 +861,7 @@ let make_device a ~budget ~sleep ?finalize () =
              (match a.gpu with
              | Am_gpu g when Pci_memory.small_bar g.memory -> None
              | Kfd_gpu k when not (Kfd.flushes_hdp k) -> None
-             | _ -> Some (allocator a Visible));
+             | _ -> Some (allocator a Visible, code_window a));
            mapping = mapping a;
            queue = queue a;
          })

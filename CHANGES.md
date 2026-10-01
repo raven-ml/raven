@@ -2971,6 +2971,14 @@ thread.
 
 ### Nx
 
+- **Breaking:** pinned memory counts in no device budget. It is the host's RAM,
+  so a GPU's `Nx_device.budget` counted it against VRAM it never used; its
+  driver's refusal is its limit. `budget` covers the device's own memory,
+  mapped memory included.
+- **Breaking:** `Driver.memory`'s `Device_local.mapped` gives the size of the
+  window mapped memory lies in. Mapped memory and loaded programs' code are held
+  within that window, and `Stats.allocated` counts loaded code, which the
+  collector now paces by the room left in its memory.
 - A compiled `Nx_quant.apply` or `Nx_quant.dequant` decodes mxfp4 codes and
   scales with integer operations on their bytes. It looked them up in tables
   by an `int64` index, which a mixture of experts stored at 8 bytes per code

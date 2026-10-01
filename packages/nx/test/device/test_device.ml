@@ -254,7 +254,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
           host_memory = { alloc = alloc ~addressed:true Pinned; free };
           mapped =
             Option.map
-              (fun _ -> { Driver.alloc = in_window; free = out_of_window })
+              (fun w -> ({ Driver.alloc = in_window; free = out_of_window }, w))
               window;
           mapping;
           queue;
@@ -338,9 +338,14 @@ module Model = struct
 
   type memory = { cells : int array; on_page : bool }
 
-  (* The buffers over some memory, the bytes owned, and for a borrow the host
-     memory it maps. *)
-  type holding = { owned : int; mutable holders : int; maps : memory option }
+  (* The buffers over some memory, the bytes owned, whether they count in the
+     device's budget, and for a borrow the host memory it maps. *)
+  type holding = {
+    owned : int;
+    budgeted : bool;
+    mutable holders : int;
+    maps : memory option;
+  }
 
   type device = {
     name : string;
@@ -378,6 +383,11 @@ module Model = struct
       (fun n h -> if h.holders > 0 then n + h.owned else n)
       0 d.owns
 
+  let budgeted d =
+    List.fold_left
+      (fun n h -> if h.holders > 0 && h.budgeted then n + h.owned else n)
+      0 d.owns
+
   let mappings d =
     let add seen h =
       match h.maps with
@@ -389,9 +399,10 @@ module Model = struct
   let name r = match r.device with None -> "CPU" | Some d -> d.name
   let alive r = if r.dropped then raise Dropped
 
-  let fresh ?(on_page = false) ?device ?(owned = 0) ~addressed s n =
+  let fresh ?(on_page = false) ?device ?(owned = 0) ?(budgeted = true)
+      ~addressed s n =
     if n < 0 || too_big s n then invalid_arg "create";
-    let holding = { owned; holders = 1; maps = None } in
+    let holding = { owned; budgeted; holders = 1; maps = None } in
     Option.iter (fun d -> d.owns <- holding :: d.owns) device;
     let memory = { cells = Array.make (nbytes s n) (-1); on_page } in
     let borrowed = false and dropped = false in
@@ -412,11 +423,13 @@ module Model = struct
     else fresh ~addressed:true s n
 
   (* A far device's memory is addressed by the host when it is pinned memory,
-     which its mapped memory is, having no window. *)
+     which its mapped memory is, having no window. Pinned memory is the host's,
+     and counts in no budget. *)
   let create d (memory : B.memory) s n =
     let bytes = if n < 0 || too_big s n then 0 else nbytes s n in
-    if bytes > 0 && live d + bytes > d.budget then raise No_memory;
-    fresh ~device:d ~owned:bytes
+    let counts = d.name = "NEAR" || memory = Device in
+    if bytes > 0 && counts && budgeted d + bytes > d.budget then raise No_memory;
+    fresh ~device:d ~owned:bytes ~budgeted:counts
       ~addressed:(d.name = "NEAR" || memory <> Device)
       s n
 
@@ -450,7 +463,7 @@ module Model = struct
   and map d r =
     let maps = if size r > 0 then Some r.memory else None in
     let mapped = mappings d in
-    let holding = { owned = 0; holders = 1; maps } in
+    let holding = { owned = 0; budgeted = false; holders = 1; maps } in
     cover "a second borrow of mapped memory"
       (maps <> None
       && mappings { d with borrows = holding :: d.borrows } = mapped);
@@ -562,7 +575,8 @@ let device_invariant (r : Model.device) { fake; baseline } =
   equal ~msg:"allocated is the live buffers' bytes" int (Model.live r) allocated;
   equal ~msg:"the driver holds the live buffers and the cache" int
     (fake.drv.held - baseline) (allocated + cached);
-  if cached > 0 then
+  (* A far device's pinned memory and its cache count in no budget. *)
+  if cached > 0 && r.name = "NEAR" then
     at_most ~msg:"the cache keeps within the budget" int ~than:r.budget
       (allocated + cached);
   equal ~msg:"budget" int r.budget (Nx_device.budget fake.dev);
@@ -778,6 +792,25 @@ let memories =
               equal ~msg memory_kind Device (memory_of f b);
               equal ~msg:(msg ^ ", whose cache serves it") int held f.drv.held)
             all_memories);
+      test "pinned memory counts in no budget" (fun () ->
+          let f = far ~budget:64 () in
+          let pinned = B.create ~memory:Pinned f.dev S.UInt8 64 in
+          let own = B.create f.dev S.UInt8 64 in
+          equal ~msg:"the device's own memory, beside pinned memory" memory_kind
+            Device (memory_of f own);
+          equal ~msg:"both allocated" int 128 (allocated f.dev);
+          ignore (Sys.opaque_identity pinned));
+      test
+        "mapped memory the window refuses is pinned memory while the device's \
+         own memory has room, and refused when it has none" (fun () ->
+          let f = far ~budget:96 ~window:32 () in
+          equal ~msg:"beyond the window" memory_kind Pinned
+            (memory_of f (B.create ~memory:Mapped f.dev S.UInt8 64));
+          let own = B.create f.dev S.UInt8 64 in
+          raises_match ~msg:"beyond the device's own memory"
+            (function Nx_device.Out_of_memory _ -> true | _ -> false)
+            (fun () -> B.create ~memory:Mapped f.dev S.UInt8 64);
+          ignore (Sys.opaque_identity own));
       test "a device with memory of its own and a window gives each memory"
         (fun () ->
           let f = far ~window:1024 () in
@@ -2540,6 +2573,16 @@ let programs =
          loads anew"
         test_unloaded;
       test "a buffer of a binary's code keeps it loaded" test_code_keeps;
+      test "a binary's code counts in its device's memory while it is loaded"
+        (fun () ->
+          let _, load = loader ~code:64 () in
+          let d = (fake ~load ()).dev in
+          let before = allocated d in
+          let p = program d ~binary:"lib" ~name:"f" in
+          equal ~msg:"loaded" int (before + 64) (allocated d);
+          ignore (Sys.opaque_identity p);
+          collected d;
+          equal ~msg:"unloaded" int before (allocated d));
       test "a host word a program keeps reads and writes through its bigarray"
         (fun () ->
           let p =

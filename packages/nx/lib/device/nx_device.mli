@@ -215,11 +215,13 @@ exception Out_of_memory of t * int
 (** {1:memory Memory} *)
 
 val budget : t -> int
-(** [budget d] is the most bytes [d]'s allocator holds at once, in live buffers
-    and in its cache together, of its own, pinned and mapped memory
-    ({!Buffer.memory}). Borrowed memory and the host's staging memory
-    ({!Buffer.copy}) do not count. It is [max_int] for the host, and defaults to
-    a device's recommended working set or memory size otherwise. *)
+(** [budget d] is the most bytes of [d]'s own memory, its mapped memory included
+    ({!Buffer.memory}), that [d] holds at once in live buffers, loaded programs'
+    code and its cache together. Pinned memory, which is the host's, borrowed
+    memory and the host's staging memory ({!Buffer.copy}) do not count. Mapped
+    memory is also held within the window the host addresses it through. It is
+    [max_int] for the host, and defaults to a device's recommended working set
+    or memory size otherwise. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], releasing cached memory to the
@@ -275,7 +277,9 @@ module Buffer : sig
             host memory on CUDA, AMD and NV. It is coherent: a write by either
             side is seen by the other once the work that wrote it has completed,
             with no flush. The libraries that submit work allocate their command
-            buffers, queue words and volatile arguments this way. *)
+            buffers, queue words and volatile arguments this way. It is the
+            host's memory, locked, and counts in no {!budget}: its driver's
+            refusal is its only limit. *)
     | Mapped
         (** The device's own memory, which its work reads at the speed of its
             own and the host also addresses, through a write-combined window
@@ -787,7 +791,8 @@ module Stats : sig
 
   val allocated : t -> int
   (** [allocated s] is the bytes of owned memory in buffers that
-      {!Buffer.create} returned and that were not yet returned to the device. *)
+      {!Buffer.create} returned and that were not yet returned to the device,
+      and in the code of loaded programs ({!Program.code}). *)
 
   val cached : t -> int
   (** [cached s] is the bytes in the device's cache: memory allocated from the
@@ -798,8 +803,9 @@ module Stats : sig
 
   val retained : t -> int
   (** [retained s] is the bytes of the device's own memory that it retains
-      because the work that last used them could not be waited for. They count
-      against its budget. Retained borrows are not counted. *)
+      because the work that last used them could not be waited for. Those of its
+      own and mapped memory count against its budget. Retained borrows are not
+      counted. *)
 
   val bytes_in : t -> int
   (** [bytes_in s] is the bytes copied into the device from another one. *)
@@ -1217,7 +1223,7 @@ module Driver : sig
     | Device_local of {
         memory : allocator;
         host_memory : allocator;
-        mapped : allocator option;
+        mapped : (allocator * int) option;
         mapping : mapping;
         queue : timeline:Region.t -> queue;
       }
@@ -1227,10 +1233,13 @@ module Driver : sig
             - [host_memory] allocates its pinned memory ({!Buffer.memory}):
               coherent host memory that its work addresses, whose regions have a
               host address.
-            - [mapped] allocates its mapped memory ({!Buffer.memory}): its own
-              memory that the host addresses through a window, whose regions
-              have a host address. With [None], or when it has none left, mapped
-              memory is pinned memory.
+            - [mapped] is the allocator of its mapped memory ({!Buffer.memory})
+              and the bytes of the window it lies in: its own memory that the
+              host addresses through that window, whose regions have a host
+              address. The window holds at most that many bytes of mapped memory
+              and of loaded programs' code ({!Program.code}). With [None], or
+              when the window has no room left, mapped memory is pinned memory,
+              and code counts in pinned memory.
             - [mapping] maps host memory for {!Buffer.borrow} and for the host's
               staging memory.
             - [queue ~timeline] is its copy queue, given the region of its

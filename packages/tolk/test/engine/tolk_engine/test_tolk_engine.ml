@@ -1935,7 +1935,7 @@ let mapped_device =
           {
             memory;
             host_memory = recording pinned_allocs memory;
-            mapped = Some (recording mapped_allocs memory);
+            mapped = Some (recording mapped_allocs memory, max_int);
             mapping = Identity;
             queue;
           }))

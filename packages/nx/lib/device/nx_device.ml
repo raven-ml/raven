@@ -125,29 +125,35 @@ type t = {
       (* the spans recorded on the device whose stamps are still to read, latest
          first *)
   mutable held : keep list; (* retained memory, and what it keeps *)
-  mutable budget : int;
-  allocated : allocated;
-  mutable cached : int;
-  mutable retained : int;
   mutable bytes_in : int;
   mutable bytes_out : int;
 }
 
 (* What a device is, with the memories it allocates. *)
 and kind =
-  | Machine of { remote : (string * io) option; memory : allocator option }
+  | Machine of { remote : (string * io) option; pool : pool }
     (* a machine's host: this machine's, whose memory is the heap, or another
-       machine's, at an address, reached through [io] and allocating with
-       [memory] *)
+       machine's, at an address and reached through [io] *)
   | Disk
-  | Shared of { memory : allocator; mapping : mapping option }
+  | Shared of { pool : pool; mapping : mapping option }
   | Local of {
-      memory : allocator;
-      pinned : allocator;
-      mapped : allocator option;
+      own : pool;
+      mapped : pool option; (* a window onto [own] that the host addresses *)
+      pinned : pool; (* the host's memory, which counts in no budget *)
       mapping : mapping;
       queue : queue;
     }
+
+(* One memory of a device: its allocator, [None] for the heap, the most bytes it
+   may hold, and the bytes it holds in live buffers and loaded code, in its
+   cache, and retained. *)
+and pool = {
+  allocator : allocator option;
+  mutable ceiling : int;
+  in_use : allocated;
+  mutable cached : int;
+  mutable retained : int;
+}
 
 and queue = {
   copy : copy;
@@ -228,6 +234,7 @@ and stamp = { by : t; mutable upto : int }
 and retiring = {
   until : unit -> (t * int) list;
   bytes : int;
+  space : memory; (* the memory [bytes] are *)
   key : (int * memory) option;
   kept : keep;
   retire : unit -> unit;
@@ -516,13 +523,54 @@ let rec push r x =
   let l = Atomic.get r in
   if not (Atomic.compare_and_set r l (x :: l)) then push r x
 
-let allocated d =
-  match d.allocated with Count c -> Atomic.get c | Heap_bytes -> heap_bytes ()
+(* Pools *)
 
-let allocate_bytes d n =
-  match d.allocated with
-  | Count c -> ignore (Atomic.fetch_and_add c n)
-  | Heap_bytes -> heap_return (-n)
+let used p =
+  match p.in_use with Count c -> Atomic.get c | Heap_bytes -> heap_bytes ()
+
+(* The bytes [p] keeps for reuse: the heap's are the collected buffers its
+   allocator keeps (see the stubs). *)
+let pool_cached p =
+  match p.in_use with Count _ -> p.cached | Heap_bytes -> heap_cached ()
+
+let room p = p.ceiling - used p - pool_cached p - p.retained
+
+(* Applies [f] to each pool an allocation of [d]'s memory [kind] counts in:
+   mapped memory is the device's own, through a window with a ceiling of its
+   own. *)
+let on_pools d kind f =
+  match (d.kind, kind) with
+  | (Machine { pool; _ } | Shared { pool; _ }), _ -> f pool
+  | Local { own; mapped = Some window; _ }, Mapped ->
+      f window;
+      f own
+  | Local { pinned; _ }, (Pinned | Mapped) -> f pinned
+  | Local { own; _ }, Device -> f own
+  | Disk, _ -> ()
+
+(* [f] summed over each pool of [d], once. Nothing is allocated: devices count
+   on every operation. *)
+let sum f d =
+  match d.kind with
+  | Machine { pool; _ } | Shared { pool; _ } -> f pool
+  | Local { own; pinned; _ } -> f own + f pinned
+  | Disk -> 0
+
+let allocated d = sum used d
+let cached d = sum pool_cached d
+let retained d = sum (fun p -> p.retained) d
+
+let allocate_bytes d kind n =
+  on_pools d kind (fun p ->
+      match p.in_use with
+      | Count c -> ignore (Atomic.fetch_and_add c n)
+      | Heap_bytes -> heap_return (-n))
+
+(* Bytes of [d]'s memory [kind] counted as retained, or no longer. *)
+let retain_bytes d kind n =
+  on_pools d kind (fun p -> p.retained <- p.retained + n)
+
+let cache_bytes d kind n = on_pools d kind (fun p -> p.cached <- p.cached + n)
 
 let memory_changed d =
   match Atomic.get profile with
@@ -650,7 +698,7 @@ and driver_memory =
   | Device_local of {
       memory : allocator;
       host_memory : allocator;
-      mapped : allocator option;
+      mapped : (allocator * int) option;
       mapping : mapping;
       queue : timeline:region -> queue;
     }
@@ -659,7 +707,7 @@ let create (desc : Description.t) made_of =
   (* A host of another machine keeps its timeline in its own memory. *)
   let host_alloc =
     match (desc.machine, made_of) with
-    | Some { kind = Machine { memory = Some a; _ }; _ }, _
+    | Some { kind = Machine { pool = { allocator = Some a; _ }; _ }; _ }, _
     | None, Remote { memory = a; _ } ->
         Some a
     | _ -> None
@@ -684,21 +732,27 @@ let create (desc : Description.t) made_of =
   in
   let words = Option.get timeline.host in
   write_word machine_io words 0L;
+  let pool ?(in_use = Count (Atomic.make 0)) ceiling allocator =
+    { allocator; ceiling; in_use; cached = 0; retained = 0 }
+  in
   let kind =
     match made_of with
-    | Process_heap -> Machine { remote = None; memory = None }
+    | Process_heap ->
+        Machine
+          { remote = None; pool = pool ~in_use:Heap_bytes desc.budget None }
     | Remote { address; io; memory } ->
-        Machine { remote = Some (address, io); memory = Some memory }
+        Machine
+          { remote = Some (address, io); pool = pool desc.budget (Some memory) }
     | Files -> Disk
     | Driver_memory (Host_visible { memory; mapping }) ->
-        Shared { memory; mapping }
+        Shared { pool = pool desc.budget (Some memory); mapping }
     | Driver_memory
         (Device_local { memory; host_memory; mapped; mapping; queue }) ->
         Local
           {
-            memory;
-            pinned = host_memory;
-            mapped;
+            own = pool desc.budget (Some memory);
+            mapped = Option.map (fun (a, window) -> pool window (Some a)) mapped;
+            pinned = pool max_int (Some host_memory);
             mapping;
             queue = queue ~timeline;
           }
@@ -747,13 +801,6 @@ let create (desc : Description.t) made_of =
       indexed = 8;
       spans = Atomic.make [];
       held = [];
-      budget = desc.budget;
-      allocated =
-        (match made_of with
-        | Process_heap -> Heap_bytes
-        | _ -> Count (Atomic.make 0));
-      cached = 0;
-      retained = 0;
       bytes_in = 0;
       bytes_out = 0;
     }
@@ -810,7 +857,21 @@ let arch d = d.arch
 let equal = ( == )
 let compare a b = Int.compare a.id b.id
 let pp ppf d = Format.pp_print_string ppf d.name
-let budget d = d.budget
+
+(* The pool whose ceiling is [d]'s budget, if any. *)
+let budgeted d =
+  match d.kind with
+  | Machine { pool; _ } | Shared { pool; _ } | Local { own = pool; _ } ->
+      Some pool
+  | Disk -> None
+
+(* Allocates nothing: the host checks it for every buffer. *)
+let budget d =
+  match d.kind with
+  | Machine { pool; _ } | Shared { pool; _ } | Local { own = pool; _ } ->
+      pool.ceiling
+  | Disk -> max_int
+
 let host_of d = match d.machine with Some h -> h | None -> d
 
 (* How [d] addresses host memory, if it does. *)
@@ -824,14 +885,12 @@ let mapping_of d =
 let queue_of d =
   match d.kind with Local { queue; _ } -> Some queue | _ -> None
 
-(* The allocator of [d]'s memory [kind], if [d] allocates it. *)
+(* The allocator of [d]'s memory [kind], if [d] allocates it: its first
+   pool's. *)
 let allocator_of d kind =
-  match (d.kind, kind) with
-  | Machine { memory; _ }, _ -> memory
-  | Shared { memory; _ }, _ | Local { memory; _ }, Device -> Some memory
-  | Local { pinned; _ }, Pinned -> Some pinned
-  | Local { mapped; _ }, Mapped -> mapped
-  | Disk, _ -> None
+  let first = ref None in
+  on_pools d kind (fun p -> if Option.is_none !first then first := p.allocator);
+  !first
 
 (* Memory the host addresses, as the host's own and a device's over it are. *)
 let host_addressed d =
@@ -1217,22 +1276,19 @@ let descriptor f =
 
 (* Memory reclamation. Everything below runs with the device taken. *)
 
-(* Frees [memories], each with its function, once [d]'s work that touched them,
-   which signals [v] at the latest, is done: at once with [~wait:false], which
-   is given only memories whose work is done. If that work cannot be waited for,
-   or a free faults, which loses [d], the memory not yet freed is retained: kept
-   with [keep], and never freed or reused, since its state is unknown. [owned]
-   memory came from [d]'s allocators, and its bytes count as retained. *)
-let free_all d ~owned ~keep ~wait v memories =
+(* Frees cached [memories] of [d], each of its memory, once [d]'s work that
+   touched them, which signals [v] at the latest, is done: at once with
+   [~wait:false], which is given only memories whose work is done. If that work
+   cannot be waited for, or a free faults, which loses [d], the memory not yet
+   freed is retained, never freed or reused, since its state is unknown. *)
+let free_all d ~wait v memories =
   let retain rest =
-    if owned then
-      d.retained <-
-        List.fold_left (fun n (_, (m : region)) -> n + m.nbytes) d.retained rest;
-    d.held <- Keep (rest, keep) :: d.held
+    List.iter (fun (_, (m : region), kind) -> retain_bytes d kind m.nbytes) rest;
+    d.held <- Keep rest :: d.held
   in
   let rec go = function
     | [] -> ()
-    | (free, m) :: tail as rest -> (
+    | (free, m, _) :: tail as rest -> (
         match free m with
         | () -> go tail
         | exception Failure why ->
@@ -1248,55 +1304,93 @@ let free_all d ~owned ~keep ~wait v memories =
 
 let free_of d kind = (Option.get (allocator_of d kind)).free
 
-(* The bytes [d] keeps for reuse: the host's are the collected buffers its
-   allocator keeps (see the stubs). *)
-let cached d =
-  match d.allocated with Count _ -> d.cached | Heap_bytes -> heap_cached ()
+(* The memory a binary's code lies in on [d]: memory the host writes and [d]'s
+   work reads, its mapped memory where it has a window, and pinned memory where
+   it has none, as a small BAR leaves it. *)
+let code_kind d =
+  match d.kind with
+  | Local { mapped = Some _; _ } -> Mapped
+  | Local _ -> Pinned
+  | Machine _ | Shared _ | Disk -> Device
 
-let fits d n = n <= d.budget - allocated d - cached d - d.retained
+(* The bytes of [i]'s code in its device's memory, [0] for a driver that keeps
+   it elsewhere. *)
+let code_bytes (i : image) = match i.code with Some r -> r.nbytes | None -> 0
+
+(* The room left in [d]'s pools for its memory [kind]. Nothing is allocated:
+   devices check it on every operation. *)
+let room_for d kind =
+  match (d.kind, kind) with
+  | (Machine { pool; _ } | Shared { pool; _ }), _ -> room pool
+  | Local { own; mapped = Some window; _ }, Mapped ->
+      Int.min (room window) (room own)
+  | Local { pinned; _ }, (Pinned | Mapped) -> room pinned
+  | Local { own; _ }, Device -> room own
+  | Disk, _ -> max_int
+
+let fits d kind n = n <= room_for d kind
 
 (* A token that puts [r] on [d]'s release list once it is collected. Its [bytes]
-   pace the collector by the room left in [d]'s budget (see the stubs). *)
-let release_token d r bytes =
-  let room = d.budget - allocated d - cached d - d.retained in
-  let live = if shares_host_memory d then allocated d else -1 in
+   of [d]'s memory [kind] pace the collector by the room left in its pools, and
+   for memory that is the host's, by the program's memory too (see the
+   stubs). *)
+let release_token d kind r bytes =
+  let room = room_for d kind in
+  let live =
+    match (d.kind, kind) with
+    | Shared { pool; _ }, _ when shares_host_memory d -> used pool
+    | Local { pinned; _ }, Pinned -> used pinned
+    | _ -> -1
+  in
   make_token d.released r bytes (Int.max 0 room) live
 
 (* [base], whose memory [d] releases once the base returned and every base made
    from it are unreachable: they keep a token that puts [base], which keeps
    none, on [d]'s release list once it is collected. A base has no mutable
    field, so [base] sees the links and claims that its copies change. *)
-let owned d base =
+let owned d (base : base) =
   {
     base with
-    keep = With (base.keep, release_token d (Memory base) base.bytes);
+    keep = With (base.keep, release_token d base.kind (Memory base) base.bytes);
   }
 
+(* How much of a device's cache to free: all of it, or until its memory [kind]
+   has room for [n] more bytes. *)
+type want = All | Room of memory * int
+
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
-   fits [n] more bytes, or its cache is empty. With [~wait:false], only memory
+   has what [want] asks, or its cache is empty. With [~wait:false], only memory
    whose work is done is freed, and nothing blocks. *)
-let release_cache ?only ~wait d n =
-  match d.allocated with
-  | Heap_bytes -> if not (fits d n) then heap_drop ()
-  | Count _ ->
-      if d.cached > 0 && not (fits d n) then begin
+let enough d = function All -> false | Room (kind, n) -> fits d kind n
+
+let release_cache ?only ~wait d want =
+  match d.kind with
+  | Machine { pool = { in_use = Heap_bytes; _ }; _ } ->
+      if not (enough d want) then heap_drop ()
+  | _ ->
+      if cached d > 0 && not (enough d want) then begin
+        let first = match want with All -> Device | Room (kind, _) -> kind in
         let freed = ref [] and last = ref 0 in
+        (* Memory of the kind asked for goes first: other memory may not free
+           the pool that refuses it, such as mapped memory's window. *)
         let keys =
           Hashtbl.fold
-            (fun ((_, kind) as key) _ acc ->
-              if Option.fold ~none:true ~some:(( = ) kind) only then key :: acc
+            (fun ((_, k) as key) _ acc ->
+              if Option.fold ~none:true ~some:(( = ) k) only then key :: acc
               else acc)
             d.cache []
+          |> List.stable_sort (fun (_, a) (_, b) ->
+              Bool.compare (a <> first) (b <> first))
         in
         List.iter
-          (fun ((size, kind) as key) ->
-            let free = free_of d kind in
+          (fun ((size, cached_kind) as key) ->
+            let free = free_of d cached_kind in
             let rec drop = function
-              | e :: es when fits d n -> e :: es
+              | e :: es when enough d want -> e :: es
               | ((m, v) as e) :: es ->
                   if wait || progress [ (d, v) ] = `Done then begin
-                    d.cached <- d.cached - size;
-                    freed := (free, m) :: !freed;
+                    cache_bytes d cached_kind (-size);
+                    freed := (free, m, cached_kind) :: !freed;
                     last := Int.max !last v;
                     drop es
                   end
@@ -1307,7 +1401,7 @@ let release_cache ?only ~wait d n =
             | [] -> Hashtbl.remove d.cache key
             | ms -> Hashtbl.replace d.cache key ms)
           keys;
-        free_all d ~owned:true ~keep:() ~wait !last !freed
+        free_all d ~wait !last !freed
       end
 
 (* The latest value of [d]'s own work in [stamps], and the others. *)
@@ -1318,12 +1412,12 @@ let foreign d stamps = List.filter (fun (d', _) -> d' != d) stamps
 
 (* Released owned memory of [b] enters [d]'s cache, with [d]'s own work on it:
    [d]'s later work on it is ordered after that work by [d]'s queue. *)
-let cache_memory d b own =
-  allocate_bytes d (-b.bytes);
+let cache_memory d (b : base) own =
+  allocate_bytes d b.kind (-b.bytes);
   let key = (b.bytes, b.kind) in
   let ms = Option.value ~default:[] (Hashtbl.find_opt d.cache key) in
   Hashtbl.replace d.cache key ((b.memory, own) :: ms);
-  d.cached <- d.cached + b.bytes
+  cache_bytes d b.kind b.bytes
 
 (* [m], [d]'s mapping of [src]'s memory, is unmapped: its borrows are
    unreachable and their work is done. Only then does the memory leave [d]'s
@@ -1345,8 +1439,8 @@ let retire d =
             go rest
         | `Lost ->
             if r.bytes > 0 then begin
-              allocate_bytes d (-r.bytes);
-              d.retained <- d.retained + r.bytes
+              allocate_bytes d r.space (-r.bytes);
+              retain_bytes d r.space r.bytes
             end;
             d.held <- r.kept :: d.held;
             go rest
@@ -1378,7 +1472,7 @@ let retire d =
    unmapped, and one of another device's memory stays its driver's until that
    memory is freed. Host memory never comes here: it is the heap's, returned
    when the collector finds its base unreachable. *)
-let release d b =
+let release d (b : base) =
   let stamps = List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps in
   match b.source with
   | Some (_, m) when m.ends = With_memory -> m.borrows <- m.borrows - 1
@@ -1396,6 +1490,7 @@ let release d b =
           {
             until = (fun () -> m.work);
             bytes = 0;
+            space = Device;
             key = None;
             kept = Keep b;
             retire =
@@ -1427,14 +1522,15 @@ let release d b =
         match List.iter (fun f -> f ()) (List.rev depends) with
         | () -> cache_memory d b own
         | exception Failure _ ->
-            allocate_bytes d (-b.bytes);
-            d.retained <- d.retained + b.bytes;
+            allocate_bytes d b.kind (-b.bytes);
+            retain_bytes d b.kind b.bytes;
             d.held <- Keep b :: d.held
       in
       d.retiring <-
         {
           until = (fun () -> until);
           bytes = b.bytes;
+          space = b.kind;
           key = Some (b.bytes, b.kind);
           kept = Keep b;
           retire;
@@ -1445,14 +1541,18 @@ let release d b =
    only [d]'s queues run its code, and a launch may run it without listing its
    memory. The host's programs return before the image can be unreachable. *)
 let unload d (i : image) =
-  let v = submitted d in
+  let v = submitted d and bytes = code_bytes i and space = code_kind d in
   d.retiring <-
     {
       until = (fun () -> [ (d, v) ]);
-      bytes = 0;
+      bytes;
+      space;
       key = None;
       kept = Keep i;
-      retire = (fun () -> driver d i.unload);
+      retire =
+        (fun () ->
+          driver d i.unload;
+          allocate_bytes d space (-bytes));
     }
     :: d.retiring
 
@@ -1468,7 +1568,7 @@ let rec release_all d = function
 let reclaim d =
   release_all d (released d.released);
   retire d;
-  release_cache ~wait:false d 0
+  release_cache ~wait:false d (Room (Device, 0))
 
 (* Waits for the work of released memory of [key], or of all of it if none is of
    [key], then retires what it can. A lost device's work is not waited for: its
@@ -1492,32 +1592,37 @@ let take_cached d key =
   | Some ((m, _) :: ms) ->
       if ms = [] then Hashtbl.remove d.cache key
       else Hashtbl.replace d.cache key ms;
-      d.cached <- d.cached - fst key;
+      cache_bytes d (snd key) (-fst key);
       Some (m, Keep ())
   | Some [] | None -> None
 
 (* [n] bytes of [d]'s memory [kind], with the memory they are. Mapped memory the
-   driver refuses releases the cached mapped memory, which holds the window, and
-   tries again; mapped memory still refused, or refused by the budget, is pinned
-   memory instead. Any other allocation the budget or the driver refuses
-   releases the cache and tries again, then waits for the work of released
-   memory and tries again. One still refused raises [Exhausted] until [last]:
-   the unreachable buffers, whose memory the collector cannot see, may hold what
-   it needs (see [last_resort_rounds] and [exhausted]). *)
+   window or the driver refuses releases the cached mapped memory, which holds
+   the window, and tries again; mapped memory still refused while the device's
+   own memory has room is pinned memory instead. Any other allocation its pools
+   or the driver refuse releases the cache and tries again, then waits for the
+   work of released memory and tries again. One still refused raises [Exhausted]
+   until [last]: the unreachable buffers, whose memory the collector cannot see,
+   may hold what it needs (see [last_resort_rounds] and [exhausted]). *)
 exception Exhausted
 
 let rec allocate d n ~kind ~last =
-  if n > d.budget then raise (Out_of_memory (d, n));
+  (* Mapped memory beyond its window can still be pinned memory. *)
+  let over = ref false in
+  on_pools d
+    (if kind = Mapped then Device else kind)
+    (fun p -> if n > p.ceiling then over := true);
+  if !over then raise (Out_of_memory (d, n));
   match take_cached d (n, kind) with
   | Some (m, keep) -> (m, keep, kind)
   | None -> (
-      release_cache ~wait:true d n;
+      release_cache ~wait:true d (Room (kind, n));
       let alloc n =
         Option.map
           (fun m -> (m, Keep ()))
           ((Option.get (allocator_of d kind)).alloc n)
       in
-      match if fits d n then driver d (fun () -> alloc n) else None with
+      match if fits d kind n then driver d (fun () -> alloc n) else None with
       | Some (({ host = None; _ } as m), _)
         when kind <> Device || Option.is_none (queue_of d) ->
           (* The host addresses a [Host_visible] device's memory and pinned and
@@ -1530,12 +1635,13 @@ let rec allocate d n ~kind ~last =
                 does not address"
                d.name)
       | Some (m, keep) -> (m, keep, kind)
-      | None when kind = Mapped && fits d n && cached_of d Mapped ->
-          release_cache ~only:Mapped ~wait:true d max_int;
+      | None when kind = Mapped && fits d Device n && cached_of d Mapped ->
+          release_cache ~only:Mapped ~wait:true d All;
           allocate d n ~kind ~last
-      | None when kind = Mapped -> allocate d n ~kind:Pinned ~last
-      | None when d.cached > 0 ->
-          release_cache ~wait:true d max_int;
+      | None when kind = Mapped && fits d Device n ->
+          allocate d n ~kind:Pinned ~last
+      | None when cached d > 0 ->
+          release_cache ~wait:true d All;
           allocate d n ~kind ~last
       | None when d.retiring <> [] ->
           wait_retiring d (n, kind);
@@ -1597,18 +1703,15 @@ let last_resort_rounds = 4
 let set_budget d n =
   if n < 0 then invalid_arg (Printf.sprintf "Nx_device.set_budget: %d < 0" n);
   with_devices [ d ] (fun () ->
-      d.budget <- n;
-      release_cache ~wait:true d 0)
+      Option.iter (fun p -> p.ceiling <- n) (budgeted d);
+      release_cache ~wait:true d (Room (Device, 0)))
 
 let set_timeout d ms =
   if ms <= 0 then invalid_arg (Printf.sprintf "Nx_device.set_timeout: %d ms" ms);
   Atomic.set d.timeout_ms ms
 
 let timeout d = Atomic.get d.timeout_ms
-
-(* [fits d max_int] fails whenever [d] caches anything. *)
-let free_cache d =
-  with_devices [ d ] (fun () -> release_cache ~wait:true d max_int)
+let free_cache d = with_devices [ d ] (fun () -> release_cache ~wait:true d All)
 
 (* At exit every device is finalized, a failed one too: its hardware may still
    reach the memory the process is about to release. *)
@@ -1729,7 +1832,7 @@ module Buffer = struct
   (* [n] reserved bytes of the heap. A refused reservation or allocation
      collects garbage once and tries again. *)
   let rec host_heap n ~round =
-    if heap_reserve n host.budget then (
+    if heap_reserve n (budget host) then (
       match heap n with
       | ba -> ba
       | exception Stdlib.Out_of_memory ->
@@ -1755,7 +1858,7 @@ module Buffer = struct
     | 0 -> empty ~borrowed:false d s n
     | bytes when d == host ->
         check host;
-        if bytes > host.budget then raise (Out_of_memory (host, bytes));
+        if bytes > budget host then raise (Out_of_memory (host, bytes));
         let ba = host_heap bytes ~round:0 in
         let base =
           base ~bytes ~borrowed:false
@@ -1779,8 +1882,8 @@ module Buffer = struct
           match
             with_devices [ d ] (fun () ->
                 let last = round = last_resort_rounds in
-                let m = allocate d bytes ~kind ~last in
-                allocate_bytes d bytes;
+                let ((_, _, given) as m) = allocate d bytes ~kind ~last in
+                allocate_bytes d given bytes;
                 memory_changed d;
                 m)
           with
@@ -2830,12 +2933,15 @@ module Program = struct
     | None -> (
         match load ~binary with
         | Ok image ->
-            let bytes =
-              match image.code with
-              | Some r -> r.nbytes
-              | None -> String.length binary
-            in
-            let token = release_token d (Code image) bytes
+            (* Code in the device's memory counts there; a driver's own objects
+               pace the collector by the binary's size. *)
+            let code = code_bytes image in
+            if code > 0 then begin
+              allocate_bytes d (code_kind d) code;
+              memory_changed d
+            end;
+            let bytes = if code > 0 then code else String.length binary in
+            let token = release_token d (code_kind d) (Code image) bytes
             and entries = Hashtbl.create 4 in
             let rec l = { binary; image; entries; kept = Keep (token, l) } in
             index d key l;
@@ -3015,7 +3121,7 @@ let stats d =
       {
         Stats.allocated = allocated d;
         cached = cached d;
-        retained = d.retained;
+        retained = retained d;
         bytes_in = d.bytes_in;
         bytes_out = d.bytes_out;
       })
@@ -3524,7 +3630,7 @@ module Driver = struct
     | Device_local of {
         memory : allocator;
         host_memory : allocator;
-        mapped : allocator option;
+        mapped : (allocator * int) option;
         mapping : mapping;
         queue : timeline:region -> queue;
       }
