@@ -5,8 +5,22 @@
 
 (executable
  (name bench_decode)
- (modules bench_decode moe gpt_oss layer_loop)
- (libraries nx nx.device nx.quant rune kaun kaun.hf jsont thumper unix))
+ (modules bench_decode moe gpt_oss layer_loop metal)
+ (libraries
+  nx
+  nx.device
+  nx.quant
+  rune
+  kaun
+  kaun.hf
+  jsont
+  thumper
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`.
 

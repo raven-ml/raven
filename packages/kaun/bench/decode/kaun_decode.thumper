@@ -13,6 +13,14 @@ GptOss/decode-step-cache-1024	alloc_words	batch=1	n=20	3.149e+05	3.146e+05 3.146
 GptOss/decode-step-cache-1024	wall_time	batch=1	n=20	1.198e-02	1.196e-02 1.197e-02 1.197e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.198e-02 1.199e-02 1.199e-02 1.199e-02 1.199e-02 1.200e-02 1.200e-02 1.206e-02 1.240e-02 1.243e-02
 GptOss/prefill-512	alloc_words	exact	314442
 GptOss/prefill-512	wall_time	batch=1	n=20	2.193e+00	2.118e+00 2.139e+00 2.149e+00 2.157e+00 2.167e+00 2.179e+00 2.186e+00 2.187e+00 2.190e+00 2.190e+00 2.196e+00 2.197e+00 2.200e+00 2.203e+00 2.205e+00 2.210e+00 2.211e+00 2.212e+00 2.216e+00 2.223e+00
+Quant/cuda/routed-product-1-tokens	alloc_words	exact	1778
+Quant/cuda/routed-product-1-tokens	wall_time	batch=128	n=20	7.237e-05	7.107e-05 7.151e-05 7.170e-05 7.172e-05 7.175e-05 7.177e-05 7.222e-05 7.234e-05 7.234e-05 7.237e-05 7.237e-05 7.264e-05 7.265e-05 7.268e-05 7.271e-05 7.271e-05 7.272e-05 7.277e-05 7.286e-05 7.478e-05
+Quant/cuda/routed-product-512-tokens	alloc_words	exact	1778
+Quant/cuda/routed-product-512-tokens	wall_time	batch=1	n=20	1.085e-01	1.084e-01 1.084e-01 1.084e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.085e-01 1.086e-01 1.086e-01 1.086e-01 1.086e-01 1.087e-01 1.087e-01 1.087e-01
+Quant/host/routed-product-1-tokens	alloc_words	exact	1559
+Quant/host/routed-product-1-tokens	wall_time	batch=1	n=20	6.946e-02	6.932e-02 6.933e-02 6.935e-02 6.939e-02 6.939e-02 6.941e-02 6.942e-02 6.943e-02 6.943e-02 6.946e-02 6.946e-02 6.951e-02 6.953e-02 6.961e-02 6.961e-02 6.967e-02 6.977e-02 7.059e-02 7.239e-02 7.288e-02
+Quant/host/routed-product-64-tokens	alloc_words	exact	1559
+Quant/host/routed-product-64-tokens	wall_time	batch=1	n=20	4.155e+00	4.146e+00 4.147e+00 4.149e+00 4.150e+00 4.152e+00 4.153e+00 4.153e+00 4.153e+00 4.153e+00 4.154e+00 4.155e+00 4.157e+00 4.157e+00 4.157e+00 4.159e+00 4.159e+00 4.159e+00 4.178e+00 4.182e+00 4.188e+00
 
 # machine: 73bfb753d0739958
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos

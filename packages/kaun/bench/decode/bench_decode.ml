@@ -147,6 +147,87 @@ let case len =
 
 let lens = [ 256; 1024 ]
 
+(* Routed quantised products at gpt-oss-20b's shapes: the gate and up projection
+   of one layer's 32 experts, MXFP4 [[| 32; 5760; 2880 |]], applied to each
+   token's 4 experts, compiled. One token is a decode step's product; a prompt's
+   tokens share experts, 512 of them on a GPU and 64 on the host, where 512 take
+   most of a minute a call. On the host, one token's product also runs eagerly.
+   Zero codes: the product's cost does not depend on their values. Each operand
+   is copied to storage of its own, as a model's are: a constant is one element
+   seen at every index, which a compiled call folds. *)
+
+let experts = 32
+and per_token = 4
+and outputs = 5760
+and inputs = 2880
+
+let compiled f = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) f
+let eager f = f
+
+let routed ~run ~tokens device =
+  let place t = Nx.place (Nx.Placement.on device) (Nx.copy t) in
+  let w =
+    Nx_quant.mxfp4
+      ~scales:(place (Nx.full Nx.uint8 [| experts; outputs; inputs / 32 |] 127))
+      (place (Nx.zeros Nx.uint8 [| experts; outputs; inputs / 2 |]))
+  in
+  (* Each token's experts, distinct, spread over all of them. *)
+  let ids =
+    Nx.init Nx.int64 [| tokens; per_token |] (fun i ->
+        Int64.of_int (((i.(0) * 7) + (i.(1) * 8)) mod experts))
+  in
+  let x = Nx.full Nx.float32 [| tokens; 1; 1; inputs |] 0.5 in
+  let f = run (fun ids x -> Nx_quant.apply ~ids w x) in
+  let ids = place ids and x = place x in
+  ignore (f ids x);
+  fun () -> ignore (f ids x)
+
+let synchronize device = Nx_device.synchronize (Nx.Device.memory device)
+
+let product ~run ~device ~tokens suffix =
+  Thumper.bench_with_setup
+    ~setup:(fun () -> routed ~run ~tokens (device ()))
+    (Printf.sprintf "routed product, %d tokens%s" tokens suffix)
+    (fun call ->
+      call ();
+      synchronize (device ()))
+
+let quant name ~device ~prompt =
+  Thumper.group name
+    (List.map
+       (fun tokens -> product ~run:compiled ~device ~tokens "")
+       [ 1; prompt ])
+
+let host () =
+  let device () = Nx.Device.host in
+  Thumper.group "host"
+    [
+      product ~run:compiled ~device ~tokens:1 "";
+      product ~run:compiled ~device ~tokens:64 "";
+      product ~run:eager ~device ~tokens:1 ", eager";
+    ]
+
+let cuda_quant () =
+  quant "cuda" ~device:(fun () -> Nx.Device.v (Cuda 0)) ~prompt:512
+
+(* Metal's pipelines are made by [--warm], as the decode kernels are (below). *)
+let metal_prompt = 512
+
+let metal () =
+  match Metal.device with
+  | None -> []
+  | Some device -> [ quant "metal" ~device ~prompt:metal_prompt ]
+
+let warm_metal () =
+  match Metal.device with
+  | None -> ()
+  | Some device ->
+      List.iter
+        (fun tokens ->
+          (routed ~run:compiled ~tokens (device ())) ();
+          synchronize (device ()))
+        [ 1; metal_prompt ]
+
 (* gpt-oss-20b *)
 
 let gpt_oss =
@@ -322,7 +403,9 @@ let warm flag =
 
 let () =
   match Array.to_list Sys.argv with
-  | [ _; "--warm" ] -> List.iter (fun len -> (decoder (model ()) ~len) ()) lens
+  | [ _; "--warm" ] ->
+      List.iter (fun len -> (decoder (model ()) ~len) ()) lens;
+      warm_metal ()
   | [ _; "--warm-gpt-oss" ] ->
       List.iter (fun kind -> (gpt_oss_step kind) ()) gpt_oss_kinds
   | [ _; "--cuda" ] ->
@@ -341,11 +424,14 @@ let () =
       let budgets =
         [ Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05 ]
       in
-      (* A gpt-oss case builds its weights in its setup. *)
+      (* A gpt-oss case builds its weights in its setup, and a prompt's routed
+         product takes seconds a call on the host. *)
       Thumper.run "kaun_decode"
         ~config:Thumper.Config.(default |> deadline 1200.)
         ~budgets
         (Thumper.group "Gpt2" (List.map case lens)
+        :: Thumper.group "Quant"
+             ((host () :: metal ()) @ if cuda then [ cuda_quant () ] else [])
         ::
         (if cuda then
            [ Thumper.group "GptOss" (List.map gpt_oss_case gpt_oss_kinds) ]
