@@ -35,6 +35,47 @@ let running_takes_first = true
 
 (* Unary *)
 
+(* Near 1, [1 - x²] cancels: its references round once, from exact terms. In
+   float64, [x² = p + e] exactly and [1 - p] is exact by Sterbenz; in float32,
+   [(1 - x) (1 + x)] is exact in float64 and rounds once to float32. *)
+let one_minus_square x =
+  let p = x *. x in
+  1. -. p -. Float.fma x x (-.p)
+
+let to_float32 r = Int32.float_of_bits (Int32.bits_of_float r)
+
+let ulps64 a b =
+  Int64.to_int (Int64.abs (Int64.sub (Int64.bits_of_float a) (Int64.bits_of_float b)))
+
+let ulps32 a b =
+  abs (Int32.to_int (Int32.bits_of_float a) - Int32.to_int (Int32.bits_of_float b))
+
+(* An elementwise function at every float dtype. *)
+type elementwise = { f : 'b. (float, 'b) Nx.t -> (float, 'b) Nx.t }
+
+(* [within_ulps n e ~reference64 ~reference32 xs] checks the gradient of [e.f]
+   at [xs], in float64 and in float32, against the reference of each dtype to
+   [n] ulps. *)
+let within_ulps n e ~reference64 ~reference32 xs =
+  let grad (type b) (dt : (float, b) Nx.dtype) xs =
+    Nx.to_array
+      (Rune.grad'
+         (fun x -> Nx.sum (e.f x))
+         (Nx.create dt [| Array.length xs |] xs))
+  in
+  let check name ulps reference xs got =
+    Array.iteri
+      (fun i x ->
+        let expected = reference x in
+        at_most int
+          ~msg:(Printf.sprintf "%s at %g: %h against %h" name x got.(i) expected)
+          ~than:n (ulps got.(i) expected))
+      xs
+  in
+  check "float64" ulps64 reference64 xs (grad Nx.float64 xs);
+  let xs32 = Array.map to_float32 xs in
+  check "float32" ulps32 reference32 xs32 (grad Nx.float32 xs32)
+
 let point_cases k points =
   cases
     ~name:(fun (name, _, _, _) -> name)
@@ -116,6 +157,17 @@ let unary_edges (k : Nx_backend.unary) =
                ("at -1 the tangent is infinite", -1., s *. inf);
                ("past 1 the tangent is NaN", 1.5, nan);
              ]);
+        test "near ±1 the gradient is ±1 / sqrt (1 - x²), to 4 ulps" (fun () ->
+            let e =
+              match k with
+              | Asin -> { f = Nx.asin }
+              | _ -> { f = Nx.acos }
+            in
+            within_ulps 4 e
+              ~reference64:(fun x -> s /. Float.sqrt (one_minus_square x))
+              ~reference32:(fun x ->
+                to_float32 (s /. Float.sqrt ((1. -. x) *. (1. +. x))))
+              [| 0.9; 0.999; 0.999999; -0.999999 |]);
       ]
   | Atan ->
       [ point_cases k (List.map row [ ("at +inf the tangent is 0", inf, 0.) ]) ]

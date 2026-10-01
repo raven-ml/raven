@@ -228,6 +228,11 @@ let terms da db =
   | Some d, None | None, Some d -> d
   | None, None -> assert false (* A rule runs for an operand with a tangent. *)
 
+(* [one_minus_square x] is [1 - x²] as [(1 - x) (1 + x)]: near |x| = 1, [x²]
+   rounds before the subtraction cancels, while [1 - x] is exact there. *)
+let one_minus_square x =
+  Nx.mul (Nx.rsub_s (one x) x) (Nx.add_s x (one x))
+
 let unary_tangent k x y dx =
   let coef c = mul dx c in
   match[@warning "@4@8"] (k : Nx_backend.unary) with
@@ -239,8 +244,8 @@ let unary_tangent k x y dx =
   | Sin -> coef (Nx.cos x)
   | Cos -> coef (Nx.neg (Nx.sin x))
   | Tan -> coef (Nx.recip (Nx.square (Nx.cos x)))
-  | Asin -> coef (Nx.recip (Nx.sqrt (Nx.rsub_s (one x) (Nx.mul x x))))
-  | Acos -> coef (Nx.neg (Nx.recip (Nx.sqrt (Nx.rsub_s (one x) (Nx.mul x x)))))
+  | Asin -> coef (Nx.recip (Nx.sqrt (one_minus_square x)))
+  | Acos -> coef (Nx.neg (Nx.recip (Nx.sqrt (one_minus_square x))))
   | Atan -> coef (Nx.recip (Nx.add_s (Nx.mul x x) (one x)))
   | Sinh -> coef (Nx.cosh x)
   | Cosh -> coef (Nx.sinh x)
