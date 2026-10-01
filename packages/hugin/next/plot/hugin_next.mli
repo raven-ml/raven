@@ -591,7 +591,10 @@ val contour :
     that a channel of that name would read in every cell the node lies in, if
     there is one. So a cell names its own scopes, and a grid, or a reference
     line layered over it, names the scales its cells share, such as the colour,
-    and no position or facet scale unless a {!share} gives its cells one.
+    and no position or facet scale unless a {!share} gives its cells one. A mark
+    made [`Independent] per panel holds its own scale of that name if it draws
+    in one panel, and a facet panel holds the one that a mark has there if no
+    other mark has one.
 
     {2:merging Merging}
 

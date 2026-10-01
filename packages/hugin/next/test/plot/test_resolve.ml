@@ -579,6 +579,43 @@ let scopes =
           equal floats (0., 3.) (hull ~at:(path [ index 0; index 0 ]) r "x");
           equal floats (2., 6.)
             (hull ~at:(path [ field "cell"; index 1 ]) r "x"));
+      test "a mark independent per panel holds its own scale" (fun () ->
+          let own = share [ ("color", `Independent) ] (filled [| 1.; 2. |]) in
+          let r = resolve (layer [ own; filled [| 5.; 6. |] ]) in
+          equal floats (1., 2.) (hull ~at:(path [ index 0 ]) r "color");
+          equal floats (5., 6.) (hull ~at:(path [ index 1 ]) r "color");
+          equal floats (5., 6.) (hull r "color"));
+      test "a zoom at a mark independent per panel zooms its own scale"
+        (fun () ->
+          let own = share [ ("color", `Independent) ] (filled [| 1.; 2. |]) in
+          let f = layer [ own; filled [| 5.; 6. |] ] in
+          let color = Scale.linear ~name:"color" () in
+          let zoomed at =
+            resolve
+              ~view:(View.set (View.zoom ?at color) (Some (8., 9.)) View.empty)
+              f
+          in
+          let r = zoomed (Some (path [ index 0 ])) in
+          equal floats (8., 9.) (hull ~at:(path [ index 0 ]) r "color");
+          equal floats (5., 6.) (hull r "color");
+          let r = zoomed None in
+          equal floats (1., 2.) (hull ~at:(path [ index 0 ]) r "color");
+          equal floats (8., 9.) (hull r "color"));
+      test "a facetted mark independent per panel names no one scale" (fun () ->
+          let f =
+            share
+              [ ("color", `Independent) ]
+              (dot ~x:(const 0.5) ~y:(const 0.5)
+                 ~fill:(num ~scale:exact (f64 [| 1.; 2. |]))
+                 ~fx:(strings [| "a"; "b" |])
+                 ())
+            |> name "m"
+          in
+          let r = resolve (layer [ f ]) in
+          fails_naming [ "no scope of the scale \"color\" holds m" ] (fun () ->
+              quant ~at:(path [ field "m" ]) r "color");
+          equal floats (2., 2.)
+            (hull ~at:(path [ field "panel"; field "b" ]) r "color"));
       prop "facets share one scale" (gen_values 6) (fun ys ->
           let y = Nx.reshape [| 2; 3 |] (f64 ys) in
           let plain = dot ~x:(const 0.5) ~y:(num ~scale:exact y) () in

@@ -2621,22 +2621,26 @@ let scope_of places name =
   | _ -> None
 
 (* [find_scale scales nodes ~at name t] is the scale [name] of the kind [t] in
-   the scope holding [at]: a panel's own scale, else the scope's. *)
+   the scope holding [at]. A scale that a mark makes independent per panel is
+   held by the mark, and by the facet panel it is in: [Panel (mid, p)] is in a
+   facet panel iff [p] is not the cell its readers are in. *)
 let find_scale scales nodes ~at name t =
   let sid = sid name t in
-  let own =
-    List.find_opt
-      (fun (F f) ->
-        equal_sid f.sid sid
-        &&
-        match f.key with
-        | Panel (_, p) -> Nx.Ptree.Path.equal p at
-        | _ -> false)
-      scales
+  let held (F f) =
+    equal_sid f.sid sid
+    &&
+    match f.key with
+    | Panel (mid, p) ->
+        Nx.Ptree.Path.equal mid at
+        || Nx.Ptree.Path.equal p at
+           && not
+                (List.exists (fun m -> Nx.Ptree.Path.equal m.m_pid p) f.members)
+    | _ -> false
   in
-  match own with
-  | Some f -> Found (Some f)
-  | None -> (
+  match List.filter held scales with
+  | [ f ] -> Found (Some f)
+  | _ :: _ :: _ -> No_scope
+  | [] -> (
       match find_path at nodes with
       | None -> No_node
       | Some places -> (
