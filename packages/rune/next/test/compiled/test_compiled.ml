@@ -33,7 +33,8 @@ let numel shape = Array.fold_left ( * ) 1 shape
    compute at float32 (ledger, Targets); [budgets] are its measured maxima of
    units in the last place, by row, where they differ from the ledger's.
    [starts] is the multiple of bytes at which the buffers drawn for it start in
-   their memory. *)
+   their memory, and [narrow_folds] whether a fold of 8-bit integers compiles
+   for it. *)
 type device = {
   device : Nx_device.t;
   name : string;
@@ -41,6 +42,7 @@ type device = {
   flushes : bool;
   budgets : (string * int) list;
   starts : int;
+  narrow_folds : bool;
 }
 
 let on_host =
@@ -51,6 +53,9 @@ let on_host =
     flushes = false;
     budgets = [];
     starts = 1;
+    (* Pending tn-cstyle: the fold casts between 8-bit vectors with a C cast,
+       which Clang refuses. *)
+    narrow_folds = false;
   }
 
 let on_metal =
@@ -65,6 +70,7 @@ let on_metal =
         (* Pending tn-metal: Metal reads the wrong elements of a buffer that
            starts 2 bytes into its memory. *)
         starts = 4;
+        narrow_folds = true;
       })
     Metal.device
 
@@ -369,9 +375,11 @@ let ints =
     D Nx.uint64;
   ]
 
-(* The integers of the fold law. Pending tn-cstyle, a fold of 8-bit integers
-   renders a cast between vectors that neither C nor Metal compiles. *)
-let fold_ints = List.filter (fun (D dt) -> Nx_dtype.itemsize dt > 1) ints
+(* The integers of the fold law on [d]. *)
+let fold_ints d =
+  if d.narrow_folds then ints
+  else List.filter (fun (D dt) -> Nx_dtype.itemsize dt > 1) ints
+
 let as_dt (F dt) = D dt
 let numeric d = ints @ List.map as_dt (floats d)
 let every d = (D Nx.bool :: ints) @ List.map as_dt (floats d)
@@ -1254,7 +1262,7 @@ let windows_and_products d ~count =
          })
   and integer_fold =
     law "fold of integers"
-      (over fold_ints
+      (over (fold_ints d)
          {
            per =
              (fun dt ->
@@ -1993,10 +2001,12 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
-    xfail
-      ~reason:
-        "a cast between int8 vectors renders as signed_char4, which neither C \
-         nor Metal converts to (tn-cstyle)"
+    (if d.narrow_folds then Fun.id
+     else
+       xfail
+         ~reason:
+           "a cast between int8 vectors renders as a C cast, which Clang \
+            refuses (tn-cstyle)")
     @@ test "a fold of int8 overlapping windows compiles" (fun () ->
         let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
         let w =
