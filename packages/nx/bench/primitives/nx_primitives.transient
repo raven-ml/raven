@@ -22,3 +22,16 @@ gather/float32-1e7-monotone	0	0.0
 gather/float64-1e7-random	0	0.0
 gather/float32-rows-4e4x8	0	0.0
 gather/float32-rows-1.25e6x8	0	0.0
+positions/mask50-4e4	2081224	52.0
+positions/mask50-1e7	520002136	52.0
+positions/counts-1e7	649996360	65.0
+compress/float64-4e4-mask50	2242416	56.1
+compress/float64-1e7-mask50	560004240	56.0
+lexsort/int64-float64-4e4	2960040	74.0
+lexsort/int64-float64-1e7	740000040	74.0
+searchsorted/float64-1e7-into-1e3	3010043384	301.0
+searchsorted/float64-1e7-into-1e6	5553388880	555.3
+unique/int64-4e4-1e2	6841664	171.0
+unique/int64-4e4-1e4	6997232	174.9
+unique/int64-1e7-1e2	1710001664	171.0
+unique/int64-1e7-1e6	1725999296	172.6

@@ -9,7 +9,7 @@
    [Nx.Rng].
 
    [--transient] prints, instead of timing, the bytes of host arrays each row's
-   call allocates beyond its result's, or [-] for a call that allocates enough
+   call allocates beyond its results', or [-] for a call that allocates enough
    on the OCaml heap to collect. [--transient] counts host arrays only: a
    kernel's C scratch, such as narrow scatter Add's 5 bytes per position
    (nx_c.h), is not counted. *)
@@ -19,11 +19,14 @@ type row =
       id : string;
       rows : int;
       setup : unit -> 'e;
-      run : 'e -> ('a, 'b) Nx.t;
+      run : 'e -> 'r;
+      results : 'r -> Nx.packed list;  (** The tensors a call returns. *)
     }
       -> row
 
-let row id rows setup run = Row { id; rows; setup; run }
+let row id rows setup run =
+  Row { id; rows; setup; run; results = (fun r -> [ Nx.P r ]) }
+
 let state () = Random.State.make [| 15 |]
 
 let tensor kind n f =
@@ -119,6 +122,60 @@ let gather =
       (take ~axis:0);
   ]
 
+let mask n = Nx.less_s (uniform_float64 n) 0.5
+
+let positions =
+  [
+    row "mask50-4e4" s (fun () -> mask s) Nx.positions;
+    row "mask50-1e7" l (fun () -> mask l) Nx.positions;
+    row "counts-1e7" l (fun () -> int64s l 4) Nx.positions;
+  ]
+
+let compress =
+  let masked id n =
+    row id n
+      (fun () -> (uniform_float64 n, mask n))
+      (fun (x, condition) -> Nx.compress ~condition x)
+  in
+  [ masked "float64-4e4-mask50" s; masked "float64-1e7-mask50" l ]
+
+(* Ascending by an int64 key of 1000 values, then by a float64 one. *)
+let lexsort =
+  let two_keys n () = (int64s n 1000, uniform_float64 n) in
+  let sort (a, b) =
+    Nx.lexsort (Nx.stack ~axis:1 [ Nx.order_key a; Nx.order_key b ])
+  in
+  [
+    row "int64-float64-4e4" s (two_keys s) sort;
+    row "int64-float64-1e7" l (two_keys l) sort;
+  ]
+
+let searchsorted =
+  let into m () = (fst (Nx.sort (uniform_float64 m)), uniform_float64 l) in
+  let search (knots, q) = Nx.searchsorted ~side:`Right knots q in
+  [
+    row "float64-1e7-into-1e3" l (into 1_000) search;
+    row "float64-1e7-into-1e6" l (into 1_000_000) search;
+  ]
+
+let unique =
+  let keys id n d =
+    Row
+      {
+        id;
+        rows = n;
+        setup = (fun () -> int64s n d);
+        run = Nx.unique;
+        results = (fun (g : Nx.groups) -> Nx.[ P g.ids; P g.first; P g.counts ]);
+      }
+  in
+  [
+    keys "int64-4e4-1e2" s 100;
+    keys "int64-4e4-1e4" s 10_000;
+    keys "int64-1e7-1e2" l 100;
+    keys "int64-1e7-1e6" l 1_000_000;
+  ]
+
 let groups =
   [
     ("arange", arange);
@@ -126,13 +183,19 @@ let groups =
     ("cumsum", cumsum);
     ("scatter", scatter);
     ("gather", gather);
+    ("positions", positions);
+    ("compress", compress);
+    ("lexsort", lexsort);
+    ("searchsorted", searchsorted);
+    ("unique", unique);
   ]
 
-(* The bytes of host arrays [f] allocates beyond its result's: the rises of the
-   host's allocated bytes during the call, less the result's bytes, or [None] if
-   a collection ran during the call. A collection returns dead arrays' bytes
-   within the next rise, so the call runs with the collector held off. *)
-let transient f =
+(* The bytes of host arrays [f] allocates beyond its results': the rises of the
+   host's allocated bytes during the call, less the bytes of the tensors
+   [results] finds in its value, or [None] if a collection ran during the call.
+   A collection returns dead arrays' bytes within the next rise, so the call
+   runs with the collector held off. *)
+let transient f results =
   let host = Nx_device.host in
   let collections () =
     let s = Gc.quick_stat () in
@@ -162,15 +225,18 @@ let transient f =
           (allocated, total + Int.max 0 (allocated - level))
       | _ -> (level, total)
     in
-    Some (snd (List.fold_left rise (base, 0) events) - Nx.nbytes r)
+    let kept =
+      List.fold_left (fun n (Nx.P t) -> n + Nx.nbytes t) 0 (results r)
+    in
+    Some (snd (List.fold_left rise (base, 0) events) - kept)
 
 let print_transient () =
   List.iter
     (fun (group, rows) ->
       List.iter
-        (fun (Row { id; rows; setup; run }) ->
+        (fun (Row { id; rows; setup; run; results }) ->
           let env = setup () in
-          match transient (fun () -> run env) with
+          match transient (fun () -> run env) results with
           | None -> Printf.printf "%s/%s\t-\t-\n%!" group id
           | Some bytes ->
               Printf.printf "%s/%s\t%d\t%.1f\n%!" group id bytes

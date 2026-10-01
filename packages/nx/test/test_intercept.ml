@@ -554,6 +554,8 @@ let reads =
           ("Nx.fold_item", discard (fun () -> Nx.fold_item ( +. ) 0. x));
           ("Nx.map_item", discard (fun () -> Nx.map_item Fun.id x));
           ("Nx.iter_item", fun () -> Nx.iter_item ignore x);
+          ("Nx.positions", discard (fun () -> Nx.positions mask));
+          ("Nx.unique", discard (fun () -> Nx.unique x));
           ("Nx.compress", discard (fun () -> Nx.compress ~condition:mask x));
           ("Nx.extract", discard (fun () -> Nx.extract ~condition:mask x));
           ("Nx.nonzero", discard (fun () -> Nx.nonzero x));
@@ -579,6 +581,37 @@ let reads =
           let i, seen = naming () in
           E.intercept i f;
           equal names [ expected ] (List.sort_uniq String.compare !seen));
+      Windtrap.cases ~name:fst
+        "a function whose length depends on values reads it once"
+        [
+          ("positions of a mask", discard (fun () -> Nx.positions mask));
+          ( "positions of counts",
+            discard (fun () ->
+                Nx.positions (Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 1l |])) );
+          ("compress", discard (fun () -> Nx.compress ~condition:mask x));
+          ( "compress along an axis",
+            discard (fun () ->
+                Nx.compress ~axis:1
+                  ~condition:(Nx.create Nx.bool [| 3 |] [| false; true; true |])
+                  wide) );
+          ("extract", discard (fun () -> Nx.extract ~condition:mask x));
+          ("nonzero", discard (fun () -> Nx.nonzero wide));
+          ("argwhere", discard (fun () -> Nx.argwhere wide));
+          ("unique", discard (fun () -> Nx.unique wide));
+        ]
+        (fun (_, f) ->
+          let i, seen = naming () in
+          E.intercept i f;
+          equal int 1 (List.length !seen));
+      test "positions of nothing and nonzero of a scalar read nothing"
+        (fun () ->
+          let i, seen = naming () in
+          E.intercept i (fun () ->
+              ignore (Nx.positions (Nx.zeros Nx.bool [| 0 |]));
+              ignore (Nx.positions (Nx.zeros Nx.int32 [| 0 |]));
+              ignore (Nx.nonzero (Nx.scalar Nx.float32 1.));
+              ignore (Nx.unique (Nx.zeros Nx.int32 [| 0 |])));
+          equal names [] !seen);
     ]
 
 let () =

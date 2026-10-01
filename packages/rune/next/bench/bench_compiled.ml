@@ -76,6 +76,25 @@ let topk ~k ~n ~rows =
           Nx_device.synchronize Nx_device.host);
     ]
 
+(* [n] float64 queries searched among [m] sorted knots, the knots captured by a
+   compiled function. Compilation happens in the warm-up. *)
+let searchsorted id ~n ~m =
+  Thumper.bench_with_setup ~id
+    ~setup:(fun () ->
+      let st = Random.State.make [| 15 |] in
+      let uniform k =
+        Nx.init Nx.float64 [| k |] (fun _ -> Random.State.float st 1.)
+      in
+      let knots = fst (Nx.sort (uniform m)) in
+      let f =
+        Rune_next.Rune.jit' (fun q -> Nx.searchsorted ~side:`Right knots q)
+      in
+      (f, uniform n))
+    id
+    (fun (f, q) ->
+      ignore (f q);
+      Nx_device.synchronize Nx_device.host)
+
 (* Chains on a GPU *)
 
 type chain = {
@@ -177,4 +196,10 @@ let () =
         (Thumper.group ~id:"gather" "gather"
            [ gather "float32-1Mi-from-1Mi-host" (1 lsl 20) ]
         :: topk ~k:4 ~n:32 ~rows:512
+        :: Thumper.group ~id:"searchsorted" "searchsorted"
+             [
+               searchsorted "float64-1e6-into-1e3-host" ~n:1_000_000 ~m:1_000;
+               searchsorted "float64-1e6-into-1e6-host" ~n:1_000_000
+                 ~m:1_000_000;
+             ]
         :: (metal args @ cuda ()))

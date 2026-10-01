@@ -15,6 +15,7 @@ This document compares the Nx library (OCaml) with NumPy (Python), highlighting 
   - [6. Linear Algebra](#6-linear-algebra)
   - [7. Broadcasting](#7-broadcasting)
   - [8. Conditional Operations](#8-conditional-operations)
+    - [Masks, Sorting and Grouping](#masks-sorting-and-grouping)
   - [9. Random Number Generation](#9-random-number-generation)
   - [10. Real-World Example: Linear Regression](#10-real-world-example-linear-regression)
 
@@ -292,6 +293,56 @@ mask = arr > 0.5
 
 # Apply condition with where
 result = np.where(mask, arr1, arr2)
+```
+
+### Masks, Sorting and Grouping
+
+Rows of keys sort column `0` first, where `np.lexsort` sorts by its last key
+first. `Nx.unique` numbers groups in order of first appearance, where
+`np.unique` numbers them in sorted order.
+
+**Nx:**
+<!-- $MDX skip -->
+```ocaml
+(* Positions where a mask holds, and the elements there *)
+let hits = Nx.positions mask
+let kept = Nx.compress ~condition:mask x
+
+(* Sort by a, then by b descending *)
+let perm =
+  Nx.lexsort (Nx.stack ~axis:1 [ Nx.order_key a; Nx.bitwise_not (Nx.order_key b) ])
+
+(* Where queries fall among sorted knots *)
+let bins = Nx.searchsorted ~side:`Right knots q
+
+(* Group ids, each group's first position and size *)
+let g = Nx.unique keys
+
+(* Maxima at indices, and counts per id *)
+let m = Nx.scatter ~mode:`Max ~axis:0 ~indices ~values base
+let counts =
+  Nx.reduce_segments `Add ~segments:k ids (Nx.ones Nx.int64 [| Nx.dim 0 ids |])
+```
+
+**NumPy:**
+```python
+# Positions where a mask holds, and the elements there
+hits = np.flatnonzero(mask)
+kept = x[mask]
+
+# Sort by a, then by b descending
+perm = np.lexsort((-b, a))
+
+# Where queries fall among sorted knots
+bins = np.searchsorted(knots, q, side="right")
+
+# Group ids, each group's first position and size
+uniq, first, ids, counts = np.unique(keys, return_index=True,
+                                     return_inverse=True, return_counts=True)
+
+# Maxima at indices, and counts per id
+m = base.copy(); np.maximum.at(m, indices, values)
+counts = np.bincount(ids, minlength=k)
 ```
 
 ## 9. Random Number Generation

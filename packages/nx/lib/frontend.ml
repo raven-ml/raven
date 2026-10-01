@@ -1983,88 +1983,114 @@ let set specs v x =
         reshape x_shape result
       end
 
-(* Data-dependent output shapes — not differentiable *)
+(* Lengths that depend on values *)
 
-let nonzero_indices_only ~by (condition : (bool, bool_elt) t) =
-  let bits = read_array ~by (flatten condition) in
-  let positions = ref [] in
-  for i = Array.length bits - 1 downto 0 do
-    if bits.(i) then positions := Int64.of_int i :: !positions
-  done;
-  let arr = Array.of_list !positions in
-  [| create (B.context condition) Int64 [| Array.length arr |] arr |]
-
-let compress' ~by ?axis ~(condition : (bool, bool_elt) t) t =
-  match axis with
-  | None ->
-      if numel condition > numel t then
-        err "compress" "condition of %d, longer than the %d elements"
-          (numel condition) (numel t);
-      let t_flat = flatten t in
-      let cond_flat = flatten condition in
-      let n =
-        sum ~axes:[ 0 ] (astype Int64 cond_flat)
-        |> squeeze |> read_item ~by |> Int64.to_int
+(* [positions' ~by c] is [positions c], its length read by the surface function
+   [by]. A boolean reads its total. Integer counts also read their least count
+   and their least running total: with every count in [0, 2^63), the first
+   running total past int64's range is negative, so the two catch a negative
+   count and a sum that wraps. *)
+let positions' (type a b) ~by (c : (a, b) t) : int64_t =
+  let dt = dtype c in
+  if ndim c <> 1 then
+    err "positions" "counts of shape %s, not 1-D" (Shape.to_string (shape c));
+  (match dt with
+  | Bool -> ()
+  | _ when Nx_dtype.is_int dt -> ()
+  | _ ->
+      err "positions" "counts of dtype %s, not boolean or integer"
+        (Nx_dtype.to_string dt));
+  let ctx = B.context c and n = dim 0 c in
+  if n = 0 then empty ctx Int64 [| 0 |]
+  else
+    let counts = cast Int64 c in
+    let ends = cumsum counts in
+    let last = shrink [| (n - 1, n) |] ends in
+    let total =
+      match dt with
+      | Bool -> (read_array ~by last).(0)
+      | _ ->
+          let least x = reshape [| 1 |] (min x) in
+          let read =
+            read_array ~by
+              (concatenate ~axis:0 [ last; least counts; least ends ])
+          in
+          (if read.(1) < 0L then
+             match dt with
+             | UInt64 -> err "positions" "a count is past int64's range"
+             | _ -> err "positions" "count %Ld is negative" read.(1));
+          if read.(2) < 0L then
+            err "positions" "the counts sum past int64's range";
+          read.(0)
+    in
+    if total = 0L then empty ctx Int64 [| 0 |]
+    else
+      (* Index [i] with a positive count lands at its run's start; every other
+         index lands at [total], outside the result, and is dropped, so no two
+         updates meet. A run longer than one is filled by the running
+         maximum. *)
+      let positive : bool_t =
+        match dt with Bool -> c | _ -> greater_s counts 0L
       in
-      if n = 0 then empty (B.context t) (dtype t) [| 0 |]
-      else take ~indices:(nonzero_indices_only ~by cond_flat).(0) t_flat
-  | Some axis ->
-      let axis = resolve_single_axis t axis in
-      let axis_size = dim axis t in
-      if numel condition <> axis_size then
-        invalid_arg
-          (Printf.sprintf "compress: length %d doesn't match axis %d size %d"
-             (numel condition) axis axis_size);
-      let cond_1d = reshape [| axis_size |] condition in
-      let true_idx = nonzero_indices_only ~by cond_1d in
-      if numel true_idx.(0) = 0 then begin
-        let s = Array.copy (shape t) in
-        s.(axis) <- 0;
-        empty (B.context t) (dtype t) s
-      end
-      else take ~axis ~indices:true_idx.(0) t
+      let at = where positive (sub ends counts) (scalar ctx Int64 total) in
+      let placed =
+        scatter ~unique_indices:true ~axis:0 ~indices:at
+          ~values:(arange ctx Int64 0 n 1)
+          (zeros ctx Int64 [| Int64.to_int total |])
+      in
+      match dt with Bool -> placed | _ -> cummax placed
 
-let compress ?axis ~condition t = compress' ~by:"Nx.compress" ?axis ~condition t
+let positions c = positions' ~by:"Nx.positions" c
+
+let compress ?axis ~condition t =
+  if ndim condition <> 1 then
+    err "compress" "condition of shape %s, not 1-D"
+      (Shape.to_string (shape condition));
+  let n =
+    match axis with
+    | None -> numel t
+    | Some a -> dim (resolve_single_axis t a) t
+  in
+  if dim 0 condition <> n then
+    err "compress" "condition of %d elements for %d" (dim 0 condition) n;
+  take ?axis ~indices:(positions' ~by:"Nx.compress" condition) t
 
 let extract ~condition t =
   if numel condition <> numel t then
     err "extract" "condition of %d elements, tensor of %d" (numel condition)
       (numel t);
-  compress' ~by:"Nx.extract" ~condition (flatten t)
+  take ~indices:(positions' ~by:"Nx.extract" (flatten condition)) t
 
-let nonzero' (type a b) ~by (t : (a, b) t) =
-  let t_shape = shape t in
-  let nd = Array.length t_shape in
-  let mask = not_equal t (zeros_like t) in
-  let bits = read_array ~by (flatten mask) in
-  let n = Array.fold_left (fun acc b -> if b then acc + 1 else acc) 0 bits in
-  let coords = Array.init nd (fun _ -> Array.make n 0L) in
-  let k = ref 0 in
-  Array.iteri
-    (fun flat b ->
-      if b then begin
-        let pos = Shape.unravel_index flat t_shape in
-        for d = 0 to nd - 1 do
-          coords.(d).(!k) <- Int64.of_int pos.(d)
-        done;
-        incr k
-      end)
-    bits;
-  Array.map (fun c -> create (B.context t) Int64 [| n |] c) coords
+(* The flat positions, in C order, of [t]'s non-zero elements. *)
+let flat_nonzero (type a b) ~by (t : (a, b) t) =
+  let mask : bool_t =
+    match dtype t with Bool -> t | _ -> not_equal t (zeros_like t)
+  in
+  positions' ~by (flatten mask)
 
-let nonzero t = nonzero' ~by:"Nx.nonzero" t
+(* The coordinates in [shape] of the flat positions [p], one tensor per axis. *)
+let coordinates shape p =
+  let r = Array.length shape in
+  let c = Array.make r p in
+  let rest = ref p in
+  for d = r - 1 downto 1 do
+    let extent = Int64.of_int shape.(d) in
+    c.(d) <- mod_s !rest extent;
+    rest := div_s !rest extent
+  done;
+  c.(0) <- !rest;
+  c
+
+let nonzero t =
+  if ndim t = 0 then [||]
+  else coordinates (shape t) (flat_nonzero ~by:"Nx.nonzero" t)
 
 let argwhere t =
   let by = "Nx.argwhere" in
-  let coords = nonzero' ~by t in
-  let nd = Array.length coords in
-  if nd = 0 then
-    let k = if read_item ~by t = Nx_dtype.zero (dtype t) then 0 else 1 in
-    empty (B.context t) Int64 [| k; 0 |]
+  if ndim t = 0 then
+    empty (B.context t) Int64 [| dim 0 (flat_nonzero ~by t); 0 |]
   else
-    let n = dim 0 coords.(0) in
-    let cols = Array.map (read_array ~by) coords in
-    init (B.context t) Int64 [| n; nd |] (fun i -> cols.(i.(1)).(i.(0)))
+    stack ~axis:1 (Array.to_list (coordinates (shape t) (flat_nonzero ~by t)))
 
 (* ───── Splitting ───── *)
 
@@ -2131,15 +2157,32 @@ let sort_axis op x axis =
     err op "axis %d out of bounds for %dD tensor" axis r;
   axis
 
+(* The sort kernels take no packed dtype: [int4] and [uint4] sort as the 8-bit
+   integers they widen to exactly. *)
 let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
   if ndim x = 0 then (x, scalar (B.context x) Nx_dtype.int64 0L)
   else
     let axis = sort_axis "sort" x axis in
-    (B.sort ~descending ~axis x, B.argsort ~descending ~axis x)
+    let sorted (type c d) (w : (c, d) t) =
+      (B.sort ~descending ~axis w, B.argsort ~descending ~axis w)
+    in
+    match dtype x with
+    | Int4 ->
+        let v, i = sorted (cast Int8 x) in
+        (cast Int4 v, i)
+    | UInt4 ->
+        let v, i = sorted (cast UInt8 x) in
+        (cast UInt4 v, i)
+    | _ -> sorted x
 
-let argsort ?(descending = false) ?(axis = -1) x =
+let argsort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
   if ndim x = 0 then scalar (B.context x) Nx_dtype.int64 0L
-  else B.argsort ~descending ~axis:(sort_axis "argsort" x axis) x
+  else
+    let axis = sort_axis "argsort" x axis in
+    match dtype x with
+    | Int4 -> B.argsort ~descending ~axis (cast Int8 x)
+    | UInt4 -> B.argsort ~descending ~axis (cast UInt8 x)
+    | _ -> B.argsort ~descending ~axis x
 
 (* The tensor and axis an arg-reduction runs along. *)
 let arg_axis op ?axis x =
@@ -2517,6 +2560,169 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
     | Nx_dtype.Complex64 | Nx_dtype.Complex128 -> assert false
   in
   (take_along_axis ~axis ~indices x, indices)
+
+(* Keys *)
+
+(* The order key of a float64: its bits, all flipped when the sign is set and
+   only the sign bit otherwise; every NaN keys to all ones. *)
+let float64_order_key (x : float64_t) : uint64_t =
+  let b = bitcast Int64 x in
+  let flip =
+    where (less_s b 0L) (scalar_like b (-1L)) (scalar_like b Int64.min_int)
+  in
+  bitcast UInt64 (where (isnan x) (scalar_like b (-1L)) (bitwise_xor b flip))
+
+let order_key (type a b) (x : (a, b) t) : uint64_t =
+  let signed v =
+    bitcast UInt64
+      (bitwise_xor (cast Int64 v) (scalar (B.context v) Int64 Int64.min_int))
+  in
+  match dtype x with
+  | Float64 -> float64_order_key x
+  | Float32 | Float16 | BFloat16 -> float64_order_key (cast Float64 x)
+  | Float8_e4m3 | Float8_e5m2 ->
+      float64_order_key (cast Float64 (cast Float16 x))
+  | Int4 | Int8 | Int16 | Int32 | Int64 -> signed x
+  | UInt4 | UInt8 | UInt16 | UInt32 | Bool -> cast UInt64 x
+  | UInt64 -> x
+  | Complex64 | Complex128 ->
+      err "order_key" "complex numbers have no order key"
+
+(* [check_keys ~op keys] refuses what [op] does not read as keys. *)
+let check_keys ~op keys =
+  let r = ndim keys in
+  if r <> 1 && r <> 2 then
+    err op "keys of shape %s, not 1-D or 2-D" (Shape.to_string (shape keys));
+  if Nx_dtype.is_complex (dtype keys) then
+    err op "complex numbers have no order"
+
+let lexsort keys =
+  check_keys ~op:"lexsort" keys;
+  if ndim keys = 1 then argsort keys
+  else
+    let n = dim 0 keys and w = dim 1 keys in
+    let column j = slice [ A; I j ] keys in
+    (* Columns from the last: each stable sort keeps the order of the columns
+       after it among its ties. *)
+    let rec sorted j perm =
+      if j < 0 then perm
+      else
+        sorted (j - 1)
+          (take ~indices:(argsort (take ~indices:perm (column j))) perm)
+    in
+    if w = 0 then arange (B.context keys) Int64 0 n 1
+    else sorted (w - 2) (argsort (column (w - 1)))
+
+(* [numeric_key x] is [order_key x] with [-0.]'s key moved to [0.]'s, so that
+   numbers compare as [less] compares them. *)
+let numeric_key (type a b) (x : (a, b) t) =
+  let k = order_key x in
+  if Nx_dtype.is_float (dtype x) then
+    where (equal_s k Int64.max_int) (scalar_like k Int64.min_int) k
+  else k
+
+(* Whether each row of the keys [a] comes before the row of [b] at its index, or
+   before or at it unless [strict], column 0 first. *)
+let lexicographic ~strict a b =
+  let w = dim 1 a in
+  let col x j = slice [ A; I j ] x in
+  let rec from j =
+    let a = col a j and b = col b j in
+    if j = w - 1 then if strict then less a b else less_equal a b
+    else logical_or (less a b) (logical_and (equal a b) (from (j + 1)))
+  in
+  if w = 0 then full (B.context a) Bool [| dim 0 a |] (not strict) else from 0
+
+let bit_length n =
+  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
+  go n 0
+
+let searchsorted (type a b) ~side (s : (a, b) t) (v : (a, b) t) =
+  check_keys ~op:"searchsorted" s;
+  let rows = ndim s = 2 in
+  if rows && (ndim v <> 2 || dim 1 v <> dim 1 s) then
+    err "searchsorted" "keys of shape %s among rows of shape %s"
+      (Shape.to_string (shape v))
+      (Shape.to_string (shape s));
+  let ctx = B.context v and m = dim 0 s in
+  let n = if rows then dim 0 v else numel v in
+  let result = if rows then [| n |] else shape v in
+  if m = 0 || n = 0 then zeros ctx Int64 result
+  else
+    let q =
+      if rows then numeric_key v
+      else reshape [| n |] (contiguous (numeric_key v))
+    and rounds = bit_length m in
+    (* All-ones keys past [m], which no query precedes: no round reads outside
+       the table. *)
+    let table =
+      let tail = (1 lsl rounds) - 1 - m in
+      pad
+        (if rows then [| (0, tail); (0, 0) |] else [| (0, tail) |])
+        (-1L) (numeric_key s)
+    in
+    let strict = match side with `Left -> true | `Right -> false in
+    let before row =
+      if rows then lexicographic ~strict row q
+      else if strict then less row q
+      else less_equal row q
+    in
+    (* [last] is the last position whose key comes before, or -1. *)
+    let rec bisect step last =
+      if step = 0 then last
+      else
+        let at = add_s last (Int64.of_int step) in
+        bisect (step / 2)
+          (where (before (take ~axis:0 ~indices:at table)) at last)
+    in
+    let count =
+      add_s (bisect (1 lsl (rounds - 1)) (full ctx Int64 [| n |] (-1L))) 1L
+    in
+    (* An all-ones query also counts the padding under [`Right]. *)
+    reshape result (if strict then count else minimum_s count (Int64.of_int m))
+
+type groups = { ids : int64_t; first : int64_t; counts : int64_t }
+
+let unique keys =
+  check_keys ~op:"unique" keys;
+  let ctx = B.context keys and n = dim 0 keys in
+  if n = 0 then
+    let none = empty ctx Int64 [| 0 |] in
+    { ids = none; first = none; counts = none }
+  else
+    let k = order_key keys in
+    let perm = lexsort k in
+    let sorted = take ~axis:0 ~indices:perm k in
+    (* Whether each sorted row starts a run of equal rows. *)
+    let starts =
+      let differs =
+        not_equal (slice [ R (1, n) ] sorted) (slice [ R (0, n - 1) ] sorted)
+      in
+      let differs = if ndim k = 2 then any ~axes:[ 1 ] differs else differs in
+      pad [| (1, 0) |] true differs
+    in
+    let iota = arange ctx Int64 0 n 1 in
+    let run = cummax (where starts iota (zeros_like iota)) in
+    let inverse =
+      scatter ~unique_indices:true ~axis:0 ~indices:perm ~values:iota
+        (zeros ctx Int64 [| n |])
+    in
+    (* The sort is stable, so a run's first row in input order is the first
+       occurrence of its key. *)
+    let firsts = take ~indices:inverse starts in
+    let earlier =
+      let f = cast Int64 firsts in
+      sub (cumsum f) f
+    in
+    let ids =
+      take ~indices:inverse (take ~indices:(take ~indices:run perm) earlier)
+    in
+    let first = positions' ~by:"Nx.unique" firsts in
+    let counts =
+      reduce_segments `Add ~segments:(dim 0 first) ids
+        (broadcast_to [| n |] (scalar ctx Int64 1L))
+    in
+    { ids; first; counts }
 
 (* ───── Random Number Generation ───── *)
 

@@ -518,7 +518,6 @@ let packed_ints =
       ("int4 add", fun () -> ignore (Nx.add q q));
       ("int4 maximum", fun () -> ignore (Nx.maximum q q));
       ("int4 equal", fun () -> ignore (Nx.equal q q));
-      ("int4 sort", fun () -> ignore (Nx.sort q));
       ("bool add", fun () -> ignore (Nx.add b b));
       ("bool neg", fun () -> ignore (Nx.neg b));
       ("bool sum", fun () -> ignore (Nx.sum b));

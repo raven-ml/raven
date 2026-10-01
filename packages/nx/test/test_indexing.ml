@@ -515,6 +515,78 @@ let narrow_additions =
       sums "bfloat16" Nx.bfloat16;
     ]
 
+(* Counts of a dtype, drawn as OCaml ints in [0, 3]. *)
+type counted = Counted : string * ('a, 'b) Nx.dtype * (int -> 'a) -> counted
+
+let counted =
+  [
+    Counted ("bool", Nx.bool, fun c -> c > 0);
+    Counted ("int4", Nx.int4, Fun.id);
+    Counted ("int8", Nx.int8, Fun.id);
+    Counted ("uint8", Nx.uint8, Fun.id);
+    Counted ("int32", Nx.int32, Int32.of_int);
+    Counted ("int64", Nx.int64, Int64.of_int);
+    Counted ("uint64", Nx.uint64, Int64.of_int);
+  ]
+
+let positions_of_counts =
+  let repeats (Counted (name, dtype, of_int)) =
+    let drawn =
+      let open Gen in
+      let* n =
+        frequency
+          [
+            (4, int_range 0 20);
+            (1, int_range 4090 4100);
+            (1, int_range 8990 9000);
+          ]
+      in
+      let bound = if name = "bool" then 1 else 3 in
+      array ~size:(constant n) (int_range 0 bound)
+    in
+    prop (name ^ " positions repeats each index by its count") drawn (fun c ->
+        let expected =
+          List.concat_map
+            (fun i -> List.init c.(i) (Fun.const (Int64.of_int i)))
+            (List.init (Array.length c) Fun.id)
+        in
+        equal (array int64) (Array.of_list expected)
+          (Nx.to_array
+             (Nx.positions
+                (Nx.create dtype [| Array.length c |] (Array.map of_int c)))))
+  in
+  let refuses message c =
+    raises
+      (Invalid_argument ("positions: " ^ message))
+      (fun () -> ignore (Nx.positions c))
+  in
+  group "positions"
+    (List.map repeats counted
+    @ [
+        test
+          "positions refuses a negative count, a uint64 count past int64, a \
+           sum past int64, a float and a matrix" (fun () ->
+            refuses "count -1 is negative"
+              (Nx.create Nx.int32 [| 2 |] [| 2l; -1l |]);
+            refuses "a count is past int64's range"
+              (Nx.create Nx.uint64 [| 2 |] [| 1L; Int64.min_int |]);
+            refuses "the counts sum past int64's range"
+              (Nx.create Nx.int64 [| 2 |] [| Int64.max_int; 1L |]);
+            refuses "counts of dtype float32, not boolean or integer"
+              (Nx.create Nx.float32 [| 1 |] [| 1. |]);
+            refuses "counts of shape [2,2], not 1-D"
+              (Nx.zeros Nx.bool [| 2; 2 |]));
+        test "positions of nothing is empty" (fun () ->
+            equal (array int64) [||]
+              (Nx.to_array (Nx.positions (Nx.zeros Nx.bool [| 0 |])));
+            equal (array int64) [||]
+              (Nx.to_array (Nx.positions (Nx.zeros Nx.int32 [| 2 |]))));
+        test "a count past the last index fills one run at the end" (fun () ->
+            equal (array int64) [| 2L; 2L; 2L; 2L; 2L |]
+              (Nx.to_array
+                 (Nx.positions (Nx.create Nx.int32 [| 3 |] [| 0l; 0l; 5l |]))));
+      ])
+
 let selections =
   group "selections"
     [
@@ -602,17 +674,46 @@ let selections =
                (Nx.extract
                   ~condition:(Nx.reshape [| 3; 2 |] condition)
                   (Nx.transpose t))));
-      test "compress without an axis refuses a condition longer than the tensor"
-        (fun () ->
+      test
+        "compress refuses a condition of another length, with or without an \
+         axis" (fun () ->
+          let t = Nx.zeros Nx.int32 [| 2; 3 |] in
+          List.iter
+            (fun (axis, n) ->
+              raises_invalid_arg (fun () ->
+                  Nx.compress ?axis ~condition:(Nx.ones Nx.bool [| n |]) t))
+            [ (None, 5); (None, 7); (Some 1, 2); (Some 1, 4) ]);
+      test "compress refuses a 2-D condition, even of the right size" (fun () ->
           raises_invalid_arg (fun () ->
               Nx.compress
-                ~condition:(Nx.create Nx.bool [| 3 |] [| false; false; true |])
-                (Nx.zeros Nx.int32 [| 2 |])));
-      test "compress refuses a condition of another length" (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.compress ~axis:0
-                ~condition:(Nx.create Nx.bool [| 3 |] [| true; false; true |])
-                (Nx.zeros Nx.int32 [| 2 |])));
+                ~condition:(Nx.ones Nx.bool [| 2; 3 |])
+                (Nx.zeros Nx.int32 [| 2; 3 |])));
+      test "compress keeps nothing or everything, along an empty axis too"
+        (fun () ->
+          let r, t = tensor_of [| 2; 3 |] in
+          let all = Nx.ones Nx.bool [| 3 |]
+          and none = Nx.zeros Nx.bool [| 3 |] in
+          equal ints r (Ref.of_nx (Nx.compress ~axis:1 ~condition:all t));
+          equal (array int) [| 2; 0 |]
+            (Nx.shape (Nx.compress ~axis:1 ~condition:none t));
+          equal (array int) [| 0; 3 |]
+            (Nx.shape
+               (Nx.compress ~axis:0 ~condition:(Nx.zeros Nx.bool [| 0 |])
+                  (Nx.zeros Nx.int32 [| 0; 3 |]))));
+      test
+        "nonzero of a scalar is empty, and argwhere of a scalar has no column"
+        (fun () ->
+          equal int 0 (Array.length (Nx.nonzero (Nx.scalar Nx.int32 3l)));
+          equal (array int) [| 1; 0 |]
+            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 3l)));
+          equal (array int) [| 0; 0 |]
+            (Nx.shape (Nx.argwhere (Nx.scalar Nx.int32 0l))));
+      test "nonzero takes NaN as non-zero, and -0 and complex zero as zero"
+        (fun () ->
+          let x = Nx.create Nx.float64 [| 4 |] [| -0.; Float.nan; 0.; 2. |] in
+          equal (array int64) [| 1L; 3L |] (Nx.to_array (Nx.nonzero x).(0));
+          let z = Nx.create Nx.complex64 [| 2 |] Complex.[| zero; one |] in
+          equal (array int64) [| 1L |] (Nx.to_array (Nx.nonzero z).(0)));
       test "extract flattens a condition of the same size and another shape"
         (fun () ->
           let r, t = tensor_of [| 2; 3 |] in
@@ -743,6 +844,7 @@ let () =
          scatters_by_extremes;
          narrow_additions;
          extremes;
+         positions_of_counts;
          selections;
          windows;
          stepped_ranges;

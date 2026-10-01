@@ -348,9 +348,12 @@ let reads =
           ( "Nx.compress",
             fun x ->
               ignore
-                (Nx.compress
+                (Nx.compress ~axis:0
                    ~condition:(Nx.create Nx.bool [| 2 |] [| true; false |])
                    x) );
+          ( "Nx.positions",
+            fun x -> ignore (Nx.positions (Nx.flatten (Nx.less_s x 1.))) );
+          ("Nx.unique", fun x -> ignore (Nx.unique x));
           ("Nx.print", Nx.print);
         ]
         (fun (name, f) ->

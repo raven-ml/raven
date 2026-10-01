@@ -131,6 +131,15 @@ let grad_tests =
         in
         equal ~msg:"value" float_exact (Float.tanh (-2.)) !seen;
         equal ~msg:"gradient" (exact ()) (vec [| 1.; -4. |]) g);
+    test
+      "a compaction reads its length from the primal and differentiates the \
+       elements it keeps" (fun () ->
+        let f x =
+          Nx.sum (Nx.mul_s (Nx.compress ~condition:(Nx.greater_s x 0.) x) 3.)
+        in
+        equal (exact ())
+          (vec [| 3.; 0.; 3.; 0. |])
+          (Rune.grad' f (vec [| 0.5; -1.; 2.; 0. |])));
     test "a branch on a value differentiates the branch taken" (fun () ->
         let f x =
           if Nx.item [] (Nx.sum x) > 0. then Nx.sum (Nx.mul x x) else Nx.sum x

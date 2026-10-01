@@ -1673,13 +1673,48 @@ val scatter :
 
     See also {!set}, {!take_along_axis}, {!reduce_segments}. *)
 
+(** {2:counted Lengths that depend on values}
+
+    {!positions}, {!compress}, {!extract}, {!nonzero}, {!argwhere} and {!unique}
+    return tensors whose length depends on their operands' values. Each reads
+    that length at most once per call, as one read named after the function the
+    program called: a placed operand's device synchronizes once. Under
+    [Rune.grad] the read reads the primal values. Inside [Rune.jit] and
+    [Rune.vmap] it raises, naming the function: there, keep the shape and mask
+    with {!where}. *)
+
+val positions : ('a, 'b) t -> int64_t
+(** [positions c] is each index [i] of [c] repeated [c.{i}] times, in increasing
+    order. A boolean [c] counts [1] where it holds and [0] elsewhere, so
+    [positions c] is the indices where [c] holds. The result's length is the sum
+    of the counts, read as {{!section:counted}a length}.
+
+    {@ocaml[
+      # create bool [| 4 |] [| false; true; false; true |]
+        |> positions |> to_array
+      - : int64 array = [|1L; 3L|]
+      # create int32 [| 3 |] [| 2l; 0l; 1l |] |> positions |> to_array
+      - : int64 array = [|0L; 0L; 2L|]
+    ]}
+
+    It sums the counts in [int64] and places the start of each run with a
+    cumulative sum and a scatter; integer counts then fill their runs with a
+    cumulative maximum. That is a few passes over [c] and over the result, with
+    nothing allocated per element.
+
+    Raises [Invalid_argument] if [c] is not 1-D, is neither boolean nor integer,
+    holds a negative count or a [uint64] count past [int64]'s range, or if its
+    counts sum past [int64]'s range.
+
+    See also {!compress}, {!nonzero}. *)
+
 val compress :
   ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [compress ?axis ~condition t] selects elements where [condition] is [true]
-    along [axis]. [condition] must be 1-D. When [axis] is omitted, [t] is
-    flattened first.
-
-    Raises [Invalid_argument] if the condition length is incompatible.
+(** [compress ?axis ~condition t] is the slices of [t] along [axis] where
+    [condition] holds, in order: [take ?axis ~indices:(positions condition) t].
+    When [axis] is omitted, [t] is flattened first. [condition] is 1-D, with as
+    many elements as [axis] has, or as [t] has when [axis] is omitted. The
+    result's length is read as {{!section:counted}a length}.
 
     {@ocaml[
       # let x =
@@ -1693,19 +1728,26 @@ val compress :
       - : (int32, int32_elt) t = [1, 3, 5]
     ]}
 
-    See also {!extract}, {!nonzero}. *)
+    Raises [Invalid_argument] if [condition] is not 1-D, or if its length is not
+    [axis]'s, or [t]'s number of elements when [axis] is omitted.
+
+    See also {!extract}, {!positions}. *)
 
 val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [extract ~condition t] is the 1-D tensor of elements of [t] where
-    [condition] is [true]. Both are flattened before comparison.
+(** [extract ~condition t] is the 1-D tensor of [t]'s elements where [condition]
+    holds, in C order: [compress ~condition:(flatten condition) t]. [condition]
+    has [t]'s number of elements, in any shape.
 
-    Raises [Invalid_argument] if sizes differ.
+    Raises [Invalid_argument] if the numbers of elements differ.
 
     See also {!compress}, {!nonzero}. *)
 
 val nonzero : ('a, 'b) t -> int64_t array
-(** [nonzero t] is an array of 1-D index tensors, one per dimension, giving the
-    coordinates of non-zero elements.
+(** [nonzero t] is the coordinates of [t]'s non-zero elements, in C order: one
+    1-D tensor per axis of [t], whose [k]th entries are the coordinates of the
+    [k]th non-zero element. A NaN is non-zero. A scalar has no axis, so
+    [nonzero] of a scalar is [[||]] and reads nothing; otherwise the number of
+    non-zero elements is read as {{!section:counted}a length}.
 
     {@ocaml[
       # let x =
@@ -1719,11 +1761,13 @@ val nonzero : ('a, 'b) t -> int64_t array
       - : int64_t * int64_t = ([0, 1, 1, 2], [1, 0, 2, 2])
     ]}
 
-    See also {!argwhere}. *)
+    See also {!argwhere}, {!positions}. *)
 
 val argwhere : ('a, 'b) t -> int64_t
-(** [argwhere t] is a 2-D tensor of shape [[k; ndim t]] whose rows are the
-    coordinates of the [k] non-zero elements.
+(** [argwhere t] is the coordinates of [t]'s [k] non-zero elements, in C order,
+    one row each: a tensor of shape [[k; ndim t]] whose columns are those of
+    {!nonzero}. A scalar gives one row of no coordinate if it is non-zero, and
+    none otherwise. [k] is read as {{!section:counted}a length}.
 
     See also {!nonzero}. *)
 
@@ -2540,25 +2584,32 @@ val reduce_segments :
     [ids] is not 1-D with one id per row of [x], if [op] is [`Max] or [`Min] and
     [x] is complex, or if [op] is [`Add] and [x] is boolean.
 
-    See also {!scatter}. *)
+    See also {!unique}, {!scatter}. *)
 
-(** {1:sorting Sorting and searching}
+(** {1:sorting Sorting, searching and grouping}
 
-    Sorting and selection order elements by one order, the {e sort order}:
+    Sorting, selection, searching and grouping order elements by one order, the
+    {e sort order}:
     - floats as [neg_infinity < ... < -0. < 0. < ... < infinity < nan], every
       NaN equal to every other whatever its sign and payload;
     - [false < true], and integers by value, unsigned ones as unsigned;
     - complex numbers by real part, then imaginary part, each as a float; one
       with a NaN part equals every other such and is above every other complex
-      number.
+      number. Only {!sort}, {!argsort} and {!top_k} order complex numbers.
 
     A descending sort orders by its exact reverse: NaN first, and [0.] before
     [-0.].
 
-    {!max}, {!maximum} and {!argmax} agree with it: NaN is the greatest element.
-    {!min}, {!minimum} and {!argmin} keep IEEE 754's semantics instead, where a
-    NaN propagates: the minimum of an axis that holds a NaN is NaN, and [argmin]
-    is the position of its first NaN. *)
+    {!order_key} gives each element a [uint64] whose unsigned order is the sort
+    order. Keys are elements or rows: {!lexsort} sorts them, {!searchsorted}
+    searches them and {!unique} groups them, a row comparing lexicographically,
+    column [0] first. {!searchsorted} departs from the sort order in one point:
+    it compares numbers as {!less} does, [-0.] equal to [0.].
+
+    {!max}, {!maximum} and {!argmax} agree with the sort order: NaN is the
+    greatest element. {!min}, {!minimum} and {!argmin} keep IEEE 754's semantics
+    instead, where a NaN propagates: the minimum of an axis that holds a NaN is
+    NaN, and [argmin] is the position of its first NaN. *)
 
 val sort : ?descending:bool -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
 (** [sort ?descending ?axis t] is [(sorted, indices)]: the elements of [t] along
@@ -2627,6 +2678,132 @@ val top_k : k:int -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t * int64_t
     ]}
 
     See also {!sort}, {!argmax}. *)
+
+val order_key : ('a, 'b) t -> uint64_t
+(** [order_key t] is, for each element of [t], a [uint64] whose unsigned order
+    is the {{!section:sorting}sort order}: the key of [a] is below the key of
+    [b], read unsigned, iff [a] sorts before [b], and the two keys are equal iff
+    [a] and [b] are equal in the sort order. It is elementwise, of [t]'s shape.
+
+    The key of an element is:
+    - for a signed integer, its [int64] value with the sign bit flipped;
+    - for an unsigned integer, its value, and for a boolean [0] or [1];
+    - for a float, the bits of its [float64] value, all of them flipped when the
+      sign bit is set and only the sign bit otherwise, so that [-0.] keys just
+      below [0.]; every NaN, whatever its sign and payload, keys to all ones.
+
+    The [float8] dtypes widen to [float16] first. An exact cast within a family
+    keeps the key: [order_key (cast int64 t)] is [order_key t] for every signed
+    integer [t], [order_key (cast uint64 t)] for every unsigned one, and
+    [order_key (cast float64 t)] for every float. On [uint64] it is the
+    identity.
+
+    A key of several columns is a row of order keys, made with {!stack}
+    [~axis:1]; a column that sorts descending is {!bitwise_not} of its order
+    key. {!lexsort}'s example builds one.
+
+    Raises [Invalid_argument] if [t] is complex: a complex number has no key of
+    64 bits.
+
+    See also {!lexsort}, {!searchsorted}, {!unique}. *)
+
+val lexsort : ('a, 'b) t -> int64_t
+(** [lexsort keys] is the stable permutation that sorts the rows of [keys]. A
+    1-D [keys] holds [n] keys of one element, and a 2-D one [n] keys of one row
+    each. Rows compare lexicographically, column [0] first, each element in the
+    {{!section:sorting}sort order}, as their {!order_key}s compare. So
+    [take ~axis:0 ~indices:(lexsort keys) keys] is in order, and equal rows keep
+    their input order. A 2-D [keys] with no column leaves every row in place.
+
+    It sorts one column at a time, the last first, each with a stable {!argsort}
+    followed by a gather: [w] sorts for [w] columns.
+
+    Rows of several dtypes, or with descending columns, are rows of order keys.
+    Ascending by [a], then descending by [b], NaN first among equal [a]s:
+
+    {@ocaml[
+      # let a = create int32 [| 4 |] [| 2l; 1l; 2l; 1l |] in
+        let b = create float64 [| 4 |] [| 0.5; nan; -1.; 3. |] in
+        lexsort (stack ~axis:1 [ order_key a; bitwise_not (order_key b) ])
+        |> to_array
+      - : int64 array = [|1L; 3L; 0L; 2L|]
+    ]}
+
+    Raises [Invalid_argument] if [keys] is not 1-D or 2-D, or is complex.
+
+    See also {!order_key}, {!argsort}, {!unique}. *)
+
+val searchsorted :
+  side:[ `Left | `Right ] -> ('a, 'b) t -> ('a, 'b) t -> int64_t
+(** [searchsorted ~side s v] is, for each key of [v], the number of keys of [s]
+    that come before it ([`Left]), or that come before it or equal it
+    ([`Right]). [s] holds [m] keys in order, so this is where the key of [v]
+    goes among them: before its equals under [`Left], after them under [`Right].
+
+    Keys are elements or rows, as {!lexsort} reads them, and compare in the
+    {{!section:sorting}sort order}, except that a float [-0.] equals [0.], as
+    {!less} compares numbers; a NaN still comes after every number. [s] is in
+    this order: a 2-D [s] of floats that {!lexsort} sorted is, unless a column
+    before its last holds both zeros. A row of {!order_key}s compares as given,
+    [-0.]'s key below [0.]'s.
+    - A 1-D [s] holds [m] keys of one element, and [v] holds keys of one element
+      in any shape: the result has [v]'s shape.
+    - A 2-D [s] of shape [[m; w]] holds [m] rows. [v] then has shape [[n; w]],
+      and the result shape [[n]].
+
+    It is a binary search of [log2 (m + 1)] rounds, rounded up, each a gather of
+    one key of [s] per key of [v] and a comparison; a compiled function fuses
+    the rounds. If [s] is not in order, each result is still a position in
+    \[[0], [m]\].
+
+    {@ocaml[
+      # let knots = create float64 [| 4 |] [| 0.; 1.; 1.; 2. |] in
+        let x = create float64 [| 4 |] [| -0.; 1.; 1.5; nan |] in
+        (to_array (searchsorted ~side:`Left knots x),
+         to_array (searchsorted ~side:`Right knots x))
+      - : int64 array * int64 array = ([|0L; 1L; 3L; 4L|], [|1L; 3L; 3L; 4L|])
+    ]}
+
+    Raises [Invalid_argument] if [s] is not 1-D or 2-D, if [s] is 2-D and [v] is
+    not 2-D with as many columns, or if they are complex.
+
+    See also {!order_key}, {!lexsort}. *)
+
+type groups = {
+  ids : int64_t;
+      (** The group of each key, of shape [[n]], in \[[0], [k]). Groups are
+          numbered in order of first appearance. *)
+  first : int64_t;
+      (** The position of each group's first key, of shape [[k]], ascending. *)
+  counts : int64_t;  (** The number of keys in each group, of shape [[k]]. *)
+}
+(** The type for [n] keys grouped into [k] groups of equal keys. *)
+
+val unique : ('a, 'b) t -> groups
+(** [unique keys] groups the keys of [keys] that are equal in the
+    {{!section:sorting}sort order}: every NaN falls in one group, whatever its
+    sign and payload, and [-0.] and [0.] fall in two. Keys are elements or rows,
+    as {!lexsort} reads them.
+
+    For [g = unique keys], group [j] is the [j]th distinct key in order of first
+    appearance: [g.ids.{0}] is [0], [take ~axis:0 ~indices:g.first keys] is the
+    distinct keys in that order, and the group of key [i] starts at position
+    [g.first.{g.ids.{i}}], which is at most [i]. The number of groups [k] is
+    read as {{!section:counted}a length}.
+
+    {@ocaml[
+      # let g = unique (create int32 [| 6 |] [| 7l; 3l; 7l; 7l; 5l; 3l |]) in
+        (to_array g.ids, to_array g.first, to_array g.counts)
+      - : int64 array * int64 array * int64 array =
+      ([|0L; 1L; 0L; 0L; 2L; 1L|], [|0L; 1L; 4L|], [|3L; 2L; 1L|])
+    ]}
+
+    It sorts the keys' {!order_key}s with {!lexsort}, then makes about a dozen
+    passes over them: gathers, a scatter, cumulative sums and maxima.
+
+    Raises [Invalid_argument] if [keys] is not 1-D or 2-D, or is complex.
+
+    See also {!reduce_segments}, {!lexsort}. *)
 
 (** {1:linalg Linear algebra} *)
 

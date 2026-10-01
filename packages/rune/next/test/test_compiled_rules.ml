@@ -419,6 +419,47 @@ let compositions =
               (Nx.to_array (f x))
               (Nx.to_array (Rune.jit' f x)))
           [ `Max; `Min ]);
+    test
+      "a compiled order key of each float dtype the host compiles is its eager \
+       value" (fun () ->
+        let x =
+          vec [| neg_infinity; -1.5; -0.; 0.; 0.25; infinity; Float.nan |]
+        in
+        let keys (type b) (dt : (float, b) Nx.dtype) =
+          let f x = Nx.order_key (Nx.cast dt x) in
+          equal ~msg:(Nx_dtype.to_string dt) (array int64)
+            (Nx.to_array (f x))
+            (Nx.to_array (Rune.jit' f x))
+        in
+        keys Nx.float64;
+        keys Nx.float32;
+        keys Nx.float16;
+        keys Nx.bfloat16);
+    test "a compiled searchsorted is its eager value" (fun () ->
+        let knots = vec [| -1.; -0.; 0.; 0.5; 0.5; 2.; Float.nan |] in
+        let queries =
+          vec [| -2.; -0.; 0.; 0.5; 1.; 2.; 3.; Float.nan; neg_infinity |]
+        in
+        let rows = ints [| 5; 2 |] [| 0; 1; 0; 3; 1; 1; 1; 2; 4; 0 |] in
+        let probes = ints [| 4; 2 |] [| 0; 3; 1; 0; 5; 5; -1; 9 |] in
+        List.iter
+          (fun side ->
+            let f q = Nx.searchsorted ~side knots q
+            and g q = Nx.searchsorted ~side rows q in
+            equal (array int64)
+              (Nx.to_array (f queries))
+              (Nx.to_array (Rune.jit' f queries));
+            equal (array int64)
+              (Nx.to_array (g probes))
+              (Nx.to_array (Rune.jit' g probes)))
+          [ `Left; `Right ]);
+    test "a compiled lexsort of order keys is its eager value" (fun () ->
+        let x = vec [| 2.; -0.; Float.nan; 0.; 2.; -1.; 0. |] in
+        let f x =
+          let a = Nx.order_key (Nx.cast Nx.int64 x) and b = Nx.order_key x in
+          Nx.lexsort (Nx.stack ~axis:1 [ a; Nx.bitwise_not b ])
+        in
+        equal (array int64) (Nx.to_array (f x)) (Nx.to_array (Rune.jit' f x)));
   ]
 
 let metal =

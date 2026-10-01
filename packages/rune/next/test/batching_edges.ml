@@ -212,6 +212,15 @@ let compositions =
       (fun r ->
         Nx.reduce_segments `Max ~segments:2 (int64s [| 3 |] [| 1; -1; 1 |]) r)
       (xs ());
+    is_the_loop "searchsorted of batched queries is the loop"
+      (fun q -> Nx.searchsorted ~side:`Right (vec [| -1.; 0.; 0.5; 2. |]) q)
+      (xs ());
+    is_the_loop "searchsorted among batched keys is the loop"
+      (fun s ->
+        Nx.searchsorted ~side:`Left (Nx.sort s |> fst) (vec [| 0.; 1. |]))
+      (xs ());
+    is_the_loop "lexsort of batched keys is the loop" Nx.lexsort
+      (mat 3 3 [| 1.; 0.; 1.; 2.; 2.; -0.; 0.; Float.nan; 0. |]);
     is_the_loop "reduce_segments over batched ids is the loop"
       (fun ids -> Nx.reduce_segments `Add ~segments:3 ids data)
       (int64s [| 2; 4 |] [| 0; 2; 0; -1; 2; 2; 1; 3 |]);

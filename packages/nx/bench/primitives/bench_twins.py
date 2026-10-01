@@ -156,6 +156,49 @@ for id, n in [("gather/float32-rows-4e4x8", S),
          lambda a: a[0][a[1]])
 
 
+def mask(n):
+    return uniform(n) < 0.5
+
+
+for n, name in [(S, "4e4"), (L, "1e7")]:
+    twin(f"positions/mask50-{name}", "numpy", lambda n=n: mask(n),
+         np.flatnonzero)
+twin("positions/counts-1e7", "numpy", lambda: ints(L, 4),
+     lambda c: np.repeat(np.arange(len(c)), c))
+
+for n, name in [(S, "4e4"), (L, "1e7")]:
+    id = f"compress/float64-{name}-mask50"
+    twin(id, "numpy", lambda n=n: (uniform(n), mask(n)), lambda a: a[0][a[1]])
+    twin(id, "pandas", lambda n=n: (pd.Series(uniform(n)), mask(n)),
+         lambda a: a[0][a[1]])
+    twin(id, "polars", lambda n=n: (pl.Series(uniform(n)), pl.Series(mask(n))),
+         lambda a: a[0].filter(a[1]))
+
+for n, name in [(S, "4e4"), (L, "1e7")]:
+    id = f"lexsort/int64-float64-{name}"
+    twin(id, "numpy", lambda n=n: (ints(n, 1000), uniform(n)),
+         lambda a: np.lexsort((a[1], a[0])))
+    twin(id, "pandas",
+         lambda n=n: pd.DataFrame({"a": ints(n, 1000), "b": uniform(n)}),
+         lambda d: d.sort_values(["a", "b"], kind="stable"))
+    twin(id, "polars",
+         lambda n=n: pl.DataFrame({"a": ints(n, 1000), "b": uniform(n)}),
+         lambda d: d.sort(["a", "b"], maintain_order=True))
+
+for m, name in [(1_000, "1e3"), (1_000_000, "1e6")]:
+    twin(f"searchsorted/float64-1e7-into-{name}", "numpy",
+         lambda m=m: (np.sort(uniform(m)), uniform(L)),
+         lambda a: np.searchsorted(a[0], a[1], side="right"))
+
+for n, name, d, dname in [(S, "4e4", 100, "1e2"), (S, "4e4", 10_000, "1e4"),
+                          (L, "1e7", 100, "1e2"), (L, "1e7", 1_000_000, "1e6")]:
+    id = f"unique/int64-{name}-{dname}"
+    twin(id, "pandas", lambda n=n, d=d: ints(n, d), pd.factorize)
+    twin(id, "numpy", lambda n=n, d=d: ints(n, d),
+         lambda k: np.unique(k, return_index=True, return_inverse=True,
+                             return_counts=True))
+
+
 # Measurement
 
 WARMUP = 3

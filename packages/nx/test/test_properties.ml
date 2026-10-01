@@ -237,6 +237,27 @@ let integer_casts =
             in
             equal (array int) s (through Nx.int4 Nx.int8 s);
             equal (array int) u (through Nx.uint4 Nx.uint8 u));
+        prop "a cast reads a strided view of int4 and of uint4"
+          (Gen.array ~size:(Gen.int_range 0 9) (Gen.int_range (-8) 7))
+          (fun v ->
+            let n = Array.length v in
+            let read narrow wide v =
+              let every_other =
+                Nx.slice
+                  [ Rs (0, n, 2) ]
+                  (Nx.flip (Nx.cast narrow (Nx.create wide [| n |] v)))
+              in
+              Nx.to_array (Nx.cast wide every_other)
+            in
+            let expected v =
+              Array.of_list
+                (List.filteri
+                   (fun i _ -> i mod 2 = 0)
+                   (List.rev (Array.to_list v)))
+            in
+            equal (array int) (expected v) (read Nx.int4 Nx.int8 v);
+            let u = Array.map (fun x -> x + 8) v in
+            equal (array int) (expected u) (read Nx.uint4 Nx.uint8 u));
         test
           "a real value is complex with no imaginary part, and back it drops \
            that part" (fun () ->

@@ -1163,10 +1163,9 @@ NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_KGEN_SRC)
 static const nx_c_map_table nx_c_cast_tables[NX_C_DTYPE_COUNT] = {
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CAST_SRCTBL)};
 
-/* Packed (int4/uint4) nibble path — serial and contiguous only. Element i of a
-   packed operand is nibble (offset + i): byte (offset+i)>>1, low nibble on even,
-   high on odd. A signed int4 nibble sign-extends; both wrap the low nibble on
-   store. */
+/* Packed (int4/uint4) nibble path — serial. Storage element k of a packed
+   operand is nibble k: byte k>>1, low nibble on even, high on odd. A signed
+   int4 nibble sign-extends; both wrap the low nibble on store. */
 
 /* compute src -> packed dst (i4/u4). The nibble value wraps for int/bool sources
    and saturates for float/complex (F2I4). */
@@ -1244,8 +1243,8 @@ static nx_c_castp_from *const nx_c_castp_from_i4[NX_C_DTYPE_COUNT] = {
 static nx_c_castp_from *const nx_c_castp_from_u4[NX_C_DTYPE_COUNT] = {
     NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_CASTP_FROM_U4_TE)};
 
-/* Contiguous (ignoring size-1 dims) — the only layout the packed path accepts,
-   so logical element i maps to storage element offset + i. */
+/* Contiguous (ignoring size-1 dims): logical element i maps to storage element
+   offset + i, so the whole operand converts in one run. */
 static bool nx_c_cast_dense(const nx_c_ndarray *a) {
   int64_t expect = 1;
   for (int i = a->ndim - 1; i >= 0; i--) {
@@ -1261,38 +1260,64 @@ static int64_t nx_c_cast_count(const nx_c_ndarray *a) {
   return t;
 }
 
-static nx_c_status nx_c_cast_packed(nx_c_dtype src, nx_c_dtype dst,
-                                  const nx_c_ndarray *o, const nx_c_ndarray *in) {
-  int64_t n = nx_c_cast_count(o);
-  if (n == 0) return NX_C_OK; /* an empty view's strides need not be dense */
-  if (!nx_c_cast_dense(o) || !nx_c_cast_dense(in)) return NX_C_ERR_PACKED;
+/* The storage offset of a's element at C-order index idx. */
+static int64_t nx_c_cast_offset(const nx_c_ndarray *a, int64_t idx) {
+  int64_t off = a->offset;
+  for (int d = a->ndim - 1; d >= 0; d--) {
+    int64_t n = a->shape[d];
+    off += (idx % n) * a->strides[d];
+    idx /= n;
+  }
+  return off;
+}
+
+/* Converts n elements: the run from storage element doff of o and soff of in. */
+static void nx_c_cast_packed_run(nx_c_dtype src, nx_c_dtype dst,
+                                 const nx_c_ndarray *o, int64_t doff,
+                                 const nx_c_ndarray *in, int64_t soff,
+                                 int64_t n) {
   bool sp = nx_c_dtype_is_packed(src), dp = nx_c_dtype_is_packed(dst);
   if (sp && dp) { /* packed -> packed is a nibble copy (low 4 bits carry over) */
     const uint8_t *S = (const uint8_t *)in->data;
     uint8_t *D = (uint8_t *)o->data;
     for (int64_t i = 0; i < n; i++) {
-      int64_t si = in->offset + i, di = o->offset + i;
+      int64_t si = soff + i, di = doff + i;
       uint8_t nib = (uint8_t)((S[si >> 1] >> ((si & 1) * 4)) & 0x0F);
       uint8_t *bp = &D[di >> 1];
       *bp = (di & 1) ? (uint8_t)((*bp & 0x0F) | (nib << 4))
                      : (uint8_t)((*bp & 0xF0) | nib);
     }
-    return NX_C_OK;
-  }
-  if (dp) {
+  } else if (dp) {
     nx_c_castp_to *fn =
         (dst == NX_C_DTYPE_u4) ? nx_c_castp_to_u4[src] : nx_c_castp_to_i4[src];
-    if (fn == NULL) return NX_C_ERR_UNSUPPORTED_DTYPE;
-    const char *sbase =
-        (const char *)in->data + in->offset * nx_c_elem_size(src);
-    fn((uint8_t *)o->data, o->offset, sbase, n);
-    return NX_C_OK;
+    fn((uint8_t *)o->data, doff,
+       (const char *)in->data + soff * nx_c_elem_size(src), n);
+  } else {
+    nx_c_castp_from *fn = (src == NX_C_DTYPE_u4) ? nx_c_castp_from_u4[dst]
+                                                 : nx_c_castp_from_i4[dst];
+    fn((char *)o->data + doff * nx_c_elem_size(dst),
+       (const uint8_t *)in->data, soff, n);
   }
-  nx_c_castp_from *fn =
-      (src == NX_C_DTYPE_u4) ? nx_c_castp_from_u4[dst] : nx_c_castp_from_i4[dst];
-  if (fn == NULL) return NX_C_ERR_UNSUPPORTED_DTYPE;
-  char *dbase = (char *)o->data + o->offset * nx_c_elem_size(dst);
-  fn(dbase, (const uint8_t *)in->data, in->offset, n);
+}
+
+/* A dense pair converts in one run; any other layout one element at a time. */
+static nx_c_status nx_c_cast_packed(nx_c_dtype src, nx_c_dtype dst,
+                                  const nx_c_ndarray *o, const nx_c_ndarray *in) {
+  bool sp = nx_c_dtype_is_packed(src), dp = nx_c_dtype_is_packed(dst);
+  if (!sp && (dst == NX_C_DTYPE_u4 ? nx_c_castp_to_u4[src]
+                                   : nx_c_castp_to_i4[src]) == NULL)
+    return NX_C_ERR_UNSUPPORTED_DTYPE;
+  if (!dp && (src == NX_C_DTYPE_u4 ? nx_c_castp_from_u4[dst]
+                                   : nx_c_castp_from_i4[dst]) == NULL)
+    return NX_C_ERR_UNSUPPORTED_DTYPE;
+  int64_t n = nx_c_cast_count(o);
+  if (n == 0) return NX_C_OK; /* an empty view's strides need not be dense */
+  if (nx_c_cast_dense(o) && nx_c_cast_dense(in))
+    nx_c_cast_packed_run(src, dst, o, o->offset, in, in->offset, n);
+  else
+    for (int64_t i = 0; i < n; i++)
+      nx_c_cast_packed_run(src, dst, o, nx_c_cast_offset(o, i), in,
+                           nx_c_cast_offset(in, i), 1);
   return NX_C_OK;
 }
 

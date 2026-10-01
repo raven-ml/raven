@@ -2934,6 +2934,21 @@ thread.
 
 ### Nx
 
+- `Nx.positions c` repeats each index by its count, or lists where a mask
+  holds. `compress`, `extract`, `nonzero` and `argwhere` are built on it: they
+  read their length once and allocate nothing per element, where they read the
+  whole mask and built OCaml lists of every position.
+- **Breaking:** `compress` requires a 1-D condition with as many elements as
+  the axis, or as the tensor without `~axis`. Without `~axis` a shorter
+  condition was read as false past its end, and both forms accepted a condition
+  of another shape with the right number of elements.
+- `Nx.order_key` gives each element a `uint64` whose unsigned order is the sort
+  order. `Nx.lexsort` sorts rows of keys stably, column 0 first;
+  `Nx.searchsorted ~side` finds where keys or rows fall among sorted ones,
+  comparing `-0.` equal to `0.`; `Nx.unique` numbers the groups of equal keys in
+  order of first appearance, with each group's first position and size.
+- `sort` and `argsort` order `int4` and `uint4` tensors, which they refused, and
+  `cast` reads a strided view of them, which it refused unless contiguous.
 - `scatter` takes `~mode:`Max` and `` `Min ``: each position holds the maximum
   or minimum of its element and the updates that reach it, NaN propagating and
   `-0.` below `0.`. A NaN result keeps the element's NaN, or else the first NaN
