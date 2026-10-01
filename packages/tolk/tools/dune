@@ -1,0 +1,2 @@
+(executable
+ (name source_digest))

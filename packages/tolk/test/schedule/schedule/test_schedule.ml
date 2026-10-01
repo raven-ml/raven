@@ -8,6 +8,19 @@ open Tolk
 let uop = Uops.uop
 let program name = Golden.sink (name ^ ".golden")
 
+(* A child of the schedules-on-disk tests schedules matmul, before the suite's
+   own schedules run. *)
+let () =
+  Disk_cache.play
+    [
+      ( "schedule",
+        fun () ->
+          let linear, _ =
+            Schedule.create_linear_with_vars ~capturing:true (program "matmul")
+          in
+          print_string (Graph.to_string linear) );
+    ]
+
 (* Recorded graphs *)
 
 let programs =
@@ -1098,6 +1111,132 @@ let loops =
       test "a loop inside a loop's body keeps its own end" nested_linear;
     ]
 
+(* Schedules on disk
+
+   A child schedules matmul with DEBUG at 3 and prints the schedule after the
+   line scheduling printed, whose verdict says whether it was made or read
+   back. *)
+
+(* Whether the child read its schedule back, and the schedule. *)
+let scheduled ?(env = []) db =
+  match
+    Disk_cache.child ~env:(("DEBUG", "3") :: env) ~cachedb:db "schedule"
+  with
+  | Ok out ->
+      let lines = String.split_on_char '\n' out in
+      let reports, graph =
+        List.partition (String.starts_with ~prefix:"scheduled ") lines
+      in
+      let hit =
+        List.exists
+          (fun l -> Str.string_match (Str.regexp ".*| +cache hit") l 0)
+          reports
+      in
+      Ok (hit, String.concat "\n" graph)
+  | Error err -> Error err
+
+let read_back db =
+  match scheduled db with
+  | Ok (hit, graph) ->
+      equal bool ~msg:"read back" true hit;
+      graph
+  | Error err -> failf "the child failed: %s" err
+
+let made db =
+  match scheduled db with
+  | Ok (hit, graph) ->
+      equal bool ~msg:"made" false hit;
+      graph
+  | Error err -> failf "the child failed: %s" err
+
+let reads_back () =
+  let db = Disk_cache.fresh () in
+  let graph = made db in
+  equal string graph (read_back db)
+
+let misses_on env () =
+  let db = Disk_cache.fresh () in
+  ignore (made db);
+  match scheduled ~env db with
+  | Ok (hit, _) -> equal bool ~msg:"read back" false hit
+  | Error err -> failf "the child failed: %s" err
+
+let recovers damage () =
+  let db = Disk_cache.fresh () in
+  let graph = made db in
+  Disk_cache.damage db damage;
+  equal string ~msg:"made again" graph (made db);
+  equal string ~msg:"then read back" graph (read_back db)
+
+let ignores_other_builds () =
+  let db = Disk_cache.fresh () in
+  ignore (made db);
+  Disk_cache.damage db Disk_cache.of_another_build;
+  ignore (made db)
+
+let races () =
+  let db = Disk_cache.fresh () in
+  let children =
+    List.init 4 (fun _ ->
+        Disk_cache.start ~env:[ ("DEBUG", "3") ] ~cachedb:db "schedule")
+  in
+  let graphs = List.map Disk_cache.finish children in
+  let graph = read_back db in
+  List.iter
+    (fun g ->
+      match g with
+      | Ok out ->
+          equal string graph
+            (String.concat "\n"
+               (List.filter
+                  (fun l -> not (String.starts_with ~prefix:"scheduled " l))
+                  (String.split_on_char '\n' out)))
+      | Error err -> failf "a child failed: %s" err)
+    graphs
+
+let memory_only () =
+  let db = Disk_cache.fresh () in
+  let env = [ ("SCACHE", "1") ] in
+  (match scheduled ~env db with
+  | Ok (hit, _) -> equal bool ~msg:"made" false hit
+  | Error err -> failf "the child failed: %s" err);
+  equal (list string) ~msg:"entries" [] (Disk_cache.entries db);
+  match scheduled ~env db with
+  | Ok (hit, _) -> equal bool ~msg:"made again" false hit
+  | Error err -> failf "the child failed: %s" err
+
+let on_disk =
+  group "create_linear_with_vars › schedules are kept on disk"
+    [
+      test "a schedule made by one process is read back by the next" reads_back;
+      group "a schedule made under one setting is not read back under another"
+        (List.map
+           (fun (name, value) -> test name (misses_on [ (name, value) ]))
+           [
+             ("SPLIT_REDUCEOP", "0");
+             ("MAX_KERNEL_BUFFERS", "8");
+             ("RING", "0");
+             ("ALL2ALL", "1");
+             ("ALLREDUCE_CAST", "0");
+             ("ALLREDUCE_NODE_NDEVS", "2");
+             ("DEFAULT_FLOAT", "half");
+             ("DEFAULT_INT", "long");
+             ("REDUCEOP_SPLIT_THRESHOLD", "65536");
+             ("REDUCEOP_SPLIT_SIZE", "20");
+             ("RING_ALLREDUCE_THRESHOLD", "1");
+             ("LATE_ALLREDUCE", "0");
+           ]);
+      group "a damaged entry is made anew, and replaced"
+        [
+          test "truncated" (recovers Disk_cache.truncated);
+          test "holding no schedule" (recovers Disk_cache.not_a_graph);
+        ];
+      test "an entry of another build of the library is not read back"
+        ignores_other_builds;
+      test "processes making one schedule at once all get it" races;
+      test "with SCACHE at 1, nothing is kept on disk" memory_only;
+    ]
+
 let () =
   exit
     (run "Tolk.Schedule"
@@ -1116,4 +1255,5 @@ let () =
          views;
          variables;
          loops;
+         on_disk;
        ])

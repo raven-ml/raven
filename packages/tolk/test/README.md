@@ -167,8 +167,9 @@ tolk has one text form of a graph.
 
 In a suite, `Golden.sink "matmul.golden"` is the graph of an input golden, and
 `Golden.graph "kernel.golden" (fun () -> sink)` is the test that a graph is an
-output golden; its failure is a diff of the two texts. `Graph.of_string` and
-`Graph.to_string` read and write the text itself. Reading a node checks that
+output golden; its failure is a diff of the two texts. The library's
+`Graph.of_string` and `Graph.to_string` read and write the text itself, which
+is also the form of the programs and schedules the disk cache keeps. Reading a node checks that
 its written dtype is the one tolk derives from its op, sources and arg.
 
 ### The graph format

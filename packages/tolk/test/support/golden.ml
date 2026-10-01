@@ -24,10 +24,12 @@ let text file actual =
 
 let graph file sink =
   Windtrap.test file (fun () ->
-      Windtrap.equal Windtrap.text (body file) (Graph.to_string (sink ())))
+      Windtrap.equal Windtrap.text (body file)
+        (Tolk.Graph.to_string (sink ())))
 
 let sink file =
-  try Graph.of_string (body file) with Failure e -> failwith (file ^ ": " ^ e)
+  try Tolk.Graph.of_string (body file)
+  with Failure e -> failwith (file ^ ": " ^ e)
 
 (* Tables *)
 

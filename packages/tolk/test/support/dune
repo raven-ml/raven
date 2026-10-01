@@ -1,9 +1,9 @@
 (library
  (name tolk_test)
- (modules golden graph dtypes interpreter kernel_graphs tensors uops kernel_opts null_queue batches
-  cuda_fp8)
+ (modules golden dtypes interpreter kernel_graphs tensors uops kernel_opts null_queue batches
+  cuda_fp8 disk_cache)
  (wrapped false)
- (libraries windtrap tolk))
+ (libraries windtrap tolk unix))
 
 ; Running kernels on the host, and batches on the NULL device, through the
 ; engine, apart so that only the tests that run them link nx.device.

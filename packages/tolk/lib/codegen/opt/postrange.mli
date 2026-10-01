@@ -150,8 +150,8 @@ module Scheduler : sig
       reductions and ends close flattened ({!Simplify.pm_flatten_range}),
       argument listing the applied optimisations, and tagged [1]. It is named
       [name_override], or else ["r"] for a kernel that reduces and ["E"]
-      otherwise, followed by the sizes of its hardware indices and axes,
-      coloured. *)
+      otherwise, followed by the sizes of its hardware indices and axes, each
+      after an underscore. The name holds no colour. *)
 end
 
 (** {1:opts Optimising} *)

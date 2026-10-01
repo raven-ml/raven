@@ -1,12 +1,12 @@
-(** UOp graphs as text, in the graph format that [test/README.md] specifies.
+(** UOp graphs as text: the format of the programs the disk cache keeps
+    ({!Codegen.to_program}) and of the goldens, which tolk's [test/README.md]
+    specifies.
 
     A graph is the nodes under a sink, one line each, in topological order:
     {v <index> <op> <dtype> [<sources>] <arg> tag=<tag> v}
     [test/gen/graph.py] writes the same text from tinygrad's graphs, so a graph
     golden reads into the UOps tinygrad built, and a graph built here writes as
     the golden tinygrad recorded. *)
-
-open Tolk
 
 val to_string : Ops.t -> string
 (** [to_string sink] is the graph under [sink]. A node comes after its sources,
@@ -22,3 +22,18 @@ val of_string : string -> Ops.t
     position, a source or a node in an argument is not an earlier line, an
     argument does not fit its operation, or a node's written data type is not
     the one its operation, sources and argument derive. *)
+
+(** {1:disk Disk} *)
+
+val cached :
+  table:string ->
+  key:string ->
+  valid:(Ops.t -> bool) ->
+  (unit -> Ops.t) ->
+  Ops.t * bool
+(** [cached ~table ~key ~valid make] is the graph that the {!Helpers.Diskcache}
+    holds for [key] in [table], and [true], if its entry reads as a graph that
+    [valid] accepts; otherwise it is [make ()], which replaces the entry, and
+    [false]. An entry that does not read is made anew, as one that is missing.
+
+    Raises [Sys_error] if the entry cannot be written. *)

@@ -286,6 +286,36 @@ let pm_resolve_linear_call =
 let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_lock = Mutex.create ()
 
+(* With the setting scache at 2 or more, schedules outlive the process in the
+   disk cache. Its key is the function's, what else shapes a schedule that a
+   process does not change (the settings and environment variables that
+   splitting reductions, bounding kernels' buffers and allreduces read, and the
+   default types), and the digest of this library's sources, of which a schedule
+   is a function. *)
+let disk_key fn =
+  let open Helpers in
+  String.concat "\n"
+    ([
+       Source_digest.digest;
+       key fn;
+       Bool.to_string (setting split_reduceop);
+       Int.to_string (setting max_kernel_buffers);
+       Int.to_string (setting ring);
+       Int.to_string (setting all2all);
+       Bool.to_string (setting allreduce_cast);
+       Int.to_string (setting allreduce_node_ndevs);
+       setting default_float;
+       setting default_int;
+     ]
+    @ List.map
+        (fun v -> v ^ "=" ^ getenv_string v "")
+        [
+          "REDUCEOP_SPLIT_THRESHOLD";
+          "REDUCEOP_SPLIT_SIZE";
+          "RING_ALLREDUCE_THRESHOLD";
+          "LATE_ALLREDUCE";
+        ])
+
 let lower_sink_to_linear call =
   let fn = body call in
   let precompile = match arg call with Call c -> c.precompile | _ -> false in
@@ -300,25 +330,32 @@ let lower_sink_to_linear call =
               Hashtbl.find_opt schedule_cache cache_key)
         else None
       in
-      let linear =
+      let make () =
+        if setting Helpers.spec <> 0 then Spec.type_verify Spec.tensor fn;
+        create_schedule
+          (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn))
+      in
+      let linear, kept =
         match hit with
-        | Some linear -> linear
+        | Some linear -> (linear, true)
         | None ->
-            if setting Helpers.spec <> 0 then Spec.type_verify Spec.tensor fn;
-            let linear =
-              create_schedule
-                (Rangeify.get_kernel_graph (Prepare.prepare_rangeify fn))
+            let linear, kept =
+              if setting Helpers.scache >= 2 then
+                Graph.cached ~table:"schedule_cache" ~key:(disk_key fn)
+                  ~valid:(fun l -> op l = Op.Linear)
+                  make
+              else (make (), false)
             in
             if cached then
               Mutex.protect schedule_cache_lock (fun () ->
                   Hashtbl.replace schedule_cache cache_key linear);
-            linear
+            (linear, kept)
       in
       let n = List.length (src linear) and debug = setting Helpers.debug in
       if (debug >= 1 && n > 1) || debug >= 3 then
         Format.printf "scheduled %5d kernels in %8.2f ms | %s %s@." n
           ((Unix.gettimeofday () -. start) *. 1000.)
-          (if Option.is_some hit then " cache hit" else "CACHE MISS")
+          (if kept then " cache hit" else "CACHE MISS")
           (String.sub (Digest.BLAKE256.to_hex cache_key) 0 8);
       Some (replace call ~src:(linear :: List.tl (src call)))
   | _ -> None

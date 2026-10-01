@@ -1,8 +1,16 @@
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox: schedules kept on disk by one run are not read back
+; by the next.
+
 (test
  (name test_schedule)
  (package tolk)
  (libraries windtrap tolk tolk_test str unix)
  (deps
+  (sandbox always)
   (glob_files *.golden))
  (action
-  (run %{test} --exclude-tag slow)))
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))

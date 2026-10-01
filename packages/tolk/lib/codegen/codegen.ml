@@ -1056,6 +1056,57 @@ type entry = { lock : Mutex.t; mutable prg : Ops.t option }
 let to_program_cache = Hashtbl.create 64
 let to_program_lock = Mutex.create ()
 
+(* Programs outlive the process in the disk cache. Its key is what
+   [to_program_key] holds, and what else shapes a program that a process does
+   not change: the linearizer's order, the environment variables that the
+   heuristic and the C renderer read, and the digest of this library's sources,
+   of which a program is a function. A kernel that asks for a beam search is not
+   kept, since its program is what the search found. *)
+let disk_key ast (ren : Renderer.t) =
+  let open Helpers in
+  let getenvs =
+    [
+      "MV";
+      "MV_BLOCKSIZE";
+      "MV_THREADS_PER_ROW";
+      "MV_ROWS_PER_THREAD";
+      "ALIGNED";
+      "EXPAND_SSA";
+    ]
+  in
+  String.concat "\n"
+    ([
+       Source_digest.digest;
+       key ast;
+       ren.name;
+       Format.asprintf "%a" Target.pp ren.target;
+       Bool.to_string (setting noopt);
+       String.concat "," (setting emulated_dtypes);
+       Int.to_string (setting use_tc);
+       Bool.to_string (setting disable_fast_idiv);
+       Int.to_string (setting transcendental);
+       Bool.to_string (setting allow_tf32);
+       setting default_float;
+       setting default_int;
+       Int.to_string (setting tc_select);
+       Int.to_string (setting tc_opt);
+       Int.to_string (setting tc_min_globals);
+       Bool.to_string (setting tuple_order);
+     ]
+    @ List.map (fun v -> v ^ "=" ^ getenv_string v "") getenvs)
+
+let kept ast =
+  match (op ast, arg ast) with Op.Sink, Kernel k -> k.beam = 0 | _ -> true
+
+let program prg = op prg = Op.Program && List.length (src prg) = 4
+
+let made_program ?beam ast ren =
+  if not (kept ast) then do_to_program ?beam ast ren
+  else
+    fst
+      (Graph.cached ~table:"to_program" ~key:(disk_key ast ren) ~valid:program
+         (fun () -> do_to_program ?beam ast ren))
+
 let to_program ?beam ast ren =
   let key = to_program_key ast ren in
   let entry =
@@ -1071,6 +1122,6 @@ let to_program ?beam ast ren =
       match entry.prg with
       | Some prg -> prg
       | None ->
-          let prg = do_to_program ?beam ast ren in
+          let prg = made_program ?beam ast ren in
           entry.prg <- Some prg;
           prg)

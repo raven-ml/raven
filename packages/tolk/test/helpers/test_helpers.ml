@@ -457,12 +457,18 @@ let unless_set key =
   if Option.is_some (Sys.getenv_opt key) then
     skip ~reason:(key ^ " is set in the environment") ()
 
+(* Defaults that are not tinygrad's: schedules are kept on disk. *)
+let diverging = [ ("SCACHE", "2") ]
+
 let holds_tinygrad_default s =
   unless_set (key s);
   let cell =
     List.find (fun cell -> String.equal (cell "key") (key s)) tinygrad_settings
   in
-  equal string (cell "default") (shown s)
+  let default =
+    Option.value (List.assoc_opt (key s) diverging) ~default:(cell "default")
+  in
+  equal string default (shown s)
 
 let library_settings =
   group "settings"
@@ -482,7 +488,8 @@ let library_settings =
             (List.filter_map
                (fun s -> if ported s then None else Some (key s))
                settings));
-      cases ~name:key "hold tinygrad's default when their variable is unset"
+      cases ~name:key
+        "hold tinygrad's default when their variable is unset, but SCACHE"
         (List.filter ported settings)
         holds_tinygrad_default;
       test "no_color is off when NO_COLOR is unset" (fun () ->

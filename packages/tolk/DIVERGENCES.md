@@ -1826,6 +1826,55 @@ the Exclusions of `README.md`.
   included (D62)`, on every emulated float, and the goldens of the
   `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
 
+
+## D63. Programs and schedules are kept on disk
+
+- **tinygrad:** `codegen/__init__.py:497-505` (`to_program_config`,
+  `to_program_key` and `to_program_cache`, a dictionary of the process),
+  `schedule/__init__.py:127-137` (`lower_sink_to_linear`'s schedule cache,
+  on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
+  default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
+- **tolk:** `lib/codegen/codegen.ml:1065` (`disk_key`), `:1098`
+  (`kept`) and `:1103` (`made_program`); `lib/schedule/schedule.ml:295`
+  (`disk_key`) and `:319` (`lower_sink_to_linear`); `lib/uop/graph.ml:939`
+  (`cached`); `lib/codegen/opt/postrange.ml:631` (`get_optimized_ast`'s
+  name); `lib/helpers.ml:269` (`scache`, `2` by default); and
+  `lib/dune`'s rule for `source_digest.ml`, written by
+  `tools/source_digest.ml`.
+- **Differs:** the program `to_program` makes of a kernel, and by default
+  the schedule `lower_sink_to_linear` makes of a function, are also put in
+  the disk cache (tables `to_program` and `schedule_cache`) as their graphs'
+  text (`Graph`), and a later process reads them back instead of making
+  them. tinygrad keeps programs for its process only, and schedules on disk
+  only when asked. Each key is tinygrad's in-memory key, what else shapes
+  the result and a process does not change (for programs `TUPLE_ORDER` and
+  the environment variables `MV`, `MV_BLOCKSIZE`, `MV_THREADS_PER_ROW`,
+  `MV_ROWS_PER_THREAD`, `ALIGNED` and `EXPAND_SSA`; for schedules the
+  settings and environment variables of splitting reductions, kernels'
+  buffers and allreduces, and the default types), and the digest of the
+  library's sources, which dune computes when it builds the library: an
+  entry is a function of the code that made it. An entry that does not read
+  as a program or a schedule is a miss, and is replaced. The program of a
+  kernel that asks for a beam search is not kept, since it is what the
+  search found. `SCACHE=1` keeps schedules in memory only, as tinygrad's
+  default does. A kernel's name holds no colour, where tinygrad colours it
+  unless `NO_COLOR` is set: a kept program does not depend on the display of
+  the process that made it.
+- **Reason:** (b). rune's first compiled call of a model is gated at 10% of
+  the old rune's, which kept compiled schedules on disk. With binaries alone
+  on disk, a warm process schedules and lowers every kernel again: on
+  gpt-oss's tiny random checkpoint on Metal, 0.64 s of scheduling and 2.08 s
+  of lowering of a 3.16 s first call, against 0.58 s for the old rune.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `programs are
+  kept on disk › a program made by one process is read back by the
+  next`, `› a program made under one setting is not read back under another
+  ›` each setting, `› a damaged entry is made anew, and replaced ›
+  truncated` and `› holding no program`, `› an entry of another build of the
+  library is not read back`, and `› processes making one program at once all
+  get it`; and the `Schedule` suite (`test/schedule/schedule`):
+  `create_linear_with_vars › schedules are kept on disk ›` the same
+  for schedules, and `› with SCACHE at 1, nothing is kept on disk`.
+
 ## D64. A cast to a narrow float through a float32 rounds once
 
 - **tinygrad:** `renderer/cstyle.py:89-90` (`create_non_native_float_pats`,
@@ -1850,6 +1899,7 @@ the Exclusions of `README.md`.
   int64, int32, uint32, uint64 and float64 sources; rune's `Jit` suite:
   `values › a bfloat16 arange from 2^40 inside a compiled call equals
   eager's`.
+
 
 ## D65. An emulated value is a value of its float
 

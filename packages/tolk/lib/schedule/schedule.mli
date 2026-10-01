@@ -65,7 +65,18 @@ val create_linear_with_vars :
       variables, each replaced in the body by a parameter; call-local storage is
       numbered by its order in each body, so equal graphs schedule alike;
     + each such call's body is scheduled ({!create_schedule}), once per body
-      when the setting {!Helpers.scache} is [1] or more;
+      when the setting {!Helpers.scache} is [1] or more. From [2], the default,
+      schedules are also kept on disk ({!Helpers.Diskcache}, table
+      ["schedule_cache"]) for later processes: a schedule is read back for the
+      same body, the same values of the settings and environment variables that
+      shape a schedule ({!Helpers.split_reduceop},
+      {!Helpers.max_kernel_buffers}, {!Helpers.ring}, {!Helpers.all2all},
+      {!Helpers.allreduce_cast}, {!Helpers.allreduce_node_ndevs},
+      {!Helpers.default_float}, {!Helpers.default_int},
+      [REDUCEOP_SPLIT_THRESHOLD], [REDUCEOP_SPLIT_SIZE],
+      [RING_ALLREDUCE_THRESHOLD] and [LATE_ALLREDUCE]) and the same sources of
+      this library; an entry that does not read as a schedule is made anew and
+      replaced;
     + the schedule's parameters are bound to the call's arguments, and each
       call-local storage to a new buffer on its device;
     + a kernel that only copies a buffer between devices, or to or from a disk,

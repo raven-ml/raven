@@ -1,12 +1,12 @@
 (* Stage benchmarks of tolk's compiler. Each program, a graph recorded from
    tinygrad as prepare_rangeify receives it, is timed one stage at a time: a
    case's setup runs the stages before it, and the case runs its stage alone, so
-   a regression shows in the stage that has it. The stages, in order:
-
-   prepare tensor graph -> prepared graph kernel_graph prepared graph -> kernel
-   graph schedule kernel graph -> linear of calls codegen each kernel -> lowered
-   sink linearize each lowered sink -> instructions render each kernel's program
-   -> C source
+   a regression shows in the stage that has it. The stages, in order: [prepare]
+   makes the tensor graph a prepared graph, [kernel_graph] a kernel graph,
+   [schedule] a linear of calls, [codegen] each kernel a lowered sink,
+   [linearize] each lowered sink instructions, and [render] each kernel's
+   program C source. [warm] is what a later process runs instead of them all: it
+   reads the schedule and each kernel's program back from the disk cache.
 
    Kernels are lowered and rendered for the CPU's C renderer, on a fixed
    architecture, so every machine times the same work. Nothing is compiled. *)
@@ -56,6 +56,28 @@ let instructions name =
       Ops.src (Ops.nth (Codegen.to_program program renderer) 1))
     (kernels name)
 
+(* The keys under which [name]'s schedule and programs are put in the disk
+   cache's table "bench", for [warm] to read back. *)
+let kept name =
+  let linear = schedule name in
+  let graphs =
+    linear :: List.map (fun k -> Codegen.to_program k renderer) (kernels name)
+  in
+  List.mapi
+    (fun i g ->
+      let key = Printf.sprintf "%s %d" name i in
+      Helpers.Diskcache.put ~table:"bench" key (Graph.to_string g);
+      key)
+    graphs
+
+let warm keys =
+  List.map
+    (fun key ->
+      Graph.cached ~table:"bench" ~key
+        ~valid:(fun _ -> true)
+        (fun () -> failwith ("bench: no entry " ^ key)))
+    keys
+
 let program name =
   let bench = Thumper.bench_with_setup ~tags:[ "lab" ] in
   Thumper.group name
@@ -74,6 +96,7 @@ let program name =
       bench
         ~setup:(fun () -> instructions name)
         "render" (List.map renderer.render);
+      bench ~setup:(fun () -> kept name) "warm" warm;
     ]
 
 let () =

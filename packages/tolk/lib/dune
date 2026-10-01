@@ -3,7 +3,7 @@
 (library
  (name tolk)
  (public_name tolk)
- (private_modules host_config)
+ (private_modules host_config source_digest)
  (libraries unix nx.device.elf)
  ; The compilers that run in the process find their vendor's library at run
  ; time, so that the library builds and runs without CUDA, ROCm or Metal.
@@ -29,6 +29,19 @@
   (write-file
    %{target}
    "let system = \"%{ocaml-config:system}\"\nlet architecture = \"%{ocaml-config:architecture}\"\n")))
+
+; The digest of the library's sources: the disk cache keeps the programs this
+; code makes of kernels, keyed on it.
+
+(rule
+ (target source_digest.ml)
+ (deps
+  (sandbox always)
+  (source_tree .))
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../tools/source_digest.exe} .))))
 
 ; dlopen is a library of its own on Linux; elsewhere it is part of the C
 ; library (macOS) or of kernel32 (Windows).

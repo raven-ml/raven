@@ -1,5 +1,3 @@
-open Tolk
-
 let strf = Printf.sprintf
 let fail fmt = Printf.ksprintf failwith fmt
 
@@ -935,3 +933,23 @@ let of_string text =
     ()
   done;
   Option.get nodes.(Array.length nodes - 1)
+
+(* Disk *)
+
+let cached ~table ~key ~valid make =
+  let read text =
+    match of_string text with
+    | g when valid g -> Some g
+    | _ | (exception (Failure _ | Invalid_argument _)) -> None
+  in
+  let kept =
+    match Helpers.Diskcache.get ~table key with
+    | Some text -> read text
+    | None | (exception Failure _) -> None
+  in
+  match kept with
+  | Some g -> (g, true)
+  | None ->
+      let g = make () in
+      Helpers.Diskcache.put ~table key (to_string g);
+      (g, false)

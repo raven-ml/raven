@@ -266,7 +266,7 @@ let debug_rangeify = Context_var.bool "DEBUG_RANGEIFY" false
 let tuple_order = Context_var.bool "TUPLE_ORDER" true
 let ccache = Context_var.bool "CCACHE" true
 let allow_tf32 = Context_var.bool "ALLOW_TF32" false
-let scache = Context_var.int "SCACHE" 1
+let scache = Context_var.int "SCACHE" 2
 let disallow_broadcast = Context_var.bool "DISALLOW_BROADCAST" false
 
 (* Integers and lists *)

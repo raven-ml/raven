@@ -201,8 +201,25 @@ let axes =
               equal ~msg:"made" string (cell "made") (made_cell made)));
     ]
 
+(* [uncoloured s] is the escaped text [s] without its colour codes. *)
+let uncoloured s =
+  let b = Buffer.create (String.length s) in
+  let n = String.length s in
+  let rec go i =
+    if i < n then
+      if i + 2 < n && String.sub s i 3 = "\\e[" then
+        go (String.index_from s i 'm' + 1)
+      else (
+        Buffer.add_char b s.[i];
+        go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+
 let colors =
-  group "the shape and name of a kernel are coloured by the roles of its axes"
+  group
+    "the shape of a kernel is coloured by the roles of its axes, and its name \
+     is not"
     [
       Golden.cases "colors.golden" (fun cell ->
           Helpers.context
@@ -216,7 +233,8 @@ let colors =
                 (fun o -> ignore (apply k o))
                 (Kernel_opts.opts_of_cell (cell "opts"));
               equal string (cell "colored_shape") (escaped (K.colored_shape k));
-              equal string (cell "name")
+              equal string
+                (uncoloured (cell "name"))
                 (escaped (info (K.get_optimized_ast k)).name)));
     ]
 

@@ -682,6 +682,101 @@ let caching =
         makes_anew_after_a_failure;
     ]
 
+(* Programs on disk
+
+   A child makes the program of add_clang's kernel and prints it. With
+   ASSERT_COMPILE set, a program it would compile fails it instead, so a child
+   that succeeds under ASSERT_COMPILE read its program from the disk. *)
+
+let parts =
+  [
+    ( "program",
+      fun () ->
+        print_string
+          (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) clang))
+    );
+  ]
+
+let made ?env db = Disk_cache.child ?env ~cachedb:db "program"
+
+let read_from_disk ?(env = []) db =
+  made ~env:(("ASSERT_COMPILE", "1") :: env) db
+
+let compiled = Error "tried to compile with ASSERT_COMPILE set"
+let outcome = Disk_cache.outcome
+
+let the_program () =
+  Ok (Graph.to_string (Codegen.to_program (Lazy.force add_kernel) clang))
+
+let reads_back () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
+
+let misses_on env () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  equal outcome compiled (read_from_disk ~env db)
+
+let recovers damage () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  Disk_cache.damage db damage;
+  equal outcome ~msg:"made again" (the_program ()) (made db);
+  equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
+
+let ignores_other_builds () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  Disk_cache.damage db Disk_cache.of_another_build;
+  equal outcome compiled (read_from_disk db)
+
+let races () =
+  let db = Disk_cache.fresh () in
+  let children =
+    List.init 4 (fun _ -> Disk_cache.start ~cachedb:db "program")
+  in
+  List.iter
+    (fun c -> equal outcome (the_program ()) (Disk_cache.finish c))
+    children;
+  equal outcome ~msg:"read back" (the_program ()) (read_from_disk db)
+
+let on_disk =
+  group "programs are kept on disk"
+    [
+      test "a program made by one process is read back by the next" reads_back;
+      group "a program made under one setting is not read back under another"
+        (List.map
+           (fun (name, value) -> test name (misses_on [ (name, value) ]))
+           [
+             ("NOOPT", "1");
+             ("TC", "0");
+             ("TC_SELECT", "0");
+             ("TC_OPT", "1");
+             ("TC_MIN_GLOBALS", "1");
+             ("TRANSCENDENTAL", "2");
+             ("DISABLE_FAST_IDIV", "0");
+             ("ALLOW_TF32", "1");
+             ("TUPLE_ORDER", "0");
+             ("DEFAULT_INT", "long");
+             ("EMULATED_DTYPES", "long");
+             ("MV", "0");
+             ("MV_BLOCKSIZE", "8");
+             ("MV_THREADS_PER_ROW", "4");
+             ("MV_ROWS_PER_THREAD", "2");
+             ("ALIGNED", "0");
+             ("EXPAND_SSA", "1");
+           ]);
+      group "a damaged entry is made anew, and replaced"
+        [
+          test "truncated" (recovers Disk_cache.truncated);
+          test "holding no program" (recovers Disk_cache.not_a_graph);
+        ];
+      test "an entry of another build of the library is not read back"
+        ignores_other_builds;
+      test "processes making one program at once all get it" races;
+    ]
+
 (* Programs *)
 
 let on_clang row = row "target" = "clang" && compiles row
@@ -2200,6 +2295,7 @@ let cleanups =
     ]
 
 let () =
+  Disk_cache.play parts;
   exit
     (run "Tolk.Codegen"
        [
@@ -2220,6 +2316,7 @@ let () =
          range_shrinking;
          beam_search;
          caching;
+         on_disk;
          programs;
          errors;
          diagnostics;

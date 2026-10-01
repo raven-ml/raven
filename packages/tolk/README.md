@@ -45,6 +45,7 @@ The modules not named after their file:
 | `codegen/__init__.py` | `lib/codegen/codegen.ml` | `Codegen` |
 | `codegen/decomp/dtype.py` | `lib/codegen/decomp/decomp_dtype.ml` | `Decomp_dtype` (`dtype.py`) |
 | `codegen/decomp/op.py` | `lib/codegen/decomp/decomp_op.ml` | `Decomp_op` (`uop/__init__.py`'s `Op`) |
+| `uop/ops.py`'s pickling of graphs (`UOp.__reduce__`, `:251`), which tinygrad's disk cache stores | `lib/uop/graph.ml` | `Graph`: graphs as text, the format of the goldens, since OCaml has no pickle |
 | `codegen/opt/__init__.py` | `lib/codegen/opt/opt.ml` | `Opt` |
 | `renderer/__init__.py` | `lib/renderer/renderer.ml` | `Renderer` |
 | `schedule/__init__.py` | `lib/schedule/schedule.ml` | `Schedule` |
@@ -156,7 +157,6 @@ is scope, not a divergence: the part left out is listed here, and
 | openpilot's `pm_fold_moved_after` pass and its `found_after` rule in `schedule/prepare.py` (`:45-60,276`) | a workaround for openpilot's models, which raven does not run. |
 | The settings `OPENPILOT_HACKS` and `FLOAT16` of `helpers.py` | they gate openpilot's `pm_fold_moved_after` pass (`schedule/prepare.py:45-60,276`), excluded with it. |
 | The setting `CAPTURING` of `helpers.py` | its reader, jit capture (`schedule/__init__.py:296`), is the `capturing` argument of `Schedule.create_linear_with_vars`, which the jit passes. |
-| The disk half of `SCACHE=2` in `schedule/__init__.py` (`:129-131,137`), which pickles a schedule into the disk cache | tolk has no serializer of graphs in the library, and `Diskcache` stores strings (see D8); `SCACHE=2` caches in memory, as `1` does. The row ends if the measurement of gpt-oss's first call (RFC 0012) asks for a schedule cache that outlives the process. |
 | `GlobalCounters` and the settings `MAX_BUFFER_SIZE` and `VALIDATE_WITH_CPU` of `helpers.py` | they are read where kernels run and buffers are allocated (`VALIDATE_WITH_CPU` at `engine/realize.py:283`), which is `tolk.engine`'s (see D3); tolk keeps `compile_linear`'s `validate` argument and the `pm_validate` rewrite. |
 | The setting `ALLOW_DEVICE_USAGE` of `helpers.py`, and the contexts that set it (`codegen/__init__.py:464`, `codegen/opt/postrange.py:270`, `engine/worker.py:9`, `function.py:61`) | the guard is structural: tolk cannot open a device. |
 | The other settings of `helpers.py` whose readers are not ported: `IMAGE`, `JIT`, `WINO`, `TRACEMETA`, `TRAINING`, `LRU`, `HCQ2`, `FUSE_OPTIM`, `USE_ATOMICS`, `CAPTURE_PROCESS_REPLAY`, `NULL_ALLOW_COPYOUT`, `VIZ`, `PROFILE`; the `PYTEST_XDIST_WORKER_COUNT` share of `PARALLEL`'s default; the `{DEV}_CC` migration check, and the `{DEV}_{RENDERER}` one of `Compiled._select_renderer` in `device.py` (`:484`) | image paths, the `Tensor` frontend and `TinyJit`, nx.device's allocators, the legacy AMD queue path, `nn`, process replay, the NULL device, viz and profiling are excluded above; raven never read `{DEV}_CC` or `{DEV}_{RENDERER}`. |
@@ -172,7 +172,8 @@ the old tolk and of tinygrad to the test that replaces it.
 
 `bench/bench_tolk.exe` times the compiler one stage at a time: preparing,
 the kernel graph, the schedule, codegen, linearizing and rendering, for the
-CPU's C renderer. Its programs are graphs recorded from tinygrad for the
+CPU's C renderer, and, as `warm`, what a later process does instead: reading
+the schedule and the programs back from the disk cache. Its programs are graphs recorded from tinygrad for the
 `Prepare` suite (`test/schedule/prepare`), among them a block of gpt-oss
 prefilling and decoding. `bench/tolk.thumper` is its baseline. Run it with
 `dune build @packages/tolk/bench/bench`, or directly from `_build`, never

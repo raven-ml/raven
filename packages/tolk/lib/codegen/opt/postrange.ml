@@ -639,26 +639,14 @@ module Scheduler = struct
               (fun a b -> String.compare (special_name a) (special_name b))
               (of_op k Op.Special)
           in
+          (* A program's name holds no colour: colour is how a name is shown,
+             and a program kept on disk must not depend on the display of the
+             process that made it. *)
           let special_ops =
-            List.map
-              (fun x ->
-                let c =
-                  if String.starts_with ~prefix:"g" (special_name x) then
-                    Helpers.Blue
-                  else Helpers.Cyan
-                in
-                Helpers.colored c (Bigint.to_string (size x)))
-              special_uops
+            List.map (fun x -> Bigint.to_string (size x)) special_uops
           in
-          let axes =
-            List.map2
-              (fun x c -> Helpers.colored c (Render.render (nth x 0)))
-              (rngs k) (colors k)
-          in
-          k_type
-          ^ String.concat
-              (Helpers.colored Helpers.Bright_black "_")
-              (("" :: special_ops) @ axes)
+          let axes = List.map (fun x -> Render.render (nth x 0)) (rngs k) in
+          k_type ^ String.concat "_" (("" :: special_ops) @ axes)
     in
     k.ast <- graph_rewrite ~ctx:() k.ast Simplify.pm_flatten_range;
     replace k.ast
