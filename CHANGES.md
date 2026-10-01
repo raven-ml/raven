@@ -5391,6 +5391,9 @@ thread.
 
 ### Quill
 
+- The terminal notebook's footer shows `Ctrl-C Interrupt` again while a cell
+  runs, in place of the run action. The footer redesign had dropped it, so
+  interrupting was only discoverable from the help screen.
 - Building quill no longer needs a node toolchain. The bundling rule for the
   server frontend was a target, so a directory build such as
   `dune build packages/quill` ran esbuild and failed without `node_modules`;

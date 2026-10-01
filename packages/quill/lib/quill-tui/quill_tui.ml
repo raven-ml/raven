@@ -1299,10 +1299,13 @@ let footer_actions m =
       { key = "Esc"; label = "Cancel" };
     ]
   else
+    (* While a cell runs, interrupting it takes the place of running one. *)
+    let interrupt = { key = "Ctrl-C"; label = "Interrupt" } in
     match m.mode with
     | Editing ->
         [
-          { key = "Shift-Enter"; label = "Run" };
+          (if has_running m then interrupt
+           else { key = "Shift-Enter"; label = "Run" });
           { key = "Tab"; label = "Complete" };
           { key = "Esc"; label = "Exit" };
           { key = "?"; label = "Help" };
@@ -1310,7 +1313,7 @@ let footer_actions m =
     | Normal ->
         [
           { key = "Enter"; label = "Edit" };
-          { key = "x"; label = "Run" };
+          (if has_running m then interrupt else { key = "x"; label = "Run" });
           { key = "j/k"; label = "Navigate" };
           { key = "?"; label = "Help" };
         ]

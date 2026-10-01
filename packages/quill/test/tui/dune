@@ -1,0 +1,23 @@
+; White-box tests of the TUI: its implementation compiled again without its
+; interface, so that the tests reach the model and the views.
+
+(copy_files ../../lib/quill-tui/quill_tui.ml)
+
+(library
+ (name quill_tui_internal)
+ (modules quill_tui)
+ (libraries
+  quill
+  quill.markdown
+  mosaic
+  mosaic.ui
+  toffee
+  matrix.grid
+  tree-sitter.ocaml
+  unix))
+
+(test
+ (name test_tui)
+ (modules test_tui)
+ (package quill)
+ (libraries quill quill_tui_internal windtrap))
