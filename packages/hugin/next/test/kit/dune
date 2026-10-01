@@ -1,4 +1,4 @@
 (tests
- (names test_locale)
+ (names test_locale test_number)
  (package hugin)
- (libraries hugin.next.kit windtrap))
+ (libraries hugin.next.kit nx windtrap))
