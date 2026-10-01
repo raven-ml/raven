@@ -182,6 +182,26 @@ val jvp : 'p Nx.Ptree.t -> 'q Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'p -> 'q * 'q
     On real tensors the imaginary parts are zero and none of this changes the
     derivatives. *)
 
+(** {1:factorisations Derivatives of factorisations}
+
+    The tangents of {!Nx.cholesky}, {!Nx.qr}, {!Nx.lu}, {!Nx.svd}, {!Nx.eigh}
+    and {!Nx.eig} are the derivatives of the factors nx computes, where those
+    are differentiable:
+    - [Nx.qr ~mode:`Complete] of a tall matrix and [Nx.svd ~full_matrices:true]
+      of a non-square one have none: their tangents raise [Invalid_argument].
+    - The tangents of singular vectors and eigenvectors are non-finite where two
+      singular values or eigenvalues are equal; the tangents of the values are
+      finite there and depend on the vectors nx chose.
+    - A vector is defined up to its sign, or on complex values its phase, which
+      nx does not fix; the tangent does. The tangent of each eigenvector that
+      {!Nx.eigh} and {!Nx.eig} give is orthogonal to it ([Qᴴ dQ] has a zero
+      diagonal), so an eigenvector of [eig] keeps its unit norm. The tangent of
+      each right singular vector that {!Nx.svd} gives is orthogonal to it, and
+      the left one carries the change of phase that keeps [a = u diag(s) vh].
+
+    {!Nx.mod_}'s tangent is [da - trunc (a / b) db], one-sided at a multiple of
+    [b]. *)
+
 (** {1:jacobians Jacobians} *)
 
 val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t

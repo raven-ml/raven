@@ -278,7 +278,8 @@ let binary_tangent i op k a b y da db =
       terms
         (term (fun da -> mul da (Nx.div b denom)) da)
         (term (fun db -> mul db (Nx.neg (Nx.div a denom))) db)
-  | Mod -> no_rule i op
+  | Mod ->
+      terms da (term (fun db -> mul db (Nx.neg (Nx.trunc (Nx.div a b)))) db)
   | Idiv | And | Or | Xor -> assert false (* A plain result. *)
 
 (* [zeros_or dx x] is [x]'s tangent, or zeros like it if it has none. *)
@@ -338,30 +339,125 @@ let solve' ~upper ~transpose ~unit_diag a b x da db =
   in
   eval (Solve_triangular { upper; transpose; unit_diag; a; b = rhs })
 
-(* P A = L U for a square A: with X = L^-1 P dA U^-1, dL = L tril_-1(X) and dU =
-   triu(X) U, packed as the factors are. *)
+(* [block x rows cols] is the block of the last two axes of [x] that the
+   ranges [rows] and [cols] select; [padded x rows cols] is [x] with zeros
+   around its last two axes, [rows] and [cols] before and after. *)
+let block x rows cols =
+  let r = Nx.ndim x in
+  Nx.shrink
+    (Array.mapi
+       (fun a d ->
+         if a = r - 2 then rows else if a = r - 1 then cols else (0, d))
+       (Nx.shape x))
+    x
+
+let padded x rows cols =
+  let r = Nx.ndim x in
+  Nx.pad
+    (Array.init r (fun a ->
+         if a = r - 2 then rows else if a = r - 1 then cols else (0, 0)))
+    (Nx_dtype.zero (Nx.dtype x))
+    x
+
+(* P A = L U, packed, for A of [m] rows, [n] columns and [k = min m n]: with L
+   completed to an [m × m] unit lower matrix, U to an [n × n] upper one by an
+   identity block, and X = L^-1 P dA U^-1, dL = L tril_-1(X) and dU = triu(X) U,
+   packed as the factors are. *)
 let lu' packed perm da =
+  let m = Nx.dim (-2) packed and n = Nx.dim (-1) packed in
+  let k = Int.min m n and dt = Nx.dtype packed in
   let pda =
     Nx.take_along_axis ~axis:(-2)
       ~indices:(Nx.broadcast_to (Nx.shape da) (Nx.unsqueeze ~axes:[ -1 ] perm))
       da
   in
-  let y =
-    Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:true packed pda
+  let l =
+    Nx.add
+      (padded (Nx.tril ~k:(-1) (block packed (0, m) (0, k))) (0, 0) (0, m - k))
+      (Nx.eye dt m)
   in
+  let u =
+    Nx.add
+      (padded (Nx.triu (block packed (0, k) (0, n))) (0, n - k) (0, 0))
+      (padded (Nx.eye dt (n - k)) (k, 0) (k, 0))
+  in
+  let y = Nx.solve_triangular ~upper:false ~unit_diag:true l pda in
   let x =
     Nx.matrix_transpose
-      (Nx.solve_triangular ~upper:false ~transpose:false ~unit_diag:false
-         (Nx.matrix_transpose packed)
+      (Nx.solve_triangular ~upper:false (Nx.matrix_transpose u)
          (Nx.matrix_transpose y))
   in
-  let l =
-    Nx.add (Nx.tril ~k:(-1) packed)
-      (Nx.eye (Nx.dtype packed) (Nx.dim (-1) packed))
+  Nx.add (Nx.matmul l (Nx.tril ~k:(-1) x)) (Nx.matmul (Nx.triu x) u)
+
+(* The matrix of [1 / (d_j - d_i)] off the diagonal and [0] on it, for a stack
+   of vectors [d]: the coefficients of a spectral derivative, infinite where two
+   of [d] are equal. *)
+let gaps d =
+  let eye = Nx.eye (Nx.dtype d) (Nx.dim (-1) d) in
+  let diffs =
+    Nx.sub (Nx.unsqueeze ~axes:[ -2 ] d) (Nx.unsqueeze ~axes:[ -1 ] d)
   in
-  Nx.add
-    (Nx.matmul l (Nx.tril ~k:(-1) x))
-    (Nx.matmul (Nx.triu x) (Nx.triu packed))
+  Nx.sub (Nx.recip (Nx.add diffs eye)) eye
+
+(* A = U S Vᴴ, thin. With P = Uᴴ dA V, dS = Re diag P, and the tangent of each
+   right singular vector orthogonal to it (Vᴴ dV has a zero diagonal), the left
+   vectors carrying the phase that keeps A = U S Vᴴ: dU = U (F ∘ (P S + S Pᴴ) +
+   i Im(diag P) S^-1) and dV = V (F ∘ (S P + Pᴴ S)), F_ij = 1 / (s_j² - s_i²),
+   plus the parts outside the span of U or V of a tall or wide A. *)
+let svd' i ~full_matrices x u s vt dx =
+  let m = Nx.dim (-2) x and n = Nx.dim (-1) x and dt = Nx.dtype x in
+  if full_matrices && m <> n then
+    invalid_arg
+      (i.entry
+     ^ ": the tangent of a complete SVD of a non-square matrix has no \
+        definition");
+  let v = adjoint vt in
+  let s = Nx.cast dt s in
+  let row = Nx.unsqueeze ~axes:[ -2 ] s and col = Nx.unsqueeze ~axes:[ -1 ] s in
+  let p = Nx.matmul (adjoint u) (Nx.matmul dx v) in
+  let ds = Nx.cast Nx.float64 (Nx.diagonal p) in
+  let f = gaps (Nx.square s) in
+  let inv = zero_where (Nx.equal s (Nx.zeros_like s)) (Nx.recip s) in
+  let phase =
+    Nx.mul
+      (Nx.mul_s (Nx.sub p (adjoint p)) (Nx_dtype.of_float dt 0.5))
+      (diag_matrix inv)
+  in
+  let ps = Nx.mul p row and sp = Nx.mul col p in
+  let du = Nx.matmul u (Nx.add (Nx.mul f (Nx.add ps (adjoint ps))) phase) in
+  let dv = Nx.matmul v (Nx.mul f (Nx.add sp (adjoint sp))) in
+  let outside basis y =
+    Nx.div (Nx.sub y (Nx.matmul basis (Nx.matmul (adjoint basis) y))) row
+  in
+  let du = if m > n then Nx.add du (outside u (Nx.matmul dx v)) else du in
+  let dv =
+    if n > m then Nx.add dv (outside v (Nx.matmul (adjoint dx) u)) else dv
+  in
+  (du, ds, adjoint dv)
+
+(* A Hermitian matrix that the lower triangle of [x] and the real part of its
+   diagonal name, Q Λ Qᴴ. With P = Qᴴ dA Q, dΛ = Re diag P and, the tangent of
+   each eigenvector orthogonal to it (Qᴴ dQ has a zero diagonal), dQ = Q (F ∘
+   P), F_ij = 1 / (λ_j - λ_i). *)
+let eigh' w q dx =
+  let dh =
+    let low = Nx.tril ~k:(-1) dx in
+    Nx.add (Nx.add low (adjoint low)) (diag_matrix (real_part (Nx.diagonal dx)))
+  in
+  let p = Nx.matmul (adjoint q) (Nx.matmul dh q) in
+  ( Nx.cast Nx.float64 (Nx.diagonal p),
+    Nx.matmul q (Nx.mul (gaps (Nx.cast (Nx.dtype q) w)) p) )
+
+(* A V = V Λ. With C = V^-1 dA V, dΛ = diag C and dV = V (F ∘ C), F_ij = 1 /
+   (λ_j - λ_i), less each column's component along itself, so that each
+   eigenvector keeps its unit norm and its tangent is orthogonal to it (Vᴴ dV
+   has a zero diagonal). *)
+let eig' values v dx =
+  let dx = Nx.cast (Nx.dtype v) dx in
+  let c = Nx.matmul (Nx.inv v) (Nx.matmul dx v) in
+  let dv = Nx.matmul v (Nx.mul (gaps values) c) in
+  let along = Nx.sum ~axes:[ -2 ] ~keepdims:true (Nx.mul (Nx.conjugate v) dv) in
+  (Nx.diagonal c, Nx.sub dv (Nx.mul v along))
 
 (* A = Q R with R square, upper triangular with a real diagonal. With X = Qᴴ dA
    R^-1 and Ω the skew-Hermitian matrix of X's strict lower triangle and the
@@ -558,10 +654,29 @@ let run : type r. t -> r Nx.Op.t -> r =
       (dual i q dq, dual i r dr)
   | Lu x ->
       let x, dx = unwrap i x in
-      if Nx.dim (-1) x <> Nx.dim (-2) x then no_rule i op;
       let packed, pivots, perm = eval (Lu x) in
       (dual i packed (lu' packed perm dx), pivots, perm)
-  | Svd _ | Eig _ | Eigh _ -> no_rule i op
+  | Svd { full_matrices; x } ->
+      let x, dx = unwrap i x in
+      let u, s, vt = eval (Svd { full_matrices; x }) in
+      let du, ds, dvt = svd' i ~full_matrices x u s vt dx in
+      (dual i u du, dual i s ds, dual i vt dvt)
+  | Eigh { vectors; x } -> (
+      let x, dx = unwrap i x in
+      let w, q = eval (Eigh { vectors = true; x }) in
+      let q = Option.get q in
+      let dw, dq = eigh' w q dx in
+      match vectors with
+      | true -> (dual i w dw, Some (dual i q dq))
+      | false -> (dual i w dw, None))
+  | Eig { vectors; x } -> (
+      let x, dx = unwrap i x in
+      let values, v = eval (Eig { vectors = true; x }) in
+      let v = Option.get v in
+      let dvalues, dv = eig' values v dx in
+      match vectors with
+      | true -> (dual i values dvalues, Some (dual i v dv))
+      | false -> (dual i values dvalues, None))
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       let a, da = split i a and b, db = split i b in
       let x = eval (Solve_triangular { upper; transpose; unit_diag; a; b }) in
