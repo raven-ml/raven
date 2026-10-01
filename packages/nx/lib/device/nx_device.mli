@@ -1346,7 +1346,7 @@ module Driver : sig
         for the device, for {!Buffer.borrow}: the region as the device's work
         addresses it, with the host address [r] has, if any, or [Error why] if
         the device cannot reach [d']'s memory. The driver keeps the mapping
-        until [r] is released ({!depends}); the runtime asks for a region again
+        until [d'] frees [r] to its driver; the runtime asks for a region again
         once the borrows of it are unreachable, and [peer] gives the same
         mapping. It runs with the device taken and [d'] free. Without it, the
         device borrows no other device's memory.
@@ -1432,8 +1432,11 @@ module Driver : sig
       another device's mapping of it or a command buffer that names it, is
       released in [f], which keeps what that object refers to. [f] must not
       reach [b], which would keep the memory forever. If [f] raises [Failure],
-      the memory is retained instead of reused. [f] runs with [b]'s device
-      taken.
+      the memory is retained instead of reused.
+
+      [f] runs with [b]'s device taken. It must not take another device or wait
+      on one; it may call another device's driver, which serialises the call
+      with its own lock.
 
       Raises [Invalid_argument] if [b] is borrowed, empty, or on
       {!Nx_device.val-host}, whose memory the heap frees. *)
