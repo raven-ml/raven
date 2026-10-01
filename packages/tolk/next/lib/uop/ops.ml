@@ -2061,6 +2061,18 @@ and movement_shape u ps =
     invalid_argf "invalid %s %s for %s" (Op.name u.op) what (repr_shape ps)
   in
   let ok = Sint.resolve ?default:None in
+  (* A size is a number: one that holds Invalid, such as the size of a shrink
+     whose bounds carry a validity, evaluates to none. *)
+  let numbers s =
+    List.iter
+      (function
+        | Sym d when List.exists is_const_invalid (toposort d) ->
+            invalid_argf "%s of sizes %s, one holding Invalid, which is no number"
+              (Op.name u.op) (repr_shape s)
+        | _ -> ())
+      s;
+    s
+  in
   match u.op with
   | Op.Unshard -> (
       match u.arg with
@@ -2092,8 +2104,8 @@ and movement_shape u ps =
           if Sint.resolve ~default:false Sint.(prod ps <> prod s) then
             invalid_argf "cannot reshape %s to %s" (repr_shape ps)
               (repr_shape s);
-          s
-      | Expand s -> s @ ps
+          numbers s
+      | Expand s -> numbers s @ ps
       | Permute order ->
           if List.sort Int.compare order <> List.init (List.length ps) Fun.id
           then bad (repr_tuple (List.map string_of_int order));
@@ -2109,7 +2121,7 @@ and movement_shape u ps =
                       && ok Sint.(o + s <= sz))
                     ps bounds)
           then bad "padding";
-          List.map (fun (_, sz) -> ssimplify_sint sz) bounds
+          numbers (List.map (fun (_, sz) -> ssimplify_sint sz) bounds)
       | Shrink bounds ->
           if
             List.length ps <> List.length bounds
@@ -2121,7 +2133,7 @@ and movement_shape u ps =
                       && ok Sint.(o + sz <= s))
                     ps bounds)
           then bad "bounds";
-          List.map (fun (_, sz) -> ssimplify_sint sz) bounds
+          numbers (List.map (fun (_, sz) -> ssimplify_sint sz) bounds)
       | Flip flips ->
           if List.length flips <> List.length ps then bad "axes";
           ps)

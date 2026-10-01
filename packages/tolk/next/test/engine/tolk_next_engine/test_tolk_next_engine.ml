@@ -857,6 +857,39 @@ let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) device at ()
       (Array.init 8 (fun r -> `Float (sum r)))
       (contents (of_size 8)))
 
+
+(* A store of a row of [x @ w] into [pool], [8; 8], through a shrink whose
+   bounds are the loaded [slot] carrying its validity: the shrink's size is 1
+   where [slot] lies within [pool], and Invalid elsewhere. *)
+let store_at_valid_slot device =
+  let buffer n dt shape =
+    Ops.reshape
+      (Ops.new_buffer (Single device) n dt)
+      (List.map (fun d -> Ops.Int d) shape)
+  in
+  let pool = buffer 64 Float32 [ 8; 8 ] in
+  let slot = buffer 1 Int32 [] in
+  let x = buffer 4 Float32 [ 1; 4; 1 ] and w = buffer 32 Float32 [ 1; 4; 8 ] in
+  let inside =
+    Ops.bitwise_and (Ops.ge slot (Ops.int 0)) (Ops.lt slot (Ops.int 8))
+  in
+  let at = Ops.valid slot inside in
+  let view =
+    Ops.shrink pool
+      [ Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))); None ]
+  in
+  let row = Ops.rop (Ops.mul x w) Op.Add [ 1 ] in
+  Ops.sink [ Ops.after view [ Ops.store view row ] ]
+
+let valid_slot_store =
+  test
+    "a store through a shrink whose bounds carry a validity is refused, its \
+     size holding Invalid" (fun () ->
+      raises_match
+        (Exn.invalid_arg ~substring:"Invalid, which is no number")
+        (fun () ->
+          Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
+
 let padded_stores =
   group "a store through a padded view (D69)"
     [
@@ -2035,6 +2068,7 @@ let () =
          programs;
          schedules;
          padded_stores;
+         group "a store through a shrink" [ valid_slot_store ];
          refusals;
          runs;
          measures;
