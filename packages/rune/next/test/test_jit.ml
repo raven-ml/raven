@@ -744,6 +744,23 @@ let lending =
           equal (tensor float_exact) (Nx.full Nx.float32 [| n |] 21.) (host !s));
     ]
 
+(* [together fs] runs each of [fs] on a domain of its own, all released at once,
+   and is their results. *)
+let together fs =
+  let go = Atomic.make false in
+  let ds =
+    List.map
+      (fun f ->
+        Domain.spawn (fun () ->
+            while not (Atomic.get go) do
+              Domain.cpu_relax ()
+            done;
+            f ()))
+      fs
+  in
+  Atomic.set go true;
+  List.map Domain.join ds
+
 (* Captures *)
 
 let storage_of x =
@@ -809,6 +826,37 @@ let captures =
           equal close (Nx.mul (x ()) (y ())) (host (g1 a));
           equal close (Nx.add (x ()) (y ())) (host (g2 a));
           equal ~msg:"pins" int 2 (Nx.Repr.Storage.pins (storage_of w)));
+      test "a bound capture read between calls stays bound" (fun () ->
+          let w = placed d1 (y ()) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = placed d1 (x ()) in
+          ignore (g a);
+          equal floats (y ()) (host w);
+          equal close (Nx.mul (x ()) (y ())) (host (g a));
+          equal ~msg:"pins" int 1 (Nx.Repr.Storage.pins (storage_of w)));
+      test "a capture is released with the compiled function that binds it"
+        (fun () ->
+          let w = placed d1 (y ()) in
+          let run () =
+            let g = Rune.jit' (fun a -> Nx.mul a w) in
+            ignore (g (placed d1 (x ())))
+          in
+          run ();
+          Gc.full_major ();
+          equal ~msg:"pins" int 0 (Nx.Repr.Storage.pins (storage_of w)));
+      test "two compiled functions binding one capture run from two domains"
+        (fun () ->
+          let w = placed d1 (y ()) in
+          let g1 = Rune.jit' (fun a -> Nx.mul a w)
+          and g2 = Rune.jit' (fun a -> Nx.add a w) in
+          let a = placed d1 (x ()) in
+          match
+            together [ (fun () -> host (g1 a)); (fun () -> host (g2 a)) ]
+          with
+          | [ r1; r2 ] ->
+              equal close (Nx.mul (x ()) (y ())) r1;
+              equal close (Nx.add (x ()) (y ())) r2
+          | _ -> fail "two results");
       test "a draw from a key the function captures raises Jit_error" (fun () ->
           raises_jit_error (fun () ->
               Rune.jit'
@@ -955,23 +1003,6 @@ let reports =
 
 (* Domains *)
 
-(* [together fs] runs each of [fs] on a domain of its own, all released at once,
-   and is their results. *)
-let together fs =
-  let go = Atomic.make false in
-  let ds =
-    List.map
-      (fun f ->
-        Domain.spawn (fun () ->
-            while not (Atomic.get go) do
-              Domain.cpu_relax ()
-            done;
-            f ()))
-      fs
-  in
-  Atomic.set go true;
-  List.map Domain.join ds
-
 let domains =
   group "domains"
     [
@@ -1098,6 +1129,22 @@ let placement =
           let r = Rune.jit' poly a in
           equal int before (bytes_in d1);
           equal close (poly (Nx.transpose (grid 2 3))) (host r));
+      slow
+        "a state starting on the host retraces once on a device, then replays"
+        (fun () ->
+          let step = Rune.jit consumes (fun a -> Nx.add_s a 1.) in
+          let s = ref (x ()) in
+          equal int 1 (traces (fun () -> s := step !s));
+          equal int 1 (traces (fun () -> s := step (placed d2 (host !s))));
+          equal int 0 (traces (fun () -> s := step !s));
+          equal floats (Nx.add_s (x ()) 3.) (host !s));
+      test
+        "a value placed on another device inside the function meets its source \
+         and raises" (fun () ->
+          raises_invalid_arg (fun () ->
+              Rune.jit'
+                (fun a -> Nx.add a (Nx.place (on d2) a))
+                (placed d1 (x ()))));
       test "a split argument computes on each device, and stays split"
         (fun () ->
           let p =
@@ -1151,6 +1198,32 @@ let scans =
           equal close
             (Rune.grad' f (grid 3 2))
             (Rune.jit' (Rune.grad' f) (grid 3 2)));
+      test "a scan over float16 rows short of 16 bytes equals eager" (fun () ->
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x -> (Nx.add c x, Nx.mul c x))
+                 ~init:(Nx.zeros Nx.float16 [| 3 |])
+                 xs)
+          in
+          let xs = Nx.cast Nx.float16 (Nx.mul_s (grid 4 3) 0.25) in
+          equal floats
+            (Nx.cast Nx.float32 (f xs))
+            (Nx.cast Nx.float32 (Rune.jit' f xs)));
+      test "nested scans inside a compiled call equal eager" (fun () ->
+          let inner c row =
+            fst (Rune.scan' ~f:(fun c x -> (Nx.add c x, x)) ~init:c row)
+          in
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   let c = inner c (Nx.reshape [| 3; 1 |] x) in
+                   (c, c))
+                 ~init:(Nx.zeros Nx.float32 [| 1 |])
+                 xs)
+          in
+          equal close (f (grid 2 3)) (Rune.jit' f (grid 2 3)));
       test "a carry that changes its shape across steps is written out"
         (fun () ->
           let f xs =
@@ -1319,6 +1392,29 @@ let device_lists =
                   Nx.place (split ~axis:0 pair) w2 ) )
           in
           equal close (f (a, (w1, w2))) (host r));
+      slow "host arguments beside a split one enter as copies" (fun () ->
+          let a = grid 4 3 and h = Nx.mul_s (grid 4 3) 2. in
+          let r = Rune.jit two Nx.add (Nx.place (split pair) a) h in
+          is_true (Nx.Placement.equal (split pair) (Nx.placement r));
+          equal floats (Nx.add a h) (host r));
+      slow "a split capture is bound on its devices, moving no bytes" (fun () ->
+          let w = Nx.place (split pair) (Nx.mul_s (grid 4 3) 2.) in
+          let g = Rune.jit' (fun a -> Nx.mul a w) in
+          let a = Nx.place (split pair) (grid 4 3) in
+          ignore (g a);
+          let before = bytes_in d1 + bytes_in d2 in
+          equal floats (Nx.mul (grid 4 3) (Nx.mul_s (grid 4 3) 2.)) (host (g a));
+          equal int before (bytes_in d1 + bytes_in d2));
+      slow "a value placed inside the function is split as it says" (fun () ->
+          let r =
+            Rune.jit' (fun a -> Nx.place (split pair) (poly a)) (grid 4 3)
+          in
+          is_true (Nx.Placement.equal (split pair) (Nx.placement r));
+          equal floats (poly (grid 4 3)) (host r));
+      slow "an indexed write into a split value equals eager" (fun () ->
+          let f a = Nx.set [ A; I 1 ] (Nx.zeros Nx.float32 [| 4 |]) a in
+          let a = grid 4 3 in
+          equal floats (f a) (host (Rune.jit' f (Nx.place (split pair) a))));
       slow "data-parallel training follows one device" (fun () ->
           let loss w a = Nx.mean (Nx.square (Nx.matmul a w)) in
           let step =

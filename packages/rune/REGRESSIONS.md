@@ -676,6 +676,7 @@ them.
 | old: test_device_lists.ml residency › a feedback call moves no bytes; residency › copies feed back without transfer; residency › a moved output feeds a call; residency › moved inputs are returned; residency › a moved split output; residency › pass-through outputs gather on read | results fed back | J › device lists › a result fed back to the call moves no bytes |
 | old: test_device_lists.ml residency › a placed capture is bound on the devices | a capture on every device | J › device lists › a capture copied to every device is bound on each |
 | old: test_device_lists.ml residency › one slice of a split storage | one shard of a split value | J › device lists › one shard's slice of a split value computes on its device alone |
+| old: test_device_lists.ml placement › an indexed write into a split value | an indexed write into a split value | J › device lists › an indexed write into a split value equals eager |
 | old: test_device_lists.ml consumption › a split state loop is bounded at two generations; consumption › consuming copies releases every copy | a split state loop | J › device lists › a loop consuming a split state holds two generations on each device |
 | old: test_device_lists.ml consumption › programs over devices own arenas | arenas | dropped: tolk.engine's linked storage (its suite) |
 | old: test_device_lists.ml consumption › a capture of consumed storage raises | a consumed capture | J › captures › a host capture another call consumes makes the program raise, naming its path |
@@ -695,6 +696,17 @@ them.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
+| old: test_jit.ml placement › a loop whose state starts on the host compiles once | a state that moves to the device | J › placement › a state starting on the host retraces once on a device, then replays |
+| old: test_jit.ml placement › placing elsewhere inside jit raises | a value placed elsewhere inside a call | J › placement › a value placed on another device inside the function meets its source and raises |
+| old: test_jit.ml compiled over device lists › host leaves enter as copies | host arguments beside a split one | J › device lists › host arguments beside a split one enter as copies |
+| old: test_jit.ml compiled over device lists › a split capture orders copies; compiled over device lists › a split capture is bound | a split capture | J › device lists › a split capture is bound on its devices, moving no bytes |
+| old: test_jit.ml compiled over device lists › placing inside a program | placing inside a call | J › device lists › a value placed inside the function is split as it says |
+| old: test_jit.ml bound captures › independent graphs share capture ownership across domains | one capture, two programs, two domains | J › captures › two compiled functions binding one capture run from two domains |
+| old: test_jit.ml bound captures › a bound value keeps its buffer across a read | a capture read between calls | J › captures › a bound capture read between calls stays bound |
+| old: test_jit.ml bound captures › a read leaves an unbound value placed | a read of a placed value | dropped: nx's placement suite (`nx placement`) |
+| old: test_jit.ml bound captures › a bound buffer is released with its owners | a capture's release | J › captures › a capture is released with the compiled function that binds it |
+| old: test_jit.ml composition › scan rows short of 16 bytes | rows shorter than 16 bytes | J › scans › a scan over float16 rows short of 16 bytes equals eager |
+| old: test_jit.ml composition › nested scans rebind inputs without changing the outer scope | nested scans | J › scans › nested scans inside a compiled call equal eager |
 | old: test_jit.ml values on the disk › a leaf and a capture are read as host values | disk leaves and captures | J › values on the disk › a leaf and a capture on the disk are read as host values |
 | old: test_jit.ml values on the disk › borrowed storage is never lent or written | a consumed disk value | J › values on the disk › a consumed value on the disk is copied, and its file unchanged |
 | old: test_jit.ml values on the disk › the file opened is read, not the one at its path now | the file opened | J › values on the disk › the file opened is read, not the one at its path now |
@@ -718,7 +730,7 @@ The kernel rows of this file are the Compiled section's.
 | old: test_jit_metal.ml placed weights › a capture resident on another device raises | a capture on another device | J › errors › operands on two devices raise nx's message |
 | old: test_jit_metal.ml placed weights › placed views bind at any offset | views at any offset on Metal | J › metal › metal › a float16 argument starting 2 bytes further retraces once, and is read where it lies |
 | old: test_jit_metal.ml reads, moves and loops › item on resident logits reads one element; reads, moves and loops › a move to the host keeps its source; reads, moves and loops › mixed placements raise; reads, moves and loops › a value moves between backends | reads and moves of placed values | dropped: nx's placement suite (`nx placement`) |
-| old: test_jit_metal.ml reads, moves and loops › a loop whose state starts on the host compiles once | a state that moves to the device | J › keys › another device retraces once |
+| old: test_jit_metal.ml reads, moves and loops › a loop whose state starts on the host compiles once | a state that moves to the device | J › placement › a state starting on the host retraces once on a device, then replays |
 
 ### test_jit_scratch.ml, continued
 
