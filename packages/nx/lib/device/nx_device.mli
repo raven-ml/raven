@@ -1006,8 +1006,8 @@ val signal_word : t -> Buffer.t
     - [false] from {!signal}'s [wait]: the time ran out;
     - [Failure why]: the device faulted, which loses it ({!Lost}).
 
-    A [finalize] that raises is printed and ignored at exit. An {!on_free} hook
-    that raises [Failure] retains its memory. Blocking driver calls should
+    A [finalize] that raises is printed and ignored at exit. A {!depends}
+    function that raises [Failure] retains its memory. Blocking driver calls should
     release the OCaml runtime. *)
 module Driver : sig
   type device := t
@@ -1280,7 +1280,7 @@ module Driver : sig
         for the device, for {!Buffer.borrow}: the region as the device's work
         addresses it, with the host address [r] has, if any, or [Error why] if
         the device cannot reach [d']'s memory. The driver keeps the mapping
-        until [d'] frees [r] ({!on_free}); the runtime asks for a region again
+        until [r] is released ({!depends}); the runtime asks for a region again
         once the borrows of it are unreachable, and [peer] gives the same
         mapping. It runs with the device taken and [d'] free. Without it, the
         device borrows no other device's memory.
@@ -1353,12 +1353,15 @@ module Driver : sig
       [Error why] if [b]'s device does not describe its memory, or cannot for
       this memory. *)
 
-  val on_free : Buffer.t -> (unit -> unit) -> unit
-  (** [on_free b f] runs [f] once [b]'s device has synchronized and before it
-      frees the region [b] lies in to its driver, so that another device that
-      mapped the region unmaps it in [f]. Memory kept in the device's cache
-      stays mapped. If [f] raises [Failure], the memory is retained instead of
-      freed. [f] runs with [b]'s device taken.
+  val depends : Buffer.t -> (unit -> unit) -> unit
+  (** [depends b f] runs [f] once the memory [b] lies in is released: its
+      buffers are unreachable and all work that may use it is done, that of
+      [b]'s device included. An object that refers to the memory, such as
+      another device's mapping of it or a command buffer that names it, is
+      released in [f], which keeps what that object refers to. [f] must not
+      reach [b], which would keep the memory forever. If [f] raises [Failure],
+      the memory is retained instead of reused. [f] runs with [b]'s device
+      taken.
 
       Raises [Invalid_argument] if [b] is borrowed, empty, or on
       {!Nx_device.val-host}, whose memory the heap frees. *)

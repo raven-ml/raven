@@ -2934,6 +2934,10 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Driver.on_free` is `Driver.depends`, which runs
+  once an allocation is released and all work on it is done, its own device's
+  included. A hook ran when the memory went back to its driver, so what it
+  released outlived the allocation while the memory stayed cached.
 - `Nx.contiguous` of a traced value is the value itself when its view is
   C-contiguous, as for any other value. It used to copy unconditionally, so
   under `Rune.jit` every call cut the program into another kernel. Use

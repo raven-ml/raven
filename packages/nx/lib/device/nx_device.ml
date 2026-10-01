@@ -108,9 +108,6 @@ type t = {
   mutable slots : region option; (* a host's staging memory, once made *)
   mutable staging : nativeint option;
       (* the device's address of its host's staging memory, once mapped *)
-  peers : (nativeint, (unit -> unit) list) Hashtbl.t;
-      (* by the address of owned memory, what runs before it is freed *)
-  peers_lock : Mutex.t;
   released : nativeint; (* its release list (see the stubs) *)
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
@@ -198,6 +195,8 @@ and links = {
   stamps : stamp list;
       (* each device whose work touched this memory, and the latest value that
          work signals: [max_int] where a lost device's work may still write it *)
+  depends : (unit -> unit) list;
+      (* what runs once the memory retires, after all work on it *)
 }
 
 (* A device's latest work on a memory. It is raised in place, with the
@@ -613,8 +612,6 @@ let create ~name ~arch ~machine ~remote ~io ~budget ~alloc ~free ~host_memory
       settled = Atomic.make 0;
       slots = None;
       staging = None;
-      peers = Hashtbl.create 4;
-      peers_lock = Mutex.create ();
       released = release_list ();
       failed = Atomic.make None;
       cache = Hashtbl.create 16;
@@ -882,7 +879,7 @@ let first_generation = { why = "" }
    device, a device it is mapped on or whose transfer into it could not be
    waited for, or those of the memory it maps. *)
 let rec check_reach base =
-  let { maps; stamps } = Atomic.get base.links in
+  let { maps; stamps; _ } = Atomic.get base.links in
   List.iter check (base.owner :: List.map (fun m -> m.on) maps);
   List.iter (fun s -> if s.upto > Atomic.get s.by.settled then check s.by) stamps;
   Option.iter (fun (src, _) -> check_reach src) base.source
@@ -891,7 +888,7 @@ let rec update_links base f =
   let l = Atomic.get base.links in
   if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
 
-let no_links = { maps = []; stamps = [] }
+let no_links = { maps = []; stamps = []; depends = [] }
 
 (* [stamps] with [d]'s work signaling [v]. *)
 let rec stamped stamps d v =
@@ -1082,22 +1079,6 @@ let owned d base =
   let token = make_token d.released base base.bytes (Int.max 0 room) live in
   { base with keep = Keep (base.keep, token) }
 
-(* Runs what other devices that map [m] registered, before [d] frees it: they
-   unmap it. Memory one of them could not unmap is retained. [d] is
-   synchronized. *)
-let free_mapped d free size (m : region) =
-  let peers =
-    Mutex.protect d.peers_lock (fun () ->
-        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers m.address) in
-        Hashtbl.remove d.peers m.address;
-        l)
-  in
-  match List.iter (fun f -> f ()) peers with
-  | () -> free m
-  | exception Failure _ ->
-      d.retained <- d.retained + size;
-      d.held <- Keep m :: d.held
-
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
    fits [n] more bytes, or its cache is empty. With [~wait:false], only memory
    whose work is done is freed, and nothing blocks. *)
@@ -1116,7 +1097,7 @@ let release_cache ?only ~wait d n =
         in
         List.iter
           (fun ((size, kind) as key) ->
-            let free = free_mapped d (free_of d kind) size in
+            let free = free_of d kind in
             let rec drop = function
               | e :: es when fits d n -> e :: es
               | ((m, v) as e) :: es ->
@@ -1209,14 +1190,13 @@ let retire d =
 
 (* Unreachable memory is released, and retires once the work that may still
    use it is done (see [retire]). Owned memory waits for other devices' work
-   alone: [d]'s own work on it orders its reuse. A mapping waits for every
-   device's work on its borrows, [d]'s too, once the last of them is
-   unreachable: a mapping of host memory is unmapped, and one of another
-   device's memory stays its driver's until that memory is freed. Host memory
-   never comes here: it is the heap's, returned when the collector finds its
-   base unreachable. *)
-(* [d]'s record [b], released: it waits for the work that may still use it
-   (see [reclaim]). *)
+   alone: [d]'s own work on it orders its reuse. Owned memory that something
+   depends on waits for all work, [d]'s too, since what depends on it may hold
+   objects that work reads. A mapping waits for every device's work on its
+   borrows, [d]'s too, once the last of them is unreachable: a mapping of host
+   memory is unmapped, and one of another device's memory stays its driver's
+   until that memory is freed. Host memory never comes here: it is the heap's,
+   returned when the collector finds its base unreachable. *)
 let release d b =
   let stamps =
     List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps
@@ -1255,13 +1235,26 @@ let release d b =
          the device; [d]'s own reuse waits for none of it. *)
       let own = Int.max (own_stamp d stamps) (submitted d)
       and until = foreign d stamps in
+      let until, retire =
+        match (Atomic.get b.links).depends with
+        | [] -> (until, fun () -> cache_memory d b own)
+        | fs ->
+            ( (d, own) :: until,
+              fun () ->
+                match List.iter (fun f -> f ()) (List.rev fs) with
+                | () -> cache_memory d b own
+                | exception Failure _ ->
+                    allocate_bytes d (-b.bytes);
+                    d.retained <- d.retained + b.bytes;
+                    d.held <- Keep b :: d.held )
+      in
       d.retiring <-
         {
           until = (fun () -> until);
           bytes = b.bytes;
           key = Some (b.bytes, b.kind);
           kept = Keep b;
-          retire = (fun () -> cache_memory d b own);
+          retire;
         }
         :: d.retiring
 
@@ -3252,13 +3245,10 @@ module Driver = struct
     | None -> Error (d.name ^ " does not describe its memory to others")
     | Some f -> driver d (fun () -> f b.base.memory)
 
-  let on_free (b : Buffer.t) f =
+  let depends (b : Buffer.t) f =
     if b.base.borrowed || b.base.owner == host || b.base.bytes = 0 then
-      refuse "on_free" "the memory is not one a device allocated";
-    let d = b.base.owner and key = b.base.memory.address in
-    Mutex.protect d.peers_lock (fun () ->
-        let l = Option.value ~default:[] (Hashtbl.find_opt d.peers key) in
-        Hashtbl.replace d.peers key (f :: l))
+      refuse "depends" "the memory is not one a device allocated";
+    update_links b.base (fun l -> { l with depends = f :: l.depends })
 
   (* Last: it shadows the host. *)
   let host ~address ~arch ?programs ?(synchronized = ignore)

@@ -3938,7 +3938,6 @@ let test_links () =
 (* A device that describes its memory, and what runs when it frees it. *)
 let test_dma () =
   let keep = Hashtbl.create 4 in
-  let freed = ref 0 in
   let d =
     Driver.device ~name:"DMA" ~arch:"test" ~budget:max_int
       ~dma:(fun r ->
@@ -3954,10 +3953,7 @@ let test_dma () =
            memory =
              {
                alloc = block keep ~addressed:true;
-               free =
-                 (fun r ->
-                   incr freed;
-                   Hashtbl.remove keep (Region.address r));
+               free = (fun r -> Hashtbl.remove keep (Region.address r));
              };
            mapping = None;
          })
@@ -3974,22 +3970,35 @@ let test_dma () =
   (match Driver.dma (B.create (fake ()).dev S.UInt8 8) with
   | Ok _ -> fail "described"
   | Error why -> contains ~msg:"undescribed" ~sub:"does not describe" why);
+  ignore (Sys.opaque_identity b)
+
+let test_depends () =
+  let opened = ref false in
+  let f = fake ~signal:(gate opened) () in
   let runs = ref 0 in
-  Driver.on_free b (fun () -> incr runs);
   raises_match (Exn.invalid_arg ~substring:"allocated") (fun () ->
-      Driver.on_free (B.create host S.UInt8 8) ignore);
-  dropped (fun () -> b);
-  ignore (stats d);
-  equal ~msg:"cached memory stays mapped" int 0 !runs;
-  Nx_device.free_cache d;
-  equal ~msg:"unmapped before it is freed" (pair int int) (1, 1) (!runs, !freed);
-  let b = B.create d S.UInt8 4096 in
-  Driver.on_free b (fun () -> failwith "the mapper is gone");
-  dropped (fun () -> b);
-  Nx_device.free_cache d;
-  equal ~msg:"memory a mapper could not unmap is retained" (pair int int)
-    (4096, 1)
-    (Nx_device.Stats.retained (stats d), !freed)
+      Driver.depends (B.create host S.UInt8 8) ignore);
+  let first =
+    dropped_at f.dev 4096 (fun b ->
+        Driver.depends (B.view b ~offset:64 S.UInt8 8) (fun () -> incr runs);
+        ignore (submit f.dev ~touches:[ b ] Fun.id))
+  in
+  ignore (stats f.dev);
+  equal ~msg:"not run while its own device's work is unsignaled" int 0 !runs;
+  let held = B.create f.dev S.UInt8 4096 in
+  equal ~msg:"not reused before it runs" bool false (B.address held = first);
+  opened := true;
+  ignore (stats f.dev);
+  equal ~msg:"run once that work is signaled" int 1 !runs;
+  equal ~msg:"then reused" nativeint first
+    (B.address (B.create f.dev S.UInt8 4096));
+  ignore
+    (dropped_at f.dev 8192 (fun b ->
+         Driver.depends b (fun () -> failwith "the mapper is gone")));
+  Nx_device.free_cache f.dev;
+  equal ~msg:"memory whose dependant raised is retained" int 8192
+    (Nx_device.Stats.retained (stats f.dev));
+  ignore (Sys.opaque_identity held)
 
 let test_remote_programs () =
   let calls = ref [] and unloaded = ref 0 in
@@ -4048,7 +4057,11 @@ let machines =
       test "a host without memory for its staging raises Out_of_memory"
         test_no_staging;
       test "links carry copies between machines" test_links;
-      test "memory described to other functions, and unmapped at free" test_dma;
+      test "memory described to other functions" test_dma;
+      test
+        "what depends on memory runs once it is released and all work on it \
+         is done, its own device's too"
+        test_depends;
       test "programs of another machine's host" test_remote_programs;
     ]
 

@@ -61,8 +61,8 @@ let closest host bus =
 (* Regions *)
 
 (* The region of [n] over the allocation [b] lies in, registered at its first
-   use at the allocation's device address, and deregistered when its device
-   frees it. [n] is locked. *)
+   use at the allocation's device address, and deregistered once the
+   allocation is released. [n] is locked. *)
 let key n (b : B.t) (dma : Driver.dma) =
   let alloc = Nativeint.to_int (Region.address (Region.of_buffer b)) in
   let owner = Nx_device.name (B.device b) in
@@ -77,7 +77,7 @@ let key n (b : B.t) (dma : Driver.dma) =
           ~size ~log_page:log ~va:alloc
       in
       Hashtbl.replace n.keys (owner, alloc) k;
-      Driver.on_free b (fun () ->
+      Driver.depends b (fun () ->
           Mutex.protect n.lock (fun () ->
               Hashtbl.remove n.keys (owner, alloc);
               Bnxt.unregister_mem n.bnxt k));
