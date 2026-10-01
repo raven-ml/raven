@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
 open Talon_next
+open Windtrap
 
 let ( let+ ) = Gen.( let+ )
 let ( and+ ) = Gen.( and+ )
@@ -199,6 +199,27 @@ let options ty =
       [ (1, Gen.constant 0); (1, Gen.int_range 1 3); (3, Gen.int_range 0 40) ]
   in
   Gen.array ~size row
+
+(* Tables *)
+
+let pp_batches ppf t =
+  let pp_sep ppf () = Format.pp_print_string ppf " + " in
+  Format.fprintf ppf "batches of %a rows"
+    (Format.pp_print_list ~pp_sep Format.pp_print_int)
+    (List.map rows (batches t))
+
+let split t =
+  let n = rows t in
+  let run a b = take (Nx.arange Nx.int64 a b 1) t in
+  let rec runs = function
+    | a :: (b :: _ as cuts) -> run a b :: runs cuts
+    | _ -> []
+  in
+  let cut cuts =
+    of_batches (runs (List.sort Int.compare ((0 :: cuts) @ [ n ])))
+  in
+  Gen.with_pp pp_batches
+    (Gen.map cut (Gen.list ~size:(Gen.int_range 0 5) (Gen.int_range 0 n)))
 
 (* Comparing and printing *)
 

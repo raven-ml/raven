@@ -15,6 +15,7 @@
   order
   window
   expr
+  key
   table
   source
   join

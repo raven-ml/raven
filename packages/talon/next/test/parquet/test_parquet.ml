@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
 open Talon_next
+open Windtrap
 module P = Talon_next_parquet
 
 (* Fixtures *)

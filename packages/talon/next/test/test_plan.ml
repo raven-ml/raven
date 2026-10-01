@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
 open Talon_next
+open Windtrap
 
 let str pp v = Format.asprintf "%a" pp v
 

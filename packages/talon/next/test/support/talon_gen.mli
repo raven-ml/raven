@@ -5,8 +5,8 @@
 
 (** Generators of types and values for talon's suites. *)
 
-open Windtrap
 open Talon_next
+open Windtrap
 
 val type_ : Type.any Gen.t
 (** [type_] draws a type: every scalar type at its edges of precision, scale,
@@ -30,6 +30,13 @@ type sample = Sample : 'a Type.t * 'a option array -> sample
 
 val sample : sample Gen.t
 (** [sample] is {!options} of a {!type_}. *)
+
+val pp_sample : Format.formatter -> sample -> unit
+(** [pp_sample] formats a sample's type and rows. *)
+
+val split : Talon_next.t -> Talon_next.t Gen.t
+(** [split t] draws [t] cut into batches: {!Talon_next.of_batches} of runs of
+    its rows, empty runs and runs of one row included. *)
 
 val witness : 'a Type.t -> 'a Testable.t
 (** [witness ty] compares values of [ty] by {!Type.compare_value}, and floats by

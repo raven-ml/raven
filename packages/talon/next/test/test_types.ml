@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Windtrap
 open Talon_next
+open Windtrap
 
 let str pp v = Format.asprintf "%a" pp v
 let rejects f = raises_match (fun e -> Exn.invalid_arg e) f

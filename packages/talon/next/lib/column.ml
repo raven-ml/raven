@@ -594,6 +594,182 @@ let ragged c =
       let (Any ty) = c.type_ in
       err "Column.ragged: %a is not stored as bytes" Type.pp ty
 
+(* Structural operations *)
+
+let rows_of_tensor x ~offset ~length =
+  let range i d = if i = 0 then (offset, offset + length) else (0, d) in
+  Nx.shrink (Array.mapi range (Nx.shape x)) x
+
+let rec sub c ~offset ~length =
+  if offset < 0 || length < 0 || offset + length > c.length then
+    err "Column.sub: rows %d to %d of %d rows" offset (offset + length) c.length;
+  let validity = Option.map (Nx_bits.sub ~offset ~length) c.validity in
+  let data =
+    match c.data with
+    | Fixed (P x) -> Fixed (P (rows_of_tensor x ~offset ~length))
+    | Bytes r -> Bytes (Nx_ragged.sub r ~offset ~length)
+    | List { offsets; child } ->
+        let offsets = Nx.shrink [| (offset, offset + length + 1) |] offsets in
+        List { offsets; child }
+    | Fields cs -> Fields (List.map (sub ~offset ~length) cs)
+  in
+  with_validity c.type_ validity ~length data
+
+(* [gather indices c] is the data of [c]'s rows at [indices], zeros and empty
+   rows outside [c]'s rows. *)
+let rec gather indices c =
+  match c.data with
+  | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 ~indices x))
+  | Bytes r -> Bytes (Nx_ragged.take ~indices r)
+  | List { offsets; child } ->
+      let elements = Nx.arange Nx.int64 0 child.length 1 in
+      let at = Nx_ragged.take ~indices (Nx_ragged.v ~offsets elements) in
+      List
+        {
+          offsets = Nx_ragged.offsets at;
+          child = take (Nx_ragged.values at) child;
+        }
+  | Fields cs -> Fields (List.map (take indices) cs)
+
+and take indices c =
+  let validity =
+    match c.validity with
+    | Some v -> Nx_bits.take ~indices v
+    | None ->
+        Nx_bits.of_bool
+          (Nx.logical_and
+             (Nx.greater_equal_s indices 0L)
+             (Nx.less_s indices (Int64.of_int c.length)))
+  in
+  with_validity c.type_ (Some validity) ~length:(Nx.dim 0 indices)
+    (gather indices c)
+
+let permute p c =
+  let validity = Option.map (Nx_bits.take ~indices:p) c.validity in
+  { c with validity; data = gather p c }
+
+let mask m c =
+  let rows = Nx.arange Nx.int64 0 c.length 1 in
+  take (Nx.where m rows (Nx.full Nx.int64 [| c.length |] (-1L))) c
+
+(* [bounds offsets] is the first and last of [offsets]. *)
+let bounds offsets =
+  let last = Nx.dim 0 offsets - 1 in
+  (Int64.to_int (Nx.item [ 0 ] offsets), Int64.to_int (Nx.item [ last ] offsets))
+
+(* [rebase offsets first] is [offsets] less [first], over contiguous storage. *)
+let rebase offsets first =
+  if first = 0 then Nx.contiguous offsets
+  else Nx.sub_s offsets (Int64.of_int first)
+
+(* [exact offsets child] is [offsets] from [0] and the rows of [child] they
+   cut. *)
+let exact offsets child =
+  let first, last = bounds offsets in
+  let child =
+    if first = 0 && last = child.length then child
+    else sub child ~offset:first ~length:(last - first)
+  in
+  (rebase offsets first, child)
+
+(* A canonical bitmap starts its bytes at bit [0] and leaves the bits past its
+   length unset, so that equal bits have equal bytes. *)
+let canonical_bits b =
+  let bytes, offset = Nx_bits.bytes b and n = Nx_bits.length b in
+  if
+    offset = 0
+    && Nx.contiguous bytes == bytes
+    && (n land 7 = 0 || Nx.item [ n / 8 ] bytes lsr (n land 7) = 0)
+  then b
+  else Nx_bits.of_bool (Nx_bits.to_bool b)
+
+let rec canonical c =
+  let validity =
+    match c.validity with
+    | Some b as v ->
+        let b' = canonical_bits b in
+        if b' == b then v else Some b'
+    | None -> None
+  in
+  let data =
+    match c.data with
+    | Fixed (P x) as d ->
+        let y = Nx.contiguous x in
+        if y == x then d else Fixed (P y)
+    | Bytes r as d ->
+        let offsets = Nx_ragged.offsets r and values = Nx_ragged.values r in
+        let first, last = bounds offsets in
+        let offsets' = rebase offsets first in
+        let values' =
+          if first = 0 && last = Nx.dim 0 values then Nx.contiguous values
+          else Nx.contiguous (Nx.shrink [| (first, last) |] values)
+        in
+        if offsets' == offsets && values' == values then d
+        else Bytes (Nx_ragged.v ~offsets:offsets' values')
+    | List { offsets; child } as d ->
+        let offsets', child' = exact offsets child in
+        let child' = canonical child' in
+        if offsets' == offsets && child' == child then d
+        else List { offsets = offsets'; child = child' }
+    | Fields cs as d ->
+        let cs' = List.map canonical cs in
+        if List.for_all2 ( == ) cs cs' then d else Fields cs'
+  in
+  if validity == c.validity && data == c.data then c
+  else { c with validity; data }
+
+let rec concat = function
+  | [] -> invalid_arg "Column.concat: no column"
+  | [ c ] -> canonical c
+  | c :: _ as cs ->
+      let sum f = List.fold_left (fun n c -> n + f c) 0 cs in
+      let nulls = sum null_count in
+      let validity =
+        if nulls = 0 then None
+        else
+          let valid c =
+            match valid c with
+            | Some m -> m
+            | None -> Nx.ones Nx.bool [| c.length |]
+          in
+          Some (Nx_bits.of_bool (Nx.concatenate ~axis:0 (List.map valid cs)))
+      in
+      let length = sum length in
+      { type_ = c.type_; length; nulls; validity; data = join cs c.data }
+
+and join cs = function
+  | Fixed (P x) ->
+      let part c =
+        match c.data with
+        | Fixed p -> Nx.unpack (Nx.dtype x) p
+        | _ -> assert false
+      in
+      Fixed (P (Nx.concatenate ~axis:0 (List.map part cs)))
+  | Bytes _ ->
+      let part c = match c.data with Bytes r -> r | _ -> assert false in
+      Bytes (Nx_ragged.concat (List.map part cs))
+  | List _ ->
+      let part c =
+        match c.data with
+        | List { offsets; child } -> exact offsets child
+        | _ -> assert false
+      in
+      let parts = List.map part cs in
+      let shift (base, tails) (offsets, child) =
+        let tail = Nx.shrink [| (1, Nx.dim 0 offsets) |] offsets in
+        (base + child.length, Nx.add_s tail (Int64.of_int base) :: tails)
+      in
+      let _, tails = List.fold_left shift (0, []) parts in
+      let offsets =
+        Nx.concatenate ~axis:0 (Nx.zeros Nx.int64 [| 1 |] :: List.rev tails)
+      in
+      List { offsets; child = concat (List.map snd parts) }
+  | Fields fs ->
+      let field i c =
+        match c.data with Fields fs -> List.nth fs i | _ -> assert false
+      in
+      Fields (List.mapi (fun i _ -> concat (List.map (field i) cs)) fs)
+
 (* Layouts *)
 
 type layout =

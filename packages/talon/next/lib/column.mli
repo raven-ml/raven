@@ -6,8 +6,9 @@
 (** Columns.
 
     [Talon_next.Column] documents columns and their layouts. This interface adds
-    their {{!repr}representation} and the {{!codec}codec} that converts OCaml
-    values to and from columns by recursion over their type. *)
+    their {{!repr}representation}, the {{!codec}codec} that converts OCaml
+    values to and from columns by recursion over their type, and the
+    {{!structural}structural operations} that every verb uses. *)
 
 type t
 
@@ -92,3 +93,39 @@ val decoder : 'a Type.t -> t -> (int -> 'a option, int * string) result
     an extension type.
 
     Raises [Invalid_argument] if [c]'s type is not [ty]. *)
+
+(** {1:structural Structural operations}
+
+    They apply to every type, recursively, and keep the type. *)
+
+val sub : t -> offset:int -> length:int -> t
+(** [sub c ~offset ~length] is rows [offset] to [offset + length - 1] of [c],
+    over [c]'s buffers.
+
+    Raises [Invalid_argument] if the rows are not rows of [c]. *)
+
+val take : Nx.int64_t -> t -> t
+(** [take indices c] is the rows of [c] at the 1-D [indices], in order. An index
+    outside \[[0];[length c - 1]\] gives a null row of zeros or an empty row, so
+    that joins pad with [-1]. *)
+
+val permute : Nx.int64_t -> t -> t
+(** [permute p c] is [take p c] for a permutation [p] of [c]'s rows. Its null
+    count is [c]'s, so a fixed-width column is permuted without a read. *)
+
+val concat : t list -> t
+(** [concat cs] is the rows of [cs], one column after the other, canonical (see
+    {!canonical}). The columns have one type.
+
+    Raises [Invalid_argument] if [cs] is empty. *)
+
+val canonical : t -> t
+(** [canonical c] is [c] with buffers that hold exactly its rows: offsets from
+    [0], values exactly the rows', a validity at bit offset [0] with no bit set
+    past its length, at every depth. It is [c] itself when [c] is canonical, and
+    one copy otherwise. Two canonical columns whose rows hold the same bytes,
+    under their nulls included, have the same layout, byte for byte. *)
+
+val mask : Nx.bool_t -> t -> t
+(** [mask m c] is [c] null where [m] is [false], with zeros or empty rows under
+    the new nulls. *)

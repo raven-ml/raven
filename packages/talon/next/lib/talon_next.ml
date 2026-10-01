@@ -19,6 +19,16 @@ module Column = struct
   let parse = Form.parse
 end
 
+let v = Table.v
+let of_batches = Table.of_batches
+let batches = Table.batches
+let schema = Table.schema
+let rows = Table.rows
+let column = Table.column
+let take = Table.take
+let to_tensor = Table.to_tensor
+let equal = Table.equal
+
 module Error = Error
 module Tz = Tz
 module Sel = Sel

@@ -78,3 +78,13 @@
  (modules test_parse)
  (package talon)
  (libraries windtrap talon.next talon_gen nx))
+
+(test
+ (name test_table)
+ (modules test_table)
+ (package talon)
+ (libraries windtrap talon.next talon_gen nx nx.dtype nx.bits)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_table.ml test_table.ml.corrected))))

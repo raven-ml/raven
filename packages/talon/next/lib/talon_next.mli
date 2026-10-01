@@ -696,6 +696,59 @@ module Column : sig
       is another type. *)
 end
 
+(** {1:tables Tables} *)
+
+val v : (string * Column.t) list -> t
+(** [v cs] is the table of the columns [cs], in order, as one batch.
+
+    Raises [Invalid_argument] if two columns have the same name, a name is not
+    valid UTF-8, or the columns have different lengths. *)
+
+val of_batches : t list -> t
+(** [of_batches ts] is the rows of [ts] one after the other, without a copy, in
+    O(number of batches). Each table's batches become the result's.
+
+    Raises [Invalid_argument] if [ts] is empty or the tables' schemas differ
+    ({!Schema.equal}). *)
+
+val batches : t -> t list
+(** [batches t] is [t]'s batches, each a table of one batch, in order. A table
+    without rows has none. *)
+
+val schema : t -> Schema.t
+(** [schema t] is the names and types of [t]'s columns. *)
+
+val rows : t -> int
+(** [rows t] is the number of rows of [t]. *)
+
+val column : t -> string -> Column.t
+(** [column t name] is the column [name] of [t]: its own when [t] is one batch
+    of a column whose buffers hold exactly its rows, else one copy that holds
+    exactly them.
+
+    Raises [Invalid_argument] if [t] has no column [name]. *)
+
+val take : Nx.int64_t -> t -> t
+(** [take indices t] is the rows of [t] at [indices], in order, as one batch:
+    [take (Nx.Rng.permutation key (rows t)) t] shuffles every column.
+
+    Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
+    \[[0];[rows t - 1]\]. *)
+
+val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b) Nx.t
+(** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
+    column [j] is the column [List.nth names j] of [t], each value converted to
+    [dt] as {!Nx.cast} converts it. It is the one copy a columnar layout forces.
+    The columns are numeric or boolean, and have no null.
+
+    Raises [Invalid_argument] if a name is not a column of [t], if a column is
+    neither numeric nor boolean, or has a null. *)
+
+val equal : t -> t -> bool
+(** [equal t0 t1] is [true] iff [t0] and [t1] have equal schemas and the same
+    keys row by row, by key identity ({!Type.compare_value}, null being one more
+    key), whatever their batches. *)
+
 module Error = Error
 module Tz = Tz
 
