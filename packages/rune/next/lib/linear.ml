@@ -61,10 +61,6 @@ let nonlinear t op =
         must be linear in its tangents"
        t.entry (name op))
 
-let untransposed op =
-  invalid_arg
-    (Printf.sprintf "Rune: the transpose of %s is not implemented" (name op))
-
 (* [record t op x] is the slot of [op]'s result, recorded on [t]; [x] is a slot
    operand, whose context the result takes. *)
 let record t op x =
@@ -76,19 +72,31 @@ let claims : type r. tape -> r Nx.Op.t -> bool =
  fun t op ->
   match[@warning "@4@8"] op with
   | Unary (_, x) -> owns t x
+  | Binary (_, a, b) -> owns t a || owns t b
   | Reduce (_, _, x) -> owns t x
   | Move (x, _) -> owns t x
-  | Read x -> owns t x
-  | Binary (_, a, b) -> owns t a || owns t b
-  | Where (_, a, b) -> owns t a || owns t b
   | Matmul (a, b) -> owns t a || owns t b
-  | Compare _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _ | Cat _
-  | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _
-  | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _ | Svd _
-  | Eig _ | Eigh _ | Solve_triangular _ | Place _ ->
+  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _
+  | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _
+  | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
+  | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
       List.exists (fun (Nx.P x) -> owns t x) (operands op)
 
-(* [run t op] is [op], one of whose operands is a slot of [t]. *)
+let real_or_complex dt = Nx_dtype.is_float dt || Nx_dtype.is_complex dt
+
+(* [record_any t op] is [record t op x] for the first slot operand [x]. *)
+let record_any t op =
+  let (Nx.P x) = List.find (fun (Nx.P x) -> owns t x) (operands op) in
+  record t op x
+
+let sum t op (k : Nx_backend.reduce) x =
+  match[@warning "@4@8"] k with
+  | Sum -> record t op x
+  | Prod | Max | Min -> nonlinear t op
+
+(* [run t op] is [op], one of whose operands is a slot of [t]: the slot of its
+   result if [op] is linear in its slots. A plain operand of an operation linear
+   in several is taken as zero, as a tangent's zero fill is. *)
 let run : type r. tape -> r Nx.Op.t -> r =
  fun t op ->
   match[@warning "@4@8"] op with
@@ -108,30 +116,43 @@ let run : type r. tape -> r Nx.Op.t -> r =
         | Idiv | Mod | Pow | Atan2 | Maximum | Minimum | And | Or | Xor -> false
       in
       if linear then record t op (if sa then a else b) else nonlinear t op
-  | Where (_, a, b) -> record t op (if owns t a then a else b)
-  | Reduce (k, _, x) -> (
-      match[@warning "@4@8"] (k : Nx_backend.reduce) with
-      | Sum -> record t op x
-      | Prod | Max | Min -> nonlinear t op)
-  | Move (x, m) -> (
-      match[@warning "@4@8"] m with
-      | Reshape _ | Expand _ | Permute _ -> record t op x
-      | Shrink _ | Flip _ | Window _ -> untransposed op)
+  | Where _ -> record_any t op
+  | Reduce (k, _, x) -> sum t op k x
+  | Scan (k, _, x) -> sum t op k x
+  | Pad (_, v, x) ->
+      if v = Nx_dtype.zero (Nx.dtype x) then record t op x else nonlinear t op
+  | Convert (Cast, dtype, x) ->
+      if real_or_complex dtype && real_or_complex (Nx.dtype x) then
+        record t op x
+      else nonlinear t op
+  | Solve_triangular { a; b; _ } ->
+      if owns t a then nonlinear t op else record t op b
   | Matmul (a, b) ->
       let sa = owns t a in
       if sa && owns t b then nonlinear t op
       else record t op (if sa then a else b)
+  | Cat _ -> record_any t op
+  | Gather _ -> record_any t op
+  | Scatter _ -> record_any t op
+  | Update _ -> record_any t op
+  | Unfold _ -> record_any t op
+  | Fold _ -> record_any t op
+  | Fft _ -> record_any t op
+  | Rfft _ -> record_any t op
+  | Irfft _ -> record_any t op
+  | Contiguous _ -> record_any t op
+  | Move _ -> record_any t op
+  | Place _ -> record_any t op
   | Read _ ->
       invalid_arg
         (Printf.sprintf
            "%s: a custom_jvp tangent map reads a tangent's value; under \
             reverse mode a tangent has none"
            t.entry)
-  | Compare _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _ | Cat _
-  | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _
-  | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _ | Svd _
-  | Eig _ | Eigh _ | Solve_triangular _ | Place _ ->
-      untransposed op
+  | Compare _ | Arg_reduce _ | Sort _ | Argsort _
+  | Convert (Bitcast, _, _)
+  | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->
+      nonlinear t op
 
 let call : type r. tape -> r Construct.t -> (unit -> r) option =
  fun t c ->
@@ -190,6 +211,72 @@ let unbroadcast ct shape =
     in
     Nx.reshape shape (Nx.sum ~axes ct)
 
+(* [shrink_axis ~axis (lo, hi) x] is [x] from [lo] to [hi] along [axis];
+   [pad_axis ~axis (lo, hi) x] is [x] with [lo] and [hi] zeros around it along
+   [axis]. *)
+let shrink_axis ~axis (lo, hi) x =
+  Nx.shrink
+    (Array.mapi (fun i d -> if i = axis then (lo, hi) else (0, d)) (Nx.shape x))
+    x
+
+let pad_axis ~axis (lo, hi) x =
+  Nx.pad
+    (Array.mapi (fun i _ -> if i = axis then (lo, hi) else (0, 0)) (Nx.shape x))
+    (Nx_dtype.zero (Nx.dtype x))
+    x
+
+(* The cotangent of the scattered updates: the cotangent at the positions they
+   reach, less, under [`Set] with repeated indices, the updates a later one
+   overwrites. *)
+let scattered ~mode ~unique ~axis ~indices ~into ct =
+  let g = Nx.take_along_axis ~axis ~indices ct in
+  match mode with
+  | `Set when not unique ->
+      let shape = Nx.shape indices in
+      let along =
+        Array.mapi (fun i _ -> if i = axis then shape.(axis) else 1) shape
+      in
+      let rank =
+        Nx.broadcast_to shape
+          (Nx.reshape along (Nx.arange Nx.int32 0 shape.(axis) 1))
+      in
+      let winner =
+        eval
+          (Scatter
+             {
+               mode = `Set;
+               unique = false;
+               axis;
+               indices;
+               updates = rank;
+               into = Nx.zeros Nx.int32 (Nx.shape into);
+             })
+      in
+      Nx.where
+        (Nx.equal (Nx.take_along_axis ~axis ~indices winner) rank)
+        g (Nx.zeros_like g)
+  | `Set | `Add -> g
+
+(* The window of [ct] that [v], written at [starts], covers; each axis is read
+   with a gather, so a traced [starts] stays traced. *)
+let window ~starts v ct =
+  let vshape = Nx.shape v in
+  let rank = Array.length vshape in
+  let w = ref ct in
+  for axis = 0 to rank - 1 do
+    let len = vshape.(axis) in
+    let start = Nx.reshape [||] (Nx.slice [ Nx.I axis ] starts) in
+    let idx = Nx.add (Nx.arange Nx.int32 0 len 1) start in
+    let shape = Array.copy (Nx.shape !w) in
+    shape.(axis) <- len;
+    let along = Array.init rank (fun i -> if i = axis then len else 1) in
+    w :=
+      Nx.take_along_axis ~axis
+        ~indices:(Nx.broadcast_to shape (Nx.reshape along idx))
+        !w
+  done;
+  !w
+
 let transpose_op : type a b.
     cotangents -> (a, b) Nx.t Nx.Op.t -> (a, b) Nx.t -> unit =
  fun cts op ct ->
@@ -218,24 +305,169 @@ let transpose_op : type a b.
         Array.mapi (fun i d -> if Array.mem i axes then 1 else d) shape
       in
       add x (Nx.broadcast_to shape (Nx.reshape kept ct))
+  | Scan (_, axis, x) ->
+      let axes = [ (if axis < 0 then axis + Nx.ndim x else axis) ] in
+      add x (Nx.flip ~axes (Nx.cumsum ~axis:(List.hd axes) (Nx.flip ~axes ct)))
+  | Pad (padding, _, x) ->
+      add x
+        (Nx.shrink
+           (Array.mapi (fun i (lo, _) -> (lo, lo + (Nx.shape x).(i))) padding)
+           ct)
+  | Cat (axis, xs) ->
+      ignore
+        (List.fold_left
+           (fun lo x ->
+             let hi = lo + (Nx.shape x).(axis) in
+             add x (shrink_axis ~axis (lo, hi) ct);
+             hi)
+           0 xs)
+  | Convert (_, _, x) -> add x (Nx.cast (Nx.dtype x) ct)
+  | Gather (axis, indices, x) ->
+      add x
+        (eval
+           (Scatter
+              {
+                mode = `Add;
+                unique = false;
+                axis;
+                indices;
+                updates = ct;
+                into = Nx.zeros_like x;
+              }))
+  | Scatter { mode; unique; axis; indices; updates; into } ->
+      add updates (scattered ~mode ~unique ~axis ~indices ~into ct);
+      add into
+        (match mode with
+        | `Add -> ct
+        | `Set ->
+            Nx.mul ct
+              (eval
+                 (Scatter
+                    {
+                      mode = `Set;
+                      unique;
+                      axis;
+                      indices;
+                      updates = Nx.zeros_like updates;
+                      into = Nx.ones_like into;
+                    })))
+  | Update (x, starts, v) ->
+      add x (eval (Update (ct, starts, Nx.zeros_like v)));
+      add v (window ~starts v ct)
+  | Unfold { kernel_size; stride; dilation; padding; x } ->
+      let shape = Nx.shape x and k = Array.length kernel_size in
+      let output_size = Array.sub shape (Array.length shape - k) k in
+      add x
+        (eval
+           (Fold { output_size; kernel_size; stride; dilation; padding; x = ct }))
+  | Fold { kernel_size; stride; dilation; padding; x; _ } ->
+      add x (eval (Unfold { kernel_size; stride; dilation; padding; x = ct }))
+  | Fft { inverse; axes; x } -> add x (eval (Fft { inverse; axes; x = ct }))
+  | Rfft { axes; x; _ } ->
+      (* rfft is a real embedding, an fft and a slice to the first n/2 + 1 bins
+         of the last axis: each transposes to its adjoint, a zero pad, the fft
+         itself and the real part. *)
+      let last = axes.(Array.length axes - 1) in
+      let n = (Nx.shape x).(last) and m = (Nx.shape ct).(last) in
+      let ct = if n > m then pad_axis ~axis:last (0, n - m) ct else ct in
+      add x
+        (Nx.real (Nx.dtype x) (eval (Fft { inverse = false; axes; x = ct })))
+  | Irfft { axes; x; _ } ->
+      (* irfft extends the spectrum along the last axis by its conjugate mirror,
+         runs the inverse fft and takes the real part. The transpose embeds the
+         real cotangent, runs the same inverse fft and folds the mirror back:
+         bins 1 .. n - m received a second contribution, which on a real
+         cotangent's transform equals the first. *)
+      let last = axes.(Array.length axes - 1) in
+      let n = (Nx.shape ct).(last) in
+      let m = (n / 2) + 1 in
+      let z =
+        eval (Fft { inverse = true; axes; x = Nx.cast (Nx.dtype x) ct })
+      in
+      let head = shrink_axis ~axis:last (0, m) z in
+      add x
+        (if n - m >= 1 then
+           Nx.add head
+             (pad_axis ~axis:last
+                (1, m - 1 - (n - m))
+                (shrink_axis ~axis:last (1, n - m + 1) head))
+         else head)
+  | Contiguous x -> add x ct
+  | Solve_triangular { upper; transpose; unit_diag; a; b } ->
+      (* The solve with op(A) transposes to the solve with op(A)ᵀ, the conjugate
+         of the other solve applied to the conjugate cotangent. *)
+      add b
+        (Nx.conjugate
+           (eval
+              (Solve_triangular
+                 {
+                   upper;
+                   transpose = not transpose;
+                   unit_diag;
+                   a;
+                   b = Nx.conjugate ct;
+                 })))
   | Move (x, m) -> (
       match[@warning "@4@8"] m with
-      | Reshape _ -> add x (Nx.reshape (Nx.shape x) ct)
+      | Reshape _ ->
+          let ct = if Nx.is_c_contiguous ct then ct else Nx.contiguous ct in
+          add x (Nx.reshape (Nx.shape x) ct)
       | Expand _ -> add x (unbroadcast ct (Nx.shape x))
       | Permute p ->
           let inverse = Array.make (Array.length p) 0 in
           Array.iteri (fun i j -> inverse.(j) <- i) p;
           add x (Nx.transpose ~axes:(Array.to_list inverse) ct)
-      | Shrink _ | Flip _ | Window _ -> assert false (* Never recorded. *))
+      | Shrink limits ->
+          let shape = Nx.shape x in
+          add x
+            (Nx.pad
+               (Array.mapi (fun i (lo, hi) -> (lo, shape.(i) - hi)) limits)
+               (Nx_dtype.zero (Nx.dtype x))
+               ct)
+      | Flip dims ->
+          let axes =
+            List.filter
+              (fun i -> dims.(i))
+              (List.init (Array.length dims) Fun.id)
+          in
+          add x (Nx.flip ~axes ct)
+      | Window { axis; size; step } ->
+          (* Overlap-add: input position [w * step + j] receives the cotangent
+             of window [w] at offset [j], which is what fold sums. *)
+          let shape = Nx.shape x in
+          let r = Array.length shape in
+          let to_fold =
+            List.init (r + 1) (fun i ->
+                if i < axis then i
+                else if i <= r - 2 then i + 1
+                else if i = r - 1 then r
+                else axis)
+          in
+          let folded =
+            eval
+              (Fold
+                 {
+                   output_size = [| shape.(axis) |];
+                   kernel_size = [| size |];
+                   stride = [| step |];
+                   dilation = [| 1 |];
+                   padding = [| (0, 0) |];
+                   x = Nx.transpose ~axes:to_fold ct;
+                 })
+          in
+          let from_fold =
+            List.init r (fun j ->
+                if j < axis then j else if j = axis then r - 1 else j - 1)
+          in
+          add x (Nx.transpose ~axes:from_fold folded))
   | Matmul (a, b) ->
       if owns a then
         add a (unbroadcast (Nx.matmul ct (Nx.matrix_transpose b)) (Nx.shape a))
       else
         add b (unbroadcast (Nx.matmul (Nx.matrix_transpose a) ct) (Nx.shape b))
-  | Compare _ | Scan _ | Sort _ | Pad _ | Cat _ | Convert _ | Threefry _
-  | Gather _ | Scatter _ | Update _ | Unfold _ | Fold _ | Fft _ | Rfft _
-  | Irfft _ | Contiguous _ | Cholesky _ | Solve_triangular _ | Place _
-  | Arg_reduce _ | Argsort _ | Read _ ->
+  | Place (_, x) -> add x (Nx.place (Nx.placement x) ct)
+  | Compare _ | Sort _ | Threefry _ | Cholesky _ | Arg_reduce _ | Argsort _
+  | Read _ ->
       assert false (* Never recorded. *)
 
 let transpose cts =

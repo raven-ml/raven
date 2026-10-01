@@ -27,10 +27,21 @@ val install : tape -> (unit -> 'a) -> 'a
 (** [install t f] is [f ()] with its operations recorded on [t] when a slot of
     [t] is an operand ({!Construct.install}).
 
+    An operation is linear in its slots when every other operand is a
+    coefficient: negation; addition and subtraction of two slots; a product with
+    one slot; a quotient of a slot; a selection, a sum or running sum, a zero
+    padding, a concatenation, a gather, a scatter or an update, a window or its
+    fold, a Fourier transform, a copy, a movement or a placement of slots; a
+    cast among real and complex dtypes; a matrix product with one slot; and a
+    triangular solve for a slot. In a selection, a concatenation, a scatter and
+    an update, an operand that is no slot stands for zero, as a tangent's zero
+    fill does.
+
     Raises [Invalid_argument], at the operation, naming [t]'s entry point, if
     the operation is not linear in its slots, as in
     ["Rune.grad: a custom_jvp tangent map applies exp to a tangent; a tangent
-     map must be linear in its tangents"], or if it reads a slot's value. *)
+     map must be linear in its tangents"], an addition or a nonzero padding
+    being affine, or if it reads a slot's value. *)
 
 (** {1:transposing Transposing} *)
 
