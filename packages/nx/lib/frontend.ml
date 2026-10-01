@@ -2779,12 +2779,10 @@ module Rng = struct
       reshape shape
         (shrink [| (0, n) |] (flatten (blocks "bits" k ((n + 1) / 2))))
 
-  (* A draw is a buffer of its own, as tinygrad's [rand] is: a compiled
-     program that reads it more than once, such as a matmul against a drawn
-     matrix, would otherwise recompute the generator for every read. *)
-  let uniform (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t
-      =
-    check_shape "uniform" shape;
+  (* [unit k dtype shape] is a draw in [0, 1) as the expression of the
+     generator's bits that makes it: a compiled program fuses it into what
+     reads it, and knows its range from the mask and the scale. *)
+  let unit (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
     let ctx = B.context k in
     let n = array_prod shape in
     if n = 0 then zeros ctx dtype shape
@@ -2814,7 +2812,7 @@ module Rng = struct
                  bottom)
               (scalar ctx Nx_dtype.float64 (Float.ldexp 1.0 (-53)))
           in
-          copy (reshape shape u)
+          reshape shape u
       | _ ->
           let p = significand_bits dtype in
           let mask =
@@ -2825,7 +2823,15 @@ module Rng = struct
               (cast Nx_dtype.float32 (bitwise_and (bits k shape) mask))
               (scalar ctx Nx_dtype.float32 (Float.ldexp 1.0 (-p)))
           in
-          copy (cast dtype u)
+          cast dtype u
+
+  (* A draw is a buffer of its own, as tinygrad's [rand] is: a compiled
+     program that reads it more than once, such as a matmul against a drawn
+     matrix, would otherwise recompute the generator for every read. *)
+  let uniform k dtype shape =
+    check_shape "uniform" shape;
+    if array_prod shape = 0 then unit k dtype shape
+    else copy (unit k dtype shape)
 
   (* Box-Muller: a radius from one uniform and an angle from another give two
      independent samples, r cos(2 pi u2) and r sin(2 pi u2). Both are kept, so
@@ -2838,11 +2844,14 @@ module Rng = struct
      smallest positive value the uniform can take, so the floor rewrites zero
      and nothing else.
 
-     The samples are a buffer of their own, like the uniforms, where
+     The samples are a buffer of their own, like a uniform draw, where
      tinygrad's [randn] is not: the transform costs a logarithm, a square root
      and a cosine per sample, and a compiled matmul against a drawn matrix
      would pay them again for every row it reads, forty times the matmul
-     itself on the CPU. *)
+     itself on the CPU. The uniforms the transform reads once are not: fused
+     with it, their range is known, so the angle 2 pi u2 is below 2 pi and its
+     sine and cosine take the short argument reduction. Read from a buffer,
+     the angle has no bound, and the long one runs as well. *)
   let normal (type b) k (dtype : (float, b) Nx_dtype.t) shape : (float, b) t =
     check_shape "normal" shape;
     let ctx = B.context k in
@@ -2851,9 +2860,8 @@ module Rng = struct
     else
       let pairs = (n + 1) / 2 in
       let box_muller (type c) (compute : (float, c) Nx_dtype.t) =
-        let u = uniform k compute [| 2; pairs |] in
-        let u1 = contiguous (slice [ I 0 ] u) in
-        let u2 = contiguous (slice [ I 1 ] u) in
+        let u = unit k compute [| 2; pairs |] in
+        let u1 = slice [ I 0 ] u and u2 = slice [ I 1 ] u in
         let smallest =
           scalar ctx compute (Float.ldexp 1.0 (-significand_bits compute))
         in
