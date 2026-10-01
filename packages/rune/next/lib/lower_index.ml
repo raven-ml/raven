@@ -169,27 +169,59 @@ let update x ~starts v =
 
 let product = List.fold_left ( * ) 1
 
+(* Whether one of [windows] windows, [stride] apart from the start of a padded
+   axis, each of [kernel] elements [dilation] apart, reads one of the [size]
+   elements of the image that follow [before] elements of padding. *)
+let reads_image ~kernel ~stride ~dilation ~windows ~before ~size =
+  List.exists
+    (fun w ->
+      List.exists
+        (fun j ->
+          let p = (w * stride) + (j * dilation) in
+          p >= before && p < before + size)
+        (List.init kernel Fun.id))
+    (List.init windows Fun.id)
+
 let unfold ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
   let lead = Ops.ndim x - k in
   let kept = List.filteri (fun d _ -> d < lead) (Ops.max_shape x) in
-  let padded =
-    Ops.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
+  let spatial = List.filteri (fun d _ -> d >= lead) (Ops.max_shape x) in
+  let count a size =
+    let before, after = padding.(a) in
+    let reach = (dilation.(a) * (kernel_size.(a) - 1)) + 1 in
+    let padded = size + before + after in
+    if padded < reach then 0 else ((padded - reach) / stride.(a)) + 1
   in
-  let windows =
-    Ops.pool ~stride:(Array.to_list stride) ~dilation:(Array.to_list dilation)
-      padded
-      (Array.to_list kernel_size)
+  let counts = List.mapi count spatial in
+  let reads a size =
+    reads_image ~kernel:kernel_size.(a) ~stride:stride.(a)
+      ~dilation:dilation.(a) ~windows:(List.nth counts a)
+      ~before:(fst padding.(a))
+      ~size
   in
-  let counts =
-    List.filteri (fun d _ -> d >= lead && d < lead + k) (Ops.max_shape windows)
+  let shape =
+    ints (kept @ [ product (Array.to_list kernel_size); product counts ])
   in
-  Ops.reshape
-    (Ops.permute windows
-       (List.init lead Fun.id
-       @ List.init k (fun a -> lead + k + a)
-       @ List.init k (fun a -> lead + a)))
-    (ints (kept @ [ product (Array.to_list kernel_size); product counts ]))
+  (* Along an axis whose windows read only padding, or that has no window, every
+     patch is the pad's zeros. *)
+  if not (List.for_all Fun.id (List.mapi reads spatial)) then
+    Ops.expand (Ops.const ~dtype:(Ops.dtype x) (`Int Z.zero)) shape
+  else
+    let padded =
+      Ops.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
+    in
+    let windows =
+      Ops.pool ~stride:(Array.to_list stride) ~dilation:(Array.to_list dilation)
+        padded
+        (Array.to_list kernel_size)
+    in
+    Ops.reshape
+      (Ops.permute windows
+         (List.init lead Fun.id
+         @ List.init k (fun a -> lead + k + a)
+         @ List.init k (fun a -> lead + a)))
+      shape
 
 (* An axis as [Ops.pool] cuts it: [windows] windows of [kernel] elements from
    [size] padded elements, read from [copies] copies of the axis laid end to end
@@ -233,15 +265,10 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
   (* Along an axis without a window, or whose every window reads only padding,
      no element lands in the output, which is zeros. *)
   let lands a c =
-    let before = fst padding.(a) in
-    List.exists
-      (fun w ->
-        List.exists
-          (fun j ->
-            let p = (w * c.stride) + (j * dilation.(a)) in
-            p >= before && p < before + output_size.(a))
-          (List.init c.kernel Fun.id))
-      (List.init c.windows Fun.id)
+    reads_image ~kernel:c.kernel ~stride:c.stride ~dilation:dilation.(a)
+      ~windows:c.windows
+      ~before:(fst padding.(a))
+      ~size:output_size.(a)
   in
   if not (List.for_all Fun.id (List.mapi lands cuts)) then
     Ops.expand

@@ -415,6 +415,13 @@ let windows =
                 ~stride:[| 1; 1 |] ~dilation:[| 2; 2 |]
                 ~padding:[| (0, 0); (1, 1) |]
                 (Nx.create Nx.float32 [| 4; 1 |] [| 1.; 2.; 3.; Float.nan |])));
+      test "an unfold whose windows along an axis read only padding is zeros"
+        (fun () ->
+          agrees (fun () ->
+              Nx.extract_patches ~kernel_size:[| 2; 1 |] ~stride:[| 1; 2 |]
+                ~dilation:[| 1; 1 |]
+                ~padding:[| (0, 0); (1, 0) |]
+                (Nx.create Nx.float32 [| 1; 3; 1 |] [| 1.; Float.nan; -0. |])));
       test "a fold with no window is zeros" (fun () ->
           exact
             (Nx.zeros Nx.float32 [| 1 |])

@@ -2006,6 +2006,25 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
+    test "an unfold whose windows along an axis read only padding is zeros"
+      (fun () ->
+        let w =
+          {
+            leading = [| 1 |];
+            kernel_size = [| 2; 1 |];
+            stride = [| 1; 2 |];
+            dilation = [| 1; 1 |];
+            padding = [| (0, 0); (1, 0) |];
+            spatial = [| 3; 1 |];
+            count = 2;
+          }
+        in
+        let gapped =
+          Nx.slice [ A; A; R (0, 1) ]
+            (Nx.create Nx.float16 [| 1; 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
+        in
+        exact_of (both d (unfold w (host_array gapped)));
+        exact_of (both d (unfold w (array_of gapped))));
     test "a fold with no window is zeros" (fun () ->
         (* nx.cpu cannot be the reference: it does not survive this fold. *)
         let module K = (val compiled) in

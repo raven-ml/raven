@@ -547,7 +547,8 @@ target's run lands.
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:223` (`fold`), `:206` (`cut`);
+- **Raven:** `lower_index.ml:255` (`fold`), `:238` (`cut`), `:175`
+  (`reads_image`);
   `lower_reduce.ml:87` (`reduce`).
 - **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
   in reverse order, a shrink by a pad of zeros, and the copies of the input
@@ -567,6 +568,25 @@ target's run lands.
   axis read only padding is zeros`, `› a fold with no window is zeros`;
   `Compiled › edges › a fold whose windows along an axis read only padding is
   zeros`, `› a fold with no window is zeros`.
+
+### I7. An unfold whose windows along an axis read only padding
+
+- **Reference:** `mixin/op.py:1323` (`pool` of the padded operand).
+- **Raven:** `lower_index.ml:185` (`unfold`), `:175` (`reads_image`).
+- **Differs:** where every window along some axis reads only padding, or the
+  axis has no window, every patch is the pad's zeros, and the lowering gives
+  zeros of the patches' shape without a kernel. tinygrad pools the padded
+  operand: upcast, every lane of the gated read is `Invalid`, and tolk's
+  lowering of the kernel fails (a `float16` unfold of a gapped operand,
+  kernel `[2; 1]`, stride `[1; 2]`, padding `[(0, 0); (1, 0)]`, raised a
+  `CAST` of a vector `STACK` at verification).
+- **nx:** `nx_backend.mli`, `unfold`: the windows of the operand padded with
+  zeros.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `windows › an unfold whose windows along an axis read only
+  padding is zeros`; `Compiled › edges › an unfold whose windows along an axis
+  read only padding is zeros`.
 
 ### L1. Products widen before they multiply
 
