@@ -1379,10 +1379,13 @@ let programs =
               "__attribute__((amdgpu_kernel)) void k(void) {}"
           with
           | None -> skip ~reason:"no clang for AMD GPUs" ()
-          | Some lib ->
-              ignore (output ());
-              amdgpu_disassemble lib;
-              contains ~sub:"s_endpgm" (last_line (output ())));
+          | Some lib -> (
+              match find_llvm_objdump () with
+              | exception Failure why -> skip ~reason:why ()
+              | _ ->
+                  ignore (output ());
+                  amdgpu_disassemble lib;
+                  contains ~sub:"s_endpgm" (last_line (output ()))));
     ]
 
 let () =

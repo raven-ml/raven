@@ -481,12 +481,17 @@ val cpu_objdump : string -> unit
 
     Raises [Failure] as {!system} if [objdump] fails. *)
 
+val find_llvm_objdump : unit -> string
+(** [find_llvm_objdump ()] is the [llvm-objdump] to run: Homebrew's on macOS,
+    and elsewhere the first of ROCm's and those named [llvm-objdump-21],
+    [llvm-objdump-20] and [llvm-objdump] on [PATH].
+
+    Raises [Failure] if there is none. *)
+
 val amdgpu_disassemble : string -> unit
 (** [amdgpu_disassemble lib] prints the instructions of the AMD GPU code object
-    [lib], as [llvm-objdump -d] prints them, without the padding instructions
-    that end it ([s_nop 0] and [s_code_end]). [llvm-objdump] is Homebrew's on
-    macOS, and elsewhere the first of ROCm's and those named [llvm-objdump-21],
-    [llvm-objdump-20] and [llvm-objdump] on [PATH].
+    [lib], as {!find_llvm_objdump}'s [llvm-objdump -d] prints them, without the
+    padding instructions that end it ([s_nop 0] and [s_code_end]).
 
     Raises [Failure] if there is no [llvm-objdump], or as {!system} if it fails.
 *)
