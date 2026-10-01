@@ -501,9 +501,15 @@ let test_profiling () =
     (traced.slots * t.engines * t.window)
     (B.nbytes t.traces);
   equal int ~msg:"the ends" (4 * traced.slots * t.engines) (B.nbytes t.ends);
+  let before = Nx_device.stats (device ()) in
   let both = profiling ~counters:[ "GRBM_GUI_ACTIVE" ] ~trace:true () in
+  let grown =
+    Nx_device.Stats.(allocated (diff before (Nx_device.stats (device ()))))
+  in
   is_true ~msg:"one trace set for the device"
     ((Option.get both.tracing).traces == t.traces);
+  is_true ~msg:"a second traced request allocates no traces"
+    (grown < B.nbytes t.traces);
   is_true ~msg:"kept for later profiles"
     (profiling ~counters:[ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ] () == p);
   let p = Nx_device.Profile.start ~counters:[ "NO_SUCH_COUNTER" ] () in
