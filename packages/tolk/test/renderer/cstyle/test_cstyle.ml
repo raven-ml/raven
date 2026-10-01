@@ -836,20 +836,42 @@ let buffers_of uops =
       | _ -> None)
     uops
 
+(* The loop a kernel's launch splits into blocks, if any. The launch binds the
+   variables of the block's bounds itself, so a run computes the whole loop. *)
+let split_of uops =
+  match Ops.arg (List.nth uops (List.length uops - 1)) with
+  | Ops.Kernel k -> k.split
+  | _ -> None
+
+let bounds_a_block uops slot =
+  match split_of uops with
+  | Some s -> slot = s.lo || slot = s.hi
+  | None -> false
+
+(* The variables a run binds: those of the kernel, the bounds of a block left
+   out, and those that a split loop's iterations read, which the kernel may no
+   longer read. *)
 let variables_of uops =
-  List.filter_map
-    (fun u ->
-      match Ops.arg u with
-      | Ops.Param
-          {
-            addrspace = Some Alu;
-            name = Some name;
-            vmin_vmax = Some (`Int lo, `Int hi);
-            _;
-          } ->
-          Some (name, Bigint.to_int lo, Bigint.to_int hi)
-      | _ -> None)
-    uops
+  let iterations =
+    match split_of uops with
+    | Some { iterations = Sym u; _ } -> Ops.toposort u
+    | _ -> []
+  in
+  let variable u =
+    match Ops.arg u with
+    | Ops.Param
+        {
+          addrspace = Some Alu;
+          name = Some name;
+          vmin_vmax = Some (`Int lo, `Int hi);
+          slot;
+          _;
+        }
+      when not (bounds_a_block uops slot) ->
+        Some (name, Bigint.to_int lo, Bigint.to_int hi)
+    | _ -> None
+  in
+  List.sort_uniq compare (List.filter_map variable (uops @ iterations))
 
 let pp_inputs ppf (buffers, vars) =
   List.iter (fun (name, v) -> Format.fprintf ppf "%s=%d@ " name v) vars;
@@ -878,9 +900,30 @@ let draw_inputs uops =
   in
   Gen.with_pp pp_inputs (Gen.pair buffers vars)
 
+(* The bounds of a split kernel's one block, the whole loop, given the values
+   [vars] of its variables: block_lo is 0 and block_hi the loop's iterations. *)
+let whole_loop uops vars =
+  match split_of uops with
+  | None -> []
+  | Some s ->
+      let name slot =
+        Option.get
+          (List.find_map
+             (fun u ->
+               match Ops.arg u with
+               | Ops.Param p when p.slot = slot -> p.name
+               | _ -> None)
+             uops)
+      in
+      [ (name s.lo, 0); (name s.hi, Ops.sym_infer s.iterations vars) ]
+
 let interpreted uops (buffers, vars) =
   let sink = List.nth uops (List.length uops - 1) in
-  let vars = List.map (fun (name, v) -> (name, `Int (Bigint.of_int v))) vars in
+  let vars =
+    List.map
+      (fun (name, v) -> (name, `Int (Bigint.of_int v)))
+      (whole_loop uops vars @ vars)
+  in
   let writes = Interpreter.writes ~vars ~buffers sink in
   List.map
     (fun (slot, _, _) ->
