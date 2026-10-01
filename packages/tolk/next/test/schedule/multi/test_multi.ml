@@ -593,6 +593,21 @@ let arithmetic =
           equal uop
             (unshard (Ops.stack [ shard a; shard b ]) [ 1 ] a)
             (multi (Ops.stack [ a; b ])));
+      test "a constant copied to several devices adds to each shard" (fun () ->
+          let x = sharded ~dtype:Int32 1 [ 2; 8 ] 0 in
+          let one = storage ~devices:(cpu 0) ~dtype:Int32 3 [ 4; 8 ] in
+          let fill = Ops.copy_to_device Ops.O.((one * int 0) + int 5) two in
+          let memory =
+            [
+              (1, Array.init 32 (fun j -> `Int (Z.of_int j)));
+              (3, Array.init 32 (fun _ -> `Int (Z.of_int 7)));
+            ]
+          in
+          let v = Ops.O.(x + fill) in
+          let whole = List.hd (Tensors.eval ~buffers:memory v) in
+          List.iter
+            (fun v -> equal (array Dtypes.const) whole v)
+            (Tensors.eval ~buffers:memory (multi v)));
       test "a stack of values sharded differently is resharded" (fun () ->
           let across = sharded 2 [ 4; 4 ] 1 in
           let memory =
