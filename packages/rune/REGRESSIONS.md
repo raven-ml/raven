@@ -725,6 +725,7 @@ The kernel rows of this file are the Compiled section's.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | old: test_jit_scratch.ml jit rejects overlapping cold calls; jit rejects reentrant replay; jit over devices rejects overlapping cold calls; jit over devices rejects reentrant replay | overlapping and reentrant calls | dropped: a compiled function now runs from several domains at once and traces through inside its own function, J › domains › two domains meeting one new key trace it once; J › transformations › a compiled function called inside another one's trace traces through |
+| old: test_jit_scratch.ml a domain tracing a shared input excludes consumption; a systhread tracing a shared input excludes consumption | a reading and a consuming call racing | J › domains › a call that reads a storage and one that consumes it, from two domains, each read it whole or refuse |
 | old: test_jit_scratch.ml destructive failure consumes old aliases | a call failing after its first kernel | dropped: no failure after a call's first kernel is observable on the suite's devices |
 | old: test_jit_scratch.ml reads keep their resident owner alive; failed release preserves all owners | storage lifetime across reads | dropped: nx's storage claims (`nx placement`) |
 
