@@ -550,6 +550,17 @@ let qr =
               f32 3 1 [| -1.; 2.; 0.5 |];
               f32 3 2 [| 0.; 1.; 0.; 2.; 0.; 3. |];
             ]);
+      test "a column whose squares underflow reflects as eager's does"
+        (fun () ->
+          let agrees dt xs =
+            let a = Nx.create dt [| 2; 2 |] xs in
+            qr_agrees ~bound:0x1p-18 ~mode:`Reduced a;
+            qr_agrees ~bound:0x1p-18 ~mode:`Complete a
+          in
+          agrees Nx.float32 [| 1.; 0.; 1e-25; 1. |];
+          agrees Nx.float32 [| 1e-30; 0.; 1e-25; 1. |];
+          agrees Nx.float64 [| 1.; 0.; 1e-170; 1. |];
+          agrees Nx.float64 [| 1e-200; 0.; 1e-170; 1. |]);
       test "a zero column takes no reflection" (fun () ->
           let a = Nx.zeros Nx.float32 [| 3; 2 |] in
           let q, r = traced2 (fun () -> Nx.qr ~mode:`Complete a) in

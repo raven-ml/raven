@@ -71,6 +71,7 @@ let matmul a b =
    cancellation occurs, and a zero column takes no reflection. *)
 
 let sum_last u = Ops.unsqueeze (Ops.rop u Op.Add [ Ops.ndim u - 1 ]) (-1)
+let max_last u = Ops.unsqueeze (Ops.rop u Op.Max [ Ops.ndim u - 1 ]) (-1)
 
 let householder a =
   let batch, m, n = matrix a in
@@ -79,13 +80,23 @@ let householder a =
     let at_i = is idx i in
     let c = Ops.squeeze ~axis:(-1) (column r i) in
     let x = Ops.where (Ops.ge idx (Ops.int i)) c (zero c) in
-    let norm = Ops.sqrt (sum_last (Ops.mul x x)) in
+    (* The norm is taken of the column divided by its largest magnitude, so that
+       no square underflows or overflows. *)
+    let magnitude =
+      Ops.where (Ops.lt x (zero x)) (Ops.mul x (float x (-1.))) x
+    in
+    let largest = max_last magnitude in
+    let scale =
+      Ops.where (Ops.ne largest (zero largest)) largest (float largest 1.)
+    in
+    let scaled = fdiv x scale in
+    let norm = Ops.mul scale (Ops.sqrt (sum_last (Ops.mul scaled scaled))) in
     let x0 = sum_last (Ops.where at_i x (zero x)) in
     let sgn = direction x0 in
     (* A column already zero below the diagonal takes no reflection, and keeps
        its diagonal element's sign. *)
     let below =
-      sum_last (Ops.where (Ops.gt idx (Ops.int i)) (Ops.mul x x) (zero x))
+      sum_last (Ops.where (Ops.gt idx (Ops.int i)) magnitude (zero x))
     in
     let active = Ops.ne below (zero below) in
     let u0 = Ops.O.(x0 + (sgn * norm)) in

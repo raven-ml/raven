@@ -2028,7 +2028,9 @@ let edges d =
         in
         exact_of (both d (unfold w (host_array gapped)));
         exact_of (both d (unfold w (array_of gapped))));
-    test "QR's factors take eager's signs" (fun () ->
+    test
+      "QR's factors take eager's signs and reflect columns whose squares \
+       underflow" (fun () ->
         let factors a =
           let m = Nx.dim 0 a and n = Nx.dim 1 a in
           let (qe, re), (qa, ra) =
@@ -2049,6 +2051,8 @@ let edges d =
             f32 1 1 [| 0.5 |];
             f32 1 3 [| 0.5; -1.; 2. |];
             f32 3 1 [| -1.; 2.; 0.5 |];
+            f32 2 2 [| 1.; 0.; 1e-25; 1. |];
+            f32 2 2 [| 1e-30; 0.; 1e-25; 1. |];
           ]);
     test "a fold and an unfold with no window are zeros and empty" (fun () ->
         let w =

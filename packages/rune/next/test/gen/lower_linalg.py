@@ -32,16 +32,21 @@ def qr(a):
     """tinygrad's `qr` (`mixin/op.py:1799`) as the lowering builds it: each
     quotient rounded once (`fdiv`), the sign of the first element written -1
     below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at every
-    value, NaN included, and a column already zero below the diagonal not
-    reflected, as LAPACK's reflectors are not."""
+    value, NaN included, a column already zero below the diagonal not
+    reflected, as LAPACK's reflectors are not, and the norm of a column taken
+    of it divided by its largest magnitude, as LAPACK's is."""
     m, n = a.shape[-2:]
     R, Q = a, Tensor.eye(m, dtype=a.dtype)
     idx = Tensor.arange(m)
     for i in range(min(m, n)):
         at_i, x = idx.eq(i), (idx >= i).where(R[..., :, i], 0)
-        norm = x.square().sum(-1, keepdim=True).sqrt()
+        magnitude = (x < 0).where(-x, x)
+        largest = magnitude.max(-1, keepdim=True)
+        scale = largest.ne(0).where(largest, 1)
+        scaled = fdiv(x, scale)
+        norm = scale * (scaled * scaled).sum(-1, keepdim=True).sqrt()
         x0 = at_i.where(x, 0).sum(-1, keepdim=True)
-        below = (idx > i).where(x * x, 0).sum(-1, keepdim=True)
+        below = (idx > i).where(magnitude, 0).sum(-1, keepdim=True)
         sgn, active = (x0 < 0).where(x0.const_like(-1), x0.const_like(1)), below.ne(0)
         u0 = x0 + sgn * norm
         v = fdiv(at_i.where(u0, x), active.where(u0, 1)).unsqueeze(-1)
