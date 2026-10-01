@@ -392,6 +392,11 @@ are the loops of its tangent and its pullback. `B › edges › …` holds the
 operands a row's draws never batch (conditions, indices, starts, keys),
 reads inside a map, and nx's functions made of several rows.
 
+The compiled rules are `next/test/test_compiled_rules.ml`, written `Jc`
+below: every row's tangent and pullback under `Rune.jit`, on the host and
+on Metal (slow), against eager, and `Jit_error` for a row or dtype the
+compiled call cannot compute.
+
 `Rune.vmap` as a whole is `next/test/test_vmap.ml`, written `V`
 below: the structures it maps, its captures, its refusals that name a
 leaf's path, the randomness of its lanes, and `lanes`.
@@ -467,8 +472,8 @@ leaf's path, the randomness of its lanes, and `lanes`.
 | old: test_complex.ml qr › * | complex qr | J, T › qr › on complex values … (tall, square and wide drawn) |
 | old: test_complex.ml factorisations › det (reverse); factorisations › det (forward) | complex det | T › compositions › complex › det, complex |
 | old: test_complex.ml factorisations › lu (reverse); factorisations › lu (forward) | complex lu | J, T › lu › on complex values … |
-| old: test_grad.ml reduction derivatives preserve zeros and ties | products at zeros, shared ties (the compiled assertions: step 4) | J › edges › reduce prod › one zero leaves the product of the others, two leave zero; J › edges › reduce max, reduce min › tied elements share the derivative |
-| old: test_grad.ml half reduction derivatives count ties without overflow | a float16 tie count (the compiled assertions: step 4) | J › edges › reduce max, reduce min › a float16 tie count above 65,504 does not overflow |
+| old: test_grad.ml reduction derivatives preserve zeros and ties | products at zeros, shared ties, eager and compiled | J › edges › reduce prod › one zero leaves the product of the others, two leave zero; J › edges › reduce max, reduce min › tied elements share the derivative; Jc › reductions › a compiled product keeps the multiplicity of its zeros; compiled tied extrema share the derivative |
+| old: test_grad.ml half reduction derivatives count ties without overflow | a float16 tie count, eager and compiled | J › edges › reduce max, reduce min › a float16 tie count above 65,504 does not overflow; Jc › reductions › a compiled float16 tie count above 65,504 does not overflow |
 | old: test_grad.ml set › differentiates both operands | set's pullback in its target and its value | T › compositions › real › set differentiates both operands |
 | old: test_grad.ml single-tensor variants › a bitcast has zero derivative | a bitcast carries no tangent | J › bitcast › it has no tangent and passes no cotangent |
 | old: test_engine.ml regressions › pad keeps its fill value under grad | pad's fill under grad | T › edges › indexed › a pad's fill receives nothing; J › edges › pad › the tangent's fill is zero |
@@ -480,7 +485,7 @@ leaf's path, the randomness of its lanes, and `lanes`.
 | old: test_fft.ml forward mode › rfft tangent is rfft of the tangent; forward mode › irfft tangent is irfft of the tangent | linear transform tangents | J › rfft, irfft › a linear operation's tangent is the operation on the tangent |
 | old: test_fft.ml vmap › fft; vmap › ifft; vmap › rfft; vmap › irfft; vmap › fft along a non-last axis; vmap › rfft along a non-last axis; vmap › non-leading batch axis | the transforms against the loop | B › fft, rfft, irfft › a map is its loop (axes drawn); › a map through a moved axis is its loop |
 | old: test_fft.ml vmap › vmap of grad | per-sample spectral gradients | B › edges › compositions › per-sample gradients of a spectral round trip |
-| old: test_fft.ml jit › rfft is refused under jit | a transform under jit | dropped: the compiled call lowers the transforms in rune.next (step 4 pins it with the compiled call's suite) |
+| old: test_fft.ml jit › rfft is refused under jit | a transform under jit | Jc › host › rfft (the compiled call raises Jit_error for a transform) |
 | old: test_vmap.ml loop oracle › elementwise chain; loop oracle › closure constants broadcast; loop oracle › scalar closure constant; loop oracle › constant output broadcasts; loop oracle › softmax composite; loop oracle › centering uses the unbatched mean | compositions against the loop | B › edges › compositions › an elementwise chain; captured constants broadcast; a scalar captured constant; a constant result is broadcast; softmax; centering uses each lane's mean |
 | old: test_vmap.ml loop oracle › bitcast; loop oracle › full reduction; loop oracle › axis reduction on matrix elements; loop oracle › max reduction; loop oracle › vector-matrix multiply; loop oracle › matrix-matrix multiply; loop oracle › reshape and transpose; loop oracle › where selects per element; loop oracle › sort; loop oracle › cumsum; loop oracle › concatenate with itself; loop oracle › pad; loop oracle › sliding windows; loop oracle › sliding windows on a leading axis; loop oracle › extract_patches; loop oracle › combine_patches; loop oracle › take_along_axis with constant indices | each row against the loop | B › bitcast, reduce <kind>, matmul, move <kind>, where, sort, scan sum, cat, pad, move window, unfold, fold, gather › a map is its loop |
 | old: test_vmap.ml loop oracle › matmul against a constant with its own batch dimensions | a captured operand's own batch axes | B › edges › compositions › a product with a captured constant of batch axes of its own |
@@ -517,3 +522,6 @@ leaf's path, the randomness of its lanes, and `lanes`.
 | old: test_rng.ml transformations › vmap over per-lane key scopes decorrelates lanes | a scope rooted at a mapped key | V › randomness › a scope rooted at a mapped key draws each key's values |
 | old: test_rng.ml transformations › vmap lane_index decorrelates lanes | lane_index folded into a key | V › randomness › a key folded with the lane index draws per lane |
 | old: test_rng.ml transformations › lane_index decorrelates lanes over devices | lane_index over devices | dropped: a map over a split axis under the compiled call (step 4, with the compiled call's suite) |
+| old: test_jit.ml linear algebra › the gradient of a Cholesky-using loss compiles; linear algebra › the gradient of det compiles; linear algebra › the gradient of a QR-using loss compiles | factorisations' gradients compiled | Jc › compositions › the gradient of a Cholesky-using loss compiles; the gradient of det compiles; the gradient of a QR-using loss compiles |
+| old: test_jit.ml indexed access › gradients through indices outside the axis; indexed access › gradient of take with repeated tokens; indexed access › gradient of top_k | indexed gradients compiled | Jc › compositions › gradients through indices outside the axis; the gradient of take with repeated tokens; the gradient of top_k lands on the chosen entries |
+| old: test_jit.ml indexed access › scatter under vmap | a compiled map of scatter | Jc › compositions › a compiled map of scatter is its eager map |
