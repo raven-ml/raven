@@ -25,7 +25,6 @@ type msg =
   | Tick of float
   | Quit
   | Metrics_msg of Metrics.msg
-  | Open_metric of string
   | Open_selected
   | Close_metric
   | Open_info
@@ -388,7 +387,6 @@ let update msg m =
         Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
   | Open_selected -> (
       let all_tags = user_metric_tags m.run in
       let total_metrics = List.length all_tags in
