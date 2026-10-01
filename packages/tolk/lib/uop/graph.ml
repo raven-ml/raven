@@ -636,7 +636,8 @@ let hcq_kernel : Ops.hcq_kernel codec =
   { write; read }
 
 (* tinygrad's queue data has no [writes]: it is read as [written_bufs], the
-   storage tinygrad says the call writes. *)
+   storage tinygrad says the call writes. It has no [copies] either: they are
+   read as none. *)
 let hcq_info : Ops.hcq_info codec =
   let make device kernels estimates nargs table inputs slots written_bufs :
       Ops.hcq_info =
@@ -650,6 +651,7 @@ let hcq_info : Ops.hcq_info codec =
       slots;
       written_bufs;
       writes = written_bufs;
+      copies = [];
     }
   in
   let get (f : Ops.hcq_info -> _) = f in

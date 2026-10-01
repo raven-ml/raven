@@ -414,6 +414,7 @@ let hcq ?(nargs = 0) device : Ops.hcq_info =
     slots = [];
     written_bufs = [];
     writes = [];
+    copies = [];
   }
 
 let hcq_calls =

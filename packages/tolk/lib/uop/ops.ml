@@ -282,6 +282,7 @@ module rec Calls : sig
     slots : (string * int) list;
     written_bufs : Node.t list;
     writes : Node.t list;
+    copies : (string * string * int) list;
   }
 
   type call_info = {
@@ -457,6 +458,7 @@ let equal_hcq_info (h0 : hcq_info) (h1 : hcq_info) =
   && h0.slots = h1.slots
   && List.equal ( == ) h0.written_bufs h1.written_bufs
   && List.equal ( == ) h0.writes h1.writes
+  && h0.copies = h1.copies
 
 let equal_call_info (c0 : call_info) (c1 : call_info) =
   Option.equal String.equal c0.name c1.name

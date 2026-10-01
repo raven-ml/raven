@@ -2948,6 +2948,19 @@ thread.
 
 ### Nx
 
+- `Nx_device.Stats.bytes_in` and `bytes_out` count the copies that compiled
+  work makes on CUDA, NV and AMD queues, which they missed: a compiled call
+  reading a host value reported no upload. Submitters count such copies with
+  `Nx_device.Submission.copied`.
+- Add `Nx.Bits`, packed bitmaps in Arrow's validity layout over a `uint8`
+  tensor at a bit offset, with `of_bool`, `to_bool`, `count`, `logand`, `logor`,
+  `lognot`, an O(1) `sub`, `take` and `concat`.
+- Add `Nx.Ragged`, ragged arrays as int64 offsets over a tensor of values
+  (Arrow's large lists and strings): `v` and `of_lengths` check their offsets,
+  `of_ids` groups rows by id and compiles, `sub`, `take`, `concat` and `map`
+  transform them, `quantile` takes each row's quantiles, and `ids` and `rank`
+  number rows by first appearance and by their order, byte strings as `memcmp`
+  orders them.
 - **Breaking:** a driver's `Driver.device ~peer` returns its mapping with how
   to unmap it, and the runtime keeps one mapping per device and memory, for
   borrows and copies alike, until the memory is released. AMD and NV kept peer

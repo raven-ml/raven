@@ -999,6 +999,15 @@ module Submission : sig
 
       Raises [Invalid_argument] if [d] is not a device of [s], or if [stamps] is
       not four [UInt64] that [d]'s host addresses. *)
+
+  val copied : t -> src:device -> dst:device -> int -> unit
+  (** [copied s ~src ~dst n] counts [n] bytes that [s]'s work copies from
+      [src]'s memory into [dst]'s: in [src]'s {!Stats.bytes_out} and [dst]'s
+      {!Stats.bytes_in}, once [f] returns. A copy within one device's memory
+      counts nothing.
+
+      Raises [Invalid_argument] if [s] did not take [src] or [dst], or if [n] is
+      negative. *)
 end
 
 val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a

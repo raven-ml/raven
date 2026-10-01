@@ -163,6 +163,7 @@ let kinds =
           slots = [ ("AMD", 1) ];
           written_bufs = [ buffer ];
           writes = [ buffer ];
+          copies = [];
         }
       in
       Ops.v

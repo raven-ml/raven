@@ -233,6 +233,7 @@ type batch = {
   devices : Nx_device.t list; (* whose queues it submits *)
   queues : Nx_device.t array; (* the same, by index *)
   submitting : (unit -> unit) list; (* each device's, before the host program *)
+  copies : (Nx_device.t * Nx_device.t * int) list; (* from, into, bytes *)
   arguments : B.t list; (* by argument slot *)
   buffers : B.t array; (* the host program's, in the order of its globals *)
   binders : binder array; (* the host program's variables, in order *)
@@ -643,6 +644,10 @@ let link_batch ~device ~storage call patches =
     named;
     host_program;
     submitting = List.map (fun n -> (device n).submitting) info.device;
+    copies =
+      List.map
+        (fun (s, d, n) -> ((device s).device, (device d).device, n))
+        info.copies;
     devices = queues;
     queues = Array.of_list queues;
     arguments;
@@ -724,6 +729,8 @@ let run_batch ~vars slots b =
       done;
       List.iter (fun f -> f ()) b.submitting;
       Nx_device.Program.call b.host_program.program b.buffers b.values;
+      List.iter (fun (src, dst, n) -> Nx_device.Submission.copied s ~src ~dst n)
+        b.copies;
       if Nx_device.Profile.enabled () then
         List.iter
           (fun (k : Ops.hcq_kernel) ->

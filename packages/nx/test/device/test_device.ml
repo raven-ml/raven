@@ -2778,6 +2778,23 @@ let test_submit_refusals () =
   refused ~msg:"a dead buffer" [ a ] [ b ];
   equal ~msg:"nothing submitted" int 0 (Nx_device.submitted a)
 
+let test_copied () =
+  let a = (fake ~name:"A" ()).dev and b = (fake ~name:"B" ()).dev in
+  let ids = B.create host S.UInt8 32 in
+  let host0 = Nx_device.stats host and a0 = Nx_device.stats a in
+  Nx_device.submit [ a ] ~touches:[ ids ] (fun s ->
+      Nx_device.Submission.copied s ~src:host ~dst:a 32;
+      Nx_device.Submission.copied s ~src:a ~dst:a 8;
+      raises_match ~msg:"a device not taken" Exn.invalid_arg (fun () ->
+          Nx_device.Submission.copied s ~src:b ~dst:a 8);
+      raises_match ~msg:"a negative count" Exn.invalid_arg (fun () ->
+          Nx_device.Submission.copied s ~src:host ~dst:a (-1)));
+  let moved d d0 f = f (Nx_device.Stats.diff d0 (Nx_device.stats d)) in
+  equal ~msg:"into the device" int 32 (moved a a0 Nx_device.Stats.bytes_in);
+  equal ~msg:"out of the host" int 32
+    (moved host host0 Nx_device.Stats.bytes_out);
+  settle [ a ]
+
 (* The minor words a submission to one device allocates on the calling domain,
    touching three buffers of the host and three of the device, the one before it
    having left its work pending on their memory. *)
@@ -2818,6 +2835,10 @@ let submissions =
         test_values;
       test "refuse no device, a host, the disk, and disk or dead buffers"
         test_submit_refusals;
+      test
+        "count the bytes their work copies between devices, and none within \
+         one"
+        test_copied;
     ]
 
 (* Failures *)

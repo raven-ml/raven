@@ -660,6 +660,7 @@ let hcq_calls () =
       slots = [ ("AMD", 1) ];
       written_bufs = [ b ];
       writes = [ b ];
+      copies = [];
     }
   in
   let zero : estimates = { ops = Int 0; lds = Int 0; mem = Int 0 } in
@@ -674,6 +675,7 @@ let hcq_calls () =
       slots = [];
       written_bufs = [];
       writes = [];
+      copies = [];
     }
   in
   sink

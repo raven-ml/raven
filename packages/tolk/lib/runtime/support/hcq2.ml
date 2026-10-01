@@ -1114,17 +1114,26 @@ let finalize_batch ctx =
       ins;
     }
   in
-  let rec kernels values items =
+  let copy tag =
+    let call = ctx.batch.(tag).call in
+    match (op (body call), Realize.get_call_arg_uops call) with
+    | Op.Store, [ dst; src ] -> (
+        match (devices_of src, devices_of dst) with
+        | s :: _, d :: _ when s <> d -> [ (s, d, nbytes dst) ]
+        | _ -> [])
+    | _ -> []
+  in
+  let rec per_trip f values items =
     List.concat_map
       (function
-        | One tag -> [ kernel values tag ]
+        | One tag -> f values tag
         | Loop (r, body) ->
             List.concat_map
-              (fun i -> kernels ((r, i) :: values) body)
+              (fun i -> per_trip f ((r, i) :: values) body)
               (List.init (trips r) Fun.id))
       items
   in
-  let kernels = kernels [] ctx.items in
+  let kernels = per_trip (fun values tag -> [ kernel values tag ]) [] ctx.items in
   let info =
     {
       device = Ordered.keys ctx.queues;
@@ -1149,6 +1158,7 @@ let finalize_batch ctx =
           (List.concat_map
              (fun e -> call_writes e.call)
              (Array.to_list ctx.batch));
+      copies = per_trip (fun _ tag -> copy tag) [] ctx.items;
     }
   in
   call ~aux:info sink (if ctx.profile then List.map snd ctx.slots else [])

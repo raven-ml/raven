@@ -1326,6 +1326,7 @@ let host_program ~(devices : string -> Engine.device) d effects =
       slots = [];
       written_bufs = [];
       writes = [];
+      copies = [];
     }
   in
   let signal =

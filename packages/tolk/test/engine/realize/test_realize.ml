@@ -79,6 +79,7 @@ let hcq_call ?(written_bufs = []) ?(estimates = counts 0 0 0) () =
       slots = [];
       written_bufs;
       writes = written_bufs;
+      copies = [];
     }
   in
   Ops.call ~aux:info (Ops.sink []) []

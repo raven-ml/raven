@@ -287,9 +287,13 @@ type hcq_info = {
       (** The storage its kernels and copies write, those that also read it
           included: the storage under each output of each of its calls, and
           under every argument of a call whose outputs are not known. *)
+  copies : (string * string * int) list;
+      (** Each copy between two devices a run makes, once for each trip of the
+          ranges around it: the device it copies from, the device it copies
+          into and its bytes. *)
 }
-(** The type for the data of a call that submits command queues. [writes] has no
-    counterpart in tinygrad and is not formatted. *)
+(** The type for the data of a call that submits command queues. [writes] and
+    [copies] have no counterpart in tinygrad and are not formatted. *)
 
 val pp_hcq_info : Format.formatter -> hcq_info -> unit
 (** [pp_hcq_info] formats

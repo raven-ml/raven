@@ -168,6 +168,7 @@ let submission ?(pad = 0) queue cmds =
       slots = [];
       written_bufs = [];
       writes = [];
+      copies = [];
     }
   in
   let batch =
