@@ -14,5 +14,7 @@ include Nx_backend.S
 (** @inline *)
 
 val backend : Nx_backend.t
-(** [backend] is nx.cpu's backend, named ["cpu"]. It runs on the devices whose
-    memory is the host's ({!Nx_device.shares_host_memory}). *)
+(** [backend] is nx.cpu's backend, named ["cpu"]. It runs on the host alone
+    ({!Nx_device.host}): the kernels run on the calling domain and wait for no
+    device, so a device's values, even in memory the host addresses, compute
+    with a backend of their own. *)

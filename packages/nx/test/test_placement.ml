@@ -687,8 +687,9 @@ let results =
           raises_invalid_arg (fun () ->
               Nx.Op.placement (Binary (Add, traced cols, at_rows))));
       test
-        "the devices receive a constant made there as one element, a result as \
-         its elements, and a filled value split like its model" (fun () ->
+        "the devices receive a constant made there as one element, compute \
+         their results themselves, and a filled value split like its model"
+        (fun () ->
           let p = Nx.place on1 (iota [| 2; 3 |])
           and split = Nx.place (Nx.Placement.sharded ~axis:0 four) x in
           let sp = Nx.sum p and ss = Nx.sum split in
@@ -709,8 +710,8 @@ let results =
           equal
             (list (pair int placement))
             [
-              (4 + 24, on1);
-              (4 + 24, on1);
+              (4, on1);
+              (4, on1);
               (4, on1);
               (4 * 4, Nx.Placement.replicated four);
               ((4 * 4) + 192, Nx.Placement.sharded ~axis:1 four);

@@ -248,11 +248,17 @@ val to_array : ('a, 'b) t -> 'a array
     The result of an operation lives where its placed operands live, computed
     by their placement's backend: operands on the host join them, and operands
     on two different device sets, or with two different backends, raise. The
-    backend computes on the host, over copies of the operands' elements, and
-    the result is placed on its devices. Over
-    split operands, an elementwise result keeps their split, which must be the
-    same for all of them (copies take it); a reduction over the split axis, and
-    a {!take} along it, give a full copy on each device; and an operation along
+    backend computes on each device, on that device's arrays, after nx copies
+    there the operands that are not: host values, values on the disk, and the
+    parts of a split value a device needs whole. nx.cpu computes on the host
+    and on devices that have no processor of their own
+    ({!Nx_device.runs_on_host}): a value on a GPU computes with a backend that
+    runs there, and an
+    operation on a device its placement's backend does not run on raises
+    {!Nx_backend.Refused} before any work, naming the remedies. Over split
+    operands, an elementwise result keeps their split, which must be the same
+    for all of them (copies take it); a reduction over the split axis, and a
+    {!take} along it, give a full copy on each device; and an operation along
     the split axis ({!sort}, {!cumsum}, {!pad} or {!concatenate} along it,
     linear algebra on its last two axes, {!fft} over it) raises. A read
     ({!item}, {!to_array}, {!to_bigarray}, {!pp}, a save) copies the elements it
@@ -300,17 +306,15 @@ module Placement : sig
 
   val device : ?backend:Nx_backend.t -> Nx_device.t -> t
   (** [device ~backend d] is placement on [d] alone, computed by [backend]
-      (defaults to [Nx_cpu.backend]).
-
-      Raises [Invalid_argument] if [backend] does not run on the host, where
-      nx computes on every placement's values. *)
+      (defaults to [Nx_cpu.backend]). A backend that does not run on [d] is
+      allowed, as a compiled call needs only the devices; an operation there
+      raises {!Nx_backend.Refused}. *)
 
   val replicated : ?backend:Nx_backend.t -> Nx_device.t list -> t
   (** [replicated ~backend ds] is a full copy on each device of [ds], computed
       by [backend] (defaults to [Nx_cpu.backend]).
 
-      Raises [Invalid_argument] if [ds] is empty, repeats a device, or as
-      {!device}. *)
+      Raises [Invalid_argument] if [ds] is empty or repeats a device. *)
 
   val sharded : ?backend:Nx_backend.t -> axis:int -> Nx_device.t list -> t
   (** [sharded ~backend ~axis ds] is equal slices of [axis] on the devices of

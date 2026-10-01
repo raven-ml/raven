@@ -291,7 +291,12 @@ let scatter ~mode ~unique ~axis ~indices ~updates x ~dst =
    keeping the elements around it. *)
 let update (x : ('a, 'b) t) ~(starts : Nx_backend.index_array) v ~dst =
   caml_copy dst x;
-  let start = Elements.get Nx_dtype.int64 starts.buffer in
+  let positions =
+    match Nx_device.Buffer.borrow Nx_device.host starts.buffer with
+    | Ok b -> b
+    | Error why -> invalid_arg ("Nx_cpu.update: " ^ why)
+  in
+  let start = Elements.get Nx_dtype.int64 positions in
   let offset = View.offset starts.view and stride = View.stride 0 starts.view in
   let bounds =
     Array.init

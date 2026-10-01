@@ -1158,6 +1158,8 @@ module Runtimes = struct
     Nx_device.set_budget r (Nx_device.Stats.allocated (Nx_device.stats r) + 16);
     f ()
 
+  (* [laws ds] checks the runtimes [ds]: operations on them compute where nx.cpu
+     runs on them, and are refused otherwise. *)
   let laws = function
     | [] -> [ test "on no runtime" (fun () -> skip ~reason:"no device" ()) ]
     | ds ->
@@ -1202,40 +1204,68 @@ module Runtimes = struct
           @ if List.length ds > 1 then [ Nx.Placement.replicated ds ] else []
         in
         let d = List.hd ds in
+        let on_d = Nx.Placement.device d in
         let out_of_memory n = function
           | Nx_device.Out_of_memory (d', m) -> Nx_device.equal d d' && m = n
           | _ -> false
+        in
+        let computing =
+          match List.for_all Nx_cpu.runs_on ds with
+          | true ->
+              [
+                prop
+                  "an operation gives the host's result on the elements \
+                   placed, placed where its operand is"
+                  (Gen.triple
+                     (Gen.of_list
+                        ~pp:(fun ppf (name, _) ->
+                          Format.pp_print_string ppf name)
+                        operations)
+                     (float_tensors Nx.float32 ~e:8 ~m:23)
+                     (Gen.of_list ~pp:Nx.Placement.pp ops))
+                  (fun ((_, f), x, p) ->
+                    let y = f (Nx.place p x) in
+                    equal Devices.placement p (Nx.placement y);
+                    equal packed (Nx.P (f (Nx.copy x))) (Nx.P (host y)));
+                test
+                  "an operation's result the runtime cannot allocate raises \
+                   Out_of_memory with the device and its bytes" (fun () ->
+                    tight d @@ fun () ->
+                    let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
+                    raises_match (out_of_memory 16) (fun () -> Nx.add x x);
+                    (* Held through the addition: the refused allocation
+                       collects garbage and tries again, and could take a dead
+                       [x]'s memory. *)
+                    ignore (Sys.opaque_identity x));
+              ]
+          | false ->
+              [
+                test
+                  "nx.cpu refuses an operation on the runtime, naming it, \
+                   before any work" (fun () ->
+                    let x = Nx.place on_d (Nx.ones Nx.float32 [| 4 |]) in
+                    raises_match
+                      (function
+                        | Nx_backend.Refused why ->
+                            String.starts_with ~prefix:"add: cpu" why
+                            && String.ends_with
+                                 ~suffix:"or compute under a compiled call" why
+                        | _ -> false)
+                      (fun () -> Nx.add x x));
+              ]
         in
         [
           group "placing" (List.map (round_trip ~disk:false) (every @ nibbles));
           group "placing from the disk"
             (List.map (round_trip ~disk:true) (every @ nibbles));
-          prop
-            "an operation gives the host's result on the elements placed, \
-             placed where its operand is"
-            (Gen.triple
-               (Gen.of_list
-                  ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
-                  operations)
-               (float_tensors Nx.float32 ~e:8 ~m:23)
-               (Gen.of_list ~pp:Nx.Placement.pp ops))
-            (fun ((_, f), x, p) ->
-              let y = f (Nx.place p x) in
-              equal Devices.placement p (Nx.placement y);
-              equal packed (Nx.P (f (Nx.copy x))) (Nx.P (host y)));
           test
-            "an allocation the runtime cannot make raises Out_of_memory with \
+            "a placement the runtime cannot allocate raises Out_of_memory with \
              the device and its bytes" (fun () ->
               tight d @@ fun () ->
-              let on_d = Nx.Placement.device d in
               raises_match (out_of_memory 400) (fun () ->
-                  Nx.place on_d (Nx.zeros Nx.float32 [| 100 |]));
-              let x = Nx.place on_d (Nx.zeros Nx.float32 [| 4 |]) in
-              raises_match (out_of_memory 16) (fun () -> Nx.add x x);
-              (* Held through the addition: the refused allocation collects
-                 garbage and tries again, and could take a dead [x]'s memory. *)
-              ignore (Sys.opaque_identity x));
+                  Nx.place on_d (Nx.zeros Nx.float32 [| 100 |])));
         ]
+        @ computing
 end
 
 module Profiles = struct

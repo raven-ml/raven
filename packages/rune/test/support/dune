@@ -45,4 +45,4 @@
  (name rune_rules)
  (wrapped false)
  (modules case reference row)
- (libraries windtrap rune nx nx.backend nx.device nx.dtype))
+ (libraries windtrap rune nx nx.backend nx.cpu nx.device nx.dtype))

@@ -2932,6 +2932,11 @@ thread.
 
 ### Nx
 
+- **Breaking:** a placed value computes on its devices. `Nx_cpu.backend` runs
+  where the host does the work (`Nx_device.runs_on_host`): a value on a GPU
+  computes with `Rune.compiled`. Placements accept a backend that does not
+  run on their devices, and the first operation there raises
+  `Nx_backend.Refused`.
 - A complete `Nx.qr` of an m x 0 matrix and an `Nx.svd` with
   `~full_matrices:true` of a matrix with an empty dimension return the identity
   as their square orthogonal factors (Q, and U or Vt). They returned all zeros,

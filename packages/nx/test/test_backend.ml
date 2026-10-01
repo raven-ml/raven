@@ -109,14 +109,24 @@ let backends =
           let y = Nx.add (Nx.place p (vec [| 1. |])) (vec [| 2. |]) in
           is_true (Nx.Placement.equal (Nx.placement y) p);
           equal floats (vec [| 3. |]) y);
-      test "a placement refuses a backend that does not run on the host"
+      test
+        "a placement takes a backend that does not run on its devices, and its \
+         first operation there refuses before any work, naming the remedies"
         (fun () ->
-          raises_invalid_arg (fun () ->
-              Nx.Placement.device ~backend:hostless Nx_device.host);
-          raises_invalid_arg (fun () ->
-              Nx.Placement.device ~backend:hostless r1);
-          raises_invalid_arg (fun () ->
-              Nx.Placement.replicated ~backend:hostless [ Nx_device.host; r1 ]));
+          let p =
+            Nx.Placement.replicated ~backend:hostless [ Nx_device.host; r1 ]
+          in
+          let x = Nx.place p (vec [| 1.; 2. |]) in
+          equal ~msg:"placed and read back" floats (vec [| 1.; 2. |]) x;
+          raises_match
+            (function
+              | Nx_backend.Refused why ->
+                  String.equal why
+                    "add: hostless does not compute on CPU; place with a \
+                     backend that runs on CPU, or compute under a compiled \
+                     call"
+              | _ -> false)
+            (fun () -> Nx.add x x));
       test "nx.cpu subtracts values placed on CPU:1, keeping their placement"
         (fun () ->
           let p = Nx.Placement.device (runtime "CPU:1") in

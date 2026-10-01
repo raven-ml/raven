@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx's operations at an nx.cpu placement: each computing operation, on operands
-   placed on a test device that holds its own memory, gives the host's result
-   bit for bit, placed on that device. *)
+(* nx's operations at a placement of nx.cpu's kernels on a test device: each
+   computing operation, on operands placed on a test device that holds its own
+   memory, gives the host's result bit for bit, placed on that device. *)
 
 open Windtrap
 open Nx_test
