@@ -2,7 +2,8 @@
  (name hugin_next_gg_kit)
  (public_name hugin.next.gg.kit)
  (libraries hugin.next.gg nx)
- (modules_without_implementation ring2 pgon2 field2)
+ (private_modules winding)
+ (modules_without_implementation field2)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
