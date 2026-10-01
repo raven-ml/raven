@@ -213,7 +213,9 @@ let gpu_file c minor =
   let module R = D.Register_fd in
   let r = P.create R.sizeof in
   P.set r R.ctl_fd c.ctl;
-  escape fd D.nv_esc_register_fd r "registering a GPU file";
+  or_undo
+    (fun () -> close_file fd)
+    (fun () -> escape fd D.nv_esc_register_fd r "registering a GPU file");
   fd
 
 let open_gpu index =

@@ -2927,6 +2927,8 @@ thread.
   not a multiple of 4 KiB. `Nx_device.Buffer.borrow` refused it with
   `NV_ERR_INVALID_ADDRESS`, because unified memory takes ranges of whole pages
   and the range was the buffer's length; it now covers the buffer's pages.
+- An NV device whose open fails while registering the GPU's device file no
+  longer leaves that file open.
 - An NV device opens through NVIDIA's kernel driver. Every open failed with
   `NV_ERR_INSUFFICIENT_PERMISSIONS`, because the driver gives a GPU only to a
   process that holds the GPU's device file open, and `Nx_nv_device` opened it
