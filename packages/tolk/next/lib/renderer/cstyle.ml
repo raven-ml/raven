@@ -431,7 +431,11 @@ let create_non_native_float_pats ?(casting = true) dts =
           (fun m ->
             let x = m "x" in
             if Dtype.equal (dtype x) Dtype.Float32 || is Op.Const x then None
-            else Some (cast (cast x Dtype.Float32) (dtype (m "y"))));
+            else
+              (* One rounding: a source more precise than a float32 reaches
+                 it rounded to odd (D64). *)
+              Some
+                (cast (Decomp_dtype.narrow x Dtype.Float32) (dtype (m "y"))));
         rule (Upat.op ~src:[ y ] ~name:"x" Op.Cast) (fun m ->
             let x = m "x" in
             if Dtype.equal (dtype x) Dtype.Float32 then None

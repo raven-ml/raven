@@ -56,6 +56,13 @@ val f2f_clamp : ?sat:bool -> Ops.t -> Dtype.t -> Ops.t
     infinity: rounding it to nearest even would give one. An infinity stays an
     infinity, which a format without one stores as its NaN, and a NaN a NaN. *)
 
+val narrow : Ops.t -> Dtype.t -> Ops.t
+(** [narrow x dt] is [x] cast to [dt], but for a {!Dtype.Float32} from a
+    {!Dtype.Float64} or an integer of 32 or 64 bits, more precise than a
+    float32: then it is [x] rounded to odd, towards zero with the last bit set
+    if bits were dropped, so that a narrow float rounded to nearest from it is
+    [x] rounded to nearest once (D9, D64). *)
+
 (** {1:passes Passes} *)
 
 val emulable : Dtype.t list

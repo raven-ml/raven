@@ -1785,6 +1785,56 @@ let signed_zeros =
           padding_computed ~flip fill before after xs);
     ]
 
+(* Casts to bfloat16 (D64)
+
+   A cast to bfloat16 from a type more precise than a float32 rounds once,
+   from the exact value, where a cast through a float32 rounds twice: 2^40 +
+   2^32 + 1 is 2^40 + 2^33 once, and 2^40 through the float32 2^40 + 2^32, a
+   tie that rounds to even. *)
+
+(* The kernel that stores into slot 0, of bfloat16, the cast of each of the [n]
+   elements of slot 1, of [from]. *)
+let cast_to_bfloat16 from n =
+  let out = Ops.param ~shape:[ Int n ] 0 Bfloat16 in
+  let x = Ops.param ~shape:[ Int n ] 1 from in
+  let i = Ops.range (Int n) [ 0 ] in
+  let store = Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) Bfloat16) in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ store [ i ] ]
+
+let rounds_once (from, values) =
+  let n = Array.length values in
+  let prg = Codegen.to_program (cast_to_bfloat16 from n) (Lazy.force host) in
+  equal (array Dtypes.value)
+    (Array.map
+       (fun v ->
+         match Dtype.const Bfloat16 v with
+         | #Dtype.value as r -> r
+         | `Invalid -> failf "%a is no bfloat16" (Testable.pp Dtypes.value) v)
+       values)
+    (List.assoc 0 (Run.on_host prg [ (1, values) ]))
+
+let bfloat16_casts =
+  let integers l = Array.of_list (List.map (fun s -> `Int (Z.of_string s)) l) in
+  group "casts to bfloat16 (D64)"
+    [
+      cases "an integer or a double rounds once on the host"
+        ~name:(fun (dt, _) -> Dtype.name dt)
+        [
+          ( Dtype.Int64,
+            integers
+              [
+                "1099511627777"; "1103806595073"; "-1103806595073"; "16842753";
+                "4629700416936869889";
+              ] );
+          (Dtype.Int32, integers [ "16842753"; "1077936129"; "-16842753" ]);
+          (Dtype.Uint32, integers [ "2155872257" ]);
+          (Dtype.Uint64, integers [ "9259400833873739777" ]);
+          ( Dtype.Float64,
+            [| `Float (1. +. 0x1p-8 +. 0x1p-40); `Float 0x1.0101p40 |] );
+        ]
+        rounds_once;
+    ]
+
 (* Lanes all Invalid *)
 
 (* rune's fold of a float32 [4; 1] to [3; 1], kernel [2; 2], dilation [2; 2]
@@ -2090,6 +2140,7 @@ let () =
          whole_graphs;
          accumulators;
          lanes;
+         bfloat16_casts;
          vectors;
          signed_zeros;
          invalid_lanes;

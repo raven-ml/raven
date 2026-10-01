@@ -1769,6 +1769,31 @@ the Exclusions of `README.md`.
   included (D62)`, on every emulated float, and the goldens of the
   `where`, `flip`, `gather` and `pad` kernels, from the patched tinygrad.
 
+## D64. A cast to a narrow float through a float32 rounds once
+
+- **tinygrad:** `renderer/cstyle.py:89-90` (`create_non_native_float_pats`,
+  which casts a source of any type but float32 to a float32, then to the
+  narrow float).
+- **tolk.next:** `lib/renderer/cstyle.ml:429` (the rule's cast), with
+  `lib/codegen/decomp/decomp_dtype.ml:531` (`narrow`, D9's).
+- **Differs:** a renderer without arithmetic on a narrow float, Clang's on
+  bfloat16 and HIP's on bfloat16 and the 8-bit floats, casts to it through a
+  float32. A source more precise than a float32 (a float64, or an integer of
+  32 or 64 bits) reaches the float32 rounded to odd, as an emulated cast's
+  does (D9), so that the cast rounds once, from the exact value. tinygrad
+  rounds to the float32 to nearest, then again: on the host, the bfloat16 of
+  the int64 `2^40 + 2^32 + 1` is `2^40` there, where its correctly rounded
+  value, which Metal's native conversion gives, is `2^40 + 2^33`. No golden
+  holds such a cast.
+- **Reason:** (b). nx casts with one rounding, and rune.next compiles its
+  casts to bfloat16 for the host: an int64 arange of bfloat16 from 2^40
+  computes a cast of each integer.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `casts to
+  bfloat16 (D64) › an integer or a double rounds once on the host`, for
+  int64, int32, uint32, uint64 and float64 sources; rune.next's `Jit` suite:
+  `values › a bfloat16 arange from 2^40 inside a compiled call equals
+  eager's`.
+
 ## D67. A long range runs as chunks of its trips
 
 - **tinygrad:** `runtime/support/hcq2.py:379-385` (`HWQueue.loop`, which

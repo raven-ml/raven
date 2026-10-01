@@ -311,22 +311,17 @@ let values ~count ~heavy =
            let f () = Nx.arange Nx.float32 0 513 1 in
            equal floats (f ())
              (Rune.jit' (fun z -> Nx.add z (f ())) (Nx.zeros_like (f ()))));
-       xfail
-         ~reason:
-           "a compiled int64 to bfloat16 cast rounds through float32, rounding \
-            twice"
-       @@ test
-            "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
-            (fun () ->
-              let a () =
-                Nx.arange Nx.bfloat16 (1 lsl 40)
-                  ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
-                  ((1 lsl 31) + 12345)
-              in
-              equal floats
-                (Nx.cast Nx.float32 (a ()))
-                (Nx.cast Nx.float32
-                   (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
+       test "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
+         (fun () ->
+           let a () =
+             Nx.arange Nx.bfloat16 (1 lsl 40)
+               ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
+               ((1 lsl 31) + 12345)
+           in
+           equal floats
+             (Nx.cast Nx.float32 (a ()))
+             (Nx.cast Nx.float32
+                (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
        test "top_k puts NaN first, as eager does" (fun () ->
            let scores =
              Nx.init Nx.float32 [| 2; 24 |] (fun i ->
