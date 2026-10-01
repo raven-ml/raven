@@ -99,38 +99,83 @@ let calls =
              (Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])) );
   ]
 
-(* [guarded call finalised x] is [call x], or [3 x] when it raises [Boom]; it
-   counts its finaliser's runs. *)
+(* The transformations' own errors, each raised at the operation that makes it:
+   an operation with no derivative, a lane read inside a map, a tangent map's
+   tangent of another shape, an addition of another shape. *)
+let no_derivative =
+  ( "an operation with no derivative",
+    fun x ->
+      ignore (Nx.svd ~full_matrices:true (Nx.reshape [| 1; 3 |] x));
+      x )
+
+let read_in_a_map =
+  ( "a value read in a map",
+    fun x ->
+      ignore (Nx.to_array x);
+      x )
+
+let tangent_shape =
+  ( "a tangent map's tangent of another shape",
+    fun x ->
+      Rune.custom_jvp tensor tensor
+        (fun x -> (Nx.mul_s x 2., fun dx -> Nx.sum dx))
+        x )
+
+(* [guarded call finalised x] is [call x], or [3 x] when it raises [Boom] or
+   [Invalid_argument]; it counts its finaliser's runs. *)
 let guarded call finalised x =
   match Fun.protect ~finally:(fun () -> incr finalised) (fun () -> call x) with
   | y -> y
-  | exception Boom -> Nx.mul_s x 3.
+  | exception (Boom | Invalid_argument _) -> Nx.mul_s x 3.
 
 let x0 () = vec [| 0.5; -1.2; 2.1 |]
 let v0 () = vec [| 1.; 0.5; -2. |]
 let xs () = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |]
+let vs () = Nx.create f64 [| 2; 3 |] [| 1.; 0.5; -2.; 0.3; 1.5; -0.7 |]
 let seen : (float, Nx.float64_elt) Rune.Total.t = Rune.Total.make ()
 
-(* Each transformation of a function [g], its argument, and the transformation
-   of [3 x]. *)
+let addition_shape =
+  ( "an addition of another shape",
+    fun x ->
+      Rune.Total.add seen (Nx.sum x);
+      x )
+
+(* Each transformation of a function [g], its argument, the transformation of [3
+   x], and the errors of its own it raises. *)
 let transformations =
   [
-    ("no transformation", (fun g x -> g x), x0, fun () -> Nx.mul_s (x0 ()) 3.);
+    ( "no transformation",
+      (fun g x -> g x),
+      x0,
+      (fun () -> Nx.mul_s (x0 ()) 3.),
+      [] );
     ( "grad",
       (fun g x -> Rune.grad' (fun x -> Nx.sum (g x)) x),
       x0,
-      fun () -> Nx.full f64 [| 3 |] 3. );
+      (fun () -> Nx.full f64 [| 3 |] 3.),
+      [ no_derivative ] );
     ( "jvp",
       (fun g x -> snd (Rune.jvp' g x (v0 ()))),
       x0,
-      fun () -> Nx.mul_s (v0 ()) 3. );
-    ("vmap", (fun g x -> Rune.vmap' g x), xs, fun () -> Nx.mul_s (xs ()) 3.);
+      (fun () -> Nx.mul_s (v0 ()) 3.),
+      [ no_derivative; tangent_shape ] );
+    ( "vmap",
+      (fun g x -> Rune.vmap' g x),
+      xs,
+      (fun () -> Nx.mul_s (xs ()) 3.),
+      [ read_in_a_map ] );
+    ( "jvp of a map",
+      (fun g x -> snd (Rune.jvp' (Rune.vmap' g) x (vs ()))),
+      xs,
+      (fun () -> Nx.mul_s (vs ()) 3.),
+      [ no_derivative; read_in_a_map; tangent_shape ] );
     ( "a total's scope",
       (fun g x ->
         fst
           (Rune.Total.collect seen ~zero:(Nx.zeros f64 [| 3 |]) (fun () -> g x))),
       x0,
-      fun () -> Nx.mul_s (x0 ()) 3. );
+      (fun () -> Nx.mul_s (x0 ()) 3.),
+      [ addition_shape ] );
     ( "a remat's function",
       (fun g x ->
         Rune.grad'
@@ -138,27 +183,42 @@ let transformations =
             Nx.sum (Rune.remat Nx.Ptree.(tensor @-> returns tensor) g x))
           x),
       x0,
-      fun () -> Nx.full f64 [| 3 |] 3. );
+      (fun () -> Nx.full f64 [| 3 |] 3.),
+      [] );
   ]
 
 let exception_tests =
   List.map
-    (fun (name, transform, x, expected) ->
+    (fun (name, transform, x, expected, errors) ->
+      let check ~compile call () =
+        let finalised = ref 0 in
+        let run = transform (guarded call finalised) in
+        let y = if compile then Rune.jit' run (x ()) else run (x ()) in
+        equal (Oracle.tensor ~rel:1e-12 ()) (expected ()) y;
+        is_true ~msg:"finalised" (!finalised > 0)
+      in
       group ("under " ^ name)
-        (List.map
+        (List.concat_map
            (fun (call_name, call) ->
-             test call_name (fun () ->
-                 let finalised = ref 0 in
-                 equal
-                   (Oracle.tensor ~rel:1e-12 ())
-                   (expected ())
-                   (transform (guarded call finalised) (x ()));
-                 is_true ~msg:"finalised" (!finalised > 0)))
-           calls))
+             [
+               test call_name (check ~compile:false call);
+               xfail ~reason:"pending: jit"
+                 (test (call_name ^ ", compiled") (check ~compile:true call));
+             ])
+           (calls @ errors)))
     transformations
 
 let later_tests =
   [
+    xfail ~reason:"pending: jit"
+      (test "an operation a compiled function refuses raises at its call"
+         (fun () ->
+           let guarded x =
+             match Nx.rfft Nx.complex128 x with
+             | _ -> x
+             | exception Rune.Jit_error _ -> Nx.mul_s x 3.
+           in
+           equal (exact ()) (Nx.mul_s (x0 ()) 3.) (Rune.jit' guarded (x0 ()))));
     test "a pullback's exception reaches the backward pass's caller" (fun () ->
         let g =
           Rune.custom_vjp tensor tensor (fun x -> (Nx.sin x, fun _ -> boom ()))
@@ -364,6 +424,117 @@ let untracked_tests =
         equal (exact ()) (one ()) (Rune.grad' (fun x -> Nx.sum (f x)) (two ())));
   ]
 
+(* Rules whose result is an argument, rules under a map *)
+
+let rule_tests =
+  let w () = vec [| 2.; -3. |] and ones () = vec [| 1.; 1. |] in
+  [
+    test "a custom_vjp whose result is its argument adds its cotangent once"
+      (fun () ->
+        let id = Rune.custom_vjp tensor tensor (fun x -> (x, fun ct -> ct)) in
+        equal (exact ())
+          (vec [| 5.; -5. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.add (id x) (Nx.mul x x))) (w ())));
+    test "a remat of the identity adds its cotangent once" (fun () ->
+        let r = Rune.remat Nx.Ptree.(tensor @-> returns tensor) Fun.id in
+        equal (exact ())
+          (vec [| 4.; -6. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.mul (r x) x)) (w ())));
+    test
+      "a custom_jvp whose result is its argument keeps the argument's tangent"
+      (fun () ->
+        let double =
+          Rune.custom_jvp tensor tensor (fun x -> (x, fun dx -> Nx.mul_s dx 2.))
+        in
+        equal ~msg:"rule first" (exact ())
+          (vec [| 3.; 3. |])
+          (snd (Rune.jvp' (fun x -> Nx.add (double x) x) (w ()) (ones ())));
+        equal ~msg:"rule second" (exact ())
+          (vec [| 3.; 3. |])
+          (snd (Rune.jvp' (fun x -> Nx.add x (double x)) (w ()) (ones ()))));
+    test "under vmap a custom_vjp's pullback runs for each lane" (fun () ->
+        (* The pullback is twice the true one, so applying it shows. *)
+        let doubled =
+          Rune.custom_vjp tensor tensor (fun x ->
+              (Nx.sin x, fun g -> Nx.mul g (Nx.mul_s (Nx.cos x) 2.)))
+        in
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (Nx.mul_s (Nx.cos (xs ())) 2.)
+          (Rune.grad' (fun xs -> Nx.sum (Rune.vmap' doubled xs)) (xs ())));
+    test "jvp of a mapped custom_vjp is refused" (fun () ->
+        let rule =
+          Rune.custom_vjp tensor tensor (fun x -> (Nx.sin x, fun g -> g))
+        in
+        raises (Invalid_argument no_forward) (fun () ->
+            Rune.jvp' (Rune.vmap' rule) (xs ()) (xs ())));
+  ]
+
+(* A remat and what it captures *)
+
+(* A layer that closes over its weight: every transformation reaches the weight
+   through the remat as it does without one. *)
+let at () = vec [| 0.7; -1.3; 2.1 |]
+let along () = vec [| 0.5; 1.; -2. |]
+let layer w x = Nx.mul (Nx.exp x) w
+let rematted = Rune.remat Nx.Ptree.(tensor @-> returns tensor)
+let plainly f = f
+let close () = Oracle.tensor ~rel:1e-12 ()
+
+let hvp loss w =
+  Rune.grad' (fun w -> Nx.sum (Nx.mul (Rune.grad' loss w) (along ()))) w
+
+let capture_tests =
+  [
+    test "a captured weight's gradient" (fun () ->
+        let loss r w = Nx.sum (Nx.sin (r (layer w) (at ()))) in
+        equal (close ())
+          (Rune.grad' (loss plainly) (along ()))
+          (Rune.grad' (loss rematted) (along ())));
+    test "a captured weight's tangent" (fun () ->
+        let tangent r w =
+          snd (Rune.jvp' (fun w -> r (layer w) (at ())) w (along ()))
+        in
+        equal (close ()) (tangent plainly (at ())) (tangent rematted (at ())));
+    test "a weight both captured and passed gets both shares" (fun () ->
+        let loss r w = Nx.sum (r (layer w) (Nx.mul w w)) in
+        equal (close ())
+          (Rune.grad' (loss plainly) (along ()))
+          (Rune.grad' (loss rematted) (along ())));
+    test "an argument the function also captures gets both shares" (fun () ->
+        let loss r w = Nx.sum (r (fun x -> Nx.mul (Nx.sin x) w) w) in
+        equal (close ())
+          (Rune.grad' (loss plainly) (along ()))
+          (Rune.grad' (loss rematted) (along ())));
+    test "second derivatives in a weight passed to the remat" (fun () ->
+        let passed r w =
+          Nx.sum
+            (Nx.sin (r (fun w x -> Nx.tanh (Nx.mul x w)) w (Nx.cos (at ()))))
+        in
+        equal (close ())
+          (hvp (passed plainly) (along ()))
+          (hvp
+             (passed
+                (Rune.remat Nx.Ptree.(tensor @-> tensor @-> returns tensor)))
+             (along ())));
+    test "second derivatives in a weight the remat captures" (fun () ->
+        let captured r w =
+          Nx.sum (Nx.sin (r (fun x -> Nx.mul (Nx.exp x) (Nx.mul w w)) (at ())))
+        in
+        equal (close ())
+          (hvp (captured plainly) (along ()))
+          (hvp (captured rematted) (along ())));
+    test "a remat inside a map captures the lane" (fun () ->
+        let lane r x = r (fun c -> Nx.mul (Nx.sin c) x) (along ()) in
+        equal ~msg:"values" (close ())
+          (Rune.vmap' (lane plainly) (xs ()))
+          (Rune.vmap' (lane rematted) (xs ()));
+        let lanes r xs = Nx.sum (Rune.vmap' (lane r) xs) in
+        equal ~msg:"grad of vmap" (close ())
+          (Rune.grad' (lanes plainly) (xs ()))
+          (Rune.grad' (lanes rematted) (xs ())));
+  ]
+
 let () =
   exit
     (run "Rune constructs"
@@ -372,4 +543,6 @@ let () =
          group "exceptions" (exception_tests @ later_tests);
          group "effects" effect_tests;
          group "values with no derivative" untracked_tests;
+         group "rules whose result is an argument, rules under a map" rule_tests;
+         group "a remat and what it captures" capture_tests;
        ])
