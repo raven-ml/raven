@@ -1735,7 +1735,7 @@ let constant_rows at =
    program holds for its loop does not grow with its steps. A step makes at
    least one call, so either count runs several of the batches the engine
    reruns; [b] above 16 is slow. The scan's outputs are rows of 16 bytes, which
-   the program writes in its result: the measure leaves the result out. *)
+   the program stacks and its result copies: the measure leaves both out. *)
 let held_by_steps at ~than a b =
   let d = match Nx.Placement.devices at with [ d ] -> d | _ -> assert false in
   (if b > 16 then slow else test)
@@ -1752,7 +1752,7 @@ let held_by_steps at ~than a b =
         Gc.full_major ();
         let before = allocated d in
         let r = g xs in
-        let held = allocated d - before - Nx.nbytes r in
+        let held = allocated d - before - (2 * Nx.nbytes r) in
         ignore (host r);
         held
       in
