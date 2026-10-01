@@ -284,6 +284,48 @@ let wrapping_case (dt, (o0, o1), (a, b, k)) =
   let vars = [ ("x", i (min x1 (x0 + k))); ("y", i (max y0 (y1 - k))) ] in
   (u, vars)
 
+(* D74: a float sum, difference or product of variables over intervals of a
+   float type's values, at a point of each. Magnitudes span the type's
+   exponents, so that sums overflow and products fall to the subnormals. *)
+let gen_float_bounds =
+  let open Gen in
+  let* dt =
+    of_list ~pp:(Testable.pp dtype)
+      Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+  in
+  let e, m = Dtype.finfo dt in
+  let emax = 1 lsl (e - 1) in
+  let magnitude =
+    let+ x = float_range (-2.) 2. and+ k = int_range (-emax - m) emax in
+    Float.ldexp x k
+  in
+  let+ o = of_list ~pp:Op.pp Op.[ Add; Sub; Mul ]
+  and+ ends = quad magnitude magnitude magnitude magnitude
+  and+ at = pair (float_range 0. 1.) (float_range 0. 1.) in
+  (dt, o, ends, at)
+
+let float_bounds_case (dt, o, (a0, a1, b0, b1), (s, t)) =
+  let value x =
+    match Dtype.truncate dt (`Float x) with `Float y -> y | _ -> Float.nan
+  in
+  let interval x0 x1 = (value (Float.min x0 x1), value (Float.max x0 x1)) in
+  let (a0, a1), (b0, b1) = (interval a0 a1, interval b0 b1) in
+  assume (List.for_all Float.is_finite [ a0; a1; b0; b1 ]);
+  let point lo hi s =
+    value (Float.min hi (Float.max lo ((lo *. (1. -. s)) +. (hi *. s))))
+  in
+  let x = variable dt (f a0) (f a1) "x" and y = variable dt (f b0) (f b1) "y" in
+  let u = Ops.alu x o [ y ] in
+  match
+    Interpreter.eval
+      ~vars:[ ("x", f (point a0 a1 s)); ("y", f (point b0 b1 t)) ]
+      u
+  with
+  | #Dtype.value as v ->
+      at_most ordered_value ~than:v (Ops.vmin u);
+      at_least ordered_value ~than:v (Ops.vmax u)
+  | `Invalid -> fail "Invalid in an expression without one"
+
 let bounds_group =
   group "bounds"
     [
@@ -326,6 +368,37 @@ let bounds_group =
               at_most ordered_value ~than:v (Ops.vmin u);
               at_least ordered_value ~than:v (Ops.vmax u)
           | `Invalid -> fail "Invalid in an expression without one");
+      prop "bounds hold every value a float operation rounds to (D74)"
+        gen_float_bounds float_bounds_case;
+      test "a float operation of bounded operands is bounded (D74)" (fun () ->
+          let x = variable Float32 (f 0.) (f 1.) "x" in
+          let y = variable Float32 (f (-2.)) (f 3.) "y" in
+          let widened lo hi =
+            let tiny = Float.ldexp 1. (-126) and rel = Float.ldexp 1. (-23) in
+            ( f (lo -. (Float.abs lo *. rel) -. tiny),
+              f (hi +. (Float.abs hi *. rel) +. tiny) )
+          in
+          check_bounds (Ops.alu x Op.Add [ y ]) (widened (-2.) 4.);
+          check_bounds (Ops.alu x Op.Sub [ y ]) (widened (-3.) 3.);
+          check_bounds (Ops.alu x Op.Mul [ y ]) (widened (-2.) 3.));
+      test
+        "a float operation of an unbounded operand, or that can overflow, has \
+         its type's bounds (D74)" (fun () ->
+          let full dt = (Dtype.min dt, Dtype.max dt) in
+          let one dt = Ops.float ~dtype:dt 1. in
+          let h = variable Float16 (f 0.) (f 65504.) "h" in
+          let w = variable Weak_float (f 0.) (f 1.) "w" in
+          check_bounds
+            (Ops.alu (Ops.param 0 Float32) Op.Add [ one Float32 ])
+            (full Float32);
+          check_bounds (Ops.alu h Op.Add [ h ]) (full Float16);
+          check_bounds (Ops.alu h Op.Mul [ h ]) (full Float16);
+          check_bounds (Ops.alu w Op.Add [ one Weak_float ]) (full Weak_float));
+      test "a float truncation and negation map their operand's bounds (D74)"
+        (fun () ->
+          let x = variable Float32 (f (-2.5)) (f 3.75) "x" in
+          check_bounds (Ops.alu x Op.Trunc []) (f (-2.), f 3.);
+          check_bounds (Ops.alu x Op.Neg []) (f (-3.75), f 2.5));
       prop "vmin is at most vmax" Nodes.gen_recipe (fun r ->
           let u = Nodes.build (Nodes.leaves ()) r in
           at_most ordered_value ~than:(Ops.vmax u) (Ops.vmin u));

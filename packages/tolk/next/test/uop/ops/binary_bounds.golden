@@ -2732,7 +2732,7 @@ Ops.XOR	dtypes.bool	False	True	True	True	False	True
 Ops.XOR	dtypes.bool	True	True	False	False	False	True
 Ops.XOR	dtypes.bool	True	True	False	True	False	True
 Ops.XOR	dtypes.bool	True	True	True	True	False	True
-Ops.ADD	dtypes.float	0.0	1.0	2.0	3.0	-inf	inf
-Ops.MUL	dtypes.float	0.0	1.0	2.0	3.0	-inf	inf
+Ops.ADD	dtypes.float	0.0	1.0	2.0	3.0	1.999999761581421	4.000000476837158
+Ops.MUL	dtypes.float	0.0	1.0	2.0	3.0	-1.1754943508222875e-38	3.0000003576278687
 Ops.MAX	dtypes.float	0.0	1.0	2.0	3.0	-inf	inf
 Ops.CMPLT	dtypes.float	0.0	1.0	2.0	3.0	True	True

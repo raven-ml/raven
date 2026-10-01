@@ -1508,8 +1508,10 @@ and compute_min_max u : Dtype.value * Dtype.value =
   let dt = u.dtype in
   let bounds x = operand_bounds u x in
   let binary =
-    if Op.Set.mem u.op Op.Set.binary && not (Dtype.is_float dt) then
+    if Op.Set.mem u.op Op.Set.binary then
       match u.src with
+      | [ x; y ] when Dtype.is_float dt ->
+          float_bounds u.op dt (bounds x) (bounds y)
       | [ x; y ] -> binary_bounds u (bounds x) (bounds y)
       | _ -> None
     else None
@@ -1551,12 +1553,58 @@ and compute_min_max u : Dtype.value * Dtype.value =
                   Op.[ Index; Stage; After; Detach; Copy; Contiguous_backward ]
         ->
           bounds (src0 ())
+      | Op.Trunc, _ ->
+          let trunc = function `Float x -> `Float (Float.trunc x) | v -> v in
+          let lo, hi = bounds (src0 ()) in
+          (trunc lo, trunc hi)
+      | Op.Neg, _ when Dtype.is_float dt ->
+          let lo, hi = bounds (src0 ()) in
+          (Value.( ~- ) hi, Value.( ~- ) lo)
       | Op.Cast, _ -> (
           let x = src0 () in
           match cast_bounds x.dtype dt (min_max x) with
           | Some b -> b
           | None -> (Dtype.min dt, Dtype.max dt))
       | _ -> (Dtype.min dt, Dtype.max dt))
+
+(* A float sum, difference or product of operands with finite bounds has bounds:
+   the corners, widened by more than the result's rounding, a relative 2^-m and
+   the smallest normal of its type, which also covers a target that flushes
+   subnormals to zero. Finite operands make a finite result, never NaN, which no
+   bounds hold; a result that may overflow its type has none. *)
+and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
+  let finite : Dtype.value -> float option = function
+    | `Float x when Float.is_finite x -> Some x
+    | `Int z -> Some (Bigint.to_float z)
+    | _ -> None
+  in
+  match
+    ( op,
+      List.mem dt Dtype.weaks,
+      List.map finite [ s0_min; s0_max; s1_min; s1_max ] )
+  with
+  | (Op.Add | Op.Sub | Op.Mul), false, [ Some a; Some b; Some c; Some d ] ->
+      let lo, hi =
+        match op with
+        | Op.Add -> (a +. c, b +. d)
+        | Op.Sub -> (a -. d, b -. c)
+        | _ ->
+            let corners = [ a *. c; a *. d; b *. c; b *. d ] in
+            ( List.fold_left Float.min Float.infinity corners,
+              List.fold_left Float.max Float.neg_infinity corners )
+      in
+      let e, m = Dtype.finfo dt in
+      let rel = Float.ldexp 1. (-m)
+      and tiny = Float.ldexp 1. (2 - (1 lsl (e - 1))) in
+      let lo = lo -. (Float.abs lo *. rel) -. tiny
+      and hi = hi +. (Float.abs hi *. rel) +. tiny in
+      let fits x =
+        match Dtype.truncate dt (`Float x) with
+        | `Float y -> Float.is_finite y
+        | _ -> false
+      in
+      if fits lo && fits hi then Some (`Float lo, `Float hi) else None
+  | _ -> None
 
 (* Rounding is monotone, so a cast maps bounds to bounds: toward zero into an
    integer, to nearest into a float. An integer keeps its value in an integer

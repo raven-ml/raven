@@ -79,6 +79,16 @@ let graphs =
               [
                 T.shl i 3; T.shr i 3; T.shl i 0; T.shr i 0; T.shl f 2; T.shr f 2;
               ]);
+        cases ~name:fst
+          "a sine of an angle bounded below the switch-over is its fast form \
+           (D74)"
+          floats (fun (_, dt) ->
+            let angle lo hi =
+              Ops.variable ~dtype:dt "a" (`Float lo) (`Float hi)
+            in
+            let bounded = angle (-29.) 29. and wide = angle (-31.) 31. in
+            is_true (Ops.equal (T.xsin bounded) (T.xsin ~fast:true bounded));
+            is_false (Ops.equal (T.xsin wide) (T.xsin ~fast:true wide)));
       ])
 
 (* Patterns *)

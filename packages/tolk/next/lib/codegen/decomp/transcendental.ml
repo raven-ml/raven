@@ -321,6 +321,11 @@ let sin_poly_large d q =
 
 let xsin ?(fast = false) ?(switch_over = 30.0) d =
   check d;
+  let fast =
+    fast
+    || Dtype.Value.(
+         `Float (-.switch_over) < vmin d && vmax d < `Float switch_over)
+  in
   let zero = float_like d 0. in
   let x = lazy_map_numbers d ~inf:zero ~neg_inf:zero ~nan:zero d in
   let x_sign =

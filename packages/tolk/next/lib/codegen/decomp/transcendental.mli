@@ -90,7 +90,8 @@ val xsin : ?fast:bool -> ?switch_over:float -> Ops.t -> Ops.t
     Angles below [switch_over] (default [30.]) in magnitude are reduced with
     {!cody_waite_reduction}, and larger ones with {!payne_hanek_reduction},
     unless [fast] (default [false]), which assumes every angle is below
-    [switch_over] and builds only the first. *)
+    [switch_over] and builds only the first. [fast] holds when [d]'s bounds
+    ({!Ops.vmin}, {!Ops.vmax}) lie below [switch_over] in magnitude. *)
 
 val xexp2 : Ops.t -> Ops.t
 (** [xexp2 d] is [2]{^ [d]}: [inf] where it overflows [d]'s type, [0] where it
