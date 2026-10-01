@@ -279,18 +279,6 @@ type binder =
   | Signals of Nx_device.t
   | Var of Ops.t
 
-(* Host memory that a device of a batch addresses but cannot borrow, such as a
-   host buffer of less than 64 KiB, which does not start on a page: the device
-   addresses [shadow], its pinned memory, which the host fills from [operand]
-   before each run and copies back once the run completed. [mirror] is the
-   host's borrow of [shadow]. *)
-type stage = {
-  owner : Nx_device.t; (* the device that addresses [shadow] *)
-  mutable operand : B.t; (* the host's borrow of the memory *)
-  shadow : B.t;
-  mirror : B.t;
-}
-
 (* A batch, as linked: its host program, the devices whose queues it submits,
    its arguments, and the values its previous run signals on each device. What
    depends on the linked schedule alone is resolved once, so that a run
@@ -308,13 +296,12 @@ type batch = {
   binders : binder array; (* the host program's variables, in order *)
   values : int array; (* the variables' values of the run being made *)
   inputs : input array; (* the address table's entries, in order *)
+  run_inputs : B.t array; (* the inputs' buffers of the run being made *)
+  run_reached : B.t array; (* how its devices reach them, by input *)
   addresses : nativeint array; (* the inputs' addresses of the run being made *)
-  input_stages : stage option array; (* by input, its last stage *)
-  stages : stage list; (* the storage its words address that link staged *)
-  written : stage list; (* those of [stages] it writes *)
   touched : B.t list;
-      (* the arguments, the storage its words address, and the borrows and
-         stages link made for them *)
+      (* the arguments, the storage its words address, and how link reached that
+         storage *)
   table : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   last : int array;
 }
@@ -384,63 +371,29 @@ let sint u =
 
 let lane buffers i = match buffers with [ b ] -> b | bs -> List.nth bs i
 
-(* A stage of the host memory [h] on [d]: pinned memory of [d], which the host
-   addresses too. *)
-let stage_on d h =
-  let shadow = B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 (B.nbytes h) in
-  match B.borrow Nx_device.host shadow with
-  | Ok mirror -> { owner = d; operand = h; shadow; mirror }
-  | Error why ->
-      invalid_arg
-        (strf "Tolk_engine: %s has no memory to stage host memory in: %s"
-           (Nx_device.name d) why)
+let refused d b why =
+  invalid_arg
+    (strf "Tolk_engine: %s cannot address memory of %s: %s" (Nx_device.name d)
+       (Nx_device.name (B.device b))
+       why)
 
-(* The stage among [stages] of the host memory [h] on [d]. *)
-let staged stages d h =
-  List.find_opt
-    (fun s ->
-      s.owner == d
-      && B.address s.operand = B.address h
-      && B.nbytes s.operand = B.nbytes h)
-    stages
+(* How [d]'s work reaches [b]: [b] on [d], and otherwise as nx.device's
+   [Buffer.reach] gives it for [access], staged where [d] maps none of it. *)
+let reach d b access =
+  if B.device b == d then b
+  else match B.reach d b access with Ok r -> r | Error why -> refused d b why
 
-(* The host copies a run's stages in before its work, and those its work writes
-   back once it completed. *)
-let copy_in s =
-  Bigarray.Array1.blit
-    (B.bigarray Bigarray.char s.operand)
-    (B.bigarray Bigarray.char s.mirror)
+(* A placeholder's storage is its device's to address, and is borrowed alone: a
+   signal word, which the host waits on while the work runs, cannot be
+   staged. *)
+let borrowed d b =
+  if B.device b == d then b
+  else match B.borrow d b with Ok r -> r | Error why -> refused d b why
 
-let copy_out s =
-  Bigarray.Array1.blit
-    (B.bigarray Bigarray.char s.mirror)
-    (B.bigarray Bigarray.char s.operand)
-
-(* [b]'s address on [d]: its own, through [d]'s borrow of it, which [keep]
-   keeps, or, with [stage], for memory of this machine's host that [d] cannot
-   borrow, that of the shadow of [stage h], for [h] the host's borrow of [b]. *)
-let address ~keep ?stage d b =
-  if (B.device b == d) [@mutate off "a device's borrow of its own buffer is it"]
-  then B.address b
-  else
-    match B.borrow d b with
-    | Ok m ->
-        keep m;
-        B.address m
-    | Error why -> (
-        let refuse () =
-          invalid_arg
-            (strf "Tolk_engine: %s cannot address memory of %s: %s"
-               (Nx_device.name d)
-               (Nx_device.name (B.device b))
-               why)
-        in
-        match stage with
-        | Some stage when Nx_device.host_of d == Nx_device.host -> (
-            match B.borrow Nx_device.host b with
-            | Ok h -> B.address (stage h).shadow
-            | Error _ -> refuse ())
-        | _ -> refuse ())
+(* Whether [b] and [b'] are the same bytes. *)
+let same_memory b b' =
+  b == b'
+  || (B.nbytes b = B.nbytes b' && Nativeint.equal (B.address b) (B.address b'))
 
 let int_of_const u =
   match Ops.arg u with
@@ -554,8 +507,8 @@ let signal_word_tag = Ops.Tag.String "timeline"
 let staging_tag = Ops.Tag.String "staging"
 
 (* The staging memory of each host, which the staged copies of every linked
-   schedule share, kept for the life of the process: each run
-   that stages through it touches it, so nx.device orders the runs. *)
+   schedule share, kept for the life of the process: each run that stages
+   through it touches it, so nx.device orders the runs. *)
 let stagings = ref []
 let stagings_lock = Mutex.create ()
 
@@ -630,32 +583,49 @@ let link_batch ~device ~storage call patches =
       patched
     |> List.concat
   in
-  (* The borrows its words' addresses map, which its runs touch: their work's
-     completion, not the link, ends them. *)
-  let borrows = ref [] in
-  let keep m = borrows := m :: !borrows in
-  let stages = ref [] and written = ref [] in
-  let stage base d h =
-    let s =
-      match staged !stages d h with
-      | Some s -> s
-      | None ->
-          let s = stage_on d h in
-          stages := s :: !stages;
-          s
-    in
-    if List.memq base info.writes && not (List.memq s !written) then
-      written := s :: !written;
-    s
+  (* How its devices reach the storage its words address, which its runs touch:
+     their work's completion, not the link, ends them. A memory is reached once
+     per device, for reading and writing when the batch writes it through any of
+     its words. *)
+  let reaches = ref [] in
+  let getaddr g =
+    match Ops.arg g with
+    | Ops.Device (Single dn | Multi (dn :: _)) ->
+        let base, _, _ = Hcq2.unwrap_lane (Ops.nth g 0) in
+        Some ((device dn).device, base, fst (linked_at storage (Ops.nth g 0)))
+    | _ -> None
   in
-  (* A placeholder's storage is the device's to address: a signal word, for one,
-     cannot be staged, as the host waits on it while the work runs. *)
+  let written =
+    List.filter_map
+      (fun g ->
+        if Ops.op g <> Op.Getaddr then None
+        else
+          match getaddr g with
+          | Some (d, base, b) when List.memq base info.writes -> Some (d, b)
+          | _ -> None)
+      patched
+  in
+  let reach_word d base b =
+    match
+      List.find_opt (fun (d', b', _) -> d' == d && same_memory b b') !reaches
+    with
+    | Some (_, _, r) -> r
+    | None ->
+        let r =
+          if is_placeholder base then borrowed d b
+          else
+            let writes (d', b') = d' == d && same_memory b b' in
+            reach d b
+              (if List.exists writes written then B.Read_write else B.Read)
+        in
+        reaches := (d, b, r) :: !reaches;
+        r
+  in
   let addr dn u =
     let base, _, _ = Hcq2.unwrap_lane u in
     let b, off = linked_at storage u in
     let d = (device dn).device in
-    let stage = if is_placeholder base then None else Some (stage base d) in
-    Nativeint.add (address ~keep ?stage d b) (Nativeint.of_int off)
+    Nativeint.add (B.address (reach_word d base b)) (Nativeint.of_int off)
   in
   List.iter (apply storage addr) patches;
   let arguments = List.map (fun u -> List.hd (Ops.Tbl.find storage u)) args in
@@ -673,7 +643,7 @@ let link_batch ~device ~storage call patches =
       let hb =
         match B.borrow host b with Ok m -> m | Error why -> invalid_arg why
       in
-      keep hb;
+      reaches := (host, b, hb) :: !reaches;
       B.bigarray Bigarray.int64 hb
   in
   let named = List.map (fun n -> (n, (device n).device)) info.device in
@@ -724,12 +694,10 @@ let link_batch ~device ~storage call patches =
     binders;
     values = Array.make (Array.length binders) 0;
     inputs;
+    run_inputs = Array.make (Array.length inputs) (List.hd arguments);
+    run_reached = Array.make (Array.length inputs) (List.hd arguments);
     addresses = Array.make (Array.length inputs) 0n;
-    input_stages = Array.make (Array.length inputs) None;
-    stages = !stages;
-    written = !written;
-    touched =
-      arguments @ reached @ !borrows @ List.map (fun s -> s.shadow) !stages;
+    touched = arguments @ reached @ List.map (fun (_, _, r) -> r) !reaches;
     table;
     last = Array.make (List.length queues) 0;
   }
@@ -741,46 +709,44 @@ let rec report_copies s = function
       Nx_device.Submission.copied s ~src ~dst n;
       report_copies s rest
 
+(* Whether the inputs [j] and [k] of a run are the same memory on one device,
+   the first input of a run over input [k]'s, and whether any input over it is
+   written. *)
+let same_input b j k =
+  b.inputs.(j).on == b.inputs.(k).on
+  && same_memory b.run_inputs.(j) b.run_inputs.(k)
+
+let rec first_same b k j = if same_input b j k then j else first_same b k (j + 1)
+
+let rec any_written b k j =
+  j < Array.length b.inputs
+  && ((b.inputs.(j).written && same_input b j k) || any_written b k (j + 1))
+
 let run_batch ~vars slots b =
-  let touches = ref b.touched and stages = ref b.stages in
-  let written = ref b.written in
-  (* The run's work reads and writes through its inputs' borrows: they are among
-     its touches until it completes. *)
-  let keep m = touches := m :: !touches in
-  (* An input's stage is the run's stage of its memory, or the input's own, made
-     again when its memory's size or device changes. *)
-  let stage k d h =
-    let s =
-      match staged !stages d h with
-      | Some s -> s
-      | None ->
-          let s =
-            match b.input_stages.(k) with
-            | Some s when s.owner == d && B.nbytes s.operand = B.nbytes h ->
-                s.operand <- h;
-                s
-            | _ ->
-                let s = stage_on d h in
-                b.input_stages.(k) <- Some s;
-                s
-          in
-          stages := s :: !stages;
-          touches := s.shadow :: !touches;
-          s
-    in
-    if b.inputs.(k).written && not (List.memq s !written) then
-      written := s :: !written;
-    s
-  in
-  for k = 0 to Array.length b.inputs - 1 do
+  let n = Array.length b.inputs in
+  for k = 0 to n - 1 do
     let i = b.inputs.(k) in
     let bs = slots.(i.slot) in
-    let x = match i.shard with Some j -> List.nth bs j | None -> List.hd bs in
-    touches := x :: !touches;
+    b.run_inputs.(k) <-
+      (match i.shard with Some j -> List.nth bs j | None -> List.hd bs)
+  done;
+  (* The run's work reads and writes through how its devices reach its inputs,
+     which are among its touches until it completes. An input's memory is
+     reached once per device, for reading and writing when any input over it is
+     written. *)
+  let touches = ref b.touched in
+  for k = 0 to n - 1 do
+    let i = b.inputs.(k) in
+    let first = first_same b k 0 in
+    if first < k then b.run_reached.(k) <- b.run_reached.(first)
+    else begin
+      let access = if any_written b k k then B.Read_write else B.Read in
+      let r = reach i.on b.run_inputs.(k) access in
+      b.run_reached.(k) <- r;
+      touches := r :: !touches
+    end;
     b.addresses.(k) <-
-      Nativeint.add
-        (address ~keep ~stage:(stage k i.on) i.on x)
-        (Nativeint.of_int i.offset)
+      Nativeint.add (B.address b.run_reached.(k)) (Nativeint.of_int i.offset)
   done;
   Nx_device.submit b.devices ~touches:!touches (fun s ->
       for i = 0 to Array.length b.queues - 1 do
@@ -791,7 +757,6 @@ let run_batch ~vars slots b =
         (fun (d', v) ->
           if not (List.memq d' b.devices) then Nx_device.Submission.wait s d' v)
         (Nx_device.Submission.waits s);
-      List.iter copy_in !stages;
       for k = 0 to Array.length b.inputs - 1 do
         b.table.{k} <- Int64.of_nativeint b.addresses.(k)
       done;
@@ -830,12 +795,7 @@ let run_batch ~vars slots b =
           b.info.kernels;
       for i = 0 to Array.length b.queues - 1 do
         b.last.(i) <- Nx_device.Submission.value s b.queues.(i)
-      done);
-  match !written with
-  | [] -> ()
-  | written ->
-      Array.iter Nx_device.synchronize b.queues;
-      List.iter copy_out written
+      done)
 
 (* The calls of a schedule's entry: itself, or those a range is around. *)
 let rec calls_of entry =

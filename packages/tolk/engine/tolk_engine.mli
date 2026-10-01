@@ -170,12 +170,11 @@ val link :
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.
-    - Host memory that a device of a batch addresses but cannot borrow
-      ({!Nx_device.Buffer.borrow}), such as a host buffer of less than 64 KiB on
-      a CUDA, AMD or NV device, which maps whole pages, is staged: the device
-      addresses pinned memory of its own of the same size, which the batch keeps
-      and {!run} fills from the host memory, and copies back when the batch
-      writes it. A placeholder's storage is never staged.
+    - A device of a batch reaches the storage its words address as
+      {!Nx_device.Buffer.reach} gives it, once per memory, for reading and
+      writing when the batch writes that storage
+      ({!Tolk.Ops.hcq_info}[.writes]); host memory the device does not map is
+      then staged. A placeholder's storage is borrowed, never staged.
 
     The linked schedule keeps its storage, its programs and the buffers of
     [bound] while it is reachable. The runs of schedules that stage copies
@@ -209,23 +208,19 @@ val run :
       memory, and on the host for the work of the devices whose memory it
       reaches but that are not the batch's, such as the source of a copy from a
       device without queues ({!Nx_device.Submission.waits}): no queue of the
-      batch waits for them. It then copies the host memory it stages into its
-      pinned memory ({!link}), writes its inputs' addresses into its address
-      table and calls its host program with each device's last submitted value
-      and the value its work signals ({!Nx_device.Submission.value}). An input
-      the batch stages is staged in pinned memory the batch keeps for that
-      input, of the input's size. While a profile is taken, it records each
-      kernel's span on each of its devices ({!Nx_device.Submission.record}).
+      batch waits for them. It then writes its inputs' addresses into its
+      address table and calls its host program with each device's last submitted
+      value and the value its work signals ({!Nx_device.Submission.value}). Its
+      devices reach each run's inputs as {!Nx_device.Buffer.reach} gives them,
+      once per memory, for reading and writing when the batch writes any input
+      over it. While a profile is taken, it records each kernel's span on each
+      of its devices ({!Nx_device.Submission.record}).
 
     [run] returns once every call is queued: a read of a result waits for the
-    work that wrote it, as {!Nx_device.synchronize} does. A batch that writes
-    host memory it stages is the exception: it synchronizes its devices once
-    submitted and copies that memory back, so that the host reads what the work
-    wrote. The batch writes the storage of its copies' destinations and of its
-    kernels' outputs, and of every argument of a kernel whose outputs are not
-    known ({!Tolk.Ops.hcq_info}[.writes]). A batch that only reads the host
-    memory it stages does not wait: its next run waits for it before it copies
-    in. Runs of [s] are serialized: a run starts once the previous one returned.
+    work that wrote it, as {!Nx_device.synchronize} does. A batch that writes a
+    staged buffer is the exception: its submission returns once its work is done
+    and the buffer copied back ({!Nx_device.submit}). Runs of [s] are
+    serialized: a run starts once the previous one returned.
 
     When the setting {!Tolk.Helpers.debug} is [1] or more and [s] runs ten calls
     or more, [run] first prints ["jit execs n calls"] on standard output, [n]
