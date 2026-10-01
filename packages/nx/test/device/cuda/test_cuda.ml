@@ -201,12 +201,10 @@ let copies =
           let b = B.create d S.UInt8 n and b' = B.create d S.UInt8 n in
           let mapped = B.create Nx_device.host S.UInt8 n in
           let bm = borrow d mapped in
-          equal (list int) [ 1; 1; 1 ]
-            [
-              values d (fun () -> B.copy ~src:pinned ~dst:b);
-              values d (fun () -> B.copy ~src:b ~dst:b');
-              values d (fun () -> B.copy ~src:b' ~dst:mapped);
-            ];
+          let into = values d (fun () -> B.copy ~src:pinned ~dst:b) in
+          let between = values d (fun () -> B.copy ~src:b ~dst:b') in
+          let out = values d (fun () -> B.copy ~src:b' ~dst:mapped) in
+          equal (list int) [ 1; 1; 1 ] [ into; between; out ];
           holds mapped (fun i -> i * 3);
           ignore (Sys.opaque_identity bm));
       test
