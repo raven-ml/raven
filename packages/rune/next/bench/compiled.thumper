@@ -1,0 +1,9 @@
+# thumper baseline v1
+# suite: compiled
+
+# machine: ca352e279bc47cb1
+# host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
+# ocaml: 5.5.1 · 64-bit · release
+
+gather/float32-1Mi-from-1Mi-host	alloc_words	exact	549
+gather/float32-1Mi-from-1Mi-host	wall_time	batch=1	n=20	7.526e-04	7.492e-04 7.493e-04 7.493e-04 7.493e-04 7.496e-04 7.497e-04 7.501e-04 7.514e-04 7.521e-04 7.522e-04 7.530e-04 7.534e-04 7.538e-04 7.541e-04 7.545e-04 7.548e-04 7.555e-04 7.555e-04 7.568e-04 7.587e-04

@@ -1,0 +1,28 @@
+(executable
+ (name bench_primitives)
+ (libraries nx nx.device thumper))
+
+; Not attached to runtest on purpose: run with `dune build @bench`, or run the
+; built exe directly. bench_twins.py measures the numpy, pandas and polars twins.
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend for
+ ; cores and distort measurements.
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_primitives.exe})
+   (diff? nx_primitives.thumper nx_primitives.thumper.corrected))))
+
+(rule
+ (locks %{project_root}/bench)
+ (action
+  (with-stdout-to
+   nx_primitives.transient.actual
+   (run %{exe:bench_primitives.exe} --transient))))
+
+(rule
+ (alias bench)
+ (action
+  (diff nx_primitives.transient nx_primitives.transient.actual)))

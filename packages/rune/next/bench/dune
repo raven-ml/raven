@@ -1,0 +1,16 @@
+(executable
+ (name bench_compiled)
+ (libraries rune.next nx nx.array nx.backend nx.device thumper))
+
+; Not attached to runtest on purpose: run with `dune build @bench`, or run the
+; built exe directly.
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend for
+ ; cores and distort measurements.
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_compiled.exe})
+   (diff? compiled.thumper compiled.thumper.corrected))))

@@ -164,7 +164,8 @@ let declined_benchmarks () =
 (* Jit: compiled execution of the same computations. Compilation — tracing plus
    kernel build — is hoisted into [setup], which builds the jitted closure and
    calls it once, so the timed region replays the compiled program only. [eager
-   run mlp] is the same forward pass without jit, the no-jit baseline. *)
+   run mlp] is the same forward pass without jit, the no-jit baseline. [arange
+   int64 1Mi replay] measures the arange a program computes. *)
 let jit_benchmarks params x x0 =
   [
     Thumper.bench_with_setup ~tags:[ "lab" ]
@@ -186,6 +187,15 @@ let jit_benchmarks params x x0 =
         f)
       "jit run chain"
       (fun f -> f x0);
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let n = 1 lsl 20 in
+        let f = Rune.jit' (fun x -> Nx.add x (Nx.arange Nx.int64 0 n 1)) in
+        let x = Nx.zeros Nx.int64 [| n |] in
+        ignore (Sys.opaque_identity (f x));
+        (f, x))
+      "arange int64 1Mi replay"
+      (fun (f, x) -> f x);
   ]
 
 (* Jit footprint: the trace-plus-compile cost of a first Rune.jit Nx.Ptree.(call
