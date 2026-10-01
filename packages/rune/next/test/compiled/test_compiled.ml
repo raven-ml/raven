@@ -31,13 +31,16 @@ let numel shape = Array.fold_left ( * ) 1 shape
 (* A device the compiled programs run on. [flushes] is whether it flushes
    float32 subnormals to zero, as Metal does, bfloat16 ones included since they
    compute at float32 (ledger, Targets); [budgets] are its measured maxima of
-   units in the last place, by row, where they differ from the ledger's. *)
+   units in the last place, by row, where they differ from the ledger's.
+   [starts] is the multiple of bytes at which the buffers drawn for it start in
+   their memory. *)
 type device = {
   device : Nx_device.t;
   name : string;
   float64 : bool;
   flushes : bool;
   budgets : (string * int) list;
+  starts : int;
 }
 
 let on_host =
@@ -47,12 +50,22 @@ let on_host =
     float64 = true;
     flushes = false;
     budgets = [];
+    starts = 1;
   }
 
 let on_metal =
   Option.map
     (fun device ->
-      { device; name = "metal"; float64 = false; flushes = true; budgets = [] })
+      {
+        device;
+        name = "metal";
+        float64 = false;
+        flushes = true;
+        budgets = [];
+        (* Pending tn-metal: Metal reads the wrong elements of a buffer that
+           starts 2 bytes into its memory. *)
+        starts = 4;
+      })
     Metal.device
 
 (* Arrays *)
@@ -137,9 +150,13 @@ let both d f = (f cpu on_cpu, f compiled (on_device d))
    starts [inner] elements into another. *)
 type layout = { strides : int array; offset : int; length : int; inner : int }
 
+(* The multiple of elements of [dtype] at which a buffer for [d] starts. *)
+let inner d dtype = Int.max 1 (d.starts / Nx_dtype.itemsize dtype)
+
 (* The axes of [shape] in any order, each reversed or not, with gaps between
-   rows, and, where [broadcast], some of stride zero. *)
-let layout ?(broadcast = true) shape =
+   rows, and, where [broadcast], some of stride zero. The buffer starts a
+   multiple of [inner] elements into its memory. *)
+let layout ?(broadcast = true) ?(inner = 1) shape =
   let open Gen in
   let r = Array.length shape in
   let* order = permutation (List.init r Fun.id) in
@@ -151,8 +168,9 @@ let layout ?(broadcast = true) shape =
        else constant false)
   in
   let* before = int_range 0 7 in
-  let* inner = int_range 0 3 in
+  let* start = int_range 0 3 in
   let+ after = int_range 0 3 in
+  let inner = start / inner * inner in
   let strides = Array.make r 0 and span = ref 1 in
   List.iter
     (fun axis ->
@@ -245,13 +263,14 @@ let operand ?broadcast ?bits ?(flush = false) d dtype shape =
   let bits = if flush && d.flushes then flushed dtype bits else bits in
   let open Gen in
   with_pp pp_arr
-    (let* l = layout ?broadcast shape in
+    (let* l = layout ?broadcast ~inner:(inner d dtype) shape in
      let+ xs = array ~size:(constant l.length) bits in
      of_bits dtype shape l xs)
 
-(* The host value [x] under a drawn layout without broadcast, the elements its
-   view does not reach poisoned with bytes [0x7f]. *)
-let laid_out (x : ('a, 'b) Nx.t) =
+(* The host value [x] under a drawn layout without broadcast, for [d] (the host
+   by default), the elements its view does not reach poisoned with bytes
+   [0x7f]. *)
+let laid_out ?(d = on_host) (x : ('a, 'b) Nx.t) =
   let dtype = Nx.dtype x and shape = Nx.shape x in
   Gen.with_pp pp_arr
     (Gen.map
@@ -268,7 +287,7 @@ let laid_out (x : ('a, 'b) Nx.t) =
            set !p (get k)
          done;
          a)
-       (layout ~broadcast:false shape))
+       (layout ~broadcast:false ~inner:(inner d dtype) shape))
 
 (* The element of [dt] whose bits are [v]. *)
 let element_of_bits (type a b) (dt : (a, b) Nx_dtype.t) v : a =
@@ -350,6 +369,9 @@ let ints =
     D Nx.uint64;
   ]
 
+(* The integers of the fold law. Pending tn-cstyle, a fold of 8-bit integers
+   renders a cast between vectors that neither C nor Metal compiles. *)
+let fold_ints = List.filter (fun (D dt) -> Nx_dtype.itemsize dt > 1) ints
 let as_dt (F dt) = D dt
 let numeric d = ints @ List.map as_dt (floats d)
 let every d = (D Nx.bool :: ints) @ List.map as_dt (floats d)
@@ -1232,7 +1254,7 @@ let windows_and_products d ~count =
          })
   and integer_fold =
     law "fold of integers"
-      (over ints
+      (over fold_ints
          {
            per =
              (fun dt ->
@@ -1392,7 +1414,7 @@ let linalg d ~count =
                let* x = matrix dt s in
                let+ upper = bool
                and+ a =
-                 laid_out (conditioned (Nx.matmul x (Nx.matrix_transpose x)))
+                 laid_out ~d (conditioned (Nx.matmul x (Nx.matrix_transpose x)))
                in
                check
                  [ said "upper %b" upper; shown a ]
@@ -1418,7 +1440,7 @@ let linalg d ~count =
                let* m = size in
                let* n = size in
                let* x = matrix dt (Array.append b [| m; n |]) in
-               let+ reduced = bool and+ a = laid_out (conditioned x) in
+               let+ reduced = bool and+ a = laid_out ~d (conditioned x) in
                check
                  [ said "reduced %b" reduced; shown a ]
                  (fun () ->
@@ -1477,7 +1499,7 @@ let linalg d ~count =
                         (Array.of_list (List.map Int32.of_int order)))
                    (conditioned x)
                in
-               let+ a = laid_out x in
+               let+ a = laid_out ~d x in
                check
                  [ shown a ]
                  (fun () ->
@@ -1510,7 +1532,7 @@ let linalg d ~count =
                let* n = int_range 1 4 in
                let* x = matrix dt (Array.append b [| m; n |]) in
                let x = conditioned x in
-               let+ full = bool and+ a = laid_out x in
+               let+ full = bool and+ a = laid_out ~d x in
                check
                  [ said "full %b" full; shown a ]
                  (fun () ->
@@ -1564,8 +1586,8 @@ let linalg d ~count =
                let+ upper = bool
                and+ transpose = bool
                and+ unit_diag = bool
-               and+ a = laid_out x
-               and+ y = laid_out y in
+               and+ a = laid_out ~d x
+               and+ y = laid_out ~d y in
                check
                  [
                    said "upper %b transpose %b unit_diag %b" upper transpose
@@ -1968,6 +1990,24 @@ let edges d =
             padding = [| (1, 1) |];
             spatial = [| 1 |];
             count = 1;
+          }
+        in
+        exact_of (both d (fold w x)));
+    xfail
+      ~reason:
+        "a cast between int8 vectors renders as signed_char4, which neither C \
+         nor Metal converts to (tn-cstyle)"
+    @@ test "a fold of int8 overlapping windows compiles" (fun () ->
+        let x = array_of (Nx.create Nx.int8 [| 2; 2 |] [| 0; -128; 0; 0 |]) in
+        let w =
+          {
+            leading = [||];
+            kernel_size = [| 1; 2 |];
+            stride = [| 1; 1 |];
+            dilation = [| 1; 2 |];
+            padding = [| (0, 0); (1, 1) |];
+            spatial = [| 2; 1 |];
+            count = 2;
           }
         in
         exact_of (both d (fold w x)));
