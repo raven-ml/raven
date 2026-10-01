@@ -292,6 +292,47 @@ let recorder =
       x;
   ]
 
+(* [lanes a] inside the map named [a]: a linear call whose transpose sums the
+   lanes' cotangents and gives each lane its row. *)
+let lanes =
+  let n = 3 and k = 2 in
+  let xs = Nx.create f64 [| n; k |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let ws =
+    Nx.create f64 [| n; n; k |]
+      (Array.init (n * n * k) (fun i -> float_of_int ((i * 5 mod 7) - 3)))
+  in
+  [
+    test "a lane's gradient is its row of every lane's cotangent" (fun () ->
+        let a = Rune.axis () in
+        let grads =
+          Rune.vmap ~axis:a
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            (fun x w ->
+              Rune.grad' (fun x -> Nx.sum (Nx.mul (Rune.lanes a x) w)) x)
+            xs ws
+        in
+        (* Lane j's objective reads lane i's x through w_j[i]. *)
+        let expected = Nx.sum ~axes:[ 0 ] ws in
+        equal floats (Nx.to_array expected) (Nx.to_array grads));
+    test "a map of lanes has its tangent's adjoint for a pullback" (fun () ->
+        let a = Rune.axis () in
+        let g xs =
+          Rune.vmap' ~axis:a (fun x -> Nx.mul_s (Rune.lanes a (Nx.sin x)) 2.) xs
+        in
+        let r = Random.State.make [| 3 |] in
+        let v = Reference.direction r Nx.Ptree.tensor xs in
+        let y, jv = Rune.jvp' g xs v in
+        let w = Reference.direction r Nx.Ptree.tensor y in
+        let _, pullback = Rune.vjp' g xs in
+        let t = Nx.Ptree.tensor in
+        let l = Reference.dot t w jv and pb = pullback w in
+        let rhs = Reference.dot t pb v in
+        let bound =
+          1e-12 *. (Reference.magnitude t w jv +. Reference.magnitude t pb v)
+        in
+        equal (float bound) l rhs);
+  ]
+
 let tests =
   [
     group "indexed" indexed;
@@ -299,4 +340,5 @@ let tests =
     solve_adjoint;
     where_at_an_infinite_coefficient;
     group "the recorder" recorder;
+    group "lanes" lanes;
   ]
