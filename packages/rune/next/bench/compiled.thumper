@@ -1,6 +1,13 @@
 # thumper baseline v1
 # suite: compiled
 
+# machine: 6e4c99d648da0929
+# host: kimchi · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+gather/float32-1Mi-from-1Mi-host	alloc_words	exact	627
+gather/float32-1Mi-from-1Mi-host	wall_time	batch=1	n=20	9.964e-04	9.930e-04 9.937e-04 9.941e-04 9.943e-04 9.945e-04 9.946e-04 9.948e-04 9.952e-04 9.953e-04 9.957e-04 9.971e-04 9.973e-04 9.977e-04 9.977e-04 9.987e-04 1.007e-03 1.009e-03 1.018e-03 1.024e-03 1.031e-03
+
 # machine: ca352e279bc47cb1
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release
