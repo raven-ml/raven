@@ -5,7 +5,8 @@
 
 (* Totals. The oracle is the plain program: an addition counts once per
    execution of the code that makes it, under a scope, a scan, a remat, a map
-   (as the loop over its lanes) and reverse mode, which runs code again. *)
+   (as the loop over its lanes) and reverse mode, which runs code again. The
+   compiled cases that compile most are slow. *)
 
 open Windtrap
 module Rune = Rune_next.Rune
@@ -128,7 +129,7 @@ let scan_tests =
         in
         equal ~msg:"total" (close ()) (expected_total xs) total;
         equal ~msg:"body runs" int 5 !runs);
-    test "a staged scan counts each step, replayed" (fun () ->
+    slow "a staged scan counts each step, replayed" (fun () ->
         let t = Rune.Total.make () in
         let f =
           Rune.jit
@@ -277,7 +278,7 @@ let differentiation_tests =
         equal ~msg:"gradient" (close ())
           (Rune.grad' (explicit xs) (w0 ()))
           (Rune.grad' (collected t xs) (w0 ())));
-    test "a collected total is differentiated as a value, compiled" (fun () ->
+    slow "a collected total is differentiated as a value, compiled" (fun () ->
         let t = Rune.Total.make () and xs = series 2 [| 6; 3 |] in
         equal (close ())
           (Rune.grad' (explicit xs) (w0 ()))
@@ -399,7 +400,7 @@ let again_tests =
               Rune.jacfwd' (remat_adding t) x)
         in
         equal (close ()) (Nx.mul_s (squares x) 4.) total);
-    test "a scope outside grad counts once, compiled" (fun () ->
+    slow "a scope outside grad counts once, compiled" (fun () ->
         let t = Rune.Total.make () and x = series 3 [| 4 |] in
         let run x =
           Rune.Total.collect t ~zero:(zero ()) (fun () ->
@@ -538,7 +539,7 @@ let sketch_tests =
         in
         let c = stack k (fun i -> snd (Rune.jvp' batch_loss w (lane i dirs))) in
         check_sketch (batch_loss w, c, ggn) (sketch batch_loss w dirs));
-    test "a marked loss's sketch, compiled" (fun () ->
+    slow "a marked loss's sketch, compiled" (fun () ->
         let f =
           Rune.jit
             Nx.Ptree.(

@@ -28,7 +28,9 @@
  (alias slow)
  (package rune)
  (action
-  (run %{exe:test_composition.exe} --tag slow)))
+  (progn
+   (run %{exe:test_composition.exe} --tag slow)
+   (run %{exe:test_total.exe} --tag slow))))
 
 (test
  (name test_vmap)
