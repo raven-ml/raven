@@ -726,18 +726,18 @@ The kernel rows of this file are the Compiled section's.
 |---|---|---|
 | old: test_jit_metal.ml metal device › grad inside jit matches eager | a gradient inside a compiled call | J › transformations › under a transformation a compiled function runs its function (the Metal cells are the composition suite's) |
 | old: test_jit_metal.ml metal device › rematerialized second derivatives replay correctly; metal device › custom backward replays indexed scatter | remat and custom rules under a compiled call | Rune compositions › triples › jit ∘ grad ∘ jvp › remat; custom_vjp |
-| old: test_jit_metal.ml metal device › multi-kernel traces replay as compiled queues; metal device › a read after a call waits for it | a call queued on Metal, and its results read | J › metal › metal › a call runs where its arguments lie, and leaves its results there |
+| old: test_jit_metal.ml metal device › multi-kernel traces replay as compiled queues; metal device › a read after a call waits for it | a call queued on Metal, and its results read | J › metal › one device › a call runs where its arguments lie, and leaves its results there |
 | old: test_jit_metal.ml metal device › command storage is released with its function; metal device › programs own their arenas | a program's storage | dropped: tolk.engine's linked storage (its suite) |
 | old: test_jit_metal.ml metal device › two programs alternate on one consumed state | alternating programs | J › lending › two programs alternating on one consumed state keep its storage |
-| old: test_jit_metal.ml placed weights › a placed view is read bit for bit | a placed view on Metal | J › metal › metal › a placed view is read where it lies |
-| old: test_jit_metal.ml placed weights › placed weights bind and replay as compiled queues | bound weights on Metal | J › metal › metal › a capture placed where the call computes is bound, not uploaded |
+| old: test_jit_metal.ml placed weights › a placed view is read bit for bit | a placed view on Metal | J › metal › one device › a placed view is read where it lies |
+| old: test_jit_metal.ml placed weights › placed weights bind and replay as compiled queues | bound weights on Metal | J › metal › one device › a capture placed where the call computes is bound, not uploaded |
 | old: test_jit_metal.ml placed weights › consuming a bound storage | consuming a captured storage | J › captures › a host capture another call consumes makes the program raise, naming its path |
-| old: test_jit_metal.ml placed weights › a step reads its weights and consumes its state | a step on Metal | J › metal › metal › a consumed placed argument lends its storage |
+| old: test_jit_metal.ml placed weights › a step reads its weights and consumes its state | a step on Metal | J › metal › one device › a consumed placed argument lends its storage |
 | old: test_jit_metal.ml placed weights › a capture resident on another device raises | a capture on another device | J › errors › operands on two devices raise nx's message |
-| old: test_jit_metal.ml placed weights › placed views bind at any offset | views at any offset on Metal | J › metal › metal › a float16 argument starting 2 bytes further retraces once, and is read where it lies |
+| old: test_jit_metal.ml placed weights › placed views bind at any offset | views at any offset on Metal | J › metal › one device › a float16 argument starting 2 bytes further retraces once, and is read where it lies |
 | old: test_jit_metal.ml placed weights › a capture moves a program past a dtype | a capture deciding a call's device | J › captures › a capture decides the device of a call of host arguments |
-| old: test_jit_metal.ml placed weights › a weight on the disk is borrowed | a weight from the disk on a device | J › one device › a view of a weight on the disk placed on the device is captured; metal › metal › a view of a weight on the disk placed on the device is captured |
-| old: test_jit_metal.ml placed weights › borrowed storage is never lent or written | a consumed value borrowed from a file | J › one device › a consumed value placed from a file lends nothing, and the file keeps its elements; metal › metal › a consumed value placed from a file lends nothing, and the file keeps its elements |
+| old: test_jit_metal.ml placed weights › a weight on the disk is borrowed | a weight from the disk on a device | J › one device › a view of a weight on the disk placed on the device is captured; metal › one device › a view of a weight on the disk placed on the device is captured |
+| old: test_jit_metal.ml placed weights › borrowed storage is never lent or written | a consumed value borrowed from a file | J › one device › a consumed value placed from a file lends nothing, and the file keeps its elements; metal › one device › a consumed value placed from a file lends nothing, and the file keeps its elements |
 | old: test_jit_metal.ml reads, moves and loops › item on resident logits reads one element; reads, moves and loops › a move to the host keeps its source; reads, moves and loops › mixed placements raise; reads, moves and loops › a value moves between backends | reads and moves of placed values | dropped: nx's placement suite (`nx placement`) |
 | old: test_jit_metal.ml reads, moves and loops › a loop whose state starts on the host compiles once | a state that moves to the device | J › placement › a state starting on the host retraces once on a device, then replays |
 
@@ -785,6 +785,35 @@ The suite is `Rune_next.Quant` (`next/test/test_quant.ml`), written `Q` below: t
 | old: test_quant.ml rules › vmap | maps of the product | Q › rules › a map over x is each row's product, eager and compiled; a map over routes and rows is each one's product, compiled; a map over weights is each weight's product, compiled |
 | old: test_quant.ml rules › over two devices | placed routes, rows and experts | Q › placements › routes and rows split over two devices give eager's product › *; Q › placements › experts split over two devices give eager's product; experts split under routes split over two devices give eager's product |
 | old: test_tensor_parallel.ml expert parallelism › each device multiplies its experts' routes | experts split over four devices | Q › placements › sixteen experts over four devices, four each, give eager's product |
+
+### Staged scans
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit.ml composition › a scan carry is written in place | a carry updated in place | J › metal › staged scans › a staged carry is one buffer, whatever the number of steps; update a carry its next value reads rotated |
+| old: test_jit.ml composition › a scan reads its rows in place | rows read in place | J › metal › staged scans › a staged scan reads its rows in place |
+| old: test_jit.ml composition › a scan reads the rows of a scan in place | a scan over another scan's rows | J › metal › staged scans › stage a scan over the rows of three another scan wrote |
+| old: test_jit.ml composition › a scan computes the values it captures once | values made before the loop | J › metal › staged scans › stage a scan whose step reads a draw and another scan's result made before it |
+| old: test_jit.ml staged scan rules › jvp of a scan is staged | jvp of a scan | J › metal › staged scans › stage jvp of a scan |
+| old: test_jit.ml staged scan rules › jvp of a scan with an inactive carry | a carry with no tangent | J › metal › staged scans › stage jvp of a scan whose counter carry takes no tangent |
+| old: test_jit.ml staged scan rules › jvp of jvp of a scan is staged | jvp of jvp | J › metal › staged scans › stage jvp of jvp of a scan |
+| old: test_jit.ml staged scan rules › vmap of a scan is staged | vmap of a scan | J › metal › staged scans › stage vmap of a scan |
+| old: test_jit.ml staged scan rules › vmap over jvp of a scan is staged | vmap over jvp | J › metal › staged scans › stage vmap over jvp of a scan |
+| old: test_jit.ml staged scan rules › vmap over jvp of a scan from an active init | tangents of the weight and the initial carry | J › metal › staged scans › stage vmap over jvp of a scan from an active initial carry |
+| old: test_jit.ml staged scan rules › vmap over jvp of a scan keeps the primal once | the primal computed once across lanes | dropped: a compiled call's work per lane is not observable without its kernels' operation counts; the values: J › metal › staged scans › stage vmap over jvp of a scan |
+| old: test_jit.ml staged scan rules › grad of jvp of a scan is staged | grad of jvp | J › metal › staged scans › stage grad of jvp of a scan |
+| old: test_jit.ml staged scan rules › grad of vmap of a scan is staged | grad of vmap | J › metal › staged scans › stage grad of vmap of a scan |
+| old: test_jit.ml staged scan rules › jvp and vmap of a gradient through a scan are staged | jvp and vmap of grad | J › metal › staged scans › stage jvp and vmap of a gradient through a scan |
+| old: test_jit.ml staged scan rules › grad of a gradient through a scan is staged | grad of grad | J › metal › staged scans › stage grad of grad of a sum over a scan's outputs |
+| old: test_jit.ml staged scan rules › grad of a scan ignores undifferentiated captures | an undifferentiated capture | J › metal › staged scans › stage grad of a scan reading an undifferentiated capture |
+| old: test_jit.ml staged scan rules › grad of a scan refuses a capture the forward did not read | a step that reads a tracked value only when run again | J › metal › staged scans › raise at the transpose for a step whose rerun reads a tracked value its first run did not |
+| old: test_jit.ml staged scan rules › a scan drops a carry its body returns unchanged | a carry the step returns unchanged | J › metal › staged scans › stage a carry the step returns unchanged, and its gradient |
+| old: test_jit.ml consumption › a staged loop refuses only the leaves it touches | a consumed leaf beside a loop | J › metal › staged scans › a consumed leaf beside a staged scan is lent |
+| old: test_jit_metal.ml metal device › a staged scan body replays as a compiled queue | a staged body on Metal | J › metal › staged scans › stage, their step once, over rows 16 bytes apart; stage a thousand steps |
+| old: test_device_lists.ml composition › a staged scan over split rows | a scan over split rows | J › device lists › a scan over split rows equals one device's (a split declines staging: the scan folds) |
+| old: test_device_lists.ml composition › a scan over short split rows of a scan | a scan over another scan's split rows | J › device lists › a scan over the split rows another scan wrote equals one device's |
+| old: test_device_lists.ml composition › grad through a staged scan | a gradient through a scan over split rows | J › device lists › a gradient through a scan over split rows equals one device's |
+| old: test_device_lists.ml composition › a carry placed by its body | a carry its step places | J › device lists › a carry the step places on the rows' devices equals one device's |
 
 ### test_remat_memory.ml
 

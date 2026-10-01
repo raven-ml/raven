@@ -1380,6 +1380,41 @@ let weighted ran w xs =
 let w0 = Nx.full Nx.float32 [| 4 |] 0.3
 let ws = Nx.stack ~axis:0 [ w0; Nx.mul_s w0 2.; Nx.mul_s w0 0.5 ]
 
+(* [stages at name f] checks that [f ran xs], over 9 and over 17 rows of three
+   at [at], computes under a compiled call what it computes eagerly, its scans'
+   steps running as many times for either length: the scans stage. *)
+let stages at name f =
+  test name (fun () ->
+      let runs n =
+        let ran = ref 0 in
+        let xs = Nx.mul_s (grid n 3) 0.01 in
+        let expected = f ran xs in
+        ran := 0;
+        let r = Rune.jit' (f ran) (Nx.place at xs) in
+        equal ~msg:(Printf.sprintf "%d rows" n) near expected (host r);
+        !ran
+      in
+      let nine = runs 9 in
+      equal ~msg:"steps for 17 rows against 9" int nine (runs 17))
+
+(* A recurrent cell of weight [wr], and a scan of it over rows of three from
+   [h]. *)
+let wr = Nx.mul_s (Nx.sub_s (grid 3 3) 4.) 0.1
+let hr = Nx.create Nx.float32 [| 3 |] [| 0.5; -0.25; 0.1 |]
+
+let cell w h x =
+  Nx.tanh
+    (Nx.add (Nx.reshape [| 3 |] (Nx.matmul w (Nx.reshape [| 3; 1 |] h))) x)
+
+let rollout ran w h xs =
+  snd
+    (Rune.scan'
+       ~f:(fun h x ->
+         incr ran;
+         let h = cell w h x in
+         (h, h))
+       ~init:h xs)
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
@@ -1461,6 +1496,230 @@ let staged_scans d =
                "Rune.grad': a function run again for its transpose reads a \
                 value the differentiation tracks that its first run did not")
             (fun () -> Rune.jit' (Rune.grad' loss) (Nx.place at w0)));
+      stages at "stage jvp of a scan" (fun ran xs ->
+          snd (Rune.jvp' (fun h -> rollout ran wr h xs) hr (Nx.ones_like hr)));
+      test "stage jvp of a scan whose counter carry takes no tangent" (fun () ->
+          let f ran xs h =
+            let (h, v), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (h, v) x ->
+                  incr ran;
+                  let h = cell wr h x in
+                  ((h, Nx.add_s v 1.), Nx.mul_s h 2.))
+                ~init:(h, Nx.scalar Nx.float32 0.)
+                xs
+            in
+            Nx.concatenate ~axis:0 [ h; Nx.reshape [| 1 |] v; Nx.flatten ys ]
+          in
+          let ran = ref 0 in
+          let xs = Nx.mul_s (grid 9 3) 0.01 in
+          let dh = Nx.create Nx.float32 [| 3 |] [| 1.; -0.5; 0.25 |] in
+          let expected = Rune.jvp' (f ran xs) hr dh in
+          ran := 0;
+          let y, dy =
+            Rune.jit
+              Nx.Ptree.(tensor @-> tensor @-> returns (pair tensor tensor))
+              (fun xs dh -> Rune.jvp' (f ran xs) hr dh)
+              (Nx.place at xs) dh
+          in
+          equal ~msg:"primal" near (fst expected) (host y);
+          equal ~msg:"tangent" near (snd expected) (host dy);
+          equal ~msg:"the counter's tangent" float_exact 0.
+            (Nx.item [ 3 ] (host dy));
+          less ~msg:"steps" int ~than:9 !ran);
+      stages at "stage jvp of jvp of a scan" (fun ran xs ->
+          let f h = rollout ran wr h xs in
+          snd
+            (Rune.jvp'
+               (fun h -> snd (Rune.jvp' f h (Nx.ones_like h)))
+               hr (Nx.ones_like hr)));
+      stages at "stage vmap of a scan" (fun ran xs ->
+          Rune.vmap' (fun h -> rollout ran wr h xs) (Nx.stack [ hr; Nx.neg hr ]));
+      stages at "stage vmap over jvp of a scan" (fun ran xs ->
+          Rune.vmap'
+            (fun dh -> snd (Rune.jvp' (fun h -> rollout ran wr h xs) hr dh))
+            (Nx.stack [ Nx.ones_like hr; hr ]));
+      stages at "stage vmap over jvp of a scan from an active initial carry"
+        (fun ran xs ->
+          let dws = Nx.stack [ wr; Nx.ones_like wr ] in
+          let dhs = Nx.stack [ hr; Nx.ones_like hr ] in
+          Rune.vmap
+            Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+            (fun dw dh ->
+              snd
+                (Rune.jvp
+                   Nx.Ptree.(pair tensor tensor)
+                   Nx.Ptree.tensor
+                   (fun (w, h) -> rollout ran w h xs)
+                   (wr, hr) (dw, dh)))
+            dws dhs);
+      stages at "stage grad of jvp of a scan" (fun ran xs ->
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (snd
+                   (Rune.jvp'
+                      (fun h -> rollout ran w h xs)
+                      hr (Nx.ones_like hr))))
+            wr);
+      stages at "stage grad of vmap of a scan" (fun ran xs ->
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (Rune.vmap'
+                   (fun h -> rollout ran w h xs)
+                   (Nx.stack [ hr; Nx.neg hr ])))
+            wr);
+      stages at "stage jvp and vmap of a gradient through a scan" (fun ran xs ->
+          let g w = Rune.grad' (fun w -> Nx.sum (rollout ran w hr xs)) w in
+          Nx.concatenate ~axis:0
+            [
+              Nx.flatten (snd (Rune.jvp' g wr (Nx.ones_like wr)));
+              Nx.flatten (Rune.vmap' g (Nx.stack [ wr; Nx.neg wr ]));
+            ]);
+      stages at "stage grad of a scan reading an undifferentiated capture"
+        (fun ran xs ->
+          let d = Nx.mul_s (grid 3 3) 0.05 in
+          Rune.grad'
+            (fun w ->
+              Nx.sum
+                (snd
+                   (Rune.scan'
+                      ~f:(fun h x ->
+                        incr ran;
+                        let h =
+                          cell w
+                            (Nx.reshape [| 3 |]
+                               (Nx.matmul d (Nx.reshape [| 3; 1 |] h)))
+                            x
+                        in
+                        (h, h))
+                      ~init:hr xs)))
+            wr);
+      stages at "stage a carry the step returns unchanged, and its gradient"
+        (fun ran xs ->
+          let c0 = Nx.create Nx.float32 [| 3 |] [| 0.1; 0.2; -0.3 |] in
+          let f (w, c) =
+            let (h, c), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (h, c) x ->
+                  incr ran;
+                  let h = cell w h (Nx.add x c) in
+                  ((h, c), h))
+                ~init:(hr, c) xs
+            in
+            Nx.add (Nx.sum ys) (Nx.add (Nx.sum h) (Nx.sum c))
+          in
+          let p = Nx.Ptree.(pair tensor tensor) in
+          let gw, gc = Rune.grad p f (wr, c0) in
+          Nx.concatenate ~axis:0
+            [ Nx.reshape [| 1 |] (f (wr, c0)); Nx.flatten gw; gc ]);
+      stages at "stage a scan over the rows of three another scan wrote"
+        (fun ran xs ->
+          let ys = rollout ran wr hr xs in
+          rollout ran (Nx.neg wr) (Nx.neg hr) ys);
+      test
+        "stage a scan whose step reads a draw and another scan's result made \
+         before it" (fun () ->
+          let settle d =
+            fst
+              (Rune.scan'
+                 ~f:(fun d _ -> (Nx.tanh (Nx.matmul d d), d))
+                 ~init:d
+                 (zeros 4 |> Nx.reshape [| 4; 1 |]))
+          in
+          let f ran (k, xs) =
+            let d =
+              settle
+                (Nx.mul_s
+                   (Nx.Rng.with_key k (fun () -> Nx.randn Nx.float32 [| 3; 3 |]))
+                   0.3)
+            in
+            fst
+              (Rune.scan'
+                 ~f:(fun h x ->
+                   incr ran;
+                   (cell d h x, h))
+                 ~init:hr xs)
+          in
+          let k = Nx.Rng.key 7 in
+          let runs n =
+            let ran = ref 0 in
+            let xs = Nx.mul_s (grid n 3) 0.01 in
+            let expected = f ran (k, xs) in
+            ran := 0;
+            let g =
+              Rune.jit
+                Nx.Ptree.(pair Nx.Rng.ptree tensor @-> returns tensor)
+                (f ran)
+            in
+            equal near expected (host (g (k, Nx.place at xs)));
+            !ran
+          in
+          equal ~msg:"steps for 17 rows against 9" int (runs 9) (runs 17));
+      test "a consumed leaf beside a staged scan is lent" (fun () ->
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step (u, v) =
+            (Nx.add_s u 1., fst (Rune.scan' ~f:sum ~init:(zeros 4) v))
+          in
+          let g = Rune.jit Nx.Ptree.(consumes both @@ returns both) step in
+          let u = Nx.place at (x ()) and v = Nx.place at (rows 6 4) in
+          let before = address u in
+          let u', v' = g (u, v) in
+          equal ~msg:"lent" nativeint before (address u');
+          equal near (Nx.add_s (x ()) 1.) (host u');
+          equal near
+            (fst (Rune.scan' ~f:sum ~init:(zeros 4) (rows 6 4)))
+            (host v'));
+      test "a staged carry is one buffer, whatever the number of steps"
+        (fun () ->
+          let held n k =
+            let xs = Nx.place at (rows n 4) in
+            let g =
+              Rune.jit' (fun xs ->
+                  fst
+                    (Rune.scan'
+                       ~f:(fun c x ->
+                         let c = Nx.add (Nx.mul_s c 0.5) (Nx.sum x) in
+                         (c, Nx.sum c))
+                       ~init:(zeros k) xs))
+            in
+            Gc.full_major ();
+            let before = allocated d in
+            let r = g xs in
+            let held = allocated d - before in
+            ignore (host r);
+            held
+          in
+          let larger n = held n 4096 - held n 4 in
+          equal ~msg:"for 64 and 512 steps" int (larger 64) (larger 512));
+      test "a staged scan reads its rows in place" (fun () ->
+          let held w =
+            let xs =
+              Nx.place at (Nx.mul_s (Nx.ones Nx.float32 [| 64; w |]) 0.01)
+            in
+            let g =
+              Rune.jit' (fun xs ->
+                  fst
+                    (Rune.scan'
+                       ~f:(fun c x ->
+                         (Nx.add (Nx.mul_s c 0.5) (Nx.sum x), Nx.sum c))
+                       ~init:(zeros 4) xs))
+            in
+            Gc.full_major ();
+            let before = allocated d in
+            let r = g xs in
+            let held = allocated d - before in
+            ignore (host r);
+            held
+          in
+          less ~msg:"bytes held for rows 1,024 values wide against 4" int
+            ~than:(64 * 1020 * 4)
+            (held 1024 - held 4));
       test
         "write out a step that draws under a key scope, drawing as eager does"
         (fun () ->
@@ -1692,6 +1951,42 @@ let device_lists =
           let xs = Nx.mul_s (grid 3 4) 0.1 in
           equal close (Rune.grad' f xs)
             (host (Rune.jit' (Rune.grad' f) (Nx.place (split ~axis:1 pair) xs))));
+      slow "a scan over split rows equals one device's" (fun () ->
+          let ran = ref 0 in
+          let f xs = rollout ran wr hr xs in
+          let xs = Nx.mul_s (grid 6 3) 0.01 in
+          equal near (f xs)
+            (host (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3 ]) xs))));
+      slow "a scan over the split rows another scan wrote equals one device's"
+        (fun () ->
+          let ran = ref 0 in
+          let f xs = rollout ran (Nx.neg wr) hr (rollout ran wr hr xs) in
+          let xs = Nx.mul_s (grid 6 3) 0.01 in
+          equal near (f xs)
+            (host (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3 ]) xs))));
+      slow "a carry the step places on the rows' devices equals one device's"
+        (fun () ->
+          let ran = ref 0 in
+          let f xs =
+            let (a, b), ys =
+              Rune.scan
+                Nx.Ptree.(pair tensor tensor)
+                Nx.Ptree.tensor Nx.Ptree.tensor
+                ~f:(fun (a, b) x ->
+                  incr ran;
+                  let a' = Nx.add (Nx.mul_s a 0.5) x in
+                  let b' = Nx.add (Nx.mul_s b 0.5) a in
+                  ((a', b'), Nx.mul a' b'))
+                ~init:
+                  (Nx.zeros Nx.float32 [| 16 |], Nx.zeros Nx.float32 [| 16 |])
+                xs
+            in
+            Nx.add (Nx.sum a) (Nx.add (Nx.sum b) (Nx.sum ys))
+          in
+          let xs = Nx.mul_s (grid 6 16) 0.01 in
+          equal near (f xs)
+            (host
+               (Rune.jit' f (Nx.place (split ~axis:1 [ d1; d2; d3; d4 ]) xs))));
       slow "a column-then-row split MLP equals one device" (fun () ->
           let w1 = Nx.mul_s (grid 3 4) 0.1 and w2 = Nx.mul_s (grid 4 3) 0.1 in
           let f (a, (w1, w2)) = Nx.matmul (Nx.relu (Nx.matmul a w1)) w2 in
