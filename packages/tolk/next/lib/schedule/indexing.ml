@@ -18,6 +18,9 @@ type ctx = {
   realize_map : int list option Tbl.t;
       (* The nodes stored whole: marked, then the axes given new ranges. *)
   non_removable : unit Tbl.t;
+  stored_through : unit Tbl.t;
+      (* The pads a store's destination moves through: its writes outside their
+         sources are dropped. *)
   range_map : (t list * t list) Tbl.t;
       (* Each node's ranges: those that index its sources, then its output. *)
   mutable range_idx : int;
@@ -53,6 +56,15 @@ let realize_srcs ctx rb =
 let realize_store_after_src ctx dest s =
   if List.memq (base dest) (toposort ~enter_calls:false s) then realize ctx s
 
+let mark_stored_pads ctx dest =
+  let rec go u =
+    if Op.Set.mem (op u) Op.Set.movement then begin
+      if op u = Op.Pad then Tbl.replace ctx.stored_through u ();
+      go (nth u 0)
+    end
+  in
+  go dest
+
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
   List.iter
@@ -69,22 +81,24 @@ let pm_generate_realize_map =
     f ctx m;
     None
   in
-  Pattern_matcher.v
-    (fun () -> [
-      rule_ctx
-        (Upat.op Op.Call ~name:"c" ~allow_any_len:true
-           ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program ]) () ])
-        (mark (fun ctx m -> realize_custom_kernel_srcs ctx (m "c")));
-      rule_ctx
-        (Upat.op Op.Store ~name:"tr")
-        (mark (fun ctx m -> realize ctx (m "tr")));
-      rule_ctx
-        (Upat.v ~op:(ops [ Op.Mselect; Op.Mstack ]) ~name:"rb" ())
-        (mark (fun ctx m -> realize_srcs ctx (m "rb")));
-      rule_ctx
-        (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "src" ])
-        (mark (fun ctx m -> realize_store_after_src ctx (m "dest") (m "src")));
-    ])
+  Pattern_matcher.v (fun () ->
+      [
+        rule_ctx
+          (Upat.op Op.Call ~name:"c" ~allow_any_len:true
+             ~src:[ Upat.v ~op:(ops [ Op.Sink; Op.Program ]) () ])
+          (mark (fun ctx m -> realize_custom_kernel_srcs ctx (m "c")));
+        rule_ctx
+          (Upat.op Op.Store ~name:"tr")
+          (mark (fun ctx m -> realize ctx (m "tr")));
+        rule_ctx
+          (Upat.v ~op:(ops [ Op.Mselect; Op.Mstack ]) ~name:"rb" ())
+          (mark (fun ctx m -> realize_srcs ctx (m "rb")));
+        rule_ctx
+          (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "src" ])
+          (mark (fun ctx m ->
+               realize_store_after_src ctx (m "dest") (m "src");
+               mark_stored_pads ctx (m "dest")));
+      ])
 
 (* Applying ranges *)
 
@@ -157,6 +171,21 @@ let create_bufferize_and_index_based_on_ranges ctx x =
 let convert_pad_to_where_to_keep_behavior_local ctx x =
   match Tbl.find_opt ctx.range_map x with
   | None -> None
+  | Some (rngs, _) when Tbl.mem ctx.stored_through x ->
+      (* A store through the pad writes only where its index falls within the
+         source. The movements below would simplify that validity away (a
+         reshape flattens the index), so the index into the storage carries it,
+         and the pad is removed as any movement is. *)
+      let valid = uprod (bool true) (List.map get_valid rngs) in
+      let rec lowest u =
+        let s = nth u 0 in
+        if Op.Set.mem (op s) Op.Set.movement then lowest s else u
+      in
+      let m = lowest x in
+      let ins, outs = Tbl.find ctx.range_map m in
+      Tbl.replace ctx.range_map m
+        (List.map (fun i -> Ops.valid (get_idx i) valid) ins, outs);
+      None
   | Some (rngs, _) ->
       let valid = uprod (bool true) (List.map get_valid rngs) in
       let s = List.hd (create_bufferize_and_index_srcs ctx x) in
@@ -211,25 +240,25 @@ let pm_apply_rangeify =
   let on o f =
     rule_ctx (Upat.v ~op:o ~name:"x" ()) (fun ctx m -> f ctx (m "x"))
   in
-  Pattern_matcher.v
-    (fun () -> [
-      on (ops [ Op.Reduce ]) convert_reduce_to_reduce_with_ranges;
-      on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
-      on (ops [ Op.Stack ]) convert_stack_to_where;
-      on Op.Set.all create_bufferize_and_index_based_on_ranges;
-      on Op.Set.movement remove_movement_op_after_rangeify;
-    ])
+  Pattern_matcher.v (fun () ->
+      [
+        on (ops [ Op.Reduce ]) convert_reduce_to_reduce_with_ranges;
+        on (ops [ Op.Pad ]) convert_pad_to_where_to_keep_behavior_local;
+        on (ops [ Op.Stack ]) convert_stack_to_where;
+        on Op.Set.all create_bufferize_and_index_based_on_ranges;
+        on Op.Set.movement remove_movement_op_after_rangeify;
+      ])
 
 let pm_fix_deviceless =
-  Pattern_matcher.v
-    (fun () -> [
-      rule_ctx (Upat.op Op.Stage ~name:"b") (fun device m ->
-          let b = m "b" in
-          match arg b with
-          | Bufferize ({ device = None; _ } as o) ->
-              Some (replace b ~arg:(Bufferize { o with device }))
-          | _ -> None);
-    ])
+  Pattern_matcher.v (fun () ->
+      [
+        rule_ctx (Upat.op Op.Stage ~name:"b") (fun device m ->
+            let b = m "b" in
+            match arg b with
+            | Bufferize ({ device = None; _ } as o) ->
+                Some (replace b ~arg:(Bufferize { o with device }))
+            | _ -> None);
+      ])
 
 (* Movements *)
 
@@ -468,6 +497,7 @@ let run_rangeify ?(debug = false) tsink =
     {
       realize_map = Tbl.create 64;
       non_removable = Tbl.create 8;
+      stored_through = Tbl.create 8;
       range_map = Tbl.create 256;
       range_idx = 0;
     }

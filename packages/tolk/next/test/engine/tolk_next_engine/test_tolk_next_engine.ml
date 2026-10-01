@@ -771,6 +771,70 @@ let copies_in_order () =
   Engine.run s [||];
   equal values (bytes 7) (Run.values Uint8 out_buffer)
 
+(* A store through a padded view: a row of 8 of [x @ w] into [pool], [8; 8],
+   padded by one row, at the row the loaded [slot] gives, or at the padding row
+   when [slot] lies outside [pool]. *)
+let padded_store device =
+  let buffer n dt shape =
+    Ops.reshape
+      (Ops.new_buffer (Single device) n dt)
+      (List.map (fun d -> Ops.Int d) shape)
+  in
+  let pool = buffer 64 Float32 [ 8; 8 ] in
+  let slot = buffer 1 Int32 [] in
+  let x = buffer 4 Float32 [ 1; 4; 1 ] and w = buffer 32 Float32 [ 1; 4; 8 ] in
+  let inside =
+    Ops.bitwise_and (Ops.ge slot (Ops.int 0)) (Ops.lt slot (Ops.int 8))
+  in
+  let at = Ops.where inside slot (Ops.int 8) in
+  let view =
+    Ops.shrink
+      (Ops.pad pool [ Some (Ops.Int 0, Ops.Int 1); None ])
+      [ Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))); None ]
+  in
+  let row = Ops.rop (Ops.mul x w) Op.Add [ 1 ] in
+  Ops.sink [ Ops.after view [ Ops.store view row ] ]
+
+(* [stores_through_a_pad ~devices device at] runs [padded_store] with [slot] at
+   [at]: [pool] holds the row at [at] when it lies within it, and is otherwise
+   untouched. *)
+let stores_through_a_pad ?(devices = devices) device at () =
+  let big = padded_store device in
+  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
+  equal ~msg:"kernels" int 1 (List.length calls);
+  let s, vars, storage = linked ~devices big in
+  let of_size n = List.find (fun st -> per_device st.arg = n) storage in
+  let pool = of_size 64 and slot = of_size 1 in
+  let x = of_size 4 and w = of_size 32 in
+  List.iter
+    (fun dst ->
+      Buffer.copy ~src:(Run.buffer host Int32 [| `Int (Z.of_int at) |]) ~dst)
+    slot.buffers;
+  Engine.run ~vars s (slots storage);
+  let num v = match v with `Float f -> f | _ -> fail "a float" in
+  let expected =
+    Array.mapi
+      (fun i v ->
+        if at >= 0 && at < 8 && i / 8 = at then
+          let j = i mod 8 in
+          `Float
+            (List.fold_left ( +. ) 0.
+               (List.init 4 (fun k ->
+                    num x.before.(k) *. num w.before.((k * 8) + j))))
+        else v)
+      pool.before
+  in
+  equal values expected (contents pool)
+
+let padded_stores =
+  group "a store through a padded view (D69)"
+    [
+      cases ~name:string_of_int "writes the row within the source" [ 0; 3; 7 ]
+        (fun at -> stores_through_a_pad "CPU" at ());
+      cases ~name:string_of_int "writes nothing outside the source" [ -1; 8; 9 ]
+        (fun at -> stores_through_a_pad "CPU" at ());
+    ]
+
 let schedules =
   group "link and run"
     [
@@ -1811,6 +1875,11 @@ let metal =
         (allocates_nothing ~devices:on_metal ~names:metal_names "copy");
       slow "a run of a batch of one kernel allocates at most 400 minor words"
         (fun () -> at_most int ~than:400 (batch_run_words ~devices:on_metal ()));
+      cases ~tags:[ "slow" ] ~name:string_of_int
+        "a store through a padded view writes the row within the source, and \
+         nothing outside it (D69)"
+        [ 0; 7; -1; 8 ] (fun at ->
+          stores_through_a_pad ~devices:on_metal "CPU:1" at ());
       slow "a program's run on Metal takes a positive time, under a second"
         (fun () ->
           let t =
@@ -1830,6 +1899,7 @@ let () =
          describing;
          programs;
          schedules;
+         padded_stores;
          refusals;
          runs;
          measures;

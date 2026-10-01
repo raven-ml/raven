@@ -1777,3 +1777,34 @@ the Exclusions of `README.md`.
   Jit suite on Metal, `staged scans › stage a thousand steps` and `› stage
   more steps than a batch holds, in chunks and the rest` (3,001 steps), each
   against the eager scan.
+
+## D69. A store through a padded view writes only within the pad's source
+
+- **tinygrad:** `schedule/indexing.py:101-105`
+  (`convert_pad_to_where_to_keep_behavior_local`), which turns every pad it
+  ranges into a selection, a store's destination included: the store then
+  targets a `WHERE`, which `uop/spec.py` refuses ("UOp verification failed …
+  Ops.STORE … Ops.WHERE").
+- **tolk.next:** `lib/schedule/indexing.ml:59` (`mark_stored_pads`),
+  `:171` (`convert_pad_to_where_to_keep_behavior_local`).
+- **Differs:** a store whose destination moves through a pad writes the
+  elements whose index falls within the pad's source and drops the ones in
+  the padding. The pad's validity goes on the store's index into the storage,
+  an `INDEX` whose index carries it, which codegen renders as a guarded
+  store; the pad is then removed as any movement is. A read through a pad
+  stays a selection, as in tinygrad. tinygrad refuses every graph this
+  changes, so every graph it accepts schedules as before. It is the
+  write-side dual of a read through a pad, which is a gated load.
+- **Reason:** (b). Rune.next's compiled call stores a lent indexed write row
+  by row (`Lower_index.scatter_rows`), and a row whose index lies outside its
+  target is dropped, as nx's scatter drops it. Through a pad, the dropped row
+  stores into the padding and reads nothing, so each row's store fuses with
+  the kernel that computes the row: a decode step's cache write with its
+  projection. As a selection of the target's own row, the store reads its
+  destination, and the kernel computing the row is stored apart.
+- **Pinned by:** the engine suite (`test/engine/tolk_next_engine`): `a store
+  through a padded view (D69) › writes the row within the source` (rows 0, 3
+  and 7) and `› writes nothing outside the source` (-1, 8 and 9), each one
+  kernel, on the host, and `Metal › a store through a padded view writes the
+  row within the source, and nothing outside it (D69)` (slow); rune.next's
+  Jit suite, `a lent write of rows › *`.
