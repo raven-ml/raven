@@ -53,3 +53,9 @@
   (progn
    (run %{test} --corrected)
    (diff? test_symbol.ml test_symbol.ml.corrected))))
+
+(test
+ (name test_stack)
+ (modules test_stack)
+ (package hugin)
+ (libraries hugin.next.kit windtrap))
