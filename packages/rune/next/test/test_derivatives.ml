@@ -857,6 +857,38 @@ let fresh_tests =
           Rune.jvp' (fun x -> Nx.mul_s x (second x)) (mat 2 3) (mat 2 3)
         in
         equal (exact ()) (Nx.mul_s (mat 2 3) 4.) y);
+    test "a reshape that a strided value's view cannot take raises as eagerly"
+      (fun () ->
+        let tr = Nx.matrix_transpose in
+        let refused f x shape =
+          let e =
+            Invalid_argument
+              (Printf.sprintf
+                 "reshape: cannot reshape %s, call contiguous() first" shape)
+          in
+          raises ~msg:"eagerly" e (fun () -> ignore (f x));
+          raises ~msg:"under jvp" e (fun () -> ignore (Rune.jvp' f x x));
+          raises ~msg:"under grad" e (fun () ->
+              ignore (Rune.grad' (fun x -> Nx.sum (f x)) x))
+        in
+        refused
+          (fun x -> Nx.reshape [| 24 |] (tr (Nx.reshape [| 3; 8 |] (tr x))))
+          (mat 4 6) "[6,4] to [3,8], strides [1,6] cannot view it";
+        refused
+          (fun x ->
+            Nx.reshape [| 4; 6 |]
+              (Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.reshape [| 2; 2; 6 |] x)))
+          (mat 4 6) "[2,2,6] to [4,6], strides [6,12,1] cannot view it");
+    test "a transposed dual is not C-contiguous, as eagerly" (fun () ->
+        let seen = ref [] in
+        let f x =
+          seen := Nx.is_c_contiguous (Nx.matrix_transpose x) :: !seen;
+          x
+        in
+        ignore (f (mat 2 3));
+        ignore (Rune.jvp' f (mat 2 3) (mat 2 3));
+        ignore (Rune.grad' (fun x -> Nx.sum (f x)) (mat 2 3));
+        equal (list bool) [ false; false; false ] !seen);
   ]
 
 let edge_tests =

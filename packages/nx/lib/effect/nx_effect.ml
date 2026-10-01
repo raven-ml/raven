@@ -297,7 +297,7 @@ module Types = struct
     t_placement : placement; (* where the value lives *)
     t_context : placement; (* where the trace creates its values *)
     t_dtype : ('a, 'b) Nx_dtype.t;
-    t_view : View.t; (* C-contiguous over the tensor's shape *)
+    t_view : View.t; (* the layout of the value it stands for *)
     t_node : ('a, 'b) node; (* the tracer's payload *)
   }
 
@@ -954,16 +954,26 @@ let identity_hash : type a b. (a, b) t -> int = function
 
 (* Traced constructor *)
 
-let traced (type a b) (ctx : context) (p : placement)
+let traced (type a b) ?view (ctx : context) (p : placement)
     (dtype : (a, b) Nx_dtype.t) (shape : int array) (node : (a, b) node) :
     (a, b) t =
+  let t_view =
+    match view with
+    | None -> View.create shape
+    | Some v when Shape.equal (View.shape v) shape -> v
+    | Some v ->
+        invalid_arg
+          (Printf.sprintf "Nx.Repr.Traced.v: a view of shape %s for shape %s"
+             (Shape.to_string (View.shape v))
+             (Shape.to_string shape))
+  in
   Traced
     {
       t_id = fresh_id ();
       t_placement = p;
       t_context = ctx;
       t_dtype = dtype;
-      t_view = View.create shape;
+      t_view;
       t_node = node;
     }
 

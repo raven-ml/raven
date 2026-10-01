@@ -207,8 +207,8 @@ module Repr = struct
   module Traced = struct
     type ('a, 'b) t = ('a, 'b) Nx_effect.traced
 
-    let v ~context p dtype shape node =
-      Nx_effect.traced context p dtype shape node
+    let v ~context ?view p dtype shape node =
+      Nx_effect.traced ?view context p dtype shape node
 
     let id (x : ('a, 'b) t) = x.t_id
     let node (x : ('a, 'b) t) = x.t_node
@@ -228,4 +228,5 @@ module Repr = struct
     Nx_effect.Host a
 
   let context = Nx_effect.context
+  let view = Nx_effect.view
 end

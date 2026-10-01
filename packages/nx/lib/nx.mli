@@ -4072,14 +4072,19 @@ module Repr : sig
 
     val v :
       context:Placement.t ->
+      ?view:Nx_array.View.t ->
       Placement.t ->
       ('a, 'b) dtype ->
       int array ->
       ('a, 'b) node ->
       ('a, 'b) Nx_effect.t
-    (** [v ~context p dtype shape node] is a traced value of [dtype] and [shape]
-        at [p], whose payload is [node]. A value made beside it is made at
-        [context]. *)
+    (** [v ~context ?view p dtype shape node] is a traced value of [dtype] and
+        [shape] at [p], whose payload is [node]. A value made beside it is made
+        at [context]. [view] is the layout of the value it stands for, which
+        nx's functions see as they see a host value's; it defaults to
+        C-contiguous over [shape].
+
+        Raises [Invalid_argument] if [view]'s shape is not [shape]. *)
 
     val id : ('a, 'b) t -> int
     (** [id x] is [x]'s identity: every traced value has its own, and a value
@@ -4108,4 +4113,9 @@ module Repr : sig
   (** [context x] is where a value made beside [x] is made: the host for a host
       value or one on the disk, a copy on each of [x]'s devices for a placed
       one, and a traced value's context. *)
+
+  val view : ('a, 'b) Nx_effect.t -> Nx_array.View.t
+  (** [view x] is the layout through which nx's functions see [x]'s elements: a
+      host value's view, a placed value's view of its whole shape, and a traced
+      value's view. *)
 end

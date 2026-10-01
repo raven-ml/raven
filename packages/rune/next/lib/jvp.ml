@@ -32,8 +32,8 @@ type (_, _) Repr.node +=
       -> ('a, 'b) Repr.node
 
 let dual owner primal tangent =
-  Repr.Traced.v ~context:(Repr.context primal) (Nx.placement primal)
-    (Nx.dtype primal) (Nx.shape primal)
+  Repr.Traced.v ~context:(Repr.context primal) ~view:(Repr.view primal)
+    (Nx.placement primal) (Nx.dtype primal) (Nx.shape primal)
     (Dual { owner; primal; tangent })
 
 let rec adopts i owner =
@@ -301,13 +301,12 @@ let binary_tangent k a b y da db =
 (* [zeros_or dx x] is [x]'s tangent, or zeros like it if it has none. *)
 let zeros_or dx x = match dx with Some dx -> dx | None -> Nx.zeros_like x
 
-(* [viewable m x] is [x], copied to C order if [m] is a reshape that its view
-   cannot take: a dual's view is C-contiguous whatever its primal's and its
-   tangent's strides. *)
-let viewable m x =
+(* [viewable m dx] is [dx], copied to C order if [m] is a reshape that its view
+   cannot take: a tangent need not share its primal's strides. *)
+let viewable m dx =
   match[@warning "@4@8"] m with
-  | Reshape _ -> if Nx.is_c_contiguous x then x else Nx.contiguous x
-  | Expand _ | Permute _ | Shrink _ | Flip _ | Window _ -> x
+  | Reshape _ -> if Nx.is_c_contiguous dx then dx else Nx.contiguous dx
+  | Expand _ | Permute _ | Shrink _ | Flip _ | Window _ -> dx
 
 (* Linear algebra. Each rule's tangent is linear in the operand's tangent:
    coefficients come from the primals, the tangent meets only products, triangle
@@ -663,9 +662,9 @@ let run : type r. t -> r Nx.Op.t -> r =
       dual i x (solve' ~upper ~transpose ~unit_diag a b x da db)
   | Move (x, m) ->
       let x, dx = unwrap i x in
-      dual i (eval (Move (viewable m x, m))) (eval (Move (viewable m dx, m)))
+      dual i (eval (Move (x, m))) (eval (Move (viewable m dx, m)))
   | Place (p, x) -> linear x (fun x -> eval (Place (p, x)))
-  | Read { by; x } -> eval (Read { by; x = Nx.contiguous (primal i x) })
+  | Read { by; x } -> eval (Read { by; x = primal i x })
 
 (* Leaves *)
 
