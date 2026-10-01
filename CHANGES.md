@@ -2939,6 +2939,9 @@ thread.
 
 ### Nx
 
+- `Nx_io`'s savers and `Nx_quant`'s eager kernels hold a read claim on the
+  memory they read while they use it, so a compiled call on another domain
+  can no longer lend it and tear a saved file.
 - Reading a host value whose elements are not one run of its memory
   (`Nx.to_array`, `Nx.item` of a transposed value) holds a read claim while it
   gathers them, so a compiled call on another domain can no longer lend that

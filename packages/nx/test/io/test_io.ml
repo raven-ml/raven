@@ -120,6 +120,18 @@ let npy =
           let s = read (saved "" save_npy (Nx.P (Nx.zeros Nx.int8 [| 3 |]))) in
           fails (fun () -> Nx_io.load_npy (file "" (s ^ "\000")));
           fails (fun () -> Nx_io.load_npy (fixture "unicode.npy")));
+      test "a save refuses memory a consuming call holds" (fun () ->
+          let x = Nx.arange Nx.int32 0 6 1 in
+          let b = Nx.to_buffer x in
+          Nx_device.Buffer.Claim.read b;
+          is_true (Nx_device.Buffer.Claim.try_exclusive b);
+          Fun.protect
+            ~finally:(fun () ->
+              Nx_device.Buffer.Claim.finish b;
+              Nx_device.Buffer.Claim.release b)
+            (fun () ->
+              fails ~naming:"in use by a consuming call" (fun () ->
+                  Nx_io.save_npy (temp_file ~suffix:".npy" ()) x)));
       test "a save that cannot read its tensor names itself" (fun () ->
           let run : type r. r Nx.Op.t -> r = function
             | Read { by; _ } -> invalid_arg by

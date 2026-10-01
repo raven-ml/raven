@@ -10,7 +10,10 @@ let strf = Printf.sprintf
 let npy_to_nx (Npy.P (kind, buffer, shape)) =
   Nx.P (Nx.of_buffer kind shape buffer)
 
-let nx_to_npy ~by t = Npy.P (Nx.dtype t, Storage.elements ~by t, Nx.shape t)
+(* [with_npy ~by t f] is [f] applied to [t] as a NumPy array over its elements,
+   read by [by]. *)
+let with_npy ~by t f =
+  Storage.reading ~by t (fun b -> f (Npy.P (Nx.dtype t, b, Nx.shape t)))
 
 (* Uniform exception-to-result conversion *)
 let wrap_exn f =
@@ -27,7 +30,7 @@ let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
 
 let save_npy ?(overwrite = true) path arr =
   wrap_exn @@ fun () ->
-  let packed = nx_to_npy ~by:"Nx_io.save_npy" arr in
+  with_npy ~by:"Nx_io.save_npy" arr @@ fun packed ->
   (if not overwrite then Npy.write ~exclusive:true packed path
    else
      let temp = Temp_file.sibling path in
@@ -67,7 +70,7 @@ let save_npz ?(overwrite = true) path items =
     try
       List.iter
         (fun (name, Nx.P nx) ->
-          Zip_archive.add_npy zo name (nx_to_npy ~by:"Nx_io.save_npz" nx))
+          with_npy ~by:"Nx_io.save_npz" nx (Zip_archive.add_npy zo name))
         items;
       Zip_archive.close_out zo
     with exn ->

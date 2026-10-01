@@ -7,9 +7,29 @@
 
 module B = Nx_device.Buffer
 
-(* The elements of [x] in C order, in a host buffer, read by the function [by]:
-   its storage when they are one run of it on the host. *)
-let elements ~by x = Nx.Op.eval (Read { by; x })
+(* [claiming buffers f] is [f ()] with [buffers] under read claims, so that no
+   compiled call lends their memory while [f] reads them. *)
+let claiming buffers f =
+  let rec claim = function
+    | [] -> ()
+    | b :: rest -> (
+        B.Claim.read b;
+        match claim rest with
+        | () -> ()
+        | exception e ->
+            B.Claim.release b;
+            raise e)
+  in
+  claim buffers;
+  Fun.protect ~finally:(fun () -> List.iter B.Claim.release buffers) f
+
+(* [reading ~by x f] is [f b] for [b] the elements of [x] in C order in a host
+   buffer, read by the function [by]: its storage when they are one run of it on
+   the host, under a read claim while [f] runs. *)
+let reading ~by x f =
+  let b = Nx.Op.eval (Read { by; x }) in
+  claiming [ b ] (fun () -> f b)
+
 let bytes b = B.bigarray Bigarray.int8_unsigned b
 
 (* The bytes of the file at [path], read where they lie: the disk's mapping of

@@ -117,7 +117,7 @@ let load_safetensors path =
    host, a value with one device's buffer is written from that device, from its
    own storage when its elements are a contiguous run of it. Any other value, a
    traced one included, is read to the host. A float's bits are copied, never
-   read as a float. *)
+   read as a float. [save_safetensors] claims the buffer while it writes it. *)
 let tensor_data (type a b) (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
@@ -142,7 +142,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
   in
   let size = Nx.itemsize t in
   if Sys.big_endian && size > 1 then begin
-    let elements = Storage.elements ~by:"Nx_io.save_safetensors" t in
+    Storage.reading ~by:"Nx_io.save_safetensors" t @@ fun elements ->
     let swapped =
       B.create Nx_device.host (B.dtype elements) (B.length elements)
     in
@@ -155,7 +155,7 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
     match Nx.shards t with
     | [ _ ], _ -> (dtype, Nx.to_buffer t)
     | _ | (exception Invalid_argument _) ->
-        (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
+        (dtype, Nx.Op.eval (Read { by = "Nx_io.save_safetensors"; x = t }))
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;
@@ -233,7 +233,7 @@ let save_safetensors ?(overwrite = true) path items =
   try
     let temp = Temp_file.sibling path in
     match
-      write temp header parts;
+      Storage.claiming (List.map snd parts) (fun () -> write temp header parts);
       Temp_file.sync temp
     with
     | () -> replace_or_keep temp path
