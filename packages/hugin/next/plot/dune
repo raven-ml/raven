@@ -11,8 +11,8 @@
   hugin.next.vg.svg
   hugin.next.vg.pdf
   hugin.next.kit
-  nx)
- (modules_without_implementation hugin_next)
+  nx
+  nx.dtype)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

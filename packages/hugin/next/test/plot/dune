@@ -10,3 +10,9 @@
   hugin.next.vg.raster
   hugin.next.vg.svg
   nx))
+
+(tests
+ (names test_figure)
+ (modules test_figure)
+ (package hugin)
+ (libraries hugin.next hugin.next.kit nx windtrap))
