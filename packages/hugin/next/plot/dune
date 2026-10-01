@@ -1,0 +1,19 @@
+(library
+ (name hugin_next)
+ (public_name hugin.next)
+ (libraries
+  hugin.next.gg
+  hugin.next.gg.kit
+  hugin.next.font
+  hugin.next.text
+  hugin.next.vg
+  hugin.next.vg.raster
+  hugin.next.vg.svg
+  hugin.next.vg.pdf
+  hugin.next.kit
+  nx)
+ (modules_without_implementation hugin_next)
+ (instrumentation
+  (backend ppx_windtrap.coverage))
+ (instrumentation
+  (backend ppx_windtrap.mutate)))

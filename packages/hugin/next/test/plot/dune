@@ -1,0 +1,12 @@
+; The Guide's call sites only need to compile, so they form a library that
+; nothing links.
+
+(library
+ (name hugin_next_test_callsites)
+ (modules test_callsites)
+ (libraries
+  hugin.next
+  hugin.next.gg.kit
+  hugin.next.vg.raster
+  hugin.next.vg.svg
+  nx))
