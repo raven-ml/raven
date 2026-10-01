@@ -1535,6 +1535,19 @@ let buffers =
           dead "first" b;
           dead "second" c;
           equal (pair int bool) (4, false) (B.length d, B.is_borrowed d));
+      test
+        "a buffer consumed twice keeps its memory while the last buffer \
+         consume returned lives" (fun () ->
+          let d = (fake ()).dev in
+          let before = allocated d in
+          let consumed_twice () =
+            B.consume ~why:"second"
+              (B.consume ~why:"first" (B.create d S.UInt8 4096))
+          in
+          let last = Sys.opaque_identity (consumed_twice ()) in
+          Gc.full_major ();
+          equal int (before + 4096) (allocated d);
+          ignore (Sys.opaque_identity last));
       test "only a buffer that spans its memory can be consumed" (fun () ->
           let b = B.create host S.UInt8 8 in
           let window = B.view b ~offset:0 S.UInt8 4 in

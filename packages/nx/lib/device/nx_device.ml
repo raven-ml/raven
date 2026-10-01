@@ -1518,7 +1518,12 @@ module Buffer = struct
       invalid_arg
         "Nx_device.Buffer.consume: the buffer is a window of its memory";
     let base = b.base in
-    let heir = { base with life = Heir base } in
+    (* The heir keeps the base whose finaliser releases the memory, which is an
+       earlier heir's when [b] was itself consumed. *)
+    let first =
+      match base.life with Heir first -> first | Live | Dead _ -> base
+    in
+    let heir = { base with life = Heir first } in
     base.life <- Dead why;
     { b with base = heir }
 

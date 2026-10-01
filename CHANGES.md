@@ -2909,6 +2909,12 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.consume` of a buffer that was itself returned by
+  `consume` no longer lets the memory be freed while the new buffer still
+  uses it. The memory went back to the device at the next collection and was
+  handed to other buffers, so a compiled call that consumes the state it
+  returned on the previous call, such as a decoder's key-value cache, could
+  read another buffer's bytes after a few steps.
 - **Breaking:** a descending `sort`, `argsort` and `top_k` order by the exact
   reverse of the ascending order, so NaN comes first instead of last and the
   first index of `top_k` is `argmax`'s.
