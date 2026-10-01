@@ -204,9 +204,10 @@ exception Lost of t * string
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes:
-    - by {!Buffer.create}, at once if [n] exceeds [d]'s {!budget}, and otherwise
-      if the budget or the driver refuses them after [d]'s cache was released
-      and unreachable buffers collected;
+    - by {!Buffer.create}, at once if [n] exceeds [d]'s {!budget} for memory
+      [Device] ({!Buffer.memory}), and otherwise if the budget or the driver
+      refuses them after [d]'s cache was released and unreachable buffers
+      collected;
     - by {!Buffer.copy}, when the host [d] of a machine cannot allocate the
       staging memory the copy goes through;
     - by {!Program.load}, when [d]'s driver cannot allocate the memory of a
@@ -289,9 +290,10 @@ module Buffer : sig
             the device is seen by the host once the work that wrote it has
             completed. The host reads it uncached and slowly.
 
-            Where the device has no such window, or the window has no room,
+            Where the device has no such window, or the window or the device's
+            {!budget} cannot hold the buffer even once its cache is released,
             mapped memory is pinned memory, which keeps the same promises more
-            strongly. Nothing raises: the buffer's region
+            strongly, and the cache stays. Nothing raises: the buffer's region
             ({!Driver.Region.of_buffer}) tells the device's library which it
             got. *)
 

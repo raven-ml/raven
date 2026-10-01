@@ -801,16 +801,25 @@ let memories =
           equal ~msg:"both allocated" int 128 (allocated f.dev);
           ignore (Sys.opaque_identity pinned));
       test
-        "mapped memory the window refuses is pinned memory while the device's \
-         own memory has room, and refused when it has none" (fun () ->
-          let f = far ~budget:96 ~window:32 () in
-          equal ~msg:"beyond the window" memory_kind Pinned
-            (memory_of f (B.create ~memory:Mapped f.dev S.UInt8 64));
+        "mapped memory that the window or the device's own memory cannot hold \
+         is pinned memory, and the cache stays" (fun () ->
+          let f = far ~budget:96 ~window:64 () in
+          dropped (fun () -> B.create f.dev S.UInt8 16);
           let own = B.create f.dev S.UInt8 64 in
-          raises_match ~msg:"beyond the device's own memory"
-            (function Nx_device.Out_of_memory _ -> true | _ -> false)
-            (fun () -> B.create ~memory:Mapped f.dev S.UInt8 64);
-          ignore (Sys.opaque_identity own));
+          let pinned =
+            List.map
+              (fun (msg, n) ->
+                let b = B.create ~memory:Mapped f.dev S.UInt8 n in
+                equal ~msg memory_kind Pinned (memory_of f b);
+                b)
+              [
+                ("beyond the device's own memory", 48);
+                ("beyond the window", 80);
+                ("beyond the budget", 128);
+              ]
+          in
+          equal ~msg:"the cache" int 16 (cached f.dev);
+          ignore (Sys.opaque_identity (own, pinned)));
       test "a device with memory of its own and a window gives each memory"
         (fun () ->
           let f = far ~window:1024 () in
@@ -1220,16 +1229,14 @@ module Pools = struct
     | None -> false
     | Some w -> n <= w - used d (windowed d) - cached (windowed d) cache
 
-  (* The memory a request of [kind] gets beside [cache]: mapped memory the
-     window refuses is pinned memory while the device's own memory has room, and
-     refused when it has none. *)
+  (* The memory a request of [kind] gets beside [cache]: mapped memory that the
+     window or the device's own memory cannot hold is pinned memory. *)
   let placed d (kind : B.memory) n cache : B.memory option =
     match kind with
     | Pinned -> Some Pinned
     | Device -> if n <= own_room d cache then Some Device else None
     | Mapped ->
-        if n > own_room d cache then None
-        else if in_window d cache n then Some Mapped
+        if n <= own_room d cache && in_window d cache n then Some Mapped
         else Some Pinned
 
   (* The memory a request of [kind] asks for: on a device with no window, mapped
@@ -1246,30 +1253,41 @@ module Pools = struct
     d.buffers <- b :: d.buffers;
     b
 
-  (* A request over the budget is refused at once, keeping the cache; a cached
-     region of its size and memory serves it; and one the pools refuse as asked
-     releases cached memory, then is served as releasing all of it allows. *)
-  let create d kind n =
-    let kind = asked d kind in
-    if kind <> B.Pinned && n > d.budget then raise No_memory;
-    let key = (n, kind) in
+  (* [n] bytes of [memory], from a cached region of that size and memory if
+     there is one. *)
+  let reused d n memory =
+    let key = (n, memory) in
     if List.mem key d.cache then begin
       cover "cached memory serves a request" true;
-      d.cache <- remove key d.cache;
-      made d n (snd key)
-    end
+      d.cache <- remove key d.cache
+    end;
+    made d n memory
+
+  (* A request of the device's own memory over the budget is refused at once,
+     keeping the cache; a cached region of its size and memory serves it; and
+     one the pools refuse as asked releases cached memory when releasing all of
+     it lets them serve it as asked. Mapped memory they cannot serve as asked
+     even then is pinned memory, cached pinned memory included, and keeps the
+     rest of the cache. *)
+  let create d kind n =
+    let kind = asked d kind in
+    if kind = B.Device && n > d.budget then raise No_memory;
+    if List.mem (n, kind) d.cache then reused d n kind
     else
       match placed d kind n d.cache with
       | Some m when m = kind -> made d n m
       | Some _ | None -> (
-          d.releases <- true;
           match placed d kind n [] with
-          | Some m ->
-              cover "mapped memory the window refuses is pinned memory"
-                (kind = Mapped && m = Pinned);
-              cover "a request the cache crowds out is served" (m = kind);
+          | Some m when m = kind ->
+              cover "a request the cache crowds out is served" true;
+              d.releases <- true;
               made d n m
+          | Some m ->
+              cover "mapped memory the pools cannot hold is pinned memory" true;
+              cover "the pinned fallback keeps a cache" (d.cache <> []);
+              reused d n m
           | None ->
+              d.releases <- true;
               d.empties <- true;
               raise No_memory)
 
@@ -1706,10 +1724,11 @@ let pools =
     [
       stateful ~count:100 ~steps:40
         "buffers and loaded code count in the pools of their memory, mapped \
-         memory the window refuses is pinned memory while the device's own has \
-         room, and the cache keeps within the budget (nx_device.mli is silent \
-         on a load beyond the budget: the code counts, and the room left goes \
-         negative; and on a request over the budget, which keeps the cache)"
+         memory that the window or the device's own memory cannot hold is \
+         pinned memory, and the cache keeps within the budget (nx_device.mli \
+         is silent on a load beyond the budget: the code counts, and the room \
+         left goes negative; and on a request over the budget, which keeps the \
+         cache)"
         pool_commands;
       stateful ~count:200 ~steps:40
         "released memory is cached once other devices' work on it is done and \

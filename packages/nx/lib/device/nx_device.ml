@@ -1363,6 +1363,15 @@ let room_for d kind =
 
 let fits d kind n = n <= room_for d kind
 
+(* Whether [d]'s window and its own memory could hold [n] more bytes of mapped
+   memory once its cache is released. *)
+let mappable d n =
+  match d.kind with
+  | Local { own; mapped = Some window; _ } ->
+      let free p = p.ceiling - used p - p.retained in
+      n <= free window && n <= free own
+  | Local { mapped = None; _ } | Machine _ | Shared _ | Disk -> false
+
 (* A token that puts [r] on [d]'s release list once it is collected. Its [bytes]
    of [d]'s memory [kind] pace the collector by the room left in its pools, and
    for memory that is the host's, by the program's memory too (see the
@@ -1644,25 +1653,25 @@ let take_cached d key =
 
 (* [n] bytes of [d]'s memory [kind], with the memory they are and the last value
    of [d]'s work that used them, [0] for memory new from the driver. Mapped
-   memory the window or the driver refuses releases the cached mapped memory,
-   which holds the window, and tries again; mapped memory still refused while
-   the device's own memory has room is pinned memory instead. Any other
-   allocation its pools or the driver refuse releases the cache and tries again,
-   then waits for the work of released memory and tries again. One still refused
-   raises [Exhausted] until [last]: the unreachable buffers, whose memory the
-   collector cannot see, may hold what it needs (see [last_resort_rounds] and
-   [exhausted]). *)
+   memory that the window and the device's own memory could not hold even with
+   the cache released is pinned memory, and keeps the cache, which pinned memory
+   does not count in. Mapped memory the driver refuses releases the cached
+   mapped memory, which holds the window, and tries again, then is pinned
+   memory. Any other allocation its pools or the driver refuse releases the
+   cache and tries again, then waits for the work of released memory and tries
+   again. One still refused raises [Exhausted] until [last]: the unreachable
+   buffers, whose memory the collector cannot see, may hold what it needs (see
+   [last_resort_rounds] and [exhausted]). *)
 exception Exhausted
 
 let rec allocate d n ~kind ~last =
-  (* Mapped memory beyond its window can still be pinned memory. *)
-  let over = ref false in
-  on_pools d
-    (if kind = Mapped then Device else kind)
-    (fun p -> if n > p.ceiling then over := true);
-  if !over then raise (Out_of_memory (d, n));
+  if kind <> Mapped then
+    on_pools d kind (fun p ->
+        if n > p.ceiling then raise (Out_of_memory (d, n)));
   match take_cached d (n, kind) with
   | Some (m, keep, used) -> (m, keep, kind, used)
+  | None when kind = Mapped && not (mappable d n) ->
+      allocate d n ~kind:Pinned ~last
   | None -> (
       release_cache ~wait:true d (Room (kind, n));
       let alloc n =
@@ -1683,11 +1692,10 @@ let rec allocate d n ~kind ~last =
                 does not address"
                d.name)
       | Some (m, keep) -> (m, keep, kind, 0)
-      | None when kind = Mapped && fits d Device n && cached_of d Mapped ->
+      | None when kind = Mapped && cached_of d Mapped ->
           release_cache ~only:Mapped ~wait:true d All;
           allocate d n ~kind ~last
-      | None when kind = Mapped && fits d Device n ->
-          allocate d n ~kind:Pinned ~last
+      | None when kind = Mapped -> allocate d n ~kind:Pinned ~last
       | None when cached d > 0 ->
           release_cache ~wait:true d All;
           allocate d n ~kind ~last

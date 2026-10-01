@@ -3004,6 +3004,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.create ~memory:Mapped` gives pinned memory when the
+  window or the device's own memory cannot hold the buffer, and keeps the cache.
+  It raised `Out_of_memory` once the device's own memory was full.
 - `Nx_device.submit` waits on the host only for the work that touched the
   memory its buffers reach, as `Submission.waits` documents. It waited for all
   work of each device whose memory they reach, which serialized unrelated work.
