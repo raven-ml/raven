@@ -43,6 +43,13 @@ let kinds =
     ("a cast", x);
     ("a variable", n);
     ("a buffer", buffer);
+    ( "a buffer past a 16-byte boundary",
+      Ops.v
+        ~arg:
+          (Param
+             (Ops.param_arg ~slot:0 ~size:16 ~device:(Single "CPU") ~phase:8
+                Float32))
+        Buffer );
     ( "a scalar parameter",
       Ops.v
         ~arg:

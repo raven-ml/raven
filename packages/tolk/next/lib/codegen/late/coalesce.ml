@@ -123,6 +123,19 @@ let memory_coalescing sink (r : Renderer.t) =
            else [])
           @ [ 1 ]
         in
+        (* Elements before the buffer's first from the 16-byte boundary behind
+           it (D54): an access of [l] elements is aligned where the element
+           count from that boundary is a multiple of [l]. *)
+        let lead =
+          match arg (buf_uop key.buf) with
+          | Param p -> Z.of_int (p.phase / Dtype.itemsize (dtype key.buf))
+          | _ -> Z.zero
+        in
+        let at first =
+          match key.base with
+          | Some b -> O.(b + const (`Int first))
+          | None -> const (`Int first)
+        in
         let sorted = List.sort Z.compare (List.map fst offsets) in
         List.iter
           (fun run ->
@@ -130,16 +143,13 @@ let memory_coalescing sink (r : Renderer.t) =
               match grp with
               | [] -> ()
               | first :: _ ->
-                  let offset =
-                    match key.base with
-                    | Some b -> O.(b + const (`Int first))
-                    | None -> const (`Int first)
-                  in
+                  let offset = at first in
                   let length =
                     List.find
                       (fun l ->
                         l <= List.length grp
-                        && Option.is_some (divides offset (Z.of_int l)))
+                        && Option.is_some
+                             (divides (at (Z.add first lead)) (Z.of_int l)))
                       lengths
                   in
                   let now = List.filteri (fun i _ -> i < length) grp

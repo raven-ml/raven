@@ -133,6 +133,11 @@ type param_arg = {
   bind_on_realize : bool;
       (** The storage is bound by whoever realizes the graph, not by a call. *)
   bound : Dtype.value option;  (** The value a variable is bound to. *)
+  phase : int;
+      (** The bytes by which the storage's first element lies past a 16-byte
+          boundary, the width of the widest vector access: from [0] to [15], a
+          multiple of the element's size. Vector accesses start only where they
+          are aligned to their width. *)
 }
 (** The type for the arguments of {!Op.Param}, {!Op.Buffer} and {!Op.Alloc}:
     storage, or a scalar variable. *)
@@ -147,12 +152,16 @@ val param_arg :
   ?volatile:bool ->
   ?bind_on_realize:bool ->
   ?bound:Dtype.value ->
+  ?phase:int ->
   slot:int ->
   Dtype.t ->
   param_arg
 (** [param_arg ~slot dtype] is the argument with these fields. [addrspace]
-    defaults to [Some Global]; the flags default to [false] and the other fields
-    to [None]. *)
+    defaults to [Some Global]; the flags default to [false], [phase] to [0] and
+    the other fields to [None].
+
+    Raises [Invalid_argument] if [phase] is not a multiple of [dtype]'s size
+    from [0] to [15]. *)
 
 val pp_param_arg : Format.formatter -> param_arg -> unit
 (** [pp_param_arg] formats the slot, the type and the size, then the fields that
@@ -1164,9 +1173,10 @@ val getaddr : ?device:string -> t -> t
 val unique_num : unit -> int
 (** [unique_num ()] is a slot number no other call returns. *)
 
-val new_buffer : ?slot:int -> device -> int -> Dtype.t -> t
-(** [new_buffer ~slot d size dt] is a {!Op.Buffer} of [size] elements of [dt] on
-    [d], in [slot] (default {!unique_num}).
+val new_buffer : ?slot:int -> ?phase:int -> device -> int -> Dtype.t -> t
+(** [new_buffer ~slot ~phase d size dt] is a {!Op.Buffer} of [size] elements of
+    [dt] on [d], in [slot] (default {!unique_num}), whose first element lies
+    [phase] bytes past a 16-byte boundary (default [0]; see {!param_arg}).
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
@@ -1225,19 +1235,33 @@ val param :
   ?name:string ->
   ?addrspace:Dtype.addr_space option ->
   ?volatile:bool ->
+  ?phase:int ->
   int ->
   Dtype.t ->
   t
 (** [param ~shape slot dt] is the parameter [slot] of type [dt]: a scalar
     without [shape], flat storage of its greatest size viewed as [shape]
-    otherwise.
+    otherwise, whose first element lies [phase] bytes past a 16-byte boundary
+    (default [0]; see {!param_arg}).
 
     Raises [Invalid_argument] if [dt] is weak. *)
 
 val param_like : t -> int -> t
 (** [param_like u slot] is a parameter in [slot] that [u] can be passed to: a
     scalar variable without its name and value, one shard of a sharded value, or
-    storage of [u]'s shape. *)
+    storage of [u]'s shape. Storage keeps the phase of the storage [u] views
+    ({!param_arg}), moved by the bytes a shrink of one axis by a constant skips;
+    a shrink by a symbolic start keeps its storage's phase.
+
+    Raises [Invalid_argument] if the phase does not fit [u]'s type. *)
+
+val storage_phase : t -> int
+(** [storage_phase u] is the phase ({!param_arg}) of the storage [u] views: its
+    storage's, moved by the bytes a shrink of one axis by a constant skips,
+    through bitcasts, reshapes, orderings and shard selections. A shrink by a
+    symbolic start keeps its storage's phase. Storage on a disk, which is read
+    at any byte, and anything that is not storage or a view of it have phase
+    [0]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t
 (** [view_as ~axis u shape] views the flat storage [u] as [shape], sharded on

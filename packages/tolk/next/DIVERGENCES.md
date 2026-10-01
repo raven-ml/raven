@@ -1424,6 +1424,44 @@ the Exclusions of `README.md`.
   `invalid_lanes_int8` of every target in `stages`, from the patched
   tinygrad.
 
+## D54. Storage says where it starts within 16 bytes
+
+- **tinygrad:** `uop/ops.py:23-37` (`ParamArg`, which has no such field) and
+  `codegen/late/coalesce.py:152` (`memory_coalescing` merges a run of `l`
+  elements where `l` divides its element offset, taking every buffer to start
+  on a 16-byte boundary).
+- **tolk.next:** `lib/uop/ops.ml:241` (`phase`), `:3220` (`param_arg`, which
+  checks it) and `:3368` (`storage_phase`, which `param_like` gives a
+  parameter); `lib/schedule/rangeify.ml:480` (`debuf`, which gives it a
+  kernel's parameter); `lib/codegen/late/coalesce.ml:129` (the merge).
+- **Differs:** a parameter or buffer carries `phase`, the bytes by which its
+  first element lies past a 16-byte boundary, a multiple of its element's
+  size; it defaults to `0`, tinygrad's assumption, so no graph of tinygrad's
+  changes. A run of `l` elements merges where `l` divides the element's count
+  from that boundary, so every vector access is aligned to its width. A
+  parameter made from storage keeps the storage's phase, moved by the bytes a
+  shrink of one axis by a constant skips; a shrink by a symbolic start keeps
+  its storage's, as tinygrad takes every view to start aligned, and storage on
+  a disk, read at any byte, has none. The phase is part of the graph, so of a
+  program's cache key.
+- **Reason:** (b). rune's `Compiled` runs an operation over the storage it is
+  given, and mapped weights put a tensor at any byte offset of its file: a
+  vector access of 16 bytes from an address that is not a multiple of 16 is
+  undefined in Clang's `aligned(16)` vector types and faults on CUDA.
+- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase
+  (D54) › one float past a boundary, eight loads are of one, two, four and
+  one`, `› three floats past a boundary, a load of four starts at element 1`,
+  `› stores start where loads would`, `› two halves past a boundary, a load of
+  four starts at element 2`, and the laws `every vector access is aligned to
+  its width, for every phase (D54)` and `coalescing preserves the kernel's
+  writes, for every phase (D54)`; the `Ops` suite: `param_arg takes a phase
+  that is a multiple of the element size below 16 (D54)`, `pp_param_arg
+  writes a phase that is not 0 (D54)`, `equal_arg tells apart parameters that
+  differ in phase (D54)` and `param_like keeps its storage's phase, moved by a
+  shrink by a constant (D54)`; the graph format's round trip of `a buffer past
+  a 16-byte boundary`; the `Schedule` suite's `disk_view_to_linear.golden`,
+  a view 8 bytes into a disk file whose parameter has no phase.
+
 ## D55. Metal names a vector after its element's one-word name
 
 - **tinygrad:** `renderer/cstyle.py:186` (`_render_dtype` names a vector

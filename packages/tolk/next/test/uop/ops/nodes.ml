@@ -137,7 +137,53 @@ let arguments =
           is_false p.volatile;
           is_false p.bind_on_realize;
           is_true (p.size = None && p.vmin_vmax = None && p.multiple_of = None);
-          is_true (p.name = None && p.device = None && p.bound = None));
+          is_true (p.name = None && p.device = None && p.bound = None);
+          equal int 0 p.phase);
+      test
+        "param_arg takes a phase that is a multiple of the element size below \
+         16 (D54)" (fun () ->
+          equal int 12 (Ops.param_arg ~slot:0 ~phase:12 Dtype.Float32).phase;
+          equal int 2 (Ops.param_arg ~slot:0 ~phase:2 Dtype.Float16).phase;
+          List.iter
+            (fun (phase, dt) ->
+              raises_match (Exn.invalid_arg ?substring:None) (fun () ->
+                  ignore (Ops.param_arg ~slot:0 ~phase dt)))
+            [ (2, Dtype.Float32); (16, Dtype.Uint8); (-4, Dtype.Float32) ]);
+      test "pp_param_arg writes a phase that is not 0 (D54)" (fun () ->
+          equal string "ParamArg(0, dtypes.float, 16, phase=4)"
+            (str Ops.pp_param_arg
+               (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
+          equal string "ParamArg(0, dtypes.float, 16)"
+            (str Ops.pp_param_arg
+               (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
+      test "equal_arg tells apart parameters that differ in phase (D54)"
+        (fun () ->
+          is_false
+            (Ops.equal_arg
+               (Param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32))
+               (Param (Ops.param_arg ~slot:0 Dtype.Float32))));
+      test
+        "param_like keeps its storage's phase, moved by a shrink by a constant \
+         (D54)" (fun () ->
+          let b = Ops.new_buffer ~phase:4 (Single "CPU") 16 Dtype.Float32 in
+          let phase u =
+            match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
+            | Param p -> p.phase
+            | _ -> fail "a parameter"
+          in
+          let shrunk k = Ops.shrink b [ Some (Int k, Int (k + 4)) ] in
+          equal int 4 (phase b);
+          equal int 8 (phase (shrunk 1));
+          equal int 0 (phase (shrunk 3));
+          equal int 8 (phase (Ops.reshape (shrunk 1) [ Int 2; Int 2 ]));
+          equal int 4
+            (phase
+               (Ops.shrink b
+                  [
+                    Some
+                      ( Sym (Ops.variable "k" (`Int Z.zero) (`Int (Z.of_int 8))),
+                        Int 4 );
+                  ])));
       test "kernel_info defaults to the kernel named test" (fun () ->
           let k = Ops.kernel_info () in
           equal string "test" k.name;

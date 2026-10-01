@@ -238,6 +238,7 @@ type param_arg = {
   volatile : bool;
   bind_on_realize : bool;
   bound : Dtype.value option;
+  phase : int;
 }
 
 type bufferize_opts = {
@@ -406,6 +407,7 @@ let equal_param_arg (p0 : param_arg) (p1 : param_arg) =
   && Bool.equal p0.volatile p1.volatile
   && Bool.equal p0.bind_on_realize p1.bind_on_realize
   && Option.equal Dtype.equal_const p0.bound p1.bound
+  && Int.equal p0.phase p1.phase
 
 let equal_estimates (e0 : estimates) (e1 : estimates) =
   equal_sint e0.ops e1.ops && equal_sint e0.lds e1.lds
@@ -760,6 +762,7 @@ let repr_param_arg (p : param_arg) =
       ("volatile", if p.volatile then Some "True" else None);
       ("bind_on_realize", if p.bind_on_realize then Some "True" else None);
       ("val", Option.map repr_const p.bound);
+      ("phase", if p.phase = 0 then None else Some (string_of_int p.phase));
     ]
   in
   let args =
@@ -3221,7 +3224,13 @@ let getaddr ?device:dev u =
 
 let param_arg ?size ?vmin_vmax ?multiple_of ?name
     ?(addrspace = Some Dtype.Global) ?device ?(volatile = false)
-    ?(bind_on_realize = false) ?bound ~slot dtype =
+    ?(bind_on_realize = false) ?bound ?(phase = 0) ~slot dtype =
+  if
+    phase < 0 || phase >= 16
+    || (phase > 0 && phase mod Dtype.itemsize dtype <> 0)
+  then
+    invalid_argf "phase %d is not a multiple of a %s's size below 16" phase
+      (repr_dtype dtype);
   {
     slot;
     dtype;
@@ -3234,18 +3243,19 @@ let param_arg ?size ?vmin_vmax ?multiple_of ?name
     volatile;
     bind_on_realize;
     bound;
+    phase;
   }
 
 let weak_storage dt =
   if List.mem dt Dtype.weaks then
     invalid_argf "a %s cannot be stored" (repr_dtype dt)
 
-let new_buffer ?slot d size dt =
+let new_buffer ?slot ?phase d size dt =
   weak_storage dt;
   let slot = match slot with Some s -> s | None -> unique_num () in
   v Op.Buffer
     ~src:(device_range_src (Some d))
-    ~arg:(Param (param_arg ~slot ~size ~device:d dt))
+    ~arg:(Param (param_arg ~slot ~size ~device:d ?phase dt))
 
 let empty ?device new_shape dt =
   weak_storage dt;
@@ -3343,18 +3353,34 @@ let placeholder_like ?addrspace u slot =
   placeholder ~slot ?addrspace (max_shard_shape u) u.dtype
 
 let param ?shape:new_shape ?device ?vmin_vmax ?multiple_of ?name
-    ?(addrspace = Some Dtype.Global) ?(volatile = false) slot dt =
+    ?(addrspace = Some Dtype.Global) ?(volatile = false) ?phase slot dt =
   weak_storage dt;
   let make size =
     v Op.Param
       ~arg:
         (Param
            (param_arg ?size ?vmin_vmax ?multiple_of ?name ~addrspace ?device
-              ~volatile ~slot dt))
+              ~volatile ?phase ~slot dt))
   in
   match new_shape with
   | None | Some [] -> make None
   | Some s -> view_as (make (Some (size_of (to_max_shape s)))) s
+
+(* The phase of the storage [u] views: its storage's, moved by the bytes a
+   shrink of one axis by a constant skips. A shrink by a symbolic start, which
+   no phase describes, is taken to keep its storage's, as views are taken to
+   start aligned; storage the graph allocates starts on a boundary. *)
+let rec storage_phase u =
+  match (u.op, u.src) with
+  | _ when on_disk u -> 0
+  | (Op.Buffer | Op.Param | Op.Alloc), _ -> (param_arg_of u).phase
+  | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), x :: _ -> storage_phase x
+  | Op.Shrink, x :: _ -> (
+      match marg u with
+      | Shrink [ (Int start, _) ] ->
+          (storage_phase x + (start * element_size x)) mod 16
+      | _ -> storage_phase x)
+  | _ -> 0
 
 let param_like u slot =
   match u.op with
@@ -3372,9 +3398,11 @@ let param_like u slot =
                  (Param
                     (param_arg ~slot
                        ~size:(size_of (to_max_shape ss))
-                       ~device:d u.dtype)))
+                       ~device:d ~phase:(storage_phase u) u.dtype)))
             ss
-      | _ -> param ?shape:(shape_opt u) ?device:(device u) slot u.dtype)
+      | _ ->
+          param ?shape:(shape_opt u) ?device:(device u) ~phase:(storage_phase u)
+            slot u.dtype)
 
 let set ?(ends = []) p x = after (first p.op p.src) [ end_ (store p x) ends ]
 

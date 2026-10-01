@@ -483,7 +483,8 @@ let debuf ctx buf =
       ~arg:
         (Param
            (param_arg ~slot:ctx.dg ~size:(max_numel buf)
-              ~addrspace:(addrspace buf) ?device:(device buf) (dtype buf)))
+              ~addrspace:(addrspace buf) ?device:(device buf)
+              ~phase:(storage_phase buf) (dtype buf)))
   in
   let ret = reshape param (List.map (fun n -> Int n) (max_shape buf)) in
   (* A buffer of symbolic shape is its greatest view, shrunk. *)

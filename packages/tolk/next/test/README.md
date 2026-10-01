@@ -256,7 +256,7 @@ The records, with their fields in order:
 
 | Record | Fields |
 |---|---|
-| `ParamArg` | `slot` integer, `dtype`, `size` integer or none, `vmin_vmax` a pair of constants, `multiple_of` integer, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `image` (always none: images are excluded), `bind_on_realize` boolean, `val` integer; `buffer` is runtime state and never written |
+| `ParamArg` | `slot` integer, `dtype`, `size` integer or none, `vmin_vmax` a pair of constants, `multiple_of` integer, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `image` (always none: images are excluded), `bind_on_realize` boolean, `val` integer, `phase` integer (tolk.next's own field, D54, never in tinygrad's goldens); `buffer` is runtime state and never written |
 | `KernelInfo` | `name` string, `applied_opts` and `opts_to_apply` tuples of `Opt` (the second may be none), `estimates` `Estimates` or none, `beam` integer |
 | `Opt` | `op` `OptOps`, `axis` integer or none, `arg` an integer, a tuple, or none |
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |

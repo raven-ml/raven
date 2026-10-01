@@ -204,6 +204,40 @@ let lengths =
             (accesses Op.Load (coalesce (loads half (List.init 8 Fun.id)))));
     ]
 
+(* A buffer whose first element lies [phase] bytes past a 16-byte boundary
+   (D54). *)
+let phased ?(dtype = Dtype.Float32) phase =
+  Ops.param ~shape:[ Int 64 ] ~phase 0 dtype
+
+let phases =
+  group "phase (D54)"
+    [
+      test
+        "one float past a boundary, eight loads are of one, two, four and one"
+        (fun () ->
+          equal runs
+            [ (0, 1); (1, 2); (3, 4); (7, 1) ]
+            (accesses Op.Load
+               (coalesce (loads (phased 4) (List.init 8 Fun.id)))));
+      test "three floats past a boundary, a load of four starts at element 1"
+        (fun () ->
+          equal runs
+            [ (0, 1); (1, 4); (5, 2); (7, 1) ]
+            (accesses Op.Load
+               (coalesce (loads (phased 12) (List.init 8 Fun.id)))));
+      test "stores start where loads would" (fun () ->
+          equal runs
+            [ (0, 1); (1, 2); (3, 4); (7, 1) ]
+            (accesses Op.Store
+               (coalesce (stores (phased 4) (List.init 8 Fun.id)))));
+      test "two halves past a boundary, a load of four starts at element 2"
+        (fun () ->
+          equal runs
+            [ (0, 2); (2, 4); (6, 2) ]
+            (accesses Op.Load
+               (coalesce (loads (phased ~dtype:Float16 4) (List.init 8 Fun.id)))));
+    ]
+
 let left_alone =
   let same name sink =
     test name (fun () -> equal Uops.uop sink (coalesce sink))
@@ -305,9 +339,9 @@ let index { scale; gated; start } j =
 
 let size = 40
 
-let generated (dtype, runs) =
-  let input = Ops.param ~shape:[ Int size ] 0 dtype
-  and output = Ops.param ~shape:[ Int size ] 1 dtype in
+let generated ?(phases = (0, 0)) (dtype, runs) =
+  let input = Ops.param ~shape:[ Int size ] ~phase:(fst phases) 0 dtype
+  and output = Ops.param ~shape:[ Int size ] ~phase:(snd phases) 1 dtype in
   (* A second store of one element under the same key is refused; the first
      store of each element is kept. *)
   let stores, _ =
@@ -350,6 +384,17 @@ let kernels_of_runs =
     (fun ppf k -> Format.pp_print_string ppf (Graph.to_string (generated k)))
     (pair dtype (list ~size:(int_range 1 3) run))
 
+(* Kernels whose buffers lie any whole number of elements past a 16-byte
+   boundary, in bytes. *)
+let phased_kernels =
+  let open Gen in
+  let+ ((dtype, _) as k) = kernels_of_runs
+  and+ input = int_range 0 15
+  and+ output = int_range 0 15 in
+  let size = Dtype.itemsize dtype in
+  let phase n = n mod (16 / size) * size in
+  ((phase input, phase output), k)
+
 let elements dtype =
   Array.init size (fun i ->
       if Dtype.is_float dtype then `Float (Float.of_int i +. 0.5)
@@ -357,8 +402,8 @@ let elements dtype =
 
 let write = triple int int Dtypes.value
 
-let preserves_writes renderer (dtype, runs) =
-  let k = generated (dtype, runs) in
+let preserves_writes ?phases renderer (dtype, runs) =
+  let k = generated ?phases (dtype, runs) in
   let coalesced = coalesce ~renderer k in
   let merged op =
     List.exists
@@ -374,9 +419,45 @@ let preserves_writes renderer (dtype, runs) =
   in
   equal (list write) (writes k) (writes coalesced)
 
+(* The elements of a merged access from the 16-byte boundary behind its buffer,
+   for each value of the loop's range. *)
+let from_boundary u =
+  let p = Ops.nth u 0 in
+  let lead =
+    match Ops.arg (Ops.buf_uop (Ops.nth p 0)) with
+    | Param q -> q.phase / Dtype.itemsize (Ops.dtype (Ops.nth p 0))
+    | _ -> 0
+  in
+  List.init 4 (fun k ->
+      lead
+      + int_of
+          (Ops.simplify
+             (Ops.substitute (Ops.get_idx (Ops.nth p 1)) [ (r, Ops.int k) ])))
+
+let aligned (phases, k) =
+  let coalesced = coalesce (generated ~phases k) in
+  List.iter
+    (fun u ->
+      if
+        (Ops.op u = Op.Load || Ops.op u = Op.Store)
+        && Ops.op (Ops.nth u 0) = Op.Shrink
+      then begin
+        let width = int_of (Ops.nth (Ops.nth u 0) 2) in
+        cover "a vector access" true;
+        List.iter
+          (fun e ->
+            equal ~msg:(Format.asprintf "%a" Ops.pp u) int 0 (e mod width))
+          (from_boundary u)
+      end)
+    (Ops.toposort coalesced)
+
 let laws =
   group "laws"
     [
+      prop "every vector access is aligned to its width, for every phase (D54)"
+        phased_kernels aligned;
+      prop "coalescing preserves the kernel's writes, for every phase (D54)"
+        phased_kernels (fun (phases, k) -> preserves_writes ~phases vector k);
       prop "coalescing preserves the kernel's writes" kernels_of_runs
         (preserves_writes vector);
       prop "without vector accesses, coalescing preserves the kernel's writes"
@@ -481,4 +562,12 @@ let dmc =
 let () =
   exit
     (run "Tolk_next.Coalesce"
-       [ memory_coalescing; laws; indexing_simplify; readme; allow_half8; dmc ])
+       [
+         memory_coalescing;
+         phases;
+         laws;
+         indexing_simplify;
+         readme;
+         allow_half8;
+         dmc;
+       ])
