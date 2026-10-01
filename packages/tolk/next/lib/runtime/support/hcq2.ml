@@ -1473,19 +1473,28 @@ let bufferize_cmdbuf ?device q name =
     Queue.q q [ binary (String.make ((a - (q.size mod a)) mod a) '\000') ]
   in
   (* The ranges a region's words read, directly or through the address of a
-     region that reads them: a linear hides its words' ranges. *)
+     region that reads them: a linear hides its words' ranges. Each region's
+     are found once, however many regions address it. *)
+  let read = Ops.Tbl.create 16 in
   let rec reads l =
-    dedup
-      (List.concat_map
-         (fun w ->
-           Nodes.to_list (ranges w)
-           @ List.concat_map
-               (fun g ->
-                 if op g = Op.Getaddr && op (nth g 0) = Op.Linear then
-                   reads (nth g 0)
-                 else [])
-               (toposort w))
-         (src l))
+    match Ops.Tbl.find_opt read l with
+    | Some rs -> rs
+    | None ->
+        let rs =
+          dedup
+            (List.concat_map
+               (fun w ->
+                 Nodes.to_list (ranges w)
+                 @ List.concat_map
+                     (fun g ->
+                       if op g = Op.Getaddr && op (nth g 0) = Op.Linear then
+                         reads (nth g 0)
+                       else [])
+                     (toposort w))
+               (src l))
+        in
+        Ops.Tbl.add read l rs;
+        rs
   in
   let placeholder ?(device = Ops.Multi q.devices) n stream =
     placeholder ~device

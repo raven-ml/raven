@@ -1222,6 +1222,20 @@ let word_tests =
               (Ops.toposort ~enter_calls:true compiled)
           in
           equal (list int) [ 0; 256; 384 ] (List.sort_uniq Int.compare starts));
+      test "regions that address the two before them, forty deep, are laid out at once" (fun () ->
+          let d = "CPU:1" in
+          let bytes = Ops.v Binary ~arg:(Bytes (String.make 8 'a')) in
+          let region src = Ops.v Linear ~src ~arg:(Region { name = "r"; align = 8 }) in
+          let rec chain k a b =
+            if k = 0 then b
+            else chain (k - 1) b (region [ Ops.getaddr ~device:d a; Ops.getaddr ~device:d b ])
+          in
+          let first = region [ bytes ] in
+          let q = Hcq2.Queue.v ~devices:[ d ] "q" in
+          ignore (Hcq2.Queue.q q [ Ops.getaddr ~device:d (chain 40 first (region [ first ])) ]);
+          let buf = Hcq2.bufferize_cmdbuf q "test" in
+          is_true ~msg:"the buffer of the regions"
+            (List.exists (fun u -> Ops.tag u = Some (String "r_q")) (Ops.toposort buf)));
       test "a region addressed through another region is laid out once, in the buffer of its name" (fun () ->
           let d = "CPU:1" in
           let region name src = Ops.v Linear ~src ~arg:(Region { name; align = 128 }) in
