@@ -13,7 +13,7 @@ let err_not_int dt =
 let err_not_float dt =
   strf "Const.float expects a floating-point dtype, got %s" (Dtype.to_string dt)
 
-type view = Bool of bool | Int of Z.t | Float of float | Invalid
+type view = Bool of bool | Int of Bigint.t | Float of float | Invalid
 type t = { dtype : Dtype.t; view : view }
 
 let view t = t.view
@@ -28,9 +28,9 @@ let integer (dtype : Dtype.t) value =
   if not (Dtype.is_int dtype) then invalid_arg (err_not_int dtype);
   { dtype; view = Int (Dtype.truncate_integer dtype value) }
 
-let int64 dtype value = integer dtype (Z.of_int64 value)
+let int64 dtype value = integer dtype (Bigint.of_int64 value)
 
-let int dtype value = integer dtype (Z.of_int value)
+let int dtype value = integer dtype (Bigint.of_int value)
 
 let float (dtype : Dtype.t) value =
   if not (Dtype.is_float dtype) then invalid_arg (err_not_float dtype);
@@ -58,7 +58,7 @@ let of_scalar dtype value =
     match value with
     | `Bool b -> int dtype (if b then 1 else 0)
     | `Int n -> int64 dtype n
-    | `Float f -> integer dtype (Z.of_float f)
+    | `Float f -> integer dtype (Bigint.of_float f)
 
 (* C leaves a non-finite float's conversion to an integer undefined. *)
 let converts dtype = function
@@ -69,8 +69,8 @@ let of_view dtype = function
   | Invalid -> invalid
   | Bool b -> of_scalar dtype (`Bool b)
   | Int n ->
-      if Dtype.is_float dtype then float dtype (Z.to_float n)
-      else if Dtype.is_bool dtype then bool (Z.sign n <> 0)
+      if Dtype.is_float dtype then float dtype (Bigint.to_float n)
+      else if Dtype.is_bool dtype then bool (Bigint.sign n <> 0)
       else integer dtype n
   | Float f -> of_scalar dtype (`Float f)
 
@@ -97,7 +97,7 @@ let raw_bits_of_const src c =
   match view c with
   | Bool b -> Some (if b then 1L else 0L)
   | Int n when Dtype.is_int src || Dtype.is_bool src ->
-      Some (Z.to_int64 (Z.signed_extract n 0 (min 64 (bytes * 8))))
+      Some (Bigint.to_int64 (Bigint.signed_extract n 0 (min 64 (bytes * 8))))
   | Float f ->
       (match src with
        | Dtype.Float32 ->
@@ -134,7 +134,7 @@ let bitcast ~dtype:target c =
 let equal_view a b =
   match a, b with
   | Bool x, Bool y -> Bool.equal x y
-  | Int x, Int y -> Z.equal x y
+  | Int x, Int y -> Bigint.equal x y
   | Float x, Float y -> Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y)
   | Invalid, Invalid -> true
   | _ -> false
@@ -144,7 +144,7 @@ let equal a b = Dtype.equal a.dtype b.dtype && equal_view a.view b.view
 let compare_view a b =
   match a, b with
   | Bool x, Bool y -> Bool.compare x y
-  | Int x, Int y -> Z.compare x y
+  | Int x, Int y -> Bigint.compare x y
   | Float x, Float y -> Int64.compare (Int64.bits_of_float x) (Int64.bits_of_float y)
   | Invalid, Invalid -> 0
   | Bool _, _ -> -1 | _, Bool _ -> 1
@@ -159,7 +159,7 @@ let to_string t =
   let s = Dtype.to_string t.dtype in
   match t.view with
   | Bool v -> strf "%b:%s" v s
-  | Int v -> strf "%s:%s" (Z.to_string v) s
+  | Int v -> strf "%s:%s" (Bigint.to_string v) s
   | Float v -> strf "%g:%s" v s
   | Invalid -> strf "Invalid:%s" s
 

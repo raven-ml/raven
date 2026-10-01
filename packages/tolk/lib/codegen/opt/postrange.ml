@@ -510,9 +510,9 @@ let apply_padto t r amount =
     (rng_kind <> Axis_type.Upcast && rng_kind <> Axis_type.Unroll
      && rng_kind <> Axis_type.Warp)
     "cannot pad upcasted or warp";
-  let amount = Z.of_int amount in
-  let new_sz = Z.(ediv (old_size + amount - one) amount * amount) in
-  check Z.(gt old_size (ediv new_sz (of_int 4))) "pad adds more than quadruple the work";
+  let amount = Bigint.of_int amount in
+  let new_sz = Bigint.(ediv (old_size + amount - one) amount * amount) in
+  check Bigint.(gt old_size (ediv new_sz (of_int 4))) "pad adds more than quadruple the work";
   let size n = U.const (Const.integer (U.dtype (range_size r)) n) in
   let replaced_rng = U.replace r ~src:[| size new_sz |] () in
   let valid =

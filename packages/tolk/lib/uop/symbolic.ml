@@ -17,7 +17,7 @@ let const_int_v u =
   match Uop.as_const u with
   | Some c ->
       (match Const.view c with
-       | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
+       | Const.Int n -> if Bigint.fits_int n then Some (Bigint.to_int n) else None
        | _ -> None)
   | _ -> None
 
@@ -65,7 +65,7 @@ let is_zero_const node =
   match U.op node, U.arg node with
   | Ops.Const, U.Arg.Value c -> (
       match Const.view c with
-      | Const.Int n -> Z.equal n Z.zero
+      | Const.Int n -> Bigint.equal n Bigint.zero
       | Const.Float 0.0 | Const.Bool false -> true
       | Const.Float _ | Const.Bool _ | Const.Invalid -> false)
   | _ -> false
@@ -194,7 +194,7 @@ let overflows u (v : Dtype.t) =
 
 let const_as_int c =
   match Const.view c with
-  | Const.Int n -> if Z.fits_int n then Some (Z.to_int n) else None
+  | Const.Int n -> if Bigint.fits_int n then Some (Bigint.to_int n) else None
   | Const.Bool b -> Some (if b then 1 else 0)
   | Const.Float _ | Const.Invalid -> None
 
@@ -1819,7 +1819,7 @@ let parse_valid v =
        | Some c ->
            (match Const.view c with
             | Const.Int n when Bound.equal (Uop.vmin lhs) (`Int n) ->
-                Some (rhs, false, `Int (Z.succ n))
+                Some (rhs, false, `Int (Bigint.succ n))
             | _ -> None)
        | None -> Some (lhs, true, Bound.pred (Uop.vmax rhs)))
   | _ -> None

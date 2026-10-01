@@ -89,21 +89,21 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
     not (is_tc a) && (axis >= P.shape_len s || is_noop a axis (P.full_shape s))
   in
   let upcast_and_local s2 =
-    let up = ref Z.one and lcl = ref Z.one in
+    let up = ref Bigint.one and lcl = ref Bigint.one in
     List.iter2 (fun x t ->
       let sz = U.sym_infer_z x var_vals in
       if t = Axis_type.Upcast || t = Axis_type.Unroll then
-        up := Z.mul !up sz
+        up := Bigint.mul !up sz
       else if t = Axis_type.Warp || t = Axis_type.Local then
-        lcl := Z.mul !lcl sz)
+        lcl := Bigint.mul !lcl sz)
       (P.full_shape s2) (P.axis_types s2);
     let tc_up = match P.tensor_core s2 with
       | Some (tc : Tc.t) ->
           let m, n, k = tc.dims in
-          Z.div (Z.mul (Z.of_int m) (Z.mul (Z.of_int n) (Z.of_int k))) (Z.of_int tc.threads)
-      | None -> Z.one
+          Bigint.div (Bigint.mul (Bigint.of_int m) (Bigint.mul (Bigint.of_int n) (Bigint.of_int k))) (Bigint.of_int tc.threads)
+      | None -> Bigint.one
     in
-    (Z.div !up tc_up, !lcl)
+    (Bigint.div !up tc_up, !lcl)
   in
   let acted = ref (if include_0 then [(0, s)] else []) in
   List.iteri (fun i a ->
@@ -113,12 +113,12 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
       | exception P.Opt_error _ -> ()
       | _ ->
           let up, lcl = upcast_and_local s2 in
-          if Z.gt up (Z.of_int max_up) || Z.gt lcl (Z.of_int max_lcl) then begin
+          if Bigint.gt up (Bigint.of_int max_up) || Bigint.gt lcl (Bigint.of_int max_lcl) then begin
             if beam_log_surpass_max () then
               Printf.eprintf
                 "too many upcast/local. up/tc_up=%s, max_up=%d, lcl=%s, \
                  max_lcl=%d\n%!"
-                (Z.to_string up) max_up (Z.to_string lcl) max_lcl
+                (Bigint.to_string up) max_up (Bigint.to_string lcl) max_lcl
           end else
             acted := (i + 1, s2) :: !acted)
     actions;
@@ -128,11 +128,11 @@ let get_kernel_actions ?(include_0 = true) ?max_up ~var_vals s =
    from the end. Returns (scaled_size, factor). *)
 let get_test_global_size global_size max_global_size =
   let test = Array.copy global_size in
-  let product dims = Array.fold_left (fun acc n -> Z.mul acc (Z.of_int n)) Z.one dims in
+  let product dims = Array.fold_left (fun acc n -> Bigint.mul acc (Bigint.of_int n)) Bigint.one dims in
   let input_size = product test in
-  let limit = Z.of_int max_global_size in
+  let limit = Bigint.of_int max_global_size in
   let cont = ref true in
-  while !cont && Z.gt (product test) limit do
+  while !cont && Bigint.gt (product test) limit do
     cont := false;
     for j = Array.length test - 1 downto 0 do
       if not !cont && test.(j) > 16 then begin
@@ -142,7 +142,7 @@ let get_test_global_size global_size max_global_size =
     done
   done;
   let scaled = product test in
-  (test, Z.to_float input_size /. Z.to_float (Z.max scaled Z.one))
+  (test, Bigint.to_float input_size /. Bigint.to_float (Bigint.max scaled Bigint.one))
 
 (* Compilation *)
 
@@ -361,7 +361,7 @@ let program_ops program var_vals =
   match kernel.estimates with
   | None -> 0.
   | Some {ops = U.Int n; _} -> Float.of_int n
-  | Some {ops = U.Sym node; _} -> Z.to_float (U.sym_infer_z node var_vals)
+  | Some {ops = U.Sym node; _} -> Bigint.to_float (U.sym_infer_z node var_vals)
 
 let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
     (s : P.t) (rawbufs : Device.Buffer.t list) ~var_vals (amt : int)
@@ -370,7 +370,7 @@ let beam_search ~to_program ?(allow_test_size = true) ?disable_cache
       match List.assoc_opt name var_vals with
       | None -> invalid_arg (Printf.sprintf "beam_search: missing variable %S" name)
       | Some value ->
-          let value = `Int (Z.of_int64 value) in
+          let value = `Int (Bigint.of_int64 value) in
           if Bound.lt value lo || Bound.lt hi value then
             invalid_arg (Printf.sprintf "beam_search: variable %S is outside its bounds" name))
     (U.symbolic_vars (P.ast s));

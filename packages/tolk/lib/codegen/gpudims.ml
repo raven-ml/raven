@@ -38,14 +38,14 @@ let special_name_of_kind kind i =
   Gpu_dim.to_special_name dim
 
 let smallest_factor n =
-  let root = Z.sqrt n in
-  let limit = if Z.equal (Z.mul root root) n then root else Z.succ root in
+  let root = Bigint.sqrt n in
+  let limit = if Bigint.equal (Bigint.mul root root) n then root else Bigint.succ root in
   let rec loop f =
-    if Z.gt f limit then Z.one
-    else if Z.equal (Z.rem n f) Z.zero then f
-    else loop (Z.succ f)
+    if Bigint.gt f limit then Bigint.one
+    else if Bigint.equal (Bigint.rem n f) Bigint.zero then f
+    else loop (Bigint.succ f)
   in
-  loop (Z.of_int 2)
+  loop (Bigint.of_int 2)
 
 let array_rev a =
   let n = Array.length a in
@@ -93,18 +93,18 @@ let split_dims dims max_sizes =
        dims (Array.sub max_sizes 0 (Array.length dims))
   then dims
   else begin
-    let d = Array.make 3 Z.one in
-    for i = 0 to min (Array.length dims) 3 - 1 do d.(i) <- Z.of_int dims.(i) done;
+    let d = Array.make 3 Bigint.one in
+    for i = 0 to min (Array.length dims) 3 - 1 do d.(i) <- Bigint.of_int dims.(i) done;
     for i = 0 to 2 do
-      while Z.gt d.(i) (Z.of_int max_sizes.(i)) do
+      while Bigint.gt d.(i) (Bigint.of_int max_sizes.(i)) do
         let div = smallest_factor d.(i) in
-        if Z.equal div Z.one then failwith (err_limit dims max_sizes);
+        if Bigint.equal div Bigint.one then failwith (err_limit dims max_sizes);
         let next = (i + 1) mod 3 in
-        d.(next) <- Z.mul d.(next) div;
-        d.(i) <- Z.div d.(i) div
+        d.(next) <- Bigint.mul d.(next) div;
+        d.(i) <- Bigint.div d.(i) div
       done
     done;
-    Array.map Z.to_int (if Z.equal d.(2) Z.one then Array.sub d 0 2 else d)
+    Array.map Bigint.to_int (if Bigint.equal d.(2) Bigint.one then Array.sub d 0 2 else d)
   end
 
 let flat_index raw limited =

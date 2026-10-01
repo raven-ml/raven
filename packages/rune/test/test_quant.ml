@@ -611,7 +611,7 @@ let test_one_token_gathers () =
     ignore (Nx.to_array (f (ids, x)));
     let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
     ignore (Nx.to_array (f (ids, x)));
-    Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
+    Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
   in
   let gathered = ops 32 and every = ops 4 in
   is_true
@@ -629,7 +629,7 @@ let test_rule () =
     ignore (Nx.to_array (f x));
     let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
     ignore (Nx.to_array (f x));
-    Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before)
+    Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before)
   in
   List.iter
     (fun device ->

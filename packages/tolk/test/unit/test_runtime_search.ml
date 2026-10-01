@@ -721,7 +721,7 @@ let candidate_program_metadata ~large () =
       is_true ~msg:"accepted candidates use the supplied constructor" (Atomic.get compiled > 0);
       is_true ~msg:"PROGRAMs without estimates can still be timed" (!timed > 0);
       estimates := Some { U.ops = U.Sym (U.const
-          (C.integer D.weakint (Z.shift_left Z.one 100)));
+          (C.integer D.weakint (Bigint.shift_left Bigint.one 100)));
         lds = U.Int 0; mem = U.Int 0 };
       timed := 0;
       search ();

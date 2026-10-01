@@ -28,7 +28,7 @@
   test_runtime_search
   test_lru_allocator)
  (package tolk)
- (libraries zarith unix threads nx.dtype tolk tolk.uop tolk.cpu windtrap))
+ (libraries unix threads nx.dtype tolk tolk.uop tolk.cpu windtrap))
 
 ; Exhaustive differential sweep over the beam action set: minutes, not
 ; seconds, so it runs under its own alias rather than @runtest.
@@ -65,7 +65,7 @@
  (name test_schedule_rangeify)
  (modules test_schedule_rangeify)
  (package tolk)
- (libraries zarith unix tolk tolk.uop windtrap))
+ (libraries unix tolk tolk.uop windtrap))
 
 (test
  (name test_schedule_scaling)

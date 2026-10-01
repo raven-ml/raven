@@ -216,7 +216,7 @@ val sum_acc_dtype : t -> t
 
 (** {1:bounds Bounds} *)
 
-type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
+type bound = [ `Bool of bool | `Int of Bigint.t | `Float of float ]
 (** Numeric bounds for dtypes. Returned by {!min} and {!max}.
 
     - [`Bool b] for boolean bounds.
@@ -320,7 +320,7 @@ val truncate_int : t -> int -> int
 
     See also {!truncate_float}. *)
 
-val truncate_integer : t -> Z.t -> Z.t
+val truncate_integer : t -> Bigint.t -> Bigint.t
 (** [truncate_integer dt x] reduces [x] to the range of [dt] using two's
     complement wrapping. {!Weakint} leaves [x] unchanged. {!Bool} maps zero
     to zero and every other value to one.

@@ -34,7 +34,7 @@ let float_div lhs rhs =
    Its weak dtype defers integer-width commitment to the consuming operation. *)
 let shift_power y =
   match Uop.const_int_value (Uop.simplify y) with
-  | Some n -> Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one n))
+  | Some n -> Uop.const (Const.integer Dtype.weakint (Bigint.shift_left Bigint.one n))
   | None ->
       invalid_arg "Decomp_transcendental: shift amount must be a constant"
 
@@ -136,7 +136,7 @@ let frexp v =
   let bits = Uop.bitcast ~src:v ~dtype:(uint_for_float fdt) in
   let exponent = P.and_ (shr bits (Uop.const_int (mantissa_bits fdt)))
       (Uop.const_int (exponent_mask fdt)) in
-  let literal n = Uop.const (Const.integer Dtype.weakint (Z.of_int64 n)) in
+  let literal n = Uop.const (Const.integer Dtype.weakint (Bigint.of_int64 n)) in
   let mantissa = Uop.bitcast ~dtype:fdt
       ~src:(P.or_ (P.and_ bits (literal m1_raw)) (literal m2_raw)) in
   mantissa, P.(exponent - Uop.const_int (exponent_bias fdt) + Uop.const_int 1)

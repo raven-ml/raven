@@ -1652,7 +1652,7 @@ val symbolic_vars : t -> (t * string * Bound.t * Bound.t) list
 (** [symbolic_vars u] is the named, bounded variables [u] reaches, each as
     [(node, name, vmin, vmax)]. *)
 
-val sym_infer_z : t -> (string * int64) list -> Z.t
+val sym_infer_z : t -> (string * int64) list -> Bigint.t
 (** [sym_infer_z u var_vals] is the exact integer [u] evaluates to once its
     variables take their signed 64-bit values in [var_vals]. Casts convert
     scalar kinds without narrowing to storage widths; bitcasts retain the

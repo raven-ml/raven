@@ -689,10 +689,10 @@ let estimate_uop call =
           match args with
           | dest :: _ ->
               let nbytes =
-                Z.mul (Z.of_int (U.max_numel dest))
-                  (Z.of_int (Tolk_uop.Dtype.itemsize (U.dtype dest)))
+                Tolk_uop.Bigint.mul (Tolk_uop.Bigint.of_int (U.max_numel dest))
+                  (Tolk_uop.Bigint.of_int (Tolk_uop.Dtype.itemsize (U.dtype dest)))
               in
-              let bytes = if Z.fits_int nbytes then E.Int (Z.to_int nbytes)
+              let bytes = if Tolk_uop.Bigint.fits_int nbytes then E.Int (Tolk_uop.Bigint.to_int nbytes)
                 else E.Symbolic (U.const (Tolk_uop.Const.integer Tolk_uop.Dtype.weakint nbytes)) in
               { E.zero with lds = bytes; mem = bytes }
           | [] -> E.zero)
@@ -725,7 +725,7 @@ let track_stats ctx call ~device bufs var_vals run =
       | et -> et
     in
     let infer = function
-      | Program_spec.Estimates.Int n -> Z.of_int n
+      | Program_spec.Estimates.Int n -> Tolk_uop.Bigint.of_int n
       | Symbolic u -> U.sym_infer_z u var_vals
     in
     let estimates = estimate_uop call in
@@ -759,7 +759,7 @@ let track_stats ctx call ~device bufs var_vals run =
                 (Helpers.time_to_str ~w:9 t)
                 (if t > 0.01 then Some "yellow" else None)
             in
-            let per x = Z.to_float x /. if t = 0.0 then 1e-20 else t in
+            let per x = Tolk_uop.Bigint.to_float x /. if t = 0.0 then 1e-20 else t in
             let flops = per op_est and membw = per mem_est in
             let ldsbw = per lds_est in
             let flops_str =

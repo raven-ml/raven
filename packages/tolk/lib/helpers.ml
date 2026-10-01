@@ -317,25 +317,25 @@ let size_to_str s =
    allocations and is not reset. *)
 module Global_counters : sig
   type t = {
-    global_ops : Z.t;
-    global_mem : Z.t;
+    global_ops : Tolk_uop.Bigint.t;
+    global_mem : Tolk_uop.Bigint.t;
     time_sum_s : float;
     kernel_count : int;
   }
 
   val snapshot : unit -> t
-  val add : kernels:int -> ops:Z.t -> mem:Z.t -> time:float option -> t
+  val add : kernels:int -> ops:Tolk_uop.Bigint.t -> mem:Tolk_uop.Bigint.t -> time:float option -> t
   val reset : unit -> unit
   val mem_used : ?device:string -> unit -> int
 end = struct
   type t = {
-    global_ops : Z.t;
-    global_mem : Z.t;
+    global_ops : Tolk_uop.Bigint.t;
+    global_mem : Tolk_uop.Bigint.t;
     time_sum_s : float;
     kernel_count : int;
   }
 
-  let empty = { global_ops = Z.zero; global_mem = Z.zero;
+  let empty = { global_ops = Tolk_uop.Bigint.zero; global_mem = Tolk_uop.Bigint.zero;
                 time_sum_s = 0.; kernel_count = 0 }
   let state = Atomic.make empty
   let snapshot () = Atomic.get state
@@ -343,8 +343,8 @@ end = struct
   let rec add ~kernels ~ops ~mem ~time =
     let previous = snapshot () in
     let next = {
-      global_ops = Z.add previous.global_ops ops;
-      global_mem = Z.add previous.global_mem mem;
+      global_ops = Tolk_uop.Bigint.add previous.global_ops ops;
+      global_mem = Tolk_uop.Bigint.add previous.global_mem mem;
       time_sum_s = previous.time_sum_s +. Option.value time ~default:0.;
       kernel_count = previous.kernel_count + kernels;
     } in

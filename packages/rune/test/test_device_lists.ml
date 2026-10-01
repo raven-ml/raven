@@ -1060,11 +1060,11 @@ let test_remat_over_a_split_batch () =
     ignore (g (rows devs4 x));
     let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
     let y = g (rows devs4 x) in
-    (y, Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
+    (y, Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
   in
   let y, recomputed = ops (grad true) and _, kept = ops (grad false) in
   check_arr ~msg:"split grads" (to_arr (grad true x)) y;
-  is_true ~msg:"the block is recomputed" (Z.gt recomputed kept)
+  is_true ~msg:"the block is recomputed" (Tolk_uop.Bigint.gt recomputed kept)
 
 (* The DP microbench: a 2-layer MLP train step (value_and_grad + SGD inside the
    compiled function), the parameters entering from the host as a copy on each

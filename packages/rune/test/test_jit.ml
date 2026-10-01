@@ -952,7 +952,7 @@ let test_scan_carry_written_in_place () =
       ignore (g c0);
       let before = (Tolk.Helpers.Global_counters.snapshot ()).global_mem in
       let c, ys = g c0 in
-      let bytes = Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before) in
+      let bytes = Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_mem before) in
       let msg what = Printf.sprintf "%s (read_old %b)" what read_old in
       check_arr ~msg:(msg "cache") (to_arr expected_c.cache) c.cache;
       check_arr ~msg:(msg "state") (to_arr expected_c.h) c.h;
@@ -1498,8 +1498,8 @@ let test_vmap_over_jvp_of_scan_keeps_the_primal_once () =
     ignore (f ());
     let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
     ignore (f ());
-    Z.to_int
-      (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
+    Tolk_uop.Bigint.to_int
+      (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before)
   in
   let g = Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) (sofo xs) in
   let lanes k = ops (fun () -> g w0 (series 3 [| k; 3; 3 |])) in
@@ -2607,7 +2607,7 @@ let test_argsort_is_not_quadratic () =
   ignore (g x);
   let before = (Tolk.Helpers.Global_counters.snapshot ()).global_ops in
   ignore (g x);
-  let ops = Z.to_int (Z.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before) in
+  let ops = Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (Tolk.Helpers.Global_counters.snapshot ()).global_ops before) in
   satisfies
     ~msg:(Printf.sprintf "%d operations for %d entries" ops n)
     ~claim:"fewer than n^2" int

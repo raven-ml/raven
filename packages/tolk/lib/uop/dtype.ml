@@ -286,15 +286,15 @@ let sum_acc_dtype dt =
 
 (* Bounds *)
 
-type bound = [ `Bool of bool | `Int of Z.t | `Float of float ]
+type bound = [ `Bool of bool | `Int of Bigint.t | `Float of float ]
 
 let max (dt : t) =
   match dt with
   | Bool -> `Bool true
   | Uint8 | Uint16 | Uint32 | Uint64 ->
-      `Int (Z.pred (Z.shift_left Z.one (bitsize dt)))
+      `Int (Bigint.pred (Bigint.shift_left Bigint.one (bitsize dt)))
   | Int8 | Int16 | Int32 | Int64 | Weakint ->
-      `Int (Z.pred (Z.shift_left Z.one (bitsize dt - 1)))
+      `Int (Bigint.pred (Bigint.shift_left Bigint.one (bitsize dt - 1)))
   | Fp8e4m3 -> `Float 448.
   | Fp8e4m3fnuz -> `Float 240.
   | Fp8e5m2fnuz -> `Float 57344.
@@ -305,7 +305,7 @@ let max (dt : t) =
 let min (dt : t) =
   match max dt with
   | `Bool _ -> `Bool false
-  | `Int n -> `Int (if is_unsigned dt then Z.zero else Z.neg (Z.succ n))
+  | `Int n -> `Int (if is_unsigned dt then Bigint.zero else Bigint.neg (Bigint.succ n))
   | `Float f -> `Float (-. f)
 
 let finfo = function
@@ -424,9 +424,9 @@ let truncate_int (dt : t) x =
 
 let truncate_integer (dt : t) x =
   if dt = Weakint then x
-  else if dt = Bool then if Z.equal x Z.zero then Z.zero else Z.one
-  else if is_unsigned dt then Z.extract x 0 (bitsize dt)
-  else if is_int dt then Z.signed_extract x 0 (bitsize dt)
+  else if dt = Bool then if Bigint.equal x Bigint.zero then Bigint.zero else Bigint.one
+  else if is_unsigned dt then Bigint.extract x 0 (bitsize dt)
+  else if is_int dt then Bigint.signed_extract x 0 (bitsize dt)
   else invalid_arg "truncate_integer: not an integer or bool dtype"
 
 (* Storage conversion *)

@@ -161,7 +161,7 @@ let pm_lower_index_dtype () =
    it; an integer the cast wraps is another value. *)
 let keeps_value s c =
   match Option.map Const.view (U.as_const s), Option.map Const.view (U.as_const c) with
-  | Some (Const.Int a), Some (Const.Int b) -> Z.equal a b
+  | Some (Const.Int a), Some (Const.Int b) -> Bigint.equal a b
   | _ -> true
 
 let uncast_const u =

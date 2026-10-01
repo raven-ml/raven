@@ -81,7 +81,7 @@ let counters =
           in
           Device.Buffer.ensure_allocated buf;
           let used = G.mem_used () in
-          ignore (G.add ~kernels:3 ~ops:Z.zero ~mem:Z.zero ~time:None);
+          ignore (G.add ~kernels:3 ~ops:Tolk_uop.Bigint.zero ~mem:Tolk_uop.Bigint.zero ~time:None);
           G.reset ();
           equal int 0 (G.snapshot ()).kernel_count;
           equal int used (G.mem_used ());

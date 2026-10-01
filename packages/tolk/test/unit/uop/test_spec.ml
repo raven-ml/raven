@@ -1116,26 +1116,26 @@ let program_oob_affine_proof_preserves_narrowing () =
 let program_oob_affine_proof_preserves_unsigned_overflow () =
   List.iter (fun dtype ->
       let shift = Dtype.bitsize dtype - 1 in
-      let scale = Z.shift_left Z.one shift in
+      let scale = Bigint.shift_left Bigint.one shift in
       let x = Uop.variable ~param:true ~name:"affine_unsigned" ~min_val:0 ~max_val:3
           ~dtype () in
       let scalar n = Uop.const (Const.integer dtype n) in
-      let gate = Uop.alu_binary ~op:Ops.And ~lhs:Uop.O.(scalar Z.zero < x)
-          ~rhs:Uop.O.(x < scalar (Z.of_int 3)) in
+      let gate = Uop.alu_binary ~op:Ops.And ~lhs:Uop.O.(scalar Bigint.zero < x)
+          ~rhs:Uop.O.(x < scalar (Bigint.of_int 3)) in
       List.iter (fun product ->
           let index = Uop.O.(Uop.cast ~src:product ~dtype:Dtype.int64 +
-              Uop.const (Const.integer Dtype.int64 (Z.neg scale))) in
+              Uop.const (Const.integer Dtype.int64 (Bigint.neg scale))) in
           is_false ~msg:(Printf.sprintf "%s %s can wrap before widening"
               (Dtype.to_string dtype) (Ops.name (Uop.op product)))
-            (masked_access_accepted ~size:(Z.to_int (Z.succ scale)) ~index ~gate))
+            (masked_access_accepted ~size:(Bigint.to_int (Bigint.succ scale)) ~index ~gate))
         [ Uop.O.(x * scalar scale);
-          Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:(scalar (Z.of_int shift)) ])
+          Uop.alu_binary ~op:Ops.Shl ~lhs:x ~rhs:(scalar (Bigint.of_int shift)) ])
     [ Dtype.uint8; Dtype.uint16; Dtype.uint32 ]
 
 let program_oob_affine_proof_checks_committed_constants () =
   let index, row_gate, col_gate = distributed_metal_access () in
   let gate = Uop.alu_binary ~op:Ops.And ~lhs:row_gate ~rhs:col_gate in
-  let invalid = Uop.cconst (Const.integer Dtype.weakint (Z.of_string "4294967295")) Dtype.int32 in
+  let invalid = Uop.cconst (Const.integer Dtype.weakint (Bigint.of_string "4294967295")) Dtype.int32 in
   is_false ~msg:"a committed constant cannot be treated as its weak positive payload"
     (masked_access_accepted ~size:117 ~index:Uop.O.(index + invalid) ~gate)
 
@@ -1143,7 +1143,7 @@ let program_oob_unsigned_add_can_wrap dtype () =
   let maximum = Bound.integer (Dtype.max dtype) in
   let x = Uop.param ~slot:(-1) ~name:"unsigned_wrap" ~dtype
       ~shape:(Uop.stack [])
-      ~vmin_vmax:(`Int (Z.pred maximum), `Int maximum)
+      ~vmin_vmax:(`Int (Bigint.pred maximum), `Int maximum)
       ~multiple_of:1 ~addrspace:Dtype.Alu () in
   let one = Uop.const (Const.int dtype 1) in
   let gate = Uop.O.(x + one < one) in
@@ -1165,10 +1165,10 @@ let program_oob_small_unsigned_add_wraps () =
 let program_oob_committed_guard_constants () =
   let x = Uop.variable ~param:true ~name:"guard_constant" ~min_val:0 ~max_val:31
       ~dtype:Dtype.int32 () in
-  let upper = Uop.const (Const.integer Dtype.int32 (Z.of_string "-2147483649")) in
+  let upper = Uop.const (Const.integer Dtype.int32 (Bigint.of_string "-2147483649")) in
   is_false ~msg:"an overflowing committed guard constant is not its weak payload"
     (masked_access_accepted ~size:16 ~index:x ~gate:Uop.O.(x < upper));
-  let lower = Uop.const (Const.integer Dtype.int32 (Z.of_string "4294967295")) in
+  let lower = Uop.const (Const.integer Dtype.int32 (Bigint.of_string "4294967295")) in
   is_false ~msg:"component proof must preserve overflowing guard casts"
     (masked_access_accepted ~size:1 ~index:Uop.O.(x + i32 (-31))
        ~gate:Uop.O.(lower < x))

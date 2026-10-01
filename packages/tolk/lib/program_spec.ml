@@ -55,7 +55,7 @@ module Estimates = struct
   let zero = { ops = Int 0; lds = Int 0; mem = Int 0 }
 
   let of_integer n =
-    if Z.fits_int n then Int (Z.to_int n)
+    if Bigint.fits_int n then Int (Bigint.to_int n)
     else Symbolic (U.const (Const.integer Dtype.weakint n))
 
   let of_node node =
@@ -70,7 +70,7 @@ module Estimates = struct
   let add_estimate a b =
     match (a, b) with
     | Int 0, x | x, Int 0 -> x
-    | Int a, Int b -> of_integer (Z.add (Z.of_int a) (Z.of_int b))
+    | Int a, Int b -> of_integer (Bigint.add (Bigint.of_int a) (Bigint.of_int b))
     | _ -> Symbolic (U.alu_binary ~op:Ops.Add ~lhs:(as_node a) ~rhs:(as_node b))
 
   let ( + ) a b =
@@ -103,7 +103,7 @@ module Estimates = struct
     match (a, b) with
     | Int 0, _ | _, Int 0 -> Int 0
     | Int 1, x | x, Int 1 -> x
-    | Int a, Int b -> of_integer (Z.mul (Z.of_int a) (Z.of_int b))
+    | Int a, Int b -> of_integer (Bigint.mul (Bigint.of_int a) (Bigint.of_int b))
     | _ -> Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:(as_node a) ~rhs:(as_node b))
 
   let min_estimate a b =
@@ -243,7 +243,7 @@ module Estimates = struct
           (match U.as_wmma u with
            | Some { info; _ } ->
                let m, n, k = info.dims in
-               add_ops (of_integer Z.(div (of_int 2 * of_int m * of_int n * of_int k)
+               add_ops (of_integer Bigint.(div (of_int 2 * of_int m * of_int n * of_int k)
                  (of_int info.threads)))
            | None -> add_ops (Int 2))
       | _ -> ())
@@ -404,7 +404,7 @@ let launch_dim u =
   match U.arg u with
   | U.Arg.Value c ->
       (match Const.view c with
-       | Const.Int n -> U.Launch_int (Z.to_int n)
+       | Const.Int n -> U.Launch_int (Bigint.to_int n)
        | Const.Float f -> U.Launch_float f
        | _ -> U.Launch_sym u)
   | _ -> U.Launch_sym u

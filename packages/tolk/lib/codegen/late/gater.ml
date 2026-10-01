@@ -60,11 +60,11 @@ let gated_mop mop idx =
    the constant conversion does not model, so it does not come back. *)
 let survives c dtype =
   match Const.of_view dtype (Const.view c) with
-  | exception (Z.Overflow | Invalid_argument _) -> false
+  | exception (Bigint.Overflow | Invalid_argument _) -> false
   | there ->
       let in_range =
         match (Const.view there, Dtype.min dtype, Dtype.max dtype) with
-        | Const.Int n, `Int lo, `Int hi -> Z.leq lo n && Z.leq n hi
+        | Const.Int n, `Int lo, `Int hi -> Bigint.leq lo n && Bigint.leq n hi
         | _ -> true
       in
       in_range

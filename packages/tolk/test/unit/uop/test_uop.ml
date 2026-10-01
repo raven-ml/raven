@@ -488,13 +488,13 @@ let integer_bounds_parity () =
     is_true (Bound.equal (Uop.vmin u) (`Int lo));
     is_true (Bound.equal (Uop.vmax u) (`Int hi))
   in
-  let signed_max = Z.of_int64 Int64.max_int in
-  let signed_min = Z.of_int64 Int64.min_int in
-  let unsigned_max = Z.pred (Z.shift_left Z.one 64) in
+  let signed_max = Bigint.of_int64 Int64.max_int in
+  let signed_min = Bigint.of_int64 Int64.min_int in
+  let unsigned_max = Bigint.pred (Bigint.shift_left Bigint.one 64) in
   exact_bounds (Uop.const (Const.int64 Dtype.int64 Int64.max_int)) signed_max signed_max;
   exact_bounds (Uop.const (Const.int64 Dtype.int64 Int64.min_int)) signed_min signed_min;
   exact_bounds (Uop.const (Const.int64 Dtype.uint64 Int64.minus_one)) unsigned_max unsigned_max;
-  exact_bounds (Uop.param ~slot:7 ~dtype:Dtype.uint64 ()) Z.zero unsigned_max;
+  exact_bounds (Uop.param ~slot:7 ~dtype:Dtype.uint64 ()) Bigint.zero unsigned_max;
   let wrapping_const =
     Uop.const
       (Const.int64 Dtype.weakint (Int64.add Int64.min_int 5L))
@@ -592,7 +592,7 @@ let placeholder_checks_shape_product () =
     [Dtype.Global; Dtype.Local; Dtype.Reg]
 
 let max_numel_handles_zero_after_large_dimensions () =
-  let huge = Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100)) in
+  let huge = Uop.const (Const.integer Dtype.weakint (Bigint.shift_left Bigint.one 100)) in
   let buffer = Uop.param ~slot:0 ~dtype:Dtype.float32
       ~shape:(Uop.stack [ huge; Uop.const_int 0 ]) () in
   equal int 0 (Uop.max_numel buffer);
@@ -619,7 +619,7 @@ let bitcast_dimensions_remain_exact_until_host_conversion () =
   let base = Uop.param ~slot:0 ~dtype:Dtype.uint64
       ~shape:(Uop.const_int max_int) () in
   let bytes = Uop.bitcast ~src:base ~dtype:Dtype.uint8 in
-  let expected = Z.mul (Z.of_int max_int) (Z.of_int 8) in
+  let expected = Bigint.mul (Bigint.of_int max_int) (Bigint.of_int 8) in
   (match Uop.shape bytes with
    | [ dim ] -> is_true (Bound.equal (Uop.vmax dim) (`Int expected))
    | _ -> fail "expected one exact byte dimension");
@@ -629,37 +629,37 @@ let bitcast_dimensions_remain_exact_until_host_conversion () =
     (fun () -> Uop.max_numel bytes)
 
 let exact_symbolic_bounds () =
-  let huge = Z.shift_left Z.one 200 in
+  let huge = Bigint.shift_left Bigint.one 200 in
   let value n = Uop.const (Const.integer Dtype.weakint n) in
   let exact u n =
     is_true (Bound.equal (Uop.vmin u) (`Int n));
     is_true (Bound.equal (Uop.vmax u) (`Int n))
   in
-  exact Uop.O.(value huge - value Z.(pred huge)) Z.one;
-  exact Uop.O.(value huge * value huge) Z.(mul huge huge);
+  exact Uop.O.(value huge - value Bigint.(pred huge)) Bigint.one;
+  exact Uop.O.(value huge * value huge) Bigint.(mul huge huge);
   exact (Uop.contiguous ~src:(value huge) ~force:true ()) huge;
   let shifted = Uop.alu_binary ~op:Ops.Shl ~lhs:(value huge) ~rhs:(Uop.const_int 100) in
-  exact shifted Z.(shift_left one 300);
+  exact shifted Bigint.(shift_left one 300);
   let v = Uop.param ~slot:(-1) ~dtype:Dtype.weakint ~name:"wide"
-      ~vmin_vmax:(`Int huge, `Int Z.(add huge (of_int 7)))
+      ~vmin_vmax:(`Int huge, `Int Bigint.(add huge (of_int 7)))
       ~addrspace:Dtype.Alu ~shape:(Uop.stack []) () in
   let small = Uop.O.(v - value huge) in
   (match Symbolic.parse_valid Uop.O.(value huge < v) with
    | Some (subject, false, lo) ->
        is_true (Uop.equal subject v);
-       is_true (Bound.equal lo (`Int (Z.succ huge)))
+       is_true (Bound.equal lo (`Int (Bigint.succ huge)))
    | _ -> fail "expected exact lower-bound clause");
   equal_bounds ~msg:"cancellation retains a tight interval" small (0, 7);
   is_true (Uop.resolve ~default:false Uop.O.(small < Uop.const_int 8));
-  let above_float = value (Z.of_string "9007199254740993") in
+  let above_float = value (Bigint.of_string "9007199254740993") in
   let rounded_float = Uop.const (Const.float Dtype.float64 9007199254740992.) in
   let comparison = Uop.alu_binary ~op:Ops.Cmplt ~lhs:rounded_float ~rhs:above_float in
-  exact comparison Z.one;
+  exact comparison Bigint.one;
   let nan = Uop.const (Const.float Dtype.float32 Float.nan) in
   is_true (Bound.equal (Uop.vmin nan) (`Float neg_infinity));
   is_true (Bound.equal (Uop.vmax nan) (`Float infinity));
   let fractional = Uop.const (Const.float Dtype.float64 (-3.75)) in
-  exact (Uop.cast ~src:fractional ~dtype:Dtype.int32) (Z.of_int (-3));
+  exact (Uop.cast ~src:fractional ~dtype:Dtype.int32) (Bigint.of_int (-3));
   raises_match (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Bound.to_int (`Int huge))
 
@@ -669,13 +669,13 @@ let unsigned_arithmetic_bounds_cover_emission () =
       ~vmin_vmax:(`Int lo, `Int hi) ~addrspace:Dtype.Alu () in
   List.iter (fun dtype ->
       let maximum = Bound.integer (Dtype.max dtype) in
-      let x = parameter dtype "unsigned_bounds" Z.zero maximum in
+      let x = parameter dtype "unsigned_bounds" Bigint.zero maximum in
       let constant n = Uop.const (Const.int dtype n) in
       let cases =
-        [ Ops.Add, 1, (fun n -> Z.succ n);
-          Ops.Sub, 1, (fun n -> Z.pred n);
-          Ops.Mul, 2, (fun n -> Z.mul n (Z.of_int 2));
-          Ops.Shl, 1, (fun n -> Z.shift_left n 1) ] in
+        [ Ops.Add, 1, (fun n -> Bigint.succ n);
+          Ops.Sub, 1, (fun n -> Bigint.pred n);
+          Ops.Mul, 2, (fun n -> Bigint.mul n (Bigint.of_int 2));
+          Ops.Shl, 1, (fun n -> Bigint.shift_left n 1) ] in
       List.iter (fun (op, rhs, exact) ->
           let value = Uop.alu_binary ~op ~lhs:x ~rhs:(constant rhs) in
           List.iter (fun input ->
@@ -684,11 +684,11 @@ let unsigned_arithmetic_bounds_cover_emission () =
               is_true
                 ~msg:(Printf.sprintf "%s %s at %s must include %s"
                   (Dtype.to_string dtype) (Ops.name op)
-                  (Z.to_string input) (Z.to_string narrowed))
+                  (Bigint.to_string input) (Bigint.to_string narrowed))
                 (Bound.le (Uop.vmin value) (`Int narrowed)
                  && Bound.le (`Int narrowed) (Uop.vmax value)))
-            [ Z.zero; Z.one; Z.pred maximum; maximum ]) cases;
-      let narrow = parameter dtype "unsigned_in_range" (Z.of_int 2) (Z.of_int 7) in
+            [ Bigint.zero; Bigint.one; Bigint.pred maximum; maximum ]) cases;
+      let narrow = parameter dtype "unsigned_in_range" (Bigint.of_int 2) (Bigint.of_int 7) in
       equal_bounds ~msg:"nonoverflowing unsigned addition remains precise"
         Uop.O.(narrow + constant 3) (5, 10);
       equal_bounds ~msg:"unsigned masking retains its tight interval"
@@ -699,13 +699,13 @@ let unsigned_arithmetic_bounds_cover_emission () =
   equal_bounds ~msg:"signed overflow retains the full destination interval"
     Uop.O.(signed + Uop.const (Const.int Dtype.int32 1))
     (-2147483648, 2147483647);
-  let huge = Z.shift_left Z.one 90 in
-  let weak = parameter Dtype.weakint "weak_exact" huge (Z.succ huge) in
+  let huge = Bigint.shift_left Bigint.one 90 in
+  let weak = parameter Dtype.weakint "weak_exact" huge (Bigint.succ huge) in
   let result = Uop.O.(weak + Uop.const_int 1) in
-  equal string (Z.to_string (Z.succ huge))
-    (Z.to_string (Bound.integer (Uop.vmin result)));
-  equal string (Z.to_string (Z.add huge (Z.of_int 2)))
-    (Z.to_string (Bound.integer (Uop.vmax result)))
+  equal string (Bigint.to_string (Bigint.succ huge))
+    (Bigint.to_string (Bound.integer (Uop.vmin result)));
+  equal string (Bigint.to_string (Bigint.add huge (Bigint.of_int 2)))
+    (Bigint.to_string (Bound.integer (Uop.vmax result)))
 
 let cast_bounds () =
   let fits = Uop.variable ~name:"fits" ~min_val:5 ~max_val:10 () in
@@ -798,7 +798,7 @@ let const_scalar_payload_constructors () =
     (Dtype.equal (dtype scalar) Dtype.int32);
   (match as_const scalar with
    | Some c ->
-       is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int (Z.of_int 2))
+       is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int (Bigint.of_int 2))
    | _ -> is_true ~msg:"scalar const payload" false);
   let coerced = const_of_dtype Dtype.float32 (Const_scalar (`Int 2L)) in
   is_true ~msg:"scalar const coerced to requested dtype"
@@ -1281,7 +1281,7 @@ let property_caches_release_nodes () =
 let exec_alu_folds_and_absorbs () =
   let c n = Const.int Dtype.int32 n in
   (match Uop.exec_alu Ops.Add Dtype.int32 [ c 2; c 3 ] with
-   | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int (Z.of_int 5))
+   | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int (Bigint.of_int 5))
    | None -> is_true ~msg:"Add folds constants" false);
   (match
      Uop.exec_alu Ops.Add Dtype.int32 [ c 2; Const.invalid ]
@@ -1294,7 +1294,7 @@ let exec_alu_folds_and_absorbs () =
   (match Uop.exec_alu Ops.Add Dtype.uint8 [ byte 255; byte 1 ] with
    | Some r ->
        is_true ~msg:"an add wraps to the dtype width"
-         (Const.view r = Const.Int (Z.of_int 0))
+         (Const.view r = Const.Int (Bigint.of_int 0))
    | None -> is_true ~msg:"an add folds" false)
 
 let exec_alu_exact_scalars () =
@@ -1766,11 +1766,11 @@ let sym_infer_host_scalars () =
   equal int 0 (Uop.sym_infer Uop.O.(n * Uop.const_int 0) []);
   let bound = Uop.bind ~var:n ~value:(Uop.const_int 7) in
   equal int 9 (Uop.sym_infer Uop.O.(bound + Uop.const_int 1) ["host_n", 8L]);
-  equal string (Z.to_string (Z.shift_left Z.one 64))
-    (Z.to_string (Uop.sym_infer_z Uop.O.(n * n) ["host_n", 0x1_0000_0000L]));
-  equal string (Z.to_string (Z.shift_left Z.one 100))
-    (Z.to_string (Uop.sym_infer_z
-      (Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one 100))) []));
+  equal string (Bigint.to_string (Bigint.shift_left Bigint.one 64))
+    (Bigint.to_string (Uop.sym_infer_z Uop.O.(n * n) ["host_n", 0x1_0000_0000L]));
+  equal string (Bigint.to_string (Bigint.shift_left Bigint.one 100))
+    (Bigint.to_string (Uop.sym_infer_z
+      (Uop.const (Const.integer Dtype.weakint (Bigint.shift_left Bigint.one 100))) []));
   raises (Invalid_argument "sym_infer: result does not fit a host integer")
     (fun () -> Uop.sym_infer Uop.O.(n * n) ["host_n", 0x1_0000_0000L]);
   raises (Invalid_argument "sym_infer: missing variable \"host_n\"")
@@ -1979,7 +1979,7 @@ let upat_captures_operands () =
       let x = Upat.(bs $ "x") and y = Upat.(bs $ "y") in
       let get_int u = match Uop.arg u with
         | Uop.Arg.Value c -> (match Const.view c with
-            | Int n -> Some (Z.to_int n) | _ -> None)
+            | Int n -> Some (Bigint.to_int n) | _ -> None)
         | _ -> None
       in
       is_true ~msg:"x = 7" (get_int x = Some 7);
@@ -2051,8 +2051,8 @@ let upat_matches_node_tags () =
 
 let upat_numeric_literals () =
   let matches pattern value = Upat.match_ pattern (Uop.const value) <> [] in
-  let exact = Const.integer Dtype.weakint (Z.of_string "9007199254740992") in
-  let next = Const.integer Dtype.weakint (Z.of_string "9007199254740993") in
+  let exact = Const.integer Dtype.weakint (Bigint.of_string "9007199254740992") in
+  let next = Const.integer Dtype.weakint (Bigint.of_string "9007199254740993") in
   let rounded = Const.float Dtype.weakfloat 9007199254740992. in
   is_true ~msg:"equal integer and float match" (matches (Upat.const exact) rounded);
   is_false ~msg:"integer is not rounded to match float"
@@ -2209,9 +2209,9 @@ let graph_rewrite_walk_does_not_enter_replacements () =
     match Uop.arg u with
     | Uop.Arg.Value c ->
         (match Const.view c with
-         | Int n when Z.equal n Z.one ->
+         | Int n when Bigint.equal n Bigint.one ->
              Some Uop.O.(Uop.const_int 2 + Uop.const_int 3)
-         | Int n when Z.equal n (Z.of_int 2) -> Some (Uop.const_int 20)
+         | Int n when Bigint.equal n (Bigint.of_int 2) -> Some (Uop.const_int 20)
          | view ->
              ignore view;
              None)
@@ -2354,8 +2354,8 @@ let graph_rewrite_skips_call_body_by_default () =
     match Uop.arg u with
     | Uop.Arg.Value c ->
         (match Const.view c with
-         | Int n when Z.equal n Z.one -> Some (Uop.const_int 10)
-         | Int n when Z.equal n (Z.of_int 2) -> Some (Uop.const_int 20)
+         | Int n when Bigint.equal n Bigint.one -> Some (Uop.const_int 10)
+         | Int n when Bigint.equal n (Bigint.of_int 2) -> Some (Uop.const_int 20)
          | view ->
              ignore view;
              None)

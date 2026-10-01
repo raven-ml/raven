@@ -51,7 +51,7 @@
   nx.backend
   nx.cpu
   tolk
-  zarith
+  tolk.uop
   unix
   threads
   windtrap
@@ -66,7 +66,7 @@
  (name test_quant)
  (modules test_quant)
  (package rune)
- (libraries unix rune nx nx.quant tolk zarith windtrap))
+ (libraries unix rune nx nx.quant tolk tolk.uop windtrap))
 
 (tests
  (names test_jit_alignment)

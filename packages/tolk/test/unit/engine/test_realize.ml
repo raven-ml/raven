@@ -964,15 +964,15 @@ let concurrent_execution_statistics () =
       for _ = 1 to 2000 do
         execute ();
         let snapshot = G.snapshot () in
-        let count = Z.of_int snapshot.kernel_count in
-        equal string (Z.to_string (Z.mul count (Z.of_int 3))) (Z.to_string snapshot.global_ops);
-        equal string (Z.to_string (Z.mul count (Z.of_int 5))) (Z.to_string snapshot.global_mem);
+        let count = Bigint.of_int snapshot.kernel_count in
+        equal string (Bigint.to_string (Bigint.mul count (Bigint.of_int 3))) (Bigint.to_string snapshot.global_ops);
+        equal string (Bigint.to_string (Bigint.mul count (Bigint.of_int 5))) (Bigint.to_string snapshot.global_mem);
         equal (float 1e-15) (float_of_int snapshot.kernel_count *. 0.125) snapshot.time_sum_s
       done)) in
   Array.iter Domain.join workers;
   equal int 8000 (G.snapshot ()).kernel_count;
-  equal string "24000" (Z.to_string (G.snapshot ()).global_ops);
-  equal string "40000" (Z.to_string (G.snapshot ()).global_mem);
+  equal string "24000" (Bigint.to_string (G.snapshot ()).global_ops);
+  equal string "40000" (Bigint.to_string (G.snapshot ()).global_mem);
   equal (float 1e-15) 1000. (G.snapshot ()).time_sum_s
 
 let () =
@@ -1229,7 +1229,7 @@ let () =
           test "execution counters retain exact large costs" (fun () ->
             let state = runtime_state () in
             let device = test_device state in
-            let cost = Z.shift_left Z.one 100 in
+            let cost = Bigint.shift_left Bigint.one 100 in
             let estimates : U.estimates = {
               ops = U.Sym (U.const (Const.integer Dtype.weakint cost));
               mem = U.Int max_int; lds = U.Int 0 } in
@@ -1243,10 +1243,10 @@ let () =
                 (U.linear [call])
             done;
             equal int 0 state.nbufs;
-            equal string (Z.to_string (Z.mul (Z.of_int 2) cost))
-              (Z.to_string (Z.sub (G.snapshot ()).global_ops ops));
-            equal string (Z.to_string (Z.mul (Z.of_int 2) (Z.of_int max_int)))
-              (Z.to_string (Z.sub (G.snapshot ()).global_mem mem)));
+            equal string (Bigint.to_string (Bigint.mul (Bigint.of_int 2) cost))
+              (Bigint.to_string (Bigint.sub (G.snapshot ()).global_ops ops));
+            equal string (Bigint.to_string (Bigint.mul (Bigint.of_int 2) (Bigint.of_int max_int)))
+              (Bigint.to_string (Bigint.sub (G.snapshot ()).global_mem mem)));
           test "runs a kernel call with resolved buffers" (fun () ->
             let state = runtime_state () in
             let device = test_device state in

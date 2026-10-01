@@ -25,7 +25,7 @@ type t
 (** Read-only constant payload. Obtain via {!view}. *)
 type view =
   | Bool of bool  (** Boolean payload. *)
-  | Int of Z.t (** Exact mathematical integer, including unsigned values. *)
+  | Int of Bigint.t (** Exact mathematical integer, including unsigned values. *)
   | Float of float  (** Floating-point payload in native double precision. *)
   | Invalid
       (** Sentinel for masked-out or undefined values. Absorbing under ALU
@@ -44,7 +44,7 @@ val dtype : t -> Dtype.t
 val bool : bool -> t
 (** [bool b] is the boolean constant [b] with dtype {!Dtype.bool}. *)
 
-val integer : Dtype.t -> Z.t -> t
+val integer : Dtype.t -> Bigint.t -> t
 (** [integer dtype n] is [n] at [dtype]: wrapped to a fixed-width dtype's
     range, exact at {!Dtype.weakint}, whose arithmetic can retain intermediates
     larger than any storage dtype.
@@ -52,7 +52,7 @@ val integer : Dtype.t -> Z.t -> t
     Raises [Invalid_argument] if [dtype] is not an integer dtype. *)
 
 val int : Dtype.t -> int -> t
-(** [int dtype n] is [integer dtype (Z.of_int n)]. See {!integer}.
+(** [int dtype n] is [integer dtype (Bigint.of_int n)]. See {!integer}.
 
     Raises [Invalid_argument] if [dtype] is not an integer dtype. *)
 
@@ -81,7 +81,7 @@ val of_scalar : Dtype.t -> Dtype.storage_scalar -> t
     floating-point dtypes produce {!Float} payloads rounded to [dtype]'s
     precision, bool dtypes produce {!Bool}, and all other dtypes produce
     integer payloads. Float-to-integer conversion truncates toward zero without a width limit.
-    Raises [Z.Overflow] when converting a non-finite float to an integer. *)
+    Raises [Bigint.Overflow] when converting a non-finite float to an integer. *)
 
 val converts : Dtype.t -> view -> bool
 (** [converts dtype v] is [false] exactly when [v] is a non-finite float and

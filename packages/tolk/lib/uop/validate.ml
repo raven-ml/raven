@@ -24,9 +24,9 @@ let is_image_shape u =
 let max_numel u =
   match Uop.max_shape u with
   | shape ->
-      let size = List.fold_left (fun size n -> Z.mul size (Z.of_int n)) Z.one shape in
-      if List.for_all (fun n -> n >= 0) shape && Z.fits_int size then
-        Some (Z.to_int size)
+      let size = List.fold_left (fun size n -> Bigint.mul size (Bigint.of_int n)) Bigint.one shape in
+      if List.for_all (fun n -> n >= 0) shape && Bigint.fits_int size then
+        Some (Bigint.to_int size)
       else None
   | exception Invalid_argument _ -> None
 
@@ -112,10 +112,10 @@ let lift_index_proof idx gate =
         let shift_count a b =
           ignore (lift b);
           match integer_const b with
-          | Some (`Int n) when Z.sign n >= 0 && Z.fits_int n ->
+          | Some (`Int n) when Bigint.sign n >= 0 && Bigint.fits_int n ->
               require (Dtype.equal (Uop.dtype a) Dtype.weakint ||
-                       Z.lt n (Z.of_int (Dtype.bitsize (Uop.dtype a))));
-              Z.to_int n
+                       Bigint.lt n (Bigint.of_int (Dtype.bitsize (Uop.dtype a))));
+              Bigint.to_int n
           | _ -> raise Unsupported in
         let lifted = match Uop.op u, Uop.src u with
           | Ops.Const, _ when Dtype.is_int dtype ->
@@ -135,7 +135,7 @@ let lift_index_proof idx gate =
           | Ops.Shl, [|a; b|] when Dtype.is_int dtype ->
               let value = lift a and count = shift_count a b in
               let result = Uop.alu_binary ~op:Ops.Mul ~lhs:value
-                  ~rhs:(Uop.const (Const.integer Dtype.weakint (Z.shift_left Z.one count))) in
+                  ~rhs:(Uop.const (Const.integer Dtype.weakint (Bigint.shift_left Bigint.one count))) in
               require (Bound.le Bound.zero (Uop.vmin a) && fits dtype result);
               result
           | Ops.Shr, [|a; b|] when Dtype.is_int dtype ->

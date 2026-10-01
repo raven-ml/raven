@@ -379,10 +379,10 @@ let contiguous_view u =
         let osz = Dtype.itemsize (U.dtype base) and isz = Dtype.itemsize (U.dtype source) in
         match integer offset, integer (U.simplify U.O.(byte_extent mod U.const_int isz)) with
         | Some offset, Some remainder
-          when Z.equal remainder Z.zero
-            && Z.equal (Z.rem (Z.mul offset (Z.of_int osz)) (Z.of_int isz)) Z.zero ->
+          when Bigint.equal remainder Bigint.zero
+            && Bigint.equal (Bigint.rem (Bigint.mul offset (Bigint.of_int osz)) (Bigint.of_int isz)) Bigint.zero ->
             let offset = U.const (Const.integer Dtype.weakint
-                (Z.div (Z.mul offset (Z.of_int osz)) (Z.of_int isz))) in
+                (Bigint.div (Bigint.mul offset (Bigint.of_int osz)) (Bigint.of_int isz))) in
             let size = U.simplify U.O.(byte_extent // U.const_int isz) in
             Some (U.index ~ptr:(flatten source) ~idxs:[U.O.(range size + offset)] ())
         | _ -> None) in
@@ -420,9 +420,9 @@ let contiguous_view u =
     match U.op result, U.children result with
     | Ops.Index, [base; offset] when U.Ref_tbl.mem proven result ->
         Option.map (fun offset ->
-            let bytes = Z.mul offset (Z.of_int (Dtype.itemsize (U.dtype base))) in
-            if not (Z.fits_int bytes) then invalid_arg "Indexing.contiguous_view: byte offset does not fit a host integer";
-            base, Z.to_int bytes) (integer offset)
+            let bytes = Bigint.mul offset (Bigint.of_int (Dtype.itemsize (U.dtype base))) in
+            if not (Bigint.fits_int bytes) then invalid_arg "Indexing.contiguous_view: byte offset does not fit a host integer";
+            base, Bigint.to_int bytes) (integer offset)
     | _ -> None
 
 (* Layout proof and storage ownership are distinct: arithmetic can have a

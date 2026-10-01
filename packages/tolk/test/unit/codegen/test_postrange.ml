@@ -539,8 +539,8 @@ let padto_tests =
         ignore (P.apply_opt t (U.Opt.Padto {axis = 0; amount = 4}));
         equal int 1 (List.length (P.rngs t));
         let size = (U.src (List.hd (P.rngs t))).(0) in
-        equal string (Z.to_string (Z.succ (Z.of_int max_int)))
-          (Z.to_string (U.sym_infer_z size [])));
+        equal string (Bigint.to_string (Bigint.succ (Bigint.of_int max_int)))
+          (Bigint.to_string (U.sym_infer_z size [])));
       (* Port of test_padto_matmul: PADTO pads 17 → 32 *)
       test "PADTO pads axis to next multiple" (fun () ->
         let ast = elementwise_global_ast ~s0:17 ~s1:4 in
@@ -703,7 +703,7 @@ let state_query_tests =
             U.range ~size:(idx (1 lsl 32)) ~axis ~kind:Ak.Upcast ()) in
         let t = P.create (wrap_sink ranges) (gpu_renderer ()) in
         equal string "18446744073709551616"
-          (Z.to_string (U.sym_infer_z (P.upcast_size t) [])));
+          (Bigint.to_string (U.sym_infer_z (P.upcast_size t) [])));
       test "upcast products retain symbolic extents" (fun () ->
         let n = U.variable ~name:"upcast_n" ~min_val:2 ~max_val:16 () in
         let r = U.range ~size:n ~axis:0 ~kind:Ak.Upcast () in

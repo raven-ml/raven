@@ -59,10 +59,10 @@ let expect_int_estimate label expected = function
 
 let expect_exact_estimate expected bindings estimate =
   let actual = match estimate with
-    | E.Int n -> Z.of_int n
+    | E.Int n -> Bigint.of_int n
     | E.Symbolic node -> U.sym_infer_z node bindings
   in
-  equal string (Z.to_string expected) (Z.to_string actual)
+  equal string (Bigint.to_string expected) (Bigint.to_string actual)
 
 let check_launch_dimension dimension bindings expected =
   let gid = special (Gpu_dim.Group_id 0) dimension in
@@ -509,7 +509,7 @@ let () =
             let a = E.{ ops = Int max_int; lds = Int max_int; mem = Int max_int } in
             let b = E.{ ops = Int 1; lds = Int 1; mem = Int 1 } in
             let sum = E.(a + b) in
-            List.iter (expect_exact_estimate (Z.succ (Z.of_int max_int)) [])
+            List.iter (expect_exact_estimate (Bigint.succ (Bigint.of_int max_int)) [])
               [ sum.ops; sum.lds; sum.mem ]);
           test "nested loop multiplicities retain their exact product" (fun () ->
             let side = 1 lsl ((Sys.int_size / 2) + 1) in
@@ -520,7 +520,7 @@ let () =
             let body = add a a in
             let end_ = U.end_ ~value:body ~ranges:[ inner; outer ] in
             let est = E.of_program [ outer; inner; a; body; end_ ] in
-            expect_exact_estimate (Z.mul (Z.of_int side) (Z.of_int side)) [] est.ops);
+            expect_exact_estimate (Bigint.mul (Bigint.of_int side) (Bigint.of_int side)) [] est.ops);
           test "memory footprints and loop traffic retain exact byte counts" (fun () ->
             let size = U.const_int max_int in
             let p = U.param ~slot:0 ~dtype:Dtype.int64 ~shape:size
@@ -530,7 +530,7 @@ let () =
             let ld = load idx in
             let end_ = U.end_ ~value:ld ~ranges:[ r ] in
             let est = E.of_program [ p; r; idx; ld; end_ ] in
-            let bytes = Z.mul (Z.of_int max_int) (Z.of_int 8) in
+            let bytes = Bigint.mul (Bigint.of_int max_int) (Bigint.of_int 8) in
             expect_exact_estimate bytes [] est.lds;
             expect_exact_estimate bytes [] est.mem);
           test "symbolic traffic is capped at the buffer footprint" (fun () ->
@@ -543,17 +543,17 @@ let () =
                 let ld = load idx in
                 let end_ = U.end_ ~value:ld ~ranges:[ r ] in
                 let est = E.of_program [ p; r; idx; ld; end_ ] in
-                expect_exact_estimate (Z.of_int 8) [ ("estimate_reads", 2L) ] est.mem;
-                expect_exact_estimate (Z.of_int 16) [ ("estimate_reads", 8L) ] est.mem;
-                expect_exact_estimate (Z.of_int 32) [ ("estimate_reads", 8L) ] est.lds)
+                expect_exact_estimate (Bigint.of_int 8) [ ("estimate_reads", 2L) ] est.mem;
+                expect_exact_estimate (Bigint.of_int 16) [ ("estimate_reads", 8L) ] est.mem;
+                expect_exact_estimate (Bigint.of_int 32) [ ("estimate_reads", 8L) ] est.lds)
               [ Dtype.weakint; Dtype.uint32; Dtype.uint64 ]);
           test "WMMA division follows the exact numerator product" (fun () ->
             let side = 1 lsl (((Sys.int_size - 1) / 3) + 1) in
             let w = wmma ~dims:(side, side, side) ~threads:32 in
             let est = E.of_program (U.toposort w) in
-            let expected = Z.div (Z.mul (Z.of_int 2) (Z.pow (Z.of_int side) 3))
-                (Z.of_int 32) in
-            expect_int_estimate "ops" (Z.to_int expected) est.ops);
+            let expected = Bigint.div (Bigint.mul (Bigint.of_int 2) (Bigint.pow (Bigint.of_int side) 3))
+                (Bigint.of_int 32) in
+            expect_int_estimate "ops" (Bigint.to_int expected) est.ops);
           test "loaded trip bounds retain the full scalar width" (fun () ->
             let p = param 0 Dtype.int64 in
             let count = load (index p (U.const_int 0)) in
@@ -562,6 +562,6 @@ let () =
             let body = add a a in
             let end_ = U.end_ ~value:body ~ranges:[ r ] in
             let est = E.of_program [ r; a; body; end_ ] in
-            expect_exact_estimate (Z.of_int64 Int64.max_int) [] est.ops);
+            expect_exact_estimate (Bigint.of_int64 Int64.max_int) [] est.ops);
         ];
     ])

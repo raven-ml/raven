@@ -250,7 +250,7 @@ let try_fold_divmod_congruence d_op x y c =
               let rmin = Uop.vmin rem_sum and rmax = Uop.vmax rem_sum in
               let quotient bound =
                 let n = Bound.integer (Bound.floordiv bound (Bound.int c)) in
-                if Z.fits_int n then Some (Z.to_int n) else None
+                if Bigint.fits_int n then Some (Bigint.to_int n) else None
               in
               match quotient rmin, quotient rmax with
               | Some k, Some kmax when k = kmax ->

@@ -27,7 +27,7 @@ let is_zero_const u =
   match U.as_const u with
   | Some c ->
       (match Const.view c with
-       | Const.Int n -> Z.equal n Z.zero
+       | Const.Int n -> Bigint.equal n Bigint.zero
        | Const.Float f -> Float.equal f 0.0
        | Const.Bool b -> not b
        | Const.Invalid -> false)

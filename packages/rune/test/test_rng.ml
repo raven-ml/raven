@@ -191,7 +191,7 @@ let test_jit_draw_is_computed_once () =
     ignore (g arg);
     let before = ops () in
     ignore (g arg);
-    Z.to_int (Z.sub (ops ()) before)
+    Tolk_uop.Bigint.to_int (Tolk_uop.Bigint.sub (ops ()) before)
   in
   let generator_ops draw rows =
     let x = Nx.ones f32 [| rows; 16 |] in

@@ -6,6 +6,7 @@
   ---------------------------------------------------------------------------*)
 
 module Ops = Ops
+module Bigint = Bigint
 module Axis_type = Axis_type
 module Dtype = Dtype
 module Const = Const

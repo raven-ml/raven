@@ -292,7 +292,7 @@ let is_not c =
 
 let is_zero_const u =
   match const_view u with
-  | Some (Const.Int n) -> Z.equal n Z.zero
+  | Some (Const.Int n) -> Bigint.equal n Bigint.zero
   | Some (Const.Float f) -> Float.equal f 0.0
   | _ -> false
 

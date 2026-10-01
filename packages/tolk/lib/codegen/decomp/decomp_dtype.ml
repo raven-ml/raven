@@ -445,7 +445,7 @@ let rule_long_const =
         let narrow = long_to_int_dtype dv in
         (match Uop.node_tag n, Const.view v with
          | Some "1", Const.Int bits ->
-             let hi = Z.to_int64 (Z.extract bits 32 32) in
+             let hi = Bigint.to_int64 (Bigint.extract bits 32 32) in
              let hi =
                match Dtype.truncate narrow (`Int hi) with
                | `Int n -> n
@@ -453,7 +453,7 @@ let rule_long_const =
              in
              Some (Uop.const (Const.int64 narrow hi))
          | (Some _ | None), Const.Int bits ->
-             let lo = Z.to_int64 (Z.extract bits 0 32) in
+             let lo = Bigint.to_int64 (Bigint.extract bits 0 32) in
              let lo =
                match Dtype.truncate narrow (`Int lo) with
                | `Int n -> n

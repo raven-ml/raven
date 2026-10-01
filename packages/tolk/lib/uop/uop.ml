@@ -513,7 +513,7 @@ let child_ops u =
       Weak_tbl.add child_ops_cache u ops;
       ops
 
-let integer_as_native n = if Z.fits_int n then Some (Z.to_int n) else None
+let integer_as_native n = if Bigint.fits_int n then Some (Bigint.to_int n) else None
 
 let program_var_name u =
   match op u, arg u with
@@ -860,8 +860,8 @@ let bind ~var ~value =
   if not (Bound.le lo bound && Bound.le bound hi) then
     invalid_arg "Uop.bind: value outside variable bounds";
   (match Const.view c with
-   | Const.Int n when not (Z.equal Z.zero
-       (Z.rem n (Z.of_int (Option.value p.multiple_of ~default:1)))) ->
+   | Const.Int n when not (Bigint.equal Bigint.zero
+       (Bigint.rem n (Bigint.of_int (Option.value p.multiple_of ~default:1)))) ->
        invalid_arg "Uop.bind: value violates variable divisor"
    | _ -> ());
   let store = mk ~op:Ops.Store ~dtype:void_dtype ~src:[| var; value |] ~arg:Arg.Empty in
@@ -885,8 +885,8 @@ let index ~ptr ~idxs () =
        | Some c ->
            (match Const.view c with
             | Const.Int n ->
-                if not (Z.fits_int n) then invalid_arg "Uop.index: stack index out of bounds";
-                let i = Z.to_int n and n = Array.length (src ptr) in
+                if not (Bigint.fits_int n) then invalid_arg "Uop.index: stack index out of bounds";
+                let i = Bigint.to_int n and n = Array.length (src ptr) in
                 let i = if i < 0 then n + i else i in
                 if i < 0 || i >= n then invalid_arg "Uop.index: stack index out of bounds";
                 (src ptr).(i)
@@ -1974,10 +1974,10 @@ let dim_binary op a b =
   match const_integer_value a, const_integer_value b with
   | Some x, Some y ->
       let z = match op with
-        | Ops.Add -> Z.add x y
-        | Ops.Sub -> Z.sub x y
-        | Ops.Mul -> Z.mul x y
-        | Ops.Floordiv -> Z.fdiv x y
+        | Ops.Add -> Bigint.add x y
+        | Ops.Sub -> Bigint.sub x y
+        | Ops.Mul -> Bigint.mul x y
+        | Ops.Floordiv -> Bigint.fdiv x y
         | _ -> invalid_arg "Uop.dim_binary: unsupported op"
       in
       const (Const.integer Dtype.weakint z)
@@ -2016,10 +2016,10 @@ let require_non_negative_shape op dims =
 let require_reshape op src_shape target =
   require_non_negative_shape op target;
   match const_integer_value (dim_prod src_shape), const_integer_value (dim_prod target) with
-  | Some src_count, Some target_count when not (Z.equal src_count target_count) ->
+  | Some src_count, Some target_count when not (Bigint.equal src_count target_count) ->
       invalid_shape op
-        (Printf.sprintf "element count changes from %s to %s" (Z.to_string src_count)
-           (Z.to_string target_count))
+        (Printf.sprintf "element count changes from %s to %s" (Bigint.to_string src_count)
+           (Bigint.to_string target_count))
   | _ ->
       if not (equal (dim_prod src_shape) (dim_prod target)) then ()
 
@@ -2907,7 +2907,7 @@ module Promoting = struct
     else
       let k =
         match (Dtype.min dt, Dtype.max dt) with
-        | `Int lo, `Int hi -> const (Const.integer Dtype.weakint (Z.add lo hi))
+        | `Int lo, `Int hi -> const (Const.integer Dtype.weakint (Bigint.add lo hi))
         | `Bool _, `Bool _ -> const_bool true
         | _ -> invalid_arg "Uop.Promoting.minimum: expected a numeric dtype"
       in
@@ -3076,7 +3076,7 @@ let unbind u =
       match as_const value with
       | Some value ->
           (match Const.view value with
-           | Const.Int n when Z.fits_int64 n -> var, Z.to_int64 n
+           | Const.Int n when Bigint.fits_int64 n -> var, Bigint.to_int64 n
            | Const.Int _ -> invalid_arg "Uop.unbind: bound value does not fit int64"
            | _ -> invalid_arg "Uop.unbind: bound value is not an integer")
       | None -> invalid_arg "Uop.unbind: bound value is not an integer")
@@ -3232,21 +3232,21 @@ let program_info_from_sink ?(target = Target.of_string "") sink =
 let const_as_float c =
   match Const.view c with
   | Const.Float f -> Some f
-  | Const.Int n -> Some (Z.to_float n)
+  | Const.Int n -> Some (Bigint.to_float n)
   | Const.Bool b -> Some (if b then 1.0 else 0.0)
   | Const.Invalid -> None
 
 let const_as_integer c =
   match Const.view c with
   | Const.Int n -> Some n
-  | Const.Bool b -> Some (if b then Z.one else Z.zero)
+  | Const.Bool b -> Some (if b then Bigint.one else Bigint.zero)
   | Const.Float _ | Const.Invalid -> None
 
 let const_of_target ~(target : Dtype.t) value =
   match value with
   | `Int n ->
-      if Dtype.is_bool target then Some (Const.bool (Z.sign n <> 0))
-      else if Dtype.is_float target then Some (Const.float target (Z.to_float n))
+      if Dtype.is_bool target then Some (Const.bool (Bigint.sign n <> 0))
+      else if Dtype.is_float target then Some (Const.float target (Bigint.to_float n))
       else Some (Const.integer target n)
   | `Float f -> Some (Const.float target f)
 
@@ -3255,12 +3255,12 @@ let compare_integer_float n f =
   else if f = Float.infinity then Some (-1)
   else if f = Float.neg_infinity then Some 1
   else
-    let c = Z.compare n (Z.of_float f) in
+    let c = Bigint.compare n (Bigint.of_float f) in
     Some (if c <> 0 || f = Float.trunc f then c else if f > 0. then -1 else 1)
 
 let compare_constants a b =
   match const_as_integer a, const_as_integer b, Const.view a, Const.view b with
-  | Some x, Some y, _, _ -> Some (Z.compare x y)
+  | Some x, Some y, _, _ -> Some (Bigint.compare x y)
   | Some n, None, _, Const.Float f -> compare_integer_float n f
   | None, Some n, Const.Float f, _ -> Option.map (fun c -> -c) (compare_integer_float n f)
   | None, None, Const.Float x, Const.Float y ->
@@ -3288,7 +3288,7 @@ let exec_unary op (target : Dtype.t) c =
         Option.bind result (fun f -> const_of_target ~target (`Float f))
   else
     let result = Option.bind (const_as_integer c) (fun x ->
-      match op with Ops.Neg -> Some (Z.neg x) | Ops.Trunc -> Some x | _ -> None) in
+      match op with Ops.Neg -> Some (Bigint.neg x) | Ops.Trunc -> Some x | _ -> None) in
     Option.bind result (fun n -> const_of_target ~target (`Int n))
 
 let exec_binary op (target : Dtype.t) a b =
@@ -3319,19 +3319,19 @@ let exec_binary op (target : Dtype.t) a b =
     match const_as_integer a, const_as_integer b with
     | Some x, Some y ->
         let result = match op with
-          | Ops.Add -> Some (Z.add x y)
-          | Ops.Sub -> Some (Z.sub x y)
-          | Ops.Mul -> Some (Z.mul x y)
-          | Ops.Cdiv -> Some (if Z.equal y Z.zero then Z.zero else Z.div x y)
-          | Ops.Cmod -> Some (if Z.equal y Z.zero then x else Z.rem x y)
-          | Ops.Floordiv -> Some (if Z.equal y Z.zero then Z.zero else Z.fdiv x y)
-          | Ops.Floormod -> Some (if Z.equal y Z.zero then x else Z.sub x (Z.mul (Z.fdiv x y) y))
-          | Ops.Max -> Some (Z.max x y)
-          | Ops.Xor -> Some (Z.logxor x y)
-          | Ops.Or -> Some (Z.logor x y)
-          | Ops.And -> Some (Z.logand x y)
-          | Ops.Shl -> Some (Z.shift_left x (Z.to_int y))
-          | Ops.Shr -> Some (Z.shift_right x (Z.to_int y))
+          | Ops.Add -> Some (Bigint.add x y)
+          | Ops.Sub -> Some (Bigint.sub x y)
+          | Ops.Mul -> Some (Bigint.mul x y)
+          | Ops.Cdiv -> Some (if Bigint.equal y Bigint.zero then Bigint.zero else Bigint.div x y)
+          | Ops.Cmod -> Some (if Bigint.equal y Bigint.zero then x else Bigint.rem x y)
+          | Ops.Floordiv -> Some (if Bigint.equal y Bigint.zero then Bigint.zero else Bigint.fdiv x y)
+          | Ops.Floormod -> Some (if Bigint.equal y Bigint.zero then x else Bigint.sub x (Bigint.mul (Bigint.fdiv x y) y))
+          | Ops.Max -> Some (Bigint.max x y)
+          | Ops.Xor -> Some (Bigint.logxor x y)
+          | Ops.Or -> Some (Bigint.logor x y)
+          | Ops.And -> Some (Bigint.logand x y)
+          | Ops.Shl -> Some (Bigint.shift_left x (Bigint.to_int y))
+          | Ops.Shr -> Some (Bigint.shift_right x (Bigint.to_int y))
           | _ -> None
         in
         Option.bind result (fun n -> const_of_target ~target (`Int n))
@@ -3342,7 +3342,7 @@ let exec_ternary op (target : Dtype.t) a b c =
   | Ops.Where ->
       let condition = match Const.view a with
         | Const.Bool b -> Some b
-        | Const.Int n -> Some (Z.sign n <> 0)
+        | Const.Int n -> Some (Bigint.sign n <> 0)
         | Const.Float f -> Some (f <> 0.)
         | Const.Invalid -> None
       in
@@ -3356,7 +3356,7 @@ let exec_ternary op (target : Dtype.t) a b c =
       else
         (match const_as_integer a, const_as_integer b, const_as_integer c with
          | Some x, Some y, Some z ->
-             const_of_target ~target (`Int (Z.add (Z.mul x y) z))
+             const_of_target ~target (`Int (Bigint.add (Bigint.mul x y) z))
          | _ -> None)
   | _ -> None
 
@@ -3399,7 +3399,7 @@ let sym_infer_z u var_vals =
           | Ops.Bitcast, _, [| source |] ->
               let value = eval source in
               (match Const.view value, Dtype.min (dtype source), Dtype.max (dtype source) with
-               | Const.Int n, `Int lo, `Int hi when Z.lt n lo || Z.gt n hi ->
+               | Const.Int n, `Int lo, `Int hi when Bigint.lt n lo || Bigint.gt n hi ->
                    invalid_arg "sym_infer: bitcast input does not fit its storage dtype"
                | _ -> ());
               let source = Const.of_view (dtype source) (Const.view value) in
@@ -3420,7 +3420,7 @@ let sym_infer_z u var_vals =
         value in
   match Const.view (eval (simplify u)) with
   | Const.Int value -> value
-  | Const.Bool value -> Z.of_int (Bool.to_int value)
+  | Const.Bool value -> Bigint.of_int (Bool.to_int value)
   | _ -> invalid_arg "sym_infer: expression did not evaluate to an integer"
 
 let sym_infer u var_vals =

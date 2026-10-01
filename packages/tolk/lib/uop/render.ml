@@ -97,7 +97,7 @@ let python_float_string f =
 let const_debug_string c =
   match Const.view c with
   | Const.Bool b -> python_bool b
-  | Const.Int n -> Z.to_string n
+  | Const.Int n -> Bigint.to_string n
   | Const.Float f -> python_float_string f
   | Const.Invalid -> "Invalid"
 
@@ -118,7 +118,7 @@ let device_arg_string = function
 
 let bound_pair_string (a, b) =
   let render = function
-    | `Int n -> Z.to_string n
+    | `Int n -> Bigint.to_string n
     | `Float f -> python_float_string f
     | `Bool b -> if b then "True" else "False"
   in

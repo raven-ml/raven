@@ -6,7 +6,6 @@
  (private_modules like)
  (libraries
   unix
-  zarith
   tolk_uop
   tolk
   tolk_amd

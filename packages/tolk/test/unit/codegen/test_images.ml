@@ -340,7 +340,7 @@ let () =
                  (fun n ->
                    match U.op n, U.arg n with
                    | Ops.Const, U.Arg.Value c ->
-                       Const.view c = Const.Int Z.zero
+                       Const.view c = Const.Int Bigint.zero
                        && Dtype.equal (U.dtype n) Dtype.weakint
                    | _ -> false)
                  root);
@@ -415,7 +415,7 @@ let () =
                     (match U.as_const alt with
                   | Some c -> (
                       match Const.view c with
-                      | Const.Int n -> Z.equal n Z.zero
+                      | Const.Int n -> Bigint.equal n Bigint.zero
                       | Const.Float 0.0 | Const.Bool false ->
                           true
                       | Const.Float _ | Const.Bool _

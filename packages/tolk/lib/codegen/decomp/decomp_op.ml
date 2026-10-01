@@ -48,25 +48,25 @@ let threefry2x32 x key =
 (* Hacker's Delight 10-1: find [(m, s)] with [x // d = (x * m) >> s]
    for [0 <= x <= vmax] and [d > 0]. *)
 let magicgu_exact vmax d =
-  if Z.sign d <= 0 || Z.sign vmax < 0 then
+  if Bigint.sign d <= 0 || Bigint.sign vmax < 0 then
     invalid_arg "Decomp_op.magicgu: expected a nonnegative bound and positive divisor";
-  let nc = Z.pred (Z.mul (Z.div (Z.succ vmax) d) d) in
+  let nc = Bigint.pred (Bigint.mul (Bigint.div (Bigint.succ vmax) d) d) in
   let rec find shift =
-    if shift > 2 * Z.numbits vmax then
+    if shift > 2 * Bigint.numbits vmax then
       invalid_arg "Decomp_op.magicgu: no solution";
-    let pow2 = Z.shift_left Z.one shift in
-    let correction = Z.sub (Z.pred d) (Z.rem (Z.pred pow2) d) in
-    if Z.compare pow2 (Z.mul nc correction) > 0 then
-      Z.div (Z.add pow2 correction) d, shift
+    let pow2 = Bigint.shift_left Bigint.one shift in
+    let correction = Bigint.sub (Bigint.pred d) (Bigint.rem (Bigint.pred pow2) d) in
+    if Bigint.compare pow2 (Bigint.mul nc correction) > 0 then
+      Bigint.div (Bigint.add pow2 correction) d, shift
     else find (shift + 1)
   in
   find 0
 
 let magicgu vmax d =
-  let multiplier, shift = magicgu_exact (Z.of_int vmax) (Z.of_int d) in
-  if not (Z.fits_int multiplier) then
+  let multiplier, shift = magicgu_exact (Bigint.of_int vmax) (Bigint.of_int d) in
+  if not (Bigint.fits_int multiplier) then
     invalid_arg "Decomp_op.magicgu: multiplier exceeds the host integer range";
-  Z.to_int multiplier, shift
+  Bigint.to_int multiplier, shift
 
 let int64_to_int_checked n =
   if Int64.compare n (Int64.of_int min_int) < 0
@@ -106,17 +106,17 @@ let shifted_div x x_for_mul multiplier shift =
 (* Multiply-shift division is valid only for a positive divisor and a
    nonnegative dividend. Prove product bounds before choosing its width. *)
 let rec fast_idiv ?(dont_cast = false) ~supports_dtype x d =
-  if Dtype.is_weak (Uop.dtype x) || Z.sign d <= 0
+  if Dtype.is_weak (Uop.dtype x) || Bigint.sign d <= 0
      || Bound.lt (Uop.vmin x) Bound.zero then None
   else
     let dtype = Uop.dtype x in
     let dtype_max = Bound.integer (Dtype.max dtype) in
-    let vmax = Z.min (Bound.integer (Uop.vmax x)) dtype_max in
-    if Z.compare vmax d < 0 then Some (Uop.const_like x 0)
+    let vmax = Bigint.min (Bound.integer (Uop.vmax x)) dtype_max in
+    if Bigint.compare vmax d < 0 then Some (Uop.const_like x 0)
     else
       let multiplier, shift = magicgu_exact vmax d in
-      let product_max = Z.mul multiplier vmax in
-      if Z.compare product_max dtype_max <= 0 then
+      let product_max = Bigint.mul multiplier vmax in
+      if Bigint.compare product_max dtype_max <= 0 then
         Some (shifted_div x x multiplier shift)
       else
         let try_widen () =
@@ -124,15 +124,15 @@ let rec fast_idiv ?(dont_cast = false) ~supports_dtype x d =
           else
             match next_integer_dtype dtype with
             | Some next when supports_dtype next
-              && Z.compare product_max (Bound.integer (Dtype.max next)) <= 0 ->
+              && Bigint.compare product_max (Bound.integer (Dtype.max next)) <= 0 ->
                 Some (shifted_div x (Uop.cast ~src:x ~dtype:next) multiplier shift)
             | _ -> None in
-        let factor_shift = Z.trailing_zeros d in
+        let factor_shift = Bigint.trailing_zeros d in
         if factor_shift = 0 then try_widen ()
         else
           let reduced = Uop.Promoting.shr x (Uop.const_int factor_shift) in
           match fast_idiv ~dont_cast:true ~supports_dtype reduced
-                  (Z.shift_right d factor_shift) with
+                  (Bigint.shift_right d factor_shift) with
           | Some _ as result -> result
           | None -> try_widen ()
 
@@ -169,7 +169,7 @@ let const_integer node =
 
 let const_int64_value node =
   match const_integer node with
-  | Some n when Z.fits_int64 n -> Some (Z.to_int64 n)
+  | Some n when Bigint.fits_int64 n -> Some (Bigint.to_int64 n)
   | _ -> None
 
 let const_bool_value node =
@@ -217,7 +217,7 @@ let is_neg_one node =
   match Uop.as_const node with
   | Some v -> (
       match Const.view v with
-      | Const.Int n -> Z.equal n Z.minus_one
+      | Const.Int n -> Bigint.equal n Bigint.minus_one
       | Const.Float f -> Float.equal f (-1.0)
       | _ -> false)
   | _ -> false
@@ -265,8 +265,8 @@ let rule_floordiv_to_shr (ops : supported_ops) node =
   else match Uop.op node, Uop.dtype node, Uop.src node with
     | Ops.Floordiv, dtype, [| x; divisor |] when Dtype.is_int dtype ->
         (match const_integer divisor with
-         | Some d when Z.compare d Z.one > 0 && Z.popcount d = 1 ->
-             Some (Uop.Promoting.shr x (Uop.const_int (Z.trailing_zeros d)))
+         | Some d when Bigint.compare d Bigint.one > 0 && Bigint.popcount d = 1 ->
+             Some (Uop.Promoting.shr x (Uop.const_int (Bigint.trailing_zeros d)))
          | _ -> None)
     | _ -> None
 
@@ -290,9 +290,9 @@ let rule_floormod_and (ops : supported_ops) node =
   else match Uop.op node, Uop.dtype node, Uop.src node with
     | Ops.Floormod, dt, [| x; c |] when Dtype.is_int dt ->
         (match const_integer c with
-         | Some cv when Z.sign cv > 0 && Z.popcount cv = 1 ->
+         | Some cv when Bigint.sign cv > 0 && Bigint.popcount cv = 1 ->
              Some
-               (Uop.Promoting.and_ x (Uop.const (Const.integer Dtype.weakint (Z.pred cv))))
+               (Uop.Promoting.and_ x (Uop.const (Const.integer Dtype.weakint (Bigint.pred cv))))
          | _ -> None)
     | _ -> None
 
@@ -507,7 +507,7 @@ let rule_not_cmplt_const (ops : supported_ops) node =
              (match const_integer_value_signed c with
               | Some cv ->
                   Some
-                    Uop.Promoting.(weak_integer (Z.pred cv) < x)
+                    Uop.Promoting.(weak_integer (Bigint.pred cv) < x)
               | None -> None)
          | [| c; x |]
            when is_signed_int_node x
@@ -515,7 +515,7 @@ let rule_not_cmplt_const (ops : supported_ops) node =
              (match const_integer_value_signed c with
               | Some cv ->
                   Some
-                    Uop.Promoting.(x < weak_integer (Z.succ cv))
+                    Uop.Promoting.(x < weak_integer (Bigint.succ cv))
               | None -> None)
          | _ -> None)
     | _ -> None
@@ -529,12 +529,12 @@ let rule_negated_signed_cmplt (ops : supported_ops) node =
              (match as_mul_const_signed rhs with
               | Some (y, cv) when is_signed_int_node y ->
                   Some
-                    Uop.Promoting.((y * weak_integer (Z.neg cv)) < x)
+                    Uop.Promoting.((y * weak_integer (Bigint.neg cv)) < x)
               | _ ->
                   (match const_integer_value_signed rhs with
                    | Some cv ->
                        Some
-                         Uop.Promoting.(weak_integer (Z.neg cv) < x)
+                         Uop.Promoting.(weak_integer (Bigint.neg cv) < x)
                    | None -> None))
          | _ -> None)
     | _ -> None
@@ -549,9 +549,9 @@ let rule_bounded_cmplt_to_eq (ops : supported_ops) node =
             when Uop.equal x1 x2 && is_signed_int_node x1 ->
               (match const_integer c1, const_integer c2 with
                | Some lo, Some hi
-                 when Z.equal (Z.succ lo) (Z.pred hi) ->
+                 when Bigint.equal (Bigint.succ lo) (Bigint.pred hi) ->
                    let lhs, rhs = Uop.Promoting.broadcasted x1
-                       (weak_integer (Z.succ lo)) in
+                       (weak_integer (Bigint.succ lo)) in
                    Some (Uop.alu_binary ~op:Ops.Cmpeq ~lhs ~rhs)
                | _ -> None)
           | _ -> None

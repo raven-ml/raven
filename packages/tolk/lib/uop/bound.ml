@@ -4,22 +4,22 @@
 
 type t = Dtype.bound
 
-let int n = `Int (Z.of_int n)
+let int n = `Int (Bigint.of_int n)
 let zero = int 0
 let one = int 1
 
 let integer = function
   | `Int n -> n
-  | `Bool b -> if b then Z.one else Z.zero
+  | `Bool b -> if b then Bigint.one else Bigint.zero
   | `Float _ -> invalid_arg "Bound.integer: floating-point bound"
 
 let to_int b =
   let n = integer b in
-  if Z.fits_int n then Z.to_int n
+  if Bigint.fits_int n then Bigint.to_int n
   else invalid_arg "Bound.to_int: bound exceeds the host integer range"
 
 let to_float = function
-  | `Int n -> Z.to_float n
+  | `Int n -> Bigint.to_float n
   | `Bool b -> if b then 1. else 0.
   | `Float f -> f
 
@@ -28,7 +28,7 @@ let compare_integer_float n f =
   else if f = infinity then -1
   else if f = neg_infinity then 1
   else
-    let c = Z.compare n (Z.of_float f) in
+    let c = Bigint.compare n (Bigint.of_float f) in
     if c <> 0 || f = Float.trunc f then c else if f > 0. then -1 else 1
 
 let compare a b =
@@ -39,7 +39,7 @@ let compare a b =
       Float.compare x y
   | `Float f, b -> -(compare_integer_float (integer b) f)
   | a, `Float f -> compare_integer_float (integer a) f
-  | a, b -> Z.compare (integer a) (integer b)
+  | a, b -> Bigint.compare (integer a) (integer b)
 
 let equal a b = compare a b = 0
 let lt a b = compare a b < 0
@@ -52,24 +52,24 @@ let arithmetic fi ff a b =
   | `Float _, _ | _, `Float _ -> `Float (ff (to_float a) (to_float b))
   | _ -> `Int (fi (integer a) (integer b))
 
-let add = arithmetic Z.add ( +. )
-let sub = arithmetic Z.sub ( -. )
-let mul = arithmetic Z.mul ( *. )
-let neg = function `Float f -> `Float (-.f) | b -> `Int (Z.neg (integer b))
+let add = arithmetic Bigint.add ( +. )
+let sub = arithmetic Bigint.sub ( -. )
+let mul = arithmetic Bigint.mul ( *. )
+let neg = function `Float f -> `Float (-.f) | b -> `Int (Bigint.neg (integer b))
 let succ b = add b one
 let pred b = sub b one
-let cdiv a b = `Int (Z.div (integer a) (integer b))
-let floordiv a b = `Int (Z.fdiv (integer a) (integer b))
+let cdiv a b = `Int (Bigint.div (integer a) (integer b))
+let floordiv a b = `Int (Bigint.fdiv (integer a) (integer b))
 let floormod a b = sub a (mul (floordiv a b) b)
-let lognot b = `Int (Z.lognot (integer b))
-let shift_left a b = `Int (Z.shift_left (integer a) (to_int b))
-let shift_right a b = `Int (Z.shift_right (integer a) (to_int b))
+let lognot b = `Int (Bigint.lognot (integer b))
+let shift_left a b = `Int (Bigint.shift_left (integer a) (to_int b))
+let shift_right a b = `Int (Bigint.shift_right (integer a) (to_int b))
 
 let round dtype b =
   if Dtype.is_float dtype then `Float (Dtype.truncate_float dtype (to_float b))
   else if Dtype.is_int dtype then
     match b with
-    | `Float f when Float.is_finite f -> `Int (Z.of_float f)
+    | `Float f when Float.is_finite f -> `Int (Bigint.of_float f)
     | _ -> b
   else b
 

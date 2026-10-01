@@ -319,7 +319,7 @@ let stack_const_bitcast_folds () =
         | Const.Int n ->
             equal int
               (Int32.to_int (Int32.bits_of_float f))
-              (Z.to_int n)
+              (Bigint.to_int n)
         | _ -> failwith "expected int lane const")
     | _ -> failwith "expected const lane"
   in
@@ -437,7 +437,7 @@ let const_value node =
 
 let check_const_int node expected =
   match C.view (const_value node) with
-  | Int v -> equal string (string_of_int expected) (Z.to_string v)
+  | Int v -> equal string (string_of_int expected) (Bigint.to_string v)
   | _ -> fail "expected int const"
 
 let check_const_float node expected =

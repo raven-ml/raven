@@ -18,7 +18,7 @@ let lower u = src (rewrite (Weak.pm_lower_index_dtype ()) (U.sink [ u ])) 0
 let const_int_of node =
   match U.as_const node with
   | Some c -> (
-      match C.view c with C.Int n -> Some (Z.to_int n) | _ -> None)
+      match C.view c with C.Int n -> Some (Bigint.to_int n) | _ -> None)
   | _ -> None
 
 let i32 n = U.const (C.int D.int32 n)
@@ -167,18 +167,18 @@ let gated_long_index_keeps_wide_storage () =
   equal dtype D.int64 (U.dtype (src (src r 1) 1))
 
 let uint64_width_and_unrepresentable_const () =
-  let maximum = Z.pred (Z.shift_left Z.one 64) in
+  let maximum = Bigint.pred (Bigint.shift_left Bigint.one 64) in
   let value n = U.const (C.integer D.weakint n) in
   let r = lower (value maximum) in
   equal dtype D.uint64 (U.dtype r);
   (match U.as_const r with
    | Some c ->
        (match C.view c with
-        | C.Int n -> is_true (Z.equal maximum n)
+        | C.Int n -> is_true (Bigint.equal maximum n)
         | _ -> fail "expected integer constant")
    | _ -> fail "expected constant");
   raises_match (function Invalid_argument _ -> true | _ -> false)
-    (fun () -> lower (value (Z.succ maximum)))
+    (fun () -> lower (value (Bigint.succ maximum)))
 
 let uncast_preserves_operand_and_result_types () =
   let x = U.variable ~name:"concrete" ~min_val:0 ~max_val:10 ~dtype:D.int32 () in

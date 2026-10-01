@@ -294,7 +294,7 @@ let render_index (ctx : ctx) ~ptr ~idx =
     | Some c -> (
         match Const.view c with
         | Const.Int i ->
-            let i = Z.to_int i in
+            let i = Bigint.to_int i in
             if U.max_numel ptr = 1 then base
             else if U.max_numel ptr > ctx.lang.gep_arr_threshold then
               strf "%s[%d]" base i
@@ -414,14 +414,14 @@ let render_float (ctx : ctx) (dt : Dtype.t) f =
     | _ -> lit
 
 let render_int (ctx : ctx) (dt : Dtype.t) n =
-  let text = Z.to_string n in
+  let text = Bigint.to_string n in
   match dt with
   | Dtype.Int64 -> text ^ "l"
   | Dtype.Uint64 -> text ^ "ul"
   | Dtype.Uint32 -> text ^ "u"
   | Dtype.Uint8 | Dtype.Uint16 -> strf "(%s)" (render_cast ctx dt (text ^ "u"))
   | Dtype.Int8 | Dtype.Int16 -> strf "(%s)" (render_cast ctx dt text)
-  | Dtype.Bool -> if Z.equal n Z.zero then "0" else "1"
+  | Dtype.Bool -> if Bigint.equal n Bigint.zero then "0" else "1"
   | _ -> text
 
 (* [Invalid] payloads are never rendered directly; rejecting here leaves a

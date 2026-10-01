@@ -45,6 +45,8 @@
 
     {2:primitives Primitives}
 
+    - {!Bigint} — exact integers, the values of integer constants and of
+      dtype limits.
     - {!Dtype} — value and pointer data types, promotion lattice, and
       float/integer truncation.
     - {!Const} — typed compile-time constants.
@@ -67,6 +69,7 @@
       arithmetic to [int32], [int64], or [uint64]. *)
 
 module Ops = Ops
+module Bigint = Bigint
 module Axis_type = Axis_type
 module Dtype = Dtype
 module Const = Const

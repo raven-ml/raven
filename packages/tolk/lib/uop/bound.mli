@@ -17,7 +17,7 @@ val zero : t
 val one : t
 (** [one] is the integer endpoint one. *)
 
-val integer : t -> Z.t
+val integer : t -> Bigint.t
 (** [integer b] is the integer value of [b], interpreting booleans as zero or
     one. Raises [Invalid_argument] for floating-point endpoints. *)
 

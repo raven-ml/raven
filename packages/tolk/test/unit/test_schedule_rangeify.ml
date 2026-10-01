@@ -26,7 +26,7 @@ module Ak = Tolk_uop.Axis_type
 
 (* Extract an int from a Const value, assuming it's Int. *)
 let const_to_int (v : C.t) : int =
-  match C.view v with C.Int n -> Z.to_int n | _ -> failwith "not Int"
+  match C.view v with C.Int n -> Tolk_uop.Bigint.to_int n | _ -> failwith "not Int"
 
 let const_to_bool (v : C.t) : bool =
   match C.view v with C.Bool b -> b | _ -> failwith "not Bool"

@@ -19,9 +19,9 @@ let magicgu_wide_bounds () =
   List.iter (fun d ->
       let m, shift = Decomp_op.magicgu vmax d in
       List.iter (fun x ->
-          let actual = Z.shift_right (Z.mul (Z.of_int x) (Z.of_int m)) shift in
+          let actual = Bigint.shift_right (Bigint.mul (Bigint.of_int x) (Bigint.of_int m)) shift in
           equal ~msg:(Printf.sprintf "%d / %d" x d) string
-            (Z.to_string (Z.div (Z.of_int x) (Z.of_int d))) (Z.to_string actual))
+            (Bigint.to_string (Bigint.div (Bigint.of_int x) (Bigint.of_int d))) (Bigint.to_string actual))
         [ 0; d - 1; d; d + 1; vmax / 2; vmax - 1; vmax ]) [ 3; 19 ]
 
 (* threefry2x32: at least terminates and produces a uint64 uop. *)
@@ -48,7 +48,7 @@ let contains_op op (u : Uop.t) =
 let const_int64_value node =
   match Uop.as_const node with
   | Some v ->
-      (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
+      (match Const.view v with Const.Int n -> Some (Bigint.to_int64 n) | _ -> None)
   | _ -> None
 
 let const_float_value node =
@@ -317,7 +317,7 @@ let long_const_halves_are_truncated_to_int32 () =
   let const_int u =
     match Uop.as_const u with
     | Some v ->
-        (match Const.view v with Const.Int n -> Some (Z.to_int64 n) | _ -> None)
+        (match Const.view v with Const.Int n -> Some (Bigint.to_int64 n) | _ -> None)
     | _ -> None
   in
   is_true ~msg:"low and high halves are signed int32 truncated"
@@ -653,7 +653,7 @@ let floor_power_of_two_lowers_before_truncation () =
        (Uop.op result = Ops.Shr && not (contains_op Ops.Cmod result))
    | None -> failwith "floor shift lowering did not fire");
   let wide = Uop.variable ~name:"wide" ~min_val:0 ~max_val:max_int ~dtype:Dtype.uint64 () in
-  let divisor = Uop.const (Const.integer Dtype.uint64 (Z.shift_left Z.one 63)) in
+  let divisor = Uop.const (Const.integer Dtype.uint64 (Bigint.shift_left Bigint.one 63)) in
   List.iter (fun (op, expected) ->
       match rewrite (Uop.alu_binary ~op ~lhs:wide ~rhs:divisor) with
       | Some result -> is_true ~msg:"unsigned power-of-two divisors retain all 64 bits"
@@ -917,47 +917,47 @@ let late_comparisons_use_exact_integer_proofs () =
   let x = param ~slot:0 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
   let y = param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
   let constant n = const (Const.integer Dtype.weakint n) in
-  let min = Z.neg (Z.shift_left Z.one 63) in
-  let max = Z.pred (Z.neg min) in
+  let min = Bigint.neg (Bigint.shift_left Bigint.one 63) in
+  let max = Bigint.pred (Bigint.neg min) in
   let rewrite u = Decomp_op.get_late_rewrite_patterns (supported_ops ()) u in
   let integer u = match as_const u with
     | Some c -> (match Const.view c with
-        | Const.Int n -> Z.to_string n
+        | Const.Int n -> Bigint.to_string n
         | _ -> fail "expected integer constant")
     | None -> fail "expected constant" in
   let reversed = (alu_binary ~op:Ops.And ~lhs:O.(constant max < x)
-      ~rhs:O.(x < constant (Z.succ min))) in
+      ~rhs:O.(x < constant (Bigint.succ min))) in
   is_true ~msg:"empty interval must not wrap to equality at INT64_MIN"
     (Option.is_none (rewrite reversed));
   List.iter (fun midpoint ->
-      let interval = alu_binary ~op:Ops.And ~lhs:O.(constant (Z.pred midpoint) < x)
-          ~rhs:O.(x < constant (Z.succ midpoint)) in
+      let interval = alu_binary ~op:Ops.And ~lhs:O.(constant (Bigint.pred midpoint) < x)
+          ~rhs:O.(x < constant (Bigint.succ midpoint)) in
       let result = Option.get (rewrite interval) in
       is_true (op result = Ops.Cmpeq);
-      Windtrap.equal string (Z.to_string midpoint) (integer (src result).(1)))
-    [Z.succ min; Z.pred max; Z.shift_left Z.one 80];
+      Windtrap.equal string (Bigint.to_string midpoint) (integer (src result).(1)))
+    [Bigint.succ min; Bigint.pred max; Bigint.shift_left Bigint.one 80];
   let not_min = Option.get (rewrite O.(not_ (x < constant min))) in
-  Windtrap.equal string (Z.to_string (Z.pred min)) (integer (src not_min).(0));
+  Windtrap.equal string (Bigint.to_string (Bigint.pred min)) (integer (src not_min).(0));
   let not_max = Option.get (rewrite O.(not_ (constant max < x))) in
-  Windtrap.equal string (Z.to_string (Z.succ max)) (integer (src not_max).(1));
-  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Z.minus_one) in
+  Windtrap.equal string (Bigint.to_string (Bigint.succ max)) (integer (src not_max).(1));
+  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Bigint.minus_one) in
   let neg_min = Option.get (rewrite O.(neg_x < constant min)) in
-  Windtrap.equal string (Z.to_string (Z.neg min)) (integer (src neg_min).(0));
+  Windtrap.equal string (Bigint.to_string (Bigint.neg min)) (integer (src neg_min).(0));
   let product = alu_binary ~op:Ops.Mul ~lhs:y ~rhs:(constant min) in
   let neg_product = Option.get (rewrite O.(neg_x < product)) in
-  Windtrap.equal string (Z.to_string (Z.neg min))
+  Windtrap.equal string (Bigint.to_string (Bigint.neg min))
     (integer (src (src neg_product).(0)).(1))
 
 let comparison_extrema_simplify_before_late_codegen () =
   let open Uop in
   let x = param ~slot:1 ~dtype:Dtype.int64 ~addrspace:Dtype.Alu () in
-  let min = Z.neg (Z.shift_left Z.one 63) in
-  let max = Z.pred (Z.neg min) in
+  let min = Bigint.neg (Bigint.shift_left Bigint.one 63) in
+  let max = Bigint.pred (Bigint.neg min) in
   let constant n = const (Const.integer Dtype.weakint n) in
-  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Z.minus_one) in
+  let neg_x = alu_binary ~op:Ops.Mul ~lhs:x ~rhs:(constant Bigint.minus_one) in
   let cases = [
     "empty interval", (alu_binary ~op:Ops.And ~lhs:O.(constant max < x)
-      ~rhs:O.(x < constant (Z.succ min))), false;
+      ~rhs:O.(x < constant (Bigint.succ min))), false;
     "below minimum", O.(not_ (x < constant min)), true;
     "above maximum", O.(not_ (constant max < x)), true;
     "negated minimum", O.(neg_x < constant min), false;

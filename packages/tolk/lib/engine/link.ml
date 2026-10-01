@@ -44,9 +44,9 @@ let word_bytes c =
   let n = Dtype.itemsize (Const.dtype c) in
   let value = match Const.view c with
     | Const.Int value -> value
-    | Const.Bool value -> Z.of_int (if value then 1 else 0)
+    | Const.Bool value -> Bigint.of_int (if value then 1 else 0)
     | _ -> invalid_arg "link: command words must be integers" in
-  Bytes.init n (fun i -> Char.chr (Z.to_int (Z.extract value (8 * i) 8)))
+  Bytes.init n (fun i -> Char.chr (Bigint.to_int (Bigint.extract value (8 * i) 8)))
 
 let rec run ~resolve ?(allow_cache = true) linear =
   match if allow_cache then find_cached linear else None with
@@ -114,7 +114,7 @@ let rec run ~resolve ?(allow_cache = true) linear =
                    List.iter2 (fun offset value ->
                        let bytes = word_bytes (Option.get value) in
                        let offset = match Const.view (Option.get offset) with
-                         | Const.Int n -> Z.to_int (Z.mul n (Z.of_int (Bytes.length bytes)))
+                         | Const.Int n -> Bigint.to_int (Bigint.mul n (Bigint.of_int (Bytes.length bytes)))
                          | _ -> invalid_arg "link: patch index must be an integer" in
                        write buf offset bytes) offsets values;
                    Some (U.noop ())

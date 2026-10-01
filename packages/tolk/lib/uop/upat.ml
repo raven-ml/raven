@@ -228,15 +228,15 @@ let pp_bindings fmt (b : bindings) =
    integer through a float. *)
 let const_value_equal a b =
   let numeric = function
-    | Const.Bool b -> Const.Int (if b then Z.one else Z.zero)
+    | Const.Bool b -> Const.Int (if b then Bigint.one else Bigint.zero)
     | value -> value
   in
   let integer_float n f =
-    Float.is_finite f && Float.floor f = f && Z.equal n (Z.of_float f)
+    Float.is_finite f && Float.floor f = f && Bigint.equal n (Bigint.of_float f)
   in
   match numeric (Const.view a), numeric (Const.view b) with
   | Const.Invalid, Const.Invalid -> true
-  | Const.Int x, Const.Int y -> Z.equal x y
+  | Const.Int x, Const.Int y -> Bigint.equal x y
   | Const.Float x, Const.Float y -> x = y
   | Const.Int n, Const.Float f | Const.Float f, Const.Int n -> integer_float n f
   | _ -> false
