@@ -349,6 +349,7 @@ let hcq ?(nargs = 0) device : Ops.hcq_info =
     inputs = [];
     slots = [];
     written_bufs = [];
+    writes = [];
   }
 
 let hcq_calls =

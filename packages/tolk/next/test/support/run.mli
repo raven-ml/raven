@@ -44,6 +44,7 @@ val devices : unit -> (string * Nx_device.t) list
 (** [devices ()] maps ["CPU"] to {!Nx_device.host}, and ["CPU:1"], ["CPU:2"] and
     ["CPU:3"] to test devices of the host's memory
     ({!Nx_device.Driver.host_memory}) that address it as it is
-    ({!Nx_device.Driver.mapping}[ Identity]). Their calls run one by one here,
-    and from command queues through {!Null_device}. The test devices are opened
-    by the first call. *)
+    ({!Nx_device.Driver.mapping}[ Identity]), and ["CPU:4"] to one that maps
+    whole pages of it ([Pages]), as a GPU does, and so borrows no host buffer of
+    less than 64 KiB. Their calls run one by one here, and from command queues
+    through {!Null_device}. The test devices are opened by the first call. *)

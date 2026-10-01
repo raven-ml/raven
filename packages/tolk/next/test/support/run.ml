@@ -131,14 +131,23 @@ let values dt b =
 
 (* Test devices *)
 
-let test_device name =
+let test_device ?(mapping = Nx_device.Driver.Identity) name =
   Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
     (Host_visible
-       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
+       { memory = Nx_device.Driver.host_memory; mapping = Some mapping })
+
+(* Maps host memory where it is, a page at least, as a GPU's driver does. *)
+let pages =
+  Nx_device.Driver.Pages
+    {
+      map = (fun a n -> Ok (Nx_device.Driver.Region.v ~host:a a n));
+      unmap = ignore;
+    }
 
 let opened =
   lazy
     (("CPU", Nx_device.host)
-    :: List.map (fun n -> (n, test_device n)) [ "CPU:1"; "CPU:2"; "CPU:3" ])
+     :: List.map (fun n -> (n, test_device n)) [ "CPU:1"; "CPU:2"; "CPU:3" ]
+    @ [ ("CPU:4", test_device ~mapping:pages "CPU:4") ])
 
 let devices () = Lazy.force opened

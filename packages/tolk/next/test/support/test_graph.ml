@@ -162,6 +162,7 @@ let kinds =
           inputs = [ (buffer, 0, "GLOBAL") ];
           slots = [ ("AMD", 1) ];
           written_bufs = [ buffer ];
+          writes = [ buffer ];
         }
       in
       Ops.v

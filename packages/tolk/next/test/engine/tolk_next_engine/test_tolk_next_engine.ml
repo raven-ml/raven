@@ -1247,6 +1247,7 @@ let host_program ~(devices : string -> Engine.device) d effects =
       inputs = [];
       slots = [];
       written_bufs = [];
+      writes = [];
     }
   in
   let signal =
@@ -1314,6 +1315,85 @@ let waits_for_a_device_without_queues ~as_input () =
   Null_device.synchronize ();
   Domain.join filling;
   equal values (floats [| 7.; 7.; 7.; 7. |]) (Run.values Float32 result)
+
+(* A batch on CPU:4's queue that copies [n] floats of a host buffer into CPU:4's
+   memory and CPU:4's [y] back into it, run twice, the host rewriting the buffer
+   in between: CPU:4 maps whole pages, so the buffer, of less than 64 KiB, is
+   staged. As an input, each run takes a buffer of its own. *)
+let stages_host_memory ~as_input n =
+  let nd = Null_device.device in
+  let from k = floats (Array.init n (fun i -> Float.of_int (k + i))) in
+  let h =
+    if as_input then Ops.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
+    else Ops.new_buffer (Single "CPU") n Float32
+  in
+  let x = Ops.new_buffer (Single "CPU:4") n Float32
+  and y = Ops.new_buffer (Single "CPU:4") n Float32 in
+  let hb = Run.buffer host Float32 (from 1)
+  and xb = Run.buffer (nd "CPU:4") Float32 (from 0)
+  and yb = Run.buffer (nd "CPU:4") Float32 (from 100) in
+  let bound =
+    (x, [ xb ]) :: (y, [ yb ]) :: (if as_input then [] else [ (h, [ hb ]) ])
+  in
+  let s = link_calls ~bound [ Ops.store_call x h; Ops.store_call h y ] in
+  let run hb = Engine.run s (if as_input then [| [ hb ] |] else [||]) in
+  run hb;
+  equal values ~msg:"read" (from 1) (Run.values Float32 xb);
+  equal values ~msg:"written" (from 100) (Run.values Float32 hb);
+  let next =
+    if as_input then Run.buffer host Float32 (from 50)
+    else begin
+      Buffer.copy ~src:(Run.buffer host Float32 (from 50)) ~dst:hb;
+      hb
+    end
+  in
+  run next;
+  equal values ~msg:"read again" (from 50) (Run.values Float32 xb);
+  equal values ~msg:"written again" (from 100) (Run.values Float32 next)
+
+(* A batch that only reads a staged host buffer, on a CPU:4 queue that starts
+   late: [run] returns before the work completes, and copies nothing back. A
+   batch that writes one returns once it completed. *)
+let waits_only_for_written_stages () =
+  let d = Null_device.device "CPU:4" in
+  let h = Ops.new_buffer (Single "CPU") 4 Float32
+  and x = Ops.new_buffer (Single "CPU:4") 4 Float32 in
+  let hb = Run.buffer host Float32 a
+  and xb = Run.buffer d Float32 (floats [| 0.; 0.; 0.; 0. |]) in
+  let bound = [ (h, [ hb ]); (x, [ xb ]) ] in
+  let reads = link_calls ~bound [ Ops.store_call x h ]
+  and writes = link_calls ~bound [ Ops.store_call h x ] in
+  let pending () = Nx_device.signaled d < Nx_device.submitted d in
+  Null_device.with_latency 0.05 (fun () -> Engine.run reads [||]);
+  is_true ~msg:"a read returns at once" (pending ());
+  Null_device.with_latency 0.05 (fun () -> Engine.run writes [||]);
+  is_false ~msg:"a write returns once done" (pending ());
+  equal values a (Run.values Float32 xb)
+
+(* A batch on CPU:4's late queue copies 64 KiB of a host buffer, which CPU:4
+   borrows through a mapping, into CPU:4's memory; the linked schedule is
+   dropped and collected before the work runs, and the copy still lands. *)
+let borrows_outlive_the_link ~as_input () =
+  let n = 16384 in
+  let d = Null_device.device "CPU:4" in
+  let data = floats (Array.init n Float.of_int) in
+  let hb = Run.buffer host Float32 data
+  and xb = Run.buffer d Float32 (Array.make n (`Float 0.)) in
+  let run () =
+    let h =
+      if as_input then
+        Ops.param ~shape:[ Int n ] ~device:(Single "CPU") 0 Float32
+      else Ops.new_buffer (Single "CPU") n Float32
+    and x = Ops.new_buffer (Single "CPU:4") n Float32 in
+    let bound = (x, [ xb ]) :: (if as_input then [] else [ (h, [ hb ]) ]) in
+    let s = link_calls ~bound [ Ops.store_call x h ] in
+    Null_device.with_latency 0.05 (fun () ->
+        Engine.run s (if as_input then [| [ hb ] |] else [||]))
+  in
+  run ();
+  Gc.full_major ();
+  Null_device.synchronize ();
+  equal values data (Run.values Float32 xb)
 
 (* A slow copy from CPU:1 into storage of the host that the link allocates,
    enqueued on CPU:1's queue with the storage's address folded in at link, then
@@ -1752,6 +1832,20 @@ let batches =
         (waits_for_a_device_without_queues ~as_input:false);
       test "a host kernel runs once the copy that feeds it landed"
         leaves_its_work_pending_on_the_host;
+      cases ~name:string_of_int
+        "a host buffer the device cannot borrow is staged, as storage"
+        [ 3; 64; 320 ]
+        (stages_host_memory ~as_input:false);
+      cases ~name:string_of_int
+        "a host buffer the device cannot borrow is staged, as an input"
+        [ 3; 64; 320 ]
+        (stages_host_memory ~as_input:true);
+      test "a run waits for its batch only when it writes a staged buffer"
+        waits_only_for_written_stages;
+      test "a batch's borrows outlive its schedule until its work completes"
+        (borrows_outlive_the_link ~as_input:false);
+      test "a run's borrows outlive its schedule until its work completes"
+        (borrows_outlive_the_link ~as_input:true);
       test "a batch reads a view of each shard of a parameter"
         reads_a_view_of_each_shard;
       test "a kernel is a span of its compute lane and a copy of its copy lane"

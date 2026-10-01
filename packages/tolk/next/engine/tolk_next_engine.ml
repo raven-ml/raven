@@ -196,12 +196,14 @@ module B = Nx_device.Buffer
 type source = Slot of int | Held of B.t list | Stack of Ops.t
 
 (* An input of a batch's address table, resolved at link: its storage, its
-   shard, its byte offset and the device whose address the table holds. *)
+   shard, its byte offset, the device whose address the table holds, and whether
+   the batch may write it. *)
 type input = {
   source : source;
   shard : int option;
   offset : int;
   on : Nx_device.t;
+  written : bool;
 }
 
 (* The value of a host program's variable on each run: a constant, a device's
@@ -211,6 +213,18 @@ type binder =
   | Submitted of Nx_device.t
   | Signals of Nx_device.t
   | Var of Ops.t
+
+(* Host memory that a device of a batch addresses but cannot borrow, such as a
+   host buffer of less than 64 KiB, which does not start on a page: the device
+   addresses [shadow], its pinned memory, which the host fills from [operand]
+   before each run and copies back once the run completed. [mirror] is the
+   host's borrow of [shadow]. *)
+type stage = {
+  owner : Nx_device.t; (* the device that addresses [shadow] *)
+  mutable operand : B.t; (* the host's borrow of the memory *)
+  shadow : B.t;
+  mirror : B.t;
+}
 
 (* A batch, as linked: its host program, the devices whose queues it submits,
    its arguments, and the values its previous run signals on each device. What
@@ -228,11 +242,15 @@ type batch = {
   binders : binder array; (* the host program's variables, in order *)
   values : int array; (* the variables' values of the run being made *)
   inputs : input array; (* the address table's entries, in order *)
-  input_buffers : B.t array; (* the inputs' buffers of the run being made *)
-  touched : B.t list; (* the arguments and the storage its words address *)
+  addresses : nativeint array; (* the inputs' addresses of the run being made *)
+  input_stages : stage option array; (* by input, its last stage *)
+  stages : stage list; (* the storage its words address that link staged *)
+  written : stage list; (* those of [stages] it writes *)
+  touched : B.t list;
+      (* the arguments, the storage its words address, and the borrows and
+         stages link made for them *)
   table : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t;
   last : int array;
-  mutable kept : B.t list; (* the borrows its run's addresses map *)
 }
 
 (* A call of a schedule, as linked: a host program with a program loaded for
@@ -250,7 +268,6 @@ type t = {
   params : (int * Nx_device.t list * int) list;
       (* the parameters the runs bind: slot, devices and bytes *)
   storage : B.t list Ops.Tbl.t; (* by node, a buffer per device *)
-  borrows : B.t list; (* the borrows link's addresses map *)
 }
 
 let names u =
@@ -299,8 +316,42 @@ let sint u =
 
 let lane buffers i = match buffers with [ b ] -> b | bs -> List.nth bs i
 
-(* [b]'s address on [d], through [d]'s borrow of it, which [keep] keeps. *)
-let address keep d b =
+(* A stage of the host memory [h] on [d]: pinned memory of [d], which the host
+   addresses too. *)
+let stage_on d h =
+  let shadow = B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 (B.nbytes h) in
+  match B.borrow Nx_device.host shadow with
+  | Ok mirror -> { owner = d; operand = h; shadow; mirror }
+  | Error why ->
+      invalid_arg
+        (strf "Tolk_next_engine: %s has no memory to stage host memory in: %s"
+           (Nx_device.name d) why)
+
+(* The stage among [stages] of the host memory [h] on [d]. *)
+let staged stages d h =
+  List.find_opt
+    (fun s ->
+      s.owner == d
+      && B.address s.operand = B.address h
+      && B.nbytes s.operand = B.nbytes h)
+    stages
+
+(* The host copies a run's stages in before its work, and those its work writes
+   back once it completed. *)
+let copy_in s =
+  Bigarray.Array1.blit
+    (B.bigarray Bigarray.char s.operand)
+    (B.bigarray Bigarray.char s.mirror)
+
+let copy_out s =
+  Bigarray.Array1.blit
+    (B.bigarray Bigarray.char s.mirror)
+    (B.bigarray Bigarray.char s.operand)
+
+(* [b]'s address on [d]: its own, through [d]'s borrow of it, which [keep]
+   keeps, or, with [stage], for memory of this machine's host that [d] cannot
+   borrow, that of the shadow of [stage h], for [h] the host's borrow of [b]. *)
+let address ~keep ?stage d b =
   if (B.device b == d) [@mutate off "a device's borrow of its own buffer is it"]
   then B.address b
   else
@@ -308,12 +359,20 @@ let address keep d b =
     | Ok m ->
         keep m;
         B.address m
-    | Error why ->
-        invalid_arg
-          (strf "Tolk_next_engine: %s cannot address memory of %s: %s"
-             (Nx_device.name d)
-             (Nx_device.name (B.device b))
-             why)
+    | Error why -> (
+        let refuse () =
+          invalid_arg
+            (strf "Tolk_next_engine: %s cannot address memory of %s: %s"
+               (Nx_device.name d)
+               (Nx_device.name (B.device b))
+               why)
+        in
+        match stage with
+        | Some stage when Nx_device.host_of d == Nx_device.host -> (
+            match B.borrow Nx_device.host b with
+            | Ok h -> B.address (stage h).shadow
+            | Error _ -> refuse ())
+        | _ -> refuse ())
 
 let int_of_const u =
   match Ops.arg u with
@@ -484,7 +543,7 @@ let placeholder device queues u =
 let hcq_info call =
   match Ops.arg call with Ops.Call { aux; _ } -> aux | _ -> None
 
-let link_batch ~device ~storage ~keep call patches =
+let link_batch ~device ~storage call patches =
   let info = Option.get (hcq_info call) in
   let args = Realize.get_call_arg_uops call in
   let is_placeholder u = Ops.op u = Op.Param && Option.is_some (Ops.tag u) in
@@ -505,9 +564,32 @@ let link_batch ~device ~storage ~keep call patches =
       patched
     |> List.concat
   in
+  (* The borrows its words' addresses map, which its runs touch: their work's
+     completion, not the link, ends them. *)
+  let borrows = ref [] in
+  let keep m = borrows := m :: !borrows in
+  let stages = ref [] and written = ref [] in
+  let stage base d h =
+    let s =
+      match staged !stages d h with
+      | Some s -> s
+      | None ->
+          let s = stage_on d h in
+          stages := s :: !stages;
+          s
+    in
+    if List.memq base info.writes && not (List.memq s !written) then
+      written := s :: !written;
+    s
+  in
+  (* A placeholder's storage is the device's to address: a signal word, for one,
+     cannot be staged, as the host waits on it while the work runs. *)
   let addr dn u =
+    let base, _, _ = Hcq2.unwrap_lane u in
     let b, off = linked_at storage u in
-    Nativeint.add (address keep (device dn).device b) (Nativeint.of_int off)
+    let d = (device dn).device in
+    let stage = if is_placeholder base then None else Some (stage base d) in
+    Nativeint.add (address ~keep ?stage d b) (Nativeint.of_int off)
   in
   List.iter (apply storage addr) patches;
   let arguments = List.map (fun u -> List.hd (Ops.Tbl.find storage u)) args in
@@ -552,7 +634,13 @@ let link_batch ~device ~storage ~keep call patches =
       | (Op.Param | Op.Buffer), _ -> Held (Ops.Tbl.find storage base)
       | _ -> Stack base
     in
-    { source; shard; offset = off + inner; on = named dev }
+    (* A stack's views are of other storage: it may be written. *)
+    let written =
+      match source with
+      | Slot _ | Held _ -> List.memq base info.writes
+      | Stack _ -> true
+    in
+    { source; shard; offset = off + inner; on = named dev; written }
   in
   let inputs = Array.of_list (List.map input info.inputs) in
   let binders = Array.of_list (List.map binder host_program.vars) in
@@ -568,15 +656,47 @@ let link_batch ~device ~storage ~keep call patches =
     binders;
     values = Array.make (Array.length binders) 0;
     inputs;
-    input_buffers = Array.make (Array.length inputs) (List.hd arguments);
-    touched = arguments @ reached;
+    addresses = Array.make (Array.length inputs) 0n;
+    input_stages = Array.make (Array.length inputs) None;
+    stages = !stages;
+    written = !written;
+    touched =
+      arguments @ reached @ !borrows @ List.map (fun s -> s.shadow) !stages;
     table;
     last = Array.make (List.length queues) 0;
-    kept = [];
   }
 
 let run_batch ~vars storage slots b =
-  let touches = ref b.touched in
+  let touches = ref b.touched and stages = ref b.stages in
+  let written = ref b.written in
+  (* The run's work reads and writes through its inputs' borrows: they are among
+     its touches until it completes. *)
+  let keep m = touches := m :: !touches in
+  (* An input's stage is the run's stage of its memory, or the input's own, made
+     again when its memory's size or device changes. *)
+  let stage k d h =
+    let s =
+      match staged !stages d h with
+      | Some s -> s
+      | None ->
+          let s =
+            match b.input_stages.(k) with
+            | Some s when s.owner == d && B.nbytes s.operand = B.nbytes h ->
+                s.operand <- h;
+                s
+            | _ ->
+                let s = stage_on d h in
+                b.input_stages.(k) <- Some s;
+                s
+          in
+          stages := s :: !stages;
+          touches := s.shadow :: !touches;
+          s
+    in
+    if b.inputs.(k).written && not (List.memq s !written) then
+      written := s :: !written;
+    s
+  in
   for k = 0 to Array.length b.inputs - 1 do
     let i = b.inputs.(k) in
     let bs =
@@ -586,8 +706,11 @@ let run_batch ~vars storage slots b =
       | Stack u -> holds storage slots vars u
     in
     let x = match i.shard with Some j -> List.nth bs j | None -> List.hd bs in
-    b.input_buffers.(k) <- x;
-    touches := x :: !touches
+    touches := x :: !touches;
+    b.addresses.(k) <-
+      Nativeint.add
+        (address ~keep ~stage:(stage k i.on) i.on x)
+        (Nativeint.of_int i.offset)
   done;
   Nx_device.submit b.devices ~touches:!touches (fun s ->
       for i = 0 to Array.length b.queues - 1 do
@@ -598,15 +721,9 @@ let run_batch ~vars storage slots b =
         (fun (d', v) ->
           if not (List.memq d' b.devices) then Nx_device.Submission.wait s d' v)
         (Nx_device.Submission.waits s);
-      b.kept <- [];
-      let keep m = b.kept <- m :: b.kept in
+      List.iter copy_in !stages;
       for k = 0 to Array.length b.inputs - 1 do
-        let i = b.inputs.(k) in
-        b.table.{k} <-
-          Int64.of_nativeint
-            (Nativeint.add
-               (address keep i.on b.input_buffers.(k))
-               (Nativeint.of_int i.offset))
+        b.table.{k} <- Int64.of_nativeint b.addresses.(k)
       done;
       for i = 0 to Array.length b.binders - 1 do
         b.values.(i) <-
@@ -642,7 +759,12 @@ let run_batch ~vars storage slots b =
           b.info.kernels;
       for i = 0 to Array.length b.queues - 1 do
         b.last.(i) <- Nx_device.Submission.value s b.queues.(i)
-      done)
+      done);
+  match !written with
+  | [] -> ()
+  | written ->
+      Array.iter Nx_device.synchronize b.queues;
+      List.iter copy_out written
 
 (* The calls of a schedule's entry: itself, or those a range is around. *)
 let rec calls_of entry =
@@ -704,8 +826,6 @@ let link ~devices ?(bound = []) linear =
          nodes)
     |> List.map (fun (slot, u) -> (slot, List.map nx (names u), bytes u))
   in
-  let borrows = ref [] in
-  let keep m = borrows := m :: !borrows in
   let rec linked entry =
     match Ops.op entry with
     | Op.End ->
@@ -730,7 +850,7 @@ let link ~devices ?(bound = []) linear =
         let patches =
           if Ops.op entry = Op.After then List.tl (Ops.src entry) else []
         in
-        Batch (link_batch ~device ~storage ~keep call patches)
+        Batch (link_batch ~device ~storage call patches)
     | Op.Program, None ->
         let first = List.hd (Realize.get_call_arg_uops call) in
         Kernel
@@ -741,7 +861,7 @@ let link ~devices ?(bound = []) linear =
     | o, _ -> fail fn "%s is no call to run" (Format.asprintf "%a" Op.pp o)
   in
   let calls = List.map linked entries in
-  { lock = Mutex.create (); calls; params; storage; borrows = !borrows }
+  { lock = Mutex.create (); calls; params; storage }
 
 let check_slots t slots =
   let fn = "Tolk_next_engine.run" in
@@ -919,11 +1039,7 @@ let run ?(vars = []) t slots =
   let n = List.length t.calls in
   if Helpers.Context_var.value Helpers.debug >= 1 && n >= 10 then
     Printf.printf "jit execs %d calls\n%!" n;
-  Mutex.protect t.lock (fun () ->
-      List.iter (run_call ~vars t slots) t.calls;
-      (* The borrows whose addresses the run's words hold outlive its
-         submission. *)
-      ignore (Sys.opaque_identity t.borrows))
+  Mutex.protect t.lock (fun () -> List.iter (run_call ~vars t slots) t.calls)
 
 (* Measuring *)
 

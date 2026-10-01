@@ -214,6 +214,21 @@ let unwrap_lane v =
   let base, lane, off = lane_offset v in
   (base, lane, const_offset off)
 
+(* The storage [call] writes: under each of its outputs, or under each of its
+   arguments when its outputs are not known. *)
+let call_writes call =
+  let args = Realize.get_call_arg_uops call in
+  let outs =
+    match Realize.get_call_outs_ins call with
+    | [], [] -> List.init (List.length args) Fun.id
+    | outs, _ -> outs
+  in
+  List.map
+    (fun k ->
+      let base, _, _ = lane_offset (List.nth args k) in
+      base)
+    outs
+
 let select_lane u lane =
   if op u = Op.Mstack then List.nth (src u) lane
   else if List.length (devices_of u) > 1 then mselect u lane
@@ -1116,6 +1131,11 @@ let finalize_batch ctx =
         dedup
           (List.concat_map
              (fun e -> Realize.get_call_written_bufs e.call)
+             (Array.to_list ctx.batch));
+      writes =
+        dedup
+          (List.concat_map
+             (fun e -> call_writes e.call)
              (Array.to_list ctx.batch));
     }
   in

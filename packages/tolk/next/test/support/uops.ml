@@ -20,7 +20,8 @@ let substituted u subs =
     | Call ({ aux = Some info; _ } as ci) ->
         let inputs = List.map (fun (b, o, d) -> (mapped b, o, d)) info.inputs in
         let written_bufs = List.map mapped info.written_bufs in
-        let aux = Some { info with inputs; written_bufs } in
+        let writes = List.map mapped info.writes in
+        let aux = Some { info with inputs; written_bufs; writes } in
         Some (c, Ops.replace ~arg:(Call { ci with aux }) c)
     | _ -> None
   in

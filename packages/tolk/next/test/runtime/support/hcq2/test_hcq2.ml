@@ -43,6 +43,7 @@ let batch_info devices : Ops.hcq_info =
     inputs = [];
     slots = [];
     written_bufs = [];
+    writes = [];
   }
 
 (* Kernels and calls *)

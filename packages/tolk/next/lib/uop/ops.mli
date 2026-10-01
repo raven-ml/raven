@@ -277,8 +277,13 @@ type hcq_info = {
   slots : (string * int) list;
       (** Each device's position of its batch slots among the arguments. *)
   written_bufs : t list;  (** The arguments the call writes. *)
+  writes : t list;
+      (** The storage its kernels and copies write, those that also read it
+          included: the storage under each output of each of its calls, and
+          under every argument of a call whose outputs are not known. *)
 }
-(** The type for the data of a call that submits command queues. *)
+(** The type for the data of a call that submits command queues. [writes] has no
+    counterpart in tinygrad and is not formatted. *)
 
 val pp_hcq_info : Format.formatter -> hcq_info -> unit
 (** [pp_hcq_info] formats

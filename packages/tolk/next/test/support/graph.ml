@@ -635,10 +635,22 @@ let hcq_kernel : Ops.hcq_kernel codec =
   in
   { write; read }
 
+(* tinygrad's queue data has no [writes]: it is read as [written_bufs], the
+   storage tinygrad says the call writes. *)
 let hcq_info : Ops.hcq_info codec =
   let make device kernels estimates nargs table inputs slots written_bufs :
       Ops.hcq_info =
-    { device; kernels; estimates; nargs; table; inputs; slots; written_bufs }
+    {
+      device;
+      kernels;
+      estimates;
+      nargs;
+      table;
+      inputs;
+      slots;
+      written_bufs;
+      writes = written_bufs;
+    }
   in
   let get (f : Ops.hcq_info -> _) = f in
   let no_cost = estimates.read (Record ("Estimates", [])) in

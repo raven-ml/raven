@@ -1447,8 +1447,7 @@ the Exclusions of `README.md`.
   memory its queues address (`Hcq2.queues.reaches`), and a copy is staged when
   either side's memory is not reached. tinygrad tries to map the buffers and
   stages the copy on failure. A buffer that `reaches` admits but the device
-  cannot map fails when the engine links the batch (its borrow is refused)
-  instead of being staged.
+  cannot map is staged by the engine instead, per batch (D70).
 - **Reason:** (c). The compiler opens no device, so it cannot try a mapping;
   the engine describes each device's reach from nx.device's
   (`Nx_device.reaches`), which the devices' drivers describe from their
@@ -1921,3 +1920,42 @@ the Exclusions of `README.md`.
   kernel, on the host, and `Metal › a store through a padded view writes the
   row within the source, and nothing outside it (D69)` (slow); rune.next's
   Jit suite, `a lent write of rows › *`.
+
+## D70. A batch stages host memory its device cannot map
+
+- **tinygrad:** `device.py:303-308` (`HostAllocator._alloc`: every host buffer
+  is its own `mmap`, so it starts on a page and every device maps it), and
+  `runtime/support/hcq2.py:151-155` (`stage_copy`, which maps each buffer).
+- **tolk.next:** `engine/tolk_next_engine.ml:321` (`stage_on`), `:354`
+  (`address`, which stages on a refused borrow), `:572` (link's stages)
+  and `:669` (`run_batch`: an input's stage, the copies in after the
+  waits and out after completion); `lib/runtime/support/hcq2.ml:219`
+  (`call_writes`, the batch's `writes`).
+- **Differs:** a host buffer of less than 64 KiB does not start on a page in
+  nx.device, so a CUDA, AMD or NV device, which maps whole pages, cannot
+  borrow it, and memory `of_bigarray` wraps may not start on one either.
+  Where a batch's device addresses such memory of this machine's host, the
+  engine stages it: the device addresses pinned memory of its own of the same
+  size, one per memory for the life of the linked batch (per input, made again
+  when the input's size changes), which each run fills from the host memory
+  inside its submission, after its waits. The batch's queue data carries
+  `writes`, which tinygrad's `HCQInfo` has not: the storage under each output
+  of each of its calls, a copy's destination and a kernel's outputs, in-place
+  ones included, and under every argument of a call whose outputs are not
+  known. A run copies back the stages of that storage once its devices
+  synchronized, and so completes before `run` returns; a run whose stages are
+  only read does not wait, and the next run's waits for it come before its
+  copies in. A placeholder's storage is never staged.
+- **Reason:** (c). nx.device starts a host buffer on a page from 64 KiB, so
+  that small tensors do not take a page each; its contract stages copies of
+  smaller ones (`Nx_device.Buffer.borrow`), and the engine honours it for the
+  addresses a batch's commands hold. tinygrad's `written_bufs` leaves out the
+  storage a call also reads and parameters, so it cannot say which stages a
+  run writes.
+- **Pinned by:** the Engine suite (`test/engine/tolk_next_engine`): `batches ›
+  a host buffer the device cannot borrow is staged, as storage` and `› as an
+  input`, of 12, 256 and 1,280 bytes, on CPU:4, a test device that maps whole
+  pages: each copies the host buffer in and a device buffer back over it, twice,
+  the host rewriting it between runs; and `› a run waits for its batch only
+  when it writes a staged buffer`, whose read returns while CPU:4's late queue
+  has not signaled.
