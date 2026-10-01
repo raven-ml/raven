@@ -2144,61 +2144,73 @@ tolk lowers as one, replaces it.
 
 - **tinygrad:** `uop/ops.py:353-356` (INDEX's shape: its index sources'
   shapes, then the rest of the source's), which no tinygrad pass puts in a
-  tensor graph; `schedule/indexing.py:30-45` (`realize_srcs`,
-  `pm_generate_realize_map`), `:70` (the sources an INDEX's ranges reach),
-  `:97-98` and `:136` (`pm_apply_rangeify`), `:171-187`
-  (`apply_movement_op`) and `:190` (`run_rangeify`);
-  `schedule/prepare.py:76-82` (`pm_mops`), `:94-101` (`fix_store_hazard`),
-  `:114` (`split_reduceop`) and `:275-277` (`prepare_rangeify`); `schedule/multi.py:202`
-  (`index_multi`) and `:291`.
-- **tolk:** `lib/schedule/indexing.ml:47` (`storage`), `:54`
-  (`is_gather`), `:56` (`realize_gathered`), `:408` (`apply_movement_op`),
-  `:161` (`broadcast_rngs`),
-  `:176` (`data_srcs`), `:229` (`convert_gather`) and `:321`;
-  `lib/schedule/prepare.ml:105` (`mops`), `:133` (`pm_tensor_mops`) and
-  `:168` (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:536`
-  (`gather_shards`), `:573` (`gather_multi`) and `:668`; the same rules in
-  `test/gen/tinygrad.patch`, which the goldens are recorded with.
+  tensor graph; `uop/spec.py:179-180` (an allreduce's operations);
+  `schedule/indexing.py:30-45` (`realize_srcs`, `pm_generate_realize_map`),
+  `:70` (the sources an INDEX's ranges reach), `:97-98` and `:136`
+  (`pm_apply_rangeify`) and `:230` (`run_rangeify`'s consumer ranges);
+  `schedule/prepare.py:65` (`_mop_index`), `:76` (`pm_mops`), `:94-101`
+  (`fix_store_hazard`), `:114` (`split_reduceop`) and `:275-277`
+  (`prepare_rangeify`); `schedule/multi.py:202` (`index_multi`) and `:291`.
+- **tolk:** `lib/uop/spec.ml:363`; `lib/schedule/indexing.ml:47`
+  (`storage`), `:54` (`is_gather`), `:56` (`realize_gathered`), `:174`
+  (`data_srcs`), `:227` (`convert_gather`), `:319` and `:495`
+  (`run_rangeify`'s consumer ranges); `lib/schedule/prepare.ml:90`
+  (`move_index`), `:133` (`mops`), `:159` (`pm_tensor_mops`) and `:195`
+  (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:532`
+  (`same_devices`), `:545` (`gather_shards`), `:584` (`gather_multi`) and
+  `:686`; the same rules in `test/gen/tinygrad.patch`, which the goldens are
+  recorded with.
 - **Differs:** an `INDEX` whose one index source has axes, `INDEX(x, L)`,
   reads `x` at the row each element of `L` holds, and its shape is `L`'s
   followed by the rest of `x`'s. The scheduler takes it as a load:
   - `x` is stored whole unless it is storage, so that a view of storage is
     read through its movements;
-  - `L` takes the gather's leading ranges, one per axis of `L`, and the
-    gather reads `x` at `L`'s element followed by its trailing ranges;
+  - `L` takes the gather's leading ranges, one per axis of `L`, by its
+    position among the gather's sources, and the gather reads `x` at `L`'s
+    element followed by its trailing ranges;
   - an index that loads from a storage state, as `L` does once ranged, moves
-    through movements with each load held as a variable, so that the index's
-    simplification does not rewrite the stores the state is ordered after
-    and give the storage a second definition;
+    through a movement with each load held as a parameter of its bounds, so
+    that the index's simplification does not rebuild the stores the state is
+    ordered after, which gave the storage a second definition;
   - in the tensor graph, prepare's movement rules leave the gather whole,
     since `L`'s shape would multiply the movement's index; `pm_mops`, which
     kernels use with vector indices, is tinygrad's;
   - a store whose value gathers from its destination's storage materialises
     the value first, as for a permutation; the index, and an index by
     scalars, read the destination in place;
-  - sharded along axes after the gathered one, each shard gathers its own;
-    sharded along the gathered axis, each shard reads the rows it holds and
+  - sharded along axes after the gathered one, each shard gathers its own.
+    Sharded along the gathered axis, each shard reads the rows it holds and
     `0` elsewhere, and the shards' bits are joined by an allreduce with a
-    bitwise or, which keeps `-0.` and NaN payloads a sum would change; a
-    sharded index gathers each part of itself from a whole value, and is
-    joined whole on each device to gather from a sharded one, the result
-    taking its sharding; a gather by several indices, and one of a value
-    sharded on the gathered axis and another, are refused.
+    bitwise or, which keeps `-0.` and NaN payloads a sum would change; the
+    spec admits Or as an allreduce's operation for it. Every device then
+    holds the whole result, so the gathered rows cross the devices: a model
+    that shards weights by rows routes its activations instead;
+  - a sharded index gathers each part of itself from a whole value. From a
+    sharded value it is first joined whole on each device, in `int64`, by the
+    copy's sum of its padded shards, and gathers as a whole index does, so
+    every device holds the result: a gather of experts split over devices by
+    routes split over them runs today. The join moves the index, which is
+    small beside the rows;
+  - refused: a gather by several indices (rune emits one), by an index on
+    other devices than its value, of a value sharded on the gathered axis and
+    another, and across devices of elements whose width has no unsigned
+    integer type.
   The index is in range: rune clamps it and selects `0` where it was not.
 - **Reason:** (b): rune lowers `Nx.take` and `Nx.take_along_axis` to a
   one-hot sum over the whole axis, which costs a reduction per element and
   made gpt-oss's decode step schedule embedding and cache reads as their own
   kernels; D68, which recognised the sum in the scheduler, was withdrawn.
-  rune's `Lower_index.gather` emits this INDEX instead.
+  rune's gather lowering emits this INDEX instead.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
   `index_zero_fill`, `index_assign_self`) and their kernel counts,
   `gather_kernel_counts`; the Prepare suite's `gather_of_self`,
-  `gather_by_self` and `gather_of_reshape`; the Multi suite's `gathers`
-  programs and `multi_pm › gathers`; the Indexing suite's
-  `apply_movement_op › a reshape leaves the storage a gather's index loads
-  from as it is (D73)`; rune's Jit suite brings the consumer's tests.
+  `gather_by_self` and `gather_of_reshape`, and `pm_mops › rules › an index
+  that loads from a storage state moves with the state as it is`; the Multi
+  suite's `gathers` programs and `multi_pm › gathers`; the Schedule suite's
+  `shard_gather_rows` goldens; the Spec suite's verdict `an allreduce by a
+  bitwise or`; rune's Jit suite (`gathers` and `gathers across devices`).
 
 ## D74. Float arithmetic has bounds, and a bounded sine takes the short reduction
 
@@ -2458,3 +2470,24 @@ tolk lowers as one, replaces it.
 - **Pinned by:** the Heuristic suite: `the optimisations chosen are
   tinygrad's › applied_opts`, cases `vecmat_of_cast_*` and `vecmat_decoded_*`,
   recorded from the equally patched tinygrad.
+
+## D82. A sharded value is not stored into a replicated destination
+
+- **tinygrad:** `schedule/multi.py:256` (`store_value_multi`), which stores
+  each shard of a sharded value into its own part of an unsharded
+  destination.
+- **tolk:** `lib/schedule/multi.ml:601` (`store_value_multi`);
+  `test/gen/tinygrad.patch`.
+- **Differs:** a store of a sharded value into a destination that is whole
+  and lives on several devices raises `Invalid_argument`. Each device would
+  write only its own part into its own copy, so every copy of a replicated
+  value would be partial. tinygrad's Tensor programs never build such a
+  store; a destination on one device, or without one, as a kernel's output
+  tile is, still takes each shard into its part.
+- **Reason:** (b): rune, where nx places a result replicated and the
+  lowered value came out sharded, as a gather of split rows by a split index
+  did: half of each copy read back as zeros. rune now converts such a value
+  before the store; the refusal makes a missed conversion fail where it is
+  built.
+- **Pinned by:** the `Multi` suite: `multi_pm › stores and calls › a store
+  of a sharded value into one replicated on its devices is refused`.

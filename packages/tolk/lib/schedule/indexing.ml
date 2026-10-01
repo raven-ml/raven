@@ -156,11 +156,9 @@ let pm_generate_realize_map =
 (* Applying ranges *)
 
 (* The ranges of [x] as its source [s] sees them: without the axes [s] lacks,
-   and [0] on the axes [x] broadcasts it over. A gather's index sees the
-   gather's leading axes, which it shapes. *)
+   and [0] on the axes [x] broadcasts it over. *)
 let broadcast_rngs x s rngs =
-  if is_gather x && s != nth x 0 then List.take (ndim s) rngs
-  else if not (Op.Set.mem (op x) Op.Set.broadcastable) then rngs
+  if not (Op.Set.mem (op x) Op.Set.broadcastable) then rngs
   else
     let baxes = broadcast_axes (shape s) (shape x)
     and nleft = ndim x - ndim s in
@@ -356,7 +354,7 @@ let apply_reshape in_shape out_shape urngs =
 
 let pad_valid = Pattern_matcher.concat Symbolic.[ symbolic; pm_simplify_valid ]
 
-let move in_shape m rngs =
+let apply_movement_op in_shape m rngs =
   match m with
   | Shrink b ->
       List.map2
@@ -401,31 +399,6 @@ let move in_shape m rngs =
         apply_reshape in_shape out_shape (substitute sink sub_array)
       in
       src (substitute reshaped (List.map (fun (r, p) -> (p, r)) sub_array))
-
-(* A gather's index loads from storage states, which the index's rewrites would
-   otherwise rewrite too, giving the storage a second definition: each load is a
-   variable of its bounds while the index moves. *)
-let apply_movement_op in_shape m rngs =
-  let load u =
-    op u = Op.Index && shape_opt u = Some [] && op (base (nth u 0)) = Op.After
-  in
-  match
-    List.filter load
-      (toposort ~gate:(fun u -> op u <> Op.After) (Ops.sink rngs))
-  with
-  | [] -> move in_shape m rngs
-  | loads ->
-      let vars =
-        List.mapi
-          (fun i u ->
-            ( u,
-              variable ~dtype:(dtype u)
-                (Printf.sprintf "load %d" i)
-                (vmin u) (vmax u) ))
-          loads
-      in
-      let moved = move in_shape m (src (substitute (Ops.sink rngs) vars)) in
-      src (substitute (Ops.sink moved) (List.map (fun (u, x) -> (x, u)) vars))
 
 (* Rangeify *)
 
@@ -532,12 +505,22 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   let broadcast_ending_ranges = Nodes.to_list (ranges (Ops.sink ended)) in
   (* The fusion decision: a reduction is stored before it is broadcast. *)
   if op x = Op.Reduce then ending := !ending @ broadcast_ending_ranges;
+  (* A gather's source sees all its ranges, and its index the leading ones,
+     which the index shapes. *)
   let consumer_rngs =
-    List.filter_map
+    List.concat_map
       (fun c ->
-        Option.map
-          (fun (rngs, _) -> broadcast_rngs c x rngs)
-          (Tbl.find_opt rctx.range_map c))
+        match Tbl.find_opt rctx.range_map c with
+        | None -> []
+        | Some (rngs, _) when is_gather c ->
+            List.concat
+              (List.mapi
+                 (fun j s ->
+                   if s != x then []
+                   else if j = 0 then [ rngs ]
+                   else [ List.take (ndim x) rngs ])
+                 (src c))
+        | Some (rngs, _) -> [ broadcast_rngs c x rngs ])
       consumers
   in
   let out_rngs =

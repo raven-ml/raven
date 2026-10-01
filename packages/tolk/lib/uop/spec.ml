@@ -360,7 +360,7 @@ let tensor : t =
          check (pat [ Op.Allreduce ] ~name:"red" ~src:[ Upat.wild ]) "red"
            (fun red ->
              match arg red with
-             | Allreduce { op; _ } -> Op.Set.mem op Op.Set.reduce
+             | Allreduce { op; _ } -> Op.Set.mem op Op.Set.reduce || op = Op.Or
              | _ -> false);
          check (pat [ Op.Unshard ] ~name:"multi") "multi" (fun multi ->
              match arg multi with

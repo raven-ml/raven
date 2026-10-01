@@ -330,6 +330,7 @@ def verdict_cases():
     sharded = UOp.param(6, dtypes.float32, 16, device=CPU2)
     case("an allreduce", UOp(Ops.ALLREDUCE, src=(sharded,), arg=(Ops.ADD, CPU2)))
     case("an allreduce by sine", UOp(Ops.ALLREDUCE, src=(sharded,), arg=(Ops.SIN, CPU2)))
+    case("an allreduce by a bitwise or", UOp(Ops.ALLREDUCE, src=(sharded.bitcast(dtypes.uint32),), arg=(Ops.OR, CPU2)))
     case("an unshard", sharded.unshard(0))
     case("an unshard over a derived range", UOp(Ops.UNSHARD, src=(sharded, device_range() * 2), arg=(0,)))
     case("an unshard missing a range", UOp(Ops.UNSHARD, src=(sharded,), arg=(0,)))

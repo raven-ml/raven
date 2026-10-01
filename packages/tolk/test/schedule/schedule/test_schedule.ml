@@ -57,6 +57,7 @@ let programs =
     "reduce_multiple_paths";
     "setitem";
     "shard_add";
+    "shard_gather_rows";
     "shard_matmul";
     "shard_sum";
     "shard_to_one";
@@ -112,6 +113,8 @@ let kernel_graphs =
     "reduce_multiple_paths_kernels";
     "setitem_kernels";
     "shard_add_kernels";
+    "shard_gather_rows_kernels";
+    "shard_gather_rows_kernels_1";
     "shard_matmul_kernels";
     "shard_sum_kernels";
     "shard_sum_kernels_1";

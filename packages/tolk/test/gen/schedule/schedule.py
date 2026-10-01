@@ -189,6 +189,9 @@ PROGRAMS = {
     "shard_matmul": lambda: sharded(8, 16, axis=0, devices=D4) @ empty(16, 4, device=D4),
     "shard_to_one": lambda: sharded(4, 8, axis=0).to("CPU:0") + 1,
     "mesh_sum": lambda: mesh(4, 4, 2).sum(2),
+    # rows gathered from a value sharded by rows, joined by a bitwise or
+    "shard_gather_rows": lambda: Tensor(sharded(8, 4, axis=0).uop.index(
+        empty(3, dtype=dtypes.int32, device=D2).uop.maximum(0).minimum(7).cast(dtypes.weakint)), device=D2),
     # variables
     "variable_shrink": lambda: empty(10)[:Variable("v", 1, 10).bind(3)] * 2,
     "variable_reduce": lambda: empty(10, 4)[:Variable("v", 1, 10).bind(5)].sum(0),

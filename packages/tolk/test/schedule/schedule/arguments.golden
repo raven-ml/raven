@@ -46,6 +46,8 @@ shard_matmul_kernels	-
 shard_to_one_kernels	-
 mesh_sum_kernels	-
 mesh_sum_kernels_1	-
+shard_gather_rows_kernels	-
+shard_gather_rows_kernels_1	-
 variable_shrink_kernels	1=3
 variable_reduce_kernels	2=5
 variable_two_kernels	1=4 4=7

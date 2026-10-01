@@ -731,7 +731,7 @@ index 1f6134e..24949cf 100644
  
  # *****************
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
-index 228ec4e..e5837c2 100644
+index 228ec4e..b559010 100644
 --- a/tinygrad/schedule/indexing.py
 +++ b/tinygrad/schedule/indexing.py
 @@ -35,6 +35,13 @@ def realize_store_after_src(ctx:IndexingContext, dest:UOp, src:UOp):
@@ -756,16 +756,7 @@ index 228ec4e..e5837c2 100644
    # sometimes we need to realize the src of STORE if there's a self-access, or if it's a cross device store
    (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
  ])
-@@ -60,6 +68,8 @@ class BufferizeOpts:
-   removable: bool = True
- 
- def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
-+  # a gather's index sees the gather's leading axes, which it shapes
-+  if x.op is Ops.INDEX and is_gather(x.src) and src is not x.src[0]: return rngs[:len(src.shape)]
-   if x.op not in GroupOp.Broadcastable: return rngs
-   baxes, nleft = broadcast_axes(src.shape, x.shape), len(x.shape)-len(src.shape)
-   return tuple(r.const_like(0) if j in baxes else r for j,r in enumerate(rngs) if j >= nleft)
-@@ -67,32 +77,39 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
+@@ -67,32 +75,39 @@ def broadcast_rngs(x:UOp, src:UOp, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
  # TODO: srcs contain (real data srcs, something else, ranges) and the boundary is confusing. see range_start
  def data_srcs(op:Ops, src:tuple[UOp, ...]) -> tuple[UOp, ...]:
    if op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.RANGE, Ops.SPECIAL}: return ()
@@ -825,7 +816,7 @@ index 228ec4e..e5837c2 100644
  
  def create_bufferize_and_index_based_on_ranges(ctx:IndexingContext, x:UOp):
    if x.op in {Ops.STAGE, Ops.INDEX}: return None
-@@ -140,6 +157,8 @@ pm_apply_rangeify = PatternMatcher([
+@@ -140,6 +155,8 @@ pm_apply_rangeify = PatternMatcher([
    (UPat(Ops.PAD, name="x"), convert_pad_to_where_to_keep_behavior_local),
    # STACK -> WHERE select on the leading range
    (UPat(Ops.STACK, name="x"), convert_stack_to_where),
@@ -834,29 +825,10 @@ index 228ec4e..e5837c2 100644
    # finally, apply_rangeify
    (UPat(GroupOp.All, name="x"), create_bufferize_and_index_based_on_ranges),
    # remove movement op
-@@ -168,7 +187,7 @@ def _apply_reshape(in_shape:tuple[sint,...], out_shape:tuple[sint, ...], urngs:U
- 
- # this is the definition of the movement ops
- @functools.cache
--def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
-+def _move(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
-   match op:
-     case Ops.SHRINK:  rngs = tuple(a if off == 0 else a+off for a,(off,_) in zip(rngs, arg))
-     case Ops.PERMUTE: rngs = tuple(rngs[p] for p in argsort(arg))
-@@ -186,6 +205,22 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
+@@ -186,6 +203,12 @@ def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UO
      case _: raise RuntimeError(f"{op} is not a MovementOp")
    return rngs
  
-+# a gather's index loads from storage states, which the index's rewrites would otherwise rewrite too, giving the storage a
-+# second definition: each load is a variable of its bounds while the index moves
-+def apply_movement_op(op:Ops, in_shape:tuple[sint,...], arg:tuple, rngs:tuple[UOp, ...]) -> tuple[UOp, ...]:
-+  loads = [u for u in UOp.sink(*rngs).toposort(gate=lambda u: u.op is not Ops.AFTER)
-+           if u.op is Ops.INDEX and u.shape == () and u.src[0].base.op is Ops.AFTER]
-+  if not loads: return _move(op, in_shape, arg, rngs)
-+  vars = {u:UOp.variable(f"load {i}", u.vmin, u.vmax, u.dtype) for i,u in enumerate(loads)}
-+  moved = _move(op, in_shape, arg, UOp.sink(*rngs).substitute(vars).src)
-+  return UOp.sink(*moved).substitute({v:k for k,v in vars.items()}).src
-+
 +# whether computing x runs a transcendental function: down to the reductions, storage and values already stored
 +def runs_transcendental(rctx:IndexingContext, x:UOp) -> bool:
 +  def computed(u:UOp) -> bool:
@@ -866,7 +838,19 @@ index 228ec4e..e5837c2 100644
  @rewrite_group(new_ctx=False)
  def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
    if debug: print("**************************")
-@@ -273,6 +308,9 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+@@ -227,7 +250,10 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
+     #  2. from the single consumer if this op only has one consumer
+     #  3. potentially new if this op has 2+ consumers
+ 
+-    consumer_rngs = [broadcast_rngs(c, x, rctx.range_map[c][0]) for c in consumer_map[x] if c in rctx.range_map]
++    # a gather's source sees all its ranges, and its index the leading ones, which the index shapes
++    consumer_rngs = [r for c in consumer_map[x] if c in rctx.range_map for rngs in [rctx.range_map[c][0]]
++                     for r in ([rngs if j == 0 else rngs[:len(x.shape)] for j,s in enumerate(c.src) if s is x]
++                               if c.op is Ops.INDEX and is_gather(c.src) else [broadcast_rngs(c, x, rngs)])]
+     if x in rctx.realize_map:
+       # if this is in the realize_map, we create new ranges (at the output)
+       out_rngs = tuple(rctx.new_range(s) for s in x.shape)
+@@ -273,6 +299,9 @@ def run_rangeify(tsink:UOp, debug:bool=False) -> UOp:
        ending_ranges[x] = []
        if len(_realize_axis):
          rctx.realize_map[x] = _realize_axis
@@ -877,7 +861,7 @@ index 228ec4e..e5837c2 100644
      ending_ranges[x] += broadcast_ending_ranges
  
 diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
-index 099ac10..1618cad 100644
+index 099ac10..89d5aa9 100644
 --- a/tinygrad/schedule/multi.py
 +++ b/tinygrad/schedule/multi.py
 @@ -191,7 +191,8 @@ def stack_multi(root:UOp):
@@ -890,10 +874,15 @@ index 099ac10..1618cad 100644
      new_sharding = tuple((ax+1, rng) for ax, rng in sharding)
      return UOp(Ops.STACK, src=tuple(srcs)).unshard(tuple(a for a,_ in new_sharding), tuple(r for _,r in new_sharding))
    # resharding: single-axis fallback
-@@ -199,7 +200,39 @@ def stack_multi(root:UOp):
+@@ -199,7 +200,42 @@ def stack_multi(root:UOp):
    assert axis is not None
    return UOp(Ops.STACK, src=tuple(shard_srcs(root.src, axis-1))).unshard(axis, next(m.src[1] for m in root.src if m.op is Ops.UNSHARD))
  
++# a gather reads its source and its index on the same devices
++def same_devices(x:UOp, l:UOp):
++  if x.device is not None and l.device is not None and x.device != l.device:
++    raise RuntimeError(f"a gather of a value on {x.device} by an index on {l.device}")
++
 +# a gather of a sharded value by a whole index. sharded along trailing axes, each shard gathers its own part. sharded along
 +# the gathered rows, each shard reads the rows it holds, zero elsewhere, and the shards' element bits are joined by a bitwise
 +# or: every element is read on one shard, so the or is its exact bits, where a sum would turn -0. into +0. and quiet a NaN
@@ -907,43 +896,58 @@ index 099ac10..1618cad 100644
 +  inside = ((local >= 0) & (local < rows)).reshape(l.shape + (1,)*(len(x.shape)-1))
 +  read = x.index(local.minimum(rows-1).maximum(0))
 +  value = inside.where(read, read.const_like(0))
-+  bits_dtype = {1:dtypes.uint8, 2:dtypes.uint16, 4:dtypes.uint32}.get(value.dtype.itemsize, dtypes.uint64)
++  if value.dtype.itemsize not in (1, 2, 4, 8): raise RuntimeError(f"a gather of {value.dtype.itemsize}-byte elements across devices")
++  bits_dtype = {1:dtypes.uint8, 2:dtypes.uint16, 4:dtypes.uint32, 8:dtypes.uint64}[value.dtype.itemsize]
 +  bits = value.cast(dtypes.uint8) if value.dtype == dtypes.bool else value.bitcast(bits_dtype)
 +  joined = bits.allreduce(Ops.OR, multi.device)
 +  return joined.cast(dtypes.bool) if value.dtype == dtypes.bool else joined.bitcast(value.dtype)
 +
-+# a sharded index is joined whole on each device, in int64 since an index type has no width to cross devices in. a gather
-+# of the whole rows then takes the index's sharding back
++# a sharded index is joined whole on each device, in int64 since an index type has no width to cross devices in, and
++# gathers as a whole index does
 +def gather_multi(root:UOp, multi:UOp):
 +  if len(root.src) != 2: raise RuntimeError("a gather takes one index")
 +  l = root.src[1]
++  same_devices(multi, l)
 +  if l.op is not Ops.UNSHARD: return gather_shards(multi, l)
 +  axes, rngs = tuple(ax for ax, _ in l.sharding), tuple(r for _, r in l.sharding)
-+  whole = copy_multi(l.src[0].cast(dtypes.int64).unshard(axes, rngs), l.device).cast(l.dtype)
-+  g = gather_shards(multi, whole)
-+  if g.op is Ops.UNSHARD: return g
-+  for ax, r in l.sharding: g = g._shard(ax, r)
-+  return g.unshard(axes, rngs)
++  return gather_shards(multi, copy_multi(l.src[0].cast(dtypes.int64).unshard(axes, rngs), l.device).cast(l.dtype))
 +
  def index_multi(root:UOp, multi:UOp):
 +  if any(i.shape != () for i in root.src[1:]): return gather_multi(root, multi)
    # INDEX on UNSHARD: resolve each sharded axis into this range's own shard.
    # Two ownership patterns are supported:
    #   contiguous: idx = rng*shard_sz + local   (thread rng owns [rng*shard_sz, ...))
-@@ -289,6 +322,8 @@ multi_pm = PatternMatcher([
+@@ -254,7 +290,10 @@ def copy_multi(multi:UOp, device:str | tuple[str, ...]):
+ def store_after_multi(dest:UOp, src:UOp): return dest.after(dest.store(src.src[0])).unshard(src.arg, src.src[1:])
+ 
+ def store_value_multi(dest:UOp, multi:UOp):
+-  # storing a sharded value into an unsharded dest: every shard stores into its own sub-view of the dest
++  # storing a sharded value into an unsharded dest: every shard stores into its own sub-view of the dest. a dest replicated
++  # on several devices would keep only each device's part in each copy, so it is refused
++  if isinstance(dest.device, tuple) and dest.op is not Ops.UNSHARD:
++    raise RuntimeError(f"a value sharded on {multi.device} stored into a destination replicated on {dest.device}")
+   return shard_subview(dest, multi).store(multi.src[0])
+ 
+ def store_dest_multi(root:UOp, multi:UOp):
+@@ -289,6 +328,8 @@ multi_pm = PatternMatcher([
    (UPat(Ops.FLIP, src=(UPat(Ops.UNSHARD, name="multi"), ), name="root"), flip_multi),
    (UPat(Ops.STACK, name="root", custom_early_reject=set([Ops.UNSHARD])), stack_multi),
    (UPat(Ops.INDEX, src=(UPat(Ops.UNSHARD, name="multi"),), name="root", allow_any_len=True), index_multi),
 +  # a gather by a sharded index gathers each part of the index
-+  (UPat(Ops.INDEX, src=(UPat.var("x"), UPat(Ops.UNSHARD, name="multi"))), lambda x,multi: x.index(multi.src[0]).unshard(multi.arg, multi.src[1:])),
++  (UPat(Ops.INDEX, src=(UPat.var("x"), UPat(Ops.UNSHARD, name="multi"))), lambda x,multi: same_devices(x, multi) or x.index(multi.src[0]).unshard(multi.arg, multi.src[1:])),
    (UPat(Ops.AFTER, src=(UPat(Ops.UNSHARD), UPat(Ops.STORE, src=(UPat(Ops.UNSHARD, name="dest"), UPat(Ops.UNSHARD, name="src"))))), store_after_multi),
    # a COPY of a sharded value copies every shard to the target device
    (UPat(Ops.COPY, src=(UPat(Ops.UNSHARD, name="multi"),), allow_any_len=True, name="copy"), lambda multi,copy: copy_multi(multi, copy.arg)),
 diff --git a/tinygrad/schedule/prepare.py b/tinygrad/schedule/prepare.py
-index a5cf57d..e6a6c61 100644
+index a5cf57d..ae2879b 100644
 --- a/tinygrad/schedule/prepare.py
 +++ b/tinygrad/schedule/prepare.py
-@@ -4,7 +4,7 @@ from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, P
+@@ -1,10 +1,10 @@
+ from dataclasses import replace
+-from tinygrad.dtype import dtypes, to_dtype
+-from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, ParamArg
++from tinygrad.dtype import dtypes, to_dtype, AddrSpace
++from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, ParamArg, sint
  from tinygrad.uop.ops import graph_rewrite, rewrite_group, identity_element, resolve_returned_after
  from tinygrad.uop.movement import mop_cleanup
  from tinygrad.helpers import prod, getenv, all_int, DEBUG, SPLIT_REDUCEOP, OPENPILOT_HACKS, FLOAT16, argsort
@@ -952,7 +956,37 @@ index a5cf57d..e6a6c61 100644
  from tinygrad.schedule.allreduce import create_allreduce_function
  from tinygrad.schedule.multi import multi_pm
  
-@@ -82,6 +82,13 @@ pm_mops = PatternMatcher([
+@@ -61,16 +61,27 @@ pm_fold_moved_after = PatternMatcher([
+   (UPat(GroupOp.ALU, name="alu"), lambda ctx,alu: alu.replace(src=new_src) if (new_src:=tuple(ctx.get(s, s) for s in alu.src)) != alu.src else None),
+ ])
+ 
++# a load from a storage state in an index, as a gather's index is once ranged, is opaque to index arithmetic, which needs
++# only its bounds: each is held as a parameter of its bounds while the index moves. rewritten in place, the load would have
++# the stores its state is ordered after rebuilt, a second definition of the storage
++def _move_index(op:Ops, in_shape:tuple[sint,...], arg:tuple, idxs:tuple[UOp, ...]) -> tuple[UOp, ...]:
++  loads = [u for u in UOp.sink(*idxs).toposort(gate=lambda u: u.op is not Ops.AFTER)
++           if u.op is Ops.INDEX and u.shape == () and u.src[0].base.op is Ops.AFTER]
++  if not loads: return apply_movement_op(op, in_shape, arg, idxs)
++  held = {u:UOp.param(-2-i, u.dtype, vmin_vmax=(u.vmin, u.vmax), addrspace=AddrSpace.ALU) for i,u in enumerate(loads)}
++  moved = apply_movement_op(op, in_shape, arg, UOp.sink(*idxs).substitute(held).src)
++  return UOp.sink(*moved).substitute({v:k for k,v in held.items()}).src
++
+ # movement op on INDEX as a PatternMatcher
+ def _mop_index(r:UOp, idx:UOp):
+   idxs = idx.src[1:]
+   if len(idxs) == len(r.shape):
+-    return r.src[0].index(*apply_movement_op(r.op, r.src[0].shape, r.marg, idxs), arg=idx.arg)
++    return r.src[0].index(*_move_index(r.op, r.src[0].shape, r.marg, idxs), arg=idx.arg)
+   if r.op is Ops.RESHAPE:
+     src_prefix = len(r.src[0].shape) - len(r.shape[len(idxs):])
+     if src_prefix >= 0 and r.src[0].shape[src_prefix:] == r.shape[len(idxs):]:
+       if src_prefix == 0: return r.src[0]
+-      ret = r.src[0].index(*apply_movement_op(r.op, r.src[0].shape[:src_prefix], r.shape[:len(idxs)], idxs), arg=idx.arg)
++      ret = r.src[0].index(*_move_index(r.op, r.src[0].shape[:src_prefix], r.shape[:len(idxs)], idxs), arg=idx.arg)
+       return ret if ret.shape == idx.shape else None
+ 
+ pm_mops = PatternMatcher([
+@@ -82,6 +93,13 @@ pm_mops = PatternMatcher([
    (UPat(GroupOp.Movement, name="r").end(name="a", allow_any_len=True), lambda r,a: a.replace(src=(r.src[0],)+a.src[1:])),
  ])
  
@@ -966,7 +1000,7 @@ index a5cf57d..e6a6c61 100644
  # *****************
  # 0. do some cleanup rewrites, mostly copied from the old stuff
  
-@@ -98,7 +105,9 @@ def fix_store_hazard(target:UOp, src:UOp):
+@@ -98,7 +116,9 @@ def fix_store_hazard(target:UOp, src:UOp):
    reaches_base: dict[UOp, bool] = {}
    for s in src.toposort(gate=store_hazard_boundary):
      reaches_base[s] = s is base or any(reaches_base.get(c) for c in s.src)
@@ -977,7 +1011,7 @@ index a5cf57d..e6a6c61 100644
  
  def split_reduceop(reduce:UOp, x:UOp):
    if prod(reduce.shape) == 0: return None
-@@ -111,7 +120,7 @@ def split_reduceop(reduce:UOp, x:UOp):
+@@ -111,7 +131,7 @@ def split_reduceop(reduce:UOp, x:UOp):
  
    # get expanded by rangeifying the UOp x
    indexed = x.index(*[UOp.range(s, i) if resolve(s>1) else 0 for i,s in enumerate(x.shape)])
@@ -986,7 +1020,7 @@ index a5cf57d..e6a6c61 100644
    is_expanded = [i not in range_nums for i in range(len(x.shape))]
  
    if not (split_candidates:=[(i,d) for i in range(reduce.arg[1])
-@@ -272,7 +281,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
+@@ -272,7 +292,7 @@ earliest_rewrites = mop_cleanup+PatternMatcher([
  def prepare_rangeify(sink:UOp) -> UOp:
    # prepare for rangeify
    tsink = graph_rewrite(forward_call_outputs(sink), multi_pm, name="multi_pm")
@@ -1167,9 +1201,18 @@ index 2842d7e..d61c26e 100644
    return alu
  
 diff --git a/tinygrad/uop/spec.py b/tinygrad/uop/spec.py
-index 72a08ff..0c24083 100644
+index 72a08ff..3c9bb15 100644
 --- a/tinygrad/uop/spec.py
 +++ b/tinygrad/uop/spec.py
+@@ -177,7 +177,7 @@ spec_tensor = PatternMatcher([
+   (UPat(Ops.COPY, name="copy", src=(UPat(),), allow_any_len=True), lambda copy:
+    is_device(copy.arg) and not is_disk_device(copy.arg) and valid_device_range(copy.arg, copy.src[1:])),
+   (UPat(Ops.ALLREDUCE, name="red", src=(UPat(),)),
+-   lambda red: isinstance(red.arg, tuple) and len(red.arg) == 2 and red.arg[0] in GroupOp.Reduce and is_device(red.arg[1])),
++   lambda red: isinstance(red.arg, tuple) and len(red.arg) == 2 and red.arg[0] in GroupOp.Reduce|{Ops.OR} and is_device(red.arg[1])),
+ 
+   # UNSHARD/MSELECT/MSTACK
+   # an UNSHARD carries the value and one sharding range per sharded axis (usually a DEVICE RANGE, but can be a derived expression)
 @@ -251,13 +251,18 @@ spec_full = PatternMatcher([
  
  # ***** kernel graph spec *****

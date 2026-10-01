@@ -45,10 +45,11 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
       after the gathered one gathers each shard. Of a value sharded on the
       gathered axis, each shard reads the rows it holds and [0] elsewhere, and
       the shards' element bits are joined across the devices by a bitwise or,
-      which keeps each element's exact bits. A gather of a whole value by a
-      sharded index gathers each part of the index; of a sharded value, it
-      gathers by the whole index, joined on each device, and its result is
-      sharded as the index;
+      which keeps each element's exact bits. Every device then holds the whole
+      result, so the gathered rows cross the devices: a model that shards
+      weights by rows routes its activations to them instead. A gather of a
+      whole value by a sharded index gathers each part of the index; of a
+      sharded value, it gathers by the whole index, joined on each device;
     - a copy to one device joins the shards along their axes; a copy to several
       devices places each shard at its offset in zeros and sums them across the
       devices;
@@ -81,6 +82,9 @@ val multi_pm : (unit, Ops.t) Ops.Pattern_matcher.t
     Raises [Invalid_argument] on what has no shard of its own: a reshape that
     moves elements between shards, a pad, flip or shrink of a sharded axis other
     than those above, a reduction of some sharded axes but not all, an index
-    that crosses shards, a gather by more than one index or of a value sharded
-    on the gathered axis and another, or values on different devices resharded
-    together. *)
+    that crosses shards, a gather by more than one index, by an index on other
+    devices than its value, of a value sharded on the gathered axis and another,
+    or of elements of a width without an unsigned integer type, a store of a
+    sharded value into a whole destination on several devices, whose copies
+    would each keep one part, or values on different devices resharded together.
+*)

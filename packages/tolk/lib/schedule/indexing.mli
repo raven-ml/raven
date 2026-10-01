@@ -41,11 +41,7 @@ val apply_movement_op :
     constant on an axis drops it: a [Reshape] to an axis of one element, an
     [Expand] that drops the leading index, a [Shrink] onto an axis of one
     element. A caller that reads through the index masks the padded values
-    itself, as {!run_rangeify} turns each [Pad] into a selection.
-
-    A load in [idxs] from a storage state ({!Op.After}), as a gather's index is,
-    is left as it is: the rewrites of the index do not reach the stores the
-    state is ordered after. *)
+    itself, as {!run_rangeify} turns each [Pad] into a selection. *)
 
 val run_rangeify : ?debug:bool -> Ops.t -> Ops.t
 (** [run_rangeify ~debug sink] is the tensor graph [sink] with its elements

@@ -216,6 +216,7 @@ a copy to two devices without its range	None	False	None	None	False	None
 a copy to a disk	None	False	None	None	False	None
 an allreduce	None	True	None	None	True	None
 an allreduce by sine	None	False	None	None	False	None
+an allreduce by a bitwise or	None	True	None	None	True	None
 an unshard	None	True	None	None	True	None
 an unshard over a derived range	None	True	None	None	True	None
 an unshard missing a range	None	False	None	None	False	None

@@ -1032,11 +1032,11 @@ let gathers =
           equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index whole [ clamp 4 index ]));
       test
-        "a gather of sharded rows by a sharded index reads the whole's rows, \
-         sharded as the index" (fun () ->
+        "a gather of sharded rows by a sharded index reads the whole's rows on \
+         every device" (fun () ->
           let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
           let u = multi (Ops.index rows [ clamp 4 index ]) in
-          equal (list int) [ 0 ] (List.map fst (Ops.sharding u));
+          equal (list int) [] (List.map fst (Ops.sharding u));
           reads_whole (Ops.index rows [ clamp 4 index ]));
       test "a gather of a value sharded on its rows and another axis is refused"
         (fun () ->
@@ -1049,6 +1049,16 @@ let gathers =
           in
           let l = clamp 4 (storage ~devices:four ~dtype:Int32 2 [ 3 ]) in
           refused ~because:"another axis" (Ops.index grid [ l ]));
+      test "a gather of a value on one device by a sharded index is refused"
+        (fun () ->
+          let index = Ops.unshard (storage ~dtype:Int32 2 [ 2 ]) [ 0 ] in
+          let x = storage ~devices:(cpu 0) 3 [ 4; 8 ] in
+          refused ~because:"by an index on" (Ops.index x [ clamp 4 index ]));
+      test "a gather of sharded rows by an index on other devices is refused"
+        (fun () ->
+          let elsewhere = Ops.Multi [ "CPU:2"; "CPU:3" ] in
+          let l = clamp 4 (storage ~devices:elsewhere ~dtype:Int32 2 [ 3 ]) in
+          refused ~because:"by an index on" (Ops.index rows [ l ]));
       test "a gather of a sharded value by two indices is refused" (fun () ->
           refused ~because:"one index" (Ops.index rows [ l; l ]));
     ]
@@ -1067,11 +1077,11 @@ let effects =
                (Ops.after (shard dest) [ Ops.store own (shard a) ])
                [ 0 ] a)
             (multi (Ops.after dest [ Ops.store dest a ])));
-      test "a store of a sharded value into a whole one stores into its part"
-        (fun () ->
-          equal uop
-            (Ops.store (Ops.shard_slice whole 0 (range a)) (shard a))
-            (multi (Ops.store whole a)));
+      test
+        "a store of a sharded value into one replicated on its devices is \
+         refused" (fun () ->
+          refused ~because:"stored into a destination replicated"
+            (Ops.store whole a));
       test "a store of a whole value into a sharded destination stores its part"
         (fun () ->
           equal uop

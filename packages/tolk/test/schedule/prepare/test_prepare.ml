@@ -297,6 +297,24 @@ let pm_mops_rules =
           let u = flat 32 in
           equal uop (Ops.end_ u [ r0 ])
             (mops (Ops.end_ (Ops.reshape u (ints [ 4; 8 ])) [ r0 ])));
+      test
+        "an index that loads from a storage state moves with the state as it is"
+        (fun () ->
+          let buf = Ops.new_buffer ~slot:2 cpu 4 Int32 in
+          let r = range 4 2 in
+          let unsimplified =
+            Ops.O.(Ops.cast r Int32 * Ops.const ~dtype:Int32 (`Int Bigint.one))
+          in
+          let state =
+            Ops.after buf
+              [ Ops.end_ (Ops.store (Ops.index buf [ r ]) unsimplified) [ r ] ]
+          in
+          let row = Ops.cast (Ops.index state [ r1 ]) Weak_int in
+          let moved = mops (Ops.index (Ops.permute x [ 1; 0 ]) [ r0; row ]) in
+          let states =
+            List.filter (fun u -> Ops.op u = After) (Ops.toposort moved)
+          in
+          equal (list uop) [ state ] states);
     ]
 
 let concrete u =

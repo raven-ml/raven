@@ -78,34 +78,6 @@ let movements =
       moved "movement_reshape_of_padded.golden" (ints [ 8 ])
         (Reshape (ints [ 2; 4 ]))
         [ Ops.valid Ops.O.(r0 - Ops.int 1) Ops.O.(r0 >= Ops.int 1); r1 ];
-      test
-        "a reshape leaves the storage a gather's index loads from as it is"
-        (fun () ->
-          let buf = Ops.new_buffer ~slot:1 (Single "CPU") 12 Int32 in
-          let r = range (Int 12) 5 in
-          let unsimplified =
-            Ops.O.(Ops.cast r Int32 * Ops.const ~dtype:Int32 (z 1))
-          in
-          let state =
-            Ops.after buf
-              [ Ops.end_ (Ops.store (Ops.index buf [ r ]) unsimplified) [ r ] ]
-          in
-          let load =
-            Ops.cast
-              (Ops.index state [ Ops.O.((r0 * Ops.int 4) + r1) ])
-              Weak_int
-          in
-          let moved =
-            Indexing.apply_movement_op (ints [ 12 ])
-              (Reshape (ints [ 3; 4 ]))
-              [ load; r1 ]
-          in
-          let states =
-            List.filter
-              (fun u -> Ops.op u = After)
-              (Ops.toposort (Ops.sink moved))
-          in
-          equal (list Uops.uop) [ state ] states);
     ]
 
 (* Movement laws

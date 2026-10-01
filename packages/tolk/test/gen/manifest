@@ -3818,6 +3818,12 @@ schedule/schedule/shard_add.golden
 schedule/schedule/shard_add_kernels.golden
 schedule/schedule/shard_add_linear.golden
 schedule/schedule/shard_add_schedule.golden
+schedule/schedule/shard_gather_rows.golden
+schedule/schedule/shard_gather_rows_kernels.golden
+schedule/schedule/shard_gather_rows_kernels_1.golden
+schedule/schedule/shard_gather_rows_linear.golden
+schedule/schedule/shard_gather_rows_schedule.golden
+schedule/schedule/shard_gather_rows_schedule_1.golden
 schedule/schedule/shard_matmul.golden
 schedule/schedule/shard_matmul_kernels.golden
 schedule/schedule/shard_matmul_linear.golden

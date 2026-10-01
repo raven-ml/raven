@@ -312,69 +312,71 @@
 310 Ops.PARAM dtypes.float [] ParamArg(slot=6, dtype=dtypes.float, size=16, device=("CPU:0", "CPU:1"))
 311 Ops.ALLREDUCE dtypes.float [310] (Ops.ADD, ("CPU:0", "CPU:1"))
 312 Ops.ALLREDUCE dtypes.float [310] (Ops.SIN, ("CPU:0", "CPU:1"))
-313 Ops.UNSHARD dtypes.float [310, 141] (0,)
-314 Ops.MUL dtypes.weakint [141, 19]
-315 Ops.UNSHARD dtypes.float [310, 314] (0,)
-316 Ops.UNSHARD dtypes.float [310] (0,)
-317 Ops.RANGE dtypes.int [20] (-1, AxisType.DEVICE)
-318 Ops.UNSHARD dtypes.float [310, 317] (0,)
-319 Ops.MSELECT dtypes.float [310] 1
-320 Ops.MSELECT dtypes.float [310] 2
-321 Ops.PARAM dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=16, device="CPU")
-322 Ops.MSELECT dtypes.float [321] 0
-323 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=16, device="CPU:0")
-324 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=16, device="CPU:1")
-325 Ops.MSTACK dtypes.float [323, 324]
-326 Ops.MSTACK dtypes.float [310, 310]
-327 Ops.MSTACK dtypes.float [0, 0]
-328 Ops.MSTACK dtypes.float [0, 5]
-329 Ops.DETACH dtypes.float [0]
-330 Ops.CONTIGUOUS_BACKWARD dtypes.float [0]
-331 Ops.STAGE dtypes.float [3, 134]
-332 Ops.LINEAR dtypes.void [7]
-333 Ops.SOURCE dtypes.void [] "void k(){}"
-334 Ops.PROGRAM dtypes.void [234]
-335 Ops.PROGRAM dtypes.void [234, 332]
-336 Ops.PROGRAM dtypes.void [234, 332, 333]
-337 Ops.BINARY dtypes.uchar [] b"\x00"
-338 Ops.PROGRAM dtypes.void [234, 332, 333, 337]
-339 Ops.PROGRAM dtypes.void [332]
-340 Ops.PROGRAM dtypes.void [0]
-341 Ops.AFTER dtypes.float [189, 7]
-342 Ops.PROGRAM dtypes.void [341]
-343 Ops.SHRINK dtypes.float [0, 258, 165]
-344 Ops.SHRINK dtypes.int [218, 258, 165]
-345 Ops.SHRINK dtypes.float [0, 258, 64]
-346 Ops.SHRINK dtypes.float [3, 258, 165]
-347 Ops.IF dtypes.void [255, 2]
-348 Ops.CAST dtypes.int [3] dtypes.int
-349 Ops.IF dtypes.void [255, 348]
-350 Ops.IF dtypes.void [255, 343]
-351 Ops.IF dtypes.void [255, 3]
-352 Ops.IF dtypes.void [261, 2]
-353 Ops.ENDIF dtypes.void [347]
-354 Ops.ENDIF dtypes.void [7]
-355 Ops.GETADDR dtypes.ulong [189] "CPU"
-356 Ops.ALLOC dtypes.float [] ParamArg(slot=211, dtype=dtypes.float, size=16, device="CPU")
-357 Ops.GETADDR dtypes.ulong [356] "CPU"
-358 Ops.GETADDR dtypes.ulong [341] "CPU"
-359 Ops.GETADDR dtypes.ulong [325] "CPU:0"
-360 Ops.GETADDR dtypes.ulong [3] "CPU"
-361 Ops.STACK dtypes.float [0, 5]
-362 Ops.ADD dtypes.weakint [15, 95]
-363 Ops.STACK dtypes.weakint [362]
-364 Ops.CAST dtypes.long [15] dtypes.long
-365 Ops.AFTER dtypes.float [325, 7]
-366 Ops.BINARY dtypes.uchar []
-367 Ops.CUSTOM_FUNCTION dtypes.void [0]
-368 Ops.CALL dtypes.void [234, 0, 5]
-369 Ops.WMMA dtypes.float [242, 243, 244]
-370 Ops.SPECIAL dtypes.weakint [152]
-371 Ops.SPECIAL dtypes.int [282]
-372 Ops.PERMUTE dtypes.float [146]
-373 Ops.REDUCE dtypes.float [0]
-374 Ops.COPY dtypes.float [0]
-375 Ops.ALLREDUCE dtypes.float [310]
-376 Ops.GETADDR dtypes.ulong [189]
-377 Ops.SINK dtypes.void [4, 8, 9, 10, 11, 12, 13, 14, 16, 17, 21, 22, 25, 28, 29, 33, 34, 36, 37, 38, 40, 41, 42, 43, 44, 45, 46, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 63, 65, 68, 69, 70, 71, 72, 73, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 97, 100, 103, 106, 107, 108, 109, 111, 112, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 134, 135, 137, 139, 140, 141, 142, 144, 147, 149, 150, 151, 155, 157, 162, 164, 167, 168, 170, 171, 172, 173, 176, 177, 179, 180, 181, 0, 182, 183, 184, 64, 185, 186, 187, 188, 189, 190, 191, 192, 193, 195, 197, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 213, 214, 215, 216, 217, 219, 221, 223, 225, 226, 227, 228, 229, 230, 231, 232, 233, 235, 236, 237, 238, 239, 240, 241, 245, 3, 247, 249, 251, 253, 254, 256, 257, 259, 260, 262, 7, 264, 266, 267, 268, 270, 271, 272, 274, 276, 278, 279, 280, 281, 283, 146, 287, 289, 291, 295, 296, 297, 298, 299, 301, 304, 305, 306, 307, 308, 309, 311, 312, 313, 315, 316, 318, 319, 320, 322, 325, 326, 327, 328, 329, 330, 222, 331, 332, 333, 334, 335, 336, 338, 339, 340, 342, 93, 18, 343, 344, 345, 346, 347, 349, 350, 351, 352, 353, 354, 355, 357, 358, 359, 360, 361, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376]
+313 Ops.BITCAST dtypes.uint [310] dtypes.uint
+314 Ops.ALLREDUCE dtypes.uint [313] (Ops.OR, ("CPU:0", "CPU:1"))
+315 Ops.UNSHARD dtypes.float [310, 141] (0,)
+316 Ops.MUL dtypes.weakint [141, 19]
+317 Ops.UNSHARD dtypes.float [310, 316] (0,)
+318 Ops.UNSHARD dtypes.float [310] (0,)
+319 Ops.RANGE dtypes.int [20] (-1, AxisType.DEVICE)
+320 Ops.UNSHARD dtypes.float [310, 319] (0,)
+321 Ops.MSELECT dtypes.float [310] 1
+322 Ops.MSELECT dtypes.float [310] 2
+323 Ops.PARAM dtypes.float [] ParamArg(slot=7, dtype=dtypes.float, size=16, device="CPU")
+324 Ops.MSELECT dtypes.float [323] 0
+325 Ops.PARAM dtypes.float [] ParamArg(slot=8, dtype=dtypes.float, size=16, device="CPU:0")
+326 Ops.PARAM dtypes.float [] ParamArg(slot=9, dtype=dtypes.float, size=16, device="CPU:1")
+327 Ops.MSTACK dtypes.float [325, 326]
+328 Ops.MSTACK dtypes.float [310, 310]
+329 Ops.MSTACK dtypes.float [0, 0]
+330 Ops.MSTACK dtypes.float [0, 5]
+331 Ops.DETACH dtypes.float [0]
+332 Ops.CONTIGUOUS_BACKWARD dtypes.float [0]
+333 Ops.STAGE dtypes.float [3, 134]
+334 Ops.LINEAR dtypes.void [7]
+335 Ops.SOURCE dtypes.void [] "void k(){}"
+336 Ops.PROGRAM dtypes.void [234]
+337 Ops.PROGRAM dtypes.void [234, 334]
+338 Ops.PROGRAM dtypes.void [234, 334, 335]
+339 Ops.BINARY dtypes.uchar [] b"\x00"
+340 Ops.PROGRAM dtypes.void [234, 334, 335, 339]
+341 Ops.PROGRAM dtypes.void [334]
+342 Ops.PROGRAM dtypes.void [0]
+343 Ops.AFTER dtypes.float [189, 7]
+344 Ops.PROGRAM dtypes.void [343]
+345 Ops.SHRINK dtypes.float [0, 258, 165]
+346 Ops.SHRINK dtypes.int [218, 258, 165]
+347 Ops.SHRINK dtypes.float [0, 258, 64]
+348 Ops.SHRINK dtypes.float [3, 258, 165]
+349 Ops.IF dtypes.void [255, 2]
+350 Ops.CAST dtypes.int [3] dtypes.int
+351 Ops.IF dtypes.void [255, 350]
+352 Ops.IF dtypes.void [255, 345]
+353 Ops.IF dtypes.void [255, 3]
+354 Ops.IF dtypes.void [261, 2]
+355 Ops.ENDIF dtypes.void [349]
+356 Ops.ENDIF dtypes.void [7]
+357 Ops.GETADDR dtypes.ulong [189] "CPU"
+358 Ops.ALLOC dtypes.float [] ParamArg(slot=211, dtype=dtypes.float, size=16, device="CPU")
+359 Ops.GETADDR dtypes.ulong [358] "CPU"
+360 Ops.GETADDR dtypes.ulong [343] "CPU"
+361 Ops.GETADDR dtypes.ulong [327] "CPU:0"
+362 Ops.GETADDR dtypes.ulong [3] "CPU"
+363 Ops.STACK dtypes.float [0, 5]
+364 Ops.ADD dtypes.weakint [15, 95]
+365 Ops.STACK dtypes.weakint [364]
+366 Ops.CAST dtypes.long [15] dtypes.long
+367 Ops.AFTER dtypes.float [327, 7]
+368 Ops.BINARY dtypes.uchar []
+369 Ops.CUSTOM_FUNCTION dtypes.void [0]
+370 Ops.CALL dtypes.void [234, 0, 5]
+371 Ops.WMMA dtypes.float [242, 243, 244]
+372 Ops.SPECIAL dtypes.weakint [152]
+373 Ops.SPECIAL dtypes.int [282]
+374 Ops.PERMUTE dtypes.float [146]
+375 Ops.REDUCE dtypes.float [0]
+376 Ops.COPY dtypes.float [0]
+377 Ops.ALLREDUCE dtypes.float [310]
+378 Ops.GETADDR dtypes.ulong [189]
+379 Ops.SINK dtypes.void [4, 8, 9, 10, 11, 12, 13, 14, 16, 17, 21, 22, 25, 28, 29, 33, 34, 36, 37, 38, 40, 41, 42, 43, 44, 45, 46, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 63, 65, 68, 69, 70, 71, 72, 73, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 97, 100, 103, 106, 107, 108, 109, 111, 112, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 134, 135, 137, 139, 140, 141, 142, 144, 147, 149, 150, 151, 155, 157, 162, 164, 167, 168, 170, 171, 172, 173, 176, 177, 179, 180, 181, 0, 182, 183, 184, 64, 185, 186, 187, 188, 189, 190, 191, 192, 193, 195, 197, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 213, 214, 215, 216, 217, 219, 221, 223, 225, 226, 227, 228, 229, 230, 231, 232, 233, 235, 236, 237, 238, 239, 240, 241, 245, 3, 247, 249, 251, 253, 254, 256, 257, 259, 260, 262, 7, 264, 266, 267, 268, 270, 271, 272, 274, 276, 278, 279, 280, 281, 283, 146, 287, 289, 291, 295, 296, 297, 298, 299, 301, 304, 305, 306, 307, 308, 309, 311, 312, 314, 315, 317, 318, 320, 321, 322, 324, 327, 328, 329, 330, 331, 332, 222, 333, 334, 335, 336, 337, 338, 340, 341, 342, 344, 93, 18, 345, 346, 347, 348, 349, 351, 352, 353, 354, 355, 356, 357, 359, 360, 361, 362, 363, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378]
 

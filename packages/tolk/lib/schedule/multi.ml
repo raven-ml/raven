@@ -528,6 +528,15 @@ let index_multi root multi =
   in
   index x (List.fold_left resolve_axis (List.tl (src root)) (sharding multi))
 
+(* A gather reads its source and its index on the same devices. *)
+let same_devices x l =
+  match (device x, device l) with
+  | Some dx, Some dl when not (equal_device dx dl) ->
+      invalid_arg
+        (Format.asprintf "a gather of a value on %a by an index on %a"
+           pp_device dx pp_device dl)
+  | _ -> ()
+
 (* A gather of a sharded value by a whole index. Sharded along trailing axes,
    each shard gathers its own part. Sharded along the gathered rows, each shard
    reads the rows it holds, zero elsewhere, and the shards' element bits are
@@ -556,7 +565,10 @@ let gather_shards multi l =
         | 1 -> Dtype.Uint8
         | 2 -> Dtype.Uint16
         | 4 -> Dtype.Uint32
-        | _ -> Dtype.Uint64
+        | 8 -> Dtype.Uint64
+        | n ->
+            invalid_arg
+              (Printf.sprintf "a gather of %d-byte elements across devices" n)
       in
       let bits =
         if Dtype.equal dt Dtype.Bool then cast value Dtype.Uint8
@@ -568,28 +580,34 @@ let gather_shards multi l =
   | _ -> invalid_arg "a gather of a value sharded on its rows and another axis"
 
 (* A sharded index is joined whole on each device, in [int64] since an index
-   type has no width to cross devices in. A gather of the whole rows then takes
-   the index's sharding back. *)
+   type has no width to cross devices in, and gathers as a whole index does. *)
 let gather_multi root multi =
   match src root with
   | [ _; l ] when is_unshard l ->
+      same_devices multi l;
       let wide = unshard_as (sharding l) (cast (nth l 0) Dtype.Int64) in
-      let whole = cast (copy_multi wide (Multi (devices l))) (dtype l) in
-      let g = gather_shards multi whole in
-      if is_unshard g then g
-      else
-        unshard_as (sharding l)
-          (List.fold_left (fun g (ax, r) -> shard_slice g ax r) g (sharding l))
-  | [ _; l ] -> gather_shards multi l
+      gather_shards multi (cast (copy_multi wide (Multi (devices l))) (dtype l))
+  | [ _; l ] ->
+      same_devices multi l;
+      gather_shards multi l
   | _ -> invalid_arg "a gather takes one index"
 
 let store_after_multi dest src =
   reshard src (after dest [ store dest (nth src 0) ])
 
 (* A sharded value stored into a whole destination: each shard stores into its
-   own sub-view of it. *)
+   own sub-view of it. A destination replicated on several devices would keep
+   only each device's part in each copy, so it is refused. *)
 let store_value_multi dest multi =
-  store (shard_subview dest multi) (nth multi 0)
+  match device dest with
+  | Some (Multi _ as d) when not (is_unshard dest) ->
+      invalid_arg
+        (Format.asprintf
+           "a value sharded on %a stored into a destination replicated on %a"
+           pp_device
+           (Option.get (device multi))
+           pp_device d)
+  | _ -> store (shard_subview dest multi) (nth multi 0)
 
 (* A store into a sharded destination: each shard stores into its own shard of
    it, and the value is taken as an arithmetic operation takes it. Scalars
@@ -670,8 +688,9 @@ and multi_pm =
               (Upat.op Op.Index ~name:"root"
                  ~src:[ Upat.var "x"; Upat.op Op.Unshard ~name:"multi" ])
               (fun m ->
-                let multi = m "multi" in
-                Some (reshard multi (index (m "x") [ nth multi 0 ])));
+                let x = m "x" and multi = m "multi" in
+                same_devices x multi;
+                Some (reshard multi (index x [ nth multi 0 ])));
             rule
               (Upat.op Op.After
                  ~src:

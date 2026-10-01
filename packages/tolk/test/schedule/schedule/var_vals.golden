@@ -40,6 +40,7 @@ shard_sum	-
 shard_matmul	-
 shard_to_one	-
 mesh_sum	-
+shard_gather_rows	-
 variable_shrink	v=3
 variable_reduce	v=5
 variable_two	v=4 w=7
