@@ -8,7 +8,30 @@ A transformation takes the structure of each value whose tensors it enumerates, 
 
 For functions of a single tensor, the primed variants (`grad'`, `vjp'`, `jvp'`, `vmap'`) take no structure; they are used below wherever the structure does not matter.
 
-Every transformation replaces each tensor of its arguments by a fresh alias, a new value over the same storage, before it differentiates or maps it. A tensor the function captures is then a constant even when it is also the argument: `Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) w` is `w`.
+A transformation tracks each tensor of its arguments at its position. A tensor behind two positions is two arguments, each with its own derivative, and a tensor the function captures is a constant even when it is also the argument: `Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) w` is `w`. To tie two uses of a weight, pass it once and use it twice.
+
+### Values stay inside
+
+A value computed inside a transformed function leaves it through the function's result. Kept in a reference and read after the transformation returns, used on another domain, or held by a closure that runs later, it has no bytes, and using it raises:
+
+```ocaml
+let () =
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let seen = ref None in
+  let _ =
+    Rune.grad'
+      (fun x ->
+        let h = Nx.tanh x in
+        seen := Some h;
+        Nx.sum h)
+      x
+  in
+  match Nx.to_array (Option.get !seen) with
+  | _ -> print_endline "read"
+  | exception Invalid_argument _ -> print_endline "the value stayed inside"
+```
+
+Inside the function `Nx.item` and `Nx.print` read values, so an OCaml `if` on a value works under differentiation. To get a value out, return it: `value_and_grad_aux` returns an objective's auxiliary values, and `vjp` and `jvp` return whatever structure the function's result has.
 
 ## Reverse-Mode AD
 
@@ -43,7 +66,7 @@ let () =
 
 ### value_and_grad_aux
 
-When the objective returns auxiliary data alongside the loss — predictions, metrics, updated state — the `_aux` variant threads it through undifferentiated:
+When the objective returns auxiliary data alongside the loss (predictions, metrics, updated state), the `_aux` variant returns it beside the gradient. It takes the auxiliary value's structure, which is how it leaves the differentiation as plain values:
 
 ```ocaml
 let () =
@@ -52,54 +75,38 @@ let () =
     (Nx.mean pred, pred) (* pred is auxiliary *)
   in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let loss, gradient, pred = Rune.value_and_grad_aux Nx.Ptree.tensor f x in
+  let loss, gradient, pred =
+    Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor f x
+  in
   ignore (loss, gradient, pred)
 ```
 
 ### vjp
 
-Vector-Jacobian product: the function need not return a scalar — you provide the cotangent to pull back. `vjp'` is the single-tensor variant:
+Vector-Jacobian product: the function need not return a scalar. `vjp` returns the result and its pullback, which maps a cotangent of the result to the gradient. `vjp'` is the single-tensor variant:
 
 ```ocaml
 let () =
   let f v = Nx.mul v v in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let ct = Nx.ones Nx.float32 [| 3 |] in
-  let y, g = Rune.vjp' f x ct in
+  let y, pullback = Rune.vjp' f x in
+  let g = pullback (Nx.ones Nx.float32 [| 3 |]) in
   Printf.printf "%s\n" (Nx.to_string y); (* [1. 4. 9.] *)
   Printf.printf "%s\n" (Nx.to_string g) (* [2. 4. 6.] *)
 ```
 
-The cotangent must have the output's shape and dtype. `vjp p q f params cotangents` takes the structures of the parameters and of the result, so a function returning a structure takes one cotangent per tensor of its result:
+The cotangent must have the output's shape and dtype. `vjp p q f params` takes the structures of the parameters and of the result, so a function returning a structure takes one cotangent per tensor of its result:
 
 ```ocaml
 let () =
   let f v = (Nx.mul v v, Nx.sum v) in
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let _, g =
-    Rune.vjp Nx.Ptree.tensor
-      Nx.Ptree.(pair tensor tensor)
-      f x
-      (Nx.ones Nx.float32 [| 3 |], Nx.scalar Nx.float32 1.0)
-  in
+  let _, pullback = Rune.vjp Nx.Ptree.tensor Nx.Ptree.(pair tensor tensor) f x in
+  let g = pullback (Nx.ones Nx.float32 [| 3 |], Nx.scalar Nx.float32 1.0) in
   Printf.printf "%s\n" (Nx.to_string g) (* [3. 5. 7.] *)
 ```
 
-### vjp_fun
-
-`vjp_fun` returns the output and a reusable pullback. Each call to the pullback runs one backward pass over the recorded computation without re-running `f` — useful for pulling back several cotangents:
-
-```ocaml
-let () =
-  let f v = Nx.mul v v in
-  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let y, pullback = Rune.vjp_fun' f x in
-  let g1 = pullback (Nx.ones Nx.float32 [| 3 |]) in
-  let g2 = pullback (Nx.create Nx.float32 [| 3 |] [| 0.; 1.; 0. |]) in
-  ignore (y, g1, g2)
-```
-
-Calling the pullback under another transformation (for example `vmap'`) transforms the backward pass — that is how `jacrev'` vectorizes its rows.
+The pullback runs no part of `f` again, except the functions `f` passes to `remat`. When `vjp` runs outside every transformation, the pullback may be applied to any number of cotangents, from any domain. Under another transformation it is transformed with it: under `vmap'` the backward pass is batched, which is how `jacrev'` computes its rows.
 
 ## Forward-Mode AD
 
@@ -267,50 +274,48 @@ Wrap the memory-heavy sub-computation (a transformer block, say), not the whole 
 
 ## Custom Differentiation Rules
 
-When you know a better rule than the composition of primitive rules — cheaper, more stable, or for a function whose interior should not be differentiated — override it.
-
-### custom_vjp
-
-`custom_vjp p ~fwd ~bwd params` computes `fst (fwd params)`; under the innermost reverse-mode transformation, `bwd residual cotangent` supplies the parameter gradients instead of differentiating `fwd`'s interior. The residual is whatever `fwd` returned alongside its result:
-
-```ocaml
-let () =
-  (* f(x) = x², with a hand-written backward rule. *)
-  let f x =
-    Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor
-      ~fwd:(fun x -> (Nx.square x, x)) (* save x as the residual *)
-      ~bwd:(fun x ct -> Nx.mul ct (Nx.mul_s x 2.0)) (* ct · 2x *)
-      x
-  in
-  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  Printf.printf "%s\n"
-    (Nx.to_string (Rune.grad' (fun v -> Nx.sum (f v)) x))
-  (* [2. 4. 6.] — from the custom rule *)
-```
-
-Each gradient leaf must match its parameter leaf's shape and dtype. Enclosing transformations (an outer `grad`) see the forward computation itself; only the innermost reverse-mode transformation applies the rule. A `vmap` passes the call on as the call of its batched `fwd` and batched `bwd`, so a `grad` outside the map applies the rule to the map's lanes. Differentiating a `custom_vjp` call in forward mode raises — define a `custom_jvp` rule for that.
+A custom rule gives a function the derivative a transformation would compute for it, in the form of that transformation's answer. The rule receives the arguments' values and returns the result with its derivative. It must not use a value its own differentiation tracks other than through its arguments: pass such a value as an argument.
 
 ### custom_jvp
 
-The forward-mode counterpart: `jvp params tangents` provides both the result and its tangent:
+`custom_jvp p q rule args` is `fst (rule args)`, whose derivative is the tangent map `snd (rule args)`: a function from the arguments' tangents to the result's, linear in them. One rule serves both modes, at every order. Forward mode applies the map, reverse mode transposes the operations the map performs, and every differentiation around the call differentiates the map's code for the second-order terms:
 
 ```ocaml
+let stable x =
+  Nx.add (Nx.relu x) (Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs x))) 1.))
+
+let softplus =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      (stable x, fun dx -> Nx.mul (Nx.sigmoid x) dx))
+
 let () =
-  let f x =
-    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor ~f:Nx.square
-      ~jvp:(fun x dx -> (Nx.square x, Nx.mul_s (Nx.mul x dx) 2.0))
-      x
-  in
-  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
-  let v = Nx.ones Nx.float32 [| 3 |] in
-  let _, tangent = Rune.jvp' f x v in
-  Printf.printf "%s\n" (Nx.to_string tangent)
-  (* [2. 4. 6.] — from the custom rule *)
+  let x = Nx.create Nx.float32 [| 3 |] [| -1.; 0.; 1. |] in
+  let g = Rune.grad' (fun x -> Nx.sum (softplus x)) x in
+  let _, t = Rune.jvp' softplus x (Nx.ones Nx.float32 [| 3 |]) in
+  Printf.printf "%s\n%s\n" (Nx.to_string g) (Nx.to_string t)
+  (* both are sigmoid x *)
 ```
 
-A `vmap` passes a `custom_jvp` on as the call of its batched `f` and batched rule, so a `jvp` outside the map applies the rule to the map's lanes. Reverse mode has no rule to apply to a `custom_jvp`, and forward mode none to a `custom_vjp`: a call whose result holds no tensor (a unit result) has nothing to differentiate and runs its function; one with a tensor result raises.
+Under reverse mode the map's tangents have no values, so the map must be linear: an operation that is not linear in a tangent (`Nx.exp dx`), an offset added to a tangent, or a read of a tangent's value raises, naming the entry point that differentiates. A value the map selects with `Nx.where`, concatenates, scatters or writes beside a tangent is taken as zero, so give such a value only as a tangent's zero fill. When the result holds no tensor, reverse mode does not apply the map: a rule with a unit result observes its arguments' tangents in forward mode and is inert under `grad`.
 
-With no transformation in scope, both constructs just run the plain forward function.
+### custom_vjp
+
+A backward rule that is not the transpose of a forward one is a `custom_vjp`. Its rule returns the result and the pullback, which maps the result's cotangents to the arguments' gradients as `vjp`'s pullback does:
+
+```ocaml
+let clip_grad c =
+  Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      (x, fun g -> Nx.clamp ~min:(-.c) ~max:c g))
+
+let () =
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let g = Rune.grad' (fun x -> Nx.sum (Nx.mul_s (clip_grad 1.0 x) 5.0)) x in
+  Printf.printf "%s\n" (Nx.to_string g) (* [1. 1. 1.], clipped from 5 *)
+```
+
+The pullback receives zeros for a tensor of the result nothing used, and its result is checked against the arguments' structure. Differentiations around the call differentiate the rule's code and the pullback's. Forward mode has no rule to apply: `jvp` of a `custom_vjp` whose result holds a tensor raises.
+
+`vmap` batches both kinds of rule, and the gradient of an argument the map does not batch is summed over its lanes. With no differentiation around the call, a rule only computes its result.
 
 ## Totals and Lanes
 
@@ -350,9 +355,9 @@ let () =
   (* wide: [2,2,3] — each of the 2 lanes holds the gather of 2 rows *)
 ```
 
-The map named `a` answers the call itself, so the gathered value is a constant of that map, and enclosing transformations see the gather. Every other map passes the call on and keeps its own lanes in front of the gathered axis, and with no map named `a` around the call, `lanes a x` is one lane. `Rune.lane_index ?axis ()` addresses maps alike: the map named `axis`, or the innermost anonymous map when `axis` is absent, answers with each lane's index, and `Nx.Rng.fold_in_tensor k (Rune.lane_index ())` gives each lane its own key. `jvp` gathers the tangent with the primal; `grad` inside the map named `a` raises when the operand is tracked, and `grad` outside it differentiates through the gather.
+The map named `a` answers the call itself, so the gathered value is a constant of that map, and enclosing transformations see the gather. Every other map passes the call on and keeps its own lanes in front of the gathered axis, and with no map named `a` around the call, `lanes a x` is one lane. `Rune.lane_index ?axis ()` addresses maps alike: the map named `axis`, or the innermost anonymous map when `axis` is absent, answers with each lane's index, and `Nx.Rng.fold_in_tensor k (Rune.lane_index ())` gives each lane its own key. `lanes a` is linear: `jvp` gathers the tangent with the primal, and `grad` gives each lane its row of the summed cotangent.
 
-Together they let a forward-mode rule use every lane at once. Under `vmap ~axis:a` over tangent directions around `jvp`, a `custom_jvp` with a unit result, called anywhere in a model, has a rule that can gather its parameter's tangents across the directions with `lanes a` and add a quantity built from all of them to a total that the caller collects inside that map. The same model runs under `grad`, where the call runs its `f`: with `~f:ignore` it does nothing.
+Together they let a forward-mode rule use every lane at once. Under `vmap ~axis:a` over tangent directions around `jvp`, a `custom_jvp` with a unit result, called anywhere in a model, has a tangent map that can gather its argument's tangents across the directions with `lanes a` and add a quantity built from all of them to a total that the caller collects inside that map. The rule receives the argument's value too, so the quantity may depend on it. The same model runs under `grad`, where the map is not applied and the call does nothing.
 
 ## Gradient Checking
 
@@ -411,9 +416,9 @@ let () =
 
 The carry the body returns must have the visits of the one it received, and each step's outputs those of the first step's: a list keeps its length and an option its presence. `scan` raises otherwise, naming the first path where they differ.
 
-Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop over the step's pullback — the compiled program's size does not depend on the number of steps. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
+Under `jit` the fold step compiles once and runs as a loop, and `grad` through a jitted scan compiles a reversed loop that runs each step again at its carry, so the compiled program's size does not depend on the number of steps. `jvp`, `vmap` and `grad` of a scan compile as one loop too. The loop reads row `i` of each leaf of `xs` in place, so data that differs per step belongs in `xs`: a model of stacked layers passes its layer weights, stacked along a leading axis, as rows. Reading them instead from a captured stack with `Nx.D` at a step counter is a gather, and differentiating a captured tensor accumulates a cotangent of its full size on every step, where the cotangent of `xs` is stacked like the outputs, row `i` coming from step `i`.
 
-Staging needs the carry to keep its shapes across steps; a fold that changes them, one reached through `vmap`, or one in a program over several devices unrolls into the compiled program instead. Everywhere outside `jit` the scan folds eagerly and differentiating traces every step.
+A compiled function writes the loop out step by step instead when the carry changes its shapes across steps, when the body runs on the host or on devices of two kinds, and inside a `custom_jvp` tangent map under reverse mode. Everywhere outside `jit` the scan is its loop, run where it is written, inside every transformation, `Rune.Total.collect` and `Nx.Rng.with_key` around it.
 
 ### Branches and loops on values
 
@@ -465,14 +470,14 @@ let () =
 
 ## Autodiff Control
 
-`detach t` is a copy of `t` through which gradients do not flow. Use it for baselines, targets, constants, and as the escape hatch for operations without gradient rules (see below). Code outside the function a transformation receives is never differentiated, so evaluating a model needs nothing.
+`detach t` is `t` with a zero derivative under every differentiation around the call. It copies nothing: outside every transformation, `detach t` is `t` itself. Use it for baselines, targets and running statistics, and for the input of an operation whose derivative has no definition there. Code outside the function a transformation receives is never differentiated, so evaluating a model needs nothing.
 
 ## Limitations
 
-Rune fails loudly rather than returning wrong gradients:
+Rune raises where a derivative has no definition, and refuses a tangent map that is not linear:
 
-- **Ops without differentiation rules raise.** Reverse mode has no rule for `svd`, `eig`, `eigh`, `Rune.lanes`, and `mod`; forward mode additionally lacks `qr`. Differentiating through them raises `Invalid_argument` — `detach` the input if gradients should not flow through. (`cholesky`, reverse-mode `qr`, and the whole FFT family are supported.)
-- **`vmap` has no rule for decomposition ops** (`cholesky`, `qr`, `svd`, `eig`, `eigh`) over batched inputs.
+- **Derivatives with no definition raise.** Every operation has a forward rule, a transpose where it is linear, and a batching rule. The tangent of a complete SVD of a non-square matrix and of a complete QR factorisation of a tall one has no definition and raises `Invalid_argument`, and the vector tangents of repeated eigenvalues or singular values are non-finite. `detach` the input where differentiation should not flow.
+- **A tangent map must be linear** under reverse mode (see Custom Differentiation Rules).
 - **`Rune.jit` rejects branches on traced values**; a scalar the compiled program would need to branch on cannot be read at trace time.
 
 ## Summary
@@ -481,13 +486,13 @@ Rune fails loudly rather than returning wrong gradients:
 |-----------|---------|-------------|
 | `grad` / `grad'` | Gradient of scalar objective | Training loss → parameter gradients |
 | `value_and_grad` | Value + gradient together | Avoid a duplicate forward pass |
-| `value_and_grad_aux` | ... plus auxiliary data | Thread state/metrics out of the objective |
-| `vjp` / `vjp_fun` | Vector-Jacobian product | Non-scalar outputs, reusable pullbacks |
+| `value_and_grad_aux` | ... plus auxiliary data | Return state or metrics from the objective |
+| `vjp` | Result and pullback | Non-scalar outputs, several cotangents |
 | `jvp` | Jacobian-vector product | Few inputs, many outputs |
 | `vmap` / `vmap'` | Vectorize over axis 0 | Per-example computation |
 | `jacfwd'` / `jacrev'` | Whole derivative matrices | Small problems, Hessians as `jacfwd' (grad' f)` |
 | `remat` | Recompute in the backward pass | Memory-bound backward passes |
-| `custom_vjp` / `custom_jvp` | User-defined rules | Stability, speed, opaque interiors |
+| `custom_jvp` / `custom_vjp` | User-defined rules | Stability, speed, opaque interiors |
 | `scan` | Structured loops | Recurrences that compile as loops under `jit` |
 | `check_grads` | Verify gradients | Testing custom rules and models |
 | `detach` | Stop gradient flow | Baselines, targets, unruled ops |

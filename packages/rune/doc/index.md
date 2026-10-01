@@ -4,14 +4,14 @@ Rune provides functional transformations — automatic differentiation, vectoriz
 
 ## Features
 
-- **Reverse mode** — `grad`, `value_and_grad`, `vjp` for backpropagation; `vjp_fun` returns a reusable pullback; `_aux` variants thread auxiliary data out of the objective
+- **Reverse mode** — `grad`, `value_and_grad` for backpropagation; `vjp` returns the result and its pullback; `value_and_grad_aux` returns an objective's auxiliary data
 - **Forward mode** — `jvp` for Jacobian-vector products in a single forward pass
 - **Vectorizing map** — `vmap` lifts a per-example function to batched inputs, mapping axis 0 of every argument
 - **Composable** — transformations nest freely: `vmap` of `grad` is per-sample gradients, `jvp` of `grad` is a Hessian-vector product, `grad` of `grad` is second order
 - **Jacobians and Hessians** — `jacfwd'` and `jacrev'`; a Hessian is `jacfwd' (grad' f)`
 - **Gradient checkpointing** — `remat` trades compute for memory in the backward pass
-- **Custom rules** — `custom_vjp` and `custom_jvp` override differentiation where you know a better rule
-- **Effect-based** — OCaml 5 effect handlers intercept Nx operations; no tracing, no graph
+- **Custom rules** — `custom_jvp` gives a function a tangent map that serves both modes at every order, and `custom_vjp` a pullback
+- **Interpreters of Nx's operations** — transformations intercept Nx operations as they run; no tracing, no graph
 
 ## Quick Start
 
@@ -52,6 +52,6 @@ Leaves may mix dtypes freely: a single forward and backward pass produces gradie
 
 - [Getting Started](01-getting-started.md) — installation, first gradients, gradient descent on a record
 - [Transformations](02-transformations.md) — complete guide to grad, vjp, jvp, vmap, remat, custom rules, and control flow
-- [How It Works](03-how-it-works.md) — effects, handlers, and the tape
+- [How It Works](03-how-it-works.md) — interpreters, forward mode and its transpose
 - [JAX Comparison](04-jax-comparison.md) — mapping JAX vocabulary to rune
 - [Compilation](05-compilation.md) — `jit` signatures, consumption, devices, the persistent cache, beam search and debugging

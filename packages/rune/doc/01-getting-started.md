@@ -132,7 +132,7 @@ This is the whole pattern — the full program is [`examples/01-gradient-descent
 
 ## Auxiliary Outputs
 
-When the objective returns data alongside the loss — predictions, metrics, updated state — use `value_and_grad_aux`. The auxiliary value rides through undifferentiated:
+When the objective returns data alongside the loss (predictions, metrics, updated state), use `value_and_grad_aux`. It takes the auxiliary value's structure and returns it beside the gradient, undifferentiated:
 
 ```ocaml
 let () =
@@ -141,7 +141,9 @@ let () =
     let pred = Nx.mul v v in
     (Nx.mean pred, pred) (* pred is auxiliary — not differentiated *)
   in
-  let loss, g, pred = Rune.value_and_grad_aux Nx.Ptree.tensor f x in
+  let loss, g, pred =
+    Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor f x
+  in
   Printf.printf "loss = %.2f\n" (Nx.item [] loss);
   Printf.printf "grad = %s\n" (Nx.to_string g);
   Printf.printf "pred = %s\n" (Nx.to_string pred)
@@ -190,10 +192,10 @@ let () =
 
 Code outside the function `grad` receives is never differentiated, so evaluating a function needs no mechanism at all.
 
-`detach` also serves as the escape hatch for operations whose gradient is not implemented (see [Transformations](02-transformations.md)): detach their inputs if differentiation should not flow through them.
+`detach` copies nothing, and it also serves for the input of an operation whose derivative has no definition there (see [Transformations](02-transformations.md)).
 
 ## Next Steps
 
 - [Transformations](02-transformations.md) — vjp, jvp, vmap, Hessians, remat, custom rules, control flow
-- [How It Works](03-how-it-works.md) — effects, handlers, and the tape
+- [How It Works](03-how-it-works.md) — interpreters, forward mode and its transpose
 - [Kaun Getting Started](../../kaun/doc/01-getting-started.md) — neural networks on top of rune

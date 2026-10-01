@@ -40,10 +40,9 @@ nest into records, so models compose structurally — see
 
 ## Features
 
-- **Reverse mode** — `grad`, `value_and_grad`, `vjp` for scalar
-  objectives and explicit cotangents; `vjp_fun` returns a reusable
-  pullback; `_aux` variants thread non-differentiated data out of the
-  objective
+- **Reverse mode** — `grad` and `value_and_grad` for scalar objectives;
+  `vjp` returns the result and its pullback, applied to any number of
+  cotangents; `value_and_grad_aux` returns an objective's auxiliary data
 - **Forward mode** — `jvp` for Jacobian-vector products in a single
   forward pass
 - **Vectorizing map** — `vmap` lifts a per-example function to batched
@@ -55,8 +54,8 @@ nest into records, so models compose structurally — see
   `jacfwd' (grad' f)`
 - **Gradient checkpointing** — `remat` recomputes a sub-computation in
   the backward pass, trading compute for memory
-- **Custom rules** — `custom_vjp` and `custom_jvp` override
-  differentiation for a function you know a better rule for
+- **Custom rules** — `custom_jvp` gives a function a tangent map that
+  serves both modes at every order, and `custom_vjp` a pullback
 - **Totals and lanes** — `Total` collects a write-only sum that code
   anywhere inside a function adds to, threading it through `scan` bodies and
   `remat` calls and summing it over a `vmap`'s lanes; `axis` names a map and
