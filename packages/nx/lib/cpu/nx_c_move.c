@@ -153,14 +153,20 @@ static inline void nx_c_nibble_set(void *p, int64_t i, uint8_t v) {
 
 /* Element [si] of [src] to element [di] of [dst], and zero into element [di],
    for the index-dependent movers. [esize] is 0 for a packed dtype, whose
-   elements are nibbles (nx_c_elem_size). */
+   elements are nibbles (nx_c_elem_size). A move of a fixed width is one load
+   and one store, where a width only known at run time calls memcpy. */
 static inline void nx_c_elem_move(void *dst, int64_t di, const void *src,
                                   int64_t si, int64_t esize) {
-  if (esize == 0)
-    nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si));
-  else
-    memcpy((char *)dst + di * esize, (const char *)src + si * esize,
-           (size_t)esize);
+  char *d = (char *)dst + di * esize;
+  const char *s = (const char *)src + si * esize;
+  switch (esize) {
+  case 0: nx_c_nibble_set(dst, di, nx_c_nibble_get(src, si)); break;
+  case 1: memcpy(d, s, 1); break;
+  case 2: memcpy(d, s, 2); break;
+  case 4: memcpy(d, s, 4); break;
+  case 8: memcpy(d, s, 8); break;
+  default: memcpy(d, s, (size_t)esize);
+  }
 }
 
 static inline void nx_c_elem_zero(void *dst, int64_t di, int64_t esize) {
@@ -378,6 +384,20 @@ static void nx_c_gather_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   const nx_c_ndarray *out = g->out;
   int nd = out->ndim, axis = g->axis;
   int64_t esize = g->esize, axis_len = data->shape[axis];
+  if (nd == 1) {
+    /* One axis: positions are strides times the counter, with no unravel. */
+    for (int64_t it = lo; it < hi; it++) {
+      int64_t index = ((const int64_t *)idx->data)[idx->offset +
+                                                   it * idx->strides[0]];
+      int64_t out_off = out->offset + it * out->strides[0];
+      if (index < 0 || index >= axis_len)
+        nx_c_elem_zero(out->data, out_off, esize);
+      else
+        nx_c_elem_move(out->data, out_off, data->data,
+                       data->offset + index * data->strides[0], esize);
+    }
+    return;
+  }
   int64_t coord[NX_C_MAX_NDIM], dcoord[NX_C_MAX_NDIM];
   for (int64_t it = lo; it < hi; it++) {
     nx_c_unravel(it, nd, out->shape, coord);
@@ -617,9 +637,47 @@ typedef struct {
   int64_t esize;
 } nx_c_scatter_ctx;
 
+/* `Set along one axis of elements of 1, 2, 4 or 8 bytes, in that unsigned
+   width. A dropped update rewrites element 0 with its own value instead of
+   being skipped, so that updates kept and dropped at random, as positions'
+   scatter makes them, take no branch each; the walk is serial, so element 0
+   ends as the updates that reach it leave it. */
+#define NX_C_SCATTER_SET_LINE(T)                                               \
+  static void nx_c_scatter_set_line_##T(const nx_c_scatter_ctx *sc,            \
+                                        int64_t lo, int64_t hi) {              \
+    const nx_c_ndarray *out = sc->out, *ix = sc->indices, *up = sc->updates;  \
+    const int64_t *index = (const int64_t *)ix->data + ix->offset;            \
+    const T *u = (const T *)up->data + up->offset;                            \
+    T *o = (T *)out->data + out->offset;                                      \
+    int64_t n = out->shape[0], is = ix->strides[0], us = up->strides[0],      \
+            os = out->strides[0];                                             \
+    if (n == 0) return;                                                       \
+    for (int64_t it = lo; it < hi; it++) {                                    \
+      int64_t k = index[it * is];                                             \
+      bool kept = (uint64_t)k < (uint64_t)n;                                  \
+      int64_t at = (kept ? k : 0) * os;                                       \
+      T v = u[it * us], old = o[at];                                          \
+      o[at] = kept ? v : old;                                                 \
+    }                                                                          \
+  }
+NX_C_SCATTER_SET_LINE(uint8_t)
+NX_C_SCATTER_SET_LINE(uint16_t)
+NX_C_SCATTER_SET_LINE(uint32_t)
+NX_C_SCATTER_SET_LINE(uint64_t)
+#undef NX_C_SCATTER_SET_LINE
+
 static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   (void)worker;
   const nx_c_scatter_ctx *sc = vctx;
+  if (sc->indices->ndim == 1 && !sc->combine) {
+    switch (sc->esize) {
+    case 1: nx_c_scatter_set_line_uint8_t(sc, lo, hi); return;
+    case 2: nx_c_scatter_set_line_uint16_t(sc, lo, hi); return;
+    case 4: nx_c_scatter_set_line_uint32_t(sc, lo, hi); return;
+    case 8: nx_c_scatter_set_line_uint64_t(sc, lo, hi); return;
+    default: break;
+    }
+  }
   const nx_c_ndarray *out = sc->out;
   const nx_c_ndarray *indices = sc->indices;
   const nx_c_ndarray *updates = sc->updates;
@@ -627,13 +685,24 @@ static void nx_c_scatter_body(int64_t lo, int64_t hi, int worker, void *vctx) {
   int64_t esize = sc->esize, axis_len = out->shape[axis];
   int64_t coord[NX_C_MAX_NDIM], ocoord[NX_C_MAX_NDIM];
   for (int64_t it = lo; it < hi; it++) {
-    nx_c_unravel(it, nd, indices->shape, coord);
-    int64_t idx_off = indices->offset + nx_c_dot(nd, coord, indices->strides);
-    int64_t index = ((const int64_t *)indices->data)[idx_off];
-    if (index < 0 || index >= axis_len) continue;
-    for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
-    int64_t out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
-    int64_t upd_off = updates->offset + nx_c_dot(nd, coord, updates->strides);
+    int64_t index, out_off, upd_off;
+    if (nd == 1) {
+      /* One axis: positions are strides times the counter, with no unravel. */
+      index = ((const int64_t *)indices->data)[indices->offset +
+                                               it * indices->strides[0]];
+      if (index < 0 || index >= axis_len) continue;
+      out_off = out->offset + index * out->strides[0];
+      upd_off = updates->offset + it * updates->strides[0];
+    } else {
+      nx_c_unravel(it, nd, indices->shape, coord);
+      int64_t idx_off =
+          indices->offset + nx_c_dot(nd, coord, indices->strides);
+      index = ((const int64_t *)indices->data)[idx_off];
+      if (index < 0 || index >= axis_len) continue;
+      for (int d = 0; d < nd; d++) ocoord[d] = (d == axis) ? index : coord[d];
+      out_off = out->offset + nx_c_dot(nd, ocoord, out->strides);
+      upd_off = updates->offset + nx_c_dot(nd, coord, updates->strides);
+    }
     char *o = (char *)out->data + out_off * esize;
     const char *u = (const char *)updates->data + upd_off * esize;
     if (sc->acc) {
