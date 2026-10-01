@@ -218,12 +218,17 @@ def call_stack():
         .sink(arg=KernelInfo("call_stack"))
 
 
-def custom():
+def custom(ren):
+    """The maximum of a float and its magnitude, written as custom code in the
+    target's language: NVRTC has none of Clang's builtins, so CUDA's code calls
+    its math functions."""
+    if isinstance(ren, CUDARenderer): magnitude, maximum = "fabsf({0})", "fmaxf({0}, {1})"
+    else: magnitude, maximum = "__builtin_fabsf({0})", "__builtin_fmaxf({0}, {1})"
     a, b = UOp.param(0, dtypes.float, 4), UOp.param(1, dtypes.float, 4)
     r = UOp.range(4, 0, AxisType.LOOP)
     val = b.index(r).load()
-    inline = UOp(Ops.CUSTOMI, src=(val,), arg=("__builtin_fabsf({0})", dtypes.float))
-    named = UOp(Ops.CUSTOM, src=(inline, val), arg=("__builtin_fmaxf({0}, {1})", dtypes.float))
+    inline = UOp(Ops.CUSTOMI, src=(val,), arg=(magnitude, dtypes.float))
+    named = UOp(Ops.CUSTOM, src=(inline, val), arg=(maximum, dtypes.float))
     return a.index(r).store(named).end(r).sink(arg=KernelInfo(name="custom"))
 
 
@@ -374,7 +379,7 @@ def common(ren):
         ("rand", tensors(lambda: [Tensor.rand(16, device="NULL")], index=-1)),
         ("inline_const_alu", ast(inline_const_alu)),
         ("gated_store_in_loop", ast(gated_store_in_loop)),
-        ("custom", ast(custom)),
+        ("custom", lambda ren: lowered(custom(ren), ren)),
         ("volatile", ast(volatile)),
         ("scalar_params", ast(scalar_params)),
         ("unbounded_loop", raw(unbounded_loop)),
