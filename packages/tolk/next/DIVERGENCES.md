@@ -1989,3 +1989,23 @@ the Exclusions of `README.md`.
   the host rewriting it between runs; and `› a run waits for its batch only
   when it writes a staged buffer`, whose read returns while CPU:4's late queue
   has not signaled.
+
+## D71. A launch states a constant bank's size in 16-byte units
+
+- **tinygrad:** `runtime/ops_nv.py:302` (`NVProgramData` writes a constant
+  bank's bytes into the launch template's `constant_buffer_size_shifted4`).
+- **tolk.next:** `lib/runtime/ops_nv.ml:301` (`program_data`).
+- **Differs:** a launch template states each constant bank's size rounded up
+  to 16 bytes and shifted right by 4, as the field's name says, where
+  tinygrad writes the bytes. The field holds 13 bits, so tinygrad refuses a
+  bank of 8 KiB or more, a parameter bank of about a thousand arguments, and
+  states a smaller bank 16 times its size.
+- **Reason:** (b). tinygrad writes a byte count into a field that counts
+  16-byte units. rune.next's staged scan `write out four hundred steps, each
+  carry stored` launches a kernel whose parameter bank holds 13,192 bytes,
+  which NV refused (`constant_buffer_size_shifted4_0=0x3388 does not fit`)
+  and CUDA runs.
+- **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
+  tinygrad with D71 applied by its generator; rune.next's Jit suite on an
+  NVIDIA GPU: `nv › staged scans › write out four hundred steps, each carry
+  stored`.

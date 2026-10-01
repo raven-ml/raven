@@ -34,6 +34,8 @@ tinygrad is changed as tolk.next differs from it:
 - DIVERGENCES D51: the local memory a descriptor states is a word of the
   device, which the engine fills, where tinygrad writes the device's value
   into the descriptor;
+- DIVERGENCES D71: a descriptor states a constant bank's size in 16-byte
+  units, where tinygrad writes its bytes;
 - an address is taken on one device, as tolk.next names one device.
 """
 
@@ -188,6 +190,8 @@ def nv_build_program(dev, prg, devs):
     local = local_words[(devs, required[0])].index(0).load()
     if data.qmd.ver >= 4: data.qmd.write(shader_local_memory_high_size_shifted4=local >> 4)
     else: data.qmd.write(shader_local_memory_high_size=local)
+    # DIVERGENCES D71: a constant bank's size, in 16-byte units
+    for i, (_, sz) in data.constbufs.items(): data.qmd.write(**{f"constant_buffer_size_shifted4_{i}": round_up(sz, 16) >> 4})
     # DIVERGENCES D38: the placeholder names the cubin and its kernel, which the engine loads
     program = UOp.placeholder((len(data.image),), dtypes.uint8, 0, device=devs, tag=("program", prg.src[3].arg, prg.to_elf().name))
     ops_nv._nv_program_cache[(prg.src[3].arg, devs)] = (data, program)

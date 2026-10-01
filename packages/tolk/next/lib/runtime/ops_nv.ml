@@ -300,7 +300,9 @@ let program_data props (obj : Device.Tiny_elf.t) =
     ];
   List.iter
     (fun (i, (_, sz)) ->
-      Qmd.write qmd (Printf.sprintf "constant_buffer_size_shifted4_%d" i) sz;
+      Qmd.write qmd
+        (Printf.sprintf "constant_buffer_size_shifted4_%d" i)
+        ((sz + 15) lsr 4);
       Qmd.write qmd (Printf.sprintf "constant_buffer_valid_%d" i) 1)
     !constbufs;
   (* Registers allocation granularity per warp is 256, warp allocation
