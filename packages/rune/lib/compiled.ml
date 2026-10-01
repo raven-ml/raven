@@ -82,7 +82,7 @@ let lower op xs dsts =
   | Contiguous, [ x ] -> [ x ]
   | Gather axis, [ indices; x ] -> [ Lower_index.gather axis indices x ]
   | Scatter (mode, unique, axis), [ indices; updates; x ] ->
-      [ Lower_index.scatter ~mode ~unique ~axis ~indices ~updates x ]
+      [ fst (Lower_index.scatter ~mode ~unique ~axis ~indices ~updates x) ]
   | Update, [ x; starts; v ] -> [ Lower_index.update x ~starts v ]
   | Unfold (kernel_size, stride, dilation, padding), [ x ] ->
       [ Lower_index.unfold ~kernel_size ~stride ~dilation ~padding x ]

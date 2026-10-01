@@ -1108,14 +1108,14 @@ let rows_written ?at name =
   let on_the_host =
     [
       cases ~name:Int64.to_string
-        "a row is stored by the kernel that computes it, beside its offset"
+        "a row is stored by the kernel that computes it, at the index it reads"
         [ 0L; 63L; -1L; 64L ] (fun at ->
           let x = projections 1 and i = indices [ at ] in
           let r, names =
             kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
           in
           equal floats (write_rows (pool ()) x i) r;
-          equal ~msg:"kernels" int 2 (List.length names);
+          equal ~msg:"kernels" int 1 (List.length names);
           equal ~msg:"reductions" int 1
             (List.length (List.filter (fun n -> n.[0] = 'r') names)));
       test
@@ -1128,7 +1128,7 @@ let rows_written ?at name =
                 Rune.jit write (write_rows ~rows_as) (pool ()) x i)
           in
           equal floats (write_rows ~rows_as (pool ()) x i) r;
-          equal ~msg:"kernels" int 2 (List.length names));
+          equal ~msg:"kernels" int 1 (List.length names));
       test
         "stores only its rows, at the pool's first and last rows, and drops \
          the rows outside it" (fun () ->
@@ -1164,6 +1164,119 @@ let rows_written ?at name =
     ]
   in
   group name (everywhere @ if at = None then on_the_host else [])
+
+(* Scatters
+
+   Rows of [into], [5; 3], holding -0. and NaN, written at one index per row of
+   updates holding -0. and NaN: repeated, outside the rows, and 2^32 + 1, which
+   a truncation would bring to row 1. Up to as many updates as rows are stored
+   at their indices; more are combined at each row. Compiled, every mode gives
+   eager's bits. *)
+let scatters =
+  let into () =
+    Nx.create Nx.float32 [| 5; 3 |]
+      [|
+        1.; -0.; Float.nan; 4.; 5.; 6.; 0.; 8.; -9.; 10.; Float.nan; 12.; -0.;
+        14.; 15.;
+      |]
+  in
+  let updates k =
+    Nx.init Nx.float32 [| k; 3 |] (fun i ->
+        match ((i.(0) * 3) + i.(1)) mod 5 with
+        | 0 -> -0.
+        | 3 -> Float.nan
+        | j -> Float.of_int ((j * 7) - i.(0)))
+  in
+  let rows l =
+    let k = List.length l in
+    Nx.broadcast_to [| k; 3 |] (Nx.reshape [| k; 1 |] (indices l))
+  in
+  let scattered mode unique l t =
+    Nx.scatter ~mode ~unique_indices:unique ~axis:0 ~indices:(rows l)
+      ~values:(updates (List.length l)) t
+  in
+  let name = function
+    | `Set -> "set"
+    | `Add -> "add"
+    | `Max -> "max"
+    | `Min -> "min"
+  in
+  let modes = [ `Set; `Add; `Max; `Min ] in
+  let agrees unique l mode =
+    equal floats
+      (scattered mode unique l (into ()))
+      (Rune.jit' (scattered mode unique l) (into ()))
+  in
+  let columns = Nx.create Nx.int64 [| 5; 2 |] [| 2L; 0L; 1L; 1L; -1L; 2L; 0L; 3L; 2L; 2L |] in
+  let along_columns mode t =
+    Nx.scatter ~mode ~axis:1 ~indices:columns
+      ~values:(Nx.mul_s (Nx.ones Nx.float32 [| 5; 2 |]) 3.) t
+  in
+  group "scatters"
+    [
+      cases ~name "repeated and dropped indices are eager's" modes
+        (agrees false [ 3L; -1L; 3L; 0L ]);
+      cases ~name "distinct indices, unique, are eager's" modes
+        (agrees true [ 4L; -1L; 0L; 0x1_0000_0001L ]);
+      cases ~name "more updates than rows are eager's" modes
+        (agrees false [ 3L; -1L; 3L; 0L; 4L; 0L; 9L ]);
+      cases ~name "each row's own columns are eager's" modes (fun mode ->
+          equal floats
+            (along_columns mode (into ()))
+            (Rune.jit' (along_columns mode) (into ())));
+      test "rows written by each lane of a map are eager's" (fun () ->
+          let lanes =
+            Nx.create Nx.int64 [| 2; 3 |] [| 4L; 1L; 4L; -1L; 0L; 2L |]
+          in
+          let f l =
+            Nx.scatter ~axis:0
+              ~indices:(Nx.broadcast_to [| 3; 3 |] (Nx.reshape [| 3; 1 |] l))
+              ~values:(updates 3) (into ())
+          in
+          equal floats (Rune.vmap' f lanes) (Rune.jit' (Rune.vmap' f) lanes));
+      test "the gradient of rows added and written is eager's" (fun () ->
+          let t = Nx.init Nx.float32 [| 5; 3 |] (fun i -> Float.of_int (i.(0) - i.(1)))
+          and w = Nx.init Nx.float32 [| 5; 3 |] (fun i -> Float.of_int ((2 * i.(0)) + i.(1) + 1)) in
+          let loss t =
+            Nx.sum
+              (Nx.mul w
+                 (Nx.scatter ~axis:0 ~indices:(rows [ 4L; 1L; 4L ])
+                    ~values:(Nx.ones Nx.float32 [| 3; 3 |])
+                    (Nx.scatter ~mode:`Add ~axis:0 ~indices:(rows [ 0L; 0L; -1L ])
+                       ~values:(Nx.ones Nx.float32 [| 3; 3 |]) t)))
+          in
+          equal floats (Rune.grad' loss t) (Rune.jit' (Rune.grad' loss) t));
+      test "seven rows are stored by the kernel that computes them" (fun () ->
+          let write =
+            Nx.Ptree.(consumes tensor @@ tensor @-> tensor @-> returns tensor)
+          in
+          let x = projections 7 and i = indices [ 9L; 0L; 63L; 2L; -1L; 40L; 3L ] in
+          let r, names =
+            kernels (fun () -> Rune.jit write write_rows (pool ()) x i)
+          in
+          equal floats (write_rows (pool ()) x i) r;
+          equal ~msg:"kernels" int 1 (List.length names));
+      test
+        "a consumed pool added to at repeated rows is computed over its \
+         updates, never its rows" (fun () ->
+          let add pool l =
+            let k = List.length l in
+            Nx.scatter ~mode:`Add ~axis:0
+              ~indices:(Nx.broadcast_to [| k; 2; 3 |] (Nx.reshape [| k; 1; 1 |] (indices l)))
+              ~values:(Nx.reshape [| k; 2; 3 |] (projections k)) pool
+          in
+          let l = [ 5L; 5L; -1L; 63L ] in
+          let r, names =
+            kernels (fun () -> Rune.jit consumes (fun p -> add p l) (pool ()))
+          in
+          equal floats (add (pool ()) l) r;
+          greater ~msg:"kernels recorded" int ~than:0 (List.length names);
+          List.iter
+            (fun name ->
+              let axes = List.tl (String.split_on_char '_' name) in
+              is_false ~msg:name (List.mem "64" axes || List.mem "384" axes))
+            names);
+    ]
 
 let lending =
   group "lending"
@@ -3823,6 +3936,7 @@ let () =
          placement;
          scans;
          gathers ~at:Nx.Placement.host Nx_device.host;
+         scatters;
          device_lists;
          split_gathers;
          disk;

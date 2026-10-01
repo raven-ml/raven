@@ -60,6 +60,35 @@ val varies : Ops.t -> int list
     node they move reads. A value that is not a movement varies along every
     axis. *)
 
+(** The rows of an indexed access to [x] along [axis] at positions [p]: the axes
+    of [x] along which [p] {!varies}, a sharded one first, then [axis], are
+    flattened into rows, and the other axes are accessed whole. *)
+type rows = {
+  view : Ops.t -> Ops.t;
+      (** [view y] is [y], of [x]'s shape, as its rows followed by the whole
+          axes. *)
+  on_rows : Ops.t -> Ops.t;
+      (** [on_rows u] is [u], of [p]'s shape and constant along the whole
+          axes, one element per row access: of [p]'s shape along the flattened
+          axes, in their order. *)
+  at : Ops.t -> Ops.t;
+      (** [at i] is the row of [view x] each row access reads, given its
+          position [i] along [axis], a [weakint] node of [on_rows p]'s shape. *)
+  count : int;  (** The number of rows of [view x]. *)
+  laid : Ops.t -> Ops.t;
+      (** [laid u] is [u], of [p]'s shape, laid out as an access reads it: its
+          flattened axes, then the whole ones. *)
+  unlaid : Ops.t -> Ops.t;  (** [unlaid] is [laid]'s inverse permutation. *)
+}
+
+val rows : Ops.t -> int -> Ops.t -> rows
+(** [rows x axis p] is the rows of an access to [x] along [axis] at [p]. Raises
+    [Invalid_argument] if a flattened axis has a symbolic size. *)
+
+val clamped : int -> Ops.t -> Ops.t
+(** [clamped n i] is the [int64] positions [i] clamped into \[[0], [n]) as
+    [weakint]. *)
+
 val take : Ops.t -> int -> Ops.t -> Ops.t
 (** [take x axis p] is the elements of [x] along [axis] at the positions [p],
     each with its bits, of [p]'s shape: [x] and [p] agree on every other axis.

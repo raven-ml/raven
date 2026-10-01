@@ -36,6 +36,19 @@ val gather : int -> Ops.t -> Ops.t -> Ops.t
     index there. An index outside \[[0], [n]), [n] being [x]'s size along
     [axis], reads zero. *)
 
+(** {1:regions Regions}
+
+    A write into a value that a program consumes can be stored in place, over
+    only the elements it writes. A region is a view of the written value,
+    through movements and gathers, and the value of the write there: storing
+    each region's value into its view of the written value's storage leaves
+    that storage holding the write's result. *)
+
+type region = {
+  dest : Ops.t;  (** The view of the written value it stores into. *)
+  value : Ops.t;  (** The value stored into it. *)
+}
+
 val scatter :
   mode:Nx_backend.scatter ->
   unique:bool ->
@@ -43,11 +56,11 @@ val scatter :
   indices:Ops.t ->
   updates:Ops.t ->
   Ops.t ->
-  Ops.t
+  Ops.t * region list
 (** [scatter ~mode ~unique ~axis ~indices ~updates x] is [x] with each element
     of [updates] combined by [mode] into the element at the position of the
-    index node [indices] at the same index along [axis]. A position that no
-    update reaches is [x]'s element.
+    index node [indices] at the same index along [axis], and its regions. A
+    position that no update reaches is [x]'s element.
     - Under [`Set] the last of duplicate positions in row-major order wins, and
       with [unique], which asserts that the positions are distinct, one of them
       does.
@@ -57,46 +70,24 @@ val scatter :
       is the element's or the first NaN update's, with its payload.
 
     An update at an index outside \[[0], [n]), [n] being [x]'s size along
-    [axis], is dropped. *)
+    [axis], is dropped.
+
+    The value combines, at each position of [x], the updates that reach it:
+    with [k] updates along [axis], an [n x k] comparison, which fuses with what
+    reads the value. When [unique] or [k <= n], and shapes are static, the one
+    region is an indexed store of the updates, which computes fewer values in
+    place: each update's value combines every update at its index, a [k x k]
+    comparison without [unique], and the last of them stores it; a dropped
+    update's index is Invalid. Otherwise there is no region. *)
 
 val update : Ops.t -> starts:Ops.t -> Ops.t -> Ops.t
 (** [update x ~starts v] is [x] with [v] at the window whose corner is the index
     vector [starts] and whose extent is [v]'s shape, a window within [x]. *)
 
-(** {1:regions Regions}
-
-    A write into a value that a program consumes can be stored in place, over
-    only the elements it writes. A region is a window of the written value, of
-    static extent at an offset that may be a node, and the value of the write
-    there: storing each region's value into its window of the written value's
-    storage leaves that storage holding the write's result. A region with a
-    [padding] is a window of the written value padded first: what it stores into
-    the padding is dropped. *)
-
-type region = {
-  padding : (Ops.sint * Ops.sint) option list option;
-      (** The padding, before and after each axis, of the value its window is
-          of, if any. *)
-  bounds : (Ops.sint * Ops.sint) option list;
-      (** The window: the start and end of each axis it narrows. *)
-  value : Ops.t;  (** The value stored into the window. *)
-}
-
-val scatter_rows :
-  axis:int -> indices:Ops.t -> updates:Ops.t -> Ops.t -> region list option
-(** [scatter_rows ~axis ~indices ~updates x] is the regions of
-    [scatter ~mode:`Set ~unique:true ~axis ~indices ~updates x], one per row of
-    [updates] along [axis], when [indices] is one index per row broadcast along
-    every other axis, [updates] spans [x] along those axes, and there are at
-    most 16 rows: each row is its own store. A window is on one device, so [x]
-    split along [axis] has none. Each is a window of [x] padded by one row after
-    [axis], at the row's index where it lies within [x] and at the padding row
-    otherwise, so that the row is dropped. [None] otherwise. *)
-
 val update_region : Ops.t -> starts:Ops.t -> Ops.t -> region option
-(** [update_region x ~starts v] is the one region of [update x ~starts v], or
-    [None] if a size is symbolic or [x] is split along an axis the window
-    narrows. *)
+(** [update_region x ~starts v] is the one region of [update x ~starts v], a
+    window of [x], or [None] if a size is symbolic or [x] is split along an axis
+    the window narrows. *)
 
 val unfold :
   kernel_size:int array ->

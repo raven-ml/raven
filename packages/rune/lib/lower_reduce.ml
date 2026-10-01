@@ -241,69 +241,82 @@ let static u d =
   | Ops.Int n -> n
   | Ops.Sym _ -> invalid_arg "a gather along an axis of symbolic size"
 
+type rows = {
+  view : Ops.t -> Ops.t;
+  on_rows : Ops.t -> Ops.t;
+  at : Ops.t -> Ops.t;
+  count : int;
+  laid : Ops.t -> Ops.t;
+  unlaid : Ops.t -> Ops.t;
+}
+
+let rows x axis p =
+  let r = Ops.ndim x and varying = varies p in
+  let others = List.filter (fun d -> d <> axis) (List.init r Fun.id) in
+  let rows = List.filter (fun d -> List.mem d varying) others in
+  let whole = List.filter (fun d -> not (List.mem d varying)) others in
+  (* A sharded axis leads, so that each shard's rows stay one block. *)
+  let lead =
+    match Ops.axis x with
+    | Some a when a = axis || List.mem a rows ->
+        a :: List.filter (( <> ) a) (rows @ [ axis ])
+    | _ -> rows @ [ axis ]
+  in
+  let order = lead @ whole in
+  let shape u = List.map (List.nth (Ops.shape u)) in
+  let count = List.fold_left (fun k d -> k * static x d) 1 lead in
+  let view y =
+    Ops.reshape (Ops.permute y order) (Ops.Int count :: shape x whole)
+  in
+  let on_rows u =
+    Ops.reshape
+      (Ops.permute
+         (Ops.shrink u
+            (List.init r (fun d ->
+                 if List.mem d whole then Some (Ops.Int 0, Ops.Int 1) else None)))
+         order)
+      (shape p lead)
+  in
+  let k = List.length lead in
+  let index d l = Option.get (List.find_index (Int.equal d) l) in
+  (* Each leading axis's position, at its stride among the leading axes: the
+     position along [axis], the element's own position along a row. *)
+  let at along_axis =
+    let position d =
+      if d = axis then along_axis
+      else
+        Ops.expand
+          (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
+          (shape p lead)
+    in
+    match List.rev lead with
+    | [] -> assert false
+    | last :: rest ->
+        fst
+          (List.fold_left
+             (fun (at, stride) d ->
+               ( Ops.add at (Ops.mul (position d) (Ops.int stride)),
+                 stride * static x d ))
+             (position last, static x last)
+             rest)
+  in
+  let laid u =
+    Ops.reshape (Ops.permute u order) (shape p lead @ shape u whole)
+  in
+  let unlaid u = Ops.permute u (List.init r (fun d -> index d order)) in
+  { view; on_rows; at; count; laid; unlaid }
+
+let clamped n row =
+  Ops.cast (Ops.maximum (Ops.minimum row (int row (n - 1))) (int row 0)) Weak_int
+
 let take x axis p =
   let n = static x axis in
   if n = 0 || List.mem 0 (Ops.max_shape p) then
     Ops.expand (Ops.const ~dtype:(dtype x) (`Int Bigint.zero)) (Ops.shape p)
   else
-    let r = Ops.ndim x and varying = varies p in
-    let others = List.filter (fun d -> d <> axis) (List.init r Fun.id) in
-    let rows = List.filter (fun d -> List.mem d varying) others in
-    let whole = List.filter (fun d -> not (List.mem d varying)) others in
-    (* A sharded axis leads, so that each shard's rows stay one block. *)
-    let lead =
-      match Ops.axis x with
-      | Some a when a = axis || List.mem a rows ->
-          a :: List.filter (( <> ) a) (rows @ [ axis ])
-      | _ -> rows @ [ axis ]
-    in
-    let order = lead @ whole in
-    let shape u = List.map (List.nth (Ops.shape u)) in
-    let x' =
-      Ops.reshape (Ops.permute x order)
-        (Ops.Int (List.fold_left (fun k d -> k * static x d) 1 lead)
-        :: shape x whole)
-    in
-    let row =
-      Ops.reshape
-        (Ops.permute
-           (Ops.shrink p
-              (List.init r (fun d ->
-                   if List.mem d whole then Some (Ops.Int 0, Ops.Int 1)
-                   else None)))
-           order)
-        (shape p lead)
-    in
-    let k = List.length lead in
-    let clamped =
-      Ops.cast
-        (Ops.maximum (Ops.minimum row (int row (n - 1))) (int row 0))
-        Weak_int
-    in
-    let index d l = Option.get (List.find_index (Int.equal d) l) in
-    (* Each leading axis's position, at its stride among the leading axes: the
-       clamped index along [axis], the element's own position along a row. *)
-    let position d =
-      if d = axis then clamped
-      else
-        Ops.expand
-          (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
-          (Ops.shape row)
-    in
-    let at =
-      match List.rev lead with
-      | [] -> assert false
-      | last :: rest ->
-          fst
-            (List.fold_left
-               (fun (at, stride) d ->
-                 ( Ops.add at (Ops.mul (position d) (Ops.int stride)),
-                   stride * static x d ))
-               (position last, static x last)
-               rest)
-    in
+    let g = rows x axis p in
     let read =
-      Ops.permute (Ops.index x' [ at ]) (List.init r (fun d -> index d order))
+      g.unlaid (Ops.index (g.view x) [ g.at (clamped n (g.on_rows p)) ])
     in
     let bits = Ops.bitcast p (unsigned (dtype p)) in
     Ops.where (Ops.lt bits (int bits n)) read (int read 0)

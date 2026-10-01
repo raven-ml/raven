@@ -251,9 +251,11 @@ let id (Nx.P y) =
 
 (* [lend ~leaves ~fits ~reads ~writes nodes ys] pairs results with the consumed
    leaves [fits] allows, where writing the result over the leaf cannot change
-   what the program still reads of it: first the indexed writes that read the
-   leaf at their own index, then the results that do, then, in the order they
-   were traced, those that do not read it. It is each result's leaf, or [-1]. *)
+   what the program still reads of it: first the indexed writes into a value
+   that reads the leaf at its own index, then the results that do, then, in the
+   order they were traced, those that do not read it. A write is its value with
+   some elements replaced, so it reads the leaf as the value it writes into
+   does. It is each result's leaf, or [-1]. *)
 let lend ~leaves ~fits ~reads ~writes nodes ys =
   let lent = Array.make (Array.length nodes) (-1) in
   let taken = Array.make leaves false in
@@ -274,10 +276,13 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
   in
   let all = List.init (Array.length nodes) Fun.id in
   let own j i = reads i nodes.(j) = Staged.Own in
-  let written j =
-    List.exists (fun (w : Lower.write) -> w.result == nodes.(j)) writes
+  let written j i =
+    List.exists
+      (fun (w : Lower.write) ->
+        w.result == nodes.(j) && reads i w.into = Staged.Own)
+      writes
   in
-  pass all (fun j i -> written j && own j i);
+  pass all written;
   pass all own;
   pass
     (List.stable_sort (fun j k -> Int.compare (id ys.(j)) (id ys.(k))) all)
@@ -471,7 +476,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
             w.result == nodes.(j)
             && w.into == leaf_nodes.(lent.(j))
             && w.regions <> []
-          then Some w.regions
+          then Some (w.into, w.regions)
           else None)
         (Lower.writes s)
   in
@@ -532,23 +537,14 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
           Lower.output s ~slot (Nx.placement y) (Nx.dtype y) (Nx.shape y)
         in
         if target != nodes.(j) then begin
-          let sint = function Ops.Sym u -> Ops.Sym (value u) | d -> d in
-          let bounds =
-            List.map (Option.map (fun (lo, hi) -> (sint lo, sint hi)))
-          in
           let written =
             match regions j with
             | None -> [ Ops.store target (value nodes.(j)) ]
-            | Some regions ->
+            | Some (into, regions) ->
                 List.map
                   (fun (r : Lower_index.region) ->
-                    let padded =
-                      match r.padding with
-                      | None -> target
-                      | Some padding -> Ops.pad target (bounds padding)
-                    in
                     Ops.store
-                      (Ops.shrink padded (bounds r.bounds))
+                      (value (Ops.substitute r.dest [ (into, target) ]))
                       (value r.value))
                   regions
           in

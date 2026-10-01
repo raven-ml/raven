@@ -174,6 +174,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit` writes `Nx.scatter` into a consumed value in place with one indexed
+  store, in every mode, unless it has more repeated updates than rows: a
+  key-value cache's rows from a page table take one kernel, with no kernel
+  for their offsets and no limit of 16 rows.
 - A bitcast between a complex dtype and the float of its components, such as
   `Nx.bitcast Nx.float32` of a `complex64` tensor, is differentiable. Its
   tangent was dropped, so a gradient through it was zero.

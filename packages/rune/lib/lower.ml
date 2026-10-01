@@ -773,16 +773,10 @@ let op : type r. scope -> r Nx.Op.t -> r =
       like x (Lower_index.gather axis (n indices) (n x))
   | Scatter { mode; unique; axis; indices; updates; into = x } ->
       let indices = n indices and updates = n updates and into = n x in
-      let regions =
-        match mode with
-        | `Set when unique ->
-            Lower_index.scatter_rows ~axis ~indices ~updates into
-        | `Set | `Add | `Max | `Min -> None
+      let result, regions =
+        Lower_index.scatter ~mode ~unique ~axis ~indices ~updates into
       in
-      like x
-        (write ~into
-           (Option.value regions ~default:[])
-           (Lower_index.scatter ~mode ~unique ~axis ~indices ~updates into))
+      like x (write ~into regions result)
   | Update (x, starts, v) ->
       let into = n x and starts = n starts and v = n v in
       like x

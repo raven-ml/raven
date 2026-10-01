@@ -71,10 +71,7 @@ let cat axis x xs =
         (snd (List.hd placed))
         (List.tl placed)
 
-(* Indexed access
-
-   A scatter meets the indices with the positions of [x] along [axis] as a
-   one-hot mask along a new last axis, as the reference builds them. *)
+(* Indexed access *)
 
 let gather axis indices x =
   Lower_reduce.take
@@ -84,9 +81,47 @@ let gather axis indices x =
           (Ops.shape indices)))
     axis indices
 
-let scatter ~mode ~unique ~axis ~indices ~updates x =
+(* Regions
+
+   A write into a value that the program consumes can be stored in place, over
+   only the elements it writes: each region is a view of [x], through movements
+   and gathers, and the value stored there. *)
+
+type region = { dest : Ops.t; value : Ops.t }
+
+(* Scatters *)
+
+let zero u = Ops.const_like u (`Int Bigint.zero)
+
+(* [combined mode own mask src] is each element [own] combined by [mode] with
+   the updates [src] that [mask] selects along the last axis, in order: under
+   [`Add] their sum from the element; under [`Max] and [`Min] the bits of the
+   first of the element and the updates that is the extreme, an update that
+   [mask] does not select standing in for the element, so that a NaN result is
+   the element's or the first NaN update's. *)
+let combined mode own mask src =
+  let r = Ops.ndim own and own' = Ops.unsqueeze own (-1) in
+  match mode with
+  | `Add ->
+      Lower_reduce.reduce Sum ~axes:[ r ]
+        (Ops.cat ~axis:r own' [ Ops.where mask src (zero src) ])
+  | (`Max | `Min) as mode ->
+      let candidates =
+        cat r own' [ Ops.where mask src (Ops.expand own' (Ops.shape mask)) ]
+      in
+      let at =
+        Lower_reduce.arg_reduce
+          (match mode with `Max -> Argmax | `Min -> Argmin)
+          ~axis:r candidates
+      in
+      Ops.squeeze ~axis:r
+        (Lower_reduce.take candidates r (Ops.unsqueeze at (-1)))
+
+(* Each position of [x] meets each update along [axis] in a one-hot mask along
+   a new last axis and combines those that reach it: n x k work, for n
+   positions and k updates along [axis]. *)
+let dense ~mode ~unique ~axis ~indices ~updates x =
   let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
-  (* Each position of [x] against each update along [axis], moved last. *)
   let within u = Ops.pad_to u (List.map Option.some (Ops.shape x) @ [ None ]) in
   let mask = within (Ops.transpose (one_hot indices n) axis r) in
   let src =
@@ -99,12 +134,8 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
   in
   let reached = Ops.rop mask Op.Max [ r ] in
   match mode with
-  | `Add ->
-      let added = Ops.where mask src (Ops.const_like src (`Int Bigint.zero)) in
-      Ops.where reached
-        (Lower_reduce.reduce Sum ~axes:[ r ]
-           (Ops.cat ~axis:r (Ops.unsqueeze x (-1)) [ added ]))
-        x
+  | (`Add | `Max | `Min) as mode ->
+      Ops.where reached (combined mode x mask src) x
   | `Set ->
       (* The last update that reaches each position is the one of highest index
          along [axis]; with [unique], it is the only one. *)
@@ -124,22 +155,70 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
         (Lower_reduce.of_bits (dtype x)
            (Lower_reduce.pick last (Lower_reduce.bits src)))
         x
-  | (`Max | `Min) as mode ->
-      (* Each position's candidates along the last axis: its element, then every
-         update in index order, an update that misses it standing in for the
-         element. The first candidate that is the extreme gives its bits, so a
-         NaN result is the element's or the first NaN update's. *)
-      let own = Ops.unsqueeze x (-1) in
-      let candidates =
-        cat r own [ Ops.where mask src (Ops.expand own (Ops.shape mask)) ]
+
+(* The region of a write in place: each update stored at its index with one
+   indexed store, k x k work. The value an update stores combines every update
+   at its index, as the dense form combines them at the position, and only the
+   last of them stores it, so that no two stores meet. With [unique], each
+   update is the only one at its index. An update outside [axis], or not the
+   last at its index, has an Invalid index, which drops its store. *)
+let indexed ~mode ~unique ~axis ~indices ~updates x =
+  let n = List.nth (Ops.max_shape x) axis and r = Ops.ndim x in
+  let k = List.nth (Ops.max_shape indices) axis in
+  let u = Ops.expand updates (Ops.shape indices) in
+  (* Each update against every update along [axis], moved last. *)
+  let spread v =
+    Ops.transpose
+      (Ops.expand (Ops.unsqueeze v (-1)) (Ops.shape v @ [ Ops.Int k ]))
+      axis r
+  in
+  let same = lazy (Ops.eq (Ops.unsqueeze indices (-1)) (spread indices)) in
+  let value =
+    match mode with
+    | `Set -> u
+    | (`Add | `Max | `Min) as mode when unique ->
+        let one = Ops.unsqueeze u (-1) in
+        combined mode (gather axis indices x) (everywhere one) one
+    | (`Add | `Max | `Min) as mode ->
+        combined mode (gather axis indices x) (Lazy.force same) (spread u)
+  in
+  let g = Lower_reduce.rows x axis indices in
+  let p = g.on_rows indices in
+  let inside =
+    Ops.lt (Ops.bitcast p Uint64)
+      (Ops.const ~dtype:Uint64 (`Int (Bigint.of_int n)))
+  in
+  let keep =
+    if unique then inside
+    else
+      let later =
+        Ops.gt
+          (Lower_reduce.along (r + 1) r (Ops.arange k))
+          (Lower_reduce.along (r + 1) axis (Ops.arange k))
       in
-      let at =
-        Lower_reduce.arg_reduce
-          (match mode with `Max -> Argmax | `Min -> Argmin)
-          ~axis:r candidates
+      let followed =
+        Ops.rop (Ops.bitwise_and (Lazy.force same) later) Op.Max [ r ]
       in
-      Ops.squeeze ~axis:r
-        (Lower_reduce.take candidates r (Ops.unsqueeze at (-1)))
+      Ops.bitwise_and inside (g.on_rows (Ops.logical_not followed))
+  in
+  let at = Ops.valid (g.at (Lower_reduce.clamped n p)) keep in
+  { dest = Ops.index (g.view x) [ at ]; value = g.laid value }
+
+let static_shape u =
+  List.for_all (function Ops.Int _ -> true | Ops.Sym _ -> false) (Ops.shape u)
+
+(* The value is the dense form, which fuses with what reads it. In place, the
+   indexed store computes fewer values unless there are more updates than
+   positions: k x k against n x k. *)
+let scatter ~mode ~unique ~axis ~indices ~updates x =
+  let n = List.nth (Ops.max_shape x) axis in
+  let k = List.nth (Ops.max_shape indices) axis in
+  if n = 0 || List.mem 0 (Ops.max_shape indices) then (x, [])
+  else
+    let value = dense ~mode ~unique ~axis ~indices ~updates x in
+    if (unique || k <= n) && static_shape x && static_shape indices then
+      (value, [ indexed ~mode ~unique ~axis ~indices ~updates x ])
+    else (value, [])
 
 (* The window is [v] moved along each axis it does not fill to its start there:
    the positions of [x] along that axis against those of [v] as a one-hot mask,
@@ -180,84 +259,11 @@ let update x ~starts v =
            (List.fold_left shift (Lower_reduce.bits v) moved))
         x
 
-(* Regions
-
-   A write into a value that the program consumes can be stored in place, over
-   only the elements it writes: each region is a window of [x], of [x] padded
-   first when some of its stores are dropped, and its value there. *)
-
-type region = {
-  padding : (Ops.sint * Ops.sint) option list option;
-  bounds : (Ops.sint * Ops.sint) option list;
-  value : Ops.t;
-}
-
-let static u =
-  List.map (function Ops.Int d -> Some d | Ops.Sym _ -> None) (Ops.shape u)
-
-(* Past this many rows, a scatter is not stored row by row: each row is its own
-   store, unrolled at trace time. *)
-let max_rows = 16
-
-(* [rows_only ~axis u] is whether the elements of [u] vary along [axis]
-   alone. *)
-let rows_only ~axis u = List.for_all (Int.equal axis) (Lower_reduce.varies u)
-
-(* Each row's offset: its index where it lies within [x], and otherwise the row
-   [n] of the padding, where its store is dropped. The offsets are stored as
-   their own vector, so that a window's offset reads a buffer: one read through
-   a broadcast fails to compile, in tinygrad as in tolk. *)
-let offsets ~axis ~indices ~k n =
-  let r = Ops.ndim indices in
-  let p =
-    narrow n
-      (Ops.reshape
-         (Ops.shrink indices
-            (List.init r (fun d ->
-                 if d = axis then None else Some (Ops.Int 0, Ops.Int 1))))
-         [ Ops.Int k ])
-  in
-  Ops.contiguous (Ops.where (Ops.ge p (Ops.int 0)) p (Ops.int n))
-
-let scatter_rows ~axis ~indices ~updates x =
-  let r = Ops.ndim x in
-  let rows = static updates and dims = static x in
-  let along f = List.init r (fun d -> if d = axis then f () else None) in
-  let spans d =
-    d = axis || (List.nth rows d = List.nth dims d && List.nth dims d <> None)
-  in
-  match (List.nth rows axis, List.nth dims axis) with
-  | Some k, Some n
-    when k <= max_rows
-         && Ops.axis x <> Some axis
-         && List.for_all spans (List.init r Fun.id)
-         && rows_only ~axis indices ->
-      let offsets = offsets ~axis ~indices ~k n in
-      let padding = Some (along (fun () -> Some (Ops.Int 0, Ops.Int 1))) in
-      Some
-        (List.init k (fun t ->
-             let at =
-               Ops.reshape
-                 (Ops.shrink offsets [ Some (Ops.Int t, Ops.Int (t + 1)) ])
-                 []
-             in
-             {
-               padding;
-               bounds =
-                 along (fun () ->
-                     Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))));
-               value =
-                 Ops.shrink updates
-                   (along (fun () -> Some (Ops.Int t, Ops.Int (t + 1))));
-             }))
-  | _ -> None
-
 let update_region x ~starts v =
-  let moved = static v and dims = static x in
   let bound d =
-    match (List.nth moved d, List.nth dims d) with
-    | Some k, Some n when k = n -> None
-    | Some k, _ ->
+    match (List.nth (Ops.shape v) d, List.nth (Ops.shape x) d) with
+    | Ops.Int k, Ops.Int n when k = n -> None
+    | Ops.Int k, _ ->
         let start =
           Ops.reshape
             (Ops.shrink (Ops.contiguous starts)
@@ -265,13 +271,13 @@ let update_region x ~starts v =
             []
         in
         Some (Ops.Sym start, Ops.Sym (Ops.add start (Ops.int k)))
-    | None, _ -> raise Exit
+    | Ops.Sym _, _ -> raise Exit
   in
   match List.init (Ops.ndim x) bound with
   | bounds -> (
       match Ops.axis x with
       | Some a when List.nth bounds a <> None -> None
-      | _ -> Some { padding = None; bounds; value = v })
+      | _ -> Some { dest = Ops.shrink x bounds; value = v })
   | exception Exit -> None
 
 (* Windows *)
