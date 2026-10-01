@@ -5696,26 +5696,30 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding x =
 
 (* Correlation and convolution *)
 
-let correlate_padding ~mode k_shape =
-  let k = Array.length k_shape in
-  match mode with
-  | `Valid -> Array.make k (0, 0)
-  | `Full ->
-      Array.init k (fun i ->
-          let p = k_shape.(i) - 1 in
-          (p, p))
-  | `Same ->
-      Array.init k (fun i ->
-          let total = k_shape.(i) - 1 in
-          (total / 2, total - (total / 2)))
+(* The zeros around each spatial axis of [x], of size [n], against a kernel axis
+   of size [k]: those whose windows are the part of the full correlation that
+   [mode] keeps. A kernel longer than [x] is centred as if the two were
+   swapped, and a convolution, whose kernel is flipped, keeps the mirrored
+   part. *)
+let correlate_padding ~flipped ~mode input k_shape =
+  Array.map2
+    (fun n k ->
+      match mode with
+      | `Full -> (k - 1, k - 1)
+      | `Valid -> if k <= n then (0, 0) else (k - n, k - n)
+      | `Same when k <= n -> (k / 2, k - 1 - (k / 2))
+      | `Same ->
+          let before = k - 1 - (n / 2) and after = k - n + (n / 2) in
+          if flipped then (after, before) else (before, after))
+    input k_shape
 
-let correlate ?(padding = `Valid) x kernel =
+let correlation ~flipped padding x kernel =
   let kr = ndim kernel in
   let xr = ndim x in
   if xr < kr then err "correlate" "input rank %d < kernel rank %d" xr kr;
   let ks = shape kernel in
   let input_spatial = Array.sub (shape x) (xr - kr) kr in
-  let pad_pairs = correlate_padding ~mode:padding ks in
+  let pad_pairs = correlate_padding ~flipped ~mode:padding input_spatial ks in
   let ones_arr = Array.make kr 1 in
   let x_unf =
     B.unfold x ~kernel_size:ks ~stride:ones_arr ~dilation:ones_arr
@@ -5733,8 +5737,12 @@ let correlate ?(padding = `Valid) x kernel =
   in
   reshape (Array.concat [ leading; out_spatial ]) result
 
+let correlate ?(padding = `Valid) x kernel =
+  correlation ~flipped:false padding x kernel
+
 let convolve ?(padding = `Valid) x kernel =
-  correlate ~padding x (flip ~axes:(List.init (ndim kernel) Fun.id) kernel)
+  correlation ~flipped:true padding x
+    (flip ~axes:(List.init (ndim kernel) Fun.id) kernel)
 
 (* Sliding window filters *)
 

@@ -3564,12 +3564,30 @@ val correlate :
     Spatial dimensions [K = ndim kernel]. Leading dimensions of [x] beyond [K]
     are batch dimensions. [padding] defaults to [`Valid].
 
+    Along each spatial axis, of size [n] in [x] and [k] in [kernel], the full
+    correlation has [n + k - 1] values, and [padding] keeps some of them. With
+    [m = min n k]:
+    - [`Full] keeps them all;
+    - [`Valid] keeps the [max n k - m + 1] where the shorter of [x] and
+      [kernel] lies within the longer, from index [m - 1];
+    - [`Same] keeps [max n k], from index [(m - 1) / 2] if [k <= n] and from
+      index [m / 2] if [k > n]. With [k <= n], value [i] correlates [kernel]
+      with the elements of [x] from [i - k / 2] to [i + (k - 1) / 2], those
+      outside [x] being zero: an odd kernel is centred on element [i].
+
+    For [x = [|1.; 2.; 3.; 4.; 5.; 6.; 7.|]] and
+    [kernel = [|1.; 10.; 100.; 1000.|]], [`Same] gives
+    [[|2100.; 3210.; 4321.; 5432.; 6543.; 7654.; 765.|]].
+
     See also {!convolve}. *)
 
 val convolve :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [convolve ?padding x kernel] is like {!correlate} but flips the kernel along
-    all spatial axes before correlating.
+(** [convolve ?padding x kernel] is the N-D convolution: {!correlate} with the
+    kernel flipped along all spatial axes, [padding] keeping the values of the
+    full convolution from the same indices, except that [`Same] keeps them
+    from index [(m - 1) / 2] whether [k] is shorter or longer than [n]. The
+    convolution of two arrays without batch dimensions is commutative.
 
     See also {!correlate}. *)
 

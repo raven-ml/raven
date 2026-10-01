@@ -2901,6 +2901,16 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx.correlate` and `Nx.convolve` change which values of the
+  full correlation `` `Same `` and `` `Valid `` keep, as their documentation now
+  states. With an even kernel of size `k`, `` `Same `` correlates each element
+  `i` with the input from `i - k/2` to `i + k/2 - 1`, one element earlier than
+  before: correlating `[|1.; ...; 7.|]` with `[|1.; 10.; 100.; 1000.|]` gives
+  `[|2100.; 3210.; ...; 765.|]`, where it gave `[|3210.; ...; 765.; 76.|]`.
+  With a kernel longer than the input along an axis, `` `Same `` keeps as many
+  values as the kernel, where it kept as many as the input, and `` `Valid ``
+  keeps those where the input lies within the kernel, where it gave an empty
+  array. These are the windows numpy's `correlate` and `convolve` keep.
 - `Nx.combine_patches` and `Nx.extract_patches` handle windows that do not fit:
   an axis shorter than its dilated kernel, even with padding, has no window.
   `combine_patches` of no window crashed the process by reading past its input,

@@ -214,6 +214,36 @@ let test_box_blur () =
   if Float.abs (center -. expected) > 0.02 then
     failf "Box filter center: expected ~%.3f, got %.3f" expected center
 
+(* An even window spans [ksize / 2] pixels before each pixel and
+   [ksize / 2 - 1] after it: a pixel's value spreads to the pixel itself and the
+   ones after it. *)
+let test_box_blur_even () =
+  let img =
+    Nx.create Nx.float32 [| 5; 5; 1 |]
+      (Array.init 25 (fun i -> if i = 12 then 1.0 else 0.0))
+  in
+  let expected =
+    Array.init 25 (fun i ->
+        let row = i / 5 and col = i mod 5 in
+        if (row = 2 || row = 3) && (col = 2 || col = 3) then 0.25 else 0.0)
+  in
+  equal (array (float 1e-6)) expected (Nx.to_array (box_blur ~ksize:2 img))
+
+(* A kernel larger than the image keeps the image's size: a 7x7 box over a 3x3
+   image covers the whole image from every pixel. *)
+let test_box_blur_larger_than_image () =
+  let img = Nx.ones Nx.float32 [| 3; 3; 1 |] in
+  equal (array (float 1e-6))
+    (Array.make 9 (9. /. 49.))
+    (Nx.to_array (box_blur ~ksize:7 img))
+
+let test_unsharp_mask_kernel_larger_than_image () =
+  let img = create_centered_square 10 12 4 in
+  check_shape "gaussian_blur keeps the shape" (Nx.shape img)
+    (gaussian_blur ~sigma:3.0 img);
+  check_shape "unsharp_mask keeps the shape" (Nx.shape img)
+    (unsharp_mask ~sigma:3.0 img)
+
 let test_median_blur () =
   let img = create_gray_f 5 5 0.5 in
   let filtered = median_blur ~ksize:3 img in
@@ -379,6 +409,10 @@ let () =
         [
           test "gaussian_blur" test_gaussian_blur;
           test "box_blur" test_box_blur;
+          test "box_blur_even" test_box_blur_even;
+          test "box_blur_larger_than_image" test_box_blur_larger_than_image;
+          test "unsharp_mask_larger_kernel"
+            test_unsharp_mask_kernel_larger_than_image;
           test "median_blur" test_median_blur;
           test "median_blur_median" test_median_blur_preserves_median;
         ];

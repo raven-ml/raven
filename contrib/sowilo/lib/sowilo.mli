@@ -134,7 +134,9 @@ val gaussian_blur : sigma:float -> ?ksize:int -> Nx.float32_t -> Nx.float32_t
     Raises [Invalid_argument] if [ksize] is even or not positive. *)
 
 val box_blur : ksize:int -> Nx.float32_t -> Nx.float32_t
-(** [box_blur ~ksize img] applies a [ksize * ksize] averaging filter.
+(** [box_blur ~ksize img] applies a [ksize * ksize] averaging filter. Each
+    pixel's window spans [ksize / 2] pixels before it and [(ksize - 1) / 2]
+    after it along each axis, pixels outside the image counting as zero.
 
     Raises [Invalid_argument] if [ksize] is not positive. *)
 
@@ -148,8 +150,9 @@ val median_blur : ksize:int -> Nx.float32_t -> Nx.float32_t
 
 val filter2d : Nx.float32_t -> Nx.float32_t -> Nx.float32_t
 (** [filter2d kernel img] applies a custom 2D convolution [kernel] to [img].
-    [kernel] has shape [[kH; kW]]. Applied independently to each channel with
-    [Same] padding. *)
+    [kernel] has shape [[kH; kW]]. Applied independently to each channel, it
+    keeps [img]'s size: each pixel's window spans [kH / 2] rows and [kW / 2]
+    columns before it, pixels outside the image counting as zero. *)
 
 val unsharp_mask : sigma:float -> ?amount:float -> Nx.float32_t -> Nx.float32_t
 (** [unsharp_mask ~sigma img] sharpens by subtracting a Gaussian blur:

@@ -234,7 +234,7 @@ let empty_windows =
 
 let correlation =
   let signal = Gen.bind (Gen.int_range 1 8) (fun n -> floats [| n |]) in
-  let kernel = Gen.bind (Gen.int_range 1 4) (fun n -> floats [| n |]) in
+  let kernel = Gen.bind (Gen.int_range 1 8) (fun n -> floats [| n |]) in
   (* The sum of [x (i + j - lo) k (j)], zero outside [x]. *)
   let correlate_ref x k ~lo ~len =
     let xs = Nx.to_array x and ks = Nx.to_array k in
@@ -247,39 +247,95 @@ let correlation =
           ks;
         !s)
   in
+  (* The values from [start] of the full correlation, [len] of them. *)
+  let window x k ~start ~len =
+    correlate_ref x k ~lo:(Nx.numel k - 1 - start) ~len
+  in
+  (* Values numpy gives for correlate and convolve of these operands. *)
+  let numpy x k =
+    ( Nx.create Nx.float64 [| Array.length x |] x,
+      Nx.create Nx.float64 [| Array.length k |] k )
+  in
+  let seven = [| 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
+  let numpy_cases =
+    [
+      ( "an even kernel",
+        numpy seven [| 1.; 10.; 100.; 1000. |],
+        [| 2100.; 3210.; 4321.; 5432.; 6543.; 7654.; 765. |],
+        [| 4321.; 5432.; 6543.; 7654. |],
+        [| 12.; 123.; 1234.; 2345.; 3456.; 4567.; 5670. |],
+        [| 1234.; 2345.; 3456.; 4567. |] );
+      ( "an odd kernel",
+        numpy seven [| 1.; 10.; 100. |],
+        [| 210.; 321.; 432.; 543.; 654.; 765.; 76. |],
+        [| 321.; 432.; 543.; 654.; 765. |],
+        [| 12.; 123.; 234.; 345.; 456.; 567.; 670. |],
+        [| 123.; 234.; 345.; 456.; 567. |] );
+      ( "an even input shorter than the kernel",
+        numpy [| 1.; 2.; 3. |] [| 1.; 10.; 100.; 1000. |],
+        [| 2100.; 3210.; 321.; 32. |],
+        [| 3210.; 321. |],
+        [| 12.; 123.; 1230.; 2300. |],
+        [| 123.; 1230. |] );
+      ( "an odd kernel longer than the input",
+        numpy [| 1.; 2. |] [| 1.; 10.; 100. |],
+        [| 210.; 21.; 2. |],
+        [| 210.; 21. |],
+        [| 1.; 12.; 120. |],
+        [| 12.; 120. |] );
+    ]
+  in
+  let exactly name expected got =
+    equal ~msg:name (array float_exact) expected (Nx.to_array got)
+  in
   group "correlation"
     [
-      prop "correlate sums the kernel over each window, valid and full"
+      cases
+        ~name:(fun (n, _, _, _, _, _) -> n)
+        "correlate and convolve keep numpy's values" numpy_cases
+        (fun (_, (x, k), c_same, c_valid, v_same, v_valid) ->
+          exactly "correlate `Same" c_same (Nx.correlate ~padding:`Same x k);
+          exactly "correlate `Valid" c_valid (Nx.correlate ~padding:`Valid x k);
+          exactly "convolve `Same" v_same (Nx.convolve ~padding:`Same x k);
+          exactly "convolve `Valid" v_valid (Nx.convolve ~padding:`Valid x k));
+      prop
+        "correlate keeps the full correlation, its valid part and its centred \
+         part"
         (Gen.pair signal kernel) (fun (x, k) ->
           let n = Nx.numel x and m = Nx.numel k in
+          let short = Int.min n m and long = Int.max n m in
           equal ~msg:"full" near
-            (correlate_ref x k ~lo:(m - 1) ~len:(n + m - 1))
+            (window x k ~start:0 ~len:(n + m - 1))
             (Ref.of_nx (Nx.correlate ~padding:`Full x k));
-          if n >= m then
-            equal ~msg:"valid" near
-              (correlate_ref x k ~lo:0 ~len:(n - m + 1))
-              (Ref.of_nx (Nx.correlate ~padding:`Valid x k)));
+          equal ~msg:"valid" near
+            (window x k ~start:(short - 1) ~len:(long - short + 1))
+            (Ref.of_nx (Nx.correlate ~padding:`Valid x k));
+          let start = if m <= n then (short - 1) / 2 else short / 2 in
+          equal ~msg:"same" near
+            (window x k ~start ~len:long)
+            (Ref.of_nx (Nx.correlate ~padding:`Same x k)));
       prop
-        "correlate `Same centres an odd kernel on each input position (nx.mli \
-         is silent on even ones)"
-        (Gen.pair signal
-           (Gen.bind (Gen.int_range 0 1) (fun h -> floats [| (2 * h) + 1 |])))
-        (fun (x, k) ->
+        "correlate `Same correlates the kernel with x from i - k/2 to i + \
+         (k-1)/2"
+        (Gen.pair signal kernel) (fun (x, k) ->
+          assume (Nx.numel k <= Nx.numel x);
           equal near
             (correlate_ref x k ~lo:(Nx.numel k / 2) ~len:(Nx.numel x))
             (Ref.of_nx (Nx.correlate ~padding:`Same x k)));
-      prop "convolve is correlate with the kernel flipped"
+      prop "full convolve is correlate with the kernel flipped"
         (Gen.pair signal kernel) (fun (x, k) ->
           equal
             (tensor (close ~rel:1e-12 ~abs:1e-12 ()))
             (Nx.correlate ~padding:`Full x (Nx.flip k))
             (Nx.convolve ~padding:`Full x k));
-      prop "full convolution is commutative" (Gen.pair signal kernel)
-        (fun (x, k) ->
-          Law.commutative
-            (tensor (close ~rel:1e-12 ~abs:1e-12 ()))
-            (Nx.convolve ~padding:`Full)
-            (x, k));
+      prop "convolution is commutative in every padding"
+        (Gen.pair signal kernel) (fun (x, k) ->
+          List.iter
+            (fun padding ->
+              Law.commutative
+                (tensor (close ~rel:1e-12 ~abs:1e-12 ()))
+                (Nx.convolve ~padding) (x, k))
+            [ `Full; `Same; `Valid ]);
     ]
 
 let filters =

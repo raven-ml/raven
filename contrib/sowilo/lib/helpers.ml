@@ -33,11 +33,15 @@ let convolve_per_channel kernel img =
   (* NCHW then merge N*C into leading: (N*C, H, W) *)
   let img_nchw = Nx.transpose ~axes:[ 0; 3; 1; 2 ] img in
   let merged = Nx.reshape [| n * c; h; w |] img_nchw in
-  (* correlate on last 2 dims with Same padding *)
-  let result = Nx.correlate ~padding:`Same merged kernel in
-  let out_shape = Nx.shape result in
-  let oh = out_shape.(1) in
-  let ow = out_shape.(2) in
-  (* Reshape back: (N, C, H_out, W_out) -> (N, H_out, W_out, C) *)
-  let result = Nx.reshape [| n; c; oh; ow |] result in
+  (* The image's size whatever the kernel's: the full correlation from the
+     window that starts kH / 2 rows and kW / 2 columns before each pixel. *)
+  let ks = Nx.shape kernel in
+  let from k size = Nx.R (k - 1 - (k / 2), k - 1 - (k / 2) + size) in
+  let result =
+    Nx.slice
+      [ Nx.A; from ks.(0) h; from ks.(1) w ]
+      (Nx.correlate ~padding:`Full merged kernel)
+  in
+  (* Reshape back: (N, C, H, W) -> (N, H, W, C) *)
+  let result = Nx.reshape [| n; c; h; w |] result in
   Nx.transpose ~axes:[ 0; 2; 3; 1 ] result
