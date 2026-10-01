@@ -169,6 +169,21 @@ let compositions =
           let inner = Rune.jit' Nx.neg in
           let g = Rune.jit' (fun x -> inner (inner x)) in
           equal floats (x ()) (g (x ())));
+      test "a remat's gradient under jit is its function's" (fun () ->
+          let g =
+            Rune.remat
+              Nx.Ptree.(tensor @-> returns tensor)
+              (fun x -> Nx.tanh (Nx.mul x x))
+          in
+          let f x = Nx.sum (g (Nx.mul_s x 2.)) in
+          let x = Nx.create Nx.float64 [| 4 |] [| 0.5; -1.; 0.25; 2. |] in
+          equal
+            (tensor (close ~abs:1e-12 ~rel:1e-9 ()))
+            (Rune.grad'
+               (fun x ->
+                 Nx.sum (Nx.tanh (Nx.mul (Nx.mul_s x 2.) (Nx.mul_s x 2.))))
+               x)
+            (Rune.jit' (Rune.grad' f) x));
       test "a scan no stager takes folds inside the trace" (fun () ->
           let f xs =
             fst
