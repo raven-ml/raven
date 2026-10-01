@@ -1033,11 +1033,12 @@ let variables =
 
 (* Loops of calls *)
 
-(* A scan of three trips: a carry [c] of four floats, updated in place, and rows
-   of four of [xs] and [ys]. Each trip stores [c * 2] into its row of [ys], then
+(* A scan of [n] trips, three by default, around a range numbered [axis]: a
+   carry [c] of four floats, updated in place, and rows of four of [xs] and
+   [ys]. Each trip stores [c * 2] into its row of [ys], then
    adds its row of [xs] to [c]. *)
-let scan_loop () =
-  let k = 4 and n = 3 in
+let scan_loop ?(axis = 100) ?(n = 3) () =
+  let k = 4 in
   let p slot = Ops.param ~shape:[ Int k ] ~device:cpu slot Float32 in
   let body =
     Ops.sink
@@ -1049,7 +1050,7 @@ let scan_loop () =
   let c = Ops.new_buffer cpu k Float32
   and xs = Ops.new_buffer cpu (n * k) Float32
   and ys = Ops.new_buffer cpu (n * k) Float32 in
-  let r = Ops.range ~axis_type:Loop (Int n) [ 100 ] in
+  let r = Ops.range ~axis_type:Loop (Int n) [ axis ] in
   let row b =
     Ops.shrink b
       [ Some (Sym Ops.O.(r * int k), Sym Ops.O.((r * int k) + int k)) ]
@@ -1131,12 +1132,27 @@ let nested_linear () =
       | entries -> failf "%d entries in the outer loop" (List.length entries))
   | entries -> failf "%d entries" (List.length entries)
 
+(* Whoever makes a loop numbers its range from a counter of its own process.
+   Five trips keep the body apart from the other tests' loops. *)
+let renumbered_loop () =
+  let verdicts axis =
+    let big, _, _ = scan_loop ~axis ~n:5 () in
+    with_settings ~debug:3 ~scache:1 (fun () ->
+        ignore (Schedule.create_linear_with_vars ~capturing:true big));
+    List.map (fun (_, verdict, _) -> verdict) (reports ())
+  in
+  is_true ~msg:"the first is new" (List.mem "CACHE MISS" (verdicts 100));
+  is_true ~msg:"under another number, every body hits"
+    (List.for_all (String.equal " cache hit") (verdicts 7))
+
 let loops =
   group "create_linear_with_vars › loops of calls"
     [
       test "a loop of a precompiled call is a loop of its body's calls"
         scan_linear;
       test "a loop inside a loop's body keeps its own end" nested_linear;
+      test "a loop whose range has another number is the same body"
+        renumbered_loop;
     ]
 
 (* Schedules on disk

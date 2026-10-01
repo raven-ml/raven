@@ -1852,8 +1852,8 @@ the Exclusions of `README.md`.
   on disk only from `SCACHE=2`), `helpers.py:286` (`SCACHE`, `1` by
   default), and `codegen/opt/postrange.py:45-46` (a kernel's name, coloured).
 - **tolk:** `lib/codegen/codegen.ml:1157` (`program_key`), `:1167`
-  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:293`
-  (`schedule_key`) and `:298` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
+  (`kept`) and `:1182` (`made_program`); `lib/schedule/schedule.ml:309`
+  (`schedule_key`) and `:314` (`lower_sink_to_linear`); `lib/uop/graph.ml:957`
   (`cached`); `lib/codegen/opt/postrange.ml:631` (`get_optimized_ast`'s
   name); `lib/helpers.ml:325` (`scache`, `2` by default) and `:132`
   (`shaping`); `lib/runtime/support/compiler_cpu.ml:30` (`cc`); and
@@ -1864,8 +1864,10 @@ the Exclusions of `README.md`.
   the disk cache (tables `to_program` and `schedule_cache`) as their graphs'
   text (`Graph`), and a later process reads them back instead of making
   them. tinygrad keeps programs for its process only, and schedules on disk
-  only when asked. Each key is the kernel or function, for programs the
-  renderer and its target, the value of every setting and environment
+  only when asked. Each key is the kernel or function, a function with its
+  ranges numbered in order (whoever makes a loop numbers its range from a
+  counter whose value depends on what the process did before), for programs
+  the renderer and its target, the value of every setting and environment
   variable that shapes what compilation makes, and the digest of the
   library's sources, which dune computes when it builds the library: an
   entry is a function of the code that made it. Settings and the variables
@@ -1902,7 +1904,9 @@ the Exclusions of `README.md`.
   `create_linear_with_vars › cache › a body scheduled under one setting
   misses under another ›` each setting, `create_linear_with_vars ›
   schedules are kept on disk ›` the same as programs' for schedules, and `›
-  with SCACHE at 1, nothing is kept on disk`; the `Helpers` suite's
+  with SCACHE at 1, nothing is kept on disk`, and `create_linear_with_vars ›
+  loops of calls › a loop whose range has another number is the same body`;
+  the `Helpers` suite's
   `shaping ›` tests; and the `Compiler_cpu` suite's `without Clang › an
   object cached by the default compiler is not served under CC`.
 

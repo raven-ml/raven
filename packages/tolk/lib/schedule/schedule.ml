@@ -286,13 +286,29 @@ let pm_resolve_linear_call =
 let schedule_cache : (string, t) Hashtbl.t = Hashtbl.create 64
 let schedule_cache_lock = Mutex.create ()
 
+(* [fn] with its ranges numbered by their order in it. Whoever makes a loop
+   numbers its range from a counter of its own, whose value depends on what the
+   process did before, such as making a schedule or reading one back: the key
+   is the same for every numbering of one function's ranges. *)
+let ranges_in_order fn =
+  let ranges =
+    List.filter (fun u -> op u = Op.Range) (toposort ~enter_calls:true fn)
+  in
+  substitute ~enter_calls:true fn
+    (List.mapi
+       (fun k r ->
+         ( r,
+           replace r
+             ~arg:(Range { axis_id = [ k ]; axis_type = axis_type r }) ))
+       ranges)
+
 (* The key of a schedule, in memory and, with the setting scache at 2 or more,
-   on disk: the function's, every setting and variable that shapes what
-   compilation makes ([Helpers.shaping]), and the digest of this library's
-   sources, of which a schedule is a function. *)
+   on disk: the function's, its ranges numbered in order, every setting and
+   variable that shapes what compilation makes ([Helpers.shaping]), and the
+   digest of this library's sources, of which a schedule is a function. *)
 let schedule_key fn =
   String.concat "\n"
-    ([ Source_digest.digest; key fn ]
+    ([ Source_digest.digest; key (ranges_in_order fn) ]
     @ List.map (fun (k, v) -> k ^ "=" ^ v) (Helpers.shaping ()))
 
 let lower_sink_to_linear call =

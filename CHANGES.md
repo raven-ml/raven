@@ -927,6 +927,10 @@ thread.
 
 ### Tolk (new)
 
+- A process reads back the schedules of a function with loops, such as a
+  staged scan, that an earlier process kept on disk. The loop's range was
+  numbered from a counter that depends on what the process did before, so a
+  warm run missed the schedules made after its first miss or hit.
 - A program cached under one host compiler (`CC`) is compiled again under
   another, in the compile cache and the program cache: the object the first
   compiler made was served.
