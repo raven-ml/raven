@@ -4164,10 +4164,11 @@ module Op : sig
     | Read : { by : string; x : ('a, 'b) Nx_effect.t } -> Nx_device.Buffer.t t
         (** [Read { by; x }] is a host buffer of exactly [x]'s elements in C
             order: [x]'s own storage, read-only by contract, when they are one
-            run of it on the host, and a copy otherwise. [by] is the qualified name of the function that reads, such as
-            ["Nx.item"] or ["Nx.compress"]: the function a program called, also
-            when it reads through another. An interpreter that cannot read [x]
-            raises a message that starts with [by]. *)
+            run of it on the host, and a copy otherwise. [by] is the qualified
+            name of the function that reads, such as ["Nx.item"] or
+            ["Nx.compress"]: the function a program called, also when it reads
+            through another. An interpreter that cannot read [x] raises a
+            message that starts with [by]. *)
 
   (** The type for operations whose result is ['r]. *)
 
