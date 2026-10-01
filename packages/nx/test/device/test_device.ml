@@ -1359,19 +1359,58 @@ let test_file_closes () =
   let replacement = file_of "new" in
   Sys.rename replacement path;
   equal ~msg:"the file opened" string "old" (read b);
-  equal ~msg:"the file now at its path" string "new" (read (of_file path));
-  if not Sys.win32 then begin
-    let descriptors () = Array.length (Sys.readdir "/dev/fd") in
-    Gc.full_major ();
-    Nx_device.synchronize disk;
-    let before = descriptors () in
-    let opened = List.init 20 (fun _ -> of_file path) in
-    equal ~msg:"open" int (before + 20) (descriptors ());
-    ignore (Sys.opaque_identity opened);
-    Gc.full_major ();
-    Nx_device.synchronize disk;
-    equal ~msg:"closed" int before (descriptors ())
-  end
+  equal ~msg:"the file now at its path" string "new" (read (of_file path))
+
+(* The disk keeps at most this many descriptors open. *)
+let max_descriptors = 64
+
+(* Opens and reads [max_descriptors] other files, which closes every
+   descriptor opened before. *)
+let evict () =
+  List.iter (fun p -> ignore (read (of_file p))) (List.init max_descriptors (fun _ -> file_of "x"))
+
+(* A file used before 63 others keeps its descriptor, and reads the file it
+   opened through it after its path names another; a file used before 64
+   others reopens the path, which now names another file. *)
+let test_file_bound () =
+  let after_others n =
+    let path = file_of "old" in
+    let b = of_file path in
+    ignore (read b);
+    List.iter
+      (fun p -> ignore (read (of_file p)))
+      (List.init n (fun _ -> file_of "x"));
+    Sys.rename (file_of "new") path;
+    (path, b)
+  in
+  let _, b = after_others (max_descriptors - 1) in
+  equal ~msg:"open after 63 others" string "old" (read b);
+  let path, b = after_others max_descriptors in
+  raises_match (Exn.sys_error ~substring:path) (fun () -> read b)
+
+let test_file_descriptors () =
+  if Sys.win32 then skip ~reason:"no /dev/fd to count descriptors" ();
+  let descriptors () = Array.length (Sys.readdir "/dev/fd") in
+  let before = descriptors () in
+  let files = List.init 200 (fun i -> (i, of_file (file_of (string_of_int i)))) in
+  at_most int ~than:(before + max_descriptors) (descriptors ());
+  List.iter
+    (fun (i, b) -> equal ~msg:(string_of_int i) string (string_of_int i) (read b))
+    files
+
+let test_file_reopened () =
+  let path = file_of "old" in
+  let b = of_file path in
+  evict ();
+  equal ~msg:"reopened, the same file" string "old" (read b);
+  let written = create_file (temp_file ()) 3 in
+  write written "abc";
+  evict ();
+  write (B.view written ~offset:1 S.UInt8 1) "z";
+  equal ~msg:"its own writes do not change it" string "azc" (read written);
+  evict ();
+  Sys.rename (file_of "new") path;
+  raises_match (Exn.sys_error ~substring:path) (fun () -> read b)
 
 (* A borrow of a file's bytes is its mapping: the host and a device that maps
    host memory read the file's bytes in place, a write through it stays in the
@@ -1445,10 +1484,18 @@ let disks =
           let (i1, o1), (hi1, ho1) = (transferred disk, transferred host) in
           equal (list int) [ 8; 3; 3; 8; 0 ]
             [ i1 - i0; o1 - o0; hi1 - hi0; ho1 - ho0; allocated disk ]);
-      test
-        "a file is read through the descriptor it was opened with, which \
-         closes once its buffers are collected"
+      test "a file is read through the descriptor it was opened with"
         test_file_closes;
+      test
+        "the disk keeps the descriptors of the 64 files it used last, and \
+         closes the least recently used"
+        test_file_bound;
+      test "the descriptors open stay bounded, whatever the buffers held"
+        test_file_descriptors;
+      test
+        "a file whose descriptor was closed is reopened, and refused once its \
+         path names another file"
+        test_file_reopened;
       test
         "a borrow of a file's bytes is its pages, copy-on-write, kept while \
          borrowed"

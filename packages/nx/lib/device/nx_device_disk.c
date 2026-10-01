@@ -53,6 +53,12 @@
 /* Too many open files, of the process or the system. */
 #define TOO_MANY (-2)
 
+/* How [open_file] opens a file: as the OCaml side's [read], [write] and
+   [create]. */
+#define MODE_READ 0
+#define MODE_WRITE 1
+#define MODE_CREATE 2
+
 /* The most bytes one read or write system call moves. */
 #define CALL_BYTES ((intnat)1 << 30)
 
@@ -60,12 +66,13 @@
 
 #ifdef _WIN32
 
-static int open_file(const char *path, int create, int64_t size,
+static int open_file(const char *path, int mode, int64_t size,
                      intptr_t *handle, int64_t *file_size) {
+  int create = mode == MODE_CREATE;
   wchar_t *wpath = caml_stat_strdup_to_utf16(path);
   caml_release_runtime_system();
   HANDLE h = CreateFileW(
-      wpath, create ? GENERIC_READ | GENERIC_WRITE : GENERIC_READ,
+      wpath, mode == MODE_READ ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
       create ? CREATE_ALWAYS : OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   int code = 0;
@@ -97,16 +104,32 @@ static int open_file(const char *path, int create, int64_t size,
 
 static void close_file(intptr_t h) { CloseHandle((HANDLE)h); }
 
+static int identify(intptr_t h, int64_t identity[3]) {
+  BY_HANDLE_FILE_INFORMATION info;
+  FILE_BASIC_INFO basic;
+  if (!GetFileInformationByHandle((HANDLE)h, &info) ||
+      !GetFileInformationByHandleEx((HANDLE)h, FileBasicInfo, &basic,
+                                    sizeof basic))
+    return (int)GetLastError();
+  identity[0] = (int64_t)info.dwVolumeSerialNumber;
+  identity[1] = ((int64_t)info.nFileIndexHigh << 32) | info.nFileIndexLow;
+  identity[2] = basic.ChangeTime.QuadPart * 100;
+  return 0;
+}
+
 #else
 
-static int open_file(const char *path, int create, int64_t size,
+static int open_file(const char *path, int mode, int64_t size,
                      intptr_t *handle, int64_t *file_size) {
+  int create = mode == MODE_CREATE;
   char *p = caml_stat_strdup(path);
   caml_release_runtime_system();
   /* Non-blocking, so that a FIFO is refused rather than waited on. It changes
      nothing for a regular file. */
   int flags = O_CLOEXEC | O_NONBLOCK |
-              (create ? O_RDWR | O_CREAT | O_TRUNC : O_RDONLY);
+              (create              ? O_RDWR | O_CREAT | O_TRUNC
+               : mode == MODE_READ ? O_RDONLY
+                                   : O_RDWR);
   int fd;
   do
     fd = open(p, flags, 0666);
@@ -132,18 +155,33 @@ static int open_file(const char *path, int create, int64_t size,
 
 static void close_file(intptr_t h) { close((int)h); }
 
+static int identify(intptr_t h, int64_t identity[3]) {
+  struct stat st;
+  if (fstat((int)h, &st) != 0) return errno;
+  identity[0] = (int64_t)st.st_dev;
+  identity[1] = (int64_t)st.st_ino;
+#if defined(__APPLE__)
+  identity[2] = (int64_t)st.st_ctimespec.tv_sec * 1000000000 +
+                st.st_ctimespec.tv_nsec;
+#else
+  identity[2] = (int64_t)st.st_ctim.tv_sec * 1000000000 + st.st_ctim.tv_nsec;
+#endif
+  return 0;
+}
+
 #endif
 
-/* [open_file path create size] is [(code, handle, size)]: [code] is 0, a
-   system error, [NOT_REGULAR] or [TOO_MANY]. With [create], the file is
-   created or truncated, for reading and writing, at [size] bytes. */
-value caml_nx_device_file_open(value v_path, value v_create, value v_size) {
-  CAMLparam3(v_path, v_create, v_size);
+/* [open_file path mode size] is [(code, handle, size)]: [code] is 0, a
+   system error, [NOT_REGULAR] or [TOO_MANY]. [mode] is [MODE_READ], for
+   reading; [MODE_WRITE], for reading and writing; or [MODE_CREATE], which
+   creates or truncates the file, for reading and writing, at [size] bytes. */
+value caml_nx_device_file_open(value v_path, value v_mode, value v_size) {
+  CAMLparam3(v_path, v_mode, v_size);
   CAMLlocal1(r);
   intptr_t h = -1;
   int64_t size = 0;
-  int code = open_file(String_val(v_path), Bool_val(v_create),
-                       Long_val(v_size), &h, &size);
+  int code = open_file(String_val(v_path), Int_val(v_mode), Long_val(v_size),
+                       &h, &size);
   r = caml_alloc_tuple(3);
   Store_field(r, 0, Val_int(code));
   Store_field(r, 1, caml_copy_nativeint(h));
@@ -157,6 +195,20 @@ value caml_nx_device_file_close(value v_handle) {
   close_file(h);
   caml_acquire_runtime_system();
   return Val_unit;
+}
+
+/* [file_identity h] is [[| code; device; inode; change |]]: [code] is 0 or
+   a system error, and the file [h] is the one on [device] numbered [inode],
+   whose data or metadata last changed at [change], in nanoseconds. */
+value caml_nx_device_file_identity(value v_handle) {
+  CAMLparam1(v_handle);
+  CAMLlocal1(r);
+  int64_t identity[3] = {0, 0, 0};
+  int code = identify(Nativeint_val(v_handle), identity);
+  r = caml_alloc_tuple(4);
+  Store_field(r, 0, Val_int(code));
+  for (int i = 0; i < 3; i++) Store_field(r, i + 1, Val_long(identity[i]));
+  CAMLreturn(r);
 }
 
 value caml_nx_device_error_message(value v_code) {

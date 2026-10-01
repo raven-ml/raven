@@ -156,16 +156,19 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;
-  try Unix.rename temp path
-  with Unix.Unix_error _ -> (
-    (* A file loaded from [path] may still be open: its values are collected and
-       the disk, which closes their files, reclaims them. *)
-    Gc.full_major ();
-    Nx_device.synchronize Nx_device.disk;
-    try Unix.rename temp path
-    with Unix.Unix_error (e, _, _) ->
-      fail_msg "cannot replace %s (%s): the tensors were written to %s" path
-        (Unix.error_message e) temp)
+  let failed e =
+    fail_msg "cannot replace %s (%s): the tensors were written to %s" path
+      (Unix.error_message e) temp
+  in
+  try Unix.rename temp path with
+  | Unix.Unix_error _ when Sys.win32 -> (
+      (* Windows refuses to replace a file while a view of its pages is
+         mapped: a value loaded from [path] and borrowed may hold one until it
+         is collected. *)
+      Gc.full_major ();
+      Nx_device.synchronize Nx_device.disk;
+      try Unix.rename temp path with Unix.Unix_error (e, _, _) -> failed e)
+  | Unix.Unix_error (e, _, _) -> failed e
 
 (* Writes the header and the tensors' bytes, each at its offset after the
    header, to a new file at [temp]. *)

@@ -203,9 +203,22 @@ and mapped = {
 
 and program = { p_device : t; p_name : string; p_handle : nativeint }
 
-(* A file a disk buffer is over: its memory's handle is the descriptor. Its
-   pages are the host memory of its mapping, made at its first borrow. *)
-and file = { path : string; writable : bool; mutable pages : base option }
+(* A file a disk buffer is over, which it names by its path and identity: its
+   device, its number there and when it last changed, which the buffer's own
+   writes advance. A descriptor of it is open while it is in the disk's
+   descriptor cache. Its pages are the host memory of its mapping, made at its
+   first borrow. *)
+and file = {
+  path : string;
+  writable : bool;
+  size : int;
+  mutable identity : identity;
+  mutable fd : nativeint option;
+  mutable used : int; (* when its descriptor was last used *)
+  mutable pages : base option;
+}
+
+and identity = { dev : int; ino : int; changed : int }
 
 (* A program that its device can release is cached weakly, and released once
    unreachable; the others are kept for the device's life. *)
@@ -348,8 +361,11 @@ external now_ms : unit -> (int[@untagged])
 
 (* Files *)
 
-external file_open : string -> bool -> int -> int * nativeint * int
+external file_open : string -> int -> int -> int * nativeint * int
   = "caml_nx_device_file_open"
+
+external file_identity : nativeint -> int * int * int * int
+  = "caml_nx_device_file_identity"
 
 external file_close : nativeint -> unit = "caml_nx_device_file_close"
 
@@ -379,9 +395,12 @@ external file_map :
 external file_advise : nativeint -> int -> int -> unit
   = "caml_nx_device_file_advise"
 
-(* The codes [file_open] gives, besides the system's. *)
+(* The codes [file_open] gives, besides the system's, and its modes. *)
 let not_regular = -1
 let too_many = -2
+let read_mode = 0
+let write_mode = 1
+let create_mode = 2
 let page = page_size ()
 
 (* [shared ba] is [ba] with the proxy of its storage made. The runtime makes a
@@ -856,6 +875,83 @@ let mapping_on d base =
 let mapped_address (m : region) a =
   Nativeint.add m.address (Nativeint.sub a (Option.get m.host))
 
+(* The disk's descriptors. A file's descriptor is open while the file is in
+   this cache, which holds at most [max_descriptors] of them and closes the
+   least recently used to open another: a disk buffer holds no descriptor while
+   it waits to be collected. A file reopened by its path must still be the
+   one the buffer opened. Everything here runs with the disk taken. *)
+
+let max_descriptors = 64
+let descriptors : file list ref = ref []
+let descriptor_uses = ref 0
+
+let close_descriptor f =
+  match f.fd with
+  | None -> ()
+  | Some fd ->
+      f.fd <- None;
+      descriptors := List.filter (fun f' -> f' != f) !descriptors;
+      file_close fd
+
+let close_descriptors () = List.iter close_descriptor !descriptors
+
+let identify path fd =
+  match file_identity fd with
+  | 0, dev, ino, changed -> { dev; ino; changed }
+  | code, _, _, _ ->
+      file_close fd;
+      raise (Sys_error (path ^ ": " ^ error_message code))
+
+(* Opens [path] with [mode], closing the cached descriptors once if the process
+   has too many open. *)
+let open_path path mode n =
+  match file_open path mode n with
+  | code, _, _ when code = too_many && !descriptors <> [] ->
+      close_descriptors ();
+      file_open path mode n
+  | r -> r
+
+let cache f fd =
+  if List.length !descriptors >= max_descriptors then begin
+    let oldest =
+      List.fold_left
+        (fun o f -> if f.used < o.used then f else o)
+        (List.hd !descriptors) !descriptors
+    in
+    close_descriptor oldest
+  end;
+  incr descriptor_uses;
+  f.used <- !descriptor_uses;
+  f.fd <- Some fd;
+  descriptors := f :: !descriptors
+
+(* [f]'s descriptor, opened again if it was closed. Raises [Sys_error] naming
+   the file if it cannot be opened, or if [f.path] now names another file or
+   one that changed since [f]'s buffer last saw it. *)
+let descriptor f =
+  match f.fd with
+  | Some fd ->
+      incr descriptor_uses;
+      f.used <- !descriptor_uses;
+      fd
+  | None -> (
+      let mode = if f.writable then write_mode else read_mode in
+      match open_path f.path mode 0 with
+      | 0, fd, _ ->
+          let i = identify f.path fd and i' = f.identity in
+          if i.dev <> i'.dev || i.ino <> i'.ino || i.changed <> i'.changed
+          then begin
+            file_close fd;
+            raise
+              (Sys_error
+                 (f.path ^ ": the file changed since its buffers opened it"))
+          end;
+          cache f fd;
+          fd
+      | code, _, _ when code = too_many ->
+          raise (Sys_error (f.path ^ ": too many open files"))
+      | code, _, _ -> raise (Sys_error (f.path ^ ": " ^ error_message code)))
+
 (* Memory reclamation. Everything below runs with the device taken. *)
 
 let release d b = push d.released b
@@ -984,7 +1080,7 @@ let reclaim d =
               if m.borrows = 0 then emptied := (src, m) :: !emptied
           | None when Option.is_some b.file ->
               (* No read or write of a file outlives the copy that made it. *)
-              file_close b.memory.handle
+              close_descriptor (Option.get b.file)
           | None when (Atomic.get b.links).reached <> [] ->
               (* Another device's work may still write it. *)
               allocate_bytes d (-b.bytes);
@@ -1325,37 +1421,46 @@ module Buffer = struct
 
   let refuse fmt = Printf.ksprintf (fun why -> Error why) fmt
 
-  (* A file is opened with the disk taken, so that the descriptors of the files
-     already collected are closed first. An open refused for too many open files
-     collects the unreachable buffers, whose descriptors the collector cannot
-     see, and tries once more. *)
+  (* A file is opened with the disk taken, into its descriptor cache. *)
   let open_file path ~create n =
-    let rec go ~collected =
-      match file_open path create n with
-      | 0, fd, size -> Ok (fd, size)
-      | code, _, _ when code = too_many && not collected ->
-          Gc.full_major ();
-          reclaim disk;
-          go ~collected:true
+    let mode = if create then create_mode else read_mode in
+    let opened () =
+      match open_path path mode n with
+      | 0, fd, size -> (
+          match identify path fd with
+          | identity ->
+              let f =
+                {
+                  path;
+                  writable = create;
+                  size;
+                  identity;
+                  fd = None;
+                  used = 0;
+                  pages = None;
+                }
+              in
+              cache f fd;
+              Ok f
+          | exception Sys_error why -> Error why)
       | code, _, _ when code = not_regular ->
           refuse "%s: not a regular file" path
       | code, _, _ when code = too_many -> refuse "%s: too many open files" path
       | code, _, _ -> refuse "%s: %s" path (error_message code)
     in
     Result.map
-      (fun (fd, size) ->
+      (fun f ->
         let memory =
-          { host = None; address = 0n; handle = fd; nbytes = size }
+          { host = None; address = 0n; handle = 0n; nbytes = f.size }
         in
         (* The file is a holder outside the claims. *)
         let base =
-          base ~exported:true ~borrowed:true ~keep:(Keep ())
-            ~file:{ path; writable = create; pages = None }
-            disk memory
+          base ~exported:true ~borrowed:true ~keep:(Keep ()) ~file:f disk
+            memory
         in
         Gc.finalise (release disk) base;
-        first base Nx_dtype.Scalar.UInt8 size)
-      (with_devices [ disk ] (fun () -> go ~collected:false))
+        first base Nx_dtype.Scalar.UInt8 f.size)
+      (with_devices [ disk ] opened)
 
   let of_file path = open_file path ~create:false 0
 
@@ -1374,7 +1479,8 @@ module Buffer = struct
         match f.pages with
         | Some base -> Ok base
         | None -> (
-            match file_map b.base.memory.handle b.base.memory.nbytes with
+            match file_map (descriptor f) f.size with
+            | exception Sys_error why -> Error why
             | 0, ba ->
                 let base =
                   base ~claim:b.base.claim ~borrowed:true ~keep:(Host ba) host
@@ -1499,7 +1605,13 @@ module Buffer = struct
       Result.bind (pages b) (fun pages ->
           (* A device faulting a file's pages in reads a few times slower than
              the disk; the host reads them as it needs them. *)
-          if d != host then file_advise b.base.memory.handle b.offset (nbytes b);
+          if d != host then
+            with_devices [ disk ] (fun () ->
+                (* Advice is a hint: a file that cannot be reopened gets
+                   none, and its pages, mapped already, stay valid. *)
+                match descriptor f with
+                | fd -> file_advise fd b.offset (nbytes b)
+                | exception Sys_error _ -> ());
           borrow_host d { b with base = pages })
 
   (* [b] over the memory its borrows map, down to memory no borrow holds. *)
@@ -1566,13 +1678,15 @@ module Buffer = struct
 
   (* The address space memory is addressed in: its machine's host's when the
      host addresses it, its device's otherwise, and its file's on the disk. *)
-  type space = In_host of int | In_device of int | In_file of nativeint
+  type space = In_host of int | In_device of int | In_file of int * int
 
   (* Where [b]'s bytes lie, below its borrows: a space and the first byte. *)
   let place b =
     let r = root b in
     let m = r.base.memory and o = r.base.owner in
-    if o == disk then (In_file m.handle, Nativeint.of_int r.offset)
+    if o == disk then
+      let i = (file_of r).identity in
+      (In_file (i.dev, i.ino), Nativeint.of_int r.offset)
     else
       match m.host with
       | Some a -> (In_host (host_of o).id, a +! r.offset)
@@ -2023,7 +2137,7 @@ module Buffer = struct
      [pos] into host memory at [a]. *)
   let read b ~pos a n =
     let f = file_of b and at = b.offset + pos in
-    match file_read b.base.memory.handle at a n with
+    match file_read (descriptor f) at a n with
     | k when k = n -> ()
     | k when k >= 0 ->
         raise
@@ -2036,8 +2150,14 @@ module Buffer = struct
      buffer [b] from its byte [pos]. *)
   let write b ~pos a n =
     let f = file_of b in
-    let code = file_write b.base.memory.handle (b.offset + pos) a n in
-    if code < 0 then raise (Sys_error (f.path ^ ": " ^ error_message (-code)))
+    let fd = descriptor f in
+    let code = file_write fd (b.offset + pos) a n in
+    if code < 0 then raise (Sys_error (f.path ^ ": " ^ error_message (-code)));
+    (* The write changed the file: its later reopens must not take it for
+       another one. *)
+    match file_identity fd with
+    | 0, dev, ino, changed -> f.identity <- { dev; ino; changed }
+    | _ -> ()
 
   (* A copy from or to the disk reads or writes its file: straight from or into
      memory the host addresses, and through the host's staging memory otherwise,

@@ -2934,6 +2934,12 @@ thread.
 
 ### Nx
 
+- Disk buffers (`Nx_device.Buffer.of_file`, `create_file`) no longer hold a
+  descriptor until they are collected, which ran out of descriptors
+  (`EMFILE`) in loops of small file round trips. The disk keeps the descriptors
+  of the 64 files it used last, and reopens a file by its path when needed,
+  raising `Sys_error` if the path now names another file or one changed by
+  another writer.
 - `Nx.top_k` along an axis whose rows it can view no longer copies its
   selection keys first. Compiled, the ranking computes the keys where it
   compares them: a short row's positions take two kernels where they took

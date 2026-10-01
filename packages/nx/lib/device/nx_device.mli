@@ -304,13 +304,18 @@ module Buffer : sig
       [UInt8] elements, one per byte, for reading: {!copy} reads them, and
       refuses to write them. Its length is the file's size when it is opened.
 
-      The buffer holds the file open, and its views share it: they read the file
-      that was opened, even once [path] is renamed, removed or replaced. The
-      file is closed once the buffer and all its views are unreachable, at the
-      disk's next operation, such as another {!of_file}, and its mapping once
-      its borrows ({!borrow}) are unreachable too. A file changed in place while
-      it is open changes what they read, and a read past a new end of the file
-      raises; a borrow of its pages asks more of the file.
+      The buffer and its views name the file that was opened. The disk keeps a
+      descriptor of it open while it is among the 64 files it used last, and
+      reads it through that descriptor even once [path] is renamed, removed or
+      replaced. A descriptor it closed to open other files is opened again by
+      [path], and a copy raises [Sys_error] naming the file if [path] no longer
+      names that file, or names it changed by another writer since: renamed,
+      removed, replaced, or changed in place. So a file the process keeps
+      buffers of must keep its path, and change only through them. A file
+      changed in place while its descriptor is open changes what they read, and
+      a read past a new end of the file raises. The mapping of its pages lasts
+      while its borrows ({!borrow}) are reachable, open or not; a borrow of its
+      pages asks more of the file.
 
       [Error why] naming [path] if it cannot be opened for reading or is not a
       regular file. *)
@@ -319,8 +324,8 @@ module Buffer : sig
   (** [create_file path n] is the file at [path], created, or emptied if it
       exists, and sized to [n] bytes, as a buffer of [n] [UInt8] elements on
       {!disk} for reading and writing: {!copy} reads and writes them. Its bytes
-      read as zero until they are written. It holds the file open as {!of_file}
-      does. A write reaches the file when {!copy} returns, and the storage once
+      read as zero until they are written. It names the file as {!of_file}
+      does, and its own writes do not change which file that is. A write reaches the file when {!copy} returns, and the storage once
       the system flushes the file, which a sync of the file forces.
 
       [Error why] naming [path] if it cannot be created.
