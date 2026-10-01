@@ -279,26 +279,22 @@ let rows x axis p =
   in
   let k = List.length lead in
   let index d l = Option.get (List.find_index (Int.equal d) l) in
-  (* Each leading axis's position, at its stride among the leading axes: the
-     position along [axis], the element's own position along a row. *)
+  (* Each leading axis's position at its row-major stride among the leading
+     axes: the position along [axis], then each row's own position. *)
   let at along_axis =
-    let position d =
-      if d = axis then along_axis
-      else
-        Ops.expand
-          (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
-          (shape p lead)
+    let stride d =
+      List.fold_left (fun n d' -> n * static x d') 1
+        (List.drop (index d lead + 1) lead)
     in
-    match List.rev lead with
-    | [] -> assert false
-    | last :: rest ->
-        fst
-          (List.fold_left
-             (fun (at, stride) d ->
-               ( Ops.add at (Ops.mul (position d) (Ops.int stride)),
-                 stride * static x d ))
-             (position last, static x last)
-             rest)
+    let term d u = match stride d with 1 -> u | n -> Ops.mul u (Ops.int n) in
+    let position d =
+      Ops.expand
+        (along k (index d lead) (Ops.arange ~dtype:Weak_int (static x d)))
+        (shape p lead)
+    in
+    List.fold_left
+      (fun at d -> if d = axis then at else Ops.add at (term d (position d)))
+      (term axis along_axis) lead
   in
   let laid u =
     Ops.reshape (Ops.permute u order) (shape p lead @ shape u whole)
