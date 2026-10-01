@@ -15,7 +15,7 @@ whether it was reused or copied, and each kernel a search optimises.
   rune.jit: retrace: 0: shape [4] here, shape [2; 3] in the previous key
   rune.jit: retrace: 0: 1 element into its run here, 0 elements into its run in the previous key
   rune.jit: 0 consumed, lent to no result
-  rune.jit: retrace: BEAM=0 NOOPT=true profiled=false here, BEAM=0 NOOPT=false profiled=false in the previous key
+  rune.jit: retrace: BEAM=0 NOOPT=true profiled=false counters=[] here, BEAM=0 NOOPT=false profiled=false counters=[] in the previous key
   rune.jit: searched a kernel at width 1
   rune.jit: searched a kernel at width 2
 
