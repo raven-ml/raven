@@ -1701,11 +1701,8 @@ let test_one_storage_behind_two_caches_raises () =
   raises_match
     (function
       | Invalid_argument msg ->
-          String.starts_with
-            ~prefix:
-              "Rune.jit: the arguments at 0.0.keys and 0.1.keys reach one \
-               storage"
-            msg
+          String.equal msg
+            "Rune.jit: 0.0.keys is consumed and 0.1.keys reaches its storage"
       | _ -> false)
     (fun () -> step [ c; c ]);
   close ~msg:"the cache stays usable" (cache 4).Attention.Cache.keys c.keys
