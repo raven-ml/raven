@@ -1,7 +1,7 @@
 (library
  (name rune_next_test)
  (wrapped false)
- (modules expr oracle programs traces witness)
+ (modules expr metal oracle programs traces witness)
  (libraries
   windtrap
   rune.next
@@ -13,7 +13,12 @@
   nx.array
   nx.device
   nx.dtype
-  zarith))
+  zarith
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))
 
 ; The rule suites' cases, rows and references.
 
