@@ -109,27 +109,35 @@ let allocated d = Nx_device.Stats.allocated (stats d)
 
 (* Values *)
 
-(* An operation of one family, by name, over two float32 arguments of one shape;
-   [exact] is whether it is computed exactly. *)
+(* How a compiled value agrees with eager's: bit for bit; bit for bit but for
+   the sign of a zero, which a compiled extreme leaves to its target; or as a
+   value computed in another order. *)
+type agreement = Exact | Exact_up_to_zero | Rounded
+
+(* An operation of one family, by name, over two float32 arguments of one shape,
+   and how its compiled value agrees with eager's. *)
 type family = {
   name : string;
-  exact : bool;
+  agreement : agreement;
   light : bool;  (** Whether the default run takes it. *)
   apply : Nx.float32_t -> Nx.float32_t -> Nx.float32_t;
 }
 
 let families =
-  let f ?(exact = true) ?(light = false) name apply =
-    { name; exact; light; apply }
+  let f ?(agreement = Exact) ?(light = false) name apply =
+    { name; agreement; light; apply }
   in
   [
-    f ~light:true "neg, abs, max" (fun a b -> Nx.maximum (Nx.neg a) (Nx.abs b));
+    f ~agreement:Exact_up_to_zero ~light:true "neg, abs, max" (fun a b ->
+        Nx.maximum (Nx.neg a) (Nx.abs b));
     f "where a less than b" (fun a b -> Nx.where (Nx.less a b) a b);
-    f ~exact:false "exp and sin" (fun a b -> Nx.add (Nx.exp a) (Nx.sin b));
-    f ~exact:false ~light:true "a sum over the last axis" (fun a b ->
+    f ~agreement:Rounded "exp and sin" (fun a b -> Nx.add (Nx.exp a) (Nx.sin b));
+    f ~agreement:Rounded ~light:true "a sum over the last axis" (fun a b ->
         Nx.add a (Nx.sum ~axes:[ -1 ] ~keepdims:true b));
-    f "a maximum over every axis" (fun a b -> Nx.mul a (Nx.max b));
-    f ~exact:false "a running sum" (fun a b -> Nx.add a (Nx.cumsum ~axis:0 b));
+    f ~agreement:Exact_up_to_zero "a maximum over every axis" (fun a b ->
+        Nx.mul a (Nx.max b));
+    f ~agreement:Rounded "a running sum" (fun a b ->
+        Nx.add a (Nx.cumsum ~axis:0 b));
     f "a transpose made contiguous" (fun a b ->
         Nx.add a (Nx.transpose (Nx.contiguous (Nx.transpose b))));
     f ~light:true "a flip and a pad" (fun a b ->
@@ -146,7 +154,7 @@ let families =
              (Nx.concatenate ~axis:0 [ a; b ])));
     f "a cast to int32 and back" (fun a b ->
         Nx.add a (Nx.cast Nx.float32 (Nx.cast Nx.int32 b)));
-    f ~exact:false "a product with the transpose" (fun a b ->
+    f ~agreement:Rounded "a product with the transpose" (fun a b ->
         Nx.add a (Nx.matmul (Nx.matmul a (Nx.matrix_transpose b)) b));
   ]
 
@@ -234,13 +242,15 @@ let far_index =
 (* The laws of values, [count] cases each; [heavy] adds the families the default
    run leaves out, and the tests whose programs take longest to compile. *)
 let values ~count ~heavy =
-  let law { name; exact; apply; _ } =
+  let law { name; agreement; apply; _ } =
     prop ~count name laid (fun (a, b) ->
         match apply a b with
-        | expected ->
-            equal
-              (if exact then floats else rounded a b)
-              expected (Rune.jit two apply a b)
+        | expected -> (
+            let actual = Rune.jit two apply a b in
+            match agreement with
+            | Exact -> equal floats expected actual
+            | Exact_up_to_zero -> Traces.exact_up_to_zero expected actual
+            | Rounded -> equal (rounded a b) expected actual)
         | exception Invalid_argument m ->
             (* An empty extreme raises eagerly; compiled, it raises too. *)
             raises_match ~msg:m Exn.invalid_arg (fun () ->
