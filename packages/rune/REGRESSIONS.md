@@ -722,7 +722,7 @@ them.
 | old: test_jit.ml cumulative reductions › a bfloat16 arange inside a compiled function equals eager | a bfloat16 arange | J › values › a bfloat16 arange from 2^40 inside a compiled call equals eager's (an expected failure: the compiled cast rounds twice) |
 | old: test_jit.ml indexed access › gather and scatter under jit agree with eager at indices beyond ±2^32 | indices 2^32 from a position | J › values › gather and scatter at indices 2^32 from a position equal eager's |
 | old: test_jit.ml indexed access › top_k puts NaN first, as eager does | top_k and NaN | J › values › top_k puts NaN first, as eager does |
-| old: test_jit.ml placement › a read of a traced value names its function | reading a traced value | J › errors › reading a traced value raises Jit_error |
+| old: test_jit.ml placement › a read of a traced value names its function | reading a traced value | next/test/test_lower.ml lower › reads › a traced value's elements cannot be read; lower › reads › a refused read names the function the program called › * |
 | old: test_jit.ml linear algebra › a wide triangular solve takes the blocked path | a triangular solve of many right-hand sides | J › swept › values › a triangular solve of 80 right-hand sides solves its system › lower; upper, transposed, unit diagonal |
 | old: test_jit.ml values on the disk › a value larger than a chunk is borrowed | a large mapped value | dropped: `Nx_device.Buffer` borrowing (`nx runtime devices`) |
 
