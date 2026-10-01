@@ -264,6 +264,14 @@ let quarter_turns a =
   in
   (where near r far_r, where near (Ops.cast q Int32) far_q)
 
+(* [within_quarter_turn r] is [r], a remainder of at most about [pi/4], clamped
+   to [[-pi/2, pi/2]]: no value moves, and the target's sine knows the remainder
+   is small, which the cancellation in [a - q pi/2] hides from its bounds. *)
+let within_quarter_turn r =
+  let c = float r (Float.pi /. 2.) and minus_c = float r (-.Float.pi /. 2.) in
+  let above = where (Ops.lt minus_c r) r minus_c in
+  where (Ops.lt above c) above c
+
 (* [by_quadrant x f] is [f] of the sine and cosine of the reduced [|x|] and of
    its quadrant, NaN at an infinity and at NaN. [|x|] is [-x] or [x] by the sign
    bit, rather than [x] with the bit cleared, so that it has [x]'s bounds: a
@@ -273,6 +281,7 @@ let by_quadrant x f =
   let a = where (sign_bit x) (neg x) x in
   let finite = Ops.lt a (float x Float.infinity) in
   let r, q = quarter_turns (where finite a (float x 0.)) in
+  let r = within_quarter_turn r in
   let quadrant n = Ops.eq (Ops.bitwise_and q (int q 3)) (int q n) in
   where finite (f (sine r) (cos_reduced r) quadrant) (float x Float.nan)
 

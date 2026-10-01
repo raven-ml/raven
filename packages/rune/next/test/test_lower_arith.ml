@@ -543,25 +543,32 @@ let random_bits =
 
    An angle with known bounds below the reductions' limits takes the short
    reduction alone, as Box-Muller's [2 pi u] does for a fused uniform [u] in
-   [[0, 1)]. An angle read from a buffer has no bounds and takes the long one as
-   well. *)
+   [[0, 1)]. An angle read from a buffer has no bounds, and [sin] and [cos]
+   reduce it themselves, the long way past their limit: the target's sine then
+   sees a remainder bounded by a quarter turn, and takes the short reduction. *)
 
 (* The first nonzero word of the bits of [1/(2 pi)], which only the long
    (Payne-Hanek) reduction reads. *)
-let payne_hanek_word = Tolk_next.Bigint.of_int 0x28be60db
+let payne_hanek_word : Tolk_next.Dtype.const =
+  `Int (Tolk_next.Bigint.of_int 0x28be60db)
 
-let long_reductions y =
-  let reads_table k =
+(* The magnitude at which tolk's sine switches to the long reduction, which it
+   compares with only where it cannot bound its angle. *)
+let switch_over : Tolk_next.Dtype.const = `Float 30.
+
+(* [kernels_reading c y] is the number of [y]'s kernels, lowered for the host,
+   that read the constant [c]. *)
+let kernels_reading c y =
+  let reads k =
     List.exists
       (fun u ->
         match Tolk_next.Ops.arg u with
-        | Tolk_next.Ops.Const (`Int z) ->
-            Tolk_next.Bigint.equal z payne_hanek_word
+        | Tolk_next.Ops.Const v -> v = c
         | _ -> false)
       (Tolk_next.Ops.toposort
          (Tolk_next.Codegen.full_rewrite_to_sink k (host Nx.Device.host)))
   in
-  List.length (List.filter reads_table (Tolk_next.Ops.src (Programs.kernels y)))
+  List.length (List.filter reads (Tolk_next.Ops.src (Programs.kernels y)))
 
 (* [drawn s f dt] is the draw [f] traced in [s] from a key argument. *)
 let drawn s f dt =
@@ -569,19 +576,30 @@ let drawn s f dt =
   within s (fun () -> f (Nx.Rng.of_tensor (argument s key)) dt [| 256 |])
 
 let long_reductions_group =
+  let read f dt =
+    let s = scope () in
+    let x = Nx.zeros dt [| 4 |] in
+    within s (fun () -> f (argument s x))
+  in
   group "long reductions"
     [
       cases ~name:(fun (F (name, _)) -> name)
         "a normal draw takes none" wide (fun (F (_, dt)) ->
           let s = scope () in
-          equal int 0 (long_reductions (drawn s Nx.Rng.normal dt)));
+          equal int 0
+            (kernels_reading payne_hanek_word (drawn s Nx.Rng.normal dt)));
       cases ~name:(fun (F (name, _)) -> name)
-        "the sine of an angle read from a buffer takes one" wide
+        "the sine of an angle read from a buffer takes its own only" wide
         (fun (F (_, dt)) ->
-          let s = scope () in
-          let x = Nx.zeros dt [| 4 |] in
-          let y = within s (fun () -> Nx.sin (argument s x)) in
-          equal int 1 (long_reductions y));
+          let y = read Nx.sin dt in
+          equal int 1 (kernels_reading payne_hanek_word y);
+          equal int 0 (kernels_reading switch_over y));
+      cases ~name:(fun (F (name, _)) -> name)
+        "the cosine of an angle read from a buffer takes its own only" wide
+        (fun (F (_, dt)) ->
+          let y = read Nx.cos dt in
+          equal int 1 (kernels_reading payne_hanek_word y);
+          equal int 0 (kernels_reading switch_over y));
     ]
 
 (* Random draws, compiled for the host: a uniform draw is eager's bits, and a
