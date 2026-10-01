@@ -1306,7 +1306,7 @@ let take_cached d key =
    releases the cache and tries again, then waits for the work of released
    memory and tries again. One still refused raises [Exhausted] until [last]:
    the unreachable buffers, whose memory the collector cannot see, may hold
-   what it needs (see [last_resort_rounds]). *)
+   what it needs (see [last_resort_rounds] and [exhausted]). *)
 exception Exhausted
 
 let rec allocate d n ~kind ~last =
@@ -1347,6 +1347,23 @@ let rec allocate d n ~kind ~last =
       | None -> raise (Out_of_memory (d, n)))
 
 (* Taking devices *)
+
+(* A round of the last resort of an allocation of [d]'s memory (see
+   [last_resort_rounds]), run with no device taken. Unreachable buffers may
+   hold the memory, which only a complete collection finds. A borrow of it on
+   another device holds it until that device's next operation releases the
+   borrow, so each device that may map [d]'s memory and is not busy is drained
+   too: one whose lock is held is busy, and drains when its operation ends.
+   The next round's collection frees what the drained borrows held. *)
+let exhausted d =
+  Gc.full_major ();
+  List.iter
+    (fun e ->
+      if e != d && reaches e d && Mutex.try_lock e.lock then
+        Fun.protect
+          ~finally:(fun () -> Mutex.unlock e.lock)
+          (fun () -> if failed e = None then try reclaim e with Lost _ -> ()))
+    (Atomic.get opened)
 
 let with_devices ds f =
   let ds = List.sort_uniq (fun a b -> Int.compare a.id b.id) ds in
@@ -1525,7 +1542,7 @@ module Buffer = struct
 
   and host_refused n ~round =
     if round = last_resort_rounds then raise (Out_of_memory (host, n));
-    Gc.full_major ();
+    exhausted host;
     host_heap n ~round:(round + 1)
 
   let not_files fn =
@@ -1572,7 +1589,7 @@ module Buffer = struct
           with
           | m -> m
           | exception Exhausted ->
-              Gc.full_major ();
+              exhausted d;
               take (round + 1)
         in
         let memory, keep, kind = take 0 in

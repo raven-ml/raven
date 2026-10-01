@@ -999,6 +999,11 @@ let memory =
           equal ~msg:"returned" int 0 (grown ());
           Fun.protect ~finally:(fun () -> Nx_device.set_budget host max_int)
           @@ fun () ->
+          (* A refused allocation gets back the memory that earlier tests'
+             idle devices still borrow, so that only live buffers count. *)
+          Nx_device.set_budget host (allocated host);
+          (try ignore (B.create host S.UInt8 1)
+           with Nx_device.Out_of_memory _ -> ());
           Nx_device.set_budget host (allocated host + 1000);
           let a = B.create host S.UInt8 600 in
           raises_match (out_of_memory host 600) (fun () ->
@@ -1301,6 +1306,23 @@ let test_borrow_again () =
   ignore (stats g.dev);
   ignore (stats g.dev);
   equal ~msg:"unmapped once released" int 0 g.drv.mapped
+
+(* A borrow's release waits for its device's next operation. A device that
+   runs none still gives back the memory of another that needs it: the
+   allocation that is refused drains the devices that map that memory. *)
+let test_idle_mapper () =
+  let g = fake ~name:"IDLE" ~maps:true () in
+  let n = 1 lsl 20 and budget = Nx_device.budget host in
+  Fun.protect ~finally:(fun () -> Nx_device.set_budget host budget)
+  @@ fun () ->
+  Gc.full_major ();
+  Nx_device.set_budget host (allocated host + n + (n / 2));
+  dropped (fun () ->
+      let hb = B.create host S.UInt8 n in
+      ignore (Sys.opaque_identity (borrow g.dev hb)));
+  let b = B.create host S.UInt8 n in
+  equal ~msg:"unmapped" int 0 g.drv.mapped;
+  ignore (Sys.opaque_identity b)
 
 let test_borrow_lifetime () =
   let collected = ref false and opened = ref false in
@@ -1849,6 +1871,10 @@ let buffers =
         "a borrow made while its released mapping waits for work takes the \
          mapping again"
         test_borrow_again;
+      test
+        "memory an idle device borrowed returns to an allocation that needs \
+         it"
+        test_idle_mapper;
       test "the host's staging memory is one, which each device maps once"
         (fun () ->
           let a = far () and b = far () in

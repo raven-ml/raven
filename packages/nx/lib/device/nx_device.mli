@@ -46,13 +46,14 @@
     ({!Lost}), the memory is {e retained}: kept, and never freed or reused. An
     allocation that the device's {!budget} or its driver refuses first releases
     the cache to the system, then waits for the work of the memory its device
-    released, then collects garbage with the device free for other domains and
-    tries again, up to four times, and raises {!Out_of_memory} only after
-    that. Memory returns one major cycle after the last value holding its
-    buffers dies, in whichever domain runs the collection, even while the
-    domain that made them is blocked. A value that a finaliser closure keeps
-    dies only once that closure has run, a cycle after its own holder died, so
-    a chain of such holders takes a cycle per link.
+    released, then collects garbage with the device free for other domains,
+    releases the borrows of its memory that idle devices still hold, and tries
+    again, up to four times, and raises {!Out_of_memory} only after that.
+    Memory returns one major cycle after the last value holding its buffers
+    dies, in whichever domain runs the collection, even while the domain that
+    made them is blocked. A value that a finaliser closure keeps dies only once
+    that closure has run, a cycle after its own holder died, so a chain of such
+    holders takes a cycle per link.
 
     {b Collection pace.} The host memory of buffers of 64 KiB or more (four
     pages, where pages are larger) paces the collector's major cycles by the

@@ -2934,6 +2934,11 @@ thread.
 
 ### Nx
 
+- An allocation refused for lack of memory releases the borrows of that
+  memory held by devices that run no operation, before it raises
+  `Out_of_memory`. A borrow is released at its device's next operation, so a
+  host buffer borrowed by a device that then stayed idle kept its memory out
+  of reach.
 - The garbage collector is paced by device memory: each device buffer counts
   against the room left in its device's budget, so dropped GPU buffers are
   found before the budget runs out. A device that filled its budget with
