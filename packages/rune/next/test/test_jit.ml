@@ -876,9 +876,9 @@ let rows_written ?at name =
                 @-> returns (pair tensor both))
               decode_step
           in
-          List.iter
-            (fun p ->
-              let x = projections 1
+          List.iteri
+            (fun i p ->
+              let x = Nx.mul_s (projections 1) (Float.of_int (i + 1))
               and pos = Nx.create Nx.int64 [| 1; 1 |] [| p |] in
               let out, (keys, values) = decode_step !eager x pos table in
               let out', (keys', values') =
