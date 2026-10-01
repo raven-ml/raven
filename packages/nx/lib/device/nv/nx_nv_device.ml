@@ -947,6 +947,7 @@ let open_kernel index =
   let rm = Nvk.rm g.c in
   let undo = ref [] in
   let taken f = undo := f :: !undo in
+  taken (fun () -> Nvk.close_gpu g);
   let doorbell ~subdevice cls =
     let usermode = Nvk.usermode g ~subdevice cls in
     taken (fun () -> Nvk.release_usermode g usermode);

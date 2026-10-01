@@ -2909,6 +2909,10 @@ thread.
 
 ### Nx
 
+- An NV device opens through NVIDIA's kernel driver. Every open failed with
+  `NV_ERR_INSUFFICIENT_PERMISSIONS`, because the driver gives a GPU only to a
+  process that holds the GPU's device file open, and `Nx_nv_device` opened it
+  only while it mapped memory. The file now stays open while the GPU is.
 - NV devices open under release 615 of NVIDIA's kernel driver, which
   `Nx_nv_device` refused as unsupported. That release moved the bits of the
   cache flush the device issues and added 8 bytes to the parameters of a

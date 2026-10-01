@@ -199,6 +199,9 @@ let rm c =
 type gpu = {
   c : client;
   minor : int;
+  file : int;
+      (* the GPU's file, which the process holds open while it uses the GPU: the
+         driver refuses the GPU to a process without it *)
   instance : int; (* the device instance, as RM numbers devices *)
   mutable device : int; (* the RM device and its virtual memory object *)
   mutable virtmem : int;
@@ -223,13 +226,18 @@ let open_gpu index =
           (Printf.sprintf "no GPU %d; NVIDIA's kernel driver reports %d" index
              (count ()))
   in
+  let file = gpu_file c minor in
   let module I = D.Id_info in
   let p = P.create I.sizeof in
   P.set p I.gpu_id gpu_id;
-  (rm c).control c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 (Some p);
+  or_undo
+    (fun () -> close_file file)
+    (fun () ->
+      (rm c).control c.root D.nv0000_ctrl_cmd_gpu_get_id_info_v2 (Some p));
   {
     c;
     minor;
+    file;
     instance = P.get p I.device_instance;
     device = 0;
     virtmem = 0;
@@ -593,6 +601,8 @@ let usermode g ~subdevice cls =
 let release_usermode g va =
   release_at va 0x10000;
   Space.free g.c.low (Nativeint.to_int va)
+
+let close_gpu g = close_file g.file
 
 let unregister_gpu g =
   let module U = D.Uvm_unregister_gpu in
