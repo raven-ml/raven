@@ -258,7 +258,23 @@ let binary_edges (k : Nx_backend.binary) =
         test "a negative quotient truncates toward zero" (fun () ->
             at (along_b Mod (-3.5)) 2. 1.);
       ]
-  | Idiv | And | Or | Xor -> []
+  | Idiv | And | Or | Xor ->
+      let f x = binary k x (vec [| 3.; 3. |]) and x = vec [| 5.; -2. |] in
+      [
+        test "on floats, its tangent and gradient are eager's verdict"
+          (fun () ->
+            match f x with
+            | exception e ->
+                raises ~msg:"the tangent" e (fun () ->
+                    Rune.jvp' f x (vec [| 1.; 1. |]));
+                raises ~msg:"the gradient" e (fun () ->
+                    Rune.grad' (fun x -> Nx.sum (f x)) x)
+            | y ->
+                let y', dy = Rune.jvp' f x (vec [| 1.; 1. |]) in
+                equal ~msg:"the primal" (Reference.exact ()) y y';
+                equal ~msg:"the tangent" floats [| 0.; 0. |] (Nx.to_array dy);
+                equal ~msg:"the gradient" floats [| 0.; 0. |] (gradient f x));
+      ]
 
 (* Selection, reductions *)
 
