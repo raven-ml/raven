@@ -100,14 +100,14 @@ let e8m0 =
     (Array.init 256 (fun s ->
          if s = 255 then Float.nan else Float.ldexp 1.0 (s - 127)))
 
-(* [values codes scales] is the weight of [codes] [[| ...; n; k / 2 |]] and
-   [scales] [[| ...; n; k / 32 |]] at float32, [[| ...; n; k |]]: each byte's
-   two values times its group's scale, looked up in the tables. *)
+(* [values codes scales] is the weight of contiguous [codes] [[| ...; n; k / 2
+   |]] and [scales] [[| ...; n; k / 32 |]] at float32, [[| ...; n; k |]]: each
+   byte's two values times its group's scale, looked up in the tables. *)
 let values codes scales =
   let s = Nx.shape codes in
   let r = Array.length s in
   let lead = Array.sub s 0 (r - 1) and k = 2 * s.(r - 1) in
-  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] (Nx.contiguous t)) in
+  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] t) in
   let v = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
   let scale = Nx.take ~indices:(indices scales) e8m0 in
   let groups = Array.append lead [| k / 32 |] in
@@ -121,7 +121,9 @@ let values codes scales =
    placed weight are read there first, so those of a split one meet no value on
    other devices. *)
 let decode codes scales =
-  values (Nx.place Nx.Placement.host codes) (Nx.place Nx.Placement.host scales)
+  values
+    (Nx.contiguous (Nx.place Nx.Placement.host codes))
+    (Nx.contiguous (Nx.place Nx.Placement.host scales))
 
 (* The eager loop decodes at most [chunk] values at a time, and at least one
    row. A chunk's dispatch costs well under one percent of its decode on the C
@@ -424,7 +426,7 @@ let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
   in
   let codes, scales, valid =
     match ids with
-    | None -> (codes, scales, None)
+    | None -> (Nx.contiguous codes, Nx.contiguous scales, None)
     | Some ids ->
         (* The matrix at each position of [wb]: its lane's row of experts, then
            its id among them. *)
@@ -512,7 +514,8 @@ module Effect = struct
     | Dequant dt -> (
         try Stdlib.Effect.perform (E_quant { w; op })
         with Stdlib.Effect.Unhandled _ ->
-          if Nx.Op.intercepted () then Nx.cast dt (values codes scales)
+          if Nx.Op.intercepted () then
+            Nx.cast dt (values (Nx.contiguous codes) (Nx.contiguous scales))
           else decode_all dt codes scales)
 end
 
