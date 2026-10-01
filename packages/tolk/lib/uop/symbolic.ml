@@ -260,6 +260,20 @@ let pm_data_invalid =
            ~op:(Op.Set.diff Op.Set.binary Op.Set.comparison)
            ~perm:[ invalid_pat; Upat.wild ] ())
         (fun m -> Some (m "i"));
+      (* a multiply-add (D25) moves inside the gate of each operand in turn,
+         and an Invalid operand makes it Invalid, as binary ops do *)
+      rule (Upat.v ~op:(ops [ Op.Mulacc ]) ~name:"alu" ()) (fun m ->
+          let a = m "alu" in
+          let gated s = op s = Op.Where && is_invalid (nth s 2) in
+          match List.find_opt (fun s -> is_invalid s || gated s) (src a) with
+          | None -> None
+          | Some s when is_invalid s -> Some s
+          | Some g ->
+              let inner s = if s == g then nth g 1 else s in
+              Some
+                (where (nth g 0)
+                   (replace a ~src:(List.map inner (src a)))
+                   (nth g 2)));
       rule (Upat.reduce ~name:"red" ~allow_any_len:true invalid_gate [])
         (fun m -> lift_reduce_gate (m "red") (m "cond") (m "x") (m "i"));
       (* an Invalid condition poisons the whole where; a gated Invalid condition

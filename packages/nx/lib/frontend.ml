@@ -668,6 +668,18 @@ let where cond if_true if_false =
     B.where (broadcast_to target cond) (broadcast_to target if_true)
       (broadcast_to target if_false)
 
+let fma a b c =
+  let dt = dtype a in
+  if Nx_dtype.is_complex dt || Nx_dtype.equal dt Nx_dtype.bool then
+    err "fma" "dtype %s, expected a float or integer dtype"
+      (Nx_dtype.to_string dt);
+  let target =
+    Shape.broadcast (Shape.broadcast (shape a) (shape b)) (shape c)
+  in
+  B.fma (broadcast_to target a) (broadcast_to target b) (broadcast_to target c)
+
+let check ok msg = B.check ok msg
+
 (* An arithmetic shift: [t / 2^n] rounded toward negative infinity. *)
 let rshift x n =
   let dt = dtype x in
@@ -689,17 +701,17 @@ let rshift x n =
         where (cmplt (sub x (mul q p)) zero) (sub q one) q)
       x n
 
-(* [log1p y] is [log (1 + y)] to a few ulp near zero: scaling by [y / d],
-   where [d] is what [1 + y] kept of [y], undoes its rounding. *)
-let log1p y =
-  let one = Nx_dtype.one (dtype y) in
-  let u = add_s y one in
-  let d = sub_s u one in
-  let inf = scalar_like y (Nx_dtype.of_float (dtype y) Float.infinity) in
-  where
-    (cmpeq d (zeros_like d))
-    y
-    (where (cmpeq u inf) u (mul (log u) (div y d)))
+let float_only op x =
+  if not (Nx_dtype.is_float (dtype x)) then
+    err op "dtype %s, expected a float dtype" (Nx_dtype.to_string (dtype x))
+
+let log1p x =
+  float_only "log1p" x;
+  B.unary Log1p x
+
+let expm1 x =
+  float_only "expm1" x;
+  B.unary Expm1 x
 
 (* Past [2^(p/2)], [p] the precision in bits, [sqrt (a^2 + 1)] rounds to [a],
    and [a^2] would overflow a narrow float. *)
@@ -720,7 +732,7 @@ let asinh x =
           let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
           let a = abs x in
           let near =
-            log1p
+            B.unary Log1p
               (add a
                  (div (square a) (add_s (sqrt (add_s (square a) one)) one)))
           in
@@ -742,7 +754,7 @@ let acosh x =
           let dt = dtype x in
           let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
           let t = sub_s x one in
-          let near = log1p (add t (sqrt (add (add t t) (square t)))) in
+          let near = B.unary Log1p (add t (sqrt (add (add t t) (square t)))) in
           let far = add_s (log x) (of_float (Stdlib.log 2.)) in
           let r =
             where
@@ -765,7 +777,7 @@ let atanh x =
           let of_float = Nx_dtype.of_float dt and one = Nx_dtype.one dt in
           let a = abs x in
           let r =
-            mul_s (log1p (div (add a a) (rsub_s one a))) (of_float 0.5)
+            mul_s (B.unary Log1p (div (add a a) (rsub_s one a))) (of_float 0.5)
           in
           where (cmplt x (zeros_like x)) (neg r) r);
     }
@@ -841,19 +853,26 @@ let min ?axes ?(keepdims = false) x = reduce_op Nx_backend.Min ?axes ~keepdims x
 let prod ?axes ?(keepdims = false) x =
   reduce_op Nx_backend.Prod ?axes ~keepdims x
 
-let associative_scan ~axis op x =
+let scan_along ~axis (op : Nx_backend.reduce) x =
+  let name =
+    match op with
+    | Sum -> "cumsum"
+    | Prod -> "cumprod"
+    | Max -> "cummax"
+    | Min -> "cummin"
+  in
   let x_shape = shape x in
   let rank = Array.length x_shape in
   if rank = 0 then
     let a = if axis < 0 then axis + 1 else axis in
     if a = 0 then x
     else
-      err "associative_scan"
-        "axis %d out of bounds for rank 0 tensor (only axis 0 valid)" axis
+      err name "axis %d out of bounds for rank 0 tensor (only axis 0 valid)"
+        axis
   else
     let a = if axis < 0 then axis + rank else axis in
     if a < 0 || a >= rank then
-      err "associative_scan" "axis %d out of bounds for %dD tensor" axis rank
+      err name "axis %d out of bounds for %dD tensor" axis rank
     else B.scan op ~axis:a x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
@@ -887,10 +906,10 @@ let flatten ?(start_dim = 0) ?(end_dim = -1) x =
 let cumulative_scan ?axis op x =
   let orig_shape = shape x in
   match axis with
-  | Some axis -> associative_scan ~axis op x
+  | Some axis -> scan_along ~axis op x
   | None ->
       let flat = flatten x in
-      let scanned = associative_scan ~axis:0 op flat in
+      let scanned = scan_along ~axis:0 op flat in
       if Array.length orig_shape = 0 then reshape [||] scanned
       else reshape orig_shape scanned
 
@@ -2299,6 +2318,102 @@ let reduce_segments (type a b) op ~segments ids (x : (a, b) t) =
     ~values:x
     (full (B.context x) dt into identity)
 
+(* Scans of structures
+
+   [associative_scan] is the odd/even recursion: it combines neighbouring pairs,
+   scans the pairs, which gives the outputs at odd indices, and combines each of
+   those with the element after it, which gives the even ones. Every output's
+   association is fixed by its index, never by the length. *)
+
+let associative_scan ?(axis = 0) st f x =
+  let along t =
+    let r = ndim t in
+    let a = if axis < 0 then axis + r else axis in
+    if a < 0 || a >= r then
+      err "associative_scan" "axis %d out of bounds for %dD tensor" axis r;
+    a
+  in
+  (* [t]'s elements along [a] in [r], an index specification. *)
+  let along_axis a r t = slice (List.init a (fun _ -> A) @ [ r ]) t in
+  let cut lo hi a t = along_axis a (R (lo, hi)) t in
+  let part lo hi x = Ptree.map st (fun _ t -> cut lo hi (along t) t) x in
+  let every_other start x =
+    Ptree.map st
+      (fun _ t ->
+        let a = along t in
+        along_axis a (Rs (start, dim a t, 2)) t)
+      x
+  in
+  (* [e] and [o] alternated into [n] elements, [e] first. *)
+  let weave n a e o =
+    let o = if n mod 2 = 0 then o else concatenate ~axis:a [ o; cut 0 1 a e ] in
+    let s = Array.copy (shape e) in
+    s.(a) <- 2 * s.(a);
+    cut 0 n a (reshape s (stack ~axis:(a + 1) [ e; o ]))
+  in
+  let rec scan n x =
+    if n < 2 then x
+    else
+      let even = every_other 0 x and odd = every_other 1 x in
+      let m = (n + 1) / 2 in
+      let odds = scan (n / 2) (f (part 0 (n / 2) even) odd) in
+      let rest = f (part 0 (m - 1) odds) (part 1 m even) in
+      let evens =
+        Ptree.map2 st
+          (fun _ e r -> concatenate ~axis:(along e) [ cut 0 1 (along e) e; r ])
+          even rest
+      in
+      Ptree.map2 st (fun _ e o -> weave n (along e) e o) evens odds
+  in
+  match Ptree.fold st (fun p t acc -> (p, dim (along t) t) :: acc) x [] with
+  | [] -> x
+  | (p, n) :: rest ->
+      List.iter
+        (fun (q, m) ->
+          if m <> n then
+            err "associative_scan" "%s has %d elements along the axis, %s %d"
+              (Ptree.Path.to_string q) m (Ptree.Path.to_string p) n)
+        rest;
+      scan n x
+
+let ewma ?axis ~alpha x =
+  if not (alpha > 0. && alpha <= 1.) then
+    err "ewma" "alpha %g, expected in (0, 1]" alpha;
+  let flat, axis =
+    match axis with
+    | None -> (flatten x, 0)
+    | Some a -> (x, resolve_single_axis x a)
+  in
+  let n = dim axis flat in
+  if alpha = 1. || n = 0 then x
+  else
+    (* Element i is the map [y -> a y + b], where [a] is 0 at 0 and [1 - alpha]
+       after, and [b] is [x0] at 0 and [alpha xi] after. The result is the [b]
+       of their running composition. An [a] that underflowed to 0 still carries
+       an infinite [b], as the recurrence would. *)
+    let smooth x =
+      let dt = dtype x and s = shape x in
+      let along lo hi =
+        Array.mapi (fun i d -> if i = axis then (lo, hi) else (0, d)) s
+      in
+      let head = shrink (along 0 1) x and tail = shrink (along 1 n) x in
+      let a =
+        pad
+          (Array.mapi (fun i _ -> if i = axis then (1, 0) else (0, 0)) s)
+          (Nx_dtype.zero dt)
+          (broadcast_to (shape tail)
+             (scalar_like x (Nx_dtype.of_float dt (1. -. alpha))))
+      in
+      let b =
+        concatenate ~axis [ head; mul_s tail (Nx_dtype.of_float dt alpha) ]
+      in
+      let compose (a1, b1) (a2, b2) =
+        (mul a1 a2, where (isinf b1) (add b1 b2) (fma a2 b1 b2))
+      in
+      snd (associative_scan ~axis Ptree.(pair tensor tensor) compose (a, b))
+    in
+    reshape (shape x) (at_float32 { f = smooth } flat)
+
 (* Above this many entries [top_k] stops taking one greatest entry per pass
    over the axis, each pass waiting on the one before it, and selects them by
    radix instead. *)
@@ -2800,6 +2915,63 @@ let unique keys =
         (broadcast_to [| n |] (scalar ctx Int64 1L))
     in
     { ids; first; counts }
+
+(* A point's cell is its bin along each dimension in C order: the edges at or
+   below it less one, and the last bin for the last edge. A point outside the
+   edges along any dimension has cell -1, which the sum drops. *)
+let histogram (type b) ?weights (dims : ((float, b) t * (float, b) t) list) :
+    (float, b) t =
+  let points, dt, ctx =
+    match dims with
+    | [] -> err "histogram" "no dimension"
+    | (_, x) :: _ -> (shape x, dtype x, B.context x)
+  in
+  let n = Shape.numel points in
+  List.iteri
+    (fun d (e, x) ->
+      if ndim e <> 1 || dim 0 e < 2 then
+        err "histogram" "edges %d of shape %s, expected at least two in a row" d
+          (Shape.to_string (shape e));
+      if not (Shape.equal (shape x) points) then
+        err "histogram" "points %d of shape %s, the first are of shape %s" d
+          (Shape.to_string (shape x))
+          (Shape.to_string points))
+    dims;
+  let bins = List.map (fun (e, _) -> dim 0 e - 1) dims in
+  let cell, inside =
+    List.fold_left2
+      (fun (cell, inside) (e, x) k ->
+        let x = reshape [| n |] x in
+        let last = equal x (broadcast_to [| n |] (slice [ I k ] e)) in
+        let b = sub_s (searchsorted ~side:`Right e x) 1L in
+        let b = where last (full ctx Int64 [| n |] (Int64.of_int (k - 1))) b in
+        let within =
+          logical_and (greater_equal_s b 0L) (less_s b (Int64.of_int k))
+        in
+        (add (mul_s cell (Int64.of_int k)) b, logical_and inside within))
+      (zeros ctx Int64 [| n |], full ctx Bool [| n |] true)
+      dims bins
+  in
+  let ids = where inside cell (full ctx Int64 [| n |] (-1L)) in
+  let segments = List.fold_left ( * ) 1 bins in
+  let sums =
+    match weights with
+    | None ->
+        cast dt
+          (reduce_segments `Add ~segments ids
+             (broadcast_to [| n |] (scalar ctx Int64 1L)))
+    | Some w -> (
+        if not (Shape.equal (shape w) points) then
+          err "histogram" "weights of shape %s for points of shape %s"
+            (Shape.to_string (shape w))
+            (Shape.to_string points);
+        let sum (type c) (acc : (float, c) dtype) =
+          cast dt
+            (reduce_segments `Add ~segments ids (cast acc (reshape [| n |] w)))
+        in
+        match dt with Float64 -> sum Float64 | _ -> sum Float32)
+  in
+  reshape (Array.of_list bins) sums
 
 (* ───── Random Number Generation ───── *)
 

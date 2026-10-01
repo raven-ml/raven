@@ -24,6 +24,7 @@ type op =
   | Binary of Nx_backend.binary
   | Compare of Nx_backend.compare
   | Where
+  | Fma
   | Cast
   | Threefry
   | Reduce of Nx_backend.reduce * int list
@@ -68,6 +69,7 @@ let lower op xs dsts =
   | Binary k, [ x; y ] -> [ Lower_arith.binary k x y ]
   | Compare k, [ x; y ] -> [ Lower_arith.compare k x y ]
   | Where, [ c; x; y ] -> [ Ops.where c x y ]
+  | Fma, [ a; b; c ] -> [ Lower_arith.fma a b c ]
   | Threefry, [ key; counter ] -> [ Lower_arith.threefry key counter ]
   | Reduce (k, axes), [ x ] -> [ Lower_reduce.reduce k ~axes x ]
   | Scan (k, axis), [ x ] -> [ Lower_reduce.scan k ~axis x ]
@@ -340,6 +342,7 @@ module Kernels = struct
   let unary k x ~dst = run "unary" (Unary k) [ A x ] [ A dst ]
   let binary k a b ~dst = run "binary" (Binary k) [ A a; A b ] [ A dst ]
   let compare k a b ~dst = run "compare" (Compare k) [ A a; A b ] [ A dst ]
+  let fma a b c ~dst = run "fma" Fma [ A a; A b; A c ] [ A dst ]
   let where c a b ~dst = run "where" Where [ A c; A a; A b ] [ A dst ]
   let cast x ~dst = run "cast" Cast [ A x ] [ A dst ]
 

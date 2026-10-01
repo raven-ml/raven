@@ -1833,6 +1833,23 @@ val rmod_s : 'a -> ('a, 'b) t -> ('a, 'b) t
 val neg : ('a, 'b) t -> ('a, 'b) t
 (** [neg t] is the element-wise negation of [t]. *)
 
+val fma : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [fma a b c] is [a * b + c] element-wise, the product added without being
+    rounded first: rounded once on [float32] and [float64], and modular on
+    integers. [float16], [bfloat16] and the [float8] dtypes take the [float32]
+    [fma] of their elements and round its result to their dtype, which may round
+    twice; a compiled function gives the same bits. The three inputs broadcast
+    to a common shape.
+
+    Raises [Invalid_argument] on complex and [bool] dtypes.
+
+    {@ocaml[
+      # let e = Float.ldexp 1. (-27) in
+        let a = scalar float64 (1. +. e) in
+        fma a a (scalar float64 (-1. -. Float.ldexp 1. (-26))) |> item []
+      - : float = 5.5511151231257827e-17
+    ]} *)
+
 (** {1:complex Complex numbers}
 
     A complex tensor stores an interleaved real and imaginary component. These
@@ -1955,6 +1972,21 @@ val log2 : ('a, 'b) t -> ('a, 'b) t
 
 val exp : ('a, 'b) t -> ('a, 'b) t
 (** [exp t] is the element-wise exponential. *)
+
+val log1p : ('a, 'b) t -> ('a, 'b) t
+(** [log1p t] is [log (1 + t)] element-wise, accurate where [t] is near zero and
+    [1 + t] would round away its digits: [log1p] of a subnormal is that
+    subnormal. On the host it is the C library's [log1p]; [float16], [bfloat16]
+    and the [float8] dtypes compute at [float32] and round once. It is [-inf] at
+    [-1] and NaN below.
+
+    Raises [Invalid_argument] on dtypes other than floats. *)
+
+val expm1 : ('a, 'b) t -> ('a, 'b) t
+(** [expm1 t] is [exp t - 1] element-wise, accurate where [t] is near zero, as
+    {!log1p}. It is [-1] at [-inf].
+
+    Raises [Invalid_argument] on dtypes other than floats. *)
 
 val exp2 : ('a, 'b) t -> ('a, 'b) t
 (** [exp2 t] is [2{^t}] element-wise. *)
@@ -2174,6 +2206,25 @@ val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val clamp : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
 (** [clamp ?min ?max t] clamps elements to \[[min], [max]\]. Either bound may be
     omitted. *)
+
+val check : (bool, bool_elt) t -> (int array -> string) -> unit
+(** [check ok msg] raises [Invalid_argument (msg i)] if an element of [ok] is
+    [false], [i] being the index of the first in C order. An empty [ok] passes.
+
+    Inside a compiled function [check] reads nothing: the compiled call raises
+    the same exception when it returns, once its later operations have run, and
+    calls [msg] then, on the values it captured when the function was traced. A
+    call that consumes its arguments has consumed them by then. A check of a
+    value the function captures, rather than computes, is answered as the
+    function traces. Mapped over a batch, [i] indexes [ok]'s first false element
+    in the first lane that has one.
+
+    {@ocaml[
+      # let t = create float32 [| 3 |] [| 0.5; 2.; 0.25 |] in
+        check (less_equal t (scalar float32 1.)) (fun i ->
+            Printf.sprintf "element %d is above 1" i.(0))
+      Exception: Invalid_argument "element 1 is above 1".
+    ]} *)
 
 (** {1:bitwise Bitwise operations} *)
 
@@ -2445,6 +2496,68 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!cummax}. *)
 
+val associative_scan : ?axis:int -> 's Ptree.t -> ('s -> 's -> 's) -> 's -> 's
+(** [associative_scan s f x] is the inclusive scan of [f] along [axis] over the
+    structure [x] of [s]: its element [i] is [f] of [x]'s elements [0] to [i],
+    in order, each element a structure of slices along [axis]. Every tensor of
+    [x] has the same number of elements along its [axis], which defaults to [0]
+    and counts from each tensor's last axis when negative.
+
+    [f] must be associative and elementwise: [f (f a b) c] equals [f a (f b c)],
+    and each element of [f a b] depends on the elements of [a] and [b] at its
+    index alone. The scan makes [O(n)] applications of [f] in about [2 log2 n]
+    rounds, each over slices of the whole structure, so a compiled function
+    computes it without a loop.
+
+    Each output's association depends on its index alone: the scan of a prefix
+    of [x] is the prefix of the scan of [x], bit for bit, and a growing series
+    keeps the bits of its earlier outputs.
+
+    Other scans are lifts of [f]:
+    - {e exclusive}: the inclusive scan shifted by one along [axis], [f]'s
+      identity first;
+    - {e reversed}: the scan of [x] flipped along [axis], flipped back;
+    - {e segmented}: the scan of pairs [(start, v)], [start] being [true] at the
+      first element of each segment, by
+      [fun (s1, v1) (s2, v2) -> (logical_or s1 s2, where s2 v2 (f v1 v2))].
+
+    {!ewma} is the scan of the affine maps [y -> a y + b] as pairs [(a, b)],
+    here at [alpha = 0.5]. An [a] that underflowed to [0] still carries an
+    infinite [b]; restart a series with the segmented lift, never with [a = 0].
+
+    {@ocaml[
+      # let compose (a1, b1) (a2, b2) =
+          (mul a1 a2, where (isinf b1) (add b1 b2) (fma a2 b1 b2))
+        in
+        let a = create float32 [| 4 |] [| 0.; 0.5; 0.5; 0.5 |]
+        and b = create float32 [| 4 |] [| 0.; 2.; 2.; 0. |] in
+        snd (associative_scan Ptree.(pair tensor tensor) compose (a, b))
+      - : (float, float32_elt) t = [0, 2, 3, 1.5]
+    ]}
+
+    Raises [Invalid_argument] if [axis] is out of bounds for a tensor of [x], or
+    if two tensors of [x] have different numbers of elements along it. *)
+
+val ewma : ?axis:int -> alpha:float -> (float, 'b) t -> (float, 'b) t
+(** [ewma ~alpha t] is the exponentially weighted moving average of [t] along
+    [axis]: [y0 = t0], then [yi = (1 - alpha) y(i-1) + alpha ti]. It is the
+    {!associative_scan} of those affine maps, so the average over a prefix of
+    [t] is the prefix of the average, bit for bit. A NaN propagates to every
+    later element, and an infinity as the recurrence carries it. A finite term
+    whose weight underflows to [0] drops out, an absolute error below the
+    largest magnitude times the dtype's least subnormal, under [1e-15] in
+    [float64]. At [alpha = 1] the result is [t]. [float16], [bfloat16] and the
+    [float8] dtypes compute at [float32] and round once. When [axis] is omitted,
+    it averages the flattened tensor and keeps [t]'s shape.
+
+    {@ocaml[
+      # ewma ~alpha:0.5 (create float32 [| 4 |] [| 0.; 4.; 4.; 0. |])
+      - : (float, float32_elt) t = [0, 2, 3, 1.5]
+    ]}
+
+    Raises [Invalid_argument] unless [0 < alpha <= 1], or if [axis] is out of
+    bounds. *)
+
 val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
 (** [mean ?axes ?keepdims t] is the arithmetic mean along [axes]. NaN
     propagates. [keepdims] defaults to [false].
@@ -2605,6 +2718,41 @@ val reduce_segments :
     [x] is complex, or if [op] is [`Add] and [x] is boolean.
 
     See also {!unique}, {!scatter}. *)
+
+val histogram :
+  ?weights:(float, 'b) t ->
+  ((float, 'b) t * (float, 'b) t) list ->
+  (float, 'b) t
+(** [histogram [ (e1, x1); ...; (ed, xd) ]] counts points into the cells of the
+    edges [e1] to [ed]: point [i] is [(x1.{i}, ..., xd.{i})], one per element of
+    the coordinates [xk], which share one shape. The result has one axis per
+    dimension, of [len ek - 1] bins: cell [(j1, ..., jd)] counts the points
+    whose coordinate [xk] is in bin [jk] of [ek] for every [k].
+
+    - Bin [j] holds the coordinates from [ek.{j}] included to [ek.{j+1}]
+      excluded; the last bin includes its right edge too. Coordinates compare as
+      {!less} does, so [-0.] is [0.].
+    - A point outside the edges along a dimension, NaN included, is in no cell.
+    - Counts accumulate in [int64] and convert once to the dtype. With
+      [weights], of the coordinates' shape, a cell holds the sum of its points'
+      weights, accumulated in [float32], or in [float64] for [float64]
+      coordinates, and rounded once.
+
+    Edges must ascend; along edges that do not, a point lands in some cell or in
+    none. [histogram] reads no value, so it maps and differentiates along
+    [weights] as {!searchsorted} and {!reduce_segments} do, and compiles where
+    the device has [float64], which {!searchsorted}'s float keys take.
+
+    {@ocaml[
+      # let e = create float64 [| 4 |] [| 0.; 1.; 2.; 3. |] in
+        let x = create float64 [| 6 |] [| 0.; 0.5; 1.; 3.; 3.5; nan |] in
+        histogram [ (e, x) ]
+      - : (float, float64_elt) t = [2, 1, 1]
+    ]}
+
+    Raises [Invalid_argument] if no dimension is given, if edges are not 1-D of
+    at least two edges, if the coordinates' shapes differ, or if [weights] has
+    another shape. *)
 
 (** {1:sorting Sorting, searching and grouping}
 
@@ -4032,9 +4180,9 @@ val of_shards :
 (** Operations as values.
 
     Every operation nx computes or answers is a constructor of {!t}: those
-    computed by the placement's backend, and {!Move}, {!Place} and {!Read},
-    which nx answers itself. A transformation is an interpreter of these values,
-    installed with {!intercept}. *)
+    computed by the placement's backend, and {!Move}, {!Place}, {!Read} and
+    {!Check}, which nx answers itself. A transformation is an interpreter of
+    these values, installed with {!intercept}. *)
 module Op : sig
   type move = Nx_effect.move =
     | Reshape of int array
@@ -4065,6 +4213,9 @@ module Op : sig
         (bool, Nx_dtype.bool_elt) Nx_effect.t
         * ('a, 'b) Nx_effect.t
         * ('a, 'b) Nx_effect.t
+        -> ('a, 'b) Nx_effect.t t
+    | Fma :
+        ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t * ('a, 'b) Nx_effect.t
         -> ('a, 'b) Nx_effect.t t
     | Reduce :
         Nx_backend.reduce * int array * ('a, 'b) Nx_effect.t
@@ -4211,6 +4362,15 @@ module Op : sig
             ["Nx.compress"]: the function a program called, also when it reads
             through another. An interpreter that cannot read [x] raises a
             message that starts with [by]. *)
+    | Check : {
+        ok : (bool, Nx_dtype.bool_elt) Nx_effect.t;
+        msg : int array -> string;
+      }
+        -> unit t
+        (** [Check { ok; msg }] raises [Invalid_argument (msg i)] if an element
+            of [ok] is false, [i] being the index of the first in C order, as
+            {!Nx.check} describes. An interpreter that defers it, such as a
+            compiled call, raises when it ends and runs [msg] then. *)
 
   (** The type for operations whose result is ['r]. *)
 

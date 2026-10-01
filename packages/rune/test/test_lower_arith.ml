@@ -197,6 +197,48 @@ let exact_int_binary =
          ("xor", { k = Nx.bitwise_xor });
        ])
 
+(* Multiply-adds *)
+
+(* [cancels dt e] is [a * a - (1 + 2e)] at [a = 1 + e], whose square's last term
+   [e^2] a product rounded before the sum loses: rounded once, the result is
+   [e^2]. *)
+let cancels dt e =
+  let a = Nx.full dt [| 1 |] (1. +. e) in
+  (a, a, Nx.full dt [| 1 |] (-1. -. (2. *. e)))
+
+let float_triples dtype =
+  let open Gen in
+  let* shape = array ~size:(int_range 0 3) (int_range 1 4) in
+  let n = Array.fold_left ( * ) 1 shape in
+  let operand =
+    map (Nx.create dtype shape) (array ~size:(constant n) any_float)
+  in
+  let+ a = operand and+ b = operand and+ c = operand in
+  (a, b, c)
+
+let multiply_adds =
+  group "multiply-adds"
+    [
+      group "a float's rounds once, a narrow float's at float32 and again"
+        (List.map
+           (fun (F (dname, dt)) ->
+             prop dname (float_triples dt) (fun (a, b, c) ->
+                 agrees (fun () -> Nx.fma a b c)))
+           float_dtypes);
+      test "a product that the sum cancels is kept whole" (fun () ->
+          let a, b, c = cancels Nx.float64 0x1p-27 in
+          equal (array float_exact) [| 0x1p-54 |]
+            (Nx.to_array (traced (fun () -> Nx.fma a b c)));
+          let a, b, c = cancels Nx.float32 0x1p-12 in
+          equal (array float_exact) [| 0x1p-24 |]
+            (Nx.to_array (traced (fun () -> Nx.fma a b c))));
+      group "an integer's wraps"
+        (List.map
+           (fun d ->
+             int_prop d { law = (fun x -> agrees (fun () -> Nx.fma x x x)) })
+           int_dtypes);
+    ]
+
 (* Comparisons and selections *)
 
 let comparisons =
@@ -385,6 +427,9 @@ let transcendentals ?tags name by =
     [
       unary ~by "exp" ~budget:4 Float.exp { f = Nx.exp };
       unary ~by "log" ~budget:4 Float.log { f = Nx.log };
+      unary ~by "log1p" ~budget:4 Float.log1p { f = Nx.log1p };
+      unary ~by ~file:"expm1_64.golden" "expm1" ~budget:4 Float.expm1
+        { f = Nx.expm1 };
       unary ~by "sin" ~budget:4 Float.sin { f = Nx.sin };
       unary ~by "cos" ~budget:4 Float.cos { f = Nx.cos };
       unary ~by "tan" ~budget:8 Float.tan { f = Nx.tan };
@@ -895,6 +940,7 @@ let () =
          nan_extremes;
          exact_int_unary;
          exact_int_binary;
+         multiply_adds;
          comparisons;
          selections;
          conversions;

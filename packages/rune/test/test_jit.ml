@@ -1662,6 +1662,131 @@ let errors =
             messages);
     ]
 
+(* Checks *)
+
+let failure i =
+  Printf.sprintf "element %s is not below 1"
+    (String.concat "," (Array.to_list (Array.map string_of_int i)))
+
+(* [bounded x] is [2 x], checking that [x] is below 1. *)
+let bounded x =
+  Nx.check (Nx.less_s x 1.) failure;
+  Nx.mul_s x 2.
+
+let passing () = Nx.create Nx.float32 [| 3 |] [| 0.; 0.5; -2. |]
+let failing () = Nx.create Nx.float32 [| 4 |] [| 0.; 0.5; 3.; 2. |]
+
+let checks =
+  group "checks"
+    [
+      test
+        "a failing check raises when the call returns, at its first false \
+         element" (fun () ->
+          raises (Invalid_argument "element 2 is not below 1") (fun () ->
+              Rune.jit' bounded (failing ())));
+      test "a passing check returns the results" (fun () ->
+          equal close (bounded (passing ())) (Rune.jit' bounded (passing ())));
+      test "each call of one program checks its own values" (fun () ->
+          let g = Rune.jit' bounded in
+          let x = Nx.create Nx.float32 [| 2 |] [| 0.; 0.5 |] in
+          equal int 1 (traces (fun () -> ignore (g x)));
+          equal int 0
+            (traces (fun () ->
+                 raises (Invalid_argument "element 1 is not below 1") (fun () ->
+                     g (Nx.create Nx.float32 [| 2 |] [| 0.; 1.5 |])))));
+      test "an index is the failing element's in the checked value's shape"
+        (fun () ->
+          let m = Nx.create Nx.float32 [| 2; 2 |] [| 0.; 0.; 4.; 0. |] in
+          raises (Invalid_argument "element 1,0 is not below 1") (fun () ->
+              Rune.jit' bounded m));
+      test "the first check traced that fails raises" (fun () ->
+          let f x =
+            Nx.check (Nx.less_s x 10.) (fun _ -> "first");
+            Nx.check (Nx.less_s x 1.) (fun _ -> "second");
+            Nx.check (Nx.less_s x 0.) (fun _ -> "third");
+            x
+          in
+          raises (Invalid_argument "second") (fun () ->
+              Rune.jit' f (failing ())));
+      test "an empty check passes" (fun () ->
+          equal close
+            (Nx.zeros Nx.float32 [| 0 |])
+            (Rune.jit' bounded (Nx.zeros Nx.float32 [| 0 |])));
+      test "the message is made when the call ends, from captured values"
+        (fun () ->
+          let made = ref 0
+          and table = Nx.create Nx.float32 [| 2 |] [| -1.; 1. |] in
+          let g =
+            Rune.jit' (fun x ->
+                Nx.check
+                  (Nx.less x
+                     (Nx.broadcast_to (Nx.shape x) (Nx.slice [ I 1 ] table)))
+                  (fun i ->
+                    incr made;
+                    Printf.sprintf "element %d is outside [%g, %g)" i.(0)
+                      (Nx.item [ 0 ] table) (Nx.item [ 1 ] table));
+                x)
+          in
+          ignore (g (passing ()));
+          equal ~msg:"made on a pass" int 0 !made;
+          raises (Invalid_argument "element 2 is outside [-1, 1)") (fun () ->
+              g (failing ()));
+          equal ~msg:"made on the failure" int 1 !made);
+      test "a call that fails its check has consumed its consumed argument"
+        (fun () ->
+          let a = failing () in
+          raises (Invalid_argument "element 2 is not below 1") (fun () ->
+              Rune.jit consumes bounded a);
+          raises_match (Exn.invalid_arg ~substring:"consumed at 0") (fun () ->
+              ignore (Nx.to_array a)));
+      test "a check in a staged scan names the first trip that fails" (fun () ->
+          let steps = ref 0 in
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   incr steps;
+                   Nx.check (Nx.less_s x 1.) failure;
+                   (c, Nx.mul_s x 2.))
+                 ~init:(Nx.zeros Nx.float32 [| 3 |])
+                 xs)
+          in
+          let xs =
+            Nx.create Nx.float32 [| 4; 3 |]
+              [| 0.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 5.; 9.; 0.; 0. |]
+          in
+          raises (Invalid_argument "element 2 is not below 1") (fun () ->
+              Rune.jit' f xs);
+          equal ~msg:"the step is traced once, as a staged scan's" int 1 !steps;
+          equal close
+            (f (Nx.zeros Nx.float32 [| 4; 3 |]))
+            (Rune.jit' f (Nx.zeros Nx.float32 [| 4; 3 |])));
+      test "a check in a scan that folds raises at its step" (fun () ->
+          let steps = ref 0 in
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   incr steps;
+                   Nx.check (Nx.less_s x 1.) failure;
+                   (c, x))
+                 ~init:(Nx.zeros Nx.float32 [| 2 |])
+                 xs)
+          in
+          let xs =
+            Nx.create Nx.float32 [| 3; 2 |] [| 0.; 0.; 0.; 4.; 9.; 0. |]
+          in
+          raises (Invalid_argument "element 1 is not below 1") (fun () -> f xs);
+          equal ~msg:"the steps up to the failing one ran" int 2 !steps);
+      test "a check under a gradient checks the primal" (fun () ->
+          let loss x = Nx.sum (bounded x) in
+          raises (Invalid_argument "element 2 is not below 1") (fun () ->
+              Rune.jit' (Rune.grad' loss) (failing ()));
+          equal close
+            (Nx.full Nx.float32 [| 3 |] 2.)
+            (Rune.jit' (Rune.grad' loss) (passing ())));
+    ]
+
 (* Reports *)
 
 let reports =
@@ -3286,6 +3411,29 @@ let on_one_device ~name d =
         (fun () ->
           consumed_slice ~at:(on d) 1 7;
           consumed_slice ~at:(on d) 5 1027);
+      test "a check in a staged scan on the device names its first failing trip"
+        (fun () ->
+          let f xs =
+            snd
+              (Rune.scan'
+                 ~f:(fun c x ->
+                   Nx.check (Nx.less_s x 1.) failure;
+                   (c, x))
+                 ~init:(placed d (Nx.zeros Nx.float32 [| 2 |]))
+                 xs)
+          in
+          let xs =
+            Nx.create Nx.float32 [| 3; 2 |] [| 0.; 0.; 0.; 4.; 9.; 0. |]
+          in
+          raises (Invalid_argument "element 1 is not below 1") (fun () ->
+              Rune.jit' f (placed d xs)));
+      test "a check of a value on the device raises when the call returns"
+        (fun () ->
+          raises (Invalid_argument "element 2 is not below 1") (fun () ->
+              Rune.jit' bounded (placed d (failing ())));
+          equal close
+            (bounded (passing ()))
+            (host (Rune.jit' bounded (placed d (passing ())))));
       test "a call searched on several domains computes eager's values"
         (fun () ->
           let f a = Nx.add_s (poly a) 0.8125 in
@@ -3536,6 +3684,7 @@ let () =
          rows_written "a lent write of rows";
          captures;
          errors;
+         checks;
          reports;
          domains;
          transformations;

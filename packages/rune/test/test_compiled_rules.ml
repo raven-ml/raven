@@ -459,6 +459,38 @@ let compositions =
           Nx.lexsort (Nx.stack ~axis:1 [ a; Nx.bitwise_not b ])
         in
         equal (array int64) (Nx.to_array (f x)) (Nx.to_array (Rune.jit' f x)));
+    test "a compiled histogram is its eager value" (fun () ->
+        let edges = vec [| -1.; 0.; 0.5; 2. |]
+        and other = vec [| 0.; 1.; 3. |] in
+        let x = vec [| -1.; -0.; 0.25; 0.5; 2.; 2.5; Float.nan; 1. |]
+        and y = vec [| 0.; 1.; 3.; 2.; 0.5; 1.; 1.; 3.5 |] in
+        let f w = Nx.histogram ~weights:w [ (edges, x); (other, y) ] in
+        let w = vec [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+        equal floats (Nx.to_array (f w)) (Nx.to_array (Rune.jit' f w));
+        equal floats
+          (Nx.to_array (Nx.histogram [ (edges, x) ]))
+          (Nx.to_array (Rune.jit' (fun x -> Nx.histogram [ (edges, x) ]) x)));
+    test
+      "a compiled ewma is its eager value, bit for bit, and so is its gradient"
+      (fun () ->
+        let x =
+          vec (Array.init 37 (fun i -> Float.of_int (i * 7 mod 11) -. 5.))
+        in
+        let f x = Nx.ewma ~alpha:0.3 x in
+        equal floats (Nx.to_array (f x)) (Nx.to_array (Rune.jit' f x));
+        let loss x = Nx.sum (Nx.mul (f x) (f x)) in
+        equal floats
+          (Nx.to_array (Rune.grad' loss x))
+          (Nx.to_array (Rune.jit' (Rune.grad' loss) x)));
+    test "a mapped ewma is its loop" (fun () ->
+        let rows =
+          Nx.create Nx.float64 [| 3; 5 |] (Array.init 15 Float.of_int)
+        in
+        let f x = Nx.ewma ~alpha:0.25 x in
+        equal floats
+          (Nx.to_array
+             (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] rows)))))
+          (Nx.to_array (Rune.jit' (Rune.vmap' f) rows)));
   ]
 
 let metal =

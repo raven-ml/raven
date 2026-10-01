@@ -3805,6 +3805,27 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
       | _ -> invalid_arg "MULACC takes three operands")
   | op -> invalid_argf "%s is not computed on constants" (Op.name op)
 
+(* A multiply-add of floats rounds once (D25). Truncated to a dtype below
+   float64, its operands have at most 24 bits, so their product is exact in a
+   double, and the sum is rounded to odd there, which the truncation then rounds
+   as the exact value. Otherwise, and for a weak float, a double, it is the
+   double nearest the exact value. *)
+let mulacc ~truncated dt a b c =
+  if
+    (not truncated)
+    || Dtype.equal dt Dtype.Float64
+    || Dtype.equal dt Dtype.Weak_float
+  then Float.fma a b c
+  else
+    let p = a *. b in
+    let r = p +. c in
+    let d = r -. p in
+    let e = p -. (r -. d) +. (c -. d) in
+    let odd = Int64.logand (Int64.bits_of_float r) 1L = 1L in
+    if (not (Float.is_finite r)) || e = 0. || odd then r
+    else if e > 0. then Float.succ r
+    else Float.pred r
+
 let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
     Dtype.const =
   let truncate (x : Dtype.value) : Dtype.const =
@@ -3830,7 +3851,14 @@ let exec_alu ?(truncate_output = true) op dt (args : Dtype.const list) :
         (* The NaN of an invalid operation is the canonical one, whatever the
            host's FPU makes of it: x86 gives a negative NaN. *)
         let v =
-          match python_alu op args with
+          match (op, args) with
+          | Op.Mulacc, [ a; b; c ] when Dtype.is_float dt ->
+              let f = Value.to_float in
+              `Float (mulacc ~truncated:truncate_output dt (f a) (f b) (f c))
+          | _ -> python_alu op args
+        in
+        let v =
+          match v with
           | v when is_nan v && not (List.exists is_nan args) -> `Float Dtype.nan
           | v -> v
         in

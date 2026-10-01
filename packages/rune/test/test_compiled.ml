@@ -608,6 +608,8 @@ let elementwise d ~count ~heavy =
                [
                  ("exp", (Nx_backend.Exp, 4));
                  ("log", (Log, 4));
+                 ("log1p", (Log1p, 4));
+                 ("expm1", (Expm1, 4));
                  ("sin", (Sin, 4));
                  ("cos", (Cos, 4));
                  ("tan", (Tan, 8));
@@ -760,6 +762,26 @@ let elementwise d ~count ~heavy =
                               K.cast (env.on x) ~dst:y;
                               y)))));
          })
+  and fma =
+    law "fma"
+      (over (numeric d)
+         {
+           per =
+             (fun dt ->
+               let open Gen in
+               let* s = shape in
+               let+ a = operand ~flush:true d dt s
+               and+ b = operand ~flush:true d dt s
+               and+ c = operand ~flush:true d dt s in
+               check
+                 [ shown a; shown b; shown c ]
+                 (fun () ->
+                   exact_on d
+                     (both d (fun (module K : Nx_backend.S) env ->
+                          let dst = env.dst dt s in
+                          K.fma (env.on a) (env.on b) (env.on c) ~dst;
+                          dst))));
+         })
   and threefry =
     law "threefry"
       (checks
@@ -776,7 +798,7 @@ let elementwise d ~count ~heavy =
                      K.threefry (env.on key) (env.on counter) ~dst;
                      dst)))))
   in
-  [ exact_unary; exact_binary; comparisons; where; cast; threefry ]
+  [ exact_unary; exact_binary; fma; comparisons; where; cast; threefry ]
   @ if heavy then [ transcendental; transcendental_binary ] else []
 
 (* Reductions, scans and sorts *)

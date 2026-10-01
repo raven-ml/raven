@@ -202,12 +202,19 @@ type capture = {
 
 type write = { result : Ops.t; into : Ops.t; regions : Lower_index.region list }
 
+type check = {
+  first : (int64, Nx_dtype.int64_elt) Nx.t;
+  shape : int array;
+  msg : int array -> string;
+}
+
 type scope = {
   renderer : Nx_device.t -> Renderer.t;
   mutable dtypes : (Nx_device.t * Dtype.t list) list;
   mutable names : (string * Nx_device.t) list;
   mutable captures : capture list;
   mutable writes : write list;
+  mutable checks : check list;
   mutable arguments : Ops.t list;
   stuck : unit Ops.Tbl.t;
       (* Nodes that read an argument, a write, a copy or storage that is no
@@ -222,6 +229,7 @@ let scope ~renderer =
     names = [];
     captures = [];
     writes = [];
+    checks = [];
     arguments = [];
     stuck = Ops.Tbl.create 64;
     followed = Ops.Tbl.create 16;
@@ -230,6 +238,16 @@ let scope ~renderer =
 let devices s = List.rev s.names
 let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
 let writes s = s.writes
+let checks s = List.rev s.checks
+
+let checking s f =
+  let outer = s.checks in
+  s.checks <- [];
+  Fun.protect
+    ~finally:(fun () -> s.checks <- outer)
+    (fun () ->
+      let v = f () in
+      (v, List.rev s.checks))
 
 (* The name that [s]'s nodes give [d]. *)
 let name s d =
@@ -699,6 +717,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Binary (k, x, y) -> like x (Lower_arith.binary k (n x) (n y))
   | Compare (k, x, y) -> ret Nx_dtype.bool (Lower_arith.compare k (n x) (n y))
   | Where (c, x, y) -> like x (Ops.where (n c) (n x) (n y))
+  | Fma (a, b, c) -> like a (Lower_arith.fma (n a) (n b) (n c))
   | Convert (Cast, dt, x) -> ret dt (Lower_arith.cast (check s what p dt) (n x))
   | Convert (Bitcast, dt, x) ->
       ret dt (Lower_arith.bitcast (check s what p dt) (n x))
@@ -788,4 +807,33 @@ let op : type r. scope -> r Nx.Op.t -> r =
             "%s: cannot read the value of a traced tensor inside jit; return \
              it from the compiled function instead"
             by
+      | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)
+  | Check { ok; msg } -> (
+      match Repr.v ok with
+      | Repr.Traced _ ->
+          (* The first false element's index in C order, or the element count:
+             the least of the indices, each where its element is false and the
+             count elsewhere. *)
+          let shape = Nx.shape ok in
+          let count = Array.fold_left ( * ) 1 shape in
+          if count > 0 then begin
+            (* The index lives where a reduction of [ok] over every axis would:
+               placed as nx places one, a copy on each device of a split
+               value. *)
+            let at =
+              Nx.Op.placement
+                (Reduce (Sum, Array.init (Array.length shape) Fun.id, ok))
+            in
+            let i = Ops.arange ~dtype:Int64 count in
+            let first =
+              Lower_reduce.reduce Min ~axes:[ 0 ]
+                (Ops.where
+                   (Ops.reshape (value s ok) [ Ops.Int count ])
+                   (Ops.const_like i (`Int (Bigint.of_int count)))
+                   i)
+            in
+            ignore (check s what at Nx_dtype.int64);
+            s.checks <-
+              { first = traced at Nx_dtype.int64 first; shape; msg } :: s.checks
+          end
       | Repr.Host _ | Repr.Placed _ -> Nx.Op.eval o)

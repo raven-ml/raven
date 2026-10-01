@@ -12,6 +12,7 @@ type t =
   | Binary of Nx_backend.binary
   | Compare of Nx_backend.compare
   | Where
+  | Fma
   | Reduce of Nx_backend.reduce
   | Scan of Nx_backend.reduce
   | Arg_reduce of Nx_backend.arg_reduce
@@ -42,6 +43,7 @@ type t =
   | Move of move
   | Place
   | Read
+  | Check
 
 val of_op : 'r Nx.Op.t -> t
 (** [of_op op] is [op]'s row. *)

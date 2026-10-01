@@ -10,6 +10,7 @@ type t =
   | Binary of Nx_backend.binary
   | Compare of Nx_backend.compare
   | Where
+  | Fma
   | Reduce of Nx_backend.reduce
   | Scan of Nx_backend.reduce
   | Arg_reduce of Nx_backend.arg_reduce
@@ -40,6 +41,7 @@ type t =
   | Move of move
   | Place
   | Read
+  | Check
 
 let of_op : type r. r Nx.Op.t -> t =
  fun op ->
@@ -48,6 +50,7 @@ let of_op : type r. r Nx.Op.t -> t =
   | Binary (k, _, _) -> Binary k
   | Compare (k, _, _) -> Compare k
   | Where _ -> Where
+  | Fma _ -> Fma
   | Reduce (k, _, _) -> Reduce k
   | Scan (k, _, _) -> Scan k
   | Arg_reduce (k, _, _) -> Arg_reduce k
@@ -83,6 +86,7 @@ let of_op : type r. r Nx.Op.t -> t =
   | Move (_, Window _) -> Move Window
   | Place _ -> Place
   | Read _ -> Read
+  | Check _ -> Check
 
 let issued f =
   let ops = ref [] in
@@ -103,6 +107,8 @@ let unaries : Nx_backend.unary list =
     Sign;
     Exp;
     Log;
+    Log1p;
+    Expm1;
     Sin;
     Cos;
     Tan;
@@ -132,7 +138,7 @@ let all =
       List.map
         (fun k -> Compare k)
         Nx_backend.[ Equal; Not_equal; Less; Less_equal ];
-      [ Where ];
+      [ Where; Fma ];
       List.map (fun k -> Reduce k) reduces;
       List.map (fun k -> Scan k) reduces;
       [ Arg_reduce Argmax; Arg_reduce Argmin ];
@@ -168,7 +174,7 @@ let all =
       List.map
         (fun m -> Move m)
         [ Reshape; Expand; Permute; Shrink; Flip; Window ];
-      [ Place; Read ];
+      [ Place; Read; Check ];
     ]
 
 let unary_name : Nx_backend.unary -> string = function
@@ -179,6 +185,8 @@ let unary_name : Nx_backend.unary -> string = function
   | Sign -> "sign"
   | Exp -> "exp"
   | Log -> "log"
+  | Log1p -> "log1p"
+  | Expm1 -> "expm1"
   | Sin -> "sin"
   | Cos -> "cos"
   | Tan -> "tan"
@@ -223,6 +231,7 @@ let name = function
   | Compare Less -> "compare less"
   | Compare Less_equal -> "compare less_equal"
   | Where -> "where"
+  | Fma -> "fma"
   | Reduce k -> "reduce " ^ reduce_name k
   | Scan k -> "scan " ^ reduce_name k
   | Arg_reduce Argmax -> "arg_reduce argmax"
@@ -262,6 +271,7 @@ let name = function
   | Move Window -> "move window"
   | Place -> "place"
   | Read -> "read"
+  | Check -> "check"
 
 let equal a b = String.equal (name a) (name b)
 let compare a b = String.compare (name a) (name b)

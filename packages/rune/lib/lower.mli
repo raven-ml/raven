@@ -105,8 +105,9 @@ val op : scope -> 'r Nx.Op.t -> 'r
     - otherwise it is storage [s] holds ({!captures}): the value itself if it
       lies where the operation computes, and a copy placed there once otherwise.
 
-    [Read] of a value that is not traced is answered in the enclosing
-    interpretation.
+    [Read] and [Check] of a value that is not traced are answered in the
+    enclosing interpretation. [Check] of a traced value reads nothing: [s]
+    records it ({!checks}).
 
     Raises [Jit_error] for [Read] of a traced value, with a message that starts
     with the name of the function that reads ([Nx.Op.Read]'s [by]), for an
@@ -197,3 +198,21 @@ type write = {
 
 val writes : scope -> write list
 (** [writes s] is each indexed write that [s] lowered, the last first. *)
+
+type check = {
+  first : (int64, Nx_dtype.int64_elt) Nx.t;
+      (** The traced scalar index, in C order, of the first false element of the
+          checked value, or its element count where every one holds. *)
+  shape : int array;  (** The checked value's shape. *)
+  msg : int array -> string;  (** The message of a failure at an index. *)
+}
+(** The type for checks ([Nx.Op.Check]) of traced values, which a program
+    answers when it has run. *)
+
+val checks : scope -> check list
+(** [checks s] is each check of a non-empty traced value that [s] lowered, in
+    the order it lowered them. *)
+
+val checking : scope -> (unit -> 'a) -> 'a * check list
+(** [checking s f] is [f ()] and the checks it lowered in [s], which {!checks}
+    then leaves out. *)

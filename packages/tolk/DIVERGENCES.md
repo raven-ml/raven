@@ -859,7 +859,8 @@ the Exclusions of `README.md`.
   operations `full_rewrite_to_sink` decomposes with, without `Mulacc`);
   `lib/renderer/cstyle.ml` (`fma`: `fma` in C-style and Metal,
   `__builtin_fmaf` and `__builtin_fma` in Clang and HIP, `__fmaf_rn` and
-  `__fma_rn` in CUDA).
+  `__fma_rn` in CUDA). `lib/uop/ops.ml` (`mulacc`, and its arm in
+  `exec_alu`); `lib/uop/symbolic.ml` (`pm_data_invalid`'s `Mulacc` rule).
 - **Differs:**
   - Each compiler would fuse a product and a sum that a rendered expression
     holds together, `a*b + c`, into one multiply-add with one rounding: Clang
@@ -875,13 +876,23 @@ the Exclusions of `README.md`.
   - `Decomp_op`'s `a * b + c` rule never applies: decomposition takes the
     renderer's operations without `Mulacc`. Every other product and sum keeps
     the two roundings the graph states.
+  - A float `Mulacc` that a graph states, as rune's lowering of `Nx.fma` does,
+    folds and evaluates rounded once, where `python_alu` (`uop/ops.py`)
+    computes `x*y + z` with two roundings: at float64 by `Float.fma`, and below
+    by a sum rounded to odd at double precision, which the dtype's truncation
+    rounds once. A `Mulacc` moves inside the Invalid gate of each operand, and
+    an Invalid operand makes it Invalid, as `pm_data_invalid` does for binary
+    operations; no tinygrad tensor graph holds `MULACC`, so it has no such
+    rule.
 - **Reason:** (b). RFC 0012's Law 1, as the maintainer amended it: a
   reduction's result is in the rounded-sum class, whose error bound a fused
   multiply-add stays within; every other compiled result meets eager nx, which
   rounds a product and a sum apart, and rune's accurate compositions
   (two-part products and sums) are exact only where each operation rounds as
   written. The fusion is the IR's, so that only a sum's products fuse, where a
-  compiler's contraction fuses any `a*b + c` of an expression. The sofo
+  compiler's contraction fuses any `a*b + c` of an expression. `Nx.fma`
+  (RFC 0015's D3) states a `Mulacc` whose compiled bits must be eager's, so its
+  fold rounds once too, and `Nx.ewma`, built on it, compiles. The sofo
   sketch's kernel `r_128_128_3_4_25_4` runs 1.74 ms with its sums fused,
   against 3.19 ms unfused and 1.79 ms under Clang's contraction (one E-core of
   an Intel Core Ultra 5 235, the same harness).
@@ -897,6 +908,14 @@ the Exclusions of `README.md`.
   2^-11)` and `(1 + 2^-12)^2` is `2^-24`, with a multiply-add in the source)
   and `› a product and a sum outside a reduction are not fused`; the Codegen
   and C-style goldens, from tinygrad with D25 applied by its generator.
+  `Tolk.Ops › exec_alu › a float multiply-add folds rounded once (D25)` (its
+  float32 case past a double's rounding ties to the wrong float32 when the sum
+  is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
+  moves inside the gate of each operand (D25)` and `› a multiply-add of
+  invalid is invalid (D25)`. In rune, `Test_lower_arith › multiply-adds › a
+  product that the sum cancels is kept whole` and `Test_compiled_rules ›
+  compositions › a compiled ewma is its eager value, bit for bit, and so is
+  its gradient`.
 
 ## D26. A minus never meets a minus in C-style source
 

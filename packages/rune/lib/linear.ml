@@ -107,8 +107,9 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Unary (k, x) -> (
       match[@warning "@4@8"] (k : Nx_backend.unary) with
       | Neg -> record t op x
-      | Recip | Abs | Sqrt | Sign | Exp | Log | Sin | Cos | Tan | Asin | Acos
-      | Atan | Sinh | Cosh | Tanh | Trunc | Ceil | Floor | Round | Erf ->
+      | Recip | Abs | Sqrt | Sign | Exp | Log | Log1p | Expm1 | Sin | Cos | Tan
+      | Asin | Acos | Atan | Sinh | Cosh | Tanh | Trunc | Ceil | Floor | Round
+      | Erf ->
           nonlinear t op)
   | Binary (k, a, b) ->
       let sa = owns t a and sb = owns t b in
@@ -121,6 +122,8 @@ let run : type r. tape -> r Nx.Op.t -> r =
       in
       if linear then record_any t op else nonlinear t op
   | Where _ -> record_any t op
+  | Fma (a, b, c) ->
+      if owns t c && owns t a <> owns t b then record t op c else nonlinear t op
   | Reduce (k, _, x) -> sum t op k x
   | Scan (k, _, x) -> sum t op k x
   | Pad (_, v, x) ->
@@ -154,7 +157,7 @@ let run : type r. tape -> r Nx.Op.t -> r =
            t.entry by)
   | Compare _ | Arg_reduce _ | Sort _ | Argsort _
   | Convert (Bitcast, _, _)
-  | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->
+  | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
       nonlinear t op
 
 (* Gathering across the lanes of the map named [axis] is linear: its transpose
@@ -342,6 +345,9 @@ let transpose_op : type a b.
       let zeros = Nx.zeros_like ct in
       add a (Nx.where c ct zeros);
       add b (Nx.where c zeros ct)
+  | Fma (a, b, c) ->
+      if owns a then add a (Nx.mul ct b) else add b (Nx.mul a ct);
+      add c ct
   | Reduce (_, axes, x) ->
       let shape = Nx.shape x in
       let kept =

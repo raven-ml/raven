@@ -298,6 +298,299 @@ let scans =
         nanmin (Ref.witness float_exact) (floats ranked) Ref.of_nx;
     ]
 
+(* Scans of structures. A scan is checked against the fold of the reference
+   along the axis, in order: integer arithmetic is exact, so any association
+   gives the fold's value. *)
+
+let running f lane =
+  let acc = ref None in
+  Array.map
+    (fun x ->
+      let v = match !acc with None -> x | Some a -> f a x in
+      acc := Some v;
+      v)
+    lane
+
+(* A tensor and one of its axes, counted from either end. *)
+let with_some_axis tensors =
+  let open Gen in
+  let* t = tensors in
+  let n = Nx.ndim t in
+  let+ a = int_range 0 (n - 1) and+ from_end = bool in
+  (t, if from_end then a - n else a)
+
+let matrix_7x2 =
+  Gen.map
+    (Nx.create Nx.int64 [| 7; 2 |])
+    (Gen.array ~size:(Gen.constant 14) Gen.int64)
+
+(* Affine maps [y -> a y + b] composed in order, which does not commute. *)
+let compose (a1, b1) (a2, b2) = Nx.(mul a1 a2, add (mul a2 b1) b2)
+let affine (a1, b1) (a2, b2) = (Int64.mul a1 a2, Int64.add (Int64.mul a2 b1) b2)
+
+let structure_scans =
+  let leaf = Nx.Ptree.tensor in
+  group "associative scans"
+    [
+      prop "the scan of an addition is the running sum along the axis"
+        (with_some_axis (int32s ranked))
+        (fun (t, axis) ->
+          let r = Ref.of_nx t in
+          let a = Ref.axis r axis in
+          equal ints
+            (Ref.along ~axis:a ~length:r.shape.(a) (running Int32.add) r)
+            (Ref.of_nx (Nx.associative_scan ~axis leaf Nx.add t)));
+      prop "a scan composes in order, each tensor of a structure at its index"
+        (Gen.pair matrix_7x2 matrix_7x2) (fun (a, b) ->
+          let ra = Ref.of_nx a and rb = Ref.of_nx b in
+          let pairs = Ref.map2 (fun x y -> (x, y)) ra rb in
+          let expected = Ref.along ~axis:0 ~length:7 (running affine) pairs in
+          let sa, sb =
+            Nx.associative_scan (Nx.Ptree.pair leaf leaf) compose (a, b)
+          in
+          equal positions (Ref.map fst expected) (Ref.of_nx sa);
+          equal positions (Ref.map snd expected) (Ref.of_nx sb));
+      prop "the scan of a prefix is the prefix of the scan, bit for bit"
+        (Gen.pair
+           (Gen.array ~size:(Gen.int_range 0 40) (Gen.float_range (-1e3) 1e3))
+           (Gen.int_range 0 40))
+        (fun (xs, m) ->
+          let n = Array.length xs in
+          let m = Int.min m n in
+          let t = Nx.create Nx.float64 [| n |] xs in
+          let scan t = Nx.associative_scan leaf Nx.add t in
+          equal (tensor float_exact)
+            (scan (Nx.slice [ R (0, m) ] t))
+            (Nx.slice [ R (0, m) ] (scan t)));
+      test "a structure's tensors may have different ranks" (fun () ->
+          let v = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |]
+          and m =
+            Nx.create Nx.int32 [| 3; 2 |] [| 1l; 10l; 2l; 20l; 3l; 30l |]
+          in
+          let add (a, b) (c, d) = (Nx.add a c, Nx.add b d) in
+          let sv, sm =
+            Nx.associative_scan (Nx.Ptree.pair leaf leaf) add (v, m)
+          in
+          equal (array int32) [| 1l; 3l; 6l |] (Nx.to_array sv);
+          equal (array int32) [| 1l; 10l; 3l; 30l; 6l; 60l |] (Nx.to_array sm));
+      test "a scan of no element or one is its input" (fun () ->
+          let f _ _ = fail "combined" in
+          let none = Nx.zeros Nx.float64 [| 0; 3 |]
+          and one = Nx.ones Nx.float64 [| 1 |] in
+          equal (tensor float_exact) none (Nx.associative_scan leaf f none);
+          equal (tensor float_exact) one (Nx.associative_scan leaf f one));
+      test "a segmented scan restarts at each segment, as a lift of f"
+        (fun () ->
+          let start =
+            Nx.create Nx.bool [| 6 |]
+              [| true; false; false; true; false; true |]
+          and v = Nx.create Nx.int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+          let f (s1, v1) (s2, v2) =
+            (Nx.logical_or s1 s2, Nx.where s2 v2 (Nx.add v1 v2))
+          in
+          let _, sums =
+            Nx.associative_scan (Nx.Ptree.pair leaf leaf) f (start, v)
+          in
+          equal (array int32) [| 1l; 3l; 6l; 4l; 9l; 6l |] (Nx.to_array sums));
+      test "tensors of different lengths along the axis are refused" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.associative_scan (Nx.Ptree.pair leaf leaf) compose
+                (Nx.zeros Nx.int64 [| 3 |], Nx.zeros Nx.int64 [| 4 |])));
+      test "an axis out of a tensor's bounds is refused" (fun () ->
+          raises_invalid_arg (fun () ->
+              Nx.associative_scan ~axis:1 leaf Nx.add
+                (Nx.zeros Nx.int64 [| 3 |])));
+    ]
+
+let ewmas =
+  let recurrence alpha lane =
+    running (fun y x -> ((1. -. alpha) *. y) +. (alpha *. x)) lane
+  in
+  let alphas = Gen.of_list ~pp:pp_float [ 0.02; 0.25; 0.5; 0.9; 1. ] in
+  let values shape =
+    viewed ~shape ~pp:pp_float Nx.float64 (Gen.float_range (-10.) 10.)
+  in
+  let v xs = Nx.create Nx.float64 [| Array.length xs |] xs in
+  group "exponentially weighted means"
+    [
+      prop "ewma follows its recurrence along the axis, or the flattened tensor"
+        (Gen.pair (with_axis (values ranked)) alphas)
+        (fun ((t, axis), alpha) ->
+          let r = Ref.of_nx t in
+          let expected =
+            match axis with
+            | None ->
+                let f = flat r in
+                Ref.reshape r.shape
+                  (Ref.along ~axis:0 ~length:f.shape.(0) (recurrence alpha) f)
+            | Some a ->
+                Ref.along ~axis:a ~length:r.shape.(a) (recurrence alpha) r
+          in
+          equal
+            (Ref.witness (close ~abs:1e-12 ~rel:1e-12 ()))
+            expected
+            (Ref.of_nx (Nx.ewma ?axis ~alpha t)));
+      test "at alpha 1 the average is the tensor" (fun () ->
+          let t = v [| 1.; Float.nan; Float.infinity; -2. |] in
+          equal (tensor float_exact) t (Nx.ewma ~alpha:1. t));
+      test "a NaN reaches every later element and no earlier one" (fun () ->
+          let y =
+            Nx.to_array (Nx.ewma ~alpha:0.5 (v [| 2.; 4.; Float.nan; 1.; 3. |]))
+          in
+          equal (array float_exact)
+            [| 2.; 3.; Float.nan; Float.nan; Float.nan |]
+            y);
+      test "an infinity stays infinite long after its weight underflows"
+        (fun () ->
+          let x =
+            v (Array.init 2048 (fun i -> if i = 0 then Float.infinity else 0.))
+          in
+          let y = Nx.to_array (Nx.ewma ~alpha:0.9 x) in
+          is_true ~msg:"every element is +inf"
+            (Array.for_all (fun e -> e = Float.infinity) y));
+      prop "the average of a prefix is the prefix of the average, bit for bit"
+        (Gen.triple
+           (Gen.array ~size:(Gen.int_range 0 40) (Gen.float_range (-1e3) 1e3))
+           (Gen.int_range 0 40) alphas)
+        (fun (xs, m, alpha) ->
+          let m = Int.min m (Array.length xs) in
+          let t = v xs in
+          equal (tensor float_exact)
+            (Nx.ewma ~alpha (Nx.slice [ R (0, m) ] t))
+            (Nx.slice [ R (0, m) ] (Nx.ewma ~alpha t)));
+      prop "at float16 the average is float32's, rounded once"
+        (Gen.pair (values (Gen.constant [| 9 |])) alphas)
+        (fun (t, alpha) ->
+          let h = Nx.cast Nx.float16 t in
+          equal (tensor float_exact)
+            (Nx.cast Nx.float16 (Nx.ewma ~alpha (Nx.cast Nx.float32 h)))
+            (Nx.ewma ~alpha h));
+      test "an alpha outside (0, 1] is refused" (fun () ->
+          List.iter
+            (fun alpha ->
+              raises_invalid_arg (fun () -> Nx.ewma ~alpha (v [| 1. |])))
+            [ 0.; -0.5; 1.5; Float.nan ]);
+    ]
+
+(* Histograms, against a count of each point into the cells whose bins hold it,
+   over ascending edges and points among them, on them, outside them and NaN. *)
+
+let ascending n =
+  let open Gen in
+  let+ steps = array ~size:(constant n) (float_range 0.25 2.)
+  and+ lo = float_range (-3.) 0. in
+  Array.of_list
+    (List.rev
+       (snd
+          (Array.fold_left
+             (fun (x, acc) d -> (x +. d, x :: acc))
+             (lo, []) steps)))
+
+(* The bin of [x] among [edges], or [None]. *)
+let bin edges x =
+  let k = Array.length edges - 1 in
+  let rec find j =
+    if j = k then None
+    else if edges.(j) <= x && (x < edges.(j + 1) || (j = k - 1 && x = edges.(k)))
+    then Some j
+    else find (j + 1)
+  in
+  find 0
+
+let coordinate edges =
+  Gen.frequency
+    [
+      ( 4,
+        Gen.float_range (edges.(0) -. 1.) (edges.(Array.length edges - 1) +. 1.)
+      );
+      (2, Gen.of_list ~pp:pp_float (Array.to_list edges));
+      (1, Gen.of_list ~pp:pp_float [ Float.nan; -0.; 0.; Float.infinity ]);
+    ]
+
+let histograms =
+  let v xs = Nx.create Nx.float64 [| Array.length xs |] xs in
+  let points =
+    let open Gen in
+    let* ka = int_range 1 4 in
+    let* kb = int_range 1 3 in
+    let* n = int_range 0 30 in
+    let* ea = ascending (ka + 1) in
+    let* eb = ascending (kb + 1) in
+    let+ xa = array ~size:(constant n) (coordinate ea)
+    and+ xb = array ~size:(constant n) (coordinate eb)
+    and+ w = array ~size:(constant n) (float_range (-2.) 2.) in
+    (ea, eb, xa, xb, w)
+  in
+  let pp ppf (ea, eb, xa, xb, _) =
+    let floats ppf a =
+      Format.fprintf ppf "[%s]"
+        (String.concat "; " (Array.to_list (Array.map (Printf.sprintf "%h") a)))
+    in
+    Format.fprintf ppf "edges %a and %a, points %a and %a" floats ea floats eb
+      floats xa floats xb
+  in
+  let points = Gen.with_pp pp points in
+  let reference ea eb xa xb w =
+    let ka = Array.length ea - 1 and kb = Array.length eb - 1 in
+    let cells = Array.make (ka * kb) 0. in
+    Array.iteri
+      (fun i x ->
+        match (bin ea x, bin eb xb.(i)) with
+        | Some a, Some b -> cells.((a * kb) + b) <- cells.((a * kb) + b) +. w i
+        | _ -> ())
+      xa;
+    Ref.create [| ka; kb |] cells
+  in
+  group "histograms"
+    [
+      prop "a point counts in the cell whose bins hold it" points
+        (fun (ea, eb, xa, xb, _) ->
+          equal (Ref.witness float_exact)
+            (reference ea eb xa xb (fun _ -> 1.))
+            (Ref.of_nx (Nx.histogram [ (v ea, v xa); (v eb, v xb) ])));
+      prop "with weights a cell sums its points' weights" points
+        (fun (ea, eb, xa, xb, w) ->
+          equal
+            (Ref.witness (close ~abs:1e-12 ~rel:1e-12 ()))
+            (reference ea eb xa xb (fun i -> w.(i)))
+            (Ref.of_nx
+               (Nx.histogram ~weights:(v w) [ (v ea, v xa); (v eb, v xb) ])));
+      test "a point on the last edge is in the last bin, past it in none"
+        (fun () ->
+          equal (array float_exact) [| 0.; 2. |]
+            (Nx.to_array
+               (Nx.histogram [ (v [| 0.; 1.; 2. |], v [| 2.; 2.; 2.5 |]) ])));
+      test "coordinates of any shape are points, -0 at the first edge"
+        (fun () ->
+          let x = Nx.create Nx.float32 [| 2; 2 |] [| -0.; 0.5; 1.; 5. |] in
+          equal (array float_exact) [| 2.; 1. |]
+            (Nx.to_array
+               (Nx.histogram
+                  [ (Nx.create Nx.float32 [| 3 |] [| 0.; 1.; 2. |], x) ])));
+      test "float16 counts and weights accumulate wider than they store"
+        (fun () ->
+          let e = Nx.create Nx.float16 [| 2 |] [| 0.; 1. |] in
+          let x = Nx.full Nx.float16 [| 4096 |] 0.5 in
+          equal (array float_exact) [| 4096. |]
+            (Nx.to_array (Nx.histogram [ (e, x) ]));
+          equal (array float_exact) [| 4096. |]
+            (Nx.to_array
+               (Nx.histogram
+                  ~weights:(Nx.ones Nx.float16 [| 4096 |])
+                  [ (e, x) ])));
+      test "no dimension, short edges and mismatched shapes are refused"
+        (fun () ->
+          let e = v [| 0.; 1. |] and x = v [| 0.5 |] in
+          raises_invalid_arg (fun () -> Nx.histogram []);
+          raises_invalid_arg (fun () -> Nx.histogram [ (v [| 0. |], x) ]);
+          raises_invalid_arg (fun () ->
+              Nx.histogram [ (Nx.zeros Nx.float64 [| 2; 2 |], x) ]);
+          raises_invalid_arg (fun () ->
+              Nx.histogram [ (e, x); (e, v [| 0.; 1. |]) ]);
+          raises_invalid_arg (fun () ->
+              Nx.histogram ~weights:(v [| 1.; 1. |]) [ (e, x) ]));
+    ]
+
 (* A float dtype, to run a case at each width. *)
 type float_dtype = F : string * (float, 'b) Nx.dtype -> float_dtype
 
@@ -1077,5 +1370,8 @@ let () =
          normalisations;
          associations;
          segment_reductions;
+         structure_scans;
+         ewmas;
+         histograms;
          at_scale;
        ])

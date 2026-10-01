@@ -172,6 +172,7 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Binary (k, x, y) -> lane (eval (Binary (k, b x, b y)))
   | Compare (k, x, y) -> lane (eval (Compare (k, b x, b y)))
   | Where (c, x, y) -> lane (eval (Where (b c, b x, b y)))
+  | Fma (x, y, z) -> lane (eval (Fma (b x, b y, b z)))
   | Reduce (k, a, x) -> lane (eval (Reduce (k, axes a, p x)))
   | Scan (k, axis, x) -> lane (eval (Scan (k, shifted axis, p x)))
   | Arg_reduce (k, axis, x) -> lane (eval (Arg_reduce (k, shifted axis, p x)))
@@ -229,6 +230,15 @@ let run : type r. t -> r Nx.Op.t -> r =
         (by
        ^ ": cannot read the value of a batched tensor inside vmap; return it \
           from the mapped function instead")
+  | Check { ok; msg } ->
+      (* The lanes' axis comes first, so the first failure is in the first
+         failing lane, and its index drops the lane. *)
+      eval
+        (Check
+           {
+             ok = b ok;
+             msg = (fun i -> msg (Array.sub i 1 (Array.length i - 1)));
+           })
 
 (* Constructs *)
 

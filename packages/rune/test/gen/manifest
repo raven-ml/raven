@@ -17,8 +17,10 @@ golden/lower_arith/cosh64.golden
 golden/lower_arith/equal.golden
 golden/lower_arith/erf64.golden
 golden/lower_arith/exp64.golden
+golden/lower_arith/expm1_64.golden
 golden/lower_arith/floor.golden
 golden/lower_arith/less.golden
+golden/lower_arith/log1p64.golden
 golden/lower_arith/log64.golden
 golden/lower_arith/mul.golden
 golden/lower_arith/neg.golden

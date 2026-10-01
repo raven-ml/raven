@@ -34,6 +34,12 @@ val binary : Nx_backend.binary -> Ops.t -> Ops.t -> Ops.t
 (** [binary k x y] is [k] of the elements of [x] and [y]. An integer quotient or
     remainder by 0 is 0, and so is a remainder by -1. *)
 
+val fma : Ops.t -> Ops.t -> Ops.t -> Ops.t
+(** [fma a b c] is [a * b + c] of the elements of [a], [b] and [c]: rounded once
+    on [float32] and [float64], by the target's multiply-add, and modular on
+    integers. A narrow float takes [float32]'s and rounds it again, as nx does.
+*)
+
 val compare : Nx_backend.compare -> Ops.t -> Ops.t -> Ops.t
 (** [compare k x y] is the boolean comparison [k] of the elements of [x] and
     [y], false where either is NaN except for [Not_equal]. *)

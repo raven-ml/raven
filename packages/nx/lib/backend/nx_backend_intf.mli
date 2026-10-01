@@ -21,6 +21,10 @@ type unary =
   | Sign  (** [-1], [0] or [1]; NaN for a NaN. *)
   | Exp
   | Log
+  | Log1p
+      (** [log (1 + x)], accurate for [x] near zero, where [1 + x] would round
+          away the digits of [x]. *)
+  | Expm1  (** [exp x - 1], accurate for [x] near zero, as [Log1p]. *)
   | Sin  (** In radians, as every trigonometric function. *)
   | Cos
   | Tan
@@ -138,6 +142,19 @@ module type S = sig
     unit
   (** [compare k a b ~dst] writes the comparison [k] of the elements of [a] and
       [b] at each index into [dst]. *)
+
+  val fma :
+    ('a, 'b) Nx_array.t ->
+    ('a, 'b) Nx_array.t ->
+    ('a, 'b) Nx_array.t ->
+    dst:('a, 'b) Nx_array.t ->
+    unit
+  (** [fma a b c ~dst] writes [a * b + c] of the elements at each index into
+      [dst]: rounded once on [float32] and [float64], and modular on integers.
+      [float16], [bfloat16] and the [float8] dtypes take the [float32]
+      multiply-add of their elements and round its result to their dtype. The
+      three operands have one shape and one dtype, neither complex nor [bool].
+  *)
 
   val where :
     (bool, Nx_dtype.bool_elt) Nx_array.t ->

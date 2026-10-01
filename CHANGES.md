@@ -172,6 +172,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A compiled function answers `Nx.check` when its call returns, raising the
+  first failed check's message, and differentiates, maps and compiles
+  `Nx.fma`, `Nx.log1p` and `Nx.expm1`.
 - `Rune.jit` and the compiled operations compile a program again for each set
   of counters a profile asks for (`Nx_device.Profile.start ~counters`). A
   program compiled under a profile that counted was kept and reused: once the
@@ -913,6 +916,9 @@ thread.
 
 ### Tolk (new)
 
+- A float `Mulacc` that a graph states folds and evaluates rounded once, as
+  every target computes it, where it rounded twice, and an Invalid gate around
+  one of its operands moves out of it, where it reached verification.
 - A compiled CPU kernel runs on every compute core: its launch splits the
   largest output loop that every store reads into blocks the host's threads
   run at once, when the kernel does enough work to repay waking them.
@@ -2960,6 +2966,22 @@ thread.
 
 ### Nx
 
+- Add `Nx.check ok msg`, which raises `Invalid_argument (msg i)` at the index
+  of `ok`'s first false element. Inside a compiled function it reads nothing:
+  the call raises when it returns, also from a staged scan or under `vmap`.
+- Add `Nx.fma`, `a * b + c` rounded once on `float32` and `float64` and
+  modular on integers, eagerly and compiled alike. `float16`, `bfloat16` and
+  the `float8` dtypes take the `float32` multiply-add and round it.
+- Add `Nx.log1p` and `Nx.expm1`, the C library's on the host, and compiled
+  compositions within 4 ulps. `asinh`, `acosh` and `atanh` call
+  `log1p` in place of a composition that lost accuracy near zero.
+- Add `Nx.histogram`, counts or weighted sums of points in the cells of
+  explicit edges in any number of dimensions, which compiles.
+- Add `Nx.associative_scan`, the inclusive scan of an associative elementwise
+  function over a structure, whose outputs keep their bits when the input
+  grows, and `Nx.ewma`, the exponentially weighted moving average built on it.
+  The errors of `cumsum`, `cumprod`, `cummax` and `cummin` name them, where
+  they named an internal `associative_scan`.
 - `Nx_device.Program.call ~split` runs a host program's iterations in blocks
   on the host's threads, and `Nx_device.Program.workers` is their number. Eager
   CPU kernels and compiled ones share this one pool.

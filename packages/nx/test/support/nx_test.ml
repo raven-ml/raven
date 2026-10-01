@@ -40,6 +40,7 @@ let described : type r. r Nx.Op.t -> r -> unit =
   | Binary _ -> value op r
   | Compare _ -> value op r
   | Where _ -> value op r
+  | Fma _ -> value op r
   | Reduce _ -> value op r
   | Scan _ -> value op r
   | Arg_reduce _ -> value op r
@@ -63,7 +64,7 @@ let described : type r. r Nx.Op.t -> r -> unit =
   | Solve_triangular _ -> value op r
   | Move _ -> value op r
   | Place _ -> value op r
-  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Read _ -> ()
+  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Read _ | Check _ -> ()
 
 let pp_shape ppf s =
   Format.fprintf ppf "[%a]"

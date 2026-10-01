@@ -698,6 +698,55 @@ let pow_int x y =
     in
     where (Ops.lt y (int y 0)) inverse power
 
+(* Near zero
+
+   [log1p x] is [log u + c / u], [u + c] being [1 + x] exactly ({!two_sum}): the
+   correction restores what the rounding of [1 + x] lost. For [u] between
+   [1/sqrt 2] and [sqrt 2], [log u] is [2 atanh s] for [s = (u - 1) / (u + 1)],
+   whose [u - 1] is exact, so its error does not grow as [u] nears 1. The
+   correction is left out where [u] is [0] or infinite, which [log u] answers
+   alone.
+
+   [expm1 x] is its Taylor series below [|x| = 1], whose terms do not cancel
+   with 1, and [exp x - 1] from there, where the subtraction at most doubles the
+   exponential's error. A zero keeps its sign in both. *)
+
+let log1p x =
+  let one = float x 1. in
+  let u, c = two_sum one x in
+  let s = (u -: one) /: (u +: one) in
+  let z = s *: s in
+  let near =
+    (float x 2. *: s)
+    +: float x 2. *: s *: z
+       *: horner z (odd_inverses (if is64 x then 10 else 4))
+  in
+  let inside lo hi =
+    Ops.bitwise_and (Ops.lt (float x lo) u) (Ops.lt u (float x hi))
+  in
+  let l = where (inside (Float.sqrt 0.5) (Float.sqrt 2.)) near (log u) in
+  let corrected = where (inside 0. Float.infinity) (l +: (c /: u)) l in
+  where (Ops.eq x (float x 0.)) x corrected
+
+let expm1 x =
+  let series =
+    x +: (x *: x *: horner x (inverse_factorials (if is64 x then 19 else 11)))
+  in
+  let e = where (Ops.lt (abs x) (float x 1.)) series (exp x -: float x 1.) in
+  where (Ops.eq x (float x 0.)) x e
+
+(* Multiply-add
+
+   A float's is the target's, rounded once; a narrow float takes [float32]'s and
+   rounds again, as nx does. An integer's wraps. *)
+
+let fma a b c =
+  if is_float a then
+    let mulacc a b c = Ops.alu a Op.Mulacc [ b; c ] in
+    if narrow a then Ops.cast (mulacc (widen a) (widen b) (widen c)) (dtype a)
+    else mulacc a b c
+  else back (dtype a) (Ops.add (Ops.mul (lift a) (lift b)) (lift c))
+
 (* Remainder
 
    C's [fmod] is exact: [|x| mod |y|] with [x]'s sign. On the significands [mx]
@@ -818,6 +867,8 @@ let unary (k : Nx_backend.unary) x =
   | Sign -> sign x
   | Exp -> float1 exp x
   | Log -> float1 log x
+  | Log1p -> float1 log1p x
+  | Expm1 -> float1 expm1 x
   | Sin -> float1 sin x
   | Cos -> float1 cos x
   | Tan -> float1 tan x

@@ -54,6 +54,8 @@ let unary =
     { name = "log"; nx = Nx.log; ocaml = Float.log; exact = false };
     { name = "log2"; nx = Nx.log2; ocaml = Float.log2; exact = false };
     { name = "exp"; nx = Nx.exp; ocaml = Float.exp; exact = false };
+    { name = "log1p"; nx = Nx.log1p; ocaml = Float.log1p; exact = false };
+    { name = "expm1"; nx = Nx.expm1; ocaml = Float.expm1; exact = false };
     { name = "exp2"; nx = Nx.exp2; ocaml = Float.exp2; exact = false };
     { name = "sin"; nx = Nx.sin; ocaml = Float.sin; exact = false };
     { name = "cos"; nx = Nx.cos; ocaml = Float.cos; exact = false };
@@ -247,6 +249,137 @@ let binary_ops =
             check "float32" Nx.float32;
             check "float64" Nx.float64);
       ])
+
+(* Near zero, and multiply-adds *)
+
+(* [x] and its value under [f], from a sweep around 0 of both signs. *)
+let near_zero =
+  List.concat_map
+    (fun e -> [ Float.ldexp 1. e; -.Float.ldexp 1.5 e ])
+    [ -1074; -1022; -600; -60; -30; -27; -12; -1 ]
+
+(* The float32 multiply-add rounded once: the product of float32 values is exact
+   in a double, and the sum rounded to odd there rounds once to float32. *)
+let fma32 a b c =
+  let p = a *. b in
+  let r = p +. c in
+  let d = r -. p in
+  let e = p -. (r -. d) +. (c -. d) in
+  let odd = Int64.logand (Int64.bits_of_float r) 1L = 1L in
+  to_f32
+    (if (not (Float.is_finite r)) || e = 0. || odd then r
+     else if e > 0. then Float.succ r
+     else Float.pred r)
+
+(* Three operands of one shape, but for the first two, which broadcast. *)
+let float_triple dtype =
+  let open Gen in
+  let* a, b = broadcast_pair dtype in
+  let s = Nx.shape (Nx.add a b) in
+  let+ c = array ~size:(constant (Ref.numel s)) any_float in
+  (a, b, Nx.create dtype s c)
+
+(* [fma_agrees f (a, b, c)] checks [Nx.fma a b c] against [f] on each
+   element. *)
+let fma_agrees f (a, b, c) =
+  let r = Nx.fma a b c in
+  let flat x = Nx.to_array (Nx.broadcast_to (Nx.shape r) x) in
+  let a = flat a and b = flat b and c = flat c in
+  equal (Ref.witness float_exact)
+    {
+      (Ref.of_nx r) with
+      data = Array.init (Array.length c) (fun i -> f a.(i) b.(i) c.(i));
+    }
+    (Ref.of_nx r)
+
+let near_zero_and_fma =
+  let v dt xs = Nx.create dt [| Array.length xs |] xs in
+  group "near zero, and multiply-adds"
+    [
+      test "log1p and expm1 of a value near zero keep its digits" (fun () ->
+          let x = v Nx.float64 (Array.of_list near_zero) in
+          equal (tensor float_exact) (Nx.map_item Float.log1p x) (Nx.log1p x);
+          equal (tensor float_exact) (Nx.map_item Float.expm1 x) (Nx.expm1 x));
+      test "log1p and expm1 keep the sign of a zero" (fun () ->
+          let x = v Nx.float32 [| 0.; -0. |] in
+          equal (tensor float_exact) x (Nx.log1p x);
+          equal (tensor float_exact) x (Nx.expm1 x));
+      test "log1p is -inf at -1 and NaN below, and expm1 is -1 at -inf"
+        (fun () ->
+          equal (tensor float_exact)
+            (v Nx.float64 [| Float.neg_infinity; Float.nan; Float.infinity |])
+            (Nx.log1p (v Nx.float64 [| -1.; -2.; Float.infinity |]));
+          equal (tensor float_exact)
+            (v Nx.float64 [| -1.; Float.infinity |])
+            (Nx.expm1 (v Nx.float64 [| Float.neg_infinity; Float.infinity |])));
+      test "log1p and expm1 refuse integers and complex numbers" (fun () ->
+          raises_invalid_arg (fun () -> Nx.log1p (Nx.zeros Nx.int32 [| 2 |]));
+          raises_invalid_arg (fun () -> Nx.expm1 (Nx.zeros Nx.int32 [| 2 |]));
+          raises_invalid_arg (fun () ->
+              Nx.log1p (Nx.zeros Nx.complex64 [| 2 |])));
+      prop "fma at float64 rounds once, as OCaml's" (float_triple Nx.float64)
+        (fma_agrees Float.fma);
+      prop "fma at float32 rounds once" (float_triple Nx.float32)
+        (fma_agrees fma32);
+      prop
+        "fma at float16, bfloat16 and the float8 dtypes is float32's, rounded"
+        (float_triple Nx.float32) (fun (a, b, c) ->
+          let narrowed (type d) name (dt : (float, d) Nx.dtype) =
+            let a = Nx.cast dt a and b = Nx.cast dt b and c = Nx.cast dt c in
+            let wide t = Nx.cast Nx.float32 t in
+            equal ~msg:name
+              (tensor (close ~rel:0. ()))
+              (Nx.cast dt (Nx.fma (wide a) (wide b) (wide c)))
+              (Nx.fma a b c)
+          in
+          narrowed "float16" Nx.float16;
+          narrowed "bfloat16" Nx.bfloat16;
+          narrowed "float8_e4m3" Nx.float8_e4m3;
+          narrowed "float8_e5m2" Nx.float8_e5m2);
+      test "fma keeps the product that its sum cancels" (fun () ->
+          let a = v Nx.float32 [| 1. +. 0x1p-12 |] in
+          equal (tensor float_exact)
+            (v Nx.float32 [| 0x1p-24 |])
+            (Nx.fma a a (v Nx.float32 [| -1. -. 0x1p-11 |])));
+      test "fma refuses complex numbers and booleans" (fun () ->
+          let c = Nx.zeros Nx.complex64 [| 2 |]
+          and b = Nx.zeros Nx.bool [| 2 |] in
+          raises_invalid_arg (fun () -> Nx.fma c c c);
+          raises_invalid_arg (fun () -> Nx.fma b b b));
+    ]
+
+(* Checks *)
+
+let index i = String.concat "," (Array.to_list (Array.map string_of_int i))
+
+(* [checked ok] is the index [Nx.check ok] names, or [None]. *)
+let checked ok =
+  match Nx.check ok index with
+  | () -> None
+  | exception Invalid_argument m -> Some m
+
+let bools = viewed ~pp:Format.pp_print_bool Nx.bool Gen.bool
+
+let checks =
+  group "checks"
+    [
+      prop "a check names the first false element in C order, over any layout"
+        bools (fun ok ->
+          let r = Ref.of_nx ok in
+          let expected =
+            Option.map
+              (fun i -> index (Ref.unravel r.shape i))
+              (Array.find_index not r.data)
+          in
+          equal (option string) expected (checked ok));
+      test "a check of no element passes" (fun () ->
+          equal (option string) None (checked (Nx.zeros Nx.bool [| 0; 3 |])));
+      test "a check of a scalar names the empty index" (fun () ->
+          equal (option string) (Some "") (checked (Nx.scalar Nx.bool false)));
+      test "a passing check makes no message" (fun () ->
+          Nx.check (Nx.ones Nx.bool [| 4 |]) (fun _ ->
+              fail "a message was made"));
+    ]
 
 (* A scalar variant is its operation against a scalar tensor, on either side. *)
 let scalar_variants =
@@ -469,6 +602,9 @@ let integer_dtypes =
              check "add" (both Int64.add) (Nx.add a b);
              check "sub" (both Int64.sub) (Nx.sub a b);
              check "mul" (both Int64.mul) (Nx.mul a b);
+             check "fma"
+               (both (fun x y -> Int64.add (Int64.mul x y) x))
+               (Nx.fma a b a);
              check "div" (both (by_zero div)) (Nx.div a b);
              check "mod_" (both (by_zero rem)) (Nx.mod_ a b);
              check "maximum"
@@ -857,6 +993,8 @@ let () =
     (run "nx elementwise"
        [
          unary_ops;
+         near_zero_and_fma;
+         checks;
          classifiers;
          binary_ops;
          scalar_variants;

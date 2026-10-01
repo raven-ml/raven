@@ -607,6 +607,8 @@ let unary_name : Nx_backend.unary -> string = function
   | Sign -> "sign"
   | Exp -> "exp"
   | Log -> "log"
+  | Log1p -> "log1p"
+  | Expm1 -> "expm1"
   | Sin -> "sin"
   | Cos -> "cos"
   | Tan -> "tan"

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*/
 
 /* nx_c_map.c — the map kernel family: elementwise unary, binary, comparison,
-   where, and cast. Every kernel is a 5-line inner loop over one 1-D run honoring
+   where, fma and cast. Every kernel is a 5-line inner loop over one 1-D run honoring
    the nx_c_map_loop ABI (nx_c.h); the engine (nx_c_engine.c) owns coalescing,
    strategy, threading, dispatch null-checks, and the funnel. Kernels state scalar
    semantics only, never touch the OCaml runtime, and never fail — the backend
@@ -349,7 +349,7 @@ static inline int nx_c_f2i4_u(double v) {
   NX_C_TOR_##cat(NX_C_CUROP, sfx) /* sint,uint,float,bool (no ordered complex) */
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Unary ops (21)
+   Unary ops (23)
    ═════════════════════════════════════════════════════════════════════════ */
 
 /* neg / recip / abs / sign: int + float + complex (never bool). */
@@ -523,7 +523,7 @@ NX_C_TRANS(tanh)
 NX_C_TRANS(sqrt)
 #undef NX_C_CUROP
 
-/* erf: float only (no standard complex error function). */
+/* erf, log1p and expm1: float only (C has no complex forms). */
 #define NX_C_FOK_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
   NX_C_UK(NX_C_CUROP, sfx, storage, compute, ld, st,                             \
          NX_C_MFN(NX_C_CUROP, compute)(vx))
@@ -533,10 +533,19 @@ NX_C_TRANS(sqrt)
 #define NX_C_FOK_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
 #define NX_C_FO_KROW(sfx, storage, compute, ld, st, cat)                        \
   NX_C_FOK_##cat(sfx, storage, compute, ld, st)
+#define NX_C_FLOATOP(op)                                                        \
+  NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FO_KROW)                                      \
+  static const nx_c_map_table nx_c_##op##_table = {                             \
+      .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FLOAT)}};
+
 #define NX_C_CUROP erf
-NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FO_KROW)
-static const nx_c_map_table nx_c_erf_table = {
-    .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_FLOAT)}};
+NX_C_FLOATOP(erf)
+#undef NX_C_CUROP
+#define NX_C_CUROP log1p
+NX_C_FLOATOP(log1p)
+#undef NX_C_CUROP
+#define NX_C_CUROP expm1
+NX_C_FLOATOP(expm1)
 #undef NX_C_CUROP
 
 /* Rounding: identity on integers, the libm rounder on floats, rejected on
@@ -958,6 +967,58 @@ static const nx_c_map_table nx_c_where_table = {
 #undef NX_C_CUROP
 
 /* ══════════════════════════════════════════════════════════════════════════
+   fma (map3) — a * b + c
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* A float takes the libm multiply-add of its compute type, rounded once: float16,
+   bfloat16 and float8 take float32's and round again on the store. An integer
+   wraps, its signed forms running in the unsigned width as add and mul do. */
+#define NX_C_FMAK(sfx, storage, compute, ld, st, EXPR)                          \
+  static void nx_c_fma_##sfx(char *const *pp, const int64_t *ssx, int64_t nn,   \
+                            void *ctx) {                                       \
+    (void)ctx;                                                                 \
+    char *out = pp[0];                                                         \
+    const char *in0 = pp[1], *in1 = pp[2], *in2 = pp[3];                       \
+    const int64_t so = ssx[0], sa = ssx[1], sb = ssx[2], sc = ssx[3];          \
+    const int64_t es = (int64_t)sizeof(storage);                              \
+    if (so == es && sa == es && sb == es && sc == es) {                       \
+      storage *pO = (storage *)out;                                           \
+      const storage *pA = (const storage *)in0;                               \
+      const storage *pB = (const storage *)in1;                               \
+      const storage *pC = (const storage *)in2;                               \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = (compute)ld(pA[i]);                                       \
+        compute vb = (compute)ld(pB[i]);                                       \
+        compute vc = (compute)ld(pC[i]);                                       \
+        pO[i] = (storage)st(EXPR);                                             \
+      }                                                                        \
+    } else {                                                                   \
+      for (int64_t i = 0; i < nn; i++) {                                       \
+        compute va = nx_c_ld_##sfx(in0 + i * sa);                              \
+        compute vb = nx_c_ld_##sfx(in1 + i * sb);                              \
+        compute vc = nx_c_ld_##sfx(in2 + i * sc);                              \
+        nx_c_st_##sfx(out + i * so, (EXPR));                                    \
+      }                                                                        \
+    }                                                                          \
+  }
+#define NX_C_FMA_NX_C_CAT_SINT(sfx, storage, compute, ld, st)                    \
+  NX_C_FMAK(sfx, storage, compute, ld, st,                                      \
+           (compute)((uint64_t)(va) * (uint64_t)(vb) + (uint64_t)(vc)))
+#define NX_C_FMA_NX_C_CAT_UINT(sfx, storage, compute, ld, st)                    \
+  NX_C_FMAK(sfx, storage, compute, ld, st, ((va) * (vb) + (vc)))
+#define NX_C_FMA_NX_C_CAT_FLOAT(sfx, storage, compute, ld, st)                   \
+  NX_C_FMAK(sfx, storage, compute, ld, st, NX_C_MFN(fma, compute)(va, vb, vc))
+#define NX_C_FMA_NX_C_CAT_COMPLEX(sfx, storage, compute, ld, st)
+#define NX_C_FMA_NX_C_CAT_BOOL(sfx, storage, compute, ld, st)
+#define NX_C_FMA_KROW(sfx, storage, compute, ld, st, cat)                       \
+  NX_C_FMA_##cat(sfx, storage, compute, ld, st)
+NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_FMA_KROW)
+#define NX_C_CUROP fma
+static const nx_c_map_table nx_c_fma_table = {
+    .fn = {NX_C_FOR_EACH_COMPUTE_DTYPE(NX_C_TROW_INTF)}};
+#undef NX_C_CUROP
+
+/* ══════════════════════════════════════════════════════════════════════════
    cast — the pair matrix (compute src × compute dst) plus a packed nibble path
    ═════════════════════════════════════════════════════════════════════════ */
 
@@ -1347,6 +1408,8 @@ NX_C_MAP1_STUB(ceil, "ceil", nx_c_ceil_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP1_STUB(floor, "floor", nx_c_floor_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP1_STUB(round, "round", nx_c_round_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP1_STUB(erf, "erf", nx_c_erf_table, NX_C_COST_COMPUTE)
+NX_C_MAP1_STUB(log1p, "log1p", nx_c_log1p_table, NX_C_COST_COMPUTE)
+NX_C_MAP1_STUB(expm1, "expm1", nx_c_expm1_table, NX_C_COST_COMPUTE)
 
 /* Binary. */
 NX_C_MAP2_STUB(add, "add", nx_c_add_table, NX_C_COST_BANDWIDTH)
@@ -1365,8 +1428,9 @@ NX_C_MAP2_STUB(and, "and", nx_c_and_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP2_STUB(shl, "shl", nx_c_shl_table, NX_C_COST_BANDWIDTH)
 NX_C_MAP2_STUB(shr, "shr", nx_c_shr_table, NX_C_COST_BANDWIDTH)
 
-/* where. */
+/* where and fma. */
 NX_C_MAP3_STUB(where, "where", nx_c_where_table, NX_C_COST_BANDWIDTH)
+NX_C_MAP3_STUB(fma, "fma", nx_c_fma_table, NX_C_COST_BANDWIDTH)
 
 /* Comparisons dispatch on the INPUT dtype (bool output), so they call the map
    driver by hand rather than through the output-dispatching funnel, then hand any

@@ -60,6 +60,15 @@ let invalid_values =
       test "a binary operation moves inside the gate of its second operand"
         (fun () ->
           folds_to Ops.O.(int 10 * gated) (Ops.valid Ops.O.(int 10 * a) cond));
+      test "a multiply-add moves inside the gate of each operand (D25)"
+        (fun () ->
+          let mulacc x y z = Ops.alu x Mulacc [ y; z ] in
+          folds_to (mulacc (Ops.valid f cond) g g)
+            (Ops.valid (mulacc f g g) cond);
+          folds_to (mulacc f g (Ops.valid g cond))
+            (Ops.valid (mulacc f g g) cond));
+      test "a multiply-add of invalid is invalid (D25)" (fun () ->
+          folds_to (raw Mulacc [ f; Ops.invalid; g ]) Ops.invalid);
       test "a cast moves inside the gate" (fun () ->
           let gated = Ops.valid x Ops.O.(x < int32 4) in
           folds_to

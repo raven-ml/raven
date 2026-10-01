@@ -904,8 +904,8 @@ let dtype : type a b. (a, b) t -> (a, b) Nx_dtype.t = function
 (* Operations
 
    Every operation nx performs is a constructor of [Op.t]: the computing ones,
-   which the placement's backend answers, and the movements, placing and
-   reading, which nx answers itself. A kind names the function among the
+   which the placement's backend answers, and the movements, placing, reading
+   and checking, which nx answers itself. A kind names the function among the
    operations of one constructor. *)
 
 (* The two dtype conversions: [Cast] converts values, and [Bitcast] reads the
@@ -936,6 +936,9 @@ module Op = struct
         -> (bool, Nx_dtype.bool_elt) Types.t t
     | Where :
         (bool, Nx_dtype.bool_elt) Types.t * ('a, 'b) Types.t * ('a, 'b) Types.t
+        -> ('a, 'b) Types.t t
+    | Fma :
+        ('a, 'b) Types.t * ('a, 'b) Types.t * ('a, 'b) Types.t
         -> ('a, 'b) Types.t t
     | Reduce :
         Nx_backend.reduce * int array * ('a, 'b) Types.t
@@ -1049,6 +1052,11 @@ module Op = struct
     | Move : ('a, 'b) Types.t * move -> ('a, 'b) Types.t t
     | Place : placement * ('a, 'b) Types.t -> ('a, 'b) Types.t t
     | Read : { by : string; x : ('a, 'b) Types.t } -> Nx_device.Buffer.t t
+    | Check : {
+        ok : (bool, Nx_dtype.bool_elt) Types.t;
+        msg : int array -> string;
+      }
+        -> unit t
 
   let name : type r. r t -> string =
    fun op ->
@@ -1062,6 +1070,8 @@ module Op = struct
         | Sign -> "sign"
         | Exp -> "exp"
         | Log -> "log"
+        | Log1p -> "log1p"
+        | Expm1 -> "expm1"
         | Sin -> "sin"
         | Cos -> "cos"
         | Tan -> "tan"
@@ -1097,6 +1107,7 @@ module Op = struct
         | Less -> "less"
         | Less_equal -> "less_equal")
     | Where _ -> "where"
+    | Fma _ -> "fma"
     | Reduce (k, _, _) -> (
         match k with
         | Sum -> "sum"
@@ -1144,6 +1155,7 @@ module Op = struct
         | Window _ -> "sliding_window")
     | Place _ -> "place"
     | Read _ -> "read"
+    | Check _ -> "check"
 
   let operands : type r. r t -> packed list =
    fun op ->
@@ -1152,6 +1164,7 @@ module Op = struct
     | Binary (_, a, b) -> [ P a; P b ]
     | Compare (_, a, b) -> [ P a; P b ]
     | Where (c, a, b) -> [ P c; P a; P b ]
+    | Fma (a, b, c) -> [ P a; P b; P c ]
     | Reduce (_, _, x) -> [ P x ]
     | Scan (_, _, x) -> [ P x ]
     | Arg_reduce (_, _, x) -> [ P x ]
@@ -1181,6 +1194,7 @@ module Op = struct
     | Move (x, _) -> [ P x ]
     | Place (_, x) -> [ P x ]
     | Read { x; _ } -> [ P x ]
+    | Check { ok; _ } -> [ P ok ]
 
   let pp ppf op =
     let operand ppf (P x) =
@@ -1426,7 +1440,7 @@ let routing : type r. r Op.t -> routing =
   let computes rule = Computes (rule, Op.operands op) in
   let along_axes axes = computes (Along axes) in
   match[@warning "@4@8"] op with
-  | Unary _ | Binary _ | Compare _ | Where _
+  | Unary _ | Binary _ | Compare _ | Where _ | Fma _
   | Convert (Cast, _, _)
   | Threefry _ | Contiguous _ ->
       computes Elementwise
@@ -1462,6 +1476,7 @@ let routing : type r. r Op.t -> routing =
   | Move (x, m) -> Moves (P x, m)
   | Place (p, _) -> Places p
   | Read { x; _ } -> Reads (P x)
+  | Check { ok; _ } -> Reads (P ok)
 
 (* Where a computing operation runs. *)
 let route_of : type r. r Op.t -> route =
@@ -1820,6 +1835,7 @@ let result_shape : type a b. (a, b) t Op.t -> int array =
   | Binary (_, a, _) -> s a
   | Compare (_, a, _) -> s a
   | Where (_, a, _) -> s a
+  | Fma (a, _, _) -> s a
   | Reduce (_, axes, x) -> Shape.reduce_output_shape (s x) axes false
   | Scan (_, _, x) -> s x
   | Arg_reduce (_, axis, x) -> Shape.reduce_output_shape (s x) [| axis |] false
@@ -1856,6 +1872,7 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
   | Binary (_, a, _) -> dtype a
   | Compare _ -> Nx_dtype.Bool
   | Where (_, a, _) -> dtype a
+  | Fma (a, _, _) -> dtype a
   | Reduce (_, _, x) -> dtype x
   | Scan (_, _, x) -> dtype x
   | Arg_reduce _ -> Nx_dtype.Int64
@@ -2021,6 +2038,18 @@ let k_where (e : env) c a b =
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
       release3 c a b;
+      Printexc.raise_with_backtrace e bt);
+  dst
+
+let k_fma (e : env) a b c =
+  let (module K) = e.kernels in
+  let dst = e.alloc a.dtype (shape_of a) in
+  claim3 a b c;
+  (match K.fma a b c ~dst with
+  | () -> release3 a b c
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      release3 a b c;
       Printexc.raise_with_backtrace e bt);
   dst
 
@@ -2440,6 +2469,7 @@ let compute : type r. env list -> settle -> r Op.t -> r =
   | Binary (k, a, b) -> each (fun e -> k_binary e k (e.arr a) (e.arr b))
   | Compare (k, a, b) -> each (fun e -> k_compare e k (e.arr a) (e.arr b))
   | Where (c, a, b) -> each (fun e -> k_where e (e.arr c) (e.arr a) (e.arr b))
+  | Fma (a, b, c) -> each (fun e -> k_fma e (e.arr a) (e.arr b) (e.arr c))
   | Reduce (k, axes, x) -> each (fun e -> k_reduce e k axes (e.arr x))
   | Scan (k, axis, x) -> each (fun e -> k_scan e k axis (e.arr x))
   | Arg_reduce (k, axis, x) -> each (fun e -> k_arg_reduce e k axis (e.arr x))
@@ -2501,7 +2531,7 @@ let compute : type r. env list -> settle -> r Op.t -> r =
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       each (fun e ->
           k_solve_triangular e upper transpose unit_diag (e.arr a) (e.arr b))
-  | Move _ | Place _ | Read _ ->
+  | Move _ | Place _ | Read _ | Check _ ->
       invalid_arg "Nx_effect.compute: the operation computes nothing"
 
 type mapper = { f : 'a 'b. ('a, 'b) t -> ('a, 'b) t }
@@ -2515,6 +2545,7 @@ let with_operands : type r. mapper -> r Op.t -> r Op.t =
   | Binary (k, a, b) -> Binary (k, f a, f b)
   | Compare (k, a, b) -> Compare (k, f a, f b)
   | Where (c, a, b) -> Where (f c, f a, f b)
+  | Fma (a, b, c) -> Fma (f a, f b, f c)
   | Reduce (k, axes, x) -> Reduce (k, axes, f x)
   | Scan (k, axis, x) -> Scan (k, axis, f x)
   | Arg_reduce (k, axis, x) -> Arg_reduce (k, axis, f x)
@@ -2546,6 +2577,7 @@ let with_operands : type r. mapper -> r Op.t -> r Op.t =
   | Move (x, m) -> Move (f x, m)
   | Place (p, x) -> Place (p, f x)
   | Read r -> Read { r with x = f r.x }
+  | Check c -> Check { c with ok = f c.ok }
 
 (* [x]'s array on [d]: its storage there, through its view. *)
 let local (type a b) d (x : (a, b) t) : (a, b) Nx_array.t =
@@ -2699,6 +2731,11 @@ let direct_where c x y =
   | Host c', Host a, Host b -> Host (k_where host_env c' a b)
   | _ -> on_devices (Where (c, x, y))
 
+let direct_fma a b c =
+  match (a, b, c) with
+  | Host a, Host b, Host c -> Host (k_fma host_env a b c)
+  | _ -> on_devices (Fma (a, b, c))
+
 let direct_reduce k axes x =
   match x with
   | Host a -> Host (k_reduce host_env k axes a)
@@ -2822,6 +2859,25 @@ let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   | Placed r -> read_elements r
   | Traced _ -> outside_trace ()
 
+(* [check_elements ok msg] raises [Invalid_argument (msg i)] for the index [i]
+   of [ok]'s first false element in C order, its elements read under a read
+   claim. *)
+let check_elements ok msg =
+  let shape = View.shape (view ok) in
+  let n = Shape.numel shape in
+  if n > 0 then begin
+    let b = read_elements_of ok in
+    Nx_device.Buffer.Claim.read b;
+    let get = Elements.get Nx_dtype.bool b in
+    let rec first i = if i = n || not (get i) then i else first (i + 1) in
+    let i =
+      Fun.protect
+        ~finally:(fun () -> Nx_device.Buffer.Claim.release b)
+        (fun () -> first 0)
+    in
+    if i < n then invalid_arg (msg (Shape.unravel_index i shape))
+  end
+
 (* [direct op] answers [op] with no interpretation. The decompositions run
    through [on_devices] even on the host, which settles each result. *)
 let direct : type r. r Op.t -> r =
@@ -2831,6 +2887,7 @@ let direct : type r. r Op.t -> r =
   | Binary (k, x, y) -> direct_binary k x y
   | Compare (k, x, y) -> direct_compare k x y
   | Where (c, x, y) -> direct_where c x y
+  | Fma (a, b, c) -> direct_fma a b c
   | Reduce (k, axes, x) -> direct_reduce k axes x
   | Scan (k, axis, x) -> direct_scan k axis x
   | Arg_reduce (k, axis, x) -> direct_arg_reduce k axis x
@@ -2860,6 +2917,7 @@ let direct : type r. r Op.t -> r =
   | Move (x, m) -> moved x m
   | Place (p, x) -> move_to p x
   | Read { x; _ } -> read_elements_of x
+  | Check { ok; msg } -> check_elements ok msg
 
 
 (* Interception
@@ -2933,6 +2991,9 @@ let cmp k x y =
 
 let where c x y =
   if intercepting () then perform (Where (c, x, y)) else direct_where c x y
+
+let fma a b c =
+  if intercepting () then perform (Fma (a, b, c)) else direct_fma a b c
 
 let reduce k ~axes x =
   if intercepting () then perform (Reduce (k, axes, x))
@@ -3048,6 +3109,9 @@ let sliding_window x ~axis ~window ~step =
    starting on a byte. *)
 let read ~by x =
   if intercepting () then perform (Read { by; x }) else read_elements_of x
+
+let check ok msg =
+  if intercepting () then perform (Check { ok; msg }) else check_elements ok msg
 
 (* A value already at [p] is returned as it is. *)
 let place (type a b) p (x : (a, b) t) : (a, b) t =

@@ -258,6 +258,8 @@ let unary_tangent k x y dx =
   | Sqrt -> coef (Nx.recip (Nx.mul (scalar y 2.) y))
   | Exp -> coef y
   | Log -> binary Fdiv dx x
+  | Log1p -> binary Fdiv dx (Nx.add_s x (one x))
+  | Expm1 -> coef (Nx.exp x)
   | Sin -> coef (Nx.cos x)
   | Cos -> coef (Nx.neg (Nx.sin x))
   | Tan -> coef (Nx.recip (Nx.square (Nx.cos x)))
@@ -590,8 +592,8 @@ let run : type r. t -> r Nx.Op.t -> r =
       match[@warning "@4@8"] (k : Nx_backend.unary) with
       | Sign when not (Nx_dtype.is_complex (Nx.dtype x)) -> y
       | Trunc | Ceil | Floor | Round -> y
-      | Neg | Recip | Abs | Sqrt | Sign | Exp | Log | Sin | Cos | Tan | Asin
-      | Acos | Atan | Sinh | Cosh | Tanh | Erf ->
+      | Neg | Recip | Abs | Sqrt | Sign | Exp | Log | Log1p | Expm1 | Sin | Cos
+      | Tan | Asin | Acos | Atan | Sinh | Cosh | Tanh | Erf ->
           dual i y (unary_tangent k x y dx))
   | Binary (k, a, b) -> (
       let a, da = split i a and b, db = split i b in
@@ -606,6 +608,23 @@ let run : type r. t -> r Nx.Op.t -> r =
       dual i
         (eval (Where (c, a, b)))
         (eval (Where (c, zeros_or da a, zeros_or db b)))
+  | Fma (a, b, c) ->
+      (* [da b + (a db + dc)], each sum a multiply-add, so that each term is
+         linear in a tangent and the other operand's constant together. *)
+      let a, da = split i a and b, db = split i b and c, dc = split i c in
+      let fma x y = function
+        | Some z -> eval (Fma (x, y, z))
+        | None -> mul x y
+      in
+      let t = match db with Some db -> Some (fma a db dc) | None -> dc in
+      let t =
+        match (da, t) with
+        | Some da, t -> fma da b t
+        | None, Some t -> t
+        | None, None ->
+            assert false (* A rule runs for an operand with a tangent. *)
+      in
+      dual i (eval (Fma (a, b, c))) t
   | Reduce (k, axes, x) -> (
       let x, dx = unwrap i x in
       let y = eval (Reduce (k, axes, x)) in
@@ -729,6 +748,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       dual i (eval (Move (x, m))) (eval (Move (viewable m dx, m)))
   | Place (p, x) -> linear x (fun x -> eval (Place (p, x)))
   | Read { by; x } -> eval (Read { by; x = primal i x })
+  | Check c -> eval (Check { c with ok = primal i c.ok })
 
 (* Leaves *)
 

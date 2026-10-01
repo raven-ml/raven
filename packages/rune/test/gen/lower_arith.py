@@ -117,6 +117,12 @@ def exp64():
 @table
 def log64():
     return function_table(mpmath.log, np.log, [abs(x) for x in EVERYWHERE])
+@table
+def log1p64():
+    return function_table(mpmath.log1p, np.log1p, EVERYWHERE + between(-0.999, 0.999, 201) + [-1.0])
+@table
+def expm1_64():
+    return function_table(mpmath.expm1, np.expm1, between(-750, 750, 601) + sweep(-40, 10, 200) + between(-2, 2, 201))
 # Beyond the exact parts of pi/2 that rune subtracts (2^12 in float32, 2^22 in
 # float64), up to the greatest double: a sweep, the doubles nearest multiples
 # of pi/2, whose remainders are tiny, and the double of the smallest remainder

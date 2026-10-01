@@ -75,10 +75,10 @@ let accumulates : Row.t -> bool = function
   | Fold | Matmul | Fft | Rfft | Irfft | Cholesky | Qr | Lu | Svd | Eig | Eigh
   | Solve_triangular ->
       true
-  | Unary _ | Binary _ | Compare _ | Where | Arg_reduce _ | Sort | Argsort | Pad
-  | Cat | Cast | Bitcast | Threefry | Gather
+  | Unary _ | Binary _ | Compare _ | Where | Fma | Arg_reduce _ | Sort | Argsort
+  | Pad | Cat | Cast | Bitcast | Threefry | Gather
   | Scatter (`Set | `Max | `Min)
-  | Update | Unfold | Contiguous | Move _ | Place | Read ->
+  | Update | Unfold | Contiguous | Move _ | Place | Read | Check ->
       false
 
 let compare_rows (c : Case.t) expected actual =

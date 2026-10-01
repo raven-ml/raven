@@ -110,6 +110,22 @@ let exec_alu =
                   ])
             Dtype.[ Float32; Float64 ];
           equal string "7ff8000000000000" (bits (f Dtype.nan)));
+      test "a float multiply-add folds rounded once (D25)" (fun () ->
+          let e = Float.ldexp 1. in
+          equal ~msg:"float32" const
+            (f (e (-24)))
+            (alu Float32 Op.Mulacc
+               [ f (1. +. e (-12)); f (1. +. e (-12)); f (-1. -. e (-11)) ]);
+          equal ~msg:"float64" const
+            (f (e (-54)))
+            (alu Float64 Op.Mulacc
+               [ f (1. +. e (-27)); f (1. +. e (-27)); f (-1. -. e (-26)) ]);
+          (* [1 + 3 2^-24 - 2^-70] is a double's midpoint of two float32s
+             before it is a float32: rounded twice it ties to the even one. *)
+          equal ~msg:"float32, past a double's rounding" const
+            (f (1. +. e (-23)))
+            (alu Float32 Op.Mulacc
+               [ f (1. +. e (-23)); f (e (-24) -. e (-47)); f (1. +. e (-23)) ]));
       test "a shift by a negative count has no value" (fun () ->
           List.iter
             (fun o ->

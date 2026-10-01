@@ -11,6 +11,8 @@ type unary = Nx_backend_intf.unary =
   | Sign
   | Exp
   | Log
+  | Log1p
+  | Expm1
   | Sin
   | Cos
   | Tan

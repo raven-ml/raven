@@ -230,7 +230,9 @@ type 'r program = {
   slots : int array; (* By leaf: its parameter's slot, or [-1]. *)
   consumed : bool array; (* By leaf. *)
   paths : string array; (* By leaf. *)
-  results : result array;
+  results : result array; (* The function's, then a scalar per check. *)
+  checks : (int array * (int array -> string)) array;
+      (* Each check's shape and message. *)
   captured : B.t list; (* The runs its captures bind. *)
   rebuild : Nx.packed list -> 'r;
 }
@@ -424,7 +426,14 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     Array.of_list
       (List.rev (Ptree.fold result_s (fun p t acc -> (p, Nx.P t) :: acc) y []))
   in
-  let ys = Array.map snd named in
+  (* A check is answered when the program has run, from the index of its first
+     failure, which the program returns after the function's results. *)
+  let checks = Array.of_list (Lower.checks s) in
+  let ys =
+    Array.append (Array.map snd named)
+      (Array.map (fun (c : Lower.check) -> Nx.P c.first) checks)
+  in
+  let user = Array.length named in
   let nodes = Array.map (fun (Nx.P t) -> Lower.value s t) ys in
   let fits i j =
     let (Nx.P x) = leaves.(i).x in
@@ -563,9 +572,11 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
         let shape = Nx.shape y and at = Nx.placement y and dt = Nx.dtype y in
         let out = outs.(j) in
         let name =
-          match Ptree.Path.to_string (fst named.(j)) with
-          | "" -> "the result"
-          | path -> "result " ^ path
+          if j >= user then "a check"
+          else
+            match Ptree.Path.to_string (fst named.(j)) with
+            | "" -> "the result"
+            | path -> "result " ^ path
         in
         (* A structure checks its leaves' shapes; a broadcast scalar has the
            shape without the bytes. *)
@@ -637,7 +648,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
   in
   let like =
     Ptree.rebuild result_s ~like:y
-      (Array.to_list (Array.map (fun r -> r.like) results))
+      (Array.to_list (Array.map (fun r -> r.like) (Array.sub results 0 user)))
   in
   let p =
     {
@@ -646,6 +657,7 @@ let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
       consumed;
       paths;
       results;
+      checks = Array.map (fun (c : Lower.check) -> (c.shape, c.msg)) checks;
       captured = List.concat_map snd bound;
       rebuild = Ptree.rebuild result_s ~like;
     }
@@ -698,7 +710,8 @@ let claimed l = match l.runs with [] -> l.buffers | runs -> runs
    and its memory is exclusive, and then consumed before the run, so that no
    work queued on its old handles reads the write. Otherwise its result is a
    copy, and it is consumed after the run. A leaf over a window of its memory,
-   or captured by another program, is copied and stays live. *)
+   or captured by another program, is copied and stays live. Once [p] has run,
+   the first of its checks that failed raises. *)
 let run entry p leaves =
   let n = Array.length leaves in
   Array.iteri
@@ -794,7 +807,16 @@ let run entry p leaves =
                 (if lends.(i) then "reused" else "copied")
           | None -> report "%s consumed, lent to no result" p.paths.(i))
       leaves;
-  p.rebuild (Array.to_list (Array.map2 value p.results results))
+  let values = Array.map2 value p.results results in
+  let user = Array.length values - Array.length p.checks in
+  Array.iteri
+    (fun k (shape, msg) ->
+      let first = Nx.item [] (Nx.unpack Nx.int64 values.(user + k)) in
+      if Int64.to_int first < numel shape then
+        invalid_arg
+          (msg (Nx_array.Shape.unravel_index (Int64.to_int first) shape)))
+    p.checks;
+  p.rebuild (Array.to_list (Array.sub values 0 user))
 
 module Programs = Memo.Make (struct
   type t = key

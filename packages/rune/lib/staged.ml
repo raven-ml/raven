@@ -277,8 +277,9 @@ let stage trace s (r : Scan.request) =
         (slot, Nx.P v))
       r.req_xs
   in
-  let carry', ys =
-    trace s (fun () -> r.req_step (List.map snd carry) (List.map snd rows))
+  let (carry', ys), checks =
+    Lower.checking s (fun () ->
+        trace s (fun () -> r.req_step (List.map snd carry) (List.map snd rows)))
   in
   let same_shape (_, Nx.P c) (Nx.P c') =
     Nx.shape c = Nx.shape c' && Nx.Placement.equal (Nx.placement c') p
@@ -291,6 +292,28 @@ let stage trace s (r : Scan.request) =
             (fun y -> Nx.Placement.(equal (at y) p || equal (at y) host))
             ys)
   then raise Scan.Not_staged;
+  (* Each check of the step carries the index of its first failure, or its
+     element count while none failed: the first trip that fails keeps its
+     index. *)
+  let failures =
+    List.map
+      (fun (c : Lower.check) ->
+        let count = numel c.shape in
+        let slot, v = parameter p Nx.int64 [||] in
+        let u = Lower.uop v in
+        let next =
+          Ops.where
+            (Ops.lt u (Ops.const_like u (`Int (Bigint.of_int count))))
+            u (Lower.uop c.first)
+        in
+        ( Nx.P (Nx.scalar Nx.int64 (Int64.of_int count)),
+          (slot, Nx.P v),
+          Nx.P (Lower.traced p Nx.int64 next) ))
+      checks
+  in
+  let init = r.req_carry @ List.map (fun (i, _, _) -> i) failures
+  and carry = carry @ List.map (fun (_, c, _) -> c) failures
+  and carry' = carry' @ List.map (fun (_, _, n) -> n) failures in
   let (Nx.P x) = List.hd r.req_xs in
   let n = (Nx.shape x).(0) in
   let range = Ops.range ~axis_type:Loop (Ops.Int n) [ Ops.unique_num () ] in
@@ -351,7 +374,7 @@ let stage trace s (r : Scan.request) =
         in
         stores := Ops.store u v :: !stores;
         fun e -> Ops.reshape (Ops.after b [ e ]) shape)
-      (List.combine r.req_carry carry)
+      (List.combine init carry)
   in
   (* Each trip reads its row of each stacked input, from a copy whose rows are
      16 bytes apart when the input's are not. *)
@@ -427,11 +450,28 @@ let stage trace s (r : Scan.request) =
          (Ops.src linear))
   then raise Scan.Not_staged;
   let e = call !args in
+  let finals =
+    List.map2
+      (fun (Nx.P c) final -> Nx.P (Lower.traced p (Nx.dtype c) (final e)))
+      init carries
+  in
+  let r_carry, firsts = Scan.split (List.length r.req_carry) finals in
+  (* A step's check holds where the loop's first failure is not. *)
+  List.iter2
+    (fun (c : Lower.check) (Nx.P first) ->
+      let count = numel c.shape in
+      let u = Lower.uop first in
+      let ok =
+        Ops.reshape
+          (Ops.ne
+             (Ops.arange ~dtype:Int64 count)
+             (Lower.broadcast u [| count |]))
+          (ints (Array.to_list c.shape))
+      in
+      Lower.op s (Nx.Op.Check { ok = Lower.traced p Nx.bool ok; msg = c.msg }))
+    checks firsts;
   {
-    Scan.r_carry =
-      List.map2
-        (fun (Nx.P c) final -> Nx.P (Lower.traced p (Nx.dtype c) (final e)))
-        r.req_carry carries;
+    Scan.r_carry;
     r_ys =
       (* An output on the host is written on the loop's device, and its rows
          copied to the host once the loop ran. *)

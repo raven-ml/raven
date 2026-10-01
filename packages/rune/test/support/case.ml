@@ -156,6 +156,8 @@ let unary_domain : Nx_backend.unary -> float Gen.t = function
   | Recip -> away 0.1 3.
   | Sqrt -> range 0.1 5.
   | Log -> range 0.1 10.
+  | Log1p -> range (-0.9) 10.
+  | Expm1 -> range (-5.) 5.
   | Sin | Cos -> range (-6.) 6.
   | Tan -> range (-1.4) 1.4
   | Asin | Acos -> range (-0.9) 0.9
@@ -180,7 +182,7 @@ let unary_complex : Nx_backend.unary -> (float Gen.t * float Gen.t) option =
   | Asin | Acos -> Some (range (-0.8) 0.8, range (-1.5) 1.5)
   | Atan -> Some (range (-2.) 2., range (-0.8) 0.8)
   | Abs | Sign -> Some (away 0.1 2., away 0.1 2.)
-  | Erf | Trunc | Ceil | Floor | Round -> None
+  | Log1p | Expm1 | Erf | Trunc | Ceil | Floor | Round -> None
 
 let unary_derivative : Nx_backend.unary -> (float -> float) option = function
   | Neg -> Some (fun _ -> -1.)
@@ -188,6 +190,8 @@ let unary_derivative : Nx_backend.unary -> (float -> float) option = function
   | Sqrt -> Some (fun x -> 1. /. (2. *. Float.sqrt x))
   | Exp -> Some Float.exp
   | Log -> Some (fun x -> 1. /. x)
+  | Log1p -> Some (fun x -> 1. /. (1. +. x))
+  | Expm1 -> Some Float.exp
   | Sin -> Some Float.cos
   | Cos -> Some (fun x -> -.Float.sin x)
   | Tan -> Some (fun x -> 1. /. (Float.cos x *. Float.cos x))
@@ -360,6 +364,26 @@ let where_case =
     ~complex:(where_instance (ctensor Nx.complex128 plane))
     Where
     (fun (D d) -> where_instance (tensor d (range (-3.) 3.)))
+
+(* A multiply-add is linear in its sum and one factor together. *)
+let fma_instance g =
+  let* s = shape 0 3 in
+  let+ a = g s and+ b = g s and+ c = g s and+ tracked = patterns 3 in
+  nary "fma"
+    (fun xs ->
+      match xs with
+      | [ a; b; c ] -> [ Op.eval (Fma (a, b, c)) ]
+      | _ -> invalid_arg "Case: three operands")
+    [ a; b; c ] tracked
+    (match tracked with
+    | [ true; false; true ] | [ false; true; true ] -> Coefficients
+    | _ -> Not_linear)
+
+let fma_case =
+  case
+    ~finite:(fma_instance (tensor Nx.float64 tied))
+    Fma
+    (fun (D d) -> fma_instance (tensor d (range (-3.) 3.)))
 
 (* Reductions and scans *)
 
@@ -1315,6 +1339,7 @@ let of_row : Row.t -> t = function
   | Binary k -> binary_case k
   | Compare k -> compare_case k
   | Where -> where_case
+  | Fma -> fma_case
   | Reduce k -> reduce_case k
   | Scan k -> scan_case k
   | Arg_reduce k -> arg_reduce_case k
@@ -1345,5 +1370,8 @@ let of_row : Row.t -> t = function
   | Move m -> move_case m
   | Place -> place_case
   | Read -> invalid_arg "Case.of_row: a read's result is a buffer"
+  | Check -> invalid_arg "Case.of_row: a check has no result"
 
-let all = List.map of_row (List.filter (fun r -> r <> Row.Read) Row.all)
+let all =
+  List.map of_row
+    (List.filter (fun r -> r <> Row.Read && r <> Row.Check) Row.all)

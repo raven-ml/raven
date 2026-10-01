@@ -179,6 +179,29 @@ let unary_edges (k : Nx_backend.unary) =
                ("where tanh rounds to 1 the tangent is 0", 20., 0.);
              ]);
       ]
+  | Log1p ->
+      [
+        point_cases k
+          (List.map row
+             [
+               ("at 0 the tangent is v", 0., 1.);
+               ("at -1 the tangent is +inf", -1., inf);
+               ( "below -1 the tangent is v / (1 + x) beside a NaN value",
+                 -3.,
+                 -0.5 );
+               ("at +inf the tangent is 0", inf, 0.);
+             ]);
+      ]
+  | Expm1 ->
+      [
+        point_cases k
+          (List.map row
+             [
+               ("at 0 the tangent is v", 0., 1.);
+               ("at -inf the tangent is 0", Float.neg_infinity, 0.);
+               ("past the float range the tangent is +inf", 710., inf);
+             ]);
+      ]
   | Erf ->
       [ point_cases k (List.map row [ ("far out the tangent is 0", 30., 0.) ]) ]
   | Abs ->

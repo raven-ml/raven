@@ -45,6 +45,8 @@ external caml_sign : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_sign"
 external caml_sqrt : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_sqrt"
 external caml_exp : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_exp"
 external caml_log : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_log"
+external caml_log1p : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_log1p"
+external caml_expm1 : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_expm1"
 external caml_sin : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_sin"
 external caml_cos : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_cos"
 external caml_tan : ('a, 'b) t -> ('a, 'b) t -> unit = "caml_nx_c_tan"
@@ -115,6 +117,9 @@ external caml_cmple :
   (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_cmple"
 
+external caml_fma : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  = "caml_nx_c_fma"
+
 external caml_where :
   ('a, 'b) t -> (bool, Nx_dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   = "caml_nx_c_where"
@@ -130,6 +135,8 @@ let unary (k : Nx_backend.unary) x ~dst =
   | Sign -> caml_sign dst x
   | Exp -> caml_exp dst x
   | Log -> caml_log dst x
+  | Log1p -> caml_log1p dst x
+  | Expm1 -> caml_expm1 dst x
   | Sin -> caml_sin dst x
   | Cos -> caml_cos dst x
   | Tan -> caml_tan dst x
@@ -168,6 +175,7 @@ let compare (k : Nx_backend.compare) x y ~dst =
   | Less -> caml_cmplt dst x y
   | Less_equal -> caml_cmple dst x y
 
+let fma a b c ~dst = caml_fma dst a b c
 let where c x y ~dst = caml_where dst c x y
 let cast x ~dst = caml_cast dst x
 
@@ -481,6 +489,7 @@ let backend =
       let runs_on = runs_on
       let unary = unary
       let binary = binary
+      let fma = fma
       let compare = compare
       let where = where
       let reduce = reduce

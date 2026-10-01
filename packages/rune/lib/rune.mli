@@ -663,6 +663,13 @@ val jit :
     [f] returns at two leaves comes back as two values, the second a copy of the
     first.
 
+    {b Checks.} {!Nx.check} of a value [f] computes reads nothing as [f] traces:
+    the program also returns the index of each check's first false element, and
+    once it has run, the call raises [Invalid_argument] with the message of the
+    first check traced that failed, its consumed arguments consumed. A check in
+    a staged {!scan} reports the first step that fails. The message is made
+    then, from the values [f] captured as it traced.
+
     {b Consumption.} Before its first kernel, a call marks every storage that a
     leaf of a consumed argument reaches as consumed; nothing unmarks it. From
     then on a read of any value over that storage, or its use as an operand or

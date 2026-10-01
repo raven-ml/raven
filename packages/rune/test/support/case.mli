@@ -68,6 +68,6 @@ val of_row : Row.t -> t
 
 val all : t list
 (** [all] is {!of_row} of every row of {!Row.all} with a tensor result: every
-    row but [Read], whose result is a buffer. *)
+    row but [Read], whose result is a buffer, and [Check], which has none. *)
 
 val float64 : dtype
