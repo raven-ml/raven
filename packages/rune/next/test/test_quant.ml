@@ -13,10 +13,6 @@ open Windtrap
 open Nx_test
 module Rune = Rune_next.Rune
 
-let unanswered =
-  "rune.next answers no Nx_quant effect: nx.quant's eager product reads its \
-   operands' bytes, so a trace raises Jit_error and a derivative is zero"
-
 let rng = Random.State.make [| 7 |]
 
 (* Scale bytes of finite values, with 0 and 1 (subnormal values) and 255 (NaN
@@ -362,7 +358,14 @@ let dense ?ids w x =
   in
   Nx.matmul x (Nx.matrix_transpose w')
 
-let close = tensor (Nx_test.close ~abs:1e-5 ~rel:1e-5 ())
+(* [near expected actual] checks [actual] against [expected] within float32 sums
+   in another order: each value within 2^-14 of [expected]'s largest magnitude,
+   which bounds the terms of these products' sums. *)
+let near ?msg expected actual =
+  let largest = Nx.item [] (Nx.max (Nx.abs expected)) in
+  equal ?msg
+    (tensor (Nx_test.close ~abs:(Float.ldexp largest (-14)) ~rel:0. ()))
+    expected actual
 
 (* A loss weighting each value of a product differently, so that a gradient
    tells its positions apart. *)
@@ -386,15 +389,15 @@ let rule_cases () =
 let rules =
   group "rules"
     [
-      cases
+      cases ~tags:[ "slow" ]
         ~name:(fun (n, _, _, _) -> n)
         "the gradient in x is the dense product's, eager and compiled"
         (rule_cases ())
         (fun (_, ids, w, x) ->
           let expected = Rune.grad' (fun x -> weighted (dense ?ids w x)) x in
           let f x = weighted (Nx_quant.apply ?ids w x) in
-          equal ~msg:"eager" close expected (Rune.grad' f x);
-          equal ~msg:"compiled" close expected (Rune.jit' (Rune.grad' f) x));
+          near ~msg:"eager" expected (Rune.grad' f x);
+          near ~msg:"compiled" expected (Rune.jit' (Rune.grad' f) x));
       test
         "the gradient through a sum over the positions is the dense product's"
         (fun () ->
@@ -403,9 +406,9 @@ let rules =
           let x = floats [| 3; 1; 1; 64 |] in
           let mixed p x = weighted (Nx.sum ~axes:[ 1 ] (p x)) in
           let expected = Rune.grad' (mixed (dense ~ids w)) x in
-          equal ~msg:"eager" close expected
+          near ~msg:"eager" expected
             (Rune.grad' (mixed (Nx_quant.apply ~ids w)) x);
-          equal ~msg:"compiled" close expected
+          near ~msg:"compiled" expected
             (Rune.jit' (Rune.grad' (mixed (Nx_quant.apply ~ids w))) x));
       cases
         ~name:(fun (n, _, _, _) -> n)
@@ -415,9 +418,9 @@ let rules =
           let t = floats (Nx.shape x) in
           let y, dy = Rune.jvp' (Nx_quant.apply ?ids w) x t in
           let y', dy' = Rune.jvp' (dense ?ids w) x t in
-          equal ~msg:"primal" close y' y;
-          equal ~msg:"tangent" close dy' dy;
-          equal ~msg:"compiled tangent" close dy'
+          near ~msg:"primal" y' y;
+          near ~msg:"tangent" dy' dy;
+          near ~msg:"compiled tangent" dy'
             (Rune.jit' (fun x -> snd (Rune.jvp' (Nx_quant.apply ?ids w) x t)) x));
       test "a map over x is each row's product, eager and compiled" (fun () ->
           let w = weight ~scale:moderate [| 4; 8; 64 |] in
@@ -427,8 +430,8 @@ let rules =
           let expected =
             Nx.stack (List.init 3 (fun i -> f (Nx.slice [ I i ] xs)))
           in
-          equal ~msg:"eager" close expected (Rune.vmap' f xs);
-          equal ~msg:"compiled" close expected (Rune.jit' (Rune.vmap' f) xs));
+          near ~msg:"eager" expected (Rune.vmap' f xs);
+          near ~msg:"compiled" expected (Rune.jit' (Rune.vmap' f) xs));
       test "a map over routes and rows is each one's product, compiled"
         (fun () ->
           let w = weight ~scale:moderate [| 4; 8; 64 |] in
@@ -443,7 +446,7 @@ let rules =
               (List.init 3 (fun i ->
                    f (Nx.slice [ I i ] ids, Nx.slice [ I i ] xs)))
           in
-          equal close expected (Rune.jit s (Rune.vmap s f) (ids, xs)));
+          near expected (Rune.jit s (Rune.vmap s f) (ids, xs)));
       test "a map over weights is each weight's product, compiled" (fun () ->
           let ws = weight ~scale:moderate [| 3; 4; 8; 64 |] in
           let ids = ints [| 2 |] [| 0; 3 |] and x = floats [| 2; 1; 64 |] in
@@ -453,8 +456,8 @@ let rules =
           let f w = Nx_quant.apply ~ids w x in
           let s = Nx.Ptree.(Nx_quant.ptree @-> returns tensor) in
           let expected = Nx.stack (List.init 3 (fun i -> f (lane i))) in
-          equal ~msg:"eager" close expected (Rune.vmap s f ws);
-          equal ~msg:"compiled" close expected (Rune.jit s (Rune.vmap s f) ws));
+          near ~msg:"eager" expected (Rune.vmap s f ws);
+          near ~msg:"compiled" expected (Rune.jit s (Rune.vmap s f) ws));
     ]
 
 let empty =
@@ -510,10 +513,10 @@ let () =
   exit
     (run "Rune_next.Quant"
        [
-         xfail ~reason:unanswered values;
-         xfail ~reason:unanswered placements;
-         xfail ~reason:unanswered rules;
+         values;
+         placements;
+         rules;
          empty;
          undifferentiated;
-         group ~tags:[ "slow" ] "metal" [ xfail ~reason:unanswered metal ];
+         group ~tags:[ "slow" ] "metal" [ metal ];
        ])

@@ -762,7 +762,7 @@ The eager-against-compiled rows of this file are the Compiled section's.
 
 ### test_quant.ml, compiled
 
-The suite is `Rune_next.Quant` (`next/test/test_quant.ml`), written `Q` below: the compiled product against eager's, on the host, on test devices with placements, and on Metal (`Q › metal › …`, slow), and its derivatives and maps against the product with the dequantised weight. Its tests are expected failures until rune.next answers nx.quant's effect.
+The suite is `Rune_next.Quant` (`next/test/test_quant.ml`), written `Q` below: the compiled product against eager's, on the host, on test devices with placements, and on Metal (`Q › metal › …`, slow), and its derivatives and maps against the product with the dequantised weight.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
