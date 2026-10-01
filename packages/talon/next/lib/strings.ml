@@ -59,27 +59,139 @@ let rec invalid a i stop =
   if i >= stop then -1
   else match sequence a i stop with 0 -> i | n -> invalid a (i + n) stop
 
-let utf_8 ~by ?mask r =
+(* [rows ~by ?mask r f] calls [f i v first stop] on each row [i] of [r] that
+   [mask] holds, [v] the bytes and [\[first, stop)] the row's. *)
+let rows ~by ?mask r f =
   let n = Nx_ragged.length r and read x f = reading ~by x f in
-  let first o v skip =
-    let rec row i =
-      if i = n then None
-      else if skip i then row (i + 1)
-      else
-        let start = Int64.to_int (A.unsafe_get o i) in
-        match invalid v start (Int64.to_int (A.unsafe_get o (i + 1))) with
-        | -1 -> row (i + 1)
-        | j -> Some (i, Printf.sprintf "invalid UTF-8 at byte %d" (j - start))
-    in
-    row 0
-  in
   read (Nx_ragged.offsets r) @@ fun o ->
   read (Nx_ragged.values r) @@ fun v ->
   let o = B.bigarray Bigarray.int64 o
   and v = B.bigarray Bigarray.int8_unsigned v in
+  let loop skip =
+    for i = 0 to n - 1 do
+      if not (skip i) then
+        f i v
+          (Int64.to_int (A.unsafe_get o i))
+          (Int64.to_int (A.unsafe_get o (i + 1)))
+    done
+  in
   match mask with
-  | None -> first o v (Fun.const false)
+  | None -> loop (Fun.const false)
   | Some mask ->
       read mask @@ fun m ->
       let m = B.bigarray Bigarray.int8_unsigned m in
-      first o v (fun i -> A.unsafe_get m i = 0)
+      loop (fun i -> A.unsafe_get m i = 0)
+
+exception Invalid_row of int * string
+
+let utf_8 ~by ?mask r =
+  let check i v first stop =
+    match invalid v first stop with
+    | -1 -> ()
+    | j ->
+        let why = Printf.sprintf "invalid UTF-8 at byte %d" (j - first) in
+        raise_notrace (Invalid_row (i, why))
+  in
+  match rows ~by ?mask r check with
+  | () -> None
+  | exception Invalid_row (i, why) -> Some (i, why)
+
+(* Scalar values *)
+
+let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+let starts_scalar v j = A.unsafe_get v j land 0xc0 <> 0x80
+
+(* [count v i stop] is the number of scalar values in the bytes [i, stop). *)
+let count v i stop =
+  let n = ref 0 in
+  for j = i to stop - 1 do
+    if starts_scalar v j then incr n
+  done;
+  !n
+
+(* [skip v i stop k] is the byte at which scalar value [k] of [i, stop) starts,
+   or [stop] past the last. *)
+let rec skip v i stop k =
+  if i >= stop || (k = 0 && starts_scalar v i) then i
+  else skip v (i + 1) stop (if starts_scalar v i then k - 1 else k)
+
+let length ~by ?mask r =
+  let ns = A.create Bigarray.int64 Bigarray.c_layout (Nx_ragged.length r) in
+  A.fill ns 0L;
+  rows ~by ?mask r (fun i v first stop ->
+      A.unsafe_set ns i (Int64.of_int (count v first stop)));
+  tensor ns
+
+let slice ~by ?mask ~offset ~length r =
+  let n = Nx_ragged.length r in
+  let lo = Array.make n 0 and hi = Array.make n 0 in
+  rows ~by ?mask r (fun i v first stop ->
+      let p = if offset >= 0 then offset else count v first stop + offset in
+      let p1 = if p > max_int - length then max_int else p + length in
+      let p0 = Int.max p 0 and p1 = Int.max p1 0 in
+      lo.(i) <- skip v first stop p0;
+      hi.(i) <- skip v lo.(i) stop (Int.max 0 (p1 - p0)));
+  let offsets = A.create Bigarray.int64 Bigarray.c_layout (n + 1) in
+  A.unsafe_set offsets 0 0L;
+  for i = 0 to n - 1 do
+    A.unsafe_set offsets (i + 1)
+      (Int64.add (A.unsafe_get offsets i) (Int64.of_int (hi.(i) - lo.(i))))
+  done;
+  let bytes =
+    A.create Bigarray.int8_unsigned Bigarray.c_layout
+      (Int64.to_int (A.unsafe_get offsets n))
+  in
+  reading ~by (Nx_ragged.values r) (fun v ->
+      let v = B.bigarray Bigarray.int8_unsigned v in
+      for i = 0 to n - 1 do
+        let at = Int64.to_int (A.unsafe_get offsets i) in
+        A.blit
+          (A.sub v lo.(i) (hi.(i) - lo.(i)))
+          (A.sub bytes at (hi.(i) - lo.(i)))
+      done);
+  Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
+
+type pattern =
+  | Literal of string
+  | Prefix of string
+  | Suffix of string
+  | Pieces of string list
+
+(* [at v j s] is [true] iff the bytes of [s] start at byte [j]. *)
+let at v j s =
+  let n = String.length s in
+  let rec loop k =
+    k = n || (A.unsafe_get v (j + k) = Char.code s.[k] && loop (k + 1))
+  in
+  loop 0
+
+(* [find v i stop s] is the first byte of [i, stop) at which [s] lies whole, or
+   [-1]. *)
+let rec find v i stop s =
+  if i + String.length s > stop then -1
+  else if at v i s then i
+  else find v (i + 1) stop s
+
+let matches ~by ?mask p r =
+  let hits =
+    A.create Bigarray.int8_unsigned Bigarray.c_layout (Nx_ragged.length r)
+  in
+  A.fill hits 0;
+  let rec pieces v i stop = function
+    | [] -> true
+    | s :: ss ->
+        let j = find v i stop s in
+        j >= 0 && pieces v (j + String.length s) stop ss
+  in
+  let matches v first stop =
+    match p with
+    | Literal s -> find v first stop s >= 0
+    | Prefix s -> stop - first >= String.length s && at v first s
+    | Suffix s ->
+        let j = stop - String.length s in
+        j >= first && at v j s
+    | Pieces ss -> pieces v first stop ss
+  in
+  rows ~by ?mask r (fun i v first stop ->
+      if matches v first stop then A.unsafe_set hits i 1);
+  Nx.cast Nx.bool (tensor hits)

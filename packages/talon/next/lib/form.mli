@@ -20,6 +20,17 @@ val parse : Type.any -> Column.t -> (Column.t, int * string) result
     Raises [Invalid_argument] if [c] is not a [string] or [binary] column, or
     [ty] is another type. *)
 
+val parse_with :
+  string -> Type.any -> Column.t -> (Column.t, int * string) result
+(** [parse_with fmt ty c] is like {!parse} for texts in the format [fmt], read
+    as [Talon_next.Expr.Temporal.parse] says: [ty] is [date], a clock or a
+    datetime. *)
+
+val format_with : string -> Column.t -> Column.t
+(** [format_with fmt c] is the text of [c]'s rows, of a [date], clock or
+    datetime type, in the format [fmt], as [Talon_next.Expr.Temporal.format]
+    writes it, null where [c] is. *)
+
 (** {1:print Printing} *)
 
 val pp : 'a Type.t -> Format.formatter -> 'a -> unit

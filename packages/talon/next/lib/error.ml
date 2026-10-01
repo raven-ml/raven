@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 type t = {
+  step : (string * int) option;
   file : string option;
   line : int option;
   column : int option;
@@ -30,7 +31,7 @@ let v ?file ?line ?column ?row_group ?bytes ?text msg =
   | Some (first, last) when first < 0 || last < first ->
       err "invalid byte range (%d, %d)" first last
   | _ -> ());
-  { file; line; column; row_group; bytes; text; msg }
+  { step = None; file; line; column; row_group; bytes; text; msg }
 
 let text_limit = 64
 
@@ -78,8 +79,11 @@ let pp_bytes ppf = function
   | first, last when first = last -> Format.fprintf ppf "byte %d" first
   | first, last -> Format.fprintf ppf "bytes %d-%d" first last
 
+let in_step step ~row e = { e with step = Some (step, row) }
+
 let pp ppf e =
   let place pp v = Format.fprintf ppf "%a: " pp v in
+  Option.iter (fun (s, r) -> Format.fprintf ppf "%s: row %d: " s r) e.step;
   (match (e.file, e.line, e.column) with
   | Some f, None, _ -> Format.fprintf ppf "%s: " f
   | Some f, Some l, None -> Format.fprintf ppf "%s:%d: " f l

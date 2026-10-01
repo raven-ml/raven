@@ -108,3 +108,13 @@
   (progn
    (run %{test} --corrected)
    (diff? test_run.ml test_run.ml.corrected))))
+
+(test
+ (name test_convert)
+ (modules test_convert)
+ (package talon)
+ (libraries windtrap talon.next talon_gen nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_convert.ml test_convert.ml.corrected))))

@@ -75,7 +75,7 @@ let check side (count : Join.count) keys counts =
           Format.asprintf "the %s row%a matches %Ld rows, not %s" side whose
             keys (Nx.item [ row ] c) (phrase count)
         in
-        Error { Eval.row; cause = Data why }
+        Error { Eval.row; cause = Data (Error.v (why ^ ".")) }
 
 let named t ns = List.map (fun n -> (n, Table.column t n)) ns
 

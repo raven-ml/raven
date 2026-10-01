@@ -45,6 +45,11 @@ type ('a, 's) term =
   | Bind :
       int Type.t * ('a option -> int option) * ('a, 's) term
       -> (int, 's) term
+  | Cast : int Type.t * (int, 's) term -> (int, 's) term
+  | Length : (string, 's) term -> (int, 's) term
+  | Substring : int * int * (string, 's) term -> (string, 's) term
+  | Parse : int Type.t * (string, 's) term -> (int, 's) term
+  | Field : Expr.Temporal.field * (Time.date, 's) term -> (int, 's) term
   | Rows : (int, Expr.agg) term
   | Reduce : ('a, 'b) reduction * ('a, Expr.row) term -> ('b, Expr.agg) term
   | Over : string list * key list * ('a, 's) term -> ('a, Expr.row) term
@@ -96,6 +101,11 @@ let rec type_of : type a s. (a, s) term -> a Type.t = function
   | Col (ty, _) | Lit (ty, _) | Null ty | Store (ty, _) -> ty
   | Map (ty, _, _) -> ty
   | Bind (ty, _, _) -> ty
+  | Cast (ty, _) -> ty
+  | Parse (ty, _) -> ty
+  | Length _ -> Type.int64
+  | Field _ -> Type.int64
+  | Substring _ -> Type.string
   | Int (_, a, b) -> common a b
   | Float (_, a, b) -> common a b
   | If (_, a, b) -> common a b
@@ -183,6 +193,11 @@ let rec expr : type a s. (a, s) term -> (a, s) Expr.t = function
   | Store (ty, a) -> Expr.store ty (expr a)
   | Map (ty, f, a) -> Expr.(store ty (const f $ expr a))
   | Bind (ty, f, a) -> Expr.(store ty (of_option (const f $ option (expr a))))
+  | Cast (ty, a) -> Expr.cast ty (expr a)
+  | Length a -> Expr.Str.length (expr a)
+  | Substring (offset, length, a) -> Expr.Str.slice ~offset ~length (expr a)
+  | Parse (ty, a) -> Expr.Str.parse ty (expr a)
+  | Field (f, a) -> Expr.Temporal.field f (expr a)
   | Rows -> Expr.rows
   | Over (by, keys, a) -> Expr.over ~by ~order:(List.map order keys) (expr a)
   | Shift (n, a) -> Expr.shift n (expr a)
@@ -395,6 +410,52 @@ let ocaml fr ty f vs =
           None)
     vs
 
+(* Text and dates *)
+
+(* [scalars s] is the scalar values of [s], each as its UTF-8 bytes. *)
+let scalars s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let n = Uchar.utf_decode_length (String.get_utf_8_uchar s i) in
+      go (i + n) (String.sub s i n :: acc)
+  in
+  go 0 []
+
+let slice offset length s =
+  let us = scalars s in
+  let p = if offset >= 0 then offset else List.length us + offset in
+  String.concat "" (List.filteri (fun i _ -> i >= p && i - p < length) us)
+
+let is_digit c = '0' <= c && c <= '9'
+
+(* [parse ty s] is the integer that [s] writes, or the reason it does not,
+   quoting [s] as errors do. *)
+let parse ty s =
+  let fail why = Error (Format.asprintf "%a" Error.pp (Error.v ~text:s why)) in
+  let sign = if s <> "" && (s.[0] = '-' || s.[0] = '+') then 1 else 0 in
+  let n = String.length s - sign in
+  if n = 0 || not (String.for_all is_digit (String.sub s sign n)) then
+    fail "not an integer"
+  else
+    match int_of_string_opt (if s.[0] = '+' then String.sub s 1 n else s) with
+    | Some v when Type.holds ty v -> Ok v
+    | _ -> fail "out of range"
+
+let field f d =
+  let y, m, day = Time.Date.to_civil d in
+  match f with
+  | `Year -> y
+  | `Month -> m
+  | `Day -> day
+  | `Yearday ->
+      let before =
+        [| 0; 31; 59; 90; 120; 151; 181; 212; 243; 273; 304; 334 |]
+      in
+      let leap = (y mod 4 = 0 && y mod 100 <> 0) || y mod 400 = 0 in
+      before.(m - 1) + day + if m > 2 && leap then 1 else 0
+  | _ -> invalid_arg "Reference: a field of a date's time of day"
+
 let compare_cells (Cell (ty, x)) c =
   match (x, read ty c) with
   | None, None -> 0
@@ -564,6 +625,30 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
         (eval fr a)
   | Map (ty, f, a) -> ocaml fr ty (Option.map f) (eval fr a)
   | Bind (ty, f, a) -> ocaml fr ty f (eval fr a)
+  | Cast (ty, a) ->
+      let cast i = function
+        | Some v when not (Type.holds ty v) ->
+            let why = Format.asprintf "cannot cast %d to %a" v Type.pp ty in
+            fail fr i (Data why);
+            None
+        | v -> v
+      in
+      Array.mapi cast (eval fr a)
+  | Length a ->
+      Array.map (Option.map (fun s -> List.length (scalars s))) (eval fr a)
+  | Substring (offset, length, a) ->
+      Array.map (Option.map (slice offset length)) (eval fr a)
+  | Parse (ty, a) ->
+      let read i v =
+        match Option.map (parse ty) v with
+        | None -> None
+        | Some (Ok v) -> Some v
+        | Some (Error why) ->
+            fail fr i (Data why);
+            None
+      in
+      Array.mapi read (eval fr a)
+  | Field (f, a) -> Array.map (Option.map (field f)) (eval fr a)
   | Rows -> Array.make (size fr) (Some (Array.length fr.rows))
   | Reduce (r, a) ->
       let v = reduce fr r (type_of a) (eval { fr with one = false } a) in
@@ -639,6 +724,9 @@ let rec local : type a s. (a, s) term -> bool = function
   | Store (_, a) -> local a
   | Map (_, _, a) -> local a
   | Bind (_, _, a) -> local a
+  | Cast (_, a) -> local a
+  | Parse (_, a) | Length a | Substring (_, _, a) -> local a
+  | Field (_, a) -> local a
   | Reduce (_, a) -> local a
 
 let local_outs os =

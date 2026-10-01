@@ -22,10 +22,10 @@ let frame b =
 
 let groups b segments = { (frame b) with segments; reduced = true }
 
-type cause = Data of string | Raised of exn * Printexc.raw_backtrace
+type cause = Data of Error.t | Raised of exn * Printexc.raw_backtrace
 type failure = { row : int; cause : cause }
 
-let not_lowered what = invalid_arg (what ^ " is not implemented yet")
+let not_lowered = Kernels.not_lowered
 
 (* Columns
 
@@ -107,28 +107,18 @@ let meet : type a. a Expr.typing -> a Expr.typing -> Type.any =
 (* [widen from t] converts a column of type [from] to the type [t] that contains
    it: binding leaves each operand at its own type, and its operation casts it
    to the type they meet at. The conversion is chosen when the expression
-   compiles, so one that no unit lowers yet is refused before any data is
-   read. *)
-let widen (Type.Any from) (Type.Any ty as t) =
-  match (from, ty, dtype from, dtype ty) with
+   compiles. *)
+let widen (Type.Any from as f) (Type.Any ty as t) =
+  match (dtype from, dtype ty) with
   | _ when Type.equal from ty -> Fun.id
-  | Categorical _, Categorical _, _, _ ->
-      fun c -> Column.with_data t (Column.data c) c
-  | Categorical dict, String, _, _ ->
-      let text = Column.v Type.string (Iarray.to_array dict) in
-      fun c ->
-        let codes = tensor Nx.int64 c in
-        let null = Nx.full Nx.int64 [| Column.length c |] (-1L) in
-        let codes =
-          Option.fold ~none:codes
-            ~some:(fun v -> Nx.where v codes null)
-            (Column.valid c)
-        in
-        Column.take codes text
-  | _, _, Some _, Some (Dtype dt) ->
+  | Some _, Some (Dtype dt) ->
       fun c -> Column.with_data t (Fixed (P (tensor dt c))) c
-  | _ ->
-      not_lowered (Format.asprintf "widening %a to %a" Type.pp from Type.pp ty)
+  | _ -> (
+      let cast = Kernels.cast f t in
+      fun c ->
+        match cast c with
+        | c, None -> c
+        | _, Some _ -> assert false (* A widening keeps every value. *))
 
 (* [words a b] is the order words ({!Key.value}) of the rows of the compound
    columns [a] and [b], of one type, which compare as their values do. A
@@ -375,6 +365,15 @@ let fail env i cause =
   | Some f when f.row <= row -> ()
   | _ -> env.failure := Some { row; cause }
 
+let data why = Data (Error.v (why ^ "."))
+
+(* [checked env (c, f)] is [c], recording its failure [f]. A column of literals
+   fails at its first value, if [env] has values. *)
+let checked env (c, f) =
+  let fails (i, e) = if i < env.extent then fail env i (Data e) in
+  Option.iter fails f;
+  c
+
 (* [fill env c] is [c], or the one row of literals [c] repeated [env.extent]
    times. *)
 let fill env c =
@@ -417,7 +416,7 @@ let decode env dec c =
   match dec c with
   | Ok get -> each env get
   | Error (row, why) ->
-      fail env row (Data why);
+      fail env row (data why);
       each env (Result.get_ok (dec (Column.sub c ~offset:0 ~length:row)))
 
 (* [store env t vs] is the column of the OCaml values [vs] at the column typing
@@ -430,7 +429,7 @@ let store : type a. env -> a Expr.typing -> a option array -> Column.t =
     match Column.encode ty n (Array.get vs) with
     | Ok c -> c
     | Error (row, why) ->
-        fail env row (Data why);
+        fail env row (data why);
         Result.get_ok
           (Column.encode ty n (fun i -> if i < row then vs.(i) else None))
   in
@@ -472,6 +471,21 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
     fun env ->
       let a = get env a in
       f a (get env b)
+  in
+  let unary_checked a f =
+    let a = compile st a in
+    fun env -> checked env (f (get env a))
+  in
+  let binary_checked a b f =
+    let a = compile st a and b = compile st b in
+    fun env ->
+      let a = get env a in
+      checked env (f a (get env b))
+  in
+  (* Text operations read a categorical as its text. *)
+  let textual a f =
+    let w = widen (type_of (Expr.typing a)) (Any Type.string) in
+    unary_checked a (fun c -> f (w c))
   in
   let ternary a b c f =
     let a = compile st a and b = compile st b and c = compile st c in
@@ -556,7 +570,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
         let c, f =
           Reduce.reduce r ty env.frame.segments (fill rows (get rows a))
         in
-        Option.iter (fun (i, why) -> fail env i (Data why)) f;
+        Option.iter (fun (i, why) -> fail env i (data why)) f;
         c
   | Over { by; order; e = x }, _ ->
       (* [x]'s nodes evaluate in the refined frame, so they share no slot with
@@ -583,6 +597,24 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Rank a, _ ->
       let a = compile st a in
       fun env -> Reduce.rank env.frame.segments (fill env (get env a))
+  | Cast (ty, a), _ ->
+      unary_checked a (Kernels.cast (type_of (Expr.typing a)) (Any ty))
+  | Text (op, a), _ -> textual a (Kernels.text op)
+  | Calendar op, _ -> (
+      let t e = type_of (Expr.typing e) in
+      match op with
+      | Add_span (a, d) -> binary_checked a d (Kernels.add (t a) (t d))
+      | Diff (a, b) ->
+          let m = meet (Expr.typing a) (Expr.typing b) in
+          let wa = widen (t a) m and wb = widen (t b) m in
+          let diff = Kernels.diff m in
+          binary_checked a b (fun a b -> diff (wa a) (wb b))
+      | Part (f, None, a) -> unary a (Kernels.field f (t a))
+      | Floor (None, step, a) -> unary_checked a (Kernels.floor step (t a))
+      | Offset (None, step, a) -> unary_checked a (Kernels.offset step (t a))
+      | Parse_with (fmt, ty, a) -> textual a (Kernels.parse_with fmt (Any ty))
+      | Format_with (fmt, a) -> unary a (Form.format_with fmt)
+      | _ -> not_lowered (Format.asprintf "%a" Expr.pp e))
   | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
 
 (* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is

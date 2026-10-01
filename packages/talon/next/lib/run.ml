@@ -20,8 +20,7 @@ let line pp v =
    over the step's input. *)
 let failed step (f : Eval.failure) =
   match f.cause with
-  | Data why ->
-      raise (Failed (Error.v (Printf.sprintf "%s: row %d: %s." step f.row why)))
+  | Data e -> raise (Failed (Error.in_step step ~row:f.row e))
   | Raised (exn, bt) -> Printexc.raise_with_backtrace exn bt
 
 let sub b ~offset ~length =
@@ -381,8 +380,8 @@ let values e q =
     let stop = match f with Some f -> f.row | None -> Table.rows b in
     (match Array.find_index Option.is_none (Array.sub vs 0 stop) with
     | Some i ->
-        let null = "the value is null; read it through Expr.option" in
-        failed step { row = rows + i; cause = Data null }
+        let null = "the value is null; read it through Expr.option." in
+        failed step { row = rows + i; cause = Data (Error.v null) }
     | None ->
         Option.iter
           (fun (f : Eval.failure) -> failed step { f with row = rows + f.row })

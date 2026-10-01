@@ -24,11 +24,12 @@
     needs from its input: a slice from the start pulls its input's first
     [offset + length] rows, and a slice from the end and a step that is not
     local all of them. A frame fails at the earliest row where a node fails, and
-    of two failures at a row, at the first evaluated: a value that a {!Map} or
-    {!Bind} type does not hold, or an exception that a function raises, at its
-    row of the step's input; [Only] over two values at the frame's first row. A
-    failed value is null. A step emits its rows before a frame that fails, and
-    the run ends with the failure: an error at the row, or the exception. *)
+    of two failures at a row, at the first evaluated: a value that a {!Map},
+    {!Bind} or {!Cast} type does not hold, a text that {!Parse} does not read,
+    or an exception that a function raises, at its row of the step's input;
+    [Only] over two values at the frame's first row. A failed value is null. A
+    step emits its rows before a frame that fails, and the run ends with the
+    failure: an error at the row, or the exception. *)
 
 open Talon_next
 
@@ -83,6 +84,19 @@ type ('a, 's) term =
       int Type.t * ('a option -> int option) * ('a, 's) term
       -> (int, 's) term
       (** [Bind (ty, f, a)] is [store ty (of_option (const f $ option a))]. *)
+  | Cast : int Type.t * (int, 's) term -> (int, 's) term
+      (** [Cast (ty, a)] is [cast ty a] between integer types: [a]'s value,
+          where [ty] holds it. *)
+  | Length : (string, 's) term -> (int, 's) term
+      (** [Str.length], an [int64]. *)
+  | Substring : int * int * (string, 's) term -> (string, 's) term
+      (** [Substring (offset, length, a)] is [Str.slice ~offset ~length a]. *)
+  | Parse : int Type.t * (string, 's) term -> (int, 's) term
+      (** [Parse (ty, a)] is [Str.parse ty a] at an integer type: a sign and
+          decimal digits, whose value [ty] holds. *)
+  | Field : Expr.Temporal.field * (Time.date, 's) term -> (int, 's) term
+      (** [Field (f, a)] is [Temporal.field f a] of a date, an [int64]: [`Year],
+          [`Month], [`Day] or [`Yearday]. *)
   | Rows : (int, Expr.agg) term
   | Reduce : ('a, 'b) reduction * ('a, Expr.row) term -> ('b, Expr.agg) term
   | Over : string list * key list * ('a, 's) term -> ('a, Expr.row) term

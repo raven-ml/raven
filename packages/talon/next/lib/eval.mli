@@ -22,13 +22,14 @@
     literal is a column of one row that nx broadcasts; an output of literals
     alone is broadcast to the frame's rows or segments, last.
 
-    {b Failures.} A failure is found at a row: a value that [store] does not
-    hold, a value that OCaml cannot read (an argument of [$], or what
-    [Query.values] decodes), or an exception that a user function or an
-    extension's declaration raises. The evaluator records the earliest, gives
-    the failing value a null and goes on, so the rows before the failing one are
-    computed as if it had not failed. It returns the failure with its result. No
-    user function is called at or past the earliest failure.
+    {b Failures.} A failure is found at a row: a value that [store] or [cast]
+    does not hold, a text that does not read, a temporal result out of range, a
+    value that OCaml cannot read (an argument of [$], or what [Query.values]
+    decodes), or an exception that a user function or an extension's declaration
+    raises. The evaluator records the earliest, gives the failing value a null
+    and goes on, so the rows before the failing one are computed as if it had
+    not failed. It returns the failure with its result. No user function is
+    called at or past the earliest failure.
 
     Nodes evaluate one after the other, each over the whole frame: the outputs
     in order, and every operand of a node, branches included, before the node,
@@ -48,7 +49,9 @@ val groups : Table.t -> Reduce.segments -> frame
 
 (** The type for what fails at a row. *)
 type cause =
-  | Data of string  (** A value the data breaks, with the reason, a phrase. *)
+  | Data of Error.t
+      (** A value the data breaks, which the run places at its step and row
+          ({!Error.in_step}). *)
   | Raised of exn * Printexc.raw_backtrace
       (** An exception a user function raised. *)
 

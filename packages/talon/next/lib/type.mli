@@ -89,6 +89,9 @@ val pow10 : int -> int64
 (** [pow10 k] is 10{^ [k]}, for [k] in \[[0];[18]\]: the factor between a
     decimal's unscaled values at two scales. *)
 
+val ns_per_unit : unit_ -> int64
+(** [ns_per_unit u] is the nanoseconds of one tick of the unit [u]. *)
+
 val storage : 'a t -> any
 (** [storage t] is [t] with every extension it is, or holds as list elements,
     replaced by its storage type: the type of the values that a record field of

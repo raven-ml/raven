@@ -294,6 +294,19 @@ let days_from_civil y m d =
   let doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy in
   (era * 146097) + doe - 719468
 
+(* Howard Hinnant's civil_from_days, the inverse of [days_from_civil]. *)
+let civil_of_days days =
+  let z = days + 719468 in
+  let era = (if z >= 0 then z else z - 146096) / 146097 in
+  let doe = z - (era * 146097) in
+  let yoe = (doe - (doe / 1460) + (doe / 36524) - (doe / 146096)) / 365 in
+  let doy = doe - ((365 * yoe) + (yoe / 4) - (yoe / 100)) in
+  let mp = ((5 * doy) + 2) / 153 in
+  let d = doy - (((153 * mp) + 2) / 5) + 1 in
+  let m = if mp < 10 then mp + 3 else mp - 9 in
+  let y = yoe + (era * 400) in
+  ((if m <= 2 then y + 1 else y), m, d)
+
 (* [day_at b pos y] reads [-MM-DD] at [pos], whose six bytes exist, as the days
    since 1970-01-01 of that day of the year [y]. *)
 let day_at b pos y =
@@ -330,6 +343,8 @@ let date b pos len =
     days
   end
 
+let floor_div a b = Int64.(if rem a b < 0L then pred (div a b) else div a b)
+
 let per_second : Type.unit_ -> int = function
   | S -> 1
   | Ms -> 1_000
@@ -341,6 +356,59 @@ let not_whole : Type.unit_ -> string = function
   | Ms -> "not a whole number of milliseconds"
   | Us -> "not a whole number of microseconds"
   | Ns -> "not a whole number of nanoseconds"
+
+(* [ticks u secs ns] is [secs] seconds and [ns] nanoseconds, [0 <= ns < 10^9],
+   after 1970-01-01 00:00:00 as ticks of [u]. A negative [secs] with a fraction
+   counts from [secs + 1], so that the least instants do not wrap. *)
+let ticks u secs ns =
+  let per = per_second u in
+  let div = 1_000_000_000 / per in
+  if ns mod div <> 0 then invalid (not_whole u);
+  let secs, frac =
+    if secs < 0 && ns > 0 then (secs + 1, (ns / div) - per) else (secs, ns / div)
+  in
+  let s = Int64.of_int secs and per = Int64.of_int per in
+  let whole = Int64.mul s per in
+  let v = Int64.add whole (Int64.of_int frac) in
+  if Int64.div whole per <> s || frac >= 0 <> (Int64.compare v whole >= 0) then
+    invalid "out of range";
+  v
+
+(* [fraction b i stop] reads one to nine digits of a fraction of a second at
+   [!i], as nanoseconds, or is [-1]. *)
+let fraction b i stop =
+  let first = !i and ns = ref 0 in
+  while !i < stop && !i - first < 9 && is_digit (get b !i) do
+    ns := (10 * !ns) + digit b !i;
+    incr i
+  done;
+  if !i = first then -1
+  else begin
+    for _ = !i - first to 8 do
+      ns := 10 * !ns
+    done;
+    !ns
+  end
+
+(* [offset b i stop] reads [Z] or [±hh:mm] at [!i] as seconds east of UTC, or is
+   [None]. *)
+let offset b i stop =
+  if !i < stop && get b !i = 'Z' then begin
+    incr i;
+    Some 0
+  end
+  else if !i + 6 > stop then None
+  else
+    let s = get b !i in
+    let oh = two_digits b (!i + 1) and om = two_digits b (!i + 4) in
+    if (s <> '+' && s <> '-') || oh < 0 || om < 0 || get b (!i + 3) <> ':' then
+      None
+    else begin
+      if oh > 23 || om > 59 then invalid "not an offset";
+      i := !i + 6;
+      let o = (3600 * oh) + (60 * om) in
+      Some (if s = '-' then -o else o)
+    end
 
 let form ~zoned =
   invalid
@@ -366,53 +434,84 @@ let datetime u ~zoned b pos len (a : int64s) k =
   let i = ref (pos + 19) and ns = ref 0 in
   if !i < stop && get b !i = '.' then begin
     incr i;
-    let first = !i in
-    while !i < stop && !i - first < 9 && is_digit (get b !i) do
-      ns := (10 * !ns) + digit b !i;
-      incr i
-    done;
-    if !i = first then form ~zoned;
-    for _ = !i - first to 8 do
-      ns := 10 * !ns
-    done
+    ns := fraction b i stop;
+    if !ns < 0 then form ~zoned
   end;
   let offset =
     if not zoned then 0
-    else if !i < stop && get b !i = 'Z' then begin
-      incr i;
-      0
-    end
-    else if !i + 6 <= stop then begin
-      let s = get b !i in
-      let oh = two_digits b (!i + 1) and om = two_digits b (!i + 4) in
-      if (s <> '+' && s <> '-') || oh < 0 || om < 0 || get b (!i + 3) <> ':'
-      then form ~zoned;
-      if oh > 23 || om > 59 then invalid "not an offset";
-      i := !i + 6;
-      let o = (3600 * oh) + (60 * om) in
-      if s = '-' then -o else o
-    end
-    else form ~zoned
+    else match offset b i stop with Some o -> o | None -> form ~zoned
   in
   if !i <> stop then form ~zoned;
   let secs = (86400 * days) + (3600 * hh) + (60 * mm) + ss - offset in
-  let per = per_second u in
-  let div = 1_000_000_000 / per in
-  if !ns mod div <> 0 then invalid (not_whole u);
-  if per < 1_000_000_000 then
-    A1.unsafe_set a k (Int64.of_int ((secs * per) + (!ns / div)))
-  else begin
-    if secs > 9223372036 || secs < -9223372037 then invalid "out of range";
-    (* In this range the ticks wrap at most once, away from the sign of
-       [secs]. *)
-    let v =
-      Int64.add
-        (Int64.mul (Int64.of_int secs) 1_000_000_000L)
-        (Int64.of_int !ns)
-    in
-    if secs >= 0 <> (Int64.compare v 0L >= 0) then invalid "out of range";
-    A1.unsafe_set a k v
-  end
+  A1.unsafe_set a k (ticks u secs !ns)
+
+(* [directed fmt ty] reads a text in the format [fmt] of [Temporal.parse] as a
+   value of [ty], a date, a clock or a datetime: days, or ticks. *)
+let directed fmt (Type.Any ty) b pos len (a : int64s) k =
+  let stop = pos + len and i = ref pos in
+  let mismatch () = invalid (Printf.sprintf "not in the format %S" fmt) in
+  let byte c = if !i < stop && get b !i = c then incr i else mismatch () in
+  let digits n =
+    if !i + n > stop then mismatch ();
+    let v = ref 0 in
+    for j = !i to !i + n - 1 do
+      if not (is_digit (get b j)) then mismatch ();
+      v := (10 * !v) + digit b j
+    done;
+    i := !i + n;
+    !v
+  in
+  let year () =
+    match if !i < stop then get b !i else ' ' with
+    | ('+' | '-') as sign ->
+        incr i;
+        let first = !i and y = ref 0 in
+        while !i < stop && is_digit (get b !i) do
+          if !y < 1 lsl 40 then y := (10 * !y) + digit b !i;
+          incr i
+        done;
+        if !i - first < 4 then mismatch ();
+        if sign = '-' then - !y else !y
+    | _ -> digits 4
+  in
+  let y = ref 1970 and mo = ref 1 and d = ref 1 and h = ref 0 and mi = ref 0 in
+  let s = ref 0 and ns = ref 0 and off = ref 0 in
+  let j = ref 0 in
+  while !j < String.length fmt do
+    (match fmt.[!j] with
+    | '%' -> (
+        incr j;
+        match fmt.[!j] with
+        | 'Y' -> y := year ()
+        | 'm' -> mo := digits 2
+        | 'd' -> d := digits 2
+        | 'H' -> h := digits 2
+        | 'M' -> mi := digits 2
+        | 'S' -> s := digits 2
+        | 'f' ->
+            ns := fraction b i stop;
+            if !ns < 0 then mismatch ()
+        | 'z' -> (
+            match offset b i stop with
+            | Some o -> off := o
+            | None -> mismatch ())
+        | c -> byte c)
+    | c -> byte c);
+    incr j
+  done;
+  if !i <> stop then mismatch ();
+  if !mo < 1 || !mo > 12 || !d < 1 || !d > days_in_month !y !mo then
+    invalid "not a day of the calendar";
+  if !h > 23 || !mi > 59 || !s > 59 then invalid "not a time of day";
+  let days = days_from_civil !y !mo !d in
+  if Option.is_none (Time.Date.of_days days) then invalid "out of range";
+  let tod = (3600 * !h) + (60 * !mi) + !s in
+  A1.unsafe_set a k
+    (match ty with
+    | Date -> Int64.of_int days
+    | Clock u -> ticks u tod !ns
+    | Datetime { unit_; _ } -> ticks unit_ ((86400 * days) + tod - !off) !ns
+    | _ -> assert false (* Binding checked [ty]. *))
 
 (* Parsing *)
 
@@ -457,12 +556,13 @@ let fixed kind zero r valid read =
   | Some e -> Error e
   | None -> Ok (Nx.of_bigarray (Bigarray.genarray_of_array1 a))
 
+let text_rows c =
+  match (Column.type_ c, Column.data c) with
+  | (Any String | Any Binary), Bytes r -> r
+  | Any t, _ -> err "Column.parse: %a is neither string nor binary" Type.pp t
+
 let parse (Type.Any ty as any) c =
-  let r =
-    match (Column.type_ c, Column.data c) with
-    | (Any String | Any Binary), Bytes r -> r
-    | Any t, _ -> err "Column.parse: %a is neither string nor binary" Type.pp t
-  in
+  let r = text_rows c in
   let valid = Column.valid c in
   let column d = Column.make any ?valid ~length:(Column.length c) d in
   let cast dt x = column (Fixed (P (Nx.cast dt x))) in
@@ -513,6 +613,80 @@ let parse (Type.Any ty as any) c =
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ ->
       err "Column.parse: %a has no text form" Type.pp ty
 
+let parse_with fmt (Type.Any ty as any) c =
+  let valid = Column.valid c in
+  let column x =
+    let x = match ty with Date -> Nx.P (Nx.cast Nx.int32 x) | _ -> Nx.P x in
+    Column.make any ?valid ~length:(Column.length c) (Fixed x)
+  in
+  Result.map column
+    (fixed Bigarray.int64 0L (text_rows c) valid (directed fmt any))
+
+(* Formats *)
+
+let format_with fmt c =
+  let (Type.Any ty) = Column.type_ c in
+  let n = Column.length c in
+  let ticks =
+    match Column.data c with
+    | Fixed (P x) -> Nx.to_array (Nx.cast Nx.int64 x)
+    | _ -> assert false
+  in
+  let valid = Option.map Nx.to_array (Column.valid c) in
+  (* [fields v] is the days, the second of the day and the nanosecond of the
+     second of the value [v]. *)
+  let fields v =
+    match ty with
+    | Date -> (Int64.to_int v, 0, 0)
+    | Clock u | Datetime { unit_ = u; _ } ->
+        let per = Int64.of_int (per_second u) in
+        let secs = floor_div v per
+        and ns_per_tick = 1_000_000_000 / per_second u in
+        let days = floor_div secs 86400L in
+        let sod = Int64.sub secs (Int64.mul days 86400L) in
+        let ns =
+          Int64.to_int (Int64.sub v (Int64.mul secs per)) * ns_per_tick
+        in
+        (Int64.to_int days, Int64.to_int sod, ns)
+    | _ -> assert false (* Binding checked [ty]. *)
+  in
+  let b = Buffer.create (16 * n) in
+  let write v =
+    let days, sod, ns = fields v in
+    let y, m, d = civil_of_days days in
+    let j = ref 0 in
+    while !j < String.length fmt do
+      (match fmt.[!j] with
+      | '%' -> (
+          incr j;
+          match fmt.[!j] with
+          | 'Y' when 0 <= y && y <= 9999 -> Printf.bprintf b "%04d" y
+          | 'Y' -> Printf.bprintf b "%+05d" y
+          | 'm' -> Printf.bprintf b "%02d" m
+          | 'd' -> Printf.bprintf b "%02d" d
+          | 'H' -> Printf.bprintf b "%02d" (sod / 3600)
+          | 'M' -> Printf.bprintf b "%02d" (sod / 60 mod 60)
+          | 'S' -> Printf.bprintf b "%02d" (sod mod 60)
+          | 'f' -> Printf.bprintf b "%09d" ns
+          | 'z' -> Buffer.add_char b 'Z'
+          | c -> Buffer.add_char b c)
+      | c -> Buffer.add_char b c);
+      incr j
+    done
+  in
+  let offsets = Array.make (n + 1) 0L in
+  for i = 0 to n - 1 do
+    if Option.fold ~none:true ~some:(fun v -> v.(i)) valid then write ticks.(i);
+    offsets.(i + 1) <- Int64.of_int (Buffer.length b)
+  done;
+  let text = Buffer.contents b in
+  let bytes =
+    Nx.init Nx.uint8 [| String.length text |] (fun i -> Char.code text.[i.(0)])
+  in
+  let offsets = Nx.create Nx.int64 [| n + 1 |] offsets in
+  Column.make (Any Type.string) ?valid:(Column.valid c) ~length:n
+    (Bytes (Nx_ragged.v ~offsets bytes))
+
 (* Printing *)
 
 let pp_text ppf s = Format.pp_print_string ppf s
@@ -529,7 +703,6 @@ let at_scale scale d =
   Decimal.v ~unscaled ~scale
 
 let ns_per_second = 1_000_000_000L
-let floor_div a b = Int64.(if rem a b < 0L then pred (div a b) else div a b)
 
 (* [pp_instant ~zoned] writes [YYYY-MM-DDThh:mm:ss], the fewest fraction digits
    that are exact, and [Z] when [zoned]. *)

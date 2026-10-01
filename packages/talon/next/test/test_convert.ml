@@ -1,0 +1,467 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+open Talon_next
+open Windtrap
+module G = Talon_gen
+
+let one name c = v [ (name, c) ]
+
+(* [run e t] is the column of [e] over [t]'s rows, or the error. *)
+let compute e t =
+  Result.map
+    (fun r -> column r "out")
+    (Query.run (Query.select Expr.[ "out" := e ] (Query.of_table t)))
+
+let result e t = require_ok ~pp:Error.pp (compute e t)
+let error e t = Format.asprintf "%a" Error.pp (require_error (compute e t))
+
+let rows_are ty expected c =
+  equal
+    (array (option (G.witness ty)))
+    expected
+    (Column.options (Type.kind ty) c)
+
+let some vs = Array.map Option.some vs
+
+(* Casts *)
+
+let casts_of name ty vs into expected =
+  test name (fun () ->
+      let x = Col.v (Type.kind ty) "x" in
+      rows_are into expected
+        (result (Expr.cast into x) (one "x" (Column.of_options ty vs))))
+
+let decimal s u = Decimal.v ~unscaled:(Int64.of_int u) ~scale:s
+
+let casts =
+  let dec = Type.decimal in
+  group "Casts"
+    [
+      casts_of "an integer in range is kept" Type.int64
+        (some [| -128; 127 |])
+        Type.int8
+        (some [| -128; 127 |]);
+      casts_of "a whole float becomes an integer" Type.float64
+        (some [| 2.; -0.; 1e9 |])
+        Type.int32
+        (some [| 2; 0; 1_000_000_000 |]);
+      casts_of "bool takes 0 and 1, and gives them" Type.int8
+        (some [| 0; 1 |])
+        Type.bool
+        (some [| false; true |]);
+      casts_of "an integer rounds to the nearest float" Type.int64
+        (some [| 16_777_217 |]) Type.float32 (some [| 16_777_216. |]);
+      casts_of "a decimal rounds to its scale, ties away from zero" Type.float64
+        (some [| 0.125; -0.125; 2.675; 1.005 |])
+        (dec ~precision:4 ~scale:2)
+        (some [| decimal 2 13; decimal 2 (-13); decimal 2 267; decimal 2 100 |]);
+      casts_of "a float scaled past 2^52 keeps its exact digits" Type.float64
+        (some [| 0.5; -2.5; 45035996273704.96 |])
+        (dec ~precision:18 ~scale:2)
+        (some [| decimal 2 50; decimal 2 (-250); decimal 2 4503599627370496 |]);
+      casts_of "a float rounds to its decimal scale, ties away from zero"
+        Type.float64
+        (some [| 0.5; -2.5; 2.4999 |])
+        (dec ~precision:3 ~scale:0)
+        (some [| decimal 0 1; decimal 0 (-3); decimal 0 2 |]);
+      test "an unsigned integer takes floats up to 2^64" (fun () ->
+          let c =
+            result
+              (Expr.cast Type.uint64 (Col.float "x"))
+              (one "x" (Column.v Type.float64 [| 1e19 |]))
+          in
+          let bits = Nx.bitcast Nx.int64 (Column.to_tensor Nx.uint64 c) in
+          (* 10^19 - 2^64: the bits of the uint64 10^19. *)
+          equal (array int64)
+            [| -8_446_744_073_709_551_616L |]
+            (Nx.to_array bits));
+      casts_of "a decimal rescales, ties away from zero"
+        (dec ~precision:6 ~scale:4)
+        (some [| decimal 4 12345; decimal 4 (-12345); decimal 4 12344 |])
+        (dec ~precision:5 ~scale:3)
+        (some [| decimal 3 1235; decimal 3 (-1235); decimal 3 1234 |]);
+      casts_of "a decimal becomes the nearest float"
+        (dec ~precision:5 ~scale:2)
+        (some [| decimal 2 10; decimal 2 (-12345) |])
+        Type.float32
+        (some [| 0.1; -123.45 |]
+        |> Array.map
+             (Option.map (fun x -> Int32.float_of_bits (Int32.bits_of_float x)))
+        );
+      casts_of "a whole decimal becomes an integer"
+        (dec ~precision:5 ~scale:2)
+        (some [| decimal 2 1200 |])
+        Type.int16 (some [| 12 |]);
+      casts_of "text in the dictionary becomes categorical" Type.string
+        (some [| "b"; "a" |])
+        (Type.categorical [| "a"; "b" |])
+        (some [| "b"; "a" |]);
+      casts_of "a categorical becomes its text"
+        (Type.categorical [| "a"; "b" |])
+        [| Some "b"; None |] Type.string [| Some "b"; None |];
+      casts_of "a finer unit multiplies" (Type.duration S)
+        (some [| Time.Span.s 3 |])
+        (Type.duration Ms)
+        (some [| Time.Span.s 3 |]);
+      casts_of "a coarser unit divides" (Type.datetime Ms)
+        (some [| Time.of_ns (-2_000_000_000L) |])
+        (Type.datetime S)
+        (some [| Time.of_ns (-2_000_000_000L) |]);
+      casts_of "lists cast element by element" (Type.list Type.int64)
+        [| Some [| 1; 2 |]; None; Some [||] |]
+        (Type.list Type.int8)
+        [| Some [| 1; 2 |]; None; Some [||] |];
+    ]
+
+let cast_failures =
+  let fails name ty vs into msg =
+    test name (fun () ->
+        let x = Col.v (Type.kind ty) "x" in
+        expect
+          (error (Expr.cast into x) (one "x" (Column.of_options ty vs)))
+          msg)
+  in
+  group "Cast failures"
+    [
+      test "a literal fails at the first row, and over no rows not at all"
+        (fun () ->
+          let e = Expr.cast Type.int8 (Expr.int 300) in
+          let t = one "x" (Column.v Type.int8 [| 1; 2 |]) in
+          equal int 0
+            (Column.length (result e (one "x" (Column.v Type.int8 [||]))));
+          expect (error e t)
+          @@ __POS_OF__
+               {| select ["out" := cast int8 300]: row 0: cannot cast 300 to int8. |});
+      fails "a fraction" Type.float64 (some [| 1.; 3.5 |]) Type.int32
+      @@ __POS_OF__
+           {| select ["out" := cast int32 x]: row 1: cannot cast 3.5 to int32. |};
+      fails "a value out of range" Type.int16 (some [| 300 |]) Type.int8
+      @@ __POS_OF__
+           {| select ["out" := cast int8 x]: row 0: cannot cast 300 to int8. |};
+      fails "a negative value to an unsigned type" Type.int8 (some [| -1 |])
+        Type.uint64
+      @@ __POS_OF__
+           {| select ["out" := cast uint64 x]: row 0: cannot cast -1 to uint64. |};
+      fails "NaN to an integer" Type.float32 (some [| Float.nan |]) Type.int64
+      @@ __POS_OF__
+           {| select ["out" := cast int64 x]: row 0: cannot cast nan to int64. |};
+      fails "a finite float past the narrower float's range" Type.float64
+        (some [| infinity; 1e300 |])
+        Type.float32
+      @@ __POS_OF__
+           {| select ["out" := cast float32 x]: row 1: cannot cast 1e+300 to float32. |};
+      fails "an integer past float16's range" Type.int32 (some [| 70000 |])
+        Type.float16
+      @@ __POS_OF__
+           {| select ["out" := cast float16 x]: row 0: cannot cast 70000 to float16. |};
+      fails "2 to bool" Type.int8 (some [| 2 |]) Type.bool
+      @@ __POS_OF__
+           {| select ["out" := cast bool x]: row 0: cannot cast 2 to bool. |};
+      fails "too many digits for a decimal" Type.int32
+        (some [| 99; 100 |])
+        (Type.decimal ~precision:4 ~scale:2)
+      @@ __POS_OF__
+           {| select ["out" := cast decimal[4, 2] x]: row 1: cannot cast 100 to decimal[4, 2]. |};
+      fails "text outside the dictionary" Type.string
+        (some [| "a"; "z" |])
+        (Type.categorical [| "a" |])
+      @@ __POS_OF__
+           {| select ["out" := cast categorical["a"] x]: row 1: cannot cast "z" to categorical["a"]. |};
+      fails "a value that is not whole in the coarser unit" (Type.duration Ms)
+        (some [| Time.Span.ms 1500 |])
+        (Type.duration S)
+      @@ __POS_OF__
+           {| select ["out" := cast duration[s] x]: row 0: cannot cast 1s500ms to duration[s]. |};
+      fails "a list element, at its row" (Type.list Type.int64)
+        [| Some [| 1 |]; None; Some [| 2; 300 |] |]
+        (Type.list Type.int8)
+      @@ __POS_OF__
+           {| select ["out" := cast list[int8] x]: row 2: cannot cast 300 to int8. |};
+    ]
+
+(* A cast keeps the values of its operand's kind that its type holds, and fails
+   at the first it does not. *)
+
+type pair = Pair : 'a Type.t * 'a Type.t -> pair
+type case = Case : 'a Type.t * 'a Type.t * 'a option array -> case
+
+let pairs =
+  let all ts =
+    List.concat_map (fun a -> List.map (fun b -> Pair (a, b)) ts) ts
+  in
+  let units = Type.[ S; Ms; Us; Ns ] in
+  Type.(
+    all [ int8; int16; int32; int64; uint8; uint16; uint32; uint64 ]
+    @ all (List.map duration units)
+    @ all (List.map clock units)
+    @ all (List.map (fun u -> datetime u) units)
+    @ all [ datetime ~zone:"UTC" S; datetime ~zone:"Europe/Paris" Ns ]
+    @ all [ string; categorical [| "a"; "é"; "" |]; categorical [||] ])
+
+let pp_case ppf (Case (a, b, vs)) =
+  Format.fprintf ppf "cast %a of %a" Type.pp b G.pp_sample (G.Sample (a, vs))
+
+let held_casts =
+  let gen =
+    Gen.bind (Gen.of_list pairs) (fun (Pair (a, b)) ->
+        Gen.map (fun vs -> Case (a, b, vs)) (G.options a))
+  in
+  prop "a cast keeps the values its type holds" (Gen.with_pp pp_case gen)
+    (fun (Case (a, b, vs)) ->
+      let x = Col.v (Type.kind a) "x" in
+      let r = compute (Expr.cast b x) (one "x" (Column.of_options a vs)) in
+      let unheld = function Some v -> not (Type.holds b v) | None -> false in
+      match Array.find_index unheld vs with
+      | None -> rows_are b vs (require_ok ~pp:Error.pp r)
+      | Some row ->
+          let e = Format.asprintf "%a" Error.pp (require_error r) in
+          contains ~sub:(Printf.sprintf ": row %d: cannot cast " row) e)
+
+(* Text *)
+
+let s = Col.string "s"
+let texts vs = one "s" (Column.of_options Type.string vs)
+
+let text =
+  let ints e vs = Column.options Kind.int (result e (texts vs)) in
+  let strings e vs = Column.options Kind.string (result e (texts vs)) in
+  let bools e vs = Column.options Kind.bool (result e (texts vs)) in
+  group "Text"
+    [
+      test "length counts scalar values" (fun () ->
+          equal
+            (array (option int))
+            [| Some 5; Some 0; None |]
+            (ints (Expr.Str.length s) [| Some "héllo"; Some ""; None |]));
+      test "slice counts scalar values, from the end when negative" (fun () ->
+          let vs = [| Some "héllo"; Some "ab"; None |] in
+          equal
+            (array (option string))
+            [| Some "él"; Some "b"; None |]
+            (strings (Expr.Str.slice ~offset:1 ~length:2 s) vs);
+          equal
+            (array (option string))
+            [| Some "ll"; Some "a"; None |]
+            (strings (Expr.Str.slice ~offset:(-3) ~length:2 s) vs));
+      test "matches" (fun () ->
+          let vs =
+            [| Some "special requests"; Some "requests special"; None |]
+          in
+          let m p = bools (Expr.Str.matches p s) vs in
+          equal
+            (array (option bool))
+            [| Some true; Some false; None |]
+            (m (Expr.Str.pieces [ "special"; "requests" ]));
+          equal
+            (array (option bool))
+            [| Some true; Some false; None |]
+            (m (Expr.Str.prefix "spe"));
+          equal
+            (array (option bool))
+            [| Some false; Some true; None |]
+            (m (Expr.Str.suffix "cial"));
+          equal
+            (array (option bool))
+            [| Some true; Some true; None |]
+            (m (Expr.Str.literal "q")));
+      test "parse fails with the text" (fun () ->
+          expect
+            (error
+               (Expr.Str.parse Type.int32 s)
+               (texts [| Some "12"; Some "x1" |]))
+          @@ __POS_OF__
+               {| select ["out" := Str.parse int32 s]: row 1: "x1": not an integer. |});
+    ]
+
+(* [scalars s] is the scalar values of [s], each as its UTF-8 bytes. *)
+let scalars s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let n = Uchar.utf_decode_length (String.get_utf_8_uchar s i) in
+      go (i + n) (String.sub s i n :: acc)
+  in
+  go 0 []
+
+let slices =
+  let text = Option.get (G.value Type.string) in
+  let gen =
+    Gen.triple
+      (Gen.array ~size:(Gen.int_range 0 6) (Gen.option text))
+      (Gen.int_range (-8) 8) (Gen.int_range 0 8)
+  in
+  prop "slice and length count the scalar values of String.get_utf_8_uchar" gen
+    (fun (vs, offset, length) ->
+      let slice s =
+        let us = scalars s in
+        let n = List.length us in
+        let p = if offset >= 0 then offset else n + offset in
+        String.concat "" (List.filteri (fun i _ -> i >= p && i < p + length) us)
+      in
+      let t = texts vs in
+      equal
+        (array (option string))
+        (Array.map (Option.map slice) vs)
+        (Column.options Kind.string
+           (result (Expr.Str.slice ~offset ~length s) t));
+      equal
+        (array (option int))
+        (Array.map (Option.map (fun s -> List.length (scalars s))) vs)
+        (Column.options Kind.int (result (Expr.Str.length s) t)))
+
+(* Time *)
+
+let date y m d = Option.get (Time.Date.of_civil (y, m, d))
+let dates vs = one "d" (Column.of_options Type.date vs)
+let d = Col.date "d"
+
+let time =
+  let ints e t = Column.options Kind.int (result e t) in
+  let days e t = Column.options Kind.date (result e t) in
+  group "Time"
+    [
+      test "fields of dates" (fun () ->
+          let t =
+            dates
+              [|
+                Some (date 1970 1 1);
+                Some (date 2024 12 31);
+                Some (date 2024 3 15);
+              |]
+          in
+          let f field = ints (Expr.Temporal.field field d) t in
+          equal (array (option int)) (some [| 1970; 2024; 2024 |]) (f `Year);
+          equal (array (option int)) (some [| 4; 2; 5 |]) (f `Weekday);
+          equal (array (option int)) (some [| 1; 366; 75 |]) (f `Yearday));
+      test "fields of datetimes before 1970" (fun () ->
+          let t =
+            one "t" (Column.v (Type.datetime Ns) [| Time.of_ns (-1L) |])
+          in
+          let f field = ints (Expr.Temporal.field field (Col.instant "t")) t in
+          equal (array (option int)) (some [| 1969 |]) (f `Year);
+          equal (array (option int)) (some [| 23 |]) (f `Hour);
+          equal (array (option int)) (some [| 59 |]) (f `Second);
+          equal (array (option int)) (some [| 999_999_999 |]) (f `Nanosecond));
+      test "add and diff" (fun () ->
+          let t = dates [| Some (date 2024 2 28) |] in
+          equal
+            (array (option int))
+            [| Some (Time.Date.to_days (date 2024 3 1)) |]
+            (Array.map
+               (Option.map Time.Date.to_days)
+               (days Expr.(Temporal.add d (span (Time.Span.days 2))) t));
+          expect
+            (error
+               Expr.(Temporal.add d (Col.span "x"))
+               (v
+                  [
+                    ("d", Column.v Type.date [| date 2024 2 28 |]);
+                    ("x", Column.v (Type.duration S) [| Time.Span.hours 36 |]);
+                  ]))
+          @@ __POS_OF__
+               {| select ["out" := Temporal.add d x]: row 0: 36h is not whole days. |});
+      test "floor and offset" (fun () ->
+          let t = dates [| Some (date 2024 1 31); Some (date 2024 3 15) |] in
+          let on e = Array.map (Option.map Time.Date.to_days) (days e t) in
+          let ds l =
+            Array.map
+              (fun (y, m, dd) -> Some (Time.Date.to_days (date y m dd)))
+              l
+          in
+          equal
+            (array (option int))
+            (ds [| (2024, 2, 29); (2024, 4, 15) |])
+            (on (Expr.Temporal.offset (Months 1) d));
+          equal
+            (array (option int))
+            (ds [| (2024, 1, 1); (2024, 1, 1) |])
+            (on (Expr.Temporal.floor (Months 3) d));
+          equal
+            (array (option int))
+            (ds [| (2024, 1, 29); (2024, 3, 11) |])
+            (on (Expr.Temporal.floor (Weeks 1) d)));
+      test "an offset reads as UTC, and a zoned datetime writes in UTC"
+        (fun () ->
+          let fmt = "%Y-%m-%dT%H:%M:%S%z"
+          and ty = Type.datetime ~zone:"UTC" S in
+          let t = texts [| Some "2024-03-15T10:00:00+02:00" |] in
+          let r = Expr.Temporal.(format fmt (parse fmt ty s)) in
+          equal
+            (array (option string))
+            [| Some "2024-03-15T08:00:00Z" |]
+            (Column.options Kind.string (result r t)));
+      test "an exact step that is not whole ticks is refused" (fun () ->
+          let t = one "t" (Column.v (Type.datetime S) [| Time.of_ns 0L |]) in
+          let e =
+            Expr.Temporal.floor (Exact (Time.Span.ms 1500)) (Col.instant "t")
+          in
+          match compute e t with
+          | _ -> fail "no exception"
+          | exception Invalid_argument m ->
+              expect m
+              @@ __POS_OF__
+                   {| Temporal.floor of datetime[s] by 1s500ms is not implemented yet |});
+      test "format and parse" (fun () ->
+          let t = dates [| Some (date 2024 3 15); None |] in
+          equal
+            (array (option string))
+            [| Some "15/03/2024"; None |]
+            (Column.options Kind.string
+               (result (Expr.Temporal.format "%d/%m/%Y" d) t));
+          expect
+            (error
+               (Expr.Temporal.parse "%d/%m/%Y" Type.date s)
+               (texts [| Some "15/03/2024"; Some "2024-03-15" |]))
+          @@ __POS_OF__
+               {| select ["out" := Temporal.parse "%d/%m/%Y" date s]: row 1: "2024-03-15": not in the format "%d/%m/%Y". |});
+    ]
+
+let fields_agree =
+  let days =
+    Gen.array ~size:(Gen.int_range 0 20) (Gen.int_range (-1_000_000) 1_000_000)
+  in
+  prop
+    "date fields agree with Time.Date.to_civil over a million days either way"
+    days (fun ds ->
+      let dates = Array.map (fun n -> Option.get (Time.Date.of_days n)) ds in
+      let t = one "d" (Column.v Type.date dates) in
+      let field f =
+        Column.values Kind.int (result (Expr.Temporal.field f d) t)
+      in
+      let civil = Array.map Time.Date.to_civil dates in
+      let yearday dt (y, _, _) =
+        Time.Date.to_days dt - Time.Date.to_days (date y 1 1) + 1
+      in
+      equal (array int) (Array.map (fun (y, _, _) -> y) civil) (field `Year);
+      equal (array int) (Array.map (fun (_, m, _) -> m) civil) (field `Month);
+      equal (array int) (Array.map (fun (_, _, d) -> d) civil) (field `Day);
+      equal (array int) (Array.map2 yearday dates civil) (field `Yearday))
+
+let formats_round_trip =
+  let ns = Gen.array ~size:(Gen.int_range 0 20) Gen.int64 in
+  prop "parse reads back what format writes" ns (fun ns ->
+      let ty = Type.datetime Ns and fmt = "%Y-%m-%d %H:%M:%S.%f" in
+      let ts = Array.map Time.of_ns ns in
+      let t = one "t" (Column.v ty ts) in
+      let text = Expr.Temporal.format fmt (Col.instant "t") in
+      equal (array int64) ns
+        (Array.map Time.to_ns
+           (Column.values Kind.instant
+              (result (Expr.Temporal.parse fmt ty text) t))))
+
+let () =
+  exit
+    (run "Convert"
+       [
+         casts;
+         cast_failures;
+         held_casts;
+         text;
+         slices;
+         time;
+         fields_agree;
+         formats_round_trip;
+       ])

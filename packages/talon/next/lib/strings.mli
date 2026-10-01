@@ -5,10 +5,10 @@
 
 (** Kernels over the bytes of text.
 
-    What is not an array operation over text: UTF-8 validation. Each kernel
-    reads its operand's bytes on the host, once, as a read named by its caller's
-    function [by], and loops over them row by row. Comparisons and grouping of
-    text are not here.
+    What is not an array operation over text: UTF-8 validation, counting,
+    slicing and matching scalar values. Each kernel reads its operand's bytes on
+    the host, once, as a read named by its caller's function [by], and loops
+    over them row by row. Comparisons and grouping of text are not here.
 
     Rows are those of an [Nx_ragged.t]; a row outside [mask], where one is
     given, is not read. *)
@@ -33,3 +33,26 @@ val utf_8 : by:string -> ?mask:Nx.bool_t -> bytes -> (int * string) option
 
     Raises [Invalid_argument] starting with [by] if the bytes cannot be read, as
     under a compiled function. *)
+
+val length : by:string -> ?mask:Nx.bool_t -> bytes -> Nx.int64_t
+(** [length ~by b] is the number of Unicode scalar values of each row of [b],
+    valid UTF-8, and [0] outside [mask]. *)
+
+val slice :
+  by:string -> ?mask:Nx.bool_t -> offset:int -> length:int -> bytes -> bytes
+(** [slice ~by ~offset ~length b] is the scalar values of each row of [b], valid
+    UTF-8, at the positions [p] to [p + length - 1] that it has, [p] being
+    [offset], or the row's length plus [offset] when [offset] is negative. A row
+    outside [mask] is empty. *)
+
+(** The type for patterns that text matches. Each string is valid UTF-8 and not
+    empty. *)
+type pattern =
+  | Literal of string  (** Anywhere in the text. *)
+  | Prefix of string  (** At its start. *)
+  | Suffix of string  (** At its end. *)
+  | Pieces of string list  (** Anywhere, in order, without overlap. *)
+
+val matches : by:string -> ?mask:Nx.bool_t -> pattern -> bytes -> Nx.bool_t
+(** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
+    outside [mask]. *)

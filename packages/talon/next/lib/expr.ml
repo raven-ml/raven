@@ -43,7 +43,7 @@ type ('e, 's) ext = {
   enc : 'e -> 's;
 }
 
-type pattern =
+type pattern = Strings.pattern =
   | Literal of string
   | Prefix of string
   | Suffix of string

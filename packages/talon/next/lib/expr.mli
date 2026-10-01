@@ -103,7 +103,7 @@ val field : 'a Kind.t -> string -> (Record.t, 's) t -> ('a, 's) t
 val unpack : (Record.t, row) t -> row out
 
 module Str : sig
-  type pattern
+  type pattern = Strings.pattern
 
   val literal : string -> pattern
   val prefix : string -> pattern

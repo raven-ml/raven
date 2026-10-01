@@ -28,11 +28,9 @@ let rec all = function
 
    Tables of the types below, whose operands meet at their common type, and
    expressions as the reference writes them. Arithmetic stays within 32 bits,
-   where the reference computes exactly. Each type that changes its values'
-   representation when it widens (decimals, clocks) appears once, since those
-   conversions are not lowered yet. OCaml functions hash their argument: one in
-   about [p] raises [Boom], and the others give values that an [int8] or an
-   unsigned type may not hold. *)
+   where the reference computes exactly. OCaml functions hash their argument:
+   one in about [p] raises [Boom], and the others give values that an [int8] or
+   an unsigned type may not hold. *)
 
 exception Boom of (int * int)
 
@@ -56,8 +54,10 @@ let palette =
       Any (categorical [| "b"; "a"; "é" |]);
       Any binary;
       Any (decimal ~precision:10 ~scale:2);
+      Any (decimal ~precision:12 ~scale:4);
       Any date;
       Any (clock Us);
+      Any (clock Ns);
       Any (duration Ns);
       Any (datetime ~zone:"UTC" Ms);
       Any (tensor Nx.float32 [| 2 |]);
@@ -156,8 +156,16 @@ let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
     let is k = Kind.provably_equal (Type.kind ty) k in
     let lifts : a R.expr Gen.t list =
       match is Kind.int with
-      | Some Equal -> [ lift (ty : int Type.t) s (d - 1) ]
+      | Some Equal -> lift (ty : int Type.t) s (d - 1) :: converted ty s (d - 1)
       | None -> []
+    in
+    let slices : a R.expr Gen.t list =
+      match is Kind.string with
+      | Some Equal when Type.equal ty Type.string ->
+          let range = Gen.pair (Gen.int_range (-4) 4) (Gen.int_range 0 4) in
+          let slice ((o, l), a) = R.Substring (o, l, a) in
+          List.map (Gen.map slice) (List.map (Gen.pair range) (texts s (d - 1)))
+      | _ -> []
     in
     let arith : a R.expr Gen.t list =
       match (is Kind.int, is Kind.float, ty) with
@@ -174,7 +182,42 @@ let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
       :: map2 (fun c (a, b) -> R.If (c, a, b)) (predicate s (d - 1)) two
       :: Gen.map (fun (a, b) -> R.Coalesce [ a; b ]) two
       :: Gen.map (fun a -> R.Store (ty, a)) narrower
-      :: (arith @ lifts))
+      :: (arith @ lifts @ slices))
+
+(* [texts s d] draws text that reads a column of [s], if [s] has text. *)
+and texts s d : string R.expr Gen.t list =
+  match kin Type.string s with
+  | [] -> []
+  | ts -> [ Gen.bind (Gen.of_list ts) (fun t -> anchored t s d) ]
+
+(* [converted ty s d] draws integers of [ty] that cast, measure or parse the
+   columns of [s], if it has some to convert. *)
+and converted : int Type.t -> _ -> int -> int R.expr Gen.t list =
+ fun ty s d ->
+  let cast a = R.Cast (ty, a) in
+  let field = Gen.of_list [ `Year; `Month; `Day; `Yearday ] in
+  let dates =
+    match kin Type.date s with
+    | [] -> []
+    | ts ->
+        let date = Gen.bind (Gen.of_list ts) (fun t -> anchored t s d) in
+        [ map2 (fun f a -> cast (R.Field (f, a))) field date ]
+  in
+  let ints =
+    match kin ty s with
+    | [] -> []
+    | ts ->
+        [ Gen.map cast (Gen.bind (Gen.of_list ts) (fun t -> anchored t s d)) ]
+  in
+  ints
+  @ List.concat_map
+      (fun text ->
+        [
+          Gen.map (fun a -> cast (R.Length a)) text;
+          Gen.map (fun a -> R.Parse (ty, a)) text;
+        ])
+      (texts s d)
+  @ dates
 
 and lift : int Type.t -> _ -> int -> int R.expr Gen.t =
  fun ty s d ->
@@ -354,7 +397,8 @@ let output s name =
           ( 3,
             Gen.bind
               (Gen.of_list Type.[ int8; uint8; int32; uint32 ])
-              (fun ty -> Gen.map out (lift ty s 1)) );
+              (fun ty ->
+                Gen.map out (Gen.one_of (lift ty s 1 :: converted ty s 1))) );
         ])
 
 let outputs s names = all (List.map (output s) names)
@@ -559,6 +603,13 @@ let agrees p =
         (match expected with
         | Ok (Error (_, why)) -> kept && occurs " rows, not " why
         | _ -> false);
+      let fails_by prefix =
+        match expected with
+        | Ok (Error (_, why)) -> kept && String.starts_with ~prefix why
+        | _ -> false
+      in
+      cover "a kept plan fails at a cast" (fails_by "cannot cast");
+      cover "a kept plan fails at a text" (fails_by "\"");
       if kept then same_failure expected actual
 
 (* Law 7: canonical layouts, byte for byte *)
@@ -825,6 +876,18 @@ let widening =
             (Type.categorical [| "x"; "y" |])
             [| Some "y"; Some "x"; None |] );
         ("s", Column.v Type.string [| "y"; "z"; "x" |]);
+        ( "d2",
+          Column.v
+            (Type.decimal ~precision:10 ~scale:2)
+            (Array.map
+               (fun u -> Decimal.v ~unscaled:u ~scale:2)
+               [| 150L; -1L; 0L |]) );
+        ( "d4",
+          Column.v
+            (Type.decimal ~precision:12 ~scale:4)
+            (Array.map
+               (fun u -> Decimal.v ~unscaled:u ~scale:4)
+               [| 15000L; -101L; 1L |]) );
       ]
   in
   let i = Col.int and s = Col.string in
@@ -848,6 +911,12 @@ let widening =
       compares "a categorical < a string compares as text"
         Expr.(s "k" < s "s")
         [| f; t; None |];
+      compares "decimals of two scales compare at the finer"
+        Expr.(Col.decimal "d2" = Col.decimal "d4")
+        [| t; f; f |];
+      compares "decimal[10, 2] < decimal[12, 4] compares at decimal[12, 4]"
+        Expr.(Col.decimal "d2" < Col.decimal "d4")
+        [| f; f; t |];
     ]
 
 (* NaN equals NaN and orders after every other value, and -0. equals 0. *)
@@ -1563,23 +1632,6 @@ let refusals =
                       Expr.[ "e" := ewm ~alpha:0.5 (Col.int "a") ]
                       (Query.of_table t))))
           @@ __POS_OF__ {| ewm ~alpha:0.5 a is not implemented yet |});
-      cases
-        ~name:(fun n ->
-          Printf.sprintf "a widening not lowered is refused over %d rows" n)
-        "Widening" [ 0; 3 ]
-        (fun n ->
-          let decimal precision scale =
-            Column.v
-              (Type.decimal ~precision ~scale)
-              (Array.init n (fun i ->
-                   Decimal.v ~unscaled:(Int64.of_int i) ~scale))
-          in
-          let t = v [ ("a", decimal 10 2); ("b", decimal 12 4) ] in
-          let p = Expr.(Col.decimal "a" < Col.decimal "b") in
-          expect
-            (message (fun () -> Query.run (Query.filter p (Query.of_table t))))
-          @@ __POS_OF__
-               {| widening decimal[10, 2] to decimal[12, 4] is not implemented yet |});
     ]
 
 let () =
