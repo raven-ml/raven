@@ -483,7 +483,7 @@ let sorts =
               agrees (fun () -> fst (Nx.top_k ~k ~axis:1 x));
               agrees (fun () -> snd (Nx.top_k ~k ~axis:1 x)))
             [ 1; 3; 6 ]);
-      test "top_k of a short row takes three kernels for its positions"
+      test "top_k of a short row takes two kernels for its positions"
         (fun () ->
           List.iter
             (fun (k, n) ->
@@ -491,7 +491,7 @@ let sorts =
               let _, y = trace (fun () -> snd (Nx.top_k ~k x)) in
               equal
                 ~msg:(Printf.sprintf "%d of %d" k n)
-                int 3
+                int 2
                 (List.length (Tolk_next.Ops.src (Programs.kernels y))))
             [ (2, 4); (4, 32); (16, 32); (32, 32) ]);
     ]

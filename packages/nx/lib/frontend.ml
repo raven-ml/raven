@@ -2271,8 +2271,8 @@ let top_k_counted = 1 lsl 24
    counting the entries that precede it: [n * n] comparisons per row and no
    pass waiting on another, where taking one entry per pass costs a kernel per
    pass when compiled. Compiled for the host, the indices of 2 of 4 entries
-   take 3 kernels instead of 6, 4 of 32 take 3 instead of 14, and 16 of 32
-   (a sort before) 3 instead of 22. Eagerly the comparisons cost more than
+   take 2 kernels instead of 6, 4 of 32 take 2 instead of 14, and 16 of 32
+   (a sort before) 2 instead of 22. Eagerly the comparisons cost more than
    the passes: 0.77 ms against 0.20 for 4 of 32 over 512 rows. *)
 let top_k_compared = 32
 
@@ -2525,12 +2525,18 @@ let top_k (type a b) ~k ?(axis = -1) (x : (a, b) t) =
     if k <= top_k_rounds && not (counted ~b:rows ~n) then
       select_by_passes ~k ~axis keys
     else
-      let last = contiguous (moveaxis axis (-1) keys) in
+      let last = moveaxis axis (-1) keys in
       let batch = Array.sub (shape last) 0 (r - 1) in
       let b = Array.fold_left ( * ) 1 batch in
       let chosen =
         if b = 0 then zeros (B.context x) Nx_dtype.int64 [| 0; k |]
-        else select ~k (reshape [| b; n |] last)
+        else
+          (* A view of rows where the layout allows one, a copy otherwise: a
+             compiled ranking then computes the keys where it compares them. *)
+          let rows = [| b; n |] in
+          if View.can_reshape (B.view last) rows then
+            select ~k (reshape rows last)
+          else select ~k (reshape rows (contiguous last))
       in
       moveaxis (-1) axis (reshape (Array.append batch [| k |]) chosen)
   in

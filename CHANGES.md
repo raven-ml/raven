@@ -2934,6 +2934,10 @@ thread.
 
 ### Nx
 
+- `Nx.top_k` along an axis whose rows it can view no longer copies its
+  selection keys first. Compiled, the ranking computes the keys where it
+  compares them: a short row's positions take two kernels where they took
+  three, as the router of gpt-oss's mixture of experts does.
 - `Nx.positions c` repeats each index by its count, or lists where a mask
   holds. `compress`, `extract`, `nonzero` and `argwhere` are built on it: they
   read their length once and allocate nothing per element, where they read the
