@@ -66,8 +66,22 @@ let mark_stored_pads ctx dest =
   go dest
 
 (* A store's destination that moves through a pad is made its own: each of its
-   movements is tagged, so that no read shares the nodes that D69 gates. *)
+   movements is marked, so that no read shares the nodes that D69 gates. The
+   mark joins any tag a movement already carries, and a destination is owned
+   once its top movement carries the mark. *)
 let stored_tag = Tag.String "stored"
+
+let marked u =
+  match tag u with
+  | Some t when Tag.equal t stored_tag -> true
+  | Some (Tag.Tuple ts) -> List.exists (Tag.equal stored_tag) ts
+  | Some _ | None -> false
+
+let mark u =
+  match tag u with
+  | None -> Some stored_tag
+  | Some _ when marked u -> tag u
+  | Some t -> Some (Tag.Tuple [ t; stored_tag ])
 
 let own_destination st =
   let rec pads u =
@@ -75,11 +89,10 @@ let own_destination st =
   in
   let rec own u =
     if not (Op.Set.mem (op u) Op.Set.movement) then u
-    else
-      replace u ~src:(own (nth u 0) :: List.tl (src u)) ~tag:(Some stored_tag)
+    else replace u ~src:(own (nth u 0) :: List.tl (src u)) ~tag:(mark u)
   in
   match src st with
-  | dest :: rest when pads dest && tag dest = None ->
+  | dest :: rest when pads dest && not (marked dest) ->
       Some (replace st ~src:(own dest :: rest))
   | _ -> None
 

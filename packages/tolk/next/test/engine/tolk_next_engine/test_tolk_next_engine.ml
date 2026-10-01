@@ -776,8 +776,9 @@ let copies_in_order () =
    when [slot] lies outside [pool]. With [read], the graph also stores the sums
    of the rows of [pool] padded by a row of [fill], [9] of them, a selection of
    [fill] off the very pad node the store goes through, and the sums of [pool]'s
-   rows read directly, [8] of them. *)
-let padded_store ?(fill = 0.) ?(read = false) device =
+   rows read directly, [8] of them. With [tag], the store's destination carries
+   [tag] already. *)
+let padded_store ?(fill = 0.) ?(read = false) ?tag device =
   let buffer n dt shape =
     Ops.reshape
       (Ops.new_buffer (Single device) n dt)
@@ -796,13 +797,17 @@ let padded_store ?(fill = 0.) ?(read = false) device =
     Ops.shrink padded
       [ Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))); None ]
   in
+  let view = match tag with None -> view | Some tag -> Ops.rtag ~tag view in
   let row = Ops.rop (Ops.mul x w) Op.Add [ 1 ] in
   let stored = Ops.after view [ Ops.store view row ] in
   if not read then Ops.sink [ stored ]
   else
-    let filled = Ops.pad ~value:(`Float fill) pool padding in
-    if not (List.memq padded (Ops.toposort filled)) then
-      fail "the read does not share the stored pad node";
+    let filled =
+      Ops.where
+        (Ops.pad (Ops.const_like ~dtype:Bool pool (`Bool true)) padding)
+        padded
+        (Ops.const (`Float fill))
+    in
     let sums = buffer 9 Float32 [ 9 ] and direct = buffer 8 Float32 [ 8 ] in
     Ops.sink
       [
@@ -816,9 +821,9 @@ let padded_store ?(fill = 0.) ?(read = false) device =
    is otherwise untouched, and with [read] the sums of the padded rows are
    [pool]'s rows before the store and [8 * fill] for the padding, and the direct
    sums [pool]'s rows before the store. *)
-let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) device at ()
-    =
-  let big = padded_store ?fill ~read device in
+let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) ?tag device
+    at () =
+  let big = padded_store ?fill ~read ?tag device in
   let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
   if not read then equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
@@ -901,6 +906,11 @@ let padded_stores =
         "a read of the same padded node reads its fill in the padding"
         [ 3; -1; 8 ] (fun at ->
           stores_through_a_pad ~fill:7. ~read:true "CPU" at ());
+      cases ~name:string_of_int
+        "a destination that already carries a tag keeps the read's fill"
+        [ 3; -1 ] (fun at ->
+          stores_through_a_pad ~fill:7. ~read:true ~tag:(Ops.Tag.Int 1) "CPU" at
+            ());
     ]
 
 let schedules =

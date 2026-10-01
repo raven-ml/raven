@@ -1897,8 +1897,8 @@ the Exclusions of `README.md`.
   ranges into a selection, a store's destination included: the store then
   targets a `WHERE`, which `uop/spec.py` refuses ("UOp verification failed …
   Ops.STORE … Ops.WHERE").
-- **tolk.next:** `lib/schedule/indexing.ml:72` (`own_destination`, run
-  first by `run_rangeify`), `:59` (`mark_stored_pads`) and `:196`
+- **tolk.next:** `lib/schedule/indexing.ml:86` (`own_destination`, run
+  first by `run_rangeify`), `:59` (`mark_stored_pads`) and `:209`
   (`convert_pad_to_where_to_keep_behavior_local`).
 - **Differs:** a store whose destination moves through a pad writes the
   elements whose index falls within the pad's source and drops the ones in
@@ -1923,10 +1923,11 @@ the Exclusions of `README.md`.
   and 7) and `› writes nothing outside the source` (-1, 8 and 9), each one
   kernel, and `› a read of the same padded node reads its fill in the
   padding` (one pad node stored through and read with a fill of 7, beside a
-  read of the storage without the pad), on the host; `Metal › a store through a padded view writes the row within the
-  source, and nothing outside it (D69)` and `› a read of a padded node stored
-  through reads its fill in the padding (D69)` (slow); rune.next's Jit suite,
-  `a lent write of rows › *`.
+  read of the storage without the pad), and `› a destination that already
+  carries a tag keeps the read's fill`, on the host; `Metal › a store through
+  a padded view writes the row within the source, and nothing outside it
+  (D69)` and `› a read of a padded node stored through reads its fill in the
+  padding (D69)` (slow); rune.next's Jit suite, `a lent write of rows › *`.
 
 ## D70. A batch stages host memory its device cannot map
 
