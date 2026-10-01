@@ -657,6 +657,11 @@ let fold_where_closure cond t f =
   if not (Nodes.mem cond (bool_slice t) || Nodes.mem cond (bool_slice f)) then
     None
   else if
+    (* a constant condition, broadcast or not, assumes nothing: the same node
+       is every other use of that constant *)
+    is_const (base cond)
+  then None
+  else if
     List.exists
       (fun u -> op_in_backward_slice_with_self u [ Op.Index ])
       [ cond; t; f ]

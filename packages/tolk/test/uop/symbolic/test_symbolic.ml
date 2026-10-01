@@ -634,6 +634,14 @@ let symbolic_selections =
           let e' = Ops.where other t e in
           let sel = Ops.where cond e' (Ops.where other e t) in
           by_symbolic sel sel);
+      test
+        "a broadcast constant condition is not folded in the branches (D75)"
+        (fun () ->
+          let x = Ops.param ~shape:[ Ops.Int 4 ] 0 Dtype.Float32 in
+          let y = Ops.param ~shape:[ Ops.Int 4 ] 1 Dtype.Float32 in
+          let no = Ops.const_like (Ops.lt x y) (`Bool false) in
+          let sel = Ops.where no (Ops.where no x (Ops.where no y x)) y in
+          equal uop sel (symbolic sel));
       test "a condition over an index is not folded in the branches" (fun () ->
           let load = Ops.index buf [ a ] in
           let c = Ops.O.(load < float 1.) in
