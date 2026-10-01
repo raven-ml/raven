@@ -703,6 +703,39 @@ let parity =
           fun () -> snd (Nx.qr a));
     ]
 
+(* Integers *)
+
+let integers =
+  group "integers"
+    [
+      test "a factorization of integers raises as eager does" (fun () ->
+          let a = Nx.create Nx.int32 [| 2; 2 |] [| 4l; 1l; 1l; 3l |] in
+          let both name f =
+            let error =
+              Invalid_argument
+                (name ^ ": linalg requires a float or complex dtype")
+            in
+            raises error (fun () -> ignore (f ()));
+            raises error (fun () -> ignore (trace f))
+          in
+          both "cholesky" (fun () ->
+              Nx.Op.eval (Cholesky { upper = false; x = a }));
+          both "qr" (fun () -> Nx.Op.eval (Qr { reduced = true; x = a }));
+          both "lu" (fun () -> Nx.Op.eval (Lu a));
+          both "svd" (fun () ->
+              Nx.Op.eval (Svd { full_matrices = false; x = a }));
+          both "solve_triangular" (fun () ->
+              Nx.Op.eval
+                (Solve_triangular
+                   {
+                     upper = true;
+                     transpose = false;
+                     unit_diag = false;
+                     a;
+                     b = a;
+                   })));
+    ]
+
 let () =
   exit
   @@ run "lower_linalg"
@@ -714,6 +747,7 @@ let () =
          lu;
          qr;
          svd;
+         integers;
          on_the_host;
          parity;
        ]

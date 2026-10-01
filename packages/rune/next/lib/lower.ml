@@ -514,6 +514,13 @@ let op : type r. scope -> r Nx.Op.t -> r =
   in
   let like x u = ret (Nx.dtype x) u in
   let n x = node s what p x in
+  (* A factorization of integers raises, as nx.cpu's does. *)
+  let factored x =
+    let dt = Nx.dtype x in
+    if not (Nx_dtype.is_float dt || Nx_dtype.is_complex dt) then
+      invalid_arg (what ^ ": linalg requires a float or complex dtype");
+    n x
+  in
   match[@warning "@4@8"] o with
   | Unary (k, x) -> like x (Lower_arith.unary k (n x))
   | Binary (k, x, y) -> like x (Lower_arith.binary k (n x) (n y))
@@ -559,19 +566,20 @@ let op : type r. scope -> r Nx.Op.t -> r =
         (Lower_index.fold ~output_size ~kernel_size ~stride ~dilation ~padding
            (n x))
   | Matmul (x, y) -> like x (Lower_linalg.matmul (n x) (n y))
-  | Cholesky { upper; x } -> like x (Lower_linalg.cholesky ~upper (n x))
+  | Cholesky { upper; x } -> like x (Lower_linalg.cholesky ~upper (factored x))
   | Qr { reduced; x } ->
-      let q, r = Lower_linalg.qr ~reduced (n x) in
+      let q, r = Lower_linalg.qr ~reduced (factored x) in
       (like x q, like x r)
   | Lu x ->
-      let lu, pivots, perm = Lower_linalg.lu (n x) in
+      let lu, pivots, perm = Lower_linalg.lu (factored x) in
       (like x lu, ret Nx_dtype.int32 pivots, ret Nx_dtype.int32 perm)
   | Svd { full_matrices; x } ->
-      let u, sv, vt = Lower_linalg.svd ~full_matrices (n x) in
+      let u, sv, vt = Lower_linalg.svd ~full_matrices (factored x) in
       (like x u, ret Nx_dtype.float64 sv, like x vt)
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       like b
-        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (n a) (n b))
+        (Lower_linalg.solve_triangular ~upper ~transpose ~unit_diag (factored a)
+           (factored b))
   | Fft _ | Rfft _ | Irfft _ | Eig _ | Eigh _ ->
       jit_error "cannot compile %s" what
   | Contiguous x -> like x (Ops.contiguous (n x))
