@@ -116,15 +116,16 @@ let lower op xs dsts =
 
 type operand = A : ('a, 'b) Nx_array.t -> operand
 
-(* How a program reads an array's elements: their dtype, the view's shape and
-   strides, the elements from its run's start to the view's first
-   ({!Lower.span}) and where that run starts within 16 bytes of memory
-   ({!Lower.phase}), which the program's vector accesses are aligned to. *)
+(* How a program reads an array's elements: their dtype, and the view over the
+   run of its storage the program binds ({!Lower.span}), of the array's shape
+   and strides and of its offset from the run's start; and where that run starts
+   within 16 bytes of memory ({!Lower.phase}), which the program's vector
+   accesses are aligned to. *)
 type layout = {
   dtype : Dtype.t;
   shape : int array;
   strides : int array;
-  first : int;
+  offset : int;
   phase : int;
 }
 
@@ -135,13 +136,13 @@ let tolk_dtype what (A a) =
 
 let layout what (A a as x) =
   let dtype = tolk_dtype what x and v = a.view in
-  let first, phase =
+  let offset, phase =
     if View.numel v = 0 then (0, 0)
     else
       let start, _ = Lower.span dtype v in
-      (fst (View.extent v) - start, Lower.phase dtype a.buffer start)
+      (View.offset v - start, Lower.phase dtype a.buffer start)
   in
-  { dtype; shape = View.shape v; strides = View.strides v; first; phase }
+  { dtype; shape = View.shape v; strides = View.strides v; offset; phase }
 
 type key = {
   op : op;
@@ -227,20 +228,25 @@ type program = {
    64: then Metal's submission of each command buffer bounds it. *)
 let links = 16
 
-let compile key d arrays dsts =
-  let name = Nx_device.name d and host = Nx_device.name (Nx_device.host_of d) in
+(* [compile key d] is the program of [key], compiled through [d], a device of
+   [key]'s target. It names its device after the target and its host [HOST]: a
+   link binds the names to the device it runs on. A program on the host names no
+   other device. *)
+let compile (key : key) d =
+  let name = key.target.device and host = "HOST" in
   let device = Ops.Single name in
-  (* Each array's node, and its storage's buffer if it has elements. *)
-  let node (A a) (l : layout) =
-    if View.numel a.view = 0 then
+  (* Each layout's node, and its run's buffer if it has elements. *)
+  let node (l : layout) =
+    let v = View.create ~offset:l.offset ~strides:l.strides l.shape in
+    if View.numel v = 0 then
       (Lower.broadcast (Ops.const ~dtype:l.dtype (`Int Z.zero)) l.shape, None)
     else
-      let start, span = Lower.span l.dtype a.view in
+      let start, span = Lower.span l.dtype v in
       let b = Ops.new_buffer ~phase:l.phase device span l.dtype in
-      (Lower.strided b a.view start, Some b)
+      (Lower.strided b v start, Some b)
   in
-  let operands = List.map2 node arrays key.inputs
-  and outs = List.map2 node dsts key.outputs in
+  let operands = List.map node key.inputs
+  and outs = List.map node key.outputs in
   let results = lower key.op (List.map fst operands) (List.map fst outs) in
   let stores =
     List.map2
@@ -328,8 +334,7 @@ let program what key t d arrays dsts =
       | Some p -> p
       | None ->
           let p =
-            Nx_device.Profile.span ("compile " ^ what) (fun () ->
-                compile key d arrays dsts)
+            Nx_device.Profile.span ("compile " ^ what) (fun () -> compile key d)
           in
           Atomic.set e.compiled (Some p);
           p)
