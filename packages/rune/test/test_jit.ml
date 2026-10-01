@@ -2273,6 +2273,54 @@ let check_scatter ~msg ?unique_indices ~axis ~indices ~values t =
       check_arr ~msg:(msg ^ ", " ^ name ^ ", replay") (to_arr (f t)) (g t))
     [ ("set", `Set); ("add", `Add) ]
 
+(* A view of a capture feeds a scatter's indices while another kernel reads the
+   same view: the kernel rangeifies the shared view into its own index
+   arithmetic, and the scatter's call must keep reading the window — it read the
+   capture's base instead. *)
+let test_scatter_at_view_of_shared_capture () =
+  let tokens = i32 [| 7 |] [| 0; 1; 2; 3; 0; 1; 2 |] in
+  let view () = Nx.slice [ Nx.R (1, 7) ] tokens in
+  let f () =
+    let s =
+      Nx.scatter ~mode:`Add ~axis:1
+        ~indices:(Nx.unsqueeze ~axes:[ 1 ] (view ()))
+        ~values:(Nx.ones f32 [| 6; 1 |])
+        (Nx.zeros f32 [| 6; 4 |])
+    in
+    (s, Nx.cast f32 (view ()))
+  in
+  let g = Rune.jit Nx.Ptree.(unit @-> returns (pair tensor tensor)) f in
+  let expected, _ = f () in
+  let got, _ = g () in
+  check_arr ~msg:"scatter at a view of a shared capture" (to_arr expected) got
+
+(* The backward of a gather scatters the cotangent at the gather's indices: a
+   view of a capture that a second traced computation also reads. *)
+let test_grad_gather_at_view_of_shared_capture () =
+  let logits =
+    Nx.create f32 [| 6; 4 |]
+      (Array.init 24 (fun i -> Float.sin (float_of_int ((i * 7) + 1)) /. 3.))
+  in
+  let tokens = i32 [| 7 |] [| 0; 1; 2; 3; 0; 1; 2 |] in
+  let cross_entropy l =
+    let targets = Nx.slice [ Nx.R (1, 7) ] tokens in
+    let picked =
+      Nx.take_along_axis ~axis:1
+        ~indices:(Nx.unsqueeze ~axes:[ 1 ] targets)
+        (Nx.log_softmax l)
+    in
+    Nx.neg (Nx.sum picked)
+  in
+  let step =
+    Rune.jit
+      Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+      (fun l -> (Rune.grad' cross_entropy l, cross_entropy l))
+  in
+  let expected = Rune.grad' cross_entropy logits in
+  let got, _ = step logits in
+  check_arr ~msg:"grad of a gather at a view of a shared capture"
+    (to_arr expected) got
+
 let test_scatter_duplicates () =
   check_scatter ~msg:"rows aimed at one row twice" ~axis:0
     ~indices:(i64 [| 3; 3 |] [| 2; 0; 1; 2; 3; 1; 0; 0; 1 |])
@@ -5456,6 +5504,10 @@ let tests =
     group "indexed access"
       [
         test "scatter matches eager" test_scatter_matches_eager;
+        test "scatter at a view of a shared capture"
+          test_scatter_at_view_of_shared_capture;
+        test "grad of a gather at a view of a shared capture"
+          test_grad_gather_at_view_of_shared_capture;
         test "gather of a narrowed comparison"
           test_gather_of_narrowed_comparison;
         test "scatter orders duplicate updates" test_scatter_duplicates;
