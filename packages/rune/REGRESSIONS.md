@@ -251,6 +251,16 @@ naming the row, when it is not. `T › compositions › …` holds nx's function
 made of several rows (their old fixtures, both laws, and closed forms), and
 `T › edges › …` the named cases.
 
+The batching suite is `next/test/rules/vmap/test_batching.ml`, written `B`
+below. Over the same rows and draws it checks that a map of the row is its
+loop over the rows of its batched operands, whichever of them are batched,
+bit for bit for the rows whose elements come from their own inputs and to
+rounding for those that accumulate; through a moved batch axis, inside
+another map, and over no row; and that the row's `jacfwd'` and `jacrev'`
+are the loops of its tangent and its pullback. `B › edges › …` holds the
+operands a row's draws never batch (conditions, indices, starts, keys),
+reads inside a map, and nx's functions made of several rows.
+
 
 ### Old rune tests
 
@@ -333,3 +343,13 @@ made of several rows (their old fixtures, both laws, and closed forms), and
 | old: test_fft.ml one-way losses › rfft2 energy; irfft2 of a lifted spectrum; complex mask, even length; odd length; complex-masked irfft; power spectrum; c2c pass in the chain | one-way spectral losses | T › compositions › spectral › (same names; the c2c pass is "a complex pass in the chain") |
 | old: test_fft.ml pulls against the DFT transpose › rfft pull, even and odd length; irfft pull, even and odd length | the transforms' pullbacks against the definition | T › compositions › spectral pullbacks › rfft against its definition; irfft against its definition (lengths 4 and 5) |
 | old: test_fft.ml forward mode › round trip, even length; odd length; forward and reverse pairings agree | spectral tangents and the adjoint identity | T › compositions › spectral › round trip, even length; odd length; filtered spectral energy (both laws) |
+| old: test_vmap.ml loop oracle › elementwise chain; closure constants broadcast; scalar closure constant; constant output broadcasts; softmax composite; centering uses the unbatched mean | compositions against the loop | B › edges › compositions › an elementwise chain; captured constants broadcast; a scalar captured constant; a constant result is broadcast; softmax; centering uses each lane's mean |
+| old: test_vmap.ml loop oracle › bitcast; full reduction; axis reduction on matrix elements; max reduction; vector-matrix multiply; matrix-matrix multiply; matmul against a constant with its own batch dimensions; reshape and transpose; where selects per element; sort; cumsum; concatenate with itself; pad; sliding windows (2); extract_patches; combine_patches; slice; take_along_axis with constant indices | each row against the loop | B › bitcast, reduce <kind>, matmul, move <kind>, where, sort, scan sum, cat, pad, move window, unfold, fold, gather › a map is its loop (operand subsets, captured operands with batch axes of their own, and axes drawn) |
+| old: test_vmap.ml axes and structure › maps a moved axis | a batch axis that is not the leading one in memory | B › <row> › a map through a moved axis is its loop |
+| old: test_vmap.ml axes and structure › raises without a batching rule | a row with no batching rule | dropped: every row has a batching rule (B › <row> › a map is its loop) |
+| old: test_vmap.ml axes and structure › reading a batched value raises; reading a constant value is fine | reads inside a map | B › edges › reads › reading a lane raises; reading a constant inside a map computes |
+| old: test_vmap.ml set › window write batches; a batched window start batches | update under a map | B › update › a map is its loop; B › edges › integer operands › batched starts alone write each lane's window (and of a matrix); batched starts and values write each lane's window |
+| old: test_vmap.ml nesting › vmap of vmap | a map inside a map | B › <row> › a map inside another map is its loop |
+| old: test_vmap.ml composition › per-sample gradients of a gather; per-sample gradients of a sliding window | the rows' pullbacks batched | B › edges › compositions › (same names); B › gather, move window › its Jacobians are the loops of its tangent and pullback |
+| old: test_fft.ml vmap › fft; ifft; rfft; irfft; fft along a non-last axis; rfft along a non-last axis; non-leading batch axis | the transforms against the loop | B › fft, rfft, irfft › a map is its loop (axes drawn); › a map through a moved axis is its loop |
+| old: test_fft.ml vmap › vmap of grad | per-sample spectral gradients | B › edges › compositions › per-sample gradients of a spectral round trip |
