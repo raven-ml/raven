@@ -421,7 +421,11 @@ let transpose_op : type a b.
          itself and the real part. *)
       let last = axes.(Array.length axes - 1) in
       let n = (Nx.shape x).(last) and m = (Nx.shape ct).(last) in
-      let ct = if n > m then pad_axis ~axis:last (0, n - m) ct else ct in
+      let ct =
+        if (n > m) [@mutate off "a pad by zero leaves the cotangent"] then
+          pad_axis ~axis:last (0, n - m) ct
+        else ct
+      in
       add x
         (Nx.real (Nx.dtype x) (eval (Fft { inverse = false; axes; x = ct })))
   | Irfft { axes; x; _ } ->
@@ -442,7 +446,10 @@ let transpose_op : type a b.
         in
         let head = shrink_axis ~axis:last (0, m) z in
         let folded =
-          if n - m >= 1 then
+          if
+            (n - m >= 1)
+            [@mutate off "at n = m the mirror is empty and the pad adds zeros"]
+          then
             Nx.add head
               (pad_axis ~axis:last
                  (1, m - 1 - (n - m))
@@ -450,8 +457,12 @@ let transpose_op : type a b.
           else head
         in
         add x
-          (if m > bins then shrink_axis ~axis:last (0, bins) folded
-           else if m < bins then pad_axis ~axis:last (0, bins - m) folded
+          (if
+             (m > bins)
+             [@mutate off "a shrink to every bin leaves the spectrum"]
+           then shrink_axis ~axis:last (0, bins) folded
+           else if (m < bins) [@mutate off "a pad by zero leaves the spectrum"]
+           then pad_axis ~axis:last (0, bins - m) folded
            else folded)
       end
   | Contiguous x -> add x ct

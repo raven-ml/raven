@@ -439,9 +439,15 @@ let svd' i ~full_matrices x u s vt dx =
   let outside basis y =
     Nx.div (Nx.sub y (Nx.matmul basis (Nx.matmul (adjoint basis) y))) row
   in
-  let du = if m > n then Nx.add du (outside u (Nx.matmul dx v)) else du in
+  let du =
+    if (m > n) [@mutate off "on a square matrix U Uᴴ = I and the term vanishes"]
+    then Nx.add du (outside u (Nx.matmul dx v))
+    else du
+  in
   let dv =
-    if n > m then Nx.add dv (outside v (Nx.matmul (adjoint dx) u)) else dv
+    if (n > m) [@mutate off "on a square matrix V Vᴴ = I and the term vanishes"]
+    then Nx.add dv (outside v (Nx.matmul (adjoint dx) u))
+    else dv
   in
   (du, ds, adjoint dv)
 
