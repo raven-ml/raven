@@ -5,11 +5,20 @@
 
 (** Columns.
 
-    [Talon_next.Column] documents columns. This interface adds their
-    {{!repr}representation} and the {{!codec}codec} that converts OCaml values
-    to and from columns by recursion over their type. *)
+    [Talon_next.Column] documents columns and their layouts. This interface adds
+    their {{!repr}representation} and the {{!codec}codec} that converts OCaml
+    values to and from columns by recursion over their type. *)
 
 type t
+
+type layout =
+  | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
+  | Varsize of { validity : Nx_bits.t option; offsets : Nx.int64_t; child : t }
+  | Children of {
+      validity : Nx_bits.t option;
+      length : int;
+      fields : (string * t) list;
+    }
 
 val type_ : t -> Type.any
 val length : t -> int
@@ -22,6 +31,8 @@ val of_tensor : ?validity:Nx_bits.t -> ('a, 'b) Nx.t -> t
 val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
 val validity : t -> Nx_bits.t option
 val ragged : t -> (int, Nx.uint8_elt) Nx_ragged.t
+val layout : t -> layout
+val of_layout : Type.any -> layout -> (t, int * string) result
 
 (** {1:repr Representation} *)
 

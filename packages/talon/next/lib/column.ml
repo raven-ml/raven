@@ -600,3 +600,180 @@ let ragged c =
       err "Column.ragged: row %d is null" (first_null c)
   | (Any String | Any Binary), Bytes r -> r
   | Any ty, _ -> err "Column.ragged: %a is neither string nor binary" Type.pp ty
+
+(* Layouts *)
+
+type layout =
+  | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
+  | Varsize of { validity : Nx_bits.t option; offsets : Nx.int64_t; child : t }
+  | Children of {
+      validity : Nx_bits.t option;
+      length : int;
+      fields : (string * t) list;
+    }
+
+let refuse fmt = err ("Column.of_layout: " ^^ fmt)
+let pp_any ppf (Type.Any t) = Type.pp ppf t
+
+let fields_of ty =
+  match Type.storage ty with Any (Record fs) -> fs | _ -> assert false
+
+let layout c =
+  let validity = c.validity in
+  match c.data with
+  | Fixed values -> Fixed { validity; values }
+  | Bytes r ->
+      let values = Nx_ragged.values r in
+      let child =
+        {
+          type_ = Any Type.uint8;
+          length = Nx.dim 0 values;
+          nulls = 0;
+          validity = None;
+          data = Fixed (P values);
+        }
+      in
+      Varsize { validity; offsets = Nx_ragged.offsets r; child }
+  | List { offsets; child } -> Varsize { validity; offsets; child }
+  | Fields cs ->
+      let (Any ty) = c.type_ in
+      let fields = List.map2 (fun (n, _) c -> (n, c)) (fields_of ty) cs in
+      Children { validity; length = c.length; fields }
+
+let check_validity validity n =
+  match validity with
+  | Some v when Nx_bits.length v <> n ->
+      refuse "a validity of length %d for %d rows" (Nx_bits.length v) n
+  | _ -> ()
+
+(* [rows_of offsets child] is the number of rows that [offsets] cut from the
+   rows of [child]. *)
+let rows_of offsets child =
+  let shape = Nx.shape offsets in
+  if Array.length shape <> 1 || shape.(0) = 0 then
+    refuse "offsets of shape %a, not 1-D with an entry" Nx.pp_shape shape;
+  let o = Bigarray.array1_of_genarray (Nx.to_bigarray offsets) in
+  let n = shape.(0) - 1 in
+  if Int64.compare o.{0} 0L < 0 then refuse "offsets start at %Ld" o.{0};
+  for r = 0 to n - 1 do
+    if Int64.compare o.{r + 1} o.{r} < 0 then
+      refuse "offsets decrease at row %d" r
+  done;
+  if Int64.compare o.{n} (Int64.of_int child.length) > 0 then
+    refuse "offsets end at %Ld, past the child's %d rows" o.{n} child.length;
+  n
+
+(* [rows_of_values ty x] is the rows of [x] if it lays out [ty], a scalar or
+   tensor type. *)
+let rows_of_values : type a. a Type.t -> Nx.packed -> int =
+ fun ty (P x) ->
+  let shape = Nx.shape x in
+  let lays_out dt cell =
+    Nx_dtype.equal dt (Nx.dtype x)
+    && Array.length shape > 0
+    && Array.sub shape 1 (Array.length shape - 1) = cell
+  in
+  let ok =
+    match ty with
+    | Tensor (dt, cell) -> lays_out dt (Iarray.to_array cell)
+    | _ -> (
+        match scalar ty with
+        | Some (Scalar s) -> lays_out s.dtype [||]
+        | None -> false)
+  in
+  if not ok then
+    refuse "%a values of shape %a do not lay out %a" Nx_dtype.pp (Nx.dtype x)
+      Nx.pp_shape shape Type.pp ty;
+  shape.(0)
+
+let ticks_per_day : Type.unit_ -> int64 = function
+  | S -> 86_400L
+  | Ms -> 86_400_000L
+  | Us -> 86_400_000_000L
+  | Ns -> 86_400_000_000_000L
+
+(* [unheld ty c] is the first non-null row of the fixed-width column [c] whose
+   stored value [ty] does not hold, and why. Every other fixed-width type holds
+   all the values of its storage. *)
+let unheld : type a. a Type.t -> t -> (int * string) option =
+ fun ty c ->
+  let first dt lo hi why =
+    let x = match c.data with Fixed p -> Nx.unpack dt p | _ -> assert false in
+    let bad = Nx.logical_or (Nx.less_s x lo) (Nx.greater_equal_s x hi) in
+    let bad =
+      match valid c with Some v -> Nx.logical_and v bad | None -> bad
+    in
+    let rows = Nx.positions bad in
+    if Nx.numel rows = 0 then None
+    else
+      let r = Int64.to_int (Nx.item [ 0 ] rows) in
+      Some (r, Format.asprintf "%a %s" Type.pp ty (why (Nx.item [ r ] x)))
+  in
+  match ty with
+  | Decimal { precision; _ } ->
+      let bound = pow10 precision in
+      let why = Printf.sprintf "unscaled value %Ld has more than %d digits" in
+      first Nx.int64
+        (Int64.neg (Int64.pred bound))
+        bound
+        (fun u -> why u precision)
+  | Categorical d ->
+      let n = Int32.of_int (Iarray.length d) in
+      first Nx.int32 0l n (Printf.sprintf "has no code %ld")
+  | Clock u ->
+      first Nx.int64 0L (ticks_per_day u)
+        (Printf.sprintf "tick %Ld is outside the day")
+  | _ -> None
+
+let held c = function Some e -> Error e | None -> Ok c
+
+let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
+ fun ty l ->
+  match (ty, l) with
+  | Ext { storage; _ }, l -> Result.map (retype ty) (of_layout storage l)
+  | (String | Binary), Varsize { validity; offsets; child } -> (
+      if not (has_type Type.uint8 child) then
+        refuse "a child of %a does not lay out %a" pp_any child.type_ Type.pp ty;
+      if child.nulls > 0 then
+        refuse "a child with a null does not lay out %a" Type.pp ty;
+      let length = rows_of offsets child in
+      check_validity validity length;
+      let values = match child.data with Fixed p -> p | _ -> assert false in
+      let r = Nx_ragged.v ~offsets (Nx.unpack Nx.uint8 values) in
+      let c = with_validity (Any ty) validity ~length (Bytes r) in
+      match ty with
+      | String ->
+          held c (Strings.utf_8 ~by:"Column.of_layout" ?mask:(valid c) r)
+      | _ -> Ok c)
+  | List e, Varsize { validity; offsets; child } ->
+      if not (has_type e child) then
+        refuse "a child of %a does not lay out %a" pp_any child.type_ Type.pp ty;
+      let length = rows_of offsets child in
+      check_validity validity length;
+      Ok (with_validity (Any ty) validity ~length (List { offsets; child }))
+  | Record fields, Children { validity; length; fields = cs } ->
+      if not (List.equal String.equal (List.map fst fields) (List.map fst cs))
+      then
+        refuse "fields %a do not lay out %a"
+          (Type.pp_list Type.pp_name)
+          (List.map fst cs) Type.pp ty;
+      if length < 0 then refuse "a length of %d" length;
+      let field (n, Type.Any ft) (_, c) =
+        if not (has_type ft c) then
+          refuse "field %a of %a does not lay out %a" Type.pp_name n pp_any
+            c.type_ Type.pp ty;
+        if c.length <> length then
+          refuse "field %a of %d rows for %d" Type.pp_name n c.length length
+      in
+      List.iter2 field fields cs;
+      check_validity validity length;
+      Ok (with_validity (Any ty) validity ~length (Fields (List.map snd cs)))
+  | _, Fixed { validity; values } ->
+      let length = rows_of_values ty values in
+      check_validity validity length;
+      let c = with_validity (Any ty) validity ~length (Fixed values) in
+      held c (unheld ty c)
+  | _, Varsize _ -> refuse "offsets and a child do not lay out %a" Type.pp ty
+  | _, Children _ -> refuse "fields do not lay out %a" Type.pp ty
+
+let of_layout (Type.Any ty) l = of_layout ty l

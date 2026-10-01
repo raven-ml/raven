@@ -333,5 +333,311 @@ let refusal_cases =
     "Refusals" refusals
     (fun (_, f, expected) -> expect (message f) expected)
 
+(* Layouts *)
+
+let pp_ty ppf (Type.Any t) = Type.pp ppf t
+
+let pp_validity ppf = function
+  | None -> Format.pp_print_string ppf "no null"
+  | Some b -> Nx.pp ppf (Nx_bits.to_bool b)
+
+let rec pp_layout ppf c =
+  let ty = Column.type_ c and v = Column.validity c in
+  match Column.layout c with
+  | Fixed { values = P x; _ } ->
+      Format.fprintf ppf "@[<hv 2>%a,@ %a,@ %a@]" pp_ty ty pp_validity v Nx.pp x
+  | Varsize { offsets; child; _ } ->
+      Format.fprintf ppf "@[<hv 2>%a,@ %a,@ %a,@ %a@]" pp_ty ty pp_validity v
+        Nx.pp offsets pp_layout child
+  | Children { length; fields; _ } ->
+      let field ppf (n, c) = Format.fprintf ppf "%s: %a" n pp_layout c in
+      Format.fprintf ppf "@[<hv 2>%a,@ %d rows,@ %a,@ %a@]" pp_ty ty length
+        pp_validity v
+        (Format.pp_print_list field)
+        fields
+
+let same_values (Nx.P x) (Nx.P y) =
+  match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+  | Some Equal ->
+      Nx.shape x = Nx.shape y && compare (Nx.to_array x) (Nx.to_array y) = 0
+  | None -> false
+
+(* Columns are the same when their types, validities and buffers' values are, at
+   every depth. *)
+let rec same a b =
+  let bits c = Option.map (fun b -> Nx.to_array (Nx_bits.to_bool b)) c in
+  let same_type (Type.Any a) (Type.Any b) = Type.equal a b in
+  same_type (Column.type_ a) (Column.type_ b)
+  && bits (Column.validity a) = bits (Column.validity b)
+  &&
+  match (Column.layout a, Column.layout b) with
+  | Fixed x, Fixed y -> same_values x.values y.values
+  | Varsize x, Varsize y ->
+      Nx.to_array x.offsets = Nx.to_array y.offsets && same x.child y.child
+  | Children x, Children y ->
+      x.length = y.length
+      && List.equal
+           (fun (n, a) (m, b) -> String.equal n m && same a b)
+           x.fields y.fields
+  | _ -> false
+
+let column_w = Testable.make ~pp:pp_layout ~equal:same
+
+let layout_round_trip (G.Sample (ty, vs)) =
+  cover "a null" (nulls vs > 0);
+  cover "text" (match ty with String -> true | _ -> false);
+  cover "nested" (match ty with List _ | Record _ -> true | _ -> false);
+  Law.round_trip column_w pass Column.layout
+    (fun l -> require_ok (Column.of_layout (Any ty) l))
+    (Column.of_options ty vs)
+
+(* An extension column holds its storage's values, and a record field of it
+   holds them as its storage's. *)
+let ext_in_record (G.Sample (ty, vs)) =
+  assume (match ty with Ext _ -> false | _ -> true);
+  cover "a null" (nulls vs > 0);
+  cover "a list or a record"
+    (match ty with List _ | Record _ -> true | _ -> false);
+  let c = Column.of_options ty vs in
+  let ety = Type.ext ~name:"m" ty in
+  let e = require_ok (Column.of_layout (Any ety) (Column.layout c)) in
+  let rty = Type.record [ ("e", Any ety) ] in
+  let fields = [ ("e", e) ] and length = Array.length vs in
+  let l = Column.Children { validity = None; length; fields } in
+  let r = require_ok (Column.of_layout (Any rty) l) in
+  Law.round_trip column_w pass (Column.values Record.kind) (Column.v rty) r
+
+let n x = Nx.create Nx.int64 [| Array.length x |] x
+let bits b = Nx_bits.of_bool (Nx.create Nx.bool [| Array.length b |] b)
+
+let fixed ?validity dt x =
+  Column.Fixed { validity; values = P (Nx.create dt [| Array.length x |] x) }
+
+let bytes ?validity rows =
+  let s = String.concat "" rows in
+  let next (o, os) r = (o + String.length r, Int64.of_int o :: os) in
+  let last, os = List.fold_left next (0, []) rows in
+  let offsets = n (Array.of_list (List.rev (Int64.of_int last :: os))) in
+  let child =
+    Column.of_tensor
+      (Nx.create Nx.uint8
+         [| String.length s |]
+         (Array.init (String.length s) (fun i -> Char.code s.[i])))
+  in
+  Column.Varsize { validity; offsets; child }
+
+let unheld =
+  let open Type in
+  let code = categorical [| "x"; "y" |]
+  and dec = decimal ~precision:3 ~scale:1 in
+  [
+    ( "the first and last scalar values of each length",
+      Any string,
+      bytes
+        [
+          "\x00\x7f";
+          "\xc2\x80\xdf\xbf";
+          "\xe0\xa0\x80\xed\x9f\xbf";
+          "\xee\x80\x80\xef\xbf\xbf";
+          "\xf0\x90\x80\x80\xf4\x8f\xbf\xbf";
+        ],
+      None );
+    ( "an overlong form",
+      Any string,
+      bytes [ "a"; "\xc0\xaf" ],
+      Some (1, "invalid UTF-8 at byte 0") );
+    ( "a surrogate",
+      Any string,
+      bytes [ "ab\xed\xa0\x80" ],
+      Some (0, "invalid UTF-8 at byte 2") );
+    ( "a value past U+10FFFF",
+      Any string,
+      bytes [ "\xf4\x90\x80\x80" ],
+      Some (0, "invalid UTF-8 at byte 0") );
+    ( "a sequence cut by the row's end",
+      Any string,
+      bytes [ "\xe2\x82"; "\xac" ],
+      Some (0, "invalid UTF-8 at byte 0") );
+    ( "the last row",
+      Any string,
+      bytes [ "é"; "日本"; "\xff" ],
+      Some (2, "invalid UTF-8 at byte 0") );
+    ( "invalid text under a null",
+      Any string,
+      bytes ~validity:(bits [| true; false |]) [ "a"; "\xff" ],
+      None );
+    ("binary holds any byte", Any binary, bytes [ "\xff" ], None);
+    ( "an extension's storage",
+      Any (ext ~name:"m" string),
+      bytes [ "\xff" ],
+      Some (0, "invalid UTF-8 at byte 0") );
+    ( "a code past the dictionary",
+      Any code,
+      fixed Nx.int32 [| 1l; 2l |],
+      Some (1, {|categorical["x", "y"] has no code 2|}) );
+    ( "a negative code",
+      Any code,
+      fixed Nx.int32 [| -1l |],
+      Some (0, {|categorical["x", "y"] has no code -1|}) );
+    ( "a code past the dictionary under a null",
+      Any code,
+      fixed ~validity:(bits [| false |]) Nx.int32 [| 2l |],
+      None );
+    ( "a decimal at its precision",
+      Any dec,
+      fixed Nx.int64 [| -999L; 999L |],
+      None );
+    ( "a decimal past its precision",
+      Any dec,
+      fixed Nx.int64 [| 999L; 1000L |],
+      Some (1, "decimal[3, 1] unscaled value 1000 has more than 3 digits") );
+    ( "a negative decimal past its precision",
+      Any dec,
+      fixed Nx.int64 [| -1000L |],
+      Some (0, "decimal[3, 1] unscaled value -1000 has more than 3 digits") );
+    ( "the last clock tick of the day",
+      Any (clock S),
+      fixed Nx.int64 [| 0L; 86_399L |],
+      None );
+    ( "a clock at the end of the day",
+      Any (clock Ms),
+      fixed Nx.int64 [| 0L; 86_400_000L |],
+      Some (1, "clock[ms] tick 86400000 is outside the day") );
+    ( "a negative clock",
+      Any (clock Ns),
+      fixed Nx.int64 [| -1L |],
+      Some (0, "clock[ns] tick -1 is outside the day") );
+  ]
+
+let unheld_cases =
+  cases
+    ~name:(fun (n, _, _, _) -> n)
+    "Values a type does not hold" unheld
+    (fun (_, ty, l, expected) ->
+      let got =
+        match Column.of_layout ty l with Ok _ -> None | Error e -> Some e
+      in
+      equal (option (pair int string)) expected got)
+
+let layouts =
+  group "Layouts"
+    [
+      prop "of_layout reads back a column's layout" G.sample layout_round_trip;
+      prop "a record field of an extension type reads and writes its storage"
+        G.sample ext_in_record;
+      test "of_layout shares its values" (fun () ->
+          let x = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
+          let c =
+            Column.of_layout (Any Type.date)
+              (Fixed { validity = None; values = P x })
+          in
+          satisfies ~claim:"x itself"
+            (Testable.make ~pp:Nx.pp ~equal:( == ))
+            (fun y -> y == x)
+            (Column.to_tensor Nx.int32 (require_ok c)));
+      unheld_cases;
+    ]
+
+let int8s_layout = fixed Nx.int8 [| 1; 2 |]
+let child = Column.v Type.int8 [| 1; 2 |]
+let of_layout ty l () = Column.of_layout (Type.Any ty) l
+
+let layout_refusals =
+  let open Type in
+  let varsize offsets child =
+    Column.Varsize { validity = None; offsets = n offsets; child }
+  in
+  let children ?(length = 2) fields =
+    Column.Children { validity = None; length; fields }
+  in
+  [
+    refuse "values of another dtype" (of_layout int16 int8s_layout)
+    @@ __POS_OF__
+         {| Column.of_layout: int8 values of shape [2] do not lay out int16 |};
+    refuse "values of another cell shape"
+      (of_layout (tensor Nx.int8 [| 3 |])
+         (Fixed { validity = None; values = P (Nx.zeros Nx.int8 [| 2; 2 |]) }))
+    @@ __POS_OF__
+         {| Column.of_layout: int8 values of shape [2,2] do not lay out tensor[int8, 3] |};
+    refuse "a scalar for a scalar type"
+      (of_layout int8
+         (Fixed { validity = None; values = P (Nx.scalar Nx.int8 1) }))
+    @@ __POS_OF__
+         {| Column.of_layout: int8 values of shape [] do not lay out int8 |};
+    refuse "a validity of another length"
+      (of_layout int8 (fixed ~validity:(bits [| true |]) Nx.int8 [| 1; 2 |]))
+    @@ __POS_OF__ {| Column.of_layout: a validity of length 1 for 2 rows |};
+    refuse "offsets that are 2-D"
+      (of_layout (list int8)
+         (Varsize
+            { validity = None; offsets = Nx.zeros Nx.int64 [| 1; 1 |]; child }))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets of shape [1,1], not 1-D with an entry |};
+    refuse "no offsets" (of_layout (list int8) (varsize [||] child))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets of shape [0], not 1-D with an entry |};
+    refuse "offsets that start below 0"
+      (of_layout (list int8) (varsize [| -1L; 0L |] child))
+    @@ __POS_OF__ {| Column.of_layout: offsets start at -1 |};
+    refuse "offsets that decrease"
+      (of_layout (list int8) (varsize [| 0L; 2L; 1L |] child))
+    @@ __POS_OF__ {| Column.of_layout: offsets decrease at row 1 |};
+    refuse "offsets past the child"
+      (of_layout (list int8) (varsize [| 0L; 3L |] child))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets end at 3, past the child's 2 rows |};
+    refuse "a list child of another type"
+      (of_layout (list int16) (varsize [| 0L; 2L |] child))
+    @@ __POS_OF__
+         {| Column.of_layout: a child of int8 does not lay out list[int16] |};
+    refuse "text over a child of another type"
+      (of_layout string (varsize [| 0L; 2L |] child))
+    @@ __POS_OF__
+         {| Column.of_layout: a child of int8 does not lay out string |};
+    refuse "text over a child with a null"
+      (of_layout string
+         (varsize [| 0L; 1L |] (Column.of_options uint8 [| Some 97; None |])))
+    @@ __POS_OF__
+         {| Column.of_layout: a child with a null does not lay out string |};
+    refuse "fields of other names"
+      (of_layout (record [ ("a", Any int8) ]) (children [ ("b", child) ]))
+    @@ __POS_OF__
+         {| Column.of_layout: fields [b] do not lay out record[a int8] |};
+    refuse "a field of another type"
+      (of_layout (record [ ("a", Any int16) ]) (children [ ("a", child) ]))
+    @@ __POS_OF__
+         {| Column.of_layout: field a of int8 does not lay out record[a int16] |};
+    refuse "a field of another length"
+      (of_layout
+         (record [ ("a", Any int8) ])
+         (children ~length:3 [ ("a", child) ]))
+    @@ __POS_OF__ {| Column.of_layout: field a of 2 rows for 3 |};
+    refuse "a negative length"
+      (of_layout (record []) (children ~length:(-1) []))
+    @@ __POS_OF__ {| Column.of_layout: a length of -1 |};
+    refuse "offsets for a scalar type"
+      (of_layout int8 (varsize [| 0L; 2L |] child))
+    @@ __POS_OF__
+         {| Column.of_layout: offsets and a child do not lay out int8 |};
+    refuse "fields for a list" (of_layout (list int8) (children []))
+    @@ __POS_OF__ {| Column.of_layout: fields do not lay out list[int8] |};
+  ]
+
+let layout_refusal_cases =
+  cases
+    ~name:(fun (n, _, _) -> n)
+    "Layout refusals" layout_refusals
+    (fun (_, f, expected) -> expect (message f) expected)
+
 let () =
-  exit (run "Column" [ codec; edge_cases; float_bits; storage; refusal_cases ])
+  exit
+    (run "Column"
+       [
+         codec;
+         edge_cases;
+         float_bits;
+         storage;
+         refusal_cases;
+         layouts;
+         layout_refusal_cases;
+       ])

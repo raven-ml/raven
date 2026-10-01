@@ -548,8 +548,8 @@ module Column : sig
 
       An extension column is laid out as its storage. The values under a null
       are unspecified; talon writes zeros, and empty rows, under the nulls it
-      makes. Columns are immutable, and share their buffers with the tensors
-      that read them. *)
+      makes. Columns are immutable, and share their buffers with the tensors and
+      layouts that read them. *)
 
   type t
   (** The type for columns. *)
@@ -626,6 +626,48 @@ module Column : sig
 
       Raises [Invalid_argument] if [c] is neither [string] nor [binary], or has
       a null. *)
+
+  (** {1:layout Layouts}
+
+      A layout is a column's Arrow buffers, as formats read and write them. *)
+
+  (** The type for layouts. *)
+  type layout =
+    | Fixed of { validity : Nx_bits.t option; values : Nx.packed }
+        (** One element per row, or one cell for a tensor column. *)
+    | Varsize of {
+        validity : Nx_bits.t option;
+        offsets : Nx.int64_t;
+        child : t;
+      }
+        (** Row [r] is the child's rows [offsets.{r}] to [offsets.{r + 1} - 1]:
+            the elements of a list, or, for [string] and [binary], the bytes, a
+            [uint8] child without nulls. *)
+    | Children of {
+        validity : Nx_bits.t option;
+        length : int;
+        fields : (string * t) list;
+      }
+        (** [length] rows, with one child per field of a record, in the record
+            type's order. *)
+
+  val layout : t -> layout
+  (** [layout c] is [c]'s layout, in O(1). *)
+
+  val of_layout : Type.any -> layout -> (t, int * string) result
+  (** [of_layout ty l] is the column of type [ty] laid out as [l], without a
+      copy, or [Error (row, reason)] for the first row whose value [ty] does not
+      hold: text that is not UTF-8, a code outside a categorical's dictionary, a
+      decimal of more digits than its precision, a time of day outside the day.
+      A row is checked only where it is not null. [reason] is a phrase, as in
+      [invalid UTF-8 at byte 3]. A child holds its own values, so only [l]'s own
+      values are checked.
+
+      Raises [Invalid_argument] if [l] does not lay out [ty]: values of another
+      dtype or cell shape than [ty]'s storage, a validity of another length,
+      offsets that are not 1-D, start below [0], decrease or reach past the
+      child, a child of another type (for text, a [uint8] column with a null),
+      or fields of other names, types or lengths than [ty]'s. *)
 end
 
 module Error = Error
