@@ -524,20 +524,6 @@ let qr' i ~reduced x q r dx =
 
 (* The interpreter *)
 
-let claims : type r. t -> r Nx.Op.t -> bool =
- fun i op ->
-  match[@warning "@4@8"] op with
-  | Unary (_, x) -> owns i x
-  | Binary (_, a, b) -> owns i a || owns i b
-  | Reduce (_, _, x) -> owns i x
-  | Move (x, _) -> owns i x
-  | Matmul (a, b) -> owns i a || owns i b
-  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _
-  | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _
-  | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
-  | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
-      List.exists (fun (Nx.P x) -> owns i x) (operands op)
-
 (* [run i op] is [op], one of whose operands is a dual of [i]. A rule forwards
    [op] on the primals and pairs its result with the tangent. *)
 let run : type r. t -> r Nx.Op.t -> r =
@@ -1035,9 +1021,11 @@ and remat : type p q.
 
 and install : type a. t -> (unit -> a) -> a =
  fun i f ->
+  let owner = { Construct.owns = (fun x -> owns i x) } in
+  let claims op = Construct.claims owner op in
   Construct.install
     {
-      op = Some { run = (fun op -> run i op); claims = (fun op -> claims i op) };
+      op = Some { run = (fun op -> run i op); claims };
       call = (fun c -> answer i c);
     }
     f

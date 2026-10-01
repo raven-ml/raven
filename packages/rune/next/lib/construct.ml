@@ -50,6 +50,22 @@ type interpreter = {
   call : 'r. 'r t -> (unit -> 'r) option;
 }
 
+type owner = { owns : 'a 'b. ('a, 'b) Nx.t -> bool }
+
+let claims : type r. owner -> r Nx.Op.t -> bool =
+ fun { owns } op ->
+  match[@warning "@4@8"] op with
+  | Unary (_, x) -> owns x
+  | Binary (_, a, b) -> owns a || owns b
+  | Reduce (_, _, x) -> owns x
+  | Move (x, _) -> owns x
+  | Matmul (a, b) -> owns a || owns b
+  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _
+  | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _
+  | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
+  | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
+      List.exists (fun (Nx.P x) -> owns x) (Nx.Op.operands op)
+
 type _ Effect.t += Construct : 'r t -> 'r Effect.t
 
 let default : type r. r t -> r = function

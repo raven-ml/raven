@@ -101,6 +101,13 @@ type interpreter = {
 }
 (** The type for interpreters of constructs and operations. *)
 
+type owner = { owns : 'a 'b. ('a, 'b) Nx.t -> bool }
+(** The type for an installation's test of the traced values it owns. *)
+
+val claims : owner -> 'r Nx.Op.t -> bool
+(** [claims o op] is [true] iff an operand of [op] is one [o] owns: the
+    operations an installation that owns traced values interprets. *)
+
 val install : interpreter -> (unit -> 'a) -> 'a
 (** [install i f] is [f ()] with every construct of its extent delivered to
     [i.call] and, when [i.op] is [Some o], every operation to [o] through

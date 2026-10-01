@@ -86,20 +86,6 @@ let record t op x =
   slot t ~context:(Repr.context x) (placement op) (Nx.Op.dtype op)
     (Nx.Op.shape op) (Recorded op)
 
-let claims : type r. tape -> r Nx.Op.t -> bool =
- fun t op ->
-  match[@warning "@4@8"] op with
-  | Unary (_, x) -> owns t x
-  | Binary (_, a, b) -> owns t a || owns t b
-  | Reduce (_, _, x) -> owns t x
-  | Move (x, _) -> owns t x
-  | Matmul (a, b) -> owns t a || owns t b
-  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _
-  | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _
-  | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
-  | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
-      List.exists (fun (Nx.P x) -> owns t x) (operands op)
-
 (* [record_any t op] is [record t op x] for the first slot operand [x]. *)
 let record_any t op =
   let (Nx.P x) = List.find (fun (Nx.P x) -> owns t x) (operands op) in
@@ -217,9 +203,11 @@ let answer : type r. tape -> r Construct.t -> (unit -> r) option =
       None
 
 let install t f =
+  let owner = { Construct.owns = (fun x -> owns t x) } in
+  let claims op = Construct.claims owner op in
   Construct.install
     {
-      op = Some { run = (fun op -> run t op); claims = (fun op -> claims t op) };
+      op = Some { run = (fun op -> run t op); claims };
       call = (fun c -> answer t c);
     }
     f

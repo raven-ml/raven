@@ -152,20 +152,6 @@ let matmul m a b =
     in
     eval (Matmul (lift a, lift b))
 
-let claims : type r. t -> r Nx.Op.t -> bool =
- fun m op ->
-  match[@warning "@4@8"] op with
-  | Unary (_, x) -> owns m x
-  | Binary (_, a, b) -> owns m a || owns m b
-  | Reduce (_, _, x) -> owns m x
-  | Move (x, _) -> owns m x
-  | Matmul (a, b) -> owns m a || owns m b
-  | Compare _ | Where _ | Scan _ | Arg_reduce _ | Sort _ | Argsort _ | Pad _
-  | Cat _ | Convert _ | Threefry _ | Gather _ | Scatter _ | Update _ | Unfold _
-  | Fold _ | Fft _ | Rfft _ | Irfft _ | Contiguous _ | Cholesky _ | Qr _ | Lu _
-  | Svd _ | Eig _ | Eigh _ | Solve_triangular _ | Place _ | Read _ ->
-      List.exists (fun (Nx.P x) -> owns m x) (operands op)
-
 (* [run m op] is [op], one of whose operands is a lane of [m], as one operation
    on the batched tensors: the map's axis in front, shapes gaining it and axes
    shifted past it, a value the lanes share broadcast along it. *)
@@ -344,9 +330,11 @@ and custom : type q. t -> q Construct.rule -> q =
 
 and install : type a. t -> (unit -> a) -> a =
  fun m f ->
+  let owner = { Construct.owns = (fun x -> owns m x) } in
+  let claims op = Construct.claims owner op in
   Construct.install
     {
-      op = Some { run = (fun op -> run m op); claims = (fun op -> claims m op) };
+      op = Some { run = (fun op -> run m op); claims };
       call = (fun c -> answer m c);
     }
     f
