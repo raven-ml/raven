@@ -117,15 +117,15 @@ let lower op xs dsts =
 type operand = A : ('a, 'b) Nx_array.t -> operand
 
 (* How a program reads an array's elements: their dtype, the view's shape and
-   strides, where its run of elements starts modulo the elements of 16 bytes
-   ({!Lower.span}), and where that run starts within 16 bytes of memory
+   strides, the elements from its run's start to the view's first
+   ({!Lower.span}) and where that run starts within 16 bytes of memory
    ({!Lower.phase}), which the program's vector accesses are aligned to. *)
 type layout = {
   dtype : Dtype.t;
   shape : int array;
   strides : int array;
+  first : int;
   phase : int;
-  storage_phase : int;
 }
 
 let tolk_dtype what (A a) =
@@ -135,19 +135,13 @@ let tolk_dtype what (A a) =
 
 let layout what (A a as x) =
   let dtype = tolk_dtype what x and v = a.view in
-  let phase, storage_phase =
+  let first, phase =
     if View.numel v = 0 then (0, 0)
     else
       let start, _ = Lower.span dtype v in
       (fst (View.extent v) - start, Lower.phase dtype a.buffer start)
   in
-  {
-    dtype;
-    shape = View.shape v;
-    strides = View.strides v;
-    phase;
-    storage_phase;
-  }
+  { dtype; shape = View.shape v; strides = View.strides v; first; phase }
 
 (* A program's key: the layouts are the operands', then the destinations'. *)
 type key = { op : op; layouts : layout list; target : Helpers.Target.t }
@@ -246,7 +240,7 @@ let compile key d arrays dsts =
     if View.numel a.view = 0 then (zeros l.dtype l.shape, None)
     else
       let start, span = Lower.span l.dtype a.view in
-      let b = Ops.new_buffer ~phase:l.storage_phase device span l.dtype in
+      let b = Ops.new_buffer ~phase:l.phase device span l.dtype in
       (Lower.strided b a.view start, Some b)
   in
   let operands = List.map2 node arrays operands

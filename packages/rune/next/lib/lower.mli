@@ -53,7 +53,8 @@ val span : Dtype.t -> Nx_array.View.t -> int * int
 val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
 (** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
     past a 16-byte boundary of [b]'s memory: the phase of storage that starts
-    there ({!Tolk_next.Ops.param_arg}).
+    there ({!Tolk_next.Ops.param_arg}). It is [0] on the disk, whose files are
+    read at any byte.
 
     Raises [Invalid_argument] if [b] is dead. *)
 

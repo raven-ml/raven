@@ -364,8 +364,10 @@ let span tdt v =
   (start, hi - start)
 
 let phase dt b start =
-  let at = Nx_device.Buffer.address b in
-  Nativeint.(to_int (rem (add at (of_int (start * Dtype.itemsize dt))) 16n))
+  if Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk then 0
+  else
+    let at = Nx_device.Buffer.address b in
+    Nativeint.(to_int (rem (add at (of_int (start * Dtype.itemsize dt))) 16n))
 
 (* The phase of element [start] of [bufs], the buffers of one placement: the
    same for every buffer. *)

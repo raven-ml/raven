@@ -229,6 +229,11 @@ let parameters =
           in
           equal (list int) [ 0; 4 ] (List.sort compare phases);
           exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
+      test "a buffer on the disk has phase 0 (D54)" (fun () ->
+          let path = Filename.temp_file "lower" ".bin" in
+          let b = Result.get_ok (Nx_device.Buffer.create_file path 64) in
+          Sys.remove path;
+          equal int 0 (Lower.phase Dtype.Uint8 b 3));
       test "a parameter binds nothing when traced" (fun () ->
           let s = scope () in
           ignore (Lower.param s ~slot:0 (grid 2 3));
