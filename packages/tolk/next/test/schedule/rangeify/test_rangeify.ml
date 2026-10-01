@@ -772,6 +772,48 @@ let loops =
           | ends -> failf "%d ends of calls" (List.length ends));
     ]
 
+(* Buffer states
+
+   A kernel reads each buffer in one state: a value read beside a later state of
+   a buffer it reads is stored first. No program rune emits needs the rule yet,
+   so each of these is expected to fail until it lands. *)
+
+let states =
+  let flat slot = Ops.param ~device:cpu ~shape:[ Int 16 ] slot Float32 in
+  let x = flat 1 and y = flat 2 in
+  let assigned = Ops.after x [ Ops.store x y ] in
+  let rows u = Ops.reshape u (ints [ 4; 4 ]) in
+  let i32 n = Ops.const ~dtype:Int32 (`Int (Bigint.of_int n)) in
+  let at =
+    Ops.cast
+      (Ops.maximum
+         (Ops.minimum (Ops.param ~device:cpu ~shape:[ Int 4 ] 3 Int32) (i32 3))
+         (i32 0))
+      Weak_int
+  in
+  let reads_what_tensors_read sink () =
+    let buffers = filled sink in
+    let into_given = List.filter (fun (s, _, _) -> List.mem s (given sink)) in
+    equal (list write)
+      (into_given (Tensors.writes ~buffers sink))
+      (into_given (Kernel_graphs.writes ~buffers (schedule sink)))
+  in
+  let one_state name sink =
+    xfail ~reason:"a kernel may read a buffer in two states"
+      (test name (reads_what_tensors_read sink))
+  in
+  group "get_kernel_graph › buffer states"
+    [
+      one_state
+        "a value read beside a later state of its buffer is stored first"
+        (stores Ops.O.(x + Ops.float ~dtype:Float32 1. + assigned));
+      one_state "a buffer read beside its later state is copied first"
+        (stores Ops.O.(x + assigned));
+      one_state "rows gathered across a store are read before it"
+        (stores
+           Ops.O.(Ops.index (rows x) [ at ] + Ops.index (rows assigned) [ at ]));
+    ]
+
 let () =
   exit
     (run "Tolk_next.Rangeify"
@@ -786,4 +828,5 @@ let () =
          spec;
          rules;
          loops;
+         states;
        ])
