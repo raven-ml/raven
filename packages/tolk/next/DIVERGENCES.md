@@ -1026,9 +1026,8 @@ the Exclusions of `README.md`.
     decline for size.
   - `n` trips of `k` calls take `n·k` commands and `n·k` copies of their
     arguments, made at link: a command and its arguments take 160 bytes on
-    the NULL queues and 264 on Metal, so 1,000 trips of 30 kernels take about
-    5 MB and 8 MB. The alternative, a trace unrolled per trip, holds a graph
-    per trip, which grows with `n` too, and more.
+    the NULL queues and 264 on Metal. A range of more calls than a chunk runs
+    as chunks of its trips (D67), so its batches hold at most two chunks'.
 - **Reason:** (b). `Rune.scan`'s staged loop (RFC 0012) schedules calls
   inside a range and runs them as one submission, whatever the trip count
   (Law 6); tinygrad's scheduler never hands `hcq2.py` a range.
@@ -1258,8 +1257,8 @@ the Exclusions of `README.md`.
   the device's timeout nor lose it; `Nx_device.submit` does, through the
   driver's `room`.
 - **Pinned by:** the Ops_amd suite: `room (D39)` and `splits (D39)`, a range
-  of 10,000 trips on AQL and one of 1,000 copies, each split into batches
-  within their queue's share; nx.device's suite: `timeline ›
+  of 10,000 trips on AQL, whose chunks (D67) split into batches within their
+  ring's share, and one of 1,000 copies, split likewise; nx.device's suite: `timeline ›
   a submission runs once its device's queues have room` and `› a device whose
   queues stay full through its timeout is lost ...`.
 ## D40. The copy engine signals the high word of a value too
@@ -1741,3 +1740,40 @@ the Exclusions of `README.md`.
   `› stack_whole_first_multi.golden`, and `› values › stack_whole writes
   what it wrote before` and `› stack_whole_first …`, from the patched
   tinygrad, whose values for both stacks equal numpy's.
+
+## D67. A long range runs as chunks of its trips
+
+- **tinygrad:** `runtime/support/hcq2.py:379-385` (`HWQueue.loop`, which
+  repeats a trip's command bytes and words once per trip:
+  `self.blob += self.blob[start:] * int(r.vmax)`).
+- **tolk.next:** `lib/runtime/support/hcq2.ml:1215` (`chunk_calls`), `:1219`
+  (`parts`), `:1230` (`chunked`) and `:1184` (`trips_from`), used by
+  `sched_batches`; `engine/tolk_next_engine.ml:906` (`run_call`'s `Range`, which
+  binds the chunk's variable).
+- **Differs:** a range of a batch (D30) of more than `chunk_calls` calls,
+  `n` trips of `k` calls, runs as chunks of `c = max 1 (chunk_calls / k)`
+  trips. One batch holds a chunk: its loop reads the range as
+  `range_value r' * c` plus its own range, for a range `r'` of `n / c` trips
+  that stays in the schedule as a range of the engine around the batch, so
+  the engine runs the batch once per chunk with the chunk as a variable. A
+  second batch holds the `n mod c` trips left, when there are any. The
+  batches hold at most `2·c·k` commands and their arguments, whatever `n`,
+  and a run takes `n / c` submissions and one more for the trips left,
+  where tinygrad's loop holds `n·k` commands in one submission.
+  `chunk_calls` is 1,024: on Metal a kernel's launch takes about 3 µs and a
+  submission about 24 µs, so a chunk's submission costs under 1% of its
+  launches, and its commands and arguments take about 270 KB.
+- **Reason:** (b). `Rune.scan`'s staged loop runs a body of a few calls per
+  step for as many steps as the scan has: unchunked, a scan of a million
+  steps held about 800 MB of commands and arguments on Metal (808 bytes a
+  step), and its program grew with its trip count, which staging exists to
+  avoid.
+- **Pinned by:** the Hcq2 suite (`test/runtime/support/hcq2`): `ranges
+  (D30) › a range of more calls than a chunk runs as a batch of a chunk, once
+  per chunk` (a batch of 1,024 trips around which the engine loops twice, a
+  batch of the 5 trips left, three submissions, and every trip's window
+  written); the Ops_amd suite's `splits (D39) › a range of 10,000 trips on
+  AQL …` (a chunk over half its ring halves, the trips left fit); rune.next's
+  Jit suite on Metal, `staged scans › stage a thousand steps` and `› stage
+  more steps than a batch holds, in chunks and the rest` (3,001 steps), each
+  against the eager scan.

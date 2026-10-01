@@ -694,7 +694,8 @@ let loops =
 
 (* The batches of a range of [trips] trips of a kernel, or of a copy, on a
    device [g] like the one [name] names, each with its trips and the bytes its
-   queue's ring takes, from the placeholder [tag]. *)
+   queue's ring takes, from the placeholder [tag]: those of the range's chunks
+   (DIVERGENCES D67) first. *)
 let pieces ?copy ~trips g name case tag =
   let linear =
     plain (fun () ->
@@ -717,7 +718,12 @@ let pieces ?copy ~trips g name case tag =
           (Ops.toposort ~enter_calls:true b)
       in
       (trips, Option.get bytes))
-    (List.filter is_batch (Ops.src linear))
+    (List.filter is_batch
+       (List.concat_map
+          (fun e ->
+            if Ops.op e = End then Ops.src (Ops.nth e 0) @ [ Ops.nth e 0 ]
+            else [ e ])
+          (Ops.src linear)))
 
 let splits =
   group "splits (D39)"
@@ -725,15 +731,16 @@ let splits =
       test
         "a range of 10,000 trips on AQL runs as batches of up to half the ring"
         (fun () ->
-          let ring = 1024 * 1024 in
+          let ring = 128 * 1024 in
           let g = { (gpu "gfx942") with compute_ring = ring } in
           let ps =
             pieces ~trips:10_000 g "gfx942" "chain_gfx942" "aql_compute_0"
           in
-          (* Two batches of 5,000 trips, each 64 bytes a trip. *)
+          (* A chunk of 1,024 trips of 64 bytes is over half the ring, so its
+             batch runs as two of 512, and the 784 trips left fit. *)
           equal ~msg:"trips and AQL bytes of each batch"
             (list (pair int int))
-            [ (5_000, 320_128); (5_000, 320_128) ]
+            [ (512, 32_896); (512, 32_896); (784, 50_304) ]
             ps;
           List.iter (fun (_, bytes) -> at_most int ~than:(ring / 2) bytes) ps);
       test

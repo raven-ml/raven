@@ -1569,6 +1569,10 @@ let staged_scans d =
         ~steps:once ~init:(zeros 3) decay (rows 5 3);
       staged at "stage a thousand steps" ~steps:once ~init:(zeros 4) decay
         (rows 1000 4);
+      (* More steps than one batch holds: they run as several chunks of steps
+         and the steps left. *)
+      staged at "stage more steps than a batch holds, in chunks and the rest"
+        ~steps:once ~init:(zeros 4) decay (rows 3001 4);
       staged at "update a carry its next value reads through a product"
         ~steps:once ~init:(ones 3) product (rows 6 3);
       staged at "stage around a scan their step writes out" ~steps:once

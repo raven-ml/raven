@@ -1414,9 +1414,47 @@ let splits_a_range_its_queue_cannot_hold () =
   Null_device.synchronize ();
   equal floats (Array.init (4 * n) (fun i -> float_of_int (i + 1))) (floats_of (List.hd (List.assq dst bound)))
 
+(* [n] trips of a kernel on its own window, more calls than a batch holds: the
+   range runs as one batch of a chunk of its trips, which the engine runs once per
+   chunk, and a batch of the trips left. *)
+let chunks_a_long_range () =
+  let n = (2 * Hcq2.chunk_calls) + 5 in
+  let r = Ops.range (Int n) [ Ops.unique_num () ] in
+  let window u =
+    let start = Ops.mul r (Ops.int 4) in
+    Ops.shrink u [ Some (Sym start, Sym (Ops.add start (Ops.int 4))) ]
+  in
+  let src = storage ~n:(4 * n) "CPU:1" and dst = storage ~n:(4 * n) "CPU:1" in
+  let devices = Null_device.devices () in
+  let compiled =
+    Hcq2.compile_linear ~devices:(fun d -> (devices d).compiler)
+      (linear [ Ops.end_ (kernel_adds (window dst) (window src)) [ r ] ])
+  in
+  let kernels b =
+    match Ops.arg (Ops.without_after b) with
+    | Call { aux = Some info; _ } -> List.length info.kernels
+    | _ -> 0
+  in
+  (match Ops.src compiled with
+  | [ chunks; left ] ->
+      equal op ~msg:"a range of the engine" End (Ops.op chunks);
+      equal int ~msg:"a chunk's trips" Hcq2.chunk_calls (kernels (Ops.nth chunks 0));
+      equal int ~msg:"the trips left" 5 (kernels left)
+  | es -> failf "a range and a batch, not %d entries" (List.length es));
+  let bound =
+    [ (src, [ new_floats "CPU:1" (Array.init (4 * n) float_of_int) ]); (dst, [ new_floats "CPU:1" (Array.make (4 * n) 0.) ]) ]
+  in
+  let d = Null_device.device "CPU:1" in
+  let before = Nx_device.submitted d in
+  Tolk_next_engine.run (Tolk_next_engine.link ~devices ~bound compiled) [||];
+  Null_device.synchronize ();
+  equal int ~msg:"a submission per chunk, and one for the trips left" (before + 3) (Nx_device.submitted d);
+  equal floats (Array.init (4 * n) (fun i -> float_of_int (i + 1))) (floats_of (List.hd (List.assq dst bound)))
+
 let ranges =
   group "ranges (D30)"
     [
+      test "a range of more calls than a chunk runs as a batch of a chunk, once per chunk" chunks_a_long_range;
       test "a range its queue cannot hold in one submission runs as several" splits_a_range_its_queue_cannot_hold;
       test "a call its queue cannot hold in one submission is refused" (fun () ->
           let devices = Null_device.devices ~ring:64 () in

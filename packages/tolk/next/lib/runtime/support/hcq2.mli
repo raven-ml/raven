@@ -294,6 +294,10 @@ end
 
 (** {1:batches Batches} *)
 
+val chunk_calls : int
+(** [chunk_calls] is the most calls of a range a batch holds ({!sched_batches}).
+*)
+
 val sched_batches :
   ?lower:(Ops.t -> Ops.t) ->
   devices:(string -> device) ->
@@ -325,7 +329,12 @@ val sched_batches :
     A call's position counts each run of the calls before it in the batch, a
     range's calls once per trip. A queue's commands and each command's arguments
     hold a copy for each trip, made at link: [n] trips of a range of [k] calls
-    take [n·k] commands and [n·k] copies of their arguments.
+    take [n·k] commands and [n·k] copies of their arguments. A range of more
+    than {!chunk_calls} calls runs as chunks of [c = max 1 (chunk_calls / k)]
+    trips: a batch of [c] trips, reading the range as [range_value r' * c] plus
+    its own range for a range [r'] of [n / c] trips that stays a range of the
+    engine around it, and a batch of the [n mod c] trips left, when there are
+    any. Its batches then hold at most [2·c·k] commands, whatever [n].
 
     A batch is a call, with an {!Ops.hcq_info} argument and, with [profile], the
     slots of its devices as arguments, of a sink of one submission per queue. A

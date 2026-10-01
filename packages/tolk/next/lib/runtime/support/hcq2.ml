@@ -1157,40 +1157,46 @@ let stages ~devices e =
   op e = Op.End
   && match range_placement devices e with Enqueued _ -> true | _ -> false
 
+(* [body] with the range [r] read as [v]. *)
+let rec shift r v = function
+  | One (c, devs, q) -> One (substitute c [ (r, v) ], devs, q)
+  | Loop (r', body) -> Loop (r', List.map (shift r v) body)
+
+(* A range of [k] trips like [r], other than [r] and every range of the calls of
+   [body]: a new number can be one a range of the calls already has. *)
+let fresh_range r body k =
+  let rec calls = function
+    | One (c, _, _) -> [ c ]
+    | Loop (_, b) -> List.concat_map calls b
+  in
+  let taken =
+    List.concat_map
+      (fun c -> Nodes.to_list (ranges c))
+      (List.concat_map calls body)
+  in
+  let rec go () =
+    let r' = range ~dtype:(dtype r) (Int k) [ unique_num () ] in
+    if r' == r || List.memq r' taken then go () else r'
+  in
+  go ()
+
+(* [r]'s trips [first, first + k) as a range of its own over [body]. *)
+let trips_from r body ~first k =
+  let r' = fresh_range r body k in
+  Loop (r', List.map (shift r (add r' (int ~dtype:(dtype r) first))) body)
+
 (* [items] as two parts that run one after the other: their halves, or the first
    and the last trips of a range. *)
 let rec halves why items =
-  let rec shift r v = function
-    | One (c, devs, q) -> One (substitute c [ (r, v) ], devs, q)
-    | Loop (r', body) -> Loop (r', List.map (shift r v) body)
-  in
   match items with
   | [] | [ One _ ] -> invalid_arg why
   | [ Loop (r, body) ] when trips r = 1 ->
       halves why (List.map (shift r (int ~dtype:(dtype r) 0)) body)
   | [ Loop (r, body) ] ->
       let n = trips r in
-      let rec calls = function
-        | One (c, _, _) -> [ c ]
-        | Loop (_, b) -> List.concat_map calls b
-      in
-      let taken =
-        List.concat_map
-          (fun c -> Nodes.to_list (ranges c))
-          (List.concat_map calls body)
-      in
-      (* A new number can be one a range of the calls already has. *)
-      let rec range_of k =
-        let r' = range ~dtype:(dtype r) (Int k) [ unique_num () ] in
-        if r' == r || List.memq r' taken then range_of k else r'
-      in
-      let r0 = range_of (n / 2) and r1 = range_of (n - (n / 2)) in
       [
-        [ Loop (r0, List.map (shift r r0) body) ];
-        [
-          Loop
-            (r1, List.map (shift r (add r1 (int ~dtype:(dtype r) (n / 2)))) body);
-        ];
+        [ trips_from r body ~first:0 (n / 2) ];
+        [ trips_from r body ~first:(n / 2) (n - (n / 2)) ];
       ]
   | items ->
       let k = List.length items / 2 in
@@ -1198,6 +1204,47 @@ let rec halves why items =
         List.filteri (fun i _ -> i < k) items;
         List.filteri (fun i _ -> i >= k) items;
       ]
+
+(* A batch holds every trip of its ranges, so a range of many calls runs as
+   chunks of trips instead: one batch of a chunk, which the engine runs once per
+   chunk with the chunk's first trip as a variable, and a batch of the trips
+   left. A chunk holds this many calls, whatever the range's trips: on Metal a
+   call takes about 3 us to launch and a submission about 24 us, so a chunk's
+   submission costs under 1% of its launches, and its commands and arguments
+   take about 270 KB. *)
+let chunk_calls = 1024
+
+(* [items] as the runs of items a batch holds, apart from the ranges that run as
+   chunks. *)
+let parts items =
+  List.fold_right
+    (fun it acc ->
+      match (it, acc) with
+      | Loop (r, body), _ when size [ it ] > chunk_calls ->
+          `Chunks (r, body) :: acc
+      | _, `Items l :: rest -> `Items (it :: l) :: rest
+      | _ -> `Items [ it ] :: acc)
+    items []
+
+(* The schedule entries of a part, its batches made by [lowered]. *)
+let chunked lowered = function
+  | `Items items -> lowered items
+  | `Chunks (r, body) ->
+      let n = trips r and k = max 1 (chunk_calls / size body) in
+      let chunk = fresh_range r body (n / k) in
+      let first = mul (range_value chunk) (int ~dtype:(dtype r) k) in
+      let inner = fresh_range r body k in
+      let batches =
+        lowered [ Loop (inner, List.map (shift r (add inner first)) body) ]
+      in
+      let left =
+        if n mod k = 0 then []
+        else lowered [ trips_from r body ~first:(n - (n mod k)) (n mod k) ]
+      in
+      end_
+        (match batches with [ b ] -> b | bs -> v Op.Linear ~src:bs)
+        [ chunk ]
+      :: left
 
 let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
   (* The calls in a range that no device with queues runs are the engine's, once
@@ -1309,7 +1356,9 @@ let rec sched_batches ?(lower = Fun.id) ~devices ~profile l =
             | exception Over_capacity why ->
                 List.concat_map lowered (halves why items)
           in
-          List.concat_map (fun (_, items) -> lowered items) groups.items)
+          List.concat_map
+            (fun (_, items) -> List.concat_map (chunked lowered) (parts items))
+            groups.items)
       (runs [] (List.combine entries devs))
   in
   replace l ~src:batched
