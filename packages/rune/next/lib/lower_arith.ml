@@ -382,7 +382,10 @@ let atan2 y x =
    large [|x|] [t] rounds to [-1] and the quotient to 1. Below [|x| = 1/4], [t]
    is its Taylor series. Above, [e^(-2|x|) - 1] is exact while [e^(-2|x|)] is at
    least [1/2], and does not cancel past it. [1 - 2 / (e^(2|x|) + 1)] would
-   cancel near 0. *)
+   cancel near 0. The exponential is [2^(-2|x| log2 e)] with the product
+   rounded: its error, about [|x|] ulps of [e^(-2|x|)], reaches [tanh] scaled by
+   [2 e^(-2|x|) / (1 - e^(-4|x|))], which keeps it near an ulp. From [-2|x| =
+   -40] on, [t] is [-1] in either width, and the argument stops there. *)
 
 (* [1/3!], [1/5!], ... to [n] terms. *)
 let factorials n =
@@ -416,7 +419,9 @@ let tanh x =
   let series =
     y +: (y *: y *: horner y (inverse_factorials (if is64 x then 15 else 8)))
   in
-  let t = where (Ops.lt (float x (-0.5)) y) series (exp y -: float x 1.) in
+  let clamped = where (Ops.lt y (float x (-40.))) (float x (-40.)) y in
+  let e = Ops.exp2 (clamped *: float x (fst log2e)) in
+  let t = where (Ops.lt (float x (-0.5)) y) series (e -: float x 1.) in
   copysign (abs t /: (t +: float x 2.)) x
 
 (* Error function
