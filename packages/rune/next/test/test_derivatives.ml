@@ -836,6 +836,27 @@ let fresh_tests =
         equal (exact ())
           (flat (Nx.contiguous (Nx.matrix_transpose dx)))
           (flat (snd (Rune.jvp' Nx.matrix_transpose (mat 2 3) dx))));
+    test "a transposed primal flattens" (fun () ->
+        let y, dy =
+          Rune.jvp'
+            (fun x -> Nx.flatten (Nx.matrix_transpose x))
+            (mat 2 3) (mat 2 3)
+        in
+        equal ~msg:"primal" (exact ()) (vec [| 1.; 4.; 2.; 5.; 3.; 6. |]) y;
+        equal ~msg:"tangent" (exact ()) (vec [| 1.; 4.; 2.; 5.; 3.; 6. |]) dy);
+    test "a gradient through a flattened transpose" (fun () ->
+        let w = vec [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        equal (exact ())
+          (Nx.create f64 [| 2; 3 |] [| 1.; 3.; 5.; 2.; 4.; 6. |])
+          (Rune.grad'
+             (fun x -> Nx.sum (Nx.mul (Nx.flatten (Nx.matrix_transpose x)) w))
+             (mat 2 3)));
+    test "a read under jvp sees a transposed primal in C order" (fun () ->
+        let second x = (Nx.to_array (Nx.matrix_transpose x)).(1) in
+        let y, _ =
+          Rune.jvp' (fun x -> Nx.mul_s x (second x)) (mat 2 3) (mat 2 3)
+        in
+        equal (exact ()) (Nx.mul_s (mat 2 3) 4.) y);
   ]
 
 let edge_tests =
