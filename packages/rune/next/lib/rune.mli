@@ -89,9 +89,12 @@ val grad : 'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> 'p
     [grad' (fun x -> Nx.sum (Nx.mul x x))] at [-0.] is [-0.]. A tensor that
     receives none has a gradient of [+0.].
 
-    Raises [Invalid_argument] if [params] holds no real or complex tensor, or if
-    [f params] is not a real or complex scalar; use {!vjp} to differentiate a
-    result that is not a scalar. *)
+    Raises [Invalid_argument] if [params] holds no real or complex tensor
+    (["Rune.grad: the parameters hold no real or complex tensor"]), or if
+    [f params] is not a real or complex scalar, naming its dtype and shape
+    (["Rune.grad: the objective must return a real or complex scalar, got
+      float64 [2]"], ["... got int32 []"]); use {!vjp} to differentiate a result
+    that is not a scalar. *)
 
 val value_and_grad :
   'p Nx.Ptree.t -> ('p -> ('c, 'd) Nx.t) -> 'p -> ('c, 'd) Nx.t * 'p
@@ -560,13 +563,15 @@ val scan :
     Everywhere else the scan is its loop, run where it is written, inside every
     transformation, {!Total.collect} and {!Nx.Rng.with_key} around it.
 
-    Raises [Invalid_argument], before any step, if [xs] has no tensor, a scalar
-    tensor or tensors of different leading lengths, or if [n] is [0]
-    (["Rune.scan: xs is empty along the scan axis"]); and, at the step, if the
-    body returns a carry whose visits or dtypes differ from the carry it
-    received, or outputs whose visits, dtypes or shapes differ from the first
-    step's, naming the first path where they differ and what each holds there,
-    as in
+    Raises [Invalid_argument], before any step, if [xs] has no tensor
+    (["Rune.scan: xs has no leaf"]), a scalar tensor
+    (["Rune.scan: an xs leaf is a scalar"]), tensors of different leading
+    lengths (["Rune.scan: the xs leaves differ in their leading length"]), or if
+    [n] is [0] (["Rune.scan: xs is empty along the scan axis"]); and, at the
+    step, if the body returns a carry whose visits or dtypes differ from the
+    carry it received, or outputs whose visits, dtypes or shapes differ from the
+    first step's, naming the first path where they differ and what each holds
+    there, as in
     ["Rune.scan: 1: length 3 in the carry the body returned, length 2 in the
      carry it received"]. *)
 
