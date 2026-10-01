@@ -1832,6 +1832,38 @@ let both_gradients at =
     (fun k -> [ check "a gradient" grad k; check "a pullback" pullback k ])
     [ 4; 2 ]
 
+(* [lent_beside_taken at] checks a compiled call at [at] that consumes its
+   state, writes it updated over it, and starts a scan from the update: the
+   scan's carry and rows are written in the results' storage, and read the
+   update, not what its store overwrote. *)
+let lent_beside_taken at =
+  test "a scan from a consumed state's update takes its carry and rows"
+    (fun () ->
+      let f (a, xs) =
+        let a = Nx.add_s a 1. in
+        let c, ys =
+          Rune.scan'
+            ~f:(fun d y ->
+              let d = Nx.add (Nx.mul_s d 0.9) y in
+              (d, d))
+            ~init:a xs
+        in
+        (a, (c, ys))
+      in
+      let g =
+        Rune.jit
+          Nx.Ptree.(
+            consumes (pair tensor tensor)
+            @@ returns (pair tensor (pair tensor tensor)))
+          f
+      in
+      let a = Nx.full Nx.float32 [| 4 |] 0.5 and xs = rows 6 4 in
+      let ea, (ec, ey) = f (a, xs) in
+      let ja, (jc, jy) = g (Nx.place at a, Nx.place at xs) in
+      equal near ea (host ja);
+      equal near ec (host jc);
+      equal near ey (host jy))
+
 let constant_rows at =
   let check name rows ~carry ~ys =
     test name (fun () ->
@@ -1901,6 +1933,7 @@ let staged_scans d =
     [
       group "constant rows" (constant_rows at);
       group "gradients" (both_gradients at);
+      lent_beside_taken at;
       staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
         ~init:(zeros 4) decay (rows 7 4);
       staged at "stage over rows that are not, through a padded copy"
@@ -2331,6 +2364,7 @@ let scans =
     [
       group "constant rows" (constant_rows Nx.Placement.host);
       group "gradients" (both_gradients Nx.Placement.host);
+      lent_beside_taken Nx.Placement.host;
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
