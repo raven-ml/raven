@@ -33,3 +33,20 @@ let () =
   let a = Nx.arange_f Nx.float32 0. 12. 1. in
   ignore (neg (Nx.slice [ R (0, 4) ] a));
   ignore (neg (Nx.slice [ R (1, 5) ] a))
+
+(* A consumed leaf no result can take: another dtype. *)
+let () =
+  ignore
+    (Rune_next.Rune.jit
+       Nx.Ptree.(consumes tensor @@ returns tensor)
+       (fun a -> Nx.cast Nx.float64 a)
+       (Nx.ones Nx.float32 [| 4 |]))
+
+(* A retrace for a setting a caller changed around the call. *)
+let () =
+  let neg = Rune_next.Rune.jit' Nx.neg in
+  let a = Nx.ones Nx.float32 [| 4 |] in
+  ignore (neg a);
+  Tolk_next.Helpers.context
+    [ B (Tolk_next.Helpers.noopt, true) ]
+    (fun () -> ignore (neg a))

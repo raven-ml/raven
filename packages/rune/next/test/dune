@@ -209,7 +209,7 @@
 (executable
  (name reports)
  (modules reports)
- (libraries rune.next nx))
+ (libraries rune.next nx tolk.next))
 
 (cram
  (applies_to reports)

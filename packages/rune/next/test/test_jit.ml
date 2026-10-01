@@ -482,6 +482,15 @@ let consumption =
                   Nx.copy of it") (fun () -> Rune.jit consumes Nx.neg a);
           equal floats (Nx.slice [ R (0, 2) ] (x ())) a);
       test
+        "a consumed broadcast of one element of its storage raises before any \
+         work" (fun () ->
+          let a = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          let v = Nx.broadcast_to [| 2 |] (Nx.slice [ R (0, 1) ] a) in
+          raises_match
+            (Exn.invalid_arg ~substring:"does not cover its whole storage")
+            (fun () -> Rune.jit consumes Nx.neg v);
+          equal floats (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) a);
+      test
         "a consumed leaf that another leaf reaches raises before any work, \
          naming both paths" (fun () ->
           let a = x () in
@@ -552,6 +561,22 @@ let lending =
             Rune.jit state (fun (a, b) -> (Nx.add_s b 1., Nx.mul_s a 2.)) (a, b)
           in
           equal (pair nativeint nativeint) ab (address r2, address r1));
+      test
+        "a result read through a flip of a leaf takes a leaf it does not read, \
+         and the leaf goes to a result derived at its own index" (fun () ->
+          let a = x () and b = y () in
+          let ab = (address a, address b) in
+          let flipped, own =
+            Rune.jit state
+              (fun (a, _) ->
+                let flipped = Nx.add_s (Nx.flip a) 1. in
+                let own = Nx.mul_s a 2. in
+                (flipped, own))
+              (a, b)
+          in
+          equal floats (Nx.add_s (Nx.flip (x ())) 1.) flipped;
+          equal floats (Nx.mul_s (x ()) 2.) own;
+          equal (pair nativeint nativeint) ab (address own, address flipped));
       test "an indexed write takes the leaf it writes before any other result"
         (fun () ->
           let a = x () and b = y () in
@@ -614,6 +639,16 @@ let lending =
           equal floats (Nx.create Nx.float32 [| 8 |] expected) r;
           is_false (Nativeint.equal before (address r));
           raises_invalid_arg (fun () -> Nx.to_array a));
+      test "a result derived through an equal-width bitcast takes the leaf"
+        (fun () ->
+          let a = x () in
+          let before = address a in
+          let f a =
+            Nx.bitcast Nx.float32 (Nx.add_s (Nx.bitcast Nx.int32 a) 1l)
+          in
+          let r = Rune.jit consumes f a in
+          equal floats (f (x ())) r;
+          equal nativeint before (address r));
       test "a result of another dtype does not take the leaf" (fun () ->
           let a = x () in
           let before = address a in
@@ -867,6 +902,22 @@ let errors =
           match !leaked with
           | Some t -> raises_invalid_arg (fun () -> Nx.to_array t)
           | None -> fail "the function did not run");
+      test
+        "a traced value kept after its call raises as another call's argument"
+        (fun () ->
+          let kept = ref None in
+          ignore
+            (Rune.jit'
+               (fun a ->
+                 kept := Some (poly a);
+                 a)
+               (x ()));
+          match !kept with
+          | Some t ->
+              raises_match
+                (Exn.invalid_arg ~substring:"a traced tensor has no bytes")
+                (fun () -> Rune.jit' Nx.neg t)
+          | None -> fail "the function did not run");
       test "a call that raised traces again at the next call" (fun () ->
           let g = Rune.jit' (fun a -> if Nx.item [ 0 ] a > 0. then a else a) in
           equal int 1 (traces (fun () -> raises_jit_error (fun () -> g (x ()))));
@@ -986,6 +1037,9 @@ let transformations =
           let f a = Nx.sum (Rune.jit consumes poly a) in
           ignore (Rune.grad' f a);
           equal floats (x ()) a);
+      test "a detached value inside a compiled call is its value" (fun () ->
+          let f a = Nx.add a (Rune.detach (poly a)) in
+          equal close (f (x ())) (Rune.jit' f (x ())));
       test "under a transformation a compiled function runs its function"
         (fun () ->
           let f a = Nx.sum (poly a) in
