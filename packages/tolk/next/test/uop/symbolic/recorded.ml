@@ -57,9 +57,34 @@ let record u =
   | [ input ] -> { kind; bounds; input; result = None }
   | _ -> failf "a record of %d nodes" (List.length (Ops.src u))
 
+(* The host's libm folds these operations, and libms legitimately differ in the
+   last place: macOS's sin 4.0 is one unit in the last place from glibc's, which
+   is correctly rounded. A constant they fold agrees within one. *)
+let host_libm = Op.[ Sin; Log2; Exp2; Pow ]
+
+let folded_within_ulp =
+  let near a b =
+    Float.equal a b
+    || Float.equal (Float.succ a) b
+    || Float.equal (Float.pred a) b
+  in
+  Testable.make ~pp:(Testable.pp uop) ~equal:(fun u0 u1 ->
+      match (Ops.arg u0, Ops.arg u1) with
+      | Ops.Const (`Float a), Ops.Const (`Float b) ->
+          Dtype.equal (Ops.dtype u0) (Ops.dtype u1) && near a b
+      | _ -> Ops.equal u0 u1)
+
 let replay test k r =
   let msg = Printf.sprintf "%s, record %d (%s)" test k r.kind in
-  equal ~msg (option uop) r.result (simplification r.kind r.input);
+  let w =
+    if
+      List.exists
+        (fun u -> List.exists (Op.equal (Ops.op u)) host_libm)
+        (Ops.toposort r.input)
+    then folded_within_ulp
+    else uop
+  in
+  equal ~msg (option w) r.result (simplification r.kind r.input);
   Option.iter
     (fun (lo, hi) ->
       let out = Option.get r.result in

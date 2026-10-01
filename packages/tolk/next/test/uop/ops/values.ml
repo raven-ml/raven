@@ -14,11 +14,28 @@ let bool_cell = function
 
 (* exec_alu *)
 
+(* The host's libm computes these operations, and libms legitimately differ in
+   the last place: macOS's sin 2.5 is one unit in the last place from glibc's,
+   which is correctly rounded. Their results agree within one. *)
+let host_libm = Op.[ Sin; Log2; Exp2; Pow ]
+
+let within_ulp =
+  let near a b =
+    Float.equal a b
+    || Float.equal (Float.succ a) b
+    || Float.equal (Float.pred a) b
+  in
+  Testable.make ~pp:(Testable.pp const) ~equal:(fun c0 c1 ->
+      match (c0, c1) with
+      | `Float a, `Float b -> near a b
+      | _ -> Testable.equal const c0 c1)
+
 let alu_row cell =
   let o = op_of_cell (cell "op") and dt = dtype_of_cell (cell "dtype") in
   let args = consts_of_cell (cell "operands")
   and truncate_output = bool_cell (cell "truncate") in
-  expect const const_of_cell (cell "result") (fun () ->
+  let w = if List.exists (Op.equal o) host_libm then within_ulp else const in
+  expect w const_of_cell (cell "result") (fun () ->
       Ops.exec_alu ~truncate_output o dt args)
 
 let alu dt o args = Ops.exec_alu o dt args
