@@ -236,7 +236,30 @@ let recorder =
   let x = vec [| 1.; 2. |] in
   let mask = Nx.create Nx.bool [| 2 |] [| true; false |] in
   let at = indices [| 1; 0 |] in
+  let through map x =
+    Rune.grad'
+      (fun x ->
+        Nx.sum
+          (Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+             (fun x -> (x, map))
+             x))
+      x
+  in
   [
+    test "a detached tangent in a tangent map is the tangent" (fun () ->
+        equal floats [| 1.; 1. |] (Nx.to_array (through Rune.detach x)));
+    test "a loop in a tangent map is written out and transposed" (fun () ->
+        (* The carry starts as a tangent: a plain zero added to one is
+           affine. *)
+        let cumsum dx =
+          snd
+            (Rune.scan'
+               ~f:(fun c r -> (Nx.add c r, Nx.add c r))
+               ~init:(Nx.mul_s (Nx.get [ 0 ] dx) 0.)
+               dx)
+        in
+        equal floats [| 3.; 2.; 1. |]
+          (Nx.to_array (through cumsum (vec [| 1.; 2.; 3. |]))));
     affine "add" (fun dx -> Op.eval (Binary (Add, dx, c))) x;
     affine "sub" (fun dx -> Op.eval (Binary (Sub, c, dx))) x;
     affine "pad"

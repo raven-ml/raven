@@ -92,6 +92,11 @@ let captures =
         equal close
           (values (stack 2 (fun i -> Nx.matmul (lane i (ms ())) w)))
           (values (Rune.vmap' (fun m -> Nx.matmul m w) (ms ()))));
+    test "a detached captured value is the value" (fun () ->
+        let c = vec [| 1.; 2.; 3. |] in
+        equal floats
+          (values (Nx.mul (xs ()) (Nx.broadcast_to [| 4; 3 |] c)))
+          (values (Rune.vmap' (fun x -> Nx.mul x (Rune.detach c)) (xs ()))));
     test "a capture that is also the argument is a constant" (fun () ->
         let w = vec [| 1.; 2.; 3. |] in
         let y = Rune.vmap' (fun x -> Nx.add x w) w in
