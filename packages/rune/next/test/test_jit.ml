@@ -1578,6 +1578,39 @@ let constant_rows at =
       ~ys:(Array.init 40 (fun k -> Int32.of_int (10 * ((k / 5) + 1))));
   ]
 
+(* [held_by_steps at ~than a b] checks that a staged scan of [b * chunk_calls]
+   steps at [at] holds less than [than] times the memory one of [a *
+   chunk_calls] steps holds, beyond the one it holds at [a]: the memory a
+   program holds for its loop does not grow with its steps. A step makes at
+   least one call, so either count runs several of the batches the engine
+   reruns; [b] above 16 is slow. The scan's outputs are rows of 16 bytes, which
+   the program stacks and its result copies: the measure leaves both out. *)
+let held_by_steps at ~than a b =
+  let d = match Nx.Placement.devices at with [ d ] -> d | _ -> assert false in
+  (if b > 16 then slow else test)
+    (Printf.sprintf
+       "a staged scan of %d chunks of calls holds less than %d times the loop \
+        memory of one of %d"
+       b than a) (fun () ->
+      let held k =
+        let n = k * Tolk_next.Hcq2.chunk_calls in
+        let xs = Nx.place at (rows n 4) in
+        let g =
+          Rune.jit' (fun xs -> Rune.scan' ~f:sum ~init:(zeros 4) xs |> snd)
+        in
+        Gc.full_major ();
+        let before = allocated d in
+        let r = g xs in
+        let held = allocated d - before - (2 * Nx.nbytes r) in
+        ignore (host r);
+        held
+      in
+      let ha = held a in
+      let hb = held b in
+      less
+        ~msg:(Printf.sprintf "%d bytes, against %d for %d chunks" hb ha a)
+        int ~than:(than * ha) (hb - ha))
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
@@ -1594,6 +1627,8 @@ let staged_scans d =
          and the steps left. *)
       staged at "stage more steps than a batch holds, in chunks and the rest"
         ~steps:once ~init:(zeros 4) decay (rows 3001 4);
+      held_by_steps at ~than:1 4 16;
+      held_by_steps at ~than:2 4 64;
       staged at "update a carry its next value reads through a product"
         ~steps:once ~init:(ones 3) product (rows 6 3);
       staged at "stage around a scan their step writes out" ~steps:once
