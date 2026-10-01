@@ -619,7 +619,7 @@ target's run lands.
 ### L2. QR by Householder reflections, R triangular
 
 - **Reference:** `mixin/op.py:1799` (`qr`).
-- **Raven:** `lower_linalg.ml:78` (`householder`), `:140` (`triu`), `:144`
+- **Raven:** `lower_linalg.ml:78` (`householder`), `:144` (`triu`), `:148`
   (`qr`).
 - **Differs:** tinygrad's reflections, with LAPACK's choice of which columns
   to reflect: a column already zero below the diagonal takes no reflection
@@ -638,9 +638,14 @@ target's run lands.
   diagonal is nonzero; its diagonal element, the opposite of its first
   element's sign times its norm, is written with zeros below it; and the
   reflection is applied to the rows from the diagonal on of the columns to
-  its right. A norm above the largest float gives an infinite diagonal element
-  and a finite `q`, as eager's does. This takes one more reduction per column
-  than tinygrad's. On a target that flushes subnormals, a column whose only
+  its right. A column that takes no reflection leaves `q` and `r` as they
+  are, whatever it holds. A norm above the largest float gives an infinite
+  diagonal element and a finite `q`, as eager's does; a later column whose
+  elements are near the largest float can still overflow the product that
+  applies an earlier reflection to it, at `float32`, where eager's stays
+  finite (`[[1, 2, 3]; [4, 3e38, 6]; [7, 3e38, 9]]`): scaling that product
+  too would cost another reduction per column. This takes one more
+  reduction per column than tinygrad's. On a target that flushes subnormals, a column whose only
   nonzero elements below the diagonal are subnormal takes no reflection (T1).
   Compiled code never raises `No_convergence`.
 - **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular,
@@ -654,9 +659,11 @@ target's run lands.
   reflection`, `› one element`, `› no column: q is the identity`, `› batch
   axes`, `› the factors take eager's signs`, `› a column whose squares
   underflow reflects as eager's does`, `› a column whose squares overflow
-  reflects as eager's does`; `Compiled › linear algebra › qr` and `› edges ›
+  reflects as eager's does`, `› a column that takes no reflection leaves q as
+  eager's, whatever it holds`; `Compiled › linear algebra › qr`, `› edges ›
   QR's factors take eager's signs and reflect columns whose squares underflow
-  or overflow`; the construction, its
+  or overflow` and `› QR's q is eager's where a column that takes no
+  reflection holds a NaN or an infinity`; the construction, its
   single-rounding quotients included, by `graph parity › qr_q`, `› qr_r`,
   whose generator builds tinygrad's reflections with `Ops.FDIV` and LAPACK's
   choice of columns.
@@ -666,8 +673,8 @@ target's run lands.
 - **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml:165` (`pairs`), `:172` (`next_pairs`), `:184`
-  (`rounds`), `:188` (`rotate`), `:236` (`svd`).
+- **Raven:** `lower_linalg.ml:169` (`pairs`), `:176` (`next_pairs`), `:188`
+  (`rounds`), `:192` (`rotate`), `:240` (`svd`).
 - **Differs:**
   - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
     for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
@@ -700,7 +707,7 @@ target's run lands.
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:363` (`cholesky`).
+- **Raven:** `lower_linalg.ml:367` (`cholesky`).
 - **No source:** a right-looking composition, one column per step: the
   column's diagonal element's square root heads it, the rest is divided by
   that root, and the working matrix loses the column's product with itself.
@@ -722,7 +729,7 @@ target's run lands.
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:398` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:402` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
   `transpose` and reversed along both axes when the triangle read is the upper
   one, and solved by substitution, one row a step, from the strictly lower
@@ -743,7 +750,7 @@ target's run lands.
 ### L6. LU with partial pivoting
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:299` (`lu`).
+- **Raven:** `lower_linalg.ml:303` (`lu`).
 - **No source:** one column a step. The pivot is the first element of largest
   magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
   magnitudes in which a NaN on the diagonal is the greatest and one below it

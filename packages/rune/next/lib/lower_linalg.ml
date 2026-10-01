@@ -127,11 +127,15 @@ let householder a =
         (Ops.where (Ops.lt rows (Ops.int i)) r (zero r))
     in
     let applied = Ops.sub r (dot w (dot (transpose v) r)) in
-    ( Ops.sub q (dot (dot q v) (transpose w)),
+    (* A column that takes no reflection leaves q and r as they are: its v holds
+       what the column held, and a NaN or an infinity there would spread through
+       a product with a zero tau. *)
+    let on = Ops.unsqueeze active (-1) in
+    ( Ops.where on (Ops.sub q (dot (dot q v) (transpose w))) q,
       Ops.where
         (Ops.eq columns (Ops.int i))
         reflected
-        (Ops.where (Ops.ge rows (Ops.int i)) applied r) )
+        (Ops.where (Ops.ge rows (Ops.int i)) (Ops.where on applied r) r) )
   in
   let q = Ops.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
   List.fold_left reflect (q, a) (List.init (Int.min m n) Fun.id)

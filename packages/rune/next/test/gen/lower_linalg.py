@@ -33,7 +33,8 @@ def qr(a):
     quotient rounded once (`fdiv`), the sign of the first element written -1
     below zero and 1 elsewhere, which is `x0.ne(0).where(x0.sign(), 1)` at every
     value, NaN included, a column already zero below the diagonal not
-    reflected, as LAPACK's reflectors are not, and the reflector built from the
+    reflected, as LAPACK's reflectors are not, its update of Q and R skipped so
+    that what it holds reaches neither, and the reflector built from the
     column divided by its largest magnitude, applied to the rows from the
     diagonal on, with the column itself written as its diagonal element and
     zeros below it, as LAPACK's are."""
@@ -58,8 +59,9 @@ def qr(a):
         diagonal = active.where((sgn * -1) * (scale * norm), x0)
         reflected = rows.eq(i).where(diagonal.unsqueeze(-1), (rows < i).where(R, 0))
         applied = R - w @ (v.transpose(-2, -1) @ R)
-        Q = Q - (Q @ v) @ w.transpose(-2, -1)
-        R = columns.eq(i).where(reflected, (rows >= i).where(applied, R))
+        on = active.unsqueeze(-1)
+        Q = on.where(Q - (Q @ v) @ w.transpose(-2, -1), Q)
+        R = columns.eq(i).where(reflected, (rows >= i).where(on.where(applied, R), R))
     return Q, R
 
 

@@ -580,6 +580,17 @@ let qr =
           agrees Nx.float32 [| 2e38; 1.; 1e30; 2. |];
           agrees Nx.float32 [| 3e38; 1.; 3e38; 2. |];
           agrees Nx.float64 [| 1e308; 1.; 1e308; 2. |]);
+      test
+        "a column that takes no reflection leaves q as eager's, whatever it \
+         holds" (fun () ->
+          let agrees r c xs =
+            let a = Nx.create Nx.float32 [| r; c |] xs in
+            let q, _ = Nx.qr ~mode:`Complete a in
+            let q', _ = traced2 (fun () -> Nx.qr ~mode:`Complete a) in
+            near ~bound:0x1p-18 q q'
+          in
+          agrees 3 3 [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; Float.nan |];
+          agrees 2 2 [| 1.; 3e38; 1.; 3e38 |]);
       test "a zero column takes no reflection" (fun () ->
           let a = Nx.zeros Nx.float32 [| 3; 2 |] in
           let q, r = traced2 (fun () -> Nx.qr ~mode:`Complete a) in

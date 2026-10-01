@@ -2062,6 +2062,26 @@ let edges d =
             f32 2 2 [| 2e38; 1.; 1e30; 2. |];
             f32 2 2 [| 3e38; 1.; 3e38; 2. |];
           ]);
+    test
+      "QR's q is eager's where a column that takes no reflection holds a NaN \
+       or an infinity" (fun () ->
+        let q_of a =
+          let m = Nx.dim 0 a and n = Nx.dim 1 a in
+          let qe, qa =
+            both d (fun (module K : Nx_backend.S) env ->
+                let q = env.dst Nx.float32 [| m; m |] in
+                let r = env.dst Nx.float32 [| m; n |] in
+                K.qr ~reduced:false (env.on (array_of a)) ~q ~r;
+                q)
+          in
+          relative ~bound:0x1p-18 (value qe) (back qa)
+        in
+        let f32 r c xs = Nx.create Nx.float32 [| r; c |] xs in
+        List.iter q_of
+          [
+            f32 3 3 [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; Float.nan |];
+            f32 2 2 [| 1.; 3e38; 1.; 3e38 |];
+          ]);
     test "a fold and an unfold with no window are zeros and empty" (fun () ->
         let w =
           {
