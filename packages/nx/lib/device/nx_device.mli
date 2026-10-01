@@ -48,6 +48,21 @@
     it, so memory dropped by a domain that is not allocating returns when that
     domain next runs its finalisers.
 
+    {b Collection pace.} The host memory of buffers of 64 KiB or more (four
+    pages, where pages are larger) paces the collector's major cycles by the
+    program's memory: its OCaml heap and the host memory its live buffers
+    hold. A cycle is due once the memory of those allocated since the last one
+    reaches [custom_major_ratio / 150] of it ({!Gc.control}), 29% by default,
+    the share the collector applies to its heap alone for other memory outside
+    it. A buffer dropped just after a cycle marks it is found by the next cycle
+    and freed while the one after that sweeps, so unreachable buffers hold at
+    most three such shares, 88% of the program's memory by default; under
+    steady allocation of buffers they measure about 0.75 times the memory of
+    the live ones. A program whose OCaml heap is small and whose buffers are
+    large thus runs a major cycle per share of the memory it holds. Smaller
+    buffers are paced as any bigarray: by the OCaml heap once they outlive the
+    minor heap.
+
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
     the devices involved. A device that hangs or faults is lost for good
     ({!Lost}).

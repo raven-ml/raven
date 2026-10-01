@@ -2909,6 +2909,11 @@ thread.
 
 ### Nx
 
+- Programs holding large tensors on the host run far fewer major collections:
+  host buffers of 64 KiB or more pace the collector by a share of the OCaml
+  heap and the live buffers together, where it took the heap alone. With 256 MB
+  of tensors live, an MLP forward pass runs 8 major cycles where it ran 196
+  (292 to 120 µs), and kaun's SGD train step takes 1.20 ms where it took 1.92.
 - `Nx.top_k` ranks an axis of at most 32 entries in one pass, each entry
   placed by the number of entries before it, instead of one pass per entry
   taken or a sort. A compiled call runs 3 kernels for the positions of 4 of

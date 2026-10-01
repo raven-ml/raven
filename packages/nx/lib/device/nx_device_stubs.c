@@ -76,8 +76,13 @@ value caml_nx_device_heap_return_byte(value n) {
   return caml_nx_device_heap_return(Long_val(n));
 }
 
+/* The bytes the collector has returned, ever. */
+static _Atomic intnat heap_collected;
+
 static void heap_token_finalize(value v) {
-  caml_nx_device_heap_return(*(intnat *)Data_custom_val(v));
+  intnat n = *(intnat *)Data_custom_val(v);
+  caml_nx_device_heap_return(n);
+  atomic_fetch_add_explicit(&heap_collected, n, memory_order_relaxed);
 }
 
 static struct custom_operations heap_token_ops = {
@@ -93,6 +98,85 @@ value caml_nx_device_heap_token(value v_n) {
   return v;
 }
 
+/* Pacing the collector
+
+   The runtime reclaims a buffer's memory when it collects the bigarray that
+   owns it, and paces its major cycles by the memory such blocks hold outside
+   the heap: a cycle is due once that much memory has reached the major heap,
+   allocated since the last one, as [caml_custom_get_max_major] gives. That is
+   a share of the major heap, which bounds the garbage floating outside the heap
+   by a share of the heap. A program whose memory is mostly buffers would then
+   collect once per buffer as large as that share of its small heap, and mark
+   the whole heap each time. The share is taken here of the program's whole
+   memory instead: the major heap and the bytes buffers hold live, so that the
+   garbage floating outside the heap stays the same share of what the program
+   holds.
+
+   The bytes held live are those held at the end of a major cycle that the next
+   cycle did not collect. A cycle frees the garbage the previous cycle found, as
+   it sweeps it, and the blocks it allocates survive it, so what it collects was
+   held at the end of the previous cycle. */
+
+static _Atomic intnat heap_live;
+static _Atomic intnat held_at_cycle;
+static _Atomic intnat collected_at_cycle;
+
+/* Called at the end of each major cycle. */
+value caml_nx_device_heap_cycle(value unit) {
+  (void)unit;
+  intnat held = atomic_load_explicit(&heap_bytes, memory_order_relaxed);
+  intnat collected =
+      atomic_load_explicit(&heap_collected, memory_order_relaxed);
+  intnat live =
+      atomic_exchange_explicit(&held_at_cycle, held, memory_order_relaxed) -
+      (collected - atomic_exchange_explicit(&collected_at_cycle, collected,
+                                            memory_order_relaxed));
+  atomic_store_explicit(&heap_live, live > 0 ? live : 0, memory_order_relaxed);
+  return Val_unit;
+}
+
+/* The memory a major cycle is due after: [caml_custom_get_max_major] is the
+   major heap's bytes over 150, times the ratio; the same share of the bytes
+   buffers hold live is added. */
+static mlsize_t heap_cycle_bytes(void) {
+  mlsize_t live =
+      (mlsize_t)atomic_load_explicit(&heap_live, memory_order_relaxed);
+  return caml_custom_get_max_major() +
+         live / 150 *
+             atomic_load_explicit(&caml_custom_major_ratio,
+                                  memory_order_relaxed);
+}
+
+/* The runtime's operations of bigarrays. The runtime exports them but declares
+   them only to itself (CAML_INTERNALS): a bigarray's block must be made here
+   with [caml_alloc_custom], which takes the memory a cycle is due after, where
+   [caml_ba_alloc] takes the runtime's. The block is then a bigarray like any
+   other, which the bigarray functions handle and the collector finalises by
+   freeing its data, as nx's tests of it check. */
+extern const struct custom_operations caml_ba_ops;
+
+/* The [n] bytes at [data], from [malloc], as a [char] bigarray that frees
+   them. */
+static value heap_bigarray(void *data, size_t n) {
+  value ba = caml_alloc_custom(&caml_ba_ops, SIZEOF_BA_ARRAY + sizeof(intnat),
+                               n, heap_cycle_bytes());
+  struct caml_ba_array *b = Caml_ba_array_val(ba);
+  b->data = data;
+  b->num_dims = 1;
+  b->flags = CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED;
+  b->proxy = NULL;
+  b->dim[0] = (intnat)n;
+  return ba;
+}
+
+/* [v_n] bytes of the heap, as a [char] bigarray that frees them. */
+value caml_nx_device_heap_alloc(value v_n) {
+  size_t n = (size_t)Long_val(v_n);
+  void *data = malloc(n);
+  if (data == NULL) caml_raise_out_of_memory();
+  return heap_bigarray(data, n);
+}
+
 /* [v_n] bytes of the heap on a page, as a [char] bigarray that frees them, or
    [None] where the C library aligns nothing that [free] releases (Windows). */
 value caml_nx_device_heap_aligned(value v_page, value v_n) {
@@ -102,14 +186,11 @@ value caml_nx_device_heap_aligned(value v_page, value v_n) {
   (void)v_n;
   CAMLreturn(Val_none);
 #else
-  CAMLlocal1(ba);
   void *data = NULL;
-  if (posix_memalign(&data, (size_t)Long_val(v_page), (size_t)Long_val(v_n)))
+  size_t n = (size_t)Long_val(v_n);
+  if (posix_memalign(&data, (size_t)Long_val(v_page), n))
     caml_raise_out_of_memory();
-  intnat dim = Long_val(v_n);
-  ba = caml_ba_alloc(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1,
-                     data, &dim);
-  CAMLreturn(caml_alloc_some(ba));
+  CAMLreturn(caml_alloc_some(heap_bigarray(data, n)));
 #endif
 }
 

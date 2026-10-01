@@ -913,6 +913,31 @@ let memory =
               B.create host S.UInt8 600);
           ignore (Sys.opaque_identity a));
       test
+        "the bigarray of a host buffer on a page is one that bigarray \
+         functions handle and the collector frees" (fun () ->
+          List.iter
+            (fun n ->
+              let freed = ref false in
+              (fun () ->
+                let ba = B.bigarray Bigarray.char (B.create host S.UInt8 n) in
+                Gc.finalise_last (fun () -> freed := true) ba;
+                let s = pattern n n in
+                String.iteri (Bigarray.Array1.set ba) s;
+                let tail = Bigarray.Array1.sub ba 3 (n - 3) in
+                Bigarray.Array1.blit tail (Bigarray.Array1.sub ba 0 (n - 3));
+                let moved = String.sub s 3 (n - 3) ^ String.sub s (n - 3) 3 in
+                equal ~msg:"sub and blit" string moved (string_of ba);
+                let back : chars =
+                  Marshal.from_string (Marshal.to_string ba []) 0
+                in
+                equal ~msg:"marshalled" string moved (string_of back);
+                ignore (Sys.opaque_identity tail))
+                ();
+              Gc.full_major ();
+              Gc.full_major ();
+              is_true ~msg:"collected" !freed)
+            [ page; (4 * page) + 3 ]);
+      test
         "a buffer of up to max_int bytes that its device cannot allocate \
          raises Out_of_memory" (fun () ->
           let small = (fake ~budget:1000 ()).dev and n = (1 lsl 58) + 1 in

@@ -294,11 +294,27 @@ external heap_return : (int[@untagged]) -> unit
 
 external heap_token : int -> heap_token = "caml_nx_device_heap_token"
 
+external heap_alloc :
+  int -> (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  = "caml_nx_device_heap_alloc"
+
 external heap_aligned :
   int ->
   int ->
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t option
   = "caml_nx_device_heap_aligned"
+
+external heap_cycle : unit -> unit = "caml_nx_device_heap_cycle" [@@noalloc]
+
+(* The collector is paced by the bytes host buffers hold live, which the end of
+   each major cycle measures: the cycle finalises a block that measures them
+   and is registered again, allocating nothing, so that an operation that ends
+   a cycle allocates as many words as one that does not. *)
+let rec end_of_cycle r =
+  heap_cycle ();
+  Gc.finalise end_of_cycle r
+
+let () = Gc.finalise end_of_cycle (Sys.opaque_identity (ref ()))
 
 external now_ns : unit -> (int[@untagged])
   = "caml_nx_device_now_ns_byte" "caml_nx_device_now_ns"
@@ -369,7 +385,12 @@ let heap_memory ba =
 let aligned_from = Int.max (64 * 1024) (4 * page)
 
 (* [n] bytes of the heap, on a page from [aligned_from]: allocated there, or cut
-   from a page of more bytes where the C library aligns nothing it frees. *)
+   from a page of more bytes where the C library aligns nothing it frees. Those
+   bytes pace the collector by the program's whole memory (see the stubs).
+   Smaller buffers are the runtime's own bigarrays, which the minor heap holds
+   and where most die: the runtime paces minor collections by the memory they
+   hold against the minor heap's size, which [caml_alloc_custom] would replace
+   with the bound it paces major cycles by. *)
 let heap n =
   if n < aligned_from then
     Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
@@ -378,9 +399,7 @@ let heap n =
     | Some ba -> ba
     | None ->
         if n > max_int - page then raise Stdlib.Out_of_memory;
-        let ba =
-          Bigarray.Array1.create Bigarray.char Bigarray.c_layout (n + page - 1)
-        in
+        let ba = heap_alloc (n + page - 1) in
         let a = Nativeint.to_int (bigarray_address ba) in
         let skip = (page - (a mod page)) mod page in
         Bigarray.Array1.sub ba skip n
