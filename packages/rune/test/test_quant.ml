@@ -331,6 +331,55 @@ let placements =
                   (Nx_quant.place p w))));
     ]
 
+(* Memory *)
+
+(* [peak d f] is [f ()] and the most bytes [d] held while it ran beyond those it
+   held before. *)
+let peak d f =
+  Gc.full_major ();
+  Nx_device.synchronize d;
+  let before = Nx_device.Stats.allocated (Nx_device.stats d) in
+  let p = Nx_device.Profile.start () in
+  match f () with
+  | y ->
+      let most =
+        List.fold_left
+          (fun most -> function
+            | Nx_device.Profile.Allocation a when Nx_device.equal a.device d ->
+                max most a.allocated
+            | _ -> most)
+          before
+          (Nx_device.Profile.stop p)
+      in
+      (y, most - before)
+  | exception e ->
+      ignore (Nx_device.Profile.stop p);
+      raise e
+
+(* A routed product gathers each expert's codes and scales at its ids: compiled,
+   the gather reads them in place, and an index it stores has the size of the
+   ids. An index broadcast to the gathered codes, [16; 2; 64; 128] here, would
+   take 2 MiB. *)
+let memory =
+  let d = driver "Q5" in
+  let p = Nx.Placement.device ~backend:Rune.compiled d in
+  group "memory"
+    [
+      test "compiled, a routed product holds its result and its ids' size"
+        (fun () ->
+          let w = Nx_quant.place p (weight ~scale:moderate [| 8; 64; 256 |]) in
+          let ids =
+            Nx.place p (ints [| 16; 2 |] (Array.init 32 (fun i -> i * 3 mod 9)))
+          and x = Nx.place p (floats [| 16; 2; 1; 256 |]) in
+          let f = routed_compiled w in
+          (* The first call loads the program, whose code counts while [f]
+             holds it. *)
+          ignore (f ids x);
+          let y, held = peak d (fun () -> f ids x) in
+          at_least ~msg:"the result" ~than:(Nx.nbytes y) int held;
+          at_most ~than:(Nx.nbytes y + Nx.nbytes ids) int held);
+    ]
+
 (* Rules *)
 
 (* [dense ?ids w x] is the product as an ordinary matmul by the dequantised
@@ -517,6 +566,7 @@ let () =
        [
          values;
          placements;
+         memory;
          rules;
          empty;
          undifferentiated;
