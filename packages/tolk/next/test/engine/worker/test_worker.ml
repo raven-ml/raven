@@ -450,7 +450,7 @@ let check_oob_race () =
         let strays = ref 0 in
         for _ = 1 to 2000 do
           let k = Atomic.fetch_and_add fresh 1 in
-          ignore (Ops.const (`Int (Z.of_int k)));
+          ignore (Ops.const (`Int (Bigint.of_int k)));
           if Context_var.value check_oob <> own then incr strays
         done;
         !strays)

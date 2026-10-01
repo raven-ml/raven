@@ -4,7 +4,7 @@
 (test
  (name test_heuristic)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test zarith)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (glob_files *.golden))
  (action

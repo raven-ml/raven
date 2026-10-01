@@ -23,7 +23,7 @@ let unsigned dt =
 
 let bits dt (v : Dtype.value) =
   match (dt, v) with
-  | Dtype.Bool, `Bool b -> Z.of_int (Bool.to_int b)
+  | Dtype.Bool, `Bool b -> Bigint.of_int (Bool.to_int b)
   | _ -> (
       match Dtype.bitcast dt (unsigned dt) v with
       | `Int z -> z
@@ -31,7 +31,7 @@ let bits dt (v : Dtype.value) =
 
 let of_bits dt z : Dtype.value =
   match dt with
-  | Dtype.Bool -> `Bool (not (Z.equal z Z.zero))
+  | Dtype.Bool -> `Bool (not (Bigint.equal z Bigint.zero))
   | _ -> Dtype.bitcast (unsigned dt) dt (`Int z)
 
 let encode dt values =
@@ -45,7 +45,8 @@ let encode dt values =
       let z = bits dt v in
       for k = 0 to size - 1 do
         let byte =
-          Z.to_int (Z.logand (Z.shift_right z (8 * k)) (Z.of_int 0xff))
+          Bigint.to_int
+            (Bigint.logand (Bigint.shift_right z (8 * k)) (Bigint.of_int 0xff))
         in
         bytes.{(i * size) + k} <- Char.chr byte
       done)
@@ -55,11 +56,11 @@ let encode dt values =
 let decode dt n bytes =
   let size = Dtype.itemsize dt in
   Array.init n (fun i ->
-      let z = ref Z.zero in
+      let z = ref Bigint.zero in
       for k = size - 1 downto 0 do
         z :=
-          Z.logor (Z.shift_left !z 8)
-            (Z.of_int (Char.code bytes.{(i * size) + k}))
+          Bigint.logor (Bigint.shift_left !z 8)
+            (Bigint.of_int (Char.code bytes.{(i * size) + k}))
       done;
       of_bits dt !z)
 
@@ -97,7 +98,8 @@ let on_host ?vars prg buffers =
     match List.assoc_opt p.slot buffers with
     | Some values -> values
     | None ->
-        Array.make (Option.get p.size) (Dtype.truncate p.dtype (`Int Z.zero))
+        Array.make (Option.get p.size)
+          (Dtype.truncate p.dtype (`Int Bigint.zero))
   in
   let memory = List.map (fun p -> (p, storage p (initial p))) params in
   let by_slot slot =

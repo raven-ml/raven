@@ -40,13 +40,13 @@ let dtype =
 
 let pp_value ppf = function
   | `Bool b -> Format.pp_print_string ppf (if b then "True" else "False")
-  | `Int n -> Z.pp_print ppf n
+  | `Int n -> Bigint.pp_print ppf n
   | `Float f -> Testable.pp float_exact ppf f
 
 let equal_value v0 v1 =
   match (v0, v1) with
   | `Bool b0, `Bool b1 -> Bool.equal b0 b1
-  | `Int n0, `Int n1 -> Z.equal n0 n1
+  | `Int n0, `Int n1 -> Bigint.equal n0 n1
   | `Float f0, `Float f1 ->
       Int64.equal (Int64.bits_of_float f0) (Int64.bits_of_float f1)
       || (Float.is_nan f0 && Float.is_nan f1)
@@ -65,7 +65,7 @@ let equal_const c0 c1 =
   | _ -> false
 
 let const = Testable.make ~pp:pp_const ~equal:equal_const
-let z = Testable.make ~pp:Z.pp_print ~equal:Z.equal
+let z = Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal
 
 (* Bounds *)
 
@@ -87,10 +87,10 @@ let int_bits =
 let int_bounds dt =
   match List.assoc_opt dt int_bits with
   | Some (bits, true) ->
-      let half = Z.shift_left Z.one (bits - 1) in
-      (Z.neg half, Z.pred half)
+      let half = Bigint.shift_left Bigint.one (bits - 1) in
+      (Bigint.neg half, Bigint.pred half)
   | Some (bits, false) when dt <> Dtype.Bool ->
-      (Z.zero, Z.pred (Z.shift_left Z.one bits))
+      (Bigint.zero, Bigint.pred (Bigint.shift_left Bigint.one bits))
   | _ -> invalid_arg (Format.asprintf "%a is not an integer" pp_dtype dt)
 
 (* Generators *)
@@ -108,30 +108,34 @@ let edges =
   List.concat_map
     (fun (dt, _) ->
       let lo, hi = int_bounds dt in
-      [ Z.pred lo; lo; Z.succ lo; Z.pred hi; hi; Z.succ hi ])
+      [ Bigint.pred lo; lo; Bigint.succ lo; Bigint.pred hi; hi; Bigint.succ hi ])
     (List.remove_assoc Dtype.Bool int_bits)
 
 let integer =
   let scaled =
     Gen.map
-      (fun (n, shift) -> Z.shift_left (Z.of_int64 n) shift)
+      (fun (n, shift) -> Bigint.shift_left (Bigint.of_int64 n) shift)
       (Gen.pair Gen.int64 (Gen.int_range 0 1036))
   in
-  Gen.with_pp Z.pp_print
+  Gen.with_pp Bigint.pp_print
     (Gen.frequency
        [
-         (2, Gen.map Z.of_int (Gen.int_range (-300) 300));
+         (2, Gen.map Bigint.of_int (Gen.int_range (-300) 300));
          (2, Gen.of_list edges);
-         (3, Gen.map Z.of_int64 Gen.int64);
+         (3, Gen.map Bigint.of_int64 Gen.int64);
          (3, scaled);
        ])
 
 let integer_in (lo, hi) =
-  let within n = Z.add lo (Z.erem n (Z.succ (Z.sub hi lo))) in
+  let within n =
+    Bigint.add lo (Bigint.erem n (Bigint.succ (Bigint.sub hi lo)))
+  in
   Gen.frequency
     [
-      (1, Gen.of_list [ lo; Z.succ lo; Z.pred hi; hi ]);
-      (1, Gen.of_list (List.filter (fun n -> Z.leq lo n && Z.leq n hi) edges));
+      (1, Gen.of_list [ lo; Bigint.succ lo; Bigint.pred hi; hi ]);
+      ( 1,
+        Gen.of_list
+          (List.filter (fun n -> Bigint.leq lo n && Bigint.leq n hi) edges) );
       (4, Gen.map within integer);
     ]
 
@@ -174,7 +178,7 @@ let value_of_cell = function
   | "True" -> `Bool true
   | "False" -> `Bool false
   | "-nan" -> `Float (Float.neg Float.nan)
-  | s when is_integer s -> `Int (Z.of_string s)
+  | s when is_integer s -> `Int (Bigint.of_string s)
   | s -> (
       match float_of_string_opt s with
       | Some f -> `Float f

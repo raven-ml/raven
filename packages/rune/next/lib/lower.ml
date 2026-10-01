@@ -45,16 +45,16 @@ let const : type a b. (a, b) Nx_dtype.t -> a -> Dtype.const =
   | BFloat16 -> `Float v
   | Float8_e4m3 -> `Float v
   | Float8_e5m2 -> `Float v
-  | Int4 -> `Int (Z.of_int v)
-  | UInt4 -> `Int (Z.of_int v)
-  | Int8 -> `Int (Z.of_int v)
-  | UInt8 -> `Int (Z.of_int v)
-  | Int16 -> `Int (Z.of_int v)
-  | UInt16 -> `Int (Z.of_int v)
-  | Int32 -> `Int (Z.of_int32 v)
-  | UInt32 -> `Int (Z.of_int32_unsigned v)
-  | Int64 -> `Int (Z.of_int64 v)
-  | UInt64 -> `Int (Z.of_int64_unsigned v)
+  | Int4 -> `Int (Bigint.of_int v)
+  | UInt4 -> `Int (Bigint.of_int v)
+  | Int8 -> `Int (Bigint.of_int v)
+  | UInt8 -> `Int (Bigint.of_int v)
+  | Int16 -> `Int (Bigint.of_int v)
+  | UInt16 -> `Int (Bigint.of_int v)
+  | Int32 -> `Int (Bigint.of_int32 v)
+  | UInt32 -> `Int (Bigint.of_int32_unsigned v)
+  | Int64 -> `Int (Bigint.of_int64 v)
+  | UInt64 -> `Int (Bigint.of_int64_unsigned v)
   | Bool -> `Bool v
   | Complex64 | Complex128 -> invalid_arg "a complex constant"
 
@@ -458,7 +458,7 @@ let param s ~slot x =
   let shape = Nx.shape x in
   let u =
     if View.numel v = 0 then
-      broadcast (Ops.const ~dtype:tdt (`Int Z.zero)) shape
+      broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape
     else
       let start, span = span tdt v in
       let phase = phase_of what tdt bufs start in
@@ -520,7 +520,8 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
     | Host_buffer b -> not (Nx_device.Buffer.is_borrowed b)
     | Placed _ -> true
   in
-  if View.numel v = 0 then broadcast (Ops.const ~dtype:tdt (`Int Z.zero)) shape
+  if View.numel v = 0 then
+    broadcast (Ops.const ~dtype:tdt (`Int Bigint.zero)) shape
   else if one && owned then
     let first = Nx.item (List.map (fun _ -> 0) (Array.to_list shape)) x in
     broadcast (Ops.const ~dtype:tdt (const dt first)) shape

@@ -222,7 +222,7 @@ let compile (key : key) d =
   let node (l : layout) =
     if View.numel l.view = 0 then
       ( Lower.broadcast
-          (Ops.const ~dtype:l.dtype (`Int Z.zero))
+          (Ops.const ~dtype:l.dtype (`Int Bigint.zero))
           (View.shape l.view),
         None )
     else

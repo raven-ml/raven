@@ -1,7 +1,7 @@
 (test
  (name test_codegen)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device unix zarith)
+ (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device unix)
  (deps
   (glob_files *.golden))
  (action

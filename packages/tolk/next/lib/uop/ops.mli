@@ -675,7 +675,7 @@ val to_bool : t -> bool
     Raises [Invalid_argument] if [u] is not boolean or its simplification has
     more than one possible value. *)
 
-val to_z : t -> Z.t
+val to_z : t -> Bigint.t
 (** [to_z u] is the value of the integer node [u], as {!to_bool}. *)
 
 val to_float : t -> float
@@ -1335,10 +1335,10 @@ val variables : t -> t list
 
 (** {1:symbolic Divisibility} *)
 
-val const_factor : t -> Z.t
+val const_factor : t -> Bigint.t
 (** [const_factor u] is a known integer that divides every value of [u]. *)
 
-val divides : t -> Z.t -> t option
+val divides : t -> Bigint.t -> t option
 (** [divides u n] is [u / n] if [u] is known to be a multiple of [n]. *)
 
 val pop_const : ?op:Op.t -> t -> t * Dtype.const

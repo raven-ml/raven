@@ -309,7 +309,9 @@ and view storage slots vars u =
   List.map (fun b -> at b off (bytes u)) buffers
 
 let sint u =
-  match Ops.arg u with Ops.Const (`Int z) -> Ops.Int (Z.to_int z) | _ -> Sym u
+  match Ops.arg u with
+  | Ops.Const (`Int z) -> Ops.Int (Bigint.to_int z)
+  | _ -> Sym u
 
 let lane buffers i = match buffers with [ b ] -> b | bs -> List.nth bs i
 
@@ -373,7 +375,7 @@ let address ~keep ?stage d b =
 
 let int_of_const u =
   match Ops.arg u with
-  | Ops.Const (`Int z) -> Z.to_int z
+  | Ops.Const (`Int z) -> Bigint.to_int z
   | Ops.Const (`Bool b) -> Bool.to_int b
   | _ -> invalid_arg (Format.asprintf "%a is no integer" Ops.pp u)
 
@@ -400,7 +402,7 @@ let rec word addr u : Dtype.value =
   | Op.Const, Ops.Const (#Dtype.value as c) -> c
   | Op.Getaddr, Ops.Device d ->
       let dn = match d with Single n | Multi (n :: _) -> n | Multi [] -> "" in
-      `Int (Z.of_nativeint (addr dn (Ops.nth u 0)))
+      `Int (Bigint.of_nativeint (addr dn (Ops.nth u 0)))
   | Op.Cast, _ -> Dtype.truncate (Ops.dtype u) (v (Ops.nth u 0))
   | Op.Bitcast, _ ->
       let x = Ops.nth u 0 in
@@ -426,11 +428,11 @@ let le dt (v : Dtype.value) =
   in
   let z =
     match (dt, v) with
-    | Dtype.Bool, `Bool b -> Z.of_int (Bool.to_int b)
+    | Dtype.Bool, `Bool b -> Bigint.of_int (Bool.to_int b)
     | _ -> (
         match Dtype.bitcast dt unsigned v with `Int z -> z | _ -> assert false)
   in
-  String.init n (fun k -> Char.chr (Z.to_int (Z.extract z (8 * k) 8)))
+  String.init n (fun k -> Char.chr (Bigint.to_int (Bigint.extract z (8 * k) 8)))
 
 let write b off s =
   let n = String.length s in

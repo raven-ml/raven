@@ -295,7 +295,9 @@ let stage trace s (r : Scan.request) =
         let stacked = Array.append [| n |] (Nx.shape y) in
         (* An empty output has nothing to write. *)
         if m = 0 then fun _ ->
-          Lower.broadcast (Ops.const ~dtype:(Ops.dtype u) (`Int Z.zero)) stacked
+          Lower.broadcast
+            (Ops.const ~dtype:(Ops.dtype u) (`Int Bigint.zero))
+            stacked
         else
           let k = stride u m in
           let b = Ops.new_buffer device (n * k) (Ops.dtype u) in

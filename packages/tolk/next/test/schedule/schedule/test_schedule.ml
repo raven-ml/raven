@@ -175,8 +175,8 @@ let schedules =
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else if Dtype.is_unsigned dtype then `Int (Z.of_int (k + 3))
-  else `Int (Z.of_int k)
+  else if Dtype.is_unsigned dtype then `Int (Bigint.of_int (k + 3))
+  else `Int (Bigint.of_int k)
 
 let given u =
   List.filter_map
@@ -240,7 +240,7 @@ let recorded key file by name column =
       List.map
         (fun kv ->
           match String.split_on_char '=' kv with
-          | [ k; v ] -> (key k, `Int (Z.of_string v))
+          | [ k; v ] -> (key k, `Int (Bigint.of_string v))
           | _ -> failf "a recorded pair %s" kv)
         (String.split_on_char ' ' pairs)
 
@@ -281,7 +281,7 @@ let computes big =
   let buffers = filled big in
   let vars =
     List.map
-      (fun (n, v) -> (n, `Int (Z.of_int v)))
+      (fun (n, v) -> (n, `Int (Bigint.of_int v)))
       (snd (Schedule.create_linear_with_vars big))
   in
   let slots = List.map (fun (_, (p : Ops.param_arg)) -> p.slot) (given big) in
@@ -513,7 +513,8 @@ let rebinding () =
   let big = unique ~constant:2.0 "variable_shrink" in
   let v = List.find Ops.is_bound_var (Ops.toposort big) in
   let five =
-    Ops.substitute big [ (v, Ops.bind (Ops.unbound v) (`Int (Z.of_int 5))) ]
+    Ops.substitute big
+      [ (v, Ops.bind (Ops.unbound v) (`Int (Bigint.of_int 5))) ]
   in
   let vals =
     with_settings ~debug:3 ~scache:1 (fun () ->
@@ -718,8 +719,8 @@ let ended_store () =
 let bound_argument () =
   let n =
     Ops.bind
-      (Ops.variable "n" (`Int (Z.of_int 1)) (`Int (Z.of_int 8)))
-      (`Int (Z.of_int 3))
+      (Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8)))
+      (`Int (Bigint.of_int 3))
   in
   let a = Ops.replace ~src:[ copy_kernel; x; y; n ] copy_call in
   let kg = Ops.sink [ Ops.after x [ a ] ] in
@@ -920,7 +921,9 @@ let views =
                (Ops.copy_to_device part (Multi [ "CPU"; "CPU:1" ]))
                part));
       test "a symbolic shape has no view" (fun () ->
-          let v = Ops.variable "n" (`Int (Z.of_int 1)) (`Int (Z.of_int 8)) in
+          let v =
+            Ops.variable "n" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 8))
+          in
           let prefix = Ops.shrink grid [ Some (Int 0, Sym v); None ] in
           equal (option uop) None
             (Schedule.contiguous_mops_to_view (to_cpu1 prefix) prefix));
@@ -950,8 +953,8 @@ let rebound value =
     [
       ( bound_var "w",
         Ops.bind
-          (Ops.variable "v" (`Int (Z.of_int 0)) (`Int (Z.of_int 10)))
-          (`Int (Z.of_int value)) );
+          (Ops.variable "v" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 10)))
+          (`Int (Bigint.of_int value)) );
     ]
 
 (* add reads the buffers of slots 2 and 3. *)

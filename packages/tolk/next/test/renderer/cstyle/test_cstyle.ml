@@ -599,7 +599,7 @@ let bf16_truncation =
 let host = lazy (Cstyle.clang host_target)
 let loaded name = Run.program (Lazy.force host) (kernel (find_case name))
 let floats xs = Array.map (fun x -> `Float x) xs
-let ints xs = Array.map (fun n -> `Int (Z.of_int n)) xs
+let ints xs = Array.map (fun n -> `Int (Bigint.of_int n)) xs
 let slot s outputs = List.assoc s outputs
 let values = array Dtypes.value
 
@@ -679,16 +679,16 @@ let stores_each_constant_as_its_type_holds_it () =
     [
       (Bool, `Bool true);
       (Bool, `Bool false);
-      (Int8, `Int (Z.of_int (-3)));
-      (Uint8, `Int (Z.of_int 200));
-      (Int16, `Int (Z.of_int (-300)));
-      (Uint16, `Int (Z.of_int 60000));
-      (Int32, `Int (Z.of_int 42));
-      (Uint32, `Int (Z.of_int 42));
-      (Uint32, `Int Z.minus_one);
-      (Int64, `Int (Z.of_int 12345));
-      (Uint64, `Int (Z.of_int 42));
-      (Uint64, `Int Z.minus_one);
+      (Int8, `Int (Bigint.of_int (-3)));
+      (Uint8, `Int (Bigint.of_int 200));
+      (Int16, `Int (Bigint.of_int (-300)));
+      (Uint16, `Int (Bigint.of_int 60000));
+      (Int32, `Int (Bigint.of_int 42));
+      (Uint32, `Int (Bigint.of_int 42));
+      (Uint32, `Int Bigint.minus_one);
+      (Int64, `Int (Bigint.of_int 12345));
+      (Uint64, `Int (Bigint.of_int 42));
+      (Uint64, `Int Bigint.minus_one);
       (Float16, `Float 1.5);
       (Bfloat16, `Float 1.5);
       (Float32, `Float 3.14);
@@ -713,7 +713,7 @@ let reads_chars_as_a_uint name () =
 (* The registers hold the uints 1 and 2, read as one little-endian ulong. *)
 let reads_registers_as_a_ulong () =
   let out = Run.on_host (loaded "clang_register_cast") [] in
-  equal values [| `Int (Z.of_string "0x200000001") |] (slot 0 out)
+  equal values [| `Int (Bigint.of_string "0x200000001") |] (slot 0 out)
 
 let picks_a_lane_by_a_variable () =
   let k = loaded "clang_dynamic_lane" in
@@ -811,7 +811,9 @@ let element dt =
   else if Dtype.is_bool dt then map (fun b -> `Bool b) bool
   else
     let low = if Dtype.is_unsigned dt then 1 else -100 in
-    map (fun n -> `Int (Z.of_int (if n = 0 then 1 else n))) (int_range low 100)
+    map
+      (fun n -> `Int (Bigint.of_int (if n = 0 then 1 else n)))
+      (int_range low 100)
 
 let buffers_of uops =
   List.filter_map
@@ -833,7 +835,7 @@ let variables_of uops =
             vmin_vmax = Some (`Int lo, `Int hi);
             _;
           } ->
-          Some (name, Z.to_int lo, Z.to_int hi)
+          Some (name, Bigint.to_int lo, Bigint.to_int hi)
       | _ -> None)
     uops
 
@@ -866,7 +868,7 @@ let draw_inputs uops =
 
 let interpreted uops (buffers, vars) =
   let sink = List.nth uops (List.length uops - 1) in
-  let vars = List.map (fun (name, v) -> (name, `Int (Z.of_int v))) vars in
+  let vars = List.map (fun (name, v) -> (name, `Int (Bigint.of_int v))) vars in
   let writes = Interpreter.writes ~vars ~buffers sink in
   List.map
     (fun (slot, _, _) ->
@@ -894,7 +896,7 @@ let narrow_element narrow dt =
   if Dtype.equal dt narrow || not (Dtype.is_float dt) then Dtypes.value_of dt
   else
     Gen.map
-      (function `Int z -> `Float (Z.to_float z) | #Dtype.value as v -> v)
+      (function `Int z -> `Float (Bigint.to_float z) | #Dtype.value as v -> v)
       (Dtypes.value_of narrow)
 
 let narrow_types = Dtype.[ Int8; Uint8; Int16; Uint16; Float16 ]

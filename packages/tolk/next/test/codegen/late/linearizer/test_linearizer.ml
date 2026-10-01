@@ -242,7 +242,7 @@ let laws =
 let tag_blind_order () =
   let c = Ops.int ~dtype:Int32 1 in
   let var name =
-    Ops.variable ~dtype:Int32 name (`Int Z.zero) (`Int (Z.of_int 9))
+    Ops.variable ~dtype:Int32 name (`Int Bigint.zero) (`Int (Bigint.of_int 9))
   in
   let ca = Ops.add c (var "a") and cb = Ops.add c (var "b") in
   let c'b = Ops.add (Ops.rtag ~tag:(Ops.Tag.Int 1) c) (var "b") in

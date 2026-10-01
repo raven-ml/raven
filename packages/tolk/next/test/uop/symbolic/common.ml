@@ -9,7 +9,7 @@ let uop = Uops.uop
 
 (* Builders *)
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 let var ?dtype ?multiple_of name lo hi =
   Ops.variable ?dtype ?multiple_of name (i lo) (i hi)
@@ -50,19 +50,20 @@ let is_leaf u =
 (* [draw rng k lo hi] is [lo] for the first binding, [hi] for the second, and a
    value between them after. *)
 let draw rng k lo hi =
-  let span = Z.(hi - lo) in
+  let span = Bigint.(hi - lo) in
   match k with
   | 0 -> lo
   | 1 -> hi
-  | _ when Z.fits_int span && Z.to_int span < 1 lsl 30 ->
-      Z.add lo (Z.of_int (Random.State.int rng (Z.to_int span + 1)))
+  | _ when Bigint.fits_int span && Bigint.to_int span < 1 lsl 30 ->
+      Bigint.add lo
+        (Bigint.of_int (Random.State.int rng (Bigint.to_int span + 1)))
   | _ ->
       (match Random.State.int rng 4 with
-        | 0 -> Z.(lo + of_int (Random.State.int rng 1000))
-        | 1 -> Z.(hi - of_int (Random.State.int rng 1000))
-        | 2 -> Z.(ediv (lo + hi) (of_int 2))
-        | _ -> Z.zero)
-      |> Z.min hi |> Z.max lo
+        | 0 -> Bigint.(lo + of_int (Random.State.int rng 1000))
+        | 1 -> Bigint.(hi - of_int (Random.State.int rng 1000))
+        | 2 -> Bigint.(ediv (lo + hi) (of_int 2))
+        | _ -> Bigint.zero)
+      |> Bigint.min hi |> Bigint.max lo
 
 let variable_value rng k (arg : Ops.param_arg) =
   match arg.vmin_vmax with
@@ -72,17 +73,18 @@ let variable_value rng k (arg : Ops.param_arg) =
       | 1 -> `Bool hi
       | _ -> `Bool (Random.State.bool rng))
   | Some (lo, hi) ->
-      let m = Z.of_int (Option.value arg.multiple_of ~default:1) in
-      let lo = Z.(cdiv (Dtype.Value.to_z lo) m)
-      and hi = Z.(fdiv (Dtype.Value.to_z hi) m) in
-      `Int Z.(m * draw rng k lo hi)
+      let m = Bigint.of_int (Option.value arg.multiple_of ~default:1) in
+      let lo = Bigint.(cdiv (Dtype.Value.to_z lo) m)
+      and hi = Bigint.(fdiv (Dtype.Value.to_z hi) m) in
+      `Int Bigint.(m * draw rng k lo hi)
   | None -> invalid_arg "a variable without bounds"
 
 (* A range and a hardware index count from 0 below their end, which the binding
    so far gives. An empty one has no value, and neither has the binding. *)
 let counter_value rng k env u =
   match Interpreter.eval ~vars:env (Ops.nth u 0) with
-  | `Int n when Z.(n > zero) -> Some (`Int (draw rng k Z.zero Z.(n - one)))
+  | `Int n when Bigint.(n > zero) ->
+      Some (`Int (draw rng k Bigint.zero Bigint.(n - one)))
   | _ -> None
 
 (* [bindings rng k us] is the [k]th binding of the leaves of [us] by name, or
@@ -112,7 +114,7 @@ let defined env u =
       match Ops.op n with
       | Floordiv | Floormod | Cdiv | Cmod -> (
           match Interpreter.eval ~vars:env (Ops.nth n 1) with
-          | `Int d -> not (Z.equal d Z.zero)
+          | `Int d -> not (Bigint.equal d Bigint.zero)
           | _ -> true)
       | _ -> true)
     (Ops.toposort u)

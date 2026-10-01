@@ -9,7 +9,7 @@ let strf = Printf.sprintf
 
 (* Constants *)
 
-type value = [ `Bool of bool | `Int of Z.t | `Float of float ]
+type value = [ `Bool of bool | `Int of Bigint.t | `Float of float ]
 type const = [ value | `Invalid ]
 
 let nan = Int64.float_of_bits 0x7FF8_0000_0000_0000L
@@ -17,7 +17,7 @@ let nan = Int64.float_of_bits 0x7FF8_0000_0000_0000L
 let equal_const (c0 : [< const ]) (c1 : [< const ]) =
   match ((c0 :> const), (c1 :> const)) with
   | `Bool b0, `Bool b1 -> Bool.equal b0 b1
-  | `Int n0, `Int n1 -> Z.equal n0 n1
+  | `Int n0, `Int n1 -> Bigint.equal n0 n1
   | `Float x0, `Float x1 ->
       Int64.equal (Int64.bits_of_float x0) (Int64.bits_of_float x1)
   | `Invalid, `Invalid -> true
@@ -39,7 +39,7 @@ let shortest_digits x =
     let s = strf "%.*e" (n - 1) (Float.abs x) in
     let e = String.index s 'e' in
     let mantissa =
-      Z.of_string
+      Bigint.of_string
         (String.concat "" (String.split_on_char '.' (String.sub s 0 e)))
     in
     let exponent =
@@ -47,13 +47,14 @@ let shortest_digits x =
     in
     let reads m =
       Float.equal
-        (float_of_string (strf "%se%d" (Z.to_string m) exponent))
+        (float_of_string (strf "%se%d" (Bigint.to_string m) exponent))
         (Float.abs x)
     in
     match
-      List.find_opt reads [ mantissa; Z.succ mantissa; Z.pred mantissa ]
+      List.find_opt reads
+        [ mantissa; Bigint.succ mantissa; Bigint.pred mantissa ]
     with
-    | Some m -> (Z.to_string m, exponent)
+    | Some m -> (Bigint.to_string m, exponent)
     | None -> shortest (n + 1)
   in
   let digits, exponent = shortest 1 in
@@ -83,7 +84,7 @@ let float_repr x =
 let pp_const ppf (c : [< const ]) =
   match c with
   | `Bool b -> Format.pp_print_string ppf (if b then "True" else "False")
-  | `Int n -> Z.pp_print ppf n
+  | `Int n -> Bigint.pp_print ppf n
   | `Float x -> Format.pp_print_string ppf (float_repr x)
   | `Invalid -> Format.pp_print_string ppf "Invalid"
 
@@ -252,8 +253,8 @@ let finfo dt =
 (* Conversions *)
 
 (* A value as an integer. A float has none: rounding it is the caller's. *)
-let integer : value -> Z.t = function
-  | `Bool b -> Z.of_int (Bool.to_int b)
+let integer : value -> Bigint.t = function
+  | `Bool b -> Bigint.of_int (Bool.to_int b)
   | `Int n -> n
   | `Float x ->
       invalid_arg (strf "%s is a float, not an integer" (float_repr x))
@@ -263,32 +264,32 @@ let integer : value -> Z.t = function
 module Value = struct
   type t = value
 
-  let of_int n = `Int (Z.of_int n)
+  let of_int n = `Int (Bigint.of_int n)
 
   let to_float : t -> float = function
     | `Bool b -> if b then 1. else 0.
-    | `Int n -> Z.to_float n
+    | `Int n -> Bigint.to_float n
     | `Float x -> x
 
-  let to_z : t -> Z.t = function
+  let to_z : t -> Bigint.t = function
     | `Float x when not (Float.is_finite x) ->
         invalid_arg (strf "%s has no integer value" (float_repr x))
-    | `Float x -> Z.of_float x
+    | `Float x -> Bigint.of_float x
     | v -> integer v
 
   let to_int v =
     let n = to_z v in
-    if Z.fits_int n then Z.to_int n
-    else invalid_arg (strf "%s does not fit an int" (Z.to_string n))
+    if Bigint.fits_int n then Bigint.to_int n
+    else invalid_arg (strf "%s does not fit an int" (Bigint.to_string n))
 
   let to_bool : t -> bool = function
     | `Bool b -> b
-    | `Int n -> not (Z.equal n Z.zero)
+    | `Int n -> not (Bigint.equal n Bigint.zero)
     | `Float x -> x <> 0.
 
   (* A value as a number: a [`Bool] counts as [0] or [1]. *)
-  let number : t -> [ `Int of Z.t | `Float of float ] = function
-    | `Bool b -> `Int (Z.of_int (Bool.to_int b))
+  let number : t -> [ `Int of Bigint.t | `Float of float ] = function
+    | `Bool b -> `Int (Bigint.of_int (Bool.to_int b))
     | (`Int _ | `Float _) as v -> v
 
   (* The order of the integer [n] and the float [x], exactly, or [None] if [x]
@@ -298,14 +299,14 @@ module Value = struct
     else if not (Float.is_finite x) then Some (if x > 0. then -1 else 1)
     else
       let floor = Float.floor x in
-      match Z.compare n (Z.of_float floor) with
+      match Bigint.compare n (Bigint.of_float floor) with
       | 0 -> Some (if x > floor then -1 else 0)
       | c -> Some c
 
   (* The order of two values, or [None] if either is NaN. *)
   let order v0 v1 =
     match (number v0, number v1) with
-    | `Int n0, `Int n1 -> Some (Z.compare n0 n1)
+    | `Int n0, `Int n1 -> Some (Bigint.compare n0 n1)
     | `Int n, `Float x -> compare_int_float n x
     | `Float x, `Int n -> Option.map Int.neg (compare_int_float n x)
     | `Float x0, `Float x1 ->
@@ -356,23 +357,29 @@ module Value = struct
   let max v0 v1 = if v1 > v0 then v1 else v0
 
   let ( ~- ) v =
-    match number v with `Int n -> `Int (Z.neg n) | `Float x -> `Float (-.x)
+    match number v with
+    | `Int n -> `Int (Bigint.neg n)
+    | `Float x -> `Float (-.x)
 
-  let ( + ) = arith Z.add ( +. )
-  let ( - ) = arith Z.sub ( -. )
-  let ( * ) = arith Z.mul ( *. )
-  let ( // ) = arith Z.fdiv (fun x y -> fst (float_divmod x y))
+  let ( + ) = arith Bigint.add ( +. )
+  let ( - ) = arith Bigint.sub ( -. )
+  let ( * ) = arith Bigint.mul ( *. )
+  let ( // ) = arith Bigint.fdiv (fun x y -> fst (float_divmod x y))
 
   let ( % ) =
     arith
-      (fun n0 n1 -> Z.sub n0 (Z.mul n1 (Z.fdiv n0 n1)))
+      (fun n0 n1 -> Bigint.sub n0 (Bigint.mul n1 (Bigint.fdiv n0 n1)))
       (fun x y -> snd (float_divmod x y))
 end
 
 let int_min dt =
-  if is_unsigned dt then Z.zero else Z.neg (Z.shift_left Z.one (bitsize dt - 1))
+  if is_unsigned dt then Bigint.zero
+  else Bigint.neg (Bigint.shift_left Bigint.one (bitsize dt - 1))
 
-let int_max dt = Z.add (Z.pred (Z.shift_left Z.one (bitsize dt))) (int_min dt)
+let int_max dt =
+  Bigint.add
+    (Bigint.pred (Bigint.shift_left Bigint.one (bitsize dt)))
+    (int_min dt)
 
 (* Narrow floats *)
 
@@ -507,15 +514,18 @@ let storage_fmt dt =
    integer rounded to nearest once. An integer past every double is the greatest
    double, which every narrower float overflows as it would. *)
 let float_of_integer z =
-  let a = Z.abs z in
-  let shift = Z.numbits a - 53 in
-  if shift <= 0 then Z.to_float z
+  let a = Bigint.abs z in
+  let shift = Bigint.numbits a - 53 in
+  if shift <= 0 then Bigint.to_float z
   else
-    let q = Z.shift_right a shift in
-    let q = if Z.equal (Z.shift_left q shift) a then q else Z.logor q Z.one in
-    let x = Float.ldexp (Z.to_float q) shift in
+    let q = Bigint.shift_right a shift in
+    let q =
+      if Bigint.equal (Bigint.shift_left q shift) a then q
+      else Bigint.logor q Bigint.one
+    in
+    let x = Float.ldexp (Bigint.to_float q) shift in
     let x = if Float.is_finite x then x else Float.max_float in
-    if Z.sign z < 0 then -.x else x
+    if Bigint.sign z < 0 then -.x else x
 
 (* [v] as a float to round to [dt]: an integer reaches a float narrower than a
    double once, so exactly or rounded to odd. *)
@@ -529,14 +539,15 @@ let to_storage_scalar dt (v : value) : value =
   match dt with
   | Float16 -> `Float (round Float16 (float_value dt v))
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz ->
-      `Int (Z.of_int (encode dt (float_value dt v)))
+      `Int (Bigint.of_int (encode dt (float_value dt v)))
   | _ -> v
 
 let from_storage_scalar dt (s : value) : value =
   match dt with
   | Bfloat16 | Fp8e4m3 | Fp8e5m2 | Fp8e4m3fnuz | Fp8e5m2fnuz -> (
       match s with
-      | `Int n -> `Float (decode dt (Z.to_int (Z.extract n 0 (bitsize dt))))
+      | `Int n ->
+          `Float (decode dt (Bigint.to_int (Bigint.extract n 0 (bitsize dt))))
       | `Bool _ | `Float _ ->
           invalid_arg
             (Format.asprintf "%a is not a storage of %a" pp_const s pp dt))
@@ -568,8 +579,8 @@ let truncate dt (v : value) : value =
   | Weak_int | Weak_float -> v
   | Bool -> `Bool (Value.to_bool v)
   | dt when is_float dt -> `Float (truncate_float dt (float_value dt v))
-  | dt when is_unsigned dt -> `Int (Z.extract (integer v) 0 (bitsize dt))
-  | dt -> `Int (Z.signed_extract (integer v) 0 (bitsize dt))
+  | dt when is_unsigned dt -> `Int (Bigint.extract (integer v) 0 (bitsize dt))
+  | dt -> `Int (Bigint.signed_extract (integer v) 0 (bitsize dt))
 
 (* The integer data type whose storage stores [dt]'s. *)
 let storage_int dt =
@@ -593,32 +604,38 @@ let float32_of_bits b =
 (* The bits that store [s], a value of [dt]'s storage format. *)
 let pack dt (s : value) =
   match dt with
-  | Bool -> if Value.to_bool s then Z.one else Z.zero
-  | Float16 -> Z.of_int (encode Float16 (Value.to_float s))
-  | Float32 -> Z.of_int (float32_bits (Value.to_float s))
+  | Bool -> if Value.to_bool s then Bigint.one else Bigint.zero
+  | Float16 -> Bigint.of_int (encode Float16 (Value.to_float s))
+  | Float32 -> Bigint.of_int (float32_bits (Value.to_float s))
   | Float64 ->
-      Z.extract (Z.of_int64 (Int64.bits_of_float (Value.to_float s))) 0 64
+      Bigint.extract
+        (Bigint.of_int64 (Int64.bits_of_float (Value.to_float s)))
+        0 64
   | Void | Weak_int | Weak_float ->
       invalid_arg (Format.asprintf "%a has no storage" pp dt)
   | dt ->
       let dt = storage_int dt and n = integer s in
-      if Z.lt n (int_min dt) || Z.gt n (int_max dt) then
+      if Bigint.lt n (int_min dt) || Bigint.gt n (int_max dt) then
         invalid_arg
-          (Format.asprintf "%a is out of the range of %a" Z.pp_print n pp dt);
-      Z.extract n 0 (bitsize dt)
+          (Format.asprintf "%a is out of the range of %a" Bigint.pp_print n pp
+             dt);
+      Bigint.extract n 0 (bitsize dt)
 
 (* The value of [dt]'s storage format that [bits] store. *)
 let unpack dt bits : value =
   match dt with
-  | Bool -> `Bool (not (Z.equal bits Z.zero))
-  | Float16 -> `Float (decode Float16 (Z.to_int bits))
-  | Float32 -> `Float (float32_of_bits (Z.to_int bits))
+  | Bool -> `Bool (not (Bigint.equal bits Bigint.zero))
+  | Float16 -> `Float (decode Float16 (Bigint.to_int bits))
+  | Float32 -> `Float (float32_of_bits (Bigint.to_int bits))
   | Float64 ->
-      `Float (Int64.float_of_bits (Z.to_int64 (Z.signed_extract bits 0 64)))
+      `Float
+        (Int64.float_of_bits
+           (Bigint.to_int64 (Bigint.signed_extract bits 0 64)))
   | dt ->
       let dt = storage_int dt in
       `Int
-        (if is_unsigned dt then bits else Z.signed_extract bits 0 (bitsize dt))
+        (if is_unsigned dt then bits
+         else Bigint.signed_extract bits 0 (bitsize dt))
 
 let bitcast d0 d1 v =
   if itemsize d0 <> itemsize d1 then
@@ -695,12 +712,14 @@ let strong dt =
   | dt -> dt
 
 let commit_int ?default_int:first lo hi =
-  if Z.equal lo hi && (Z.lt lo (int_min Int64) || Z.gt lo (int_max Uint64)) then
-    invalid_arg (strf "%s does not fit any integer" (Z.to_string lo));
+  if
+    Bigint.equal lo hi
+    && (Bigint.lt lo (int_min Int64) || Bigint.gt lo (int_max Uint64))
+  then invalid_arg (strf "%s does not fit any integer" (Bigint.to_string lo));
   let first = match first with Some dt -> dt | None -> default_int () in
   if not (List.mem first ints) then
     invalid_arg (Format.asprintf "%a is not an integer of known width" pp first);
-  let holds dt = Z.leq (int_min dt) lo && Z.leq hi (int_max dt) in
+  let holds dt = Bigint.leq (int_min dt) lo && Bigint.leq hi (int_max dt) in
   Option.value
     (List.find_opt holds [ first; Int32; Int64; Uint64 ])
     ~default:Int64
@@ -729,8 +748,8 @@ let of_consts (cs : [< const ] list) =
             | `Float _ | `Invalid -> None
           in
           let ns = List.filter_map integral cs in
-          let lo = List.fold_left Z.min (List.hd ns) ns in
-          let hi = List.fold_left Z.max (List.hd ns) ns in
+          let lo = List.fold_left Bigint.min (List.hd ns) ns in
+          let hi = List.fold_left Bigint.max (List.hd ns) ns in
           commit_int lo hi
       | dt -> strong dt)
 

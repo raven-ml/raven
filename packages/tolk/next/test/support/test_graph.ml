@@ -2,7 +2,7 @@ open Windtrap
 open Tolk_next
 
 let node = Testable.make ~pp:Ops.pp ~equal:Ops.equal
-let int n = Ops.v ~arg:(Const (`Int (Z.of_int n))) Const
+let int n = Ops.v ~arg:(Const (`Int (Bigint.of_int n))) Const
 let cast dt u = Ops.v ~src:[ u ] ~arg:(Dtype dt) Cast
 let x = cast Float32 (int 1)
 let half = cast Float16 (int 1)
@@ -12,7 +12,7 @@ let n =
     ~arg:
       (Param
          (Ops.param_arg ~slot:(-1)
-            ~vmin_vmax:(`Int Z.zero, `Int (Z.of_int 9))
+            ~vmin_vmax:(`Int Bigint.zero, `Int (Bigint.of_int 9))
             ~name:"n" ~addrspace:(Some Alu) Weak_int))
     Param
 
@@ -35,7 +35,7 @@ let kinds =
   [
     ("an integer", int 3);
     ( "an integer beyond 64 bits",
-      Ops.v ~arg:(Const (`Int (Z.shift_left Z.one 200))) Const );
+      Ops.v ~arg:(Const (`Int (Bigint.shift_left Bigint.one 200))) Const );
     ("a boolean", Ops.v ~arg:(Const (`Bool true)) Const);
     ("a negative zero", Ops.v ~arg:(Const (`Float (-0.0))) Const);
     ("a NaN", Ops.v ~arg:(Const (`Float Float.nan)) Const);
@@ -56,7 +56,7 @@ let kinds =
           (Param
              (Ops.param_arg ~slot:1 ~addrspace:None ~volatile:true
                 ~bind_on_realize:true
-                ~bound:(`Int (Z.of_int 4))
+                ~bound:(`Int (Bigint.of_int 4))
                 Int32))
         Param );
     ( "a range",

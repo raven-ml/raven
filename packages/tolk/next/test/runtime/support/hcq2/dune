@@ -12,8 +12,7 @@
   tolk_next_test
   tolk_next_run
   nx.device
-  unix
-  zarith)
+  unix)
  (deps
   (sandbox always)
   (glob_files *.golden))

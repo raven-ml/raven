@@ -163,7 +163,7 @@ let sharded_storage u =
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else `Int (Z.of_int k)
+  else `Int (Bigint.of_int k)
 
 let filled u =
   let sharded = sharded_storage u in
@@ -599,8 +599,8 @@ let arithmetic =
           let fill = Ops.copy_to_device Ops.O.((one * int 0) + int 5) two in
           let memory =
             [
-              (1, Array.init 32 (fun j -> `Int (Z.of_int j)));
-              (3, Array.init 32 (fun _ -> `Int (Z.of_int 7)));
+              (1, Array.init 32 (fun j -> `Int (Bigint.of_int j)));
+              (3, Array.init 32 (fun _ -> `Int (Bigint.of_int 7)));
             ]
           in
           let v = Ops.O.(x + fill) in
@@ -848,7 +848,9 @@ let tiles =
               [ 0; 1 ]
           in
           let v = Ops.O.(Ops.reshape mesh (ints [ 4; 12; 1 ]) * int 2) in
-          let memory = [ (1, Array.init 48 (fun j -> `Int (Z.of_int j))) ] in
+          let memory =
+            [ (1, Array.init 48 (fun j -> `Int (Bigint.of_int j))) ]
+          in
           let whole = List.hd (Tensors.eval ~buffers:memory v) in
           List.iter
             (fun got -> equal (array Dtypes.const) whole got)

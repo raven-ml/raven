@@ -5,7 +5,7 @@
 (test
  (name test_compiler_cpu)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device zarith)
+ (libraries windtrap tolk.next tolk_next_test tolk_next_run tolk.next.engine nx.device)
  (deps
   (sandbox always)
   (glob_files *.golden))

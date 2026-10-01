@@ -323,7 +323,7 @@ let pm_remove_invalid =
           if not (List.exists is_invalid (src s)) then None
           else
             let zero_invalid x =
-              if is_invalid x then const ~dtype:(dtype s) (`Int Z.zero) else x
+              if is_invalid x then const ~dtype:(dtype s) (`Int Bigint.zero) else x
             in
             Some (replace s ~src:(List.map zero_invalid (src s))));
     ])
@@ -436,15 +436,15 @@ let symbolic_simple =
               if
                 (k >= 0)
                 [@mutate off "a shift by 0 is the x >> 0 rule's, tried first"]
-                && Z.(equal (logor mask (pred (shift_left one k))) minus_one)
-              then Some (shr (m "x") (lit (`Int (Z.of_int k))))
+                && Bigint.(equal (logor mask (pred (shift_left one k))) minus_one)
+              then Some (shr (m "x") (lit (`Int (Bigint.of_int k))))
               else None);
           rule
             Upat.(var "x" land cvar "mask" // cvar "c")
             (fun m ->
               let mask = V.to_z (num (m "mask")) and c = V.to_z (num (m "c")) in
               if
-                Z.(
+                Bigint.(
                   gt c zero
                   && equal (logand c (pred c)) zero
                   && equal (logor mask (pred c)) minus_one)
@@ -516,7 +516,7 @@ let symbolic_simple =
             (fun m -> Some O.(m "x" lor m "y"));
           (* Div rules *)
           rule
-            Upat.(cvar ~arg:(`Int Z.zero) "x" / int 0)
+            Upat.(cvar ~arg:(`Int Bigint.zero) "x" / int 0)
             (fun m -> Some (const_like (m "x") (`Float Dtype.nan)));
           (* x*0 -> 0 or 0*x -> 0, for integers: a float product by zero is NaN
              at an infinity or a NaN, and -0. at a negative x *)
@@ -609,14 +609,14 @@ let symbolic_simple =
 let lt_folding x c =
   let p, np =
     List.partition
-      (fun u -> Z.equal (const_factor u) Z.one)
+      (fun u -> Bigint.equal (const_factor u) Bigint.one)
       (split_uop x Op.Add)
   in
-  let d = List.fold_left (fun d u -> Z.gcd d (const_factor u)) c np in
+  let d = List.fold_left (fun d u -> Bigint.gcd d (const_factor u)) c np in
   let sum f = List.fold_left (fun s u -> V.(s + f u)) zero p in
   match np with
-  | n :: ns when Z.gt d Z.one && V.(zero <= sum vmin && sum vmax < `Int d) ->
-      Some O.(Option.get (divides (usum n ns) d) < lit (`Int (Z.fdiv c d)))
+  | n :: ns when Bigint.gt d Bigint.one && V.(zero <= sum vmin && sum vmax < `Int d) ->
+      Some O.(Option.get (divides (usum n ns) d) < lit (`Int (Bigint.fdiv c d)))
   | _ -> None
 
 (* (X := a0*x0 + a1*x1 + ...) > 0 is equivalent to x0 + x1 + ... > 0 if xi >= 0
@@ -916,7 +916,7 @@ let symbolic =
               Upat.(var ~dtype:[ Dtype.Weak_int ] "x" < cvar "c")
               (fun m ->
                 match num (m "c") with
-                | `Int c when Z.sign c > 0 -> lt_folding (m "x") c
+                | `Int c when Bigint.sign c > 0 -> lt_folding (m "x") c
                 | _ -> None);
             rule
               Upat.(
@@ -1054,9 +1054,9 @@ let parse_valid v =
        and X < c -> X <= c-1 *)
   else if int_lt v && is_const (nth v 0) then
     match value (nth v 0) with
-    | #Dtype.value as c -> Some (nth v 1, false, Z.succ (V.to_z c))
+    | #Dtype.value as c -> Some (nth v 1, false, Bigint.succ (V.to_z c))
     | `Invalid -> None
-  else if int_lt v then Some (nth v 0, true, Z.pred (V.to_z (vmax (nth v 1))))
+  else if int_lt v then Some (nth v 0, true, Bigint.pred (V.to_z (vmax (nth v 1))))
   else None
 
 let uop_given_valid ?(try_simplex = true) valid u =
@@ -1125,10 +1125,10 @@ let uop_given_valid ?(try_simplex = true) valid u =
    useful simplifications *)
 let valid_priority v valids =
   match parse_valid v with
-  | None -> (0, Z.zero)
+  | None -> (0, Bigint.zero)
   | Some (e, upper, c) ->
       let depends o = e == o || Nodes.mem e (backward_slice o) in
-      (-List.length (List.filter depends valids), if upper then c else Z.neg c)
+      (-List.length (List.filter depends valids), if upper then c else Bigint.neg c)
 
 let simplify_valid valid =
   (* this should only be for indexing, skip if there's a INDEX *)
@@ -1137,7 +1137,7 @@ let simplify_valid valid =
     let valids = split_uop valid Op.And in
     let keyed = List.map (fun v -> (valid_priority v valids, v)) valids in
     let order ((d0, c0), _) ((d1, c1), _) =
-      match Int.compare d0 d1 with 0 -> Z.compare c0 c1 | c -> c
+      match Int.compare d0 d1 with 0 -> Bigint.compare c0 c1 | c -> c
     in
     let valids = List.map snd (List.stable_sort order keyed) in
     let given ret stmt =

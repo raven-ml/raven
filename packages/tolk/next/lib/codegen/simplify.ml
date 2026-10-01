@@ -236,7 +236,7 @@ let sum_between ?lower ?upper r value =
     let lo =
       match lower with
       | Some l -> maximum l (int 0)
-      | None -> const_like r (`Int Z.zero)
+      | None -> const_like r (`Int Bigint.zero)
     in
     let count = maximum O.(hi - lo) (int 0) in
     if Dtype.is_float (dtype value) then

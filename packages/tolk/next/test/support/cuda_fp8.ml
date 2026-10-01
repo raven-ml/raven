@@ -4,7 +4,7 @@ let helper = "template <class T, class F> __device__ __forceinline__ T tg_fp8("
 
 let infinity_byte t infinity =
   match Dtype.bitcast t Uint8 (`Float infinity) with
-  | `Int z -> Printf.sprintf "0x%02x" (Z.to_int z)
+  | `Int z -> Printf.sprintf "0x%02x" (Bigint.to_int z)
   | _ -> invalid_arg "a byte is an integer"
 
 let fp8_of_name = function

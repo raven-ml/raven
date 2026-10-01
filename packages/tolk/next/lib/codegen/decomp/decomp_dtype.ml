@@ -43,7 +43,7 @@ let pair = function [ a; b ] -> (a, b) | _ -> invalid_arg "expected two words"
 (* Section 4.3.1 of TAOCP. The result is the two words of a long, low first, or
    one value for a comparison or a cast to another type. *)
 let rec l2i op dt uops =
-  let zero = const ~dtype:dt (`Int Z.zero) in
+  let zero = const ~dtype:dt (`Int Bigint.zero) in
   let bin () =
     match uops with
     | [ a0; a1; b0; b1 ] -> (a0, a1, b0, b1)
@@ -59,14 +59,14 @@ let rec l2i op dt uops =
          extend. *)
       let x = List.hd uops in
       let lo = cast x (l2i_dt dt) in
-      let zero = const_like lo (`Int Z.zero) in
+      let zero = const_like lo (`Int Bigint.zero) in
       if Dtype.equal (dtype x) Bool || List.mem (dtype x) Dtype.uints then
         words lo zero
       else
         words lo
           (where
-             O.(x < const_like x (`Int Z.zero))
-             (const_like lo (`Int Z.minus_one))
+             O.(x < const_like x (`Int Bigint.zero))
+             (const_like lo (`Int Bigint.minus_one))
              zero)
   | Op.Cast when is_long dt ->
       (* The words of the truncated float's magnitude, its quotient and
@@ -226,7 +226,7 @@ and shift_operands op = function
 (* TAOCP's Algorithm 4.3.1D could be faster, but it must be parameterised over
    the width of the divisor. *)
 and long_division op dt (a0, a1, b0, b1) =
-  let zero = const ~dtype:dt (`Int Z.zero) in
+  let zero = const ~dtype:dt (`Int Bigint.zero) in
   let signed = Dtype.equal dt Int32 in
   let negate a0 a1 = pair (l2i Op.Neg uint [ a0; a1 ]) in
   let magnitude w0 w1 =
@@ -241,16 +241,16 @@ and long_division op dt (a0, a1, b0, b1) =
       (Some a_neg, a0, a1, Some b_neg, b0, b1)
     else (None, a0, a1, None, b0, b1)
   in
-  let z = const ~dtype:uint (`Int Z.zero) in
+  let z = const ~dtype:uint (`Int Bigint.zero) in
   let q = ref (z, z) and r = ref (z, z) in
   for i = 63 downto 0 do
     let r0, r1 = !r in
     let r0, r1 =
-      pair (l2i Op.Shl uint [ r0; r1; const ~dtype:uint (`Int Z.one); z ])
+      pair (l2i Op.Shl uint [ r0; r1; const ~dtype:uint (`Int Bigint.one); z ])
     in
     let bit =
       List.hd
-        (l2i Op.Shr uint [ a0; a1; const ~dtype:uint (`Int (Z.of_int i)); z ])
+        (l2i Op.Shr uint [ a0; a1; const ~dtype:uint (`Int (Bigint.of_int i)); z ])
     in
     let r0 = O.(r0 lor (bit land int 1)) in
     let cond = logical_not (List.hd (l2i Op.Cmplt uint [ r0; r1; b0; b1 ])) in
@@ -401,7 +401,7 @@ and pm_long_decomp =
              let x = m "x" and c = m "c" in
              match (tag x, value c) with
              | Some (Tuple [ Int w; Dtype dt ]), (#Dtype.value as v) ->
-                 let n = Z.shift_right (Dtype.Value.to_z v) (32 * w) in
+                 let n = Bigint.shift_right (Dtype.Value.to_z v) (32 * w) in
                  Some
                    (const ~dtype:dt (Dtype.truncate dt (`Int n) :> Dtype.const))
              | _ -> None);
@@ -555,7 +555,7 @@ let narrow x to_ =
         let below = float (edge -. Float.ldexp 1. (k - 24)) in
         ((fun c -> O.(top lor c)), cast (where top below y) src)
     in
-    let zero = const_like x (`Int Z.zero) in
+    let zero = const_like x (`Int Bigint.zero) in
     let away =
       or_top O.((x < back) land (zero < x) lor ((back < x) land (x < zero)))
     in

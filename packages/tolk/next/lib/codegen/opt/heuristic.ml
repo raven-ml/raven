@@ -24,14 +24,14 @@ let try_split ?(top = false) k axis amount target =
 (* A size is known when it is an integer, which a constant beyond an int also
    is. *)
 let known_size = function
-  | Int n -> Some (Z.of_int n)
+  | Int n -> Some (Bigint.of_int n)
   | Sym u when op u = Op.Const -> (
       match value u with `Int n -> Some n | _ -> None)
   | Sym _ -> None
 
 let divisible s n =
   match known_size s with
-  | Some s -> Z.(equal (rem s (of_int n)) zero)
+  | Some s -> Bigint.(equal (rem s (of_int n)) zero)
   | None -> false
 
 let shape_at k i = List.nth (K.full_shape k) i
@@ -41,7 +41,7 @@ let size_at k i = Option.get (known_size (shape_at k i))
 
 let first_dividing r sizes =
   List.find_opt
-    (fun sz -> Option.is_some (divides (nth r 0) (Z.of_int sz)))
+    (fun sz -> Option.is_some (divides (nth r 0) (Bigint.of_int sz)))
     sizes
 
 let last l = List.nth l (List.length l - 1)
@@ -138,7 +138,8 @@ let matvec k =
           |> List.find_map (fun global_idx ->
               if
                 Option.is_some
-                  (divides (nth first_reduce_rng 0) (Z.of_int threads_per_row))
+                  (divides (nth first_reduce_rng 0)
+                     (Bigint.of_int threads_per_row))
                 && divisible (shape_at k global_idx)
                      (blocksize * rows_per_thread)
               then begin
@@ -192,10 +193,15 @@ let upcast_masked k =
       (fun to_upcast axis ->
         let is_masked = List.memq (List.nth (K.rngs k) axis) where_gate_rngs in
         let upcast =
-          List.fold_left (fun p a -> Z.mul p (size_at k a)) Z.one to_upcast
+          List.fold_left
+            (fun p a -> Bigint.mul p (size_at k a))
+            Bigint.one to_upcast
         in
         let n = size_at k axis in
-        if Z.(leq n (of_int 7)) && is_masked && Z.(leq (upcast * n) (of_int 49))
+        if
+          Bigint.(leq n (of_int 7))
+          && is_masked
+          && Bigint.(leq (upcast * n) (of_int 49))
         then begin
           if debug () >= 4 then
             Format.eprintf "upcasting masked axis : %d@." axis;
@@ -285,7 +291,7 @@ let unroll k =
     && holds Sint.(K.upcast_size k < Int 64)
   then
     let s = size_at k (last (K.unrollable_dims k)) in
-    let at_most n x = Z.(leq x (of_int n)) in
+    let at_most n x = Bigint.(leq x (of_int n)) in
     if at_most 32 s then
       begin if try_split k (last (K.unrollable_dims k)) 0 Opt.Unroll then
         (* if it's small, upcast a second reduce dimension too *)
@@ -346,9 +352,9 @@ let locals k =
        (fun deleted_shape (axis, local_sz) ->
          let axis = axis - deleted_shape in
          let will_delete_shape =
-           Option.equal Z.equal
+           Option.equal Bigint.equal
              (known_size (shape_at k axis))
-             (Some (Z.of_int local_sz))
+             (Some (Bigint.of_int local_sz))
          in
          ignore (split k axis local_sz Opt.Local);
          if will_delete_shape then deleted_shape + 1 else deleted_shape)

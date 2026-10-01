@@ -6,7 +6,10 @@ open Tolk_next
 
 let int = Ops.int
 let ints = List.map (fun n : Ops.sint -> Int n)
-let var name lo hi = Ops.variable name (`Int (Z.of_int lo)) (`Int (Z.of_int hi))
+
+let var name lo hi =
+  Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
+
 let storage shape = Ops.param ~shape:(ints shape) 0 Float32
 let cleanup u = Ops.graph_rewrite ~ctx:() u Movement.mop_cleanup
 let index u idxs = Ops.v Op.Index ~src:(u :: idxs)

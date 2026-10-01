@@ -4,7 +4,7 @@
 open Windtrap
 open Tolk_next
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 let var ?(dtype = Dtype.Weak_int) ?multiple_of name lo hi =
   Ops.variable ~dtype ?multiple_of name (i lo) (i hi)
@@ -47,7 +47,7 @@ let nested_divisions =
           is_none (rewrite d);
           let vars = [ ("w", i k) ] in
           equal Dtypes.const
-            (`Int (Z.of_int 805306368))
+            (`Int (Bigint.of_int 805306368))
             (Interpreter.eval ~vars (once d)));
     ]
 
@@ -103,8 +103,8 @@ let declared_multiples =
 (* x // c and x % c for a positive constant c *)
 
 let constant_divisors =
-  let huge = Ops.const (`Int (Z.shift_left Z.one 100)) in
-  let huge_divisor = Ops.const (`Int Z.(pred (shift_left one 101))) in
+  let huge = Ops.const (`Int (Bigint.shift_left Bigint.one 100)) in
+  let huge_divisor = Ops.const (`Int Bigint.(pred (shift_left one 101))) in
   group "constant divisors"
     [
       rewrites "nest_the_division_of_a_remainder" Ops.O.(a % int 12 // int 3);
@@ -181,7 +181,9 @@ let zero_divisors =
         (fun () -> raises_on Ops.O.(((x * int 0) + x) // int 3));
       test "a division of any integer by 0 raises Division_by_zero" (fun () ->
           let any =
-            Ops.variable "x" (`Int (Z.of_int min_int)) (`Int (Z.of_int max_int))
+            Ops.variable "x"
+              (`Int (Bigint.of_int min_int))
+              (`Int (Bigint.of_int max_int))
           in
           raises_on Ops.O.(any // int 0));
     ]
@@ -243,13 +245,13 @@ let gen_point d =
     let lo, hi = int_bounds v in
     let m =
       match Ops.arg v with
-      | Param { multiple_of = Some m; _ } -> Z.of_int m
-      | _ -> Z.one
+      | Param { multiple_of = Some m; _ } -> Bigint.of_int m
+      | _ -> Bigint.one
     in
-    let first = Z.(cdiv lo m) in
-    let count = Z.(succ (fdiv hi m - first)) in
+    let first = Bigint.(cdiv lo m) in
+    let count = Bigint.(succ (fdiv hi m - first)) in
     Gen.map
-      (fun k -> (Ops.expr v, `Int Z.(m * (first + erem (of_int k) count))))
+      (fun k -> (Ops.expr v, `Int Bigint.(m * (first + erem (of_int k) count))))
       (Gen.frequency
          [ (1, Gen.constant 0); (1, Gen.constant (-1)); (4, Gen.nat) ])
   in

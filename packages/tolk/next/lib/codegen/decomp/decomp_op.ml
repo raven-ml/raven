@@ -14,13 +14,13 @@ let z_const z = const (`Int z)
 (* The m and s with x // d = (x * m) >> s for 0 <= x <= vmax and d > 0, from
    Hacker's Delight, chapter 10. *)
 let magicgu vmax d =
-  let nc = Z.(pred (succ vmax / d * d)) in
+  let nc = Bigint.(pred (succ vmax / d * d)) in
   let rec search s =
-    if s > 2 * Z.numbits vmax then assert false
+    if s > 2 * Bigint.numbits vmax then assert false
     else
-      let p = Z.shift_left Z.one s in
-      let r = Z.rem (Z.pred p) d in
-      if Z.gt p Z.(nc * (d - one - r)) then (Z.((p + d - one - r) / d), s)
+      let p = Bigint.shift_left Bigint.one s in
+      let r = Bigint.rem (Bigint.pred p) d in
+      if Bigint.gt p Bigint.(nc * (d - one - r)) then (Bigint.((p + d - one - r) / d), s)
       else search (s + 1)
   in
   search 0
@@ -38,19 +38,19 @@ let widen : Dtype.t -> Dtype.t option = function
 
 let rec fast_idiv' ~dont_cast r x d =
   let dmax dt = Dtype.Value.to_z (Dtype.max dt) in
-  if Z.leq d Z.zero || Dtype.Value.(vmin x < of_int 0) then None
+  if Bigint.leq d Bigint.zero || Dtype.Value.(vmin x < of_int 0) then None
   else
-    let vmax = Z.min (Dtype.Value.to_z (vmax x)) (dmax (dtype x)) in
-    if Z.lt vmax d then Some (const_like x (`Int Z.zero))
+    let vmax = Bigint.min (Dtype.Value.to_z (vmax x)) (dmax (dtype x)) in
+    if Bigint.lt vmax d then Some (const_like x (`Int Bigint.zero))
     else
       let m, s = magicgu vmax d in
-      if Z.leq Z.(m * vmax) (dmax (dtype x)) then
+      if Bigint.leq Bigint.(m * vmax) (dmax (dtype x)) then
         Some O.((x * z_const m) lsr int s)
       else
-        let k = Z.trailing_zeros d in
+        let k = Bigint.trailing_zeros d in
         match
           if k > 0 then
-            fast_idiv' ~dont_cast:true r O.(x lsr int k) (Z.shift_right d k)
+            fast_idiv' ~dont_cast:true r O.(x lsr int k) (Bigint.shift_right d k)
           else None
         with
         | Some q -> Some q
@@ -59,7 +59,7 @@ let rec fast_idiv' ~dont_cast r x d =
             match widen (dtype x) with
             | Some next
               when List.mem next (Renderer.supported_dtypes r)
-                   && Z.leq Z.(m * vmax) (dmax next) ->
+                   && Bigint.leq Bigint.(m * vmax) (dmax next) ->
                 Some (cast O.((cast x next * z_const m) lsr int s) (dtype x))
             | _ -> None)
 
@@ -113,13 +113,13 @@ let floormod_to_mod a b =
       + where
           ((r <> int 0) land sign_differs a b)
           b
-          (const_like b (`Int Z.zero)))
+          (const_like b (`Int Bigint.zero)))
 
 (* The exponent of a constant that is 2^i, 0 <= i < 64. *)
 let power_of_two c =
   match value c with
-  | `Int z when Z.sign z > 0 && Z.popcount z = 1 && Z.numbits z <= 64 ->
-      Some (Z.numbits z - 1)
+  | `Int z when Bigint.sign z > 0 && Bigint.popcount z = 1 && Bigint.numbits z <= 64 ->
+      Some (Bigint.numbits z - 1)
   | _ -> None
 
 (* The exponent of a constant that is 2^i, 1 <= i < 64: a shift by 0 is left as
@@ -155,7 +155,7 @@ let simplifying_patterns ops =
                Upat.O.(x_int % c)
                (fun m ->
                  Option.map
-                   (fun v -> O.(m "x" land z_const Z.(pred (shift_left one v))))
+                   (fun v -> O.(m "x" land z_const Bigint.(pred (shift_left one v))))
                    (power_of_two (m "c")));
            ];
          [
@@ -292,7 +292,7 @@ let late_patterns ~disable_fast_idiv ops =
                           let x = m "x" in
                           alu x Mulacc
                             [
-                              const_like x (`Int Z.(shift_left one (to_int n)));
+                              const_like x (`Int Bigint.(shift_left one (to_int n)));
                               m "c";
                             ])
                         (int_value (m "n")));
@@ -306,7 +306,7 @@ let late_patterns ~disable_fast_idiv ops =
                Upat.O.(
                  var "a"
                  * Upat.op Fdiv ~dtype:Dtype.floats
-                     ~src:[ Upat.const (`Int Z.one); var "b" ])
+                     ~src:[ Upat.const (`Int Bigint.one); var "b" ])
                (fun m -> Some (alu (m "a") Fdiv [ m "b" ]));
            ];
        ])

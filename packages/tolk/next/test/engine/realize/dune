@@ -4,7 +4,7 @@
 (test
  (name test_realize)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test unix zarith)
+ (libraries windtrap tolk.next tolk_next_test unix)
  (deps
   (sandbox always)
   (glob_files *.golden))

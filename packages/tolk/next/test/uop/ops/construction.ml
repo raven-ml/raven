@@ -159,7 +159,7 @@ let elementwise =
           equal dtype Int64
             (Ops.commit_dtype
                (Ops.variable ~dtype:Weak_int "n" (i 0)
-                  (`Int (Z.shift_left Z.one 40))));
+                  (`Int (Bigint.shift_left Bigint.one 40))));
           equal dtype Int64
             (Ops.commit_dtype ~default_int:Int64 (weak_var "n" 0 10));
           equal dtype Float32 (Ops.commit_dtype (Ops.float 1.));
@@ -219,7 +219,8 @@ let constants =
       test "consts takes the committed type of its literals" (fun () ->
           equal dtype Int32 (Ops.dtype (Ops.consts [ i 1; i 2 ]));
           equal dtype Int64
-            (Ops.dtype (Ops.consts [ i 1; `Int (Z.shift_left Z.one 40) ]));
+            (Ops.dtype
+               (Ops.consts [ i 1; `Int (Bigint.shift_left Bigint.one 40) ]));
           equal dtype Float32 (Ops.dtype (Ops.consts [ i 1; f 2.5 ]));
           equal dtype Bool (Ops.dtype (Ops.consts [ `Bool true; `Bool false ])));
       test "const_like expands to the node's shape, in its type" (fun () ->
@@ -298,7 +299,7 @@ let movement =
           equal (list int)
             (List.init 600 (fun i -> i * (i + 1) / 2))
             (List.map
-               (function `Int z -> Z.to_int z | _ -> -1)
+               (function `Int z -> Bigint.to_int z | _ -> -1)
                (Array.to_list (List.hd (Tensors.eval sums)))));
       test "arange rejects a step of 0 and a dtype that cannot hold it"
         (fun () ->

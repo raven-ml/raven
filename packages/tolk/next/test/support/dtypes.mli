@@ -20,7 +20,7 @@ val value : Dtype.value Windtrap.testable
 val const : Dtype.const Windtrap.testable
 (** [const] is {!value} with [`Invalid] equal only to itself. *)
 
-val z : Z.t Windtrap.testable
+val z : Bigint.t Windtrap.testable
 (** [z] compares integers. *)
 
 (** {1:lists Data types} *)
@@ -54,13 +54,13 @@ val finite_float : float Windtrap.Gen.t
 (** [finite_float] draws a finite float, weighted towards the ranges of the
     narrow floats. *)
 
-val integer : Z.t Windtrap.Gen.t
+val integer : Bigint.t Windtrap.Gen.t
 (** [integer] draws an integer of any magnitude up to [2{^ 1100}], the edges of
     every integer data type and their neighbours included. *)
 
 (** {1:bounds Bounds} *)
 
-val int_bounds : Dtype.t -> Z.t * Z.t
+val int_bounds : Dtype.t -> Bigint.t * Bigint.t
 (** [int_bounds dt] is the least and the greatest value of the integer data type
     [dt], {!Dtype.Weak_int} included.
 

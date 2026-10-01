@@ -3,7 +3,7 @@ open Tolk_next
 open Dtypes
 
 let x ?(slot = 0) dt = Ops.param slot dt
-let int n = `Int (Z.of_int n)
+let int n = `Int (Bigint.of_int n)
 let eval ?vars ?params ?buffers u = Interpreter.eval ?vars ?params ?buffers u
 let var name = Ops.variable ~dtype:Dtype.Int32 name (int 0) (int 10)
 let rejects f = raises_match (Exn.invalid_arg ?substring:None) f

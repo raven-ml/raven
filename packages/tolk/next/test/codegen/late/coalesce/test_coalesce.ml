@@ -27,7 +27,7 @@ let value k =
 
 let store_at buf i = Ops.store (at buf (Ops.int i)) (value i)
 let stores buf offsets = Ops.sink (List.map (store_at buf) offsets)
-let int_of u = Z.to_int (Ops.to_z u)
+let int_of u = Bigint.to_int (Ops.to_z u)
 
 (* The accesses of [sink], each as the constant offset it starts at and the
    number of elements it reads or writes. *)
@@ -427,7 +427,7 @@ let phased_kernels =
 let elements dtype =
   Array.init size (fun i ->
       if Dtype.is_float dtype then `Float (Float.of_int i +. 0.5)
-      else `Int (Z.of_int ((3 * i) + 1)))
+      else `Int (Bigint.of_int ((3 * i) + 1)))
 
 let write = triple int int Dtypes.value
 

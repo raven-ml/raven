@@ -143,7 +143,7 @@ and fold d =
       let gcd_with_remainder () =
         let g =
           `Int
-            (List.fold_left (fun g f -> Z.gcd g (V.to_z f)) (V.to_z c) factors)
+            (List.fold_left (fun g f -> Bigint.gcd g (V.to_z f)) (V.to_z c) factors)
         in
         if V.(g <= of_int 1) then None
         else

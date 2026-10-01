@@ -1,7 +1,7 @@
 (test
  (name test_decomp_dtype)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test zarith)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (glob_files *.golden))
  (action

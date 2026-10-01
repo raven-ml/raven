@@ -5,7 +5,7 @@
  (name test_ops_cuda)
  (modules test_ops_cuda)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test zarith)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (sandbox always)
   (glob_files *.golden))
@@ -26,8 +26,7 @@
   tolk.next.engine
   tolk_next_test
   nx.device
-  nx.cuda.device
-  zarith))
+  nx.cuda.device))
 
 (rule
  (alias slow)

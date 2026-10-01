@@ -8,7 +8,7 @@
 open Ops
 
 let dim_max = function
-  | Int d -> Z.of_int d
+  | Int d -> Bigint.of_int d
   | Sym u -> Dtype.Value.to_z (vmax u)
 
 let cannot_limit dims max_sizes =
@@ -28,14 +28,14 @@ let cannot_limit dims max_sizes =
 let rec group_dims dims max_sizes =
   let rec fit ds ms =
     match (ds, ms) with
-    | d :: ds, m :: ms -> Z.leq (dim_max d) (Z.of_int m) && fit ds ms
+    | d :: ds, m :: ms -> Bigint.leq (dim_max d) (Bigint.of_int m) && fit ds ms
     | [], _ -> true
     | _ :: _, [] -> false
   in
   let rec merge ds ms =
     match (ds, ms) with
     | d0 :: (d1 :: rest as ds), m :: ms ->
-        if Z.leq Z.(dim_max d0 * dim_max d1) (Z.of_int m) then
+        if Bigint.leq Bigint.(dim_max d0 * dim_max d1) (Bigint.of_int m) then
           Some (Sint.(d0 * d1) :: rest)
         else Option.map (List.cons d0) (merge ds ms)
     | _ -> None
@@ -46,23 +46,23 @@ let rec group_dims dims max_sizes =
 
 (* Sizes as the grouping computes them: exact integers, whose intermediate
    products may pass [int], or nodes. *)
-type size = N of Z.t | U of t
+type size = N of Bigint.t | U of t
 
-let size = function Int n -> N (Z.of_int n) | Sym u -> U u
+let size = function Int n -> N (Bigint.of_int n) | Sym u -> U u
 let node = function N z -> const (`Int z) | U u -> u
 
 let ( *! ) a b =
-  match (a, b) with N x, N y -> N Z.(x * y) | _ -> U O.(node a * node b)
+  match (a, b) with N x, N y -> N Bigint.(x * y) | _ -> U O.(node a * node b)
 
-let prod = List.fold_left ( *! ) (N Z.one)
+let prod = List.fold_left ( *! ) (N Bigint.one)
 
 (* Split each dim that exceeds its axis by its least divisor, moving the divisor
    to the next axis. *)
 let split_dims dims max_sizes =
   let fits d m =
     match d with
-    | N d -> Z.leq d (Z.of_int m)
-    | U u -> Z.leq (Dtype.Value.to_z (vmax (simplify u))) (Z.of_int m)
+    | N d -> Bigint.leq d (Bigint.of_int m)
+    | U u -> Bigint.leq (Dtype.Value.to_z (vmax (simplify u))) (Bigint.of_int m)
   in
   let rec fit ds ms =
     match (ds, ms) with d :: ds, m :: ms -> fits d m && fit ds ms | _ -> true
@@ -71,7 +71,7 @@ let split_dims dims max_sizes =
   if fit sizes max_sizes then sizes
   else
     let a =
-      Array.of_list (sizes @ List.init (3 - List.length dims) (fun _ -> N Z.one))
+      Array.of_list (sizes @ List.init (3 - List.length dims) (fun _ -> N Bigint.one))
     in
     let n = Array.length a in
     for i = 0 to n - 1 do
@@ -82,16 +82,16 @@ let split_dims dims max_sizes =
       in
       let rec limit () =
         match a.(i) with
-        | N d when Z.gt d (Z.of_int m) ->
-            let last = Z.of_float (Float.ceil (Float.sqrt (Z.to_float d))) in
+        | N d when Bigint.gt d (Bigint.of_int m) ->
+            let last = Bigint.of_float (Float.ceil (Float.sqrt (Bigint.to_float d))) in
             let rec least k =
-              if Z.gt k last then Z.one
-              else if Z.(equal (rem d k) zero) then k
-              else least (Z.succ k)
+              if Bigint.gt k last then Bigint.one
+              else if Bigint.(equal (rem d k) zero) then k
+              else least (Bigint.succ k)
             in
-            let div = least (Z.of_int 2) in
-            if Z.equal div Z.one then cannot_limit dims max_sizes;
-            a.(i) <- N (Z.div d div);
+            let div = least (Bigint.of_int 2) in
+            if Bigint.equal div Bigint.one then cannot_limit dims max_sizes;
+            a.(i) <- N (Bigint.div d div);
             let next = (i + 1) mod n in
             a.(next) <- a.(next) *! N div;
             limit ()
@@ -103,7 +103,7 @@ let split_dims dims max_sizes =
     done;
     let sizes = Array.to_list a in
     match a.(2) with
-    | N z when Z.equal z Z.one -> List.filteri (fun i _ -> i < 2) sizes
+    | N z when Bigint.equal z Bigint.one -> List.filteri (fun i _ -> i < 2) sizes
     | _ -> sizes
 
 (* The product of the sizes after each size. *)
@@ -177,7 +177,7 @@ let add_gpudims (r : Renderer.t) s =
             match (local_dims, local_shape, r.local_max) with
             | l0 :: _, w :: _, _ :: rest
               when axis_type (range l0) = Axis_type.Warp ->
-                Z.to_int (dim_max w) :: rest
+                Bigint.to_int (dim_max w) :: rest
             | _ -> r.local_max
           in
           let local_idxs = grouped_dims "lidx" local_shape (Some local_max) in
@@ -185,7 +185,7 @@ let add_gpudims (r : Renderer.t) s =
             List.filter_map
               (fun u ->
                 if op u = Op.Special then
-                  Some (Z.to_int (dim_max (Sym (nth u 0))))
+                  Some (Bigint.to_int (dim_max (Sym (nth u 0))))
                 else None)
               local_idxs
           in

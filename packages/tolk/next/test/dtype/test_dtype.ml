@@ -50,7 +50,7 @@ let any_const =
 (* The same constant built anew: an integer from its digits, and a float from
    its bits. *)
 let respell = function
-  | `Int n -> `Int (Z.of_string (Z.to_string n))
+  | `Int n -> `Int (Bigint.of_string (Bigint.to_string n))
   | `Float f -> `Float (Int64.float_of_bits (Int64.bits_of_float f))
   | c -> c
 
@@ -76,8 +76,8 @@ let constants =
       test "zero and negative zero are different constants" (fun () ->
           not_equal const_equality (`Float 0.) (`Float (-0.)));
       test "constants of different kinds differ" (fun () ->
-          not_equal const_equality (`Int Z.one) (`Float 1.);
-          not_equal const_equality (`Bool true) (`Int Z.one);
+          not_equal const_equality (`Int Bigint.one) (`Float 1.);
+          not_equal const_equality (`Bool true) (`Int Bigint.one);
           not_equal const_equality `Invalid (`Bool false));
       prop "equal_const is an equivalence"
         (Gen.pair any_const any_const)
@@ -295,14 +295,19 @@ let small_const =
        [
          (1, Gen.constant `Invalid);
          (1, Gen.map (fun b -> `Bool b) Gen.bool);
-         (3, Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range (-1000) 1000));
+         ( 3,
+           Gen.map
+             (fun n -> `Int (Bigint.of_int n))
+             (Gen.int_range (-1000) 1000) );
          (2, Gen.map (fun f -> `Float f) Gen.any_float);
        ])
 
 let commit_bounds =
   Gen.map
-    (fun (a, b) -> (Z.min a b, Z.max a b))
-    (Gen.such_that (fun (a, b) -> not (Z.equal a b)) (Gen.pair integer integer))
+    (fun (a, b) -> (Bigint.min a b, Bigint.max a b))
+    (Gen.such_that
+       (fun (a, b) -> not (Bigint.equal a b))
+       (Gen.pair integer integer))
 
 let literals =
   group "literals"
@@ -322,7 +327,8 @@ let literals =
           equal dtype (Dtype.of_consts cs) (Dtype.of_consts (List.rev cs)));
       Golden.cases "commit.golden" ~key:[ "lo"; "hi"; "default_int" ]
         (fun cell ->
-          let lo = Z.of_string (cell "lo") and hi = Z.of_string (cell "hi") in
+          let lo = Bigint.of_string (cell "lo")
+          and hi = Bigint.of_string (cell "hi") in
           let default_int =
             match cell "default_int" with
             | "None" -> None
@@ -334,12 +340,13 @@ let literals =
         ~name:alias
         Dtype.[ Weak_int; Bool; Float32; Weak_float; Void ]
         (fun default_int ->
-          rejects (fun () -> Dtype.commit_int ~default_int Z.zero Z.one));
+          rejects (fun () ->
+              Dtype.commit_int ~default_int Bigint.zero Bigint.one));
       prop "commit_int holds its bounds, or falls back to int64" commit_bounds
         (fun (lo, hi) ->
           let dt = Dtype.commit_int lo hi in
           let min, max = int_bounds dt in
-          let holds = Z.leq min lo && Z.leq hi max in
+          let holds = Bigint.leq min lo && Bigint.leq hi max in
           cover "holds its bounds" holds;
           cover "falls back" (not holds);
           if not holds then equal dtype Dtype.Int64 dt);
@@ -464,19 +471,25 @@ let word_of dt =
    raises, such an integer converts to a double as the infinity of its sign, and
    to a narrower float as the greatest double does: the finite value it is
    overflows every narrower float alike. *)
-let beyond_doubles = Z.sub (Z.shift_left Z.one 1024) (Z.shift_left Z.one 970)
+let beyond_doubles =
+  Bigint.sub
+    (Bigint.shift_left Bigint.one 1024)
+    (Bigint.shift_left Bigint.one 970)
+
 let bfloat16_ties = [ 1.0039062500000002; 1. +. 0x1p-8 +. 0x1p-40 ]
 
 let as_tinygrad dt cell = function
   | `Float f when Dtype.equal dt Dtype.Bfloat16 && List.mem f bfloat16_ties ->
       Some (`Float 1.0078125)
   | `Int n
-    when Dtype.is_float dt && Z.geq (Z.abs n) beyond_doubles && raised cell ->
+    when Dtype.is_float dt
+         && Bigint.geq (Bigint.abs n) beyond_doubles
+         && raised cell ->
       let big =
         if Dtype.(equal dt Float64 || equal dt Weak_float) then Float.infinity
         else Float.max_float
       in
-      Some (`Float (if Z.sign n < 0 then -.big else big))
+      Some (`Float (if Bigint.sign n < 0 then -.big else big))
   | _ -> None
 
 (* Storage moves a NaN's bits: every word encodes back to itself through its
@@ -493,7 +506,7 @@ let as_tinygrad dt cell = function
    canonical 0x7e00, of its sign, and its conversions between float32 and double
    quieting a signalling NaN, which tinygrad's bfloat16 storage goes through. *)
 let nan_word dt word =
-  let bits mask = Z.to_int (Z.logand word (Z.of_int mask)) in
+  let bits mask = Bigint.to_int (Bigint.logand word (Bigint.of_int mask)) in
   match dt with
   | Dtype.Fp8e4m3 -> bits 0xFF = 0xFF
   | Fp8e5m2 -> bits 0x7C = 0x7C && bits 0x03 <> 0
@@ -508,7 +521,7 @@ let reencoded dt word tinygrad =
    tinygrad stores 0x7F. *)
 let e5m2_nan = function
   | `Float f when Float.is_nan f ->
-      Some (`Int (Z.of_int (if Float.sign_bit f then 0xFE else 0x7E)))
+      Some (`Int (Bigint.of_int (if Float.sign_bit f then 0xFE else 0x7E)))
   | _ -> None
 
 (* [row w read cell dt v f] checks [f v] against the golden row of [dt] and [v],
@@ -560,7 +573,7 @@ let truncatable =
   Gen.bind stored (fun dt ->
       let takes = function
         | `Float _ -> Dtype.is_float dt || Dtype.is_bool dt
-        | `Int n -> (not (Dtype.is_float dt)) || Z.numbits n < 1000
+        | `Int n -> (not (Dtype.is_float dt)) || Bigint.numbits n < 1000
         | `Bool _ -> true
       in
       Gen.map (fun v -> (dt, v)) (Gen.such_that takes any_value))
@@ -580,7 +593,7 @@ let truncation =
         (Gen.pair (dtype_list Dtype.weaks) any_value)
         (fun (dt, v) -> equal value v (Dtype.truncate dt v));
       test "truncate rejects void" (fun () ->
-          rejects (fun () -> Dtype.truncate Dtype.Void (`Int Z.zero)));
+          rejects (fun () -> Dtype.truncate Dtype.Void (`Int Bigint.zero)));
       prop "an integer wraps modulo two to its width"
         (Gen.pair (dtype_list Dtype.ints) integer)
         (fun (dt, n) ->
@@ -590,9 +603,10 @@ let truncation =
             | _ -> fail "not an integer"
           in
           let lo, hi = int_bounds dt in
-          is_true ~msg:"within bounds" (Z.leq lo r && Z.leq r hi);
-          equal ~msg:"congruent" z Z.zero
-            (Z.erem (Z.sub n r) (Z.shift_left Z.one (Dtype.bitsize dt))));
+          is_true ~msg:"within bounds" (Bigint.leq lo r && Bigint.leq r hi);
+          equal ~msg:"congruent" z Bigint.zero
+            (Bigint.erem (Bigint.sub n r)
+               (Bigint.shift_left Bigint.one (Dtype.bitsize dt))));
       prop "bfloat16 rounding is odd" Gen.any_float (fun f ->
           equal value
             (`Float (-.truncated Dtype.Bfloat16 f))
@@ -605,11 +619,11 @@ let truncation =
         (fun () ->
           (* Past 2^53 the double rounds an integer onto a tie of the narrower
              float, which it would then round to even. *)
-          let z = Z.of_string "9042383626829825" in
+          let z = Bigint.of_string "9042383626829825" in
           equal value
-            (Dtype.bitcast Uint16 Bfloat16 (`Int (Z.of_int 0x5a01)))
+            (Dtype.bitcast Uint16 Bfloat16 (`Int (Bigint.of_int 0x5a01)))
             (Dtype.truncate Bfloat16 (`Int z));
-          let z = Z.(shift_left one 60 + shift_left one 36 + one) in
+          let z = Bigint.(shift_left one 60 + shift_left one 36 + one) in
           equal value
             (`Float (Float.ldexp 1. 60 +. Float.ldexp 1. 37))
             (Dtype.truncate Float32 (`Int z)));
@@ -636,16 +650,20 @@ let truncation =
               let word =
                 match Dtype.bitcast dt w v with `Int n -> n | _ -> fail msg
               in
-              let has mask = not (Z.equal (Z.logand word mask) Z.zero) in
-              let bit n = Z.shift_left Z.one n in
+              let has mask =
+                not (Bigint.equal (Bigint.logand word mask) Bigint.zero)
+              in
+              let bit n = Bigint.shift_left Bigint.one n in
               match dt with
               | Dtype.Fp8e4m3fnuz | Fp8e5m2fnuz ->
-                  equal ~msg z (Z.of_int 0x80) word
+                  equal ~msg z (Bigint.of_int 0x80) word
               | Fp8e4m3 | Fp8e5m2 ->
-                  equal ~msg z (Z.of_int (if negative then 0xFF else 0x7F)) word
+                  equal ~msg z
+                    (Bigint.of_int (if negative then 0xFF else 0x7F))
+                    word
               | Float64 ->
                   is_true ~msg:"quiet" (has (bit 51));
-                  equal ~msg:"sign" bool negative (Z.sign word < 0)
+                  equal ~msg:"sign" bool negative (Bigint.sign word < 0)
               | _ ->
                   let bits = 8 * Dtype.itemsize dt in
                   let mantissa = snd (Dtype.finfo dt) in
@@ -685,7 +703,7 @@ let storage =
                (value_of_cell (cell "storage"))));
       Golden.cases "reencode.golden" ~key:[ "dtype"; "word" ] (fun cell ->
           let dt = dtype_of_cell (cell "dtype")
-          and word = Z.of_string (cell "word") in
+          and word = Bigint.of_string (cell "word") in
           let unsigned =
             if Dtype.itemsize dt = 1 then Dtype.Uint8 else Dtype.Uint16
           in
@@ -717,7 +735,7 @@ let storage =
             if Dtype.itemsize dt = 1 then Dtype.Uint8 else Dtype.Uint16
           in
           for word = 0 to (1 lsl (8 * Dtype.itemsize dt)) - 1 do
-            let word = `Int (Z.of_int word) in
+            let word = `Int (Bigint.of_int word) in
             equal
               ~msg:(Format.asprintf "%a" (Testable.pp value) word)
               value word
@@ -726,10 +744,10 @@ let storage =
       prop "a bitcast through a float gives back every 32- and 64-bit word"
         ~examples:
           [
-            (Dtype.Float32, `Int (Z.of_int 0x7F80_0001));
-            (Dtype.Float32, `Int (Z.of_int 0xFFBF_FFFF));
-            (Dtype.Float64, `Int (Z.of_int64 0x7FF0_0000_0000_0001L));
-            (Dtype.Float64, `Int (Z.of_int64 0xFFF7_FFFF_FFFF_FFFFL));
+            (Dtype.Float32, `Int (Bigint.of_int 0x7F80_0001));
+            (Dtype.Float32, `Int (Bigint.of_int 0xFFBF_FFFF));
+            (Dtype.Float64, `Int (Bigint.of_int64 0x7FF0_0000_0000_0001L));
+            (Dtype.Float64, `Int (Bigint.of_int64 0xFFF7_FFFF_FFFF_FFFFL));
           ]
         (Gen.bind
            (dtype_list Dtype.[ Float32; Float64; Int32 ])
@@ -743,7 +761,8 @@ let storage =
           List.iter
             (fun (dt, bits, negative) ->
               let f =
-                as_float (Dtype.from_storage_scalar dt (`Int (Z.of_int bits)))
+                as_float
+                  (Dtype.from_storage_scalar dt (`Int (Bigint.of_int bits)))
               in
               is_true
                 ~msg:(Printf.sprintf "0x%x is a NaN" bits)
@@ -796,12 +815,12 @@ let bitcasts =
           Law.round_trip value value (Dtype.bitcast a b) (Dtype.bitcast b a) v);
       test "a bitcast keeps the item size" (fun () ->
           rejects (fun () ->
-              Dtype.bitcast Dtype.Int8 Dtype.Float16 (`Int Z.one)));
+              Dtype.bitcast Dtype.Int8 Dtype.Float16 (`Int Bigint.one)));
       cases "a bitcast needs data types with storage" ~name:alias
         Dtype.[ Void; Weak_int; Weak_float ]
         (fun dt ->
-          rejects (fun () -> Dtype.bitcast dt dt (`Int Z.one));
-          rejects (fun () -> Dtype.bitcast Dtype.Int64 dt (`Int Z.one)));
+          rejects (fun () -> Dtype.bitcast dt dt (`Int Bigint.one));
+          rejects (fun () -> Dtype.bitcast Dtype.Int64 dt (`Int Bigint.one)));
     ]
 
 (* A data type and a constant it takes: only a float or bool takes a NaN or an
@@ -832,7 +851,7 @@ let consts =
         (fun dt ->
           let w = word_of dt in
           for word = 0 to (1 lsl (8 * Dtype.itemsize dt)) - 1 do
-            let word = `Int (Z.of_int word) in
+            let word = `Int (Bigint.of_int word) in
             match Dtype.const dt (Dtype.bitcast w dt word) with
             | #Dtype.value as v ->
                 equal
@@ -848,8 +867,8 @@ let consts =
    rounds to 2^1024 or more to a float. Where Python raises, such an integer
    operates with a float as the infinity of its sign. *)
 let to_infinity = function
-  | `Int n when Z.geq (Z.abs n) beyond_doubles ->
-      `Float (if Z.sign n < 0 then Float.neg_infinity else Float.infinity)
+  | `Int n when Bigint.geq (Bigint.abs n) beyond_doubles ->
+      `Float (if Bigint.sign n < 0 then Float.neg_infinity else Float.infinity)
   | v -> v
 
 (* [arithmetic cell op a b] is that [op a b] is what [cell] reads as. Where
@@ -875,7 +894,7 @@ let operand =
        [
          (1, Gen.map (fun b -> `Bool b) Gen.bool);
          (3, Gen.map (fun n -> `Int n) integer);
-         (1, Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range (-3) 3));
+         (1, Gen.map (fun n -> `Int (Bigint.of_int n)) (Gen.int_range (-3) 3));
          (3, Gen.map (fun f -> `Float f) Gen.any_float);
          ( 1,
            Gen.map
@@ -891,7 +910,7 @@ let number =
 let integers = Gen.map (fun n -> `Int n) integer
 
 let is_zero = function
-  | `Int n -> Z.equal n Z.zero
+  | `Int n -> Bigint.equal n Bigint.zero
   | `Bool b -> not b
   | `Float f -> Stdlib.( = ) f 0.
 
@@ -919,8 +938,10 @@ let values =
             (value_of_cell (cell "negated"))
             (-value_of_cell (cell "a")));
       test "of_int is an integer" (fun () ->
-          equal value (`Int (Z.of_int (-7))) (of_int (-7));
-          equal value (`Int (Z.of_int Stdlib.max_int)) (of_int Stdlib.max_int));
+          equal value (`Int (Bigint.of_int (-7))) (of_int (-7));
+          equal value
+            (`Int (Bigint.of_int Stdlib.max_int))
+            (of_int Stdlib.max_int));
       prop "compare is a total order by magnitude"
         (Gen.triple operand operand operand)
         (Law.order magnitude);
@@ -959,9 +980,9 @@ let values =
         (fun (a, b) ->
           match (a, b) with
           | `Int m, `Int n ->
-              equal ~msg:"+" value (`Int (Z.add m n)) (a + b);
-              equal ~msg:"-" value (`Int (Z.sub m n)) (a - b);
-              equal ~msg:"*" value (`Int (Z.mul m n)) (a * b)
+              equal ~msg:"+" value (`Int (Bigint.add m n)) (a + b);
+              equal ~msg:"-" value (`Int (Bigint.sub m n)) (a - b);
+              equal ~msg:"*" value (`Int (Bigint.mul m n)) (a * b)
           | _ -> fail "not integers");
       prop "multiplication distributes over addition on integers"
         (Gen.triple integers integers integers)
@@ -977,7 +998,7 @@ let values =
         (Gen.pair operand
            (Gen.such_that
               (function
-                | `Int n -> not (Z.equal n Z.zero)
+                | `Int n -> not (Bigint.equal n Bigint.zero)
                 | `Bool b -> b
                 | `Float _ -> true)
               operand))
@@ -988,20 +1009,23 @@ let values =
       prop "integer division and modulo rebuild the dividend"
         (Gen.pair integers
            (Gen.such_that
-              (function `Int n -> not (Z.equal n Z.zero) | _ -> true)
+              (function
+                | `Int n -> not (Bigint.equal n Bigint.zero) | _ -> true)
               integers))
         (fun (a, b) -> equal value a ((a // b * b) + (a % b)));
       prop "an integer remainder is less than the divisor and of its sign"
         (Gen.pair integers
            (Gen.such_that
-              (function `Int n -> not (Z.equal n Z.zero) | _ -> true)
+              (function
+                | `Int n -> not (Bigint.equal n Bigint.zero) | _ -> true)
               integers))
         (fun (a, b) ->
           match (a % b, b) with
           | `Int r, `Int n ->
               is_true ~msg:"sign"
-                (Stdlib.( = ) (Z.sign r) 0 || Stdlib.( = ) (Z.sign r) (Z.sign n));
-              is_true ~msg:"size" (Z.lt (Z.abs r) (Z.abs n))
+                (Stdlib.( = ) (Bigint.sign r) 0
+                || Stdlib.( = ) (Bigint.sign r) (Bigint.sign n));
+              is_true ~msg:"size" (Bigint.lt (Bigint.abs r) (Bigint.abs n))
           | _ -> fail "not integers");
       (* Moving a remainder to the divisor's sign adds the divisor, which can
          round up to it: 5e-324 % -4.450246113776542e-308 is the divisor. *)
@@ -1015,13 +1039,13 @@ let values =
           is_true ~msg:"size" (Stdlib.( <= ) (Float.abs r) (Float.abs y)));
       cases "a zero divisor raises Division_by_zero"
         ~name:(Format.asprintf "%a" (Testable.pp value))
-        [ `Int Z.zero; `Bool false; `Float 0.; `Float (-0.) ]
+        [ `Int Bigint.zero; `Bool false; `Float 0.; `Float (-0.) ]
         (fun zero ->
-          raises Division_by_zero (fun () -> `Int (Z.of_int 7) // zero);
+          raises Division_by_zero (fun () -> `Int (Bigint.of_int 7) // zero);
           raises Division_by_zero (fun () -> `Float 1.5 % zero));
       prop "a bool counts as an integer" (Gen.pair Gen.bool operand)
         (fun (b, v) ->
-          let n = `Int (if b then Z.one else Z.zero) in
+          let n = `Int (if b then Bigint.one else Bigint.zero) in
           equal ~msg:"+" value (n + v) (`Bool b + v);
           equal ~msg:"*" value (n * v) (`Bool b * v);
           equal ~msg:"-" value (-n) (-`Bool b);
@@ -1048,24 +1072,24 @@ let conversions =
               rejects (fun () -> to_z v);
               rejects (fun () -> to_int v)
           | c ->
-              let n = Z.of_string c in
+              let n = Bigint.of_string c in
               equal ~msg:"to_z" z n (to_z v);
-              if Z.fits_int n then
-                equal ~msg:"to_int" int (Z.to_int n) (to_int v)
+              if Bigint.fits_int n then
+                equal ~msg:"to_int" int (Bigint.to_int n) (to_int v)
               else rejects (fun () -> to_int v));
           equal ~msg:"to_bool" bool (bool_cell (cell "bool")) (to_bool v));
       prop "to_float of a float is itself" Gen.any_float (fun f ->
           equal value (`Float f) (`Float (to_float (`Float f))));
       prop "to_z truncates a float towards zero" finite_float (fun f ->
-          equal z (Z.of_float (Float.trunc f)) (to_z (`Float f)));
+          equal z (Bigint.of_float (Float.trunc f)) (to_z (`Float f)));
       prop "to_z of an integer is itself, and to_int where it fits" integer
         (fun n ->
           equal ~msg:"to_z" z n (to_z (`Int n));
-          if Z.fits_int n then
-            equal ~msg:"to_int" int (Z.to_int n) (to_int (`Int n))
+          if Bigint.fits_int n then
+            equal ~msg:"to_int" int (Bigint.to_int n) (to_int (`Int n))
           else rejects (fun () -> to_int (`Int n)));
-      cases "to_int takes exactly the integers of int" ~name:Z.to_string
-        Z.
+      cases "to_int takes exactly the integers of int" ~name:Bigint.to_string
+        Bigint.
           [
             of_int Stdlib.min_int;
             of_int Stdlib.max_int;
@@ -1073,10 +1097,11 @@ let conversions =
             succ (of_int Stdlib.max_int);
           ]
         (fun n ->
-          if Z.fits_int n then equal int (Z.to_int n) (to_int (`Int n))
+          if Bigint.fits_int n then
+            equal int (Bigint.to_int n) (to_int (`Int n))
           else rejects (fun () -> to_int (`Int n)));
       prop "to_bool is being unequal to zero" operand (fun v ->
-          equal bool (is_nan v || not (v = `Int Z.zero)) (to_bool v));
+          equal bool (is_nan v || not (v = `Int Bigint.zero)) (to_bool v));
       prop "to_float preserves the order of values" (Gen.pair operand operand)
         (fun (a, b) ->
           assume (not (is_nan a || is_nan b));

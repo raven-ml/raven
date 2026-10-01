@@ -314,7 +314,7 @@ let timeline_values =
           in
           let stores = List.filter into_slots (nodes Store host) in
           equal int ~msg:"stores into the slots" 2 (List.length stores);
-          List.iter (fun st -> equal uop (Ops.const ~dtype:Uint64 (`Int Z.zero)) (Ops.nth st 1)) stores);
+          List.iter (fun st -> equal uop (Ops.const ~dtype:Uint64 (`Int Bigint.zero)) (Ops.nth st 1)) stores);
     ]
 
 (* Layout of arguments *)
@@ -907,7 +907,7 @@ let running =
           equal (list floats) [ Array.make 4 4.; Array.make 4 6. ]
             (List.map (fun u -> floats_of (List.hd (List.assq u bound))) [ b1; b2 ]));
       test "a schedule's variables reach its kernels" (fun () ->
-          let v = Ops.variable ~dtype:Int32 "v" (`Int Z.one) (`Int (Z.of_int 4)) in
+          let v = Ops.variable ~dtype:Int32 "v" (`Int Bigint.one) (`Int (Bigint.of_int 4)) in
           let out = param (Single "CPU:1") 0 4 in
           let i = Ops.range (Sym v) [ 0 ] in
           let kernel =
@@ -1005,10 +1005,16 @@ let struct_t : Hcq2.c_struct =
 
 let words_of b =
   let a = Nx_device.Buffer.bigarray Bigarray.int8_unsigned (host_view b) in
-  let byte i = Z.of_int a.{i} in
+  let byte i = Bigint.of_int a.{i} in
   fun off size ->
-    List.fold_left (fun acc k -> Z.add (Z.shift_left acc 8) (byte (off + k))) Z.zero
+    List.fold_left (fun acc k -> Bigint.add (Bigint.shift_left acc 8) (byte (off + k))) Bigint.zero
       (List.init size (fun k -> size - 1 - k))
+
+(* The same word in hexadecimal, two digits a byte. *)
+let hex_of b =
+  let a = Nx_device.Buffer.bigarray Bigarray.int8_unsigned (host_view b) in
+  fun off size ->
+    String.concat "" (List.init size (fun k -> Printf.sprintf "%02x" a.{off + size - 1 - k}))
 
 let output () = Nx_device.Buffer.create (nx "CPU:1") UInt8 16
 
@@ -1020,7 +1026,7 @@ let host_functions =
           let ffs = Hcq2.ccall ~host:"CPU:1" ~lib:"libc" ~ret:Int32 "ffs" [ Ops.int ~dtype:Int32 0x10 ] in
           let b = output () in
           host_batch ~outputs:[ ("result", b) ] [ Ops.store (Ops.index out [ Ops.int 0 ]) ffs ];
-          equal string "5" (Z.to_string (words_of b 0 4)));
+          equal string "5" (Bigint.to_string (words_of b 0 4)));
       test "a C structure holds each field it is given, as its size's unsigned integer" (fun () ->
           let s =
             Hcq2.cstruct ~host:"CPU:1" struct_t
@@ -1028,7 +1034,7 @@ let host_functions =
                 ("u8", u8 0x12);
                 ("u16", u16 0x3456);
                 ("u32", u32 0x789ABCDE);
-                ("u64", Ops.const ~dtype:Uint64 (`Int (Z.of_string "0xFEDCBA9876543210")));
+                ("u64", Ops.const ~dtype:Uint64 (`Int (Bigint.of_string "0xFEDCBA9876543210")));
               ]
           in
           let out = Ops.placeholder ~device:(Single "CPU:1") ~tag:(String "copied") [ 16 ] Uint8 in
@@ -1039,14 +1045,14 @@ let host_functions =
           let b = output () in
           host_batch ~outputs:[ ("copied", b) ] [ copy ];
           equal (list string) [ "12"; "3456"; "789abcde"; "fedcba9876543210" ]
-            (List.map (fun (_, off, size) -> Z.format "%x" (words_of b off size)) struct_t.fields));
+            (List.map (fun (_, off, size) -> hex_of b off size) struct_t.fields));
       test "cfield reads a field of a structure" (fun () ->
           let s = Hcq2.cstruct ~host:"CPU:1" struct_t [ ("u32", u32 42) ] in
           let out = Ops.placeholder ~device:(Single "CPU:1") ~volatile:true ~tag:(String "field") [ 1 ] Uint32 in
           let b = output () in
           host_batch ~outputs:[ ("field", b) ]
             [ Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.load (Hcq2.cfield s struct_t "u32") []) ];
-          equal string "42" (Z.to_string (words_of b 0 4)));
+          equal string "42" (Bigint.to_string (words_of b 0 4)));
       test "cstruct and cfield raise Invalid_argument for a field the layout lacks" (fun () ->
           rejects (fun () -> Hcq2.cstruct ~host:"CPU:1" struct_t [ ("nope", u8 1) ]);
           rejects (fun () -> Hcq2.cfield (Hcq2.cstruct ~host:"CPU:1" struct_t []) struct_t "nope"));
@@ -1076,7 +1082,7 @@ let queues =
   group "Queue"
     [
       test "dword is a word's low 32 bits, as a uint32" (fun () ->
-          equal uop (Ops.const ~dtype:Uint32 (`Int (Z.of_int 0x23456789))) (Hcq2.Queue.dword 0x1_2345_6789));
+          equal uop (Ops.const ~dtype:Uint32 (`Int (Bigint.of_int 0x23456789))) (Hcq2.Queue.dword 0x1_2345_6789));
       test "q appends constants at their width, bytes as they are, and room for other words"
         (fun () ->
           let seen = ref None in
@@ -1150,9 +1156,9 @@ let word_tests =
           host_batch ~outputs:[ ("patched", b) ] (List.tl (Ops.src patched));
           let word = words_of b in
           equal (list string) [ "1"; "2"; string_of_int (value land 0xFFFFFFFF) ]
-            (List.map (fun off -> Z.to_string (word off 4)) [ 0; 4; 8 ]);
+            (List.map (fun off -> Bigint.to_string (word off 4)) [ 0; 4; 8 ]);
           equal string ~msg:"the blob elsewhere" (String.concat "" (List.init 20 (fun _ -> "aa")))
-            (Z.format "%040x" (word 12 20)));
+            (hex_of b 12 20));
       test "a row known at link is written at link, the others by the host program" (fun () ->
           let d = "CPU:1" in
           let buf = Ops.placeholder ~device:(Single d) ~tag:(String "patched") [ 32 ] Uint8 in

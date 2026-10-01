@@ -11,8 +11,7 @@
   tolk.next.engine
   tolk_next_test
   tolk_next_run
-  nx.device
-  zarith)
+  nx.device)
  (deps
   (sandbox always)
   (glob_files *.golden))

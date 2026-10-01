@@ -944,7 +944,7 @@ below. A graph golden holds the sink of its inputs and that sink rewritten to a
 fixed point by one matcher alone. `fast_idiv_grid.golden` holds tinygrad's
 `fast_idiv` of every integer type over 13 bounds and 28 divisors (the uint64
 edges, 2^64 and 2^70 + 1 included), with and without a wider type, and the
-laws check every quotient against `Z.div` in the interpreter.
+laws check every quotient against `Bigint.div` in the interpreter.
 
 | Source | Behaviour | Outcome |
 |---|---|---|

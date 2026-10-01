@@ -100,7 +100,7 @@ let applied ast =
 
 let size r =
   match Ops.vmax r with
-  | `Int n -> Z.succ n
+  | `Int n -> Bigint.succ n
   | v -> failf "a range has the bound %a" (Testable.pp Dtypes.value) v
 
 (* Choosing *)
@@ -159,7 +159,7 @@ let evaluable c =
 
 let iterations c =
   let k = K.v (kernel c.kernel) (renderer c.renderer) in
-  List.fold_left (fun n r -> Z.mul n (size r)) Z.one (K.rngs k)
+  List.fold_left (fun n r -> Bigint.mul n (size r)) Bigint.one (K.rngs k)
 
 (* Kernels of more than 2^18 iterations are pinned by their goldens alone. *)
 let keeps_kernel_writes =
@@ -168,7 +168,7 @@ let keeps_kernel_writes =
     List.filter
       (fun c ->
         let n = iterations c in
-        Z.(of_int lo < n && n <= of_int hi))
+        Bigint.(of_int lo < n && n <= of_int hi))
       evaluable
   in
   let keeps c =

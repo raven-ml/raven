@@ -16,7 +16,7 @@
 
 (** {1:idiv Integer division} *)
 
-val fast_idiv : Renderer.t -> Ops.t -> Z.t -> Ops.t option
+val fast_idiv : Renderer.t -> Ops.t -> Bigint.t -> Ops.t option
 (** [fast_idiv r x d] is [x] divided by the positive constant [d], rounding
     towards zero, as a multiplication and a right shift: [(x * m) >> s], for
     [x]'s values from [0] to its upper bound. It shifts the powers of two out of

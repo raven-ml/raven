@@ -5,7 +5,7 @@
 open Windtrap
 open Tolk_next
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 let v ?(dtype = Dtype.Weak_int) name lo hi =
   Ops.variable ~dtype name (i lo) (i hi)
@@ -51,7 +51,7 @@ let numbers_once dims idxs =
           List.fold_left2
             (fun acc idx stride ->
               match Interpreter.eval ~vars idx with
-              | `Int n -> acc + (Z.to_int n * stride)
+              | `Int n -> acc + (Bigint.to_int n * stride)
               | c ->
                   failf "an index is an integer, not %a"
                     (Testable.pp Dtypes.const) c)
@@ -62,7 +62,7 @@ let numbers_once dims idxs =
         if seen.(flat) then failf "iteration %d is numbered twice" flat;
         seen.(flat) <- true
     | (name, size) :: rest ->
-        for v = 0 to Z.to_int size - 1 do
+        for v = 0 to Bigint.to_int size - 1 do
           each ((name, v) :: bound) rest
         done
   in
@@ -82,7 +82,7 @@ let fits max_sizes idxs =
       let axis = int_of_string (String.sub name 4 (String.length name - 4)) in
       match List.nth_opt max_sizes axis with
       | Some _ when axis = 0 && List.length max_sizes = 3 -> ()
-      | Some bound -> at_most ~msg:name int ~than:bound (Z.to_int size)
+      | Some bound -> at_most ~msg:name int ~than:bound (Bigint.to_int size)
       | None -> failf "%s has no bound" name)
     (specials idxs)
 
@@ -104,7 +104,7 @@ let bool_of_cell = function
 let render_specials idxs =
   String.concat " "
     (List.map
-       (fun (n, s) -> Printf.sprintf "%s=%s" n (Z.to_string s))
+       (fun (n, s) -> Printf.sprintf "%s=%s" n (Bigint.to_string s))
        (specials idxs))
 
 let render_idxs idxs =
@@ -126,9 +126,9 @@ let grouped_dims_golden =
 
 (* A launch of at most 2^12 iterations, which a law enumerates. *)
 let small_enough dims =
-  Z.leq
-    (List.fold_left (fun p d -> Z.(p * of_int d)) Z.one dims)
-    (Z.of_int 4096)
+  Bigint.leq
+    (List.fold_left (fun p d -> Bigint.(p * of_int d)) Bigint.one dims)
+    (Bigint.of_int 4096)
 
 let grouped_dims_number_once =
   let rows =

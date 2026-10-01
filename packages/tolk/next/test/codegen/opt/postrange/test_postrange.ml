@@ -114,7 +114,7 @@ let sint ppf = function
 
 let size r =
   match Ops.vmax r with
-  | `Int n -> Z.succ n
+  | `Int n -> Bigint.succ n
   | v -> failf "a range has the bound %a" (Testable.pp Dtypes.value) v
 
 let axis_type_name t =
@@ -127,7 +127,7 @@ let made_cell rngs =
        (fun r ->
          Printf.sprintf "%s:%s:%s"
            (String.concat "_" (List.map string_of_int (Ops.axis_id r)))
-           (Z.to_string (size r))
+           (Bigint.to_string (size r))
            (axis_type_name (Ops.axis_type r)))
        rngs)
 
@@ -306,8 +306,8 @@ let shifts =
       test "splits an axis into its quotient and a new axis of the amount"
         (fun () ->
           let k, (quotient, amount) = shifted 0 4 Upcast in
-          equal Dtypes.z (Z.of_int 16) (size quotient);
-          equal Dtypes.z (Z.of_int 4) (size amount);
+          equal Dtypes.z (Bigint.of_int 16) (size quotient);
+          equal Dtypes.z (Bigint.of_int 4) (size amount);
           equal axis_type Weak (Ops.axis_type quotient);
           equal axis_type Upcast (Ops.axis_type amount);
           let slice = Ops.backward_slice (K.ast k) in
@@ -467,7 +467,10 @@ let evaluable c =
           [ Op.Stage; Op.Backedge; Op.Special ])
 
 let iterations c =
-  List.fold_left (fun n r -> Z.mul n (size r)) Z.one (K.rngs (scheduler c))
+  List.fold_left
+    (fun n r -> Bigint.mul n (size r))
+    Bigint.one
+    (K.rngs (scheduler c))
 
 (* Kernels of more than 2^18 iterations are pinned by their goldens alone. *)
 let keeps_kernel_writes =
@@ -476,7 +479,7 @@ let keeps_kernel_writes =
     List.filter
       (fun c ->
         let n = iterations c in
-        Z.(of_int lo < n && n <= of_int hi))
+        Bigint.(of_int lo < n && n <= of_int hi))
       evaluable
   in
   let keeps c = keeps_writes (kernel c.kernel) (optimize c) in

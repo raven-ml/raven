@@ -9,7 +9,7 @@ open Ops
 
 let transcendental_dtypes = Dtype.[ Float16; Float32; Float64 ]
 let float_like u x = const_like u (`Float x)
-let int_like u n = const_like u (`Int (Z.of_int n))
+let int_like u n = const_like u (`Int (Bigint.of_int n))
 
 let not_in what dt =
   invalid_arg (Format.asprintf "%a is not %s" Dtype.pp dt what)
@@ -53,7 +53,7 @@ let exponent_mask dt = (1 lsl fst (Dtype.finfo dt)) - 1
 
 let pow2 y =
   if y < 0 then invalid_arg (Printf.sprintf "negative shift %d" y);
-  const (`Int (Z.shift_left Z.one y))
+  const (`Int (Bigint.shift_left Bigint.one y))
 
 let shr x y = O.(x // pow2 y)
 let shl x y = O.(x * pow2 y)

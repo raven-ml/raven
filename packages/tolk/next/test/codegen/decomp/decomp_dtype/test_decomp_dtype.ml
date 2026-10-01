@@ -38,7 +38,7 @@ let is_16_bit dt = Dtype.bitsize dt = 16
 
 let as_int v =
   match (v :> Dtype.const) with
-  | `Int z -> Z.to_int z
+  | `Int z -> Bigint.to_int z
   | v -> failf "%a is not an integer" (Testable.pp const) v
 
 let as_float v =
@@ -49,12 +49,12 @@ let as_float v =
 (* [encode dt v] is the code of [v] as a [dt] value, rounded as Dtype folds it;
    [decode dt c] is the value of the code [c]. *)
 let encode dt v = as_int (Dtype.bitcast dt (storage dt) (Dtype.truncate dt v))
-let decode dt c = as_float (Dtype.bitcast (storage dt) dt (`Int (Z.of_int c)))
+let decode dt c = as_float (Dtype.bitcast (storage dt) dt (`Int (Bigint.of_int c)))
 
 (* [bits x] is the code of the float32 [x]; [f32 b] is the float32 of the code
    [b]. *)
 let bits x = as_int (Dtype.bitcast Float32 Uint32 (`Float x))
-let f32 b = as_float (Dtype.bitcast Uint32 Float32 (`Int (Z.of_int b)))
+let f32 b = as_float (Dtype.bitcast Uint32 Float32 (`Int (Bigint.of_int b)))
 let is_nan_code dt c = Float.is_nan (decode dt c)
 
 (* [greatest dt] is the code of [dt]'s greatest finite value, [top dt] that
@@ -172,7 +172,7 @@ let code_of dt =
     ~pp:(fun ppf c -> Format.fprintf ppf "0x%x (%h)" c (decode dt c))
     ~equal:(same_nan dt)
 
-let code c = `Int (Z.of_int c)
+let code c = `Int (Bigint.of_int c)
 
 (* f2f *)
 
@@ -403,15 +403,15 @@ let near_integer_ties ~all dt (lo, hi) =
   let near_mid (v, w) =
     let m = (v +. w) /. 2. in
     if Float.is_integer m && Float.abs m >= 1. then
-      List.map (fun d -> Z.(of_float m + of_int d)) [ -1; 0; 1 ]
+      List.map (fun d -> Bigint.(of_float m + of_int d)) [ -1; 0; 1 ]
     else []
   in
   (List.concat_map
      (fun (v, w) -> near_mid (v, w) @ near_mid (-.v, -.w))
      (neighbours ~all dt)
-  @ Z.[ lo; succ lo; pred hi; hi; zero; one ])
-  |> List.filter (fun z -> Z.leq lo z && Z.leq z hi)
-  |> List.sort_uniq Z.compare
+  @ Bigint.[ lo; succ lo; pred hi; hi; zero; one ])
+  |> List.filter (fun z -> Bigint.leq lo z && Bigint.leq z hi)
+  |> List.sort_uniq Bigint.compare
   |> List.map (fun z -> `Int z)
 
 let casts_doubles ~all dt () =
@@ -434,7 +434,7 @@ let casts_narrow_integers ~all dt () =
       let lo, hi = int_bounds from in
       let values =
         if Dtype.bitsize from = 8 then
-          List.init (Z.to_int Z.(hi - lo) + 1) (fun k -> `Int Z.(lo + of_int k))
+          List.init (Bigint.to_int Bigint.(hi - lo) + 1) (fun k -> `Int Bigint.(lo + of_int k))
         else near_integer_ties ~all dt (lo, hi)
       in
       converts ~from ~to_:dt values (encode dt))
@@ -460,8 +460,8 @@ let undefined_casts ~on k inputs =
     | `Float x ->
         let lo, hi = int_bounds (Ops.dtype c) in
         Float.is_nan x
-        || Float.trunc x < Z.to_float lo
-        || Float.trunc x > Z.to_float hi
+        || Float.trunc x < Bigint.to_float lo
+        || Float.trunc x > Bigint.to_float hi
     | _ -> false
   in
   List.filter
@@ -856,7 +856,7 @@ let stored dt vs =
       (fun v ->
         List.map
           (fun k ->
-            Dtype.truncate (word_of dt) (`Int (Z.extract (z_of v) (32 * k) 32)))
+            Dtype.truncate (word_of dt) (`Int (Bigint.extract (z_of v) (32 * k) 32)))
           [ 0; 1 ])
       vs
   else vs
@@ -864,7 +864,7 @@ let stored dt vs =
 let rec of_words dt = function
   | lo :: hi :: rest ->
       Dtype.truncate dt
-        (`Int Z.(extract (z_of lo) 0 32 + shift_left (z_of hi) 32))
+        (`Int Bigint.(extract (z_of lo) 0 32 + shift_left (z_of hi) 32))
       :: of_words dt rest
   | [] -> []
   | [ _ ] -> failf "a 64-bit integer lacks its high word"
@@ -884,9 +884,9 @@ let computes ins out f =
 let wrap dt z = Dtype.truncate dt (`Int z)
 
 let nonzero dt =
-  Gen.such_that (fun v -> not (Z.equal (z_of v) Z.zero)) (value_of dt)
+  Gen.such_that (fun v -> not (Bigint.equal (z_of v) Bigint.zero)) (value_of dt)
 
-let shift_count = Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range 0 63)
+let shift_count = Gen.map (fun n -> `Int (Bigint.of_int n)) (Gen.int_range 0 63)
 
 (* [law name ins out f args oracle] is the property that the emulated [f]
    computes [oracle] on the arguments that [args] draws. *)
@@ -901,7 +901,7 @@ let law ?tags ?(count = 100) ?examples name ins out f args oracle =
 let binary ?tags ?count dt ?(b = value_of dt) ?examples name op oracle =
   let examples =
     Option.map
-      (List.map (fun (a, b) -> [ wrap dt a; `Int (Z.of_int b) ]))
+      (List.map (fun (a, b) -> [ wrap dt a; `Int (Bigint.of_int b) ]))
       examples
   in
   law ?tags ?count ?examples
@@ -919,7 +919,7 @@ let compares dt name op oracle =
     (fun xs -> Ops.alu (List.nth xs 0) op [ List.nth xs 1 ])
     (Gen.map (fun (a, b) -> [ a; b ]) (Gen.pair (value_of dt) (value_of dt)))
     (function
-      | [ a; b ] -> `Bool (oracle (Z.compare (z_of a) (z_of b)))
+      | [ a; b ] -> `Bool (oracle (Bigint.compare (z_of a) (z_of b)))
       | _ -> assert false)
 
 (* [converts_from from dt] is the law that the emulated cast from [from] to [dt]
@@ -930,7 +930,7 @@ let converts_from from dt =
     [ from ] dt (cast_to dt)
     (Gen.map (fun v -> [ v ]) (value_of from))
     (function
-      | [ `Bool b ] -> wrap dt (if b then Z.one else Z.zero)
+      | [ `Bool b ] -> wrap dt (if b then Bigint.one else Bigint.zero)
       | [ v ] -> wrap dt (z_of v)
       | _ -> assert false)
 
@@ -946,7 +946,7 @@ let wide_floats dt =
 let float32_in dt =
   let lo, hi = int_bounds dt in
   Gen.such_that
-    (fun x -> Z.to_float lo <= x && x < Z.to_float hi)
+    (fun x -> Bigint.to_float lo <= x && x < Bigint.to_float hi)
     (Gen.map
        (fun x -> as_float (Dtype.truncate Float32 (`Float x)))
        finite_float)
@@ -957,14 +957,14 @@ let shl_examples dt =
     if dt = Dtype.Int64 then [ -0x1234; 0x80000001; -1; 0x1234; 1 ]
     else [ 0x80000001; 0x80000001; 1; 0xFEDC; 1 ]
   in
-  List.combine (List.map Z.of_int values) [ 0; 5; 31; 32; 62 ]
+  List.combine (List.map Bigint.of_int values) [ 0; 5; 31; 32; 62 ]
 
 let shr_examples dt =
   let values =
     if dt = Dtype.Int64 then
-      List.map Z.of_int
+      List.map Bigint.of_int
         [ -(1 lsl 40); -1; -(1 lsl 50); -(1 lsl 40); 0x123456789ABCDEF ]
-    else List.init 5 (fun _ -> Z.of_string "0xFEDCBA9876543210")
+    else List.init 5 (fun _ -> Bigint.of_string "0xFEDCBA9876543210")
   in
   List.combine values [ 0; 5; 31; 32; 63 ]
 
@@ -972,30 +972,30 @@ let shr_examples dt =
    a high word of [2^25 - 1], and a low word of [2^31 - 1] under a zero high
    word. *)
 let leading_word_examples dt =
-  let zs = Z.[ (of_int 0x1ffffff lsl 32) + of_int 12345; of_int 0x7fffffff ] in
-  let zs = if dt = Dtype.Int64 then zs @ List.map Z.neg zs else zs in
+  let zs = Bigint.[ (of_int 0x1ffffff lsl 32) + of_int 12345; of_int 0x7fffffff ] in
+  let zs = if dt = Dtype.Int64 then zs @ List.map Bigint.neg zs else zs in
   List.map (fun z -> [ `Int z ]) zs
 
 let long_laws dt =
   let other = if dt = Dtype.Int64 then Dtype.Uint64 else Dtype.Int64 in
   [
-    binary dt "add" Add Z.add;
-    binary dt "sub" Sub Z.sub;
-    binary dt "mul" Mul Z.mul;
-    binary dt "and" And Z.logand;
-    binary dt "or" Or Z.logor;
-    binary dt "xor" Xor Z.logxor;
-    binary dt "max" Max Z.max;
-    binary ~count:20 dt ~b:(nonzero dt) "truncating division" Cdiv Z.div;
-    binary ~count:20 dt ~b:(nonzero dt) "truncating remainder" Cmod Z.rem;
+    binary dt "add" Add Bigint.add;
+    binary dt "sub" Sub Bigint.sub;
+    binary dt "mul" Mul Bigint.mul;
+    binary dt "and" And Bigint.logand;
+    binary dt "or" Or Bigint.logor;
+    binary dt "xor" Xor Bigint.logxor;
+    binary dt "max" Max Bigint.max;
+    binary ~count:20 dt ~b:(nonzero dt) "truncating division" Cdiv Bigint.div;
+    binary ~count:20 dt ~b:(nonzero dt) "truncating remainder" Cmod Bigint.rem;
     binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
-      "truncating division, over 2000 cases" Cdiv Z.div;
+      "truncating division, over 2000 cases" Cdiv Bigint.div;
     binary ~tags:[ "slow" ] ~count:2000 dt ~b:(nonzero dt)
-      "truncating remainder, over 2000 cases" Cmod Z.rem;
+      "truncating remainder, over 2000 cases" Cmod Bigint.rem;
     binary dt ~b:shift_count ~examples:(shl_examples dt) "shl" Shl (fun a n ->
-        Z.shift_left a (Z.to_int n));
+        Bigint.shift_left a (Bigint.to_int n));
     binary dt ~b:shift_count ~examples:(shr_examples dt) "shr" Shr (fun a n ->
-        Z.shift_right a (Z.to_int n));
+        Bigint.shift_right a (Bigint.to_int n));
     compares dt "cmplt" Cmplt (fun c -> c < 0);
     compares dt "cmpeq" Cmpeq (fun c -> c = 0);
     compares dt "cmpne" Cmpne (fun c -> c <> 0);
@@ -1004,7 +1004,7 @@ let long_laws dt =
       [ dt ] dt
       (fun xs -> Ops.alu (List.hd xs) Neg [])
       (Gen.map (fun v -> [ v ]) (value_of dt))
-      (function [ a ] -> wrap dt (Z.neg (z_of a)) | _ -> assert false);
+      (function [ a ] -> wrap dt (Bigint.neg (z_of a)) | _ -> assert false);
     law
       (alias dt ^ " selection")
       [ Bool; dt; dt ] dt
@@ -1033,7 +1033,7 @@ let long_laws dt =
       [ Float32 ] dt (cast_to dt)
       (Gen.map (fun x -> [ `Float x ]) (float32_in dt))
       (function
-        | [ `Float x ] -> wrap dt (Z.of_float (Float.trunc x))
+        | [ `Float x ] -> wrap dt (Bigint.of_float (Float.trunc x))
         | _ -> assert false);
     law ~examples:(leading_word_examples dt)
       (alias dt ^ " to float32, the nearest")
@@ -1075,7 +1075,7 @@ let casts ?(from = Dtype.Float32) dt table =
     (List.combine values
        (List.map as_int (written ~on:on_narrows k [ values ])))
 
-let integer s = `Int (Z.of_string s)
+let integer s = `Int (Bigint.of_string s)
 
 let least_subnormals =
   Dtype.
@@ -1380,9 +1380,9 @@ let params k =
   |> List.sort_uniq (fun (a : Ops.param_arg) b -> Int.compare a.slot b.slot)
 
 let random_z rng bits =
-  let word () = Z.of_int (Random.State.bits rng land 0xffff) in
-  Z.extract
-    Z.(word () + (word () lsl 16) + (word () lsl 32) + (word () lsl 48))
+  let word () = Bigint.of_int (Random.State.bits rng land 0xffff) in
+  Bigint.extract
+    Bigint.(word () + (word () lsl 16) + (word () lsl 32) + (word () lsl 48))
     0 bits
 
 let contains affix s =
@@ -1415,9 +1415,9 @@ let draw rng name ~last dt =
   | Dtype.Int64 | Uint64 ->
       let z =
         if contains "shl_by" name && last then
-          Z.of_int (Random.State.int rng 64)
+          Bigint.of_int (Random.State.int rng 64)
         else if (contains "div" name || contains "mod" name) && last then
-          Z.succ (random_z rng 31)
+          Bigint.succ (random_z rng 31)
         else random_z rng 64
       in
       let v = Dtype.truncate dt (`Int z) in
@@ -1427,10 +1427,10 @@ let draw rng name ~last dt =
       let x = if contains "ulong" name then x else x -. 0x1p61 in
       same (Dtype.truncate Float32 (`Float x))
   | Float32 ->
-      let x = f32 (Z.to_int (random_z rng 31) mod 0x7f800000) in
+      let x = f32 (Bigint.to_int (random_z rng 31) mod 0x7f800000) in
       same (`Float (if Random.State.bool rng then x else -.x))
   | Int32 when contains "gather" name ->
-      same (`Int (Z.of_int (Random.State.int rng 16)))
+      same (`Int (Bigint.of_int (Random.State.int rng 16)))
   | Bool -> same (`Bool (Random.State.bool rng))
   | dt -> same (Dtype.truncate dt (`Int (random_z rng (Dtype.bitsize dt))))
 
@@ -1471,7 +1471,7 @@ let emulated_writes_natively ?tags (name, named, lacks) =
             (s, i / 2, List.hd (of_words (dtype_of s) [ lo; hi ]))
             :: decoded rest
         | (s, i, `Int c) :: rest when List.mem (dtype_of s) narrows ->
-            (s, i, `Float (decode (dtype_of s) (Z.to_int c))) :: decoded rest
+            (s, i, `Float (decode (dtype_of s) (Bigint.to_int c))) :: decoded rest
         | w :: rest -> w :: decoded rest
         | [] -> []
       in
@@ -1567,8 +1567,8 @@ let pass =
                (params (decomps on_32_bits k))));
       test "a 64-bit integer variable cannot be emulated" (fun () ->
           let c =
-            Ops.variable ~dtype:Int64 "c" (`Int Z.zero)
-              (`Int (Z.shift_left Z.one 40))
+            Ops.variable ~dtype:Int64 "c" (`Int Bigint.zero)
+              (`Int (Bigint.shift_left Bigint.one 40))
           in
           let k = kernel [] Int64 1 (fun _ -> c) in
           rejects (fun () -> decomps on_32_bits k));

@@ -120,7 +120,7 @@ let inputs k =
     Array.init size (fun i ->
         if Dtype.is_bool p.dtype then `Bool (i mod 2 = 0)
         else if Dtype.is_float p.dtype then `Float (Float.of_int (i mod 3))
-        else `Int (Z.of_int (i mod 3)))
+        else `Int (Bigint.of_int (i mod 3)))
   in
   Ops.toposort k
   |> List.filter_map (fun u ->
@@ -134,7 +134,7 @@ let variables k =
   List.map
     (fun v ->
       match Ops.vmax v with
-      | `Int z -> (Ops.expr v, Z.to_int z)
+      | `Int z -> (Ops.expr v, Bigint.to_int z)
       | _ -> invalid_arg ("variable " ^ Ops.expr v ^ " is no integer"))
     (Ops.variables k)
 

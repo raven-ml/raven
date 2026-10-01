@@ -618,7 +618,7 @@ let sum_of (n, s, v, dt) =
     | Outer_value -> Ops.cast o dt
     | Range_value -> Ops.cast r dt
   in
-  let zero = Ops.const (`Int Z.zero) in
+  let zero = Ops.const (`Int Bigint.zero) in
   let select c = Ops.where c value zero in
   let body =
     match s with

@@ -93,7 +93,7 @@ module Queue = struct
   let contents q = Bytes.sub_string q.blob 0 q.size
 
   let le n z =
-    String.init n (fun i -> Char.chr (Z.to_int (Z.extract z (8 * i) 8)))
+    String.init n (fun i -> Char.chr (Bigint.to_int (Bigint.extract z (8 * i) 8)))
 
   let q q words =
     List.iter
@@ -248,8 +248,8 @@ let signal_word d =
 let timeline_var what d =
   variable ~dtype:Dtype.Uint64
     (to_name [ what; d ])
-    (`Int Z.zero)
-    (`Int Z.(shift_left one 62 - one))
+    (`Int Bigint.zero)
+    (`Int Bigint.(shift_left one 62 - one))
 
 let submitted d = timeline_var "submitted" d
 let value d = timeline_var "value" d
@@ -258,7 +258,7 @@ let range_value r =
   variable
     ~dtype:(Dtype.strong (dtype r))
     ("range_" ^ range_str r)
-    (`Int Z.zero) (vmax r)
+    (`Int Bigint.zero) (vmax r)
 
 (* Host functions and C structures *)
 
@@ -485,8 +485,8 @@ let unwrap_call devices call =
       if n = 1 then None
       else
         let dnum =
-          variable ~dtype:Dtype.Int32 "_device_num" (`Int Z.zero)
-            (`Int (Z.of_int (n - 1)))
+          variable ~dtype:Dtype.Int32 "_device_num" (`Int Bigint.zero)
+            (`Int (Bigint.of_int (n - 1)))
         in
         let lane i =
           replace call
@@ -495,7 +495,7 @@ let unwrap_call devices call =
                :: List.map
                     (fun a -> if is_bound_var a then a else select_lane a i)
                     (src_without_body call)
-              @ [ bind dnum (`Int (Z.of_int i)) ])
+              @ [ bind dnum (`Int (Bigint.of_int i)) ])
         in
         Some (v Op.Linear ~src:(List.init n lane))
 
@@ -1430,7 +1430,7 @@ let contents q =
     List.concat_map
       (fun (w, (at, r)) ->
         let table =
-          String.concat "" (List.map (Queue.le 4) (List.map Z.of_int at))
+          String.concat "" (List.map (Queue.le 4) (List.map Bigint.of_int at))
         in
         List.init
           (Dtype.itemsize (dtype w) / 4)
@@ -1569,7 +1569,7 @@ let hcq_fence f =
         [
           store
             (index (after base last) [ int i ])
-            (const ~dtype:(dtype base) (`Int Z.zero));
+            (const ~dtype:(dtype base) (`Int Bigint.zero));
         ])
       timelines (src f)
   in

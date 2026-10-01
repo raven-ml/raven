@@ -19,10 +19,10 @@ let narrow n p =
   else
     let inside =
       Ops.lt (Ops.bitcast p Uint64)
-        (Ops.const ~dtype:Uint64 (`Int (Z.of_int n)))
+        (Ops.const ~dtype:Uint64 (`Int (Bigint.of_int n)))
     in
     Ops.where inside (Ops.cast p Int32)
-      (Ops.const ~dtype:Int32 (`Int Z.minus_one))
+      (Ops.const ~dtype:Int32 (`Int Bigint.minus_one))
 
 (* [one_hot idx n] is whether each index of [idx] is each position of a new last
    axis of [n] elements. *)
@@ -100,7 +100,7 @@ let scatter ~mode ~unique ~axis ~indices ~updates x =
   let reached = Ops.rop mask Op.Max [ r ] in
   match mode with
   | `Add ->
-      let added = Ops.where mask src (Ops.const_like src (`Int Z.zero)) in
+      let added = Ops.where mask src (Ops.const_like src (`Int Bigint.zero)) in
       Ops.where reached
         (Lower_reduce.reduce Sum ~axes:[ r ]
            (Ops.cat ~axis:r (Ops.unsqueeze x (-1)) [ added ]))
@@ -316,7 +316,7 @@ let unfold ~kernel_size ~stride ~dilation ~padding x =
   (* Along an axis whose windows read only padding, or that has no window, every
      patch is the pad's zeros. *)
   if not (List.for_all Fun.id (List.mapi reads spatial)) then
-    Ops.expand (Ops.const ~dtype:(Ops.dtype x) (`Int Z.zero)) shape
+    Ops.expand (Ops.const ~dtype:(Ops.dtype x) (`Int Bigint.zero)) shape
   else
     let padded =
       Ops.pad x (List.init lead (fun _ -> None) @ pads (Array.to_list padding))
@@ -379,7 +379,7 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
   in
   if not (List.for_all Fun.id (List.mapi lands cuts)) then
     Ops.expand
-      (Ops.const ~dtype:(Ops.dtype x) (`Int Z.zero))
+      (Ops.const ~dtype:(Ops.dtype x) (`Int Bigint.zero))
       (ints (kept @ Array.to_list output_size))
   else
     let shape f = ints (kept @ List.concat_map f cuts) in

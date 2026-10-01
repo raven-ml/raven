@@ -28,7 +28,7 @@ let device_ranges u =
     (fun r acc -> if Ops.axis_type r = Device then r :: acc else acc)
     (Ops.ranges u) []
 
-let count r = Z.to_int (Ops.to_z (Ops.nth r 0))
+let count r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
 
 let on_device k u =
   Ops.ssimplify
@@ -84,7 +84,7 @@ let broadcast shape t =
 let movement ~device u t =
   let int = int ~device in
   let shape = concrete u in
-  let zero = Dtype.const (Ops.dtype u) (`Int Z.zero) in
+  let zero = Dtype.const (Ops.dtype u) (`Int Bigint.zero) in
   match Ops.marg u with
   | Reshape _ -> { t with shape }
   | Expand _ -> broadcast shape t
@@ -179,7 +179,7 @@ let unsigned dt =
   | 8 -> Uint64
   | n -> fail "no unsigned type of %d bytes" n
 
-let bits dt : Dtype.const -> Z.t option = function
+let bits dt : Dtype.const -> Bigint.t option = function
   | `Invalid -> None
   | #Dtype.value as v -> (
       match Dtype.bitcast dt (unsigned dt) v with
@@ -198,18 +198,20 @@ let rebytes u t =
       let e = t.cells.((row * row_in) + (b / os)) in
       let shift = 8 * (b mod os) in
       Option.map
-        (fun z -> Z.logand (Z.shift_right z shift) (Z.of_int 0xff))
+        (fun z ->
+          Bigint.logand (Bigint.shift_right z shift) (Bigint.of_int 0xff))
         (bits from e.value)
     in
     let rec gather i acc =
       if i = ns then Some acc
       else
         match byte ((at * ns) + i) with
-        | Some v -> gather (i + 1) (Z.logor acc (Z.shift_left v (8 * i)))
+        | Some v ->
+            gather (i + 1) (Bigint.logor acc (Bigint.shift_left v (8 * i)))
         | None -> None
     in
     let value : Dtype.const =
-      match gather 0 Z.zero with
+      match gather 0 Bigint.zero with
       | Some z -> (Dtype.bitcast (unsigned dt) dt (`Int z) :> Dtype.const)
       | None -> `Invalid
     in

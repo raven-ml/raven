@@ -37,7 +37,7 @@ let rejects ?__POS__ f =
 
 (* Integers and values, as tests write them *)
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 let f x = `Float x
 let ints l = List.map (fun n : Ops.sint -> Int n) l
 

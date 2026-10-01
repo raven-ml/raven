@@ -44,7 +44,7 @@ let runs l =
     | [] -> List.rev (List.rev run :: acc)
     | x :: rest -> (
         match run with
-        | prev :: _ when Z.equal x (Z.succ prev) -> go acc (x :: run) rest
+        | prev :: _ when Bigint.equal x (Bigint.succ prev) -> go acc (x :: run) rest
         | [] -> go acc [ x ] rest
         | _ -> go (List.rev run :: acc) [ x ] rest)
   in
@@ -58,7 +58,7 @@ let memory_coalescing sink (r : Renderer.t) =
     let add key offset u =
       match List.find_opt (fun (k, _) -> same k key) !groups with
       | Some (_, offsets) -> (
-          match List.find_opt (fun (o, _) -> Z.equal o offset) !offsets with
+          match List.find_opt (fun (o, _) -> Bigint.equal o offset) !offsets with
           | Some (_, us) -> us := u :: !us
           | None -> offsets := (offset, ref [ u ]) :: !offsets)
       | None -> groups := (key, ref [ (offset, ref [ u ]) ]) :: !groups
@@ -94,7 +94,7 @@ let memory_coalescing sink (r : Renderer.t) =
                   | Op.Add, [ c; b ] when op c = Op.Const ->
                       (Some b, int_value c)
                   | Op.Const, _ -> (None, int_value idx)
-                  | _ -> (Some idx, Z.zero)
+                  | _ -> (Some idx, Bigint.zero)
                 in
                 add { op = op u; buf; base; valid; arg = arg u } offset u
               end
@@ -133,7 +133,7 @@ let memory_coalescing sink (r : Renderer.t) =
           | Param p -> (p.phase, p.align)
           | _ -> (0, 16)
         in
-        let lead = Z.of_int (phase / size) in
+        let lead = Bigint.of_int (phase / size) in
         (* An access of another width than the storage's elements, through a
            bitcast, may start between its own elements: it merges nothing. *)
         let lengths =
@@ -146,7 +146,7 @@ let memory_coalescing sink (r : Renderer.t) =
           | Some b -> O.(b + const (`Int first))
           | None -> const (`Int first)
         in
-        let sorted = List.sort Z.compare (List.map fst offsets) in
+        let sorted = List.sort Bigint.compare (List.map fst offsets) in
         List.iter
           (fun run ->
             let rec take grp =
@@ -159,7 +159,7 @@ let memory_coalescing sink (r : Renderer.t) =
                       (fun l ->
                         l <= List.length grp
                         && Option.is_some
-                             (divides (at (Z.add first lead)) (Z.of_int l)))
+                             (divides (at (Bigint.add first lead)) (Bigint.of_int l)))
                       lengths
                   in
                   let now = List.filteri (fun i _ -> i < length) grp

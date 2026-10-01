@@ -7,7 +7,7 @@ open Tolk_next
 
 let dtype = Ops.dtype
 let is_float u = Dtype.is_float (dtype u)
-let int u n = Ops.const_like u (`Int (Z.of_int n))
+let int u n = Ops.const_like u (`Int (Bigint.of_int n))
 let size u axis = List.nth (Ops.max_shape u) axis
 let width dts dt = List.find (fun d -> Dtype.itemsize d = Dtype.itemsize dt) dts
 let signed = width Dtype.sints
@@ -192,7 +192,7 @@ let ordered k =
 let positions ~descending axis high =
   let n = size high axis in
   let low = bit_length (n - 1) in
-  let mask = Ops.const ~dtype:Int64 (`Int (Z.of_int ((1 lsl low) - 1))) in
+  let mask = Ops.const ~dtype:Int64 (`Int (Bigint.of_int ((1 lsl low) - 1))) in
   let tie r = if descending then Ops.sub mask r else r in
   let ranks = along (Ops.ndim high) axis (Ops.arange ~dtype:Int64 n) in
   let packed = Ops.bitwise_or (Ops.shl high (Ops.int low)) (tie ranks) in
@@ -227,7 +227,7 @@ let take x axis p =
     (pick hot (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis (Ops.ndim x)))
 
 let argsort ~descending ~axis x =
-  if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Z.zero)
+  if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Bigint.zero)
   else
     let k = ordered (keys ~nan:`Greatest x) in
     let positions = positions ~descending axis in
@@ -239,7 +239,8 @@ let argsort ~descending ~axis x =
       let half h = Ops.cast h Int64 in
       let lo =
         half
-          (Ops.bitwise_and k (Ops.const_like k (`Int (Z.of_int 0xffff_ffff))))
+          (Ops.bitwise_and k
+             (Ops.const_like k (`Int (Bigint.of_int 0xffff_ffff))))
       in
       let first = positions lo in
       take first axis

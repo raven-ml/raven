@@ -41,7 +41,7 @@ type record = {
 }
 
 let bound : Ops.Tag.t -> Dtype.value = function
-  | Int n -> `Int (Z.of_int n)
+  | Int n -> `Int (Bigint.of_int n)
   | Bool b -> `Bool b
   | tag -> failf "%a is not a bound" Ops.Tag.pp tag
 

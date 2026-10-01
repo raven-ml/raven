@@ -7,7 +7,7 @@
 
 open Ops
 
-let zero = `Int Z.zero
+let zero = `Int Bigint.zero
 
 let move_where_load m =
   let l = m "l" and a = m "a" in

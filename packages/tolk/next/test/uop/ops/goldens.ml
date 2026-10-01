@@ -793,7 +793,7 @@ let reprs () =
     ("none", v Op.Noop);
     ("int", int 42);
     ("negative int", int (-3));
-    ("huge int", const (`Int (Z.shift_left Z.one 100)));
+    ("huge int", const (`Int (Bigint.shift_left Bigint.one 100)));
     ("float", float 1.5);
     ("negative zero", float (-0.));
     ("nan", float Float.nan);

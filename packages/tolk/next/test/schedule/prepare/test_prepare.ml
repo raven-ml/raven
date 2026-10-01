@@ -140,8 +140,8 @@ let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else if Dtype.is_unsigned dtype then `Int (Z.of_int (k + 3))
-  else `Int (Z.of_int k)
+  else if Dtype.is_unsigned dtype then `Int (Bigint.of_int (k + 3))
+  else `Int (Bigint.of_int k)
 
 let storage u =
   List.filter_map
@@ -404,7 +404,9 @@ let reads memory rs u cs =
   let names = List.map (fun r -> Option.get (Interpreter.name r)) rs in
   List.map
     (fun c ->
-      let vars = List.combine names (List.map (fun i -> `Int (Z.of_int i)) c) in
+      let vars =
+        List.combine names (List.map (fun i -> `Int (Bigint.of_int i)) c)
+      in
       Interpreter.eval ~vars ~buffers:memory u)
     cs
 
@@ -520,7 +522,9 @@ let contiguous_views =
          "a view of storage after its stores is a view of the ordered storage"
          (Some (ordered, 2))
          (Ops.shrink ordered [ Some (Int 2, Int 5) ]));
-      (let rows = Ops.variable "rows" (`Int (Z.of_int 1)) (`Int (Z.of_int 2)) in
+      (let rows =
+         Ops.variable "rows" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 2))
+       in
        let m = Ops.reshape (flat 6) (ints [ 3; 2 ]) in
        case "a view of a symbolic size is no view" None
          (Ops.shrink m
@@ -860,7 +864,9 @@ let earliest =
           contains ~sub:"split 256: (65536,) -> (256, 256) -> ()" (output ()));
       test "a reduction of a symbolic shape is not split" (fun () ->
           let v =
-            Ops.variable "v" (`Int (Z.of_int 1)) (`Int (Z.of_int 65536))
+            Ops.variable "v"
+              (`Int (Bigint.of_int 1))
+              (`Int (Bigint.of_int 65536))
           in
           let part = Ops.shrink (flat 65536) [ Some (Int 0, Sym v) ] in
           let total = Ops.param ~device:cpu ~shape:[] 0 Float32 in

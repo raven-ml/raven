@@ -269,10 +269,10 @@ let constants =
   group "constants"
     [
       test "an operation on weak constants is its exact value" (fun () ->
-          let big = Z.shift_left Z.one 40 in
+          let big = Bigint.shift_left Bigint.one 40 in
           folds_to
             Ops.O.(Ops.const (`Int big) + Ops.const (`Int big))
-            (Ops.const (`Int (Z.shift_left Z.one 41)));
+            (Ops.const (`Int (Bigint.shift_left Bigint.one 41)));
           folds_to Ops.O.(float 1.25 + float 2.5) (Ops.float 3.75));
       test "an operation on committed constants computes at their width"
         (fun () ->
@@ -294,7 +294,7 @@ let constants =
           let max = Ops.int ~dtype:Uint32 0xFFFF_FFFF in
           let one = Ops.int ~dtype:Uint32 1 in
           folds_to Ops.O.((max + one) lsr one) (Ops.int ~dtype:Uint32 0);
-          let half = `Int (Z.shift_left Z.one 31) in
+          let half = `Int (Bigint.shift_left Bigint.one 31) in
           folds_to
             (Ops.cast (Ops.cconst Int32 half) Int64)
             (Ops.int ~dtype:Int64 (-2147483648));
@@ -1025,7 +1025,7 @@ let symbolic_casts =
             (Ops.cast bounded Int16);
           let unbounded =
             Ops.variable ~dtype:Int64 "u" (i 0)
-              (`Int (Z.of_string "4294967295"))
+              (`Int (Bigint.of_string "4294967295"))
           in
           let chain = Ops.cast (Ops.cast unbounded Int32) Int64 in
           by_symbolic chain chain);
@@ -1468,7 +1468,7 @@ let other_tests =
           and b = var ~dtype:Int32 "b" (-5) 5 in
           let c =
             Ops.variable ~dtype:Uint32 "c" (i 0)
-              (`Int (Z.of_string "4294967295"))
+              (`Int (Bigint.of_string "4294967295"))
           in
           let shifted =
             Ops.O.(Ops.bitcast (Ops.bitcast a Uint32 lsl int 1) Int32 + int 2)
@@ -1514,7 +1514,9 @@ let other_tests =
               (Ops.where cond (Ops.float Float.neg_infinity) (Ops.float 2.7))
               Int32
           in
-          equal bounds_of (`Int (Z.of_int32 Int32.min_int), i 2) (bounds i32));
+          equal bounds_of
+            (`Int (Bigint.of_int32 Int32.min_int), i 2)
+            (bounds i32));
       test "log2 of -1 folds to NaN and the reciprocal of 0 to infinity"
         (fun () ->
           let is_nan u =

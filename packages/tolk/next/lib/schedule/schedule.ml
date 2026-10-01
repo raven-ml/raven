@@ -376,7 +376,7 @@ let simplify_copy_kernel call ast dst src =
     Some (replace call ~src:(sink :: List.tl (Ops.src call)))
 
 let pm_copy_from_store =
-  let zero = Upat.op Op.Const ~arg:(Const (`Int Z.zero)) in
+  let zero = Upat.op Op.Const ~arg:(Const (`Int Bigint.zero)) in
   let param name = Upat.op Op.Param ~name in
   let copy_call body =
     Upat.op Op.Call ~name:"call" ~allow_any_len:true ~src:[ Upat.sink [ body ] ]

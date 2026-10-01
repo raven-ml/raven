@@ -98,8 +98,8 @@ let rec over eval vars ranges f acc =
       match eval vars (Ops.nth r 0) with
       | `Int n ->
           let name = Option.get (name r) and acc = ref acc in
-          for i = 0 to Z.to_int n - 1 do
-            acc := over eval ((name, `Int (Z.of_int i)) :: vars) rs f !acc
+          for i = 0 to Bigint.to_int n - 1 do
+            acc := over eval ((name, `Int (Bigint.of_int i)) :: vars) rs f !acc
           done;
           !acc
       | _ -> invalid_arg "a range's end is not an integer")
@@ -188,7 +188,7 @@ and read ~check ~vars ~params ~buffers index =
   match Ops.src index with
   | [ vector; i ] when of_stacks vector -> (
       match eval i with
-      | `Int k -> eval (lane (Z.to_int k) vector)
+      | `Int k -> eval (lane (Bigint.to_int k) vector)
       | `Invalid -> `Invalid
       | _ -> invalid_arg "a lane is not an integer")
   | [ storage; i ] -> (
@@ -201,7 +201,7 @@ and read ~check ~vars ~params ~buffers index =
             | _ ->
                 invalid_arg
                   "a vector load has a storage, an offset and a length")
-        | _ -> (storage, `Int Z.zero, None)
+        | _ -> (storage, `Int Bigint.zero, None)
       in
       let slot = storage_slot storage in
       let elements =
@@ -213,18 +213,19 @@ and read ~check ~vars ~params ~buffers index =
       | `Invalid, _ | _, `Invalid -> `Invalid
       | `Int o, `Int k -> (
           (match length with
-          | Some n when not Z.(geq k zero && lt k (Ops.to_z n)) ->
+          | Some n when not Bigint.(geq k zero && lt k (Ops.to_z n)) ->
               invalid_arg
-                (Format.asprintf "lane %a is outside a vector of %a" Z.pp_print
-                   k Z.pp_print (Ops.to_z n))
+                (Format.asprintf "lane %a is outside a vector of %a"
+                   Bigint.pp_print k Bigint.pp_print (Ops.to_z n))
           | _ -> ());
-          match Z.add o k with
-          | e when Z.(geq e zero && lt e (of_int (Array.length elements))) ->
-              (elements.(Z.to_int e) :> Dtype.const)
+          match Bigint.add o k with
+          | e when Bigint.(geq e zero && lt e (of_int (Array.length elements)))
+            ->
+              (elements.(Bigint.to_int e) :> Dtype.const)
           | e ->
               invalid_arg
-                (Format.asprintf "index %a is outside buffer %d" Z.pp_print e
-                   slot))
+                (Format.asprintf "index %a is outside buffer %d" Bigint.pp_print
+                   e slot))
       | _ -> invalid_arg "an index is not an integer")
   | _ -> invalid_arg "cannot evaluate an index by more than one index"
 
@@ -243,7 +244,7 @@ let overflows ?(vars = []) ?(params = []) ?(buffers = []) u =
     match v with
     | `Int z when Dtype.is_int dt && dt <> Dtype.Weak_int ->
         let lo, hi = Dtypes.int_bounds dt in
-        if Z.lt z lo || Z.gt z hi then raise Overflow
+        if Bigint.lt z lo || Bigint.gt z hi then raise Overflow
     | _ -> ()
   in
   match fold ~check ~vars ~params ~buffers u with
@@ -274,8 +275,8 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
       | Index, [ storage; index ] -> (storage_slot storage, index, [ value ])
       | Shrink, [ storage; offset; length ]
         when Ops.op value = Op.Stack
-             && Z.equal (Ops.to_z length)
-                  (Z.of_int (List.length (Ops.src value))) ->
+             && Bigint.equal (Ops.to_z length)
+                  (Bigint.of_int (List.length (Ops.src value))) ->
           (storage_slot storage, offset, Ops.src value)
       | Shrink, _ ->
           invalid_arg "a store through a vector stores a stack of its length"
@@ -297,7 +298,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
       | `Int i when opened ->
           let write (k, acc) lane =
             match eval vars lane with
-            | #Dtype.value as v -> (k + 1, (slot, Z.to_int i + k, v) :: acc)
+            | #Dtype.value as v -> (k + 1, (slot, Bigint.to_int i + k, v) :: acc)
             | `Invalid -> (k + 1, acc)
           in
           snd (List.fold_left write (0, acc) lanes)

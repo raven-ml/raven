@@ -208,7 +208,7 @@ let arguments =
                   (Ops.permute square [ 1; 0 ])
                   [ Some (Int 1, Int 3); None ]));
           let at ?multiple_of () =
-            let k = Ops.variable ?multiple_of "k" (`Int Z.zero) (`Int (Z.of_int 8)) in
+            let k = Ops.variable ?multiple_of "k" (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
             Ops.shrink b [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]
           in
           let known u =
@@ -233,7 +233,7 @@ let arguments =
           equal (pair int int) ~msg:"a start into a reordered view" (4, 0)
             (known
                (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 2))
+                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero) (`Int (Bigint.of_int 2))
                 in
                 Ops.shrink
                   (Ops.permute square [ 1; 0 ])
@@ -242,7 +242,7 @@ let arguments =
             (16, 8)
             (known
                (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 8))
+                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero) (`Int (Bigint.of_int 8))
                 in
                 Ops.shrink b
                   [ Some (Sym (Ops.add k (Ops.int 1)), Sym (Ops.add k (Ops.int 5))) ])));

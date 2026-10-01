@@ -117,7 +117,7 @@ let expand_range ctx r =
   |> Option.map (fun axis ->
       let n = Dtype.Value.to_int (vmax r) + 1 in
       let c =
-        consts ~dtype:(dtype r) (List.map (fun i -> `Int (Z.of_int i)) (upto n))
+        consts ~dtype:(dtype r) (List.map (fun i -> `Int (Bigint.of_int i)) (upto n))
       in
       reshape c
         (List.map

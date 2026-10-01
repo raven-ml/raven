@@ -8,8 +8,7 @@
   nx.backend
   nx.device
   tolk.next
-  tolk.next.engine
-  zarith)
+  tolk.next.engine)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

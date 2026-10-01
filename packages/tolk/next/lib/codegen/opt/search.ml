@@ -45,7 +45,7 @@ let actions =
 
 (* Products in integers of any size, as Python's: the sizes of a launch, and the
    lanes and threads of a kernel, can multiply past an int. *)
-let zprod l = List.fold_left (fun z n -> Z.(z * of_int n)) Z.one l
+let zprod l = List.fold_left (fun z n -> Bigint.(z * of_int n)) Bigint.one l
 
 let get_test_global_size global_size max_global_size vars =
   let input = List.map (fun s -> sym_infer s vars) global_size in
@@ -55,11 +55,11 @@ let get_test_global_size global_size max_global_size vars =
     | n :: rest -> n :: halve_last_above_16 rest
   in
   let rec shrink size =
-    if Z.leq (zprod size) (Z.of_int max_global_size) then size
+    if Bigint.leq (zprod size) (Bigint.of_int max_global_size) then size
     else shrink (List.rev (halve_last_above_16 (List.rev size)))
   in
   let size = shrink input in
-  (size, Z.to_float (zprod input) /. Z.to_float (zprod size))
+  (size, Bigint.to_float (zprod input) /. Bigint.to_float (zprod size))
 
 (* Measured up to [cnt] times, stopping once slower than [early_stop]: the least
    time. *)
@@ -118,19 +118,19 @@ let try_compile k =
 (* The least and greatest product of [sizes] over their variables' values. *)
 let product_bounds sizes =
   let bound f = function
-    | Int n -> Z.of_int n
+    | Int n -> Bigint.of_int n
     | Sym u -> (
         match f u with `Int z -> z | _ -> invalid_arg "a size is no integer")
   in
   List.fold_left
-    (fun (lo, hi) s -> Z.(lo * bound vmin s, hi * bound vmax s))
-    (Z.one, Z.one) sizes
+    (fun (lo, hi) s -> Bigint.(lo * bound vmin s, hi * bound vmax s))
+    (Bigint.one, Bigint.one) sizes
 
 (* Whether a product of bounds [(lo, hi)] exceeds [limit], which its variables'
    values must decide. *)
 let exceeds (lo, hi) limit =
-  if Z.gt lo (Z.of_int limit) then true
-  else if Z.leq hi (Z.of_int limit) then false
+  if Bigint.gt lo (Bigint.of_int limit) then true
+  else if Bigint.leq hi (Bigint.of_int limit) then false
   else invalid_arg "the lanes or threads of a candidate depend on a variable"
 
 let too_many ~max_up ~max_lcl k =
@@ -149,15 +149,15 @@ let too_many ~max_up ~max_lcl k =
   in
   let up =
     let lo, hi = size [ Upcast; Unroll ] in
-    Z.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
+    Bigint.(fdiv lo (of_int tc_up), fdiv hi (of_int tc_up))
   and lcl = size [ Warp; Local ] in
   let too_many = exceeds up max_up || exceeds lcl max_lcl in
   if too_many && log_surpass_max () then
     Printf.printf
       "too many upcast/local. up//tc_up=%s, max_up=%d, lcl=%s, max_lcl=%d\n%!"
-      (Z.to_string (snd up))
+      (Bigint.to_string (snd up))
       max_up
-      (Z.to_string (snd lcl))
+      (Bigint.to_string (snd lcl))
       max_lcl;
   too_many
 
@@ -235,7 +235,7 @@ let binary prg =
 
 let midpoint v =
   match (vmin v, vmax v) with
-  | `Int lo, `Int hi -> Z.(to_int (fdiv (lo + hi) (of_int 2)))
+  | `Int lo, `Int hi -> Bigint.(to_int (fdiv (lo + hi) (of_int 2)))
   | _ -> invalid_arg ("the variable " ^ expr v ^ " has no integer bounds")
 
 let beam_search ~measure ?allow_test_size amt s =

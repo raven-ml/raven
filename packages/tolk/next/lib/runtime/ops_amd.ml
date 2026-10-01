@@ -469,7 +469,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
       let user_regs =
         (if data.enable_private_segment_sgpr then
            [
-             O.(scratch_addr lor const (`Int (Z.shift_left Z.one 63)));
+             O.(scratch_addr lor const (`Int (Bigint.shift_left Bigint.one 63)));
              u32 0xffff_ffff;
              u32 0x20c14000;
            ]
@@ -549,8 +549,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
        PM4 packets between them wrapped as indirect buffers. The packets point
        into the command buffer, whose address binds at submit. *)
     let cmd_addr =
-      variable ~dtype:Dtype.Uint64 "cmdbuf" (`Int Z.zero)
-        (`Int (Z.shift_left Z.one 48))
+      variable ~dtype:Dtype.Uint64 "cmdbuf" (`Int Bigint.zero)
+        (`Int (Bigint.shift_left Bigint.one 48))
     in
     let items = ref [] and run_start = ref 0 in
     let add ws = items := !items @ [ Packets ws ] in
@@ -724,7 +724,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
       else
         let carry = eq (cast value Dtype.Uint32) (u32 0) in
         List.map
-          (fun w -> where carry w (const_like w (`Int Z.zero)))
+          (fun w -> where carry w (const_like w (`Int Bigint.zero)))
           [
             u32 fence;
             O.(getaddr signal + u64 4);

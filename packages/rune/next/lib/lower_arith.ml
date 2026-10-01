@@ -10,7 +10,7 @@ let is_float u = Dtype.is_float (dtype u)
 let is_signed u = List.exists (Dtype.equal (dtype u)) Dtype.sints
 let where = Ops.where
 let float u x = Ops.const_like u (`Float x)
-let int u n = Ops.const_like u (`Int (Z.of_int n))
+let int u n = Ops.const_like u (`Int (Bigint.of_int n))
 let isnan x = Ops.ne x x
 
 (* Comparisons false on NaN: [x >= y] and [x <= y]. *)
@@ -35,7 +35,8 @@ let unsigned dt = if Dtype.itemsize dt = 8 then Dtype.Uint64 else Dtype.Uint32
 let bits x = Ops.bitcast x (unsigned (dtype x))
 
 (* The bits of the float [x] with the sign bit only, or all bits but it. *)
-let sign_mask x = Z.shift_left Z.one ((8 * Dtype.itemsize (dtype x)) - 1)
+let sign_mask x =
+  Bigint.shift_left Bigint.one ((8 * Dtype.itemsize (dtype x)) - 1)
 
 let sign_bit x =
   Ops.ne
@@ -44,7 +45,7 @@ let sign_bit x =
 
 let magnitude x =
   Ops.bitwise_and (bits x)
-    (Ops.const_like (bits x) (`Int (Z.pred (sign_mask x))))
+    (Ops.const_like (bits x) (`Int (Bigint.pred (sign_mask x))))
 
 (* Modular integers
 
@@ -508,7 +509,8 @@ let sb =
    exact. *)
 let high_half a =
   let keep =
-    if is64 a then Z.of_string "0xffffffff00000000" else Z.of_int 0xffffe000
+    if is64 a then Bigint.of_string "0xffffffff00000000"
+    else Bigint.of_int 0xffffe000
   in
   Ops.bitcast
     (Ops.bitwise_and (bits a) (Ops.const_like (bits a) (`Int keep)))
@@ -846,7 +848,7 @@ let saturate dt x =
     where (Ops.bitwise_or (isnan x) (Ops.bitwise_or low high)) (float x 0.) x
   in
   where (isnan x)
-    (bound (`Int Z.zero))
+    (bound (`Int Bigint.zero))
     (where low
        (bound (Dtype.min dt))
        (where high (bound (Dtype.max dt)) (Ops.cast safe dt)))

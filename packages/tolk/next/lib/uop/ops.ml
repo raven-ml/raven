@@ -1083,8 +1083,8 @@ let key u =
 
 let identity_element op dt : Dtype.const =
   match op with
-  | Op.Add -> Dtype.const dt (`Int Z.zero)
-  | Op.Mul -> Dtype.const dt (`Int Z.one)
+  | Op.Add -> Dtype.const dt (`Int Bigint.zero)
+  | Op.Mul -> Dtype.const dt (`Int Bigint.one)
   | Op.Max -> Dtype.const dt (Dtype.min dt :> Dtype.const)
   | op -> invalid_argf "%s has no identity element" (Op.name op)
 
@@ -1204,7 +1204,7 @@ module Make_elementwise (B : Elementwise_base) = struct
     let a, b = broadcasted x y in
     alu a op [ b ]
 
-  let int n = literal (`Int (Z.of_int n))
+  let int n = literal (`Int (Bigint.of_int n))
   let bool b = literal (`Bool b)
   let add x y = binop Op.Add x y
   let mul x y = binop Op.Mul x y
@@ -1272,7 +1272,7 @@ module Make_elementwise (B : Elementwise_base) = struct
     let base, exponent = broadcasted x y in
     let non_negative_int =
       match literal_value y with
-      | Some (`Int z) -> Z.geq z Z.zero
+      | Some (`Int z) -> Bigint.geq z Bigint.zero
       | Some (`Bool _) -> true
       | Some _ -> false
       | None -> true
@@ -1402,7 +1402,7 @@ include Make_elementwise (struct
   let direct_floor = false
 end)
 
-let int ?dtype n = const ?dtype (`Int (Z.of_int n))
+let int ?dtype n = const ?dtype (`Int (Bigint.of_int n))
 let float ?dtype x = const ?dtype (`Float x)
 let bool ?dtype b = const ?dtype (`Bool b)
 let invalid = const `Invalid
@@ -1450,17 +1450,17 @@ let table_values dt bytes : Dtype.value list =
       let at = i * size in
       match fmt with
       | '?' -> `Bool (bytes.[at] <> '\000')
-      | 'b' -> `Int (Z.of_int (String.get_int8 bytes at))
-      | 'B' -> `Int (Z.of_int (String.get_uint8 bytes at))
-      | 'h' -> `Int (Z.of_int (String.get_int16_le bytes at))
-      | 'H' -> `Int (Z.of_int (String.get_uint16_le bytes at))
-      | 'i' -> `Int (Z.of_int32 (String.get_int32_le bytes at))
-      | 'I' -> `Int (Z.of_int32_unsigned (String.get_int32_le bytes at))
-      | 'q' -> `Int (Z.of_int64 (String.get_int64_le bytes at))
-      | 'Q' -> `Int (Z.of_int64_unsigned (String.get_int64_le bytes at))
+      | 'b' -> `Int (Bigint.of_int (String.get_int8 bytes at))
+      | 'B' -> `Int (Bigint.of_int (String.get_uint8 bytes at))
+      | 'h' -> `Int (Bigint.of_int (String.get_int16_le bytes at))
+      | 'H' -> `Int (Bigint.of_int (String.get_uint16_le bytes at))
+      | 'i' -> `Int (Bigint.of_int32 (String.get_int32_le bytes at))
+      | 'I' -> `Int (Bigint.of_int32_unsigned (String.get_int32_le bytes at))
+      | 'q' -> `Int (Bigint.of_int64 (String.get_int64_le bytes at))
+      | 'Q' -> `Int (Bigint.of_int64_unsigned (String.get_int64_le bytes at))
       | 'e' ->
           Dtype.bitcast Dtype.Uint16 Dtype.Float16
-            (`Int (Z.of_int (String.get_uint16_le bytes at)))
+            (`Int (Bigint.of_int (String.get_uint16_le bytes at)))
       | 'f' -> `Float (Int32.float_of_bits (String.get_int32_le bytes at))
       | 'd' -> `Float (Int64.float_of_bits (String.get_int64_le bytes at))
       | c -> invalid_argf "unknown format %C" c)
@@ -1527,7 +1527,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
           | _ -> invalid_arg "where needs three sources")
       | (Op.Param | Op.Buffer | Op.Alloc), Param { vmin_vmax = Some b; _ } -> b
       | (Op.Range | Op.Special), _ when not (Dtype.equal dt Dtype.Void) ->
-          (`Int Z.zero, snd (min_max (sub (src0 ()) (int 1))))
+          (`Int Bigint.zero, snd (min_max (sub (src0 ()) (int 1))))
       | Op.Stack, _ when not (List.is_empty u.src) ->
           let bs = List.map bounds u.src in
           (fst (extremes (List.map fst bs)), snd (extremes (List.map snd bs)))
@@ -1544,7 +1544,7 @@ and compute_min_max u : Dtype.value * Dtype.value =
           (`Float x, `Float x)
       | Op.Pad, _ ->
           let lo, hi = bounds (src0 ()) in
-          (Value.min lo (`Int Z.zero), Value.max hi (`Int Z.zero))
+          (Value.min lo (`Int Bigint.zero), Value.max hi (`Int Bigint.zero))
       | op, _
         when Op.Set.mem op Op.Set.movement
              || List.mem op
@@ -1577,7 +1577,7 @@ and cast_bounds src dt (lo, hi) =
   if Dtype.is_int dt && not (Dtype.is_float src) then Some (lo, hi)
   else if
     Dtype.is_unsigned dt
-    && Value.( <= ) (`Int Z.zero) lo
+    && Value.( <= ) (`Int Bigint.zero) lo
     && Value.( <= ) hi (Dtype.max dt)
   then Some (lo, hi)
   else if
@@ -1591,7 +1591,7 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   let add = Value.( + ) and sub = Value.( - ) and mul = Value.( * ) in
   let neg = Value.( ~- ) and lt = Value.( < ) and le = Value.( <= ) in
   let equal = Value.( = ) in
-  let z = Value.to_z and zero = `Int Z.zero in
+  let z = Value.to_z and zero = `Int Bigint.zero in
   let ints = List.for_all (function `Float _ -> false | _ -> true) in
   let c1 = equal s1_min s1_max in
   let corners f =
@@ -1605,57 +1605,57 @@ and binary_bounds u (s0_min, s0_max) (s1_min, s1_max) =
   | Op.And when Dtype.is_int u.dtype && c1 && le zero s1_max ->
       if lt s0_min zero then Some (zero, s1_max)
       else
-        let mask = Z.pred (Z.shift_left Z.one (Z.numbits (z s0_max))) in
-        Some (zero, Value.min s0_max (`Int (Z.logand (z s1_max) mask)))
+        let mask = Bigint.pred (Bigint.shift_left Bigint.one (Bigint.numbits (z s0_max))) in
+        Some (zero, Value.min s0_max (`Int (Bigint.logand (z s1_max) mask)))
   | Op.Mul -> corners mul
   (* A shift by a negative count is undefined: its bounds are the type's. *)
   | Op.Shl when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
-      let k = Z.to_int (z s1_min) in
-      Some (`Int (Z.shift_left (z s0_min) k), `Int (Z.shift_left (z s0_max) k))
+      let k = Bigint.to_int (z s1_min) in
+      Some (`Int (Bigint.shift_left (z s0_min) k), `Int (Bigint.shift_left (z s0_max) k))
   | Op.Shr when c1 && ints [ s0_min; s0_max; s1_min ] && le zero s1_min ->
-      let k = Z.to_int (z s1_min) in
-      Some (`Int (Z.shift_right (z s0_min) k), `Int (Z.shift_right (z s0_max) k))
+      let k = Bigint.to_int (z s1_min) in
+      Some (`Int (Bigint.shift_right (z s0_min) k), `Int (Bigint.shift_right (z s0_max) k))
   | Op.Cmod when c1 && lt zero s1_max ->
       let c = s1_min in
       Some
         ( (if lt zero s0_min then zero
            else if lt (neg c) s0_min then s0_min
-           else neg (sub s1_max (`Int Z.one))),
+           else neg (sub s1_max (`Int Bigint.one))),
           if lt s0_max zero then zero
           else if lt s0_max c then s0_max
-          else sub c (`Int Z.one) )
+          else sub c (`Int Bigint.one) )
   | Op.Cmod when lt zero s1_min ->
-      let m = sub s1_max (`Int Z.one) in
+      let m = sub s1_max (`Int Bigint.one) in
       Some
         (if le zero s0_min then (zero, m)
          else if le s0_max zero then (neg m, zero)
          else (neg m, m))
   | Op.Cmod when lt s1_max zero ->
-      let m = sub (neg s1_min) (`Int Z.one) in
+      let m = sub (neg s1_min) (`Int Bigint.one) in
       Some
         (if le zero s0_min then (zero, m)
          else if le s0_max zero then (neg m, zero)
          else (neg m, m))
-  | Op.Cdiv when Z.gt (Z.mul (z s1_min) (z s1_max)) Z.zero ->
+  | Op.Cdiv when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
       let d a b = divide `Quotient ~toward_zero:true a b in
       corners d
   | (Op.Floordiv | Op.Floormod) when lt s0_max s0_min -> Some (zero, zero)
-  | Op.Floordiv when Z.gt (Z.mul (z s1_min) (z s1_max)) Z.zero ->
+  | Op.Floordiv when Bigint.gt (Bigint.mul (z s1_min) (z s1_max)) Bigint.zero ->
       let d a b = Value.(a // b) in
       corners d
-  | Op.Floormod when c1 && not (Z.equal (z s1_min) Z.zero) ->
+  | Op.Floormod when c1 && not (Bigint.equal (z s1_min) Bigint.zero) ->
       let c = s1_min in
       if Value.(s0_min // c = s0_max // c) then
         Some (Value.(s0_min % c), Value.(s0_max % c))
-      else if lt zero c then Some (zero, sub c (`Int Z.one))
-      else Some (add c (`Int Z.one), zero)
-  | Op.Floormod when lt zero s1_min -> Some (zero, sub s1_max (`Int Z.one))
-  | Op.Floormod when lt s1_max zero -> Some (add s1_min (`Int Z.one), zero)
+      else if lt zero c then Some (zero, sub c (`Int Bigint.one))
+      else Some (add c (`Int Bigint.one), zero)
+  | Op.Floormod when lt zero s1_min -> Some (zero, sub s1_max (`Int Bigint.one))
+  | Op.Floormod when lt s1_max zero -> Some (add s1_min (`Int Bigint.one), zero)
   | Op.Xor
-    when equal s1_min (`Int Z.minus_one)
-         && equal s1_max (`Int Z.minus_one)
+    when equal s1_min (`Int Bigint.minus_one)
+         && equal s1_max (`Int Bigint.minus_one)
          && ints [ s0_min; s0_max ] ->
-      Some (`Int (Z.lognot (z s0_max)), `Int (Z.lognot (z s0_min)))
+      Some (`Int (Bigint.lognot (z s0_max)), `Int (Bigint.lognot (z s0_min)))
   | Op.Max -> Some (Value.max s0_min s1_min, Value.max s0_max s1_max)
   | Op.Cmplt -> Some (`Bool (lt s0_max s1_min), `Bool (lt s0_min s1_max))
   | Op.Cmpne ->
@@ -1714,7 +1714,7 @@ let resolve ?(default = true) u =
 
 let sint_of_const (c : Dtype.const) =
   match c with
-  | `Int z when Z.fits_int z -> Some (Int (Z.to_int z) : sint)
+  | `Int z when Bigint.fits_int z -> Some (Int (Bigint.to_int z) : sint)
   | `Bool b -> Some (Int (Bool.to_int b))
   | _ -> None
 
@@ -1767,17 +1767,17 @@ module Sint = struct
   (* Integers compute exactly, as Python's do, and a result past [int] raises
      rather than wraps. *)
   let of_z z =
-    if Z.fits_int z then Int (Z.to_int z)
-    else invalid_argf "%s is larger than an int" (Z.to_string z)
+    if Bigint.fits_int z then Int (Bigint.to_int z)
+    else invalid_argf "%s is larger than an int" (Bigint.to_string z)
 
   let arith fz fu a b =
     match (a, b) with
-    | Int x, Int y -> of_z (fz (Z.of_int x) (Z.of_int y))
+    | Int x, Int y -> of_z (fz (Bigint.of_int x) (Bigint.of_int y))
     | _ -> Sym (fu (node a) (node b))
 
-  let ( + ) = arith Z.add add
-  let ( - ) = arith Z.sub sub
-  let ( * ) = arith Z.mul mul
+  let ( + ) = arith Bigint.add add
+  let ( - ) = arith Bigint.sub sub
+  let ( * ) = arith Bigint.mul mul
 
   let ( // ) =
     arith
@@ -1792,7 +1792,7 @@ module Sint = struct
   let prod l =
     let ints = List.filter_map (function Int n -> Some n | Sym _ -> None) l in
     if List.length ints = List.length l then
-      of_z (List.fold_left (fun z n -> Z.mul z (Z.of_int n)) Z.one ints)
+      of_z (List.fold_left (fun z n -> Bigint.mul z (Bigint.of_int n)) Bigint.one ints)
     else List.fold_left ( * ) (Int 1) l
 
   type cond = Known of bool | Cond of node
@@ -1843,8 +1843,8 @@ let size_of shape =
       (fun acc n ->
         if n <> 0 && abs acc > max_int / abs n then
           invalid_argf "a shape of %s elements is larger than an int"
-            (Z.to_string
-               (List.fold_left (fun z n -> Z.mul z (Z.of_int n)) Z.one shape))
+            (Bigint.to_string
+               (List.fold_left (fun z n -> Bigint.mul z (Bigint.of_int n)) Bigint.one shape))
         else acc * n)
       1 shape
 
@@ -1990,7 +1990,7 @@ and compute_shape u : sint list option =
       let rs = drop 1 u.src in
       Some
         (List.map
-           (fun r -> Int (Value.to_int (Value.( + ) (vmax r) (`Int Z.one))))
+           (fun r -> Int (Value.to_int (Value.( + ) (vmax r) (`Int Bigint.one))))
            rs
         @ shape (src0 ()))
   | Op.Wmma -> (
@@ -2089,7 +2089,7 @@ and movement_shape u ps =
                     s
                     * Int
                         (Value.to_int
-                           (Value.( + ) (vmax (List.nth ranges i)) (`Int Z.one))))
+                           (Value.( + ) (vmax (List.nth ranges i)) (`Int Bigint.one))))
               | None -> s)
             ps
       | _ -> invalid_arg "an unshard needs its axes")
@@ -2576,7 +2576,7 @@ let movement_pad u pads =
 let is_zero (c : Dtype.const) =
   match c with
   | `Invalid -> false
-  | #Dtype.value as x -> Value.( = ) x (`Int Z.zero)
+  | #Dtype.value as x -> Value.( = ) x (`Int Bigint.zero)
 
 let const_like ?dtype u c =
   let ret = const ?dtype:(Some (Option.value dtype ~default:u.dtype)) c in
@@ -2585,7 +2585,7 @@ let const_like ?dtype u c =
       mop ret (Expand s)
   | _ -> ret
 
-let pad ?(value = `Int Z.zero) u padding =
+let pad ?(value = `Int Bigint.zero) u padding =
   let pads = List.map (Option.value ~default:(Int 0, Int 0)) padding in
   check_rank u "padding" pads;
   let has_neg =
@@ -2611,7 +2611,7 @@ let pad ?(value = `Int Z.zero) u padding =
       (movement_pad (const_like ~dtype:Dtype.Bool x (`Bool true)) pads)
       padded (const value)
 
-let pad_to ?(value = `Int Z.zero) u new_shape =
+let pad_to ?(value = `Int Bigint.zero) u new_shape =
   let to_pad x =
     if List.length new_shape <> ndim x then
       invalid_argf "%d sizes for a node of %d axes" (List.length new_shape)
@@ -2846,7 +2846,7 @@ let element_size x =
 let nbytes u =
   match numel u with
   | Int n -> n * element_size u
-  | Sym s -> Z.to_int (to_z s) * element_size u
+  | Sym s -> Bigint.to_int (to_z s) * element_size u
 
 let contiguous x =
   if List.mem x.dtype Dtype.weaks then x
@@ -2974,16 +2974,16 @@ let arange ?(start = 0) ?(step = 1) ?dtype stop =
   let dt =
     match dtype with
     | Some dt -> dt
-    | None -> Dtype.commit_int (Z.of_int lo) (Z.of_int hi)
+    | None -> Dtype.commit_int (Bigint.of_int lo) (Bigint.of_int hi)
   in
   if
-    Value.(`Int (Z.of_int lo) < Dtype.min dt)
-    || Value.(Dtype.max dt < `Int (Z.of_int hi))
+    Value.(`Int (Bigint.of_int lo) < Dtype.min dt)
+    || Value.(Dtype.max dt < `Int (Bigint.of_int hi))
   then
     invalid_argf "arange [%d, %d) is not representable in %s" start stop
       (repr_dtype dt);
   let n = Helpers.ceildiv (stop - start) step in
-  let full dt c k = expand (const ~dtype:dt (`Int (Z.of_int c))) [ Int k ] in
+  let full dt c k = expand (const ~dtype:dt (`Int (Bigint.of_int c))) [ Int k ] in
   if n <= 0 then full dt 0 0
   else
     let acc =
@@ -3418,21 +3418,21 @@ let expr u =
 
 (* Divisibility *)
 
-let rec const_factor u : Z.t =
+let rec const_factor u : Bigint.t =
   match u.op with
   | Op.Const -> integer (value u)
   | Op.Stack ->
-      List.fold_left (fun g s -> Z.gcd g (const_factor s)) Z.zero u.src
-  | Op.Add -> Z.gcd (const_factor (nth u 0)) (const_factor (nth u 1))
+      List.fold_left (fun g s -> Bigint.gcd g (const_factor s)) Bigint.zero u.src
+  | Op.Add -> Bigint.gcd (const_factor (nth u 0)) (const_factor (nth u 1))
   | Op.Mul ->
       if (nth u 0).op = Op.Const then integer (value (nth u 0))
       else if (nth u 1).op = Op.Const then integer (value (nth u 1))
-      else Z.one
+      else Bigint.one
   | op when Op.Set.mem op Op.Set.defines -> (
       match u.arg with
-      | Param { multiple_of = Some m; _ } -> Z.of_int m
-      | _ -> Z.one)
-  | _ -> Z.one
+      | Param { multiple_of = Some m; _ } -> Bigint.of_int m
+      | _ -> Bigint.one)
+  | _ -> Bigint.one
 
 and as_value (c : Dtype.const) : Dtype.value =
   match c with
@@ -3446,8 +3446,8 @@ and integer c =
       invalid_argf "%s is not an integer" (repr_const c)
   | v -> Value.to_z v
 
-let rec divides u (n : Z.t) =
-  if Z.equal n Z.one then Some u
+let rec divides u (n : Bigint.t) =
+  if Bigint.equal n Bigint.one then Some u
   else
     match u.op with
     | Op.Const ->
@@ -3470,7 +3470,7 @@ let rec divides u (n : Z.t) =
     | op when Op.Set.mem op Op.Set.defines -> (
         match u.arg with
         | Param { multiple_of = Some m; _ } ->
-            if Z.equal (Z.rem (Z.of_int m) n) Z.zero then
+            if Bigint.equal (Bigint.rem (Bigint.of_int m) n) Bigint.zero then
               Some (div ~rounding:`Floor u (const (`Int n)))
             else None
         | _ -> None)
@@ -3506,7 +3506,7 @@ let rec storage_phase u =
          modulo the largest power of two up to [align] that divides [by]. *)
       let moved by first =
         let rec known a =
-          if a < align && Z.divisible by (Z.of_int (2 * a)) then known (2 * a)
+          if a < align && Bigint.divisible by (Bigint.of_int (2 * a)) then known (2 * a)
           else a
         in
         let a = known 1 in
@@ -3522,16 +3522,16 @@ let rec storage_phase u =
               (Int 0) bounds (shape x)
           in
           match offset with
-          | Int n -> moved Z.zero (n * bytes)
+          | Int n -> moved Bigint.zero (n * bytes)
           | Sym e ->
               let rest, c = pop_const (simplify e) in
               moved
-                (Z.mul (const_factor rest) (Z.of_int bytes))
-                (Z.to_int (integer c) * bytes))
+                (Bigint.mul (const_factor rest) (Bigint.of_int bytes))
+                (Bigint.to_int (integer c) * bytes))
       | Shrink bounds when not (ints (List.map fst bounds)) ->
           (* A symbolic start into a view that reorders or pads its storage
              moves by bytes unknown here: only the element's size holds. *)
-          moved (Z.of_int bytes) 0
+          moved (Bigint.of_int bytes) 0
       | _ -> (align, phase))
   | (Op.Bitcast | Op.After | Op.Mselect), x :: _ -> storage_phase x
   | o, x :: _ when Op.Set.mem o Op.Set.movement -> storage_phase x
@@ -3597,11 +3597,11 @@ let gcd us =
         else List.map (fun (_, c) -> integer c) popped
       in
       product
-        (const_like first_u (`Int (List.fold_left Z.gcd Z.zero factors)))
+        (const_like first_u (`Int (List.fold_left Bigint.gcd Bigint.zero factors)))
         (elements common)
 
 let rec divide_exact u d =
-  if u == d then Some (const_like u (`Int Z.one))
+  if u == d then Some (const_like u (`Int Bigint.one))
   else if d.op = Op.Const then divides u (Value.to_z (as_value (value d)))
   else
     match u.op with
@@ -3631,8 +3631,8 @@ let rec divide_exact u d =
 
 let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
-  | (`Bool _ | `Int _), (`Bool _ | `Int _) when Z.geq (Value.to_z y) Z.zero ->
-      `Int (Z.pow (Value.to_z x) (Value.to_int y))
+  | (`Bool _ | `Int _), (`Bool _ | `Int _) when Bigint.geq (Value.to_z y) Bigint.zero ->
+      `Int (Bigint.pow (Value.to_z x) (Value.to_int y))
   | _ ->
       let fx = Value.to_float x and fy = Value.to_float y in
       (* C's pow is Python's, except that a zero to a negative power raises in
@@ -3642,8 +3642,8 @@ let py_pow (x : Dtype.value) (y : Dtype.value) : Dtype.value =
 
 let py_exp2 (x : Dtype.value) : Dtype.value =
   match x with
-  | (`Bool _ | `Int _) when Z.geq (Value.to_z x) Z.zero ->
-      `Int (Z.shift_left Z.one (Value.to_int x))
+  | (`Bool _ | `Int _) when Bigint.geq (Value.to_z x) Bigint.zero ->
+      `Int (Bigint.shift_left Bigint.one (Value.to_int x))
   | _ -> `Float (Float.pow 2. (Value.to_float x))
 
 let int_operands op (x : Dtype.value) (y : Dtype.value) =
@@ -3654,9 +3654,9 @@ let int_operands op (x : Dtype.value) (y : Dtype.value) =
 (* A shift's operands, its count as an [int]. *)
 let shift_operands op x y =
   let a, b = int_operands op x y in
-  if Z.sign b < 0 then
-    invalid_argf "a shift by a negative count, %s, has no value" (Z.to_string b);
-  (a, Z.to_int b)
+  if Bigint.sign b < 0 then
+    invalid_argf "a shift by a negative count, %s, has no value" (Bigint.to_string b);
+  (a, Bigint.to_int b)
 
 let bitwise op fb fz (x : Dtype.value) (y : Dtype.value) : Dtype.value =
   match (x, y) with
@@ -3679,14 +3679,14 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   match op with
   | Op.Log2 ->
       unary (fun x ->
-          if Value.( < ) (`Int Z.zero) x then
+          if Value.( < ) (`Int Bigint.zero) x then
             `Float (Float.log2 (Value.to_float x))
-          else if Value.( = ) x (`Int Z.zero) then `Float Float.neg_infinity
+          else if Value.( = ) x (`Int Bigint.zero) then `Float Float.neg_infinity
           else `Float Dtype.nan)
   | Op.Exp2 -> unary py_exp2
   | Op.Sqrt ->
       unary (fun x ->
-          if Value.( <= ) (`Int Z.zero) x then
+          if Value.( <= ) (`Int Bigint.zero) x then
             `Float (Float.sqrt (Value.to_float x))
           else `Float Dtype.nan)
   | Op.Reciprocal ->
@@ -3714,17 +3714,17 @@ let python_alu op (args : Dtype.value list) : Dtype.value =
   | Op.Cmpne -> binary (fun x y -> `Bool (not (Value.( = ) x y)))
   | Op.Cmplt -> binary (fun x y -> `Bool (Value.( < ) x y))
   | Op.Cmpeq -> binary (fun x y -> `Bool (Value.( = ) x y))
-  | Op.Xor -> binary (bitwise op ( <> ) Z.logxor)
-  | Op.Or -> binary (bitwise op ( || ) Z.logor)
-  | Op.And -> binary (bitwise op ( && ) Z.logand)
+  | Op.Xor -> binary (bitwise op ( <> ) Bigint.logxor)
+  | Op.Or -> binary (bitwise op ( || ) Bigint.logor)
+  | Op.And -> binary (bitwise op ( && ) Bigint.logand)
   | Op.Shr ->
       binary (fun x y ->
           let a, k = shift_operands op x y in
-          `Int (Z.shift_right a k))
+          `Int (Bigint.shift_right a k))
   | Op.Shl ->
       binary (fun x y ->
           let a, k = shift_operands op x y in
-          `Int (Z.shift_left a k))
+          `Int (Bigint.shift_left a k))
   | Op.Max -> binary Value.max
   | Op.Cmod -> binary (divide `Remainder ~toward_zero:true)
   | Op.Cdiv -> binary (divide `Quotient ~toward_zero:true)
@@ -3780,7 +3780,7 @@ let sym_infer (s : sint) vars =
         | Op.Param when addrspace n = Some Dtype.Alu || is_variable n -> (
             let name = expr n in
             match List.assoc_opt name vars with
-            | Some x -> `Int (Z.of_int x)
+            | Some x -> `Int (Bigint.of_int x)
             | None -> invalid_argf "the variable %s has no value" name)
         | Op.Cast ->
             let x = get (first n.op n.src) in
@@ -4414,7 +4414,7 @@ let contract u rs =
     (List.map
        (fun idx ->
          substitute u
-           (List.map2 (fun r i -> (r, const_like r (`Int (Z.of_int i)))) rs idx))
+           (List.map2 (fun r i -> (r, const_like r (`Int (Bigint.of_int i)))) rs idx))
        (product rs))
 
 let bind var x =
@@ -4428,7 +4428,7 @@ let bind var x =
       (repr_const (vmax var));
   let p = param_arg_of var in
   let multiple = Option.value p.multiple_of ~default:1 in
-  if Option.is_none (divides c (Z.of_int multiple)) then
+  if Option.is_none (divides c (Bigint.of_int multiple)) then
     invalid_argf "%s is not a multiple of %d" (repr_const x) multiple;
   replace var ~arg:(Param { p with bound = Some x })
 
@@ -4460,7 +4460,7 @@ let variables u =
            else if
              x.op = Op.Range && Axis_type.equal (axis_type x) Axis_type.Device
            then
-             Some (variable ~dtype:x.dtype "_device_num" (`Int Z.zero) (vmax x))
+             Some (variable ~dtype:x.dtype "_device_num" (`Int Bigint.zero) (vmax x))
            else None)
          (Nodes.to_list (backward_slice_with_self u)))
   in

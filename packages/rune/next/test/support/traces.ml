@@ -58,16 +58,16 @@ let to_value : type a b. (a, b) Nx_dtype.t -> a -> Dtype.value =
   | BFloat16 -> `Float v
   | Float8_e4m3 -> `Float v
   | Float8_e5m2 -> `Float v
-  | Int4 -> `Int (Z.of_int v)
-  | UInt4 -> `Int (Z.of_int v)
-  | Int8 -> `Int (Z.of_int v)
-  | UInt8 -> `Int (Z.of_int v)
-  | Int16 -> `Int (Z.of_int v)
-  | UInt16 -> `Int (Z.of_int v)
-  | Int32 -> `Int (Z.of_int32 v)
-  | UInt32 -> `Int (Z.of_int32_unsigned v)
-  | Int64 -> `Int (Z.of_int64 v)
-  | UInt64 -> `Int (Z.of_int64_unsigned v)
+  | Int4 -> `Int (Bigint.of_int v)
+  | UInt4 -> `Int (Bigint.of_int v)
+  | Int8 -> `Int (Bigint.of_int v)
+  | UInt8 -> `Int (Bigint.of_int v)
+  | Int16 -> `Int (Bigint.of_int v)
+  | UInt16 -> `Int (Bigint.of_int v)
+  | Int32 -> `Int (Bigint.of_int32 v)
+  | UInt32 -> `Int (Bigint.of_int32_unsigned v)
+  | Int64 -> `Int (Bigint.of_int64 v)
+  | UInt64 -> `Int (Bigint.of_int64_unsigned v)
   | Bool -> `Bool v
   | Complex64 | Complex128 -> invalid_arg "a complex element"
 
@@ -82,16 +82,16 @@ let of_const : type a b. (a, b) Nx_dtype.t -> Dtype.const -> a =
   | BFloat16 -> float c
   | Float8_e4m3 -> float c
   | Float8_e5m2 -> float c
-  | Int4 -> Z.to_int (int c)
-  | UInt4 -> Z.to_int (int c)
-  | Int8 -> Z.to_int (int c)
-  | UInt8 -> Z.to_int (int c)
-  | Int16 -> Z.to_int (int c)
-  | UInt16 -> Z.to_int (int c)
-  | Int32 -> Z.to_int32 (int c)
-  | UInt32 -> Z.to_int32_unsigned (int c)
-  | Int64 -> Z.to_int64 (int c)
-  | UInt64 -> Z.to_int64_unsigned (int c)
+  | Int4 -> Bigint.to_int (int c)
+  | UInt4 -> Bigint.to_int (int c)
+  | Int8 -> Bigint.to_int (int c)
+  | UInt8 -> Bigint.to_int (int c)
+  | Int16 -> Bigint.to_int (int c)
+  | UInt16 -> Bigint.to_int (int c)
+  | Int32 -> Bigint.to_int32 (int c)
+  | UInt32 -> Bigint.to_int32_unsigned (int c)
+  | Int64 -> Bigint.to_int64 (int c)
+  | UInt64 -> Bigint.to_int64_unsigned (int c)
   | Bool -> ( match c with `Bool b -> b | _ -> invalid_arg "not a boolean")
   | Complex64 | Complex128 -> invalid_arg "a complex element"
 
@@ -168,7 +168,7 @@ let element_bits : type a b. (a, b) Nx_dtype.t -> a -> Dtype.value =
  fun dt v ->
   match to_value dt v with
   | `Float f when Float.is_nan f -> `Bool false
-  | `Float f -> `Int (Z.of_int64 (Int64.bits_of_float f))
+  | `Float f -> `Int (Bigint.of_int64 (Int64.bits_of_float f))
   | v -> v
 
 let exact ?__POS__ expected actual =

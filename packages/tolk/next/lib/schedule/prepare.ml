@@ -571,7 +571,7 @@ let earliest_rewrites =
              let x = m "x" in
              match shape_opt x with
              | Some s when List.exists (Sint.equal (Int 0)) s ->
-                 Some (replace ~tag:(tag x) (const_like x (`Int Z.zero)))
+                 Some (replace ~tag:(tag x) (const_like x (`Int Bigint.zero)))
              | _ -> None);
          (* Effects lose their movements. *)
          rule (Upat.op Op.Sink ~name:"s") (fun m ->
@@ -676,6 +676,6 @@ let contiguous_view u =
   match (op out, src out) with
   | Op.Index, b :: c :: _ when Option.is_some (tag b) && op c = Op.Const -> (
       match arg c with
-      | Const (`Int n) -> Some (replace ~tag:None b, Z.to_int n)
+      | Const (`Int n) -> Some (replace ~tag:None b, Bigint.to_int n)
       | _ -> None)
   | _ -> None

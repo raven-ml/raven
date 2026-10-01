@@ -27,7 +27,8 @@ let h = Ops.variable ~dtype:Bool "h" (`Bool false) (`Bool true)
 let gates = [| g; h; Ops.logical_not g |]
 
 let idx n =
-  Ops.variable (Printf.sprintf "i%d" n) (`Int Z.zero) (`Int (Z.of_int 63))
+  Ops.variable (Printf.sprintf "i%d" n) (`Int Bigint.zero)
+    (`Int (Bigint.of_int 63))
 
 let x = Ops.variable ~dtype:Float32 "x" (`Float (-1.)) (`Float 1.)
 let buf = Ops.param ~shape:[ Int 64 ] 0 Float32

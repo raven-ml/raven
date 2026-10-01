@@ -11,7 +11,6 @@
   nx.cuda.device
   nx.amd.device
   nx.nv.device
-  zarith
   (select
    metal.ml
    from

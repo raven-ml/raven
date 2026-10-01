@@ -53,7 +53,7 @@ let device_ranges x =
 (* [x] on the [i]th device: its device range is [i]. *)
 let at_device i x =
   match device_ranges x with
-  | r :: _ -> substitute x [ (r, const_like r (`Int (Z.of_int i))) ]
+  | r :: _ -> substitute x [ (r, const_like r (`Int (Bigint.of_int i))) ]
   | [] -> x
 
 let apply_shrink marg s i =
@@ -222,7 +222,7 @@ and shard_idx rng dev_idx =
   | r :: _ -> (
       match
         ssimplify
-          (substitute rng [ (r, const_like r (`Int (Z.of_int dev_idx))) ])
+          (substitute rng [ (r, const_like r (`Int (Bigint.of_int dev_idx))) ])
       with
       | Int n -> n
       | Sym _ -> invalid_arg "a shard's position is not a constant")
@@ -517,7 +517,7 @@ let index_multi root multi =
         let md = simplify (mod_ diff sz) in
         let is_zero =
           op md = Op.Const
-          && match Ops.value md with `Int z -> Z.equal z Z.zero | _ -> false
+          && match Ops.value md with `Int z -> Bigint.equal z Bigint.zero | _ -> false
         in
         if not is_zero then crosses ()
         else

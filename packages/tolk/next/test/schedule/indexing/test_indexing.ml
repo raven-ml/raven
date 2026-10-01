@@ -5,7 +5,7 @@
 open Windtrap
 open Tolk_next
 
-let z n = `Int (Z.of_int n)
+let z n = `Int (Bigint.of_int n)
 let size shape = List.fold_left ( * ) 1 shape
 let ints = List.map (fun n -> Ops.Int n)
 
@@ -130,7 +130,7 @@ let defined in_shape m =
   match Tensors.eval ~buffers:[ (0, elements in_shape) ] moved with
   | [ elements ] ->
       List.map
-        (function `Int v when Z.equal v Z.zero -> `Invalid | v -> v)
+        (function `Int v when Bigint.equal v Bigint.zero -> `Invalid | v -> v)
         (Array.to_list elements)
   | _ -> fail "a movement of a value on one device is on one device"
 
@@ -564,7 +564,7 @@ let count op u = List.length (all op u)
 let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
 
 let range_of r =
-  (Ops.axis_id r, Ops.axis_type r, Z.to_int (Ops.to_z (Ops.nth r 0)))
+  (Ops.axis_id r, Ops.axis_type r, Bigint.to_int (Ops.to_z (Ops.nth r 0)))
 
 let ranges_of u = List.sort compare (List.map range_of (all Range u))
 let ranges_witness = list (triple (list int) axis_type int)

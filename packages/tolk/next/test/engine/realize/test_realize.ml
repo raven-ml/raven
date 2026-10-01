@@ -53,9 +53,9 @@ let scaled_kernel variables =
     [ Ops.store (Ops.index out [ Ops.int 0 ]) product ]
 
 let program kernel = Codegen.to_program kernel uncompiled
-let n = Ops.variable ~dtype:Int32 "n" (`Int Z.one) (`Int (Z.of_int 8))
-let m = Ops.variable ~dtype:Int32 "m" (`Int Z.one) (`Int (Z.of_int 8))
-let bound v x = Ops.bind v (`Int (Z.of_int x))
+let n = Ops.variable ~dtype:Int32 "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
+let m = Ops.variable ~dtype:Int32 "m" (`Int Bigint.one) (`Int (Bigint.of_int 8))
+let bound v x = Ops.bind v (`Int (Bigint.of_int x))
 let storage ?(device = "CPU") ?(dtype = Dtype.Float32) n = Ops.new_buffer (Single device) n dtype
 let linear calls = Ops.v Linear ~src:calls
 let custom_call args = Ops.call (Ops.custom_function "f" []) args
@@ -296,7 +296,7 @@ let names =
           equal string "copy       16 B, CPU:0, CPU:1 <- CPU:2, CPU:3"
             (plain (fun () -> Realize.get_call_name call (Realize.get_call_arg_uops call))));
       test "sizes a copy with the variables' values" (fun () ->
-          let v = Ops.variable "v" (`Int Z.one) (`Int (Z.of_int 10)) in
+          let v = Ops.variable "v" (`Int Bigint.one) (`Int (Bigint.of_int 10)) in
           let src = Ops.shrink (storage 10) [ Some (Int 0, Sym v) ] in
           let call = Ops.store_call (Ops.shrink (storage 10) [ Some (Int 0, Sym v) ]) src in
           equal string "copy       12 B,     CPU <- CPU    "

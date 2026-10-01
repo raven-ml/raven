@@ -207,7 +207,8 @@ let command_buffer queue cmds =
         (Ops.toposort w)
     in
     match Interpreter.eval (Ops.substitute w addrs) with
-    | `Int z -> Z.to_int (Z.extract z 0 (8 * Dtype.itemsize (Ops.dtype w)))
+    | `Int z ->
+        Bigint.to_int (Bigint.extract z 0 (8 * Dtype.itemsize (Ops.dtype w)))
     | _ -> fail "a command word is no integer"
   in
   (* The stores into the command buffer, not into the regions' buffers. *)

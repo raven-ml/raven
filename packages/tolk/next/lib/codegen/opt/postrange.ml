@@ -33,14 +33,14 @@ let pp_types ppf ts =
 
 (* The size of a range, its greatest value plus one, exactly: it may exceed an
    int. *)
-let size r = Z.succ (V.to_z (vmax r))
+let size r = Bigint.succ (V.to_z (vmax r))
 let z n = const (`Int n)
-let sint_of_z n = if Z.fits_int n then Int (Z.to_int n) else Sym (z n)
+let sint_of_z n = if Bigint.fits_int n then Int (Bigint.to_int n) else Sym (z n)
 
 (* A size is known when it is an integer, which a constant beyond an int also
    is. *)
 let known_size = function
-  | Int n -> Some (Z.of_int n)
+  | Int n -> Some (Bigint.of_int n)
   | Sym u when op u = Op.Const -> (
       match value u with `Int n -> Some n | _ -> None)
   | Sym _ -> None
@@ -119,7 +119,7 @@ module Scheduler = struct
 
   let known_above_one shape i =
     match known_size (List.nth shape i) with
-    | Some s -> Z.gt s Z.one
+    | Some s -> Bigint.gt s Bigint.one
     | None -> false
 
   let upcastable_dims k =
@@ -206,7 +206,7 @@ module Scheduler = struct
       | Some s -> Ok s
       | None ->
           Error
-            (strf "%s does not divide %s in %s" (Z.to_string amount)
+            (strf "%s does not divide %s in %s" (Bigint.to_string amount)
                (Render.render (nth rng 0))
                (colored_shape k))
 
@@ -229,7 +229,7 @@ module Scheduler = struct
       (amount <= 1)
       [@mutate off "a split by 1 also fails, when its rewrite cycles"]
     then invalid_arg (strf "a split takes more than 1, not %d" amount);
-    let amount = Z.of_int amount in
+    let amount = Bigint.of_int amount in
     match split_size k rng amount target with
     | Ok old_sz -> shift_by ?top ?new_rng k rng amount target old_sz
     | Error msg -> invalid_arg msg
@@ -271,11 +271,11 @@ module Scheduler = struct
             (amount = 0 || amount > 1)
             (strf "a split takes 0 or more than 1, not %d" amount);
           if target = Local then check k.ren.has_local "locals needed for opt";
-          let amt = if amount = 0 then size rng else Z.of_int amount in
+          let amt = if amount = 0 then size rng else Bigint.of_int amount in
           if target = Unroll then
-            check Z.(leq amt (of_int 32)) "don't unroll more than 32";
+            check Bigint.(leq amt (of_int 32)) "don't unroll more than 32";
           if target = Upcast then
-            check Z.(leq amt (of_int 16)) "don't upcast more than 16";
+            check Bigint.(leq amt (of_int 16)) "don't upcast more than 16";
           (* prevents METAL compiler hangs *)
           (match reduceop k with
           | Some r
@@ -338,11 +338,11 @@ module Scheduler = struct
           check
             (not (List.mem (axis_type rng) [ Axis_type.Upcast; Unroll; Warp ]))
             "cannot pad upcasted or warp";
-          let amount = Z.of_int amount in
+          let amount = Bigint.of_int amount in
           let sz = size rng in
-          let new_sz = Z.(cdiv sz amount * amount) in
+          let new_sz = Bigint.(cdiv sz amount * amount) in
           check
-            Z.(gt sz (fdiv new_sz (of_int 4)))
+            Bigint.(gt sz (fdiv new_sz (of_int 4)))
             "pad adds more than quadruple the work";
           let replaced_rng =
             replace rng ~src:[ const_like (nth rng 0) (`Int new_sz) ]
@@ -451,7 +451,9 @@ module Scheduler = struct
           String.concat ", "
             (List.map
                (fun r ->
-                 strf "(%d, %s)" (List.hd (axis_id r)) (Z.to_string (size r)))
+                 strf "(%d, %s)"
+                   (List.hd (axis_id r))
+                   (Bigint.to_string (size r)))
                rs)
         in
         Format.eprintf "TC(%d): [%s] [%s] [%s]@." axis (show in0_ranges)
@@ -485,7 +487,12 @@ module Scheduler = struct
         let shape () =
           Array.iteri
             (fun i a ->
-              if not (Z.equal (Z.rem (size a) (Z.of_int dims.(i))) Z.zero) then begin
+              if
+                not
+                  (Bigint.equal
+                     (Bigint.rem (size a) (Bigint.of_int dims.(i)))
+                     Bigint.zero)
+              then begin
                 if opt_level < 2 then
                   raise_notrace (Refused "tc padding requires opt_level >= 2");
                 (* PADTO might fail *)
@@ -504,12 +511,12 @@ module Scheduler = struct
               let replaced, r =
                 match index_of_bit c tc.frag_c.lanes with
                 | Some j ->
-                    split k axes.(d) (Z.of_int 2) Local
+                    split k axes.(d) (Bigint.of_int 2) Local
                       ~new_rng:
                         (let p = 1 lsl j in
                          O.(warp // int p % int 2))
                 | None ->
-                    split k axes.(d) (Z.of_int 2)
+                    split k axes.(d) (Bigint.of_int 2)
                       (if d = 2 then Unroll else Upcast)
               in
               axes.(d) <- replaced;
@@ -550,7 +557,7 @@ module Scheduler = struct
       | None -> ins
       | Some g ->
           List.map
-            (fun x -> where g x (const ~dtype:(dtype x) (`Int Z.zero)))
+            (fun x -> where g x (const ~dtype:(dtype x) (`Int Bigint.zero)))
             ins
     in
     let relabel_a, relabel_b = Tc.relabel tc in
@@ -640,7 +647,7 @@ module Scheduler = struct
                     Helpers.Blue
                   else Helpers.Cyan
                 in
-                Helpers.colored c (Z.to_string (size x)))
+                Helpers.colored c (Bigint.to_string (size x)))
               special_uops
           in
           let axes =

@@ -71,8 +71,8 @@ let upat =
           equal (option uop) None (rewrite m (Ops.v ~src:[ zero; zero ] Op.Mul));
           equal (option uop) None (rewrite m (Ops.int (-1))));
       test "matches integers and floats exactly" (fun () ->
-          let exact = `Int (Z.of_string "9007199254740992")
-          and next = `Int (Z.of_string "9007199254740993") in
+          let exact = `Int (Bigint.of_string "9007199254740992")
+          and next = `Int (Bigint.of_string "9007199254740993") in
           let rounded = Ops.float 9007199254740992. in
           is_true (matches (P.const exact) rounded);
           is_false (matches (P.const next) rounded);
@@ -113,7 +113,7 @@ let upat =
                      Op.Mul)
                   (fun m ->
                     match Ops.value (m "c") with
-                    | `Int n when Z.equal (Z.abs n) Z.one -> tagged (m "x")
+                    | `Int n when Bigint.equal (Bigint.abs n) Bigint.one -> tagged (m "x")
                     | _ -> None);
               ])
           in
@@ -564,7 +564,7 @@ let matchers =
 let value_of u =
   match Ops.value u with
   | `Float x -> x
-  | `Int n -> Z.to_float n
+  | `Int n -> Bigint.to_float n
   | _ -> fail "a number"
 
 let fconst x = Ops.float x
@@ -740,7 +740,7 @@ let rewriting =
                       match Ops.value x with
                       | `Int n ->
                           Some
-                            (Ops.rtag ~tag:(Int 1) (Ops.int (Z.to_int n + 1)))
+                            (Ops.rtag ~tag:(Int 1) (Ops.int (Bigint.to_int n + 1)))
                       | _ -> None);
               ])
           in

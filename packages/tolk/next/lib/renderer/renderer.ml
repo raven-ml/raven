@@ -39,7 +39,7 @@ module Estimates = struct
   let without_specials = function
     | Int n -> Int n
     | Sym m ->
-        let zero x = (x, const_like x (`Int Z.zero)) in
+        let zero x = (x, const_like x (`Int Bigint.zero)) in
         Sym
           (substitute m
              (List.map zero (List.filter (is Op.Special) (toposort m))))

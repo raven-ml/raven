@@ -18,7 +18,7 @@
 
 (** {1:consts Constants} *)
 
-type value = [ `Bool of bool | `Int of Z.t | `Float of float ]
+type value = [ `Bool of bool | `Int of Bigint.t | `Float of float ]
 (** The type for values. An [`Int] is a mathematical integer: its data type
     bounds it only when it is truncated. *)
 
@@ -65,7 +65,7 @@ module Value : sig
       rounded to nearest, ties to even, or to the infinity of its sign if it
       rounds past the greatest double. *)
 
-  val to_z : t -> Z.t
+  val to_z : t -> Bigint.t
   (** [to_z v] is [v] as an integer: [0] or [1] for a [`Bool], and a float
       rounded towards zero.
 
@@ -335,7 +335,7 @@ val strong : t -> t
 (** [strong dt] commits [dt] to a width: {!Weak_int} is [default_int ()],
     {!Weak_float} is [default_float ()], and any other [dt] is itself. *)
 
-val commit_int : ?default_int:t -> Z.t -> Z.t -> t
+val commit_int : ?default_int:t -> Bigint.t -> Bigint.t -> t
 (** [commit_int ~default_int lo hi] is the first of [default_int], {!Int32},
     {!Int64} and {!Uint64} that holds every integer from [lo] to [hi], and
     {!Int64} if none does. [default_int] defaults to [default_int ()].

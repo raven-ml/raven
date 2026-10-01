@@ -154,7 +154,7 @@ let contains s sub =
    size is an expression of the variable, which the host program computes on
    each run, as the kernel's compilation committed it. *)
 let quarter_sized () =
-  let n = Ops.variable "n" (`Int Z.one) (`Int (Z.of_int 1024)) in
+  let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 1024)) in
   let size = Ops.O.((n + Ops.int 3) // Ops.int 4) in
   let param slot =
     Ops.param ~shape:[ Int 256 ] ~device:(Single "METAL") slot Float32
@@ -177,7 +177,7 @@ let quarter_sized () =
   let buf () = Ops.new_buffer (Single "METAL") 256 Float32 in
   Ops.call
     (Codegen.to_program kernel metal)
-    [ buf (); buf (); Ops.bind n (`Int (Z.of_int 100)) ]
+    [ buf (); buf (); Ops.bind n (`Int (Bigint.of_int 100)) ]
 
 let sizes =
   group "launch sizes"

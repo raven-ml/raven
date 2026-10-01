@@ -9,7 +9,7 @@ let fail fmt = Printf.ksprintf failwith fmt
 type value =
   | None_
   | Bool of bool
-  | Int of Z.t
+  | Int of Bigint.t
   | Float of float
   | Invalid
   | Str of string
@@ -30,7 +30,7 @@ let rec equal_value v0 v1 =
       && List.equal
            (fun (k0, v0) (k1, v1) -> String.equal k0 k1 && equal_value v0 v1)
            f0 f1
-  | Int z0, Int z1 -> Z.equal z0 z1
+  | Int z0, Int z1 -> Bigint.equal z0 z1
   | None_, None_ | Invalid, Invalid -> true
   | Bool b0, Bool b1 -> Bool.equal b0 b1
   | Str s0, Str s1 | Bytes s0, Bytes s1 -> String.equal s0 s1
@@ -73,7 +73,7 @@ let quote s =
 let rec print index = function
   | None_ -> "None"
   | Bool b -> if b then "True" else "False"
-  | Int z -> Z.to_string z
+  | Int z -> Bigint.to_string z
   | Float f
     when Float.is_nan f
          && not (Int64.equal (Int64.bits_of_float f) 0x7FF8_0000_0000_0000L) ->
@@ -168,7 +168,7 @@ let number c =
     | Some f -> Float f
     | None -> fail "bad number %s" text
   else
-    match Z.of_string text with
+    match Bigint.of_string text with
     | z -> Int z
     | exception Invalid_argument _ -> fail "bad number %s" text
 
@@ -237,10 +237,10 @@ type 'a codec = { write : 'a -> value; read : value -> 'a }
 
 let int =
   let read = function
-    | Int z when Z.fits_int z -> Z.to_int z
+    | Int z when Bigint.fits_int z -> Bigint.to_int z
     | v -> expected "an integer" v
   in
-  { write = (fun n -> Int (Z.of_int n)); read }
+  { write = (fun n -> Int (Bigint.of_int n)); read }
 
 let bool =
   {

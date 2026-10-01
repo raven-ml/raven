@@ -2,7 +2,10 @@ open Windtrap
 open Tolk_next
 
 let uop = Testable.make ~pp:Ops.pp ~equal:Ops.equal
-let var name lo hi = Ops.variable name (`Int (Z.of_int lo)) (`Int (Z.of_int hi))
+
+let var name lo hi =
+  Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
+
 let a = var "a" 1 5
 
 (* The cases of an input golden are its sink's sources, in order. *)

@@ -114,8 +114,8 @@ type replay = (int * (string * int) list) list -> Dtype.value array list
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else if Dtype.is_unsigned dtype then `Int (Z.of_int (k + 3))
-  else `Int (Z.of_int k)
+  else if Dtype.is_unsigned dtype then `Int (Bigint.of_int (k + 3))
+  else `Int (Bigint.of_int k)
 
 let start seed u =
   Array.init (Ops.max_numel u) (fun j ->

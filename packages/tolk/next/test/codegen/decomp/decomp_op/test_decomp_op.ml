@@ -6,12 +6,12 @@ open Windtrap
 open Tolk_next
 open Dtypes
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 let var ?(dtype = Dtype.Int32) name lo hi =
   Ops.variable ~dtype name (`Int lo) (`Int hi)
 
-let v ?dtype name lo hi = var ?dtype name (Z.of_int lo) (Z.of_int hi)
+let v ?dtype name lo hi = var ?dtype name (Bigint.of_int lo) (Bigint.of_int hi)
 let param ?(slot = 0) dt = Ops.param slot dt
 let target = Result.get_ok (Helpers.Target.of_string "")
 
@@ -44,14 +44,14 @@ let grid =
         var
           ~dtype:(dtype_named (cell "dtype"))
           "x"
-          (Z.of_string (cell "vmin"))
-          (Z.of_string (cell "vmax"))
+          (Bigint.of_string (cell "vmin"))
+          (Bigint.of_string (cell "vmax"))
       in
       let r =
         Decomp_op.fast_idiv
           (renderer_named (cell "renderer"))
           x
-          (Z.of_string (cell "d"))
+          (Bigint.of_string (cell "d"))
       in
       equal string (cell "result")
         (match r with
@@ -61,18 +61,27 @@ let grid =
 (* The numerators a quotient is checked at: the ends of the range, each side of
    the first multiples of [d], and points spread between. *)
 let numerators vmax d =
-  let spread = List.init 16 (fun k -> Z.(vmax * of_int k / of_int 15)) in
-  [ Z.zero; Z.one; Z.pred d; d; Z.succ d; Z.(d + d); Z.pred vmax; vmax ]
+  let spread = List.init 16 (fun k -> Bigint.(vmax * of_int k / of_int 15)) in
+  [
+    Bigint.zero;
+    Bigint.one;
+    Bigint.pred d;
+    d;
+    Bigint.succ d;
+    Bigint.(d + d);
+    Bigint.pred vmax;
+    vmax;
+  ]
   @ spread
-  |> List.filter (fun n -> Z.(geq n zero && leq n vmax))
+  |> List.filter (fun n -> Bigint.(geq n zero && leq n vmax))
 
 let divides vmax d u =
   List.iter
     (fun n ->
       equal
-        ~msg:(Format.asprintf "%a / %a" Z.pp_print n Z.pp_print d)
+        ~msg:(Format.asprintf "%a / %a" Bigint.pp_print n Bigint.pp_print d)
         const
-        (`Int (Z.div n d))
+        (`Int (Bigint.div n d))
         (at [ ("x", `Int n) ] u))
     (numerators vmax d)
 
@@ -89,9 +98,11 @@ let grid_divides =
       List.iter
         (fun cell ->
           if key cell = k then
-            let vmax = Z.of_string (cell "vmax")
-            and d = Z.of_string (cell "d") in
-            let x = var ~dtype:(dtype_named (cell "dtype")) "x" Z.zero vmax in
+            let vmax = Bigint.of_string (cell "vmax")
+            and d = Bigint.of_string (cell "d") in
+            let x =
+              var ~dtype:(dtype_named (cell "dtype")) "x" Bigint.zero vmax
+            in
             let u =
               require_some
                 (Decomp_op.fast_idiv (renderer_named (cell "renderer")) x d)
@@ -106,45 +117,45 @@ let integers =
    ends and their neighbours. *)
 let below hi =
   let open Gen in
-  let* bits = int_range 1 (max 1 (Z.numbits hi)) in
+  let* bits = int_range 1 (max 1 (Bigint.numbits hi)) in
   let* edge = int_range 0 7 in
   let+ lo = int64 and+ hi_bits = int64 in
   let r =
-    Z.(
+    Bigint.(
       extract
         (logor (of_int64_unsigned lo)
            (shift_left (of_int64_unsigned hi_bits) 64))
         0 bits)
   in
   match edge with
-  | 0 -> Z.zero
+  | 0 -> Bigint.zero
   | 1 -> hi
-  | 2 -> Z.max Z.zero (Z.pred hi)
-  | _ -> Z.min r hi
+  | 2 -> Bigint.max Bigint.zero (Bigint.pred hi)
+  | _ -> Bigint.min r hi
 
 let top dt =
   match dt with
-  | Dtype.Weak_int -> Z.(pred (shift_left one 64))
+  | Dtype.Weak_int -> Bigint.(pred (shift_left one 64))
   | _ -> snd (int_bounds dt)
 
 let division_case =
   let open Gen in
   let* dt = of_list ~pp:Dtype.pp integers in
   let* vmax = below (top dt) in
-  let vmax = Z.max vmax Z.one in
-  let* d = map Z.succ (below Z.(max vmax (of_int 1000))) in
+  let vmax = Bigint.max vmax Bigint.one in
+  let* d = map Bigint.succ (below Bigint.(max vmax (of_int 1000))) in
   let+ n = below vmax and+ wide = bool in
   (dt, vmax, d, n, wide)
 
 let pp_division_case ppf (dt, vmax, d, n, wide) =
-  Format.fprintf ppf "%a x in [0, %a], %a / %a%s" Dtype.pp dt Z.pp_print vmax
-    Z.pp_print n Z.pp_print d
+  Format.fprintf ppf "%a x in [0, %a], %a / %a%s" Dtype.pp dt Bigint.pp_print
+    vmax Bigint.pp_print n Bigint.pp_print d
     (if wide then "" else ", nothing to widen to")
 
 let fast_idiv_divides =
   prop ~count:500 "fast_idiv x d is x / d wherever it applies"
     (Gen.with_pp pp_division_case division_case) (fun (dt, vmax, d, n, wide) ->
-      let x = var ~dtype:dt "x" Z.zero vmax in
+      let x = var ~dtype:dt "x" Bigint.zero vmax in
       let r = if wide then everything else nothing in
       match Decomp_op.fast_idiv r x d with
       | None -> cover "declines" true
@@ -152,13 +163,13 @@ let fast_idiv_divides =
           cover "divides" true;
           cover "widens"
             (List.exists (fun u -> Ops.op u = Cast) (Ops.toposort u));
-          equal const (`Int (Z.div n d)) (at [ ("x", `Int n) ] u))
+          equal const (`Int (Bigint.div n d)) (at [ ("x", `Int n) ] u))
 
 (* A golden holds the dividend and its quotient. *)
 let quotient file x d =
   Golden.graph (file ^ ".golden") (fun () ->
       Ops.sink
-        [ x; require_some (Decomp_op.fast_idiv everything x (Z.of_int d)) ])
+        [ x; require_some (Decomp_op.fast_idiv everything x (Bigint.of_int d)) ])
 
 let fast_idiv =
   let x = v "x" 0 1000 in
@@ -172,21 +183,22 @@ let fast_idiv =
       quotient "fast_idiv_widens" (v ~dtype:Int16 "x" 0 1000) 3;
       quotient "fast_idiv_folds_a_small_dividend" (v "x" 0 6) 7;
       test "fast_idiv declines a divisor that is not positive" (fun () ->
-          is_none (Decomp_op.fast_idiv everything x Z.zero);
-          is_none (Decomp_op.fast_idiv everything x (Z.of_int (-3))));
+          is_none (Decomp_op.fast_idiv everything x Bigint.zero);
+          is_none (Decomp_op.fast_idiv everything x (Bigint.of_int (-3))));
       test "fast_idiv declines a dividend that can be negative" (fun () ->
-          is_none (Decomp_op.fast_idiv everything (v "x" (-1) 100) (Z.of_int 7)));
+          is_none
+            (Decomp_op.fast_idiv everything (v "x" (-1) 100) (Bigint.of_int 7)));
       test "fast_idiv of a dividend below the divisor is zero of its type"
         (fun () ->
           let u =
-            require_some (Decomp_op.fast_idiv everything x (Z.of_int 1001))
+            require_some (Decomp_op.fast_idiv everything x (Bigint.of_int 1001))
           in
           equal Uops.uop (Ops.const_like x (i 0)) u);
       test "fast_idiv divides by a divisor beyond every integer type" (fun () ->
           let u =
             require_some
               (Decomp_op.fast_idiv everything (v ~dtype:Int64 "x" 0 100)
-                 Z.(shift_left one 70))
+                 Bigint.(shift_left one 70))
           in
           equal const (i 0) (at [ ("x", i 100) ] u));
     ]
@@ -197,10 +209,12 @@ let fast_idiv =
    c1)] under the key words [(k0, k1)], as the words [(r0, r1)]; the first word
    of each pair is the low half of its Uint64. *)
 let hash ~counter:(c0, c1) ~key:(k0, k1) =
-  let word64 lo hi = `Int Z.(logor (of_int lo) (shift_left (of_int hi) 32)) in
+  let word64 lo hi =
+    `Int Bigint.(logor (of_int lo) (shift_left (of_int hi) 32))
+  in
   let u = Decomp_op.threefry2x32 (param Uint64) (param ~slot:1 Uint64) in
   match Interpreter.eval ~params:[ (0, word64 c0 c1); (1, word64 k0 k1) ] u with
-  | `Int r -> Z.(to_int (extract r 0 32), to_int (extract r 32 32))
+  | `Int r -> Bigint.(to_int (extract r 0 32), to_int (extract r 32 32))
   | c -> failf "a hash is an integer, not %a" (Testable.pp const) c
 
 let words = pair int int
@@ -265,14 +279,14 @@ let threefry =
          wraps each 32-bit word as the hash does. *)
       test "the hash of constants folds to its value" (fun () ->
           equal const
-            (`Int (Z.of_string "6264663365535751564"))
+            (`Int (Bigint.of_string "6264663365535751564"))
             (Interpreter.eval (Ops.simplify hash_of_constants)));
     ]
 
 (* Simplifying patterns *)
 
-let wide = var ~dtype:Uint64 "w" Z.zero Z.(pred (shift_left one 64))
-let two_to_63 = Ops.const ~dtype:Uint64 (`Int Z.(shift_left one 63))
+let wide = var ~dtype:Uint64 "w" Bigint.zero Bigint.(pred (shift_left one 64))
+let two_to_63 = Ops.const ~dtype:Uint64 (`Int Bigint.(shift_left one 63))
 
 let floordivs () =
   let p = v "p" 0 100 and n = v "n" (-100) 0 and m = v "m" (-10) 10 in
@@ -288,8 +302,8 @@ let floordivs () =
       m // int 1;
       m // int (-4);
       wide // two_to_63;
-      wide // Ops.const (`Int Z.(shift_left one 63));
-      wide // Ops.const (`Int Z.(shift_left one 64));
+      wide // Ops.const (`Int Bigint.(shift_left one 63));
+      wide // Ops.const (`Int Bigint.(shift_left one 64));
       v ~dtype:Weak_int "k" (-10) 10 // int 8;
       v "a" 0 3 // v "b" 0 3;
       v "c" (-3) 0 // v "e" (-3) 0;
@@ -308,8 +322,8 @@ let floormods () =
       m % int 1;
       m % int (-4);
       wide % two_to_63;
-      wide % Ops.const (`Int Z.(shift_left one 63));
-      wide % Ops.const (`Int Z.(shift_left one 64));
+      wide % Ops.const (`Int Bigint.(shift_left one 63));
+      wide % Ops.const (`Int Bigint.(shift_left one 64));
       v ~dtype:Weak_int "k" (-10) 10 % int 8;
       v "a" 0 3 % v "b" 0 3;
       v "c" (-3) 0 % v "e" (-3) 0;
@@ -351,25 +365,27 @@ let floor_case =
   in
   let lo, hi =
     match dt with
-    | Weak_int -> (Z.of_int (-1000), Z.of_int 1000)
+    | Weak_int -> (Bigint.of_int (-1000), Bigint.of_int 1000)
     | _ -> int_bounds dt
   in
-  let point = map (fun k -> Z.(lo + k)) (below Z.(hi - lo)) in
+  let point = map (fun k -> Bigint.(lo + k)) (below Bigint.(hi - lo)) in
   let* a0 = point in
   let* a1 = point in
-  let* b = such_that (fun b -> not (Z.equal b Z.zero)) point in
+  let* b = such_that (fun b -> not (Bigint.equal b Bigint.zero)) point in
   let* constant = bool in
   let* floor_mod = bool in
   let* shr_and = bool in
-  let+ a = map (fun k -> Z.(min a0 a1 + k)) (below Z.(abs (a1 - a0))) in
-  (dt, (Z.min a0 a1, Z.max a0 a1), a, b, constant, floor_mod, shr_and)
+  let+ a =
+    map (fun k -> Bigint.(min a0 a1 + k)) (below Bigint.(abs (a1 - a0)))
+  in
+  (dt, (Bigint.min a0 a1, Bigint.max a0 a1), a, b, constant, floor_mod, shr_and)
 
 let pp_floor_case ppf (dt, (lo, hi), a, b, constant, floor_mod, shr_and) =
-  Format.fprintf ppf "%a a=%a in [%a, %a] %s %s%a%s" Dtype.pp dt Z.pp_print a
-    Z.pp_print lo Z.pp_print hi
+  Format.fprintf ppf "%a a=%a in [%a, %a] %s %s%a%s" Dtype.pp dt Bigint.pp_print
+    a Bigint.pp_print lo Bigint.pp_print hi
     (if floor_mod then "%" else "//")
     (if constant then "" else "b=")
-    Z.pp_print b
+    Bigint.pp_print b
     (if shr_and then " with Shr and And" else "")
 
 let floor_rewrites_keep_values =
@@ -377,7 +393,10 @@ let floor_rewrites_keep_values =
     (Gen.with_pp pp_floor_case floor_case)
     (fun (dt, (lo, hi), a, b, constant, floor_mod, shr_and) ->
       (* the least integer divided by -1 overflows its type *)
-      assume (not (Z.equal b Z.minus_one && Z.equal a (fst (int_bounds dt))));
+      assume
+        (not
+           (Bigint.equal b Bigint.minus_one
+           && Bigint.equal a (fst (int_bounds dt))));
       let x = var ~dtype:dt "a" lo hi in
       let y, vars =
         if constant then (Ops.const (`Int b), [])
@@ -387,8 +406,8 @@ let floor_rewrites_keep_values =
         if floor_mod then Ops.mod_ x y else Ops.div ~rounding:`Floor x y
       in
       let set = if shr_and then ops [ Shr; And ] else ops [] in
-      let q = Z.fdiv a b in
-      let expected = if floor_mod then Z.(a - (b * q)) else q in
+      let q = Bigint.fdiv a b in
+      let expected = if floor_mod then Bigint.(a - (b * q)) else q in
       let r = simplify_with set e in
       cover "rewritten" (not (Ops.equal r e));
       equal const (`Int expected) (at (("a", `Int a) :: vars) r))
@@ -439,7 +458,9 @@ let cdivs () =
   let u = v ~dtype:Uint32 "u" 0 1000 and p = v "p" 0 1000 in
   let m = v "m" (-1000) 1000 in
   let cdiv x d = Ops.alu x Cdiv [ d ] and cmod x d = Ops.alu x Cmod [ d ] in
-  let big = var ~dtype:Uint32 "x" Z.zero Z.(pred (shift_left one 32)) in
+  let big =
+    var ~dtype:Uint32 "x" Bigint.zero Bigint.(pred (shift_left one 32))
+  in
   [
     cdiv u (Ops.int 8);
     cdiv u (Ops.int 1);
@@ -459,7 +480,7 @@ let cdivs () =
     cdiv (v ~dtype:Weak_int "k" 0 100) (Ops.int 8);
     cmod m (Ops.int 4);
     cdiv (v ~dtype:Int64 "l" 0 100)
-      (Ops.const (`Int (Z.of_int64 Int64.max_int)));
+      (Ops.const (`Int (Bigint.of_int64 Int64.max_int)));
   ]
 
 let negations () =
@@ -491,18 +512,19 @@ let comparisons () =
 let extremes () =
   let x = param Int64 and y = param ~slot:1 Int64 in
   let c n = Ops.const (`Int n) in
-  let lo = Z.of_int64 Int64.min_int and hi = Z.of_int64 Int64.max_int in
-  let two_to_80 = Z.(shift_left one 80) in
+  let lo = Bigint.of_int64 Int64.min_int
+  and hi = Bigint.of_int64 Int64.max_int in
+  let two_to_80 = Bigint.(shift_left one 80) in
   Ops.O.
     [
       Ops.logical_not (x < c lo);
       Ops.logical_not (c hi < x);
       x * int (-1) < c lo;
       x * int (-1) < y * c lo;
-      (c hi < x) land (x < c (Z.succ lo));
-      (c lo < x) land (x < c Z.(lo + of_int 2));
-      (c Z.(hi - of_int 2) < x) land (x < c hi);
-      (c (Z.pred two_to_80) < x) land (x < c (Z.succ two_to_80));
+      (c hi < x) land (x < c (Bigint.succ lo));
+      (c lo < x) land (x < c Bigint.(lo + of_int 2));
+      (c Bigint.(hi - of_int 2) < x) land (x < c hi);
+      (c (Bigint.pred two_to_80) < x) land (x < c (Bigint.succ two_to_80));
     ]
 
 let mulaccs () =
@@ -574,32 +596,34 @@ let trunc_case =
   let* dt = of_list ~pp:Dtype.pp integers in
   let lo, hi =
     match dt with
-    | Weak_int -> (Z.of_int (-100_000), Z.of_int 100_000)
+    | Weak_int -> (Bigint.of_int (-100_000), Bigint.of_int 100_000)
     | _ -> int_bounds dt
   in
-  let point = map (fun k -> Z.(lo + k)) (below Z.(hi - lo)) in
+  let point = map (fun k -> Bigint.(lo + k)) (below Bigint.(hi - lo)) in
   let* a0 = point in
   let* a1 = point in
   let top = hi in
-  let lo, hi = (Z.min a0 a1, Z.max a0 a1) in
-  let* power = int_range 0 (min 12 (Z.numbits top - 1)) in
+  let lo, hi = (Bigint.min a0 a1, Bigint.max a0 a1) in
+  let* power = int_range 0 (min 12 (Bigint.numbits top - 1)) in
   let* d =
     frequency
       [
-        (1, constant Z.(shift_left one power));
-        (3, map Z.succ (below (Z.min (Z.pred top) (Z.of_int 100_000))));
+        (1, constant Bigint.(shift_left one power));
+        ( 3,
+          map Bigint.succ
+            (below (Bigint.min (Bigint.pred top) (Bigint.of_int 100_000))) );
       ]
   in
   let* remainder = bool in
   let* narrow = bool in
-  let+ a = map (fun k -> Z.(lo + k)) (below Z.(hi - lo)) in
+  let+ a = map (fun k -> Bigint.(lo + k)) (below Bigint.(hi - lo)) in
   (dt, (lo, hi), a, d, remainder, narrow)
 
 let pp_trunc_case ppf (dt, (lo, hi), a, d, remainder, narrow) =
-  Format.fprintf ppf "%a a=%a in [%a, %a] %s %a%s" Dtype.pp dt Z.pp_print a
-    Z.pp_print lo Z.pp_print hi
+  Format.fprintf ppf "%a a=%a in [%a, %a] %s %a%s" Dtype.pp dt Bigint.pp_print a
+    Bigint.pp_print lo Bigint.pp_print hi
     (if remainder then "cmod" else "cdiv")
-    Z.pp_print d
+    Bigint.pp_print d
     (if narrow then ", nothing to widen to" else "")
 
 let truncations_keep_values =
@@ -614,7 +638,7 @@ let truncations_keep_values =
       let r = late_with ~disable_fast_idiv:false ~renderer (ops [ Shr ]) e in
       cover "rewritten" (not (Ops.equal r e));
       equal const
-        (`Int (if remainder then Z.rem a d else Z.div a d))
+        (`Int (if remainder then Bigint.rem a d else Bigint.div a d))
         (at [ ("a", `Int a) ] r))
 
 (* The integer expressions the other late rules rewrite, over x, y and z in
@@ -698,18 +722,18 @@ let lowered_divisions =
           let d = Ops.int divisor in
           List.iter
             (fun n ->
-              let a = Z.of_int n and b = Z.of_int divisor in
+              let a = Bigint.of_int n and b = Bigint.of_int divisor in
               let check name e expected =
                 equal
                   ~msg:(Printf.sprintf "%d %s %d" n name divisor)
                   const (`Int expected)
                   (at [ ("x", `Int a) ] (lower e))
               in
-              let q = Z.fdiv a b in
-              check "cdiv" (Ops.alu x Cdiv [ d ]) (Z.div a b);
-              check "cmod" (Ops.alu x Cmod [ d ]) (Z.rem a b);
+              let q = Bigint.fdiv a b in
+              check "cdiv" (Ops.alu x Cdiv [ d ]) (Bigint.div a b);
+              check "cmod" (Ops.alu x Cmod [ d ]) (Bigint.rem a b);
               check "//" (Ops.div ~rounding:`Floor x d) q;
-              check "%" (Ops.mod_ x d) Z.(a - (b * q)))
+              check "%" (Ops.mod_ x d) Bigint.(a - (b * q)))
             values)
         divisors)
 

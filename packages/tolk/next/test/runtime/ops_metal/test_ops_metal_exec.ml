@@ -330,7 +330,8 @@ let execution =
           equal int 1 (List.length spans));
       slow "a launch size that reads a variable is set on each run" (fun () ->
           let v =
-            Ops.variable ~dtype:Int32 "v" (`Int Z.one) (`Int (Z.of_int 4))
+            Ops.variable ~dtype:Int32 "v" (`Int Bigint.one)
+              (`Int (Bigint.of_int 4))
           in
           let out = param (Single "METAL") 0 in
           let i = Ops.range (Sym v) [ 0 ] in
@@ -358,7 +359,8 @@ let execution =
       slow "each trip of a range sets the launch size that reads a variable"
         (fun () ->
           let v =
-            Ops.variable ~dtype:Int32 "v" (`Int Z.one) (`Int (Z.of_int 4))
+            Ops.variable ~dtype:Int32 "v" (`Int Bigint.one)
+              (`Int (Bigint.of_int 4))
           in
           let out = param (Single "METAL") 0 in
           let i = Ops.range (Sym v) [ 0 ] in

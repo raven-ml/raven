@@ -205,7 +205,8 @@ let command_words ~gpu ~queue ~command ~word v =
       let w = Ops.substitute w (List.map address getaddrs) in
       let vars =
         [
-          (Option.get (Interpreter.name (Hcq2.value device)), `Int (Z.of_int v));
+          ( Option.get (Interpreter.name (Hcq2.value device)),
+            `Int (Bigint.of_int v) );
         ]
       in
       match Interpreter.eval ~vars w with
@@ -213,12 +214,12 @@ let command_words ~gpu ~queue ~command ~word v =
           let n = Dtype.itemsize (Ops.dtype w) in
           let off =
             match Ops.arg off with
-            | Const (`Int z) -> Z.to_int z
+            | Const (`Int z) -> Bigint.to_int z
             | _ -> fail "a word's offset is a constant"
           in
           for k = 0 to n - 1 do
             Bytes.set blob (off + k)
-              (Char.chr (Z.to_int (Z.extract z (8 * k) 8)))
+              (Char.chr (Bigint.to_int (Bigint.extract z (8 * k) 8)))
           done
       | _ -> fail "a word is an integer")
     (Hcq2.Queue.words q);

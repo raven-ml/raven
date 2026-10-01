@@ -45,7 +45,7 @@ let int_dtypes =
   Dtype.[ Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64; Weak_int ]
 
 let gen_int_dtype = Gen.of_list ~pp:(Testable.pp dtype) int_dtypes
-let small = Gen.map (fun n -> `Int (Z.of_int n)) (Gen.int_range (-300) 300)
+let small = Gen.map (fun n -> `Int (Bigint.of_int n)) (Gen.int_range (-300) 300)
 let gen_int = Gen.map (fun n -> `Int n) Dtypes.integer
 
 let binary_ops =
@@ -152,7 +152,7 @@ let exec_alu =
           Law.commutative const (fun x y -> exact Weak_int o [ x; y ]) (a, b));
       prop "truncated division and remainder recompose the dividend"
         (Gen.pair gen_int gen_int) (fun (a, b) ->
-          assume (b <> `Int Z.zero);
+          assume (b <> `Int Bigint.zero);
           let q = exact Weak_int Op.Cdiv [ a; b ]
           and r = exact Weak_int Op.Cmod [ a; b ] in
           equal const a
@@ -161,13 +161,14 @@ let exec_alu =
         "floor division and remainder recompose the dividend, the remainder \
          signed as the divisor"
         (Gen.pair gen_int gen_int) (fun (a, b) ->
-          assume (b <> `Int Z.zero);
+          assume (b <> `Int Bigint.zero);
           let q = exact Weak_int Op.Floordiv [ a; b ]
           and r = exact Weak_int Op.Floormod [ a; b ] in
           equal const a
             (exact Weak_int Op.Add [ exact Weak_int Op.Mul [ q; b ]; r ]);
           match (r, b) with
-          | `Int r, `Int b -> is_true (Z.sign r = 0 || Z.sign r = Z.sign b)
+          | `Int r, `Int b ->
+              is_true (Bigint.sign r = 0 || Bigint.sign r = Bigint.sign b)
           | _ -> fail "integer remainder");
       test "a float division by zero is a float zero, weak or not" (fun () ->
           List.iter
@@ -222,7 +223,7 @@ let rec eval env u =
     match v with
     | `Int n when Dtype.is_int dt && not (Dtype.equal dt Weak_int) -> (
         match (Dtype.min dt, Dtype.max dt) with
-        | `Int lo, `Int hi -> Z.leq lo n && Z.leq n hi
+        | `Int lo, `Int hi -> Bigint.leq lo n && Bigint.leq n hi
         | _ -> true)
     | _ -> true
   in
@@ -234,7 +235,7 @@ let rec eval env u =
         match eval env (Ops.nth u 0) with
         | `Bool b ->
             if Dtype.is_bool dt then `Bool b
-            else `Int (if b then Z.one else Z.zero)
+            else `Int (if b then Bigint.one else Bigint.zero)
         | v -> v)
     | o, _ -> (
         match
@@ -249,7 +250,7 @@ let rec eval env u =
 
 let compare_value (v0 : Dtype.value) (v1 : Dtype.value) =
   match (v0, v1) with
-  | `Int a, `Int b -> Z.compare a b
+  | `Int a, `Int b -> Bigint.compare a b
   | `Bool a, `Bool b -> Bool.compare a b
   | `Float a, `Float b -> Float.compare a b
   | _ -> invalid_arg "values of different kinds"
@@ -270,8 +271,8 @@ let gen_wrapping =
        (Gen.int_range 0 60))
 
 let wrapping_case (dt, (o0, o1), (a, b, k)) =
-  let lo = Z.to_int (Dtype.Value.to_z (Dtype.min dt))
-  and hi = Z.to_int (Dtype.Value.to_z (Dtype.max dt)) in
+  let lo = Bigint.to_int (Dtype.Value.to_z (Dtype.min dt))
+  and hi = Bigint.to_int (Dtype.Value.to_z (Dtype.max dt)) in
   let start n = min hi (lo + (n mod (hi - lo + 1))) in
   let x0 = start a and y0 = start b in
   let x1 = min hi (x0 + 60) and y1 = min hi (y0 + 60) in
@@ -331,15 +332,16 @@ let bounds_group =
       test "a constant is its own bounds" (fun () ->
           check_bounds (Ops.int 42) (int_bounds 42 42));
       test "bounds are exact integers, whatever their size" (fun () ->
-          let huge = Z.shift_left Z.one 200 in
+          let huge = Bigint.shift_left Bigint.one 200 in
           let c n = Ops.const (`Int n) in
-          check_bounds Ops.O.(c huge - c (Z.pred huge)) (i 1, i 1);
+          check_bounds Ops.O.(c huge - c (Bigint.pred huge)) (i 1, i 1);
           check_bounds
             Ops.O.(c huge * c huge)
-            (`Int (Z.mul huge huge), `Int (Z.mul huge huge));
+            (`Int (Bigint.mul huge huge), `Int (Bigint.mul huge huge));
           check_bounds
             Ops.O.(c huge lsl int 100)
-            (`Int (Z.shift_left huge 100), `Int (Z.shift_left huge 100)));
+            ( `Int (Bigint.shift_left huge 100),
+              `Int (Bigint.shift_left huge 100) ));
       test "a constant at its type's edge has exact bounds" (fun () ->
           List.iter
             (fun (dt, n) ->
@@ -348,9 +350,9 @@ let bounds_group =
                 (`Int n, `Int n))
             Dtype.
               [
-                (Int64, Z.of_int64 Int64.max_int);
-                (Int64, Z.of_int64 Int64.min_int);
-                (Uint64, Z.pred (Z.shift_left Z.one 64));
+                (Int64, Bigint.of_int64 Int64.max_int);
+                (Int64, Bigint.of_int64 Int64.min_int);
+                (Uint64, Bigint.pred (Bigint.shift_left Bigint.one 64));
               ];
           check_bounds (Ops.param 7 Uint64) (Dtype.min Uint64, Dtype.max Uint64));
       test "a NaN constant has its type's bounds" (fun () ->
@@ -522,7 +524,9 @@ let bounds_group =
           is_true (Ops.exact Int8 [ i (-128); i 127 ]);
           is_false (Ops.exact Int8 [ i 0; i 128 ]);
           is_false (Ops.exact Uint8 [ i (-1) ]);
-          is_true (Ops.exact Weak_int [ i (-1); `Int (Z.shift_left Z.one 100) ]));
+          is_true
+            (Ops.exact Weak_int
+               [ i (-1); `Int (Bigint.shift_left Bigint.one 100) ]));
       test "overflows is whether the bounds leave the type" (fun () ->
           is_true (Ops.overflows (weak_var "x" 0 200) Int8);
           is_false (Ops.overflows (weak_var "x" (-128) 127) Int8);
@@ -535,15 +539,15 @@ let resolving =
   group "resolve"
     [
       test "to_z, to_float and to_bool read a literal" (fun () ->
-          equal z (Z.of_int 5) (Ops.to_z (Ops.int 5));
+          equal z (Bigint.of_int 5) (Ops.to_z (Ops.int 5));
           equal float_exact 1.5 (Ops.to_float (Ops.float 1.5));
           is_true (Ops.to_bool (Ops.bool true)));
       test "to_z reads a typed constant and an integer sum of constants"
         (fun () ->
-          equal z (Z.of_int 4) (Ops.to_z (Ops.int ~dtype:Int32 4));
-          equal z (Z.of_int 11)
+          equal z (Bigint.of_int 4) (Ops.to_z (Ops.int ~dtype:Int32 4));
+          equal z (Bigint.of_int 11)
             (Ops.to_z Ops.O.(Ops.int ~dtype:Int32 4 + int 7));
-          equal z (Z.of_int 2)
+          equal z (Bigint.of_int 2)
             (Ops.to_z Ops.O.(int 8 // Ops.int ~dtype:Int32 4)));
       test "to_bool decides comparisons of constants" (fun () ->
           is_true (Ops.to_bool Ops.O.(int 4 < int 7));
@@ -684,64 +688,68 @@ let divisibility =
   group "divisibility"
     [
       test "const_factor is a known divisor" (fun () ->
-          equal z (Z.of_int 42) (Ops.const_factor (Ops.int 42));
-          equal z (Z.of_int 6) (Ops.const_factor Ops.O.(int 30 + int 12));
-          equal z (Z.of_int 5) (Ops.const_factor Ops.O.(int 5 * int 7));
-          equal z (Z.of_int 3) (Ops.const_factor Ops.O.(x * int 3));
-          equal z Z.one (Ops.const_factor Ops.O.(x // int 4));
-          equal z (Z.of_int 4)
+          equal z (Bigint.of_int 42) (Ops.const_factor (Ops.int 42));
+          equal z (Bigint.of_int 6) (Ops.const_factor Ops.O.(int 30 + int 12));
+          equal z (Bigint.of_int 5) (Ops.const_factor Ops.O.(int 5 * int 7));
+          equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(x * int 3));
+          equal z Bigint.one (Ops.const_factor Ops.O.(x // int 4));
+          equal z (Bigint.of_int 4)
             (Ops.const_factor (weak_var ~multiple_of:4 "x" 16 32));
           let g = Ops.special (Int 8) "gidx0" in
-          equal z Z.one (Ops.const_factor g);
-          equal z (Z.of_int 3) (Ops.const_factor Ops.O.(g * int 3));
-          equal z (Z.of_int 3) (Ops.const_factor Ops.O.((g * int 3) + int 6));
-          equal z Z.one (Ops.const_factor Ops.O.((g * int 3) + int 1)));
+          equal z Bigint.one (Ops.const_factor g);
+          equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(g * int 3));
+          equal z (Bigint.of_int 3)
+            (Ops.const_factor Ops.O.((g * int 3) + int 6));
+          equal z Bigint.one (Ops.const_factor Ops.O.((g * int 3) + int 1)));
       test "divides divides a stack lane by lane" (fun () ->
           equal (option uop)
             (Some (Ops.v ~src:[ Ops.O.(x * int 1); Ops.O.(x * int 2) ] Op.Stack))
             (Ops.divides
                (Ops.stack Ops.O.[ x * int 2; x * int 4 ])
-               (Z.of_int 2));
+               (Bigint.of_int 2));
           is_none
             (Ops.divides
                (Ops.stack Ops.O.[ x * int 2; x * int 3 ])
-               (Z.of_int 2)));
+               (Bigint.of_int 2)));
       test "divides divides a product through its left factor first" (fun () ->
           let m = weak_var ~multiple_of:4 "m" 0 16 in
           equal (option uop)
             (Some Ops.O.(m // int 2 * x))
-            (Ops.divides Ops.O.(m * x) (Z.of_int 2));
-          is_none (Ops.divides Ops.O.(x + int 3) (Z.of_int 2)));
+            (Ops.divides Ops.O.(m * x) (Bigint.of_int 2));
+          is_none (Ops.divides Ops.O.(x + int 3) (Bigint.of_int 2)));
       test "const_factor of storage without a multiple is 1" (fun () ->
-          equal z Z.one
+          equal z Bigint.one
             (Ops.const_factor (Ops.param ~shape:(ints [ 4 ]) 0 Int32)));
       test "gcd rejects nothing" (fun () -> rejects (fun () -> Ops.gcd []));
       test "gcd of constants is their gcd" (fun () ->
           equal uop (Ops.int 2) (Ops.gcd [ Ops.int 6; Ops.int 4 ]));
       test "const_factor of a stack is the gcd of its lanes" (fun () ->
-          equal z (Z.of_int 2)
+          equal z (Bigint.of_int 2)
             (Ops.const_factor (Ops.stack Ops.O.[ x * int 2; x * int 4 ])));
       test "divides divides a known multiple" (fun () ->
           equal (option z)
-            (Some (Z.of_int 6))
+            (Some (Bigint.of_int 6))
             (Option.map Ops.const_factor
-               (Ops.divides (Ops.int 42) (Z.of_int 7)));
-          is_none (Ops.divides (Ops.int 42) (Z.of_int 5));
-          equal (option z) (Some Z.one)
+               (Ops.divides (Ops.int 42) (Bigint.of_int 7)));
+          is_none (Ops.divides (Ops.int 42) (Bigint.of_int 5));
+          equal (option z) (Some Bigint.one)
             (Option.map Ops.const_factor
-               (Ops.divides Ops.O.((x * int 6) + int 18) (Z.of_int 6)));
-          is_none (Ops.divides Ops.O.(weak_var "x" 15 45 * int 4) (Z.of_int 3));
-          is_some (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Z.of_int 4));
-          is_some (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Z.of_int 2));
-          equal (option uop) (Some x) (Ops.divides x Z.one));
+               (Ops.divides Ops.O.((x * int 6) + int 18) (Bigint.of_int 6)));
+          is_none
+            (Ops.divides Ops.O.(weak_var "x" 15 45 * int 4) (Bigint.of_int 3));
+          is_some
+            (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 4));
+          is_some
+            (Ops.divides (weak_var ~multiple_of:4 "x" 16 32) (Bigint.of_int 2));
+          equal (option uop) (Some x) (Ops.divides x Bigint.one));
       test "divides divides a float constant only into an integer" (fun () ->
-          is_none (Ops.divides (Ops.float 2.5) (Z.of_int 2));
+          is_none (Ops.divides (Ops.float 2.5) (Bigint.of_int 2));
           equal (option uop)
             (Some (Ops.float 2.))
-            (Ops.divides (Ops.float 4.) (Z.of_int 2)));
+            (Ops.divides (Ops.float 4.) (Bigint.of_int 2)));
       test "a typed constant is a cast, whose divisors are not known" (fun () ->
-          is_none (Ops.divides (Ops.int ~dtype:Int32 8) (Z.of_int 2));
-          equal z Z.one (Ops.const_factor (Ops.int ~dtype:Int32 8)));
+          is_none (Ops.divides (Ops.int ~dtype:Int32 8) (Bigint.of_int 2));
+          equal z Bigint.one (Ops.const_factor (Ops.int ~dtype:Int32 8)));
       test "pop_const splits off a constant operand" (fun () ->
           let e = Ops.O.(x + int 3) in
           equal (pair uop const) (x, i 3) (Ops.pop_const e);

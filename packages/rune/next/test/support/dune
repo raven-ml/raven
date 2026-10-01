@@ -15,7 +15,6 @@
   nx.cuda.device
   nx.nv.device
   nx.dtype
-  zarith
   (select
    metal.ml
    from

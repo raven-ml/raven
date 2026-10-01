@@ -329,7 +329,7 @@ let buffer slot =
     buffer_dtypes.(slot mod Array.length buffer_dtypes)
 
 let scalar (name, dtype) =
-  Ops.variable ~dtype name (`Int Z.zero) (`Int (Z.of_int 9))
+  Ops.variable ~dtype name (`Int Bigint.zero) (`Int (Bigint.of_int 9))
 
 let scalars =
   [

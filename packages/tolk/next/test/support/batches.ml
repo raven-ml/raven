@@ -36,7 +36,7 @@ let instruction c =
 let word u =
   if Ops.op u = Index then
     let base, off = Hcq2.unwrap_view (Ops.nth u 0) in
-    (base, off + (Z.to_int (Ops.to_z (Ops.nth u 1)) * Dtype.itemsize (Ops.dtype u)))
+    (base, off + (Bigint.to_int (Ops.to_z (Ops.nth u 1)) * Dtype.itemsize (Ops.dtype u)))
   else Hcq2.unwrap_view u
 
 let devices batch =
@@ -59,7 +59,7 @@ let run ?(finished = []) ?order batch =
   let named name what = List.exists (fun d -> Ops.expr (what d) = name) devices in
   let rec value u =
     match Ops.op u with
-    | Const -> Z.to_int (Ops.to_z u)
+    | Const -> Bigint.to_int (Ops.to_z u)
     | Load -> get (word (Ops.nth u 0))
     | Param when named (Ops.expr u) Hcq2.submitted -> submitted
     | Param when named (Ops.expr u) Hcq2.value -> submitted + 1

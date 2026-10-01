@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk_next
 
-let z n = `Int (Z.of_int n)
+let z n = `Int (Bigint.of_int n)
 let ints = List.map z
 let shape = List.map (fun n -> Ops.Int n)
 let cpu = Ops.Single "CPU"

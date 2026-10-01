@@ -164,7 +164,7 @@ let filled u =
           let element j : Dtype.value =
             let k = (((j * 7) + (slot * 3)) mod 11) - 3 in
             if Dtype.is_float dtype then `Float (float_of_int k)
-            else `Int (Z.of_int k)
+            else `Int (Bigint.of_int k)
           in
           Some (slot, Array.init (size * devices device) element)
       | _ -> None)

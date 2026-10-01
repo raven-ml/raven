@@ -186,8 +186,8 @@ let devices = function Some (Ops.Multi l) -> List.length l | _ -> 1
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else if Dtype.is_unsigned dtype then `Int (Z.of_int (k + 3))
-  else `Int (Z.of_int k)
+  else if Dtype.is_unsigned dtype then `Int (Bigint.of_int (k + 3))
+  else `Int (Bigint.of_int k)
 
 let storage u =
   List.filter_map
@@ -506,7 +506,9 @@ let rules =
           rejects ~because:"cycle" (fun () -> Rangeify.get_kernel_graph sink));
       test "a materialisation of a symbolic size takes its greatest size"
         (fun () ->
-          let v = Ops.variable "v" (`Int (Z.of_int 1)) (`Int (Z.of_int 16)) in
+          let v =
+            Ops.variable "v" (`Int (Bigint.of_int 1)) (`Int (Bigint.of_int 16))
+          in
           let r = Ops.range ~axis_type:Loop (Sym v) [ 0 ] in
           let r' = Ops.range ~axis_type:Loop (Sym v) [ 1 ] in
           let opts : Ops.bufferize_opts =

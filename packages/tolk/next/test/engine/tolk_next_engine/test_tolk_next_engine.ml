@@ -182,7 +182,7 @@ let kernel ?(name = "axpy") ?(size = 4) ?bound () =
       (Dtype.Value.of_int 100)
   in
   let n =
-    match bound with Some v -> Ops.bind n (`Int (Z.of_int v)) | None -> n
+    match bound with Some v -> Ops.bind n (`Int (Bigint.of_int v)) | None -> n
   in
   let i = Ops.range (Int size) [ 0 ] in
   let at b = Ops.index (buffer b) [ i ] in
@@ -252,9 +252,9 @@ let counts_in_a_loop (name, count) =
       let p =
         Engine.Program.load host (Codegen.to_program sink (Lazy.force clang))
       in
-      let out = Run.buffer host Int32 [| `Int Z.zero |] in
+      let out = Run.buffer host Int32 [| `Int Bigint.zero |] in
       Engine.Program.run p [ out ];
-      equal values [| `Int (Z.of_int count) |] (Run.values Int32 out))
+      equal values [| `Int (Bigint.of_int count) |] (Run.values Int32 out))
 
 let with_binary bytes prg =
   let srcs = Ops.src prg in
@@ -325,8 +325,8 @@ let program name = Golden.sink ("../../schedule/schedule/" ^ name ^ ".golden")
 let element dtype k : Dtype.value =
   if Dtype.is_float dtype then `Float (float_of_int k)
   else if Dtype.equal dtype Bool then `Bool (k > 0)
-  else if Dtype.is_unsigned dtype then `Int (Z.of_int (k + 3))
-  else `Int (Z.of_int k)
+  else if Dtype.is_unsigned dtype then `Int (Bigint.of_int (k + 3))
+  else `Int (Bigint.of_int k)
 
 let placement (p : Ops.param_arg) =
   match p.device with
@@ -544,7 +544,7 @@ let stores_through_a_bitcast () =
     Array.map (fun x -> Dtype.Value.to_float x +. 1.) (slot storage 3).before
   in
   let bits =
-    Array.map (fun x -> `Int (Z.of_int32 (Int32.bits_of_float x))) sums
+    Array.map (fun x -> `Int (Bigint.of_int32 (Int32.bits_of_float x))) sums
   in
   equal values
     (Array.map (Dtype.truncate Uint32) bits)
@@ -742,7 +742,9 @@ let plans_the_buffers_of_a_range ~through_a_view () =
 (* A copy out of a device, a copy into it, and the copy out again: the last copy
    reads what the second wrote. *)
 let copies_in_order () =
-  let bytes k = Array.init 16 (fun i -> `Int (Z.of_int (i * k land 0xff))) in
+  let bytes k =
+    Array.init 16 (fun i -> `Int (Bigint.of_int (i * k land 0xff)))
+  in
   let node d = Ops.new_buffer (Single d) 16 Uint8 in
   let device_side = node "CPU:1" and out = node "CPU" and fresh = node "CPU" in
   let linear =
@@ -832,7 +834,7 @@ let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) ?tag device
   let x = of_size 4 and w = of_size 32 in
   List.iter
     (fun dst ->
-      Buffer.copy ~src:(Run.buffer host Int32 [| `Int (Z.of_int at) |]) ~dst)
+      Buffer.copy ~src:(Run.buffer host Int32 [| `Int (Bigint.of_int at) |]) ~dst)
     slot.buffers;
   Engine.run ~vars s (slots storage);
   let num v = match v with `Float f -> f | _ -> fail "a float" in
@@ -1579,7 +1581,7 @@ let calls_a_function_of_the_host () =
   in
   Engine.run (Engine.link ~devices compiled) [||];
   Null_device.synchronize ();
-  equal values [| `Int (Z.of_int 5) |] (Run.values Int32 result)
+  equal values [| `Int (Bigint.of_int 5) |] (Run.values Int32 result)
 
 (* A vendor's storage of fewer bytes than its placeholder is refused at link,
    before any run could write past it. *)

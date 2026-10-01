@@ -4,7 +4,7 @@
 open Windtrap
 open Tolk_next
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 let int = Ops.int
 let float = Ops.float
 let pow2 n = Int.shift_left 1 n
@@ -114,7 +114,7 @@ let pm_lower_weak =
     let idx = Ops.variable ~dtype:Int64 "i" (i 0) (`Int hi) in
     Ops.index (Ops.param ~shape:[ Int size ] 0 Float32) [ Ops.valid idx flag ]
   in
-  let max_uint64 = Z.(pred (shift_left one 64)) in
+  let max_uint64 = Bigint.(pred (shift_left one 64)) in
   let custom = Ops.v Op.Custom ~arg:(Code { code = "n"; dtype = Weak_int }) in
   group "pm_lower_weak"
     [
@@ -124,7 +124,7 @@ let pm_lower_weak =
       test "an int no 64-bit integer holds cannot be lowered" (fun () ->
           raises_match (Exn.invalid_arg ?substring:None) (fun () ->
               rewrite Uop_weak.pm_lower_weak
-                (Ops.sink [ Ops.const (`Int (Z.succ max_uint64)) ])));
+                (Ops.sink [ Ops.const (`Int (Bigint.succ max_uint64)) ])));
       lower ~default_float:"half" "lower_a_float_to_the_default_float"
         Ops.O.(float 1.5 * float 2.0);
       lower "lower_range_arithmetic" Ops.O.(range * int 4);
@@ -154,13 +154,13 @@ let pm_lower_weak =
       lower "lower_a_weak_expression_under_a_committed_consumer"
         Ops.O.(small Int32 * (weak + int 1));
       lower "lower_a_gated_long_index_into_a_small_buffer_to_int32"
-        (gated_index 8 (Z.of_int 7));
+        (gated_index 8 (Bigint.of_int 7));
       lower "lower_a_gated_long_index_into_the_largest_int32_buffer_to_int32"
-        (gated_index (pow2 31) (Z.of_int (pow2 31 - 1)));
+        (gated_index (pow2 31) (Bigint.of_int (pow2 31 - 1)));
       lower "lower_a_gated_long_index_into_a_buffer_past_int32_keeps_int64"
-        (gated_index (pow2 31 + 1) (Z.of_int (pow2 31)));
+        (gated_index (pow2 31 + 1) (Bigint.of_int (pow2 31)));
       lower "lower_a_gated_long_index_into_a_huge_buffer_keeps_int64"
-        (gated_index (pow2 33) (Z.shift_left Z.one 32));
+        (gated_index (pow2 33) (Bigint.shift_left Bigint.one 32));
       lower "lower_a_gated_shrink_to_the_width_its_bounds_need"
         (let buf = Ops.param ~shape:[ Int (pow2 31 + 64) ] 0 Float32 in
          let n = var "i" 0 (pow2 28) in

@@ -24,7 +24,7 @@ let as_float v =
 
 let as_int v =
   match (v :> Dtype.const) with
-  | `Int n -> Z.to_int n
+  | `Int n -> Bigint.to_int n
   | v -> failf "%a is not an integer" (Testable.pp const) v
 
 let round dt f = as_float (Dtype.truncate dt (`Float f))
@@ -218,7 +218,7 @@ let bits =
           let eval f =
             as_int
               (Interpreter.eval
-                 ~params:[ (0, `Int (Z.of_int v)) ]
+                 ~params:[ (0, `Int (Bigint.of_int v)) ]
                  (f (x Dtype.Int32) n))
           in
           equal int left (eval T.shl);
@@ -238,7 +238,7 @@ let bits =
         [ 0; 1; 2; 10; 63; -1; -2; -10; -63 ] (fun q ->
           let v =
             Interpreter.eval
-              ~params:[ (0, `Int (Z.of_int q)) ]
+              ~params:[ (0, `Int (Bigint.of_int q)) ]
               (T.pow2if (x Dtype.Int32) Dtype.Float32)
           in
           equal float_exact (Float.ldexp 1. q) (as_float v));

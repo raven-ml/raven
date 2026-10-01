@@ -1,7 +1,7 @@
 open Windtrap
 open Tolk_next
 
-let z n = `Int (Z.of_int n)
+let z n = `Int (Bigint.of_int n)
 let cpu = Ops.Single "CPU"
 let write = list (triple int int Dtypes.value)
 let param slot = Ops.param ~device:cpu ~shape:[ Int 4 ] slot Int32

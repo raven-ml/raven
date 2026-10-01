@@ -48,7 +48,7 @@ let each_node table check =
 
 (* Nodes, as tests write them *)
 
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 let var ?(dtype = Dtype.Int32) name lo hi =
   Ops.variable ~dtype name (i lo) (i hi)

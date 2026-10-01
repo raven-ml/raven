@@ -190,7 +190,7 @@ let an_index_shared_with_a_value () =
 
 let shrink_indexing () =
   let storage = buffer 0 32
-  and a = Ops.variable "a" (`Int Z.zero) (`Int (Z.of_int 8)) in
+  and a = Ops.variable "a" (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
   let shrunk =
     Ops.v Shrink ~src:[ storage; Ops.O.(a + int 1); Ops.O.(a * int 2) ]
   in
@@ -267,7 +267,7 @@ let kernels file = lazy (Array.of_list (Ops.src (Golden.sink file)))
 let recorded = kernels "kernels.golden"
 let symbolic = kernels "symbolic_kernels.golden"
 let kernel file cell = Ops.src (Lazy.force file).(int_of_string (cell "src"))
-let n = Ops.variable "n" (`Int Z.one) (`Int (Z.of_int 8))
+let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8))
 let at_n value s = Ops.sym_infer s [ ("n", value) ]
 
 let recorded_estimates cell : Ops.estimates =

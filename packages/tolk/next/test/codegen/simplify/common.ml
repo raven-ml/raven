@@ -6,7 +6,7 @@ open Tolk_next
 module Pm = Ops.Pattern_matcher
 
 let uop = Uops.uop
-let i n = `Int (Z.of_int n)
+let i n = `Int (Bigint.of_int n)
 
 (* Passes *)
 
@@ -54,7 +54,7 @@ let gated_load valid idx =
 (* Inspection *)
 
 let ranges u = List.filter (fun n -> Ops.op n = Range) (Ops.toposort u)
-let size r = Z.to_int (Ops.to_z (Ops.nth r 0))
+let size r = Bigint.to_int (Ops.to_z (Ops.nth r 0))
 let sizes u = List.sort compare (List.map size (ranges u))
 
 let count op u =
@@ -80,7 +80,7 @@ let draw_value rng k dt lo hi : Dtype.value =
 
 let bound_int (v : Dtype.value) =
   match v with
-  | `Int z -> Z.to_int z
+  | `Int z -> Bigint.to_int z
   | `Float f -> int_of_float f
   | `Bool b -> Bool.to_int b
 
@@ -139,8 +139,8 @@ let binding rng k us =
             if List.mem_assoc name b.vars then Some b
             else
               match eval b (Ops.nth u 0) with
-              | `Int n when Z.(n > zero) ->
-                  let v = i (draw rng k 0 (Z.to_int n - 1)) in
+              | `Int n when Bigint.(n > zero) ->
+                  let v = i (draw rng k 0 (Bigint.to_int n - 1)) in
                   Some { b with vars = (name, v) :: b.vars }
               | _ -> None)
         | _ -> Some b)

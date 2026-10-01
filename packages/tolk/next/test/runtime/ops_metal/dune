@@ -5,7 +5,7 @@
  (name test_ops_metal)
  (modules test_ops_metal)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test zarith)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (sandbox always)
   (glob_files *.golden))
@@ -28,8 +28,7 @@
   tolk.next.engine
   tolk_next_test
   nx.device
-  nx.metal.device
-  zarith))
+  nx.metal.device))
 
 (rule
  (alias slow)

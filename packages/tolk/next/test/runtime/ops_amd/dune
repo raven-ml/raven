@@ -5,7 +5,7 @@
  (name test_ops_amd)
  (modules test_ops_amd)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test zarith)
+ (libraries windtrap tolk.next tolk_next_test)
  (deps
   (sandbox always)
   (glob_files *.golden))
@@ -21,13 +21,7 @@
 (executable
  (name test_ops_amd_exec)
  (modules test_ops_amd_exec)
- (libraries
-  windtrap
-  tolk.next
-  tolk.next.engine
-  nx.device
-  nx.amd.device
-  zarith))
+ (libraries windtrap tolk.next tolk.next.engine nx.device nx.amd.device))
 
 (rule
  (alias slow)

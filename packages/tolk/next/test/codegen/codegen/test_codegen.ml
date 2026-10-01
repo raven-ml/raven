@@ -245,7 +245,7 @@ let interpretable u =
 
 let bound k =
   List.map
-    (fun (name, v) -> (name, `Int (Z.of_int v)))
+    (fun (name, v) -> (name, `Int (Bigint.of_int v)))
     (Kernel_opts.variables k)
 
 (* The writes the interpreter gives [u] from the storage and variables that
@@ -345,7 +345,7 @@ let words ~dt ~st v =
   List.init
     (Dtype.itemsize dt / Dtype.itemsize st)
     (fun i ->
-      let word = Z.extract z (i * width) width in
+      let word = Bigint.extract z (i * width) width in
       Dtype.bitcast (unsigned st) st (`Int word))
 
 let of_words ~dt ~st ws =
@@ -353,8 +353,8 @@ let of_words ~dt ~st ws =
   let z =
     List.fold_left
       (fun (acc, i) w ->
-        (Z.logor acc (Z.shift_left (bits st w) (i * width)), i + 1))
-      (Z.zero, 0) ws
+        (Bigint.logor acc (Bigint.shift_left (bits st w) (i * width)), i + 1))
+      (Bigint.zero, 0) ws
     |> fst
   in
   Dtype.bitcast (unsigned dt) dt (`Int z)
@@ -723,8 +723,8 @@ let binary_of p =
 let ten_scalars () =
   let vars =
     List.init 10 (fun i ->
-        Ops.variable ~dtype:Int32 (Printf.sprintf "v%d" i) (`Int Z.zero)
-          (`Int (Z.of_int 100)))
+        Ops.variable ~dtype:Int32 (Printf.sprintf "v%d" i) (`Int Bigint.zero)
+          (`Int (Bigint.of_int 100)))
   in
   let out = Ops.param ~shape:[ Int 1 ] 0 Int32 in
   let sum = List.fold_left Ops.add (List.hd vars) (List.tl vars) in
@@ -861,7 +861,7 @@ let launches_reversed row =
     List.filter (is Special) (instructions row)
     |> List.map (fun u ->
         match (Ops.arg u, Ops.vmax u) with
-        | String name, `Int z -> (name, Z.to_int z + 1)
+        | String name, `Int z -> (name, Bigint.to_int z + 1)
         | _ -> invalid_arg "a hardware index is named and bounded")
     |> List.sort_uniq compare
   in
@@ -1339,16 +1339,16 @@ let divisions =
                        [ Ops.int ~dtype:Uint64 3 ];
                    ])));
       test "a division of 0 or 1 by 3 is 0" (fun () ->
-          let x = Ops.variable ~dtype:Int32 "x" (`Int Z.zero) (`Int Z.one) in
+          let x = Ops.variable ~dtype:Int32 "x" (`Int Bigint.zero) (`Int Bigint.one) in
           let lowered =
             Helpers.context fast_idiv (fun () ->
                 full_rewrite [ Ops.alu x Cdiv [ Ops.int 3 ] ])
           in
           List.iter
             (fun v ->
-              equal Dtypes.const ~msg:(string_of_int v) (`Int Z.zero)
+              equal Dtypes.const ~msg:(string_of_int v) (`Int Bigint.zero)
                 (Interpreter.eval
-                   ~vars:[ ("x", `Int (Z.of_int v)) ]
+                   ~vars:[ ("x", `Int (Bigint.of_int v)) ]
                    (Ops.nth lowered 0)))
             [ 0; 1 ]);
       test "a division by 7 times 64 shifts out the 64 first, in 32 bits"
@@ -1814,7 +1814,7 @@ let rounds_once (from, values) =
     (List.assoc 0 (Run.on_host prg [ (1, values) ]))
 
 let bfloat16_casts =
-  let integers l = Array.of_list (List.map (fun s -> `Int (Z.of_string s)) l) in
+  let integers l = Array.of_list (List.map (fun s -> `Int (Bigint.of_string s)) l) in
   group "casts to bfloat16 (D64)"
     [
       cases "an integer or a double rounds once on the host"
