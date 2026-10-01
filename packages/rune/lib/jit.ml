@@ -1760,7 +1760,7 @@ let rows_storage tt ~n ~numel ~stride =
 (* A row slot [slot] of [numel] elements, each device's, over the rows of the
    [n; ...] value [tt]: its storage when it holds them at the loop's row stride,
    or a copy padded to it (a whole row: see [stage_scan]). *)
-let add_rows_in_value st l ~slot ~numel ~n tt =
+let add_rows_in_value l ~slot ~numel ~n tt =
   let stride = row_stride (F.Tensor.val_dtype tt) numel in
   let node =
     match rows_storage tt ~n ~numel ~stride with
@@ -2725,7 +2725,7 @@ and stage_scan ?places ?(seen = []) st req : Scan.scan_res =
     let l = loop () in
     List.iter2
       (fun s (Nx.P x) ->
-        add_rows_in_value st l ~slot:s.s_node ~numel:(slot_numel s) ~n
+        add_rows_in_value l ~slot:s.s_node ~numel:(slot_numel s) ~n
           (tolk_of st x))
       x_slots req_xs;
     let pairs =
