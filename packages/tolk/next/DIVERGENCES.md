@@ -66,14 +66,18 @@ the Exclusions of `README.md`.
 ## D3. device.py and the ops_*.py files are split
 
 - **tinygrad:** `device.py`, `runtime/ops_*.py`.
-- **tolk.next:** `lib/device.ml` (the compiler half of `device.py`), waiting
-  for L7 for the `ops_*.py` files; `lib/uop/ops.ml:229` (the type
-  `param_arg`), `:3110` (`param_arg`), `:3131` (`new_buffer`).
+- **tolk.next:** `lib/device.ml` (the compiler half of `device.py`);
+  `lib/runtime/ops_metal.ml`, `ops_cuda.ml`, `ops_amd.ml` and `ops_nv.ml` (the
+  IR half of each `ops_*.py`); `engine/tolk_next_engine.ml:56` (`device`) and
+  the vendors `engine/metal.macos.ml`, `cuda.ml`, `amd.ml` and `nv.ml`;
+  `lib/uop/ops.ml:229` (the type `param_arg`), `:3225` (`param_arg`), `:3253`
+  (`new_buffer`).
 - **Differs:** tolk.next holds the compiler half: `Compiler`, the renderer
   and compiler selection of `Compiled`, and the IR half of each `ops_*.py`
   (queues, `pm_encode`, program data), all returning data. The lazy `Buffer`
-  and running a schedule are `tolk.next.engine`'s (L7), which has no
-  registry of devices by name; allocators, programs, drivers and profile
+  and running a schedule are `tolk.next.engine`'s, which has no registry of
+  devices by name: its caller maps each name to a device; allocators,
+  programs, drivers and profile
   events are nx.device's. So a node of the compiler holds no runtime state:
   `ParamArg` has no `buffer`, a `BUFFER` is named by its slot for the engine
   to bind, and `UOp.buffer`, `realized`, `is_realized`, `_buffer_view`,
@@ -82,9 +86,17 @@ the Exclusions of `README.md`.
   operation itself, `BUFFER` or `ALLOC`, so the specification's checks of
   `ParamArg.buffer` (`uop/spec.py:149,153,266,268`) hold by construction.
 - **Reason:** (c).
-- **Pinned by:** waiting for L6 and L7; for `Ops`: `Tolk_next.Ops › storage ›
-  new_buffer takes the next slot without one` and `Tolk_next.Ops › arguments ›
-  reprs.golden`, where a `BUFFER` prints and interns by its slot alone.
+- **Pinned by:** for `Ops`: `Tolk_next.Ops › storage › new_buffer takes the
+  next slot without one` and `Tolk_next.Ops › arguments › reprs.golden`, where
+  a `BUFFER` prints and interns by its slot alone; for the queues: the
+  `recorded cases` of `Tolk_next.Ops_metal`, `Tolk_next.Ops_cuda`,
+  `Tolk_next.Ops_amd` and `Tolk_next.Ops_nv`, which encode each vendor's
+  queues as nodes on a machine without its device; for the engine: the Engine
+  suite (`test/engine/tolk_next_engine`): `device › a name the map does not
+  hold is refused` and `refusals › link refuses a device the map does not
+  hold`, which a registry would resolve, and `refusals › run refuses a
+  parameter it binds no buffers`, which a `BUFFER` holding its buffer would
+  run.
 
 ## D4. Import cycles are broken
 
@@ -100,14 +112,16 @@ the Exclusions of `README.md`.
   - `schedule/__init__.py` against `engine.realize`, `engine/realize.py:262`
     against `hcq2`, and `tensor.py` against `engine.jit` and `engine.realize`;
   - `renderer/cstyle.py` imports the compilers and `ops_metal`.
-- **tolk.next:** waiting for L2 through L8, each break with its layer; for
-  `uop/ops.py`, `lib/uop/ops.ml:571` (`construction_check`), `:1683`
-  (`simplify_hook`), `:4446` (`Private`), `:1188` (`Make_elementwise`),
-  `:814` (`repr`), `:243` (`bufferize_opts`), `:261` (`Calls`);
-  `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
-  `lib/renderer/renderer.ml` (`Compiler`); `lib/schedule/prepare.ml`
-  (`contiguous_view`); `lib/schedule/schedule.ml` (`pm_flatten_linear`); and
-  `lib/codegen/codegen.ml:621` (`apply_opts`).
+- **tolk.next:** for `uop/ops.py`, `lib/uop/ops.ml:572`
+  (`construction_check`), `:1685` (`simplify_hook`), `:4614` (`Private`),
+  `:1190` (`Make_elementwise`), `:816` (`repr`), `:244` (`bufferize_opts`),
+  `:262` (`Calls`); `lib/uop/render.ml:202` (`render`), `:212` (`srender`);
+  `lib/renderer/renderer.ml:119` (`Compiler`); `lib/schedule/prepare.ml:665`
+  (`contiguous_view`); `lib/schedule/schedule.ml:164` (`pm_flatten_linear`);
+  `lib/codegen/codegen.ml:638` (`apply_opts`); `lib/engine/realize.ml:117`
+  (`lower_and_compile`); `lib/runtime/support/hcq2.ml:416` (`device`),
+  `:1875` (`pm_beam`), `:1892` (`compile_linear`); and
+  `lib/runtime/support/compiler_metal.ml` (`Compiler_metal`).
 - **Differs:**
   - the `UOp` methods that call a later module become functions of that
     module: `contiguous_view` and its matcher go to `Prepare`,
@@ -139,8 +153,9 @@ the Exclusions of `README.md`.
     README), so they need no break;
   - `device.py`'s `Compiler` and `CompileError` are `Renderer.Compiler`,
     since a renderer holds its compiler and `Device` follows `Renderer`;
-  - `apply_opts` takes the optimiser as an argument, and `Search` lands with
-    the engine; `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
+  - `apply_opts` takes the optimiser as an argument, and `Search` follows
+    `Postrange` and takes the timing of a kernel as its `measure` argument;
+    `Codegen.full_rewrite_to_sink` and `Codegen.to_program` take
     the beam search as their `beam` argument, a function of the width the
     kernel asks for, and raise when a kernel asks for one and none is given;
   - the engine has one order (schedule, realize, hcq2, jit), and each late
@@ -157,7 +172,7 @@ the Exclusions of `README.md`.
     `Ops_metal`, follows `Hcq2`.
 - **Reason:** (a). Each layer's review checks that its breaks are the
   smallest possible.
-- **Pinned by:** waiting for L5 through L8; for `Codegen`:
+- **Pinned by:** for `Codegen`:
   `Tolk_next.Codegen › beam search (D4) › a kernel that asks for a beam of
   width w is optimised by beam w` and `› raises Invalid_argument when a kernel
   asks for a beam and none is given`; for `Ops`: `Tolk_next.Ops › resolve ›
@@ -166,7 +181,20 @@ the Exclusions of `README.md`.
   `Symbolic`'s rules; `Tolk_next.Ops › printing › pretty.golden`;
   `Tolk_next.Ops › elementwise patterns › the pattern operators are the named
   pattern operations`; `Tolk_next.Ops › queue calls › pp_hcq_info formats
-  every field, as the record's repr`.
+  every field, as the record's repr`; for `Renderer`: `Tolk_next.Renderer ›
+  Compiler › compile raises what the toolchain rejects`, its
+  `Compile_error`; for `Prepare`: `Tolk_next.Prepare › contiguous_view › a
+  reshape keeps the order`; for `Schedule`: `Tolk_next.Schedule ›
+  pm_flatten_linear › Linears nested in Linears are inlined in order`; for
+  the engine's order: `Tolk_next.Realize › lower_and_compile with a beam
+  search › raises Invalid_argument for a kernel that asks for one when none is
+  given`, `Tolk_next.Hcq2 › compile_linear › makes each kernel ask for a beam
+  of the width BEAM sets`, which passes the search, and `› copies through the
+  halves of a staging buffer of the host where the queues cannot reach`, whose
+  caller describes the devices and their queues; for `Compiler_metal`:
+  `Tolk_next.Compiler_metal › MTLCompiler › compiles a kernel to a Metal
+  library`. Each calls the function where its break puts it, or passes the
+  late binding as an argument, so none compiles without the break.
 
 ## D5. Compilation workers are domains
 
