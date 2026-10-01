@@ -103,8 +103,13 @@ let gen_leaf =
         (Gen.triple gen_stroke gen_color gen_path);
     ]
 
+let pp_positions ppf xs =
+  let pp_sep ppf () = Format.fprintf ppf ";@ " in
+  Format.fprintf ppf "@[<1>[|%a|]@]" (Format.pp_print_array ~pp_sep pp_float) xs
+
 let gen_positions =
-  Gen.map Array.of_list (Gen.list ~size:(Gen.int_range 1 4) coord)
+  Gen.with_pp pp_positions
+    (Gen.map Array.of_list (Gen.list ~size:(Gen.int_range 1 4) coord))
 
 let rec gen_picture depth =
   if depth = 0 then gen_leaf
@@ -134,8 +139,9 @@ let rec gen_picture depth =
 let gen_picture = Gen.with_pp Picture.pp (gen_picture 3)
 
 (* Pictures of rectangles whose numbers are quarters below 2^9, stroked with
-   pens that reach half their width, so that each sum a box takes is exact in
-   any order: whether a box touches a clip then does not hang on a rounding. *)
+   pens that reach half their width, placed by quarters and scaled by 0.5 or 2,
+   so that each sum a box takes is exact in any order: whether a box touches a
+   clip then does not hang on a rounding. *)
 let quarter = Gen.map (fun n -> Float.of_int n /. 4.) (Gen.int_range (-400) 400)
 let quarter_size = Gen.map (fun n -> Float.of_int n /. 4.) (Gen.int_range 1 200)
 
@@ -145,7 +151,14 @@ let gen_quarter_rect =
     (Gen.pair (Gen.pair quarter quarter) (Gen.pair quarter_size quarter_size))
 
 let gen_quarter_positions =
-  Gen.map Array.of_list (Gen.list ~size:(Gen.int_range 1 4) quarter)
+  Gen.with_pp pp_positions
+    (Gen.map Array.of_list (Gen.list ~size:(Gen.int_range 1 4) quarter))
+
+let gen_quarter_placement =
+  Gen.with_pp Affine.pp
+    (Gen.map
+       (fun ((dx, dy), s) -> Affine.(translate dx dy * scale s s))
+       (Gen.pair (Gen.pair quarter quarter) (Gen.of_list [ 0.5; 1.; 2. ])))
 
 let rec gen_quarter_picture depth =
   let leaf =
@@ -168,6 +181,13 @@ let rec gen_quarter_picture depth =
           Gen.map
             (fun (q, p) -> Picture.clip q p)
             (Gen.pair gen_quarter_rect sub) );
+        ( 1,
+          Gen.map
+            (fun (m, p) -> Picture.transform m p)
+            (Gen.pair gen_quarter_placement sub) );
+        ( 1,
+          Gen.map (fun (a, p) -> Picture.opacity a p) (Gen.pair unit_float sub)
+        );
         ( 1,
           Gen.map
             (fun (xs, p) -> Picture.stamp xs (Array.map Float.neg xs) p)
@@ -407,18 +427,19 @@ let scaled_stamp_keeps_pens () =
     (Some (Box2.v (-1.) (-1.) 22. 2.))
     (Picture.bounds (Picture.stamp ~scales:[| 2. |] [| 0. |] [| 0. |] p))
 
-let stamp_is_its_instances (xs, p) =
+let stamp_is_its_instances (m, (xs, p)) =
   let ys = Array.map (fun x -> 1. -. x) xs in
   let instances =
     Array.to_list
       (Array.mapi
          (fun i x ->
-           Picture.bounds (Picture.transform (Affine.translate x ys.(i)) p))
+           Picture.bounds
+             (Picture.transform Affine.(m * translate x ys.(i)) p))
          xs)
   in
-  equal (option box2_near)
+  equal (option box2)
     (List.fold_left union None instances)
-    (Picture.bounds (Picture.stamp xs ys p))
+    (Picture.bounds (Picture.transform m (Picture.stamp xs ys p)))
 
 let clipped_stamp_is_its_instances (q, (xs, p)) =
   let ys = Array.map (fun x -> 1. -. x) xs in
@@ -430,7 +451,7 @@ let clipped_stamp_is_its_instances (q, (xs, p)) =
              (Picture.clip q (Picture.transform (Affine.translate x ys.(i)) p)))
          xs)
   in
-  equal (option box2_near)
+  equal (option box2)
     (List.fold_left union None instances)
     (Picture.bounds (Picture.clip q (Picture.stamp xs ys p)))
 
@@ -461,9 +482,9 @@ let bounds =
           equal (option box2)
             (union (Picture.bounds a) (Picture.bounds b))
             (Picture.bounds (Picture.group [ a; b ])));
-      prop "a translation moves the bounds" (Gen.triple coord coord gen_picture)
-        (fun (dx, dy, p) ->
-          equal (option box2_near)
+      prop "a translation moves the bounds"
+        (Gen.triple quarter quarter gen_quarter_picture) (fun (dx, dy, p) ->
+          equal (option box2)
             (Option.map (shift dx dy) (Picture.bounds p))
             (Picture.bounds (Picture.transform (Affine.translate dx dy) p)));
       test "a rotation bounds the rotated box" (fun () ->
@@ -513,7 +534,8 @@ let bounds =
             (Some (Box2.v 0. 0. 10. 10.))
             (Picture.bounds (Picture.clip q (Picture.group [ dot; far ]))));
       prop "a stamp is bounded by its instances"
-        (Gen.pair gen_positions gen_picture)
+        (Gen.pair gen_quarter_placement
+           (Gen.pair gen_quarter_positions gen_quarter_picture))
         stamp_is_its_instances;
       prop "a stamp under a clip is bounded by its instances under the clip"
         (Gen.pair gen_quarter_rect
@@ -532,6 +554,12 @@ let bounds =
           equal (option box2)
             (clipped (Picture.stamp ~scales:[| 1. |] [| 0. |] [| 0. |] two))
             (clipped (Picture.stamp [| 0. |] [| 0. |] two)));
+      test "a clip cuts each instance of a stamp in a stamp" (fun () ->
+          let q = Path.rect (Box2.v 12. 12. 6. 6.) in
+          let inner = Picture.stamp [| 0.; 20. |] [| 20.; 0. |] dot in
+          is_none ~pp:pp_box
+            (Picture.bounds
+               (Picture.clip q (Picture.stamp [| 0. |] [| 0. |] inner))));
       test "a stamp skips instances at non-finite positions" (fun () ->
           let p =
             Picture.stamp [| Float.nan; 50.; infinity |] [| 0.; 0.; 0. |] dot
