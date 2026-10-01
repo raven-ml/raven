@@ -429,15 +429,42 @@ let dma n r =
 
 (* Programs *)
 
+(* The resource manager's frame-buffer fact [index] of [g], in bytes. *)
+let fb_info n (g : Nvk.gpu) index =
+  let module F = D.Fb_info in
+  let (module R : D.RELEASE) = g.c.release in
+  let module G = R.Fb_get_info in
+  let p = P.create G.sizeof in
+  P.set p G.fb_info_list_size 1;
+  P.set p (P.elt_field G.fb_info_list 0 F.index) index;
+  n.rm.control n.obj.subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p);
+  P.get p (P.elt_field G.fb_info_list 0 F.data) * 1024
+
+(* The most memory the host can map for code: BAR1 under the kernel driver;
+   under PCI the memory BAR, unless it is small and memory the host maps is
+   system memory. *)
+let code_window n =
+  match n.gpu with
+  | Kernel_gpu g -> fb_info n g D.nv2080_ctrl_fb_info_index_bar1_size
+  | Pci_gpu p ->
+      if Pci_memory.small_bar p.memory then max_int else snd (Pci.bar p.pci 1)
+
 (* The cubin [binary], relocated and uploaded to memory of the device the host
-   writes, which it frees once unloaded. A cubin the device cannot run is
-   refused, and the device stays usable. *)
+   writes, which it frees once unloaded. A cubin the device cannot run, or
+   larger than that memory could ever hold, is refused, and the device stays
+   usable. *)
 let load n ~binary =
   match Cubin.load binary with
   | exception Failure why -> Error why
   | c -> (
       let bytes = String.length c.image in
       match alloc_mem n Visible bytes with
+      | None when bytes > code_window n ->
+          Error
+            (Printf.sprintf
+               "%d bytes of code, more than the %d the host can map (enable \
+                Resizable BAR in the firmware settings)"
+               bytes (code_window n))
       | None -> raise (Nx_device.Out_of_memory (Option.get n.dev, bytes))
       | Some mem ->
           register n mem;
@@ -669,17 +696,7 @@ let public_channel dev (c : Pushbuf.channel) =
 let budget n =
   match n.gpu with
   | Pci_gpu p -> Page_table.memory (Nvdev.mm p.nvdev)
-  | Kernel_gpu g ->
-      let module F = D.Fb_info in
-      let (module R : D.RELEASE) = g.c.release in
-      let module G = R.Fb_get_info in
-      let p = P.create G.sizeof in
-      P.set p G.fb_info_list_size 1;
-      P.set p
-        (P.elt_field G.fb_info_list 0 F.index)
-        D.nv2080_ctrl_fb_info_index_heap_size;
-      n.rm.control n.obj.subdevice D.nv2080_ctrl_cmd_fb_get_info_v2 (Some p);
-      P.get p (P.elt_field G.fb_info_list 0 F.data) * 1024
+  | Kernel_gpu g -> fb_info n g D.nv2080_ctrl_fb_info_index_heap_size
 
 (* Creates the device's RM objects, channels and runtime memory. [doorbell] maps
    the usermode page, given the usermode class. [taken undo] is given how to

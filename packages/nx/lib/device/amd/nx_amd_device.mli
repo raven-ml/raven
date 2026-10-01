@@ -57,9 +57,8 @@
     the device's {!Nx_device.arch}: the function [name] is the kernel whose
     descriptor is the symbol [name ^ ".kd"]. A code object is uploaded once
     while a program of it or its {!kernel}'s code is reachable
-    ({!Nx_device.Program.load}). Under {!Pci} its memory lies in the BAR: a load
-    that raises {!Nx_device.Out_of_memory} may need Resizable BAR enabled in the
-    firmware settings.
+    ({!Nx_device.Program.load}). A code object larger than the memory the host
+    can map is refused, naming Resizable BAR, which enlarges it.
 
     {b Faults and hangs.} A fault the GPU reports, such as a page fault, loses
     the device ({!Nx_device.Lost}) with the driver's report when a wait finds

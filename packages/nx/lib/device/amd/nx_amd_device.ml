@@ -410,15 +410,31 @@ let dma a r =
 
 (* Programs *)
 
+(* The most memory the host can map for code: the part of the GPU's memory it
+   maps under the kernel driver; under PCI the memory BAR, unless it is small
+   and memory the host maps is system memory. *)
+let code_window a =
+  match a.gpu with
+  | Kfd_gpu k -> k.visible
+  | Am_gpu g ->
+      if Pci_memory.small_bar g.memory then max_int else snd (Pci.bar g.pci 0)
+
 (* The code object [binary], relocated and uploaded to memory of the device the
    host writes, which it frees once unloaded. A code object the device cannot
-   run is refused, and the device stays usable. *)
+   run, or larger than that memory could ever hold, is refused, and the device
+   stays usable. *)
 let load a ~binary =
   match Code_object.image binary with
   | exception Failure why -> Error why
   | obj, img -> (
       let bytes = String.length img in
       match alloc_mem a Visible bytes with
+      | None when bytes > code_window a ->
+          Error
+            (Printf.sprintf
+               "%d bytes of code, more than the %d the host can map (enable \
+                Resizable BAR in the firmware settings)"
+               bytes (code_window a))
       | None -> raise (Nx_device.Out_of_memory (Option.get a.dev, bytes))
       | Some mem ->
           register a mem;

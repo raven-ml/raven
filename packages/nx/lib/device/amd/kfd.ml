@@ -93,6 +93,7 @@ type t = {
   props : (string * int) list;
   ip_ver : (int * Amdev.version) list;
   vram : int;
+  visible : int; (* of [vram], the bytes the host can map *)
   sysfs : string;
   mutable events : int array; (* signal, memory exception, hardware exception *)
   mutable doorbells : (nativeint * int64) option; (* the page, and its offset *)
@@ -161,19 +162,24 @@ let open_new node =
           (nbif_hwip, nbif_hwid, "NBIF", false);
         ]
   in
-  let vram =
-    List.fold_left
-      (fun acc bank ->
+  (* The banks of the GPU's memory: heap type 1 is the part the host can map, 2
+     the rest. *)
+  let banks =
+    List.filter_map
+      (fun bank ->
         let p =
           properties (Printf.sprintf "%s/mem_banks/%s/properties" dir bank)
         in
         match
           (List.assoc_opt "heap_type" p, List.assoc_opt "size_in_bytes" p)
         with
-        | Some (1 | 2), Some n -> acc + n
-        | _ -> acc)
-      0
+        | Some ((1 | 2) as heap), Some n -> Some (heap, n)
+        | _ -> None)
       (dir_entries (dir ^ "/mem_banks"))
+  in
+  let vram = List.fold_left (fun acc (_, n) -> acc + n) 0 banks in
+  let visible =
+    List.fold_left (fun acc (h, n) -> if h = 1 then acc + n else acc) 0 banks
   in
   let fd = Lazy.force kfd in
   let major, minor = version fd in
@@ -191,6 +197,7 @@ let open_new node =
     props;
     ip_ver;
     vram;
+    visible;
     sysfs;
     events = [||];
     doorbells = None;

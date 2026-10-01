@@ -1370,7 +1370,8 @@ module Driver : sig
         [Error why] if the driver rejects it. It runs with the device taken. A
         driver that has no memory for the code raises {!Nx_device.Out_of_memory}
         with nothing changed, and the load is tried again once unreachable
-        programs are collected. Without [load], the device loads no programs.
+        programs are collected; code that no collection could make room for is
+        [Error why]. Without [load], the device loads no programs.
       - [peer d' r] maps the region [r] of the device [d'] of the same machine
         for the device, for {!Buffer.borrow}: the region as the device's work
         addresses it, with the host address [r] has, if any, or [Error why] if

@@ -2975,7 +2975,8 @@ thread.
   `Nx_device.Driver.image`: the region of its code, how it finds a function, and
   how it unloads. A driver with no memory for the code raises `Out_of_memory`,
   and `Program.load` collects unreachable programs and tries again, as
-  `Buffer.create` does.
+  `Buffer.create` does. AMD and NV refuse code larger than the memory the host
+  can map at once, with an `Error` that names Resizable BAR.
 - **Breaking:** a placed value computes on its devices. `Nx_cpu.backend` runs
   where the host does the work (`Nx_device.runs_on_host`): a value on a GPU
   computes with `Rune.compiled`. Placements accept a backend that does not

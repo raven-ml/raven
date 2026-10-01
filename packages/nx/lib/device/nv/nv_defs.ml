@@ -104,6 +104,7 @@ let nv2080_ctrl_fb_flush_gpu_cache_flags_invalidate_yes = 1
 let nv2080_ctrl_fb_flush_gpu_cache_flags_flush_mode_full_cache = 1
 let nv2080_ctrl_cmd_fb_get_info_v2 = 0x20801303
 let nv2080_ctrl_fb_info_index_heap_size = 9
+let nv2080_ctrl_fb_info_index_bar1_size = 5
 let nv2080_ctrl_cmd_internal_bus_flush_with_sysmembar = 0x20800a70
 let nv2080_ctrl_cmd_internal_static_kgr_get_info = 0x20800a2a
 let nv2080_ctrl_cmd_internal_static_kgr_get_context_buffers_info = 0x20800a32
