@@ -1741,6 +1741,44 @@ let rollout ran w h xs =
 (* [constant_rows at] checks scans over rows computed from constants alone, of 4
    and 20 bytes, with a carry at [at]: the rows have no device until the program
    places them, padded to the loop's row stride. *)
+(* [both_gradients at] checks compiled gradients of a scan in its initial carry
+   and its rows, at [at], by grad and by a pullback, for rows of 16 bytes, which
+   the transpose's loop writes in the result's storage, and of 8, which it
+   copies: the two results share the loop, which runs once. *)
+let both_gradients at =
+  let scan (c, xs) =
+    snd
+      (Rune.scan'
+         ~f:(fun d y ->
+           let d = Nx.add (Nx.mul_s d 0.9) y in
+           (d, Nx.sin d))
+         ~init:c xs)
+  in
+  let both = Nx.Ptree.(pair tensor tensor) in
+  let check name g k =
+    test
+      (Printf.sprintf "%s in a scan's carry and rows of %d bytes" name (4 * k))
+      (fun () ->
+        let c = Nx.full Nx.float32 [| k |] 0.7 and xs = rows 6 k in
+        let ec, ex = g (c, xs) in
+        let jc, jx =
+          Rune.jit
+            Nx.Ptree.(both @-> returns both)
+            g
+            (Nx.place at c, Nx.place at xs)
+        in
+        equal near ec (host jc);
+        equal near ex (host jx))
+  in
+  let grad = Rune.grad both (fun a -> Nx.sum (scan a)) in
+  let pullback a =
+    let ys, back = Rune.vjp both Nx.Ptree.tensor scan a in
+    back (Nx.cos ys)
+  in
+  List.concat_map
+    (fun k -> [ check "a gradient" grad k; check "a pullback" pullback k ])
+    [ 4; 2 ]
+
 let constant_rows at =
   let check name rows ~carry ~ys =
     test name (fun () ->
@@ -1776,7 +1814,7 @@ let constant_rows at =
    program holds for its loop does not grow with its steps. A step makes at
    least one call, so either count runs several of the batches the engine
    reruns; [b] above 16 is slow. The scan's outputs are rows of 16 bytes, which
-   the program stacks and its result copies: the measure leaves both out. *)
+   the program writes in its result: the measure leaves the result out. *)
 let held_by_steps at ~than a b =
   let d = match Nx.Placement.devices at with [ d ] -> d | _ -> assert false in
   (if b > 16 then slow else test)
@@ -1793,7 +1831,7 @@ let held_by_steps at ~than a b =
         Gc.full_major ();
         let before = allocated d in
         let r = g xs in
-        let held = allocated d - before - (2 * Nx.nbytes r) in
+        let held = allocated d - before - Nx.nbytes r in
         ignore (host r);
         held
       in
@@ -1809,6 +1847,7 @@ let staged_scans d =
   group "staged scans"
     [
       group "constant rows" (constant_rows at);
+      group "gradients" (both_gradients at);
       staged at "stage, their step once, over rows 16 bytes apart" ~steps:once
         ~init:(zeros 4) decay (rows 7 4);
       staged at "stage over rows that are not, through a padded copy"
@@ -2238,6 +2277,7 @@ let scans =
   group "scans"
     [
       group "constant rows" (constant_rows Nx.Placement.host);
+      group "gradients" (both_gradients Nx.Placement.host);
       test "a scan folds inside the trace and equals eager" (fun () ->
           let f xs = snd (cumulative xs) in
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
