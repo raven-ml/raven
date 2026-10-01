@@ -580,7 +580,6 @@ let exp2 x = rpow_s (Nx_dtype.of_float (dtype x) 2.0) x
 let tan x = B.unary Tan x
 let square x = mul x x
 let sign x = B.unary Sign x
-let relu x = maximum_s x (Nx_dtype.zero (dtype x))
 
 (* [exp] only ever sees [-|x|], so it cannot overflow, and a negative [x]
    gives [e / (1 + e)], which keeps the subnormal tail where [1 / (1 + e)]
@@ -667,6 +666,12 @@ let where cond if_true if_false =
     let target = Shape.broadcast (Shape.broadcast st sf) sc in
     B.where (broadcast_to target cond) (broadcast_to target if_true)
       (broadcast_to target if_false)
+
+(* [x] where it is positive or NaN, and zero elsewhere, [-0.] included. *)
+let relu x =
+  where
+    (logical_or (greater_s x (Nx_dtype.zero (dtype x))) (cmpne x x))
+    x (zeros_like x)
 
 let fma a b c =
   let dt = dtype a in
@@ -2427,6 +2432,30 @@ let ewma ?axis ~alpha x =
    holds more than [x]'s rows, so the levels are fixed by [x]'s shape and
    nothing is read. *)
 
+(* The extreme [op] of [a] and [b] as a selection of one of them, so that a
+   range's extreme is one of its rows. Its values are {!maximum}'s and
+   {!minimum}'s: a NaN [a] first, then a NaN [b], and [-0.] below [0.]; at any
+   other tie the selection takes [b]. *)
+let selected_extreme op a b =
+  let ahead = match op with `Max -> cmplt b a | `Min -> cmplt a b in
+  let a_wins =
+    if not (Nx_dtype.is_float (dtype a)) then ahead
+    else
+      let zero = scalar_like a (Nx_dtype.zero (dtype a)) in
+      let negative_zero x = logical_and (cmpeq x zero) (cmplt (recip x) zero) in
+      let zeros = logical_and (cmpeq a zero) (cmpeq b zero) in
+      let signed =
+        match op with
+        | `Max -> logical_and (negative_zero b) (logical_not (negative_zero a))
+        | `Min -> logical_and (negative_zero a) (logical_not (negative_zero b))
+      in
+      logical_or (isnan a)
+        (logical_and
+           (logical_not (isnan b))
+           (logical_or ahead (logical_and zeros signed)))
+  in
+  where a_wins a b
+
 let reduce_ranges op ~lo ~hi x =
   if ndim x = 0 then err "reduce_ranges" "x is a scalar, which has no rows";
   if ndim lo <> 1 || not (Shape.equal (shape lo) (shape hi)) then
@@ -2444,7 +2473,10 @@ let reduce_ranges op ~lo ~hi x =
     if longest <= 0 then none
     else
       let combine =
-        match op with `Add -> add | `Max -> maximum | `Min -> minimum
+        match op with
+        | `Add -> add
+        | `Max -> selected_extreme `Max
+        | `Min -> selected_extreme `Min
       in
       let rec level k = if 1 lsl k >= longest - 1 then k else level (k + 1) in
       let top = level 0 in
