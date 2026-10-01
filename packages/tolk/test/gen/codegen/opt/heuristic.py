@@ -54,6 +54,15 @@ def last(*tensors): return kernels(*tensors)[-1]
 def empty(*shape, dtype=dtypes.float): return Tensor.empty(*shape, dtype=dtype)
 
 
+def decoded(n, k):
+    """An [n, k] matrix decoded by a table: each code byte is a row of two
+    values, scaled by its group of 32."""
+    table, codes, scales = empty(256, 2), empty(n, k // 2, dtype=dtypes.uint8), empty(n, k // 32)
+    rows = codes.cast(dtypes.int32).maximum(0).minimum(255).cast(dtypes.weakint)
+    values = Tensor(table.uop.index(rows.uop))
+    return (values.reshape(n, k // 32, 32) * scales.reshape(n, k // 32, 1)).reshape(n, k)
+
+
 def with_vars(*tensors):
     return [c.src[0] for c in Tensor.linear_with_vars(*tensors)[0].src if c.src[0].op is Ops.SINK][-1]
 
@@ -83,6 +92,8 @@ KERNELS = {
     "vecmat_of_exp": lambda: last(empty(1, 4096).exp() @ empty(4096, 1024)),
     "vecmat_1000": lambda: last(empty(1, 4096) @ empty(4096, 1000)),
     "matvec": lambda: last(empty(1024, 4096) @ empty(4096, 1)),
+    "vecmat_of_cast": lambda: last(empty(1, 4096, dtype=dtypes.bfloat16).float() @ empty(4096, 1024)),
+    "vecmat_decoded": lambda: last(empty(1, 4096) @ decoded(1024, 4096).T),
     "conv": lambda: last(empty(1, 16, 32, 32).conv2d(empty(32, 16, 3, 3), padding=1)),
     "conv_half": lambda: last(empty(1, 16, 32, 32, dtype=dtypes.half).conv2d(empty(32, 16, 3, 3, dtype=dtypes.half), padding=1)),
     "stack": lambda: last(Tensor.stack(empty(1024), empty(1024), empty(1024))),

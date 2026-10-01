@@ -57,6 +57,20 @@ let index_of x l =
 let idx b = get_idx (nth b 1)
 let indexes r b = Nodes.mem r (backward_slice (idx b))
 
+(* The load [u] reads through dtype conversions. *)
+let rec read u =
+  match op u with
+  | Op.Cast | Op.Bitcast -> read (nth u 0)
+  | Op.Index -> Some u
+  | _ -> None
+
+(* Whether [r] is a term of the index [i], alone or times a constant. *)
+let term_of r i =
+  List.exists
+    (fun t ->
+      t == r || (op t = Op.Mul && nth t 0 == r && op (nth t 1) = Op.Const))
+    (split_uop i Op.Add)
+
 (* first try the tensor cores *)
 let tensor_cores k =
   let use_tc = setting Helpers.use_tc and tc_opt = setting Helpers.tc_opt in
@@ -117,22 +131,34 @@ let matvec k =
         Some (nth r 0)
     | _ -> None
   in
-  match mulop with
-  | Some mulop
+  (* The vector is a load, read through dtype conversions, and the matrix a
+     computation of loads with no reduce, such as values decoded from codes by a
+     table. *)
+  let operands =
+    match mulop with
+    | Some m when op m = Op.Mul -> (
+        let matrix = nth m 1 in
+        match read (nth m 0) with
+        | Some vector
+          when op_in_backward_slice_with_self matrix [ Op.Index ]
+               && not (op_in_backward_slice_with_self matrix [ Op.Reduce ]) ->
+            Some (vector, matrix)
+        | _ -> None)
+    | _ -> None
+  in
+  match operands with
+  | Some (vector, matrix)
     when ren.has_local
          && Helpers.getenv "MV" 1 <> 0
          && (blocksize > 1 || threads_per_row > 1 || rows_per_thread > 1)
          && List.length (K.full_shape k) >= 2
-         && ren.has_shared
-         && op mulop = Op.Mul
-         && op (nth mulop 0) = Op.Index
-         && op (nth mulop 1) = Op.Index -> (
-      let idx0 = idx (nth mulop 0) and idx1 = idx (nth mulop 1) in
+         && ren.has_shared -> (
+      let idx0 = idx vector and matrix_ranges = ranges matrix in
       match K.ranges_of k [ Reduce ] with
       | first_reduce_rng :: _
-        when List.exists (( == ) first_reduce_rng) (split_uop idx0 Op.Add)
+        when term_of first_reduce_rng idx0
              && List.for_all
-                  (fun r -> Nodes.mem r (ranges idx1))
+                  (fun r -> Nodes.mem r matrix_ranges)
                   (Nodes.to_list (ranges idx0)) ->
           K.axes_of k [ Global ]
           |> List.find_map (fun global_idx ->

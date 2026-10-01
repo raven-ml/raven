@@ -2340,3 +2340,34 @@ tolk lowers as one, replaces it.
 - **Pinned by:** the Rangeify suite's `swiglu_down` and `attention` rows of
   `kernel_counts.golden` and their kernel goldens, from the equally patched
   tinygrad.
+
+## D81. The matrix-vector layout reads its operands through conversions and decoding
+
+- **tinygrad:** `codegen/opt/heuristic.py:61-79` (`hand_coded_optimizations`'
+  matrix-vector case), which applies only when the reduced product's two
+  operands are loads (`mulop.src[0].op is Ops.INDEX and mulop.src[1].op is
+  Ops.INDEX`) and the vector's index has the first reduce range as a term of
+  its sum.
+- **tolk:** `lib/codegen/opt/heuristic.ml:61` (`read`), `:68` (`term_of`) and
+  `:122` (`matvec`); `test/gen/tinygrad.patch`, which gives tinygrad the same
+  before the goldens are recorded.
+- **Differs:** the vector is a load read through dtype conversions (`CAST`,
+  `BITCAST`), and the matrix any computation of loads with no reduce, whose
+  ranges then stand for the matrix load's index's. The first reduce range may
+  be a term of the vector's index alone or times a constant. A product of two
+  loads is chosen as before.
+- **Reason:** (b): rune's quantised products (`Nx_quant.apply`), whose matrix
+  is MXFP4 codes decoded, by a table or by bit operations, and scaled by
+  their group, and whose vector is a bfloat16 activation widened to float32.
+  A decoded byte splits the reduce into a range over bytes and one over a
+  byte's two values, so the vector reads the byte range times 2. tinygrad
+  declines the case, as it does a vector read through a cast alone, and the
+  kernel then ran each row's whole reduce in one thread: gpt-oss-20b's expert
+  products on CUDA launched 960 threads, the down product taking 1.98 ms per
+  layer and gate-up 2.01 ms. On Metal (M1 Max), the down product of four
+  experts at gpt-oss's widths takes 0.65 ms where it took 2.2 ms with the
+  codes decoded by bit operations, and 0.64 to 0.77 ms where it took 2.8 to
+  8.2 ms with the table.
+- **Pinned by:** the Heuristic suite: `the optimisations chosen are
+  tinygrad's › applied_opts`, cases `vecmat_of_cast_*` and `vecmat_decoded_*`,
+  recorded from the equally patched tinygrad.

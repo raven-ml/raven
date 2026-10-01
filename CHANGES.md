@@ -913,6 +913,9 @@ thread.
 
 ### Tolk (new)
 
+- A compiled matrix-vector product whose vector is converted, or whose matrix
+  is decoded, such as `Nx_quant.apply`'s, spreads each row's reduction over a
+  group of threads: it ran each row in one thread.
 - **Breaking:** tolk is a new port of tinygrad's compiler, at the tinygrad
   commit its test generator pins, running on `nx.device`'s runtimes. It
   replaces the first port: `tolk.uop`, `tolk.frontend`, `tolk.nn`, `tolk.cpu`,

@@ -308,6 +308,35 @@ index 62c3191..fb2d746 100644
  
  def xpow(base:UOp, exponent:UOp) -> UOp:
    # start with b ** e = exp2(e * log2(b))
+diff --git a/tinygrad/codegen/opt/heuristic.py b/tinygrad/codegen/opt/heuristic.py
+index 712a2b7..440b7b3 100644
+--- a/tinygrad/codegen/opt/heuristic.py
++++ b/tinygrad/codegen/opt/heuristic.py
+@@ -60,13 +60,21 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
+ 
+   # should use matvec - TODO: adjust/tune based on the wide vs tall/large vs small mat
+   MV_BLOCKSIZE, MV_THREADS_PER_ROW, MV_ROWS_PER_THREAD = getenv("MV_BLOCKSIZE", 4), getenv("MV_THREADS_PER_ROW", 8), getenv("MV_ROWS_PER_THREAD", 4)
++  # the vector is a load, read through dtype conversions, and the matrix a computation of loads, such as values decoded from codes by a table
++  def read(u):
++    while u.op in (Ops.CAST, Ops.BITCAST): u = u.src[0]
++    return u if u.op is Ops.INDEX else None
++  def of_loads(u): return any(x.op is Ops.INDEX for x in u.toposort()) and not any(x.op is Ops.REDUCE for x in u.toposort())
+   if k.ren.has_local and getenv("MV",1) != 0 and (MV_BLOCKSIZE > 1 or MV_THREADS_PER_ROW > 1 or MV_ROWS_PER_THREAD > 1) and  \
+     k.reduceop is not None and k.reduceop.arg[0] is Ops.ADD and len(k.full_shape) >= 2 and k.ren.has_shared and \
+-    (mulop:=k.reduceop.src[0]).op is Ops.MUL and mulop.src[0].op is Ops.INDEX and mulop.src[1].op is Ops.INDEX:
+-    idx0, idx1 = mulop.src[0].src[1].get_idx(), mulop.src[1].src[1].get_idx()
++    (mulop:=k.reduceop.src[0]).op is Ops.MUL and (vector:=read(mulop.src[0])) is not None and \
++    of_loads(matrix:=mulop.src[1]):
++    idx0 = vector.src[1].get_idx()
+     if k.ranges_of(AxisType.REDUCE):
+       first_reduce_rng = k.ranges_of(AxisType.REDUCE)[0]
+-      if any(u is first_reduce_rng for u in idx0.split_uop(Ops.ADD)) and all(r in idx1.ranges for r in idx0.ranges):
++      # the vector reads along the first reduce range, at a constant stride
++      if any(u is first_reduce_rng or (u.op is Ops.MUL and u.src[0] is first_reduce_rng and u.src[1].op is Ops.CONST)
++             for u in idx0.split_uop(Ops.ADD)) and all(r in matrix.ranges for r in idx0.ranges):
+         for global_idx in k.axes_of(AxisType.GLOBAL):
+           if first_reduce_rng.src[0].divides(MV_THREADS_PER_ROW) is not None and k.full_shape[global_idx]%(MV_BLOCKSIZE*MV_ROWS_PER_THREAD) == 0:
+             if DEBUG >= 3:
 diff --git a/tinygrad/codegen/opt/postrange.py b/tinygrad/codegen/opt/postrange.py
 index f80c800..060072f 100644
 --- a/tinygrad/codegen/opt/postrange.py
