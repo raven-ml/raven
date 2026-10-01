@@ -191,15 +191,12 @@ let fail fn fmt = Printf.ksprintf (fun m -> invalid_arg (fn ^ ": " ^ m)) fmt
 
 module B = Nx_device.Buffer
 
-(* Where an input of a batch is: the buffers of a parameter's slot, storage the
-   link holds, or a stack of views. *)
-type source = Slot of int | Held of B.t list | Stack of Ops.t
-
-(* An input of a batch's address table, resolved at link: its storage, its
-   shard, its byte offset, the device whose address the table holds, and whether
-   the batch may write it. *)
+(* An input of a batch's address table, resolved at link: the parameter's slot
+   whose buffers it is, its shard, its byte offset, the device whose address the
+   table holds, and whether the batch may write it. Only a parameter's address
+   changes between runs, so the table's other addresses are written at link. *)
 type input = {
-  source : source;
+  slot : int;
   shard : int option;
   offset : int;
   on : Nx_device.t;
@@ -628,19 +625,18 @@ let link_batch ~device ~storage call patches =
   in
   let input (base, off, dev) =
     let base, shard, inner = Hcq2.unwrap_lane base in
-    let source =
-      match (Ops.op base, Ops.arg base) with
-      | Op.Param, Ops.Param p when Option.is_none (Ops.tag base) -> Slot p.slot
-      | (Op.Param | Op.Buffer), _ -> Held (Ops.Tbl.find storage base)
-      | _ -> Stack base
-    in
-    (* A stack's views are of other storage: it may be written. *)
-    let written =
-      match source with
-      | Slot _ | Held _ -> List.memq base info.writes
-      | Stack _ -> true
-    in
-    { source; shard; offset = off + inner; on = named dev; written }
+    match (Ops.op base, Ops.arg base) with
+    | Op.Param, Ops.Param p when Option.is_none (Ops.tag base) ->
+        {
+          slot = p.slot;
+          shard;
+          offset = off + inner;
+          on = named dev;
+          written = List.memq base info.writes;
+        }
+    | _ ->
+        invalid_arg
+          (Format.asprintf "Tolk_next_engine.link: an input of %a" Ops.pp base)
   in
   let inputs = Array.of_list (List.map input info.inputs) in
   let binders = Array.of_list (List.map binder host_program.vars) in
@@ -666,7 +662,7 @@ let link_batch ~device ~storage call patches =
     last = Array.make (List.length queues) 0;
   }
 
-let run_batch ~vars storage slots b =
+let run_batch ~vars slots b =
   let touches = ref b.touched and stages = ref b.stages in
   let written = ref b.written in
   (* The run's work reads and writes through its inputs' borrows: they are among
@@ -699,12 +695,7 @@ let run_batch ~vars storage slots b =
   in
   for k = 0 to Array.length b.inputs - 1 do
     let i = b.inputs.(k) in
-    let bs =
-      match i.source with
-      | Slot s -> slots.(s)
-      | Held bs -> bs
-      | Stack u -> holds storage slots vars u
-    in
+    let bs = slots.(i.slot) in
     let x = match i.shard with Some j -> List.nth bs j | None -> List.hd bs in
     touches := x :: !touches;
     b.addresses.(k) <-
@@ -917,13 +908,13 @@ let seconds f =
    its own, the batch reports each kernel's span once its devices synchronized.
    While a profile is taken elsewhere, the spans are that profile's, and the
    batch reports no time. *)
-let run_reported ~vars storage slots b =
+let run_reported ~vars slots b =
   let own =
     if Nx_device.Profile.enabled () then None
     else try Some (Nx_device.Profile.start ()) with Invalid_argument _ -> None
   in
   let events =
-    match run_batch ~vars storage slots b with
+    match run_batch ~vars slots b with
     | () -> (
         match own with
         | Some p -> Nx_device.Profile.stop p
@@ -1021,8 +1012,8 @@ let rec run_call ~vars t slots = function
               (Some (seconds call_program))
           else call_program ())
         lanes
-  | Batch b when reporting () -> run_reported ~vars t.storage slots b
-  | Batch b -> run_batch ~vars t.storage slots b
+  | Batch b when reporting () -> run_reported ~vars slots b
+  | Batch b -> run_batch ~vars slots b
   | Range { ranges; body } ->
       let rec trips vars = function
         | [] -> List.iter (run_call ~vars t slots) body
