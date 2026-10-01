@@ -7,10 +7,11 @@
 
     A plan is written in the small language below, which {!query} translates to
     the verbs and {!run} evaluates one row at a time over decoded [option]
-    values, comparing them with {!Talon_next.Type.compare_value}. Its
-    expressions are of one type: every operand of an operation has the type of
-    the operation's column operand, and a literal or [Null] stands only beside
-    an operand that reads a column, so that it takes that operand's type. *)
+    values, comparing them with {!Talon_next.Type.compare_value}. The operands
+    of an operation meet at their common type ({!Talon_next.Type.common}), and a
+    literal or [Null] stands only beside an operand that reads a column, so that
+    it takes that operand's type. Extension columns are read as their storage.
+*)
 
 open Talon_next
 
@@ -24,9 +25,9 @@ type 'a expr =
   | Lit : 'a Type.t * 'a -> 'a expr  (** A literal of the type it meets. *)
   | Null : 'a Type.t -> 'a expr
   | Int : iop * int expr * int expr -> int expr
-      (** At [int8] to [int32], [uint8] to [uint32]. *)
+      (** Meeting at [int8] to [int32], [uint8] to [uint32]. *)
   | Float : fop * float expr * float expr -> float expr
-      (** At [float32] and [float64]. *)
+      (** Meeting at [float32] and [float64]. *)
   | Cmp : cmp * 'a expr * 'a expr -> bool expr
   | And : bool expr * bool expr -> bool expr
   | Or : bool expr * bool expr -> bool expr
@@ -35,6 +36,8 @@ type 'a expr =
   | Is_null : 'a expr -> bool expr
   | Coalesce : 'a expr list -> 'a expr
   | Is_in : 'a list * 'a expr -> bool expr
+  | Store : 'a Type.t * 'a expr -> 'a expr
+      (** At a type that contains the operand's. *)
 
 (** The type for outputs. *)
 type out = Out : string * 'a expr -> out | Keep of string list
@@ -66,8 +69,11 @@ val schema : plan -> (string * Type.any) list
 (** The type for a column of values. *)
 type column = Column : 'a Type.t * 'a option array -> column
 
+val decode : Column.t -> column
+(** [decode c] is [c]'s values, an extension's as its storage's. *)
+
 val run : plan -> (string * column) list
-(** [run p] is [p]'s rows, column by column. *)
+(** [run p] is [p]'s rows, column by column, as {!decode} reads them. *)
 
 val values : 'a expr -> plan -> ('a array, int) result
 (** [values e p] is [e] on each of [p]'s rows, or [Error r] for the first row

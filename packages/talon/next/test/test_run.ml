@@ -26,9 +26,11 @@ let rec all = function
 
 (* Generated plans
 
-   Tables of the types below, and expressions of one type each, as the reference
-   writes them. Arithmetic stays within 32 bits, where the reference computes
-   exactly. *)
+   Tables of the types below, whose operands meet at their common type, and
+   expressions as the reference writes them. Arithmetic stays within 32 bits,
+   where the reference computes exactly. Each type that changes its values'
+   representation when it widens (decimals, clocks) appears once, since those
+   conversions are not lowered yet. *)
 
 let palette =
   Type.
@@ -36,40 +38,86 @@ let palette =
       Any int8;
       Any int16;
       Any int32;
-      Any uint8;
-      Any uint32;
       Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
+      Any uint64;
       Any float16;
       Any float32;
       Any float64;
       Any bool;
       Any string;
-      Any (categorical [| "a"; "b"; "é" |]);
+      Any (categorical [| "b"; "a" |]);
+      Any (categorical [| "b"; "a"; "é" |]);
       Any binary;
+      Any (decimal ~precision:10 ~scale:2);
       Any date;
+      Any (clock Us);
+      Any (duration Ns);
+      Any (datetime ~zone:"UTC" Ms);
+      Any (tensor Nx.float32 [| 2 |]);
       Any (list int64);
       Any (record [ ("x", Any int8); ("s", Any string) ]);
+      Any (ext ~name:"celsius" float64);
     ]
+
+(* [expressible s] is the columns of [s] that a handle reads: all but
+   extensions. *)
+let expressible s =
+  List.filter
+    (fun (_, Type.Any t) ->
+      Option.is_some (Kind.provably_equal (Type.kind t) (Type.kind t)))
+    s
+
+let rec drawn : type a. a Type.t -> int -> Column.t Gen.t =
+ fun ty n ->
+  match ty with
+  | Ext { storage; _ } ->
+      let ext c = Result.get_ok (Column.of_layout (Any ty) (Column.layout c)) in
+      Gen.map ext (drawn storage n)
+  | _ ->
+      Gen.map (Column.of_options ty)
+        (Gen.array ~size:(Gen.constant n) (Gen.option (value ty)))
 
 let table s =
   Gen.bind (Gen.int_range 0 12) (fun n ->
-      let column (name, Type.Any ty) =
-        Gen.map
-          (fun vs -> (name, Column.of_options ty vs))
-          (Gen.array ~size:(Gen.constant n) (Gen.option (value ty)))
+      let named (name, Type.Any ty) =
+        Gen.map (fun c -> (name, c)) (drawn ty n)
       in
-      Gen.map v (all (List.map column s)))
+      Gen.map v (all (List.map named s)))
 
 let schemas =
-  Gen.bind (Gen.int_range 1 4) (fun k ->
-      Gen.map
-        (List.mapi (fun i t -> (Printf.sprintf "c%d" i, t)))
-        (all (List.init k (fun _ -> Gen.of_list palette))))
+  let named = List.mapi (fun i t -> (Printf.sprintf "c%d" i, t)) in
+  Gen.bind (Gen.int_range 0 3) (fun k ->
+      Gen.map named
+        (all
+           (Gen.of_list (List.map snd (expressible (named palette)))
+           :: List.init k (fun _ -> Gen.of_list palette))))
 
 let names ty s =
   List.filter_map
     (fun (n, Type.Any t) -> if Type.equal t ty then Some n else None)
     s
+
+(* [kin ty s] is the types of [s]'s columns of [ty]'s kind; [meeting] those that
+   meet [ty], and [within] those that [ty] contains. *)
+let kin : type a. a Type.t -> _ -> a Type.t list =
+ fun ty s ->
+  List.filter_map
+    (fun (_, Type.Any t) ->
+      match Kind.provably_equal (Type.kind t) (Type.kind ty) with
+      | Some Equal -> Some (t : a Type.t)
+      | None -> None)
+    s
+
+let meeting ty s =
+  List.filter (fun t -> Option.is_some (Type.common [ ty; t ])) (kin ty s)
+
+let within ty s =
+  List.filter
+    (fun t -> Option.equal Type.equal (Type.common [ ty; t ]) (Some ty))
+    (kin ty s)
 
 (* [pair a b] draws an expression of [a] and one of [b], in either order. *)
 let pair a b =
@@ -77,18 +125,27 @@ let pair a b =
     (fun flip (x, y) -> if flip then (y, x) else (x, y))
     Gen.bool (Gen.pair a b)
 
-(* [anchored ty s d] reads a column of type [ty] of [s]; [operand ty s d] is
-   such an expression, a literal or a null, which meets one. *)
+(* [anchored ty s d] is an expression of type [ty] that reads a column of [s];
+   [operand ty s d] is one, a literal or a null, which meets it. *)
 let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
  fun ty s d ->
   let col = Gen.map (fun n -> R.Col (ty, n)) (Gen.of_list (names ty s)) in
   if d = 0 then col
   else
-    let two = pair (anchored ty s (d - 1)) (operand ty s (d - 1)) in
+    let narrower =
+      Gen.bind (Gen.of_list (within ty s)) (fun t -> anchored t s (d - 1))
+    in
+    let two =
+      Gen.one_of
+        [
+          pair (anchored ty s (d - 1)) (operand ty s (d - 1));
+          pair narrower (anchored ty s (d - 1));
+        ]
+    in
     let is k = Kind.provably_equal (Type.kind ty) k in
     let arith : a R.expr Gen.t list =
       match (is Kind.int, is Kind.float, ty) with
-      | Some Equal, _, (Int8 | Int16 | Int32 | Uint8 | Uint32) ->
+      | Some Equal, _, (Int8 | Int16 | Int32 | Uint8 | Uint16 | Uint32) ->
           let op = Gen.of_list R.[ Add; Sub; Mul; Div; Mod ] in
           [ map2 (fun op (a, b) -> R.Int (op, a, b)) op two ]
       | _, Some Equal, (Float32 | Float64) ->
@@ -100,6 +157,7 @@ let rec anchored : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
       (col
       :: map2 (fun c (a, b) -> R.If (c, a, b)) (predicate s (d - 1)) two
       :: Gen.map (fun (a, b) -> R.Coalesce [ a; b ]) two
+      :: Gen.map (fun a -> R.Store (ty, a)) narrower
       :: arith)
 
 and operand : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
@@ -114,8 +172,13 @@ and operand : type a. a Type.t -> _ -> int -> a R.expr Gen.t =
 
 and predicate s d : bool R.expr Gen.t =
   let compared =
-    Gen.bind (Gen.of_list s) (fun (_, Type.Any ty) ->
+    Gen.bind
+      (Gen.of_list (expressible s))
+      (fun (_, Type.Any ty) ->
         let a = anchored ty s d in
+        let other =
+          Gen.bind (Gen.of_list (meeting ty s)) (fun t -> anchored t s d)
+        in
         let op = Gen.of_list [ `Eq; `Ne; `Lt; `Le; `Gt; `Ge ] in
         let values = Gen.list ~size:(Gen.int_range 0 3) (value ty) in
         Gen.one_of
@@ -123,7 +186,7 @@ and predicate s d : bool R.expr Gen.t =
             map2
               (fun op (a, b) -> R.Cmp (op, a, b))
               op
-              (pair a (operand ty s d));
+              (Gen.one_of [ pair a (operand ty s d); pair a other ]);
             Gen.map (fun a -> R.Is_null a) a;
             map2 (fun vs a -> R.Is_in (vs, a)) values a;
           ])
@@ -144,7 +207,9 @@ and predicate s d : bool R.expr Gen.t =
       ]
 
 let output s name =
-  Gen.bind (Gen.of_list s) (fun (_, Type.Any ty) ->
+  Gen.bind
+    (Gen.of_list (expressible s))
+    (fun (_, Type.Any ty) ->
       let out e = R.Out (name, e) in
       Gen.frequency
         [
@@ -217,10 +282,10 @@ let split_plans = Gen.with_pp pp_plan (Gen.bind plans split)
 (* The run against the reference *)
 
 let holds t (n, R.Column (ty, vs)) =
-  equal ~msg:n
-    (array (option (G.witness ty)))
-    vs
-    (Column.options (Type.kind ty) (column t n))
+  let (R.Column (ty', vs')) = R.decode (column t n) in
+  match Kind.provably_equal (Type.kind ty') (Type.kind ty) with
+  | Some Equal -> equal ~msg:n (array (option (G.witness ty))) vs vs'
+  | None -> failf "%s holds %a, not %a" n Type.pp ty' Type.pp ty
 
 let agrees p =
   let t = run_ok (R.query p) in
@@ -278,8 +343,9 @@ let values_cases =
          let s = R.schema p in
          Gen.map
            (fun e -> (p, e))
-           (Gen.bind (Gen.of_list s) (fun (_, Type.Any ty) ->
-                Gen.map (fun e -> E e) (anchored ty s 1)))))
+           (Gen.bind
+              (Gen.of_list (expressible s))
+              (fun (_, Type.Any ty) -> Gen.map (fun e -> E e) (anchored ty s 1)))))
 
 let values_agree (p, E e) =
   match (R.values e p, Query.values (R.expr e) (R.query p)) with
@@ -387,11 +453,14 @@ let widening =
   let mixed =
     v
       [
-        ("a", Column.v Type.int8 [| -1; 5 |]);
-        ("b", Column.v Type.int16 [| -1; 300 |]);
-        ("c", Column.v Type.uint8 [| 255; 5 |]);
-        ("k", Column.v (Type.categorical [| "x"; "y" |]) [| "y"; "x" |]);
-        ("s", Column.v Type.string [| "y"; "z" |]);
+        ("a", Column.v Type.int8 [| -1; 5; 0 |]);
+        ("b", Column.v Type.int16 [| -1; 300; 0 |]);
+        ("c", Column.v Type.uint8 [| 255; 5; 0 |]);
+        ( "k",
+          Column.of_options
+            (Type.categorical [| "x"; "y" |])
+            [| Some "y"; Some "x"; None |] );
+        ("s", Column.v Type.string [| "y"; "z"; "x" |]);
       ]
   in
   let i = Col.int and s = Col.string in
@@ -400,15 +469,44 @@ let widening =
   in
   group "Operands of two types"
     [
-      compares "int8 = int16 compares at int16" Expr.(i "a" = i "b") [| t; f |];
-      compares "int8 < int16 compares at int16" Expr.(i "a" < i "b") [| f; t |];
-      compares "uint8 < int16 compares at int16" Expr.(i "c" < i "b") [| f; t |];
+      compares "int8 = int16 compares at int16"
+        Expr.(i "a" = i "b")
+        [| t; f; t |];
+      compares "int8 < int16 compares at int16"
+        Expr.(i "a" < i "b")
+        [| f; t; f |];
+      compares "uint8 < int16 compares at int16"
+        Expr.(i "c" < i "b")
+        [| f; t; f |];
       compares "a categorical = a string compares as text"
         Expr.(s "k" = s "s")
-        [| t; f |];
+        [| t; f; None |];
       compares "a categorical < a string compares as text"
         Expr.(s "k" < s "s")
-        [| f; t |];
+        [| f; t; None |];
+    ]
+
+(* NaN equals NaN and orders after every other value, and -0. equals 0. *)
+let float_order =
+  let floats =
+    v
+      [
+        ("x", Column.v Type.float64 [| Float.nan; 1.; -0.; Float.nan; 1. |]);
+        ("y", Column.v Type.float32 [| Float.nan; Float.nan; 0.; 2.; 1. |]);
+      ]
+  in
+  let x = Col.float "x" and y = Col.float "y" in
+  let compares name e expected =
+    test name (fun () -> rows_are Type.bool expected (bools e floats))
+  in
+  group "Float order"
+    [
+      compares "x = y" Expr.(x = y) [| t; f; t; f; t |];
+      compares "x <> y" Expr.(x <> y) [| f; t; f; t; f |];
+      compares "x < y" Expr.(x < y) [| f; t; f; f; f |];
+      compares "x <= y" Expr.(x <= y) [| t; t; t; f; t |];
+      compares "x > y" Expr.(x > y) [| f; f; f; t; f |];
+      compares "x >= y" Expr.(x >= y) [| t; f; t; t; t |];
     ]
 
 let failures =
@@ -485,7 +583,26 @@ let refusals =
                       Expr.[ "r" := over (rank (Col.int "a")) ]
                       (Query.of_table t))))
           @@ __POS_OF__ {| over (rank a) is not implemented yet |});
+      cases
+        ~name:(fun n ->
+          Printf.sprintf "a widening not lowered is refused over %d rows" n)
+        "Widening" [ 0; 3 ]
+        (fun n ->
+          let decimal precision scale =
+            Column.v
+              (Type.decimal ~precision ~scale)
+              (Array.init n (fun i ->
+                   Decimal.v ~unscaled:(Int64.of_int i) ~scale))
+          in
+          let t = v [ ("a", decimal 10 2); ("b", decimal 12 4) ] in
+          let p = Expr.(Col.decimal "a" < Col.decimal "b") in
+          expect
+            (message (fun () -> Query.run (Query.filter p (Query.of_table t))))
+          @@ __POS_OF__
+               {| widening decimal[10, 2] to decimal[12, 4] is not implemented yet |});
     ]
 
 let () =
-  exit (run "Run" [ laws; kleene; arithmetic; widening; failures; refusals ])
+  exit
+    (run "Run"
+       [ laws; kleene; arithmetic; widening; float_order; failures; refusals ])

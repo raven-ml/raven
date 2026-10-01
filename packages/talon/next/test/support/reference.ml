@@ -23,6 +23,7 @@ type 'a expr =
   | Is_null : 'a expr -> bool expr
   | Coalesce : 'a expr list -> 'a expr
   | Is_in : 'a list * 'a expr -> bool expr
+  | Store : 'a Type.t * 'a expr -> 'a expr
 
 type out = Out : string * 'a expr -> out | Keep of string list
 
@@ -51,17 +52,21 @@ let literal : type a s. a Type.t -> (a -> (a, s) Expr.t) option =
       | None, None, None -> None)
 
 let rec type_of : type a. a expr -> a Type.t = function
-  | Col (ty, _) | Lit (ty, _) | Null ty -> ty
-  | Int (_, a, _) -> type_of a
-  | Float (_, a, _) -> type_of a
-  | If (_, a, _) -> type_of a
-  | Coalesce es -> type_of (List.hd es)
+  | Col (ty, _) | Lit (ty, _) | Null ty | Store (ty, _) -> ty
+  | Int (_, a, b) -> common a b
+  | Float (_, a, b) -> common a b
+  | If (_, a, b) -> common a b
+  | Coalesce es -> Option.get (Type.common (List.map type_of es))
   | Cmp _ -> Type.bool
   | And _ -> Type.bool
   | Or _ -> Type.bool
   | Not _ -> Type.bool
   | Is_null _ -> Type.bool
   | Is_in _ -> Type.bool
+
+(* [common a b] is the type at which [a] and [b] meet. *)
+and common : type a. a expr -> a expr -> a Type.t =
+ fun a b -> Option.get (Type.common [ type_of a; type_of b ])
 
 (* Translation *)
 
@@ -106,6 +111,7 @@ let rec expr : type a. a expr -> (a, Expr.row) Expr.t = function
   | Is_null a -> Expr.is_null (expr a)
   | Coalesce es -> Expr.coalesce (List.map expr es)
   | Is_in (vs, a) -> Expr.is_in vs (expr a)
+  | Store (ty, a) -> Expr.store ty (expr a)
 
 let out = function
   | Out (n, e) -> Expr.(n := expr e)
@@ -211,11 +217,11 @@ let rec eval : type a. row -> a expr -> a option =
   | Col (ty, n) -> read ty (List.assoc n row)
   | Lit (ty, v) -> Some (stored ty v)
   | Null _ -> None
-  | Int (op, a, b) -> both (int (type_of a) op) a b
-  | Float (op, a, b) -> both (fun x y -> Some (float (type_of a) op x y)) a b
+  | Int (op, a, b) -> both (int (type_of e) op) a b
+  | Float (op, a, b) -> both (fun x y -> Some (float (type_of e) op x y)) a b
   | Cmp (op, a, b) ->
       both
-        (fun x y -> Some (compare op (Type.compare_value (type_of a) x y)))
+        (fun x y -> Some (compare op (Type.compare_value (common a b) x y)))
         a b
   | And (a, b) -> (
       match (eval row a, eval row b) with
@@ -231,6 +237,7 @@ let rec eval : type a. row -> a expr -> a option =
   | If (c, a, b) -> if eval row c = Some true then eval row a else eval row b
   | Is_null a -> Some (Option.is_none (eval row a))
   | Coalesce es -> List.find_map (eval row) es
+  | Store (_, a) -> eval row a
   | Is_in (vs, a) ->
       let ty = type_of a in
       let same x v = Type.compare_value ty x (stored ty v) = 0 in
@@ -243,13 +250,26 @@ let out_cells row = function
   | Out (n, e) -> [ (n, Cell (type_of e, eval row e)) ]
   | Keep ns -> List.map (fun n -> (n, List.assoc n row)) ns
 
+type column = Column : 'a Type.t * 'a option array -> column
+
+(* An extension's values are read as its storage's. *)
+let storage : type a. a Type.t -> Type.any = function
+  | Ext { storage; _ } -> Any storage
+  | ty -> Any ty
+
+let decode c =
+  let (Type.Any st) = match Column.type_ c with Any ty -> storage ty in
+  let c = Result.get_ok (Column.of_layout (Any st) (Column.layout c)) in
+  Column (st, Column.options (Type.kind st) c)
+
 let table_rows t =
-  let column (n, Type.Any ty) =
-    Array.map
-      (fun v -> (n, Cell (ty, v)))
-      (Column.options (Type.kind ty) (column t n))
+  let column n =
+    let (Column (ty, vs)) = decode (column t n) in
+    Array.map (fun v -> (n, Cell (ty, v))) vs
   in
-  let columns = List.map column (Schema.columns (Talon_next.schema t)) in
+  let columns =
+    List.map column (List.map fst (Schema.columns (Talon_next.schema t)))
+  in
   List.init (rows t) (fun i -> List.map (fun c -> c.(i)) columns)
 
 let rec rows : plan -> row list = function
@@ -265,11 +285,10 @@ let rec rows : plan -> row list = function
       List.filteri (fun i _ -> i >= start && i - start < length) rs
   | Append (p, rest) -> rows p @ rows rest
 
-type column = Column : 'a Type.t * 'a option array -> column
-
 let run p =
   let rs = rows p in
   let column (n, Type.Any ty) =
+    let (Type.Any ty) = storage ty in
     ( n,
       Column
         (ty, Array.of_list (List.map (fun r -> read ty (List.assoc n r)) rs)) )

@@ -69,6 +69,15 @@ val make : Type.any -> ?valid:Nx.bool_t -> length:int -> data -> t
     Raises [Invalid_argument] if [d] is not [ty]'s storage, or if a part's
     length or [valid]'s is not [length]. *)
 
+val with_data : Type.any -> data -> t -> t
+(** [with_data ty d c] is the column of type [ty] with values [d] and [c]'s
+    nulls, which it does not count again: [c]'s values cast to [ty], or read as
+    another type of the same storage. As {!make}, it checks that [d] is [ty]'s
+    storage for [c]'s rows, and nothing about values.
+
+    Raises [Invalid_argument] if [d] is not [ty]'s storage for [length c] rows.
+*)
+
 val valid : t -> Nx.bool_t option
 (** [valid c] is [c]'s validity as a byte mask, [None] iff [c] has no null. *)
 
@@ -125,7 +134,3 @@ val canonical : t -> t
     past its length, at every depth. It is [c] itself when [c] is canonical, and
     one copy otherwise. Two canonical columns whose rows hold the same bytes,
     under their nulls included, have the same layout, byte for byte. *)
-
-val mask : Nx.bool_t -> t -> t
-(** [mask m c] is [c] null where [m] is [false], with zeros or empty rows under
-    the new nulls. *)

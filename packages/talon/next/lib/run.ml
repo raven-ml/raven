@@ -82,20 +82,24 @@ let select q outputs input s =
       let cs, f = eval (Eval.frame b) in
       (cut q b f cs, f))
 
+(* Where [derive] takes a column of its result from. *)
+type source = Output of int | Input of int
+
 let derive q outputs input s =
   let eval = Eval.outputs (Query.schema input) outputs in
-  let names = List.map fst outputs
-  and inputs = Schema.names (Query.schema input) in
-  let column b outs n =
-    match List.assoc_opt n outs with
-    | Some c -> c
-    | None ->
-        (Table.columns b).(Option.get (List.find_index (String.equal n) inputs))
+  let index n ns = List.find_index (String.equal n) ns in
+  let outs = List.map fst outputs and ins = Schema.names (Query.schema input) in
+  let source n =
+    match index n outs with
+    | Some i -> Output i
+    | None -> Input (Option.get (index n ins))
   in
+  let sources = List.map source (Schema.names (Query.schema q)) in
   streaming q s (fun b ->
       let cs, f = eval (Eval.frame b) in
-      let outs = List.combine names cs in
-      (cut q b f (List.map (column b outs) (Schema.names (Query.schema q))), f))
+      let cs = Array.of_list cs and ins = Table.columns b in
+      let column = function Output i -> cs.(i) | Input j -> ins.(j) in
+      (cut q b f (List.map column sources), f))
 
 let filter q predicate input s =
   let eval = Eval.predicate (Query.schema input) predicate in
@@ -103,13 +107,7 @@ let filter q predicate input s =
       let n = Table.rows b in
       let keep, f = eval (Eval.frame b) in
       let keep =
-        match f with
-        | None -> keep
-        | Some f ->
-            let before =
-              Nx.less_s (Nx.arange Nx.int64 0 n 1) (Int64.of_int f.row)
-            in
-            Nx.logical_and keep before
+        match f with None -> keep | Some f -> Nx.shrink [| (0, f.row) |] keep
       in
       let idx = Nx.positions keep in
       let rows = Nx.dim 0 idx in

@@ -73,8 +73,7 @@ let column : type a. a Expr.typing -> a option array -> Column.t =
   | Column ty -> encoded ty vs
   | Extension d ->
       let c = encoded d.storage (Array.map (Option.map d.enc) vs) in
-      Column.make (Any d.type_) ?valid:(Column.valid c)
-        ~length:(Column.length c) (Column.data c)
+      Column.with_data (Any d.type_) (Column.data c) c
   | Value -> not_lowered "an OCaml value"
 
 let type_of : type a. a Expr.typing -> Type.any = function
@@ -82,39 +81,48 @@ let type_of : type a. a Expr.typing -> Type.any = function
   | Extension d -> Any d.type_
   | Value -> not_lowered "an OCaml value"
 
-(* [widen t c] is [c] at the type [t] that contains [c]'s: binding leaves each
-   operand at its own type, and its operation casts it to the type they meet
-   at. *)
-let widen (Type.Any ty as t) c =
-  let (Any from) = Column.type_ c in
-  let length = Column.length c and valid = Column.valid c in
-  match (from, ty, dtype ty, Column.data c) with
-  | _ when Type.equal from ty -> c
-  | Categorical _, Categorical _, _, data -> Column.make t ?valid ~length data
-  | Categorical dict, String, _, Fixed (P codes) ->
-      let codes = Nx.cast Nx.int64 codes in
-      let codes =
-        match valid with
-        | Some v -> Nx.where v codes (Nx.full Nx.int64 [| length |] (-1L))
-        | None -> codes
-      in
-      Column.take codes (Column.v Type.string (Iarray.to_array dict))
-  | _, _, Some (Dtype dt), Fixed (P x) ->
-      Column.make t ?valid ~length (Fixed (P (Nx.cast dt x)))
+(* [meet ta tb] is the type at which operands of the typings [ta] and [tb]
+   meet. *)
+let meet : type a. a Expr.typing -> a Expr.typing -> Type.any =
+ fun ta tb ->
+  match (ta, tb) with
+  | Column ta, Column tb -> Any (Option.get (Type.common [ ta; tb ]))
+  | ta, _ -> type_of ta
+
+(* [widen from t] converts a column of type [from] to the type [t] that contains
+   it: binding leaves each operand at its own type, and its operation casts it
+   to the type they meet at. The conversion is chosen when the expression
+   compiles, so one that no unit lowers yet is refused before any data is
+   read. *)
+let widen (Type.Any from) (Type.Any ty as t) =
+  match (from, ty, dtype from, dtype ty) with
+  | _ when Type.equal from ty -> Fun.id
+  | Categorical _, Categorical _, _, _ ->
+      fun c -> Column.with_data t (Column.data c) c
+  | Categorical dict, String, _, _ ->
+      let text = Column.v Type.string (Iarray.to_array dict) in
+      fun c ->
+        let codes = tensor Nx.int64 c in
+        let null = Nx.full Nx.int64 [| Column.length c |] (-1L) in
+        let codes =
+          Option.fold ~none:codes
+            ~some:(fun v -> Nx.where v codes null)
+            (Column.valid c)
+        in
+        Column.take codes text
+  | _, _, Some _, Some (Dtype dt) ->
+      fun c -> Column.with_data t (Fixed (P (tensor dt c))) c
   | _ ->
       not_lowered (Format.asprintf "widening %a to %a" Type.pp from Type.pp ty)
 
-(* [words a b] is the order words ({!Key.value}) of [a]'s and [b]'s rows, one
-   type, which compare as their values do. A compound value's word is a code
-   relative to the rows it is computed over, so those of both columns are
-   computed at once. *)
+(* [words a b] is the order words ({!Key.value}) of the rows of the compound
+   columns [a] and [b], of one type, which compare as their values do. A
+   compound value's word is a code relative to the rows it is computed over, so
+   those of both columns are computed at once. *)
 let words a b =
-  match Column.data a with
-  | Fixed (P x) when Nx.ndim x = 1 -> (Key.value Order a, Key.value Order b)
-  | _ ->
-      let w = Key.value Order (Column.concat [ a; b ]) in
-      let n = Column.length a in
-      (Nx.shrink [| (0, n) |] w, Nx.shrink [| (n, Nx.dim 0 w) |] w)
+  let w = Key.value Order (Column.concat [ a; b ]) in
+  let n = Column.length a in
+  (Nx.shrink [| (0, n) |] w, Nx.shrink [| (n, Nx.dim 0 w) |] w)
 
 (* Operations *)
 
@@ -130,13 +138,15 @@ let arithmetic : type a.
   let (Dtype dt) = Option.get (dtype ty) in
   let x = tensor dt a and y = tensor dt b in
   (* nx leaves a signed type's least value divided by [-1] unspecified, and
-     talon wraps it: [x / -1] is [neg x], and [x mod -1] is [x mod 1], 0. *)
+     talon wraps it: [x / -1] is [neg x], and [x mod -1] is [x mod 1], 0. Both
+     divide by [y] with [-1] replaced by [1]. *)
   let quotient f =
     if not signed then f x y
     else
       let one = Nx.ones_like y in
       let minus_one = Nx.equal y (Nx.neg one) in
-      Nx.where minus_one (f (Nx.neg x) one) (f x (Nx.where minus_one one y))
+      let q = f x (Nx.where minus_one one y) in
+      match op with Div -> Nx.where minus_one (Nx.neg x) q | _ -> q
   in
   let r =
     match op with
@@ -157,8 +167,9 @@ let arithmetic : type a.
   in
   fixed (Any ty) ?valid r
 
-let compare (op : Expr.compare) a b =
-  let x, y = words a b in
+(* [ordered op x y] compares [x] and [y] by talon's total order: floats with
+   every NaN equal, and after every other value. *)
+let ordered (type a b) (op : Expr.compare) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
   let r =
     match op with
     | `Eq -> Nx.equal x y
@@ -167,6 +178,27 @@ let compare (op : Expr.compare) a b =
     | `Le -> Nx.less_equal x y
     | `Gt -> Nx.greater x y
     | `Ge -> Nx.greater_equal x y
+  in
+  if not (Nx_dtype.is_float (Nx.dtype x)) then r
+  else
+    let nan_x = Nx.isnan x and nan_y = Nx.isnan y in
+    let only a b = Nx.logical_and a (Nx.logical_not b) in
+    match op with
+    | `Eq -> Nx.logical_or r (Nx.logical_and nan_x nan_y)
+    | `Ne -> only r (Nx.logical_and nan_x nan_y)
+    | `Lt -> Nx.logical_or r (only nan_y nan_x)
+    | `Le -> Nx.logical_or r nan_y
+    | `Gt -> Nx.logical_or r (only nan_x nan_y)
+    | `Ge -> Nx.logical_or r nan_x
+
+let compare op a b =
+  let r =
+    match (Column.data a, Column.data b) with
+    | Fixed (P x), Fixed q when Nx.ndim x = 1 ->
+        ordered op x (Nx.unpack (Nx.dtype x) q)
+    | _ ->
+        let x, y = words a b in
+        ordered op x y
   in
   boolean ?valid:(valid [ a; b ]) r
 
@@ -235,19 +267,27 @@ let rec coalesce = function
   | c :: cs -> (
       match Column.valid c with None -> c | Some v -> choose v c (coalesce cs))
 
-(* [is_in vs a] finds the words of [a]'s rows among the sorted words of the
-   values [vs]. *)
-let is_in vs a =
+(* [is_in vs] finds the words of a column's rows among the sorted words of the
+   values [vs]: words of fixed-width values sorted once, and codes of compound
+   values computed with the column's rows. *)
+let is_in vs =
   let m = Column.length vs in
-  if m = 0 then boolean (Nx.zeros Nx.bool [| Column.length a |])
-  else
-    let x, w = words a vs in
-    let s, _ = Nx.sort w in
+  let found s x a =
     let i = Nx.searchsorted ~side:`Left s x in
     let hit =
       Nx.equal (Nx.take ~indices:(Nx.minimum_s i (Int64.of_int (m - 1))) s) x
     in
     boolean (Option.fold ~none:hit ~some:(Nx.logical_and hit) (Column.valid a))
+  in
+  match Column.data vs with
+  | _ when m = 0 -> fun a -> boolean (Nx.zeros Nx.bool [| Column.length a |])
+  | Fixed (P x) when Nx.ndim x = 1 ->
+      let s, _ = Nx.sort (Key.value Order vs) in
+      fun a -> found s (Key.value Order a) a
+  | _ ->
+      fun a ->
+        let x, w = words a vs in
+        found (fst (Nx.sort w)) x a
 
 (* Compiling
 
@@ -319,23 +359,24 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Int (op, a, b), Column ty -> binary a b (arithmetic ty op)
   | Float (op, a, b), Column ty -> binary a b (arithmetic ty op)
   | Compare (op, a, b), _ ->
-      let t =
-        match (Expr.typing a, Expr.typing b) with
-        | Column ta, Column tb -> Type.Any (Option.get (Type.common [ ta; tb ]))
-        | ta, _ -> type_of ta
-      in
-      binary a b (fun a b -> compare op (widen t a) (widen t b))
+      let t = meet (Expr.typing a) (Expr.typing b) in
+      let wa = widen (type_of (Expr.typing a)) t
+      and wb = widen (type_of (Expr.typing b)) t in
+      binary a b (fun a b -> compare op (wa a) (wb b))
   | Logic (op, a, b), _ -> binary a b (logic op)
   | Not a, _ -> unary a (fun a -> boolean ?valid:(Column.valid a) (falsity a))
   | If (c, a, b), _ ->
       let t = type_of typing in
+      let wa = widen (type_of (Expr.typing a)) t
+      and wb = widen (type_of (Expr.typing b)) t in
       let c = compile st c and a = compile st a and b = compile st b in
-      fun env ->
-        choose (truth (get env c)) (widen t (get env a)) (widen t (get env b))
+      fun env -> choose (truth (get env c)) (wa (get env a)) (wb (get env b))
   | Is_null a, _ -> unary a is_null
   | Coalesce es, _ ->
-      let t = type_of typing and es = List.map (compile st) es in
-      fun env -> coalesce (List.map (fun e -> widen t (get env e)) es)
+      let t = type_of typing in
+      let operand e = (compile st e, widen (type_of (Expr.typing e)) t) in
+      let es = List.map operand es in
+      fun env -> coalesce (List.map (fun (e, w) -> w (get env e)) es)
   | Is_in (vs, a), _ ->
       let vs =
         column (Expr.typing a) (Array.of_list (List.map Option.some vs))
@@ -344,7 +385,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | Store (ty, a), _ -> (
       match Expr.typing a with
       | Value -> not_lowered (Format.asprintf "%a" Expr.pp e)
-      | _ -> unary a (widen (Any ty)))
+      | ta -> unary a (widen (type_of ta) (Any ty)))
   | _ -> not_lowered (Format.asprintf "%a" Expr.pp e)
 
 (* Calls *)
@@ -389,10 +430,7 @@ let values : type a.
     | Column ty -> Column.decoder ty
     | Extension d ->
         fun c ->
-          let c =
-            Column.make (Any d.storage) ?valid:(Column.valid c)
-              ~length:(Column.length c) (Column.data c)
-          in
+          let c = Column.with_data (Any d.storage) (Column.data c) c in
           Result.map
             (fun get i -> Option.map d.dec (get i))
             (Column.decoder d.storage c)

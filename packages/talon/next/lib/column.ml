@@ -169,6 +169,12 @@ let make (Type.Any ty as type_) ?valid ~length data =
       err "Column.make: a validity of length %d for %d rows" (Nx.numel m) length
   | _ -> with_validity type_ (Option.map Nx_bits.of_bool valid) ~length data
 
+let with_data (Type.Any ty as type_) data c =
+  if not (stores ty c.length data) then
+    err "Column.with_data: the data is not %a's storage for %d rows" Type.pp ty
+      c.length;
+  { c with type_; data }
+
 (* [retype ty c] is [c] as a column of [ty], a type with [c]'s storage: an
    extension type over [c]'s, or the reverse. *)
 let rec retype : type a. a Type.t -> t -> t =
@@ -647,10 +653,6 @@ and take indices c =
 let permute p c =
   let validity = Option.map (Nx_bits.take ~indices:p) c.validity in
   { c with validity; data = gather p c }
-
-let mask m c =
-  let rows = Nx.arange Nx.int64 0 c.length 1 in
-  take (Nx.where m rows (Nx.full Nx.int64 [| c.length |] (-1L))) c
 
 (* [bounds offsets] is the first and last of [offsets]. *)
 let bounds offsets =
