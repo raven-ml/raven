@@ -411,11 +411,11 @@ val lanes : axis -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
     gathers its own [x] across [a]. With no map named [a] around the call there
     is one lane, and [lanes a x] is [Nx.unsqueeze ~axes:[0] x].
 
-    [lanes a] is linear, and forward mode differentiates it as such: the tangent
-    of [lanes a x] is [lanes a dx]. [Nx.sum ~axes:[0] (lanes a x)] is the sum of
-    [x] over the lanes of [a].
-
-    Raises [Invalid_argument] when reverse mode differentiates [x]. *)
+    [lanes a] is linear, and both modes differentiate it as such: the tangent of
+    [lanes a x] is [lanes a dx], and under reverse mode inside the map named [a]
+    the cotangent of [x] is the calling lane's row of the sum over the lanes of
+    their cotangents, so a lane's gradient collects every lane's use of its [x].
+    [Nx.sum ~axes:[0] (lanes a x)] is the sum of [x] over the lanes of [a]. *)
 
 val lane_index : ?axis:axis -> unit -> (int32, Nx.int32_elt) Nx.t
 (** [lane_index ?axis ()] is the calling lane's index in the map named [axis],

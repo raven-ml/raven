@@ -170,6 +170,35 @@ let run : type r. tape -> r Nx.Op.t -> r =
   | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ ->
       nonlinear t op
 
+(* Gathering across the lanes of the map named [axis] is linear: its transpose
+   is the calling lane's row of the sum of every lane's cotangent, a
+   reduce-scatter. *)
+let lanes t axis x =
+  let n = Construct.perform (Lane_count axis) in
+  let shape = Nx.shape x in
+  let like =
+    Nx.broadcast_to
+      (Array.append [| n |] shape)
+      (Nx.unsqueeze ~axes:[ 0 ] (Nx.zeros_like x))
+  in
+  let pullback = function
+    | [ Nx.P ct ] ->
+        let ct = Nx.unpack (Nx.dtype x) (Nx.P ct) in
+        let summed =
+          Nx.sum ~axes:[ 0 ] (Construct.perform (Lanes (axis, ct)))
+        in
+        let index = Construct.perform (Lane_index (Some axis)) in
+        [
+          Nx.P
+            (Nx.reshape shape
+               (Nx.take ~axis:0 ~indices:(Nx.reshape [| 1 |] index) summed));
+        ]
+    | _ -> assert false (* One output. *)
+  in
+  match call t [ Nx.P x ] pullback [ Nx.P like ] with
+  | [ y ] -> Nx.unpack (Nx.dtype x) y
+  | _ -> assert false (* One output. *)
+
 let answer : type r. tape -> r Construct.t -> (unit -> r) option =
  fun t c ->
   match[@warning "@4@8"] c with
@@ -182,15 +211,8 @@ let answer : type r. tape -> r Construct.t -> (unit -> r) option =
               "Rune.Total.add: a custom_jvp tangent map adds a tangent under \
                reverse mode; a total takes values")
       else None
-  | Lanes (_, x) ->
-      if owns t x then
-        Some
-          (fun () ->
-            invalid_arg
-              (t.entry
-             ^ ": reverse mode does not differentiate a value gathered across \
-                a map's lanes"))
-      else None
+  | Lanes (axis, x) ->
+      if owns t x then Some (fun () -> lanes t axis x) else None
   | Scan _ | Remat _ | Barrier _ | Custom _ | Lane_index _ | Lane_count _ ->
       None
 
