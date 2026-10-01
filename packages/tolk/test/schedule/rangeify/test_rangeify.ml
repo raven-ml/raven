@@ -21,7 +21,7 @@ let kernel_graph name =
 (* Recorded graphs *)
 
 (* Gathers: tensor graphs of UOps in which an index by an integer value with a
-   shape, clamped into range, reads rows of its source (D73). *)
+   shape, clamped into range, reads rows of its source. *)
 let gathers =
   [
     "index_rows";
@@ -715,7 +715,7 @@ let laws =
         schedules_what_it_computes;
     ]
 
-(* Loops of calls (D60) *)
+(* Loops of calls *)
 
 (* A scan of three trips over parameters: a carry [c] of four floats, updated in
    place, and rows of four of [xs] and [ys]. Each trip's call stores [c * 2]
@@ -747,7 +747,7 @@ let scan_loop () =
   (Ops.sink [ Ops.after c [ e ]; Ops.after ys [ e ] ], r)
 
 let loops =
-  group "get_kernel_graph › loops of calls (D60)"
+  group "get_kernel_graph › loops of calls"
     [
       test "a loop of a precompiled call is no kernel" (fun () ->
           let sink, _ = scan_loop () in

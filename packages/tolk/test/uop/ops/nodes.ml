@@ -142,7 +142,7 @@ let arguments =
           equal int 16 p.align);
       test
         "param_arg takes a phase that is a multiple of the element size below \
-         16 (D54)" (fun () ->
+         16" (fun () ->
           equal int 12 (Ops.param_arg ~slot:0 ~phase:12 Dtype.Float32).phase;
           equal int 2 (Ops.param_arg ~slot:0 ~phase:2 Dtype.Float16).phase;
           List.iter
@@ -152,7 +152,7 @@ let arguments =
             [ (2, Dtype.Float32); (16, Dtype.Uint8); (-4, Dtype.Float32) ]);
       test
         "param_arg takes an alignment that is a power of two up to 16, and a \
-         phase below it (D54)" (fun () ->
+         phase below it" (fun () ->
           equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32).align;
           equal int 2
             (Ops.param_arg ~slot:0 ~phase:2 ~align:4 Dtype.Float16).phase;
@@ -169,7 +169,7 @@ let arguments =
             ]);
       test
         "pp_param_arg writes a phase that is not 0 and an alignment that is \
-         not 16 (D54)" (fun () ->
+         not 16" (fun () ->
           equal string "ParamArg(0, dtypes.float, 16, phase=4)"
             (str Ops.pp_param_arg
                (Ops.param_arg ~slot:0 ~size:16 ~phase:4 Dtype.Float32));
@@ -179,7 +179,7 @@ let arguments =
           equal string "ParamArg(0, dtypes.float, 16)"
             (str Ops.pp_param_arg
                (Ops.param_arg ~slot:0 ~size:16 Dtype.Float32)));
-      test "equal_arg tells apart parameters that differ in phase (D54)"
+      test "equal_arg tells apart parameters that differ in phase"
         (fun () ->
           is_false
             (Ops.equal_arg
@@ -187,7 +187,7 @@ let arguments =
                (Param (Ops.param_arg ~slot:0 Dtype.Float32))));
       test
         "param_like keeps its storage's phase, moved by a shrink, and knows it \
-         modulo what a symbolic start moves by (D54)" (fun () ->
+         modulo what a symbolic start moves by" (fun () ->
           let b = Ops.new_buffer ~phase:4 (Single "CPU") 16 Dtype.Float32 in
           let phase u =
             match Ops.arg (Ops.buf_uop (Ops.param_like u 0)) with
@@ -529,7 +529,7 @@ let identity =
           is_true (Sys.opaque_identity u0 == u1));
       test "zero and negative zero are different nodes" (fun () ->
           is_false (Ops.float 0. == Ops.float (-0.)));
-      (* D27. A NaN constant keeps its bits, where tinygrad makes every NaN
+      (* A NaN constant keeps its bits, where tinygrad makes every NaN
          constant the same. *)
       test "NaN constants of different bits are different nodes" (fun () ->
           is_false

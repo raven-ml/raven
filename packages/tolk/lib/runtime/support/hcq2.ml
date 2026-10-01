@@ -247,7 +247,7 @@ let signal_word d =
     ~tag:(Tag.String "timeline") [ 1 ] Dtype.Uint64
 
 (* Timeline values are variables of the host program, which the engine binds on
-   each run: only the runtime writes the submitted value (D1). *)
+   each run: only the runtime writes the submitted value. *)
 let timeline_var what d =
   variable ~dtype:Dtype.Uint64
     (to_name [ what; d ])
@@ -1573,10 +1573,11 @@ let encode_submit devices submit =
   cmds.submit ()
 
 (* The fence re-arms the batch's queue signals. Waiting for the batch's previous
-   run is the engine's, before it runs the host program (D1). *)
+   run is the engine's, before it runs the host program. *)
 let hcq_fence f =
   (* The re-arming follows the run's timeline values, as it follows the
-     timeline's loads without D1: it happens on every run, never at link. *)
+     timeline's loads where tolk's signal words differ from tinygrad's: it
+     happens on every run, never at link. *)
   let timelines =
     List.map submitted
       (List.sort_uniq String.compare

@@ -80,8 +80,7 @@ let graphs =
                 T.shl i 3; T.shr i 3; T.shl i 0; T.shr i 0; T.shl f 2; T.shr f 2;
               ]);
         cases ~name:fst
-          "a sine of an angle bounded below the switch-over is its fast form \
-           (D74)"
+          "a sine of an angle bounded below the switch-over is its fast form"
           floats (fun (_, dt) ->
             let angle lo hi =
               Ops.variable ~dtype:dt "a" (`Float lo) (`Float hi)
@@ -385,7 +384,7 @@ let specials =
               (at Dtype.Float32 T.xlog2 (Float.ldexp 1. (-149))));
         test
           "xlog2 of a negative number whose reciprocal overflows is NaN, and \
-           of -0. is -inf (D56)" (fun () ->
+           of -0. is -inf" (fun () ->
             equal const (`Float nan)
               (at Dtype.Float32 T.xlog2 (-.Float.ldexp 1. (-130)));
             equal const (`Float nan)
@@ -460,7 +459,7 @@ let inputs dt ~lo ~hi =
   Gen.with_pp Format.pp_print_float (Gen.map (round dt) (Gen.float_range lo hi))
 
 (* tinygrad checks sine below 1e8; a double is drawn from its whole range, which
-   the exact reduction keeps within an ulp or two (D31). *)
+   the exact reduction keeps within an ulp or two. *)
 let sine_bound = function Dtype.Float64 -> (-1e300, 1e300) | _ -> (-1e8, 1e8)
 
 let accurate name f reference ~bound =

@@ -9,15 +9,15 @@ position among them, the target and the renderer, and the settings it is
 rendered under; the source of case `c` is the text golden `c`.
 
 tolk writes each operation on a narrow scalar as a cast of itself to its
-type (D17), so the source of a kernel with such an operation is tinygrad's
+type, so the source of a kernel with such an operation is tinygrad's
 source for the kernel with those casts: the table's column `narrowed` gives
 the position of that kernel in `kernels`, and its text golden is its source.
 
-tolk writes a division, `Ops.FDIV`, on every target (D50), so a source is
+tolk writes a division, `Ops.FDIV`, on every target, so a source is
 the one tinygrad writes once its renderer lists `Ops.FDIV` as Clang does.
 
 Metal's vector types of chars, unsigned shorts and unsigned longs are named
-after the one-word names Metal gives their elements (D55), so a Metal source
+after the one-word names Metal gives their elements, so a Metal source
 is tinygrad's with `signed_char`, `unsigned_char`, `unsigned_short` and
 `unsigned_long` vectors named `char`, `uchar`, `ushort` and `ulong` ones.
 
@@ -469,12 +469,12 @@ def all_cases():
 CASES = all_cases()
 
 
-# D17: an operation is narrowed when it is inlined into its one user, which does
+# An operation is narrowed when it is inlined into its one user, which does
 # not store it, and computes on a scalar that C promotes: a char or a short, or
 # Clang's __fp16.
 
 def narrowing(ren, uops):
-    """`uops` with each operation D17 narrows followed by a cast to its type, or
+    """`uops` with each narrowed operation followed by a cast to its type, or
     None if it narrows none."""
     promoted = (dtypes.char, dtypes.uchar, dtypes.short, dtypes.ushort) + \
         ((dtypes.half,) if isinstance(ren, ClangRenderer) else ())
@@ -495,7 +495,7 @@ def narrowing(ren, uops):
 
 def kernel_of(name, make, setting):
     """The kernel of a case, and the kernel whose tinygrad source is its source
-    (D17), the same unless the case renders by default."""
+   , the same unless the case renders by default."""
     ren = renderer(name)
     uops = list(make(ren))
     return uops, (narrowing(ren, uops) if not setting else None) or uops
@@ -522,7 +522,7 @@ def cases():
     return ["case", "kernel", *TARGET_COLUMNS, "setting", "narrowed"], rows
 
 
-# D50: tolk writes a division, Ops.FDIV, on every target, as tinygrad's
+# Tolk writes a division, Ops.FDIV, on every target, as tinygrad's
 # Clang writes it; tinygrad's Metal, CUDA and HIP renderers do not list it, and
 # write it once it is added to their table as Clang has it.
 
@@ -531,7 +531,7 @@ def writing_division(ren):
     return ren
 
 
-# D55: Metal's vector types are named after one-word elements, where tinygrad
+# Metal's vector types are named after one-word elements, where tinygrad
 # joins the words of a two-word element's name with an underscore.
 
 METAL_VECTORS = {dtypes.char: "char", dtypes.uchar: "uchar", dtypes.ushort: "ushort", dtypes.ulong: "ulong"}

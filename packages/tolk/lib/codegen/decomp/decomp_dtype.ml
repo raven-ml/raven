@@ -682,7 +682,7 @@ and f2f_store st idx value fr to_ =
    without arithmetic: a load, a constant, a selection between such values,
    and stacks and lanes of them. A move keeps every code, a signalling NaN's
    included, where converting through the emulating float would quiet it
-   (D62). *)
+  . *)
 and moved ((fr, _) as ctx) x =
   let all xs =
     List.fold_right
@@ -714,7 +714,7 @@ and moved ((fr, _) as ctx) x =
 
 (* [x], a value of the emulating float, rounded to the emulated float [fr]: its
    bits encoded as [fr]'s, decoded back. Every emulated node holds a value of
-   [fr], so a cast or an operation rounds where nx rounds it (D65). *)
+   [fr], so a cast or an operation rounds where nx rounds it. *)
 and rounded (fr, to_) x =
   f2f (f2f (bitcast x (f2f_dt to_)) to_ fr) fr to_
 
@@ -820,7 +820,7 @@ and pm_float_decomp =
                   [fr]; arithmetic rounds its result. *)
                Some
                  (if Op.Set.mem (op x) moves then y else rounded ctx y));
-         (* A store of a move stores the bits moved (D62). *)
+         (* A store of a move stores the bits moved. *)
          rule_ctx
            (Upat.v ~op:(ops [ Op.Store ]) ~allow_any_len:true
               ~src:[ Upat.var "idx"; Upat.var "val" ]

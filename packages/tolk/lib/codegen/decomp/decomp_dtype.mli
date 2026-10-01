@@ -62,7 +62,7 @@ val narrow : Ops.t -> Dtype.t -> Ops.t
     {!Dtype.Float64} or an integer of 32 or 64 bits, more precise than a
     float32: then it is [x] rounded to odd, towards zero with the last bit set
     if bits were dropped, so that a narrow float rounded to nearest from it is
-    [x] rounded to nearest once (D9, D64). *)
+    [x] rounded to nearest once. *)
 
 (** {1:passes Passes} *)
 

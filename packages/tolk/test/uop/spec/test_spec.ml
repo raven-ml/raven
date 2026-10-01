@@ -253,7 +253,7 @@ let type_verify =
         ];
     ]
 
-(* Vectors in programs (D58) *)
+(* Vectors in programs *)
 
 (* An elementwise operation of a program on two lanes, and the same operation on
    one. *)
@@ -269,7 +269,7 @@ let lanes op =
         Ops.where (flag "p") (fvar "a") (fvar "c") )
 
 let vectors =
-  group "vectors in programs (D58)"
+  group "vectors in programs"
     [
       cases "a program has no elementwise operation on a vector"
         ~name:(function `Add -> "add" | `Cast -> "cast" | `Where -> "where")
@@ -333,7 +333,7 @@ let construction =
               else rejects (fun () -> with_spec 2 rebuild));
     ]
 
-(* Loops of calls in the kernel graph (D60) *)
+(* Loops of calls in the kernel graph *)
 
 (* [row axis_type] is a row of four of twelve floats that moves with a range of
    three trips of [axis_type], with the range. *)
@@ -357,7 +357,7 @@ let kernel_graph_judges axis_type =
   List.map (judge Spec.kernel_graph) [ e; v; Ops.nth v 1; r ]
 
 let loops =
-  group "kernel_graph › loops of calls (D60)"
+  group "kernel_graph › loops of calls"
     [
       test "accepts a loop of a call over a loop range" (fun () ->
           equal (list verdict)
@@ -380,7 +380,7 @@ let loops =
                Ops.O.(var ~dtype:Weak_int "n" 0 8 + int 1)));
     ]
 
-(* Arguments against their parameters (D54) *)
+(* Arguments against their parameters *)
 
 (* A call, in a loop of three trips, of a body adding one to its parameter of
    four floats, whose start is known to [align] bytes, on rows [stride] floats
@@ -404,7 +404,7 @@ let call_on_rows ~align stride =
   Ops.call ~precompile:true body [ row ]
 
 let arguments =
-  group "kernel_graph › arguments against their parameters (D54)"
+  group "kernel_graph › arguments against their parameters"
     [
       test "refuses a row a float apart for a parameter that starts on 16 bytes"
         (fun () ->

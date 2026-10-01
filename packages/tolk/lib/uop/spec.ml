@@ -403,7 +403,7 @@ let program : t =
        (fun () -> [
          (* Every elementwise operation on values is on scalars: renderers whose
             vectors are structs without arithmetic cannot write one on a vector
-            (D58). A bitcast of memory views it, and a node without a shape is
+           . A bitcast of memory views it, and a node without a shape is
             judged by the other rules. *)
          decide (Upat.v ~op:Op.Set.elementwise ~name:"x" ()) "x" (fun x ->
              match (addrspace x, shape_opt x) with

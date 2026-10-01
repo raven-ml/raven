@@ -195,7 +195,7 @@ let sizes =
     ]
 
 let loops =
-  group "loops (D30)"
+  group "loops"
     [
       test "a range's addresses are integers, profiled or not" (fun () ->
           List.iter

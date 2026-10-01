@@ -463,7 +463,7 @@ let word_of dt =
 (* Where tolk departs from tinygrad, a value converts as tinygrad converts
    another, whose own golden row checks it.
 
-   D9. Narrow float conversions are IEEE conversions: a float that tinygrad's
+   Narrow float conversions are IEEE conversions: a float that tinygrad's
    float32 step rounds onto a bfloat16 tie converts as the bfloat16 above it.
 
    Excluded (README): CPython's refusal to convert an integer whose magnitude
@@ -496,10 +496,10 @@ let as_tinygrad dt cell = function
    data type. tinygrad departs from that on NaN words, and a row gives the word
    itself where
 
-   D10. A float8 NaN keeps its sign when decoded: tinygrad encodes e4m3's 0xFF
+   A float8 NaN keeps its sign when decoded: tinygrad encodes e4m3's 0xFF
    back as 0x7F;
 
-   D20. Storage keeps an e5m2 NaN's payload: tinygrad encodes every e5m2 NaN as
+   Storage keeps an e5m2 NaN's payload: tinygrad encodes every e5m2 NaN as
    0x7F of its sign;
 
    Excluded (README): CPython's struct packing every float16 NaN as the
@@ -517,7 +517,7 @@ let nan_word dt word =
 let reencoded dt word tinygrad =
   if nan_word dt word then `Int word else tinygrad
 
-(* D20: the e5m2 storage of a NaN is its quiet code, 0x7E of its sign, where
+(* The e5m2 storage of a NaN is its quiet code, 0x7E of its sign, where
    tinygrad stores 0x7F. *)
 let e5m2_nan = function
   | `Float f when Float.is_nan f ->
@@ -525,7 +525,8 @@ let e5m2_nan = function
   | _ -> None
 
 (* [row w read cell dt v f] checks [f v] against the golden row of [dt] and [v],
-   or, where D9 departs from tinygrad, against [f] of the value that [v]
+   or, where tolk's IEEE conversions of the narrow floats depart from
+   tinygrad, against [f] of the value that [v]
    converts as, which its own row checks. *)
 let row w read cell dt v f =
   match as_tinygrad dt cell v with
@@ -755,7 +756,7 @@ let storage =
         (fun (dt, word) ->
           let w = word_of dt in
           equal value word (Dtype.bitcast dt w (Dtype.bitcast w dt word)));
-      (* D10. A float8 NaN keeps its sign when decoded: tinygrad decodes e4m3's
+      (* A float8 NaN keeps its sign when decoded: tinygrad decodes e4m3's
          0xFF as a positive NaN. *)
       test "a NaN decodes with the sign of its bits" (fun () ->
           List.iter

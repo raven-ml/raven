@@ -163,7 +163,7 @@ let broadcast_and_devec_wmma b =
     Some (reshape (stack (List.map lane lanes)) (shape b))
 
 (* A sum's identity is the zero accumulator a WMMA starts from: the running sum
-   replaces it, so no addition of +0. stays in the loop (D24). *)
+   replaces it, so no addition of +0. stays in the loop. *)
 let wmma_accumulate wmma add =
   let acc = nth wmma 2 in
   let lane s = if is Op.Cast s then nth s 0 else s in
@@ -425,7 +425,7 @@ let merge_reduce_ends sink =
 
 (* A sum adds each product of its source into its running sum as one
    multiply-add, rounded once, where the renderer [ren] writes one for its type,
-   in the order it adds them unfused (D25). [fuses ren r x] is [true] iff the
+   in the order it adds them unfused. [fuses ren r x] is [true] iff the
    reduce [r] of [x] adds products that way. Its additions are tagged [fusable]
    while the products are indexed down to their operands, and [pm_fuse_products]
    fuses them. *)
@@ -566,7 +566,7 @@ let pm_cast_float_alu =
           else Some (replace u ~src:[ cast x (dtype u) ]));
     ])
 
-(* A sum's addition of a product is one multiply-add (D25): the product is the
+(* A sum's addition of a product is one multiply-add: the product is the
    second operand, the running sum the first. An addition that adds no product
    keeps its two roundings. *)
 let pm_fuse_products =
@@ -787,7 +787,7 @@ let full_rewrite_to_sink ?(optimize = true) ?beam ast ren =
   let sink = rewrite pm_fuse_products sink in
   (* floordiv+mod / dtype decomp (early) *)
   (* a multiply-add is a sum's alone, which pm_reduce_local makes: a product
-     and a sum elsewhere round apart (D25) *)
+     and a sum elsewhere round apart *)
   let supported_ops =
     ops
       (List.filter

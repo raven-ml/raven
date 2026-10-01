@@ -47,7 +47,7 @@ let cache =
                (ccache_off (fun () -> Compiler_amd.hip "gfx1100"))));
     ]
 
-(* Without comgr on the machine (D15) *)
+(* Without comgr on the machine *)
 
 let without_comgr =
   group "without comgr on the machine"
@@ -62,7 +62,7 @@ let without_comgr =
           | Some msg -> in_order ~subs:[ "comgr"; "COMGR_PATH" ] msg);
     ]
 
-(* A library that does not load (D15): these tests run in a process of their
+(* A library that does not load: these tests run in a process of their
    own, where COMGR_PATH names a file that is no library. *)
 
 let load_failure () =

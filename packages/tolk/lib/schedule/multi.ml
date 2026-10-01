@@ -71,7 +71,7 @@ let mstack_early_shrink ms shrink =
   in
   replace ms ~src:(List.mapi each (src ms))
 
-(* A selection of a value on no device is that value (D35). *)
+(* A selection of a value on no device is that value. *)
 let pm_unselect_deviceless =
   Pattern_matcher.v
     (fun () -> [

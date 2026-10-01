@@ -72,7 +72,7 @@ let sources =
       group ~tags:[ "unaligned" ] "with ALIGNED=0" (sources_under "ALIGNED=0");
     ]
 
-(* D17: C computes an operation on a char, a short or Clang's __fp16 in a wider
+(* C computes an operation on a char, a short or Clang's __fp16 in a wider
    type, so the source casts each such operation back to its type: an operation
    on a scalar of one of these types, inlined into its one user, which does not
    store it. The source of a kernel is then tinygrad's for the kernel with those
@@ -128,7 +128,7 @@ let written_kernel row =
   | i -> Ops.src (Lazy.force kernels).(int_of_string i)
 
 let narrowing =
-  group "narrowing (D17)"
+  group "narrowing"
     [
       Golden.cases "cases.golden" (fun row ->
           if row "setting" = "-" then
@@ -273,7 +273,7 @@ let parentheses =
           equal bool (not flat) (contains src "((((("));
     ]
 
-(* Float8 infinities on CUDA (D16) *)
+(* Float8 infinities on CUDA *)
 
 (* A kernel converts a value to a float8 type when it casts to one anything but
    a constant. *)
@@ -322,7 +322,7 @@ let converts_with_the_infinity_byte (case, t, dt) =
     (source_of_case case)
 
 let fp8_infinities =
-  group "float8 infinities on CUDA (D16)"
+  group "float8 infinities on CUDA"
     [
       test "declares the guard exactly when it converts a value to a float8"
         guard_only_where_converted;
@@ -514,7 +514,7 @@ let lacks_toolchain why =
 let rejected =
   [
     ( "metal_transcendental_bf16",
-      "tinygrad's graph truncates a bfloat without the float cast (D18)" );
+      "tinygrad's graph truncates a bfloat without the float cast" );
   ]
 
 let compiles_with_its_toolchain row =
@@ -540,7 +540,7 @@ let compilation =
   group ~tags:[ "slow" ] "every GPU kernel compiles with its target's toolchain"
     (List.map compiles_with_its_toolchain gpu_rows)
 
-(* bfloat16 truncation on Metal (D18) *)
+(* bfloat16 truncation on Metal *)
 
 (* Metal has no trunc of a bfloat: it truncates a float, so the extra matcher
    truncates a bfloat16 in float32. *)
@@ -581,7 +581,7 @@ let compiles_its_truncation () =
       skip ~reason:why ()
 
 let bf16_truncation =
-  group "bfloat16 truncation on Metal (D18)"
+  group "bfloat16 truncation on Metal"
     [
       test "truncates a bfloat16 in float32" truncates_in_float;
       test "leaves it to CUDA, which truncates a bfloat16 with htrunc"
@@ -967,9 +967,9 @@ let execution =
       test "reads two uint registers as a ulong through a cast of their address"
         reads_registers_as_a_ulong;
       test "passes named parameters" passes_named_parameters;
-      test "rounds each operation on halves to a half (D17)"
+      test "rounds each operation on halves to a half"
         rounds_each_operation_on_halves;
-      test "wraps each operation on unsigned chars (D17)"
+      test "wraps each operation on unsigned chars"
         wraps_each_operation_on_chars;
       group ~tags:[ "slow" ] "every kernel compiles and loads"
         (List.map compiles_and_loads clang_rows);
@@ -977,11 +977,11 @@ let execution =
         "every kernel the interpreter runs writes what it computes"
         (List.map agrees_with_the_interpreter interpreted_rows);
       group ~tags:[ "slow" ]
-        "a kernel over a narrow type wraps and rounds as the interpreter (D17)"
+        "a kernel over a narrow type wraps and rounds as the interpreter"
         (List.map wraps_and_rounds_as_the_interpreter narrow_rows);
     ]
 
-(* Division (D50)
+(* Division
 
    A division, Ops.FDIV, is the language's [/] on every target, whether or not
    the target lists it among its operations. Metal's is IEEE's division, rounded
@@ -1038,7 +1038,7 @@ let divides_on_metal () =
         (Run.values Float32 quotients)
 
 let division_group =
-  group "division (D50)"
+  group "division"
     [
       test "the operands tell a quotient from a product by the reciprocal"
         (fun () ->

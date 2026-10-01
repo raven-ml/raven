@@ -63,7 +63,7 @@ let cache =
           is_none (Compiler.cachekey (ccache_off Compiler_metal.compiler)));
     ]
 
-(* Without MTLCompiler on the machine (D15) *)
+(* Without MTLCompiler on the machine *)
 
 let without_mtlcompiler =
   group "without MTLCompiler on the machine"
@@ -79,7 +79,7 @@ let without_mtlcompiler =
           | Some msg -> in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
     ]
 
-(* A library that does not load (D15): these tests run in a process of their
+(* A library that does not load: these tests run in a process of their
    own, where MTLCOMPILER_PATH names a file that is no library. *)
 
 let load_failure () =
@@ -151,7 +151,7 @@ let metal =
           is_metal_library
             (with_metal (fun () ->
                  Compiler.compile (Compiler_metal.compiler ()) src)));
-      test "a product and a sum compile under the no-contraction pragma (D25)"
+      test "a product and a sum compile under the no-contraction pragma"
         (fun () ->
           let src =
             "#include <metal_stdlib>\n\

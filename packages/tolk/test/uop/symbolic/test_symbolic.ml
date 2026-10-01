@@ -280,7 +280,7 @@ let constants =
           folds_to
             Ops.O.(Ops.float ~dtype:Float32 1.5 + Ops.float ~dtype:Float32 2.)
             (Ops.float ~dtype:Float32 3.5));
-      (* D13: uncasting a committed constant reads it at its width, where
+      (* Uncasting a committed constant reads it at its width, where
          tinygrad keeps the literal unwrapped. *)
       test "a comparison reads a committed constant at its width" (fun () ->
           let x = var ~dtype:Uint8 "x" 0 255 in
@@ -288,7 +288,7 @@ let constants =
           equal uop Ops.O.(x < int 44) (rewrite Uop_weak.pm_uncast_const lt);
           equal Dtypes.const (`Bool false)
             (Interpreter.eval ~vars:[ ("x", i 100) ] (symbolic lt)));
-      (* D13: a committed constant is read at its width, by an operation that
+      (* A committed constant is read at its width, by an operation that
          folds and by a cast of it, where tinygrad reads it unwrapped. *)
       test "an operation reads committed constants at their width" (fun () ->
           let max = Ops.int ~dtype:Uint32 0xFFFF_FFFF in
@@ -380,10 +380,10 @@ let constants =
           match Ops.arg nan with
           | Const (`Float v) when Float.is_nan v -> ()
           | _ -> failf "0 / 0 is@ %a" (Testable.pp uop) nan);
-      test "x / x and (x * y) / y stay, for floats (D24)" (fun () ->
+      test "x / x and (x * y) / y stay, for floats" (fun () ->
           folds_to Ops.O.(f / f) Ops.O.(f / f);
           folds_to Ops.O.(f * g / g) Ops.O.(f * g / g));
-      test "x * 0 is 0 for integers and booleans, and stays for floats (D24)"
+      test "x * 0 is 0 for integers and booleans, and stays for floats"
         (fun () ->
           folds_to Ops.O.(a * int 0) (Ops.int 0);
           folds_to Ops.O.(cond * bool false) (Ops.bool false);
@@ -424,7 +424,7 @@ let casts =
             (Ops.bitcast (Ops.bitcast x Float32) Uint32)
             (Ops.bitcast x Uint32);
           folds_to (Ops.bitcast (Ops.bitcast x Float32) Int32) x);
-      (* D27. A folded bitcast reads a float constant's bits as its type stores
+      (* A folded bitcast reads a float constant's bits as its type stores
          them, where tinygrad converts it first and a NaN loses its bits. *)
       cases
         "a bitcast round trip of every 8- and 16-bit word folds to its value"
@@ -469,7 +469,7 @@ let powers =
             (special Float.neg_infinity (special 0. (Ops.sqrt f))));
       test "x ** -1 is the reciprocal of x" (fun () ->
           by_symbolic (Ops.pow f (Ops.float (-1.))) (Ops.reciprocal f));
-      test "x ** c stays for c between -1 and 0 (D24)" (fun () ->
+      test "x ** c stays for c between -1 and 0" (fun () ->
           let p = Ops.pow f (Ops.float (-0.8)) in
           by_symbolic p p);
       test "a power of constants is its value" (fun () ->
@@ -593,10 +593,10 @@ let terms =
           let n = Ops.param 5 Dtype.Int32 in
           by_symbolic Ops.O.(n + n) Ops.O.(n * int 2);
           folds_to Ops.O.(n // int (-1)) Ops.O.(n * int (-1)));
-      test "(x / y) / z stays (D24)" (fun () ->
+      test "(x / y) / z stays" (fun () ->
           let h = Ops.param 3 Dtype.Float32 in
           by_symbolic Ops.O.(f / g / h) Ops.O.(f / g / h));
-      test "-(x + c) is -x + -c for integers, and stays for floats (D24)"
+      test "-(x + c) is -x + -c for integers, and stays for floats"
         (fun () ->
           by_symbolic
             Ops.O.(int (-1) * (a + int 3))
@@ -635,7 +635,7 @@ let symbolic_selections =
           let sel = Ops.where cond e' (Ops.where other e t) in
           by_symbolic sel sel);
       test
-        "a broadcast constant condition is not folded in the branches (D75)"
+        "a broadcast constant condition is not folded in the branches"
         (fun () ->
           let x = Ops.param ~shape:[ Ops.Int 4 ] 0 Dtype.Float32 in
           let y = Ops.param ~shape:[ Ops.Int 4 ] 1 Dtype.Float32 in
@@ -790,7 +790,7 @@ let comparisons =
           by_symbolic e e);
     ]
 
-(* D24: integers wrap at a committed width, so a rewrite that computes as
+(* Integers wrap at a committed width, so a rewrite that computes as
    unbounded integers do applies there only where nothing wraps. Each graph is
    evaluated before and after [sym] at bindings where something wraps. *)
 
@@ -806,7 +806,7 @@ let keeps_machine_value ?(by = sym) u points =
 let wrapping =
   let u = var ~dtype:Uint8 "u" 0 255 and y = var ~dtype:Int8 "y" 0 50 in
   let at_u n = [ ("u", i n) ] and at_y n = [ ("y", i n) ] in
-  group "integers wrap (D24)"
+  group "integers wrap"
     [
       test "an offset crosses a comparison only where neither side wraps"
         (fun () ->
@@ -843,13 +843,13 @@ let wrapping =
           by_symbolic u u);
     ]
 
-(* D13: a committed integer constant holds its type's value. A fold reads a weak
+(* A committed integer constant holds its type's value. A fold reads a weak
    operand of an operation on a committed integer, and writes its result, at
    that type's width, and so do the bounds. *)
 let committed_constants =
   let v ?(dtype = Dtype.Uint8) name lo hi = var ~dtype name lo hi in
   let b = v "b" 0 1 and d = v "d" 1 2 and a = v "a" 0 1 in
-  group "committed constants hold their type's value (D13)"
+  group "committed constants hold their type's value"
     [
       test "a weak operand is read at the width of the operation" (fun () ->
           let b32 = v ~dtype:Uint32 "b" 0 1 in
@@ -869,10 +869,10 @@ let committed_constants =
             [ [ ("b", i 0); ("c", i 2) ]; [ ("b", i 1); ("c", i 2) ] ]);
     ]
 
-(* D24: floats keep IEEE's values, signed zeros, infinities, NaN and subnormals
+(* Floats keep IEEE's values, signed zeros, infinities, NaN and subnormals
    included. Each graph is evaluated before and after the rewrite, with [f], [g]
-   and [h] bound to the given float32 values, at points where the rewrite that
-   D24 restricts changes the value. *)
+   and [h] bound to the given float32 values, at points where a rewrite tolk
+   restricts to exact values changes the value. *)
 
 let keeps_float_bits ?(by = sym) u points =
   let after = by u in
@@ -896,7 +896,7 @@ let keeps_float_bits ?(by = sym) u points =
 let floats =
   let h = Ops.param 3 Dtype.Float32 and inf = Float.infinity in
   let cond = Ops.O.(f < float 1.) in
-  group "floats keep IEEE values (D24)"
+  group "floats keep IEEE values"
     [
       test "float folds: identities that IEEE does not keep" (fun () ->
           keeps_float_bits Ops.O.(f + float 0.) [ [ -0. ] ];
@@ -1338,7 +1338,7 @@ let sym_group =
           simplifies_to
             (Ops.store index (Ops.valid f cond))
             (Ops.store (Ops.index buf [ Ops.valid a cond ]) f));
-      test "reciprocals of products stay (D24)" (fun () ->
+      test "reciprocals of products stay" (fun () ->
           let d = Ops.reciprocal Ops.O.(float 1. + f) in
           List.iter
             (fun u -> simplifies_to u u)
@@ -1362,7 +1362,7 @@ let sym_group =
             (Ops.reduce Ops.O.(x * y) Add [ reduce_range ])
             Ops.O.(
               Ops.reduce (Ops.int ~dtype:Int32 1) Add [ reduce_range ] * (x * y)));
-      test "factors stay in a float sum or maximum (D24)" (fun () ->
+      test "factors stay in a float sum or maximum" (fun () ->
           List.iter
             (fun o ->
               let red =
@@ -1390,7 +1390,7 @@ let sym_group =
           let body = Ops.O.(Ops.cast reduce_range Int32 * v) in
           let red = Ops.reduce body Max [ reduce_range ] in
           simplifies_to red red);
-      test "-(x + y) is -x + -y for integers, and stays for floats (D24)"
+      test "-(x + y) is -x + -y for integers, and stays for floats"
         (fun () ->
           simplifies_to
             Ops.O.(int (-1) * (a + b))

@@ -59,7 +59,7 @@ let pm_commit_weak =
     [
       test
         "a 64-bit unsigned cast of a weak expression keeps its value past a \
-         float's precision (D44)" (fun () ->
+         float's precision" (fun () ->
           let b = var "b" 0 (pow2 40) in
           let u = Ops.cast Ops.O.((b * int 3) + int 1) Uint64 in
           equal Dtypes.const
@@ -346,7 +346,7 @@ let laws =
           let u = sink es in
           equal values (values_of env u)
             (values_of env (rewrite Uop_weak.pm_commit_weak u)));
-      prop "pm_commit_weak computes an integer cast in integers (D44)"
+      prop "pm_commit_weak computes an integer cast in integers"
         (Gen.pair gen_expr integer_type) (fun (es, dt) ->
           let committed =
             rewrite Uop_weak.pm_commit_weak

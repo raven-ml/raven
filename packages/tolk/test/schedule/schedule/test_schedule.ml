@@ -745,13 +745,13 @@ let ordering =
   group "create_schedule › rules"
     [
       test "a kernel's argument that is no storage is refused" not_storage;
-      test "an end of a call over a loop schedules the call in its loop (D60)"
+      test "an end of a call over a loop schedules the call in its loop"
         ended;
       test "an end of a call over device ranges schedules the call"
         ended_on_devices;
-      test "a loop runs after the call that writes what it reads (D60)"
+      test "a loop runs after the call that writes what it reads"
         loop_after_writer;
-      test "a loop runs before the call that overwrites what it reads (D60)"
+      test "a loop runs before the call that overwrites what it reads"
         loop_before_overwriter;
       test "a kernel reading storage before and after a write runs after it"
         read_across;
@@ -1003,7 +1003,7 @@ let variables =
       test "a kernel on buffers of two devices is refused" several_devices;
     ]
 
-(* Loops of calls (D60) *)
+(* Loops of calls *)
 
 (* A scan of three trips: a carry [c] of four floats, updated in place, and rows
    of four of [xs] and [ys]. Each trip stores [c * 2] into its row of [ys], then
@@ -1104,7 +1104,7 @@ let nested_linear () =
   | entries -> failf "%d entries" (List.length entries)
 
 let loops =
-  group "create_linear_with_vars › loops of calls (D60)"
+  group "create_linear_with_vars › loops of calls"
     [
       test "a loop of a precompiled call is a loop of its body's calls"
         scan_linear;

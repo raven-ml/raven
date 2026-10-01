@@ -11,7 +11,7 @@ its binary, whose sources are the lowered sink with its estimates, the
 linearized instructions and the rendered source.
 
 tolk writes each operation on a narrow scalar as a cast of itself to its
-type (D17), so the source of a program with such an operation is tinygrad's
+type, so the source of a program with such an operation is tinygrad's
 source for its instructions with those casts: the text golden
 `<case>_narrowed` of a case whose column `narrowed` is `True`.
 
@@ -771,12 +771,12 @@ def program(case, target):
             return f"KernelOptError: {e}"
 
 
-# D17: an operation is narrowed when it is inlined into its one user, which does
+# An operation is narrowed when it is inlined into its one user, which does
 # not store it, and computes on a scalar that C promotes: a char or a short, or
 # Clang's __fp16.
 
 def narrowing(ren, uops):
-    """`uops` with each operation D17 narrows followed by a cast to its type, or
+    """`uops` with each narrowed operation followed by a cast to its type, or
     None if it narrows none."""
     promoted = (dtypes.char, dtypes.uchar, dtypes.short, dtypes.ushort) + \
         ((dtypes.half,) if isinstance(ren, ClangRenderer) else ())

@@ -508,7 +508,7 @@ let laws =
     [
       prop ~examples "a rewritten value holds the value computed whole" drawn
         holds_whole;
-      test "a shard of a product with zero cast to a float is zero (D35)"
+      test "a shard of a product with zero cast to a float is zero"
         (fun () ->
           holds_whole_once
             {
@@ -518,7 +518,7 @@ let laws =
               grid = false;
               steps = [ Scale 0; Cast; Select 0 ];
             });
-      test "a shard of a sum of a product with zero is zero (D35)" (fun () ->
+      test "a shard of a sum of a product with zero is zero" (fun () ->
           holds_whole_once
             {
               n = 2;
@@ -839,14 +839,14 @@ let sharding = list (pair int uop)
 let tiles =
   group "multi_pm › two sharded axes"
     [
-      test "a reshape divides each sharded axis by its own count (D21)"
+      test "a reshape divides each sharded axis by its own count"
         (fun () ->
           equal uop
             (Ops.unshard ~ranges:[ tile_rows; tile_cols ]
                (Ops.reshape tile_part (ints [ 2; 1; 4 ]))
                [ 0; 1 ])
             (multi (Ops.reshape tile (ints [ 4; 3; 4 ]))));
-      test "a reshape of a mesh of 2 by 4 devices keeps each tile (D21)"
+      test "a reshape of a mesh of 2 by 4 devices keeps each tile"
         (fun () ->
           let eight = Ops.Multi (List.init 8 (Printf.sprintf "CPU:%d")) in
           let r = Ops.range ~axis_type:Device (Int 8) [ -1 ] in
@@ -952,7 +952,7 @@ let selections =
             (multi (Ops.mselect (Ops.reshape flat (ints [ 4; 8 ])) 1)));
       test
         "a selection of a movement by the device range takes the selected \
-         device's position (D23)" (fun () ->
+         device's position" (fun () ->
           let d = Ops.range ~axis_type:Device (Int 2) [ -1 ] in
           let at start = Ops.mop flat (Shrink [ (start, Int 16) ]) in
           equal uop

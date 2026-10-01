@@ -766,12 +766,11 @@ let nans =
                 (both_signs signalling_nans))
             narrows);
       cases ~name:alias
-        "an emulated copy keeps every NaN code, a signalling one's included \
-         (D62)"
+        "an emulated copy keeps every NaN code, a signalling one's included"
         narrows (fun dt -> copies (nan_codes dt) dt);
       cases ~name:alias
         "an emulated selection keeps every NaN code, a signalling one's \
-         included (D62)"
+         included"
         narrows (fun dt -> selects_codes (nan_codes dt) dt ());
       cases ~name:alias
         "an emulated cast of a float32 or a double NaN is the NaN code Dtype \
@@ -798,7 +797,7 @@ let nans =
             (written ~on:on_narrows k [ List.map code cs ]));
     ]
 
-(* Rounding in the kernel (D65) *)
+(* Rounding in the kernel *)
 
 (* Float32 values within every narrow float's range. *)
 let in_range =
@@ -813,7 +812,7 @@ let rounded dt v =
   | c -> failf "%a is no float" (Testable.pp Dtypes.const) c
 
 let rounding =
-  group "rounding in the kernel (D65)"
+  group "rounding in the kernel"
     [
       cases ~name:alias
         "a cast to an emulated float and back is the value rounded once" narrows
@@ -1067,7 +1066,7 @@ let long_arithmetic =
                  (undefined_casts ~on:on_32_bits k [ values ])));
       ])
 
-(* D9: narrow float conversions are IEEE conversions *)
+(* Narrow float conversions are IEEE conversions *)
 
 (* [casts ~from dt table] checks that the emulated cast of each value of
    [table], of type [from], to [dt] writes the code beside it. *)
@@ -1093,8 +1092,8 @@ let least_subnormals =
       (Fp8e5m2fnuz, 0x1p-17);
     ]
 
-let d9 =
-  group "D9"
+let ieee_narrow_floats =
+  group "narrow float conversions are IEEE conversions"
     [
       cases
         ~name:(fun (dt, _) -> alias dt)
@@ -1211,7 +1210,7 @@ let d9 =
 (* A golden holds a kernel and what tinygrad's pass makes of it, with each call
    of f2f and f2f_clamp held as a placeholder: a custom node over its operand,
    whose code names the call and its arguments
-   (gen/codegen/decomp/decomp_dtype.py). The conversions are D9's. *)
+   (gen/codegen/decomp/decomp_dtype.py). The conversions are IEEE's. *)
 
 let dtype_named s = Result.get_ok (Dtype.of_string s)
 
@@ -1592,7 +1591,7 @@ let () =
          emulated_floats;
          nans;
          rounding;
-         d9;
+         ieee_narrow_floats;
          long_arithmetic;
          graphs;
          pass;

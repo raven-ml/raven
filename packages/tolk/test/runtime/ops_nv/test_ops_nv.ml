@@ -383,7 +383,7 @@ let words =
           equal (list action) [ Write64 (signal, v) ] (signalled "COMPUTE:0" v));
       cases ~name:hex
         "the copy engine releases the low word, then the high word where the \
-         value lives (D40)"
+         value lives"
         values (fun v ->
           let lo = v land 0xffff_ffff and hi = v lsr 32 in
           equal (list action)
@@ -587,7 +587,7 @@ let storages =
           equal int 1 (List.length local));
       test
         "the launches of two programs in one batch read one local memory word, \
-         whatever the engine binds to it (D51)" (fun () ->
+         whatever the engine binds to it" (fun () ->
           let call = simple_add (buf ()) (buf ()) (buf ()) in
           let prg = Ops.nth call 0 in
           let binary = Ops.nth prg 3 in
@@ -841,7 +841,7 @@ let compute_methods submitted =
     blobs
 
 let loops =
-  group "loops (D30)"
+  group "loops"
     [
       test
         "each trip's two launches chain on descriptors of the trip's own, and \

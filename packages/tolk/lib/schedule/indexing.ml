@@ -78,7 +78,7 @@ let mark_stored_pads ctx dest =
   go dest
 
 (* A store's destination that moves through a pad is made its own: each of its
-   movements is marked, so that no read shares the nodes that D69 gates. The
+   movements is marked, so that no read shares the nodes its store gates. The
    mark joins any tag a movement already carries, and a destination is owned
    once its top movement carries the mark. *)
 let stored_tag = Tag.String "stored"

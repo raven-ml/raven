@@ -82,7 +82,7 @@ let exec_alu =
           equal const (f 1.) (alu Float32 Op.Max [ f 1.; f Float.nan ]));
       test
         "an invalid operation's NaN is the canonical positive quiet NaN, \
-         whatever the host gives (D27)" (fun () ->
+         whatever the host gives" (fun () ->
           let inf = Float.infinity in
           (* The bits, since NaNs compare equal as values. x86 gives
              0xfff8000000000000. *)
@@ -258,7 +258,7 @@ let compare_value (v0 : Dtype.value) (v1 : Dtype.value) =
 let ordered_value = Testable.with_compare compare_value value
 let gen_point = Gen.pair (Gen.int_range (-8) 8) (Gen.int_range 1 5)
 
-(* D24: an operation on a committed integer, as compiled code computes it, wraps
+(* An operation on a committed integer, as compiled code computes it, wraps
    at the type's width. [x o y], then [o'] with [x] again, over narrow variables
    of 61 values starting anywhere in their type, at a point of each. *)
 let gen_wrapping =
@@ -284,7 +284,7 @@ let wrapping_case (dt, (o0, o1), (a, b, k)) =
   let vars = [ ("x", i (min x1 (x0 + k))); ("y", i (max y0 (y1 - k))) ] in
   (u, vars)
 
-(* D74: a float sum, difference or product of variables over intervals of a
+(* A float sum, difference or product of variables over intervals of a
    float type's values, at a point of each, or a selection of one by comparing
    them ([Op.Where]: [x] where [x < y], else [x] where [y < x], else [y]).
    Magnitudes span the type's exponents, so that sums overflow and products fall
@@ -366,7 +366,7 @@ let bounds_group =
           let v = eval [ ("v0", i x0); ("v1", i x1) ] u in
           at_most ordered_value ~than:v (Ops.vmin u);
           at_least ordered_value ~than:v (Ops.vmax u));
-      prop "bounds hold the value a committed integer wraps to (D24)"
+      prop "bounds hold the value a committed integer wraps to"
         gen_wrapping (fun case ->
           let u, vars = wrapping_case case in
           match Interpreter.eval ~vars u with
@@ -374,9 +374,9 @@ let bounds_group =
               at_most ordered_value ~than:v (Ops.vmin u);
               at_least ordered_value ~than:v (Ops.vmax u)
           | `Invalid -> fail "Invalid in an expression without one");
-      prop "bounds hold every value a float operation rounds to (D74)"
+      prop "bounds hold every value a float operation rounds to"
         gen_float_bounds float_bounds_case;
-      test "a float operation of bounded operands is bounded (D74)" (fun () ->
+      test "a float operation of bounded operands is bounded" (fun () ->
           let x = variable Float32 (f 0.) (f 1.) "x" in
           let y = variable Float32 (f (-2.)) (f 3.) "y" in
           let widened lo hi =
@@ -389,7 +389,7 @@ let bounds_group =
           check_bounds (Ops.alu x Op.Mul [ y ]) (widened (-2.) 3.));
       test
         "a float operation of an unbounded operand, or that can overflow, has \
-         its type's bounds (D74)" (fun () ->
+         its type's bounds" (fun () ->
           let full dt = (Dtype.min dt, Dtype.max dt) in
           let one dt = Ops.float ~dtype:dt 1. in
           let h = variable Float16 (f 0.) (f 65504.) "h" in
@@ -400,7 +400,7 @@ let bounds_group =
           check_bounds (Ops.alu h Op.Add [ h ]) (full Float16);
           check_bounds (Ops.alu h Op.Mul [ h ]) (full Float16);
           check_bounds (Ops.alu w Op.Add [ one Weak_float ]) (full Weak_float));
-      test "a float selection by a comparison narrows what it selects (D74)"
+      test "a float selection by a comparison narrows what it selects"
         (fun () ->
           let x = variable Float32 (f (-10.)) (f 10.) "x" in
           let p = Ops.param 0 Float32 in
@@ -412,7 +412,7 @@ let bounds_group =
           let above = Ops.where (Ops.lt minus_c p) p minus_c in
           check_bounds above (f (-2.), f Float.infinity);
           check_bounds (Ops.where (Ops.lt above c) above c) (f (-2.), f 2.));
-      test "a float truncation and negation map their operand's bounds (D74)"
+      test "a float truncation and negation map their operand's bounds"
         (fun () ->
           let x = variable Float32 (f (-2.5)) (f 3.75) "x" in
           check_bounds (Ops.alu x Op.Trunc []) (f (-2.), f 3.);
@@ -566,7 +566,7 @@ let bounds_group =
           check_bounds (Ops.cast x Uint32) (Dtype.min Uint32, Dtype.max Uint32));
       test
         "a typed integer constant outside its type is bounded by its wrapped \
-         value, a non-finite one by the type (D13)" (fun () ->
+         value, a non-finite one by the type" (fun () ->
           check_bounds (Ops.int ~dtype:Int8 300) (int_bounds 44 44);
           check_bounds (Ops.int ~dtype:Uint8 (-1)) (int_bounds 255 255);
           check_bounds
@@ -575,7 +575,7 @@ let bounds_group =
           check_bounds
             (Ops.cast (Ops.float ~dtype:Float32 4.5) Int32)
             (int_bounds 4 4));
-      test "a committed integer that can leave its type has its bounds (D24)"
+      test "a committed integer that can leave its type has its bounds"
         (fun () ->
           let full dt = (Dtype.min dt, Dtype.max dt) in
           let u = var ~dtype:Uint8 "u" 0 255 and y = var ~dtype:Int8 "y" 0 50 in
@@ -587,12 +587,12 @@ let bounds_group =
           check_bounds Ops.O.(u lxor int (-1)) (full Uint8);
           check_bounds Ops.O.(y + int 50) (int_bounds 50 100);
           check_bounds Ops.O.(weak_var "w" 0 50 * int 4) (int_bounds 0 200));
-      test "an integer cast to a signed type it leaves wraps (D24)" (fun () ->
+      test "an integer cast to a signed type it leaves wraps" (fun () ->
           let w = var "w" 0 255 in
           check_bounds (Ops.cast w Int8) (Dtype.min Int8, Dtype.max Int8);
           check_bounds (Ops.cast (var "v" 0 100) Int8) (int_bounds 0 100);
           check_bounds (Ops.cast (Ops.cast w Uint8) Int32) (int_bounds 0 255));
-      test "a constant table holding a NaN has its type's bounds (D24)"
+      test "a constant table holding a NaN has its type's bounds"
         (fun () ->
           let bits x =
             let b = Bytes.create 4 in

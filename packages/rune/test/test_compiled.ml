@@ -1823,7 +1823,7 @@ let refusals d =
 (* The 8-bit floats, which neither the host's renderer nor Metal's has and
    tolk emulates: arithmetic is eager's, and a copy or a selection, which
    moves data, keeps each code's bits, subnormals and signalling NaNs
-   included (D62). *)
+   included. *)
 
 (* The host array of every code of [dtype], in the order [code] gives. *)
 let codes dtype code =
@@ -1865,7 +1865,7 @@ let float8 d =
             let x = operand 11 m k and y = operand 5 k n in
             exact_of (both d (matmul [| m; n |] x y)))
           [ (3, 12, 5); (1, 64, 40); (16, 32, 24) ]);
-    cases "a copy of every 8-bit float code keeps its bits (D62)" ~name dts
+    cases "a copy of every 8-bit float code keeps its bits" ~name dts
       (fun (F dt) ->
         let x = codes dt Fun.id in
         let copy (module K : Nx_backend.S) env =
@@ -1874,7 +1874,7 @@ let float8 d =
           dst
         in
         same_bytes (both d copy));
-    cases "a selection of every 8-bit float code keeps its bits (D62)" ~name
+    cases "a selection of every 8-bit float code keeps its bits" ~name
       dts (fun (F dt) ->
         let x = codes dt Fun.id and y = codes dt (fun i -> 255 - i) in
         let c = codes Nx.bool (fun i -> i land 1) in

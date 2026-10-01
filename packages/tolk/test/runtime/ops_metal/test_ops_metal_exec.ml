@@ -102,7 +102,7 @@ let windows n () =
     (Array.init (4 * n) (fun i -> float_of_int (i + 1)))
     (floats_of (List.hd (List.assq dst bound)))
 
-(* Phase (D54) *)
+(* Phase *)
 
 (* The floor of a float16 [3; 4] of strides [1; 3] over the twelve halves of a
    buffer whose first lies [offset] bytes into its memory, as a kernel that
@@ -469,4 +469,4 @@ let execution =
 
 let () =
   exit
-    (run "Tolk.Ops_metal (execution)" [ execution; group "phase (D54)" phases ])
+    (run "Tolk.Ops_metal (execution)" [ execution; group "phase" phases ])

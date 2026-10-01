@@ -23,7 +23,7 @@ import tinygrad.runtime.support.compiler_cuda as compiler_cuda
 import tinygrad.runtime.ops_metal as ops_metal
 
 # Making a renderer makes its compiler, which loads its library in tinygrad and
-# nothing in tolk (D15): comgr and NVRTC are absent where the goldens are
+# nothing in tolk: comgr and NVRTC are absent where the goldens are
 # generated, and on macOS NVRTC starts a compile server in docker. Metal's code
 # generation service makes the forked processes crash at random.
 compiler_amd.c.DLL._loaded_.add(compiler_amd.comgr.dll.nm)

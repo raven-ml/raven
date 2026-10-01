@@ -51,7 +51,7 @@ let cache =
                (ccache_off (fun () -> Compiler_cuda.nvrtc "sm_89"))));
     ]
 
-(* Without NVRTC on the machine (D15) *)
+(* Without NVRTC on the machine *)
 
 let without_nvrtc =
   group "without NVRTC on the machine"
@@ -66,7 +66,7 @@ let without_nvrtc =
           | Some msg -> in_order ~subs:[ "nvrtc"; "NVRTC_PATH" ] msg);
     ]
 
-(* A library that does not load (D15): these tests run in a process of their
+(* A library that does not load: these tests run in a process of their
    own, where NVRTC_PATH names a file that is no library. *)
 
 let load_failure () =

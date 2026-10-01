@@ -406,7 +406,7 @@ let rec interleave word writers waiter f =
 
 let carry_law =
   let queues = [ "COMPUTE:0"; "COPY:0" ] in
-  group "carry law (D37)"
+  group "carry law"
     (List.concat_map
        (fun name ->
          let gpu = gpu name in
@@ -524,7 +524,7 @@ let room =
       cmds.signal (Hcq2.signal_word "AMD") (Hcq2.value "AMD")
     done
   in
-  group "room (D39)"
+  group "room"
     [
       test "an SDMA command buffer of up to a quarter of its ring submits"
         (fun () -> submits small "COPY:0" (copies 2));
@@ -742,7 +742,7 @@ let batched ?profile name case =
   (List.length (List.filter is_batch (Ops.src linear)), contains)
 
 let loops =
-  group "loops (D30)"
+  group "loops"
     [
       test
         "a range is one batch whose PM4 commands and arguments repeat per trip"
@@ -801,7 +801,7 @@ let pieces ?copy ~trips g name case tag =
           (Ops.src linear)))
 
 let splits =
-  group "splits (D39)"
+  group "splits"
     [
       test
         "a range of 10,000 trips on AQL runs as batches of up to half the ring"

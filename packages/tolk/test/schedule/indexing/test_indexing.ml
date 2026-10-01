@@ -79,8 +79,8 @@ let movements =
         (Reshape (ints [ 2; 4 ]))
         [ Ops.valid Ops.O.(r0 - Ops.int 1) Ops.O.(r0 >= Ops.int 1); r1 ];
       test
-        "a reshape leaves the storage a gather's index loads from as it is \
-         (D73)" (fun () ->
+        "a reshape leaves the storage a gather's index loads from as it is"
+        (fun () ->
           let buf = Ops.new_buffer ~slot:1 (Single "CPU") 12 Int32 in
           let r = range (Int 12) 5 in
           let unsimplified =

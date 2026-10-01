@@ -105,7 +105,7 @@ let selection =
 (* Devices are named exactly as the caller gives them, with no index, no case
    folding and no architecture read from the name. *)
 let named_never_parsed =
-  group "renderer takes a device's name as it is (D6)"
+  group "renderer takes a device's name as it is"
     [
       test "refuses a device name with an index" (fun () ->
           List.iter

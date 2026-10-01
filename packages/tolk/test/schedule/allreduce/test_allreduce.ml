@@ -73,7 +73,7 @@ let numbered_as golden red u =
   in
   Ops.substitute u subs
 
-(* D19: tinygrad gathers each chunk a hierarchical allreduce reduces on every
+(* Tinygrad gathers each chunk a hierarchical allreduce reduces on every
    device, whatever its target. Where the target is one device, tolk copies
    there the chunk device [k] of the first node reduced, which each gather holds
    first. *)
@@ -96,7 +96,7 @@ let expansions =
     let file = name ^ "_handled.golden" in
     let handled () = Ops.sink [ handled ~settings (allreduce name) ] in
     if name = "nodes_to_one_device" then
-      test (file ^ ", landed on its device (D19)") (fun () ->
+      test (file ^ ", landed on its device") (fun () ->
           equal uop (landed_on_its_device (Golden.sink file)) (handled ()))
     else Golden.graph file handled
   in
@@ -383,7 +383,7 @@ let rules =
   in
   group "rules"
     [
-      test "a hierarchical allreduce to one device lands there (D19)" (fun () ->
+      test "a hierarchical allreduce to one device lands there" (fun () ->
           let red =
             red_of
               {

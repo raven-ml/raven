@@ -278,7 +278,7 @@ index 62c3191..fd4b815 100644
    - switch_over is the threshold for switching to payne_hanek_reduction.
    """
    assert d.dtype in TRANSCENDENTAL_DTYPES
-+  # an angle whose bounds lie below the switch-over takes the short reduction alone (D74)
++  # an angle whose bounds lie below the switch-over takes the short reduction alone
 +  fast = fast or (-switch_over < d.vmin and d.vmax < switch_over)
    # mask +-inf/nan as zero
    x = _lazy_map_numbers(d, d.const_like(0.0), d.const_like(0.0), d.const_like(0.0), d)
@@ -916,7 +916,7 @@ index 2842d7e..12abd7e 100644
 +    return at_width(promo_dtype(self.src) if self.op in GroupOp.Comparison else self.dtype, s._min_max)
 +  @functools.cached_property
 +  def _interval(self) -> tuple[PyConst, PyConst]:
-+    # a float sum, difference or product of finite bounds has the corners, widened past the result's rounding (D74)
++    # a float sum, difference or product of finite bounds has the corners, widened past the result's rounding
 +    if self.op in (Ops.ADD, Ops.SUB, Ops.MUL) and self.dtype in dtypes.floats:
 +      b = [float(v) if isinstance(v, (int, float)) else math.nan for v in (*self._operand(self.src[0]), *self._operand(self.src[1]))]
 +      if all(math.isfinite(v) for v in b):
@@ -941,7 +941,7 @@ index 2842d7e..12abd7e 100644
 -    if self.op is Ops.WHERE: return min(self.src[1].vmin, self.src[2].vmin), max(self.src[1].vmax, self.src[2].vmax)
 +    if self.op is Ops.WHERE:
 +      (x0, x1), (y0, y1) = self._operand(self.src[1]), self._operand(self.src[2])
-+      # where a float comparison a < b holds, neither is NaN, a is below b's greatest value and b above a's least (D74)
++      # where a float comparison a < b holds, neither is NaN, a is below b's greatest value and b above a's least
 +      if (c:=self.src[0]).op is Ops.CMPLT and dtypes.is_float(c.src[0].dtype):
 +        if self.src[1] is c.src[0]: x1 = min(x1, c.src[1].vmax)
 +        elif self.src[1] is c.src[1]: x0 = max(x0, c.src[0].vmin)
@@ -962,7 +962,7 @@ index 2842d7e..12abd7e 100644
 -    if self.op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.AFTER, Ops.DETACH, Ops.COPY, Ops.CONTIGUOUS_BACKWARD}: return self.src[0]._min_max
 +    if self.op is Ops.PAD: return min(self._operand(self.src[0])[0], 0), max(self._operand(self.src[0])[1], 0)  # PAD adds zeros
 +    if self.op in GroupOp.Movement|{Ops.INDEX, Ops.STAGE, Ops.AFTER, Ops.DETACH, Ops.COPY, Ops.CONTIGUOUS_BACKWARD}: return self._operand(self.src[0])
-+    # truncation and negation are monotone (D74)
++    # truncation and negation are monotone
 +    if self.op is Ops.TRUNC:
 +      return tuple(math.copysign(math.trunc(v), v) if isinstance(v, float) and math.isfinite(v) else v for v in self._operand(self.src[0]))
 +    if self.op is Ops.NEG and dtypes.is_float(self.dtype):
@@ -1156,7 +1156,7 @@ index 2eb2e96..c046d56 100644
  def fold_where_closure(cond:UOp, t:UOp, f:UOp) -> UOp|None:
    """in cond.where(t, f), cond is True within t and False within f"""
    if cond not in t.bool_slice and cond not in f.bool_slice: return None
-+  # a constant condition, broadcast or not, assumes nothing: the same node is every other use of that constant (D75)
++  # a constant condition, broadcast or not, assumes nothing: the same node is every other use of that constant
 +  if cond.base.op is Ops.CONST: return None
    # INDEX gates are owned by the valid/store-coalescing machinery, leave them alone
    if any(u.op_in_backward_slice_with_self(Ops.INDEX) for u in (cond, t, f)): return None

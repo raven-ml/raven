@@ -603,7 +603,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
           ~data_sel:G.data_sel__mec_release_mem__send_gpu_clock_counter
           ~int_sel:G.int_sel__mec_release_mem__none ())
   in
-  (* A device's value is written whole, in one 64-bit write (D37). *)
+  (* A device's value is written whole, in one 64-bit write. *)
   let signal_mem signal value =
     let data_sel =
       if is_signal_word signal then
@@ -925,7 +925,7 @@ let copy_queue ~host gpu q : Hcq2.commands =
   in
   (* A device's value is written 32 bits at a time: its high half only when its
      low half is 0, the high half every later value shares; four NOPs otherwise
-     (D37). *)
+    . *)
   let signal signal value =
     let fence =
       G.sdma_op_fence

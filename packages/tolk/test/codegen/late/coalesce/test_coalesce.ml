@@ -205,12 +205,12 @@ let lengths =
     ]
 
 (* A buffer whose first element lies [phase] bytes past a multiple of [align]
-   (D54). *)
+  . *)
 let phased ?(dtype = Dtype.Float32) ?align phase =
   Ops.param ~shape:[ Int 64 ] ~phase ?align 0 dtype
 
 let phases =
-  group "phase (D54)"
+  group "phase"
     [
       test
         "one float past a boundary, eight loads are of one, two, four and one"
@@ -494,11 +494,11 @@ let laws =
     [
       prop
         "every vector access is aligned to its width and within the alignment, \
-         for every phase and alignment (D54)"
+         for every phase and alignment"
         phased_kernels aligned;
       prop
         "coalescing preserves the kernel's writes, for every phase and \
-         alignment (D54)"
+         alignment"
         phased_kernels (fun (phases, k) -> preserves_writes ~phases vector k);
       prop "coalescing preserves the kernel's writes" kernels_of_runs
         (preserves_writes vector);

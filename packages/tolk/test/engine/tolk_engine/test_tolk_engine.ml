@@ -896,7 +896,7 @@ let valid_slot_store =
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
 let padded_stores =
-  group "a store through a padded view (D69)"
+  group "a store through a padded view"
     [
       cases ~name:string_of_int "writes the row within the source" [ 0; 3; 7 ]
         (fun at -> stores_through_a_pad "CPU" at ());
@@ -926,7 +926,7 @@ let schedules =
         [ "contiguous"; "copy_view"; "shard_add" ] (fun name ->
           runs_on_its_slots name ());
       test "a range around a call runs it once per trip" runs_once_per_trip;
-      test "a scan runs its body once per trip, carrying in place (D60)"
+      test "a scan runs its body once per trip, carrying in place"
         scans_with_a_carry;
       test "a planned buffer a range writes is not placed over one it leaves"
         (plans_the_buffers_of_a_range ~through_a_view:false);
@@ -2049,12 +2049,11 @@ let metal =
         (fun () -> at_most int ~than:400 (batch_run_words ~devices:on_metal ()));
       cases ~tags:[ "slow" ] ~name:string_of_int
         "a store through a padded view writes the row within the source, and \
-         nothing outside it (D69)"
+         nothing outside it"
         [ 0; 7; -1; 8 ] (fun at ->
           stores_through_a_pad ~devices:on_metal "CPU:1" at ());
       cases ~tags:[ "slow" ] ~name:string_of_int
-        "a read of a padded node stored through reads its fill in the padding \
-         (D69)"
+        "a read of a padded node stored through reads its fill in the padding"
         [ 3; -1 ] (fun at ->
           stores_through_a_pad ~devices:on_metal ~fill:7. ~read:true "CPU:1" at
             ());

@@ -207,7 +207,7 @@ let recorded =
        cases)
 
 let profile_keys =
-  group "profile keys (D12)"
+  group "profile keys"
     [
       test "a kernel's profile key is its program's key" (fun () ->
           let b = List.init 3 (fun _ -> storage "CPU:1") in
@@ -327,7 +327,7 @@ let param_arg u =
   match Ops.arg u with Param p -> p | _ -> failf "%a is no parameter" Ops.pp u
 
 let timeline_values =
-  group "timeline values (D1)"
+  group "timeline values"
     [
       test "a signal word is one volatile uint64 of its device, tagged timeline"
         (fun () ->
@@ -951,7 +951,7 @@ let scheduling =
 (* Stamp slots follow Submission.record *)
 
 let stamps =
-  group "stamp slots (D7)"
+  group "stamp slots"
     [
       test
         "a device's slots are one per queue, then two per call when profiling"
@@ -2315,7 +2315,7 @@ let chunks_a_long_range () =
     (floats_of (List.hd (List.assq dst bound)))
 
 let ranges =
-  group "ranges (D30)"
+  group "ranges"
     [
       test
         "a range of more calls than a chunk runs as a batch of a chunk, once \

@@ -119,7 +119,7 @@ let adds out inp =
 let storage d = Ops.new_buffer (Single d) 4 Float32
 
 let function_words =
-  group "function words (D36)"
+  group "function words"
     [
       test
         "a batch over two devices reads a kernel's function from a word of each"
@@ -174,7 +174,7 @@ let ranged () =
 let once () = adds (storage "CUDA") (storage "CUDA")
 
 let loops =
-  group "loops (D30)"
+  group "loops"
     [
       test "a range is a loop of the host program around its launches"
         (fun () ->

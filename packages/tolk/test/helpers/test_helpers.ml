@@ -426,7 +426,7 @@ let settings =
 let not_ported =
   (* They gate openpilot's pass and image paths. *)
   [ "OPENPILOT_HACKS"; "FLOAT16" ]
-  (* Jit capture, kernel runs and allocation are rune's (D3). *)
+  (* Jit capture, kernel runs and allocation are rune's. *)
   @ [ "CAPTURING"; "MAX_BUFFER_SIZE"; "VALIDATE_WITH_CPU" ]
   (* tolk cannot open a device. *)
   @ [ "ALLOW_DEVICE_USAGE" ]

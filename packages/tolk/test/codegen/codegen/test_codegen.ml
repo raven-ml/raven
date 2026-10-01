@@ -142,7 +142,7 @@ let sample row =
       "elementwise_add"; "reduce_rows"; "gated_store"; "symbolic"; "sum_unroll";
     ]
 
-(* D9: an emulated float8 converts as IEEE does, where tinygrad saturates and
+(* An emulated float8 converts as IEEE does, where tinygrad saturates and
    flushes, so the graphs of these programs differ from tinygrad's in their
    conversions; `values on the host` pins what they compute. *)
 let emulated_fp8 = [ "fp8_clang"; "fp8_metal"; "fp8_hip" ]
@@ -166,8 +166,8 @@ let launches_as_tinygrad row =
     (program_info (recorded_program row))
     (program_info (program row))
 
-(* D16: CUDA keeps a float8 infinity special; the source compares with
-   tinygrad's once the guard is written back as tinygrad writes it. D17: a
+(* CUDA keeps a float8 infinity special; the source compares with
+   tinygrad's once the guard is written back as tinygrad writes it. A
    narrowed program's source is tinygrad's for its instructions with the casts
    that narrow, its golden <name>_narrowed. *)
 let writes_as_tinygrad row =
@@ -214,7 +214,7 @@ let stages =
            ~only:(fun row -> compiles row && not (d9 row))
            programs_as_tinygrad);
       group "each program is rendered as tinygrad renders it" sources;
-      group "an emulated float8 program launches as tinygrad's (D9)"
+      group "an emulated float8 program launches as tinygrad's"
         (per_row ~only:d9 launches_as_tinygrad);
       group "an optimisation that does not apply raises tinygrad's error"
         (per_row ~only:(fun row -> not (compiles row)) refuses_as_tinygrad);
@@ -496,7 +496,7 @@ let values =
            run_on_host);
     ]
 
-(* Beam search (D4) *)
+(* Beam search *)
 
 let upcast4 = Opt.Split { axis = 0; amount = 4; target = Upcast; top = false }
 let add_kernel = lazy (kernel_of "add_clang")
@@ -532,7 +532,7 @@ let searches_with_its_width () =
   same_graph (Ops.sink (Ops.src listed)) (Ops.sink (Ops.src searched))
 
 let beam_search =
-  group "beam search (D4)"
+  group "beam search"
     [
       test "a kernel that asks for a beam of width w is optimised by beam w"
         searches_with_its_width;
@@ -576,7 +576,7 @@ let beam_search =
           equal (list int) [] !asked);
     ]
 
-(* Programs are kept (D5) *)
+(* Programs are kept *)
 
 (* A kernel no other call compiles, even in a rerun of the suite: it stores a
    value of its own into 16 floats. *)
@@ -671,8 +671,7 @@ let caching =
       test "a second call with an equal kernel compiles nothing"
         keeps_its_programs;
       test
-        "calls from several domains at once make one program, compiled once \
-         (D5)"
+        "calls from several domains at once make one program, compiled once"
         compiles_once_across_domains;
       test "a program made under one setting is not returned under another"
         separates_settings;
@@ -1366,8 +1365,8 @@ let divisions =
           lacks Max uops;
           lacks Cmod uops);
       test
-        "a dividend that can wrap keeps the correction of a floor division \
-         (D24)" (fun () ->
+        "a dividend that can wrap keeps the correction of a floor division"
+        (fun () ->
           (* tinygrad's test divides max x 0 + 1, which is negative at the
              greatest int, where tolk's int32 wraps. *)
           let x =
@@ -1569,7 +1568,7 @@ let checks_what_it_lowers () =
           Codegen.full_rewrite_to_sink ~optimize:false
             (Lazy.force marker_kernel) breaking))
 
-(* Tensor-core accumulators (D24) *)
+(* Tensor-core accumulators *)
 
 (* A Metal tensor core's product added, from the constant accumulator [c], to
    two floats the kernel loads: [out[i] = (wmma a b c)[i] + acc[i]], where
@@ -1678,7 +1677,7 @@ let replaces_a_zero c =
     (List.filter (is Wmma) (Ops.toposort (lowered_on_metal (accumulated c))))
 
 let accumulators =
-  group "tensor-core accumulators (D24)"
+  group "tensor-core accumulators"
     [
       cases ~name:string_of_float "the running sum replaces a zero accumulator"
         [ 0.; -0. ] replaces_a_zero;
@@ -1692,7 +1691,7 @@ let accumulators =
         keeps_a_zero_accumulator_value;
     ]
 
-(* Multiply-adds (D25)
+(* Multiply-adds
 
    A sum adds each product of its source into its running sum as one
    multiply-add, rounded once, in the order it adds them unfused; every other
@@ -1727,7 +1726,7 @@ let mentions sub s =
   go 0
 
 let multiply_adds =
-  group "multiply-adds (D25)"
+  group "multiply-adds"
     [
       cases ~name:string_of_int
         "a sum of products adds each into its running sum rounded once, of"
@@ -1781,7 +1780,7 @@ let lanes =
         (refused_by_the_host "invalid_lanes_int8");
     ]
 
-(* Vectors in programs (D58) *)
+(* Vectors in programs *)
 
 let on_a_vector u =
   Op.Set.mem (Ops.op u) Op.Set.elementwise
@@ -1837,7 +1836,7 @@ let refused_on_a_cast kernel () =
           Codegen.to_program kernel clang))
 
 let vectors =
-  group "vectors in programs (D58)"
+  group "vectors in programs"
     [
       test "a cast left on two lanes after devectorize is refused"
         (refused_on_a_cast (vector_select_kernel ()));
@@ -1847,7 +1846,7 @@ let vectors =
         (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
     ]
 
-(* Signed zeros (D52) *)
+(* Signed zeros *)
 
 (* [padded ~flip fill before after xs] stores into a new buffer the float32
    values [xs] padded with [before] and [after] elements of [fill], as a pad by
@@ -1926,7 +1925,7 @@ let signed_zero_pads =
                    [ 0.; -0.; 1.; -2.5; Float.nan ])))))
 
 let signed_zeros =
-  group "signed zeros (D52)"
+  group "signed zeros"
     [
       test "a pad with -0. fill renders and computes -0." (fun () ->
           let sink, _ = padded (-0.) 1 1 [| 1.; 2. |] in
@@ -1942,7 +1941,7 @@ let signed_zeros =
           padding_computed ~flip fill before after xs);
     ]
 
-(* Casts to bfloat16 (D64)
+(* Casts to bfloat16
 
    A cast to bfloat16 from a type more precise than a float32 rounds once, from
    the exact value, where a cast through a float32 rounds twice: 2^40 + 2^32 + 1
@@ -1976,7 +1975,7 @@ let bfloat16_casts =
   let integers l =
     Array.of_list (List.map (fun s -> `Int (Bigint.of_string s)) l)
   in
-  group "casts to bfloat16 (D64)"
+  group "casts to bfloat16"
     [
       cases "an integer or a double rounds once on the host"
         ~name:(fun (dt, _) -> Dtype.name dt)

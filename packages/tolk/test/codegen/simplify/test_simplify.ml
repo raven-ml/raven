@@ -327,7 +327,7 @@ let collapsing =
           equal uop
             (Ops.where c (i32 2) (Ops.int 0))
             (collapse Ops.O.(i32 2 * Ops.cast c Int32)));
-      test "a float product by a comparison cast from a boolean stays (D24)"
+      test "a float product by a comparison cast from a boolean stays"
         (fun () ->
           let u = Ops.O.(two * Ops.cast Ops.O.(r < Ops.int 3) Float32) in
           equal int 0 (count Where (collapse u)));
@@ -400,7 +400,7 @@ let reduce_simplifying =
             (reduce_simplify (sum (f32 3.) [ r ])));
     ]
 
-(* D24: a comparison is solved for x only where nothing wraps, and never for
+(* A comparison is solved for x only where nothing wraps, and never for
    floats, where moving a term rounds; a float sum counted in closed form and a
    float product by a mask keep IEEE's values. Each graph is evaluated before
    and after the pass at bindings where the rewritten form would differ. *)
@@ -411,7 +411,7 @@ let solving =
       (Interpreter.eval ~vars ~buffers g)
       (Interpreter.eval ~vars ~buffers (pass g))
   in
-  group "keeping values (D24)"
+  group "keeping values"
     [
       test "x + y < c is solved only where nothing wraps" (fun () ->
           same_value collapse
@@ -771,7 +771,7 @@ let laws =
         (fun ((_, s, v, dt) as drawn) ->
           assume (v <> Range_value);
           (* A float product by a mask stays, since it is not a selection at an
-             infinity or a negative value (D24). *)
+             infinity or a negative value. *)
           assume
             (not
                (Dtype.is_float dt && match s with Mask _ -> true | _ -> false));

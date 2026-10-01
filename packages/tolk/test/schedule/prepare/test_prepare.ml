@@ -548,10 +548,10 @@ let contiguous_views =
         (Some (bytes, 2))
         (Ops.shrink bytes [ Some (Int 2, Int 6) ]);
       (let one = Ops.const ~dtype:Int64 (`Int Bigint.one) in
-       case "a constant is no view (D72)" None one);
-      case "a constant of one element is no view (D72)" None
+       case "a constant is no view" None one);
+      case "a constant of one element is no view" None
         (Ops.reshape (Ops.const ~dtype:Int64 (`Int Bigint.one)) (ints [ 1 ]));
-      case "a computed value is no view (D72)" None (Ops.add b b);
+      case "a computed value is no view" None (Ops.add b b);
     ]
 
 let is_run memory elements =

@@ -275,7 +275,7 @@ let threefry =
           let alu u = Op.Set.mem (Ops.op u) Op.Set.alu in
           equal (list Uops.uop) []
             (List.filter alu (Ops.toposort (Ops.simplify hash_of_constants))));
-      (* D13: folding reads committed constants at their width, so the fold
+      (* Folding reads committed constants at their width, so the fold
          wraps each 32-bit word as the hash does. *)
       test "the hash of constants folds to its value" (fun () ->
           equal const

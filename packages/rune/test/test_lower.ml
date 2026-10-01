@@ -237,7 +237,7 @@ let parameters =
           in
           equal (list int) [ 0; 4 ] (List.sort compare phases);
           exact (Nx.add x (Nx.mul x x)) (Programs.compiled s y));
-      test "a buffer on the disk has phase 0 (D54)" (fun () ->
+      test "a buffer on the disk has phase 0" (fun () ->
           let path = Filename.temp_file "lower" ".bin" in
           let b = Result.get_ok (Nx_device.Buffer.create_file path 64) in
           Sys.remove path;
