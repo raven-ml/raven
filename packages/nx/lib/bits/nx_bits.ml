@@ -6,6 +6,7 @@
 open Nx
 
 let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
+let shape_string x = Format.asprintf "%a" pp_shape (shape x)
 
 (* [bytes] is 1-D and holds exactly the bytes bit [offset] to bit [offset +
    length - 1] reach, and [0 <= offset < 8]. *)
@@ -19,8 +20,7 @@ let make bytes ~offset ~length =
 
 let v ?(offset = 0) ~length bytes =
   if ndim bytes <> 1 then
-    err "Nx_bits.v" "bytes of shape %s, not 1-D"
-      (Nx_array.Shape.to_string (shape bytes));
+    err "Nx_bits.v" "bytes of shape %s, not 1-D" (shape_string bytes);
   if offset < 0 || length < 0 then
     err "Nx_bits.v" "offset %d and length %d, not both >= 0" offset length;
   let n = dim 0 bytes in
@@ -46,8 +46,7 @@ let of_words words =
 
 let of_bool m =
   if ndim m <> 1 then
-    err "Nx_bits.of_bool" "mask of shape %s, not 1-D"
-      (Nx_array.Shape.to_string (shape m));
+    err "Nx_bits.of_bool" "mask of shape %s, not 1-D" (shape_string m);
   let n = dim 0 m in
   let m = pad [| (0, -n land 7) |] false m in
   let groups = reshape [| dim 0 m / 8; 8 |] (cast UInt8 m) in
@@ -75,7 +74,7 @@ let popcount () =
   create Int64 [| 256 |] (Array.init 256 set)
 
 let count b =
-  if b.length = 0 then zeros Int64 [||]
+  if b.length = 0 then cast Int64 (scalar_like b.bytes 0)
   else
     let table = popcount () and n = dim 0 b.bytes in
     let ones bytes = sum (take ~indices:(cast Int64 bytes) table) in
@@ -120,8 +119,7 @@ let sub b ~offset ~length =
 
 let take ~indices b =
   if ndim indices <> 1 then
-    err "Nx_bits.take" "indices of shape %s, not 1-D"
-      (Nx_array.Shape.to_string (shape indices));
+    err "Nx_bits.take" "indices of shape %s, not 1-D" (shape_string indices);
   let at = add_s indices (Int64.of_int b.offset) in
   let byte = take ~indices:(div_s at 8L) b.bytes in
   let weight =

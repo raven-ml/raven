@@ -12,7 +12,7 @@ let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
    along axis 0. *)
 type ('a, 'b) t = { offsets : int64_t; values : ('a, 'b) Nx.t }
 
-let shape_string x = Nx_array.Shape.to_string (shape x)
+let shape_string x = Format.asprintf "%a" pp_shape (shape x)
 
 (* [read ~by x] is the elements of the int64 tensor [x] in C order, read by the
    function [by]. *)
@@ -207,7 +207,7 @@ let keys (type a b) op (x : (a, b) Nx.t) =
    left. Each round reads once, through [op]. *)
 let ranks op r =
   let n = length r in
-  if n = 0 then (zeros Int64 [| 0 |], 0)
+  if n = 0 then (full_as r.offsets [| 0 |] 0L, 0)
   else
     let values, offsets = elements r in
     let (P keys) = keys op values in
@@ -420,8 +420,8 @@ let concat = function
         (fun r' ->
           if cell r' <> cell r then
             err "Nx_ragged.concat" "cells of shape %s and %s"
-              (Nx_array.Shape.to_string (cell r))
-              (Nx_array.Shape.to_string (cell r')))
+              (Format.asprintf "%a" pp_shape (cell r))
+              (Format.asprintf "%a" pp_shape (cell r')))
         rs;
       let bounds =
         read ~by:"Nx_ragged.concat"

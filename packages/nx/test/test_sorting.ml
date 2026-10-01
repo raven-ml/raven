@@ -638,6 +638,26 @@ let order_keys =
                  [| neg_infinity; -0.; 0.; infinity; nan |]);
             equal (array int) [| 0x7f; 0x80; 0xff |]
               (narrow_keys Nx.uint8 Nx.float8_e5m2 [| -0.; 0.; nan |]));
+        test "a float8's 8-bit keys order every bit pattern as its 64-bit keys"
+          (fun () ->
+            let every (type b) (fp8 : (float, b) Nx.dtype) =
+              let x = Nx.bitcast fp8 (Nx.arange Nx.uint8 0 256 1) in
+              let k8 = Nx.to_array (Nx.order_key Nx.uint8 x) in
+              let k64 = Nx.to_array (Nx.order_key Nx.uint64 x) in
+              for i = 0 to 255 do
+                for j = 0 to 255 do
+                  equal
+                    ~msg:
+                      (Printf.sprintf "%s bits 0x%02x and 0x%02x"
+                         (Nx_dtype.to_string fp8) i j)
+                    int
+                    (sign (Int.compare k8.(i) k8.(j)))
+                    (sign (Int64.unsigned_compare k64.(i) k64.(j)))
+                done
+              done
+            in
+            every Nx.float8_e4m3;
+            every Nx.float8_e5m2);
         test "order_key refuses complex numbers" (fun () ->
             raises_invalid_arg (fun () ->
                 Nx.order_key Nx.uint64 (Nx.zeros Nx.complex64 [| 1 |])));

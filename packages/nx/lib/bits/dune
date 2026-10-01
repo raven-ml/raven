@@ -1,7 +1,7 @@
 (library
  (name nx_bits)
  (public_name nx.bits)
- (libraries nx nx.array nx.dtype)
+ (libraries nx)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation
