@@ -927,6 +927,10 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_engine.link` and `Tolk_engine.run` raise `Invalid_argument` naming
+  both requests when an AMD batch encoded for one profile request (counters,
+  traces) links or runs under another, whose shared trace buffers it would
+  overwrite.
 - `DEBUG` 4 and 7 print the source and instructions of a program read back
   from the disk cache, as of one compiled; they printed nothing.
 - The CUDA device's kernels compile to cubins, which the driver loads as they

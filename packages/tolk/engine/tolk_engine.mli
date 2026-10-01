@@ -68,7 +68,10 @@ type device = {
           once the batch waited for its previous run and before its host
           program, when the device's objects cannot change: the time to write
           the words that change between runs, such as the buffers Metal's work
-          declares resident. *)
+          declares resident. It raises [Invalid_argument], before anything is
+          submitted, if the batch cannot run now: an AMD batch encoded for
+          another profile request than the one being taken
+          ({!Nx_device.Profile.counters}, {!Nx_device.Profile.traced}). *)
 }
 (** The type for devices as the engine runs work on them. *)
 
@@ -186,7 +189,8 @@ val link :
     [bound] gives a storage node buffers of other devices, sizes or number than
     its placement, if a vendor gives a placeholder storage of fewer bytes than
     the placeholder, if a batch names a C function of a library the engine does
-    not know, or if [linear] is not a compiled schedule;
+    not know, if a batch that profiles was encoded for another profile request
+    than the one being taken, or if [linear] is not a compiled schedule;
     {!Nx_device.Out_of_memory} if a device cannot allocate its storage; and
     [Failure] if a device refuses a program's binary. *)
 
@@ -233,8 +237,9 @@ val run :
     lines then have no time.
 
     Raises [Invalid_argument] if [slots] does not bind each parameter of [s] to
-    buffers of its placement's devices, each holding its parameter's bytes, or
-    if a variable is unbound, and {!Nx_device.Lost} as the devices do. *)
+    buffers of its placement's devices, each holding its parameter's bytes, if a
+    variable is unbound, or if a device refuses to run a batch now (its
+    [submitting]), and {!Nx_device.Lost} as the devices do. *)
 
 (** {1:measuring Measuring} *)
 

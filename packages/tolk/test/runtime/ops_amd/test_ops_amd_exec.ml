@@ -268,6 +268,34 @@ let execution =
                       is_true ~msg:"in order" (s.start <= s.stop)
                   | _ -> ())
                 waves);
+      slow "a batch runs only under the profile request it was encoded for"
+        (fun () ->
+          let b = chain 1 in
+          let bound = bound_to (Array.make 4 0.) b in
+          let traced = Nx_device.Profile.start ~trace:true () in
+          let s =
+            Fun.protect
+              ~finally:(fun () -> ignore (Nx_device.Profile.stop traced))
+              (fun () ->
+                match link ~bound (chained b) with
+                | exception Failure why
+                  when String.ends_with ~suffix:"set -l stable_std`" why ->
+                    skip ~reason:why ()
+                | s -> s)
+          in
+          let refused () =
+            raises_match
+              (Exn.invalid_arg
+                 ~substring:"encoded for traces, and the profile asks for")
+              (fun () -> Tolk_engine.run s [||])
+          in
+          refused ();
+          let counting =
+            Nx_device.Profile.start ~counters:[ "GRBM_GUI_ACTIVE" ] ()
+          in
+          Fun.protect
+            ~finally:(fun () -> ignore (Nx_device.Profile.stop counting))
+            refused);
       slow "each trip of a range runs its kernel on its own window" (fun () ->
           let n = 5 in
           let src, dst, e = ranged n in

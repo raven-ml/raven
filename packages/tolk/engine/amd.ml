@@ -75,24 +75,41 @@ let program d a ~binary ~name =
       ignore (A.scratch a k.private_segment);
       k.code
 
-(* The profiling of a batch that profiles, which the profile being taken asks
-   for since the batch was compiled. *)
-let mismatch () =
-  invalid_arg
-    "Tolk_engine.link: the batch profiles its kernels' runs as the profile \
-     being taken does not"
+(* The profile request work is encoded for: the counters it counts and whether
+   it traces. A batch writes the device's profiling of its request, whose trace
+   buffers every request shares, so it links and runs only while its request is
+   the profile's. *)
+let request () = (Nx_device.Profile.counters (), Nx_device.Profile.traced ())
 
-let profiled a = match A.profiling a with Some p -> p | None -> mismatch ()
+let pp_request = function
+  | [], false -> "no counters or traces"
+  | [], true -> "traces"
+  | counters, traced ->
+      Printf.sprintf "counters [%s]%s"
+        (String.concat "; " counters)
+        (if traced then " and traces" else "")
 
-let samples a =
-  match (profiled a).counting with Some c -> c.samples | None -> mismatch ()
+let check fn encoded =
+  let asked = request () in
+  if asked <> encoded then
+    invalid_arg
+      (Printf.sprintf
+         "Tolk_engine.%s: the batch was encoded for %s, and the profile asks \
+          for %s"
+         fn (pp_request encoded) (pp_request asked))
 
-let traced a =
-  match (profiled a).tracing with Some t -> t | None -> mismatch ()
+(* The device's profiling, for a batch linked under the request it was encoded
+   for. *)
+let profiled a encoded =
+  check "link" encoded;
+  Option.get (A.profiling a)
+
+let counted a encoded = Option.get (profiled a encoded).counting
+let traced a encoded = Option.get (profiled a encoded).tracing
 
 (* The storage of the placeholders AMD's commands name: those of the device
    [name]. *)
-let placeholder name d a u =
+let placeholder name d a encoded u =
   let on_device =
     match Ops.device u with
     | Some (Single n) | Some (Multi [ n ]) -> n = name
@@ -108,10 +125,10 @@ let placeholder name d a u =
         | Doorbell q -> (queue a q).doorbell
         | Program { binary; name } -> program d a ~binary ~name
         | Scratch n -> A.scratch a n
-        | Log -> (profiled a).log
-        | Samples -> samples a
-        | Traces -> (traced a).traces
-        | Trace_ends -> (traced a).ends)
+        | Log -> (profiled a encoded).log
+        | Samples -> (counted a encoded).samples
+        | Traces -> (traced a encoded).traces
+        | Trace_ends -> (traced a encoded).ends)
       (Ops_amd.storage u)
 
 (* The queues address the memory nx.device says the device reaches: other memory
@@ -127,8 +144,11 @@ let reaches d devices n =
 let queues ~host devices name d =
   Option.map
     (fun a ->
+      let encoded = request () in
       ( Ops_amd.queues ~host:(Lazy.force host) ~reaches:(reaches d devices)
           (gpu a),
-        placeholder name d a,
-        fun () -> A.flush_hdp a ))
+        placeholder name d a encoded,
+        fun () ->
+          check "run" encoded;
+          A.flush_hdp a ))
     (A.of_device d)
