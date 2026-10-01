@@ -2,7 +2,6 @@
  (name hugin_next_text)
  (public_name hugin.next.text)
  (libraries hugin.next.gg hugin.next.font)
- (modules_without_implementation text)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

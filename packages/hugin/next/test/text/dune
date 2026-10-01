@@ -1,0 +1,53 @@
+(copy_files ../font/build.ml)
+
+(library
+ (name text_support)
+ (wrapped false)
+ (modules text_support build)
+ (libraries hugin.next.gg hugin.next.font hugin.next.text windtrap))
+
+(test
+ (name test_text)
+ (modules test_text)
+ (package hugin)
+ (libraries hugin.next.gg hugin.next.text text_support windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_text.ml test_text.ml.corrected))))
+
+(test
+ (name test_layout)
+ (modules test_layout)
+ (package hugin)
+ (libraries
+  hugin.next.gg
+  hugin.next.font
+  hugin.next.text
+  text_support
+  windtrap)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_layout.ml test_layout.ml.corrected))))
+
+(test
+ (name test_drawing)
+ (modules test_drawing)
+ (package hugin)
+ (libraries
+  hugin.next.gg
+  hugin.next.font
+  hugin.next.vg
+  hugin.next.vg.svg
+  hugin.next.text
+  text_support
+  windtrap)
+ (deps
+  (glob_files golden/*.svg))
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? golden/axis_title.svg golden/axis_title.svg.corrected)
+   (diff? golden/fallback.svg golden/fallback.svg.corrected)
+   (diff? golden/notdef.svg golden/notdef.svg.corrected))))
