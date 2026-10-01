@@ -170,12 +170,27 @@ let runs_on d =
            (engine_devices ~name:"DEVICE" ~host:"HOST" d "DEVICE").compiler
              .queues
 
+(* [memo cell latch k make] is [k]'s value in [cell], made by [make] the first
+   time, under [latch]. [cell] is read without [latch], which only guards its
+   additions. *)
+let memo cell latch k make =
+  match List.assq_opt k (Atomic.get cell) with
+  | Some v -> v
+  | None -> (
+      Mutex.protect latch @@ fun () ->
+      match List.assq_opt k (Atomic.get cell) with
+      | Some v -> v
+      | None ->
+          let v = make () in
+          Atomic.set cell ((k, v) :: Atomic.get cell);
+          v)
+
 let targets = Atomic.make []
 
 (* [target what d] is [d]'s target, for the kernel [what], which refuses a
    device the backend does not run on. *)
 let target what d =
-  Memo.assoc targets lock d @@ fun () ->
+  memo targets lock d @@ fun () ->
   if not (runs_on d) then
     refuse what "%s runs no compiled program" (Nx_device.name d);
   let target = Engine.target d in
@@ -263,7 +278,7 @@ let compile (key : key) d =
 (* [p]'s next link on [d], linked there the first time. *)
 let link p d =
   let links, next =
-    Memo.assoc p.links p.latch d @@ fun () ->
+    memo p.links p.latch d @@ fun () ->
     let devices = engine_devices ~name:p.name ~host:p.host d in
     (Array.init links (fun _ -> Engine.link ~devices p.linear), Atomic.make 0)
   in

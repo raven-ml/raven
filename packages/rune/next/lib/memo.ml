@@ -3,18 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let assoc cell latch k make =
-  match List.assq_opt k (Atomic.get cell) with
-  | Some v -> v
-  | None -> (
-      Mutex.protect latch @@ fun () ->
-      match List.assq_opt k (Atomic.get cell) with
-      | Some v -> v
-      | None ->
-          let v = make () in
-          Atomic.set cell ((k, v) :: Atomic.get cell);
-          v)
-
 module Make (K : Hashtbl.HashedType) = struct
   module H = Hashtbl.Make (K)
 

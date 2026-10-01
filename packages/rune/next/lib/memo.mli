@@ -3,15 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Values made once, from any domain.
+(** Values made once per key, from any domain.
 
-    A compiled call makes its programs, links and device descriptions the first
-    time a key meets them, and reads them without a lock afterwards. *)
-
-val assoc : ('k * 'v) list Atomic.t -> Mutex.t -> 'k -> (unit -> 'v) -> 'v
-(** [assoc cell latch k make] is [k]'s value in [cell], keys compared
-    physically, made by [make] and added the first time under [latch]. [cell] is
-    read without [latch], which only guards its additions. *)
+    A compiled call, and each kernel of the compiled backend, makes its program
+    the first time it meets a key, and reads it without making it again. *)
 
 (** Tables whose values are made once per key. *)
 module Make (K : Hashtbl.HashedType) : sig

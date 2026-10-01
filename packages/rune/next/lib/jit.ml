@@ -708,11 +708,16 @@ let run entry p leaves =
       leaves;
   p.rebuild (Array.to_list (Array.map2 value p.results results))
 
-type 'r entry = { latch : Mutex.t; program : 'r program option Atomic.t }
+module Programs = Memo.Make (struct
+  type t = key
+
+  let equal = same_key
+  let hash = hash
+end)
 
 let compiled (type a r) entry (args_s : a Ptree.t) (result_s : r Ptree.t) roles
     (g : a -> r) : a -> r =
-  let lock = Mutex.create () and table = Hashtbl.create 8 and last = ref None in
+  let table = Programs.create () and last = Atomic.make None in
   fun args ->
     if Nx.Op.intercepted () then g args
     else
@@ -725,44 +730,19 @@ let compiled (type a r) entry (args_s : a Ptree.t) (result_s : r Ptree.t) roles
           layouts = Array.to_list (Array.map (fun l -> l.layout) leaves);
         }
       in
-      let h = hash key in
-      let e =
-        Mutex.protect lock @@ fun () ->
-        let e =
-          match
-            List.find_opt
-              (fun (k, _) -> same_key k key)
-              (Hashtbl.find_all table h)
-          with
-          | Some (_, e) -> e
-          | None ->
-              Option.iter
-                (fun k ->
-                  report "retrace: %s"
-                    (difference (fst (paths args_s roles args)) key k))
-                !last;
-              let e = { latch = Mutex.create (); program = Atomic.make None } in
-              Hashtbl.add table h (key, e);
-              e
-        in
-        last := Some key;
-        e
+      let retrace () =
+        Option.iter
+          (fun k ->
+            report "retrace: %s"
+              (difference (fst (paths args_s roles args)) key k))
+          (Atomic.get last)
       in
       let p =
-        match Atomic.get e.program with
-        | Some p -> p
-        | None -> (
-            Mutex.protect e.latch @@ fun () ->
-            match Atomic.get e.program with
-            | Some p -> p
-            | None ->
-                let paths, consumed = paths args_s roles args in
-                let p =
-                  compile args_s result_s g args leaves ~paths ~consumed
-                in
-                Atomic.set e.program (Some p);
-                p)
+        Programs.find table key ~miss:retrace (fun () ->
+            let paths, consumed = paths args_s roles args in
+            compile args_s result_s g args leaves ~paths ~consumed)
       in
+      Atomic.set last (Some key);
       check entry p.consumed p.paths leaves;
       run entry p leaves
 
