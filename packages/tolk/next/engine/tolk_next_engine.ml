@@ -426,8 +426,8 @@ let placeholder device queues u =
   match named with
   | Some b when B.nbytes b < bytes u ->
       invalid_arg
-        (strf "Tolk_next_engine.link: %s's storage holds %d bytes, not %d"
-           (Format.asprintf "%a" Ops.pp u)
+        (Format.asprintf
+           "Tolk_next_engine.link: %a's storage holds %d bytes, not %d" Ops.pp u
            (B.nbytes b) (bytes u))
   | Some b -> b
   | None -> (
