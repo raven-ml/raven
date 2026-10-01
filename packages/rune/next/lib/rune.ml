@@ -54,14 +54,21 @@ let objective fn y =
          "%s: the objective must return a real or complex scalar, got %a %a" fn
          Nx.pp_dtype (Nx.dtype y) Nx.pp_shape (Nx.shape y))
 
-let value_and_grad_of fn p f params =
-  let tape, i, seeded, y = linearize fn p f params in
+let value_and_grad_aux_of fn p x f params =
+  let tape, i, seeded, (y, aux) = linearize fn p f params in
   let y, dy = Jvp.split i y in
   objective fn y;
   let seed cts =
     Option.iter (fun dy -> Linear.add cts dy (Nx.ones_like y)) dy
   in
-  (y, pull p tape i seeded params seed)
+  let aux = Ptree.map x (fun _ v -> fst (Jvp.split i v)) aux in
+  (y, pull p tape i seeded params seed, aux)
+
+let value_and_grad_of fn p f params =
+  let y, g, () =
+    value_and_grad_aux_of fn p Ptree.unit (fun x -> (f x, ())) params
+  in
+  (y, g)
 
 let value_and_grad p f params =
   value_and_grad_of "Rune.value_and_grad" p f params
@@ -69,16 +76,7 @@ let value_and_grad p f params =
 let grad p f params = snd (value_and_grad_of "Rune.grad" p f params)
 
 let value_and_grad_aux p x f params =
-  let tape, i, seeded, (y, aux) =
-    linearize "Rune.value_and_grad_aux" p f params
-  in
-  let y, dy = Jvp.split i y in
-  objective "Rune.value_and_grad_aux" y;
-  let seed cts =
-    Option.iter (fun dy -> Linear.add cts dy (Nx.ones_like y)) dy
-  in
-  let aux = Ptree.map x (fun _ v -> fst (Jvp.split i v)) aux in
-  (y, pull p tape i seeded params seed, aux)
+  value_and_grad_aux_of "Rune.value_and_grad_aux" p x f params
 
 let vjp_of fn p q f params =
   let tape, i, seeded, y = linearize fn p f params in
@@ -115,10 +113,8 @@ let jvp_of fn p q f params tangents =
   if not !any then
     invalid_argf "%s: the parameters hold no real or complex tensor" fn;
   let y = Jvp.install i (fun () -> f duals) in
-  let tangent _ v =
-    match Jvp.split i v with _, Some dv -> dv | v, None -> Nx.zeros_like v
-  in
-  (Ptree.map q (fun _ v -> fst (Jvp.split i v)) y, Ptree.map q tangent y)
+  ( Ptree.map q (fun _ v -> fst (Jvp.split i v)) y,
+    Ptree.map q (fun _ v -> Jvp.tangent i v) y )
 
 let jvp p q f params tangents = jvp_of "Rune.jvp" p q f params tangents
 

@@ -30,6 +30,10 @@ val split : t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t * ('a, 'b) Nx.t option
 (** [split i x] is [(p, Some dx)] if [x] is a dual of [i] of primal [p] and
     tangent [dx], and [(x, None)] otherwise. *)
 
+val tangent : t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [tangent i x] is the tangent of [x] if it is a dual of [i], and otherwise
+    zeros, or under reverse mode a slot nothing feeds. *)
+
 val install : t -> (unit -> 'a) -> 'a
 (** [install i f] is [f ()] under [i]'s interpreter ({!Construct.install}).
 
