@@ -359,6 +359,24 @@ let context p =
   if Placement.equal p Placement.host then Placement.host
   else Placement.replicated ~backend:(Placement.backend p) (Placement.devices p)
 
+(* [settled s what p u] is [u], a value computed at [p]'s devices, laid out as
+   nx places a result at [p]. Where they differ, a value split over the devices
+   is joined whole on each, keeping each element's bits, and a value whole on
+   each is split as nx splits it. *)
+let settled s what p u =
+  let shape = Array.of_list (Ops.max_shape u) in
+  match (layout what p shape, Ops.axis u) with
+  | One, _ | Copies, None -> u
+  | Split a, Some b when a = b -> u
+  | Copies, Some _ -> Ops.copy_to_device u (device_of s p)
+  | Split a, sharding ->
+      let whole =
+        match sharding with
+        | Some _ -> Ops.copy_to_device u (device_of s p)
+        | None -> u
+      in
+      Ops.shard ~axis:a whole (List.map (name s) (Placement.devices p))
+
 let traced p dt u =
   Repr.Traced.v ~context:(context p) p dt
     (Array.of_list (Ops.max_shape u))
@@ -697,7 +715,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   in
   let ret dt u =
     ignore (check s what p dt);
-    traced p dt u
+    traced p dt (settled s what p u)
   in
   let like x u = ret (Nx.dtype x) u in
   let write ~into regions result =

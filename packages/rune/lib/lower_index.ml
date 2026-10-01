@@ -73,8 +73,8 @@ let cat axis x xs =
 
 (* Indexed access
 
-   The indices meet the positions of [x] along [axis] as a one-hot mask along a
-   new last axis, as the reference builds them. *)
+   A scatter meets the indices with the positions of [x] along [axis] as a
+   one-hot mask along a new last axis, as the reference builds them. *)
 
 let gather axis indices x =
   Lower_reduce.take
@@ -199,22 +199,9 @@ let static u =
    store, unrolled at trace time. *)
 let max_rows = 16
 
-(* [rows_only ~axis u] is whether the elements of [u] depend on their position
-   along [axis] alone: through its movements, the index into the node they move
-   reads no other axis' position. *)
-let rows_only ~axis u =
-  let positions = List.mapi (fun d n -> Ops.range n [ -1 - d ]) (Ops.shape u) in
-  let rec read u index =
-    if Op.Set.mem (Ops.op u) Op.Set.movement then
-      let src = Ops.nth u 0 in
-      read src (Indexing.apply_movement_op (Ops.shape src) (Ops.marg u) index)
-    else index
-  in
-  let others = List.filteri (fun d _ -> d <> axis) positions in
-  not
-    (List.exists
-       (fun i -> List.exists (fun p -> List.memq p others) (Ops.toposort i))
-       (read u positions))
+(* [rows_only ~axis u] is whether the elements of [u] vary along [axis]
+   alone. *)
+let rows_only ~axis u = List.for_all (Int.equal axis) (Lower_reduce.varies u)
 
 (* Each row's offset: its index where it lies within [x], and otherwise the row
    [n] of the padding, where its store is dropped. The offsets are stored as

@@ -2088,6 +2088,12 @@ let flipped c x =
   let c = Nx.add (Nx.flip c) x in
   (c, Nx.mul_s c 2.)
 
+(* A step that takes its carry's elements in the carry's own order. *)
+let sorted c x =
+  let order = Nx.argsort ~descending:true ~axis:0 c in
+  let c = Nx.add (Nx.take ~axis:0 ~indices:order c) x in
+  (c, c)
+
 (* [staged at name ~steps ~init f xs] checks that the scan of [f] over [xs],
    compiled with [xs] at [at], computes the eager scan's values, its step
    running [steps n] times for [n] rows. *)
@@ -2379,6 +2385,8 @@ let staged_scans d =
         ~init:(ones 3) rotated (rows 5 3);
       staged at "update a carry its next value reads reversed" ~steps:once
         ~init:(ones 3) flipped (rows 5 3);
+      staged at "update a carry its next value takes in its own order"
+        ~steps:once ~init:(zeros 3) sorted (rows 5 3);
       carried at "swap two carries" ~steps:1
         ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 3. ]
         (fun cs x ->
@@ -2911,6 +2919,36 @@ let scans =
 let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
 let copies ds = Nx.Placement.replicated ~backend:Rune.compiled ds
 
+(* Rows split over two devices, gathered: each device reads the rows it holds
+   and the devices join the bits of what they read, so -0. keeps its sign. *)
+let split_gathers =
+  let split = Nx.Placement.sharded ~backend:Rune.compiled ~axis:0 [ d1; d2 ] in
+  let rows =
+    Nx.init Nx.float32 [| 6; 3 |] (fun i ->
+        let k = (i.(0) * 3) + i.(1) in
+        if k mod 4 = 1 then -0. else Float.of_int k)
+  in
+  let take indices t = Nx.take ~axis:0 ~indices t in
+  let taken indices =
+    Rune.jit Nx.Ptree.(tensor @-> tensor @-> returns tensor) take indices
+  in
+  group "gathers across devices"
+    [
+      test "rows taken from rows split over two devices keep their bits"
+        (fun () ->
+          let indices = Nx.create Nx.int64 [| 5 |] [| 5L; -1L; 0L; 3L; 9L |] in
+          equal floats (take indices rows)
+            (host (taken indices (Nx.place split rows))));
+      test
+        "rows taken by indices split over two devices from rows split over \
+         them keep their bits" (fun () ->
+          let indices =
+            Nx.create Nx.int64 [| 6 |] [| 4L; 1L; -2L; 5L; 0L; 7L |]
+          in
+          equal floats (take indices rows)
+            (host (taken (Nx.place split indices) (Nx.place split rows))));
+    ]
+
 let device_lists =
   let pair = [ d1; d2 ] in
   group "device lists"
@@ -3333,11 +3371,13 @@ let disk =
 (* Gathers *)
 
 (* Rows read at indices from memory, by calls whose arguments are placed at
-   [at], computing on [d]: a gather that its reader broadcasts or reads twice is
-   stored by a kernel of its own and read back, and so is a sum masked by a
-   bound from memory. A device loads a program once however many calls run it,
-   so each test's rows have a width of their own, and no kernel of one test is
-   loaded by another. *)
+   [at], computing on [d]: a gather is a load, read where it is used even when
+   its reader broadcasts it or reads it twice, while a sum masked by a bound
+   from memory and read twice is stored by a kernel of its own and read back.
+   Compiled, a gather reads eager's bits, and zero at an index outside its axis,
+   under a map and a gradient too. A device loads a program once however many
+   calls run it, so each test's rows have a width of their own, and no kernel of
+   one test is loaded by another. *)
 let gathers ~at d =
   let rows n w scale =
     Nx.init Nx.float32 [| n; w |] (fun i ->
@@ -3357,47 +3397,117 @@ let gathers ~at d =
   let indices =
     Nx.create Nx.int64 [| 8 |] [| 3L; 5L; 7L; 0L; 47L; 12L; 12L; 40L |]
   in
+  (* A table whose rows hold -0. and NaN, read at indices past both ends of its
+     axes, by 2^32 + 1 among them. *)
+  let table =
+    Nx.init Nx.float32 [| 6; 5 |] (fun i ->
+        match ((i.(0) * 5) + i.(1)) mod 7 with
+        | 2 -> -0.
+        | 4 -> Float.nan
+        | k -> Float.of_int ((i.(0) * 5) + i.(1) - k))
+  in
+  let far =
+    Nx.create Nx.int64 [| 7 |] [| 2L; -1L; 6L; 0L; -7L; 5L; 0x1_0000_0001L |]
+  in
+  let reads name f indices =
+    test name (fun () ->
+        equal floats (f indices table)
+          (host
+             (Rune.jit
+                Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                f (Nx.place at indices) (Nx.place at table))))
+  in
+  let weights =
+    Nx.init Nx.float32 [| 7; 5 |] (fun i -> Float.of_int (i.(0) - i.(1)))
+  in
+  let loss t = Nx.sum (Nx.mul weights (Nx.take ~axis:0 ~indices:far t)) in
+  let whole =
+    Nx.init Nx.float32 [| 6; 5 |] (fun i -> Float.of_int (i.(0) + (2 * i.(1))))
+  in
   group "gathers"
-    [
-      kernels "a cache's rows read by a product are a kernel of their own" 2
-        (fun slots ->
-          Nx.matmul (rows 8 32 0.01)
-            (Nx.transpose (Nx.take ~axis:0 (rows 20 32 0.001) ~indices:slots)))
-        (Nx.create Nx.int64 [| 12 |]
-           (Array.init 12 (fun i -> Int64.of_int (19 - i))));
-      kernels
-        "rows at positions from an offset, read twice, are a kernel of their \
-         own"
-        2
-        (fun p ->
-          scores 16
-            (Nx.take ~axis:0 (rows 64 16 0.001)
-               ~indices:(Nx.add (Nx.arange Nx.int64 0 8 1) p)))
-        (Nx.scalar Nx.int64 4L);
-      kernels "rows read by two sums are a kernel of their own" 2
-        (fun indices ->
-          let g = Nx.take ~axis:0 (rows 64 40 0.001) ~indices in
-          Nx.add
-            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 0 ] (rows 8 40 0.01))))
-            (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 1 ] (rows 8 40 0.02)))))
-        indices;
-      kernels
-        "rows summed below a bound from memory, read twice, are a kernel of \
-         their own"
-        2
-        (fun bound ->
-          let below =
-            Nx.less
-              (Nx.reshape [| 1; 48; 1 |] (Nx.arange Nx.int64 0 48 1))
-              bound
-          in
-          scores 24
-            (Nx.sum ~axes:[ 1 ]
-               (Nx.where below
-                  (Nx.reshape [| 1; 48; 24 |] (rows 48 24 0.001))
-                  (Nx.scalar Nx.float32 0.))))
-        (Nx.reshape [| 8; 1; 1 |] indices);
-    ]
+    ([
+       reads "rows taken compiled are eager's, zero outside the axis"
+         (fun indices t -> Nx.take ~axis:0 ~indices t)
+         far;
+       reads "columns taken compiled are eager's, zero outside the axis"
+         (fun indices t -> Nx.take ~axis:1 ~indices t)
+         far;
+       reads "elements taken along an axis compiled are eager's"
+         (fun indices t -> Nx.take_along_axis ~axis:1 ~indices t)
+         (Nx.init Nx.int64 [| 6; 3 |] (fun i ->
+              Int64.of_int ((((i.(0) * 3) + i.(1)) mod 9) - 2)));
+       reads "rows taken by each lane of a map compiled are eager's"
+         (fun indices t ->
+           Rune.vmap' (fun indices -> Nx.take ~axis:0 ~indices t) indices)
+         (Nx.reshape [| 2; 4 |]
+            (Nx.create Nx.int64 [| 8 |] [| 5L; -1L; 0L; 6L; 2L; 2L; 9L; 1L |]));
+       reads "rows taken from each lane's table compiled are eager's"
+         (fun indices t ->
+           Rune.vmap'
+             (fun t -> Nx.take ~axis:0 ~indices t)
+             (Nx.stack [ t; Nx.neg t ]))
+         far;
+       test "the gradient of rows taken compiled is eager's" (fun () ->
+           equal floats (Rune.grad' loss whole)
+             (host (Rune.jit' (Rune.grad' loss) (Nx.place at whole))));
+       kernels "a cache's rows read by a product are read in its kernel" 1
+         (fun slots ->
+           Nx.matmul (rows 8 32 0.01)
+             (Nx.transpose (Nx.take ~axis:0 (rows 20 32 0.001) ~indices:slots)))
+         (Nx.create Nx.int64 [| 12 |]
+            (Array.init 12 (fun i -> Int64.of_int (19 - i))));
+       kernels
+         "rows at positions from an offset, read twice, are read where used" 1
+         (fun p ->
+           scores 16
+             (Nx.take ~axis:0 (rows 64 16 0.001)
+                ~indices:(Nx.add (Nx.arange Nx.int64 0 8 1) p)))
+         (Nx.scalar Nx.int64 4L);
+       kernels "rows read by two sums are read in their kernel" 1
+         (fun indices ->
+           let g = Nx.take ~axis:0 (rows 64 40 0.001) ~indices in
+           Nx.add
+             (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 0 ] (rows 8 40 0.01))))
+             (Nx.sum ~axes:[ 1 ] (Nx.mul g (Nx.slice [ I 1 ] (rows 8 40 0.02)))))
+         indices;
+       kernels
+         "rows summed below a bound from memory, read twice, are a kernel of \
+          their own"
+         2
+         (fun bound ->
+           let below =
+             Nx.less
+               (Nx.reshape [| 1; 48; 1 |] (Nx.arange Nx.int64 0 48 1))
+               bound
+           in
+           scores 24
+             (Nx.sum ~axes:[ 1 ]
+                (Nx.where below
+                   (Nx.reshape [| 1; 48; 24 |] (rows 48 24 0.001))
+                   (Nx.scalar Nx.float32 0.))))
+         (Nx.reshape [| 8; 1; 1 |] indices);
+     ]
+    @
+    (* svd's singular values are float64, which Metal refuses. *)
+    if Nx.Placement.equal at Nx.Placement.host then
+      [
+        test "a 3x3 svd, whose factors three gathers order, compiles" (fun () ->
+            let svd a =
+              let u, s, vt = Nx.svd ~full_matrices:false a in
+              (u, (Nx.cast Nx.float32 s, vt))
+            in
+            let a = Nx.mul_s (Nx.eye Nx.float32 3) 4. in
+            let u, (s, vt) = svd a in
+            let u', (s', vt') =
+              Rune.jit
+                Nx.Ptree.(tensor @-> returns (pair tensor (pair tensor tensor)))
+                svd a
+            in
+            equal close u (host u');
+            equal close s (host s');
+            equal close vt (host vt'));
+      ]
+    else [])
 
 (* One device *)
 
@@ -3697,6 +3807,7 @@ let () =
          scans;
          gathers ~at:Nx.Placement.host Nx_device.host;
          device_lists;
+         split_gathers;
          disk;
          on_one_device ~name:"one device" d4;
          sums_fuse_products Nx_device.host;

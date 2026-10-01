@@ -215,16 +215,87 @@ let pick mask b =
   let selected = Ops.where mask b (Ops.int 0) in
   Ops.rop selected Op.Add [ Ops.ndim selected - 1 ]
 
-(* The positions are compared in [int64]: where [x] is read from memory, tolk
-   folds the selection into a load gated on [p]'s range and computes the load's
-   address in 32 bits, which a narrowing before the comparison would only
-   repeat. *)
-let take x axis p =
-  let hot =
-    Ops.eq (Ops.unsqueeze p (-1)) (Ops.arange ~dtype:(dtype p) (size x axis))
+(* Gathers
+
+   A gather is tolk's {!Op.Index} of [x] by a value with axes: the axes of [x]
+   that [p] varies along, then [axis], are flattened into rows, read at the row
+   each element of [p] names, and the axes [p] is broadcast along are read
+   whole. [p] is clamped into [axis], so that every read is in range, and an
+   element whose position lies outside it is selected as zero. *)
+
+let varies u =
+  let positions = List.mapi (fun d n -> Ops.range n [ -1 - d ]) (Ops.shape u) in
+  let rec read u index =
+    if Op.Set.mem (Ops.op u) Op.Set.movement then
+      let src = Ops.nth u 0 in
+      read src (Indexing.apply_movement_op (Ops.shape src) (Ops.marg u) index)
+    else index
   in
-  of_bits (dtype x)
-    (pick hot (Ops.transpose (Ops.unsqueeze (bits x) (-1)) axis (Ops.ndim x)))
+  let reached = List.concat_map Ops.toposort (read u positions) in
+  List.filter
+    (fun d -> List.memq (List.nth positions d) reached)
+    (List.init (Ops.ndim u) Fun.id)
+
+let static u d =
+  match List.nth (Ops.shape u) d with
+  | Ops.Int n -> n
+  | Ops.Sym _ -> invalid_arg "a gather along an axis of symbolic size"
+
+let take x axis p =
+  let n = static x axis in
+  if n = 0 || List.mem 0 (Ops.max_shape p) then
+    Ops.expand (Ops.const ~dtype:(dtype x) (`Int Bigint.zero)) (Ops.shape p)
+  else
+    let r = Ops.ndim x and varying = varies p in
+    let others = List.filter (fun d -> d <> axis) (List.init r Fun.id) in
+    let rows = List.filter (fun d -> List.mem d varying) others in
+    let whole = List.filter (fun d -> not (List.mem d varying)) others in
+    (* A sharded axis leads, so that each shard's rows stay one block. *)
+    let rows =
+      match Ops.axis x with
+      | Some a when List.mem a rows -> a :: List.filter (( <> ) a) rows
+      | _ -> rows
+    in
+    let lead = rows @ [ axis ] and order = rows @ (axis :: whole) in
+    let shape u = List.map (List.nth (Ops.shape u)) in
+    let x' =
+      Ops.reshape (Ops.permute x order)
+        (Ops.Int (List.fold_left (fun k d -> k * static x d) 1 lead)
+        :: shape x whole)
+    in
+    let row =
+      Ops.reshape
+        (Ops.permute
+           (Ops.shrink p
+              (List.init r (fun d ->
+                   if List.mem d whole then Some (Ops.Int 0, Ops.Int 1)
+                   else None)))
+           order)
+        (shape p lead)
+    in
+    let k = List.length lead in
+    let clamped =
+      Ops.cast
+        (Ops.maximum (Ops.minimum row (int row (n - 1))) (int row 0))
+        Weak_int
+    in
+    let index d l = Option.get (List.find_index (Int.equal d) l) in
+    let at, _ =
+      List.fold_right
+        (fun d (at, stride) ->
+          let position =
+            Ops.expand
+              (along k (index d rows) (Ops.arange ~dtype:Weak_int (static x d)))
+              (Ops.shape row)
+          in
+          (Ops.add at (Ops.mul position (Ops.int stride)), stride * static x d))
+        rows (clamped, n)
+    in
+    let read =
+      Ops.permute (Ops.index x' [ at ]) (List.init r (fun d -> index d order))
+    in
+    let bits = Ops.bitcast p (unsigned (dtype p)) in
+    Ops.where (Ops.lt bits (int bits n)) read (int read 0)
 
 let argsort ~descending ~axis x =
   if size x axis <= 1 then Ops.const_like ~dtype:Int64 x (`Int Bigint.zero)

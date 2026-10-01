@@ -174,6 +174,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- `jit` compiles `Nx.take`, `Nx.take_along_axis` and the sorts as loads at
+  the indices, which fuse into the operations that read them, where a one-hot
+  sum cost a reduction over the axis per element and a kernel of its own.
 - A compiled function answers `Nx.check` when its call returns, raising the
   first failed check's message, and differentiates, maps and compiles
   `Nx.fma`, `Nx.log1p` and `Nx.expm1`.

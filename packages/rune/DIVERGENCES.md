@@ -441,16 +441,16 @@ target's run lands.
 - **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:965`
   (`argsort`).
-- **Raven:** `lower_reduce.ml:130` (`bitonic`), `:192` (`positions`), `:222`
-  (`take`), `:229` (`argsort`), `:248` (`sort`).
+- **Raven:** `lower_reduce.ml:130` (`bitonic`), `:192` (`positions`), `:244`
+  (`take`), `:300` (`argsort`), `:320` (`sort`).
 - **Differs:** tinygrad's network sorts R4's keys, NaN at the greatest key in
   both directions, each read as the unsigned integer of its width and packed in
   an `int64` above its position, complemented for a descending sort. Packed
   integers are distinct, so the network gives the stable order, and the
   positions are their low bits. A 64-bit key sorts in two such passes, its low
   half first. The sorted values are the operand's elements at those positions,
-  a one-hot sum over their bits. tinygrad's recovery never matches a NaN, and
-  its network compares floats.
+  read by a gather (I3). tinygrad's recovery never matches a NaN, and its
+  network compares floats.
 - **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, in nx's sort order
   or its exact reverse when descending (NaN last ascending and first descending,
   `-0.` before `0.` ascending), and `sort` is the operand taken along `argsort`,
@@ -489,21 +489,26 @@ target's run lands.
 - **Pinned by:** `assembly › pieces of different lengths keep -0.`,
   `assembly › cat › *`.
 
-### I3. Gather over bit patterns
+### I3. Gather by an index
 
 - **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
-- **Raven:** `lower_index.ml:79` (`gather`); `lower_reduce.ml:207` (`bits`),
-  `:214` (`pick`).
-- **Differs:** the one-hot selection is summed over the elements' bit patterns
-  as unsigned integers of their width (booleans as `uint8`) and read back; the
-  reference sums the values, which turns a gathered `-0.` into `+0.`. An index
-  out of range selects nothing and reads the bits 0, `+0.`.
+- **Raven:** `lower_index.ml:79` (`gather`); `lower_reduce.ml:226` (`varies`),
+  `:244` (`take`).
+- **Differs:** a gather is one tolk INDEX of the operand by an index with axes.
+  The operand's axes that the index varies along, a split one first, then the
+  gathered axis, are flattened into rows; the index, clamped into the axis,
+  names a row, and the axes it is broadcast along are read whole. Where the
+  index lies outside the axis, an unsigned comparison selects `0`. The read
+  is a load, so each element keeps its bits; the reference sums the values,
+  which turns a gathered `-0.` into `+0.`, and costs a reduction over the
+  axis per element.
 - **nx:** `nx_backend_intf.mli`, `gather`: the element at the index; an index
   outside the axis reads zero.
 - **Class:** exact.
 - **Reason:** (b).
 - **Pinned by:** `indexed access › a gathered -0. keeps its sign`,
-  `› an index out of range reads +0.`, `› gather › *`.
+  `› an index out of range reads +0.`, `› gather › *`; Jit's `gathers › *`
+  and `gathers across devices › *`.
 
 ### I4. Scatter keeps unreached positions and sets bits
 
@@ -520,7 +525,8 @@ target's run lands.
     on the unsigned bit pattern (A2).
   - `Set`: the bits of the last update that reaches a position, the one of
     highest index along the axis (every reaching update with `unique`), are
-    selected by a one-hot sum over bit patterns, as I3, in one reduction. The
+    selected by a one-hot sum over their bit patterns, as unsigned integers
+    of their width, in one reduction. The
     meaning agrees with the reference's `_masked_merge`, which also keeps the
     last update; its construction, a chain of one `where` per update along the
     axis, grows the graph with the number of updates.
@@ -543,7 +549,8 @@ target's run lands.
   `where` per window position.
 - **Raven:** `lower_index.ml:131` (`update`).
 - **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
-  one-hot selection over bit patterns (I3), and the moved `v` is selected on
+  one-hot selection over bit patterns, as unsigned integers of their width,
+  and the moved `v` is selected on
   the window's mask; along an axis `v` fills, the start is 0.
 - **nx:** `nx_backend_intf.mli`, `update`: `starts` is read when the kernel
   runs, already clamped so that the window fits.
@@ -778,6 +785,25 @@ target's run lands.
   diagonal is never the pivot`, `› a NaN on the diagonal is the pivot`, `› one
   element`, `› no element`.
 
+
+### P1. A result lies as nx places it
+
+- **Reference:** none: tinygrad's multi-device rules decide a result's
+  sharding from its operands'.
+- **Raven:** `lower.ml:348` (`settled`).
+- **Differs:** each lowered result is laid out as nx places it. A value tolk
+  computes split over the devices where nx places the result whole on each is
+  joined whole on each, by its elements' bits; one tolk computes whole, or
+  split along another axis, where nx splits it, is split as nx splits it.
+  Without it, a gather of rows split over devices by indices split over them
+  was split while nx places it whole, and each device's copy of the result
+  held only its own part.
+- **nx:** the placement of each operation's result, which a traced value
+  reports.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** Jit's `gathers across devices › rows taken by indices split
+  over two devices from rows split over them keep their bits`.
 
 ## Targets
 

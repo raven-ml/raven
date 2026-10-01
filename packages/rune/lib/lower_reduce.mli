@@ -54,10 +54,21 @@ val pick : Ops.t -> Ops.t -> Ops.t
 (** [pick mask b] is the bits [b] where [mask] holds, summed over the last axis:
     the element [mask] selects, or zero where it selects none. *)
 
+val varies : Ops.t -> int list
+(** [varies u] is the axes, in order, along which the elements of [u] may
+    differ: through [u]'s movements, those whose position the index into the
+    node they move reads. A value that is not a movement varies along every
+    axis. *)
+
 val take : Ops.t -> int -> Ops.t -> Ops.t
 (** [take x axis p] is the elements of [x] along [axis] at the positions [p],
     each with its bits, of [p]'s shape: [x] and [p] agree on every other axis.
-    [p] is [int64], and a position out of range takes [0]. *)
+    [p] is [int64], and a position out of range takes [0].
+
+    It reads [x] with one {!Op.Index} by a value with axes, the axes along which
+    [p] {!varies} flattened with [axis] into its rows, a sharded one first, and
+    [p] clamped into [axis]. Raises [Invalid_argument] if one of those axes has
+    a symbolic size. *)
 
 val argsort : descending:bool -> axis:int -> Ops.t -> Ops.t
 (** [argsort ~descending ~axis x] is the positions that sort [x] along [axis],

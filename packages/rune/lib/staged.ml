@@ -60,8 +60,11 @@ let after s values deps =
 type reach = Apart | Own | Other
 
 let keeps_index u =
+  let sized v = not (List.exists (Dtype.equal (Ops.dtype v)) Dtype.weaks) in
   match Ops.op u with
-  | Op.Cast | Op.Bitcast -> Ops.element_size u = Ops.element_size (Ops.nth u 0)
+  | Op.Cast | Op.Bitcast ->
+      let v = Ops.nth u 0 in
+      sized u && sized v && Ops.element_size u = Ops.element_size v
   | Op.Reshape | Op.Stage -> true
   | o -> Op.Set.mem o Op.Set.elementwise
 
