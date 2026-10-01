@@ -234,9 +234,17 @@ let stage trace s (r : Scan.request) =
   let reads = Array.map (fun u -> reach ~from:u) params in
   let k = Array.length params in
   let edges = Array.make k [] in
-  let rec reaches i j = i = j || List.exists (fun l -> reaches l j) edges.(i) in
-  let copied = Array.make k false in
+  let copied = Array.make k false and seen = Array.make k false in
+  let rec reaches j i =
+    i = j
+    || (not seen.(j))
+       && begin
+         seen.(j) <- true;
+         List.exists (fun l -> reaches l i) edges.(j)
+       end
+  in
   for i = 0 to k - 1 do
+    Array.fill seen 0 k false;
     let others =
       List.filter
         (fun j -> j <> i && reads.(j) nexts.(i) <> Apart)

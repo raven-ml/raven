@@ -1426,21 +1426,21 @@ let staged at name ~steps ~init f xs =
       equal near ys (host ys');
       equal int (steps (Nx.shape xs).(0)) !ran)
 
-(* [paired at name ~steps ~init f xs] is [staged] for two carries. *)
-let paired at name ~steps ~init f xs =
+(* [carried at name ~steps ~init f xs] is [staged] for a list of carries. *)
+let carried at name ~steps ~init f xs =
   test name (fun () ->
       let ran = ref 0 in
       let scan xs =
-        let (a, b), ys =
+        let cs, ys =
           Rune.scan
-            Nx.Ptree.(pair tensor tensor)
+            Nx.Ptree.(list tensor)
             Nx.Ptree.tensor Nx.Ptree.tensor
             ~f:(fun c x ->
               incr ran;
               f c x)
             ~init xs
         in
-        [ a; b; ys ]
+        ys :: cs
       in
       let eager = scan xs in
       ran := 0;
@@ -1544,18 +1544,49 @@ let staged_scans d =
         ~init:(ones 3) rotated (rows 5 3);
       staged at "update a carry its next value reads reversed" ~steps:once
         ~init:(ones 3) flipped (rows 5 3);
-      paired at "swap two carries" ~steps:1
-        ~init:(ones 4, Nx.full Nx.float32 [| 4 |] 3.)
-        (fun (a, b) x -> ((b, a), Nx.add (Nx.mul_s a 2.) x))
+      carried at "swap two carries" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 3. ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ b; a ], Nx.add (Nx.mul_s a 2.) x)
+          | _ -> assert false)
         (rows 5 4);
-      paired at "update two carries that read each other" ~steps:1
-        ~init:(ones 4, Nx.full Nx.float32 [| 4 |] 3.)
-        (fun (a, b) x -> ((Nx.add b x, a), Nx.add a b))
+      carried at "update two carries that read each other" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 3. ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ Nx.add b x; a ], Nx.add a b)
+          | _ -> assert false)
         (rows 6 4);
-      paired at "update carries as a Fibonacci sequence" ~steps:1
-        ~init:(ones 4, ones 4)
-        (fun (a, b) x -> ((b, Nx.add (Nx.add a b) x), a))
+      carried at "update carries as a Fibonacci sequence" ~steps:1
+        ~init:[ ones 4; ones 4 ]
+        (fun cs x ->
+          match cs with
+          | [ a; b ] -> ([ b; Nx.add (Nx.add a b) x ], a)
+          | _ -> assert false)
         (rows 6 4);
+      carried at "rotate three carries" ~steps:1
+        ~init:[ ones 4; Nx.full Nx.float32 [| 4 |] 2.; zeros 4 ]
+        (fun cs x ->
+          match cs with
+          | [ a; b; c ] -> ([ b; Nx.add c x; a ], Nx.add a c)
+          | _ -> assert false)
+        (rows 6 4);
+      (* Each carry's next value reads every earlier carry: checking each for a
+         cycle walks the carries once, where following every path would take
+         minutes. *)
+      carried at "update forty carries that each read the earlier ones" ~steps:1
+        ~init:(List.init 40 (fun _ -> ones 4))
+        (fun cs x ->
+          let next, _ =
+            List.fold_left
+              (fun (next, sum) c ->
+                (Nx.add (Nx.add c x) (Nx.mul_s sum 0.001) :: next, Nx.add sum c))
+              ([], zeros 4)
+              cs
+          in
+          (List.rev next, Nx.sum (List.hd next)))
+        (rows 3 4);
       transformed at "stage grad of a sum over a scan's outputs" ~steps:3
         (fun ran -> Rune.grad' (summed ran));
       transformed at "stage grad of grad of a sum over a scan's outputs"
