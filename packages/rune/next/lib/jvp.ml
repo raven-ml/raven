@@ -10,7 +10,7 @@ type t = {
   entry : string;
   slots : Linear.tape option;
   rerun : rerun option;
-  id : unit ref;  (** Each installation is a block of its own. *)
+  id : unit ref;  (** The installation's identity, which its duals name. *)
 }
 
 (* A rerun's installation adopts the duals of its parent, and of the parent's
@@ -38,7 +38,7 @@ let dual owner primal tangent =
 
 let rec adopts i owner =
   match i.rerun with
-  | Some r -> r.parent == owner || adopts r.parent owner
+  | Some r -> r.parent.id == owner.id || adopts r.parent owner
   | None -> false
 
 let rec captured : type a b. capture list -> (a, b) Nx.t -> (a, b) Nx.t option =
@@ -68,7 +68,7 @@ let own (type a b) i (x : (a, b) Nx.t) : ((a, b) Nx.t * (a, b) Nx.t) option =
   | Traced tr -> (
       match Repr.Traced.node tr with
       | Dual { owner; primal; tangent } ->
-          if owner == i then Some (primal, tangent)
+          if owner.id == i.id then Some (primal, tangent)
           else if adopts i owner then Some (primal, capture i x primal)
           else None
       | _ -> None)
@@ -78,7 +78,7 @@ let owns i x =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Dual { owner; _ } -> owner == i || adopts i owner
+      | Dual { owner; _ } -> owner.id == i.id || adopts i owner
       | _ -> false)
   | Host _ | Placed _ -> false
 
@@ -95,10 +95,6 @@ let unwrap i x =
   | None -> assert false (* [i] claims the operation through [x]. *)
 
 (* Coefficients *)
-
-let no_rule i op =
-  invalid_arg
-    (Printf.sprintf "%s: the tangent of %s is not implemented" i.entry (name op))
 
 let unary k x = eval (Unary (k, x))
 let binary k a b = eval (Binary (k, a, b))
@@ -191,7 +187,11 @@ let linear_scan ~axis a b =
   let n = (Nx.shape a).(axis) in
   let zero = Nx_dtype.zero (Nx.dtype b) in
   let rec go d a b =
-    if d >= n then b
+    if
+      (d >= n)
+      [@mutate
+        off "a round at d = n shifts everything out and leaves b unchanged"]
+    then b
     else
       go (2 * d)
         (Nx.mul a (shifted ~axis d (one a) a))
@@ -258,7 +258,7 @@ let selected y first da db =
 (* [zero_where c x] is [x] with zeros where [c] holds. *)
 let zero_where c x = Nx.where c (Nx.zeros_like x) x
 
-let binary_tangent i op k a b y da db =
+let binary_tangent k a b y da db =
   let term f = Option.map f in
   match[@warning "@4@8"] (k : Nx_backend.binary) with
   | Add -> terms da db
@@ -490,7 +490,10 @@ let qr_square q r da =
    = Q R₁ square, so dR₂ = Qᴴ (dA₂ - dQ R₂). *)
 let qr' i ~reduced x q r dx =
   let m = Nx.dim (-2) x and n = Nx.dim (-1) x in
-  if m >= n then begin
+  if
+    (m >= n)
+    [@mutate off "a square matrix through the wide branch has an empty R₂"]
+  then begin
     if (not reduced) && m > n then
       invalid_arg
         (i.entry
@@ -551,7 +554,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       match[@warning "@4@8"] (k : Nx_backend.binary) with
       | Idiv | And | Or | Xor -> y
       | Add | Sub | Mul | Fdiv | Mod | Pow | Atan2 | Maximum | Minimum ->
-          dual i y (binary_tangent i op k a b y da db))
+          dual i y (binary_tangent k a b y da db))
   | Compare (k, a, b) -> eval (Compare (k, primal i a, primal i b))
   | Where (c, a, b) ->
       let a, da = split i a and b, db = split i b in
@@ -569,7 +572,6 @@ let run : type r. t -> r Nx.Op.t -> r =
   | Scan (k, axis, x) -> (
       let x, dx = unwrap i x in
       let y = eval (Scan (k, axis, x)) in
-      let axis = if axis < 0 then axis + Nx.ndim x else axis in
       match[@warning "@4@8"] (k : Nx_backend.reduce) with
       | Sum -> dual i y (eval (Scan (Sum, axis, dx)))
       | Prod ->

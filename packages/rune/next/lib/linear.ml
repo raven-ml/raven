@@ -352,8 +352,8 @@ let transpose_op : type a b.
       in
       add x (Nx.broadcast_to shape (Nx.reshape kept ct))
   | Scan (_, axis, x) ->
-      let axes = [ (if axis < 0 then axis + Nx.ndim x else axis) ] in
-      add x (Nx.flip ~axes (Nx.cumsum ~axis:(List.hd axes) (Nx.flip ~axes ct)))
+      add x
+        (Nx.flip ~axes:[ axis ] (Nx.cumsum ~axis (Nx.flip ~axes:[ axis ] ct)))
   | Pad (padding, _, x) ->
       add x
         (Nx.shrink

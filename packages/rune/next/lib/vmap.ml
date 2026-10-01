@@ -10,7 +10,7 @@ type t = {
   entry : string;
   axis : Construct.axis option;
   size : int;
-  id : unit ref;  (** Each installation is a block of its own. *)
+  id : unit ref;  (** The installation's identity, which its lanes name. *)
 }
 
 let create ?axis entry size = { entry; axis; size; id = ref () }
@@ -29,7 +29,9 @@ let lane m x =
 let owns m x =
   match Repr.v x with
   | Traced tr -> (
-      match Repr.Traced.node tr with Lane { map; _ } -> map == m | _ -> false)
+      match Repr.Traced.node tr with
+      | Lane { map; _ } -> map.id == m.id
+      | _ -> false)
   | Host _ | Placed _ -> false
 
 (* [physical m x] is the batched tensor of [x] if it is a lane of [m], and [x]
@@ -38,7 +40,7 @@ let physical (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t =
   match Repr.v x with
   | Traced tr -> (
       match Repr.Traced.node tr with
-      | Lane { map; batched } when map == m -> batched
+      | Lane { map; batched } when map.id == m.id -> batched
       | _ -> x)
   | Host _ | Placed _ -> x
 
