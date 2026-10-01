@@ -232,18 +232,21 @@ let lend ~leaves ~fits ~reads ~writes nodes ys =
     (fun j i -> reads i nodes.(j) = Staged.Apart);
   lent
 
-(* [replaced map u] is [u] with each node [map] pairs replaced by its image. *)
-let replaced map u =
-  let memo = Ops.Tbl.create 64 in
-  let rec go u =
-    match List.assq_opt u map with
+(* [rebuilder ()] is [(value, assign)]: [value u] is [u] with each node [assign]
+   paired with an image replaced by it, through one memo, so that a node several
+   values reach is rebuilt once. Every node is assigned before [value] reaches a
+   node above it. *)
+let rebuilder () =
+  let images = Ops.Tbl.create 16 and memo = Ops.Tbl.create 64 in
+  let rec value u =
+    match Ops.Tbl.find_opt images u with
     | Some v -> v
     | None -> (
         match Ops.Tbl.find_opt memo u with
         | Some v -> v
         | None ->
             let src = Ops.src u in
-            let src' = List.map go src in
+            let src' = List.map value src in
             let v =
               if List.for_all2 ( == ) src src' then u
               else Ops.replace u ~src:src'
@@ -251,7 +254,7 @@ let replaced map u =
             Ops.Tbl.add memo u v;
             v)
   in
-  go u
+  (value, fun u v -> Ops.Tbl.replace images u v)
 
 (* [ordered ~leaves nodes lent] is [lent] with pairs given up until the stores
    have an order, and that order of the results. A lent result is written over
@@ -406,31 +409,15 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
           else None)
         (Lower.writes s)
   in
-  (* The results are stored in that order: a result that reads a lent one reads
-     its store. *)
-  let assigned = ref []
+  (* The results are stored in that order, rebuilt through one substitution: a
+     result that reads a lent one reads its store, and a node results share
+     stays one node. *)
+  let value, assign = rebuilder ()
   and stores = ref []
   and outs = Array.make (Array.length ys) Empty in
-  (* A fresh result that is all of a buffer the program makes, in order, and
-     that no call reads whole, has the program write it in its storage in place
-     of that buffer, and no copy. *)
+  (* A fresh result that is all of a buffer the program makes, in order, has the
+     program write it in its storage in place of that buffer, and no copy. *)
   let taken = ref [] in
-  let whole =
-    lazy
-      (List.concat_map
-         (fun u ->
-           if Ops.op u = Op.Call then
-             List.filter_map
-               (fun a ->
-                 match Tolk_next.Prepare.contiguous_view a with
-                 | Some (b, 0) when Ops.max_numel b = Ops.max_numel a ->
-                     Some
-                       (if Ops.op b = Op.After then List.hd (Ops.src b) else b)
-                 | _ -> None)
-               (Ops.src_without_body u)
-           else [])
-         (Ops.toposort (Ops.sink (Array.to_list nodes))))
-  in
   let made b =
     Ops.op b = Op.Buffer
     && (match Ops.arg b with
@@ -461,13 +448,12 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
         | Some a
           when List.hd (Ops.src a) == b
                && made b
-               && (not (List.memq b (Lazy.force whole)))
                && Ops.max_numel b = n
                && Ops.max_numel t = n
                && Tolk_next.Dtype.equal (Ops.dtype b) (Ops.dtype t)
                && Ops.device b = Ops.device t ->
             taken := (b, t) :: !taken;
-            stores := a :: !stores;
+            stores := value a :: !stores;
             true
         | _ -> false)
     | _ -> false
@@ -480,7 +466,6 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
           Lower.output s ~slot (Nx.placement y) (Nx.dtype y) (Nx.shape y)
         in
         if target != nodes.(j) then begin
-          let value = replaced !assigned in
           let sint = function Ops.Sym u -> Ops.Sym (value u) | d -> d in
           let bounds =
             List.map (Option.map (fun (lo, hi) -> (sint lo, sint hi)))
@@ -503,7 +488,7 @@ let compile (type a r) (args_s : a Ptree.t) (result_s : r Ptree.t) (g : a -> r)
           in
           let stored = Ops.after target written in
           stores := stored :: !stores;
-          if lent.(j) >= 0 then assigned := (nodes.(j), stored) :: !assigned
+          if lent.(j) >= 0 then assign nodes.(j) stored
         end
       in
       if numel (Nx.shape y) = 0 then ()
