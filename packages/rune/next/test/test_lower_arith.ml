@@ -506,6 +506,76 @@ let random_bits =
             (fun () -> trace (fun () -> Nx.Op.eval (Threefry (key, counter)))));
     ]
 
+(* Long reductions
+
+   An angle with known bounds below the reductions' limits takes the short
+   reduction alone, as Box-Muller's [2 pi u] does for a fused uniform [u] in
+   [[0, 1)]. An angle read from a buffer has no bounds and takes the long one as
+   well. *)
+
+(* The first nonzero word of the bits of [1/(2 pi)], which only the long
+   (Payne-Hanek) reduction reads. *)
+let payne_hanek_word = Tolk_next.Bigint.of_int 0x28be60db
+
+let long_reductions y =
+  let reads_table k =
+    List.exists
+      (fun u ->
+        match Tolk_next.Ops.arg u with
+        | Tolk_next.Ops.Const (`Int z) ->
+            Tolk_next.Bigint.equal z payne_hanek_word
+        | _ -> false)
+      (Tolk_next.Ops.toposort
+         (Tolk_next.Codegen.full_rewrite_to_sink k (host Nx.Device.host)))
+  in
+  List.length (List.filter reads_table (Tolk_next.Ops.src (Programs.kernels y)))
+
+(* [drawn s f dt] is the draw [f] traced in [s] from a key argument. *)
+let drawn s f dt =
+  let key = (Nx.Rng.key 7 :> (int32, Nx.int32_elt) Nx.t) in
+  within s (fun () -> f (Nx.Rng.of_tensor (argument s key)) dt [| 256 |])
+
+let long_reductions_group =
+  group "long reductions"
+    [
+      cases ~name:(fun (F (name, _)) -> name)
+        "a normal draw takes none" wide (fun (F (_, dt)) ->
+          let s = scope () in
+          equal int 0 (long_reductions (drawn s Nx.Rng.normal dt)));
+      cases ~name:(fun (F (name, _)) -> name)
+        "the sine of an angle read from a buffer takes one" wide
+        (fun (F (_, dt)) ->
+          let s = scope () in
+          let x = Nx.zeros dt [| 4 |] in
+          let y = within s (fun () -> Nx.sin (argument s x)) in
+          equal int 1 (long_reductions y));
+    ]
+
+(* Random draws, compiled for the host: a uniform draw is eager's bits, and a
+   normal one within the ulps that two implementations of [log], [sqrt] and
+   [cos] or [sin] leave between them (3 measured over 4096 draws). *)
+
+let random_draws =
+  let compiled f dt =
+    let key = Nx.Rng.key 7 in
+    let draw k = f k dt [| 256 |] in
+    let y =
+      Rune_next.Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) draw key
+    in
+    (draw key, Nx.place Nx.Placement.host y)
+  in
+  group "random draws"
+    [
+      cases ~name:(fun (F (name, _)) -> name)
+        "a uniform draw is eager's" wide (fun (F (_, dt)) ->
+          let eager, y = compiled Nx.Rng.uniform dt in
+          exact eager y);
+      cases ~name:(fun (F (name, _)) -> name)
+        "a normal draw is within 4 ulps of eager's" wide (fun (F (_, dt)) ->
+          let eager, y = compiled Nx.Rng.normal dt in
+          ulps ~budget:4 ~expected:eager [||] y);
+    ]
+
 (* Compiled for the host
 
    The exact operations over the values that break arithmetic, every pair of
@@ -775,6 +845,8 @@ let () =
          logarithms_group ~tags:[ "slow" ] "logarithms on the host"
            { eval = Programs.compiled };
          random_bits;
+         long_reductions_group;
+         random_draws;
          on_the_host;
          parity;
        ]

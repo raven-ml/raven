@@ -265,9 +265,12 @@ let quarter_turns a =
   (where near r far_r, where near (Ops.cast q Int32) far_q)
 
 (* [by_quadrant x f] is [f] of the sine and cosine of the reduced [|x|] and of
-   its quadrant, NaN at an infinity and at NaN. *)
+   its quadrant, NaN at an infinity and at NaN. [|x|] is [-x] or [x] by the sign
+   bit, rather than [x] with the bit cleared, so that it has [x]'s bounds: a
+   bounded argument is then known finite and below the limit, and the long
+   reduction folds away. *)
 let by_quadrant x f =
-  let a = abs x in
+  let a = where (sign_bit x) (neg x) x in
   let finite = Ops.lt a (float x Float.infinity) in
   let r, q = quarter_turns (where finite a (float x 0.)) in
   let quadrant n = Ops.eq (Ops.bitwise_and q (int q 3)) (int q n) in
