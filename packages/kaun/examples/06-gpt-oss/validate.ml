@@ -129,11 +129,14 @@ let identical ?(flushed = fun _ -> false) name expected actual =
        (Array.length expected) !first zeroed)
 
 (* [compiled devices f x] is [f x], compiled over [devices] when given: [x] is
-   placed there, a copy on each. *)
+   placed there, a copy on each, and the result is read back to the host, where
+   the checks compute on it eagerly. *)
 let compiled devices f x =
   match devices with
   | None -> f x
-  | Some ds -> Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x)
+  | Some ds ->
+      Nx.place Nx.Placement.host
+        (Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x))
 
 let number j =
   match j with
@@ -348,14 +351,14 @@ let ids_tensor rows =
   Nx.create Nx.int64 [| batch; seq |]
     (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
+(* The scales stay where they are placed: the addition is compiled, so it runs
+   there. *)
 let with_scale_offset offset (p : _ Gpt_oss.params) =
+  let add s = Rune.jit' (fun s -> Nx.add s (Nx.scalar Nx.uint8 offset)) s in
   let shift = function
     | Moe.Float w -> Moe.Float w
     | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) ->
-        Moe.Quant
-          (Nx_quant.mxfp4
-             ~scales:(Nx.add scales (Nx.scalar Nx.uint8 offset))
-             codes)
+        Moe.Quant (Nx_quant.mxfp4 ~scales:(add scales) codes)
   in
   let block (b : _ Gpt_oss.block) =
     let moe =
@@ -440,7 +443,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         expected
         (flat (compiled devices (attend layer) x));
       if layer = Gpt_oss.Sliding && exact then begin
-        let unbound = flat (attend Gpt_oss.Full x) in
+        let unbound = flat (compiled devices (attend Gpt_oss.Full) x) in
         let gap = ref 0.0 in
         Array.iteri
           (fun j e -> gap := Float.max !gap (Float.abs (e -. unbound.(j))))
@@ -540,16 +543,16 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         (0, [], Gpt_oss.cache cfg ~slots:n dt)
         [ 1; 7; n ]
     in
-    to32 (Gpt_oss.logits cfg p (Nx.concatenate ~axis:1 (List.rev hs)))
+    compiled devices
+      (fun h -> to32 (Gpt_oss.logits cfg p h))
+      (Nx.concatenate ~axis:1 (List.rev_map (Nx.place Nx.Placement.host) hs))
   in
-  let eager_logits =
-    if devices = None then logits
-    else to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids))
+  let cached =
+    if devices = None then Gpt_oss.cached cfg p else compiled_cached cfg p
   in
   close ~tol
     (name "cached, in chunks of 1, 7 and the rest, every position")
-    (flat eager_logits)
-    (flat (chunked (Gpt_oss.cached cfg p)));
+    (flat logits) (flat (chunked cached));
   Option.iter
     (fun devices ->
       let whole = compiled_cached cfg p
