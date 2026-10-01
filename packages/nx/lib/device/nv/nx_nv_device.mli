@@ -176,9 +176,6 @@ val of_device : Nx_device.t -> t option
 (** [of_device d] is the channels and properties of [d], if [d] is an NV device.
 *)
 
-val interface : t -> interface
-(** [interface n] is the interface the device was opened through. *)
-
 type channel = {
   ring : Nx_device.Buffer.t;
       (** The channel's GPFIFO: 64-bit entries, each naming a pushbuffer

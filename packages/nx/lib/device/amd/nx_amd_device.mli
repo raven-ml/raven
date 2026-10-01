@@ -171,9 +171,6 @@ val of_device : Nx_device.t -> t option
 (** [of_device d] is the queues and properties of [d], if [d] is an AMD device.
 *)
 
-val interface : t -> interface
-(** [interface a] is the interface the device was opened through. *)
-
 type queue = {
   ring : Nx_device.Buffer.t;
       (** The ring, whose size ({!Nx_device.Buffer.nbytes}) is a power of two.

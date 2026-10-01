@@ -124,13 +124,7 @@ let opening =
           greater int ~than:0 (Nx_device.budget metal));
       test "its low-level accessors are Metal objects" (fun () ->
           List.iter (not_equal nativeint 0n)
-            Nx_metal_device.[ mtl_device m; queue m; event m; fence m ];
-          let b = B.create metal S.UInt8 16 in
-          equal ~msg:"a buffer's MTLBuffer" (option nativeint)
-            (Some Nx_device.Driver.Region.(handle (of_buffer b)))
-            (Nx_metal_device.resource m b);
-          equal ~msg:"none of the host's buffers" (option nativeint) None
-            (Nx_metal_device.resource m (B.create Nx_device.host S.UInt8 16)));
+            Nx_metal_device.[ queue m; event m; fence m ]);
       cases ~name:fst "refuse"
         [
           ("a device past the count", fun () -> is_error (Nx_metal_device.get 1));

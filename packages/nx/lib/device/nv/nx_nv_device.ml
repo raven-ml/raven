@@ -1179,7 +1179,6 @@ let v ?host ?interface ?firmware i =
   | Error msg -> failwith msg
 
 let of_device = nv_of
-let interface n = match n.gpu with Kernel_gpu _ -> Kernel | Pci_gpu _ -> Pci
 let compute n = fst (Option.get n.public)
 let copy n = snd (Option.get n.public)
 let shared_window _ = Nativeint.of_int shared_window

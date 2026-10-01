@@ -159,7 +159,6 @@ let of_device d =
   | Some m when Nx_device.equal m.dev d -> Some m
   | _ -> None
 
-let mtl_device m = m.mtl
 let queue m = m.queue
 let event m = m.event
 let fence m = m.fence

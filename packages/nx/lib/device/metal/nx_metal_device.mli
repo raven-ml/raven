@@ -63,9 +63,6 @@ type t
 val of_device : Nx_device.t -> t option
 (** [of_device d] is the Metal objects of [d], if [d] is a Metal device. *)
 
-val mtl_device : t -> nativeint
-(** [mtl_device m] is the [MTLDevice]. *)
-
 val queue : t -> nativeint
 (** [queue m] is the [MTLCommandQueue] all work is submitted to. *)
 
@@ -78,10 +75,6 @@ val fence : t -> nativeint
 val residency_set : t -> nativeint option
 (** [residency_set m] is the [MTLResidencySet] of the device's buffers, added to
     the queue, where Metal has residency sets. *)
-
-val resource : t -> Nx_device.Buffer.t -> nativeint option
-(** [resource m b] is the [MTLBuffer] of the memory [b] is a view of, if [b] is
-    on [m]'s device: its region's handle ({!Nx_device.Driver.Region.handle}). *)
 
 val resources : t -> nativeint array
 (** [resources m] is the [MTLBuffer]s of the device's memory, which work must

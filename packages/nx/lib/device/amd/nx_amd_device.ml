@@ -928,7 +928,6 @@ let v ?host ?interface ?firmware i =
   | Error msg -> failwith msg
 
 let of_device = amd_of
-let interface a = match a.gpu with Kfd_gpu _ -> Kernel | Am_gpu _ -> Pci
 let queues a = Option.get a.queues
 let compute a = match queues a with c, _, _ -> c
 let aql a = match queues a with _, aql, _ -> aql
