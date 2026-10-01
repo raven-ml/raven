@@ -55,6 +55,7 @@ stand_in("test.helpers", full_rewrite=unavailable, to_uops_list=unavailable, eva
 
 from golden import graph, table
 from tinygrad.dtype import dtypes
+from tinygrad.helpers import DEV
 from tinygrad.uop.ops import UOp, Ops, graph_rewrite
 from tinygrad.uop.weak import pm_commit_weak
 import tinygrad.uop.symbolic as symbolic
@@ -88,6 +89,10 @@ FILES = {
     "null/test_dtype_weak.py": (test_dtype_weak, {
         "test_committed_const_conversion_folds", "test_derivable_const_rounds_at_the_derived_width"}),
 }
+
+# A test's Tensor.empty places its buffer on the default device, which would
+# otherwise be the machine's own.
+DEV.value = "CPU"
 
 MATCHERS = {name: getattr(symbolic, name) for name in
             ("sym", "symbolic", "symbolic_simple", "commutative", "pm_simplify_valid", "pm_move_where_on_load",
