@@ -172,6 +172,16 @@ let sorted =
     (fun cell -> dtype_of_cell (cell "dtype"))
     (Golden.rows "properties.golden")
 
+(* Pairs of data types, the second the first half the time: two drawn
+   independently are rarely equal. *)
+let often_equal =
+  Gen.(
+    with_pp
+      (fun ppf (a, b) -> Format.fprintf ppf "%a, %a" Dtype.pp a Dtype.pp b)
+      (let* a = every in
+       let+ b = frequency [ (1, constant a); (1, every) ] in
+       (a, b)))
+
 let data_types =
   group "data types"
     [
@@ -182,10 +192,10 @@ let data_types =
       prop "compare is a total order"
         (Gen.triple every every every)
         (Law.order dtype);
-      prop "equal data types hash alike" (Gen.pair every every) (fun (a, b) ->
+      prop "equal data types hash alike" often_equal (fun (a, b) ->
           cover "equal" (Dtype.equal a b);
           if Dtype.equal a b then equal int (Dtype.hash a) (Dtype.hash b));
-      prop "equal is structural equality" (Gen.pair every every) (fun (a, b) ->
+      prop "equal is structural equality" often_equal (fun (a, b) ->
           equal bool (a = b) (Dtype.equal a b));
       Golden.cases "finfo.golden" (fun cell ->
           equal (pair int int)
