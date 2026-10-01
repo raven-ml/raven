@@ -48,38 +48,37 @@
     the cache to the system, then waits for the work of the memory its device
     released, then collects garbage with the device free for other domains,
     releases the borrows of its memory that idle devices still hold, and tries
-    again, up to four times, and raises {!Out_of_memory} only after that.
-    Memory returns one major cycle after the last value holding its buffers
-    dies, in whichever domain runs the collection, even while the domain that
-    made them is blocked. A value that a finaliser closure keeps dies only once
-    that closure has run, a cycle after its own holder died, so a chain of such
+    again, up to four times, and raises {!Out_of_memory} only after that. Memory
+    returns one major cycle after the last value holding its buffers dies, in
+    whichever domain runs the collection, even while the domain that made them
+    is blocked. A value that a finaliser closure keeps dies only once that
+    closure has run, a cycle after its own holder died, so a chain of such
     holders takes a cycle per link.
 
     {b Collection pace.} The host memory of buffers of 64 KiB or more (four
     pages, where pages are larger) paces the collector's major cycles by the
-    program's memory: its OCaml heap and the host memory its live buffers
-    hold. A cycle is due once the memory of those allocated since the last one
-    reaches [custom_major_ratio / 150] of it ({!Gc.control}), 29% by default,
-    the share the collector applies to its heap alone for other memory outside
-    it. A buffer dropped just after a cycle marks it is found by the next cycle
-    and freed while the one after that sweeps, so unreachable buffers hold at
-    most three such shares, 88% of the program's memory by default; under
-    steady allocation of buffers they measure about 0.75 times the memory of
-    the live ones. A program whose OCaml heap is small and whose buffers are
-    large thus runs a major cycle per share of the memory it holds. The live
-    memory is measured once each cycle ends, at the end of the next major
-    slice of any domain. Smaller buffers are paced as any bigarray: by the
-    OCaml heap once they outlive the minor heap.
+    program's memory: its OCaml heap and the host memory its live buffers hold.
+    A cycle is due once the memory of those allocated since the last one reaches
+    [custom_major_ratio / 150] of it ({!Gc.control}), 29% by default, the share
+    the collector applies to its heap alone for other memory outside it. A
+    buffer dropped just after a cycle marks it is found by the next cycle and
+    freed while the one after that sweeps, so unreachable buffers hold at most
+    three such shares, 88% of the program's memory by default; under steady
+    allocation of buffers they measure about 0.75 times the memory of the live
+    ones. A program whose OCaml heap is small and whose buffers are large thus
+    runs a major cycle per share of the memory it holds. The live memory is
+    measured once each cycle ends, at the end of the next major slice of any
+    domain. Smaller buffers are paced as any bigarray: by the OCaml heap once
+    they outlive the minor heap.
 
     The memory of another device's buffers paces the major cycles by the room
     left in that device's {!budget}: a cycle is due once the memory of the
     buffers allocated since the last one reaches the same share of that room,
-    and at least a page. Unreachable buffers then hold at most three such
-    shares of what the device could still allocate, and a device that fills
-    up runs cycles more often instead of refusing allocations; a full
-    collection ({!Out_of_memory}) is the last resort. A buffer small enough
-    for the minor heap paces minor collections no faster than any custom
-    block does.
+    and at least a page. Unreachable buffers then hold at most three such shares
+    of what the device could still allocate, and a device that fills up runs
+    cycles more often instead of refusing allocations; a full collection
+    ({!Out_of_memory}) is the last resort. A buffer small enough for the minor
+    heap paces minor collections no faster than any custom block does.
 
     {b Hangs and faults.} {!synchronize} and {!Buffer.copy} wait for the work of
     the devices involved. A device that hangs or faults is lost for good
@@ -348,9 +347,10 @@ module Buffer : sig
   (** [create_file path n] is the file at [path], created, or emptied if it
       exists, and sized to [n] bytes, as a buffer of [n] [UInt8] elements on
       {!disk} for reading and writing: {!copy} reads and writes them. Its bytes
-      read as zero until they are written. It names the file as {!of_file}
-      does, and its own writes do not change which file that is. A write reaches the file when {!copy} returns, and the storage once
-      the system flushes the file, which a sync of the file forces.
+      read as zero until they are written. It names the file as {!of_file} does,
+      and its own writes do not change which file that is. A write reaches the
+      file when {!copy} returns, and the storage once the system flushes the
+      file, which a sync of the file forces.
 
       [Error why] naming [path] if it cannot be created.
 
@@ -749,8 +749,8 @@ module Stats : sig
   (** [cached s] is the bytes in the device's cache: memory allocated from the
       driver and held for reuse. The host's cache holds the memory of collected
       buffers of 64 KiB or more for the next buffers of their sizes: up to a
-      major cycle's share of the program's memory, or 32 MiB where that is
-      less. *)
+      major cycle's share of the program's memory, or 32 MiB where that is less.
+  *)
 
   val retained : t -> int
   (** [retained s] is the bytes of the device's own memory that it retains
@@ -981,14 +981,14 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
 
     When [f] returns, [s] commits: each value is its device's {!submitted}
     value, {!synchronize} on each device whose memory the buffers reach waits
-    for the work, and the spans of {!Submission.record} are kept. The memory
-    of [touches] is stamped with the values: once unreachable, it returns to
-    its device, or to the system, only after the work is done. So [touches]
-    lists every buffer the work reaches, its code and arguments included: a
-    buffer it leaves out may be freed while the work still runs. If [f] raises,
-    nothing is committed, so [f] may raise only before it enqueues any work. A
-    {!Lost} that [f] raises loses its device, as a driver error after work was
-    enqueued leaves the queue in an unknown state.
+    for the work, and the spans of {!Submission.record} are kept. The memory of
+    [touches] is stamped with the values: once unreachable, it returns to its
+    device, or to the system, only after the work is done. So [touches] lists
+    every buffer the work reaches, its code and arguments included: a buffer it
+    leaves out may be freed while the work still runs. If [f] raises, nothing is
+    committed, so [f] may raise only before it enqueues any work. A {!Lost} that
+    [f] raises loses its device, as a driver error after work was enqueued
+    leaves the queue in an unknown state.
 
     Inside [f], the devices are used only through {!Submission}, {!submitted},
     {!signaled}, {!signal_word}, the buffers' properties and low-level
@@ -1039,8 +1039,8 @@ val signal_word : t -> Buffer.t
     - [Failure why]: the device faulted, which loses it ({!Lost}).
 
     A [finalize] that raises is printed and ignored at exit. A {!depends}
-    function that raises [Failure] retains its memory. Blocking driver calls should
-    release the OCaml runtime. *)
+    function that raises [Failure] retains its memory. Blocking driver calls
+    should release the OCaml runtime. *)
 module Driver : sig
   type device := t
 

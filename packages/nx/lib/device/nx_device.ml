@@ -152,8 +152,8 @@ and buffer = {
   generation : generation; (* its memory's when the buffer was made *)
 }
 
-(* A base has no mutable field: the state that changes is in records it
-   shares with its copies, which release the memory (see [owned]). *)
+(* A base has no mutable field: the state that changes is in records it shares
+   with its copies, which release the memory (see [owned]). *)
 and base = {
   owner : t;
   memory : region;
@@ -196,20 +196,21 @@ and links = {
   maps : mapped list; (* the mappings of this memory, one per device *)
   stamps : stamp list;
       (* each device whose work touched this memory, and the latest value that
-         work signals: [max_int] where a lost device's work may still write it *)
+         work signals: [max_int] where a lost device's work may still write
+         it *)
   depends : (unit -> unit) list;
       (* what runs once the memory retires, after all work on it *)
 }
 
-(* A device's latest work on a memory. It is raised in place, with the
-   devices of the memory taken, so that a submission allocates nothing for the
-   memory its devices' work touched before. *)
+(* A device's latest work on a memory. It is raised in place, with the devices
+   of the memory taken, so that a submission allocates nothing for the memory
+   its devices' work touched before. *)
 and stamp = { by : t; mutable upto : int }
 
-(* Released memory that waits for the work that may still use it: [retire]
-   runs once each stamp [until] gives is signaled, and the memory is retained,
-   with [kept], once one of them is a lost device's unfinished work. [bytes]
-   are owned bytes, and [key] the cache the memory goes to. *)
+(* Released memory that waits for the work that may still use it: [retire] runs
+   once each stamp [until] gives is signaled, and the memory is retained, with
+   [kept], once one of them is a lost device's unfinished work. [bytes] are
+   owned bytes, and [key] the cache the memory goes to. *)
 and retiring = {
   until : unit -> (t * int) list;
   bytes : int;
@@ -343,8 +344,10 @@ external wait_u64 :
 
 external page_size : unit -> int = "caml_nx_device_page_size" [@@noalloc]
 external release_list : unit -> nativeint = "caml_nx_device_release_list"
+
 external make_token : nativeint -> base -> int -> int -> int -> token
   = "caml_nx_device_token"
+
 external released : nativeint -> base list = "caml_nx_device_released"
 
 external heap_bytes : unit -> (int[@untagged])
@@ -379,7 +382,6 @@ external heap_drop : unit -> unit = "caml_nx_device_heap_drop" [@@noalloc]
 external heap_init : unit -> unit = "caml_nx_device_heap_init" [@@noalloc]
 
 let () = heap_init ()
-
 
 external now_ns : unit -> (int[@untagged])
   = "caml_nx_device_now_ns_byte" "caml_nx_device_now_ns"
@@ -902,7 +904,9 @@ let first_generation = { why = "" }
 let rec check_reach base =
   let { maps; stamps; _ } = Atomic.get base.links in
   List.iter check (base.owner :: List.map (fun m -> m.on) maps);
-  List.iter (fun s -> if s.upto > Atomic.get s.by.settled then check s.by) stamps;
+  List.iter
+    (fun s -> if s.upto > Atomic.get s.by.settled then check s.by)
+    stamps;
   Option.iter (fun (src, _) -> check_reach src) base.source
 
 let rec update_links base f =
@@ -955,7 +959,9 @@ let progress stamps =
             lose d why;
             `Lost)
     `Done stamps
+
 let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
+
 let mapping_on d base =
   List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
 
@@ -963,11 +969,11 @@ let mapping_on d base =
 let mapped_address (m : region) a =
   Nativeint.add m.address (Nativeint.sub a (Option.get m.host))
 
-(* The disk's descriptors. A file's descriptor is open while the file is in
-   this cache, which holds at most [max_descriptors] of them and closes the
-   least recently used to open another: a disk buffer holds no descriptor while
-   it waits to be collected. A file reopened by its path must still be the
-   one the buffer opened. Everything here runs with the disk taken. *)
+(* The disk's descriptors. A file's descriptor is open while the file is in this
+   cache, which holds at most [max_descriptors] of them and closes the least
+   recently used to open another: a disk buffer holds no descriptor while it
+   waits to be collected. A file reopened by its path must still be the one the
+   buffer opened. Everything here runs with the disk taken. *)
 
 let max_descriptors = 64
 let descriptors : file list ref = ref []
@@ -1014,8 +1020,8 @@ let cache f fd =
   descriptors := f :: !descriptors
 
 (* [f]'s descriptor, opened again if it was closed. Raises [Sys_error] naming
-   the file if it cannot be opened, or if [f.path] now names another file or
-   one that changed since [f]'s buffer last saw it. *)
+   the file if it cannot be opened, or if [f.path] now names another file or one
+   that changed since [f]'s buffer last saw it. *)
 let descriptor f =
   match f.fd with
   | Some fd ->
@@ -1027,8 +1033,7 @@ let descriptor f =
       match open_path f.path mode 0 with
       | 0, fd, _ ->
           let i = identify f.path fd and i' = f.identity in
-          if i.dev <> i'.dev || i.ino <> i'.ino || i.changed <> i'.changed
-          then begin
+          if i.dev <> i'.dev || i.ino <> i'.ino || i.changed <> i'.changed then begin
             file_close fd;
             raise
               (Sys_error
@@ -1044,11 +1049,10 @@ let descriptor f =
 
 (* Frees [memories], each with its function, once [d]'s work that touched them,
    which signals [v] at the latest, is done: at once with [~wait:false], which
-   is given only memories whose work is done. If that work cannot be waited
-   for, or a free faults, which loses [d], the memory not yet freed is retained:
-   kept with [keep], and never freed or reused, since its state is unknown.
-   [owned] memory came from [d]'s allocators, and its bytes count as
-   retained. *)
+   is given only memories whose work is done. If that work cannot be waited for,
+   or a free faults, which loses [d], the memory not yet freed is retained: kept
+   with [keep], and never freed or reused, since its state is unknown. [owned]
+   memory came from [d]'s allocators, and its bytes count as retained. *)
 let free_all d ~owned ~keep ~wait v memories =
   let retain rest =
     if owned then
@@ -1088,12 +1092,12 @@ let cached d =
 
 let fits d n = n <= d.budget - allocated d - cached d - d.retained
 
-(* [base], whose memory [d] releases once the base returned and every base
-   made from it are unreachable: they keep a token that puts [base], which
-   keeps none, on [d]'s release list once it is collected. A base has no
-   mutable field, so [base] sees the links and claims that its copies change.
-   The token's owned bytes pace the collector by the room left in [d]'s budget
-   (see the stubs). *)
+(* [base], whose memory [d] releases once the base returned and every base made
+   from it are unreachable: they keep a token that puts [base], which keeps
+   none, on [d]'s release list once it is collected. A base has no mutable
+   field, so [base] sees the links and claims that its copies change. The
+   token's owned bytes pace the collector by the room left in [d]'s budget (see
+   the stubs). *)
 let owned d base =
   let room = d.budget - allocated d - cached d - d.retained in
   let live = if shares_host_memory d then allocated d else -1 in
@@ -1172,8 +1176,8 @@ let unmap d src m =
   driver d (fun () -> m.unmap m.mapped);
   update_maps src (List.filter (fun m' -> m' != m))
 
-(* Retires each released memory of [d] whose work is done, retains those a
-   lost device's unfinished work touched, and keeps the others waiting. *)
+(* Retires each released memory of [d] whose work is done, retains those a lost
+   device's unfinished work touched, and keeps the others waiting. *)
 let retire d =
   let before = allocated d in
   let rec go = function
@@ -1209,28 +1213,25 @@ let retire d =
           if allocated d <> before then memory_changed d;
           raise e)
 
-(* Unreachable memory is released, and retires once the work that may still
-   use it is done (see [retire]). Owned memory waits for other devices' work
-   alone: [d]'s own work on it orders its reuse. Owned memory that something
-   depends on waits for all work, [d]'s too, since what depends on it may hold
-   objects that work reads. A mapping waits for every device's work on its
-   borrows, [d]'s too, once the last of them is unreachable: a mapping of host
-   memory is unmapped, and one of another device's memory stays its driver's
-   until that memory is freed. Host memory never comes here: it is the heap's,
-   returned when the collector finds its base unreachable. *)
+(* Unreachable memory is released, and retires once the work that may still use
+   it is done (see [retire]). Owned memory waits for other devices' work alone:
+   [d]'s own work on it orders its reuse. Owned memory that something depends on
+   waits for all work, [d]'s too, since what depends on it may hold objects that
+   work reads. A mapping waits for every device's work on its borrows, [d]'s
+   too, once the last of them is unreachable: a mapping of host memory is
+   unmapped, and one of another device's memory stays its driver's until that
+   memory is freed. Host memory never comes here: it is the heap's, returned
+   when the collector finds its base unreachable. *)
 let release d b =
-  let stamps =
-    List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps
-  in
+  let stamps = List.map (fun s -> (s.by, s.upto)) (Atomic.get b.links).stamps in
   match b.source with
   | Some (src, m) ->
       m.work <- List.fold_left (fun l (e, v) -> stamped l e v) m.work stamps;
       m.borrows <- m.borrows - 1;
-      (* The unmap also waits for every piece of [d]'s work submitted before
-         the last borrow went, which may reach the mapping without having
-         listed it. A borrow made before the unmap takes the mapping again:
-         the unmap then does nothing, and the next last release queues
-         another. *)
+      (* The unmap also waits for every piece of [d]'s work submitted before the
+         last borrow went, which may reach the mapping without having listed it.
+         A borrow made before the unmap takes the mapping again: the unmap then
+         does nothing, and the next last release queues another. *)
       if m.borrows = 0 then m.work <- stamped m.work d (submitted d);
       if m.borrows = 0 && not m.unmapping then begin
         m.unmapping <- true;
@@ -1252,8 +1253,8 @@ let release d b =
       close_descriptor (Option.get b.file)
   | None ->
       (* A free to the driver waits for every piece of [d]'s work submitted
-         before the release, listed or not, as tinygrad's free synchronizes
-         the device; [d]'s own reuse waits for none of it. *)
+         before the release, listed or not, as tinygrad's free synchronizes the
+         device; [d]'s own reuse waits for none of it. *)
       let own = Int.max (own_stamp d stamps) (submitted d)
       and until = foreign d stamps in
       let until, retire =
@@ -1287,9 +1288,9 @@ let reclaim d =
   retire d;
   release_cache ~wait:false d 0
 
-(* Waits for the work of released memory of [key], or of all of it if none is
-   of [key], then retires what it can. A lost device's work is not waited for:
-   its memory is retained. *)
+(* Waits for the work of released memory of [key], or of all of it if none is of
+   [key], then retires what it can. A lost device's work is not waited for: its
+   memory is retained. *)
 let wait_retiring d key =
   let some = List.filter (fun r -> r.key = Some key) d.retiring in
   List.iter
@@ -1319,8 +1320,8 @@ let take_cached d key =
    memory instead. Any other allocation the budget or the driver refuses
    releases the cache and tries again, then waits for the work of released
    memory and tries again. One still refused raises [Exhausted] until [last]:
-   the unreachable buffers, whose memory the collector cannot see, may hold
-   what it needs (see [last_resort_rounds] and [exhausted]). *)
+   the unreachable buffers, whose memory the collector cannot see, may hold what
+   it needs (see [last_resort_rounds] and [exhausted]). *)
 exception Exhausted
 
 let rec allocate d n ~kind ~last =
@@ -1363,12 +1364,12 @@ let rec allocate d n ~kind ~last =
 (* Taking devices *)
 
 (* A round of the last resort of an allocation of [d]'s memory (see
-   [last_resort_rounds]), run with no device taken. Unreachable buffers may
-   hold the memory, which only a complete collection finds. A borrow of it on
-   another device holds it until that device's next operation releases the
-   borrow, so each device that may map [d]'s memory and is not busy is drained
-   too: one whose lock is held is busy, and drains when its operation ends.
-   The next round's collection frees what the drained borrows held. *)
+   [last_resort_rounds]), run with no device taken. Unreachable buffers may hold
+   the memory, which only a complete collection finds. A borrow of it on another
+   device holds it until that device's next operation releases the borrow, so
+   each device that may map [d]'s memory and is not busy is drained too: one
+   whose lock is held is busy, and drains when its operation ends. The next
+   round's collection frees what the drained borrows held. *)
 let exhausted d =
   Gc.full_major ();
   List.iter
@@ -1404,11 +1405,11 @@ let with_devices ds f =
 let synchronize d = with_devices [ d ] (fun () -> sync d)
 
 (* How many collections the last resort of a refused allocation runs, with no
-   device taken, trying the allocation again after each. Unreachable buffers
-   may hold the memory, which only a complete collection finds, and a buffer
-   that a finaliser closure keeps returns only a cycle after that closure
-   runs: a chain of such holders takes a cycle per link, and nothing short of
-   the allocation succeeding tells that its memory came back. *)
+   device taken, trying the allocation again after each. Unreachable buffers may
+   hold the memory, which only a complete collection finds, and a buffer that a
+   finaliser closure keeps returns only a cycle after that closure runs: a chain
+   of such holders takes a cycle per link, and nothing short of the allocation
+   succeeding tells that its memory came back. *)
 let last_resort_rounds = 4
 
 let set_budget d n =
@@ -1502,9 +1503,9 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; address = 0n; handle = 0n; nbytes = 0 }
 
-  (* A base over [memory], whose claims are its source's for a borrow,
-     [claim] when given, and new otherwise, held by whoever holds the bigarray
-     or the file when [exported]. *)
+  (* A base over [memory], whose claims are its source's for a borrow, [claim]
+     when given, and new otherwise, held by whoever holds the bigarray or the
+     file when [exported]. *)
   let base ?(bytes = 0) ?(kind = Device) ?source ?file ?claim
       ?(exported = false) ~borrowed ~keep d memory =
     let claim =
@@ -1683,8 +1684,7 @@ module Buffer = struct
         in
         (* The file is a holder outside the claims. *)
         let base =
-          base ~exported:true ~borrowed:true ~keep:(Keep ()) ~file:f disk
-            memory
+          base ~exported:true ~borrowed:true ~keep:(Keep ()) ~file:f disk memory
         in
         let base = owned disk base in
         first base Nx_dtype.Scalar.UInt8 f.size)
@@ -1729,7 +1729,17 @@ module Buffer = struct
         | None ->
             Result.map
               (fun (mapped, skip) ->
-                let m = { on = d; mapped; skip; unmap; borrows = 1; work = []; unmapping = false } in
+                let m =
+                  {
+                    on = d;
+                    mapped;
+                    skip;
+                    unmap;
+                    borrows = 1;
+                    work = [];
+                    unmapping = false;
+                  }
+                in
                 update_maps src (List.cons m);
                 m)
               (driver d map))
@@ -1768,9 +1778,9 @@ module Buffer = struct
     in
     let base = base ~source:(src, mapped) ~borrowed:true ~keep d region in
     (* A device other than a host may run work on the memory after [submit]
-       returns, as test devices whose queues run behind the host do: its
-       release waits for that work, and keeps [b] until then. A host's work
-       is the calls it makes, which return once done. *)
+       returns, as test devices whose queues run behind the host do: its release
+       waits for that work, and keeps [b] until then. A host's work is the calls
+       it makes, which return once done. *)
     let base = if d == host then base else owned d base in
     { b with base }
 
@@ -1848,8 +1858,8 @@ module Buffer = struct
              the disk; the host reads them as it needs them. *)
           if d != host then
             with_devices [ disk ] (fun () ->
-                (* Advice is a hint: a file that cannot be reopened gets
-                   none, and its pages, mapped already, stay valid. *)
+                (* Advice is a hint: a file that cannot be reopened gets none,
+                   and its pages, mapped already, stay valid. *)
                 match descriptor f with
                 | fd -> file_advise fd b.offset (nbytes b)
                 | exception Sys_error _ -> ());
@@ -1916,7 +1926,6 @@ module Buffer = struct
         size;
     { b with offset = b.offset + offset; dtype = s; length = n }
 
-
   (* The address space memory is addressed in: its machine's host's when the
      host addresses it, its device's otherwise, and its file's on the disk. *)
   type space = In_host of int | In_device of int | In_file of int * int
@@ -1975,11 +1984,11 @@ module Buffer = struct
 
     let read b =
       live b;
-      read_claim (b.base.claim)
+      read_claim b.base.claim
 
-    let release b = release_claim (b.base.claim)
-    let try_exclusive b = exclusive_claim (b.base.claim)
-    let finish b = finish_claim (b.base.claim)
+    let release b = release_claim b.base.claim
+    let try_exclusive b = exclusive_claim b.base.claim
+    let finish b = finish_claim b.base.claim
     let export = read
 
     (* The memories a bracket reads, with repeats, and those it holds
@@ -1995,8 +2004,7 @@ module Buffer = struct
       live b;
       if not (spans b) then
         invalid_arg
-          "Nx_device.Buffer.Claim.consume: the buffer is a window of its \
-           memory";
+          "Nx_device.Buffer.Claim.consume: the buffer is a window of its memory";
       let generation = { why } in
       m.generation <- generation;
       { b with generation }

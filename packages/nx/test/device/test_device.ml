@@ -296,8 +296,8 @@ let never waits =
       incr waits;
       false)
 
-(* A signal that a gate opens: until then the device has signaled nothing, and
-   a wait for it fails. *)
+(* A signal that a gate opens: until then the device has signaled nothing, and a
+   wait for it fails. *)
 let gate opened =
   {
     Driver.signaled = (fun () -> if !opened then max_int else 0);
@@ -882,10 +882,9 @@ let memories =
           ignore (Sys.opaque_identity b));
     ]
 
-
-(* Memory that finaliser closures keep, two deep, returns to an allocation
-   that needs it: each closure releases its hold a cycle after its value
-   dies, which one collection does not cover. *)
+(* Memory that finaliser closures keep, two deep, returns to an allocation that
+   needs it: each closure releases its hold a cycle after its value dies, which
+   one collection does not cover. *)
 let test_finaliser_chain () =
   let d = (fake ~name:"CHAIN" ~budget:4096 ()).dev in
   (fun () ->
@@ -895,6 +894,7 @@ let test_finaliser_chain () =
     Gc.finalise (fun _ -> ignore (Sys.opaque_identity inner)) outer)
     ();
   equal int 4096 (B.nbytes (B.create d S.UInt8 4096))
+
 (* Allocating many budgets of a device's memory in dropped buffers, a sixteenth
    of its budget each, never collects by force: the collector is paced by the
    device's memory, and finds the dropped buffers before the budget runs out. *)
@@ -909,8 +909,8 @@ let test_paced () =
   equal int 0 (forced () - before)
 
 (* The host's cache of collected buffers shrinks to its bound as major cycles
-   end, whichever domain runs them: here while the domain that made the
-   buffers is blocked. *)
+   end, whichever domain runs them: here while the domain that made the buffers
+   is blocked. *)
 let test_measured_while_blocked () =
   let held = List.init 48 (fun _ -> B.create host S.UInt8 (4 lsl 20)) in
   Gc.full_major ();
@@ -956,15 +956,13 @@ let memory =
          count what is copied (nx_device.mli is silent on the alignment of a \
          new buffer: 16 bytes assumed)"
         commands;
-      test
-        "a buffer dropped by a domain that then blocks returns to its device"
+      test "a buffer dropped by a domain that then blocks returns to its device"
         test_dropped_by_blocked_domain;
       test
         "memory that finaliser closures hold, two deep, returns to an \
          allocation that needs it"
         test_finaliser_chain;
-      test
-        "many budgets of dropped buffers of a device never collect by force"
+      test "many budgets of dropped buffers of a device never collect by force"
         test_paced;
       test
         "the host's cache shrinks as cycles end on any domain, the one that \
@@ -999,8 +997,8 @@ let memory =
           equal ~msg:"returned" int 0 (grown ());
           Fun.protect ~finally:(fun () -> Nx_device.set_budget host max_int)
           @@ fun () ->
-          (* A refused allocation gets back the memory that earlier tests'
-             idle devices still borrow, so that only live buffers count. *)
+          (* A refused allocation gets back the memory that earlier tests' idle
+             devices still borrow, so that only live buffers count. *)
           Nx_device.set_budget host (allocated host);
           (try ignore (B.create host S.UInt8 1)
            with Nx_device.Out_of_memory _ -> ());
@@ -1307,14 +1305,13 @@ let test_borrow_again () =
   ignore (stats g.dev);
   equal ~msg:"unmapped once released" int 0 g.drv.mapped
 
-(* A borrow's release waits for its device's next operation. A device that
-   runs none still gives back the memory of another that needs it: the
-   allocation that is refused drains the devices that map that memory. *)
+(* A borrow's release waits for its device's next operation. A device that runs
+   none still gives back the memory of another that needs it: the allocation
+   that is refused drains the devices that map that memory. *)
 let test_idle_mapper () =
   let g = fake ~name:"IDLE" ~maps:true () in
   let n = 1 lsl 20 and budget = Nx_device.budget host in
-  Fun.protect ~finally:(fun () -> Nx_device.set_budget host budget)
-  @@ fun () ->
+  Fun.protect ~finally:(fun () -> Nx_device.set_budget host budget) @@ fun () ->
   Gc.full_major ();
   Nx_device.set_budget host (allocated host + n + (n / 2));
   dropped (fun () ->
@@ -1489,14 +1486,16 @@ let test_file_closes () =
 (* The disk keeps at most this many descriptors open. *)
 let max_descriptors = 64
 
-(* Opens and reads [max_descriptors] other files, which closes every
-   descriptor opened before. *)
+(* Opens and reads [max_descriptors] other files, which closes every descriptor
+   opened before. *)
 let evict () =
-  List.iter (fun p -> ignore (read (of_file p))) (List.init max_descriptors (fun _ -> file_of "x"))
+  List.iter
+    (fun p -> ignore (read (of_file p)))
+    (List.init max_descriptors (fun _ -> file_of "x"))
 
 (* A file used before 63 others keeps its descriptor, and reads the file it
-   opened through it after its path names another; a file used before 64
-   others reopens the path, which now names another file. *)
+   opened through it after its path names another; a file used before 64 others
+   reopens the path, which now names another file. *)
 let test_file_bound () =
   let after_others n =
     let path = file_of "old" in
@@ -1517,10 +1516,13 @@ let test_file_descriptors () =
   if Sys.win32 then skip ~reason:"no /dev/fd to count descriptors" ();
   let descriptors () = Array.length (Sys.readdir "/dev/fd") in
   let before = descriptors () in
-  let files = List.init 200 (fun i -> (i, of_file (file_of (string_of_int i)))) in
+  let files =
+    List.init 200 (fun i -> (i, of_file (file_of (string_of_int i))))
+  in
   at_most int ~than:(before + max_descriptors) (descriptors ());
   List.iter
-    (fun (i, b) -> equal ~msg:(string_of_int i) string (string_of_int i) (read b))
+    (fun (i, b) ->
+      equal ~msg:(string_of_int i) string (string_of_int i) (read b))
     files
 
 let test_file_reopened () =
@@ -1872,8 +1874,7 @@ let buffers =
          mapping again"
         test_borrow_again;
       test
-        "memory an idle device borrowed returns to an allocation that needs \
-         it"
+        "memory an idle device borrowed returns to an allocation that needs it"
         test_idle_mapper;
       test "the host's staging memory is one, which each device maps once"
         (fun () ->
@@ -2707,7 +2708,6 @@ let test_cut_short () =
   raises_match failed (fun () ->
       B.copy ~src:shared ~dst:(B.create host S.UInt8 page))
 
-
 (* The address of a buffer of [n] bytes of [d] that [f] makes and drops. *)
 let dropped_at d n f =
   let a = ref 0n in
@@ -2721,7 +2721,8 @@ let test_foreign_stamps () =
   let owner = (fake ~name:"OWNER" ()).dev and opened = ref false in
   let reader = (fake ~name:"READER" ~signal:(gate opened) ()).dev in
   let first =
-    dropped_at owner 4096 (fun b -> ignore (submit reader ~touches:[ b ] Fun.id))
+    dropped_at owner 4096 (fun b ->
+        ignore (submit reader ~touches:[ b ] Fun.id))
   in
   let held = B.create owner S.UInt8 4096 in
   equal ~msg:"not reused while the reader's work is unsignaled" bool false
@@ -2793,8 +2794,8 @@ let test_hung_transfer () =
 
 let test_retained () =
   let f = fake ~name:"D" ~budget:1000 ~signal:(never (ref 0)) () in
-  (* The work does not list the buffer: a free to the driver still waits for
-     it, as for all of the device's work submitted before the release. *)
+  (* The work does not list the buffer: a free to the driver still waits for it,
+     as for all of the device's work submitted before the release. *)
   dropped (fun () ->
       let b = B.create f.dev S.UInt8 600 in
       ignore (submit f.dev Fun.id);
@@ -4148,8 +4149,8 @@ let machines =
       test "links carry copies between machines" test_links;
       test "memory described to other functions" test_dma;
       test
-        "what depends on memory runs once it is released and all work on it \
-         is done, its own device's too"
+        "what depends on memory runs once it is released and all work on it is \
+         done, its own device's too"
         test_depends;
       test "programs of another machine's host" test_remote_programs;
     ]
