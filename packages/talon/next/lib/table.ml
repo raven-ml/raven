@@ -20,7 +20,9 @@ let columns t =
   | bs -> err "Table.columns: a table of %d batches" (List.length bs)
 
 let v cs =
-  let schema = Schema.v (List.map (fun (n, c) -> (n, Column.type_ c)) cs) in
+  let schema =
+    Schema.make ~by:"Talon.v" (List.map (fun (n, c) -> (n, Column.type_ c)) cs)
+  in
   let rows = match cs with [] -> 0 | (_, c) :: _ -> Column.length c in
   let check (n, c) =
     if Column.length c <> rows then

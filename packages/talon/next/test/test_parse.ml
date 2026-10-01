@@ -117,6 +117,12 @@ let values =
           ],
           List.map day [ 0; 11016; -719528; 2932896; -1 ] );
       Case
+        ( date,
+          [ "-0044-03-15"; "+12345-01-01"; "-0001-12-31"; "+2024-02-29" ],
+          List.map
+            (fun ymd -> Option.get (Time.Date.of_civil ymd))
+            [ (-44, 3, 15); (12345, 1, 1); (-1, 12, 31); (2024, 2, 29) ] );
+      Case
         ( datetime Us,
           [
             "1970-01-01T00:00:01";
@@ -225,6 +231,12 @@ let refusals =
       (Any date, "2024-1-01", "not YYYY-MM-DD");
       (Any date, "2024-13-01", "not a day of the calendar");
       (Any date, "2024-01-01T00:00:00", "not YYYY-MM-DD");
+      (Any date, "+123-01-01", "not YYYY-MM-DD");
+      (Any date, "12345-01-01", "not YYYY-MM-DD");
+      (Any date, "+12a45-01-01", "not YYYY-MM-DD");
+      (Any date, "-12345-02-30", "not a day of the calendar");
+      (Any date, "+5881581-01-01", "out of range");
+      (Any date, "-99999999999999999999-01-01", "out of range");
       ( Any (datetime Us),
         "2024-01-01T00:00:00.1234567",
         "not a whole number of microseconds" );

@@ -5,11 +5,17 @@
 
 (** Schemas: the names and types of a table's columns.
 
-    [Talon_next.Schema] documents schemas. This interface adds {!names}. *)
+    [Talon_next.Schema] documents schemas. This interface adds {!make} and
+    {!names}. *)
 
 type t
 
 val v : (string * Type.any) list -> t
+
+val make : by:string -> (string * Type.any) list -> t
+(** [make ~by columns] is [v columns], whose errors name the function [by], as
+    in [Talon.v]. *)
+
 val columns : t -> (string * Type.any) list
 
 val names : t -> string list

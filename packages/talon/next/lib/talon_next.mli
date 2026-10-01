@@ -687,7 +687,8 @@ module Column : sig
         scale [s] and of at most [p] digits;
       - [string]: the bytes, valid UTF-8; [binary]: the bytes;
       - a categorical: one of the dictionary's strings;
-      - [date]: [YYYY-MM-DD], from year [0000] to [9999];
+      - [date]: [YYYY-MM-DD], a year outside [0000] to [9999] signed and of at
+        least four digits, as {!Time.Date.pp} writes it: [-0044-03-15];
       - [datetime[u]] and [datetime[u, z]]: a date, [T] or a space, [hh:mm:ss]
         and an optional fraction of one to nine digits, then, with a zone only,
         [Z] or [±hh:mm]; a whole number of [u] in [u]'s range.
@@ -748,6 +749,54 @@ val equal : t -> t -> bool
 (** [equal t0 t1] is [true] iff [t0] and [t1] have equal schemas and the same
     keys row by row, by key identity ({!Type.compare_value}, null being one more
     key), whatever their batches. *)
+
+(** {1:display Display} *)
+
+type limits = {
+  head : int;  (** The rows shown from the start. *)
+  tail : int;  (** The rows shown from the end. *)
+  columns : int;  (** The columns shown, from the first. *)
+  width : int;  (** The widest cell, in Unicode scalar values. *)
+}
+(** The type for display limits. A table of at most [head + tail] rows shows all
+    of them. *)
+
+val limits : limits
+(** [limits] is [{ head = 5; tail = 5; columns = 12; width = 32 }], the limits
+    of {!pp}. *)
+
+val pp : Format.formatter -> t -> unit
+(** [pp] is [pp_with limits]. *)
+
+val pp_with : limits -> Format.formatter -> t -> unit
+(** [pp_with l ppf t] formats [t] for people, reading only the rows it shows.
+    With [{ limits with head = 2; tail = 1 }]:
+    {v
+    table 16 rows × 4 columns
+     carrier  mean_delay  flights  name
+     string   float64     int64    string
+     OO          58.0000        9  ∅
+     F9          53.4214      280  Frontier Airlines Inc.
+     ⋮
+     HA          29.0000        1  Hawaiian Airlines Inc.
+     13 rows not shown
+    v}
+    - a header, then the names and types of the shown columns;
+    - all rows, or the first [l.head], a [⋮] line, the last [l.tail], and the
+      number of rows not shown;
+    - with more than [l.columns] columns, a last line naming those not shown.
+
+    A null is [∅]. Text shows as it reads, its control characters and bytes that
+    are not UTF-8 escaped as {!Type.pp_quoted} escapes them, cut with […] past
+    [l.width] scalar values. Numbers are right-aligned; the floats of a column
+    show with one number of decimals, the fewest, up to six, that give each
+    shown value six significant digits, or in scientific notation when a shown
+    value needs it. Other values show in the text that {!Column.parse} reads,
+    such as [2024-03-15T09:30:00.5Z] for a zoned datetime and [12.50] for a
+    decimal of scale 2; durations and clocks as {!Time.Span.pp} formats them,
+    lists as OCaml lists, and records and tensors as [<record>] and [<tensor>].
+
+    Raises [Invalid_argument] if a limit is negative or [l.width] is [0]. *)
 
 module Error = Error
 module Tz = Tz

@@ -9,6 +9,7 @@
   type
   column
   form
+  display
   strings
   problem
   sel

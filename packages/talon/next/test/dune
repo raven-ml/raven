@@ -88,3 +88,13 @@
   (progn
    (run %{test} --corrected)
    (diff? test_table.ml test_table.ml.corrected))))
+
+(test
+ (name test_display)
+ (modules test_display)
+ (package talon)
+ (libraries windtrap talon.next talon_gen nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_display.ml test_display.ml.corrected))))

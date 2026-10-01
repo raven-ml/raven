@@ -266,6 +266,12 @@ let refusals =
     refuse "v of columns of other lengths" (fun () ->
         v [ ("a", Column.v Type.int8 [| 1 |]); ("b", Column.v Type.int8 [||]) ])
     @@ __POS_OF__ {| Talon.v: column "b" has 0 rows, not 1 |};
+    refuse "v of a duplicate name" (fun () ->
+        v [ ("a", Column.v Type.int8 [||]); ("a", Column.v Type.int8 [||]) ])
+    @@ __POS_OF__ {| Talon.v: duplicate column "a" |};
+    refuse "v of a name that is not UTF-8" (fun () ->
+        v [ ("\xff", Column.v Type.int8 [||]) ])
+    @@ __POS_OF__ {| Talon.v: column name "\255" is not UTF-8 |};
     refuse "of_batches of no table" (fun () -> of_batches [])
     @@ __POS_OF__ {| Talon.of_batches: no table |};
     refuse "of_batches of other schemas" (fun () ->

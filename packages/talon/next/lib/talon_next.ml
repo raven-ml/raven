@@ -29,6 +29,17 @@ let take = Table.take
 let to_tensor = Table.to_tensor
 let equal = Table.equal
 
+type limits = Display.limits = {
+  head : int;
+  tail : int;
+  columns : int;
+  width : int;
+}
+
+let limits = Display.limits
+let pp_with = Display.pp
+let pp = pp_with limits
+
 module Error = Error
 module Tz = Tz
 module Sel = Sel

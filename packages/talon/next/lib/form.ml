@@ -166,15 +166,21 @@ type width = { p : int; emin : int; max : float }
 let half = { p = 11; emin = -14; max = 65504. }
 let single = { p = 24; emin = -126; max = 0x1.fffffep127 }
 
-(* [nearest w v] is the value of width [w] nearest to [v], for a [v] that is not
-   halfway between two of them. *)
+(* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
 let nearest w v =
   let biased =
     Int64.to_int (Int64.shift_right_logical (Int64.bits_of_float v) 52)
   in
   let e = Int.max ((biased land 0x7FF) - 1023) w.emin in
   let ulp = Float.ldexp 1. (e - w.p + 1) in
-  let r = Float.round (v /. ulp) *. ulp in
+  let q = v /. ulp in
+  let r = Float.round q in
+  let r =
+    if Float.abs (r -. q) = 0.5 && Float.rem r 2. <> 0. then
+      r -. Float.copy_sign 1. q
+    else r
+  in
+  let r = r *. ulp in
   if Float.abs r > w.max then Float.copy_sign Float.infinity v else r
 
 (* [magnitude s] is the significant digits of the decimal number [s], without
@@ -285,7 +291,7 @@ let days_in_month y m =
   | 4 | 6 | 9 | 11 -> 30
   | _ -> 31
 
-(* Howard Hinnant's days_from_civil, for years from 0. *)
+(* Howard Hinnant's days_from_civil. *)
 let days_from_civil y m d =
   let y = if m <= 2 then y - 1 else y in
   let era = (if y >= 0 then y else y - 399) / 400 in
@@ -294,24 +300,41 @@ let days_from_civil y m d =
   let doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy in
   (era * 146097) + doe - 719468
 
-(* [date_at b pos] reads [YYYY-MM-DD] at [pos], whose ten bytes exist, as its
-   days since 1970-01-01. *)
-let date_at b pos =
-  let y0 = two_digits b pos and y1 = two_digits b (pos + 2) in
-  let m = two_digits b (pos + 5) and d = two_digits b (pos + 8) in
-  if
-    y0 < 0 || y1 < 0 || m < 0 || d < 0
-    || get b (pos + 4) <> '-'
-    || get b (pos + 7) <> '-'
-  then invalid "not YYYY-MM-DD";
-  let y = (100 * y0) + y1 in
+(* [day_at b pos y] reads [-MM-DD] at [pos], whose six bytes exist, as the days
+   since 1970-01-01 of that day of the year [y]. *)
+let day_at b pos y =
+  let m = two_digits b (pos + 1) and d = two_digits b (pos + 4) in
+  if m < 0 || d < 0 || get b pos <> '-' || get b (pos + 3) <> '-' then
+    invalid "not YYYY-MM-DD";
   if m < 1 || m > 12 || d < 1 || d > days_in_month y m then
     invalid "not a day of the calendar";
   days_from_civil y m d
 
+(* [date_at b pos] reads [YYYY-MM-DD] at [pos], whose ten bytes exist, as its
+   days since 1970-01-01. *)
+let date_at b pos =
+  let y0 = two_digits b pos and y1 = two_digits b (pos + 2) in
+  if y0 < 0 || y1 < 0 then invalid "not YYYY-MM-DD";
+  day_at b (pos + 4) ((100 * y0) + y1)
+
+(* A year outside [0000] to [9999] is signed and of at least four digits, as
+   [Time.Date.pp] writes it: [-0044-03-15], [+12345-01-01]. Past 2^40 the year
+   stops growing, which is out of range. *)
 let date b pos len =
-  if len <> 10 then invalid "not YYYY-MM-DD";
-  date_at b pos
+  if len = 10 then date_at b pos
+  else begin
+    let stop = pos + len in
+    if len < 11 || (get b pos <> '+' && get b pos <> '-') then
+      invalid "not YYYY-MM-DD";
+    let y = ref 0 in
+    for i = pos + 1 to stop - 7 do
+      if not (is_digit (get b i)) then invalid "not YYYY-MM-DD";
+      if !y < 1 lsl 40 then y := (10 * !y) + digit b i
+    done;
+    let days = day_at b (stop - 6) (if get b pos = '-' then - !y else !y) in
+    if Option.is_none (Time.Date.of_days days) then invalid "out of range";
+    days
+  end
 
 let per_second : Type.unit_ -> int = function
   | S -> 1
@@ -495,3 +518,229 @@ let parse (Type.Any ty as any) c =
   | Binary -> Ok (column (Bytes r))
   | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ ->
       err "Column.parse: %a has no text form" Type.pp ty
+
+(* Printing *)
+
+let pp_text ppf s = Format.pp_print_string ppf s
+
+(* Floats write without an exponent from 10^-7 up to 10^21. *)
+let min_positional = -7
+let max_positional = 21
+
+(* [exponent_of s] is the exponent of the [%e] text [s]. *)
+let exponent_of s =
+  let e = String.index s 'e' in
+  int_of_string (String.sub s (e + 1) (String.length s - e - 1))
+
+(* [positional s] is the [%e] text [s] without its exponent when the exponent is
+   in [min_positional, max_positional): [1.5e+02] is [150], [1.5e-03] is
+   [0.0015]. *)
+let positional s =
+  let e = String.index s 'e' and exp = exponent_of s in
+  if exp < min_positional || exp >= max_positional then s
+  else
+    let negative = s.[0] = '-' in
+    let mantissa =
+      String.sub s (Bool.to_int negative) (e - Bool.to_int negative)
+    in
+    let digits = String.concat "" (String.split_on_char '.' mantissa) in
+    let n = String.length digits in
+    let text =
+      if exp >= n - 1 then digits ^ String.make (exp - n + 1) '0'
+      else if exp >= 0 then
+        String.sub digits 0 (exp + 1)
+        ^ "."
+        ^ String.sub digits (exp + 1) (n - exp - 1)
+      else "0." ^ String.make (-exp - 1) '0' ^ digits
+    in
+    if negative then "-" ^ text else text
+
+(* [shortest reads x] is the text of [x] in the fewest significant digits that
+   [reads] reads back as [x]. *)
+let shortest reads x =
+  let rec loop p =
+    let s = Printf.sprintf "%.*e" (p - 1) x in
+    if p = 17 || Float.equal (reads s) x then positional s else loop (p + 1)
+  in
+  loop 1
+
+let read_narrow w s =
+  let n = String.length s in
+  let b = A1.create Bigarray.int8_unsigned Bigarray.c_layout n in
+  String.iteri (fun i c -> A1.unsafe_set b i (Char.code c)) s;
+  let a = A1.create Bigarray.float64 Bigarray.c_layout 1 in
+  narrow w b 0 n a 0;
+  nearest w (A1.unsafe_get a 0)
+
+let pp_float : type a. a Type.t -> Format.formatter -> float -> unit =
+ fun ty ppf x ->
+  if Float.is_nan x then pp_text ppf "nan"
+  else if Float.is_finite x then
+    let text =
+      match ty with
+      | Float16 -> shortest (read_narrow half) (nearest half x)
+      | Float32 -> shortest (read_narrow single) (nearest single x)
+      | _ -> shortest float_of_string x
+    in
+    pp_text ppf text
+  else pp_text ppf (if x > 0. then "inf" else "-inf")
+
+let rec pow10_64 k = if k = 0 then 1L else Int64.mul 10L (pow10_64 (k - 1))
+
+(* [at_scale scale d] is [d], which is exact at [scale], written with [scale]
+   digits after the point. *)
+let at_scale scale d =
+  let u = Decimal.unscaled d and s = Decimal.scale d in
+  let unscaled =
+    if s <= scale then Int64.mul u (pow10_64 (scale - s))
+    else Int64.div u (pow10_64 (s - scale))
+  in
+  Decimal.v ~unscaled ~scale
+
+let ns_per_second = 1_000_000_000L
+let floor_div a b = Int64.(if rem a b < 0L then pred (div a b) else div a b)
+
+(* [pp_instant ~zoned] writes [YYYY-MM-DDThh:mm:ss], the fewest fraction digits
+   that are exact, and [Z] when [zoned]. *)
+let pp_instant ~zoned ppf t =
+  let ns = Time.to_ns t in
+  let secs = floor_div ns ns_per_second in
+  let frac = Int64.to_int (Int64.sub ns (Int64.mul secs ns_per_second)) in
+  let days = Int64.to_int (floor_div secs 86400L) in
+  let sod =
+    Int64.to_int (Int64.sub secs (Int64.mul (Int64.of_int days) 86400L))
+  in
+  Format.fprintf ppf "%a" Time.Date.pp (Option.get (Time.Date.of_days days));
+  Format.fprintf ppf "T%02d:%02d:%02d" (sod / 3600)
+    (sod / 60 mod 60)
+    (sod mod 60);
+  if frac > 0 then begin
+    let digits = Printf.sprintf "%09d" frac and n = ref 9 in
+    while digits.[!n - 1] = '0' do
+      decr n
+    done;
+    Format.fprintf ppf ".%s" (String.sub digits 0 !n)
+  end;
+  if zoned then pp_text ppf "Z"
+
+let pp : type a. a Type.t -> Format.formatter -> a -> unit =
+ fun ty ppf v ->
+  match (ty, Type.kind ty) with
+  | Decimal { scale; _ }, _ -> Decimal.pp ppf (at_scale scale v)
+  | Binary, _ -> pp_text ppf (v :> string)
+  | Datetime { zone; _ }, _ -> pp_instant ~zoned:(zone <> None) ppf v
+  | (Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _), k ->
+      Type.pp_lit k ppf v
+  | _, Bool -> Format.pp_print_bool ppf v
+  | _, Int -> Format.pp_print_int ppf v
+  | _, Float -> pp_float ty ppf v
+  | _, String -> pp_text ppf v
+  | _, Date -> Time.Date.pp ppf v
+  | _, k -> Type.pp_lit k ppf v
+
+(* Cells *)
+
+let is_null c i =
+  match Column.validity c with
+  | None -> false
+  | Some v ->
+      not (Nx.item [ 0 ] (Nx_bits.to_bool (Nx_bits.sub v ~offset:i ~length:1)))
+
+let row_int64 x i = Nx.item [] (Nx.cast Nx.int64 (Nx.get [ i ] x))
+let row_float x i = Nx.item [] (Nx.cast Nx.float64 (Nx.get [ i ] x))
+
+(* [pp_ticks ty pp_value of_ticks ppf ticks] writes the value of [ticks] through
+   [of_ticks], or the ticks themselves when they are outside {!Time}'s range. *)
+let pp_ticks ty pp_value of_ticks ppf ticks =
+  match of_ticks ticks with
+  | Some v -> pp_value ppf v
+  | None -> Format.fprintf ppf "%a tick %Ld" Type.pp ty ticks
+
+let span_of_ticks : Type.unit_ -> int64 -> Time.span option = function
+  | S -> Time.Span.of_s
+  | Ms -> Time.Span.of_ms
+  | Us -> Time.Span.of_us
+  | Ns -> fun n -> Some (Time.Span.of_ns n)
+
+let instant_of_ticks : Type.unit_ -> int64 -> Time.instant option = function
+  | S -> Time.of_s
+  | Ms -> Time.of_ms
+  | Us -> Time.of_us
+  | Ns -> fun n -> Some (Time.of_ns n)
+
+let rec pp_cell c i ppf =
+  if is_null c i then pp_text ppf "∅"
+  else
+    let (Any ty) = Column.type_ c in
+    pp_row ty c i ppf
+
+and pp_row : type a. a Type.t -> Column.t -> int -> Format.formatter -> unit =
+ fun ty c i ppf ->
+  match (ty, Column.data c) with
+  | Ext { storage; _ }, _ -> pp_row storage c i ppf
+  | (String | Binary), Bytes r ->
+      let o = Nx_ragged.offsets r and values = Nx_ragged.values r in
+      let pos = Int64.to_int (Nx.item [ i ] o) in
+      let len = Int64.to_int (Nx.item [ i + 1 ] o) - pos in
+      let byte k = Char.chr (Nx.item [ pos + k ] values) in
+      Type.pp_quoted ppf (String.init len byte)
+  | List _, List { offsets; child } ->
+      let first = Int64.to_int (Nx.item [ i ] offsets) in
+      let stop = Int64.to_int (Nx.item [ i + 1 ] offsets) in
+      let elements = List.init (stop - first) (( + ) first) in
+      Type.pp_list (fun ppf j -> pp_cell child j ppf) ppf elements
+  | Record _, _ -> pp_text ppf "<record>"
+  | Tensor _, _ -> pp_text ppf "<tensor>"
+  | _, Fixed (P x) -> (
+      match (ty, Type.kind ty) with
+      | Int64, _ -> Format.fprintf ppf "%Ld" (row_int64 x i)
+      | Uint64, _ ->
+          let bits = Nx.item [] (Nx.bitcast Nx.int64 (Nx.get [ i ] x)) in
+          Format.fprintf ppf "%Lu" bits
+      | Decimal { scale; _ }, _ ->
+          Decimal.pp ppf (Decimal.v ~unscaled:(row_int64 x i) ~scale)
+      | Categorical d, _ ->
+          Type.pp_quoted ppf (Iarray.get d (Int64.to_int (row_int64 x i)))
+      | Date, _ ->
+          let of_days n = Time.Date.of_days (Int64.to_int n) in
+          pp_ticks ty Time.Date.pp of_days ppf (row_int64 x i)
+      | (Clock u | Duration u), _ ->
+          pp_ticks ty Time.Span.pp (span_of_ticks u) ppf (row_int64 x i)
+      | Datetime { unit_; zone }, _ ->
+          let pp_value = pp_instant ~zoned:(zone <> None) in
+          pp_ticks ty pp_value (instant_of_ticks unit_) ppf (row_int64 x i)
+      | _, Bool -> pp ty ppf (row_int64 x i <> 0L)
+      | _, Int -> pp ty ppf (Int64.to_int (row_int64 x i))
+      | _, Float -> pp ty ppf (row_float x i)
+      | _ -> assert false)
+  | _ -> assert false
+
+(* Floats of a table column *)
+
+let significant = 6
+let max_decimals = 6
+
+(* Past 10^16 a float64's integer digits are no longer all its own. *)
+let max_fixed = 1e16
+
+(* [exponent x] is the decimal exponent of [x] rounded to six significant
+   digits: [2] for [99.99996], which rounds to [100.000]. *)
+let exponent x = exponent_of (Printf.sprintf "%.*e" (significant - 1) x)
+
+let pp_floats xs =
+  let decimals = ref 0 and scientific = ref false in
+  Array.iter
+    (fun x ->
+      if Float.is_finite x && x <> 0. then begin
+        let d = significant - 1 - exponent x in
+        if d > max_decimals || Float.abs x >= max_fixed then scientific := true
+        else decimals := Int.max !decimals d
+      end)
+    xs;
+  let decimals = !decimals and scientific = !scientific in
+  fun ppf x ->
+    if Float.is_nan x then pp_text ppf "nan"
+    else if not (Float.is_finite x) then
+      pp_text ppf (if x > 0. then "inf" else "-inf")
+    else if scientific then Format.fprintf ppf "%.*e" (significant - 1) x
+    else Format.fprintf ppf "%.*f" decimals x

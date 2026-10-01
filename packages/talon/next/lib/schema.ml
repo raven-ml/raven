@@ -7,16 +7,17 @@ module Smap = Map.Make (String)
 
 type t = { columns : (string * Type.any) list; index : Type.any Smap.t }
 
-let v columns =
+let make ~by columns =
   let add index (name, t) =
     if not (String.is_valid_utf_8 name) then
-      invalid_arg (Printf.sprintf "Schema.v: column name %S is not UTF-8" name);
+      invalid_arg (Printf.sprintf "%s: column name %S is not UTF-8" by name);
     if Smap.mem name index then
-      invalid_arg (Printf.sprintf "Schema.v: duplicate column %S" name);
+      invalid_arg (Printf.sprintf "%s: duplicate column %S" by name);
     Smap.add name t index
   in
   { columns; index = List.fold_left add Smap.empty columns }
 
+let v columns = make ~by:"Schema.v" columns
 let columns s = s.columns
 let names s = List.map fst s.columns
 let find s name = Smap.find_opt name s.index
