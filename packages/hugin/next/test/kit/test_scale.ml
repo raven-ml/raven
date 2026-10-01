@@ -441,6 +441,41 @@ let normalisation =
           equal float_exact Float.nan (Scale.normalize s "the");
           equal float_exact Float.nan (Scale.normalize s "03");
           equal float_exact 0. (Scale.bandwidth (Scale.band ())));
+      test "a domain spans the difference of its transformed ends" (fun () ->
+          let length s = Scale.length s in
+          equal (float 1e-12) 3. (length (Scale.linear ~domain:(2., 5.) ()));
+          equal (float 1e-12) 3. (length (Scale.log ~domain:(1., 1000.) ()));
+          equal (float 1e-12) 3.
+            (length (Scale.log ~base:2. ~domain:(1., 8.) ()));
+          equal (float 1e-12) 1.
+            (length (Scale.symlog ~domain:(0., Float.exp 1. -. 1.) ()));
+          equal (float 1e-12) 1.
+            (length (Scale.pow ~exponent:2. ~domain:(0., 2.) ()));
+          equal (float 1e-12) 2.
+            (length
+               (Scale.linear ~reverse:true ~clamp:true ~domain:(-1., 1.) ()));
+          equal float_exact 0. (length (Scale.linear ~domain:(4., 4.) ())));
+      test "an instant domain spans seconds" (fun () ->
+          equal float_exact 86400. (Scale.length (Scale.time ()));
+          let a = Time.v Ns 0L and b = Time.v Ns 1_500_000_000L in
+          equal float_exact 1.5 (Scale.length (Scale.time ~domain:(a, b) ())));
+      test "a band spans its steps" (fun () ->
+          let cats = Scale.Labels [| "a"; "b"; "c" |] in
+          equal float_exact 3. (Scale.length (Scale.band ~domain:cats ()));
+          equal float_exact 3.5
+            (Scale.length (Scale.band ~padding:0.5 ~domain:cats ()));
+          equal float_exact 0. (Scale.length (Scale.band ())));
+      test "an overflowing length is infinite, a missing end's nan" (fun () ->
+          equal float_exact Float.infinity
+            (Scale.length
+               (Scale.linear ~domain:(-.Float.max_float, Float.max_float) ()));
+          let logit =
+            Scale.custom ~transform:"logit"
+              ~forward:(fun p -> Float.log (p /. (1. -. p)))
+              ~inverse:(fun v -> 1. /. (1. +. Float.exp (-.v)))
+              ()
+          in
+          equal float_exact Float.nan (Scale.length logit));
     ]
 
 (* Inversion *)

@@ -290,6 +290,18 @@ let bandwidth s =
   let n = Float.of_int (size c) and p = padding s in
   if n = 0. then 0. else (1. -. p) /. (n +. p)
 
+let length : type d. d t -> float =
+ fun s ->
+  match domain_of s with
+  | Floats (a, b) ->
+      let tf = s.transform in
+      if missing tf a || missing tf b then Float.nan
+      else
+        let t = forward tf a b in
+        Float.abs (t b -. t a)
+  | Instants (a, b) -> Float.abs (Steps.ns_diff b a) /. 1e9
+  | Categories c -> Float.of_int (size c) +. padding s
+
 let wrap s = s.wrap
 let scheme s = s.scheme
 let areas s = s.areas

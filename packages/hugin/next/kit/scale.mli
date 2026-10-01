@@ -308,6 +308,15 @@ val bandwidth : string t -> float
     [(1 - p) / (n + p)] for [n] categories and padding [p], and [0.] if [s] has
     no category. *)
 
+val length : 'd t -> float
+(** [length s] is the length of the domain of [s] in the units its normalisation
+    divides: [|T b - T a|] for a continuous domain \[[a];[b]\] and the transform
+    [T] ({!section-continuous}), in seconds on a temporal scale, and [n + p] on
+    a band scale of [n] categories and padding [p], the steps that \[[0];[1]\]
+    holds ({!section-categorical}). So a log scale in base [10] over
+    \[[1];[1000]\] spans [3.]. It is [infinity] if the difference overflows and
+    [nan] if an end of the domain is missing. *)
+
 val wrap : string t -> int option
 (** [wrap s] is the number of facet panels per row of [s], if set. *)
 
