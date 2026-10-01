@@ -931,6 +931,9 @@ thread.
 
 ### Tolk (new)
 
+- `Spec.program` refuses an index of a vector value at a lane that is not a
+  constant, which CUDA cannot compile: its vectors are structs. Such a kernel
+  fails at lowering where it failed in NVRTC.
 - A process reads back the schedules of a function with loops, such as a
   staged scan, that an earlier process kept on disk. The loop's range was
   numbered from a counter that depends on what the process did before, so a

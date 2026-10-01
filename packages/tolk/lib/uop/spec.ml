@@ -409,6 +409,17 @@ let program : t =
              match (addrspace x, shape_opt x) with
              | Some Dtype.Alu, Some (_ :: _) -> Some false
              | _ | (exception Invalid_argument _) -> None);
+         (* A lane of a vector value is read at a constant lane, for the same
+            renderers: their lanes are members, named in the source. *)
+         decide (pat [ Op.Index ] ~name:"x") "x" (fun x ->
+             let constant i =
+               op i = Op.Cast
+               && match src i with [ c ] -> op c = Op.Const | _ -> false
+             in
+             match src x with
+             | v :: lanes when addrspace v = Some Dtype.Alu ->
+                 if List.for_all constant lanes then None else Some false
+             | _ -> None);
          decide (Upat.v ~op:Op.Set.all ~name:"x" ()) "x" (fun x ->
              if
                op x <> Op.Cast && List.exists (fun s -> op s = Op.Const) (src x)

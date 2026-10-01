@@ -510,11 +510,15 @@ let lacks_toolchain why =
   String.starts_with ~prefix:"failed to load library" why
   || String.starts_with ~prefix:"comgr not available" why
 
-(* The sources the toolchain rejects as tinygrad writes them. *)
+(* The sources the toolchain rejects as tinygrad writes them. CUDA's vectors
+   are structs, so a kernel that casts one or picks its lane by a value is no
+   program (Spec.program) and never reaches the renderer. *)
 let rejected =
   [
     ( "metal_transcendental_bf16",
       "tinygrad's graph truncates a bfloat without the float cast" );
+    ("cuda_dynamic_lane", "reads a lane by a variable, which no program does");
+    ("cuda_vector_cast", "casts a vector, which no program does");
   ]
 
 let compiles_with_its_toolchain row =

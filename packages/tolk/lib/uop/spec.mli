@@ -66,8 +66,9 @@ val program : t
     constant appears only under the cast that types it and nothing else is weak;
     there is no movement but a shrink of storage by a constant length, no global
     buffer and no {!Ops.invalid}; no elementwise operation on values has a
-    vector shape, a bitcast of memory aside. It adds conditionals ({!Op.If},
-    {!Op.Endif}) and lowered, [int32] {!Op.Special}s. *)
+    vector shape, a bitcast of memory aside, and a lane of a vector value is
+    read at a constant lane. It adds conditionals ({!Op.If}, {!Op.Endif}) and
+    lowered, [int32] {!Op.Special}s. *)
 
 val hcq : t
 (** [hcq] is {!shared} with the operations of command-queue programs: the

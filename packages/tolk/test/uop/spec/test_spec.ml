@@ -278,6 +278,15 @@ let vectors =
           let vector, scalar = lanes op in
           equal verdict (Some false) (judge Spec.program vector);
           is_false (judge Spec.program scalar = Some false));
+      test "a program reads a lane of a vector at a constant (D86)" (fun () ->
+          let vector = Ops.stack [ fvar "a"; fvar "b" ] in
+          let lane i = fresh_v ~src:[ vector; i ] Op.Index in
+          let i =
+            Ops.variable ~dtype:Int32 "i" (`Int Bigint.zero) (`Int Bigint.one)
+          in
+          equal verdict (Some false) (judge Spec.program (lane i));
+          is_false
+            (judge Spec.program (lane (Ops.int ~dtype:Int32 1)) = Some false));
     ]
 
 (* Construction *)

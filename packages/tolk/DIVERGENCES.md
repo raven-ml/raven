@@ -1737,7 +1737,9 @@ the Exclusions of `README.md`.
   where on two lanes, and the same on one); the `Codegen` suite's `vectors in
   programs › a weak constant stored into four lanes of half is refused` and,
   on every case, `› no program applies an elementwise operation to a
-  vector`.
+  vector`; the `Cstyle` suite's `every GPU kernel compiles with its target's
+  toolchain › cuda_vector_cast`, tinygrad's source, which NVRTC rejects
+  (slow, an expected failure).
 
 ## D60. A loop of a call stays in the schedule
 
@@ -2617,3 +2619,21 @@ tolk lowers as one, replaces it.
   those nx.amd.device's decoder is tested on.
 - **Pinned by:** the Ops_amd suite: `recorded cases › traces` and
   `counters_traces`, from tinygrad's own encoding, which spills.
+
+## D86. A program reads a lane of a vector at a constant
+
+- **tinygrad:** `uop/spec.py:83` (`shared_spec`, which accepts an index of
+  any integer) and `:205` (`spec_program`); `renderer/cstyle.py:168`
+  (`render_index`, which writes a lane picked by a value as `(v)[i]`).
+- **tolk:** `lib/uop/spec.ml:412` (the second rule of `program`).
+- **Differs:** `Spec.program` rejects an index of a vector value
+  (`AddrSpace.ALU`) whose lane is not a constant. No pass of tinygrad or
+  tolk makes one; a hand-built kernel that does fails at lowering, naming
+  the index.
+- **Reason:** (b), as D58's. CUDA's vectors are structs whose lanes are
+  members, so NVRTC rejects `(v)[i]` ("no operator [] matches these
+  operands"); rune compiles its kernels for CUDA.
+- **Pinned by:** the Spec suite (`test/uop/spec`): `vectors in programs ›
+  a program reads a lane of a vector at a constant (D86)`; the Cstyle suite's
+  `every GPU kernel compiles with its target's toolchain › cuda_dynamic_lane`,
+  tinygrad's source, which NVRTC rejects (slow, an expected failure).
