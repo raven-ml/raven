@@ -19,6 +19,12 @@ val differentiable : ('a, 'b) Nx.t -> bool
 (** [differentiable x] is [true] iff [x] is real or complex: a tangent of [x] is
     a value of its dtype. *)
 
+val same_coordinates : ('a, 'b) Nx.dtype -> ('c, 'd) Nx.dtype -> bool
+(** [same_coordinates src dst] is [true] iff a bitcast from [src] to [dst] reads
+    the same real coordinates, which makes it linear: [dst] is [src], real or
+    complex, or one is a complex dtype and the other the float of its
+    components. *)
+
 val create : string -> tape
 (** [create entry] is a fresh tape for the entry point named [entry], which its
     errors name. *)
@@ -36,10 +42,10 @@ val install : tape -> (unit -> 'a) -> 'a
     one slot; a quotient of a slot; a selection, a sum or running sum, a zero
     padding, a concatenation, a gather, a scatter or an update, a window or its
     fold, a Fourier transform, a copy, a movement or a placement of slots; a
-    cast among real and complex dtypes; a matrix product with one slot; and a
-    triangular solve for a slot. In a selection, a concatenation, a scatter and
-    an update, an operand that is no slot stands for zero, as a tangent's zero
-    fill does.
+    cast among real and complex dtypes; a bitcast that keeps coordinates
+    ({!same_coordinates}); a matrix product with one slot; and a triangular
+    solve for a slot. In a selection, a concatenation, a scatter and an update,
+    an operand that is no slot stands for zero, as a tangent's zero fill does.
 
     Raises [Invalid_argument], at the operation, naming [t]'s entry point, if
     the operation is not linear in its slots, as in

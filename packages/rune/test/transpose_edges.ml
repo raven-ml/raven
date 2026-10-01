@@ -288,6 +288,11 @@ let recorder =
       (fun dx ->
         Op.eval (Convert (Cast, f64, Op.eval (Convert (Cast, Nx.int32, dx)))))
       x;
+    affine "bitcast"
+      (fun dx ->
+        Op.eval
+          (Convert (Bitcast, f64, Op.eval (Convert (Bitcast, Nx.int64, dx)))))
+      x;
     test "a pad with a zero fill is linear" (fun () ->
         let map dx =
           Op.eval

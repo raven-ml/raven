@@ -651,6 +651,22 @@ let assembly_edges : Row.t -> test list = function
             check Nx.int64;
             check Nx.bool);
       ]
+  | Bitcast ->
+      [
+        test "a bitcast to an integer or another float format has no tangent"
+          (fun () ->
+            let check (type c d) (dtype : (c, d) Nx.dtype) x =
+              let y, dy =
+                Rune.jvp'
+                  (fun x -> Op.eval (Convert (Bitcast, dtype, x)))
+                  x (Nx.ones_like x)
+              in
+              equal (Reference.exact ()) (Nx.zeros_like y) dy
+            in
+            check Nx.int64 (vec [| 1.5; -2. |]);
+            check Nx.uint32 (vec [| 1.5; -2. |]);
+            check Nx.bfloat16 (Nx.create Nx.float16 [| 2 |] [| 1.5; -2. |]));
+      ]
   | _ -> []
 
 let reshape_edges =
@@ -778,7 +794,7 @@ let of_row (r : Row.t) =
   | Where -> where_edges
   | Reduce k -> reduce_edges k
   | Sort -> [ sort_law ]
-  | Pad | Cat | Gather | Scatter _ | Cast -> assembly_edges r
+  | Pad | Cat | Gather | Scatter _ | Cast | Bitcast -> assembly_edges r
   | Cholesky | Qr | Solve_triangular -> linalg_edges r
   | Read -> read_edges
   | Move Reshape -> reshape_edges

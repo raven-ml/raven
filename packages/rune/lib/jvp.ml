@@ -671,7 +671,12 @@ let run : type r. t -> r Nx.Op.t -> r =
       if Nx_dtype.is_float dtype || Nx_dtype.is_complex dtype then
         dual i y (eval (Convert (Cast, dtype, dx)))
       else y
-  | Convert (Bitcast, dtype, x) -> eval (Convert (Bitcast, dtype, primal i x))
+  | Convert (Bitcast, dtype, x) ->
+      let x, dx = unwrap i x in
+      let y = eval (Convert (Bitcast, dtype, x)) in
+      if Linear.same_coordinates (Nx.dtype x) dtype then
+        dual i y (eval (Convert (Bitcast, dtype, dx)))
+      else y
   | Threefry _ -> assert false (* Its int32 operands are never duals. *)
   | Gather (axis, indices, x) ->
       linear x (fun x -> eval (Gather (axis, indices, x)))

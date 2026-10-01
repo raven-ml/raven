@@ -29,6 +29,19 @@ type (_, _) Repr.node +=
 
 let real_or_complex dt = Nx_dtype.is_float dt || Nx_dtype.is_complex dt
 let differentiable x = real_or_complex (Nx.dtype x)
+
+(* A complex element is the pair of its components, so a bitcast between a
+   complex dtype and the float of its components reads the same real
+   coordinates, as does one to a real or complex operand's own dtype. Any other
+   bitcast reads a value's bits as an unrelated value. *)
+let same_coordinates : type a b c d.
+    (a, b) Nx_dtype.t -> (c, d) Nx_dtype.t -> bool =
+ fun src dst ->
+  match (src, dst) with
+  | Nx_dtype.Complex64, Nx_dtype.Float32 | Float32, Complex64 -> true
+  | Complex128, Float64 | Float64, Complex128 -> true
+  | _ -> real_or_complex src && Nx_dtype.equal src dst
+
 let create entry = { entry; entries = Array.make 64 Input; length = 0 }
 
 let owns t x =
@@ -132,6 +145,9 @@ let run : type r. tape -> r Nx.Op.t -> r =
       if real_or_complex dtype && real_or_complex (Nx.dtype x) then
         record t op x
       else nonlinear t op
+  | Convert (Bitcast, dtype, x) ->
+      if same_coordinates (Nx.dtype x) dtype then record t op x
+      else nonlinear t op
   | Solve_triangular { a; b; _ } ->
       if owns t a then nonlinear t op else record t op b
   | Matmul (a, b) ->
@@ -155,9 +171,8 @@ let run : type r. tape -> r Nx.Op.t -> r =
            "%s: a custom_jvp tangent map reads a tangent's value with %s; \
             under reverse mode a tangent has none"
            t.entry by)
-  | Compare _ | Arg_reduce _ | Sort _ | Argsort _
-  | Convert (Bitcast, _, _)
-  | Threefry _ | Cholesky _ | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
+  | Compare _ | Arg_reduce _ | Sort _ | Argsort _ | Threefry _ | Cholesky _
+  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Check _ ->
       nonlinear t op
 
 (* Gathering across the lanes of the map named [axis] is linear: its transpose
@@ -370,7 +385,16 @@ let transpose_op : type a b.
              add x (shrink_axis ~axis (lo, hi) ct);
              hi)
            0 xs)
-  | Convert (_, _, x) -> add x (Nx.cast (Nx.dtype x) ct)
+  | Convert (Cast, _, x) -> add x (Nx.cast (Nx.dtype x) ct)
+  | Convert (Bitcast, _, x) ->
+      (* The tape holds a complex cotangent conjugated, [dL/dre - i dL/dim], and
+         a pair of float components holds [dL/dre] and [dL/dim], so a bitcast
+         between the two conjugates its complex side. [Nx.conjugate] leaves the
+         real side as it is. *)
+      let back ct = Nx.bitcast (Nx.dtype x) ct in
+      if Nx_dtype.is_complex (Nx.dtype x) = Nx_dtype.is_complex (Nx.dtype ct)
+      then add x (back ct)
+      else add x (Nx.conjugate (back (Nx.conjugate ct)))
   | Gather (axis, indices, x) ->
       add x
         (eval

@@ -174,6 +174,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- A bitcast between a complex dtype and the float of its components, such as
+  `Nx.bitcast Nx.float32` of a `complex64` tensor, is differentiable. Its
+  tangent was dropped, so a gradient through it was zero.
+
 - **Breaking:** where the operands of `Nx.maximum` or `Nx.minimum` tie, each
   takes half of the derivative, as tied elements share it along the axes of
   `Nx.max` and `Nx.min`; the second operand took all of it. `Nx.relu` and

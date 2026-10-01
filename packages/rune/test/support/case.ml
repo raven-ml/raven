@@ -568,20 +568,31 @@ let cast_case =
         (tensor d (range (-3.) 3.))
         (if D d = float64 then exact else [ D Nx.float64 ]))
 
+(* A bitcast between a complex dtype and the float of its components, which
+   holds them along a last axis of two. Any other bitcast has no tangent, which
+   the edges check. *)
+let bitcast_instance dst x =
+  let f x = [ Op.eval (Convert (Bitcast, dst, one x)) ] in
+  instance ~linear:f (Format.asprintf "bitcast to %a" Nx.pp_dtype dst) f [ x ]
+
 let bitcast_case =
-  case ~kind:Plain ~dtypes:[ D Nx.float32; D Nx.float64 ] Bitcast (fun (D d) ->
-      let* s = shape 0 3 in
-      match Nx_dtype.equal_witness d Nx.float32 with
-      | Some Type.Equal ->
-          let+ x = tensor Nx.float32 (range (-3.) 3.) s in
-          instance "bitcast to int32"
-            (fun x -> [ Op.eval (Convert (Bitcast, Nx.int32, one x)) ])
-            [ x ]
-      | None ->
-          let+ x = tensor Nx.float64 (range (-3.) 3.) s in
-          instance "bitcast to int64"
-            (fun x -> [ Op.eval (Convert (Bitcast, Nx.int64, one x)) ])
-            [ x ])
+  let widen d dst =
+    let* s = shape 0 2 in
+    let+ x = tensor d (range (-3.) 3.) (Array.append s [| 2 |]) in
+    bitcast_instance dst x
+  and narrow d dst =
+    let* s = shape 0 2 in
+    let+ x = ctensor d plane s in
+    bitcast_instance dst x
+  in
+  case ~dtypes:wide ~complex:(narrow Nx.complex128 Nx.float64) Bitcast
+    (fun (D d) ->
+      match d with
+      | Float32 -> widen d Nx.complex64
+      | Float64 -> widen d Nx.complex128
+      | Complex64 -> narrow d Nx.float32
+      | Complex128 -> narrow d Nx.float64
+      | _ -> invalid_arg "Case: a bitcast of a float or complex dtype")
 
 let threefry_case =
   case ~kind:Integer ~dtypes:[ float64 ] Threefry (fun _ ->
