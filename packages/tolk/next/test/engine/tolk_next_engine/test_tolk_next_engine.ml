@@ -773,8 +773,11 @@ let copies_in_order () =
 
 (* A store through a padded view: a row of 8 of [x @ w] into [pool], [8; 8],
    padded by one row, at the row the loaded [slot] gives, or at the padding row
-   when [slot] lies outside [pool]. *)
-let padded_store device =
+   when [slot] lies outside [pool]. With [read], the graph also stores the sums
+   of the rows of [pool] padded by a row of [fill], [9] of them, a selection of
+   [fill] off the very pad node the store goes through, and the sums of [pool]'s
+   rows read directly, [8] of them. *)
+let padded_store ?(fill = 0.) ?(read = false) device =
   let buffer n dt shape =
     Ops.reshape
       (Ops.new_buffer (Single device) n dt)
@@ -787,21 +790,37 @@ let padded_store device =
     Ops.bitwise_and (Ops.ge slot (Ops.int 0)) (Ops.lt slot (Ops.int 8))
   in
   let at = Ops.where inside slot (Ops.int 8) in
+  let padding = [ Some (Ops.Int 0, Ops.Int 1); None ] in
+  let padded = Ops.pad pool padding in
   let view =
-    Ops.shrink
-      (Ops.pad pool [ Some (Ops.Int 0, Ops.Int 1); None ])
+    Ops.shrink padded
       [ Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))); None ]
   in
   let row = Ops.rop (Ops.mul x w) Op.Add [ 1 ] in
-  Ops.sink [ Ops.after view [ Ops.store view row ] ]
+  let stored = Ops.after view [ Ops.store view row ] in
+  if not read then Ops.sink [ stored ]
+  else
+    let filled = Ops.pad ~value:(`Float fill) pool padding in
+    if not (List.memq padded (Ops.toposort filled)) then
+      fail "the read does not share the stored pad node";
+    let sums = buffer 9 Float32 [ 9 ] and direct = buffer 8 Float32 [ 8 ] in
+    Ops.sink
+      [
+        stored;
+        Ops.after sums [ Ops.store sums (Ops.rop filled Op.Add [ 1 ]) ];
+        Ops.after direct [ Ops.store direct (Ops.rop pool Op.Add [ 1 ]) ];
+      ]
 
-(* [stores_through_a_pad ~devices device at] runs [padded_store] with [slot] at
-   [at]: [pool] holds the row at [at] when it lies within it, and is otherwise
-   untouched. *)
-let stores_through_a_pad ?(devices = devices) device at () =
-  let big = padded_store device in
+(* [stores_through_a_pad ~devices ~fill ~read device at] runs [padded_store]
+   with [slot] at [at]: [pool] holds the row at [at] when it lies within it, and
+   is otherwise untouched, and with [read] the sums of the padded rows are
+   [pool]'s rows before the store and [8 * fill] for the padding, and the direct
+   sums [pool]'s rows before the store. *)
+let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) device at ()
+    =
+  let big = padded_store ?fill ~read device in
   let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
-  equal ~msg:"kernels" int 1 (List.length calls);
+  if not read then equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
   let of_size n = List.find (fun st -> per_device st.arg = n) storage in
   let pool = of_size 64 and slot = of_size 1 in
@@ -824,7 +843,19 @@ let stores_through_a_pad ?(devices = devices) device at () =
         else v)
       pool.before
   in
-  equal values expected (contents pool)
+  equal values expected (contents pool);
+  if read then (
+    let sum r =
+      List.fold_left ( +. ) 0.
+        (List.init 8 (fun j -> num pool.before.((r * 8) + j)))
+    in
+    let fill = Option.value fill ~default:0. in
+    equal ~msg:"the padded rows read" values
+      (Array.init 9 (fun r -> `Float (if r < 8 then sum r else 8. *. fill)))
+      (contents (of_size 9));
+    equal ~msg:"the rows read without the pad" values
+      (Array.init 8 (fun r -> `Float (sum r)))
+      (contents (of_size 8)))
 
 let padded_stores =
   group "a store through a padded view (D69)"
@@ -833,6 +864,10 @@ let padded_stores =
         (fun at -> stores_through_a_pad "CPU" at ());
       cases ~name:string_of_int "writes nothing outside the source" [ -1; 8; 9 ]
         (fun at -> stores_through_a_pad "CPU" at ());
+      cases ~name:string_of_int
+        "a read of the same padded node reads its fill in the padding"
+        [ 3; -1; 8 ] (fun at ->
+          stores_through_a_pad ~fill:7. ~read:true "CPU" at ());
     ]
 
 let schedules =
@@ -1974,6 +2009,12 @@ let metal =
          nothing outside it (D69)"
         [ 0; 7; -1; 8 ] (fun at ->
           stores_through_a_pad ~devices:on_metal "CPU:1" at ());
+      cases ~tags:[ "slow" ] ~name:string_of_int
+        "a read of a padded node stored through reads its fill in the padding \
+         (D69)"
+        [ 3; -1 ] (fun at ->
+          stores_through_a_pad ~devices:on_metal ~fill:7. ~read:true "CPU:1" at
+            ());
       slow "a program's run on Metal takes a positive time, under a second"
         (fun () ->
           let t =

@@ -65,6 +65,31 @@ let mark_stored_pads ctx dest =
   in
   go dest
 
+(* A store's destination that moves through a pad is made its own: each of its
+   movements is tagged, so that no read shares the nodes that D69 gates. *)
+let stored_tag = Tag.String "stored"
+
+let own_destination st =
+  let rec pads u =
+    Op.Set.mem (op u) Op.Set.movement && (op u = Op.Pad || pads (nth u 0))
+  in
+  let rec own u =
+    if not (Op.Set.mem (op u) Op.Set.movement) then u
+    else
+      replace u ~src:(own (nth u 0) :: List.tl (src u)) ~tag:(Some stored_tag)
+  in
+  match src st with
+  | dest :: rest when pads dest && tag dest = None ->
+      Some (replace st ~src:(own dest :: rest))
+  | _ -> None
+
+let pm_own_stored_destinations =
+  Pattern_matcher.v (fun () ->
+      [
+        rule_ctx (Upat.op Op.Store ~name:"st") (fun () m ->
+            own_destination (m "st"));
+      ])
+
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
   List.iter
@@ -502,6 +527,7 @@ let run_rangeify ?(debug = false) tsink =
       range_idx = 0;
     }
   in
+  let tsink = graph_rewrite ~ctx:() tsink pm_own_stored_destinations in
   ignore (graph_rewrite ~ctx:rctx tsink pm_generate_realize_map);
   let tsink_toposort = toposort ~gate:gate_kernel_sink tsink in
   let consumer_map = Tbl.create 256 in

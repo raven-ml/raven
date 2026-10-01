@@ -1897,16 +1897,20 @@ the Exclusions of `README.md`.
   ranges into a selection, a store's destination included: the store then
   targets a `WHERE`, which `uop/spec.py` refuses ("UOp verification failed …
   Ops.STORE … Ops.WHERE").
-- **tolk.next:** `lib/schedule/indexing.ml:59` (`mark_stored_pads`),
-  `:171` (`convert_pad_to_where_to_keep_behavior_local`).
+- **tolk.next:** `lib/schedule/indexing.ml:72` (`own_destination`, run
+  first by `run_rangeify`), `:59` (`mark_stored_pads`) and `:196`
+  (`convert_pad_to_where_to_keep_behavior_local`).
 - **Differs:** a store whose destination moves through a pad writes the
   elements whose index falls within the pad's source and drops the ones in
-  the padding. The pad's validity goes on the store's index into the storage,
-  an `INDEX` whose index carries it, which codegen renders as a guarded
-  store; the pad is then removed as any movement is. A read through a pad
-  stays a selection, as in tinygrad. tinygrad refuses every graph this
-  changes, so every graph it accepts schedules as before. It is the
-  write-side dual of a read through a pad, which is a gated load.
+  the padding. The store's destination is first made its own, its movements
+  tagged, so that no read shares them; on that path the pad's validity goes on
+  the index into the storage, an `INDEX` whose index carries it, which codegen
+  renders as a guarded store, and the pad is removed as any movement is. A
+  read through a pad, the same pad as the store's included, stays a
+  selection, as in tinygrad: a fill other than zero, a selection off the pad,
+  reads its fill. tinygrad refuses every graph this changes, so every graph
+  it accepts schedules as before. It is the write-side dual of a read through
+  a pad, which is a gated load.
 - **Reason:** (b). Rune.next's compiled call stores a lent indexed write row
   by row (`Lower_index.scatter_rows`), and a row whose index lies outside its
   target is dropped, as nx's scatter drops it. Through a pad, the dropped row
@@ -1917,9 +1921,12 @@ the Exclusions of `README.md`.
 - **Pinned by:** the engine suite (`test/engine/tolk_next_engine`): `a store
   through a padded view (D69) › writes the row within the source` (rows 0, 3
   and 7) and `› writes nothing outside the source` (-1, 8 and 9), each one
-  kernel, on the host, and `Metal › a store through a padded view writes the
-  row within the source, and nothing outside it (D69)` (slow); rune.next's
-  Jit suite, `a lent write of rows › *`.
+  kernel, and `› a read of the same padded node reads its fill in the
+  padding` (one pad node stored through and read with a fill of 7, beside a
+  read of the storage without the pad), on the host; `Metal › a store through a padded view writes the row within the
+  source, and nothing outside it (D69)` and `› a read of a padded node stored
+  through reads its fill in the padding (D69)` (slow); rune.next's Jit suite,
+  `a lent write of rows › *`.
 
 ## D70. A batch stages host memory its device cannot map
 
