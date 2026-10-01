@@ -674,13 +674,16 @@ let run : type r. t -> r Nx.Op.t -> r =
       let du, ds, dvt = svd' i ~full_matrices x u s vt dx in
       (dual i u du, dual i s ds, dual i vt dvt)
   | Eigh { vectors; x } -> (
+      (* The primal is the operation as written: without vectors, the
+         factorisation the tangent needs is a second one, whose values may
+         differ in rounding. *)
       let x, dx = unwrap i x in
       let w, q = eval (Eigh { vectors = true; x }) in
       let q = Option.get q in
       let dw, dq = eigh' w q dx in
       match vectors with
       | true -> (dual i w dw, Some (dual i q dq))
-      | false -> (dual i w dw, None))
+      | false -> (dual i (fst (eval (Eigh { vectors; x }))) dw, None))
   | Eig { vectors; x } -> (
       let x, dx = unwrap i x in
       let values, v = eval (Eig { vectors = true; x }) in
@@ -688,7 +691,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       let dvalues, dv = eig' values v dx in
       match vectors with
       | true -> (dual i values dvalues, Some (dual i v dv))
-      | false -> (dual i values dvalues, None))
+      | false -> (dual i (fst (eval (Eig { vectors; x }))) dvalues, None))
   | Solve_triangular { upper; transpose; unit_diag; a; b } ->
       let a, da = split i a and b, db = split i b in
       let x = eval (Solve_triangular { upper; transpose; unit_diag; a; b }) in
