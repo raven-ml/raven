@@ -5,8 +5,7 @@
 
 (* Totals. The oracle is the plain program: an addition counts once per
    execution of the code that makes it, under a scope, a scan, a remat, a map
-   (as the loop over its lanes) and reverse mode, which runs code again. The
-   compiled cases wait for jit. *)
+   (as the loop over its lanes) and reverse mode, which runs code again. *)
 
 open Windtrap
 module Rune = Rune_next.Rune
@@ -16,11 +15,6 @@ let vec a = Nx.create f64 [| Array.length a |] a
 let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()
-
-(* What rune does not compute yet, by name: each runs and is expected to fail,
-   so it turns red the day it passes. *)
-let pending why t = xfail ~reason:("pending: " ^ why) t
-let compiled name f = pending "jit" (test name f)
 
 let series seed shape =
   let n = Array.fold_left ( * ) 1 shape in
@@ -107,8 +101,7 @@ let scope_tests =
               Rune.Total.add t (scalar 4.))
         in
         equal (exact ()) (scalar 7.) total);
-    compiled "a jit inside a scope runs eagerly and its additions count"
-      (fun () ->
+    test "a jit inside a scope runs eagerly and its additions count" (fun () ->
         let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
         let f = Rune.jit' (rollout t (w0 ()) (h0 ())) in
         let _, total = Rune.Total.collect t ~zero:(zero ()) (fun () -> f xs) in
@@ -135,7 +128,7 @@ let scan_tests =
         in
         equal ~msg:"total" (close ()) (expected_total xs) total;
         equal ~msg:"body runs" int 5 !runs);
-    compiled "a staged scan counts each step, replayed" (fun () ->
+    test "a staged scan counts each step, replayed" (fun () ->
         let t = Rune.Total.make () in
         let f =
           Rune.jit
@@ -195,7 +188,7 @@ let scan_tests =
                  Nx.Ptree.(tensor @-> returns tensor)
                  (fun _ -> raise Exit)
                  (lane 0 xs))));
-    compiled "restarted traces discard their additions" (fun () ->
+    test "restarted traces discard their additions" (fun () ->
         let t = Rune.Total.make () and xs = series 2 [| 4; 3 |] in
         let dirs = series 6 [| 3; 3; 3 |] in
         let f dirs =
@@ -284,8 +277,7 @@ let differentiation_tests =
         equal ~msg:"gradient" (close ())
           (Rune.grad' (explicit xs) (w0 ()))
           (Rune.grad' (collected t xs) (w0 ())));
-    compiled "a collected total is differentiated as a value, compiled"
-      (fun () ->
+    test "a collected total is differentiated as a value, compiled" (fun () ->
         let t = Rune.Total.make () and xs = series 2 [| 6; 3 |] in
         equal (close ())
           (Rune.grad' (explicit xs) (w0 ()))
@@ -407,7 +399,7 @@ let again_tests =
               Rune.jacfwd' (remat_adding t) x)
         in
         equal (close ()) (Nx.mul_s (squares x) 4.) total);
-    compiled "a scope outside grad counts once, compiled" (fun () ->
+    test "a scope outside grad counts once, compiled" (fun () ->
         let t = Rune.Total.make () and x = series 3 [| 4 |] in
         let run x =
           Rune.Total.collect t ~zero:(zero ()) (fun () ->
@@ -546,7 +538,7 @@ let sketch_tests =
         in
         let c = stack k (fun i -> snd (Rune.jvp' batch_loss w (lane i dirs))) in
         check_sketch (batch_loss w, c, ggn) (sketch batch_loss w dirs));
-    compiled "a marked loss's sketch, compiled" (fun () ->
+    test "a marked loss's sketch, compiled" (fun () ->
         let f =
           Rune.jit
             Nx.Ptree.(

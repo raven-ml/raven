@@ -6,8 +6,7 @@
 (* Custom differentiation rules: a rule replaces the derivative of its function,
    a custom_jvp serves both modes, a custom_vjp has no forward derivative, a
    call with no tensor result runs under the mode its rule lacks, and maps pass
-   every rule on. Deliberately wrong rules show that the rule is used. The
-   compiled cases wait for jit. *)
+   every rule on. Deliberately wrong rules show that the rule is used. *)
 
 open Windtrap
 module Rune = Rune_next.Rune
@@ -16,7 +15,6 @@ let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()
-let compiled name f = xfail ~reason:"pending: jit" (test name f)
 let tensor = Nx.Ptree.tensor
 let pair = Nx.Ptree.(pair tensor tensor)
 let v3 () = vec [| 0.7; -1.3; 2.1 |]
@@ -357,7 +355,7 @@ let map_tests =
 
 let compiled_tests =
   [
-    compiled "a custom_vjp's pullback under jit, replayed" (fun () ->
+    test "a custom_vjp's pullback under jit, replayed" (fun () ->
         let f =
           Rune.jit' (Rune.grad' (fun x -> Nx.sum (Nx.mul (fake_grad_sin x) x)))
         in
@@ -365,15 +363,14 @@ let compiled_tests =
           (fun x ->
             equal (close ()) (Nx.add (Nx.mul_s x 100.) (Nx.sin x)) (f x))
           [ v3 (); vec [| -0.3; 0.4; 1.2 |] ]);
-    compiled "a custom_jvp's tangent map under jit, replayed" (fun () ->
+    test "a custom_jvp's tangent map under jit, replayed" (fun () ->
         let f =
           Rune.jit' (fun x -> snd (Rune.jvp' fake_jvp_sin x (Nx.mul_s x 2.)))
         in
         List.iter
           (fun x -> equal (close ()) (Nx.mul_s x 200.) (f x))
           [ v3 (); vec [| -0.3; 0.4; 1.2 |] ]);
-    compiled "a custom_vjp whose pullback scatters, under jit, replayed"
-      (fun () ->
+    test "a custom_vjp whose pullback scatters, under jit, replayed" (fun () ->
         let indices = Nx.create Nx.int32 [| 3 |] [| 2l; 0l; 2l |] in
         let take =
           Rune.custom_vjp tensor tensor (fun x ->

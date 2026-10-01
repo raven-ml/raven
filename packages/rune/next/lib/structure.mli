@@ -55,6 +55,7 @@ type 'f signature =
   | Signature : {
       args : 'a Nx.Ptree.t;  (** The arguments, as one value. *)
       result : 'r Nx.Ptree.t;  (** The result. *)
+      roles : Nx.Ptree.role list;  (** Each argument's role, in order. *)
       apply : 'f -> 'a -> 'r;
           (** [apply f a] is [f] applied to the arguments [a]. *)
       curry : ('a -> 'r) -> 'f;
@@ -63,9 +64,14 @@ type 'f signature =
     }
       -> 'f signature
 
+val signature : string -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) signature
+(** [signature fn s] is [s] as a function of one value.
+
+    Raises [Invalid_argument], naming [fn], if [s] has no argument. *)
+
 val uncurry : string -> ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) signature
-(** [uncurry fn s] is [s] as a function of one value, for a transformation that
-    only reads its arguments.
+(** [uncurry fn s] is {!signature}[ fn s], for a transformation that only reads
+    its arguments.
 
     Raises [Invalid_argument], naming [fn], if [s] has no argument, or if [s]
     consumes an argument ({!Nx.Ptree.consumes}), as in

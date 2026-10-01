@@ -66,6 +66,7 @@ type 'f signature =
   | Signature : {
       args : 'a Ptree.t;
       result : 'r Ptree.t;
+      roles : Ptree.role list;
       apply : 'f -> 'a -> 'r;
       curry : ('a -> 'r) -> 'f;
     }
@@ -122,8 +123,19 @@ let rec spine : type f. string -> int -> f Ptree.fn -> f spine =
         }
   | Returns _ -> invalid_arg (fn ^ ": the signature has no argument")
 
-let uncurry fn s =
+let signature fn s =
   let (Spine u) = spine fn 0 s in
+  Signature
+    {
+      args = of_walker u.walk;
+      result = u.result;
+      roles = u.roles;
+      apply = u.apply;
+      curry = u.curry;
+    }
+
+let uncurry fn s =
+  let (Signature u as signature) = signature fn s in
   List.iteri
     (fun i -> function
       | Ptree.Consumed ->
@@ -133,10 +145,4 @@ let uncurry fn s =
             fn i
       | Read -> ())
     u.roles;
-  Signature
-    {
-      args = of_walker u.walk;
-      result = u.result;
-      apply = u.apply;
-      curry = u.curry;
-    }
+  signature

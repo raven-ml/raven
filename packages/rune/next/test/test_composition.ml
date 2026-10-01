@@ -124,16 +124,6 @@ let argument ts =
 
 let name ts = String.concat " ∘ " (List.map transformation_name ts)
 
-(* What a cell waits for, when rune does not compute it yet: the cell runs and
-   is expected to fail, so it turns red the day it passes. *)
-let waits_for ts = if List.mem Jit ts then Some "jit" else None
-
-let cell ?tags ts name f =
-  let t = test ?tags name f in
-  match waits_for ts with
-  | Some why -> xfail ~reason:("pending: " ^ why) t
-  | None -> t
-
 (* Expected values *)
 
 type outcome = Value of Nx.float64_t | Raises of string
@@ -209,7 +199,7 @@ let pair_group ts =
   group ~tags (name ts)
     (List.map
        (fun c ->
-         cell ts (construct_name c) (fun () ->
+         test (construct_name c) (fun () ->
              check (expected outer inner c) (fun () ->
                  compose ts (through c) (argument ts))))
        constructs)
@@ -242,7 +232,7 @@ let triple_group ts =
   group ~tags (name ts)
     (List.map
        (fun c ->
-         cell ts (construct_name c) (fun () ->
+         test (construct_name c) (fun () ->
              let run () = compose ts (through c) (argument ts) in
              let outcome =
                if c = Custom_vjp && innermost_derivative ts = Some Jvp then
@@ -263,7 +253,7 @@ let total_group =
     (List.map
        (fun ts ->
          let tags = if List.mem Jit ts then [ "slow" ] else [] in
-         cell ~tags ts (name ts) (fun () ->
+         test ~tags (name ts) (fun () ->
              let arg = argument ts in
              let _, total =
                Rune.Total.collect tot ~zero:(Nx.scalar f64 0.) (fun () ->
@@ -331,7 +321,7 @@ let pullback_group =
     (List.concat_map
        (fun c ->
          [
-           cell [ Vmap ]
+           test
              (construct_name c ^ " under vmap is its loop")
              (fun () ->
                let _, pb = Rune.vjp' (through c) (x ()) in
@@ -340,7 +330,7 @@ let pullback_group =
                  Nx.stack (List.init 3 (fun i -> pb (Nx.get [ i ] cts)))
                in
                equal (Oracle.tensor ~rel:1e-12 ()) loop (Rune.vmap' pb cts));
-           cell [ Grad ]
+           test
              (construct_name c ^ " from two domains")
              (fun () ->
                let _, pb = Rune.vjp' (through c) (x ()) in

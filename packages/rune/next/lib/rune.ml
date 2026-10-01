@@ -6,7 +6,6 @@
 module Ptree = Nx.Ptree
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-let not_yet name = invalid_arg ("Rune." ^ name ^ ": not implemented yet")
 
 (* Reverse mode *)
 
@@ -333,7 +332,7 @@ let scan cs xs_s ys_s ~f ~init xs = scan_of "Rune.scan" cs xs_s ys_s ~f ~init xs
 
 exception Jit_error = Lower.Jit_error
 
-let jit _ _ _ = not_yet "jit"
+let jit s f = Jit.jit "Rune.jit" s f
 let compiled = Compiled.backend
 
 (* Functions of one tensor *)
@@ -345,4 +344,4 @@ let vjp' f x = vjp_of "Rune.vjp'" t t f x
 let jvp' f x dx = jvp_of "Rune.jvp'" t t f x dx
 let vmap' ?axis f x = vmap_of "Rune.vmap'" ?axis Ptree.(t @-> returns t) f x
 let scan' ~f ~init xs = scan_of "Rune.scan'" t t t ~f ~init xs
-let jit' _ _ = not_yet "jit'"
+let jit' f = Jit.jit "Rune.jit'" Ptree.(tensor @-> returns tensor) f

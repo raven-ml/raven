@@ -650,25 +650,27 @@ val jit : ('a -> 'b) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     path; its shape and dtype stay readable. A consumed leaf must cover its
     whole storage, and no other leaf of the call nor a capture of its program
     may reach that storage: the call raises [Invalid_argument] before anything
-    runs, naming both paths, and consumes nothing. A call that raises before its
-    first kernel consumes nothing; once execution begins, consumed arguments
-    stay consumed even if the call raises.
+    runs, naming both paths, as in
+    ["Rune.jit: 0 is consumed and 1 reaches its storage"], and consumes nothing.
+    A call that raises before its first kernel consumes nothing; once execution
+    begins, consumed arguments stay consumed even if the call raises.
 
     {b Lending.} A result may take the storage of a consumed leaf, so a loop
     that consumes its state holds one generation of it. It does when their
-    dtypes, sizes and placements are equal, the leaf's run of storage starts
-    where the program writes the result within 16 bytes of memory, no compiled
-    function binds the storage, and writing the result there cannot change it:
-    no kernel reads the leaf after the first kernel that writes the result, and
-    that kernel reads it only where the result derives from it at its own index
-    (elementwise operations, equal-width casts and reshapes: an optimizer
-    update, a window written into a cache). Partners are chosen once per
-    program: first the results of an indexed write into a consumed leaf, then
-    the results that derive from one at their own index, then the rest, in the
-    order the program writes them. Each storage lends at most once. Storage that
-    cannot lend on a call is copied first, and the argument is still consumed.
+    dtypes, sizes and placements are equal, the leaf's storage starts on 16
+    bytes of memory, as fresh storage does, and writing the result there cannot
+    change what the program still reads: the result reads the leaf only where it
+    derives from it at its own index (elementwise operations, equal-width casts
+    and reshapes: an optimizer update, a window written into a cache), or does
+    not read it at all. Partners are chosen once per program: first the results
+    of an indexed write, then the other results that derive from a consumed leaf
+    at their own index, then the results that do not read one, in the order the
+    function computes them. Each storage lends at most once. On a call, storage
+    that cannot lend (memory the value borrows, or storage a compiled function
+    binds) is copied first, and the argument is still consumed.
     [RUNE_JIT_DEBUG=1] reports each consumed leaf:
-    ["rune.jit: 2.0.keys -> result 1.0.keys reused"].
+    ["rune.jit: 2.0.keys -> result 1.0.keys reused"], [copied] when its storage
+    was copied.
 
     {b Captures.} A capture is bound once per compiled function, at the trace
     that meets it: one element becomes a constant of the program; a value placed

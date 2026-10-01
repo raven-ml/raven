@@ -6,20 +6,6 @@
 open Rune_next
 open Tolk_next
 
-(* [u] with each parameter held as a buffer of its slot, which the harness binds
-   as it binds a capture. *)
-let held u =
-  let buffer p =
-    match Ops.arg p with
-    | Param { slot; size = Some n; dtype; device = Some d; phase; _ } ->
-        (p, Ops.new_buffer ~slot ~phase d n dtype)
-    | _ -> invalid_arg "a parameter that is not storage"
-  in
-  Ops.substitute u
-    (List.filter_map
-       (fun p -> if Op.equal (Ops.op p) Op.Param then Some (buffer p) else None)
-       (Ops.toposort u))
-
 (* The schedule that stores [y] into a new buffer on the host, and that
    buffer. *)
 let schedule y =
@@ -28,9 +14,7 @@ let schedule y =
   let out = Ops.new_buffer (Single "CPU") n tdt in
   let shape = List.map (fun d -> Ops.Int d) (Array.to_list (Nx.shape y)) in
   let view = Ops.reshape out shape in
-  let sink =
-    Ops.sink [ Ops.after view [ Ops.store view (held (Lower.uop y)) ] ]
-  in
+  let sink = Ops.sink [ Ops.after view [ Ops.store view (Lower.uop y) ] ] in
   (fst (Schedule.create_linear_with_vars sink), out)
 
 let kernels y =

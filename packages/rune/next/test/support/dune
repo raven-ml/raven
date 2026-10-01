@@ -1,7 +1,7 @@
 (library
  (name rune_next_test)
  (wrapped false)
- (modules expr oracle programs traces)
+ (modules expr oracle programs traces witness)
  (libraries
   windtrap
   rune.next

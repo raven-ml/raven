@@ -202,23 +202,21 @@ let exception_tests =
            (fun (call_name, call) ->
              [
                test call_name (check ~compile:false call);
-               xfail ~reason:"pending: jit"
-                 (test (call_name ^ ", compiled") (check ~compile:true call));
+               test (call_name ^ ", compiled") (check ~compile:true call);
              ])
            (calls @ errors)))
     transformations
 
 let later_tests =
   [
-    xfail ~reason:"pending: jit"
-      (test "an operation a compiled function refuses raises at its call"
-         (fun () ->
-           let guarded x =
-             match Nx.rfft Nx.complex128 x with
-             | _ -> x
-             | exception Rune.Jit_error _ -> Nx.mul_s x 3.
-           in
-           equal (exact ()) (Nx.mul_s (x0 ()) 3.) (Rune.jit' guarded (x0 ()))));
+    test "an operation a compiled function refuses raises at its call"
+      (fun () ->
+        let guarded x =
+          match Nx.rfft Nx.complex128 x with
+          | _ -> x
+          | exception Rune.Jit_error _ -> Nx.mul_s x 3.
+        in
+        equal (exact ()) (Nx.mul_s (x0 ()) 3.) (Rune.jit' guarded (x0 ())));
     test "a pullback's exception reaches the backward pass's caller" (fun () ->
         let g =
           Rune.custom_vjp tensor tensor (fun x -> (Nx.sin x, fun _ -> boom ()))

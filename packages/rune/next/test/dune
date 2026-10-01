@@ -179,6 +179,32 @@
    cache
    (run %{exe:test_compiled.exe} --tag slow))))
 
+; The compiled call's suite runs on the host. reports.t pins the lines
+; RUNE_JIT_DEBUG prints, which the module reads once.
+
+(test
+ (name test_jit)
+ (modules test_jit)
+ (package rune)
+ (libraries windtrap rune.next rune_next_test nx_test nx nx.device)
+ (deps
+  (sandbox always))
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (run %{test} --exclude-tag slow))))
+
+(executable
+ (name reports)
+ (modules reports)
+ (libraries rune.next nx))
+
+(cram
+ (applies_to reports)
+ (package rune)
+ (deps reports.exe))
+
 (cram
  (applies_to exhaustive)
  (package rune)

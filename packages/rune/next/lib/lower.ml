@@ -205,11 +205,23 @@ type scope = {
   renderer : Device.t -> Renderer.t;
   mutable names : (string * Device.t) list;
   mutable captures : capture list;
+  mutable writes : Ops.t list;
+  mutable arguments : Ops.t list;
 }
 
-let scope ~renderer = { renderer; names = []; captures = [] }
+let scope ~renderer =
+  { renderer; names = []; captures = []; writes = []; arguments = [] }
+
 let devices s = List.rev s.names
 let captures s = List.rev_map (fun c -> (c.buffer, c.buffers)) s.captures
+
+let held s =
+  List.filter_map
+    (fun c ->
+      match c.storage with Placed st -> Some st | Host_buffer _ -> None)
+    s.captures
+
+let writes s = s.writes
 
 (* The name that [s]'s nodes give [d]. *)
 let name s d =
@@ -293,10 +305,12 @@ let same_layout p q shape =
 let same_devices p q =
   List.equal Device.equal (Placement.devices p) (Placement.devices q)
 
-let on_disk x =
-  match Placement.devices (Nx.placement x) with
+let disk p =
+  match Placement.devices p with
   | [ d ] -> Device.equal d (Device.of_runtime Nx_device.disk)
   | _ -> false
+
+let on_disk x = disk (Nx.placement x)
 
 (* Where an operation reads [x]: where it lies, or the host for a value on the
    disk. *)
@@ -363,6 +377,16 @@ let span tdt v =
   let start = lo - (lo mod per) in
   (start, hi - start)
 
+let run tdt v b =
+  let start, span = span tdt v in
+  Nx_device.Buffer.view b
+    ~offset:(start * Dtype.itemsize tdt)
+    (Nx_device.Buffer.dtype b) span
+
+let buffers x =
+  let _, bufs, _ = storage x in
+  bufs
+
 let phase dt b start =
   if Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk then 0
   else
@@ -400,12 +424,24 @@ let param s ~slot x =
     else
       let start, span = span tdt v in
       let phase = phase_of what tdt bufs start in
-      viewed what
-        (Ops.param ~shape:[ Ops.Int span ] ~device:(device_of s p) ~phase slot
-           tdt)
-        p shape v start
+      let buffer = Ops.new_buffer ~slot ~phase (device_of s p) span tdt in
+      s.arguments <- buffer :: s.arguments;
+      viewed what buffer p shape v start
   in
   traced p (Nx.dtype x) u
+
+let output s ~slot p dt shape =
+  let what = "a result" in
+  let tdt = check s what p dt in
+  (* Every device holds a window of one shape. *)
+  let d = List.hd (Placement.devices p) in
+  let local =
+    View.create
+      (Array.map (fun (lo, hi) -> hi - lo) (Placement.window p shape d))
+  in
+  viewed what
+    (Ops.new_buffer ~slot (device_of s p) (View.numel local) tdt)
+    p shape local 0
 
 (* Captures *)
 
@@ -445,24 +481,27 @@ let bind : type a b. scope -> string -> Placement.t -> (a, b) Nx.t -> Ops.t =
         let start, span = span tdt v in
         let phase = phase_of what tdt bufs start in
         let buffer = Ops.new_buffer ~phase (device_of s p) span tdt in
-        let view b =
-          Nx_device.Buffer.view b
-            ~offset:(start * Dtype.itemsize tdt)
-            (Nx_device.Buffer.dtype b) span
-        in
         let node = viewed what buffer p shape v start in
-        let buffers = List.map view bufs in
+        let buffers = List.map (run tdt v) bufs in
         s.captures <-
           { storage = key; view = v; at = p; node; buffer; buffers }
           :: s.captures;
         node
 
-(* [capture s what p x] is the node of [x], a value that is not traced, at [p]:
+(* [placed s what p x] is the node of [x], a value that is not traced, at [p]:
    where it lies if that is [p], placed there first otherwise. *)
-let capture s what p x =
+let placed s what p x =
   if (not (on_disk x)) && same_layout (Nx.placement x) p (Nx.shape x) then
     bind s what p x
   else bind s what p (Nx.place p x)
+
+(* [capture s what p x] is the node of [x], a value that is not traced, as an
+   operand of an operation at [p]: where it lies if that is on [p]'s devices,
+   and otherwise a copy on each of them, as nx places a host operand. *)
+let capture s what p x =
+  if (not (on_disk x)) && same_devices (Nx.placement x) p then
+    bind s what (Nx.placement x) x
+  else placed s what (context p) x
 
 (* [node s what p x] is the node of the operand [x] of an operation at [p]. A
    traced value on other devices is copied there, as nx places a host operand of
@@ -474,6 +513,8 @@ let node s what p x =
       if same_devices (Nx.placement x) p then u
       else Ops.copy_to_device u (device_of s p)
   | Repr.Host _ | Repr.Placed _ -> capture s what p x
+
+let value s x = node s "a value" (Nx.placement x) x
 
 (* Movements *)
 
@@ -507,12 +548,20 @@ let place s what p q x =
 
 let op : type r. scope -> r Nx.Op.t -> r =
  fun s o ->
-  let what = Nx.Op.name o and p = Nx.Op.placement o in
+  let what = Nx.Op.name o in
+  (* A movement of a value on the disk is read on the host. *)
+  let p =
+    match Nx.Op.placement o with p when disk p -> Placement.host | p -> p
+  in
   let ret dt u =
     ignore (check s what p dt);
     traced p dt u
   in
   let like x u = ret (Nx.dtype x) u in
+  let write u =
+    s.writes <- u :: s.writes;
+    u
+  in
   let n x = node s what p x in
   (* A factorization of integers raises, as nx.cpu's does. *)
   let factored x =
@@ -531,7 +580,8 @@ let op : type r. scope -> r Nx.Op.t -> r =
       ret dt (Lower_arith.bitcast (check s what p dt) (n x))
   | Threefry (key, counter) ->
       let k = n key in
-      if not (Ops.op_in_backward_slice_with_self k [ Op.Param ]) then
+      let slice = Ops.backward_slice_with_self k in
+      if not (List.exists (fun a -> Ops.Nodes.mem a slice) s.arguments) then
         jit_error
           "a random draw from a key that does not depend on the function's \
            arguments would repeat on every call; pass the key as an argument";
@@ -555,10 +605,11 @@ let op : type r. scope -> r Nx.Op.t -> r =
       like x (Lower_index.gather axis (n indices) (n x))
   | Scatter { mode; unique; axis; indices; updates; into } ->
       like into
-        (Lower_index.scatter ~mode ~unique ~axis ~indices:(n indices)
-           ~updates:(n updates) (n into))
+        (write
+           (Lower_index.scatter ~mode ~unique ~axis ~indices:(n indices)
+              ~updates:(n updates) (n into)))
   | Update (x, starts, v) ->
-      like x (Lower_index.update (n x) ~starts:(n starts) (n v))
+      like x (write (Lower_index.update (n x) ~starts:(n starts) (n v)))
   | Unfold { kernel_size; stride; dilation; padding; x } ->
       like x (Lower_index.unfold ~kernel_size ~stride ~dilation ~padding (n x))
   | Fold { output_size; kernel_size; stride; dilation; padding; x } ->
@@ -587,7 +638,7 @@ let op : type r. scope -> r Nx.Op.t -> r =
   | Place (q, x) -> (
       match Repr.v x with
       | Repr.Traced _ -> like x (place s what (Nx.placement x) q x)
-      | Repr.Host _ | Repr.Placed _ -> like x (capture s what q x))
+      | Repr.Host _ | Repr.Placed _ -> like x (placed s what q x))
   | Read x -> (
       match Repr.v x with
       | Repr.Traced _ ->

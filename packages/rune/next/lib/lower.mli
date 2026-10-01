@@ -50,6 +50,17 @@ val span : Dtype.t -> Nx_array.View.t -> int * int
     reaches, from the element at or below the first one it reaches whose offset
     is a multiple of 16 bytes, through the last one: [(start, length)]. *)
 
+val run : Dtype.t -> Nx_array.View.t -> Nx_device.Buffer.t -> Nx_device.Buffer.t
+(** [run dt v b] is the run of [b]'s elements of [dt] that {!span} gives for the
+    view [v]: the buffer a parameter of a value of view [v] over [b] binds. *)
+
+val buffers : ('a, 'b) Nx.t -> Nx_device.Buffer.t list
+(** [buffers x] is the buffer of [x]'s storage on each device of [x]'s
+    placement, in order.
+
+    Raises [Invalid_argument] if [x] is traced, and as
+    {!Nx.Repr.Storage.buffers} does. *)
+
 val phase : Dtype.t -> Nx_device.Buffer.t -> int -> int
 (** [phase dt b start] is the bytes by which element [start] of [dt] in [b] lies
     past a 16-byte boundary of [b]'s memory: the phase of storage that starts
@@ -101,17 +112,40 @@ val op : scope -> 'r Nx.Op.t -> 'r
 
 val param : scope -> slot:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [param s ~slot x] is the traced value that stands for [x] in [s]: at [x]'s
-    placement, of its dtype and shape, whose node views the parameter [slot] as
-    [x]'s view views its storage. The parameter holds the run of [x]'s storage
-    that {!captures} describes for a capture; a program binds it to that run of
-    each argument it is called with. The parameter's phase is where that run of
-    [x]'s storage starts within 16 bytes ({!Tolk_next.Ops.param_arg}), and the
-    program accesses memory as aligned to it: an argument whose run starts
-    elsewhere within 16 bytes needs a program traced from it.
+    placement, of its dtype and shape, whose node views the storage of slot
+    [slot] ({!Tolk_next.Ops.new_buffer}) as [x]'s view views its storage. The
+    storage is the run of [x]'s storage that {!captures} describes for a
+    capture; a program binds it to that run of each argument it is called with.
+    Its phase is where that run of [x]'s storage starts within 16 bytes
+    ({!Tolk_next.Ops.param_arg}), and the program accesses memory as aligned to
+    it: an argument whose run starts elsewhere within 16 bytes needs a program
+    traced from it.
 
     Raises [Jit_error] if a device of [x]'s placement cannot compute its dtype
     or [x]'s buffers start at different places within 16 bytes, and
     [Invalid_argument] if [x] is traced. *)
+
+val output :
+  scope ->
+  slot:int ->
+  Nx.Placement.t ->
+  ('a, 'b) Nx_dtype.t ->
+  int array ->
+  Ops.t
+(** [output s ~slot p dt shape] is the node that views the storage of slot
+    [slot] as a value of [dt] and [shape] at [p], in C order: each device's
+    window of the value, starting on 16 bytes. A program stores a result into
+    it.
+
+    Raises as {!param} does. *)
+
+val value : scope -> ('a, 'b) Nx.t -> Ops.t
+(** [value s x] is the node of [x] in [s] at [x]'s placement: its own if [x] is
+    traced, and its capture ({!op}) otherwise. *)
+
+val traced : Nx.Placement.t -> ('a, 'b) Nx_dtype.t -> Ops.t -> ('a, 'b) Nx.t
+(** [traced p dt u] is the traced value at [p] of [dt] whose elements [u]
+    computes, of [u]'s shape. *)
 
 val uop : ('a, 'b) Nx.t -> Ops.t
 (** [uop x] is the node of the traced value [x].
@@ -129,3 +163,11 @@ val captures : scope -> (Ops.t * Nx_device.Buffer.t list) list
     first element its view reaches whose offset is a multiple of 16 bytes,
     through the last one it reaches; its phase is where that run starts within
     16 bytes ({!Tolk_next.Ops.param_arg}). *)
+
+val held : scope -> Nx.Repr.Storage.t list
+(** [held s] is the placed storage that [s]'s captures bind: what a program of
+    [s] pins ({!Nx.Repr.Storage.pin}). Host storage records no binding. *)
+
+val writes : scope -> Ops.t list
+(** [writes s] is the node of each result of an indexed write ([Nx.Op.Update],
+    [Nx.Op.Scatter]) that [s] lowered, the last first. *)

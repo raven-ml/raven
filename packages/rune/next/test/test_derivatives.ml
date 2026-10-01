@@ -24,18 +24,6 @@ let escape =
 
 let starts fn m = starts_with ~affix:(fn ^ ": ") m
 
-(* The tests whose behaviour rune does not compute yet, by what each waits for.
-   Each runs and is expected to fail, so it turns red the day it passes. *)
-let pending = [ ("a pullback applied under jit is its eager value", "jit") ]
-
-let marked name t =
-  match List.assoc_opt name pending with
-  | Some why -> xfail ~reason:("pending: " ^ why) t
-  | None -> t
-
-let test name f = marked name (Windtrap.test name f)
-let prop name gen law = marked name (Windtrap.prop name gen law)
-
 (* A record of parameters: two float leaves and a carried integer one. *)
 type 'a params = { w : 'a; b : 'a; steps : Nx.int32_t }
 

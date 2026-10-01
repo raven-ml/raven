@@ -16,25 +16,6 @@ let vec a = Nx.create f64 [| Array.length a |] a
 let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
 let close () = Oracle.tensor ~rel:1e-12 ()
-
-(* The tests whose behaviour rune does not compute yet, by what each waits for.
-   Each runs and is expected to fail, so it turns red the day it passes. *)
-let pending =
-  [
-    ("a scan under jit on the host is its loop written out", "jit");
-    ("a scan's gradient under jit on the host is the eager one", "jit");
-    ("a changed carry is refused under jit", "jit");
-    ("a declined scan under jit (vmap (grad f)) is its loop written out", "jit");
-    ("a declined scan inside a scope under jit counts each row once", "jit");
-    ("a loop in a tangent map under jit (grad f) is written out", "jit");
-  ]
-
-let marked name t =
-  match List.assoc_opt name pending with
-  | Some why -> xfail ~reason:("pending: " ^ why) t
-  | None -> t
-
-let test ?tags name f = marked name (Windtrap.test ?tags name f)
 let v4 () = vec [| 0.5; -1.2; 2.1; 0.8 |]
 
 let rows () =
