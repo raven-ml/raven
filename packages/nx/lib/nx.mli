@@ -1451,12 +1451,10 @@ val to_buffer : ('a, 'b) t -> Nx_device.Buffer.t
     order, and a copy otherwise: on the same device, or on the host for a value
     on the disk, which computes nothing, or on a device that holds values in
     memory of its own. The buffer is read-only by contract: [x] and its views
-    read the same memory. A traced value is read as {!Op.Read} reads it, by the
-    interpretation that made it, into a host buffer.
+    read the same memory.
 
-    Raises [Invalid_argument] if [x] is on several devices (use {!shards}), or
-    as a read of a consumed value or of a traced one outside its interpretation
-    raises. *)
+    Raises [Invalid_argument] if [x] is traced, if it is on several devices (use
+    {!shards}), or as a read of a consumed value raises. *)
 
 (** {1:indexing Indexing and slicing}
 
@@ -4164,8 +4162,9 @@ module Op : sig
     | Move : ('a, 'b) Nx_effect.t * move -> ('a, 'b) Nx_effect.t t
     | Place : Placement.t * ('a, 'b) Nx_effect.t -> ('a, 'b) Nx_effect.t t
     | Read : { by : string; x : ('a, 'b) Nx_effect.t } -> Nx_device.Buffer.t t
-        (** [Read { by; x }] is [x]'s elements in C order, in a host buffer.
-            [by] is the qualified name of the function that reads, such as
+        (** [Read { by; x }] is a host buffer of [x]'s elements: for a host
+            value, its storage, which [x]'s view reads (offset and strides);
+            for any other value, exactly its elements in C order. [by] is the qualified name of the function that reads, such as
             ["Nx.item"] or ["Nx.compress"]: the function a program called, also
             when it reads through another. An interpreter that cannot read [x]
             raises a message that starts with [by]. *)

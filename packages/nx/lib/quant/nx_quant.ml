@@ -137,9 +137,15 @@ let bytes buf = Nx_device.Buffer.bigarray Bigarray.int8_unsigned buf
 let floats buf = Nx_device.Buffer.bigarray Bigarray.float32 buf
 
 (* The elements of [x] in C order, in a host buffer, read by the function [by]:
-   its storage when it is contiguous on the host. *)
+   its storage when it is contiguous on the host. A read of a value elsewhere
+   gives exactly its elements; one of a host value gives its storage, so it is
+   made contiguous first. *)
 let elements ~by x =
-  let x = Nx.contiguous x in
+  let x =
+    if Nx.Placement.equal (Nx.placement x) Nx.Placement.host then
+      Nx.contiguous x
+    else x
+  in
   let b = Nx.Op.eval (Read { by; x }) in
   Nx_device.Buffer.view b ~offset:0 (Nx_device.Buffer.dtype b) (Nx.numel x)
 

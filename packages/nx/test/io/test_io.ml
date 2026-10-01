@@ -395,6 +395,25 @@ let safetensors =
           let again = temp_file () in
           Nx_io.save_safetensors again [ (entry, p) ];
           equal string (payload path) (payload again));
+      test "a save that cannot read its traced tensor names itself" (fun () ->
+          let module N = struct
+            type (_, _) Nx.Repr.node += Node : ('a, 'b) Nx.Repr.node
+          end in
+          let t =
+            Nx.Repr.Traced.v ~context:Nx.Placement.host Nx.Placement.host
+              Nx.float32 [| 3 |] N.Node
+          in
+          let run : type r. r Nx.Op.t -> r = function
+            | Read { by; _ } -> invalid_arg by
+            | Contiguous x -> x
+            | op -> Nx.Op.eval op
+          in
+          let refusing = { Nx.Op.run; claims = (fun _ -> true) } in
+          let path = temp_file ~suffix:".safetensors" () in
+          raises_match (Exn.invalid_arg ~substring:"Nx_io.save_safetensors")
+            (fun () ->
+              Nx.Op.intercept refusing (fun () ->
+                  Nx_io.save_safetensors path [ ("t", Nx.P t) ])));
       test "a header's JSON string escapes are decoded" (fun () ->
           let name = "aé🚀\"\\/\b\012\r\n\t" in
           let p = Nx.P (Nx.create Nx.uint8 [| 1 |] [| 42 |]) in

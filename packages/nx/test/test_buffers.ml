@@ -136,8 +136,10 @@ let to_buffer =
                 (Nx.ones Nx.int8 [| 4 |])
             in
             raises_invalid_arg (fun () -> Nx.to_buffer x));
-        test "refuses a traced value as every read does" (fun () ->
-            raises escaped (fun () -> Nx.to_buffer (traced ())));
+        test "refuses a traced value" (fun () ->
+            raises
+              (Invalid_argument "Nx.to_buffer: a traced value has no buffer")
+              (fun () -> Nx.to_buffer (traced ())));
         test "refuses a consumed value, naming where it was consumed" (fun () ->
             let x =
               Nx.place (Nx.Placement.device d1) (Nx.ones Nx.int8 [| 4 |])

@@ -3230,11 +3230,10 @@ let empty (type a b) (x : (a, b) t) =
   | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
 
 (* A value on the disk, which computes nothing, is copied to the host, as is one
-   in memory of its own, which has no runtime buffer. A traced value is read by
-   the interpretation that made it. *)
+   in memory of its own, which has no runtime buffer. *)
 let to_buffer (type a b) (x : (a, b) t) =
   match x with
-  | Traced _ -> elements ~by:"Nx.to_buffer" x
+  | Traced _ -> invalid_arg "Nx.to_buffer: a traced value has no buffer"
   | Placed r when List.compare_length_with (devices_of r.r_placement) 1 > 0 ->
       invalid_arg
         (Format.asprintf "Nx.to_buffer: a value at %a is on several devices"

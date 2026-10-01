@@ -114,9 +114,10 @@ let load_safetensors path =
 
 (* [tensor_data t] is the SafeTensors dtype of [t] and a buffer of its elements'
    bytes, in row-major order and little-endian, as stored: on a little-endian
-   host, [t]'s own storage when its elements are a contiguous run of it on one
-   device, wherever it is. A value on several devices is read to the host. A
-   float's bits are copied, never read as a float. *)
+   host, a value with one device's buffer is written from that device, from its
+   own storage when its elements are a contiguous run of it. Any other value, a
+   traced one included, is read to the host. A float's bits are copied, never
+   read as a float. *)
 let tensor_data (type a b) (t : (a, b) Nx.t) =
   let dtype : Safetensors.dtype =
     match Nx.dtype t with
@@ -151,9 +152,10 @@ let tensor_data (type a b) (t : (a, b) Nx.t) =
     (dtype, swapped)
   end
   else
-    match Nx.Placement.devices (Nx.placement t) with
-    | [ _ ] -> (dtype, Nx.to_buffer t)
-    | _ -> (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
+    match Nx.shards t with
+    | [ _ ], _ -> (dtype, Nx.to_buffer t)
+    | _ | (exception Invalid_argument _) ->
+        (dtype, Storage.elements ~by:"Nx_io.save_safetensors" t)
 
 let replace_or_keep temp path =
   Unix.chmod temp Temp_file.mode;
