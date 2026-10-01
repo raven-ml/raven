@@ -5,4 +5,4 @@
 (test
  (name test_gpt2)
  (package kaun)
- (libraries kaun kaun.hf jsont nx rune windtrap))
+ (libraries kaun kaun.hf jsont nx windtrap))

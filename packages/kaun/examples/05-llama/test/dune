@@ -5,4 +5,4 @@
 (test
  (name test_llama)
  (package kaun)
- (libraries kaun kaun.hf jsont nx rune windtrap))
+ (libraries kaun kaun.hf jsont nx windtrap))
