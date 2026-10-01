@@ -158,15 +158,14 @@ val link :
       [placeholder], or that of a device of the batch, gives it, if any.
       Otherwise the signal word placeholder of a device is that device's
       {!Nx_device.signal_word}; the staging placeholder of a host (tagged
-      ["staging"]) is that host's staging memory, pinned, which every linked
-      schedule shares and which is kept for the life of the process. Any other,
-      which the host writes, is allocated on its device: a volatile placeholder,
-      which the device writes too, and a command buffer (tagged ["cmdbuf_…"]),
-      which the device fetches, in pinned memory
-      ({!Nx_device.Buffer.create}[ ~memory:Pinned]), which both see coherently;
-      the others, such as kernel arguments, in mapped memory ([~memory:Mapped]),
-      which the device reads as its own, and which is pinned memory on a device
-      that has none.
+      ["staging"]) is that host's {!Nx_device.staging}, which every linked
+      schedule and nx.device's copies share. Any other, which the host writes,
+      is allocated on its device: a volatile placeholder, which the device
+      writes too, and a command buffer (tagged ["cmdbuf_…"]), which the device
+      fetches, in pinned memory ({!Nx_device.Buffer.create}[ ~memory:Pinned]),
+      which both see coherently; the others, such as kernel arguments, in mapped
+      memory ([~memory:Mapped]), which the device reads as its own, and which is
+      pinned memory on a device that has none.
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.
@@ -178,9 +177,10 @@ val link :
 
     The linked schedule keeps its storage, its programs and the buffers of
     [bound] while it is reachable. The runs of schedules that stage copies
-    through one host take turns with its staging memory, whatever their devices:
-    a run waits for the staged work of earlier runs on other devices before it
-    submits its own.
+    through one host take turns with its staging memory, whatever their devices,
+    and with nx.device's copies through it: a run waits for the staged work of
+    earlier runs on other devices before it submits its own, and a copy waits
+    for the runs' work before it fills a slot.
 
     Raises [Invalid_argument] if [devices] does not map a device of [linear], if
     [bound] gives a storage node buffers of other devices, sizes or number than

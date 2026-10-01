@@ -4620,6 +4620,42 @@ let staging =
             (bytes_at (B.address r2) 4);
           store_signal (B.address (Nx_device.signal_word d)) v2);
       test
+        "a staged copy fills a slot of the host's staging memory once the work \
+         that queued a use of it is done" (fun () ->
+          let near = (fake ~maps:true ()).dev and gpu = (far ()).dev in
+          let staging = Nx_device.staging host in
+          B.copy
+            ~src:(host_bytes [ 7; 7; 7; 7 ])
+            ~dst:(B.view staging ~offset:0 S.UInt8 4);
+          let on_near = Result.get_ok (B.borrow near staging) in
+          let seen = chars 4 in
+          let domain =
+            submit near ~touches:[ on_near ] (fun v ->
+                work_later near v (fun () ->
+                    memmove
+                      (B.address (B.of_bigarray seen))
+                      (B.address on_near) 4))
+          in
+          let dst = B.create gpu S.UInt8 4 in
+          B.copy ~src:(host_bytes [ 1; 2; 3; 4 ]) ~dst;
+          Domain.join domain;
+          equal (list int) ~msg:"what the queued use read" [ 7; 7; 7; 7 ]
+            (List.init 4 (fun i -> Char.code seen.{i}));
+          equal (list int) ~msg:"what the copy landed" [ 1; 2; 3; 4 ]
+            (contents dst));
+      test
+        "a device lost while it maps the host's staging memory leaves the \
+         other devices' staged copies working" (fun () ->
+          let broken = far ~name:"BROKEN" () and gpu = (far ()).dev in
+          let b = B.create broken.dev S.UInt8 4 in
+          B.copy ~src:(host_bytes [ 1; 1; 1; 1 ]) ~dst:b;
+          broken.drv.broken <- true;
+          raises_match (lost broken.dev "enqueue refused") (fun () ->
+              B.copy ~src:(host_bytes [ 2; 2; 2; 2 ]) ~dst:b);
+          let dst = B.create gpu S.UInt8 4 in
+          B.copy ~src:(host_bytes [ 3; 4; 5; 6 ]) ~dst;
+          equal (list int) [ 3; 4; 5; 6 ] (contents dst));
+      test
         "host memory of 64 KiB or more the device does not map is refused, \
          naming its size" (fun () ->
           let d = (fake ~maps:true ()).dev in

@@ -2974,6 +2974,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.staging h` is the host's staging memory, which `Buffer.copy`
+  and the libraries that submit work now share: a copy fills a slot only once
+  the queued work that uses it is done.
 - `Nx_device.Buffer.reach d b access` gives device work its way to `b`: a
   borrow where `d` maps `b`, and for host memory under 64 KiB that `d` cannot
   map, such as a small tensor on a CUDA, AMD or NV GPU, a staged buffer that

@@ -1468,17 +1468,19 @@ the Exclusions of `README.md`.
 - **tinygrad:** `runtime/support/hcq2.py:131-134` (`_staging`: a host
   `Buffer` of 128 MiB, allocated once per device and kept), `:155-156`
   (`stage_copy` names it by `UOp.from_buffer`).
-- **tolk:** `lib/runtime/support/hcq2.ml:457` (`staging_size`), `:472`
-  (the placeholder in `stage_copy`); `engine/tolk_engine.ml:360`
+- **tolk:** `lib/runtime/support/hcq2.ml:507` (`staging_size`), `:522`
+  (the placeholder in `stage_copy`); `engine/tolk_engine.ml:512`
   (`staging`).
 - **Differs:** a copy between memory the queues cannot reach goes through the
   two halves of a placeholder of the host tagged `"staging"`, of 128 MiB. The
-  engine gives it, at link, the host's staging memory: one pinned buffer per
-  host, which every linked schedule shares and which is kept for the life of
-  the process, as tinygrad's is. Runs that stage through one host take turns
-  with it, whatever their devices, since each touches it; one area per device
-  would let them overlap for 128 MiB a device, and waits for a measured
-  bottleneck.
+  engine gives it, at link, the host's staging memory, nx.device's
+  (`Nx_device.staging`): one per host, which every linked schedule and
+  nx.device's own staged copies share, and which is kept for the life of the
+  process, as tinygrad's is. Runs that stage through one host take turns with
+  it, whatever their devices, since each touches it and so takes the host;
+  nx.device's copies take the host too, and wait for those runs' work before
+  they fill a slot. One area per device would let runs overlap for 128 MiB a
+  device, and waits for a measured bottleneck.
 - **Reason:** (c). The compiler opens no device and allocates nothing
   (plan §1a): storage it names is a placeholder, and the engine's link
   allocates it.

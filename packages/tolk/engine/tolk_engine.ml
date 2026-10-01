@@ -506,20 +506,16 @@ let apply storage addr p =
 let signal_word_tag = Ops.Tag.String "timeline"
 let staging_tag = Ops.Tag.String "staging"
 
-(* The staging memory of each host, which the staged copies of every linked
-   schedule share, kept for the life of the process: each run that stages
-   through it touches it, so nx.device orders the runs. *)
-let stagings = ref []
-let stagings_lock = Mutex.create ()
-
-let staging d n =
-  Mutex.protect stagings_lock @@ fun () ->
-  match List.assq_opt d !stagings with
-  | Some b when B.nbytes b >= n -> b
-  | _ ->
-      let b = B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 n in
-      stagings := (d, b) :: List.remove_assq d !stagings;
-      b
+(* The host's staging memory, which nx.device's copies and the staged copies of
+   every linked schedule share: each run that stages through it touches it, and
+   so holds the host taken, as nx.device's copies do. *)
+let staging h n =
+  let b = Nx_device.staging h in
+  if B.nbytes b < n then
+    invalid_arg
+      (strf "Tolk_engine.link: %s's staging memory holds %d bytes, not %d"
+         (Nx_device.name h) (B.nbytes b) n);
+  b
 
 (* The storage of a batch's placeholder [u]: the signal word of its device for
    ["timeline"], the host's staging memory for ["staging"], the address of a C

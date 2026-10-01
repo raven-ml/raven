@@ -984,6 +984,18 @@ module Profile : sig
       U+FFFD. [oc] is neither flushed nor closed. *)
 end
 
+val staging : t -> Buffer.t
+(** [staging h] is the host [h]'s staging memory: two slots of 64 MiB of host
+    memory, made at the first staged copy or call and kept for the life of the
+    process. {!Buffer.copy} stages through it the bytes no device of a copy can
+    address. The libraries that submit work stage copies through it too: work
+    that uses it touches it, and holds [h] taken while it writes or queues a use
+    of a slot, which its {!submit} does by touching it. A host fill of a slot
+    first waits for every queued use.
+
+    Raises [Invalid_argument] if [h] is no host or is the {!disk}, and
+    {!Out_of_memory} if [h] cannot allocate it. *)
+
 (** {1:submitting Submitting work}
 
     For the libraries that submit work to devices. Work is submitted inside

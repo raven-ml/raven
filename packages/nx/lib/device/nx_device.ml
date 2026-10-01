@@ -90,9 +90,10 @@ type t = {
   timeline_keep : keep;
   last : int Atomic.t; (* the submitted value, which only this module writes *)
   settled : int Atomic.t; (* the latest value a wait saw signaled *)
-  mutable slots : region option; (* a host's staging memory, once made *)
-  mutable staging : nativeint option;
-      (* the device's address of its host's staging memory, once mapped *)
+  mutable slots : buffer option; (* a host's staging memory, once made *)
+  mutable staging : buffer option;
+      (* the device's borrow of its host's staging memory, once made, kept for
+         the device's life *)
   released : nativeint; (* its release list (see the stubs) *)
   failed : string option Atomic.t;
       (* why the device was lost, which every operation raises *)
@@ -2041,13 +2042,15 @@ module Buffer = struct
 
   (* [d]'s mapping of the memory of [src], made by its first borrow with [map]
      and shared by the later ones, and [skip] bytes into it. *)
+  let share_taken d src ~ends ~map =
+    Result.map
+      (fun m ->
+        m.borrows <- m.borrows + 1;
+        m)
+      (map_on d src ~ends ~map)
+
   let share d src ~ends ~map =
-    with_devices [ d ] (fun () ->
-        Result.map
-          (fun m ->
-            m.borrows <- m.borrows + 1;
-            m)
-          (map_on d src ~ends ~map))
+    with_devices [ d ] (fun () -> share_taken d src ~ends ~map)
 
   (* A buffer over the memory of [b] that [m] maps on [d]. *)
   let borrowed d b m =
@@ -2093,7 +2096,7 @@ module Buffer = struct
   (* A device maps the whole host memory under [b], once, and its borrows share
      the mapping. A mapping locks whole pages, so it starts on one: host memory
      of another buffer then never shares its pages. *)
-  let borrow_host d b =
+  let borrow_host ?(share = share) d b =
     let h = host_of d and src = b.base in
     let first = Option.get src.memory.host in
     match mapping_of d with
@@ -2456,58 +2459,71 @@ module Buffer = struct
   (* Bytes per slot of a host's staging memory, which has two. *)
   let chunk = 64 lsl 20
 
-  (* This machine's staging memory, made at the first staged copy and kept for
-     the life of the process. It is used with the host taken. *)
-  let staging = ref None
+  (* The host [h]'s staging memory, made at its first use and kept for the life
+     of the process: this machine's on the heap, another machine's in that
+     machine's memory. It is used with [h] taken, as are its slots: a host fill
+     of one first waits for the work of every device that used the memory (see
+     [copy] and [staging_on]). *)
+  let rec staging h =
+    match h.slots with
+    | None -> fresh_staging h
+    | Some b -> (
+        match check_reach b.base with
+        | () -> b
+        | exception Lost _ ->
+            (* A lost device may still write it: it is retained, and the host
+               stages through new memory. *)
+            h.held <- Keep b :: h.held;
+            fresh_staging h)
 
-  let staging_memory () =
-    match !staging with
-    | Some ba -> ba
-    | None -> (
+  and fresh_staging h =
+    let base =
+      if h == host then
         match heap (2 * chunk) with
-        | ba ->
-            staging := Some ba;
-            ba
+        | ba -> base ~borrowed:false ~keep:(Host ba) host (heap_memory ba)
         | exception Stdlib.Out_of_memory ->
-            raise (Out_of_memory (host, 2 * chunk)))
-
-  (* The address of the host [h]'s staging memory: this machine's, or memory of
-     another machine's host, allocated there at its first staged copy and kept
-     for the life of the process. It is used with [h] taken. *)
-  let slots h =
-    if h == host then bigarray_address (staging_memory ())
-    else
-      match h.slots with
-      | Some m -> Option.get m.host
-      | None -> (
-          match
-            driver h (fun () ->
-                (Option.get (allocator_of h Device)).alloc (2 * chunk))
-          with
-          | Some m ->
-              h.slots <- Some m;
-              Option.get m.host
-          | None -> raise (Out_of_memory (h, 2 * chunk)))
-
-  (* [e]'s address of its host's staging memory, which [e] maps at its first
-     staged copy and keeps mapped. *)
-  let staging_on e =
-    match e.staging with
-    | Some a -> a
-    | None -> (
-        let h = host_of e in
-        let first = slots h in
+            raise (Out_of_memory (host, 2 * chunk))
+      else
         match
-          match Option.get (mapping_of e) with
-          | Identity -> Ok first
-          | Pages { map; _ } ->
-              Result.map
-                (fun m -> mapped_address m first)
-                (map first (2 * chunk))
+          driver h (fun () ->
+              (Option.get (allocator_of h Device)).alloc (2 * chunk))
         with
-        | Ok a ->
-            e.staging <- Some a;
-            a
+        | Some m -> base ~borrowed:false ~keep:(Keep ()) h m
+        | None -> raise (Out_of_memory (h, 2 * chunk))
+    in
+    let b = first base Nx_dtype.Scalar.UInt8 (2 * chunk) in
+    h.slots <- Some b;
+    b
+
+  (* Waits for the work of every device that used the host [h]'s staging memory,
+     such as a compiled batch's staged copies, before a copy uses its slots. *)
+  let staging_done h =
+    match h.slots with
+    | None -> ()
+    | Some _ ->
+        List.iter
+          (fun s -> wait_signal s.by s.upto)
+          (Atomic.get (staging h).base.links).stamps
+
+  (* The address of the host [h]'s staging memory, in [h]'s address space. *)
+  let slots h = Option.get (hosted (staging h))
+
+  (* [e]'s address of its host's staging memory, through its borrow of it, which
+     [e] makes at its first staged copy, with [e] taken, and keeps. Work that
+     touches the borrow, such as a compiled batch's staged copies, stamps the
+     staging memory. *)
+  let staging_on e =
+    let h = host_of e in
+    let current = staging h in
+    match e.staging with
+    | Some ({ base = { source = Some (src, _); _ }; _ } as b)
+      when src == current.base ->
+        address b
+    | Some _ | None -> (
+        match borrow_host ~share:share_taken e current with
+        | Ok b ->
+            e.staging <- Some b;
+            address b
         | Error why ->
             failwith
               (Printf.sprintf "%s cannot map %s's staging memory: %s" e.name
@@ -2706,7 +2722,7 @@ module Buffer = struct
       | None, Some io -> io_call hd (fun () -> io.write ~dst:b ~src:a len)
       | Some io, None -> io_call hs (fun () -> io.read ~src:a ~dst:b len)
       | Some io, Some io' ->
-          let relay = bigarray_address (staging_memory ()) +! slot i in
+          let relay = slots host +! slot i in
           io_call hs (fun () -> io.read ~src:a ~dst:relay len);
           io_call hd (fun () -> io'.write ~dst:b ~src:relay len));
       from_host ~timed dst n i
@@ -2930,6 +2946,7 @@ module Buffer = struct
     with_devices (s :: d :: rs :: rd :: also) (fun () ->
         List.iter sync
           (List.sort_uniq (fun a b -> Int.compare a.id b.id) [ s; d; rs; rd ]);
+        List.iter staging_done also;
         reachable src;
         reachable dst;
         (if n > 0 then
@@ -2952,6 +2969,11 @@ module Buffer = struct
 
   let offset b = b.offset
 end
+
+let staging h =
+  if Option.is_some h.machine || h == disk then
+    invalid_arg (Printf.sprintf "Nx_device.staging: %s is no host" h.name);
+  with_devices [ h ] (fun () -> Buffer.staging h)
 
 (* Programs *)
 
