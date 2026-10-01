@@ -525,3 +525,150 @@ leaf's path, the randomness of its lanes, and `lanes`.
 | old: test_jit.ml linear algebra › the gradient of a Cholesky-using loss compiles; linear algebra › the gradient of det compiles; linear algebra › the gradient of a QR-using loss compiles | factorisations' gradients compiled | Jc › compositions › the gradient of a Cholesky-using loss compiles; the gradient of det compiles; the gradient of a QR-using loss compiles |
 | old: test_jit.ml indexed access › gradients through indices outside the axis; indexed access › gradient of take with repeated tokens; indexed access › gradient of top_k | indexed gradients compiled | Jc › compositions › gradients through indices outside the axis; the gradient of take with repeated tokens; the gradient of top_k lands on the chosen entries |
 | old: test_jit.ml indexed access › scatter under vmap | a compiled map of scatter | Jc › compositions › a compiled map of scatter is its eager map |
+
+## Compiled call
+
+The suite is `Rune_next.Jit` (`next/test/test_jit.ml`), written `J`
+below, over the host and test devices that share the host's memory; its
+`swept › …` laws and the device and backend keys are slow. Kernel numerics
+under a compiled call are the kernels' own: those rows name the `Compiled`
+suite's laws, which run each kernel over every layout, beside `J › values ›
+one operation per family equals eager › …`, which runs them through one
+traced program. Rows the Metal suite and the staged scan will cover come with
+them.
+
+### test_jit.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit.ml jit basics › 64-bit constants keep every bit | 64-bit constants in a program | J › values › 64-bit integer constants keep every bit |
+| old: test_jit.ml jit basics › narrow constants wrap; jit basics › folded integer constants wrap | integer constants wrap at their width | J › values › integer constants wrap at the operand's width |
+| old: test_jit.ml jit basics › integer comparisons read wrapped values; jit basics › ordered comparisons are false at NaN | comparisons | Compiled › host › elementwise › comparisons |
+| old: test_jit.ml jit basics › pow of a tensor base matches eager; jit basics › pow of a subnormal base | pow | Compiled › host, swept › elementwise › transcendental binary; › exact binary |
+| old: test_jit.ml jit basics › float sums and products keep their grouping; jit basics › float constants keep their grouping; jit basics › float identities hold only where IEEE keeps them | IEEE arithmetic in a traced program | J › values › float identities hold only where IEEE keeps them; Compiled › host › reductions › reduce floats |
+| old: test_jit.ml jit basics › max propagates NaN; jit basics › zeros keep their sign | extremes and signed zeros | J › values › one operation per family equals eager › neg, abs, max; Compiled › host › elementwise › exact binary |
+| old: test_jit.ml jit basics › element-wise chain matches eager | a chain of elementwise operations | J › values › one operation per family equals eager › neg, abs, max |
+| old: test_jit.ml jit basics › bitcast matches eager; jit basics › bitcast outputs retain their own dtype; jit basics › float8 bitcasts preserve raw bytes through movements | bitcast | dropped: a bitcast is a view in nx and reaches no kernel; a traced bitcast is a movement of its leaf, which J › keys › strides out of C order retrace once and J › values › one operation per family equals eager › a flip and a pad cover |
+| old: test_jit.ml jit basics › replay reads fresh input data | a replay reads its new arguments | J › values › a replay reads its new arguments, and an earlier call's again |
+| old: test_jit.ml jit basics › a new shape retraces | a new shape retraces | J › keys › another extent retraces once; › another rank retraces once |
+| old: test_jit.ml jit basics › zero-size outputs are empty tensors | zero-size results | J › values › a zero-size result is an empty tensor |
+| old: test_jit.ml jit basics › closure-captured weights (matmul) | a captured weight | J › captures › a captured tensor is a constant of the program |
+| old: test_jit.ml jit basics › a structured result | structured results | J › values › a structured result equals eager's leaf by leaf |
+| old: test_jit.ml jit basics › aliased input leaves are separate inputs | one value at two read leaves | J › results › one value passed at two read leaves is read at both |
+| old: test_jit.ml keys › reports key programs; keys › a leafless element keys programs; keys › cases key programs | reports in the key | J › keys › another reported integer retraces once; › another case retraces once; › another list length retraces once; › an option's presence retraces once |
+| old: test_jit.ml composition › grad inside jit matches eager grad; composition › jit under grad runs eagerly; composition › jit under vmap runs eagerly | the compiled call under and around the transformations | J › transformations › under a transformation a compiled function runs its function; › under grad a compiled function consumes nothing (the cells of every order are the composition suite's) |
+| old: test_jit.ml composition › scan matches eager; composition › a scan over structured rows | a scan inside a trace | J › scans › a scan folds inside the trace and equals eager |
+| old: test_jit.ml composition › grad through a scan matches eager; composition › grad through a scan, stacked outputs only; composition › grad through a scan, final carry only; composition › grad through a scan with a multi-leaf carry; composition › grad through a scan with an asymmetric pair carry; composition › grad through nested scans; composition › grad through a scan with a captured weight; composition › grad through a scan with a vector carry; composition › grad through a scan with an external input; composition › grad through a scan with external matrices; composition › grad through a scan with a matrix carry | gradients through a scan inside a trace | J › scans › a gradient through a scan equals eager's |
+| old: test_jit.ml composition › shape-unstable carry unrolls instead of staging | a carry that changes shape | J › scans › a carry that changes its shape across steps is written out |
+| old: test_jit.ml composition › a scan rejects ragged or scalar rows | the scan's refusals inside a trace | J › scans › an empty scan axis raises Rune.scan's message |
+| old: test_jit.ml sliding windows › unfold matches eager; sliding windows › fold of unfold matches eager; sliding windows › sliding window matches eager; sliding windows › correlate matches eager | windows | Compiled › host › windows and products › unfold; › fold of floats; J › keys › overlapping windows retrace once |
+| old: test_jit.ml reductions › half-precision sums accumulate wide; reductions › half-precision products multiply wide | narrow floats accumulate at float32 | Compiled › host › narrow floats accumulate at float32 › a float16 sum of 4096 ones is 4096; › a float16 product past the float16 range and back is exact |
+| old: test_jit.ml reductions › narrow matrix products multiply exactly; reductions › vector products are matrix products | products | Compiled › host › narrow floats accumulate at float32 › a float16 contraction of 4096 ones is 4096; › windows and products › float products |
+| old: test_jit.ml reductions › extremes | extremes | Compiled › host › reductions › reduce exactly |
+| old: test_jit.ml cumulative reductions › small integer scans keep their dtype; cumulative reductions › long scans match eager; cumulative reductions › scans propagate NaN; cumulative reductions › scans order -0 below +0 | running reductions | Compiled › host › reductions › scan exactly; › scan floats |
+| old: test_jit.ml cumulative reductions › 8-bit float scans along a long axis | 8-bit float scans | dropped: the host's renderer has no 8-bit float, Compiled › host › refusals of the host › an 8-bit float is refused on the host › float8_e4m3 |
+| old: test_jit.ml indexed access › scatter matches eager; indexed access › scatter orders duplicate updates; indexed access › scatter orders thousands of duplicate updates; indexed access › scatter along a middle axis; indexed access › scatter with unique indices; indexed access › scatter with unique indices broken at one row; indexed access › scatter drops an update outside the axis; indexed access › scatter carries int and bfloat16 payloads | scatter | Compiled › host › indexed › scatter exactly; › scatter add of floats |
+| old: test_jit.ml indexed access › gather of a narrowed comparison; indexed access › gathers read zero outside the axis; indexed access › take over a large table matches eager; indexed access › gathers keep -0; indexed access › an index outside the axis beside unit axes | gather | Compiled › host › indexed › gather |
+| old: test_jit.ml indexed access › concatenation keeps every bit | concatenation | Compiled › host › edges › a concatenation of 17 pieces, a kernel of 18 arguments, keeps every bit |
+| old: test_jit.ml indexed access › sorted values are the input's elements; indexed access › sort matches eager; indexed access › sort of every dtype matches eager | sorts | Compiled › host, swept › reductions › sort; › argsort |
+| old: test_jit.ml indexed access › top_k matches eager; indexed access › top_k radix select matches eager; indexed access › top_k over a row of 2^20 entries; indexed access › compiled argsort is not quadratic | top_k and the cost of argsort | dropped: `Nx.top_k` is nx's composition of `sort` and `argsort` (Compiled › host, swept › reductions › argsort), and an argsort's cost is the lowering's |
+| old: test_jit.ml indexed access › diag matches eager | diag | dropped: nx's composition of movements and a gather, Compiled › host › indexed › gather |
+| old: test_jit.ml linear algebra › reduced QR matches eager; linear algebra › a zero-tail column takes no reflector | QR | Compiled › host, swept › linear algebra › qr |
+| old: test_jit.ml linear algebra › cholesky matches eager in both triangles | Cholesky | Compiled › host, swept › linear algebra › cholesky |
+| old: test_jit.ml linear algebra › triangular solve matches eager for every flag combination; linear algebra › triangular solve takes a vector right-hand side; linear algebra › triangular solve is batched | triangular solves | Compiled › host, swept › linear algebra › solve_triangular |
+| old: test_jit.ml linear algebra › LU matches eager; linear algebra › solve and inv match eager | LU | Compiled › host, swept › linear algebra › lu |
+| old: test_jit.ml errors › reading a traced value raises | reading a traced value | J › errors › reading a traced value raises Jit_error |
+| old: test_jit.ml errors › traced values have no storage; errors › a leaked traced value raises | a traced value outside its call | J › errors › a traced value kept after the call raises on read |
+| old: test_jit.ml errors › unsupported operations raise | an operation no target computes | J › errors › an operation no target computes raises Jit_error |
+| old: test_jit.ml state › non-contiguous inputs fall back to copies | non-contiguous arguments | dropped: arguments are read in place, J › placement › a placed view is read where it lies; nx makes views only through movements, which a program expresses |
+| old: test_jit.ml state › offset views read the right span | offset views | J › keys › an argument starting 4 bytes further within 16 bytes of memory retraces once; › an argument starting 16 bytes further shares the program |
+| old: test_jit.ml state › outputs have their own storage | fresh results | J › results › every result leaf has storage of its own |
+| old: test_jit.ml values › set with a traced window start replays the position; values › set at a traced corner over two axes; values › slice with a traced window start replays the position | a window at a position read when the call runs | J › lending › a window written at a position read when the call runs reuses the cache; Compiled › host › indexed › update |
+| old: test_jit.ml values › set with static specs matches eager | set at static positions | J › lending › an indexed write takes the leaf it writes before any other result |
+| old: test_jit.ml training › jitted training follows the eager trajectory | a training loop | J › lending › two programs alternating on one consumed state keep its storage |
+| old: test_jit.ml placement › a placed value equals its argument; placement › a compiled function runs where its inputs live | a call runs where its arguments lie | J › placement › a call runs where its arguments lie, and leaves its results there |
+| old: test_jit.ml placement › strided and offset values; placement › placed views bind without a copy; placement › windows bind from aligned offsets; placement › captured views bind | placed views read in place | J › placement › a placed view is read where it lies |
+| old: test_jit.ml placement › a placed value feeds an input with no transfer | no transfer for a placed argument | J › placement › a placed argument feeds a call with no transfer |
+| old: test_jit.ml placement › a resident value is returned as it is | a returned argument | J › results › a result that returns a read argument is a copy |
+| old: test_jit.ml placement › on the host device; placement › a program on the host is on the host | the host | J › values › one operation per family equals eager › neg, abs, max |
+| old: test_jit.ml placement › placement under grad, jvp, vmap and jit | placement through the transformations | J › transformations › under a transformation a compiled function runs its function |
+| old: test_jit.ml placement › an unbound placed value is consumed | a consumed placed value | J › placement › a consumed split state is lent on every device |
+| old: test_jit.ml placement › item reads one element; placement › a move to the host keeps its source; placement › mixed placements raise | reads, moves and mixed placements | dropped: nx's placement suite (`nx placement`) |
+| old: test_jit.ml placement › an input on another device raises | operands on two devices | J › errors › operands on two devices raise nx's message |
+| old: test_jit.ml placement › one device per name | one device per name | J › errors › a name met with two devices raises |
+| old: test_jit.ml placement › a capture decides the device; placement › a capture's device is remembered | the device of a capture | J › captures › a capture decides the device of a call of host arguments |
+| old: test_jit.ml placement › placed views share programs; placement › strides key programs | views in the key | J › keys › strides out of C order retrace once; › an argument starting 16 bytes further shares the program |
+| old: test_jit.ml placement › views of inputs as outputs | a returned view | J › results › a result that returns a read argument is a copy |
+| old: test_jit.ml placement › overlapping views are copied | overlapping windows | J › keys › overlapping windows retrace once |
+| old: test_jit.ml placement › a window's view is released | a view released after a call | dropped: release is nx.device's (its suite); a program holds only its captures, J › captures › a capture placed where the call computes is bound, not uploaded |
+| old: test_jit.ml device lists › * | eager placement over device lists | dropped: nx's placement suite (`nx placement`) |
+| old: test_jit.ml compiled over device lists › a split input; compiled over device lists › views of split values are read in place | a split argument | J › placement › a split argument computes on each device, and stays split |
+| old: test_jit.ml compiled over device lists › a consumed carry keeps its placement | a consumed split state | J › placement › a consumed split state is lent on every device |
+| old: test_jit.ml compiled over device lists › leaves on other devices raise; compiled over device lists › operands that cannot meet raise | operands that cannot meet | J › errors › operands on two devices raise nx's message |
+| old: test_jit.ml bound captures › binding a placed capture moves no bytes | a bound capture | J › captures › a capture placed where the call computes is bound, not uploaded |
+| old: test_jit.ml bound captures › two compiled functions share one buffer | a buffer two programs bind | J › captures › two compiled functions share one captured buffer |
+| old: test_jit.ml bound captures › a bound capture returned unchanged is a copy | a returned capture | J › results › a result that returns a capture is a copy |
+| old: test_jit.ml bound captures › consuming a bound storage; bound captures › a consumed bound storage goes with its owners | consuming a captured storage | J › captures › a host capture another call consumes makes the program raise, naming its path |
+| old: test_jit.ml bound captures › the collection budget counts every allocation; bound captures › a device that cannot allocate raises Out_of_memory | allocation budgets | dropped: nx.device's allocator and its budget (`nx runtime devices`) |
+| old: test_jit.ml chunked transfers › * | transfers in chunks | dropped: `Nx_device.Buffer.copy` (`nx runtime devices`) |
+| old: test_jit.ml residency › feedback chain moves no bytes | a result fed back moves no bytes | J › placement › a placed argument feeds a call with no transfer |
+| old: test_jit.ml residency › forced handles feed current bytes; residency › handles feed other jitted closures; residency › handles feed new signatures without forcing; residency › grad over jit forces deferred arguments; residency › vmap over jit forces deferred arguments; residency › signature dispatch never forces; residency › dropped handles are reclaimed | deferred handles | dropped: a compiled call's results are values; nothing is deferred |
+| old: test_jit.ml residency › the same handle can seed two leaves | one value at two leaves | J › results › one value passed at two read leaves is read at both |
+| old: test_jit.ml residency › duplicate output leaves are two values | one value at two results | J › results › a value at two result leaves comes back as two values |
+| old: test_jit.ml residency › empty values are consumed and returned fresh | empty values | J › values › a zero-size result is an empty tensor |
+| old: test_jit.ml residency › pass-through outputs survive later calls | a returned argument survives | J › results › a result that returns a read argument is a copy |
+| old: test_jit.ml residency › captures upload once across signatures | a host capture uploaded once | J › captures › a host capture of a call on a device is placed there once |
+| old: test_jit.ml residency › a read after a call waits for it | a read waits | J › domains › two domains replay one program, each reading its own arguments |
+| old: test_jit.ml residency › programs own their arenas; residency › dropping a program releases its arena; residency › a buffer freed under a running kernel is not reused | arenas | dropped: tolk.engine's linked storage (its suite) |
+| old: test_jit.ml consumption › lending follows derivation; consumption › a consumed input hands its storage to the output | lending | J › lending › a result takes the consumed leaf it derives from at its own index; › a consumed host argument lends its storage to the result |
+| old: test_jit.ml consumption › a consumed argument between read ones; consumption › a step reads its first argument; consumption › a step reuses only its state's storage | a consumed argument among read ones | J › lending › a window written at a position read when the call runs reuses the cache |
+| old: test_jit.ml consumption › consumption bounds resident memory at two generations | two generations | J › lending › a loop consuming its state holds two generations of it |
+| old: test_jit.ml consumption › a movement path refuses reuse and stays correct; consumption › a later reader refuses reuse and stays correct | a result read through a movement | J › lending › a result that reads its consumed leaf at other indices takes fresh storage; a result read through a flip of a leaf takes a leaf it does not read, and the leaf goes to a result derived at its own index |
+| old: test_jit.ml consumption › a consumed pass-through moves its storage | an unchanged consumed leaf | J › lending › a consumed leaf returned unchanged is lent with no store |
+| old: test_jit.ml consumption › a run-time window write reuses the cache; consumption › a pool read after its write still reuses storage | a window write | J › lending › a window written at a position read when the call runs reuses the cache |
+| old: test_jit.ml consumption › two programs alternate on one consumed state | alternating programs | J › lending › two programs alternating on one consumed state keep its storage |
+| old: test_jit.ml consumption › consumption reuses a pool written by scatter; consumption › scatter of values read from the consumed pool; consumption › scatter of the consumed pool into itself; consumption › scatter refuses a later reader of the consumed pool; consumption › scatter beside a reader of the old value | indexed writes into a consumed pool | J › lending › an indexed write takes the leaf it writes before any other result |
+| old: test_jit.ml consumption › scatter without consumption keeps its input; consumption › an indexed write into a read leaf keeps it; consumption › an updated input returned unchanged stays readable; consumption › outputs never write into an input's buffer; consumption › jit never consumes its inputs | read arguments are never written | J › consumption › read arguments stay readable after any number of calls |
+| old: test_jit.ml consumption › a partial view of a storage is not consumed | a consumed slice | J › consumption › a consumed slice raises before any work, consuming nothing |
+| old: test_jit.ml consumption › a storage both arguments reach raises; consumption › a storage two leaves reach raises; consumption › a handle in both arguments raises | a storage two leaves reach | J › consumption › a consumed leaf that another leaf reaches raises before any work, naming both paths; › two consumed leaves over one storage raise before any work |
+| old: test_jit.ml consumption › every derived leaf is reused | every derived leaf lends | J › lending › every leaf of a consumed state derived at its own index is lent |
+| old: test_jit.ml consumption › a consumed handle raises on read; consumption › re-feeding a consumed handle raises; consumption › a value read before the call is still consumed | a consumed value raises | J › consumption › a consumed argument raises on read, naming its path; › a consumed argument raises as an operand and as an argument |
+| old: test_jit.ml consumption › captures that reach consumed storage raise; consumption › a copied capture of consumed storage raises | a captured storage consumed | J › consumption › a consumed leaf whose storage the function captures raises |
+| old: test_jit.ml consumption › a host input is consumed; consumption › a consumed host input holds its storage alone | a consumed host argument | J › lending › a consumed host argument lends its storage to the result |
+
+### test_jit_alignment.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit_alignment.ml host memory in place › a capture at an address that is 4 modulo 16 | a capture at any address | J › keys › an argument starting 4 bytes further within 16 bytes of memory retraces once |
+
+### test_jit_cuda.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit_cuda.ml cuda device › grad inside jit matches eager; cuda device › multi-kernel traces replay through compiled queues; cuda residency › *; cuda half › float16 softmax matches eager; cuda half › bfloat16 softmax matches eager; cuda half › float16 sandwich grad is fp32; cuda half › bfloat16 sandwich grad is fp32; cuda device lists › *; cuda rng › *; cuda consumption › * | the compiled call on CUDA | dropped: no CUDA device in the suite's devices yet; J's laws take any device, and every row has its host counterpart in J |
+
+### test_jit_scratch.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_jit_scratch.ml partial consumption upgrade releases prior cells; consumption excludes alias reads; consumption excludes same-placement alias moves; shared reader excludes consumption | a consuming call excludes every other view | J › consumption › a consumed leaf that another leaf reaches raises before any work, naming both paths; › a view of consumed storage taken before the call raises on read |
+| old: test_jit_scratch.ml capture pins storage during tracing; failed trace releases its capture pin | capture pins | J › captures › a capture placed where the call computes is bound, not uploaded; J › consumption › a call that raises while tracing consumes nothing |
+| old: test_jit_scratch.ml jit releases its owner after trace failure; jit over devices releases its owner after trace failure | a failed trace leaves nothing behind | J › errors › a call that raised traces again at the next call |
+| old: test_jit_scratch.ml independent replays keep their intermediates | replays from several domains | J › domains › two domains replay one program, each reading its own arguments |
+| old: test_jit_scratch.ml concurrent transfers preserve accounting; independent uploads keep their bytes; concurrent device lookups keep one identity | transfers and device identity across domains | dropped: nx.device's (`nx runtime devices`) |
+
+### test_device_lists.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_device_lists.ml numerics › a new shape retraces | a new shape retraces | J › keys › another extent retraces once |
+| old: test_device_lists.ml residency › a split output in eager code; residency › operations over a batch split; residency › rows of a split table; residency › a roll by one slice | eager placement over a split | dropped: nx's placement suite (`nx placement`) |
+| old: test_device_lists.ml errors › * | errors of placements | dropped: nx's placement suite (`nx placement`) |
+| old: test_device_lists.ml consumption › consumed storage is lent on every device | lending on every device | J › placement › a consumed split state is lent on every device |
+
+### test_remat_memory.ml
+
+| Source | Behaviour | Outcome |
+|---|---|---|
+| old: test_remat_memory.ml jit (grad) under remat keeps under half the activations | a remat under a compiled gradient | J › scans › a remat under a compiled gradient equals eager's (the memory figure comes with the Metal suite) |
