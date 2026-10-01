@@ -1719,16 +1719,18 @@ module Pattern_matcher : sig
 
   val v : (unit -> ('ctx, node) rule list) -> ('ctx, node) t
   (** [v rules] is the rewriter of the rules [rules ()] returns, which it
-      calls once, on its first rewrite. A rule declines by returning [None] or
-      the node it matched; the next rule is then tried.
+      calls on its first rewrite. Domains that rewrite first at once may each
+      call [rules ()]; all of them use the one result the matcher keeps. A
+      rule declines by returning [None] or the node it matched; the next rule
+      is then tried.
 
       The first rewrite raises [Invalid_argument] if a rule's pattern has no
       operation. *)
 
   val fold : (unit -> ('ctx, 'r) rule list) -> ('ctx, 'r) t
   (** [fold rules] is the matcher of the rules [rules ()] returns, which it
-      calls once, on its first rewrite, and whose results are not the nodes
-      they match. A rule declines by returning [None].
+      calls on its first rewrite as {!v} does, and whose results are not the
+      nodes they match. A rule declines by returning [None].
 
       The first rewrite raises [Invalid_argument] if a rule's pattern has no
       operation. *)

@@ -471,6 +471,11 @@ and pm_long_decomp =
                  load (replace (reindex ~mul:2 idx w) ~tag:None) []));
        ]))
 
+(* Forced as the module initialises, on one domain: the compilers' domains
+   would race to force it first, and a lazy value that two domains force at
+   once raises. *)
+let pm_long_decomp = Lazy.force pm_long_decomp
+
 (* Floats *)
 
 (* The unsigned integer of a float's width, which holds its bits. *)
@@ -854,6 +859,11 @@ and pm_float_decomp =
              else None);
        ]))
 
+(* Forced as the module initialises, on one domain: the compilers' domains
+   would race to force it first, and a lazy value that two domains force at
+   once raises. *)
+let pm_float_decomp = Lazy.force pm_float_decomp
+
 (* Passes *)
 
 let emulable = Dtype.(fp8s @ [ Bfloat16; Float16; Int64; Uint64 ])
@@ -877,11 +887,10 @@ let do_dtype_decomps ctx sink =
         if Helpers.Context_var.value Helpers.debug >= 2 then
           Format.eprintf "emulating %a as %a@." Dtype.pp fr Dtype.pp to_;
         if List.mem fr Dtype.floats then
-          graph_rewrite ~bottom_up:true ~ctx:(fr, to_) sink
-            (Lazy.force pm_float_decomp)
+          graph_rewrite ~bottom_up:true ~ctx:(fr, to_) sink pm_float_decomp
         else
           graph_rewrite ~bottom_up:true ~ctx:(Splits.create 64) sink
-            (Lazy.force pm_long_decomp))
+            pm_long_decomp)
       sink
       (List.sort Dtype.compare (List.filter should_emulate ctx.found))
   in

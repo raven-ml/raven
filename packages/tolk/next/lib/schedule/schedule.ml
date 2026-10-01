@@ -536,6 +536,11 @@ and pm_canonicalize_alloc =
              canonicalize_alloc ctx (m "b"));
        ]))
 
+(* Forced as the module initialises, on one domain: the compilers' domains
+   would race to force it first, and a lazy value that two domains force at
+   once raises. *)
+let pm_canonicalize_alloc = Lazy.force pm_canonicalize_alloc
+
 let replace_input_buffer ctx b =
   ctx.replacements <- b :: ctx.replacements;
   param_like b (List.length ctx.replacements - 1)
@@ -574,7 +579,7 @@ let transform_to_call big_sink =
       (sink (List.rev ctx.stores))
       (Pattern_matcher.concat
          [
-           Lazy.force pm_canonicalize_alloc;
+           pm_canonicalize_alloc;
            pm_replace_buf;
            with_ctx remove_all_tags;
          ])
