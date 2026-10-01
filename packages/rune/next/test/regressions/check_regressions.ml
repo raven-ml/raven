@@ -137,7 +137,18 @@ let () =
             error "REGRESSIONS.md:%d: %s is no old test file" r.line r.file)
         rows;
       if !errors > 0 then (
-        Printf.printf "%d problems\n" !errors;
+        Printf.printf
+          "%d problems\n\n\
+           Every test of packages/rune/test needs a row in \
+           packages/rune/REGRESSIONS.md, in the section of the suite that owns \
+           it:\n\
+          \  | old: <file> <path> | <behaviour> | <outcome> |\n\
+           where <path> is the test's path as its suite's -l prints it (a \
+           group's path followed by \" › *\" covers the group, \"\\|\" stands \
+           for a bar), and <outcome> is the rune.next test that keeps the \
+           behaviour (<suite> › <group> › <test>), a cram test (<path>.t), or \
+           \"dropped: <reason>\".\n"
+          !errors;
         exit 1)
   | _ ->
       prerr_endline "usage: check_regressions LEDGER LISTING...";

@@ -220,10 +220,8 @@
   exhaustive.t.list
   (echo "*\n")))
 
-; Its own alias until every old test is mapped; then runtest.
-
 (rule
- (alias regressions)
+ (alias runtest)
  (package rune)
  (deps
   (glob_files *.list))

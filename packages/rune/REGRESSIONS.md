@@ -12,9 +12,9 @@ A row names its source as `old: <file> <path>; <path>; ...` or
 (`<suite> › <group> › <test>`) or as `dropped: <reason>`. An old test's path
 is the one its suite's `-l` prints; a path ending in ` › *` covers a group,
 and `*` the whole file. A row may name a test that was since deleted, to
-record what became of it. `next/test/regressions` checks that a row maps every
-old test (`dune build @packages/rune/next/test/regressions/regressions`). A
-module's section starts when its test pass does.
+record what became of it. `next/test/regressions`, part of `runtest`, checks
+that a row maps every old test. A module's section starts when its test pass
+does.
 
 ## Owners
 
