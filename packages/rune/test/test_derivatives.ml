@@ -139,6 +139,18 @@ let grad_tests =
         equal (exact ())
           (vec [| 3.; 0.; 3.; 0. |])
           (Rune.grad' f (vec [| 0.5; -1.; 2.; 0. |])));
+    test
+      "a range reduction reads its longest range from the bounds and \
+       differentiates each range's rows" (fun () ->
+        let lo = Nx.create Nx.int64 [| 3 |] [| -1L; 1L; 3L |]
+        and hi = Nx.create Nx.int64 [| 3 |] [| 2L; 4L; 3L |] in
+        let x = vec [| 0.5; -1.; 2.; 0. |] in
+        equal ~msg:"Add" (exact ())
+          (vec [| 1.; 2.; 1.; 1. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.reduce_ranges `Add ~lo ~hi x)) x);
+        equal ~msg:"Max" (exact ())
+          (vec [| 1.; 0.; 1.; 0. |])
+          (Rune.grad' (fun x -> Nx.sum (Nx.reduce_ranges `Max ~lo ~hi x)) x));
     test "a branch on a value differentiates the branch taken" (fun () ->
         let f x =
           if Nx.item [] (Nx.sum x) > 0. then Nx.sum (Nx.mul x x) else Nx.sum x

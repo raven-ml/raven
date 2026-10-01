@@ -2285,7 +2285,18 @@ let argmin ?axis ?(keepdims = false) x =
   let x', axis = arg_axis "argmin" ?axis x in
   keep_axis ~keepdims ~axis x' (B.arg_reduce Argmin ~axis x')
 
-let reduce_segments (type a b) op ~segments ids (x : (a, b) t) =
+(* The identity of [op] on [dt], for the function [name], which refuses a sum of
+   booleans and the extremes of complex numbers. *)
+let identity_of (type a b) name op (dt : (a, b) dtype) : a =
+  match (op, dt) with
+  | `Add, Bool -> err name "booleans have no sum"
+  | `Add, _ -> Nx_dtype.zero dt
+  | (`Max | `Min), _ when Nx_dtype.is_complex dt ->
+      err name "complex numbers are not ordered"
+  | `Max, _ -> Nx_dtype.min_value dt
+  | `Min, _ -> Nx_dtype.max_value dt
+
+let reduce_segments op ~segments ids x =
   let dt = dtype x in
   if segments < 0 then err "reduce_segments" "%d segments" segments;
   if ndim x = 0 then err "reduce_segments" "x is a scalar, which has no rows";
@@ -2293,21 +2304,7 @@ let reduce_segments (type a b) op ~segments ids (x : (a, b) t) =
     err "reduce_segments" "ids of shape %s for %d rows"
       (Shape.to_string (shape ids))
       (dim 0 x);
-  let ordered () =
-    if Nx_dtype.is_complex dt then
-      err "reduce_segments" "complex numbers are not ordered"
-  in
-  let identity : a =
-    match (op, dt) with
-    | `Add, Bool -> err "reduce_segments" "booleans have no sum"
-    | `Add, _ -> Nx_dtype.zero dt
-    | `Max, _ ->
-        ordered ();
-        Nx_dtype.min_value dt
-    | `Min, _ ->
-        ordered ();
-        Nx_dtype.max_value dt
-  in
+  let identity = identity_of "reduce_segments" op dt in
   let along = Array.init (ndim x) (fun d -> if d = 0 then dim 0 x else 1) in
   let into = Array.copy (shape x) in
   into.(0) <- segments;
@@ -2413,6 +2410,95 @@ let ewma ?axis ~alpha x =
       snd (associative_scan ~axis Ptree.(pair tensor tensor) compose (a, b))
     in
     reshape (shape x) (at_float32 { f = smooth } flat)
+
+(* Ranges
+
+   [reduce_ranges] answers each range from levels of chunks. Level [k] holds, at
+   each row, the combination of its chunk of [2^k] rows from that row to the
+   chunk's end, its suffix, and from the chunk's start to that row, its prefix.
+   Level [k] comes from level [k - 1]: a suffix in a chunk's first half goes on
+   through the second half's total, and a prefix in its second half starts from
+   the first half's total. A range whose first and last rows lie in neighbouring
+   chunks of a level is the first row's suffix, then the last row's prefix. At
+   every such level the boundary between the two chunks is the same row, and a
+   higher level only adds the identity to the suffix and the prefix, so the
+   range's bits are those of its bounds whichever level answers it. A range of
+   [L] rows has such a level once its chunks hold [L - 1] rows, so the longest
+   range decides how many levels are built. *)
+
+let reduce_ranges op ~lo ~hi x =
+  if ndim x = 0 then err "reduce_ranges" "x is a scalar, which has no rows";
+  if ndim lo <> 1 || not (Shape.equal (shape lo) (shape hi)) then
+    err "reduce_ranges" "bounds of shapes %s and %s, not one of each per range"
+      (Shape.to_string (shape lo))
+      (Shape.to_string (shape hi));
+  let n = dim 0 x and m = dim 0 lo in
+  let clip b = clamp ~min:0L ~max:(Int64.of_int n) b in
+  let lo = clip lo and hi = clip hi in
+  let rows = Array.sub (shape x) 1 (ndim x - 1) in
+  let ranges x =
+    let id = identity_of "reduce_ranges" op (dtype x) in
+    let none = full (B.context x) (dtype x) (Array.append [| m |] rows) id in
+    let longest =
+      if n = 0 || m = 0 then 0
+      else Int64.to_int (read_item ~by:"Nx.reduce_ranges" (max (sub hi lo)))
+    in
+    if longest <= 0 then none
+    else
+      let combine =
+        match op with `Add -> add | `Max -> maximum | `Min -> minimum
+      in
+      let rec level k = if 1 lsl k >= longest - 1 then k else level (k + 1) in
+      let top = level 0 in
+      let chunk = 1 lsl top in
+      let padded = (n + chunk - 1) / chunk * chunk in
+      let whole = Array.map (fun d -> (0, d)) rows
+      and untouched = Array.map (fun _ -> (0, 0)) rows in
+      let x =
+        if padded = n then x
+        else pad (Array.append [| (0, padded - n) |] untouched) id x
+      in
+      let at indices t = take ~axis:0 ~indices t in
+      let per_range b =
+        reshape (Array.append [| m |] (Array.map (fun _ -> 1) rows)) b
+      in
+      let double k suf pre =
+        let h = 1 lsl (k - 1) in
+        let blocks = padded / (2 * h) in
+        let halves t = reshape (Array.append [| blocks; 2; h |] rows) t in
+        let row half i t =
+          shrink
+            (Array.append [| (0, blocks); (half, half + 1); (i, i + 1) |] whole)
+            t
+        in
+        let around before after t =
+          pad
+            (Array.append [| (0, 0); (before, after); (0, 0) |] untouched)
+            id t
+        in
+        let flat t = reshape (Array.append [| padded |] rows) t in
+        (* A half's total is its first row's suffix and its last row's
+           prefix. *)
+        let s = halves suf and p = halves pre in
+        ( flat (combine s (around 0 1 (row 1 0 s))),
+          flat (combine (around 1 0 (row 0 (h - 1) p)) p) )
+      in
+      let l = lo and r = sub_s hi 1L in
+      (* [ls] and [rs] are the chunks of [l] and [r] at level [k]. *)
+      let rec up k (suf, pre) ls rs res =
+        let here = equal_s (sub rs ls) 1L in
+        let res = where (per_range here) (combine (at l suf) (at r pre)) res in
+        if k = top then res
+        else up (k + 1) (double (k + 1) suf pre) (div_s ls 2L) (div_s rs 2L) res
+      in
+      let one_row = where (per_range (equal l r)) (at r x) none in
+      let res = up 0 (x, x) l r one_row in
+      (* A sum is [0.] plus its terms, as [sum]'s: [-0.] terms give [0.]. *)
+      match op with
+      | `Add -> add_s res (Nx_dtype.zero (dtype x))
+      | _ -> res
+  in
+  match op with `Add -> at_float32 { f = ranges } x | _ -> ranges x
 
 (* Above this many entries [top_k] stops taking one greatest entry per pass
    over the axis, each pass waiting on the one before it, and selects them by

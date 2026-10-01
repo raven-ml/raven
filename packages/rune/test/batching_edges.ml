@@ -131,6 +131,17 @@ let reads =
              "Nx.item: cannot read the value of a batched tensor inside vmap; \
               return it from the mapped function instead") (fun () ->
             Rune.vmap' (fun x -> Nx.mul_s x (Nx.item [] x)) data));
+    test "a range reduction over batched bounds names Nx.reduce_ranges"
+      (fun () ->
+        raises
+          (Invalid_argument
+             "Nx.reduce_ranges: cannot read the value of a batched tensor \
+              inside vmap; return it from the mapped function instead")
+          (fun () ->
+            Rune.vmap'
+              (fun hi ->
+                Nx.reduce_ranges `Add ~lo:(int64s [| 1 |] [| 0 |]) ~hi data)
+              (int64s [| 2; 1 |] [| 1; 3 |])));
     test "reading a constant inside a map computes" (fun () ->
         let c = Nx.scalar f64 3. in
         equal (Reference.exact ()) (Nx.mul_s data 3.)
@@ -220,6 +231,13 @@ let compositions =
       (xs ());
     is_the_loop "lexsort of batched keys is the loop" Nx.lexsort
       (mat 3 3 [| 1.; 0.; 1.; 2.; 2.; -0.; 0.; Float.nan; 0. |]);
+    is_the_loop "reduce_ranges over batched rows is the loop"
+      (fun r ->
+        Nx.reduce_ranges `Max
+          ~lo:(int64s [| 3 |] [| -1; 1; 2 |])
+          ~hi:(int64s [| 3 |] [| 2; 3; 2 |])
+          r)
+      (xs ());
     is_the_loop "reduce_segments over batched ids is the loop"
       (fun ids -> Nx.reduce_segments `Add ~segments:3 ids data)
       (int64s [| 2; 4 |] [| 0; 2; 0; -1; 2; 2; 1; 3 |]);

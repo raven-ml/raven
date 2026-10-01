@@ -184,6 +184,21 @@ let quantile =
     row "float64-1e7" l (fun () -> uniform_float64 l) box;
   ]
 
+(* Trailing windows of 1e3 rows, the first ones shorter, as pandas'
+   [rolling(1000, min_periods=1)] cuts them. *)
+let ranges =
+  let windows n () =
+    ( Nx.arange Nx.int64 (1 - 1000) (n + 1 - 1000) 1,
+      Nx.arange Nx.int64 1 (n + 1) 1,
+      uniform_float64 n )
+  in
+  let reduce op (lo, hi, x) = Nx.reduce_ranges op ~lo ~hi x in
+  [
+    row "add-float64-4e4-w1e3" s (windows s) (reduce `Add);
+    row "add-float64-1e7-w1e3" l (windows l) (reduce `Add);
+    row "max-float64-1e7-w1e3" l (windows l) (reduce `Max);
+  ]
+
 let bits =
   let mask () =
     let st = state () in
@@ -315,6 +330,7 @@ let groups =
     ("searchsorted", searchsorted);
     ("unique", unique);
     ("quantile", quantile);
+    ("ranges", ranges);
     ("bits", bits);
     ("ragged-take", ragged_take);
     ("ragged", ragged_rows);

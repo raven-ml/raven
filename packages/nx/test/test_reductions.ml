@@ -1199,6 +1199,20 @@ let segmented =
 
 let int64s xs = Nx.create Nx.int64 [| Array.length xs |] xs
 
+(* [op]'s step: a sum, or the winner under [wins]. *)
+let combining add wins op a b =
+  match op with
+  | `Add -> Option.get add a b
+  | `Max -> if wins ~greater:true a b then b else a
+  | `Min -> if wins ~greater:false a b then b else a
+
+let identity dtype = function
+  | `Add -> Nx_dtype.zero dtype
+  | `Max -> Nx_dtype.min_value dtype
+  | `Min -> Nx_dtype.max_value dtype
+
+let op_name = function `Add -> "Add" | `Max -> "Max" | `Min -> "Min"
+
 let segment_reductions =
   let combines (Seg s) op =
     let drawn =
@@ -1214,25 +1228,15 @@ let segment_reductions =
       in
       (segments, ids, x)
     in
-    let name = match op with `Add -> "Add" | `Max -> "Max" | `Min -> "Min" in
     prop
       (Printf.sprintf "%s reduce_segments %s combines each segment's rows"
-         s.name name) drawn (fun (segments, ids, x) ->
+         s.name (op_name op))
+      drawn
+      (fun (segments, ids, x) ->
         let r = Ref.of_nx x in
         let w = Ref.numel (Array.sub r.shape 1 (Ref.ndim r - 1)) in
-        let combine a b =
-          match op with
-          | `Add -> Option.get s.add a b
-          | `Max -> if s.wins ~greater:true a b then b else a
-          | `Min -> if s.wins ~greater:false a b then b else a
-        in
-        let identity =
-          match op with
-          | `Add -> Nx_dtype.zero s.dtype
-          | `Max -> Nx_dtype.min_value s.dtype
-          | `Min -> Nx_dtype.max_value s.dtype
-        in
-        let expected = Array.make (segments * w) identity in
+        let combine = combining s.add s.wins op in
+        let expected = Array.make (segments * w) (identity s.dtype op) in
         Array.iteri
           (fun i id ->
             if id >= 0 && id < segments then
@@ -1357,6 +1361,261 @@ let segment_reductions =
                   (Nx.zeros Nx.bool [| 2 |])));
       ])
 
+(* Range reductions, against the segments' loop over each range's rows after
+   clipping, and against max, min and the running scans where they must agree
+   bit for bit. Bounds reach past both ends of the rows, and some ranges are
+   empty or inverted. *)
+
+let bounds n =
+  let open Gen in
+  let bound = int_range (-2) (n + 2) in
+  array ~size:(int_range 0 6) (pair bound bound)
+
+(* The ranges [(lo, hi)] as the two bound tensors. *)
+let ranges b =
+  let bound f = int64s (Array.map (fun p -> Int64.of_int (f p)) b) in
+  (bound fst, bound snd)
+
+let reduce op b x =
+  let lo, hi = ranges b in
+  Nx.reduce_ranges op ~lo ~hi x
+
+(* A nonempty range of [n] rows, [n > 0]. *)
+let nonempty_range n =
+  let open Gen in
+  let* lo = int_range 0 (n - 1) in
+  let+ hi = int_range (lo + 1) n in
+  (lo, hi)
+
+let range_combines (Seg s) op =
+  let drawn =
+    let open Gen in
+    let* n = int_range 0 9 in
+    let* width = option (int_range 0 3) in
+    let shape = match width with None -> [| n |] | Some w -> [| n; w |] in
+    (* A layout may transpose [x]: its rows are counted once it is drawn. *)
+    let* x = viewed ~shape:(constant shape) ~pp:s.pp s.dtype s.value in
+    let+ b = bounds (Nx.dim 0 x) in
+    (b, x)
+  in
+  prop
+    (Printf.sprintf "%s reduce_ranges %s combines each range's rows" s.name
+       (op_name op))
+    drawn
+    (fun (b, x) ->
+      let r = Ref.of_nx x in
+      let n = r.shape.(0)
+      and w = Ref.numel (Array.sub r.shape 1 (Ref.ndim r - 1)) in
+      let combine = combining s.add s.wins op in
+      let expected = Array.make (Array.length b * w) (identity s.dtype op) in
+      Array.iteri
+        (fun i (lo, hi) ->
+          for row = Int.max lo 0 to Int.min hi n - 1 do
+            for j = 0 to w - 1 do
+              let at = (i * w) + j in
+              expected.(at) <- combine expected.(at) r.data.((row * w) + j)
+            done
+          done)
+        b;
+      let shape = Array.copy r.shape in
+      shape.(0) <- Array.length b;
+      equal (Ref.witness s.exact)
+        (Ref.create shape expected)
+        (Ref.of_nx (reduce op b x)))
+
+(* float32 bits of small integers, both zeros and NaNs of distinct payloads. *)
+let float32_bits =
+  Gen.frequency
+    [
+      ( 5,
+        Gen.map
+          (fun i -> Int32.bits_of_float (float_of_int i))
+          (Gen.int_range (-3) 3) );
+      (1, Gen.of_list ~pp:pp_int32 (Array.to_list nan_payloads));
+      (1, Gen.of_list ~pp:pp_int32 [ 0l; Int32.min_int ]);
+    ]
+
+let extremes_are_max_and_min =
+  prop
+    "Max and Min of a range are max and min of its rows, NaN payloads included"
+    (let open Gen in
+     let* n = int_range 1 70 in
+     let* bits = array ~size:(constant n) float32_bits in
+     let+ b = array ~size:(int_range 1 8) (nonempty_range n) in
+     (bits, b))
+    (fun (bits, b) ->
+      let x =
+        Nx.bitcast Nx.float32 (Nx.create Nx.int32 [| Array.length bits |] bits)
+      in
+      List.iter
+        (fun (op, extreme) ->
+          let expected =
+            Array.map
+              (fun (lo, hi) ->
+                Nx.item []
+                  (Nx.bitcast Nx.int32 (extreme (Nx.shrink [| (lo, hi) |] x))))
+              b
+          in
+          equal ~msg:(op_name op) (array int32) expected
+            (Nx.to_array (Nx.bitcast Nx.int32 (reduce op b x))))
+        [ (`Max, fun t -> Nx.max t); (`Min, fun t -> Nx.min t) ])
+
+(* Small integers among terms of 1e300, so that a sum that took in a term
+   outside its range would lose the small ones, and fractions, whose sums round
+   differently in each association. *)
+let huge_small_or_fraction =
+  Gen.frequency
+    [
+      (3, Gen.map float_of_int (Gen.int_range (-3) 3));
+      (1, Gen.of_list ~pp:pp_float [ 1e300; -1e300 ]);
+      (2, Gen.float_range (-1.) 1.);
+    ]
+
+let small v = Float.is_integer v && Float.abs v < 4.
+
+let sums_hold_their_own_terms =
+  prop "a range's sum is its terms' alone, bit for bit as if it were alone"
+    (let open Gen in
+     let* xs = array ~size:(int_range 1 80) huge_small_or_fraction in
+     let+ b = array ~size:(int_range 1 8) (nonempty_range (Array.length xs)) in
+     (xs, b))
+    (fun (xs, b) ->
+      let x = Nx.create Nx.float64 [| Array.length xs |] xs in
+      let together = float_bits (reduce `Add b x) in
+      Array.iteri
+        (fun i (lo, hi) ->
+          let terms = Array.sub xs lo (hi - lo) in
+          if Array.for_all small terms then
+            equal ~msg:"small terms" float_exact
+              (Array.fold_left ( +. ) 0. terms)
+              (Int64.float_of_bits together.(i));
+          equal ~msg:"alone" int64
+            (float_bits (reduce `Add [| (lo, hi) |] x)).(0)
+            together.(i))
+        b)
+
+(* Unit roundoff of float32. *)
+let u32 = ldexp 1. (-24)
+
+let sums_round_little =
+  prop
+    "a float32 range sum is within a few roundings per level of the exact sum"
+    (let open Gen in
+     let* xs = array ~size:(int_range 1 600) (float_range (-1.) 1.) in
+     let+ b = array ~size:(int_range 1 8) (nonempty_range (Array.length xs)) in
+     (xs, b))
+    (fun (xs, b) ->
+      let x =
+        Nx.cast Nx.float32 (Nx.create Nx.float64 [| Array.length xs |] xs)
+      in
+      let xs = Nx.to_array (Nx.cast Nx.float64 x) in
+      let got = Nx.to_array (Nx.cast Nx.float64 (reduce `Add b x)) in
+      Array.iteri
+        (fun i (lo, hi) ->
+          let terms = Array.sub xs lo (hi - lo) in
+          let exact = Array.fold_left ( +. ) 0. terms in
+          let mass = Array.fold_left (fun a v -> a +. Float.abs v) 0. terms in
+          let levels = Float.ceil (Float.log2 (float_of_int (hi - lo))) in
+          at_most
+            ~msg:(Printf.sprintf "range %d to %d" lo hi)
+            float_exact
+            ~than:(((2. *. levels) +. 2.) *. u32 *. mass)
+            (Float.abs (got.(i) -. exact)))
+        b)
+
+let narrow_sums_round_once =
+  prop "a float16 range sum is float32's, rounded once"
+    (let open Gen in
+     let* xs = array ~size:(int_range 1 60) (float_range (-300.) 300.) in
+     let+ b = bounds (Array.length xs) in
+     (xs, b))
+    (fun (xs, b) ->
+      let h =
+        Nx.cast Nx.float16 (Nx.create Nx.float64 [| Array.length xs |] xs)
+      in
+      equal (array int64)
+        (float_bits (Nx.cast Nx.float16 (reduce `Add b (Nx.cast Nx.float32 h))))
+        (float_bits (reduce `Add b h)))
+
+let running =
+  prop "the ranges from row 0 to each row are the running sums and maxima"
+    (let open Gen in
+     let* n = int_range 1 40 in
+     let+ ints = array ~size:(constant n) small_int32
+     and+ bits = array ~size:(constant n) float32_bits in
+     (ints, bits))
+    (fun (ints, bits) ->
+      let n = Array.length ints in
+      let b = Array.init n (fun i -> (0, i + 1)) in
+      let ints = Nx.create Nx.int32 [| n |] ints in
+      equal ~msg:"sums" (array int32)
+        (Nx.to_array (Nx.cumsum ints))
+        (Nx.to_array (reduce `Add b ints));
+      let x = Nx.bitcast Nx.float32 (Nx.create Nx.int32 [| n |] bits) in
+      equal ~msg:"maxima" (array int32)
+        (Nx.to_array (Nx.bitcast Nx.int32 (Nx.cummax x)))
+        (Nx.to_array (Nx.bitcast Nx.int32 (reduce `Max b x))))
+
+let range_reductions =
+  let props =
+    List.concat_map
+      (fun (Seg s as seg) ->
+        (if Option.is_some s.add then [ range_combines seg `Add ] else [])
+        @ [ range_combines seg `Max; range_combines seg `Min ])
+      segmented
+  in
+  group "ranges"
+    (props
+    @ [
+        extremes_are_max_and_min;
+        sums_hold_their_own_terms;
+        sums_round_little;
+        narrow_sums_round_once;
+        running;
+        test "-0 terms sum to +0, and Max and Min order -0 below +0" (fun () ->
+            let x = Nx.create Nx.float32 [| 3 |] [| -0.; -0.; 0. |] in
+            let b = [| (0, 1); (0, 2); (1, 3); (3, 3) |] in
+            equal ~msg:"Add" (array int64)
+              (float_bits (Nx.zeros Nx.float32 [| 4 |]))
+              (float_bits (reduce `Add b x));
+            equal ~msg:"Max" (array int64)
+              (float_bits
+                 (Nx.create Nx.float32 [| 4 |] [| -0.; -0.; 0.; neg_infinity |]))
+              (float_bits (reduce `Max b x));
+            equal ~msg:"Min" (array int64)
+              (float_bits
+                 (Nx.create Nx.float32 [| 4 |] [| -0.; -0.; -0.; infinity |]))
+              (float_bits (reduce `Min b x)));
+        test "rows of no rows, and no ranges, have the shapes of their rows"
+          (fun () ->
+            let x = Nx.zeros Nx.float64 [| 0; 2 |] in
+            equal (tensor float_exact)
+              (Nx.full Nx.float64 [| 2; 2 |] neg_infinity)
+              (reduce `Max [| (-1, 3); (0, 0) |] x);
+            equal (tensor float_exact)
+              (Nx.zeros Nx.float64 [| 0; 3 |])
+              (reduce `Add [||] (Nx.ones Nx.float64 [| 4; 3 |])));
+        test
+          "reduce_ranges refuses a scalar, misshapen bounds, complex extremes \
+           and boolean sums" (fun () ->
+            let two = Nx.zeros Nx.int64 [| 2 |]
+            and x = Nx.zeros Nx.float32 [| 2 |] in
+            raises_invalid_arg (fun () ->
+                Nx.reduce_ranges `Add ~lo:two ~hi:two (Nx.scalar Nx.float32 1.));
+            raises_invalid_arg (fun () ->
+                Nx.reduce_ranges `Add ~lo:two ~hi:(Nx.zeros Nx.int64 [| 3 |]) x);
+            raises_invalid_arg (fun () ->
+                Nx.reduce_ranges `Add
+                  ~lo:(Nx.zeros Nx.int64 [| 2; 1 |])
+                  ~hi:(Nx.zeros Nx.int64 [| 2; 1 |])
+                  x);
+            raises_invalid_arg (fun () ->
+                Nx.reduce_ranges `Max ~lo:two ~hi:two
+                  (Nx.zeros Nx.complex64 [| 2 |]));
+            raises_invalid_arg (fun () ->
+                Nx.reduce_ranges `Add ~lo:two ~hi:two (Nx.zeros Nx.bool [| 2 |])));
+      ])
+
 let () =
   exit
     (run "nx reductions"
@@ -1370,6 +1629,7 @@ let () =
          normalisations;
          associations;
          segment_reductions;
+         range_reductions;
          structure_scans;
          ewmas;
          histograms;

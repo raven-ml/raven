@@ -2719,6 +2719,55 @@ val reduce_segments :
 
     See also {!unique}, {!scatter}. *)
 
+val reduce_ranges :
+  [ `Add | `Max | `Min ] -> lo:int64_t -> hi:int64_t -> ('a, 'b) t -> ('a, 'b) t
+(** [reduce_ranges op ~lo ~hi x] combines ranges of rows of [x]: row [i] of the
+    result is [op]'s identity combined by [op] with the rows of [x] from
+    [lo.{i}] included to [hi.{i}] excluded. The rows of [x] lie along axis 0,
+    and [lo] and [hi] hold one bound per range. The result has [x]'s shape but
+    with one row per range.
+
+    Bounds clip to \[[0], [n]\] for [n] rows, so a range may reach past either
+    end of [x]. A range whose clipped [lo] is at or after its clipped [hi] holds
+    the identity, which is {!reduce_segments}'s.
+
+    - [`Add] is a float sum as {!sum} describes, [0.] plus the range's terms,
+      combined in an association that depends on the range's bounds alone. Only
+      the range's own terms enter it, so a large row outside the range never
+      cancels into it. [float16], [bfloat16] and the [float8] dtypes accumulate
+      in [float32] and round once. Integer sums wrap.
+    - [`Max] and [`Min] are {!max} and {!min} over the range's rows: NaN
+      propagates, [-0.] is less than [0.], and on the host a NaN result holds
+      the range's first NaN.
+
+    Each row's bits depend on its range and that range's rows, never on the
+    other ranges. A growing window, a running reduction, is the ranges from [0]
+    to [i + 1].
+
+    [reduce_ranges] reads one value, the length [L] of its longest range: its
+    work is [O((n + m) log L)] for [m] ranges and its memory [O(n + m)]. The
+    read keeps it from compiling: under {!Rune.val-jit} it raises, naming
+    [Nx.reduce_ranges]. Under {!Rune.val-vmap}, bounds that depend on a mapped
+    value raise likewise, and other bounds map as {!take} and {!where} do. It
+    differentiates as {!take}, {!where} and [op] do: under [`Max] and [`Min] a
+    tie gives the whole derivative to one of the tied rows.
+
+    {@ocaml[
+      # let x = create float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+        let lo = create int64 [| 4 |] [| -2L; 0L; 3L; 4L |]
+        and hi = create int64 [| 4 |] [| 1L; 3L; 3L; 9L |] in
+        (to_array (reduce_ranges `Add ~lo ~hi x),
+         to_array (reduce_ranges `Max ~lo ~hi x))
+      - : float array * float array =
+      ([|1.; 6.; 0.; 5.|], [|1.; 3.; neg_infinity; 5.|])
+    ]}
+
+    Raises [Invalid_argument] if [x] is a scalar, if [lo] and [hi] are not 1-D
+    of one length, if [op] is [`Max] or [`Min] and [x] is complex, or if [op] is
+    [`Add] and [x] is boolean.
+
+    See also {!reduce_segments}, {!cumsum}. *)
+
 val histogram :
   ?weights:(float, 'b) t ->
   ((float, 'b) t * (float, 'b) t) list ->
