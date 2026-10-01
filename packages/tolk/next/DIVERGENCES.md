@@ -960,7 +960,8 @@ the Exclusions of `README.md`.
   `bufferize_cmdbuf`, the ranges of each group in `patch`, the moving offsets
   of `lower_call`, the halves of `sched_batches`, and the kernels not
   compiled yet of `get_enqueue_devs`; `lib/runtime/ops_metal.ml`,
-  `lib/runtime/ops_cuda.ml` and `lib/runtime/ops_amd.ml` (`loop`).
+  `lib/runtime/ops_cuda.ml`, `lib/runtime/ops_amd.ml` and
+  `lib/runtime/ops_nv.ml` (`loop`).
 - **Differs:** an `END` of ranges around calls that are all enqueued, on
   devices of one kind, belongs to their batch. Each queue its calls run on
   loops over its commands of one trip, as `HWQueue.loop` does, and a nested
@@ -1017,7 +1018,9 @@ the Exclusions of `README.md`.
   (`test/runtime/ops_cuda`): `loops (D30) › a range is a loop of the host
   program around its launches` and `› a range's addresses are integers,
   profiled or not`; the Ops_amd suite (`test/runtime/ops_amd`): `loops
-  (D30)`.
+  (D30)`; the Ops_nv suite (`test/runtime/ops_nv`): `loops (D30) › each
+  trip's two launches chain on descriptors of the trip's own, and the channel
+  schedules each trip's chain`.
 
 ## D31. Payne-Hanek reduces exactly, to the nearest quadrant
 
@@ -1169,26 +1172,35 @@ the Exclusions of `README.md`.
   each wait passes only once its value is written; and every `recorded
   cases` golden.
 
-## D38. An AMD program's code object is loaded by the engine
+## D38. A program's code object is loaded by the engine
 
 - **tinygrad:** `runtime/ops_amd.py:533-541` (`amd_build_program` makes a
   placeholder tagged `program` and stores the image into it at link), `:1032`
   (`AMDDevice.program_buffer` allocates it), `:547-548` (`_amd_program_image`
-  refuses a kernel whose LDS exceeds the GPU's).
-- **tolk.next:** `lib/runtime/ops_amd.ml:153` (`amd_build_program`); the
-  engine's AMD module.
+  refuses a kernel whose LDS exceeds the GPU's); `runtime/ops_nv.py:314-320`
+  (`nv_build_program` makes a placeholder tagged `program` and stores the
+  image into it at link, with a row for each relocation of the program's own
+  address).
+- **tolk.next:** `lib/runtime/ops_amd.ml:153` (`amd_build_program`),
+  `lib/runtime/ops_nv.ml:340` (`build_program`); the engine's AMD and NV
+  modules.
 - **Differs:** the program's placeholder is tagged
   `("program", binary, name)`, and no link patch writes an image into it: the
   engine loads the code object on the device (`Nx_device.Program.load`) and
-  binds the placeholder to the image nx.device uploaded (`Nx_amd_device.kernel`'s
-  `code`), whose layout is the one the compiler reads its descriptor from
-  (`Nx_device_elf`). The LDS check is the load's.
-- **Reason:** (c). Programs are nx.device's (D3): its AMD library uploads a
-  code object once per device into memory the GPU fetches from, flushes the
-  host data path, checks the kernel against the GPU and records the load in
+  binds the placeholder to the image nx.device uploaded and relocated
+  (`Nx_amd_device.kernel`'s `code`, `Nx_nv_device.kernel`'s `image`), whose
+  layout is the one the compiler reads its descriptor from (`Nx_device_elf`,
+  sections aligned to 128 bytes on NV). The LDS check is the AMD load's; NV's
+  relocations are its load's.
+- **Reason:** (c). Programs are nx.device's (D3): its AMD and NV libraries
+  upload a code object once per device into memory the GPU fetches from,
+  relocate it, check the kernel against the GPU and record the load in
   profiles.
-- **Pinned by:** the Ops_amd suite: every `recorded cases` golden, from
-  tinygrad with D38 applied by its generator.
+- **Pinned by:** the Ops_amd and Ops_nv suites: every `recorded cases`
+  golden, from tinygrad with D38 applied by its generator, whose offsets into
+  the image tinygrad's ELF loader computes and the encoders read from
+  `Nx_device_elf`; the Ops_nv suite's `storage › a compute queue names its
+  program's cubin, ...`.
 
 ## D39. A submission writes at most half of each AMD ring
 
@@ -1219,6 +1231,30 @@ the Exclusions of `README.md`.
   within their queue's share; nx.device's suite: `timeline ›
   a submission runs once its device's queues have room` and `› a device whose
   queues stay full through its timeout is lost ...`.
+## D40. The copy engine signals the high word of a value too
+
+- **tinygrad:** `runtime/ops_nv.py:197-201` (`NVCopyQueue.semaphore` and
+  `.signal`, a one-word copy-engine release of the value's low 32 bits).
+- **tolk.next:** `lib/runtime/ops_nv.ml` (`copy_signal`).
+- **Differs:** the copy queue signals a value in two one-word releases: its low
+  word into the signal word, then its high word into the next four bytes of
+  the signal word when the low word is `0`, and into a word of its own, a
+  volatile placeholder of the device tagged `nv_sink`, otherwise. The value
+  is known when the host program runs, so the second release is always
+  encoded, and its address chosen then.
+- **Reason:** (c). Timeline values are 64 bits, and nx.nv.device writes them
+  as this rule says (its low-level section). A low word alone loses the high
+  word at 2^32: the signal word falls from 2^32 - 1 to 0 and stays there. A
+  high word rewritten on every release takes the value back when another
+  channel's release of the next value lands between the two words.
+- **Pinned by:** the Ops_nv suite (`test/runtime/ops_nv`): `command words ›
+  the copy engine releases the low word, then the high word where the value
+  lives (D40)` for the values 2^32 - 1, 2^32, 2^32 + 1, 2^33 - 1 and 2^33;
+  `the 32-bit carry law`, over every order in which the writes of three works
+  on the compute channel, this copy queue and nx.nv.device's copies can land,
+  and its counterexamples, tinygrad's release and a high word rewritten late;
+  the recorded cases, whose host programs are tinygrad's with D40 applied by
+  their generator (`gen/runtime/ops_nv.py`).
 
 ## D41. The memory plan sees a range's calls, and leaves buffers reached through views
 
@@ -1266,7 +1302,11 @@ the Exclusions of `README.md`.
   `commands.submit` takes no command buffer: `encode_submit` calls it once
   every command is encoded, and the vendor finishes its queue, then calls
   `bufferize_cmdbuf` itself, as AMD's AQL queue already bufferizes its
-  packets on the host.
+  packets on the host. A vendor's `submit` raises `Over_capacity` for a
+  submission its queue cannot take, and the batch is split (D30): NV's when
+  its command buffer has more words than a ring entry's 21-bit length field
+  holds (`lib/runtime/ops_nv.ml:404`, `submit_cmdbuf`), where tinygrad's
+  entry would carry the length's high bits into its other fields.
 - **Reason:** (b). NV's launch descriptors and constant buffers are regions
   (Ops_nv), so that a range's trips each get their own copy of them, as the
   staged scan batches a scan body in one submission (RFC 0012). A launch
@@ -1280,7 +1320,8 @@ the Exclusions of `README.md`.
 - **Pinned by:** `Tolk_next.Hcq2 › patch and bufferize_cmdbuf › each region
   starts at its own alignment in the buffer of its name` and `› a region
   addressed through another region is laid out once, in the buffer of its
-  name`; the Hcq2, NULL, Metal, CUDA and AMD goldens, unchanged.
+  name`; the Hcq2, NULL, Metal, CUDA and AMD goldens, unchanged; the Ops_nv
+  recorded cases, whose generator applies D43 to tinygrad.
 
 ## D44. An integer cast of a weak expression computes in integers
 
@@ -1392,6 +1433,31 @@ the Exclusions of `README.md`.
   the reciprocal` and the slow `› Metal divides as IEEE does, rounding once`.
   CUDA's and HIP's `/` are correctly rounded by their compilers' defaults,
   which is on the hardware checks of `test/README.md`.
+
+## D51. A launch reads its local memory size from a word of the device
+
+- **tinygrad:** `runtime/ops_nv.py:283-291` (`NVProgramData` writes the
+  device's `slm_per_thread` into the launch template's
+  `shader_local_memory_high_size`), `:688-697`
+  (`NVDevice._ensure_has_local_memory` grows the device's local memory when
+  it builds a program).
+- **tolk.next:** `lib/runtime/ops_nv.ml:324` (`local_word`), `:340`
+  (`build_program`); `engine/nv.ml` (`local`).
+- **Differs:** a launch template's local memory size reads a 32-bit word,
+  a placeholder of the device tagged `("nv_local", bytes)` for kernels that
+  need `bytes` per thread, which the host program loads when it runs. The
+  engine binds every such placeholder of a device to one word of the device,
+  grows the device's local memory to `bytes` when it links the batch
+  (`Nx_nv_device.local_memory`) and writes the bytes per thread the memory
+  then provides into the word. A batch linked before a later one grew the
+  memory launches with the grown size.
+- **Reason:** (c). The compiler opens no device, so it cannot read or grow
+  the device's local memory; nx.nv.device owns it, and grows it as work on the
+  device's timeline.
+- **Pinned by:** the Ops_nv suite: every `recorded cases` golden, from
+  tinygrad with D51 applied by its generator, and `storage › a compute queue
+  names its program's cubin, its channel's words, and the local memory its
+  launches need`; the Ops_nv execution suite on an NVIDIA GPU.
 
 ## D53. A lane of a scalar value is that value
 
