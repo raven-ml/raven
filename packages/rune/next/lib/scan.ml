@@ -39,3 +39,27 @@ let fold r =
     ys.(i) <- y
   done;
   { r_carry = !carry; r_ys = stack (Array.to_list ys) }
+
+(* Transformed scans *)
+
+let rec split n l =
+  if n = 0 then ([], l)
+  else
+    match l with
+    | x :: l ->
+        let a, b = split (n - 1) l in
+        (x :: a, b)
+    | [] -> invalid_arg "Scan.split: too few leaves"
+
+let fixpoint active attempt =
+  let exception Grow of bool list in
+  let rec run active =
+    let grow next =
+      if List.exists2 (fun a n -> n && not a) active next then
+        raise_notrace (Grow (List.map2 ( || ) active next))
+    in
+    match attempt ~grow active with
+    | r -> r
+    | exception Grow active -> run active
+  in
+  run active

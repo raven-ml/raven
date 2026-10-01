@@ -47,3 +47,27 @@ val fold : request -> result
 (** [fold r] runs [r]'s steps one after the other in the caller's
     interpretation, so every installation around the caller sees each step's
     operations. An exception of [r.req_step] propagates unchanged. *)
+
+(** {1:transformed Transformed scans}
+
+    A transformation passes a scan on with the leaves it adds after the scan's:
+    the tangents of the carry tensors that have one, or the lanes of those that
+    are lanes. A carry tensor that has none at [init] may have one after a step,
+    which the transformed scan cannot carry: the attempt is abandoned and
+    restarted with that tensor added. *)
+
+val split : int -> leaves -> leaves * leaves
+(** [split n l] is the first [n] leaves of [l] and the others. *)
+
+val fixpoint : bool list -> (grow:(bool list -> unit) -> bool list -> 'r) -> 'r
+(** [fixpoint active attempt] is [attempt ~grow active], where [active] says
+    which carry tensors the transformed scan carries values of. A step of the
+    attempt calls [grow next] with which tensors of the carry it returns have
+    values: when [next] has one that the attempt's [active] lacks, [grow]
+    abandons the attempt and [fixpoint] restarts it with their union. Otherwise
+    [grow] returns.
+
+    An attempt changes no state that outlives it before its scan returns, so a
+    restart forgets the abandoned one. [grow] belongs to its attempt: a step of
+    a nested fixpoint's scan calls its own. Only a compiled call runs a step
+    before it answers, so only an attempt under one restarts. *)

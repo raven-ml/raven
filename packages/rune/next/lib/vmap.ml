@@ -244,6 +244,22 @@ let lanes_of m s x =
 let physicals m s x = Nx.Ptree.map s (fun _ x -> physical m x) x
 let all_batched m s x = Nx.Ptree.map s (fun _ x -> batched m x) x
 
+(* Leaves *)
+
+let leaf_lanes m = List.map (fun (Nx.P x) -> owns m x)
+
+let lanes_at m flags =
+  List.map2 (fun f (Nx.P x) -> if f then Nx.P (lane m x) else Nx.P x) flags
+
+let batched_at m flags =
+  List.map2 (fun f (Nx.P x) -> if f then Nx.P (batched m x) else Nx.P x) flags
+
+let physical_leaf m (Nx.P x) = Nx.P (physical m x)
+
+(* A lane's rows along a scan's axis, the scan's axis in front of the map's; and
+   back. *)
+let swap (Nx.P x) = Nx.P (Nx.swapaxes 0 1 x)
+
 let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun m c ->
   match[@warning "@4@8"] c with
@@ -286,7 +302,62 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
               (Remat { p; q; f; args = physicals m p args; recomputed })
           in
           relanes m q !out y)
-  | Scan _ | Barrier _ -> None
+  | Scan r -> Some (fun () -> scan m r)
+  | Barrier { values; after } ->
+      let flags = leaf_lanes m values in
+      if List.mem true flags || List.mem true (leaf_lanes m after) then
+        Some
+          (fun () ->
+            let read =
+              Construct.perform
+                (Barrier
+                   {
+                     values = List.map (physical_leaf m) values;
+                     after = List.map (physical_leaf m) after;
+                   })
+            in
+            lanes_at m flags read)
+      else None
+
+(* A scan passes on batched: a lane row has the scan's axis in front of the
+   map's, a lane carry stays batched through every step, and the step runs the
+   body under the map reinstalled. *)
+and scan : t -> Scan.request -> Scan.result =
+ fun m r ->
+  let rows = leaf_lanes m r.req_xs in
+  let xs =
+    List.map2
+      (fun f x -> if f then swap (physical_leaf m x) else x)
+      rows r.req_xs
+  in
+  Scan.fixpoint (leaf_lanes m r.req_carry) (fun ~grow carried ->
+      let outputs = ref [] in
+      let req_step c x =
+        let c', y =
+          install m (fun () ->
+              r.req_step (lanes_at m carried c) (lanes_at m rows x))
+        in
+        grow (leaf_lanes m c');
+        outputs := leaf_lanes m y;
+        (batched_at m carried c', List.map (physical_leaf m) y)
+      in
+      let result =
+        Construct.perform
+          (Scan
+             {
+               r with
+               req_carry = batched_at m carried r.req_carry;
+               req_xs = xs;
+               req_step;
+             })
+      in
+      let r_ys =
+        List.map2
+          (fun f y ->
+            if f then match swap y with Nx.P y -> Nx.P (lane m y) else y)
+          !outputs result.r_ys
+      in
+      { Scan.r_carry = lanes_at m carried result.r_carry; r_ys })
 
 (* A custom call passes on as the call of its rule batched: the rule runs under
    the map reinstalled, so the lanes it receives and captures are the map's

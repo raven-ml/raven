@@ -684,7 +684,16 @@ let rec duals i flags leaves ts =
   | [], [], [] -> []
   | _ -> assert false (* A flag per leaf, a tangent per flag set. *)
 
+(* [seed i tape flags leaves] is [leaves] with each one [flags] marks a dual of
+   [i] whose tangent is a fresh input slot of [tape], and those slots. *)
+let seed i tape flags leaves =
+  let slots =
+    List.map (fun (Nx.P x) -> Nx.P (Linear.input tape x)) (pick flags leaves)
+  in
+  (duals i flags leaves slots, slots)
+
 let owned i = List.map (fun (Nx.P x) -> owns i x)
+let primal_leaf i (Nx.P x) = Nx.P (primal i x)
 
 (* [zero i x] is the tangent of [x] when [i] tracks none: zeros, or under
    reverse mode a slot nothing feeds. *)
@@ -805,6 +814,15 @@ let custom : type q. t -> q Construct.rule -> (unit -> q) option =
 
 (* Remat *)
 
+(* The primal of a dual, read from its node. *)
+let node_primal (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
+  match Repr.v x with
+  | Traced tr -> (
+      match Repr.Traced.node tr with
+      | Dual { primal; _ } -> primal
+      | _ -> assert false (* A capture is a dual. *))
+  | Host _ | Placed _ -> assert false (* A capture is a dual. *)
+
 let child i tape captures =
   {
     entry = i.entry;
@@ -812,6 +830,26 @@ let child i tape captures =
     rerun = Some { parent = i; captures };
     id = ref ();
   }
+
+(* A barrier on duals of [i] reads their primals, and with value tangents their
+   tangents too, once [after] exists; a slot needs no barrier. *)
+let barrier i values after =
+  let flags = owned i values in
+  let extra =
+    match i.slots with None -> tangents i flags values | Some _ -> []
+  in
+  let read =
+    Construct.perform
+      (Barrier
+         {
+           values = List.map (primal_leaf i) values @ extra;
+           after = List.map (primal_leaf i) after;
+         })
+  in
+  let primals, read_tangents = Scan.split (List.length values) read in
+  match i.slots with
+  | None -> duals i flags primals read_tangents
+  | Some _ -> duals i flags primals (tangents i flags values)
 
 let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
  fun i c ->
@@ -828,7 +866,204 @@ let rec answer : type r. t -> r Construct.t -> (unit -> r) option =
   | Lanes (axis, x) ->
       let lanes x = Construct.perform (Lanes (axis, x)) in
       Option.map (fun (x, dx) () -> dual i (lanes x) (lanes dx)) (own i x)
-  | Scan _ | Barrier _ | Lane_index _ | Lane_count _ -> None
+  | Scan r -> (
+      match i.slots with
+      | None -> Some (fun () -> scan_values i r)
+      | Some tape -> Some (fun () -> scan_slots i tape r))
+  | Barrier { values; after } ->
+      if List.exists (fun (Nx.P x) -> owns i x) values then
+        Some (fun () -> barrier i values after)
+      else None
+  | Lane_index _ | Lane_count _ -> None
+
+(* With value tangents a scan passes on as the scan of its jvp: the carry and
+   the rows gain the tangents of those that have one, the outputs those of
+   theirs, and the step runs the body under [i] reinstalled. *)
+and scan_values : t -> Scan.request -> Scan.result =
+ fun i r ->
+  let nc = List.length r.req_carry and nx = List.length r.req_xs in
+  let rows = owned i r.req_xs in
+  Scan.fixpoint (owned i r.req_carry) (fun ~grow carried ->
+      let outputs = ref [] in
+      let req_step c x =
+        let c, dc = Scan.split nc c and x, dx = Scan.split nx x in
+        let c', y =
+          install i (fun () ->
+              r.req_step (duals i carried c dc) (duals i rows x dx))
+        in
+        grow (owned i c');
+        outputs := owned i y;
+        ( List.map (primal_leaf i) c' @ tangents i carried c',
+          List.map (primal_leaf i) y @ tangents i !outputs y )
+      in
+      let result =
+        Construct.perform
+          (Scan
+             {
+               r with
+               req_carry =
+                 List.map (primal_leaf i) r.req_carry
+                 @ tangents i carried r.req_carry;
+               req_xs =
+                 List.map (primal_leaf i) r.req_xs @ tangents i rows r.req_xs;
+               req_step;
+             })
+      in
+      let c, dc = Scan.split nc result.r_carry in
+      let ys, dys = Scan.split (List.length !outputs) result.r_ys in
+      { Scan.r_carry = duals i carried c dc; r_ys = duals i !outputs ys dys })
+
+(* Under reverse mode a scan passes on as its primal scan, whose step runs the
+   body under a child of [i] on a scratch tape it drops and also outputs the
+   carry it received. Once it returns, the tape gains one linear call from the
+   tangents of the tracked initial carry, rows and captures to those of the
+   dependent final carry and outputs; its transpose is the reversed scan that
+   runs each step again at its carry, threading the carry's cotangent and
+   summing the captures'. *)
+and scan_slots : t -> Linear.tape -> Scan.request -> Scan.result =
+ fun i tape r ->
+  let nc = List.length r.req_carry and nx = List.length r.req_xs in
+  let rows = owned i r.req_xs in
+  Scan.fixpoint (owned i r.req_carry) (fun ~grow carried ->
+      let outputs = ref [] and captures = ref [] in
+      let req_step c x =
+        let scratch = Linear.create i.entry in
+        let ch = child i scratch [] in
+        let c', y =
+          Linear.install scratch (fun () ->
+              install ch (fun () ->
+                  r.req_step
+                    (fst (seed ch scratch carried c))
+                    (fst (seed ch scratch rows x))))
+        in
+        grow (owned ch c');
+        outputs := owned ch y;
+        let y = List.map (primal_leaf ch) y
+        and c' = List.map (primal_leaf ch) c' in
+        (captures := match ch.rerun with Some r -> r.captures | None -> []);
+        (c', y @ c)
+      in
+      let c0 = List.map (primal_leaf i) r.req_carry in
+      let xs = List.map (primal_leaf i) r.req_xs in
+      let result =
+        Construct.perform
+          (Scan { r with req_carry = c0; req_xs = xs; req_step })
+      in
+      let outputs = !outputs and captures = !captures in
+      let ny = List.length outputs in
+      let ys, carries = Scan.split ny result.r_ys in
+      let final = result.r_carry in
+      if not (List.mem true carried || List.mem true outputs) then
+        { Scan.r_carry = final; r_ys = ys }
+      else
+        let slot (Nx.P x) = Option.map (fun (_, dx) -> Nx.P dx) (own i x) in
+        let initial = List.map slot r.req_carry
+        and row_slots = List.map slot r.req_xs in
+        let inputs =
+          List.filter_map Fun.id initial
+          @ List.filter_map Fun.id row_slots
+          @ List.map
+              (fun (Capture (d, _)) -> Option.get (slot (Nx.P d)))
+              captures
+        in
+        let pick flags l =
+          List.filter_map
+            (fun (f, x) -> if f then Some x else None)
+            (List.combine flags l)
+        in
+        let transpose cts =
+          let ct_carry, ct_ys =
+            Scan.split (List.length (pick carried final)) cts
+          in
+          let zeros (Nx.P x) = Nx.P (Nx.zeros_like x) in
+          let primals_of (Capture (d, _)) = Nx.P (node_primal d) in
+          let nk = List.length ct_carry and ncap = List.length captures in
+          let req_step carry row =
+            Total.discarding @@ fun () ->
+            let ct_c, ct_caps = Scan.split nk carry in
+            let c, rest = Scan.split nc row in
+            let x, ct_y = Scan.split nx rest in
+            let rerun = Linear.create i.entry in
+            let fresh (Capture (d, _)) =
+              Capture (d, Linear.input rerun (node_primal d))
+            in
+            let caps = List.map fresh captures in
+            let ch = child i rerun caps in
+            let c, c_in = seed ch rerun carried c
+            and x, x_in = seed ch rerun rows x in
+            let c', y =
+              Linear.install rerun (fun () ->
+                  install ch (fun () -> r.req_step c x))
+            in
+            (match ch.rerun with
+            | Some r when List.length r.captures > ncap ->
+                invalid_arg
+                  (i.entry
+                 ^ ": a scan's step reads, under its transpose, a value the \
+                    differentiation tracks that its forward run did not")
+            | _ -> ());
+            let received = Linear.cotangents rerun in
+            let add (Nx.P v) (Nx.P ct) =
+              Option.iter
+                (fun (_, dv) ->
+                  Linear.add received dv (Nx.unpack (Nx.dtype v) (Nx.P ct)))
+                (own ch v)
+            in
+            List.iter2 add (pick carried c') ct_c;
+            List.iter2 add (pick outputs y) ct_y;
+            Linear.transpose received;
+            let cotangent (Nx.P s) =
+              match Linear.cotangent received s with
+              | Some g -> Nx.P g
+              | None -> Nx.P (Nx.zeros_like s)
+            in
+            let sum (Nx.P a) (Nx.P b) =
+              Nx.P (Nx.add a (Nx.unpack (Nx.dtype a) (Nx.P b)))
+            in
+            ( List.map cotangent c_in
+              @ List.map2 sum ct_caps
+                  (List.map (fun (Capture (_, s)) -> cotangent (Nx.P s)) caps),
+              List.map cotangent x_in )
+          in
+          let request =
+            {
+              Scan.req_carry =
+                ct_carry @ List.map zeros (List.map primals_of captures);
+              req_xs = carries @ xs @ ct_ys;
+              req_step;
+              req_reverse = not r.req_reverse;
+            }
+          in
+          let result =
+            match Construct.perform (Scan request) with
+            | result -> result
+            | exception Scan.Not_staged -> Scan.fold request
+          in
+          let ct_c0, ct_caps = Scan.split nk result.r_carry in
+          let ct_c0 =
+            List.filter_map
+              (fun (slot, ct) -> Option.map (fun _ -> ct) slot)
+              (List.combine (pick carried initial) ct_c0)
+          in
+          ct_c0 @ result.r_ys @ ct_caps
+        in
+        let slots =
+          ref
+            (Linear.call tape inputs transpose
+               (pick carried final @ pick outputs ys))
+        in
+        let attach flags leaves =
+          List.map2
+            (fun f (Nx.P x) ->
+              match !slots with
+              | s :: rest when f ->
+                  slots := rest;
+                  Nx.P (dual i x (Nx.unpack (Nx.dtype x) s))
+              | _ -> Nx.P x)
+            flags leaves
+        in
+        let r_carry = attach carried final in
+        { Scan.r_carry; r_ys = attach outputs ys })
 
 (* With value tangents a remat passes on as the remat of its function's jvp,
    over the arguments' primals and tangents, so that no dual of [i] crosses into
