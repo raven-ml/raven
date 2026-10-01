@@ -308,7 +308,7 @@ the Exclusions of `README.md`.
   format stores an underflow to negative zero as positive zero`, and `an
   emulated narrow-float copy quiets a signalling NaN; a native copy keeps its
   bits`; `Tolk_next.Decomp_dtype › goldens`, which are tinygrad's graphs with
-  `f2f` and `f2f_clamp` replaced by these conversions; and a rune test at L9.
+  `f2f` and `f2f_clamp` replaced by these conversions.
 
 ## D10. A float8 NaN keeps its sign when decoded
 
@@ -321,7 +321,7 @@ the Exclusions of `README.md`.
   folded constant agree, and every NaN code keeps its sign through a round
   trip.
 - **Pinned by:** `Tolk_next.Dtype › storage › a NaN decodes with the sign of
-  its bits`; and a rune test at L9.
+  its bits`.
 
 ## D11. Kernel optimisations are typed
 
@@ -482,7 +482,7 @@ the Exclusions of `README.md`.
   and `cuda_inf_nan_float8_e5m2`, which compare with tinygrad's source once the
   guard is written back as tinygrad writes it; and `Tolk_next.Cstyle › every
   GPU kernel compiles with its target's toolchain › cuda_*` (slow, skipped
-  without NVRTC). A rune test at L9 checks the stored values.
+  without NVRTC).
 
 ## D17. Each operation on a narrow scalar is narrowed in the source
 
@@ -579,8 +579,7 @@ the Exclusions of `README.md`.
 - **Pinned by:** `Tolk_next.Dtype › storage › a bitcast through a float
   gives back every 8- and 16-bit word`, on every e5m2 code, and the NaN rows
   of `Tolk_next.Dtype › storage › reencode.golden` and `Tolk_next.Dtype ›
-  truncate › truncation.golden`, stated in code; and a rune test at L9: a
-  jitted `Nx.bitcast` of every e5m2 code keeps it.
+  truncate › truncation.golden`, stated in code.
 
 ## D21. A reshape of a value sharded on two axes divides each by its own count
 
@@ -889,8 +888,7 @@ the Exclusions of `README.md`.
   bitcast round trip of every 8- and 16-bit word folds to its value`, which evaluates each graph
   with the reference interpreter before and after `simplify`;
   `Tolk_next.Dtype › const › const keeps the bits of every 8- and 16-bit float
-  word`; and, at L9, a rune test: a jitted `Nx.bitcast` of a NaN constant
-  keeps its bits.
+  word`.
 
 ## D28. A host program has nx.device's entry
 
