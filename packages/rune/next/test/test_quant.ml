@@ -142,6 +142,10 @@ let products ~scale =
     case "ids outside the experts, over a vector"
       ~ids:(ints [| 3 |] [| 5; -5; 0 |])
       w68 (floats [| 64 |]);
+    case "ids 2^32 from an expert"
+      ~ids:(ints [| 6; 1 |] [| 0; (1 lsl 32) + 2; 1; 3; 5 - (1 lsl 32); 4 |])
+      w68
+      (floats [| 6; 1; 2; 64 |]);
     case "a lane of experts per batch row"
       ~ids:(ints [| 2; 2 |] [| 2; -1; 0; 2 |])
       (weight ~scale [| 2; 3; 8; 64 |])

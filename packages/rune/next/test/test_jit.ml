@@ -197,6 +197,21 @@ let rounded a b =
     ~abs:(Float.ldexp (largest a +. (float_of_int n *. largest b)) (-20))
     ()
 
+(* Indices along an axis of 4, some 2^32 from one of its positions, which a
+   truncation to 32 bits would bring back to it. *)
+let far = 1 lsl 32
+
+let far_index =
+  Gen.frequency
+    [
+      (2, Gen.int_range (-2) 5);
+      ( 1,
+        let open Gen in
+        let+ i = int_range 0 3
+        and+ k = of_list ~pp:Format.pp_print_int [ -2; -1; 1; 2 ] in
+        i + (k * far) );
+    ]
+
 (* The laws of values, [count] cases each; [heavy] adds the families the default
    run leaves out, and the tests whose programs take longest to compile. *)
 let values ~count ~heavy =
@@ -261,6 +276,101 @@ let values ~count ~heavy =
              (Nx.create Nx.int32 [| 3 |]
                 [| 0x3f800000l; Int32.min_int; Int32.bits_of_float Float.nan |])
              r);
+       test "a bitcast between widths reads the bytes eager reads" (fun () ->
+           let bytes =
+             Nx.init Nx.uint8 [| 2; 8 |] (fun i ->
+                 ((i.(0) * 8) + i.(1)) * 29 mod 256)
+           in
+           let words = Nx.bitcast Nx.uint64 bytes in
+           equal (tensor int64)
+             (Nx.bitcast Nx.int64 words)
+             (Nx.bitcast Nx.int64 (Rune.jit' (Nx.bitcast Nx.uint64) bytes));
+           equal (tensor int) bytes (Rune.jit' (Nx.bitcast Nx.uint8) words));
+       cases ~name:fst "an arange inside a compiled call equals eager's"
+         [
+           ("1 element", (0, 1, 1));
+           ("257 elements", (0, 257, 1));
+           ("513 elements", (0, 513, 1));
+           ("2^20 elements", (0, 1 lsl 20, 1));
+           ("down by 2 from 1000", (1000, -26, -2));
+           ( "from 2^40 by more than 2^34",
+             ( 1 lsl 40,
+               (1 lsl 40) + (8 * ((1 lsl 34) + 12345)),
+               (1 lsl 34) + 12345 ) );
+         ]
+         (fun (_, (start, stop, step)) ->
+           let arange () = Nx.arange Nx.int64 start stop step in
+           let eager = arange () in
+           equal (tensor int64) eager
+             (Rune.jit' (fun z -> Nx.add z (arange ())) (Nx.zeros_like eager)));
+       test "an int32 and a float32 arange inside a compiled call equal eager's"
+         (fun () ->
+           let i () = Nx.arange Nx.int32 0 513 1 in
+           equal (tensor int32) (i ())
+             (Rune.jit' (fun z -> Nx.add z (i ())) (Nx.zeros_like (i ())));
+           let f () = Nx.arange Nx.float32 0 513 1 in
+           equal floats (f ())
+             (Rune.jit' (fun z -> Nx.add z (f ())) (Nx.zeros_like (f ()))));
+       xfail
+         ~reason:
+           "a compiled int64 to bfloat16 cast rounds through float32, rounding \
+            twice"
+       @@ test
+            "a bfloat16 arange from 2^40 inside a compiled call equals eager's"
+            (fun () ->
+              let a () =
+                Nx.arange Nx.bfloat16 (1 lsl 40)
+                  ((1 lsl 40) + (8 * ((1 lsl 31) + 12345)))
+                  ((1 lsl 31) + 12345)
+              in
+              equal floats
+                (Nx.cast Nx.float32 (a ()))
+                (Nx.cast Nx.float32
+                   (Rune.jit' (fun z -> Nx.add z (a ())) (Nx.zeros_like (a ())))));
+       test "top_k puts NaN first, as eager does" (fun () ->
+           let scores =
+             Nx.init Nx.float32 [| 2; 24 |] (fun i ->
+                 let i = (i.(0) * 24) + i.(1) in
+                 if i mod 5 = 3 then Float.nan else float_of_int (i * 7 mod 11))
+           in
+           List.iter
+             (fun k ->
+               let indices x = snd (Nx.top_k ~k x) in
+               let eager = indices scores in
+               equal ~msg:"the first NaN first" (tensor int64)
+                 (Nx.scalar Nx.int64 3L)
+                 (Nx.slice [ I 0; I 0 ] eager);
+               equal
+                 ~msg:(Printf.sprintf "top %d" k)
+                 (tensor int64) eager (Rune.jit' indices scores))
+             [ 2; 17 ]);
+       prop "gather and scatter at indices 2^32 from a position equal eager's"
+         ~examples:[ [| far + 1; 1 - far; 2; -1; 4; far |] ]
+         (Gen.array ~size:(Gen.constant 6) far_index)
+         (fun idx ->
+           let indices =
+             Nx.create Nx.int64 [| 6 |] (Array.map Int64.of_int idx)
+           in
+           let t = Nx.reshape [| 4; 2 |] (Nx.arange_f Nx.float32 1. 9. 1.) in
+           let scatter mode indices t =
+             Nx.scatter ~mode ~axis:0
+               ~indices:
+                 (Nx.broadcast_to [| 6; 2 |] (Nx.reshape [| 6; 1 |] indices))
+               ~values:
+                 (Nx.reshape [| 6; 2 |] (Nx.arange_f Nx.float32 10. 22. 1.))
+               t
+           in
+           List.iter
+             (fun (msg, f) ->
+               equal ~msg floats (f indices t)
+                 (Rune.jit
+                    Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+                    f indices t))
+             [
+               ("take", fun indices t -> Nx.take ~axis:0 ~indices t);
+               ("scatter set", scatter `Set);
+               ("scatter add", scatter `Add);
+             ]);
        test "a zero-size result is an empty tensor" (fun () ->
            let a = Nx.zeros Nx.float32 [| 0; 3 |] in
            let r = Rune.jit' poly a in
@@ -1766,6 +1876,26 @@ let scans =
           equal close (f (grid 3 2)) (Rune.jit' f (grid 3 2)));
       staged Nx.Placement.host "a scan on the host runs its step once per row"
         ~steps:Fun.id ~init:(zeros 3) sum (rows 5 3);
+      test "a scan over rows computed from constants alone equals eager"
+        (fun () ->
+          List.iter
+            (fun rows ->
+              let f c =
+                Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.tensor
+                  ~f:(fun c l -> (Nx.add c (Nx.sum l), Nx.mul_s l 10l))
+                  ~init:c (rows ())
+              in
+              let g =
+                Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) f
+              in
+              equal
+                (pair (tensor int32) (tensor int32))
+                (f (Nx.zeros Nx.int32 [||]))
+                (g (Nx.zeros Nx.int32 [||])))
+            [
+              (fun () -> Nx.cumsum (Nx.ones Nx.int32 [| 8 |]));
+              (fun () -> Nx.cumsum ~axis:0 (Nx.ones Nx.int32 [| 8; 5 |]));
+            ]);
       test "a gradient through a scan equals eager's" (fun () ->
           let f xs = Nx.sum (snd (cumulative xs)) in
           equal close

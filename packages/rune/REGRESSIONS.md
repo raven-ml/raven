@@ -715,6 +715,13 @@ them.
 | old: test_jit.ml values on the disk › borrowed storage is never lent or written | a consumed disk value | J › values on the disk › a consumed value on the disk is copied, and its file unchanged |
 | old: test_jit.ml values on the disk › the file opened is read, not the one at its path now | the file opened | J › values on the disk › the file opened is read, not the one at its path now |
 | old: test_jit.ml values on the disk › a value not aligned to its elements is read into the device | a disk value not aligned to its elements | J › values on the disk › a value on the disk not aligned to its elements is read |
+| old: test_jit.ml jit basics › a bitcast between widths is refused | a bitcast between widths | J › values › a bitcast between widths reads the bytes eager reads (nx bitcasts between widths, and so does the compiled call) |
+| old: test_jit.ml composition › a scan reads rows computed from constants alone | rows made of constants | J › scans › a scan over rows computed from constants alone equals eager |
+| old: test_jit.ml cumulative reductions › arange inside a compiled function equals eager arange › * | arange inside a compiled call | J › values › an arange inside a compiled call equals eager's › *; J › values › an int32 and a float32 arange inside a compiled call equal eager's |
+| old: test_jit.ml cumulative reductions › a bfloat16 arange inside a compiled function equals eager | a bfloat16 arange | J › values › a bfloat16 arange from 2^40 inside a compiled call equals eager's (an expected failure: the compiled cast rounds twice) |
+| old: test_jit.ml indexed access › gather and scatter under jit agree with eager at indices beyond ±2^32 | indices 2^32 from a position | J › values › gather and scatter at indices 2^32 from a position equal eager's |
+| old: test_jit.ml indexed access › top_k puts NaN first, as eager does | top_k and NaN | J › values › top_k puts NaN first, as eager does |
+| old: test_jit.ml placement › a read of a traced value names its function | reading a traced value | J › errors › reading a traced value raises Jit_error |
 | old: test_jit.ml linear algebra › a wide triangular solve takes the blocked path | a triangular solve of many right-hand sides | J › swept › values › a triangular solve of 80 right-hand sides solves its system › lower; upper, transposed, unit diagonal |
 | old: test_jit.ml values on the disk › a value larger than a chunk is borrowed | a large mapped value | dropped: `Nx_device.Buffer` borrowing (`nx runtime devices`) |
 
@@ -769,6 +776,7 @@ The suite is `Rune_next.Quant` (`next/test/test_quant.ml`), written `Q` below: t
 | old: test_quant.ml Law 2 › without ids | products without ids | Q › values › compiled, a product is eager's › without ids, matrices; without ids, batch axes broadcast; without ids, a vector |
 | old: test_quant.ml Law 2 › fewer positions than experts | gathered experts, and positions that select none | Q › values › compiled, a product is eager's › fewer positions than experts; ids outside the experts, over a vector; a lane of experts per batch row |
 | old: test_quant.ml Law 2 › as many positions as experts or more | every expert selected | Q › values › compiled, a product is eager's › as many positions as experts or more |
+| old: test_quant.ml Law 2 › ids 2^32 from an expert select none, on every form | ids 2^32 from an expert | Q › values › compiled, a product is eager's › ids 2^32 from an expert; Q › metal › on Metal, a product is eager's › ids 2^32 from an expert |
 | old: test_quant.ml Law 2 › grouped | many routes of one row | Q › values › compiled, a product is eager's › many routes of one row |
 | old: test_quant.ml Law 2 › transposed | the transposed product | Q › values › compiled, a product is eager's › transposed |
 | old: test_quant.ml Law 2 › the largest scales | infinite values | Q › values › compiled, a product is eager's › the largest scales |
