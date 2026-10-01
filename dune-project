@@ -111,7 +111,12 @@
     :with-test
     (>= 0.2.0)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper :with-test)
+  ; examples
+  (nx
+   (and
+    (= :version)
+    :with-dev-setup)))
  (tags
   (tokenization bpe wordpiece subword-tokenization language-models)))
 
@@ -131,6 +136,10 @@
    (= :version))
   bytesrw
   (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (ppx_windtrap
    (and
     :with-test
     (>= 0.2.0)))
@@ -157,6 +166,11 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
@@ -210,20 +224,26 @@
    (= :version))
   (rune
    (= :version))
-  ; vega is not a library dependency: kaun composes with it in user
-  ; code (tests and examples only).
+  logs
+  jsont
+  bytesrw
+  ; vega is not a library dependency: users compose it with kaun in their
+  ; own code, as kaun's tests, benches and docs do.
   (vega
    (and
     (= :version)
     :with-test))
-  logs
-  jsont
-  bytesrw
   (windtrap
    (and
     :with-test
     (>= 0.2.0)))
-  (thumper :with-test))
+  (mdx :with-test)
+  (thumper :with-test)
+  ; examples
+  (brot
+   (and
+    (= :version)
+    :with-dev-setup)))
  (tags
   (machine-learning deep-learning neural-networks)))
 
@@ -243,6 +263,11 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (tags
   (compiler gpu tensor-computation)))
@@ -267,6 +292,7 @@
    (and
     :with-test
     (>= 0.2.0)))
+  (mdx :with-test)
   (thumper :with-test))
  (tags
   (optimization machine-learning gradient-descent)))
@@ -289,7 +315,25 @@
   (windtrap
    (and
     :with-test
-    (>= 0.2.0))))
+    (>= 0.2.0)))
+  (mdx :with-test)
+  ; examples
+  (nx
+   (and
+    (= :version)
+    :with-dev-setup))
+  (rune
+   (and
+    (= :version)
+    :with-dev-setup))
+  (vega
+   (and
+    (= :version)
+    :with-dev-setup))
+  (kaun
+   (and
+    (= :version)
+    :with-dev-setup)))
  (tags
   (experiment-tracking machine-learning monitoring)))
 
@@ -310,7 +354,11 @@
    (and
     :with-test
     (>= 0.2.0)))
-  (mdx :with-test))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (thumper :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
 
@@ -329,6 +377,7 @@
   bytesrw
   jsont
   mosaic
+  matrix
   (windtrap
    (and
     :with-test

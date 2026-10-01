@@ -20,6 +20,7 @@ depends: [
   "windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}
   "thumper" {with-test}
+  "hugin" {>= "1.0.0~alpha3" & with-dev-setup}
   "odoc" {with-doc}
 ]
 build: [

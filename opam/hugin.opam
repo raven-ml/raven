@@ -16,7 +16,8 @@ depends: [
   "nx" {= version}
   "compress" {= version}
   "windtrap" {with-test & >= "0.2.0"}
-  "mdx" {with-test}
+  "ppx_windtrap" {with-test & >= "0.2.0"}
+  "thumper" {with-test}
   "odoc" {with-doc}
 ]
 build: [

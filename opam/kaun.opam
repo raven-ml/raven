@@ -16,12 +16,14 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {= version}
   "rune" {= version}
-  "vega" {= version & with-test}
   "logs"
   "jsont"
   "bytesrw"
+  "vega" {= version & with-test}
   "windtrap" {with-test & >= "0.2.0"}
+  "mdx" {with-test}
   "thumper" {with-test}
+  "brot" {= version & with-dev-setup}
   "odoc" {with-doc}
 ]
 build: [

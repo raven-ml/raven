@@ -40,6 +40,11 @@
     :with-test
     (>= 0.2.0)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper :with-test)
+  ; examples
+  (hugin
+   (and
+    (>= 1.0.0~alpha3)
+    :with-dev-setup)))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))

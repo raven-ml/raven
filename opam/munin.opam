@@ -20,6 +20,11 @@ depends: [
   "mosaic"
   "matrix"
   "windtrap" {with-test & >= "0.2.0"}
+  "mdx" {with-test}
+  "nx" {= version & with-dev-setup}
+  "rune" {= version & with-dev-setup}
+  "vega" {= version & with-dev-setup}
+  "kaun" {= version & with-dev-setup}
   "odoc" {with-doc}
 ]
 build: [

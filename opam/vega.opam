@@ -17,6 +17,7 @@ depends: [
   "nx" {= version}
   "rune" {= version & with-test}
   "windtrap" {with-test & >= "0.2.0"}
+  "mdx" {with-test}
   "thumper" {with-test}
   "odoc" {with-doc}
 ]

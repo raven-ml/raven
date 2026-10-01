@@ -40,6 +40,19 @@
     :with-test
     (>= 0.2.0)))
   (mdx :with-test)
-  (thumper :with-test))
+  (thumper :with-test)
+  ; examples
+  (kaun
+   (and
+    (>= 1.0.0~alpha3)
+    :with-dev-setup))
+  (rune
+   (and
+    (>= 1.0.0~alpha3)
+    :with-dev-setup))
+  (vega
+   (and
+    (>= 1.0.0~alpha3)
+    :with-dev-setup)))
  (tags
   (reinforcement-learning machine-learning environments)))

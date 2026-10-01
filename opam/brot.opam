@@ -24,6 +24,7 @@ depends: [
   "windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}
   "thumper" {with-test}
+  "nx" {= version & with-dev-setup}
   "odoc" {with-doc}
 ]
 build: [
