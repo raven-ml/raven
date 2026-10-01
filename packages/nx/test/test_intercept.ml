@@ -291,19 +291,218 @@ let cases () =
     C (Place (Nx.Placement.device Nx_test.Devices.d1, x));
   ]
 
+(* Operations that change their operands' shapes, drawn over shapes with empty
+   axes and over scalars wherever the operation takes them. *)
+
+let dim = Gen.int_range 0 4
+let shape r = Gen.array ~size:(Gen.constant r) dim
+let ranked lo hi = Gen.bind (Gen.int_range lo hi) shape
+let zeros s = Nx.zeros Nx.float32 s
+let complex s = Nx.zeros Nx.complex64 s
+
+(* Distinct axes of a rank [r] value, in any order, at least [least] of them. *)
+let axes ?(least = 0) r =
+  let open Gen in
+  let* chosen =
+    such_that
+      (fun l -> List.length l >= least)
+      (subsequence (List.init r Fun.id))
+  in
+  map Array.of_list (permutation chosen)
+
+(* A window over [n] spatial axes: its kernel, stride, dilation and padding, and
+   spatial sizes that hold at least one window. *)
+let window n =
+  let open Gen in
+  let+ kernel = array ~size:(constant n) (int_range 1 3)
+  and+ stride = array ~size:(constant n) (int_range 1 2)
+  and+ dilation = array ~size:(constant n) (int_range 1 2)
+  and+ padding = array ~size:(constant n) (pair (int_range 0 1) (int_range 0 1))
+  and+ extra = array ~size:(constant n) (int_range 0 3) in
+  let sizes =
+    Array.init n (fun i ->
+        let before, after = padding.(i) in
+        Int.max 0
+          ((dilation.(i) * (kernel.(i) - 1)) + 1 - before - after + extra.(i)))
+  in
+  (kernel, stride, dilation, padding, sizes)
+
+(* Every generator of [gs], drawn in order. *)
+let rec all = function
+  | [] -> Gen.constant []
+  | g :: gs ->
+      let open Gen in
+      let+ x = g and+ xs = all gs in
+      x :: xs
+
+let generated =
+  let open Gen in
+  let pad =
+    let* s = ranked 0 3 in
+    let+ padding =
+      array
+        ~size:(constant (Array.length s))
+        (pair (int_range 0 2) (int_range 0 2))
+    in
+    C (Pad (padding, 0., zeros s))
+  in
+  let cat =
+    let* s = ranked 1 3 in
+    let* axis = int_range 0 (Array.length s - 1) in
+    let+ sizes = list ~size:(int_range 1 3) dim in
+    C
+      (Cat
+         ( axis,
+           List.map
+             (fun n ->
+               zeros (Array.mapi (fun i d -> if i = axis then n else d) s))
+             sizes ))
+  in
+  let reduce =
+    let* s = ranked 0 3 in
+    let+ axes = axes (Array.length s) in
+    C (Reduce (Sum, axes, zeros s))
+  in
+  let arg_reduce =
+    let* s = ranked 1 3 in
+    let s = Array.map (Int.max 1) s in
+    let+ axis = int_range 0 (Array.length s - 1) in
+    C (Arg_reduce (Argmax, axis, zeros s))
+  in
+  let matmul =
+    let* batch = ranked 0 2 in
+    let* m, k, n = triple dim dim dim in
+    let operand_batch =
+      let* kept = int_range 0 (Array.length batch) in
+      let+ ones = array ~size:(constant kept) bool in
+      Array.mapi
+        (fun i one -> if one then 1 else batch.(Array.length batch - kept + i))
+        ones
+    in
+    let+ ba = operand_batch and+ bb = operand_batch in
+    C
+      (Matmul
+         (zeros (Array.append ba [| m; k |]), zeros (Array.append bb [| k; n |])))
+  in
+  let unfold =
+    let* lead = ranked 0 2 in
+    let+ kernel_size, stride, dilation, padding, sizes =
+      bind (int_range 1 2) window
+    in
+    C
+      (Unfold
+         {
+           kernel_size;
+           stride;
+           dilation;
+           padding;
+           x = zeros (Array.append lead sizes);
+         })
+  in
+  let fold =
+    let* lead = ranked 0 1 in
+    let+ kernel_size, stride, dilation, padding, output_size =
+      bind (int_range 1 2) window
+    in
+    let windows =
+      Array.mapi
+        (fun i d ->
+          let before, after = padding.(i) in
+          (d + before + after - ((dilation.(i) * (kernel_size.(i) - 1)) + 1))
+          / stride.(i)
+          + 1)
+        output_size
+    in
+    let product = Array.fold_left ( * ) 1 in
+    C
+      (Fold
+         {
+           output_size;
+           kernel_size;
+           stride;
+           dilation;
+           padding;
+           x =
+             zeros
+               (Array.append lead [| product kernel_size; product windows |]);
+         })
+  in
+  let rfft =
+    let* s = ranked 1 3 in
+    let s = Array.map (Int.max 1) s in
+    let+ axes = axes ~least:1 (Array.length s) in
+    C (Rfft { dtype = Nx.complex64; axes; x = zeros s })
+  in
+  let irfft =
+    let* s = ranked 1 3 in
+    let s = Array.map (Int.max 2) s in
+    let* axes = axes ~least:1 (Array.length s) in
+    let+ last = option (int_range 1 6) in
+    let sizes =
+      Option.map
+        (fun n ->
+          Array.mapi
+            (fun i a -> if i = Array.length axes - 1 then n else s.(a))
+            axes)
+        last
+    in
+    C (Irfft { dtype = Nx.float32; axes; s = sizes; x = complex s })
+  in
+  let move =
+    let* s = ranked 0 3 in
+    let r = Array.length s in
+    let+ m =
+      one_of
+        [
+          constant (E.Reshape [| Array.fold_left ( * ) 1 s |]);
+          map
+            (fun order -> E.Permute (Array.of_list order))
+            (permutation (List.init r Fun.id));
+          map
+            (fun limits -> E.Shrink (Array.of_list limits))
+            (all
+               (List.map
+                  (fun d ->
+                    let* lo = int_range 0 d in
+                    let+ hi = int_range lo d in
+                    (lo, hi))
+                  (Array.to_list s)));
+        ]
+    in
+    C (Move (zeros s, m))
+  in
+  let window_move =
+    let* s = ranked 1 3 in
+    let s = Array.map (Int.max 1) s in
+    let* axis = int_range 0 (Array.length s - 1) in
+    let* size = int_range 1 s.(axis) in
+    let+ step = int_range 1 2 in
+    C (Move (zeros s, Window { axis; size; step }))
+  in
+  with_pp
+    (fun ppf (C op) -> E.pp ppf op)
+    (one_of
+       [
+         pad;
+         cat;
+         reduce;
+         arg_reduce;
+         matmul;
+         unfold;
+         fold;
+         rfft;
+         irfft;
+         move;
+         window_move;
+       ])
+
 let describing =
   group "Op.shape and Op.dtype"
     [
       test "are the shape and dtype of each operation's result" (fun () ->
-          List.iter
-            (fun (C op) ->
-              let msg = E.name op in
-              let r = E.eval op in
-              equal ~msg (array int) (Nx.shape r) (E.shape op);
-              equal ~msg string
-                (Nx_dtype.to_string (Nx.dtype r))
-                (Nx_dtype.to_string (E.dtype op)))
-            (cases ()));
+          List.iter (fun (C op) -> Nx_test.described op (E.eval op)) (cases ()));
+      prop "are the shape and dtype of each drawn operation's result" generated
+        (fun (C op) -> Nx_test.described op (E.eval op));
       test "refuse a concatenation of no value" (fun () ->
           raises_match Exn.invalid_arg (fun () ->
               E.shape (Cat (0, ([] : (float, Nx.float32_elt) Nx.t list))));

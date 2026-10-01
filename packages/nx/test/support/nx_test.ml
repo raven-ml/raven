@@ -24,6 +24,47 @@ let close ?(abs = 0.) ~rel () =
 let raises_invalid_arg f =
   raises_match Exn.invalid_arg (fun () -> ignore (f ()))
 
+(* [described op r] checks that [r], [op]'s result, has the shape and dtype
+   [Nx.Op.shape] and [Nx.Op.dtype] give when it is one value. *)
+let described : type r. r Nx.Op.t -> r -> unit =
+ fun op r ->
+  let value (type a b) (op : (a, b) Nx.t Nx.Op.t) (r : (a, b) Nx.t) =
+    let msg = Format.asprintf "%a" Nx.Op.pp op in
+    equal ~msg (array int) (Nx.shape r) (Nx.Op.shape op);
+    equal ~msg string
+      (Nx_dtype.to_string (Nx.dtype r))
+      (Nx_dtype.to_string (Nx.Op.dtype op))
+  in
+  match op with
+  | Unary _ -> value op r
+  | Binary _ -> value op r
+  | Compare _ -> value op r
+  | Where _ -> value op r
+  | Reduce _ -> value op r
+  | Scan _ -> value op r
+  | Arg_reduce _ -> value op r
+  | Sort _ -> value op r
+  | Argsort _ -> value op r
+  | Pad _ -> value op r
+  | Cat _ -> value op r
+  | Convert _ -> value op r
+  | Threefry _ -> value op r
+  | Gather _ -> value op r
+  | Scatter _ -> value op r
+  | Update _ -> value op r
+  | Unfold _ -> value op r
+  | Fold _ -> value op r
+  | Matmul _ -> value op r
+  | Fft _ -> value op r
+  | Rfft _ -> value op r
+  | Irfft _ -> value op r
+  | Contiguous _ -> value op r
+  | Cholesky _ -> value op r
+  | Solve_triangular _ -> value op r
+  | Move _ -> value op r
+  | Place _ -> value op r
+  | Qr _ | Lu _ | Svd _ | Eig _ | Eigh _ | Read _ -> ()
+
 let pp_shape ppf s =
   Format.fprintf ppf "[%a]"
     (Format.pp_print_seq
