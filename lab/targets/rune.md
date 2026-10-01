@@ -20,6 +20,11 @@ compile a computation graph.
   identical everywhere (a check or bless only ever writes `PATH.corrected`;
   acceptance is the `mv`), and `dune exec` would need a `--` separator
   before thumper's flags while adding nothing.
+  On kimchi (x86 Linux, 6 performance and 8 efficiency cores) the
+  committed section was recorded pinned to the performance cores:
+  run every gate there as `DEV=CPU taskset -c 0-5 <BENCH> ...`. `DEV=CPU`
+  keeps the jitted rows on the CPU; without it, rune runs them on the
+  first GPU that opens.
 
 ## In scope (may edit)
 

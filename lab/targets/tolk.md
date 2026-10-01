@@ -29,7 +29,10 @@ so a regression localizes to one stage.
   simplest and what this program assumes: the corrected-file contract is
   identical everywhere (a check or bless only ever writes `PATH.corrected`;
   acceptance is the `mv`), and `dune exec` would need a `--` separator
-  before thumper's flags while adding nothing. Example gate run:
+  before thumper's flags while adding nothing. On kimchi (x86 Linux, 6
+  performance and 8 efficiency cores) the committed section was recorded
+  pinned to the performance cores: prefix every gate there with
+  `taskset -c 0-5`. Example gate run:
 
   ```
   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected

@@ -21,6 +21,9 @@ materializations).
   acceptance is the `mv`), and `dune exec` would need a `--` separator
   before thumper's flags while adding nothing. Build with the dune command
   above, then invoke the exe path with thumper's flags appended (no `--`).
+  On kimchi (x86 Linux, 6 performance and 8 efficiency cores) the
+  committed section was recorded pinned to the performance cores:
+  run every gate there as `taskset -c 0-5 <BENCH> ...`.
 
 One executable per session. Other nx suites you may target instead (each its own
 session, same exe-path rule):
