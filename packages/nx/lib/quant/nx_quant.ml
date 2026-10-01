@@ -81,11 +81,17 @@ end
 
 let ptree = Nx.Ptree.instantiate (module Structure)
 
-(* Decoding. A byte holds two e2m1 codes, the low nibble first; a code is a sign
-   bit over the magnitudes 0, 0.5, 1, 1.5, 2, 3, 4 and 6. Every value, scaled,
-   is exact at float32 barring overflow, so the table of a byte's two values and
-   the table of the 256 scales, whose products are rounded once, give the
-   format's values. nx's exp2 is not exact at integer arguments. *)
+(* Decoding. A byte holds two e2m1 codes, the low nibble first: a sign bit, two
+   exponent bits and a mantissa bit, the magnitudes 0, 0.5, 1, 1.5, 2, 3, 4 and
+   6. A scale byte is an e8m0 exponent, 2^(s - 127), with 255 a NaN. Every
+   value, scaled, is exact at float32 barring overflow, and the product is
+   rounded once.
+
+   Eagerly, two table lookups decode a chunk in two passes of the C backend. In
+   a composition, the values are assembled as float32 bits with integer
+   operations: a compiled product then reads the code bytes themselves, where a
+   lookup's int64 index would be stored between gathering the experts and
+   multiplying. *)
 
 let byte_values =
   let e2m1 = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |] in
@@ -100,16 +106,13 @@ let e8m0 =
     (Array.init 256 (fun s ->
          if s = 255 then Float.nan else Float.ldexp 1.0 (s - 127)))
 
-(* [values codes scales] is the weight of contiguous [codes] [[| ...; n; k / 2
-   |]] and [scales] [[| ...; n; k / 32 |]] at float32, [[| ...; n; k |]]: each
-   byte's two values times its group's scale, looked up in the tables. *)
-let values codes scales =
+(* [scaled codes v scale] is the weight of [codes] [[| ...; n; k / 2 |]] from
+   their values [v], two per byte, and their groups' scales: each value times
+   its group's scale, [[| ...; n; k |]]. *)
+let scaled codes v scale =
   let s = Nx.shape codes in
   let r = Array.length s in
   let lead = Array.sub s 0 (r - 1) and k = 2 * s.(r - 1) in
-  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] t) in
-  let v = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
-  let scale = Nx.take ~indices:(indices scales) e8m0 in
   let groups = Array.append lead [| k / 32 |] in
   Nx.reshape
     (Array.append lead [| k |])
@@ -117,11 +120,52 @@ let values codes scales =
        (Nx.reshape (Array.append groups [| 32 |]) v)
        (Nx.reshape (Array.append groups [| 1 |]) scale))
 
+(* [looked_up codes scales] is the weight of contiguous [codes] and [scales] [[|
+   ...; n; k / 32 |]] at float32, by table. *)
+let looked_up codes scales =
+  let indices t = Nx.cast Nx.int64 (Nx.reshape [| -1 |] t) in
+  scaled codes
+    (Nx.take ~axis:0 ~indices:(indices codes) byte_values)
+    (Nx.take ~indices:(indices scales) e8m0)
+
+(* [code_bits q] is the float32 bits of the e2m1 codes [q], at most 15. An
+   exponent of 0 is 0 or 0.5; another, [e], is 2^(e - 1) (1 + m / 2). *)
+let code_bits q =
+  let k = Nx.scalar_like q in
+  let e = Nx.bitwise_and (Nx.rshift q 1) (k 3l)
+  and m = Nx.bitwise_and q (k 1l) in
+  let sign = Nx.lshift (Nx.bitwise_and q (k 8l)) 28 in
+  let magnitude =
+    Nx.where (Nx.equal_s e 0l)
+      (Nx.mul_s m (Int32.shift_left 126l 23))
+      (Nx.bitwise_or (Nx.lshift (Nx.add_s e 126l) 23) (Nx.lshift m 22))
+  in
+  Nx.bitwise_or sign magnitude
+
+(* [scale_bits s] is the float32 bits of the e8m0 scales [s]: 2^-127, a
+   subnormal, at 0, and NaN at 255. *)
+let scale_bits s =
+  let k = Nx.scalar_like s in
+  Nx.where (Nx.equal_s s 0l) (k 0x00400000l)
+    (Nx.where (Nx.equal_s s 255l) (k 0x7FC00000l) (Nx.lshift s 23))
+
+(* [values codes scales] is the weight of contiguous [codes] and [scales] at
+   float32, from their bits. *)
+let values codes scales =
+  let bytes = Nx.cast Nx.uint32 codes in
+  let nibbles =
+    Nx.stack ~axis:(-1)
+      [ Nx.bitwise_and bytes (Nx.scalar_like bytes 15l); Nx.rshift bytes 4 ]
+  in
+  scaled codes
+    (Nx.bitcast Nx.float32 (code_bits nibbles))
+    (Nx.bitcast Nx.float32 (scale_bits (Nx.cast Nx.uint32 scales)))
+
 (* [decode codes scales] is rows of a weight decoded on the host: rows of a
    placed weight are read there first, so those of a split one meet no value on
    other devices. *)
 let decode codes scales =
-  values
+  looked_up
     (Nx.contiguous (Nx.place Nx.Placement.host codes))
     (Nx.contiguous (Nx.place Nx.Placement.host scales))
 
@@ -413,8 +457,9 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
   end
 
 (* Compositions. Under a transformation, an operation on a weight is nx's
-   operations, which the transformation sees: the values by table, the experts
-   [ids] selects gathered from the packed parts, and one product. *)
+   operations, which the transformation sees: the experts [ids] selects gathered
+   from the packed parts, their values assembled from the bytes, and one
+   product. *)
 
 let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
     (float, b) Nx.t =

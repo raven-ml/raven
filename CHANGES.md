@@ -2971,6 +2971,10 @@ thread.
 
 ### Nx
 
+- A compiled `Nx_quant.apply` or `Nx_quant.dequant` decodes mxfp4 codes and
+  scales with integer operations on their bytes. It looked them up in tables
+  by an `int64` index, which a mixture of experts stored at 8 bytes per code
+  byte between gathering the experts and multiplying.
 - `nx` no longer depends on `bytesrw`. `Nx_io.gunzip` still decompresses in
   bounded memory, through a `Compress_deflate.Decoder`.
 - Add `Nx.check ok msg`, which raises `Invalid_argument (msg i)` at the index

@@ -498,4 +498,39 @@ let parity =
               a);
     ]
 
-let () = exit @@ run "lower_index" [ assembly; indexed; windows; parity ]
+(* Quantised products
+
+   A product with a quantised weight gathers the codes of the experts its ids
+   select, decodes them and multiplies. The decoding is integer operations on
+   the code bytes: no kernel stores a value wider than the bytes and the decoded
+   floats, such as an index into a table. *)
+
+let quantised =
+  let codes =
+    Nx.init Nx.uint8 [| 8; 16; 32 |] (fun i -> (i.(1) * 37) + i.(2))
+  in
+  let scales = Nx.full Nx.uint8 [| 8; 16; 2 |] 127 in
+  let w = Nx_quant.mxfp4 ~scales codes in
+  let stores_int64 k =
+    List.exists
+      (fun u ->
+        Tolk.Op.equal (Tolk.Ops.op u) Store
+        && Tolk.Dtype.equal (Tolk.Ops.dtype (Tolk.Ops.nth u 1)) Int64)
+      (Tolk.Ops.toposort k)
+  in
+  group "quantised products"
+    [
+      test "a routed product stores no int64" (fun () ->
+          let ids = Nx.create Nx.int64 [| 1; 2 |] [| 3L; 5L |] in
+          let x = Nx.ones Nx.float32 [| 1; 1; 3; 64 |] in
+          let s = scope () in
+          let y =
+            within s (fun () ->
+                Nx_quant.apply ~ids:(argument s ids) w (argument s x))
+          in
+          is_false
+            (List.exists stores_int64 (Tolk.Ops.src (Programs.kernels y))));
+    ]
+
+let () =
+  exit @@ run "lower_index" [ assembly; indexed; windows; parity; quantised ]

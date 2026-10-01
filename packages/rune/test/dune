@@ -110,6 +110,7 @@
   nx
   nx.dtype
   nx.device
+  nx.quant
   tolk)
  (deps
   (glob_files golden/lower_arith/*.golden)

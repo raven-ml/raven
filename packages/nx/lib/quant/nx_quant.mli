@@ -15,9 +15,9 @@
     handler takes the effect, they decode one bounded chunk at a time, whatever
     the weight's size. Inside {!Nx.Op.intercept}, where a transformation or a
     compiled call interprets operations and no handler takes the effect, they
-    are compositions of nx's operations: table lookups of the values, a gather
-    of the experts [ids] selects and one product, which the interpreter sees
-    whole.
+    are compositions of nx's operations: the values assembled from the code
+    bytes with integer operations, a gather of the experts [ids] selects and
+    one product, which the interpreter sees whole.
 
     A transformation that runs those operations eagerly, such as a gradient
     outside a compiled call, holds every matrix the product gathers, decoded at
