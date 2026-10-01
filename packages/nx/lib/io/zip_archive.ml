@@ -8,6 +8,7 @@
   --------------------------------------------------------------------------*)
 
 open Bigarray
+module Crc32 = Compress_deflate.Crc32
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 type method_ = Store | Deflate
@@ -16,7 +17,7 @@ type entry = {
   name : string;
   method_ : method_;
   flags : int;
-  crc32 : int32;
+  crc32 : Crc32.t;
   compressed_size : int;
   uncompressed_size : int;
   local_offset : int;
@@ -133,16 +134,6 @@ let u32 data off =
   if value > Int64.of_int max_int then
     error "ZIP value exceeds the OCaml integer range";
   Int64.to_int value
-
-let i32_bits data off =
-  let open Int32 in
-  logor
-    (of_int (byte data off))
-    (logor
-       (shift_left (of_int (byte data (off + 1))) 8)
-       (logor
-          (shift_left (of_int (byte data (off + 2))) 16)
-          (shift_left (of_int (byte data (off + 3))) 24)))
 
 let signature data off expected =
   if u32_i64 data off <> expected then
@@ -263,7 +254,7 @@ let parse_entries data ~count ~central_size ~central_offset =
       in
       if flags land lnot allowed_flags <> 0 then
         error "unsupported ZIP flags 0x%04x" flags;
-      let crc32 = i32_bits data (off + 16) in
+      let crc32 = u32 data (off + 16) in
       let compressed32 = u32_i64 data (off + 20) in
       let uncompressed32 = u32_i64 data (off + 24) in
       let name_len = u16 data (off + 28) in
@@ -343,7 +334,7 @@ let validate_local_entry data ~central_offset entry =
       else (Int64.to_int compressed32, Int64.to_int uncompressed32, 0)
     in
     if
-      i32_bits data (off + 14) <> entry.crc32
+      u32 data (off + 14) <> entry.crc32
       || local_compressed <> entry.compressed_size
       || local_uncompressed <> entry.uncompressed_size
     then error "ZIP local metadata disagrees with central entry %S" entry.name;
@@ -362,7 +353,7 @@ let validate_local_entry data ~central_offset entry =
         || size_bytes > central_offset - descriptor - 4
       then None
       else
-        let crc = i32_bits data descriptor in
+        let crc = u32 data descriptor in
         let compressed, uncompressed =
           if zip64 then (u64 data (descriptor + 4), u64 data (descriptor + 12))
           else (u32 data (descriptor + 4), u32 data (descriptor + 8))
@@ -486,28 +477,30 @@ let read_npy (archive : in_file) name =
         header.data_offset + header.data_size <> src_len
         || entry.uncompressed_size <> src_len
       then error "NPY size mismatch in ZIP entry %S" entry.name;
-      let crc = Nx_io_codec.crc32 archive.data ~off:src_off ~len:src_len in
-      if crc <> entry.crc32 then
+      let data = Array1.sub archive.data src_off src_len in
+      if Crc32.bigbytes data <> entry.crc32 then
         error "CRC-32 mismatch in ZIP entry %S" entry.name;
-      Npy.materialize header
-        (Npy.Stored { src = archive.data; off = src_off + header.data_offset })
-      |> fst
+      Npy.materialize header ~src:archive.data
+        ~off:(src_off + header.data_offset)
   | Deflate ->
-      let prefix =
-        Nx_io_codec.inflate_raw_prefix archive.data ~off:src_off ~len:src_len
-          ~max_output:(Npy.max_header_size + 12)
-      in
-      let header = Npy.parse_header prefix ~off:0 ~len:(Array1.dim prefix) in
+      (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
+      if entry.uncompressed_size / 1032 > src_len then
+        error "ZIP entry %S declares more data than its DEFLATE data holds"
+          entry.name;
+      let data = Array1.create int8_unsigned c_layout entry.uncompressed_size in
+      (match
+         Compress_deflate.Deflate.decompress
+           (Array1.sub archive.data src_off src_len)
+           data
+       with
+      | Ok () -> ()
+      | Error e -> error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
+      if Crc32.bigbytes data <> entry.crc32 then
+        error "CRC-32 mismatch in ZIP entry %S" entry.name;
+      let header = Npy.parse_header data ~off:0 ~len:(Array1.dim data) in
       if header.data_offset + header.data_size <> entry.uncompressed_size then
         error "NPY size mismatch in ZIP entry %S" entry.name;
-      let packed, crc =
-        Npy.materialize header
-          (Npy.Deflated
-             { src = archive.data; src_off; src_len; skip = header.data_offset })
-      in
-      if crc <> Some entry.crc32 then
-        error "CRC-32 mismatch in ZIP entry %S" entry.name;
-      packed
+      Npy.view_or_materialize header ~src:data ~off:header.data_offset
 
 let le16 value =
   String.init 2 (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))
@@ -519,12 +512,6 @@ let le32_i64 value =
            (Int64.logand (Int64.shift_right_logical value (8 * i)) 0xffL)))
 
 let le32 value = le32_i64 (Int64.of_int value)
-
-let le32_bits value =
-  String.init 4 (fun i ->
-      Char.chr
-        (Int32.to_int
-           (Int32.logand (Int32.shift_right_logical value (8 * i)) 0xffl)))
 
 let le64 value =
   let value = Int64.of_int value in
@@ -566,16 +553,64 @@ let worst_deflate_size size =
 
 let sample_size = 64 * 1024
 
-let choose_method (Npy.E encoded) =
-  let available = max 0 (sample_size - String.length encoded.header) in
-  let data_size = min encoded.data_size available in
+(* The first [n] bytes of [header] followed by [data]. *)
+let prefix (encoded : Npy.encoded) n =
+  let header = encoded.header in
+  let b = Bytes.create n in
+  let from_header = Int.min n (String.length header) in
+  Bytes.blit_string header 0 b 0 from_header;
+  for i = from_header to n - 1 do
+    Bytes.unsafe_set b i
+      (Char.unsafe_chr
+         (Array1.unsafe_get encoded.data (i - String.length header)))
+  done;
+  Bytes.unsafe_to_string b
+
+(* An entry is deflated when deflate shrinks its first 64 KiB. *)
+let choose_method (encoded : Npy.encoded) =
+  let size = String.length encoded.header + Array1.dim encoded.data in
+  let sample = prefix encoded (Int.min sample_size size) in
   let compressed =
-    Nx_io_codec.deflate_raw ~prefix:encoded.header encoded.data ~off:0
-      ~len:data_size
+    Bytesrw.Bytes.Writer.filter_string
+      [ Compress_deflate.Deflate.compress_writes () ]
+      sample
   in
-  if Array1.dim compressed < String.length encoded.header + data_size then
-    Deflate
-  else Store
+  if String.length compressed < String.length sample then Deflate else Store
+
+(* Writes [encoded] to the archive with [method_]. Returns its CRC-32 and its
+   size as written. *)
+let write_entry archive method_ (encoded : Npy.encoded) =
+  let size = Array1.dim encoded.data in
+  match method_ with
+  | Store ->
+      write_string archive.fd encoded.header;
+      Nx_io_codec.write_all archive.fd encoded.data ~off:0 ~len:size;
+      let crc =
+        Crc32.slice (Bytesrw.Bytes.Slice.of_string_or_eod encoded.header)
+      in
+      (Crc32.bigbytes ~crc encoded.data, String.length encoded.header + size)
+  | Deflate ->
+      let open Bytesrw in
+      let w = Bytesrw_unix.bytes_writer_of_fd ~pos:0 archive.fd in
+      let crc = ref 0 in
+      let z = Compress_deflate.Deflate.compress_writes () ~eod:false w in
+      let z = Bytes.Writer.tap (fun s -> crc := Crc32.slice ~crc:!crc s) z in
+      Bytes.Writer.write_string z encoded.header;
+      let chunk = Bytes.create sample_size in
+      let rec copy first =
+        if first < size then begin
+          let n = Int.min sample_size (size - first) in
+          for i = 0 to n - 1 do
+            Bytes.unsafe_set chunk i
+              (Char.unsafe_chr (Array1.unsafe_get encoded.data (first + i)))
+          done;
+          Bytes.Writer.write z (Bytes.Slice.make chunk ~first:0 ~length:n);
+          copy (first + n)
+        end
+      in
+      copy 0;
+      Bytes.Writer.write_eod z;
+      (!crc, Bytes.Writer.pos w)
 
 let add_npy archive name packed =
   if archive.closed then invalid_arg "Zip_archive.add_npy: archive is closed";
@@ -584,11 +619,13 @@ let add_npy archive name packed =
     invalid_arg "Zip_archive.add_npy: unsafe or invalid UTF-8 entry name";
   let filename = name ^ npy_suffix in
   if Hashtbl.mem archive.names filename then error "duplicate NPZ entry %S" name;
-  let (Npy.E encoded as encoded_npy) = Npy.encode packed in
-  let method_ = choose_method encoded_npy in
+  let encoded = Npy.encode packed in
+  let method_ = choose_method encoded in
   Hashtbl.add archive.names filename ();
   let uncompressed_size =
-    checked_add "NPY entry" (String.length encoded.header) encoded.data_size
+    checked_add "NPY entry"
+      (String.length encoded.header)
+      (Array1.dim encoded.data)
   in
   let maximum_size =
     match method_ with
@@ -613,21 +650,13 @@ let add_npy archive name packed =
   in
   write_string archive.fd local;
   add_offset archive (String.length local);
-  let stats =
-    match method_ with
-    | Store ->
-        Nx_io_codec.store_to_fd archive.fd ~prefix:encoded.header encoded.data
-          ~off:0 ~len:encoded.data_size
-    | Deflate ->
-        Nx_io_codec.deflate_raw_to_fd archive.fd ~prefix:encoded.header
-          encoded.data ~off:0 ~len:encoded.data_size
-  in
-  add_offset archive stats.output_size;
+  let crc32, compressed_size = write_entry archive method_ encoded in
+  add_offset archive compressed_size;
   let descriptor =
-    le32_i64 0x08074b50L ^ le32_bits stats.crc32
+    le32_i64 0x08074b50L ^ le32 crc32
     ^
-    if zip64_sizes then le64 stats.output_size ^ le64 stats.input_size
-    else le32 stats.output_size ^ le32 stats.input_size
+    if zip64_sizes then le64 compressed_size ^ le64 uncompressed_size
+    else le32 compressed_size ^ le32 uncompressed_size
   in
   write_string archive.fd descriptor;
   add_offset archive (String.length descriptor);
@@ -636,9 +665,9 @@ let add_npy archive name packed =
       name = filename;
       method_;
       flags;
-      crc32 = stats.crc32;
-      compressed_size = stats.output_size;
-      uncompressed_size = stats.input_size;
+      crc32;
+      compressed_size;
+      uncompressed_size;
       local_offset;
     }
   in
@@ -672,7 +701,7 @@ let central_record written =
   in
   let method_code = match entry.method_ with Store -> 0 | Deflate -> 8 in
   le32_i64 0x02014b50L ^ le16 0x031e ^ le16 version ^ le16 entry.flags
-  ^ le16 method_code ^ le16 0 ^ le16 0 ^ le32_bits entry.crc32 ^ compressed
+  ^ le16 method_code ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ compressed
   ^ uncompressed
   ^ le16 (String.length entry.name)
   ^ le16 (String.length extra)

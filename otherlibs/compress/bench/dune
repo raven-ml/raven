@@ -1,0 +1,24 @@
+(data_only_dirs data)
+
+(executable
+ (name bench_compress)
+ (libraries
+  bytesrw
+  compress.deflate
+  compress.snappy
+  compress.lz4
+  compress.zstd
+  thumper))
+
+; Not attached to runtest: run with `dune build @otherlibs/compress/bench/bench`
+; after reference.py has written the corpora.
+
+(rule
+ (alias bench)
+ (locks %{project_root}/bench)
+ (deps
+  (source_tree data))
+ (action
+  (progn
+   (run %{exe:bench_compress.exe})
+   (diff? compress.thumper compress.thumper.corrected))))

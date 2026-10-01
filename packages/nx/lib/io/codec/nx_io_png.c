@@ -2,10 +2,12 @@
   Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
 
-  Static PNG decoding and encoding following the W3C PNG specification. The
-  decoder validates the complete chunk stream before allocating codec state,
-  inflates scanlines through a row consumer, and writes pixels directly into
-  the Nx-owned destination Bigarray.
+  Static PNG decoding and encoding following the W3C PNG specification: the
+  chunk stream, scanline filters and pixel formats. The caller checks chunk
+  CRC-32s, and compresses and decompresses image data with compress.deflate's
+  zlib streams: the decoder unfilters the decompressed scanlines in place and writes pixels
+  directly into the Nx-owned destination Bigarray, and the encoder returns the
+  filtered scanlines.
   --------------------------------------------------------------------------*/
 
 #include "nx_io_codec.h"
@@ -32,16 +34,13 @@ typedef enum {
   PNG_OK = 0,
   PNG_TRUNCATED,
   PNG_SIGNATURE,
-  PNG_CRC,
   PNG_ORDER,
   PNG_IHDR,
   PNG_UNSUPPORTED,
   PNG_PALETTE,
-  PNG_ZLIB,
   PNG_FILTER,
   PNG_SIZE,
-  PNG_NOMEM,
-  PNG_SYSTEM
+  PNG_NOMEM
 } png_status;
 
 typedef struct {
@@ -67,8 +66,6 @@ static const char *png_message(png_status status) {
     return "truncated PNG stream";
   case PNG_SIGNATURE:
     return "invalid PNG signature";
-  case PNG_CRC:
-    return "PNG chunk CRC mismatch";
   case PNG_ORDER:
     return "invalid PNG chunk ordering";
   case PNG_IHDR:
@@ -77,16 +74,12 @@ static const char *png_message(png_status status) {
     return "unsupported PNG feature";
   case PNG_PALETTE:
     return "invalid PNG palette";
-  case PNG_ZLIB:
-    return "invalid PNG zlib stream";
   case PNG_FILTER:
     return "invalid PNG scanline filter";
   case PNG_SIZE:
     return "PNG dimensions are too large";
   case PNG_NOMEM:
     return "PNG codec allocation failed";
-  case PNG_SYSTEM:
-    return "PNG output error";
   }
   return "unknown PNG error";
 }
@@ -95,13 +88,6 @@ static const char *png_message(png_status status) {
 static uint32_t read_be32(const uint8_t *p) {
   return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
          ((uint32_t)p[2] << 8) | (uint32_t)p[3];
-}
-
-static void write_be32(uint8_t p[4], uint32_t value) {
-  p[0] = (uint8_t)(value >> 24);
-  p[1] = (uint8_t)(value >> 16);
-  p[2] = (uint8_t)(value >> 8);
-  p[3] = (uint8_t)value;
 }
 
 static int type_is(const uint8_t *type, const char name[4]) {
@@ -140,6 +126,7 @@ static unsigned color_channels(unsigned color) {
   }
 }
 
+/* Reads the chunk stream [src], whose chunk CRC-32s the caller checks. */
 static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
   memset(info, 0, sizeof(*info));
   if (len < sizeof(png_signature))
@@ -163,9 +150,6 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
       return PNG_TRUNCATED;
     const uint8_t *type = src + off + 4;
     const uint8_t *data = type + 4;
-    uint32_t expected_crc = read_be32(data + length);
-    if (nx_io_crc32(type, length + 4) != expected_crc)
-      return PNG_CRC;
     if ((type[2] & 0x20u) != 0)
       return PNG_ORDER;
 
@@ -237,28 +221,26 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
   return PNG_OK;
 }
 
-static png_status collect_idat(const uint8_t *src, size_t len,
-                               const png_info *info, uint8_t **result) {
-  uint8_t *compressed = malloc(info->idat_size);
-  if (compressed == NULL)
-    return PNG_NOMEM;
-  size_t dst = 0;
+/* Copies the IDAT chunks of [src] into [dst], which they must fill: [src] may
+   be a mapped file that changed since it was parsed. */
+static png_status copy_idat(const uint8_t *src, size_t len, uint8_t *dst,
+                            size_t dst_len) {
   size_t off = 8;
-  while (off < len) {
+  size_t at = 0;
+  while (len - off >= 12) {
     size_t length = read_be32(src + off);
+    if (length > len - off - 12)
+      return PNG_TRUNCATED;
     const uint8_t *type = src + off + 4;
     if (type_is(type, "IDAT")) {
-      memcpy(compressed + dst, type + 4, length);
-      dst += length;
+      if (length > dst_len - at)
+        return PNG_SIZE;
+      memcpy(dst + at, type + 4, length);
+      at += length;
     }
     off += length + 12;
   }
-  if (dst != info->idat_size) {
-    free(compressed);
-    return PNG_SIZE;
-  }
-  *result = compressed;
-  return PNG_OK;
+  return at == dst_len ? PNG_OK : PNG_SIZE;
 }
 
 static size_t pass_extent(size_t size, unsigned start, unsigned step) {
@@ -359,26 +341,6 @@ static uint8_t scale_sample(unsigned value, unsigned depth) {
                    ((1u << depth) - 1u));
 }
 
-typedef struct {
-  const png_info *info;
-  uint8_t *dst;
-  unsigned output_channels;
-  uint8_t *current;
-  uint8_t *previous;
-  size_t max_row;
-  unsigned pass;
-  size_t pass_width;
-  size_t pass_height;
-  size_t pass_row;
-  size_t row_size;
-  size_t row_pos;
-  unsigned filter;
-  uint32_t adler_a;
-  uint32_t adler_b;
-  png_status status;
-  int complete;
-} png_consumer;
-
 static void pass_geometry(const png_info *info, unsigned pass, size_t *width,
                           size_t *height) {
   static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
@@ -394,200 +356,96 @@ static void pass_geometry(const png_info *info, unsigned pass, size_t *width,
   }
 }
 
-static void consumer_next_pass(png_consumer *consumer) {
-  unsigned passes = consumer->info->interlace ? 7 : 1;
-  while (consumer->pass < passes) {
-    pass_geometry(consumer->info, consumer->pass, &consumer->pass_width,
-                  &consumer->pass_height);
-    if (consumer->pass_width != 0 && consumer->pass_height != 0) {
-      consumer->row_size = (consumer->pass_width * consumer->info->channels *
-                                consumer->info->depth +
-                            7) /
-                           8;
-      consumer->pass_row = 0;
-      consumer->row_pos = 0;
-      memset(consumer->previous, 0, consumer->max_row);
-      return;
-    }
-    consumer->pass++;
-  }
-  consumer->complete = 1;
-}
-
-static png_status write_scanline(png_consumer *consumer) {
+/* Writes the pixels of the unfiltered scanline [line], row [row] of pass
+   [pass], into [dst]. */
+static png_status write_row(const png_info *info, unsigned pass, size_t row,
+                            size_t pass_width, const uint8_t *line,
+                            uint8_t *dst, unsigned output_channels) {
   static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
   static const uint8_t start_y[7] = {0, 0, 4, 0, 2, 0, 1};
   static const uint8_t step_x[7] = {8, 8, 4, 4, 2, 2, 1};
   static const uint8_t step_y[7] = {8, 8, 8, 4, 4, 2, 2};
-  unsigned bpp = (consumer->info->channels * consumer->info->depth + 7) / 8;
-  if (bpp == 0)
-    bpp = 1;
-  png_status status = unfilter(
-      consumer->current, consumer->pass_row == 0 ? NULL : consumer->previous,
-      consumer->row_size, bpp, consumer->filter);
-  if (status != PNG_OK)
-    return status;
-
-  unsigned sx = consumer->info->interlace ? start_x[consumer->pass] : 0;
-  unsigned sy = consumer->info->interlace ? start_y[consumer->pass] : 0;
-  unsigned dx = consumer->info->interlace ? step_x[consumer->pass] : 1;
-  unsigned dy = consumer->info->interlace ? step_y[consumer->pass] : 1;
-  size_t y = sy + consumer->pass_row * dy;
-  for (size_t x_pass = 0; x_pass < consumer->pass_width; x_pass++) {
-    size_t component = x_pass * consumer->info->channels;
+  unsigned sx = info->interlace ? start_x[pass] : 0;
+  unsigned sy = info->interlace ? start_y[pass] : 0;
+  unsigned dx = info->interlace ? step_x[pass] : 1;
+  unsigned dy = info->interlace ? step_y[pass] : 1;
+  size_t y = sy + row * dy;
+  for (size_t x_pass = 0; x_pass < pass_width; x_pass++) {
+    size_t component = x_pass * info->channels;
     unsigned r;
     unsigned g;
     unsigned b;
-    if (consumer->info->color == 0 || consumer->info->color == 4) {
-      uint8_t gray = scale_sample(
-          sample(consumer->current, component, consumer->info->depth),
-          consumer->info->depth);
+    if (info->color == 0 || info->color == 4) {
+      uint8_t gray =
+          scale_sample(sample(line, component, info->depth), info->depth);
       r = g = b = gray;
-    } else if (consumer->info->color == 3) {
-      unsigned index = sample(consumer->current, x_pass, consumer->info->depth);
-      if (index >= consumer->info->palette_size)
+    } else if (info->color == 3) {
+      unsigned index = sample(line, x_pass, info->depth);
+      if (index >= info->palette_size)
         return PNG_PALETTE;
-      r = consumer->info->palette[index * 3];
-      g = consumer->info->palette[index * 3 + 1];
-      b = consumer->info->palette[index * 3 + 2];
+      r = info->palette[index * 3];
+      g = info->palette[index * 3 + 1];
+      b = info->palette[index * 3 + 2];
     } else {
-      r = scale_sample(
-          sample(consumer->current, component, consumer->info->depth),
-          consumer->info->depth);
-      g = scale_sample(
-          sample(consumer->current, component + 1, consumer->info->depth),
-          consumer->info->depth);
-      b = scale_sample(
-          sample(consumer->current, component + 2, consumer->info->depth),
-          consumer->info->depth);
+      r = scale_sample(sample(line, component, info->depth), info->depth);
+      g = scale_sample(sample(line, component + 1, info->depth), info->depth);
+      b = scale_sample(sample(line, component + 2, info->depth), info->depth);
     }
     size_t x = sx + x_pass * dx;
-    size_t dst = (y * consumer->info->width + x) * consumer->output_channels;
-    if (consumer->output_channels == 1) {
-      consumer->dst[dst] =
-          (uint8_t)((77u * r + 150u * g + 29u * b + 128u) >> 8);
+    size_t at = (y * info->width + x) * output_channels;
+    if (output_channels == 1) {
+      dst[at] = (uint8_t)((77u * r + 150u * g + 29u * b + 128u) >> 8);
     } else {
-      consumer->dst[dst] = (uint8_t)r;
-      consumer->dst[dst + 1] = (uint8_t)g;
-      consumer->dst[dst + 2] = (uint8_t)b;
+      dst[at] = (uint8_t)r;
+      dst[at + 1] = (uint8_t)g;
+      dst[at + 2] = (uint8_t)b;
     }
-  }
-  uint8_t *swap = consumer->previous;
-  consumer->previous = consumer->current;
-  consumer->current = swap;
-  consumer->pass_row++;
-  consumer->row_pos = 0;
-  if (consumer->pass_row == consumer->pass_height) {
-    consumer->pass++;
-    consumer_next_pass(consumer);
   }
   return PNG_OK;
 }
 
-static nx_io_status consume_scanline(void *context, uint8_t byte) {
-  png_consumer *consumer = context;
-  consumer->adler_a += byte;
-  if (consumer->adler_a >= 65521u)
-    consumer->adler_a -= 65521u;
-  consumer->adler_b += consumer->adler_a;
-  if (consumer->adler_b >= 65521u)
-    consumer->adler_b -= 65521u;
-  if (consumer->complete)
-    return NX_IO_OUTPUT_SIZE;
-  if (consumer->row_pos == 0) {
-    consumer->filter = byte;
-    consumer->row_pos = 1;
-    return byte <= 4 ? NX_IO_OK : NX_IO_INVALID_BLOCK;
-  }
-  consumer->current[consumer->row_pos - 1] = byte;
-  consumer->row_pos++;
-  if (consumer->row_pos == consumer->row_size + 1) {
-    png_status status = write_scanline(consumer);
-    if (status != PNG_OK) {
-      consumer->status = status;
-      return NX_IO_STOPPED;
-    }
-  }
-  return NX_IO_OK;
-}
-
-static png_status decode_png(const uint8_t *src, size_t len, uint8_t *dst,
-                             size_t dst_len, int grayscale) {
-  png_info info;
-  png_status status = parse_png(src, len, &info);
-  if (status != PNG_OK)
-    return status;
+/* Unfilters the scanlines of [filtered] in place, pass by pass, and writes
+   their pixels into [dst]. */
+static png_status decode_png(const png_info *info, uint8_t *filtered,
+                             size_t filtered_len, uint8_t *dst, size_t dst_len,
+                             int grayscale) {
   unsigned output_channels = grayscale ? 1 : 3;
-  if (info.width > SIZE_MAX / info.height ||
-      info.width * info.height > SIZE_MAX / output_channels ||
-      info.width * info.height * output_channels != dst_len)
+  if (info->width > SIZE_MAX / info->height ||
+      info->width * info->height > SIZE_MAX / output_channels ||
+      info->width * info->height * output_channels != dst_len)
     return PNG_SIZE;
-  size_t filtered_size;
+  size_t total;
   size_t max_row;
-  status = scanline_size(&info, &filtered_size, &max_row);
+  png_status status = scanline_size(info, &total, &max_row);
   if (status != PNG_OK)
     return status;
-  if (max_row > SIZE_MAX / 2)
+  if (total != filtered_len)
     return PNG_SIZE;
-  uint8_t *zlib = NULL;
-  status = collect_idat(src, len, &info, &zlib);
-  if (status != PNG_OK)
-    return status;
-  unsigned cmf = zlib[0];
-  unsigned flg = zlib[1];
-  if ((cmf & 15u) != 8 || (cmf >> 4) > 7 || ((cmf << 8) | flg) % 31 != 0 ||
-      (flg & 0x20u) != 0) {
-    free(zlib);
-    return PNG_ZLIB;
+  unsigned bpp = (info->channels * info->depth + 7) / 8;
+  if (bpp == 0)
+    bpp = 1;
+  unsigned passes = info->interlace ? 7 : 1;
+  uint8_t *scanline = filtered;
+  for (unsigned pass = 0; pass < passes; pass++) {
+    size_t width;
+    size_t height;
+    pass_geometry(info, pass, &width, &height);
+    if (width == 0 || height == 0)
+      continue;
+    size_t row_size = (width * info->channels * info->depth + 7) / 8;
+    const uint8_t *previous = NULL;
+    for (size_t row = 0; row < height; row++) {
+      uint8_t *line = scanline + 1;
+      status = unfilter(line, previous, row_size, bpp, scanline[0]);
+      if (status == PNG_OK)
+        status = write_row(info, pass, row, width, line, dst, output_channels);
+      if (status != PNG_OK)
+        return status;
+      previous = line;
+      scanline += row_size + 1;
+    }
   }
-  uint32_t expected_adler = read_be32(zlib + info.idat_size - 4);
-  uint8_t *rows = malloc(max_row == 0 ? 1 : max_row * 2);
-  if (rows == NULL) {
-    free(zlib);
-    return PNG_NOMEM;
-  }
-  png_consumer consumer;
-  memset(&consumer, 0, sizeof(consumer));
-  consumer.info = &info;
-  consumer.dst = dst;
-  consumer.output_channels = output_channels;
-  consumer.current = rows;
-  consumer.previous = rows + max_row;
-  consumer.max_row = max_row;
-  consumer.adler_a = 1;
-  consumer_next_pass(&consumer);
-  nx_io_result result =
-      nx_io_inflate_raw_sink(zlib + 2, info.idat_size - 6, filtered_size,
-                             consume_scanline, &consumer, NULL);
-  free(rows);
-  free(zlib);
-  if (consumer.status != PNG_OK)
-    return consumer.status;
-  if (result.status != NX_IO_OK)
-    return result.status == NX_IO_NOMEM ? PNG_NOMEM : PNG_ZLIB;
-  uint32_t actual_adler = (consumer.adler_b << 16) | consumer.adler_a;
-  if (!consumer.complete || actual_adler != expected_adler)
-    return PNG_ZLIB;
   return PNG_OK;
-}
-
-static uint32_t crc_table_entry(uint32_t value) {
-  for (int bit = 0; bit < 8; bit++)
-    value = (value >> 1) ^ (0xedb88320u & (0u - (value & 1u)));
-  return value;
-}
-
-static uint32_t crc_update(uint32_t crc, const uint8_t *data, size_t len) {
-  uint32_t table[256];
-  for (uint32_t i = 0; i < 256; i++)
-    table[i] = crc_table_entry(i);
-  for (size_t i = 0; i < len; i++)
-    crc = table[(crc ^ data[i]) & 0xffu] ^ (crc >> 8);
-  return crc;
-}
-
-static png_status write_all(nx_io_fd fd, const uint8_t *data, size_t len) {
-  return nx_io_write_all(fd, data, len) == 0 ? PNG_OK : PNG_SYSTEM;
 }
 
 static unsigned filter_byte(unsigned filter, unsigned raw, unsigned left,
@@ -661,124 +519,6 @@ static png_status filter_image(const uint8_t *src, size_t width, size_t height,
   return PNG_OK;
 }
 
-static void put_chunk(uint8_t **cursor, const char type[4],
-                      const uint8_t *data, size_t len) {
-  uint8_t *p = *cursor;
-  write_be32(p, (uint32_t)len);
-  memcpy(p + 4, type, 4);
-  if (len > 0)
-    memcpy(p + 8, data, len);
-  uint32_t crc = crc_update(0xffffffffu, (const uint8_t *)type, 4);
-  crc = crc_update(crc, data, len) ^ 0xffffffffu;
-  write_be32(p + 8 + len, crc);
-  *cursor = p + 12 + len;
-}
-
-/* Assembles the whole PNG file for [src] into a malloc'd buffer. A [ppm] other
-   than 0 is written as a pHYs chunk of [ppm] pixels per metre on both axes, and
-   a non-zero [srgb] as an sRGB chunk with the perceptual rendering intent. */
-static png_status build_png(const uint8_t *src, size_t src_len, size_t width,
-                            size_t height, unsigned channels, uint32_t ppm,
-                            int srgb, uint8_t **out, size_t *out_len) {
-  if (width == 0 || height == 0 ||
-      (channels != 1 && channels != 3 && channels != 4) ||
-      width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
-      width * height * channels != src_len || width > UINT32_MAX ||
-      height > UINT32_MAX)
-    return PNG_SIZE;
-  uint8_t *filtered = NULL;
-  size_t filtered_len;
-  png_status status =
-      filter_image(src, width, height, channels, &filtered, &filtered_len);
-  if (status != PNG_OK)
-    return status;
-  uint8_t *raw = NULL;
-  uint32_t crc;
-  nx_io_result compressed =
-      nx_io_deflate_raw(NULL, 0, filtered, filtered_len, NX_IO_NO_FD, &raw, &crc);
-  if (compressed.status != NX_IO_OK) {
-    free(filtered);
-    return compressed.status == NX_IO_NOMEM ? PNG_NOMEM : PNG_SIZE;
-  }
-  uint32_t adler = nx_io_adler32(filtered, filtered_len);
-  free(filtered);
-  if (compressed.output_size > SIZE_MAX - 6) {
-    free(raw);
-    return PNG_SIZE;
-  }
-  uint8_t *zlib = realloc(raw, compressed.output_size + 6);
-  if (zlib == NULL) {
-    free(raw);
-    return PNG_NOMEM;
-  }
-  memmove(zlib + 2, zlib, compressed.output_size);
-  zlib[0] = 0x78;
-  zlib[1] = 0x01;
-  write_be32(zlib + compressed.output_size + 2, adler);
-  size_t zlib_len = compressed.output_size + 6;
-  size_t idat_chunks = (zlib_len + PNG_IDAT_CHUNK - 1) / PNG_IDAT_CHUNK;
-  if (zlib_len > SIZE_MAX / 2 || idat_chunks > SIZE_MAX / 12) {
-    free(zlib);
-    return PNG_SIZE;
-  }
-  size_t total = sizeof(png_signature) + 12 + 13 + (srgb ? 12 + 1 : 0) +
-                 (ppm != 0 ? 12 + 9 : 0) + zlib_len + (idat_chunks * 12) + 12;
-  uint8_t *file = malloc(total);
-  if (file == NULL) {
-    free(zlib);
-    return PNG_NOMEM;
-  }
-  uint8_t *cursor = file;
-  memcpy(cursor, png_signature, sizeof(png_signature));
-  cursor += sizeof(png_signature);
-  uint8_t ihdr[13];
-  write_be32(ihdr, (uint32_t)width);
-  write_be32(ihdr + 4, (uint32_t)height);
-  ihdr[8] = 8;
-  ihdr[9] = channels == 1 ? 0 : channels == 3 ? 2 : 6;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-  put_chunk(&cursor, "IHDR", ihdr, sizeof(ihdr));
-  if (srgb) {
-    const uint8_t perceptual = 0;
-    put_chunk(&cursor, "sRGB", &perceptual, 1);
-  }
-  if (ppm != 0) {
-    uint8_t phys[9];
-    write_be32(phys, ppm);
-    write_be32(phys + 4, ppm);
-    phys[8] = 1;
-    put_chunk(&cursor, "pHYs", phys, sizeof(phys));
-  }
-  size_t off = 0;
-  while (off < zlib_len) {
-    size_t chunk = zlib_len - off;
-    if (chunk > PNG_IDAT_CHUNK)
-      chunk = PNG_IDAT_CHUNK;
-    put_chunk(&cursor, "IDAT", zlib + off, chunk);
-    off += chunk;
-  }
-  put_chunk(&cursor, "IEND", NULL, 0);
-  free(zlib);
-  *out = file;
-  *out_len = total;
-  return PNG_OK;
-}
-
-static png_status encode_png(nx_io_fd fd, const uint8_t *src, size_t src_len,
-                             size_t width, size_t height, unsigned channels) {
-  uint8_t *file = NULL;
-  size_t file_len = 0;
-  png_status status =
-      build_png(src, src_len, width, height, channels, 0, 0, &file, &file_len);
-  if (status != PNG_OK)
-    return status;
-  status = write_all(fd, file, file_len);
-  free(file);
-  return status;
-}
-
 #ifndef NX_IO_CODEC_NO_OCAML
 static void checked_bytes(value vbuf, const uint8_t **data, size_t *len) {
   struct caml_ba_array *array = Caml_ba_array_val(vbuf);
@@ -808,83 +548,87 @@ CAMLprim value caml_nx_io_png_probe(value vsrc) {
   CAMLreturn(vresult);
 }
 
-CAMLprim value caml_nx_io_png_decode(value vsrc, value vdst, value vgrayscale) {
-  CAMLparam3(vsrc, vdst, vgrayscale);
+/* The image data of [src], a probed PNG stream, and the length of its
+   decompressed scanlines. */
+CAMLprim value caml_nx_io_png_idat(value vsrc) {
+  CAMLparam1(vsrc);
+  CAMLlocal2(vidat, vresult);
   const uint8_t *src;
   size_t src_len;
   checked_bytes(vsrc, &src, &src_len);
-  const uint8_t *dst_const;
+  png_info info;
+  size_t filtered;
+  size_t max_row;
+  png_status status = parse_png(src, src_len, &info);
+  if (status == PNG_OK)
+    status = scanline_size(&info, &filtered, &max_row);
+  if (status == PNG_OK && filtered > (size_t)Max_long)
+    status = PNG_SIZE;
+  if (status != PNG_OK)
+    caml_failwith(png_message(status));
+  vidat = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
+                             (intnat)info.idat_size);
+  status = copy_idat(Caml_ba_data_val(vsrc), src_len, Caml_ba_data_val(vidat), info.idat_size);
+  if (status != PNG_OK)
+    caml_failwith(png_message(status));
+  vresult = caml_alloc_tuple(2);
+  Store_field(vresult, 0, vidat);
+  Store_field(vresult, 1, Val_long(filtered));
+  CAMLreturn(vresult);
+}
+
+CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst,
+                                     value vgrayscale) {
+  CAMLparam4(vsrc, vfiltered, vdst, vgrayscale);
+  const uint8_t *src;
+  size_t src_len;
+  checked_bytes(vsrc, &src, &src_len);
+  const uint8_t *filtered;
+  size_t filtered_len;
+  checked_bytes(vfiltered, &filtered, &filtered_len);
+  const uint8_t *dst;
   size_t dst_len;
-  checked_bytes(vdst, &dst_const, &dst_len);
-  uint8_t *dst = (uint8_t *)dst_const;
+  checked_bytes(vdst, &dst, &dst_len);
   int grayscale = Bool_val(vgrayscale);
+  png_info info;
   caml_release_runtime_system();
-  png_status status = decode_png(src, src_len, dst, dst_len, grayscale);
+  png_status status = parse_png(src, src_len, &info);
+  if (status == PNG_OK)
+    status = decode_png(&info, (uint8_t *)filtered, filtered_len,
+                        (uint8_t *)dst, dst_len, grayscale);
   caml_acquire_runtime_system();
   if (status != PNG_OK)
     caml_failwith(png_message(status));
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_nx_io_png_encode(value vfd, value vsrc, value vwidth,
-                                     value vheight, value vchannels) {
-  CAMLparam5(vfd, vsrc, vwidth, vheight, vchannels);
-  const uint8_t *src;
-  size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
-  intnat width_i = Long_val(vwidth);
-  intnat height_i = Long_val(vheight);
-  intnat channels_i = Long_val(vchannels);
-  if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
-    caml_invalid_argument("Nx_io PNG: invalid image dimensions");
-  nx_io_fd fd = Nx_io_fd_val(vfd);
-  caml_release_runtime_system();
-  png_status status = encode_png(fd, src, src_len, (size_t)width_i,
-                                 (size_t)height_i, (unsigned)channels_i);
-  int saved_errno = errno;
-  caml_acquire_runtime_system();
-  if (status == PNG_SYSTEM)
-    unix_error(saved_errno == 0 ? EIO : saved_errno, "write", Nothing);
-  if (status != PNG_OK)
-    caml_failwith(png_message(status));
-  CAMLreturn(Val_unit);
-}
-CAMLprim value caml_nx_io_png_encode_string(value vsrc, value vwidth,
-                                            value vheight, value vchannels,
-                                            value vppm, value vsrgb) {
-  CAMLparam5(vsrc, vwidth, vheight, vchannels, vppm);
-  CAMLxparam1(vsrgb);
+/* The filtered scanlines of the 8-bit image [src]. */
+CAMLprim value caml_nx_io_png_filter(value vsrc, value vwidth, value vheight,
+                                     value vchannels) {
+  CAMLparam4(vsrc, vwidth, vheight, vchannels);
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
   checked_bytes(vsrc, &src, &src_len);
-  intnat width_i = Long_val(vwidth);
-  intnat height_i = Long_val(vheight);
-  intnat channels_i = Long_val(vchannels);
-  intnat ppm_i = Long_val(vppm);
-  if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
-    caml_invalid_argument("Nx_io PNG: invalid image dimensions");
-  if (ppm_i < 0 || ppm_i > 0x7fffffff)
-    caml_invalid_argument("Nx_io PNG: invalid pixels per metre");
-  int srgb = Bool_val(vsrgb);
-  uint8_t *file = NULL;
-  size_t file_len = 0;
+  size_t width = (size_t)Long_val(vwidth);
+  size_t height = (size_t)Long_val(vheight);
+  unsigned channels = (unsigned)Long_val(vchannels);
+  if (width == 0 || height == 0 ||
+      (channels != 1 && channels != 3 && channels != 4) ||
+      width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
+      width * height * channels != src_len || width > UINT32_MAX ||
+      height > UINT32_MAX)
+    caml_failwith(png_message(PNG_SIZE));
+  uint8_t *filtered = NULL;
+  size_t filtered_len;
   caml_release_runtime_system();
-  png_status status = build_png(src, src_len, (size_t)width_i,
-                                (size_t)height_i, (unsigned)channels_i,
-                                (uint32_t)ppm_i, srgb, &file, &file_len);
+  png_status status =
+      filter_image(src, width, height, channels, &filtered, &filtered_len);
   caml_acquire_runtime_system();
   if (status != PNG_OK)
     caml_failwith(png_message(status));
-  vresult = caml_alloc_initialized_string(file_len, (const char *)file);
-  free(file);
+  vresult = caml_alloc_initialized_string(filtered_len, (const char *)filtered);
+  free(filtered);
   CAMLreturn(vresult);
 }
-
-CAMLprim value caml_nx_io_png_encode_string_bytecode(value *argv, int argn) {
-  (void)argn;
-  return caml_nx_io_png_encode_string(argv[0], argv[1], argv[2], argv[3],
-                                      argv[4], argv[5]);
-}
 #endif
-

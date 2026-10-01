@@ -25,4 +25,6 @@
   nx.device
   nx.io
   str
-  windtrap))
+  windtrap
+  bytesrw
+  compress.deflate))

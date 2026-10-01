@@ -1,7 +1,13 @@
 (library
  (name hugin_next_vg_pdf)
  (public_name hugin.next.vg.pdf)
- (libraries hugin.next.vg hugin.next.gg hugin.next.font nx nx.io)
+ (libraries
+  hugin.next.vg
+  hugin.next.gg
+  hugin.next.font
+  nx
+  bytesrw
+  compress.deflate)
  (private_modules vector)
  (instrumentation
   (backend ppx_windtrap.coverage))

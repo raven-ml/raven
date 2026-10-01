@@ -1,0 +1,6 @@
+(test
+ (name test_lz4)
+ (package compress)
+ (libraries windtrap compress.lz4 compress_fixtures)
+ (deps
+  (glob_files ../fixtures/*)))

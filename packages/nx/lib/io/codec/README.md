@@ -11,19 +11,20 @@ sublibrary.
 - While the lock is released, code accesses only Bigarray storage, copied
   scalars, stack values, C allocations, and file descriptors. It never calls
   back into OCaml.
-- DEFLATE uses a checked 32 KiB history ring. PNG reconstructs one scanline at
-  a time into the final Nx buffer. JPEG entropy data is decoded into bounded
+- PNG unfilters its decompressed scanlines in place and writes each pixel
+  into the final Nx buffer. JPEG entropy data is decoded into bounded
   coefficient planes before inverse transformation.
 - Checksums, declared output sizes, container offsets, marker order, and codec
   termination are validated before a result is returned.
-- Writers use deterministic metadata and fixed internal policies. Compression
-  levels, PNG filters, JPEG tables, and JPEG subsampling are not public API.
+- Writers use deterministic metadata and fixed internal policies. PNG filters,
+  JPEG tables, and JPEG subsampling are not public API.
 - No process-global mutable codec state is used.
 
 ## Implemented formats
 
-- RFC 1951 stored, fixed-Huffman, and dynamic-Huffman DEFLATE blocks, plus the
-  RFC 1950 zlib and RFC 1952 gzip wrappers used by PNG and `Nx_io.gunzip`.
+DEFLATE, zlib and gzip streams come from `compress.deflate`
+(`otherlibs/compress`).
+
 - PNG static images with all specified color types and bit depths, all five
   filters, palettes, transparency metadata, and Adam7 interlacing. Encoding is
   8-bit grayscale, RGB, or RGBA.
@@ -36,17 +37,14 @@ JPEG 2000/XL families are deliberately outside the surface.
 
 ## Normative implementation sources
 
-- [RFC 1950: ZLIB Compressed Data Format](https://www.rfc-editor.org/rfc/rfc1950)
-- [RFC 1951: DEFLATE Compressed Data Format](https://www.rfc-editor.org/rfc/rfc1951)
-- [RFC 1952: GZIP File Format](https://www.rfc-editor.org/rfc/rfc1952)
 - [PNG Specification, Third Edition](https://www.w3.org/TR/png-3/)
 - [ITU-T T.81: Digital compression and coding of continuous-tone still images](https://www.itu.int/rec/T-REC-T.81)
 
 The code is independently implemented from these specifications and does not
 incorporate source from the libraries that it replaced.
 
-The nx.io suite, `packages/nx/test/io`, exercises DEFLATE block boundaries,
-adaptive and stored blocks, image round trips, truncation, single-bit
-corruption, and arbitrary bytes after each format's header. CI also runs it
-with nx's C built under AddressSanitizer and UndefinedBehaviorSanitizer (the
-`sanitize` profile of `packages/nx/dune`), halting on the first report.
+The nx.io suite, `packages/nx/test/io`, exercises image round trips,
+truncation, single-bit corruption, and arbitrary bytes after each format's
+header. CI also runs it with nx's C built under AddressSanitizer and
+UndefinedBehaviorSanitizer (the `sanitize` profile of `packages/nx/dune`),
+halting on the first report.

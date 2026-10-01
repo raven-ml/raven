@@ -1,0 +1,15 @@
+(library
+ (name compress_deflate)
+ (public_name compress.deflate)
+ (libraries bytesrw)
+ (foreign_stubs
+  (language c)
+  (names
+   compress_deflate_checksum
+   compress_deflate_inflate
+   compress_deflate_deflate
+   compress_deflate_stubs)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

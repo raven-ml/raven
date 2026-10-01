@@ -54,6 +54,22 @@ jobs:
           opam pin add ppx_windtrap git+https://github.com/invariant-hq/windtrap.git#7be03df651610949a87ed3bb797984015e9691b9 --no-action
           opam install . --deps-only --with-test
 
+      - name: Build and test compress
+        run: |
+          opam exec -- dune build --release otherlibs/compress
+          opam exec -- dune build --release @otherlibs/compress/runtest
+
+      # The decoders parse untrusted bytes: their suites run with the C built
+      # under AddressSanitizer and UndefinedBehaviorSanitizer, each property
+      # over 1000 inputs.
+      - name: Test compress under the sanitizers
+        if: runner.os != 'Windows'
+        env:
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          WINDTRAP_PROP_COUNT: 1000
+        run: opam exec -- dune build --profile sanitize @otherlibs/compress/runtest
+
       - name: Build and test nx
         run: |
           opam exec -- dune build --release packages/nx

@@ -1,6 +1,9 @@
 /*--------------------------------------------------------------------------
   Copyright (c) 2026 The Raven authors. All rights reserved.
   SPDX-License-Identifier: ISC
+
+  Byte spans of tensors: copies, byte swaps, Fortran-to-C reordering and
+  writes to a file.
   --------------------------------------------------------------------------*/
 
 #include "nx_io_codec.h"
@@ -20,66 +23,6 @@
 #include <string.h>
 #include <unistd.h>
 
-static void crc32_tables(uint32_t table[8][256]) {
-  for (uint32_t i = 0; i < 256; i++) {
-    uint32_t c = i;
-    for (int bit = 0; bit < 8; bit++)
-      c = (c >> 1) ^ (0xedb88320u & (0u - (c & 1u)));
-    table[0][i] = c;
-  }
-  for (unsigned slice = 1; slice < 8; slice++)
-    for (unsigned i = 0; i < 256; i++) {
-      uint32_t previous = table[slice - 1][i];
-      table[slice][i] = table[0][previous & 0xffu] ^ (previous >> 8);
-    }
-}
-
-static uint32_t read_le32(const uint8_t *src) {
-  return (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) |
-         ((uint32_t)src[3] << 24);
-}
-
-static uint32_t crc32_update(uint32_t table[8][256], uint32_t crc,
-                             const uint8_t *src, size_t len) {
-  while (len >= 8) {
-    uint32_t first = crc ^ read_le32(src);
-    uint32_t second = read_le32(src + 4);
-    crc = table[7][first & 0xffu] ^ table[6][(first >> 8) & 0xffu] ^
-          table[5][(first >> 16) & 0xffu] ^ table[4][first >> 24] ^
-          table[3][second & 0xffu] ^ table[2][(second >> 8) & 0xffu] ^
-          table[1][(second >> 16) & 0xffu] ^ table[0][second >> 24];
-    src += 8;
-    len -= 8;
-  }
-  while (len-- != 0)
-    crc = table[0][(crc ^ *src++) & 0xffu] ^ (crc >> 8);
-  return crc;
-}
-
-uint32_t nx_io_crc32(const uint8_t *src, size_t len) {
-  uint32_t table[8][256];
-  crc32_tables(table);
-  uint32_t crc = crc32_update(table, 0xffffffffu, src, len);
-  return crc ^ 0xffffffffu;
-}
-
-uint32_t nx_io_adler32(const uint8_t *src, size_t len) {
-  const uint32_t modulus = 65521u;
-  uint32_t a = 1u;
-  uint32_t b = 0u;
-  while (len != 0) {
-    size_t chunk = len < 5552 ? len : 5552;
-    len -= chunk;
-    while (chunk-- != 0) {
-      a += *src++;
-      b += a;
-    }
-    a %= modulus;
-    b %= modulus;
-  }
-  return (b << 16) | a;
-}
-
 #ifndef NX_IO_CODEC_NO_OCAML
 static void checked_span(value vbuf, value voff, value vlen,
                          const uint8_t **src, size_t *len) {
@@ -94,28 +37,6 @@ static void checked_span(value vbuf, value voff, value vlen,
     caml_invalid_argument("Nx_io codec: byte span out of bounds");
   *src = (const uint8_t *)Caml_ba_data_val(vbuf) + off;
   *len = n;
-}
-
-CAMLprim value caml_nx_io_crc32(value vbuf, value voff, value vlen) {
-  CAMLparam3(vbuf, voff, vlen);
-  const uint8_t *src;
-  size_t len;
-  checked_span(vbuf, voff, vlen, &src, &len);
-  caml_release_runtime_system();
-  uint32_t crc = nx_io_crc32(src, len);
-  caml_acquire_runtime_system();
-  CAMLreturn(caml_copy_int32((int32_t)crc));
-}
-
-CAMLprim value caml_nx_io_adler32(value vbuf, value voff, value vlen) {
-  CAMLparam3(vbuf, voff, vlen);
-  const uint8_t *src;
-  size_t len;
-  checked_span(vbuf, voff, vlen, &src, &len);
-  caml_release_runtime_system();
-  uint32_t sum = nx_io_adler32(src, len);
-  caml_acquire_runtime_system();
-  CAMLreturn(caml_copy_int32((int32_t)sum));
 }
 
 CAMLprim value caml_nx_io_blit_bytes(value vsrc, value vsrc_off, value vdst,
@@ -237,45 +158,4 @@ CAMLprim value caml_nx_io_write_all(value vfd, value vbuf, value voff,
   CAMLreturn(Val_unit);
 }
 
-static int write_exact(nx_io_fd fd, const uint8_t *src, size_t len) {
-  return nx_io_write_all(fd, src, len);
-}
-
-CAMLprim value caml_nx_io_store_to_fd(value vfd, value vprefix, value vbuf,
-                                      value voff, value vlen) {
-  CAMLparam5(vfd, vprefix, vbuf, voff, vlen);
-  CAMLlocal2(vresult, vcrc);
-  const uint8_t *src;
-  size_t len;
-  checked_span(vbuf, voff, vlen, &src, &len);
-  size_t prefix_len = caml_string_length(vprefix);
-  if (prefix_len > SIZE_MAX - len || prefix_len + len > (size_t)Max_long)
-    caml_invalid_argument("Nx_io store: input is too large");
-  uint8_t *prefix = prefix_len == 0 ? NULL : malloc(prefix_len);
-  if (prefix_len != 0 && prefix == NULL)
-    caml_raise_out_of_memory();
-  if (prefix_len != 0)
-    memcpy(prefix, String_val(vprefix), prefix_len);
-  size_t total = prefix_len + len;
-  nx_io_fd fd = Nx_io_fd_val(vfd);
-  int error;
-  uint32_t table[8][256];
-  crc32_tables(table);
-  caml_release_runtime_system();
-  uint32_t crc = crc32_update(table, 0xffffffffu, prefix, prefix_len);
-  crc = crc32_update(table, crc, src, len) ^ 0xffffffffu;
-  error = write_exact(fd, prefix, prefix_len);
-  if (error == 0)
-    error = write_exact(fd, src, len);
-  caml_acquire_runtime_system();
-  free(prefix);
-  if (error != 0)
-    unix_error(error, "write", Nothing);
-  vcrc = caml_copy_int32((int32_t)crc);
-  vresult = caml_alloc_tuple(3);
-  Store_field(vresult, 0, vcrc);
-  Store_field(vresult, 1, Val_long(total));
-  Store_field(vresult, 2, Val_long(total));
-  CAMLreturn(vresult);
-}
 #endif

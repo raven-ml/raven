@@ -41,6 +41,30 @@
   (name ppx_windtrap)))
 
 (package
+ (name compress)
+ (dir otherlibs/compress)
+ (synopsis "Deflate, gzip, zlib, Snappy, LZ4 and Zstandard for bytesrw")
+ (description
+  "Compression codecs with no system library: deflate and its zlib and gzip framings, Snappy blocks, and LZ4 and Zstandard decompression. Streams are bytesrw readers and writers; data held in memory, such as a page of a mapped Parquet file, decompresses directly between byte arrays.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  bytesrw
+  ; tests
+  (windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (ppx_windtrap
+   (and
+    :with-test
+    (>= 0.2.0)))
+  (thumper :with-test))
+ (tags
+  (compression deflate gzip zlib snappy lz4 zstd bytesrw)))
+
+(package
  (name nx)
  (dir packages/nx)
  (license ISC)
@@ -51,6 +75,9 @@
   (ocaml
    (>= 5.5.0))
   dune
+  bytesrw
+  (compress
+   (= :version))
   ; tests
   (windtrap
    (and
@@ -274,7 +301,10 @@
   (ocaml
    (>= 5.2.0))
   dune
+  bytesrw
   (nx
+   (= :version))
+  (compress
    (= :version))
   (windtrap
    (and

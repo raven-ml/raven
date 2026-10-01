@@ -1,0 +1,10 @@
+(library
+ (name compress_snappy)
+ (public_name compress.snappy)
+ (foreign_stubs
+  (language c)
+  (names compress_snappy_stubs)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

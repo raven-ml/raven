@@ -1,0 +1,10 @@
+(library
+ (name compress_lz4)
+ (public_name compress.lz4)
+ (foreign_stubs
+  (language c)
+  (names compress_lz4_stubs)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

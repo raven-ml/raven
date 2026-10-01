@@ -32,13 +32,7 @@ type header = {
 type packed =
   | P : ('a, 'b) Nx_dtype.t * Nx_device.Buffer.t * int array -> packed
 
-type encoded =
-  | E : {
-      header : string;
-      data : ('a, 'b, c_layout) Array1.t;
-      data_size : int;
-    }
-      -> encoded
+type encoded = { header : string; data : bytes }
 
 let magic = "\x93NUMPY"
 let max_header_size = 1 lsl 20
@@ -316,38 +310,35 @@ let parse_header src ~off ~len =
     data_size;
   }
 
-type payload =
-  | Stored of { src : bytes; off : int }
-  | Deflated of { src : bytes; src_off : int; src_len : int; skip : int }
-
-let materialize header payload =
+(* The tensor of [header] whose data starts at byte [off] of [src], copied into
+   a buffer of its own in C order and native byte order. *)
+let materialize header ~src ~off =
   let (K kind) = header.kind in
   let buffer = Nx_array.Elements.create kind header.elements in
   let destination = Storage.bytes buffer in
-  let fill target =
-    match payload with
-    | Stored { src; off } ->
-        Nx_io_codec.blit_bytes ~src ~src_off:off ~dst:target ~dst_off:0
-          ~len:header.data_size;
-        None
-    | Deflated { src; src_off; src_len; skip } ->
-        Some
-          (Nx_io_codec.inflate_raw_into src ~src_off ~src_len ~skip ~dst:target
-             ~dst_off:0 ~dst_len:header.data_size)
-  in
-  let crc =
-    if header.fortran_order && Array.length header.shape > 1 then (
-      let temporary = Array1.create int8_unsigned c_layout header.data_size in
-      let checksum = fill temporary in
-      Nx_io_codec.reorder_fortran_to_c ~src:temporary ~src_off:0
-        ~dst:destination ~shape:header.shape ~element_size:header.element_size;
-      checksum)
-    else fill destination
-  in
+  if header.fortran_order && Array.length header.shape > 1 then
+    Nx_io_codec.reorder_fortran_to_c ~src ~src_off:off ~dst:destination
+      ~shape:header.shape ~element_size:header.element_size
+  else
+    Nx_io_codec.blit_bytes ~src ~src_off:off ~dst:destination ~dst_off:0
+      ~len:header.data_size;
   if header.swap_endian then
     Nx_io_codec.byteswap destination ~element_size:header.element_size
       ~elements:header.elements;
-  (P (kind, buffer, Array.copy header.shape), crc)
+  P (kind, buffer, Array.copy header.shape)
+
+(* [materialize], without a copy when the data is in C order and native byte
+   order and [off] is aligned to its elements: the tensor is then a view of
+   [src]. *)
+let view_or_materialize header ~src ~off =
+  let (K kind) = header.kind in
+  let c_order = (not header.fortran_order) || Array.length header.shape <= 1 in
+  if c_order && (not header.swap_endian) && off mod header.element_size = 0 then
+    let src = Nx_device.Buffer.of_bigarray src in
+    let scalar = Nx_dtype.Scalar.of_dtype kind in
+    let buffer = Nx_device.Buffer.view src ~offset:off scalar header.elements in
+    P (kind, buffer, Array.copy header.shape)
+  else materialize header ~src ~off
 
 let read_copy path =
   let src = Storage.file_bytes path in
@@ -355,7 +346,7 @@ let read_copy path =
   let header = parse_header src ~off:0 ~len:size in
   if header.data_offset > size || header.data_size <> size - header.data_offset
   then read_error "NPY payload size does not match its shape and dtype";
-  materialize header (Stored { src; off = header.data_offset }) |> fst
+  materialize header ~src ~off:header.data_offset
 
 let code_of_kind : type a b. (a, b) Nx_dtype.t -> string = function
   | Float16 -> "f2"
@@ -412,12 +403,7 @@ let encode_header kind shape =
   magic ^ String.make 1 (Char.chr version) ^ "\x00" ^ length_bytes ^ header
 
 let encode (P (kind, buffer, shape)) =
-  E
-    {
-      header = encode_header kind shape;
-      data = Storage.bytes buffer;
-      data_size = Nx_device.Buffer.nbytes buffer;
-    }
+  { header = encode_header kind shape; data = Storage.bytes buffer }
 
 let really_write_string fd text =
   let rec loop off =
@@ -440,9 +426,10 @@ let write ?(exclusive = false) packed path =
     Fun.protect
       ~finally:(fun () -> Unix.close fd)
       (fun () ->
-        let (E encoded) = encode packed in
+        let encoded = encode packed in
         really_write_string fd encoded.header;
-        Nx_io_codec.write_all fd encoded.data ~off:0 ~len:encoded.data_size)
+        Nx_io_codec.write_all fd encoded.data ~off:0
+          ~len:(Array1.dim encoded.data))
   with
   | () -> ()
   | exception exn ->

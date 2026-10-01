@@ -2937,8 +2937,22 @@ thread.
 - Schedules are plain functions of the step counter; loops evaluate one at
   the counter and pass it as `~lr`.
 
+### Compress (new)
+
+- Add the `compress` package: deflate with its zlib and gzip framings
+  (`Compress_deflate`, moved out of `nx.io`), Snappy blocks
+  (`Compress_snappy`), and LZ4 and Zstandard decompression (`Compress_lz4`,
+  `Compress_zstd`), with no system library. Deflate streams are bytesrw
+  filters, and data held in memory, such as a page of a mapped Parquet file,
+  decompresses directly between byte arrays.
+
 ### Nx
 
+- `nx.io` takes deflate from the `compress` package. Loading a deflated NPZ
+  entry is about 3x faster, and the tensor uses the decompressed memory
+  without a copy when its data is aligned; loading a PNG is about 2x faster.
+  `Nx_io.gunzip` decompresses as it reads, in constant memory, where it
+  mapped its whole input.
 - Add `Nx.Bits`, packed bitmaps in Arrow's validity layout over a `uint8`
   tensor at a bit offset, with `of_bool`, `to_bool`, `count`, `logand`, `logor`,
   `lognot`, an O(1) `sub`, `take` and `concat`.
@@ -4208,8 +4222,6 @@ thread.
 - Add `Nx_io.encode_png`, the PNG bytes of a `uint8` image tensor as a
   string, for embedding images in documents or sending them over a socket
   without going through a file.
-- Add `Nx_io.deflate` and `Nx_io.inflate`, zlib compression of strings,
-  the format PDF and PNG streams use.
 - The C backend compiles with mingw-w64 on Windows. It no longer relies on the
   C11 `CMPLX` constructors or `aligned_alloc`, which mingw's headers lack, and
   registers no fork handlers there. The I/O layer writes through Windows file

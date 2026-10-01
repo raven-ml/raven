@@ -41,7 +41,11 @@ let set doc n body =
 (* Streams are deflated unless their data already is. *)
 let stream ?(compress = true) dict data =
   let dict, data =
-    if compress then ("/Filter /FlateDecode " ^ dict, Nx_io.deflate data)
+    if compress then
+      ( "/Filter /FlateDecode " ^ dict,
+        Bytesrw.Bytes.Writer.filter_string
+          [ Compress_deflate.Zlib.compress_writes () ]
+          data )
     else (dict, data)
   in
   Printf.sprintf "<< /Length %d %s>>\nstream\n%s\nendstream"

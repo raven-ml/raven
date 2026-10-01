@@ -1,0 +1,6 @@
+(test
+ (name test_snappy)
+ (package compress)
+ (libraries windtrap compress.snappy compress_fixtures)
+ (deps
+  (glob_files ../fixtures/*)))

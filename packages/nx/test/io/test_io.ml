@@ -180,6 +180,12 @@ let npz =
               ("stored", Nx.init Nx.uint8 [| 70_000 |] random, 0);
               ("deflated", Nx.zeros Nx.uint8 [| 70_000 |], 8);
             ]);
+      test
+        "a deflated entry whose data starts at no multiple of its element size \
+         loads" (fun () ->
+          equal packed
+            (Nx.P (Nx.create Nx.float64 [| 5 |] [| 0.; 1.5; 3.; 4.5; 6. |]))
+            (Nx_io.load_npz_entry ~name:"w" (fixture "unaligned.npz")));
       test "an entry whose checksum does not match fails" (fun () ->
           let s = read (saved "" save_npz [ ("w", one) ]) in
           (* The CRC-32 of the central directory's first entry. *)
@@ -188,71 +194,37 @@ let npz =
           in
           let path = file "" (flip_byte s (crc 0)) in
           fails (fun () -> Nx_io.load_npz_entry ~name:"w" path));
+      test
+        "a deflated entry that declares more data than deflate can expand to \
+         fails" (fun () ->
+          let s = read (fixture "unaligned.npz") in
+          let rec find signature i =
+            if String.sub s i 4 = signature then i else find signature (i + 1)
+          in
+          (* The uncompressed size of the local and the central header. *)
+          let b = Bytes.of_string s in
+          Bytes.set_int32_le b (find "PK\003\004" 0 + 22) 0x40000000l;
+          Bytes.set_int32_le b (find "PK\001\002" 0 + 24) 0x40000000l;
+          let path = file "" (Bytes.to_string b) in
+          fails ~naming:"declares more data" (fun () ->
+              Nx_io.load_npz_entry ~name:"w" path));
     ]
 
 (* Compression *)
 
-let crc32 s =
-  let crc = ref 0xFFFFFFFF in
-  String.iter
-    (fun c ->
-      crc := !crc lxor Char.code c;
-      for _ = 1 to 8 do
-        crc := (!crc lsr 1) lxor (!crc land 1 * 0xEDB88320)
-      done)
-    s;
-  !crc lxor 0xFFFFFFFF
-
-(* A gzip member around the DEFLATE data of [deflate s]. *)
 let gzip s =
-  let z = Nx_io.deflate s in
-  "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"
-  ^ String.sub z 2 (String.length z - 6)
-  ^ le32 (crc32 s)
-  ^ le32 (String.length s land 0xFFFFFFFF)
+  Bytesrw.Bytes.Writer.filter_string
+    [ Compress_deflate.Gzip.compress_writes () ]
+    s
 
 let gunzipped src =
   let dst = temp_file () in
   Nx_io.gunzip ~src ~dst;
   read dst
 
-let lines = String.concat "" (List.init 200 (Printf.sprintf "line %d\n"))
-
 let compression =
   group "compression"
     [
-      prop
-        "inflate inverts deflate, whose zlib frame and Adler-32 it checks, on \
-         short strings and on long ones past the window and block sizes"
-        (let long = Gen.int_range 60_000 200_000 in
-         Gen.frequency
-           [
-             (18, Gen.string);
-             (1, Gen.string_of ~size:long (Gen.char_range 'a' 'd'));
-             (1, Gen.string_of ~size:long Gen.char);
-           ])
-        (Law.round_trip string string Nx_io.deflate Nx_io.inflate);
-      cases ~name:fst "inflate reads streams written by Python's zlib"
-        [
-          ("empty", "");
-          ("fixed", "hello, nx zlib!\n");
-          ("stored", "stored block\n");
-          ("dynamic", lines);
-        ]
-        (fun (name, data) ->
-          let z = read (fixture ("zlib_" ^ name ^ ".z")) in
-          equal string data (Nx_io.inflate z));
-      cases ~name:fst "inflate refuses what is no zlib stream"
-        [
-          ("the empty string", fun _ -> "");
-          ("text", fun _ -> "hello");
-          ( "a checksum that does not match",
-            fun z -> flip_byte z (String.length z - 1) );
-          ("a stream cut short", fun z -> cut z 5);
-        ]
-        (fun (_, damage) ->
-          let z = read (fixture "zlib_dynamic.z") in
-          fails (fun () -> Nx_io.inflate (damage z)));
       prop "gunzip decompresses gzip members to their concatenation"
         ~examples:[ [ "\144\144\144\144" ] ]
         (Gen.list ~size:(Gen.int_range 1 4) Gen.string)
@@ -267,6 +239,7 @@ let compression =
           ("a checksum", fun s -> flip_byte s (String.length s - 8));
           ("a partial member after it", fun s -> s ^ String.sub s 0 12);
           ("a size field", fun s -> cut s 4 ^ le32 99);
+          ("no member", fun _ -> "");
         ]
         (fun (_, damage) ->
           let src = file "" (damage (read (fixture "hello.gz"))) in
@@ -897,7 +870,8 @@ let images_group =
             fails (fun () -> Nx_io.encode_png (Nx.zeros Nx.uint8 shape)));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let png = flip_byte (read (fixture "png_filters.png")) 30 in
-          fails (fun () -> Nx_io.load_image (file "" png)));
+          fails ~naming:"PNG chunk CRC mismatch" (fun () ->
+              Nx_io.load_image (file "" png)));
       test "an image of noise, which deflate stores uncompressed, round trips"
         (fun () ->
           let noise =
@@ -1093,19 +1067,6 @@ let damaged_image name stream suffix =
 let malformed =
   group "malformed streams"
     [
-      prop "inflate of a zlib header and any bytes returns or fails" bytes
-        (fun b -> returns_or_fails (fun () -> Nx_io.inflate ("\x78\x9c" ^ b)));
-      prop
-        "inflate of a stream with a bit flipped returns or fails, and of one \
-         cut short fails"
-        (let open Gen in
-         let* s = string_of ~size:(int_range 1 3000) (char_range 'a' 'f') in
-         let z = Nx_io.deflate s in
-         map (fun d -> (z, d)) (damage (String.length z)))
-        (fun (z, d) ->
-          match d with
-          | Flip _ -> returns_or_fails (fun () -> Nx_io.inflate (damaged z d))
-          | Cut _ -> fails (fun () -> Nx_io.inflate (damaged z d)));
       prop "gunzip of a gzip header and any bytes decompresses or fails" bytes
         (fun b ->
           let src =

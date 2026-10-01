@@ -1,0 +1,10 @@
+(library
+ (name compress_zstd)
+ (public_name compress.zstd)
+ (foreign_stubs
+  (language c)
+  (names compress_zstd_block compress_zstd_stubs)
+  (flags
+   (:standard -std=c11 -O3 -fwrapv -Wall -Wextra -Wpedantic)))
+ (instrumentation
+  (backend ppx_windtrap.coverage)))

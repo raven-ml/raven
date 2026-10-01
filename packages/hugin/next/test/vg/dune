@@ -70,7 +70,8 @@
   hugin.next.vg.pdf
   vg_corpus
   nx
-  nx.io
+  bytesrw
+  compress.deflate
   windtrap)
  (deps
   (glob_files golden/*.pdf.txt))

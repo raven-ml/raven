@@ -28,7 +28,13 @@ let streams pdf =
         let len = int_of_string (Str.matched_group 1 pdf) in
         let start = Str.match_end () in
         let data = String.sub pdf start len in
-        let data = try Nx_io.inflate data with Failure _ -> data in
+        let data =
+          try
+            Bytesrw.Bytes.Reader.filter_string
+              [ Compress_deflate.Zlib.decompress_reads () ]
+              data
+          with Bytesrw.Bytes.Stream.Error _ -> data
+        in
         go (start + len) (data :: acc)
   in
   go 0 []

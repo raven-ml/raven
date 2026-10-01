@@ -62,7 +62,13 @@ let objects doc =
             done;
             int_of_string (String.sub dict j (!k - j))
           in
-          (n, dict, Some (Nx_io.inflate (String.sub body (i + 8) length))))
+          let data = String.sub body (i + 8) length in
+          ( n,
+            dict,
+            Some
+              (Bytesrw.Bytes.Reader.filter_string
+                 [ Compress_deflate.Zlib.decompress_reads () ]
+                 data) ))
 
 (* [content doc] is the page's content stream, object 4. *)
 let content doc =
