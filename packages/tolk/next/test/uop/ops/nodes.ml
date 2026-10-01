@@ -225,7 +225,7 @@ let arguments =
             (16, 0)
             (known
                (let k =
-                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 8))
+                  Ops.variable ~multiple_of:4 "k" (`Int Bigint.zero) (`Int (Bigint.of_int 8))
                 in
                 Ops.shrink
                   (Ops.contiguous (Ops.add b b))
