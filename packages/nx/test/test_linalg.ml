@@ -712,6 +712,23 @@ let factorizations =
                   (pair c c)))
             (Nx.matmul ac v)
             (Nx.mul v (Nx.unsqueeze ~axes:[ 0 ] w)));
+      prop
+        "eig gives its values in the same order, bit for bit, with and without \
+         vectors"
+        (sized (fun n -> Gen.pair (matrix n n) (complex_matrix n n)))
+        (fun (a, c) ->
+          let bits w =
+            Array.concat
+              (List.map
+                 (fun (z : Complex.t) ->
+                   [| Int64.bits_of_float z.re; Int64.bits_of_float z.im |])
+                 (Array.to_list (Nx.to_array w)))
+          in
+          let same a =
+            equal (array int64) (bits (fst (Nx.eig a))) (bits (Nx.eigvals a))
+          in
+          same a;
+          same c);
       test "the factorizations refuse integers and non-square matrices"
         (fun () ->
           raises_invalid_arg (fun () -> Nx.qr (Nx.ones Nx.int32 [| 2; 2 |]));
