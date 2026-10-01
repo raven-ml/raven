@@ -6,7 +6,7 @@
 (* Stateful layers: batch normalization and dropout. The house pattern under
    test: trainable parameters and running statistics are separate records, a
    training forward returns (output, new stats), and the training step threads
-   the stats out of the objective through value_and_grad_aux's aux channel. *)
+   the stats out of the objective through value_and_grad_aux. *)
 
 open Windtrap
 open Kaun
@@ -163,7 +163,7 @@ let test_bn_init_validates () =
     (fun () -> Batch_norm.init ~features:0)
 
 (* The full training-step round trip: a model mixing stateless and stateful
-   layers, stats threaded through value_and_grad_aux's aux channel. *)
+   layers, the stats returned through value_and_grad_aux. *)
 module Model = struct
   type 'a t = { lin : 'a Linear.t; bn : 'a Batch_norm.t; out : 'a Linear.t }
 
@@ -200,7 +200,11 @@ let test_bn_train_step_roundtrip () =
       let pred, stats' = Model.forward p stats ~training:true x in
       (Loss.mse pred y, stats')
     in
-    let loss, grads, stats' = Rune.value_and_grad_aux model objective params in
+    let loss, grads, stats' =
+      Rune.value_and_grad_aux model
+        (Nx.Ptree.instantiate (module Batch_norm.Stats))
+        objective params
+    in
     let params, ostate =
       Vega.adam_step model ~lr:(Vega.lr 0.02) ostate ~params ~grads
     in

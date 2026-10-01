@@ -189,13 +189,13 @@ let () =
 There is no `model.train()`/`model.eval()`; mode is an explicit `~training` argument on the functions that care:
 
 - `Dropout.apply ~rate ~training` — training draws a fresh mask and rescales; eval is the identity.
-- `Batch_norm.apply p stats ~training` — training normalizes with batch statistics and returns updated running statistics; eval uses the running statistics. Thread the statistics through the loop with `Rune.value_and_grad_aux` — see [Layers and Models](02-layers-and-models.md) for the full pattern.
+- `Batch_norm.apply p stats ~training` — training normalizes with batch statistics and returns updated running statistics; eval uses the running statistics. Return the statistics from the objective with `Rune.value_and_grad_aux`, which takes their structure — see [Layers and Models](02-layers-and-models.md) for the full pattern.
 
 A model forward that takes `~training` serves both phases; evaluation is the same function with `~training:false`.
 
 ## Going Further
 
-Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [rune transformations guide](../../rune/doc/02-transformations.md)), and `Rune.value_and_grad_aux` threads any auxiliary output — predictions for logging, updated statistics — out of the objective.
+Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [rune transformations guide](../../rune/doc/02-transformations.md)), and `Rune.value_and_grad_aux` returns any auxiliary output of the objective (predictions for logging, updated statistics), given its structure.
 
 For complete programs, see [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) (MLP, AdamW, accuracy evaluation) and [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn) (CNN, dropout, checkpointing).
 

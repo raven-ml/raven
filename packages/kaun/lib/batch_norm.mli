@@ -14,18 +14,22 @@
 
     {!apply} in training mode normalizes with the current batch's statistics and
     returns updated running statistics; in eval mode it normalizes with the
-    running statistics and returns them unchanged. A training step threads the
-    updated statistics out of the objective through {!Rune.value_and_grad_aux}'s
-    auxiliary channel — they ride through differentiation undifferentiated:
+    running statistics and returns them unchanged. A training step returns the
+    updated statistics from the objective beside the loss, through
+    {!Rune.value_and_grad_aux}, which takes their structure and gives them back
+    undifferentiated:
 
     {[
     let model = Nx.Ptree.instantiate (module Model) in
+    let model_stats = Nx.Ptree.instantiate (module Model.Stats) in
     let step (params, stats, ostate) =
       let objective p =
         let pred, stats' = Model.forward p stats ~training:true x in
         (Loss.mse pred y, stats')
       in
-      let loss, grads, stats' = Rune.value_and_grad_aux model objective params in
+      let loss, grads, stats' =
+        Rune.value_and_grad_aux model model_stats objective params
+      in
       let params, ostate =
         Vega.adam_step model ~lr:(Vega.lr 1e-3) ostate ~params ~grads
       in
@@ -112,8 +116,8 @@ val apply :
     With [training = true], [mean] and [var] are the current batch's mean and
     population variance — gradients flow through them to [x] — and [stats'] is
     the updated running statistics [momentum * stats + (1 - momentum) * batch].
-    The update is detached: no gradient flows through [stats'], so it can safely
-    ride the auxiliary channel of {!Rune.value_and_grad_aux} (see the module
+    The update is detached: no gradient flows through [stats'], which a
+    training step returns through {!Rune.value_and_grad_aux} (see the module
     preamble).
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].

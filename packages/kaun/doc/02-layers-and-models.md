@@ -147,7 +147,7 @@ For autoregressive decoding, `Attention.cached` runs causal self-attention of a 
 
 `Batch_norm` is the one layer with non-parameter state. It is two structures: trainable parameters (`Batch_norm.t`, the affine `gamma` and `beta` — differentiated and optimized like any other parameters) and running statistics (`Batch_norm.Stats.t`, per-feature mean and variance — never differentiated, updated by every training forward).
 
-`apply` in training mode normalizes with the current batch's statistics and returns updated running statistics; in eval mode it normalizes with the running statistics and returns them unchanged. A training step threads the updated statistics out of the objective through `Rune.value_and_grad_aux`'s auxiliary channel — they ride through differentiation undifferentiated:
+`apply` in training mode normalizes with the current batch's statistics and returns updated running statistics; in eval mode it normalizes with the running statistics and returns them unchanged. A training step returns the updated statistics from the objective beside the loss, through `Rune.value_and_grad_aux`, which takes their structure and gives them back undifferentiated:
 
 ```ocaml
 module Net = struct
@@ -181,14 +181,15 @@ let () =
     }
   in
 
-  (* One training step: stats' rides the auxiliary channel. *)
+  (* One training step: stats' leaves the objective beside the loss. *)
+  let bn_stats = Nx.Ptree.instantiate (module Batch_norm.Stats) in
   let step (params, stats, ostate) =
     let objective p =
       let pred, stats' = Net.forward p stats ~training:true x in
       (Loss.mse pred y, stats')
     in
     let loss, grads, stats' =
-      Rune.value_and_grad_aux net objective params
+      Rune.value_and_grad_aux net bn_stats objective params
     in
     let params, ostate =
       Vega.adam_step net ~lr:(Vega.lr 1e-2) ostate ~params ~grads
