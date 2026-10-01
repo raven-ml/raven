@@ -883,99 +883,6 @@ let copies_in_order () =
   Engine.run s [||];
   equal values (bytes 7) (Run.values Uint8 out_buffer)
 
-(* A store through a padded view: a row of 8 of [x @ w] into [pool], [8; 8],
-   padded by one row, at the row the loaded [slot] gives, or at the padding row
-   when [slot] lies outside [pool]. With [read], the graph also stores the sums
-   of the rows of [pool] padded by a row of [fill], [9] of them, a selection of
-   [fill] off the very pad node the store goes through, and the sums of [pool]'s
-   rows read directly, [8] of them. With [tag], the store's destination carries
-   [tag] already. *)
-let padded_store ?(fill = 0.) ?(read = false) ?tag device =
-  let buffer n dt shape =
-    Ops.reshape
-      (Ops.new_buffer (Single device) n dt)
-      (List.map (fun d -> Ops.Int d) shape)
-  in
-  let pool = buffer 64 Float32 [ 8; 8 ] in
-  let slot = buffer 1 Int32 [] in
-  let x = buffer 4 Float32 [ 1; 4; 1 ] and w = buffer 32 Float32 [ 1; 4; 8 ] in
-  let inside =
-    Ops.bitwise_and (Ops.ge slot (Ops.int 0)) (Ops.lt slot (Ops.int 8))
-  in
-  let at = Ops.where inside slot (Ops.int 8) in
-  let padding = [ Some (Ops.Int 0, Ops.Int 1); None ] in
-  let padded = Ops.pad pool padding in
-  let view =
-    Ops.shrink padded
-      [ Some (Ops.Sym at, Ops.Sym (Ops.add at (Ops.int 1))); None ]
-  in
-  let view = match tag with None -> view | Some tag -> Ops.rtag ~tag view in
-  let row = Ops.rop (Ops.mul x w) Op.Add [ 1 ] in
-  let stored = Ops.after view [ Ops.store view row ] in
-  if not read then Ops.sink [ stored ]
-  else
-    let filled =
-      Ops.where
-        (Ops.pad (Ops.const_like ~dtype:Bool pool (`Bool true)) padding)
-        padded
-        (Ops.const (`Float fill))
-    in
-    let sums = buffer 9 Float32 [ 9 ] and direct = buffer 8 Float32 [ 8 ] in
-    Ops.sink
-      [
-        stored;
-        Ops.after sums [ Ops.store sums (Ops.rop filled Op.Add [ 1 ]) ];
-        Ops.after direct [ Ops.store direct (Ops.rop pool Op.Add [ 1 ]) ];
-      ]
-
-(* [stores_through_a_pad ~devices ~fill ~read device at] runs [padded_store]
-   with [slot] at [at]: [pool] holds the row at [at] when it lies within it, and
-   is otherwise untouched, and with [read] the sums of the padded rows are
-   [pool]'s rows before the store and [8 * fill] for the padding, and the direct
-   sums [pool]'s rows before the store. *)
-let stores_through_a_pad ?(devices = devices) ?fill ?(read = false) ?tag device
-    at () =
-  let big = padded_store ?fill ~read ?tag device in
-  let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
-  if not read then equal ~msg:"kernels" int 1 (List.length calls);
-  let s, vars, storage = linked ~devices big in
-  let of_size n = List.find (fun st -> per_device st.arg = n) storage in
-  let pool = of_size 64 and slot = of_size 1 in
-  let x = of_size 4 and w = of_size 32 in
-  List.iter
-    (fun dst ->
-      Buffer.copy
-        ~src:(Run.buffer host Int32 [| `Int (Bigint.of_int at) |])
-        ~dst)
-    slot.buffers;
-  Engine.run ~vars s (slots storage);
-  let num v = match v with `Float f -> f | _ -> fail "a float" in
-  let expected =
-    Array.mapi
-      (fun i v ->
-        if at >= 0 && at < 8 && i / 8 = at then
-          let j = i mod 8 in
-          `Float
-            (List.fold_left ( +. ) 0.
-               (List.init 4 (fun k ->
-                    num x.before.(k) *. num w.before.((k * 8) + j))))
-        else v)
-      pool.before
-  in
-  equal values expected (contents pool);
-  if read then (
-    let sum r =
-      List.fold_left ( +. ) 0.
-        (List.init 8 (fun j -> num pool.before.((r * 8) + j)))
-    in
-    let fill = Option.value fill ~default:0. in
-    equal ~msg:"the padded rows read" values
-      (Array.init 9 (fun r -> `Float (if r < 8 then sum r else 8. *. fill)))
-      (contents (of_size 9));
-    equal ~msg:"the rows read without the pad" values
-      (Array.init 8 (fun r -> `Float (sum r)))
-      (contents (of_size 8)))
-
 (* A store of [rows], [4; 8], into [pool], [8; 8], at the rows the loaded
    [slots] give, an index that is Invalid where a slot lies outside [pool]: a
    scatter of rows, one kernel ranging over them. *)
@@ -994,11 +901,11 @@ let gathered_store device =
   let dest = Ops.index pool [ at ] in
   Ops.sink [ Ops.after pool [ Ops.store dest (Ops.add rows (Ops.float 0.5)) ] ]
 
-(* [stores_through_a_gather targets] runs [gathered_store] with [slots] at
-   [targets]: [pool] holds each row at its slot within it, and is otherwise
-   untouched. *)
-let stores_through_a_gather targets () =
-  let big = gathered_store "CPU" in
+(* [stores_through_a_gather ~devices device targets] runs [gathered_store] on
+   [device] with [slots] at [targets]: [pool] holds each row at its slot within
+   it, and is otherwise untouched. *)
+let stores_through_a_gather ?(devices = devices) device targets () =
+  let big = gathered_store device in
   let calls = Ops.src (fst (Schedule.create_linear_with_vars big)) in
   equal ~msg:"kernels" int 1 (List.length calls);
   let s, vars, storage = linked ~devices big in
@@ -1054,24 +961,6 @@ let valid_slot_store =
       raises_match (Exn.invalid_arg ~substring:"Invalid, which is no number")
         (fun () -> Schedule.create_linear_with_vars (store_at_valid_slot "CPU")))
 
-let padded_stores =
-  group "a store through a padded view"
-    [
-      cases ~name:string_of_int "writes the row within the source" [ 0; 3; 7 ]
-        (fun at -> stores_through_a_pad "CPU" at ());
-      cases ~name:string_of_int "writes nothing outside the source" [ -1; 8; 9 ]
-        (fun at -> stores_through_a_pad "CPU" at ());
-      cases ~name:string_of_int
-        "a read of the same padded node reads its fill in the padding"
-        [ 3; -1; 8 ] (fun at ->
-          stores_through_a_pad ~fill:7. ~read:true "CPU" at ());
-      cases ~name:string_of_int
-        "a destination that already carries a tag keeps the read's fill"
-        [ 3; -1 ] (fun at ->
-          stores_through_a_pad ~fill:7. ~read:true ~tag:(Ops.Tag.Int 1) "CPU" at
-            ());
-    ]
-
 let gathered_stores =
   group "a store through a gather"
     [
@@ -1080,7 +969,7 @@ let gathered_stores =
           String.concat ", " (Array.to_list (Array.map string_of_int t)))
         "writes each row at its loaded index and drops an invalid one"
         [ [| 0; 3; 7; 5 |]; [| 6; -1; 8; 2 |] ]
-        (fun targets -> stores_through_a_gather targets ());
+        (fun targets -> stores_through_a_gather "CPU" targets ());
     ]
 
 let schedules =
@@ -2277,16 +2166,10 @@ let metal =
         (allocates_nothing ~devices:on_metal ~names:metal_names "copy");
       slow "a run of a batch of one kernel allocates at most 400 minor words"
         (fun () -> at_most int ~than:400 (batch_run_words ~devices:on_metal ()));
-      cases ~tags:[ "slow" ] ~name:string_of_int
-        "a store through a padded view writes the row within the source, and \
-         nothing outside it"
-        [ 0; 7; -1; 8 ] (fun at ->
-          stores_through_a_pad ~devices:on_metal "CPU:1" at ());
-      cases ~tags:[ "slow" ] ~name:string_of_int
-        "a read of a padded node stored through reads its fill in the padding"
-        [ 3; -1 ] (fun at ->
-          stores_through_a_pad ~devices:on_metal ~fill:7. ~read:true "CPU:1" at
-            ());
+      slow
+        "a store through a gather writes each row at its loaded index and \
+         drops an invalid one"
+        (stores_through_a_gather ~devices:on_metal "CPU:1" [| 6; -1; 8; 2 |]);
       slow "a program's run on Metal takes a positive time, under a second"
         (fun () ->
           let t =
@@ -2307,7 +2190,6 @@ let () =
          programs;
          in_blocks;
          schedules;
-         padded_stores;
          gathered_stores;
          group "a store through a shrink" [ valid_slot_store ];
          refusals;

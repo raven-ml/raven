@@ -20,9 +20,6 @@ type ctx = {
   non_removable : unit Tbl.t;
   broadcast : unit Tbl.t;
       (* The values stored because a broadcast reads them. *)
-  stored_through : unit Tbl.t;
-      (* The pads a store's destination moves through: its writes outside their
-         sources are dropped. *)
   range_map : (t list * t list) Tbl.t;
       (* Each node's ranges: those that index its sources, then its output. *)
   mutable range_idx : int;
@@ -70,53 +67,6 @@ let realize_srcs ctx rb =
 let realize_store_after_src ctx dest s =
   if List.memq (base dest) (toposort ~enter_calls:false s) then realize ctx s
 
-let mark_stored_pads ctx dest =
-  let rec go u =
-    if Op.Set.mem (op u) Op.Set.movement then begin
-      if op u = Op.Pad then Tbl.replace ctx.stored_through u ();
-      go (nth u 0)
-    end
-  in
-  go dest
-
-(* A store's destination that moves through a pad is made its own: each of its
-   movements is marked, so that no read shares the nodes its store gates. The
-   mark joins any tag a movement already carries, and a destination is owned
-   once its top movement carries the mark. *)
-let stored_tag = Tag.String "stored"
-
-let marked u =
-  match tag u with
-  | Some t when Tag.equal t stored_tag -> true
-  | Some (Tag.Tuple ts) -> List.exists (Tag.equal stored_tag) ts
-  | Some _ | None -> false
-
-let mark u =
-  match tag u with
-  | None -> Some stored_tag
-  | Some _ when marked u -> tag u
-  | Some t -> Some (Tag.Tuple [ t; stored_tag ])
-
-let own_destination st =
-  let rec pads u =
-    Op.Set.mem (op u) Op.Set.movement && (op u = Op.Pad || pads (nth u 0))
-  in
-  let rec own u =
-    if not (Op.Set.mem (op u) Op.Set.movement) then u
-    else replace u ~src:(own (nth u 0) :: List.tl (src u)) ~tag:(mark u)
-  in
-  match src st with
-  | dest :: rest when pads dest && not (marked dest) ->
-      Some (replace st ~src:(own dest :: rest))
-  | _ -> None
-
-let pm_own_stored_destinations =
-  Pattern_matcher.v (fun () ->
-      [
-        rule_ctx (Upat.op Op.Store ~name:"st") (fun () m ->
-            own_destination (m "st"));
-      ])
-
 let realize_custom_kernel_srcs ctx c =
   let rec strip s = if op s = Op.Reshape then strip (nth s 0) else s in
   List.iter
@@ -151,8 +101,7 @@ let pm_generate_realize_map =
         rule_ctx
           (Upat.op Op.Store ~src:[ Upat.var "dest"; Upat.var "src" ])
           (mark (fun ctx m ->
-               realize_store_after_src ctx (m "dest") (m "src");
-               mark_stored_pads ctx (m "dest")));
+               realize_store_after_src ctx (m "dest") (m "src")));
       ])
 
 (* Applying ranges *)
@@ -246,21 +195,6 @@ let create_bufferize_and_index_based_on_ranges ctx x =
 let convert_pad_to_where_to_keep_behavior_local ctx x =
   match Tbl.find_opt ctx.range_map x with
   | None -> None
-  | Some (rngs, _) when Tbl.mem ctx.stored_through x ->
-      (* A store through the pad writes only where its index falls within the
-         source. The movements below would simplify that validity away (a
-         reshape flattens the index), so the index into the storage carries it,
-         and the pad is removed as any movement is. *)
-      let valid = uprod (bool true) (List.map get_valid rngs) in
-      let rec lowest u =
-        let s = nth u 0 in
-        if Op.Set.mem (op s) Op.Set.movement then lowest s else u
-      in
-      let m = lowest x in
-      let ins, outs = Tbl.find ctx.range_map m in
-      Tbl.replace ctx.range_map m
-        (List.map (fun i -> Ops.valid (get_idx i) valid) ins, outs);
-      None
   | Some (rngs, _) ->
       let valid = uprod (bool true) (List.map get_valid rngs) in
       let s = List.hd (create_bufferize_and_index_srcs ctx x) in
@@ -585,12 +519,10 @@ let run_rangeify ?(debug = false) tsink =
       realize_map = Tbl.create 64;
       non_removable = Tbl.create 8;
       broadcast = Tbl.create 8;
-      stored_through = Tbl.create 8;
       range_map = Tbl.create 256;
       range_idx = 0;
     }
   in
-  let tsink = graph_rewrite ~ctx:() tsink pm_own_stored_destinations in
   ignore (graph_rewrite ~ctx:rctx tsink pm_generate_realize_map);
   let tsink_toposort = toposort ~gate:gate_kernel_sink tsink in
   let consumer_map = Tbl.create 256 in

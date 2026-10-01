@@ -2039,44 +2039,14 @@ written elsewhere in the graph left buffers with two definitions, and it
 was withdrawn; an explicit gather, which rune emits as an indexed load and
 tolk lowers as one, replaces it.
 
-## D69. A store through a padded view writes only within the pad's source
+## D69. Withdrawn
 
-- **tinygrad:** `schedule/indexing.py:101-105`
-  (`convert_pad_to_where_to_keep_behavior_local`), which turns every pad it
-  ranges into a selection, a store's destination included: the store then
-  targets a `WHERE`, which `uop/spec.py` refuses ("UOp verification failed …
-  Ops.STORE … Ops.WHERE").
-- **tolk:** `lib/schedule/indexing.ml:86` (`own_destination`, run
-  first by `run_rangeify`), `:59` (`mark_stored_pads`) and `:209`
-  (`convert_pad_to_where_to_keep_behavior_local`).
-- **Differs:** a store whose destination moves through a pad writes the
-  elements whose index falls within the pad's source and drops the ones in
-  the padding. The store's destination is first made its own, its movements
-  tagged, so that no read shares them; on that path the pad's validity goes on
-  the index into the storage, an `INDEX` whose index carries it, which codegen
-  renders as a guarded store, and the pad is removed as any movement is. A
-  read through a pad, the same pad as the store's included, stays a
-  selection, as in tinygrad: a fill other than zero, a selection off the pad,
-  reads its fill. tinygrad refuses every graph this changes, so every graph
-  it accepts schedules as before. It is the write-side dual of a read through
-  a pad, which is a gated load.
-- **Reason:** (b). Rune.next's compiled call stores a lent indexed write row
-  by row (`Lower_index.scatter_rows`), and a row whose index lies outside its
-  target is dropped, as nx's scatter drops it. Through a pad, the dropped row
-  stores into the padding and reads nothing, so each row's store fuses with
-  the kernel that computes the row: a decode step's cache write with its
-  projection. As a selection of the target's own row, the store reads its
-  destination, and the kernel computing the row is stored apart.
-- **Pinned by:** the engine suite (`test/engine/tolk_engine`): `a store
-  through a padded view (D69) › writes the row within the source` (rows 0, 3
-  and 7) and `› writes nothing outside the source` (-1, 8 and 9), each one
-  kernel, and `› a read of the same padded node reads its fill in the
-  padding` (one pad node stored through and read with a fill of 7, beside a
-  read of the storage without the pad), and `› a destination that already
-  carries a tag keeps the read's fill`, on the host; `Metal › a store through
-  a padded view writes the row within the source, and nothing outside it
-  (D69)` and `› a read of a padded node stored through reads its fill in the
-  padding (D69)` (slow); rune's Jit suite, `a lent write of rows › *`.
+A store whose destination moved through a pad wrote only within the pad's
+source, its validity carried on the index into the storage, so that rune
+could drop a row it wrote out of range into a padding row. Rune now writes
+those rows with one store through a gather whose index is Invalid where a
+row is dropped, which tinygrad schedules as a gated store, and nothing
+stores through a pad.
 
 ## D70. A batch reaches host memory through nx.device's staging
 
@@ -2164,9 +2134,9 @@ tolk lowers as one, replaces it.
   `schedule/prepare.py:65` (`_mop_index`), `:76` (`pm_mops`), `:94-101`
   (`fix_store_hazard`), `:114` (`split_reduceop`) and `:275-277`
   (`prepare_rangeify`); `schedule/multi.py:202` (`index_multi`) and `:291`.
-- **tolk:** `lib/uop/spec.ml:363`; `lib/schedule/indexing.ml:47`
-  (`storage`), `:54` (`is_gather`), `:56` (`realize_gathered`), `:174`
-  (`data_srcs`), `:227` (`convert_gather`), `:319` and `:508`
+- **tolk:** `lib/uop/spec.ml:363`; `lib/schedule/indexing.ml:46`
+  (`storage`), `:53` (`is_gather`), `:55` (`realize_gathered`), `:125`
+  (`data_srcs`), `:180` (`convert_gather`), `:257` and `:440`
   (`run_rangeify`'s consumer ranges); `lib/schedule/prepare.ml:90`
   (`move_index`), `:133` (`mops`), `:159` (`pm_tensor_mops`) and `:195`
   (`fix_store_hazard`'s `reorders`); `lib/schedule/multi.ml:558`
@@ -2372,8 +2342,8 @@ tolk lowers as one, replaces it.
   `schedule/rangeify.py:25` (`cleanup_dead_axes`) and `:50-95`
   (`remove_bufferize`, which inlines that store again when its value reads
   at most three buffers and no reduction reads a buffer).
-- **tolk:** `lib/schedule/indexing.ml:542` (`assign_ranges`, which records
-  the values a broadcast stores) and `:205` (`bufferize_and_index`, which
+- **tolk:** `lib/schedule/indexing.ml:412` (`assign_ranges`, which records
+  the values a broadcast stores) and `:139` (`bufferize_and_index`, which
   marks their stages `Broadcast`); `lib/uop/ops.mli:262` (`keep`, in place of
   `removable`); `lib/schedule/rangeify.ml:114` (`remove_bufferize`, which
   keeps such a stage); `test/gen/tinygrad.patch`, which gives tinygrad the
