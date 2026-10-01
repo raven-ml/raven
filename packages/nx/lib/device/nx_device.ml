@@ -59,8 +59,10 @@ type keep =
   | Host : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> keep
   | Heap : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * heap_token -> keep
   | Addressed : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t * 'c -> keep
-(* another device's memory the host addresses, as a bigarray that owns nothing,
-   and what keeps the memory *)
+    (* another device's memory the host addresses, as a bigarray that owns
+       nothing, and what keeps the memory *)
+  | With : keep * 'a -> keep
+(* a memory's keep, and one more holder, such as a release token *)
 
 (* The host memory of [create] is kept with its token: a custom block whose
    finaliser returns the reserved bytes to the host's count. *)
@@ -1166,7 +1168,7 @@ let release_token d r bytes =
 let owned d base =
   {
     base with
-    keep = Keep (base.keep, release_token d (Memory base) base.bytes);
+    keep = With (base.keep, release_token d (Memory base) base.bytes);
   }
 
 (* Frees cached memory, of the memory [only] if given, to the system until [d]
@@ -2178,11 +2180,14 @@ module Buffer = struct
       fail "the buffer is not aligned to %d bytes" align;
     if bytes = 0 then Bigarray.Array1.create k Bigarray.c_layout 0
     else
-      match buf.base.keep with
-      | Host ba -> bigarray_view ba k buf.offset (bytes / size)
-      | Heap (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
-      | Addressed (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
-      | Keep _ -> assert false (* host memory is always a bigarray's *)
+      let rec view = function
+        | Host ba -> bigarray_view ba k buf.offset (bytes / size)
+        | Heap (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
+        | Addressed (ba, _) -> bigarray_view ba k buf.offset (bytes / size)
+        | With (keep, _) -> view keep
+        | Keep _ -> assert false (* host memory is always a bigarray's *)
+      in
+      view buf.base.keep
 
   (* Copies. The devices involved are taken and synchronized. A device's copy is
      work on its timeline, waited for at once. *)
@@ -2768,7 +2773,7 @@ module Program = struct
         take 0
 
   let keep p (b : Buffer.t) =
-    { b with base = { b.base with keep = Keep (b.base.keep, p.p_loaded.kept) } }
+    { b with base = { b.base with keep = With (b.base.keep, p.p_loaded.kept) } }
 
   let code p =
     Option.map

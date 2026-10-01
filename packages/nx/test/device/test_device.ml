@@ -2501,6 +2501,15 @@ let programs =
          loads anew"
         test_unloaded;
       test "a buffer of a binary's code keeps it loaded" test_code_keeps;
+      test "a host word a program keeps reads and writes through its bigarray"
+        (fun () ->
+          let p =
+            program (fake ~load:(loads 1n) ()).dev ~binary:"lib" ~name:"f"
+          in
+          let word = Nx_device.Program.keep p (B.create host S.Int64 1) in
+          let a = B.bigarray Bigarray.int64 word in
+          a.{0} <- 42L;
+          equal int64 42L (B.bigarray Bigarray.int64 word).{0});
       test
         "a load refused memory collects unreachable binaries and tries again, \
          then raises Out_of_memory"
