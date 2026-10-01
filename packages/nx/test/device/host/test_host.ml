@@ -408,6 +408,12 @@ let test_split_refusals () =
       ( "a slot past the values",
         { extent = 1; blocks = 1; lo = 1; hi = 3 },
         [| 0; 0; 0 |] );
+      ( "one slot for both bounds",
+        { extent = 4; blocks = 2; lo = 1; hi = 1 },
+        [| 0; 0; 0 |] );
+      ( "iterations times blocks past max_int",
+        { extent = max_int / 2; blocks = 3; lo = 1; hi = 2 },
+        [| 0; 0; 0 |] );
     ]
 
 let () =

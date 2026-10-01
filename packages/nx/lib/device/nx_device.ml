@@ -2822,9 +2822,13 @@ module Program = struct
       (fun s ->
         if s.extent < 0 then refuse "a split of %d iterations" s.extent;
         if s.blocks < 1 then refuse "a split into %d blocks" s.blocks;
+        if s.extent > max_int / s.blocks then
+          refuse "a split of %d iterations into %d blocks overflows" s.extent
+            s.blocks;
         if not (slot s.lo && slot s.hi) then
           refuse "a split's slots %d and %d among %d values" s.lo s.hi
-            (Array.length values))
+            (Array.length values);
+        if s.lo = s.hi then refuse "a split's bounds share the slot %d" s.lo)
       split;
     let run () =
       match split with

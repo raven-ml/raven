@@ -985,6 +985,8 @@ static value call(value v_entry, value v_buffers, value v_values,
     split_job j = {f, b, NULL, nv,
                    Long_val(Field(v_split, 0)), Long_val(Field(v_split, 1)),
                    Long_val(Field(v_split, 2)), Long_val(Field(v_split, 3))};
+    /* A block past the iterations would run none. */
+    if (j.blocks > j.extent) j.blocks = j.extent > 0 ? j.extent : 1;
     if (nthreads > j.blocks) nthreads = (int)j.blocks;
     j.values = malloc((size_t)nthreads * (nv ? nv : 1) * sizeof *j.values);
     if (j.values == NULL) {

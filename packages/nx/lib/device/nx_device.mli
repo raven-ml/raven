@@ -773,7 +773,8 @@ module Program : sig
 
       Raises [Invalid_argument] if [p]'s device runs no programs or does not
       address the memory of a buffer of [buffers], if [split.extent < 0],
-      [split.blocks < 1], or [split.lo] or [split.hi] is no slot of [values],
+      [split.blocks < 1], [split.extent * split.blocks] exceeds [max_int],
+      [split.lo] or [split.hi] is no slot of [values], or [split.lo = split.hi],
       and {!Lost} if a lost device can reach a buffer of [buffers]. *)
 end
 

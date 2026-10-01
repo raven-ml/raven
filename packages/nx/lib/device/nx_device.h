@@ -50,7 +50,9 @@ static inline const char *nx_device_buffer_why(value b) {
 /* The host's thread pool, which nx.cpu's kernels and the blocks of
    Nx_device.Program.call share, so that they never oversubscribe the cores.
    Nx_device hands it out as a nativeint (the primitive caml_nx_device_pool),
-   so that a library reaches it without linking against nx.device's C.
+   so that another library's stubs hold no reference to a symbol of
+   nx.device's, which a bytecode program loads as a shared library of its
+   own.
 
    [workers ()] is the pool's threads, the caller included: the CPUs the
    process may use. [compute_workers ()] is those that pay for compute-bound
