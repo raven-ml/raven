@@ -26,6 +26,8 @@ depends: [
   "jsont"
   "mosaic"
   "matrix"
+  "toffee"
+  "tree-sitter"
   "windtrap" {with-test & >= "0.2.0"}
   "mdx" {with-test}
   "odoc" {with-doc}

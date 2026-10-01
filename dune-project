@@ -380,6 +380,8 @@
   jsont
   mosaic
   matrix
+  toffee
+  tree-sitter
   (windtrap
    (and
     :with-test
