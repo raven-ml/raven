@@ -9,7 +9,7 @@ where	1
 cast_half	1
 softmax	3
 layernorm	3
-attention	4
+attention	5
 conv	1
 maxpool	1
 cat	1
@@ -20,6 +20,7 @@ cumsum	1
 sort	8
 embedding	2
 argmax	2
+swiglu_down	3
 gather_broadcast	2
 gather_read_twice	2
 gather_rotary	2
@@ -87,7 +88,7 @@ variable_staged	2
 symbolic_kept	2
 symbolic_contiguous	2
 variable_read_twice	1
-expand_staged	1
+expand_staged	2
 expand_kept	2
 padded_twice	1
 stage_of_assigned	2

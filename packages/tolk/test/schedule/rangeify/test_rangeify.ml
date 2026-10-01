@@ -74,6 +74,7 @@ let programs =
     "double_matmul";
     "elementwise_three";
     "embedding";
+    "swiglu_down";
     "gather_broadcast";
     "gather_read_twice";
     "gather_rotary";

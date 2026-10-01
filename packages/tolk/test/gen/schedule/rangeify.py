@@ -182,6 +182,10 @@ PROGRAMS = {
     "sort": lambda: empty(8).sort()[0],
     "embedding": lambda: empty(10, 4)[Tensor([1, 2, 3], dtype="int")],
     "argmax": lambda: empty(4, 8).argmax(1),
+    # an activation over the halves of a product, read by a second product
+    "swiglu_down": lambda: (lambda gu: (gu[:, :, 0].clamp(max_=7.0) * (gu[:, :, 0] * 1.702).sigmoid()
+                                        * (gu[:, :, 1].clamp(-7.0, 7.0) + 1)) @ empty(32, 64))(
+        (empty(7, 64) @ empty(64, 64)).reshape(7, 32, 2)),
     # gathers at loaded indices, read where they are broadcast or twice, and a
     # masked sum that is no gather
     "gather_broadcast": lambda: empty(8, 32) @ empty(20, 32)[empty(12, dtype=dtypes.int)].T,

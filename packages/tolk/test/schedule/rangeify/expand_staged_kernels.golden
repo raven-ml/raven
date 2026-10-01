@@ -9,15 +9,22 @@
 7 Ops.INDEX dtypes.float [1, 6]
 8 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU")
 9 Ops.INDEX dtypes.float [8, 3]
-10 Ops.EXP2 dtypes.float [9]
-11 Ops.INDEX dtypes.float [8, 5]
-12 Ops.EXP2 dtypes.float [11]
-13 Ops.ADD dtypes.float [10, 12]
-14 Ops.STORE dtypes.void [7, 13]
-15 Ops.END dtypes.void [14, 3, 5]
-16 Ops.SINK dtypes.void [15] KernelInfo()
-17 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU") tag=()
-18 Ops.CALL dtypes.void [16, 0, 17] CallInfo()
-19 Ops.AFTER dtypes.float [0, 18]
-20 Ops.SINK dtypes.void [19]
+10 Ops.INDEX dtypes.float [8, 5]
+11 Ops.ADD dtypes.float [9, 10]
+12 Ops.STORE dtypes.void [7, 11]
+13 Ops.END dtypes.void [12, 3, 5]
+14 Ops.SINK dtypes.void [13] KernelInfo()
+15 Ops.ALLOC dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
+16 Ops.PARAM dtypes.float [] ParamArg(slot=0, dtype=dtypes.float, size=4, device="CPU")
+17 Ops.INDEX dtypes.float [16, 3]
+18 Ops.EXP2 dtypes.float [9]
+19 Ops.STORE dtypes.void [17, 18]
+20 Ops.END dtypes.void [19, 3]
+21 Ops.SINK dtypes.void [20] KernelInfo()
+22 Ops.PARAM dtypes.float [] ParamArg(slot=1, dtype=dtypes.float, size=4, device="CPU") tag=()
+23 Ops.CALL dtypes.void [21, 15, 22] CallInfo()
+24 Ops.AFTER dtypes.float [15, 23]
+25 Ops.CALL dtypes.void [14, 0, 24] CallInfo()
+26 Ops.AFTER dtypes.float [0, 25]
+27 Ops.SINK dtypes.void [26]
 

@@ -2305,3 +2305,38 @@ tolk lowers as one, replaces it.
   index is zero`; `lanes all Invalid › a kernel whose upcast lanes all read
   an Invalid index sums to zero`; `vectors in programs › a select of lanes
   whose loads all fold is devectorized`.
+
+## D77. A broadcast value that runs a transcendental stays stored
+
+- **tinygrad:** `schedule/indexing.py:270-276` (`run_rangeify`, which
+  stores an elementwise value or reduction whose ranges a broadcast ends)
+  and `schedule/rangeify.py:50-95` (`remove_bufferize`, which inlines that
+  store again when its value reads at most three buffers and no reduction
+  reads a buffer).
+- **tolk:** `lib/schedule/indexing.ml:503` (`runs_transcendental`) and
+  `:571` (`assign_ranges`, which marks such a store non-removable);
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** where a broadcast ends ranges below a value, and computing
+  the value runs `EXP2`, `LOG2`, `SIN` or `POW` (down to the reductions,
+  storage and values already stored), the store is kept: the value is
+  computed once per element and read where it is broadcast. tinygrad's cost
+  check counts buffers and reductions only, so it inlines such a value
+  into its consumer, which computes it again for every element of the
+  ranges it does not vary along: a SwiGLU's sigmoid once per output column
+  of the down projection, a softmax's exponentials once per column of the
+  product with the values, a RoPE's sines and cosines once per head.
+- **Reason:** (b). On the host, where the transcendental functions are
+  polynomials, recomputing them dominates. On an M-series Mac under load
+  (provisional), one MoE block of gpt-oss-20b took 182 ms a token and
+  64 ms with the rule, and 1415 ms and 555 ms for 8 tokens; causal
+  attention with sinks at gpt-oss's shapes took 2726 ms and 614 ms at 512
+  tokens, and 39.0 s and 10.9 s at 2048. On Metal the MoE block took
+  18.4 ms and 17.1 ms a token, and attention 23.5 ms and 16.8 ms at 512
+  tokens, 187 ms and 183 ms at 2048. On CUDA, gpt-oss-20b's prefill took
+  9.4 s and 3.1 s warm, and its attention-score kernel went from 29k nodes
+  to 479. The cost is memory: attention keeps its exponentials, one more
+  buffer of tokens by tokens by heads while the call runs (1.10 GB and
+  2.17 GB allocated at 2048 tokens).
+- **Pinned by:** the Rangeify suite's `swiglu_down` and `attention` rows of
+  `kernel_counts.golden` and their kernel goldens, from the equally patched
+  tinygrad.

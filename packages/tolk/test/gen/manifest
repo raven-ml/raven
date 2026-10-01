@@ -3639,6 +3639,8 @@ schedule/rangeify/sum_all_kernels.golden
 schedule/rangeify/sum_kept_broadcast.golden
 schedule/rangeify/sum_kept_broadcast_kernels.golden
 schedule/rangeify/sum_kernels.golden
+schedule/rangeify/swiglu_down.golden
+schedule/rangeify/swiglu_down_kernels.golden
 schedule/rangeify/symbolic_contiguous.golden
 schedule/rangeify/symbolic_contiguous_kernels.golden
 schedule/rangeify/symbolic_kept.golden

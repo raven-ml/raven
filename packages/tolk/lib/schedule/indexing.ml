@@ -498,6 +498,19 @@ let merge_consumer_rngs rctx x consumer_rngs =
    ranges, as a sink does not. *)
 let no_ranges = ops Op.[ Call; Linear; After; Mstack; Mselect ]
 
+(* Whether computing [x] runs a transcendental function: down to the reductions,
+   storage and values already stored, which are not recomputed where [x] is. *)
+let runs_transcendental rctx x =
+  let computed u =
+    u == x
+    || not
+         (Tbl.mem rctx.realize_map u
+         || Op.Set.mem (op u) (ops Op.[ Reduce; Buffer; Param; After; Alloc ]))
+  in
+  List.exists
+    (fun u -> Op.Set.mem (op u) (ops Op.[ Exp2; Log2; Sin; Pow ]))
+    (toposort ~gate:computed x)
+
 let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
   let consumers = List.rev (Tbl.find consumer_map x) in
   let ending =
@@ -552,6 +565,11 @@ let assign_ranges rctx ~debug ~consumer_map ~ending_ranges x =
           else begin
             Tbl.replace rctx.realize_map x
               (Some (List.init (List.length out_rngs) Fun.id));
+            (* Read where it is broadcast, a value would be computed once per
+               element of the ranges it does not vary along: one that runs a
+               transcendental function stays stored. *)
+            if runs_transcendental rctx x then
+              Tbl.replace rctx.non_removable x ();
             new_ranges rctx (List.take (List.length out_rngs) (shape x))
           end
         end
