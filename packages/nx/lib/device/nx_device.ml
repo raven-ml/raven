@@ -695,6 +695,8 @@ let disk =
 let name d = d.name
 let arch d = d.arch
 let equal = ( == )
+let compare a b = Int.compare a.id b.id
+let pp ppf d = Format.pp_print_string ppf d.name
 let budget d = d.budget
 let host_of d = match d.machine with Some h -> h | None -> d
 
@@ -2015,7 +2017,9 @@ module Buffer = struct
       let all =
         List.sort
           (fun (s, a, _, _) (s', a', _, _) ->
-            match compare s s' with 0 -> Nativeint.compare a a' | c -> c)
+            match Stdlib.compare s s' with
+            | 0 -> Nativeint.compare a a'
+            | c -> c)
           all
       in
       let refuse () =

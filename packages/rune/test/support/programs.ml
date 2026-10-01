@@ -31,7 +31,7 @@ let compiled s y =
   in
   match Ops.src linear with
   | [ call ] ->
-      let ren = Traces.host Nx.Device.host in
+      let ren = Traces.host Nx_device.host in
       let program = Codegen.to_program (Ops.body call) ren in
       let args = Ops.src_without_body call in
       let bound =

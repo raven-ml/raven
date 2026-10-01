@@ -12,7 +12,6 @@ exception Linalg_error = Nx_backend.Linalg_error
 
 let context = Nx_effect.Placement.host
 
-module Device = Nx_effect.Device
 module Placement = Nx_effect.Placement
 
 let place = Nx_effect.place
@@ -147,9 +146,7 @@ module Repr = struct
 
     let buffers (s : t) =
       match Nx_effect.Cell.state s with
-      | Nx_effect.Live (Nx_effect.Runtime bs) -> bs
-      | Live _ ->
-          invalid_arg "Nx.Repr.Storage.buffers: storage in memory of its own"
+      | Nx_effect.Live bs -> bs
       | Consumed k -> invalid_arg (Nx_effect.why_consumed k)
 
     let placement (s : t) = s.placement

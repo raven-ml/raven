@@ -235,8 +235,7 @@ let driver name =
          mapping = Some Nx_device.Driver.Identity;
        })
 
-let devices =
-  List.map (fun n -> Nx.Device.of_runtime (driver n)) [ "Q1"; "Q2"; "Q3"; "Q4" ]
+let devices = List.map driver [ "Q1"; "Q2"; "Q3"; "Q4" ]
 
 let pair = [ List.nth devices 0; List.nth devices 1 ]
 let split ?(axis = 0) ds = Nx.Placement.sharded ~backend:Rune.compiled ~axis ds
@@ -495,7 +494,7 @@ let metal =
   | None -> slow "metal" (fun () -> skip ~reason:"no Metal device" ())
   | Some m ->
       let p =
-        Nx.Placement.device ~backend:Rune.compiled (Nx.Device.of_runtime m)
+        Nx.Placement.device ~backend:Rune.compiled m
       in
       cases
         ~name:(fun c -> c.name)

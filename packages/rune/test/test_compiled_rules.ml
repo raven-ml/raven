@@ -245,10 +245,9 @@ let reductions =
 (* A device over the host's memory whose programs are the host's, so that a
    traced argument lies off the host. *)
 let device =
-  Nx.Device.of_runtime
-    (Nx_device.Driver.device ~name:"COMPILED-RULES" ~arch:"test" ~budget:max_int
-       (Host_visible
-          { memory = Nx_device.Driver.host_memory; mapping = Some Identity }))
+  Nx_device.Driver.device ~name:"COMPILED-RULES" ~arch:"test" ~budget:max_int
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
 
 let on_device x = Nx.place (Nx.Placement.device device) x
 
@@ -465,7 +464,6 @@ let metal =
   match Metal.device with
   | None -> []
   | Some d ->
-      let d = Nx.Device.of_runtime d in
       let float32 = Case.D Nx.float32 in
       let points (c : Case.t) =
         if List.mem float32 c.dtypes then Some (c.smooth float32) else None

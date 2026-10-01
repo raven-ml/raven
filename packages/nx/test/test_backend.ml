@@ -45,7 +45,7 @@ let runtime name =
   Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
     (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-let r1 = Nx.Device.of_runtime (runtime "R1")
+let r1 = runtime "R1"
 let vec a = Nx.create Nx.float32 [| Array.length a |] a
 let floats = tensor float_exact
 
@@ -73,14 +73,14 @@ let backends =
               equal ~msg:"an operation it does not change is the host's" floats
                 (vec [| 2.; 8.; 18. |])
                 z)
-            [ Nx.Device.host; r1 ]);
+            [ Nx_device.host; r1 ]);
       test "an operation on host values does not reach another backend"
         (fun () ->
           let before = !Counting.adds in
           ignore (Nx.add (vec [| 1. |]) (vec [| 2. |]));
           equal int before !Counting.adds);
       test "a refused operation raises Refused" (fun () ->
-          let p = Nx.Placement.device ~backend:refusing Nx.Device.host in
+          let p = Nx.Placement.device ~backend:refusing Nx_device.host in
           let x = Nx.place p (Nx.ones Nx.float32 [| 2; 2 |]) in
           raises_match
             (function Nx_backend.Refused _ -> true | _ -> false)
@@ -89,11 +89,11 @@ let backends =
       test "operands with two backends raise, naming both placements" (fun () ->
           let x =
             Nx.place
-              (Nx.Placement.device ~backend:counting Nx.Device.host)
+              (Nx.Placement.device ~backend:counting Nx_device.host)
               (vec [| 1. |])
           and y =
             Nx.place
-              (Nx.Placement.device ~backend:refusing Nx.Device.host)
+              (Nx.Placement.device ~backend:refusing Nx_device.host)
               (vec [| 1. |])
           in
           raises_match
@@ -105,30 +105,28 @@ let backends =
               | _ -> false)
             (fun () -> ignore (Nx.add x y)));
       test "a host operand joins a placement of another backend" (fun () ->
-          let p = Nx.Placement.device ~backend:counting Nx.Device.host in
+          let p = Nx.Placement.device ~backend:counting Nx_device.host in
           let y = Nx.add (Nx.place p (vec [| 1. |])) (vec [| 2. |]) in
           is_true (Nx.Placement.equal (Nx.placement y) p);
           equal floats (vec [| 3. |]) y);
       test "a placement refuses a backend that does not run on the host"
         (fun () ->
           raises_invalid_arg (fun () ->
-              Nx.Placement.device ~backend:hostless Nx.Device.host);
+              Nx.Placement.device ~backend:hostless Nx_device.host);
           raises_invalid_arg (fun () ->
               Nx.Placement.device ~backend:hostless r1);
           raises_invalid_arg (fun () ->
-              Nx.Placement.replicated ~backend:hostless [ Nx.Device.host; r1 ]));
+              Nx.Placement.replicated ~backend:hostless [ Nx_device.host; r1 ]));
       test "nx.cpu subtracts values placed on CPU:1, keeping their placement"
         (fun () ->
-          let p =
-            Nx.Placement.device (Nx.Device.of_runtime (runtime "CPU:1"))
-          in
+          let p = Nx.Placement.device (runtime "CPU:1") in
           let a = Nx.place p (vec [| 5.; 7. |])
           and b = Nx.place p (vec [| 2.; 3. |]) in
           let d = Nx.sub a b in
           is_true (Nx.Placement.equal (Nx.placement d) p);
           equal floats (vec [| 3.; 4. |]) d);
       test "placements differ by backend, and print it" (fun () ->
-          let p = Nx.Placement.device ~backend:counting Nx.Device.host in
+          let p = Nx.Placement.device ~backend:counting Nx_device.host in
           is_false (Nx.Placement.equal p Nx.Placement.host);
           is_true (Nx_backend.equal (Nx.Placement.backend p) counting);
           is_true
@@ -161,7 +159,7 @@ let backends =
          and one of another placement as a placed value" (fun () ->
           let x = vec [| 1.; 2. |] in
           is_false ~msg:"created on the host" (is_placed x);
-          let p = Nx.Placement.device ~backend:counting Nx.Device.host in
+          let p = Nx.Placement.device ~backend:counting Nx_device.host in
           let y = Nx.place p x in
           is_true ~msg:"another backend on the host device" (is_placed y);
           is_true ~msg:"its results" (is_placed (Nx.add y y));

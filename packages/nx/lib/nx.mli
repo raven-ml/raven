@@ -226,9 +226,9 @@ val to_array : ('a, 'b) t -> 'a array
 
 (** {1:placement Devices, backends and placement}
 
-    Where a value lives is a value too. A device holds memory; the library that
-    owns a device's runtime opens it (for example [Rune.device "METAL"]), and
-    {!Device.host} is the host. A backend ({!Nx_backend.t}) is kernels that
+    Where a value lives is a value too. A device ({!Nx_device.t}) holds memory;
+    the library that drives it opens it (for example [Nx_metal_device.v 0]), and
+    {!Nx_device.host} is the host. A backend ({!Nx_backend.t}) is kernels that
     compute nx's operations on arrays. A placement is one device, a list of
     devices each holding a full copy, or a list of devices each holding an
     equal slice along one axis, together with the one backend that computes on
@@ -259,7 +259,7 @@ val to_array : ('a, 'b) t -> 'a array
     reads and leaves the value where it is. A value's storage is released when
     no value reaches it.
 
-    The disk ([Device.of_runtime Nx_device.disk]) holds values in files, such as
+    The disk ({!Nx_device.disk}) holds values in files, such as
     the tensors [Nx_io.load_safetensors] loads, and computes nothing: a value on
     it takes part in an operation as a host value, which the host reads in the
     file's pages, and a movement of it stays on the disk. {!place} onto the host
@@ -286,49 +286,6 @@ val to_array : ('a, 'b) t -> 'a array
     of a value split by rows, {!item}) is a view of that shard on its device
     alone, so {!item} reads one element. *)
 
-(** Devices. *)
-module Device : sig
-  type t = Nx_effect.device
-  (** The type for devices. *)
-
-  val host : t
-  (** [host] is the host, named ["CPU"]. *)
-
-  val name : t -> string
-  (** [name d] is [d]'s name, for example ["METAL"] or ["CUDA:3"]. *)
-
-  val equal : t -> t -> bool
-  (** [equal d d'] is [true] iff [d] and [d'] are the same device. Libraries
-      that open devices return one value per device. *)
-
-  val compare : t -> t -> int
-  (** [compare] is a total order on devices, compatible with {!equal}. *)
-
-  val pp : Format.formatter -> t -> unit
-  (** [pp] formats a device's name. *)
-
-  val of_runtime : Nx_device.t -> t
-  (** [of_runtime d] is the device that holds placed values in [d]'s buffers:
-      the same value for every call with [d], and {!host} for [Nx_device.host].
-      It has [d]'s name. {!place} and operations raise {!Out_of_memory} with
-      this device when [d] cannot allocate. A value placed on another such
-      device is copied into [d]'s buffers straight from that device's, a
-      window at a time, when the window is a contiguous run of the value's
-      storage, and through the host otherwise. *)
-
-  val runtime : t -> Nx_device.t
-  (** [runtime d] is the runtime device whose buffers hold [d]'s placed values:
-      [runtime (of_runtime rd)] is [rd], and [runtime host] is
-      [Nx_device.host].
-
-      Raises [Invalid_argument] if [d] holds its values in memory of its own,
-      as a device another library opens does. *)
-
-  exception Out_of_memory of t * int
-  (** Raised by an operation, a {!place} or a compiled call when a device cannot
-      allocate the given number of bytes. *)
-end
-
 (** Placements. *)
 module Placement : sig
   type t = Nx_effect.placement
@@ -338,38 +295,37 @@ module Placement : sig
       list never repeats a device. *)
 
   val host : t
-  (** [host] is [device Device.host]: the host device with [Nx_cpu.backend],
+  (** [host] is [device Nx_device.host]: the host device with [Nx_cpu.backend],
       whose values are arrays in host memory (see {{!placement}above}). *)
 
-  val device : ?backend:Nx_backend.t -> Device.t -> t
+  val device : ?backend:Nx_backend.t -> Nx_device.t -> t
   (** [device ~backend d] is placement on [d] alone, computed by [backend]
       (defaults to [Nx_cpu.backend]).
 
       Raises [Invalid_argument] if [backend] does not run on the host, where
       nx computes on every placement's values. *)
 
-  val replicated : ?backend:Nx_backend.t -> Device.t list -> t
+  val replicated : ?backend:Nx_backend.t -> Nx_device.t list -> t
   (** [replicated ~backend ds] is a full copy on each device of [ds], computed
       by [backend] (defaults to [Nx_cpu.backend]).
 
-      Raises [Invalid_argument] if [ds] is empty, repeats a device, mixes
-      devices whose memories differ (those of {!Device.of_runtime}, the host
-      included, and those another library opens), or as {!device}. *)
+      Raises [Invalid_argument] if [ds] is empty, repeats a device, or as
+      {!device}. *)
 
-  val sharded : ?backend:Nx_backend.t -> axis:int -> Device.t list -> t
+  val sharded : ?backend:Nx_backend.t -> axis:int -> Nx_device.t list -> t
   (** [sharded ~backend ~axis ds] is equal slices of [axis] on the devices of
       [ds], in order, computed by [backend] (defaults to [Nx_cpu.backend]).
 
       Raises [Invalid_argument] if [axis] is negative, or as {!replicated}. *)
 
-  val devices : t -> Device.t list
+  val devices : t -> Nx_device.t list
   (** [devices p] is the devices of [p], in the order that decides which window
       each holds. *)
 
   val backend : t -> Nx_backend.t
   (** [backend p] is the backend that computes on values at [p]. *)
 
-  val window : t -> int array -> Device.t -> (int * int) array
+  val window : t -> int array -> Nx_device.t -> (int * int) array
   (** [window p shape d] is the window of a value of shape [shape] that [d]
       holds at [p], as [(start, stop)] per axis, [stop] exclusive, as {!shrink}
       takes it: [shrink (window p (shape x) d) x] is [d]'s part of [x].
@@ -4295,8 +4251,7 @@ module Repr : sig
     val buffers : t -> Nx_device.Buffer.t list
     (** [buffers s] is [s]'s buffers, one per device.
 
-        Raises [Invalid_argument] if [s] was consumed, or if its devices hold it
-        in memory of their own. *)
+        Raises [Invalid_argument] if [s] was consumed. *)
 
     val placement : t -> Placement.t
     (** [placement s] is where [s] lives. *)

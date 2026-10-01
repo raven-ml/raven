@@ -566,7 +566,7 @@ let kernels_reading c y =
         | Tolk_next.Ops.Const v -> v = c
         | _ -> false)
       (Tolk_next.Ops.toposort
-         (Tolk_next.Codegen.full_rewrite_to_sink k (host Nx.Device.host)))
+         (Tolk_next.Codegen.full_rewrite_to_sink k (host Nx_device.host)))
   in
   List.length (List.filter reads (Tolk_next.Ops.src (Programs.kernels y)))
 

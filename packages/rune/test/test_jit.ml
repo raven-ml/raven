@@ -93,17 +93,13 @@ let driver ?(mapping = Some Nx_device.Driver.Identity) name =
     (Host_visible { memory = Nx_device.Driver.host_memory; mapping })
 
 let d1, d2, d3, d4 =
-  match
-    List.map
-      (fun n -> Nx.Device.of_runtime (driver n))
-      [ "J1"; "J2"; "J3"; "J4" ]
-  with
+  match List.map driver [ "J1"; "J2"; "J3"; "J4" ] with
   | [ a; b; c; d ] -> (a, b, c, d)
   | _ -> assert false
 
 let on d = Nx.Placement.device ~backend:Rune.compiled d
 let placed d t = Nx.place (on d) t
-let stats d = Nx_device.stats (Nx.Device.runtime d)
+let stats = Nx_device.stats
 let bytes_in d = Nx_device.Stats.bytes_in (stats d)
 let allocated d = Nx_device.Stats.allocated (stats d)
 
@@ -117,7 +113,7 @@ let allocated d = Nx_device.Stats.allocated (stats d)
 let settled d =
   for _ = 1 to 4 do
     Gc.full_major ();
-    Nx_device.synchronize (Nx.Device.runtime d)
+    Nx_device.synchronize d
   done;
   allocated d
 
@@ -1459,7 +1455,7 @@ let captures =
           in
           run ();
           Gc.full_major ();
-          Nx_device.synchronize (Nx.Device.runtime d4);
+          Nx_device.synchronize d4;
           equal int before (allocated d4));
       test "two compiled functions binding one capture run from two domains"
         (fun () ->
@@ -1515,8 +1511,8 @@ let captures =
 
 (* Errors *)
 
-let twin1 = Nx.Device.of_runtime (driver "TWIN")
-let twin2 = Nx.Device.of_runtime (driver "TWIN")
+let twin1 = driver "TWIN"
+let twin2 = driver "TWIN"
 
 let errors =
   let leaked = ref None in
@@ -3010,7 +3006,7 @@ let device_lists =
 let on_disk_at_read path =
   let module B = Nx_device.Buffer in
   let pp = Format.pp_print_string in
-  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let p = Nx.Placement.device Nx_device.disk in
   Nx.Repr.Placed.v p Nx.float32
     (Nx_array.View.create [| 4 |])
     (Nx.Repr.Storage.v p
@@ -3026,7 +3022,7 @@ let on_disk_at path x =
   let src = elements x in
   let pp = Format.pp_print_string in
   B.copy ~src ~dst:(require_ok ~pp (B.create_file path (B.nbytes src)));
-  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let p = Nx.Placement.device Nx_device.disk in
   Nx.Repr.Placed.v p (Nx.dtype x)
     (Nx_array.View.create (Nx.shape x))
     (Nx.Repr.Storage.v p
@@ -3053,7 +3049,7 @@ let unaligned_on_disk v =
           land 255)
   in
   ignore (on_disk_at path bytes);
-  let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let p = Nx.Placement.device Nx_device.disk in
   Nx.Repr.Placed.v p Nx.int32
     (Nx_array.View.create [| n |])
     (Nx.Repr.Storage.v p
@@ -3091,7 +3087,7 @@ let disk =
           let module B = Nx_device.Buffer in
           let path = temp_file () in
           ignore (on_disk_at path (Nx.concatenate ~axis:0 [ x (); y () ]));
-          let p = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+          let p = Nx.Placement.device Nx_device.disk in
           let file = require_ok ~pp:Format.pp_print_string (B.of_file path) in
           let weight first =
             Nx.Repr.Placed.v p Nx.float32
@@ -3352,7 +3348,7 @@ let on_one_device ~name d =
           (* A device that shares the host's memory borrows the file's pages,
              which it must not lend; another copies them into its own. *)
           let copied =
-            not (Nx_device.shares_host_memory (Nx.Device.runtime d))
+            not (Nx_device.shares_host_memory d)
           in
           equal bool ~msg:"lent" copied
             (List.equal Nativeint.equal before (Witness.addresses r));
@@ -3407,7 +3403,7 @@ let constants_where_used d =
       let f p = Nx.add (Nx.arange Nx.int64 0 8 1) p in
       let p = Nx.scalar Nx.int64 4L in
       let r, loaded =
-        loaded_on (Nx.Device.runtime d) (fun () -> Rune.jit' f (placed d p))
+        loaded_on d (fun () -> Rune.jit' f (placed d p))
       in
       equal ~msg:"programs" int 1 loaded;
       equal (tensor int64) (f p) (host r))
@@ -3430,16 +3426,15 @@ let sums_fuse_products d =
 (* The calls on a GPU of [kind], if this machine has one. *)
 let on_gpu kind = function
   | Some m ->
-      let d = Nx.Device.of_runtime m in
       [
-        on_one_device ~name:"one device" d;
-        constants_where_used d;
-        sums_fuse_products d;
-        staged_scans d;
+        on_one_device ~name:"one device" m;
+        constants_where_used m;
+        sums_fuse_products m;
+        staged_scans m;
         rows_written
-          ~at:(Nx.Placement.device ~backend:Rune.compiled d)
+          ~at:(Nx.Placement.device ~backend:Rune.compiled m)
           "a lent write of rows";
-        gathers ~at:(on d) m;
+        gathers ~at:(on m) m;
       ]
   | None ->
       let why = "no " ^ kind ^ " device" in
@@ -3466,7 +3461,7 @@ let () =
          device_lists;
          disk;
          on_one_device ~name:"one device" d4;
-         sums_fuse_products (Nx.Device.of_runtime Nx_device.host);
+         sums_fuse_products Nx_device.host;
          group ~tags:[ "slow" ] "metal" (on_gpu "Metal" Metal.device);
          group ~tags:[ "slow" ] "cuda" (on_gpu "CUDA" Nvidia.cuda);
          group ~tags:[ "slow" ] "nv" (on_gpu "NV" Nvidia.nv);

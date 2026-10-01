@@ -25,9 +25,9 @@ let refuses = List.iter raises_invalid_arg
 
 (* Where a value lives, as nx.mli states it. *)
 type where =
-  | One of Nx.Device.t
-  | Copies of Nx.Device.t list
-  | Split of int * Nx.Device.t list
+  | One of Nx_device.t
+  | Copies of Nx_device.t list
+  | Split of int * Nx_device.t list
 
 let to_placement = function
   | One d -> Nx.Placement.device d
@@ -36,8 +36,8 @@ let to_placement = function
 
 let pp_where ppf w = Nx.Placement.pp ppf (to_placement w)
 let devices_of = function One d -> [ d ] | Copies ds | Split (_, ds) -> ds
-let sorted ds = List.sort Nx.Device.compare ds
-let same_set ds es = List.equal Nx.Device.equal (sorted ds) (sorted es)
+let sorted ds = List.sort Nx_device.compare ds
+let same_set ds es = List.equal Nx_device.equal (sorted ds) (sorted es)
 
 (* Placements *)
 
@@ -62,7 +62,7 @@ let make (ds, axis) =
 
 let placement_args =
   let open Gen in
-  let+ ds = permutation ~pp:Nx.Device.pp four
+  let+ ds = permutation ~pp:Nx_device.pp four
   and+ n = int_range 1 4
   and+ axis = option (int_range 0 2) in
   (List.filteri (fun i _ -> i < n) ds, axis)
@@ -76,7 +76,7 @@ let placements =
             [
               (on1, Nx.Placement.replicated [ d1 ]);
               (on1, Nx.Placement.sharded ~axis:3 [ d1 ]);
-              (Nx.Placement.host, Nx.Placement.device Nx.Device.host);
+              (Nx.Placement.host, Nx.Placement.device Nx_device.host);
               ( Nx.Placement.replicated [ d1; d2 ],
                 Nx.Placement.replicated [ d2; d1 ] );
             ];
@@ -89,7 +89,7 @@ let placements =
          let+ b =
            frequency
              [
-               (1, map (fun ds -> (ds, axis)) (permutation ~pp:Nx.Device.pp ds));
+               (1, map (fun ds -> (ds, axis)) (permutation ~pp:Nx_device.pp ds));
                (2, placement_args);
              ]
          in

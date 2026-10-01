@@ -82,7 +82,7 @@ type scope
 (** The type for traces in progress: the renderer of each device, the device of
     every name its nodes carry, and the captures it has bound. *)
 
-val scope : renderer:(Nx.Device.t -> Renderer.t) -> scope
+val scope : renderer:(Nx_device.t -> Renderer.t) -> scope
 (** [scope ~renderer] is an empty trace in which the programs of a device [d]
     are rendered by [renderer d], which decides the dtypes [d] computes
     ({!Decomp_dtype.computes}). [renderer] is called once per device of the
@@ -174,7 +174,7 @@ val uop : ('a, 'b) Nx.t -> Ops.t
 
     Raises [Invalid_argument] if [x] is not a value traced by a scope. *)
 
-val devices : scope -> (string * Nx.Device.t) list
+val devices : scope -> (string * Nx_device.t) list
 (** [devices s] is the device of each name that [s]'s nodes carry, in the order
     [s] met them. *)
 

@@ -162,6 +162,13 @@ val arch : t -> string
 val equal : t -> t -> bool
 (** [equal d d'] is [true] iff [d] and [d'] are the same device. *)
 
+val compare : t -> t -> int
+(** [compare] is a total order on devices, compatible with {!equal}: the order
+    in which they were opened, the {!host} first. *)
+
+val pp : Format.formatter -> t -> unit
+(** [pp] formats a device's {!name}. *)
+
 val synchronize : t -> unit
 (** [synchronize d] returns once the work submitted to [d], and the work
     submitted to other devices that touched [d]'s memory, has completed. The

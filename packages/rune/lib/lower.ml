@@ -7,7 +7,6 @@ open Tolk_next
 module View = Nx_array.View
 module Repr = Nx.Repr
 module Placement = Nx.Placement
-module Device = Nx.Device
 
 exception Jit_error of string
 
@@ -204,9 +203,9 @@ type capture = {
 type write = { result : Ops.t; into : Ops.t; regions : Lower_index.region list }
 
 type scope = {
-  renderer : Device.t -> Renderer.t;
-  mutable dtypes : (Device.t * Dtype.t list) list;
-  mutable names : (string * Device.t) list;
+  renderer : Nx_device.t -> Renderer.t;
+  mutable dtypes : (Nx_device.t * Dtype.t list) list;
+  mutable names : (string * Nx_device.t) list;
   mutable captures : capture list;
   mutable writes : write list;
   mutable arguments : Ops.t list;
@@ -234,9 +233,9 @@ let writes s = s.writes
 
 (* The name that [s]'s nodes give [d]. *)
 let name s d =
-  let n = Device.name d in
+  let n = Nx_device.name d in
   (match List.assoc_opt n s.names with
-  | Some d' when Device.equal d d' -> ()
+  | Some d' when Nx_device.equal d d' -> ()
   | Some _ ->
       invalid_arg
         (Printf.sprintf "two devices are named %s in one compiled function" n)
@@ -270,7 +269,7 @@ let check : type a b.
   | Some tdt ->
       List.iter
         (fun d ->
-          if not (supports s d tdt) then refuse (" on " ^ Device.name d))
+          if not (supports s d tdt) then refuse (" on " ^ Nx_device.name d))
         (Placement.devices p);
       tdt
 
@@ -316,17 +315,17 @@ let device_of s p =
    whatever computes on them. *)
 let same_layout p q shape =
   let dp = Placement.devices p in
-  List.equal Device.equal dp (Placement.devices q)
+  List.equal Nx_device.equal dp (Placement.devices q)
   && List.for_all
        (fun d -> Placement.window p shape d = Placement.window q shape d)
        dp
 
 let same_devices p q =
-  List.equal Device.equal (Placement.devices p) (Placement.devices q)
+  List.equal Nx_device.equal (Placement.devices p) (Placement.devices q)
 
 let disk p =
   match Placement.devices p with
-  | [ d ] -> Device.equal d (Device.of_runtime Nx_device.disk)
+  | [ d ] -> Nx_device.equal d Nx_device.disk
   | _ -> false
 
 let on_disk x = disk (Nx.placement x)
@@ -471,8 +470,7 @@ let parameter s ~slot p dt shape =
 (* The engine's devices *)
 
 let engine s =
-  Tolk_next_engine.device
-    (List.map (fun (n, d) -> (n, Device.runtime d)) (devices s))
+  Tolk_next_engine.device (devices s)
 
 (* Captures *)
 
@@ -589,9 +587,7 @@ let follow s q u =
               List.map
                 (fun d ->
                   let dst =
-                    Nx_device.Buffer.create (Device.runtime d)
-                      (Nx_device.Buffer.dtype src)
-                      n
+                    Nx_device.Buffer.create d (Nx_device.Buffer.dtype src) n
                   in
                   Nx_device.Buffer.copy ~src ~dst;
                   dst)

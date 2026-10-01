@@ -14,9 +14,9 @@ module B = Nx_device.Buffer
 
 let d1 = Devices.d1
 let d2 = Devices.d2
-let r1 = Nx.Device.runtime d1
+let r1 = d1
 let placement = Devices.placement
-let disk = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk)
+let disk = Nx.Placement.device Nx_device.disk
 
 let device =
   Testable.make
@@ -48,7 +48,7 @@ let one_run x =
 
 let runtime_of x =
   match Nx.Placement.devices (Nx.placement x) with
-  | [ d ] -> Nx.Device.runtime d
+  | [ d ] -> d
   | _ -> fail "expected a value on one device"
 
 let traced () =
@@ -178,7 +178,7 @@ let of_buffer =
       test "places the value with the backend it names" (fun () ->
           let x = Nx.of_buffer ~backend Nx.int32 [| 4 |] (ints 4) in
           equal placement
-            (Nx.Placement.device ~backend Nx.Device.host)
+            (Nx.Placement.device ~backend Nx_device.host)
             (Nx.placement x));
       test "reads a file's bytes as a value on the disk" (fun () ->
           let x = Runtimes.on_disk (Nx.arange Nx.int32 0 6 1) in
@@ -221,7 +221,7 @@ let one_per_device (Stored.Case c) =
     (placed c.tensors) (fun (t, p) ->
       let buffers, _ = Nx.shards (Nx.place p t) in
       equal (list device)
-        (List.map Nx.Device.runtime (Nx.Placement.devices p))
+        (Nx.Placement.devices p)
         (List.map B.device buffers))
 
 let same_handles x y =
@@ -268,7 +268,7 @@ let of_shards =
   let p = Nx.Placement.replicated [ d1; d2 ] in
   let view = Nx_array.View.create [| 4 |] in
   let on r ?(scalar = Nx_dtype.Scalar.Int32) n = B.create r scalar n in
-  let r2 = Nx.Device.runtime d2 in
+  let r2 = d2 in
   let refuses what buffers =
     test what (fun () ->
         raises_invalid_arg (fun () -> Nx.of_shards p Nx.int32 view buffers))

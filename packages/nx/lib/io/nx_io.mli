@@ -145,8 +145,8 @@ val load_safetensors : string -> archive
     name.
 
     Loading opens the file and reads its header; it reads no tensor data. Each
-    entry is a value on the disk device ([Nx.Device.of_runtime Nx_device.disk]),
-    over the entry's bytes in the file. The host reads an entry where it lies:
+    entry is a value on the disk device ({!Nx_device.disk}), over the entry's
+    bytes in the file. The host reads an entry where it lies:
     an operation on it computes on the file's pages, mapped copy-on-write, and
     so does {!Nx.place} onto the host or onto a device whose memory is the
     host's, such as Metal's, which borrows them without a copy. {!Nx.place} onto

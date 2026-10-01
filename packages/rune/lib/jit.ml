@@ -47,12 +47,12 @@ type leaf = {
   layout : layout;
 }
 
-let disk = Nx.Device.of_runtime Nx_device.disk
+let disk = Nx_device.disk
 
 let leaf (Nx.P t) =
   let t =
     match Nx.Placement.devices (Nx.placement t) with
-    | [ d ] when Nx.Device.equal d disk -> Nx.place Nx.Placement.host t
+    | [ d ] when Nx_device.equal d disk -> Nx.place Nx.Placement.host t
     | _ -> t
   in
   let x = Nx.P t in
@@ -399,9 +399,7 @@ let paths args_s roles args =
    [args], whose leaves are [leaves], and compiles and links its program. *)
 let compile ~beam ?parallel (type a r) (args_s : a Ptree.t)
     (result_s : r Ptree.t) (g : a -> r) (args : a) leaves ~paths ~consumed =
-  let s =
-    Lower.scope ~renderer:(fun d -> Engine.renderer (Nx.Device.runtime d))
-  in
+  let s = Lower.scope ~renderer:Engine.renderer in
   let slots = Array.map (fun _ -> Ops.unique_num ()) leaves in
   let params =
     Array.mapi
@@ -678,7 +676,7 @@ let check entry consumed paths leaves =
 let fresh at dt shape =
   let n = numel (local at shape) in
   List.map
-    (fun d -> B.create (Nx.Device.runtime d) (Nx_dtype.Scalar.of_dtype dt) n)
+    (fun d -> B.create d (Nx_dtype.Scalar.of_dtype dt) n)
     (Placement.devices at)
 
 let value r bufs =

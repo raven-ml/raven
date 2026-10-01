@@ -2317,8 +2317,7 @@ let placement d =
     test "nx computes at a compiled placement, which its results keep"
       (fun () ->
         let p =
-          Nx.Placement.device ~backend:Rune_internals.Compiled.backend
-            (Nx.Device.of_runtime d.device)
+          Nx.Placement.device ~backend:Rune_internals.Compiled.backend d.device
         in
         let x = f32 [| 2; 3 |] [| 1.; -0.; 2.5; -3.; 4.; 0.5 |] in
         let y = Nx.mul (Nx.add (Nx.place p x) (Nx.place p x)) (Nx.place p x) in

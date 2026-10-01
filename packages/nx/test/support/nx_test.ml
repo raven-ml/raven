@@ -911,12 +911,12 @@ module Devices = struct
   let runtimes = List.map runtime [ "TEST:1"; "TEST:2"; "TEST:3"; "TEST:4" ]
 
   let d1, d2, d3, d4 =
-    match List.map Nx.Device.of_runtime runtimes with
+    match runtimes with
     | [ d1; d2; d3; d4 ] -> (d1, d2, d3, d4)
     | _ -> assert false
 
   (* A device beside the four. *)
-  let other = Nx.Device.of_runtime (runtime "OTHER")
+  let other = runtime "OTHER"
 
   let total count =
     List.fold_left (fun n r -> n + count (Nx_device.stats r)) 0 runtimes
@@ -1078,10 +1078,10 @@ module Stored = struct
       ]
 end
 
-(* The contract of [Nx.Device.of_runtime], checked on the runtimes of a suite:
-   test runtimes over host memory, Metal, CUDA. A value of every dtype placed on
-   one runtime, copied on all or split along an axis reads back bit for bit,
-   each runtime receiving the bytes of its window; an operation gives the host's
+(* The contract of runtime devices, checked on the runtimes of a suite: test
+   runtimes over host memory, Metal, CUDA. A value of every dtype placed on one
+   runtime, copied on all or split along an axis reads back bit for bit, each
+   runtime receiving the bytes of its window; an operation gives the host's
    result on the elements placed, placed where its operand is; and an allocation
    a runtime cannot make raises Out_of_memory with its device and bytes. *)
 module Runtimes = struct
@@ -1121,7 +1121,7 @@ module Runtimes = struct
 
   (* The bytes of the elements of [x] that [d] holds at [p], as stored. *)
   let window_bytes p x d =
-    if List.exists (Nx.Device.equal d) (Nx.Placement.devices p) then
+    if List.exists (Nx_device.equal d) (Nx.Placement.devices p) then
       let window = Nx.Placement.window p (Nx.shape x) d in
       let n = Array.fold_left (fun n (lo, hi) -> n * (hi - lo)) 1 window in
       let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
@@ -1160,20 +1160,19 @@ module Runtimes = struct
 
   let laws = function
     | [] -> [ test "on no runtime" (fun () -> skip ~reason:"no device" ()) ]
-    | rs ->
-        let ds = List.map Nx.Device.of_runtime rs in
+    | ds ->
         let received f =
-          let before = List.map Nx_device.stats rs in
+          let before = List.map Nx_device.stats ds in
           let y = f () in
           let bytes_in r s =
             Nx_device.Stats.(bytes_in (diff s (Nx_device.stats r)))
           in
-          (y, List.map2 bytes_in rs before)
+          (y, List.map2 bytes_in ds before)
         in
         (* A value on the disk is borrowed from its file's pages by devices
            whose memory the host addresses, which receive no byte, unless a
            window of 4-bit elements starts inside a byte. *)
-        let borrows = List.for_all Nx_device.shares_host_memory rs in
+        let borrows = List.for_all Nx_device.shares_host_memory ds in
         let round_trip ~disk (Case c) =
           prop
             (c.name ^ " values"
@@ -1202,9 +1201,9 @@ module Runtimes = struct
           List.map Nx.Placement.device ds
           @ if List.length ds > 1 then [ Nx.Placement.replicated ds ] else []
         in
-        let r = List.hd rs and d = List.hd ds in
+        let d = List.hd ds in
         let out_of_memory n = function
-          | Nx.Device.Out_of_memory (d', m) -> Nx.Device.equal d d' && m = n
+          | Nx_device.Out_of_memory (d', m) -> Nx_device.equal d d' && m = n
           | _ -> false
         in
         [
@@ -1227,7 +1226,7 @@ module Runtimes = struct
           test
             "an allocation the runtime cannot make raises Out_of_memory with \
              the device and its bytes" (fun () ->
-              tight r @@ fun () ->
+              tight d @@ fun () ->
               let on_d = Nx.Placement.device d in
               raises_match (out_of_memory 400) (fun () ->
                   Nx.place on_d (Nx.zeros Nx.float32 [| 100 |]));

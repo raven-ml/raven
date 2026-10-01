@@ -1274,10 +1274,9 @@ let move_case m =
 
 (* Devices over host memory, so that a value can be placed off the host. *)
 let device name =
-  Nx.Device.of_runtime
-    (Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
-       (Host_visible
-          { memory = Nx_device.Driver.host_memory; mapping = Some Identity }))
+  Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
 
 let d1 = device "RULES:1"
 let d2 = device "RULES:2"

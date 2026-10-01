@@ -358,7 +358,7 @@ let safetensors =
       ("{\"" ^ name ^ {|":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|})
     ^ "\042"
   in
-  let disk = Nx.Placement.device (Nx.Device.of_runtime Nx_device.disk) in
+  let disk = Nx.Placement.device Nx_device.disk in
   let on_disk archive =
     List.for_all
       (fun (_, Nx.P t) -> Nx.Placement.equal disk (Nx.placement t))

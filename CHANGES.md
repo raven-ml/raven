@@ -3154,9 +3154,20 @@ thread.
   paths, which code outside nx could only receive from a walk. A path can now
   be written literally and compared with the one a walk gives, as in
   `Path.equal p (Path.v [ Field "out"; Field "w" ])`.
-- `Nx.Device.runtime` is the runtime device whose buffers hold a device's
-  placed values, the inverse of `Nx.Device.of_runtime`, for compiled calls
-  that allocate on the devices their trace names.
+- **Breaking:** a device is an `Nx_device.t`, the runtime's own, and the
+  `Nx.Device` module is gone. Placements take and give `Nx_device.t`. Each
+  removed value and its replacement:
+  - `Nx.Device.t`, `host`, `name`, `equal` are `Nx_device.t`, `host`, `name`,
+    `equal`; `Nx.Device.compare` and `pp` are the new `Nx_device.compare` and
+    `Nx_device.pp`.
+  - `Nx.Device.of_runtime d` and `Nx.Device.runtime d` are `d`, and
+    `Nx.Device.of_runtime Nx_device.disk` is `Nx_device.disk`.
+  - `Nx.Device.Out_of_memory` is `Nx_device.Out_of_memory`, which operations
+    and `Nx.place` now raise as the runtime does.
+  - `Nx.Placement.replicated` and `sharded` no longer refuse devices "whose
+    memories differ": every device's values are runtime buffers.
+
+  Code that names a device now depends on the `nx.device` library.
 - **Breaking:** `Nx.correlate` and `Nx.convolve` change which values of the
   full correlation `` `Same `` and `` `Valid `` keep, as their documentation now
   states. With an even kernel of size `k`, `` `Same `` correlates each element

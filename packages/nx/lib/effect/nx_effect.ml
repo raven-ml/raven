@@ -14,9 +14,9 @@ open Nx_array
 
    A tensor is one of three things. [Host] is an nx.cpu tensor, the value of the
    host placement: the host device with the host backend.
-   [Placed] is a value at any other placement, held in the memory of its
-   devices: nx knows its placement, dtype and view, and the devices' memory
-   alone knows its storage. [Traced] is a node of a trace: it has no bytes and
+   [Placed] is a value at any other placement, held in runtime buffers, one per
+   device of its placement: nx knows its placement, dtype and view, and the
+   buffers are its storage. [Traced] is a node of a trace: it has no bytes and
    never will, and the tracer that made it keeps its payload in [t_node].
 
    The host device thus holds values in two ways. At the host placement a value
@@ -286,7 +286,10 @@ module Types = struct
     mutable exclusive : bool;
   }
 
-  and state = Live of storage | Consumed of consumption
+  and state =
+    | Live of Nx_device.Buffer.t list
+        (* one buffer per device of the cell's placement, in its order *)
+    | Consumed of consumption
 
   (* Where a compiled call consumed a storage: the consumed leaf's path in the
      call's arguments, whose first segment is the argument's position from 0. *)
@@ -301,23 +304,10 @@ module Types = struct
     t_node : ('a, 'b) node; (* the tracer's payload *)
   }
 
-  (* How a device holds bytes: the library that opens it reads and places the
-     values in its memory. Computing on them is not the memory's. *)
-  and memory = {
-    read : 'a 'b. ('a, 'b) resident -> Nx_device.Buffer.t;
-        (* the view's elements, in C order, in a host buffer the caller owns *)
-    place : 'a 'b. placement -> ('a, 'b) t -> ('a, 'b) t;
-        (* the value on a placement of devices of this memory; its source
-           stays. Raises [Invalid_argument] if the placement cannot hold the
-           dtype. *)
-  }
-
-  and device = { d_id : int; d_name : string; d_memory : memory }
   (* Devices, a layout and the one backend that computes on the values there. *)
-  and placement = { grid : device Grid.t; backend : backend }
+  and placement = { grid : Nx_device.t Grid.t; backend : backend }
 
   and backend = Nx_backend.t
-  and storage = ..
   and ('a, 'b) node = ..
 end
 
@@ -336,10 +326,6 @@ let filled dtype shape v =
   let a = alloc dtype shape in
   Elements.fill dtype a.buffer v;
   a
-
-(* The memory of [Nx_device] devices, the host among them: one buffer per device
-   of the cell's placement, in its order. *)
-type storage += Runtime of Nx_device.Buffer.t list
 
 let id_counter = Atomic.make 0
 let fresh_id () = Atomic.fetch_and_add id_counter 1 + 1
@@ -430,15 +416,6 @@ module Cell = struct
     retire
 end
 
-(* Reading placed values *)
-
-(* The elements of a placed value's view. *)
-let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
-  Cell.with_borrow r.r_cell (fun () ->
-  match r.r_cell.state with
-  | Consumed k -> consumed k
-  | Live _ -> (List.hd (Grid.devices r.r_cell.placement.grid)).d_memory.read r)
-
 (* [global p shape] is the shape of a value whose tiles at [p] have [shape]. *)
 let global p shape =
   match Grid.cuts p.grid with
@@ -457,91 +434,19 @@ let whole_view r =
       View.create ~offset:(View.offset v) ~strides:(View.strides v)
         (global r.r_placement (View.shape v))
 
-(* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
-   it: through its host address, [dtype]'s elements at a time. *)
-let check_host fn dtype buffer =
-  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
-    invalid_arg
-      (Printf.sprintf "%s: the buffer is on %s, not CPU" fn
-         (Nx_device.name (Nx_device.Buffer.device buffer)));
-  if
-    not
-      (Nx_dtype.Scalar.equal
-         (Nx_device.Buffer.dtype buffer)
-         (Nx_dtype.Scalar.of_dtype dtype))
-  then
-    invalid_arg
-      (Printf.sprintf "%s: a %s buffer read as %s" fn
-         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
-         (Nx_dtype.to_string dtype))
-
-(* [file_run r] is the file bytes that hold [r]'s storage, when they lie on the
-   disk at a byte aligned to an element, so that the host can read them in
-   place. *)
-let file_run (type a b) (r : (a, b) resident) =
-  match Cell.state r.r_cell with
-  | Live (Runtime [ b ])
-    when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk ->
-      let size =
-        Int.max 1 (Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype b) / 8)
-      in
-      if Nativeint.to_int (Nx_device.Buffer.address b) mod size = 0 then Some b
-      else None
-  | _ -> None
-
-(* A placed value is read by the backend that made its storage, the cell's,
-   which a view at a placement of another backend shares. It is read once and
-   checked: a buffer of another device or format would otherwise reach nx.cpu's
-   kernels. *)
-let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
-  let buffer = read_elements r in
-  check_host "Nx_effect.read" r.r_dtype buffer;
-  { dtype = r.r_dtype; view = View.create (View.shape (whole_view r)); buffer }
-
-(* A value on the disk is read where it lies, in its file's pages, and keeps its
-   view; it is copied when the system does not map the file. *)
-let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
-  match file_run r with
-  | Some b -> (
-      match
-        Cell.with_borrow r.r_cell (fun () ->
-            Nx_device.Buffer.borrow Nx_device.host b)
-      with
-      | Ok buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
-      | Error _ -> read_copy r)
-  | None -> read_copy r
-
-(* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
-   of its view's elements when it is placed. *)
-let host_of : type a b. (a, b) t -> (a, b) Nx_array.t = function
-  | Host t -> t
-  | Placed r -> read_host r
-  | Traced _ -> outside_trace ()
-
 (* Devices and placements
 
-   The host device is the one of id 0; ids from [fresh_id] start at 1. It is
-   made with the runtime's memory, so the [Device] module is defined below that
-   memory, and the [Placement] module after the routing; the functions here are
+   The [Placement] module is defined after the routing; the functions here are
    what the code in between needs. *)
 
-exception Out_of_memory of device * int
-
-let () =
-  Printexc.register_printer (function
-    | Out_of_memory (d, n) ->
-        Some (Printf.sprintf "Nx.Device.Out_of_memory(%s, %d bytes)" d.d_name n)
-    | _ -> None)
-
-let is_host_device d = d.d_id = 0
+let is_host_device d = Nx_device.equal d Nx_device.host
 let is_host_backend b = Nx_backend.equal b Nx_cpu.backend
 
 let is_host_placement p =
   is_host_backend p.backend
   && match Grid.devices p.grid with [ d ] -> is_host_device d | _ -> false
 
-let pp_device ppf d = Format.pp_print_string ppf d.d_name
-let pp_grid ppf g = Grid.pp pp_device ppf g
+let pp_grid ppf g = Grid.pp Nx_device.pp ppf g
 
 let pp_placement ppf p =
   pp_grid ppf p.grid;
@@ -549,7 +454,6 @@ let pp_placement ppf p =
     Format.fprintf ppf " with %s" (Nx_backend.name p.backend)
 
 let devices_of p = Grid.devices p.grid
-let memory_of p = (List.hd (devices_of p)).d_memory
 
 (* Raises unless every cut of [p] divides its axis of [shape] evenly. *)
 let check_shape what p shape =
@@ -570,7 +474,8 @@ let window_of p shape d =
   match List.find_index (( == ) d) (devices_of p) with
   | None ->
       invalid_arg
-        (Printf.sprintf "Nx.Placement.window: %s holds no window" d.d_name)
+        (Printf.sprintf "Nx.Placement.window: %s holds no window"
+           (Nx_device.name d))
   | Some k ->
       check_shape "Nx.Placement.window" p shape;
       let w = Array.map (fun n -> (0, n)) shape in
@@ -581,11 +486,10 @@ let window_of p shape d =
         (Grid.cuts p.grid) (Grid.tile_index p.grid k);
       w
 
-(* Placed constructors, for device memories *)
+(* Placed constructors *)
 
-(* A cell over [storage] of [length] elements per device of [placement], whose
-   memory owns it. The memory attaches the finaliser that releases the
-   storage. *)
+(* A cell over [storage], one runtime buffer of [length] elements per device of
+   [placement], which the runtime releases with the buffers. *)
 let cell ~placement ~length storage =
   { placement; length; state = Live storage; bound = Atomic.make 0;
     lock = Mutex.create (); readers = 0; exclusive = false }
@@ -702,7 +606,7 @@ let extents w = Array.map (fun (lo, hi) -> hi - lo) w
    that holds it, and only where it meets the window. Memories read placed
    values, and gather the pieces of a move, this way. *)
 let assemble (type a b) (r : (a, b) resident) window
-    (read : device -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
+    (read : Nx_device.t -> View.t -> Nx_device.Buffer.t) : Nx_device.Buffer.t =
   let p = r.r_placement in
   let shape = global p (View.shape r.r_view) in
   let pieces =
@@ -729,23 +633,7 @@ let assemble (type a b) (r : (a, b) resident) window
         pieces;
       dst
 
-(* Runtime memory *)
-
-let runtime_lock = Mutex.create ()
-let opened : (Nx_device.t * device) list ref = ref []
-
-let runtime_of d =
-  if is_host_device d then Nx_device.host
-  else
-    Mutex.protect runtime_lock (fun () ->
-        match List.find_opt (fun (_, d') -> d' == d) !opened with
-        | Some (rd, _) -> rd
-        | None -> invalid_arg ("Nx: " ^ d.d_name ^ " is not a runtime device"))
-
-let create_runtime d s n =
-  try Nx_device.Buffer.create (runtime_of d) s n
-  with Nx_device.Out_of_memory (_, bytes) ->
-    raise (Out_of_memory (d, bytes))
+(* Runtime buffers *)
 
 (* The elements of view [v] of [b], of [dtype]. Int4 storage is read whole: its
    elements may not start on a byte. A strided view is gathered by nx.cpu. *)
@@ -809,7 +697,7 @@ let file_windows v ds windows b =
   in
   let spans = List.map span windows in
   if
-    List.for_all (fun d -> Nx_device.shares_host_memory (runtime_of d)) ds
+    List.for_all Nx_device.shares_host_memory ds
     && List.for_all Option.is_some spans
   then
     let spans = List.map Option.get spans in
@@ -817,7 +705,7 @@ let file_windows v ds windows b =
     if List.for_all (fun (v', _) -> v' = view) spans then
       let borrows =
         List.map2
-          (fun d (_, run) -> Nx_device.Buffer.borrow (runtime_of d) run)
+          (fun d (_, run) -> Nx_device.Buffer.borrow d run)
           ds spans
       in
       if List.for_all Result.is_ok borrows then
@@ -826,123 +714,146 @@ let file_windows v ds windows b =
     else None
   else None
 
-let runtime_memory =
-  let read : type a b. (a, b) resident -> Nx_device.Buffer.t =
-   fun r ->
-    match Cell.state r.r_cell with
-    | Live (Runtime bufs) ->
-        let holders = devices_of r.r_cell.placement in
-        let buffer_on d =
-          List.nth bufs (Option.get (List.find_index (( == ) d) holders))
-        in
-        let shape = global r.r_placement (View.shape r.r_view) in
-        assemble r
-          (Array.map (fun n -> (0, n)) shape)
-          (fun d v -> read_view r.r_dtype (buffer_on d) v)
-    | _ -> assert false (* nx reads consumed values itself *)
-  in
-  (* A value on the disk is placed on devices that share the host's memory by
-     borrowing its file's pages, and keeps its view ([file_windows]). Otherwise
-     a window that is a contiguous run of a value's one runtime buffer is copied
-     from it, device to device: a value on the disk is read into the device.
-     Other windows are copied from the value read to the host. *)
-  let place : type a b. placement -> (a, b) t -> (a, b) t =
-   fun p x ->
-    let host = lazy (match x with Placed r -> read_copy r | _ -> host_of x) in
-    let dt, v, run =
-      match x with
-      | Placed r -> (
-          match Cell.state r.r_cell with
-          | Live (Runtime [ b ]) -> (r.r_dtype, r.r_view, run_in b)
-          | _ -> (r.r_dtype, whole_view r, fun _ -> None))
-      | _ ->
-          let h = Lazy.force host in
-          (h.dtype, h.view, fun _ -> None)
-    in
-    let shape = View.shape v in
-    let s = Nx_dtype.Scalar.of_dtype dt in
-    let ds = devices_of p in
-    let windows = List.map (fun d -> window_of p shape d) ds in
-    let local = extents (List.hd windows) in
-    let n = Array.fold_left ( * ) 1 local in
-    let borrowed =
-      match x with
-      | Placed r -> Option.bind (file_run r) (file_windows r.r_view ds windows)
-      | _ -> None
-    in
-    match borrowed with
-    | Some (view, bufs) ->
-        placed p dt view
-          (cell ~placement:p
-             ~length:(Nx_device.Buffer.length (List.hd bufs))
-             (Runtime bufs))
-    | None ->
-        let piece w =
-          match run (View.shrink v w) with
-          | Some b -> b
-          | None ->
-              let h = Lazy.force host in
-              Elements.contiguous h.buffer (View.shrink h.view w)
-        in
-        let bufs =
-          List.map2
-            (fun d w ->
-              let b = create_runtime d s n in
-              if n > 0 then Nx_device.Buffer.copy ~src:(piece w) ~dst:b;
-              b)
-            ds windows
-        in
-        placed p dt (View.create local)
-          (cell ~placement:p ~length:n (Runtime bufs))
-  in
-  { read; place }
+(* Reading placed values *)
 
-(* The disk's memory: files, whose values are read as every runtime device's
-   are, and where nothing is placed. *)
-let disk_memory =
-  let place _ _ =
+(* The elements of a placed value's view. *)
+let read_elements (type a b) (r : (a, b) resident) : Nx_device.Buffer.t =
+  Cell.with_borrow r.r_cell (fun () ->
+      match r.r_cell.state with
+      | Consumed k -> consumed k
+      | Live bufs ->
+          let holders = devices_of r.r_cell.placement in
+          let buffer_on d =
+            List.nth bufs
+              (Option.get (List.find_index (Nx_device.equal d) holders))
+          in
+          let shape = global r.r_placement (View.shape r.r_view) in
+          assemble r
+            (Array.map (fun n -> (0, n)) shape)
+            (fun d v -> read_view r.r_dtype (buffer_on d) v))
+
+(* Raises unless [buffer] is a host buffer of [dtype]'s format, as nx.cpu reads
+   it: through its host address, [dtype]'s elements at a time. *)
+let check_host fn dtype buffer =
+  if not (Nx_device.equal (Nx_device.Buffer.device buffer) Nx_device.host) then
     invalid_arg
-      "Nx.place: values on DISK are read from files, and none is placed there"
+      (Printf.sprintf "%s: the buffer is on %s, not CPU" fn
+         (Nx_device.name (Nx_device.Buffer.device buffer)));
+  if
+    not
+      (Nx_dtype.Scalar.equal
+         (Nx_device.Buffer.dtype buffer)
+         (Nx_dtype.Scalar.of_dtype dtype))
+  then
+    invalid_arg
+      (Printf.sprintf "%s: a %s buffer read as %s" fn
+         (Nx_dtype.Scalar.to_string (Nx_device.Buffer.dtype buffer))
+         (Nx_dtype.to_string dtype))
+
+(* [file_run r] is the file bytes that hold [r]'s storage, when they lie on the
+   disk at a byte aligned to an element, so that the host can read them in
+   place. *)
+let file_run (type a b) (r : (a, b) resident) =
+  match Cell.state r.r_cell with
+  | Live [ b ]
+    when Nx_device.equal (Nx_device.Buffer.device b) Nx_device.disk ->
+      let size =
+        Int.max 1 (Nx_dtype.Scalar.bitsize (Nx_device.Buffer.dtype b) / 8)
+      in
+      if Nativeint.to_int (Nx_device.Buffer.address b) mod size = 0 then Some b
+      else None
+  | _ -> None
+
+(* A placed value is read by the backend that made its storage, the cell's,
+   which a view at a placement of another backend shares. It is read once and
+   checked: a buffer of another device or format would otherwise reach nx.cpu's
+   kernels. *)
+let read_copy (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
+  let buffer = read_elements r in
+  check_host "Nx_effect.read" r.r_dtype buffer;
+  { dtype = r.r_dtype; view = View.create (View.shape (whole_view r)); buffer }
+
+(* A value on the disk is read where it lies, in its file's pages, and keeps its
+   view; it is copied when the system does not map the file. *)
+let read_host (type a b) (r : (a, b) resident) : (a, b) Nx_array.t =
+  match file_run r with
+  | Some b -> (
+      match
+        Cell.with_borrow r.r_cell (fun () ->
+            Nx_device.Buffer.borrow Nx_device.host b)
+      with
+      | Ok buffer -> { Nx_array.dtype = r.r_dtype; view = whole_view r; buffer }
+      | Error _ -> read_copy r)
+  | None -> read_copy r
+
+(* [host_of x] is [x]'s value as a host tensor: [x] itself on the host, a copy
+   of its view's elements when it is placed. *)
+let host_of : type a b. (a, b) t -> (a, b) Nx_array.t = function
+  | Host t -> t
+  | Placed r -> read_host r
+  | Traced _ -> outside_trace ()
+
+let on_disk p =
+  match Grid.devices p.grid with
+  | [ d ] -> Nx_device.equal d Nx_device.disk
+  | _ -> false
+
+(* A value on the disk is placed on devices that share the host's memory by
+   borrowing its file's pages, and keeps its view ([file_windows]). Otherwise
+   a window that is a contiguous run of a value's one runtime buffer is copied
+   from it, device to device: a value on the disk is read into the device.
+   Other windows are copied from the value read to the host. *)
+let place_at : type a b. placement -> (a, b) t -> (a, b) t =
+ fun p x ->
+  if on_disk p then
+    invalid_arg
+      "Nx.place: values on DISK are read from files, and none is placed there";
+  let host = lazy (match x with Placed r -> read_copy r | _ -> host_of x) in
+  let dt, v, run =
+    match x with
+    | Placed r -> (
+        match Cell.state r.r_cell with
+        | Live [ b ] -> (r.r_dtype, r.r_view, run_in b)
+        | _ -> (r.r_dtype, whole_view r, fun _ -> None))
+    | _ ->
+        let h = Lazy.force host in
+        (h.dtype, h.view, fun _ -> None)
   in
-  { runtime_memory with place }
-
-let disk = { d_id = fresh_id (); d_name = "DISK"; d_memory = disk_memory }
-let () = opened := (Nx_device.disk, disk) :: !opened
-let on_disk p = match Grid.devices p.grid with [ d ] -> d == disk | _ -> false
-
-(* Devices *)
-
-module Device = struct
-  type t = device
-
-  exception Out_of_memory = Out_of_memory
-
-  let host = { d_id = 0; d_name = "CPU"; d_memory = runtime_memory }
-
-  let make name memory =
-    { d_id = fresh_id (); d_name = name; d_memory = memory }
-
-  let of_runtime rd =
-    if Nx_device.equal rd Nx_device.host then host
-    else
-      Mutex.protect runtime_lock (fun () ->
-          match
-            List.find_opt (fun (rd', _) -> Nx_device.equal rd rd') !opened
-          with
-          | Some (_, d) -> d
-          | None ->
-              let d = make (Nx_device.name rd) runtime_memory in
-              opened := (rd, d) :: !opened;
-              d)
-
-  let runtime = runtime_of
-  let is_host = is_host_device
-  let name d = d.d_name
-  let memory d = d.d_memory
-  let equal = ( == )
-  let compare a b = Int.compare a.d_id b.d_id
-  let pp = pp_device
-end
+  let shape = View.shape v in
+  let s = Nx_dtype.Scalar.of_dtype dt in
+  let ds = devices_of p in
+  let windows = List.map (fun d -> window_of p shape d) ds in
+  let local = extents (List.hd windows) in
+  let n = Array.fold_left ( * ) 1 local in
+  let borrowed =
+    match x with
+    | Placed r -> Option.bind (file_run r) (file_windows r.r_view ds windows)
+    | _ -> None
+  in
+  match borrowed with
+  | Some (view, bufs) ->
+      placed p dt view
+        (cell ~placement:p
+           ~length:(Nx_device.Buffer.length (List.hd bufs))
+           bufs)
+  | None ->
+      let piece w =
+        match run (View.shrink v w) with
+        | Some b -> b
+        | None ->
+            let h = Lazy.force host in
+            Elements.contiguous h.buffer (View.shrink h.view w)
+      in
+      let bufs =
+        List.map2
+          (fun d w ->
+            let b = Nx_device.Buffer.create d s n in
+            if n > 0 then Nx_device.Buffer.copy ~src:(piece w) ~dst:b;
+            b)
+          ds windows
+      in
+      placed p dt (View.create local)
+        (cell ~placement:p ~length:n bufs)
 
 (* Traced constructor *)
 
@@ -1566,7 +1477,7 @@ let settle : type a b. route -> (a, b) Nx_array.t -> (a, b) t =
  fun r h ->
   match r with
   | On_host -> Host h
-  | At p -> (memory_of p).place p (Host h)
+  | At p -> place_at p (Host h)
 
 (* Movements
 
@@ -1733,17 +1644,16 @@ module Placement = struct
   let v backend grid = { grid; backend }
   let grid p = p.grid
   let backend p = p.backend
-  let host = { grid = Grid.device Device.host; backend = Nx_cpu.backend }
+  let host = { grid = Grid.device Nx_device.host; backend = Nx_cpu.backend }
   let devices = devices_of
-  let memory = memory_of
   let is_host = is_host_placement
   let cuts p = Grid.cuts p.grid
   let uncut p ~axis = { p with grid = Grid.uncut p.grid ~axis }
   let map_axes f p = { p with grid = Grid.map_axes f p.grid }
 
-  (* nx computes on the values of every placement on the host until every
-     device's memory is runtime buffers (see Computing), so a placement's
-     backend runs on the host. *)
+  (* nx computes on the values of every placement on the host until it calls a
+     backend once per device (see Computing), so a placement's backend runs on
+     the host. *)
   let check what backend ds =
     let fail fmt =
       Printf.ksprintf invalid_arg ("Nx.Placement.%s: " ^^ fmt) what
@@ -1751,18 +1661,14 @@ module Placement = struct
     let rec distinct = function
       | [] -> ()
       | d :: rest ->
-          if List.memq d rest then fail "%s appears twice" d.d_name;
+          if List.memq d rest then
+            fail "%s appears twice" (Nx_device.name d);
           distinct rest
     in
     match ds with
     | [] -> fail "no device"
-    | d :: rest ->
+    | _ ->
         distinct ds;
-        List.iter
-          (fun d' ->
-            if d'.d_memory != d.d_memory then
-              fail "%s and %s have different memories" d.d_name d'.d_name)
-          rest;
         if not (Nx_backend.runs_on backend Nx_device.host) then
           fail "%s does not run on the host" (Nx_backend.name backend)
 
@@ -1998,7 +1904,7 @@ let result_dtype : type a b. (a, b) t Op.t -> (a, b) Nx_dtype.t =
 
 (* The elements of [x]'s view in C order, in a host buffer: nx.cpu's storage of
    a host value, whose readers make it contiguous first, and a copy of a placed
-   one's, read by the memory that holds its storage. *)
+   one's, read from its runtime buffers. *)
 let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   match x with
   | Host t -> t.buffer
@@ -2006,8 +1912,7 @@ let read_elements_of (type a b) (x : (a, b) t) : Nx_device.Buffer.t =
   | Traced _ -> outside_trace ()
 
 (* [x] at [p]. A placed value at a placement that differs from [p] only in
-   backend is a view of its storage; otherwise the memory of [p]'s devices makes
-   the value there. *)
+   backend is a view of its storage; otherwise it is placed there anew. *)
 let move_to (type a b) p (x : (a, b) t) : (a, b) t =
   let move () =
     match x with
@@ -2017,7 +1922,7 @@ let move_to (type a b) p (x : (a, b) t) : (a, b) t =
         Placed { r with r_id = fresh_id (); r_placement = p }
     | Host _ | Placed _ ->
         check_shape "Nx.place" p (View.shape (view x));
-        (memory_of p).place p x
+        place_at p x
   in
   match x with
   | Placed r -> Cell.with_borrow r.r_cell move
@@ -2030,11 +1935,9 @@ let move_to (type a b) p (x : (a, b) t) : (a, b) t =
    their own arrays.
 
    Operands at any other placement follow this library's one transitional rule:
-   a device brings its own memory, the [storage] extension and the [memory]
-   record that reads and places values in it, and the placement's backend
-   computes on the host, over copies of the operands' elements, before [settle]
-   places the result where [route] says. The rule goes when every device's
-   memory is runtime buffers and nx calls a backend once per device. *)
+   the placement's backend computes on the host, over copies of the operands'
+   elements, before [settle] places the result where [route] says. The rule
+   goes when nx calls a backend once per device, on its runtime buffers. *)
 
 type kernels = (module Nx_backend.S)
 
@@ -3025,7 +2928,7 @@ let run (type a b) (x : (a, b) t) =
   | Host t -> run_in t.buffer t.view
   | Placed r -> (
       match Cell.state r.r_cell with
-      | Live (Runtime [ b ]) -> run_in b r.r_view
+      | Live [ b ] -> run_in b r.r_view
       | _ -> None)
   | Traced _ -> outside_trace ()
 
@@ -3051,12 +2954,12 @@ let shard_storage what p buffers =
     (fun d b ->
       if Nx_device.Buffer.length b <> length then
         invalid_arg (what ^ ": buffers of different lengths");
-      if Nx_device.Buffer.device b != runtime_of d then
+      if Nx_device.Buffer.device b != d then
         invalid_arg
-          (Printf.sprintf "%s: a buffer for %s is on %s" what d.d_name
+          (Printf.sprintf "%s: a buffer for %s is on %s" what (Nx_device.name d)
              (Nx_device.name (Nx_device.Buffer.device b))))
     ds buffers;
-  cell ~placement:p ~length (Runtime buffers)
+  cell ~placement:p ~length buffers
 
 (* [host_value what dtype view b] is the host value of [b] under [view]. *)
 let host_value what dtype view b =
@@ -3099,17 +3002,12 @@ let shards (type a b) (x : (a, b) t) =
   | Host a -> ([ a.buffer ], a.view)
   | Placed r -> (
       match Cell.state r.r_cell with
-      | Live (Runtime buffers) ->
+      | Live buffers ->
           let holders = devices_of r.r_cell.placement in
           let on d =
             List.nth buffers (Option.get (List.find_index (( == ) d) holders))
           in
           (List.map on (devices_of r.r_placement), r.r_view)
-      | Live _ ->
-          invalid_arg
-            (Format.asprintf
-               "Nx.shards: %a holds its values in memory of its own"
-               pp_placement r.r_placement)
       | Consumed k -> consumed k)
   | Traced _ -> outside_trace ()
 
@@ -3123,7 +3021,7 @@ let of_buffer (type a b) ?(backend = Nx_cpu.backend) (dtype : (a, b) Nx_dtype.t)
          (Shape.to_string shape) n);
   check_format what dtype b;
   let p =
-    Placement.device ~backend (Device.of_runtime (Nx_device.Buffer.device b))
+    Placement.device ~backend (Nx_device.Buffer.device b)
   in
   of_shards p dtype (View.create shape) [ b ]
 
@@ -3132,7 +3030,7 @@ let empty (type a b) (x : (a, b) t) =
   let s = Nx_dtype.Scalar.of_dtype (dtype x) in
   match x with
   | Placed r when not (on_disk r.r_placement) ->
-      create_runtime (List.hd (devices_of r.r_placement)) s 0
+      Nx_device.Buffer.create (List.hd (devices_of r.r_placement)) s 0
   | Host _ | Placed _ | Traced _ -> Nx_device.Buffer.create Nx_device.host s 0
 
 (* A value on the disk, which computes nothing, is copied to the host, as is one

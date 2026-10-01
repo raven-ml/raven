@@ -151,7 +151,7 @@ let runs_tests =
     under "jvp" (fun f -> ignore (Rune.jvp' f (v4 ()) (v4 ())));
     under "grad" (fun f -> ignore (Rune.grad' f (v4 ())));
     under "vmap" (fun f ->
-        ignore (Rune.vmap' (fun x -> f x) (Nx.reshape [| 1; 4 |] (v4 ()))));
+        ignore (Rune.vmap' f (Nx.reshape [| 1; 4 |] (v4 ()))));
   ]
 
 (* Refusals *)

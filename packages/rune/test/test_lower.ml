@@ -187,9 +187,9 @@ let runtime name =
   Nx_device.Driver.device ~name ~arch:"test" ~budget:max_int
     (Host_visible { memory = Nx_device.Driver.host_memory; mapping = None })
 
-let d1 = Nx.Device.of_runtime (runtime "CPU:1")
-let d2 = Nx.Device.of_runtime (runtime "CPU:2")
-let twin = Nx.Device.of_runtime (runtime "CPU:1")
+let d1 = runtime "CPU:1"
+let d2 = runtime "CPU:2"
+let twin = runtime "CPU:1"
 let names s = List.map fst (Lower.devices s)
 
 (* Parameters *)
