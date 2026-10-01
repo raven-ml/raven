@@ -23,6 +23,7 @@ external memmove : nativeint -> nativeint -> int -> unit
 
 external store_signal : nativeint -> int -> unit = "test_nx_device_signal"
 external c_host : B.t -> nativeint = "test_nx_device_buffer_host"
+external c_live : B.t -> bool = "test_nx_device_buffer_live"
 
 let host = Nx_device.host
 let chars n : chars = Bigarray.Array1.create Bigarray.char Bigarray.c_layout n
@@ -50,6 +51,10 @@ let write b s = B.copy ~src:(of_string s) ~dst:b
 
 (* [d]'s borrow of [b], which it maps. *)
 let borrow d b = match B.borrow d b with Ok b -> b | Error why -> failwith why
+
+(* [b] consumed with [why] by a donation, as a compiled call consumes it. *)
+let consume ~why b =
+  B.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c -> B.Claim.consume c ~why b)
 
 (* The file at [path], opened, or created with [n] bytes. *)
 let of_file path =
@@ -1580,7 +1585,7 @@ let buffers =
          live over the same bytes" (fun () ->
           let b = of_string "abcdefgh" in
           let before = B.view b ~offset:2 S.UInt8 4 in
-          let c = B.consume ~why:"taken" b in
+          let c = consume ~why:"taken" b in
           let dead f =
             raises (Invalid_argument "taken") (fun () -> ignore (f ()))
           in
@@ -1590,20 +1595,21 @@ let buffers =
           dead (fun () -> B.view b ~offset:0 S.UInt8 1);
           dead (fun () -> B.copy ~src:before ~dst:(B.create host S.UInt8 4));
           dead (fun () -> B.copy ~src:(of_string "abcdefgh") ~dst:b);
-          dead (fun () -> B.consume ~why:"again" b);
+          dead (fun () -> consume ~why:"again" b);
+          dead (fun () -> B.Claim.read b);
           equal (pair string string) ("abcdefgh", "cdef")
             (read c, read (B.view c ~offset:2 S.UInt8 4));
           equal bool true (B.is_borrowed c));
       test
-        "a buffer consumed twice: each dead handle names the consumption that \
-         killed it, and the memory stays owned" (fun () ->
+        "a buffer consumed twice: every dead handle names the last \
+         consumption, and the memory stays owned" (fun () ->
           let b = B.create host S.Float32 4 in
-          let c = B.consume ~why:"first" b in
-          let d = B.consume ~why:"second" c in
+          let c = consume ~why:"first" b in
+          let d = consume ~why:"second" c in
           let dead why b =
             raises (Invalid_argument why) (fun () -> ignore (B.address b))
           in
-          dead "first" b;
+          dead "second" b;
           dead "second" c;
           equal (pair int bool) (4, false) (B.length d, B.is_borrowed d));
       test
@@ -1612,8 +1618,8 @@ let buffers =
           let d = (fake ()).dev in
           let before = allocated d in
           let consumed_twice () =
-            B.consume ~why:"second"
-              (B.consume ~why:"first" (B.create d S.UInt8 4096))
+            consume ~why:"second"
+              (consume ~why:"first" (B.create d S.UInt8 4096))
           in
           let last = Sys.opaque_identity (consumed_twice ()) in
           Gc.full_major ();
@@ -1624,8 +1630,8 @@ let buffers =
           let window = B.view b ~offset:0 S.UInt8 4 in
           equal (pair bool bool) (true, false) (B.spans b, B.spans window);
           raises_match Exn.invalid_arg (fun () ->
-              ignore (B.consume ~why:"window" window));
-          equal bool true (B.spans (B.consume ~why:"whole" b)));
+              ignore (consume ~why:"window" window));
+          equal bool true (B.spans (consume ~why:"whole" b)));
       test
         "of_bigarray takes elements at multiples of their size, of one \
          component for complex kinds, and refuses others" (fun () ->
@@ -1706,6 +1712,203 @@ let buffers =
           copies bb ba ();
           Domain.join d;
           equal int (2000 * 64) (Nx_device.Stats.bytes_out (stats b)));
+    ]
+
+(* Claims. A test that takes a claim releases it, so a failure leaves no buffer
+   claimed for the next. *)
+
+module Claim = B.Claim
+
+let busy = Exn.invalid_arg ~substring:"in use"
+let unbalanced = Exn.invalid_arg ~substring:"unbalanced claim"
+
+let test_claim_counts () =
+  let b = B.create host S.UInt8 8 in
+  Claim.read b;
+  Claim.read b;
+  equal ~msg:"two readers" bool false (Claim.try_exclusive b);
+  Claim.release b;
+  equal ~msg:"one reader, the caller" bool true (Claim.try_exclusive b);
+  raises_match ~msg:"a read while exclusive" busy (fun () -> Claim.read b);
+  raises_match ~msg:"a read of a view while exclusive" busy (fun () ->
+      Claim.read (B.view b ~offset:4 S.UInt8 4));
+  Claim.finish b;
+  Claim.read b;
+  Claim.release b;
+  Claim.release b;
+  equal ~msg:"free again" bool true
+    (Claim.read b;
+     let x = Claim.try_exclusive b in
+     Claim.finish b;
+     Claim.release b;
+     x)
+
+let test_unbalanced_release () =
+  let b = B.create host S.UInt8 8 in
+  raises_match ~msg:"no claim" unbalanced (fun () -> Claim.release b);
+  Claim.read b;
+  ignore (Claim.try_exclusive b : bool);
+  raises_match ~msg:"an exclusive claim" unbalanced (fun () -> Claim.release b);
+  Claim.finish b;
+  Claim.release b;
+  (* Neither refused release wrote: one read is the only claim. *)
+  Claim.read b;
+  equal bool true (Claim.try_exclusive b);
+  Claim.finish b;
+  Claim.release b
+
+(* A borrow and the memory it maps share one count (L12). *)
+let test_claims_through_borrows () =
+  let cpu =
+    Driver.device ~name:"CPU:1" ~arch:"test" ~budget:max_int
+      (Host_visible { memory = Driver.host_memory; mapping = Some Identity })
+  in
+  let b = B.create host S.UInt8 page in
+  let on_cpu = borrow cpu b in
+  Claim.read on_cpu;
+  Claim.read b;
+  equal ~msg:"a read through the borrow" bool false (Claim.try_exclusive b);
+  Claim.release on_cpu;
+  equal ~msg:"the borrow's read released" bool true (Claim.try_exclusive b);
+  raises_match ~msg:"a read through the borrow while exclusive" busy (fun () ->
+      Claim.read on_cpu);
+  Claim.finish b;
+  Claim.release b
+
+let test_exported () =
+  let b = B.create host S.UInt8 8 in
+  Claim.export b;
+  Claim.read b;
+  equal ~msg:"exported" bool false (Claim.try_exclusive b);
+  Claim.release b;
+  let imported = of_string "abcdefgh" in
+  Claim.read imported;
+  equal ~msg:"over a bigarray" bool false (Claim.try_exclusive imported);
+  Claim.release imported
+
+let test_stale_claims () =
+  let b = B.create host S.UInt8 8 in
+  let view = B.view b ~offset:2 S.UInt8 4 in
+  let c = consume ~why:"taken" b in
+  let stale f = raises (Invalid_argument "taken") f in
+  stale (fun () -> Claim.read b);
+  stale (fun () -> Claim.read view);
+  stale (fun () -> ignore (consume ~why:"again" view));
+  equal ~msg:"the C check" bool false (c_live b);
+  equal ~msg:"the C check, of the new handle" bool true (c_live c);
+  (* A release accepts a stale handle: it acts on the memory. *)
+  Claim.read c;
+  Claim.release b;
+  equal ~msg:"released through the stale handle" bool true
+    (Claim.read c;
+     let x = Claim.try_exclusive c in
+     Claim.finish b;
+     Claim.release c;
+     x)
+
+let test_bracket () =
+  let a = B.create host S.UInt8 8 and b = B.create host S.UInt8 8 in
+  let outcome =
+    Claim.with_ ~read:[ a ] ~donate:[ [ b ] ] (fun c ->
+        raises_match ~msg:"a read of the donation" busy (fun () -> Claim.read b);
+        Claim.read a;
+        Claim.release a;
+        (Claim.exclusive c b, Claim.exclusive c a))
+  in
+  equal ~msg:"the donation, exclusive" (pair bool bool) (true, false) outcome;
+  raises_match ~msg:"donating what it reads" Exn.invalid_arg (fun () ->
+      Claim.with_
+        ~read:[ B.view a ~offset:4 S.UInt8 4 ]
+        ~donate:[ [ a ] ]
+        (fun _ -> fail "ran"));
+  raises_match ~msg:"donating one memory twice" Exn.invalid_arg (fun () ->
+      Claim.with_ ~read:[] ~donate:[ [ a ]; [ a ] ] (fun _ -> fail "ran"));
+  raises (Failure "f") (fun () ->
+      Claim.with_ ~read:[ a ] ~donate:[ [ b ] ] (fun _ -> failwith "f"));
+  Claim.read b;
+  equal ~msg:"every claim released when f raised" bool true
+    (Claim.try_exclusive b);
+  Claim.finish b;
+  Claim.release b;
+  Claim.read a;
+  ignore (Claim.try_exclusive a : bool);
+  raises_match ~msg:"a buffer exclusive elsewhere" busy (fun () ->
+      Claim.with_ ~read:[ a ] ~donate:[] (fun _ -> fail "ran"));
+  Claim.finish a;
+  Claim.release a
+
+(* A value over several devices is exclusive only if each of its shards is. *)
+let test_bracket_shards () =
+  let s1 = B.create host S.UInt8 8 and s2 = B.create host S.UInt8 8 in
+  Claim.read s2;
+  Claim.with_ ~read:[]
+    ~donate:[ [ s1; s2 ] ]
+    (fun c ->
+      equal ~msg:"neither shard exclusive" (pair bool bool) (false, false)
+        (Claim.exclusive c s1, Claim.exclusive c s2);
+      Claim.read s1;
+      Claim.release s1);
+  Claim.release s2
+
+(* A window of its memory is never exclusive and never consumed. *)
+let test_bracket_window () =
+  let b = B.create host S.UInt8 8 in
+  let window = B.view b ~offset:0 S.UInt8 4 in
+  Claim.with_ ~read:[] ~donate:[ [ window ] ] (fun c ->
+      equal ~msg:"not exclusive" bool false (Claim.exclusive c window);
+      Claim.read b;
+      Claim.release b;
+      raises_match ~msg:"not consumed" Exn.invalid_arg (fun () ->
+          ignore (Claim.consume c ~why:"window" window)));
+  is_true ~msg:"the memory lives" (c_live b && c_live window)
+
+(* With a read claim only, consumption kills the handles and the caller copies:
+   the memory is not the caller's to write. *)
+let test_consume_read_only () =
+  let b = B.create host S.UInt8 8 in
+  let outside = B.view b ~offset:0 S.UInt8 8 in
+  Claim.read outside;
+  let c =
+    Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+        equal ~msg:"not exclusive" bool false (Claim.exclusive c b);
+        Claim.consume c ~why:"copied" b)
+  in
+  raises (Invalid_argument "copied") (fun () -> ignore (B.address b));
+  Claim.release outside;
+  is_true ~msg:"the new handle" (c_live c);
+  raises_match ~msg:"a buffer the bracket does not hold" Exn.invalid_arg
+    (fun () ->
+      Claim.with_ ~read:[] ~donate:[] (fun k ->
+          ignore (Claim.consume k ~why:"stray" c)))
+
+let claims =
+  group "claims"
+    [
+      test
+        "reads share, one reader becomes exclusive, and exclusive \
+         refuses             reads"
+        test_claim_counts;
+      test "a release with no read claim raises and changes nothing"
+        test_unbalanced_release;
+      test
+        "a read through a borrow and one through the memory it maps \
+         count             together"
+        test_claims_through_borrows;
+      test "an exported or imported memory is never exclusive" test_exported;
+      test
+        "a consumed buffer's claims raise its consumption, and a \
+         release             accepts it"
+        test_stale_claims;
+      test "the bracket claims before its function and releases after"
+        test_bracket;
+      test "a donation over shards is exclusive only if every shard is"
+        test_bracket_shards;
+      test "a donated window is held for reading and never consumed"
+        test_bracket_window;
+      test
+        "a donation consumed under a read claim dies without being             \
+         exclusive"
+        test_consume_read_only;
     ]
 
 let refusals =
@@ -2128,7 +2331,7 @@ let test_submit_refusals () =
   refused ~msg:"the disk" [ Nx_device.disk ] [];
   refused ~msg:"a buffer on the disk" [ a ] [ create_file (temp_file ()) 8 ];
   let b = B.create a S.UInt8 8 in
-  ignore (B.consume ~why:"consumed" b);
+  ignore (consume ~why:"consumed" b);
   refused ~msg:"a dead buffer" [ a ] [ b ];
   equal ~msg:"nothing submitted" int 0 (Nx_device.submitted a)
 
@@ -3536,6 +3739,7 @@ let () =
          laws;
          borrows;
          buffers;
+         claims;
          disks;
          refusals;
          timeline;

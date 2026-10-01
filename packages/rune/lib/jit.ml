@@ -4986,7 +4986,10 @@ let replay (type q) (q : q Nx.Ptree.t) (c : q compiled)
   List.iter
     (fun (i, b) ->
       let live =
-        HB.consume ~why:(Nx_effect.why_consumed c.cp_consumptions.(i)) b
+        HB.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun claim ->
+            HB.Claim.consume claim
+              ~why:(Nx_effect.why_consumed c.cp_consumptions.(i))
+              b)
       in
       Hashtbl.iter
         (fun tag (i', _) ->

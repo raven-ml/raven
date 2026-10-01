@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The field order of [region], [base], [life] and [Buffer.t] up to the fields
+(* The field order of [region], [base], [root] and [Buffer.t] up to the fields
    nx_device.h reads is its C ABI. *)
 type region = {
   host : nativeint option;
@@ -147,6 +147,7 @@ and buffer = {
   offset : int; (* bytes into [base.memory] *)
   dtype : Nx_dtype.Scalar.t;
   length : int;
+  generation : generation; (* its root's when the buffer was made *)
 }
 
 and base = {
@@ -158,16 +159,22 @@ and base = {
   keep : keep;
   source : (base * mapped) option;
       (* for a borrow, the memory it maps, and the mapping *)
-  links : links Atomic.t;
+  mutable links : links; [@atomic]
   file : file option; (* on the disk, the file *)
-  mutable life : life;
+  root : base option;
+      (* the base below every view and borrow of the memory, [None] when it is
+         this one: the root, whose next fields count the claims on the memory
+         and its consumptions *)
+  mutable claims : int; [@atomic]
+      (* the read claims, or -1 while one holder is exclusive; a holder outside
+         the claims, such as a bigarray's, holds one it never releases *)
+  mutable generation : generation; [@atomic]
+      (* a buffer made at another is dead *)
 }
 
-(* Whether a base's buffers may reach its memory. A consumed base is [Dead], and
-   the base its consumption made in its place, over the same memory, is its
-   [Heir]: it keeps the dead one, whose finaliser releases the memory,
-   reachable. *)
-and life = Live | Heir of base | Dead of string
+(* A generation of a memory: the first, or the one a consumption began, for the
+   reason [why]. *)
+and generation = { why : string }
 
 (* The other devices that reach a base's memory, changed together. *)
 and links = {
@@ -818,23 +825,29 @@ let sync d =
   read_spans d;
   try d.synchronized () with Failure why -> fail d why
 
+(* Every memory's generation until its first consumption: buffers made then
+   compare it physically. *)
+let first_generation = { why = "" }
+
+(* The base below every view and borrow of [base]'s memory. *)
+let root_of base = match base.root with None -> base | Some r -> r
+
 (* Raises [Lost] for a lost device that can reach [base]'s memory: its own
    device, a device it is mapped on or whose transfer into it could not be
    waited for, or those of the memory it maps. *)
 let rec check_reach base =
-  let { maps; reached } = Atomic.get base.links in
+  let { maps; reached } = base.links in
   List.iter check (base.owner :: (List.map (fun m -> m.on) maps @ reached));
   Option.iter (fun (src, _) -> check_reach src) base.source
 
 let rec update_links base f =
-  let l = Atomic.get base.links in
-  if not (Atomic.compare_and_set base.links l (f l)) then update_links base f
+  let l = base.links in
+  if not (Atomic.Loc.compare_and_set [%atomic.loc base.links] l (f l)) then
+    update_links base f
 
 let no_links = { maps = []; reached = [] }
 let update_maps base f = update_links base (fun l -> { l with maps = f l.maps })
-
-let mapping_on d base =
-  List.find_opt (fun m -> m.on == d) (Atomic.get base.links).maps
+let mapping_on d base = List.find_opt (fun m -> m.on == d) base.links.maps
 
 (* The device's address of the host address [a] in the mapping [m]. *)
 let mapped_address (m : region) a =
@@ -969,7 +982,7 @@ let reclaim d =
           | None when Option.is_some b.file ->
               (* No read or write of a file outlives the copy that made it. *)
               file_close b.memory.handle
-          | None when (Atomic.get b.links).reached <> [] ->
+          | None when b.links.reached <> [] ->
               (* Another device's work may still write it. *)
               allocate_bytes d (-b.bytes);
               d.retained <- d.retained + b.bytes;
@@ -1123,6 +1136,7 @@ module Buffer = struct
     offset : int; (* bytes into [base.memory] *)
     dtype : Nx_dtype.Scalar.t;
     length : int;
+    generation : generation; (* its root's when the buffer was made *)
   }
 
   (* [n * bitsize s / 8] rounded up, without the product overflowing. *)
@@ -1149,7 +1163,8 @@ module Buffer = struct
 
   (* Raises unless [b]'s memory was not consumed since [b] was made. *)
   let live b =
-    match b.base.life with Dead why -> invalid_arg why | Live | Heir _ -> ()
+    let g = (root_of b.base).generation in
+    if b.generation != g then invalid_arg g.why
 
   let address b =
     live b;
@@ -1168,8 +1183,15 @@ module Buffer = struct
   (* No byte of it is ever read or written, so the host addresses it. *)
   let no_memory = { host = Some 0n; address = 0n; handle = 0n; nbytes = 0 }
 
-  let base ?(bytes = 0) ?(kind = Device) ?source ?file ~borrowed ~keep d memory
-      =
+  (* A base over [memory], whose root is its source's for a borrow, [root]'s
+     when given, and itself otherwise. *)
+  let base ?(bytes = 0) ?(kind = Device) ?source ?file ?root ?(exported = false)
+      ~borrowed ~keep d memory =
+    let root =
+      match (source, root) with
+      | Some (src, _), _ | None, Some src -> Some (root_of src)
+      | None, None -> None
+    in
     {
       owner = d;
       memory;
@@ -1178,14 +1200,20 @@ module Buffer = struct
       borrowed;
       keep;
       source;
-      links = Atomic.make no_links;
+      links = no_links;
       file;
-      life = Live;
+      root;
+      claims = (if exported then 1 else 0);
+      generation = first_generation;
     }
 
+  (* The buffer of [n] elements of [s] at the start of [base]'s memory. *)
+  let first base s n =
+    let generation = (root_of base).generation in
+    { base; offset = 0; dtype = s; length = n; generation }
+
   let empty ~borrowed d s n =
-    let base = base ~borrowed ~keep:(Keep ()) d no_memory in
-    { base; offset = 0; dtype = s; length = n }
+    first (base ~borrowed ~keep:(Keep ()) d no_memory) s n
 
   (* Host memory takes neither the host nor its release list: its bytes are
      reserved atomically against the budget and returned by the finaliser of a
@@ -1226,25 +1254,16 @@ module Buffer = struct
         if bytes > host.budget then raise (Out_of_memory (host, bytes));
         let ba = host_heap bytes ~collected:false in
         let base =
-          {
-            owner = host;
-            memory = heap_memory ba;
-            bytes;
-            kind = Device;
-            borrowed = false;
-            keep = Heap (ba, heap_token bytes);
-            source = None;
-            links = Atomic.make no_links;
-            file = None;
-            life = Live;
-          }
+          base ~bytes ~borrowed:false
+            ~keep:(Heap (ba, heap_token bytes))
+            host (heap_memory ba)
         in
         (* While a profile is taken, the return of the bytes is recorded too. *)
         if Atomic.get profile <> None then begin
           memory_changed host;
           Gc.finalise_last (fun () -> memory_changed host) base
         end;
-        { base; offset = 0; dtype = s; length = n }
+        first base s n
     | bytes ->
         let kind =
           match (memory, d.host_memory, d.mapped) with
@@ -1261,7 +1280,7 @@ module Buffer = struct
         in
         let base = base ~bytes ~kind ~borrowed:false ~keep d memory in
         Gc.finalise (release d) base;
-        { base; offset = 0; dtype = s; length = n }
+        first base s n
 
   (* The bytes an element of [k] is aligned to: one component's for the complex
      kinds. *)
@@ -1293,8 +1312,11 @@ module Buffer = struct
             aligned to %d bytes"
            address align);
     let ba = shared ba in
-    let base = base ~borrowed:true ~keep:(Host ba) host (heap_memory ba) in
-    { base; offset = 0; dtype; length = Bigarray.Array1.dim ba }
+    (* Whoever holds the bigarray reaches the memory outside the claims. *)
+    let base =
+      base ~exported:true ~borrowed:true ~keep:(Host ba) host (heap_memory ba)
+    in
+    first base dtype (Bigarray.Array1.dim ba)
 
   let refuse fmt = Printf.ksprintf (fun why -> Error why) fmt
 
@@ -1320,13 +1342,14 @@ module Buffer = struct
         let memory =
           { host = None; address = 0n; handle = fd; nbytes = size }
         in
+        (* The file is a holder outside the claims. *)
         let base =
-          base ~borrowed:true ~keep:(Keep ())
+          base ~exported:true ~borrowed:true ~keep:(Keep ())
             ~file:{ path; writable = create; pages = None }
             disk memory
         in
         Gc.finalise (release disk) base;
-        { base; offset = 0; dtype = Nx_dtype.Scalar.UInt8; length = size })
+        first base Nx_dtype.Scalar.UInt8 size)
       (with_devices [ disk ] (fun () -> go ~collected:false))
 
   let of_file path = open_file path ~create:false 0
@@ -1349,7 +1372,8 @@ module Buffer = struct
             match file_map b.base.memory.handle b.base.memory.nbytes with
             | 0, ba ->
                 let base =
-                  base ~borrowed:true ~keep:(Host ba) host (heap_memory ba)
+                  base ~root:b.base ~borrowed:true ~keep:(Host ba) host
+                    (heap_memory ba)
                 in
                 f.pages <- Some base;
                 Ok base
@@ -1377,7 +1401,7 @@ module Buffer = struct
       base ~source:(b.base, m) ~borrowed:true ~keep:(Keep b) d m.mapped
     in
     Gc.finalise (release d) base;
-    { base; offset = m.skip + b.offset; dtype = b.dtype; length = b.length }
+    { b with base; offset = m.skip + b.offset }
 
   (* A device whose mapping is the identity addresses host memory at its host
      addresses: its borrow is over the memory itself, with no page to lock and
@@ -1555,20 +1579,115 @@ module Buffer = struct
     && Nativeint.compare a (a' +! n') < 0
     && Nativeint.compare a' (a +! n) < 0
 
-  let consume ~why b =
-    live b;
-    if not (spans b) then
+  module Claim = struct
+    let busy () =
       invalid_arg
-        "Nx_device.Buffer.consume: the buffer is a window of its memory";
-    let base = b.base in
-    (* The heir keeps the base whose finaliser releases the memory: the one
-       [b]'s base keeps when [b] is itself a heir. *)
-    let first =
-      match base.life with Heir first -> first | Live | Dead _ -> base
-    in
-    let heir = { base with life = Heir first } in
-    base.life <- Dead why;
-    { b with base = heir }
+        "Nx_device.Buffer.Claim: the memory is in use by a consuming call"
+
+    let unbalanced () =
+      invalid_arg "Nx_device.Buffer.Claim.release: unbalanced claim"
+
+    (* Claims count on the root, so a borrow and the memory it maps share them.
+       Each loop retries only a CAS that another domain's claim beat. *)
+
+    let rec read_root r =
+      let n = r.claims in
+      if n < 0 then busy ()
+      else if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] n (n + 1))
+      then read_root r
+
+    let rec release_root r =
+      let n = r.claims in
+      if n <= 0 then unbalanced ()
+      else if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] n (n - 1))
+      then release_root r
+
+    let exclusive_root r =
+      Atomic.Loc.compare_and_set [%atomic.loc r.claims] 1 (-1)
+
+    let finish_root r =
+      if not (Atomic.Loc.compare_and_set [%atomic.loc r.claims] (-1) 1) then
+        invalid_arg "Nx_device.Buffer.Claim.finish: the memory is not exclusive"
+
+    let read b =
+      live b;
+      read_root (root_of b.base)
+
+    let release b = release_root (root_of b.base)
+    let try_exclusive b = exclusive_root (root_of b.base)
+    let finish b = finish_root (root_of b.base)
+    let export = read
+
+    (* The roots a bracket reads, with repeats, and those it holds exclusive. *)
+    type t = { reads : base list; exclusive : base list }
+
+    let exclusive c b = List.memq (root_of b.base) c.exclusive
+
+    let consume c ~why b =
+      let r = root_of b.base in
+      if not (List.memq r c.reads) then
+        invalid_arg "Nx_device.Buffer.Claim.consume: the buffer is not claimed";
+      live b;
+      if not (spans b) then
+        invalid_arg
+          "Nx_device.Buffer.Claim.consume: the buffer is a window of its memory";
+      let generation = { why } in
+      r.generation <- generation;
+      { b with generation }
+
+    let with_ ~read:rs ~donate f =
+      let donated = List.concat donate in
+      List.iteri
+        (fun i d ->
+          let others = rs @ List.filteri (fun j _ -> j <> i) donated in
+          if List.exists (overlaps d) others then
+            invalid_arg
+              "Nx_device.Buffer.Claim.with_: a donated buffer overlaps another \
+               buffer of the call")
+        donated;
+      (* Reads in order, releasing those taken if one is refused. *)
+      let reads =
+        List.fold_left
+          (fun taken b ->
+            match read b with
+            | () -> root_of b.base :: taken
+            | exception e ->
+                List.iter release_root taken;
+                raise e)
+          [] (rs @ donated)
+      in
+      (* A value is exclusive if each of its shards is; a window is never. *)
+      let exclusive =
+        List.concat_map
+          (fun shards ->
+            let roots = List.map (fun b -> root_of b.base) shards in
+            if not (List.for_all spans shards) then []
+            else
+              let rec upgrade taken = function
+                | [] -> roots
+                | r :: rest ->
+                    if exclusive_root r then upgrade (r :: taken) rest
+                    else begin
+                      List.iter finish_root taken;
+                      []
+                    end
+              in
+              upgrade [] roots)
+          donate
+      in
+      let release () =
+        List.iter finish_root exclusive;
+        List.iter release_root reads
+      in
+      match f { reads; exclusive } with
+      | v ->
+          release ();
+          v
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          release ();
+          Printexc.raise_with_backtrace e bt
+  end
 
   let bigarray (type a b) (k : (a, b) Bigarray.kind) buf :
       (a, b, Bigarray.c_layout) Bigarray.Array1.t =
@@ -2349,7 +2468,7 @@ let signal_word d =
   let base =
     Buffer.base ~borrowed:true ~keep:d.timeline_keep owner d.timeline
   in
-  { Buffer.base; offset = 0; dtype = Nx_dtype.Scalar.UInt64; length = 1 }
+  Buffer.first base Nx_dtype.Scalar.UInt64 1
 
 (* Profiles *)
 
@@ -2715,8 +2834,7 @@ module Driver = struct
     let bytes = Buffer.checked_nbytes "Driver.buffer" s n in
     if bytes > r.nbytes then
       refuse "buffer" "%d bytes do not fit in a region of %d" bytes r.nbytes;
-    let base = Buffer.base ~borrowed:true ~keep:(Keep ()) d r in
-    { Buffer.base; offset = 0; dtype = s; length = n }
+    Buffer.first (Buffer.base ~borrowed:true ~keep:(Keep ()) d r) s n
 
   let dma (b : Buffer.t) =
     let d = b.base.owner in

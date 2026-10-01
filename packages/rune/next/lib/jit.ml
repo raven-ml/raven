@@ -725,7 +725,11 @@ let run entry p leaves =
             (fun c -> Storage.consume c.storage ~path:p.paths.(i))
             claims.(i);
           if lends.(i) || l.host then
-            List.map (B.consume ~why:(why p.paths.(i))) l.buffers
+            List.map
+              (fun b ->
+                B.Claim.with_ ~read:[] ~donate:[ [ b ] ] (fun c ->
+                    B.Claim.consume c ~why:(why p.paths.(i)) b))
+              l.buffers
           else l.buffers
         end)
       leaves

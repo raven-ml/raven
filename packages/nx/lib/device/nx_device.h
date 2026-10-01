@@ -9,6 +9,7 @@
 #define NX_DEVICE_H
 
 #include <caml/mlvalues.h>
+#include <stdatomic.h>
 #include <stdint.h>
 
 #ifdef _WIN32
@@ -29,18 +30,28 @@ static inline void *nx_device_buffer_host(value b) {
   return (char *)Nativeint_val(Field(host, 0)) + Long_val(Field(b, 1));
 }
 
-/* Whether the Nx_device.Buffer.t [b] is live: its memory was not consumed
-   (Nx_device.Buffer.consume) since [b] was made. [base]'s [life] (slot 9) is
-   [Live], an immediate, [Heir] (tag 0) or [Dead] (tag 1). */
-static inline int nx_device_buffer_live(value b) {
-  value life = Field(Field(b, 0), 9);
-  return Is_long(life) || Tag_val(life) != 1;
+/* The root of the Nx_device.Buffer.t [b]: its base's root (slot 9), [None]
+   when the base is its own root. */
+static inline value nx_device_buffer_root(value b) {
+  value base = Field(b, 0);
+  value root = Field(base, 9);
+  return Is_block(root) ? Field(root, 0) : base;
 }
 
-/* Why the dead Nx_device.Buffer.t [b] was consumed: [Dead]'s string, valid
-   until the next allocation. */
+/* Whether the Nx_device.Buffer.t [b] is live: its memory was not consumed
+   (Nx_device.Buffer.Claim.consume) since [b] was made. [b]'s generation (slot
+   4) is then its root's (slot 11), which only a consumption replaces. */
+static inline int nx_device_buffer_live(value b) {
+  value root = nx_device_buffer_root(b);
+  value generation = atomic_load_explicit((_Atomic value *)&Field(root, 11),
+                                          memory_order_acquire);
+  return Field(b, 4) == generation;
+}
+
+/* Why the dead Nx_device.Buffer.t [b] was consumed: the reason of its root's
+   generation, valid until the next allocation. */
 static inline const char *nx_device_buffer_why(value b) {
-  return String_val(Field(Field(Field(b, 0), 9), 0));
+  return String_val(Field(Field(nx_device_buffer_root(b), 11), 0));
 }
 
 /* The host clock: nanoseconds of the monotonic clock that

@@ -391,7 +391,7 @@ module Buffer : sig
       the system cannot map the file, naming it.
 
       Raises [Invalid_argument] if [b] is on another machine or is dead
-      ({!consume}), and {!Lost} if [d] is lost. *)
+      ({!Claim.consume}), and {!Lost} if [d] is lost. *)
 
   val device : t -> device
   (** [device b] is the device whose memory [b] is. *)
@@ -433,20 +433,88 @@ module Buffer : sig
       copy-on-write, and two opens of one file ({!of_file}, {!create_file}) are
       two memories. *)
 
-  val consume : why:string -> t -> t
-  (** [consume ~why b] is a buffer over [b]'s memory, and kills every other
-      buffer over that memory made before: [b] and its views. Reaching a dead
-      buffer's bytes ({!address}, {!bigarray}, {!copy}, {!borrow},
-      {!Program.call}, or a kernel reading it) raises [Invalid_argument why].
-      The result, and the views made of it, are live; the memory stays owned or
-      borrowed as [b]'s was.
+  (** Claims on memory.
 
-      A library that takes over memory it was handed, such as a compiled call
-      that writes its result over an argument, consumes the argument's buffer,
-      so that no earlier handle observes the new contents.
+      Every view and borrow of one memory shares one count of claims. A reader
+      claims the memory while it reads it on the host, and a compiled call that
+      writes over memory it was handed holds it exclusive, so that no reader
+      sees the write. Claims never wait: a claim that cannot be had raises, or
+      for an exclusive one, reports [false].
 
-      Raises [Invalid_argument] if [b] is dead or does not {!spans} its memory:
-      consuming a window of it would kill the rest. *)
+      A claimed memory may be consumed: every buffer over it made before becomes
+      dead, and reaching a dead buffer's bytes ({!address}, {!bigarray},
+      {!copy}, {!borrow}, {!Program.call}, {!submit}, or a kernel reading it)
+      raises [Invalid_argument] with the consumption's reason. A consumption
+      releases nothing: the memory lives while a buffer reaches it.
+
+      Device work takes no claim: it is ordered after the work queued before it.
+      Memory reached outside the claims, by whoever holds the bigarray of
+      {!of_bigarray} or by a holder {!Claim.export} names, is never exclusive. A
+      raw {!address} or {!bigarray} is outside the claims, and its holder
+      answers for it. *)
+  module Claim : sig
+    type buffer := t
+
+    val read : buffer -> unit
+    (** [read b] claims [b]'s memory for reading, beside other readers.
+
+        Raises [Invalid_argument] if [b] is dead, or if the memory is held
+        exclusive. *)
+
+    val release : buffer -> unit
+    (** [release b] ends a {!read} of [b]'s memory. It accepts a dead [b].
+
+        Raises [Invalid_argument] and changes nothing if the memory has no read
+        claim. *)
+
+    val try_exclusive : buffer -> bool
+    (** [try_exclusive b] turns the caller's read claim on [b]'s memory into an
+        exclusive one. It is [false], and changes nothing, if the memory has
+        other claims or is exported. *)
+
+    val finish : buffer -> unit
+    (** [finish b] turns the exclusive claim on [b]'s memory back into the read
+        claim it came from, which {!release} then ends. It accepts a dead [b].
+
+        Raises [Invalid_argument] if the memory is not exclusive. *)
+
+    val export : buffer -> unit
+    (** [export b] is a read claim on [b]'s memory for a holder outside the
+        claims, such as a library given its bytes without a copy, which is never
+        released: the memory is never exclusive again. A buffer {!of_bigarray}
+        makes starts with one, for whoever holds the bigarray, and so does one
+        {!of_file} or {!create_file} makes, for the file.
+
+        Raises [Invalid_argument] as {!read} does. *)
+
+    type t
+    (** The type for the claims of a {!with_}. *)
+
+    val with_ : read:buffer list -> donate:buffer list list -> (t -> 'a) -> 'a
+    (** [with_ ~read ~donate f] claims the memory of [read] and of [donate] for
+        reading, then tries each value of [donate] (its buffers, one per device)
+        exclusive, and is [f] of the claims. A value is exclusive if each of its
+        buffers {!spans} its memory and can be had exclusive; its buffers are
+        otherwise left read. Every claim is released when [f] returns or raises.
+
+        Raises [Invalid_argument] before [f], releasing what it claimed, if a
+        buffer is dead, if a memory is held exclusive, or if a buffer of
+        [donate] overlaps another of [read] or [donate]. *)
+
+    val exclusive : t -> buffer -> bool
+    (** [exclusive c b] is [true] iff [c] holds [b]'s memory exclusive: the
+        caller may write it in place. *)
+
+    val consume : t -> why:string -> buffer -> buffer
+    (** [consume c ~why b] consumes [b]'s memory with the reason [why]: [b] and
+        every buffer over the memory made before are dead. It is a buffer over
+        the same memory, live, which the caller may write in place only if [c]
+        holds it {!exclusive}; with a read claim only, it must not write it.
+
+        Raises [Invalid_argument] if [c] does not claim [b]'s memory, if [b] is
+        dead, or if [b] does not {!spans} its memory: consuming a window would
+        kill the rest. *)
+  end
 
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they are
@@ -871,9 +939,9 @@ val submit : t list -> touches:Buffer.t list -> (Submission.t -> 'a) -> 'a
 
     Raises [Invalid_argument] if [ds] is empty or has a host or the disk, which
     run no submitted work, or if a buffer of [touches] is on the disk or dead
-    ({!Buffer.consume}), and {!Lost} if a device it takes is lost, if a lost
-    device can reach a buffer of [touches], or if a device of [ds] has no room
-    in its queues within its {!timeout}. *)
+    ({!Buffer.Claim.consume}), and {!Lost} if a device it takes is lost, if a
+    lost device can reach a buffer of [touches], or if a device of [ds] has no
+    room in its queues within its {!timeout}. *)
 
 val submitted : t -> int
 (** [submitted d] is the value [d]'s last submitted work signals, [0] before any

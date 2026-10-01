@@ -2922,6 +2922,12 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Buffer.consume` is `Nx_device.Buffer.Claim.consume`,
+  which needs a claim on the memory from `Claim.with_`. `Nx_device.Buffer.Claim`
+  counts read claims on memory, shared by its views and borrows, and holds it
+  exclusive for a writer. A buffer over a bigarray or a file is never
+  exclusive, since the bigarray's holder and the file reach the memory outside
+  the claims. A dead buffer names the memory's last consumption.
 - Complex `div` and `recip` compute by Smith's algorithm, as OCaml's
   `Complex.div` does, on every platform. They used C's division, whose
   runtime gives a NaN part where the quotient's is zero when the other part

@@ -29,3 +29,9 @@ value test_nx_device_memmove(value dst, value src, value n) {
 value test_nx_device_buffer_host(value b) {
   return caml_copy_nativeint((intnat)nx_device_buffer_host(b));
 }
+
+/* Whether a buffer is live as C code checks it: its memory was not consumed
+   since it was made. */
+value test_nx_device_buffer_live(value b) {
+  return Val_bool(nx_device_buffer_live(b));
+}
