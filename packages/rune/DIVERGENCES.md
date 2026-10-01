@@ -547,7 +547,7 @@ target's run lands.
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:220` (`fold`), `:206` (`cut`);
+- **Raven:** `lower_index.ml:223` (`fold`), `:206` (`cut`);
   `lower_reduce.ml:87` (`reduce`).
 - **No source:** the transpose of the unfold: each movement of `Ops.pool` undone
   in reverse order, a shrink by a pad of zeros, and the copies of the input

@@ -525,12 +525,12 @@ let ulps d ~budget inputs e a =
     ev
 
 (* A transcendental row's budget against nx.cpu on [d]: the device's measured
-   maximum, else the lowering's budget against the correctly rounded result and
-   nx.cpu's own ulp. At the narrow dtypes both round a float32 result once, and
-   may round to either side of it. *)
-let budget d name ledger (dt : (float, 'b) Nx_dtype.t) =
+   maximum, else [stated], the lowering's budget against the correctly rounded
+   result, plus nx.cpu's own ulp. At the narrow dtypes both round a float32
+   result once, and may round to either side of it. *)
+let budget d name stated (dt : (float, 'b) Nx_dtype.t) =
   if Nx_dtype.itemsize dt < 4 then 2
-  else Option.value (List.assoc_opt name d.budgets) ~default:(ledger + 1)
+  else Option.value (List.assoc_opt name d.budgets) ~default:(stated + 1)
 
 (* Elementwise *)
 
@@ -594,7 +594,7 @@ let elementwise d ~count ~heavy =
                  ("tanh", (Tanh, 8));
                  ("erf", (Erf, 8));
                ])
-            (fun (name, (k, ledger)) ->
+            (fun (name, (k, stated)) ->
               over_floats (floats d)
                 {
                   per_float =
@@ -606,7 +606,7 @@ let elementwise d ~count ~heavy =
                         [ said "%s" name; shown x ]
                         (fun () ->
                           let e, a = both d (unary k x) in
-                          ulps d ~budget:(budget d name ledger dt) [ x ] e a));
+                          ulps d ~budget:(budget d name stated dt) [ x ] e a));
                 })))
   and exact_binary =
     law "exact binary"
@@ -645,7 +645,7 @@ let elementwise d ~count ~heavy =
       (checks
          (Gen.bind
             (rows [ ("pow", (Nx_backend.Pow, 16)); ("atan2", (Atan2, 8)) ])
-            (fun (name, (k, ledger)) ->
+            (fun (name, (k, stated)) ->
               over_floats (floats d)
                 {
                   per_float =
@@ -658,7 +658,7 @@ let elementwise d ~count ~heavy =
                         [ said "%s" name; shown x; shown y ]
                         (fun () ->
                           let e, a = both d (binary k x y) in
-                          ulps d ~budget:(budget d name ledger dt) [ x; y ] e a));
+                          ulps d ~budget:(budget d name stated dt) [ x; y ] e a));
                 })))
   and comparisons =
     law "comparisons"

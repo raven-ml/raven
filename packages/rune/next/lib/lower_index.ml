@@ -205,7 +205,10 @@ type cut = {
 
 let cut ~kernel ~stride ~dilation ~size =
   let ceil_div a b = (a + b - 1) / b in
-  let windows = ceil_div (size - (dilation * (kernel - 1))) stride in
+  (* A kernel that spans more than the padded axis has no window. *)
+  let windows =
+    Int.max 0 (ceil_div (size - (dilation * (kernel - 1))) stride)
+  in
   let scale =
     (ceil_div
        ((windows * stride) - dilation)
@@ -238,7 +241,7 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
             let p = (w * c.stride) + (j * dilation.(a)) in
             p >= before && p < before + output_size.(a))
           (List.init c.kernel Fun.id))
-      (List.init (Int.max 0 c.windows) Fun.id)
+      (List.init c.windows Fun.id)
   in
   if not (List.for_all Fun.id (List.mapi lands cuts)) then
     Ops.expand
