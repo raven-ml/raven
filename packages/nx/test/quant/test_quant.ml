@@ -378,6 +378,27 @@ let values_and_products =
          expert and exactly zero where an id selects none"
         (Gen.with_pp pp_product products)
         product_law;
+      prop
+        "under a transformation, apply and dequant are compositions of nx's \
+         operations that give the eager values"
+        (Gen.with_pp pp_product products)
+        (fun (_, w, ids, transpose, X { x; _ }) ->
+          let composed f =
+            Nx.Op.intercept
+              { run = (fun o -> Nx.Op.eval o); claims = (fun _ -> true) }
+              f
+          in
+          let floats t = Nx.to_array (Nx.cast Nx.float64 t) in
+          let apply () =
+            Nx_quant.Effect.perform w (Apply { ids; x; transpose })
+          in
+          equal (array float_exact)
+            (floats (apply ()))
+            (floats (composed apply));
+          let dequant () = Nx_quant.dequant Nx.float32 w in
+          equal (array float_exact)
+            (floats (dequant ()))
+            (floats (composed dequant)));
       test "a weight of several chunks, split inside a matrix" (fun () ->
           let w = random_weight [| 2; 1100; 4096 |] in
           let dq = Nx_quant.dequant Nx.float32 w in

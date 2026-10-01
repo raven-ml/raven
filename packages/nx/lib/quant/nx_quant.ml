@@ -100,20 +100,28 @@ let e8m0 =
     (Array.init 256 (fun s ->
          if s = 255 then Float.nan else Float.ldexp 1.0 (s - 127)))
 
-(* [decode codes scales] is rows [[| r; k / 2 |]] and [[| r; k / 32 |]] at
-   float32, [[| r; k |]], decoded on the host: rows of a placed weight are read
-   there first, so those of a split one meet no value on other devices. *)
-let decode codes scales =
-  let codes = Nx.place Nx.Placement.host codes
-  and scales = Nx.place Nx.Placement.host scales in
-  let r = Nx.dim 0 codes and k = 2 * Nx.dim 1 codes in
+(* [values codes scales] is the weight of [codes] [[| ...; n; k / 2 |]] and
+   [scales] [[| ...; n; k / 32 |]] at float32, [[| ...; n; k |]]: each byte's
+   two values times its group's scale, looked up in the tables. *)
+let values codes scales =
+  let s = Nx.shape codes in
+  let r = Array.length s in
+  let lead = Array.sub s 0 (r - 1) and k = 2 * s.(r - 1) in
   let indices t = Nx.cast Nx.int32 (Nx.reshape [| -1 |] (Nx.contiguous t)) in
-  let values = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
+  let v = Nx.take ~axis:0 ~indices:(indices codes) byte_values in
   let scale = Nx.take ~indices:(indices scales) e8m0 in
-  Nx.reshape [| r; k |]
+  let groups = Array.append lead [| k / 32 |] in
+  Nx.reshape
+    (Array.append lead [| k |])
     (Nx.mul
-       (Nx.reshape [| r; k / 32; 32 |] values)
-       (Nx.reshape [| r; k / 32; 1 |] scale))
+       (Nx.reshape (Array.append groups [| 32 |]) v)
+       (Nx.reshape (Array.append groups [| 1 |]) scale))
+
+(* [decode codes scales] is rows of a weight decoded on the host: rows of a
+   placed weight are read there first, so those of a split one meet no value on
+   other devices. *)
+let decode codes scales =
+  values (Nx.place Nx.Placement.host codes) (Nx.place Nx.Placement.host scales)
 
 (* The eager loop decodes at most [chunk] values at a time, and at least one
    row. A chunk's dispatch costs well under one percent of its decode on the C
@@ -394,6 +402,77 @@ let product_all (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
     Nx.cast dt (Nx.reshape out (rows_at slot y))
   end
 
+(* Compositions. Under a transformation, an operation on a weight is nx's
+   operations, which the transformation sees: the values by table, the experts
+   [ids] selects gathered from the packed parts, and one product. *)
+
+let composed_apply (type b) ~transpose ?ids codes scales (x : (float, b) Nx.t) :
+    (float, b) Nx.t =
+  let ws = Nx.shape codes in
+  let wr = Array.length ws in
+  let wb, _ =
+    product_shape ~transpose ?ids:(Option.map Nx.shape ids) ws (Nx.shape x)
+  in
+  let codes, scales, valid =
+    match ids with
+    | None -> (codes, scales, None)
+    | Some ids ->
+        (* The matrix at each position of [wb]: its lane's row of experts, then
+           its id among them. *)
+        let p = wr - 3 in
+        let lanes = Array.sub ws 0 p and e = ws.(p) in
+        let ids = Nx.broadcast_to wb ids in
+        let lane =
+          let at = ref (Nx.zeros Nx.int32 wb) and stride = ref 1 in
+          for a = p - 1 downto 0 do
+            if lanes.(a) > 1 then begin
+              let shape = Array.mapi (fun b n -> if b = a then n else 1) wb in
+              let iota = Nx.reshape shape (Nx.arange Nx.int32 0 lanes.(a) 1) in
+              at := Nx.add !at (Nx.mul_s iota (Int32.of_int !stride))
+            end;
+            stride := !stride * lanes.(a)
+          done;
+          !at
+        in
+        let valid =
+          Nx.logical_and
+            (Nx.greater_equal_s ids 0l)
+            (Nx.less_s ids (Int32.of_int e))
+        in
+        let at =
+          Nx.reshape [| -1 |]
+            (Nx.add
+               (Nx.mul_s lane (Int32.of_int e))
+               (Nx.clamp ~min:0l ~max:(Int32.of_int (e - 1)) ids))
+        in
+        let gather t =
+          let s = Nx.shape t in
+          let matrix = Array.sub s (wr - 2) 2 in
+          Nx.reshape (Array.append wb matrix)
+            (Nx.take ~axis:0 ~indices:at
+               (Nx.reshape
+                  (Array.append
+                     [| Array.fold_left ( * ) 1 (Array.sub s 0 (wr - 2)) |]
+                     matrix)
+                  (Nx.contiguous t)))
+        in
+        (gather codes, gather scales, Some valid)
+  in
+  let w = values codes scales and x32 = Nx.cast Nx.float32 x in
+  let y =
+    if transpose then Nx.matmul x32 w else Nx.matmul x32 (Nx.matrix_transpose w)
+  in
+  let y =
+    match valid with
+    | None -> y
+    | Some valid ->
+        let trailing = if Nx.ndim x = 1 then [| 1 |] else [| 1; 1 |] in
+        Nx.where
+          (Nx.reshape (Array.append wb trailing) valid)
+          y (Nx.zeros_like y)
+  in
+  Nx.cast (Nx.dtype x) y
+
 (* The effect *)
 
 module Effect = struct
@@ -418,10 +497,14 @@ module Effect = struct
              (Nx.shape codes) (Nx.shape x));
         try Stdlib.Effect.perform (E_quant { w; op })
         with Stdlib.Effect.Unhandled _ ->
-          product_all ~transpose ?ids codes scales x)
+          if Nx.Op.intercepted () then
+            composed_apply ~transpose ?ids codes scales x
+          else product_all ~transpose ?ids codes scales x)
     | Dequant dt -> (
         try Stdlib.Effect.perform (E_quant { w; op })
-        with Stdlib.Effect.Unhandled _ -> decode_all dt codes scales)
+        with Stdlib.Effect.Unhandled _ ->
+          if Nx.Op.intercepted () then Nx.cast dt (values codes scales)
+          else decode_all dt codes scales)
 end
 
 (* Products *)

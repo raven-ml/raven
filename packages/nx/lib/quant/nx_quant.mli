@@ -13,7 +13,11 @@
 
     {!apply} and {!dequant} perform {!Effect.E_quant}. Run eagerly, where no
     handler takes the effect, they decode one bounded chunk at a time, whatever
-    the weight's size.
+    the weight's size. Inside {!Nx.Op.intercept}, where a transformation or a
+    compiled call interprets operations and no handler takes the effect, they
+    are compositions of nx's operations: table lookups of the values, a gather
+    of the experts [ids] selects and one product, which the interpreter sees
+    whole.
 
     A quantised weight has no gradient: build it once and capture it.
 
@@ -28,8 +32,8 @@
 (** {1:weights Weights} *)
 
 (** The type for quantised weights. Match on a weight to read its parts; only
-    the constructors build one. Block-scaled FP8 lands later as a second
-    format. *)
+    the constructors build one. Block-scaled FP8 lands later as a second format.
+*)
 type t = private
   | Mxfp4 of {
       codes : (int, Nx.uint8_elt) Nx.t;
