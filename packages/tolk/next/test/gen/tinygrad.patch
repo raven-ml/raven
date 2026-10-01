@@ -465,6 +465,20 @@ index 1f6134e..24949cf 100644
    return l.replace(src=tuple(srcs))
  
  # *****************
+diff --git a/tinygrad/schedule/multi.py b/tinygrad/schedule/multi.py
+index 099ac10..52620b8 100644
+--- a/tinygrad/schedule/multi.py
++++ b/tinygrad/schedule/multi.py
+@@ -191,7 +191,8 @@ def stack_multi(root:UOp):
+   if not multis: return None
+   sharding = multis[0].sharding
+   if all(m.sharding == sharding for m in multis):
+-    srcs = [m.src[0] if m.op is Ops.UNSHARD else m for m in root.src]
++    # a whole src takes its per-shard sub-view, as in alu_multi
++    srcs = [m.src[0] if m.op is Ops.UNSHARD else shard_subview(m, multis[0]) for m in root.src]
+     new_sharding = tuple((ax+1, rng) for ax, rng in sharding)
+     return UOp(Ops.STACK, src=tuple(srcs)).unshard(tuple(a for a,_ in new_sharding), tuple(r for _,r in new_sharding))
+   # resharding: single-axis fallback
 diff --git a/tinygrad/uop/divandmod.py b/tinygrad/uop/divandmod.py
 index 5a9905e..7246f9b 100644
 --- a/tinygrad/uop/divandmod.py

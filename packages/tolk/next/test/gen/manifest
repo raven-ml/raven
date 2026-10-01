@@ -3154,6 +3154,10 @@ schedule/multi/sort.golden
 schedule/multi/sort_multi.golden
 schedule/multi/stack.golden
 schedule/multi/stack_multi.golden
+schedule/multi/stack_whole.golden
+schedule/multi/stack_whole_first.golden
+schedule/multi/stack_whole_first_multi.golden
+schedule/multi/stack_whole_multi.golden
 schedule/multi/store_load.golden
 schedule/multi/store_load_multi.golden
 schedule/multi/store_value.golden

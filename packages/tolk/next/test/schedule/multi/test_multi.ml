@@ -57,6 +57,8 @@ let programs =
     "add_two_partitions";
     "variable_shrink";
     "stack";
+    "stack_whole";
+    "stack_whole_first";
     "cat";
     "repeat";
     "grid_add";

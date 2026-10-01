@@ -1767,3 +1767,26 @@ the Exclusions of `README.md`.
   a call over a range of any other kind`, `› accepts an open device range`
   and `› refuses a weak sum of a weak integer variable`; its
   `verdicts.golden` records the patched spec on ends and shrinks.
+
+## D61. A stack takes the per-shard sub-view of a whole source
+
+- **tinygrad:** `schedule/multi.py:188-200` (`stack_multi`, which stacks a
+  source that is not sharded as it is beside the shards of the others).
+- **tolk.next:** `lib/schedule/multi.ml:474` (`stack_multi`), and
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** in a stack whose sharded sources are sharded alike, a whole
+  source, one value of the full shape on every device, takes its per-shard
+  sub-view (`shard_subview`), as an elementwise operation's does
+  (`alu_multi`). tinygrad stacks it whole beside the shards: the stack's
+  shards then mix a shard with a whole value, and
+  `Tensor.stack(a.shard(devices, axis=0), b.shard(devices))` gives wrong
+  values, or fails at a later operation on the shard sub-view's shape check
+  when the whole source comes first.
+- **Reason:** (b). rune.next's compiled `Nx.stack` of a value sharded on an
+  axis and a replicated one gives other values than eagerly. The same stack
+  is how rune lowers a concatenation, and a scatter-add, of such values.
+- **Pinned by:** the `Multi` suite (`test/schedule/multi`): `multi_pm ›
+  recorded › programs › stack_whole_multi.golden` and
+  `› stack_whole_first_multi.golden`, and `› values › stack_whole writes
+  what it wrote before` and `› stack_whole_first …`, from the patched
+  tinygrad, whose values for both stacks equal numpy's.

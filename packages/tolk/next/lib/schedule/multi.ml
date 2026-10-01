@@ -469,7 +469,8 @@ let flip_multi root multi =
   in
   reshard multi (flip (nth multi 0) axes)
 
-(* A stack adds a leading axis: its sources are sharded one axis below. *)
+(* A stack adds a leading axis: its sources are sharded one axis below. A whole
+   source takes its per-shard sub-view, as an elementwise operation's does. *)
 let stack_multi root =
   match List.filter is_unshard (src root) with
   | [] -> None
@@ -477,10 +478,11 @@ let stack_multi root =
       let sharding = sharding first in
       if List.for_all (fun m -> equal_sharding (Ops.sharding m) sharding) multis
       then
+        let each m = if is_unshard m then nth m 0 else shard_subview m first in
         Some
           (unshard_as
              (List.map (fun (ax, r) -> (ax + 1, r)) sharding)
-             (v Op.Stack ~src:(List.map peel (src root))))
+             (v Op.Stack ~src:(List.map each (src root))))
       else
         (* Resharding: the single-axis fallback. *)
         let axis = sharded_axis root in

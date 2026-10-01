@@ -153,6 +153,8 @@ PROGRAMS = {
     "add_two_partitions": add_two_partitions,
     "variable_shrink": lambda: sharded(4, 8, axis=0)[:, :Variable("v", 1, 8).bind(3)] + 1,
     "stack": lambda: Tensor.stack(sharded(4, 8, axis=0), sharded(4, 8, axis=0)) + 1,
+    "stack_whole": lambda: Tensor.stack(sharded(4, 8, axis=0), empty(4, 8, devices=D2)) + 1,
+    "stack_whole_first": lambda: Tensor.stack(empty(4, 8, devices=D2), sharded(4, 8, axis=0)) + 1,
     "cat": lambda: Tensor.cat(sharded(4, 8, axis=0), sharded(4, 8, axis=0), dim=1),
     "repeat": lambda: sharded(4, 8, axis=0).repeat(1, 2) + 1,
     # two sharded axes
