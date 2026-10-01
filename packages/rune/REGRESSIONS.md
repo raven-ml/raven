@@ -240,6 +240,16 @@ the tangent; an integer or boolean row has no tangent. A path
 `J › cumulative › …` and `J › factorisations › …` are named cases. An old
 test of a fixed shape or fixture maps to the row whose generator draws it. The
 suite checks forward mode only; the pullbacks are the reverse-mode suite's.
+The reverse-mode suite is `next/test/rules/linear/test_transposes.ml`,
+written `T` below. Over the same rows and draws, ties and zeros included, it
+checks each row's pullback against its tangent by the adjoint identity
+`Re ⟨w, J v⟩ = Re ⟨J* w, v⟩` to rounding (with no finite difference), a
+linear row's pullback against the row itself, the pullback of a remat of the
+row and of a custom_vjp whose pullback is the row's, and a custom_jvp whose
+tangent map applies the row: transposed when the map is linear, refused,
+naming the row, when it is not. `T › compositions › …` holds nx's functions
+made of several rows (their old fixtures, both laws, and closed forms), and
+`T › edges › …` the named cases.
 
 
 ### Old rune tests
@@ -279,3 +289,47 @@ suite checks forward mode only; the pullbacks are the reverse-mode suite's.
 | old: test_grad.ml half reduction derivatives count ties without overflow (eager) | a float16 tie count | J › edges › reduce max, reduce min › a float16 tie count above 65,504 does not overflow |
 | old: test_grad.ml single-tensor variants › a bitcast has zero derivative | a bitcast carries no tangent | J › bitcast › it has no tangent and passes no cotangent |
 | old: test_fft.ml forward mode › rfft tangent is rfft of the tangent; irfft tangent is irfft of the tangent | linear transform tangents | J › rfft, irfft › a linear operation's tangent is the operation on the tangent |
+| old: test_ops.ml unary rules › neg, exp, log, sqrt, recip, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, abs, erf | each unary pullback | T › unary <kind> › the pullback is the adjoint of the tangent map (with J's central difference) |
+| old: test_ops.ml unary rules › sigmoid, across its two sides | sigmoid | T › compositions › real › sigmoid, across its two sides |
+| old: test_ops.ml binary rules › add, sub, mul, div, pow, maximum, minimum, atan2 | each binary pullback | T › binary <kind> › the pullback is the adjoint of the tangent map (ties drawn) |
+| old: test_ops.ml broadcasting › add broadcasts a row; mul broadcasts a column; sub broadcasts a scalar | broadcast binaries | T › compositions › real › (same names) |
+| old: test_ops.ml reduction rules › sum over all axes; over one axis; keepdims; prod; max; max keepdims; min | reduction pullbacks | T › reduce <kind> › the pullback is the adjoint of the tangent map (axes drawn, ties and zeros drawn); T › compositions › real › sum keeping its axes |
+| old: test_ops.ml reduction rules › mean over one axis | mean | T › compositions › real › mean over one axis |
+| old: test_ops.ml movement rules › reshape, transpose, broadcast_to, pad, shrink, flip | movement pullbacks | T › move reshape, move permute, move expand, pad, move shrink, move flip › a linear operation's pullback is its adjoint |
+| old: test_ops.ml movement rules › sliding window; strided; with gaps; on a leading axis | window pullbacks | T › move window › a linear operation's pullback is its adjoint (steps past the window drawn); T › edges › indexed › an element no window reads receives zero |
+| old: test_ops.ml movement rules › concatenate | cat's pullback | T › cat › a linear operation's pullback is its adjoint |
+| old: test_ops.ml movement rules › slice; tril | slice, tril | T › compositions › real › slice; tril |
+| old: test_ops.ml selection rules › where; take_along_axis; sort | selection pullbacks | T › where, gather, sort › the pullback is the adjoint of the tangent map |
+| old: test_ops.ml selection rules › scatter (set); scatter (set) with a repeated index; scatter (add) | scatter's pullback | T › scatter › a linear operation's pullback is its adjoint; T › edges › indexed › under Set a shadowed update receives nothing; under Set the overwritten target receives nothing; under Add every duplicate update receives the cotangent |
+| old: test_ops.ml scan rules › cumsum, cumprod, cummax, cummin | scan pullbacks | T › scan <kind> › the pullback is the adjoint of the tangent map (ties and zeros drawn) |
+| old: test_ops.ml scan rules › cummax and cummin give each running extremum's cotangent to its element; cumprod is exact at zeros; cumprod's gradient differentiates exactly at zeros; the three "has the gradient of its definition" properties | the cumulative gradients | J › cumulative › running extrema, running products (gradients through grad) |
+| old: test_ops.ml matmul rules › 2d x 2d; batched x batched; 2d x batched; batched x 2d; a batch axis of extent one broadcasts | matmul's pullback | T › matmul › the pullback is the adjoint of the tangent map; › a linear operation's pullback is its adjoint (leading axes, extent-1 broadcasts on either side, ranks that differ drawn) |
+| old: test_ops.ml linalg rules › cholesky; cholesky (batched); qr (reduced); qr (reduced, batched); lu (square, batched) | factorisation pullbacks | T › cholesky, qr, lu › the pullback is the adjoint of the tangent map (batches drawn) |
+| old: test_ops.ml linalg rules › det is det(a) times the inverse transpose; slogdet; solve and inv | det, slogdet, solve, inv | T › compositions › real › det; slogdet; solve; inv; the gradient of det is det times the inverse transpose |
+| old: test_ops.ml linalg rules › solve_triangular (batched vector rhs); (unit diagonal) | the triangular solve's pullback | T › solve_triangular › the pullback is the adjoint of the tangent map (flags, vector right-hand sides, batches drawn) |
+| old: test_ops.ml complex accessors › magnitude; real and imag; angle; conjugate; complex leaf differentiates abs as z/abs | complex accessors | T › compositions › complex › magnitude of an assembled complex tensor; real and imag; angle; conjugate of an assembled complex tensor; the gradient of abs z is z / abs z |
+| old: test_ops.ml composites › softmax cross-entropy; layer-norm; windowed energy | composites | T › compositions › real › (same names) |
+| old: test_jvp.ml operands without a tangent › x ** 2, x ** 3, 2 x, x / 2, maximum x 0, minimum 0 x, atan2 x 1, atan2 1 x: jvp is the transpose of vjp | the adjoint identity with a constant operand, at zeros and ties | T › binary pow, mul, fdiv, maximum, minimum, atan2 › the pullback is the adjoint of the tangent map (constant operands and ties drawn) |
+| old: test_jvp.ml scan rules › cumsum, cumprod, cummax, cummin, cumprod along a first axis, cummax along a first axis: jvp is the transpose of vjp | the scans' adjoint identity | T › scan <kind> › the pullback is the adjoint of the tangent map (axes drawn) |
+| old: test_jvp.ml broadcasting › add broadcasts a row; mul broadcasts a column | broadcast binaries | T › compositions › real › (same names) |
+| old: test_jvp.ml reduction rules › mean over one axis | mean | T › compositions › real › mean over one axis |
+| old: test_jvp.ml movement rules › slice | slice | T › compositions › real › slice |
+| old: test_jvp.ml linalg rules › det, solve and inv | det, solve, inv | T › compositions › real › det; solve; inv |
+| old: test_jvp.ml composites › softmax cross-entropy shaped function; magnitude of an assembled complex tensor | composites | T › compositions › real › softmax cross-entropy shaped loss; complex › magnitude of an assembled complex tensor |
+| old: test_complex.ml holomorphic rules › recip, sqrt, exp, log, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, mul, fdiv, pow, matmul, reduce_prod (reverse) | complex pullbacks | T › <row> › on complex values the pullback is the adjoint of the tangent map |
+| old: test_complex.ml modulus › abs (reverse); magnitude; abs of a product | the modulus | T › unary abs › on complex values the pullback is the adjoint of the tangent map; T › compositions › complex › magnitude; abs of a product |
+| old: test_complex.ml sign › sign (reverse); sign of a product; abs, second order | the complex sign | T › unary sign › on complex values the pullback is the adjoint of the tangent map; T › compositions › complex › sign of a product; the modulus's gradient, differentiated again |
+| old: test_complex.ml transforms › fft, ifft, irfft (3) (reverse); ifft of fft; rfft of a real part; complex-filtered round trip | transform pullbacks | T › fft, irfft › on complex values the pullback is the adjoint of the tangent map; T › compositions › spectral › ifft of fft; rfft of a real part; complex-filtered round trip |
+| old: test_complex.ml component access › real, imag, angle, conjugate, reassembled | component access | T › compositions › complex › real; imag; angle of a complex tensor; conjugate; reassembled |
+| old: test_complex.ml linear and movement rules › neg, sum, cumsum, cumprod, cat, gather, flip, where (reverse); broadcast and reduce | complex linear pullbacks | T › <row> › on complex values the pullback is the adjoint of the tangent map; › on complex values a linear operation's pullback is its adjoint; T › compositions › complex › broadcast and reduce |
+| old: test_complex.ml arithmetic › add, sub, matmul batched, matmul vector (reverse); square, log2, exp2, rsqrt, mean, trace, vdot | complex arithmetic | T › binary add, binary sub, matmul › on complex values the pullback is the adjoint of the tangent map; T › compositions › complex › square; log2; exp2; rsqrt; mean; trace; vdot |
+| old: test_complex.ml movements › reshape, transpose, pad, shrink, sliding window, scatter set, scatter add (reverse); slice strided; slice dynamic; set dynamic; tile; roll; set; diagonal; correlate | complex movements | T › <row> › on complex values a linear operation's pullback is its adjoint; T › compositions › complex › slice, strided; slice, dynamic; set, dynamic; tile; roll; set; diagonal; correlate |
+| old: test_complex.ml triangular solves › lower, upper, lower transposed, upper transposed, unit diagonal transposed, vector transposed (reverse); solve; inv | the conjugate transpose in the solve's pullback | T › edges › a solve's pullback in b is the solve by the conjugate transpose (all 8 flag combinations); T › solve_triangular › on complex values the pullback is the adjoint of the tangent map; T › compositions › complex › solve, complex; inv, complex |
+| old: test_complex.ml cholesky › lower; upper (reverse); of a Gram matrix | the Hermitian factor's pullback | T › cholesky › on complex values the pullback is the adjoint of the tangent map; T › compositions › complex › cholesky of a Gram matrix |
+| old: test_complex.ml qr › tall (reverse); square (reverse) | complex qr | T › qr › on complex values the pullback is the adjoint of the tangent map (tall, square and wide drawn) |
+| old: test_complex.ml factorisations › det; lu (reverse) | det, lu | T › compositions › complex › det, complex; T › lu › on complex values the pullback is the adjoint of the tangent map |
+| old: test_grad.ml set › differentiates both operands | set's pullback in its target and its value | T › compositions › real › set differentiates both operands; T › update › a linear operation's pullback is its adjoint |
+| old: test_fft.ml gradients › round trip, even length; odd length; along axis 0, even; along axis 0, odd; with ortho norm; zero-padded spectrum; truncated spectrum; 2-D round trip; permuted axes; permuted axes, resized spectrum; filtered spectral energy | spectral round trips | T › compositions › spectral › (same names) |
+| old: test_fft.ml one-way losses › rfft2 energy; irfft2 of a lifted spectrum; complex mask, even length; odd length; complex-masked irfft; power spectrum; c2c pass in the chain | one-way spectral losses | T › compositions › spectral › (same names; the c2c pass is "a complex pass in the chain") |
+| old: test_fft.ml pulls against the DFT transpose › rfft pull, even and odd length; irfft pull, even and odd length | the transforms' pullbacks against the definition | T › compositions › spectral pullbacks › rfft against its definition; irfft against its definition (lengths 4 and 5) |
+| old: test_fft.ml forward mode › round trip, even length; odd length; forward and reverse pairings agree | spectral tangents and the adjoint identity | T › compositions › spectral › round trip, even length; odd length; filtered spectral energy (both laws) |

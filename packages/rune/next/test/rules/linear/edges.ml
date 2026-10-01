@@ -1,0 +1,302 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The pullbacks' edges: what a duplicated, shadowed, padded or unread element
+   receives, the conjugate transpose of a triangular solve, where the two modes
+   part at a non-finite coefficient, and the affine tangent maps the recorder
+   refuses or reads as linear. *)
+
+open Windtrap
+module Rune = Rune_next.Rune
+module Op = Nx.Op
+
+let f64 = Nx.float64
+let vec a = Nx.create f64 [| Array.length a |] a
+let floats = array float_exact
+let gradient f x = Nx.to_array (Rune.grad' (fun x -> Nx.sum (f x)) x)
+
+let indices a =
+  Nx.create Nx.int32 [| Array.length a |] (Array.map Int32.of_int a)
+
+let indexed =
+  [
+    test "under Set a shadowed update receives nothing" (fun () ->
+        let scatter u =
+          Op.eval
+            (Scatter
+               {
+                 mode = `Set;
+                 unique = false;
+                 axis = 0;
+                 indices = indices [| 1; 1 |];
+                 updates = u;
+                 into = Nx.zeros f64 [| 3 |];
+               })
+        in
+        equal floats [| 0.; 1. |] (gradient scatter (vec [| 5.; 6. |])));
+    test "under Set the overwritten target receives nothing" (fun () ->
+        let scatter into =
+          Op.eval
+            (Scatter
+               {
+                 mode = `Set;
+                 unique = false;
+                 axis = 0;
+                 indices = indices [| 1; 1 |];
+                 updates = vec [| 5.; 6. |];
+                 into;
+               })
+        in
+        equal floats [| 1.; 0.; 1. |] (gradient scatter (vec [| 1.; 2.; 3. |])));
+    test "under Add every duplicate update receives the cotangent" (fun () ->
+        let scatter u =
+          Op.eval
+            (Scatter
+               {
+                 mode = `Add;
+                 unique = false;
+                 axis = 0;
+                 indices = indices [| 1; 1 |];
+                 updates = u;
+                 into = Nx.zeros f64 [| 3 |];
+               })
+        in
+        equal floats [| 1.; 1. |] (gradient scatter (vec [| 5.; 6. |])));
+    test
+      "a gathered element receives the sum of its reads, an index outside the \
+       axis nothing" (fun () ->
+        let gather x = Op.eval (Gather (0, indices [| 2; 0; 2; -1; 3 |], x)) in
+        equal floats [| 1.; 0.; 2. |] (gradient gather (vec [| 1.; 2.; 3. |])));
+    test "a pad's fill receives nothing" (fun () ->
+        equal floats [| 1.; 1. |]
+          (gradient
+             (fun x -> Op.eval (Pad ([| (2, 1) |], 5., x)))
+             (vec [| 1.; 2. |])));
+    test "an element no window reads receives zero" (fun () ->
+        let windows x =
+          Op.eval (Move (x, Window { axis = 0; size = 2; step = 3 }))
+        in
+        equal floats [| 1.; 1.; 0.; 1.; 1. |]
+          (gradient windows (vec [| 1.; 2.; 3.; 4.; 5. |])));
+  ]
+
+let recordings =
+  [
+    test "a cotangent laid out unlike its operand reshapes as the operand does"
+      (fun () ->
+        (* The pullback of a transpose is a transposed view. *)
+        let f x =
+          Op.eval
+            (Move (Op.eval (Move (x, Reshape [| 3; 2 |])), Permute [| 1; 0 |]))
+        in
+        let w = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        let _, pullback = Rune.vjp' f (vec [| 0.; 0.; 0.; 0.; 0.; 0. |]) in
+        equal floats [| 1.; 4.; 2.; 5.; 3.; 6. |] (Nx.to_array (pullback w)));
+    cases
+      ~name:(fun n -> Printf.sprintf "%d operations" n)
+      "a recording of any length transposes"
+      [ 61; 62; 63; 64; 65; 127; 128; 129 ]
+      (fun n ->
+        let rec negate k x =
+          if k = 0 then x else negate (k - 1) (Op.eval (Unary (Neg, x)))
+        in
+        let expected = if n mod 2 = 0 then 1. else -1. in
+        equal floats [| expected; expected |]
+          (gradient (negate n) (vec [| 1.; 2. |])));
+  ]
+
+(* A triangular solve's pullback in its right-hand side is the solve by the
+   conjugate transpose: [b ↦ A⁻¹ b] has the adjoint [A⁻ᴴ] under [Re ⟨u, v⟩]. *)
+let solve_adjoint =
+  let a =
+    Nx.create Nx.complex128 [| 3; 3 |]
+      (Array.map
+         (fun (re, im) -> { Complex.re; im })
+         [|
+           (2.1, 0.5);
+           (-0.7, 1.3);
+           (0.4, -0.9);
+           (0.8, 0.2);
+           (1.9, -0.6);
+           (0.3, 0.7);
+           (-0.5, 0.4);
+           (0.6, -0.3);
+           (2.4, 0.8);
+         |])
+  in
+  let b = Nx.cast Nx.complex128 (vec [| 1.; -2.; 0.5 |]) in
+  let flags =
+    List.concat_map
+      (fun upper ->
+        List.concat_map
+          (fun transpose ->
+            List.map
+              (fun unit_diag -> (upper, transpose, unit_diag))
+              [ false; true ])
+          [ false; true ])
+      [ false; true ]
+  in
+  cases
+    ~name:(fun (u, t, d) ->
+      Printf.sprintf "%s%s%s"
+        (if u then "upper" else "lower")
+        (if t then ", transposed" else "")
+        (if d then ", unit diagonal" else ""))
+    "a solve's pullback in b is the solve by the conjugate transpose" flags
+    (fun (upper, transpose, unit_diag) ->
+      let solve transpose b =
+        Op.eval (Solve_triangular { upper; transpose; unit_diag; a; b })
+      in
+      let w =
+        Nx.create Nx.complex128 [| 3 |]
+          Complex.[| { re = 0.3; im = -1.1 }; one; { re = -0.7; im = 0.9 } |]
+      in
+      let _, pullback = Rune.vjp' (solve transpose) b in
+      equal
+        (Reference.close ~rel:1e-12 ())
+        [ Reference.complexes (solve (not transpose) w) ]
+        [ Reference.complexes (pullback w) ])
+
+(* [where (x > 0) (sqrt x) 0] at [0]: forward mode selects the zero branch's
+   tangent, and reverse mode multiplies the unselected branch's zero cotangent
+   by [sqrt]'s infinite coefficient. *)
+let where_at_an_infinite_coefficient =
+  test "where at 0 over sqrt: jvp gives 0 and grad gives NaN" (fun () ->
+      let f x =
+        Op.eval
+          (Where
+             ( Op.eval (Compare (Less, Nx.zeros_like x, x)),
+               Op.eval (Unary (Sqrt, x)),
+               Nx.zeros_like x ))
+      in
+      let x = vec [| 0. |] in
+      equal ~msg:"jvp" floats [| 0. |]
+        (Nx.to_array (snd (Rune.jvp' f x (vec [| 1. |]))));
+      equal ~msg:"grad" floats [| Float.nan |] (gradient f x))
+
+(* The recorder reads a tangent map built from the rows. *)
+
+let affine name f x =
+  test name (fun () ->
+      raises
+        (Invalid_argument
+           (Printf.sprintf
+              "Rune.grad': a custom_jvp tangent map applies %s to a tangent; a \
+               tangent map must be linear in its tangents"
+              name))
+        (fun () ->
+          Rune.grad'
+            (fun x ->
+              Nx.sum
+                (Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+                   (fun x -> (x, f))
+                   x))
+            x))
+
+(* A plain operand beside a tangent of [where], [cat], [scatter] or [update] is
+   read as zero: the gradient of the map with it equals the gradient of the map
+   with zeros in its place. *)
+let taken_as_zero name with_constant with_zeros x =
+  test name (fun () ->
+      let through map x =
+        Rune.grad'
+          (fun x ->
+            Nx.sum
+              (Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+                 (fun x -> (x, map))
+                 x))
+          x
+      in
+      equal floats
+        (Nx.to_array (through with_zeros x))
+        (Nx.to_array (through with_constant x)))
+
+let recorder =
+  let c = vec [| 7.; 8. |] and z = Nx.zeros f64 [| 2 |] in
+  let x = vec [| 1.; 2. |] in
+  let mask = Nx.create Nx.bool [| 2 |] [| true; false |] in
+  let at = indices [| 1; 0 |] in
+  [
+    affine "add" (fun dx -> Op.eval (Binary (Add, dx, c))) x;
+    affine "sub" (fun dx -> Op.eval (Binary (Sub, c, dx))) x;
+    affine "pad"
+      (fun dx ->
+        Op.eval
+          (Move (Op.eval (Pad ([| (1, 1) |], 5., dx)), Shrink [| (1, 3) |])))
+      x;
+    affine "cast"
+      (fun dx ->
+        Op.eval (Convert (Cast, f64, Op.eval (Convert (Cast, Nx.int32, dx)))))
+      x;
+    test "a pad with a zero fill is linear" (fun () ->
+        let map dx =
+          Op.eval
+            (Move (Op.eval (Pad ([| (1, 1) |], 0., dx)), Shrink [| (1, 3) |]))
+        in
+        equal floats [| 1.; 1. |]
+          (Nx.to_array
+             (Rune.grad'
+                (fun x ->
+                  Nx.sum
+                    (Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
+                       (fun x -> (x, map))
+                       x))
+                x)));
+    taken_as_zero "a constant branch of where is read as zero"
+      (fun dx -> Op.eval (Where (mask, dx, c)))
+      (fun dx -> Op.eval (Where (mask, dx, z)))
+      x;
+    taken_as_zero "a constant piece of cat is read as zero"
+      (fun dx ->
+        Op.eval (Move (Op.eval (Cat (0, [ dx; c ])), Shrink [| (1, 3) |])))
+      (fun dx ->
+        Op.eval (Move (Op.eval (Cat (0, [ dx; z ])), Shrink [| (1, 3) |])))
+      x;
+    taken_as_zero "a constant target of scatter is read as zero"
+      (fun dx ->
+        Op.eval
+          (Scatter
+             {
+               mode = `Add;
+               unique = false;
+               axis = 0;
+               indices = at;
+               updates = dx;
+               into = c;
+             }))
+      (fun dx ->
+        Op.eval
+          (Scatter
+             {
+               mode = `Add;
+               unique = false;
+               axis = 0;
+               indices = at;
+               updates = dx;
+               into = z;
+             }))
+      x;
+    taken_as_zero "a constant target of update is read as zero"
+      (fun dx ->
+        Op.eval
+          (Move
+             ( Op.eval (Update (vec [| 9.; 9.; 9. |], indices [| 1 |], dx)),
+               Shrink [| (1, 3) |] )))
+      (fun dx ->
+        Op.eval
+          (Move
+             ( Op.eval (Update (Nx.zeros f64 [| 3 |], indices [| 1 |], dx)),
+               Shrink [| (1, 3) |] )))
+      x;
+  ]
+
+let tests =
+  [
+    group "indexed" indexed;
+    group "recordings" recordings;
+    solve_adjoint;
+    where_at_an_infinite_coefficient;
+    group "the recorder" recorder;
+  ]
