@@ -97,14 +97,17 @@ let dropped f =
 
 (* A driver whose memory is host memory aligned to 16 bytes and never to a page.
    It counts its bytes, its calls and its live mappings but those of the host's
-   staging memory. A far driver's own memory is not addressed by the host, and
-   its copy queue runs copies and timestamps when the host waits for them, as a
-   GPU runs behind the host: [stalled] stops it, [broken] makes it refuse to
-   enqueue, and a device named PEER... copies into the memory of the others. Its
-   timestamps are the host clock, or, with a clock of its own, ticks of it two
-   hours ahead. *)
+   staging memory, and the memory each of its regions is. A far driver's own
+   memory is not addressed by the host, except through a window of [window]
+   bytes of mapped memory when it has one, and its copy queue runs copies and
+   timestamps when the host waits for them, as a GPU runs behind the host:
+   [stalled] stops it, [broken] makes it refuse to enqueue, and a device named
+   PEER... copies into the memory of the others. Its timestamps are the host
+   clock, or, with a clock of its own, ticks of it two hours ahead. *)
 type driver = {
   blocks : (nativeint, chars * int) Hashtbl.t;
+  memories : (nativeint, B.memory) Hashtbl.t;
+  mutable window : int;
   mutable held : int;
   mutable frees : int;
   mutable refuse : bool;
@@ -123,11 +126,13 @@ let transfers name = String.starts_with ~prefix:"PEER" name
 let ahead = 7_200_000_000_000
 
 let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
-    ?signal ?load ?peer ?timeout_ms ?synchronized ?sleep ?finalize ?clock
-    ?resolve ?room ?reaches () =
+    ?window ?signal ?load ?peer ?timeout_ms ?synchronized ?sleep ?finalize
+    ?clock ?resolve ?room ?reaches () =
   let drv =
     {
       blocks = Hashtbl.create 8;
+      memories = Hashtbl.create 8;
+      window = Option.value window ~default:0;
       held = 0;
       frees = 0;
       refuse = false;
@@ -139,7 +144,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
       broken = false;
     }
   in
-  let alloc ~addressed n =
+  let alloc ~addressed memory n =
     if drv.refuse then None
     else
       let ba = chars (n + 31) in
@@ -148,6 +153,7 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
       (* Never on a page, so that no other device maps it by chance. *)
       let a = if Nativeint.rem a 4096n = 0n then Nativeint.add a 16n else a in
       Hashtbl.replace drv.blocks a (ba, n);
+      Hashtbl.replace drv.memories a memory;
       drv.held <- drv.held + n;
       let host = if addressed then Some a else None in
       Some (Region.v ?host ~handle:a a n)
@@ -156,7 +162,18 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     let a = Region.address r in
     drv.held <- drv.held - snd (Hashtbl.find drv.blocks a);
     drv.frees <- drv.frees + 1;
-    Hashtbl.remove drv.blocks a
+    Hashtbl.remove drv.blocks a;
+    Hashtbl.remove drv.memories a
+  in
+  let in_window n =
+    if n > drv.window then None
+    else (
+      drv.window <- drv.window - n;
+      alloc ~addressed:true Mapped n)
+  in
+  let out_of_window r =
+    drv.window <- drv.window + snd (Hashtbl.find drv.blocks (Region.address r));
+    free r
   in
   let map a n =
     if n = staging_bytes then drv.staging <- a :: drv.staging
@@ -224,15 +241,19 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
     if far then
       Device_local
         {
-          memory = { alloc = alloc ~addressed:false; free };
-          host_memory = { alloc = alloc ~addressed:true; free };
+          memory = { alloc = alloc ~addressed:false Device; free };
+          host_memory = { alloc = alloc ~addressed:true Pinned; free };
+          mapped =
+            Option.map
+              (fun _ -> { Driver.alloc = in_window; free = out_of_window })
+              window;
           mapping;
           queue;
         }
     else
       Host_visible
         {
-          memory = { alloc = alloc ~addressed:true; free };
+          memory = { alloc = alloc ~addressed:true Device; free };
           mapping = (if maps then Some mapping else None);
         }
   in
@@ -250,8 +271,12 @@ let fake ?(name = "NEAR") ?(budget = max_int) ?(far = false) ?(maps = far)
   Option.iter (Nx_device.set_timeout dev) timeout_ms;
   { dev; drv }
 
-let far ?(name = "FAR") ?budget ?clock ?peer ?reaches () =
-  fake ~name ?budget ~far:true ?clock ?peer ?reaches ()
+let far ?(name = "FAR") ?budget ?window ?clock ?peer ?reaches () =
+  fake ~name ?budget ~far:true ?window ?clock ?peer ?reaches ()
+
+(* The memory of [d]'s driver that holds [b]. *)
+let memory_of f b =
+  Hashtbl.find f.drv.memories (Region.address (Region.of_buffer b))
 
 (* A signal whose waits answer [wait timeout_ms]. *)
 let signal ?(signaled = 0) wait =
@@ -369,11 +394,14 @@ module Model = struct
     if big then fresh ~on_page:true ~addressed:true s (page * 8 / S.bitsize s)
     else fresh ~addressed:true s n
 
-  (* A far device's memory is addressed by the host when it is host memory. *)
-  let create d pinned s n =
+  (* A far device's memory is addressed by the host when it is pinned memory,
+     which its mapped memory is, having no window. *)
+  let create d (memory : B.memory) s n =
     let bytes = if n < 0 || too_big s n then 0 else nbytes s n in
     if bytes > 0 && live d + bytes > d.budget then raise No_memory;
-    fresh ~device:d ~owned:bytes ~addressed:(d.name = "NEAR" || pinned) s n
+    fresh ~device:d ~owned:bytes
+      ~addressed:(d.name = "NEAR" || memory <> Device)
+      s n
 
   let view r (offset, s, n) =
     alive r;
@@ -561,9 +589,20 @@ let pp_budget ppf n =
   else Format.pp_print_int ppf n
 
 (* Mostly false: a device's host memory. *)
-let seldom =
+let pp_memory ppf (m : B.memory) =
+  Format.pp_print_string ppf
+    (match m with
+    | Device -> "Device"
+    | Pinned -> "Pinned"
+    | Mapped -> "Mapped")
+
+(* Mostly the device's own memory. *)
+let memories =
   Gen.frequency
-    [ (3, Gen.constant ~pp:Format.pp_print_bool false); (1, Gen.bool) ]
+    [
+      (3, Gen.constant ~pp:pp_memory B.Device);
+      (1, Gen.of_list ~pp:pp_memory [ B.Pinned; Mapped ]);
+    ]
 
 (* Mostly room for every buffer. *)
 let budgets =
@@ -659,10 +698,10 @@ let commands =
       (fun big s n ->
         some (B.create host s (if big then page * 8 / S.bitsize s else n)));
     command "create"
-      (dev ^-> seldom @-> formats @-> counts @-> makes buf)
+      (dev ^-> memories @-> formats @-> counts @-> makes buf)
       Model.create
-      (fun d pinned s n ->
-        created d.fake.dev s n (fun () -> B.create ~pinned d.fake.dev s n));
+      (fun d memory s n ->
+        created d.fake.dev s n (fun () -> B.create ~memory d.fake.dev s n));
     command "view"
       (buf ^-> windows ^-> makes buf)
       Model.view
@@ -704,6 +743,131 @@ let commands =
         | Error _ -> raise Model.Refused)
   in
   [ borrow; borrow ]
+
+let memory_kind = Testable.make ~pp:pp_memory ~equal:( = )
+let all_memories = [ B.Device; Pinned; Mapped ]
+
+let memories =
+  group "memories"
+    [
+      test "every memory of a device the host addresses is its own" (fun () ->
+          List.iter
+            (fun m ->
+              let f = fake () in
+              let msg = Format.asprintf "%a" pp_memory m in
+              dropped (fun () -> B.create ~memory:m f.dev S.UInt8 64);
+              let held = f.drv.held in
+              let b = B.create f.dev S.UInt8 64 in
+              equal ~msg memory_kind Device (memory_of f b);
+              equal ~msg:(msg ^ ", whose cache serves it") int held f.drv.held)
+            all_memories);
+      test "a device with memory of its own and a window gives each memory"
+        (fun () ->
+          let f = far ~window:1024 () in
+          List.iter
+            (fun m ->
+              equal
+                ~msg:(Format.asprintf "%a" pp_memory m)
+                memory_kind m
+                (memory_of f (B.create ~memory:m f.dev S.UInt8 64)))
+            all_memories);
+      test "mapped memory is pinned memory on a device with no window"
+        (fun () ->
+          let f = far () in
+          equal memory_kind Pinned
+            (memory_of f (B.create ~memory:Mapped f.dev S.UInt8 64)));
+      test "mapped memory is pinned memory once the window has no room"
+        (fun () ->
+          let f = far ~window:100 () in
+          let first = B.create ~memory:Mapped f.dev S.UInt8 64 in
+          let second = B.create ~memory:Mapped f.dev S.UInt8 64 in
+          equal
+            (pair memory_kind memory_kind)
+            (Mapped, Pinned)
+            (memory_of f first, memory_of f second));
+      test
+        "the host addresses mapped memory, which copies reach without staging"
+        (fun () ->
+          let f = far ~window:1024 () in
+          let b = B.create ~memory:Mapped f.dev S.UInt8 64 in
+          let own = B.create f.dev S.UInt8 64 in
+          is_true ~msg:"a host address"
+            (Region.host_address (Region.of_buffer b) <> None);
+          let staged = f.drv.staged in
+          write b (pattern 1 64);
+          B.copy ~src:b ~dst:own;
+          write b (pattern 2 64);
+          B.copy ~src:own ~dst:b;
+          equal ~msg:"no staged copy" int staged f.drv.staged;
+          equal ~msg:"its bytes, there and back" string (pattern 1 64) (read b));
+      test "freed mapped memory is cached as mapped memory alone" (fun () ->
+          let f = far ~window:64 () in
+          dropped (fun () -> B.create ~memory:Mapped f.dev S.UInt8 64);
+          let pinned = B.create ~memory:Pinned f.dev S.UInt8 64 in
+          let mapped = B.create ~memory:Mapped f.dev S.UInt8 64 in
+          equal
+            (pair memory_kind memory_kind)
+            (Pinned, Mapped)
+            (memory_of f pinned, memory_of f mapped));
+      test
+        "another device borrows mapped memory through its peer mapping, as the \
+         device's own" (fun () ->
+          let peered = ref 0 in
+          let peer _ r =
+            incr peered;
+            Ok r
+          in
+          let o = far ~name:"OWNER" ~window:1024 () in
+          let a = far ~name:"MAPPER" ~peer () in
+          let b = B.create ~memory:Mapped o.dev S.UInt8 64 in
+          let mappings = a.drv.mapped in
+          let on_a = borrow a.dev b in
+          equal ~msg:"a peer mapping" int 1 !peered;
+          equal ~msg:"no host mapping" int mappings a.drv.mapped;
+          ignore (Sys.opaque_identity on_a));
+      test
+        "a mapped request the window refuses first frees cached mapped memory"
+        (fun () ->
+          let f = far ~window:64 () in
+          dropped (fun () ->
+              ( B.create ~memory:Mapped f.dev S.UInt8 32,
+                B.create f.dev S.UInt8 32 ));
+          let frees = f.drv.frees in
+          equal memory_kind Mapped
+            (memory_of f (B.create ~memory:Mapped f.dev S.UInt8 64));
+          equal ~msg:"the cached mapped region alone is freed" int (frees + 1)
+            f.drv.frees);
+      test
+        "the host borrows mapped memory over its host address, as pinned memory"
+        (fun () ->
+          List.iter
+            (fun (window, m) ->
+              let f = far ?window () in
+              let b = B.create ~memory:Mapped f.dev S.UInt8 64 in
+              let msg = Format.asprintf "%a" pp_memory m in
+              equal ~msg memory_kind m (memory_of f b);
+              write b (pattern 4 64);
+              match B.borrow host b with
+              | Error why -> failf "%s: %s" msg why
+              | Ok h ->
+                  equal
+                    ~msg:(msg ^ ", over its host address")
+                    bool true
+                    (Some (B.address h)
+                    = Region.host_address (Region.of_buffer b));
+                  equal ~msg:(msg ^ ", its bytes") string (pattern 4 64)
+                    Bigarray.Array1.(
+                      let ba = B.bigarray Bigarray.char h in
+                      String.init (dim ba) (fun i -> unsafe_get ba i)))
+            [ (Some 1024, B.Mapped); (None, Pinned) ]);
+      test "mapped memory counts in its device's budget" (fun () ->
+          let f = far ~budget:100 ~window:1000 () in
+          let b = B.create ~memory:Mapped f.dev S.UInt8 80 in
+          equal ~msg:"allocated" int 80 (allocated f.dev);
+          raises_match (out_of_memory f.dev 40) (fun () ->
+              B.create f.dev S.UInt8 40);
+          ignore (Sys.opaque_identity b));
+    ]
 
 let memory =
   group "memory"
@@ -795,21 +959,21 @@ let far_one = far ()
 let placed =
   let place =
     Gen.of_list
-      ~pp:(fun ppf (d, pinned) ->
+      ~pp:(fun ppf (d, memory) ->
         Format.fprintf ppf "on %a%s" pp_device d
-          (if pinned then "'s host memory" else ""))
+          (if memory = B.Pinned then "'s host memory" else ""))
       [
-        (host, false);
-        (near.dev, false);
-        (far_one.dev, false);
-        (far_one.dev, true);
+        (host, B.Device);
+        (near.dev, Device);
+        (far_one.dev, Device);
+        (far_one.dev, Pinned);
       ]
   in
   Gen.quad place formats (ints [ 0; 1; 2; 3; 17; 1000 ]) (ints [ 0; 1; 3 ])
 
-let inside ((d, pinned), s, n, k) =
+let inside ((d, memory), s, n, k) =
   let o = k * Model.element s in
-  B.view (B.create ~pinned d S.UInt8 (o + Model.nbytes s n + 5)) ~offset:o s n
+  B.view (B.create ~memory d S.UInt8 (o + Model.nbytes s n + 5)) ~offset:o s n
 
 type kind = Kind : ('a, 'b) Bigarray.kind * S.t -> kind
 
@@ -990,7 +1154,7 @@ let routes =
   let borrow = borrow a.dev mapped in
   let small () = B.create host S.UInt8 8 in
   let on f () = B.create f.dev S.UInt8 8 in
-  let pinned f () = B.create ~pinned:true f.dev S.UInt8 8 in
+  let pinned f () = B.create ~memory:Pinned f.dev S.UInt8 8 in
   let of_mapped () = B.view mapped ~offset:8 S.UInt8 8 in
   let queued () = List.map (fun f -> f.drv.queued) fakes in
   let staged () = List.fold_left (fun n f -> n + f.drv.staged) 0 fakes in
@@ -1480,6 +1644,7 @@ let refusals =
       {
         memory;
         host_memory;
+        mapped = None;
         mapping = Pages { map = (fun _ _ -> Error ""); unmap = ignore };
         queue = (fun ~timeline -> queue ?clock ~timeline ());
       }
@@ -2977,6 +3142,7 @@ let remote_gpu ?(name = "GPU") m =
        {
          memory = { alloc = block keep ~addressed:false; free };
          host_memory = { alloc = block keep ~addressed:true; free };
+         mapped = None;
          mapping = Pages { map; unmap = ignore };
          queue;
        })
@@ -3040,7 +3206,7 @@ let test_remote_gpu () =
   let hb = B.create m.mhost S.UInt8 5000 in
   B.copy ~src:back ~dst:hb;
   equal ~msg:"into its host's memory" string (pattern 2 5000) (read hb);
-  let pinned = B.create ~pinned:true gpu S.UInt8 5000 in
+  let pinned = B.create ~memory:Pinned gpu S.UInt8 5000 in
   write pinned (pattern 3 5000);
   B.copy ~src:pinned ~dst:on;
   equal ~msg:"from its host memory" string (pattern 3 5000) (read on);
@@ -3272,6 +3438,7 @@ let () =
        [
          devices;
          memory;
+         memories;
          laws;
          borrows;
          buffers;

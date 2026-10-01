@@ -921,6 +921,7 @@ let make_device n ?finalize () =
          {
            memory = allocator n Vram;
            host_memory = allocator n Host;
+           mapped = None;
            mapping = mapping n;
            queue = queue n;
          })

@@ -133,7 +133,7 @@ let test_memory () =
   let back = B.create Nx_device.host S.UInt8 n in
   equal ~msg:"out" int 1 (steps d (fun () -> B.copy ~src:v ~dst:back));
   is_true ~msg:"round trip" (same_bytes src back);
-  let pinned = B.create ~pinned:true d S.UInt8 n in
+  let pinned = B.create ~memory:Pinned d S.UInt8 n in
   is_true ~msg:"pinned memory the host addresses" (hosted pinned <> None);
   equal ~msg:"VRAM to host memory of the GPU" int 1
     (steps d (fun () -> B.copy ~src:v ~dst:pinned));
@@ -223,7 +223,7 @@ let test_peer () =
     (steps d1 (fun () -> B.copy ~src:b ~dst:a));
   is_true ~msg:"the second GPU into the first" (same_bytes src' (to_host a));
   B.copy ~src ~dst:a;
-  let h1 = B.create ~pinned:true d1 S.UInt8 n in
+  let h1 = B.create ~memory:Pinned d1 S.UInt8 n in
   let locked = locked_kib () in
   B.copy ~src:a ~dst:h1;
   equal ~msg:"the other GPU's host memory stays locked" int locked
@@ -231,7 +231,7 @@ let test_peer () =
   let back = B.create Nx_device.host S.UInt8 n in
   B.copy ~src:h1 ~dst:back;
   is_true ~msg:"into the other GPU's host memory" (same_bytes src back);
-  let h0 = B.create ~pinned:true d0 S.UInt8 n in
+  let h0 = B.create ~memory:Pinned d0 S.UInt8 n in
   B.copy ~src:src' ~dst:h0;
   B.copy ~src:h0 ~dst:b;
   is_true ~msg:"out of the other GPU's host memory"
@@ -480,8 +480,8 @@ let test_coherence () =
   let d = device () in
   let n = (2 * mib) + 4099 in
   let written = B.create Nx_device.host S.UInt8 n in
-  let h1 = B.create ~pinned:true d S.UInt8 n
-  and h2 = B.create ~pinned:true d S.UInt8 n in
+  let h1 = B.create ~memory:Pinned d S.UInt8 n
+  and h2 = B.create ~memory:Pinned d S.UInt8 n in
   let lent1 = B.create Nx_device.host S.UInt8 n
   and lent2 = B.create Nx_device.host S.UInt8 n in
   let b1 = borrow d lent1 and b2 = borrow d lent2 in

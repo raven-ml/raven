@@ -165,10 +165,10 @@ exception Out_of_memory of t * int
 
 val budget : t -> int
 (** [budget d] is the most bytes [d]'s allocator holds at once, in live buffers
-    and in its cache together, of its own memory and of its pinned memory
-    ({!Buffer.create}[ ~pinned:true]). Borrowed memory and the host's staging
-    memory ({!Buffer.copy}) do not count. It is [max_int] for the host, and
-    defaults to a device's recommended working set or memory size otherwise. *)
+    and in its cache together, of its own, pinned and mapped memory
+    ({!Buffer.memory}). Borrowed memory and the host's staging memory
+    ({!Buffer.copy}) do not count. It is [max_int] for the host, and defaults to
+    a device's recommended working set or memory size otherwise. *)
 
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], releasing cached memory to the
@@ -216,18 +216,40 @@ module Buffer : sig
       all its views are unreachable. Borrowed memory is never cached, and never
       counted in a device's budget or statistics. *)
 
-  val create : ?pinned:bool -> device -> Nx_dtype.Scalar.t -> int -> t
-  (** [create d s n] is an owned buffer of [n] elements of format [s] on [d].
-      Its contents are unspecified. A buffer of no bytes allocates nothing.
+  (** The type for the memories of a device that {!create} allocates. *)
+  type memory =
+    | Device  (** The device's own memory. *)
+    | Pinned
+        (** Memory that both the device's work and its host address: page-locked
+            host memory on CUDA, AMD and NV. It is coherent: a write by either
+            side is seen by the other once the work that wrote it has completed,
+            with no flush. The libraries that submit work allocate their command
+            buffers, queue words and volatile arguments this way. *)
+    | Mapped
+        (** The device's own memory, which its work reads at the speed of its
+            own and the host also addresses, through a write-combined window
+            onto it (a BAR). A host write is seen by the work submitted after a
+            full fence on the host and the vendor's flush of the host's path to
+            the memory, which its library performs when it submits. A write by
+            the device is seen by the host once the work that wrote it has
+            completed. The host reads it uncached and slowly.
 
-      With [~pinned:true] (defaults to [false]) the memory is [d]'s pinned
-      memory, which both [d]'s work and [d]'s host address: page-locked host
-      memory on CUDA, AMD and NV, and [d]'s own memory on the devices whose
-      memory the host addresses. It is coherent: a write by either side is seen
-      by the other once the work that wrote it has completed, with no flush. The
-      libraries that submit work allocate their command buffers, queue words and
-      volatile arguments this way. It counts in [d]'s budget, [d] caches it, and
-      copies between it and [d]'s memory need no staging.
+            Where the device has no such window, or the window has no room,
+            mapped memory is pinned memory, which keeps the same promises more
+            strongly. Nothing raises: the buffer's region
+            ({!Driver.Region.of_buffer}) tells the device's library which it
+            got. *)
+
+  val create : ?memory:memory -> device -> Nx_dtype.Scalar.t -> int -> t
+  (** [create d s n] is an owned buffer of [n] elements of format [s] on [d], in
+      [d]'s memory [memory] (defaults to [Device]). Its contents are
+      unspecified. A buffer of no bytes allocates nothing.
+
+      On a device whose memory the host addresses, such as the {!host}, Metal
+      and test devices over the host's memory, every [memory] is the device's
+      own: [create ~memory d = create d]. Pinned and mapped memory count in
+      [d]'s budget, [d] caches them, and copies between them and [d]'s memory
+      need no staging.
 
       On the {!host}, buffers of at least 64 KiB (four pages where pages are
       larger) start on a page, so that devices can {!borrow} them.
@@ -297,14 +319,15 @@ module Buffer : sig
       - system memory, which [d]'s mapping of host memory ({!Driver.mapping})
         maps: memory of [d]'s host ({!host_of}), of a device described as
         [Host_visible] ({!Driver.memory}), such as Metal and test devices over
-        the host's memory, and the pinned memory of any device ({!create}).
+        the host's memory, and the pinned memory of any device ({!memory}).
         Through an [Identity] mapping, such as the {!host}'s, the borrow is over
         the memory's host addresses, without a copy;
       - the own memory of a [Device_local] device, such as a CUDA, AMD or NV
         GPU's, which [d]'s driver maps ({!Driver.device}'s [peer]) once per
         region, even where a memory BAR gives it a host address. The mapping
         lasts until that device frees the memory, and [d] can reach it until
-        then.
+        then. The device's mapped memory ({!memory}) is the exception for its
+        host, which borrows it over its host address, as it does pinned memory.
 
       Through a [Pages] mapping, [d] maps the whole host memory that [b] is a
       view of, once: the borrows on [d] of views of that memory share one
@@ -333,13 +356,13 @@ module Buffer : sig
       {!copy} them into their memory.
 
       [Error why] if [d] cannot map that kind of memory (a host maps no
-      [Device_local] memory, and another machine's host none of its devices'),
-      if, through a [Pages] mapping, [b] is a host buffer {!create} made of
-      fewer than 64 KiB, the memory [b] is a view of does not start on a page,
-      or [d]'s driver refuses to map it, with the driver's reason; for [b] on
-      the disk, if [d] does not share the host's memory, if [b]'s first byte is
-      not aligned to the size of one of its elements, or if the system cannot
-      map the file, naming it.
+      [Device_local] memory but mapped memory, and another machine's host none
+      of its devices'), if, through a [Pages] mapping, [b] is a host buffer
+      {!create} made of fewer than 64 KiB, the memory [b] is a view of does not
+      start on a page, or [d]'s driver refuses to map it, with the driver's
+      reason; for [b] on the disk, if [d] does not share the host's memory, if
+      [b]'s first byte is not aligned to the size of one of its elements, or if
+      the system cannot map the file, naming it.
 
       Raises [Invalid_argument] if [b] is on another machine or is dead
       ({!consume}), and {!Lost} if [d] is lost. *)
@@ -966,21 +989,26 @@ module Driver : sig
   type memory =
     | Host_visible of { memory : allocator; mapping : mapping option }
         (** The host addresses all of the device's memory, and copies it.
-            [memory] serves {!Buffer.create}, with and without [~pinned]. With
+            [memory] serves {!Buffer.create}, whatever its [~memory]. With
             [mapping], the device borrows host memory ({!Buffer.borrow}); the
             device then shares the host's memory ({!shares_host_memory}). *)
     | Device_local of {
         memory : allocator;
         host_memory : allocator;
+        mapped : allocator option;
         mapping : mapping;
         queue : timeline:Region.t -> queue;
       }
         (** The device's queue copies its own memory, staging through host
             memory it maps.
             - [memory] allocates its own memory, which the host may not address.
-            - [host_memory] allocates its pinned memory
-              ({!Buffer.create}[ ~pinned:true]): coherent host memory that its
-              work addresses, whose regions have a host address.
+            - [host_memory] allocates its pinned memory ({!Buffer.memory}):
+              coherent host memory that its work addresses, whose regions have a
+              host address.
+            - [mapped] allocates its mapped memory ({!Buffer.memory}): its own
+              memory that the host addresses through a window, whose regions
+              have a host address. With [None], or when it has none left, mapped
+              memory is pinned memory.
             - [mapping] maps host memory for {!Buffer.borrow} and for the host's
               staging memory.
             - [queue ~timeline] is its copy queue, given the region of its

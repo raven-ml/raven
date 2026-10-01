@@ -2889,6 +2889,13 @@ thread.
 
 ### Nx
 
+- **Breaking:** `Nx_device.Buffer.create` takes `?memory:(Device | Pinned |
+  Mapped)` in place of `?pinned`: `~pinned:true` is `~memory:Pinned`. `Mapped`
+  is device memory that the host also writes through a window onto it (a
+  BAR), which the device reads at the speed of its own. Where a device has no
+  such window or it is full, mapped memory is pinned memory, and on a device
+  the host addresses every memory is its own. Drivers describe the window with
+  `Driver.Device_local`'s new `mapped` allocator.
 - **Breaking:** `Nx_nv_device.kernel`'s `image` is the uploaded cubin as a
   buffer of the device rather than its address, so a compiled batch binds its
   program to the image nx.nv.device loaded and relocated.

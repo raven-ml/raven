@@ -1292,7 +1292,7 @@ the Exclusions of `README.md`.
   (NV maps such memory through BAR1).
 - **tolk.next:** `engine/tolk_next_engine.ml` (`placeholder`, which allocates
   every placeholder no vendor names with `Nx_device.Buffer.create
-  ~pinned:true`).
+  ~memory:Pinned`).
 - **Differs:** a batch's launch descriptors, constant buffers and kernel
   arguments live in the device's pinned memory, system memory the device and
   the host both address, where tinygrad places them in the device's own

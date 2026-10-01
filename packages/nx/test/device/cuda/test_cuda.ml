@@ -130,7 +130,7 @@ let memory =
           let b = B.create d S.Float32 250 in
           equal ~msg:"GPU memory the host does not address" (option nativeint)
             None (hosted b);
-          let p = B.create ~pinned:true d S.UInt8 100 in
+          let p = B.create ~memory:Pinned d S.UInt8 100 in
           is_true ~msg:"pinned memory the host addresses" (hosted p <> None);
           equal int 1100
             Nx_device.Stats.(allocated (diff s0 (Nx_device.stats d)));
@@ -194,7 +194,7 @@ let copies =
          host memory takes one timeline value" (fun () ->
           let d = cuda () in
           let n = 100 * mib in
-          let pinned = B.create ~pinned:true d S.UInt8 n in
+          let pinned = B.create ~memory:Pinned d S.UInt8 n in
           B.copy ~src:(host_of n (fun i -> i * 3)) ~dst:pinned;
           let b = B.create d S.UInt8 n and b' = B.create d S.UInt8 n in
           let mapped = B.create Nx_device.host S.UInt8 n in
@@ -217,7 +217,7 @@ let copies =
           B.copy ~src:(host_of 1000 Fun.id) ~dst:src;
           equal ~msg:"transfer" int 1 (values d (fun () -> B.copy ~src ~dst));
           holds dst Fun.id;
-          let pinned = B.create ~pinned:true d1 S.UInt8 1000 in
+          let pinned = B.create ~memory:Pinned d1 S.UInt8 1000 in
           B.copy ~src:dst ~dst:pinned;
           let on_d = B.create d S.UInt8 1000 in
           equal ~msg:"from page-locked memory" int 1

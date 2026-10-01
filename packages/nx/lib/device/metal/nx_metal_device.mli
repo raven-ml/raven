@@ -7,8 +7,8 @@
 
     Opens the Mac's GPU as an {!Nx_device.t} named ["METAL"]. Its buffers are
     memory that the processor and the GPU share, coherently, so copies between
-    them and host buffers are memory copies, and its pinned memory
-    ({!Nx_device.Buffer.create}[ ~pinned:true]) is its own, and it borrows host
+    them and host buffers are memory copies, its pinned and mapped memory
+    ({!Nx_device.Buffer.memory}) are its own, and it borrows host
     memory when the GPU shares the host's memory. Its programs are functions of
     metallib binaries. Its budget defaults to the working set size Metal
     recommends for the GPU.

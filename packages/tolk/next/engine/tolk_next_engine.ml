@@ -404,7 +404,7 @@ let staging d n =
   match List.assq_opt d !stagings with
   | Some b when B.nbytes b >= n -> b
   | _ ->
-      let b = B.create ~pinned:true d Nx_dtype.Scalar.UInt8 n in
+      let b = B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 n in
       stagings := (d, b) :: List.remove_assq d !stagings;
       b
 
@@ -436,7 +436,7 @@ let placeholder device queues u =
       | Some t when Ops.Tag.equal t staging_tag -> staging d (bytes u)
       | Some (Ops.Tag.Tuple [ String "cfunc"; String lib; String _ ]) ->
           invalid_arg (strf "Tolk_next_engine.link: no C library %s" lib)
-      | _ -> B.create ~pinned:true d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))
+      | _ -> B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 (max 1 (bytes u)))
 
 let hcq_info call =
   match Ops.arg call with Ops.Call { aux; _ } -> aux | _ -> None

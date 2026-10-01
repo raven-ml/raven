@@ -13,9 +13,11 @@
     directly from and to host memory that the GPU addresses, and through the
     host's staging memory from and to other host memory. Host memory that the
     GPU addresses is page-locked:
-    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, not
+    - {!Nx_device.Buffer.create}[ ~memory:Pinned] allocates it, not
       write-combined, so that it is coherent for the host and the GPU, and it
-      counts in the device's budget, which defaults to the GPU's memory size;
+      counts in the device's budget, which defaults to the GPU's memory size.
+      Mapped memory is this memory too: the driver API maps no GPU memory for
+      the host;
     - {!Nx_device.Buffer.borrow} registers host memory, whole pages of it, for
       every CUDA device at once, and unregisters it when the last device's
       borrows of it are unreachable. It counts in no budget. The memory must be

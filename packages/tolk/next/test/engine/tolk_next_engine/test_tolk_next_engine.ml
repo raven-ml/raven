@@ -55,7 +55,14 @@ let local =
        }
      in
      Nx_device.Driver.device ~name:"LOCAL" ~arch:"test" ~budget:max_int
-       (Device_local { memory; host_memory = memory; mapping = Identity; queue }))
+       (Device_local
+          {
+            memory;
+            host_memory = memory;
+            mapped = None;
+            mapping = Identity;
+            queue;
+          }))
 
 (* The host of another machine, which no test reaches. *)
 let remote =

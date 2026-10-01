@@ -115,7 +115,7 @@ let new_icb d (cmds : Ops_metal.command list) header =
 
 (* A batch's slots start zeroed: its host program reads the stamps it wrote. *)
 let new_slots d n =
-  let buf = B.create ~pinned:true d Nx_dtype.Scalar.UInt8 n in
+  let buf = B.create ~memory:Pinned d Nx_dtype.Scalar.UInt8 n in
   Bigarray.Array1.fill (host_words buf) 0L;
   buf
 

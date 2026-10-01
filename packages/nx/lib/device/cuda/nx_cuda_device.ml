@@ -267,6 +267,7 @@ let open_cuda i ~arch ~budget ctx =
          {
            memory;
            host_memory = host_memory ctx;
+           mapped = None;
            mapping = Pages { map = map ctx; unmap = unmap ctx };
            queue;
          })

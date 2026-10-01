@@ -671,6 +671,7 @@ let make_device a ~budget ~sleep ?finalize () =
          {
            memory = allocator a Vram;
            host_memory = allocator a Host;
+           mapped = None;
            mapping = mapping a;
            queue = queue a;
          })

@@ -127,7 +127,7 @@ let test_memory () =
   let back = B.create Nx_device.host S.UInt8 n in
   equal ~msg:"out" int 1 (steps d (fun () -> B.copy ~src:v ~dst:back));
   is_true ~msg:"round trip" (same_bytes src back);
-  let pinned = B.create ~pinned:true d S.UInt8 n in
+  let pinned = B.create ~memory:Pinned d S.UInt8 n in
   is_true ~msg:"pinned memory the host addresses" (hosted pinned <> None);
   equal ~msg:"VRAM to host memory of the GPU" int 1
     (steps d (fun () -> B.copy ~src:v ~dst:pinned));
@@ -204,7 +204,7 @@ let test_peer () =
   let back = B.create Nx_device.host S.UInt8 n in
   B.copy ~src:b ~dst:back;
   is_true ~msg:"the bytes" (same_bytes src back);
-  let h1 = B.create ~pinned:true d1 S.UInt8 n in
+  let h1 = B.create ~memory:Pinned d1 S.UInt8 n in
   B.copy ~src:a ~dst:h1;
   let back = B.create Nx_device.host S.UInt8 n in
   B.copy ~src:h1 ~dst:back;
@@ -412,8 +412,8 @@ let test_coherence () =
   let d = device () in
   let n = (2 * mib) + 4099 in
   let written = B.create Nx_device.host S.UInt8 n in
-  let h1 = B.create ~pinned:true d S.UInt8 n
-  and h2 = B.create ~pinned:true d S.UInt8 n in
+  let h1 = B.create ~memory:Pinned d S.UInt8 n
+  and h2 = B.create ~memory:Pinned d S.UInt8 n in
   let lent1 = B.create Nx_device.host S.UInt8 n
   and lent2 = B.create Nx_device.host S.UInt8 n in
   let b1 = borrow d lent1 and b2 = borrow d lent2 in

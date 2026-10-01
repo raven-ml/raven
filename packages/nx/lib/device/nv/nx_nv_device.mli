@@ -40,9 +40,9 @@
     directly from and to host memory the GPU addresses, and through the host's
     staging memory from and to other host memory. Host memory the GPU addresses
     is coherent for it:
-    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, system memory the
-      GPU snoops, and it counts in the device's budget, which defaults to the
-      size of the GPU's memory heap;
+    - {!Nx_device.Buffer.create}[ ~memory:Pinned] allocates it, system memory
+      the GPU snoops, and it counts in the device's budget, which defaults to
+      the size of the GPU's memory heap. Mapped memory is this memory too;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it, and
       page-locks it while mapped. It counts in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs

@@ -143,8 +143,8 @@ val link :
       ["staging"]) is that host's staging memory, pinned, which every linked
       schedule shares and which is kept for the life of the process; and any
       other is allocated in pinned memory of its device
-      ({!Nx_device.Buffer.create}[ ~pinned:true]), which the host and the device
-      see coherently, since the batch's host program writes it.
+      ({!Nx_device.Buffer.create}[ ~memory:Pinned]), which the host and the
+      device see coherently, since the batch's host program writes it.
     - Each program is loaded once for each device and binary, and the words
       known at link, the addresses of linked storage among them, are written
       into the placeholders.

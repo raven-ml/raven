@@ -29,9 +29,9 @@
     directly from and to host memory the GPU addresses, and through the host's
     staging memory from and to other host memory. Host memory the GPU addresses
     is registered with it and coherent for it:
-    - {!Nx_device.Buffer.create}[ ~pinned:true] allocates it, uncached system
+    - {!Nx_device.Buffer.create}[ ~memory:Pinned] allocates it, uncached system
       memory, and it counts in the device's budget, which defaults to the GPU's
-      memory size;
+      memory size. Mapped memory is this memory too;
     - {!Nx_device.Buffer.borrow} maps host memory, whole pages of it. It counts
       in no budget;
     - the host's staging memory, 128 MiB, is mapped at the first copy that needs
