@@ -134,21 +134,6 @@ let extrema' (type a b) ~axes (x : (a, b) Nx.t) y : (a, b) Nx.t =
   in
   match Nx.dtype x with Float64 -> share Nx.float64 | _ -> share Nx.float32
 
-(* The derivative of a product at one zero is the product of the other factors,
-   and at two zeros or more it is zero; no branch divides by zero. *)
-let prod' ~axes x y =
-  let y = kept ~axes x y and axes = Array.to_list axes in
-  let zero = Nx.equal x (Nx.zeros_like x) in
-  let safe = Nx.where zero (Nx.ones_like x) x in
-  let count = Nx.sum ~axes ~keepdims:true (Nx.cast Nx.int32 zero) in
-  let at_zero =
-    Nx.where
-      (Nx.equal count (Nx.ones_like count))
-      (Nx.prod ~axes ~keepdims:true safe)
-      (Nx.zeros_like y)
-  in
-  Nx.where zero at_zero (Nx.div y safe)
-
 (* [shifted ~axis d fill x] is [x] moved [d] places along [axis], [d] elements
    of [fill] first and its last [d] elements dropped. *)
 let shifted ~axis d fill x =
@@ -157,6 +142,29 @@ let shifted ~axis d fill x =
     Array.mapi (fun a _ -> if a = axis then (d, 0) else (0, 0)) shape
   in
   Nx.shrink (Array.map (fun n -> (0, n)) shape) (Nx.pad pads fill x)
+
+(* [others ~axes x] is, at each element of [x], the product of the other
+   elements over [axes]: the product before it in their order times the product
+   after it. No division, so it is exact at zeros and where the product
+   underflows, at every order. *)
+let others ~axes x =
+  let shape = Nx.shape x in
+  let kept =
+    List.filter (fun a -> not (Array.mem a axes)) (List.init (Nx.ndim x) Fun.id)
+  in
+  let order = Array.of_list (kept @ Array.to_list axes) in
+  let moved = Nx.contiguous (Nx.transpose ~axes:(Array.to_list order) x) in
+  let k = List.length kept in
+  let n = Array.fold_left (fun n a -> n * shape.(a)) 1 axes in
+  let flat =
+    Nx.reshape (Array.of_list (List.map (Array.get shape) kept @ [ n ])) moved
+  in
+  let exclusive x = shifted ~axis:k 1 (one x) (Nx.cumprod ~axis:k x) in
+  let rev x = Nx.flip ~axes:[ k ] x in
+  let o = Nx.mul (exclusive flat) (rev (exclusive (rev flat))) in
+  let inverse = Array.make (Array.length order) 0 in
+  Array.iteri (fun i a -> inverse.(a) <- i) order;
+  Nx.transpose ~axes:(Array.to_list inverse) (Nx.reshape (Nx.shape moved) o)
 
 (* The position along [axis] of the element each running extremum [y] takes: the
    last position where the extremum changed or became NaN, so ties keep the
@@ -339,9 +347,9 @@ let solve' ~upper ~transpose ~unit_diag a b x da db =
   in
   eval (Solve_triangular { upper; transpose; unit_diag; a; b = rhs })
 
-(* [block x rows cols] is the block of the last two axes of [x] that the
-   ranges [rows] and [cols] select; [padded x rows cols] is [x] with zeros
-   around its last two axes, [rows] and [cols] before and after. *)
+(* [block x rows cols] is the block of the last two axes of [x] that the ranges
+   [rows] and [cols] select; [padded x rows cols] is [x] with zeros around its
+   last two axes, [rows] and [cols] before and after. *)
 let block x rows cols =
   let r = Nx.ndim x in
   Nx.shrink
@@ -557,7 +565,7 @@ let run : type r. t -> r Nx.Op.t -> r =
       | Sum -> dual i y (eval (Reduce (Sum, axes, dx)))
       | Max | Min ->
           dual i y (eval (Reduce (Sum, axes, mul dx (extrema' ~axes x y))))
-      | Prod -> dual i y (eval (Reduce (Sum, axes, mul dx (prod' ~axes x y)))))
+      | Prod -> dual i y (eval (Reduce (Sum, axes, mul dx (others ~axes x)))))
   | Scan (k, axis, x) -> (
       let x, dx = unwrap i x in
       let y = eval (Scan (k, axis, x)) in
