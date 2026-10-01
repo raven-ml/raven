@@ -1283,6 +1283,27 @@ let paired at name ~steps ~init f xs =
       List.iter2 (fun e c -> equal near e (host c)) eager (g (Nx.place at xs));
       equal int steps !ran)
 
+(* [summed ran xs] is the sum of the outputs of a scan over [xs], counting its
+   steps in [ran]: the transpose's rows of output cotangents are a broadcast
+   constant. *)
+let summed ran xs =
+  let step c x =
+    incr ran;
+    decay c x
+  in
+  Nx.sum (snd (Rune.scan' ~f:step ~init:(zeros 4) xs))
+
+(* [transformed at name ~steps f] checks that [f ran] over nine rows at [at]
+   computes under a compiled call what it computes eagerly, its scans' steps
+   running [steps] times. *)
+let transformed at name ~steps f =
+  test name (fun () ->
+      let ran = ref 0 in
+      let r = f ran (rows 9 4) in
+      ran := 0;
+      equal near r (host (Rune.jit' (f ran) (Nx.place at (rows 9 4))));
+      equal int steps !ran)
+
 (* Scans on a device whose work runs from command queues. *)
 let staged_scans d =
   let at = on d and once _ = 1 in
@@ -1314,6 +1335,23 @@ let staged_scans d =
         ~init:(ones 4, ones 4)
         (fun (a, b) x -> ((b, Nx.add (Nx.add a b) x), a))
         (rows 6 4);
+      transformed at "stage grad of a sum over a scan's outputs" ~steps:3
+        (fun ran -> Rune.grad' (summed ran));
+      transformed at "stage grad of grad of a sum over a scan's outputs"
+        ~steps:7 (fun ran ->
+          Rune.grad' (fun xs -> Nx.sum (Rune.grad' (summed ran) xs)));
+      transformed at "stage jvp of a loss reading a host capture after the scan"
+        ~steps:2 (fun ran xs ->
+          let k = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+          let loss xs =
+            let step c x =
+              incr ran;
+              decay c x
+            in
+            let c, ys = Rune.scan' ~f:step ~init:(zeros 4) xs in
+            Nx.add (Nx.sum ys) (Nx.sum (Nx.mul c k))
+          in
+          snd (Rune.jvp' loss xs (Nx.ones_like xs)));
       test
         "write out a step that draws under a key scope, drawing as eager does"
         (fun () ->
