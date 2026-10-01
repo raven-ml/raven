@@ -422,6 +422,20 @@ def invalid_lanes_int8():
     value = ((r < 3) & (j % 5 < 1)).where(x.index((r < 3).where(j // 5, UOp.const(Invalid))), UOp.const(0))
     return out.index(UOp.const(0)).store(value.cast(dtypes.uint).reduce(r, arg=Ops.ADD).cast(dtypes.char)).sink(arg=KernelInfo())
 
+
+def invalid_lanes_fold():
+    """rune's fold of an int8 [2; 2] with output size [2; 1], kernel [1; 2], dilation [1; 2] and padding [(0, 0);
+    (1, 1)]: every window lies in the padding, so in devectorize the gated load of each unrolled lane folds to a
+    scalar 0, which the vector select around it holds after broadcasting was unpacked (D59)."""
+    out, x = UOp.param(0, dtypes.char, 2, device="CPU"), UOp.param(1, dtypes.char, 4, device="CPU")
+    l = UOp.range(2, 2, AxisType.WEAK)
+    r0, r1 = UOp.range(2, 0, AxisType.REDUCE), UOp.range(4, 1, AxisType.REDUCE)
+    j = r1 * 3 + 1
+    gate = (((r0 * 2 + l) < 3) & (r1 < 3)) & ((r0 < 1) & (j % 5 < 1))
+    value = gate.where(x.index((r1 < 3).where((j // 5) * 2 + l, UOp.const(Invalid))), UOp.const(0))
+    red = value.cast(dtypes.uint).reduce(r0, r1, arg=Ops.ADD).cast(dtypes.char)
+    return out.index(l).store(red).end(l).sink(arg=KernelInfo())
+
 def dependent_loop_bound():
     # null/test_linearizer_rewrite.py::test_dependent_loop_bound
     buf, out, counts = UOp.param(0, dtypes.int, 16), UOp.param(1, dtypes.int, 4), UOp.param(2, dtypes.int, 4)
@@ -672,6 +686,7 @@ HAND = {
     "sqrt_of_int": sqrt_of_int,
     "invalid_lanes": invalid_lanes,
     "invalid_lanes_int8": invalid_lanes_int8,
+    "invalid_lanes_fold": invalid_lanes_fold,
     # runtime/test_custom_kernel.py
     "custom_arange": lambda: custom(empty(16), fxn=custom_arange),
     "custom_eye": lambda: custom(empty(8, 8), fxn=custom_eye),

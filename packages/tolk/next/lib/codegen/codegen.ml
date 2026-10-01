@@ -224,11 +224,15 @@ let pm_expand_broadcast =
 let do_devectorize b =
   let s = shape b in
   let invalid x = is_invalid (base x) in
+  (* A scalar value stands for every lane: a fold may drop a source's width
+     after broadcasting was unpacked (D59). *)
+  let scalar x = shape_opt x = Some [] && addrspace x = Some Dtype.Alu in
   if
     s = []
     || not
          (List.for_all
-            (fun x -> List.equal Sint.equal (shape x) s || invalid x)
+            (fun x ->
+              List.equal Sint.equal (shape x) s || invalid x || scalar x)
             (src b))
   then None
   else
@@ -236,7 +240,10 @@ let do_devectorize b =
       replace b
         ~src:
           (List.map
-             (fun x -> if invalid x then base x else index_ints x idx)
+             (fun x ->
+               if invalid x then base x
+               else if scalar x then x
+               else index_ints x idx)
              (src b))
     in
     let lanes = List.map lane (product (int_shape s)) in

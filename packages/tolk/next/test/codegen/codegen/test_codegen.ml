@@ -1631,6 +1631,42 @@ let lanes =
         (per_row ~only:compiles reads_no_lane_of_a_scalar);
     ]
 
+(* Vectors left after devectorize (D59) *)
+
+let on_a_vector u =
+  Op.Set.mem (Ops.op u) Op.Set.elementwise
+  && match Ops.shape_opt u with Some (_ :: _) -> true | _ -> false
+
+let applies_no_elementwise_operation_to_a_vector row =
+  equal (list Uops.uop) [] (List.filter on_a_vector (instructions row))
+
+(* A machine without NVRTC refuses every source, saying it cannot load it. *)
+let compiles_for_cuda row =
+  let t = target (row "device") (row "renderer") (row "arch") in
+  match
+    Renderer.Compiler.compile (Cstyle.cuda t).compiler (source (program row))
+  with
+  | _ -> ()
+  | exception Renderer.Compiler.Compile_error why
+    when String.starts_with ~prefix:"failed to load library" why ->
+      skip ~reason:why ()
+
+let vectors =
+  group "vectors left after devectorize (D59)"
+    [
+      test
+        "a select whose lanes fold to a scalar is rendered as scalars for CUDA"
+        (fun () -> writes_as_tinygrad (row_named "invalid_lanes_fold_cuda"));
+      test
+        "on the host, the program of a select whose lanes fold to a scalar \
+         writes what its kernel writes"
+        (runs_as_interpreted "invalid_lanes_fold");
+      slow "its CUDA source compiles with NVRTC" (fun () ->
+          compiles_for_cuda (row_named "invalid_lanes_fold_cuda"));
+      group "no program applies an elementwise operation to a vector"
+        (per_row ~only:compiles applies_no_elementwise_operation_to_a_vector);
+    ]
+
 (* Errors *)
 
 (* A kernel holds no conditional: only a program's instructions do. *)
@@ -1897,6 +1933,7 @@ let () =
          whole_graphs;
          accumulators;
          lanes;
+         vectors;
          gated_stores;
          divisions;
          range_shrinking;

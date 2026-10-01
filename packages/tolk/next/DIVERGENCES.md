@@ -1615,3 +1615,32 @@ the Exclusions of `README.md`.
   negative number whose reciprocal overflows is NaN, and of -0. is -inf
   (D56)`, and the negative float16 rows of `values.golden` of magnitude below
   `2^-16`, from the patched tinygrad.
+
+## D59. Devectorize reads a scalar source as every lane
+
+- **tinygrad:** `codegen/__init__.py:117-124` (`do_devectorize`, which
+  splits an elementwise operation, load or store into lanes only when every
+  source has its shape: broadcasting is unpacked a stage before).
+- **tolk.next:** `lib/codegen/codegen.ml:224` (`do_devectorize`), and
+  `test/gen/tinygrad.patch`, which gives tinygrad the same rule.
+- **Differs:** a source of shape `()` that is a value, not memory, is that
+  value in every lane. A fold in devectorize can drop a source's width after
+  broadcasting was unpacked: a load whose index is `Invalid` in every lane
+  folds to a scalar `0`. tinygrad then leaves the select around it a vector
+  select, and a vector cast of a stack of constants after the weak lowering,
+  which CUDA's vectors, structs without arithmetic, cannot render; tolk.next
+  splits it into scalar selects as any other.
+- **Reason:** (b). rune lowers `Nx.combine_patches` of int8 to such a
+  kernel when every window lies in the padding (output `[2; 1]`, kernel
+  `[1; 2]`, dilation `[1; 2]`, padding `[(0, 0); (1, 1)]`), and compiles
+  it for CUDA.
+- **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `vectors
+  left after devectorize (D59) › a select whose lanes fold to a scalar is
+  rendered as scalars for CUDA`, `› on the host, the program of a select
+  whose lanes fold to a scalar writes what its kernel writes`, the slow `›
+  its CUDA source compiles with NVRTC` (skipped without NVRTC) and, on every
+  case, `› no program applies an elementwise operation to a vector`; and the
+  case `invalid_lanes_fold` of every target in `stages`, from the patched
+  tinygrad. In rune.next, the `Compiled` suite's `edges › a fold of int8
+  overlapping windows compiles (D59)` and its integer fold law, int8
+  included, on the host.

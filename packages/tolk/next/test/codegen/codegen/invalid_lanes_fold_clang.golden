@@ -1,0 +1,58 @@
+# tinygrad 79af1ca70e7021f504919c4ff5631245acc33ed6
+0 Ops.PARAM dtypes.char [] ParamArg(slot=0, dtype=dtypes.char, size=2, device="CPU")
+1 Ops.CONST dtypes.weakint [] 2
+2 Ops.CAST dtypes.int [1] dtypes.int
+3 Ops.RANGE dtypes.int [2] (2, AxisType.WEAK)
+4 Ops.INDEX dtypes.char [0, 3]
+5 Ops.ALLOC dtypes.uint [] ParamArg(slot=0, dtype=dtypes.uint, size=1, addrspace=AddrSpace.REG)
+6 Ops.AFTER dtypes.uint [5, 3]
+7 Ops.CONST dtypes.weakint [] 0
+8 Ops.CAST dtypes.int [7] dtypes.int
+9 Ops.INDEX dtypes.uint [6, 8]
+10 Ops.CAST dtypes.uint [7] dtypes.uint
+11 Ops.STORE dtypes.void [9, 10]
+12 Ops.RANGE dtypes.int [2, 3] (0, AxisType.REDUCE)
+13 Ops.AFTER dtypes.uint [5, 11, 12]
+14 Ops.INDEX dtypes.uint [13, 8]
+15 Ops.LOAD dtypes.uint [14]
+16 Ops.CONST dtypes.weakint [] 1
+17 Ops.CAST dtypes.int [16] dtypes.int
+18 Ops.CMPLT dtypes.bool [12, 17]
+19 Ops.CAST dtypes.char [7] dtypes.char
+20 Ops.WHERE dtypes.char [18, 19, 19]
+21 Ops.CAST dtypes.uint [20] dtypes.uint
+22 Ops.CAST dtypes.uint [1] dtypes.uint
+23 Ops.SHL dtypes.uint [21, 22]
+24 Ops.ADD dtypes.uint [15, 23]
+25 Ops.STORE dtypes.void [14, 24]
+26 Ops.END dtypes.void [25, 12]
+27 Ops.AFTER dtypes.uint [5, 26]
+28 Ops.INDEX dtypes.uint [27, 8]
+29 Ops.LOAD dtypes.uint [28]
+30 Ops.CAST dtypes.char [29] dtypes.char
+31 Ops.STORE dtypes.void [4, 30]
+32 Ops.END dtypes.void [31, 3]
+33 Ops.SINK dtypes.void [32] KernelInfo(name="r_2_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),)) tag=1
+34 Ops.BUFFER dtypes.uint [] ParamArg(slot=0, dtype=dtypes.uint, size=1, addrspace=AddrSpace.REG)
+35 Ops.AFTER dtypes.uint [34, 3]
+36 Ops.INDEX dtypes.uint [35, 8]
+37 Ops.STORE dtypes.void [36, 10]
+38 Ops.AFTER dtypes.uint [34, 37, 12]
+39 Ops.INDEX dtypes.uint [38, 8]
+40 Ops.LOAD dtypes.uint [39]
+41 Ops.ADD dtypes.uint [40, 23]
+42 Ops.STORE dtypes.void [39, 41]
+43 Ops.END dtypes.void [42, 12]
+44 Ops.AFTER dtypes.uint [34, 43]
+45 Ops.INDEX dtypes.uint [44, 8]
+46 Ops.LOAD dtypes.uint [45]
+47 Ops.CAST dtypes.char [46] dtypes.char
+48 Ops.STORE dtypes.void [4, 47]
+49 Ops.END dtypes.void [48, 3]
+50 Ops.SINK dtypes.void [49] KernelInfo(name="r_2_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),), estimates=Estimates(ops=16, lds=2, mem=2)) tag=1
+51 Ops.SINK dtypes.void [49] KernelInfo(name="r_2_2_4", applied_opts=(Opt(op=OptOps.SPLIT, axis=2, arg=(0, AxisType.UNROLL)),)) tag=1
+52 Ops.LINEAR dtypes.void [0, 34, 7, 19, 8, 16, 17, 1, 2, 10, 22, 3, 35, 36, 37, 12, 38, 39, 40, 18, 20, 21, 23, 41, 42, 43, 44, 45, 46, 4, 47, 48, 49, 51]
+53 Ops.SOURCE dtypes.void [] "\nvoid r_2_2_4(signed char* restrict data0_2) {\n  unsigned int buf0[1];\n  for (int Lidx2 = 0; Lidx2 < 2; Lidx2++) {\n    *(buf0+0) = 0u;\n    for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {\n      signed char alu1 = ((Ridx0<1)?((signed char)(0)):((signed char)(0)));\n      *(buf0+0) = ((*(buf0+0))+(((unsigned int)(alu1))<<2u));\n    }\n    *(data0_2+Lidx2) = ((signed char)((*(buf0+0))));\n  }\n}\n"
+54 Ops.PROGRAM dtypes.void [50, 52, 53] ProgramInfo(globals=(0,), outs=(0,), target=Target(device="CPU", renderer="CLANG", arch="x86_64,x86-64"))
+55 Ops.SINK dtypes.void [33, 54]
+
