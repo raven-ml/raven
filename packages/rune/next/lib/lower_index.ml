@@ -227,8 +227,8 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
         cut ~kernel:kernel_size.(a) ~stride:stride.(a) ~dilation:dilation.(a)
           ~size:(output_size.(a) + before + after))
   in
-  (* Along an axis whose every window reads only padding, no element lands in
-     the output, which is zeros. *)
+  (* Along an axis without a window, or whose every window reads only padding,
+     no element lands in the output, which is zeros. *)
   let lands a c =
     let before = fst padding.(a) in
     List.exists
@@ -238,7 +238,7 @@ let fold ~output_size ~kernel_size ~stride ~dilation ~padding x =
             let p = (w * c.stride) + (j * dilation.(a)) in
             p >= before && p < before + output_size.(a))
           (List.init c.kernel Fun.id))
-      (List.init c.windows Fun.id)
+      (List.init (Int.max 0 c.windows) Fun.id)
   in
   if not (List.for_all Fun.id (List.mapi lands cuts)) then
     Ops.expand

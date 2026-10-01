@@ -2004,6 +2004,17 @@ let edges d =
           }
         in
         exact_of (both d (fold w x)));
+    test "a fold with no window is zeros" (fun () ->
+        (* nx.cpu cannot be the reference: it does not survive this fold. *)
+        let module K = (val compiled) in
+        let { on; dst } = on_device d in
+        let x = array_of (Nx.zeros Nx.float32 [| 3; 0 |]) in
+        let y = dst Nx.float32 [| 1 |] in
+        K.fold ~output_size:[| 1 |] ~kernel_size:[| 3 |] ~stride:[| 1 |]
+          ~dilation:[| 1 |]
+          ~padding:[| (0, 0) |]
+          (on x) ~dst:y;
+        exact (array_of (Nx.zeros Nx.float32 [| 1 |])) y);
     test "a fold whose windows along an axis read only padding is zeros"
       (fun () ->
         let geometry ~kernel_size ~stride ~dilation ~padding ~spatial x =
