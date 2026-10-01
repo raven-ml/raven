@@ -3485,11 +3485,11 @@ let pop_const ?(op = Op.Add) u : t * Dtype.const =
    the bytes a shrink of storage seen whole skips, known modulo fewer bytes when
    the shrink's start is symbolic. Any other view keeps its storage's, as views
    are taken to start aligned, unless a symbolic start moves it; storage the
-   graph allocates starts on a boundary. *)
+   graph allocates, a stage's included, starts on a boundary. *)
 let rec storage_phase u =
   let rec whole v =
     match (v.op, v.src) with
-    | (Op.Buffer | Op.Param | Op.Alloc), _ -> true
+    | (Op.Buffer | Op.Param | Op.Alloc | Op.Stage), _ -> true
     | (Op.Bitcast | Op.Reshape | Op.After | Op.Mselect), v :: _ -> whole v
     | _ -> false
   in

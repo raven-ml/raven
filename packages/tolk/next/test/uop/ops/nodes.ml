@@ -221,6 +221,15 @@ let arguments =
             (known (at ~multiple_of:2 ()));
           equal (pair int int) ~msg:"a start of every fourth element" (16, 4)
             (known (at ~multiple_of:4 ()));
+          equal (pair int int) ~msg:"a start of every fourth element of a stage"
+            (16, 0)
+            (known
+               (let k =
+                  Ops.variable ~multiple_of:4 "k" (`Int Z.zero) (`Int (Z.of_int 8))
+                in
+                Ops.shrink
+                  (Ops.contiguous (Ops.add b b))
+                  [ Some (Sym k, Sym (Ops.add k (Ops.int 4))) ]));
           equal (pair int int) ~msg:"a start into a reordered view" (4, 0)
             (known
                (let k =

@@ -1270,13 +1270,14 @@ val param_like : t -> int -> t
 val storage_phase : t -> int * int
 (** [storage_phase u] is the alignment and phase [(align, phase)]
     ({!param_arg}) of the storage [u] views: its storage's, moved by the bytes a
-    shrink skips when it shrinks the storage seen whole, in row-major order. A
-    shrink by a symbolic start known only to multiples of fewer bytes than the
-    storage's alignment, such as a window that moves with a range, lowers the
-    alignment to the largest power of two those bytes are a multiple of, and a
-    symbolic start into a view that reorders or pads the storage keeps only
-    the element's size. Any other view keeps its storage's: a reordering, a
-    bitcast, an ordering or a shard selection. Storage on a disk, which no vector access reads, and
+    shrink skips when it shrinks the storage seen whole, a buffer or a stage
+    the schedule allocates, in row-major order. A shrink by a symbolic start
+    known only to multiples of fewer bytes than the storage's alignment, such
+    as a window that moves with a range, lowers the alignment to the largest
+    power of two those bytes are a multiple of, and a symbolic start into a
+    view that reorders or pads the storage keeps only the element's size. Any
+    other view keeps its storage's: a reordering, a bitcast, an ordering or a
+    shard selection. Storage on a disk, which no vector access reads, and
     anything that is not storage or a view of it have [(16, 0)]. *)
 
 val view_as : ?axis:int -> t -> sint list -> t
