@@ -835,6 +835,13 @@ let lending =
           done;
           equal floats (fst !eager) (fst !compiled);
           equal floats (snd !eager) (snd !compiled));
+      test "a consumed leaf returned as it is keeps its value" (fun () ->
+          let both = Nx.Ptree.(pair tensor tensor) in
+          let step (a, b) = (Nx.add_s a 1., b) in
+          let g = Rune.jit Nx.Ptree.(consumes both @@ returns both) step in
+          let a, b = g (g (x (), Nx.ones Nx.float32 [| 4 |])) in
+          equal floats (Nx.add_s (x ()) 2.) a;
+          equal floats (Nx.ones Nx.float32 [| 4 |]) b);
     ]
 
 (* [together fs] runs each of [fs] on a domain of its own, all released at once,

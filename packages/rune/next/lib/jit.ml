@@ -684,7 +684,10 @@ let run entry p leaves =
         (fun j r ->
           match r.out with
           | Fresh k -> slots.(k) <- results.(j)
-          | Lent i -> slots.(p.slots.(i)) <- results.(j)
+          | Lent i ->
+              (* A leaf returned as it is and read by no kernel has no slot. *)
+              let k = p.slots.(i) in
+              if k >= 0 then slots.(k) <- results.(j)
           | Empty -> ())
         p.results;
       Engine.run linked slots)
