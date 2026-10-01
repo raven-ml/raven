@@ -394,6 +394,40 @@ let law ~count name g = prop ~count name g (fun (Check (_, f)) -> f ())
 (* Exact: eager's bits, every NaN equal to every NaN. *)
 let exact e a = Traces.exact (value e) (back a)
 let exact_of (e, a) = exact e a
+
+(* [x] with its float32 and bfloat16 subnormals as signed zeros. *)
+let flush_subnormals (type a b) (x : (a, b) Nx.t) : (a, b) Nx.t =
+  let flush ~exponent ~sign v =
+    if Int64.logand v exponent = 0L then Int64.logand v sign else v
+  in
+  match Nx.dtype x with
+  | Float32 ->
+      let bits =
+        Array.map
+          (fun w ->
+            Int64.to_int32
+              (flush ~exponent:0x7f80_0000L ~sign:0x8000_0000L
+                 (Int64.logand (Int64.of_int32 w) 0xffff_ffffL)))
+          (Nx.to_array (Nx.bitcast Nx.uint32 x))
+      in
+      Nx.bitcast Nx.float32 (Nx.create Nx.uint32 (Nx.shape x) bits)
+  | BFloat16 ->
+      let bits =
+        Array.map
+          (fun w ->
+            Int64.to_int
+              (flush ~exponent:0x7f80L ~sign:0x8000L (Int64.of_int w)))
+          (Nx.to_array (Nx.bitcast Nx.uint16 x))
+      in
+      Nx.bitcast Nx.bfloat16 (Nx.create Nx.uint16 (Nx.shape x) bits)
+  | _ -> x
+
+(* Exact on [d]: eager's results with their subnormals flushed where [d]'s
+   arithmetic flushes those of its results, as Metal's does. *)
+let exact_on d (e, a) =
+  let e = value e in
+  Traces.exact (if d.flushes then flush_subnormals e else e) (back a)
+
 let f64 x = Nx.to_array (Nx.cast Nx.float64 x)
 
 (* The unit roundoff of a float dtype. *)
@@ -461,11 +495,12 @@ let ranks (x : (float, 'b) Nx.t) =
       else b)
     bits
 
-(* Units in the last place: each element of [a] within [budget] of eager's [e],
-   computed from [inputs] elementwise; NaN must be NaN and an infinity the same
-   one. *)
-let ulps ~budget inputs e a =
-  let e = value e and a = back a in
+(* Units in the last place on [d]: each element of [a] within [budget] of
+   eager's [e], its subnormals flushed where [d] flushes them, computed from
+   [inputs] elementwise; NaN must be NaN and an infinity the same one. *)
+let ulps d ~budget inputs e a =
+  let e = if d.flushes then flush_subnormals (value e) else value e in
+  let a = back a in
   let ev = Nx.to_array e and av = Nx.to_array a in
   let er = ranks e and ar = ranks a in
   let distance i =
@@ -537,7 +572,7 @@ let elementwise d ~count ~heavy =
                       let+ x = operand ~flush:true d dt s in
                       check
                         [ said "%s" name; shown x ]
-                        (fun () -> exact_of (both d (unary k x))));
+                        (fun () -> exact_on d (both d (unary k x))));
                 })))
   and transcendental =
     law "transcendental unary"
@@ -570,7 +605,7 @@ let elementwise d ~count ~heavy =
                         [ said "%s" name; shown x ]
                         (fun () ->
                           let e, a = both d (unary k x) in
-                          ulps ~budget:(budget d name ledger dt) [ x ] e a));
+                          ulps d ~budget:(budget d name ledger dt) [ x ] e a));
                 })))
   and exact_binary =
     law "exact binary"
@@ -602,7 +637,7 @@ let elementwise d ~count ~heavy =
                       and+ y = operand ~flush:true d dt s in
                       check
                         [ said "%s" name; shown x; shown y ]
-                        (fun () -> exact_of (both d (binary k x y))));
+                        (fun () -> exact_on d (both d (binary k x y))));
                 })))
   and transcendental_binary =
     law "transcendental binary"
@@ -622,7 +657,7 @@ let elementwise d ~count ~heavy =
                         [ said "%s" name; shown x; shown y ]
                         (fun () ->
                           let e, a = both d (binary k x y) in
-                          ulps ~budget:(budget d name ledger dt) [ x; y ] e a));
+                          ulps d ~budget:(budget d name ledger dt) [ x; y ] e a));
                 })))
   and comparisons =
     law "comparisons"
@@ -689,7 +724,7 @@ let elementwise d ~count ~heavy =
                    check
                      [ said "to %s" (Nx_dtype.to_string dst); shown x ]
                      (fun () ->
-                       exact_of
+                       exact_on d
                          (both d (fun (module K : Nx_backend.S) env ->
                               let y = env.dst dst s in
                               K.cast (env.on x) ~dst:y;
