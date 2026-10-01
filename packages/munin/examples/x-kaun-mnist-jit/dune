@@ -1,3 +1,18 @@
 (executable
  (name main)
- (libraries nx rune vega kaun kaun.datasets munin munin.sys unix))
+ (libraries
+  nx
+  nx.device
+  nx.cuda.device
+  rune
+  vega
+  kaun
+  kaun.datasets
+  munin
+  munin.sys
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))

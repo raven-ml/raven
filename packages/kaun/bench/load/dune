@@ -4,4 +4,18 @@
 
 (executable
  (name bench_load)
- (libraries kaun kaun.hf jsont jsont.bytesrw nx rune unix))
+ (libraries
+  kaun
+  kaun.hf
+  jsont
+  jsont.bytesrw
+  nx
+  nx.device
+  nx.cuda.device
+  rune
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))

@@ -1,4 +1,19 @@
 (executables
  (names main validate)
- (modules llama main validate)
- (libraries kaun kaun.hf jsont jsont.bytesrw brot nx rune unix))
+ (modules llama devices metal main validate)
+ (libraries
+  kaun
+  kaun.hf
+  jsont
+  jsont.bytesrw
+  brot
+  nx
+  nx.device
+  nx.cuda.device
+  rune
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))

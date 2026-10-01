@@ -88,6 +88,17 @@ let () =
         l2 = Linear.init ~inputs:128 ~outputs:10;
       }
   in
+  (* The parameters start on the device, so the compiled step runs there and
+     keeps them there. *)
+  let on_device =
+    Nx.Placement.device
+      (match String.uppercase_ascii !device with
+      | "METAL" -> Metal.device ()
+      | "CUDA" -> Nx_cuda_device.v 0
+      | "CPU" -> Nx_device.host
+      | d -> failwith (d ^ ": not METAL, CPU or CUDA"))
+  in
+  params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
   let state = Vega.sgd_init cnn !params in
   let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in
 
@@ -139,14 +150,13 @@ let () =
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
     (loss, fst (Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads))
   in
-  let devices = [ Rune.device !device ] in
   let step =
-    Rune.jit ~devices
+    Rune.jit
       Nx.Ptree.(tensor @-> tensor @-> consumes cnn @@ returns (pair tensor cnn))
       train_step
   in
   let forward =
-    Rune.jit ~devices Nx.Ptree.(cnn @-> tensor @-> returns tensor) Cnn.apply
+    Rune.jit Nx.Ptree.(cnn @-> tensor @-> returns tensor) Cnn.apply
   in
   let evaluate params =
     let correct, total =

@@ -128,8 +128,12 @@ let identical ?(flushed = fun _ -> false) name expected actual =
     (Printf.sprintf "  (%d of %d values differ%s%s)" !differing
        (Array.length expected) !first zeroed)
 
+(* [compiled devices f x] is [f x], compiled over [devices] when given: [x] is
+   placed there, a copy on each. *)
 let compiled devices f x =
-  match devices with None -> f x | Some devices -> Rune.jit' ~devices f x
+  match devices with
+  | None -> f x
+  | Some ds -> Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x)
 
 let number j =
   match j with
@@ -221,7 +225,7 @@ let dequant ~devices fx =
       let expected = floats (mem "values" case) in
       let flushed i =
         List.exists
-          (fun d -> Nx.Device.name d = "METAL")
+          (fun d -> Nx_device.name d = "METAL")
           (Option.value devices ~default:[])
         && (scale_bytes.(i / 32) = 0 || Float.abs expected.(i) < min_normal)
       in
@@ -398,9 +402,9 @@ let rotary fx (cfg : Gpt_oss.config) =
     (part half)
 
 (* [Gpt_oss.cached cfg p] compiled as one program for the whole model. *)
-let compiled_cached ~devices cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
+let compiled_cached cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
-  Rune.jit ~devices
+  Rune.jit
     Nx.Ptree.(
       caches @-> Cache_index.ptree @-> tensor @-> returns (pair tensor caches))
     (Gpt_oss.cached cfg p)
@@ -482,18 +486,17 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (name "the first logits of the last position")
     (floats (mem "last_first_values" case))
     (Array.init 8 at);
-  Option.iter
-    (fun devices ->
-      let as_inputs =
-        Rune.jit ~devices
-          Nx.Ptree.(instantiate (module Gpt_oss.Params) @-> returns tensor)
-          (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
-          p
-      in
-      close ~tol
-        (name "parameters as compiled inputs, packed ones included")
-        (flat logits) (flat as_inputs))
-    devices;
+  if devices <> None then begin
+    let as_inputs =
+      Rune.jit
+        Nx.Ptree.(instantiate (module Gpt_oss.Params) @-> returns tensor)
+        (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
+        p
+    in
+    close ~tol
+      (name "parameters as compiled inputs, packed ones included")
+      (flat logits) (flat as_inputs)
+  end;
   let n_layers = List.length cfg.layers in
   let stream k =
     let first l = List.filteri (fun i _ -> i < k) l in
@@ -549,11 +552,12 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (flat (chunked (Gpt_oss.cached cfg p)));
   Option.iter
     (fun devices ->
-      let whole = compiled_cached ~devices cfg p in
+      let whole = compiled_cached cfg p
+      and placement = Nx.Placement.replicated devices in
       close ~tol:1e-6
         (name "one program per layer kind is the whole-model program")
         (flat (chunked whole))
-        (flat (chunked (Layer_loop.cached ~devices cfg p))))
+        (flat (chunked (Layer_loop.cached ~placement cfg p))))
     devices;
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in
@@ -610,14 +614,6 @@ let models ~devices ~dtype ~label fx path =
         ~exact ~label fx case cfg p dt)
     (members (mem "cases" fx))
 
-(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
-   list. *)
-let parse_devices s =
-  match int_of_string_opt s with
-  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
-  | Some _ -> failwith "--devices: the device count must be positive"
-  | None -> List.map String.trim (String.split_on_char ',' s)
-
 let () =
   let fixtures = ref "fixtures" and devices = ref "" in
   let dtype = ref "float32" in
@@ -643,7 +639,7 @@ let () =
      FILE] [--devices LIST] [--dtype DT]";
   let devices =
     if !devices = "" then None
-    else Some (List.map Rune.device (parse_devices !devices))
+    else Some (Devices.parse !devices)
   in
   let weights fx given =
     let repo = string (mem "repo" fx) in

@@ -85,11 +85,11 @@ let generate (type b) ?device cfg (params : (float, b) Nx.t Gpt2.params)
   let step =
     match device with
     | None -> step
-    | Some device ->
+    | Some _ ->
         let caches =
           Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))
         in
-        Rune.jit ~devices:[ device ]
+        Rune.jit
           Nx.Ptree.(
             tensor @-> Kaun.Cache_index.ptree @-> consumes caches
             @@ returns (pair tensor caches))
@@ -194,7 +194,7 @@ let () =
   let (Gpt2.Dtype dt) =
     if !dtype = "" then Gpt2.stored_dtype ckpt else Gpt2.dtype_of_string !dtype
   in
-  let device = if !jit = "" then None else Some (Rune.device !jit) in
+  let device = if !jit = "" then None else Some (Devices.of_name !jit) in
   let params = Gpt2.of_hf ?placement:(whole_on device) cfg dt ckpt in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in

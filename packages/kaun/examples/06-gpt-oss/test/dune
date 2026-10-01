@@ -5,9 +5,4 @@
 (tests
  (names test_layer_loop test_structures)
  (package kaun)
- (libraries kaun kaun.hf jsont rune nx nx.quant unix windtrap)
- (action
-  (setenv
-   RUNE_JIT_DEBUG
-   1
-   (run %{test}))))
+ (libraries kaun kaun.hf jsont rune nx nx.device nx.quant windtrap))

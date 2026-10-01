@@ -14,16 +14,16 @@
     placed. *)
 
 val cached :
-  devices:Nx.Device.t list ->
+  placement:Nx.Placement.t ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   Nx.int64_t ->
   (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [cached ~devices cfg p] is {!Gpt_oss.cached}[ cfg p] run on [devices] by an
-    embedding program and one block program per layer kind, each compiled once
-    per call shape. Apply it once and reuse the result: the partial application
+(** [cached ~placement cfg p] is {!Gpt_oss.cached}[ cfg p] run where [p] is
+    placed by an embedding program and one block program per layer kind, each
+    compiled once per call shape. Apply it once and reuse the result: the partial application
     holds the programs. A block program is {!Gpt_oss.block} compiled on the
     signature
 
@@ -36,21 +36,23 @@ val cached :
     where [block] and [cache] instantiate {!Gpt_oss.Block} and
     {!Kaun.Attention.Cache}: it reads its layer's weights and the index, and
     consumes its layer's cache and the residual stream, whose storage its
-    results take. A call places the index on [devices], a copy on each, once for
-    all the layers and consumes the caches it is given. [p] is best placed on
-    [devices] ({!Gpt_oss.of_hf}[ ~placement]): its leaves are read where they
-    are, split ones included. *)
+    results take. A call places the index at [placement] once for all the
+    layers and consumes the caches it is given. The programs run on the devices
+    [p] is placed on ({!Gpt_oss.of_hf}[ ~placement]), whose leaves they read
+    where they are, split ones included; [placement] is a copy on each of
+    them. *)
 
 val greedy :
-  ?devices:Nx.Device.t list ->
+  ?placement:Nx.Placement.t ->
   Gpt_oss.config ->
   (float, 'b) Nx.t Gpt_oss.params ->
   (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
   Kaun.Cache_index.t ->
   Nx.int64_t ->
   Nx.int64_t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [greedy ?devices cfg p caches index ids] is the most likely next token of
-    each sequence, of shape [[| batch |]], after the tokens [ids], and the
-    caches with their keys and values written. With [devices] it is {!cached}
-    and a compiled head over the last position; without, {!Gpt_oss.cached} run
-    eagerly. Apply it to [cfg p] once and reuse the result. *)
+(** [greedy ?placement cfg p caches index ids] is the most likely next token
+    of each sequence, of shape [[| batch |]], after the tokens [ids], and the
+    caches with their keys and values written. With [placement] it is
+    {!cached} and a compiled head over the last position; without,
+    {!Gpt_oss.cached} run eagerly. Apply it to [cfg p] once and reuse the
+    result. *)

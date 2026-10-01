@@ -7,8 +7,8 @@
    pool, whose step time must not grow with the pool, and the gradient of
    [Nx.take] into a vocabulary-sized table, whose cost must follow the tokens.
    Each step ends with a scalar read that depends on the written tensor, so a
-   timing covers the device work. Run with DEV set to a GPU backend: on the
-   host, outputs are host tensors and no storage is reused. *)
+   timing covers the device work. RUNE_JIT_DEBUG=1 reports what each call does
+   with the consumed pool. *)
 
 type state = { pool : Nx.float32_t; rows : Nx.int64_t; values : Nx.float32_t }
 
@@ -110,14 +110,10 @@ let scatter_case ~runs ~n ~k =
     state := step { rows; values } !state;
     ignore (Nx.item [] !state.probe : float)
   in
-  Rune.reset_jit_stats ();
   let med, best, words = timed ~warmup:3 ~runs once in
-  let reused = (Rune.jit_stats ()).reused_bytes / (runs + 3) in
   Printf.printf
-    "scatter n=%-7d k=%-3d median %8.3f ms  min %8.3f ms  %9.0f words/call  \
-     reused %d MB/call\n\
-     %!"
-    n k med best words (reused / 1_000_000)
+    "scatter n=%-7d k=%-3d median %8.3f ms  min %8.3f ms  %9.0f words/call\n%!"
+    n k med best words
 
 (* One row written at a run-time position into a consumed cache. *)
 let window_case ~runs ~n =

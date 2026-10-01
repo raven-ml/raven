@@ -219,22 +219,33 @@ let load_fixture spec path =
 
 let now_ms () = Unix.gettimeofday () *. 1e3
 
+(* The device a variant runs on: Metal for "metal", the host otherwise. *)
+let device_of name =
+  match String.lowercase_ascii name with
+  | "metal" -> Metal.device ()
+  | _ -> Nx_device.host
+
 let run spec ~fixture ~variant ~device ~steps =
   let params, tokens = load_fixture spec fixture in
   let step =
     match variant with
     | "eager" -> train_step spec
     | "jit" ->
-        let device = match device with "metal" -> "METAL" | _ -> "CPU" in
         Rune.jit
-          ~devices:[ Rune.device device ]
           Nx.Ptree.(
             tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
           (train_step spec)
     | v -> failwith ("unknown variant " ^ v)
   in
   let n_batches = (Nx.shape tokens).(0) in
-  let state = ref (params, Vega.sgd_init model params) in
+  (* The state starts on the device, so the compiled step runs there and its
+     results stay there. *)
+  let state =
+    ref
+      (Nx.Ptree.map state
+         (fun _ t -> Nx.place (Nx.Placement.device (device_of device)) t)
+         (params, Vega.sgd_init model params))
+  in
   let losses = Array.make steps 0. and step_ms = Array.make steps 0. in
   for i = 0 to steps - 1 do
     let batch = Nx.slice [ I (i mod n_batches) ] tokens in
@@ -273,9 +284,10 @@ let emit ~variant ~device ~losses ~step_ms =
 let device_works name =
   match
     Rune.jit'
-      ~devices:[ Rune.device name ]
       (fun x -> Nx.add x x)
-      (Nx.ones Nx.float32 [| 4 |])
+      (Nx.place
+         (Nx.Placement.device (device_of name))
+         (Nx.ones Nx.float32 [| 4 |]))
   with
   | (_ : Nx.float32_t) -> true
   | exception _ -> false

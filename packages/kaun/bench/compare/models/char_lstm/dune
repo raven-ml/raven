@@ -1,6 +1,19 @@
 (executable
  (name model)
- (libraries kaun vega nx rune jsont jsont.bytesrw unix))
+ (libraries
+  kaun
+  vega
+  nx
+  nx.device
+  rune
+  jsont
+  jsont.bytesrw
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))
 
 ; Not attached to any alias: the harness (../../run.py) runs the built
 ; executable directly, one process per measurement, so that a cold number is

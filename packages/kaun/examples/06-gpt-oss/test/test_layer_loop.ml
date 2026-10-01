@@ -5,9 +5,7 @@
 
 (* The layer loop at gpt-oss's depth, on small random weights placed on CPU:1, a
    device with storage of its own: each block program reads its layer's weights
-   and the cache index and writes the layer's cache in the cache's own storage.
-   The programs report what each call did to its consumed leaves under
-   RUNE_JIT_DEBUG=1, which the dune rule sets. *)
+   and the cache index and writes the layer's cache in the cache's own storage. *)
 
 open Windtrap
 open Kaun
@@ -34,7 +32,13 @@ let cfg =
     tied = false;
   }
 
-let cpu1 = Nx.Placement.device (Rune.device "CPU:1")
+(* A test device over the host's memory, which the host addresses as it is. *)
+let cpu1_device =
+  Nx_device.Driver.device ~name:"CPU:1" ~arch:"test" ~budget:max_int
+    (Host_visible
+       { memory = Nx_device.Driver.host_memory; mapping = Some Identity })
+
+let cpu1 = Nx.Placement.device cpu1_device
 
 let params () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
@@ -76,52 +80,19 @@ let params () =
     head = Some (linear ~bias:false d cfg.vocab_size);
   }
 
-(* The lines [f] writes to standard error. *)
-let stderr_of f =
-  let path = Filename.temp_file "test_layer_loop" ".log" in
-  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0o600 in
-  flush stderr;
-  let saved = Unix.dup Unix.stderr in
-  Unix.dup2 fd Unix.stderr;
-  Unix.close fd;
-  let r =
-    Fun.protect
-      ~finally:(fun () ->
-        flush stderr;
-        Unix.dup2 saved Unix.stderr;
-        Unix.close saved)
-      f
+(* Where each pool's storage starts: a call that wrote a layer's cache in its
+   own storage returns it at the address it was given. *)
+let addresses caches =
+  let of_leaf x =
+    match Nx.Repr.v x with
+    | Placed p ->
+        List.map Nx_device.Buffer.address
+          (Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p))
+    | Host _ | Traced _ -> invalid_arg "addresses: not a placed value"
   in
-  let lines = In_channel.with_open_text path In_channel.input_lines in
-  Sys.remove path;
-  (r, lines)
-
-(* What each call in [lines] reported about its consumed leaves: the lines that
-   follow each replay line, in order. *)
-let consumed_reports lines =
-  let prefix = "rune.jit: " in
-  let report line =
-    if String.starts_with ~prefix line then
-      Some
-        (String.sub line (String.length prefix)
-           (String.length line - String.length prefix))
-    else None
-  in
-  let close calls = function
-    | None -> calls
-    | Some call -> List.rev call :: calls
-  in
-  let calls, last =
-    List.fold_left
-      (fun (calls, call) line ->
-        match (report line, call) with
-        | Some r, _ when String.starts_with ~prefix:"replay on " r ->
-            (close calls call, Some [])
-        | Some r, Some call -> (calls, Some (r :: call))
-        | _ -> (calls, call))
-      ([], None) lines
-  in
-  List.rev (close calls last)
+  List.concat_map
+    (fun (c : _ Attention.Cache.t) -> of_leaf c.keys @ of_leaf c.values)
+    caches
 
 let test_blocks_read_weights_and_reuse_caches () =
   let p = params () in
@@ -137,12 +108,11 @@ let test_blocks_read_weights_and_reuse_caches () =
       is_true ~msg:"the builder places each pool"
         (Nx.Placement.equal cpu1 (Nx.placement c.Attention.Cache.keys)))
     caches;
-  let cached = Layer_loop.cached ~devices:[ Rune.device "CPU:1" ] cfg p in
+  let cached = Layer_loop.cached ~placement:cpu1 cfg p in
   let index = Cache_index.rows ~context [| n0 |] in
   let ids = Nx.create Nx.int64 [| 1; n0 |] (Array.init n0 Int64.of_int) in
   let x, caches = cached caches index ids in
   let x = ref x and caches = ref caches and index = ref index in
-  let pool = Nx.nbytes (List.hd !caches).Attention.Cache.keys in
   for step = 1 to steps do
     let msg = Printf.sprintf "step %d" step in
     let token = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int step |] in
@@ -150,40 +120,13 @@ let test_blocks_read_weights_and_reuse_caches () =
     let index_bytes =
       Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0
     in
-    let s0 = Rune.jit_stats () in
-    let (x', caches'), lines =
-      stderr_of (fun () -> cached !caches !index token)
-    in
-    let s1 = Rune.jit_stats () in
-    let blocks =
-      List.filter
-        (List.exists (String.starts_with ~prefix:"1.keys"))
-        (consumed_reports lines)
-    in
-    equal ~msg:(msg ^ ": one report per layer") int 24 (List.length blocks);
-    List.iteri
-      (fun layer report ->
-        let msg = Printf.sprintf "%s, layer %d" msg layer in
-        is_true
-          ~msg:(msg ^ ": the weights and the index are read")
-          (List.for_all
-             (fun r ->
-               not
-                 (String.starts_with ~prefix:"0" r
-                 || String.starts_with ~prefix:"2" r))
-             report);
-        equal
-          ~msg:(msg ^ ": the keys and values take their storage")
-          (list string)
-          [
-            "1.keys -> result 1.keys reused";
-            "1.values -> result 1.values reused";
-          ]
-          (List.filter (String.starts_with ~prefix:"1.") report))
-      blocks;
-    is_true
-      ~msg:(msg ^ ": every pool's bytes are reused")
-      (s1.reused_bytes - s0.reused_bytes >= 24 * 2 * pool);
+    let before = addresses !caches in
+    let s0 = Nx_device.stats cpu1_device in
+    let x', caches' = cached !caches !index token in
+    let s1 = Nx_device.stats cpu1_device in
+    equal
+      ~msg:(msg ^ ": every pool is written in its own storage")
+      (list nativeint) before (addresses caches');
     (* The first single-token call compiles its programs, which upload their
        host constants once. *)
     if step > 1 then
@@ -191,7 +134,7 @@ let test_blocks_read_weights_and_reuse_caches () =
         ~msg:(msg ^ ": only the index and the token are uploaded")
         int
         (index_bytes + Nx.nbytes token)
-        (s1.bytes_to_device - s0.bytes_to_device);
+        Nx_device.Stats.(bytes_in (diff s0 s1));
     x := x';
     caches := caches'
   done;

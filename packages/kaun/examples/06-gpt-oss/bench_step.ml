@@ -128,7 +128,8 @@ let run ?device c params dt ~tokens ~steps ~context =
     Option.map (fun d _ ~axis:_ -> Nx.Placement.device d) device
   in
   let step =
-    Layer_loop.greedy ?devices:(Option.map (fun d -> [ d ]) device) c params
+    Layer_loop.greedy ?placement:(Option.map Nx.Placement.device device) c
+      params
   in
   let timed (caches, index, ids) =
     let t0 = Unix.gettimeofday () in
@@ -138,11 +139,19 @@ let run ?device c params dt ~tokens ~steps ~context =
     let ids = Nx.create Nx.int64 [| 1; 1 |] [| token |] in
     ((caches, Cache_index.advance index, ids), t)
   in
+  let stats () = Option.map Nx_device.stats device in
+  let last = ref (stats ()) in
   let report name t =
-    let st = Rune.jit_stats () in
-    Printf.printf "%s: %.3f s  (to_device %d, from_device %d, resident %d)\n%!"
-      name t st.bytes_to_device st.bytes_from_device st.resident_bytes;
-    Rune.reset_jit_stats ()
+    let now = stats () in
+    (match (!last, now) with
+    | Some s, Some s' ->
+        let d = Nx_device.Stats.diff s s' in
+        Printf.printf
+          "%s: %.3f s  (to_device %d, from_device %d, allocated %d)\n%!" name t
+          (Nx_device.Stats.bytes_in d) (Nx_device.Stats.bytes_out d)
+          (Nx_device.Stats.allocated s')
+    | _ -> Printf.printf "%s: %.3f s\n%!" name t);
+    last := now
   in
   let state, t =
     timed
@@ -190,7 +199,7 @@ let () =
      [--context N] [--dtype DT] [--small-vocab]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
-  let device = if !jit = "" then None else Some (Rune.device !jit) in
+  let device = if !jit = "" then None else Some (Devices.of_name !jit) in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
   let t0 = Unix.gettimeofday () in
   let p = params ?device c dt ~skip_tables:!skip_tables in

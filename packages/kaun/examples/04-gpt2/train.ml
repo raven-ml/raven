@@ -219,14 +219,6 @@ let train_step_scaled objective key { params; ls } =
    dropout backward, storing a 3-wide vector through a scalar float pointer. Not
    rechecked since.) *)
 
-(* [--devices] accepts a CPU device count ([--devices 2] means CPU:1,CPU:2) or
-   an explicit comma-separated tuple ([--devices CUDA:0,CUDA:1]). *)
-let parse_devices s =
-  match int_of_string_opt s with
-  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
-  | Some _ -> failwith "--devices: the device count must be positive"
-  | None -> List.map String.trim (String.split_on_char ',' s)
-
 (* Fingerprints: [first8] is bitwise (fp32 printed as float64 repr); [sum] and
    [abs_sum] accumulate in float64 with pairwise summation, as the reference. *)
 
@@ -446,11 +438,16 @@ let () =
      closure. *)
   let step : int -> Gpt2.t -> Gpt2.t * float =
     if !devices = "" then
-      let devices = [ Rune.device !device ] in
+      (* The batch, the same every step, is placed on the device once, so the
+         step runs there; the parameters start on the host and stay on the
+         device after the first step. *)
+      let on_device = Nx.Placement.device (Devices.of_name !device) in
+      let inputs = Nx.place on_device inputs
+      and targets = Nx.place on_device targets in
       if !compute_dtype = "float16" then begin
         let scaled = Nx.Ptree.instantiate (module Scaled) in
         let f =
-          Rune.jit ~devices
+          Rune.jit
             Nx.Ptree.(key @-> consumes scaled @@ returns (pair tensor scaled))
             (train_step_scaled (fun key -> obj key inputs targets))
         in
@@ -462,7 +459,7 @@ let () =
       end
       else
         let f =
-          Rune.jit ~devices
+          Rune.jit
             Nx.Ptree.(
               key @-> consumes gpt2_tree @@ returns (pair tensor gpt2_tree))
             (fun key params -> train_step (obj key inputs targets) params)
@@ -473,11 +470,11 @@ let () =
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
-      let devs = parse_devices !devices in
-      device := String.concat "," devs;
+      let devs = Devices.parse !devices in
+      device := String.concat "," (List.map Nx_device.name devs);
       (* The batch, the same every step, is split on axis 0 once; the key and
          the parameters start on the host and enter as a copy on each device. *)
-      let split = Nx.Placement.sharded ~axis:0 (List.map Rune.device devs) in
+      let split = Nx.Placement.sharded ~axis:0 devs in
       let inputs = Nx.place split inputs and targets = Nx.place split targets in
       let f =
         Rune.jit

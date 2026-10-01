@@ -74,28 +74,32 @@ let () =
         })
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
+  let device = Devices.of_name !jit in
   let f =
-    Rune.jit'
-      ~devices:[ Rune.device !jit ]
-      (fun x ->
+    Rune.jit' (fun x ->
         Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
   in
   let run () =
-    let x = random_floats ~scale:1.0 [| !tokens; width |] in
+    let x =
+      Nx.place (Nx.Placement.device device)
+        (random_floats ~scale:1.0 [| !tokens; width |])
+    in
     let y, t = seconds (fun () -> Nx.to_array (f x)) in
     if not (Array.for_all Float.is_finite y) then failwith "non-finite output";
     t
   in
   Printf.printf "first call (trace, compile, upload, run): %.2f s\n%!" (run ());
   Printf.printf "second call: %.1f ms\n%!" (1e3 *. run ());
+  let before = Nx_device.stats device in
   let times = Array.init !steps (fun _ -> run ()) in
   Array.sort compare times;
-  let stats = Rune.jit_stats () in
+  let stats = Nx_device.Stats.diff before (Nx_device.stats device) in
   Printf.printf
     "%s, %d tokens per call, %d calls: min %.1f ms, median %.1f ms, max %.1f ms\n"
     !jit !tokens !steps
     (1e3 *. times.(0))
     (1e3 *. times.(!steps / 2))
     (1e3 *. times.(!steps - 1));
-  Printf.printf "bytes to device %d, from device %d\n%!" stats.bytes_to_device
-    stats.bytes_from_device
+  Printf.printf "bytes to device %d, from device %d\n%!"
+    (Nx_device.Stats.bytes_in stats)
+    (Nx_device.Stats.bytes_out stats)

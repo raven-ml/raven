@@ -47,19 +47,12 @@ let fixed_prompt =
     2359L;
   |]
 
-(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
-   list. *)
-let parse_devices s =
-  match int_of_string_opt s with
-  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
-  | Some _ -> failwith "--devices: the device count must be positive"
-  | None -> List.map String.trim (String.split_on_char ',' s)
-
 (* [on_token] sees every generated token as it arrives and says whether to stop.
    With [devices], the step compiles for them and the caches are placed there as
    the parameters are. *)
 let generate ?devices cfg params dt ~log ~count ~on_token prompt =
-  let step = Layer_loop.greedy ?devices cfg params in
+  let placement = Option.map Nx.Placement.replicated devices in
+  let step = Layer_loop.greedy ?placement cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
     let token, caches = step caches index ids in
@@ -172,8 +165,7 @@ let () =
     else Gpt_oss.dtype_of_string !dtype
   in
   let devices =
-    if !devices = "" then None
-    else Some (List.map Rune.device (parse_devices !devices))
+    if !devices = "" then None else Some (Devices.parse !devices)
   in
   let count default = if !count > 0 then !count else default in
   let log = if !prompt = "" then stdout else stderr in

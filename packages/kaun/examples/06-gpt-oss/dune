@@ -1,5 +1,21 @@
 (executables
  (names main validate validate_text validate_stream bench bench_step)
- (modules moe gpt_oss layer_loop harmony main validate validate_text
-  validate_stream bench bench_step)
- (libraries kaun kaun.hf jsont jsont.bytesrw brot nx nx.quant rune unix))
+ (modules moe gpt_oss layer_loop harmony devices metal main validate
+  validate_text validate_stream bench bench_step)
+ (libraries
+  kaun
+  kaun.hf
+  jsont
+  jsont.bytesrw
+  brot
+  nx
+  nx.device
+  nx.cuda.device
+  nx.quant
+  rune
+  unix
+  (select
+   metal.ml
+   from
+   (nx.metal.device -> metal.macos.ml)
+   (-> metal.other.ml))))

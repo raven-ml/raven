@@ -70,12 +70,12 @@ let generate (type b) ?devices cfg (params : (float, b) Nx.t Llama.params)
   let step =
     match devices with
     | None -> step
-    | Some devices ->
+    | Some _ ->
         let sampling = Nx.Ptree.instantiate (module Sampling)
         and caches =
           Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
         in
-        Rune.jit ~devices
+        Rune.jit
           Nx.Ptree.(
             tensor @-> Cache_index.ptree @-> Nx.Rng.ptree @-> sampling
             @-> consumes caches
@@ -119,14 +119,6 @@ let generate (type b) ?devices cfg (params : (float, b) Nx.t Llama.params)
       (float_of_int (max_tokens - 2) /. (Unix.gettimeofday () -. !t0));
   out
 
-(* A device, a CPU device count ([4] is CPU:1..CPU:4) or a comma-separated
-   list. *)
-let parse_devices s =
-  match int_of_string_opt s with
-  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
-  | Some _ -> failwith "--devices: the device count must be positive"
-  | None -> List.map String.trim (String.split_on_char ',' s)
-
 let load_tokenizer () =
   let path = Kaun_hf.download_file ~file:"tokenizer.json" Llama.default_repo in
   match Brot.from_file path with
@@ -165,7 +157,7 @@ let () =
   let ids = Array.map Int64.of_int (Brot.encode_ids tokenizer !prompt) in
   let devices =
     if !devices = "" then None
-    else Some (List.map Rune.device (parse_devices !devices))
+    else Some (Devices.parse !devices)
   in
   (* At the checkpoint's own dtype the import casts nothing. *)
   let (Llama.Dtype dt) =
