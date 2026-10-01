@@ -491,6 +491,27 @@ let compositions =
           (Nx.to_array
              (Nx.stack (List.init 3 (fun i -> f (Nx.get [ i ] rows)))))
           (Nx.to_array (Rune.jit' (Rune.vmap' f) rows)));
+    test
+      "a compiled reduce_ranges is its eager value over traced rows or bounds, \
+       and so is its gradient" (fun () ->
+        let x =
+          vec
+            (Array.init 23 (fun i -> (Float.of_int (i * 7 mod 11) /. 3.) -. 1.))
+        in
+        let lo = ints [| 5 |] [| -3; 0; 4; 9; 20 |]
+        and hi = ints [| 5 |] [| 2; 23; 4; 19; 30 |] in
+        let w = vec [| 1.; -2.; 3.; 0.5; 2. |] in
+        List.iter
+          (fun op ->
+            let f x = Nx.reduce_ranges op ~lo ~hi x
+            and g hi = Nx.reduce_ranges op ~lo ~hi x in
+            equal floats (Nx.to_array (f x)) (Nx.to_array (Rune.jit' f x));
+            equal floats (Nx.to_array (g hi)) (Nx.to_array (Rune.jit' g hi));
+            let loss x = Nx.sum (Nx.mul (f x) w) in
+            equal floats
+              (Nx.to_array (Rune.grad' loss x))
+              (Nx.to_array (Rune.jit' (Rune.grad' loss) x)))
+          [ `Add; `Max; `Min ]);
   ]
 
 let metal =

@@ -2423,8 +2423,9 @@ let ewma ?axis ~alpha x =
    every such level the boundary between the two chunks is the same row, and a
    higher level only adds the identity to the suffix and the prefix, so the
    range's bits are those of its bounds whichever level answers it. A range of
-   [L] rows has such a level once its chunks hold [L - 1] rows, so the longest
-   range decides how many levels are built. *)
+   [L] rows has such a level once its chunks hold [L - 1] rows, and no range
+   holds more than [x]'s rows, so the levels are fixed by [x]'s shape and
+   nothing is read. *)
 
 let reduce_ranges op ~lo ~hi x =
   if ndim x = 0 then err "reduce_ranges" "x is a scalar, which has no rows";
@@ -2439,10 +2440,7 @@ let reduce_ranges op ~lo ~hi x =
   let ranges x =
     let id = identity_of "reduce_ranges" op (dtype x) in
     let none = full (B.context x) (dtype x) (Array.append [| m |] rows) id in
-    let longest =
-      if n = 0 || m = 0 then 0
-      else Int64.to_int (read_item ~by:"Nx.reduce_ranges" (max (sub hi lo)))
-    in
+    let longest = if m = 0 then 0 else n in
     if longest <= 0 then none
     else
       let combine =

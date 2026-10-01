@@ -1524,18 +1524,25 @@ let sums_round_little =
         b)
 
 let narrow_sums_round_once =
-  prop "a float16 range sum is float32's, rounded once"
-    (let open Gen in
-     let* xs = array ~size:(int_range 1 60) (float_range (-300.) 300.) in
-     let+ b = bounds (Array.length xs) in
-     (xs, b))
-    (fun (xs, b) ->
-      let h =
-        Nx.cast Nx.float16 (Nx.create Nx.float64 [| Array.length xs |] xs)
-      in
-      equal (array int64)
-        (float_bits (Nx.cast Nx.float16 (reduce `Add b (Nx.cast Nx.float32 h))))
-        (float_bits (reduce `Add b h)))
+  List.map
+    (fun (W (name, dt)) ->
+      prop
+        (Printf.sprintf "a %s range sum is float32's, rounded once" name)
+        (let open Gen in
+         let* xs = array ~size:(int_range 1 60) (float_range (-300.) 300.) in
+         let+ b = bounds (Array.length xs) in
+         (xs, b))
+        (fun (xs, b) ->
+          let h = Nx.cast dt (Nx.create Nx.float64 [| Array.length xs |] xs) in
+          equal (array int64)
+            (float_bits (Nx.cast dt (reduce `Add b (Nx.cast Nx.float32 h))))
+            (float_bits (reduce `Add b h))))
+    [
+      W ("float16", Nx.float16);
+      W ("bfloat16", Nx.bfloat16);
+      W ("float8_e4m3", Nx.float8_e4m3);
+      W ("float8_e5m2", Nx.float8_e5m2);
+    ]
 
 let running =
   prop "the ranges from row 0 to each row are the running sums and maxima"
@@ -1565,12 +1572,11 @@ let range_reductions =
       segmented
   in
   group "ranges"
-    (props
+    (props @ narrow_sums_round_once
     @ [
         extremes_are_max_and_min;
         sums_hold_their_own_terms;
         sums_round_little;
-        narrow_sums_round_once;
         running;
         test "-0 terms sum to +0, and Max and Min order -0 below +0" (fun () ->
             let x = Nx.create Nx.float32 [| 3 |] [| -0.; -0.; 0. |] in

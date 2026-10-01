@@ -1614,21 +1614,6 @@ let errors =
               | _ -> false)
             (fun () ->
               ignore (Rune.jit' take (Nx.create Nx.int64 [| 2 |] [| 1L; 0L |]))));
-      test
-        "a range reduction inside a compiled call names Nx.reduce_ranges, over \
-         traced or captured bounds" (fun () ->
-          let names f a =
-            raises_match
-              (function
-                | Rune.Jit_error m ->
-                    String.starts_with ~prefix:"Nx.reduce_ranges: " m
-                | _ -> false)
-              (fun () -> ignore (Rune.jit' f a))
-          in
-          let lo = Nx.zeros Nx.int64 [| 2 |]
-          and hi = Nx.create Nx.int64 [| 2 |] [| 1L; 3L |] in
-          names (fun hi -> Nx.reduce_ranges `Add ~lo ~hi (x ())) hi;
-          names (fun x -> Nx.reduce_ranges `Add ~lo ~hi x) (x ()));
       test "an operation no target computes raises Jit_error" (fun () ->
           raises_jit_error (fun () ->
               Rune.jit'

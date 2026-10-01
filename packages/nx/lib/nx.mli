@@ -2744,13 +2744,11 @@ val reduce_ranges :
     other ranges. A growing window, a running reduction, is the ranges from [0]
     to [i + 1].
 
-    [reduce_ranges] reads one value, the length [L] of its longest range: its
-    work is [O((n + m) log L)] for [m] ranges and its memory [O(n + m)]. The
-    read keeps it from compiling: under {!Rune.val-jit} it raises, naming
-    [Nx.reduce_ranges]. Under {!Rune.val-vmap}, bounds that depend on a mapped
-    value raise likewise, and other bounds map as {!take} and {!where} do. It
-    differentiates as {!take}, {!where} and [op] do: under [`Max] and [`Min] a
-    tie gives the whole derivative to one of the tied rows.
+    Its work is [O((n + m) log n)] for [n] rows and [m] ranges. Its memory is
+    [O(n + m)], and [O((n + m) log n)] under {!Rune.val-grad}, which keeps every
+    level for the derivative. It reads no value, so it compiles and maps as
+    {!take}, {!where} and [op] do, and differentiates as they do: under [`Max]
+    and [`Min] a tie gives the whole derivative to one of the tied rows.
 
     {@ocaml[
       # let x = create float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in

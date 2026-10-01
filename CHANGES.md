@@ -2976,8 +2976,9 @@ thread.
 
 - Add `Nx.reduce_ranges`, the sum, maximum or minimum of each range of rows
   from `lo` to `hi`, for rolling and growing windows. Bounds clip to the rows,
-  a sum holds its range's terms alone, and windows of `L` rows cost
-  `O(n log L)`.
+  and a sum holds its range's terms alone. It costs `O((n + m) log n)` for `n`
+  rows and `m` ranges, reads no value, and compiles and maps under `Rune.jit`
+  and `Rune.vmap`.
 - `Nx_device.staging h` is the host's staging memory, which `Buffer.copy`
   and the libraries that submit work now share: a copy fills a slot only once
   the queued work that uses it is done.

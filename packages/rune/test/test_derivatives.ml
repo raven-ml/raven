@@ -139,9 +139,7 @@ let grad_tests =
         equal (exact ())
           (vec [| 3.; 0.; 3.; 0. |])
           (Rune.grad' f (vec [| 0.5; -1.; 2.; 0. |])));
-    test
-      "a range reduction reads its longest range from the bounds and \
-       differentiates each range's rows" (fun () ->
+    test "a range reduction differentiates each range's rows" (fun () ->
         let lo = Nx.create Nx.int64 [| 3 |] [| -1L; 1L; 3L |]
         and hi = Nx.create Nx.int64 [| 3 |] [| 2L; 4L; 3L |] in
         let x = vec [| 0.5; -1.; 2.; 0. |] in
@@ -151,6 +149,30 @@ let grad_tests =
         equal ~msg:"Max" (exact ())
           (vec [| 1.; 0.; 1.; 0. |])
           (Rune.grad' (fun x -> Nx.sum (Nx.reduce_ranges `Max ~lo ~hi x)) x));
+    test
+      "a range's extreme gives its whole derivative to one of its tied rows, \
+       infinite ones too" (fun () ->
+        let lo = Nx.create Nx.int64 [| 2 |] [| 0L; 3L |]
+        and hi = Nx.create Nx.int64 [| 2 |] [| 3L; 6L |] in
+        List.iter
+          (fun (op, msg, xs) ->
+            let g =
+              Nx.to_array
+                (Rune.grad'
+                   (fun x -> Nx.sum (Nx.reduce_ranges op ~lo ~hi x))
+                   (vec xs))
+            in
+            let total a b = Array.fold_left ( +. ) 0. (Array.sub g a (b - a)) in
+            equal ~msg float_exact 1. (total 0 3);
+            equal ~msg float_exact 1. (total 4 6);
+            equal ~msg (array float_exact) [| 0.; 0. |] [| g.(3); g.(6) |];
+            is_true ~msg (Array.for_all (fun v -> v = 0. || v = 1.) g))
+          [
+            ( `Max,
+              "Max",
+              [| neg_infinity; neg_infinity; neg_infinity; 1.; 2.; 2.; 0. |] );
+            (`Min, "Min", [| infinity; infinity; infinity; 1.; 0.; 0.; 2. |]);
+          ]);
     test "a branch on a value differentiates the branch taken" (fun () ->
         let f x =
           if Nx.item [] (Nx.sum x) > 0. then Nx.sum (Nx.mul x x) else Nx.sum x

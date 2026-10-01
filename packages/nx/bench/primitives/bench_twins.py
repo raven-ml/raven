@@ -164,10 +164,10 @@ for n, name in [(S, "4e4"), (L, "1e7")]:
 
 W = 1_000
 for n, name in [(S, "4e4"), (L, "1e7")]:
-    id = f"ranges/add-float64-{name}-w1e3"
-    twin(id, "pandas", lambda n=n: pd.Series(uniform(n)),
+    row = f"ranges/add-float64-{name}-w1e3"
+    twin(row, "pandas", lambda n=n: pd.Series(uniform(n)),
          lambda s: s.rolling(W, min_periods=1).sum())
-    twin(id, "polars", lambda n=n: pl.Series(uniform(n)),
+    twin(row, "polars", lambda n=n: pl.Series(uniform(n)),
          lambda s: s.rolling_sum(W, min_samples=1))
 twin("ranges/max-float64-1e7-w1e3", "pandas", lambda: pd.Series(uniform(L)),
      lambda s: s.rolling(W, min_periods=1).max())
