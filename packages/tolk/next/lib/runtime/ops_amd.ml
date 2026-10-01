@@ -7,8 +7,27 @@
 
 open Ops
 
+type counter = {
+  block : string;
+  event : int;
+  register : int;
+  instances : int;
+  engines : int;
+  arrays : int;
+  wgps : int;
+  offset : int;
+}
+
+type counting = {
+  slots : int;
+  counters : counter list;
+  size : int;
+  wgp_active : engine:int -> array:int -> wgp:int -> bool;
+}
+
 type gpu = {
   target : int * int * int;
+  gc : int * int * int;
   sdma : int * int * int;
   xccs : int;
   shader_engines : int;
@@ -17,6 +36,7 @@ type gpu = {
   aql : bool;
   compute_ring : int;
   copy_rings : int list;
+  counting : counting option;
 }
 
 let major gpu =
@@ -231,6 +251,19 @@ let tmpring_size gpu n =
   in
   bits waves (min num_waves max_scratch_waves) lor bits wavesize wave_scratch
 
+(* The counter registers of the GPU's graphics family: the latest family of its
+   major at or before its version, as tinygrad picks a register module. *)
+let counter_registers gpu =
+  let m, _, _ = gpu.gc in
+  match
+    List.rev
+      (List.filter
+         (fun ((m', _, _) as v) -> m' = m && v <= gpu.gc)
+         G.gc_families)
+  with
+  | v :: _ -> G.counter_registers v
+  | [] -> []
+
 (* An AQL queue's packets: dispatches and runs of PM4 packets, and loops around
    them, each with its range and the bytes of its trip in the command buffer. *)
 type aql = Packets of Ops.t list | Trips of Ops.t * int * aql list
@@ -352,6 +385,182 @@ let compute_queue ~host gpu q : Hcq2.commands =
     wait_reg_mem ~reg:G.bif_bx_pf_gpu_hdp_flush_req
       ~reg_done:G.bif_bx_pf_gpu_hdp_flush_done (u32 0xffff_ffff);
     acquire_mem ()
+  in
+  (* Counting: a run's slot holds its counters until a synchronization reads
+     them back. *)
+  let registers = lazy (counter_registers gpu) in
+  let register name =
+    match List.find_opt (fun (n, _, _) -> n = name) (Lazy.force registers) with
+    | Some (_, addr, fields) -> Some (addr, fields)
+    | None -> None
+  in
+  let set name fields =
+    match register name with
+    | None -> invalid_arg (Printf.sprintf "the GPU has no register %s" name)
+    | Some (addr, fs) ->
+        wreg addr
+          [
+            u32
+              (List.fold_left
+                 (fun w (f, v) -> w lor bits (List.assoc f fs) v)
+                 0 fields);
+          ]
+  in
+  let set_grbm ?instance ?se ?sa ?wgp () =
+    let instance =
+      match wgp with
+      | Some w -> Some ((w lsl 2) lor Option.value instance ~default:0)
+      | None -> instance
+    in
+    let field key = function
+      | None -> (key ^ "_broadcast_writes", 1)
+      | Some v -> (key ^ "_index", v)
+    in
+    set "GRBM_GFX_INDEX"
+      [
+        field "instance" instance;
+        field "se" se;
+        field (if gfx9 then "sh" else "sa") sa;
+      ]
+  in
+  let perfmon =
+    if major gpu <= 11 then "CP_PERFMON_CNTL" else "CP_PERFMON_CNTL_1"
+  in
+  let reset_counters ~enable =
+    set_grbm ();
+    set perfmon [ ("perfmon_state", 0) ];
+    if enable then set perfmon [ ("perfmon_state", 1) ]
+  in
+  let log_slots = Option.fold ~none:0 ~some:(fun c -> c.slots) gpu.counting in
+  let log =
+    placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String "prof_log")
+      [ 1 + log_slots ]
+      Dtype.Uint64
+  in
+  let samples c =
+    placeholder ~slot:0 ~device:(Multi devs) ~tag:(Tag.String "pmc_buf")
+      [ c.slots * c.size ]
+      Dtype.Uint8
+  in
+  let sample_register c =
+    Printf.sprintf "%s_PERFCOUNTER%d" c.block c.register
+  in
+  let start_counting c =
+    reset_counters ~enable:false;
+    set "SQ_PERFCOUNTER_CTRL"
+      ([ ("cs_en", 1); ("ps_en", 1); ("gs_en", 1); ("hs_en", 1) ]
+      @ if gfx9 then [ ("vmid_mask", 0xffff) ] else []);
+    if not gfx9 then
+      set "SQ_PERFCOUNTER_CTRL2" [ ("force_en", 1); ("vmid_en", 0xffff) ];
+    List.iter
+      (fun ct ->
+        (* GFX11 on selects SQ counters with even registers. *)
+        let index =
+          if (not gfx9) && ct.block = "SQ" then 2 * ct.register else ct.register
+        in
+        let select = Printf.sprintf "%s_PERFCOUNTER%d_SELECT" ct.block index in
+        if register select = None then
+          invalid_arg
+            (Printf.sprintf "%s is out of counter registers: (%s is not found)"
+               ct.block (sample_register ct));
+        set select
+          (("perf_sel", ct.event)
+          ::
+          (if gfx9 && ct.block = "SQ" then
+             [
+               ("simd_mask", 0xf);
+               ("sqc_bank_mask", 0xf);
+               ("sqc_client_mask", 0xf);
+             ]
+           else [])))
+      c.counters;
+    if gfx9 then
+      set "SQ_PERFCOUNTER_MASK" [ ("sh0_mask", 0xffff); ("sh1_mask", 0xffff) ];
+    set "COMPUTE_PERFCOUNT_ENABLE" [ ("perfcount_enable", 1) ];
+    reset_counters ~enable:true
+  in
+  let read_counters c slot =
+    let buf = O.(getaddr (samples c) + (slot * u64 c.size)) in
+    set_grbm ();
+    set perfmon [ ("perfmon_state", 1); ("perfmon_sample_enable", 1) ];
+    List.iter
+      (fun ct ->
+        let offset = ref ct.offset in
+        for xcc = 0 to gpu.xccs - 1 do
+          pred_exec (1 lsl xcc) (fun () ->
+              for inst = 0 to ct.instances - 1 do
+                for se = 0 to ct.engines - 1 do
+                  for sa = 0 to ct.arrays - 1 do
+                    for wgp = 0 to ct.wgps - 1 do
+                      let at = !offset in
+                      offset := at + 8;
+                      if ct.wgps = 1 || c.wgp_active ~engine:se ~array:sa ~wgp
+                      then begin
+                        if ct.instances > 1 then set_grbm ~instance:inst ()
+                        else if gfx9 then set_grbm ~se ()
+                        else set_grbm ~se ~sa ~wgp ();
+                        let copy reg at =
+                          (* From a performance counter to memory through the
+                             L2. *)
+                          pkt3 G.packet3_copy_data
+                            [
+                              u32 ((2 lsl 8) lor 4);
+                              u32 reg;
+                              u32 0;
+                              O.(buf + u64 at);
+                            ]
+                        in
+                        let name = sample_register ct in
+                        Option.iter
+                          (fun (lo, _) -> copy lo at)
+                          (register (name ^ "_LO"));
+                        Option.iter
+                          (fun (hi, _) -> copy hi (at + 4))
+                          (register (name ^ "_HI"))
+                      end
+                    done
+                  done
+                done
+              done)
+        done)
+      c.counters;
+    reset_counters ~enable:true
+  in
+  Option.iter start_counting gpu.counting;
+  let runs = ref [] in
+  (* A counted run takes the next slot of the log, which the host program
+     writes. *)
+  let start_run lib (data : program) =
+    Option.map
+      (fun c ->
+        let slot =
+          O.(
+            (load (index log [ int 0 ]) [] + u64 (List.length !runs))
+            % u64 c.slots)
+        in
+        runs :=
+          !runs
+          @ [
+              store
+                (index log [ O.(int 1 + cast slot Dtype.Int32) ])
+                O.(getaddr lib + u64 data.desc_offset);
+            ];
+        (c, slot))
+      gpu.counting
+  in
+  let stop_run = Option.iter (fun (c, slot) -> read_counters c slot) in
+  (* Once its command buffer is written, the host program adds the submission's
+     runs to the log's count. *)
+  let count_runs cmdbuf =
+    match !runs with
+    | [] -> cmdbuf
+    | rs ->
+        after cmdbuf
+          [
+            store
+              (index (after log (cmdbuf :: rs)) [ int 0 ])
+              O.(load (index log [ int 0 ]) [] + u64 (List.length rs));
+          ]
   in
   let kernargs call prg data =
     let info =
@@ -487,6 +696,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
         lor bits G.compute_dispatch_initiator_compute_shader_en 1
       in
       acquire_mem ~gli:0 ~gl2:0 ();
+      let run = start_run lib data in
       wreg G.compute_pgm_lo [ O.(prog_addr lsr int 8) ];
       wreg G.compute_pgm_rsrc1 [ u32 data.rsrc1; u32 data.rsrc2 ];
       wreg
@@ -516,7 +726,8 @@ let compute_queue ~host gpu q : Hcq2.commands =
           u32
             ((G.cs_partial_flush lsl G.event_type)
             lor (event_index_partial_flush lsl G.event_index));
-        ]
+        ];
+      stop_run run
     in
     (* The ring gets an indirect buffer packet: 4 dwords, and put stays aligned
        so that it never wraps mid packet. *)
@@ -528,7 +739,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
           ~tag:(Tag.String (Hcq2.to_name [ "ib"; queue ]))
           [ 16 ] Dtype.Uint8
       in
-      push cmdbuf
+      push (count_runs cmdbuf)
         (Hcq2.patch ib
            [ (int 4, O.(getaddr base + int off)) ]
            ~blob:(ib_blob cmdbuf))
@@ -580,12 +791,14 @@ let compute_queue ~host gpu q : Hcq2.commands =
     in
     let exec call prg =
       let data, lib, info, ka = program call prg in
+      let run = start_run lib data in
       close_run (Hcq2.Queue.size q);
       add
         (dispatch_packet data info
            ~kernel_object:O.(getaddr lib + int data.desc_offset)
            ~kernarg_address:(getaddr ka) ());
-      run_start := Hcq2.Queue.size q
+      run_start := Hcq2.Queue.size q;
+      stop_run run
     in
     (* A loop's packets are once per trip, each pointing into its trip's bytes
        of the command buffer, which the queue repeats. *)
@@ -625,7 +838,7 @@ let compute_queue ~host gpu q : Hcq2.commands =
              (Printf.sprintf
                 "AQL packets of %d bytes exceed half their ring of %d bytes"
                 size gpu.compute_ring));
-      push cmdbuf
+      push (count_runs cmdbuf)
         (Hcq2.bufferize_cmdbuf ~device:(Single host) q "aql")
         ~unit:64 ~doorbell_lag:1 ()
     in
@@ -824,12 +1037,16 @@ type storage =
   | Doorbell of string
   | Program of { binary : string; name : string }
   | Scratch of int
+  | Log
+  | Samples
 
 let storage u =
   match tag u with
   | Some (Tag.Tuple [ String "program"; Bytes binary; String name ]) ->
       Some (Program { binary; name })
   | Some (Tag.String "scratch") -> Some (Scratch (max_numel u))
+  | Some (Tag.String "prof_log") -> Some Log
+  | Some (Tag.String "pmc_buf") -> Some Samples
   | Some (Tag.String t) -> (
       (* [name_queue_index], as queue_args tags them. *)
       match List.rev (String.split_on_char '_' t) with

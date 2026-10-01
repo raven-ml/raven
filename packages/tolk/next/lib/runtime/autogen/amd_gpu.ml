@@ -16,6 +16,7 @@ let packet3_release_mem = 0x49
 let packet3_dispatch_direct = 0x15
 let packet3_event_write = 0x46
 let packet3_indirect_buffer = 0x3f
+let packet3_copy_data = 0x40
 let indirect_buffer_valid = 0x800000
 let cache_flush_and_inv_ts_event = 0x14
 let event_index__mec_release_mem__end_of_pipe = 5
@@ -94,6 +95,291 @@ let compute_restart_x = 0x2e1b
 let compute_pgm_rsrc3 = 0x2e28
 let compute_pgm_rsrc3_gfx9 = 0x2e2d
 let compute_user_data_0 = 0x2e40
+
+(* The registers a run that counts writes and reads, in each graphics family:
+   (name, address, fields as (name, (hi, lo))). *)
+
+let counter_registers = function
+  | (9, 4, 3) ->
+      [
+        ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
+        ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (7, 0)); ("se_broadcast_writes", (31, 31)); ("se_index", (23, 16)); ("sh_broadcast_writes", (29, 29)); ("sh_index", (15, 8)) ]);
+        ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_LO", 0xd040, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_SELECT", 0xd840, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("grbm_busy_user_defined_mask", (19, 19)); ("ia_busy_user_defined_mask", (23, 23)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tc_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)); ("vgt_busy_user_defined_mask", (12, 12)); ("wd_busy_user_defined_mask", (28, 28)) ]);
+        ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("grbm_busy_user_defined_mask", (19, 19)); ("ia_busy_user_defined_mask", (23, 23)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tc_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)); ("vgt_busy_user_defined_mask", (12, 12)); ("wd_busy_user_defined_mask", (28, 28)) ]);
+        ("SQ_PERFCOUNTER0_HI", 0xd1c1, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER10_HI", 0xd1d5, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER10_LO", 0xd1d4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER11_HI", 0xd1d7, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER11_LO", 0xd1d6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER11_SELECT", 0xd9cb, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER12_HI", 0xd1d9, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER12_LO", 0xd1d8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER12_SELECT", 0xd9cc, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER13_HI", 0xd1db, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER13_LO", 0xd1da, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER13_SELECT", 0xd9cd, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER14_HI", 0xd1dd, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER14_LO", 0xd1dc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER14_SELECT", 0xd9ce, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER15_HI", 0xd1df, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER15_LO", 0xd1de, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER15_SELECT", 0xd9cf, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER1_HI", 0xd1c3, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_LO", 0xd1c2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_SELECT", 0xd9c1, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER2_HI", 0xd1c5, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_LO", 0xd1c4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_SELECT", 0xd9c2, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER3_HI", 0xd1c7, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_LO", 0xd1c6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_SELECT", 0xd9c3, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER4_HI", 0xd1c9, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_LO", 0xd1c8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_SELECT", 0xd9c4, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER5_HI", 0xd1cb, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_LO", 0xd1ca, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_SELECT", 0xd9c5, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER6_HI", 0xd1cd, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_LO", 0xd1cc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_SELECT", 0xd9c6, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER7_HI", 0xd1cf, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_LO", 0xd1ce, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_SELECT", 0xd9c7, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER8_HI", 0xd1d1, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER8_LO", 0xd1d0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER8_SELECT", 0xd9c8, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER9_HI", 0xd1d3, [ ("perfcounter_hi", (31, 0)) ]);
+        ("SQ_PERFCOUNTER9_LO", 0xd1d2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("simd_mask", (27, 24)); ("spm_mode", (23, 20)); ("sqc_bank_mask", (15, 12)); ("sqc_client_mask", (19, 16)) ]);
+        ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cntr_rate", (12, 8)); ("cs_en", (6, 6)); ("disable_flush", (13, 13)); ("es_en", (3, 3)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ls_en", (5, 5)); ("ps_en", (0, 0)); ("vmid_mask", (31, 16)); ("vs_en", (1, 1)) ]);
+        ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)) ]);
+        ("SQ_PERFCOUNTER_MASK", 0xd9e1, [ ("sh0_mask", (15, 0)); ("sh1_mask", (31, 16)) ]);
+        ("TCC_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
+        ("TCC_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
+        ("TCC_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("TCC_PERFCOUNTER1_HI", 0xd383, [ ("perfcounter_hi", (31, 0)) ]);
+        ("TCC_PERFCOUNTER1_LO", 0xd382, [ ("perfcounter_lo", (31, 0)) ]);
+        ("TCC_PERFCOUNTER1_SELECT", 0xdb82, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("TCC_PERFCOUNTER2_HI", 0xd385, [ ("perfcounter_hi", (31, 0)) ]);
+        ("TCC_PERFCOUNTER2_LO", 0xd384, [ ("perfcounter_lo", (31, 0)) ]);
+        ("TCC_PERFCOUNTER2_SELECT", 0xdb84, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("TCC_PERFCOUNTER3_HI", 0xd387, [ ("perfcounter_hi", (31, 0)) ]);
+        ("TCC_PERFCOUNTER3_LO", 0xd386, [ ("perfcounter_lo", (31, 0)) ]);
+        ("TCC_PERFCOUNTER3_SELECT", 0xdb85, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+      ]
+  | (11, 0, 0) ->
+      [
+        ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
+        ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER1_HI", 0xd383, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_LO", 0xd382, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_SELECT", 0xdb82, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER2_HI", 0xd385, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_LO", 0xd384, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_SELECT", 0xdb84, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GL2C_PERFCOUNTER3_HI", 0xd387, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_LO", 0xd386, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_SELECT", 0xdb85, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (7, 0)); ("sa_broadcast_writes", (29, 29)); ("sa_index", (15, 8)); ("se_broadcast_writes", (31, 31)); ("se_index", (23, 16)) ]);
+        ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_LO", 0xd040, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_SELECT", 0xd840, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER11_SELECT", 0xd9cb, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER12_SELECT", 0xd9cc, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER13_SELECT", 0xd9cd, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER14_SELECT", 0xd9ce, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER15_SELECT", 0xd9cf, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER1_LO", 0xd1c2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_SELECT", 0xd9c1, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER2_LO", 0xd1c4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_SELECT", 0xd9c2, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER3_LO", 0xd1c6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_SELECT", 0xd9c3, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER4_LO", 0xd1c8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_SELECT", 0xd9c4, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER5_LO", 0xd1ca, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_SELECT", 0xd9c5, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER6_LO", 0xd1cc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_SELECT", 0xd9c6, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER7_LO", 0xd1ce, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_SELECT", 0xd9c7, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER8_SELECT", 0xd9c8, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
+        ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+      ]
+  | (11, 0, 3) ->
+      [
+        ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
+        ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER1_HI", 0xd383, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_LO", 0xd382, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_SELECT", 0xdb82, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER2_HI", 0xd385, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_LO", 0xd384, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_SELECT", 0xdb84, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GL2C_PERFCOUNTER3_HI", 0xd387, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_LO", 0xd386, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_SELECT", 0xdb85, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (7, 0)); ("sa_broadcast_writes", (29, 29)); ("sa_index", (15, 8)); ("se_broadcast_writes", (31, 31)); ("se_index", (23, 16)) ]);
+        ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_LO", 0xd040, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_SELECT", 0xd840, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER11_SELECT", 0xd9cb, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER12_SELECT", 0xd9cc, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER13_SELECT", 0xd9cd, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER14_SELECT", 0xd9ce, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER15_SELECT", 0xd9cf, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER1_LO", 0xd1c2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_SELECT", 0xd9c1, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER2_LO", 0xd1c4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_SELECT", 0xd9c2, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER3_LO", 0xd1c6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_SELECT", 0xd9c3, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER4_LO", 0xd1c8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_SELECT", 0xd9c4, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER5_LO", 0xd1ca, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_SELECT", 0xd9c5, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER6_LO", 0xd1cc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_SELECT", 0xd9c6, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER7_LO", 0xd1ce, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_SELECT", 0xd9c7, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER8_SELECT", 0xd9c8, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
+        ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+      ]
+  | (11, 5, 0) ->
+      [
+        ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("CP_PERFMON_CNTL", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
+        ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER1_HI", 0xd383, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_LO", 0xd382, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_SELECT", 0xdb82, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER2_HI", 0xd385, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_LO", 0xd384, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_SELECT", 0xdb84, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GL2C_PERFCOUNTER3_HI", 0xd387, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_LO", 0xd386, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_SELECT", 0xdb85, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_sel", (9, 0)) ]);
+        ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (6, 0)); ("sa_broadcast_writes", (29, 29)); ("sa_index", (15, 8)); ("se_broadcast_writes", (31, 31)); ("se_index", (23, 16)) ]);
+        ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_LO", 0xd040, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_SELECT", 0xd840, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("gds_busy_user_defined_mask", (24, 24)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("rmi_busy_user_defined_mask", (31, 31)); ("sc_busy_user_defined_mask", (17, 17)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER11_SELECT", 0xd9cb, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER12_SELECT", 0xd9cc, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER13_SELECT", 0xd9cd, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER14_SELECT", 0xd9ce, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER15_SELECT", 0xd9cf, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER1_LO", 0xd1c2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_SELECT", 0xd9c1, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER2_LO", 0xd1c4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_SELECT", 0xd9c2, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER3_LO", 0xd1c6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_SELECT", 0xd9c3, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER4_LO", 0xd1c8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_SELECT", 0xd9c4, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER5_LO", 0xd1ca, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_SELECT", 0xd9c5, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER6_LO", 0xd1cc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_SELECT", 0xd9c6, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER7_LO", 0xd1ce, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_SELECT", 0xd9c7, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER8_SELECT", 0xd9c8, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
+        ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+      ]
+  | (12, 0, 0) ->
+      [
+        ("COMPUTE_PERFCOUNT_ENABLE", 0x2e0b, [ ("perfcount_enable", (0, 0)) ]);
+        ("CP_PERFMON_CNTL_1", 0xd808, [ ("perfmon_enable_mode", (9, 8)); ("perfmon_sample_enable", (10, 10)); ("perfmon_state", (3, 0)); ("spm_perfmon_state", (7, 4)) ]);
+        ("GL2C_PERFCOUNTER0_HI", 0xd381, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_LO", 0xd380, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER0_SELECT", 0xdb80, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER1_HI", 0xd383, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_LO", 0xd382, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER1_SELECT", 0xdb82, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER2_HI", 0xd385, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_LO", 0xd384, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER2_SELECT", 0xdb84, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GL2C_PERFCOUNTER3_HI", 0xd387, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_LO", 0xd386, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GL2C_PERFCOUNTER3_SELECT", 0xdb86, [ ("cntr_mode", (23, 20)); ("perf_mode", (31, 28)); ("perf_mode1", (27, 24)); ("perf_sel", (9, 0)); ("perf_sel1", (19, 10)) ]);
+        ("GRBM_GFX_INDEX", 0xc200, [ ("instance_broadcast_writes", (30, 30)); ("instance_index", (6, 0)); ("sa_broadcast_writes", (29, 29)); ("sa_index", (9, 8)); ("se_broadcast_writes", (31, 31)); ("se_index", (19, 16)) ]);
+        ("GRBM_PERFCOUNTER0_HI", 0xd041, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_LO", 0xd040, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER0_SELECT", 0xd840, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("sc_busy_user_defined_mask", (17, 17)); ("sc_clean_user_defined_mask", (9, 9)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("GRBM_PERFCOUNTER1_HI", 0xd044, [ ("perfcounter_hi", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_LO", 0xd043, [ ("perfcounter_lo", (31, 0)) ]);
+        ("GRBM_PERFCOUNTER1_SELECT", 0xd841, [ ("bci_busy_user_defined_mask", (25, 25)); ("cb_busy_user_defined_mask", (21, 21)); ("cb_clean_user_defined_mask", (11, 11)); ("cp_busy_user_defined_mask", (22, 22)); ("db_busy_user_defined_mask", (20, 20)); ("db_clean_user_defined_mask", (10, 10)); ("ea_busy_user_defined_mask", (30, 30)); ("ge_busy_user_defined_mask", (28, 28)); ("grbm_busy_user_defined_mask", (19, 19)); ("pa_busy_user_defined_mask", (18, 18)); ("perf_sel", (5, 0)); ("rlc_busy_user_defined_mask", (26, 26)); ("sc_busy_user_defined_mask", (17, 17)); ("sc_clean_user_defined_mask", (9, 9)); ("spi_busy_user_defined_mask", (16, 16)); ("sx_busy_user_defined_mask", (14, 14)); ("ta_busy_user_defined_mask", (13, 13)); ("tcp_busy_user_defined_mask", (27, 27)); ("utcl2_busy_user_defined_mask", (29, 29)) ]);
+        ("SQ_PERFCOUNTER0_LO", 0xd1c0, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER0_SELECT", 0xd9c0, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER10_SELECT", 0xd9ca, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER11_SELECT", 0xd9cb, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER12_SELECT", 0xd9cc, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER13_SELECT", 0xd9cd, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER14_SELECT", 0xd9ce, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER15_SELECT", 0xd9cf, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER1_LO", 0xd1c2, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER1_SELECT", 0xd9c1, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER2_LO", 0xd1c4, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER2_SELECT", 0xd9c2, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER3_LO", 0xd1c6, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER3_SELECT", 0xd9c3, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER4_LO", 0xd1c8, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER4_SELECT", 0xd9c4, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER5_LO", 0xd1ca, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER5_SELECT", 0xd9c5, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER6_LO", 0xd1cc, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER6_SELECT", 0xd9c6, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER7_LO", 0xd1ce, [ ("perfcounter_lo", (31, 0)) ]);
+        ("SQ_PERFCOUNTER7_SELECT", 0xd9c7, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER8_SELECT", 0xd9c8, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER9_SELECT", 0xd9c9, [ ("perf_mode", (31, 28)); ("perf_sel", (8, 0)); ("spm_mode", (23, 20)) ]);
+        ("SQ_PERFCOUNTER_CTRL", 0xd9e0, [ ("cs_en", (6, 6)); ("disable_me0pipe0_perf", (14, 14)); ("disable_me0pipe1_perf", (15, 15)); ("disable_me1pipe0_perf", (16, 16)); ("disable_me1pipe1_perf", (17, 17)); ("disable_me1pipe2_perf", (18, 18)); ("disable_me1pipe3_perf", (19, 19)); ("gs_en", (2, 2)); ("hs_en", (4, 4)); ("ps_en", (0, 0)) ]);
+        ("SQ_PERFCOUNTER_CTRL2", 0xd9e2, [ ("force_en", (0, 0)); ("vmid_en", (16, 1)) ]);
+      ]
+  | _ -> []
+
+(* The graphics families of [counter_registers]. *)
+let gc_families = [ (9, 4, 3); (11, 0, 0); (11, 0, 3); (11, 5, 0); (12, 0, 0) ]
+
 let compute_dispatch_initiator_compute_shader_en = (0, 0)
 let compute_dispatch_initiator_force_start_at_000 = (2, 2)
 let compute_dispatch_initiator_cs_w32_en = (15, 15)

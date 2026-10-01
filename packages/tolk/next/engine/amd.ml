@@ -12,8 +12,30 @@ module A = Nx_amd_device
 (* The GPU as the compiler encodes its packets. *)
 let gpu a =
   let p = A.props a in
+  let counting (c : A.counting) =
+    {
+      Ops_amd.slots = c.slots;
+      counters =
+        List.map
+          (fun (ct : A.counter) ->
+            {
+              Ops_amd.block = ct.block;
+              event = ct.event;
+              register = ct.register;
+              instances = ct.instances;
+              engines = ct.engines;
+              arrays = ct.arrays;
+              wgps = ct.wgps;
+              offset = ct.offset;
+            })
+          c.counters;
+      size = c.size;
+      wgp_active = c.wgp_active;
+    }
+  in
   {
     Ops_amd.target = p.target;
+    gc = p.gc;
     sdma = p.sdma;
     xccs = p.xccs;
     shader_engines = p.shader_engines;
@@ -22,6 +44,7 @@ let gpu a =
     aql = A.aql a;
     compute_ring = B.nbytes (A.compute a).ring;
     copy_rings = List.map (fun (q : A.queue) -> B.nbytes q.ring) (A.sdma a);
+    counting = Option.map counting (A.counting a);
   }
 
 let queue a = function
@@ -42,6 +65,16 @@ let program d a ~binary ~name =
       ignore (A.scratch a k.private_segment);
       k.code
 
+(* The counting of a batch that counts, which the profile being taken asks for
+   since the batch was compiled. *)
+let counted a =
+  match A.counting a with
+  | Some c -> c
+  | None ->
+      invalid_arg
+        "Tolk_next_engine.link: the batch counts its kernels' runs, and the \
+         profile being taken asks for no counters"
+
 (* The storage of the placeholders AMD's commands name: those of the device
    [name]. *)
 let placeholder name d a u =
@@ -59,7 +92,9 @@ let placeholder name d a u =
         | Put q -> (queue a q).put
         | Doorbell q -> (queue a q).doorbell
         | Program { binary; name } -> program d a ~binary ~name
-        | Scratch n -> A.scratch a n)
+        | Scratch n -> A.scratch a n
+        | Log -> (counted a).log
+        | Samples -> (counted a).samples)
       (Ops_amd.storage u)
 
 (* The queues address the memory nx.device says the device reaches: other memory

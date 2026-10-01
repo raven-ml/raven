@@ -22,6 +22,7 @@ the driver releases 570, 580 and 610, which the script checks.
 
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -121,7 +122,7 @@ def nv():
 PM4_CONSTANTS = [
     "PACKET_TYPE3", "PACKET3_SET_SH_REG", "PACKET3_SET_SH_REG_START", "PACKET3_SET_SH_REG_END", "PACKET3_SET_UCONFIG_REG",
     "PACKET3_SET_UCONFIG_REG_START", "PACKET3_PRED_EXEC", "PACKET3_WAIT_REG_MEM", "PACKET3_ACQUIRE_MEM",
-    "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER",
+    "PACKET3_RELEASE_MEM", "PACKET3_DISPATCH_DIRECT", "PACKET3_EVENT_WRITE", "PACKET3_INDIRECT_BUFFER", "PACKET3_COPY_DATA",
     "INDIRECT_BUFFER_VALID", "CACHE_FLUSH_AND_INV_TS_EVENT", "event_index__mec_release_mem__end_of_pipe",
     "data_sel__mec_release_mem__send_32_bit_low", "data_sel__mec_release_mem__send_64_bit_data",
     "data_sel__mec_release_mem__send_gpu_clock_counter", "int_sel__mec_release_mem__none",
@@ -153,6 +154,9 @@ GC_REGISTERS = ["regCOMPUTE_DISPATCH_INITIATOR", "regCOMPUTE_START_X", "regCOMPU
                 "regCOMPUTE_PGM_RSRC3", "regCOMPUTE_USER_DATA_0"]
 GC_FAMILIES = {"gc_9_4_3": "vega", "gc_11_0_0": "navi", "gc_11_0_3": "navi", "gc_11_5_0": "navi", "gc_12_0_0": "navi"}
 INITIATOR_FIELDS = ["compute_shader_en", "force_start_at_000", "cs_w32_en"]
+# The registers a run that counts writes and reads, in each family of GC_FAMILIES.
+COUNTER_REGISTERS = (r"reg(GRBM_GFX_INDEX|CP_PERFMON_CNTL(_1)?|SQ_PERFCOUNTER_(CTRL2?|MASK)|COMPUTE_PERFCOUNT_ENABLE|"
+                     r"(GRBM|GL2C|TCC|SQ)_PERFCOUNTER\d+_(SELECT|LO|HI))")
 # The host data path's flush registers of each bus interface family, as ops_amd.py's memory_barrier names them.
 NBIO_FAMILIES = {"nbio_4_3_0": "0", "nbio_7_2_0": "0", "nbio_7_7_0": "0", "nbio_7_9_0": "0", "nbio_7_11_0": "1", "nbif_6_3_1": "0"}
 
@@ -217,6 +221,19 @@ def amd():
         gfx9 = addr("gc_9_4_3", bases["vega"], n)
         lines += [f"let {n[3:].lower()} = {ml_value(navi)}"]
         if gfx9 != navi: lines += [f"let {n[3:].lower()}_gfx9 = {ml_value(gfx9)}"]
+    lines += ["", "(* The registers a run that counts writes and reads, in each graphics family:",
+              "   (name, address, fields as (name, (hi, lo))). *)", "", "let counter_registers = function"]
+    pattern = re.compile(COUNTER_REGISTERS)
+    for fam, b in GC_FAMILIES.items():
+        rows = sorted((n[3:], bases[b][seg] + off, sorted((f, (hi, lo)) for f, (lo, hi) in fields.items()))
+                      for n, (off, seg, fields) in getattr(regs, fam).items() if pattern.fullmatch(n))
+        lines += [f"  | ({', '.join(fam.split('_')[1:])}) ->", "      ["]
+        lines += [f'        ("{n}", {ml_value(a)}, [ ' + "; ".join(f'("{f}", {ml_value(r)})' for f, r in fs) + " ]);"
+                  for n, a, fs in rows]
+        lines += ["      ]"]
+    lines += ["  | _ -> []", ""]
+    lines += ["(* The graphics families of [counter_registers]. *)",
+              "let gc_families = [ " + "; ".join(f"({', '.join(f.split('_')[1:])})" for f in GC_FAMILIES) + " ]", ""]
     for f in INITIATOR_FIELDS:
         lo, hi = same(f, [getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2][f] for fam in GC_FAMILIES
                           if f in getattr(regs, fam)["regCOMPUTE_DISPATCH_INITIATOR"][2]])

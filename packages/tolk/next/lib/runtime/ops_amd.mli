@@ -41,9 +41,38 @@
 
 (** {1:gpus GPUs} *)
 
+type counter = {
+  block : string;
+      (** The hardware block that counts it: ["GRBM"], ["GL2C"], ["TCC"] or
+          ["SQ"]. *)
+  event : int;  (** The event its block's counter selects. *)
+  register : int;  (** Which of its block's counter registers counts it. *)
+  instances : int;  (** The instances of its block in one die. *)
+  engines : int;  (** The shader engines it is counted in. *)
+  arrays : int;  (** The shader arrays of an engine it is counted in. *)
+  wgps : int;  (** The work-group processors of an array it is counted in. *)
+  offset : int;  (** The byte offset of its values in a run's samples. *)
+}
+(** The type for a counter as a kernel's run counts it: a 64-bit value per die,
+    instance, engine, array and work-group processor, the last varying fastest.
+*)
+
+type counting = {
+  slots : int;  (** The runs the log holds. *)
+  counters : counter list;  (** The counters each run counts. *)
+  size : int;  (** The bytes of a run's samples. *)
+  wgp_active : engine:int -> array:int -> wgp:int -> bool;
+      (** Whether a work-group processor is active: an inactive one is not read.
+      *)
+}
+(** The type for how the compute queue counts each kernel's run. *)
+
 type gpu = {
   target : int * int * int;
       (** The graphics target, such as [(11, 0, 0)] for ["gfx1100"]. *)
+  gc : int * int * int;
+      (** The version of the graphics block, whose registers the counting
+          writes. *)
   sdma : int * int * int;  (** The version of the copy engine. *)
   xccs : int;  (** The number of compute dies. *)
   shader_engines : int;  (** The number of shader engines of one die. *)
@@ -55,6 +84,7 @@ type gpu = {
   compute_ring : int;  (** The size in bytes of the compute queue's ring. *)
   copy_rings : int list;
       (** The size in bytes of each copy queue's ring, ["COPY:0"] first. *)
+  counting : counting option;  (** How kernels' runs are counted, if they are. *)
 }
 (** The type for the AMD GPUs a compiler encodes work for. *)
 
@@ -94,6 +124,15 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
       memory: if it does not fit before the end of the ring, the rest of the
       ring is zeroed and it starts at the ring's beginning.
 
+    With [gpu.counting], the compute queue's commands start by resetting the
+    GPU's performance counters and selecting the counted events, and each [exec]
+    counts its kernel's run: its host program takes the next of the log's slots
+    ({!Log}), the log's count plus the runs before it in the submission modulo
+    [slots], and writes the kernel's descriptor address there; after the kernel,
+    the queue copies the counters' values into the slot's samples ({!Samples})
+    and resets the counters. Once the command buffer is written, the host
+    program adds the submission's runs to the log's count.
+
     [exec] and [copy] raise [Invalid_argument] on a queue that does not run
     them, and a command of a copy queue [gpu] lacks raises [Invalid_argument]. A
     submission writes at most half of each ring, the room the device leaves it:
@@ -101,6 +140,9 @@ val queues : host:string -> reaches:(string -> bool) -> gpu -> Hcq2.queues
     quarter of its ring, since zeroing the ring's tail can double what they
     take, or if the AQL packets exceed half of theirs, and the batch is then
     split into several submissions.
+
+    The compute queue's commands raise [Invalid_argument] if [gpu.counting]
+    counts more counters of a block than its graphics family has registers.
 
     Raises [Invalid_argument] if [gpu] has several dies and its compute queue
     takes PM4 packets, or if [gpu.target] is none of [(9, 4, 2)], [(9, 5, 0)]
@@ -127,6 +169,10 @@ type storage =
   | Scratch of int
       (** The device's scratch memory, for kernels of up to that many bytes of
           scratch per lane. *)
+  | Log
+      (** [1 + slots] 64-bit words of the GPU's [counting]: the runs taken so
+          far, then the kernel descriptor address of each slot's run. *)
+  | Samples  (** [slots] runs of [size] bytes: the counters' values. *)
 
 val storage : Ops.t -> storage option
 (** [storage u] is the storage of the placeholder [u] of a batch if AMD's

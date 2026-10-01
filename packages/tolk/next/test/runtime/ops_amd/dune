@@ -5,7 +5,7 @@
  (name test_ops_amd)
  (modules test_ops_amd)
  (package tolk)
- (libraries windtrap tolk.next tolk_next_test)
+ (libraries windtrap tolk.next tolk_next_test nx.amd.device)
  (deps
   (sandbox always)
   (glob_files *.golden))

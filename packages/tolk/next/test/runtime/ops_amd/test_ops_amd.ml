@@ -22,11 +22,12 @@ let host_target =
 let ring = 16 lsl 20
 
 (* The GPUs of the generator's cases, as tinygrad describes them. *)
-let gpu = function
+let rec gpu = function
   | ("gfx1100" | "gfx1100_sdma5" | "gfx1100_sdma52" | "gfx1100_no_sdma") as name
     ->
       {
         Ops_amd.target = (11, 0, 0);
+        gc = (11, 0, 0);
         sdma =
           (match name with
           | "gfx1100_sdma5" -> (5, 0, 0)
@@ -43,10 +44,12 @@ let gpu = function
           | "gfx1100" -> [ ring; ring ]
           | "gfx1100_sdma5" | "gfx1100_sdma52" -> [ ring ]
           | _ -> []);
+        counting = None;
       }
   | "gfx1201" ->
       {
         target = (12, 0, 1);
+        gc = (12, 0, 1);
         sdma = (7, 0, 0);
         xccs = 1;
         shader_engines = 4;
@@ -55,11 +58,13 @@ let gpu = function
         aql = false;
         compute_ring = ring;
         copy_rings = [ ring ];
+        counting = None;
       }
   | ("gfx942" | "gfx942_cpx") as name ->
       let cpx = name = "gfx942_cpx" in
       {
         target = (9, 4, 2);
+        gc = (9, 4, 3);
         sdma = (4, 4, 2);
         xccs = (if cpx then 1 else 8);
         shader_engines = 4;
@@ -68,8 +73,70 @@ let gpu = function
         aql = not cpx;
         compute_ring = ring;
         copy_rings = [ ring ];
+        counting = None;
       }
+  | name when String.ends_with ~suffix:"_counters" name ->
+      let g = gpu (String.sub name 0 (String.length name - 9)) in
+      { g with counting = Some (counting g) }
   | name -> fail ("no GPU " ^ name)
+
+(* The counting of tinygrad's default counters on [g], laid out as nx.amd.device
+   lays them out, the work-group processor 2 of the shader engine 1 inactive,
+   as the generator's cases describe it. *)
+and counting (g : Ops_amd.gpu) =
+  let major, _, _ = g.target in
+  let l2, lds = if major = 9 then ("TCC", "SQ") else ("GL2C", "SQC") in
+  let props =
+    {
+      Nx_amd_device.target = g.target;
+      gc = g.gc;
+      sdma = g.sdma;
+      nbio = (0, 0, 0);
+      xccs = g.xccs;
+      shader_engines = g.shader_engines;
+      compute_units = g.compute_units;
+      compute_units_per_array = 4;
+      waves_per_cu = 32;
+      lds_bytes = 65536;
+      scratch_slots_per_cu = g.scratch_slots_per_cu;
+    }
+  in
+  let counters =
+    Nx_amd_device.counters props
+      [
+        "SQ_BUSY_CYCLES";
+        "SQ_INSTS_VALU";
+        "SQ_INSTS_SALU";
+        lds ^ "_LDS_IDX_ACTIVE";
+        lds ^ "_LDS_BANK_CONFLICT";
+        "GRBM_GUI_ACTIVE";
+        l2 ^ "_HIT";
+        l2 ^ "_MISS";
+      ]
+  in
+  {
+    Ops_amd.slots = 32;
+    counters =
+      List.map
+        (fun (c : Nx_amd_device.counter) ->
+          {
+            Ops_amd.block = c.block;
+            event = c.event;
+            register = c.register;
+            instances = c.instances;
+            engines = c.engines;
+            arrays = c.arrays;
+            wgps = c.wgps;
+            offset = c.offset;
+          })
+        counters;
+    size =
+      List.fold_left
+        (fun n (c : Nx_amd_device.counter) ->
+          n + (g.xccs * c.instances * c.engines * c.arrays * c.wgps * 8))
+        0 counters;
+    wgp_active = (fun ~engine ~array:_ ~wgp -> (engine, wgp) <> (1, 2));
+  }
 
 (* The host, and AMD, whose queues address the host's memory. *)
 let gpu_devices (g : Ops_amd.gpu) = function
@@ -139,6 +206,9 @@ let cases =
     ("variable_gfx942", "gfx942", false);
     ("scratch", "gfx1100", false);
     ("scratch_gfx942", "gfx942", false);
+    ("counters", "gfx1100_counters", false);
+    ("counters_gfx1201", "gfx1201_counters", false);
+    ("counters_gfx942", "gfx942_counters", false);
   ]
 
 let recorded =
@@ -484,6 +554,8 @@ let pp_storage ppf = function
   | Doorbell q -> Format.fprintf ppf "Doorbell %s" q
   | Program { name; _ } -> Format.fprintf ppf "Program %s" name
   | Scratch n -> Format.fprintf ppf "Scratch %d" n
+  | Log -> Format.pp_print_string ppf "Log"
+  | Samples -> Format.pp_print_string ppf "Samples"
 
 let storage = Testable.make ~pp:pp_storage ~equal:( = )
 
@@ -521,6 +593,8 @@ let linking =
               ("write_ptr_copy_1", Some (Write_ptr "COPY:1"));
               ("put_value_copy_0", Some (Put "COPY:0"));
               ("doorbell_compute_0", Some (Doorbell "COMPUTE:0"));
+              ("prof_log", Some Log);
+              ("pmc_buf", Some Samples);
               ("cmdbuf_compute_0", None);
               ("slots", None);
               ("timeline", None);

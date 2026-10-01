@@ -2433,6 +2433,15 @@ runtime/ops_amd/copies_prepared.golden
 runtime/ops_amd/copies_profile_compiled.golden
 runtime/ops_amd/copies_profile_host.golden
 runtime/ops_amd/copies_profile_prepared.golden
+runtime/ops_amd/counters_compiled.golden
+runtime/ops_amd/counters_gfx1201_compiled.golden
+runtime/ops_amd/counters_gfx1201_host.golden
+runtime/ops_amd/counters_gfx1201_prepared.golden
+runtime/ops_amd/counters_gfx942_compiled.golden
+runtime/ops_amd/counters_gfx942_host.golden
+runtime/ops_amd/counters_gfx942_prepared.golden
+runtime/ops_amd/counters_host.golden
+runtime/ops_amd/counters_prepared.golden
 runtime/ops_amd/large_copy_compiled.golden
 runtime/ops_amd/large_copy_gfx942_compiled.golden
 runtime/ops_amd/large_copy_gfx942_host.golden

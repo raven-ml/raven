@@ -19,6 +19,10 @@ x86_64; no host program compiles: its binary is its source's bytes. For each cas
 `signal_words.golden` is the words of waits and signals on a device's signal
 word at values that carry into its high half, and on a queue's signal.
 
+The cases that count (`counters*`) take tinygrad's default counters of their
+GPU, with a profile log of PROF_SLOTS runs; the work-group processor 2 of the
+shader engine 1 is inactive.
+
 tinygrad is changed as tolk.next differs from it:
 - DIVERGENCES D1, as hcq2_d1.py applies it;
 - DIVERGENCES D37: a wait on a device's signal word is for equality of its
@@ -29,6 +33,8 @@ tinygrad is changed as tolk.next differs from it:
   which the engine loads, instead of holding the image a link patch writes;
 - DIVERGENCES D48: the grid of a dispatch packet in a kernel's arguments is
   words, 32-bit constants when it is known;
+- DIVERGENCES D66: a counted run's entry in the profile log is its kernel
+  descriptor's address;
 - an address is taken on the queue's first device, as tolk.next names one
   device.
 """
@@ -86,24 +92,33 @@ GPUS = {
     "gfx1100_no_sdma": ((11, 0, 0), (6, 0, 0), 1, 6, 48, False, 0),
 }
 RING, SCRATCH_SLOTS = 16 << 20, 32
-GPU = SimpleNamespace(value="gfx1100")
+GPU, COUNTERS = SimpleNamespace(value="gfx1100"), SimpleNamespace(value=False)
+GC = {9: (9, 4, 3), 11: (11, 0, 0), 12: (12, 0, 0)}
+CU_PER_SIMD_ARRAY, PROF_SLOTS = 4, 32
 
 
 def amd_init(self, device=""):
     target, sdma, xccs, ses, cus, aql, copies = GPUS[GPU.value]
     self.target, self.arch = target, "gfx%d%x%x" % target
-    self.iface = SimpleNamespace(props={"lds_size_in_kb": 64, "max_slots_scratch_cu": SCRATCH_SLOTS})
+    self.iface = SimpleNamespace(props={"lds_size_in_kb": 64, "max_slots_scratch_cu": SCRATCH_SLOTS,
+                                        "cu_per_simd_array": CU_PER_SIMD_ARRAY},
+                                 is_wgp_active=lambda xcc, se, sa, wgp: (se, wgp) != (1, 2))
     self.xccs, self.se_cnt, self.cu_cnt, self.is_aql = xccs, ses, cus, int(aql)
     self.soc, self.pm4 = ops_amd.import_soc(target), ops_amd.importlib.import_module(
         f"tinygrad.runtime.autogen.am.pm4_{'soc15' if target[0] == 9 else 'nv'}")
     self.sdma = ops_amd.import_module("sdma", min(sdma, (6, 0, 0)))
     offsets = ops_amd.importlib.import_module(f"tinygrad.runtime.autogen.am.{'vega' if target[0] == 9 else 'navi'}_offsets")
     base = lambda ip, n: {i: tuple(getattr(offsets, f"{ip}_BASE__INST{i}_SEG{s}", 0) for s in range(n)) for i in range(6)}
-    self.gc = ops_amd.AMDIP("gc", {9: (9, 4, 3), 11: (11, 0, 0), 12: (12, 0, 0)}[target[0]], bases=base("GC", 6))
+    self.gc = ops_amd.AMDIP("gc", GC[target[0]], bases=base("GC", 6))
     self.nbio = ops_amd.AMDIP("nbio" if target[0] < 12 else "nbif", {9: (7, 9, 0), 11: (4, 3, 0), 12: (6, 3, 1)}[target[0]],
                               bases=base("NBIO", 9))
     self.max_copy_size = 0x40000000 if (4, 4, 2) <= sdma < (5, 0, 0) or sdma >= (5, 2, 0) else 0x400000
-    self.pmc_enabled = self.sqtt_enabled = False
+    self.pmc_enabled, self.sqtt_enabled = COUNTERS.value, False
+    if self.pmc_enabled:
+        self.prof_slots, self.pmc_counters = PROF_SLOTS, ops_amd.import_pmc(target)
+        l2, lds = ("TCC", "SQ") if target[0] == 9 else ("GL2C", "SQC")
+        self.pmc_names = ["SQ_BUSY_CYCLES", "SQ_INSTS_VALU", "SQ_INSTS_SALU", f"{lds}_LDS_IDX_ACTIVE",
+                          f"{lds}_LDS_BANK_CONFLICT", "GRBM_GUI_ACTIVE", f"{l2}_HIT", f"{l2}_MISS"]
     self.copies = copies
     Compiled.__init__(self, device, None, [HIPRenderer], None, arch=self.arch)
     self.compute_queue = SimpleNamespace(ring=SimpleNamespace(size=RING // 4, dtype=dtypes.uint32))
@@ -177,6 +192,25 @@ def amd_build_program(dev, prg, devs):
 ops_amd.amd_build_program = amd_build_program
 
 
+# The profile buffers, which only their placeholders' shapes need.
+
+ops_amd.AMDDevice.prof_log = property(lambda self: SimpleNamespace(size=1 + self.prof_slots, dtype=dtypes.uint64))
+ops_amd.AMDDevice.pmc_buf = property(lambda self: SimpleNamespace(size=self.pmc_size * self.prof_slots, dtype=dtypes.uint8))
+
+
+# DIVERGENCES D66
+
+def prof_start(self, data, info, lib):
+    if not (self.dev.pmc_enabled or self.dev.sqtt_enabled): return None
+    slot = (self.prof_buf("prof_log").index(0).load() + len(self.profiled)) % self.dev.prof_slots
+    tag = lib.getaddr(self.devs) + data.desc_offset
+    self.profiled.append(self.prof_buf("prof_log").index(1 + slot.cast(dtypes.int)).store(tag))
+    return slot
+
+
+ops_amd.AMDComputeQueue.prof_start = prof_start
+
+
 # DIVERGENCES D48
 
 dispatch_packet = ops_amd.dispatch_packet
@@ -216,6 +250,9 @@ CASES = {
     "variable_gfx942": (lambda: (empty(10)[:Variable("v", 1, 10).bind(3)] + 1).contiguous(), {"gpu": "gfx942"}),
     "scratch": (lambda: (empty() + 1).contiguous(), {"kernel": "scratch"}),
     "scratch_gfx942": (lambda: (empty() + 1).contiguous(), {"gpu": "gfx942", "kernel": "scratch"}),
+    "counters": (lambda: chain(empty(), 2), {"counters": True}),
+    "counters_gfx1201": (lambda: chain(empty(), 2), {"gpu": "gfx1201", "counters": True}),
+    "counters_gfx942": (lambda: chain(empty(), 2), {"gpu": "gfx942", "counters": True}),
 }
 
 
@@ -223,6 +260,7 @@ def compiled(case):
     """(prepared, compiled) of the case."""
     program, options = CASES[case]
     GPU.value = options.get("gpu", "gfx1100")
+    COUNTERS.value = options.get("counters", False)
     KERNEL.value = options.get("kernel", "simple_add")
     captured, sched = [], hcq2.sched_batches
 

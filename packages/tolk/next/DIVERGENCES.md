@@ -1881,6 +1881,26 @@ the Exclusions of `README.md`.
   device › a chain of 8-bit float operations rounds after each, as eager
   does`, and the same on Metal.
 
+## D66. A counted run's log entry is its kernel descriptor's address
+
+- **tinygrad:** `runtime/ops_amd.py:157-165` (`prof_start` writes the program
+  placeholder's slot, a constant, into the run's entry of `prof_log`),
+  `:1056-1068` (`collect_prof` hands that slot to its profile event, which
+  `viz/serve.py:353` maps to the program).
+- **tolk.next:** `lib/runtime/ops_amd.ml:533` (`start_run` writes the address of
+  the kernel descriptor, `getaddr lib + desc_offset`).
+- **Differs:** the entry is the address of the run's kernel descriptor, which
+  the host program computes from the code object's address at link, where
+  tinygrad writes a constant that names the program's placeholder in its
+  compiler.
+- **Reason:** (c). nx.amd.device reads the log at each synchronization and
+  names each run's counters after its kernel (`Nx_device.Profile.Counters`):
+  it knows its kernels by their descriptor addresses, the programs' handles,
+  and nothing of a compiler's placeholders.
+- **Pinned by:** the Ops_amd suite: `recorded cases › counters`,
+  `counters_gfx1201` and `counters_gfx942`, from the generator patched as
+  `test/gen/runtime/ops_amd.py` says.
+
 ## D67. A long range runs as chunks of its trips
 
 - **tinygrad:** `runtime/support/hcq2.py:379-385` (`HWQueue.loop`, which

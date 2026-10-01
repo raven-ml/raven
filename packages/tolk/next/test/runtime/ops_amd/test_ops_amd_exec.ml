@@ -183,6 +183,46 @@ let execution =
           | [ (_, _, first_stop); (_, second_start, _) ] ->
               at_least int ~than:first_stop second_start
           | _ -> ());
+      slow "a profile that counts has each kernel's run count, in order"
+        (fun () ->
+          let b = chain 3 in
+          let bound = bound_to (Array.make 4 0.) b in
+          let p =
+            Nx_device.Profile.start
+              ~counters:[ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ]
+              ()
+          in
+          let events =
+            Fun.protect
+              ~finally:(fun () ->
+                if Nx_device.Profile.enabled () then
+                  ignore (Nx_device.Profile.stop p))
+              (fun () ->
+                match run_calls ~bound (chained b) with
+                | exception Failure why
+                  when String.ends_with ~suffix:"set -l stable_std`" why ->
+                    skip ~reason:why ()
+                | _ -> Nx_device.Profile.stop p)
+          in
+          let counted =
+            List.filter_map
+              (function
+                | Nx_device.Profile.Counters c
+                  when Nx_device.equal c.device (amd ()) ->
+                    Some (c.name, c.counters)
+                | _ -> None)
+              events
+          in
+          equal (list string) [ "k"; "k"; "k" ] (List.map fst counted);
+          List.iter
+            (fun (_, counters) ->
+              equal (list string) ~msg:"the counters asked for"
+                [ "GRBM_GUI_ACTIVE"; "SQ_BUSY_CYCLES" ]
+                (List.map fst counters);
+              is_true ~msg:"the GPU was busy"
+                (Array.fold_left ( + ) 0 (List.assoc "GRBM_GUI_ACTIVE" counters)
+                > 0))
+            counted);
       slow "each trip of a range runs its kernel on its own window" (fun () ->
           let n = 5 in
           let src, dst, e = ranged n in
