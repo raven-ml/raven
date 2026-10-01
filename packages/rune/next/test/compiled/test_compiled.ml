@@ -5,9 +5,9 @@
 
 (* The compiled backend against nx.cpu. Each kernel runs on the same operands in
    both backends: strided, broadcast, reversed, offset, in a buffer that starts
-   inside another, empty or scalar. Its results agree to the class of its row in
-   the lowering's ledger: bit for bit, within the error of a rounded sum, within
-   a budget of units in the last place, or within a measured bound. A refusal
+   inside another, empty or scalar. Its results agree to the class the lowering
+   states for it: bit for bit, within the error of a rounded sum, within a
+   budget of units in the last place, or within a measured bound. A refusal
    raises before any work; a program is compiled once per key, from any domain;
    and linear algebra gives non-finite values where nx.cpu raises. The host runs
    the programs; Metal, the full sweeps and the cost figures are slow. *)
@@ -28,10 +28,11 @@ let numel shape = Array.fold_left ( * ) 1 shape
 
 (* Devices *)
 
-(* A device the compiled programs run on. [flushes] is whether it flushes
-   float32 subnormals to zero, as Metal does, bfloat16 ones included since they
-   compute at float32 (ledger, Targets); [budgets] are its measured maxima of
-   units in the last place, by row, where they differ from the ledger's. *)
+(* A device the compiled programs run on. [flushes] is whether its arithmetic
+   reads and writes float32 subnormals as zeros of their sign, as Metal's does,
+   bfloat16 ones included since they compute at float32; [budgets] are its
+   measured maxima of units in the last place, by row, where they differ from
+   the lowering's. *)
 type device = {
   device : Nx_device.t;
   name : string;
@@ -524,7 +525,7 @@ let ulps d ~budget inputs e a =
     ev
 
 (* A transcendental row's budget against nx.cpu on [d]: the device's measured
-   maximum, else the ledger's budget against the correctly rounded result and
+   maximum, else the lowering's budget against the correctly rounded result and
    nx.cpu's own ulp. At the narrow dtypes both round a float32 result once, and
    may round to either side of it. *)
 let budget d name ledger (dt : (float, 'b) Nx_dtype.t) =
@@ -1654,7 +1655,8 @@ let linalg d ~count =
   @ [ solve; never_raises ]
 
 (* Where nx.cpu raises Linalg_error, the compiled programs run their fixed steps
-   and give the non-finite values the ledger pins (L4, L5). *)
+   and give the non-finite values that their steps make of a singular or an
+   indefinite matrix. *)
 
 let f32 shape xs = Nx.create Nx.float32 shape xs
 

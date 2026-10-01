@@ -727,3 +727,26 @@ target's run lands.
   diagonal is never the pivot`, `› a NaN on the diagonal is the pivot`, `› one
   element`, `› no element`.
 
+
+## Targets
+
+A target computes what its hardware computes where that differs from nx's
+meaning and no lowering recovers it. Each entry gives the targets, what
+differs, nx's meaning, and the test that pins it.
+
+### T1. Subnormals flush to zeros of their sign
+
+- **Targets:** Metal, for `float32` and for `bfloat16`, which computes at
+  `float32`.
+- **Differs:** arithmetic reads a subnormal operand as a zero of its sign and
+  writes a subnormal result as a zero of its sign: `recip (-0x1.fffffep127)`
+  is `-0.`, where nx.cpu gives `-0x1p-128`, and `atan2 (-4) 0x1.fffffep127`
+  is `-0.`. A kernel that moves or orders values without computing on them,
+  a copy, a gather or a sort, keeps every bit.
+- **nx:** `nx_backend.mli`: IEEE 754 binary arithmetic, with gradual
+  underflow.
+- **Pinned by:** `Compiled › metal › elementwise › exact unary`, `› exact
+  binary`, `› transcendental unary`, `› transcendental binary` and `› cast`
+  (slow), which draw operands without subnormals on a flushing target and
+  compare with eager's result flushed the same way; `› reductions › sort`
+  keeps subnormals.
