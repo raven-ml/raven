@@ -1638,16 +1638,48 @@ module Buffer = struct
       r.generation <- generation;
       { b with generation }
 
+    (* Raises if a buffer of [donated] shares a byte with another of [rs] or
+       [donated]: the bytes sorted by where they lie, each is checked against
+       the furthest end reached before it, and against the furthest a donated
+       one reached. *)
+    let refuse_overlaps rs donated =
+      let bytes donated b =
+        let s, a = place b in
+        (s, a, a +! nbytes b, donated)
+      in
+      let some = List.filter (fun b -> nbytes b > 0) in
+      let all =
+        List.map (bytes false) (some rs) @ List.map (bytes true) (some donated)
+      in
+      let all =
+        List.sort
+          (fun (s, a, _, _) (s', a', _, _) ->
+            match compare s s' with 0 -> Nativeint.compare a a' | c -> c)
+          all
+      in
+      let refuse () =
+        invalid_arg
+          "Nx_device.Buffer.Claim.with_: a donated buffer overlaps another \
+           buffer of the call"
+      in
+      let further a b = if Nativeint.compare a b < 0 then b else a in
+      let rec sweep space reached by_donated = function
+        | [] -> ()
+        | (s, a, e, donated) :: rest ->
+            let reached, by_donated =
+              if s = space then (reached, by_donated) else (a, a)
+            in
+            if Nativeint.compare a (if donated then reached else by_donated) < 0
+            then refuse ();
+            sweep s (further reached e)
+              (if donated then further by_donated e else by_donated)
+              rest
+      in
+      match all with [] -> () | (s, a, _, _) :: _ -> sweep s a a all
+
     let with_ ~read:rs ~donate f =
       let donated = List.concat donate in
-      List.iteri
-        (fun i d ->
-          let others = rs @ List.filteri (fun j _ -> j <> i) donated in
-          if List.exists (overlaps d) others then
-            invalid_arg
-              "Nx_device.Buffer.Claim.with_: a donated buffer overlaps another \
-               buffer of the call")
-        donated;
+      refuse_overlaps rs donated;
       (* Reads in order, releasing those taken if one is refused. *)
       let reads =
         List.fold_left

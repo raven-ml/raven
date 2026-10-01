@@ -1632,7 +1632,8 @@ let buffers =
           let on_host = borrow host file in
           let whole = borrow far_one.dev on_host in
           let part = borrow far_one.dev (B.view on_host ~offset:8 S.UInt8 8) in
-          equal (list bool) [ true; true; true; false ]
+          equal (list bool)
+            [ true; true; true; false ]
             (List.map B.spans [ file; on_host; whole; part ]));
       test "only a buffer that spans its memory can be consumed" (fun () ->
           let b = B.create host S.UInt8 8 in
@@ -1890,9 +1891,60 @@ let test_consume_read_only () =
       Claim.with_ ~read:[] ~donate:[] (fun k ->
           ignore (Claim.consume k ~why:"stray" c)))
 
+(* Views of two memories, each read or donated, and whether the bracket over
+   them raises: exactly when a donated view shares a byte with another view. *)
+let views =
+  let view =
+    Gen.triple (Gen.int_range 0 1) (Gen.int_range 0 63) Gen.bool
+    |> Gen.map (fun (m, offset, donated) -> (m, offset, 64 - offset, donated))
+  in
+  let view = Gen.pair view (Gen.int_range 0 64) in
+  Gen.list ~size:(Gen.int_range 0 8) view
+  |> Gen.map
+       (List.map (fun ((m, offset, room, donated), n) ->
+            (m, offset, Int.min n room, donated)))
+  |> Gen.with_pp (fun ppf vs ->
+      List.iter
+        (fun (m, o, n, d) ->
+          Format.fprintf ppf "%s %d[%d, +%d] "
+            (if d then "donate" else "read")
+            m o n)
+        vs)
+
+let test_bracket_overlaps vs =
+  let memories = [| B.create host S.UInt8 64; B.create host S.UInt8 64 |] in
+  let views =
+    List.map
+      (fun (m, o, n, d) -> (B.view memories.(m) ~offset:o S.UInt8 n, d))
+      vs
+  in
+  let read = List.filter_map (fun (b, d) -> if d then None else Some b) views in
+  let donated =
+    List.filter_map (fun (b, d) -> if d then Some b else None) views
+  in
+  let overlap =
+    List.exists
+      (fun (i, (b, d)) ->
+        d
+        && List.exists
+             (fun (j, (b', _)) -> i <> j && B.overlaps b b')
+             (List.mapi (fun j v -> (j, v)) views))
+      (List.mapi (fun i v -> (i, v)) views)
+  in
+  let raised =
+    match
+      Claim.with_ ~read ~donate:(List.map (fun b -> [ b ]) donated) ignore
+    with
+    | () -> false
+    | exception Invalid_argument _ -> true
+  in
+  equal bool overlap raised
+
 let claims =
   group "claims"
     [
+      prop "the bracket refuses exactly the donations that overlap another view"
+        views test_bracket_overlaps;
       test
         "reads share, one reader becomes exclusive, and exclusive \
          refuses             reads"

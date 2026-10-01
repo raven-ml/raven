@@ -2081,16 +2081,18 @@ let claim2 a b =
   match claim b with
   | () -> ()
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e
+      Printexc.raise_with_backtrace e bt
 
 let claim3 a b c =
   claim2 a b;
   match claim c with
   | () -> ()
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 a b;
-      raise e
+      Printexc.raise_with_backtrace e bt
 
 let rec claim_all = function
   | [] -> ()
@@ -2099,8 +2101,9 @@ let rec claim_all = function
       match claim_all rest with
       | () -> ()
       | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
           release a;
-          raise e)
+          Printexc.raise_with_backtrace e bt)
 
 let release_all xs = List.iter release xs
 
@@ -2112,8 +2115,9 @@ let k_unary ((module K) : kernels) k a =
   (match K.unary k a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_binary ((module K) : kernels) k a b =
@@ -2122,8 +2126,9 @@ let k_binary ((module K) : kernels) k a b =
   (match K.binary k a b ~dst with
   | () -> release2 a b
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 a b;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_compare ((module K) : kernels) k a b =
@@ -2132,8 +2137,9 @@ let k_compare ((module K) : kernels) k a b =
   (match K.compare k a b ~dst with
   | () -> release2 a b
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 a b;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_where ((module K) : kernels) c a b =
@@ -2142,8 +2148,9 @@ let k_where ((module K) : kernels) c a b =
   (match K.where c a b ~dst with
   | () -> release3 c a b
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release3 c a b;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_reduce ((module K) : kernels) k axes a =
@@ -2152,8 +2159,9 @@ let k_reduce ((module K) : kernels) k axes a =
   (match K.reduce k ~axes a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_scan ((module K) : kernels) k axis a =
@@ -2162,8 +2170,9 @@ let k_scan ((module K) : kernels) k axis a =
   (match K.scan k ~axis a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_arg_reduce ((module K) : kernels) k axis a =
@@ -2175,8 +2184,9 @@ let k_arg_reduce ((module K) : kernels) k axis a =
   (match K.arg_reduce k ~axis a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_sort ((module K) : kernels) descending axis a =
@@ -2185,8 +2195,9 @@ let k_sort ((module K) : kernels) descending axis a =
   (match K.sort ~descending ~axis a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_argsort ((module K) : kernels) descending axis a =
@@ -2195,8 +2206,9 @@ let k_argsort ((module K) : kernels) descending axis a =
   (match K.argsort ~descending ~axis a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_pad ((module K) : kernels) padding v a =
@@ -2205,8 +2217,9 @@ let k_pad ((module K) : kernels) padding v a =
   (match K.pad padding v a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_cat ((module K) : kernels) axis xs =
@@ -2216,8 +2229,9 @@ let k_cat ((module K) : kernels) axis xs =
   (match K.cat ~axis xs ~dst with
   | () -> release_all xs
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release_all xs;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_cast ((module K) : kernels) dtype a =
@@ -2226,8 +2240,9 @@ let k_cast ((module K) : kernels) dtype a =
   (match K.cast a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_threefry ((module K) : kernels) key ctr =
@@ -2236,8 +2251,9 @@ let k_threefry ((module K) : kernels) key ctr =
   (match K.threefry key ctr ~dst with
   | () -> release2 key ctr
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 key ctr;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_gather ((module K) : kernels) axis indices data =
@@ -2246,8 +2262,9 @@ let k_gather ((module K) : kernels) axis indices data =
   (match K.gather ~axis indices data ~dst with
   | () -> release2 indices data
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 indices data;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_scatter ((module K) : kernels) mode unique axis indices updates into =
@@ -2256,8 +2273,9 @@ let k_scatter ((module K) : kernels) mode unique axis indices updates into =
   (match K.scatter ~mode ~unique ~axis ~indices ~updates into ~dst with
   | () -> release3 indices updates into
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release3 indices updates into;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_update ((module K) : kernels) a starts v =
@@ -2266,8 +2284,9 @@ let k_update ((module K) : kernels) a starts v =
   (match K.update a ~starts v ~dst with
   | () -> release3 a starts v
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release3 a starts v;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
@@ -2279,8 +2298,9 @@ let k_unfold ((module K) : kernels) kernel_size stride dilation padding a =
   (match K.unfold ~kernel_size ~stride ~dilation ~padding a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_fold ((module K) : kernels) output_size kernel_size stride dilation
@@ -2290,8 +2310,9 @@ let k_fold ((module K) : kernels) output_size kernel_size stride dilation
   (match K.fold ~output_size ~kernel_size ~stride ~dilation ~padding a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_matmul ((module K) : kernels) a b =
@@ -2300,8 +2321,9 @@ let k_matmul ((module K) : kernels) a b =
   (match K.matmul a b ~dst with
   | () -> release2 a b
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 a b;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_fft ((module K) : kernels) inverse axes a =
@@ -2310,8 +2332,9 @@ let k_fft ((module K) : kernels) inverse axes a =
   (match K.fft ~inverse ~axes a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_rfft ((module K) : kernels) dtype axes a =
@@ -2320,8 +2343,9 @@ let k_rfft ((module K) : kernels) dtype axes a =
   (match K.rfft ~axes a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_irfft ((module K) : kernels) dtype axes s a =
@@ -2330,8 +2354,9 @@ let k_irfft ((module K) : kernels) dtype axes s a =
   (match K.irfft ~axes ~s a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let k_contiguous ((module K) : kernels) a =
@@ -2340,8 +2365,9 @@ let k_contiguous ((module K) : kernels) a =
   (match K.contiguous a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 (* [bitcast_array dtype a] is [a]'s bytes read as elements of [dtype]: at [a]'s
@@ -2395,8 +2421,9 @@ let k_cholesky ((module K) : kernels) upper a =
   (match K.cholesky ~upper a ~dst with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 (* The batch axes of a matrix of shape [..., m, n], and [m] and [n]. *)
@@ -2415,8 +2442,9 @@ let k_qr ((module K) : kernels) reduced a =
   (match K.qr ~reduced a ~q ~r with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   (q, r)
 
 let k_lu ((module K) : kernels) a =
@@ -2428,8 +2456,9 @@ let k_lu ((module K) : kernels) a =
   (match K.lu a ~lu ~pivots ~perm with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   (lu, pivots, perm)
 
 let k_svd ((module K) : kernels) full_matrices a =
@@ -2443,8 +2472,9 @@ let k_svd ((module K) : kernels) full_matrices a =
   (match K.svd a ~u ~s ~vt with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   (u, s, vt)
 
 let k_eig ((module K) : kernels) vectors a =
@@ -2457,8 +2487,9 @@ let k_eig ((module K) : kernels) vectors a =
   (match K.eig a ~values ~vectors with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   (values, vectors)
 
 let k_eigh ((module K) : kernels) vectors a =
@@ -2469,8 +2500,9 @@ let k_eigh ((module K) : kernels) vectors a =
   (match K.eigh a ~values ~vectors with
   | () -> release a
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release a;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   (values, vectors)
 
 let k_solve_triangular ((module K) : kernels) upper transpose unit_diag a b =
@@ -2479,8 +2511,9 @@ let k_solve_triangular ((module K) : kernels) upper transpose unit_diag a b =
   (match K.solve_triangular ~upper ~transpose ~unit_diag a b ~dst with
   | () -> release2 a b
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       release2 a b;
-      raise e);
+      Printexc.raise_with_backtrace e bt);
   dst
 
 let all_host xs = List.for_all (function Host _ -> true | _ -> false) xs

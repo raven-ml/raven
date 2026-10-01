@@ -2922,6 +2922,9 @@ thread.
 
 ### Nx
 
+- `Nx_device.Buffer.Claim.with_` checks a call's donated buffers against its
+  other buffers in `n log n` time, where a call donating a model's parameters
+  and optimizer state made a quadratic number of overlap checks.
 - `Nx_device.Buffer.spans` of a borrow judges the memory it maps: a borrow of
   all of a memory spans it even when its device maps whole pages around it, as
   Metal maps a file's pages, so `Claim.consume` accepts it as it accepts the

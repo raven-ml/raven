@@ -367,8 +367,9 @@ let reading ~by x f =
       Nx_device.Buffer.Claim.release buf;
       v
   | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
       Nx_device.Buffer.Claim.release buf;
-      raise e
+      Printexc.raise_with_backtrace e bt
 
 (* [x]'s elements in C order, read by [by]. *)
 let read_array ~by x = reading ~by x (Array.init (numel x))
